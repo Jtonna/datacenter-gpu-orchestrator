@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 )
 
 // Error is a request-level failure with the HTTP status to answer.
@@ -65,7 +66,33 @@ type Extracted struct {
 	// Body yields every byte of the original body, in order. Close it
 	// (it removes any spill file).
 	Body io.ReadCloser
+
+	rb       *replayBody // Body, when the replay can still be pre-filled
+	buffered int64
 }
+
+// Prefetch keeps reading the unread remainder of a multipart body into the
+// bounded spill (memory, then a temp file, same cap as the prefix) in the
+// background, until the first Read of Body (the hand-over to the upstream)
+// or Close. It exists so that a client that disconnects while its request
+// is queued is noticed: Go's http.Server only cancels the request context
+// on disconnect after the body has been read to the end.
+//
+// onErr is called at most once, from the background goroutine, if the read
+// fails before EOF (the client went away, or the cap was exceeded: then the
+// error is a *Error with status 413) while Body has not been handed over.
+// interrupt, if not nil, is called by Close to unblock a read in progress
+// (e.g. a read deadline in the past). It is a no-op for bodies with nothing
+// left to read, such as JSON.
+func (e *Extracted) Prefetch(onErr func(error), interrupt func()) {
+	if e.rb != nil {
+		e.rb.startPrefetch(onErr, interrupt)
+	}
+}
+
+// BufferedBytes is how much of the body is held in memory for a JSON body
+// (0 for multipart, whose memory use is bounded by Limits.MemBytes).
+func (e *Extracted) BufferedBytes() int64 { return e.buffered }
 
 // Extract reads the model name from a request without consuming the body
 // for good.
@@ -123,7 +150,7 @@ func extractJSON(r *http.Request, lim Limits) (*Extracted, error) {
 	if !ok || name == "" {
 		return nil, missingModel()
 	}
-	return &Extracted{Model: name, Body: io.NopCloser(bytes.NewReader(data))}, nil
+	return &Extracted{Model: name, Body: io.NopCloser(bytes.NewReader(data)), buffered: int64(len(data))}, nil
 }
 
 // spill is a write-only buffer that keeps a prefix in memory and puts the
@@ -163,6 +190,17 @@ func (s *spill) Write(p []byte) (int, error) {
 	return s.file.Write(p)
 }
 
+// readAt reads buffered bytes at off (the memory part comes first, then the
+// file).
+func (s *spill) readAt(p []byte, off int64) (int, error) {
+	if m := int64(s.mem.Len()); off < m {
+		return copy(p, s.mem.Bytes()[off:]), nil
+	} else if s.file != nil {
+		return s.file.ReadAt(p, off-m)
+	}
+	return 0, io.EOF
+}
+
 func (s *spill) discard() {
 	if s.file != nil {
 		name := s.file.Name()
@@ -173,34 +211,115 @@ func (s *spill) discard() {
 }
 
 // replay returns the buffered prefix followed by rest.
-func (s *spill) replay(rest io.Reader, restCloser io.Closer) io.ReadCloser {
-	var prefix io.Reader = bytes.NewReader(s.mem.Bytes())
-	rc := &replayBody{closer: restCloser}
-	if s.file != nil {
-		if _, err := s.file.Seek(0, io.SeekStart); err == nil {
-			prefix = io.MultiReader(prefix, io.LimitReader(s.file, s.n-int64(s.mem.Len())))
-		}
-		rc.file = s.file
-	}
-	rc.r = io.MultiReader(prefix, rest)
-	return rc
+func (s *spill) replay(rest io.Reader, restCloser io.Closer) *replayBody {
+	b := &replayBody{sp: s, rest: rest, closer: restCloser}
+	b.cond = sync.NewCond(&b.mu)
+	return b
 }
 
+// replayBody yields the spilled bytes, then whatever is still unread. While
+// a prefetch is running it also follows the spill as it grows.
 type replayBody struct {
-	r      io.Reader
-	file   *os.File
+	sp     *spill
+	rest   io.Reader
 	closer io.Closer
+
+	mu        sync.Mutex
+	cond      *sync.Cond
+	off       int64 // replay position in the spill
+	handed    bool  // the replay has started (or Close ran): prefetch must stop
+	closed    bool
+	pumping   bool  // the prefetch goroutine is alive
+	err       error // sticky outcome of the prefetch: io.EOF, a read error, or 413
+	interrupt func()
 }
 
-func (b *replayBody) Read(p []byte) (int, error) { return b.r.Read(p) }
+func (b *replayBody) startPrefetch(onErr func(error), interrupt func()) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.handed || b.pumping || b.err != nil {
+		return
+	}
+	b.pumping, b.interrupt = true, interrupt
+	go b.pump(onErr)
+}
+
+func (b *replayBody) pump(onErr func(error)) {
+	buf := make([]byte, 32<<10)
+	for {
+		n, err := b.rest.Read(buf)
+		b.mu.Lock()
+		if n > 0 && !b.closed {
+			if _, werr := b.sp.Write(buf[:n]); werr != nil {
+				switch {
+				case b.sp.tooBig:
+					err = tooLarge("multipart upload", b.sp.max)
+				case b.sp.failure != nil:
+					err = &Error{Status: http.StatusInternalServerError, Message: "buffering upload: " + b.sp.failure.Error()}
+				default:
+					err = werr
+				}
+			}
+		}
+		stop := b.handed
+		if err != nil {
+			b.err = err
+		}
+		report := err != nil && !errors.Is(err, io.EOF) && !stop
+		if err != nil || stop {
+			b.pumping = false
+		}
+		b.cond.Broadcast()
+		b.mu.Unlock()
+		if report {
+			onErr(err)
+		}
+		if err != nil || stop {
+			return
+		}
+	}
+}
+
+func (b *replayBody) Read(p []byte) (int, error) {
+	b.mu.Lock()
+	b.handed = true
+	for {
+		if b.off < b.sp.n {
+			n, err := b.sp.readAt(p[:min(int64(len(p)), b.sp.n-b.off)], b.off)
+			b.off += int64(n)
+			b.mu.Unlock()
+			if n > 0 {
+				return n, nil
+			}
+			return 0, err
+		}
+		if b.pumping {
+			b.cond.Wait() // the in-flight read of the prefetch finishes first
+			continue
+		}
+		if b.err != nil {
+			err := b.err
+			b.mu.Unlock()
+			return 0, err
+		}
+		break
+	}
+	b.mu.Unlock()
+	return b.rest.Read(p)
+}
 
 func (b *replayBody) Close() error {
-	if b.file != nil {
-		name := b.file.Name()
-		b.file.Close()
-		os.Remove(name)
-		b.file = nil
+	b.mu.Lock()
+	b.handed = true
+	if b.pumping && b.interrupt != nil {
+		b.interrupt()
+		for b.pumping { // without an interrupt a stuck read cannot be waited for
+			b.cond.Wait()
+		}
 	}
+	b.closed = true
+	b.sp.discard()
+	b.mu.Unlock()
 	if b.closer != nil {
 		return b.closer.Close()
 	}
@@ -244,7 +363,8 @@ func extractMultipart(r *http.Request, boundary string, lim Limits) (*Extracted,
 				sp.discard()
 				return nil, missingModel()
 			}
-			return &Extracted{Model: name, Body: sp.replay(r.Body, r.Body)}, nil
+			rb := sp.replay(r.Body, r.Body)
+			return &Extracted{Model: name, Body: rb, rb: rb}, nil
 		}
 		// Skip the part; the tee keeps its bytes for the replay.
 		if _, err := io.Copy(io.Discard, part); err != nil {

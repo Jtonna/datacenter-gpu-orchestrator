@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -96,5 +97,27 @@ func TestSlidingWindowWarning(t *testing.T) {
 	}
 	if strings.Contains(out, "profile=plain") || strings.Contains(out, "gemma-measured") {
 		t.Fatalf("unexpected warning:\n%s", out)
+	}
+}
+
+// A shutdown that overran its grace (children were killed) is not a clean
+// stop: exit non-zero and say why.
+func TestExitCodeAfterShutdown(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, nil))
+	if got := exitCodeAfterShutdown(0, nil, log); got != 0 {
+		t.Fatalf("clean shutdown: exit %d", got)
+	}
+	if got := exitCodeAfterShutdown(1, nil, log); got != 1 {
+		t.Fatalf("earlier failure must stay: exit %d", got)
+	}
+	if buf.Len() != 0 {
+		t.Fatalf("clean shutdown logged: %s", buf.String())
+	}
+	if got := exitCodeAfterShutdown(0, context.DeadlineExceeded, log); got != 1 {
+		t.Fatalf("overrun shutdown: exit %d, want 1", got)
+	}
+	if out := buf.String(); !strings.Contains(out, "level=ERROR") || !strings.Contains(out, "killed") {
+		t.Fatalf("no explanation logged: %q", out)
 	}
 }

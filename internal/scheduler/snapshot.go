@@ -16,14 +16,25 @@ import (
 // Read-only views of the core. None of these changes scheduling state.
 
 // cmdline is the command line shown for an instance: the child's argv once
-// it runs, else the command it will be started with (port 0).
+// it runs. Before that there is no port, so a llama command is shown without
+// its --port flag (the hub's --rpc and --ctx-size patterns still match) and a
+// kind: command line, whose port flag is unknown, is not shown.
 func (c *schedCore) cmdline(in *inst) string {
 	if in.argv != nil {
 		return instance.RenderCommand(in.argv)
 	}
+	if in.prof.Kind == core.KindCommand {
+		return ""
+	}
 	argv, err := instance.BuildArgs(*in.prof, in.placement, 0, c.build)
 	if err != nil {
 		return ""
+	}
+	for i := 0; i+1 < len(argv); i++ {
+		if argv[i] == "--port" {
+			argv = append(argv[:i:i], argv[i+2:]...)
+			break
+		}
 	}
 	return instance.RenderCommand(argv)
 }

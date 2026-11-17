@@ -75,6 +75,9 @@ type Client struct {
 	noTierLogged    map[string]bool
 	ambiguousLogged map[string]string
 	notify          chan struct{}
+	created         time.Time
+	feedDownLogged  bool
+	staleLogged     bool
 
 	nextPoll time.Time // feed goroutine only
 }
@@ -109,7 +112,8 @@ func New(cfg *config.Config, opts Options) *Client {
 		opts.Logger = slog.Default()
 	}
 	return &Client{
-		cfg: cfg, opts: opts, base: strings.TrimRight(cfg.Fleet.URL, "/"),
+		created: opts.Clock(),
+		cfg:     cfg, opts: opts, base: strings.TrimRight(cfg.Fleet.URL, "/"),
 		noTierLogged: map[string]bool{}, ambiguousLogged: map[string]string{},
 		notify: make(chan struct{}, 1),
 	}
@@ -181,6 +185,9 @@ func (c *Client) Changed() <-chan struct{} { return c.notify }
 func (c *Client) Resolve(name string) (core.NodeID, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.isLocalNameLocked(name) {
+		return c.localIDLocked(), nil
+	}
 	m, amb, err := c.resolveLocked(name)
 	switch {
 	case amb != nil:
@@ -188,9 +195,10 @@ func (c *Client) Resolve(name string) (core.NodeID, error) {
 		return "", &AmbiguousError{Name: name, IDs: amb}
 	case err == nil:
 		delete(c.ambiguousLogged, name)
+		if c.isLocalMemberLocked(*m) {
+			return c.localIDLocked(), nil
+		}
 		return core.NodeID(m.ID), nil
-	case c.probeOK && strings.EqualFold(name, c.cfg.Fleet.LocalNode):
-		return c.localIDLocked(nil), nil
 	}
 	return "", err
 }
@@ -199,7 +207,11 @@ func (c *Client) Resolve(name string) (core.NodeID, error) {
 // the probe cannot run it asks the console like for any other node.
 func (c *Client) FetchNode(ctx context.Context, id core.NodeID) (core.Node, error) {
 	c.mu.Lock()
-	isLocal := id == c.localIDLocked(c.localMemberLocked())
+	isLocal := id == c.localIDLocked()
+	var memberID string
+	if lm := c.localMemberLocked(); lm != nil {
+		memberID = lm.ID
+	}
 	c.mu.Unlock()
 	if isLocal {
 		pctx, cancel := context.WithTimeout(ctx, c.opts.RequestTimeout)
@@ -214,10 +226,22 @@ func (c *Client) FetchNode(ctx context.Context, id core.NodeID) (core.Node, erro
 			}
 			return n, nil
 		}
+		// Probe unavailable: ask the console about the fleet member for the
+		// local node, never about the local id itself.
+		if memberID == "" {
+			return core.Node{}, fmt.Errorf("%w: local node %s has no fleet member and the probe failed", ErrNotFound, id)
+		}
+		return c.fetchMember(ctx, memberID, true, id)
 	}
+	return c.fetchMember(ctx, string(id), false, id)
+}
+
+// fetchMember reads GET /api/nodes/<memberID> and converts it; the node is
+// published under id.
+func (c *Client) fetchMember(ctx context.Context, memberID string, isLocal bool, id core.NodeID) (core.Node, error) {
 	rctx, cancel := context.WithTimeout(ctx, c.opts.RequestTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(rctx, http.MethodGet, c.base+"/api/nodes/"+url.PathEscape(string(id)), nil)
+	req, err := http.NewRequestWithContext(rctx, http.MethodGet, c.base+"/api/nodes/"+url.PathEscape(memberID), nil)
 	if err != nil {
 		return core.Node{}, err
 	}
@@ -240,6 +264,7 @@ func (c *Client) FetchNode(ctx context.Context, id core.NodeID) (core.Node, erro
 	if !ok {
 		return core.Node{}, fmt.Errorf("fleet: node %s matches no tier", id)
 	}
+	n.ID = id
 	return n, nil
 }
 
@@ -308,19 +333,27 @@ func (c *Client) localMemberLocked() *Member {
 	return m
 }
 
-func (c *Client) localIDLocked(m *Member) core.NodeID {
-	if m != nil {
-		return core.NodeID(m.ID)
-	}
+// localIDLocked is the local node's one fixed id: the configured
+// fleet.local_node, whether or not (or when) its fleet member shows up.
+func (c *Client) localIDLocked() core.NodeID {
 	if c.cfg.Fleet.LocalNode == "" {
 		return "local"
 	}
 	return core.NodeID(c.cfg.Fleet.LocalNode)
 }
 
+func (c *Client) isLocalNameLocked(name string) bool {
+	return c.cfg.Fleet.LocalNode != "" && strings.EqualFold(name, c.cfg.Fleet.LocalNode)
+}
+
+// isLocalMemberLocked: the member's id or hostname is fleet.local_node.
+func (c *Client) isLocalMemberLocked(m Member) bool {
+	return c.isLocalNameLocked(m.ID) || c.isLocalNameLocked(m.Hostname)
+}
+
 func (c *Client) localFromProbeLocked(total, used int) (core.Node, bool) {
 	m := c.localMemberLocked()
-	n := core.Node{ID: c.localIDLocked(m), Hostname: c.cfg.Fleet.LocalNode, Local: true, Online: true, TotalMiB: total, FreeMiB: clampZero(total - used)}
+	n := core.Node{ID: c.localIDLocked(), Hostname: c.cfg.Fleet.LocalNode, Local: true, Online: true, TotalMiB: total, FreeMiB: clampZero(total - used)}
 	var role, source string
 	if m != nil {
 		n.Hostname, role, source = m.Hostname, m.Role, m.Source
@@ -338,7 +371,7 @@ func (c *Client) rebuildLocked() {
 	local := c.localMemberLocked()
 	var nodes []core.Node
 	for _, m := range c.members {
-		if local != nil && m.ID == local.ID {
+		if c.isLocalMemberLocked(m) {
 			continue
 		}
 		n, ok := nodeFromMember(c.cfg, m, false)
@@ -357,6 +390,7 @@ func (c *Client) rebuildLocked() {
 		ln, lok = c.localFromProbeLocked(c.probeTotal, c.probeUsed)
 	} else if local != nil {
 		ln, lok = nodeFromMember(c.cfg, *local, true)
+		ln.ID = c.localIDLocked()
 	}
 	if lok {
 		nodes = append(nodes, ln)
@@ -381,7 +415,41 @@ func (c *Client) wakeLocked() {
 func (c *Client) touch() {
 	c.mu.Lock()
 	c.haveByte, c.lastByte = true, c.opts.Clock()
+	c.checkStaleLocked()
 	c.mu.Unlock()
+}
+
+// checkStaleLocked logs the view becoming stale (age > stale_after) and
+// becoming fresh again, once per transition and never per retry. Before the
+// first byte the age counts from the client's creation.
+func (c *Client) checkStaleLocked() {
+	var age time.Duration
+	if c.haveByte {
+		age = c.opts.Clock().Sub(c.lastByte)
+	} else {
+		age = c.opts.Clock().Sub(c.created)
+	}
+	switch stale := age > c.cfg.Fleet.StaleAfter; {
+	case stale && !c.staleLogged:
+		c.staleLogged = true
+		c.opts.Logger.Warn("fleet view stale: remote nodes are ineligible until the console is heard from",
+			"age", age.Round(time.Second), "stale_after", c.cfg.Fleet.StaleAfter)
+	case !stale && c.staleLogged:
+		c.staleLogged = false
+		c.opts.Logger.Info("fleet view fresh again")
+	}
+}
+
+// feedFailed logs the first failure of an outage (a Warn with the error);
+// further failures are silent until the feed has recovered.
+func (c *Client) feedFailed(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.feedDownLogged {
+		c.feedDownLogged = true
+		c.opts.Logger.Warn("fleet console unreachable: feed disconnected, polling until it is back", "url", c.base, "err", err)
+	}
+	c.checkStaleLocked()
 }
 
 func (c *Client) setConnected(v bool) {
@@ -393,6 +461,10 @@ func (c *Client) setConnected(v bool) {
 	}
 	if v {
 		c.lastReconnect = c.opts.Clock()
+		if c.feedDownLogged {
+			c.feedDownLogged = false
+			c.opts.Logger.Info("fleet feed recovered")
+		}
 	}
 }
 
@@ -523,11 +595,15 @@ func (c *Client) stream(ctx context.Context) (gotEvent bool) {
 	resp, err := c.opts.HTTPClient.Do(req)
 	if err != nil {
 		c.opts.Logger.Debug("fleet stream connect failed", "err", err)
+		if ctx.Err() == nil {
+			c.feedFailed(err)
+		}
 		return false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		c.opts.Logger.Debug("fleet stream refused", "status", resp.StatusCode)
+		c.feedFailed(fmt.Errorf("stream refused: status %d", resp.StatusCode))
 		return false
 	}
 	wd.Reset(c.opts.IdleTimeout)
@@ -556,6 +632,13 @@ func (c *Client) stream(ctx context.Context) (gotEvent bool) {
 			data = append(data, strings.TrimPrefix(line[len("data:"):], " "))
 		}
 	}
+	if ctx.Err() == nil {
+		err := sc.Err()
+		if err == nil {
+			err = errors.New("stream closed by the console")
+		}
+		c.feedFailed(err)
+	}
 	return gotEvent
 }
 
@@ -571,6 +654,9 @@ func (c *Client) runProbe(ctx context.Context) (total, used int, err error) {
 
 func (c *Client) probeLoop(ctx context.Context) {
 	for {
+		c.mu.Lock()
+		c.checkStaleLocked() // a quiet feed produces no events to notice it on
+		c.mu.Unlock()
 		c.probeOnce(ctx)
 		t := time.NewTimer(c.opts.ProbeInterval)
 		select {

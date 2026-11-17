@@ -107,6 +107,11 @@ func (c *schedCore) timers() {
 		if !ns.ovUntil.IsZero() && !c.now.Before(ns.ovUntil) {
 			ns.ovUntil = timeZero // the 10-minute limit of the override
 		}
+		if ns.settle == setFailed {
+			if c.dropGone(id); c.nodes[id] == nil {
+				continue
+			}
+		}
 		if (ns.settle == setWaiting || ns.settle == setFailed) && !c.now.Before(ns.settleAt) {
 			ns.settle = setFetching
 			ns.fetchGen++
@@ -169,6 +174,21 @@ func (c *schedCore) nodeLost(in *inst, id core.NodeID) {
 	c.requeue(in, ws)
 }
 
+// dropGone forgets a node whose post-settle fetch failed when it is absent
+// from a fresh view and nothing holds or claims it. If it reappears it is a
+// new, unknown node.
+func (c *schedCore) dropGone(id core.NodeID) {
+	ns := c.nodes[id]
+	if ns == nil || ns.settle != setFailed || ns.holder != "" || ns.claim != "" || !c.fresh {
+		return
+	}
+	if _, present := c.raw[id]; present {
+		return
+	}
+	delete(c.nodes, id)
+	c.changed = true
+}
+
 func (c *schedCore) fetched(id core.NodeID, gen uint64, n core.Node, err error) {
 	ns := c.nodes[id]
 	if ns == nil || ns.settle != setFetching || ns.fetchGen != gen {
@@ -180,11 +200,20 @@ func (c *schedCore) fetched(id core.NodeID, gen uint64, n core.Node, err error) 
 		// It stays unusable (and ineligible, so claims on it drop) and is
 		// fetched again after another settle period, so one failed
 		// fetch does not lose the node for good.
+		//
+		// DESIGN: the retries stop once the node is absent from a fresh
+		// view and nothing holds or claims it (see dropGone): its state
+		// and timer are dropped. The failure is logged once per outage.
 		vn, _ := c.raw[id]
 		ns.settle, ns.settleAt = setFailed, c.now.Add(max(vn.Settle, fetchRetryMin))
-		c.log.Warn("post-settle fetch failed; node treated as offline", "node", id, "err", err)
+		if !ns.failLog {
+			ns.failLog = true
+			c.log.Warn("post-settle fetch failed; node treated as offline", "node", id, "err", err)
+		}
+		c.dropGone(id)
 		return
 	}
+	ns.failLog = false
 	ns.settle = setNone
 	ns.fetched = &n
 	ns.fetchKey, ns.fetchHad = c.raw[id]

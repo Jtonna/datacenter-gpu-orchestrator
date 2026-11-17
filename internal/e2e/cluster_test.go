@@ -113,7 +113,7 @@ models_dir: "%s"
 local_probe_cmd: "%s --nvidia-smi 8151 0"
 defaults:
   ttl: 0s
-  min_hold: 0s
+  min_hold: 1ms
   max_hold: 1s
   drain_after: 1s
   queue_timeout: 60s

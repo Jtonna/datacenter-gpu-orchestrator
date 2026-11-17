@@ -81,6 +81,19 @@ func TestValidateRejects(t *testing.T) {
 		{"override rpc port range", baseHeader + "node_overrides:\n  n: { rpc: \"10.0.0.3:70000\" }\n", []string{`node_overrides "n"`, "rpc"}},
 		{"override rpc ipv6", baseHeader + "node_overrides:\n  n: { rpc: \"[::1]:5\" }\n", []string{`node_overrides "n"`, "rpc"}},
 		{"defaults max_pool zero", baseHeader + "defaults: {max_pool: 0}\n", []string{"defaults", "max_pool"}},
+		{"stale_after zero", baseHeader + "fleet: {stale_after: 0s}\n", []string{"fleet", "stale_after", "positive"}},
+		{"stale_after negative", baseHeader + "fleet: {stale_after: -1s}\n", []string{"fleet", "stale_after", "positive"}},
+		{"min_hold zero", baseHeader + "defaults: {min_hold: 0s}\n", []string{"defaults", "min_hold", "positive"}},
+		{"max_hold zero", baseHeader + "defaults: {min_hold: 1s, max_hold: 0s}\n", []string{"defaults", "max_hold", "positive"}},
+		{"max_hold below min_hold", baseHeader + "defaults: {min_hold: 10s, max_hold: 5s}\n", []string{"defaults", "max_hold", "min_hold"}},
+		{"drain_after zero", baseHeader + "defaults: {drain_after: 0s}\n", []string{"defaults", "drain_after", "positive"}},
+		{"queue_timeout zero", baseHeader + "defaults: {queue_timeout: 0s}\n", []string{"defaults", "queue_timeout", "positive"}},
+		{"shutdown_grace zero", baseHeader + "defaults: {shutdown_grace: 0s}\n", []string{"defaults", "shutdown_grace", "positive"}},
+		{"command_load_timeout zero", baseHeader + "defaults: {command_load_timeout: 0s}\n", []string{"defaults", "command_load_timeout", "positive"}},
+		{"max_pool negative", baseHeader + "defaults: {max_pool: -1}\n", []string{"defaults", "max_pool"}},
+		{"min_share_mib negative", baseHeader + "defaults: {min_share_mib: -1}\n", []string{"defaults", "min_share_mib", "negative"}},
+		{"device_overhead_mib negative", baseHeader + "defaults: {device_overhead_mib: -1}\n", []string{"defaults", "device_overhead_mib", "negative"}},
+		{"cache_ram_mib negative", baseHeader + "defaults: {cache_ram_mib: -1}\n", []string{"defaults", "cache_ram_mib", "negative"}},
 		{"bare nonzero duration", baseHeader + "defaults: {ttl: 300}\n", []string{"line 6", "invalid duration"}},
 	}
 	for _, tt := range tests {
@@ -182,5 +195,12 @@ func TestValidateReportsAllErrors(t *testing.T) {
 	err := parseErr(y, nil)
 	if err == nil || !strings.Contains(err.Error(), `profile "a"`) || !strings.Contains(err.Error(), `profile "b"`) {
 		t.Fatalf("want both profiles reported, got %v", err)
+	}
+}
+
+// ttl 0 means never unload and stall_timeout 0 disables the check: both stay legal.
+func TestValidateAcceptsZeroTTLAndStallTimeout(t *testing.T) {
+	if err := parseErr(baseHeader+"defaults: {ttl: 0s, stall_timeout: 0s}\nprofiles: {}\n", nil); err != nil {
+		t.Fatal(err)
 	}
 }

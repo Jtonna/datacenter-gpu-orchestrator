@@ -26,11 +26,18 @@ import (
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/scheduler"
 )
 
+// DefaultMaxQueuedBodyBytes is the default Options.MaxQueuedBodyBytes.
+const DefaultMaxQueuedBodyBytes = 256 << 20
+
 // Options tune a Server. The zero value is production behaviour.
 type Options struct {
 	Logger *slog.Logger
 	// Limits bound request-body buffering for model extraction.
 	Limits proxy.Limits
+	// MaxQueuedBodyBytes caps the sum of buffered JSON request bodies held
+	// by requests that wait for an instance (default 256 MiB); a request
+	// that would exceed it gets 503 with Retry-After.
+	MaxQueuedBodyBytes int64
 	// PingInterval is the /api/events keep-alive comment period (default 15 s).
 	PingInterval time.Duration
 	// Now is the clock for activity records, inflight timestamps and alias
@@ -51,6 +58,8 @@ type Server struct {
 	start time.Time
 
 	shutting atomic.Bool
+	bodyMu   sync.Mutex
+	bodyHeld int64 // buffered JSON bytes of requests that are waiting
 	hub      *hub
 	activity *activityLog
 
@@ -66,6 +75,9 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 	}
 	if o.PingInterval <= 0 {
 		o.PingInterval = 15 * time.Second
+	}
+	if o.MaxQueuedBodyBytes <= 0 {
+		o.MaxQueuedBodyBytes = DefaultMaxQueuedBodyBytes
 	}
 	if o.Now == nil {
 		o.Now = time.Now
@@ -247,6 +259,7 @@ func (s *Server) handleV1(w http.ResponseWriter, r *http.Request) {
 	if s.shuttingDown(w) {
 		return
 	}
+	releaseWait := func() {}
 	ex, err := proxy.Extract(r, s.opts.Limits)
 	if err != nil {
 		var pe *proxy.Error
@@ -268,8 +281,39 @@ func (s *Server) handleV1(w http.ResponseWriter, r *http.Request) {
 	if alias {
 		s.logAlias(r, ex.Model, p.Name)
 	}
-	lease, err := s.sched.Acquire(r.Context(), ex.Model)
+	if n := ex.BufferedBytes(); n > 0 {
+		if !s.reserveBody(n) {
+			writeSchedError(w, &scheduler.Error{Status: http.StatusServiceUnavailable, Reason: scheduler.ReasonClusterBusy,
+				Message: "too many request bodies are waiting in the queue", RetryAfter: 30 * time.Second})
+			return
+		}
+		var once sync.Once
+		release := func() { once.Do(func() { s.releaseBody(n) }) }
+		defer release()
+		releaseWait = release
+	}
+	// While queued, keep reading the rest of an upload into the bounded spill:
+	// that makes a client that disconnects mid-upload visible (design 8.2
+	// step 5), because net/http only cancels the context once the body has
+	// been read to the end.
+	actx, cancelWait := context.WithCancelCause(r.Context())
+	defer cancelWait(nil)
+	ex.Prefetch(func(err error) { cancelWait(err) }, func() {
+		http.NewResponseController(w).SetReadDeadline(time.Now())
+	})
+	lease, err := s.sched.Acquire(actx, ex.Model)
+	releaseWait() // admitted or answered: the body no longer waits in the queue
 	if err != nil {
+		var se *scheduler.Error
+		if cause := context.Cause(actx); r.Context().Err() == nil && cause != nil && errors.As(err, &se) && se.Status == scheduler.StatusClientClosed {
+			var pe *proxy.Error
+			if errors.As(cause, &pe) {
+				proxy.WriteError(w, pe.Status, pe.Message, errType(pe.Status), "bad request", nil)
+			} else {
+				s.log.Debug("client left mid-upload while queued", "model", ex.Model, "err", cause)
+			}
+			return
+		}
 		s.writeErr(w, err)
 		return
 	}
@@ -288,6 +332,23 @@ func (s *Server) handleV1(w http.ResponseWriter, r *http.Request) {
 	if res.Aborted {
 		panic(http.ErrAbortHandler)
 	}
+}
+
+// reserveBody counts n buffered body bytes against the global cap.
+func (s *Server) reserveBody(n int64) bool {
+	s.bodyMu.Lock()
+	defer s.bodyMu.Unlock()
+	if s.bodyHeld+n > s.opts.MaxQueuedBodyBytes {
+		return false
+	}
+	s.bodyHeld += n
+	return true
+}
+
+func (s *Server) releaseBody(n int64) {
+	s.bodyMu.Lock()
+	s.bodyHeld -= n
+	s.bodyMu.Unlock()
 }
 
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {

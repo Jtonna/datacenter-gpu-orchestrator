@@ -142,7 +142,8 @@ func TestBuildArgsErrors(t *testing.T) {
 		{"empty placement", testOpts, core.Placement{}, "no nodes"},
 		{"remote without address", testOpts, core.Placement{Nodes: []core.PlacedNode{remote("a", "", 5)}}, "address"},
 		{"split length mismatch", testOpts, core.Placement{Nodes: []core.PlacedNode{local(1), remote("a", "x:1", 1)}, TensorSplit: []int{1}}, "tensor split"},
-		{"no positive budgets", testOpts, core.Placement{Nodes: []core.PlacedNode{local(0), remote("a", "x:1", 0)}}, "tensor split"},
+		{"explicit split with no positive value", testOpts, core.Placement{Nodes: []core.PlacedNode{local(5), remote("a", "x:1", 5)}, TensorSplit: []int{0, 0}}, "tensor split"},
+		{"explicit split with a negative value", testOpts, core.Placement{Nodes: []core.PlacedNode{local(5), remote("a", "x:1", 5)}, TensorSplit: []int{-1, 3}}, "negative"},
 		{"no local device configured", noLocalDev, core.Placement{Nodes: []core.PlacedNode{local(1)}}, "local device"},
 	}
 	for _, tc := range tests {
@@ -237,5 +238,34 @@ func TestRenderCommandHubRegexes(t *testing.T) {
 	}
 	if m := ctxRe.FindStringSubmatch(s); m == nil || m[1] != "12288" {
 		t.Errorf("ctx regex on %q: %v", s, m)
+	}
+}
+
+// Forced placement has no fit check (design 7.3), so a node's budget can be
+// zero or negative (free below headroom); budget-derived weights are clamped
+// to at least 1 instead of failing the load. Explicit splits are not.
+func TestBuildArgsBudgetSplitClampedToOne(t *testing.T) {
+	for _, tc := range []struct {
+		budgets [2]int
+		want    string
+	}{
+		{[2]int{-300, 5000}, "1,5000"},
+		{[2]int{0, 0}, "1,1"},
+		{[2]int{7000, -1}, "7000,1"},
+	} {
+		pl := core.Placement{Nodes: []core.PlacedNode{local(tc.budgets[0]), remote("a", "x:1", tc.budgets[1])}}
+		argv, err := BuildArgs(llamaProfile(), pl, 1, testOpts)
+		if err != nil {
+			t.Fatalf("%v: %v", tc.budgets, err)
+		}
+		got := ""
+		for i, a := range argv {
+			if a == "--tensor-split" {
+				got = argv[i+1]
+			}
+		}
+		if got != tc.want {
+			t.Errorf("%v: --tensor-split %q, want %q", tc.budgets, got, tc.want)
+		}
 	}
 }

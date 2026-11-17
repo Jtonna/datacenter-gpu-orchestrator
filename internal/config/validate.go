@@ -203,20 +203,29 @@ func (c *Config) validateTiers(add func(string, ...any)) {
 
 func (c *Config) validateDefaults(add func(string, ...any)) {
 	d := c.Defaults
+	// ttl and stall_timeout may be 0 (never unload, check disabled).
 	for _, x := range []struct {
 		name string
 		v    time.Duration
-	}{
-		{"ttl", d.TTL}, {"min_hold", d.MinHold}, {"max_hold", d.MaxHold}, {"drain_after", d.DrainAfter},
-		{"queue_timeout", d.QueueTimeout}, {"stall_timeout", d.StallTimeout},
-		{"command_load_timeout", d.CommandLoadTimeout}, {"shutdown_grace", d.ShutdownGrace},
-	} {
+	}{{"ttl", d.TTL}, {"stall_timeout", d.StallTimeout}} {
 		if x.v < 0 {
 			add("defaults: %s: must not be negative", x.name)
 		}
 	}
+	for _, x := range []struct {
+		name string
+		v    time.Duration
+	}{
+		{"min_hold", d.MinHold}, {"max_hold", d.MaxHold}, {"drain_after", d.DrainAfter},
+		{"queue_timeout", d.QueueTimeout}, {"command_load_timeout", d.CommandLoadTimeout},
+		{"shutdown_grace", d.ShutdownGrace},
+	} {
+		if x.v <= 0 {
+			add("defaults: %s: must be positive, got %v", x.name, x.v)
+		}
+	}
 	if d.MinHold > d.MaxHold {
-		add("defaults: min_hold: must not exceed max_hold")
+		add("defaults: max_hold: must be at least min_hold (%v), got %v", d.MinHold, d.MaxHold)
 	}
 	if d.MaxPool < 1 {
 		add("defaults: max_pool: must be at least 1, got %d", d.MaxPool)
@@ -235,7 +244,7 @@ func (c *Config) validateDefaults(add func(string, ...any)) {
 	if d.LocalDevice == "" {
 		add("defaults: local_device: must not be empty")
 	}
-	if c.Fleet.StaleAfter < 0 {
-		add("fleet: stale_after: must not be negative")
+	if c.Fleet.StaleAfter <= 0 {
+		add("fleet: stale_after: must be positive, got %v", c.Fleet.StaleAfter)
 	}
 }

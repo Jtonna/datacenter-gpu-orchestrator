@@ -175,3 +175,30 @@ func TestPlan_DryRunChangesNothing(t *testing.T) {
 		t.Fatalf("dry run changed state:\nbefore %+v\nafter  %+v", before, after)
 	}
 }
+
+// An instance still in pre-flight has no port yet: /running must not show a
+// fake "--port 0". A llama command is shown without the port flag (the hub
+// still finds --rpc and --ctx-size); a kind: command line is not shown.
+func TestRunning_PreflightCmdHasNoFakePort(t *testing.T) {
+	h := newHarness(t).nodes(ps5("a", 2, 15000), omen(8000))
+	h.llama("m", 8000)
+	h.command("whisper", 2000)
+	h.autoProbe, h.autoStart = false, false
+	h.request("m")
+	h.request("whisper")
+	got := h.c.runningList()
+	if len(got) != 2 {
+		t.Fatalf("running %+v", got)
+	}
+	for _, r := range got {
+		if strings.Contains(r.Cmd, "--port") || strings.Contains(r.Cmd, " 0 ") {
+			t.Errorf("%s: cmd shows a fake port: %q", r.Profile, r.Cmd)
+		}
+	}
+	if m := got[0]; m.Profile != "m" || !strings.Contains(m.Cmd, "--rpc 10.0.0.2:50052") || !strings.Contains(m.Cmd, "--ctx-size 4096") {
+		t.Errorf("llama pre-flight cmd %q", m.Cmd)
+	}
+	if got[1].Cmd != "" {
+		t.Errorf("whisper pre-flight cmd %q, want empty", got[1].Cmd)
+	}
+}

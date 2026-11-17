@@ -115,7 +115,9 @@ func splitWeights(p core.Profile, pl core.Placement) ([]int, error) {
 	default:
 		w = make([]int, n)
 		for i, node := range pl.Nodes {
-			w[i] = node.BudgetMiB
+			// Forced placement has no fit check (design 7.3), so a budget
+			// can be zero or negative; weigh such a node at the minimum.
+			w[i] = max(node.BudgetMiB, 1)
 		}
 	}
 	if len(w) != n {

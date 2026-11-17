@@ -177,6 +177,14 @@ func (h *hub) close() {
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodHead { // the mux routes HEAD to GET handlers: no stream, no body
+		h := w.Header()
+		h.Set("Content-Type", "text/event-stream")
+		h.Set("Cache-Control", "no-cache")
+		h.Set("X-Accel-Buffering", "no")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	rc := http.NewResponseController(w)
 	c := s.hub.add()
 	if c == nil {

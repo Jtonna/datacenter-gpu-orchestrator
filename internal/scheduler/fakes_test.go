@@ -91,12 +91,13 @@ type fakeView struct {
 	connected     bool
 	lastReconnect time.Time
 	fetchErr      map[core.NodeID]error
+	fetchCalls    map[core.NodeID]int
 	changed       chan struct{}
 }
 
 func newFakeView(clk *fakeClock) *fakeView {
 	return &fakeView{clk: clk, nodes: map[core.NodeID]core.Node{}, connected: true,
-		lastReconnect: t0, fetchErr: map[core.NodeID]error{}, changed: make(chan struct{}, 1), lastByte: t0}
+		lastReconnect: t0, fetchErr: map[core.NodeID]error{}, fetchCalls: map[core.NodeID]int{}, changed: make(chan struct{}, 1), lastByte: t0}
 }
 
 func (v *fakeView) Nodes() []core.Node {
@@ -133,6 +134,7 @@ func (v *fakeView) Changed() <-chan struct{} { return v.changed }
 func (v *fakeView) FetchNode(_ context.Context, id core.NodeID) (core.Node, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	v.fetchCalls[id]++
 	if err := v.fetchErr[id]; err != nil {
 		return core.Node{}, err
 	}

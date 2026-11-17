@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func readAll(t *testing.T, r io.Reader) []byte {
@@ -181,5 +182,85 @@ func TestExtractMultipartWithoutModelIs400(t *testing.T) {
 	var he *Error
 	if !errors.As(err, &he) || he.Status != http.StatusBadRequest {
 		t.Fatalf("err = %v, want 400", err)
+	}
+}
+
+func prefetchRequest(t *testing.T, fileBytes int) (*http.Request, *io.PipeWriter, []byte) {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	mw.WriteField("model", "m")
+	fw, _ := mw.CreateFormFile("file", "a.wav")
+	fw.Write(bytes.Repeat([]byte("abcdefghij"), fileBytes/10))
+	mw.Close()
+	pr, pw := io.Pipe()
+	r := httptest.NewRequest("POST", "/v1/audio/transcriptions", pr)
+	r.Header.Set("Content-Type", mw.FormDataContentType())
+	return r, pw, buf.Bytes()
+}
+
+func TestPrefetchReplaysSpilledThenLiveBytesAndRemovesTempFile(t *testing.T) {
+	dir := t.TempDir()
+	r, pw, full := prefetchRequest(t, 300<<10)
+	go pw.Write(full[:1000]) // enough for the model field
+	ex, err := Extract(r, Limits{MemBytes: 10 << 10, TempDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	errs := make(chan error, 1)
+	ex.Prefetch(func(err error) { errs <- err }, func() { pw.CloseWithError(errors.New("interrupted")) })
+	go func() {
+		pw.Write(full[1000:200000])
+		pw.Write(full[200000:])
+		pw.Close()
+	}()
+	if got := readAll(t, ex.Body); !bytes.Equal(got, full[:len(got)]) || len(got) != len(full) {
+		t.Fatalf("replayed %d bytes, want %d identical", len(got), len(full))
+	}
+	ex.Body.Close()
+	if ents, _ := os.ReadDir(dir); len(ents) != 0 {
+		t.Fatalf("temp files left: %v", ents)
+	}
+	select {
+	case err := <-errs:
+		t.Fatalf("unexpected onErr: %v", err)
+	default:
+	}
+}
+
+func TestPrefetchReportsReadFailureBeforeEOFAndCloseCleansUp(t *testing.T) {
+	dir := t.TempDir()
+	r, pw, full := prefetchRequest(t, 300<<10)
+	go pw.Write(full[:1000])
+	ex, err := Extract(r, Limits{MemBytes: 10 << 10, TempDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	errs := make(chan error, 1)
+	ex.Prefetch(func(err error) { errs <- err }, nil)
+	go func() { pw.Write(full[1000:100000]); pw.CloseWithError(io.ErrUnexpectedEOF) }()
+	if err := <-errs; !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("onErr = %v", err)
+	}
+	ex.Body.Close()
+	if ents, _ := os.ReadDir(dir); len(ents) != 0 {
+		t.Fatalf("temp files left: %v", ents)
+	}
+}
+
+func TestPrefetchCloseInterruptsABlockedRead(t *testing.T) {
+	r, pw, full := prefetchRequest(t, 300<<10)
+	go pw.Write(full[:1000])
+	ex, err := Extract(r, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex.Prefetch(func(error) { t.Error("onErr after Close") }, func() { pw.CloseWithError(errors.New("deadline")) })
+	done := make(chan struct{})
+	go func() { ex.Body.Close(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Close did not return")
 	}
 }

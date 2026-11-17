@@ -5,7 +5,8 @@
 //	llm-scheduler [--config <path>] [--check-config] [--version]
 //
 // It logs to stderr and exits 0 after a clean shutdown on SIGTERM or
-// interrupt (design 8.6).
+// interrupt (design 8.6), and 1 when the shutdown overran its grace and
+// children had to be killed.
 package main
 
 import (
@@ -123,6 +124,17 @@ func checkFleet(ctx context.Context, cfg *config.Config, log *slog.Logger) {
 		"url", cfg.Fleet.URL, "err", err)
 }
 
+// exitCodeAfterShutdown keeps an earlier failure code; a shutdown that ran
+// out of grace (so children had to be killed) is not a clean stop either:
+// it is logged and makes the exit code 1.
+func exitCodeAfterShutdown(code int, shutdownErr error, log *slog.Logger) int {
+	if shutdownErr == nil {
+		return code
+	}
+	log.Error("shutdown did not finish within its grace; children were killed", "err", shutdownErr)
+	return 1
+}
+
 func serve(cfg *config.Config, log *slog.Logger) int {
 	warnSlidingWindow(cfg, log)
 
@@ -190,9 +202,7 @@ func serve(cfg *config.Config, log *slog.Logger) int {
 		case <-sctx.Done():
 		}
 	}()
-	if err := apiSrv.Shutdown(sctx); err != nil {
-		log.Warn("shutdown did not finish within its grace; children were killed", "err", err)
-	}
+	code = exitCodeAfterShutdown(code, apiSrv.Shutdown(sctx), log)
 	hctx, hcancel := context.WithTimeout(context.Background(), apiGrace)
 	defer hcancel()
 	if err := httpSrv.Shutdown(hctx); err != nil {

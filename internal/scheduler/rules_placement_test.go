@@ -340,3 +340,55 @@ func TestCommand_LocalNodeOnly(t *testing.T) {
 	w2 := h.request("flux") // capacity: the local node alone, 8000-200 < 9000
 	h.failed(w2, http.StatusServiceUnavailable, ReasonDoesNotFit)
 }
+
+// Regression (review item 1): the local node keeps one id, so an instance on
+// it stays its holder, and stays evictable, when the view's local entry is
+// refreshed or replaced; the settle fetch then targets that same id.
+func TestLocalNode_HolderAndEvictionSurviveViewRefresh(t *testing.T) {
+	h := newHarness(t).nodes(omen(8000))
+	h.llama("m", 6000)
+	g := h.ready("m")
+	h.release(g)
+	h.wantNodes("m", "omen")
+
+	// refreshed figures, then replaced (removed and re-added) entry
+	h.view.modify("omen", func(n *core.Node) { n.FreeMiB = 1500; n.Hostname = "omen-runner" })
+	h.viewChanged()
+	h.view.remove("omen")
+	h.viewChanged()
+	h.view.set(omen(7800))
+	h.viewChanged()
+	if got := h.c.nodes["omen"].holder; got != "m" {
+		t.Fatalf("holder of omen = %q, want m", got)
+	}
+	if len(h.c.nodes) != 1 {
+		t.Fatalf("ghost node ids: %v", h.c.nodes)
+	}
+
+	h.command("whisper", 5000)
+	w := h.request("whisper")
+	h.pending(w)
+	h.advance(h.cfg.Defaults.MaxHold)
+	h.wantState("m", "absent")  // evicted: it was still associated with the node
+	h.advance(10 * time.Second) // settle, then the fetch of the same id
+	h.wantState("whisper", "starting")
+	if len(h.c.nodes) != 1 {
+		t.Fatalf("ghost node ids: %v", h.c.nodes)
+	}
+}
+
+// Forced placement has no fit check (7.3): a node whose pre-flight free
+// figure is below its headroom must not make the load fail with a negative
+// tensor-split weight.
+func TestForced_NegativeBudgetStillLoadsWithClampedSplit(t *testing.T) {
+	h := newHarness(t).nodes(ps5("a", 2, 15000), alien("al", 7800))
+	h.llama("bench", 1, func(p *core.Profile) { p.ForceNodes = []string{"al", "a"} })
+	h.prober.free["10.0.0.2:50052"] = 600 // below the PS5 tier's 1000 MiB headroom
+	w := h.request("bench")
+	h.wantState("bench", "starting")
+	h.healthy("bench")
+	h.granted(w)
+	if got := argValue(h.child("bench").Argv(), "--tensor-split"); got != "7600,1" {
+		t.Fatalf("--tensor-split %q, want 7600,1", got)
+	}
+}

@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -48,6 +49,10 @@ const (
 	aAdvance
 	aUnload
 	aUnloadIdle
+	aHealthErr   // WaitHealthy returned an error (the core must wait for the exit or the load timeout)
+	aLoadTimeout // time passes the earliest load deadline: failure by health timeout
+	aDropNode    // a node (the local one included) leaves the view entirely
+	aReaddNode   // a dropped node comes back under the same ID
 	nActKinds
 )
 
@@ -55,6 +60,7 @@ var actWeights = [nActKinds]int{
 	aRequest: 14, aLoad: 2, aCancel: 4, aRelease: 10, aProbe: 8, aStart: 6, aHealthy: 8,
 	aCrash: 2, aStopExit: 8, aFetch: 6, aToggleNode: 2, aMemory: 3, aReconnect: 1, aRestore: 2,
 	aStale: 1, aAdvance: 12, aUnload: 2, aUnloadIdle: 1,
+	aHealthErr: 2, aLoadTimeout: 2, aDropNode: 2, aReaddNode: 3,
 }
 
 type action struct {
@@ -95,6 +101,7 @@ type randWorld struct {
 	profiles []string
 	nodeIDs  []core.NodeID
 	removed  []core.Node
+	dropped  []core.Node // nodes removed by aDropNode, to be re-added later
 	waiters  []*waiter
 	leases   []*grant
 	leased   map[*waiter]bool
@@ -244,6 +251,8 @@ func (w *randWorld) apply(act action) {
 				o.err = &instance.ProbeError{Kind: instance.ProbeMultipleRPCLines, Addr: tg.addr}
 			case act.b%10 == 2 && j == bad:
 				o.result.FreeMiB = n.FreeMiB / 3 // much less than the fleet says
+			case act.b%10 == 3 && j == bad:
+				o.err = &instance.ProbeError{Kind: instance.ProbeCanceled, Addr: tg.addr, Err: context.Canceled}
 			}
 			rs = append(rs, o)
 		}
@@ -299,7 +308,7 @@ func (w *randWorld) apply(act action) {
 		h.step(ev)
 	case aToggleNode:
 		id := w.nodeIDs[pick(len(w.nodeIDs))]
-		if _, ok := h.view.get(id); !ok || id == "omen" {
+		if _, ok := h.view.get(id); !ok {
 			return
 		}
 		h.view.modify(id, func(n *core.Node) { n.Online = !n.Online })
@@ -341,6 +350,54 @@ func (w *randWorld) apply(act action) {
 			h.view.fresh()
 			w.note("feed resumes")
 		}
+		h.step(evViewChanged{})
+	case aHealthErr:
+		var cands []*inst
+		for _, in := range h.c.sortedInsts() {
+			if in.state == stStarting && in.phase == phLoading {
+				cands = append(cands, in)
+			}
+		}
+		if len(cands) == 0 {
+			return
+		}
+		in := cands[pick(len(cands))]
+		w.note("health error %s", in.prof.Name)
+		h.step(evHealthy{iid: in.iid, err: errors.New("health check failed")})
+	case aLoadTimeout:
+		var dl time.Time
+		for _, in := range h.c.insts {
+			if in.state == stStarting && in.phase == phLoading && (dl.IsZero() || in.loadDL.Before(dl)) {
+				dl = in.loadDL
+			}
+		}
+		if dl.IsZero() {
+			return
+		}
+		w.note("advance to the load deadline")
+		h.advance(dl.Sub(h.clk.Now()) + time.Second)
+	case aDropNode:
+		var live []core.Node
+		for _, n := range h.view.Nodes() {
+			live = append(live, n)
+		}
+		if len(live) == 0 {
+			return
+		}
+		n := live[pick(len(live))]
+		w.dropped = append(w.dropped, n)
+		h.view.remove(n.ID)
+		w.note("drop node %s from the view", n.ID)
+		h.step(evViewChanged{})
+	case aReaddNode:
+		if len(w.dropped) == 0 {
+			return
+		}
+		i := pick(len(w.dropped))
+		n := w.dropped[i]
+		w.dropped = append(w.dropped[:i], w.dropped[i+1:]...)
+		h.view.set(n)
+		w.note("re-add node %s", n.ID)
 		h.step(evViewChanged{})
 	case aAdvance:
 		d := []time.Duration{time.Second, 3 * time.Second, 10 * time.Second, 31 * time.Second, 2 * time.Minute, 7 * time.Minute}[act.b%6]
@@ -394,6 +451,10 @@ func (w *randWorld) quiesce() {
 	if len(w.removed) > 0 {
 		h.view.set(w.removed...)
 		w.removed = nil
+	}
+	if len(w.dropped) > 0 {
+		h.view.set(w.dropped...)
+		w.dropped = nil
 	}
 	h.view.fresh()
 	for _, id := range w.nodeIDs {
@@ -490,14 +551,27 @@ func runSeq(seed int64, acts []action) (fail string, log []string) {
 		}
 	}()
 	w = newRandWorld(seed)
-	shutdownAt := -1
-	if seed%2 == 1 {
-		shutdownAt = len(acts) * 9 / 10 // odd seeds: SIGTERM late in the run
+	// Shutdown placement varies by seed: none, late (90%), part-way through
+	// at a seed-derived point, and part-way followed by a forced shutdown.
+	shutdownAt, forceAt := -1, -1
+	sr := rand.New(rand.NewSource(seed*31 + 7))
+	switch seed % 4 {
+	case 1:
+		shutdownAt = len(acts) * 9 / 10
+	case 2:
+		shutdownAt = sr.Intn(max(len(acts), 1))
+	case 3:
+		shutdownAt = sr.Intn(max(len(acts), 1))
+		forceAt = shutdownAt + sr.Intn(max(len(acts)-shutdownAt, 1))
 	}
 	for i, a := range acts {
 		if i == shutdownAt {
 			w.note("shutdown")
 			w.h.step(evShutdown{})
+		}
+		if i == forceAt {
+			w.note("forced shutdown")
+			w.h.step(evShutdown{force: true})
 		}
 		w.apply(a)
 	}

@@ -208,6 +208,7 @@ type nodeState struct {
 	fetched  *core.Node // figures from the post-settle fetch
 	fetchKey core.Node  // the view entry when the fetch was done
 	fetchHad bool       // whether the view had the node then
+	failLog  bool       // the fetch failure of this outage is already logged
 
 	ovFree  int
 	ovUntil time.Time // pre-flight override; zero when none

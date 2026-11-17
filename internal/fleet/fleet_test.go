@@ -645,7 +645,7 @@ func TestLocalProbePublishesLocalNodeAndHidesFleetEntry(t *testing.T) {
 	e.f.SetOnline("3c:52:82:11", false) // the probe must not care
 	c := e.start()
 	eventually(t, func() bool { return len(c.Nodes()) == 2 }, "local + one remote")
-	n, ok := e.nodeByID("3c:52:82:11")
+	n, ok := e.nodeByID("omen-runner")
 	if !ok {
 		t.Fatalf("local node missing: %+v", c.Nodes())
 	}
@@ -663,9 +663,9 @@ func TestLocalProbePublishesLocalNodeAndHidesFleetEntry(t *testing.T) {
 	}
 	// figures follow the probe
 	e.probe.set("8151, 8000\n", nil)
-	eventually(t, func() bool { n, _ := e.nodeByID("3c:52:82:11"); return n.FreeMiB == 151 }, "probe update")
+	eventually(t, func() bool { n, _ := e.nodeByID("omen-runner"); return n.FreeMiB == 151 }, "probe update")
 	e.probe.set("8151, 9000\n", nil)
-	eventually(t, func() bool { n, _ := e.nodeByID("3c:52:82:11"); return n.FreeMiB == 0 }, "never negative")
+	eventually(t, func() bool { n, _ := e.nodeByID("omen-runner"); return n.FreeMiB == 0 }, "never negative")
 	if e.log.count("level=WARN") != 0 {
 		t.Fatalf("unexpected warnings: %s", e.log.String())
 	}
@@ -689,7 +689,7 @@ func TestLocalProbeFailureFallsBackToFleetAndWarnsOnce(t *testing.T) {
 	c := e.start()
 	eventually(t, func() bool { return e.probe.count() >= 5 }, "several probe attempts")
 	eventually(t, func() bool { return len(c.Nodes()) == 2 }, "fallback node")
-	n, ok := e.nodeByID("3c:52:82:11")
+	n, ok := e.nodeByID("omen-runner")
 	if !ok || !n.Local || n.Addr != "" || n.TotalMiB != 8192 || n.FreeMiB != 6144 || n.Priority != 3 {
 		t.Fatalf("fallback local node: %+v", n)
 	}
@@ -698,7 +698,7 @@ func TestLocalProbeFailureFallsBackToFleetAndWarnsOnce(t *testing.T) {
 	}
 	// recovery switches to the probe; a later failure warns again
 	e.probe.set("8151, 1000\n", nil)
-	eventually(t, func() bool { n, _ := e.nodeByID("3c:52:82:11"); return n.TotalMiB == 8151 }, "probe recovered")
+	eventually(t, func() bool { n, _ := e.nodeByID("omen-runner"); return n.TotalMiB == 8151 }, "probe recovered")
 	e.probe.set("", errors.New("gone again"))
 	eventually(t, func() bool { return e.log.count("level=WARN") == 2 }, "second warning after recovery")
 }
@@ -708,7 +708,7 @@ func TestLocalProbeGarbageCountsAsFailure(t *testing.T) {
 	e.probe.set("No devices were found\n", nil)
 	e.f.SetMembers(omenMember())
 	c := e.start()
-	eventually(t, func() bool { n, ok := e.nodeByID("3c:52:82:11"); return ok && n.TotalMiB == 8192 && n.Local }, "fleet fallback after garbage")
+	eventually(t, func() bool { n, ok := e.nodeByID("omen-runner"); return ok && n.TotalMiB == 8192 && n.Local }, "fleet fallback after garbage")
 	if e.log.count("level=WARN") != 1 {
 		t.Fatalf("warnings: %s", e.log.String())
 	}
@@ -720,9 +720,9 @@ func TestFetchNodeForLocalUsesProbe(t *testing.T) {
 	e.probe.set("8151, 100\n", nil)
 	e.f.SetMembers(omenMember())
 	c := e.start()
-	eventually(t, func() bool { _, ok := e.nodeByID("3c:52:82:11"); return ok }, "local node")
+	eventually(t, func() bool { _, ok := e.nodeByID("omen-runner"); return ok }, "local node")
 	e.probe.set("8151, 4000\n", nil)
-	n, err := c.FetchNode(context.Background(), "3c:52:82:11")
+	n, err := c.FetchNode(context.Background(), "omen-runner")
 	if err != nil || !n.Local || n.FreeMiB != 4151 {
 		t.Fatalf("%+v %v", n, err)
 	}
@@ -736,8 +736,8 @@ func TestResolveLocalNodeName(t *testing.T) {
 	e.probe.set("8151, 100\n", nil)
 	e.f.SetMembers(omenMember())
 	c := e.start()
-	eventually(t, func() bool { _, ok := e.nodeByID("3c:52:82:11"); return ok }, "local node")
-	if id, err := c.Resolve("omen-runner"); err != nil || id != "3c:52:82:11" {
+	eventually(t, func() bool { _, ok := e.nodeByID("omen-runner"); return ok }, "local node")
+	if id, err := c.Resolve("omen-runner"); err != nil || id != "omen-runner" {
 		t.Fatalf("%q %v", id, err)
 	}
 }
@@ -758,4 +758,161 @@ func TestRunReturnsOnCancelPromptlyEvenWhenHung(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not return after cancel")
 	}
+}
+
+// ---- local node identity (stable ID) ----
+
+func localIDs(c *Client) (ids []string, locals int) {
+	for _, n := range c.Nodes() {
+		ids = append(ids, string(n.ID))
+		if n.Local {
+			locals++
+		}
+	}
+	return
+}
+
+func TestLocalIDStableAcrossMemberAppearance(t *testing.T) {
+	for _, probeOK := range []bool{true, false} {
+		name := "probe"
+		if !probeOK {
+			name = "fallback"
+		}
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t)
+			if probeOK {
+				e.probe.set("8151, 100\n", nil)
+			}
+			e.f.SetMembers(fakefleet.PS5("a8", "ps5-1", "10.0.0.2", 12, 4.5, 14.1, 3.2))
+			c := e.start()
+			eventually(t, func() bool { _, ok := e.nodeByID("a8"); return ok }, "first view")
+			if probeOK {
+				if _, ok := e.nodeByID("omen-runner"); !ok {
+					t.Fatalf("member absent: %v", c.Nodes())
+				}
+			}
+			for round := 0; round < 2; round++ {
+				e.f.Upsert(omenMember())
+				e.f.Push()
+				eventually(t, func() bool { _, err := c.Resolve("3c:52:82:11"); return err == nil }, "member known")
+				eventually(t, func() bool { _, ok := e.nodeByID("omen-runner"); return ok }, "local present after member appears")
+				ids, locals := localIDs(c)
+				if locals != 1 || len(ids) != 2 {
+					t.Fatalf("round %d with member: %v", round, ids)
+				}
+				if _, ok := e.nodeByID("3c:52:82:11"); ok {
+					t.Fatalf("member id leaked as a node: %v", ids)
+				}
+				e.f.Remove("3c:52:82:11")
+				e.f.Push()
+				if probeOK {
+					eventually(t, func() bool { _, err := c.Resolve("3c:52:82:11"); return errors.Is(err, ErrNotFound) }, "member gone")
+					if _, ok := e.nodeByID("omen-runner"); !ok {
+						t.Fatalf("local id changed after member vanished: %v", c.Nodes())
+					}
+				} else {
+					eventually(t, func() bool { _, ok := e.nodeByID("omen-runner"); return !ok }, "fallback local gone with member")
+				}
+			}
+		})
+	}
+}
+
+func TestResolveLocalByIDHostnameAndName(t *testing.T) {
+	for _, localName := range []string{"omen-runner", "3c:52:82:11"} {
+		t.Run(localName, func(t *testing.T) {
+			e := newEnv(t)
+			e.cfg.Fleet.LocalNode = localName
+			e.probe.set("8151, 100\n", nil)
+			c := e.start()
+			eventually(t, func() bool { return len(c.Nodes()) == 1 }, "local node")
+			want := core.NodeID(localName)
+			check := func(stage string) {
+				for _, name := range []string{"omen-runner", "3c:52:82:11", localName} {
+					id, err := c.Resolve(name)
+					if stage == "before" && name != localName {
+						continue // member not known yet
+					}
+					if err != nil || id != want {
+						t.Errorf("%s: Resolve(%q)=%q,%v want %q", stage, name, id, err, want)
+					}
+				}
+			}
+			check("before")
+			e.f.SetMembers(omenMember())
+			e.f.Push()
+			eventually(t, func() bool {
+				i1, e1 := c.Resolve("omen-runner")
+				i2, e2 := c.Resolve("3c:52:82:11")
+				return e1 == nil && e2 == nil && i1 == want && i2 == want
+			}, "member resolves to local id")
+			check("after")
+			if ids, _ := localIDs(c); len(ids) != 1 || ids[0] != string(want) {
+				t.Fatalf("nodes: %v", ids)
+			}
+		})
+	}
+}
+
+func TestFetchNodeLocalFallsBackToMemberNeverLocalIDOnConsole(t *testing.T) {
+	e := newEnv(t) // probe fails
+	e.f.SetMembers(omenMember())
+	c := e.start()
+	eventually(t, func() bool { _, ok := e.nodeByID("omen-runner"); return ok }, "fallback local node")
+	n, err := c.FetchNode(context.Background(), "omen-runner")
+	if err != nil || n.ID != "omen-runner" || !n.Local || n.Addr != "" || n.TotalMiB != 8192 {
+		t.Fatalf("%+v %v", n, err)
+	}
+	// member gone and probe down: an error, not a console fetch of the local id
+	e.f.Remove("3c:52:82:11")
+	e.f.Push()
+	eventually(t, func() bool { return len(c.Nodes()) == 0 }, "empty view")
+	before := e.f.Requests(fakefleet.EpNode)
+	if _, err := c.FetchNode(context.Background(), "omen-runner"); err == nil {
+		t.Fatal("expected error")
+	}
+	if e.f.Requests(fakefleet.EpNode) != before {
+		t.Fatal("FetchNode(local id) must never GET /api/nodes/<local id>")
+	}
+}
+
+// ---- feed loss and staleness are reported once per outage ----
+
+func TestFeedLossAndStalenessLoggedOncePerOutage(t *testing.T) {
+	e := newEnv(t)
+	e.probe.set("8151, 100\n", nil)
+	e.f.SetMembers(fakefleet.PS5("a8", "ps5-1", "10.0.0.2", 12, 4.5, 14.1, 3.2))
+	c := e.start()
+	eventually(t, func() bool { return c.Connected() }, "connected")
+	if n := e.log.count("level=WARN"); n != 0 {
+		t.Fatalf("warnings while healthy: %s", e.log.String())
+	}
+	// the console goes away: stream and poll both fail, many retries happen
+	e.f.Fail(fakefleet.EpStream, 503)
+	e.f.Fail(fakefleet.EpFleet, 503)
+	e.f.DropStreams()
+	eventually(t, func() bool { return e.f.Requests(fakefleet.EpStream) >= 8 }, "several reconnect attempts")
+	eventually(t, func() bool { return e.log.count("feed disconnected") == 1 }, "one disconnect warning")
+	if e.log.count("level=WARN") != 1 || !strings.Contains(e.log.String(), "err=") {
+		t.Fatalf("the warning should carry the error: %s", e.log.String())
+	}
+	if e.log.count("view stale") != 0 {
+		t.Fatalf("not stale yet: %s", e.log.String())
+	}
+	e.clock.Advance(2 * time.Minute) // past stale_after (1m) with no bytes
+	eventually(t, func() bool { return e.log.count("view stale") == 1 }, "one stale warning")
+	n := e.f.Requests(fakefleet.EpStream)
+	eventually(t, func() bool { return e.f.Requests(fakefleet.EpStream) >= n+5 }, "more retries")
+	if e.log.count("feed disconnected") != 1 || e.log.count("view stale") != 1 || e.log.count("level=WARN") != 2 {
+		t.Fatalf("repeated per retry:\n%s", e.log.String())
+	}
+	// recovery
+	e.f.Heal(fakefleet.EpStream)
+	e.f.Heal(fakefleet.EpFleet)
+	eventually(t, func() bool { return e.log.count("feed recovered") == 1 && e.log.count("view fresh again") == 1 }, "one recovery line each")
+	if e.log.count(`level=INFO msg="fleet feed recovered"`)+e.log.count(`level=INFO msg="fleet view fresh again"`) != 2 {
+		t.Fatalf("recovery must be Info:\n%s", e.log.String())
+	}
+	e.f.DropStreams()
+	eventually(t, func() bool { return e.log.count("feed disconnected") == 2 }, "a new outage warns again")
 }

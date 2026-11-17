@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -367,4 +368,54 @@ func TestShutdown_QueuedWaiterOfDrainingVictimGets503Once(t *testing.T) {
 	h.wantState("big", "ready") // claim dropped; it finishes its generation
 	h.release(g)
 	h.wantState("big", "absent")
+}
+
+// Design 8.5 item 7 stops applying once the node has left a fresh view and
+// nothing holds or claims it: its state and timer are dropped, and the fetch
+// failure is logged once.
+func TestSettleFetch_NodeGoneFromFreshViewIsDroppedNotRefetchedForever(t *testing.T) {
+	var logs strings.Builder
+	h := newHarness(t).nodes(ps5("a", 2, 15000))
+	h.c.log = slog.New(slog.NewTextHandler(&logs, nil))
+	h.llama("m", 8000)
+	h.release(h.ready("m"))
+	h.exit("m", 0) // the child ran: node a settles
+	h.view.remove("a")
+	h.viewChanged()
+	h.advance(time.Hour)
+	if n := h.view.fetchCalls["a"]; n > 1 {
+		t.Fatalf("node a fetched %d times after leaving the fleet", n)
+	}
+	if h.c.nodes["a"] != nil {
+		t.Fatalf("node state for a absent node kept: %+v", h.c.nodes["a"])
+	}
+	if dl, ok := h.c.nextDeadline(); ok {
+		t.Fatalf("pending deadline %v for a node that is gone", dl)
+	}
+	if n := strings.Count(logs.String(), "post-settle fetch failed"); n > 1 {
+		t.Fatalf("fetch failure logged %d times", n)
+	}
+	// it comes back: usable again
+	h.view.set(ps5("a", 2, 15000))
+	h.viewChanged()
+	h.request("m")
+	h.wantState("m", "starting")
+	h.wantNodes("m", "a")
+}
+
+func TestSettleFetch_FailureLoggedOncePerOutageWhileNodeStillListed(t *testing.T) {
+	var logs strings.Builder
+	h := newHarness(t).nodes(ps5("a", 2, 15000))
+	h.c.log = slog.New(slog.NewTextHandler(&logs, nil))
+	h.llama("m", 8000)
+	h.release(h.ready("m"))
+	h.view.fetchErr["a"] = errBoom
+	h.exit("m", 0)
+	h.advance(time.Minute) // several retries, the node stays in the view
+	if h.view.fetchCalls["a"] < 3 {
+		t.Fatalf("expected retries, got %d", h.view.fetchCalls["a"])
+	}
+	if n := strings.Count(logs.String(), "post-settle fetch failed"); n != 1 {
+		t.Fatalf("logged %d times, want once per outage:\n%s", n, logs.String())
+	}
 }

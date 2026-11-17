@@ -206,6 +206,10 @@ fleet entry for `fleet.local_node`. The fleet entry for the local node is
 otherwise ignored. The probe command is a config value (`local_probe_cmd`), so
 tests point it at a fake.
 
+The local node has one fixed id for the life of the process: the value of
+`fleet.local_node`. Its fleet member (matched by id or hostname) is never
+published as a remote node, and both of the member's names resolve to that id.
+
 ## 6. Configuration
 
 One YAML file. Nodes are not listed; only how to rank them.
@@ -477,7 +481,7 @@ llama-server-rpc --host 127.0.0.1 --port <p> --model /models/<file>
 - Device names: the i-th remote node is `RPC<i>` (H2: one device per worker);
   the local node is `local_device`. `--device` lists them in placement order.
 - `--tensor-split` values are each node's budget from the pre-flight figures,
-  as integers, unless the profile gives `tensor_split`.
+  as integers of at least 1, unless the profile gives `tensor_split`.
 - Local only: no `--rpc`, `--device CUDA0`.
 
 ### 7.5 Pre-flight
@@ -671,7 +675,9 @@ These resolve cases the rules above left open. Each is marked `// DESIGN:` in
 6. Node loss while an instance is `starting`: its waiters go back into the
    queue (keeping their place); the profile is not backed off.
 7. If the fetch after settling fails, the node is offline, and it is fetched
-   again after another settle period.
+   again after another settle period. The retries stop once the node is absent
+   from a fresh view and nothing holds or claims it: its state is dropped, and
+   the failure is logged once per outage.
 8. `POST /api/unload` on a `starting` instance is refused without `force`;
    with `force` its waiters get `503`.
 
@@ -830,7 +836,9 @@ Polled by the hub every 1 s with a 1 s timeout on a keep-alive connection.
 - `model` and `name`: the profile name, never an alias.
 - `state`: `starting`, `ready` or `stopping`. The hub drops `stopping` and
   `stopped`, shows `starting` as loading, and treats anything else as ready.
-  A `draining` instance is reported as `ready`.
+  A `draining` instance is reported as `ready`. While an instance is still in
+  pre-flight it has no port yet: `cmd` then omits `--port` (llama) or is empty
+  (command).
 - `cmd`: the real command line as one string. The hub extracts workers with
   `--rpc[= ]+(\S+)` and context with `(?:--ctx-size|-c)[= ]+(\d+)`, so the
   scheduler always writes `--rpc a,b` and `--ctx-size n` in that form.
