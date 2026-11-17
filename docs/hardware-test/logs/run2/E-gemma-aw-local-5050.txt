@@ -1,0 +1,7 @@
+== E-gemma-aw-local-5050 start 23:28:05
+gpu_before 10 MiB
+gpu_loaded 4160 MiB
+2687527, 4142 MiB
+{"model":"gemma-4-12b:aw-local-5050","msg":"ok"}
+
+== E-gemma-aw-local-5050 done 23:29:05 gpu 10 MiB

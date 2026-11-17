@@ -1,0 +1,1 @@
+{"model": "qwen3.5-4b:t2", "t_sent": "15:32:00", "status": 200, "total_s": 9.68, "ttft_s": 8.27, "chunks": 30, "predicted_n": 30, "gen_tps": 20.57, "prompt_n": 11, "prompt_tps": 18.87, "text": "Thinking Process:\n\n1.  **Analyze the Input:**\n    *   Input: \"hi\"\n    *   Language: English\n"}

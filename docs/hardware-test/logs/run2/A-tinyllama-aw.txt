@@ -1,0 +1,9 @@
+== A-tinyllama-aw start 23:23:30
+gpu_before 10 MiB
+gpu_loaded 10 MiB
+{"model":"tinyllama:aw","msg":"ok"}
+
+unloaded 23:23:46
+{"model":"tinyllama:aw","msg":"ok"}
+
+== A-tinyllama-aw done 23:24:12 gpu 10 MiB

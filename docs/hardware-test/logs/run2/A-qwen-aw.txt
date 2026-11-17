@@ -1,0 +1,9 @@
+== A-qwen-aw start 23:24:12
+gpu_before 10 MiB
+gpu_loaded 10 MiB
+{"model":"qwen3.5-4b:aw","msg":"ok"}
+
+unloaded 23:25:05
+{"model":"qwen3.5-4b:aw","msg":"ok"}
+
+== A-qwen-aw done 23:26:05 gpu 10 MiB
