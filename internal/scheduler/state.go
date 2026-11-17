@@ -117,6 +117,10 @@ type inst struct {
 	drainInFlight     int // in_flight when draining began; it may only fall
 	victimOf          string
 	stopMode          instance.StopMode
+
+	served     int    // requests admitted (logged when the instance stops)
+	stopReason string // why it is being stopped (first reason wins), for the log
+	exit       string // how the child ended, for the log
 }
 
 func (in *inst) nodeIDs() []core.NodeID {
@@ -218,6 +222,7 @@ type nodeState struct {
 
 	quarUntil time.Time
 	quarLevel int
+	quarOpen  bool // quarantined and the release not yet logged
 
 	missingSince time.Time
 }
@@ -225,6 +230,7 @@ type nodeState struct {
 type backoff struct {
 	until time.Time
 	level int
+	open  bool // backed off and the end not yet logged
 }
 
 type lease struct {
@@ -265,6 +271,8 @@ type schedCore struct {
 	stopAll    bool
 	killAll    bool
 	finished   bool
+	stopLogged bool // "shutdown stopping instances" logged
+	doneLogged bool // "shutdown complete" logged
 
 	effects []effect
 	feed    []FeedEvent

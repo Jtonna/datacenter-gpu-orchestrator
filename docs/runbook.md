@@ -82,7 +82,9 @@ Expected: `exit=0`. On `exit=1` read the message (unknown field, missing model f
 
 ---
 
-## C. One-time firewall rule (3 min)
+## C. Firewall check (1 min; add the rule only if the check fails)
+
+**Measured 2026-11-17: on this box the container reached the fleet console with no extra rule.** Run the `curl` check below from inside the container first. Add the ufw rule only if it fails.
 
 Why: the container is on `172.30.0.0/24`; the OMEN's ufw only admits 22, 9443 and 5353 (host/README.md, Firewall). Without this rule the scheduler cannot read the fleet console on 8090 (design 10). This repo never adds the rule for you.
 

@@ -39,6 +39,10 @@ type StartSpec struct {
 	// HealthPath is the path polled for readiness: "/health" for llama (the
 	// default when empty), the profile's check_endpoint for kind: command.
 	HealthPath string
+	// Env are KEY=VALUE entries set in the child's environment after the
+	// LLAMA_ARG_* scrub, replacing any inherited variable of the same name
+	// (names compared case-insensitively). An entry "KEY=" sets it empty.
+	Env []string
 }
 
 // StopMode selects how Stop ends a child.

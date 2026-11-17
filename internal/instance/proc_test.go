@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -295,7 +296,7 @@ func TestChildEnvironmentIsScrubbed(t *testing.T) {
 func TestLoadStatsFromChildOutput(t *testing.T) {
 	t.Setenv("FAKELLAMA_LOAD_LOG", "auto")
 	l := newLauncher(t)
-	c := start(t, l, fakeSpec(t, "--rpc", "10.0.0.2:50052,10.0.0.3:50052", "--device", "RPC0,RPC1,CUDA0"))
+	c := start(t, l, fakeSpec(t, "-lv", "4", "--rpc", "10.0.0.2:50052,10.0.0.3:50052", "--device", "RPC0,RPC1,CUDA0"))
 	waitHealthy(t, c)
 	// output is read asynchronously; the lines precede listening, but poll anyway
 	deadline := time.Now().Add(waitFor)
@@ -360,5 +361,40 @@ func TestNoGoroutineLeakAfterManyChildren(t *testing.T) {
 		buf := make([]byte, 1<<16)
 		n := runtime.Stack(buf, true)
 		t.Fatalf("goroutines %d -> %d\n%s", before, after, buf[:n])
+	}
+}
+
+func TestStartSpecEnvOverridesAfterScrub(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "start.jsonl")
+	t.Setenv("FAKELLAMA_START_LOG", logPath)
+	t.Setenv("LLAMA_ARG_MODEL", "/leak")
+	t.Setenv("CUDA_VISIBLE_DEVICES", "0")
+	l := newLauncher(t)
+	spec := fakeSpec(t)
+	spec.Env = []string{"CUDA_VISIBLE_DEVICES="}
+	c := start(t, l, spec)
+	waitHealthy(t, c)
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rec struct{ Env map[string]string }
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(data))), &rec); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := rec.Env["CUDA_VISIBLE_DEVICES"]; !ok || v != "" {
+		t.Errorf("CUDA_VISIBLE_DEVICES = %q (set=%v), want set and empty", v, ok)
+	}
+	if _, ok := rec.Env["LLAMA_ARG_MODEL"]; ok {
+		t.Error("LLAMA_ARG_* must still be scrubbed")
+	}
+}
+
+func TestOverrideEnv(t *testing.T) {
+	base := []string{"PATH=/bin", "cuda_visible_devices=1", "LLAMA_ARG_X=1", "A=b"}
+	got := overrideEnv(scrubEnv(base), []string{"CUDA_VISIBLE_DEVICES="})
+	want := []string{"PATH=/bin", "A=b", "CUDA_VISIBLE_DEVICES="}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %q want %q", got, want)
 	}
 }

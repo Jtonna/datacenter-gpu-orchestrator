@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/instance"
@@ -80,6 +81,7 @@ type probeOutcome struct {
 	addr   string
 	result instance.ProbeResult
 	err    error
+	took   time.Duration // how long the probe ran
 }
 
 // ---- effects (slow work the runner performs and reports back) ----

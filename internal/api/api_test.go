@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/scheduler"
 )
 
 func jsonOf(t *testing.T, s string) map[string]any {
@@ -162,6 +164,11 @@ func TestWriteSchedErrorShapes(t *testing.T) {
 	tail, _ := er["tail"].([]any)
 	if len(tail) != 2 || er["reason"] != "load failed" || !strings.Contains(er["message"].(string), "boom line 2") {
 		t.Fatalf("error = %v", er)
+	}
+	w = newRecorder()
+	writeSchedError(w, &scheduler.Error{Status: 503, Reason: scheduler.ReasonDoesNotFit, Message: "needs 99999 MiB"})
+	if w.Code != 503 || w.Header().Get("Retry-After") != "" {
+		t.Fatalf("does-not-fit: code %d retry-after %q, want none", w.Code, w.Header().Get("Retry-After"))
 	}
 	w = newRecorder()
 	writeSchedError(w, &schedErr503)

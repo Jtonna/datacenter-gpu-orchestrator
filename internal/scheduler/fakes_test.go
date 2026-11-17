@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -413,3 +414,57 @@ func (c *fakeChild) stopModes() []instance.StopMode {
 }
 
 var errBoom = errors.New("boom")
+
+// ---- capturing logger ----
+
+type logRec struct {
+	Level slog.Level
+	Msg   string
+	Attrs map[string]any
+}
+
+// capLog is a slog.Handler that records every record, so tests assert on
+// messages and attribute keys, never on formatting.
+type capLog struct {
+	mu   sync.Mutex
+	recs []logRec
+}
+
+func (l *capLog) Enabled(context.Context, slog.Level) bool { return true }
+func (l *capLog) WithAttrs([]slog.Attr) slog.Handler       { return l }
+func (l *capLog) WithGroup(string) slog.Handler            { return l }
+func (l *capLog) Handle(_ context.Context, r slog.Record) error {
+	rec := logRec{Level: r.Level, Msg: r.Message, Attrs: map[string]any{}}
+	r.Attrs(func(a slog.Attr) bool { rec.Attrs[a.Key] = a.Value.Any(); return true })
+	l.mu.Lock()
+	l.recs = append(l.recs, rec)
+	l.mu.Unlock()
+	return nil
+}
+
+func (l *capLog) all() []logRec {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]logRec(nil), l.recs...)
+}
+
+// find returns the records with message msg whose attrs include every
+// key/value pair in match (given as alternating key, value).
+func (l *capLog) find(msg string, match ...any) []logRec {
+	var out []logRec
+	for _, r := range l.all() {
+		if r.Msg != msg {
+			continue
+		}
+		ok := true
+		for i := 0; i+1 < len(match); i += 2 {
+			if fmt.Sprint(r.Attrs[match[i].(string)]) != fmt.Sprint(match[i+1]) {
+				ok = false
+			}
+		}
+		if ok {
+			out = append(out, r)
+		}
+	}
+	return out
+}

@@ -2,7 +2,6 @@ package scheduler
 
 import (
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -37,6 +36,7 @@ type harness struct {
 	needs    map[string]NeedInfo
 	needErr  map[string]error
 	c        *schedCore
+	logs     *capLog
 
 	autoProbe, autoStart, autoExit, autoFetch bool
 
@@ -68,7 +68,7 @@ func newHarness(t fatalT) *harness {
 		t: t, clk: clk, view: view, prober: newFakeProber(view), launcher: newFakeLauncher(),
 		cfg: testConfig(), needs: map[string]NeedInfo{}, needErr: map[string]error{},
 		autoProbe: true, autoStart: true, autoExit: true, autoFetch: true,
-		children: map[uint64]*fakeChild{},
+		children: map[uint64]*fakeChild{}, logs: &capLog{},
 	}
 	needs := NeedFunc(func(p *core.Profile) (NeedInfo, error) {
 		if err := h.needErr[p.Name]; err != nil {
@@ -79,7 +79,7 @@ func newHarness(t fatalT) *harness {
 		}
 		return NeedInfo{Need: placer.Measured(p.NeedsMiB), FileBytes: 1 << 30}, nil
 	})
-	h.c = newCore(h.cfg, clk, view, needs, instance.OptionsFromConfig(h.cfg), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h.c = newCore(h.cfg, clk, view, needs, instance.OptionsFromConfig(h.cfg), slog.New(h.logs))
 	return h
 }
 

@@ -3,6 +3,7 @@ package e2e
 import (
 	"encoding/json"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -431,5 +432,68 @@ func TestFleetUnreachableStillServesLocalNode(t *testing.T) {
 	})
 	if status, body := c.chat("local-only", false); status != 200 {
 		t.Fatalf("local model with the fleet down: %d %s", status, body)
+	}
+}
+
+// Defect 1: llama.cpp prints the buffer-size lines only from -lv 4 (fakellama
+// copies that), so per-device memory in /api/status proves the scheduler
+// passes the flag; /running shows it in the documented position; and the
+// child's chatty output is not echoed to the scheduler's own stderr.
+func TestChildVerbosityFeedsMemoryAndStderrStaysQuiet(t *testing.T) {
+	c := withPS5(t, map[string]string{"FAKELLAMA_LOAD_LOG": "auto"})
+	if status, body := c.chat("tiny:2k", false); status != 200 {
+		t.Fatalf("chat: %d %s", status, body)
+	}
+	run := c.running()
+	if len(run) != 1 || !strings.Contains(run[0].Cmd, "--cache-ram 2048 -lv 4 --rpc 10.0.0.2:50052 --device RPC0") {
+		t.Fatalf("cmd = %v", run)
+	}
+	insts, _ := c.jsonGet("/api/status")["instances"].([]any)
+	if len(insts) != 1 {
+		t.Fatalf("instances = %v", insts)
+	}
+	in := insts[0].(map[string]any)
+	if total, _ := in["device_total_mib"].(float64); total != 1300 {
+		t.Fatalf("device_total_mib = %v, want 1300 (1000 model + 200 KV + 100 compute): %v", in["device_total_mib"], in)
+	}
+	for _, noise := range []string{"buffer size", "load_tensors", "llama_kv_cache"} {
+		if strings.Contains(c.stderr.String(), noise) {
+			t.Fatalf("child output leaked into the scheduler log (%q):\n%s", noise, c.stderr.String())
+		}
+	}
+}
+
+// Defect 2: a child placed only on remote workers must not initialise CUDA on
+// the host GPU; one placed on the local node keeps the inherited variable.
+func TestRemoteOnlyChildHidesHostGPULocalChildInherits(t *testing.T) {
+	c := withPS5(t, nil)
+	if status, body := c.chat("tiny:2k", false); status != 200 {
+		t.Fatalf("remote chat: %d %s", status, body)
+	}
+	if status, body := c.chat("local-only", false); status != 200 {
+		t.Fatalf("local chat: %d %s", status, body)
+	}
+	var remoteEnv, localEnv map[string]string
+	for _, s := range c.starts() {
+		if s.Mode != "serve" {
+			continue
+		}
+		cmd := strings.Join(s.Argv, " ")
+		switch {
+		case strings.Contains(cmd, "--rpc 10.0.0.2:50052"):
+			remoteEnv = s.Env
+		case strings.Contains(cmd, "--device CUDA0") && !strings.Contains(cmd, "--rpc"):
+			localEnv = s.Env
+		}
+	}
+	if remoteEnv == nil || localEnv == nil {
+		t.Fatalf("start log lacks a remote or local serve entry: %+v", c.starts())
+	}
+	if v, ok := remoteEnv["CUDA_VISIBLE_DEVICES"]; !ok || v != "" {
+		t.Fatalf("remote-only child: CUDA_VISIBLE_DEVICES = %q (set=%v), want set and empty; env %v", v, ok, remoteEnv)
+	}
+	inherited, wasSet := os.LookupEnv("CUDA_VISIBLE_DEVICES")
+	if v, ok := localEnv["CUDA_VISIBLE_DEVICES"]; ok != wasSet || v != inherited {
+		t.Fatalf("local child: CUDA_VISIBLE_DEVICES = %q (set=%v), want inherited %q (set=%v)", v, ok, inherited, wasSet)
 	}
 }

@@ -51,6 +51,9 @@ func (c *schedCore) nextDeadline() (time.Time, bool) {
 		if !ns.missingSince.IsZero() {
 			add(ns.missingSince.Add(nodeLossAfter))
 		}
+		if ns.quarOpen {
+			add(ns.quarUntil) // the release is logged then
+		}
 		if waiting {
 			if !ns.ovUntil.IsZero() {
 				add(ns.ovUntil)
@@ -58,8 +61,8 @@ func (c *schedCore) nextDeadline() (time.Time, bool) {
 			add(ns.quarUntil)
 		}
 	}
-	if waiting {
-		for _, b := range c.backoffs {
+	for _, b := range c.backoffs {
+		if waiting || b.open {
 			add(b.until)
 		}
 	}

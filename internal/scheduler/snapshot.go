@@ -156,6 +156,9 @@ func (c *schedCore) statusDoc() Status {
 			Claim: append([]core.NodeID(nil), e.claim...), Victims: append([]string(nil), e.victims...),
 			VictimsStopped: e.stoppedAny,
 		})
+		if last := &st.Queue[len(st.Queue)-1]; !e.claimed() && c.insts[e.prof.Name] == nil {
+			_, last.WaitReason = c.waitWhy(e.prof)
+		}
 	}
 	for _, id := range c.sortedNodeIDs() {
 		ns := c.nodes[id]
@@ -275,11 +278,6 @@ func (c *schedCore) dryPlan(profile string) PlanReport {
 		}
 	}
 	r.Action = PlanQueue
-	switch {
-	case !c.fresh && !localOnly(p):
-		r.Reason = string(ReasonFleetStale) + "; " + perr.Error()
-	default:
-		r.Reason = perr.Error()
-	}
+	_, r.Reason = c.waitWhy(p)
 	return r
 }

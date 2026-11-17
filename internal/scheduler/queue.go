@@ -142,14 +142,18 @@ func (c *schedCore) plan(e *entry) bool {
 	e.victims = slices.Clone(res.Victims)
 	e.stoppedAny = false
 	c.changed = true
+	c.log.Info("claim made", "profile", e.prof.Name, "nodes", nodeIDStrings(e.claim), "victims", slices.Clone(res.Victims),
+		"waiters", len(e.waiters))
 	for _, v := range res.Victims {
 		in := c.insts[v]
 		in.victimOf = e.prof.Name
 		if in.inFlight == 0 {
-			c.stopInst(in, stopGraceful)
+			c.stopFor(in, stopGraceful, "evicted for "+e.prof.Name)
 		} else {
 			in.state = stDraining
 			in.drainInFlight = in.inFlight
+			c.log.Info("victim draining", "profile", v, "entry", e.prof.Name, "reason", "evicted for "+e.prof.Name,
+				"in_flight", in.inFlight)
 		}
 	}
 	return true
@@ -294,26 +298,9 @@ func (c *schedCore) checkTimeout(e *entry) {
 	if e.claimed() || e.clock < c.cfg.Defaults.QueueTimeout {
 		return
 	}
-	c.answerEntry(e, err503(c.timeoutReason(e.prof), fmt.Sprintf("no room for %s within queue_timeout", e.prof.Name), queueRetryAfter))
-}
-
-// timeoutReason names why an entry waited too long.
-func (c *schedCore) timeoutReason(p *core.Profile) Reason {
-	if len(p.ForceNodes) > 0 {
-		for _, name := range p.ForceNodes {
-			id, err := c.view.Resolve(name)
-			if err != nil || !c.eligible(id) {
-				if !c.fresh {
-					return ReasonFleetStale
-				}
-				return ReasonForcedUnavailable
-			}
-		}
-	}
-	if !c.fresh && !localOnly(p) {
-		return ReasonFleetStale
-	}
-	return ReasonClusterBusy
+	reason, why := c.waitWhy(e.prof)
+	c.log.Warn("queue timeout", "profile", e.prof.Name, "waited", e.clock, "reason", string(reason), "detail", why, "waiters", len(e.waiters))
+	c.answerEntry(e, err503(reason, fmt.Sprintf("no room for %s within queue_timeout: %s", e.prof.Name, why), queueRetryAfter))
 }
 
 // answerEntry fails every waiter of an entry, then drops its claim and

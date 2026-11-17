@@ -26,6 +26,7 @@ type config struct {
 	tensorSplit string
 	ctxSize     int
 	parallel    int
+	verbosity   int // -lv; llama.cpp's default is 3
 	listDevices bool
 	other       map[string]string // every other flag; value is "" when it had none
 }
@@ -66,7 +67,7 @@ func fakeNvidiaSmi(args []string) {
 }
 
 func parseArgs(args []string) config {
-	c := config{host: "127.0.0.1", port: 8080, ctxSize: 4096, parallel: 1, other: map[string]string{}}
+	c := config{host: "127.0.0.1", port: 8080, ctxSize: 4096, parallel: 1, verbosity: 3, other: map[string]string{}}
 	for i := 0; i < len(args); i++ {
 		name, val, hasVal := strings.Cut(args[i], "=")
 		if !strings.HasPrefix(name, "-") {
@@ -101,6 +102,11 @@ func parseArgs(args []string) config {
 			if n, err := strconv.Atoi(val); err == nil && n > 0 {
 				c.parallel = n
 			}
+		case "-lv", "--verbosity", "--log-verbosity":
+			if n, err := strconv.Atoi(val); err == nil {
+				c.verbosity = n
+			}
+			c.other[name] = val
 		default:
 			c.other[name] = val
 		}

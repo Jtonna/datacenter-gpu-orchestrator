@@ -81,13 +81,14 @@ func (c *Config) EffectiveLoadTimeout(p *core.Profile) (d time.Duration, ok bool
 }
 
 // ProfilesWithoutNeedsMiB lists kind: llama profiles that rely on the
-// memory estimate, sorted by name. It is the hook for the design-section-6
+// memory estimate, sorted by name. Profiles with force_nodes are left out:
+// a forced placement skips the fit check and never uses the estimate (7.3). It is the hook for the design-section-6
 // sliding-window warning: the caller reads each model's GGUF metadata and
 // warns when it declares a sliding window. Config cannot do that itself.
 func (c *Config) ProfilesWithoutNeedsMiB() []*core.Profile {
 	var out []*core.Profile
 	for _, p := range c.Profiles {
-		if p.Kind == core.KindLlama && p.NeedsMiB == 0 {
+		if p.Kind == core.KindLlama && p.NeedsMiB == 0 && len(p.ForceNodes) == 0 {
 			out = append(out, p)
 		}
 	}

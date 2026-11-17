@@ -1,0 +1,13 @@
+0.00.622.613 I print_info: MASK token            = 4 '
+0.00.622.613 I print_info: LF token              = 107 '
+0.00.622.613 I print_info: EOG token             = 1 '
+0.00.622.614 I print_info: EOG token             = 50 '
+0.00.622.614 I print_info: EOG token             = 106 '
+0.00.622.614 I print_info: max token length      = 93
+0.00.624.356 I load_tensors: loading model tensors, this can take a while... (load_mode = mmap)
+0.07.215.659 I load_tensors: offloading output layer to GPU
+0.07.215.661 I load_tensors: offloading 47 repeating layers to GPU
+0.07.215.661 I load_tensors: offloaded 49/49 layers to GPU
+0.07.215.666 I load_tensors:   CPU_Mapped model buffer size =   540.00 MiB
+0.07.215.666 I load_tensors: RPC0[10.0.0.101:50052] model buffer size =  6776.84 MiB
+0.58.021.244 E recv failed (bytes_recv=0, size_to_recv=8)

@@ -1,0 +1,17 @@
+0.01.312.025 I llama_kv_cache: n_rot_k = 0, n_embd_head_k_all = 256
+0.01.312.026 I llama_kv_cache: n_rot_v = 0, n_embd_head_k_all = 256
+0.01.312.028 I sched_reserve: reserving ...
+0.01.313.439 I resolve_fused_ops: Flash Attention enabled
+0.01.313.441 I resolve_fused_ops: resolving fused DeepSeek V4 HC support:
+0.01.313.856 I resolve_fused_ops: fused DeepSeek V4 HC pre enabled
+0.01.314.225 I resolve_fused_ops: fused DeepSeek V4 HC comb enabled
+0.01.314.594 I resolve_fused_ops: fused DeepSeek V4 HC post enabled
+0.01.315.313 E ggml_backend_cuda_buffer_type_alloc_buffer: allocating 129.52 MiB on device 0: cudaMalloc failed: out of memory
+0.01.315.315 E ggml_gallocr_reserve_n_impl: failed to allocate CUDA0 buffer of size 135815296
+0.01.315.315 E graph_reserve: failed to allocate compute buffers
+0.01.317.211 E llama_init_from_model: failed to initialize the context: failed to allocate compute pp buffers
+0.01.317.217 E cmn  common_init_: failed to create context with model '/models/gemma-4-12b-it-Q4_K_M.gguf'
+0.01.317.218 E cmn  common_init_: failed to create context with model '/models/gemma-4-12b-it-Q4_K_M.gguf'
+0.01.317.219 E srv    load_model: failed to create_context with model '/models/gemma-4-12b-it-Q4_K_M.gguf'
+0.01.317.221 I srv    operator(): operator(): cleaning up before exit...
+0.01.318.122 E srv  server_run_i: exiting due to model loading error

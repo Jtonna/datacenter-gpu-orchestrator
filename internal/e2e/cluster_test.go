@@ -245,8 +245,9 @@ func (c *cluster) waitFor(what string, timeout time.Duration, f func() bool) {
 }
 
 type startEntry struct {
-	Mode string   `json:"mode"`
-	Argv []string `json:"argv"`
+	Mode string            `json:"mode"`
+	Argv []string          `json:"argv"`
+	Env  map[string]string `json:"env"`
 }
 
 // starts returns the fakellama start log: one entry per list-devices probe

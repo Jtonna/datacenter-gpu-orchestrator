@@ -21,6 +21,10 @@ var managedFlags = map[string]bool{
 	"--parallel": true, "-np": true, "--cache-type-k": true, "-ctk": true, "--cache-type-v": true,
 	"-ctv": true, "--fit": true, "-fit": true, "--cache-ram": true, "-cram": true,
 	"--flash-attn": true, "-fa": true, "--main-gpu": true, "-mg": true,
+	// Log verbosity is always set by the scheduler (-lv 4, design 7.4); -v and
+	// --log-disable would change what the load-log reader sees.
+	"-lv": true, "--verbosity": true, "--log-verbosity": true,
+	"-v": true, "--verbose": true, "--log-verbose": true, "--log-disable": true,
 }
 
 // validate checks every startup rule and returns all violations joined, in

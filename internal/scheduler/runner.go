@@ -205,8 +205,9 @@ func (s *Scheduler) exec(ef effect) {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
+					began := s.opts.Clock.Now()
 					r, err := s.opts.Prober.Probe(ctx, tg.addr)
-					out[i] = probeOutcome{id: tg.id, addr: tg.addr, result: r, err: err}
+					out[i] = probeOutcome{id: tg.id, addr: tg.addr, result: r, err: err, took: s.opts.Clock.Now().Sub(began)}
 				}()
 			}
 			wg.Wait()

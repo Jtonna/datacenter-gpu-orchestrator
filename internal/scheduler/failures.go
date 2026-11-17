@@ -17,7 +17,8 @@ func (c *schedCore) quarantine(id core.NodeID, cause error) {
 	}
 	ns.quarLevel++
 	ns.quarUntil = c.now.Add(d)
-	c.log.Warn("pre-flight failed; node quarantined", "node", id, "for", d, "err", cause)
+	ns.quarOpen = true
+	c.log.Warn("node quarantined", "node", id, "for", d, "until", ns.quarUntil, "level", ns.quarLevel, "err", cause)
 	c.changed = true
 }
 
@@ -35,6 +36,8 @@ func (c *schedCore) startBackoff(profile string) {
 	}
 	b.level++
 	b.until = c.now.Add(d)
+	b.open = true
+	c.log.Warn("profile backed off", "profile", profile, "for", d, "until", b.until, "level", b.level)
 	if e := c.entries[profile]; e != nil {
 		c.answerEntry(e, err503(ReasonBackoff, fmt.Sprintf("profile %s is backed off after a failed load", profile), d))
 	}
@@ -104,6 +107,10 @@ func (c *schedCore) timers() {
 		if ns == nil {
 			continue
 		}
+		if ns.quarOpen && !c.now.Before(ns.quarUntil) {
+			ns.quarOpen = false
+			c.log.Info("node released from quarantine", "node", id)
+		}
 		if !ns.ovUntil.IsZero() && !c.now.Before(ns.ovUntil) {
 			ns.ovUntil = timeZero // the 10-minute limit of the override
 		}
@@ -116,6 +123,13 @@ func (c *schedCore) timers() {
 			ns.settle = setFetching
 			ns.fetchGen++
 			c.effects = append(c.effects, effFetch{id: id, gen: ns.fetchGen})
+		}
+	}
+
+	for _, name := range c.sortedBackoffNames() {
+		if b := c.backoffs[name]; b.open && !c.now.Before(b.until) {
+			b.open = false
+			c.log.Info("profile backoff ended", "profile", name)
 		}
 	}
 
@@ -137,8 +151,7 @@ func (c *schedCore) timers() {
 		ttl := c.cfg.EffectiveTTL(in.prof)
 		if in.state == stReady && in.inFlight == 0 && ttl > 0 && !c.now.Before(in.lastUsed.Add(ttl)) &&
 			(c.fresh || !in.hasRemote()) {
-			c.log.Info("idle unload", "profile", in.prof.Name, "idle", c.now.Sub(in.lastUsed))
-			c.stopInst(in, stopGraceful)
+			c.stopFor(in, stopGraceful, "ttl")
 		}
 	}
 }
@@ -167,10 +180,11 @@ func (c *schedCore) lostNode(in *inst) core.NodeID {
 // returned instance (7.5), keeping its creation time and clock; the
 // profile is not backed off.
 func (c *schedCore) nodeLost(in *inst, id core.NodeID) {
-	c.log.Warn("node lost; instance killed", "profile", in.prof.Name, "node", id)
+	c.log.Error("node lost", "profile", in.prof.Name, "node", id,
+		"missing_for", c.now.Sub(c.ns(id).missingSince), "in_flight", in.inFlight, "waiters", len(in.waiters))
 	ws := in.waiters
 	in.waiters = nil
-	c.stopInst(in, stopKill)
+	c.stopFor(in, stopKill, "node loss")
 	c.requeue(in, ws)
 }
 
@@ -221,3 +235,12 @@ func (c *schedCore) fetched(id core.NodeID, gen uint64, n core.Node, err error) 
 
 var _ = slices.Contains[[]int]
 var _ = time.Second
+
+func (c *schedCore) sortedBackoffNames() []string {
+	names := make([]string, 0, len(c.backoffs))
+	for n := range c.backoffs {
+		names = append(names, n)
+	}
+	slices.Sort(names)
+	return names
+}

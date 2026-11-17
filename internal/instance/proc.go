@@ -91,7 +91,7 @@ func (l *ProcessLauncher) Start(spec StartSpec) (Child, error) {
 	p.stdout, p.stderr = NewLineWriter(sink), NewLineWriter(sink)
 
 	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Env = scrubEnv(base)
+	cmd.Env = overrideEnv(scrubEnv(base), spec.Env)
 	cmd.Stdout, cmd.Stderr = p.stdout, p.stderr
 	cmd.WaitDelay = 2 * time.Second // never hang on pipes inherited by strays
 	prepare(cmd)

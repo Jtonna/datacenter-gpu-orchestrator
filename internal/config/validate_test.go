@@ -151,6 +151,8 @@ func TestValidateExtraArgsManagedFlags(t *testing.T) {
 		"--model", "-m", "--ctx-size", "-c", "--n-gpu-layers", "--gpu-layers", "-ngl", "--parallel", "-np",
 		"--cache-type-k", "-ctk", "--cache-type-v", "-ctv", "--fit", "-fit", "--cache-ram", "-cram",
 		"--flash-attn", "-fa", "--main-gpu", "-mg",
+		// log verbosity: the scheduler always passes -lv 4 (design 7.4)
+		"-lv", "--verbosity", "--log-verbosity", "-v", "--verbose", "--log-verbose", "--log-disable",
 	}
 	for _, f := range flags {
 		for _, form := range []string{f, f + "=1"} {

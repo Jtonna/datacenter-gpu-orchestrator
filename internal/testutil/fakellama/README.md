@@ -4,7 +4,7 @@ A stand-in for `llama-server-rpc` (design 7.4, 11). Tests build it with
 `harness.BuildFakeLlama(t)` and run it as a subprocess.
 
 It accepts any command line. `--host`, `--port`, `--model/-m`, `--rpc`,
-`--device/-dev`, `--tensor-split/-ts`, `--ctx-size/-c`, `--parallel/-np` and
+`--device/-dev`, `--tensor-split/-ts`, `--ctx-size/-c`, `--parallel/-np`, `-lv/--verbosity/--log-verbosity` and
 `--list-devices` are understood; every other flag is tolerated, with or
 without a value.
 
@@ -37,7 +37,7 @@ loaded, every endpoint answers 503 `{"error":{"message":"Loading model",...}}`.
 | `FAKELLAMA_STREAM_CHUNKS` | Content chunks per reply. Default 5. |
 | `FAKELLAMA_STREAM_DELAY` | Pause between streamed chunks. Default 0. |
 | `FAKELLAMA_STALL_AFTER` | Streaming: after N content chunks send nothing more and hold the connection until the client leaves. Default off. |
-| `FAKELLAMA_LOAD_LOG` | On start (before listening), print llama.cpp style `model` / `KV` / `compute buffer size` lines on stderr: `auto` (one set per `--device` name, 1000/200/100 MiB) or `NAME:modelMiB:kvMiB:computeMiB,...`. RPC devices are named `RPC0[<endpoint>]` as in llama.cpp. A `CPU_Mapped` model line and unrelated lines are interleaved. Default: nothing. |
+| `FAKELLAMA_LOAD_LOG` | On start (before listening), and only when the command line has `-lv N` with N >= 4 (`--verbosity`, `--log-verbosity`; llama.cpp hides these INFO lines at its default 3), print llama.cpp style `model` / `KV` / `compute buffer size` lines on stderr: `auto` (one set per `--device` name, 1000/200/100 MiB) or `NAME:modelMiB:kvMiB:computeMiB,...`. RPC devices are named `RPC0[<endpoint>]` as in llama.cpp. A `CPU_Mapped` model line and unrelated lines are interleaved. Default: nothing. |
 | `FAKELLAMA_IGNORE_SIGTERM` | Non-empty: log "ignoring" on stderr and keep running on SIGTERM/interrupt. |
 
 By default SIGTERM or interrupt exits 0 at once. The SIGTERM tests are skipped

@@ -74,9 +74,14 @@ func TestSlidingWindowWarning(t *testing.T) {
 	must(ggufgen.Write(filepath.Join(models, "gemma.gguf"), ggufgen.Spec{Arch: "gemma3", SlidingWindow: 1024}))
 	must(ggufgen.Write(filepath.Join(models, "plain.gguf"), ggufgen.Spec{}))
 	must(ggufgen.Write(filepath.Join(models, "gemma-measured.gguf"), ggufgen.Spec{Arch: "gemma3", SlidingWindow: 1024}))
+	must(ggufgen.Write(filepath.Join(models, "gemma-forced.gguf"), ggufgen.Spec{Arch: "gemma3", SlidingWindow: 1024}))
 	path := writeConfig(t, models, `  gemma:
     model: gemma.gguf
     ctx: 8192
+  gemma-forced:
+    model: gemma-forced.gguf
+    ctx: 8192
+    force_nodes: [ps5-a, omen]
   plain:
     model: plain.gguf
     ctx: 8192
@@ -97,6 +102,10 @@ func TestSlidingWindowWarning(t *testing.T) {
 	}
 	if strings.Contains(out, "profile=plain") || strings.Contains(out, "gemma-measured") {
 		t.Fatalf("unexpected warning:\n%s", out)
+	}
+	// Forced profiles skip the fit check and never use the estimate (7.3).
+	if strings.Contains(out, "gemma-forced") {
+		t.Fatalf("warned for a force_nodes profile:\n%s", out)
 	}
 }
 

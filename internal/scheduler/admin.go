@@ -22,7 +22,7 @@ func (c *schedCore) unload(profile string, force bool) error {
 	switch in.state {
 	case stStopping:
 		if force {
-			c.stopInst(in, stopKill)
+			c.stopFor(in, stopKill, "admin")
 		}
 		return nil
 	case stStarting:
@@ -35,7 +35,7 @@ func (c *schedCore) unload(profile string, force bool) error {
 		ws := in.waiters
 		in.waiters = nil
 		c.failAll(ws, err503(ReasonUnloaded, fmt.Sprintf("%s was unloaded while loading", profile), queueRetryAfter))
-		c.stopInst(in, stopKill)
+		c.stopFor(in, stopKill, "admin")
 		return nil
 	default: // ready, draining
 		if in.inFlight > 0 && !force {
@@ -45,7 +45,7 @@ func (c *schedCore) unload(profile string, force bool) error {
 		if in.inFlight > 0 {
 			mode = stopKill
 		}
-		c.stopInst(in, mode)
+		c.stopFor(in, mode, "admin")
 		return nil
 	}
 }
@@ -56,7 +56,7 @@ func (c *schedCore) unloadIdle() []string {
 	var out []string
 	for _, in := range c.sortedInsts() {
 		if in.state == stReady && in.inFlight == 0 {
-			c.stopInst(in, stopGraceful)
+			c.stopFor(in, stopGraceful, "admin")
 			out = append(out, in.prof.Name)
 		}
 	}
@@ -71,6 +71,12 @@ func (c *schedCore) beginShutdown(force bool) {
 	if !c.shutdown {
 		c.shutdown = true
 		c.shutdownDL = c.now.Add(c.cfg.Defaults.ShutdownGrace)
+		queued := 0
+		for _, e := range c.entries {
+			queued += len(e.waiters)
+		}
+		c.log.Info("shutdown begun", "grace", c.cfg.Defaults.ShutdownGrace, "force", force, "instances", len(c.insts),
+			"queued_waiters", queued)
 		// Every queued waiter first, so a claim dropped below cannot admit
 		// a queued waiter to a victim returning to ready.
 		for _, e := range c.orderedEntries() {
@@ -87,11 +93,14 @@ func (c *schedCore) beginShutdown(force bool) {
 				ws := in.waiters
 				in.waiters = nil
 				c.failAll(ws, err503(ReasonShuttingDown, "the scheduler is shutting down", queueRetryAfter))
-				c.stopInst(in, stopGraceful)
+				c.stopFor(in, stopGraceful, "shutdown")
 			}
 		}
 	}
 	if force {
+		if !c.killAll {
+			c.log.Warn("shutdown forced: killing every instance now")
+		}
 		c.stopAll, c.killAll = true, true
 	}
 }
@@ -109,6 +118,11 @@ func (c *schedCore) shutdownProgress() {
 	if inFlight == 0 || !c.now.Before(c.shutdownDL) {
 		c.stopAll = true
 	}
+	if c.stopAll && !c.stopLogged {
+		c.stopLogged = true
+		c.log.Info("shutdown stopping instances", "in_flight", inFlight, "grace_passed", !c.now.Before(c.shutdownDL),
+			"kill", c.killAll, "instances", len(c.insts))
+	}
 	if c.stopAll {
 		mode := stopGraceful
 		if c.killAll {
@@ -119,11 +133,15 @@ func (c *schedCore) shutdownProgress() {
 				ws := in.waiters
 				in.waiters = nil
 				c.failAll(ws, err503(ReasonShuttingDown, "the scheduler is shutting down", queueRetryAfter))
-				c.stopInst(in, mode)
+				c.stopFor(in, mode, "shutdown")
 			}
 		}
 	}
 	if len(c.insts) == 0 {
 		c.finished = true
+		if !c.doneLogged {
+			c.doneLogged = true
+			c.log.Info("shutdown complete")
+		}
 	}
 }

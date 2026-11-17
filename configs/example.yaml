@@ -30,16 +30,20 @@ tiers:                     # first match wins; lower number preferred;
     priority: 1
     headroom_mib: 1024
     shared_memory: true    # GPU memory is system RAM
-    link_mb_s: 11          # used to size load timeouts
+    link_mb_s: 8           # used to size load timeouts. Measured 2026-11-17: 13.9 MB/s for one
+                           # upload alone (qwen3.5-4b, 3.0 GB in 216 s), under 5.6 MB/s while two
+                           # PS5 uploads ran at once (gemma-4-12b); 11 timed that load out at 1411 s
     settle: 3s
   - match: { hostname: "alienware*" }
     priority: 2
     headroom_mib: 256      # dedicated VRAM; pre-flight gives exact figures
-    link_mb_s: 11
+    link_mb_s: 60          # measured 2026-11-17: 77 MB/s (qwen3.5-4b cold, 3.0 GB in 39 s)
     settle: 8s             # relayed figures are measured every 5 s
   - match: { local: true }
     priority: 3
-    headroom_mib: 256
+    headroom_mib: 450      # measured 2026-11-17: nvidia-smi reports 8151 MiB but llama.cpp can use
+                           # only 7707 (a 444 MiB gap); each child on the GPU also adds ~120 MiB of
+                           # CUDA context that the load log does not show
     settle: 2s
 
 node_overrides:            # optional; wins over the fleet's ip/rpc_port
@@ -49,16 +53,21 @@ profiles:
   qwen3.5-4b:
     model: Qwen_Qwen3.5-4B-Q4_K_M.gguf
     ctx: 16384
+    needs_mib: 3400        # measured 2026-11-17: 3343 MiB (load log sum) on one PS5 (.122) and on
+                           # the Alienware; the GGUF estimate (4986) is 1.5x too high
 
   gemma-4-12b:             # bare name = the default variant
     model: gemma-4-12b-it-Q4_K_M.gguf
     ctx: 8192
-    needs_mib: 7800        # measured; see 7.2
+    needs_mib: 7850        # measured 2026-11-17: 7514 MiB on the OMEN alone (+124 MiB CUDA
+                           # context = 7638 in nvidia-smi); 7831 MiB split over Alienware + OMEN
+                           # (2 devices); see 7.2
     aliases: [gemma-4-12b-1pool-8k, gemma-4-12b-2pool-8k]
 
   # Gemma is a sliding-window model: the estimate is far too high, so each
-  # variant needs a measured needs_mib (design 7.2). The values below are
-  # conservative PLACEHOLDERS until measured through a force_nodes profile.
+  # variant needs a measured needs_mib (design 7.2). 8K and 64K are measured
+  # (2026-11-17); the 48k and 96k values below are conservative PLACEHOLDERS
+  # until measured through a force_nodes profile.
   "gemma-4-12b:48k":
     model: gemma-4-12b-it-Q4_K_M.gguf
     ctx: 49152
@@ -72,7 +81,8 @@ profiles:
     ctx: 65536
     kv_quant: q8_0
     flash_attn: true
-    needs_mib: 13000       # PLACEHOLDER, TODO measure (design 7.2)
+    needs_mib: 8600        # measured 2026-11-17: 8578 MiB on Alienware + OMEN (2 devices; KV 799
+                           # MiB q8_0, compute 535 + 467); one device would be about 8100
     aliases: [gemma-4-12b-2pool-64k, gemma-4-12b-3pool-64k]
 
   "gemma-4-12b:96k":
@@ -115,6 +125,7 @@ profiles:
   tinyllama:
     model: tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
     ctx: 2048
+    needs_mib: 700         # measured 2026-11-17: 696 MiB on the Alienware (RPC) and on the OMEN
     aliases: [tinyllama-ps5]
 
   # kind: command profiles run on the local node alone. Commands are taken

@@ -21,6 +21,8 @@ const (
 	ReasonFleetStale        Reason = "fleet view stale"         // 503, queue_timeout
 	ReasonBackoff           Reason = "backoff"                  // 503, profile backed off after a failed load
 	ReasonShuttingDown      Reason = "shutting down"            // 503
+	ReasonNodesQuarantined  Reason = "nodes quarantined"        // 503, queue_timeout: the nodes that would fit are quarantined
+	ReasonNodeNoAddress     Reason = "node has no address"      // 503, queue_timeout: a node that would fit has no known rpc address
 	ReasonDoesNotFit        Reason = "does not fit"             // 503, need exceeds cluster capacity (7.2)
 	ReasonUnloaded          Reason = "unloaded"                 // 503, a loading instance was force-unloaded
 	ReasonClientGone        Reason = "client gone"              // 499, the caller's context ended
@@ -32,7 +34,8 @@ type Error struct {
 	Status  int
 	Reason  Reason
 	Message string
-	// RetryAfter is set for every 503 (whole seconds, at least 1 s).
+	// RetryAfter is set for every 503 (whole seconds, at least 1 s) except
+	// ReasonDoesNotFit, which is permanent and carries none (zero).
 	RetryAfter time.Duration
 	// Tail (502) holds the last lines of the child's output.
 	Tail []string
@@ -197,6 +200,9 @@ type EntryStatus struct {
 	Claim          []core.NodeID
 	Victims        []string
 	VictimsStopped bool
+	// WaitReason says why an unclaimed entry has not been placed: the placer's
+	// reason, or a quarantined / no-address / forced-node-absent cause.
+	WaitReason string
 }
 
 // QuarantineStatus is one quarantined node (design 8.4).

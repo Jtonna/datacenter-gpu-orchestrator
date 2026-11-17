@@ -3,6 +3,8 @@ package instance
 import (
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -181,5 +183,97 @@ func TestLoadLogInterleavedStreams(t *testing.T) {
 	wg.Wait()
 	if got := l.Snapshot().Devices[0].KVMiB; !near(got, 800) {
 		t.Fatalf("KV = %v want 800", got)
+	}
+}
+
+// readFixture feeds a testdata log through a LineWriter in odd-sized chunks,
+// as a child's pipe would deliver it.
+func readFixture(t *testing.T, name string) LoadStats {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := NewLoadLog()
+	w := NewLineWriter(l.Feed)
+	for len(b) > 0 {
+		n := min(37, len(b))
+		w.Write(b[:n])
+		b = b[n:]
+	}
+	w.Close()
+	return l.Snapshot()
+}
+
+func devByName(s LoadStats, name string) (DeviceMem, bool) {
+	for _, d := range s.Devices {
+		if d.Name == name {
+			return d, true
+		}
+	}
+	return DeviceMem{}, false
+}
+
+// Real lines (with llama.cpp's "0.01.119.248 I " prefix) from the first
+// hardware test, run with -lv 4.
+func TestLoadLogRealFixturesWithTimestampPrefix(t *testing.T) {
+	s := readFixture(t, "llama-lv4-ps5-aw-pool.log")
+	a, ok1 := devByName(s, "RPC0[10.0.0.122:50052]")
+	b, ok2 := devByName(s, "RPC0[10.0.0.3:50052]")
+	c, ok3 := devByName(s, "CPU_Mapped")
+	if !ok1 || !ok2 || !ok3 || !near(a.ModelMiB, 4257.94) || !near(b.ModelMiB, 2518.93) || !c.Host || !near(c.ModelMiB, 540) {
+		t.Fatalf("devices = %+v", s.Devices)
+	}
+	if !near(s.TotalMiB(), 4257.94+2518.93) || !near(s.HostMiB(), 540) {
+		t.Errorf("total %v host %v", s.TotalMiB(), s.HostMiB())
+	}
+
+	s = readFixture(t, "llama-lv4-ps5-single.log")
+	if d, ok := devByName(s, "RPC0[10.0.0.101:50052]"); !ok || !near(d.ModelMiB, 6776.84) {
+		t.Fatalf("devices = %+v", s.Devices)
+	}
+
+	// An OOM tail has no buffer-size lines and must not invent any.
+	if s := readFixture(t, "llama-lv4-local-oom.log"); len(s.Devices) != 0 {
+		t.Fatalf("devices from an error tail: %+v", s.Devices)
+	}
+}
+
+// Model, KV (two sliding-window buffers per device) and compute lines
+// together reproduce the figures /api/status showed for the run.
+func TestLoadLogGemmaTwoDeviceFixture(t *testing.T) {
+	s := readFixture(t, "llama-lv4-gemma-aw-local.log")
+	rpc, _ := devByName(s, "RPC0[10.0.0.3:50052]")
+	cuda, _ := devByName(s, "CUDA0")
+	if !near(rpc.TotalMiB(), 3679.04) || !near(cuda.TotalMiB(), 4151.53) {
+		t.Fatalf("rpc %+v cuda %+v", rpc, cuda)
+	}
+	if !near(s.TotalMiB(), 7830.57) || !near(s.HostMiB(), 540+113.11) {
+		t.Errorf("total %v host %v", s.TotalMiB(), s.HostMiB())
+	}
+}
+
+// At -lv 4 the child prints far more; one endless line without a newline
+// must not grow the buffer, and the ring must stay at its size.
+func TestLineWriterBoundedOnHugeLinesAndRingStaysBounded(t *testing.T) {
+	var got []string
+	w := NewLineWriter(func(s string) { got = append(got, s) })
+	chunk := []byte(strings.Repeat("y", 1<<20))
+	for i := 0; i < 20; i++ { // 20 MiB, no newline
+		w.Write(chunk)
+		if cap(w.buf) > 2*maxLineBytes {
+			t.Fatalf("buffer grew to %d", cap(w.buf))
+		}
+	}
+	w.Write([]byte("\nnext\n"))
+	if len(got) != 2 || len(got[0]) != maxLineBytes || got[1] != "next" {
+		t.Fatalf("got %d lines, first len %d", len(got), len(got[0]))
+	}
+	r := newRing(50)
+	for i := 0; i < 100000; i++ {
+		r.Add(fmt.Sprintf("print_info: line %d", i))
+	}
+	if len(r.Lines()) != 50 || r.Last(1)[0] != "print_info: line 99999" {
+		t.Fatalf("ring = %d lines", len(r.Lines()))
 	}
 }

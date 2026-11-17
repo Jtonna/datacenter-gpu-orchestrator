@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
+	"time"
 
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/instance"
@@ -41,6 +43,7 @@ func (c *schedCore) startInstance(p *core.Profile, pl core.Placement, waiters []
 	c.insts[p.Name] = in
 	c.changed = true
 	c.emitState(in, RunningStarting)
+	c.logPlacement(in)
 
 	var targets []probeTarget
 	for _, n := range pl.Nodes {
@@ -66,7 +69,12 @@ func (c *schedCore) preflightDone(iid uint64, results []probeOutcome) {
 		ns := c.ns(r.id)
 		if r.err != nil {
 			var pe *instance.ProbeError
-			if errors.As(r.err, &pe) && pe.Kind == instance.ProbeCanceled {
+			kind := "unknown"
+			if errors.As(r.err, &pe) {
+				kind = pe.Kind.String()
+			}
+			c.log.Warn("pre-flight failed", "profile", in.prof.Name, "node", r.id, "addr", r.addr, "kind", kind, "duration", r.took, "err", r.err)
+			if pe != nil && pe.Kind == instance.ProbeCanceled {
 				failed = true // not a verdict on the node
 				continue
 			}
@@ -77,6 +85,8 @@ func (c *schedCore) preflightDone(iid uint64, results []probeOutcome) {
 			failed = true
 			continue
 		}
+		c.log.Info("pre-flight ok", "profile", in.prof.Name, "node", r.id, "addr", r.addr,
+			"free_mib", r.result.FreeMiB, "total_mib", r.result.TotalMiB, "duration", r.took)
 		ns.quarLevel = 0
 		ns.quarUntil = c.now // a successful pre-flight resets the quarantine
 		ns.ovFree, ns.ovUntil = r.result.FreeMiB, c.now.Add(overrideTTL)
@@ -84,7 +94,7 @@ func (c *schedCore) preflightDone(iid uint64, results []probeOutcome) {
 		ns.fetched = nil
 	}
 	if failed {
-		c.returnInst(in)
+		c.returnInst(in, "pre-flight failed", nil)
 		return
 	}
 	req, _, err := c.request(in.prof)
@@ -101,8 +111,7 @@ func (c *schedCore) preflightDone(iid uint64, results []probeOutcome) {
 		pl.Nodes[i].BudgetMiB = budgets[i]
 	}
 	if !placer.Fits(req, budgets) {
-		c.log.Info("exact pre-flight figures do not fit; instance returned", "profile", in.prof.Name, "budgets", budgets)
-		c.returnInst(in)
+		c.returnInst(in, "exact pre-flight figures do not fit", budgets)
 		return
 	}
 	in.placement = pl
@@ -112,7 +121,9 @@ func (c *schedCore) preflightDone(iid uint64, results []probeOutcome) {
 // returnInst is design 7.5's "returned": straight to absent, nodes released
 // without settling, waiters back into the profile's entry with its original
 // creation time and accumulated clock.
-func (c *schedCore) returnInst(in *inst) {
+func (c *schedCore) returnInst(in *inst, reason string, budgets []int) {
+	c.log.Info("instance returned", "profile", in.prof.Name, "reason", reason, "nodes", nodeIDStrings(in.nodeIDs()),
+		"budgets", budgets, "waiters", len(in.waiters))
 	ws := in.waiters
 	in.waiters = nil
 	c.removeInst(in, false)
@@ -157,6 +168,7 @@ func (c *schedCore) launch(in *inst) {
 	c.effects = append(c.effects, effStart{iid: in.iid, spec: instance.StartSpec{
 		Build:      func(port int) ([]string, error) { return instance.BuildArgs(p, pl, port, opts) },
 		HealthPath: health,
+		Env:        instance.ChildEnvOverrides(p, pl),
 	}})
 }
 
@@ -177,6 +189,7 @@ func (c *schedCore) childStarted(iid uint64, ch instance.Child, err error) {
 		return
 	}
 	in.child, in.childRan, in.argv = ch, true, ch.Argv()
+	c.log.Info("child started", "profile", in.prof.Name, "pid", ch.PID(), "port", ch.Port(), "cmd", instance.RenderCommand(in.argv))
 	if in.state == stStopping {
 		c.effects = append(c.effects, effStop{iid: in.iid, child: ch, mode: in.stopMode})
 		return
@@ -200,6 +213,9 @@ func (c *schedCore) healthy(iid uint64, err error) {
 		ns.hasPF, ns.hasClaim = false, false // forgotten when a load on the node succeeds
 	}
 	c.emitState(in, RunningReady)
+	load := in.child.Load()
+	c.log.Info("instance ready", "profile", in.prof.Name, "load_duration", in.loadDuration,
+		"memory_mib", load.TotalMiB(), "devices", len(load.Devices), "waiters", len(in.waiters))
 	ws := in.waiters
 	in.waiters = nil
 	for _, w := range ws {
@@ -236,6 +252,7 @@ func (c *schedCore) stopInst(in *inst, mode instance.StopMode) {
 	}
 	in.state, in.stopMode = stStopping, mode
 	c.changed = true
+	c.log.Info("instance stopping", "profile", in.prof.Name, "reason", c.stopReasonOf(in), "mode", modeName(mode), "in_flight", in.inFlight)
 	c.emitState(in, RunningStopping)
 	if in.child != nil {
 		c.effects = append(c.effects, effStop{iid: in.iid, child: in.child, mode: mode})
@@ -262,6 +279,14 @@ func (c *schedCore) removeInst(in *inst, settle bool) {
 	}
 	delete(c.insts, in.prof.Name)
 	c.changed = true
+	if in.childRan {
+		var loadedFor time.Duration
+		if !in.readyAt.IsZero() {
+			loadedFor = c.now.Sub(in.readyAt)
+		}
+		c.log.Info("instance stopped", "profile", in.prof.Name, "reason", c.stopReasonOf(in), "loaded_for", loadedFor,
+			"requests_served", in.served, "exit", in.exit)
+	}
 	c.emitState(in, RunningStopped)
 }
 
@@ -295,10 +320,15 @@ func (c *schedCore) exited(iid uint64, st instance.ExitStatus) {
 	if in == nil || in.child == nil {
 		return
 	}
+	in.exit = st.String()
 	switch in.state {
 	case stStarting:
 		c.failLoad(in, "child exited during load: "+st.String(), st.Tail, true)
 	default:
+		if in.state != stStopping {
+			c.log.Error("instance exited unexpectedly", "profile", in.prof.Name, "exit", in.exit, "in_flight", in.inFlight)
+			in.stopReason = "child exited"
+		}
 		// ready or draining: in-flight requests fail on their own (the
 		// connection is gone); stopping: the stop completed.
 		c.removeInst(in, true)
@@ -316,6 +346,11 @@ func (c *schedCore) failLoad(in *inst, msg string, tail []string, gone bool) {
 	if len(tail) > failureTailLines {
 		tail = tail[len(tail)-failureTailLines:]
 	}
+	c.log.Error("load failed", "profile", in.prof.Name, "reason", msg, "exit", in.exit,
+		"waiters", len(in.waiters), "last_lines", strings.Join(lastLines(tail, 10), " | "))
+	if in.stopReason == "" {
+		in.stopReason = "load failed"
+	}
 	ws := in.waiters
 	in.waiters = nil
 	c.failAll(ws, err502(fmt.Sprintf("loading %s failed: %s", in.prof.Name, msg), tail))
@@ -328,4 +363,60 @@ func (c *schedCore) failLoad(in *inst, msg string, tail []string, gone bool) {
 	default:
 		c.removeInst(in, false)
 	}
+}
+
+// logPlacement logs the placement chosen for a new instance.
+func (c *schedCore) logPlacement(in *inst) {
+	need, measured := 0, false
+	if info, err := c.need(in.prof); err == nil {
+		need, measured = info.Need.MiB, info.Need.Measured
+	}
+	budgets := make([]int, len(in.placement.Nodes))
+	for i, n := range in.placement.Nodes {
+		budgets[i] = n.BudgetMiB
+	}
+	c.log.Info("placement chosen", "profile", in.prof.Name, "nodes", nodeIDStrings(in.nodeIDs()), "budgets", budgets,
+		"need_mib", need, "measured", measured, "waiters", len(in.waiters))
+}
+
+func nodeIDStrings(ids []core.NodeID) []string {
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = string(id)
+	}
+	return out
+}
+
+func modeName(m instance.StopMode) string {
+	if m == stopKill {
+		return "kill"
+	}
+	return "graceful"
+}
+
+func lastLines(lines []string, n int) []string {
+	if len(lines) > n {
+		return lines[len(lines)-n:]
+	}
+	return lines
+}
+
+// stopFor stops an instance and remembers why (the first reason wins), so
+// the "instance stopping" and "instance stopped" lines can say.
+func (c *schedCore) stopFor(in *inst, mode instance.StopMode, reason string) {
+	if in.stopReason == "" {
+		in.stopReason = reason
+	}
+	c.stopInst(in, mode)
+}
+
+// stopReasonOf is the recorded reason, else "evicted for X" for a victim.
+func (c *schedCore) stopReasonOf(in *inst) string {
+	switch {
+	case in.stopReason != "":
+		return in.stopReason
+	case in.victimOf != "":
+		return "evicted for " + in.victimOf
+	}
+	return "unspecified"
 }

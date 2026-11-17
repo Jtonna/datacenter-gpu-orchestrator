@@ -192,17 +192,7 @@ func exitCode(err error) int {
 // CUDA_VISIBLE_DEVICES set to the empty string (design 7.5, H3). Names are
 // compared case-insensitively because Windows environments are.
 func probeEnv(base []string) []string {
-	out := make([]string, 0, len(base)+1)
-	out = append(out, scrubEnv(base)...)
-	kept := out[:0]
-	for _, kv := range out {
-		k, _, _ := strings.Cut(kv, "=")
-		if strings.EqualFold(k, "CUDA_VISIBLE_DEVICES") {
-			continue
-		}
-		kept = append(kept, kv)
-	}
-	return append(kept, "CUDA_VISIBLE_DEVICES=")
+	return overrideEnv(scrubEnv(base), []string{"CUDA_VISIBLE_DEVICES="})
 }
 
 // scrubEnv removes every LLAMA_ARG_* variable (design 6: children are started
@@ -237,3 +227,24 @@ func (c *capBuffer) Write(p []byte) (int, error) {
 }
 
 func (c *capBuffer) String() string { return c.b.String() }
+
+// overrideEnv returns env with every entry of set applied: a variable already
+// present under the same name (any case, as on Windows) is dropped first.
+func overrideEnv(env, set []string) []string {
+	out := make([]string, 0, len(env)+len(set))
+	for _, kv := range env {
+		k, _, _ := strings.Cut(kv, "=")
+		drop := false
+		for _, s := range set {
+			sk, _, _ := strings.Cut(s, "=")
+			if strings.EqualFold(k, sk) {
+				drop = true
+				break
+			}
+		}
+		if !drop {
+			out = append(out, kv)
+		}
+	}
+	return append(out, set...)
+}

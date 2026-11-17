@@ -29,6 +29,24 @@ func OptionsFromConfig(c *config.Config) BuildOptions {
 	}
 }
 
+// LlamaLogVerbosity is the --verbosity (-lv) threshold every kind: llama child
+// is started with. It is the MINIMUM that prints the three buffer-size lines
+// the load-log reader needs (design 7.4), at llama.cpp
+// 330f0189c9fc71ef631f40211660a87d99251cc1:
+//
+//	src/llama-model.cpp:2109, src/llama-kv-cache.cpp:279 and
+//	src/llama-context.cpp:918 all use LLAMA_LOG_INFO (GGML_LOG_LEVEL_INFO).
+//	common/log.cpp:548-557 (common_log_get_verbosity, line 551) maps
+//	GGML_LOG_LEVEL_INFO to LOG_LEVEL_TRACE, which common/log.h:25 defines as 4,
+//	and common_log_default_callback (common/log.cpp:561-565) drops a message whose
+//	verbosity is above the threshold. The default threshold is LOG_DEFAULT_LLAMA
+//	= LOG_LEVEL_INFO = 3 (common/log.h:32, common/log.cpp:17), so the lines are hidden by default;
+//	-lv 4 shows them. Level 5 (debug) is not needed and would also print
+//	GGML_LOG_LEVEL_DEBUG lines (common/log.cpp:96), so 4 is exact.
+//	Spellings (common/arg.cpp:3934): -lv, --verbosity, --log-verbosity;
+//	env LLAMA_ARG_LOG_VERBOSITY (scrubbed from the child's environment).
+const LlamaLogVerbosity = 4
+
 // BuildArgs returns the argv for a profile placed on pl, listening on port.
 // For kind: llama it follows design 7.4 exactly; for kind: command it expands
 // ${PORT} in the profile's cmd and splits it (see ExpandCommand).
@@ -77,6 +95,9 @@ func BuildArgs(p core.Profile, pl core.Placement, port int, o BuildOptions) ([]s
 		"--parallel", strconv.Itoa(parallel),
 		"--jinja",
 		"--cache-ram", strconv.Itoa(o.CacheRAMMiB),
+		// Always raise the log verbosity, in this fixed position (right after
+		// --cache-ram, before the placement flags): see LlamaLogVerbosity.
+		"-lv", strconv.Itoa(LlamaLogVerbosity),
 	}
 	if len(rpc) > 0 {
 		args = append(args, "--rpc", strings.Join(rpc, ","))
@@ -244,4 +265,23 @@ func shellQuote(s string) string {
 		return s
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// ChildEnvOverrides returns the extra environment for a child (StartSpec.Env).
+// A kind: llama child whose placement has no local node gets
+// CUDA_VISIBLE_DEVICES="" (as the pre-flight probe does): llama.cpp
+// initialises its CUDA backend whatever --device says, which costs about
+// 102 MiB of the host GPU per child even when only RPC workers are used
+// (design 7.4). With the local node in the placement the variable is left as
+// inherited. kind: command profiles are never touched.
+func ChildEnvOverrides(p core.Profile, pl core.Placement) []string {
+	if p.Kind == core.KindCommand {
+		return nil
+	}
+	for _, n := range pl.Nodes {
+		if n.Local {
+			return nil
+		}
+	}
+	return []string{"CUDA_VISIBLE_DEVICES="}
 }

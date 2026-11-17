@@ -10,7 +10,7 @@ import (
 // emitLoadLog prints, on stderr, the buffer-size lines llama.cpp logs while
 // loading (formats at commit 330f0189: src/llama-model.cpp:2109,
 // src/llama-kv-cache.cpp:279, src/llama-context.cpp:918). It is scripted by
-// FAKELLAMA_LOAD_LOG: empty = nothing; "auto" = one device per --device name
+// FAKELLAMA_LOAD_LOG (and only when the command line has -lv 4 or more): empty = nothing; "auto" = one device per --device name
 // (default: every --rpc endpoint, then CUDA0) with 1000/200/100 MiB; otherwise
 // "NAME:modelMiB:kvMiB:computeMiB,..." where NAME is a --device name.
 //
@@ -19,7 +19,10 @@ import (
 // and some unrelated lines are interleaved to exercise tolerant parsers.
 func emitLoadLog(cfg config) {
 	spec := os.Getenv("FAKELLAMA_LOAD_LOG")
-	if spec == "" {
+	// These are INFO messages, which llama.cpp shows only from -lv 4 up
+	// (common/log.cpp:551, default threshold 3), so a command line without
+	// -lv 4 sees nothing, exactly as on the real hardware.
+	if spec == "" || cfg.verbosity < 4 {
 		return
 	}
 	type entry struct {

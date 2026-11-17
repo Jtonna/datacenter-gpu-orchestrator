@@ -12,7 +12,9 @@ import (
 const maxLineBytes = 16 << 10
 
 // Log line formats at llama.cpp 330f0189c9fc71ef631f40211660a87d99251cc1
-// (all LLAMA_LOG_INFO, printed to stderr; %s is a buffer or buffer-type name):
+// (all LLAMA_LOG_INFO, printed only at -lv 4 or more, which BuildArgs always
+// passes, see LlamaLogVerbosity; %s is a buffer or buffer-type name; real
+// lines also carry a "0.01.119.248 I " timestamp/level prefix):
 //
 //	src/llama-model.cpp:2109        "%s: %12s model buffer size = %8.2f MiB\n"
 //	src/llama-kv-cache.cpp:279      "%s: %10s KV buffer size = %8.2f MiB\n"

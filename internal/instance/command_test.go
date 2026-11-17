@@ -49,7 +49,7 @@ func TestBuildArgsLlama(t *testing.T) {
 
 	base := func(port, ctx, par string) []string {
 		return []string{"llama-server-rpc", "--host", "127.0.0.1", "--port", port, "--model", "/models/g.gguf",
-			"--n-gpu-layers", "999", "--fit", "off", "--ctx-size", ctx, "--parallel", par, "--jinja", "--cache-ram", "2048"}
+			"--n-gpu-layers", "999", "--fit", "off", "--ctx-size", ctx, "--parallel", par, "--jinja", "--cache-ram", "2048", "-lv", "4"}
 	}
 	cat := func(parts ...[]string) []string {
 		var out []string
@@ -112,7 +112,7 @@ func TestBuildArgsMatchesAppendixA1(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "llama-server-rpc --host 127.0.0.1 --port 5801 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 65536 --parallel 1 --jinja --cache-ram 2048 --rpc 10.0.0.2:50052 --device RPC0 -ctk q8_0 -ctv q8_0 --flash-attn on"
+	want := "llama-server-rpc --host 127.0.0.1 --port 5801 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 65536 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.2:50052 --device RPC0 -ctk q8_0 -ctv q8_0 --flash-attn on"
 	if got := RenderCommand(argv); got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
@@ -267,5 +267,40 @@ func TestBuildArgsBudgetSplitClampedToOne(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("%v: --tensor-split %q, want %q", tc.budgets, got, tc.want)
 		}
+	}
+}
+
+// kind: command profiles get exactly the expanded command: no verbosity flag.
+func TestBuildArgsCommandKindHasNoVerbosityFlag(t *testing.T) {
+	p := core.Profile{Name: "c", Kind: core.KindCommand, Cmd: "sd-server --port ${PORT}"}
+	argv, err := BuildArgs(p, core.Placement{Nodes: []core.PlacedNode{local(1)}}, 7, testOpts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(argv, " "); got != "sd-server --port 7" {
+		t.Fatalf("argv = %q", got)
+	}
+}
+
+// Defect 2: llama initialises its CUDA backend whatever --device says, which
+// costs ~102 MiB of the host GPU per child. A placement without the local node
+// hides the GPU from the child; one with it leaves the variable inherited.
+func TestChildEnvOverrides(t *testing.T) {
+	remoteOnly := core.Placement{Nodes: []core.PlacedNode{remote("a", "10.0.0.2:50052", 1), remote("b", "10.0.0.3:50052", 1)}}
+	withLocal := core.Placement{Nodes: []core.PlacedNode{remote("a", "10.0.0.2:50052", 1), local(1)}}
+	localOnly := core.Placement{Nodes: []core.PlacedNode{local(1)}}
+	cmdProf := core.Profile{Name: "c", Kind: core.KindCommand, Cmd: "x ${PORT}"}
+
+	if got := ChildEnvOverrides(llamaProfile(), remoteOnly); !reflect.DeepEqual(got, []string{"CUDA_VISIBLE_DEVICES="}) {
+		t.Errorf("remote only: %q", got)
+	}
+	if got := ChildEnvOverrides(llamaProfile(), withLocal); len(got) != 0 {
+		t.Errorf("with local node: %q", got)
+	}
+	if got := ChildEnvOverrides(llamaProfile(), localOnly); len(got) != 0 {
+		t.Errorf("local only: %q", got)
+	}
+	if got := ChildEnvOverrides(cmdProf, remoteOnly); len(got) != 0 {
+		t.Errorf("kind: command must be unaffected: %q", got)
 	}
 }

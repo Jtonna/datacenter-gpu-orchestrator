@@ -205,6 +205,9 @@ func TestCapacity_NeverFits_503AtOnceWithFigures(t *testing.T) {
 	if e.NeedMiB != 40000 || e.RequiredMiB != 40000 || e.CapacityMiB != 15000+7800 {
 		t.Fatalf("figures need %d required %d capacity %d", e.NeedMiB, e.RequiredMiB, e.CapacityMiB)
 	}
+	if e.RetryAfter != 0 {
+		t.Fatalf("Retry-After = %v: the error is permanent, retrying cannot help", e.RetryAfter)
+	}
 	h.noEntry("huge")
 }
 

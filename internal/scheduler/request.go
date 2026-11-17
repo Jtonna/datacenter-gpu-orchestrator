@@ -43,9 +43,14 @@ func (c *schedCore) arrive(w *waiter) {
 	if err := c.capacity(w.profile); err != nil {
 		var np *placer.NoPlacement
 		if errors.As(err, &np) && np.Reason == placer.ExceedsCapacity {
-			e := err503(ReasonDoesNotFit, fmt.Sprintf("profile %s needs %d MiB (fit rule requires %d MiB) but the cluster can hold at most %d MiB",
-				p.Name, np.NeedMiB, np.RequiredMiB, np.CapacityMiB), queueRetryAfter)
+			// Permanent (the config or the cluster must change), so no
+			// Retry-After: RetryAfter stays zero and the API omits the header.
+			e := &Error{Status: http.StatusServiceUnavailable, Reason: ReasonDoesNotFit,
+				Message: fmt.Sprintf("profile %s needs %d MiB (fit rule requires %d MiB) but the cluster can hold at most %d MiB",
+					p.Name, np.NeedMiB, np.RequiredMiB, np.CapacityMiB)}
 			e.NeedMiB, e.RequiredMiB, e.CapacityMiB = np.NeedMiB, np.RequiredMiB, np.CapacityMiB
+			c.log.Warn("request can never fit the cluster", "profile", p.Name, "need_mib", np.NeedMiB,
+				"required_mib", np.RequiredMiB, "capacity_mib", np.CapacityMiB)
 			c.fail(w, e)
 			return
 		}
@@ -58,8 +63,12 @@ func (c *schedCore) arrive(w *waiter) {
 	if e == nil {
 		e = &entry{prof: p, seq: c.next(), created: c.now}
 		c.entries[p.Name] = e
+		e.waiters = append(e.waiters, w)
+		c.log.Info("queue entry created", "profile", p.Name, "alias", w.alias, "waiters", len(e.waiters))
+	} else {
+		e.waiters = append(e.waiters, w)
+		c.log.Debug("request joined queue entry", "profile", p.Name, "alias", w.alias, "waiters", len(e.waiters))
 	}
-	e.waiters = append(e.waiters, w)
 	c.changed = true
 }
 
@@ -100,6 +109,7 @@ func (c *schedCore) admit(in *inst, w *waiter) {
 	id := c.next()
 	c.leases[id] = &lease{id: id, profile: in.prof.Name, iid: in.iid}
 	in.inFlight++
+	in.served++
 	in.lastUsed = c.now
 	addr := "127.0.0.1:" + strconv.Itoa(in.child.Port())
 	c.answer(w, answer{grant: &grant{ID: id, Addr: addr, Profile: in.prof.Name, Alias: w.alias}})
@@ -152,7 +162,7 @@ func (c *schedCore) release(id uint64) {
 	in.inFlight--
 	in.lastUsed = c.now
 	if in.state == stDraining && in.inFlight == 0 {
-		c.stopInst(in, stopGraceful)
+		c.stopFor(in, stopGraceful, "evicted for "+in.victimOf)
 	}
 	c.changed = true
 }

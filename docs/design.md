@@ -1,7 +1,8 @@
 # Cluster scheduler: design
 
-Status: v1.0, approved to build from after three review passes. Owner: Jacob.
-Date: 2026-11-17. Changes to behaviour go into this document first.
+Status: v1.1. Approved after three review passes; built; first hardware test
+run 2026-11-17 (results in `docs/hardware-test/RESULTS.md`). Owner: Jacob.
+Changes to behaviour go into this document first.
 
 A drop-in replacement for llama-swap on the OMEN that decides at load time which
 machines a model runs on. Working name of the binary: `llm-scheduler`.
@@ -100,6 +101,12 @@ All **[verified]** against source unless tagged otherwise.
 - **[verified]** PS5 link is 100 Mb today, about 11.8 MB/s. Sending 5 GB to a
   PS5 takes about 7 minutes. The `rpc-server` tensor cache (`-c`) shortens
   repeat loads.
+- **[measured 2026-11-17]** PS5 uploads ran at about 13.9 MB/s for one upload
+  and under 5.6 MB/s each with two at once, although the OMEN's port is
+  gigabit. The Alienware took 77 MB/s. A warm reload from the worker's cache
+  took about 7 s. Config uses `link_mb_s` 8 for PS5s and 60 for the Alienware.
+- **[measured 2026-11-17]** H1, H2 and H3 below all hold on this cluster, and
+  the container reached the fleet console on 8090 without an extra firewall rule.
 - **[verified by owner]** The old "wedges on client close" and "stalls over
   500 MiB" problems belonged to the PS5LM app, not PS5 Linux.
 - **[verified]** The OMEN's host firewall admits only ports 22, 9443 and 5353
@@ -206,6 +213,10 @@ fleet entry for `fleet.local_node`. The fleet entry for the local node is
 otherwise ignored. The probe command is a config value (`local_probe_cmd`), so
 tests point it at a fake.
 
+The local tier's `headroom_mib` is 450. `nvidia-smi` reports 8151 MiB on the
+OMEN's GPU but llama.cpp can use 7707, and each child that uses the GPU adds
+about 120 MiB of CUDA context that the load log does not show.
+
 The local node has one fixed id for the life of the process: the value of
 `fleet.local_node`. Its fleet member (matched by id or hostname) is never
 published as a remote node, and both of the member's names resolve to that id.
@@ -249,16 +260,16 @@ tiers:                     # first match wins; lower number preferred;
     priority: 1
     headroom_mib: 1024
     shared_memory: true    # GPU memory is system RAM
-    link_mb_s: 11          # used to size load timeouts
+    link_mb_s: 8           # measured; used to size load timeouts
     settle: 3s
   - match: { hostname: "alienware*" }
     priority: 2
     headroom_mib: 256      # dedicated VRAM; pre-flight gives exact figures
-    link_mb_s: 11
+    link_mb_s: 60
     settle: 8s             # relayed figures are measured every 5 s
   - match: { local: true }
     priority: 3
-    headroom_mib: 256
+    headroom_mib: 450      # see 5.1
     settle: 2s
 
 node_overrides:            # optional; wins over the fleet's ip/rpc_port
@@ -268,7 +279,7 @@ profiles:
   gemma-4-12b:             # bare name = the default variant
     model: gemma-4-12b-it-Q4_K_M.gguf
     ctx: 8192
-    needs_mib: 7800        # measured; see 7.2
+    needs_mib: 7850        # measured 2026-11-17; see 7.2
     aliases: [gemma-4-12b-1pool-8k, gemma-4-12b-2pool-8k]
   "devstral-24b:14k":
     model: Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf
@@ -471,7 +482,7 @@ Built in this fixed order; `extra_args` always last:
 ```
 llama-server-rpc --host 127.0.0.1 --port <p> --model /models/<file>
   --n-gpu-layers 999 --fit off --ctx-size <ctx × parallel> --parallel <n> --jinja
-  --cache-ram <cache_ram_mib>
+  --cache-ram <cache_ram_mib> -lv 4
   [--rpc ip1:port,ip2:port]              # remote nodes, placement order
   --device <names>                       # exactly the chosen devices, always present
   [--tensor-split a,b,c]                 # same order as --device; omitted for one device
@@ -483,6 +494,13 @@ llama-server-rpc --host 127.0.0.1 --port <p> --model /models/<file>
 - `--tensor-split` values are each node's budget from the pre-flight figures,
   as integers of at least 1, unless the profile gives `tensor_split`.
 - Local only: no `--rpc`, `--device CUDA0`.
+- `-lv 4`: llama.cpp prints the per-device buffer sizes only at verbosity 4
+  or higher (the default is 3), so every llama child runs with it. Child
+  output is kept in a bounded buffer and is not copied to the scheduler's log.
+  All spellings of the verbosity flags are managed flags.
+- A llama child whose placement has no local node is started with
+  `CUDA_VISIBLE_DEVICES=""`. Without it llama.cpp initialises CUDA whatever
+  `--device` says and takes about 100 MiB of the OMEN's VRAM per child.
 
 ### 7.5 Pre-flight
 
@@ -521,7 +539,7 @@ Unless the profile sets `load_timeout`:
 `120 s + 2 × Σ over remote nodes (node's share of the model file ÷ link_mb_s)`.
 A share is the file size times that node's fraction of the tensor split.
 Sizes are in bytes and `link_mb_s` is decimal megabytes per second.
-Example: 10 GB (10^10 bytes) to a PS5 at 11 MB/s gives about 32 minutes.
+Example: 10 GB (10^10 bytes) to a PS5 at 8 MB/s gives about 44 minutes.
 `kind: command` profiles use `command_load_timeout`.
 
 ## 8. Runtime behaviour
@@ -723,10 +741,11 @@ timeout; client cancellation propagates upstream.
   `extra_hosts: host.docker.internal:host-gateway`, and a pinned bridge subnet
   `172.30.0.0/24`. The `/run/avahi-daemon` mount is dropped: the scheduler uses
   IP addresses only.
-- **Required host firewall rule:** allow `172.30.0.0/24` to port 8090, so the
-  container can reach the fleet console. The runbook gives the command and
-  verifies it with `curl http://host.docker.internal:8090/api/fleet` from
-  inside the container. The scheduler logs a clear error if it cannot connect.
+- **Host firewall:** the container must reach the fleet console on host port
+  8090. On this box it did so with no extra rule. The runbook checks it with
+  `curl http://host.docker.internal:8090/api/fleet` from inside the container;
+  only if that fails, allow `172.30.0.0/24` to port 8090. The scheduler logs a
+  clear error if it cannot connect.
 - **The scheduler and llama-swap must never run at the same time.** A worker
   serves one client; whichever connects second waits. Rollout is a cutover:
   1. Stop llama-swap.
@@ -829,7 +848,7 @@ Polled by the hub every 1 s with a 1 s timeout on a keep-alive connection.
 ```json
 { "running": [
   { "model": "gemma-4-12b:64k", "state": "ready", "name": "gemma-4-12b:64k",
-    "cmd": "llama-server-rpc --host 127.0.0.1 --port 5801 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 65536 --parallel 1 --jinja --cache-ram 2048 --rpc 10.0.0.2:50052 --device RPC0 -ctk q8_0 -ctv q8_0 --flash-attn on" }
+    "cmd": "llama-server-rpc --host 127.0.0.1 --port 5801 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 65536 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.2:50052 --device RPC0 -ctk q8_0 -ctv q8_0 --flash-attn on" }
 ] }
 ```
 
