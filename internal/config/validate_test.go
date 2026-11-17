@@ -1,0 +1,186 @@
+package config
+
+import (
+	"strings"
+	"testing"
+)
+
+const baseHeader = `
+models_dir: /models
+tiers:
+  - match: { local: true }
+    priority: 3
+`
+
+// prof wraps profile YAML (already indented under "profiles:") in a config.
+func prof(body string) string { return baseHeader + "profiles:\n" + body }
+
+func parseErr(yaml string, exists func(string) bool) error {
+	if exists == nil {
+		exists = existsAll
+	}
+	_, err := ParseWithOptions([]byte(yaml), Options{FileExists: exists})
+	return err
+}
+
+func TestValidateRejects(t *testing.T) {
+	llama := "  p:\n    model: m.gguf\n    ctx: 4096\n"
+	tests := []struct {
+		name string
+		yaml string
+		want []string // every substring must appear in the error
+	}{
+		{"unknown top-level field", baseHeader + "bogus: 1\nprofiles: {}\n", []string{"bogus"}},
+		{"unknown profile field", prof(llama + "    ctxx: 1\n"), []string{"ctxx"}},
+		{"unknown defaults field", baseHeader + "defaults: {ttll: 5s}\n", []string{"ttll"}},
+		{"duplicate profile name", prof(llama + "  p:\n    model: m.gguf\n    ctx: 1\n"), []string{"p"}},
+		{"alias equals other profile", prof(llama + "  q:\n    model: m.gguf\n    ctx: 1\n    aliases: [p]\n"),
+			[]string{`profile "q"`, "aliases", `"p"`, "profile name"}},
+		{"alias equals own name", prof(llama + "    aliases: [p]\n"),
+			[]string{`profile "p"`, "aliases", `"p"`}},
+		{"alias used twice across profiles", prof("  p:\n    model: m.gguf\n    ctx: 1\n    aliases: [x]\n  q:\n    model: m.gguf\n    ctx: 1\n    aliases: [x]\n"),
+			[]string{"aliases", `"x"`, "already used"}},
+		{"alias repeated in one list", prof(llama + "    aliases: [x, x]\n"),
+			[]string{`profile "p"`, "aliases", `"x"`}},
+		{"force_nodes with allow_tiers", prof(llama + "    force_nodes: [a]\n    allow_tiers: [1]\n"),
+			[]string{`profile "p"`, "force_nodes", "allow_tiers"}},
+		{"tensor_split without force_nodes", prof(llama + "    tensor_split: [1, 2]\n"),
+			[]string{`profile "p"`, "tensor_split", "force_nodes"}},
+		{"tensor_split length differs", prof(llama + "    force_nodes: [a, b]\n    tensor_split: [1]\n"),
+			[]string{`profile "p"`, "tensor_split", "length"}},
+		{"tensor_split non-positive", prof(llama + "    force_nodes: [a, b]\n    tensor_split: [1, 0]\n"),
+			[]string{`profile "p"`, "tensor_split"}},
+		{"q8 kv without flash_attn", prof(llama + "    kv_quant: q8_0\n"),
+			[]string{`profile "p"`, "kv_quant", "flash_attn"}},
+		{"q4 kv with flash_attn false", prof(llama + "    kv_quant: q4_0\n    flash_attn: false\n"),
+			[]string{`profile "p"`, "kv_quant", "flash_attn"}},
+		{"kv_quant unknown", prof(llama + "    kv_quant: q5_0\n    flash_attn: true\n"),
+			[]string{`profile "p"`, "kv_quant", "q5_0"}},
+		{"ctx missing", prof("  p:\n    model: m.gguf\n"), []string{`profile "p"`, "ctx"}},
+		{"ctx zero", prof("  p:\n    model: m.gguf\n    ctx: 0\n"), []string{`profile "p"`, "ctx", "positive"}},
+		{"parallel zero", prof(llama + "    parallel: 0\n"), []string{`profile "p"`, "parallel", "positive"}},
+		{"parallel negative", prof(llama + "    parallel: -2\n"), []string{`profile "p"`, "parallel"}},
+		{"model missing", prof("  p:\n    ctx: 1\n"), []string{`profile "p"`, "model"}},
+		{"needs_mib negative", prof(llama + "    needs_mib: -1\n"), []string{`profile "p"`, "needs_mib"}},
+		{"allow_tiers below 1", prof(llama + "    allow_tiers: [0]\n"), []string{`profile "p"`, "allow_tiers"}},
+		{"unknown kind", prof("  p:\n    kind: weird\n"), []string{`profile "p"`, "kind", "weird"}},
+		{"negative ttl", prof(llama + "    ttl: -5s\n"), []string{`profile "p"`, "ttl"}},
+		{"command without cmd", prof("  c:\n    kind: command\n    needs_mib: 10\n"),
+			[]string{`profile "c"`, "cmd"}},
+		{"command without needs_mib", prof("  c:\n    kind: command\n    cmd: x ${PORT}\n"),
+			[]string{`profile "c"`, "needs_mib"}},
+		{"command cmd lacks PORT", prof("  c:\n    kind: command\n    cmd: x\n    needs_mib: 1\n"),
+			[]string{`profile "c"`, "cmd", "${PORT}"}},
+		{"llama with cmd", prof(llama + "    cmd: x\n"), []string{`profile "p"`, "cmd", "kind: command"}},
+		{"tier priority zero", "tiers:\n  - match: { local: true }\n    priority: 0\n", []string{"tiers[0]", "priority"}},
+		{"tier empty match", "tiers:\n  - match: {}\n    priority: 1\n", []string{"tiers[0]", "match"}},
+		{"tier bad glob", "tiers:\n  - match: { hostname: \"[\" }\n    priority: 1\n", []string{"tiers[0]", "hostname"}},
+		{"tier negative headroom", "tiers:\n  - match: { local: true }\n    priority: 1\n    headroom_mib: -1\n", []string{"tiers[0]", "headroom_mib"}},
+		{"override rpc no port", baseHeader + "node_overrides:\n  n: { rpc: \"10.0.0.3\" }\n", []string{`node_overrides "n"`, "rpc"}},
+		{"override rpc hostname", baseHeader + "node_overrides:\n  n: { rpc: \"alien:50052\" }\n", []string{`node_overrides "n"`, "rpc"}},
+		{"override rpc port range", baseHeader + "node_overrides:\n  n: { rpc: \"10.0.0.3:70000\" }\n", []string{`node_overrides "n"`, "rpc"}},
+		{"override rpc ipv6", baseHeader + "node_overrides:\n  n: { rpc: \"[::1]:5\" }\n", []string{`node_overrides "n"`, "rpc"}},
+		{"defaults max_pool zero", baseHeader + "defaults: {max_pool: 0}\n", []string{"defaults", "max_pool"}},
+		{"bare nonzero duration", baseHeader + "defaults: {ttl: 300}\n", []string{"line 6", "invalid duration"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := parseErr(tt.yaml, nil)
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tt.want)
+			}
+			for _, w := range tt.want {
+				if !strings.Contains(err.Error(), w) {
+					t.Errorf("error %q lacks %q", err.Error(), w)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateCommandRejectsLlamaOnlyFields(t *testing.T) {
+	fields := map[string]string{
+		"model": "m.gguf", "ctx": "10", "parallel": "1", "kv_quant": "f16", "flash_attn": "false",
+		"allow_tiers": "[1]", "force_nodes": "[a]", "tensor_split": "[1]", "extra_args": "[-x]",
+	}
+	for f, v := range fields {
+		t.Run(f, func(t *testing.T) {
+			y := prof("  c:\n    kind: command\n    cmd: run ${PORT}\n    needs_mib: 5\n    " + f + ": " + v + "\n")
+			err := parseErr(y, nil)
+			if err == nil || !strings.Contains(err.Error(), `profile "c"`) || !strings.Contains(err.Error(), f) {
+				t.Fatalf("want error naming profile c and %q, got %v", f, err)
+			}
+		})
+	}
+}
+
+func TestValidateMissingModelFile(t *testing.T) {
+	exists := func(p string) bool { return !strings.HasSuffix(p, "gone.gguf") }
+	y := prof("  ok:\n    model: here.gguf\n    ctx: 1\n  bad:\n    model: gone.gguf\n    ctx: 1\n")
+	err := parseErr(y, exists)
+	if err == nil || !strings.Contains(err.Error(), `profile "bad"`) ||
+		!strings.Contains(err.Error(), "model") || !strings.Contains(err.Error(), "gone.gguf") {
+		t.Fatalf("got %v", err)
+	}
+	if strings.Contains(err.Error(), `profile "ok"`) {
+		t.Errorf("existing model flagged: %v", err)
+	}
+	// Command profiles have no model file and must not be checked.
+	y = prof("  c:\n    kind: command\n    cmd: run ${PORT}\n    needs_mib: 5\n")
+	if err := parseErr(y, func(p string) bool { t.Errorf("unexpected check of %q", p); return false }); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateExtraArgsManagedFlags(t *testing.T) {
+	flags := []string{
+		"--rpc", "--device", "-dev", "--tensor-split", "-ts", "--split-mode", "-sm", "--host", "--port",
+		"--model", "-m", "--ctx-size", "-c", "--n-gpu-layers", "--gpu-layers", "-ngl", "--parallel", "-np",
+		"--cache-type-k", "-ctk", "--cache-type-v", "-ctv", "--fit", "-fit", "--cache-ram", "-cram",
+		"--flash-attn", "-fa", "--main-gpu", "-mg",
+	}
+	for _, f := range flags {
+		for _, form := range []string{f, f + "=1"} {
+			t.Run(form, func(t *testing.T) {
+				y := prof("  p:\n    model: m.gguf\n    ctx: 1\n    extra_args: [\"--ok\", \"" + form + "\"]\n")
+				err := parseErr(y, nil)
+				if err == nil || !strings.Contains(err.Error(), `profile "p"`) ||
+					!strings.Contains(err.Error(), "extra_args") || !strings.Contains(err.Error(), f) {
+					t.Fatalf("want extra_args error naming %q, got %v", f, err)
+				}
+			})
+		}
+	}
+	// Unmanaged flags are fine, including look-alikes.
+	y := prof("  p:\n    model: m.gguf\n    ctx: 1\n    extra_args: [\"--no-warmup\", \"--chat-template\", \"--port-ish\", \"--threads=4\"]\n")
+	if err := parseErr(y, nil); err != nil {
+		t.Fatalf("unmanaged extra_args rejected: %v", err)
+	}
+}
+
+func TestValidateAcceptsValid(t *testing.T) {
+	y := prof(`  p:
+    model: m.gguf
+    ctx: 4096
+    kv_quant: q8_0
+    flash_attn: true
+    force_nodes: [a, b]
+    tensor_split: [60, 40]
+    aliases: [old]
+  q:
+    model: m.gguf
+    ctx: 4096
+    aliases: [old2]
+`) + "node_overrides:\n  n: { rpc: \"10.0.0.3:50052\" }\n"
+	if err := parseErr(y, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateReportsAllErrors(t *testing.T) {
+	y := prof("  a:\n    ctx: 1\n  b:\n    model: m.gguf\n")
+	err := parseErr(y, nil)
+	if err == nil || !strings.Contains(err.Error(), `profile "a"`) || !strings.Contains(err.Error(), `profile "b"`) {
+		t.Fatalf("want both profiles reported, got %v", err)
+	}
+}
