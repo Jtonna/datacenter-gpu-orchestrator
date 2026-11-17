@@ -12,9 +12,10 @@ if [ $# -ge 2 ] && [ "$1" = "--load" ]; then LOAD_MODEL="$2"; fi
 CONFIG="${CONFIG:-/opt/llm-scheduler/config.yaml}"
 PROFILES="${TMPDIR:-/tmp}/smoke-profiles.$$"
 
-# VERIFY against /api/status output: jq filter giving one TSV row per device
-# (node, model MiB, KV MiB, compute MiB) for the instance of profile $p.
-STATUS_DEVICE_TSV='.instances[]? | select(.profile == $p) | .devices[]? | [.node, .model_mib, .kv_mib, .compute_mib] | @tsv'
+# jq filter giving one TSV row per device (node, model MiB, KV MiB, compute MiB) for the
+# instance of profile $p. Device buffers sit in .instances[].nodes[].memory[]; host (CPU)
+# buffers are in .host_memory and are deliberately not read here.
+STATUS_DEVICE_TSV='.instances[]? | select(.profile == $p) | .nodes[]? | .id as $n | .memory[]? | [$n, .model_mib, .kv_mib, .compute_mib] | @tsv'
 
 FAILS=0
 pass() { printf 'PASS  %s\n' "$*"; }

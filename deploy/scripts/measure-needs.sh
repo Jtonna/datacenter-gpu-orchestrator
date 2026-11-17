@@ -11,11 +11,12 @@ set -eu
 BASE="${1%/}"; P="$2"
 WAIT_MAX_S="${WAIT_MAX_S:-3600}"
 
-# VERIFY against /api/status output: jq filter giving one TSV row per device of the instance
-# for profile $p: node, model MiB, KV MiB, compute MiB. Host (CPU) buffers must NOT be included.
-STATUS_DEVICE_TSV='.instances[]? | select(.profile == $p) | .devices[]? | [.node, .model_mib, .kv_mib, .compute_mib] | @tsv'
-# VERIFY against /api/status output: the sum the scheduler itself reports (cross-check only).
-STATUS_SUM_MIB='.instances[]? | select(.profile == $p) | .sum_mib'
+# jq filter giving one TSV row per device of the instance for profile $p: node, model MiB,
+# KV MiB, compute MiB. Host (CPU) buffers are in .host_memory and are NOT included.
+STATUS_DEVICE_TSV='.instances[]? | select(.profile == $p) | .nodes[]? | .id as $n | .memory[]? | [$n, .model_mib, .kv_mib, .compute_mib] | @tsv'
+# The scheduler's own figure (cross-check only). It also counts unmatched device buffers
+# (.unmatched), which the per-node rows above do not, so it can be larger than SUM.
+STATUS_SUM_MIB='.instances[]? | select(.profile == $p) | .device_total_mib'
 
 have() { command -v "$1" >/dev/null 2>&1; }
 

@@ -63,7 +63,7 @@ docker run --rm --entrypoint llm-scheduler llm-scheduler:local --version
 docker run --rm --entrypoint sh llm-scheduler:local -c 'command -v curl || command -v wget'
 ```
 
-Expected: a version line (note: the stamp only shows your git version if `cmd/llm-scheduler` declares `var version`, not `const version`; `0.0.0-m0` means not stamped, harmless), then a path such as `/usr/bin/curl`.
+Expected: a version line (the stamp replaces the default `0.1.0` with your git version; `0.1.0` means the build was not stamped, harmless), then a path such as `/usr/bin/curl`.
 
 5. Install the deployment files.
 
@@ -169,7 +169,7 @@ cd ~/ps5-ai-datacenter-load-balancer
 CONFIG=/opt/llm-scheduler/config.yaml sh deploy/scripts/smoke.sh http://127.0.0.1:3122
 ```
 
-Expected: `PASS` for `/health`, every profile in `/v1/models`, `/running` shape; then one line per profile from `POST /api/plan` showing a placement or a reason; ends `SMOKE PASSED`. Read the plan lines: a profile that says no placement because a node is offline is normal if that node is off.
+Expected: `PASS` for `/health`, every profile in `/v1/models`, `/running` shape; then one line per profile from `POST /api/plan` showing its `action` (`serve`, `wait`, `start`, `evict`, `queue`, `backoff` or `reject`) with `placement` (the nodes) or `reason`; ends `SMOKE PASSED`. Read the plan lines: a profile that says no placement because a node is offline is normal if that node is off.
 
 2. Check what the scheduler thinks of the fleet.
 
@@ -187,7 +187,7 @@ Expected: the nodes (PS5s, `alienware-llm`, `omen-runner`) with fresh view age (
 CONFIG=/opt/llm-scheduler/config.yaml sh deploy/scripts/smoke.sh http://127.0.0.1:3122 --load tinyllama
 ```
 
-Expected: a chat reply, wall time, `tokens/s`, and a per-device memory table. If the table is empty or an error says the jq expression failed, the `/api/status` field names differ from the guess in the script: see "VERIFY list" at the end of this file.
+Expected: a chat reply, wall time, `tokens/s`, and a per-device memory table. If the table is empty, the instance has no `nodes[].memory` rows: run `curl -s http://127.0.0.1:3122/api/status | jq '.instances[] | {profile, state, nodes}'` to see what the scheduler reports.
 
 5. Unload it.
 
@@ -309,17 +309,17 @@ Nodes come from the fleet manager (design 4). Verify only:
 curl -s http://127.0.0.1:3122/api/status
 ```
 
-Per design 9 it shows: instances, placements, per-device memory from the last pre-flight, claims, queue, quarantines, backoffs, the node view and its age. Pipe through `jq .` if installed. Exact field names are not fixed by the design.
+It returns one JSON object with the keys `time`, `shutting_down`, `instances`, `queue`, `quarantines`, `backoffs` and `view`. Each instance has `profile`, `state`, `nodes` (placed nodes, each with `id` and its device `memory` rows: `name`, `model_mib`, `kv_mib`, `compute_mib`, `total_mib`), `host_memory`, `unmatched` and `device_total_mib`. The node view is `view.nodes`, with `live_budget_mib` and related budgets. Pipe through `jq .` if installed.
 
 ### Phase out an alias
 
 Alias hits are logged with the caller's address (design 8.2). Count them:
 
 ```sh
-docker logs llama-swap 2>&1 | grep -i alias | tail -50
+docker logs llama-swap 2>&1 | grep 'deprecated model alias used' | tail -50
 ```
 
-The exact log text is not specified in the design: look at the first lines it prints and refine the grep. When an alias has no hits for as long as you care to wait (log history is only as long as the container's, and a `docker compose down` resets it), remove it from `aliases:` in the config, validate, restart. Tell the caller first if the log shows one.
+Each hit is a WARN line `msg="deprecated model alias used"` with `alias=`, `profile=` and `caller=` (the caller's IP; `forwarded_for=` too when an `X-Forwarded-For` header is present). It is logged at most once per alias and caller per minute. When an alias has no hits for as long as you care to wait (log history is only as long as the container's, and a `docker compose down` resets it), remove it from `aliases:` in the config, validate, restart. Tell the caller first if the log shows one.
 
 ### Tune hold and timeouts
 
@@ -353,21 +353,3 @@ First look, always: `curl -s http://127.0.0.1:3122/api/status` and `docker logs 
 | Load timeout on a cold PS5 | Timeout is `120 s + 2 x (share of model file / link_mb_s)`; the link is 100 Mb, about 11 MB/s (design 7.6): 5 GB takes about 7 min. Waiters get `502` with the child's last log lines; the profile is backed off 60 s, doubling to 10 min | Set `load_timeout` on the profile above the cold time you measured (H check 6), or correct `link_mb_s`. Backoff clears when the profile next reaches ready; during it requests fail with `503`, so wait it out. |
 
 ---
-
-## VERIFY list (guesses to confirm against the real `/api/status`)
-
-The design does not fix the field names inside `/api/status`. The scripts guess them, each in one variable marked `# VERIFY against /api/status output`:
-
-| Script | Variable | Guess |
-|---|---|---|
-| `deploy/scripts/smoke.sh` | `STATUS_DEVICE_TSV` | `.instances[].profile`, `.devices[]` with `node`, `model_mib`, `kv_mib`, `compute_mib` |
-| `deploy/scripts/measure-needs.sh` | `STATUS_DEVICE_TSV` | same as above |
-| `deploy/scripts/measure-needs.sh` | `STATUS_SUM_MIB` | `.instances[].sum_mib` |
-
-Check once, then fix the variables:
-
-```sh
-curl -s http://127.0.0.1:3122/api/status | jq .
-```
-
-Also unverified because other code is in progress: `/api/plan` output text, the alias log line, and whether `cmd/llm-scheduler` has `var version`.
