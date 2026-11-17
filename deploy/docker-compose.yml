@@ -1,0 +1,37 @@
+# llm-scheduler: replaces llama-swap on the OMEN (design section 10).
+# Deploy to /opt/llm-scheduler (owner admin), next to the old /opt/llama-swap.
+# NEVER run this and llama-swap at the same time: a worker serves one client.
+name: llm-scheduler
+
+services:
+  llm-scheduler:
+    image: llm-scheduler:local        # built by deploy/Dockerfile, see docs/runbook.md
+    # Must stay "llama-swap": the hub finds the container by that name prefix.
+    container_name: llama-swap
+    restart: unless-stopped
+    init: true                        # reaps children; each child has its own process group
+    stop_grace_period: 330s           # shutdown_grace (300s) + 30s, design 8.6
+    ports:
+      - "0.0.0.0:3122:8080"           # same binding as llama-swap today
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./config.yaml:/etc/llm-scheduler/config.yaml:ro
+      - /srv/llama-swap/models:/models:ro
+      # No /run/avahi-daemon mount: the scheduler uses IP addresses only.
+    networks:
+      - sched
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+networks:
+  sched:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24       # the host firewall rule for :8090 names this subnet
