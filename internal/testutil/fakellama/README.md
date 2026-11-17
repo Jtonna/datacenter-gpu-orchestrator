@@ -42,3 +42,10 @@ loaded, every endpoint answers 503 `{"error":{"message":"Loading model",...}}`.
 
 By default SIGTERM or interrupt exits 0 at once. The SIGTERM tests are skipped
 on Windows, where Go cannot deliver that signal to a child.
+
+## Additions for the end-to-end tests
+
+| Item | Effect |
+|---|---|
+| `FAKELLAMA_LIST_DEVICES_HANG_ADDR` | Comma-separated `--rpc` endpoints. `--list-devices` blocks forever only when one of its `--rpc` endpoints is listed (one busy worker among several). |
+| `fakellama --nvidia-smi [totalMiB [usedMiB]]` | Prints `total, used` (default `8151, 0`) and exits: a stand-in for the `nvidia-smi` command in `local_probe_cmd`. |

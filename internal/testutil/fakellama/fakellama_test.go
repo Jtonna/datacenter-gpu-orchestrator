@@ -532,3 +532,30 @@ func TestOtherEndpoints(t *testing.T) {
 		}
 	})
 }
+
+func TestFakeNvidiaSmiMode(t *testing.T) {
+	p := startProc(t, nil, "--nvidia-smi", "8151", "500")
+	<-p.done
+	if got := strings.TrimSpace(p.stdout.String()); got != "8151, 500" {
+		t.Fatalf("stdout = %q, want %q", got, "8151, 500")
+	}
+	p = startProc(t, nil, "--nvidia-smi")
+	<-p.done
+	if got := strings.TrimSpace(p.stdout.String()); got != "8151, 0" {
+		t.Fatalf("defaults: stdout = %q", got)
+	}
+}
+
+func TestListDevicesHangOnlyForNamedEndpoints(t *testing.T) {
+	env := map[string]string{"FAKELLAMA_LIST_DEVICES_HANG_ADDR": "10.0.0.2:50052, 10.0.0.9:50052"}
+	hung := startProc(t, env, "--rpc", "10.0.0.2:50052", "--list-devices")
+	ok := startProc(t, env, "--rpc", "10.0.0.4:50052", "--list-devices")
+	ok.waitExit(t)
+	if !strings.Contains(ok.stdout.String(), "RPC0: 10.0.0.4:50052") {
+		t.Fatalf("unlisted endpoint should answer, got %q", ok.stdout.String())
+	}
+	time.Sleep(300 * time.Millisecond)
+	if hung.exited() {
+		t.Fatal("listed endpoint should hang")
+	}
+}

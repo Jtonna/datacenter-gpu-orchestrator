@@ -1,10 +1,206 @@
 // Command llm-scheduler is the cluster scheduler (see docs/design.md).
+//
+// Usage:
+//
+//	llm-scheduler [--config <path>] [--check-config] [--version]
+//
+// It logs to stderr and exits 0 after a clean shutdown on SIGTERM or
+// interrupt (design 8.6).
 package main
 
-import "fmt"
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"syscall"
+	"time"
 
-const version = "0.0.0-m0"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/api"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/config"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/fleet"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/gguf"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/instance"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/scheduler"
+)
 
-func main() {
-	fmt.Println("llm-scheduler", version)
+// version is set at build time with -ldflags "-X main.version=...".
+var version = "0.1.0"
+
+const (
+	defaultConfig = "/etc/llm-scheduler/config.yaml"
+	// Children listen on 127.0.0.1 in this range (design 7.4 example: 5801).
+	childPortLo, childPortHi = 5800, 5999
+	// apiGrace is how long the HTTP server may take to close its remaining
+	// connections once the scheduler has finished shutting down.
+	apiGrace = 5 * time.Second
+	// shutdownSlack is added to shutdown_grace for the scheduler's own
+	// SIGTERM-to-SIGKILL escalation before the shutdown context gives up.
+	shutdownSlack = 30 * time.Second
+)
+
+func main() { os.Exit(realMain(os.Args[1:], os.Stdout, os.Stderr)) }
+
+func realMain(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("llm-scheduler", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	cfgPath := fs.String("config", defaultConfig, "path to the YAML config file")
+	check := fs.Bool("check-config", false, "validate the config, print any errors, and exit 0 (valid) or 1")
+	showVersion := fs.Bool("version", false, "print the version and exit")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	if *showVersion {
+		fmt.Fprintln(stdout, "llm-scheduler", version)
+		return 0
+	}
+	cfg, err := config.Load(*cfgPath)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if *check {
+		fmt.Fprintf(stdout, "config ok: %d profiles\n", len(cfg.Profiles))
+		return 0
+	}
+	logger := slog.New(slog.NewTextHandler(stderr, nil))
+	return serve(cfg, logger)
+}
+
+// warnSlidingWindow is the design section 6 startup warning: a kind: llama
+// profile with no needs_mib whose model declares a sliding window gets an
+// estimate that is several times too high.
+func warnSlidingWindow(cfg *config.Config, log *slog.Logger) {
+	for _, p := range cfg.ProfilesWithoutNeedsMiB() {
+		path := filepath.Join(cfg.ModelsDir, p.Model)
+		meta, err := gguf.ReadMeta(path)
+		if err != nil {
+			log.Warn("cannot read GGUF metadata; the memory estimate will fail for this profile", "profile", p.Name, "model", path, "err", err)
+			continue
+		}
+		if meta.SlidingWindow {
+			log.Warn("profile has no needs_mib and its model uses sliding-window attention; the memory estimate is several times too high, so measure the model once and set needs_mib (design 7.2, runbook)",
+				"profile", p.Name, "model", path)
+		}
+	}
+}
+
+// checkFleet logs a clear error when the fleet console cannot be reached at
+// startup. The scheduler keeps running: the local node still works and the
+// fleet client keeps retrying.
+func checkFleet(ctx context.Context, cfg *config.Config, log *slog.Logger) {
+	if cfg.Fleet.URL == "" {
+		log.Error("no fleet.url configured: only the local node can be used")
+		return
+	}
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(cctx, http.MethodGet, cfg.Fleet.URL+"/api/fleet", nil)
+	if err == nil {
+		var resp *http.Response
+		if resp, err = http.DefaultClient.Do(req); err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return
+			}
+			err = fmt.Errorf("HTTP %s", resp.Status)
+		}
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	log.Error("cannot reach the fleet console; remote nodes are unavailable until it answers (check the host firewall rule for port 8090). Still running: the local node works and the connection is retried",
+		"url", cfg.Fleet.URL, "err", err)
+}
+
+func serve(cfg *config.Config, log *slog.Logger) int {
+	warnSlidingWindow(cfg, log)
+
+	ports, err := instance.NewPortAllocator(childPortLo, childPortHi)
+	if err != nil {
+		log.Error("port allocator", "err", err)
+		return 1
+	}
+	ln, err := net.Listen("tcp", cfg.Listen)
+	if err != nil {
+		log.Error("cannot listen", "addr", cfg.Listen, "err", err)
+		return 1
+	}
+
+	bg, bgCancel := context.WithCancel(context.Background())
+	defer bgCancel()
+	fc := fleet.New(cfg, fleet.Options{Logger: log})
+	fleetDone := make(chan struct{})
+	go func() { fc.Run(bg); close(fleetDone) }()
+	go checkFleet(bg, cfg, log)
+
+	sched, err := scheduler.New(cfg, scheduler.Options{
+		View:     fc,
+		Prober:   &instance.ExecProber{ServerBin: cfg.Defaults.ServerBin},
+		Launcher: &instance.ProcessLauncher{Ports: ports},
+		Logger:   log,
+	})
+	if err != nil {
+		log.Error("scheduler", "err", err)
+		ln.Close()
+		return 1
+	}
+	schedDone := make(chan struct{})
+	go func() { sched.Run(bg); close(schedDone) }()
+
+	apiSrv := api.New(cfg, sched, api.Options{Logger: log})
+	httpSrv := &http.Server{Handler: apiSrv, ReadHeaderTimeout: 10 * time.Second}
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- httpSrv.Serve(ln) }()
+	log.Info("llm-scheduler started", "version", version, "listen", ln.Addr().String(), "profiles", len(cfg.Profiles))
+
+	sigs := make(chan os.Signal, 2)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	code := 0
+	select {
+	case s := <-sigs:
+		log.Info("shutting down", "signal", s.String())
+	case err := <-serveErr:
+		log.Error("HTTP server failed", "err", err)
+		code = 1
+	}
+
+	// Design 8.6: stop accepting, then let the scheduler answer waiters,
+	// wait for in-flight requests up to shutdown_grace, and stop children.
+	// A second signal kills everything at once.
+	ln.Close()
+	grace := cfg.Defaults.ShutdownGrace + shutdownSlack
+	sctx, scancel := context.WithTimeout(context.Background(), grace)
+	defer scancel()
+	go func() {
+		select {
+		case <-sigs:
+			log.Warn("second signal: stopping everything at once")
+			scancel()
+		case <-sctx.Done():
+		}
+	}()
+	if err := apiSrv.Shutdown(sctx); err != nil {
+		log.Warn("shutdown did not finish within its grace; children were killed", "err", err)
+	}
+	hctx, hcancel := context.WithTimeout(context.Background(), apiGrace)
+	defer hcancel()
+	if err := httpSrv.Shutdown(hctx); err != nil {
+		httpSrv.Close()
+	}
+	bgCancel()
+	<-schedDone
+	<-fleetDone
+	log.Info("stopped")
+	return code
 }

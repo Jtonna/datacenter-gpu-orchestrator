@@ -31,6 +31,10 @@ type config struct {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--nvidia-smi" {
+		fakeNvidiaSmi(os.Args[2:])
+		return
+	}
 	cfg := parseArgs(os.Args[1:])
 	mode := "serve"
 	if cfg.listDevices {
@@ -44,6 +48,21 @@ func main() {
 		return
 	}
 	serve(cfg)
+}
+
+// fakeNvidiaSmi stands in for `nvidia-smi --query-gpu=memory.total,memory.used
+// --format=csv,noheader,nounits` (the scheduler's local_probe_cmd, design 5.1):
+// `fakellama --nvidia-smi [totalMiB [usedMiB]]` prints "total, used" and exits.
+// The defaults are an empty 8151 MiB card.
+func fakeNvidiaSmi(args []string) {
+	total, used := 8151, 0
+	if len(args) > 0 {
+		total, _ = strconv.Atoi(args[0])
+	}
+	if len(args) > 1 {
+		used, _ = strconv.Atoi(args[1])
+	}
+	fmt.Printf("%d, %d\n", total, used)
 }
 
 func parseArgs(args []string) config {
@@ -170,7 +189,7 @@ type device struct {
 }
 
 func runListDevices(cfg config) {
-	if os.Getenv("FAKELLAMA_LIST_DEVICES_HANG") != "" {
+	if os.Getenv("FAKELLAMA_LIST_DEVICES_HANG") != "" || hangsFor(cfg.rpc) {
 		select {} // a busy rpc-server blocks the real client forever
 	}
 	if code := envInt("FAKELLAMA_LIST_DEVICES_EXIT", 0); code != 0 {
@@ -178,6 +197,21 @@ func runListDevices(cfg config) {
 		os.Exit(code)
 	}
 	printDevices(devices(cfg))
+}
+
+// hangsFor reports whether any --rpc endpoint is listed in
+// FAKELLAMA_LIST_DEVICES_HANG_ADDR (comma separated): one busy worker among
+// several answering ones.
+func hangsFor(rpc []string) bool {
+	for _, want := range strings.Split(os.Getenv("FAKELLAMA_LIST_DEVICES_HANG_ADDR"), ",") {
+		want = strings.TrimSpace(want)
+		for _, have := range rpc {
+			if want != "" && want == have {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // devices returns FAKELLAMA_DEVICES ("NAME:totalMiB:freeMiB,...", or "none"),
