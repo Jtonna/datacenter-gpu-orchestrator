@@ -1,0 +1,1 @@
+{"model": "gemma-4-12b:local", "t_sent": "08:23:45", "status": 200, "total_s": 23.86, "ttft_s": 0.2, "chunks": 799, "predicted_n": 800, "gen_tps": 33.66, "prompt_n": 34, "prompt_tps": 322.15, "text": "Lighthouse keeper finds a mysterious map.\nLong, detailed story.\nAt least 700 words.\n\n    *   *Character:* Elias Thorne. "}

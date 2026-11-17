@@ -1,0 +1,90 @@
+{"t":"16:29:54.05","inst":["tinyllama=ready inf=0 victim_of="],"q":[]}
+{"t":"16:29:55.06","inst":[],"q":[{"p":"qwen3.5-4b:t2","claimed":true,"claim":["b4:45:06:ca:2c:8f"],"victims":[],"w":1}]}
+{"t":"16:29:56.07","inst":[],"q":[{"p":"qwen3.5-4b:t2","claimed":true,"claim":["b4:45:06:ca:2c:8f"],"victims":[],"w":1}]}
+{"t":"16:29:57.08","inst":[],"q":[{"p":"qwen3.5-4b:t2","claimed":true,"claim":["b4:45:06:ca:2c:8f"],"victims":[],"w":1}]}
+{"t":"16:29:58.09","inst":[],"q":[{"p":"qwen3.5-4b:t2","claimed":true,"claim":["b4:45:06:ca:2c:8f"],"victims":[],"w":1}]}
+{"t":"16:29:59.09","inst":[],"q":[{"p":"qwen3.5-4b:t2","claimed":true,"claim":["b4:45:06:ca:2c:8f"],"victims":[],"w":1}]}
+{"t":"16:30:00.10","inst":[],"q":[{"p":"qwen3.5-4b:t2","claimed":true,"claim":["b4:45:06:ca:2c:8f"],"victims":[],"w":1}]}
+{"t":"16:30:01.11","inst":[],"q":[{"p":"qwen3.5-4b:t2","claimed":true,"claim":["b4:45:06:ca:2c:8f"],"victims":[],"w":1}]}
+{"t":"16:30:02.12","inst":[],"q":[{"p":"qwen3.5-4b:t2","claimed":true,"claim":["b4:45:06:ca:2c:8f"],"victims":[],"w":1}]}
+{"t":"16:30:03.13","inst":["qwen3.5-4b:t2=starting/loading inf=0 victim_of="],"q":[]}
+{"t":"16:30:04.13","inst":["qwen3.5-4b:t2=starting/loading inf=0 victim_of="],"q":[]}
+{"t":"16:30:05.14","inst":["qwen3.5-4b:t2=starting/loading inf=0 victim_of="],"q":[]}
+{"t":"16:30:06.15","inst":["qwen3.5-4b:t2=starting/loading inf=0 victim_of="],"q":[]}
+{"t":"16:30:07.16","inst":["qwen3.5-4b:t2=starting/loading inf=0 victim_of="],"q":[]}
+{"t":"16:30:08.17","inst":["qwen3.5-4b:t2=starting/loading inf=0 victim_of="],"q":[]}
+{"t":"16:30:09.17","inst":["qwen3.5-4b:t2=starting/loading inf=0 victim_of="],"q":[]}
+{"t":"16:30:10.18","inst":["qwen3.5-4b:t2=ready inf=1 victim_of="],"q":[]}
+{"t":"16:30:11.19","inst":["qwen3.5-4b:t2=ready inf=1 victim_of="],"q":[]}
+{"t":"16:30:12.20","inst":["qwen3.5-4b:t2=ready inf=1 victim_of="],"q":[]}
+{"t":"16:30:13.21","inst":["qwen3.5-4b:t2=ready inf=1 victim_of="],"q":[]}
+{"t":"16:30:14.22","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:15.23","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:16.24","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:17.25","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:18.25","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:19.26","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:20.27","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:21.28","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:22.29","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:23.30","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:24.31","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:25.32","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:26.33","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:27.34","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:28.35","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:29.36","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:30.37","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:31.38","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:32.39","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:33.39","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:34.40","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:35.41","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:36.42","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:37.43","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:38.44","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:39.45","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:40.46","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:41.46","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:42.47","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:43.48","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:44.49","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:45.50","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:46.51","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:47.52","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:48.53","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:49.54","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:50.55","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:51.56","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:52.57","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:53.58","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:54.59","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:55.60","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:56.60","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:57.61","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:58.62","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:30:59.63","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:31:00.64","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:31:01.65","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:31:02.66","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:31:03.67","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:31:04.67","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:31:05.68","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:31:06.69","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:31:07.70","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:31:08.71","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:31:09.72","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:31:10.73","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:31:11.74","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:31:12.75","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:31:13.76","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:31:14.77","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:31:15.78","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:31:16.78","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:31:17.79","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:31:18.80","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:31:19.81","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:31:20.82","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:31:21.83","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:31:22.84","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}
+{"t":"16:31:23.85","inst":["qwen3.5-4b:t2=ready inf=0 victim_of="],"q":[]}

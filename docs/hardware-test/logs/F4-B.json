@@ -1,0 +1,1 @@
+{"model": "tinyllama:local", "t_sent": "08:23:48", "status": 200, "total_s": 23.63, "ttft_s": 23.61, "chunks": 10, "predicted_n": 9, "gen_tps": 336.77, "prompt_n": 25, "prompt_tps": 1099.48, "text": "Hey, let's chat!"}

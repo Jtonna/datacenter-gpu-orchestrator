@@ -1,0 +1,11 @@
+== tinyllama:nonode
+code=000 t=10.002268
+cat: /tmp/body.txt: No such file or directory
+
+== no-such-model
+code=404 t=0.000592
+{"error":{"code":"model_not_found","message":"unknown model: model \"no-such-model\" not found","param":null,"reason":"unknown model","type":"invalid_request_error"}}
+== tinyllama:huge
+Retry-After: 30
+code=503 t=0.000532
+{"error":{"code":503,"message":"does not fit: profile tinyllama:huge needs 99999 MiB (fit rule requires 99999 MiB) but the cluster can hold at most 42659 MiB","param":null,"reason":"does not fit","type":"server_error"}}

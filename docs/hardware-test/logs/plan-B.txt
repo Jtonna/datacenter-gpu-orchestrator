@@ -1,0 +1,34 @@
+gemma-4-12b	{"action":"start","alias":false,"capacity_mib":0,"instance":"","measured":true,"model":"gemma-4-12b","need_mib":7800,"placement":[{"addr":"10.0.0.101:50052","budget_mib":12626,"id":"70:66:2a:a9:a7:65","local":false,"memory":[]}],"reason":"","required_mib":0,"victims":[]}
+ [200]
+gemma-4-12b:2ps5	{"action":"start","alias":false,"capacity_mib":0,"instance":"","measured":false,"model":"gemma-4-12b:2ps5","need_mib":12040,"placement":[{"addr":"10.0.0.122:50052","budget_mib":12656,"id":"c0:15:1b:3d:6a:7a","local":false,"memory":[]},{"addr":"10.0.0.101:50052","budget_mib":12626,"id":"70:66:2a:a9:a7:65","local":false,"memory":[]}],"reason":"","required_mib":0,"victims":[]}
+ [200]
+gemma-4-12b:2ps5-5050	{"action":"start","alias":false,"capacity_mib":0,"instance":"","measured":false,"model":"gemma-4-12b:2ps5-5050","need_mib":12040,"placement":[{"addr":"10.0.0.122:50052","budget_mib":12656,"id":"c0:15:1b:3d:6a:7a","local":false,"memory":[]},{"addr":"10.0.0.101:50052","budget_mib":12626,"id":"70:66:2a:a9:a7:65","local":false,"memory":[]}],"reason":"","required_mib":0,"victims":[]}
+ [200]
+gemma-4-12b:64k	{"action":"start","alias":false,"capacity_mib":0,"instance":"","measured":true,"model":"gemma-4-12b:64k","need_mib":14000,"placement":[{"addr":"10.0.0.122:50052","budget_mib":12656,"id":"c0:15:1b:3d:6a:7a","local":false,"memory":[]},{"addr":"10.0.0.101:50052","budget_mib":12626,"id":"70:66:2a:a9:a7:65","local":false,"memory":[]}],"reason":"","required_mib":0,"victims":[]}
+ [200]
+gemma-4-12b:64k-ps5a	{"action":"start","alias":false,"capacity_mib":0,"instance":"","measured":false,"model":"gemma-4-12b:64k-ps5a","need_mib":29096,"placement":[{"addr":"10.0.0.101:50052","budget_mib":12626,"id":"70:66:2a:a9:a7:65","local":false,"memory":[]}],"reason":"","required_mib":0,"victims":[]}
+ [200]
+gemma-4-12b:64k-ps5b	{"action":"start","alias":false,"capacity_mib":0,"instance":"","measured":false,"model":"gemma-4-12b:64k-ps5b","need_mib":29096,"placement":[{"addr":"10.0.0.122:50052","budget_mib":12656,"id":"c0:15:1b:3d:6a:7a","local":false,"memory":[]}],"reason":"","required_mib":0,"victims":[]}
+ [200]
+gemma-4-12b:ps5-aw	{"action":"start","alias":false,"capacity_mib":0,"instance":"","measured":false,"model":"gemma-4-12b:ps5-aw","need_mib":12040,"placement":[{"addr":"10.0.0.122:50052","budget_mib":12656,"id":"c0:15:1b:3d:6a:7a","local":false,"memory":[]},{"addr":"10.0.0.3:50052","budget_mib":7649,"id":"b4:45:06:ca:2c:8f","local":false,"memory":[]}],"reason":"","required_mib":0,"victims":[]}
+ [200]
+gemma-4-12b:ps5a	{"action":"start","alias":false,"capacity_mib":0,"instance":"","measured":false,"model":"gemma-4-12b:ps5a","need_mib":12040,"placement":[{"addr":"10.0.0.101:50052","budget_mib":12626,"id":"70:66:2a:a9:a7:65","local":false,"memory":[]}],"reason":"","required_mib":0,"victims":[]}
+ [200]
+gemma-4-12b:ps5b	{"action":"start","alias":false,"capacity_mib":0,"instance":"","measured":false,"model":"gemma-4-12b:ps5b","need_mib":12040,"placement":[{"addr":"10.0.0.122:50052","budget_mib":12656,"id":"c0:15:1b:3d:6a:7a","local":false,"memory":[]}],"reason":"","required_mib":0,"victims":[]}
+ [200]
+gemma-4-12b:t1	{"action":"start","alias":false,"capacity_mib":0,"instance":"","measured":true,"model":"gemma-4-12b:t1","need_mib":7800,"placement":[{"addr":"10.0.0.101:50052","budget_mib":12626,"id":"70:66:2a:a9:a7:65","local":false,"memory":[]}],"reason":"","required_mib":0,"victims":[]}
+ [200]
+qwen3.5-4b	{"action":"start","alias":false,"capacity_mib":0,"instance":"","measured":false,"model":"qwen3.5-4b","need_mib":4986,"placement":[{"addr":"10.0.0.101:50052","budget_mib":12626,"id":"70:66:2a:a9:a7:65","local":false,"memory":[]}],"reason":"","required_mib":0,"victims":[]}
+ [200]
+qwen3.5-4b:t1	{"action":"start","alias":false,"capacity_mib":0,"instance":"","measured":false,"model":"qwen3.5-4b:t1","need_mib":4986,"placement":[{"addr":"10.0.0.101:50052","budget_mib":12626,"id":"70:66:2a:a9:a7:65","local":false,"memory":[]}],"reason":"","required_mib":0,"victims":[]}
+ [200]
+tinyllama	{"action":"start","alias":false,"capacity_mib":0,"instance":"","measured":false,"model":"tinyllama","need_mib":682,"placement":[{"addr":"10.0.0.101:50052","budget_mib":12626,"id":"70:66:2a:a9:a7:65","local":false,"memory":[]}],"reason":"","required_mib":0,"victims":[]}
+ [200]
+tinyllama:huge	{"action":"reject","alias":false,"capacity_mib":42659,"instance":"","measured":true,"model":"tinyllama:huge","need_mib":99999,"placement":[],"reason":"placer: need 99999 MiB (requires 99999 MiB) exceeds cluster capacity 42659 MiB","required_mib":99999,"victims":[]}
+ [200]
+tinyllama:local	{"action":"start","alias":false,"capacity_mib":0,"instance":"","measured":false,"model":"tinyllama:local","need_mib":682,"placement":[{"addr":"","budget_mib":7885,"id":"omen-runner","local":true,"memory":[]}],"reason":"","required_mib":0,"victims":[]}
+ [200]
+tinyllama:nonode	{"action":"queue","alias":false,"capacity_mib":0,"instance":"","measured":false,"model":"tinyllama:nonode","need_mib":682,"placement":[],"reason":"placer: forced nodes unavailable: no-such-node","required_mib":0,"victims":[]}
+ [200]
+tinyllama:t1	{"action":"start","alias":false,"capacity_mib":0,"instance":"","measured":false,"model":"tinyllama:t1","need_mib":682,"placement":[{"addr":"10.0.0.101:50052","budget_mib":12626,"id":"70:66:2a:a9:a7:65","local":false,"memory":[]}],"reason":"","required_mib":0,"victims":[]}
+ [200]

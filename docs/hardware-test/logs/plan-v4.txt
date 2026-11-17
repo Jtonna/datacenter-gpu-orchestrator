@@ -1,0 +1,4 @@
+gemma-4-12b {"action":"start","need_mib":7800,"placement":["10.0.0.250:50052/12574"],"reason":""}
+gemma-4-12b:64k {"action":"start","need_mib":8600,"placement":["10.0.0.250:50052/12574"],"reason":""}
+qwen3.5-4b {"action":"start","need_mib":4986,"placement":["10.0.0.250:50052/12574"],"reason":""}
+tinyllama {"action":"start","need_mib":682,"placement":["10.0.0.250:50052/12574"],"reason":""}

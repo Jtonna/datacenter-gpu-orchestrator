@@ -1,0 +1,31 @@
+# llm-scheduler hardware test. Based on deploy/docker-compose.yml + override example.
+name: llm-scheduler-test
+services:
+  llm-scheduler:
+    image: llm-scheduler:test
+    container_name: llm-scheduler-test
+    restart: "no"
+    init: true
+    stop_grace_period: 330s
+    ports:
+      - "0.0.0.0:3199:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./config.yaml:/etc/llm-scheduler/config.yaml:ro
+      - /srv/llama-swap/models:/models:ro
+    networks:
+      - sched
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+networks:
+  sched:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24

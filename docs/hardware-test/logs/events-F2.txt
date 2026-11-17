@@ -1,0 +1,20 @@
+data: {"data":"[{\"id\":\"gemma-4-12b\",\"state\":\"starting\"},{\"id\":\"gemma-4-12b:2ps5\",\"state\":\"stopped\"},{\"id\":\"gemma-4-12b:2ps5-5050\",\"state\":\"stopped\"},{\"id\":\"gemma-4-12b:64k\",\"state\":\"stopped\"},{\"id\":\"gemma-4-12b:64k-ps5a\",\"state\":\"stopped\"},{\"id\":\"gemma-4-12b:64k-ps5b\",\"state\":\"stopped\"},{\"id\":\"gemma-4-12b:ps5-aw\",\"state\":\"stopped\"},{\"id\":\"gemma-4-12b:ps5a\",\"state\":\"stopped\"},{\"id\":\"gemma-4-12b:ps5b\",\"state\":\"stopped\"},{\"id\":\"gemma-4-12b:t1\",\"state\":\"stopped\"},{\"id\":\"qwen3.5-4b\",\"state\":\"ready\",\"readySince\":\"2026-11-17T15:52:17.569Z\"},{\"id\":\"qwen3.5-4b:t1\",\"state\":\"stopped\"},{\"id\":\"tinyllama\",\"state\":\"stopped\"},{\"id\":\"tinyllama:huge\",\"state\":\"stopped\"},{\"id\":\"tinyllama:local\",\"state\":\"stopped\"},{\"id\":\"tinyllama:nonode\",\"state\":\"stopped\"},{\"id\":\"tinyllama:t1\",\"state\":\"stopped\"}]","type":"modelStatus"}
+
+data: {"data":"{\"operation\":\"snapshot\",\"requests\":[]}","type":"inflight"}
+
+data: {"data":"[{\"id\":\"gemma-4-12b\",\"state\":\"starting\"},{\"id\":\"gemma-4-12b:2ps5\",\"state\":\"stopped\"},{\"id\":\"gemma-4-12b:2ps5-5050\",\"state\":\"stopped\"},{\"id\":\"gemma-4-12b:64k\",\"state\":\"stopped\"},{\"id\":\"gemma-4-12b:64k-ps5a\",\"state\":\"stopped\"},{\"id\":\"gemma-4-12b:64k-ps5b\",\"state\":\"stopped\"},{\"id\":\"gemma-4-12b:ps5-aw\",\"state\":\"stopped\"},{\"id\":\"gemma-4-12b:ps5a\",\"state\":\"stopped\"},{\"id\":\"gemma-4-12b:ps5b\",\"state\":\"stopped\"},{\"id\":\"gemma-4-12b:t1\",\"state\":\"stopped\"},{\"id\":\"qwen3.5-4b\",\"state\":\"ready\",\"readySince\":\"2026-11-17T15:52:17.569Z\"},{\"id\":\"qwen3.5-4b:t1\",\"state\":\"stopped\"},{\"id\":\"tinyllama\",\"state\":\"starting\"},{\"id\":\"tinyllama:huge\",\"state\":\"stopped\"},{\"id\":\"tinyllama:local\",\"state\":\"stopped\"},{\"id\":\"tinyllama:nonode\",\"state\":\"stopped\"},{\"id\":\"tinyllama:t1\",\"state\":\"stopped\"}]","type":"modelStatus"}
+
+data: {"data":"[{\"id\":\"gemma-4-12b\",\"state\":\"starting\"},{\"id\":\"gemma-4-12b:2ps5\",\"state\":\"stopped\"},{\"id\":\"gemma-4-12b:2ps5-5050\",\"state\":\"stopped\"},{\"id\":\"gemma-4-12b:64k\",\"state\":\"stopped\"},{\"id\":\"gemma-4-12b:64k-ps5a\",\"state\":\"stopped\"},{\"id\":\"gemma-4-12b:64k-ps5b\",\"state\":\"stopped\"},{\"id\":\"gemma-4-12b:ps5-aw\",\"state\":\"stopped\"},{\"id\":\"gemma-4-12b:ps5a\",\"state\":\"stopped\"},{\"id\":\"gemma-4-12b:ps5b\",\"state\":\"stopped\"},{\"id\":\"gemma-4-12b:t1\",\"state\":\"stopped\"},{\"id\":\"qwen3.5-4b\",\"state\":\"ready\",\"readySince\":\"2026-11-17T15:52:17.569Z\"},{\"id\":\"qwen3.5-4b:t1\",\"state\":\"stopped\"},{\"id\":\"tinyllama\",\"state\":\"ready\",\"readySince\":\"2026-11-17T15:57:02.809Z\"},{\"id\":\"tinyllama:huge\",\"state\":\"stopped\"},{\"id\":\"tinyllama:local\",\"state\":\"stopped\"},{\"id\":\"tinyllama:nonode\",\"state\":\"stopped\"},{\"id\":\"tinyllama:t1\",\"state\":\"stopped\"}]","type":"modelStatus"}
+
+data: {"data":"{\"operation\":\"upsert\",\"request\":{\"id\":\"11\",\"model\":\"tinyllama\",\"timestamp\":\"2026-11-17T15:57:02.809Z\"}}","type":"inflight"}
+
+data: {"data":"{}","type":"activity"}
+
+data: {"data":"{\"id\":\"11\",\"operation\":\"remove\"}","type":"inflight"}
+
+: ping
+
+: ping
+
+: ping
+
