@@ -1,0 +1,116 @@
+package scheduler
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/config"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/estimate"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/gguf"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/placer"
+)
+
+// Clock is the time source of the scheduler. The core only calls Now; the
+// runner uses AfterFunc to wake itself at the core's next deadline.
+type Clock interface {
+	Now() time.Time
+	// AfterFunc calls f in its own goroutine once d has passed. The
+	// returned function cancels the call if it has not happened yet.
+	AfterFunc(d time.Duration, f func()) (stop func() bool)
+}
+
+// RealClock is the wall clock.
+type RealClock struct{}
+
+// Now implements Clock.
+func (RealClock) Now() time.Time { return time.Now() }
+
+// AfterFunc implements Clock.
+func (RealClock) AfterFunc(d time.Duration, f func()) func() bool {
+	return time.AfterFunc(d, f).Stop
+}
+
+// NeedInfo is a profile's memory need plus the model file size used for
+// the load timeout (design 7.6).
+type NeedInfo struct {
+	Need      placer.Need
+	FileBytes int64
+}
+
+// NeedProvider gives a profile's memory need (design 7.2). An error is a
+// load failure for that profile (502 and backoff), never a crash. It is
+// called from the core goroutine; results that succeed are cached by the
+// core for the life of the scheduler.
+type NeedProvider interface {
+	Need(p *core.Profile) (NeedInfo, error)
+}
+
+// NeedFunc adapts a function to NeedProvider.
+type NeedFunc func(p *core.Profile) (NeedInfo, error)
+
+// Need implements NeedProvider.
+func (f NeedFunc) Need(p *core.Profile) (NeedInfo, error) { return f(p) }
+
+// ConfigNeeds is the production NeedProvider: needs_mib when set (measured),
+// else weights + KV from the model's GGUF header (estimated). For kind:
+// command the need is needs_mib and the file size is 0.
+type ConfigNeeds struct {
+	Cfg *config.Config
+
+	mu    sync.Mutex
+	cache map[string]NeedInfo
+}
+
+// Need implements NeedProvider.
+func (c *ConfigNeeds) Need(p *core.Profile) (NeedInfo, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if info, ok := c.cache[p.Name]; ok {
+		return info, nil
+	}
+	info, err := c.compute(p)
+	if err != nil {
+		return NeedInfo{}, err
+	}
+	if c.cache == nil {
+		c.cache = map[string]NeedInfo{}
+	}
+	c.cache[p.Name] = info
+	return info, nil
+}
+
+func (c *ConfigNeeds) compute(p *core.Profile) (NeedInfo, error) {
+	if p.Kind == core.KindCommand {
+		return NeedInfo{Need: placer.Measured(p.NeedsMiB)}, nil
+	}
+	path := filepath.Join(c.Cfg.ModelsDir, p.Model)
+	if p.NeedsMiB > 0 {
+		st, err := os.Stat(path)
+		if err != nil {
+			return NeedInfo{}, fmt.Errorf("model file: %w", err)
+		}
+		return NeedInfo{Need: placer.Measured(p.NeedsMiB), FileBytes: st.Size()}, nil
+	}
+	meta, err := gguf.ReadMeta(path)
+	if err != nil {
+		return NeedInfo{}, fmt.Errorf("model file: %w", err)
+	}
+	elems, err := meta.KVElemsPerToken()
+	if err != nil {
+		return NeedInfo{}, fmt.Errorf("model file %s: %w", path, err)
+	}
+	parallel := max(p.Parallel, 1)
+	quant := p.KVQuant
+	if quant == "" {
+		quant = "f16"
+	}
+	kv, err := estimate.KVMiB(1, p.Ctx*parallel, elems, 0, quant)
+	if err != nil {
+		return NeedInfo{}, err
+	}
+	return NeedInfo{Need: placer.Estimated(estimate.NeedMiB(meta.FileSize, kv)), FileBytes: meta.FileSize}, nil
+}

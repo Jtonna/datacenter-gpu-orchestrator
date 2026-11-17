@@ -654,7 +654,28 @@ Rules that hold throughout:
 | A non-streaming request hangs | Not detected in v1, other than by node loss. `POST /api/unload` with `force` clears it. |
 | Fleet feed down | Reconnect SSE with backoff; poll `GET /api/fleet` every 5 s meanwhile. View age is the time since the last byte from the feed, pings included. Loaded instances keep serving. Past `stale_after`, remote nodes are not eligible; the local node still is. |
 
-### 8.5 Shutdown
+### 8.5 Clarifications settled during the build
+
+These resolve cases the rules above left open. Each is marked `// DESIGN:` in
+`internal/scheduler`.
+
+1. A returned instance (7.5) does not clear its nodes' pre-flight overrides
+   when it releases them; only a release after a child actually ran does.
+2. The queue pass repeats until nothing changes, so an older entry sees
+   capacity that a younger entry gave back in the same event.
+3. For step 5, "eligible" does not include the `min_share` test: a node held by
+   a victim has almost no live budget and would otherwise void every claim.
+4. `drain_after` is measured on the same clock as `queue_timeout`, including
+   its pause while any instance is `starting`.
+5. The 30 s node-loss counter is cleared while the fleet view is stale.
+6. Node loss while an instance is `starting`: its waiters go back into the
+   queue (keeping their place); the profile is not backed off.
+7. If the fetch after settling fails, the node is offline, and it is fetched
+   again after another settle period.
+8. `POST /api/unload` on a `starting` instance is refused without `force`;
+   with `force` its waiters get `503`.
+
+### 8.6 Shutdown
 
 On SIGTERM: stop accepting; answer every queued waiter `503`; stop `starting`
 instances and answer their waiters `503`; wait for in-flight requests up to
@@ -718,7 +739,7 @@ TDD: for every task, tests are written and seen failing before the code.
   estimate maths, command building (exact argument order), `--list-devices`
   output parsing, placer (table-driven: tiers, pools, forced nodes, plans).
 - **Scheduler core, rule tests:** fake clock, node view, prober and launcher;
-  events fed in a fixed order. One test per rule in 8.2-8.5.
+  events fed in a fixed order. One test per rule in 8.2-8.6.
 - **Scheduler core, random tests:** generated event sequences (requests,
   disconnects, load results, node changes, clock ticks) checked after every
   event against invariants: a node has at most one holder and at most one

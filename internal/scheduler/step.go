@@ -1,0 +1,226 @@
+package scheduler
+
+import (
+	"fmt"
+
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/instance"
+)
+
+// ---- events (inputs to the step function) ----
+
+type event interface{ isEvent() }
+
+type (
+	// evAcquire: a request arrived (8.2). The waiter carries the resolved
+	// profile; its id is assigned by the core.
+	evAcquire struct{ w *waiter }
+	// evCancel: the client of a waiting request went away (8.2 step 5).
+	evCancel struct{ w *waiter }
+	// evRelease: an admitted request ended.
+	evRelease struct{ id uint64 }
+	// evPreflight: all probes of a starting instance finished (7.5).
+	evPreflight struct {
+		iid     uint64
+		results []probeOutcome
+	}
+	// evChildStarted: Launcher.Start returned.
+	evChildStarted struct {
+		iid   uint64
+		child instance.Child
+		err   error
+	}
+	// evHealthy: WaitHealthy returned.
+	evHealthy struct {
+		iid uint64
+		err error
+	}
+	// evExited: the child's Exited channel delivered.
+	evExited struct {
+		iid    uint64
+		status instance.ExitStatus
+	}
+	// evFetched: the post-settle fetch of a node finished.
+	evFetched struct {
+		id   core.NodeID
+		gen  uint64
+		node core.Node
+		err  error
+	}
+	evViewChanged struct{}
+	evTick        struct{}
+	evUnload      struct {
+		profile string
+		force   bool
+		reply   chan error
+	}
+	evUnloadIdle struct{ reply chan []string }
+	evShutdown   struct{ force bool }
+	// evQuery runs fn inside the core goroutine (snapshots, dry runs).
+	evQuery struct{ fn func(c *schedCore) }
+)
+
+func (evAcquire) isEvent()      {}
+func (evCancel) isEvent()       {}
+func (evRelease) isEvent()      {}
+func (evPreflight) isEvent()    {}
+func (evChildStarted) isEvent() {}
+func (evHealthy) isEvent()      {}
+func (evExited) isEvent()       {}
+func (evFetched) isEvent()      {}
+func (evViewChanged) isEvent()  {}
+func (evTick) isEvent()         {}
+func (evUnload) isEvent()       {}
+func (evUnloadIdle) isEvent()   {}
+func (evShutdown) isEvent()     {}
+func (evQuery) isEvent()        {}
+
+type probeOutcome struct {
+	id     core.NodeID
+	addr   string
+	result instance.ProbeResult
+	err    error
+}
+
+// ---- effects (slow work the runner performs and reports back) ----
+
+type effect interface{ isEffect() }
+
+type probeTarget struct {
+	id   core.NodeID
+	addr string
+}
+
+type (
+	// effProbe: pre-flight every target in parallel, then send one evPreflight.
+	effProbe struct {
+		iid     uint64
+		targets []probeTarget
+	}
+	// effStart: Launcher.Start; send evChildStarted. On success also watch
+	// Exited (evExited) and run WaitHealthy (evHealthy) until effCancelHealth.
+	effStart struct {
+		iid  uint64
+		spec instance.StartSpec
+	}
+	effCancelHealth struct{ iid uint64 }
+	effStop         struct {
+		iid   uint64
+		child instance.Child
+		mode  instance.StopMode
+	}
+	// effFetch: View.FetchNode; send evFetched.
+	effFetch struct {
+		id  core.NodeID
+		gen uint64
+	}
+	// effReply: deliver an answer to a waiter's channel (never blocks:
+	// the channel has room for exactly one answer).
+	effReply struct {
+		w *waiter
+		a answer
+	}
+)
+
+func (effProbe) isEffect()        {}
+func (effStart) isEffect()        {}
+func (effCancelHealth) isEffect() {}
+func (effStop) isEffect()         {}
+func (effFetch) isEffect()        {}
+func (effReply) isEffect()        {}
+
+// checkInvariantsEachStep makes handle verify every invariant after each
+// step and panic on a violation. Tests switch it on.
+var checkInvariantsEachStep = false
+
+// handle is the step function: it applies one event, then the time-based
+// rules, then the queue pass of design 8.3. It never blocks.
+func (c *schedCore) handle(ev event) {
+	c.now = c.clock.Now()
+	if c.now.Before(c.last) {
+		c.now = c.last // never let time run backwards inside the core
+	}
+	c.accumulate()
+	c.refreshView()
+
+	switch e := ev.(type) {
+	case evAcquire:
+		c.arrive(e.w)
+	case evCancel:
+		c.cancel(e.w)
+	case evRelease:
+		c.release(e.id)
+	case evPreflight:
+		c.preflightDone(e.iid, e.results)
+	case evChildStarted:
+		c.childStarted(e.iid, e.child, e.err)
+	case evHealthy:
+		c.healthy(e.iid, e.err)
+	case evExited:
+		c.exited(e.iid, e.status)
+	case evFetched:
+		c.fetched(e.id, e.gen, e.node, e.err)
+	case evViewChanged, evTick:
+	case evUnload:
+		err := c.unload(e.profile, e.force)
+		if e.reply != nil {
+			e.reply <- err
+		}
+	case evUnloadIdle:
+		got := c.unloadIdle()
+		if e.reply != nil {
+			e.reply <- got
+		}
+	case evShutdown:
+		c.beginShutdown(e.force)
+	case evQuery:
+		e.fn(c)
+	default:
+		panic(fmt.Sprintf("scheduler: unknown event %T", ev))
+	}
+
+	c.timers()
+	c.runPasses()
+	c.shutdownProgress()
+	c.last = c.now
+	if checkInvariantsEachStep {
+		if err := c.checkInvariants(); err != nil {
+			panic(err)
+		}
+	}
+}
+
+// takeEffects returns and clears the outbox.
+func (c *schedCore) takeEffects() []effect {
+	out := c.effects
+	c.effects = nil
+	return out
+}
+
+// takeFeed returns and clears the feed outbox.
+func (c *schedCore) takeFeed() []FeedEvent {
+	out := c.feed
+	c.feed = nil
+	return out
+}
+
+// answer delivers a waiter's one answer and forgets it.
+func (c *schedCore) answer(w *waiter, a answer) {
+	if w.answered {
+		panic(fmt.Sprintf("scheduler: waiter %d answered twice", w.id))
+	}
+	w.answered = true
+	delete(c.waiters, w.id)
+	if w.reply != nil {
+		c.effects = append(c.effects, effReply{w: w, a: a})
+	}
+}
+
+func (c *schedCore) fail(w *waiter, err *Error) { c.answer(w, answer{err: err}) }
+
+func (c *schedCore) failAll(ws []*waiter, err *Error) {
+	for _, w := range ws {
+		e := *err
+		c.fail(w, &e)
+	}
+}
