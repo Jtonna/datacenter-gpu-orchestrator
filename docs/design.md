@@ -422,9 +422,12 @@ sum, in `/api/status` for as long as the instance lives. To measure a profile,
 load it once through a `force_nodes` profile (which skips the fit check), read
 the sum, and write it into `needs_mib`.
 
-If a profile's need does not fit the plan budgets of all eligible nodes
-together (best `max_pool` of them), the request fails at once with `503` and a
-message giving the need and the capacity. It does not queue.
+If a profile's need does not fit the plan budgets of all the nodes it could
+ever use (best `max_pool` of them), the request fails at once with `503` and a
+message giving the need and the capacity. It does not queue. For this check
+only, quarantined and settling nodes still count, because they will be back
+shortly. The check is skipped while the fleet view is stale: the request
+queues, and if nothing changes it times out with the "fleet view stale" reason.
 
 Worked checks, used as golden placer tests (OMEN 8151 MiB, Alienware 7885 MiB,
 both empty, headroom 256):
@@ -433,7 +436,7 @@ both empty, headroom 256):
 |---|---|---|
 | `gemma-4-12b`, `needs_mib: 7800`, OMEN alone | 8151 − 256 = 7895 ≥ 7800 | fits |
 | same, Alienware alone | 7885 − 256 = 7629 < 7800 | does not fit |
-| Devstral 14K q8, estimated about 14828, both laptops | (7895 − 600) + (7629 − 600) = 14324 < 15569 | does not fit (see 6.1) |
+| Devstral 14K q8, estimated about 14828, both laptops | (7895 − 600) + (7629 − 600) = 14324 < 15570 | does not fit (see 6.1) |
 
 ### 7.3 Choosing nodes
 
