@@ -113,6 +113,9 @@ func appendStartLog(mode string) {
 			env[k] = v
 		}
 	}
+	if v, ok := os.LookupEnv("CUDA_VISIBLE_DEVICES"); ok {
+		env["CUDA_VISIBLE_DEVICES"] = v // set-but-empty matters to the pre-flight (H3)
+	}
 	line, _ := json.Marshal(map[string]any{
 		"time": time.Now().UTC().Format(time.RFC3339Nano),
 		"pid":  os.Getpid(),
@@ -236,6 +239,7 @@ func serve(cfg config) {
 		time.AfterFunc(envDuration("FAKELLAMA_LOAD_DELAY"), func() { s.ready.Store(true) })
 	}
 
+	emitLoadLog(cfg)
 	addr := fmt.Sprintf("%s:%d", cfg.host, cfg.port)
 	fmt.Fprintln(os.Stderr, "fakellama: listening on", addr)
 	if err := http.ListenAndServe(addr, s.routes()); err != nil {

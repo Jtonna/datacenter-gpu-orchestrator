@@ -418,7 +418,11 @@ a measured `needs_mib`.
 
 **Measuring.** When a child loads, the scheduler reads the model, KV and
 compute buffer sizes that llama.cpp logs per device and shows them, with their
-sum, in `/api/status` for as long as the instance lives. To measure a profile,
+sum, in `/api/status` for as long as the instance lives. In those log lines an
+RPC device is named `RPC0[<ip:port>]` with a per-server index, so devices are
+matched to nodes by the endpoint in brackets, not by the `RPC<n>` name used on
+the command line. Host-side buffers (CPU) are shown separately and are not
+part of the sum. To measure a profile,
 load it once through a `force_nodes` profile (which skips the fit check), read
 the sum, and write it into `needs_mib`.
 
@@ -512,7 +516,8 @@ No child is ever started against a worker that would hang it.
 Unless the profile sets `load_timeout`:
 `120 s + 2 × Σ over remote nodes (node's share of the model file ÷ link_mb_s)`.
 A share is the file size times that node's fraction of the tensor split.
-Example: 10 GB to a PS5 at 11 MB/s gives about 32 minutes of allowance.
+Sizes are in bytes and `link_mb_s` is decimal megabytes per second.
+Example: 10 GB (10^10 bytes) to a PS5 at 11 MB/s gives about 32 minutes.
 `kind: command` profiles use `command_load_timeout`.
 
 ## 8. Runtime behaviour

@@ -26,7 +26,7 @@ loaded, every endpoint answers 503 `{"error":{"message":"Loading model",...}}`.
 
 | Variable | Effect |
 |---|---|
-| `FAKELLAMA_START_LOG` | File to which one JSON line is appended per start: time, pid, mode (`serve` or `list-devices`), full `argv`, and every `FAKELLAMA_*` and `LLAMA_ARG_*` env var. |
+| `FAKELLAMA_START_LOG` | File to which one JSON line is appended per start: time, pid, mode (`serve` or `list-devices`), full `argv`, and every `FAKELLAMA_*` and `LLAMA_ARG_*` env var, plus `CUDA_VISIBLE_DEVICES` when set (even empty). |
 | `FAKELLAMA_LOAD_DELAY` | Duration (e.g. `500ms`) before `/health` turns 200. Default 0. |
 | `FAKELLAMA_NEVER_HEALTHY` | Non-empty: stay in "loading" forever. |
 | `FAKELLAMA_EXIT_CODE` | Exit with this code, after `FAKELLAMA_EXIT_AFTER` (default 0s), printing a line on stderr. Simulates a load failure. |
@@ -37,6 +37,7 @@ loaded, every endpoint answers 503 `{"error":{"message":"Loading model",...}}`.
 | `FAKELLAMA_STREAM_CHUNKS` | Content chunks per reply. Default 5. |
 | `FAKELLAMA_STREAM_DELAY` | Pause between streamed chunks. Default 0. |
 | `FAKELLAMA_STALL_AFTER` | Streaming: after N content chunks send nothing more and hold the connection until the client leaves. Default off. |
+| `FAKELLAMA_LOAD_LOG` | On start (before listening), print llama.cpp style `model` / `KV` / `compute buffer size` lines on stderr: `auto` (one set per `--device` name, 1000/200/100 MiB) or `NAME:modelMiB:kvMiB:computeMiB,...`. RPC devices are named `RPC0[<endpoint>]` as in llama.cpp. A `CPU_Mapped` model line and unrelated lines are interleaved. Default: nothing. |
 | `FAKELLAMA_IGNORE_SIGTERM` | Non-empty: log "ignoring" on stderr and keep running on SIGTERM/interrupt. |
 
 By default SIGTERM or interrupt exits 0 at once. The SIGTERM tests are skipped
