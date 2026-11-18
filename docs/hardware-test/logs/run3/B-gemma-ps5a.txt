@@ -1,0 +1,9 @@
+== B-gemma-ps5a start 23:37:27
+gpu_before 10 MiB
+gpu_loaded 10 MiB
+{"model":"gemma-4-12b:ps5a","msg":"ok"}
+
+unloaded 23:39:18
+{"model":"gemma-4-12b:ps5a","msg":"ok"}
+
+== B-gemma-ps5a done 23:44:32 gpu 10 MiB

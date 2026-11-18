@@ -1,0 +1,6 @@
+== E-gemma-ps5-aw start 23:50:32
+gpu_before 10 MiB
+gpu_loaded 10 MiB
+{"model":"gemma-4-12b:ps5-aw","msg":"ok"}
+
+== E-gemma-ps5-aw done 23:52:18 gpu 10 MiB

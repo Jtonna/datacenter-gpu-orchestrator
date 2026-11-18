@@ -1,0 +1,205 @@
+time=2026-11-17T23:37:14.768Z level=INFO msg="llm-scheduler started" version=test-eb268e1 listen=[::]:8080 profiles=14
+time=2026-11-17T23:37:27.139Z level=INFO msg="queue entry created" profile=gemma-4-12b:ps5a alias=false waiters=1
+time=2026-11-17T23:37:27.139Z level=INFO msg="placement chosen" profile=gemma-4-12b:ps5a nodes=[70:66:2a:a9:a7:65] budgets=[12544] need_mib=12040 measured=false waiters=1
+time=2026-11-17T23:37:27.259Z level=INFO msg="pre-flight ok" profile=gemma-4-12b:ps5a node=70:66:2a:a9:a7:65 addr=10.0.0.101:50052 free_mib=14927 total_mib=14947 duration=119.428183ms
+time=2026-11-17T23:37:27.260Z level=INFO msg="child started" profile=gemma-4-12b:ps5a pid=103 port=5800 cmd="llama-server-rpc --host 127.0.0.1 --port 5800 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 8192 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.101:50052 --device RPC0"
+time=2026-11-17T23:38:47.030Z level=INFO msg="instance ready" profile=gemma-4-12b:ps5a load_duration=1m19.94492002s memory_mib=7514.360000000001 devices=3 waiters=1
+time=2026-11-17T23:39:17.290Z level=INFO msg="instance stopping" profile=gemma-4-12b:ps5a reason=admin mode=graceful in_flight=0
+time=2026-11-17T23:39:17.407Z level=INFO msg="instance stopped" profile=gemma-4-12b:ps5a reason=admin loaded_for=30.37651231s requests_served=4 exit="exit code 0, stop requested"
+time=2026-11-17T23:39:23.355Z level=INFO msg="queue entry created" profile=gemma-4-12b:ps5a alias=false waiters=1
+time=2026-11-17T23:39:23.355Z level=INFO msg="placement chosen" profile=gemma-4-12b:ps5a nodes=[70:66:2a:a9:a7:65] budgets=[12462] need_mib=12040 measured=false waiters=1
+time=2026-11-17T23:39:23.475Z level=INFO msg="pre-flight ok" profile=gemma-4-12b:ps5a node=70:66:2a:a9:a7:65 addr=10.0.0.101:50052 free_mib=14921 total_mib=14947 duration=120.057451ms
+time=2026-11-17T23:39:23.476Z level=INFO msg="child started" profile=gemma-4-12b:ps5a pid=398 port=5801 cmd="llama-server-rpc --host 127.0.0.1 --port 5801 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 8192 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.101:50052 --device RPC0"
+time=2026-11-17T23:44:02.214Z level=INFO msg="instance ready" profile=gemma-4-12b:ps5a load_duration=4m38.858609983s memory_mib=7514.360000000001 devices=3 waiters=1
+time=2026-11-17T23:44:28.763Z level=INFO msg="instance stopping" profile=gemma-4-12b:ps5a reason=admin mode=graceful in_flight=0
+time=2026-11-17T23:44:28.878Z level=INFO msg="instance stopped" profile=gemma-4-12b:ps5a reason=admin loaded_for=26.663702723s requests_served=4 exit="exit code 0, stop requested"
+time=2026-11-17T23:44:32.930Z level=INFO msg="queue entry created" profile=qwen3.5-4b:ps5b alias=false waiters=1
+time=2026-11-17T23:44:32.930Z level=INFO msg="placement chosen" profile=qwen3.5-4b:ps5b nodes=[c0:15:1b:3d:6a:7a] budgets=[12605] need_mib=4986 measured=false waiters=1
+time=2026-11-17T23:44:33.051Z level=INFO msg="pre-flight ok" profile=qwen3.5-4b:ps5b node=c0:15:1b:3d:6a:7a addr=10.0.0.122:50052 free_mib=14927 total_mib=14947 duration=121.240846ms
+time=2026-11-17T23:44:33.052Z level=INFO msg="child started" profile=qwen3.5-4b:ps5b pid=1274 port=5802 cmd="llama-server-rpc --host 127.0.0.1 --port 5802 --model /models/Qwen_Qwen3.5-4B-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 16384 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.122:50052 --device RPC0"
+time=2026-11-17T23:44:41.077Z level=INFO msg="instance ready" profile=qwen3.5-4b:ps5b load_duration=8.187081745s memory_mib=3342.77 devices=3 waiters=1
+time=2026-11-17T23:45:03.751Z level=INFO msg="instance stopping" profile=qwen3.5-4b:ps5b reason=admin mode=graceful in_flight=0
+time=2026-11-17T23:45:03.856Z level=INFO msg="instance stopped" profile=qwen3.5-4b:ps5b reason=admin loaded_for=22.778956911s requests_served=4 exit="exit code 0, stop requested"
+time=2026-11-17T23:45:09.822Z level=INFO msg="queue entry created" profile=qwen3.5-4b:ps5b alias=false waiters=1
+time=2026-11-17T23:45:09.822Z level=INFO msg="placement chosen" profile=qwen3.5-4b:ps5b nodes=[c0:15:1b:3d:6a:7a] budgets=[12554] need_mib=4986 measured=false waiters=1
+time=2026-11-17T23:45:09.944Z level=INFO msg="pre-flight ok" profile=qwen3.5-4b:ps5b node=c0:15:1b:3d:6a:7a addr=10.0.0.122:50052 free_mib=14919 total_mib=14947 duration=122.0093ms
+time=2026-11-17T23:45:09.944Z level=INFO msg="child started" profile=qwen3.5-4b:ps5b pid=1430 port=5803 cmd="llama-server-rpc --host 127.0.0.1 --port 5803 --model /models/Qwen_Qwen3.5-4B-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 16384 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.122:50052 --device RPC0"
+time=2026-11-17T23:45:17.470Z level=INFO msg="instance ready" profile=qwen3.5-4b:ps5b load_duration=7.648131645s memory_mib=3342.77 devices=3 waiters=1
+time=2026-11-17T23:45:39.915Z level=INFO msg="instance stopping" profile=qwen3.5-4b:ps5b reason=admin mode=graceful in_flight=0
+time=2026-11-17T23:45:40.023Z level=INFO msg="instance stopped" profile=qwen3.5-4b:ps5b reason=admin loaded_for=22.553424598s requests_served=4 exit="exit code 0, stop requested"
+time=2026-11-17T23:46:20.704Z level=INFO msg="queue entry created" profile=gemma-4-12b:2ps5 alias=false waiters=1
+time=2026-11-17T23:46:20.704Z level=INFO msg="placement chosen" profile=gemma-4-12b:2ps5 nodes="[c0:15:1b:3d:6a:7a 70:66:2a:a9:a7:65]" budgets="[12574 12503]" need_mib=12040 measured=false waiters=1
+time=2026-11-17T23:46:20.813Z level=INFO msg="pre-flight ok" profile=gemma-4-12b:2ps5 node=c0:15:1b:3d:6a:7a addr=10.0.0.122:50052 free_mib=14919 total_mib=14947 duration=109.081194ms
+time=2026-11-17T23:46:20.813Z level=INFO msg="pre-flight ok" profile=gemma-4-12b:2ps5 node=70:66:2a:a9:a7:65 addr=10.0.0.101:50052 free_mib=14921 total_mib=14947 duration=108.892328ms
+time=2026-11-17T23:46:20.813Z level=INFO msg="child started" profile=gemma-4-12b:2ps5 pid=1674 port=5804 cmd="llama-server-rpc --host 127.0.0.1 --port 5804 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 8192 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.122:50052,10.0.0.101:50052 --device RPC0,RPC1 --tensor-split 13895,13897"
+time=2026-11-17T23:46:47.403Z level=INFO msg="instance ready" profile=gemma-4-12b:2ps5 load_duration=26.743545273s memory_mib=7830.5 devices=4 waiters=1
+time=2026-11-17T23:47:44.916Z level=INFO msg="instance stopping" profile=gemma-4-12b:2ps5 reason=admin mode=graceful in_flight=0
+time=2026-11-17T23:47:45.033Z level=INFO msg="instance stopped" profile=gemma-4-12b:2ps5 reason=admin loaded_for=57.629947857s requests_served=4 exit="exit code 0, stop requested"
+time=2026-11-17T23:47:50.984Z level=INFO msg="queue entry created" profile=gemma-4-12b:2ps5 alias=false waiters=1
+time=2026-11-17T23:47:50.984Z level=INFO msg="placement chosen" profile=gemma-4-12b:2ps5 nodes="[c0:15:1b:3d:6a:7a 70:66:2a:a9:a7:65]" budgets="[12544 12482]" need_mib=12040 measured=false waiters=1
+time=2026-11-17T23:47:51.118Z level=INFO msg="pre-flight ok" profile=gemma-4-12b:2ps5 node=c0:15:1b:3d:6a:7a addr=10.0.0.122:50052 free_mib=14917 total_mib=14947 duration=134.560269ms
+time=2026-11-17T23:47:51.118Z level=INFO msg="pre-flight ok" profile=gemma-4-12b:2ps5 node=70:66:2a:a9:a7:65 addr=10.0.0.101:50052 free_mib=14921 total_mib=14947 duration=134.650218ms
+time=2026-11-17T23:47:51.119Z level=INFO msg="child started" profile=gemma-4-12b:2ps5 pid=1996 port=5805 cmd="llama-server-rpc --host 127.0.0.1 --port 5805 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 8192 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.122:50052,10.0.0.101:50052 --device RPC0,RPC1 --tensor-split 13893,13897"
+time=2026-11-17T23:48:11.938Z level=INFO msg="instance ready" profile=gemma-4-12b:2ps5 load_duration=20.954533748s memory_mib=7830.5 devices=4 waiters=1
+time=2026-11-17T23:49:08.087Z level=INFO msg="instance stopping" profile=gemma-4-12b:2ps5 reason=admin mode=graceful in_flight=0
+time=2026-11-17T23:49:08.206Z level=INFO msg="instance stopped" profile=gemma-4-12b:2ps5 reason=admin loaded_for=56.26802872s requests_served=4 exit="exit code 0, stop requested"
+time=2026-11-17T23:49:12.276Z level=INFO msg="queue entry created" profile=gemma-4-12b:2ps5-5050 alias=false waiters=1
+time=2026-11-17T23:49:12.276Z level=INFO msg="placement chosen" profile=gemma-4-12b:2ps5-5050 nodes="[c0:15:1b:3d:6a:7a 70:66:2a:a9:a7:65]" budgets="[12544 12503]" need_mib=12040 measured=false waiters=1
+time=2026-11-17T23:49:12.407Z level=INFO msg="pre-flight ok" profile=gemma-4-12b:2ps5-5050 node=c0:15:1b:3d:6a:7a addr=10.0.0.122:50052 free_mib=14917 total_mib=14947 duration=127.419473ms
+time=2026-11-17T23:49:12.407Z level=INFO msg="pre-flight ok" profile=gemma-4-12b:2ps5-5050 node=70:66:2a:a9:a7:65 addr=10.0.0.101:50052 free_mib=14921 total_mib=14947 duration=130.601135ms
+time=2026-11-17T23:49:12.408Z level=INFO msg="child started" profile=gemma-4-12b:2ps5-5050 pid=2296 port=5806 cmd="llama-server-rpc --host 127.0.0.1 --port 5806 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 8192 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.122:50052,10.0.0.101:50052 --device RPC0,RPC1 --tensor-split 50,50"
+time=2026-11-17T23:49:33.229Z level=INFO msg="instance ready" profile=gemma-4-12b:2ps5-5050 load_duration=21.014813175s memory_mib=7830.5 devices=4 waiters=1
+time=2026-11-17T23:50:28.703Z level=INFO msg="instance stopping" profile=gemma-4-12b:2ps5-5050 reason=admin mode=graceful in_flight=0
+time=2026-11-17T23:50:28.801Z level=INFO msg="instance stopped" profile=gemma-4-12b:2ps5-5050 reason=admin loaded_for=55.571961761s requests_served=4 exit="exit code 0, stop requested"
+time=2026-11-17T23:50:32.892Z level=INFO msg="queue entry created" profile=gemma-4-12b:ps5-aw alias=false waiters=1
+time=2026-11-17T23:50:32.892Z level=INFO msg="placement chosen" profile=gemma-4-12b:ps5-aw nodes="[c0:15:1b:3d:6a:7a b4:45:06:ca:2c:8f]" budgets="[12533 7598]" need_mib=12040 measured=false waiters=1
+time=2026-11-17T23:50:33.021Z level=INFO msg="pre-flight ok" profile=gemma-4-12b:ps5-aw node=c0:15:1b:3d:6a:7a addr=10.0.0.122:50052 free_mib=14917 total_mib=14947 duration=128.48195ms
+time=2026-11-17T23:50:33.021Z level=INFO msg="pre-flight ok" profile=gemma-4-12b:ps5-aw node=b4:45:06:ca:2c:8f addr=10.0.0.3:50052 free_mib=7509 total_mib=7842 duration=128.92796ms
+time=2026-11-17T23:50:33.021Z level=INFO msg="child started" profile=gemma-4-12b:ps5-aw pid=2589 port=5807 cmd="llama-server-rpc --host 127.0.0.1 --port 5807 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 8192 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.122:50052,10.0.0.3:50052 --device RPC0,RPC1 --tensor-split 13893,7253"
+time=2026-11-17T23:51:35.470Z level=INFO msg="instance ready" profile=gemma-4-12b:ps5-aw load_duration=1m2.640613845s memory_mib=7830.53 devices=4 waiters=1
+time=2026-11-17T23:52:14.602Z level=INFO msg="instance stopping" profile=gemma-4-12b:ps5-aw reason=admin mode=graceful in_flight=0
+time=2026-11-17T23:52:14.720Z level=INFO msg="instance stopped" profile=gemma-4-12b:ps5-aw reason=admin loaded_for=39.25001519s requests_served=4 exit="exit code 0, stop requested"
+time=2026-11-17T23:53:19.780Z level=INFO msg="queue entry created" profile=gemma-4-12b:t1 alias=false waiters=1
+time=2026-11-17T23:53:19.780Z level=INFO msg="placement chosen" profile=gemma-4-12b:t1 nodes=[70:66:2a:a9:a7:65] budgets=[12523] need_mib=7850 measured=true waiters=1
+time=2026-11-17T23:53:19.875Z level=INFO msg="pre-flight ok" profile=gemma-4-12b:t1 node=70:66:2a:a9:a7:65 addr=10.0.0.101:50052 free_mib=14921 total_mib=14947 duration=94.446297ms
+time=2026-11-17T23:53:19.875Z level=INFO msg="child started" profile=gemma-4-12b:t1 pid=3106 port=5808 cmd="llama-server-rpc --host 127.0.0.1 --port 5808 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 8192 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.101:50052 --device RPC0"
+time=2026-11-17T23:53:58.258Z level=INFO msg="instance ready" profile=gemma-4-12b:t1 load_duration=38.477816981s memory_mib=7514.360000000001 devices=3 waiters=1
+time=2026-11-17T23:53:59.887Z level=INFO msg="queue entry created" profile=qwen3.5-4b:t1 alias=false waiters=1
+time=2026-11-17T23:53:59.887Z level=INFO msg="placement chosen" profile=qwen3.5-4b:t1 nodes=[c0:15:1b:3d:6a:7a] budgets=[12544] need_mib=3400 measured=true waiters=1
+time=2026-11-17T23:53:59.985Z level=INFO msg="pre-flight ok" profile=qwen3.5-4b:t1 node=c0:15:1b:3d:6a:7a addr=10.0.0.122:50052 free_mib=14917 total_mib=14947 duration=98.428655ms
+time=2026-11-17T23:53:59.986Z level=INFO msg="child started" profile=qwen3.5-4b:t1 pid=3274 port=5809 cmd="llama-server-rpc --host 127.0.0.1 --port 5809 --model /models/Qwen_Qwen3.5-4B-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 16384 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.122:50052 --device RPC0"
+time=2026-11-17T23:54:07.510Z level=INFO msg="instance ready" profile=qwen3.5-4b:t1 load_duration=7.623173289s memory_mib=3342.77 devices=3 waiters=1
+time=2026-11-17T23:54:09.281Z level=INFO msg="queue entry created" profile=tinyllama:t1 alias=false waiters=1
+time=2026-11-17T23:54:36.736Z level=INFO msg="claim made" profile=tinyllama:t1 nodes=[70:66:2a:a9:a7:65] victims=[gemma-4-12b:t1] waiters=1
+time=2026-11-17T23:54:36.736Z level=INFO msg="instance stopping" profile=gemma-4-12b:t1 reason="evicted for tinyllama:t1" mode=graceful in_flight=0
+time=2026-11-17T23:54:36.834Z level=INFO msg="instance stopped" profile=gemma-4-12b:t1 reason="evicted for tinyllama:t1" loaded_for=38.576341385s requests_served=1 exit="exit code 0, stop requested"
+time=2026-11-17T23:54:39.836Z level=INFO msg="placement chosen" profile=tinyllama:t1 nodes=[70:66:2a:a9:a7:65] budgets=[12533] need_mib=700 measured=true waiters=1
+time=2026-11-17T23:54:39.953Z level=INFO msg="pre-flight ok" profile=tinyllama:t1 node=70:66:2a:a9:a7:65 addr=10.0.0.101:50052 free_mib=14921 total_mib=14947 duration=117.048784ms
+time=2026-11-17T23:54:39.954Z level=INFO msg="child started" profile=tinyllama:t1 pid=3438 port=5810 cmd="llama-server-rpc --host 127.0.0.1 --port 5810 --model /models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 2048 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.101:50052 --device RPC0"
+time=2026-11-17T23:55:04.037Z level=INFO msg="instance ready" profile=tinyllama:t1 load_duration=24.201080364s memory_mib=696.03 devices=3 waiters=1
+time=2026-11-17T23:55:04.787Z level=INFO msg="queue entry created" profile=gemma-4-12b:2ps5 alias=false waiters=1
+time=2026-11-17T23:55:34.038Z level=INFO msg="claim made" profile=gemma-4-12b:2ps5 nodes="[c0:15:1b:3d:6a:7a 70:66:2a:a9:a7:65]" victims="[qwen3.5-4b:t1 tinyllama:t1]" waiters=1
+time=2026-11-17T23:55:34.038Z level=INFO msg="instance stopping" profile=qwen3.5-4b:t1 reason="evicted for gemma-4-12b:2ps5" mode=graceful in_flight=0
+time=2026-11-17T23:55:34.038Z level=INFO msg="instance stopping" profile=tinyllama:t1 reason="evicted for gemma-4-12b:2ps5" mode=graceful in_flight=0
+time=2026-11-17T23:55:34.068Z level=INFO msg="instance stopped" profile=tinyllama:t1 reason="evicted for gemma-4-12b:2ps5" loaded_for=30.030841471s requests_served=1 exit="exit code 0, stop requested"
+time=2026-11-17T23:55:34.119Z level=INFO msg="instance stopped" profile=qwen3.5-4b:t1 reason="evicted for gemma-4-12b:2ps5" loaded_for=1m26.609414287s requests_served=1 exit="exit code 0, stop requested"
+time=2026-11-17T23:55:37.120Z level=INFO msg="placement chosen" profile=gemma-4-12b:2ps5 nodes="[c0:15:1b:3d:6a:7a 70:66:2a:a9:a7:65]" budgets="[12533 12533]" need_mib=12040 measured=false waiters=1
+time=2026-11-17T23:55:37.226Z level=INFO msg="pre-flight ok" profile=gemma-4-12b:2ps5 node=c0:15:1b:3d:6a:7a addr=10.0.0.122:50052 free_mib=14917 total_mib=14947 duration=104.718268ms
+time=2026-11-17T23:55:37.226Z level=INFO msg="pre-flight ok" profile=gemma-4-12b:2ps5 node=70:66:2a:a9:a7:65 addr=10.0.0.101:50052 free_mib=14917 total_mib=14947 duration=105.472652ms
+time=2026-11-17T23:55:37.226Z level=INFO msg="child started" profile=gemma-4-12b:2ps5 pid=3646 port=5811 cmd="llama-server-rpc --host 127.0.0.1 --port 5811 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 8192 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.122:50052,10.0.0.101:50052 --device RPC0,RPC1 --tensor-split 13893,13893"
+time=2026-11-17T23:55:58.043Z level=INFO msg="instance ready" profile=gemma-4-12b:2ps5 load_duration=20.922502361s memory_mib=7830.5 devices=4 waiters=1
+time=2026-11-17T23:56:20.753Z level=INFO msg="instance stopping" profile=gemma-4-12b:2ps5 reason=admin mode=graceful in_flight=0
+time=2026-11-17T23:56:20.831Z level=INFO msg="instance stopped" profile=gemma-4-12b:2ps5 reason=admin loaded_for=22.788066247s requests_served=1 exit="exit code 0, stop requested"
+time=2026-11-17T23:56:28.815Z level=INFO msg="queue entry created" profile=gemma-4-12b alias=false waiters=1
+time=2026-11-17T23:56:28.815Z level=INFO msg="placement chosen" profile=gemma-4-12b nodes=[70:66:2a:a9:a7:65] budgets=[12513] need_mib=7850 measured=true waiters=1
+time=2026-11-17T23:56:28.934Z level=INFO msg="pre-flight ok" profile=gemma-4-12b node=70:66:2a:a9:a7:65 addr=10.0.0.101:50052 free_mib=14917 total_mib=14947 duration=119.044473ms
+time=2026-11-17T23:56:28.935Z level=INFO msg="child started" profile=gemma-4-12b pid=3865 port=5812 cmd="llama-server-rpc --host 127.0.0.1 --port 5812 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 8192 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.101:50052 --device RPC0"
+time=2026-11-17T23:56:29.309Z level=INFO msg="queue entry created" profile=qwen3.5-4b alias=false waiters=1
+time=2026-11-17T23:56:29.309Z level=INFO msg="placement chosen" profile=qwen3.5-4b nodes=[c0:15:1b:3d:6a:7a] budgets=[12523] need_mib=3400 measured=true waiters=1
+time=2026-11-17T23:56:29.400Z level=INFO msg="pre-flight ok" profile=qwen3.5-4b node=c0:15:1b:3d:6a:7a addr=10.0.0.122:50052 free_mib=14917 total_mib=14947 duration=91.630852ms
+time=2026-11-17T23:56:29.401Z level=INFO msg="child started" profile=qwen3.5-4b pid=3916 port=5813 cmd="llama-server-rpc --host 127.0.0.1 --port 5813 --model /models/Qwen_Qwen3.5-4B-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 16384 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.122:50052 --device RPC0"
+time=2026-11-17T23:56:29.810Z level=INFO msg="queue entry created" profile=tinyllama alias=false waiters=1
+time=2026-11-17T23:56:29.810Z level=INFO msg="placement chosen" profile=tinyllama nodes=[b4:45:06:ca:2c:8f] budgets=[7598] need_mib=700 measured=true waiters=1
+time=2026-11-17T23:56:29.898Z level=INFO msg="pre-flight ok" profile=tinyllama node=b4:45:06:ca:2c:8f addr=10.0.0.3:50052 free_mib=7509 total_mib=7842 duration=88.204156ms
+time=2026-11-17T23:56:29.899Z level=INFO msg="child started" profile=tinyllama pid=3980 port=5814 cmd="llama-server-rpc --host 127.0.0.1 --port 5814 --model /models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 2048 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.3:50052 --device RPC0"
+time=2026-11-17T23:56:39.934Z level=INFO msg="instance ready" profile=tinyllama load_duration=10.124268621s memory_mib=696.03 devices=3 waiters=3
+time=2026-11-17T23:56:44.202Z level=INFO msg="instance ready" profile=qwen3.5-4b load_duration=14.8937053s memory_mib=3342.77 devices=3 waiters=3
+time=2026-11-17T23:57:05.058Z level=INFO msg="instance ready" profile=gemma-4-12b load_duration=36.242524619s memory_mib=7514.360000000001 devices=3 waiters=2
+time=2026-11-18T00:00:22.712Z level=INFO msg="shutting down" signal=terminated
+time=2026-11-18T00:00:22.712Z level=INFO msg="shutdown begun" grace=5m0s force=false instances=3 queued_waiters=0
+time=2026-11-18T00:00:22.712Z level=INFO msg="shutdown stopping instances" in_flight=0 grace_passed=false kill=false instances=3
+time=2026-11-18T00:00:22.712Z level=INFO msg="instance stopping" profile=gemma-4-12b reason=shutdown mode=graceful in_flight=0
+time=2026-11-18T00:00:22.712Z level=INFO msg="instance stopping" profile=qwen3.5-4b reason=shutdown mode=graceful in_flight=0
+time=2026-11-18T00:00:22.712Z level=INFO msg="instance stopping" profile=tinyllama reason=shutdown mode=graceful in_flight=0
+time=2026-11-18T00:00:22.743Z level=INFO msg="instance stopped" profile=tinyllama reason=shutdown loaded_for=3m42.808351888s requests_served=3 exit="exit code 0, stop requested"
+time=2026-11-18T00:00:22.814Z level=INFO msg="instance stopped" profile=qwen3.5-4b reason=shutdown loaded_for=3m38.611647094s requests_served=3 exit="exit code 0, stop requested"
+time=2026-11-18T00:00:22.821Z level=INFO msg="instance stopped" profile=gemma-4-12b reason=shutdown loaded_for=3m17.763174451s requests_served=2 exit="exit code 0, stop requested"
+time=2026-11-18T00:00:22.821Z level=INFO msg="shutdown complete"
+time=2026-11-18T00:00:22.821Z level=INFO msg=stopped
+time=2026-11-18T00:00:23.180Z level=INFO msg="llm-scheduler started" version=test-eb268e1 listen=[::]:8080 profiles=14
+time=2026-11-18T00:00:40.021Z level=INFO msg="queue entry created" profile=gemma-4-12b:t1 alias=false waiters=1
+time=2026-11-18T00:00:40.021Z level=INFO msg="placement chosen" profile=gemma-4-12b:t1 nodes=[70:66:2a:a9:a7:65] budgets=[12544] need_mib=7850 measured=true waiters=1
+time=2026-11-18T00:00:40.135Z level=INFO msg="pre-flight ok" profile=gemma-4-12b:t1 node=70:66:2a:a9:a7:65 addr=10.0.0.101:50052 free_mib=14917 total_mib=14947 duration=114.844576ms
+time=2026-11-18T00:00:40.136Z level=INFO msg="child started" profile=gemma-4-12b:t1 pid=121 port=5800 cmd="llama-server-rpc --host 127.0.0.1 --port 5800 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 8192 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.101:50052 --device RPC0"
+time=2026-11-18T00:01:19.515Z level=INFO msg="instance ready" profile=gemma-4-12b:t1 load_duration=39.494096057s memory_mib=7514.360000000001 devices=3 waiters=1
+time=2026-11-18T00:01:21.042Z level=INFO msg="queue entry created" profile=qwen3.5-4b:t1 alias=false waiters=1
+time=2026-11-18T00:01:21.042Z level=INFO msg="placement chosen" profile=qwen3.5-4b:t1 nodes=[c0:15:1b:3d:6a:7a] budgets=[12544] need_mib=3400 measured=true waiters=1
+time=2026-11-18T00:01:21.156Z level=INFO msg="pre-flight ok" profile=qwen3.5-4b:t1 node=c0:15:1b:3d:6a:7a addr=10.0.0.122:50052 free_mib=14917 total_mib=14947 duration=114.169771ms
+time=2026-11-18T00:01:21.156Z level=INFO msg="child started" profile=qwen3.5-4b:t1 pid=303 port=5801 cmd="llama-server-rpc --host 127.0.0.1 --port 5801 --model /models/Qwen_Qwen3.5-4B-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 16384 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.122:50052 --device RPC0"
+time=2026-11-18T00:01:28.683Z level=INFO msg="instance ready" profile=qwen3.5-4b:t1 load_duration=7.641487563s memory_mib=3342.77 devices=3 waiters=1
+time=2026-11-18T00:01:30.117Z level=INFO msg="queue entry created" profile=tinyllama:t1 alias=false waiters=1
+time=2026-11-18T00:01:58.684Z level=INFO msg="claim made" profile=tinyllama:t1 nodes=[c0:15:1b:3d:6a:7a] victims=[qwen3.5-4b:t1] waiters=1
+time=2026-11-18T00:01:58.684Z level=INFO msg="instance stopping" profile=qwen3.5-4b:t1 reason="evicted for tinyllama:t1" mode=graceful in_flight=0
+time=2026-11-18T00:01:58.762Z level=INFO msg="instance stopped" profile=qwen3.5-4b:t1 reason="evicted for tinyllama:t1" loaded_for=30.078678174s requests_served=1 exit="exit code 0, stop requested"
+time=2026-11-18T00:02:01.763Z level=INFO msg="placement chosen" profile=tinyllama:t1 nodes=[c0:15:1b:3d:6a:7a] budgets=[12533] need_mib=700 measured=true waiters=1
+time=2026-11-18T00:02:01.879Z level=INFO msg="pre-flight ok" profile=tinyllama:t1 node=c0:15:1b:3d:6a:7a addr=10.0.0.122:50052 free_mib=14917 total_mib=14947 duration=115.792053ms
+time=2026-11-18T00:02:01.880Z level=INFO msg="child started" profile=tinyllama:t1 pid=468 port=5802 cmd="llama-server-rpc --host 127.0.0.1 --port 5802 --model /models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 2048 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.122:50052 --device RPC0"
+time=2026-11-18T00:02:09.405Z level=INFO msg="instance ready" profile=tinyllama:t1 load_duration=7.64120893s memory_mib=696.03 devices=3 waiters=1
+time=2026-11-18T00:02:09.882Z level=INFO msg="queue entry created" profile=gemma-4-12b:2ps5 alias=false waiters=1
+time=2026-11-18T00:02:39.405Z level=INFO msg="claim made" profile=gemma-4-12b:2ps5 nodes="[c0:15:1b:3d:6a:7a 70:66:2a:a9:a7:65]" victims="[gemma-4-12b:t1 tinyllama:t1]" waiters=1
+time=2026-11-18T00:02:39.405Z level=INFO msg="instance stopping" profile=gemma-4-12b:t1 reason="evicted for gemma-4-12b:2ps5" mode=graceful in_flight=0
+time=2026-11-18T00:02:39.405Z level=INFO msg="instance stopping" profile=tinyllama:t1 reason="evicted for gemma-4-12b:2ps5" mode=graceful in_flight=0
+time=2026-11-18T00:02:39.436Z level=INFO msg="instance stopped" profile=tinyllama:t1 reason="evicted for gemma-4-12b:2ps5" loaded_for=30.03112774s requests_served=1 exit="exit code 0, stop requested"
+time=2026-11-18T00:02:39.506Z level=INFO msg="instance stopped" profile=gemma-4-12b:t1 reason="evicted for gemma-4-12b:2ps5" loaded_for=1m19.99090962s requests_served=1 exit="exit code 0, stop requested"
+time=2026-11-18T00:02:42.507Z level=INFO msg="placement chosen" profile=gemma-4-12b:2ps5 nodes="[c0:15:1b:3d:6a:7a 70:66:2a:a9:a7:65]" budgets="[12523 12544]" need_mib=12040 measured=false waiters=1
+time=2026-11-18T00:02:42.644Z level=INFO msg="pre-flight ok" profile=gemma-4-12b:2ps5 node=c0:15:1b:3d:6a:7a addr=10.0.0.122:50052 free_mib=14915 total_mib=14947 duration=135.058074ms
+time=2026-11-18T00:02:42.644Z level=INFO msg="pre-flight ok" profile=gemma-4-12b:2ps5 node=70:66:2a:a9:a7:65 addr=10.0.0.101:50052 free_mib=14917 total_mib=14947 duration=137.344361ms
+time=2026-11-18T00:02:42.645Z level=INFO msg="child started" profile=gemma-4-12b:2ps5 pid=633 port=5803 cmd="llama-server-rpc --host 127.0.0.1 --port 5803 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 8192 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.122:50052,10.0.0.101:50052 --device RPC0,RPC1 --tensor-split 13891,13893"
+time=2026-11-18T00:03:03.463Z level=INFO msg="instance ready" profile=gemma-4-12b:2ps5 load_duration=20.95596944s memory_mib=7830.5 devices=4 waiters=1
+time=2026-11-18T00:03:16.292Z level=INFO msg="instance stopping" profile=gemma-4-12b:2ps5 reason=admin mode=graceful in_flight=0
+time=2026-11-18T00:03:16.390Z level=INFO msg="instance stopped" profile=gemma-4-12b:2ps5 reason=admin loaded_for=12.927473944s requests_served=1 exit="exit code 0, stop requested"
+time=2026-11-18T00:03:26.353Z level=INFO msg="queue entry created" profile=gemma-4-12b alias=false waiters=1
+time=2026-11-18T00:03:26.353Z level=INFO msg="placement chosen" profile=gemma-4-12b nodes=[70:66:2a:a9:a7:65] budgets=[12523] need_mib=7850 measured=true waiters=1
+time=2026-11-18T00:03:26.474Z level=INFO msg="pre-flight ok" profile=gemma-4-12b node=70:66:2a:a9:a7:65 addr=10.0.0.101:50052 free_mib=14917 total_mib=14947 duration=120.698144ms
+time=2026-11-18T00:03:26.475Z level=INFO msg="child started" profile=gemma-4-12b pid=821 port=5804 cmd="llama-server-rpc --host 127.0.0.1 --port 5804 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 8192 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.101:50052 --device RPC0"
+time=2026-11-18T00:03:26.849Z level=INFO msg="queue entry created" profile=qwen3.5-4b alias=false waiters=1
+time=2026-11-18T00:03:26.849Z level=INFO msg="placement chosen" profile=qwen3.5-4b nodes=[c0:15:1b:3d:6a:7a] budgets=[12523] need_mib=3400 measured=true waiters=1
+time=2026-11-18T00:03:26.946Z level=INFO msg="pre-flight ok" profile=qwen3.5-4b node=c0:15:1b:3d:6a:7a addr=10.0.0.122:50052 free_mib=14915 total_mib=14947 duration=96.775921ms
+time=2026-11-18T00:03:26.947Z level=INFO msg="child started" profile=qwen3.5-4b pid=872 port=5805 cmd="llama-server-rpc --host 127.0.0.1 --port 5805 --model /models/Qwen_Qwen3.5-4B-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 16384 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.122:50052 --device RPC0"
+time=2026-11-18T00:03:27.350Z level=INFO msg="queue entry created" profile=tinyllama alias=false waiters=1
+time=2026-11-18T00:03:27.350Z level=INFO msg="placement chosen" profile=tinyllama nodes=[b4:45:06:ca:2c:8f] budgets=[7598] need_mib=700 measured=true waiters=1
+time=2026-11-18T00:03:27.441Z level=INFO msg="pre-flight ok" profile=tinyllama node=b4:45:06:ca:2c:8f addr=10.0.0.3:50052 free_mib=7509 total_mib=7842 duration=90.991273ms
+time=2026-11-18T00:03:27.442Z level=INFO msg="child started" profile=tinyllama pid=942 port=5806 cmd="llama-server-rpc --host 127.0.0.1 --port 5806 --model /models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 2048 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.3:50052 --device RPC0"
+time=2026-11-18T00:03:37.226Z level=INFO msg="instance ready" profile=tinyllama load_duration=9.875468538s memory_mib=696.03 devices=3 waiters=3
+time=2026-11-18T00:03:40.743Z level=INFO msg="instance ready" profile=qwen3.5-4b load_duration=13.893646818s memory_mib=3342.77 devices=3 waiters=3
+time=2026-11-18T00:04:07.114Z level=INFO msg="instance ready" profile=gemma-4-12b load_duration=40.761118725s memory_mib=7514.360000000001 devices=3 waiters=2
+time=2026-11-18T00:05:59.540Z level=INFO msg="shutting down" signal=terminated
+time=2026-11-18T00:05:59.540Z level=INFO msg="shutdown begun" grace=5m0s force=false instances=3 queued_waiters=0
+time=2026-11-18T00:05:59.540Z level=INFO msg="shutdown stopping instances" in_flight=0 grace_passed=false kill=false instances=3
+time=2026-11-18T00:05:59.540Z level=INFO msg="instance stopping" profile=gemma-4-12b reason=shutdown mode=graceful in_flight=0
+time=2026-11-18T00:05:59.540Z level=INFO msg="instance stopping" profile=qwen3.5-4b reason=shutdown mode=graceful in_flight=0
+time=2026-11-18T00:05:59.540Z level=INFO msg="instance stopping" profile=tinyllama reason=shutdown mode=graceful in_flight=0
+time=2026-11-18T00:05:59.564Z level=INFO msg="instance stopped" profile=tinyllama reason=shutdown loaded_for=2m22.338251696s requests_served=3 exit="exit code 0, stop requested"
+time=2026-11-18T00:05:59.631Z level=INFO msg="instance stopped" profile=gemma-4-12b reason=shutdown loaded_for=1m52.516719096s requests_served=2 exit="exit code 0, stop requested"
+time=2026-11-18T00:05:59.634Z level=INFO msg="instance stopped" profile=qwen3.5-4b reason=shutdown loaded_for=2m18.890709422s requests_served=3 exit="exit code 0, stop requested"
+time=2026-11-18T00:05:59.634Z level=INFO msg="shutdown complete"
+time=2026-11-18T00:05:59.634Z level=INFO msg=stopped
+time=2026-11-18T00:05:59.996Z level=INFO msg="llm-scheduler started" version=test-eb268e1 listen=[::]:8080 profiles=15
+time=2026-11-18T00:06:04.146Z level=INFO msg="queue entry created" profile=gemma-4-12b:ps5b alias=false waiters=1
+time=2026-11-18T00:06:04.146Z level=INFO msg="placement chosen" profile=gemma-4-12b:ps5b nodes=[c0:15:1b:3d:6a:7a] budgets=[12544] need_mib=12040 measured=false waiters=1
+time=2026-11-18T00:06:04.266Z level=INFO msg="pre-flight ok" profile=gemma-4-12b:ps5b node=c0:15:1b:3d:6a:7a addr=10.0.0.122:50052 free_mib=14915 total_mib=14947 duration=119.775324ms
+time=2026-11-18T00:06:04.266Z level=INFO msg="child started" profile=gemma-4-12b:ps5b pid=94 port=5800 cmd="llama-server-rpc --host 127.0.0.1 --port 5800 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 8192 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.122:50052 --device RPC0"
+time=2026-11-18T00:17:13.599Z level=INFO msg="instance ready" profile=gemma-4-12b:ps5b load_duration=11m9.512837018s memory_mib=7514.360000000001 devices=3 waiters=1
+time=2026-11-18T00:17:40.199Z level=INFO msg="instance stopping" profile=gemma-4-12b:ps5b reason=admin mode=graceful in_flight=0
+time=2026-11-18T00:17:40.317Z level=INFO msg="instance stopped" profile=gemma-4-12b:ps5b reason=admin loaded_for=26.718367658s requests_served=4 exit="exit code 0, stop requested"
+time=2026-11-18T00:17:46.263Z level=INFO msg="queue entry created" profile=gemma-4-12b:ps5b alias=false waiters=1
+time=2026-11-18T00:17:46.263Z level=INFO msg="placement chosen" profile=gemma-4-12b:ps5b nodes=[c0:15:1b:3d:6a:7a] budgets=[12533] need_mib=12040 measured=false waiters=1
+time=2026-11-18T00:17:46.385Z level=INFO msg="pre-flight ok" profile=gemma-4-12b:ps5b node=c0:15:1b:3d:6a:7a addr=10.0.0.122:50052 free_mib=14915 total_mib=14947 duration=121.04272ms
+time=2026-11-18T00:17:46.385Z level=INFO msg="child started" profile=gemma-4-12b:ps5b pid=2017 port=5801 cmd="llama-server-rpc --host 127.0.0.1 --port 5801 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 8192 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.122:50052 --device RPC0"
+time=2026-11-18T00:20:08.126Z level=INFO msg="instance ready" profile=gemma-4-12b:ps5b load_duration=2m21.862334767s memory_mib=7514.360000000001 devices=3 waiters=1
+time=2026-11-18T00:20:34.721Z level=INFO msg="instance stopping" profile=gemma-4-12b:ps5b reason=admin mode=graceful in_flight=0
+time=2026-11-18T00:20:34.842Z level=INFO msg="instance stopped" profile=gemma-4-12b:ps5b reason=admin loaded_for=26.716146322s requests_served=4 exit="exit code 0, stop requested"
+time=2026-11-18T00:20:38.905Z level=INFO msg="queue entry created" profile=gemma-4-12b:ps5a alias=false waiters=1
+time=2026-11-18T00:20:38.905Z level=INFO msg="placement chosen" profile=gemma-4-12b:ps5a nodes=[70:66:2a:a9:a7:65] budgets=[12523] need_mib=12040 measured=false waiters=1
+time=2026-11-18T00:20:39.025Z level=INFO msg="pre-flight ok" profile=gemma-4-12b:ps5a node=70:66:2a:a9:a7:65 addr=10.0.0.101:50052 free_mib=14917 total_mib=14947 duration=120.356162ms
+time=2026-11-18T00:20:39.026Z level=INFO msg="child started" profile=gemma-4-12b:ps5a pid=2544 port=5802 cmd="llama-server-rpc --host 127.0.0.1 --port 5802 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 8192 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.101:50052 --device RPC0"
+time=2026-11-18T00:21:10.883Z level=INFO msg="instance ready" profile=gemma-4-12b:ps5a load_duration=32.036195714s memory_mib=7514.360000000001 devices=3 waiters=1
+time=2026-11-18T00:21:37.516Z level=INFO msg="instance stopping" profile=gemma-4-12b:ps5a reason=admin mode=graceful in_flight=0
+time=2026-11-18T00:21:37.640Z level=INFO msg="instance stopped" profile=gemma-4-12b:ps5a reason=admin loaded_for=26.75697473s requests_served=4 exit="exit code 0, stop requested"
+time=2026-11-18T00:21:43.584Z level=INFO msg="queue entry created" profile=gemma-4-12b:ps5a alias=false waiters=1
+time=2026-11-18T00:21:43.584Z level=INFO msg="placement chosen" profile=gemma-4-12b:ps5a nodes=[70:66:2a:a9:a7:65] budgets=[12513] need_mib=12040 measured=false waiters=1
+time=2026-11-18T00:21:43.704Z level=INFO msg="pre-flight ok" profile=gemma-4-12b:ps5a node=70:66:2a:a9:a7:65 addr=10.0.0.101:50052 free_mib=14917 total_mib=14947 duration=120.512916ms
+time=2026-11-18T00:21:43.705Z level=INFO msg="child started" profile=gemma-4-12b:ps5a pid=2771 port=5803 cmd="llama-server-rpc --host 127.0.0.1 --port 5803 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 8192 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.101:50052 --device RPC0"
+time=2026-11-18T00:22:11.047Z level=INFO msg="instance ready" profile=gemma-4-12b:ps5a load_duration=27.46360421s memory_mib=7514.360000000001 devices=3 waiters=1
+time=2026-11-18T00:22:37.586Z level=INFO msg="instance stopping" profile=gemma-4-12b:ps5a reason=admin mode=graceful in_flight=0
+time=2026-11-18T00:22:37.713Z level=INFO msg="instance stopped" profile=gemma-4-12b:ps5a reason=admin loaded_for=26.665923486s requests_served=4 exit="exit code 0, stop requested"
