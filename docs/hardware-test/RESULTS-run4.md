@@ -1,6 +1,6 @@
 # llm-scheduler: fourth on-hardware test (stopped early, then re-measured after the PS5 fixes)
 
-Date: 2026-11-18. Three PS5s as rpc workers, OMEN as host, one gigabit port.
+Date: 2026-11-18. Three PS5s as rpc workers, OMEN as host, one gigabit port (the numbers marked 1 GbE were measured on that port; see "After the network upgrade" at the end).
 
 **Run 4 was stopped early by the owner.** The part before the stop was our own tester's partial run. The logs folder `logs/run4/` is partial: it was copied part way through the run and it only covers that part. The after-fix numbers on this page do not come from that folder. They come from the scheduler's log lines and from the separate benchmark agent, as marked below.
 
@@ -45,7 +45,7 @@ Both fixes were made on the PS5 side and are not in this repo.
 | Two | 167 s each | 40 MB/s each |
 | Three | 246 s each | 27 MB/s each |
 
-- Load progress was verified live. It is measured from TCP acknowledged bytes and matches about 80 MB/s.
+- Load progress was verified live. It is measured from TCP acknowledged bytes and matches about 80 MB/s (measured on the old 1 GbE link).
 
 ### Load times through the scheduler (ctx 2048; scheduler log)
 
@@ -129,6 +129,21 @@ The scheduler can stand in for llama-swap on port 3122. The hub polls `/running`
 - Run 4 itself stopped early, so its planned tests after the stop were not run.
 - The before-fix rows above are partial and used the PS5 cache.
 - Mixtral 8x7B needs a different GGUF file.
+
+## After the network upgrade (2026-11-18, about 14:00 to 14:31 UTC)
+
+The OMEN's link to the PS5 switch moved from its built-in 1 GbE port to a USB-C adapter (interface `enx6c1ff7c349ea`) negotiated at 2500 Mb/s. The PS5s still have 1 GbE ports. Load times through the scheduler at ctx 2048. The "1 GbE" column is the old link, the "2.5 GbE" column is the new one.
+
+| Load | 1 GbE | 2.5 GbE |
+|---|---|---|
+| Gemma 12B on one PS5 | 89 s (single stream about 78 MB/s) | 66 s (about 100 to 108 MB/s) |
+| Qwen 27B across three PS5s | 216 s | 170 s |
+| Kimi-Dev 72B IQ2_S across three PS5s | 363 s | 286 s |
+| Two Gemma 12B at once, different PS5s | 167 s each | 66 s each |
+| Three Gemma 12B at once | 246 s each | 77 s each (about 280 MB/s in total) |
+| Devstral 24B on two PS5s, with Gemma 12B on the third | no earlier run of this pair (Devstral alone: 183 s) | 149 s and 67 s |
+
+Reading: a single stream to one PS5 is now limited by that PS5's own 1 GbE port (about 100 to 125 MB/s). Loads to different PS5s no longer share one gigabit. Two at once run at full speed. Three at once slow slightly because the total nears the 2.5 GbE link. A split model still uploads to one PS5 at a time. The PS5 tier `link_mb_s` is now 100.
 
 ## Files
 

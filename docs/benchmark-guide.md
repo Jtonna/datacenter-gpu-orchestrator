@@ -162,7 +162,7 @@ If the config has an error the container exits. The reason is in `docker logs --
 | Number | Where it comes from |
 |---|---|
 | Load time | `load_duration` (seconds) on the instance in `/api/status` `instances[]`, and the scheduler log line that contains `load_duration=` and `memory_mib=`. It runs from child start to ready. Live example: tinyllama loaded onto one PS5 in 9.15 s. |
-| Upload MB/s | `load.bytes_sent / load.elapsed_s` from `/running` or `/api/status` while loading (bytes the workers acknowledged, measured from TCP counters; about 80 MB/s live). For a finished load, model file size in MB divided by load time is an average only. Per worker: `load.workers[].bytes_sent`. |
+| Upload MB/s | `load.bytes_sent / load.elapsed_s` from `/running` or `/api/status` while loading (bytes the workers acknowledged, measured from TCP counters; about 80 MB/s in total live on the old 1 GbE link, about 100 to 108 MB/s per PS5 since the 2.5 GbE link of 2026-11-18). For a finished load, model file size in MB divided by load time is an average only. Per worker: `load.workers[].bytes_sent`. |
 | Prefill tokens/s | `timings.prompt_per_second` in the completion response (confirmed live). |
 | Decode tokens/s | `timings.predicted_per_second` in the completion response (confirmed live). |
 | Token counts | `usage.prompt_tokens`, `usage.completion_tokens`; `timings.prompt_n`, `timings.predicted_n`. Streaming: the numbers are in the last chunks (unverified for `timings` in streamed replies). |
@@ -223,7 +223,9 @@ All from the code. Statuses are HTTP codes; `reason` is in the JSON error.
 
 ## 9. New in this build (live since 2026-11-18)
 
-Items 1 and 2 were checked live on the OMEN on 2026-11-18 at 09:43 UTC (version `test-da67241+failfast+childlog`). Items 3 and 4 came with `+progress+loadreport2`; load progress was checked live (measured from TCP acknowledged bytes, matching about 80 MB/s).
+Items 1 and 2 were checked live on the OMEN on 2026-11-18 at 09:43 UTC (version `test-da67241+failfast+childlog`). Items 3 and 4 came with `+progress+loadreport2`; load progress was checked live (measured from TCP acknowledged bytes, matching about 80 MB/s on the old 1 GbE link).
+
+Network note (2026-11-18, about 14:00 to 14:31 UTC): the OMEN's link to the PS5 switch moved from its built-in 1 GbE port to a USB-C adapter, interface `enx6c1ff7c349ea`, at 2500 Mb/s. The PS5s still have 1 GbE ports. To read tx bytes on the host, use `enx6c1ff7c349ea` (older logs used `eno1`). Load times at ctx 2048, 1 GbE then 2.5 GbE: Gemma 12B on one PS5 89 s then 66 s; Qwen 27B on three PS5s 216 s then 170 s; Kimi-Dev 72B IQ2_S on three PS5s 363 s then 286 s; two Gemma 12B at once 167 s each then 66 s each; three at once 246 s each then 77 s each (about 280 MB/s in total). A single stream is now limited by the PS5's own 1 GbE port (about 100 to 125 MB/s). A split model still uploads to one PS5 at a time. Label any new number with the link it was measured on.
 
 1. Fail fast. A request for a profile forced onto a machine that is absent from the fleet or offline gets HTTP 503 after the grace period, instead of waiting the whole queue timeout (1800 s). Live reply for an absent machine:
 ```json

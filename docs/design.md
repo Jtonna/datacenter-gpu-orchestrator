@@ -107,12 +107,26 @@ All **[verified]** against source unless tagged otherwise.
   repo): the tensor cache was turned off, and the PS5 GPU clock was pinned at
   2230 MHz (it sat at 500 MHz), which raised decode speed about 2.4x on a
   two-PS5 split. With the cache off, every load is a full upload and there are
-  no fast cached reloads. Upload speed is 75 to 84 MB/s in total out of the
-  OMEN (one gigabit port), the same for 1, 2 or 3 PS5s in one load. A split
-  model uploads to one PS5 at a time, in an order llama.cpp chooses. Loads that
-  run at the same time share that rate: one Gemma 12B load took 89 s, two at
-  once 167 s each (40 MB/s each), three at once 246 s each (27 MB/s each).
-  Config uses `link_mb_s` 80 for PS5s and 60 for the Alienware.
+  no fast cached reloads. On the old link (the OMEN's built-in 1 GbE port)
+  upload speed was 75 to 84 MB/s in total out of the OMEN, the same for 1, 2 or
+  3 PS5s in one load. A split model uploads to one PS5 at a time, in an order
+  llama.cpp chooses. Loads that ran at the same time shared that rate: one
+  Gemma 12B load took 89 s, two at once 167 s each (40 MB/s each), three at
+  once 246 s each (27 MB/s each).
+- **[measured 2026-11-18, about 14:00 to 14:31 UTC]** The OMEN's link to the
+  PS5 switch moved from its built-in 1 GbE port to a USB-C adapter (interface
+  `enx6c1ff7c349ea`) negotiated at 2500 Mb/s. The PS5s still have 1 GbE ports.
+  A single stream to one PS5 is now limited by that PS5's own port (about 100
+  to 125 MB/s). Loads to different PS5s no longer share one gigabit. Load times
+  at ctx 2048, before (1 GbE) and after (2.5 GbE): Gemma 12B on one PS5 89 s,
+  then 66 s (single stream about 78 MB/s, then about 100 to 108 MB/s); Qwen
+  27B across three PS5s 216 s, then 170 s; Kimi-Dev 72B IQ2_S across three PS5s
+  363 s, then 286 s; two Gemma 12B loads at once 167 s each, then 66 s each;
+  three Gemma 12B loads at once 246 s each, then 77 s each (about 280 MB/s in
+  total, close to the 2.5 GbE link). Devstral 24B on two PS5s together with
+  Gemma 12B on the third took 149 s and 67 s (no earlier run of this pair;
+  Devstral alone was 183 s on 1 GbE). A split model still uploads to one PS5 at
+  a time. Config uses `link_mb_s` 100 per PS5 and 60 for the Alienware.
 - **[measured 2026-11-17]** H1, H2 and H3 below all hold on this cluster, and
   the container reached the fleet console on 8090 without an extra firewall rule.
 - **[verified by owner]** The old "wedges on client close" and "stalls over
@@ -639,7 +653,8 @@ Unless the profile sets `load_timeout`:
 `120 s + 2 × Σ over remote nodes (node's share of the model file ÷ link_mb_s)`.
 A share is the file size times that node's fraction of the tensor split.
 Sizes are in bytes and `link_mb_s` is decimal megabytes per second.
-Example: 10 GB (10^10 bytes) to a PS5 at 80 MB/s gives about 6 minutes (370 s).
+Example: 10 GB (10^10 bytes) to a PS5 at 100 MB/s gives about 5 minutes (320 s).
+(On the old 1 GbE link the figure was 80 MB/s, which gave 370 s.)
 `kind: command` profiles use `command_load_timeout`.
 
 ### 7.6a Load progress
@@ -682,6 +697,10 @@ bytes_total`, where `elapsed` is the time since the child started, `rate` is
 the slowest `link_mb_s` among the remote nodes divided by the number of loads
 uploading at that moment (they share the host's one network port: measured
 2026-11-18, about 75 to 84 MB/s in total, split equally), capped at 0.99.
+That split was measured on the old 1 GbE link. On the 2.5 GbE link, loads to
+different PS5s no longer share the rate, so the estimate is pessimistic for
+simultaneous loads (it shows too little progress and too long an ETA). The
+measured figure, the normal case on Linux, is not affected.
 
 #### The `load` report and `recent_loads`
 
@@ -1038,7 +1057,7 @@ groups and signals sit behind one small OS-specific file.
    for 15 minutes, so a request for a different model that needs the same
    nodes can get `503` and must retry. Shorter `max_hold` means faster turns
    and more time spent loading. Since there are no cached reloads (3.2), every
-   reload is a full upload at about 80 MB/s, so a hold of one load time is a
+   reload is a full upload at about 100 MB/s per PS5 (80 MB/s in total on the old 1 GbE link), so a hold of one load time is a
    real protection. To be tuned on the real cluster.
 2. PS5 usable memory: sources disagree (12 GB, 14.1 GB, 14948 MiB). The
    scheduler uses the pre-flight figure at load time; the hardware checks

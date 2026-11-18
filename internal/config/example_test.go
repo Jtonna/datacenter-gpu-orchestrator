@@ -56,7 +56,7 @@ func TestExampleConfigParses(t *testing.T) {
 			t.Errorf("%s needs_mib = %d, want %d", name, p.NeedsMiB, want)
 		}
 	}
-	for host, want := range map[string]int{"ps5-062e1d84": 80, "alienware-llm": 60} {
+	for host, want := range map[string]int{"ps5-062e1d84": 100, "alienware-llm": 60} {
 		if tier, ok := c.MatchTier(host, "", "", false); !ok || tier.LinkMBs != float64(want) {
 			t.Errorf("%s link_mb_s = %+v, want %d", host, tier, want)
 		}

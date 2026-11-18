@@ -282,7 +282,7 @@ nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits
 
 ## H. Hardware checks (about 60 min, in any order)
 
-All commands and expected results: `deploy/scripts/hardware-checks.md`. Do H1, H2, H3 first: if H2 or H3 fails, placements on PS5s will be quarantined by the pre-flight. Since 2026-11-18 the PS5 tensor cache is off, so there are no fast cached reloads and every load is a full upload at about 80 MB/s (design 3.2). Open items the design leaves for hardware: what a head does when a worker loses power (inferred, not observed), PS5 usable memory (sources disagree).
+All commands and expected results: `deploy/scripts/hardware-checks.md`. Do H1, H2, H3 first: if H2 or H3 fails, placements on PS5s will be quarantined by the pre-flight. Since 2026-11-18 the PS5 tensor cache is off, so there are no fast cached reloads and every load is a full upload (design 3.2). Upload speed was about 80 MB/s in total on the old 1 GbE link. Since the OMEN moved to a 2.5 GbE USB-C adapter (`enx6c1ff7c349ea`, 2026-11-18) it is about 100 to 108 MB/s per PS5, and loads to different PS5s no longer share one gigabit. Gemma 12B on one PS5 took 89 s on 1 GbE and 66 s on 2.5 GbE; three at once took 246 s each, then 77 s each. The PS5 tier `link_mb_s` is now 100. Open items the design leaves for hardware: what a head does when a worker loses power (inferred, not observed), PS5 usable memory (sources disagree).
 
 ---
 
@@ -397,7 +397,7 @@ All in `defaults:` (design 6, 8.3, 13 item 6). Change one value, restart, watch.
 | 503 after waiting too long | `queue_timeout` | raise |
 | Streaming aborted mid-generation | `stall_timeout` | raise (`0` = off, used for image/audio) |
 | Idle models linger | `ttl` | lower |
-| Cold PS5 load times out | profile `load_timeout`, tier `link_mb_s` | raise / correct |
+| Cold PS5 load times out | profile `load_timeout`, tier `link_mb_s` (100 per PS5 on the 2.5 GbE link; it was 80 in total on 1 GbE) | raise / correct |
 
 ---
 

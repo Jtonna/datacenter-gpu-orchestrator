@@ -34,10 +34,10 @@ tiers:                     # first match wins; lower number preferred;
     priority: 1
     headroom_mib: 1024
     shared_memory: true    # GPU memory is system RAM
-    link_mb_s: 80          # used to size load timeouts. Measured 2026-11-18 after the PS5 tensor cache
-                           # was turned off: 75 to 84 MB/s in total out of the OMEN, the same for 1, 2
-                           # or 3 PS5s in one load, and shared between loads that run at the same time
-                           # (one Gemma 12B load 89 s; two at once 167 s each; three at once 246 s each)
+    link_mb_s: 100         # used to size load timeouts. Per PS5, measured 2026-11-18 on the 2.5 GbE OMEN
+                           # link (one Gemma 12B load: about 100 to 108 MB/s). Was about 80 in total and
+                           # shared between loads on the old 1 GbE port (75 to 84 MB/s; two at once 167 s
+                           # each, three at once 246 s each). Now two at once 66 s each, three at once 77 s
     settle: 3s
   - match: { hostname: "alienware*" }
     priority: 2

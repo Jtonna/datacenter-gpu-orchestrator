@@ -118,7 +118,24 @@ Two fixes were made on the PS5 side (not in this repo): the `rpc-server` tensor 
 | Two Gemma 12B loads at once | 167 s each, 40 MB/s each | The rate is shared. |
 | Three Gemma 12B loads at once | 246 s each, 27 MB/s each | The rate is shared. |
 
-`link_mb_s` for the PS5 tier is now 80.
+The rows above were measured on the old 1 GbE link (the OMEN's built-in port).
+
+`link_mb_s` for the PS5 tier was 80 on that link. It is now 100 (see below).
+
+#### After the network upgrade (2026-11-18, about 14:00 to 14:31 UTC)
+
+The OMEN's link to the PS5 switch moved to a USB-C adapter (interface `enx6c1ff7c349ea`) negotiated at 2500 Mb/s. The PS5s still have 1 GbE ports.
+
+| Case | 1 GbE (old link) | 2.5 GbE |
+|---|---|---|
+| One Gemma 12B load, one PS5 | 89 s, about 78 MB/s | 66 s, about 100 to 108 MB/s |
+| Qwen 27B, three PS5s | 216 s | 170 s |
+| Kimi-Dev 72B IQ2_S, three PS5s | 363 s | 286 s |
+| Two Gemma 12B at once, different PS5s | 167 s each | 66 s each |
+| Three Gemma 12B at once | 246 s each | 77 s each, about 280 MB/s in total |
+| Devstral 24B on two PS5s plus Gemma 12B on the third | no earlier run of this pair (Devstral alone 183 s) | 149 s and 67 s |
+
+A single stream to one PS5 is now limited by that PS5's own 1 GbE port (about 100 to 125 MB/s). Loads to different PS5s no longer share one gigabit. Three at once slow slightly because the total nears the 2.5 GbE link. A split model still uploads to one PS5 at a time.
 
 ### Load times through the scheduler (ctx 2048 unless stated)
 
