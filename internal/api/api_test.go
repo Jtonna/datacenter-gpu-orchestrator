@@ -212,7 +212,7 @@ func TestHealthIs200WithNothingLoaded(t *testing.T) {
 
 func TestRunningEmptyIsEmptyArray(t *testing.T) {
 	e := newEnv(t, chatOK)
-	if b := strings.TrimSpace(body(t, e.get("/running"))); b != `{"running":[]}` {
+	if b := runningOnly(t, e); b != `{"running":[]}` {
 		t.Fatalf("running = %s", b)
 	}
 }
@@ -280,7 +280,7 @@ func TestUpstreamUnloadedIs503AtOnceAndStartsNothing(t *testing.T) {
 		t.Fatal("upstream waited")
 	}
 	errBody(t, b)
-	if r := strings.TrimSpace(body(t, e.get("/running"))); r != `{"running":[]}` {
+	if r := runningOnly(t, e); r != `{"running":[]}` {
 		t.Fatalf("/upstream started something: %s", r)
 	}
 }
@@ -313,7 +313,7 @@ func TestUnloadEndpoints(t *testing.T) {
 		t.Fatalf("unload by name: %d %s", resp.StatusCode, body(t, resp))
 	}
 	resp.Body.Close()
-	eventually(t, "alpha stopped", func() bool { return strings.TrimSpace(body(t, e.get("/running"))) == `{"running":[]}` })
+	eventually(t, "alpha stopped", func() bool { return runningOnly(t, e) == `{"running":[]}` })
 
 	e.post("/v1/chat/completions", chat("alpha")).Body.Close()
 	e.post("/v1/chat/completions", chat("beta:64k")).Body.Close() // evicts or loads next to it
@@ -322,7 +322,7 @@ func TestUnloadEndpoints(t *testing.T) {
 		t.Fatalf("GET /unload: %d", resp.StatusCode)
 	}
 	resp.Body.Close()
-	eventually(t, "everything idle stopped", func() bool { return strings.TrimSpace(body(t, e.get("/running"))) == `{"running":[]}` })
+	eventually(t, "everything idle stopped", func() bool { return runningOnly(t, e) == `{"running":[]}` })
 
 	if resp := e.post("/api/models/unload/nope", ""); resp.StatusCode != 404 {
 		t.Fatalf("unknown model: %d", resp.StatusCode)
@@ -363,7 +363,7 @@ func TestUnloadBusyIs409AndForceStopsIt(t *testing.T) {
 	}
 	resp.Body.Close()
 	close(release)
-	eventually(t, "alpha gone", func() bool { return strings.TrimSpace(body(t, e.get("/running"))) == `{"running":[]}` })
+	eventually(t, "alpha gone", func() bool { return runningOnly(t, e) == `{"running":[]}` })
 }
 
 func TestLoadIs202AndPlanChangesNothing(t *testing.T) {
@@ -380,7 +380,7 @@ func TestLoadIs202AndPlanChangesNothing(t *testing.T) {
 	if pl, _ := p["placement"].([]any); len(pl) != 1 {
 		t.Fatalf("placement = %v", p["placement"])
 	}
-	if r := strings.TrimSpace(body(t, e.get("/running"))); r != `{"running":[]}` {
+	if r := runningOnly(t, e); r != `{"running":[]}` {
 		t.Fatalf("plan changed state: %s", r)
 	}
 	if resp := e.post("/api/plan", `{"model":"nope"}`); resp.StatusCode != 404 {

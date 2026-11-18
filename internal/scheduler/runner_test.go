@@ -39,6 +39,11 @@ func startScheduler(t *testing.T, nodes []core.Node, profiles ...*core.Profile) 
 	view := newFakeView(clk)
 	view.set(nodes...)
 	cfg := testConfig()
+	// These tests drive the real clock-following loop; the forced-node
+	// fail-fast (which answers in 30 s) would race with the queue_timeout
+	// test, so it is set out of the way here. Its own rules are in
+	// rules_forcedgone_test.go.
+	cfg.Defaults.ForcedNodeGrace = 24 * time.Hour
 	for _, p := range profiles {
 		cfg.Profiles[p.Name] = p
 	}
@@ -47,6 +52,9 @@ func startScheduler(t *testing.T, nodes []core.Node, profiles ...*core.Profile) 
 	s, err := New(cfg, Options{
 		Clock: clk, View: view, Prober: f.prober, Launcher: f.launcher,
 		Needs: NeedFunc(func(p *core.Profile) (NeedInfo, error) {
+			if p.Name == "upload" {
+				return NeedInfo{Need: placer.Measured(p.NeedsMiB), FileBytes: 1100 * mb}, nil
+			}
 			return NeedInfo{Need: placer.Measured(p.NeedsMiB)}, nil
 		}),
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -268,14 +276,14 @@ func TestScheduler_FeedReportsStatesAndRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	l.Release()
-	want := []FeedKind{FeedInstance, FeedInstance, FeedAdmitted, FeedFinished}
+	want := []FeedKind{FeedInstance, FeedLoadStarted, FeedLoadFinished, FeedInstance, FeedAdmitted, FeedFinished}
 	for i, k := range want {
 		select {
 		case ev := <-ch:
 			if ev.Kind != k || ev.Profile != "m" {
 				t.Fatalf("event %d: %+v, want kind %v", i, ev, k)
 			}
-			if k == FeedInstance && i == 1 && (ev.State != RunningReady || ev.ReadySince.IsZero()) {
+			if k == FeedInstance && i == 3 && (ev.State != RunningReady || ev.ReadySince.IsZero()) {
 				t.Fatalf("ready event %+v", ev)
 			}
 			if k == FeedFinished && ev.RequestID != l.ID {
@@ -349,3 +357,30 @@ func waitFor(t *testing.T, cond func() bool) {
 }
 
 var _ = fmt.Sprint
+
+// The real loop reads the byte count off the event loop and folds the
+// result back in: a loading remote instance becomes "measured".
+func TestScheduler_LoadProgressIsMeasuredThroughTheRunner(t *testing.T) {
+	f := startScheduler(t, []core.Node{ps5("a", 2, 15000)}, llamaP("upload", 8000))
+	f.launcher.autoHealthy = false
+	f.launcher.sent = 400_000_000
+	if err := f.s.Load(ctxT(t), "upload"); err != nil {
+		t.Fatal(err)
+	}
+	var in InstanceStatus
+	waitFor(t, func() bool {
+		f.clk.Advance(time.Second)
+		st, err := f.s.Status(ctxT(t))
+		if err != nil || len(st.Instances) != 1 {
+			return false
+		}
+		in = st.Instances[0]
+		return in.LoadProgressSource != nil && *in.LoadProgressSource == "measured"
+	})
+	if in.LoadBytesSent == nil || *in.LoadBytesSent != 400_000_000 {
+		t.Fatalf("load_bytes_sent = %v", in.LoadBytesSent)
+	}
+	if r := f.s.Running(); len(r) != 1 || r[0].LoadProgress == nil {
+		t.Fatalf("running %+v", r)
+	}
+}

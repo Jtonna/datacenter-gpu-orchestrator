@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/config"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/fleet"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/instance"
@@ -43,6 +44,10 @@ func (c *schedCore) runningList() []RunningInstance {
 	var out []RunningInstance
 	for _, in := range c.sortedInsts() {
 		r := RunningInstance{Profile: in.prof.Name, State: in.state.running(), Cmd: c.cmdline(in)}
+		if in.state == stStarting {
+			r.LoadProgress = c.loadView(in).progress
+			r.Load = c.loadReport(in)
+		}
 		if in.state == stReady || in.state == stDraining {
 			r.ReadySince = in.readyAt
 		}
@@ -97,7 +102,7 @@ func endpointOf(name string) string {
 func (c *schedCore) instStatus(in *inst) InstanceStatus {
 	s := InstanceStatus{
 		Profile: in.prof.Name, State: in.state.String(), RunningState: in.state.running(),
-		Cmd: c.cmdline(in), Created: in.created, LastUsed: in.lastUsed, LoadDuration: in.loadDuration,
+		Cmd: c.cmdline(in), LogFile: in.logFile, Created: in.created, LastUsed: in.lastUsed, LoadDuration: in.loadDuration,
 		InFlight: in.inFlight, Waiters: len(in.waiters), VictimOf: in.victimOf,
 	}
 	if in.state == stStarting {
@@ -108,6 +113,12 @@ func (c *schedCore) instStatus(in *inst) InstanceStatus {
 	}
 	if in.state == stReady || in.state == stDraining {
 		s.ReadySince = in.readyAt
+	}
+	if in.state == stStarting {
+		v := c.loadView(in)
+		s.LoadElapsedS, s.LoadBytesTotal, s.LoadBytesSent = &v.elapsed, v.total, v.sent
+		s.LoadProgress, s.LoadEtaS, s.LoadProgressSource = v.progress, v.eta, v.source
+		s.Load = c.loadReport(in)
 	}
 	if in.child != nil {
 		s.Addr = "127.0.0.1:" + strconv.Itoa(in.child.Port())
@@ -144,7 +155,7 @@ func (c *schedCore) instStatus(in *inst) InstanceStatus {
 }
 
 func (c *schedCore) statusDoc() Status {
-	st := Status{Time: c.now, ShuttingDown: c.shutdown}
+	st := Status{Time: c.now, ShuttingDown: c.shutdown, RecentLoads: c.recentLoads()}
 	for _, in := range c.sortedInsts() {
 		st.Instances = append(st.Instances, c.instStatus(in))
 	}
@@ -235,6 +246,10 @@ func (c *schedCore) dryPlan(profile string) PlanReport {
 		r.Action, r.Reason = PlanReject, why
 		return r
 	}
+	if fe := c.forcedGoneErr(p); fe != nil && c.insts[profile] == nil {
+		r.Action, r.Reason = PlanReject, fe.Message
+		return r
+	}
 	req, info, err := c.request(p)
 	if err != nil {
 		r.Action, r.Reason = PlanReject, "memory need unknown: "+err.Error()
@@ -270,6 +285,7 @@ func (c *schedCore) dryPlan(profile string) PlanReport {
 	pl, perr := placer.Place(req, c.freeCandidates(p))
 	if perr == nil {
 		r.Action, r.Placement = PlanStart, c.placedStatus(pl)
+		c.applyForcedFit(&r, p, pl)
 		return r
 	}
 	if ev := c.evictables(p, 0); len(ev) > 0 {
@@ -284,4 +300,22 @@ func (c *schedCore) dryPlan(profile string) PlanReport {
 	r.Action = PlanQueue
 	_, r.Reason = c.waitWhy(p)
 	return r
+}
+
+// applyForcedFit adds the forced_fit_check outcome to a plan that would
+// start: a refusal in reject mode, a warning in warn mode.
+func (c *schedCore) applyForcedFit(r *PlanReport, p *core.Profile, pl core.Placement) {
+	ids := make([]core.NodeID, len(pl.Nodes))
+	for i, n := range pl.Nodes {
+		ids[i] = n.ID
+	}
+	ff := c.forcedFitCheck(p, ids)
+	if ff == nil {
+		return
+	}
+	if ff.mode == config.ForcedFitReject {
+		r.Action, r.Reason = PlanReject, ff.message(p.Name)+" (defaults.forced_fit_check is reject)"
+		return
+	}
+	r.Warning = ff.message(p.Name) + " (defaults.forced_fit_check is warn; it would start anyway)"
 }

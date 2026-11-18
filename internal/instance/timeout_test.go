@@ -107,3 +107,26 @@ func TestRemoteShares(t *testing.T) {
 		t.Fatalf("single node shares = %v", got)
 	}
 }
+
+func TestSplitFractions(t *testing.T) {
+	pl := core.Placement{Nodes: []core.PlacedNode{{ID: "omen", Local: true, BudgetMiB: 6000}, {ID: "a", BudgetMiB: 3000}, {ID: "b", BudgetMiB: 1000}}}
+	near := func(got []float64, want ...float64) {
+		t.Helper()
+		if len(got) != len(want) {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+		for i := range want {
+			if math.Abs(got[i]-want[i]) > 1e-9 {
+				t.Fatalf("got %v, want %v", got, want)
+			}
+		}
+	}
+	near(SplitFractions(core.Profile{}, pl), 0.6, 0.3, 0.1)                              // budgets, as BuildArgs
+	near(SplitFractions(core.Profile{TensorSplit: []int{1, 1, 2}}, pl), 0.25, 0.25, 0.5) // profile split
+	pl.TensorSplit = []int{2, 1, 1}
+	near(SplitFractions(core.Profile{TensorSplit: []int{1, 1, 2}}, pl), 0.5, 0.25, 0.25)                               // placement split wins
+	near(SplitFractions(core.Profile{TensorSplit: []int{1, 2}}, core.Placement{Nodes: pl.Nodes}), 1.0/3, 1.0/3, 1.0/3) // unusable: even
+	if got := SplitFractions(core.Profile{}, core.Placement{}); got != nil {
+		t.Fatalf("no nodes: %v", got)
+	}
+}

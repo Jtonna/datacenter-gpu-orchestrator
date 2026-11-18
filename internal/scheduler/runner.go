@@ -55,6 +55,7 @@ type Scheduler struct {
 
 type snapshot struct {
 	running  []RunningInstance
+	recent   []LoadOutcome
 	profiles []ProfileState
 	upstream map[string]string
 }
@@ -153,7 +154,7 @@ func (s *Scheduler) step(ev event) {
 			up[name] = a
 		}
 	}
-	s.snap.Store(&snapshot{running: s.core.runningList(), profiles: s.core.profileStates(), upstream: up})
+	s.snap.Store(&snapshot{running: s.core.runningList(), recent: s.core.recentLoads(), profiles: s.core.profileStates(), upstream: up})
 	for _, ef := range s.core.takeEffects() {
 		s.exec(ef)
 	}
@@ -215,6 +216,13 @@ func (s *Scheduler) exec(ef effect) {
 		})
 	case effStart:
 		s.goBg(func(ctx context.Context) { s.startChild(ctx, ef) })
+	case effSample:
+		// Reading the kernel's socket table is off the event loop; the
+		// result comes back as an event.
+		s.goBg(func(context.Context) {
+			sc, err := ef.counter.SentBytes(ef.peers)
+			s.post(context.Background(), evLoadSample{iid: ef.iid, bytes: sc.Bytes, sockets: sc.Sockets, peers: sc.Peers, err: err})
+		})
 	case effFetch:
 		s.goBg(func(ctx context.Context) {
 			n, err := s.opts.View.FetchNode(ctx, ef.id)
@@ -447,6 +455,19 @@ func (s *Scheduler) Upstream(model string) (string, bool) {
 // Running is the /running list (design A.1). It never waits.
 func (s *Scheduler) Running() []RunningInstance {
 	return append([]RunningInstance(nil), s.snap.Load().running...)
+}
+
+// RecentLoads is the outcome of the load attempts that finished within
+// RecentLoadRetention, newest first, for /running. It never waits.
+func (s *Scheduler) RecentLoads() []LoadOutcome {
+	cut := s.opts.Clock.Now().Add(-RecentLoadRetention).UnixMilli()
+	out := []LoadOutcome{}
+	for _, o := range s.snap.Load().recent {
+		if o.FinishedAt >= cut {
+			out = append(out, o)
+		}
+	}
+	return out
 }
 
 // Profiles is every profile with its state, for modelStatus (A.3).

@@ -32,6 +32,10 @@ func TestValidateRejects(t *testing.T) {
 	}{
 		{"unknown top-level field", baseHeader + "bogus: 1\nprofiles: {}\n", []string{"bogus"}},
 		{"unknown profile field", prof(llama + "    ctxx: 1\n"), []string{"ctxx"}},
+		{"forced_node_grace zero", baseHeader + "defaults: {forced_node_grace: 0}\nprofiles: {}\n", []string{"forced_node_grace", "positive"}},
+		{"forced_node_grace negative", baseHeader + "defaults: {forced_node_grace: -5s}\nprofiles: {}\n", []string{"forced_node_grace", "positive"}},
+		{"forced_fit_check unknown", baseHeader + "defaults: {forced_fit_check: maybe}\nprofiles: {}\n", []string{"forced_fit_check", "off", "warn", "reject"}},
+		{"child_log_keep zero", baseHeader + "child_log_keep: 0\nprofiles: {}\n", []string{"child_log_keep", "at least 1"}},
 		{"unknown defaults field", baseHeader + "defaults: {ttll: 5s}\n", []string{"ttll"}},
 		{"duplicate profile name", prof(llama + "  p:\n    model: m.gguf\n    ctx: 1\n"), []string{"p"}},
 		{"alias equals other profile", prof(llama + "  q:\n    model: m.gguf\n    ctx: 1\n    aliases: [p]\n"),

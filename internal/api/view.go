@@ -9,7 +9,8 @@ import (
 
 // jsonView converts the scheduler's status structs (which carry no JSON
 // tags) into plain JSON values: snake_case keys, durations as seconds
-// (float), times as RFC 3339 (zero time as null), slices never null.
+// (float), times as RFC 3339 (zero time as null), slices never null. A nil
+// pointer field is left out of its object (the optional load_* fields).
 func jsonView(v any) any { return view(reflect.ValueOf(v)) }
 
 var (
@@ -55,6 +56,9 @@ func view(v reflect.Value) any {
 		out := map[string]any{}
 		for i := 0; i < v.NumField(); i++ {
 			if f := v.Type().Field(i); f.IsExported() {
+				if fv := v.Field(i); fv.Kind() == reflect.Pointer && fv.IsNil() {
+					continue
+				}
 				out[snake(f.Name)] = view(v.Field(i))
 			}
 		}

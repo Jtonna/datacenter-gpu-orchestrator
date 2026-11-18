@@ -370,9 +370,16 @@ func (s *Server) handleRunning(w http.ResponseWriter, r *http.Request) {
 	list := s.sched.Running()
 	out := make([]any, 0, len(list))
 	for _, ri := range list {
-		out = append(out, map[string]any{"model": ri.Profile, "state": string(ri.State), "name": ri.Profile, "cmd": ri.Cmd})
+		e := map[string]any{"model": ri.Profile, "state": string(ri.State), "name": ri.Profile, "cmd": ri.Cmd}
+		if ri.LoadProgress != nil {
+			e["load_progress"] = *ri.LoadProgress // an addition; the llama-swap fields above are unchanged
+		}
+		if ri.Load != nil {
+			e["load"] = jsonView(ri.Load) // the structured report (design 7.6a)
+		}
+		out = append(out, e)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"running": out})
+	writeJSON(w, http.StatusOK, map[string]any{"running": out, "recent_loads": jsonView(s.sched.RecentLoads())})
 }
 
 func (s *Server) handleUnloadAll(w http.ResponseWriter, r *http.Request) {

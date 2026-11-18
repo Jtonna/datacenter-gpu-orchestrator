@@ -8,9 +8,13 @@ import (
 
 // Config is the parsed, validated configuration file.
 type Config struct {
-	Listen        string
-	Fleet         Fleet
-	ModelsDir     string
+	Listen    string
+	Fleet     Fleet
+	ModelsDir string
+	// ChildLogDir, when set, receives one file per child start holding its
+	// complete stdout and stderr; ChildLogKeep is how many such files to keep.
+	ChildLogDir   string
+	ChildLogKeep  int
 	LocalProbeCmd string
 	Defaults      Defaults
 	Tiers         []TierRule
@@ -44,7 +48,22 @@ type Defaults struct {
 	CacheRAMMiB        int
 	ServerBin          string
 	LocalDevice        string
+	// ForcedNodeGrace is how long a forced node may be absent or offline in a
+	// live fleet view before requests for the profile fail fast.
+	ForcedNodeGrace time.Duration
+	// ForcedFitCheck is what a profile with force_nodes does when its memory
+	// need exceeds the forced nodes' free memory at pre-flight: ForcedFitOff
+	// (no check, the default), ForcedFitWarn (log and start) or
+	// ForcedFitReject (fail the request).
+	ForcedFitCheck string
 }
+
+// Values of defaults.forced_fit_check.
+const (
+	ForcedFitOff    = "off"
+	ForcedFitWarn   = "warn"
+	ForcedFitReject = "reject"
+)
 
 // Match is a tier's match clause. Empty fields are not checked.
 type Match struct {

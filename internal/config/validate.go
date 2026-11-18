@@ -240,7 +240,7 @@ func (c *Config) validateDefaults(add func(string, ...any)) {
 	}{
 		{"min_hold", d.MinHold}, {"max_hold", d.MaxHold}, {"drain_after", d.DrainAfter},
 		{"queue_timeout", d.QueueTimeout}, {"command_load_timeout", d.CommandLoadTimeout},
-		{"shutdown_grace", d.ShutdownGrace},
+		{"shutdown_grace", d.ShutdownGrace}, {"forced_node_grace", d.ForcedNodeGrace},
 	} {
 		if x.v <= 0 {
 			add("defaults: %s: must be positive, got %v", x.name, x.v)
@@ -260,11 +260,19 @@ func (c *Config) validateDefaults(add func(string, ...any)) {
 			add("defaults: %s: must not be negative", x.name)
 		}
 	}
+	switch d.ForcedFitCheck {
+	case ForcedFitOff, ForcedFitWarn, ForcedFitReject:
+	default:
+		add("defaults: forced_fit_check: must be %s, %s or %s, got %q", ForcedFitOff, ForcedFitWarn, ForcedFitReject, d.ForcedFitCheck)
+	}
 	if d.ServerBin == "" {
 		add("defaults: server_bin: must not be empty")
 	}
 	if d.LocalDevice == "" {
 		add("defaults: local_device: must not be empty")
+	}
+	if c.ChildLogKeep < 1 {
+		add("child_log_keep: must be at least 1, got %d", c.ChildLogKeep)
 	}
 	if c.Fleet.StaleAfter <= 0 {
 		add("fleet: stale_after: must be positive, got %v", c.Fleet.StaleAfter)

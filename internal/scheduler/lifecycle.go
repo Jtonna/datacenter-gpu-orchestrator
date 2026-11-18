@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/config"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/instance"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/placer"
@@ -41,6 +42,7 @@ func (c *schedCore) startInstance(p *core.Profile, pl core.Placement, waiters []
 		ns.claim = ""
 	}
 	c.insts[p.Name] = in
+	c.initLoadProgress(in)
 	c.changed = true
 	c.emitState(in, RunningStarting)
 	c.logPlacement(in)
@@ -105,6 +107,21 @@ func (c *schedCore) preflightDone(iid uint64, results []probeOutcome) {
 		c.failLoad(in, err.Error(), nil, false)
 		return
 	}
+	if ff := c.forcedFitCheck(in.prof, in.nodeIDs()); ff != nil {
+		if ff.mode == config.ForcedFitReject {
+			// Up front, before anything is uploaded. Not a load failure: no
+			// backoff, no quarantine; the nodes are released unsettled.
+			c.log.Warn("forced profile does not fit; rejecting", "profile", in.prof.Name, "need_mib", ff.need,
+				"free_mib", ff.free, "nodes", ff.nodes, "measured", ff.measured)
+			ws := in.waiters
+			in.waiters = nil
+			c.failAll(ws, ff.err(in.prof.Name))
+			c.removeInst(in, false)
+			return
+		}
+		c.log.Warn("forced profile may not fit", "profile", in.prof.Name, "need_mib", ff.need,
+			"free_mib", ff.free, "nodes", ff.nodes, "measured", ff.measured)
+	}
 	pl := in.placement
 	pl.Nodes = slices.Clone(pl.Nodes)
 	budgets := make([]int, len(pl.Nodes))
@@ -161,6 +178,7 @@ func (c *schedCore) launch(in *inst) {
 		n, _ := c.node(id)
 		return n.LinkMBs
 	})
+	c.initLoadProgress(in)
 	in.loadTimeout = instance.EffectiveLoadTimeout(p, c.cfg.Defaults.CommandLoadTimeout, info.FileBytes, shares)
 	opts := c.build
 	health := defaultHealthCheck
@@ -172,6 +190,8 @@ func (c *schedCore) launch(in *inst) {
 		Build:      func(port int) ([]string, error) { return instance.BuildArgs(p, pl, port, opts) },
 		HealthPath: health,
 		Env:        instance.ChildEnvOverrides(p, pl),
+		Profile:    p.Name,
+		InstanceID: in.iid,
 	}})
 }
 
@@ -192,13 +212,23 @@ func (c *schedCore) childStarted(iid uint64, ch instance.Child, err error) {
 		return
 	}
 	in.child, in.childRan, in.argv = ch, true, ch.Argv()
-	c.log.Info("child started", "profile", in.prof.Name, "pid", ch.PID(), "port", ch.Port(), "cmd", instance.RenderCommand(in.argv))
+	if lf, ok := ch.(instance.LogFiler); ok {
+		in.logFile = lf.LogFile()
+	}
+	attrs := []any{"profile", in.prof.Name, "pid", ch.PID(), "port", ch.Port(), "cmd", instance.RenderCommand(in.argv)}
+	if in.logFile != "" {
+		attrs = append(attrs, "log_file", in.logFile)
+	}
+	c.log.Info("child started", attrs...)
+	c.beginLoad(in)
 	if in.state == stStopping {
+		c.finishLoad(in, LoadCancelled, cancelReason(in.stopReason))
 		c.effects = append(c.effects, effStop{iid: in.iid, child: ch, mode: in.stopMode})
 		return
 	}
 	in.phase = phLoading
 	in.loadDL = c.now.Add(in.loadTimeout)
+	in.loadStart, in.nextSample, in.nextLoadLog = c.now, c.now.Add(sampleEvery), c.now.Add(loadLogEvery)
 	c.changed = true
 }
 
@@ -208,6 +238,7 @@ func (c *schedCore) healthy(iid uint64, err error) {
 		return // exits and timeouts arrive as their own events
 	}
 	in.state, in.phase = stReady, phRunning
+	c.finishLoad(in, LoadReady, "")
 	in.readyAt, in.lastUsed = c.now, c.now
 	in.loadDuration = c.now.Sub(in.created)
 	delete(c.backoffs, in.prof.Name) // reset when the profile next reaches ready
@@ -253,6 +284,13 @@ func (c *schedCore) stopInst(in *inst, mode instance.StopMode) {
 	if in.phase == phLoading {
 		c.effects = append(c.effects, effCancelHealth{iid: in.iid})
 	}
+	if in.state == stStarting && in.loadActive() {
+		if in.stopReason == "node loss" {
+			c.finishLoad(in, LoadFailed, "a worker node was lost during the load")
+		} else {
+			c.finishLoad(in, LoadCancelled, cancelReason(in.stopReason))
+		}
+	}
 	in.state, in.stopMode = stStopping, mode
 	c.changed = true
 	c.log.Info("instance stopping", "profile", in.prof.Name, "reason", c.stopReasonOf(in), "mode", modeName(mode), "in_flight", in.inFlight)
@@ -282,6 +320,7 @@ func (c *schedCore) removeInst(in *inst, settle bool) {
 	}
 	delete(c.insts, in.prof.Name)
 	c.changed = true
+	c.finishLoad(in, LoadCancelled, cancelReason(in.stopReason)) // only if still open
 	if in.childRan {
 		var loadedFor time.Duration
 		if !in.readyAt.IsZero() {
@@ -354,6 +393,7 @@ func (c *schedCore) failLoad(in *inst, msg string, tail []string, gone bool) {
 	if in.stopReason == "" {
 		in.stopReason = "load failed"
 	}
+	c.finishLoad(in, LoadFailed, msg)
 	ws := in.waiters
 	in.waiters = nil
 	c.failAll(ws, err502(fmt.Sprintf("loading %s failed: %s", in.prof.Name, msg), tail))

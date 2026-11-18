@@ -49,18 +49,14 @@ func TestExampleConfigParses(t *testing.T) {
 		*p.StallTimeout != 0 {
 		t.Errorf("whisper: %+v", p)
 	}
-	// Measured on hardware, 2026-11-17 (docs/hardware-test/RESULTS.md).
-	for name, want := range map[string]int{"gemma-4-12b": 7850, "gemma-4-12b:64k": 8600, "qwen3.5-4b": 3400, "tinyllama": 700} {
+	// Measured on hardware, 2026-11-17 and 2026-11-18 (docs/hardware-test/).
+	for name, want := range map[string]int{"gemma-4-12b": 7900, "gemma-4-12b:48k": 8250, "gemma-4-12b:64k": 8600,
+		"gemma-4-12b:96k": 9050, "devstral-24b": 14300, "qwen3.5-4b": 3400, "tinyllama": 700} {
 		if p := c.Profiles[name]; p.NeedsMiB != want {
 			t.Errorf("%s needs_mib = %d, want %d", name, p.NeedsMiB, want)
 		}
 	}
-	for _, name := range []string{"gemma-4-12b:48k", "gemma-4-12b:96k"} { // still placeholders
-		if p := c.Profiles[name]; p.NeedsMiB == 0 {
-			t.Errorf("%s lost its placeholder needs_mib", name)
-		}
-	}
-	for host, want := range map[string]int{"ps5-062e1d84": 8, "alienware-llm": 60} {
+	for host, want := range map[string]int{"ps5-062e1d84": 80, "alienware-llm": 60} {
 		if tier, ok := c.MatchTier(host, "", "", false); !ok || tier.LinkMBs != float64(want) {
 			t.Errorf("%s link_mb_s = %+v, want %d", host, tier, want)
 		}
@@ -84,6 +80,11 @@ func TestDeployConfigMatchesExample(t *testing.T) {
 		return c
 	}
 	a, b := load("configs/example.yaml"), load("deploy/config.yaml")
+	// The deploy file turns on the child log directory; the example leaves it off.
+	if b.ChildLogDir == "" {
+		t.Errorf("deploy/config.yaml should set child_log_dir")
+	}
+	b.ChildLogDir = a.ChildLogDir
 	if !reflect.DeepEqual(a, b) {
 		t.Fatalf("deploy/config.yaml parses differently from configs/example.yaml: %+v vs %+v", a, b)
 	}

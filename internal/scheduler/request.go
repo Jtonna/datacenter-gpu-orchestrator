@@ -45,6 +45,12 @@ func (c *schedCore) arrive(w *waiter) {
 		c.fail(w, c.excludedForcedErr(p, why))
 		return
 	}
+	if c.insts[p.Name] != nil {
+		// draining or stopping: it waits for that instance to go
+	} else if err := c.failFastForced(p, 1); err != nil {
+		c.fail(w, err)
+		return
+	}
 	// draining, stopping or no instance: the queue (7.2 capacity check first).
 	if err := c.capacity(w.profile); err != nil {
 		var np *placer.NoPlacement

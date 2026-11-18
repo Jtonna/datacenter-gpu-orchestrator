@@ -52,6 +52,23 @@ func EffectiveLoadTimeout(p core.Profile, commandDefault time.Duration, fileByte
 // profile split, else budgets). linkMBs looks up a node's tier link speed.
 // If the weights are unusable, the file is assumed to be spread evenly.
 func RemoteShares(p core.Profile, pl core.Placement, linkMBs func(core.NodeID) float64) []NodeShare {
+	fr := SplitFractions(p, pl)
+	var out []NodeShare
+	for i, node := range pl.Nodes {
+		if node.Local {
+			continue
+		}
+		out = append(out, NodeShare{Fraction: fr[i], LinkMBs: linkMBs(node.ID)})
+	}
+	return out
+}
+
+// SplitFractions returns every placement node's share of the model, in
+// placement order: its tensor split weight over the sum, exactly the split
+// BuildArgs passes to the child (a placement's own split for an automatic
+// placement, else the profile's, else the budgets). If the weights are
+// unusable the model is assumed to be spread evenly. Nil for no nodes.
+func SplitFractions(p core.Profile, pl core.Placement) []float64 {
 	n := len(pl.Nodes)
 	if n == 0 {
 		return nil
@@ -67,12 +84,9 @@ func RemoteShares(p core.Profile, pl core.Placement, linkMBs func(core.NodeID) f
 	for _, v := range w {
 		sum += v
 	}
-	var out []NodeShare
-	for i, node := range pl.Nodes {
-		if node.Local {
-			continue
-		}
-		out = append(out, NodeShare{Fraction: float64(w[i]) / float64(sum), LinkMBs: linkMBs(node.ID)})
+	out := make([]float64, n)
+	for i := range w {
+		out[i] = float64(w[i]) / float64(sum)
 	}
 	return out
 }

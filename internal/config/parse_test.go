@@ -27,6 +27,7 @@ func TestParseDefaultsApplied(t *testing.T) {
 		StallTimeout: 300 * time.Second, CommandLoadTimeout: 900 * time.Second,
 		ShutdownGrace: 300 * time.Second, MaxPool: 4, DeviceOverheadMiB: 600,
 		MinShareMiB: 1024, CacheRAMMiB: 2048, ServerBin: "llama-server-rpc", LocalDevice: "CUDA0",
+		ForcedNodeGrace: 30 * time.Second, ForcedFitCheck: ForcedFitOff,
 	}
 	if d != want {
 		t.Fatalf("defaults = %+v\nwant      %+v", d, want)
@@ -140,5 +141,28 @@ func TestLoadReadsFile(t *testing.T) {
 	}
 	if _, err := Load(filepath.Join(t.TempDir(), "missing.yaml")); err == nil {
 		t.Fatal("expected error for missing file")
+	}
+}
+
+func TestParseForcedNodeGraceAndChildLogKeys(t *testing.T) {
+	c := mustParse(t, "profiles: {}\n")
+	if c.Defaults.ForcedNodeGrace != 30*time.Second || c.ChildLogDir != "" || c.ChildLogKeep != 200 {
+		t.Fatalf("defaults: grace %v, dir %q, keep %d", c.Defaults.ForcedNodeGrace, c.ChildLogDir, c.ChildLogKeep)
+	}
+	c = mustParse(t, "child_log_dir: /var/log/children\nchild_log_keep: 7\ndefaults: {forced_node_grace: 5s}\nprofiles: {}\n")
+	if c.Defaults.ForcedNodeGrace != 5*time.Second || c.ChildLogDir != "/var/log/children" || c.ChildLogKeep != 7 {
+		t.Fatalf("set: grace %v, dir %q, keep %d", c.Defaults.ForcedNodeGrace, c.ChildLogDir, c.ChildLogKeep)
+	}
+}
+
+func TestParseForcedFitCheck(t *testing.T) {
+	if c := mustParse(t, "profiles: {}\n"); c.Defaults.ForcedFitCheck != ForcedFitOff {
+		t.Fatalf("default = %q, want %q", c.Defaults.ForcedFitCheck, ForcedFitOff)
+	}
+	for _, v := range []string{ForcedFitOff, ForcedFitWarn, ForcedFitReject} {
+		c := mustParse(t, "defaults: {forced_fit_check: "+v+"}\nprofiles: {}\n")
+		if c.Defaults.ForcedFitCheck != v {
+			t.Fatalf("forced_fit_check %s parsed as %q", v, c.Defaults.ForcedFitCheck)
+		}
 	}
 }

@@ -23,8 +23,12 @@ func DefaultDefaults() Defaults {
 		StallTimeout: 300 * time.Second, CommandLoadTimeout: 900 * time.Second,
 		ShutdownGrace: 300 * time.Second, MaxPool: 4, DeviceOverheadMiB: 600,
 		MinShareMiB: 1024, CacheRAMMiB: 2048, ServerBin: "llama-server-rpc", LocalDevice: "CUDA0",
+		ForcedNodeGrace: 30 * time.Second, ForcedFitCheck: ForcedFitOff,
 	}
 }
+
+// DefaultChildLogKeep is how many child log files are kept by default.
+const DefaultChildLogKeep = 200
 
 // DefaultLocalProbeCmd is the nvidia-smi query of design 5.1.
 const DefaultLocalProbeCmd = "nvidia-smi --query-gpu=memory.total,memory.used --format=csv,noheader,nounits"
@@ -50,6 +54,7 @@ func ParseWithOptions(data []byte, o Options) (*Config, error) {
 		Listen:        ":8080",
 		Fleet:         rawFleet{StaleAfter: duration(60 * time.Second)},
 		ModelsDir:     "/models",
+		ChildLogKeep:  DefaultChildLogKeep,
 		LocalProbeCmd: DefaultLocalProbeCmd,
 		Defaults:      rawDefaultsFrom(DefaultDefaults()),
 	}
@@ -62,6 +67,8 @@ func ParseWithOptions(data []byte, o Options) (*Config, error) {
 		Listen:        raw.Listen,
 		Fleet:         Fleet{URL: raw.Fleet.URL, LocalNode: raw.Fleet.LocalNode, StaleAfter: time.Duration(raw.Fleet.StaleAfter)},
 		ModelsDir:     raw.ModelsDir,
+		ChildLogDir:   strings.TrimSpace(raw.ChildLogDir),
+		ChildLogKeep:  raw.ChildLogKeep,
 		LocalProbeCmd: raw.LocalProbeCmd,
 		Defaults:      raw.Defaults.value(),
 		NodeOverrides: map[string]NodeOverride{},
@@ -114,6 +121,8 @@ type rawConfig struct {
 	Listen        string                 `yaml:"listen"`
 	Fleet         rawFleet               `yaml:"fleet"`
 	ModelsDir     string                 `yaml:"models_dir"`
+	ChildLogDir   string                 `yaml:"child_log_dir"`
+	ChildLogKeep  int                    `yaml:"child_log_keep"`
 	LocalProbeCmd string                 `yaml:"local_probe_cmd"`
 	Defaults      rawDefaults            `yaml:"defaults"`
 	Tiers         []rawTier              `yaml:"tiers"`
@@ -242,18 +251,21 @@ type rawDefaults struct {
 	CacheRAMMiB        int      `yaml:"cache_ram_mib"`
 	ServerBin          string   `yaml:"server_bin"`
 	LocalDevice        string   `yaml:"local_device"`
+	ForcedNodeGrace    duration `yaml:"forced_node_grace"`
+	ForcedFitCheck     string   `yaml:"forced_fit_check"`
 }
 
 func rawDefaultsFrom(d Defaults) rawDefaults {
 	return rawDefaults{duration(d.TTL), duration(d.MinHold), duration(d.MaxHold), duration(d.DrainAfter),
 		duration(d.QueueTimeout), duration(d.StallTimeout), duration(d.CommandLoadTimeout),
 		duration(d.ShutdownGrace), d.MaxPool, d.DeviceOverheadMiB, d.MinShareMiB, d.CacheRAMMiB,
-		d.ServerBin, d.LocalDevice}
+		d.ServerBin, d.LocalDevice, duration(d.ForcedNodeGrace), d.ForcedFitCheck}
 }
 
 func (r rawDefaults) value() Defaults {
 	return Defaults{time.Duration(r.TTL), time.Duration(r.MinHold), time.Duration(r.MaxHold),
 		time.Duration(r.DrainAfter), time.Duration(r.QueueTimeout), time.Duration(r.StallTimeout),
 		time.Duration(r.CommandLoadTimeout), time.Duration(r.ShutdownGrace), r.MaxPool,
-		r.DeviceOverheadMiB, r.MinShareMiB, r.CacheRAMMiB, r.ServerBin, r.LocalDevice}
+		r.DeviceOverheadMiB, r.MinShareMiB, r.CacheRAMMiB, r.ServerBin, r.LocalDevice,
+		time.Duration(r.ForcedNodeGrace), r.ForcedFitCheck}
 }

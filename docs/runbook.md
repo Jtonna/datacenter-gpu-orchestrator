@@ -222,13 +222,13 @@ The ufw rule from section C can stay.
 
 ## G. Measure `needs_mib` (about 20 min per Gemma variant, plus load time)
 
-Why: Gemma has sliding-window layers, so the estimate is several times too high (design 7.2). The values in the config for `gemma-4-12b:48k`, `:96k`, `flux-1-schnell` and `flux-1-dev` are **PLACEHOLDERS** until you do this. (`gemma-4-12b` 8K is measured at 7850 and `:64k` at 8600; see `docs/hardware-test/BENCHMARKS.md`.) Until then the scheduler may say "does not fit" for a profile that does fit.
+Why: Gemma has sliding-window layers, so the estimate is several times too high (design 7.2). The values in the config for `flux-1-schnell` and `flux-1-dev` are **PLACEHOLDERS** until you do this. (`gemma-4-12b` 8K is measured at 7900, `:48k` at 8250, `:64k` at 8600 and `:96k` at 9050; see `docs/hardware-test/BENCHMARKS.md`.) Until then the scheduler may say "does not fit" for a profile that does fit.
 
 Rule: `needs_mib` is the whole footprint (weights + KV + compute buffers), no margin added (design 7.2).
 
-### G1. Gemma variants (48k and 96k are still placeholders; `gemma-4-12b` 8K is measured at 7850 and `:64k` at 8600)
+### G1. Gemma variants (all four are measured now; use these steps to re-check one or to size a new variant)
 
-For each variant still on a placeholder (48k, 96k), one at a time. Nodes must be online and free. To re-check 64k, use the same steps with `ctx: 65536`.
+For each variant you want to measure, one at a time. Nodes must be online and free. To re-check 64k, use the same steps with `ctx: 65536`.
 
 1. Uncomment the `gemma-measure` template at the end of `/opt/llm-scheduler/config.yaml`. Set `ctx` to the variant (`49152`, `65536` or `98304`), keep `kv_quant: q8_0` and `flash_attn: true`, and set `force_nodes` / `tensor_split` to the pool you expect it to run on in practice (for example a PS5 and the Alienware). The compute buffer is per device, so the sum depends on the number of devices: measure on the pool size you will really use (the design does not say more; this is an assumption).
 
@@ -282,7 +282,7 @@ nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits
 
 ## H. Hardware checks (about 60 min, in any order)
 
-All commands and expected results: `deploy/scripts/hardware-checks.md`. Do H1, H2, H3 first: if H2 or H3 fails, placements on PS5s will be quarantined by the pre-flight. Open items the design leaves for hardware: whether the cache shortens repeat loads, what a head does when a worker loses power (inferred, not observed), PS5 usable memory (sources disagree).
+All commands and expected results: `deploy/scripts/hardware-checks.md`. Do H1, H2, H3 first: if H2 or H3 fails, placements on PS5s will be quarantined by the pre-flight. Since 2026-11-18 the PS5 tensor cache is off, so there are no fast cached reloads and every load is a full upload at about 80 MB/s (design 3.2). Open items the design leaves for hardware: what a head does when a worker loses power (inferred, not observed), PS5 usable memory (sources disagree).
 
 ---
 
@@ -323,13 +323,57 @@ exclude_nodes:
 5. You can exclude the local node (`omen-runner`). The OMEN GPU is then never used, and `kind: command` profiles (Whisper, FLUX) fail with "does not fit" because they run on the local node only.
 6. To bring the machine back, delete the entry and restart.
 
+### Benchmarking only the PS5s from a test deployment
+
+A second copy of the scheduler can stand in on port 3122 while you benchmark the PS5s alone. Give it a config with `exclude_nodes` listing the OMEN (`omen-runner`) and the Alienware (`alienware-llm`), so only PS5s get models. Keep `forced_fit_check` off for the benchmark. The PS5 dashboards path keeps working: the hub polls `/running` on 3122, relays the `load` object and `recent_loads` to the fleet manager's `/api/models`, and shows them (verified 2026-11-18). Steps and the profile set are in `docs/benchmark-guide.md`. When done, put the production config and image back (section D, and F if you need llama-swap).
+
 ### Read `/api/status`
 
 ```sh
 curl -s http://127.0.0.1:3122/api/status
 ```
 
-It returns one JSON object with the keys `time`, `shutting_down`, `instances`, `queue`, `quarantines`, `backoffs` and `view`. Each instance has `profile`, `state`, `nodes` (placed nodes, each with `id` and its device `memory` rows: `name`, `model_mib`, `kv_mib`, `compute_mib`, `total_mib`), `host_memory`, `unmatched` and `device_total_mib`. The node view is `view.nodes`, with `eligible`, `excluded` (see "Keeping a machine out of the pool"), `live_budget_mib` and related budgets. Pipe through `jq .` if installed.
+It returns one JSON object with the keys `time`, `shutting_down`, `instances`, `queue`, `quarantines`, `backoffs`, `recent_loads` and `view`. Each instance has `profile`, `state`, `log_file` (the file holding that child's full output; absent or empty when `child_log_dir` is off, see "Child output logs"), `nodes` (placed nodes, each with `id` and its device `memory` rows: `name`, `model_mib`, `kv_mib`, `compute_mib`, `total_mib`), `host_memory`, `unmatched` and `device_total_mib`. The node view is `view.nodes`, with `eligible`, `excluded` (see "Keeping a machine out of the pool"), `live_budget_mib` and related budgets. Pipe through `jq .` if installed.
+
+A starting instance whose child is loading also has a `load` object (below). `recent_loads` (also on `GET /running`, next to `running`) is the outcome of every load attempt that started a child and finished in the last 120 s, newest first, always present and `[]` when there is none: `{"session_id", "model", "workers", "outcome": "ready"|"failed"|"cancelled", "reason", "finished_at" (unix ms), "load_s"}`. `reason` is empty for `ready`; a failed load says why (child exit, load timeout), a cancelled one says it was unloaded or the scheduler shut down. The `/api/events` stream sends `loadStarted` (`session_id`, `model`, `started_at`, `workers`) and `loadFinished` (the same object as the `recent_loads` entry).
+
+### Watch a load (progress and ETA)
+
+A load onto the PS5s prints nothing in the child log while the model uploads, so look at the scheduler instead. While the instance is `starting`:
+
+```sh
+curl -s http://127.0.0.1:3122/api/status | jq '.instances[] | select(.state=="starting") | {profile, load_elapsed_s, load_bytes_total, load_bytes_sent, load_progress, load_eta_s, load_progress_source}'
+```
+
+`load_progress_source` is `"measured"` when the scheduler counted the bytes the workers acknowledged (Linux; then `load_bytes_sent` is shown) and `"estimated"` when it worked from `link_mb_s` and the clock (the figure is then only a guide). `load_progress` stays at or below 0.99 until the model is ready. A load with no remote worker (OMEN GPU only) shows `load_elapsed_s` only. `GET /running` has the same figure as `load_progress` on the entry. The scheduler log also carries a `load progress` line every 30 s per loading instance (`docker logs llama-swap | grep "load progress"`). Loads started at the same time share the host's one gigabit port (about 80 MB/s in total), so two loads each go at about half speed.
+
+For a program, the same instance (and its entry in `GET /running`) carries a `load` object: `session_id` (unique per load attempt, also in `recent_loads`), `started_at` (unix ms), `elapsed_s`, `bytes_total`, `bytes_sent`, `progress`, `eta_s`, `source`, and `workers`, one `{addr, bytes_total, bytes_sent, state}` per remote worker in `--rpc` order. A worker is `waiting` (under 1 MiB received), `receiving` (at least 1 MiB but under 99% of its bytes), or `done` (99% or more of its bytes), judged from that worker's own bytes only; workers receive one at a time, in an order llama.cpp decides and that is not guaranteed. Per-worker `bytes_sent` is only present when `source` is `measured`; on an estimate every worker shows `waiting`. Per-worker `bytes_total` starts as the worker's share of the file by the tensor split and is replaced by the real size once the child prints its `model buffer size` line for that worker. The `load` object is absent while the instance is in pre-flight and once it is ready. Example:
+
+```sh
+curl -s http://127.0.0.1:3122/running | jq '.running[] | select(.state=="starting") | .load'
+```
+
+### Fit check for forced profiles
+
+A profile with `force_nodes` is not fit-checked by default. To guard it, set in `defaults:` (restart to apply):
+
+```yaml
+defaults:
+  forced_fit_check: reject   # off (default) | warn | reject
+```
+
+The profile's need (`needs_mib`, else the estimate) is compared with the forced nodes' free memory from the pre-flight, without taking tier headroom off. `warn` logs `forced profile may not fit` (with `need_mib`, `free_mib`, `nodes`) and starts anyway. `reject` fails the request at once with `503` "forced nodes do not fit", before anything is uploaded; it does not back the profile off or quarantine a node. `POST /api/plan` shows the same result (`action: reject`, or a `warning` field in `warn` mode). If the need is estimated, measure it (G) so the check is exact.
+
+### Child output logs
+
+The scheduler writes each child llama-server's complete stdout and stderr to a new file under `/opt/llm-scheduler/logs` on the OMEN (`child_log_dir` in `config.yaml`, mounted by compose). One file per start, named `<UTC time>-<profile>-<instance id>.log`, so `ls` sorts by time. This is where the KV cache size, the memory breakdown and the exact out-of-memory error are, beyond the last 40 lines in a `502`.
+
+```sh
+curl -s http://127.0.0.1:3122/api/status | jq '.instances[] | {profile, log_file}'   # path inside the container
+ls -t /opt/llm-scheduler/logs | head
+```
+
+The oldest files are deleted past `child_log_keep` (200). If startup logs `child_log_dir is not usable`, the directory could not be created or written: fix its permissions or the mount, then restart; until then loads work but no files are kept. The container's own log (`docker logs`) rotates at 50 MB, 5 files.
 
 ### Phase out an alias
 
@@ -365,11 +409,14 @@ First look, always: `curl -s http://127.0.0.1:3122/api/status` and `docker logs 
 |---|---|---|
 | `503` "cluster busy" with `Retry-After: 30` | The profile's queue entry waited `queue_timeout` (600 s) with no claim: every node it could use is held, claimed, quarantined or settling, and nothing was evictable yet (held models are protected for `hold`) | Retry. See `/api/status` queue and holders. Free a node: `POST /api/models/unload/{model}` (idle only). Tune hold (I). |
 | `503` "does not fit", message with need and capacity | The profile's need exceeds the combined plan budgets of the best `max_pool` nodes, even if all were empty (design 7.2) | Is `needs_mib` a stale PLACEHOLDER? Measure (G). Is a PS5/laptop offline or missing `ip` in the fleet? Raise nothing blindly: compare the need in the message with the node sizes in `/api/status`. Skipped while the fleet view is stale (the request then queues). |
+| `503` "forced nodes unavailable" within about 30 s, message `forced node X is absent from the fleet` or `... offline in the fleet` | A node named in the profile's `force_nodes` has been missing from the live fleet view for `forced_node_grace` (30 s). Absent means the fleet console does not list it (worker or console down, wrong name); offline means it is listed but not online | Bring the machine back (start the worker, check `GET /api/fleet`), or fix the name in `force_nodes`. Then retry. If the fleet view itself is stale, this does not fire: see "Fleet view stale". |
+| `503` "forced nodes do not fit", message with need, free, the nodes and `measured` or `estimated` | `defaults.forced_fit_check` is `reject` and the profile's need is above the forced nodes' free memory as the pre-flight saw it (no headroom taken off). Nothing was started; the profile is not backed off | Free memory on those nodes (stop what holds it), pick other nodes, or lower the need if it is only an estimate (measure it, G). `warn` would start anyway, `off` disables the check. |
+| A forced profile starts uploading, then the PS5 `rpc-server` crashes mid-upload (child log: "Remote RPC server crashed or returned malformed response"); the worker restarts by itself | The model does not fit the forced nodes. Measured 2026-11-18: Devstral 24B forced onto one PS5 needs about 13991 MiB against about 13.5 GB free. A `force_nodes` profile skips the fit check unless `forced_fit_check` is set | Force enough nodes (Devstral 24B fits on two PS5s: 14248 MiB measured at ctx 8192). Set `defaults.forced_fit_check: reject` or `warn` (see "Fit check for forced profiles"). The profile is backed off after the failed load; wait it out. |
 | A node stuck quarantined | Its pre-flight keeps failing: quarantine is 30 s, doubling to 10 min, reset by a successful pre-flight (design 8.4) | Run the H2/H3 commands against that node. Fix the node (worker down, busy, more than one device: pin `-d` on it, firewall). The design has no clear-quarantine command; wait up to 10 min after fixing, or restart the container (that the state is in memory only is assumed, not stated for the scheduler). |
 | Pre-flight timeouts (10 s probe fails) | Another client holds that `rpc-server` (single-client; a blocked probe never returns), or the worker is silent | Look for a second head: old llama-swap still running (`docker ps -a`), a hand-run `llama-server-rpc`. Stop it. Never run two heads. |
 | Fleet view stale | No byte from the fleet console for `stale_after` (60 s): console down, wrong URL, or the firewall rule is missing. Remote nodes become ineligible; the OMEN still works (design 8.4) | `docker exec llama-swap curl -fsS http://host.docker.internal:8090/api/fleet`; check rule (C) and that the console runs on `:8090`. The console keeps state in memory: after its restart the view is empty until nodes report. |
 | Hub panel shows nothing | Hub reads `/running`, `/upstream/{model}/props`, `/slots` and `/api/events` (design A); it finds the container by the name prefix `llama-swap` | `docker ps` name is `llama-swap`; `curl -s http://127.0.0.1:3122/running` is valid JSON with `running`. With several models loaded the panel shows only one (known, design 13 item 4). Beyond this the design is silent: look at the hub's logs. |
 | A model loads on the OMEN unexpectedly | Tier 3 (OMEN) is used only when tiers 1 and 2 together cannot hold the model, or PS5/Alienware were ineligible (offline, quarantined, stale, `ip` null, no tier match). `kind: command` profiles (FLUX, Whisper) always run on the OMEN. `qwen3.5-4b` was on the OMEN before; now it goes to a PS5 first (design 13 item 3) | `POST /api/plan` for the profile and read why. Fix the node problem. To forbid the OMEN: `allow_tiers: [1, 2]` on the profile. |
-| Load timeout on a cold PS5 | Timeout is `120 s + 2 x (share of model file / link_mb_s)`; the link is 100 Mb, about 11 MB/s (design 7.6): 5 GB takes about 7 min. Waiters get `502` with the child's last log lines; the profile is backed off 60 s, doubling to 10 min | Set `load_timeout` on the profile above the cold time you measured (H check 6), or correct `link_mb_s`. Backoff clears when the profile next reaches ready; during it requests fail with `503`, so wait it out. |
+| Load timeout on a cold PS5 | Timeout is `120 s + 2 x (share of model file / link_mb_s)`; `link_mb_s` for the PS5 tier is 80, measured 2026-11-18 as the total out of the OMEN (design 3.2, 7.6): 5 GB takes about 1 min, and loads that run at the same time share that rate (three Gemma 12B loads at once took 246 s each). Waiters get `502` with the child's last log lines; the profile is backed off 60 s, doubling to 10 min | Set `load_timeout` on the profile above the load time you measured (H check 6), or correct `link_mb_s`. Backoff clears when the profile next reaches ready; during it requests fail with `503`, so wait it out. |
 
 ---

@@ -98,13 +98,21 @@ All **[verified]** against source unless tagged otherwise.
 - **[verified by owner]** PS5 and Alienware firewalls admit port 50052 from the
   OMEN only. llama-swap reaches both today from a bridged container. Every head
   process must run on the OMEN.
-- **[verified]** PS5 link is 100 Mb today, about 11.8 MB/s. Sending 5 GB to a
-  PS5 takes about 7 minutes. The `rpc-server` tensor cache (`-c`) shortens
-  repeat loads.
-- **[measured 2026-11-17]** PS5 uploads ran at about 13.9 MB/s for one upload
-  and under 5.6 MB/s each with two at once, although the OMEN's port is
-  gigabit. The Alienware took 77 MB/s. A warm reload from the worker's cache
-  took about 7 s. Config uses `link_mb_s` 8 for PS5s and 60 for the Alienware.
+- **[measured 2026-11-17, superseded]** Before the PS5-side fixes, PS5 uploads
+  ran at about 13.9 MB/s for one upload and under 5.6 MB/s each with two at
+  once. The cause was the PS5 `rpc-server` tensor cache, which wrote every
+  tensor to USB storage at about 3 MB/s (a cold 14.3 GB load took 83 minutes).
+  The Alienware took 77 MB/s.
+- **[measured 2026-11-18]** Two PS5-side fixes landed (they are not in this
+  repo): the tensor cache was turned off, and the PS5 GPU clock was pinned at
+  2230 MHz (it sat at 500 MHz), which raised decode speed about 2.4x on a
+  two-PS5 split. With the cache off, every load is a full upload and there are
+  no fast cached reloads. Upload speed is 75 to 84 MB/s in total out of the
+  OMEN (one gigabit port), the same for 1, 2 or 3 PS5s in one load. A split
+  model uploads to one PS5 at a time, in an order llama.cpp chooses. Loads that
+  run at the same time share that rate: one Gemma 12B load took 89 s, two at
+  once 167 s each (40 MB/s each), three at once 246 s each (27 MB/s each).
+  Config uses `link_mb_s` 80 for PS5s and 60 for the Alienware.
 - **[measured 2026-11-17]** H1, H2 and H3 below all hold on this cluster, and
   the container reached the fleet console on 8090 without an extra firewall rule.
 - **[verified by owner]** The old "wedges on client close" and "stalls over
@@ -237,6 +245,8 @@ fleet:
   local_node: omen-runner
   stale_after: 60s                 # view age beyond which remote nodes are not used
 models_dir: /models
+child_log_dir: ""                  # optional; see "Child output on disk" below
+child_log_keep: 200                # files kept in child_log_dir
 
 defaults:
   ttl: 300s                # unload after this long idle; 0 = never
@@ -253,6 +263,8 @@ defaults:
   cache_ram_mib: 2048      # per-instance prompt cache limit on the host
   server_bin: llama-server-rpc
   local_device: CUDA0
+  forced_node_grace: 30s   # forced node absent/offline this long: fail fast (8.4)
+  forced_fit_check: off    # off | warn | reject: fit check for force_nodes profiles (7.2)
 
 tiers:                     # first match wins; lower number preferred;
                            # a node matching no tier is never used
@@ -284,7 +296,7 @@ profiles:
   gemma-4-12b:             # bare name = the default variant
     model: gemma-4-12b-it-Q4_K_M.gguf
     ctx: 8192
-    needs_mib: 7850        # measured 2026-11-17; see 7.2
+    needs_mib: 7900        # measured 2026-11-18; see 7.2
     aliases: [gemma-4-12b-1pool-8k, gemma-4-12b-2pool-8k]
   "devstral-24b:14k":
     model: Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf
@@ -331,7 +343,8 @@ model without giving up the `ps5-*` tier for the others.
   hostname glob against an id), the request fails at once with `503`, reason
   `node excluded` and no `Retry-After`, like `does not fit`; an entry already
   queued is failed the same way when the node is seen. A forced node that is
-  merely absent from the fleet still queues (it may come online).
+  absent from the fleet, or offline, queues for `forced_node_grace` (30 s) in
+  case it is only re-registering, then fails fast (8.4).
 - The scheduler logs the entries once at startup and, at INFO, the first time
   each excluded node appears in the fleet view.
 
@@ -490,6 +503,31 @@ both empty, headroom 256):
 | same, Alienware alone | 7885 − 256 = 7629 < 7800 | does not fit |
 | Devstral 14K q8, estimated about 14828, both laptops | (7895 − 600) + (7629 − 600) = 14324 < 15570 | does not fit (see 6.1) |
 
+**Optional fit check for forced profiles (`defaults.forced_fit_check`).** A
+profile with `force_nodes` skips the placer's fit check by design (7.3), so a
+forced load whose model needs 14.0 GB on workers with 13.5 GB free simply
+starts uploading and can crash the worker. This happened on hardware on
+2026-11-18: Devstral 24B forced onto one PS5 needed about 13991 MiB against
+about 13.5 GB free; the upload started, the PS5 `rpc-server` crashed mid-upload
+("Remote RPC server crashed or returned malformed response") and restarted by
+itself. `forced_fit_check` adds a guard
+with three values: `off` (the default: today's behaviour, no check), `warn`
+and `reject`. The comparison is the profile's need (`needs_mib` when measured,
+else the estimate of this section) against the sum of the forced nodes' FREE
+memory as the scheduler holds it after the pre-flight (7.5), with no tier
+headroom taken off: forced profiles may eat into headroom, and only a need
+above the whole free figure counts. `warn` logs one WARN line, `forced profile
+may not fit`, with `need_mib`, `free_mib`, `nodes` and `measured`, and starts
+anyway. `reject` fails the request before a child is started, with `503`,
+reason `forced nodes do not fit` and a `Retry-After` like the other placement
+refusals (free memory changes), and a plain-words message giving the need, the
+free figure, the forced nodes and whether the need is `measured` or
+`estimated`. It is not a load failure: the profile is not backed off and no
+node is quarantined, and the nodes are released at once. `POST /api/plan`
+reports the same outcome from the free figures it holds (no probe is run): in
+`reject` mode `action: reject` with the message in `reason`, in `warn` mode
+the usual `start` plus a `warning` field.
+
 ### 7.3 Choosing nodes
 
 The placer is given a set of usable nodes with budgets, and returns a
@@ -507,6 +545,29 @@ placement or nothing.
 
 So a pool of PS5s is chosen before anything that touches the Alienware, and the
 OMEN is reached only when tiers 1 and 2 together cannot hold the model.
+
+### 7.3a Child output on disk
+
+The scheduler keeps only the last 200 lines of each child's output in memory
+(used for the 502 body). Benchmarks need all of it: the KV cache size, the
+memory breakdown and the exact out-of-memory error. When `child_log_dir` is set,
+every child (`kind: llama` and `kind: command`) writes its complete stdout and
+stderr to a new file there, one file per start, named
+`<UTC time>-<profile>-<instance id>.log`, for example
+`20261118T064512Z-gemma-4-12b_48k-7.log` (characters other than letters,
+digits, `-` and `.` in the profile name become `_`). The in-memory tail is
+unchanged. The `child started` log line and `GET /api/status` (`log_file` on
+each instance) give the path of the current or last file.
+
+- Empty or unset `child_log_dir`: off, nothing changes.
+- `child_log_keep` (default 200): when a new file is created, the oldest of the
+  scheduler's own files beyond that count are deleted. Other files in the
+  directory are never touched.
+- Never in the way of a load: at startup the directory is created if needed and
+  test-written; if that fails the scheduler warns and runs with the feature off.
+  A later failure to create or write a file logs one warning and the child runs
+  on without a file.
+- Compose mounts `./logs` on the host at `/var/log/llm-children`.
 
 ### 7.4 Command line
 
@@ -578,8 +639,135 @@ Unless the profile sets `load_timeout`:
 `120 s + 2 × Σ over remote nodes (node's share of the model file ÷ link_mb_s)`.
 A share is the file size times that node's fraction of the tensor split.
 Sizes are in bytes and `link_mb_s` is decimal megabytes per second.
-Example: 10 GB (10^10 bytes) to a PS5 at 8 MB/s gives about 44 minutes.
+Example: 10 GB (10^10 bytes) to a PS5 at 80 MB/s gives about 6 minutes (370 s).
 `kind: command` profiles use `command_load_timeout`.
+
+### 7.6a Load progress
+
+The child prints nothing while it uploads the model to the remote workers (the
+log stops at `load_tensors: loading model tensors, this can take a while...`),
+and a PS5 load takes minutes. While an instance is `starting`, `GET /api/status`
+shows how far it is. All fields are in the instance object and are left out
+once the instance is ready:
+
+| Field | Meaning |
+|---|---|
+| `load_elapsed_s` | Seconds since the instance was created. Always present while starting. |
+| `load_bytes_total` | Bytes the remote workers must receive: the model file size times the remote nodes' share of the tensor split. Absent for a placement with no remote worker (local GPU only: nothing is uploaded, so only `load_elapsed_s` is shown). |
+| `load_bytes_sent` | Bytes the workers have acknowledged. Only when measured. |
+| `load_progress` | 0 to 1, never above 0.99 until the instance is ready. Absent when it cannot be known (not measured and no `link_mb_s` figure in the nodes' tiers). |
+| `load_eta_s` | Seconds left at the current rate. |
+| `load_progress_source` | `"measured"` or `"estimated"`. |
+
+`GET /running` gains one number, `load_progress`, on an entry that is loading a
+remote model, and the structured `load` object and `recent_loads` described
+below; its other fields are unchanged (Appendix A.1). The scheduler also
+logs one INFO line, `load progress`, every 30 s per loading instance with
+`elapsed`, `percent`, `eta`, `source` and the byte counts.
+
+*Measured.* On Linux the scheduler reads the kernel's TCP statistics for the
+child's connections to the workers (netlink `sock_diag`, the source of
+`ss -ti`) and adds up `bytes_acked`: what the workers have acknowledged. The
+child shares the scheduler's network namespace, and only the sockets of the
+child's own process group whose peer is a worker's rpc address are counted.
+`/proc/<pid>/io` was tried first and does not work: its `wchar` counts
+`write(2)` but not `send(2)`, which llama.cpp's RPC client uses (a test proves
+it: 64 MiB sent with `sendto` leaves `wchar` at a few dozen bytes). The count is read at
+most once a second, in its own goroutine and never on the scheduler's event
+loop. A read error, or no connection to a worker yet, falls back to the
+estimate until a read succeeds again; the figure never goes backwards.
+
+*Estimated* (also on any platform but Linux). `progress = elapsed × rate ÷
+bytes_total`, where `elapsed` is the time since the child started, `rate` is
+the slowest `link_mb_s` among the remote nodes divided by the number of loads
+uploading at that moment (they share the host's one network port: measured
+2026-11-18, about 75 to 84 MB/s in total, split equally), capped at 0.99.
+
+#### The `load` report and `recent_loads`
+
+A consumer that wants more than one number reads the structured report. A
+**load attempt** (a session) starts when its child starts and ends when the
+instance is ready, the load fails, or it is cancelled. Pre-flight is not part
+of it: an instance that never starts a child has no session, shows no `load`
+and leaves nothing in `recent_loads`.
+
+**`load`**, on each `GET /running` entry and on the same instance of
+`GET /api/status`, while the child loads (absent otherwise). The flat fields
+above stay exactly as they are.
+
+```json
+"load": {
+  "session_id": "ld-1794995021087-3",
+  "started_at": 1794995021087,
+  "elapsed_s": 42.1,
+  "bytes_total": 11628266644,
+  "bytes_sent": 5580799366,
+  "progress": 0.4799,
+  "eta_s": 605,
+  "source": "measured",
+  "workers": [
+    {"addr": "10.0.0.101:50052", "bytes_total": 5814133322, "bytes_sent": 5580799366, "state": "receiving"},
+    {"addr": "10.0.0.122:50052", "bytes_total": 5814133322, "bytes_sent": 0, "state": "waiting"}
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `session_id` | Unique per load attempt and the same for its whole life; it is the `session_id` later seen in `recent_loads` and in the load events (A.3). Built as `ld-<start time in unix ms>-<instance id>`: the instance id restarts from 1 with the scheduler, the start time makes it unique across restarts. |
+| `started_at` | Unix ms at which the child started. |
+| `elapsed_s` | Seconds since `started_at`. (`load_elapsed_s` counts from the instance's creation, so it also includes pre-flight.) |
+| `bytes_total`, `bytes_sent`, `progress`, `eta_s`, `source` | The same figures as `load_bytes_total`, `load_bytes_sent`, `load_progress`, `load_eta_s`, `load_progress_source`, with the same omissions: `bytes_total` is absent for a load with no remote worker, `bytes_sent` unless measured, `progress` (0 to 0.99) and `eta_s` when unknown. |
+| `workers` | The remote workers in `--rpc` list order. Workers receive one at a time, but llama.cpp decides the order, so it is not guaranteed to match the array. Always present, empty for a local-GPU-only load. |
+
+A worker is `{addr, bytes_total, bytes_sent?, state}`:
+
+- `bytes_sent` is that worker's own TCP acknowledged-byte count (the netlink
+  read of 7.6a returns one figure per worker address as well as their sum). It
+  never goes backwards, even if a socket closes. It is absent when `source` is
+  `estimated`, or when a reading carried no per-worker figures.
+- `bytes_total` starts as the worker's tensor-split share of the model file
+  (the split the scheduler passes to the child: the placement's, else the
+  profile's, else the node budgets, so equal shares for equal budgets). When
+  the child's output prints the real size, it replaces the estimate: the
+  scheduler reads the `model buffer size` line of each remote device from the
+  same load log that fills `memory_mib` (`load_tensors: RPC0[10.0.0.101:50052]
+  model buffer size = 6686.84 MiB`; the device label is `RPC0[...]` for every
+  worker, so the address inside the brackets is the key; MiB is 1048576
+  bytes). The totals sum to roughly `bytes_total`; they are not forced to.
+- `state`: the real upload is one worker at a time, in an order llama.cpp decides (not guaranteed to be the `--rpc` order). Each state comes from that worker's own `bytes_sent` only.
+  `waiting`: less than 1 MiB acknowledged (the handshake). `receiving`: at
+  least 1 MiB and not done. `done`: `bytes_sent` reached `bytes_total` within
+  1%. When `source` is
+  `estimated` nothing is known per worker, so every worker is `waiting`
+  (a guess would be wrong); the overall `progress` is still given.
+
+`/running` is served from a snapshot taken after each scheduler step, so
+`elapsed_s` and the figures can be up to one step old (about a second while
+the bytes are measured, up to 30 s on an estimate); `/api/status` is computed
+on request.
+
+**`recent_loads`**, a top-level key of `GET /running` (next to `running`,
+whose entries are unchanged) and of `GET /api/status`. It is always present,
+an empty array when there is nothing to show. It holds the outcomes of load
+attempts that started a child, newest first, each kept for
+`RecentLoadRetention` (120 s) after it finished:
+
+```json
+{"session_id": "ld-1794995021087-3", "model": "big", "workers": ["10.0.0.101:50052", "10.0.0.122:50052"],
+ "outcome": "ready", "reason": "", "finished_at": 1794995221087, "load_s": 215.1}
+```
+
+- `outcome`: `ready`; `failed` (the child exited during the load, the load
+  timeout passed, or a worker node was lost); `cancelled` (an unload or
+  shutdown during the load, or an eviction).
+- `reason`: plain words, empty for `ready`. For `failed` it is the load error
+  (`child exited during load: exit status 1`, `load timeout (2m0s) passed`);
+  for `cancelled` it is `unloaded while loading` or `scheduler shutting down`.
+- `workers`: the remote workers' addresses (empty for a local load).
+- `finished_at`: unix ms. `load_s`: seconds from `started_at` to the end.
+- A load refused before a child starts (no fit, backoff, failed pre-flight,
+  child that could not be started) does not appear.
 
 ## 8. Runtime behaviour
 
@@ -661,7 +849,8 @@ An instance is **evictable** for an entry when it is `ready`,
 unclaimed for at least `drain_after`. `hold = clamp(load_duration, min_hold,
 max_hold)`: a model is guaranteed to serve for as long as it took to load
 (at most `max_hold`), so two alternating models do not spend all their time
-loading.
+loading. With no cached reloads on the PS5s (3.2), a reload always costs the
+full upload, so the hold is worth keeping.
 
 **Claimed entry**
 
@@ -693,7 +882,8 @@ Rules that hold throughout:
   claimed entry waits for it, as llama-swap does.
 - An unclaimed entry whose clock passes `queue_timeout` answers
   its waiters `503` with `Retry-After: 30` and a JSON error naming the reason:
-  cluster busy, forced nodes unavailable, or fleet view stale.
+  cluster busy, forced nodes unavailable, or fleet view stale. A forced node
+  that is gone is failed sooner, see 8.4.
 - **Idle unload:** `ready`, `in_flight == 0`, `now − last_used ≥ ttl` →
   `stopping`. Paused for instances on remote nodes while the fleet view is
   stale, since they could not be reloaded.
@@ -711,6 +901,7 @@ Rules that hold throughout:
 | Child exits, or the load timeout passes, during `starting` | Instance → `stopping`. Waiters get `502` with the last lines of the child's output. The **profile** is backed off 60 s, doubling per repeat up to 10 min, reset when the profile next reaches `ready`. During backoff its requests fail fast with `503`, and any entry for it is answered `503` and deleted. Nodes are not quarantined: the pre-flight already cleared them. |
 | Child exits while `ready` or `draining` | In-flight requests fail; instance → `absent`. |
 | A remote node in use is offline in, or absent from, a live view for 30 s continuously | Node loss: instance → `stopping` with SIGKILL; in-flight requests fail. Needed because a blocked RPC socket does not make the child exit. The 30 s counter resets whenever the feed reconnects, so a fleet console restart is not read as every node vanishing. |
+| A forced node (`force_nodes`) is absent from, or offline in, a live fleet view for `forced_node_grace` (default 30 s) continuously | Fail fast: the profile's waiting and new requests get `503`, reason `forced nodes unavailable`, `Retry-After: 30` (the same as the queue timeout), with a message naming the node and saying whether it is `absent from the fleet` or `offline in the fleet`, instead of waiting out `queue_timeout`. The grace lets a node that is re-registering (fleet console or PS5 worker restart) come back. The clock restarts when the feed reconnects and does not count while the view is stale (then today's behaviour applies: the request queues and the "fleet view stale" reason can follow). A forced node that is present and online but busy is not a fail-fast case; it queues. Excluded nodes fail as before (6). |
 | A streaming response sends nothing for `stall_timeout` **after its first chunk** | That request is aborted with an error event. The instance is not stopped. Time before the first chunk (prompt processing) is never timed. |
 | A non-streaming request hangs | Not detected in v1, other than by node loss. `POST /api/unload` with `force` clears it. |
 | Fleet feed down | Reconnect SSE with backoff; poll `GET /api/fleet` every 5 s meanwhile. View age is the time since the last byte from the feed, pings included. Loaded instances keep serving. Past `stale_after`, remote nodes are not eligible; the local node still is. |
@@ -759,7 +950,7 @@ gets its own process group, so nothing is left behind.
 | `GET /api/events`, `GET /api/metrics/activity` | llama-swap compatible, for the hub's llama panel. Appendix A. |
 | `GET /ui/` | A one-line page linking to `/api/status`. |
 | `GET /health` | `200` whenever the scheduler is running. |
-| `GET /api/status` | Instances, placements, per-device memory from the last pre-flight, claims, queue, quarantines, backoffs, node view and its age. |
+| `GET /api/status` | Instances, placements, per-device memory from the last pre-flight, claims, queue, quarantines, backoffs, node view and its age. A starting instance also shows its load progress and its `load` report (7.6a). The top-level `recent_loads` lists the outcomes of load attempts finished in the last 120 s. |
 | `POST /api/plan` `{model}` | Dry run: what would happen if this model were requested now (placement, plan with victims, or the reason for neither). Changes nothing. |
 | `POST /api/load` `{model}` | Start loading ahead of time. Returns `202` at once. |
 | `POST /api/unload` `{model, force}` | Stop one instance if idle; `force: true` stops it even if busy. |
@@ -821,7 +1012,7 @@ TDD: for every task, tests are written and seen failing before the code.
 - **Platform split:** SIGTERM-then-SIGKILL escalation is tested on Linux only;
   on Windows the tests assert only that the child is gone.
 - **On hardware (owner, with runbook):** H1, H2, H3; `--device` and
-  `--tensor-split` behaviour on a PS5 pool; cold and warm load timing; measured
+  `--tensor-split` behaviour on a PS5 pool; load timing (there is no warm reload since 2026-11-18); measured
   `needs_mib` for each Gemma profile; estimate versus observed memory for the
   others; worker power-off during a generation; a 10-agent mixed-model soak.
 
@@ -846,7 +1037,9 @@ groups and signals sit behind one small OS-specific file.
 6. Hold time. A model that took 15 minutes to load is protected from eviction
    for 15 minutes, so a request for a different model that needs the same
    nodes can get `503` and must retry. Shorter `max_hold` means faster turns
-   and more time spent loading. To be tuned on the real cluster.
+   and more time spent loading. Since there are no cached reloads (3.2), every
+   reload is a full upload at about 80 MB/s, so a hold of one load time is a
+   real protection. To be tuned on the real cluster.
 2. PS5 usable memory: sources disagree (12 GB, 14.1 GB, 14948 MiB). The
    scheduler uses the pre-flight figure at load time; the hardware checks
    compare it with what actually loads.
@@ -900,6 +1093,15 @@ Polled by the hub every 1 s with a 1 s timeout on a keep-alive connection.
 - `cmd`: the real command line as one string. The hub extracts workers with
   `--rpc[= ]+(\S+)` and context with `(?:--ctx-size|-c)[= ]+(\d+)`, so the
   scheduler always writes `--rpc a,b` and `--ctx-size n` in that form.
+- `load_progress` (number, 0 to 0.99) is an addition on an entry whose
+  instance is `starting` and loads onto a remote worker (7.6a).
+- `load` (object) is an addition on an entry whose child is loading: session,
+  progress and per-worker upload state (7.6a). It is absent once the instance
+  is ready.
+- `recent_loads` (array) is a new top-level key next to `running`, always
+  present: the outcomes of the load attempts finished in the last 120 s,
+  newest first (7.6a).
+  No other field changed; consumers that ignore unknown keys are unaffected.
 
 ### A.2 `GET /upstream/{model}/props` and `/slots`
 
@@ -929,6 +1131,21 @@ data: {"type":"inflight","data":"{\"operation\":\"snapshot\",\"requests\":[]}"}
   `{operation:"remove", id}` when it ends. A request is
   `{id: string, model: string, timestamp: ISO-8601}`.
 - `activity`: `{}`; sent when a request finishes, telling the client to refetch A.4.
+- `loadStarted`: sent when a load attempt starts, that is when its child has
+  started. `data` is `{session_id, model, started_at, workers}`: `model` is
+  the profile name, `started_at` unix ms, `workers` the remote workers'
+  addresses in `--rpc` order (empty for a local load).
+- `loadFinished`: sent when the attempt ends. `data` is the same object as the
+  `recent_loads` entry: `{session_id, model, workers, outcome, reason,
+  finished_at, load_s}` (7.6a). It is sent before the `modelStatus` that
+  reports the instance `ready`. Neither event replaces `modelStatus`, which is
+  still sent on every instance state change.
+
+```
+data: {"type":"loadStarted","data":"{\"model\":\"big\",\"session_id\":\"ld-1794995021087-3\",\"started_at\":1794995021087,\"workers\":[\"10.0.0.101:50052\",\"10.0.0.122:50052\"]}"}
+
+data: {"type":"loadFinished","data":"{\"finished_at\":1794995221087,\"load_s\":215.1,\"model\":\"big\",\"outcome\":\"ready\",\"reason\":\"\",\"session_id\":\"ld-1794995021087-3\",\"workers\":[\"10.0.0.101:50052\",\"10.0.0.122:50052\"]}"}
+```
 - Each event is flushed at once. The connection may stay open for an hour.
   A comment line (`: ping`) is sent every 15 s.
 

@@ -43,6 +43,10 @@ type StartSpec struct {
 	// LLAMA_ARG_* scrub, replacing any inherited variable of the same name
 	// (names compared case-insensitively). An entry "KEY=" sets it empty.
 	Env []string
+	// Profile and InstanceID name the child's log file when the launcher has
+	// a LogDir; they are not used otherwise.
+	Profile    string
+	InstanceID uint64
 }
 
 // StopMode selects how Stop ends a child.

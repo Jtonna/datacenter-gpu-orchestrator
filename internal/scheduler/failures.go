@@ -1,11 +1,13 @@
 package scheduler
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"time"
 
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/fleet"
 )
 
 // quarantine is design 8.4: 30 s, doubling per repeat up to 10 min.
@@ -106,6 +108,114 @@ func (c *schedCore) refreshView() {
 			ns.missingSince = c.now
 		}
 	}
+	c.trackForced(reconnected)
+}
+
+// forcedState says whether the node a force_nodes name points at is gone:
+// "absent" (not in the fleet view), "offline" (in it, but offline), or ""
+// (usable, the local node, excluded (handled elsewhere), or not decidable,
+// as for an ambiguous hostname).
+func (c *schedCore) forcedState(name string) string {
+	id, err := c.view.Resolve(name)
+	if err != nil {
+		if errors.Is(err, fleet.ErrNotFound) {
+			return forcedAbsent
+		}
+		return ""
+	}
+	n, ok := c.raw[id]
+	switch {
+	case !ok:
+		return forcedAbsent
+	case n.Local || c.excluded(n):
+		return ""
+	case !n.Online:
+		return forcedOffline
+	}
+	return ""
+}
+
+const (
+	forcedAbsent  = "absent from the fleet"
+	forcedOffline = "offline in the fleet"
+)
+
+// trackForced keeps, for every name any profile forces, since when it has
+// been continuously absent or offline in a live view (defaults.
+// forced_node_grace, design 8.4).
+//
+// DESIGN: while the view is stale the timers are cleared, not paused: stale
+// time never counts, and the clock starts again once the view is fresh and
+// still shows the node missing. A feed reconnect also restarts it, as for
+// node loss, so a fleet console restart does not fail requests while the
+// workers are still re-registering.
+func (c *schedCore) trackForced(reconnected bool) {
+	seen := map[string]bool{}
+	for _, p := range c.cfg.Profiles {
+		for _, name := range p.ForceNodes {
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			switch {
+			case !c.fresh || c.forcedState(name) == "":
+				delete(c.forcedGone, name)
+			case reconnected || c.forcedGone[name].IsZero():
+				c.forcedGone[name] = c.now
+			}
+		}
+	}
+	for name := range c.forcedGone {
+		if !seen[name] {
+			delete(c.forcedGone, name)
+		}
+	}
+}
+
+// forcedGoneName finds the first forced node of p that has been absent or
+// offline in a live view for the whole grace period, with how it is gone and
+// for how long. The name is empty when there is none.
+func (c *schedCore) forcedGoneName(p *core.Profile) (name, state string, missing time.Duration) {
+	if !c.fresh {
+		return "", "", 0
+	}
+	for _, n := range p.ForceNodes {
+		since, ok := c.forcedGone[n]
+		if !ok || c.now.Sub(since) < c.cfg.Defaults.ForcedNodeGrace {
+			continue
+		}
+		if st := c.forcedState(n); st != "" {
+			return n, st, c.now.Sub(since).Round(time.Second)
+		}
+	}
+	return "", "", 0
+}
+
+// forcedGoneErr is the fail-fast of design 8.4: a forced node of p has been
+// absent or offline in a live view for the whole grace period. Nil when none.
+// It is the same 503 and reason as the queue_timeout failure, with the
+// cause spelled out.
+func (c *schedCore) forcedGoneErr(p *core.Profile) *Error {
+	name, state, missing := c.forcedGoneName(p)
+	if name == "" {
+		return nil
+	}
+	return err503(ReasonForcedUnavailable,
+		fmt.Sprintf("forced node %s is %s (for %v); profile %s cannot start until it is back, so this fails now instead of waiting for queue_timeout",
+			name, state, missing, p.Name), queueRetryAfter)
+}
+
+// failFastForced returns the fail-fast error for p, logging the reason, or
+// nil when no forced node is gone.
+func (c *schedCore) failFastForced(p *core.Profile, waiters int) *Error {
+	err := c.forcedGoneErr(p)
+	if err == nil {
+		return nil
+	}
+	name, state, missing := c.forcedGoneName(p)
+	c.log.Warn("forced node unavailable; failing the request", "profile", p.Name, "node", name,
+		"state", state, "for", missing, "waiters", waiters)
+	return err
 }
 
 // timers applies every time-based rule that is due at c.now.
@@ -155,6 +265,7 @@ func (c *schedCore) timers() {
 			c.nodeLost(in, lost)
 			continue
 		}
+		c.loadTimers(in)
 		// Idle unload, paused for remote instances while the view is stale.
 		ttl := c.cfg.EffectiveTTL(in.prof)
 		if in.state == stReady && in.inFlight == 0 && ttl > 0 && !c.now.Before(in.lastUsed.Add(ttl)) &&

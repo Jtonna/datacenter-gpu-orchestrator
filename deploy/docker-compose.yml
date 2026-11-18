@@ -9,6 +9,11 @@ services:
     # Must stay "llama-swap": the hub finds the container by that name prefix.
     container_name: llama-swap
     restart: unless-stopped
+    logging:                          # the container's own log (docker logs); child output goes to ./logs
+      driver: json-file
+      options:
+        max-size: 50m
+        max-file: "5"
     init: true                        # reaps children; each child has its own process group
     stop_grace_period: 330s           # shutdown_grace (300s) + 30s, design 8.6
     ports:
@@ -18,6 +23,9 @@ services:
     volumes:
       - ./config.yaml:/etc/llm-scheduler/config.yaml:ro
       - /srv/llama-swap/models:/models:ro
+      # Full output of every child llama-server, one file per start (child_log_dir
+      # in config.yaml). Created on first start if missing; old files are pruned.
+      - ./logs:/var/log/llm-children
       # No /run/avahi-daemon mount: the scheduler uses IP addresses only.
     networks:
       - sched

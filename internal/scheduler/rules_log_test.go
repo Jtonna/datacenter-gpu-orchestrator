@@ -177,6 +177,7 @@ func TestLog_PreflightFailureQuarantineReleaseAndReturn(t *testing.T) {
 
 func TestLog_QueueTimeoutWarns(t *testing.T) {
 	h := newHarness(t).nodes(ps5("a", 2, 15000))
+	h.cfg.Defaults.ForcedNodeGrace = time.Hour // keep the fail-fast out of this test
 	h.llama("f", 8000, func(p *core.Profile) { p.ForceNodes = []string{"ghost"} })
 	h.request("f")
 	h.advance(601 * time.Second)

@@ -68,6 +68,12 @@ func (c *schedCore) evalEntry(e *entry) {
 		c.answerEntry(e, c.excludedForcedErr(p, why))
 		return
 	}
+	if c.insts[p.Name] == nil {
+		if err := c.failFastForced(p, len(e.waiters)); err != nil {
+			c.answerEntry(e, err)
+			return
+		}
+	}
 	if e.claimed() {
 		switch {
 		case c.claimBroken(e):

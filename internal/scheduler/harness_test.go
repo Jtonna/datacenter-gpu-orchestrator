@@ -38,7 +38,7 @@ type harness struct {
 	c        *schedCore
 	logs     *capLog
 
-	autoProbe, autoStart, autoExit, autoFetch bool
+	autoProbe, autoStart, autoExit, autoFetch, autoSample bool
 
 	probes   []effProbe
 	starts   []effStart
@@ -47,6 +47,7 @@ type harness struct {
 	queue    []event
 	stepping bool
 	trace    []string
+	feedLog  []FeedEvent // every feed event taken after a step
 }
 
 func ptrDur(d time.Duration) *time.Duration { return &d }
@@ -67,7 +68,7 @@ func newHarness(t fatalT) *harness {
 	h := &harness{
 		t: t, clk: clk, view: view, prober: newFakeProber(view), launcher: newFakeLauncher(),
 		cfg: testConfig(), needs: map[string]NeedInfo{}, needErr: map[string]error{},
-		autoProbe: true, autoStart: true, autoExit: true, autoFetch: true,
+		autoProbe: true, autoStart: true, autoExit: true, autoFetch: true, autoSample: true,
 		children: map[uint64]*fakeChild{}, logs: &capLog{},
 	}
 	needs := NeedFunc(func(p *core.Profile) (NeedInfo, error) {
@@ -160,6 +161,8 @@ func describe(e event) string {
 		return fmt.Sprintf("exited iid=%d", e.iid)
 	case evFetched:
 		return fmt.Sprintf("fetched %s err=%v", e.id, e.err)
+	case evLoadSample:
+		return fmt.Sprintf("load-sample iid=%d bytes=%d sockets=%d err=%v", e.iid, e.bytes, e.sockets, e.err)
 	}
 	return fmt.Sprintf("%T", e)
 }
@@ -199,11 +202,16 @@ func (h *harness) drain() {
 				h.fetches = append(h.fetches, ef)
 			}
 		case effCancelHealth:
+		case effSample:
+			if h.autoSample {
+				sc, err := ef.counter.SentBytes(ef.peers)
+				h.queue = append(h.queue, evLoadSample{iid: ef.iid, bytes: sc.Bytes, sockets: sc.Sockets, peers: sc.Peers, err: err})
+			}
 		default:
 			h.t.Fatalf("unknown effect %T", ef)
 		}
 	}
-	h.c.takeFeed()
+	h.feedLog = append(h.feedLog, h.c.takeFeed()...)
 }
 
 func (h *harness) runProbe(ef effProbe) event {

@@ -108,6 +108,7 @@ type inst struct {
 	child       instance.Child
 	childRan    bool
 	argv        []string
+	logFile     string // full child output on disk; empty when not kept
 	loadTimeout time.Duration
 	loadDL      time.Time
 
@@ -117,6 +118,27 @@ type inst struct {
 	drainInFlight     int // in_flight when draining began; it may only fall
 	victimOf          string
 	stopMode          instance.StopMode
+
+	// Load progress (loadprogress.go).
+	loadStart   time.Time // the child started; the upload begins about now
+	remoteBytes int64     // bytes the remote workers must receive; 0 for a local-only load
+	peers       []string  // the workers' rpc addresses
+	linkMBs     float64   // slowest remote tier link, MB/s; 0 when unknown
+	sentBytes   int64     // largest acknowledged count seen
+	measured    bool      // the last count read was good
+	samples     []byteSample
+	nextSample  time.Time
+	sampling    bool // a count is being read
+	noSample    bool // this platform or child cannot count
+	nextLoadLog time.Time
+
+	// The load attempt (loadreport.go): from child start to ready, failure or cancel.
+	sessionID   string
+	sessionAt   time.Time
+	sessionDone bool
+	workerEst   []int64          // per worker (in peers order): share of the file by the tensor split
+	peerSent    map[string]int64 // per worker: largest acknowledged count seen
+	peerKnown   bool             // the last count carried per-worker figures
 
 	served     int    // requests admitted (logged when the instance stops)
 	stopReason string // why it is being stopped (first reason wins), for the log
@@ -266,6 +288,7 @@ type schedCore struct {
 	age           time.Duration
 	seenReconnect time.Time
 	excludedSeen  map[core.NodeID]bool // excluded nodes already logged
+	forcedGone    map[string]time.Time // force_nodes name -> when it was first seen absent or offline in a live view
 
 	shutdown   bool
 	shutdownDL time.Time
@@ -275,6 +298,7 @@ type schedCore struct {
 	stopLogged bool // "shutdown stopping instances" logged
 	doneLogged bool // "shutdown complete" logged
 
+	recent  []LoadOutcome // finished load attempts, newest first (loadreport.go)
 	effects []effect
 	feed    []FeedEvent
 	feedSeq uint64
@@ -290,6 +314,7 @@ func newCore(cfg *config.Config, clock Clock, view fleet.View, needs NeedProvide
 		insts: map[string]*inst{}, entries: map[string]*entry{}, nodes: map[core.NodeID]*nodeState{},
 		backoffs: map[string]*backoff{}, waiters: map[uint64]*waiter{}, leases: map[uint64]*lease{},
 		needs_: map[string]NeedInfo{}, raw: map[core.NodeID]core.Node{}, excludedSeen: map[core.NodeID]bool{},
+		forcedGone: map[string]time.Time{},
 	}
 }
 

@@ -28,11 +28,24 @@ func (c *schedCore) nextDeadline() (time.Time, bool) {
 		}
 	}
 
+	// Forced nodes gone: the fail-fast of design 8.4 is due when the grace ends.
+	for _, e := range c.entries {
+		for _, name := range e.prof.ForceNodes {
+			if since, ok := c.forcedGone[name]; ok {
+				add(since.Add(d.ForcedNodeGrace))
+			}
+		}
+	}
+
 	for _, in := range c.insts {
 		switch in.state {
 		case stStarting:
 			if in.phase == phLoading {
 				add(in.loadDL)
+				add(in.nextLoadLog)
+				if c.wantsSample(in) && !in.sampling {
+					add(in.nextSample)
+				}
 			}
 		case stReady:
 			if waiting {

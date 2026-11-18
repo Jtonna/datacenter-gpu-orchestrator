@@ -48,6 +48,15 @@ type (
 		node core.Node
 		err  error
 	}
+	// evLoadSample: a count of the bytes a loading child has sent to its
+	// workers finished (see effSample).
+	evLoadSample struct {
+		iid     uint64
+		bytes   int64
+		sockets int
+		peers   map[string]int64 // per worker, by address; nil when not counted per worker
+		err     error
+	}
 	evViewChanged struct{}
 	evTick        struct{}
 	evUnload      struct {
@@ -69,6 +78,7 @@ func (evChildStarted) isEvent() {}
 func (evHealthy) isEvent()      {}
 func (evExited) isEvent()       {}
 func (evFetched) isEvent()      {}
+func (evLoadSample) isEvent()   {}
 func (evViewChanged) isEvent()  {}
 func (evTick) isEvent()         {}
 func (evUnload) isEvent()       {}
@@ -111,6 +121,13 @@ type (
 		child instance.Child
 		mode  instance.StopMode
 	}
+	// effSample: read how many bytes counter's child has sent to peers (off
+	// the event loop); send evLoadSample.
+	effSample struct {
+		iid     uint64
+		counter instance.ByteCounter
+		peers   []string
+	}
 	// effFetch: View.FetchNode; send evFetched.
 	effFetch struct {
 		id  core.NodeID
@@ -128,6 +145,7 @@ func (effProbe) isEffect()        {}
 func (effStart) isEffect()        {}
 func (effCancelHealth) isEffect() {}
 func (effStop) isEffect()         {}
+func (effSample) isEffect()       {}
 func (effFetch) isEffect()        {}
 func (effReply) isEffect()        {}
 
@@ -162,6 +180,8 @@ func (c *schedCore) handle(ev event) {
 		c.exited(e.iid, e.status)
 	case evFetched:
 		c.fetched(e.id, e.gen, e.node, e.err)
+	case evLoadSample:
+		c.loadSampled(e.iid, e.bytes, e.sockets, e.peers, e.err)
 	case evViewChanged, evTick:
 	case evUnload:
 		err := c.unload(e.profile, e.force)
@@ -182,6 +202,7 @@ func (c *schedCore) handle(ev event) {
 	}
 
 	c.timers()
+	c.pruneRecent()
 	c.runPasses()
 	c.shutdownProgress()
 	c.last = c.now

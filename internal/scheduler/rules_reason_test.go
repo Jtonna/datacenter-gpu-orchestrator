@@ -84,6 +84,7 @@ func TestReason_MixedQuarantinedAndNoAddress(t *testing.T) {
 // only the reason text is specific.
 func TestReason_ForcedNodeNotInFleetStillQueues(t *testing.T) {
 	h := newHarness(t).nodes(ps5("a", 2, 15000))
+	h.cfg.Defaults.ForcedNodeGrace = time.Hour // keep the fail-fast out of this test
 	h.llama("f", 8000, func(p *core.Profile) { p.ForceNodes = []string{"a", "ghost"} })
 	h.step(evTick{})
 	r := h.c.dryPlan("f")

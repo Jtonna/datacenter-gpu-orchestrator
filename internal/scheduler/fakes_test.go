@@ -295,8 +295,9 @@ type fakeLauncher struct {
 	nextPort    int
 	failNext    error
 	children    []*fakeChild
-	autoHealthy bool // runner tests: children are healthy at once
-	autoExit    bool // runner tests: Stop makes the child exit
+	autoHealthy bool  // runner tests: children are healthy at once
+	autoExit    bool  // runner tests: Stop makes the child exit
+	sent        int64 // runner tests: children count this many bytes sent (0: they cannot count)
 }
 
 func newFakeLauncher() *fakeLauncher { return &fakeLauncher{nextPort: 5800} }
@@ -314,9 +315,13 @@ func (l *fakeLauncher) Start(spec instance.StartSpec) (instance.Child, error) {
 		return nil, err
 	}
 	ch := &fakeChild{port: l.nextPort, argv: argv, health: spec.HealthPath,
-		exitCh: make(chan instance.ExitStatus, 1), healthyCh: make(chan struct{}), gone: make(chan struct{}),
+		logFile: fmt.Sprintf("/logs/%s-%d.log", spec.Profile, spec.InstanceID),
+		exitCh:  make(chan instance.ExitStatus, 1), healthyCh: make(chan struct{}), gone: make(chan struct{}),
 		tail: []string{"loading model", "error: out of memory"}}
 	ch.autoExit = l.autoExit
+	if l.sent > 0 {
+		ch.counting, ch.sent, ch.socks = true, l.sent, 1
+	}
 	if l.autoHealthy {
 		ch.becomeHealthy()
 	}
@@ -344,7 +349,55 @@ type fakeChild struct {
 	tail      []string
 	load      instance.LoadStats
 	autoExit  bool // runner tests: Stop makes the child exit
+	logFile   string
+
+	// Upload counting (instance.ByteCounter): off unless counting is set,
+	// when SentBytes answers sent/socks/sentErr and counts its calls.
+	counting  bool
+	sent      int64
+	socks     int
+	sentErr   error
+	sentPeers map[string]int64
+	sentCall  int
 }
+
+func (c *fakeChild) SentBytes(peers []string) (instance.SentCount, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sentCall++
+	if !c.counting {
+		return instance.SentCount{}, instance.ErrSentBytesUnsupported
+	}
+	var per map[string]int64
+	if c.sentPeers != nil {
+		per = map[string]int64{}
+		for k, v := range c.sentPeers {
+			per[k] = v
+		}
+	}
+	return instance.SentCount{Bytes: c.sent, Sockets: c.socks, Peers: per}, c.sentErr
+}
+
+// setSentPeers is setSent with per-worker figures (the sum is their total).
+func (c *fakeChild) setSentPeers(per map[string]int64) {
+	var sum int64
+	for _, v := range per {
+		sum += v
+	}
+	c.mu.Lock()
+	c.counting, c.sent, c.socks, c.sentErr, c.sentPeers = true, sum, len(per), nil, per
+	c.mu.Unlock()
+}
+
+func (c *fakeChild) setSent(bytes int64, socks int, err error) {
+	c.mu.Lock()
+	c.counting, c.sent, c.socks, c.sentErr = true, bytes, socks, err
+	c.mu.Unlock()
+}
+
+func (c *fakeChild) sentCalls() int { c.mu.Lock(); defer c.mu.Unlock(); return c.sentCall }
+
+func (c *fakeChild) LogFile() string { return c.logFile }
 
 func (c *fakeChild) Port() int      { return c.port }
 func (c *fakeChild) PID() int       { return 1000 + c.port }

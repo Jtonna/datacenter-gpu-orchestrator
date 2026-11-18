@@ -22,6 +22,8 @@ fleet:
   local_node: omen-runner
   stale_after: 60s                 # view age beyond which remote nodes are not used
 models_dir: /models
+child_log_dir: /var/log/llm-children   # full output of every child, one file per start (compose mounts ./logs here)
+# child_log_keep: 200              # most files kept in child_log_dir; the oldest are deleted
 
 defaults:
   ttl: 300s                # unload after this long idle; 0 = never
@@ -38,6 +40,8 @@ defaults:
   cache_ram_mib: 2048      # per-instance prompt cache limit on the host
   server_bin: llama-server-rpc
   local_device: CUDA0
+  # forced_node_grace: 30s  # a force_nodes node absent or offline this long in a live fleet view fails the request now (not after queue_timeout)
+  # forced_fit_check: off   # off | warn | reject. A force_nodes profile skips the placer's fit check; with warn or reject its need is compared with the forced nodes' FREE memory at pre-flight (no headroom taken off): warn logs and starts anyway, reject answers 503 "forced nodes do not fit"
 
 tiers:                     # first match wins; lower number preferred;
                            # a node matching no tier is never used
@@ -45,14 +49,10 @@ tiers:                     # first match wins; lower number preferred;
     priority: 1
     headroom_mib: 1024
     shared_memory: true    # GPU memory is system RAM
-    link_mb_s: 8           # used to size load timeouts. Measured 2026-11-17: 13.9 MB/s for one
-                           # upload alone (qwen3.5-4b, 3.0 GB in 216 s), under 5.6 MB/s while two
-                           # PS5 uploads ran at once (gemma-4-12b); 11 timed that load out at 1411 s.
-                           # Run 3 (cold gemma-4-12b to one PS5, about 3.4 GB sent, the rest cached):
-                           # 5.1 MB/s average over 669 s, bursty: about 39 MB/s in the first minute,
-                           # 2 to 4 MB/s after, with multi-minute gaps of nothing. The 1920 s load
-                           # deadline (design 7.6 counts the whole file, not only the bytes sent)
-                           # was adequate, so 8 stays.
+    link_mb_s: 80          # used to size load timeouts. Measured 2026-11-18 after the PS5 tensor cache
+                           # was turned off: 75 to 84 MB/s in total out of the OMEN, the same for 1, 2
+                           # or 3 PS5s in one load, and shared between loads that run at the same time
+                           # (one Gemma 12B load 89 s; two at once 167 s each; three at once 246 s each)
     settle: 3s
   - match: { hostname: "alienware*" }
     priority: 2
@@ -94,21 +94,20 @@ profiles:
   gemma-4-12b:             # bare name = the default variant
     model: gemma-4-12b-it-Q4_K_M.gguf
     ctx: 8192
-    needs_mib: 7850        # measured 2026-11-17: 7514 MiB on the OMEN alone (+124 MiB CUDA
-                           # context = 7638 in nvidia-smi); 7831 MiB split over Alienware + OMEN
-                           # (2 devices); see 7.2
+    needs_mib: 7900        # measured 2026-11-18 (load log sum, ctx 8192): 7514 MiB on one PS5, 7831 on
+                           # two, 7852 on three (2026-11-17: 7514 on the OMEN alone, +124 MiB CUDA
+                           # context = 7638 in nvidia-smi); see 7.2
     aliases: [gemma-4-12b-1pool-8k, gemma-4-12b-2pool-8k]
 
   # Gemma is a sliding-window model: the estimate is far too high, so each
-  # variant needs a measured needs_mib (design 7.2). 8K and 64K are measured
-  # (2026-11-17); the 48k and 96k values below are conservative PLACEHOLDERS
-  # until measured through a force_nodes profile.
+  # variant needs a measured needs_mib (design 7.2). 8K, 48k, 64k and 96k are
+  # measured (2026-11-17 and 2026-11-18).
   "gemma-4-12b:48k":
     model: gemma-4-12b-it-Q4_K_M.gguf
     ctx: 49152
     kv_quant: q8_0
     flash_attn: true
-    needs_mib: 12000       # PLACEHOLDER, TODO measure (design 7.2)
+    needs_mib: 8250        # measured 2026-11-18: 8206 MiB on two PS5s (load log sum)
     aliases: [gemma-4-12b-2pool-48k]
 
   "gemma-4-12b:64k":
@@ -125,12 +124,14 @@ profiles:
     ctx: 98304
     kv_quant: q8_0
     flash_attn: true
-    needs_mib: 15000       # PLACEHOLDER, TODO measure (design 7.2)
+    needs_mib: 9050        # measured 2026-11-18: 8998 MiB on two PS5s (load log sum)
     aliases: [gemma-4-12b-3pool-96k]
 
   devstral-24b:
     model: Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf
     ctx: 8192
+    needs_mib: 14300       # measured 2026-11-18: 14248 MiB on two PS5s (load log sum). Does not fit
+                           # one PS5 (about 13991 needed, about 13.5 GB free)
     aliases: [devstral-24b-f16]
 
   "devstral-24b:14k":

@@ -160,10 +160,18 @@ func serve(cfg *config.Config, log *slog.Logger) int {
 	go func() { fc.Run(bg); close(fleetDone) }()
 	go checkFleet(bg, cfg, log)
 
+	launcher := &instance.ProcessLauncher{Ports: ports, LogDir: cfg.ChildLogDir, LogKeep: cfg.ChildLogKeep, Logger: log}
+	if err := launcher.PrepareLogDir(); err != nil {
+		log.Warn("child_log_dir is not usable; children run without full log files", "dir", cfg.ChildLogDir, "err", err)
+		launcher.LogDir = ""
+	} else if launcher.LogDir != "" {
+		log.Info("keeping each child's full output", "dir", launcher.LogDir, "keep", cfg.ChildLogKeep)
+	}
+
 	sched, err := scheduler.New(cfg, scheduler.Options{
 		View:     fc,
 		Prober:   &instance.ExecProber{ServerBin: cfg.Defaults.ServerBin},
-		Launcher: &instance.ProcessLauncher{Ports: ports},
+		Launcher: launcher,
 		Logger:   log,
 	})
 	if err != nil {

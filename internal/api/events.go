@@ -69,6 +69,10 @@ func (h *hub) run(feed <-chan scheduler.FeedEvent) {
 			r := inflightReq{ID: strconv.FormatUint(ev.RequestID, 10), Model: ev.Profile, Timestamp: isoTime(ev.Time)}
 			h.inflight[ev.RequestID] = r
 			h.broadcastLocked(frame("inflight", map[string]any{"operation": "upsert", "request": r}))
+		case scheduler.FeedLoadStarted:
+			h.broadcastLocked(frame("loadStarted", jsonView(ev.LoadStarted)))
+		case scheduler.FeedLoadFinished:
+			h.broadcastLocked(frame("loadFinished", jsonView(ev.Outcome)))
 		case scheduler.FeedFinished:
 			delete(h.inflight, ev.RequestID)
 			h.broadcastLocked(frame("inflight", map[string]any{"operation": "remove", "id": strconv.FormatUint(ev.RequestID, 10)}))

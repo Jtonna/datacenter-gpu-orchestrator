@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -27,6 +28,16 @@ type ProcessLauncher struct {
 	StopGrace      time.Duration  // SIGTERM to SIGKILL delay; 0 means DefaultStopGrace
 	TailLines      int            // output lines kept; 0 means DefaultTailLines
 	HealthInterval time.Duration  // health poll period; 0 means DefaultHealthInterval
+
+	// LogDir, when set, receives one file per start holding the child's
+	// complete stdout and stderr; LogKeep (0 means DefaultLogKeep) is how many
+	// of our files to keep there. A failure to create or write a file is
+	// logged once (to Logger, default slog.Default) and never fails a start.
+	LogDir  string
+	LogKeep int
+	Logger  *slog.Logger
+
+	warnOnce sync.Once
 }
 
 var _ Launcher = (*ProcessLauncher)(nil)
@@ -93,9 +104,16 @@ func (l *ProcessLauncher) Start(spec StartSpec) (Child, error) {
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = overrideEnv(scrubEnv(base), spec.Env)
 	cmd.Stdout, cmd.Stderr = p.stdout, p.stderr
+	if sink := l.openChildLog(spec.Profile, spec.InstanceID); sink != nil {
+		p.logSink = sink
+		cmd.Stdout, cmd.Stderr = io.MultiWriter(p.stdout, sink), io.MultiWriter(p.stderr, sink)
+	}
 	cmd.WaitDelay = 2 * time.Second // never hang on pipes inherited by strays
 	prepare(cmd)
 	if err := cmd.Start(); err != nil {
+		if p.logSink != nil {
+			p.logSink.Close()
+		}
 		l.Ports.Release(port)
 		return nil, fmt.Errorf("instance: starting %s: %w", argv[0], err)
 	}
@@ -117,6 +135,7 @@ type proc struct {
 	load     *LoadLog
 	stdout   *LineWriter
 	stderr   *LineWriter
+	logSink  *fileSink // nil when the child has no log file
 
 	mu      sync.Mutex
 	stopReq bool // Stop was called
@@ -129,9 +148,15 @@ type proc struct {
 	exitCh chan ExitStatus
 }
 
-func (p *proc) Port() int           { return p.port }
-func (p *proc) PID() int            { return p.cmd.Process.Pid }
-func (p *proc) Argv() []string      { return append([]string(nil), p.argv...) }
+func (p *proc) Port() int      { return p.port }
+func (p *proc) PID() int       { return p.cmd.Process.Pid }
+func (p *proc) Argv() []string { return append([]string(nil), p.argv...) }
+func (p *proc) LogFile() string {
+	if p.logSink == nil {
+		return ""
+	}
+	return p.logSink.path
+}
 func (p *proc) Tail(n int) []string { return p.ring.Last(n) }
 func (p *proc) Load() LoadStats     { return p.load.Snapshot() }
 
@@ -147,6 +172,9 @@ func (p *proc) wait() {
 	p.mu.Unlock()
 	p.stdout.Close()
 	p.stderr.Close()
+	if p.logSink != nil {
+		p.logSink.Close()
+	}
 
 	st := ExitStatus{Requested: requested, Tail: p.ring.Lines()}
 	if ps := p.cmd.ProcessState; ps != nil {

@@ -24,6 +24,7 @@ const (
 	ReasonNodesQuarantined  Reason = "nodes quarantined"        // 503, queue_timeout: the nodes that would fit are quarantined
 	ReasonNodeNoAddress     Reason = "node has no address"      // 503, queue_timeout: a node that would fit has no known rpc address
 	ReasonDoesNotFit        Reason = "does not fit"             // 503, need exceeds cluster capacity (7.2)
+	ReasonForcedDoesNotFit  Reason = "forced nodes do not fit"  // 503, forced_fit_check: reject and the need exceeds the forced nodes' free memory
 	ReasonNodeExcluded      Reason = "node excluded"            // 503, exclude_nodes keeps out the nodes this needs (permanent for a forced profile)
 	ReasonUnloaded          Reason = "unloaded"                 // 503, a loading instance was force-unloaded
 	ReasonClientGone        Reason = "client gone"              // 499, the caller's context ended
@@ -95,6 +96,11 @@ type RunningInstance struct {
 	State      RunningState
 	Cmd        string    // the command line as one string
 	ReadySince time.Time // zero until ready
+	// LoadProgress is 0 to 1 while a remote load is under way (never 1: the
+	// instance is ready when it is done), else nil. See InstanceStatus.
+	LoadProgress *float64
+	// Load is the structured load report while the child loads (loadreport.go).
+	Load *LoadReport
 }
 
 // ProfileState is one modelStatus entry (design A.3).
@@ -117,19 +123,25 @@ const (
 	// FeedFinished: an admitted request ended (its lease was released).
 	// The HTTP layer adds the path and status it knows.
 	FeedFinished
+	// FeedLoadStarted: a load attempt began (LoadStarted).
+	FeedLoadStarted
+	// FeedLoadFinished: a load attempt ended (Outcome).
+	FeedLoadFinished
 )
 
 // FeedEvent is one entry of the subscription feed (design A.3, A.4).
 type FeedEvent struct {
 	// Seq increases by one per event across the whole scheduler; a gap
 	// seen by a subscriber means events were dropped for it.
-	Seq        uint64
-	Kind       FeedKind
-	Time       time.Time
-	Profile    string
-	State      RunningState // FeedInstance
-	ReadySince time.Time    // FeedInstance, when ready
-	RequestID  uint64       // FeedAdmitted, FeedFinished
+	Seq         uint64
+	Kind        FeedKind
+	Time        time.Time
+	Profile     string
+	State       RunningState // FeedInstance
+	ReadySince  time.Time    // FeedInstance, when ready
+	RequestID   uint64       // FeedAdmitted, FeedFinished
+	LoadStarted *LoadStart   // FeedLoadStarted
+	Outcome     *LoadOutcome // FeedLoadFinished
 }
 
 // Status is the /api/status document.
@@ -140,7 +152,9 @@ type Status struct {
 	Queue        []EntryStatus // oldest first; claims are shown on their entries
 	Quarantines  []QuarantineStatus
 	Backoffs     []BackoffStatus
-	View         ViewStatus
+	// RecentLoads: load attempts finished within RecentLoadRetention, newest first.
+	RecentLoads []LoadOutcome
+	View        ViewStatus
 }
 
 // InstanceStatus describes one instance.
@@ -151,6 +165,7 @@ type InstanceStatus struct {
 	Phase        string // starting only: preflight, launching, loading
 	Addr         string // 127.0.0.1:port once the child runs
 	Cmd          string
+	LogFile      string // file holding the child's full output; empty when not kept
 	Created      time.Time
 	ReadySince   time.Time
 	LastUsed     time.Time
@@ -168,6 +183,19 @@ type InstanceStatus struct {
 	// DeviceTotalMiB is the sum of every device buffer from the load log:
 	// the figure to write into needs_mib (design 7.2).
 	DeviceTotalMiB float64
+
+	// Load progress, set only while the instance is starting; nil fields are
+	// left out of the JSON. A load with no remote worker has no upload, so it
+	// has only LoadElapsedS. The fields are plain numbers in seconds and bytes.
+	LoadElapsedS       *float64 // since the instance was created
+	LoadBytesTotal     *int64   // what must be uploaded to the remote workers
+	LoadBytesSent      *int64   // bytes the workers have acknowledged; only when measured
+	LoadProgress       *float64 // 0 to 0.99 (1 only by becoming ready)
+	LoadEtaS           *float64 // seconds left at the current rate
+	LoadProgressSource *string  // "measured" or "estimated"
+	// Load is the structured version of the above plus per-worker progress;
+	// set while the child loads.
+	Load *LoadReport
 }
 
 // PlacedNodeStatus is one node of an instance's placement with the memory
@@ -277,6 +305,9 @@ type PlanReport struct {
 	Reason    string // why there is no placement (queue, reject, backoff)
 	NeedMiB   int
 	Measured  bool
+	// Warning is set when defaults.forced_fit_check is warn and the forced
+	// nodes' free memory is below the need: the load would start anyway.
+	Warning string
 	// RequiredMiB and CapacityMiB are set for a reject on capacity.
 	RequiredMiB, CapacityMiB int
 }
