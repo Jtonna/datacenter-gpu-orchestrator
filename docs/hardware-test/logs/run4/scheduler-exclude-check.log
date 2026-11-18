@@ -1,0 +1,8 @@
+time=2026-11-18T03:35:44.491Z level=INFO msg="exclude_nodes configured: these nodes are never used" entries=ps5-407c8925
+time=2026-11-18T03:35:44.491Z level=INFO msg="llm-scheduler started" version=test-da67241 listen=[::]:8080 profiles=25
+time=2026-11-18T03:35:44.494Z level=INFO msg="excluded node in fleet view" node=0c:70:43:5c:08:0e hostname=ps5-407c8925 entry=ps5-407c8925
+time=2026-11-18T03:35:58.723Z level=INFO msg="queue entry created" profile=tinyllama alias=false waiters=1
+time=2026-11-18T03:35:58.723Z level=INFO msg="placement chosen" profile=tinyllama nodes=[70:66:2a:a9:a7:65] budgets=[12533] need_mib=700 measured=true waiters=1
+time=2026-11-18T03:35:59.646Z level=INFO msg="pre-flight ok" profile=tinyllama node=70:66:2a:a9:a7:65 addr=10.0.0.101:50052 free_mib=14917 total_mib=14947 duration=922.714001ms
+time=2026-11-18T03:35:59.646Z level=INFO msg="child started" profile=tinyllama pid=102 port=5800 cmd="llama-server-rpc --host 127.0.0.1 --port 5800 --model /models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 2048 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.101:50052 --device RPC0"
+time=2026-11-18T03:36:07.424Z level=INFO msg="instance ready" profile=tinyllama load_duration=8.701081486s memory_mib=696.03 devices=1 waiters=1

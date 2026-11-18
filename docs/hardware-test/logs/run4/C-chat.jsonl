@@ -1,0 +1,1 @@
+{"model": "devstral-24b", "t_sent": "21:57:39", "status": 503, "body": "{\"error\":{\"code\":503,\"message\":\"unloaded: devstral-24b was unloaded while loading\",\"param\":null,\"reason\":\"unloaded\",\"type\":\"server_error\"}}", "retry_after": "30", "total_s": 1091.81, "ttft_s": null, "chunks": 0, "text": ""}

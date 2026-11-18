@@ -1,0 +1,20 @@
+### generating 04:02:46
+-- fleet /api/models
+{"v":1,"updated":1794974566171,"models":[{"name":"Qwen_Qwen3.5-4B-Q4_K_M","quant":"Q4_K_M","state":"ready","generating":true,"slots_total":1,"slots_active":1,"ctx_size":2048,"ctx_used":142,"tokens_per_s":39,"rpc_workers":["10.0.0.101:50052"],"reporter":"omen-hub","last_seen":1794974566087,"stale":false}]}
+-- sched /running
+{"model":"b-qwen4b-1ps5","name":"b-qwen4b-1ps5","state":"ready"}
+-- slots
+[{"id":0,"n_ctx":2048,"speculative":false,"is_processing":true,"id_task":369,"n_prompt_tokens":146,"n_prompt_tokens_processed":4,"n_prompt_tokens_cache":16,"params":{"seed":4294967295,"temperature":0.800000011920929,"dynatemp_range":0.0,"dynatemp_exponent":1.0,"top_k":40,"top_p":0.949999988079071,"m
+### after-request 04:03:01
+-- fleet /api/models
+{"v":1,"updated":1794974581680,"models":[{"name":"Qwen_Qwen3.5-4B-Q4_K_M","quant":"Q4_K_M","state":"ready","generating":false,"slots_total":1,"slots_active":0,"ctx_size":2048,"ctx_used":519,"tokens_per_s":0,"rpc_workers":["10.0.0.101:50052"],"reporter":"omen-hub","last_seen":1794974581088,"stale":false}]}
+-- sched /running
+{"model":"b-qwen4b-1ps5","name":"b-qwen4b-1ps5","state":"ready"}
+-- slots
+[{"id":0,"n_ctx":2048,"speculative":false,"is_processing":false,"id_task":369,"n_prompt_tokens":519,"n_prompt_tokens_processed":0,"n_prompt_tokens_cache":0,"params":{"seed":4294967295,"temperature":0.800000011920929,"dynatemp_range":0.0,"dynatemp_exponent":1.0,"top_k":40,"top_p":0.949999988079071,"m
+### after-unload 04:03:13
+-- fleet /api/models
+{"v":1,"updated":1794974593709,"models":[]}
+-- sched /running
+-- slots
+{"error":{"code":503,"message":"not ready: b-qwen4b-1ps5 is not loaded or is not ready; /upstream never starts a model","param":null,"reason":"not ready","type":"server_error"}}

@@ -1,0 +1,4 @@
+== D-2-gemma-ps5a start 03:50:04 nic=eno1
+fleet_before [{"h":"ps5-407c8925","ram":0.9,"vram":0.05},{"h":"ps5-9032a330","ram":0.92,"vram":0.05},{"h":"ps5-31bd9dc4","ram":0.83,"vram":0.02}]
+gpu_before 10 MiB
+cmd: llama-server-rpc -m /models/gemma-4-12b-it-Q4_K_M.gguf --rpc 10.0.0.101:50052 --device RPC0 --n-gpu-layers 99  --host 127.0.0.1 --port 9999 --ctx-size 2048 --jinja -lv 4 (image llm-scheduler:test, --gpus all, CUDA_VISIBLE_DEVICES empty)

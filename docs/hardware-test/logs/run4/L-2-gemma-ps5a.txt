@@ -1,0 +1,23 @@
+== L-2-gemma-ps5a start 04:04:59 profile=b-gemma-1ps5
+fleet_before [{"h":"ps5-407c8925","ram":0.9,"vram":0.05},{"h":"ps5-9032a330","ram":0.88,"vram":0.05},{"h":"ps5-31bd9dc4","ram":0.83,"vram":0.02}]
+gpu_before 10 MiB
+{"model":"b-gemma-1ps5","msg":"loading"}
+
+status=ok wall_s=61 end=04:06:00
+time=2026-11-18T04:04:59.880Z level=INFO msg="queue entry created" profile=b-gemma-1ps5 alias=false waiters=1
+time=2026-11-18T04:04:59.880Z level=INFO msg="placement chosen" profile=b-gemma-1ps5 nodes=[70:66:2a:a9:a7:65] budgets=[12513] need_mib=8104 measured=false waiters=1
+time=2026-11-18T04:04:59.999Z level=INFO msg="pre-flight ok" profile=b-gemma-1ps5 node=70:66:2a:a9:a7:65 addr=10.0.0.101:50052 free_mib=14865 total_mib=14947 duration=118.691706ms
+time=2026-11-18T04:04:59.999Z level=INFO msg="child started" profile=b-gemma-1ps5 pid=105 port=5800 cmd="llama-server-rpc --host 127.0.0.1 --port 5800 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 2048 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.101:50052 --device RPC0"
+time=2026-11-18T04:05:58.458Z level=INFO msg="instance ready" profile=b-gemma-1ps5 load_duration=58.6358894s memory_mib=7412.360000000001 devices=1 waiters=1
+{"addr":"127.0.0.1:5800","nodes":[{"id":"70:66:2a:a9:a7:65","m":[{"compute_mib":123.52,"kv_mib":512,"model_mib":6776.84,"name":"RPC0[10.0.0.101:50052]","total_mib":7412.360000000001}]}],"device_total_mib":7412.360000000001,"unmatched":[],"host_memory":[{"compute_mib":0,"kv_mib":0,"model_mib":540,"name":"CPU_Mapped","total_mib":540},{"compute_mib":33.53,"kv_mib":0,"model_mib":0,"name":"CPU","total_mib":33.53}]}
+short {"total_s": 3.61, "prompt_n": 25, "prompt_tps": 40.54, "pred_n": 88, "gen_tps": 29.17}
+long1 {"total_s": 5.46, "prompt_n": 417, "prompt_tps": 138.97, "pred_n": 60, "gen_tps": 28.69}
+long2 {"total_s": 5.05, "prompt_n": 417, "prompt_tps": 139.54, "pred_n": 60, "gen_tps": 28.72}
+long3 {"total_s": 5.05, "prompt_n": 417, "prompt_tps": 139.18, "pred_n": 60, "gen_tps": 28.72}
+fleet_loaded [{"h":"ps5-407c8925","ram":0.88,"vram":0.05},{"h":"ps5-9032a330","ram":8.01,"vram":7.13},{"h":"ps5-31bd9dc4","ram":0.82,"vram":0.02}]
+gpu_loaded 10 MiB
+{"model":"b-gemma-1ps5","msg":"ok"}
+
+fleet_after [{"h":"ps5-407c8925","rpc":50052,"ram":0.9,"vram":0.05},{"h":"ps5-9032a330","rpc":50052,"ram":0.9,"vram":0.05},{"h":"ps5-31bd9dc4","rpc":50052,"ram":0.83,"vram":0.02}]
+gpu_after 10 MiB
+== L-2-gemma-ps5a done 04:06:29

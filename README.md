@@ -25,3 +25,10 @@ Add `-race` where cgo is available (needs gcc on Windows).
   (see its README).
 - `internal/testutil/harness/` test helpers: build `fakellama` once, free
   ports, wait for HTTP endpoints.
+
+## Docs
+
+- [docs/design.md](docs/design.md) the design.
+- [docs/runbook.md](docs/runbook.md) deploying and running it on the OMEN.
+- [docs/benchmark-guide.md](docs/benchmark-guide.md) running model benchmarks through the scheduler.
+- [docs/hardware-test/](docs/hardware-test) results of the hardware tests: `RESULTS.md`, `RESULTS-run2.md`, `RESULTS-run3.md`, `RESULTS-run4.md` and the merged tables in `BENCHMARKS.md`.

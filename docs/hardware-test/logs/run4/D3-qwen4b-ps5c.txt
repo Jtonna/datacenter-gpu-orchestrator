@@ -1,0 +1,4 @@
+== D3-qwen4b-ps5c start 03:36:53 nic=eno1
+fleet_before [{"h":"ps5-407c8925","ram":0.75,"vram":0.01},{"h":"ps5-9032a330","ram":0.85,"vram":0.02},{"h":"ps5-31bd9dc4","ram":0.83,"vram":0.02}]
+gpu_before 10 MiB
+cmd: llama-server-rpc -m /models/Qwen_Qwen3.5-4B-Q4_K_M.gguf --rpc 10.0.0.114:50052 --device RPC0 --n-gpu-layers 99  --host 127.0.0.1 --port 9999 --ctx-size 2048 --jinja (image llm-scheduler:test, --gpus all, CUDA_VISIBLE_DEVICES empty)

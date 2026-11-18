@@ -1,0 +1,54 @@
+== D-5-gemma-ps5c start 04:32:57 nic=eno1
+fleet_before [{"h":"ps5-407c8925","ram":0.87,"vram":0.05},{"h":"ps5-9032a330","ram":7.61,"vram":6.58},{"h":"ps5-31bd9dc4","ram":7.32,"vram":6.49}]
+gpu_before 10 MiB
+cmd: llama-server-rpc -m /models/gemma-4-12b-it-Q4_K_M.gguf --rpc 10.0.0.114:50052 --device RPC0 --n-gpu-layers 99  --host 127.0.0.1 --port 9998 --ctx-size 2048 --jinja -lv 4 (image llm-scheduler:test, --gpus all, CUDA_VISIBLE_DEVICES empty)
+status=ok load_s=1645.450301694 tx_bytes=9636845730 end=05:00:23
+0.00.018.885 E ggml_cuda_init: failed to initialize CUDA: no CUDA-capable device is detected
+0.00.027.866 I cmn  common_param:   - RPC0    : 10.0.0.114:50052 (14947 MiB, 14868 MiB free)
+0.00.027.903 I srv  server_prepa: n_parallel is set to auto, using n_parallel = 4 and kv_unified = true
+0.00.308.919 I common_memory_breakdown_print: |   - RPC0 (10.0.0.114:50052) | 14947 = 14868 + (7572 =  6776 +     672 +     124) +       -7493 |
+0.00.391.039 I llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
+0.00.391.042 I llama_model_loader: - kv   0:                       general.architecture str              = gemma4
+0.00.391.045 I llama_model_loader: - kv   1:                               general.type str              = model
+0.00.391.046 I llama_model_loader: - kv   2:                     general.sampling.top_k i32              = 64
+0.00.391.049 I llama_model_loader: - kv   3:                     general.sampling.top_p f32              = 0.950000
+0.00.391.049 I llama_model_loader: - kv   4:                      general.sampling.temp f32              = 1.000000
+0.00.391.050 I llama_model_loader: - kv   5:                               general.name str              = Gemma-4-12B-It
+0.00.391.050 I llama_model_loader: - kv   6:                           general.finetune str              = it
+0.00.391.050 I llama_model_loader: - kv   7:                           general.basename str              = Gemma-4-12B-It
+0.00.391.050 I llama_model_loader: - kv   8:                       general.quantized_by str              = Unsloth
+0.00.391.051 I llama_model_loader: - kv   9:                         general.size_label str              = 12B
+0.00.391.051 I llama_model_loader: - kv  10:                            general.license str              = apache-2.0
+0.00.391.052 I llama_model_loader: - kv  11:                       general.license.link str              = https://ai.google.dev/gemma/docs/gemm...
+0.00.391.052 I llama_model_loader: - kv  12:                           general.repo_url str              = https://huggingface.co/unsloth
+0.00.391.053 I llama_model_loader: - kv  13:                   general.base_model.count u32              = 1
+0.00.391.053 I llama_model_loader: - kv  14:                  general.base_model.0.name str              = Gemma 4 12b It
+0.00.391.053 I llama_model_loader: - kv  15:          general.base_model.0.organization str              = Google
+0.00.391.054 I llama_model_loader: - kv  16:              general.base_model.0.repo_url str              = https://huggingface.co/google/gemma-4...
+0.00.391.055 I llama_model_loader: - kv  17:                               general.tags arr[str,2]       = ["unsloth", "any-to-any"]
+0.00.391.056 I llama_model_loader: - kv  18:                         gemma4.block_count u32              = 48
+0.00.391.056 I llama_model_loader: - kv  19:                      gemma4.context_length u32              = 262144
+0.00.391.056 I llama_model_loader: - kv  20:                    gemma4.embedding_length u32              = 3840
+0.00.391.056 I llama_model_loader: - kv  21:                 gemma4.feed_forward_length u32              = 15360
+0.00.391.057 I llama_model_loader: - kv  22:                gemma4.attention.head_count u32              = 16
+0.00.391.058 I llama_model_loader: - kv  23:             gemma4.attention.head_count_kv arr[i32,48]      = [8, 8, 8, 8, 8, 1, 8, 8, 8, 8, 8, 1, ...
+0.00.391.059 I llama_model_loader: - kv  24:                      gemma4.rope.freq_base f32              = 1000000.000000
+0.00.391.060 I llama_model_loader: - kv  25:                  gemma4.rope.freq_base_swa f32              = 10000.000000
+0.00.391.060 I llama_model_loader: - kv  26:    gemma4.attention.layer_norm_rms_epsilon f32              = 0.000001
+0.00.391.061 I llama_model_loader: - kv  27:                gemma4.attention.key_length u32              = 512
+0.00.391.061 I llama_model_loader: - kv  28:              gemma4.attention.value_length u32              = 512
+0.00.391.061 I llama_model_loader: - kv  29:             gemma4.final_logit_softcapping f32              = 30.000000
+0.00.391.062 I llama_model_loader: - kv  30:            gemma4.attention.sliding_window u32              = 1024
+0.00.391.062 I llama_model_loader: - kv  31:          gemma4.attention.shared_kv_layers u32              = 0
+0.00.391.062 I llama_model_loader: - kv  32:    gemma4.embedding_length_per_layer_input u32              = 0
+0.00.391.063 I llama_model_loader: - kv  33:    gemma4.attention.sliding_window_pattern arr[bool,48]     = [true, true, true, true, true, false,...
+0.00.391.063 I llama_model_loader: - kv  34:            gemma4.attention.key_length_swa u32              = 256
+short {"total_s": 2.68, "prompt_n": 25, "prompt_tps": 28.85, "pred_n": 46, "gen_tps": 25.0}
+long1 {"total_s": 5.46, "prompt_n": 417, "prompt_tps": 142.7, "pred_n": 60, "gen_tps": 28.84}
+long2 {"total_s": 4.96, "prompt_n": 417, "prompt_tps": 143.24, "pred_n": 60, "gen_tps": 28.83}
+long3 {"total_s": 4.96, "prompt_n": 417, "prompt_tps": 143.52, "pred_n": 60, "gen_tps": 28.83}
+fleet_loaded [{"h":"ps5-407c8925","ram":8.2,"vram":7.29},{"h":"ps5-9032a330","ram":7.59,"vram":6.58},{"h":"ps5-31bd9dc4","ram":7.32,"vram":6.49}]
+gpu_loaded 10 MiB
+fleet_after [{"h":"ps5-407c8925","rpc":50052,"ram":0.96,"vram":0.05},{"h":"ps5-9032a330","rpc":50052,"ram":7.59,"vram":6.58},{"h":"ps5-31bd9dc4","rpc":50052,"ram":7.33,"vram":6.49}]
+gpu_after 10 MiB
+== D-5-gemma-ps5c done 05:00:51

@@ -1,6 +1,8 @@
-# Benchmarks: what the three hardware runs measured
+# Benchmarks: what the hardware runs measured
 
-This page merges the numbers from `RESULTS.md` (run 1), `RESULTS-run2.md` (run 2) and `RESULTS-run3.md` (run 3). All three ran on 2026-11-17 and early 2026-11-18 UTC. Nothing here is new. If you need the context for a number, open the run it came from.
+This page merges the numbers from `RESULTS.md` (run 1), `RESULTS-run2.md` (run 2), `RESULTS-run3.md` (run 3) and `RESULTS-run4.md` (run 4, partial). Runs 1 to 3 ran on 2026-11-17 and early 2026-11-18 UTC.
+
+**The first part of this page (the main table, upload rates and memory needs) was measured before the PS5 fixes of 2026-11-18** (tensor cache turned off, GPU clock pinned at 2230 MHz). Those PS5 rows used the worker's tensor cache, so the cold and warm loads and upload rates there do not apply any more. The numbers measured after the fixes are in the last part, "After the PS5 fixes (2026-11-18)".
 
 How to read it:
 
@@ -87,9 +89,9 @@ Two related numbers:
 - The OMEN tier's `headroom_mib` is 450. nvidia-smi reports 8151 MiB but llama.cpp can use only 7707 MiB, a gap of 444 MiB (run 1).
 - Each child that uses the OMEN GPU adds about 120 MiB of CUDA context that the load log does not show. Run 1 measured about 102 MiB per RPC-only child before the fix. After the fix, the OMEN stayed at 10 MiB with remote-only models loaded (run 2, and again after every PS5 load in run 3).
 
-## Not yet measured
+## Not yet measured (as of runs 1 to 3)
 
-- **Gemma 48k and 96k.** They were not run in any of the three runs, so there is no measured `needs_mib` for them.
+- **Gemma 48k and 96k.** They were not run in any of the three runs, so there was no measured `needs_mib` for them. They were measured after the fixes (last part).
 - **Gemma 64K on one device.** About 8100 MiB is inferred, not measured.
 - **Two cold uploads at once.** Every pooled test in run 3 found at least one half already cached.
 - **A second all-cold PS5 load.** The PS5 caches cannot be cleared. The Alienware cache was also warm.
@@ -102,3 +104,75 @@ Two related numbers:
 - **Whether a node that comes back has a very low first budget.** Run 2 saw one placement at 5724 MiB. Run 3 could not reproduce it, because no node dropped.
 - **Why the PS5 uploads stall.** Inferred to be worker or PS5 side. Not measured.
 - **FLUX and Whisper.** These runs did not cover them.
+
+## After the PS5 fixes (2026-11-18)
+
+Two fixes were made on the PS5 side (not in this repo): the `rpc-server` tensor cache was turned off, and the PS5 GPU clock was pinned at 2230 MHz (it sat at 500 MHz; decode about 2.4x faster on a two-PS5 split). Every load is now a full upload and there are no cached reloads. Sources: load times and memory come from the scheduler's log lines (`load_duration`, "instance ready"); decode speeds come from the separate benchmark agent (full tables in `C:\Users\J\documents\ps5llm\benchmarks.md`, outside this repo). Details and context: `RESULTS-run4.md`.
+
+### Upload rates after the fixes
+
+| Case | Rate | Notes |
+|---|---|---|
+| Total out of the OMEN, 1, 2 or 3 PS5s in one load | 75 to 84 MB/s | A split model uploads to one PS5 at a time, in an order llama.cpp chooses. |
+| One Gemma 12B load | 89 s | |
+| Two Gemma 12B loads at once | 167 s each, 40 MB/s each | The rate is shared. |
+| Three Gemma 12B loads at once | 246 s each, 27 MB/s each | The rate is shared. |
+
+`link_mb_s` for the PS5 tier is now 80.
+
+### Load times through the scheduler (ctx 2048 unless stated)
+
+| Model | PS5s | Load s |
+|---|---|---|
+| tinyllama | 1 | 8 to 9 |
+| qwen 4B | 1 | 35 to 38 |
+| gemma 12B | 1 | 85 to 90 |
+| devstral 24B | 2 | 183 |
+| devstral 24B | 3 | 184 |
+| qwen 27B | 2 | 215 |
+| qwen 27B | 3 | 216 |
+| qwen3 coder 30B | 3 | 240 |
+| kimi-dev 72B IQ2_S, ctx 8192 | 3 | 356 |
+
+### Memory per instance (MiB, "instance ready" log lines)
+
+| Model | Context | PS5s | MiB |
+|---|---|---|---|
+| tinyllama | 2048 | 1 | 696 |
+| tinyllama | 8192 | 1 | 834 |
+| qwen 4B | 2048 | 1 | 2881 |
+| qwen 4B | 8192 | 1 | 3079 |
+| qwen 4B | not stated | 2 | 3034 |
+| qwen 4B | not stated | 3 | 3126 |
+| gemma 12B | 2048 | 1 | 7412 |
+| gemma 12B | 8192 | 1 | 7514 |
+| gemma 12B | 2048 | 2 | 7687 |
+| gemma 12B | 8192 | 2 | 7831 |
+| gemma 12B | not stated | 3 | 7852 |
+| gemma 12B | 48k | 2 | 8206 |
+| gemma 12B | 96k | 2 | 8998 |
+| devstral 24B | 8192 | 2 | 14248 |
+| devstral 24B | 2048 | 2 | 14248 |
+| devstral 24B | 2048 | 3 | 14517 |
+| qwen 27B | 2048 | 2 | 16272 |
+| qwen 27B | 2048 | 3 | 16442 |
+| qwen 27B | 8192 | 3 | 16898 |
+| qwen3 coder 30B | 2048 | 3 | 18077 |
+| kimi-dev 72B IQ2_S | 8192 | 3 | 29785 |
+
+Config `needs_mib` now: `gemma-4-12b` 7900 (above the 7852 seen on three PS5s), `gemma-4-12b:48k` 8250 (from 8206), `gemma-4-12b:96k` 9050 (from 8998), `devstral-24b` 14300 (from 14248 at ctx 8192); `tinyllama` 700 and `gemma-4-12b:64k` 8600 are unchanged. Devstral 24B does not fit one PS5 (needs about 13991 MiB, about 13.5 GB free); forced onto one PS5 the upload starts and the PS5 `rpc-server` crashes mid-upload.
+
+### Decode speed on three PS5s (benchmark agent)
+
+| Model | Decode tok/s |
+|---|---|
+| deepseek v2 lite | 78.4 |
+| qwen3 coder 30B-A3B | 62.3 |
+| qwen3 30B-A3B | 59 to 61 (2k, 8k and 32k context) |
+| glm-4 32B | 15.1 |
+| kimi-dev 72B IQ2_S | 8.9 |
+| llama 3.3 70B Q2_K | 8.5 |
+| qwen2.5 72B Q2_K | 8.5 |
+| devstral 24B (two PS5s) | 17.8 |
+
+Other benchmark-agent findings: automatic placement was 3.8 to 7.5% faster in decode than forcing three PS5s for models that fit on fewer. Adding PS5s to a model that already fits slightly lowers decode (qwen 4B 47.9 / 45.5 / 44.8 tok/s on 1 / 2 / 3 PS5s) but raises prefill (devstral 24B 104.5 to 137.6 tok/s from 2 to 3 PS5s). Mixtral 8x7B (TheBloke Q4_K_M file) failed to load for a file-format reason (`tensor 'blk.0.ffn_down_exps.weight' not found`), not memory.

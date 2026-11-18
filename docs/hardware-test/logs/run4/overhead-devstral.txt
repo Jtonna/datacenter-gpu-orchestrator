@@ -1,0 +1,21 @@
+profile=m-devstral-8k child=127.0.0.1:5801 05:50:16
+child 1: 4.635579 4.635497 "prompt_per_second":145.79787305417898 "predicted_n":7 "predicted_per_second":7.9220888964002025 
+lb    1: 4.647288 4.647186 "prompt_per_second":144.66896156875438 "predicted_n":7 "predicted_per_second":8.119761062497801 
+child 2: 4.667280 4.667188 "prompt_per_second":144.28245653012183 "predicted_n":7 "predicted_per_second":8.013162955681867 
+lb    2: 4.642981 4.642892 "prompt_per_second":144.53765346573152 "predicted_n":7 "predicted_per_second":8.210472731651645 
+child 3: 4.738590 4.738497 "prompt_per_second":143.67322859173538 "predicted_n":7 "predicted_per_second":7.468194825287805 
+lb    3: 4.598159 4.598088 "prompt_per_second":145.46506855910286 "predicted_n":7 "predicted_per_second":8.450109147243152 
+child 4: 4.613197 4.613129 "prompt_per_second":145.0567980804236 "predicted_n":7 "predicted_per_second":8.38335401227323 
+lb    4: 4.620758 4.620680 "prompt_per_second":145.09121743600966 "predicted_n":7 "predicted_per_second":8.286480193240717 
+child 5: 4.623063 4.622987 "prompt_per_second":144.24466345805263 "predicted_n":7 "predicted_per_second":8.531731642912906 
+lb    5: 4.676878 4.676780 "prompt_per_second":145.08324440030034 "predicted_n":7 "predicted_per_second":7.700442518763411 
+child-stream 1 ttft/total: 0.002253 4.701543
+lb-stream    1 ttft/total: 0.002465 4.648116
+child-stream 2 ttft/total: 0.002586 4.536913
+lb-stream    2 ttft/total: 0.003373 4.629763
+child-stream 3 ttft/total: 0.002768 4.696615
+lb-stream    3 ttft/total: 0.003675 4.625054
+child-stream 4 ttft/total: 0.002445 4.658025
+lb-stream    4 ttft/total: 0.002662 4.713107
+child-stream 5 ttft/total: 0.002736 4.786379
+lb-stream    5 ttft/total: 0.002513 4.707975
