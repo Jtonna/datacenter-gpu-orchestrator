@@ -275,6 +275,11 @@ tiers:                     # first match wins; lower number preferred;
 node_overrides:            # optional; wins over the fleet's ip/rpc_port
   alienware-llm: { rpc: "10.0.0.3:50052" }
 
+exclude_nodes:             # optional; nodes that are never used (see below)
+  - ps5-abc123             # a hostname
+  - ps5-test*              # a hostname glob
+  - 70:66:2a:a9:a7:65      # a node id
+
 profiles:
   gemma-4-12b:             # bare name = the default variant
     model: gemma-4-12b-it-Q4_K_M.gguf
@@ -304,6 +309,32 @@ profiles:
 `tier.match` keys: `hostname` (glob), `role` (exact), `source` (exact),
 `local` (bool). Several keys in one match must all hold.
 
+**Excluding nodes.** `exclude_nodes` is an optional list of strings. An entry
+matches a node when it equals the node id, or matches the node's hostname as a
+glob (the same matching as a tier's `hostname`); both are case-insensitive. It
+lets the owner keep a machine (a PS5 under test, say) from ever receiving a
+model without giving up the `ps5-*` tier for the others.
+
+- An excluded node is not *reachable* (7.1), so it is never eligible, never
+  placed, never claimed, never counted in the capacity check (7.2) or in a
+  plan, and never pre-flighted (7.5).
+- It still appears in `/api/status` `view.nodes` with `excluded: true` and
+  `eligible: false`. Wait and plan reasons that involve it say
+  `node <hostname> is excluded by config`. When the capacity check fails, the
+  message lists the excluded nodes that were left out.
+- The local node can be excluded (by `fleet.local_node` or its hostname). The
+  OMEN GPU is then never used, and `kind: command` profiles, which run only on
+  the local node, fail as "does not fit".
+- Excluding wins over forcing. A profile whose `force_nodes` names an excluded
+  node fails config validation when config alone can tell (the name equals an
+  entry, or is a hostname the glob matches). When only the fleet can tell (a
+  hostname glob against an id), the request fails at once with `503`, reason
+  `node excluded` and no `Retry-After`, like `does not fit`; an entry already
+  queued is failed the same way when the node is seen. A forced node that is
+  merely absent from the fleet still queues (it may come online).
+- The scheduler logs the entries once at startup and, at INFO, the first time
+  each excluded node appears in the fleet view.
+
 Fields for `kind: llama` (the default):
 
 | Field | Meaning |
@@ -327,7 +358,8 @@ node alone.
 Startup validation fails fast on: unknown fields; duplicate names or aliases; a
 missing model file; `force_nodes` with `allow_tiers`; `tensor_split` without
 `force_nodes` or of a different length; quantised KV without `flash_attn`;
-`extra_args` containing a managed flag in any spelling (`--rpc`, `--device/-dev`,
+an empty or invalid-glob `exclude_nodes` entry; a `force_nodes` name that
+`exclude_nodes` excludes; `extra_args` containing a managed flag in any spelling (`--rpc`, `--device/-dev`,
 `--tensor-split/-ts`, `--split-mode/-sm`, `--host`, `--port`, `--model/-m`,
 `--ctx-size/-c`, `--n-gpu-layers/--gpu-layers/-ngl`, `--parallel/-np`,
 `--cache-type-k/-ctk`, `--cache-type-v/-ctv`, `--fit/-fit`,
@@ -396,6 +428,7 @@ The fleet client and local probe produce, per node, in MiB:
 
 A node is **eligible** for a profile when all hold:
 
+- it is not excluded by `exclude_nodes` (6)
 - it is the local node, or it is online in a view no older than `stale_after`
 - remote: an address is known (`node_overrides`, else `ip` + `rpc_port`)
 - it matches a tier, and the profile's `allow_tiers` permits that tier
@@ -529,6 +562,12 @@ settling (no child ran), and its waiters go back into the profile's queue
 entry. A returned entry keeps its original creation time, and so its place in
 the queue, and its accumulated unclaimed time. The next pass sees the
 quarantine or the override, so it does not repeat the same placement.
+
+A failed probe's reason leads with the worker's own message (for example
+`Failed to connect to <addr>`, or `no answer within 10s`, or `no RPC device
+line in output`). The probe hides CUDA on purpose, so llama.cpp's
+`ggml_cuda_init` failure, backtrace frames and blank lines are dropped from
+that summary; the raw stderr is logged at debug level.
 
 The local node is not probed; `nvidia-smi` already gives exact figures.
 No child is ever started against a worker that would hang it.

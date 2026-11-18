@@ -1,12 +1,14 @@
 package scheduler
 
 import (
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/instance"
 )
 
 // Scheduling is observable in the log: one structured line per event,
@@ -259,5 +261,44 @@ func TestLaunchEnvHidesHostGPUOnlyForRemoteOnlyPlacements(t *testing.T) {
 	}
 	if got := envOf(1); len(got) != 0 {
 		t.Errorf("local env = %q", got)
+	}
+}
+
+// "devices" in the instance ready line counts the GPU/RPC devices the model
+// was placed on, not the host (CPU) rows of the load log.
+func TestLog_InstanceReadyCountsPlacedDevicesNotHostRows(t *testing.T) {
+	h := newHarness(t).nodes(ps5("a", 2, 15000))
+	h.llama("m", 8000)
+	h.request("m")
+	h.child("m").load = instance.LoadStats{Devices: []instance.DeviceMem{
+		{Name: "RPC0[10.0.0.2:50052]", ModelMiB: 7000, KVMiB: 500, ComputeMiB: 100},
+		{Name: "CPU_Mapped", Host: true, ModelMiB: 300},
+		{Name: "CPU", Host: true, ComputeMiB: 20},
+	}}
+	h.healthy("m")
+	rd := h.mustLog("instance ready", "profile", "m")
+	if got := rd.Attrs["devices"]; fmt.Sprint(got) != "1" {
+		t.Fatalf("devices = %v, want 1 (one RPC device, two host rows)", got)
+	}
+}
+
+// The raw probe output stays available at debug level; the warning leads
+// with the real cause, not the expected CUDA noise.
+func TestLog_PreflightFailureLeadsWithCauseAndKeepsRawAtDebug(t *testing.T) {
+	h := newHarness(t).nodes(ps5("a", 2, 15000))
+	h.llama("m", 8000)
+	raw := "0.00.021.162 E ggml_cuda_init: failed to initialize CUDA: no CUDA-capable device is detected\n" +
+		"/src/ggml/src/ggml-rpc/ggml-rpc.cpp:653: Failed to connect to 10.0.0.2:50052\n"
+	h.prober.fail["10.0.0.2:50052"] = &instance.ProbeError{Kind: instance.ProbeExit, Addr: "10.0.0.2:50052",
+		Detail: "signal: aborted (core dumped)", Stderr: raw}
+	h.request("m")
+	w := h.mustLog("pre-flight failed", "node", "a")
+	msg := fmt.Sprint(w.Attrs["err"])
+	if !strings.Contains(msg, "Failed to connect to 10.0.0.2:50052") || strings.Contains(msg, "CUDA") {
+		t.Fatalf("warning err = %q", msg)
+	}
+	d := h.mustLog("pre-flight raw output", "node", "a")
+	if d.Level != slog.LevelDebug || !strings.Contains(fmt.Sprint(d.Attrs["stderr"]), "ggml_cuda_init") {
+		t.Fatalf("debug record = %+v", d)
 	}
 }

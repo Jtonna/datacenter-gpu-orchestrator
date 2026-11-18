@@ -35,6 +35,16 @@ func (c *Config) validate(raw map[string]*rawProfile, exists func(string) bool) 
 
 	c.validateDefaults(add)
 	c.validateTiers(add)
+	for i, e := range c.ExcludeNodes {
+		switch {
+		case e == "":
+			add("exclude_nodes[%d]: entry must not be empty", i)
+		default:
+			if _, err := path.Match(e, ""); err != nil {
+				add("exclude_nodes[%d]: invalid glob %q", i, e)
+			}
+		}
+	}
 	names := make([]string, 0, len(c.NodeOverrides))
 	for n := range c.NodeOverrides {
 		names = append(names, n)
@@ -140,6 +150,14 @@ func (c *Config) validateLlama(p *core.Profile, r *rawProfile, pf func(field, fo
 			if v <= 0 {
 				pf("tensor_split", "values must be positive, got %d", v)
 			}
+		}
+	}
+	for _, name := range p.ForceNodes {
+		// DESIGN: excluding wins over forcing. Only what config alone can tell is
+		// checked here (the name against the entries as an id and as a hostname);
+		// a hostname glob against an id is left to the scheduler at request time.
+		if e, ok := c.ExcludedBy(core.NodeID(name), name); ok {
+			pf("force_nodes", "node %q is excluded by exclude_nodes entry %q; excluding wins, so drop it from force_nodes or from exclude_nodes", name, e)
 		}
 	}
 	for i, a := range p.ExtraArgs {

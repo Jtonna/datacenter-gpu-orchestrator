@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -64,6 +65,7 @@ func ParseWithOptions(data []byte, o Options) (*Config, error) {
 		LocalProbeCmd: raw.LocalProbeCmd,
 		Defaults:      raw.Defaults.value(),
 		NodeOverrides: map[string]NodeOverride{},
+		ExcludeNodes:  trimAll(raw.ExcludeNodes),
 		Profiles:      map[string]*core.Profile{},
 	}
 	for _, t := range raw.Tiers {
@@ -94,6 +96,17 @@ func ParseWithOptions(data []byte, o Options) (*Config, error) {
 	return c, nil
 }
 
+func trimAll(in []string) []string {
+	if in == nil {
+		return nil
+	}
+	out := make([]string, len(in))
+	for i, s := range in {
+		out[i] = strings.TrimSpace(s)
+	}
+	return out
+}
+
 // modelPath is where a profile's model file is expected.
 func (c *Config) modelPath(p *core.Profile) string { return filepath.Join(c.ModelsDir, p.Model) }
 
@@ -105,6 +118,7 @@ type rawConfig struct {
 	Defaults      rawDefaults            `yaml:"defaults"`
 	Tiers         []rawTier              `yaml:"tiers"`
 	NodeOverrides map[string]rawOverride `yaml:"node_overrides"`
+	ExcludeNodes  []string               `yaml:"exclude_nodes"`
 	Profiles      map[string]*rawProfile `yaml:"profiles"`
 }
 

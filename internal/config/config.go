@@ -15,7 +15,10 @@ type Config struct {
 	Defaults      Defaults
 	Tiers         []TierRule
 	NodeOverrides map[string]NodeOverride
-	Profiles      map[string]*core.Profile
+	// ExcludeNodes lists nodes that are never used: each entry is a node id or a
+	// hostname glob (case-insensitive). See Excluded.
+	ExcludeNodes []string
+	Profiles     map[string]*core.Profile
 }
 
 // Fleet is the fleet console connection.

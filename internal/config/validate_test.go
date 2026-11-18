@@ -206,3 +206,40 @@ func TestValidateAcceptsZeroTTLAndStallTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestValidateExcludeNodes(t *testing.T) {
+	llama := "  p:\n    model: m.gguf\n    ctx: 4096\n"
+	tests := []struct {
+		name string
+		yaml string
+		want []string
+	}{
+		{"empty entry", baseHeader + "exclude_nodes: [\"\"]\n", []string{"exclude_nodes", "empty"}},
+		{"blank entry", baseHeader + "exclude_nodes: [\"  \"]\n", []string{"exclude_nodes", "empty"}},
+		{"bad glob", baseHeader + "exclude_nodes: [\"ps5-[\"]\n", []string{"exclude_nodes", "invalid glob", "ps5-["}},
+		{"forced profile names excluded id", prof(llama+"    force_nodes: [\"70:66:2A:A9:A7:65\"]\n") +
+			"exclude_nodes: [\"70:66:2a:a9:a7:65\"]\n", []string{`profile "p"`, "force_nodes", "70:66:2A:A9:A7:65", "excluded"}},
+		{"forced profile names hostname matched by glob", prof(llama+"    force_nodes: [alienware-llm, ps5-test1]\n") +
+			"exclude_nodes: [\"PS5-TEST*\"]\n", []string{`profile "p"`, "force_nodes", "ps5-test1", "excluded"}},
+		{"forced profile names excluded local node", prof(llama+"    force_nodes: [omen-runner]\n") +
+			"exclude_nodes: [omen-runner]\n", []string{`profile "p"`, "omen-runner", "excluded"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := parseErr(tt.yaml, nil)
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tt.want)
+			}
+			for _, w := range tt.want {
+				if !strings.Contains(err.Error(), w) {
+					t.Errorf("error %q lacks %q", err.Error(), w)
+				}
+			}
+		})
+	}
+	// A forced name that only a runtime lookup can tie to an exclusion is not a load-time error.
+	ok := prof(llama+"    force_nodes: [\"70:66:2a:a9:a7:65\"]\n") + "exclude_nodes: [\"ps5-*\"]\n"
+	if err := parseErr(ok, nil); err != nil {
+		t.Fatalf("glob vs id must be left to runtime: %v", err)
+	}
+}

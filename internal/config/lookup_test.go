@@ -168,3 +168,32 @@ func TestProfilesWithoutNeedsMiB(t *testing.T) {
 		}
 	}
 }
+
+func TestExcluded(t *testing.T) {
+	c := mustParse(t, "exclude_nodes: [\"70:66:2A:A9:A7:65\", \"ps5-abc123\", \"PS5-test*\", omen-runner]\ntiers:\n  - match: { local: true }\n    priority: 1\n")
+	if got := c.ExcludeNodes; len(got) != 4 {
+		t.Fatalf("ExcludeNodes = %v", got)
+	}
+	tests := []struct {
+		id, host string
+		want     bool
+	}{
+		{"70:66:2a:a9:a7:65", "ps5-zzz", true}, // id, case-insensitive
+		{"70:66:2A:A9:A7:65", "", true},        // id, same case
+		{"aa:bb", "PS5-ABC123", true},          // hostname exact, case-insensitive
+		{"aa:bb", "ps5-test9", true},           // hostname glob
+		{"aa:bb", "ps5-tes", false},            // glob needs the t
+		{"omen-runner", "omen-runner", true},   // local node by id
+		{"aa:bb", "ps5-other", false},
+		{"ps5-abc123x", "ps5-abc123x", false}, // an entry is not a prefix match
+		{"ps5-test1", "alienware", false},     // a glob is matched against the hostname only
+	}
+	for _, tt := range tests {
+		if got := c.Excluded(core.NodeID(tt.id), tt.host); got != tt.want {
+			t.Errorf("Excluded(%q,%q) = %v, want %v", tt.id, tt.host, got, tt.want)
+		}
+	}
+	if (&Config{}).Excluded("x", "y") {
+		t.Error("empty list excludes nothing")
+	}
+}

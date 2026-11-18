@@ -52,6 +52,14 @@ func (c *schedCore) refreshView() {
 		raw[n.ID] = n
 	}
 	c.raw = raw
+	for _, id := range c.sortedNodeIDs() {
+		if n, ok := raw[id]; ok && !c.excludedSeen[id] {
+			if entry, hit := c.cfg.ExcludedBy(n.ID, n.Hostname); hit {
+				c.excludedSeen[id] = true
+				c.log.Info("excluded node in fleet view", "node", id, "hostname", n.Hostname, "entry", entry)
+			}
+		}
+	}
 	c.age = c.view.Age()
 	c.fresh = c.age <= c.cfg.Fleet.StaleAfter
 

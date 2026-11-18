@@ -73,13 +73,55 @@ type ProbeError struct {
 func (e *ProbeError) Error() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "pre-flight of %s failed (%s)", e.Addr, e.Kind)
-	if e.Detail != "" {
-		b.WriteString(": " + e.Detail)
-	}
-	if s := strings.TrimSpace(e.Stderr); s != "" {
-		b.WriteString("; stderr: " + s)
+	sum := summarizeStderr(e.Stderr)
+	switch {
+	case e.Kind == ProbeExit && sum != "":
+		// The worker's own message (for example "Failed to connect") is the cause;
+		// the exit status is only how the probe process died.
+		b.WriteString(": " + sum)
+		if e.Detail != "" {
+			b.WriteString(" (" + e.Detail + ")")
+		}
+	default:
+		if e.Detail != "" {
+			b.WriteString(": " + e.Detail)
+		}
+		if sum != "" {
+			b.WriteString("; stderr: " + sum)
+		}
 	}
 	return b.String()
+}
+
+var (
+	// The probe hides CUDA on purpose (design 7.5), so llama.cpp always logs a
+	// CUDA init failure. It says nothing about the worker.
+	stderrNoiseRE = regexp.MustCompile(`ggml_cuda_init|no CUDA-capable device`)
+	// A backtrace frame such as "llama-server-rpc(+0x1c95a7b)[0x5a9a3448ea7b]".
+	stackFrameRE = regexp.MustCompile(`\)\[0x[0-9a-fA-F]+\]\s*$`)
+	// Log prefixes: llama.cpp's "0.00.021.162 E " and a source "file.cpp:653: ".
+	stderrTimeRE = regexp.MustCompile(`^\d+\.\d+\.\d+\.\d+\s+[A-Z]\s+`)
+	stderrFileRE = regexp.MustCompile(`^\S+\.(?:cpp|cc|c|h):\d+:\s*`)
+)
+
+// summarizeStderr reduces a probe's stderr to the lines that say what went
+// wrong: expected CUDA noise, backtraces and blank lines are dropped, log
+// prefixes are stripped, and at most three lines are kept. The raw text stays
+// on ProbeError.Stderr (the scheduler logs it at debug level).
+func summarizeStderr(raw string) string {
+	var keep []string
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || stderrNoiseRE.MatchString(line) || stackFrameRE.MatchString(line) {
+			continue
+		}
+		line = stderrFileRE.ReplaceAllString(stderrTimeRE.ReplaceAllString(line, ""), "")
+		keep = append(keep, line)
+		if len(keep) == 3 {
+			break
+		}
+	}
+	return strings.Join(keep, " | ")
 }
 
 func (e *ProbeError) Unwrap() error { return e.Err }

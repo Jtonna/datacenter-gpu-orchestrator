@@ -497,3 +497,58 @@ func TestRemoteOnlyChildHidesHostGPULocalChildInherits(t *testing.T) {
 		t.Fatalf("local child: CUDA_VISIBLE_DEVICES = %q (set=%v), want inherited %q (set=%v)", v, ok, inherited, wasSet)
 	}
 }
+
+// 17. exclude_nodes: a PS5 that appears mid-run and matches an excluded
+// hostname glob is shown in the status but never receives a model, although
+// it would be the placer's tightest fit.
+func TestExcludedNodeAppearsMidRunAndReceivesNothing(t *testing.T) {
+	const psC = "aa:bb:cc:00:00:03"
+	c := startCluster(t, options{
+		members:  []ps5Member{ps5(psA, "ps5-aaaa", "10.0.0.2"), ps5(psB, "ps5-bbbb", "10.0.0.4")},
+		profiles: profilesBasic, exclude: `["PS5-TEST*"]`,
+	})
+	if status, body := c.chat("tiny:2k", false); status != 200 {
+		t.Fatalf("first request: %d %s", status, body)
+	}
+	// A smaller PS5 (so the placer's smallest-fit rule would pick it) joins and is excluded.
+	smallPS5 := ps5(psC, "ps5-test1", "10.0.0.6")
+	smallPS5.VRAMTotal, smallPS5.VRAMUsed = ptr(14.0), ptr(0.0)
+	c.fleet.Upsert(smallPS5)
+	c.fleet.Push()
+	var node map[string]any
+	c.waitFor("excluded node in the status view", 10*time.Second, func() bool {
+		view, _ := c.jsonGet("/api/status")["view"].(map[string]any)
+		nodes, _ := view["nodes"].([]any)
+		for _, n := range nodes {
+			if n.(map[string]any)["id"] == psC {
+				node = n.(map[string]any)
+				return true
+			}
+		}
+		return false
+	})
+	if node["excluded"] != true || node["eligible"] != false {
+		t.Fatalf("excluded node status = %v, want excluded true and eligible false", node)
+	}
+	// big-a needs 12000 MiB: psC (13312 budget) would be the tightest fit if it were allowed.
+	if status, body := c.chat("big-a", false); status != 200 {
+		t.Fatalf("big-a: %d %s", status, body)
+	}
+	for _, s := range c.starts() {
+		if strings.Contains(strings.Join(s.Argv, " "), "10.0.0.6") {
+			t.Fatalf("excluded node was used (%s): %v", s.Mode, s.Argv)
+		}
+	}
+	for _, r := range c.running() {
+		if strings.Contains(r.Cmd, "10.0.0.6") {
+			t.Fatalf("running on the excluded node: %+v", r)
+		}
+	}
+	logs := c.stderr.String()
+	if n := strings.Count(logs, "excluded node in fleet view"); n != 1 {
+		t.Fatalf("first-seen log lines = %d, want 1\n%s", n, logs)
+	}
+	if !strings.Contains(logs, "exclude_nodes configured") {
+		t.Fatalf("startup log lacks the configured entries\n%s", logs)
+	}
+}

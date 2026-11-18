@@ -186,7 +186,7 @@ func (c *schedCore) statusDoc() Status {
 			continue
 		}
 		s := NodeStatus{ID: id, Hostname: n.Hostname, Local: n.Local, Online: n.Online, Addr: n.Addr, Priority: n.Priority,
-			Eligible: c.eligible(id), TotalMiB: n.TotalMiB, FreeMiB: c.freeMiB(id, n), LiveBudgetMiB: c.liveBudget(id, n),
+			Eligible: c.eligible(id), Excluded: c.excluded(n), TotalMiB: n.TotalMiB, FreeMiB: c.freeMiB(id, n), LiveBudgetMiB: c.liveBudget(id, n),
 			EmptyMiB: c.emptyMiB(id, n), PlanBudgetMiB: c.planBudget(id, n)}
 		if ns := c.nodes[id]; ns != nil {
 			if !ns.ovUntil.IsZero() && c.now.Before(ns.ovUntil) {
@@ -231,6 +231,10 @@ func (c *schedCore) dryPlan(profile string) PlanReport {
 		r.Action, r.Reason = PlanBackoff, fmt.Sprintf("backed off until %s", b.until.Format("15:04:05"))
 		return r
 	}
+	if why, bad := c.forcedExcluded(p); bad && c.insts[profile] == nil {
+		r.Action, r.Reason = PlanReject, why
+		return r
+	}
 	req, info, err := c.request(p)
 	if err != nil {
 		r.Action, r.Reason = PlanReject, "memory need unknown: "+err.Error()
@@ -255,7 +259,7 @@ func (c *schedCore) dryPlan(profile string) PlanReport {
 		if errors.As(err, &np) {
 			r.RequiredMiB, r.CapacityMiB = np.RequiredMiB, np.CapacityMiB
 		}
-		r.Action, r.Reason = PlanReject, err.Error()
+		r.Action, r.Reason = PlanReject, err.Error()+c.excludedNote(p)
 		return r
 	}
 	if e := c.entries[profile]; e != nil {

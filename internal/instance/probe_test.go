@@ -210,3 +210,51 @@ func TestExecProberScrubsEnvironment(t *testing.T) {
 		t.Errorf("CUDA_VISIBLE_DEVICES = %q (set=%v), want set and empty", v, ok)
 	}
 }
+
+// The probe hides CUDA on purpose, so llama.cpp always prints a CUDA init
+// failure on stderr. It must not lead the reason, and the stack trace is noise.
+const realConnectRefusedStderr = "0.00.021.162 E ggml_cuda_init: failed to initialize CUDA: no CUDA-capable device is detected\n" +
+	"/src/ggml/src/ggml-rpc/ggml-rpc.cpp:653: Failed to connect to 10.0.0.250:50052\n\n" +
+	"llama-server-rpc(+0x1c95a7b)[0x5a9a3448ea7b]\nllama-server-rpc(+0x1c9606c)[0x5a9a3448f06c]\n" +
+	"/lib/x86_64-linux-gnu/libc.so.6(+0x2a1ca)[0x73d8f7f9a1ca]\n" +
+	"/lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x8b)[0x73d8f7f9a28b]\nllama-server-rpc(+0x238205)[0x5a9a32a31205]"
+
+func TestProbeErrorLeadsWithRealCauseNotCUDANoise(t *testing.T) {
+	e := &ProbeError{Kind: ProbeExit, Addr: "10.0.0.250:50052", Detail: "signal: aborted (core dumped)", Stderr: realConnectRefusedStderr}
+	got := e.Error()
+	want := "pre-flight of 10.0.0.250:50052 failed (exit): ggml-rpc.cpp:653: Failed to connect to 10.0.0.250:50052 (signal: aborted (core dumped))"
+	if !strings.HasPrefix(got, "pre-flight of 10.0.0.250:50052 failed (exit): ") || !strings.Contains(got, "Failed to connect to 10.0.0.250:50052") {
+		t.Fatalf("reason = %q, want it to lead with the connect failure (e.g. %q)", got, want)
+	}
+	for _, noise := range []string{"ggml_cuda_init", "CUDA", "libc.so", "llama-server-rpc(+0x", "\n"} {
+		if strings.Contains(got, noise) {
+			t.Errorf("reason %q still contains %q", got, noise)
+		}
+	}
+	if e.Stderr != realConnectRefusedStderr {
+		t.Error("raw stderr must stay on the error for debug logging")
+	}
+}
+
+func TestProbeErrorOtherKindsKeepTheirCauseFirst(t *testing.T) {
+	cuda := "0.00.020.000 E ggml_cuda_init: failed to initialize CUDA: no CUDA-capable device is detected\n"
+	tests := []struct {
+		name string
+		e    *ProbeError
+		want string
+	}{
+		{"timeout", &ProbeError{Kind: ProbeTimeout, Addr: "a:1", Detail: "no answer within 10s", Stderr: cuda},
+			"pre-flight of a:1 failed (timeout): no answer within 10s"},
+		{"no rpc line", &ProbeError{Kind: ProbeNoRPCLine, Addr: "a:1", Detail: "no RPC device line in output", Stderr: cuda},
+			"pre-flight of a:1 failed (no-rpc-line): no RPC device line in output"},
+		{"exit with only noise", &ProbeError{Kind: ProbeExit, Addr: "a:1", Detail: "exit status 1", Stderr: cuda},
+			"pre-flight of a:1 failed (exit): exit status 1"},
+		{"timeout with a real message", &ProbeError{Kind: ProbeTimeout, Addr: "a:1", Detail: "no answer within 10s", Stderr: cuda + "rpc: waiting for server\n"},
+			"pre-flight of a:1 failed (timeout): no answer within 10s; stderr: rpc: waiting for server"},
+	}
+	for _, tt := range tests {
+		if got := tt.e.Error(); got != tt.want {
+			t.Errorf("%s: got %q want %q", tt.name, got, tt.want)
+		}
+	}
+}

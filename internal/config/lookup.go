@@ -95,3 +95,27 @@ func (c *Config) ProfilesWithoutNeedsMiB() []*core.Profile {
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
+
+// Excluded reports whether the node is kept out of the pool by exclude_nodes.
+// An entry matches when it equals the node id (case-insensitive) or matches
+// the hostname as a glob (case-insensitive, the same matching as a tier's
+// hostname). A hostname of "" matches no glob.
+func (c *Config) Excluded(id core.NodeID, hostname string) bool {
+	_, ok := c.ExcludedBy(id, hostname)
+	return ok
+}
+
+// ExcludedBy is Excluded that also returns the matching entry.
+func (c *Config) ExcludedBy(id core.NodeID, hostname string) (string, bool) {
+	for _, e := range c.ExcludeNodes {
+		if strings.EqualFold(e, string(id)) {
+			return e, true
+		}
+		if hostname != "" {
+			if ok, err := path.Match(strings.ToLower(e), strings.ToLower(hostname)); err == nil && ok {
+				return e, true
+			}
+		}
+	}
+	return "", false
+}

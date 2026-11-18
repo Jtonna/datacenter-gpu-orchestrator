@@ -69,6 +69,7 @@ type options struct {
 	profiles string            // YAML, indented two spaces, placed under "profiles:"
 	env      map[string]string // extra environment for the scheduler (and so its children)
 	fleetURL string            // override the fake fleet's URL (e.g. an unreachable one)
+	exclude  string            // YAML list for exclude_nodes, e.g. `["ps5-test*"]`; empty for none
 }
 
 // cluster is a running llm-scheduler with its fakes.
@@ -107,6 +108,10 @@ func startCluster(t *testing.T, o options) *cluster {
 	}
 	port := harness.FreePort(t)
 	slash := filepath.ToSlash
+	excludeLine := ""
+	if o.exclude != "" {
+		excludeLine = "exclude_nodes: " + o.exclude + "\n"
+	}
 	cfg := fmt.Sprintf(`listen: "127.0.0.1:%d"
 fleet: {url: "%s", local_node: omen-runner, stale_after: 60s}
 models_dir: "%s"
@@ -123,9 +128,9 @@ defaults:
 tiers:
   - {match: {hostname: "ps5-*"}, priority: 1, headroom_mib: 1024, shared_memory: true, link_mb_s: 1000, settle: 100ms}
   - {match: {local: true}, priority: 3, headroom_mib: 256, settle: 100ms}
-profiles:
+%sprofiles:
 %s
-`, port, fleetURL, slash(models), slash(fake), slash(fake), o.profiles)
+`, port, fleetURL, slash(models), slash(fake), slash(fake), excludeLine, o.profiles)
 	cfgPath := filepath.Join(dir, "config.yaml")
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)

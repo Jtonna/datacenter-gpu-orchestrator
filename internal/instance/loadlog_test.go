@@ -277,3 +277,20 @@ func TestLineWriterBoundedOnHugeLinesAndRingStaysBounded(t *testing.T) {
 		t.Fatalf("ring = %d lines", len(r.Lines()))
 	}
 }
+
+func TestLoadStatsDeviceCountIgnoresHostRows(t *testing.T) {
+	l := NewLoadLog()
+	for _, line := range []string{
+		"load_tensors:   CPU_Mapped model buffer size =   300.00 MiB",
+		"load_tensors: RPC0[10.0.0.2:50052] model buffer size =  7000.00 MiB",
+		"load_tensors:        CUDA0 model buffer size =  1000.00 MiB",
+		"llama_context:        CPU compute buffer size =    20.00 MiB",
+		"load_tensors:  CUDA_Host model buffer size =    10.00 MiB",
+	} {
+		l.Feed(line)
+	}
+	s := l.Snapshot()
+	if got := s.DeviceCount(); got != 2 {
+		t.Fatalf("DeviceCount = %d (%+v), want 2", got, s.Devices)
+	}
+}

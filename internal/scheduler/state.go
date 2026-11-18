@@ -265,6 +265,7 @@ type schedCore struct {
 	fresh         bool
 	age           time.Duration
 	seenReconnect time.Time
+	excludedSeen  map[core.NodeID]bool // excluded nodes already logged
 
 	shutdown   bool
 	shutdownDL time.Time
@@ -288,7 +289,7 @@ func newCore(cfg *config.Config, clock Clock, view fleet.View, needs NeedProvide
 		cfg: cfg, clock: clock, view: view, needs: needs, build: build, log: log,
 		insts: map[string]*inst{}, entries: map[string]*entry{}, nodes: map[core.NodeID]*nodeState{},
 		backoffs: map[string]*backoff{}, waiters: map[uint64]*waiter{}, leases: map[uint64]*lease{},
-		needs_: map[string]NeedInfo{}, raw: map[core.NodeID]core.Node{},
+		needs_: map[string]NeedInfo{}, raw: map[core.NodeID]core.Node{}, excludedSeen: map[core.NodeID]bool{},
 	}
 }
 
@@ -404,8 +405,16 @@ func (c *schedCore) planBudget(id core.NodeID, n core.Node) int {
 	return c.emptyMiB(id, n) - n.HeadroomMiB
 }
 
+// excluded: exclude_nodes keeps the node out of the pool (design 6). An
+// excluded node is not reachable, so it is never eligible, never counted in
+// capacity checks or plans, and never pre-flighted.
+func (c *schedCore) excluded(n core.Node) bool { return c.cfg.Excluded(n.ID, n.Hostname) }
+
 // reachable: the local node, or online in a fresh view with an address.
 func (c *schedCore) reachable(n core.Node) bool {
+	if c.excluded(n) {
+		return false
+	}
 	if n.Local {
 		return true
 	}

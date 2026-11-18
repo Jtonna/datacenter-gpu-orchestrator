@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/placer"
 )
 
@@ -39,6 +41,10 @@ func (c *schedCore) arrive(w *waiter) {
 			return
 		}
 	}
+	if why, bad := c.forcedExcluded(p); bad {
+		c.fail(w, c.excludedForcedErr(p, why))
+		return
+	}
 	// draining, stopping or no instance: the queue (7.2 capacity check first).
 	if err := c.capacity(w.profile); err != nil {
 		var np *placer.NoPlacement
@@ -47,7 +53,7 @@ func (c *schedCore) arrive(w *waiter) {
 			// Retry-After: RetryAfter stays zero and the API omits the header.
 			e := &Error{Status: http.StatusServiceUnavailable, Reason: ReasonDoesNotFit,
 				Message: fmt.Sprintf("profile %s needs %d MiB (fit rule requires %d MiB) but the cluster can hold at most %d MiB",
-					p.Name, np.NeedMiB, np.RequiredMiB, np.CapacityMiB)}
+					p.Name, np.NeedMiB, np.RequiredMiB, np.CapacityMiB) + c.excludedNote(p)}
 			e.NeedMiB, e.RequiredMiB, e.CapacityMiB = np.NeedMiB, np.RequiredMiB, np.CapacityMiB
 			c.log.Warn("request can never fit the cluster", "profile", p.Name, "need_mib", np.NeedMiB,
 				"required_mib", np.RequiredMiB, "capacity_mib", np.CapacityMiB)
@@ -70,6 +76,50 @@ func (c *schedCore) arrive(w *waiter) {
 		c.log.Debug("request joined queue entry", "profile", p.Name, "alias", w.alias, "waiters", len(e.waiters))
 	}
 	c.changed = true
+}
+
+// forcedExcluded finds a force_nodes entry of p that resolves to a node
+// excluded by config (excluding wins, design 6). Config load catches the
+// cases it can; this catches an id against a hostname glob and the like. A
+// forced node that is merely absent from the fleet is not reported here: it
+// may come online, so the request queues.
+func (c *schedCore) forcedExcluded(p *core.Profile) (string, bool) {
+	for _, name := range p.ForceNodes {
+		id, err := c.view.Resolve(name)
+		if err != nil {
+			continue
+		}
+		if n, ok := c.node(id); ok && c.excluded(n) {
+			return fmt.Sprintf("profile %s forces node %s, but node %s is excluded by config (excluding wins: change exclude_nodes or force_nodes)",
+				p.Name, name, nodeLabel(id, n)), true
+		}
+	}
+	return "", false
+}
+
+// excludedForcedErr is the permanent failure for a forced profile that names
+// an excluded node: no Retry-After, because only a config change fixes it.
+func (c *schedCore) excludedForcedErr(p *core.Profile, why string) *Error {
+	c.log.Warn("forced profile names an excluded node", "profile", p.Name, "detail", why)
+	return &Error{Status: http.StatusServiceUnavailable, Reason: ReasonNodeExcluded, Message: why}
+}
+
+// excludedNote lists the nodes exclude_nodes kept out of a capacity check
+// that the profile could otherwise have used, so a "does not fit" is not a
+// mystery. Empty when none.
+func (c *schedCore) excludedNote(p *core.Profile) string {
+	var names []string
+	for _, id := range c.sortedNodeIDs() {
+		n, ok := c.node(id)
+		if !ok || !c.excluded(n) || !(n.Local || n.Online) || (localOnly(p) && !n.Local) {
+			continue
+		}
+		names = append(names, nodeLabel(id, n))
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	return "; nodes excluded by config and not counted: " + strings.Join(names, ", ")
 }
 
 // capacity is the fail-fast check of design 7.2: the need against the plan

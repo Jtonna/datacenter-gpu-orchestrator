@@ -64,6 +64,9 @@ func (c *schedCore) forcedWhy(p *core.Profile, np *placer.NoPlacement) (Reason, 
 		switch {
 		case err != nil || !ok:
 			parts = append(parts, fmt.Sprintf("forced node %s is not in the fleet view", name))
+		case c.excluded(n):
+			parts = append(parts, fmt.Sprintf("forced node %s: node %s is excluded by config", name, nodeLabel(id, n)))
+			reason = ReasonNodeExcluded
 		case !n.Local && n.Addr == "":
 			parts = append(parts, fmt.Sprintf("node %s has no known address", name))
 		case c.quarantined(id):
@@ -105,10 +108,12 @@ func (c *schedCore) filteredWhy(p *core.Profile, req placer.Request) (Reason, st
 	}
 	var parts []string
 	var until time.Time
-	var noAddr []string
+	var noAddr, excluded []string
 	for _, cd := range cands {
 		n, _ := c.node(cd.ID)
 		switch {
+		case c.excluded(n):
+			excluded = append(excluded, nodeLabel(cd.ID, n))
 		case c.quarantined(cd.ID):
 			if u := c.nodes[cd.ID].quarUntil; u.After(until) {
 				until = u
@@ -127,6 +132,13 @@ func (c *schedCore) filteredWhy(p *core.Profile, req placer.Request) (Reason, st
 		parts = append(parts, fmt.Sprintf("node %s has no known address", name))
 		if reason == ReasonClusterBusy {
 			reason = ReasonNodeNoAddress
+		}
+	}
+	slices.Sort(excluded)
+	for _, name := range excluded {
+		parts = append(parts, fmt.Sprintf("node %s is excluded by config", name))
+		if reason == ReasonClusterBusy {
+			reason = ReasonNodeExcluded
 		}
 	}
 	if len(parts) == 0 {

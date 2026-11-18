@@ -24,6 +24,7 @@ const (
 	ReasonNodesQuarantined  Reason = "nodes quarantined"        // 503, queue_timeout: the nodes that would fit are quarantined
 	ReasonNodeNoAddress     Reason = "node has no address"      // 503, queue_timeout: a node that would fit has no known rpc address
 	ReasonDoesNotFit        Reason = "does not fit"             // 503, need exceeds cluster capacity (7.2)
+	ReasonNodeExcluded      Reason = "node excluded"            // 503, exclude_nodes keeps out the nodes this needs (permanent for a forced profile)
 	ReasonUnloaded          Reason = "unloaded"                 // 503, a loading instance was force-unloaded
 	ReasonClientGone        Reason = "client gone"              // 499, the caller's context ended
 )
@@ -236,6 +237,7 @@ type NodeStatus struct {
 	Addr            string
 	Priority        int
 	Eligible        bool // ignoring the profile-specific rules (allow_tiers, min_share)
+	Excluded        bool // kept out of the pool by exclude_nodes; never eligible
 	TotalMiB        int
 	FreeMiB         int // figure used for the live budget (fleet, fetch, or pre-flight override)
 	LiveBudgetMiB   int

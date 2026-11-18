@@ -66,6 +66,18 @@ func (s LoadStats) TotalMiB() float64 {
 	return t
 }
 
+// DeviceCount is the number of GPU/RPC devices that reported buffers. Host
+// rows (CPU, CPU_Mapped, *_Host) are not devices the model was placed on.
+func (s LoadStats) DeviceCount() int {
+	n := 0
+	for _, d := range s.Devices {
+		if !d.Host {
+			n++
+		}
+	}
+	return n
+}
+
 // HostMiB is the sum over host buffers.
 func (s LoadStats) HostMiB() float64 {
 	var t float64

@@ -4,8 +4,9 @@
 # hardware-test tuning is in both). Checked against the box:
 #   fleet.url        host.docker.internal:8090 (compose maps it to the host)
 #   local_node       omen-runner (hostname the hub reports, host/omen-hub-nodes.py)
-#   node_overrides   alienware-llm -> 10.0.0.3:50052 (wins over the fleet ip/rpc_port,
-#                    so this works before the hub patch `hub-member-ip` is live)
+#   node_overrides   none. The hub patch `hub-member-ip` went live on 2026-11-17 23:36 UTC
+#                    and the fleet list reports 10.0.0.3:50052 for the Alienware, so the
+#                    old alienware-llm override is commented out (kept as an example).
 # Lines marked PLACEHOLDER / TODO measure must be replaced with measured values
 # (docs/runbook.md section G) before the profile is relied on.
 # Validate:  docker run --rm -v $PWD/config.yaml:/etc/llm-scheduler/config.yaml:ro \
@@ -46,7 +47,12 @@ tiers:                     # first match wins; lower number preferred;
     shared_memory: true    # GPU memory is system RAM
     link_mb_s: 8           # used to size load timeouts. Measured 2026-11-17: 13.9 MB/s for one
                            # upload alone (qwen3.5-4b, 3.0 GB in 216 s), under 5.6 MB/s while two
-                           # PS5 uploads ran at once (gemma-4-12b); 11 timed that load out at 1411 s
+                           # PS5 uploads ran at once (gemma-4-12b); 11 timed that load out at 1411 s.
+                           # Run 3 (cold gemma-4-12b to one PS5, about 3.4 GB sent, the rest cached):
+                           # 5.1 MB/s average over 669 s, bursty: about 39 MB/s in the first minute,
+                           # 2 to 4 MB/s after, with multi-minute gaps of nothing. The 1920 s load
+                           # deadline (design 7.6 counts the whole file, not only the bytes sent)
+                           # was adequate, so 8 stays.
     settle: 3s
   - match: { hostname: "alienware*" }
     priority: 2
@@ -60,8 +66,23 @@ tiers:                     # first match wins; lower number preferred;
                            # CUDA context that the load log does not show
     settle: 2s
 
-node_overrides:            # optional; wins over the fleet's ip/rpc_port
-  alienware-llm: { rpc: "10.0.0.3:50052" }
+# Optional: wins over the fleet's ip/rpc_port. Not needed now. The hub patch
+# (hub-member-ip) went live on 2026-11-17 23:36 UTC and the fleet list reports
+# 10.0.0.3:50052 for the Alienware (verified on hardware: the scheduler found it
+# with no override). Uncomment only to pin a node whose fleet address is missing
+# or wrong, for example against a hub without the patch.
+# node_overrides:
+#   alienware-llm: { rpc: "10.0.0.3:50052" }
+
+# Optional: nodes that are never used. Each entry is a node id (a MAC such as
+# 70:66:2a:a9:a7:65) or a hostname glob; matching ignores case. An excluded node
+# gets no model, is not counted in capacity checks and is never pre-flighted, but
+# it still shows in /api/status (excluded: true). The ps5-* tier keeps finding
+# every other PS5. Excluding wins over force_nodes. Excluding the local node
+# (omen-runner) means the OMEN GPU is never used.
+# exclude_nodes:
+#   - ps5-abc123
+#   - ps5-test*
 
 profiles:
   qwen3.5-4b:

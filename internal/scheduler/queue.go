@@ -64,6 +64,10 @@ func (c *schedCore) evalEntry(e *entry) {
 		c.answerEntry(e, err503(ReasonBackoff, fmt.Sprintf("profile %s is backed off after a failed load", p.Name), b.until.Sub(c.now)))
 		return
 	}
+	if why, bad := c.forcedExcluded(p); bad && c.insts[p.Name] == nil {
+		c.answerEntry(e, c.excludedForcedErr(p, why))
+		return
+	}
 	if e.claimed() {
 		switch {
 		case c.claimBroken(e):

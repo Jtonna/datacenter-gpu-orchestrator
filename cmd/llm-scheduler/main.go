@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -137,6 +138,9 @@ func exitCodeAfterShutdown(code int, shutdownErr error, log *slog.Logger) int {
 
 func serve(cfg *config.Config, log *slog.Logger) int {
 	warnSlidingWindow(cfg, log)
+	if len(cfg.ExcludeNodes) > 0 {
+		log.Info("exclude_nodes configured: these nodes are never used", "entries", strings.Join(cfg.ExcludeNodes, ", "))
+	}
 
 	ports, err := instance.NewPortAllocator(childPortLo, childPortHi)
 	if err != nil {

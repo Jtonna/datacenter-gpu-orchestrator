@@ -74,6 +74,9 @@ func (c *schedCore) preflightDone(iid uint64, results []probeOutcome) {
 				kind = pe.Kind.String()
 			}
 			c.log.Warn("pre-flight failed", "profile", in.prof.Name, "node", r.id, "addr", r.addr, "kind", kind, "duration", r.took, "err", r.err)
+			if pe != nil && pe.Stderr != "" {
+				c.log.Debug("pre-flight raw output", "node", r.id, "addr", r.addr, "stderr", pe.Stderr)
+			}
 			if pe != nil && pe.Kind == instance.ProbeCanceled {
 				failed = true // not a verdict on the node
 				continue
@@ -215,7 +218,7 @@ func (c *schedCore) healthy(iid uint64, err error) {
 	c.emitState(in, RunningReady)
 	load := in.child.Load()
 	c.log.Info("instance ready", "profile", in.prof.Name, "load_duration", in.loadDuration,
-		"memory_mib", load.TotalMiB(), "devices", len(load.Devices), "waiters", len(in.waiters))
+		"memory_mib", load.TotalMiB(), "devices", load.DeviceCount(), "waiters", len(in.waiters))
 	ws := in.waiters
 	in.waiters = nil
 	for _, w := range ws {

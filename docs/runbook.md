@@ -22,7 +22,7 @@ Total first-time cost: about 45 minutes, plus model loads.
 Tick every box. If one fails, stop: do not cut over.
 
 1. [ ] Fleet manager runs the **fleet-scheduler-fields** version (members carry `ip` and `rpc_port`).
-2. [ ] Either the hub patch `hub-member-ip` (branch of `omen-runner-fleet-manager`) is deployed, **or** you accept the Alienware override already in `deploy/config.yaml` (`alienware-llm: 10.0.0.3:50052`). Without the patch, relayed members show `ip: null`; the override covers the Alienware only.
+2. [ ] The hub patch `hub-member-ip` (branch of `omen-runner-fleet-manager`) is deployed. It went live on 2026-11-17 23:36 UTC, and the fleet list now reports `10.0.0.3:50052` for the Alienware, so no `node_overrides` entry is needed. (If you ever run against a hub without the patch, relayed members show `ip: null`; uncomment the example `node_overrides` entry in `deploy/config.yaml` for the Alienware.)
 3. [ ] Docker works: `docker ps`
 4. [ ] Base image exists: `docker image inspect llama-swap-whisper:rpc-330f018 --format '{{.Id}}'`
 5. [ ] Model files exist for every profile in the config (script below checks).
@@ -34,7 +34,7 @@ cd ~/ps5-ai-datacenter-load-balancer
 sh deploy/scripts/preflight-host.sh deploy/config.yaml
 ```
 
-Expected: lines of `OK`, ending `PRE-FLIGHT PASSED`. A `FAIL` on the **firewall** line is expected until section C; any other `FAIL`: fix it first. `WARN ... ip: null` is fine if you rely on the override.
+Expected: lines of `OK`, ending `PRE-FLIGHT PASSED`. A `FAIL` on the **firewall** line is expected until section C; any other `FAIL`: fix it first. `WARN ... ip: null` means a member has no address; check the hub patch, or add a `node_overrides` entry for it.
 
 ---
 
@@ -222,13 +222,13 @@ The ufw rule from section C can stay.
 
 ## G. Measure `needs_mib` (about 20 min per Gemma variant, plus load time)
 
-Why: Gemma has sliding-window layers, so the estimate is several times too high (design 7.2). The values in the config for `gemma-4-12b:48k`, `:64k`, `:96k` and for `flux-1-schnell`, `flux-1-dev` are **PLACEHOLDERS** until you do this. Until then the scheduler may say "does not fit" for a profile that does fit.
+Why: Gemma has sliding-window layers, so the estimate is several times too high (design 7.2). The values in the config for `gemma-4-12b:48k`, `:96k`, `flux-1-schnell` and `flux-1-dev` are **PLACEHOLDERS** until you do this. (`gemma-4-12b` 8K is measured at 7850 and `:64k` at 8600; see `docs/hardware-test/BENCHMARKS.md`.) Until then the scheduler may say "does not fit" for a profile that does fit.
 
 Rule: `needs_mib` is the whole footprint (weights + KV + compute buffers), no margin added (design 7.2).
 
-### G1. Gemma variants (48k, 64k, 96k; the 8K `gemma-4-12b` already has 7800)
+### G1. Gemma variants (48k and 96k are still placeholders; `gemma-4-12b` 8K is measured at 7850 and `:64k` at 8600)
 
-For each variant, one at a time. Nodes must be online and free.
+For each variant still on a placeholder (48k, 96k), one at a time. Nodes must be online and free. To re-check 64k, use the same steps with `ctx: 65536`.
 
 1. Uncomment the `gemma-measure` template at the end of `/opt/llm-scheduler/config.yaml`. Set `ctx` to the variant (`49152`, `65536` or `98304`), keep `kv_quant: q8_0` and `flash_attn: true`, and set `force_nodes` / `tensor_split` to the pool you expect it to run on in practice (for example a PS5 and the Alienware). The compute buffer is per device, so the sum depends on the number of devices: measure on the pool size you will really use (the design does not say more; this is an assumption).
 
@@ -305,13 +305,31 @@ Nodes come from the fleet manager (design 4). Verify only:
 3. Check it exposes one device (H2): `docker exec llama-swap timeout 10 llama-server-rpc --rpc <ip>:50052 --list-devices | grep -c '^ *RPC'` expects `1`.
 4. `curl -s http://127.0.0.1:3122/api/status` lists it with a fresh view; `POST /api/plan` for a big profile now shows it as an option.
 
+### Keeping a machine out of the pool
+
+Use `exclude_nodes` when a machine must never receive a model (for example a PS5 under test) but you still want the `ps5-*` tier to find every other PS5. It is a top-level list in `/opt/llm-scheduler/config.yaml`. Each entry is a node id (a MAC such as `70:66:2a:a9:a7:65`) or a hostname glob. Matching ignores case.
+
+```yaml
+exclude_nodes:
+  - ps5-abc123        # one machine, by hostname
+  - ps5-test*         # every machine whose hostname starts with ps5-test
+  - 70:66:2a:a9:a7:65 # by id
+```
+
+1. Add the entry, validate with `--check-config`, restart (`cd /opt/llm-scheduler && docker compose restart`). Restart stops anything running.
+2. Check `curl -s http://127.0.0.1:3122/api/status`: under `view.nodes` the machine shows `"excluded": true` and `"eligible": false`. The log has one INFO line at start listing the entries, and one `excluded node in fleet view` line the first time each excluded machine appears.
+3. An excluded machine is never used, never counted in capacity checks and never pre-flighted. A plan or wait reason that involves it says `node <hostname> is excluded by config`.
+4. Excluding wins over forcing. A profile whose `force_nodes` names an excluded node fails `--check-config` when config alone can tell. When it cannot (for example `force_nodes` uses the MAC and the entry is a hostname glob), the request fails at once with 503 `node excluded` and no `Retry-After`. Remove the entry, or the node from `force_nodes`.
+5. You can exclude the local node (`omen-runner`). The OMEN GPU is then never used, and `kind: command` profiles (Whisper, FLUX) fail with "does not fit" because they run on the local node only.
+6. To bring the machine back, delete the entry and restart.
+
 ### Read `/api/status`
 
 ```sh
 curl -s http://127.0.0.1:3122/api/status
 ```
 
-It returns one JSON object with the keys `time`, `shutting_down`, `instances`, `queue`, `quarantines`, `backoffs` and `view`. Each instance has `profile`, `state`, `nodes` (placed nodes, each with `id` and its device `memory` rows: `name`, `model_mib`, `kv_mib`, `compute_mib`, `total_mib`), `host_memory`, `unmatched` and `device_total_mib`. The node view is `view.nodes`, with `live_budget_mib` and related budgets. Pipe through `jq .` if installed.
+It returns one JSON object with the keys `time`, `shutting_down`, `instances`, `queue`, `quarantines`, `backoffs` and `view`. Each instance has `profile`, `state`, `nodes` (placed nodes, each with `id` and its device `memory` rows: `name`, `model_mib`, `kv_mib`, `compute_mib`, `total_mib`), `host_memory`, `unmatched` and `device_total_mib`. The node view is `view.nodes`, with `eligible`, `excluded` (see "Keeping a machine out of the pool"), `live_budget_mib` and related budgets. Pipe through `jq .` if installed.
 
 ### Phase out an alias
 
