@@ -1,0 +1,516 @@
+package bench
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/benchspec"
+)
+
+// API is the scheduler's own HTTP API as the runner uses it. The runner talks
+// to nothing else, so a benchmark exercises exactly the path a client uses.
+type API interface {
+	// Plan is POST /api/plan (changes nothing).
+	Plan(ctx context.Context, model string) (*PlanInfo, error)
+	// Unload is POST /api/unload.
+	Unload(ctx context.Context, model string, force bool) (*UnloadInfo, error)
+	// Status is GET /api/status, reduced to what the runner reads.
+	Status(ctx context.Context) (*StatusInfo, error)
+	// Chat is POST /v1/chat/completions, marked with X-Bench-Run. onProgress
+	// (may be nil) is called while a streamed answer arrives.
+	Chat(ctx context.Context, runID string, req ChatRequest, onProgress func(ChatProgress)) (*ChatResponse, error)
+	// LoadHistory is the loadFinished history record of a load session, or nil
+	// when history is off or has no such record.
+	LoadHistory(ctx context.Context, sessionID string) (*HistoryLoad, error)
+}
+
+// PlanInfo is the answer of /api/plan.
+type PlanInfo struct {
+	Action string
+	Reason string
+	Raw    json.RawMessage
+}
+
+// UnloadInfo is the answer of /api/unload.
+type UnloadInfo struct {
+	Status int
+	Msg    string
+}
+
+// LoadInfo is the `load` object of a loading instance.
+type LoadInfo struct {
+	SessionID  string
+	ElapsedS   float64
+	BytesTotal *int64
+	BytesSent  *int64
+	Progress   *float64
+	EtaS       *float64
+	Raw        json.RawMessage
+}
+
+// InstanceNodeInfo is one placed node of an instance with its measured memory.
+type InstanceNodeInfo struct {
+	ID        string
+	MemoryMiB float64
+}
+
+// InstanceInfo is one instance of /api/status.
+type InstanceInfo struct {
+	Profile        string
+	State          string
+	InFlight       int
+	Waiters        int
+	LogFile        string
+	DeviceTotalMiB float64
+	Load           *LoadInfo
+	Nodes          []InstanceNodeInfo
+}
+
+// RecentLoad is an entry of recent_loads.
+type RecentLoad struct {
+	SessionID  string
+	Model      string
+	Outcome    string
+	Reason     string
+	FinishedAt int64
+	LoadS      float64
+	Workers    []string
+}
+
+// StatusInfo is what the runner reads of /api/status.
+type StatusInfo struct {
+	Instances   []InstanceInfo
+	QueueLen    int
+	RecentLoads []RecentLoad
+	Hostnames   map[string]string // node id to hostname
+	Time        time.Time
+}
+
+// Instance finds the instance of a profile.
+func (s *StatusInfo) Instance(profile string) *InstanceInfo {
+	for i := range s.Instances {
+		if s.Instances[i].Profile == profile {
+			return &s.Instances[i]
+		}
+	}
+	return nil
+}
+
+// HistoryLoad is what the history knows of a finished load.
+type HistoryLoad struct {
+	LoadS  float64
+	Bytes  int64
+	AvgMBs float64
+	Nodes  []NodeLoad
+}
+
+// ChatRequest is one request to send.
+type ChatRequest struct {
+	Model  string
+	Body   []byte
+	Stream bool
+}
+
+// ChatProgress is reported while a streamed answer arrives.
+type ChatProgress struct {
+	Tokens    int
+	ElapsedMS float64
+}
+
+// ChatResponse is the outcome of one request.
+type ChatResponse struct {
+	Status     int
+	WallMS     float64
+	TTFTMS     *float64
+	Timings    json.RawMessage
+	Message    []byte // canonical JSON of the whole message object
+	Text       string
+	ErrMessage string // the scheduler's error message for a non-200 answer
+	ErrReason  string
+}
+
+// BuildChatRequest makes the JSON body for a benchmark request.
+func BuildChatRequest(profile string, r benchspec.Request) ChatRequest {
+	body := map[string]any{
+		"model": profile, "messages": r.ChatMessages(), "max_tokens": r.MaxTok(), "temperature": r.Temp(),
+		"seed": r.SeedVal(), "cache_prompt": r.CachesPrompt(), "stream": r.Streams(),
+	}
+	if r.Streams() {
+		body["stream_options"] = map[string]any{"include_usage": true}
+	}
+	b, _ := json.Marshal(body)
+	return ChatRequest{Model: profile, Body: b, Stream: r.Streams()}
+}
+
+// HashMessage is the sha256 (hex) of the canonical JSON of a message object.
+func HashMessage(canonical []byte) string {
+	sum := sha256.Sum256(canonical)
+	return hex.EncodeToString(sum[:])
+}
+
+// Head is the first n characters of s.
+func Head(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
+}
+
+// ---- HTTP implementation ----
+
+// HTTPAPI is the API over HTTP on a base URL (the scheduler's own loopback address).
+type HTTPAPI struct {
+	Base   string
+	Client *http.Client // nil: a client with no overall timeout (requests carry their own contexts)
+}
+
+func (h *HTTPAPI) client() *http.Client {
+	if h.Client != nil {
+		return h.Client
+	}
+	return http.DefaultClient
+}
+
+func (h *HTTPAPI) do(ctx context.Context, method, path string, body []byte, hdr map[string]string) (*http.Response, error) {
+	var rd io.Reader
+	if body != nil {
+		rd = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(h.Base, "/")+path, rd)
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
+	return h.client().Do(req)
+}
+
+func readLimited(r io.Reader) []byte {
+	b, _ := io.ReadAll(io.LimitReader(r, 4<<20))
+	return b
+}
+
+type errBody struct {
+	Error struct {
+		Message string `json:"message"`
+		Reason  string `json:"reason"`
+	} `json:"error"`
+}
+
+// Plan implements API.
+func (h *HTTPAPI) Plan(ctx context.Context, model string) (*PlanInfo, error) {
+	b, _ := json.Marshal(map[string]any{"model": model})
+	resp, err := h.do(ctx, "POST", "/api/plan", b, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw := readLimited(resp.Body)
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("/api/plan answered %d: %s", resp.StatusCode, Head(string(raw), 300))
+	}
+	var p struct {
+		Action string `json:"action"`
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, fmt.Errorf("/api/plan: %w", err)
+	}
+	return &PlanInfo{Action: p.Action, Reason: p.Reason, Raw: raw}, nil
+}
+
+// Unload implements API.
+func (h *HTTPAPI) Unload(ctx context.Context, model string, force bool) (*UnloadInfo, error) {
+	b, _ := json.Marshal(map[string]any{"model": model, "force": force})
+	resp, err := h.do(ctx, "POST", "/api/unload", b, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw := readLimited(resp.Body)
+	var m struct {
+		Msg   string `json:"msg"`
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	json.Unmarshal(raw, &m)
+	msg := m.Msg
+	if msg == "" {
+		msg = m.Error.Message
+	}
+	return &UnloadInfo{Status: resp.StatusCode, Msg: msg}, nil
+}
+
+type statusWire struct {
+	Time      string `json:"time"`
+	Instances []struct {
+		Profile        string  `json:"profile"`
+		State          string  `json:"state"`
+		InFlight       int     `json:"in_flight"`
+		Waiters        int     `json:"waiters"`
+		LogFile        string  `json:"log_file"`
+		DeviceTotalMiB float64 `json:"device_total_mib"`
+		Load           *struct {
+			SessionID  string   `json:"session_id"`
+			ElapsedS   float64  `json:"elapsed_s"`
+			BytesTotal *int64   `json:"bytes_total"`
+			BytesSent  *int64   `json:"bytes_sent"`
+			Progress   *float64 `json:"progress"`
+			EtaS       *float64 `json:"eta_s"`
+		} `json:"load"`
+		Nodes []struct {
+			ID     string `json:"id"`
+			Memory []struct {
+				TotalMiB float64 `json:"total_mib"`
+			} `json:"memory"`
+		} `json:"nodes"`
+	} `json:"instances"`
+	Queue       []json.RawMessage `json:"queue"`
+	RecentLoads []struct {
+		SessionID  string   `json:"session_id"`
+		Model      string   `json:"model"`
+		Outcome    string   `json:"outcome"`
+		Reason     string   `json:"reason"`
+		FinishedAt int64    `json:"finished_at"`
+		LoadS      float64  `json:"load_s"`
+		Workers    []string `json:"workers"`
+	} `json:"recent_loads"`
+	View struct {
+		Nodes []struct {
+			ID       string `json:"id"`
+			Hostname string `json:"hostname"`
+		} `json:"nodes"`
+	} `json:"view"`
+}
+
+// Status implements API.
+func (h *HTTPAPI) Status(ctx context.Context) (*StatusInfo, error) {
+	resp, err := h.do(ctx, "GET", "/api/status", nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw := readLimited(resp.Body)
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("/api/status answered %d", resp.StatusCode)
+	}
+	return ParseStatus(raw)
+}
+
+// ParseStatus reduces an /api/status document to the StatusInfo fields.
+func ParseStatus(raw []byte) (*StatusInfo, error) {
+	var w statusWire
+	if err := json.Unmarshal(raw, &w); err != nil {
+		return nil, fmt.Errorf("/api/status: %w", err)
+	}
+	var envelope struct {
+		Instances []struct {
+			Load json.RawMessage `json:"load"`
+		} `json:"instances"`
+	}
+	json.Unmarshal(raw, &envelope)
+	out := &StatusInfo{QueueLen: len(w.Queue), Hostnames: map[string]string{}}
+	if t, err := time.Parse(time.RFC3339Nano, w.Time); err == nil {
+		out.Time = t
+	}
+	for i, in := range w.Instances {
+		ii := InstanceInfo{Profile: in.Profile, State: in.State, InFlight: in.InFlight, Waiters: in.Waiters, LogFile: in.LogFile, DeviceTotalMiB: in.DeviceTotalMiB}
+		if in.Load != nil {
+			li := &LoadInfo{SessionID: in.Load.SessionID, ElapsedS: in.Load.ElapsedS, BytesTotal: in.Load.BytesTotal, BytesSent: in.Load.BytesSent, Progress: in.Load.Progress, EtaS: in.Load.EtaS}
+			if i < len(envelope.Instances) {
+				li.Raw = envelope.Instances[i].Load
+			}
+			ii.Load = li
+		}
+		for _, n := range in.Nodes {
+			var mem float64
+			for _, m := range n.Memory {
+				mem += m.TotalMiB
+			}
+			ii.Nodes = append(ii.Nodes, InstanceNodeInfo{ID: n.ID, MemoryMiB: mem})
+		}
+		out.Instances = append(out.Instances, ii)
+	}
+	for _, r := range w.RecentLoads {
+		out.RecentLoads = append(out.RecentLoads, RecentLoad{SessionID: r.SessionID, Model: r.Model, Outcome: r.Outcome, Reason: r.Reason, FinishedAt: r.FinishedAt, LoadS: r.LoadS, Workers: r.Workers})
+	}
+	for _, n := range w.View.Nodes {
+		if n.Hostname != "" {
+			out.Hostnames[n.ID] = n.Hostname
+		}
+	}
+	return out, nil
+}
+
+// LoadHistory implements API.
+func (h *HTTPAPI) LoadHistory(ctx context.Context, sessionID string) (*HistoryLoad, error) {
+	q := url.Values{"session_id": {sessionID}, "type": {"loadFinished"}, "limit": {"5"}}
+	resp, err := h.do(ctx, "GET", "/api/history?"+q.Encode(), nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw := readLimited(resp.Body)
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("/api/history answered %d", resp.StatusCode)
+	}
+	var d struct {
+		Events []struct {
+			Data struct {
+				LoadS       float64 `json:"load_s"`
+				Bytes       float64 `json:"bytes"`
+				AvgMBs      float64 `json:"avg_mb_s"`
+				NodesDetail []struct {
+					Node      string   `json:"node"`
+					Bytes     *float64 `json:"bytes"`
+					MemoryMiB *float64 `json:"memory_mib"`
+				} `json:"nodes_detail"`
+			} `json:"data"`
+		} `json:"events"`
+	}
+	if err := json.Unmarshal(raw, &d); err != nil {
+		return nil, err
+	}
+	if len(d.Events) == 0 {
+		return nil, nil
+	}
+	e := d.Events[0].Data
+	out := &HistoryLoad{LoadS: e.LoadS, Bytes: int64(e.Bytes), AvgMBs: e.AvgMBs}
+	for _, n := range e.NodesDetail {
+		nl := NodeLoad{Node: n.Node, MemoryMiB: n.MemoryMiB}
+		if n.Bytes != nil {
+			b := int64(*n.Bytes)
+			nl.Bytes = &b
+		}
+		out.Nodes = append(out.Nodes, nl)
+	}
+	return out, nil
+}
+
+type chatChunk struct {
+	Choices []struct {
+		Delta struct {
+			Role             string `json:"role"`
+			Content          string `json:"content"`
+			ReasoningContent string `json:"reasoning_content"`
+		} `json:"delta"`
+		Message map[string]any `json:"message"`
+	} `json:"choices"`
+	Timings json.RawMessage `json:"timings"`
+}
+
+// Chat implements API.
+func (h *HTTPAPI) Chat(ctx context.Context, runID string, req ChatRequest, onProgress func(ChatProgress)) (*ChatResponse, error) {
+	start := time.Now()
+	resp, err := h.do(ctx, "POST", "/v1/chat/completions", req.Body, map[string]string{"X-Bench-Run": runID})
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	out := &ChatResponse{Status: resp.StatusCode}
+	if resp.StatusCode != 200 {
+		raw := readLimited(resp.Body)
+		var eb errBody
+		if json.Unmarshal(raw, &eb) == nil && eb.Error.Message != "" {
+			out.ErrMessage, out.ErrReason = eb.Error.Message, eb.Error.Reason
+		} else {
+			out.ErrMessage = strings.TrimSpace(Head(string(raw), 1000))
+		}
+		out.WallMS = ms(time.Since(start))
+		return out, nil
+	}
+	if !req.Stream {
+		raw, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+		out.WallMS = ms(time.Since(start))
+		if err != nil {
+			return nil, err
+		}
+		var c chatChunk
+		if err := json.Unmarshal(raw, &c); err != nil {
+			return nil, fmt.Errorf("the answer is not JSON: %w", err)
+		}
+		out.Timings = c.Timings
+		if len(c.Choices) > 0 && c.Choices[0].Message != nil {
+			out.Message, _ = json.Marshal(c.Choices[0].Message) // maps marshal with sorted keys: canonical
+			if s, ok := c.Choices[0].Message["content"].(string); ok {
+				out.Text = s
+			}
+		}
+		return out, nil
+	}
+	// Streamed: server-sent events.
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(make([]byte, 1<<20), 16<<20)
+	var text, reasoning strings.Builder
+	chunks := 0
+	var lastProgress time.Time
+	for sc.Scan() {
+		line := sc.Text()
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "[DONE]" {
+			break
+		}
+		var c chatChunk
+		if json.Unmarshal([]byte(data), &c) != nil {
+			continue
+		}
+		if len(c.Timings) > 0 && string(c.Timings) != "null" {
+			out.Timings = c.Timings
+		}
+		if len(c.Choices) == 0 {
+			continue
+		}
+		d := c.Choices[0].Delta
+		if d.Content != "" || d.ReasoningContent != "" {
+			if out.TTFTMS == nil {
+				v := ms(time.Since(start))
+				out.TTFTMS = &v
+			}
+			chunks++
+			text.WriteString(d.Content)
+			reasoning.WriteString(d.ReasoningContent)
+			if onProgress != nil && time.Since(lastProgress) >= 250*time.Millisecond {
+				lastProgress = time.Now()
+				onProgress(ChatProgress{Tokens: chunks, ElapsedMS: ms(time.Since(start))})
+			}
+		}
+	}
+	out.WallMS = ms(time.Since(start))
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	if onProgress != nil {
+		onProgress(ChatProgress{Tokens: chunks, ElapsedMS: out.WallMS})
+	}
+	msg := map[string]any{"role": "assistant", "content": text.String()}
+	if reasoning.Len() > 0 {
+		msg["reasoning_content"] = reasoning.String()
+	}
+	out.Message, _ = json.Marshal(msg)
+	out.Text = text.String()
+	return out, nil
+}
+
+func ms(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
