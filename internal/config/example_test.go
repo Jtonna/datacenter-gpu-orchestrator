@@ -91,6 +91,10 @@ func TestDeployConfigMatchesExample(t *testing.T) {
 		t.Errorf("deploy/config.yaml should set history_dir")
 	}
 	b.HistoryDir = a.HistoryDir
+	if b.DataDir == "" || !b.Bench.Enabled {
+		t.Errorf("deploy/config.yaml should set data_dir (the benchmark feature is then on)")
+	}
+	b.DataDir, b.Bench.Enabled = a.DataDir, a.Bench.Enabled
 	if !reflect.DeepEqual(a, b) {
 		t.Fatalf("deploy/config.yaml parses differently from configs/example.yaml: %+v vs %+v", a, b)
 	}

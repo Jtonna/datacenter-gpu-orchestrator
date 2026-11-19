@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/benchspec"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
 )
 
@@ -35,6 +36,7 @@ func (c *Config) validate(raw map[string]*rawProfile, exists func(string) bool) 
 
 	c.validateDefaults(add)
 	c.validateRecovery(add)
+	c.validateBench(add)
 	c.validateTiers(add)
 	for i, e := range c.ExcludeNodes {
 		switch {
@@ -346,5 +348,66 @@ func (c *Config) validateRecovery(add func(string, ...any)) {
 	}
 	if r.HTTPTimeout <= 0 {
 		add("recovery: http_timeout: must be positive, got %v", r.HTTPTimeout)
+	}
+}
+
+// validateBench checks data_dir, ws_max_clients and the bench block, including
+// the seeded benchmarks and suites (profiles must exist, references must resolve).
+func (c *Config) validateBench(add func(string, ...any)) {
+	if c.WSMaxClients < 1 || c.WSMaxClients > MaxWSMaxClients {
+		add("ws_max_clients must be 1 to %d, got %d", MaxWSMaxClients, c.WSMaxClients)
+	}
+	if c.benchEnabledSet != nil && *c.benchEnabledSet && c.DataDir == "" {
+		add("bench.enabled is true but data_dir is empty: the benchmark feature stores its results under data_dir")
+	}
+	b := &c.Bench
+	if b.RegressLoadPct <= 0 || b.RegressLoadPct > 1000 {
+		add("bench.regress_load_pct must be above 0 and at most 1000, got %v", b.RegressLoadPct)
+	}
+	if b.RegressDecodePct <= 0 || b.RegressDecodePct > 100 {
+		add("bench.regress_decode_pct must be above 0 and at most 100, got %v", b.RegressDecodePct)
+	}
+	if b.MaxRunMinutes < 1 || b.MaxRunMinutes > 10080 {
+		add("bench.max_run_minutes must be 1 to 10080, got %d", b.MaxRunMinutes)
+	}
+	profileOK := func(id string) bool { _, _, ok := c.Resolve(id); return ok }
+	byID := map[string]*benchspec.Benchmark{}
+	for i, bm := range b.Benchmarks {
+		if bm == nil {
+			add("bench.benchmarks[%d]: empty entry", i)
+			continue
+		}
+		if err := bm.Validate(profileOK); err != nil {
+			add("bench.benchmarks[%d] (%s): %v", i, bm.ID, err)
+		}
+		if byID[bm.ID] != nil {
+			add("bench.benchmarks[%d]: duplicate id %q", i, bm.ID)
+		}
+		byID[bm.ID] = bm
+	}
+	for _, bm := range b.Benchmarks {
+		if bm == nil || !bm.IsParallel() {
+			continue
+		}
+		for _, m := range bm.Parallel {
+			if mb, ok := byID[m]; !ok || mb.IsParallel() {
+				add("bench.benchmarks (%s): parallel member %q is not a plain benchmark of this block", bm.ID, m)
+			}
+		}
+	}
+	look := func(id string) (*benchspec.Benchmark, bool) { bm, ok := byID[id]; return bm, ok }
+	seen := map[string]bool{}
+	for i, s := range b.Suites {
+		if s == nil {
+			add("bench.suites[%d]: empty entry", i)
+			continue
+		}
+		if err := s.Validate(profileOK, look); err != nil {
+			add("bench.suites[%d] (%s): %v", i, s.ID, err)
+		}
+		if seen[s.ID] {
+			add("bench.suites[%d]: duplicate id %q", i, s.ID)
+		}
+		seen[s.ID] = true
 	}
 }

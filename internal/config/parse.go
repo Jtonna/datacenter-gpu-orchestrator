@@ -12,6 +12,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/benchspec"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
 )
 
@@ -68,6 +69,8 @@ func ParseWithOptions(data []byte, o Options) (*Config, error) {
 		ChildLogKeep:      DefaultChildLogKeep,
 		HistoryMaxFileMiB: DefaultHistoryMaxFileMiB, HistoryKeepFiles: DefaultHistoryKeepFiles, HistoryMemoryEvents: DefaultHistoryMemoryEvents,
 		LocalProbeCmd: DefaultLocalProbeCmd,
+		WSMaxClients:  DefaultWSMaxClients,
+		Bench:         rawBench{RegressLoadPct: DefaultRegressLoadPct, RegressDecodePct: DefaultRegressDecodePct, MaxRunMinutes: DefaultMaxRunMinutes},
 		Defaults:      rawDefaultsFrom(DefaultDefaults()),
 		Recovery:      rawRecoveryFrom(DefaultRecovery()),
 	}
@@ -85,11 +88,15 @@ func ParseWithOptions(data []byte, o Options) (*Config, error) {
 		HistoryDir:   strings.TrimSpace(raw.HistoryDir), HistoryMaxFileMiB: raw.HistoryMaxFileMiB, HistoryKeepFiles: raw.HistoryKeepFiles,
 		HistoryMemoryEvents: raw.HistoryMemoryEvents,
 		LocalProbeCmd:       raw.LocalProbeCmd,
-		Defaults:            raw.Defaults.value(),
-		NodeOverrides:       map[string]NodeOverride{},
-		ExcludeNodes:        trimAll(raw.ExcludeNodes),
-		Recovery:            raw.Recovery.value(),
-		Profiles:            map[string]*core.Profile{},
+		DataDir:             strings.TrimSpace(raw.DataDir),
+		WSMaxClients:        raw.WSMaxClients,
+		Bench: Bench{RegressLoadPct: raw.Bench.RegressLoadPct, RegressDecodePct: raw.Bench.RegressDecodePct,
+			MaxRunMinutes: raw.Bench.MaxRunMinutes, Benchmarks: raw.Bench.Benchmarks, Suites: raw.Bench.Suites},
+		Defaults:      raw.Defaults.value(),
+		NodeOverrides: map[string]NodeOverride{},
+		ExcludeNodes:  trimAll(raw.ExcludeNodes),
+		Recovery:      raw.Recovery.value(),
+		Profiles:      map[string]*core.Profile{},
 	}
 	for _, t := range raw.Tiers {
 		c.Tiers = append(c.Tiers, TierRule{
@@ -113,6 +120,8 @@ func ParseWithOptions(data []byte, o Options) (*Config, error) {
 	if exists == nil {
 		exists = func(p string) bool { _, err := os.Stat(p); return err == nil }
 	}
+	c.Bench.Enabled = c.DataDir != "" && (raw.Bench.Enabled == nil || *raw.Bench.Enabled)
+	c.benchEnabledSet = raw.Bench.Enabled
 	if err := c.validate(rawProfiles, exists); err != nil {
 		return nil, err
 	}
@@ -144,6 +153,9 @@ type rawConfig struct {
 	HistoryKeepFiles    int                    `yaml:"history_keep_files"`
 	HistoryMemoryEvents int                    `yaml:"history_memory_events"`
 	LocalProbeCmd       string                 `yaml:"local_probe_cmd"`
+	DataDir             string                 `yaml:"data_dir"`
+	WSMaxClients        int                    `yaml:"ws_max_clients"`
+	Bench               rawBench               `yaml:"bench"`
 	Defaults            rawDefaults            `yaml:"defaults"`
 	Tiers               []rawTier              `yaml:"tiers"`
 	NodeOverrides       map[string]rawOverride `yaml:"node_overrides"`
@@ -323,4 +335,13 @@ func rawRecoveryFrom(r Recovery) rawRecovery {
 func (r rawRecovery) value() Recovery {
 	return Recovery{r.Enabled, trimAll(r.Actions), time.Duration(r.MinInterval),
 		time.Duration(r.StepWait), time.Duration(r.RequestTTL), time.Duration(r.HTTPTimeout)}
+}
+
+type rawBench struct {
+	Enabled          *bool                  `yaml:"enabled"`
+	RegressLoadPct   float64                `yaml:"regress_load_pct"`
+	RegressDecodePct float64                `yaml:"regress_decode_pct"`
+	MaxRunMinutes    int                    `yaml:"max_run_minutes"`
+	Benchmarks       []*benchspec.Benchmark `yaml:"benchmarks"`
+	Suites           []*benchspec.Suite     `yaml:"suites"`
 }

@@ -3,6 +3,7 @@ package config
 import (
 	"time"
 
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/benchspec"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
 )
 
@@ -24,9 +25,16 @@ type Config struct {
 	HistoryKeepFiles    int
 	HistoryMemoryEvents int
 	LocalProbeCmd       string
-	Defaults            Defaults
-	Tiers               []TierRule
-	NodeOverrides       map[string]NodeOverride
+	// DataDir holds the scheduler database (benchmarks, runs, results) as
+	// scheduler.db; empty turns the benchmark feature off. WSMaxClients is the
+	// most concurrent /ws clients.
+	DataDir         string
+	WSMaxClients    int
+	Bench           Bench
+	benchEnabledSet *bool // bench.enabled as written, to reject true without data_dir
+	Defaults        Defaults
+	Tiers           []TierRule
+	NodeOverrides   map[string]NodeOverride
 	// ExcludeNodes lists nodes that are never used: each entry is a node id or a
 	// hostname glob (case-insensitive). See Excluded.
 	ExcludeNodes []string
@@ -161,3 +169,27 @@ type Options struct {
 	// FileExists reports whether a model file exists. Nil uses os.Stat.
 	FileExists func(path string) bool
 }
+
+// Bench is the benchmark feature's settings (design 9.3).
+type Bench struct {
+	// Enabled is true when data_dir is set and bench.enabled is not false.
+	Enabled bool
+	// RegressLoadPct: a load this much slower than the baseline's is a regression (default 15).
+	RegressLoadPct float64
+	// RegressDecodePct: decode tokens per second this much lower is a regression (default 7).
+	RegressDecodePct float64
+	// MaxRunMinutes stops a run that takes longer (default 240).
+	MaxRunMinutes int
+	// Benchmarks and Suites are seeded into the database at start (source "config").
+	Benchmarks []*benchspec.Benchmark
+	Suites     []*benchspec.Suite
+}
+
+// Defaults of the websocket and benchmark settings.
+const (
+	DefaultWSMaxClients     = 32
+	MaxWSMaxClients         = 1000
+	DefaultRegressLoadPct   = 15
+	DefaultRegressDecodePct = 7
+	DefaultMaxRunMinutes    = 240
+)

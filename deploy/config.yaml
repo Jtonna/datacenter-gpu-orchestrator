@@ -28,6 +28,8 @@ history_dir: /var/lib/llm-scheduler/history   # safety and lifecycle event histo
 # history_max_file_mib: 16         # a history file is rotated at this size
 # history_keep_files: 20           # most history files kept; the oldest are deleted
 # history_memory_events: 5000      # newest events held in memory for queries (reloaded from the files at start)
+data_dir: /var/lib/llm-scheduler/data   # scheduler database (scheduler.db) for benchmarks and their results (design 9.3; compose mounts ./data here). Empty = benchmark feature off
+# ws_max_clients: 32               # most concurrent /ws (WebSocket) clients; the next one is refused with 503. /ws allows same-origin and private-LAN origins only
 
 defaults:
   ttl: 300s                # unload after this long idle; 0 = never
@@ -241,3 +243,44 @@ profiles:
   #   flash_attn: true
   #   force_nodes: [ps5-062e1d84, alienware-llm]   # device order = this order
   #   tensor_split: [60, 40]
+
+# Benchmarks (design 9.3, runbook "Benchmarks"): test cases and groups of them ("suites") that the
+# scheduler runs through its own HTTP API, storing every result in data_dir/scheduler.db. Seeds below are
+# written to the database at every start with source "config"; items created through the REST API have
+# source "api" and are never overwritten by this block. Uncomment and set data_dir above to use it.
+# bench:
+#   enabled: true              # default true when data_dir is set
+#   regress_load_pct: 15       # a load this much slower than the baseline run's is flagged as a regression
+#   regress_decode_pct: 7      # decode tokens/s this much lower than the baseline's is flagged
+#   max_run_minutes: 240       # a run that takes longer is stopped and marked failed
+#   benchmarks:
+#     - id: tinyllama-cold     # a slug: letters, digits, . - _
+#       name: TinyLlama cold start
+#       profile: tinyllama     # a profile of this file
+#       cold: true             # unload first so the load is measured (default true)
+#       warmup_requests: 1     # extra request after the load, recorded separately, left out of the statistics
+#       repeats: 3             # each request is measured this many times
+#       requests:
+#         - {name: short, prompt: "Say hello in five words.", max_tokens: 32}
+#         - {name: streamed, prompt: "Count from one to ten.", max_tokens: 64, stream: true}   # also measures time to first token
+#     - id: gemma-cold
+#       profile: gemma-4-12b
+#       repeats: 3
+#       requests:
+#         - name: summary
+#           messages:
+#             - {role: system, content: "You are terse."}
+#             - {role: user, content: "Explain what a load balancer does in two sentences."}
+#           max_tokens: 96
+#       expect: {outcome: ready, max_load_s: 120}
+#     - id: both-at-once       # a concurrent step: these two loads start at the same moment
+#       parallel: [tinyllama-cold, gemma-cold]
+#   suites:
+#     - id: smoke
+#       name: Smoke test
+#       benchmarks: [tinyllama-cold, gemma-cold, both-at-once]
+#       stop_on_failure: false
+#       cooldown_s: 10         # pause between benchmarks (default 5)
+#       only_when_idle: true   # wait while anything else uses the scheduler (default true)
+#       idle_wait_s: 600       # ...at most this long, then the run is marked skipped
+#       # schedule: {at: "03:00"}   # or {every: 24h}; default none (run it by hand)
