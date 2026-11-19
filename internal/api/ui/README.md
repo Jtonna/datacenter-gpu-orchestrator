@@ -14,13 +14,17 @@ core/store.js       the live store: state, on(), listen()
 core/live.js        the WebSocket client (reconnects by itself)
 core/api.js         REST helper: get(), send(), post/put/patch/del (X-Source, X-Actor)
 core/router.js      hash router and the view registry
-core/shell.js       navigation, connection indicator, the name that signs changes
+core/shell.js       navigation, the connection warning, the name that signs changes
 core/status.js      helpers that read the status document
 core/reasons.js     the scheduler's reason strings in plain words (no DOM)
 core/ui.js          the shared components (below)
-core/charts.js      sparkline(), lineChart(), barMeter(): inline SVG
+core/charts.js      every chart and the chart tooltip: inline SVG and plain boxes ("Charts" below)
+core/catalog.js     the model catalog, kept for the life of the page (fed by the live channel)
+core/avatar.js      the picture of a model: the owner's icon, else a drawn tile
+core/rate.js        the pass rate as dots (passDots)
 views/<id>.js       one module per screen; it registers itself
 views/models/       the instance card and the model page of the Models screen
+views/benchmarks/   the parts of Benchmarks; pages.js is a suite's and a benchmark's own page
 fonts/              Manrope (variable) and JetBrains Mono, with their licences (OFL)
 ```
 
@@ -94,7 +98,56 @@ One screenshot: `scripts/ui-screens.sh http://127.0.0.1:8790 models loading desk
 | `--r-card` `--r-ctl` `--r-badge` `--r-chip` | 14, 9, 6, 5 px | radii |
 
 Colour means state. Mint = fine, amber = in progress, coral = wrong, lilac =
-waiting, grey = inactive. Do not use a colour for decoration.
+waiting, grey = inactive. Do not use a colour for decoration. The one
+exception is the avatar of a model (`core/avatar.js`): its hue is the identity
+of a model family, muted (28% saturation on a dark tile), and used nowhere
+else; an avatar never uses a state colour.
+
+## Charts (`core/charts.js`)
+
+Decided once, used everywhere. No chart library; inline SVG or plain boxes.
+
+- **Colour is state, never a series.** Mint = it worked (loaded, passed),
+  coral = failed or cancelled, amber = refused or partly passed, grey = no
+  result or a neutral quantity (requests served, a duration line).
+- **The number of machines is a shape, not a colour.** 1 PS5 = circle, 2 =
+  square, 3 = triangle (`shapeOf(n)`); in the small "last loads" strip it is
+  the count of pips under a bar. Loads on different node counts take very
+  different times, so a load time is never drawn without its node count, and
+  never averaged across node counts.
+- **Points for events, a line for one thing measured again.** Loads over time
+  are separate events: `pointChart` (no line). One benchmark over its runs is
+  the same measurement repeated: `lineChart` (a grey line, the points coloured
+  by the result of the run). Counts per hour, day or run: `columns` (stacked).
+- **Axes.** The y axis starts at 0 (`zero`), has four grid lines and labels with
+  the unit ("25 s", "200 MB/s"), thousands separated. The x axis names its first
+  and last moment. The title of the tile says what is drawn and in which unit.
+- **Size.** A chart is drawn for 560 px (340 px on a phone) and only shrinks, so
+  its labels stay 11 px JetBrains Mono. Plot heights: 170 to 190 px for a main
+  chart, 76 to 96 px for a strip of columns. Tiles sit in `.viz-grid` (two
+  columns, one on a phone); a tile that needs the full width is `cls: 'wide'`.
+- **Tooltip.** Every mark carries `data-tip`: lines of text, the first is the
+  title (`tipText(head, lines)`). One floating box for the page shows it on
+  hover and on keyboard focus; a mark that can be focused has `tabindex="0"`.
+  Order of the lines: what happened, when (ago and the exact time), the
+  configuration, the machines, the figures.
+- **Empty state.** `noData('Not measured yet', why)`: a dashed frame with the
+  words, the same everywhere. Never an empty axis.
+- **Text alternative.** A tile is `viz(title, note, body, {legend, alt})`: `alt`
+  is one sentence with the figures, read by a screen reader (`p.sr`) and set as
+  the chart's `aria-label`. Write it from the data, not "a chart of".
+- **Legend.** Under the chart, only what is in it: `legendItems([[shapeSwatch('square'), '2 PS5s'], [colorSwatch('coral'), 'Failed']])`.
+
+| Chart | Call | Use |
+|---|---|---|
+| Last loads | `loadSpark(marks, {label})` | The strip of a model row: one bar per load (the newest 12), oldest left. Height = load time on the row's own scale, pips = machines, coral = failed, a hollow amber stub = a refused request. |
+| Pass dots | `passDots(recent, rate, {label, large})` (`core/rate.js`), `dots(marks)` | One pill per run, oldest left: mint passed, amber partly, coral failed, grey cancelled or no result; the percentage beside it; each pill links to its run. Wherever a pass rate is shown. |
+| Points over time | `pointChart({series: [{name, shape, points: [{x, y, color, tip}]}], unit})` | Load time and upload speed of every load of a model. |
+| Line over runs | `lineChart({series, unit, time, zero})` | One benchmark or one suite over its runs. |
+| Columns | `columns(buckets, {series: [{key, color}], label, tip})` | Loads per hour, benchmarks passed per run. |
+| Comparison | `compareBars([{label, value, text, tip}])` | One figure on 1, 2 and 3 machines; a row without a value says "not measured yet". |
+| Fit | `fitBar({need, budgets, label, budgetText})` | The memory a model needs against what one, two and three machines give: the most important fact about a model here. |
+| Tile | `viz(title, note, body, {legend, alt, cls, key})`, `noData(text, why)` | The frame of every chart. |
 
 ## A view
 
@@ -151,9 +204,14 @@ events as they happen, newest first), `state.bench` (`{state, run}`: the
 ## Shell (`core/shell.js`)
 
 - `NAV`: the navigation groups and entries.
-- `setShellSlot(name, node | null)`: puts a node into the pane above the
-  connection card. The compact benchmark-run indicator uses the slot `run`.
-- `connection()`: `{dot, title, note}` of the indicator.
+- `setShellSlot(name, node | null)`: puts a node into the foot of the pane.
+  The compact benchmark-run indicator uses the slot `run`.
+- There is no "Live" indicator. `connection()` is `null` while all is well,
+  else `{title, note}`: the shell shows it as a slim bar above the screen
+  (`.connbar`) when the live channel is connecting for more than a moment, was
+  lost, or the fleet feed is stale or disconnected, and removes it by itself.
+  Do not draw a second warning in a view (`staleBanner()` returns nothing now).
+  `connectionFacts()` is the same in words for the About screen.
 
 ## Components
 
@@ -189,7 +247,10 @@ markup it produces, so the markup can also be written with `h()` directly.
 | Event row | `h('div.ev', time, typeBadge, h('div', h('p', sentence), h('p.d', detail)))` | `.ev.sev-warn` / `.sev-error` add a left edge. |
 | Filter chips | `chips([{id, label, count}], current, onPick, ariaLabel)` | `div.chips > button.fc(.on)`. Single choice; the first is "All". |
 | Tabs | `tabs([{id, label, count}], current, onPick)` | `div.tabs > button.tab(.on)`. Sub navigation inside one screen; keep the tab in the route (`navigate(id, rest, query, true)`). |
-| Banner | `banner(kind, content, action)` | `div.banner(.info|.warn|.err)`. A condition of the whole screen. `staleBanner()` (`core/status.js`) is the shared one for a lost connection or a stale fleet feed: put it right under the page header of every Monitor screen. |
+| Banner | `banner(kind, content, action)` | `div.banner(.info|.warn|.err)`. A condition of the whole screen. A lost connection or a stale fleet feed is not a view's business: the shell shows it above every screen. |
+| Avatar | `avatar(model, 28 | 40 | 72)`, `named(model, node)` (`core/avatar.js`) | `span.av`: the owner's icon when `model.icon` is set, else a tile with the family's letters in the family's hue (`model.brand`), a prompt glyph for a command service. 40 px in the Models list, 28 px in a card header or a table of another screen, 72 px in a page header. Wherever a model is named prominently. |
+| Panel | `aside.drawer` in `div.drawer-back` (see `views/benchmarks.js`) | A panel from the right over the page, for the configuration of the thing the page is about. It is in the route (`?edit=1`), so Back closes it; Escape and a click beside it too. |
+| Snippet | `div.snip > div.snip-h + pre` | A block of text to copy (a command, a configuration), with a Copy button in its header. |
 | Empty state | `empty(title, text, action)` | `div.empty > b + p (+ button)`. Says what is not there, why, and what would make it appear. |
 | Loading state | `skeleton(lines)` | Pulsing lines; while the first REST answer is on its way. |
 | Form from a schema | `schemaForm({fields, values, onChange, showDefaults})` | `div.form-grid > div.field`. `fields` are schema objects `{key, type, enum, default, min, max, unit, description, restart_required, label}`; types `duration`, `int`, `float`, `bool`, `enum`, `string`, `text`, `list`, anything else as JSON. Dotted keys reach into objects. Returns `{el, values(), validate(), setErrors({key: msg}), changed()}`. Shows "Changed from default", "Edited" and "Needs restart" marks by itself. |
@@ -200,7 +261,7 @@ markup it produces, so the markup can also be written with `h()` directly.
 | Prompt | `promptText({title, intro, label, value, placeholder})` | Promise of a string or `null`. |
 | Toast | `toast(text, kind)` | `ok`, `err` or neutral; bottom right; for the result of an action ("Saved as revision 15"). Not for live events. |
 | Sparkline | `sparkline(values, {width, height, color, flag, label})` (`core/charts.js`) | Inline SVG line, last point marked, `flag` = indexes drawn coral (regressions). |
-| Line chart | `lineChart({series: [{name, color, points: [{x, y, flag, title}]}], unit, time, zero, width, height, label})` (`core/charts.js`) | Inline SVG with a y axis and four grid lines; each point has a hover title. Drawn for `width` px (default 720) and never larger, so labels stay 11 px; the left margin fits the longest y label with its unit. Colours: `mint`, `amber`, `coral`, `lilac`, `mut`. |
+| Charts | see "Charts" above | `loadSpark`, `passDots`, `pointChart`, `lineChart`, `columns`, `compareBars`, `fitBar`, in a `viz` tile. |
 | Meter | `barMeter(value, max, cls)` (`core/charts.js`) | A thin bar for a table cell. |
 | Step segments | `segments(index, total, ariaLabel)` | `div.bar.sm.seg`: equal steps, done mint, current amber, rest grey ("phase 2 of 5"). |
 | Change mark | `changeMark(pct, {better: 'lower' or 'higher', regression})`, `signedPct(v)` | A signed percent next to a figure: mint better, amber worse, coral plus a "Regression" badge past the limit, grey under 1%. |
@@ -300,10 +361,45 @@ needs_mib, needs_basis, needs_measured, aliases, generated, plan`),
 cluster_budget_mib`), `loads` (`count, ready, failed, cancelled, unloads,
 refusals, last, by_nodes[]`), `last_loaded`, `last_active`,
 `requests_served`, `last_refusal`, `bench` (`benchmarks, runs, by_nodes[]`).
-`GET /api/models/<key>` adds `events[]` and `bench.detail[]`. The instance
-cards are drawn from the WebSocket status (they need the live load figures);
-the catalog is fetched on open and again when the placement picture of the
-status changes, an event of a load arrives or the configuration changes.
+Also per entry: `raw_name` (the name as the file wrote it, when `name` was
+tidied), `brand` (the model family: gemma, qwen, llama, mistral, deepseek,
+glm, kimi, tinyllama, ..., `other`, `command`), `icon` (`{etag, scope:
+"model" | "family"}` or null), `loads.recent[]` (the newest 12 marks: `at,
+profile, nodes` (a count), `outcome` (`ready`, `failed`, `cancelled`,
+`refused`), `load_s, mb_s`, and `count` for a run of refusals) and
+`fit.budgets_mib[]` (what one, two, three machines give together).
+`GET /api/models/<key>` adds `events[]`, `bench.detail[]` (each with
+`recent[]`, the pass/fail history) and `charts`: `loads[]` (every load, oldest
+first: `at, profile, nodes, outcome, load_s, mb_s, memory_mib, ctx, stayed_s,
+requests, ended, bench_run`) and `activity.hours[24]` / `activity.days[7]`
+(`at, loads, failed, refusals, requests`).
+
+The catalog is kept in memory on the server and on the page. Use
+`core/catalog.js`: `catalog.models`, `catalog.byKey`, `catalog.byProfile`,
+`onCatalog(fn)`, `needCatalog()`, `modelFor({profile, model_file})`. The live
+channel sends the whole catalog when it connects (topic `models`) and then
+only the entries that changed, so a view never fetches it and never polls;
+going back to Models draws at once. The instance cards are drawn from the
+WebSocket status (they need the live load figures). A model's icon: `PUT`
+(raw image body), `GET`, `DELETE /api/models/<key>/icon[?scope=family]`
+(`api.upload`, `api.del`).
+
+## Agents and MCP (as built on the server)
+
+`GET /api/agents` -> `{agents: [{id, name, description, key_prefix, created_at,
+created_by: {source, actor}, last_used_at, rotated_at, revoked_at, revoked,
+request_count, actor ("agent:<name>"), audit_entries}], note}`. `POST
+/api/agents {name, description}` -> `{agent, key}`: the key is in this answer
+and nowhere else, ever: show it once. `PATCH /api/agents/{id}`, `POST
+/api/agents/{id}/rotate` (-> a new `key`), `DELETE /api/agents/{id}` (revoke;
+the row stays). `GET /api/mcp/tools` -> `{server, tools: [{name, group,
+summary, description, read_only, destructive}], groups: [{id, title, note}]}`:
+draw the tool list from it, do not hard-code a tool. A key is identity for the
+audit log, not access control: say so wherever keys are shown. Audit entries
+made with a key have `actor: "agent:<name>"` and `agent_id`;
+`GET /api/audit?agent=<id>` filters by it. The MCP screen builds the address it
+shows from `location.origin` at run time: no UI file names a host. The web UI
+still has no load or unload control; the MCP screen only says that agents do.
 
 ## The benchmark contract (as built on the server)
 
@@ -361,6 +457,16 @@ before drawing a field.
   Run detail is phase-aware: a load-only benchmark shows load metrics; a
   conversation shows per turn prefill, decode, time to first token and reused
   prompt tokens.
+- A suite and a benchmark have their own page (`#/benchmarks/suite/<id>`,
+  `#/benchmarks/benchmark/<id>`): run history first, then the trend, then what
+  it contains or expects. Their configuration opens as a panel (`?edit=1`).
+  `GET /api/bench/benchmarks/<id>/results` -> `{results: [{run_id, suite_id,
+  suite_name, run_state, at, result, outcome, reason, profile, model_file,
+  nodes, duration_s, load_s, load_mb_s, memory_mib, decode_tps, prefill_tps,
+  ttft_ms, expect, regression}]}`, oldest first. Every suite and benchmark of
+  the aggregates has `recent[]` (`{run_id, at, result: pass | partial | fail |
+  cancelled | none, passed, failed, outcome}`, oldest first, at most 30): draw
+  a pass rate with `passDots(recent, pass_rate)`, never as a bare percentage.
 - Aggregates: `GET /api/bench/aggregates?suite=&benchmark=&profile=&since=&until=&env=`
   -> `{runs_considered, environment, benchmarks: [{benchmark_id, runs, steps,
   pass_rate (a fraction, 0 to 1), outcomes, metrics: {<metric>: {count, min, median, mean, max, stdev,
