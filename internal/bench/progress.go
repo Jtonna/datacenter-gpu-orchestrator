@@ -180,7 +180,7 @@ func newTrack(b *benchspec.Benchmark, item int, hist map[string]float64) *benchT
 	for i := range ps {
 		p := &ps[i]
 		tp := trackPhase{typ: p.Type, label: p.Title(), weight: defaultWeight(p)}
-		if v, ok := hist[phaseKey(i, p.Type)]; ok && v > 0 {
+		if v, ok := hist[phaseKey(i, p.Type)]; ok {
 			tp.weight, tp.known = v, true
 		}
 		t.phases = append(t.phases, tp)
