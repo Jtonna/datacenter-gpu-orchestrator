@@ -194,10 +194,21 @@ func serve(cfg *config.Config, log *slog.Logger) int {
 	schedDone := make(chan struct{})
 	go func() { sched.Run(bg); close(schedDone) }()
 
-	apiSrv := api.New(cfg, sched, api.Options{Logger: log, History: hist, Version: version})
+	benchStore, benchMgr := openBench(cfg, ln, hist, log)
+	if benchStore != nil {
+		defer benchStore.Close()
+	}
+	ao := api.Options{Logger: log, History: hist, Version: version, WSMaxClients: cfg.WSMaxClients, Bench: benchMgr, BenchStore: benchStore,
+		System: api.SystemInfo{Listen: cfg.Listen, Safety: safetySummary(cfg), HistoryDir: cfg.HistoryDir, DataDir: cfg.DataDir,
+			ChildLogDir: cfg.ChildLogDir, ModelsDir: cfg.ModelsDir, Bench: map[string]any{"enabled": benchMgr != nil, "regress_load_pct": cfg.Bench.RegressLoadPct,
+				"regress_decode_pct": cfg.Bench.RegressDecodePct, "max_run_minutes": cfg.Bench.MaxRunMinutes}}}
+	apiSrv := api.New(cfg, sched, ao)
 	httpSrv := &http.Server{Handler: apiSrv, ReadHeaderTimeout: 10 * time.Second}
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- httpSrv.Serve(ln) }()
+	if benchMgr != nil {
+		benchMgr.Start(bg)
+	}
 	log.Info("llm-scheduler started", "version", version, "listen", ln.Addr().String(), "profiles", len(cfg.Profiles))
 
 	sigs := make(chan os.Signal, 2)
@@ -228,6 +239,11 @@ func serve(cfg *config.Config, log *slog.Logger) int {
 		case <-sctx.Done():
 		}
 	}()
+	if benchMgr != nil { // a running benchmark is cancelled and unloads what it loaded while the API still answers
+		bmctx, bmcancel := context.WithTimeout(sctx, 60*time.Second)
+		benchMgr.Stop(bmctx)
+		bmcancel()
+	}
 	code = exitCodeAfterShutdown(code, apiSrv.Shutdown(sctx), log)
 	hctx, hcancel := context.WithTimeout(context.Background(), apiGrace)
 	defer hcancel()

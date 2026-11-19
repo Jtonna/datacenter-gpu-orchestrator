@@ -128,7 +128,7 @@ func (s *server) usage() map[string]any {
 func (s *server) timings() map[string]any {
 	return map[string]any{
 		"prompt_n": 10, "prompt_ms": 5.0, "predicted_n": s.chunks, "predicted_ms": 10.0 * float64(s.chunks),
-		"predicted_per_second": 100.0,
+		"predicted_per_second": 100.0, "prompt_per_second": 2000.0, "cache_n": 0,
 	}
 }
 
