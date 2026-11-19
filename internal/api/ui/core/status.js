@@ -67,3 +67,32 @@ export function staleBanner() {
   }
   return null;
 }
+
+// plainReason(text) turns the scheduler's reason strings (wait_reason, a
+// plan's reason) into a plain sentence. The scheduler's own words stay
+// available: callers put the raw text in a tooltip. An unknown wording is
+// only tidied (prefix removed, capital, full stop), never guessed at.
+export function plainReason(raw) {
+  let s = String(raw || '').trim();
+  if (!s) return '';
+  let stale = '';
+  if (/^fleet view stale;\s*/i.test(s)) { stale = 'The fleet feed is stale, so remote nodes are not used. '; s = s.replace(/^fleet view stale;\s*/i, ''); }
+  s = s.replace(/^placer:\s*/i, '');
+  const n = v => Number(v).toLocaleString('en-US');
+  let m;
+  if ((m = s.match(/^need (\d+) MiB \(requires (\d+) MiB\) exceeds cluster capacity (\d+) MiB(?:; nodes excluded by config and not counted: (.+))?$/i))) {
+    return stale + `Needs ${n(m[1])} MiB` + (m[2] !== m[1] ? ` (${n(m[2])} MiB with the safety margins)` : '') + `, more than the whole cluster can hold (${n(m[3])} MiB)` +
+      (m[4] ? `. Not counted because they are excluded: ${m[4]}.` : '.');
+  }
+  if ((m = s.match(/^need (\d+) MiB \(requires (\d+) MiB\) does not fit the available nodes$/i))) {
+    return stale + `Needs ${n(m[1])} MiB` + (m[2] !== m[1] ? ` (${n(m[2])} MiB with the safety margins)` : '') + '; the nodes that are free now do not have that much.';
+  }
+  if ((m = s.match(/^forced nodes? in use: (.+)$/i))) return stale + `It is tied to ${m[1]}, which ${m[1].includes(',') ? 'are' : 'is'} in use by another model.`;
+  if ((m = s.match(/^joins the queued entry \((\d+) waiting, claimed (true|false)\)$/i))) {
+    return stale + (m[2] === 'true' ? 'Requests for it are already waiting and have claimed their nodes; this one would join them.' : 'Requests for it are already waiting for room; this one would join them.');
+  }
+  if ((m = s.match(/^a placement is available/i))) return stale + 'A node is free; it starts at the next pass.';
+  if (!s) return stale.trim();
+  s = s.charAt(0).toUpperCase() + s.slice(1);
+  return stale + (/[.!?]$/.test(s) ? s : s + '.');
+}
