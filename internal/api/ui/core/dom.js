@@ -50,7 +50,15 @@ export function h(tag, attrs, ...children) {
 
 export const frag = (...children) => { const f = document.createDocumentFragment(); append(f, children); return f; };
 
+const kept = n => n.nodeType === 1 && n.hasAttribute('data-keep');
+
+// Two nodes are the same slot when their kind and key agree. A data-keep node
+// is a subtree its owner manages by hand: it only ever matches itself, or a
+// placeholder with the same explicit key, so it is never rebuilt from, or
+// merged into, a look-alike.
 function sameKind(a, b) {
+  if (a === b) return true;
+  if (kept(a) || kept(b)) return a.__key != null && a.__key === b.__key && a.nodeName === b.nodeName && kept(a) && kept(b);
   return a.nodeType === b.nodeType && a.nodeName === b.nodeName && a.__key === b.__key;
 }
 
@@ -82,7 +90,7 @@ export function morph(parent, next) {
     } else {
       // look ahead for a keyed match before replacing
       let found = null;
-      if (n.__key != null) for (let s = cur; s; s = s.nextSibling) if (sameKind(s, n)) { found = s; break; }
+      if (n.__key != null || kept(n)) for (let s = cur; s; s = s.nextSibling) if (sameKind(s, n)) { found = s; break; }
       if (found) {
         parent.insertBefore(found, cur);
         if (!found.hasAttribute('data-keep')) { syncAttrs(found, n); morph(found, Array.from(n.childNodes)); }

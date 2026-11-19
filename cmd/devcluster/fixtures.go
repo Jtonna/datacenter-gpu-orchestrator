@@ -91,7 +91,7 @@ var modelBytes = map[string]int64{
 var profiles = []profileDef{
 	{ID: "gemma-4-12b", Model: fileGemma, Ctx: 8192, NeedsMiB: 7900, Aliases: []string{"gemma-4-12b-1pool-8k", "gemma-4-12b-2pool-8k"}},
 	{ID: "gemma-4-12b:48k", Model: fileGemma, Ctx: 49152, NeedsMiB: 8250, KVQuant: "q8_0", FlashAttn: true, Aliases: []string{"gemma-4-12b-2pool-48k"}},
-	{ID: "qwen3.5-4b", Model: fileQwen4, Ctx: 16384, NeedsMiB: 3400},
+	{ID: "qwen3.5-4b", Model: fileQwen4, Ctx: 16384, Parallel: 4, NeedsMiB: 3400},
 	{ID: "devstral-24b", Model: fileDevstral, Ctx: 8192, NeedsMiB: 12100, Aliases: []string{"devstral-24b-q3"}},
 	{ID: "qwen3.8-27b", Model: fileQwen27, Ctx: 16384, Parallel: 2, NeedsMiB: 19600, KVQuant: "q8_0", FlashAttn: true, Aliases: []string{"qwen-27b"}},
 	{ID: "kimi-dev-72b-iq2s", Model: fileKimi, Ctx: 8192, NeedsMiB: 26800, Aliases: []string{"kimi-dev-72b"}},
@@ -103,8 +103,39 @@ var profiles = []profileDef{
 	{ID: "bench-kimi-72b-3w", Model: fileKimi, Ctx: 8192, NeedsMiB: 26800, ForceNodes: []string{ps5A.Host, ps5B.Host, ps5C.Host}, TensorSplit: []int{34, 33, 33}},
 }
 
+// liveProfiles, when set, lists the profiles of the configuration in force
+// (the real configuration service); the scripted status, plans and profile
+// list use it, so a profile created in the UI appears and a deleted one goes.
+var liveProfiles func() []profileDef
+
+// currentProfiles is the profile list in force: the real configuration's,
+// else the fixtures above.
+func currentProfiles() []profileDef {
+	if liveProfiles != nil {
+		if ps := liveProfiles(); ps != nil {
+			return ps
+		}
+	}
+	return profiles
+}
+
+// profileDefs converts the real configuration's profiles.
+func (c *cluster) profileDefs() []profileDef {
+	cfg := c.svc.Config()
+	if cfg == nil || !cfg.Configured {
+		return []profileDef{}
+	}
+	out := []profileDef{}
+	for name, p := range cfg.Profiles {
+		out = append(out, profileDef{ID: name, Model: p.Model, Ctx: p.Ctx, Parallel: p.Parallel, NeedsMiB: p.NeedsMiB, Aliases: p.Aliases,
+			ForceNodes: p.ForceNodes, TensorSplit: p.TensorSplit, KVQuant: p.KVQuant, FlashAttn: p.FlashAttn})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
 func profileByID(id string) (profileDef, bool) {
-	for _, p := range profiles {
+	for _, p := range currentProfiles() {
 		if p.ID == id {
 			return p, true
 		}

@@ -281,21 +281,6 @@ func pastEvents(now time.Time) []history.Event {
 		"Pre-flight of devstral-24b failed for ps5-407c8925 (timeout): list-devices did not finish within 20s.",
 		map[string]any{"kind": "timeout", "addr": ps5C.Addr(), "duration_s": 20.0, "err": "list-devices did not finish within 20s"})
 
-	// a benchmark run of the smoke suite
-	bt := at(218)
-	run := fmt.Sprintf("run-%s-smoke", bt.UTC().Format("20060102T1504"))
-	g.add(bt, history.TBenchRunStarted, history.Info, "", nil, "", fmt.Sprintf("Benchmark run %s of suite Smoke test started (2 steps).", run),
-		map[string]any{"bench_run": run, "suite": "smoke", "steps": 2, "trigger": "manual", "baseline": ""})
-	g.add(at(221), history.TBenchStepFinished, history.Info, "bench-gemma-12b-1w", nil, "",
-		"Benchmark gemma-load-1w on bench-gemma-12b-1w finished: ready, load 75.2 s.",
-		map[string]any{"bench_run": run, "benchmark": "gemma-load-1w", "idx": 1, "outcome": "ready", "pass": true, "load_s": 75.2, "regression": false})
-	g.add(at(225), history.TBenchStepFinished, history.Info, "bench-gemma-12b-2w", nil, "",
-		"Benchmark gemma-conversation on bench-gemma-12b-2w finished: ready, load 41.9 s, decode 11.7 tok/s.",
-		map[string]any{"bench_run": run, "benchmark": "gemma-conversation", "idx": 2, "outcome": "ready", "pass": true, "load_s": 41.9, "decode_tps": 11.7, "regression": false})
-	g.add(at(225).Add(4*time.Second), history.TBenchRunFinished, history.Info, "", nil, "",
-		fmt.Sprintf("Benchmark run %s finished: completed, 2 of 2 steps passed.", run),
-		map[string]any{"bench_run": run, "suite": "smoke", "state": "completed", "error": "", "steps": 2, "passed": 2, "failed": 0, "regressions": 0, "duration_s": 431.0})
-
 	sort.SliceStable(g.out, func(i, j int) bool { return g.out[i].Ts < g.out[j].Ts })
 	return g.out
 }

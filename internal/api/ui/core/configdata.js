@@ -64,7 +64,14 @@ export function entrySentence(e) {
   const t = e.target;
   const sec = e.section;
   if (sec === 'runtime') return `${actionName(e.action)} model ${t}`;
-  if (sec === 'bench' || sec === 'benchmarks' || sec === 'suites') return `${actionName(e.action)} ${sec === 'suites' ? 'suite' : 'benchmark'} ${t}`;
+  if (sec === 'bench' || sec === 'benchmarks' || sec === 'suites') {
+    // the server writes the target as "suite:<id>", "benchmark:<id>" or "run:<id>"
+    const m = /^(suite|benchmark|run):(.*)$/.exec(t || '');
+    const kind = m ? m[1] : sec === 'suites' ? 'suite' : 'benchmark';
+    const id = m ? m[2] : t;
+    if (kind === 'run') return `${e.action === 'cancel' ? 'Cancelled' : e.action === 'create' || e.action === 'run' ? 'Started' : actionName(e.action)} benchmark run ${id}`;
+    return `${actionName(e.action)} ${kind} ${id}`;
+  }
   if (sec === 'profiles') return `${actionName(e.action)} profile ${t}`;
   if (sec === 'tiers') return `${actionName(e.action)} the tier list`;
   if (sec === 'exclude_nodes') return `${actionName(e.action)} the excluded nodes`;

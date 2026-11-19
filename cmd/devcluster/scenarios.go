@@ -4,16 +4,21 @@ import (
 	"math"
 	"time"
 
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/bench"
+
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/scheduler"
 )
 
-// Scenarios: what the status side shows. Every scenario except live is a Go
-// function that builds a scheduler.Status; bench-* scenarios also start the
-// mock benchmark engine in a frozen run (mock_bench_engine.go).
+// Scenarios: what the status side shows, and for bench-* scenarios what the
+// Benchmarks screens show. Every scenario except live builds a
+// scheduler.Status (DEV-ONLY injection into /api/status, /api/profiles,
+// /api/plan, /api/metrics/activity and the live channel's status frames); the
+// profile list always comes from the real configuration.
 
-// A scenario is a name, a description, a status builder and a bench preset.
-// To add one, put it in a file of its own and register it from init:
+// A scenario is a name, a description, a status builder and an optional
+// frozen bench world. To add one, put it in a file of its own and register it
+// from init:
 //
 //	func init() {
 //		registerScenario(scenario{Name: "my-case", Description: "...", Status: scMyCase})
@@ -21,29 +26,22 @@ import (
 //
 // Status gets the render time and how long the scenario has been selected
 // (for creeping figures); nil means live (the real scheduler answers).
-// Bench is the frozen benchmark run to show: "", "load", "conversation" or
-// "last" (see freeze in mock_bench_engine.go).
 //
-// BenchSetup, when set, runs after the bench mock is reseeded (and after
-// the frozen run, if any) and before the bench state frame goes out. It may
-// change the seeded data in place: take e.store.mu while touching
-// e.store.benchmarks, e.store.suites or e.store.runs (types in
-// mock_bench.go; fillStep, newSteps and benchEnv in mock_bench_seed.go
-// build runs), and call e.enqueue(suiteID, "", note, "manual") without any
-// lock held to start or queue runs. Example, no suites at all:
+// Bench, when set, makes it a frozen bench scenario (bench_frozen.go): the real
+// database is snapshotted, Prepare may change the snapshot, and a real
+// benchmark manager runs Suite on it against the scripted scheduler until the
+// FreezeLoad or FreezeChat point; /api/bench/... and the bench frames then come
+// from that world. Example, a run held in the load of the 3-worker Gemma:
 //
-//	BenchSetup: func(e *benchEngine, now time.Time) {
-//		e.store.mu.Lock()
-//		defer e.store.mu.Unlock()
-//		e.store.suites, e.store.runs = map[string]map[string]any{}, nil
-//	},
+//	Bench: &frozenSpec{Suite: "load-scaling", FreezeLoad: map[string]float64{"bench-gemma-12b-3w": 0.4}},
+//
+// Without Bench, the Benchmarks screens show the real server's data.
 type scenario struct {
 	Name        string
 	Description string
 	StartupOnly bool // selectable only with --scenario at startup
 	Status      func(now time.Time, t time.Duration) *statusBuilder
-	Bench       string
-	BenchSetup  func(e *benchEngine, now time.Time)
+	Bench       *frozenSpec
 }
 
 // registerScenario adds a scenario; a duplicate name panics at startup.
@@ -66,11 +64,20 @@ var scenarios = []scenario{
 	{Name: "refused", Description: "gemma-4-12b ready; a failed kimi-dev-72b-iq2s load 50 s ago with a backoff; fresh requestRefused and loadFinished failed history events.", Status: scRefused},
 	{Name: "hung", Description: "qwen3.8-27b on three PS5s; ps5-31bd9dc4 hung and quarantined with a pending recovery request; ps5-407c8925 offline.", Status: scHung},
 	{Name: "stale", Description: "Like ready, but the fleet view is stale and disconnected (age 95 s).", Status: scStale},
-	{Name: "bare", Description: "First start: configured false, config revision 0, no profiles, no tiers (no node eligible), history off, no benchmarks, empty audit. Only with --scenario bare at startup (history cannot be switched off at runtime).", StartupOnly: true, Status: scBare},
+	{Name: "bare", Description: "First start on an empty database (nothing imported): the real configured false and revision 0, no profiles, no tiers (no node eligible), history off, no benchmarks, empty audit. Only with --scenario bare at startup (history cannot be switched off at runtime).", StartupOnly: true, Status: scBare},
 	{Name: "live", Description: "The real scheduler, nothing scripted: a chat request to /v1/chat/completions really loads a model through fakellama."},
-	{Name: "bench-load", Description: "nightly benchmark run at about 75%: step 7 kimi-72b-load-3w in its load phase at 40% (workers done / receiving / waiting).", Status: scBenchLoad, Bench: "load"},
-	{Name: "bench-conversation", Description: "nightly benchmark run at about 45%: a conversation benchmark on bench-gemma-12b-2w, turn 3 of 5, streaming.", Status: scBenchConversation, Bench: "conversation"},
-	{Name: "bench-last", Description: "nightly benchmark run at about 93%: the last benchmark (8 of 8) in a requests phase, 4 of 6 requests done.", Status: scBenchLast, Bench: "last"},
+	{Name: "bench-load", Description: "Frozen nightly run: step 7 kimi-72b-load-3w in its load phase at 40% (workers done / receiving / waiting).", Status: scBenchLoad,
+		Bench: &frozenSpec{Suite: "nightly", FreezeLoad: map[string]float64{"bench-kimi-72b-3w": 0.40}, Lead: 270 * time.Second}},
+	{Name: "bench-conversation", Description: "Frozen nightly run: gemma-conversation on bench-gemma-12b-2w, turn 3 of 5 streaming.", Status: scBenchConversation,
+		Bench: &frozenSpec{Suite: "nightly", FreezeChat: map[string]int{"bench-gemma-12b-2w": 3}, Lead: 210 * time.Second}},
+	{Name: "bench-last", Description: "Frozen nightly run: the last benchmark (8 of 8) devstral-load-requests in its requests phase, 4 of 6 requests done.", Status: scBenchLast,
+		Bench: &frozenSpec{Suite: "nightly", FreezeChat: map[string]int{"bench-devstral-24b": 5}, Lead: 9 * time.Minute}},
+	{Name: "bench-hold", Description: "Frozen phase-tour run: tour-every-phase in its hold phase (lengthened to 15 min in the snapshot, so it creeps).", Status: scBenchHold,
+		Bench: &frozenSpec{Suite: "phase-tour", Prepare: func(st *bench.Store) error { return setHold(st, "tour-every-phase", 900) }, FreezeChat: map[string]int{"qwen3.5-4b": 7}, Lead: 40 * time.Second}},
+	{Name: "bench-concurrent", Description: "Frozen nightly run: qwen-simultaneous, four requests at once, 1 of 4 done, three streaming.", Status: scBenchConcurrent,
+		Bench: &frozenSpec{Suite: "nightly", FreezeChat: map[string]int{"qwen3.5-4b": 12}, Lead: 270 * time.Second}},
+	{Name: "bench-parallel", Description: "Frozen side-by-side run: the parallel step qwen-and-gemma, Qwen 4B in its requests and the Gemma load at 60% (detail.members).", Status: scBenchParallel,
+		Bench: &frozenSpec{Suite: "side-by-side", FreezeLoad: map[string]float64{"bench-gemma-12b-1w": 0.60}, FreezeChat: map[string]int{"qwen3.5-4b": 4}, Lead: 35 * time.Second}},
 }
 
 func scenarioByName(n string) (scenario, bool) {
@@ -210,6 +217,25 @@ func scBenchLoad(now time.Time, t time.Duration) *statusBuilder {
 func scBenchConversation(now time.Time, t time.Duration) *statusBuilder {
 	b := newStatus(now)
 	b.ready("bench-gemma-12b-2w", []string{ps5A.Host, ps5B.Host}, instOpts{readyAgo: 50 * time.Second, served: 3, inFlight: 1, lastTPS: 11.8, lastAgo: 6 * time.Second})
+	return b
+}
+
+func scBenchHold(now time.Time, t time.Duration) *statusBuilder {
+	b := newStatus(now)
+	b.ready("qwen3.5-4b", []string{ps5A.Host}, instOpts{readyAgo: 70 * time.Second, served: 7, lastTPS: 30.8, lastAgo: 20 * time.Second})
+	return b
+}
+
+func scBenchConcurrent(now time.Time, t time.Duration) *statusBuilder {
+	b := newStatus(now)
+	b.ready("qwen3.5-4b", []string{ps5A.Host}, instOpts{readyAgo: 40 * time.Second, served: 11, inFlight: 3, lastTPS: 18.2, lastAgo: 2 * time.Second})
+	return b
+}
+
+func scBenchParallel(now time.Time, t time.Duration) *statusBuilder {
+	b := newStatus(now)
+	b.ready("qwen3.5-4b", []string{ps5B.Host}, instOpts{readyAgo: 30 * time.Second, served: 3, inFlight: 1, lastTPS: 31.2, lastAgo: 3 * time.Second})
+	b.loading("bench-gemma-12b-1w", []string{ps5A.Host}, loadOpts{startedAgo: 45*time.Second + t, progress: 0.6, rateMBs: 101})
 	return b
 }
 

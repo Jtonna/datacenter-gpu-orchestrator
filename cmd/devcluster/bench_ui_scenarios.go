@@ -1,49 +1,42 @@
 package main
 
-// Scenarios for the Benchmarks screens, in a file of their own (see the
-// BenchSetup hook in scenarios.go).
+// Scenarios for the Benchmarks screens' empty and crowded states, as frozen
+// bench worlds (see Bench in scenarios.go): the snapshot of the real database
+// is changed through the real store before anything runs.
 
 import (
-	"sort"
 	"time"
+
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/bench"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/benchspec"
 )
 
 func init() {
-	registerScenario(scenario{Name: "bench-no-benchmarks", Description: "Benchmarks screen empty states: no benchmarks, no suites, no runs.", Status: scEmpty,
-		BenchSetup: func(e *benchEngine, now time.Time) {
-			e.store.mu.Lock()
-			defer e.store.mu.Unlock()
-			e.store.benchmarks, e.store.suites, e.store.runs = map[string]map[string]any{}, map[string]map[string]any{}, nil
-		}})
+	registerScenario(scenario{Name: "bench-no-benchmarks", Description: "Benchmarks screen empty states: no benchmarks, no suites, no runs (a snapshot with everything deleted).", Status: scEmpty,
+		Bench: &frozenSpec{Prepare: func(st *bench.Store) error { return clearBench(st, true, true) }}})
 
-	registerScenario(scenario{Name: "bench-no-suites", Description: "Benchmarks exist but no suite and no run.", Status: scEmpty,
-		BenchSetup: func(e *benchEngine, now time.Time) {
-			e.store.mu.Lock()
-			defer e.store.mu.Unlock()
-			e.store.suites, e.store.runs = map[string]map[string]any{}, nil
-		}})
+	registerScenario(scenario{Name: "bench-no-suites", Description: "Benchmarks exist but no suite and no run (a snapshot with the suites and runs deleted).", Status: scEmpty,
+		Bench: &frozenSpec{Prepare: func(st *bench.Store) error { return clearBench(st, true, false) }}})
 
-	registerScenario(scenario{Name: "bench-long-queue", Description: "A suite of every benchmark twice (about 20 entries) is running, with two more runs of it queued behind.", Status: scEmpty,
-		BenchSetup: func(e *benchEngine, now time.Time) {
-			e.store.mu.Lock()
-			ids := make([]string, 0, len(e.store.benchmarks))
-			for id, b := range e.store.benchmarks {
-				if _, par := b["parallel"]; !par {
-					ids = append(ids, id)
-				}
+	registerScenario(scenario{Name: "bench-long-queue", Description: "A suite of every benchmark twice (20 entries) is running, held in the 3-worker Gemma load at 55%, with two more runs of it queued behind.", Status: scEmpty,
+		Bench: &frozenSpec{Prepare: addEverything, Suite: "everything", Runs: 3, FreezeLoad: map[string]float64{"bench-gemma-12b-3w": 0.55}, Lead: 270 * time.Second}})
+}
+
+// addEverything adds the suite "everything": every benchmark that is not a parallel step, twice.
+func addEverything(st *bench.Store) error {
+	bs, err := st.ListBenchmarks()
+	if err != nil {
+		return err
+	}
+	var items []benchspec.SuiteItem
+	for pass := 0; pass < 2; pass++ {
+		for _, b := range bs {
+			if !b.Spec.IsParallel() && b.Spec.ID != "gemma-idle-hold" {
+				items = append(items, benchspec.SuiteItem{Ref: b.Spec.ID})
 			}
-			sort.Strings(ids)
-			all := []any{}
-			for pass := 0; pass < 2; pass++ {
-				for _, id := range ids {
-					all = append(all, id)
-				}
-			}
-			e.store.suites["everything"] = map[string]any{"id": "everything", "name": "Everything, twice", "description": "Every benchmark, two passes.",
-				"benchmarks": all, "cooldown_s": float64(5)}
-			e.store.mu.Unlock()
-			for i := 0; i < 3; i++ {
-				e.enqueue("everything", "", "long queue scenario", "manual")
-			}
-		}})
+		}
+	}
+	cd := 0
+	su := &benchspec.Suite{ID: "everything", Name: "Everything, twice", Description: "Every benchmark, two passes.", Benchmarks: items, CooldownS: &cd}
+	return st.SaveSuite(su, "api", time.Now().UnixMilli())
 }

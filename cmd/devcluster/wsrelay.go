@@ -1,11 +1,13 @@
 package main
 
 // The WebSocket front. The browser connects here; the relay dials the real
-// server's /ws and copies frames both ways. On the way down it adds what the
-// mock contract promises (hello.data.bench and config_revision, status
-// config_revision) and it injects the mock's own frames: config after each
-// config write and bench from the mock engine (a bench state frame follows
-// hello). If the upstream connection drops, the client connection is closed.
+// server's /ws and copies frames both ways unchanged (the real server sends
+// hello with config_revision, status, event, config and bench frames itself).
+//
+// DEV-ONLY, and only while a frozen bench scenario is selected
+// (bench_frozen.go): the real server's bench frames are dropped and the
+// frozen world's are sent instead, starting with its state frame after hello,
+// on a bench subscription and when the scenario is selected.
 
 import (
 	"context"
@@ -13,23 +15,24 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
 )
 
 type relayClient struct {
-	conn   *websocket.Conn
-	wmu    sync.Mutex
-	mu     sync.Mutex
-	topics map[string]bool // bench and config only; the rest is upstream's business
-	ready  bool            // hello sent: injected frames may follow
+	conn  *websocket.Conn
+	wmu   sync.Mutex
+	mu    sync.Mutex
+	bench bool // subscribed to the bench topic
+	ready bool // hello sent: injected frames may follow
 }
 
-func (c *relayClient) wants(t string) bool {
+func (c *relayClient) wantsBench() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.ready && c.topics[t]
+	return c.ready && c.bench
 }
 
 func (c *relayClient) write(ctx context.Context, b []byte) error {
@@ -42,17 +45,17 @@ func (c *relayClient) write(ctx context.Context, b []byte) error {
 
 type relay struct {
 	upstream string // ws://127.0.0.1:port/ws
-	benchOn  bool
-	revision func() int
-	state    func() map[string]any // bench state document
+
+	// frozen, when set, is the state document of the frozen bench world: its
+	// frames replace the real server's bench frames.
+	frozen atomic.Pointer[func() any]
 
 	mu      sync.Mutex
 	clients map[*relayClient]struct{}
 }
 
-func newRelay(upstreamHTTP string, benchOn bool, revision func() int, state func() map[string]any) *relay {
-	return &relay{upstream: "ws" + strings.TrimPrefix(upstreamHTTP, "http") + "/ws", benchOn: benchOn, revision: revision, state: state,
-		clients: map[*relayClient]struct{}{}}
+func newRelay(upstreamHTTP string) *relay {
+	return &relay{upstream: "ws" + strings.TrimPrefix(upstreamHTTP, "http") + "/ws", clients: map[*relayClient]struct{}{}}
 }
 
 func frame(typ string, data any) []byte {
@@ -60,12 +63,28 @@ func frame(typ string, data any) []byte {
 	return b
 }
 
-// inject sends a mock frame to every client that wants its topic.
-func (rl *relay) inject(typ string, data any) {
-	if typ == "bench" && !rl.benchOn {
+// setFrozen switches the bench frames to a frozen world (state != nil) or
+// back to the real server (state nil, real is its state document), and
+// sends every client the state frame of the world now shown.
+func (rl *relay) setFrozen(state func() any, real func() any) {
+	if state == nil {
+		rl.frozen.Store(nil)
+		rl.broadcastBench(map[string]any{"kind": "state", "state": real()})
 		return
 	}
-	b := frame(typ, data)
+	rl.frozen.Store(&state)
+	rl.broadcastBench(map[string]any{"kind": "state", "state": state()})
+}
+
+// injectFrozen sends a frame of the frozen world, if it is the one shown.
+func (rl *relay) injectFrozen(ev map[string]any) {
+	if rl.frozen.Load() != nil {
+		rl.broadcastBench(ev)
+	}
+}
+
+func (rl *relay) broadcastBench(ev map[string]any) {
+	b := frame("bench", ev)
 	rl.mu.Lock()
 	var cs []*relayClient
 	for c := range rl.clients {
@@ -73,39 +92,24 @@ func (rl *relay) inject(typ string, data any) {
 	}
 	rl.mu.Unlock()
 	for _, c := range cs {
-		if c.wants(typ) {
+		if c.wantsBench() {
 			go c.write(context.Background(), b)
 		}
 	}
 }
 
-// augment adds the mock fields to a frame from the real server.
-func (rl *relay) augment(b []byte) (out []byte, isHello bool) {
-	var f map[string]json.RawMessage
-	if json.Unmarshal(b, &f) != nil {
-		return b, false
+func (rl *relay) frozenState(c *relayClient, ctx context.Context) {
+	if f := rl.frozen.Load(); f != nil && c.wantsBench() {
+		c.write(ctx, frame("bench", map[string]any{"kind": "state", "state": (*f)()}))
 	}
-	var typ string
-	json.Unmarshal(f["type"], &typ)
-	if typ != "hello" && typ != "status" {
-		return b, false
+}
+
+func frameType(b []byte) string {
+	var f struct {
+		Type string `json:"type"`
 	}
-	var data map[string]any
-	if json.Unmarshal(f["data"], &data) != nil || data == nil {
-		return b, typ == "hello"
-	}
-	data["config_revision"] = rl.revision()
-	if typ == "hello" {
-		data["bench"] = map[bool]string{true: "on", false: "off"}[rl.benchOn]
-		topics := []any{}
-		if l, ok := data["topics"].([]any); ok {
-			topics = l
-		}
-		data["topics"] = append(topics, "config")
-	}
-	f["data"], _ = json.Marshal(data)
-	out, _ = json.Marshal(f)
-	return out, typ == "hello"
+	json.Unmarshal(b, &f)
+	return f.Type
 }
 
 func (rl *relay) serveWS(w http.ResponseWriter, r *http.Request) {
@@ -123,7 +127,7 @@ func (rl *relay) serveWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	conn.SetReadLimit(4096)
-	c := &relayClient{conn: conn, topics: map[string]bool{"bench": true, "config": true}}
+	c := &relayClient{conn: conn, bench: true}
 	rl.mu.Lock()
 	rl.clients[c] = struct{}{}
 	rl.mu.Unlock()
@@ -143,18 +147,19 @@ func (rl *relay) serveWS(w http.ResponseWriter, r *http.Request) {
 				cancel()
 				return
 			}
-			b, hello := rl.augment(b)
+			typ := frameType(b)
+			if typ == "bench" && rl.frozen.Load() != nil {
+				continue // DEV-ONLY: a frozen bench scenario shows its own world
+			}
 			if c.write(ctx, b) != nil {
 				cancel()
 				return
 			}
-			if hello {
+			if typ == "hello" {
 				c.mu.Lock()
 				c.ready = true
 				c.mu.Unlock()
-				if rl.benchOn && c.wants("bench") {
-					c.write(ctx, frame("bench", map[string]any{"kind": "state", "state": rl.state()}))
-				}
+				rl.frozenState(c, ctx)
 			}
 		}
 	}()
@@ -164,28 +169,30 @@ func (rl *relay) serveWS(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			break
 		}
+		sendState := false
 		var m struct {
 			Type   string   `json:"type"`
 			Topics []string `json:"topics"`
 		}
 		if json.Unmarshal(b, &m) == nil && m.Type == "subscribe" {
-			next := map[string]bool{}
+			on := false
 			for _, t := range m.Topics {
-				next[t] = true
+				on = on || t == "bench"
 			}
 			c.mu.Lock()
-			prevBench := c.topics["bench"]
-			c.topics = map[string]bool{"bench": next["bench"], "config": next["config"]}
+			was := c.bench
+			c.bench = on
 			c.mu.Unlock()
-			if next["bench"] && !prevBench && rl.benchOn && c.wants("bench") {
-				c.write(ctx, frame("bench", map[string]any{"kind": "state", "state": rl.state()}))
-			}
+			sendState = on && !was
 		}
 		wctx, wcancel := context.WithTimeout(ctx, 10*time.Second)
 		err = up.Write(wctx, typ, b)
 		wcancel()
 		if err != nil {
 			break
+		}
+		if sendState {
+			rl.frozenState(c, ctx)
 		}
 	}
 	up.Close(websocket.StatusNormalClosure, "")

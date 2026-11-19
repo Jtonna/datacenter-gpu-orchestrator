@@ -309,14 +309,7 @@ func (s *scenarioState) handleProfiles(w http.ResponseWriter, r *http.Request) b
 		return false
 	}
 	b.finish()
-	if s.configState != nil {
-		if _, configured := s.configState(); !configured {
-			writeJSON(w, 200, map[string]any{"profiles": []any{}}) // first start: no profiles yet
-			return true
-		}
-	}
-	ps := append([]profileDef(nil), profiles...)
-	sort.Slice(ps, func(i, j int) bool { return ps[i].ID < ps[j].ID })
+	ps := currentProfiles() // the real configuration's (none when nothing is configured)
 	out := []any{}
 	for _, p := range ps {
 		e := map[string]any{"id": p.ID, "kind": "llama", "model": p.Model, "ctx": p.Ctx, "parallel": max(p.Parallel, 1),

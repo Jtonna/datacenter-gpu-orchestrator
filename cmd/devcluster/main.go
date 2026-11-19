@@ -1,21 +1,27 @@
 // Command devcluster is a dev harness for the LLM Scheduler web UI. It runs
-// the REAL api.Server, scheduler and history store against an in-process fake
-// fleet and the fakellama binary, and puts a front in front of it that
+// the REAL server, wired as cmd/llm-scheduler's serve: the configuration
+// service on a real database (seeded through the real import path, then
+// through real REST and MCP writes), the audit log, the scheduler, the
+// history, the benchmark store and manager, the API and MCP at /mcp. Only the
+// fleet (fakefleet, in process) and the llama processes (fakellama) are fakes.
+// A front in front of it
 //
-//   - answers /api/status, /api/profiles and /api/plan from a scripted
-//     scenario (all scenarios but live),
+//   - answers /api/status, /api/profiles, /api/plan and
+//     /api/metrics/activity from a scripted scenario (all scenarios but live;
+//     DEV-ONLY injection, built from the scheduler's own types, profile list
+//     from the real configuration),
 //
-//   - mocks the config, audit and benchmark API that the server does not have
-//     yet (the mock_*.go files),
+//   - in a frozen bench-* scenario, answers /api/bench/... from a snapshot
+//     world run by a second real benchmark manager (bench_frozen.go),
 //
-//   - relays /ws to the real server and adds the mock frames,
+//   - relays /ws to the real server,
 //
-//   - forwards everything else, /ui/ included, to the real server.
+//   - forwards everything else, /mcp and /ui/ included, to the real server.
 //
 //     go run ./cmd/devcluster --listen 127.0.0.1:8790 --scenario demo
 //
-// Control: GET /dev/scenarios, POST /dev/scenario?name=<name>[&reset=1],
-// GET /dev/ready. It is a development tool only; nothing here is shipped.
+// Control: GET /dev/scenarios, POST /dev/scenario?name=<name>, GET /dev/ready.
+// It is a development tool only; nothing here is shipped.
 package main
 
 import (
@@ -29,6 +35,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -36,13 +44,17 @@ import (
 )
 
 type harness struct {
-	c      *cluster
-	st     *scenarioState
-	cfg    *configStore
-	audit  *auditLog
-	engine *benchEngine
-	relay  *relay
-	bare   bool // started with --scenario bare
+	c     *cluster
+	log   *slog.Logger
+	st    *scenarioState
+	relay *relay
+	bare  bool // started with --scenario bare
+
+	seeded  chan struct{} // closed when the startup seed is written
+	seedErr atomic.Pointer[error]
+
+	bmu    sync.Mutex // serializes bench world switches
+	frozen atomic.Pointer[frozenWorld]
 }
 
 func main() {
@@ -72,63 +84,73 @@ func main() {
 		os.Exit(1)
 	}
 
-	h := &harness{st: &scenarioState{}, bare: sc.Name == "bare"}
+	h := &harness{log: log, st: &scenarioState{}, bare: sc.Name == "bare", seeded: make(chan struct{})}
 	h.st.set(sc.Name)
 	fmt.Fprintf(os.Stderr, "devcluster: building fakellama and starting the real scheduler...\n")
-	h.c, err = startCluster(log, !h.bare, h.st.statusSource, func(s *history.Store) { seedHistory(s, time.Now()) })
+	o := clusterOpts{bare: h.bare, statusSource: h.st.statusSource}
+	if !h.bare {
+		o.seedHistory = func(s *history.Store) { seedHistory(s, time.Now()) }
+	}
+	h.c, err = startCluster(log, o)
 	if err != nil {
 		ln.Close()
 		fmt.Fprintf(os.Stderr, "devcluster: %v\n", err)
 		os.Exit(1)
 	}
 	h.st.c = h.c
+	liveProfiles = h.c.profileDefs
+	h.st.configState = func() (int, bool) { return int(h.c.svc.Revision()), h.c.svc.Config().Configured }
+	h.relay = newRelay(h.c.url)
 
-	h.audit = &auditLog{}
-	h.cfg = newConfigStore(h.audit)
-	h.cfg.reset(h.bare)
-	h.st.configState = func() (int, bool) { r := h.cfg.current(); return r, r > 0 }
-	store := newBenchStore()
-	h.engine = newBenchEngine(store)
-	h.relay = newRelay(h.c.url, !h.bare, h.cfg.current, h.engine.stateDoc)
-	h.cfg.notify = func(d map[string]any) { h.relay.inject("config", d) }
-	h.engine.emit = func(ev map[string]any) { h.relay.inject("bench", ev) }
-	h.engine.revision = h.cfg.current
-	if h.c.hist.On() {
-		h.engine.record = h.c.hist.Record
+	if h.bare {
+		close(h.seeded)
+		h.c.benchMgr.Start(h.c.bgCtx)
+	} else {
+		fmt.Fprintf(os.Stderr, "devcluster: seeding the configuration history, benchmarks and suites...\n")
+		if err := seedConfig(h.c, log); err != nil {
+			fmt.Fprintf(os.Stderr, "devcluster: %v\n", err)
+		}
+		if err := seedBenchDefs(h.c); err != nil {
+			fmt.Fprintf(os.Stderr, "devcluster: %v\n", err)
+		}
+		go h.seedRuns()
 	}
-	h.engine.reset(h.bare, sc.Bench, time.Now(), sc.BenchSetup)
-	ba := &benchAPI{store: store, engine: h.engine, cfg: h.cfg}
-	h.cfg.profileRefs = store.profileRefs
+	if sc.Bench != nil {
+		go h.applyBench(sc)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /dev/scenarios", h.listScenarios)
 	mux.HandleFunc("POST /dev/scenario", h.setScenario)
 	mux.HandleFunc("GET /dev/ready", h.ready)
 	mux.HandleFunc("GET /dev/frame", devFrame)
-	h.cfg.routes(mux)
-	mux.HandleFunc("GET /api/audit", h.audit.handle)
-	mux.HandleFunc("GET /api/audit/{id}", h.audit.get)
-	ba.routes(mux)
 	mux.HandleFunc("GET /ws", h.relay.serveWS)
 	mux.HandleFunc("GET /api/status", func(w http.ResponseWriter, r *http.Request) {
 		if !h.st.handleStatus(w, r) {
-			h.c.api.ServeHTTP(w, r)
+			h.c.root.ServeHTTP(w, r)
 		}
 	})
 	mux.HandleFunc("GET /api/metrics/activity", func(w http.ResponseWriter, r *http.Request) {
 		if !h.st.handleActivity(w, r) {
-			h.c.api.ServeHTTP(w, r)
+			h.c.root.ServeHTTP(w, r)
 		}
 	})
 	mux.HandleFunc("GET /api/profiles", func(w http.ResponseWriter, r *http.Request) {
 		if !h.st.handleProfiles(w, r) {
-			h.c.api.ServeHTTP(w, r)
+			h.c.root.ServeHTTP(w, r)
 		}
 	})
 	mux.HandleFunc("POST /api/plan", func(w http.ResponseWriter, r *http.Request) {
 		if !h.st.handlePlan(w, r) {
-			h.c.api.ServeHTTP(w, r)
+			h.c.root.ServeHTTP(w, r)
 		}
+	})
+	mux.HandleFunc("/api/bench/", func(w http.ResponseWriter, r *http.Request) {
+		if fw := h.frozen.Load(); fw != nil { // DEV-ONLY: the frozen scenario's snapshot world
+			fw.ServeHTTP(w, r)
+			return
+		}
+		h.c.root.ServeHTTP(w, r)
 	})
 	if *uiDir == "auto" {
 		*uiDir = defaultUIDir()
@@ -139,7 +161,7 @@ func main() {
 		uiMode = "from disk: " + abs + " (edit and reload, no rebuild)"
 		mux.HandleFunc("GET /ui/", uiDiskHandler(abs))
 	}
-	mux.Handle("/", h.c.api)
+	mux.Handle("/", h.c.root)
 
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
@@ -149,20 +171,22 @@ func main() {
 	}()
 
 	url := "http://" + ln.Addr().String()
-	fmt.Printf("\ndevcluster ready at %s/ui/  (real server underneath at %s)\n", url, h.c.url)
+	fmt.Printf("\ndevcluster ready at %s/ui/  (real server underneath at %s, MCP at %s/mcp)\n", url, h.c.url, url)
 	fmt.Printf("ui: %s\n", uiMode)
-	fmt.Printf("scenario: %s\n\nscenarios (POST %s/dev/scenario?name=<name>[&reset=1]):\n", sc.Name, url)
+	fmt.Printf("scenario: %s\n\nscenarios (POST %s/dev/scenario?name=<name>):\n", sc.Name, url)
 	for _, s := range scenarios {
 		fmt.Printf("  %-20s %s\n", s.Name, s.Description)
 	}
-	fmt.Printf("\nGET %s/dev/ready answers 200 once the fake fleet is live. Ctrl+C stops.\n", url)
+	fmt.Printf("\nGET %s/dev/ready answers 200 once the fake fleet is live and the seed is written. Ctrl+C stops.\n", url)
 	go h.announceReady()
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	<-sig
 	fmt.Fprintln(os.Stderr, "devcluster: stopping...")
-	h.engine.reset(true, "", time.Now())
+	if fw := h.frozen.Swap(nil); fw != nil {
+		fw.close()
+	}
 	h.relay.closeAll()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	if srv.Shutdown(ctx) != nil {
@@ -173,13 +197,72 @@ func main() {
 	fmt.Fprintln(os.Stderr, "devcluster: stopped, temp files removed.")
 }
 
+// seedRuns writes the past benchmark runs, gives the suites their real run
+// options and then starts the real benchmark manager.
+func (h *harness) seedRuns() {
+	defer close(h.seeded)
+	defer h.c.benchMgr.Start(h.c.bgCtx)
+	start := time.Now()
+	err := seedBenchRuns(h.c, h.log)
+	if err == nil {
+		err = seedBenchFinish(h.c)
+	}
+	if err != nil {
+		h.seedErr.Store(&err)
+		fmt.Fprintf(os.Stderr, "devcluster: benchmark seed: %v\n", err)
+		return
+	}
+	fmt.Printf("devcluster: %d past benchmark runs written in %.0f s.\n", len(pastRuns()), time.Since(start).Seconds())
+}
+
+func (h *harness) isSeeded() bool {
+	select {
+	case <-h.seeded:
+		return true
+	default:
+		return false
+	}
+}
+
+// applyBench shows the bench side of a scenario: the real server's, or a
+// frozen world. It waits for the seed (the snapshot needs it).
+func (h *harness) applyBench(sc scenario) error {
+	<-h.seeded
+	h.bmu.Lock()
+	defer h.bmu.Unlock()
+	if cur, _ := h.st.get(); cur.Name != sc.Name { // another scenario was chosen meanwhile
+		return nil
+	}
+	if old := h.frozen.Swap(nil); old != nil {
+		old.close()
+	}
+	if sc.Bench == nil {
+		h.relay.setFrozen(nil, func() any { return h.c.benchMgr.State() })
+		return nil
+	}
+	placeholder := func() any { // drop the real bench frames while the snapshot world starts
+		return map[string]any{"enabled": true, "run": nil, "current": nil, "queue": []any{}, "next_scheduled": []any{}}
+	}
+	h.relay.frozen.Store(&placeholder)
+	fw, err := startFrozen(h.c, h.log, sc.Bench, h.relay.injectFrozen)
+	if err != nil {
+		h.log.Error("frozen bench scenario", "scenario", sc.Name, "err", err)
+		h.relay.setFrozen(nil, func() any { return h.c.benchMgr.State() })
+		return err
+	}
+	fw.settle(6 * time.Second)
+	h.frozen.Store(fw)
+	h.relay.setFrozen(func() any { return fw.mgr.State() }, nil)
+	return nil
+}
+
 func (h *harness) announceReady() {
-	for i := 0; i < 120; i++ {
+	for i := 0; i < 240; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		ok := h.c.ready(ctx)
+		ok := h.c.ready(ctx) && h.isSeeded()
 		cancel()
 		if ok {
-			fmt.Println("devcluster: fleet live, /dev/ready is 200.")
+			fmt.Println("devcluster: fleet live and seed written, /dev/ready is 200.")
 			return
 		}
 		time.Sleep(500 * time.Millisecond)
@@ -190,11 +273,18 @@ func (h *harness) ready(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 	sc, _ := h.st.get()
-	if !h.c.ready(ctx) {
-		writeJSON(w, 503, map[string]any{"ready": false, "scenario": sc.Name})
+	doc := map[string]any{"scenario": sc.Name, "seeded": h.isSeeded(), "frozen_bench": h.frozen.Load() != nil}
+	if e := h.seedErr.Load(); e != nil {
+		doc["seed_error"] = (*e).Error()
+	}
+	live := h.c.ready(ctx)
+	doc["fleet_live"] = live
+	doc["ready"] = live && h.isSeeded() && (sc.Bench == nil || h.frozen.Load() != nil)
+	if doc["ready"] != true {
+		writeJSON(w, 503, doc)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"ready": true, "scenario": sc.Name})
+	writeJSON(w, 200, doc)
 }
 
 func (h *harness) listScenarios(w http.ResponseWriter, r *http.Request) {
@@ -202,7 +292,7 @@ func (h *harness) listScenarios(w http.ResponseWriter, r *http.Request) {
 	list := []any{}
 	for _, s := range scenarios {
 		list = append(list, map[string]any{"name": s.Name, "description": s.Description, "startup_only": s.StartupOnly,
-			"scripted": s.Status != nil, "bench": s.Bench})
+			"scripted": s.Status != nil, "frozen_bench": s.Bench != nil})
 	}
 	writeJSON(w, 200, map[string]any{"current": cur.Name, "started_bare": h.bare, "scenarios": list})
 }
@@ -215,22 +305,28 @@ func (h *harness) setScenario(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if sc.StartupOnly && !h.bare {
-		writeErr(w, 409, fmt.Sprintf("scenario %s only works at startup (history cannot be switched off at runtime): restart with --scenario %s", name, name), "conflict")
+		writeErr(w, 409, fmt.Sprintf("scenario %s only works at startup (it needs an empty database and history off): restart with --scenario %s", name, name), "conflict")
 		return
 	}
-	reset := r.URL.Query().Get("reset") == "1" || r.URL.Query().Get("reset") == "true"
+	if h.bare && sc.Bench != nil {
+		writeErr(w, 409, fmt.Sprintf("scenario %s needs the seeded database; restart without --scenario bare", name), "conflict")
+		return
+	}
 	h.st.set(sc.Name)
 	now := time.Now()
-	h.engine.reset(h.bare, sc.Bench, now, sc.BenchSetup)
-	if reset {
-		h.cfg.reset(h.bare)
-		h.relay.inject("config", map[string]any{"revision": h.cfg.current(), "audit_entry_ids": []int64{}, "section": "multiple", "target": "",
-			"source": "system", "actor": "devcluster"})
-	}
 	if sc.Name == "refused" && h.c.hist.On() {
 		h.recordRefused(now)
 	}
-	writeJSON(w, 200, map[string]any{"scenario": sc.Name, "description": sc.Description, "since": now.UnixMilli(), "reset": reset})
+	doc := map[string]any{"scenario": sc.Name, "description": sc.Description, "since": now.UnixMilli()}
+	if h.isSeeded() {
+		if err := h.applyBench(sc); err != nil {
+			doc["bench_error"] = err.Error()
+		}
+	} else {
+		doc["bench"] = "the benchmark seed is still being written; the bench side follows when it is done"
+		go h.applyBench(sc)
+	}
+	writeJSON(w, 200, doc)
 }
 
 // recordRefused writes the fresh history events the refused scenario promises.
