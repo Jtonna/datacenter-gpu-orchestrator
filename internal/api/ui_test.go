@@ -180,3 +180,21 @@ func TestUIWritesCarrySourceAndActor(t *testing.T) {
 		}
 	}
 }
+
+// Live data comes over the WebSocket only: no view polls on a timer. The two
+// intervals that exist are the one-second clock tick of the store (it redraws
+// "38 min ago", it fetches nothing) and the watchdog of the live channel.
+func TestUIHasNoPollingTimer(t *testing.T) {
+	allowed := map[string]bool{"core/store.js": true, "core/live.js": true}
+	for _, name := range uiFiles(t) {
+		if path.Ext(name) != ".js" {
+			continue
+		}
+		if strings.Contains(uiText(t, name), "setInterval") && !allowed[name] {
+			t.Errorf("%s uses setInterval: refresh on a WebSocket message instead of a timer", name)
+		}
+	}
+	if strings.Contains(uiText(t, "core/store.js"), "api.") || strings.Contains(uiText(t, "core/store.js"), "fetch") {
+		t.Error("core/store.js must not call REST")
+	}
+}
