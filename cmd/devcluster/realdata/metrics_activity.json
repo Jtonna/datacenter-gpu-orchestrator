@@ -1,0 +1,56 @@
+{
+ "data": [
+  {
+   "duration_ms": 3120,
+   "id": 1,
+   "model": "bench-qwen4b-1a-2048",
+   "req_path": "/v1/chat/completions",
+   "resp_status_code": 200,
+   "timestamp": "2026-11-19T08:44:35.922Z",
+   "tokens": {
+    "input_tokens": 22,
+    "output_tokens": 120,
+    "tokens_per_second": 47.918060921170365
+   }
+  },
+  {
+   "duration_ms": 3672,
+   "id": 2,
+   "model": "bench-qwen4b-1a-2048",
+   "req_path": "/v1/chat/completions",
+   "resp_status_code": 200,
+   "timestamp": "2026-11-19T08:44:39.596Z",
+   "tokens": {
+    "input_tokens": 22,
+    "output_tokens": 120,
+    "tokens_per_second": 47.82120175081858
+   }
+  },
+  {
+   "duration_ms": 3121,
+   "id": 3,
+   "model": "bench-qwen4b-1a-2048",
+   "req_path": "/v1/chat/completions",
+   "resp_status_code": 200,
+   "timestamp": "2026-11-19T08:44:42.717Z",
+   "tokens": {
+    "input_tokens": 22,
+    "output_tokens": 120,
+    "tokens_per_second": 47.763925793322684
+   }
+  },
+  {
+   "duration_ms": 3097,
+   "id": 4,
+   "model": "bench-qwen4b-1a-2048",
+   "req_path": "/v1/chat/completions",
+   "resp_status_code": 200,
+   "timestamp": "2026-11-19T08:44:45.815Z",
+   "tokens": {
+    "input_tokens": 22,
+    "output_tokens": 120,
+    "tokens_per_second": 47.92342561478908
+   }
+  }
+ ]
+}

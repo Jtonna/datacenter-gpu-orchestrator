@@ -80,6 +80,9 @@ func (s *scenarioState) realGet(ctx context.Context, path string) (any, error) {
 // statusSource is the /ws status for the real server's hub: the scripted
 // status, or in scenario live the real GET /api/status document.
 func (s *scenarioState) statusSource(ctx context.Context) (any, error) {
+	if sc, _ := s.get(); sc.Raw != nil { // a recorded status, as it was
+		return sc.Raw()
+	}
 	if b := s.scripted(); b != nil {
 		return s.decorate(b.finish()), nil
 	}
@@ -304,16 +307,28 @@ func (s *scenarioState) handlePlan(w http.ResponseWriter, r *http.Request) bool 
 }
 
 func (s *scenarioState) handleProfiles(w http.ResponseWriter, r *http.Request) bool {
+	out := s.profileEntries()
+	if out == nil {
+		return false
+	}
+	writeJSON(w, 200, map[string]any{"profiles": out})
+	return true
+}
+
+// profileEntries is the scripted profile list (the entries of GET
+// /api/profiles); nil in scenario live.
+func (s *scenarioState) profileEntries() []map[string]any {
 	b := s.scripted()
 	if b == nil {
-		return false
+		return nil
 	}
 	b.finish()
 	ps := currentProfiles() // the real configuration's (none when nothing is configured)
-	out := []any{}
+	out := []map[string]any{}
 	for _, p := range ps {
 		e := map[string]any{"id": p.ID, "kind": "llama", "model": p.Model, "ctx": p.Ctx, "parallel": max(p.Parallel, 1),
-			"aliases": nonNil(p.Aliases), "force_nodes": nonNil(p.ForceNodes), "tensor_split": p.TensorSplit, "needs_mib_configured": p.NeedsMiB}
+			"aliases": nonNil(p.Aliases), "force_nodes": nonNil(p.ForceNodes), "tensor_split": p.TensorSplit, "needs_mib_configured": p.NeedsMiB,
+			"generated": api.IsGeneratedProfile(p.ID, p.Generated)}
 		if p.TensorSplit == nil {
 			e["tensor_split"] = []int{}
 		}
@@ -331,8 +346,7 @@ func (s *scenarioState) handleProfiles(w http.ResponseWriter, r *http.Request) b
 		e["plan"] = plan
 		out = append(out, e)
 	}
-	writeJSON(w, 200, map[string]any{"profiles": out})
-	return true
+	return out
 }
 
 func nonNil(s []string) []string {

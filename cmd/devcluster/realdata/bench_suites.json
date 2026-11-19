@@ -1,0 +1,58 @@
+{
+ "suites": [
+  {
+   "benchmarks": [
+    "gemma12b-load-3ps5",
+    "qwen4b-load-requests-1ps5",
+    "devstral-1ps5-refused"
+   ],
+   "cooldown_s": 3,
+   "created_at": 1795077040445,
+   "id": "smoke",
+   "last_run": {
+    "baseline_run_id": "run-20261119T083040-085c9a",
+    "env": {
+     "config_revision": "1",
+     "llama_binary": "llama-server-rpc",
+     "scheduler_version": "v2-eff1011",
+     "workers": [
+      {
+       "node": "alienware-llm"
+      },
+      {
+       "node": "ps5-31bd9dc4",
+       "rpc_server_version": "9958d7ddcab4152720f64df958a876352085dfaf311db66859a6450607ff5ee7"
+      },
+      {
+       "node": "ps5-407c8925",
+       "rpc_server_version": "9958d7ddcab4152720f64df958a876352085dfaf311db66859a6450607ff5ee7"
+      },
+      {
+       "node": "ps5-9032a330",
+       "rpc_server_version": "9958d7ddcab4152720f64df958a876352085dfaf311db66859a6450607ff5ee7"
+      }
+     ]
+    },
+    "finished_at": 1795077891823,
+    "id": "run-20261119T084332-1788b0",
+    "note": "after the refused-outcome fix",
+    "queued_at": 1795077812583,
+    "started_at": 1795077812599,
+    "state": "completed",
+    "suite_id": "smoke",
+    "suite_name": "Smoke test",
+    "summary": {
+     "failed": 0,
+     "passed": 3,
+     "regressions": 0,
+     "steps": 3
+    },
+    "trigger": "manual",
+    "version": "v2-eff1011"
+   },
+   "name": "Smoke test",
+   "source": "api",
+   "updated_at": 1795077040445
+  }
+ ]
+}

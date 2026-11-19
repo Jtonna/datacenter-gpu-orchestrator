@@ -1,0 +1,5 @@
+{
+ "benchmark": "gemma12b-load-3ps5",
+ "metric": "concurrent_wall_s",
+ "points": []
+}

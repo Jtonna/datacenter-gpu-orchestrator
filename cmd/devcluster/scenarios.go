@@ -42,6 +42,10 @@ type scenario struct {
 	StartupOnly bool // selectable only with --scenario at startup
 	Status      func(now time.Time, t time.Duration) *statusBuilder
 	Bench       *frozenSpec
+	// Real marks a scenario that replays the recording of a real scheduler
+	// (real.go); Raw is its status document.
+	Real bool
+	Raw  func() (map[string]any, error)
 }
 
 // registerScenario adds a scenario; a duplicate name panics at startup.

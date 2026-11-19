@@ -1,0 +1,7 @@
+{
+ "exclude_nodes": [
+  "omen-runner",
+  "alienware*"
+ ],
+ "revision": 1
+}

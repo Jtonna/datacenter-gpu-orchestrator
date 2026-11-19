@@ -1,0 +1,772 @@
+{
+ "baseline_run_id": "run-20261119T083040-085c9a",
+ "env": {
+  "config_revision": "1",
+  "llama_binary": "llama-server-rpc",
+  "scheduler_version": "v2-eff1011",
+  "workers": [
+   {
+    "node": "alienware-llm"
+   },
+   {
+    "node": "ps5-31bd9dc4",
+    "rpc_server_version": "9958d7ddcab4152720f64df958a876352085dfaf311db66859a6450607ff5ee7"
+   },
+   {
+    "node": "ps5-407c8925",
+    "rpc_server_version": "9958d7ddcab4152720f64df958a876352085dfaf311db66859a6450607ff5ee7"
+   },
+   {
+    "node": "ps5-9032a330",
+    "rpc_server_version": "9958d7ddcab4152720f64df958a876352085dfaf311db66859a6450607ff5ee7"
+   }
+  ]
+ },
+ "finished_at": 1795077891823,
+ "id": "run-20261119T084332-1788b0",
+ "note": "after the refused-outcome fix",
+ "queued_at": 1795077812583,
+ "started_at": 1795077812599,
+ "state": "completed",
+ "steps": [
+  {
+   "benchmark_id": "gemma12b-load-3ps5",
+   "comparison": {
+    "baseline_run_id": "run-20261119T083040-085c9a",
+    "found": true,
+    "load_s_pct": 0,
+    "regression": false
+   },
+   "expect": {
+    "checks": [
+     {
+      "detail": "the scheduler answered as expected: ready",
+      "name": "outcome",
+      "pass": true
+     },
+     {
+      "detail": "load took 28.1 s, limit 60.0 s",
+      "name": "max_load_s",
+      "pass": true
+     }
+    ],
+    "pass": true
+   },
+   "finished_at": 1795077843764,
+   "id": 4,
+   "idx": 0,
+   "load": {
+    "avg_mb_s": 251,
+    "bytes": 7051790280,
+    "load_s": 28.1,
+    "memory_mib": 7851.58,
+    "nodes": [
+     {
+      "bytes": 2317441658,
+      "memory_mib": 2630.6,
+      "node": "ps5-9032a330"
+     },
+     {
+      "bytes": 2147522794,
+      "memory_mib": 2381,
+      "node": "ps5-31bd9dc4"
+     },
+     {
+      "bytes": 2586825828,
+      "memory_mib": 2840,
+      "node": "ps5-407c8925"
+     }
+    ],
+    "outcome": "ready",
+    "session_id": "ld-1795077812812-3",
+    "source": "history",
+    "workers": [
+     "10.0.0.101:50052",
+     "10.0.0.122:50052",
+     "10.0.0.114:50052"
+    ]
+   },
+   "log_file": "/var/log/llm-children/20261119T084332Z-bench-gemma12b-3-2048-3.log",
+   "model_file": "gemma-4-12b-it-Q4_K_M.gguf",
+   "name": "Gemma 12B load, 3 PS5s",
+   "node_count": 3,
+   "outcome": "ready",
+   "phases": [
+    {
+     "duration_s": 29.097,
+     "finished_at": 1795077841761,
+     "idx": 0,
+     "load": {
+      "avg_mb_s": 251,
+      "bytes": 7051790280,
+      "load_s": 28.1,
+      "memory_mib": 7851.58,
+      "nodes": [
+       {
+        "bytes": 2317441658,
+        "memory_mib": 2630.6,
+        "node": "ps5-9032a330"
+       },
+       {
+        "bytes": 2147522794,
+        "memory_mib": 2381,
+        "node": "ps5-31bd9dc4"
+       },
+       {
+        "bytes": 2586825828,
+        "memory_mib": 2840,
+        "node": "ps5-407c8925"
+       }
+      ],
+      "outcome": "ready",
+      "session_id": "ld-1795077812812-3",
+      "source": "history",
+      "workers": [
+       "10.0.0.101:50052",
+       "10.0.0.122:50052",
+       "10.0.0.114:50052"
+      ]
+     },
+     "outcome": "ok",
+     "started_at": 1795077812664,
+     "state": "done",
+     "type": "load"
+    },
+    {
+     "duration_s": 2.003,
+     "finished_at": 1795077843764,
+     "idx": 1,
+     "outcome": "ok",
+     "started_at": 1795077841761,
+     "state": "done",
+     "type": "unload",
+     "unload": {
+      "gone": true,
+      "unload_s": 2.002,
+      "was_loaded": true
+     }
+    }
+   ],
+   "plan": {
+    "action": "start",
+    "alias": false,
+    "capacity_mib": 0,
+    "fit_need_mib": 8510,
+    "instance": "",
+    "measured": false,
+    "model": "bench-gemma12b-3-2048",
+    "need_basis": "estimated, +5% margin; the estimate is 8104 MiB",
+    "need_mib": 8104,
+    "placement": [
+     {
+      "addr": "10.0.0.101:50052",
+      "budget_mib": 12363,
+      "id": "70:66:2a:a9:a7:65",
+      "local": false,
+      "memory": []
+     },
+     {
+      "addr": "10.0.0.122:50052",
+      "budget_mib": 12402,
+      "id": "c0:15:1b:3d:6a:7a",
+      "local": false,
+      "memory": []
+     },
+     {
+      "addr": "10.0.0.114:50052",
+      "budget_mib": 12231,
+      "id": "0c:70:43:5c:08:0e",
+      "local": false,
+      "memory": []
+     }
+    ],
+    "reason": "",
+    "required_mib": 0,
+    "victims": [],
+    "warning": ""
+   },
+   "profile": "bench-gemma12b-3-2048",
+   "spec": {
+    "description": "Cold load of Gemma 12B across three PS5s, then unload. Measures load time and upload speed.",
+    "expect": {
+     "max_load_s": 60
+    },
+    "id": "gemma12b-load-3ps5",
+    "name": "Gemma 12B load, 3 PS5s",
+    "phases": [
+     {
+      "type": "load"
+     },
+     {
+      "type": "unload"
+     }
+    ],
+    "profile": "bench-gemma12b-3-2048"
+   },
+   "started_at": 1795077812600,
+   "state": "done",
+   "stats": {
+    "failed": 0,
+    "requests": 0
+   }
+  },
+  {
+   "benchmark_id": "qwen4b-load-requests-1ps5",
+   "comparison": {
+    "baseline_run_id": "run-20261119T083040-085c9a",
+    "decode_tps_pct": 0.052981954845119736,
+    "found": true,
+    "load_s_pct": -5.947955390334565,
+    "output_hash_differs": false,
+    "prefill_tps_pct": -0.9768574072291039,
+    "regression": false
+   },
+   "expect": {
+    "checks": [
+     {
+      "detail": "the scheduler answered as expected: ready",
+      "name": "outcome",
+      "pass": true
+     },
+     {
+      "detail": "decode 47.84 tok/s, minimum 35.00",
+      "name": "min_decode_tps",
+      "pass": true
+     }
+    ],
+    "pass": true
+   },
+   "finished_at": 1795077887818,
+   "id": 5,
+   "idx": 1,
+   "load": {
+    "avg_mb_s": 112.9,
+    "bytes": 2857599515,
+    "load_s": 25.3,
+    "memory_mib": 2880.77,
+    "nodes": [
+     {
+      "bytes": 2857599515,
+      "memory_mib": 2880.8,
+      "node": "ps5-9032a330"
+     }
+    ],
+    "outcome": "ready",
+    "session_id": "ld-1795077846896-6",
+    "source": "history",
+    "workers": [
+     "10.0.0.101:50052"
+    ]
+   },
+   "log_file": "/var/log/llm-children/20261119T084406Z-bench-qwen4b-1a-2048-6.log",
+   "model_file": "Qwen_Qwen3.5-4B-Q4_K_M.gguf",
+   "name": "Qwen 4B load and requests, 1 PS5",
+   "node_count": 1,
+   "outcome": "ready",
+   "phases": [
+    {
+     "duration_s": 26.034,
+     "finished_at": 1795077872801,
+     "idx": 0,
+     "load": {
+      "avg_mb_s": 112.9,
+      "bytes": 2857599515,
+      "load_s": 25.3,
+      "memory_mib": 2880.77,
+      "nodes": [
+       {
+        "bytes": 2857599515,
+        "memory_mib": 2880.8,
+        "node": "ps5-9032a330"
+       }
+      ],
+      "outcome": "ready",
+      "session_id": "ld-1795077846896-6",
+      "source": "history",
+      "workers": [
+       "10.0.0.101:50052"
+      ]
+     },
+     "outcome": "ok",
+     "started_at": 1795077846767,
+     "state": "done",
+     "type": "load"
+    },
+    {
+     "duration_s": 3.121,
+     "finished_at": 1795077875923,
+     "idx": 1,
+     "outcome": "ok",
+     "started_at": 1795077872802,
+     "state": "done",
+     "stats": {
+      "decode_tps": {
+       "max": 47.918060921170365,
+       "mean": 47.918060921170365,
+       "median": 47.918060921170365,
+       "min": 47.918060921170365,
+       "n": 1,
+       "stdev": 0
+      },
+      "failed": 0,
+      "output_hashes": {
+       "short": "2f9d381643c0554cfbee9ebd1ecd3bd7256133ced2b89bbd7a1bb0202056fd0a"
+      },
+      "prefill_tps": {
+       "max": 34.58233188663912,
+       "mean": 34.58233188663912,
+       "median": 34.58233188663912,
+       "min": 34.58233188663912,
+       "n": 1,
+       "stdev": 0
+      },
+      "requests": 1,
+      "wall_ms": {
+       "max": 3120.745955,
+       "mean": 3120.745955,
+       "median": 3120.745955,
+       "min": 3120.745955,
+       "n": 1,
+       "stdev": 0
+      }
+     },
+     "type": "warmup"
+    },
+    {
+     "duration_s": 9.893,
+     "finished_at": 1795077885816,
+     "idx": 2,
+     "outcome": "ok",
+     "started_at": 1795077875923,
+     "state": "done",
+     "stats": {
+      "decode_tps": {
+       "max": 47.92342561478908,
+       "mean": 47.836184386310116,
+       "median": 47.82120175081858,
+       "min": 47.763925793322684,
+       "n": 3,
+       "stdev": 0.08079856302346787
+      },
+      "failed": 0,
+      "output_hashes": {
+       "short": "2f9d381643c0554cfbee9ebd1ecd3bd7256133ced2b89bbd7a1bb0202056fd0a"
+      },
+      "prefill_tps": {
+       "max": 36.212084301732254,
+       "mean": 35.68716813318148,
+       "median": 35.86297734437913,
+       "min": 34.986442753433046,
+       "n": 3,
+       "stdev": 0.6314514710456982
+      },
+      "requests": 3,
+      "wall_ms": {
+       "max": 3672.996656,
+       "mean": 3297.2791666666667,
+       "median": 3121.197802,
+       "min": 3097.643042,
+       "n": 3,
+       "stdev": 325.5939657347351
+      }
+     },
+     "type": "requests"
+    },
+    {
+     "duration_s": 2.001,
+     "finished_at": 1795077887817,
+     "idx": 3,
+     "outcome": "ok",
+     "started_at": 1795077885816,
+     "state": "done",
+     "type": "unload",
+     "unload": {
+      "gone": true,
+      "unload_s": 2.001,
+      "was_loaded": true
+     }
+    }
+   ],
+   "plan": {
+    "action": "start",
+    "alias": false,
+    "capacity_mib": 0,
+    "fit_need_mib": 3295,
+    "instance": "",
+    "measured": false,
+    "model": "bench-qwen4b-1a-2048",
+    "need_basis": "estimated, +5% margin; the estimate is 3138 MiB",
+    "need_mib": 3138,
+    "placement": [
+     {
+      "addr": "10.0.0.101:50052",
+      "budget_mib": 12369,
+      "id": "70:66:2a:a9:a7:65",
+      "local": false,
+      "memory": []
+     }
+    ],
+    "reason": "",
+    "required_mib": 0,
+    "victims": [],
+    "warning": ""
+   },
+   "profile": "bench-qwen4b-1a-2048",
+   "requests": [
+    {
+     "decode_tps": 47.918060921170365,
+     "deterministic": true,
+     "id": 5,
+     "name": "short",
+     "output_sha256": "2f9d381643c0554cfbee9ebd1ecd3bd7256133ced2b89bbd7a1bb0202056fd0a",
+     "phase": "warmup",
+     "phase_idx": 1,
+     "predicted_ms": 2483.406,
+     "predicted_n": 120,
+     "prompt_ms": 636.163,
+     "prompt_n": 22,
+     "prompt_tps": 34.58233188663912,
+     "seq": 1,
+     "started_at": 1795077872802,
+     "status": 200,
+     "timings": {
+      "cache_n": 0,
+      "predicted_ms": 2483.406,
+      "predicted_n": 120,
+      "predicted_per_second": 47.918060921170365,
+      "predicted_per_token_ms": 20.868957983193276,
+      "prompt_ms": 636.163,
+      "prompt_n": 22,
+      "prompt_per_second": 34.58233188663912,
+      "prompt_per_token_ms": 28.9165
+     },
+     "wall_ms": 3120.745955
+    },
+    {
+     "decode_tps": 47.82120175081858,
+     "deterministic": true,
+     "id": 6,
+     "name": "short",
+     "output_sha256": "2f9d381643c0554cfbee9ebd1ecd3bd7256133ced2b89bbd7a1bb0202056fd0a",
+     "phase": "measured",
+     "phase_idx": 2,
+     "predicted_ms": 2488.436,
+     "predicted_n": 120,
+     "prompt_ms": 607.532,
+     "prompt_n": 22,
+     "prompt_tps": 36.212084301732254,
+     "seq": 2,
+     "started_at": 1795077875923,
+     "status": 200,
+     "timings": {
+      "cache_n": 0,
+      "predicted_ms": 2488.436,
+      "predicted_n": 120,
+      "predicted_per_second": 47.82120175081858,
+      "predicted_per_token_ms": 20.911226890756303,
+      "prompt_ms": 607.532,
+      "prompt_n": 22,
+      "prompt_per_second": 36.212084301732254,
+      "prompt_per_token_ms": 27.61509090909091
+     },
+     "wall_ms": 3672.996656
+    },
+    {
+     "decode_tps": 47.763925793322684,
+     "deterministic": true,
+     "id": 7,
+     "name": "short",
+     "output_sha256": "2f9d381643c0554cfbee9ebd1ecd3bd7256133ced2b89bbd7a1bb0202056fd0a",
+     "phase": "measured",
+     "phase_idx": 2,
+     "predicted_ms": 2491.42,
+     "predicted_n": 120,
+     "prompt_ms": 628.815,
+     "prompt_n": 22,
+     "prompt_tps": 34.986442753433046,
+     "seq": 3,
+     "started_at": 1795077879596,
+     "status": 200,
+     "timings": {
+      "cache_n": 0,
+      "predicted_ms": 2491.42,
+      "predicted_n": 120,
+      "predicted_per_second": 47.763925793322684,
+      "predicted_per_token_ms": 20.936302521008404,
+      "prompt_ms": 628.815,
+      "prompt_n": 22,
+      "prompt_per_second": 34.986442753433046,
+      "prompt_per_token_ms": 28.582500000000003
+     },
+     "wall_ms": 3121.197802
+    },
+    {
+     "decode_tps": 47.92342561478908,
+     "deterministic": true,
+     "id": 8,
+     "name": "short",
+     "output_sha256": "2f9d381643c0554cfbee9ebd1ecd3bd7256133ced2b89bbd7a1bb0202056fd0a",
+     "phase": "measured",
+     "phase_idx": 2,
+     "predicted_ms": 2483.128,
+     "predicted_n": 120,
+     "prompt_ms": 613.446,
+     "prompt_n": 22,
+     "prompt_tps": 35.86297734437913,
+     "seq": 4,
+     "started_at": 1795077882718,
+     "status": 200,
+     "timings": {
+      "cache_n": 0,
+      "predicted_ms": 2483.128,
+      "predicted_n": 120,
+      "predicted_per_second": 47.92342561478908,
+      "predicted_per_token_ms": 20.8666218487395,
+      "prompt_ms": 613.446,
+      "prompt_n": 22,
+      "prompt_per_second": 35.86297734437913,
+      "prompt_per_token_ms": 27.883909090909093
+     },
+     "wall_ms": 3097.643042
+    }
+   ],
+   "spec": {
+    "description": "Cold load on one PS5, one warm-up, three measured requests, unload.",
+    "expect": {
+     "min_decode_tps": 35
+    },
+    "id": "qwen4b-load-requests-1ps5",
+    "name": "Qwen 4B load and requests, 1 PS5",
+    "phases": [
+     {
+      "type": "load"
+     },
+     {
+      "count": 1,
+      "type": "warmup"
+     },
+     {
+      "repeats": 3,
+      "requests": [
+       {
+        "max_tokens": 120,
+        "name": "short",
+        "prompt": "Explain in three sentences how a suspension bridge carries load."
+       }
+      ],
+      "type": "requests"
+     },
+     {
+      "type": "unload"
+     }
+    ],
+    "profile": "bench-qwen4b-1a-2048"
+   },
+   "started_at": 1795077846766,
+   "state": "done",
+   "stats": {
+    "decode_tps": {
+     "max": 47.92342561478908,
+     "mean": 47.836184386310116,
+     "median": 47.82120175081858,
+     "min": 47.763925793322684,
+     "n": 3,
+     "stdev": 0.08079856302346787
+    },
+    "failed": 0,
+    "output_hashes": {
+     "short": "2f9d381643c0554cfbee9ebd1ecd3bd7256133ced2b89bbd7a1bb0202056fd0a"
+    },
+    "prefill_tps": {
+     "max": 36.212084301732254,
+     "mean": 35.68716813318148,
+     "median": 35.86297734437913,
+     "min": 34.986442753433046,
+     "n": 3,
+     "stdev": 0.6314514710456982
+    },
+    "requests": 3,
+    "wall_ms": {
+     "max": 3672.996656,
+     "mean": 3297.2791666666667,
+     "median": 3121.197802,
+     "min": 3097.643042,
+     "n": 3,
+     "stdev": 325.5939657347351
+    }
+   }
+  },
+  {
+   "benchmark_id": "devstral-1ps5-refused",
+   "comparison": {
+    "baseline_run_id": "run-20261119T083040-085c9a",
+    "found": false,
+    "regression": false
+   },
+   "error": "forced nodes do not fit: profile bench-devstral24b-1a-2048: need 14691 MiB (estimated, +5% margin; the estimate is 13991 MiB), but the nodes it is forced onto have only 12368 MiB usable in total (usable 12368 MiB on ps5-9032a330 (shared memory, headroom kept, from fleet figures)) (defaults.forced_fit_check is reject)",
+   "expect": {
+    "checks": [
+     {
+      "detail": "the scheduler answered as expected: refused",
+      "name": "outcome",
+      "pass": true
+     }
+    ],
+    "pass": true
+   },
+   "finished_at": 1795077891823,
+   "http_status": 503,
+   "id": 6,
+   "idx": 2,
+   "model_file": "Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf",
+   "name": "Devstral 24B on one PS5 is refused",
+   "node_count": 1,
+   "outcome": "refused",
+   "phases": [
+    {
+     "duration_s": 1.002,
+     "error": "forced nodes do not fit: profile bench-devstral24b-1a-2048: need 14691 MiB (estimated, +5% margin; the estimate is 13991 MiB), but the nodes it is forced onto have only 12368 MiB usable in total (usable 12368 MiB on ps5-9032a330 (shared memory, headroom kept, from fleet figures)) (defaults.forced_fit_check is reject)",
+     "finished_at": 1795077891823,
+     "idx": 0,
+     "outcome": "refused",
+     "started_at": 1795077890821,
+     "state": "failed",
+     "type": "load"
+    }
+   ],
+   "plan": {
+    "action": "reject",
+    "alias": false,
+    "capacity_mib": 0,
+    "fit_need_mib": 14691,
+    "instance": "",
+    "measured": false,
+    "model": "bench-devstral24b-1a-2048",
+    "need_basis": "estimated, +5% margin; the estimate is 13991 MiB",
+    "need_mib": 13991,
+    "placement": [
+     {
+      "addr": "10.0.0.101:50052",
+      "budget_mib": 12368,
+      "id": "70:66:2a:a9:a7:65",
+      "local": false,
+      "memory": []
+     }
+    ],
+    "reason": "profile bench-devstral24b-1a-2048: need 14691 MiB (estimated, +5% margin; the estimate is 13991 MiB), but the nodes it is forced onto have only 12368 MiB usable in total (usable 12368 MiB on ps5-9032a330 (shared memory, headroom kept, from fleet figures)) (defaults.forced_fit_check is reject)",
+    "required_mib": 0,
+    "victims": [],
+    "warning": ""
+   },
+   "profile": "bench-devstral24b-1a-2048",
+   "reason": "forced nodes do not fit: profile bench-devstral24b-1a-2048: need 14691 MiB (estimated, +5% margin; the estimate is 13991 MiB), but the nodes it is forced onto have only 12368 MiB usable in total (usable 12368 MiB on ps5-9032a330 (shared memory, headroom kept, from fleet figures)) (defaults.forced_fit_check is reject)",
+   "spec": {
+    "description": "A model that does not fit on one PS5 must be refused before any upload.",
+    "expect": {
+     "outcome": "refused"
+    },
+    "id": "devstral-1ps5-refused",
+    "name": "Devstral 24B on one PS5 is refused",
+    "phases": [
+     {
+      "type": "load"
+     }
+    ],
+    "profile": "bench-devstral24b-1a-2048"
+   },
+   "started_at": 1795077890820,
+   "state": "done",
+   "stats": {
+    "failed": 0,
+    "requests": 0
+   }
+  }
+ ],
+ "suite": {
+  "benchmarks": {
+   "devstral-1ps5-refused": {
+    "description": "A model that does not fit on one PS5 must be refused before any upload.",
+    "expect": {
+     "outcome": "refused"
+    },
+    "id": "devstral-1ps5-refused",
+    "name": "Devstral 24B on one PS5 is refused",
+    "phases": [
+     {
+      "type": "load"
+     }
+    ],
+    "profile": "bench-devstral24b-1a-2048"
+   },
+   "gemma12b-load-3ps5": {
+    "description": "Cold load of Gemma 12B across three PS5s, then unload. Measures load time and upload speed.",
+    "expect": {
+     "max_load_s": 60
+    },
+    "id": "gemma12b-load-3ps5",
+    "name": "Gemma 12B load, 3 PS5s",
+    "phases": [
+     {
+      "type": "load"
+     },
+     {
+      "type": "unload"
+     }
+    ],
+    "profile": "bench-gemma12b-3-2048"
+   },
+   "qwen4b-load-requests-1ps5": {
+    "description": "Cold load on one PS5, one warm-up, three measured requests, unload.",
+    "expect": {
+     "min_decode_tps": 35
+    },
+    "id": "qwen4b-load-requests-1ps5",
+    "name": "Qwen 4B load and requests, 1 PS5",
+    "phases": [
+     {
+      "type": "load"
+     },
+     {
+      "count": 1,
+      "type": "warmup"
+     },
+     {
+      "repeats": 3,
+      "requests": [
+       {
+        "max_tokens": 120,
+        "name": "short",
+        "prompt": "Explain in three sentences how a suspension bridge carries load."
+       }
+      ],
+      "type": "requests"
+     },
+     {
+      "type": "unload"
+     }
+    ],
+    "profile": "bench-qwen4b-1a-2048"
+   }
+  },
+  "suite": {
+   "benchmarks": [
+    "gemma12b-load-3ps5",
+    "qwen4b-load-requests-1ps5",
+    "devstral-1ps5-refused"
+   ],
+   "cooldown_s": 3,
+   "id": "smoke",
+   "name": "Smoke test"
+  }
+ },
+ "suite_id": "smoke",
+ "suite_name": "Smoke test",
+ "summary": {
+  "failed": 0,
+  "passed": 3,
+  "regressions": 0,
+  "steps": 3
+ },
+ "trigger": "manual",
+ "version": "v2-eff1011"
+}

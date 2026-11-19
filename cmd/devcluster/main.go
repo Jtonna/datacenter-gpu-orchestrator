@@ -35,6 +35,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -49,6 +50,8 @@ type harness struct {
 	st    *scenarioState
 	relay *relay
 	bare  bool // started with --scenario bare
+	real  bool // started with a real scenario: the recording is replayed (real.go)
+	rp    *replay
 
 	seeded  chan struct{} // closed when the startup seed is written
 	seedErr atomic.Pointer[error]
@@ -62,7 +65,16 @@ func main() {
 	scen := flag.String("scenario", "demo", "scenario at startup (see GET /dev/scenarios)")
 	verbose := flag.Bool("verbose", false, "log the real server at info level")
 	uiDir := flag.String("ui-dir", "auto", `serve /ui/ from this directory (default: internal/api/ui under the module root when it exists; "" = the embedded files)`)
+	capture := flag.String("capture", "", "record the GET answers of the scheduler at this base URL into cmd/devcluster/realdata (GET only), then exit")
+	captureStatus := flag.String("capture-status", "", "with --capture: record only /api/status, under this file name")
 	flag.Parse()
+	if *capture != "" {
+		if err := runCapture(*capture, *captureStatus); err != nil {
+			fmt.Fprintf(os.Stderr, "devcluster: capture: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	sc, ok := scenarioByName(*scen)
 	if !ok {
@@ -86,9 +98,20 @@ func main() {
 
 	h := &harness{log: log, st: &scenarioState{}, bare: sc.Name == "bare", seeded: make(chan struct{})}
 	h.st.set(sc.Name)
+	if sc.Real {
+		rp, err := loadReplay(time.Now())
+		if err != nil {
+			ln.Close()
+			fmt.Fprintf(os.Stderr, "devcluster: %v\n", err)
+			os.Exit(1)
+		}
+		h.real, h.rp, realReplay = true, rp, rp
+	}
 	fmt.Fprintf(os.Stderr, "devcluster: building fakellama and starting the real scheduler...\n")
 	o := clusterOpts{bare: h.bare, statusSource: h.st.statusSource}
-	if !h.bare {
+	if h.real {
+		o.seedHistory, o.recorded = h.rp.seedHistory, true
+	} else if !h.bare {
 		o.seedHistory = func(s *history.Store) { seedHistory(s, time.Now()) }
 	}
 	h.c, err = startCluster(log, o)
@@ -102,7 +125,10 @@ func main() {
 	h.st.configState = func() (int, bool) { return int(h.c.svc.Revision()), h.c.svc.Config().Configured }
 	h.relay = newRelay(h.c.url)
 
-	if h.bare {
+	if h.real {
+		close(h.seeded) // the recording has its own benchmarks and configuration: nothing is seeded
+		h.relay.setFrozen(func() any { v, _ := h.rp.doc("/api/bench/state"); return v }, nil)
+	} else if h.bare {
 		close(h.seeded)
 		h.c.benchMgr.Start(h.c.bgCtx)
 	} else {
@@ -115,7 +141,7 @@ func main() {
 		}
 		go h.seedRuns()
 	}
-	if sc.Bench != nil {
+	if sc.Bench != nil && !h.real {
 		go h.applyBench(sc)
 	}
 
@@ -137,6 +163,16 @@ func main() {
 	})
 	mux.HandleFunc("GET /api/profiles", func(w http.ResponseWriter, r *http.Request) {
 		if !h.st.handleProfiles(w, r) {
+			h.c.root.ServeHTTP(w, r)
+		}
+	})
+	mux.HandleFunc("GET /api/models", func(w http.ResponseWriter, r *http.Request) {
+		if !h.handleModels(w, r) {
+			h.c.root.ServeHTTP(w, r)
+		}
+	})
+	mux.HandleFunc("GET /api/models/{key...}", func(w http.ResponseWriter, r *http.Request) {
+		if !h.handleModels(w, r) {
 			h.c.root.ServeHTTP(w, r)
 		}
 	})
@@ -163,7 +199,15 @@ func main() {
 	}
 	mux.Handle("/", h.c.root)
 
-	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	var front http.Handler = mux
+	if h.real { // DEV-ONLY: the recording answers before anything else
+		front = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/dev/") || r.URL.Path == "/ws" || !h.serveReal(w, r) {
+				mux.ServeHTTP(w, r)
+			}
+		})
+	}
+	srv := &http.Server{Handler: front, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			fmt.Fprintf(os.Stderr, "devcluster: %v\n", err)
@@ -302,6 +346,15 @@ func (h *harness) setScenario(w http.ResponseWriter, r *http.Request) {
 	sc, ok := scenarioByName(name)
 	if !ok {
 		writeErr(w, 404, fmt.Sprintf("unknown scenario %q: see GET /dev/scenarios", name), "not found")
+		return
+	}
+	if sc.Real != h.real {
+		writeErr(w, 409, "the real scenarios replay a recording loaded at startup: restart with --scenario real to see them, and without it for the scripted ones", "conflict")
+		return
+	}
+	if h.real {
+		h.st.set(sc.Name)
+		writeJSON(w, 200, map[string]any{"scenario": sc.Name, "description": sc.Description, "since": time.Now().UnixMilli()})
 		return
 	}
 	if sc.StartupOnly && !h.bare {

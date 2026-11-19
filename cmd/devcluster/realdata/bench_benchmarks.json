@@ -1,0 +1,76 @@
+{
+ "benchmarks": [
+  {
+   "created_at": 1795076889701,
+   "description": "A model that does not fit on one PS5 must be refused before any upload.",
+   "expect": {
+    "outcome": "refused"
+   },
+   "id": "devstral-1ps5-refused",
+   "name": "Devstral 24B on one PS5 is refused",
+   "phases": [
+    {
+     "type": "load"
+    }
+   ],
+   "profile": "bench-devstral24b-1a-2048",
+   "source": "api",
+   "updated_at": 1795076889701
+  },
+  {
+   "created_at": 1795076889686,
+   "description": "Cold load of Gemma 12B across three PS5s, then unload. Measures load time and upload speed.",
+   "expect": {
+    "max_load_s": 60
+   },
+   "id": "gemma12b-load-3ps5",
+   "name": "Gemma 12B load, 3 PS5s",
+   "phases": [
+    {
+     "type": "load"
+    },
+    {
+     "type": "unload"
+    }
+   ],
+   "profile": "bench-gemma12b-3-2048",
+   "source": "api",
+   "updated_at": 1795076889686
+  },
+  {
+   "created_at": 1795077040437,
+   "description": "Cold load on one PS5, one warm-up, three measured requests, unload.",
+   "expect": {
+    "min_decode_tps": 35
+   },
+   "id": "qwen4b-load-requests-1ps5",
+   "name": "Qwen 4B load and requests, 1 PS5",
+   "phases": [
+    {
+     "type": "load"
+    },
+    {
+     "count": 1,
+     "type": "warmup"
+    },
+    {
+     "repeats": 3,
+     "requests": [
+      {
+       "max_tokens": 120,
+       "name": "short",
+       "prompt": "Explain in three sentences how a suspension bridge carries load."
+      }
+     ],
+     "type": "requests"
+    },
+    {
+     "type": "unload"
+    }
+   ],
+   "profile": "bench-qwen4b-1a-2048",
+   "source": "api",
+   "updated_at": 1795077040437
+  }
+ ]
+}

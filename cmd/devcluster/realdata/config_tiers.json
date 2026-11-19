@@ -1,0 +1,32 @@
+{
+ "revision": 1,
+ "tiers": [
+  {
+   "headroom_mib": 1024,
+   "link_mb_s": 100,
+   "match": {
+    "hostname": "ps5-*"
+   },
+   "priority": 1,
+   "settle": "3s",
+   "shared_memory": true
+  },
+  {
+   "headroom_mib": 256,
+   "link_mb_s": 60,
+   "match": {
+    "hostname": "alienware*"
+   },
+   "priority": 2,
+   "settle": "8s"
+  },
+  {
+   "headroom_mib": 450,
+   "match": {
+    "local": true
+   },
+   "priority": 3,
+   "settle": "2s"
+  }
+ ]
+}

@@ -1,0 +1,17 @@
+{
+ "created_at": 1795076889701,
+ "description": "A model that does not fit on one PS5 must be refused before any upload.",
+ "expect": {
+  "outcome": "refused"
+ },
+ "id": "devstral-1ps5-refused",
+ "name": "Devstral 24B on one PS5 is refused",
+ "phases": [
+  {
+   "type": "load"
+  }
+ ],
+ "profile": "bench-devstral24b-1a-2048",
+ "source": "api",
+ "updated_at": 1795076889701
+}

@@ -71,6 +71,7 @@ type profileDef struct {
 	KVQuant     string
 	FlashAttn   bool
 	TTL         string
+	Generated   *bool
 }
 
 const (
@@ -128,7 +129,7 @@ func (c *cluster) profileDefs() []profileDef {
 	out := []profileDef{}
 	for name, p := range cfg.Profiles {
 		out = append(out, profileDef{ID: name, Model: p.Model, Ctx: p.Ctx, Parallel: p.Parallel, NeedsMiB: p.NeedsMiB, Aliases: p.Aliases,
-			ForceNodes: p.ForceNodes, TensorSplit: p.TensorSplit, KVQuant: p.KVQuant, FlashAttn: p.FlashAttn})
+			ForceNodes: p.ForceNodes, TensorSplit: p.TensorSplit, KVQuant: p.KVQuant, FlashAttn: p.FlashAttn, Generated: p.Generated})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out

@@ -40,3 +40,10 @@ func viaJSON(v any) map[string]any {
 	}
 	return m
 }
+
+// ListModelFiles is the catalog's scan of a models directory: every *.gguf in
+// dir plus the named files, each with its metadata. Not cached.
+func ListModelFiles(dir string, named []string) []ModelFile {
+	var c modelFileCache
+	return c.list(dir, named)
+}

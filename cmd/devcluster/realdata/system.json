@@ -1,0 +1,52 @@
+{
+ "bench": {
+  "enabled": true,
+  "max_run_minutes": 240,
+  "regress_decode_pct": 7,
+  "regress_load_pct": 15
+ },
+ "listen": ":8080",
+ "live_clients": 1,
+ "live_clients_max": 32,
+ "models_dir": "/models",
+ "now": 1795078436666,
+ "origin_policy": "same origin, or an origin on a loopback or private-network address (the live channel has no authentication)",
+ "profiles": 254,
+ "safety": {
+  "estimate_margin": 0.05,
+  "exclude_nodes": 2,
+  "forced_fit_check": "reject",
+  "load_memory_floor_mib": 768,
+  "load_stall_timeout_s": 180,
+  "recovery_actions": [
+   "restart_rpc_server"
+  ],
+  "recovery_enabled": false,
+  "split_skew_margin": 0.15,
+  "worker_probe_interval_s": 0,
+  "worker_silence_s": 30
+ },
+ "started_at": 1795077798404,
+ "storage": {
+  "child_logs": {
+   "bytes": 6208013,
+   "dir": "/var/log/llm-children",
+   "files": 251
+  },
+  "database": {
+   "bytes": 768720,
+   "dir": "/var/lib/llm-scheduler/data",
+   "on": true,
+   "path": "/var/lib/llm-scheduler/data/scheduler.db",
+   "schema_version": 2
+  },
+  "history": {
+   "bytes": 221339,
+   "dir": "/var/lib/llm-scheduler/history",
+   "files": 1,
+   "on": true
+  }
+ },
+ "uptime_s": 638,
+ "version": "v2-eff1011"
+}

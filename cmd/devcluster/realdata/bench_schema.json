@@ -1,0 +1,617 @@
+{
+ "benchmark_options": [
+  {
+   "description": "Lower-case letters, digits, '.', '-' and '_'; up to 64 characters.",
+   "name": "id",
+   "required": true,
+   "type": "string"
+  },
+  {
+   "description": "A readable name (default the id).",
+   "name": "name",
+   "type": "string"
+  },
+  {
+   "description": "What this benchmark does and measures, shown while it runs.",
+   "name": "description",
+   "type": "text"
+  },
+  {
+   "description": "The profile (or alias) of this scheduler to benchmark.",
+   "name": "profile",
+   "required": true,
+   "type": "string"
+  },
+  {
+   "description": "What to do, in order. Without phases the simple form (cold, warmup_requests, requests, repeats, unload_after) is used.",
+   "item_type": "phase",
+   "name": "phases",
+   "type": "list"
+  },
+  {
+   "default": 600,
+   "description": "Limit for the whole benchmark, load and holds included.",
+   "max": 86400,
+   "min": 1,
+   "name": "timeout_s",
+   "type": "integer",
+   "unit": "s"
+  },
+  {
+   "description": "Free tags for filtering.",
+   "item_type": "string",
+   "name": "tags",
+   "type": "list"
+  }
+ ],
+ "expect_keys": [
+  {
+   "description": "What the scheduler should do: ready (default), refused (it declines before loading) or failed (the load fails).",
+   "name": "outcome",
+   "type": "enum"
+  },
+  {
+   "description": "The load must take at most this long.",
+   "name": "max_load_s",
+   "type": "number",
+   "unit": "s"
+  },
+  {
+   "description": "Mean decode speed must be at least this.",
+   "name": "min_decode_tps",
+   "needs": "requests",
+   "type": "number",
+   "unit": "tok/s"
+  },
+  {
+   "description": "Mean prompt-processing speed must be at least this.",
+   "name": "min_prefill_tps",
+   "needs": "requests",
+   "type": "number",
+   "unit": "tok/s"
+  },
+  {
+   "description": "Mean time to first token must be at most this (needs a streamed phase).",
+   "name": "max_ttft_ms",
+   "needs": "requests",
+   "type": "number",
+   "unit": "ms"
+  },
+  {
+   "description": "The first request's output must hash to this (needs temperature 0).",
+   "name": "output_sha256",
+   "needs": "requests",
+   "type": "string"
+  },
+  {
+   "description": "Every turn after the first must reuse at least this many prompt tokens from the cache.",
+   "name": "min_reused_tokens",
+   "needs": "conversation",
+   "type": "integer",
+   "unit": "tokens"
+  },
+  {
+   "description": "All simultaneous requests together must finish within this time.",
+   "name": "max_concurrent_wall_s",
+   "needs": "concurrent_requests",
+   "type": "number",
+   "unit": "s"
+  },
+  {
+   "description": "At most this many simultaneous requests may fail (default: not checked).",
+   "name": "max_errors",
+   "needs": "concurrent_requests",
+   "type": "integer"
+  },
+  {
+   "description": "The instance must be gone within this time of the unload.",
+   "name": "max_unload_s",
+   "needs": "unload",
+   "type": "number",
+   "unit": "s"
+  }
+ ],
+ "limits": {
+  "concurrent": 16,
+  "hold_seconds": 3600,
+  "max_tokens": 65536,
+  "phases": 32,
+  "repeats": 100,
+  "requests": 64,
+  "suite_items": 100,
+  "timeout_s": 86400,
+  "turns": 64,
+  "warmups": 10
+ },
+ "phase_types": [
+  {
+   "description": "Cold load only: unload the profile if it is loaded, then load it without sending any chat request and wait until it is ready.",
+   "options": [
+    {
+     "description": "A name for this phase, shown in the progress view.",
+     "name": "label",
+     "type": "string"
+    }
+   ],
+   "records": [
+    "load_s",
+    "load_bytes",
+    "load_mb_s",
+    "node_bytes",
+    "memory_mib",
+    "plan"
+   ],
+   "title": "Load",
+   "type": "load"
+  },
+  {
+   "description": "Send requests that are recorded but left out of the statistics, so a cold cache does not skew the measured ones.",
+   "options": [
+    {
+     "description": "A name for this phase, shown in the progress view.",
+     "name": "label",
+     "type": "string"
+    },
+    {
+     "default": 1,
+     "description": "How many warm-up requests to send.",
+     "max": 10,
+     "min": 0,
+     "name": "count",
+     "type": "integer"
+    },
+    {
+     "description": "The request to send (default: the first request of the requests phase).",
+     "name": "request",
+     "type": "request"
+    }
+   ],
+   "records": [
+    "decode_tps",
+    "prefill_tps"
+   ],
+   "title": "Warm-up",
+   "type": "warmup"
+  },
+  {
+   "description": "The measured requests: each prompt is sent `repeats` times and statistics are computed over them.",
+   "options": [
+    {
+     "description": "A name for this phase, shown in the progress view.",
+     "name": "label",
+     "type": "string"
+    },
+    {
+     "description": "The prompts or chats to send.",
+     "item_type": "request",
+     "max": 64,
+     "min": 1,
+     "name": "requests",
+     "required": true,
+     "type": "list"
+    },
+    {
+     "default": 1,
+     "description": "How many times each request is sent.",
+     "max": 100,
+     "min": 1,
+     "name": "repeats",
+     "type": "integer"
+    },
+    {
+     "default": false,
+     "description": "Default for requests that do not set it: reuse the cached prompt.",
+     "name": "cache_prompt",
+     "type": "boolean"
+    },
+    {
+     "default": 128,
+     "description": "The most tokens one answer may have.",
+     "max": 65536,
+     "min": 1,
+     "name": "max_tokens",
+     "type": "integer",
+     "unit": "tokens"
+    },
+    {
+     "default": 0,
+     "description": "Sampling temperature; 0 makes the output repeatable, so its hash can be compared between runs.",
+     "max": 2,
+     "min": 0,
+     "name": "temperature",
+     "type": "number"
+    },
+    {
+     "default": 42,
+     "description": "Sampling seed.",
+     "name": "seed",
+     "type": "integer"
+    },
+    {
+     "default": false,
+     "description": "Stream the answer, which also measures the time to first token.",
+     "name": "stream",
+     "type": "boolean"
+    }
+   ],
+   "records": [
+    "decode_tps",
+    "prefill_tps",
+    "ttft_ms",
+    "wall_ms",
+    "output_sha256"
+   ],
+   "title": "Requests",
+   "type": "requests"
+  },
+  {
+   "description": "A multi-turn exchange: each turn is sent with all earlier turns and the model's replies, which measures how much of the prompt the server reuses.",
+   "options": [
+    {
+     "description": "A name for this phase, shown in the progress view.",
+     "name": "label",
+     "type": "string"
+    },
+    {
+     "description": "An optional system message that starts the conversation.",
+     "name": "system",
+     "type": "text"
+    },
+    {
+     "description": "The user's messages, in order.",
+     "item_type": "turn",
+     "max": 64,
+     "min": 1,
+     "name": "turns",
+     "required": true,
+     "type": "list"
+    },
+    {
+     "default": true,
+     "description": "Let the server reuse the cached earlier turns.",
+     "name": "cache_prompt",
+     "type": "boolean"
+    },
+    {
+     "default": 128,
+     "description": "The most tokens one answer may have.",
+     "max": 65536,
+     "min": 1,
+     "name": "max_tokens",
+     "type": "integer",
+     "unit": "tokens"
+    },
+    {
+     "default": 0,
+     "description": "Sampling temperature; 0 makes the output repeatable, so its hash can be compared between runs.",
+     "max": 2,
+     "min": 0,
+     "name": "temperature",
+     "type": "number"
+    },
+    {
+     "default": 42,
+     "description": "Sampling seed.",
+     "name": "seed",
+     "type": "integer"
+    },
+    {
+     "default": false,
+     "description": "Stream the answer, which also measures the time to first token.",
+     "name": "stream",
+     "type": "boolean"
+    }
+   ],
+   "records": [
+    "decode_tps",
+    "prefill_tps",
+    "ttft_ms",
+    "prompt_tokens",
+    "reused_tokens",
+    "wall_ms"
+   ],
+   "title": "Conversation",
+   "type": "conversation"
+  },
+  {
+   "description": "Keep the model loaded and idle for a while, then send one request to see how it behaves after the idle time.",
+   "options": [
+    {
+     "description": "A name for this phase, shown in the progress view.",
+     "name": "label",
+     "type": "string"
+    },
+    {
+     "default": 60,
+     "description": "How long to stay idle.",
+     "max": 3600,
+     "min": 1,
+     "name": "seconds",
+     "type": "integer",
+     "unit": "s"
+    },
+    {
+     "description": "The request sent afterwards (default: the first request of the requests phase).",
+     "name": "request",
+     "type": "request"
+    }
+   ],
+   "records": [
+    "held_s",
+    "decode_tps",
+    "prefill_tps",
+    "ttft_ms"
+   ],
+   "title": "Hold",
+   "type": "hold"
+  },
+  {
+   "description": "Send n requests to the same profile at the same moment and record each one's wait and decode speed, the total time and the errors.",
+   "options": [
+    {
+     "description": "A name for this phase, shown in the progress view.",
+     "name": "label",
+     "type": "string"
+    },
+    {
+     "default": 2,
+     "description": "How many requests to send together.",
+     "max": 16,
+     "min": 2,
+     "name": "n",
+     "type": "integer"
+    },
+    {
+     "description": "The request every one of them sends (default: the first request of the requests phase).",
+     "name": "request",
+     "type": "request"
+    }
+   ],
+   "records": [
+    "wall_s",
+    "wait_ms",
+    "decode_tps",
+    "errors"
+   ],
+   "title": "Simultaneous requests",
+   "type": "concurrent_requests"
+  },
+  {
+   "description": "Unload the profile and record how long it takes until the instance is gone.",
+   "options": [
+    {
+     "description": "A name for this phase, shown in the progress view.",
+     "name": "label",
+     "type": "string"
+    }
+   ],
+   "records": [
+    "unload_s"
+   ],
+   "title": "Unload",
+   "type": "unload"
+  }
+ ],
+ "request_options": [
+  {
+   "description": "A short label for the request (default request-N).",
+   "name": "name",
+   "type": "string"
+  },
+  {
+   "description": "The prompt, sent as one user message. Give this or messages.",
+   "name": "prompt",
+   "type": "text"
+  },
+  {
+   "description": "A full chat: a list of {role, content}. Give this or prompt.",
+   "item_type": "message",
+   "name": "messages",
+   "type": "list"
+  },
+  {
+   "default": false,
+   "description": "Let the server reuse the cached prompt; off means every request does its full prefill.",
+   "name": "cache_prompt",
+   "type": "boolean"
+  },
+  {
+   "default": 128,
+   "description": "The most tokens one answer may have.",
+   "max": 65536,
+   "min": 1,
+   "name": "max_tokens",
+   "type": "integer",
+   "unit": "tokens"
+  },
+  {
+   "default": 0,
+   "description": "Sampling temperature; 0 makes the output repeatable, so its hash can be compared between runs.",
+   "max": 2,
+   "min": 0,
+   "name": "temperature",
+   "type": "number"
+  },
+  {
+   "default": 42,
+   "description": "Sampling seed.",
+   "name": "seed",
+   "type": "integer"
+  },
+  {
+   "default": false,
+   "description": "Stream the answer, which also measures the time to first token.",
+   "name": "stream",
+   "type": "boolean"
+  }
+ ],
+ "templates": [
+  {
+   "benchmark": {
+    "description": "Cold load, then unload. Measures load time and upload rate only.",
+    "id": "load-only-example",
+    "name": "Load only",
+    "phases": [
+     {
+      "type": "load"
+     },
+     {
+      "type": "unload"
+     }
+    ],
+    "profile": "your-profile"
+   },
+   "description": "Measures just the cold load of a profile: how long it takes, how many bytes go to which worker and how much memory it uses. No chat request is sent.",
+   "id": "load-only",
+   "name": "Load only"
+  },
+  {
+   "benchmark": {
+    "description": "Cold load, a warm-up and 3 measured requests.",
+    "id": "load-and-requests-example",
+    "name": "Load and requests",
+    "phases": [
+     {
+      "type": "load"
+     },
+     {
+      "count": 1,
+      "request": {
+       "max_tokens": 16,
+       "name": "hello",
+       "prompt": "Say hello in five words."
+      },
+      "type": "warmup"
+     },
+     {
+      "max_tokens": 128,
+      "repeats": 3,
+      "requests": [
+       {
+        "name": "explain",
+        "prompt": "Explain in two sentences what a GPU does."
+       }
+      ],
+      "type": "requests"
+     },
+     {
+      "type": "unload"
+     }
+    ],
+    "profile": "your-profile"
+   },
+   "description": "A cold load, one warm-up, then measured requests repeated several times, then unload.",
+   "id": "load-and-requests",
+   "name": "Load and requests"
+  },
+  {
+   "benchmark": {
+    "description": "Cold load, then a 3-turn conversation with prompt caching.",
+    "id": "load-and-conversation-example",
+    "name": "Load and conversation",
+    "phases": [
+     {
+      "type": "load"
+     },
+     {
+      "max_tokens": 96,
+      "stream": true,
+      "system": "You are a concise assistant.",
+      "turns": [
+       {
+        "content": "Name three uses of a hash table."
+       },
+       {
+        "content": "Give a one-line example of the second one."
+       },
+       {
+        "content": "Now summarise our conversation in one sentence."
+       }
+      ],
+      "type": "conversation"
+     },
+     {
+      "type": "unload"
+     }
+    ],
+    "profile": "your-profile"
+   },
+   "description": "A cold load followed by a multi-turn conversation, to see prefill, decode and how much of the earlier turns the server reuses.",
+   "id": "load-and-conversation",
+   "name": "Load and conversation"
+  },
+  {
+   "benchmark": {
+    "description": "Measured requests only; leaves the model loaded.",
+    "id": "requests-on-loaded-example",
+    "name": "Requests on a loaded model",
+    "phases": [
+     {
+      "max_tokens": 128,
+      "repeats": 5,
+      "requests": [
+       {
+        "name": "explain",
+        "prompt": "Explain in two sentences what a GPU does."
+       }
+      ],
+      "type": "requests"
+     }
+    ],
+    "profile": "your-profile"
+   },
+   "description": "No load and no unload: sends requests to whatever is loaded (the model is loaded first if it is not).",
+   "id": "requests-on-loaded",
+   "name": "Requests on a loaded model"
+  },
+  {
+   "benchmark": {
+    "description": "Cold load, then 4 requests at the same moment.",
+    "id": "simultaneous-requests-example",
+    "name": "Simultaneous requests",
+    "phases": [
+     {
+      "type": "load"
+     },
+     {
+      "n": 4,
+      "request": {
+       "max_tokens": 32,
+       "name": "hello",
+       "prompt": "Say hello in ten words."
+      },
+      "type": "concurrent_requests"
+     },
+     {
+      "type": "unload"
+     }
+    ],
+    "profile": "your-profile"
+   },
+   "description": "Loads the model, then fires several identical requests at once to see how the scheduler and the model share the time.",
+   "id": "simultaneous-requests",
+   "name": "Simultaneous requests"
+  }
+ ],
+ "turn_options": [
+  {
+   "description": "A short label for the turn (default turn-N).",
+   "name": "name",
+   "type": "string"
+  },
+  {
+   "description": "What the user says in this turn.",
+   "name": "content",
+   "required": true,
+   "type": "text"
+  },
+  {
+   "description": "Overrides the phase's max_tokens for this turn.",
+   "max": 65536,
+   "min": 1,
+   "name": "max_tokens",
+   "type": "integer",
+   "unit": "tokens"
+  }
+ ]
+}

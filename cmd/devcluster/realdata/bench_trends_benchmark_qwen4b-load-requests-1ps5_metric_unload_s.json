@@ -1,0 +1,16 @@
+{
+ "benchmark": "qwen4b-load-requests-1ps5",
+ "metric": "unload_s",
+ "points": [
+  {
+   "run_id": "run-20261119T083040-085c9a",
+   "started_at": 1795077040458,
+   "value": 2.002
+  },
+  {
+   "run_id": "run-20261119T084332-1788b0",
+   "started_at": 1795077812599,
+   "value": 2.001
+  }
+ ]
+}

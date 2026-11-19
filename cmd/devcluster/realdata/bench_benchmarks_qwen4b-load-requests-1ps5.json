@@ -1,0 +1,35 @@
+{
+ "created_at": 1795077040437,
+ "description": "Cold load on one PS5, one warm-up, three measured requests, unload.",
+ "expect": {
+  "min_decode_tps": 35
+ },
+ "id": "qwen4b-load-requests-1ps5",
+ "name": "Qwen 4B load and requests, 1 PS5",
+ "phases": [
+  {
+   "type": "load"
+  },
+  {
+   "count": 1,
+   "type": "warmup"
+  },
+  {
+   "repeats": 3,
+   "requests": [
+    {
+     "max_tokens": 120,
+     "name": "short",
+     "prompt": "Explain in three sentences how a suspension bridge carries load."
+    }
+   ],
+   "type": "requests"
+  },
+  {
+   "type": "unload"
+  }
+ ],
+ "profile": "bench-qwen4b-1a-2048",
+ "source": "api",
+ "updated_at": 1795077040437
+}

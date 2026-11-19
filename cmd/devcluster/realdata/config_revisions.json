@@ -1,0 +1,12 @@
+{
+ "current": 1,
+ "revisions": [
+  {
+   "actor": "load-balancer-agent",
+   "comment": "migration from config.yaml (v1 test deployment)",
+   "revision": 1,
+   "source": "import",
+   "ts": 1795076791322
+  }
+ ]
+}

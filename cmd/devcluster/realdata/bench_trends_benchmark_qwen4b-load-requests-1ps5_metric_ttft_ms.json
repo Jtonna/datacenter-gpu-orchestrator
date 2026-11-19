@@ -1,0 +1,5 @@
+{
+ "benchmark": "qwen4b-load-requests-1ps5",
+ "metric": "ttft_ms",
+ "points": []
+}

@@ -10,8 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/api"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/bench"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/benchspec"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
 )
 
 var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -219,4 +221,65 @@ func TestHarness(t *testing.T) {
 		t.Fatalf("mcp: %v %v", err, resp)
 	}
 	resp.Body.Close()
+}
+
+// The recording of the real cluster is complete enough to replay: the index
+// names files that exist and parse, the profile list is the large real one,
+// and the catalog built from it has one entry per model file, none of them a
+// generated configuration.
+func TestRealRecordingReplays(t *testing.T) {
+	start := time.Now()
+	rp, err := loadReplay(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"/api/status", "/api/profiles", "/api/config", "/api/config/schema", "/api/history", "/api/audit", "/api/system",
+		"/api/bench/state", "/api/bench/runs", "/api/bench/aggregates"} {
+		if _, ok := rp.doc(key); !ok {
+			t.Errorf("the recording has no %s", key)
+		}
+	}
+	ps := rp.profiles()
+	if len(ps) < 100 {
+		t.Fatalf("only %d profiles in the recording", len(ps))
+	}
+	for _, f := range []string{"status.json", "status-loading.json"} {
+		st, err := rp.status(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		at, _ := time.Parse(time.RFC3339Nano, st["time"].(string))
+		if d := time.Since(at); d < -time.Minute || d > time.Minute {
+			t.Errorf("%s: its time %v was not moved to now", f, at)
+		}
+	}
+	// timestamps age with the harness: the newest recorded event is as old as it was at the recording
+	hv, _ := rp.doc("/api/history")
+	newest := hv.(map[string]any)["events"].([]any)[0].(map[string]any)["ts"].(float64)
+	if age := float64(start.UnixMilli()) - newest; age < 0 || age > 3*3600e3 {
+		t.Errorf("the newest recorded event is %v ms old after the shift", age)
+	}
+	status, _ := rp.status("status.json")
+	in := api.CatalogInput{Status: status, Profiles: ps, HistoryOn: true}
+	b, _ := json.Marshal(hv)
+	var doc struct{ Events []history.Event }
+	json.Unmarshal(b, &doc)
+	in.Events, in.Files = doc.Events, rp.modelFiles(doc.Events)
+	models := api.BuildModelCatalog(in, "")
+	if len(models) < 5 || len(models) > 40 {
+		t.Fatalf("%d models from %d profiles", len(models), len(ps))
+	}
+	total := 0
+	for _, m := range models {
+		total += m["profile_count"].(int)
+		if strings.HasPrefix(m["key"].(string), "bench-") {
+			t.Errorf("a profile is listed as a model: %v", m["key"])
+		}
+	}
+	if total != len(ps) {
+		t.Errorf("the models hold %d profiles, the recording %d", total, len(ps))
+	}
+	if p, ok := rp.plan(ps[0]["id"].(string), status); !ok || p["action"] == nil || p["need_basis"] == nil {
+		t.Errorf("derived plan: %v", p)
+	}
 }

@@ -124,6 +124,9 @@ type clusterOpts struct {
 	bare         bool
 	statusSource func(ctx context.Context) (any, error)
 	seedHistory  func(*history.Store)
+	// recorded: the history is a recording (scenario real); the harness's own
+	// start is not written into it.
+	recorded bool
 }
 
 // startCluster builds everything and starts the real server on its own
@@ -244,10 +247,12 @@ func startCluster(log *slog.Logger, o clusterOpts) (*cluster, error) {
 	if c.hist.On() && o.seedHistory != nil {
 		o.seedHistory(c.hist)
 	}
-	c.hist.Record(history.Event{Ts: time.Now().UnixMilli(), Type: history.TSchedulerStarted, Severity: history.Info,
-		Data: map[string]any{"version": devVersion, "profiles": len(cfg.Profiles), "listen": cfg.Listen, "safety": safetySummary(cfg),
-			"history": map[string]any{"max_file_mib": cfg.HistoryMaxFileMiB, "keep_files": cfg.HistoryKeepFiles, "memory_events": cfg.HistoryMemoryEvents}},
-		Summary: fmt.Sprintf("llm-scheduler %s started with %d profiles.", devVersion, len(cfg.Profiles))})
+	if !o.recorded {
+		c.hist.Record(history.Event{Ts: time.Now().UnixMilli(), Type: history.TSchedulerStarted, Severity: history.Info,
+			Data: map[string]any{"version": devVersion, "profiles": len(cfg.Profiles), "listen": cfg.Listen, "safety": safetySummary(cfg),
+				"history": map[string]any{"max_file_mib": cfg.HistoryMaxFileMiB, "keep_files": cfg.HistoryKeepFiles, "memory_events": cfg.HistoryMemoryEvents}},
+			Summary: fmt.Sprintf("llm-scheduler %s started with %d profiles.", devVersion, len(cfg.Profiles))})
+	}
 
 	serverBin := cfg.Defaults.ServerBin
 	if o.bare {

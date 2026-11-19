@@ -1,0 +1,13 @@
+{
+ "benchmarks": [
+  "gemma12b-load-3ps5",
+  "qwen4b-load-requests-1ps5",
+  "devstral-1ps5-refused"
+ ],
+ "cooldown_s": 3,
+ "created_at": 1795077040445,
+ "id": "smoke",
+ "name": "Smoke test",
+ "source": "api",
+ "updated_at": 1795077040445
+}

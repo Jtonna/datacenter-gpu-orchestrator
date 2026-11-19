@@ -1,0 +1,286 @@
+{
+ "backoffs": [],
+ "config_revision": 1,
+ "configured": true,
+ "instances": [
+  {
+   "addr": "127.0.0.1:5800",
+   "cmd": "llama-server-rpc --host 127.0.0.1 --port 5800 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 2048 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.101:50052,10.0.0.122:50052,10.0.0.114:50052 --device RPC0,RPC1,RPC2 --tensor-split 33,33,34",
+   "created": "2026-11-19T08:43:32.664Z",
+   "device_total_mib": 6776.849999999999,
+   "host_memory": [
+    {
+     "compute_mib": 0,
+     "kv_mib": 0,
+     "model_mib": 540,
+     "name": "CPU_Mapped",
+     "total_mib": 540
+    }
+   ],
+   "in_flight": 0,
+   "last_used": null,
+   "load": {
+    "bytes_sent": 6934098288,
+    "bytes_total": 7121861440,
+    "elapsed_s": 26.3,
+    "eta_s": 1,
+    "progress": 0.9736,
+    "session_id": "ld-1795077812812-3",
+    "source": "measured",
+    "started_at": 1795077812812,
+    "workers": [
+     {
+      "addr": "10.0.0.101:50052",
+      "bytes_sent": 2317441658,
+      "bytes_total": 2317342474,
+      "state": "done"
+     },
+     {
+      "addr": "10.0.0.122:50052",
+      "bytes_sent": 2147522794,
+      "bytes_total": 2147431219,
+      "state": "done"
+     },
+     {
+      "addr": "10.0.0.114:50052",
+      "bytes_sent": 2469133836,
+      "bytes_total": 2641268572,
+      "state": "receiving"
+     }
+    ]
+   },
+   "load_bytes_sent": 6934098288,
+   "load_bytes_total": 7121861440,
+   "load_deadline": "2026-11-19T09:43:32.812Z",
+   "load_duration": 0,
+   "load_elapsed_s": 26.5,
+   "load_eta_s": 1,
+   "load_progress": 0.9736,
+   "load_progress_source": "measured",
+   "log_file": "/var/log/llm-children/20261119T084332Z-bench-gemma12b-3-2048-3.log",
+   "model_file": "gemma-4-12b-it-Q4_K_M.gguf",
+   "nodes": [
+    {
+     "addr": "10.0.0.101:50052",
+     "budget_mib": 12363,
+     "id": "70:66:2a:a9:a7:65",
+     "local": false,
+     "memory": [
+      {
+       "compute_mib": 0,
+       "kv_mib": 0,
+       "model_mib": 2209.99,
+       "name": "RPC0[10.0.0.101:50052]",
+       "total_mib": 2209.99
+      }
+     ]
+    },
+    {
+     "addr": "10.0.0.122:50052",
+     "budget_mib": 12402,
+     "id": "c0:15:1b:3d:6a:7a",
+     "local": false,
+     "memory": [
+      {
+       "compute_mib": 0,
+       "kv_mib": 0,
+       "model_mib": 2047.95,
+       "name": "RPC0[10.0.0.122:50052]",
+       "total_mib": 2047.95
+      }
+     ]
+    },
+    {
+     "addr": "10.0.0.114:50052",
+     "budget_mib": 12231,
+     "id": "0c:70:43:5c:08:0e",
+     "local": false,
+     "memory": [
+      {
+       "compute_mib": 0,
+       "kv_mib": 0,
+       "model_mib": 2518.91,
+       "name": "RPC0[10.0.0.114:50052]",
+       "total_mib": 2518.91
+      }
+     ]
+    }
+   ],
+   "phase": "loading",
+   "profile": "bench-gemma12b-3-2048",
+   "ready_since": null,
+   "requests_served": 0,
+   "running_state": "starting",
+   "stale_profile": false,
+   "state": "starting",
+   "unmatched": [],
+   "victim_of": "",
+   "waiters": 1
+  }
+ ],
+ "last_refusals": [],
+ "learned_needs": {},
+ "quarantines": [],
+ "queue": [],
+ "recent_loads": [],
+ "shutting_down": false,
+ "time": "2026-11-19T08:43:59.142Z",
+ "view": {
+  "age": 0.017801809,
+  "connected": true,
+  "nodes": [
+   {
+    "addr": "10.0.0.114:50052",
+    "claimed_by": "",
+    "eligible": true,
+    "empty_mib": 14438,
+    "excluded": false,
+    "free_mib": 14899,
+    "health": {
+     "channels": {
+      "heartbeat": "ok",
+      "probe": "unknown",
+      "upload": "ok"
+     },
+     "silent_for_s": {},
+     "since": 1795077812812,
+     "state": "ok"
+    },
+    "holder": "bench-gemma12b-3-2048",
+    "hostname": "ps5-407c8925",
+    "id": "0c:70:43:5c:08:0e",
+    "live_budget_mib": 9701,
+    "local": false,
+    "missing_since": null,
+    "online": true,
+    "override_free_mib": 14899,
+    "override_until": "2026-11-19T08:53:32.811Z",
+    "plan_budget_mib": 13414,
+    "priority": 1,
+    "quarantined": null,
+    "rpc_server_mem_mib": 86.38,
+    "rpc_server_version": "9958d7ddcab4152720f64df958a876352085dfaf311db66859a6450607ff5ee7",
+    "settle_until": null,
+    "settling": "",
+    "total_mib": 14438
+   },
+   {
+    "addr": "10.0.0.101:50052",
+    "claimed_by": "",
+    "eligible": true,
+    "empty_mib": 14438,
+    "excluded": false,
+    "free_mib": 14872,
+    "health": {
+     "channels": {
+      "heartbeat": "ok",
+      "probe": "unknown",
+      "upload": "unknown"
+     },
+     "silent_for_s": {},
+     "since": 1795077812812,
+     "state": "ok"
+    },
+    "holder": "bench-gemma12b-3-2048",
+    "hostname": "ps5-9032a330",
+    "id": "70:66:2a:a9:a7:65",
+    "live_budget_mib": 10331,
+    "local": false,
+    "missing_since": null,
+    "online": true,
+    "override_free_mib": 14872,
+    "override_until": "2026-11-19T08:53:32.811Z",
+    "plan_budget_mib": 13414,
+    "priority": 1,
+    "quarantined": null,
+    "rpc_server_mem_mib": 103.91,
+    "rpc_server_version": "9958d7ddcab4152720f64df958a876352085dfaf311db66859a6450607ff5ee7",
+    "settle_until": null,
+    "settling": "",
+    "total_mib": 14438
+   },
+   {
+    "addr": "10.0.0.3:50052",
+    "claimed_by": "",
+    "eligible": false,
+    "empty_mib": 8192,
+    "excluded": true,
+    "free_mib": 7854,
+    "holder": "",
+    "hostname": "alienware-llm",
+    "id": "b4:45:06:ca:2c:8f",
+    "live_budget_mib": 7598,
+    "local": false,
+    "missing_since": null,
+    "online": true,
+    "override_free_mib": 0,
+    "override_until": null,
+    "plan_budget_mib": 7936,
+    "priority": 2,
+    "quarantined": null,
+    "settle_until": null,
+    "settling": "",
+    "total_mib": 8192
+   },
+   {
+    "addr": "10.0.0.122:50052",
+    "claimed_by": "",
+    "eligible": true,
+    "empty_mib": 14438,
+    "excluded": false,
+    "free_mib": 14874,
+    "health": {
+     "channels": {
+      "heartbeat": "ok",
+      "probe": "unknown",
+      "upload": "unknown"
+     },
+     "silent_for_s": {},
+     "since": 1795077812812,
+     "state": "ok"
+    },
+    "holder": "bench-gemma12b-3-2048",
+    "hostname": "ps5-31bd9dc4",
+    "id": "c0:15:1b:3d:6a:7a",
+    "live_budget_mib": 10387,
+    "local": false,
+    "missing_since": null,
+    "online": true,
+    "override_free_mib": 14874,
+    "override_until": "2026-11-19T08:53:32.811Z",
+    "plan_budget_mib": 13414,
+    "priority": 1,
+    "quarantined": null,
+    "rpc_server_mem_mib": 94.69,
+    "rpc_server_version": "9958d7ddcab4152720f64df958a876352085dfaf311db66859a6450607ff5ee7",
+    "settle_until": null,
+    "settling": "",
+    "total_mib": 14438
+   },
+   {
+    "addr": "",
+    "claimed_by": "",
+    "eligible": false,
+    "empty_mib": 8151,
+    "excluded": true,
+    "free_mib": 8141,
+    "holder": "",
+    "hostname": "omen-runner",
+    "id": "omen-runner",
+    "live_budget_mib": 7691,
+    "local": true,
+    "missing_since": null,
+    "online": true,
+    "override_free_mib": 0,
+    "override_until": null,
+    "plan_budget_mib": 7701,
+    "priority": 3,
+    "quarantined": null,
+    "settle_until": null,
+    "settling": "",
+    "total_mib": 8151
+   }
+  ],
+  "stale": false
+ }
+}

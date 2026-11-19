@@ -1,0 +1,20 @@
+{
+ "created_at": 1795076889686,
+ "description": "Cold load of Gemma 12B across three PS5s, then unload. Measures load time and upload speed.",
+ "expect": {
+  "max_load_s": 60
+ },
+ "id": "gemma12b-load-3ps5",
+ "name": "Gemma 12B load, 3 PS5s",
+ "phases": [
+  {
+   "type": "load"
+  },
+  {
+   "type": "unload"
+  }
+ ],
+ "profile": "bench-gemma12b-3-2048",
+ "source": "api",
+ "updated_at": 1795076889686
+}
