@@ -1,11 +1,13 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,10 +31,16 @@ const (
 	TopicBench  = "bench"
 	TopicConfig = "config"
 	TopicPing   = "ping"
+	// TopicModels carries the model catalog: the whole document of GET
+	// /api/models when a client subscribes, then {version, base, changed,
+	// removed, order} when entries change. A client asks for it by name; it is
+	// not among the topics a new connection gets by default, so a client that
+	// does not know it never receives the large first frame.
+	TopicModels = "models"
 )
 
 // subscribable are the topics a client can switch on and off; hello and ping always arrive.
-var subscribable = map[string]bool{TopicStatus: true, TopicEvent: true, TopicBench: true, TopicConfig: true}
+var subscribable = map[string]bool{TopicStatus: true, TopicEvent: true, TopicBench: true, TopicConfig: true, TopicModels: true}
 
 // wsConn is what the hub needs of a connection (*websocket.Conn satisfies it).
 type wsConn interface {
@@ -75,7 +83,9 @@ type wsHub struct {
 
 	hello    func() any
 	status   func(ctx context.Context) (any, error)
-	snapshot func() []map[string]any // extra messages for a new client (bench state)
+	snapshot func() []map[string]any          // extra messages for a new client (bench state)
+	models   func(ctx context.Context) []byte // the whole catalog as a frame's data, or nil
+	onStatus func(v any)                      // every status the loop looked at
 	log      func(msg string, args ...any)
 
 	mu       sync.Mutex
@@ -259,6 +269,9 @@ func (h *wsHub) serve(ctx context.Context, conn wsConn) {
 			c.topics = next
 			c.mu.Unlock()
 			h.sendSnapshot(c, next[TopicStatus] && !prev[TopicStatus], next[TopicBench] && !prev[TopicBench])
+			if next[TopicModels] && !prev[TopicModels] {
+				h.sendModels(c)
+			}
 		case "pong":
 		}
 	}
@@ -279,6 +292,43 @@ func (h *wsHub) sendSnapshot(c *wsClient, withStatus, withBench bool) {
 			h.enqueue(c, wsFrame(TopicBench, h.now(), ev))
 		}
 	}
+}
+
+// rawFrame is wsFrame for data that is already JSON.
+func rawFrame(typ string, ts time.Time, data []byte) []byte {
+	b := make([]byte, 0, len(data)+64)
+	b = append(b, `{"type":"`+typ+`","ts":`...)
+	b = strconv.AppendInt(b, ts.UnixMilli(), 10)
+	b = append(b, `,"data":`...)
+	b = append(b, bytes.TrimSpace(data)...)
+	return append(b, '}')
+}
+
+// sendModels queues the whole catalog for a client that asked for the topic.
+// The catalog comes from memory; when it is not built yet it is built off
+// this goroutine and sent when ready, so the connection is never held up.
+func (h *wsHub) sendModels(c *wsClient) {
+	if h.models == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if b := h.models(ctx); b != nil && c.wants(TopicModels) {
+			h.enqueue(c, rawFrame(TopicModels, h.now(), b))
+		}
+	}()
+}
+
+// publishModels sends the entries that changed between two catalogs.
+func (h *wsHub) publishModels(snap, prev *catalogSnap) {
+	if h.clientCount() == 0 {
+		return
+	}
+	if prev == nil {
+		return // the first catalog: a client gets it when it subscribes (sendModels)
+	}
+	h.broadcast(TopicModels, wsFrame(TopicModels, h.now(), snap.delta(prev)))
 }
 
 // volatile are the status fields that change on every look; a change in them
@@ -357,6 +407,9 @@ func (h *wsHub) statusLoop() {
 		cancel()
 		if err != nil {
 			continue
+		}
+		if h.onStatus != nil {
+			h.onStatus(v)
 		}
 		sig := statusSignature(v)
 		now := h.now()
@@ -494,13 +547,21 @@ func (s *Server) newWSHub() *wsHub {
 			benchState = "on"
 		}
 		return map[string]any{"version": o.Version, "started_at": s.start.UnixMilli(), "server_time": s.opts.Now().UnixMilli(),
-			"history": hist, "bench": benchState, "topics": []string{TopicStatus, TopicEvent, TopicBench, TopicConfig, TopicPing}, "ws_max_clients": max, "config_revision": s.configRevision()}
+			"history": hist, "bench": benchState, "topics": []string{TopicStatus, TopicEvent, TopicBench, TopicConfig, TopicPing, TopicModels}, "ws_max_clients": max, "config_revision": s.configRevision()}
 	}
 	h.status = o.statusSource
 	if h.status == nil {
 		h.status = func(ctx context.Context) (any, error) {
 			return s.statusView(ctx)
 		}
+		h.onStatus = s.catalogStatus
+	}
+	h.models = func(ctx context.Context) []byte {
+		snap, err := s.catalogGet(ctx)
+		if err != nil {
+			return nil
+		}
+		return snap.list
 	}
 	if s.hist.On() {
 		h.cancels = append(h.cancels, s.hist.Subscribe(h.publishEvent))

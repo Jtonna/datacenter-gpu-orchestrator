@@ -101,6 +101,7 @@ func (s *Server) benchRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/bench/benchmarks", g(s.listBenchmarks))
 	m.HandleFunc("POST /api/bench/benchmarks", g(s.createBenchmark))
 	m.HandleFunc("GET /api/bench/benchmarks/{id}", g(s.getBenchmark))
+	m.HandleFunc("GET /api/bench/benchmarks/{id}/results", g(s.benchmarkResults))
 	m.HandleFunc("PUT /api/bench/benchmarks/{id}", g(s.putBenchmark))
 	m.HandleFunc("DELETE /api/bench/benchmarks/{id}", g(s.deleteBenchmark))
 	m.HandleFunc("GET /api/bench/suites", g(s.listSuites))
@@ -201,6 +202,27 @@ func (s *Server) getBenchmark(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, benchmarkJSON(b))
+}
+
+// benchmarkResults is GET /api/bench/benchmarks/{id}/results: what the
+// benchmark did in each stored run, oldest first (?limit= runs, default 200).
+func (s *Server) benchmarkResults(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	limit := 0
+	if v := r.URL.Query().Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > bench.MaxAggRuns {
+			badParam(w, "limit must be 1 to %d, got %q", bench.MaxAggRuns, v)
+			return
+		}
+		limit = n
+	}
+	res, err := s.opts.BenchStore.BenchmarkResults(id, limit)
+	if err != nil {
+		s.storeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"benchmark": id, "results": res})
 }
 
 // parseBenchmark decodes and validates a benchmark body; wantID, when not

@@ -1,21 +1,18 @@
 package api
 
 import (
-	"context"
 	"math"
-	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/bench"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/gguf"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/proxy"
 )
 
 // The model catalog (GET /api/models, GET /api/models/{key}): one entry per
@@ -47,7 +44,11 @@ type ModelFile struct {
 	SizeBytes int64  `json:"size_bytes"`
 	// Name, Family, Parameters and Quant come from the GGUF metadata when it
 	// could be read (MetaSource "gguf"), else from the file name ("file_name").
-	Name          string `json:"name"`
+	Name string `json:"name"`
+	// RawName is the name as the metadata or the file name wrote it, when Name
+	// was tidied (TidyModelName); Brand is the model family for the avatar.
+	RawName       string `json:"raw_name,omitempty"`
+	Brand         string `json:"brand,omitempty"`
 	Publisher     string `json:"publisher,omitempty"`
 	Family        string `json:"family,omitempty"` // general.architecture
 	Parameters    string `json:"parameters,omitempty"`
@@ -79,9 +80,101 @@ func ModelFileFromName(file string) ModelFile {
 		mf.Parameters = strings.ToUpper(m[1]) + "B"
 		mf.Parameters = strings.Replace(mf.Parameters, "X", "x", 1)
 	}
-	mf.Name = strings.ReplaceAll(stem, "_", " ")
+	mf.setName(stem, mf.Publisher)
 	return mf
 }
+
+// setName stores the tidy display name of raw and what it implies.
+func (mf *ModelFile) setName(raw, publisher string) {
+	name, pub := TidyModelName(raw, publisher)
+	mf.Name, mf.Publisher = name, pub
+	mf.RawName = ""
+	if raw != name {
+		mf.RawName = raw
+	}
+	mf.Brand = BrandOf(name + " " + mf.File)
+}
+
+var (
+	sizeWord    = regexp.MustCompile(`(?i)^(\d+x)?\d+(\.\d+)?[bmk]$`)
+	versionWord = regexp.MustCompile(`^v\d`)
+	hasUpper    = regexp.MustCompile(`[A-Z]`)
+	// spellings of words that are written in one case in a file name
+	nameWords = map[string]string{"it": "IT", "tinyllama": "TinyLlama", "deepseek": "DeepSeek", "glm": "GLM", "moe": "MoE", "ai": "AI",
+		"qwq": "QwQ", "gpt": "GPT", "llama": "Llama", "gguf": "GGUF"}
+	publisherNames = map[string]string{"mistralai": "Mistral AI", "moonshotai": "Moonshot AI", "qwen": "Qwen", "thudm": "THUDM", "tinyllama": "TinyLlama",
+		"google": "Google", "meta": "Meta", "meta-llama": "Meta", "deepseek-ai": "DeepSeek", "deepseek": "DeepSeek", "microsoft": "Microsoft",
+		"zai-org": "Z.ai", "openai": "OpenAI", "nvidia": "NVIDIA", "ibm-granite": "IBM"}
+)
+
+// TidyModelName is the one rule for a model's display name, whatever wrote
+// it (GGUF general.name, or the file name): a leading "<publisher>_" is taken
+// off and returned as the publisher, dashes and underscores become spaces, a
+// word written all in lower case gets a capital ("mixtral" -> "Mixtral",
+// "8x7b" -> "8x7B", "it" -> "IT"), version words stay ("v0.1"), and a word
+// that already has a capital is left as written ("DeepSeek", "A3B"). The
+// publisher is spelled the usual way when it is a known one.
+func TidyModelName(raw, publisher string) (name, pub string) {
+	s := strings.TrimSpace(raw)
+	if i := strings.Index(s, "_"); i > 0 && !strings.ContainsAny(s[:i], "-. ") && i+1 < len(s) {
+		if publisher == "" {
+			publisher = s[:i]
+		}
+		s = s[i+1:]
+	}
+	words := strings.FieldsFunc(s, func(r rune) bool { return r == '-' || r == '_' || r == ' ' })
+	for i, w := range words {
+		lw := strings.ToLower(w)
+		switch {
+		case sizeWord.MatchString(w):
+			words[i] = strings.ToUpper(w[:len(w)-1]) + strings.ToUpper(w[len(w)-1:])
+			words[i] = strings.Replace(words[i], "X", "x", 1)
+		case nameWords[lw] != "" && (w == lw || lw == "it"):
+			words[i] = nameWords[lw]
+		case versionWord.MatchString(w) || hasUpper.MatchString(w):
+		case w != "":
+			words[i] = strings.ToUpper(w[:1]) + w[1:]
+		}
+	}
+	name = strings.Join(words, " ")
+	if name == "" {
+		name = strings.TrimSpace(raw)
+	}
+	pub = strings.TrimSpace(publisher)
+	if p, ok := publisherNames[strings.ToLower(pub)]; ok {
+		pub = p
+	}
+	return name, pub
+}
+
+// brands are the model families the UI draws an avatar for, most specific
+// first (Kimi Dev is built on Qwen and TinyLlama on Llama: their own name wins).
+var brands = []struct{ brand, words string }{
+	{"tinyllama", "tinyllama"}, {"deepseek", "deepseek"}, {"kimi", "kimi|moonshot"}, {"mistral", "mistral|mixtral|devstral|codestral|magistral|ministral|pixtral"},
+	{"gemma", "gemma"}, {"qwen", "qwen|qwq"}, {"glm", "glm|chatglm"}, {"llama", "llama"}, {"phi", `\bphi\b`}, {"granite", "granite"},
+}
+
+var brandRes = func() []*regexp.Regexp {
+	out := make([]*regexp.Regexp, len(brands))
+	for i, b := range brands {
+		out[i] = regexp.MustCompile(`(?i)` + b.words)
+	}
+	return out
+}()
+
+// BrandOf names the family of a model from its name and file name: gemma,
+// qwen, llama, mistral, deepseek, glm, kimi, tinyllama, ... or "other".
+func BrandOf(text string) string {
+	for i, re := range brandRes {
+		if re.MatchString(text) {
+			return brands[i].brand
+		}
+	}
+	return "other"
+}
+
+// metaReads counts the GGUF headers parsed (a test checks that a warm catalog reads none).
+var metaReads atomic.Int64
 
 // ReadModelFile stats one file in dir and reads its GGUF header.
 func ReadModelFile(dir, file string) ModelFile {
@@ -91,6 +184,7 @@ func ReadModelFile(dir, file string) ModelFile {
 		return mf
 	}
 	mf.Exists, mf.SizeBytes = true, st.Size()
+	metaReads.Add(1)
 	meta, err := gguf.ReadMeta(filepath.Join(dir, file))
 	if err != nil {
 		return mf
@@ -103,23 +197,42 @@ func ReadModelFile(dir, file string) ModelFile {
 		s, _ := v.(string)
 		return strings.TrimSpace(s)
 	}
+	pub := mf.Publisher // from the file name, unless the metadata names one
+	if n := str("general.organization"); n != "" {
+		pub = n
+	}
 	if n := str("general.name"); n != "" {
-		mf.Name = n
+		mf.setName(n, pub)
+	} else if pub != mf.Publisher {
+		_, mf.Publisher = TidyModelName("", pub)
 	}
 	if n := str("general.size_label"); n != "" {
 		mf.Parameters = n
 	}
-	if n := str("general.organization"); n != "" {
-		mf.Publisher = n
-	}
 	return mf
+}
+
+// fileMetaStore remembers file metadata across restarts (the database).
+type fileMetaStore interface {
+	FileMeta(path string, size, mtime int64, into any) bool
+	PutFileMeta(path string, size, mtime int64, meta any) error
+}
+
+// metaFormat is bumped when the way a ModelFile is derived changes, so stored
+// metadata of an older build is read again.
+const metaFormat = 2
+
+type storedMeta struct {
+	Format int       `json:"format"`
+	File   ModelFile `json:"file"`
 }
 
 // modelFileCache remembers the metadata of the files in the models directory,
 // keyed by name, size and modification time, so a header is parsed once.
 type modelFileCache struct {
-	mu   sync.Mutex
-	seen map[string]cachedFile
+	mu    sync.Mutex
+	seen  map[string]cachedFile
+	store fileMetaStore // optional: the same, kept in the database
 }
 
 type cachedFile struct {
@@ -161,8 +274,18 @@ func (c *modelFileCache) list(dir string, named []string) []ModelFile {
 			out = append(out, e.mf)
 			continue
 		}
+		full := filepath.Join(dir, n)
+		var sm storedMeta
+		if c.store != nil && c.store.FileMeta(full, st.Size(), st.ModTime().UnixNano(), &sm) && sm.Format == metaFormat {
+			c.seen[n] = cachedFile{size: st.Size(), mod: st.ModTime(), mf: sm.File}
+			out = append(out, sm.File)
+			continue
+		}
 		mf := ReadModelFile(dir, n)
 		c.seen[n] = cachedFile{size: st.Size(), mod: st.ModTime(), mf: mf}
+		if c.store != nil {
+			_ = c.store.PutFileMeta(full, st.Size(), st.ModTime().UnixNano(), storedMeta{Format: metaFormat, File: mf})
+		}
 		out = append(out, mf)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].File < out[j].File })
@@ -181,7 +304,14 @@ type CatalogInput struct {
 	Aggregates map[string]any
 	Files      []ModelFile
 	HistoryOn  bool
+	// Icons is storage key -> etag of the icons the owner set ("model:<key>",
+	// "family:<brand>"); Now is the clock for the activity buckets (default time.Now).
+	Icons map[string]string
+	Now   time.Time
 }
+
+// recentLoads is how many marks loads.recent carries (the Models list draws them).
+const recentLoads = 12
 
 // ---- loose JSON readers (a document may come from jsonView or from a decoder) ----
 
@@ -276,7 +406,7 @@ func BuildModelCatalog(in CatalogInput, detailKey string) []map[string]any {
 		var a *modelAcc
 		if jstr(p["kind"]) == "command" || model == "" {
 			a = get(commandKey+id, "command")
-			a.file = ModelFile{Name: id, MetaSource: "profile"}
+			a.file = ModelFile{Name: id, MetaSource: "profile", Brand: "command"}
 		} else {
 			a = get(model, "llama")
 			if f, ok := files[model]; ok {
@@ -426,7 +556,19 @@ func BuildModelCatalog(in CatalogInput, detailKey string) []map[string]any {
 			lastAt      int64
 		}
 		events []history.Event
+		recent []map[string]any // newest first, at most recentLoads
+		series []map[string]any // detail only: every load, newest first
+		ended  map[string]map[string]any
+		hours  map[int64]*bucket // detail only
+		days   map[int64]*bucket
 	}
+	now := in.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	const hourMS, dayMS = int64(3600e3), int64(86400e3)
+	hour0 := now.UnixMilli()/hourMS*hourMS - 23*hourMS
+	day0 := now.UnixMilli()/dayMS*dayMS - 6*dayMS
 	loads := map[string]*loadAgg{}
 	la := func(key string) *loadAgg {
 		if loads[key] == nil {
@@ -451,10 +593,67 @@ func BuildModelCatalog(in CatalogInput, detailKey string) []map[string]any {
 		if detailKey == key && e.Type != history.TNodeMemory && len(a.events) < 200 {
 			a.events = append(a.events, *e)
 		}
+		var hb, db *bucket
+		if detailKey == key {
+			if a.hours == nil {
+				a.hours, a.days, a.ended = map[int64]*bucket{}, map[int64]*bucket{}, map[string]map[string]any{}
+			}
+			if h := e.Ts / hourMS * hourMS; h >= hour0 {
+				if a.hours[h] == nil {
+					a.hours[h] = &bucket{}
+				}
+				hb = a.hours[h]
+			}
+			if d := e.Ts / dayMS * dayMS; d >= day0 {
+				if a.days[d] == nil {
+					a.days[d] = &bucket{}
+				}
+				db = a.days[d]
+			}
+		}
+		count := func(f func(*bucket)) {
+			if hb != nil {
+				f(hb)
+			}
+			if db != nil {
+				f(db)
+			}
+		}
 		switch e.Type {
 		case history.TLoadFinished:
 			a.count++
 			outcome := jstr(e.Data["outcome"])
+			mark := map[string]any{"at": e.Ts, "profile": e.Profile, "nodes": len(e.Nodes), "outcome": outcome, "load_s": e.Data["load_s"], "mb_s": e.Data["avg_mb_s"]}
+			if len(a.recent) < recentLoads {
+				a.recent = append(a.recent, mark)
+			}
+			count(func(b *bucket) {
+				b.loads++
+				if outcome != "ready" {
+					b.failed++
+				}
+			})
+			if detailKey == key && len(a.series) < 300 {
+				row := map[string]any{"at": e.Ts, "profile": e.Profile, "nodes": len(e.Nodes), "outcome": outcome, "load_s": e.Data["load_s"], "mb_s": e.Data["avg_mb_s"]}
+				mem := 0.0
+				for _, d := range jlist(e.Data["nodes_detail"]) {
+					mem += jnum(jmap(d)["memory_mib"])
+				}
+				if mem > 0 {
+					row["memory_mib"] = math.Round(mem)
+				}
+				if c := profileCtx[e.Profile]; c > 0 {
+					row["ctx"] = c
+				}
+				if r := jstr(e.Data["bench_run"]); r != "" {
+					row["bench_run"] = r
+				}
+				// the unload of this load came later, so it was seen first (newest first)
+				if u := a.ended[e.SessionID]; u != nil && e.SessionID != "" {
+					row["stayed_s"], row["requests"], row["ended"] = u["loaded_for_s"], u["requests_served"], u["reason"]
+				}
+				a.series = append(a.series, row)
+			}
 			if a.last == nil {
 				a.last = map[string]any{"at": e.Ts, "profile": e.Profile, "nodes": e.Nodes, "outcome": outcome,
 					"load_s": e.Data["load_s"], "mb_s": e.Data["avg_mb_s"]}
@@ -503,11 +702,22 @@ func BuildModelCatalog(in CatalogInput, detailKey string) []map[string]any {
 		case history.TInstanceUnloaded:
 			a.unloads++
 			a.served += int(jnum(e.Data["requests_served"]))
+			count(func(b *bucket) { b.requests += int(jnum(e.Data["requests_served"])) })
+			if a.ended != nil && e.SessionID != "" {
+				a.ended[e.SessionID] = e.Data
+			}
 			if e.Ts > a.lastActive {
 				a.lastActive = e.Ts
 			}
 		case history.TRequestRefused:
 			a.refusals++
+			count(func(b *bucket) { b.refusals++ })
+			// refusals come in bursts (a client that retries): one mark per run of them
+			if n := len(a.recent); n > 0 && a.recent[n-1]["outcome"] == "refused" && a.recent[n-1]["profile"] == e.Profile {
+				a.recent[n-1]["count"] = a.recent[n-1]["count"].(int) + 1
+			} else if n < recentLoads {
+				a.recent = append(a.recent, map[string]any{"at": e.Ts, "profile": e.Profile, "nodes": 0, "outcome": "refused", "count": 1, "reason": e.Data["reason"]})
+			}
 			noteRefusal(key, e.Ts, map[string]any{"profile": e.Profile, "reason": e.Data["reason"], "message": e.Data["message"], "status": e.Data["status"]})
 		}
 	}
@@ -560,7 +770,7 @@ func BuildModelCatalog(in CatalogInput, detailKey string) []map[string]any {
 		b.runs += int(jnum(gm["runs"]))
 		ms := jmap(gm["metrics"])
 		row := map[string]any{"benchmark_id": gm["benchmark_id"], "name": gm["name"], "profile": gm["profile"], "runs": gm["runs"],
-			"pass_rate": gm["pass_rate"], "outcomes": gm["outcomes"], "last_at": gm["last_at"], "last_run_id": gm["last_run_id"]}
+			"pass_rate": gm["pass_rate"], "outcomes": gm["outcomes"], "last_at": gm["last_at"], "last_run_id": gm["last_run_id"], "recent": gm["recent"]}
 		for _, name := range []string{"load_s", "load_mb_s", "decode_tps", "prefill_tps", "memory_mib"} {
 			if v := metric(ms, name); v != nil {
 				row[name] = v
@@ -575,10 +785,23 @@ func BuildModelCatalog(in CatalogInput, detailKey string) []map[string]any {
 		if detailKey != "" && key != detailKey {
 			continue
 		}
+		brand := a.file.Brand
+		if brand == "" {
+			brand = BrandOf(a.file.Name + " " + a.file.File)
+		}
 		e := map[string]any{"key": key, "kind": a.kind, "file": a.file.File, "exists": a.file.Exists, "size_bytes": a.file.SizeBytes,
-			"name": a.file.Name, "meta_source": a.file.MetaSource}
+			"name": a.file.Name, "meta_source": a.file.MetaSource, "brand": brand, "icon": nil}
 		if a.kind == "command" {
 			e["exists"] = true
+		}
+		if a.file.RawName != "" {
+			e["raw_name"] = a.file.RawName
+		}
+		// the owner's icon: this model's own, else the one set for its family
+		if tag := in.Icons[IconModelKey(key)]; tag != "" {
+			e["icon"] = map[string]any{"etag": tag, "scope": "model"}
+		} else if tag := in.Icons[IconFamilyKey(brand)]; tag != "" && a.kind == "llama" {
+			e["icon"] = map[string]any{"etag": tag, "scope": "family"}
 		}
 		for k, v := range map[string]string{"publisher": a.file.Publisher, "family": a.file.Family, "parameters": a.file.Parameters, "quant": a.file.Quant} {
 			if v != "" {
@@ -688,6 +911,13 @@ func BuildModelCatalog(in CatalogInput, detailKey string) []map[string]any {
 					total += b
 				}
 				fit["cluster_budget_mib"] = total
+				// what one, two, three ... machines of the empty cluster give together
+				cum, sums := 0.0, make([]float64, 0, len(budgets))
+				for _, b := range budgets {
+					cum += b
+					sums = append(sums, cum)
+				}
+				fit["budgets_mib"] = sums
 			}
 			if len(fit) > 0 {
 				e["fit"] = fit
@@ -713,7 +943,7 @@ func BuildModelCatalog(in CatalogInput, detailKey string) []map[string]any {
 		}
 		sort.Slice(by, func(i, j int) bool { return by[i]["nodes"].(int) < by[j]["nodes"].(int) })
 		e["loads"] = map[string]any{"count": l.count, "ready": l.ready, "failed": l.failed, "cancelled": l.cancelled, "unloads": l.unloads,
-			"refusals": l.refusals, "last": l.last, "by_nodes": by}
+			"refusals": l.refusals, "last": l.last, "by_nodes": by, "recent": nonNilMaps(l.recent)}
 		served := l.served
 		lastActive := l.lastActive
 		for _, i := range il {
@@ -749,6 +979,19 @@ func BuildModelCatalog(in CatalogInput, detailKey string) []map[string]any {
 				ev = []history.Event{}
 			}
 			e["events"] = ev
+			hours, days := make([]map[string]any, 0, 24), make([]map[string]any, 0, 7)
+			for t := hour0; t < hour0+24*hourMS; t += hourMS {
+				hours = append(hours, l.hours[t].row(t))
+			}
+			for t := day0; t < day0+7*dayMS; t += dayMS {
+				days = append(days, l.days[t].row(t))
+			}
+			// oldest first: a chart reads left to right
+			series := make([]map[string]any, 0, len(l.series))
+			for i := len(l.series) - 1; i >= 0; i-- {
+				series = append(series, l.series[i])
+			}
+			e["charts"] = map[string]any{"loads": series, "activity": map[string]any{"hours": hours, "days": days}}
 		}
 		out = append(out, e)
 	}
@@ -762,6 +1005,27 @@ func BuildModelCatalog(in CatalogInput, detailKey string) []map[string]any {
 	return out
 }
 
+// bucket counts what happened to one model in one hour or day.
+type bucket struct{ loads, failed, refusals, requests int }
+
+func (b *bucket) row(at int64) map[string]any {
+	if b == nil {
+		b = &bucket{}
+	}
+	return map[string]any{"at": at, "loads": b.loads, "failed": b.failed, "refusals": b.refusals, "requests": b.requests}
+}
+
+func nonNilMaps(v []map[string]any) []map[string]any {
+	if v == nil {
+		return []map[string]any{}
+	}
+	return v
+}
+
+// IconModelKey and IconFamilyKey are the storage keys of an owner-set icon.
+func IconModelKey(key string) string    { return "model:" + key }
+func IconFamilyKey(brand string) string { return "family:" + brand }
+
 func nilIfZero(v int64) any {
 	if v == 0 {
 		return nil
@@ -773,62 +1037,3 @@ func nilIfZero(v int64) any {
 var catalogEventTypes = []string{history.TLoadStarted, history.TLoadFinished, history.TInstanceUnloaded, history.TRequestRefused,
 	history.TLearnedNeed, history.TLoadStalled, history.TLoadLowMemory, history.TEviction, history.TChildExited, history.TProfileBackedOff,
 	history.TPreflightFailed, history.TNeedsMiBTooLow, history.TBenchStepFinished}
-
-// catalogInput gathers the live documents. The scheduler is only asked what
-// GET /api/status and GET /api/profiles already ask it; file metadata is read
-// here, on the request's goroutine, and cached.
-func (s *Server) catalogInput(ctx context.Context) (CatalogInput, error) {
-	in := CatalogInput{HistoryOn: s.hist.On()}
-	st, err := s.statusView(ctx)
-	if err != nil {
-		return in, err
-	}
-	in.Status, _ = st.(map[string]any)
-	in.Profiles = s.profileEntries(ctx)
-	in.Events = s.hist.Query(history.Query{Types: catalogEventTypes, Limit: history.MaxLimit}).Events
-	if s.opts.Bench != nil {
-		if doc, err := s.opts.Bench.Aggregates(bench.AggFilter{}); err == nil {
-			in.Aggregates = viaJSON(doc)
-		}
-	}
-	if s.opts.modelFiles != nil {
-		in.Files = s.opts.modelFiles()
-	} else {
-		var named []string
-		for _, p := range in.Profiles {
-			if jstr(p["kind"]) != "command" {
-				named = append(named, jstr(p["model"]))
-			}
-		}
-		in.Files = s.files.list(s.conf().ModelsDir, named)
-	}
-	return in, nil
-}
-
-// handleModelCatalog is GET /api/models: one entry per model file.
-func (s *Server) handleModelCatalog(w http.ResponseWriter, r *http.Request) {
-	in, err := s.catalogInput(r.Context())
-	if err != nil {
-		s.writeErr(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"models": BuildModelCatalog(in, ""), "models_dir": s.conf().ModelsDir, "history": in.HistoryOn})
-}
-
-// handleModelDetail is GET /api/models/{key}: one model with its recent
-// events and the benchmarks that use it. The key is the file name, or
-// "command:<profile id>" for a profile of kind command.
-func (s *Server) handleModelDetail(w http.ResponseWriter, r *http.Request) {
-	key := r.PathValue("key")
-	in, err := s.catalogInput(r.Context())
-	if err != nil {
-		s.writeErr(w, err)
-		return
-	}
-	out := BuildModelCatalog(in, key)
-	if len(out) == 0 {
-		proxy.WriteError(w, http.StatusNotFound, "no model file "+key+": see GET /api/models", "invalid_request_error", "not found", nil)
-		return
-	}
-	writeJSON(w, http.StatusOK, out[0])
-}

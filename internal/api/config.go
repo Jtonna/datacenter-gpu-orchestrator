@@ -595,7 +595,7 @@ func (s *Server) auditList(w http.ResponseWriter, r *http.Request) {
 	}
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	f := cfgstore.Filter{Since: since, Until: until, Source: q.Get("source"), Actor: q.Get("actor"), Section: q.Get("section"),
-		Target: q.Get("target"), Action: q.Get("action"), Query: q.Get("q"), Limit: limit, Ascending: strings.EqualFold(q.Get("order"), "asc")}
+		Target: q.Get("target"), Action: q.Get("action"), Query: q.Get("q"), Agent: q.Get("agent"), Limit: limit, Ascending: strings.EqualFold(q.Get("order"), "asc")}
 	es, total, err := st.Query(r.Context(), f)
 	if err != nil {
 		apiErr(w, http.StatusInternalServerError, "%v", err)
@@ -718,5 +718,6 @@ func (s *Server) PublishConfig(ev cfgsvc.ChangeEvent) {
 	if ids == nil {
 		ids = []int64{}
 	}
+	s.catalogDirty(false) // profiles and their plans are part of the model catalog
 	s.ws.publishConfig(map[string]any{"revision": ev.Revision, "audit_entry_ids": ids, "section": ev.Section, "target": ev.Target, "source": ev.Source, "actor": ev.Actor})
 }

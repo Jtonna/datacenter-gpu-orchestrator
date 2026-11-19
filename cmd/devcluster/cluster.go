@@ -295,7 +295,10 @@ func startCluster(log *slog.Logger, o clusterOpts) (*cluster, error) {
 	c.api = api.New(cfg, c.sched, ao)
 	started.Store(true)
 	c.mcp = mcpserver.New(c.api, mcpserver.Options{Version: devVersion, Guide: docs.BenchmarkGuide,
-		Bridge: func(ctx context.Context, actor string) context.Context { return audit.WithSource(ctx, "mcp", actor) }})
+		Bridge:   func(ctx context.Context, actor string) context.Context { return audit.WithSource(ctx, "mcp", actor) },
+		Identify: c.api.IdentifyAgent})
+	c.api.SetMCPTools(c.mcp.ToolInfo)
+	c.api.Warm()
 	c.root = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { // as serve: not a ServeMux
 		if r.URL.Path == "/mcp" {
 			c.mcp.ServeHTTP(w, r)

@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/bench"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/cfgstore"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/config"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/proxy"
@@ -95,6 +96,12 @@ type Server struct {
 	activity *activityLog
 	hist     *history.Store
 	files    modelFileCache // metadata of the files in models_dir (models.go)
+	catalog  catalogCache   // the model catalog, kept in memory (catalog.go)
+	// store is the database behind the audit log when it is the scheduler's
+	// own: it also keeps the agents, the model icons and the file metadata.
+	store       *cfgstore.Store
+	agents      agentRegistry
+	mcpToolList atomic.Pointer[func() any]
 
 	auditQ    chan audit.Entry
 	auditQuit chan struct{}
@@ -127,8 +134,11 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 	}
 	s := &Server{cfg: cfg, sched: sched, opts: o, log: o.Logger, start: o.Now(), hist: o.History,
 		activity: newActivityLog(200), aliasSeen: map[string]time.Time{}}
+	s.store, _ = o.Audit.(*cfgstore.Store)
+	s.agents.store = s.store
 	s.hub = newHub(sched, o.Now)
 	s.ws = s.newWSHub()
+	s.startCatalog()
 	s.mux = s.routes()
 	s.startAudit()
 	if o.Audit != nil {
@@ -138,7 +148,12 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 }
 
 // ServeHTTP implements http.Handler.
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
+// A request that carries an agent key is attributed to that agent first (agents.go).
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r, ok := s.identify(w, r); ok {
+		s.mux.ServeHTTP(w, r)
+	}
+}
 
 // BeginShutdown makes every new request that would start work answer 503
 // (design 8.6, "stop accepting"). The caller closes its listener too.
@@ -157,7 +172,15 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 // Close stops the feed goroutine and closes every event stream.
-func (s *Server) Close() { s.hub.close(); s.ws.close(); s.stopAudit() }
+func (s *Server) Close() {
+	s.stopCatalog()
+	s.hub.close()
+	s.ws.close()
+	s.stopAudit()
+	if s.store != nil {
+		s.agents.flush()
+	}
+}
 
 // conf is the configuration in force now (it changes when a revision is applied).
 func (s *Server) conf() *config.Config {
@@ -190,7 +213,10 @@ func (s *Server) routes() *http.ServeMux {
 	s.configRoutes(m) // /api/config, /api/audit (config.go)
 	m.HandleFunc("GET /api/profiles", s.handleProfiles)
 	m.HandleFunc("GET /api/models", s.handleModelCatalog)
-	m.HandleFunc("GET /api/models/{key...}", s.handleModelDetail)
+	m.HandleFunc("GET /api/models/{key...}", s.handleModelDetail) // and GET /api/models/{key}/icon
+	m.HandleFunc("PUT /api/models/{key...}", s.handleIconPut)     // only /api/models/{key}/icon
+	m.HandleFunc("DELETE /api/models/{key...}", s.handleIconDelete)
+	s.agentRoutes(m) // /api/agents, /api/mcp/tools (agents.go)
 	m.HandleFunc("GET /api/metrics/activity", s.handleActivity)
 	m.HandleFunc("GET /ui/{$}", s.handleUI)
 	m.HandleFunc("GET /ui/", s.handleUIFile)

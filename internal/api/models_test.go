@@ -30,13 +30,13 @@ func TestIsGeneratedProfile(t *testing.T) {
 
 func TestModelFileFromName(t *testing.T) {
 	for _, c := range []struct{ file, name, publisher, params, quant string }{
-		{"gemma-4-12b-it-Q4_K_M.gguf", "gemma-4-12b-it", "", "12B", "Q4_K_M"},
-		{"Qwen_Qwen3.5-4B-Q4_K_M.gguf", "Qwen3.5-4B", "Qwen", "4B", "Q4_K_M"},
-		{"moonshotai_Kimi-Dev-72B-IQ2_S.gguf", "Kimi-Dev-72B", "moonshotai", "72B", "IQ2_S"},
-		{"tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf", "tinyllama-1.1b-chat-v1.0", "", "1.1B", "Q4_K_M"},
-		{"mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf", "mixtral-8x7b-instruct-v0.1", "", "8x7B", "Q4_K_M"},
-		{"Llama-3.3-70B-Instruct-Q2_K.gguf", "Llama-3.3-70B-Instruct", "", "70B", "Q2_K"},
-		{"plain.gguf", "plain", "", "", ""},
+		{"gemma-4-12b-it-Q4_K_M.gguf", "Gemma 4 12B IT", "", "12B", "Q4_K_M"},
+		{"Qwen_Qwen3.5-4B-Q4_K_M.gguf", "Qwen3.5 4B", "Qwen", "4B", "Q4_K_M"},
+		{"moonshotai_Kimi-Dev-72B-IQ2_S.gguf", "Kimi Dev 72B", "Moonshot AI", "72B", "IQ2_S"},
+		{"tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf", "TinyLlama 1.1B Chat v1.0", "", "1.1B", "Q4_K_M"},
+		{"mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf", "Mixtral 8x7B Instruct v0.1", "", "8x7B", "Q4_K_M"},
+		{"Llama-3.3-70B-Instruct-Q2_K.gguf", "Llama 3.3 70B Instruct", "", "70B", "Q2_K"},
+		{"plain.gguf", "Plain", "", "", ""},
 	} {
 		mf := ModelFileFromName(c.file)
 		if mf.Name != c.name || mf.Publisher != c.publisher || mf.Parameters != c.params || mf.Quant != c.quant || mf.MetaSource != "file_name" {
@@ -82,10 +82,10 @@ func TestModelFilesFromDirectory(t *testing.T) {
 			t.Fatalf("pass %d: files %v, want the two .gguf in the directory and the named missing one", pass, got)
 		}
 		g := got["gemma-4-12b-it-Q4_K_M.gguf"]
-		if !g.Exists || g.SizeBytes != int64(len(good)) || g.Name != "Gemma 4 12B It" || g.Family != "gemma3" || g.Parameters != "12B" || g.Quant != "Q4_K_M" || g.MetaSource != "gguf" {
+		if !g.Exists || g.SizeBytes != int64(len(good)) || g.Name != "Gemma 4 12B IT" || g.RawName != "Gemma 4 12B It" || g.Brand != "gemma" || g.Family != "gemma3" || g.Parameters != "12B" || g.Quant != "Q4_K_M" || g.MetaSource != "gguf" {
 			t.Errorf("pass %d: gguf file: %+v", pass, g)
 		}
-		if b := got["broken-7b-Q8_0.gguf"]; !b.Exists || b.MetaSource != "file_name" || b.Name != "broken-7b" || b.Quant != "Q8_0" {
+		if b := got["broken-7b-Q8_0.gguf"]; !b.Exists || b.MetaSource != "file_name" || b.Name != "Broken 7B" || b.Quant != "Q8_0" {
 			t.Errorf("pass %d: unreadable file: %+v", pass, b)
 		}
 		if m := got["missing-3b-Q4_K_M.gguf"]; m.Exists || m.SizeBytes != 0 || m.Parameters != "3B" {
@@ -180,7 +180,7 @@ func TestModelCatalogGrouping(t *testing.T) {
 	}
 	// a file that is not there
 	b := by["big-72B-Q2_K.gguf"]
-	if b["exists"] != false || b["name"] != "big-72B" || b["parameters"] != "72B" || b["quant"] != "Q2_K" || b["meta_source"] != "file_name" || b["state"] != "not_loaded" {
+	if b["exists"] != false || b["name"] != "Big 72B" || b["raw_name"] != "big-72B" || b["parameters"] != "72B" || b["quant"] != "Q2_K" || b["meta_source"] != "file_name" || b["state"] != "not_loaded" {
 		t.Errorf("missing file: %v", b)
 	}
 	if u := by["unused-3b-Q4_K_M.gguf"]; u == nil || u["profile_count"] != 0 || u["exists"] != true {

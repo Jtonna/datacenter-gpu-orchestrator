@@ -42,6 +42,12 @@ type Options struct {
 	Bridge func(ctx context.Context, actor string) context.Context
 	// MaxSessions bounds the remembered initialize handshakes (default 256).
 	MaxSessions int
+	// Identify, when set, runs on every request before it is handled: it
+	// resolves the agent key the request may carry (Authorization: Bearer or
+	// X-Agent-Key) and returns the context to continue with. A non-nil error
+	// is answered with the given HTTP status (an unknown or revoked key: 401)
+	// and nothing is run. A request without a key passes unchanged.
+	Identify func(r *http.Request) (ctx context.Context, status int, err error)
 }
 
 // Server is the http.Handler for /mcp. inner is the scheduler's REST handler.
@@ -102,6 +108,7 @@ const (
 	codeMethod   = -32601
 	codeParams   = -32602
 	codeInternal = -32603
+	codeAgentKey = -32001 // the request carried an agent key that is unknown or revoked
 )
 
 func rpcFail(id json.RawMessage, code int, msg string) *rpcResponse {
@@ -118,6 +125,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !originAllowed(r) {
 		http.Error(w, "this origin may not use the MCP endpoint: only the same origin and loopback or private-network origins are allowed", http.StatusForbidden)
 		return
+	}
+	if s.opts.Identify != nil {
+		ctx, status, err := s.opts.Identify(r)
+		if err != nil {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="llm-scheduler agent identity"`)
+			writeRPC(w, status, rpcFail(nil, codeAgentKey, err.Error()))
+			return
+		}
+		if ctx != r.Context() {
+			r = r.WithContext(ctx)
+		}
 	}
 	switch r.Method {
 	case http.MethodPost:
@@ -391,6 +409,51 @@ func (s *Server) toolList() []any {
 		out = append(out, map[string]any{"name": t.Name, "description": t.Desc, "inputSchema": t.schema(), "annotations": t.annotations()})
 	}
 	return out
+}
+
+// Tool groups of ToolInfo.
+const (
+	GroupRead    = "read"
+	GroupConfig  = "configuration"
+	GroupBench   = "benchmarks"
+	GroupRuntime = "runtime"
+)
+
+// group says what kind of thing a tool does, for a person reading the list.
+func (t *tool) group() string {
+	switch {
+	case t.ReadOnly:
+		return GroupRead
+	case t.Name == "load_model" || t.Name == "unload_model" || strings.HasPrefix(t.Path, "/api/load") || strings.HasPrefix(t.Path, "/api/unload") || strings.HasPrefix(t.Path, "/api/models/unload"):
+		return GroupRuntime
+	case strings.HasPrefix(t.Path, "/api/bench"):
+		return GroupBench
+	}
+	return GroupConfig
+}
+
+// ToolInfo describes the server for people: its name, version, protocol
+// versions, instructions and every tool with a one-line description and its
+// group (read, configuration, benchmarks, runtime). The web UI shows it.
+func (s *Server) ToolInfo() any {
+	tools := make([]any, 0, len(s.tools))
+	for _, t := range s.tools {
+		desc := t.Desc
+		summary := desc
+		if i := strings.Index(summary, ". "); i > 0 {
+			summary = summary[:i+1]
+		}
+		tools = append(tools, map[string]any{"name": t.Name, "group": t.group(), "summary": summary, "description": desc,
+			"read_only": t.ReadOnly, "destructive": !t.ReadOnly && t.Destructive, "input_schema": t.schema()})
+	}
+	return map[string]any{"server": map[string]any{"name": "llm-scheduler", "version": s.opts.Version}, "path": "/mcp", "transport": "http",
+		"protocol_versions": protocolVersions, "instructions": instructions, "tools": tools,
+		"groups": []map[string]any{
+			{"id": GroupRead, "title": "Read", "note": "Look at the cluster, the configuration, the history and benchmark results. Nothing changes."},
+			{"id": GroupConfig, "title": "Configuration", "note": "Change settings, profiles, tiers and nodes. Every change is a revision that can be rolled back."},
+			{"id": GroupBench, "title": "Benchmarks", "note": "Define benchmarks and suites, start and cancel runs. A run loads and unloads real models."},
+			{"id": GroupRuntime, "title": "Load and unload", "note": "Load a model ahead of time or stop a loaded one. Only agents and the API can do this; the web UI has no such control."},
+		}}
 }
 
 type toolResult struct {

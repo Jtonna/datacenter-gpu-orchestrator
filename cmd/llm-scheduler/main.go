@@ -255,7 +255,10 @@ func serve(boot config.Bootstrap, log *slog.Logger) int {
 	started.Store(true)
 	// MCP at /mcp on the same port; its tools run in-process through apiSrv (design 9.5).
 	mcpSrv := mcpserver.New(apiSrv, mcpserver.Options{Version: version, Guide: docs.BenchmarkGuide,
-		Bridge: func(ctx context.Context, actor string) context.Context { return audit.WithSource(ctx, "mcp", actor) }})
+		Bridge:   func(ctx context.Context, actor string) context.Context { return audit.WithSource(ctx, "mcp", actor) },
+		Identify: apiSrv.IdentifyAgent}) // an agent key names the agent in the audit log (it is not access control)
+	apiSrv.SetMCPTools(mcpSrv.ToolInfo)
+	apiSrv.Warm()                                                           // the model catalog is built in the background, before anyone asks
 	root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { // not a ServeMux: it would clean paths the API serves verbatim
 		if r.URL.Path == "/mcp" {
 			mcpSrv.ServeHTTP(w, r)
