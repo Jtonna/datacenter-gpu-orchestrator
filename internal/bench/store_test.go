@@ -443,3 +443,24 @@ func TestPhasesEnvironmentAndNewColumnsRoundTrip(t *testing.T) {
 	}
 	s.SetRunEnv("run-1", rev)
 }
+
+func TestTrendsOfPhaseMetrics(t *testing.T) {
+	s, _ := openTemp(t)
+	for i, id := range []string{"r1", "r2"} {
+		s.CreateRun(newRun(id, "s", int64(i+1)))
+		s.SetRunState(id, RunCompleted, int64(10*(i+1)), int64(10*(i+1)+5), "")
+		st := &Step{RunID: id, BenchmarkID: "a", Profile: "p", State: StepDone, Outcome: "ready", StartedAt: int64(10 * (i + 1))}
+		s.AddStep(st)
+		st.Load = &LoadResult{LoadS: 60, AvgMBs: float64(100 + i), MemoryMiB: 7900}
+		st.Stats = &Stats{TTFT: &Summary{N: 2, Mean: float64(40 + i)}}
+		s.UpdateStep(st)
+		s.AddPhase(&PhaseResult{StepID: st.ID, RunID: id, Idx: 1, Type: "unload", State: PhaseDone, Unload: &UnloadResult{Loaded: true, Gone: true, UnloadS: float64(2 + i)}})
+		s.AddPhase(&PhaseResult{StepID: st.ID, RunID: id, Idx: 2, Type: "concurrent_requests", State: PhaseDone, Concurrent: &ConcurrentResult{N: 2, WallMS: float64(4000 + 1000*i)}})
+	}
+	for metric, want := range map[string][2]float64{"ttft_ms": {40, 41}, "load_mb_s": {100, 101}, "memory_mib": {7900, 7900}, "unload_s": {2, 3}, "concurrent_wall_s": {4, 5}} {
+		pts, err := s.Trend("a", metric, 10)
+		if err != nil || len(pts) != 2 || pts[0].Value != want[0] || pts[1].Value != want[1] {
+			t.Errorf("%s: %+v %v", metric, pts, err)
+		}
+	}
+}

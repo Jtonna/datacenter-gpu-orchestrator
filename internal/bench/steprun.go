@@ -122,6 +122,7 @@ func (x *exec) runBenchmark(b *benchspec.Benchmark, idx int, group string, g *ga
 	defer cancelCtx()
 	br := &benchRun{x: x, st: st, b: b, ctx: ctx, g: g, member: member}
 	br.track = x.startTrack(b, idx)
+	st.ModelFile = br.track.modelFile
 	defer func() {
 		if g != nil {
 			g.arrive(member)

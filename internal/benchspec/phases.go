@@ -312,6 +312,15 @@ func (b *Benchmark) validatePhases() []error {
 	if len(b.Phases) > MaxPhases {
 		add("phases: at most %d", MaxPhases)
 	}
+	holds := 0
+	for _, p := range b.Phases {
+		if p.Type == PhaseHold {
+			holds += p.HoldS()
+		}
+	}
+	if limit := int(b.Timeout().Seconds()); holds > 0 && holds+30 > limit {
+		add("the holds add up to %d s, which does not fit in timeout_s (%d s): raise timeout_s to at least %d", holds, limit, holds+30)
+	}
 	for i := range b.Phases {
 		p := &b.Phases[i]
 		w := func(f string, a ...any) { add("phases[%d] (%s): %s", i, p.Type, fmt.Sprintf(f, a...)) }

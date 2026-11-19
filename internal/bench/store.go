@@ -984,7 +984,7 @@ func (s *Store) phases(stepID int64) ([]PhaseResult, error) {
 // ---- trends ----
 
 // TrendMetrics are the metrics /api/bench/trends accepts.
-var TrendMetrics = []string{"load_s", "decode_tps", "prefill_tps"}
+var TrendMetrics = []string{"load_s", "load_mb_s", "memory_mib", "decode_tps", "prefill_tps", "ttft_ms", "unload_s", "concurrent_wall_s"}
 
 // Trend returns up to limit points of a metric for a benchmark over past
 // runs, oldest first (the newest limit points).
@@ -997,6 +997,16 @@ func (s *Store) Trend(benchmark, metric string, limit int) ([]TrendPoint, error)
 		expr = `json_extract(s.stats,'$.decode_tps.mean')`
 	case "prefill_tps":
 		expr = `json_extract(s.stats,'$.prefill_tps.mean')`
+	case "ttft_ms":
+		expr = `json_extract(s.stats,'$.ttft_ms.mean')`
+	case "load_mb_s":
+		expr = `json_extract(s.load,'$.avg_mb_s')`
+	case "memory_mib":
+		expr = `json_extract(s.load,'$.memory_mib')`
+	case "unload_s": // from the phase results
+		expr = `(SELECT json_extract(p.result,'$.unload.unload_s') FROM run_phases p WHERE p.step_id=s.id AND p.type='unload' AND p.state='done' ORDER BY p.idx LIMIT 1)`
+	case "concurrent_wall_s":
+		expr = `(SELECT json_extract(p.result,'$.concurrent.wall_ms')/1000.0 FROM run_phases p WHERE p.step_id=s.id AND p.type='concurrent_requests' AND p.state='done' ORDER BY p.idx LIMIT 1)`
 	default:
 		return nil, fmt.Errorf("metric must be one of %s", strings.Join(TrendMetrics, ", "))
 	}

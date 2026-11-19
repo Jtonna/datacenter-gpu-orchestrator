@@ -76,6 +76,7 @@ type Manager struct {
 	stopping bool
 	subs     map[int]func(map[string]any)
 	subSeq   int
+	modelOf  func(profile string) string // the model file of a profile, from the config
 	sched    map[string]*schedState
 	wake     chan struct{}
 	done     chan struct{}
@@ -427,6 +428,25 @@ func (m *Manager) finishUnstarted(r *Run, state, why string) {
 	m.publishRun(r)
 	m.record(history.TBenchRunFinished, history.Info, "", fmt.Sprintf("Benchmark run %s was %s before it started: %s.", r.ID, state, why),
 		map[string]any{"bench_run": r.ID, "suite": r.SuiteID, "state": state, "error": why})
+}
+
+// SetModelFile tells the manager how to name the model file of a profile before
+// its instance exists (the progress and the step show it from the start). The
+// API layer sets it from the configuration.
+func (m *Manager) SetModelFile(f func(profile string) string) {
+	m.mu.Lock()
+	m.modelOf = f
+	m.mu.Unlock()
+}
+
+func (m *Manager) modelFileOf(profile string) string {
+	m.mu.Lock()
+	f := m.modelOf
+	m.mu.Unlock()
+	if f == nil {
+		return ""
+	}
+	return f(profile)
 }
 
 // Aggregates is GET /api/bench/aggregates: the stored runs, aggregated.

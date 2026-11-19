@@ -222,3 +222,13 @@ func TestSchemaDescribesEveryPhaseAndTemplatesAreValid(t *testing.T) {
 		}
 	}
 }
+
+func TestHoldsMustFitInTheTimeout(t *testing.T) {
+	err := validate(t, `{"id":"a","profile":"p","phases":[{"type":"hold","seconds":900,"request":{"prompt":"x"}}]}`)
+	if err == nil || !strings.Contains(err.Error(), "does not fit in timeout_s (600 s): raise timeout_s to at least 930") {
+		t.Fatalf("%v", err)
+	}
+	if err := validate(t, `{"id":"a","profile":"p","timeout_s":1000,"phases":[{"type":"hold","seconds":900,"request":{"prompt":"x"}}]}`); err != nil {
+		t.Fatal(err)
+	}
+}

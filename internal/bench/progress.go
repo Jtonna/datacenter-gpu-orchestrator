@@ -253,6 +253,7 @@ func itemWeights(items []*itemPlan) (w []float64, anyKnown bool) {
 func (x *exec) startTrack(b *benchspec.Benchmark, item int) *benchTrack {
 	hist := x.m.o.Store.MedianPhaseSeconds(b.ID)
 	t := newTrack(b, item, hist)
+	t.modelFile = x.m.modelFileOf(b.Profile)
 	x.a.mu.Lock()
 	x.a.tracks[b.ID] = t
 	x.a.mu.Unlock()

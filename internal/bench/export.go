@@ -151,6 +151,7 @@ func ExportMarkdown(r *Run) string {
 		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", mdEscape(name), mdEscape(st.Profile), mdEscape(nodes),
 			load, mbs, prefill, decode, sd, mem, mdEscape(outcome), mdEscape(baselineText(st)))
 	}
+	b.WriteString(ExportMarkdownPhases(r))
 	return b.String()
 }
 
@@ -161,7 +162,7 @@ func ExportCSV(r *Run) (string, error) {
 	head := []string{"run_id", "suite", "idx", "group", "benchmark", "profile", "nodes", "state", "outcome", "http_status", "reason", "pass",
 		"load_s", "avg_mb_s", "memory_mib", "requests", "failed_requests",
 		"prefill_tps_mean", "prefill_tps_stdev", "decode_tps_mean", "decode_tps_median", "decode_tps_min", "decode_tps_max", "decode_tps_stdev",
-		"ttft_ms_mean", "baseline_run_id", "load_vs_baseline_pct", "decode_vs_baseline_pct", "regression"}
+		"ttft_ms_mean", "baseline_run_id", "load_vs_baseline_pct", "decode_vs_baseline_pct", "regression", "model_file", "worker_nodes", "phases"}
 	if err := w.Write(head); err != nil {
 		return "", err
 	}
@@ -206,8 +207,183 @@ func ExportCSV(r *Run) (string, error) {
 		} else {
 			row = append(row, "", "", "", "")
 		}
+		var ph []string
+		for _, p := range st.Phases {
+			ph = append(ph, p.Type+":"+p.State)
+		}
+		row = append(row, st.ModelFile, strconv.Itoa(st.NodeCount), strings.Join(ph, ";"))
 		if err := w.Write(row); err != nil {
 			return "", err
+		}
+	}
+	w.Flush()
+	return buf.String(), w.Error()
+}
+
+// phaseNumbers are the headline figures of a phase, for the markdown and csv exports.
+func phaseNumbers(p *PhaseResult) string {
+	var parts []string
+	switch p.Type {
+	case "load":
+		if p.Load != nil {
+			parts = append(parts, "load "+f1(p.Load.LoadS)+" s")
+			if p.Load.AvgMBs > 0 {
+				parts = append(parts, f1(p.Load.AvgMBs)+" MB/s")
+			}
+			if p.Load.Bytes > 0 {
+				parts = append(parts, strconv.FormatFloat(float64(p.Load.Bytes)/1e9, 'f', 2, 64)+" GB")
+			}
+			if p.Load.MemoryMiB > 0 {
+				parts = append(parts, strconv.FormatFloat(p.Load.MemoryMiB, 'f', 0, 64)+" MiB")
+			}
+		}
+	case "unload":
+		if p.Unload != nil && p.Unload.Loaded {
+			parts = append(parts, "gone after "+f2(p.Unload.UnloadS)+" s")
+		}
+	case "hold":
+		if p.HeldS != nil {
+			parts = append(parts, "idle "+f1(*p.HeldS)+" s")
+		}
+		if p.LoadedAfterHold != nil && !*p.LoadedAfterHold {
+			parts = append(parts, "model was unloaded meanwhile")
+		}
+	case "concurrent_requests":
+		if c := p.Concurrent; c != nil {
+			parts = append(parts, strconv.Itoa(c.N)+" together, "+f1(c.WallMS/1000)+" s, "+strconv.Itoa(c.Errors)+" errors")
+		}
+	}
+	if s := p.Stats; s != nil && p.Type != "load" && p.Type != "unload" {
+		if s.Decode != nil {
+			parts = append(parts, "decode "+f2(s.Decode.Mean)+" tok/s")
+		}
+		if s.Prefill != nil {
+			parts = append(parts, "prefill "+f1(s.Prefill.Mean)+" tok/s")
+		}
+		if s.TTFT != nil {
+			parts = append(parts, "ttft "+f1(s.TTFT.Mean)+" ms")
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// ExportMarkdownPhases is the per-phase part of the markdown export: for each
+// step that has phases, a table of them, and a table of the turns of every
+// conversation. It is empty when no step has any.
+func ExportMarkdownPhases(r *Run) string {
+	var b strings.Builder
+	for i := range r.Steps {
+		st := &r.Steps[i]
+		if len(st.Phases) == 0 {
+			continue
+		}
+		name := st.Name
+		if name == "" {
+			name = st.BenchmarkID
+		}
+		fmt.Fprintf(&b, "\n## %s phases\n\n", mdEscape(name))
+		b.WriteString("| # | Phase | State | Seconds | What it measured |\n| ---: | --- | --- | ---: | --- |\n")
+		for _, p := range st.Phases {
+			label := p.Type
+			if p.Label != "" {
+				label = p.Label + " (" + p.Type + ")"
+			}
+			state := p.State
+			if p.Outcome != "" && p.Outcome != PhaseOK {
+				state += ", " + p.Outcome
+			}
+			fmt.Fprintf(&b, "| %d | %s | %s | %s | %s |\n", p.Idx+1, mdEscape(label), mdEscape(state), f1(p.DurationS), mdEscape(phaseNumbers(&p)))
+		}
+		for _, p := range st.Phases {
+			if len(p.Turns) == 0 {
+				continue
+			}
+			fmt.Fprintf(&b, "\nConversation (phase %d):\n\n| Turn | Prompt tokens | Reused | Prefill tok/s | Decode tok/s | First token ms | Wall ms |\n| ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n", p.Idx+1)
+			for _, t := range p.Turns {
+				ttft := "-"
+				if t.TTFTMS != nil {
+					ttft = f1(*t.TTFTMS)
+				}
+				fmt.Fprintf(&b, "| %d | %d | %d | %s | %s | %s | %s |\n", t.Turn, t.PromptTokens, t.CacheN, f1(t.PrefillTPS), f2(t.DecodeTPS), ttft, f1(t.WallMS))
+			}
+		}
+	}
+	return b.String()
+}
+
+// ExportCSVPhases is one row per phase of every step.
+func ExportCSVPhases(r *Run) (string, error) {
+	var buf bytes.Buffer
+	w := csv.NewWriter(&buf)
+	if err := w.Write([]string{"run_id", "suite", "step_idx", "benchmark", "phase_idx", "type", "label", "state", "outcome", "duration_s", "load_s", "avg_mb_s", "bytes", "memory_mib",
+		"requests", "decode_tps_mean", "prefill_tps_mean", "ttft_ms_mean", "held_s", "unload_s", "concurrent_n", "concurrent_wall_ms", "concurrent_errors", "error"}); err != nil {
+		return "", err
+	}
+	num := func(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
+	for i := range r.Steps {
+		st := &r.Steps[i]
+		for _, p := range st.Phases {
+			row := []string{r.ID, r.SuiteID, strconv.Itoa(st.Idx), st.BenchmarkID, strconv.Itoa(p.Idx), p.Type, p.Label, p.State, p.Outcome, num(p.DurationS)}
+			if l := p.Load; l != nil {
+				row = append(row, num(l.LoadS), num(l.AvgMBs), strconv.FormatInt(l.Bytes, 10), num(l.MemoryMiB))
+			} else {
+				row = append(row, "", "", "", "")
+			}
+			reqs, dec, pre, ttft := "", "", "", ""
+			if s := p.Stats; s != nil {
+				reqs = strconv.Itoa(s.Requests)
+				if s.Decode != nil {
+					dec = num(s.Decode.Mean)
+				}
+				if s.Prefill != nil {
+					pre = num(s.Prefill.Mean)
+				}
+				if s.TTFT != nil {
+					ttft = num(s.TTFT.Mean)
+				}
+			}
+			held, unl := "", ""
+			if p.HeldS != nil {
+				held = num(*p.HeldS)
+			}
+			if p.Unload != nil {
+				unl = num(p.Unload.UnloadS)
+			}
+			cn, cw, ce := "", "", ""
+			if c := p.Concurrent; c != nil {
+				cn, cw, ce = strconv.Itoa(c.N), num(c.WallMS), strconv.Itoa(c.Errors)
+			}
+			row = append(row, reqs, dec, pre, ttft, held, unl, cn, cw, ce, p.Error)
+			if err := w.Write(row); err != nil {
+				return "", err
+			}
+		}
+	}
+	w.Flush()
+	return buf.String(), w.Error()
+}
+
+// ExportCSVTurns is one row per conversation turn.
+func ExportCSVTurns(r *Run) (string, error) {
+	var buf bytes.Buffer
+	w := csv.NewWriter(&buf)
+	if err := w.Write([]string{"run_id", "benchmark", "phase_idx", "turn", "name", "status", "prompt_tokens", "prompt_n", "reused_tokens", "prefill_tps", "decode_tps", "ttft_ms", "wall_ms", "predicted_n"}); err != nil {
+		return "", err
+	}
+	num := func(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
+	for i := range r.Steps {
+		st := &r.Steps[i]
+		for _, p := range st.Phases {
+			for _, t := range p.Turns {
+				ttft := ""
+				if t.TTFTMS != nil {
+					ttft = num(*t.TTFTMS)
+				}
+				if err := w.Write([]string{r.ID, st.BenchmarkID, strconv.Itoa(p.Idx), strconv.Itoa(t.Turn), t.Name, strconv.Itoa(t.Status), strconv.Itoa(t.PromptTokens),
+					strconv.Itoa(t.PromptN), strconv.Itoa(t.CacheN), num(t.PrefillTPS), num(t.DecodeTPS), ttft, num(t.WallMS), strconv.Itoa(t.PredictedN)}); err != nil {
+					return "", err
+				}
+			}
 		}
 	}
 	w.Flush()
