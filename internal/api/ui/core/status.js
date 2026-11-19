@@ -28,6 +28,14 @@ export function nodeMemory(placed) {
   return m;
 }
 
+// machines(st, n) -> "1 PS5", "3 PS5s": the pool's machines by their common
+// name when every node of the pool is a PS5, else "1 node", "3 nodes".
+export function machines(st, n) {
+  const pool = viewNodes(st).filter(x => !x.excluded);
+  const ps5 = pool.length > 0 && pool.every(x => /^ps5\b/i.test(x.hostname || ''));
+  return ps5 ? `${n} PS5${n === 1 ? '' : 's'}` : `${n} node${n === 1 ? '' : 's'}`;
+}
+
 // instanceBadge(inst) -> the state badge of an instance.
 export function instanceBadge(inst) {
   switch (inst.state) {
@@ -68,36 +76,5 @@ export function staleBanner() {
   return null;
 }
 
-// plainReason(text) turns the scheduler's reason strings (wait_reason, a
-// plan's reason) into a plain sentence. The scheduler's own words stay
-// available: callers put the raw text in a tooltip. An unknown wording is
-// only tidied (prefix removed, capital, full stop), never guessed at.
-export function plainReason(raw) {
-  let s = String(raw || '').trim();
-  if (!s) return '';
-  let stale = '';
-  if (/^fleet view stale;\s*/i.test(s)) { stale = 'The fleet feed is stale, so remote nodes are not used. '; s = s.replace(/^fleet view stale;\s*/i, ''); }
-  const n = v => Number(v).toLocaleString('en-US');
-  let m;
-  if ((m = s.match(/^waited (\d+)s without a placement: (.+)$/i))) {
-    const mins = Math.round(m[1] / 60);
-    return stale + `Waited ${mins >= 1 ? mins + ' min' : m[1] + ' s'} without finding room. ` + plainReason(m[2]);
-  }
-  if ((m = s.match(/^profile (\S+) is backed off after a failed load$/i))) return stale + 'Its last load failed, so it is held back for a while.';
-  s = s.replace(/^placer:\s*/i, '');
-  if ((m = s.match(/^need (\d+) MiB \(requires (\d+) MiB\) exceeds cluster capacity (\d+) MiB(?:; nodes excluded by config and not counted: (.+))?$/i))) {
-    return stale + `Needs ${n(m[1])} MiB` + (m[2] !== m[1] ? ` (${n(m[2])} MiB with the safety margins)` : '') + `, more than the whole cluster can hold (${n(m[3])} MiB)` +
-      (m[4] ? `. Not counted because they are excluded: ${m[4]}.` : '.');
-  }
-  if ((m = s.match(/^need (\d+) MiB \(requires (\d+) MiB\) does not fit the available nodes$/i))) {
-    return stale + `Needs ${n(m[1])} MiB` + (m[2] !== m[1] ? ` (${n(m[2])} MiB with the safety margins)` : '') + '; the nodes that are free now do not have that much.';
-  }
-  if ((m = s.match(/^forced nodes? in use: (.+)$/i))) return stale + `It is tied to ${m[1]}, which ${m[1].includes(',') ? 'are' : 'is'} in use by another model.`;
-  if ((m = s.match(/^joins the queued entry \((\d+) waiting, claimed (true|false)\)$/i))) {
-    return stale + (m[2] === 'true' ? 'Requests for it are already waiting and have claimed their nodes; this one would join them.' : 'Requests for it are already waiting for room; this one would join them.');
-  }
-  if ((m = s.match(/^a placement is available/i))) return stale + 'A node is free; it starts at the next pass.';
-  if (!s) return stale.trim();
-  s = s.charAt(0).toUpperCase() + s.slice(1);
-  return stale + (/[.!?]$/.test(s) ? s : s + '.');
-}
+// The reason strings in plain words live in reasons.js (no DOM, testable).
+export { plainReason, shortReason, explain, plainBasis } from './reasons.js';

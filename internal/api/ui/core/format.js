@@ -26,16 +26,25 @@ export function num(v, digits = 0) {
   if (v == null || Number.isNaN(v)) return DASH;
   return (digits === 0 ? nf0 : digits === 1 ? nf1 : nf2).format(v);
 }
+// The unit rule (README, "Units"): anything read at a glance is GB with one
+// decimal, where 1 GB = 1,024 MiB = 2^30 bytes, for memory and file sizes
+// alike, so a model's file and its memory can be compared. MiB (mib()) is for
+// detail tables and tooltips only.
 export const mib = v => (v == null ? DASH : nf0.format(Math.round(v)) + ' MiB');
-export function gib(v) { return v == null ? DASH : nf1.format(v / 1024) + ' GiB'; }
-// bytes as decimal GB or MB, the way upload sizes are spoken about.
+// gb(mib) -> "7.2 GB"; gbNum(mib) -> "7.2" (for a figure with its unit set apart).
+export const gbNum = v => (v == null || Number.isNaN(v) ? DASH : nf1.format(v / 1024));
+export const gb = v => (v == null || Number.isNaN(v) ? DASH : gbNum(v) + ' GB');
+export function gib(v) { return gb(v); }
+// bytes(n) -> "6.6 GB", "638 MB": the same GB as memory (2^30 bytes).
 export function bytes(v) {
   if (v == null) return DASH;
-  if (v >= 1e9) return nf2.format(v / 1e9) + ' GB';
-  if (v >= 1e6) return nf0.format(v / 1e6) + ' MB';
-  if (v >= 1e3) return nf0.format(v / 1e3) + ' kB';
+  if (v >= 2 ** 30 / 10) return nf1.format(v / 2 ** 30) + ' GB';
+  if (v >= 2 ** 20) return nf0.format(v / 2 ** 20) + ' MB';
+  if (v >= 1024) return nf0.format(v / 1024) + ' kB';
   return nf0.format(v) + ' B';
 }
+// shortId('9958d7dd...', 12) -> the first characters of a long identifier.
+export const shortId = (s, n = 12) => (s && String(s).length > n + 1 ? String(s).slice(0, n) + '…' : s || '');
 export const pct = (v, digits = 0) => (v == null ? DASH : num(v, digits) + '%');
 export const tps = v => (v == null || v <= 0 ? DASH : nf1.format(v));
 export function ctx(v) {

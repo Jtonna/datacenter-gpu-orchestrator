@@ -4,7 +4,7 @@
 
 import { h, morph } from './dom.js';
 import { on } from './store.js';
-import { num, mib, parseGoDuration } from './format.js';
+import { num, mib, gb, gbNum, parseGoDuration } from './format.js';
 
 // ---------- live rendering ----------
 
@@ -66,13 +66,52 @@ export function legend(items) {
 // mem = {model_mib, kv_mib, compute_mib, total_mib}; budget = usable MiB.
 export function memoryRow(name, mem, budget, extra) {
   const other = Math.max(0, (mem.total_mib || 0) - (mem.model_mib || 0) - (mem.kv_mib || 0) - (mem.compute_mib || 0));
-  const label = `${mib(mem.total_mib)} for this model on ${name}` + (budget ? `, of ${mib(budget)} usable` : '');
+  const label = `${gb(mem.total_mib)} for this model on ${name}` + (budget ? `, of ${gb(budget)} usable` : '');
+  // a part under 0.05 GB would read "0.0": it is given in MiB instead
+  const part = (v, what) => (v >= 51 ? `${gbNum(v)} GB ${what}` : v > 0 ? `${num(v)} MiB ${what}` : null);
+  const split = [part(mem.model_mib, 'model'), part(mem.kv_mib, 'KV cache'), part(mem.compute_mib, 'compute')].filter(Boolean);
   return h('div.nr', { key: 'mem-' + name },
     h('span.mono', name, extra ? [' ', extra] : null),
     bar([{ cls: 'm', value: mem.model_mib, title: 'Model ' + mib(mem.model_mib) }, { cls: 'k', value: mem.kv_mib, title: 'KV cache ' + mib(mem.kv_mib) },
       { cls: 'c', value: mem.compute_mib, title: 'Compute ' + mib(mem.compute_mib) }, { cls: 'o', value: other, title: 'Other ' + mib(other) }], budget, label),
-    h('span.mono.fig', budget ? `${num(mem.total_mib)} / ${mib(budget)}` : mib(mem.total_mib)),
-    h('span.mono.mut', `${num(mem.model_mib)} model · ${num(mem.kv_mib)} KV · ${num(mem.compute_mib)} compute`));
+    h('span.mono.fig', { title: budget ? `${mib(mem.total_mib)} of ${mib(budget)} usable` : mib(mem.total_mib) }, budget ? `${gbNum(mem.total_mib)} / ${gb(budget)}` : gb(mem.total_mib)),
+    h('span.mut.split', { title: `${mib(mem.model_mib)} model, ${mib(mem.kv_mib)} KV cache, ${mib(mem.compute_mib)} compute` }, split.join(' · ')));
+}
+
+// copyButton(text, what) -> a small "Copy" button that puts text on the clipboard.
+export function copyButton(text, what) {
+  return h('button.copy', { type: 'button', title: 'Copy ' + (what || 'it'), 'aria-label': 'Copy ' + (what || text), onclick: async e => {
+    e.stopPropagation();
+    try { await navigator.clipboard.writeText(text); toast('Copied ' + (what || text), 'ok'); } catch { toast('Copy it by hand: ' + text); }
+  } }, 'Copy');
+}
+
+// facts([['Address', node], ['Priority', '1']]) -> aligned label / value pairs.
+export function facts(pairs) {
+  return h('dl.facts', pairs.filter(Boolean).map(([k, v, title]) => [h('dt', k), h('dd', { title }, v)]));
+}
+
+// backLink('Models', href) -> the way back from a detail page, above its title.
+export const backLink = (label, to) => h('a.back', { href: to }, '\u2190 ' + label);
+
+// more(open, onToggle, show, hide) -> a quiet "show more" button for a part
+// that is folded away (the scheduler's own wording, a long list).
+export function more(open, onToggle, show, hide) {
+  return h('button.more', { type: 'button', 'aria-expanded': open ? 'true' : 'false', onclick: e => { e.stopPropagation(); onToggle(); } }, open ? (hide || 'Hide') : (show || 'Show'));
+}
+
+// memBar({model, other, total, limit}, label): one node's memory on one track.
+// Solid segments: models (mint), other use (grey); the rest of the track is
+// free. `limit` is where a new model must stop (free minus the headroom): one
+// marker line, drawn only when it is inside the track.
+export function memBar(o, label) {
+  const t = o.total > 0 ? o.total : 1;
+  const pct = v => Math.max(0, Math.min(100, (v / t) * 100)).toFixed(2) + '%';
+  return h('div.membar', { role: 'img', 'aria-label': label || '' },
+    h('div.track',
+      o.model > 0 ? h('span.m', { style: 'width:' + pct(o.model), title: 'Models ' + mib(o.model) }) : null,
+      o.other > 0 ? h('span.o', { style: 'width:' + pct(o.other), title: 'Other use ' + mib(o.other) }) : null),
+    o.limit != null && o.limit > 0 && o.limit < t ? h('i.lim', { style: 'left:' + pct(o.limit), title: 'New models may fill the node up to here; the rest is kept free' }) : null);
 }
 
 // progress({fraction: 0.41, cls: 'a', left: node, mid: node, right: node, foot: [l, r], striped: 0.2})
