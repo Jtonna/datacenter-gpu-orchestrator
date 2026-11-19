@@ -159,6 +159,11 @@ func TestBenchMock(t *testing.T) {
 	if code, _ = call(mux, "POST", "/api/bench/benchmarks", `{"id":"x","profile":"qwen3.5-4b","phases":[{"type":"conversation","turns":["hi"]}]}`); code != 422 {
 		t.Fatalf("string turn: %d", code)
 	}
+	code, m = call(mux, "POST", "/api/bench/benchmarks", `{"id":"x","profile":"qwen3.5-4b","phases":[{"type":"load"},{"type":"conversation","turns":[{"content":" "}],"max_tokens":0}]}`)
+	if msg, _ := m["error"].(map[string]any)["message"].(string); code != 422 ||
+		msg != "phases[1] (conversation): max_tokens must be a whole number from 1 to 65536, got 0\nphases[1] (conversation): turns[0].content is empty" {
+		t.Fatalf("validation messages: %d %q", code, msg)
+	}
 	if code, _ = call(mux, "POST", "/api/bench/benchmarks", `{"id":"x","profile":"qwen3.5-4b","phases":[{"type":"load"},{"type":"conversation","turns":[{"content":"hi"}]},{"type":"unload"}]}`); code != 201 {
 		t.Fatalf("good benchmark: %d", code)
 	}

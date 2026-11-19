@@ -421,193 +421,239 @@ var slugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 var simpleKeys = []string{"cold", "requests", "repeats", "warmup_requests", "unload_after"}
 
+// validateBenchmark checks a benchmark body and, like benchspec.Validate,
+// reports every problem it finds, one per line, prefixed with where it is
+// (for example "phases[1] (conversation): turns[0].content is empty").
 func validateBenchmark(bm map[string]any, saved map[string]map[string]any) error {
+	var errs []string
+	add := func(f string, a ...any) { errs = append(errs, fmt.Sprintf(f, a...)) }
+	done := func() error {
+		if len(errs) == 0 {
+			return nil
+		}
+		return bad("%s", strings.Join(errs, "\n"))
+	}
 	id := strOpt(bm, "id")
 	if !slugRe.MatchString(id) {
-		return bad("benchmark %q: id must be lower-case letters, digits, '.', '-' and '_', up to 64 characters", id)
+		add("id %q must be 1 to 64 characters: lower-case letters, digits, '.', '-' or '_', starting with a letter or digit", id)
 	}
 	if isParallel(bm) {
-		for k := range bm {
+		for _, k := range sortedKeys(bm) {
 			if !contains([]string{"id", "name", "description", "tags", "parallel"}, k) {
-				return bad("benchmark %s: a parallel step takes only id, name, description, tags and parallel, not %s", id, k)
+				add("a parallel step names the benchmarks to start together and nothing else (no profile, phases, requests, cold, repeats, warmup_requests, timeout_s, expect or unload_after)")
+				break
 			}
 		}
 		l := asList(bm["parallel"])
 		if len(l) < 2 || len(l) > 8 {
-			return bad("benchmark %s: parallel must name 2 to 8 benchmarks", id)
+			add("parallel needs 2 to 8 benchmark ids")
 		}
+		seen := map[string]bool{}
 		for _, x := range l {
-			m, ok := saved[fmt.Sprint(x)]
-			if !ok {
-				return bad("parallel member %q is not a saved benchmark", fmt.Sprint(x))
+			mid := fmt.Sprint(x)
+			m, ok := saved[mid]
+			switch {
+			case mid == id:
+				add("parallel: a step cannot contain itself")
+			case seen[mid]:
+				add("parallel: %q is listed twice", mid)
+			case !ok:
+				add("parallel member %q is not a saved benchmark", mid)
+			case isParallel(m):
+				add("parallel member %q is itself a parallel step", mid)
 			}
-			if isParallel(m) {
-				return bad("parallel member %q is itself a parallel step", fmt.Sprint(x))
-			}
+			seen[mid] = true
 		}
-		return nil
+		return done()
 	}
-	for k := range bm {
+	for _, k := range sortedKeys(bm) {
 		if _, ok := optionIn(benchSchema.BenchmarkOptions, k); !ok && !contains(simpleKeys, k) && k != "expect" {
-			return bad("benchmark %s: unknown field %q", id, k)
+			add("unknown field %q", k)
 		}
 	}
 	prof := strOpt(bm, "profile")
 	if prof == "" {
-		return bad("benchmark %s: profile is required", id)
-	}
-	if _, ok := profileByID(prof); !ok {
-		return bad("benchmark %s: profile %q is not a profile or alias of this scheduler", id, prof)
+		add("profile is required")
+	} else if _, ok := profileByID(prof); !ok {
+		add("profile %q is not a profile or alias of this scheduler", prof)
 	}
 	if t, ok := bm["timeout_s"]; ok {
 		if x, ok := t.(float64); !ok || x < 1 || x > 86400 || x != float64(int64(x)) {
-			return bad("benchmark %s: timeout_s must be a whole number from 1 to 86400, got %s", id, show(t))
+			add("timeout_s must be 1 to 86400, got %s", show(t))
 		}
 	}
 	if ph, ok := bm["phases"]; ok {
 		for _, k := range simpleKeys {
 			if _, ok := bm[k]; ok {
-				return bad("benchmark %s: phases and the simple form (%s) cannot be mixed", id, k)
+				add("phases replaces the simple form: remove %s", k)
 			}
 		}
 		l, ok := ph.([]any)
 		if !ok || len(l) == 0 || len(l) > 32 {
-			return bad("benchmark %s: phases must list 1 to 32 phases", id)
+			add("phases: between 1 and 32 are required")
 		}
 		for i, p := range l {
 			m, ok := p.(map[string]any)
 			if !ok {
-				return bad("benchmark %s phase %d: must be an object", id, i+1)
+				add("phases[%d]: must be an object", i)
+				continue
 			}
 			t := strOpt(m, "type")
 			def, ok := phaseTypeDef(t)
 			if !ok {
-				return bad("benchmark %s phase %d: type %q is not one of load, warmup, requests, conversation, hold, concurrent_requests, unload", id, i+1, t)
+				add("phases[%d]: type %q is not one of load, warmup, requests, conversation, hold, concurrent_requests, unload", i, t)
+				continue
 			}
-			where := fmt.Sprintf("benchmark %s phase %d (%s)", id, i+1, t)
+			w := func(f string, a ...any) { add("phases[%d] (%s): %s", i, t, fmt.Sprintf(f, a...)) }
 			for _, o := range def.Options {
 				if _, ok := m[o.Name]; o.Required && !ok {
-					return bad("%s: %s is required", where, o.Name)
+					w("%s is required", o.Name)
 				}
 			}
-			for k, v := range m {
+			for _, k := range sortedKeys(m) {
 				if k == "type" {
 					continue
 				}
 				o, ok := optionIn(def.Options, k)
 				if !ok {
-					return bad("%s: unknown option %q", where, k)
+					var names []string
+					for _, x := range def.Options {
+						names = append(names, x.Name)
+					}
+					w("option %q does not belong to this phase type (it takes: %s)", k, strings.Join(names, ", "))
+					continue
 				}
-				if err := checkOption(o, where+": "+k, v); err != nil {
-					return err
+				switch {
+				case o.Type == "request":
+					checkRequest(m[k], 0, fmt.Sprintf("phases[%d].request", i), add)
+				case o.Type == "list" && o.ItemType == "request":
+					rl, ok := m[k].([]any)
+					if !ok || len(rl) == 0 || len(rl) > 64 {
+						w("requests: between 1 and 64 are required")
+					}
+					for j, r := range rl {
+						checkRequest(r, j, fmt.Sprintf("phases[%d].requests[%d]", i, j), add)
+					}
+				default:
+					checkOption(o, k, m[k], w)
 				}
 			}
 		}
 	} else {
 		l, ok := bm["requests"].([]any)
 		if !ok || len(l) == 0 || len(l) > 64 {
-			return bad("benchmark %s: requests must list 1 to 64 requests (or use phases)", id)
+			add("requests: between 1 and 64 are required (or give phases)")
 		}
 		for i, r := range l {
-			if err := checkOption(benchOption{Name: "requests", Type: "request"}, fmt.Sprintf("benchmark %s request %d", id, i+1), r); err != nil {
-				return err
-			}
+			checkRequest(r, i, fmt.Sprintf("requests[%d]", i), add)
 		}
 	}
 	if e, ok := bm["expect"]; ok {
 		m, ok := e.(map[string]any)
 		if !ok {
-			return bad("benchmark %s: expect must be an object", id)
-		}
-		if o, ok := m["outcome"]; ok && !contains([]string{"ready", "refused", "failed"}, fmt.Sprint(o)) {
-			return bad("benchmark %s: expect.outcome must be ready, refused or failed, got %s", id, show(o))
+			add("expect must be an object")
+		} else if o, ok := m["outcome"]; ok && !contains([]string{"ready", "refused", "failed"}, fmt.Sprint(o)) {
+			add("expect.outcome must be ready, refused or failed, got %s", show(o))
 		}
 	}
-	return nil
+	return done()
 }
 
-// checkOption checks one value against a schema option.
-func checkOption(o benchOption, where string, v any) error {
+// checkRequest checks one request object; its messages read "<where> (<name>): ...".
+func checkRequest(v any, i int, where string, add func(string, ...any)) {
+	m, ok := v.(map[string]any)
+	if !ok {
+		add("%s: must be a request object {name, prompt or messages, max_tokens, ...}", where)
+		return
+	}
+	name := strOpt(m, "name")
+	if name == "" {
+		name = fmt.Sprintf("request-%d", i+1)
+	}
+	w := func(f string, a ...any) { add("%s (%s): %s", where, name, fmt.Sprintf(f, a...)) }
+	for _, k := range sortedKeys(m) {
+		ro, ok := optionIn(benchSchema.RequestOptions, k)
+		if !ok {
+			w("unknown field %q", k)
+			continue
+		}
+		if ro.Type == "list" { // messages
+			if _, ok := m[k].([]any); !ok {
+				w("messages must be a list of {role, content}")
+			}
+			continue
+		}
+		checkOption(ro, k, m[k], w)
+	}
+	switch {
+	case strOpt(m, "prompt") != "" && len(asList(m["messages"])) > 0:
+		w("give either messages or prompt, not both")
+	case strOpt(m, "prompt") == "" && len(asList(m["messages"])) == 0:
+		w("messages or prompt is required")
+	}
+}
+
+// checkOption checks one value against a schema option; w adds a message.
+func checkOption(o benchOption, name string, v any, w func(string, ...any)) {
+	rangeText := ""
+	switch {
+	case o.Min != nil && o.Max != nil:
+		rangeText = fmt.Sprintf(" from %v to %v", *o.Min, *o.Max)
+	case o.Min != nil:
+		rangeText = fmt.Sprintf(" of at least %v", *o.Min)
+	case o.Max != nil:
+		rangeText = fmt.Sprintf(" of at most %v", *o.Max)
+	}
 	switch o.Type {
 	case "integer", "number":
 		x, ok := v.(float64)
-		if !ok || o.Type == "integer" && x != float64(int64(x)) {
-			return bad("%s must be a %s, got %s", where, map[string]string{"integer": "whole number", "number": "number"}[o.Type], show(v))
-		}
-		if o.Min != nil && x < *o.Min || o.Max != nil && x > *o.Max {
-			return bad("%s: %v is out of range", where, x)
+		kind := map[string]string{"integer": "a whole number", "number": "a number"}[o.Type]
+		if !ok || o.Type == "integer" && x != float64(int64(x)) || o.Min != nil && x < *o.Min || o.Max != nil && x > *o.Max {
+			w("%s must be %s%s, got %s", name, kind, rangeText, show(v))
 		}
 	case "boolean":
 		if _, ok := v.(bool); !ok {
-			return bad("%s must be true or false", where)
+			w("%s must be true or false", name)
 		}
 	case "string", "text":
 		if _, ok := v.(string); !ok {
-			return bad("%s must be a string", where)
-		}
-	case "request":
-		m, ok := v.(map[string]any)
-		if !ok {
-			return bad("%s must be a request object", where)
-		}
-		for k, x := range m {
-			ro, ok := optionIn(benchSchema.RequestOptions, k)
-			if !ok {
-				return bad("%s: unknown request field %q", where, k)
-			}
-			if ro.Type == "list" { // messages
-				if _, ok := x.([]any); !ok {
-					return bad("%s: messages must be a list of {role, content}", where)
-				}
-				continue
-			}
-			if err := checkOption(ro, where+"."+k, x); err != nil {
-				return err
-			}
-		}
-		if strOpt(m, "prompt") == "" && len(asList(m["messages"])) == 0 {
-			return bad("%s: a request needs a prompt or messages", where)
+			w("%s must be a string", name)
 		}
 	case "list":
 		l, ok := v.([]any)
 		if !ok {
-			return bad("%s must be a list", where)
+			w("%s must be a list", name)
+			return
 		}
 		if o.Min != nil && float64(len(l)) < *o.Min || o.Max != nil && float64(len(l)) > *o.Max {
-			return bad("%s must have %v to %v items", where, show(o.Min), show(o.Max))
+			w("%s: between %v and %v are required", name, show(o.Min), show(o.Max))
 		}
-		for i, x := range l {
-			w := fmt.Sprintf("%s[%d]", where, i)
+		for j, x := range l {
 			switch o.ItemType {
-			case "request":
-				if err := checkOption(benchOption{Type: "request"}, w, x); err != nil {
-					return err
-				}
 			case "turn":
 				m, ok := x.(map[string]any)
 				if !ok {
-					return bad("%s must be a turn object {name, content, max_tokens}", w)
+					w("%s[%d] must be a turn object {name, content, max_tokens}", name, j)
+					continue
 				}
-				for k, y := range m {
+				for _, k := range sortedKeys(m) {
 					to, ok := optionIn(benchSchema.TurnOptions, k)
 					if !ok {
-						return bad("%s: unknown turn field %q", w, k)
+						w("%s[%d]: unknown field %q", name, j, k)
+						continue
 					}
-					if err := checkOption(to, w+"."+k, y); err != nil {
-						return err
-					}
+					checkOption(to, fmt.Sprintf("%s[%d].%s", name, j, k), m[k], w)
 				}
 				if strings.TrimSpace(strOpt(m, "content")) == "" {
-					return bad("%s: content is required", w)
+					w("%s[%d].content is empty", name, j)
 				}
 			case "string":
 				if _, ok := x.(string); !ok {
-					return bad("%s must be a string", w)
+					w("%s[%d] must be a string", name, j)
 				}
 			}
 		}
 	}
-	return nil
 }
 
 func validateSuite(su map[string]any, benchmarks map[string]map[string]any) error {
