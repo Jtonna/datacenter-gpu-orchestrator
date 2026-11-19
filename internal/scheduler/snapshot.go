@@ -105,6 +105,7 @@ func (c *schedCore) instStatus(in *inst) InstanceStatus {
 		Cmd: c.cmdline(in), LogFile: in.logFile, Created: in.created, LastUsed: in.lastUsed, LoadDuration: in.loadDuration,
 		InFlight: in.inFlight, Waiters: len(in.waiters), VictimOf: in.victimOf,
 		ModelFile: in.prof.Model, RequestsServed: in.served,
+		StaleProfile: c.staleProfile(in),
 	}
 	if in.state == stStarting {
 		s.Phase = in.phase.String()
@@ -156,7 +157,7 @@ func (c *schedCore) instStatus(in *inst) InstanceStatus {
 }
 
 func (c *schedCore) statusDoc() Status {
-	st := Status{Time: c.now, ShuttingDown: c.shutdown, RecentLoads: c.recentLoads(), LearnedNeeds: c.learnedNeeds()}
+	st := Status{Time: c.now, ShuttingDown: c.shutdown, RecentLoads: c.recentLoads(), LearnedNeeds: c.learnedNeeds(), ConfigRevision: c.cfg.Revision, Configured: c.cfg.Configured}
 	for _, in := range c.sortedInsts() {
 		st.Instances = append(st.Instances, c.instStatus(in))
 	}

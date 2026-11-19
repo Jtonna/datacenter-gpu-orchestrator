@@ -165,6 +165,9 @@ type Status struct {
 	// run measured and the need fit decisions use now (memfit.go). Empty until
 	// a profile has loaded.
 	LearnedNeeds map[string]LearnedNeed
+	// ConfigRevision is the configuration revision in force; Configured is false while the built-in defaults run (nothing imported yet).
+	ConfigRevision int64
+	Configured     bool
 }
 
 // InstanceStatus describes one instance.
@@ -185,8 +188,10 @@ type InstanceStatus struct {
 	LoadDeadline   time.Time // starting, child running
 	InFlight       int
 	Waiters        int
-	VictimOf       string // profile of the claimed entry this instance drains or stops for
-	Nodes          []PlacedNodeStatus
+	// StaleProfile: the profile was changed or deleted after this instance started; it keeps the definition it started with until its next load.
+	StaleProfile bool
+	VictimOf     string // profile of the claimed entry this instance drains or stops for
+	Nodes        []PlacedNodeStatus
 	// HostMemory lists host-side buffers from the load log (CPU, *_Host);
 	// they are not part of the per-device sums.
 	HostMemory []DeviceMemory
