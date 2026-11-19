@@ -96,7 +96,7 @@ func main() {
 	if h.c.hist.On() {
 		h.engine.record = h.c.hist.Record
 	}
-	h.engine.reset(h.bare, sc.Bench, time.Now())
+	h.engine.reset(h.bare, sc.Bench, time.Now(), sc.BenchSetup)
 	ba := &benchAPI{store: store, engine: h.engine, cfg: h.cfg}
 	h.cfg.profileRefs = store.profileRefs
 
@@ -221,7 +221,7 @@ func (h *harness) setScenario(w http.ResponseWriter, r *http.Request) {
 	reset := r.URL.Query().Get("reset") == "1" || r.URL.Query().Get("reset") == "true"
 	h.st.set(sc.Name)
 	now := time.Now()
-	h.engine.reset(h.bare, sc.Bench, now)
+	h.engine.reset(h.bare, sc.Bench, now, sc.BenchSetup)
 	if reset {
 		h.cfg.reset(h.bare)
 		h.relay.inject("config", map[string]any{"revision": h.cfg.current(), "audit_entry_ids": []int64{}, "section": "multiple", "target": "",

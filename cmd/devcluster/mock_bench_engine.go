@@ -1072,7 +1072,7 @@ func (e *benchEngine) finishFrozenLocked(a *activeRun) {
 }
 
 // reset stops everything and reseeds the store (empty when bare).
-func (e *benchEngine) reset(bare bool, frozen string, since time.Time) {
+func (e *benchEngine) reset(bare bool, frozen string, since time.Time, setup ...func(*benchEngine, time.Time)) {
 	e.mu.Lock()
 	if e.cur != nil {
 		if !e.cur.cancelled {
@@ -1092,6 +1092,11 @@ func (e *benchEngine) reset(bare bool, frozen string, since time.Time) {
 	}
 	if frozen != "" {
 		e.freeze(frozen, since)
+	}
+	for _, f := range setup {
+		if f != nil {
+			f(e, since)
+		}
 	}
 	e.mu.Lock()
 	e.send(map[string]any{"kind": "state", "state": e.stateLocked()})

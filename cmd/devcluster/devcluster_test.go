@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -110,21 +111,122 @@ func TestBenchMock(t *testing.T) {
 
 	code, m := call(mux, "GET", "/api/bench/state", "")
 	run, _ := m["run"].(map[string]any)
-	if code != 200 || run == nil || run["state"] != "running" || run["current"].(map[string]any)["benchmark_id"] != "kimi-72b-load-3w" {
+	if code != 200 || run == nil || run["state"] != "running" || m["current"] == nil {
 		t.Fatalf("state: %d %v", code, m)
 	}
+	cur := run["current"].(map[string]any)
+	phase := cur["phase"].(map[string]any)
+	detail := cur["detail"].(map[string]any)
+	if cur["benchmark_id"] != "kimi-72b-load-3w" || cur["index"] != 6.0 || phase["type"] != "load" || phase["index"] != 0.0 ||
+		detail["text"] == nil || detail["load"].(map[string]any)["workers"] == nil || run["steps_done"] != 6.0 || len(run["queue"].([]any)) != 1 {
+		t.Fatalf("progress: %v", run)
+	}
+	code, m = call(mux, "GET", "/api/bench/runs/"+run["id"].(string), "")
+	if env := m["env"].(map[string]any); code != 200 || env["config_revision"] != "14" || len(env["workers"].([]any)) != 3 {
+		t.Fatalf("run env: %d %v", code, m["env"])
+	}
+	conv := m["steps"].([]any)[3].(map[string]any)
+	ph1 := conv["phases"].([]any)[1].(map[string]any)
+	if ph1["type"] != "conversation" || len(ph1["turns"].([]any)) != 5 || conv["requests"].([]any)[0].(map[string]any)["phase_idx"] != 1.0 {
+		t.Fatalf("conversation step: %v", conv)
+	}
+	code, m = call(mux, "GET", "/api/bench/schema", "")
+	if code != 200 || len(m["phase_types"].([]any)) != 7 || len(m["templates"].([]any)) != 5 || m["limits"] == nil {
+		t.Fatalf("schema: %d %v", code, m)
+	}
 	code, m = call(mux, "GET", "/api/bench/aggregates", "")
-	if code != 200 || len(m["benchmarks"].([]any)) != 9 || len(m["by_model"].([]any)) == 0 {
+	if code != 200 || len(m["benchmarks"].([]any)) != 9 || len(m["by_model_nodes"].([]any)) == 0 || m["environment"] == nil {
 		t.Fatalf("aggregates: %d %v", code, m)
+	}
+	for _, b := range m["benchmarks"].([]any) {
+		b := b.(map[string]any)
+		if b["benchmark_id"] == "gemma-conversation" && len(b["turns"].([]any)) != 5 {
+			t.Fatalf("conversation turns: %v", b["turns"])
+		}
+		if b["benchmark_id"] == "gemma-load-1w" {
+			ls := b["metrics"].(map[string]any)["load_s"].(map[string]any)
+			if ls["threshold_pct"] != 15.0 || ls["points"].([]any)[0].(map[string]any)["at"] == nil {
+				t.Fatalf("metric: %v", ls)
+			}
+		}
+	}
+	if code, m = call(mux, "GET", "/api/bench/aggregates?env=same", ""); code != 200 || m["runs_considered"].(float64) >= 60 {
+		t.Fatalf("env=same: %d %v", code, m["runs_considered"])
 	}
 	if code, _ = call(mux, "POST", "/api/bench/benchmarks", `{"id":"x","profile":"nope","phases":[{"type":"load"}]}`); code != 422 {
 		t.Fatalf("bad benchmark: %d", code)
+	}
+	if code, _ = call(mux, "POST", "/api/bench/benchmarks", `{"id":"x","profile":"qwen3.5-4b","phases":[{"type":"conversation","turns":["hi"]}]}`); code != 422 {
+		t.Fatalf("string turn: %d", code)
+	}
+	if code, _ = call(mux, "POST", "/api/bench/benchmarks", `{"id":"x","profile":"qwen3.5-4b","phases":[{"type":"load"},{"type":"conversation","turns":[{"content":"hi"}]},{"type":"unload"}]}`); code != 201 {
+		t.Fatalf("good benchmark: %d", code)
 	}
 	if code, _ = call(mux, "DELETE", "/api/bench/benchmarks/gemma-load-1w", ""); code != 409 {
 		t.Fatalf("delete of a benchmark a suite uses: %d", code)
 	}
 	if code, _ = call(mux, "GET", "/api/bench/runs/"+run["id"].(string)+"/export?format=csv", ""); code != 200 {
 		t.Fatalf("export: %d", code)
+	}
+}
+
+// TestBenchPlay plays the side-by-side suite (a parallel step, then a
+// conversation) and checks the frames it sends.
+func TestBenchPlay(t *testing.T) {
+	if testing.Short() {
+		t.Skip("plays a run in real time")
+	}
+	store := newBenchStore()
+	eng := newBenchEngine(store)
+	var mu sync.Mutex
+	kinds := map[string]int{}
+	var members, done map[string]any
+	eng.emit = func(ev map[string]any) {
+		mu.Lock()
+		defer mu.Unlock()
+		k := ev["kind"].(string)
+		kinds[k]++
+		if k == "progress" && members == nil {
+			if c, _ := ev["run"].(map[string]any)["current"].(map[string]any); c != nil {
+				if d, _ := c["detail"].(map[string]any); d != nil && d["members"] != nil {
+					members = c
+				}
+			}
+		}
+		if k == "aggregate_updated" {
+			done = ev
+		}
+	}
+	eng.reset(false, "", time.Now())
+	defer eng.reset(true, "", time.Now())
+	if _, status, msg := eng.enqueue("side-by-side", "", "test", "manual"); status != 0 {
+		t.Fatal(status, msg)
+	}
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		mu.Lock()
+		d := done
+		mu.Unlock()
+		if d != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("run did not finish: %v", kinds)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, k := range []string{"run", "progress", "step_started", "step_finished", "request", "load", "aggregate_updated"} {
+		if kinds[k] == 0 {
+			t.Errorf("no %s frame: %v", k, kinds)
+		}
+	}
+	if members == nil || members["profile"] != "qwen3.5-4b + bench-gemma-12b-1w" || len(members["detail"].(map[string]any)["members"].([]map[string]any)) != 2 {
+		t.Errorf("parallel progress: %v", members)
+	}
+	if done["state"] != "completed" || len(done["benchmarks"].([]string)) != 3 {
+		t.Errorf("aggregate_updated: %v", done)
 	}
 }
 
