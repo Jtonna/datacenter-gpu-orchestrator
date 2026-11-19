@@ -242,41 +242,60 @@ For the Configure group. The exact shapes are in `internal/api/config.go` and
   profile was changed or deleted after the model loaded (Models shows "Older
   definition").
 
-## The benchmark contract
+## The benchmark contract (as built on the server)
 
-For the Benchmarks group. Existing endpoints: design 9.3 and `internal/api/bench.go`.
-Added by the owner (the dev harness mocks all of it until the server has it):
+For the Benchmarks group. The exact shapes are in `docs/design.md` 9.3 and
+`internal/api/bench.go` of the backend branch (`feat/bench-phases`, merged into
+`feat/bench-and-live-ui`); the dev harness mocks them. Read the real code
+before drawing a field.
 
-- A benchmark is `{id, name, description, profile, phases: [{type, ...options}], timeout_s,
-  expect, tags}`. Phase types and their options come from `GET /api/bench/schema` ->
-  `{phase_types: [{type, label, description, options: [{key, type, default, min, max,
-  unit, description, enum}]}], templates: [{id, name, description, phases}],
-  benchmark_fields, suite_fields}`; option types are the `schemaForm` types plus
-  `requests` (a list of `{name, prompt, max_tokens, stream}`) and `turns` (a list of
-  user messages). Types: `load`, `warmup`, `requests`, `conversation`, `hold`,
-  `concurrent_requests`, `unload`. A benchmark without `phases` is the simple form.
-- Progress: WebSocket `bench` messages with `kind: "progress"` and `GET /api/bench/state`
-  carry `run: {id, suite_id, suite_name, state, percent, started_at, elapsed_s, eta_s,
-  steps_total, steps_done, current: {index, benchmark_id, name, description, profile,
-  model_file, nodes, phase: {index, type, label, of}, percent, detail}, next: {benchmark_id,
-  name, description, profile} | null, queue: [benchmark ids]}`. It is in the store as
-  `state.bench.run` (null when no run is active); subscribe with `on('bench', fn)`.
-  During a load phase `current.detail` is the scheduler's load object (the same
-  `load` the Models screen draws: `progress`, `eta_s`, `stalled_s`, `workers: [{addr,
-  bytes_total, bytes_sent, state}]`; map `addr` to a node with `nodeByAddr`); during
-  request phases it is `{requests_done, requests_total, request, state, tokens,
-  elapsed_ms, tokens_per_second, turn, turns_total, in_flight}`.
-- Run detail: each step may have `phases: [{index, type, label, state, started_at,
-  finished_at, wall_ms}]`; each request has `phase` (a phase type; `measured` in the
-  simple form), `phase_index` and, for a conversation, `turn` (with `cache_n` = reused
-  prompt tokens).
+- A benchmark is `{id, name, description, profile, phases: [{type, ...options}],
+  timeout_s, expect, tags}`. A benchmark without `phases` is the simple form
+  (load, warm-up, requests, unload). Phase types: `load` (cold load only, no
+  chat request), `warmup`, `requests`, `conversation` (multi-turn), `hold`
+  (idle N seconds, then one request), `concurrent_requests`, `unload`.
+- `GET /api/bench/schema` -> the phase types, each with `title`, `description`,
+  `records` and `options[]` (`name, type, default, min, max, unit, description`),
+  plus `expect` keys (`outcome, max_load_s, min_decode_tps, min_prefill_tps,
+  max_ttft_ms, output_sha256, min_reused_tokens, max_concurrent_wall_s,
+  max_errors, max_unload_s`), `templates` (`load-only`, `load-and-requests`,
+  `load-and-conversation`, `requests-on-loaded`, `simultaneous-requests`),
+  `request_options`, `turn_options`, `benchmark_options`, `limits`. Render the
+  editor from it (map an option to a `schemaForm` field: `key` = its `name`);
+  offer the templates as starting points.
+- Progress: `GET /api/bench/state` -> `{enabled, current, queue, next_scheduled,
+  run}` where `run` is the progress object or null, and WebSocket `bench`
+  messages with `kind: "progress"` carry the same object as `run`:
+  `{id, suite_id, suite_name, state, percent, started_at (unix ms), elapsed_s,
+  eta_s (may be null), steps_total, steps_done, current: {index (0-based),
+  benchmark_id, name, description, profile, model_file, nodes, phase: {index,
+  type, label}, percent, detail} | null (until the first benchmark starts),
+  next: {benchmark_id, name, description, profile} | null, queue: [benchmark ids]}`.
+  For a concurrent step `current.profile` is the members joined with " + " and
+  `detail.members` lists them. `detail` during a load phase is `{text, load}`
+  where `load` is the scheduler's load object (the one the Models screen draws:
+  `progress`, `eta_s`, `stalled_s`, `workers: [{addr, bytes_total, bytes_sent,
+  state}]`; map `addr` to a node with `nodeByAddr`); during a conversation it is
+  `{text, turn, turns, tokens, max_tokens}`.
+  The store keeps it as `state.bench.run` (null when no run is active);
+  subscribe with `on('bench', fn)`.
+- Other `bench` message kinds (`listen('bench', fn)`): `state` (on connect: the
+  state document), `run` (a run changed state), `step_started`, `step_finished`,
+  `request` (one request of the step in flight: `run_id, idx, benchmark_id,
+  phase, request, seq, state` started or streaming, `tokens`, `elapsed_ms`),
+  `load` (the load object of the step in flight) and `aggregate_updated`
+  (`run_id, suite_id, state, benchmarks`: refresh aggregates and run lists on it).
+- A run records its environment: `env` (`scheduler_version`, `config_revision`,
+  `llama_binary`, `workers[]` with `rpc_server_version`). Show it on the run detail.
+  Run detail is phase-aware: a load-only benchmark shows load metrics; a
+  conversation shows per turn prefill, decode, time to first token and reused
+  prompt tokens.
 - Aggregates: `GET /api/bench/aggregates?suite=&benchmark=&profile=&since=&until=&env=`
-  -> `{benchmarks: [{benchmark_id, name, profile, model_file, workers, phase_types, runs,
-  pass_rate, outcomes, metrics: {load_s | load_mb_s | decode_tps | prefill_tps | ttft_ms |
-  memory_mib: {count, min, median, mean, max, stdev, last, best, change_pct, regressions,
-  points: [{ts, run_id, value}]}}}], suites: [{suite_id, name, runs, pass_rate,
-  mean_duration_s, last_run}], by_model: [{model_file, runs, by_workers: [{workers, runs,
-  metrics}]}], by_workers: [...]}`.
+  -> `{runs_considered, environment, benchmarks: [{benchmark_id, runs, steps,
+  pass_rate, outcomes, metrics: {<metric>: {count, min, median, mean, max, stdev,
+  last, best, change_pct, threshold_pct, regression, points: [{run_id, at, value}]}},
+  turns: [...], last_run_id, last_at}], suites: [...], by_model: [...],
+  by_model_nodes: [{model_file, nodes, runs, steps, metrics}]}`.
 - The compact run indicator in the shell: `setShellSlot('run', node)` (`core/shell.js`).
 - The one-click run: `confirm({...})` first, saying that it will load and unload
   models on the cluster, then `api.post('/api/bench/suites/<id>/run', {note})`.
