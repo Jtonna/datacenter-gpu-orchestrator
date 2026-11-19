@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/bench"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/config"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/proxy"
@@ -51,6 +52,24 @@ type Options struct {
 	History *history.Store
 	// Version is the scheduler's version string, shown by /api/about.
 	Version string
+
+	// Live channel (design 9.2). Zero values are the defaults.
+	WSMaxClients     int           // concurrent /ws clients (default 32)
+	WSStatusInterval time.Duration // status look period: at most 4 messages a second (default 250 ms)
+	WSLoadInterval   time.Duration // least status rate while a load runs (default 1 s)
+	WSIdleInterval   time.Duration // least status rate at all (default 5 s)
+	WSPingInterval   time.Duration // ping message period (default 15 s)
+	WSQueue          int           // per-client send queue (default 64 frames)
+	WSWriteTimeout   time.Duration // one frame write (default 10 s)
+
+	// Bench and BenchStore are the benchmark feature; nil means it is off (its
+	// endpoints answer 503).
+	Bench      *bench.Manager
+	BenchStore *bench.Store
+	// System is what /api/system reports about the configuration and storage.
+	System SystemInfo
+
+	statusSource func(ctx context.Context) (any, error) // tests replace the status the hub sends
 }
 
 // Server is the http.Handler for the whole API.
@@ -66,6 +85,7 @@ type Server struct {
 	bodyMu   sync.Mutex
 	bodyHeld int64 // buffered JSON bytes of requests that are waiting
 	hub      *hub
+	ws       *wsHub
 	activity *activityLog
 	hist     *history.Store
 
@@ -97,6 +117,7 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 	s := &Server{cfg: cfg, sched: sched, opts: o, log: o.Logger, start: o.Now(), hist: o.History,
 		activity: newActivityLog(200), aliasSeen: map[string]time.Time{}}
 	s.hub = newHub(sched, o.Now)
+	s.ws = s.newWSHub()
 	s.mux = s.routes()
 	return s
 }
@@ -116,11 +137,12 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.BeginShutdown()
 	err := s.sched.Shutdown(ctx)
 	s.hub.close()
+	s.ws.close()
 	return err
 }
 
 // Close stops the feed goroutine and closes every event stream.
-func (s *Server) Close() { s.hub.close() }
+func (s *Server) Close() { s.hub.close(); s.ws.close() }
 
 func (s *Server) routes() *http.ServeMux {
 	m := http.NewServeMux()
@@ -140,6 +162,8 @@ func (s *Server) routes() *http.ServeMux {
 	m.HandleFunc("/upstream/{model}/{rest...}", s.handleUpstream)
 	m.HandleFunc("/upstream/{model}", s.handleUpstream)
 	m.HandleFunc("GET /api/events", s.handleEvents)
+	m.HandleFunc("GET /ws", s.handleWS)
+	s.benchRoutes(m)
 	m.HandleFunc("GET /api/metrics/activity", s.handleActivity)
 	m.HandleFunc("GET /ui/{$}", s.handleUI)
 	m.HandleFunc("GET /ui", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/ui/", http.StatusMovedPermanently) })

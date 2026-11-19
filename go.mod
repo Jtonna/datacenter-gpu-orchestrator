@@ -3,6 +3,7 @@ module github.com/Jtonna/ps5-ai-datacenter-load-balancer
 go 1.25
 
 require (
+	github.com/coder/websocket v1.8.14
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.44.0
 )
