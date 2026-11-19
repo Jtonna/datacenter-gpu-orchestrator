@@ -155,6 +155,8 @@ type BenchmarkAgg struct {
 	Turns       []TurnAgg             `json:"turns,omitempty"`
 	LastRunID   string                `json:"last_run_id"`
 	LastAt      int64                 `json:"last_at"`
+	// Recent is its pass/fail history, oldest first, at most MaxRecent runs.
+	Recent []RecentMark `json:"recent"`
 }
 
 // SuiteLastRun is the newest run of a suite.
@@ -176,6 +178,8 @@ type SuiteAgg struct {
 	PassRate      float64        `json:"pass_rate"`
 	MeanDurationS float64        `json:"mean_duration_s"`
 	LastRun       *SuiteLastRun  `json:"last_run,omitempty"`
+	// Recent is its pass/fail history, oldest first, at most MaxRecent runs.
+	Recent []RecentMark `json:"recent"`
 }
 
 // ModelAgg is a model file (on a number of worker nodes) over the runs.
@@ -492,9 +496,11 @@ func (s *Store) Aggregate(f AggFilter, th Thresholds, now time.Time) (*Aggregate
 		}
 	}
 
+	suiteMarks, benchMarks := RecentOf(runs)
 	for _, id := range sortedKeys(benches) {
 		ba := benches[id]
 		a := ba.agg
+		a.Recent = clipRecent(benchMarks[id])
 		a.Runs = len(ba.runs)
 		if a.Steps > 0 {
 			a.PassRate = round4(float64(ba.passed) / float64(a.Steps))
@@ -519,6 +525,7 @@ func (s *Store) Aggregate(f AggFilter, th Thresholds, now time.Time) (*Aggregate
 	}
 	for _, id := range sortedKeys(suites) {
 		sa := suites[id]
+		sa.Recent = clipRecent(suiteMarks[id])
 		if sa.Runs > 0 {
 			sa.PassRate = round4(float64(suitePass[id]) / float64(sa.Runs))
 		}
