@@ -154,11 +154,13 @@ collect:
 	}
 }
 
-// Without data_dir the feature is off and the rest works.
-func TestBenchOffWithoutDataDir(t *testing.T) {
-	c := withPS5(t, nil)
+// With the bench_enabled setting off the feature is off and the rest works.
+func TestBenchOffWhenSettingOff(t *testing.T) {
+	o := options{profiles: profilesBasic, topLevel: "bench:\n  enabled: false\n"}
+	o.members = append(o.members, ps5(psA, "ps5-062e1d84", "10.0.0.2"))
+	c := startCluster(t, o)
 	st, b, _ := c.do("GET", "/api/bench/suites", "")
-	if st != 503 || !strings.Contains(b, "data_dir") {
+	if st != 503 {
 		t.Fatalf("%d %s", st, b)
 	}
 	if status, _ := c.chat("tiny:2k", false); status != 200 {
