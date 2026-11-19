@@ -87,7 +87,7 @@ func readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 }
 
 func (s *Server) profileOK(id string) bool {
-	_, _, ok := s.cfg.Resolve(id)
+	_, _, ok := s.conf().Resolve(id)
 	return ok
 }
 
@@ -497,7 +497,7 @@ func (s *Server) benchProfiles(w http.ResponseWriter, r *http.Request) {
 		Aliases []string `json:"aliases,omitempty"`
 	}
 	var out []pr
-	for name, p := range s.cfg.Profiles {
+	for name, p := range s.conf().Profiles {
 		out = append(out, pr{ID: name, Kind: string(p.Kind), Aliases: p.Aliases})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
@@ -558,7 +558,7 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version": s.opts.Version, "started_at": s.start.UnixMilli(), "now": now.UnixMilli(), "uptime_s": int64(now.Sub(s.start) / time.Second),
 		"listen": sys.Listen, "models_dir": sys.ModelsDir, "safety": sys.Safety, "bench": sys.Bench, "storage": storage,
-		"live_clients": s.ws.clientCount(), "live_clients_max": s.ws.max, "profiles": len(s.cfg.Profiles),
+		"live_clients": s.ws.clientCount(), "live_clients_max": s.ws.max, "profiles": len(s.conf().Profiles),
 		"origin_policy": "same origin, or an origin on a loopback or private-network address (the live channel has no authentication)",
 	})
 }

@@ -27,11 +27,12 @@ const (
 	TopicStatus = "status"
 	TopicEvent  = "event"
 	TopicBench  = "bench"
+	TopicConfig = "config"
 	TopicPing   = "ping"
 )
 
 // subscribable are the topics a client can switch on and off; hello and ping always arrive.
-var subscribable = map[string]bool{TopicStatus: true, TopicEvent: true, TopicBench: true}
+var subscribable = map[string]bool{TopicStatus: true, TopicEvent: true, TopicBench: true, TopicConfig: true}
 
 // wsConn is what the hub needs of a connection (*websocket.Conn satisfies it).
 type wsConn interface {
@@ -184,11 +185,19 @@ func (h *wsHub) publishBench(ev map[string]any) {
 	h.broadcast(TopicBench, wsFrame(TopicBench, h.now(), ev))
 }
 
+// publishConfig sends a configuration change announcement.
+func (h *wsHub) publishConfig(ev map[string]any) {
+	if h.clientCount() == 0 {
+		return
+	}
+	h.broadcast(TopicConfig, wsFrame(TopicConfig, h.now(), ev))
+}
+
 // serve runs one accepted connection until it ends.
 func (h *wsHub) serve(ctx context.Context, conn wsConn) {
 	conn.SetReadLimit(4096)
 	c := &wsClient{conn: conn, send: make(chan []byte, h.queue), done: make(chan struct{}),
-		topics: map[string]bool{TopicStatus: true, TopicEvent: true, TopicBench: true}}
+		topics: map[string]bool{TopicStatus: true, TopicEvent: true, TopicBench: true, TopicConfig: true}}
 	h.mu.Lock()
 	h.reserved--
 	if h.closed {
@@ -485,7 +494,7 @@ func (s *Server) newWSHub() *wsHub {
 			benchState = "on"
 		}
 		return map[string]any{"version": o.Version, "started_at": s.start.UnixMilli(), "server_time": s.opts.Now().UnixMilli(),
-			"history": hist, "bench": benchState, "topics": []string{TopicStatus, TopicEvent, TopicBench, TopicPing}, "ws_max_clients": max}
+			"history": hist, "bench": benchState, "topics": []string{TopicStatus, TopicEvent, TopicBench, TopicConfig, TopicPing}, "ws_max_clients": max, "config_revision": s.configRevision()}
 	}
 	h.status = o.statusSource
 	if h.status == nil {

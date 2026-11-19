@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/audit"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/cfgsvc"
 	"io"
 	"log/slog"
 	"math"
@@ -68,6 +70,9 @@ type Options struct {
 	BenchStore *bench.Store
 	// System is what /api/system reports about the configuration and storage.
 	System SystemInfo
+	// Config is the configuration service (REST /api/config); Audit receives the audit entries of runtime actions. Nil turns the endpoints off (503).
+	Config *cfgsvc.Service
+	Audit  AuditStore
 
 	statusSource func(ctx context.Context) (any, error) // tests replace the status the hub sends
 }
@@ -89,6 +94,10 @@ type Server struct {
 	activity *activityLog
 	hist     *history.Store
 
+	auditQ    chan audit.Entry
+	auditQuit chan struct{}
+	auditDone chan struct{}
+	auditOnce sync.Once
 	aliasMu   sync.Mutex
 	aliasSeen map[string]time.Time
 }
@@ -119,6 +128,7 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 	s.hub = newHub(sched, o.Now)
 	s.ws = s.newWSHub()
 	s.mux = s.routes()
+	s.startAudit()
 	return s
 }
 
@@ -142,7 +152,15 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 // Close stops the feed goroutine and closes every event stream.
-func (s *Server) Close() { s.hub.close(); s.ws.close() }
+func (s *Server) Close() { s.hub.close(); s.ws.close(); s.stopAudit() }
+
+// conf is the configuration in force now (it changes when a revision is applied).
+func (s *Server) conf() *config.Config {
+	if s.sched != nil {
+		return s.sched.Config()
+	}
+	return s.cfg
+}
 
 func (s *Server) routes() *http.ServeMux {
 	m := http.NewServeMux()
@@ -164,6 +182,7 @@ func (s *Server) routes() *http.ServeMux {
 	m.HandleFunc("GET /api/events", s.handleEvents)
 	m.HandleFunc("GET /ws", s.handleWS)
 	s.benchRoutes(m)
+	s.configRoutes(m) // /api/config, /api/audit (config.go)
 	m.HandleFunc("GET /api/profiles", s.handleProfiles)
 	m.HandleFunc("GET /api/metrics/activity", s.handleActivity)
 	m.HandleFunc("GET /ui/{$}", s.handleUI)
@@ -310,7 +329,7 @@ func (s *Server) handleV1(w http.ResponseWriter, r *http.Request) {
 	}
 	defer ex.Body.Close()
 
-	p, alias, ok := s.cfg.Resolve(ex.Model)
+	p, alias, ok := s.conf().Resolve(ex.Model)
 	if !ok {
 		writeSchedError(w, &scheduler.Error{Status: http.StatusNotFound, Reason: scheduler.ReasonUnknownModel,
 			Message: fmt.Sprintf("model %q not found", ex.Model)})
@@ -390,8 +409,8 @@ func (s *Server) releaseBody(n int64) {
 }
 
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
-	names := make([]string, 0, len(s.cfg.Profiles))
-	for n := range s.cfg.Profiles {
+	names := make([]string, 0, len(s.conf().Profiles))
+	for n := range s.conf().Profiles {
 		names = append(names, n)
 	}
 	sort.Strings(names)
@@ -429,14 +448,17 @@ func (s *Server) handleUnloadAll(w http.ResponseWriter, r *http.Request) {
 	if got == nil {
 		got = []string{}
 	}
+	s.auditRuntime(r, audit.ActionUnload, "*", map[string]any{"unloaded": got})
 	writeJSON(w, http.StatusOK, map[string]any{"msg": "ok", "unloaded": got})
 }
 
 func (s *Server) handleUnloadAllText(w http.ResponseWriter, r *http.Request) {
-	if _, err := s.sched.UnloadAllIdle(r.Context()); err != nil {
+	got, err := s.sched.UnloadAllIdle(r.Context())
+	if err != nil {
 		s.writeErr(w, err)
 		return
 	}
+	s.auditRuntime(r, audit.ActionUnload, "*", map[string]any{"unloaded": got})
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	io.WriteString(w, "OK\n")
 }
@@ -445,6 +467,7 @@ func (s *Server) unload(w http.ResponseWriter, r *http.Request, model string, fo
 	err := s.sched.Unload(r.Context(), model, force)
 	switch {
 	case err == nil:
+		s.auditRuntime(r, audit.ActionUnload, model, map[string]any{"force": force})
 		writeJSON(w, http.StatusOK, map[string]any{"msg": "ok", "model": model})
 	case errors.Is(err, scheduler.ErrNotLoaded):
 		writeJSON(w, http.StatusOK, map[string]any{"msg": "not loaded", "model": model})
@@ -463,7 +486,7 @@ func (s *Server) handleUnloadByName(w http.ResponseWriter, r *http.Request) {
 // never waits: the instance must be ready or draining right now.
 func (s *Server) handleUpstream(w http.ResponseWriter, r *http.Request) {
 	model := r.PathValue("model")
-	p, alias, ok := s.cfg.Resolve(model)
+	p, alias, ok := s.conf().Resolve(model)
 	if !ok {
 		writeSchedError(w, &scheduler.Error{Status: http.StatusNotFound, Reason: scheduler.ReasonUnknownModel,
 			Message: fmt.Sprintf("model %q not found", model)})
@@ -488,7 +511,7 @@ func (s *Server) handleUpstream(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		plain = tail
 	}
-	res := proxy.Forward(w, r, proxy.Options{Addr: addr, Path: plain, RawPath: tail, StallTimeout: s.cfg.EffectiveStallTimeout(p)})
+	res := proxy.Forward(w, r, proxy.Options{Addr: addr, Path: plain, RawPath: tail, StallTimeout: s.conf().EffectiveStallTimeout(p)})
 	if res.Aborted {
 		panic(http.ErrAbortHandler)
 	}
@@ -554,9 +577,10 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := req.Model
-	if p, _, ok := s.cfg.Resolve(req.Model); ok {
+	if p, _, ok := s.conf().Resolve(req.Model); ok {
 		name = p.Name
 	}
+	s.auditRuntime(r, audit.ActionLoad, name, nil)
 	writeJSON(w, http.StatusAccepted, map[string]any{"msg": "loading", "model": name})
 }
 
