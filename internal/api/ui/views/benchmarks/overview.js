@@ -7,6 +7,9 @@ import { badge, button, table, empty, skeleton } from '../../core/ui.js';
 import { num, plural, ago, dur, DASH } from '../../core/format.js';
 import { cache, suiteTitle, runBadge, rateBadge, phaseChips, scheduleText, describe, modelOf, errorBanner } from './common.js';
 import { runSuite } from './runconfirm.js';
+import { passDots } from '../../core/rate.js';
+import { catalog } from '../../core/catalog.js';
+import { avatar } from '../../core/avatar.js';
 
 const play = 'M6 4l10 6-10 6z';
 
@@ -28,21 +31,22 @@ function suitesCard(running) {
   else if (!suites.length) body = empty('No suites yet', 'A suite is an ordered list of benchmarks that run together, on a schedule or with one click. Create a benchmark first, then group it into a suite.',
     h('a.btn.sm', { href: href('benchmarks', ['edit', 'suite', 'new']) }, 'New suite'));
   else body = table({
-    minWidth: 900, rows: suites, key: s => s.id,
+    minWidth: 960, rows: suites, key: s => s.id, onRow: s => navigate('benchmarks', ['suite', s.id]),
     columns: [
-      { label: 'Suite', render: s => h('span', h('a', { href: href('benchmarks', ['edit', 'suite', s.id]), style: 'font-weight:700' }, suiteTitle(s)),
+      { label: 'Suite', render: s => h('span', h('a', { href: href('benchmarks', ['suite', s.id]), style: 'font-weight:700', onclick: e => e.stopPropagation() }, suiteTitle(s)),
         s.description ? h('span.sub', s.description) : h('span.sub.mono', s.id)) },
       { label: 'Benchmarks', cls: 'r', render: s => num((s.benchmarks || []).length) },
       { label: 'Schedule', cls: 'tight', render: s => h('span', scheduleText(s.schedule), s.only_when_idle === false ? h('span.sub', 'Does not wait for idle') : null) },
       { label: 'Last run', render: s => lastRunCell(s) },
-      { label: 'Pass rate', cls: 'tight', render: s => { const a = aggs.find(x => x.suite_id === s.id); return a ? rateBadge(a.pass_rate) : h('span.mut', DASH); } },
+      { label: 'Pass rate', cls: 'tight', title: 'One dot per run, oldest left. Mint: every benchmark passed. Amber: some failed. Coral: failed.', render: s => { const a = aggs.find(x => x.suite_id === s.id); return passDots(a && a.recent, a && a.pass_rate, { label: `Runs of ${suiteTitle(s)}, oldest first` }); } },
       { label: '', cls: 'tight', render: s => h('span.row', { style: 'gap:8px;justify-content:flex-end;flex-wrap:nowrap' },
+        h('a', { class: 'btn sm', href: href('benchmarks', ['suite', s.id], { edit: 1 }), title: 'Open the configuration of the suite', onclick: e => e.stopPropagation() }, 'Configure'),
         h('button', { class: 'btn sm', type: 'button', disabled: !!cache.off, title: running ? 'A run is active; this one is queued behind it' : 'Run the suite now',
-          onclick: () => runSuite(s) }, 'Run')) },
+          onclick: e => { e.stopPropagation(); runSuite(s); } }, 'Run')) },
     ],
   });
   return h('section.card', { key: 'suites' },
-    h('div.ch', h('h2', 'Suites'), h('span.note', 'Run a whole suite with one click'), h('span.right', h('a.btn.sm', { href: href('benchmarks', ['edit', 'suite', 'new']) }, 'New suite'))),
+    h('div.ch', h('h2', 'Suites'), h('span.note', 'Open one for its runs. Run a whole suite with one click.'), h('span.right', h('a.btn.sm', { href: href('benchmarks', ['edit', 'suite', 'new']) }, 'New suite'))),
     body);
 }
 
@@ -55,21 +59,23 @@ function benchmarksCard() {
   else if (!list.length) body = empty('No benchmarks yet', 'A benchmark is one test case: which model to use and what to do with it, such as only loading it, or loading it and sending a conversation. Start from a template.',
     h('a.btn.sm', { href: href('benchmarks', ['edit', 'benchmark', 'new']) }, 'New benchmark'));
   else body = table({
-    minWidth: 980, rows: list, key: b => b.id,
+    minWidth: 1040, rows: list, key: b => b.id, onRow: b => navigate('benchmarks', ['benchmark', b.id]),
     columns: [
-      { label: 'Benchmark', render: b => h('span', { style: 'display:block;max-width:420px' }, h('a', { href: href('benchmarks', ['edit', 'benchmark', b.id]), style: 'font-weight:700' }, b.name || b.id),
-        b.description ? h('span.sub', { style: 'font-weight:500' }, b.description) : null) },
+      { label: 'Benchmark', render: b => h('span.named', { style: 'max-width:460px' }, avatar(b.parallel ? null : catalog.byProfile[b.profile] || catalog.byKey[modelOf(b.profile)] || null, 28),
+        h('span.grow', h('a', { href: href('benchmarks', ['benchmark', b.id]), style: 'font-weight:700', onclick: e => e.stopPropagation() }, b.name || b.id),
+          b.description ? h('span.sub', { style: 'font-weight:500' }, b.description) : null)) },
       { label: 'Profile', cls: 'tight', render: b => (b.parallel ? h('span.mut', 'Several') : h('span', h('span.mono.nowrap', b.profile), modelOf(b.profile) ? h('span.sub.mono', modelOf(b.profile)) : null)) },
       { label: 'Phases', render: b => phaseChips(b) },
-      { label: 'Passed', cls: 'tight', title: 'The share of its steps that passed, over the stored runs', render: b => {
+      { label: 'Passed', cls: 'tight', title: 'One dot per run, oldest left, with the share that passed', render: b => {
         const a = aggs.find(x => x.benchmark_id === b.id);
         if (!a || !a.steps) return h('span.mut', 'Not run yet');
-        return h('span', rateBadge(a.pass_rate), h('span.sub', a.last_at ? ['last run ', ago(a.last_at)] : null));
+        return h('span', passDots(a.recent, a.pass_rate, { label: `Runs of ${b.name || b.id}, oldest first` }), h('span.sub', a.last_at ? ['last run ', ago(a.last_at)] : null));
       } },
+      { label: '', cls: 'tight', render: b => h('a', { class: 'btn sm', href: href('benchmarks', ['benchmark', b.id], { edit: 1 }), title: 'Open the configuration of the benchmark', onclick: e => e.stopPropagation() }, 'Configure') },
     ],
   });
   return h('section.card', { key: 'benchmarks' },
-    h('div.ch', h('h2', 'Benchmarks'), h('span.note', 'Test cases: what to load and what to do with it'), h('span.right', h('a.btn.sm', { href: href('benchmarks', ['edit', 'benchmark', 'new']) }, 'New benchmark'))),
+    h('div.ch', h('h2', 'Benchmarks'), h('span.note', 'Test cases: what to load and what to do with it. Open one for its results.'), h('span.right', h('a.btn.sm', { href: href('benchmarks', ['edit', 'benchmark', 'new']) }, 'New benchmark'))),
     body);
 }
 

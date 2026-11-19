@@ -8,6 +8,7 @@ import { badge, table, chips, empty, skeleton, stat, toggle } from '../../core/u
 import { sparkline, lineChart } from '../../core/charts.js';
 import { num, dur, ago, plural, DASH } from '../../core/format.js';
 import { cache, METRICS, metricDef, fmtMetric, changeMark, rateBadge, runBadge, withUnit } from './common.js';
+import { passDots } from '../../core/rate.js';
 
 // The view's own state: it survives re-drawing and tab changes within the screen.
 export const aggState = { same: false, benchmark: '', metric: 'decode_tps', trend: null, trendFor: '', trendErr: null, loadingTrend: false, modelMetric: 'load_s' };
@@ -61,9 +62,9 @@ function suitesCard(agg) {
     suites.length ? table({
       minWidth: 640, rows: suites, key: s => s.suite_id,
       columns: [
-        { label: 'Suite', render: s => s.name || s.suite_id },
+        { label: 'Suite', render: s => h('a', { href: href('benchmarks', ['suite', s.suite_id]), style: 'font-weight:700' }, s.name || s.suite_id) },
         { label: 'Runs', cls: 'r', render: s => num(s.runs) },
-        { label: 'Pass rate', cls: 'tight', render: s => rateBadge(s.pass_rate) },
+        { label: 'Pass rate', cls: 'tight', title: 'One dot per run, oldest left', render: s => passDots(s.recent, s.pass_rate, { label: `Runs of ${s.name || s.suite_id}, oldest first` }) },
         { label: 'Mean duration', cls: 'r', render: s => dur(s.mean_duration_s) },
         { label: 'Last run', cls: 'tight', render: s => (s.last_run ? h('a', { href: href('benchmarks', ['runs', s.last_run.id]), style: 'color:inherit' },
           h('span.row', { style: 'gap:8px' }, runBadge(s.last_run.state), s.last_run.regression ? badge('Regression', 'aside') : null), h('span.sub', ago(s.last_run.started_at))) : DASH) },
@@ -80,7 +81,8 @@ function benchCard(b, redraw) {
   const out = b.outcomes || {};
   const odd = Object.keys(out).filter(k => k !== 'ready' && out[k]).map(k => `${out[k]} ${k}`);
   return h('section.card', { key: 'bagg-' + b.benchmark_id },
-    h('div.ch', h('h2', b.name || b.benchmark_id), rateBadge(b.pass_rate), h('span.mono.mut', b.profile),
+    h('div.ch', h('h2', h('a', { href: href('benchmarks', ['benchmark', b.benchmark_id]), style: 'color:inherit' }, b.name || b.benchmark_id)),
+      b.recent && b.recent.length ? passDots(b.recent, b.pass_rate, { label: `Runs of ${b.name || b.benchmark_id}, oldest first` }) : rateBadge(b.pass_rate), h('span.mono.mut', b.profile),
       h('span.note', `${plural(b.runs, 'run')}` + (odd.length ? ' · ' + odd.join(', ') : '')),
       b.last_at ? h('span.right.mut', { style: 'font-size:12px' }, 'Last ', ago(b.last_at)) : null),
     rows.length ? table({
