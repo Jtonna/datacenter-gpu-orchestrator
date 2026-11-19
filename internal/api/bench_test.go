@@ -54,7 +54,7 @@ func TestBenchEndpointsAnswer503WhenOff(t *testing.T) {
 		{"GET", "/api/bench/benchmarks"}, {"POST", "/api/bench/benchmarks"}, {"GET", "/api/bench/benchmarks/x"}, {"PUT", "/api/bench/benchmarks/x"},
 		{"DELETE", "/api/bench/benchmarks/x"}, {"GET", "/api/bench/suites"}, {"POST", "/api/bench/suites"}, {"POST", "/api/bench/suites/x/run"},
 		{"GET", "/api/bench/runs"}, {"GET", "/api/bench/runs/x"}, {"POST", "/api/bench/runs/x/cancel"}, {"GET", "/api/bench/runs/x/export"},
-		{"GET", "/api/bench/trends"}, {"GET", "/api/bench/state"},
+		{"GET", "/api/bench/trends"}, {"GET", "/api/bench/state"}, {"GET", "/api/bench/aggregates"}, {"GET", "/api/bench/schema"},
 	} {
 		st, b, _ := e.do(c[0], c[1], "")
 		if st != 503 || !strings.Contains(b, "data_dir") {
