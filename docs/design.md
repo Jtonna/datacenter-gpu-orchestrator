@@ -1496,6 +1496,7 @@ gets its own process group, so nothing is left behind.
 | `GET /ws` | The live channel, a WebSocket (9.2): hello, status, event, bench, ping. |
 | `/api/bench/...` | Benchmarks (with phases), suites, runs, progress, exports, trends, aggregates and the editor schema (9.3). `503` when the `bench_enabled` setting is off or the database is not open. |
 | `/api/config/...`, `GET /api/audit[/{id}]` | The configuration (profiles, tiers, settings, exclusions, overrides, recovery, fleet), its revisions, export/import and the audit log (6.0). |
+| `POST /mcp` | The MCP server for AI agents (9.5): the same operations as the REST API, as tools. |
 | `GET /api/profiles`, `GET /api/system` | Every profile with its need and dry-run plan; configuration and storage summary (9.4). Read-only. |
 | `GET /health` | `200` whenever the scheduler is running. |
 | `GET /api/status` | Instances, placements, per-device memory from the last pre-flight, claims, queue, quarantines, backoffs, node view and its age. A starting instance also shows its load progress and its `load` report (7.6a). The top-level `recent_loads` lists the outcomes of load attempts finished in the last 120 s. Each node in `view.nodes` that an instance uses also has `health` (8.4a), and a node that was sent a recovery request or reported an outcome also has `recovery` (8.4b). |
@@ -1995,6 +1996,92 @@ existing keys are unchanged.
 summary as the `schedulerStarted` event), the benchmark settings, live client
 count and the storage locations with sizes (history directory, database file and
 schema version, child log directory).
+
+### 9.5 MCP server (`/mcp`)
+
+AI agents operate the scheduler through the Model Context Protocol, in the same
+binary and on the same port: `http://<omen>:3122/mcp`. Package
+`internal/mcpserver`. No authentication (LAN tool, like the rest).
+
+*Transport.* Streamable HTTP in its stateless form: every `POST /mcp` carries
+one JSON-RPC 2.0 message (a batch is accepted too) and is answered with one
+`application/json` body; notifications get `202`. `GET /mcp` answers `405`
+(there is no server-initiated stream). `initialize` negotiates the protocol
+version (2025-11-25, 2025-06-18, 2025-03-26 or 2024-11-05; the client's if
+supported, else the newest), returns `serverInfo` `llm-scheduler` with the
+scheduler's version, capabilities `tools` and `resources`, and a short
+`instructions` text (check `plan_load` before `load_model`; loads take minutes;
+never unload a busy model unless asked; configuration changes are audited and
+reversible). It also returns an `Mcp-Session-Id`; the server remembers only the
+client name and version behind it (a bounded in-memory map), so the audit log
+can name the client. A client that sends no session id still works.
+`DELETE /mcp` forgets a session. Because a browser page can send a plain POST to
+a LAN host, `/mcp` requires `Content-Type: application/json` and applies the
+same origin rule as `/ws` (9.2). The protocol is hand-rolled (about 400 lines):
+the official Go SDK was not used because it pulls an OAuth, JWT and
+JSON-Schema dependency tree into a binary that otherwise has three direct
+dependencies, and this server needs only `initialize`, `ping`, `tools/*` and
+`resources/*`.
+
+*One implementation, two transports.* A tool is a table entry: name, schema, and
+a recipe (method, path, which arguments are path parts, query parameters or
+body). A call builds an HTTP request and runs it **in-process** through the same
+`http.Handler` that serves REST (a small recorder instead of a socket), then
+returns the answer body as the tool result. So a tool cannot differ from its
+REST endpoint, validation, status codes and error text included, and a tool for
+an endpoint that is added later works as soon as the route exists. A 2xx answer
+is the result; any other status is a tool error (`isError: true`) carrying
+`HTTP <status> from <method> <path>: <body>`. When the route does not exist in
+the build (the mux's `404 no such path`) the error says "this server build does
+not have that endpoint". The only tools that reshape an answer are the status
+views (`get_status`, `list_nodes`, `get_queue`, below) and `get_profile` (falls
+back to the entry of `GET /api/profiles` when `/api/config/profiles/{id}` is
+absent). Arguments are validated against the tool's own schema before anything
+is sent (unknown or missing arguments, wrong types, enum values) and fail as
+tool errors.
+
+*Tools* (46; read-only tools carry `readOnlyHint`; replacing and deleting tools,
+`unload_model` and `rollback_config` carry `destructiveHint`):
+
+| Tool | REST it calls |
+|---|---|
+| `get_status` | `GET /api/status`, summarised model-centric: per instance the profile, model file, state, nodes (hostname, budget, memory), `in_flight`, `requests_served`, load progress, ETA and `last_request`; then nodes, queue, quarantines, backoffs, the five newest `recent_loads` and the fleet view state. `verbose: true` returns the full object. |
+| `list_nodes`, `get_queue` | The nodes (full) or the queue with quarantines and backoffs, from `GET /api/status`. |
+| `list_models`, `list_profiles`, `get_profile` | `GET /v1/models`, `GET /api/profiles`, `GET /api/config/profiles/{id}` |
+| `plan_load` | `POST /api/plan` |
+| `query_history`, `get_history_summary` | `GET /api/history` (all its filters), `GET /api/history/summary` |
+| `get_system_info` | `GET /api/system` |
+| `get_config`, `get_config_schema` | `GET /api/config`, `GET /api/config/schema` |
+| `list_config_revisions`, `get_config_revision` | `GET /api/config/revisions`, `.../{revision}` |
+| `query_audit` | `GET /api/audit` (since, until, source, actor, section, target, action, q, limit) |
+| `list_benchmarks`, `get_benchmark`, `list_suites`, `get_suite` | `GET /api/bench/benchmarks`, `.../{id}`, `/suites`, `/suites/{id}` |
+| `get_bench_state`, `list_runs`, `get_run`, `export_run` | `GET /api/bench/state`, `/runs`, `/runs/{id}`, `/runs/{id}/export?format=md\|csv\|json` |
+| `get_bench_aggregates`, `get_bench_trends`, `get_bench_schema` | `GET /api/bench/aggregates`, `/trends`, `/schema` |
+| `load_model`, `unload_model` | `POST /api/load` `{model}`, `POST /api/unload` `{model, force}` |
+| `update_settings` | `PATCH /api/config/settings` (body = `settings`) |
+| `create_profile`, `update_profile`, `delete_profile` | `POST /api/config/profiles`, `PUT` and `DELETE /api/config/profiles/{id}` |
+| `set_tiers`, `set_exclude_nodes`, `set_node_overrides`, `set_recovery_settings`, `set_fleet_settings` | `PUT /api/config/tiers`, `/exclude-nodes`, `/node-overrides`, `/recovery`, `/fleet` (body = `value`, the new section as `get_config` shows it) |
+| `rollback_config` | `POST /api/config/revisions/{revision}/rollback` |
+| `create_benchmark`, `update_benchmark`, `delete_benchmark`, `create_suite`, `update_suite`, `delete_suite` | `POST /api/bench/benchmarks`, `PUT`, `DELETE .../{id}`, and the same for `/suites` |
+| `run_suite`, `cancel_run` | `POST /api/bench/suites/{id}/run` `{baseline, note}`, `POST /api/bench/runs/{id}/cancel` |
+
+Tools that change configuration (the `/api/config` ones) take `comment`
+(header `X-Comment`), `dry_run` (`?dry_run=1`) and `if_revision` (header
+`If-Match`). Every write tool takes an optional `actor` label.
+
+*Resources.* `llm-scheduler://status` (`GET /api/status`),
+`llm-scheduler://config` (`GET /api/config`) and
+`llm-scheduler://docs/benchmark-guide` (the embedded guide, `docs/embed.go`).
+
+*Audit source rule.* A request that reaches a handler through MCP is marked in
+its context: `mcpserver.SourceFromContext(ctx)` returns `(true, actor)`. The
+marker is an unexported context key set only by the in-process dispatcher; no
+header is consulted and a context cannot cross the network, so a REST client
+cannot claim to be MCP. The audit log records such a change with
+`source: "mcp"`, and the actor is the client name and version from the
+`initialize` handshake, or `<actor argument> (via <client>)` when the write
+tool was given `actor`. `Options.Bridge` is the single hook that copies the
+marker into the audit package's own context value.
 
 ## 10. Packaging and rollout
 

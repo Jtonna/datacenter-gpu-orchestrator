@@ -35,6 +35,8 @@ documents that input format and `deploy/seed-config.yaml` is the production seed
 (runbook "Configuration lives in the database"). Starting on an empty database works:
 no profiles, "no configuration yet".
 
+AI agents can operate it over MCP at `/mcp` on the same port (46 tools that run the same code as the REST API; design 9.5, runbook "Let an AI agent operate the scheduler").
+
 ## Tests
 
 ```
