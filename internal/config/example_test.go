@@ -71,7 +71,7 @@ func TestExampleConfigParses(t *testing.T) {
 	}
 }
 
-// deploy/config.yaml is configs/example.yaml with a header and a commented
+// deploy/seed-config.yaml is configs/example.yaml with a header and a commented
 // template added: the two must stay in sync.
 func TestDeployConfigMatchesExample(t *testing.T) {
 	load := func(rel string) *Config {
@@ -81,29 +81,29 @@ func TestDeployConfigMatchesExample(t *testing.T) {
 		}
 		return c
 	}
-	a, b := load("configs/example.yaml"), load("deploy/config.yaml")
+	a, b := load("configs/example.yaml"), load("deploy/seed-config.yaml")
 	// The deploy file turns on the child log directory; the example leaves it off.
 	if b.ChildLogDir == "" {
-		t.Errorf("deploy/config.yaml should set child_log_dir")
+		t.Errorf("deploy/seed-config.yaml should set child_log_dir")
 	}
 	b.ChildLogDir = a.ChildLogDir
 	if b.HistoryDir == "" {
-		t.Errorf("deploy/config.yaml should set history_dir")
+		t.Errorf("deploy/seed-config.yaml should set history_dir")
 	}
 	b.HistoryDir = a.HistoryDir
 	if b.DataDir == "" || !b.Bench.Enabled {
-		t.Errorf("deploy/config.yaml should set data_dir (the benchmark feature is then on)")
+		t.Errorf("deploy/seed-config.yaml should set data_dir (the benchmark feature is then on)")
 	}
 	b.DataDir, b.Bench.Enabled = a.DataDir, a.Bench.Enabled
 	if !reflect.DeepEqual(a, b) {
-		t.Fatalf("deploy/config.yaml parses differently from configs/example.yaml: %+v vs %+v", a, b)
+		t.Fatalf("deploy/seed-config.yaml parses differently from configs/example.yaml: %+v vs %+v", a, b)
 	}
 }
 
 // The memory safety keys are documented as commented defaults in both files,
 // with the same default values the parser applies.
 func TestExampleConfigsDocumentTheMemorySafetyDefaults(t *testing.T) {
-	for _, rel := range []string{"configs/example.yaml", "deploy/config.yaml"} {
+	for _, rel := range []string{"configs/example.yaml", "deploy/seed-config.yaml"} {
 		b, err := os.ReadFile(filepath.Join("..", "..", rel))
 		if err != nil {
 			t.Fatal(err)
@@ -123,7 +123,7 @@ func TestExampleConfigsDocumentTheMemorySafetyDefaults(t *testing.T) {
 // The history keys are documented as commented defaults in both files, with
 // the values the parser applies.
 func TestExampleConfigsDocumentTheHistoryDefaults(t *testing.T) {
-	for _, rel := range []string{"configs/example.yaml", "deploy/config.yaml"} {
+	for _, rel := range []string{"configs/example.yaml", "deploy/seed-config.yaml"} {
 		b, err := os.ReadFile(filepath.Join("..", "..", rel))
 		if err != nil {
 			t.Fatal(err)
