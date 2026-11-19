@@ -169,22 +169,24 @@ type Status struct {
 
 // InstanceStatus describes one instance.
 type InstanceStatus struct {
-	Profile      string
-	State        string // starting, ready, draining, stopping
-	RunningState RunningState
-	Phase        string // starting only: preflight, launching, loading
-	Addr         string // 127.0.0.1:port once the child runs
-	Cmd          string
-	LogFile      string // file holding the child's full output; empty when not kept
-	Created      time.Time
-	ReadySince   time.Time
-	LastUsed     time.Time
-	LoadDuration time.Duration
-	LoadDeadline time.Time // starting, child running
-	InFlight     int
-	Waiters      int
-	VictimOf     string // profile of the claimed entry this instance drains or stops for
-	Nodes        []PlacedNodeStatus
+	Profile        string
+	State          string // starting, ready, draining, stopping
+	RunningState   RunningState
+	Phase          string // starting only: preflight, launching, loading
+	Addr           string // 127.0.0.1:port once the child runs
+	Cmd            string
+	LogFile        string // file holding the child's full output; empty when not kept
+	Created        time.Time
+	ReadySince     time.Time
+	LastUsed       time.Time
+	ModelFile      string // the profile model file (kind llama)
+	RequestsServed int    // requests admitted since the instance started
+	LoadDuration   time.Duration
+	LoadDeadline   time.Time // starting, child running
+	InFlight       int
+	Waiters        int
+	VictimOf       string // profile of the claimed entry this instance drains or stops for
+	Nodes          []PlacedNodeStatus
 	// HostMemory lists host-side buffers from the load log (CPU, *_Host);
 	// they are not part of the per-device sums.
 	HostMemory []DeviceMemory

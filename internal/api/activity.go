@@ -52,3 +52,17 @@ func (a *activityLog) snapshot() []any {
 	}
 	return out
 }
+
+// lastByModel is the newest finished request of each model that reported a
+// token rate.
+func (a *activityLog) lastByModel() map[string]activityRecord {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := map[string]activityRecord{}
+	for _, r := range a.recs { // oldest first, so later records win
+		if r.TPS > 0 {
+			out[r.Model] = r
+		}
+	}
+	return out
+}

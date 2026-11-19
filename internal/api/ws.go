@@ -490,11 +490,7 @@ func (s *Server) newWSHub() *wsHub {
 	h.status = o.statusSource
 	if h.status == nil {
 		h.status = func(ctx context.Context) (any, error) {
-			st, err := s.sched.Status(ctx)
-			if err != nil {
-				return nil, err
-			}
-			return jsonView(st), nil
+			return s.statusView(ctx)
 		}
 	}
 	if s.hist.On() {

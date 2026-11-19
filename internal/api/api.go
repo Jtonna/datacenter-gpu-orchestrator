@@ -164,6 +164,7 @@ func (s *Server) routes() *http.ServeMux {
 	m.HandleFunc("GET /api/events", s.handleEvents)
 	m.HandleFunc("GET /ws", s.handleWS)
 	s.benchRoutes(m)
+	m.HandleFunc("GET /api/profiles", s.handleProfiles)
 	m.HandleFunc("GET /api/metrics/activity", s.handleActivity)
 	m.HandleFunc("GET /ui/{$}", s.handleUI)
 	m.HandleFunc("GET /ui", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/ui/", http.StatusMovedPermanently) })
@@ -516,12 +517,12 @@ func readModelRequest(w http.ResponseWriter, r *http.Request) (modelRequest, boo
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	st, err := s.sched.Status(r.Context())
+	v, err := s.statusView(r.Context())
 	if err != nil {
 		s.writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, jsonView(st))
+	writeJSON(w, http.StatusOK, v)
 }
 
 func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {

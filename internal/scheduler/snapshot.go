@@ -104,6 +104,7 @@ func (c *schedCore) instStatus(in *inst) InstanceStatus {
 		Profile: in.prof.Name, State: in.state.String(), RunningState: in.state.running(),
 		Cmd: c.cmdline(in), LogFile: in.logFile, Created: in.created, LastUsed: in.lastUsed, LoadDuration: in.loadDuration,
 		InFlight: in.inFlight, Waiters: len(in.waiters), VictimOf: in.victimOf,
+		ModelFile: in.prof.Model, RequestsServed: in.served,
 	}
 	if in.state == stStarting {
 		s.Phase = in.phase.String()

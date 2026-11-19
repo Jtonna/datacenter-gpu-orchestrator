@@ -382,14 +382,15 @@ func (m *Manager) Enqueue(suiteID string, o EnqueueOptions) (*Run, error) {
 		m.mu.Unlock()
 		return nil, err
 	}
+	copyOut := *r // the queue owns r from here on; callers get a snapshot
 	m.queue = append(m.queue, &queued{run: r, plan: plan})
 	m.mu.Unlock()
-	m.publishRun(r)
+	m.publishRun(&copyOut)
 	select {
 	case m.wake <- struct{}{}:
 	default:
 	}
-	return r, nil
+	return &copyOut, nil
 }
 
 // Cancel cancels a queued run at once, or asks the running run to stop after
