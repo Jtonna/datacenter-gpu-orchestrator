@@ -59,6 +59,9 @@ const (
 	TLearnedNeed        = "learnedNeed"
 	TNeedsMiBTooLow     = "needsMibTooLow"
 	TNodeMemory         = "nodeMemory"
+	TBenchRunStarted    = "benchRunStarted"
+	TBenchStepFinished  = "benchStepFinished"
+	TBenchRunFinished   = "benchRunFinished"
 )
 
 // Event is one history record. Ts is unix milliseconds; Seq is monotonic per

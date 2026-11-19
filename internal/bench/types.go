@@ -59,6 +59,7 @@ const (
 
 // Request phases.
 const (
+	PhaseLoad     = "load" // the first request of a cold step: it triggers the load, so its time includes it
 	PhaseWarmup   = "warmup"
 	PhaseMeasured = "measured"
 )

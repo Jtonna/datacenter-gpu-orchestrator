@@ -91,7 +91,7 @@ CREATE TABLE requests (
   run_id        TEXT NOT NULL,
   seq           INTEGER NOT NULL,
   name          TEXT NOT NULL DEFAULT '',
-  phase         TEXT NOT NULL CHECK (phase IN ('warmup','measured')),
+  phase         TEXT NOT NULL CHECK (phase IN ('load','warmup','measured')),
   status        INTEGER NOT NULL DEFAULT 0,
   wall_ms       REAL NOT NULL DEFAULT 0,
   ttft_ms       REAL,
