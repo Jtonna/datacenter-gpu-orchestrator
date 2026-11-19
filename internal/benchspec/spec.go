@@ -110,6 +110,13 @@ type Expect struct {
 	MinDecodeTPS *float64 `json:"min_decode_tps,omitempty" yaml:"min_decode_tps,omitempty"`
 	MaxLoadS     *float64 `json:"max_load_s,omitempty" yaml:"max_load_s,omitempty"`
 	OutputSHA256 string   `json:"output_sha256,omitempty" yaml:"output_sha256,omitempty"`
+	// Metrics of the other phases (see Schema).
+	MinPrefillTPS     *float64 `json:"min_prefill_tps,omitempty" yaml:"min_prefill_tps,omitempty"`
+	MaxTTFTMS         *float64 `json:"max_ttft_ms,omitempty" yaml:"max_ttft_ms,omitempty"`
+	MaxUnloadS        *float64 `json:"max_unload_s,omitempty" yaml:"max_unload_s,omitempty"`
+	MaxConcurrentWall *float64 `json:"max_concurrent_wall_s,omitempty" yaml:"max_concurrent_wall_s,omitempty"`
+	MinReusedTokens   *int     `json:"min_reused_tokens,omitempty" yaml:"min_reused_tokens,omitempty"`
+	MaxErrors         *int     `json:"max_errors,omitempty" yaml:"max_errors,omitempty"`
 }
 
 // Want is the expected outcome (default ready).
@@ -134,6 +141,11 @@ type Benchmark struct {
 	Expect         *Expect   `json:"expect,omitempty" yaml:"expect,omitempty"`
 	UnloadAfter    *bool     `json:"unload_after,omitempty" yaml:"unload_after,omitempty"`
 	Tags           []string  `json:"tags,omitempty" yaml:"tags,omitempty"`
+	// Phases is the ordered list of things to do (load, warmup, requests,
+	// conversation, hold, concurrent_requests, unload). It replaces the simple
+	// form (cold, requests, repeats, warmup_requests, unload_after), which
+	// Expand turns into phases.
+	Phases []Phase `json:"phases,omitempty" yaml:"phases,omitempty"`
 	// Parallel makes this a concurrent step: the benchmarks named here start at
 	// the same moment. It excludes every other field except id, name, description and tags.
 	Parallel []string `json:"parallel,omitempty" yaml:"parallel,omitempty"`
@@ -229,8 +241,8 @@ func (b *Benchmark) Validate(profileOK func(string) bool) error {
 	}
 	if b.IsParallel() {
 		if b.Profile != "" || len(b.Requests) > 0 || b.Cold != nil || b.Repeats != 0 || b.WarmupRequests != nil ||
-			b.Expect != nil || b.UnloadAfter != nil || b.TimeoutS != 0 {
-			add("a parallel step names the benchmarks to start together and nothing else (no profile, requests, cold, repeats, warmup_requests, timeout_s, expect or unload_after)")
+			b.Expect != nil || b.UnloadAfter != nil || b.TimeoutS != 0 || len(b.Phases) > 0 {
+			add("a parallel step names the benchmarks to start together and nothing else (no profile, phases, requests, cold, repeats, warmup_requests, timeout_s, expect or unload_after)")
 		}
 		if len(b.Parallel) < 2 || len(b.Parallel) > MaxParallelMembers {
 			add("parallel needs 2 to %d benchmark ids", MaxParallelMembers)
@@ -255,70 +267,29 @@ func (b *Benchmark) Validate(profileOK func(string) bool) error {
 	case profileOK != nil && !profileOK(b.Profile):
 		add("profile %q is not a profile of this scheduler", b.Profile)
 	}
-	if b.Repeats < 0 || b.Repeats > MaxRepeats {
-		add("repeats must be 0 to %d", MaxRepeats)
-	}
-	if b.WarmupRequests != nil && (*b.WarmupRequests < 0 || *b.WarmupRequests > MaxWarmups) {
-		add("warmup_requests must be 0 to %d", MaxWarmups)
-	}
 	if b.TimeoutS < 0 || b.TimeoutS > MaxTimeoutS {
 		add("timeout_s must be 0 to %d", MaxTimeoutS)
 	}
-	if len(b.Requests) == 0 || len(b.Requests) > MaxRequests {
-		add("requests: between 1 and %d are required", MaxRequests)
-	}
-	for i := range b.Requests {
-		r := &b.Requests[i]
-		if r.Name == "" {
-			r.Name = fmt.Sprintf("request-%d", i+1)
+	if len(b.Phases) > 0 {
+		if b.Cold != nil || len(b.Requests) > 0 || b.Repeats != 0 || b.WarmupRequests != nil || b.UnloadAfter != nil {
+			add("phases replaces cold, requests, repeats, warmup_requests and unload_after: put those into the phases, or drop phases to use the simple form")
 		}
-		w := func(f string, a ...any) { add("requests[%d] (%s): %s", i, r.Name, fmt.Sprintf(f, a...)) }
-		if len(r.Name) > 80 {
-			w("name is longer than 80 characters")
+		errs = append(errs, b.validatePhases()...)
+	} else {
+		if b.Repeats < 0 || b.Repeats > MaxRepeats {
+			add("repeats must be 0 to %d", MaxRepeats)
 		}
-		switch {
-		case r.Prompt != "" && len(r.Messages) > 0:
-			w("give either messages or prompt, not both")
-		case r.Prompt == "" && len(r.Messages) == 0:
-			w("messages or prompt is required")
+		if b.WarmupRequests != nil && (*b.WarmupRequests < 0 || *b.WarmupRequests > MaxWarmups) {
+			add("warmup_requests must be 0 to %d", MaxWarmups)
 		}
-		if len(r.Prompt) > 1<<20 {
-			w("prompt is larger than 1 MiB")
+		if len(b.Requests) == 0 || len(b.Requests) > MaxRequests {
+			add("requests: between 1 and %d are required", MaxRequests)
 		}
-		for j, m := range r.Messages {
-			if m.Role != "system" && m.Role != "user" && m.Role != "assistant" {
-				w("messages[%d].role must be system, user or assistant, got %q", j, m.Role)
-			}
-			if m.Content == "" {
-				w("messages[%d].content is empty", j)
-			}
-		}
-		if r.MaxTokens < 0 || r.MaxTokens > MaxTokensLimit {
-			w("max_tokens must be 1 to %d (default %d)", MaxTokensLimit, DefaultMaxTokens)
-		}
-		if r.Temperature != nil && (*r.Temperature < 0 || *r.Temperature > 2) {
-			w("temperature must be 0 to 2")
+		for i := range b.Requests {
+			validateRequest(&b.Requests[i], i, fmt.Sprintf("requests[%d]", i), add)
 		}
 	}
-	if e := b.Expect; e != nil {
-		switch e.Outcome {
-		case "", OutcomeReady, OutcomeRefused, OutcomeFailed:
-		default:
-			add("expect.outcome must be ready, refused or failed, got %q", e.Outcome)
-		}
-		if (e.Outcome == OutcomeRefused || e.Outcome == OutcomeFailed) && (e.MinDecodeTPS != nil || e.OutputSHA256 != "") {
-			add("expect.min_decode_tps and expect.output_sha256 only make sense when the outcome is ready")
-		}
-		if e.MinDecodeTPS != nil && *e.MinDecodeTPS < 0 {
-			add("expect.min_decode_tps must not be negative")
-		}
-		if e.MaxLoadS != nil && *e.MaxLoadS <= 0 {
-			add("expect.max_load_s must be positive")
-		}
-		if e.OutputSHA256 != "" && !sha256Re.MatchString(e.OutputSHA256) {
-			add("expect.output_sha256 must be 64 lower-case hex characters")
-		}
-	}
+	b.validateExpect(add)
 	return errors.Join(errs...)
 }
 
