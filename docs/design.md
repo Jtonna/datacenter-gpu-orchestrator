@@ -183,7 +183,7 @@ Non-goals for v1 (see section 14 for the planned follow-ups):
 - Using free nodes that an earlier request has claimed while it waits (no backfill).
 - Budgeting host RAM on the OMEN. Nodes are exclusive, so there are never more
   instances than nodes, and each instance's host prompt cache is capped.
-- Authentication (unchanged: LAN-only firewall) and a web UI.
+- Authentication (unchanged: LAN-only firewall). The dashboard at /ui/ is read-only (9.1); the live channel (9.2) and benchmarks (9.3) are the only additions.
 - Starting or stopping `rpc-server` on nodes.
 
 ## 5. Architecture
@@ -213,6 +213,7 @@ clients ──HTTP──▶ ┌──────────────── 
 | `internal/scheduler` | The state machine: instances, claims, queue, timers. |
 | `internal/proxy` | Extract the model name; stream the request to the instance. |
 | `internal/api` | Routes: OpenAI paths, llama-swap compatible paths, admin paths. |
+| `internal/benchspec`, `internal/bench` | Benchmark and suite shapes and validation; the SQLite store, runner, statistics and exports (9.3). |
 | `cmd/llm-scheduler` | Wiring, flags, signals. |
 
 **Concurrency model.** All scheduler state is owned by one goroutine that
@@ -265,6 +266,15 @@ history_dir: ""                    # optional; the event history (9.1). Empty = 
 history_max_file_mib: 16           # a history file is rotated at this size
 history_keep_files: 20             # files kept in history_dir; the oldest are deleted
 history_memory_events: 5000        # newest events held in memory for queries (1 to 200000)
+data_dir: ""                       # optional; the scheduler database (9.3). Empty = benchmark feature off
+ws_max_clients: 32                 # concurrent /ws clients (9.2); 1 to 1000
+bench:                             # 9.3; every key optional
+  enabled: true                    # default true when data_dir is set; true without data_dir is an error
+  regress_load_pct: 15             # a load more than this much slower than the baseline's is a regression
+  regress_decode_pct: 7            # decode tokens/s more than this much lower is a regression
+  max_run_minutes: 240             # a run that takes longer is stopped and marked failed
+  benchmarks: []                   # seeded into the database at start (source "config")
+  suites: []
 
 defaults:
   ttl: 300s                # unload after this long idle; 0 = never
@@ -1341,6 +1351,9 @@ gets its own process group, so nothing is left behind.
 | `GET /api/events`, `GET /api/metrics/activity` | llama-swap compatible, for the hub's llama panel. Appendix A. |
 | `GET /ui/` | The read-only dashboard (9.1): one self-contained page embedded in the binary. |
 | `GET /api/history`, `GET /api/history/summary`, `GET /api/history/export`, `GET /api/about` | The event history and what the dashboard header shows (9.1). Read-only. |
+| `GET /ws` | The live channel, a WebSocket (9.2): hello, status, event, bench, ping. |
+| `/api/bench/...` | Benchmarks, suites, runs, exports, trends (9.3). `503` when `data_dir` is not set. |
+| `GET /api/profiles`, `GET /api/system` | Every profile with its need and dry-run plan; configuration and storage summary (9.4). Read-only. |
 | `GET /health` | `200` whenever the scheduler is running. |
 | `GET /api/status` | Instances, placements, per-device memory from the last pre-flight, claims, queue, quarantines, backoffs, node view and its age. A starting instance also shows its load progress and its `load` report (7.6a). The top-level `recent_loads` lists the outcomes of load attempts finished in the last 120 s. Each node in `view.nodes` that an instance uses also has `health` (8.4a), and a node that was sent a recovery request or reported an outcome also has `recovery` (8.4b). |
 | `POST /api/plan` `{model}` | Dry run: what would happen if this model were requested now (placement, plan with victims, or the reason for neither). Changes nothing. |
@@ -1462,6 +1475,228 @@ expandable to the full record, a copy-as-JSON button and the other events of the
 same `session_id`); Loads (finished loads, sortable, profile and outcome
 filter); Timeline (all events, filtered by type, severity, node, profile and
 text); Summary (counts and per-profile load statistics).
+
+### 9.2 The live channel (`GET /ws`)
+
+One WebSocket for everything that is live; REST is for what a client pulls or
+pushes. It is in the same process and port as the rest (`http://<omen>:3122` ->
+`ws://<omen>:3122/ws`). The SSE stream `/api/events` (A.3) is unchanged and
+stays for the hub's llama panel. Library: `github.com/coder/websocket` (pure
+Go). Package `internal/api` (`ws.go`).
+
+*Frames.* JSON text frames, `{"type": "...", "ts": <unix ms>, "data": {...}}`.
+
+| `type` | Direction | When, and `data` |
+|---|---|---|
+| `hello` | server | First message. `version`, `started_at`, `server_time` (unix ms), `history` (`on`/`off`), `bench` (`on`/`off`), `topics`, `ws_max_clients`. |
+| `status` | server | The object `GET /api/status` returns (with the model-centric additions of 9.4). A full snapshot on connect, then whenever it changed, looked at every 250 ms so at most 4 a second; while a load is in progress at least one a second (so progress moves); at least one every 5 s. A change in only the clock, the fleet view age or a queue entry's age is not a change. |
+| `event` | server | Every history event as recorded: the record of `GET /api/history`, including `seq` and `data.bench_run`. Only when `history_dir` is set (history off records nothing). |
+| `bench` | server | Benchmark feature events (9.3). `data.kind` is `state` (on connect: the `GET /api/bench/state` document), `run`, `step_started`, `step_finished`, `progress` or `load`. |
+| `ping` | server | Every 15 s, `data: {}`. |
+| `subscribe` | client | `{"type":"subscribe","topics":["status","event","bench"]}`. Default is all three. Replaces the set; `hello` and `ping` always arrive. Newly subscribing to `status` or `bench` sends a fresh snapshot at once. |
+| `pong` | client | `{"type":"pong"}`; accepted and ignored (any traffic keeps the connection alive). Unknown messages are ignored. |
+
+*Never in the way of serving.* The status look is an ordinary `Status` query
+on the scheduler loop (the same as `GET /api/status`), taken at most 4 times a
+second and only while a client is connected. Each client has a bounded send
+queue (64 frames); a frame that does not fit means the client is too slow, and
+it is closed with code 1008 (policy violation) at once, never waited for; a
+write that takes over 10 s does the same. A producer (history, benchmarks) only
+does non-blocking sends. At most `ws_max_clients` (default 32) clients; the next
+gets `503` with `Retry-After`. On shutdown every client is closed with 1001.
+
+*Origin check.* The tool has no authentication (LAN only). A browser sends an
+`Origin` header on a WebSocket request, so the handshake is refused (`403`)
+unless there is no `Origin` (not a browser), it is the same origin as the
+request, or its host is a loopback or private IP (`127.0.0.0/8`, `::1`,
+`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`, link-local), `localhost`, a name
+ending in `.local`, `.lan`, `.home.arpa` or `.internal`, or a single-label name
+such as `omen`. This stops a page on the internet from using the browser of
+someone on the LAN to reach the scheduler; it is not authentication.
+
+### 9.3 Benchmarks
+
+Defining benchmarks, grouping them into suites, running them through the
+scheduler itself and keeping every result. Packages: `internal/benchspec`
+(shapes and validation), `internal/bench` (store, runner, statistics, export),
+`internal/api/bench.go` (REST). All of it is off when `data_dir` is empty or
+the database cannot be opened: the endpoints answer `503` with a message
+naming `data_dir`; everything else is unaffected.
+
+**Concepts.**
+
+*Benchmark* (a test case): `id` (slug), `name`, `description`, `profile` (a
+profile id or alias; unknown ones are rejected when it is saved), `cold`
+(default true: unload the profile first so the load is measured), `requests`
+(1 to 64 of `{name, messages | prompt, max_tokens (default 128), temperature
+(default 0), seed (default 42), cache_prompt (default false), stream (default
+false; when true time to first token is measured)}`), `repeats` (default 1,
+per request), `warmup_requests` (default 1), `timeout_s` (default 600, the
+whole benchmark including the load), `expect`, `unload_after` (default true),
+`tags`. A `prompt` is sent as one user message. `expect`: `outcome`
+(`ready` default, `refused`, `failed`), `min_decode_tps`, `max_load_s`,
+`output_sha256` (pins the output of the first request). *Concurrent step*:
+`{"id": ..., "parallel": [<benchmark ids>]}` (2 to 8 plain benchmarks with
+different profiles): their first requests, and so their loads, are fired at
+the same moment.
+
+*Suite*: `id`, `name`, `benchmarks` (ordered list of benchmark ids, or inline
+benchmarks, whose id defaults to `<suite>-<position>`), `stop_on_failure`
+(default false), `cooldown_s` (default 5, between benchmarks), `only_when_idle`
+(default true), `idle_wait_s` (default 600), `schedule` (`{"every":"24h"}` at
+least 10 minutes, or `{"at":"03:00"}` local time; default none), `baseline` (a
+run id; default the previous completed run of the suite).
+
+*Run*: one execution of a suite; states `queued`, `running`, `paused` (waiting
+for idle), `completed`, `failed`, `cancelled`, `skipped`. One run at a time,
+others queue (at most 20). A run stores the suite and every benchmark it named
+as they were when it was queued.
+
+**Execution.** The runner is a goroutine of the same process that drives the
+scheduler only through its public HTTP API on its own loopback address
+(`/api/plan`, `/api/status`, `/api/unload`, `/v1/chat/completions`,
+`/api/history`), so a benchmark takes exactly the path a client takes and the
+scheduler's fit checks cannot be bypassed. Every request carries
+`X-Bench-Run: <run id>`; the scheduler copies it into the history records of
+the load that request causes and of a refusal (`data.bench_run`). That is the
+only change in the core and it changes no behaviour. Per benchmark:
+
+1. `POST /api/plan` is recorded. If `cold` and the profile has an instance, it
+   is unloaded (not forced; a busy profile fails the step) and the runner waits
+   until it is gone. In a concurrent step every member gets this far, then all
+   fire together.
+2. First request = `requests[0]` (phase `load`), unless the profile is already
+   ready. While it is in flight the runner reads `/api/status` every second,
+   publishes the instance's `load` object on the live channel and remembers the
+   child's `log_file`. Afterwards the load is read from the scheduler: the
+   `recent_loads` entry (session id, outcome, reason), the history `loadFinished`
+   record of that session (bytes, MB/s, per node bytes and memory), the
+   instance's `device_total_mib`. Without history only `recent_loads`, the last
+   observed progress and the request's own wall time are available and
+   `load.source` says so.
+3. `warmup_requests` copies of `requests[0]` (phase `warmup`), then every
+   request `repeats` times (phase `measured`). Per request: status, wall time,
+   time to first token (streaming), the `timings` object, `prompt_n`,
+   `predicted_n`, `cache_n`, prompt and decode tokens per second, the sha256 of
+   the canonical JSON of the whole message object, its first 400 characters.
+   A request that does not return 200 ends the step (outcome `failed`).
+4. A refused (`503` or 4xx) or failed (502 and the like) first request is a
+   result, not a runner error: the status code, the scheduler's reason text and
+   the child's log file are stored. `refused` is a 503 or 4xx before a load
+   started; `failed` is the rest; `error` means the runner itself could not do
+   its job; `cancelled`; `skipped`.
+5. The step is unloaded if the run loaded it and `unload_after` is true. At the
+   end of the run (however it ended) everything the run loaded is unloaded
+   (`unload_after: false` keeps a model for the *following benchmarks of the
+   same run*).
+
+*Safety.* `only_when_idle` (default true): the run does not start, and pauses
+between benchmarks, while the scheduler has an instance this run did not load,
+a request in flight or waiting that is not this run's, or a queue entry. It
+waits up to `idle_wait_s`, then the run ends `skipped` (benchmarks already done
+keep their results; the rest are recorded as skipped). Cancel
+(`POST /api/bench/runs/{id}/cancel`) stops after the current request (a load in
+progress is abandoned at once and force-unloaded, since nobody wants it), marks
+the run `cancelled` and unloads what the run loaded. On shutdown the running
+run is cancelled the same way with the reason "scheduler shutting down", before
+the HTTP server stops. At start, a run found `running` or `paused` is marked
+`failed` with `failed (interrupted)` and a `queued` one `cancelled`. A run that
+exceeds `bench.max_run_minutes` is stopped and marked `failed`. Scheduled runs
+are queued by a check every 30 s and not queued twice for one suite.
+
+*Statistics and comparison.* Per step: mean, median, min, max and sample
+standard deviation of decode tokens/s, prefill tokens/s, time to first token
+and wall time over the measured requests that returned 200; warmup and the load
+request are never included. A step passes when its `expect` holds (default: the
+outcome is `ready`). Against the baseline run: percent change of load time
+(positive is slower), decode, prefill and time to first token; `regression` is
+true when the load is more than `bench.regress_load_pct` (15) slower, decode
+more than `bench.regress_decode_pct` (7) slower, the output hash of a
+deterministic (temperature 0) request differs, or a benchmark that loaded in the
+baseline no longer does. A request whose repeats produced different outputs is
+marked `varies` and is not compared.
+
+**Storage.** `data_dir/scheduler.db`, SQLite via `modernc.org/sqlite` (pure Go,
+no cgo; the Docker build is the plain `go build`), WAL mode, one writer
+goroutine (one transaction per write), reads through a pool. Schema versions
+are rows of `migrations (version, name, applied_at)`; a database written by a
+newer build is refused. JSON columns hold the open shapes.
+
+| Table | Columns |
+|---|---|
+| `migrations` | `version` PK, `name`, `applied_at` |
+| `benchmarks` | `id` PK, `name`, `source` (`config`/`api`), `spec` JSON, `created_at`, `updated_at` |
+| `suites` | same as benchmarks |
+| `runs` | `id` PK, `suite_id`, `suite_name`, `state`, `note`, `triggered_by` (`manual`/`schedule`), `baseline_run_id`, `queued_at`, `started_at`, `finished_at`, `error`, `version`, `suite` JSON (suite + benchmarks snapshot), `summary` JSON |
+| `run_steps` | `id` PK, `run_id` FK, `idx`, `grp` (parallel step id), `benchmark_id`, `name`, `profile`, `state`, `outcome`, `reason`, `http_status`, `log_file`, `started_at`, `finished_at`, `error`, JSON: `spec`, `plan`, `load`, `stats`, `expect`, `comparison` |
+| `requests` | `id` PK, `step_id` FK, `run_id`, `seq`, `name`, `phase` (`load`/`warmup`/`measured`), `status`, `wall_ms`, `ttft_ms`, `prompt_n`, `prompt_ms`, `prompt_tps`, `predicted_n`, `predicted_ms`, `decode_tps`, `cache_n`, `timings` JSON, `output_sha256`, `output_head`, `deterministic`, `error`, `started_at` |
+
+*Seeding.* The config's `bench.benchmarks` and `bench.suites` (same shapes as
+the API, YAML) are upserted at every start with `source: "config"`. An item
+created through the API has `source: "api"` and is never overwritten by config.
+Editing a config item through the API makes it an api item; deleting one makes
+it reappear at the next start. Config validation checks every seed against the
+profiles.
+
+*History.* The JSONL history is unchanged and not migrated. A run writes
+`benchRunStarted`, `benchStepFinished` and `benchRunFinished` (all with
+`data.bench_run`); the load of a benchmark's first request and its refusals carry
+`data.bench_run` too.
+
+**REST** (pull and push only; a bad body is `400`, a failed validation `422`,
+an unknown id `404`, a conflict `409`, off `503`):
+
+| Endpoint | Behaviour |
+|---|---|
+| `GET /api/bench/benchmarks`, `POST` | List `{"benchmarks": [...]}`; create (`201`, `409` if the id exists). |
+| `GET /api/bench/benchmarks/{id}`, `PUT`, `DELETE` | One benchmark (the spec fields plus `source`, `created_at`, `updated_at`); replace; delete (`409` while a suite or parallel step names it). |
+| `GET /api/bench/suites`, `POST`, `GET/PUT/DELETE /api/bench/suites/{id}` | The same for suites; the list adds `last_run`. |
+| `POST /api/bench/suites/{id}/run` | Body optional `{"baseline": "<run id>", "note": "..."}`. `202` with the run (`queued`); `429` when 20 runs are queued. |
+| `GET /api/bench/runs?suite=&state=&limit=` | `{"runs": [...]}` newest first, without steps. |
+| `GET /api/bench/runs/{id}` | The run with `steps`, their `requests`, `stats`, `expect`, `comparison`, `load`, `plan`. |
+| `POST /api/bench/runs/{id}/cancel` | `202`; `409` for a finished run. |
+| `GET /api/bench/runs/{id}/export?format=json\|csv\|md` | Download. `md` is a table, one row per benchmark: profile, nodes, load s, MB/s, prefill and decode tokens/s, decode standard deviation, memory MiB, outcome, change against the baseline. `csv` is one row per step. |
+| `GET /api/bench/trends?benchmark=&metric=load_s\|decode_tps\|prefill_tps&limit=` | `{"benchmark","metric","points":[{run_id,started_at,value}]}` oldest first (the newest `limit`), ready steps of completed or failed runs. |
+| `GET /api/bench/state` | `{"enabled","current","queue","next_scheduled"}`. |
+| `GET /api/bench/profiles` | Valid profile ids (and aliases) for an editor. |
+
+**`bench` WebSocket messages** (`data.kind`): `state` (on connect; the
+`/api/bench/state` document), `run` (`data.run`: id, suite, state, trigger,
+times, note, baseline, error, summary, `progress` with `steps_total`,
+`steps_done`, the step in flight and `paused_because`), `step_started`
+(`run_id`, `step`), `step_finished` (`run_id`, `step`: outcome, reason, load,
+stats, expect, comparison, no requests), `progress` (`run_id`, `idx`,
+`benchmark_id`, `phase`, `request`, `seq`, `state` `started`/`streaming`,
+`tokens` and `elapsed_ms` while streaming), `load` (`run_id`, `idx`,
+`benchmark_id`, `load`: the status `load` object of the step in flight).
+
+### 9.4 Model-centric status, `/api/profiles`, `/api/system`
+
+`GET /api/status` (and the `status` WebSocket message) describes each instance
+with: `profile`, `model_file`, `state`, `nodes` (id, address, budget, and the
+per-device `memory` from the load log), `device_total_mib`, `in_flight`,
+`requests_served` (admitted since it started), `ready_since`, `last_used`,
+`load_duration`, and the load progress fields while starting. When the
+upstream reported a token rate for the newest finished request of that model,
+the instance also has `last_request`: `tokens_per_second`, `output_tokens`,
+`input_tokens`, `status`, `duration_ms`, `finished_at`. That figure comes from
+the activity log (A.4) and is the rate of the last *finished* request: there is
+no live tokens-per-second figure for a generation in progress (the proxy does
+not parse the stream), so a client can only show the live rate of a benchmark's
+streamed request (`bench` `progress` messages). All additions are new keys;
+existing keys are unchanged.
+
+`GET /api/profiles` lists every profile: `id`, `kind`, `model`, `ctx`,
+`parallel`, `aliases`, `force_nodes`, `tensor_split`, `needs_mib_configured`
+(when set), `needs_mib` with `needs_basis` (`measured, needs_mib`, `estimated,
++5% margin; ...` or `measured this run`) and `needs_measured`, and `plan`
+(the dry-run of `POST /api/plan`: `action`, `would_start`, `nodes` as hostnames,
+`reason`, `instance`, `warning`). Read-only; it runs one plan per profile.
+
+`GET /api/system`: version, uptime, `listen`, the safety settings (the same
+summary as the `schedulerStarted` event), the benchmark settings, live client
+count and the storage locations with sizes (history directory, database file and
+schema version, child log directory).
 
 ## 10. Packaging and rollout
 

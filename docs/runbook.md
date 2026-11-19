@@ -439,6 +439,88 @@ ls /opt/llm-scheduler/history                                              # the
 
 `history` in the answer says `off` when `history_dir` is empty. `truncated: true` means more events match than were returned: narrow the range or raise `limit` (at most 2000).
 
+### Benchmarks run by the scheduler (design 9.3)
+
+The scheduler can run benchmarks itself and keep the numbers: define test
+cases ("benchmarks"), group them ("suites"), run a suite, read the results,
+compare with the last run. It uses its own HTTP API on loopback, so a
+benchmark loads and serves exactly like a client's request does, and it never
+skips the fit checks.
+
+1. **Turn it on.** Set `data_dir: /var/lib/llm-scheduler/data` in `config.yaml`
+   (the shipped `deploy/config.yaml` has it) and keep the compose volume
+   `./data:/var/lib/llm-scheduler/data`. Restart the container. The log says
+   `benchmark feature on database=...`. If it says the database cannot be opened
+   the feature stays off (its endpoints answer `503`) and serving is not
+   affected; fix the directory permissions and restart.
+2. **Define.** Either put a `bench:` block in `config.yaml` (a commented
+   example is at the end of the file; it is written to the database at every
+   start and never overwrites something created through the API), or use the
+   API:
+```sh
+B=http://localhost:3122
+curl -s -X POST $B/api/bench/benchmarks -H 'Content-Type: application/json' -d '{
+  "id": "gemma12b-1ps5-cold", "profile": "bench-gemma12b-1a-2048",
+  "repeats": 3, "warmup_requests": 1,
+  "requests": [{"name": "short", "prompt": "Explain what a load balancer does in two sentences.", "max_tokens": 96}]}'
+curl -s -X POST $B/api/bench/suites -H 'Content-Type: application/json' -d '{
+  "id": "gemma-scaling", "benchmarks": ["gemma12b-1ps5-cold"], "cooldown_s": 10}'
+```
+   Unknown profiles, bad ids and unknown fields are rejected (`400` or `422`
+   with the reason). A benchmark that is *supposed* to be refused (a model that
+   does not fit) has `"expect": {"outcome": "refused"}`; it passes when the
+   scheduler refuses.
+3. **Run.** `curl -s -X POST $B/api/bench/suites/gemma-scaling/run -d '{"note":"after the PS5 firmware update"}'`
+   returns the run (`queued`). Runs go one at a time; others queue. Watch with
+   `curl -s $B/api/bench/state`, or on `/ws` (`bench` messages). Cancel with
+   `POST /api/bench/runs/<id>/cancel`: it stops after the current request and
+   unloads what the run loaded.
+4. **`only_when_idle` (default true).** Benchmarks load and unload models on the
+   real cluster, so a run does not start, and pauses between benchmarks, while
+   the scheduler has a model this run did not load, a request in flight that is
+   not the run's, or anything queued. A model that someone used last stays loaded
+   for its `ttl` (300 s by default), so a run may wait that long. After
+   `idle_wait_s` (default 600) the run ends `skipped` and what it had measured
+   is kept. Set `only_when_idle: false` only when you know nobody else is using
+   the cluster: a cold benchmark then unloads the profile it tests even if
+   someone else loaded it.
+5. **Read.** `GET /api/bench/runs?suite=gemma-scaling` lists runs;
+   `GET /api/bench/runs/<id>` has every step, its load numbers (load seconds,
+   bytes, MB/s, per node bytes and memory, the child's log file), every request
+   (phase `load`, `warmup` or `measured`, timings, output hash) and the
+   statistics. The warmup request and the load request are never in the
+   statistics. A step that was refused or failed is a result with the
+   scheduler's reason, not an error. Each load is also in the event history
+   with `data.bench_run`: `GET /api/history?session_id=<session>`.
+6. **Compare.** Each run is compared with the previous completed run of the
+   same suite (or the `baseline` you named when you ran it). `regression: true`
+   means the load was more than 15% slower (`bench.regress_load_pct`), decode
+   more than 7% slower (`bench.regress_decode_pct`), or the output of a
+   temperature-0 request changed.
+7. **Export.** `GET /api/bench/runs/<id>/export?format=md` is a table to paste
+   into a document; `format=csv` one row per step; `format=json` everything.
+   `GET /api/bench/trends?benchmark=gemma12b-1ps5-cold&metric=load_s` gives the
+   points over past runs for a chart.
+8. **Schedule.** `"schedule": {"at": "03:00"}` (local time of the container,
+   normally UTC) or `{"every": "24h"}` in a suite queues it by itself.
+9. **Back up the database.** All results are in `/opt/llm-scheduler/data/scheduler.db`
+   (plus `-wal` and `-shm` files while it runs). A consistent copy while the
+   scheduler runs: `docker exec llama-swap sh -c 'command -v sqlite3'` may not
+   exist in the image, so the safe ways are (a) stop the container and copy
+   the three files, or (b) `curl -s $B/api/bench/runs/<id>/export?format=json`
+   for the runs you care about. Deleting the file resets the feature (it is
+   recreated empty at the next start; config seeds come back). The JSONL event
+   history (`./history`) is separate and unchanged.
+10. **A run died with the scheduler.** A run that was running when the
+    container stopped is marked `failed` with `failed (interrupted)` at the next
+    start; a queued one is `cancelled`. A model the run had loaded went away
+    with the container.
+
+Live channel: `ws://<omen>:3122/ws` (design 9.2). From a browser it only
+accepts the same origin or a LAN origin. `ws_max_clients` (32) limits clients.
+Test it from a shell with any WebSocket client, for example
+`websocat ws://localhost:3122/ws`.
+
 ### Child output logs
 
 The scheduler writes each child llama-server's complete stdout and stderr to a new file under `/opt/llm-scheduler/logs` on the OMEN (`child_log_dir` in `config.yaml`, mounted by compose). One file per start, named `<UTC time>-<profile>-<instance id>.log`, so `ls` sorts by time. This is where the KV cache size, the memory breakdown and the exact out-of-memory error are, beyond the last 40 lines in a `502`.

@@ -29,6 +29,10 @@ services:
       # The event history (history_dir in config.yaml): JSON Lines, rotated by size,
       # read by GET /api/history and the dashboard at /ui/. Survives image swaps.
       - ./history:/var/lib/llm-scheduler/history
+      # The scheduler database (data_dir in config.yaml): benchmarks, suites and every run's
+      # results in scheduler.db (SQLite, WAL). Back it up with the container stopped, or with
+      # sqlite3 .backup (runbook "Benchmarks"). Survives image swaps.
+      - ./data:/var/lib/llm-scheduler/data
       # No /run/avahi-daemon mount: the scheduler uses IP addresses only.
     networks:
       - sched

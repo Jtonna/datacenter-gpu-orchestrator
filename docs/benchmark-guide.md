@@ -74,6 +74,8 @@ Errors use this shape: `{"error":{"message":"...","type":"...","param":null,"cod
 | ANY | `/upstream/{model}/...` | Passes straight to a model that is already ready. Never loads. `503 not ready` otherwise. | `curl -s $B/upstream/b-gemma-2ps5/props` |
 | GET | `/api/events` | Server-sent events stream for the hub panel. | `curl -sN $B/api/events` |
 | GET | `/api/metrics/activity` | Last 200 finished requests: model, path, status, duration, token counts, tokens per second. | `curl -s $B/api/metrics/activity` |
+| GET | `/ws` | Live channel (WebSocket), see section 12 and design 9.2. | `websocat ws://localhost:3122/ws` |
+| ANY | `/api/bench/...` | Benchmarks, suites and runs run by the scheduler itself (section 12). | `curl -s $B/api/bench/state` |
 | GET | `/ui/` | The read-only dashboard: nodes, queue, incidents, finished loads (time, MB/s, memory), timeline, summary. Open `http://<omen>:3122/ui/`. | |
 | GET | `/api/history`, `/api/history/summary`, `/api/history/export` | The event history behind the dashboard (`history_dir`). The summary has load seconds (min, median, max) and average MB/s per profile; the export is JSON Lines, so a benchmark run can be saved with `curl -s "$B/api/history/export?since=<ms>"`. | `curl -s "$B/api/history?type=loadFinished&limit=20"` |
 
@@ -300,3 +302,83 @@ An ISSUE report includes:
 5. A snapshot of `curl -s localhost:3122/api/status`.
 6. The last 100 lines: `docker logs --tail 100 llm-scheduler-test`.
 7. The child log file path (from `/api/status` `log_file`, mapped to the host path in section 7).
+
+## 12. Running benchmarks from the scheduler itself
+
+Sections 2 to 7 describe running a benchmark by hand with `curl`. The same
+method is built into the scheduler (design 9.3, runbook "Benchmarks run by the
+scheduler"): it does the plan, the cold start, the first request that loads, the
+warmup, the repeated requests, the unload, keeps every number in a database and
+compares with the last run. It needs `data_dir` in the config and the `./data`
+volume; without them `/api/bench/...` answers `503`.
+
+What the by-hand method of section 6 maps to:
+
+| By hand | In the scheduler |
+|---|---|
+| `plan`, then one request that includes the load, then a second identical request | `plan`, a first request (phase `load`), `warmup_requests` (default 1) and `repeats` measured requests per request |
+| Unload before the next profile | `cold: true` unloads the profile first, `unload_after: true` unloads it after |
+| `cache_prompt: false`, check `timings.cache_n` is 0 | `cache_prompt` defaults to false; `cache_n` is stored per request |
+| Load time, upload MB/s, memory per machine | `load.load_s`, `load.avg_mb_s`, `load.nodes[]` (bytes, `memory_mib`), `load.memory_mib`, from `recent_loads` and the history record of the load session |
+| Prefill and decode tokens/s | `timings.prompt_per_second`, `timings.predicted_per_second` per request; mean, median, min, max and standard deviation per benchmark |
+| "Stop file between profiles" | `POST /api/bench/runs/<id>/cancel` (stops after the current request, unloads what the run loaded) |
+
+Worked example: how one Gemma 12B model scales over 1, 2 and 3 PS5s, a model
+that must be refused, and two loads at once. The profile names are the
+generated ones of section 5a.
+
+```sh
+B=http://localhost:3122
+post() { curl -s -X POST "$B$1" -H 'Content-Type: application/json' -d "$2"; echo; }
+
+# one benchmark per placement; the same request, so the numbers compare
+for place in 1a 2 3; do
+  post /api/bench/benchmarks '{
+    "id": "gemma12b-'$place'", "name": "Gemma 12B on '$place' PS5, ctx 2048",
+    "profile": "bench-gemma12b-'$place'-2048", "cold": true,
+    "warmup_requests": 1, "repeats": 3, "timeout_s": 1800,
+    "tags": ["scaling"],
+    "requests": [
+      {"name": "short",  "prompt": "Say hello in five words.", "max_tokens": 32},
+      {"name": "stream", "prompt": "Write a short paragraph about the sea.", "max_tokens": 128, "stream": true}
+    ]}'
+done
+
+# a concurrent step: two loads fired at the same moment (a known behaviour to measure)
+post /api/bench/benchmarks '{"id": "tiny-1a", "profile": "bench-tinyllama-1a-2048",
+  "requests": [{"prompt": "Say hello.", "max_tokens": 16}]}'
+post /api/bench/benchmarks '{"id": "tiny-1b", "profile": "bench-tinyllama-1b-2048",
+  "requests": [{"prompt": "Say hello.", "max_tokens": 16}]}'
+post /api/bench/benchmarks '{"id": "two-loads-at-once", "parallel": ["tiny-1a", "tiny-1b"]}'
+
+# the suite: ordered, 30 s between benchmarks, waits for the cluster to be idle
+post /api/bench/suites '{
+  "id": "gemma-scaling", "name": "Gemma 12B scaling over PS5s",
+  "benchmarks": ["gemma12b-1a", "gemma12b-2", "gemma12b-3", "two-loads-at-once"],
+  "cooldown_s": 30, "only_when_idle": true, "idle_wait_s": 900}'
+
+post /api/bench/suites/gemma-scaling/run '{"note": "baseline on the 2.5 GbE link"}'
+```
+
+Then read it: `curl -s $B/api/bench/state` while it runs, and when it has
+finished (`state: completed`):
+
+```sh
+RUN=$(curl -s "$B/api/bench/runs?suite=gemma-scaling&limit=1" | jq -r '.runs[0].id')
+curl -s "$B/api/bench/runs/$RUN/export?format=md"       # a table for a document
+curl -s "$B/api/bench/runs/$RUN" | jq '.steps[] | {benchmark_id, outcome, load, stats: .stats.decode_tps}'
+```
+
+To test a model that is supposed not to fit, give the benchmark
+`"expect": {"outcome": "refused"}` (a profile that the placer refuses with
+`503 does not fit`; note that a *forced* profile skips the fit check unless
+`forced_fit_check` is `warn` or `reject`, section 4, so it would try to load).
+The step then records the refusal and its reason and passes.
+
+Notes. A run does not start while anything else is loaded or in flight
+(`only_when_idle`), so run it when the cluster is otherwise idle. The runner
+uses the scheduler's own API, so everything section 4 says about forced
+profiles, fit checks and quarantines applies unchanged. The first request after
+a load is slow on this hardware, which is why it and the warmup request are
+recorded but left out of the statistics.
+
