@@ -189,6 +189,14 @@ func (c *schedCore) statusDoc() Status {
 			st.Backoffs = append(st.Backoffs, BackoffStatus{Profile: n, Until: b.until, Level: b.level})
 		}
 	}
+	refused := make([]string, 0, len(c.lastRefusal))
+	for n := range c.lastRefusal {
+		refused = append(refused, n)
+	}
+	sort.Strings(refused)
+	for _, n := range refused {
+		st.LastRefusals = append(st.LastRefusals, c.lastRefusal[n])
+	}
 	st.View = ViewStatus{Age: c.age, Connected: c.view.Connected(), Stale: !c.fresh}
 	if c.age == fleet.NeverReceived {
 		st.View.Age = -1

@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"testing"
+	"time"
 
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
 )
@@ -48,5 +49,28 @@ func TestBenchRun_RefusalIsTagged(t *testing.T) {
 	evs := h.of(history.TRequestRefused)
 	if len(evs) != 1 || evs[0].Data["bench_run"] != "br-2" {
 		t.Fatalf("refusal events %+v", evs)
+	}
+}
+
+func TestStatus_LastRefusalPerProfile(t *testing.T) {
+	h := newHarness(t).nodes(ps5("a", 2, 15000))
+	h.llama("huge", 60000)
+	if got := h.c.statusDoc().LastRefusals; len(got) != 0 {
+		t.Fatalf("refusals before any: %+v", got)
+	}
+	w := &waiter{profile: "huge", reply: make(chan answer, 2), benchRun: "br-9"}
+	h.step(evAcquire{w: w})
+	h.failed(w, 503, ReasonDoesNotFit)
+	got := h.c.statusDoc().LastRefusals
+	if len(got) != 1 || got[0].Profile != "huge" || got[0].Reason != string(ReasonDoesNotFit) || got[0].Status != 503 || got[0].Message == "" || got[0].BenchRun != "br-9" || got[0].At.IsZero() {
+		t.Fatalf("last refusals %+v", got)
+	}
+	// A repeat inside the history dedupe window still updates the status record.
+	first := got[0].At
+	h.advance(time.Second)
+	h.failed(h.request("huge"), 503, ReasonDoesNotFit)
+	got = h.c.statusDoc().LastRefusals
+	if len(got) != 1 || got[0].BenchRun != "" || !got[0].At.After(first) {
+		t.Fatalf("after repeat %+v", got)
 	}
 }

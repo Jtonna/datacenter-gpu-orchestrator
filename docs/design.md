@@ -790,6 +790,8 @@ per-node figures replace the skew margin when the node set and the split are the
 same. A learned figure never lowers a configured `needs_mib`; if it is higher,
 one WARN per profile (`configured needs_mib is too low`, both numbers) is logged
 and the higher figure is used. `GET /api/status` shows them in `learned_needs`.
+
+`GET /api/status` also carries `last_refusals`: per profile, the newest answer that refused it without serving it (`profile`, `at`, `status`, `reason`, `message`, `bench_run`). `POST /api/load` answers 202 before the fit and pre-flight checks have run, so a client that started a load compares `at` with the time of its call to learn why no child started. The benchmark runner's `load` phase does this and records outcome `refused` with that message.
 Nothing is written to the config.
 
 **Memory watch during a load (`defaults.load_memory_floor_mib`, default 768, 0

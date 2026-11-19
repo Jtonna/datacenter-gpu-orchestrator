@@ -292,7 +292,11 @@ func ExportMarkdownPhases(r *Run) string {
 			if p.Outcome != "" && p.Outcome != PhaseOK {
 				state += ", " + p.Outcome
 			}
-			fmt.Fprintf(&b, "| %d | %s | %s | %s | %s |\n", p.Idx+1, mdEscape(label), mdEscape(state), f1(p.DurationS), mdEscape(phaseNumbers(&p)))
+			measured := phaseNumbers(&p)
+			if measured == "" && p.Error != "" {
+				measured = p.Error // a phase that stopped with nothing measured says why
+			}
+			fmt.Fprintf(&b, "| %d | %s | %s | %s | %s |\n", p.Idx+1, mdEscape(label), mdEscape(state), f1(p.DurationS), mdEscape(measured))
 		}
 		for _, p := range st.Phases {
 			if len(p.Turns) == 0 {

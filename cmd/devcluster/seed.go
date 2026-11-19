@@ -3,7 +3,7 @@ package main
 // The startup seed, all through the real server:
 //
 //   - seedConfig: about fifteen configuration writes after the import, through
-//     the REST handlers (as the UI with X-Source: ui and X-Actor: jacob, as curl
+//     the REST handlers (as the UI with X-Source: ui and X-Actor: alex, as curl
 //     with X-Actor: curl) and through MCP, so the revisions and the audit log
 //     hold every source (import, ui, rest, mcp);
 //
@@ -40,13 +40,13 @@ func seedConfig(c *cluster, log *slog.Logger) error {
 	}
 	put := func(path string, w who, body any) error { _, err := s.do("PUT", path, w, body); return err }
 
-	_, err = s.do("PATCH", "/api/config/settings", asJacob.say("Keep idle models ten minutes: reloading the 27B costs more than it saves"), map[string]any{"ttl": "600s"})
+	_, err = s.do("PATCH", "/api/config/settings", asAlex.say("Keep idle models ten minutes: reloading the 27B costs more than it saves"), map[string]any{"ttl": "600s"})
 	step("settings ttl", err)
 
-	if p, err := s.do("GET", "/api/config/profiles/gemma-4-12b", asJacob, nil); err == nil {
+	if p, err := s.do("GET", "/api/config/profiles/gemma-4-12b", asAlex, nil); err == nil {
 		prof, _ := p["profile"].(map[string]any)
 		prof["needs_mib"] = 8100
-		step("gemma needs_mib", put("/api/config/profiles/gemma-4-12b", asJacob.say("Measured 8.1 GB after the llama.cpp update"), map[string]any{"profile": prof}))
+		step("gemma needs_mib", put("/api/config/profiles/gemma-4-12b", asAlex.say("Measured 8.1 GB after the llama.cpp update"), map[string]any{"profile": prof}))
 	} else {
 		step("get gemma", err)
 	}
@@ -55,12 +55,12 @@ func seedConfig(c *cluster, log *slog.Logger) error {
 		map[string]any{"id": "qwen3.5-4b:32k", "model": fileQwen4, "ctx": 32768, "needs_mib": 4600, "kv_quant": "q8_0", "flash_attn": true})
 	step("create qwen 32k", err)
 
-	if t, err := s.do("GET", "/api/config/tiers", asJacob, nil); err == nil {
+	if t, err := s.do("GET", "/api/config/tiers", asAlex, nil); err == nil {
 		tiers, _ := t["tiers"].([]any)
 		if len(tiers) > 0 {
 			tiers[0].(map[string]any)["link_mb_s"] = 112
 		}
-		step("tiers", put("/api/config/tiers", asJacob.say("PS5 link speed measured after the move to the 2.5 GbE switch"), map[string]any{"tiers": tiers}))
+		step("tiers", put("/api/config/tiers", asAlex.say("PS5 link speed measured after the move to the 2.5 GbE switch"), map[string]any{"tiers": tiers}))
 	} else {
 		step("get tiers", err)
 	}
@@ -69,10 +69,10 @@ func seedConfig(c *cluster, log *slog.Logger) error {
 		"comment": "temporary profile for a context-length experiment", "actor": "ctx sweep"})
 	step("mcp create scratch", err)
 
-	step("exclude test consoles", put("/api/config/exclude-nodes", asJacob.say("a test console is on the bench this week; keep every ps5-test-* out of the pool"),
+	step("exclude test consoles", put("/api/config/exclude-nodes", asAlex.say("a test console is on the bench this week; keep every ps5-test-* out of the pool"),
 		map[string]any{"exclude_nodes": []string{"alienware-m15", "ps5-test-*"}}))
 
-	_, err = s.do("PATCH", "/api/config/settings", asJacob.say("Queue longer: the nightly benchmarks hold the PS5s for a while"),
+	_, err = s.do("PATCH", "/api/config/settings", asAlex.say("Queue longer: the nightly benchmarks hold the PS5s for a while"),
 		map[string]any{"queue_timeout": "900s", "drain_after": "45s"})
 	step("settings queue", err)
 
@@ -86,13 +86,13 @@ func seedConfig(c *cluster, log *slog.Logger) error {
 	_, err = s.do("PATCH", "/api/config/recovery", asCurl.say("fewer restarts: one recovery request per node every 15 minutes"), map[string]any{"min_interval": "900s"})
 	step("recovery", err)
 
-	step("node overrides", put("/api/config/node-overrides", asJacob.say("pin the Alienware's rpc port while it is on the bench"),
+	step("node overrides", put("/api/config/node-overrides", asAlex.say("pin the Alienware's rpc port while it is on the bench"),
 		map[string]any{"node_overrides": map[string]any{"alienware-m15": map[string]any{"rpc": "10.0.0.3:50053"}}}))
 
 	step("exclude back", put("/api/config/exclude-nodes", asCurl.say("test console returned"),
 		map[string]any{"exclude_nodes": []string{"alienware-m15"}}))
 
-	_, err = s.do("POST", "/api/config/profiles", asJacob.say("Devstral with a 16k context for longer diffs"),
+	_, err = s.do("POST", "/api/config/profiles", asAlex.say("Devstral with a 16k context for longer diffs"),
 		map[string]any{"id": "devstral-24b:16k", "model": fileDevstral, "ctx": 16384, "needs_mib": 13300, "kv_quant": "q8_0", "flash_attn": true})
 	step("create devstral 16k", err)
 
@@ -236,7 +236,7 @@ func seedBenchDefs(c *cluster) error {
 			_, err := s.do("POST", path, asCurl, spec)
 			return err
 		default:
-			_, err := s.do("POST", path, asJacob, spec)
+			_, err := s.do("POST", path, asAlex, spec)
 			return err
 		}
 	}
@@ -261,13 +261,13 @@ func seedBenchFinish(c *cluster) error {
 		w       who
 		changes map[string]any
 	}{
-		{"nightly", asJacob.say("run it every night at 03:00, ten seconds between benchmarks"), map[string]any{"cooldown_s": 10, "schedule": map[string]any{"at": "03:00"}}},
+		{"nightly", asAlex.say("run it every night at 03:00, ten seconds between benchmarks"), map[string]any{"cooldown_s": 10, "schedule": map[string]any{"at": "03:00"}}},
 		{"load-scaling", asCurl.say("let the PS5s settle between loads"), map[string]any{"cooldown_s": 5}},
-		{"smoke", asJacob, map[string]any{"cooldown_s": 5}},
-		{"side-by-side", asJacob, map[string]any{"cooldown_s": 5}},
+		{"smoke", asAlex, map[string]any{"cooldown_s": 5}},
+		{"side-by-side", asAlex, map[string]any{"cooldown_s": 5}},
 	}
 	for _, e := range edits {
-		got, err := s.do("GET", "/api/bench/suites/"+e.id, asJacob, nil)
+		got, err := s.do("GET", "/api/bench/suites/"+e.id, asAlex, nil)
 		if err != nil {
 			return err
 		}

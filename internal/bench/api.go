@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -38,6 +39,39 @@ type API interface {
 	// LoadHistory is the loadFinished history record of a load session, or nil
 	// when history is off or has no such record.
 	LoadHistory(ctx context.Context, sessionID string) (*HistoryLoad, error)
+	// Refusals are the history records of the given types (requestRefused,
+	// preflightFailed, profileBackedOff) of a profile since a unix-ms time,
+	// newest first. It is the fallback for a scheduler whose status carries no
+	// last_refusals; an error or an empty list means nothing is known.
+	Refusals(ctx context.Context, profile string, sinceMS int64, types ...string) ([]Refusal, error)
+}
+
+// Refusal is a record of the scheduler turning a profile down before any child
+// started: the newest one of a profile in the status (last_refusals) or a
+// history event.
+type Refusal struct {
+	Profile  string
+	AtMS     int64
+	Type     string // history event type; empty for a status record
+	Status   int    // the HTTP status the refused request got, when known
+	Reason   string // the scheduler's reason code ("does not fit", "backoff", ...)
+	Message  string // the scheduler's words
+	BenchRun string // the bench run whose request was refused, when it carried one
+}
+
+// Text is the refusal as a sentence for a step, worded like the answer a
+// refused request gets: "<reason>: <message>". With no message it is the
+// reason code alone.
+func (r Refusal) Text() string {
+	switch {
+	case r.Message != "" && r.Reason != "" && !strings.HasPrefix(r.Message, r.Reason):
+		return r.Reason + ": " + r.Message
+	case r.Message != "":
+		return r.Message
+	case r.Reason != "":
+		return r.Reason
+	}
+	return "refused by the scheduler"
 }
 
 // PlanInfo is the answer of /api/plan.
@@ -117,8 +151,10 @@ type StatusInfo struct {
 	Instances   []InstanceInfo
 	QueueLen    int
 	RecentLoads []RecentLoad
-	Hostnames   map[string]string // node id to hostname
-	Workers     []WorkerInfo
+	// LastRefusals is the newest refusal of each profile (status last_refusals); empty on a build without it.
+	LastRefusals []Refusal
+	Hostnames    map[string]string // node id to hostname
+	Workers      []WorkerInfo
 	// ConfigRevision is the revision of the scheduler's configuration when the
 	// status exposes one (it does not on every build); empty otherwise.
 	ConfigRevision string
@@ -381,6 +417,14 @@ type statusWire struct {
 			RPCServerVersion string `json:"rpc_server_version"`
 		} `json:"nodes"`
 	} `json:"view"`
+	LastRefusals []struct {
+		Profile  string `json:"profile"`
+		At       string `json:"at"`
+		Status   int    `json:"status"`
+		Reason   string `json:"reason"`
+		Message  string `json:"message"`
+		BenchRun string `json:"bench_run"`
+	} `json:"last_refusals"`
 	ConfigRevision json.RawMessage `json:"config_revision"`
 	Config         struct {
 		Revision json.RawMessage `json:"revision"`
@@ -458,6 +502,13 @@ func ParseStatus(raw []byte) (*StatusInfo, error) {
 	for _, r := range w.RecentLoads {
 		out.RecentLoads = append(out.RecentLoads, RecentLoad{SessionID: r.SessionID, Model: r.Model, Outcome: r.Outcome, Reason: r.Reason, FinishedAt: r.FinishedAt, LoadS: r.LoadS, Workers: r.Workers})
 	}
+	for _, r := range w.LastRefusals {
+		rf := Refusal{Profile: r.Profile, Status: r.Status, Reason: r.Reason, Message: r.Message, BenchRun: r.BenchRun}
+		if t, err := time.Parse(time.RFC3339Nano, r.At); err == nil {
+			rf.AtMS = t.UnixMilli()
+		}
+		out.LastRefusals = append(out.LastRefusals, rf)
+	}
 	for _, n := range w.View.Nodes {
 		if n.Hostname != "" {
 			out.Hostnames[n.ID] = n.Hostname
@@ -512,6 +563,45 @@ func (h *HTTPAPI) LoadHistory(ctx context.Context, sessionID string) (*HistoryLo
 			nl.Bytes = &b
 		}
 		out.Nodes = append(out.Nodes, nl)
+	}
+	return out, nil
+}
+
+// Refusals implements API.
+func (h *HTTPAPI) Refusals(ctx context.Context, profile string, sinceMS int64, types ...string) ([]Refusal, error) {
+	q := url.Values{"type": {strings.Join(types, ",")}, "profile": {profile}, "since": {strconv.FormatInt(sinceMS, 10)}, "limit": {"20"}}
+	resp, err := h.do(ctx, "GET", "/api/history?"+q.Encode(), nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw := readLimited(resp.Body)
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("/api/history answered %d", resp.StatusCode)
+	}
+	var d struct {
+		Events []struct {
+			Ts      int64          `json:"ts"`
+			Type    string         `json:"type"`
+			Summary string         `json:"summary"`
+			Data    map[string]any `json:"data"`
+		} `json:"events"`
+	}
+	if err := json.Unmarshal(raw, &d); err != nil {
+		return nil, err
+	}
+	var out []Refusal
+	for _, e := range d.Events {
+		r := Refusal{AtMS: e.Ts, Type: e.Type, Message: strings.TrimSpace(e.Summary)}
+		if v, ok := e.Data["message"].(string); ok && v != "" {
+			r.Message = v
+		}
+		r.Reason, _ = e.Data["reason"].(string)
+		r.BenchRun, _ = e.Data["bench_run"].(string)
+		if v, ok := e.Data["status"].(float64); ok {
+			r.Status = int(v)
+		}
+		out = append(out, r)
 	}
 	return out, nil
 }

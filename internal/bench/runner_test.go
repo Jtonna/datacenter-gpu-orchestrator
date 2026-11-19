@@ -677,3 +677,119 @@ func TestStartRecoversInterruptedRuns(t *testing.T) {
 		t.Fatalf("%s %q", r.State, r.Error)
 	}
 }
+
+// ---- a load that the scheduler accepts and then does not carry out ----
+
+const loadOnlyBench = `{"id":"lo","profile":"m","phases":[{"type":"load"}],"timeout_s":20,"expect":{"outcome":"%s"}}`
+
+// runLoadOnly runs a benchmark whose only phase is a load against the scripted profile.
+func runLoadOnly(t *testing.T, api *fakeAPI, want string) (*Run, *Step) {
+	t.Helper()
+	tm := newTestMgr(t, api)
+	tm.bench(fmt.Sprintf(loadOnlyBench, want))
+	tm.suite(`{"id":"s","benchmarks":["lo"],"only_when_idle":false}`)
+	r := tm.finished(tm.run("s").ID)
+	if len(r.Steps) != 1 {
+		t.Fatalf("steps %+v", r.Steps)
+	}
+	return r, &r.Steps[0]
+}
+
+func checkPhaseReason(t *testing.T, st *Step, outcome, reason string) {
+	t.Helper()
+	if st.Outcome != outcome || !strings.Contains(st.Reason, reason) {
+		t.Fatalf("step outcome %q reason %q, want %q containing %q", st.Outcome, st.Reason, outcome, reason)
+	}
+	if len(st.Phases) == 0 || st.Phases[0].Outcome != outcome || !strings.Contains(st.Phases[0].Error, reason) {
+		t.Fatalf("phase %+v", st.Phases)
+	}
+}
+
+// (a) the load API itself refuses.
+func TestLoadPhaseAPIRefusalStatuses(t *testing.T) {
+	for code, want := range map[int]string{404: OutcomeRefused, 409: OutcomeRefused, 422: OutcomeRefused, 503: OutcomeRefused, 500: OutcomeFailed} {
+		api := newFake().prof("m", fakeProf{loadCode: code})
+		_, st := runLoadOnly(t, api, want)
+		if st.Outcome != want || st.HTTPStatus != code || st.Reason != "scripted load answer" {
+			t.Errorf("status %d: outcome %q http %d reason %q, want %q", code, st.Outcome, st.HTTPStatus, st.Reason, want)
+		}
+	}
+}
+
+// (b) accepted, then refused before a child starts: from the status record.
+func TestLoadPhaseRefusedAfterAcceptFromStatus(t *testing.T) {
+	text := "forced nodes do not fit: profile m: need 14691 MiB (estimated, +5% margin)"
+	api := newFake().prof("m", fakeProf{loadDelay: 60 * time.Millisecond, refuseAfter: "status", refuseText: text})
+	r, st := runLoadOnly(t, api, "refused")
+	checkPhaseReason(t, st, OutcomeRefused, text)
+	if !st.Expect.Pass || r.Summary.Passed != 1 || st.HTTPStatus != 503 {
+		t.Fatalf("expect %+v summary %+v http %d", st.Expect, r.Summary, st.HTTPStatus)
+	}
+	if strings.Contains(strings.Join(api.callList(), " "), "chat:") {
+		t.Fatal("no request is sent")
+	}
+}
+
+// (b) the same, found in the history when the status has no record.
+func TestLoadPhaseRefusedAfterAcceptFromHistory(t *testing.T) {
+	text := "forced nodes do not fit: profile m: need 14691 MiB"
+	api := newFake().prof("m", fakeProf{loadDelay: 60 * time.Millisecond, refuseAfter: "history", refuseText: text})
+	_, st := runLoadOnly(t, api, "refused")
+	checkPhaseReason(t, st, OutcomeRefused, text)
+	if !st.Expect.Pass {
+		t.Fatalf("%+v", st.Expect)
+	}
+}
+
+// A refusal of another bench run, or one from before this load, is not ours.
+func TestLoadPhaseIgnoresForeignRefusals(t *testing.T) {
+	api := newFake().prof("m", fakeProf{loadDelay: 30 * time.Millisecond})
+	api.lastRef = []Refusal{{Profile: "m", AtMS: time.Now().Add(-time.Hour).UnixMilli(), Status: 503, Reason: "does not fit", Message: "old"},
+		{Profile: "m", AtMS: time.Now().Add(time.Hour).UnixMilli(), Status: 503, Reason: "does not fit", Message: "someone else", BenchRun: "other-run"}}
+	_, st := runLoadOnly(t, api, "ready")
+	if st.Outcome != OutcomeReady || !st.Expect.Pass {
+		t.Fatalf("%+v", st)
+	}
+}
+
+// (c) a child started and died or was cancelled: failed, with the scheduler's reason.
+func TestLoadPhaseChildDiedKeepsItsReason(t *testing.T) {
+	for _, outcome := range []string{"failed", "cancelled"} {
+		api := newFake().prof("m", fakeProf{loadDelay: 60 * time.Millisecond, fail: true, failOutcome: outcome, failReason: "llama-server exited with code 1 (out of memory)"})
+		_, st := runLoadOnly(t, api, "ready")
+		if st.Outcome != OutcomeFailed || st.Reason != "llama-server exited with code 1 (out of memory)" || st.Phases[0].Error != st.Reason {
+			t.Errorf("%s: %+v", outcome, st)
+		}
+		if st.Load == nil || st.Load.Outcome != outcome {
+			t.Errorf("%s: load %+v", outcome, st.Load)
+		}
+	}
+}
+
+// (c) followed by a backoff record: the child's reason wins over the backoff.
+func TestLoadPhaseFailedChildBeatsBackoffRecord(t *testing.T) {
+	api := newFake().prof("m", fakeProf{loadDelay: 40 * time.Millisecond, fail: true, failReason: "child exited during load"})
+	api.histRef = []Refusal{{Profile: "m", Type: "profileBackedOff", AtMS: time.Now().Add(time.Hour).UnixMilli(), Message: "backed off"}}
+	_, st := runLoadOnly(t, api, "ready")
+	if st.Outcome != OutcomeFailed || st.Reason != "child exited during load" {
+		t.Fatalf("%+v", st)
+	}
+}
+
+// (d) a forced node is absent or offline: the scheduler's fail-fast refusal.
+func TestLoadPhaseForcedNodeUnavailable(t *testing.T) {
+	text := "forced nodes unavailable: node ps5-b is offline in the fleet"
+	api := newFake().prof("m", fakeProf{loadDelay: 60 * time.Millisecond, refuseAfter: "status", refuseReason: "forced nodes unavailable", refuseText: text})
+	_, st := runLoadOnly(t, api, "refused")
+	checkPhaseReason(t, st, OutcomeRefused, text)
+}
+
+// Nothing explains the vanished instance: the generic reason, and not after the whole timeout.
+func TestLoadPhaseGenericDisappearance(t *testing.T) {
+	api := newFake().prof("m", fakeProf{loadDelay: 60 * time.Millisecond, refuseAfter: "none"})
+	start := time.Now()
+	_, st := runLoadOnly(t, api, "ready")
+	if st.Outcome != OutcomeFailed || st.Reason != "the instance disappeared during the load" || time.Since(start) > 10*time.Second {
+		t.Fatalf("%+v after %s", st, time.Since(start))
+	}
+}

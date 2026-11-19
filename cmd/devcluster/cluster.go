@@ -316,7 +316,7 @@ func importConfig(c *cluster, boot config.Bootstrap, yaml string) error {
 		return fmt.Errorf("the harness configuration is not valid: %w", err)
 	}
 	ctx := context.Background()
-	o := cfgsvc.WriteOpts{Origin: audit.Origin{Source: audit.SourceImport, Actor: "cli:jacob", Comment: "import of the YAML configuration file"}}
+	o := cfgsvc.WriteOpts{Origin: audit.Origin{Source: audit.SourceImport, Actor: "cli:alex", Comment: "import of the YAML configuration file"}}
 	boot.ModelsDir = imp.Config.ModelsDir
 	svc := cfgsvc.New(ctx, cfgsvc.Options{Store: c.cs, Boot: boot})
 	if _, err := svc.Import(ctx, o, imp.Doc, false); err != nil {

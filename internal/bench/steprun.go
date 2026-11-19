@@ -373,8 +373,9 @@ func (br *benchRun) loadModel(cold bool) bool {
 	}
 	x.a.markLoaded(b.Profile, true) // the load may be running: it is unloaded with force at the end
 	ready, failure := false, ""
+	var refused *Refusal
 	seen := false
-	for !ready && failure == "" {
+	for !ready && failure == "" && refused == nil {
 		if x.a.cancelled() {
 			br.fail(OutcomeCancelled, "cancelled while the model was loading")
 			return false
@@ -409,24 +410,39 @@ func (br *benchRun) loadModel(cold bool) bool {
 				if cur.State == "ready" {
 					ready = true
 				}
-			default:
+			}
+			if !ready && refused == nil && cur == nil {
+				refused = br.refusalFor(ctx, s, startMS)
+			}
+			if !ready && refused == nil && cur == nil {
 				if rl := recentFailure(s, b.Profile, startMS); rl != nil {
 					failure = rl.Reason
 					if failure == "" {
 						failure = "the load " + rl.Outcome
 					}
+				} else if rf := br.historyRefusal(ctx, startMS, "profileBackedOff"); rf != nil {
+					refused = rf
 				} else if seen {
 					failure = "the instance disappeared during the load"
 				}
 			}
 		}
-		if !ready && failure == "" && !x.sleep(m.o.LoadPoll) {
+		if !ready && failure == "" && refused == nil && !x.sleep(m.o.LoadPoll) {
 			br.fail(OutcomeCancelled, "cancelled while the model was loading")
 			return false
 		}
 	}
 	lf, _ := obs.get()
 	st.LogFile = lf
+	if refused != nil { // the scheduler turned the load down before any child started
+		x.a.markLoaded(b.Profile, false)
+		st.HTTPStatus, st.Reason = refused.Status, refused.Text()
+		if st.HTTPStatus == 0 {
+			st.HTTPStatus = 503
+		}
+		br.fail(OutcomeRefused, st.Reason)
+		return false
+	}
 	if failure != "" {
 		st.Reason = failure
 		br.fail(OutcomeFailed, failure)
@@ -436,6 +452,47 @@ func (br *benchRun) loadModel(cold bool) bool {
 	br.loaded = true
 	br.captureLoad(startMS, start, obs, true)
 	return true
+}
+
+// ownRefusal reports whether a refusal record answers this step's load call:
+// recorded after the call, and tagged with this run when it carries a tag.
+func (br *benchRun) ownRefusal(r Refusal, startMS int64) bool {
+	return r.AtMS >= startMS && (r.BenchRun == "" || r.BenchRun == br.st.RunID)
+}
+
+// refusalFor finds the scheduler's refusal of this step's load: first in the
+// status (last_refusals), then in the history (requestRefused, preflightFailed).
+// It is asked only once the instance is gone, so a refusal of someone else's
+// request cannot stop a load that is going well. It returns nil when there is none.
+func (br *benchRun) refusalFor(ctx context.Context, s *StatusInfo, startMS int64) *Refusal {
+	var best *Refusal
+	for i := range s.LastRefusals {
+		r := &s.LastRefusals[i]
+		if r.Profile == br.b.Profile && br.ownRefusal(*r, startMS) && (best == nil || r.AtMS > best.AtMS) {
+			best = r
+		}
+	}
+	if best != nil {
+		return best
+	}
+	return br.historyRefusal(ctx, startMS, "requestRefused", "preflightFailed")
+}
+
+// historyRefusal is the newest history event of the given types that answers this step's load call.
+func (br *benchRun) historyRefusal(ctx context.Context, startMS int64, types ...string) *Refusal {
+	hctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	list, err := br.x.m.o.API.Refusals(hctx, br.b.Profile, startMS, types...)
+	if err != nil {
+		return nil
+	}
+	var best *Refusal
+	for i := range list {
+		if r := &list[i]; br.ownRefusal(*r, startMS) && (best == nil || r.AtMS > best.AtMS) {
+			best = r
+		}
+	}
+	return best
 }
 
 // loadProgress feeds the scheduler's load progress into the progress model.

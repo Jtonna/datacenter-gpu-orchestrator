@@ -316,3 +316,60 @@ func TestBenchPhasesEndToEnd(t *testing.T) {
 		t.Fatalf("%v", sc)
 	}
 }
+
+// A load-only benchmark aimed at a profile that the scheduler accepts at
+// /api/load and then refuses before any child starts (a model forced onto a
+// node it does not fit, forced_fit_check: reject). The runner must report the
+// scheduler's refusal, not "the instance disappeared during the load".
+func TestBenchLoadPhaseRefusedAfterAccept(t *testing.T) {
+	dir := t.TempDir()
+	top := "data_dir: \"" + filepath.ToSlash(filepath.Join(dir, "data")) + "\"\nhistory_dir: \"" + filepath.ToSlash(filepath.Join(dir, "history")) + "\"\n"
+	o := options{profiles: benchProfiles + `  forced-big:
+    model: forced-big.gguf
+    ctx: 4096
+    needs_mib: 40000
+    force_nodes: [ps5-062e1d84]
+`, topLevel: top, defaults: "  forced_fit_check: reject\n"}
+	o.members = append(o.members, ps5(psA, "ps5-062e1d84", "10.0.0.2"))
+	c := startCluster(t, o)
+
+	mustStatus(t, c, "POST", "/api/bench/benchmarks", `{"id":"forced-load","name":"Forced load","profile":"forced-big","timeout_s":30,
+	  "phases":[{"type":"load"}],"expect":{"outcome":"refused"}}`, 201)
+	mustStatus(t, c, "POST", "/api/bench/suites", `{"id":"refuse","name":"Refuse","benchmarks":["forced-load"],"cooldown_s":0}`, 201)
+	run := mustStatus(t, c, "POST", "/api/bench/suites/refuse/run", `{}`, 202)
+	id := run["id"].(string)
+	var detail map[string]any
+	c.waitFor("the run to finish", 60*time.Second, func() bool {
+		_, b, _ := c.do("GET", "/api/bench/runs/"+id, "")
+		detail = nil
+		json.Unmarshal([]byte(b), &detail)
+		s, _ := detail["state"].(string)
+		return s == "completed" || s == "failed" || s == "cancelled" || s == "skipped"
+	})
+	if detail["state"] != "completed" {
+		t.Fatalf("run ended %v: %v", detail["state"], detail["error"])
+	}
+	st := detail["steps"].([]any)[0].(map[string]any)
+	reason, _ := st["reason"].(string)
+	if st["outcome"] != "refused" || st["http_status"].(float64) != 503 || !strings.Contains(reason, "forced nodes do not fit") || !strings.Contains(reason, "need 40000 MiB") {
+		t.Fatalf("step: %v", st)
+	}
+	if st["expect"].(map[string]any)["pass"] != true {
+		t.Fatalf("expectation: %v", st["expect"])
+	}
+	ph := st["phases"].([]any)[0].(map[string]any)
+	if ph["outcome"] != "refused" || !strings.Contains(ph["error"].(string), "forced nodes do not fit") {
+		t.Fatalf("phase: %v", ph)
+	}
+	// The scheduler's own records agree: a refusal, and no load ever started.
+	if h := c.jsonGet("/api/history?type=loadStarted&profile=forced-big"); len(h["events"].([]any)) != 0 {
+		t.Fatalf("a load started: %v", h)
+	}
+	if h := c.jsonGet("/api/history?type=requestRefused&profile=forced-big"); len(h["events"].([]any)) == 0 {
+		t.Fatalf("no requestRefused record: %v", h)
+	}
+	_, md, _ := c.do("GET", "/api/bench/runs/"+id+"/export?format=md", "")
+	if !strings.Contains(md, "| Forced load | forced-big |") || !strings.Contains(md, "refused, passed (forced nodes do not fit") || strings.Count(md, "forced nodes do not fit: profile forced-big") < 2 || strings.Contains(md, "failed, failed") {
+		t.Fatalf("markdown:\n%s", md)
+	}
+}

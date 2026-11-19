@@ -29,8 +29,8 @@ func newSeedClient(base string) *seedClient {
 type who struct{ source, actor, comment string }
 
 var (
-	asJacob = who{source: "ui", actor: "jacob"}
-	asCurl  = who{source: "rest", actor: "curl"}
+	asAlex = who{source: "ui", actor: "alex"}
+	asCurl = who{source: "rest", actor: "curl"}
 )
 
 func (w who) say(comment string) who { w.comment = comment; return w }

@@ -315,15 +315,16 @@ type schedCore struct {
 	feedSeq uint64
 
 	// History (history.go).
-	hist      []history.Event
-	memNext   map[core.NodeID]time.Time // next periodic nodeMemory sample per node that backs an instance
-	refused   map[string]*refusal       // last recorded refusal per profile and reason
-	viewSeen  bool
-	viewFresh bool
-	viewConn  bool
-	staleAt   time.Time
-	downAt    time.Time
-	changed   bool
+	hist        []history.Event
+	memNext     map[core.NodeID]time.Time // next periodic nodeMemory sample per node that backs an instance
+	lastRefusal map[string]RefusalStatus  // newest recorded refusal per profile (status only; not deduplicated)
+	refused     map[string]*refusal       // last recorded refusal per profile and reason
+	viewSeen    bool
+	viewFresh   bool
+	viewConn    bool
+	staleAt     time.Time
+	downAt      time.Time
+	changed     bool
 }
 
 func newCore(cfg *config.Config, clock Clock, view fleet.View, needs NeedProvider, build instance.BuildOptions, log *slog.Logger) *schedCore {
@@ -336,7 +337,7 @@ func newCore(cfg *config.Config, clock Clock, view fleet.View, needs NeedProvide
 		backoffs: map[string]*backoff{}, waiters: map[uint64]*waiter{}, leases: map[uint64]*lease{},
 		needs_: map[string]NeedInfo{}, learned: map[string]*learnedNeed{}, warnedLow: map[string]bool{}, raw: map[core.NodeID]core.Node{}, excludedSeen: map[core.NodeID]bool{},
 		forcedGone: map[string]time.Time{}, health: map[core.NodeID]*workerHealth{},
-		recov: map[core.NodeID]*recoveryNode{}, memNext: map[core.NodeID]time.Time{}, refused: map[string]*refusal{},
+		recov: map[core.NodeID]*recoveryNode{}, memNext: map[core.NodeID]time.Time{}, refused: map[string]*refusal{}, lastRefusal: map[string]RefusalStatus{},
 	}
 }
 

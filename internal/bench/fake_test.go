@@ -22,6 +22,17 @@ type fakeProf struct {
 	nodes     []string
 	modelFile string
 	chatCode  int // a status other than 200 for every chat request (after the load)
+
+	loadCode    int    // /api/load answers this status (with the scheduler's words) instead of 202
+	failOutcome string // outcome of a failed load in recent_loads (default "failed")
+	failReason  string // reason of a failed load (default "child exited during load")
+	// refuseAfter makes the scheduler accept the load (202), show the instance
+	// for loadDelay, then refuse it before any child starts: "status" records
+	// it in last_refusals, "history" and "backoff" only in the history.
+	refuseAfter  string
+	refuseReason string // reason code of that refusal (default "forced nodes do not fit")
+	refuseText   string
+	refuseTag    string // bench run tag the refusal carries (default: the run that sent the load)
 }
 
 type fakeInst struct {
@@ -55,6 +66,9 @@ type fakeAPI struct {
 	revision string
 	version  string // rpc_server_version of the nodes
 	loadHook func()
+	lastRef  []Refusal // status last_refusals
+	histRef  []Refusal // history refusal events
+	runOf    map[string]string
 }
 
 func newFake() *fakeAPI {
@@ -122,9 +136,26 @@ func (f *fakeAPI) beginLoad(model string, p *fakeProf) {
 		}
 		f.seq++
 		sid := fmt.Sprintf("ld-%d", f.seq)
+		if p.refuseAfter != "" {
+			delete(f.insts, model)
+			r := Refusal{Profile: model, AtMS: time.Now().UnixMilli(), Status: 503, Reason: orStr(p.refuseReason, "forced nodes do not fit"), Message: p.refuseText, BenchRun: orStr(p.refuseTag, f.runOf[model])}
+			switch p.refuseAfter {
+			case "none":
+				// nothing is recorded
+			case "status":
+				f.lastRef = append(f.lastRef, r)
+			case "backoff":
+				r.Type = "profileBackedOff"
+				f.histRef = append(f.histRef, r)
+			default:
+				r.Type = "requestRefused"
+				f.histRef = append(f.histRef, r)
+			}
+			return
+		}
 		if p.fail {
 			delete(f.insts, model)
-			f.recent = append([]RecentLoad{{SessionID: sid, Model: model, Outcome: "failed", Reason: "child exited during load", FinishedAt: time.Now().UnixMilli(), LoadS: 3}}, f.recent...)
+			f.recent = append([]RecentLoad{{SessionID: sid, Model: model, Outcome: orStr(p.failOutcome, "failed"), Reason: orStr(p.failReason, "child exited during load"), FinishedAt: time.Now().UnixMilli(), LoadS: 3}}, f.recent...)
 			return
 		}
 		in.state = "ready"
@@ -137,6 +168,32 @@ func (f *fakeAPI) beginLoad(model string, p *fakeProf) {
 		f.hist[sid] = &HistoryLoad{LoadS: p.loadS, Bytes: 6700000000, AvgMBs: 101.4, Nodes: nodes}
 		f.slowOnce[model] = true
 	}()
+}
+
+func orStr(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+func (f *fakeAPI) Refusals(ctx context.Context, profile string, since int64, types ...string) ([]Refusal, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.log("refusals:" + profile)
+	var out []Refusal
+	for _, r := range f.histRef {
+		if r.Profile != profile || r.AtMS < since {
+			continue
+		}
+		for _, t := range types {
+			if t == r.Type {
+				out = append(out, r)
+				break
+			}
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeAPI) Load(ctx context.Context, model string) (*LoadAnswer, error) {
@@ -155,6 +212,15 @@ func (f *fakeAPI) Load(ctx context.Context, model string) (*LoadAnswer, error) {
 	}
 	if p.refuse {
 		return &LoadAnswer{Status: 503, Msg: "does not fit: needs 99999 MiB", Reason: "does not fit"}, nil
+	}
+	if p.loadCode != 0 {
+		return &LoadAnswer{Status: p.loadCode, Msg: "scripted load answer"}, nil
+	}
+	if f.runOf == nil {
+		f.runOf = map[string]string{}
+	}
+	if id, _ := ctx.Value(runCtxKey{}).(string); id != "" {
+		f.runOf[model] = id
 	}
 	f.beginLoad(model, p)
 	return &LoadAnswer{Status: 202, Msg: "loading"}, nil
@@ -180,7 +246,7 @@ func (f *fakeAPI) Unload(ctx context.Context, model string, force bool) (*Unload
 func (f *fakeAPI) Status(ctx context.Context) (*StatusInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	st := &StatusInfo{Hostnames: map[string]string{"n1": "ps5-a", "n2": "ps5-b", "n3": "ps5-c"}, RecentLoads: append([]RecentLoad(nil), f.recent...), ConfigRevision: f.revision}
+	st := &StatusInfo{Hostnames: map[string]string{"n1": "ps5-a", "n2": "ps5-b", "n3": "ps5-c"}, RecentLoads: append([]RecentLoad(nil), f.recent...), LastRefusals: append([]Refusal(nil), f.lastRef...), ConfigRevision: f.revision}
 	st.Workers = []WorkerInfo{{ID: "n0", Hostname: "omen", Local: true}, {ID: "n1", Hostname: "ps5-a", RPCServerVersion: f.version},
 		{ID: "n2", Hostname: "ps5-b", RPCServerVersion: f.version}, {ID: "n3", Hostname: "ps5-c", RPCServerVersion: f.version}}
 	for name, in := range f.insts {

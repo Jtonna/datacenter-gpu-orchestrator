@@ -251,6 +251,7 @@ func (c *schedCore) noteRefusal(profile string, err *Error, waiters int, benchRu
 	if err == nil || !refusalRecorded(err.Reason) {
 		return
 	}
+	c.lastRefusal[profile] = RefusalStatus{Profile: profile, At: c.now, Status: err.Status, Reason: string(err.Reason), Message: err.Message, BenchRun: benchRun}
 	key := profile + "\x00" + string(err.Reason)
 	if r, ok := c.refused[key]; ok && c.now.Sub(r.at) < refuseDedupe {
 		r.suppressed += waiters

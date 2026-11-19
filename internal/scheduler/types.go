@@ -158,6 +158,11 @@ type Status struct {
 	Queue        []EntryStatus // oldest first; claims are shown on their entries
 	Quarantines  []QuarantineStatus
 	Backoffs     []BackoffStatus
+	// LastRefusals: per profile, the newest answer that refused it without
+	// serving it (does not fit, backoff, forced nodes unavailable, ...), so a
+	// client that started a load can see why it never began. Not cleared when
+	// the profile later loads; compare At with the time of your own request.
+	LastRefusals []RefusalStatus
 	// RecentLoads: load attempts finished within RecentLoadRetention, newest first.
 	RecentLoads []LoadOutcome
 	View        ViewStatus
@@ -263,6 +268,16 @@ type BackoffStatus struct {
 	Profile string
 	Until   time.Time
 	Level   int
+}
+
+// RefusalStatus is the newest refusal of one profile.
+type RefusalStatus struct {
+	Profile  string
+	At       time.Time
+	Status   int
+	Reason   string
+	Message  string
+	BenchRun string // the X-Bench-Run id of the request refused, when it had one
 }
 
 // ViewStatus is the node view as the scheduler uses it.

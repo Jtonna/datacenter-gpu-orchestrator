@@ -320,6 +320,11 @@ func (a *scriptedAPI) LoadHistory(ctx context.Context, sid string) (*bench.Histo
 	return a.hist[sid], nil
 }
 
+// Refusals: the scripted scheduler records none; its refusals are answers of Load.
+func (a *scriptedAPI) Refusals(ctx context.Context, profile string, sinceMS int64, types ...string) ([]bench.Refusal, error) {
+	return nil, nil
+}
+
 func (a *scriptedAPI) wait(ctx context.Context, d time.Duration) error {
 	t := time.NewTimer(d)
 	defer t.Stop()
