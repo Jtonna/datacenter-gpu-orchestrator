@@ -44,14 +44,17 @@ function niceTicks(lo, hi, n = 4) {
 }
 
 // lineChart({series:[{name, color:'mint', points:[{x: unixMs | number, y}]}],
-//   height: 220, unit: 's', time: true (x is a time), zero: true (y starts at 0),
-//   marks: [{x, y, color:'coral', title}], label})
+//   width: 720, height: 220, unit: 's', time: true (x is a time), zero: true (y starts at 0), label})
 // A small line chart with a labelled y axis, four grid lines and a dot per point
-// (each dot has a <title> with the exact value).
+// (each dot has a <title> with the exact value). It is drawn for `width` CSS
+// pixels and never grows beyond that, so its 11 px labels stay 11 px in a wide
+// card (in a narrower place it shrinks as a whole). The left margin is sized
+// from the longest y label, unit included, so labels are never cut.
 export function lineChart(o) {
-  const W = 720, H = o.height || 220, L = 52, R = 12, T = 10, B = 26;
-  const svg = h('svg', { class: 'chart', viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': o.label || 'Chart', preserveAspectRatio: 'xMidYMid meet' });
+  const W = o.width || 720, H = o.height || 220, R = 12, T = 10, B = 26;
+  const svg = h('svg', { class: 'chart', viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': o.label || 'Chart', preserveAspectRatio: 'xMinYMid meet', style: `max-width:${W}px` });
   const all = o.series.flatMap(s => s.points);
+  let L = 40;
   if (!all.length) {
     svg.appendChild(h('text', { x: W / 2, y: H / 2, 'text-anchor': 'middle' }, 'No data yet'));
     return svg;
@@ -60,11 +63,14 @@ export function lineChart(o) {
   if (o.zero) ylo = 0;
   let xlo = Math.min(...all.map(p => p.x)), xhi = Math.max(...all.map(p => p.x));
   if (xlo === xhi) { xlo -= 1; xhi += 1; }
+  const ticks = niceTicks(ylo, yhi);
+  const tickLabel = t => num(t, Math.abs(t) < 10 && t % 1 ? 1 : 0) + (o.unit ? ' ' + o.unit : '');
+  L = Math.max(L, Math.ceil(Math.max(...ticks.map(t => tickLabel(t).length)) * 6.7) + 14);
   const X = v => L + ((v - xlo) / (xhi - xlo)) * (W - L - R);
   const Y = v => H - B - ((v - ylo) / (yhi - ylo)) * (H - T - B);
-  for (const t of niceTicks(ylo, yhi)) {
+  for (const t of ticks) {
     svg.appendChild(h('line', { class: 'gridline', x1: L, x2: W - R, y1: Y(t), y2: Y(t) }));
-    svg.appendChild(h('text', { x: L - 8, y: Y(t) + 4, 'text-anchor': 'end' }, num(t, Math.abs(t) < 10 && t % 1 ? 1 : 0) + (o.unit ? ' ' + o.unit : '')));
+    svg.appendChild(h('text', { x: L - 8, y: Y(t) + 4, 'text-anchor': 'end' }, tickLabel(t)));
   }
   const xl = v => (o.time ? clock(v, false) : num(v));
   svg.appendChild(h('text', { x: L, y: H - 6, 'text-anchor': 'start' }, o.time ? dateTime(xlo).replace(/:\d\d$/, '') : xl(xlo)));

@@ -8,7 +8,7 @@
 
 import { h } from '../../core/dom.js';
 import * as api from '../../core/api.js';
-import { schemaForm, toggle, tagInput, confirm, toast, banner, empty, skeleton, button, badge } from '../../core/ui.js';
+import { schemaForm, toggle, tagInput, confirm, toast, banner, empty, skeleton, button, badge, pickCards } from '../../core/ui.js';
 import { plural, dateTime, DASH } from '../../core/format.js';
 import { cache, loadSchema, loadProfiles, loadModelProfiles, loadBenchmarks, loadSuites, phasesOf, phaseTitle, describe, modelOf, benchmarkById, suiteTitle } from './common.js';
 
@@ -77,7 +77,7 @@ function field(text, control, o = {}) {
 }
 
 const section = (title, note, ...body) => h('section.card', h('div.ch', h('h2', title), note ? h('span.note', note) : null), ...body);
-const inset = (...c) => h('div', { style: 'border:1px solid var(--line);background:var(--inset);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:12px' }, ...c);
+const inset = (...c) => h('div.sub-block', ...c);
 const smallBtn = (text, fn, kind = '', attrs = {}) => h('button', Object.assign({ class: 'btn sm ' + kind, type: 'button', onclick: fn }, attrs), text);
 
 // ---------- the benchmark editor ----------
@@ -120,11 +120,8 @@ export function benchmarkEditor(o) {
   function pick() {
     const tpls = (cache.schema.templates || []);
     return [section('Start from a template', 'You can change everything afterwards',
-      h('div.cb', h('div.grid', tpls.map(t => h('button', { class: 'card', type: 'button', style: 'text-align:left;padding:16px;cursor:pointer;display:flex;flex-direction:column;gap:8px;color:var(--text)', onclick: () => { startFrom(t.id); draw(); } },
-        h('b', { style: 'font-size:16px' }, t.name), h('span.mut', { style: 'font-weight:500' }, t.description),
-        h('span.nodes', phasesOf(t.benchmark).map(p => h('span.node', phaseTitle(p.type))))),
-      ).concat([h('button', { class: 'card', type: 'button', style: 'text-align:left;padding:16px;cursor:pointer;display:flex;flex-direction:column;gap:8px;color:var(--text)', onclick: () => { startFrom('blank'); draw(); } },
-        h('b', { style: 'font-size:16px' }, 'Blank'), h('span.mut', { style: 'font-weight:500' }, 'Load, then unload. Add the phases you want.'))]))))];
+      h('div.cb', pickCards(tpls.map(t => ({ title: t.name, text: t.description, chips: phasesOf(t.benchmark).map(p => phaseTitle(p.type)), onPick: () => { startFrom(t.id); draw(); } }))
+        .concat([{ title: 'Blank', text: 'Load, then unload. Add the phases you want.', onPick: () => { startFrom('blank'); draw(); } }]))))];
   }
 
   // ---- step 2: edit ----

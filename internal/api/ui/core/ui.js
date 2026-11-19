@@ -395,3 +395,54 @@ export function schemaForm(o) {
     changed: () => o.fields.map(f => f.key).filter(k => !same(getPath(vals, k), getPath(initial, k))),
   };
 }
+
+// ---------- promoted from the Benchmarks views ----------
+
+// signedPct(12) -> "+12%", signedPct(-3.4) -> "−3.4%".
+export function signedPct(v) {
+  if (v == null || Number.isNaN(v)) return '–';
+  const s = Math.abs(v) < 10 ? num(Math.abs(v), 1) : num(Math.abs(v), 0);
+  return (v > 0 ? '+' : v < 0 ? '−' : '') + s + '%';
+}
+
+// changeMark(pct, {better: 'lower' | 'higher', regression}) -> a signed percent
+// next to a figure: coral with a Regression badge when it crossed its limit,
+// amber when worse, mint when better, grey when under 1%.
+export function changeMark(pct, o = {}) {
+  if (pct == null) return h('span.mut', '–');
+  const worse = (o.better || 'lower') === 'lower' ? pct > 0 : pct < 0;
+  const cls = o.regression ? 'err-t' : Math.abs(pct) < 1 ? 'mut' : worse ? 'warn-t' : 'ok-t';
+  return h('span.nowrap', { title: o.regression ? 'More than the allowed change for this figure' : worse ? 'Worse than before, within the allowed change' : 'Not worse' },
+    h('span', { class: 'mono ' + cls }, signedPct(pct)), o.regression ? [' ', badge('Regression', 'aside')] : null);
+}
+
+// segments(index, total, label) -> a bar of equal steps: done mint, the current
+// one amber, the rest grey. For "phase 2 of 5" and the like.
+export function segments(index, total, label) {
+  return h('div.bar.sm.seg', { role: 'img', 'aria-label': label || `Step ${index + 1} of ${total}` },
+    Array.from({ length: total }, (_, i) => h('span', { class: i < index ? 'm' : i === index ? 'a' : 'o' })));
+}
+
+// pickCards([{title, text, chips: ['Load', 'Requests'], onPick}]) -> a grid of
+// cards to choose a starting point from (templates).
+export function pickCards(items) {
+  return h('div.grid', items.map(it => h('button', { class: 'card pick', type: 'button', onclick: it.onPick },
+    h('b', it.title), it.text ? h('span', it.text) : null,
+    it.chips && it.chips.length ? h('span.nodes', it.chips.map(c => h('span.node', c))) : null)));
+}
+
+// subBlock(title, actions, ...body) -> one repeatable block of a form (a phase,
+// a request, a turn, a tier): a title row with its buttons, then its fields.
+export function subBlock(title, actions, ...body) {
+  return h('div.sub-block', h('div.sub-head', typeof title === 'string' ? h('b', title) : title, actions ? h('span.row', { style: 'gap:6px;flex-wrap:nowrap' }, actions) : null), ...body);
+}
+
+// orderButtons({index, count, onMove: delta => {}, onRemove, what}) -> the
+// up / down / Remove buttons of a block in an ordered list.
+export function orderButtons(o) {
+  return [
+    o.onMove ? button('↑', () => o.onMove(-1), 'sm', { 'aria-label': 'Move ' + (o.what || 'it') + ' up', disabled: o.index === 0 }) : null,
+    o.onMove ? button('↓', () => o.onMove(1), 'sm', { 'aria-label': 'Move ' + (o.what || 'it') + ' down', disabled: o.index === o.count - 1 }) : null,
+    o.onRemove ? button('Remove', o.onRemove, 'sm dng', { 'aria-label': 'Remove ' + (o.what || 'it') }) : null,
+  ];
+}

@@ -4,7 +4,7 @@
 
 import { h } from '../../core/dom.js';
 import * as api from '../../core/api.js';
-import { badge } from '../../core/ui.js';
+import { badge, signedPct as sharedSignedPct, changeMark as sharedChangeMark } from '../../core/ui.js';
 import { plainReason } from '../../core/status.js';
 import { num, dur, plural, DASH } from '../../core/format.js';
 
@@ -59,22 +59,11 @@ export const fmtMetric = (key, v) => (v == null || Number.isNaN(v) ? DASH : num(
 export const withUnit = (key, v) => (v == null ? DASH : fmtMetric(key, v) + ' ' + metricDef(key).unit);
 
 // A signed percent: "+12%" / "−3.4%".
-export function signedPct(v) {
-  if (v == null || Number.isNaN(v)) return DASH;
-  const s = Math.abs(v) < 10 ? num(Math.abs(v), 1) : num(Math.abs(v), 0);
-  return (v > 0 ? '+' : v < 0 ? '−' : '') + s + '%';
-}
+export const signedPct = sharedSignedPct;
 
 // A change next to a figure: coral when it is a regression, amber when it is
 // worse, mint when better.
-export function changeMark(key, pct, regression) {
-  if (pct == null) return h('span.mut', DASH);
-  const better = metricDef(key).better;
-  const worse = better === 'lower' ? pct > 0 : pct < 0;
-  const cls = regression ? 'err-t' : Math.abs(pct) < 1 ? 'mut' : worse ? 'warn-t' : 'ok-t';
-  return h('span.nowrap', { title: regression ? 'More than the allowed change for this figure' : worse ? 'Worse than before, within the allowed change' : 'Not worse' },
-    h('span', { class: 'mono ' + cls }, signedPct(pct)), regression ? [' ', badge('Regression', 'aside')] : null);
-}
+export const changeMark = (key, pct, regression) => sharedChangeMark(pct, { better: metricDef(key).better, regression });
 
 // ---------- states ----------
 

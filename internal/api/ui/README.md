@@ -172,8 +172,13 @@ markup it produces, so the markup can also be written with `h()` directly.
 | Prompt | `promptText({title, intro, label, value, placeholder})` | Promise of a string or `null`. |
 | Toast | `toast(text, kind)` | `ok`, `err` or neutral; bottom right; for the result of an action ("Saved as revision 15"). Not for live events. |
 | Sparkline | `sparkline(values, {width, height, color, flag, label})` (`core/charts.js`) | Inline SVG line, last point marked, `flag` = indexes drawn coral (regressions). |
-| Line chart | `lineChart({series: [{name, color, points: [{x, y, flag, title}]}], unit, time, zero, height, label})` (`core/charts.js`) | Inline SVG with a y axis and four grid lines; each point has a hover title. Colours: `mint`, `amber`, `coral`, `lilac`, `mut`. |
+| Line chart | `lineChart({series: [{name, color, points: [{x, y, flag, title}]}], unit, time, zero, width, height, label})` (`core/charts.js`) | Inline SVG with a y axis and four grid lines; each point has a hover title. Drawn for `width` px (default 720) and never larger, so labels stay 11 px; the left margin fits the longest y label with its unit. Colours: `mint`, `amber`, `coral`, `lilac`, `mut`. |
 | Meter | `barMeter(value, max, cls)` (`core/charts.js`) | A thin bar for a table cell. |
+| Step segments | `segments(index, total, ariaLabel)` | `div.bar.sm.seg`: equal steps, done mint, current amber, rest grey ("phase 2 of 5"). |
+| Change mark | `changeMark(pct, {better: 'lower' or 'higher', regression})`, `signedPct(v)` | A signed percent next to a figure: mint better, amber worse, coral plus a "Regression" badge past the limit, grey under 1%. |
+| Pick cards | `pickCards([{title, text, chips, onPick}])` | `div.grid > button.card.pick`: choose a starting point (templates). |
+| Repeatable block | `subBlock(title, actions, ...body)`, `orderButtons({index, count, onMove, onRemove, what})` | `div.sub-block > div.sub-head + fields`: one item of an ordered list inside a form (a phase, a request, a turn, a tier) with its up, down and Remove buttons. Put a `schemaForm(...).el` in the body. |
+| Shell slot | `setShellSlot(name, node or null)` (`core/shell.js`) | Shows a node in the pane above the connection card, or under the top bar at phone width. The benchmark run indicator uses `run`. Update the node in place; the shell never re-creates it. |
 
 Formatting (`core/format.js`): `num(v, digits)`, `mib(v)`, `gib(v)`,
 `bytes(v)` (GB / MB), `pct(v)`, `tps(v)`, `ctx(v)` ("16k"), `dur(seconds)`
@@ -256,7 +261,7 @@ before drawing a field.
   (idle N seconds, then one request), `concurrent_requests`, `unload`.
 - `GET /api/bench/schema` -> the phase types, each with `title`, `description`,
   `records` and `options[]` (`name, type, default, min, max, unit, description`),
-  plus `expect` keys (`outcome, max_load_s, min_decode_tps, min_prefill_tps,
+  plus `expect_keys` (`outcome, max_load_s, min_decode_tps, min_prefill_tps,
   max_ttft_ms, output_sha256, min_reused_tokens, max_concurrent_wall_s,
   max_errors, max_unload_s`), `templates` (`load-only`, `load-and-requests`,
   `load-and-conversation`, `requests-on-loaded`, `simultaneous-requests`),
@@ -269,8 +274,11 @@ before drawing a field.
   `{id, suite_id, suite_name, state, percent, started_at (unix ms), elapsed_s,
   eta_s (may be null), steps_total, steps_done, current: {index (0-based),
   benchmark_id, name, description, profile, model_file, nodes, phase: {index,
-  type, label}, percent, detail} | null (until the first benchmark starts),
-  next: {benchmark_id, name, description, profile} | null, queue: [benchmark ids]}`.
+  type, label, phases_total}, percent, detail} | null (until the first benchmark
+  starts), next: {benchmark_id, name, description, profile} | null,
+  queue: [the benchmark ids still to run]}`. Mind the two queues: `state.queue`
+  (top level of `GET /api/bench/state`) is the list of queued RUNS; `run.queue`
+  is the benchmarks left in the active run.
   For a concurrent step `current.profile` is the members joined with " + " and
   `detail.members` lists them. `detail` during a load phase is `{text, load}`
   where `load` is the scheduler's load object (the one the Models screen draws:
@@ -285,14 +293,19 @@ before drawing a field.
   phase, request, seq, state` started or streaming, `tokens`, `elapsed_ms`),
   `load` (the load object of the step in flight) and `aggregate_updated`
   (`run_id, suite_id, state, benchmarks`: refresh aggregates and run lists on it).
-- A run records its environment: `env` (`scheduler_version`, `config_revision`,
-  `llama_binary`, `workers[]` with `rpc_server_version`). Show it on the run detail.
+- A run records its environment: `env` (`scheduler_version`, `config_revision`
+  (a string), `llama_binary`, `workers[]` with `rpc_server_version`). Show it on
+  the run detail. A run `Step` has no `nodes` field: use `node_count`,
+  `load.nodes[].node` and `env.workers`.
+- A failed validation answers with one text per problem, joined by newlines,
+  each starting with where it is: `phases[1] (conversation): ...`. Show each
+  next to its phase.
   Run detail is phase-aware: a load-only benchmark shows load metrics; a
   conversation shows per turn prefill, decode, time to first token and reused
   prompt tokens.
 - Aggregates: `GET /api/bench/aggregates?suite=&benchmark=&profile=&since=&until=&env=`
   -> `{runs_considered, environment, benchmarks: [{benchmark_id, runs, steps,
-  pass_rate, outcomes, metrics: {<metric>: {count, min, median, mean, max, stdev,
+  pass_rate (a fraction, 0 to 1), outcomes, metrics: {<metric>: {count, min, median, mean, max, stdev,
   last, best, change_pct, threshold_pct, regression, points: [{run_id, at, value}]}},
   turns: [...], last_run_id, last_at}], suites: [...], by_model: [...],
   by_model_nodes: [{model_file, nodes, runs, steps, metrics}]}`.

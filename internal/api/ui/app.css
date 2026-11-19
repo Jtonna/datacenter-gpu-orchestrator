@@ -90,6 +90,9 @@ b.mono,a.mono,.mono b,h1 .mono,h2 .mono,h3 .mono,b .mono{font-weight:500}
 .actor{font-size:var(--fs-sm);font-weight:600;color:var(--mut);padding:0 4px;display:flex;gap:6px;align-items:baseline;flex-wrap:wrap}
 .actor button{border:0;background:none;padding:0;color:var(--mint-text);font-weight:700;font-size:var(--fs-sm);cursor:pointer}
 .topbar{display:none}
+.slotbox{display:flex;flex-direction:column;gap:10px}
+.slotbox:empty{display:none}
+.topslots{display:none}
 .main{flex:1 1 auto;min-width:0;padding:20px 26px 40px;display:flex;flex-direction:column;gap:var(--s4);max-width:1560px}
 .page-head{display:flex;flex-wrap:wrap;align-items:center;gap:10px 22px;min-height:36px}
 .page-head h1{font-size:var(--fs-h1);font-weight:800;letter-spacing:-.01em;line-height:1.2}
@@ -109,6 +112,8 @@ b.mono,a.mono,.mono b,h1 .mono,h2 .mono,h3 .mono,b .mono{font-weight:500}
   .topbar .menu{margin-left:auto}
   .topbar .conn-mini{display:flex;align-items:center;gap:7px;font-size:var(--fs-sm);font-weight:700;margin-left:auto}
   .topbar .conn-mini+.menu{margin-left:0}
+  .topslots{display:flex;padding:10px 14px 0}
+  .topslots:empty{display:none}
   .pane{display:none;position:fixed;inset:57px 0 0 0;width:auto;height:auto;z-index:19;border-right:0}
   .app.menu-open .pane{display:flex}
   .pane>.brand{display:none}
@@ -340,3 +345,14 @@ svg .f-mint{fill:var(--mint)}svg .f-amber{fill:var(--amber)}svg .f-coral{fill:va
   .ch .right{margin-left:0}
   .page-head .actions{margin-left:0}
 }
+
+/* ---------- promoted from the Benchmarks views ---------- */
+.bar.seg{background:transparent;gap:3px}
+.bar.seg>span{border-radius:3px;flex:1 1 0}
+.bar.seg .o{background:var(--fill)}
+.pick{display:flex;flex-direction:column;gap:8px;text-align:left;padding:16px;cursor:pointer;color:var(--text);font-weight:500}
+.pick:hover{border-color:var(--mint-line);background:var(--hover)}
+.pick b{font-size:var(--fs-lg);font-weight:800}
+.pick>span{color:var(--mut)}
+.sub-block{border:1px solid var(--line);background:var(--inset);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.sub-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 12px}

@@ -61,11 +61,31 @@ export function connection() {
 }
 
 const slots = {};
-// setShellSlot('run', node) puts a node into the pane above the connection
-// card (the compact benchmark run indicator lives there); null removes it.
+const narrow = window.matchMedia('(max-width:860px)');
+let strip = null; // the slot box under the top bar, used at phone width
+
+// setShellSlot('run', node) shows a node in the shell: in the pane above the
+// connection card, or at phone width (where the pane is a closed drawer) in a
+// strip under the top bar. null removes it. The node is yours: update it in
+// place (morph into it); the shell only decides where it sits and never
+// re-creates or re-wraps it.
 export function setShellSlot(name, node) {
   if (node) slots[name] = node; else delete slots[name];
-  draw();
+  placeSlots();
+}
+
+// placeSlots moves the slot nodes into the box of the current layout. The
+// boxes are left alone by morph (data-keep), so a node stays where it is put.
+function placeSlots() {
+  if (!root) return;
+  const box = narrow.matches ? strip : root.querySelector('.pane .slotbox');
+  if (!box) return;
+  const want = Object.keys(slots).map(k => slots[k]);
+  for (const n of want) if (n.parentNode !== box) box.appendChild(n);
+  for (const other of [strip, root.querySelector('.pane .slotbox')]) {
+    if (!other) continue;
+    for (const c of Array.from(other.children)) if (!want.includes(c) || other !== box) c.remove();
+  }
 }
 
 let root = null, activeId = 'models';
@@ -107,13 +127,14 @@ function draw() {
     h('a.brand', { href: href('models') }, mark(34), h('div', h('b', 'LLM Scheduler'), h('span', brandSub()))),
     navNode(),
     h('div.pane-foot',
-      Object.keys(slots).map(k => h('div', { key: 'slot-' + k, 'data-keep': '' }, slots[k])),
+      h('div.slotbox', { key: 'slots', 'data-keep': '' }),
       h('div.conn', { role: 'status', 'aria-live': 'polite' },
         h('b', h('span', { class: 'dot ' + conn.dot }), conn.title),
         h('span', { class: conn.warn ? 'warn-t' : null }, conn.note)),
       h('div.actor', h('span', 'Changes are signed as ', h('b.txt2', getActor())),
         h('button', { type: 'button', onclick: changeActor }, 'Change'))),
   ]);
+  placeSlots();
 }
 
 async function changeActor() {
@@ -129,6 +150,9 @@ async function changeActor() {
 
 export function startShell(app) {
   root = app;
+  strip = h('div.slotbox.topslots', { 'data-keep': '' });
+  root.querySelector('.topbar').after(strip);
+  narrow.addEventListener('change', placeSlots);
   activeId = parse(location.hash).id;
   onRoute(route => { activeId = route.id; closeMenu(); draw(); });
   on(['status', 'conn', 'hello', 'tick'], draw);

@@ -8,7 +8,7 @@ import * as api from '../../core/api.js';
 import { state, on, listen, emit } from '../../core/store.js';
 import { href } from '../../core/router.js';
 import { setShellSlot } from '../../core/shell.js';
-import { badge, bar, progress, button, confirm, toast, nodeChips, banner } from '../../core/ui.js';
+import { badge, bar, progress, button, confirm, toast, nodeChips, banner, segments } from '../../core/ui.js';
 import { nodeByAddr, healthBadge } from '../../core/status.js';
 import { num, bytes, dur, clock, now, DASH, plural } from '../../core/format.js';
 import { cache, suiteById, benchmarkById, phaseTitle, reasonNode } from './common.js';
@@ -26,9 +26,6 @@ export function trackLive() {
     else if (d.kind === 'run') lastRunMsg = d.run || null;
     else if (d.kind === 'step_started') lastReq = null;
   });
-  // core/shell.js builds a fresh data-keep wrapper around the slot node on every
-  // draw, which moves the node out of the wrapper that stays. Put it back (same task, no flicker).
-  on(['tick', 'status', 'conn', 'hello', 'bench'], () => queueMicrotask(rehome));
   on('bench', () => {
     if (state.bench.run !== seenRun) { seenRun = state.bench.run; seenAt = Date.now(); }
     if (!state.bench.run) { lastReq = null; lastRunMsg = null; }
@@ -82,14 +79,7 @@ function updateIndicator() {
       h('span', { style: 'overflow-wrap:anywhere;text-align:right' }, cur ? cur.name : run.state === 'paused' ? 'Waiting for idle' : 'Starting')),
   ]);
   indicator.setAttribute('aria-label', `Benchmark run ${run.suite_name}, ${Math.round(pctOf(run.percent))} percent. Open Benchmarks.`);
-  if (!indicatorOn) { indicatorOn = true; setShellSlot('run', indicator); queueMicrotask(rehome); }
-}
-
-function rehome() {
-  if (!indicatorOn) return;
-  for (const w of document.querySelectorAll('.pane-foot > div')) {
-    if (w.__key === 'slot-run' && indicator.parentNode !== w) w.replaceChildren(indicator);
-  }
+  if (!indicatorOn) { indicatorOn = true; setShellSlot('run', indicator); }
 }
 
 // ---------- the panel ----------
@@ -218,7 +208,7 @@ export function livePanel() {
         cur.model_file ? h('span.mono.mut.wrap-any', { title: 'Model file' }, cur.model_file) : null,
         h('div', { style: 'display:flex;flex-direction:column;gap:6px' },
           h('span.txt2', { style: 'font-weight:700' }, total ? `Phase ${ph.index + 1} of ${total}: ` : 'Phase: ', h('span', { style: 'color:var(--amber-text)' }, (ph.label && ph.label !== ph.type ? ph.label : phaseTitle(ph.type)))),
-          total ? bar(Array.from({ length: total }, (_, i) => ({ cls: i < ph.index ? 'm' : i === ph.index ? 'a' : 'o', value: 1 })), total, `Phase ${ph.index + 1} of ${total}`, 'sm') : null),
+          total ? segments(ph.index, total, `Phase ${ph.index + 1} of ${total}`) : null),
         progress({
           fraction: pctOf(cur.percent) / 100, cls: 'a', label: `${Math.round(pctOf(cur.percent))} percent of this benchmark is done`,
           left: h('span', h('span.pct', `${Math.round(pctOf(cur.percent))}%`), h('span.mut', { style: 'font-weight:600' }, ' of this benchmark')),
