@@ -78,7 +78,7 @@ func TestRecoveryConfigRejects(t *testing.T) {
 // Both config files carry the recovery block as comments, with the defaults
 // the parser applies (the block stays commented out: the feature is off).
 func TestExampleConfigsDocumentRecovery(t *testing.T) {
-	for _, rel := range []string{"configs/example.yaml", "deploy/config.yaml"} {
+	for _, rel := range []string{"configs/example.yaml", "deploy/seed-config.yaml"} {
 		b, err := os.ReadFile(filepath.Join("..", "..", rel))
 		if err != nil {
 			t.Fatal(err)

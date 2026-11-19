@@ -39,7 +39,7 @@ type Options struct {
 // wait for Run to process them; Upstream, Running and Profiles read a
 // snapshot published after every step and never wait.
 type Scheduler struct {
-	cfg  *config.Config
+	cfg  atomic.Pointer[config.Config]
 	opts Options
 	core *schedCore
 
@@ -93,12 +93,13 @@ func New(cfg *config.Config, o Options) (*Scheduler, error) {
 		o.Logger = slog.Default()
 	}
 	s := &Scheduler{
-		cfg: cfg, opts: o,
+		opts:   o,
 		core:   newCore(cfg, o.Clock, o.View, o.Needs, *o.Build, o.Logger),
 		events: make(chan event, 256), tick: make(chan struct{}, 1),
 		loopDone: make(chan struct{}), runDone: make(chan struct{}),
 		healthCancel: map[uint64]context.CancelFunc{}, subs: map[*subscriber]struct{}{},
 	}
+	s.cfg.Store(cfg)
 	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
 	s.snap.Store(&snapshot{profiles: s.core.profileStates(), upstream: map[string]string{}})
 	return s, nil
@@ -342,7 +343,7 @@ func (s *Scheduler) Acquire(ctx context.Context, model string) (*Lease, error) {
 // X-Bench-Run header). The id only tags the history records of the load the
 // request causes (data.bench_run); scheduling is unchanged.
 func (s *Scheduler) AcquireFor(ctx context.Context, model, benchRun string) (*Lease, error) {
-	p, alias, ok := s.cfg.Resolve(model)
+	p, alias, ok := s.Config().Resolve(model)
 	if !ok {
 		return nil, errUnknown(model)
 	}
@@ -383,7 +384,7 @@ func (s *Scheduler) lease(a answer) (*Lease, error) {
 		return nil, a.err
 	}
 	g := a.grant
-	stall := s.cfg.EffectiveStallTimeout(s.cfg.Profiles[g.Profile])
+	stall := s.Config().EffectiveStallTimeout(s.Config().Profiles[g.Profile])
 	return &Lease{ID: g.ID, Addr: g.Addr, Profile: g.Profile, Alias: g.Alias, StallTimeout: stall, s: s}, nil
 }
 
@@ -392,11 +393,17 @@ func (s *Scheduler) lease(a answer) (*Lease, error) {
 // needed, else the *Error a request would get now (unknown, backoff,
 // does not fit, shutting down).
 func (s *Scheduler) Load(ctx context.Context, model string) error {
-	p, _, ok := s.cfg.Resolve(model)
+	return s.LoadFor(ctx, model, "")
+}
+
+// LoadFor is Load for a request that carries a bench run id (the X-Bench-Run
+// header): the id only tags the history records of the load (data.bench_run).
+func (s *Scheduler) LoadFor(ctx context.Context, model, benchRun string) error {
+	p, _, ok := s.Config().Resolve(model)
 	if !ok {
 		return errUnknown(model)
 	}
-	w := &waiter{profile: p.Name, synthetic: true, reply: make(chan answer, 1)}
+	w := &waiter{profile: p.Name, synthetic: true, reply: make(chan answer, 1), benchRun: benchRun}
 	if !s.post(ctx, evAcquire{w: w}) {
 		return errShutting()
 	}
@@ -443,7 +450,7 @@ func (s *Scheduler) query(ctx context.Context, fn func(c *schedCore)) error {
 // instance if idle; force stops it even if busy or loading. ErrNotLoaded
 // and ErrBusy report why nothing was done.
 func (s *Scheduler) Unload(ctx context.Context, model string, force bool) error {
-	p, _, ok := s.cfg.Resolve(model)
+	p, _, ok := s.Config().Resolve(model)
 	if !ok {
 		return errUnknown(model)
 	}
@@ -472,7 +479,7 @@ func (s *Scheduler) Status(ctx context.Context) (Status, error) {
 // Plan is POST /api/plan: what a request for model would meet now. It
 // changes nothing.
 func (s *Scheduler) Plan(ctx context.Context, model string) (PlanReport, error) {
-	p, alias, ok := s.cfg.Resolve(model)
+	p, alias, ok := s.Config().Resolve(model)
 	if !ok {
 		return PlanReport{}, errUnknown(model)
 	}
@@ -485,7 +492,7 @@ func (s *Scheduler) Plan(ctx context.Context, model string) (PlanReport, error) 
 // Upstream is the address for /upstream/{model}: set only while the
 // profile's instance is ready or draining. It never waits.
 func (s *Scheduler) Upstream(model string) (string, bool) {
-	p, _, ok := s.cfg.Resolve(model)
+	p, _, ok := s.Config().Resolve(model)
 	if !ok {
 		return "", false
 	}
@@ -588,5 +595,25 @@ func (s *Scheduler) publish(evs []FeedEvent) {
 				break
 			}
 		}
+	}
+}
+
+// Config is the configuration snapshot now in force. It never waits.
+func (s *Scheduler) Config() *config.Config { return s.cfg.Load() }
+
+// ApplyConfig hands the scheduler a new immutable configuration snapshot. It
+// returns at once: request goroutines see the new snapshot immediately, and
+// the core swaps to it as an event, between two steps. It reports false when
+// the scheduler has stopped.
+func (s *Scheduler) ApplyConfig(cfg *config.Config) bool {
+	if cfg == nil {
+		return false
+	}
+	s.cfg.Store(cfg)
+	select {
+	case s.events <- evConfig{cfg: cfg}:
+		return true
+	case <-s.loopDone:
+		return false
 	}
 }

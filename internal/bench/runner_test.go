@@ -15,215 +15,6 @@ import (
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
 )
 
-// fakeProf scripts how the fake scheduler treats one profile.
-type fakeProf struct {
-	refuse    bool          // 503 "does not fit"
-	fail      bool          // 502 load failed
-	loadDelay time.Duration // how long the first request waits for the load
-	loadS     float64       // load time the scheduler reports
-	decode    float64       // decode tokens per second in the timings
-	prefill   float64
-	output    string
-	chatDelay time.Duration
-	nodes     []string
-}
-
-type fakeInst struct {
-	state    string
-	inflight int
-}
-
-// fakeAPI is the scheduler's HTTP API, scripted. It records every call.
-type fakeAPI struct {
-	mu       sync.Mutex
-	profs    map[string]*fakeProf
-	insts    map[string]*fakeInst
-	external map[string]bool // instances of other users, shown in status
-	extReq   int             // requests in flight of other users
-	recent   []RecentLoad
-	hist     map[string]*HistoryLoad
-	calls    []string
-	chats    map[string][]time.Time // first-request start times by profile
-	nChat    map[string]int
-	hdrRuns  []string
-	seq      int
-	busyUnl  map[string]bool // unload answers 409
-	slowOnce map[string]bool // the first measured request after a load is slow
-}
-
-func newFake() *fakeAPI {
-	return &fakeAPI{profs: map[string]*fakeProf{}, insts: map[string]*fakeInst{}, external: map[string]bool{}, hist: map[string]*HistoryLoad{},
-		chats: map[string][]time.Time{}, nChat: map[string]int{}, busyUnl: map[string]bool{}, slowOnce: map[string]bool{}}
-}
-
-func (f *fakeAPI) prof(name string, p fakeProf) *fakeAPI {
-	if p.decode == 0 {
-		p.decode = 30
-	}
-	if p.prefill == 0 {
-		p.prefill = 200
-	}
-	if p.output == "" {
-		p.output = "hello from " + name
-	}
-	if p.loadS == 0 {
-		p.loadS = 66.1
-	}
-	if p.nodes == nil {
-		p.nodes = []string{"ps5-a"}
-	}
-	f.profs[name] = &p
-	return f
-}
-
-func (f *fakeAPI) log(s string) { f.calls = append(f.calls, s) }
-
-func (f *fakeAPI) callList() []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]string(nil), f.calls...)
-}
-
-func (f *fakeAPI) has(inst string) bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	_, ok := f.insts[inst]
-	return ok
-}
-
-func (f *fakeAPI) Plan(ctx context.Context, model string) (*PlanInfo, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.log("plan:" + model)
-	return &PlanInfo{Action: "start", Raw: json.RawMessage(`{"model":"` + model + `","action":"start"}`)}, nil
-}
-
-func (f *fakeAPI) Unload(ctx context.Context, model string, force bool) (*UnloadInfo, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.log(fmt.Sprintf("unload:%s force=%v", model, force))
-	if f.busyUnl[model] {
-		return &UnloadInfo{Status: 409, Msg: "busy"}, nil
-	}
-	if _, ok := f.insts[model]; !ok {
-		return &UnloadInfo{Status: 200, Msg: "not loaded"}, nil
-	}
-	delete(f.insts, model)
-	return &UnloadInfo{Status: 200, Msg: "ok"}, nil
-}
-
-func (f *fakeAPI) Status(ctx context.Context) (*StatusInfo, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	st := &StatusInfo{Hostnames: map[string]string{"n1": "ps5-a"}, RecentLoads: append([]RecentLoad(nil), f.recent...)}
-	for name, in := range f.insts {
-		ii := InstanceInfo{Profile: name, State: in.state, InFlight: in.inflight, LogFile: "/var/log/llm-children/" + name + ".log",
-			DeviceTotalMiB: 7900, Nodes: []InstanceNodeInfo{{ID: "n1", MemoryMiB: 7900}}}
-		if in.state == "starting" {
-			b, tot := int64(100), int64(1000)
-			ii.Load = &LoadInfo{SessionID: "ld-live", BytesSent: &b, BytesTotal: &tot, Raw: json.RawMessage(`{"session_id":"ld-live","progress":0.1}`)}
-		}
-		st.Instances = append(st.Instances, ii)
-	}
-	for name := range f.external {
-		st.Instances = append(st.Instances, InstanceInfo{Profile: name, State: "ready", InFlight: f.extReq})
-	}
-	return st, nil
-}
-
-func (f *fakeAPI) LoadHistory(ctx context.Context, sid string) (*HistoryLoad, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.hist[sid], nil
-}
-
-func (f *fakeAPI) Chat(ctx context.Context, runID string, req ChatRequest, onProgress func(ChatProgress)) (*ChatResponse, error) {
-	var body struct {
-		Model  string `json:"model"`
-		Stream bool   `json:"stream"`
-	}
-	json.Unmarshal(req.Body, &body)
-	f.mu.Lock()
-	f.hdrRuns = append(f.hdrRuns, runID)
-	p := f.profs[body.Model]
-	f.nChat[body.Model]++
-	n := f.nChat[body.Model]
-	f.log(fmt.Sprintf("chat:%s#%d", body.Model, n))
-	_, loaded := f.insts[body.Model]
-	if !loaded {
-		f.chats[body.Model] = append(f.chats[body.Model], time.Now())
-	}
-	if p == nil {
-		f.mu.Unlock()
-		return &ChatResponse{Status: 404, ErrMessage: "model not found"}, nil
-	}
-	if !loaded {
-		if p.refuse {
-			f.mu.Unlock()
-			return &ChatResponse{Status: 503, ErrMessage: "does not fit: needs 99999 MiB", ErrReason: "does not fit"}, nil
-		}
-		delay := p.loadDelay
-		f.insts[body.Model] = &fakeInst{state: "starting"}
-		f.mu.Unlock()
-		select {
-		case <-time.After(delay):
-		case <-ctx.Done():
-			f.mu.Lock()
-			f.log("chat-aborted:" + body.Model)
-			f.mu.Unlock()
-			return nil, ctx.Err()
-		}
-		f.mu.Lock()
-		if p.fail {
-			delete(f.insts, body.Model)
-			f.seq++
-			sid := fmt.Sprintf("ld-%d", f.seq)
-			f.recent = append([]RecentLoad{{SessionID: sid, Model: body.Model, Outcome: "failed", Reason: "child exited during load", FinishedAt: time.Now().UnixMilli(), LoadS: 3}}, f.recent...)
-			f.mu.Unlock()
-			return &ChatResponse{Status: 502, ErrMessage: "load failed: child exited during load"}, nil
-		}
-		f.insts[body.Model].state = "ready"
-		f.seq++
-		sid := fmt.Sprintf("ld-%d", f.seq)
-		f.recent = append([]RecentLoad{{SessionID: sid, Model: body.Model, Outcome: "ready", FinishedAt: time.Now().UnixMilli(), LoadS: p.loadS, Workers: []string{"10.0.0.2:50052"}}}, f.recent...)
-		var nodes []NodeLoad
-		for _, nn := range p.nodes {
-			b, mem := int64(6700000000), 7900.0
-			nodes = append(nodes, NodeLoad{Node: nn, Bytes: &b, MemoryMiB: &mem})
-		}
-		f.hist[sid] = &HistoryLoad{LoadS: p.loadS, Bytes: 6700000000, AvgMBs: 101.4, Nodes: nodes}
-		f.slowOnce[body.Model] = true
-	}
-	in := f.insts[body.Model]
-	in.inflight++
-	decode := p.decode
-	if f.slowOnce[body.Model] { // the first request after a load is slow on this hardware
-		decode = p.decode / 5
-		delete(f.slowOnce, body.Model)
-	}
-	delay := p.chatDelay
-	f.mu.Unlock()
-	defer func() { f.mu.Lock(); in.inflight--; f.mu.Unlock() }()
-	if delay > 0 {
-		select {
-		case <-time.After(delay):
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}
-	msg, _ := json.Marshal(map[string]any{"role": "assistant", "content": p.output})
-	tm, _ := json.Marshal(map[string]any{"prompt_n": 10, "prompt_ms": 5, "prompt_per_second": p.prefill, "predicted_n": 8, "predicted_ms": 80, "predicted_per_second": decode, "cache_n": 0})
-	resp := &ChatResponse{Status: 200, WallMS: 12, Timings: tm, Message: msg, Text: p.output}
-	if body.Stream {
-		v := 7.0
-		resp.TTFTMS = &v
-		if onProgress != nil {
-			onProgress(ChatProgress{Tokens: 8, ElapsedMS: 12})
-		}
-	}
-	return resp, nil
-}
-
 // ---- harness ----
 
 type testMgr struct {
@@ -357,8 +148,9 @@ func TestRunMeasuresTheColdLoadAndExcludesWarmup(t *testing.T) {
 		t.Fatalf("%+v", st)
 	}
 	calls := strings.Join(api.callList(), " ")
-	if !strings.Contains(calls, "plan:gemma") || strings.Index(calls, "unload:gemma force=false") > strings.Index(calls, "chat:gemma#1") {
-		t.Fatalf("a cold benchmark must unload the profile before its first request: %s", calls)
+	if !strings.Contains(calls, "plan:gemma") || strings.Index(calls, "unload:gemma force=false") > strings.Index(calls, "load:gemma") ||
+		strings.Index(calls, "load:gemma") > strings.Index(calls, "chat:gemma#1") {
+		t.Fatalf("a cold benchmark unloads the profile, loads it with /api/load and only then sends requests: %s", calls)
 	}
 	// load numbers come from the scheduler: history by session id
 	if st.Load == nil || st.Load.LoadS != 66.1 || st.Load.Bytes != 6700000000 || st.Load.AvgMBs != 101.4 || st.Load.Source != "history" ||
@@ -368,20 +160,20 @@ func TestRunMeasuresTheColdLoadAndExcludesWarmup(t *testing.T) {
 	if st.LogFile != "/var/log/llm-children/gemma.log" {
 		t.Fatalf("log file %q", st.LogFile)
 	}
-	// requests: the load request, one warmup, three measured
+	// requests: one warmup, three measured; the load sends no request
 	var phases []string
 	for _, q := range st.Requests {
 		phases = append(phases, q.Phase)
 	}
-	if strings.Join(phases, ",") != "load,warmup,measured,measured,measured" {
+	if strings.Join(phases, ",") != "warmup,measured,measured,measured" {
 		t.Fatalf("phases %v", phases)
 	}
-	// The first request after the load is slow (decode/5): neither it nor the warmup is in the statistics.
+	// The first request after the load (the warmup) is slow (decode/5): it is not in the statistics.
 	if st.Stats.Decode.N != 3 || st.Stats.Decode.Mean != 30 || st.Stats.Decode.Stdev != 0 || st.Stats.Prefill.Mean != 200 {
 		t.Fatalf("stats %+v (warmup leaked in?)", st.Stats)
 	}
 	if st.Requests[0].DecodeTPS != 6 {
-		t.Fatalf("the load request should be the slow one: %+v", st.Requests[0])
+		t.Fatalf("the warmup should be the slow one: %+v", st.Requests[0])
 	}
 	if st.Requests[2].OutputSHA256 == "" || st.Requests[2].OutputHead != "hello from gemma" || len(st.Requests[2].Timings) == 0 {
 		t.Fatalf("%+v", st.Requests[2])
@@ -424,8 +216,11 @@ func TestExpectedRefusalPasses(t *testing.T) {
 	if r.State != RunCompleted || st.Outcome != OutcomeRefused || st.HTTPStatus != 503 || !strings.Contains(st.Reason, "does not fit") || !st.Expect.Pass {
 		t.Fatalf("%s %+v", r.State, st)
 	}
-	if len(st.Requests) != 1 || st.Requests[0].Status != 503 || r.Summary.Passed != 1 || r.Summary.Failed != 0 {
-		t.Fatalf("%+v %+v", st.Requests, r.Summary)
+	if len(st.Requests) != 0 || r.Summary.Passed != 1 || r.Summary.Failed != 0 || strings.Contains(strings.Join(api.callList(), " "), "chat:") {
+		t.Fatalf("a refused load is the load's answer: no request is sent: %+v %+v", st.Requests, r.Summary)
+	}
+	if len(st.Phases) != 4 || st.Phases[0].Type != "load" || st.Phases[0].State != PhaseFailed || st.Phases[0].Outcome != OutcomeRefused || st.Phases[1].State != PhaseSkipped {
+		t.Fatalf("phases %+v", st.Phases)
 	}
 	if len(api.callList()) > 0 && strings.Contains(strings.Join(api.callList(), " "), "unload:huge") && false {
 		t.Fatal("unreachable")
@@ -796,7 +591,7 @@ func TestInlineBenchmarksRun(t *testing.T) {
 	tm := newTestMgr(t, api)
 	tm.suite(`{"id":"s","only_when_idle":false,"benchmarks":[{"profile":"gemma","warmup_requests":0,"requests":[{"name":"q","prompt":"hi","max_tokens":4}]}]}`)
 	r := tm.finished(tm.run("s").ID)
-	if r.State != RunCompleted || r.Steps[0].BenchmarkID != "s-1" || len(r.Steps[0].Requests) != 2 { // load request + one measured
+	if r.State != RunCompleted || r.Steps[0].BenchmarkID != "s-1" || len(r.Steps[0].Requests) != 1 { // one measured request: the load itself sends none
 		t.Fatalf("%s %+v", r.State, r.Steps)
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/config"
@@ -40,9 +41,15 @@ type Member struct {
 	// reports it (a newer field; may be absent). For a shared-memory node it
 	// replaces the RAM total minus used figure.
 	MemAvailableMiB *int `json:"mem_available_mib"`
+	// RPCServerMemMiB and RPCServerVersion are informational only (newer
+	// fields; never used for decisions).
+	RPCServerMemMiB  *float64 `json:"rpc_server_mem_mib"`
+	RPCServerVersion *string  `json:"rpc_server_version"`
 	// LastRecoveryAction is the node's last reported recovery outcome (a newer
 	// field; absent from older fleet managers, null when none).
 	LastRecoveryAction *RecoveryAction `json:"last_recovery_action"`
+
+	problems []memberProblem // fields ignored while decoding (see UnmarshalJSON)
 }
 
 // RecoveryAction is a member's last_recovery_action.
@@ -74,12 +81,13 @@ type Options struct {
 // Client is the fleet console client, the local probe and the merged node
 // view. Create it with New and run it with Run; it implements View.
 type Client struct {
-	cfg  *config.Config
+	cfg  atomic.Pointer[config.Config]
 	opts Options
 	base string
 
 	mu              sync.Mutex
 	members         []Member
+	warned          map[string]time.Time
 	haveByte        bool
 	lastByte        time.Time
 	connected       bool
@@ -128,12 +136,26 @@ func New(cfg *config.Config, opts Options) *Client {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
-	return &Client{
+	c := &Client{
 		created: opts.Clock(),
-		cfg:     cfg, opts: opts, base: strings.TrimRight(cfg.Fleet.URL, "/"),
+		opts:    opts, base: strings.TrimRight(cfg.Fleet.URL, "/"),
 		noTierLogged: map[string]bool{}, ambiguousLogged: map[string]string{},
 		notify: make(chan struct{}, 1),
 	}
+	c.cfg.Store(cfg)
+	return c
+}
+
+func (c *Client) conf() *config.Config { return c.cfg.Load() }
+
+// SetConfig swaps the configuration (tiers, node overrides, stale_after,
+// local_probe_cmd). The node view is rebuilt at once so a tier change applies
+// to the next placement decision. fleet.url and fleet.local_node are read at start only.
+func (c *Client) SetConfig(cfg *config.Config) {
+	c.cfg.Store(cfg)
+	c.mu.Lock()
+	c.rebuildLocked()
+	c.mu.Unlock()
 }
 
 // execProbe runs cmd without a shell (split on whitespace).
@@ -277,7 +299,8 @@ func (c *Client) fetchMember(ctx context.Context, memberID string, isLocal bool,
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&m); err != nil {
 		return core.Node{}, fmt.Errorf("fleet: fetch node %s: %w", id, err)
 	}
-	n, ok := nodeFromMember(c.cfg, m, isLocal)
+	c.warnProblems(m)
+	n, ok := nodeFromMember(c.conf(), m, isLocal)
 	if !ok {
 		return core.Node{}, fmt.Errorf("fleet: node %s matches no tier", id)
 	}
@@ -337,7 +360,7 @@ func (c *Client) logAmbiguousLocked(name string, ids []core.NodeID) {
 
 // localMemberLocked is the fleet member for fleet.local_node, if unambiguous.
 func (c *Client) localMemberLocked() *Member {
-	name := c.cfg.Fleet.LocalNode
+	name := c.conf().Fleet.LocalNode
 	if name == "" {
 		return nil
 	}
@@ -353,14 +376,14 @@ func (c *Client) localMemberLocked() *Member {
 // localIDLocked is the local node's one fixed id: the configured
 // fleet.local_node, whether or not (or when) its fleet member shows up.
 func (c *Client) localIDLocked() core.NodeID {
-	if c.cfg.Fleet.LocalNode == "" {
+	if c.conf().Fleet.LocalNode == "" {
 		return "local"
 	}
-	return core.NodeID(c.cfg.Fleet.LocalNode)
+	return core.NodeID(c.conf().Fleet.LocalNode)
 }
 
 func (c *Client) isLocalNameLocked(name string) bool {
-	return c.cfg.Fleet.LocalNode != "" && strings.EqualFold(name, c.cfg.Fleet.LocalNode)
+	return c.conf().Fleet.LocalNode != "" && strings.EqualFold(name, c.conf().Fleet.LocalNode)
 }
 
 // isLocalMemberLocked: the member's id or hostname is fleet.local_node.
@@ -370,12 +393,12 @@ func (c *Client) isLocalMemberLocked(m Member) bool {
 
 func (c *Client) localFromProbeLocked(total, used int) (core.Node, bool) {
 	m := c.localMemberLocked()
-	n := core.Node{ID: c.localIDLocked(), Hostname: c.cfg.Fleet.LocalNode, Local: true, Online: true, TotalMiB: total, FreeMiB: clampZero(total - used)}
+	n := core.Node{ID: c.localIDLocked(), Hostname: c.conf().Fleet.LocalNode, Local: true, Online: true, TotalMiB: total, FreeMiB: clampZero(total - used)}
 	var role, source string
 	if m != nil {
 		n.Hostname, role, source = m.Hostname, m.Role, m.Source
 	}
-	t, ok := c.cfg.MatchTier(n.Hostname, role, source, true)
+	t, ok := c.conf().MatchTier(n.Hostname, role, source, true)
 	if !ok {
 		return core.Node{}, false
 	}
@@ -391,7 +414,7 @@ func (c *Client) rebuildLocked() {
 		if c.isLocalMemberLocked(m) {
 			continue
 		}
-		n, ok := nodeFromMember(c.cfg, m, false)
+		n, ok := nodeFromMember(c.conf(), m, false)
 		if !ok {
 			if !c.noTierLogged[m.ID] {
 				c.noTierLogged[m.ID] = true
@@ -406,7 +429,7 @@ func (c *Client) rebuildLocked() {
 	if c.probeOK {
 		ln, lok = c.localFromProbeLocked(c.probeTotal, c.probeUsed)
 	} else if local != nil {
-		ln, lok = nodeFromMember(c.cfg, *local, true)
+		ln, lok = nodeFromMember(c.conf(), *local, true)
 		ln.ID = c.localIDLocked()
 	}
 	if lok {
@@ -446,11 +469,11 @@ func (c *Client) checkStaleLocked() {
 	} else {
 		age = c.opts.Clock().Sub(c.created)
 	}
-	switch stale := age > c.cfg.Fleet.StaleAfter; {
+	switch stale := age > c.conf().Fleet.StaleAfter; {
 	case stale && !c.staleLogged:
 		c.staleLogged = true
 		c.opts.Logger.Warn("fleet view stale: remote nodes are ineligible until the console is heard from",
-			"age", age.Round(time.Second), "stale_after", c.cfg.Fleet.StaleAfter)
+			"age", age.Round(time.Second), "stale_after", c.conf().Fleet.StaleAfter)
 	case !stale && c.staleLogged:
 		c.staleLogged = false
 		c.opts.Logger.Info("fleet view fresh again")
@@ -495,7 +518,34 @@ func (c *Client) applySnapshot(ms []Member) {
 // ---- feed ----
 
 type fleetDoc struct {
-	Members *[]Member `json:"members"`
+	Members *[]json.RawMessage `json:"members"`
+}
+
+// warnInterval is the least time between two warnings about the same
+// ignored field.
+const warnInterval = 10 * time.Minute
+
+// warnProblems logs one WARN per distinct ignored field, at most once per
+// warnInterval, so a persistent problem is not logged on every update.
+func (c *Client) warnProblems(m Member) {
+	for _, p := range m.problems {
+		c.warnOnce("field:"+p.Field, "fleet member field ignored", "field", p.Field, "member", m.ID, "err", p.Err)
+	}
+}
+
+func (c *Client) warnOnce(key, msg string, args ...any) {
+	c.mu.Lock()
+	now := c.opts.Clock()
+	if c.warned == nil {
+		c.warned = map[string]time.Time{}
+	}
+	if at, ok := c.warned[key]; ok && now.Sub(at) < warnInterval {
+		c.mu.Unlock()
+		return
+	}
+	c.warned[key] = now
+	c.mu.Unlock()
+	c.opts.Logger.Warn(msg, args...)
 }
 
 func (c *Client) applyDoc(data []byte) bool {
@@ -508,7 +558,20 @@ func (c *Client) applyDoc(data []byte) bool {
 		c.opts.Logger.Warn("bad fleet payload ignored", "err", err)
 		return false
 	}
-	c.applySnapshot(*d.Members)
+	ms := make([]Member, 0, len(*d.Members))
+	for i, raw := range *d.Members {
+		var m Member
+		if err := json.Unmarshal(raw, &m); err != nil || m.ID == "" {
+			if err == nil {
+				err = errNoID
+			}
+			c.warnOnce("member", "unusable fleet member skipped", "index", i, "err", err)
+			continue
+		}
+		c.warnProblems(m)
+		ms = append(ms, m)
+	}
+	c.applySnapshot(ms)
 	return true
 }
 
@@ -662,7 +725,7 @@ func (c *Client) stream(ctx context.Context) (gotEvent bool) {
 // ---- local probe ----
 
 func (c *Client) runProbe(ctx context.Context) (total, used int, err error) {
-	out, err := c.opts.RunProbe(ctx, c.cfg.LocalProbeCmd)
+	out, err := c.opts.RunProbe(ctx, c.conf().LocalProbeCmd)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -697,7 +760,7 @@ func (c *Client) probeOnce(ctx context.Context) {
 	if err != nil {
 		if !c.probeWarned {
 			c.probeWarned = true
-			c.opts.Logger.Warn("local GPU probe failed, falling back to the fleet entry for the local node", "cmd", c.cfg.LocalProbeCmd, "err", err)
+			c.opts.Logger.Warn("local GPU probe failed, falling back to the fleet entry for the local node", "cmd", c.conf().LocalProbeCmd, "err", err)
 		}
 		if !c.probeOK {
 			return

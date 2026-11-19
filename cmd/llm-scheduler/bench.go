@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/bench"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/config"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/cfgsvc"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
 )
 
@@ -26,33 +26,44 @@ func loopbackURL(ln net.Addr) string {
 	return "http://" + host + ":" + port
 }
 
-// openBench opens the benchmark database and builds the manager. When
-// data_dir is unset, bench is disabled, or the database cannot be opened, the
-// feature is off (nil, nil): its endpoints answer 503 and nothing else is
-// affected.
-func openBench(cfg *config.Config, ln net.Listener, hist *history.Store, log *slog.Logger) (*bench.Store, *bench.Manager) {
-	if !cfg.Bench.Enabled {
-		return nil, nil
+// benchmarksUsing lists the benchmarks that refer to a profile (for the delete warning).
+func benchmarksUsing(st *bench.Store, profile string) []string {
+	if st == nil {
+		return nil
 	}
-	st, err := bench.OpenStore(cfg.DataDir)
+	bms, err := st.ListBenchmarks()
 	if err != nil {
-		log.Warn("the benchmark database cannot be opened; the benchmark feature is off (everything else works)", "data_dir", cfg.DataDir, "err", err)
+		return nil
+	}
+	var out []string
+	for _, b := range bms {
+		if b.Spec != nil && b.Spec.Profile == profile {
+			out = append(out, b.Spec.ID)
+		}
+	}
+	return out
+}
+
+// openBench builds the benchmark manager on the shared database. When bench is
+// disabled by its setting or the database is not open, the feature is off
+// (nil, nil): its endpoints answer 503 and nothing else is affected.
+func openBench(svc *cfgsvc.Service, st *bench.Store, ln net.Listener, hist *history.Store, log *slog.Logger) (*bench.Store, *bench.Manager) {
+	cfg := svc.Config()
+	if !cfg.Bench.Enabled || st == nil {
 		return nil, nil
 	}
 	o := bench.ManagerOptions{Store: st, API: &bench.HTTPAPI{Base: loopbackURL(ln.Addr())}, Version: version, Logger: log,
 		Thresholds: bench.Thresholds{LoadPct: cfg.Bench.RegressLoadPct, DecodePct: cfg.Bench.RegressDecodePct},
 		MaxRun:     time.Duration(cfg.Bench.MaxRunMinutes) * time.Minute,
-		ProfileOK:  func(id string) bool { _, _, ok := cfg.Resolve(id); return ok }}
+		ProfileOK:  func(id string) bool { _, _, ok := svc.Config().Resolve(id); return ok }}
 	if hist.On() {
 		o.Record = hist.Record
 	}
 	m, err := bench.NewManager(o)
 	if err != nil {
 		log.Warn("the benchmark manager cannot start; the benchmark feature is off", "err", err)
-		st.Close()
 		return nil, nil
 	}
-	m.Seed(cfg.Bench.Benchmarks, cfg.Bench.Suites)
-	log.Info("benchmark feature on", "database", st.Path(), "benchmarks_seeded", len(cfg.Bench.Benchmarks), "suites_seeded", len(cfg.Bench.Suites))
+	log.Info("benchmark feature on", "database", st.Path())
 	return st, m
 }

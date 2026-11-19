@@ -2,7 +2,11 @@
 //
 // Usage:
 //
-//	llm-scheduler [--config <path>] [--check-config] [--version]
+//	llm-scheduler [--listen ADDR] [--data-dir DIR] [--models-dir DIR] [--history-dir DIR] [--child-log-dir DIR] [--version]
+//	llm-scheduler import-config --data-dir DIR [--replace] [--check] file.yaml
+//
+// Everything except those deployment paths is configuration kept in the
+// database in data-dir and changed through the REST API, MCP or the web UI.
 //
 // It logs to stderr and exits 0 after a clean shutdown on SIGTERM or
 // interrupt (design 8.6), and 1 when the shutdown overran its grace and
@@ -22,15 +26,22 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/docs"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/api"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/audit"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/bench"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/cfgstore"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/cfgsvc"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/config"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/fleet"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/gguf"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/instance"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/mcpserver"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/scheduler"
 )
 
@@ -38,7 +49,6 @@ import (
 var version = "0.1.0"
 
 const (
-	defaultConfig = "/etc/llm-scheduler/config.yaml"
 	// Children listen on 127.0.0.1 in this range (design 7.4 example: 5801).
 	childPortLo, childPortHi = 5800, 5999
 	// apiGrace is how long the HTTP server may take to close its remaining
@@ -52,10 +62,12 @@ const (
 func main() { os.Exit(realMain(os.Args[1:], os.Stdout, os.Stderr)) }
 
 func realMain(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "import-config" {
+		return importConfig(args[1:], stdout, stderr)
+	}
 	fs := flag.NewFlagSet("llm-scheduler", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	cfgPath := fs.String("config", defaultConfig, "path to the YAML config file")
-	check := fs.Bool("check-config", false, "validate the config, print any errors, and exit 0 (valid) or 1")
+	bf := bindBootstrap(fs)
 	showVersion := fs.Bool("version", false, "print the version and exit")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -67,17 +79,8 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "llm-scheduler", version)
 		return 0
 	}
-	cfg, err := config.Load(*cfgPath)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	if *check {
-		fmt.Fprintf(stdout, "config ok: %d profiles\n", len(cfg.Profiles))
-		return 0
-	}
 	logger := slog.New(slog.NewTextHandler(stderr, nil))
-	return serve(cfg, logger)
+	return serve(bf.value(), logger)
 }
 
 // warnSlidingWindow is the design section 6 startup warning: a kind: llama
@@ -137,7 +140,53 @@ func exitCodeAfterShutdown(code int, shutdownErr error, log *slog.Logger) int {
 	return 1
 }
 
-func serve(cfg *config.Config, log *slog.Logger) int {
+func serve(boot config.Bootstrap, log *slog.Logger) int {
+	// The database holds the configuration. If it cannot be opened the scheduler
+	// still starts (built-in defaults, no profiles); configuration changes then answer 503.
+	var dbStore *bench.Store
+	var cs *cfgstore.Store
+	if st, err := bench.OpenStore(boot.DataDir); err != nil {
+		log.Error("the database cannot be opened; running with built-in defaults and no profiles, configuration changes are unavailable", "data_dir", boot.DataDir, "err", err)
+	} else {
+		dbStore = st
+		defer dbStore.Close()
+		if cs, err = cfgstore.Open(st); err != nil {
+			log.Error("the configuration tables cannot be opened; configuration changes are unavailable", "err", err)
+			cs = nil
+		}
+	}
+	var (
+		sched   *scheduler.Scheduler
+		fc      *fleet.Client
+		apiSrv  *api.Server
+		started atomic.Bool // set once the pieces above exist; guards the service callbacks
+	)
+	so0 := cfgsvc.Options{Store: cs, Boot: boot, Logger: log,
+		ProfileRefs: func(id string) []string { return benchmarksUsing(dbStore, id) },
+		Apply: func(c *config.Config) {
+			if !started.Load() {
+				return
+			}
+			fc.SetConfig(c)
+			sched.ApplyConfig(c)
+		},
+		OnChange: func(ev cfgsvc.ChangeEvent) {
+			if started.Load() {
+				apiSrv.PublishConfig(ev)
+			}
+		}}
+	svc := cfgsvc.New(context.Background(), so0)
+	cfg := svc.Config()
+	if cs != nil {
+		if n, err := cs.PruneAudit(cfg.AuditRetentionDays); err != nil {
+			log.Warn("audit retention", "err", err)
+		} else if n > 0 {
+			log.Info("audit entries older than audit_retention_days were removed", "removed", n)
+		}
+	}
+	if !cfg.Configured {
+		log.Warn("no configuration yet: no profiles are defined and no node matches a tier, so nothing can be loaded; import one with `llm-scheduler import-config` or the REST API (PUT /api/config/...)", "data_dir", boot.DataDir, "error", svc.LoadError())
+	}
 	warnSlidingWindow(cfg, log)
 	if len(cfg.ExcludeNodes) > 0 {
 		log.Info("exclude_nodes configured: these nodes are never used", "entries", strings.Join(cfg.ExcludeNodes, ", "))
@@ -156,7 +205,7 @@ func serve(cfg *config.Config, log *slog.Logger) int {
 
 	bg, bgCancel := context.WithCancel(context.Background())
 	defer bgCancel()
-	fc := fleet.New(cfg, fleet.Options{Logger: log})
+	fc = fleet.New(cfg, fleet.Options{Logger: log})
 	fleetDone := make(chan struct{})
 	go func() { fc.Run(bg); close(fleetDone) }()
 	go checkFleet(bg, cfg, log)
@@ -185,7 +234,7 @@ func serve(cfg *config.Config, log *slog.Logger) int {
 	if hist.On() {
 		so.History = hist
 	}
-	sched, err := scheduler.New(cfg, so)
+	sched, err = scheduler.New(cfg, so)
 	if err != nil {
 		log.Error("scheduler", "err", err)
 		ln.Close()
@@ -194,16 +243,27 @@ func serve(cfg *config.Config, log *slog.Logger) int {
 	schedDone := make(chan struct{})
 	go func() { sched.Run(bg); close(schedDone) }()
 
-	benchStore, benchMgr := openBench(cfg, ln, hist, log)
-	if benchStore != nil {
-		defer benchStore.Close()
-	}
-	ao := api.Options{Logger: log, History: hist, Version: version, WSMaxClients: cfg.WSMaxClients, Bench: benchMgr, BenchStore: benchStore,
+	benchStore, benchMgr := openBench(svc, dbStore, ln, hist, log)
+	ao := api.Options{Logger: log, History: hist, Version: version, WSMaxClients: cfg.WSMaxClients, Bench: benchMgr, BenchStore: benchStore, Config: svc,
 		System: api.SystemInfo{Listen: cfg.Listen, Safety: safetySummary(cfg), HistoryDir: cfg.HistoryDir, DataDir: cfg.DataDir,
 			ChildLogDir: cfg.ChildLogDir, ModelsDir: cfg.ModelsDir, Bench: map[string]any{"enabled": benchMgr != nil, "regress_load_pct": cfg.Bench.RegressLoadPct,
 				"regress_decode_pct": cfg.Bench.RegressDecodePct, "max_run_minutes": cfg.Bench.MaxRunMinutes}}}
-	apiSrv := api.New(cfg, sched, ao)
-	httpSrv := &http.Server{Handler: apiSrv, ReadHeaderTimeout: 10 * time.Second}
+	if cs != nil {
+		ao.Audit = cs
+	}
+	apiSrv = api.New(cfg, sched, ao)
+	started.Store(true)
+	// MCP at /mcp on the same port; its tools run in-process through apiSrv (design 9.5).
+	mcpSrv := mcpserver.New(apiSrv, mcpserver.Options{Version: version, Guide: docs.BenchmarkGuide,
+		Bridge: func(ctx context.Context, actor string) context.Context { return audit.WithSource(ctx, "mcp", actor) }})
+	root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { // not a ServeMux: it would clean paths the API serves verbatim
+		if r.URL.Path == "/mcp" {
+			mcpSrv.ServeHTTP(w, r)
+			return
+		}
+		apiSrv.ServeHTTP(w, r)
+	})
+	httpSrv := &http.Server{Handler: root, ReadHeaderTimeout: 10 * time.Second}
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- httpSrv.Serve(ln) }()
 	if benchMgr != nil {
@@ -228,7 +288,7 @@ func serve(cfg *config.Config, log *slog.Logger) int {
 	// wait for in-flight requests up to shutdown_grace, and stop children.
 	// A second signal kills everything at once.
 	ln.Close()
-	grace := cfg.Defaults.ShutdownGrace + shutdownSlack
+	grace := svc.Config().Defaults.ShutdownGrace + shutdownSlack
 	sctx, scancel := context.WithTimeout(context.Background(), grace)
 	defer scancel()
 	go func() {

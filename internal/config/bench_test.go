@@ -79,7 +79,7 @@ bench:
 // Both shipped config files carry the bench block as a commented example,
 // with the same keys the parser knows.
 func TestExampleConfigsDocumentTheBenchBlock(t *testing.T) {
-	for _, rel := range []string{"configs/example.yaml", "deploy/config.yaml"} {
+	for _, rel := range []string{"configs/example.yaml", "deploy/seed-config.yaml"} {
 		b, err := os.ReadFile(filepath.Join("..", "..", rel))
 		if err != nil {
 			t.Fatal(err)

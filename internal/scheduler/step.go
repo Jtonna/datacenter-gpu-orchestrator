@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/config"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/instance"
 )
@@ -73,6 +74,8 @@ type (
 		tail   string
 		err    error
 	}
+	// evConfig swaps in a new configuration snapshot between steps.
+	evConfig      struct{ cfg *config.Config }
 	evViewChanged struct{}
 	evTick        struct{}
 	evUnload      struct {
@@ -97,6 +100,7 @@ func (evFetched) isEvent()        {}
 func (evLoadSample) isEvent()     {}
 func (evWorkerProbe) isEvent()    {}
 func (evRecoveryPosted) isEvent() {}
+func (evConfig) isEvent()         {}
 func (evViewChanged) isEvent()    {}
 func (evTick) isEvent()           {}
 func (evUnload) isEvent()         {}
@@ -224,6 +228,8 @@ func (c *schedCore) handle(ev event) {
 		c.workerProbed(e.id, e.gen, e.err)
 	case evRecoveryPosted:
 		c.recoveryPosted(e)
+	case evConfig:
+		c.applyConfig(e.cfg)
 	case evViewChanged, evTick:
 	case evUnload:
 		err := c.unload(e.profile, e.force)

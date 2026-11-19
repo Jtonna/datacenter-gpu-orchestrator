@@ -76,6 +76,7 @@ type Manager struct {
 	stopping bool
 	subs     map[int]func(map[string]any)
 	subSeq   int
+	modelOf  func(profile string) string // the model file of a profile, from the config
 	sched    map[string]*schedState
 	wake     chan struct{}
 	done     chan struct{}
@@ -429,9 +430,36 @@ func (m *Manager) finishUnstarted(r *Run, state, why string) {
 		map[string]any{"bench_run": r.ID, "suite": r.SuiteID, "state": state, "error": why})
 }
 
+// SetModelFile tells the manager how to name the model file of a profile before
+// its instance exists (the progress and the step show it from the start). The
+// API layer sets it from the configuration.
+func (m *Manager) SetModelFile(f func(profile string) string) {
+	m.mu.Lock()
+	m.modelOf = f
+	m.mu.Unlock()
+}
+
+func (m *Manager) modelFileOf(profile string) string {
+	m.mu.Lock()
+	f := m.modelOf
+	m.mu.Unlock()
+	if f == nil {
+		return ""
+	}
+	return f(profile)
+}
+
+// Aggregates is GET /api/bench/aggregates: the stored runs, aggregated.
+func (m *Manager) Aggregates(f AggFilter) (*AggregatesDoc, error) {
+	return m.o.Store.Aggregate(f, m.o.Thresholds, m.o.Now())
+}
+
 // StateDoc is GET /api/bench/state.
 type StateDoc struct {
-	Enabled       bool             `json:"enabled"`
+	Enabled bool `json:"enabled"`
+	// Run is the progress of the running run (design 9.3): percent, the benchmark
+	// and phase in flight, the next one, the queue and the eta; null when idle.
+	Run           map[string]any   `json:"run"`
 	Current       map[string]any   `json:"current"`
 	Queue         []map[string]any `json:"queue"`
 	NextScheduled []ScheduledRun   `json:"next_scheduled"`
@@ -449,7 +477,7 @@ type ScheduledRun struct {
 // State is the current run, the queue and the next scheduled runs.
 func (m *Manager) State() StateDoc {
 	m.checkSchedules(false)
-	d := StateDoc{Enabled: true, Queue: []map[string]any{}, NextScheduled: []ScheduledRun{}}
+	d := StateDoc{Enabled: true, Queue: []map[string]any{}, NextScheduled: []ScheduledRun{}, Run: m.Progress()}
 	m.mu.Lock()
 	var cur *Run
 	if m.cur != nil {

@@ -41,6 +41,13 @@ type Config struct {
 	// Recovery is the optional recovery-request feature (design 8.4b).
 	Recovery Recovery
 	Profiles map[string]*core.Profile
+
+	// AuditRetentionDays is informational (the application never deletes audit entries); 0 keeps everything.
+	AuditRetentionDays int
+	// Revision is the configuration revision this snapshot was built from and
+	// Configured is false for the built-in defaults of an empty database.
+	Revision   int64
+	Configured bool
 }
 
 // Recovery actions, in the only order they may be configured.
@@ -174,6 +181,8 @@ type Options struct {
 type Bench struct {
 	// Enabled is true when data_dir is set and bench.enabled is not false.
 	Enabled bool
+	// EnabledSetting is the bench_enabled setting (Enabled also needs data_dir).
+	EnabledSetting bool
 	// RegressLoadPct: a load this much slower than the baseline's is a regression (default 15).
 	RegressLoadPct float64
 	// RegressDecodePct: decode tokens per second this much lower is a regression (default 7).

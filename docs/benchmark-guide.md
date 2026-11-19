@@ -8,7 +8,7 @@ Anything not confirmed is marked "unverified". "Scheduler" and "load balancer" m
 - `llm-scheduler` decides which machines run a model, loads it, queues requests and unloads it later.
 - It runs on the OMEN as container `llm-scheduler-test` (image `llm-scheduler:test`), host port 3122. llama-swap is stopped and must stay stopped.
 - Scheduler version string: `test-da67241+failfast+childlog+progress+loadreport2`.
-- Config: `~/llm-scheduler-test/config.yaml`. It is read once at start. A change needs a container restart.
+- Config: in the scheduler database (`~/llm-scheduler-test/data/scheduler.db`), read and changed over REST: `GET http://localhost:3122/api/config`. A change takes effect at once, with no restart, and is audited (runbook "Configuration lives in the database"). A test deployment is first set up with `llm-scheduler import-config` from a YAML file (the old `config.yaml` is the input format).
 - Models are GGUF files in `/srv/llama-swap/models` (mounted at `/models`). Machines come from the fleet manager at `localhost:8090`, not from the config.
 - Machines: three PS5s (each serves one client at a time), the Alienware laptop, and the OMEN's own GPU. For these benchmarks only the three PS5s receive models. The OMEN and the Alienware are excluded (section 4). Do not remove that exclusion.
 - PS5 fleet, all rpc port 50052:
@@ -104,7 +104,7 @@ The config already has 225 generated profiles named `bench-<model>-<place>-<ctx>
 - Models: `tinyllama`, `qwen4b`, `gemma12b`, `devstral24b`, `qwen27b`, `deepseek-v2-lite`, `qwen30b-a3b`, `mixtral-8x7b`, `llama33-70b-q2`, `qwen25-72b-q2`, `glm4-32b`, `qwen3-coder-30b`, `kimi-dev-72b-iq2s`.
 - Place: `1a`, `1b`, `1c` (one PS5 each), `2` (two PS5s), `3` (three PS5s), `auto` (the scheduler picks). `kimi-dev-72b-iq2s` has only `2`, `3` and `auto`.
 - Context: `2048`, `8192`, `32768`.
-- Example: `bench-gemma12b-3-8192`. Which PS5 is `1a`, `1b` or `1c` is set in the config (read `~/llm-scheduler-test/config.yaml`; not checked for this guide).
+- Example: `bench-gemma12b-3-8192`. Which PS5 is `1a`, `1b` or `1c` is set in the profile (`curl -s localhost:3122/api/config/profiles/bench-gemma12b-1a | jq .`; not checked for this guide).
 
 Count: 13 models x 6 places x 3 contexts is 234, less 9 for the three places kimi does not have, gives 225.
 
@@ -114,51 +114,28 @@ Count: 13 models x 6 places x 3 contexts is 234, less 9 for the three places kim
 ```sh
 ls -l /srv/llama-swap/models/
 ```
-2. Back up the config, then append the profiles. A backup before each edit is required. The `profiles:` block is the last block in the file, so appending a correctly indented profile to the end works (confirmed live with `printf ... >> config.yaml`). Append (do not replace the file) so the file stays the one mounted into the container. Names must be unique. `model` must be the exact file name. Copy the shape of the existing `b-*` profiles.
+2. Create the profiles through the API. Every change is a numbered revision in the audit log, so no file backup is needed (roll back with `POST /api/config/revisions/N/rollback`). Names must be unique (a second create of the same id answers `409`). `model` must be the exact file name. Copy the shape of the existing `b-*` profiles (`curl -s localhost:3122/api/config/profiles/b-qwen3-30b-2ps5 | jq .profile`). Add `?dry_run=1` to a request to validate it without writing.
 ```sh
-cd ~/llm-scheduler-test && cp config.yaml config.yaml.bak-$(date -u +%Y%m%dT%H%M%SZ)
-cat >> config.yaml <<'EOF'
+H=localhost:3122
+A='-H X-Actor:benchmark-agent'
 
-  # auto-placed: the scheduler picks machines. Needs a measured needs_mib for good results (step 6).
-  qwen3-30b-auto-8k:
-    model: Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf
-    ctx: 8192
+# auto-placed: the scheduler picks machines. Needs a measured needs_mib for good results (step 6).
+curl -s -X POST $H/api/config/profiles $A -d '{"id":"qwen3-30b-auto-8k","model":"Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf","ctx":8192}'
 
-  # forced onto two PS5s, split 50/50, ctx 2048
-  b-qwen3-30b-2ps5:
-    model: Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf
-    ctx: 2048
-    load_timeout: 10800s
-    force_nodes: [ps5-9032a330, ps5-31bd9dc4]
-    tensor_split: [50, 50]
+# forced onto two PS5s, split 50/50, ctx 2048
+curl -s -X POST $H/api/config/profiles $A -d '{"id":"b-qwen3-30b-2ps5","model":"Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf","ctx":2048,"load_timeout":"10800s","force_nodes":["ps5-9032a330","ps5-31bd9dc4"],"tensor_split":[50,50]}'
 
-  # forced onto three PS5s, split 33/33/34, bigger context (quantised KV needs flash_attn)
-  b-qwen3-30b-3ps5-8k:
-    model: Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf
-    ctx: 8192
-    load_timeout: 10800s
-    force_nodes: [ps5-9032a330, ps5-31bd9dc4, ps5-407c8925]
-    tensor_split: [33, 33, 34]
-    kv_quant: q8_0
-    flash_attn: true
-EOF
+# forced onto three PS5s, split 33/33/34, bigger context (quantised KV needs flash_attn)
+curl -s -X POST $H/api/config/profiles $A -d '{"id":"b-qwen3-30b-3ps5-8k","model":"Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf","ctx":8192,"load_timeout":"10800s","force_nodes":["ps5-9032a330","ps5-31bd9dc4","ps5-407c8925"],"tensor_split":[33,33,34],"kv_quant":"q8_0","flash_attn":true}'
 ```
-The new text must be indented under the existing `profiles:` block: two spaces before the profile name, four before its keys. If the end of the file has changed, put the lines where the last profile ends and check the indentation.
-3. Rules the loader enforces (from `docs/design.md`): `tensor_split` needs `force_nodes` and the same length; `kv_quant` other than f16 needs `flash_attn: true`; `force_nodes` and `allow_tiers` cannot both be set; the model file must exist; unknown fields are errors; a forced node must not be excluded. `ctx` is per slot. `force_nodes` accepts a hostname or a node id.
-4. Check the config without touching hardware. Unverified on this box (command is from the runbook with the image tag changed to `:test`). Expect `exit=0`.
+3. Rules the loader enforces (from `docs/design.md`): `tensor_split` needs `force_nodes` and the same length; `kv_quant` other than f16 needs `flash_attn: true`; `force_nodes` and `allow_tiers` cannot both be set; the model file must exist; unknown fields are errors; a forced node must not be excluded. `ctx` is per slot. `force_nodes` accepts a hostname or a node id. A request that breaks a rule answers `400` with every message and writes nothing.
+4. Check the result. No restart is needed and nothing loaded is stopped; the profile is usable at once.
 ```sh
-docker run --rm -v ~/llm-scheduler-test/config.yaml:/etc/llm-scheduler/config.yaml:ro -v /srv/llama-swap/models:/models:ro \
-  --entrypoint llm-scheduler llm-scheduler:test --check-config --config /etc/llm-scheduler/config.yaml; echo "exit=$?"
-```
-5. Apply. Only restart when nothing is loaded (`/running | jq .running` is `[]`) and no request is in flight. Tell the orchestrator before each restart. Save logs first (section 7). A restart stops any loaded model.
-```sh
-docker restart llm-scheduler-test
-sleep 15
-docker ps --filter name=llm-scheduler-test      # expect (healthy)
-curl -s localhost:3122/running | jq .running      # []
+curl -s localhost:3122/api/config | jq '{revision, configured}'
 curl -s localhost:3122/v1/models | jq -r '.data[].id' | grep qwen3-30b
+curl -s -X POST localhost:3122/api/plan -d '{"model":"b-qwen3-30b-2ps5"}' | jq .
 ```
-If the config has an error the container exits. The reason is in `docker logs --tail 20 llm-scheduler-test`. Fix the file (or copy the `.bak` file back over `config.yaml`) and run `docker start llm-scheduler-test`.
+5. To undo a change: `curl -s localhost:3122/api/config/revisions | jq .` lists the revisions, `curl -s -X POST localhost:3122/api/config/revisions/N/rollback` restores revision N as a new revision. A setting the schema marks `restart_required` (for example `ws_max_clients`) needs a container restart; only restart when nothing is loaded (`/running | jq .running` is `[]`) and tell the orchestrator first.
 6. After the first successful load, read `device_total_mib` from `/api/status` for that instance. That sum is the figure for `needs_mib` on an auto profile (design 7.2). Write it in only if the orchestrator asks.
 
 ## 6. What to measure and where each number comes from
@@ -282,7 +259,7 @@ Rules:
 - Do not start llama-swap.
 - Do not remove `exclude_nodes` from the config.
 - Do not run a `llama-server-rpc` directly against a PS5 while the scheduler has a model loaded on it. The workers take one client at a time. If a direct run is needed, unload first, and say so in that benchmark row.
-- Change only `~/llm-scheduler-test/config.yaml` (with a backup before each edit) and restart only `llm-scheduler-test`. Tell the orchestrator before each restart.
+- Change configuration only through `llm-scheduler-test`'s own `/api/config` endpoints (every change is audited; send `X-Actor`) and restart only `llm-scheduler-test`. Tell the orchestrator before each restart.
 
 Results file: `C:\Users\J\documents\ps5llm\benchmarks.md`. You own its layout (phase tables are fine). Two requirements:
 - Every row says whether it was measured direct or via the load balancer.
@@ -307,17 +284,28 @@ An ISSUE report includes:
 
 Sections 2 to 7 describe running a benchmark by hand with `curl`. The same
 method is built into the scheduler (design 9.3, runbook "Benchmarks run by the
-scheduler"): it does the plan, the cold start, the first request that loads, the
-warmup, the repeated requests, the unload, keeps every number in a database and
-compares with the last run. It needs `data_dir` in the config and the `./data`
-volume; without them `/api/bench/...` answers `503`.
+scheduler"): it does the plan, the cold load, the warmup, the repeated requests
+or a conversation, the unload, keeps every number in a database, compares with
+the last run and adds the history up (aggregates). A benchmark is a list of
+**phases**, so it can measure just the load, or the load and follow-up messages,
+or what happens after the model sat idle. It needs the database (the `./data`
+volume) and the `bench_enabled` setting (on by default); without them
+`/api/bench/...` answers `503`.
+
+The runner sends every request, the `load` and `unload` calls included, with
+`X-Bench-Run: <run id>`. The history then tags the load with `data.bench_run`,
+and the audit log lists the run's own loads and unloads as source `system`,
+actor `bench run <run id>` (section `runtime`), so they are not confused with a
+person loading a model. Defining and running benchmarks through REST, the web
+page or MCP (`create_benchmark`, `create_suite`, `run_suite`, `get_run`,
+`get_bench_aggregates`) is audited in section `bench`.
 
 What the by-hand method of section 6 maps to:
 
 | By hand | In the scheduler |
 |---|---|
-| `plan`, then one request that includes the load, then a second identical request | `plan`, a first request (phase `load`), `warmup_requests` (default 1) and `repeats` measured requests per request |
-| Unload before the next profile | `cold: true` unloads the profile first, `unload_after: true` unloads it after |
+| `plan`, then one request that includes the load, then a second identical request | `plan`, a `load` phase (`POST /api/load`, no chat request: the load is measured on its own), a `warmup` phase (default 1 request) and a `requests` phase with `repeats` measured requests per request |
+| Unload before the next profile | the `load` phase unloads the profile first (it is cold), an `unload` phase unloads it after and times how long until the instance is gone |
 | `cache_prompt: false`, check `timings.cache_n` is 0 | `cache_prompt` defaults to false; `cache_n` is stored per request |
 | Load time, upload MB/s, memory per machine | `load.load_s`, `load.avg_mb_s`, `load.nodes[]` (bytes, `memory_mib`), `load.memory_mib`, from `recent_loads` and the history record of the load session |
 | Prefill and decode tokens/s | `timings.prompt_per_second`, `timings.predicted_per_second` per request; mean, median, min, max and standard deviation per benchmark |
@@ -374,6 +362,93 @@ To test a model that is supposed not to fit, give the benchmark
 `503 does not fit`; note that a *forced* profile skips the fit check unless
 `forced_fit_check` is `warn` or `reject`, section 4, so it would try to load).
 The step then records the refusal and its reason and passes.
+
+### 12a. Phases: load only, load and follow-up messages, idle, simultaneous
+
+The examples above use the simple form (`cold`, `warmup_requests`, `repeats`,
+`requests`), which the scheduler turns into the phases `load`, `warmup`,
+`requests`, `unload`. Write `phases` yourself to measure something else. Each
+phase is `{"type": ..., "label": ..., options}`; `GET $B/api/bench/schema` lists
+the types, their options with defaults and limits, the `expect` keys and five
+ready-made templates. Profile names below are the generated ones of section 5a.
+
+Load only: how long a model takes to load, how many bytes go to which PS5, how
+fast, and how much memory it takes. No chat request is sent. This is the cleanest
+way to compare links or PS5 counts (the numbers of section 9).
+
+```sh
+post /api/bench/benchmarks '{
+  "id": "gemma12b-load-3", "name": "Gemma 12B load on 3 PS5, ctx 2048",
+  "description": "Cold load only, then unload. Measures load time, bytes per PS5 and memory.",
+  "profile": "bench-gemma12b-3-2048", "timeout_s": 1800,
+  "phases": [{"type": "load"}, {"type": "unload"}],
+  "expect": {"max_load_s": 200}}'
+```
+
+Load and follow-up messages: a conversation, where each turn is sent with the
+earlier turns and the model's replies. `cache_n` per turn shows how much of the
+prompt the server reused (the prompt cache only helps when `cache_prompt` is on,
+which is the default for a conversation).
+
+```sh
+post /api/bench/benchmarks '{
+  "id": "qwen27b-conversation-3", "name": "Qwen 27B conversation on 3 PS5, ctx 8192",
+  "description": "Cold load, then a 4-turn conversation with a long first turn; shows prefill, decode and prompt reuse per turn.",
+  "profile": "bench-qwen27b-3-8192", "timeout_s": 2400,
+  "phases": [
+    {"type": "load"},
+    {"type": "conversation", "system": "You are a concise assistant.", "max_tokens": 128, "stream": true,
+     "turns": [
+       {"name": "long-first", "content": "Summarise the history of the Roman Republic in about 300 words."},
+       {"content": "Which three events mattered most, and why?"},
+       {"content": "Now say that in one sentence."},
+       {"content": "Translate that sentence into French."}]},
+    {"type": "unload"}],
+  "expect": {"min_reused_tokens": 50, "max_ttft_ms": 20000}}'
+```
+
+Idle behaviour: keep a loaded model idle and then send one request.
+
+```sh
+post /api/bench/benchmarks '{
+  "id": "gemma12b-after-idle", "profile": "bench-gemma12b-1a-2048", "timeout_s": 900,
+  "description": "Load, wait 5 minutes idle, then one request: does the model answer as fast as before?",
+  "phases": [
+    {"type": "load"},
+    {"type": "warmup", "request": {"prompt": "Say hello in five words.", "max_tokens": 32}},
+    {"type": "requests", "requests": [{"name": "before", "prompt": "Explain what a GPU does in two sentences.", "max_tokens": 96}]},
+    {"type": "hold", "seconds": 300, "request": {"name": "after", "prompt": "Explain what a GPU does in two sentences.", "max_tokens": 96}},
+    {"type": "unload"}]}'
+```
+
+Simultaneous requests to one loaded model: `n` requests at the same moment; the
+result has each request's wait and decode speed, the total time and the errors.
+
+```sh
+post /api/bench/benchmarks '{
+  "id": "gemma12b-4-at-once", "profile": "bench-gemma12b-1a-2048",
+  "phases": [
+    {"type": "load"},
+    {"type": "concurrent_requests", "n": 4, "request": {"prompt": "Say hello in ten words.", "max_tokens": 32}},
+    {"type": "unload"}],
+  "expect": {"max_errors": 0, "max_concurrent_wall_s": 120}}'
+```
+
+A phase that sends requests, with no `load` before it, loads the model first if
+it is not loaded (and leaves it loaded for the next benchmark of the run; the end
+of the run unloads it). So `phases: [{"type": "requests", ...}]` is "requests on
+a model that is already loaded".
+
+Reading it while it runs: `curl -s $B/api/bench/state | jq .run` gives the
+whole-run percent, the benchmark and phase in flight with its own percent (for a
+load-only benchmark that is the model's load percent), the next benchmark, the
+queue and the estimated seconds left (`null` until the benchmark has run once).
+After the run, `curl -s "$B/api/bench/aggregates?benchmark=gemma12b-load-3"`
+adds the history up (min, median, mean, max, standard deviation, last, best,
+percent change of the last run against the earlier median, regression flags and
+the last 30 points for a chart); with `by_model_nodes` the same model on 1, 2 and
+3 PS5s side by side. Add `&env=same` to compare only runs made with the same
+scheduler version, configuration revision, llama binary and rpc-server versions.
 
 Notes. A run does not start while anything else is loaded or in flight
 (`only_when_idle`), so run it when the cluster is otherwise idle. The runner

@@ -35,6 +35,11 @@ type Node struct {
 	// last_recovery_action); Present is false when there is none or the fleet
 	// manager is too old to report it. Comparable, so Node stays comparable.
 	Recovery RecoveryOutcome
+
+	// Informational figures from the fleet (never used for decisions).
+	RPCServerMemMiB   float64 // the rpc-server process's memory; valid when RPCServerMemKnown
+	RPCServerMemKnown bool
+	RPCServerVersion  string // rpc-server build id; empty when not reported
 }
 
 // RecoveryOutcome is what a node reported after acting on a recovery request.

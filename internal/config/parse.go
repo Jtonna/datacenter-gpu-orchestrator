@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -62,6 +63,11 @@ func Parse(data []byte) (*Config, error) { return ParseWithOptions(data, Options
 
 // ParseWithOptions is Parse with injectable behaviour.
 func ParseWithOptions(data []byte, o Options) (*Config, error) {
+	c, _, _, err := parseYAML(data, o)
+	return c, err
+}
+
+func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*ProfileSpec, error) {
 	raw := rawConfig{
 		Listen:            ":8080",
 		Fleet:             rawFleet{StaleAfter: duration(60 * time.Second)},
@@ -77,7 +83,7 @@ func ParseWithOptions(data []byte, o Options) (*Config, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	if err := dec.Decode(&raw); err != nil && !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("config: %w", err)
+		return nil, nil, nil, fmt.Errorf("config: %w", err)
 	}
 	c := &Config{
 		Listen:       raw.Listen,
@@ -108,10 +114,10 @@ func ParseWithOptions(data []byte, o Options) (*Config, error) {
 	for k, v := range raw.NodeOverrides {
 		c.NodeOverrides[k] = NodeOverride{RPC: v.RPC}
 	}
-	rawProfiles := map[string]*rawProfile{}
+	rawProfiles := map[string]*ProfileSpec{}
 	for name, rp := range raw.Profiles {
 		if rp == nil {
-			rp = &rawProfile{}
+			rp = &ProfileSpec{}
 		}
 		rawProfiles[name] = rp
 		c.Profiles[name] = rp.toCore(name)
@@ -122,10 +128,11 @@ func ParseWithOptions(data []byte, o Options) (*Config, error) {
 	}
 	c.Bench.Enabled = c.DataDir != "" && (raw.Bench.Enabled == nil || *raw.Bench.Enabled)
 	c.benchEnabledSet = raw.Bench.Enabled
+	c.Bench.EnabledSetting = raw.Bench.Enabled == nil || *raw.Bench.Enabled
 	if err := c.validate(rawProfiles, exists); err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
-	return c, nil
+	return c, &raw, rawProfiles, nil
 }
 
 func trimAll(in []string) []string {
@@ -143,76 +150,76 @@ func trimAll(in []string) []string {
 func (c *Config) modelPath(p *core.Profile) string { return filepath.Join(c.ModelsDir, p.Model) }
 
 type rawConfig struct {
-	Listen              string                 `yaml:"listen"`
-	Fleet               rawFleet               `yaml:"fleet"`
-	ModelsDir           string                 `yaml:"models_dir"`
-	ChildLogDir         string                 `yaml:"child_log_dir"`
-	ChildLogKeep        int                    `yaml:"child_log_keep"`
-	HistoryDir          string                 `yaml:"history_dir"`
-	HistoryMaxFileMiB   int                    `yaml:"history_max_file_mib"`
-	HistoryKeepFiles    int                    `yaml:"history_keep_files"`
-	HistoryMemoryEvents int                    `yaml:"history_memory_events"`
-	LocalProbeCmd       string                 `yaml:"local_probe_cmd"`
-	DataDir             string                 `yaml:"data_dir"`
-	WSMaxClients        int                    `yaml:"ws_max_clients"`
-	Bench               rawBench               `yaml:"bench"`
-	Defaults            rawDefaults            `yaml:"defaults"`
-	Tiers               []rawTier              `yaml:"tiers"`
-	NodeOverrides       map[string]rawOverride `yaml:"node_overrides"`
-	ExcludeNodes        []string               `yaml:"exclude_nodes"`
-	Recovery            rawRecovery            `yaml:"recovery"`
-	Profiles            map[string]*rawProfile `yaml:"profiles"`
+	Listen              string                      `yaml:"listen" json:"listen,omitempty"`
+	Fleet               rawFleet                    `yaml:"fleet" json:"fleet,omitempty"`
+	ModelsDir           string                      `yaml:"models_dir" json:"models_dir,omitempty"`
+	ChildLogDir         string                      `yaml:"child_log_dir" json:"child_log_dir,omitempty"`
+	ChildLogKeep        int                         `yaml:"child_log_keep" json:"child_log_keep,omitempty"`
+	HistoryDir          string                      `yaml:"history_dir" json:"history_dir,omitempty"`
+	HistoryMaxFileMiB   int                         `yaml:"history_max_file_mib" json:"history_max_file_mib,omitempty"`
+	HistoryKeepFiles    int                         `yaml:"history_keep_files" json:"history_keep_files,omitempty"`
+	HistoryMemoryEvents int                         `yaml:"history_memory_events" json:"history_memory_events,omitempty"`
+	LocalProbeCmd       string                      `yaml:"local_probe_cmd" json:"local_probe_cmd,omitempty"`
+	DataDir             string                      `yaml:"data_dir" json:"data_dir,omitempty"`
+	WSMaxClients        int                         `yaml:"ws_max_clients" json:"ws_max_clients,omitempty"`
+	Bench               rawBench                    `yaml:"bench" json:"bench,omitempty"`
+	Defaults            rawDefaults                 `yaml:"defaults" json:"defaults,omitempty"`
+	Tiers               []TierSpec                  `yaml:"tiers" json:"tiers,omitempty"`
+	NodeOverrides       map[string]NodeOverrideSpec `yaml:"node_overrides" json:"node_overrides,omitempty"`
+	ExcludeNodes        []string                    `yaml:"exclude_nodes" json:"exclude_nodes,omitempty"`
+	Recovery            rawRecovery                 `yaml:"recovery" json:"recovery,omitempty"`
+	Profiles            map[string]*ProfileSpec     `yaml:"profiles" json:"profiles,omitempty"`
 }
 
 type rawFleet struct {
-	URL        string   `yaml:"url"`
-	LocalNode  string   `yaml:"local_node"`
-	StaleAfter duration `yaml:"stale_after"`
+	URL        string   `yaml:"url" json:"url,omitempty"`
+	LocalNode  string   `yaml:"local_node" json:"local_node,omitempty"`
+	StaleAfter duration `yaml:"stale_after" json:"stale_after,omitempty"`
 }
 
-type rawOverride struct {
-	RPC string `yaml:"rpc"`
+type NodeOverrideSpec struct {
+	RPC string `yaml:"rpc" json:"rpc,omitempty"`
 }
 
-type rawTier struct {
-	Match        rawMatch `yaml:"match"`
-	Priority     int      `yaml:"priority"`
-	HeadroomMiB  int      `yaml:"headroom_mib"`
-	SharedMemory bool     `yaml:"shared_memory"`
-	LinkMBs      float64  `yaml:"link_mb_s"`
-	Settle       duration `yaml:"settle"`
+type TierSpec struct {
+	Match        MatchSpec `yaml:"match" json:"match,omitempty"`
+	Priority     int       `yaml:"priority" json:"priority,omitempty"`
+	HeadroomMiB  int       `yaml:"headroom_mib" json:"headroom_mib,omitempty"`
+	SharedMemory bool      `yaml:"shared_memory" json:"shared_memory,omitempty"`
+	LinkMBs      float64   `yaml:"link_mb_s" json:"link_mb_s,omitempty"`
+	Settle       duration  `yaml:"settle" json:"settle,omitempty"`
 }
 
-type rawMatch struct {
-	Hostname string `yaml:"hostname"`
-	Role     string `yaml:"role"`
-	Source   string `yaml:"source"`
-	Local    *bool  `yaml:"local"`
+type MatchSpec struct {
+	Hostname string `yaml:"hostname" json:"hostname,omitempty"`
+	Role     string `yaml:"role" json:"role,omitempty"`
+	Source   string `yaml:"source" json:"source,omitempty"`
+	Local    *bool  `yaml:"local" json:"local,omitempty"`
 }
 
-// rawProfile uses pointers wherever "absent" must be told from zero.
-type rawProfile struct {
-	Kind             string    `yaml:"kind"`
-	Model            string    `yaml:"model"`
-	Ctx              *int      `yaml:"ctx"`
-	Parallel         *int      `yaml:"parallel"`
-	KVQuant          string    `yaml:"kv_quant"`
-	FlashAttn        *bool     `yaml:"flash_attn"`
-	NeedsMiB         int       `yaml:"needs_mib"`
-	AllowTiers       []int     `yaml:"allow_tiers"`
-	ForceNodes       []string  `yaml:"force_nodes"`
-	TensorSplit      []int     `yaml:"tensor_split"`
-	ExtraArgs        []string  `yaml:"extra_args"`
-	Cmd              string    `yaml:"cmd"`
-	CheckEndpoint    string    `yaml:"check_endpoint"`
-	Aliases          []string  `yaml:"aliases"`
-	TTL              *duration `yaml:"ttl"`
-	LoadTimeout      duration  `yaml:"load_timeout"`
-	StallTimeout     *duration `yaml:"stall_timeout"`
-	LoadStallTimeout *duration `yaml:"load_stall_timeout"`
+// ProfileSpec uses pointers wherever "absent" must be told from zero.
+type ProfileSpec struct {
+	Kind             string    `yaml:"kind" json:"kind,omitempty"`
+	Model            string    `yaml:"model" json:"model,omitempty"`
+	Ctx              *int      `yaml:"ctx" json:"ctx,omitempty"`
+	Parallel         *int      `yaml:"parallel" json:"parallel,omitempty"`
+	KVQuant          string    `yaml:"kv_quant" json:"kv_quant,omitempty"`
+	FlashAttn        *bool     `yaml:"flash_attn" json:"flash_attn,omitempty"`
+	NeedsMiB         int       `yaml:"needs_mib" json:"needs_mib,omitempty"`
+	AllowTiers       []int     `yaml:"allow_tiers" json:"allow_tiers,omitempty"`
+	ForceNodes       []string  `yaml:"force_nodes" json:"force_nodes,omitempty"`
+	TensorSplit      []int     `yaml:"tensor_split" json:"tensor_split,omitempty"`
+	ExtraArgs        []string  `yaml:"extra_args" json:"extra_args,omitempty"`
+	Cmd              string    `yaml:"cmd" json:"cmd,omitempty"`
+	CheckEndpoint    string    `yaml:"check_endpoint" json:"check_endpoint,omitempty"`
+	Aliases          []string  `yaml:"aliases" json:"aliases,omitempty"`
+	TTL              *duration `yaml:"ttl" json:"ttl,omitempty"`
+	LoadTimeout      duration  `yaml:"load_timeout" json:"load_timeout,omitempty"`
+	StallTimeout     *duration `yaml:"stall_timeout" json:"stall_timeout,omitempty"`
+	LoadStallTimeout *duration `yaml:"load_stall_timeout" json:"load_stall_timeout,omitempty"`
 }
 
-func (r *rawProfile) toCore(name string) *core.Profile {
+func (r *ProfileSpec) toCore(name string) *core.Profile {
 	p := &core.Profile{
 		Name: name, Kind: core.Kind(r.Kind), Model: r.Model, KVQuant: r.KVQuant,
 		NeedsMiB: r.NeedsMiB, AllowTiers: r.AllowTiers, ForceNodes: r.ForceNodes,
@@ -272,31 +279,31 @@ func (d *duration) ptr() *time.Duration {
 }
 
 type rawDefaults struct {
-	TTL                duration `yaml:"ttl"`
-	MinHold            duration `yaml:"min_hold"`
-	MaxHold            duration `yaml:"max_hold"`
-	DrainAfter         duration `yaml:"drain_after"`
-	QueueTimeout       duration `yaml:"queue_timeout"`
-	StallTimeout       duration `yaml:"stall_timeout"`
-	CommandLoadTimeout duration `yaml:"command_load_timeout"`
-	LoadStallTimeout   duration `yaml:"load_stall_timeout"`
-	ShutdownGrace      duration `yaml:"shutdown_grace"`
-	MaxPool            int      `yaml:"max_pool"`
-	DeviceOverheadMiB  int      `yaml:"device_overhead_mib"`
-	MinShareMiB        int      `yaml:"min_share_mib"`
-	CacheRAMMiB        int      `yaml:"cache_ram_mib"`
-	ServerBin          string   `yaml:"server_bin"`
-	LocalDevice        string   `yaml:"local_device"`
-	ForcedNodeGrace    duration `yaml:"forced_node_grace"`
-	ForcedFitCheck     string   `yaml:"forced_fit_check"`
+	TTL                duration `yaml:"ttl" json:"ttl,omitempty"`
+	MinHold            duration `yaml:"min_hold" json:"min_hold,omitempty"`
+	MaxHold            duration `yaml:"max_hold" json:"max_hold,omitempty"`
+	DrainAfter         duration `yaml:"drain_after" json:"drain_after,omitempty"`
+	QueueTimeout       duration `yaml:"queue_timeout" json:"queue_timeout,omitempty"`
+	StallTimeout       duration `yaml:"stall_timeout" json:"stall_timeout,omitempty"`
+	CommandLoadTimeout duration `yaml:"command_load_timeout" json:"command_load_timeout,omitempty"`
+	LoadStallTimeout   duration `yaml:"load_stall_timeout" json:"load_stall_timeout,omitempty"`
+	ShutdownGrace      duration `yaml:"shutdown_grace" json:"shutdown_grace,omitempty"`
+	MaxPool            int      `yaml:"max_pool" json:"max_pool,omitempty"`
+	DeviceOverheadMiB  int      `yaml:"device_overhead_mib" json:"device_overhead_mib,omitempty"`
+	MinShareMiB        int      `yaml:"min_share_mib" json:"min_share_mib,omitempty"`
+	CacheRAMMiB        int      `yaml:"cache_ram_mib" json:"cache_ram_mib,omitempty"`
+	ServerBin          string   `yaml:"server_bin" json:"server_bin,omitempty"`
+	LocalDevice        string   `yaml:"local_device" json:"local_device,omitempty"`
+	ForcedNodeGrace    duration `yaml:"forced_node_grace" json:"forced_node_grace,omitempty"`
+	ForcedFitCheck     string   `yaml:"forced_fit_check" json:"forced_fit_check,omitempty"`
 
-	WorkerProbeInterval        duration `yaml:"worker_probe_interval"`
-	WorkerSilence              duration `yaml:"worker_silence"`
-	WorkerProbeDuringInference bool     `yaml:"worker_probe_during_inference"`
+	WorkerProbeInterval        duration `yaml:"worker_probe_interval" json:"worker_probe_interval,omitempty"`
+	WorkerSilence              duration `yaml:"worker_silence" json:"worker_silence,omitempty"`
+	WorkerProbeDuringInference bool     `yaml:"worker_probe_during_inference" json:"worker_probe_during_inference,omitempty"`
 
-	SplitSkewMargin    float64 `yaml:"split_skew_margin"`
-	EstimateMargin     float64 `yaml:"estimate_margin"`
-	LoadMemoryFloorMiB int     `yaml:"load_memory_floor_mib"`
+	SplitSkewMargin    float64 `yaml:"split_skew_margin" json:"split_skew_margin,omitempty"`
+	EstimateMargin     float64 `yaml:"estimate_margin" json:"estimate_margin,omitempty"`
+	LoadMemoryFloorMiB int     `yaml:"load_memory_floor_mib" json:"load_memory_floor_mib,omitempty"`
 }
 
 func rawDefaultsFrom(d Defaults) rawDefaults {
@@ -319,12 +326,12 @@ func (r rawDefaults) value() Defaults {
 }
 
 type rawRecovery struct {
-	Enabled     bool     `yaml:"enabled"`
-	Actions     []string `yaml:"actions"`
-	MinInterval duration `yaml:"min_interval"`
-	StepWait    duration `yaml:"step_wait"`
-	RequestTTL  duration `yaml:"request_ttl"`
-	HTTPTimeout duration `yaml:"http_timeout"`
+	Enabled     bool     `yaml:"enabled" json:"enabled,omitempty"`
+	Actions     []string `yaml:"actions" json:"actions,omitempty"`
+	MinInterval duration `yaml:"min_interval" json:"min_interval,omitempty"`
+	StepWait    duration `yaml:"step_wait" json:"step_wait,omitempty"`
+	RequestTTL  duration `yaml:"request_ttl" json:"request_ttl,omitempty"`
+	HTTPTimeout duration `yaml:"http_timeout" json:"http_timeout,omitempty"`
 }
 
 func rawRecoveryFrom(r Recovery) rawRecovery {
@@ -338,10 +345,46 @@ func (r rawRecovery) value() Recovery {
 }
 
 type rawBench struct {
-	Enabled          *bool                  `yaml:"enabled"`
-	RegressLoadPct   float64                `yaml:"regress_load_pct"`
-	RegressDecodePct float64                `yaml:"regress_decode_pct"`
-	MaxRunMinutes    int                    `yaml:"max_run_minutes"`
-	Benchmarks       []*benchspec.Benchmark `yaml:"benchmarks"`
-	Suites           []*benchspec.Suite     `yaml:"suites"`
+	Enabled          *bool                  `yaml:"enabled" json:"enabled,omitempty"`
+	RegressLoadPct   float64                `yaml:"regress_load_pct" json:"regress_load_pct,omitempty"`
+	RegressDecodePct float64                `yaml:"regress_decode_pct" json:"regress_decode_pct,omitempty"`
+	MaxRunMinutes    int                    `yaml:"max_run_minutes" json:"max_run_minutes,omitempty"`
+	Benchmarks       []*benchspec.Benchmark `yaml:"benchmarks" json:"benchmarks,omitempty"`
+	Suites           []*benchspec.Suite     `yaml:"suites" json:"suites,omitempty"`
+}
+
+// MarshalJSON writes the duration as a string such as "5m0s".
+func (d duration) MarshalJSON() ([]byte, error) {
+	return json.Marshal(time.Duration(d).String())
+}
+
+// UnmarshalJSON accepts "300s" or a bare 0.
+func (d *duration) UnmarshalJSON(b []byte) error {
+	var v any
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	x, err := ParseDurationValue(v)
+	if err != nil {
+		return err
+	}
+	*d = duration(x)
+	return nil
+}
+
+// ParseDurationValue turns a decoded JSON value (a duration string like "300s" or the number 0) into a duration.
+func ParseDurationValue(v any) (time.Duration, error) {
+	switch t := v.(type) {
+	case string:
+		x, err := time.ParseDuration(strings.TrimSpace(t))
+		if err != nil {
+			return 0, fmt.Errorf("invalid duration %q (write it like 300s, or 0)", t)
+		}
+		return x, nil
+	case float64:
+		if t == 0 {
+			return 0, nil
+		}
+	}
+	return 0, fmt.Errorf("invalid duration %v (write it like 300s, or 0)", v)
 }

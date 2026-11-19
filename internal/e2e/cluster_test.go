@@ -89,6 +89,9 @@ type cluster struct {
 
 var modelRe = regexp.MustCompile(`(?m)^\s+model:\s*(\S+)`)
 
+// dirRe finds data_dir and history_dir lines of a test snippet.
+var dirRe = regexp.MustCompile(`(?m)^(data_dir|history_dir):\s*"([^"]+)"`)
+
 func startCluster(t *testing.T, o options) *cluster {
 	t.Helper()
 	fake := harness.BuildFakeLlama(t)
@@ -138,9 +141,30 @@ defaults:
 		t.Fatal(err)
 	}
 
+	// The YAML is imported once into the database (the only use of YAML left), then the
+	// scheduler starts from the database with the bootstrap flags.
+	dataDir := filepath.Join(dir, "data")
+	historyDir := ""
+	for _, m := range dirRe.FindAllStringSubmatch(o.topLevel, -1) {
+		switch m[1] {
+		case "data_dir":
+			dataDir = filepath.FromSlash(m[2])
+		case "history_dir":
+			historyDir = filepath.FromSlash(m[2])
+		}
+	}
+	imp := exec.Command(schedBin, "import-config", "--data-dir", dataDir, "--models-dir", models, cfgPath)
+	if out, err := imp.CombinedOutput(); err != nil {
+		t.Fatalf("import-config: %v\n%s", err, out)
+	}
+
 	c := &cluster{t: t, fleet: fl, url: fmt.Sprintf("http://127.0.0.1:%d", port), stderr: &syncBuf{},
 		startLog: filepath.Join(dir, "starts.jsonl"), done: make(chan struct{}), client: &http.Client{Timeout: 60 * time.Second}}
-	c.cmd = exec.Command(schedBin, "--config", cfgPath)
+	args := []string{"--listen", fmt.Sprintf("127.0.0.1:%d", port), "--data-dir", dataDir, "--models-dir", models}
+	if historyDir != "" {
+		args = append(args, "--history-dir", historyDir)
+	}
+	c.cmd = exec.Command(schedBin, args...)
 	for _, kv := range os.Environ() {
 		if !strings.HasPrefix(kv, "FAKELLAMA_") && !strings.HasPrefix(kv, "LLAMA_ARG_") {
 			c.cmd.Env = append(c.cmd.Env, kv)

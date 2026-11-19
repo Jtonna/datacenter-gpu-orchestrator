@@ -38,8 +38,8 @@ func (s *Server) statusView(ctx context.Context) (any, error) {
 // memory need (and where the figure comes from) and what a request for it
 // would do now (the dry-run plan). Read-only.
 func (s *Server) handleProfiles(w http.ResponseWriter, r *http.Request) {
-	names := make([]string, 0, len(s.cfg.Profiles))
-	for n := range s.cfg.Profiles {
+	names := make([]string, 0, len(s.conf().Profiles))
+	for n := range s.conf().Profiles {
 		names = append(names, n)
 	}
 	sort.Strings(names)
@@ -53,7 +53,7 @@ func (s *Server) handleProfiles(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]any, 0, len(names))
 	for _, n := range names {
-		p := s.cfg.Profiles[n]
+		p := s.conf().Profiles[n]
 		e := map[string]any{"id": n, "kind": string(p.Kind), "model": p.Model, "ctx": p.Ctx, "parallel": p.Parallel,
 			"aliases": nonNil(p.Aliases), "force_nodes": nonNil(p.ForceNodes), "tensor_split": p.TensorSplit}
 		if p.TensorSplit == nil {

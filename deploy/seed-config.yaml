@@ -1,17 +1,19 @@
-# Production config for the OMEN. Mount read-only at /etc/llm-scheduler/config.yaml.
-# Copied from configs/example.yaml (design 6, 6.1), kept identical to it apart from this
-# header and a commented measuring template appended at the end (the 2026-11-17
-# hardware-test tuning is in both). Checked against the box:
+# SEED CONFIGURATION for the OMEN. Used ONCE, as the input of
+#   llm-scheduler import-config --data-dir <dir> seed-config.yaml
+# which writes it into an empty configuration database as revision 1. After that the
+# database is the source of truth: change settings through the REST API, MCP or the web
+# UI (docs/runbook.md); editing this file changes nothing. The server never reads YAML.
+# The keys listen, models_dir, data_dir, history_dir and child_log_dir are NOT imported:
+# they are deployment paths set by flags or LLM_SCHEDULER_* variables (compose sets them).
+# Same content as configs/example.yaml (design 6, 6.1) apart from this header, checked against the box:
 #   fleet.url        host.docker.internal:8090 (compose maps it to the host)
 #   local_node       omen-runner (hostname the hub reports, host/omen-hub-nodes.py)
 #   node_overrides   none. The hub patch `hub-member-ip` went live on 2026-11-17 23:36 UTC
-#                    and the fleet list reports 10.0.0.3:50052 for the Alienware, so the
-#                    old alienware-llm override is commented out (kept as an example).
+#                    and the fleet list reports 10.0.0.3:50052 for the Alienware.
 # Lines marked PLACEHOLDER / TODO measure must be replaced with measured values
 # (docs/runbook.md section G) before the profile is relied on.
-# Validate:  docker run --rm -v $PWD/config.yaml:/etc/llm-scheduler/config.yaml:ro \
-#              -v /srv/llama-swap/models:/models:ro --entrypoint llm-scheduler \
-#              llm-scheduler:local --check-config --config /etc/llm-scheduler/config.yaml
+# Validate without writing:
+#   docker compose run --rm --no-deps llm-scheduler import-config --check /seed/seed-config.yaml
 
 # Example llm-scheduler configuration (design sections 6 and 6.1).
 # Nodes are not listed here; only how to rank them.

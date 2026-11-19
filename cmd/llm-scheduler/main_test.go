@@ -37,25 +37,51 @@ func TestVersionFlag(t *testing.T) {
 	}
 }
 
-func TestCheckConfig(t *testing.T) {
+func TestImportConfigCheckAndRefuse(t *testing.T) {
 	models := t.TempDir()
 	os.WriteFile(filepath.Join(models, "a.gguf"), []byte("x"), 0o644)
 	good := writeConfig(t, models, "  a:\n    model: a.gguf\n    ctx: 1024\n    needs_mib: 100\n")
 	var out, errb bytes.Buffer
-	if code := realMain([]string{"--check-config", "--config", good}, &out, &errb); code != 0 {
+	if code := realMain([]string{"import-config", "--check", good}, &out, &errb); code != 0 {
 		t.Fatalf("good config: exit %d: %s", code, errb.String())
 	}
 	bad := writeConfig(t, models, "  a:\n    model: missing.gguf\n    ctx: 1024\n    needs_mib: 100\n")
 	out.Reset()
 	errb.Reset()
-	if code := realMain([]string{"--check-config", "--config", bad}, &out, &errb); code != 1 {
+	if code := realMain([]string{"import-config", "--check", bad}, &out, &errb); code != 1 {
 		t.Fatalf("bad config: exit %d, want 1", code)
 	}
 	if !strings.Contains(errb.String(), "missing.gguf") {
 		t.Fatalf("errors not printed: %q", errb.String())
 	}
-	if code := realMain([]string{"--check-config", "--config", filepath.Join(models, "nope.yaml")}, &out, &errb); code != 1 {
+	if code := realMain([]string{"import-config", "--check", filepath.Join(models, "nope.yaml")}, &out, &errb); code != 1 {
 		t.Fatalf("missing file: exit %d", code)
+	}
+}
+
+func TestImportConfigWritesRevisionOneAndRefusesSecond(t *testing.T) {
+	models := t.TempDir()
+	os.WriteFile(filepath.Join(models, "a.gguf"), []byte("x"), 0o644)
+	file := writeConfig(t, models, "  a:\n    model: a.gguf\n    ctx: 1024\n    needs_mib: 100\n")
+	data := t.TempDir()
+	var out, errb bytes.Buffer
+	args := []string{"import-config", "--data-dir", data, "--models-dir", models, file}
+	if code := realMain(args, &out, &errb); code != 0 {
+		t.Fatalf("exit %d: %s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "revision 1") {
+		t.Fatalf("stdout %q", out.String())
+	}
+	out.Reset()
+	errb.Reset()
+	if code := realMain(args, &out, &errb); code != 1 || !strings.Contains(errb.String(), "--replace") {
+		t.Fatalf("second import: exit %d %q", code, errb.String())
+	}
+	out.Reset()
+	errb.Reset()
+	file2 := writeConfig(t, models, "  a:\n    model: a.gguf\n    ctx: 2048\n    needs_mib: 100\n")
+	if code := realMain([]string{"import-config", "--replace", "--data-dir", data, "--models-dir", models, file2}, &out, &errb); code != 0 || !strings.Contains(out.String(), "revision 2") {
+		t.Fatalf("replace: exit %d %q %q", code, out.String(), errb.String())
 	}
 }
 

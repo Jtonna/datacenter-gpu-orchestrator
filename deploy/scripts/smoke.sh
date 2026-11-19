@@ -1,6 +1,6 @@
 #!/bin/sh
 # Usage: smoke.sh <base-url> [--load <model>]        e.g. smoke.sh http://127.0.0.1:3122
-# Env:   CONFIG=/opt/llm-scheduler/config.yaml  (to read the expected profile names)
+# Env:   CONFIG=/opt/llm-scheduler/seed-config.yaml  (the seed file: expected profile names are read from it; the live configuration is in the database)
 # Without --load nothing is ever started (only /health, /v1/models, /running, POST /api/plan).
 # With --load: one tiny chat completion, which DOES load the model.
 set -eu
@@ -9,7 +9,7 @@ set -eu
 BASE="${1%/}"; shift
 LOAD_MODEL=""
 if [ $# -ge 2 ] && [ "$1" = "--load" ]; then LOAD_MODEL="$2"; fi
-CONFIG="${CONFIG:-/opt/llm-scheduler/config.yaml}"
+CONFIG="${CONFIG:-/opt/llm-scheduler/seed-config.yaml}"
 PROFILES="${TMPDIR:-/tmp}/smoke-profiles.$$"
 
 # jq filter giving one TSV row per device (node, model MiB, KV MiB, compute MiB) for the

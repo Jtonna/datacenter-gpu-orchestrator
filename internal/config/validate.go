@@ -30,7 +30,7 @@ var managedFlags = map[string]bool{
 
 // validate checks every startup rule and returns all violations joined, in
 // a deterministic order.
-func (c *Config) validate(raw map[string]*rawProfile, exists func(string) bool) error {
+func (c *Config) validate(raw map[string]*ProfileSpec, exists func(string) bool) error {
 	var errs []error
 	add := func(format string, a ...any) { errs = append(errs, fmt.Errorf(format, a...)) }
 
@@ -108,7 +108,7 @@ func (c *Config) validate(raw map[string]*rawProfile, exists func(string) bool) 
 	return errors.Join(errs...)
 }
 
-func (c *Config) validateLlama(p *core.Profile, r *rawProfile, pf func(field, format string, a ...any), exists func(string) bool) {
+func (c *Config) validateLlama(p *core.Profile, r *ProfileSpec, pf func(field, format string, a ...any), exists func(string) bool) {
 	if r.Cmd != "" {
 		pf("cmd", "only valid with kind: command")
 	}
@@ -177,7 +177,7 @@ func (c *Config) validateLlama(p *core.Profile, r *rawProfile, pf func(field, fo
 	}
 }
 
-func validateCommand(p *core.Profile, r *rawProfile, pf func(field, format string, a ...any)) {
+func validateCommand(p *core.Profile, r *ProfileSpec, pf func(field, format string, a ...any)) {
 	if p.Cmd == "" {
 		pf("cmd", "is required for kind: command")
 	} else if !strings.Contains(p.Cmd, "${PORT}") {

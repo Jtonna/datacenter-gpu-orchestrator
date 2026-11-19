@@ -1,4 +1,10 @@
-# Example llm-scheduler configuration (design sections 6 and 6.1).
+# Example INPUT FILE of `llm-scheduler import-config` (design sections 6 and 6.1).
+# This is the documented format of the one-time import: the scheduler itself never
+# reads YAML. The file is validated with the normal rules and written into an empty
+# configuration database as revision 1; afterwards the database is the source of truth
+# (REST /api/config, MCP, web UI) and this file is only a record of the starting point.
+# listen, models_dir, data_dir, history_dir and child_log_dir below are deployment paths:
+# they are not imported, they are set by flags or LLM_SCHEDULER_* variables.
 # Nodes are not listed here; only how to rank them.
 
 listen: ":8080"                    # mapped to 3122 by compose
