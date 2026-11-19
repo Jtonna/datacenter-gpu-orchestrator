@@ -25,12 +25,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/docs"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/api"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/config"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/fleet"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/gguf"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/instance"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/mcpserver"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/scheduler"
 )
 
@@ -203,7 +205,16 @@ func serve(cfg *config.Config, log *slog.Logger) int {
 			ChildLogDir: cfg.ChildLogDir, ModelsDir: cfg.ModelsDir, Bench: map[string]any{"enabled": benchMgr != nil, "regress_load_pct": cfg.Bench.RegressLoadPct,
 				"regress_decode_pct": cfg.Bench.RegressDecodePct, "max_run_minutes": cfg.Bench.MaxRunMinutes}}}
 	apiSrv := api.New(cfg, sched, ao)
-	httpSrv := &http.Server{Handler: apiSrv, ReadHeaderTimeout: 10 * time.Second}
+	// MCP at /mcp on the same port; its tools run in-process through apiSrv (design 9.5).
+	mcpSrv := mcpserver.New(apiSrv, mcpserver.Options{Version: version, Guide: docs.BenchmarkGuide})
+	root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { // not a ServeMux: it would clean paths the API serves verbatim
+		if r.URL.Path == "/mcp" {
+			mcpSrv.ServeHTTP(w, r)
+			return
+		}
+		apiSrv.ServeHTTP(w, r)
+	})
+	httpSrv := &http.Server{Handler: root, ReadHeaderTimeout: 10 * time.Second}
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- httpSrv.Serve(ln) }()
 	if benchMgr != nil {
