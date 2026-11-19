@@ -38,6 +38,9 @@ func (c *schedCore) arrive(w *waiter) {
 			return
 		case stStarting:
 			in.waiters = append(in.waiters, w)
+			if in.benchRun == "" {
+				in.benchRun = w.benchRun
+			}
 			return
 		}
 	}

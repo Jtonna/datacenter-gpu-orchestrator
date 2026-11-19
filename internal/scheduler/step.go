@@ -283,7 +283,7 @@ func (c *schedCore) answer(w *waiter, a answer) {
 
 func (c *schedCore) fail(w *waiter, err *Error) {
 	c.answer(w, answer{err: err})
-	c.noteRefusal(w.profile, err, 1)
+	c.noteRefusal(w.profile, err, 1, w.benchRun)
 }
 
 func (c *schedCore) failAll(ws []*waiter, err *Error) {
@@ -292,6 +292,6 @@ func (c *schedCore) failAll(ws []*waiter, err *Error) {
 		c.answer(w, answer{err: &e})
 	}
 	if len(ws) > 0 {
-		c.noteRefusal(ws[0].profile, err, len(ws))
+		c.noteRefusal(ws[0].profile, err, len(ws), ws[0].benchRun)
 	}
 }

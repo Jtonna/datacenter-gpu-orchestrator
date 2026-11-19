@@ -27,6 +27,12 @@ func (c *schedCore) startInstance(p *core.Profile, pl core.Placement, waiters []
 	}
 	in := &inst{iid: c.next(), prof: p, state: stStarting, phase: phPreflight, placement: pl,
 		created: c.now, waiters: waiters, entryCreated: e.created, entrySeq: e.seq, entryClock: e.clock}
+	for _, w := range waiters {
+		if w.benchRun != "" {
+			in.benchRun = w.benchRun
+			break
+		}
+	}
 	for _, n := range pl.Nodes {
 		ns := c.ns(n.ID)
 		switch {

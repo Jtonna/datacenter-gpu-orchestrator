@@ -52,6 +52,12 @@ func (c *schedCore) record(typ, sev, profile, summary string, nodes []string, se
 // recordInst is record for an event about an instance: its profile, the
 // nodes of its placement and its load session.
 func (c *schedCore) recordInst(in *inst, typ, sev, summary string, data map[string]any) {
+	if in.benchRun != "" {
+		if data == nil {
+			data = map[string]any{}
+		}
+		data["bench_run"] = in.benchRun
+	}
 	c.record(typ, sev, in.prof.Name, summary, c.placementNames(in), in.sessionID, data)
 }
 
@@ -241,7 +247,7 @@ func refusalRecorded(r Reason) bool {
 // noteRefusal records that requests for a profile were answered without being
 // served. The same profile and reason is recorded at most every refuseDedupe;
 // the next record says how many were left out.
-func (c *schedCore) noteRefusal(profile string, err *Error, waiters int) {
+func (c *schedCore) noteRefusal(profile string, err *Error, waiters int, benchRun string) {
 	if err == nil || !refusalRecorded(err.Reason) {
 		return
 	}
@@ -264,6 +270,9 @@ func (c *schedCore) noteRefusal(profile string, err *Error, waiters int) {
 	}
 	if err.RetryAfter > 0 {
 		data["retry_after_s"] = secs(err.RetryAfter)
+	}
+	if benchRun != "" {
+		data["bench_run"] = benchRun
 	}
 	c.record(history.TRequestRefused, history.Warn, profile,
 		fmt.Sprintf("Request for %s refused before start (%s): %s.", profile, err.Reason, trimDot(err.Message)),

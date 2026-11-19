@@ -314,7 +314,7 @@ func (s *Server) handleV1(w http.ResponseWriter, r *http.Request) {
 	ex.Prefetch(func(err error) { cancelWait(err) }, func() {
 		http.NewResponseController(w).SetReadDeadline(time.Now())
 	})
-	lease, err := s.sched.Acquire(actx, ex.Model)
+	lease, err := s.sched.AcquireFor(actx, ex.Model, benchRunHeader(r.Header.Get("X-Bench-Run")))
 	releaseWait() // admitted or answered: the body no longer waits in the queue
 	if err != nil {
 		var se *scheduler.Error
@@ -541,4 +541,22 @@ func (s *Server) handleUnload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.unload(w, r, req.Model, req.Force)
+}
+
+// benchRunHeader validates the X-Bench-Run header (the id of the benchmark run
+// that sent the request): 1 to 64 characters of letters, digits, dot, dash or
+// underscore. Anything else is ignored (the request is served untagged).
+func benchRunHeader(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" || len(v) > 64 {
+		return ""
+	}
+	for _, r := range v {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '-', r == '_':
+		default:
+			return ""
+		}
+	}
+	return v
 }

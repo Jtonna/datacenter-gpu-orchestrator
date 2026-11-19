@@ -143,6 +143,7 @@ type inst struct {
 	peerKnown   bool                 // the last count carried per-worker figures
 	peerGrowth  map[string]time.Time // per worker: when its count was first seen or last rose
 
+	benchRun   string // the bench run whose request started this instance (history records only)
 	served     int    // requests admitted (logged when the instance stops)
 	stopReason string // why it is being stopped (first reason wins), for the log
 	exit       string // how the child ended, for the log
@@ -175,6 +176,7 @@ type waiter struct {
 	arrived   time.Time
 	reply     chan answer // nil for synthetic waiters
 	answered  bool
+	benchRun  string // X-Bench-Run id of the benchmark run that sent it; only tags history records
 }
 
 // grant is a successful admission.

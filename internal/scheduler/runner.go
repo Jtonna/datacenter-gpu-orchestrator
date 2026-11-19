@@ -335,11 +335,18 @@ func errGone() *Error {
 // ReasonClientGone is returned; a lease granted at the same moment is
 // released.
 func (s *Scheduler) Acquire(ctx context.Context, model string) (*Lease, error) {
+	return s.AcquireFor(ctx, model, "")
+}
+
+// AcquireFor is Acquire for a request that carries a bench run id (the
+// X-Bench-Run header). The id only tags the history records of the load the
+// request causes (data.bench_run); scheduling is unchanged.
+func (s *Scheduler) AcquireFor(ctx context.Context, model, benchRun string) (*Lease, error) {
 	p, alias, ok := s.cfg.Resolve(model)
 	if !ok {
 		return nil, errUnknown(model)
 	}
-	w := &waiter{profile: p.Name, alias: alias, reply: make(chan answer, 1)}
+	w := &waiter{profile: p.Name, alias: alias, reply: make(chan answer, 1), benchRun: benchRun}
 	if !s.post(ctx, evAcquire{w: w}) {
 		if ctx.Err() != nil {
 			return nil, errGone()

@@ -62,6 +62,9 @@ type Store struct {
 
 	dropped atomic.Uint64
 
+	subs   map[uint64]func(Event) // live listeners (Subscribe), under mu
+	subSeq uint64
+
 	// Owned by the writer goroutine (and by Open before it starts).
 	f      *os.File
 	size   int64
@@ -298,6 +301,9 @@ func (s *Store) Record(ev Event) {
 	s.seq++
 	ev.Seq = s.seq
 	s.ring = append(s.ring, ev)
+	for _, fn := range s.subs {
+		fn(ev)
+	}
 	if len(s.ring) > s.opt.MemoryEvents {
 		s.ring = s.ring[len(s.ring)-s.opt.MemoryEvents:]
 		s.coversAll = false
@@ -782,4 +788,24 @@ func median(sorted []float64) float64 {
 		return sorted[n/2]
 	}
 	return math.Round((sorted[n/2-1]+sorted[n/2])/2*10) / 10
+}
+
+// Subscribe registers fn to be called with every event Record accepts, in
+// order, after it has its Seq. fn runs on the recording goroutine (the
+// scheduler loop's hand-off) and so must never block. The returned function
+// removes the subscription. An off store never calls fn.
+func (s *Store) Subscribe(fn func(Event)) (cancel func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.subSeq++
+	id := s.subSeq
+	if s.subs == nil {
+		s.subs = map[uint64]func(Event){}
+	}
+	s.subs[id] = fn
+	return func() {
+		s.mu.Lock()
+		delete(s.subs, id)
+		s.mu.Unlock()
+	}
 }
