@@ -208,7 +208,7 @@ registerView({
           body[key] = v;
           keys.push(key);
         }
-        if (keys.length) ops.push({ label: `${scope === 'settings' ? 'Settings' : scope === 'recovery' ? 'Recovery' : 'Fleet'}: ${keys.join(', ')}`, method: 'PATCH', path: SCOPE_PATH[scope], body });
+        if (keys.length) ops.push({ label: `${scope === 'settings' ? 'Settings' : scope === 'recovery' ? 'Recovery' : 'Fleet'}: ${keys.join(', ')}`, method: 'PATCH', path: SCOPE_PATH[scope], body, count: keys.length });
       }
       return ops;
     };
@@ -226,7 +226,7 @@ registerView({
           }
         },
       });
-      if (r && r.saved) { pending.clear(); saved = r; }
+      if (r && r.saved) { pending.clear(); saved = r; watch.clear(); }
       await load();
     }
     const discard = async () => {

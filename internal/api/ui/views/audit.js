@@ -45,9 +45,9 @@ function details(e) {
 // ---- the revision viewer ----
 
 async function viewRevision(n, current, onRollback) {
-  const body = h('div.col', { style: 'gap:14px;min-width:0' }, h('p.mut', 'Loading revision ' + n + '…'));
-  const foot = h('div.dlg-foot');
   let closeDlg = () => {};
+  const body = h('div.col', { style: 'gap:14px;min-width:0' }, h('p.mut', 'Loading revision ' + n + '…'));
+  const foot = h('div.dlg-foot', h('button', { class: 'btn lg', type: 'button', onclick: () => closeDlg(undefined) }, 'Close'));
   const dlgP = dialog({ title: 'Revision ' + n, wide: true, body: close => { closeDlg = close; return h('div.col', { style: 'gap:14px;min-width:0' }, body, foot); } });
   try {
     const [rv, dry] = await Promise.all([api.get('/api/config/revisions/' + n),
@@ -62,9 +62,9 @@ async function viewRevision(n, current, onRollback) {
         dry && dry.changed ? [h('p.mut', 'Rolling back to this revision would change:'), diffView(dry.diff)] : h('p.mut', 'It is the same as the current configuration.')],
       h('b', 'The configuration at this revision'),
       h('div.row', { style: 'gap:6px 18px;font-size:var(--fs-md)' },
-        h('span', h('b', num(profiles.length)), ' profiles'), h('span', h('b', num((cfg.tiers || []).length)), ' tiers'),
-        h('span', h('b', num((cfg.settings_set || []).length)), ' settings changed from default'),
-        h('span', h('b', num((cfg.exclude_nodes || []).length)), ' excluded nodes'), h('span', h('b', num(Object.keys(cfg.node_overrides || {}).length)), ' node overrides')),
+        h('span', plural(profiles.length, 'profile')), h('span', plural((cfg.tiers || []).length, 'tier')),
+        h('span', plural((cfg.settings_set || []).length, 'setting'), ' changed from default'),
+        h('span', plural((cfg.exclude_nodes || []).length, 'excluded node')), h('span', plural(Object.keys(cfg.node_overrides || {}).length, 'node override'))),
       h('pre.mono', { style: 'margin:0;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--inset);overflow:auto;max-height:340px;font-size:var(--fs-sm)', tabindex: '0', 'aria-label': 'The configuration document at revision ' + n }, json(rv.document || cfg))));
     foot.replaceChildren(frag(
       n === current ? null : h('button', { class: 'btn lg dng', type: 'button', onclick: () => { closeDlg(undefined); setTimeout(() => onRollback(n), 0); } }, 'Roll back to this revision…'),
@@ -212,7 +212,7 @@ registerView({
           : empty('The audit trail could not be read', error);
       } else if (!entries) body = skeleton(6);
       else if (!entries.length) {
-        body = hasFilters() || filters().range !== 'all' ? empty('No entry matches', hasFilters() ? 'Change the filters or widen the time range.' : 'Nothing was changed in this time range. Choose All time to see older entries.')
+        body = hasFilters() || filters().range !== 'all' ? empty('No entry matches', hasFilters() ? 'Change the filters or widen the time range.' : 'Nothing was changed in this time range. Choose All time to look further back. Every change to profiles, tiers, settings and benchmarks, and every load or unload asked for over REST or MCP, is recorded here.')
           : empty('Nothing has been changed yet', 'Every change to profiles, tiers, settings and benchmarks, and every load or unload asked for over REST or MCP, is recorded here with who made it and from where.');
       } else {
         const rows = [];

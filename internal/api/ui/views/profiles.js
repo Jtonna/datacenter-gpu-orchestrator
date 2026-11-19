@@ -140,7 +140,7 @@ function makeEditor(o) {
   }
 
   const el = h('section.card', { 'data-keep': '', key: 'editor-' + (mode === 'edit' ? id : mode) + '-' + Math.random().toString(36).slice(2, 7), 'aria-label': mode === 'edit' ? 'Edit ' + id : 'New profile' },
-    h('div.ch', h('h2', mode === 'edit' ? ['Edit profile ', h('span.mono', id)] : mode === 'dup' ? ['New profile, copied from ', h('span.mono', o.from)] : 'New profile'),
+    h('div.ch', h('h2', mode === 'edit' ? [o.unsaved ? 'New profile ' : 'Edit profile ', h('span.mono', id)] : mode === 'dup' ? ['New profile, copied from ', h('span.mono', o.from)] : 'New profile'),
       h('span.right', h('a', { href: href('profiles') }, 'Back to the list'))),
     h('div.cb', { style: 'display:flex;flex-direction:column;gap:22px' },
       serverBox,
@@ -237,7 +237,7 @@ registerView({
         if (!initial) { editor = { missing: id }; return; }
       }
       editor = makeEditor({
-        fields, mode, id, from, newId, initial, exists: v => !!profiles()[v] || (pending.has(v) && pending.get(v).type !== 'delete'),
+        fields, mode, id, unsaved: mode === 'edit' && !profiles()[id], from, newId, initial, exists: v => !!profiles()[v] || (pending.has(v) && pending.get(v).type !== 'delete'),
         onStage: (pid, prof, m) => {
           const existing = !!profiles()[pid];
           pending.set(pid, { type: existing ? 'update' : 'create', profile: prof, errors: [] });
@@ -281,7 +281,7 @@ registerView({
       });
       if (r && r.saved) {
         for (const id of [...pending.keys()]) pending.delete(id);
-        saved = r; editor = null; editorKey = '';
+        saved = r; watch.clear(); editor = null; editorKey = '';
         if (route.rest.length) navigate('profiles', null, null, true);
       }
       await load();
@@ -322,7 +322,8 @@ registerView({
         return h('span', { style: 'display:flex;flex-wrap:wrap;gap:4px' }, b);
       };
       const body = !rows.length ? empty(all.length ? 'No profile matches' : 'No profiles yet',
-        all.length ? 'Change the search or the filter.' : 'A profile names a model file and how to load it. Add one with New profile.')
+        all.length ? 'Change the search or the filter.' : 'A profile names a model file and how to load it. Add the first one to let the scheduler place a model.',
+        all.length ? null : button('Add the first profile', () => navigate('profiles', ['new']), 'pri sm'))
         : table({
           minWidth: 1020, rows, key: id => id, onRow: id => navigate('profiles', [id]),
           rowClass: id => (pending.has(id) && pending.get(id).type === 'delete' ? 'mut' : ''),

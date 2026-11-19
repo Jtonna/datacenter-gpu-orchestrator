@@ -150,15 +150,17 @@ registerView({
 
     const buildOps = () => {
       const ops = [];
-      if (dirtyTiers()) ops.push({ label: 'Tier list', method: 'PUT', path: '/api/config/tiers', body: { tiers: draft.tiers } });
-      if (dirtyExclude()) ops.push({ label: 'Excluded nodes', method: 'PUT', path: '/api/config/exclude-nodes', body: { exclude_nodes: draft.exclude } });
+      if (dirtyTiers()) ops.push({ label: 'Tier list', method: 'PUT', path: '/api/config/tiers', body: { tiers: draft.tiers },
+        summary: h('div.col', { style: 'gap:4px' }, h('span.mut', 'The tier list would be, in the order it is checked:'),
+          draft.tiers.map((t, i) => h('span', h('span.mono', (i + 1) + '. '), ruleSentence(t), h('span.mut', ' · priority ' + (t.priority ?? DASH))))) });
+      if (dirtyExclude()) ops.push({ label: 'Excluded nodes', method: 'PUT', path: '/api/config/exclude-nodes', body: { exclude_nodes: draft.exclude }, count: Math.max(1, Math.abs(draft.exclude.length - (cfg.exclude_nodes || []).length)) });
       if (dirtyOverrides()) ops.push({ label: 'Node overrides', method: 'PUT', path: '/api/config/node-overrides', body: { node_overrides: draft.overrides } });
       return ops;
     };
     async function review() {
       if (!draft) return;
       const r = await reviewChanges({ title: 'Review tier and node changes', getRevision: rev, buildOps, reload: async () => { await load(); } });
-      if (r && r.saved) { draft = null; saved = r; }
+      if (r && r.saved) { draft = null; saved = r; watch.clear(); }
       await load();
     }
     const discard = async () => {

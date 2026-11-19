@@ -17,7 +17,7 @@ import { dialog, diffView, badge, banner, button } from '../../core/ui.js';
 import { ago, plural } from '../../core/format.js';
 import { listen } from '../../core/store.js';
 import { href } from '../../core/router.js';
-import { SOURCES, sourceBadge, sectionName } from './data.js';
+import { SOURCES, SECTION_NAMES, sourceBadge, sectionName } from './data.js';
 
 let saving = 0;
 export const isSaving = () => saving > 0;
@@ -42,11 +42,12 @@ export function savedBanner(result, onClose) {
   return h('div.banner.info', { key: 'saved-banner', role: 'status' },
     h('span.grow', h('b', result.revision ? `Saved as revision ${result.revision}. ` : 'Saved. '),
       result.changed === false ? 'Nothing changed.' : 'It is in force now; models that are already loaded keep the definition they started with.',
-      restart.length ? [' ', h('b.warn-t', 'These keys take effect after the scheduler restarts: '), restart.map((k, i) => [i ? ', ' : '', h('span.mono', k)]), '.'] : null,
+      restart.length ? [' ', h('b.warn-t', 'These keys take effect after the scheduler restarts: '), restart.map((k, i) => [i ? ', ' : '', h('span.mono', shortKey(k))]), '.'] : null,
       ' ', h('a', { href: href('audit') }, 'See it in Audit')),
     button('Dismiss', onClose, 'sm'));
 }
 
+const shortKey = k => String(k).replace(/^settings\./, '');
 const who = ev => `${ev.actor || 'someone'} (${(SOURCES[ev.source] || [ev.source || 'unknown'])[0]})`;
 
 // watchConfig({revision, pending, refresh, redraw}) listens for "config" messages.
@@ -77,7 +78,7 @@ export function watchConfig(o) {
 export function noticeBanner(notice, o) {
   if (!notice) return null;
   const ev = notice.ev || {};
-  const what = ev.section ? sectionName(ev.section).toLowerCase() + (ev.target ? ' ' + ev.target : '') : 'the configuration';
+  const what = ev.section && SECTION_NAMES[ev.section] ? sectionName(ev.section).toLowerCase() + (ev.target ? ' ' + ev.target : '') : 'the configuration';
   if (notice.auto) {
     return h('div.banner.info', { key: 'notice', role: 'status' },
       h('span.grow', h('b', 'Updated. '), `${who(ev)} changed ${what}${ev.revision ? ' (revision ' + ev.revision + ')' : ''}; this screen shows the new state.`),
@@ -92,7 +93,7 @@ export function noticeBanner(notice, o) {
 
 // reviewChanges({title, intro, saveLabel, getRevision, buildOps, reload, onInvalid}) -> Promise of
 //   {saved, partial, revision, restart_required, changed} or undefined when closed unsaved.
-// An op is {label, method, path, body, params, forceable}. A forceable op (delete of
+// An op is {label, method, path, body, params, forceable, count (how many changes it holds), summary (a node shown above the diff)}. A forceable op (delete of
 // a profile) is sent with force=1 once the user ticked the box next to its warnings.
 export function reviewChanges(o) {
   return dialog({ title: o.title || 'Review changes', wide: true, body: close => body(o, close) });
@@ -176,21 +177,21 @@ function body(o, close) {
 
   const diffBlock = (op, r) => h('div.col', { style: 'gap:6px' },
     h('div.row', { style: 'gap:8px' }, h('b', op.label), r.changed ? null : badge('No change', 'n')),
-    r.changed ? diffView(r.diff) : h('span.mut', 'This change would not alter the configuration.'));
+    r.changed ? [op.summary || null, diffView(r.diff)] : h('span.mut', 'This change would not alter the configuration.'));
 
   function draw() {
     const kids = [];
     const rev = o.getRevision();
     if (st.phase === 'dry') kids.push(h('p.mut', 'Checking the changes against the server…'), h('div.dlg-foot', button('Cancel', () => close(undefined), 'lg')));
     if (st.phase === 'review' || st.phase === 'saving') {
-      const changed = st.res.filter(r => r.changed).length;
+      const changed = st.res.reduce((n, r, i) => n + (r.changed ? (ops[i].count || 1) : 0), 0);
       const warnings = [...new Set(st.res.flatMap(r => r.warnings || []))];
       const restart = [...new Set(st.res.flatMap(r => r.restart_required || []))];
       const needForce = ops.some((op, i) => op.forceable && (st.res[i].warnings || []).length);
       kids.push(h('p', changed ? (o.intro || `This writes a new configuration revision on top of revision ${rev}. Nothing has been saved yet.`) : 'None of these edits would change the configuration.'));
       ops.forEach((op, i) => kids.push(diffBlock(op, st.res[i])));
       if (warnings.length) kids.push(banner('warn', h('span', h('b', 'Check this first. '), warnings.map((w, i) => [i ? ' ' : '', w, w.endsWith('.') ? '' : '.']))));
-      if (restart.length) kids.push(banner('info', h('span', h('b', 'Needs a restart. '), 'These keys take effect after the scheduler restarts: ', restart.map((k, i) => [i ? ', ' : '', h('span.mono', k)]), '. They are saved now.')));
+      if (restart.length) kids.push(banner('info', h('span', h('b', 'Needs a restart. '), 'These keys take effect after the scheduler restarts: ', restart.map((k, i) => [i ? ', ' : '', h('span.mono', shortKey(k))]), '. They are saved now.')));
       if (needForce) {
         const box = h('input', { type: 'checkbox', 'aria-label': 'Delete anyway' });
         box.addEventListener('change', () => { st.force = box.checked; draw(); });
