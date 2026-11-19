@@ -148,20 +148,6 @@ func newEnv(t *testing.T, upstream http.Handler, mod ...func(*Options)) *env {
 		}
 	}
 	e := &env{t: t, cfg: cfg, upstream: up, logs: &syncBuf{}, clock: time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC)}
-	sched, err := scheduler.New(cfg, scheduler.Options{
-		View: &fakeView{ch: make(chan struct{}, 1)}, Prober: noProber{}, Launcher: &fakeLauncher{port: port},
-		Needs: scheduler.NeedFunc(func(p *core.Profile) (scheduler.NeedInfo, error) {
-			return scheduler.NeedInfo{Need: placer.Measured(p.NeedsMiB), FileBytes: 1 << 20}, nil
-		}),
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	e.sched = sched
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() { sched.Run(ctx); close(done) }()
 	opts := Options{
 		Logger:       slog.New(slog.NewTextHandler(e.logs, nil)),
 		Now:          func() time.Time { e.nowMu.Lock(); defer e.nowMu.Unlock(); return e.clock },
@@ -170,6 +156,24 @@ func newEnv(t *testing.T, upstream http.Handler, mod ...func(*Options)) *env {
 	for _, m := range mod {
 		m(&opts)
 	}
+	so := scheduler.Options{
+		View: &fakeView{ch: make(chan struct{}, 1)}, Prober: noProber{}, Launcher: &fakeLauncher{port: port},
+		Needs: scheduler.NeedFunc(func(p *core.Profile) (scheduler.NeedInfo, error) {
+			return scheduler.NeedInfo{Need: placer.Measured(p.NeedsMiB), FileBytes: 1 << 20}, nil
+		}),
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	if opts.History != nil {
+		so.History = opts.History
+	}
+	sched, err := scheduler.New(cfg, so)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.sched = sched
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { sched.Run(ctx); close(done) }()
 	e.api = New(cfg, sched, opts)
 	e.front = httptest.NewServer(e.api)
 	t.Cleanup(func() {

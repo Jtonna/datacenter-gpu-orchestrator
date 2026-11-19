@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
 )
 
 // Worker health detection (design 8.4a). Detection and reporting only: a
@@ -82,6 +83,11 @@ type workerHealth struct {
 	addr  string
 	state string
 	since time.Time // when the state was entered
+
+	// lost: node loss killed the instance that used this worker while it was
+	// offline or absent in a live view. It is then kept as hung, with no instance
+	// using it, until it is seen online in a live view again (keepLostNodeHung).
+	lost bool
 
 	// The last evaluation, for status.
 	ch       [nChannels]string
@@ -296,15 +302,34 @@ func (c *schedCore) workerHealthStep() {
 		watched = append(watched, id)
 	}
 	sort.Slice(watched, func(i, j int) bool { return watched[i] < watched[j] })
+	// A lost node is back when a live view shows it online. It stays in the
+	// table for this step (so its recovery episode ends with the right reason).
+	returned := map[core.NodeID]bool{}
 	for _, id := range watched {
-		if use[id] == nil {
-			c.dropHealth(id, c.health[id])
+		if h := c.health[id]; h.lost && c.fresh {
+			if n, ok := c.raw[id]; ok && n.Online {
+				h.lost = false
+				returned[id] = true
+			}
+		}
+	}
+	for _, id := range watched {
+		if h := c.health[id]; use[id] == nil && !h.lost && !returned[id] {
+			c.dropHealth(id, h)
+		}
+	}
+	for _, id := range watched {
+		if returned[id] && use[id] == nil {
+			c.setHealth(id, c.health[id], nil, HealthOK, timeZero)
 		}
 	}
 	for _, id := range c.sortedNodeIDs() {
 		u := use[id]
 		if u == nil {
 			continue
+		}
+		if h := c.health[id]; h != nil && h.lost {
+			continue // killed off by node loss and not back yet: nothing to evaluate
 		}
 		h := c.health[id]
 		if h == nil || h.addr != u.addr {
@@ -319,24 +344,79 @@ func (c *schedCore) workerHealthStep() {
 		}
 		c.evalChannels(id, h, u)
 		if next := c.healthState(h); next != h.state {
-			c.setHealth(id, h, u, next)
+			c.setHealth(id, h, u, next, timeZero)
 		}
 	}
 }
 
-func (c *schedCore) setHealth(id core.NodeID, h *workerHealth, u *workerUse, next string) {
+// keepLostNodeHung is design 8.4a's rule for a node that node loss has just
+// killed an instance on: it was offline or absent for nodeLossAfter, so its
+// heartbeat is silent, and with no instance using it the normal tracking would
+// forget it before it could ever be called hung. It is kept as hung (heartbeat
+// silent since it went missing), quarantined, until a live view shows it online
+// again; recovery requests, when enabled, run on that episode as for any hung node.
+func (c *schedCore) keepLostNodeHung(id core.NodeID, in *inst) {
+	missingSince := c.ns(id).missingSince
+	addr := ""
+	for _, pn := range in.placement.Nodes {
+		if pn.ID == id {
+			addr = pn.Addr
+		}
+	}
+	h := c.health[id]
+	if h == nil {
+		h = &workerHealth{addr: addr, state: HealthOK, since: c.now}
+		c.health[id] = h
+	}
+	h.lost = true
+	if h.state == HealthHung {
+		return // already hung (and quarantined) with its own episode start
+	}
+	h.ch = [nChannels]string{ChanUnknown, ChanSilent, ChanUnknown}
+	h.silentAt = [nChannels]time.Time{}
+	h.silentAt[chHeartbeat] = missingSince
+	c.setHealth(id, h, &workerUse{addr: addr, insts: []*inst{in}}, HealthHung, missingSince)
+}
+
+// setHealth enters a new state. since is when it began (zero: now); a node
+// kept hung after node loss began its episode when it went missing.
+func (c *schedCore) setHealth(id core.NodeID, h *workerHealth, u *workerUse, next string, since time.Time) {
 	prev, prevSince := h.state, h.since
-	h.state, h.since = next, c.now
+	if since.IsZero() {
+		since = c.now
+	}
+	h.state, h.since = next, since
 	c.changed = true
 	c.emit(FeedWorkerHealth, "", func(e *FeedEvent) {
 		e.Worker = &WorkerHealthEvent{Node: id, Addr: h.addr, Health: c.healthStatus(h)}
 	})
+	insts := ""
+	if u != nil {
+		insts = instNames(u)
+	}
+	name := c.nodeName(id)
+	data := map[string]any{"state": next, "previous": prev, "addr": h.addr, "instances": insts,
+		"channels": map[string]any{"upload": h.ch[chUpload], "heartbeat": h.ch[chHeartbeat], "probe": h.ch[chProbe]},
+		"silent":   c.silentText(h), "node_lost": h.lost}
 	switch {
 	case next == HealthHung:
-		c.log.Error("worker hung", "node", id, "addr", h.addr, "silent", c.silentText(h), "instances", instNames(u))
+		c.log.Error("worker hung", "node", id, "addr", h.addr, "silent", c.silentText(h), "instances", insts)
+		c.record(history.TWorkerHealth, history.Error, "",
+			fmt.Sprintf("Worker %s is hung (%s); its node is quarantined.", name, c.silentText(h)), []string{name}, "", data)
 		c.quarantine(id, errWorkerHung)
 	case prev == HealthHung:
-		c.log.Info("worker recovered", "node", id, "addr", h.addr, "hung_for", c.now.Sub(prevSince).Round(time.Second))
+		hung := c.now.Sub(prevSince)
+		c.log.Info("worker recovered", "node", id, "addr", h.addr, "hung_for", hung.Round(time.Second))
+		data["hung_for_s"] = secs(hung)
+		c.record(history.TWorkerHealth, history.Info, "",
+			fmt.Sprintf("Worker %s recovered after being hung for %s.", name, hung.Round(time.Second)), []string{name}, "", data)
+	default:
+		sev := history.Info
+		if next == HealthSuspect {
+			sev = history.Warn
+		}
+		c.record(history.TWorkerHealth, sev, "",
+			fmt.Sprintf("Worker %s health is now %s (was %s).", name, next, prev), []string{name}, "", data)
 	}
 }
 

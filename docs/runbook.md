@@ -396,7 +396,7 @@ recovery:
   # http_timeout: 3s
 ```
 
-What it sends: one `POST <fleet.url>/api/recovery/<node id>` (the id percent-encoded, colons as `%3A`) with `{"v":1,"target_node_id","action","reason","issued_at","expires_at","nonce"}`, the first time a worker that backs a model turns `hung`, for any remote node an instance is using, never the OMEN or an excluded node. With more actions it waits `step_wait` (at least `min_interval` in all) and sends the next one if the node is still hung; it sends at most one request per listed action per hung episode, and stops and resets when the node is healthy again. A `5xx` or timeout is retried once after 10 s with a new nonce; a `400/403/404/409/410/422/429` is not retried.
+What it sends: one `POST <fleet.url>/api/recovery/<node id>` (the id percent-encoded, colons as `%3A`) with `{"v":1,"target_node_id","action","reason","issued_at","expires_at","nonce"}`, the first time a worker that backs a model turns `hung`, for any remote node an instance is using, never the OMEN or an excluded node. With more actions it waits `step_wait` (at least `min_interval` in all) and sends the next one if the node is still hung; it sends at most one request per listed action per hung episode, and stops and resets when the node is healthy again. A `5xx` or timeout is retried once after 10 s with a new nonce; a `400/403/404/409/410/422/429` is not retried and **stops the escalation for that hung episode** (WARN `recovery sequence stopped`), so a refused restart is never followed by a reboot request.
 
 **WARNING: `restart_docker` and `reboot` are off by default and interrupt everything on that machine** (every model it serves, every container, every other job). Add them to `actions` only if you accept that, and only in the order `restart_rpc_server`, `restart_docker`, `reboot`.
 
@@ -412,6 +412,32 @@ Read it in `GET /api/status`: each node that was sent a request, or whose outcom
 - `last_outcome` is what the PS5 reported (`ok` or `failed`); `last_outcome.nonce` equal to `last_request.nonce` means it answers that request. `failed` makes the next step go as soon as `min_interval` allows.
 - `step` is how many steps this hung episode has sent; `episode_started` is there only while the node is hung. After recovery it goes back to `0` and is omitted, while `last_request` and `last_outcome` stay.
 - Log lines (INFO unless noted): `recovery request sent`, `recovery request stored`, WARN `recovery request refused` / `recovery request failed` (with `status` and the response `body`), `recovery outcome`, `recovery sequence reset`, WARN `recovery sequence finished and worker still hung`. The `/api/events` stream sends `recoveryRequest` when a request is sent and when an outcome is seen.
+
+### Event history and the dashboard
+
+The scheduler keeps its safety and lifecycle events (loads and how they ended, stalls, low-memory cancels, lost and hung nodes, quarantines, recovery requests and answers, evictions, unloads with their reason, fleet view and feed trouble, per-minute memory of the PS5s in use) in `/opt/llm-scheduler/history` on the OMEN (`history_dir` in `config.yaml`, mounted by compose as `./history`). JSON Lines, files named `events-<UTC time>.jsonl`, rotated at 16 MiB, 20 files kept (`history_max_file_mib`, `history_keep_files`). It survives restarts and image swaps; the newest 5000 events are reloaded into memory at start. If startup logs `history_dir is not usable` the history is off until the directory is fixed and the scheduler restarted; scheduling is never affected.
+
+Open the dashboard from any machine on the LAN: `http://<omen>:3122/ui/`. It is read-only. Pick a time range at the top, read Incidents first, click a row for the full record and the other events of the same load (`session_id`).
+
+Query it with curl:
+
+```sh
+B=http://127.0.0.1:3122
+SINCE=$(( ($(date +%s) - 6*3600) * 1000 ))
+curl -s "$B/api/history?severity=warn&since=$SINCE" | jq '.events[] | {ts, type, severity, summary}'
+curl -s "$B/api/history?type=nodeLost,workerHealth&node=ps5-062e1d84&limit=50" | jq '.events[].summary'
+curl -s "$B/api/history?session_id=ld-1795055840000-3&order=asc" | jq '.events[] | [.type, .summary]'
+curl -s "$B/api/history/summary?since=$SINCE" | jq '{loads, profiles, nodes, incidents: (.incidents | length)}'
+```
+
+Export a range, or copy the files:
+
+```sh
+curl -s "$B/api/history/export?since=$SINCE" > history-last6h.jsonl     # the same link is on the dashboard
+ls /opt/llm-scheduler/history                                              # the raw files, jq works on them too
+```
+
+`history` in the answer says `off` when `history_dir` is empty. `truncated: true` means more events match than were returned: narrow the range or raise `limit` (at most 2000).
 
 ### Child output logs
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/config"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/instance"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/placer"
 )
@@ -76,6 +77,9 @@ func (c *schedCore) preflightDone(iid uint64, results []probeOutcome) {
 				kind = pe.Kind.String()
 			}
 			c.log.Warn("pre-flight failed", "profile", in.prof.Name, "node", r.id, "addr", r.addr, "kind", kind, "duration", r.took, "err", r.err)
+			c.record(history.TPreflightFailed, history.Warn, in.prof.Name,
+				fmt.Sprintf("Pre-flight of %s failed for %s (%s): %v.", in.prof.Name, c.nodeName(r.id), kind, r.err),
+				[]string{c.nodeName(r.id)}, "", map[string]any{"kind": kind, "addr": r.addr, "duration_s": secs(r.took), "err": r.err.Error()})
 			if pe != nil && pe.Stderr != "" {
 				c.log.Debug("pre-flight raw output", "node", r.id, "addr", r.addr, "stderr", pe.Stderr)
 			}
@@ -332,6 +336,9 @@ func (c *schedCore) removeInst(in *inst, settle bool) {
 		}
 		c.log.Info("instance stopped", "profile", in.prof.Name, "reason", c.stopReasonOf(in), "loaded_for", loadedFor,
 			"requests_served", in.served, "exit", in.exit)
+		if !in.readyAt.IsZero() {
+			c.historyUnloaded(in)
+		}
 	}
 	c.emitState(in, RunningStopped)
 }
@@ -373,6 +380,9 @@ func (c *schedCore) exited(iid uint64, st instance.ExitStatus) {
 	default:
 		if in.state != stStopping {
 			c.log.Error("instance exited unexpectedly", "profile", in.prof.Name, "exit", in.exit, "in_flight", in.inFlight)
+			c.recordInst(in, history.TChildExited, history.Error,
+				fmt.Sprintf("The %s child exited while the instance was %s (%s) with %d requests in flight.", in.prof.Name, in.state, in.exit, in.inFlight),
+				map[string]any{"exit": in.exit, "state": in.state.String(), "in_flight": in.inFlight, "requests_served": in.served})
 			in.stopReason = "child exited"
 		}
 		// ready or draining: in-flight requests fail on their own (the

@@ -3,13 +3,16 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/config"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/testutil/ggufgen"
 )
 
@@ -128,5 +131,45 @@ func TestExitCodeAfterShutdown(t *testing.T) {
 	}
 	if out := buf.String(); !strings.Contains(out, "level=ERROR") || !strings.Contains(out, "killed") {
 		t.Fatalf("no explanation logged: %q", out)
+	}
+}
+
+func TestHistoryStartedAndStoppingEvents(t *testing.T) {
+	models := t.TempDir()
+	os.WriteFile(filepath.Join(models, "a.gguf"), []byte("x"), 0o644)
+	cfg, err := config.Load(writeConfig(t, models, "  a:\n    model: a.gguf\n    ctx: 1024\n    needs_mib: 100\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	e := startedEvent(cfg, "9.9.9", now)
+	if e.Type != "schedulerStarted" || e.Data["version"] != "9.9.9" || e.Data["profiles"] != 1 || !strings.Contains(e.Summary, "9.9.9") {
+		t.Fatalf("%+v", e)
+	}
+	safety := e.Data["safety"].(map[string]any)
+	if safety["load_memory_floor_mib"] != 768 || safety["split_skew_margin"] != 0.15 || safety["recovery_enabled"] != false {
+		t.Fatalf("safety %+v", safety)
+	}
+	if _, err := json.Marshal(e); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(e)
+	t.Logf("%s", b)
+	s := stoppingEvent("terminated", now)
+	if s.Type != "schedulerStopping" || s.Data["reason"] != "terminated" {
+		t.Fatalf("%+v", s)
+	}
+	b, _ = json.Marshal(s)
+	t.Logf("%s", b)
+	// Written through a store, they survive a restart.
+	dir := t.TempDir()
+	st := history.Open(history.Options{Dir: dir})
+	st.Record(e)
+	st.Record(s)
+	st.Close()
+	st = history.Open(history.Options{Dir: dir})
+	defer st.Close()
+	if r := st.Query(history.Query{Asc: true}); len(r.Events) != 2 || r.Events[0].Type != "schedulerStarted" {
+		t.Fatalf("%+v", r)
 	}
 }

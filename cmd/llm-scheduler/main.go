@@ -29,6 +29,7 @@ import (
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/config"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/fleet"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/gguf"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/instance"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/scheduler"
 )
@@ -168,12 +169,23 @@ func serve(cfg *config.Config, log *slog.Logger) int {
 		log.Info("keeping each child's full output", "dir", launcher.LogDir, "keep", cfg.ChildLogKeep)
 	}
 
-	sched, err := scheduler.New(cfg, scheduler.Options{
+	// The event history: opened before the scheduler so that its first events are kept. It
+	// never fails and never blocks scheduling (a bad directory only warns).
+	hist := history.Open(history.Options{Dir: cfg.HistoryDir, MaxFileBytes: int64(cfg.HistoryMaxFileMiB) << 20,
+		KeepFiles: cfg.HistoryKeepFiles, MemoryEvents: cfg.HistoryMemoryEvents, Logger: log})
+	defer hist.Close()
+	hist.Record(startedEvent(cfg, version, time.Now()))
+
+	so := scheduler.Options{
 		View:     fc,
 		Prober:   &instance.ExecProber{ServerBin: cfg.Defaults.ServerBin},
 		Launcher: launcher,
 		Logger:   log,
-	})
+	}
+	if hist.On() {
+		so.History = hist
+	}
+	sched, err := scheduler.New(cfg, so)
 	if err != nil {
 		log.Error("scheduler", "err", err)
 		ln.Close()
@@ -182,7 +194,7 @@ func serve(cfg *config.Config, log *slog.Logger) int {
 	schedDone := make(chan struct{})
 	go func() { sched.Run(bg); close(schedDone) }()
 
-	apiSrv := api.New(cfg, sched, api.Options{Logger: log})
+	apiSrv := api.New(cfg, sched, api.Options{Logger: log, History: hist, Version: version})
 	httpSrv := &http.Server{Handler: apiSrv, ReadHeaderTimeout: 10 * time.Second}
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- httpSrv.Serve(ln) }()
@@ -194,8 +206,10 @@ func serve(cfg *config.Config, log *slog.Logger) int {
 	select {
 	case s := <-sigs:
 		log.Info("shutting down", "signal", s.String())
+		hist.Record(stoppingEvent(s.String(), time.Now()))
 	case err := <-serveErr:
 		log.Error("HTTP server failed", "err", err)
+		hist.Record(stoppingEvent("HTTP server failed: "+err.Error(), time.Now()))
 		code = 1
 	}
 

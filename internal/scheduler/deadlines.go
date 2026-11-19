@@ -93,6 +93,7 @@ func (c *schedCore) nextDeadline() (time.Time, bool) {
 	}
 
 	c.healthDeadlines(add)
+	c.memoryDeadlines(add)
 	c.recoveryDeadlines(add)
 
 	if c.shutdown && !c.stopAll {

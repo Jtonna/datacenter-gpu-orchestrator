@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
 )
 
 // Recovery requests (design 8.4b). When worker health marks a remote worker
@@ -121,6 +122,7 @@ type recoveryNode struct {
 	retried   bool      // the current step already used its retry
 	advance   bool      // the node reported curNonce failed: do not wait step_wait
 	spent     bool      // "sequence finished" logged for this episode
+	stopped   bool      // a request was refused: no more steps this episode
 
 	// Across episodes.
 	lastSent time.Time // when a request was last posted; min_interval counts from it
@@ -165,7 +167,7 @@ func (c *schedCore) recoveryStep() {
 		}
 		if !rs.active {
 			rs.active, rs.started, rs.step, rs.stepAt = true, c.now, 0, timeZero
-			rs.retryAt, rs.retried, rs.advance, rs.spent = timeZero, false, false, false
+			rs.retryAt, rs.retried, rs.advance, rs.spent, rs.stopped = timeZero, false, false, false, false
 			rs.curAction, rs.curNonce = "", ""
 			rs.epoch++
 			c.log.Info("recovery episode started", "node", id, "actions", strings.Join(c.cfg.Recovery.Actions, ","))
@@ -192,7 +194,7 @@ func (c *schedCore) recoveryReset(id core.NodeID, rs *recoveryNode, h *workerHea
 	}
 	c.log.Info("recovery sequence reset", "node", id, "reason", why, "steps_sent", rs.step,
 		"episode", c.now.Sub(rs.started).Round(time.Second))
-	rs.active, rs.step = false, 0
+	rs.active, rs.step, rs.stopped = false, 0, false
 	rs.retryAt, rs.retried, rs.advance = timeZero, false, false
 	rs.epoch++
 	c.changed = true
@@ -218,7 +220,7 @@ func (c *schedCore) recoveryNextAt(rs *recoveryNode) (time.Time, bool) {
 // recoverySend sends the next request of the episode if one is due and the
 // view is live.
 func (c *schedCore) recoverySend(id core.NodeID, h *workerHealth, rs *recoveryNode) {
-	if rs.posting {
+	if rs.posting || rs.stopped {
 		return
 	}
 	if !rs.retryAt.IsZero() {
@@ -235,6 +237,10 @@ func (c *schedCore) recoverySend(id core.NodeID, h *workerHealth, rs *recoveryNo
 			rs.spent = true
 			c.log.Warn("recovery sequence finished and worker still hung", "node", id,
 				"actions", strings.Join(c.cfg.Recovery.Actions, ","))
+			c.record(history.TRecoveryStopped, history.Warn, "",
+				fmt.Sprintf("The recovery sequence for %s finished (%s) and the worker is still hung.", c.nodeName(id),
+					strings.Join(c.cfg.Recovery.Actions, ", ")), []string{c.nodeName(id)}, "",
+				map[string]any{"reason": "every action was sent", "actions": c.cfg.Recovery.Actions})
 		}
 		return
 	}
@@ -283,6 +289,10 @@ func (c *schedCore) recoveryPost(id core.NodeID, h *workerHealth, rs *recoveryNo
 	c.log.Info("recovery request sent", "node", id, "action", action, "nonce", rec.Nonce, "reason", rec.Reason,
 		"step", rs.step, "of", len(r.Actions))
 	c.changed = true
+	c.record(history.TRecoveryRequest, history.Info, "",
+		fmt.Sprintf("Recovery request %s sent for %s (step %d of %d): %s.", action, c.nodeName(id), rs.step, len(r.Actions), rec.Reason),
+		[]string{c.nodeName(id)}, "", map[string]any{"action": action, "nonce": rec.Nonce, "step": rs.step, "of": len(r.Actions),
+			"reason": rec.Reason, "expires_at": rec.ExpiresAt})
 	c.emitRecovery(id, "sent")
 	c.effects = append(c.effects, effRecoveryPost{id: id, epoch: rs.epoch, action: action, nonce: rec.Nonce,
 		url: recoveryURL(c.cfg.Fleet.URL, id), body: body, timeout: r.HTTPTimeout})
@@ -314,6 +324,31 @@ func (c *schedCore) recoveryPosted(e evRecoveryPosted) {
 	}
 	if rs.lastReq != nil && rs.lastReq.Nonce == e.nonce {
 		rs.lastReq.Status, rs.lastReq.HTTPStatus = status, e.status
+	}
+	sev := history.Info
+	if status != RecoveryStored {
+		sev = history.Warn
+	}
+	name := c.nodeName(e.id)
+	resp := map[string]any{"action": e.action, "nonce": e.nonce, "outcome": status, "http_status": e.status}
+	text := fmt.Sprintf("The fleet manager answered the %s request for %s with HTTP %d (%s).", e.action, name, e.status, status)
+	if e.err != nil {
+		resp["err"] = e.err.Error()
+		text = fmt.Sprintf("The %s request for %s got no answer from the fleet manager: %v.", e.action, name, e.err)
+	} else if e.tail != "" {
+		resp["body"] = e.tail
+	}
+	c.record(history.TRecoveryResponse, sev, "", text, []string{name}, "", resp)
+	if status == RecoveryRefused && current && rs.active && rs.epoch == e.epoch {
+		// A refused request ends the escalation for this hung episode: the
+		// next step (a reboot, say) must not follow a restart that was refused.
+		rs.stopped, rs.retryAt = true, timeZero
+		c.log.Warn("recovery sequence stopped", "node", e.id, "action", e.action, "status", e.status,
+			"reason", "the fleet manager refused the request; no further steps this episode", "body", e.tail)
+		c.record(history.TRecoveryStopped, history.Warn, "",
+			fmt.Sprintf("The recovery sequence for %s stopped: the %s request was refused with HTTP %d, so no further step is sent this episode.",
+				name, e.action, e.status), []string{name}, "",
+			map[string]any{"reason": "request refused", "action": e.action, "http_status": e.status, "body": e.tail})
 	}
 	c.changed = true
 	if retry && current && rs.active && rs.epoch == e.epoch && !rs.retried {
@@ -351,6 +386,14 @@ func (c *schedCore) recoveryOutcomes() {
 		rs.lastOut = &out
 		c.log.Info("recovery outcome", "node", id, "action", o.Action, "outcome", o.Outcome, "nonce", o.Nonce,
 			"reason", o.Reason, "duration_ms", o.DurationMs, "ours", slices.Contains(rs.sent, o.Nonce))
+		osev := history.Info
+		if o.Outcome == "failed" {
+			osev = history.Warn
+		}
+		c.record(history.TRecoveryOutcome, osev, "",
+			fmt.Sprintf("Node %s reported %s of %s after %d ms.", c.nodeName(id), o.Outcome, o.Action, o.DurationMs),
+			[]string{c.nodeName(id)}, "", map[string]any{"action": o.Action, "outcome": o.Outcome, "nonce": o.Nonce, "reason": o.Reason,
+				"duration_ms": o.DurationMs, "ours": slices.Contains(rs.sent, o.Nonce), "at": o.At})
 		if rs.active && o.Nonce == rs.curNonce && o.Outcome == "failed" {
 			rs.advance = true
 		}
@@ -393,7 +436,7 @@ func (c *schedCore) recoveryDeadlines(add func(time.Time)) {
 		return
 	}
 	for _, rs := range c.recov {
-		if !rs.active || rs.posting {
+		if !rs.active || rs.posting || rs.stopped {
 			continue
 		}
 		if !rs.retryAt.IsZero() {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/config"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/instance"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/placer"
 )
@@ -51,7 +52,8 @@ type harness struct {
 	queue    []event
 	stepping bool
 	trace    []string
-	feedLog  []FeedEvent // every feed event taken after a step
+	feedLog  []FeedEvent     // every feed event taken after a step
+	histLog  []history.Event // every history event taken after a step
 }
 
 func ptrDur(d time.Duration) *time.Duration { return &d }
@@ -229,6 +231,7 @@ func (h *harness) drain() {
 		}
 	}
 	h.feedLog = append(h.feedLog, h.c.takeFeed()...)
+	h.histLog = append(h.histLog, h.c.takeHistory()...)
 }
 
 func (h *harness) runProbe(ef effProbe) event {

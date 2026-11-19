@@ -87,6 +87,10 @@ func TestDeployConfigMatchesExample(t *testing.T) {
 		t.Errorf("deploy/config.yaml should set child_log_dir")
 	}
 	b.ChildLogDir = a.ChildLogDir
+	if b.HistoryDir == "" {
+		t.Errorf("deploy/config.yaml should set history_dir")
+	}
+	b.HistoryDir = a.HistoryDir
 	if !reflect.DeepEqual(a, b) {
 		t.Fatalf("deploy/config.yaml parses differently from configs/example.yaml: %+v vs %+v", a, b)
 	}
@@ -109,5 +113,25 @@ func TestExampleConfigsDocumentTheMemorySafetyDefaults(t *testing.T) {
 	d := DefaultDefaults()
 	if d.SplitSkewMargin != 0.15 || d.EstimateMargin != 0.05 || d.LoadMemoryFloorMiB != 768 {
 		t.Errorf("defaults %+v", d)
+	}
+}
+
+// The history keys are documented as commented defaults in both files, with
+// the values the parser applies.
+func TestExampleConfigsDocumentTheHistoryDefaults(t *testing.T) {
+	for _, rel := range []string{"configs/example.yaml", "deploy/config.yaml"} {
+		b, err := os.ReadFile(filepath.Join("..", "..", rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{"history_dir:", "# history_max_file_mib: 16", "# history_keep_files: 20", "# history_memory_events: 5000"} {
+			if !strings.Contains(string(b), want) {
+				t.Errorf("%s lacks %q", rel, want)
+			}
+		}
+	}
+	c := mustParse(t, "profiles: {}\n")
+	if c.HistoryMaxFileMiB != 16 || c.HistoryKeepFiles != 20 || c.HistoryMemoryEvents != 5000 {
+		t.Errorf("defaults %+v", c)
 	}
 }

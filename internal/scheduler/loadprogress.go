@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/instance"
 )
 
@@ -260,8 +261,22 @@ func (c *schedCore) failStalledLoad(in *inst, quiet time.Duration) {
 	limit := c.cfg.EffectiveLoadStallTimeout(in.prof)
 	c.log.Error("load stalled", "profile", in.prof.Name, "bytes_sent", in.sentBytes, "bytes_total", in.remoteBytes,
 		"stalled", quiet.Round(time.Second), "limit", limit, "workers", c.workerBytesText(in))
+	c.recordInst(in, history.TLoadStalled, history.Error,
+		fmt.Sprintf("Loading %s stalled: the workers acknowledged no new bytes for %s (%d of %d bytes sent).",
+			in.prof.Name, quiet.Round(time.Second), in.sentBytes, in.remoteBytes),
+		map[string]any{"stalled_s": secs(quiet), "limit_s": secs(limit), "bytes_sent": in.sentBytes, "bytes_total": in.remoteBytes,
+			"per_worker_bytes": c.workerBytesMap(in)})
 	c.failLoad(in, fmt.Sprintf("load stalled: no bytes acknowledged by the workers for %v (sent %d of %d)",
 		limit, in.sentBytes, in.remoteBytes), nil, false)
+}
+
+// workerBytesMap is the bytes each worker acknowledged, by address.
+func (c *schedCore) workerBytesMap(in *inst) map[string]any {
+	out := map[string]any{}
+	for _, p := range in.peers {
+		out[p] = in.peerSent[p]
+	}
+	return out
 }
 
 // workerBytesText is "addr=bytes" per worker, for the log.

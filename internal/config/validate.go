@@ -291,6 +291,17 @@ func (c *Config) validateDefaults(add func(string, ...any)) {
 	if c.ChildLogKeep < 1 {
 		add("child_log_keep: must be at least 1, got %d", c.ChildLogKeep)
 	}
+	if c.HistoryMaxFileMiB < 1 {
+		add("history_max_file_mib: must be at least 1, got %d", c.HistoryMaxFileMiB)
+	}
+	if c.HistoryKeepFiles < 1 {
+		add("history_keep_files: must be at least 1, got %d", c.HistoryKeepFiles)
+	}
+	if c.HistoryMemoryEvents < 1 {
+		add("history_memory_events: must be at least 1, got %d", c.HistoryMemoryEvents)
+	} else if c.HistoryMemoryEvents > MaxHistoryMemoryEvents {
+		add("history_memory_events: must be at most %d, got %d", MaxHistoryMemoryEvents, c.HistoryMemoryEvents)
+	}
 	if c.Fleet.StaleAfter <= 0 {
 		add("fleet: stale_after: must be positive, got %v", c.Fleet.StaleAfter)
 	}

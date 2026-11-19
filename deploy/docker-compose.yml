@@ -26,6 +26,9 @@ services:
       # Full output of every child llama-server, one file per start (child_log_dir
       # in config.yaml). Created on first start if missing; old files are pruned.
       - ./logs:/var/log/llm-children
+      # The event history (history_dir in config.yaml): JSON Lines, rotated by size,
+      # read by GET /api/history and the dashboard at /ui/. Survives image swaps.
+      - ./history:/var/lib/llm-scheduler/history
       # No /run/avahi-daemon mount: the scheduler uses IP addresses only.
     networks:
       - sched

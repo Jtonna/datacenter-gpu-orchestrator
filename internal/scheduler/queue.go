@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/placer"
 )
 
@@ -156,6 +157,11 @@ func (c *schedCore) plan(e *entry) bool {
 		"waiters", len(e.waiters))
 	for _, v := range res.Victims {
 		in := c.insts[v]
+		c.recordInst(in, history.TEviction, history.Info,
+			fmt.Sprintf("%s is being evicted to make room for %s, which waited %s (%d waiting).", v, e.prof.Name,
+				e.clock.Round(time.Second), len(e.waiters)),
+			map[string]any{"victim": v, "for_profile": e.prof.Name, "waited_s": secs(e.clock), "waiters": len(e.waiters),
+				"victim_busy": in.inFlight > 0, "in_flight": in.inFlight})
 		in.victimOf = e.prof.Name
 		if in.inFlight == 0 {
 			c.stopFor(in, stopGraceful, "evicted for "+e.prof.Name)

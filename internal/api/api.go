@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/config"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/proxy"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/scheduler"
 )
@@ -46,6 +47,10 @@ type Options struct {
 	// AliasLogEvery is the minimum gap between log lines for one
 	// alias+caller pair (default 1 minute).
 	AliasLogEvery time.Duration
+	// History is the event history behind /api/history; nil means history is off.
+	History *history.Store
+	// Version is the scheduler's version string, shown by /api/about.
+	Version string
 }
 
 // Server is the http.Handler for the whole API.
@@ -62,6 +67,7 @@ type Server struct {
 	bodyHeld int64 // buffered JSON bytes of requests that are waiting
 	hub      *hub
 	activity *activityLog
+	hist     *history.Store
 
 	aliasMu   sync.Mutex
 	aliasSeen map[string]time.Time
@@ -85,7 +91,10 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 	if o.AliasLogEvery <= 0 {
 		o.AliasLogEvery = time.Minute
 	}
-	s := &Server{cfg: cfg, sched: sched, opts: o, log: o.Logger, start: o.Now(),
+	if o.History == nil {
+		o.History = history.Open(history.Options{}) // off
+	}
+	s := &Server{cfg: cfg, sched: sched, opts: o, log: o.Logger, start: o.Now(), hist: o.History,
 		activity: newActivityLog(200), aliasSeen: map[string]time.Time{}}
 	s.hub = newHub(sched, o.Now)
 	s.mux = s.routes()
@@ -135,6 +144,10 @@ func (s *Server) routes() *http.ServeMux {
 	m.HandleFunc("GET /ui/{$}", s.handleUI)
 	m.HandleFunc("GET /ui", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/ui/", http.StatusMovedPermanently) })
 	m.HandleFunc("GET /api/status", s.handleStatus)
+	m.HandleFunc("GET /api/history", s.handleHistory)
+	m.HandleFunc("GET /api/history/summary", s.handleHistorySummary)
+	m.HandleFunc("GET /api/history/export", s.handleHistoryExport)
+	m.HandleFunc("GET /api/about", s.handleAbout)
 	m.HandleFunc("POST /api/plan", s.handlePlan)
 	m.HandleFunc("POST /api/load", s.handleLoad)
 	m.HandleFunc("POST /api/unload", s.handleUnload)
@@ -458,11 +471,6 @@ func (s *Server) handleUpstream(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"data": s.activity.snapshot()})
-}
-
-func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	io.WriteString(w, "<!doctype html><title>llm-scheduler</title><p>llm-scheduler: <a href=\"/api/status\">/api/status</a>\n")
 }
 
 // ---- admin ----

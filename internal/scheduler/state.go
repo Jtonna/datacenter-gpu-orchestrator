@@ -9,6 +9,7 @@ import (
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/config"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/fleet"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/instance"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/placer"
 )
@@ -310,7 +311,17 @@ type schedCore struct {
 	effects []effect
 	feed    []FeedEvent
 	feedSeq uint64
-	changed bool
+
+	// History (history.go).
+	hist      []history.Event
+	memNext   map[core.NodeID]time.Time // next periodic nodeMemory sample per node that backs an instance
+	refused   map[string]*refusal       // last recorded refusal per profile and reason
+	viewSeen  bool
+	viewFresh bool
+	viewConn  bool
+	staleAt   time.Time
+	downAt    time.Time
+	changed   bool
 }
 
 func newCore(cfg *config.Config, clock Clock, view fleet.View, needs NeedProvider, build instance.BuildOptions, log *slog.Logger) *schedCore {
@@ -323,7 +334,7 @@ func newCore(cfg *config.Config, clock Clock, view fleet.View, needs NeedProvide
 		backoffs: map[string]*backoff{}, waiters: map[uint64]*waiter{}, leases: map[uint64]*lease{},
 		needs_: map[string]NeedInfo{}, learned: map[string]*learnedNeed{}, warnedLow: map[string]bool{}, raw: map[core.NodeID]core.Node{}, excludedSeen: map[core.NodeID]bool{},
 		forcedGone: map[string]time.Time{}, health: map[core.NodeID]*workerHealth{},
-		recov: map[core.NodeID]*recoveryNode{},
+		recov: map[core.NodeID]*recoveryNode{}, memNext: map[core.NodeID]time.Time{}, refused: map[string]*refusal{},
 	}
 }
 
@@ -387,6 +398,12 @@ func (c *schedCore) sortedNodeIDs() []core.NodeID {
 		ids = append(ids, id)
 	}
 	for id := range c.nodes {
+		if !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	for id := range c.health { // a worker tracked as hung after node loss may be gone from the view and from c.nodes
 		if !seen[id] {
 			ids = append(ids, id)
 		}

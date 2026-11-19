@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/instance"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/placer"
 )
@@ -174,8 +175,19 @@ func (c *schedCore) learnNeed(in *inst) {
 		c.warnedLow[in.prof.Name] = true
 		c.log.Warn("configured needs_mib is too low: the load measured more memory; using the measured value",
 			"profile", in.prof.Name, "configured_mib", base.Need.MiB, "measured_mib", total)
+		c.recordInst(in, history.TNeedsMiBTooLow, history.Warn,
+			fmt.Sprintf("The configured needs_mib of %s (%d MiB) is too low: the load measured %d MiB, which is used from now on.",
+				in.prof.Name, base.Need.MiB, total),
+			map[string]any{"configured_mib": base.Need.MiB, "measured_mib": total})
 	}
 	c.log.Info("learned memory need", "profile", in.prof.Name, "measured_mib", total, "per_node", len(l.Nodes) > 0)
+	perNode := make([]map[string]any, 0, len(l.Nodes))
+	for _, n := range l.Nodes {
+		perNode = append(perNode, map[string]any{"node": c.nodeName(n.ID), "fraction": n.Fraction, "mib": n.MiB})
+	}
+	c.recordInst(in, history.TLearnedNeed, history.Info,
+		fmt.Sprintf("Measured the memory need of %s at %d MiB; fit decisions use it for the rest of this run.", in.prof.Name, total),
+		map[string]any{"measured_mib": total, "highest_mib": l.TotalMiB, "per_node": perNode})
 	c.changed = true
 }
 
@@ -347,6 +359,10 @@ func (c *schedCore) cancelLowMemoryLoad(in *inst, label string, avail int) {
 	c.log.Error("load cancelled: a node ran low on memory", "profile", in.prof.Name, "node", label,
 		"available_mib", avail, "floor_mib", floor, "node_memory_mib", c.memoryFigures(in),
 		"elapsed", c.now.Sub(in.created).Round(1e6))
+	c.recordInst(in, history.TLoadLowMemory, history.Error,
+		fmt.Sprintf("Loading %s was cancelled: %s ran low on memory (%d MiB available, floor %d MiB).", in.prof.Name, label, avail, floor),
+		map[string]any{"node": label, "available_mib": avail, "floor_mib": floor, "elapsed_s": secs(c.now.Sub(in.created))})
+	c.hist[len(c.hist)-1].Nodes = []string{label}
 	msg := fmt.Sprintf("load cancelled: %s ran low on memory during the load (available %d MiB, floor %d MiB)", label, avail, floor)
 	c.failLoadMode(in, msg, nil, false, stopKill)
 }

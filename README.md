@@ -6,6 +6,10 @@ Alienware, OMEN) run it, and queues requests when nothing is free. See
 [docs/design.md](docs/design.md) for the full design. Current state: milestone
 M0 (scaffold, test harness, `fakellama`); no scheduler logic yet.
 
+The scheduler keeps its safety and lifecycle events in a file-backed history
+(`history_dir`) and serves a read-only dashboard at `/ui/` and the history at
+`/api/history` (design 9.1, runbook "Event history and the dashboard").
+
 ## Tests
 
 ```

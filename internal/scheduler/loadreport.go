@@ -99,6 +99,7 @@ func (c *schedCore) beginLoad(in *inst) {
 		e.LoadStarted = &LoadStart{SessionID: in.sessionID, Model: in.prof.Name, StartedAt: c.now.UnixMilli(),
 			Workers: append([]string{}, in.peers...)}
 	})
+	c.historyLoadStarted(in)
 }
 
 // finishLoad closes the load attempt once and records its outcome.
@@ -113,6 +114,7 @@ func (c *schedCore) finishLoad(in *inst, outcome, reason string) {
 	c.pruneRecent()
 	c.changed = true
 	c.emit(FeedLoadFinished, in.prof.Name, func(e *FeedEvent) { cp := o; e.Outcome = &cp })
+	c.historyLoadFinished(in, o)
 }
 
 // cancelReason puts a stop reason into plain words.

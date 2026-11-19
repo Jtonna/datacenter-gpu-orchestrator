@@ -261,6 +261,10 @@ fleet:
 models_dir: /models
 child_log_dir: ""                  # optional; see "Child output on disk" below
 child_log_keep: 200                # files kept in child_log_dir
+history_dir: ""                    # optional; the event history (9.1). Empty = off
+history_max_file_mib: 16           # a history file is rotated at this size
+history_keep_files: 20             # files kept in history_dir; the oldest are deleted
+history_memory_events: 5000        # newest events held in memory for queries (1 to 200000)
 
 defaults:
   ttl: 300s                # unload after this long idle; 0 = never
@@ -1042,11 +1046,11 @@ Rules that hold throughout:
 | A node a load runs on (shared-memory tier) reports available memory below `load_memory_floor_mib` (default 768) at any time during the load, in a live fleet view (7.2a) | Cancelled at once: the child is killed, waiters get `502` (as for any load failure) with `load cancelled: <node> ran low on memory during the load (available N MiB, floor M MiB)`, the outcome in `recent_loads` / `loadFinished` is `failed`, an ERROR line gives every watched node's figure, and the profile is backed off as below. The node is not quarantined. A stale view, an unreported figure, an offline node and a dedicated-VRAM node are not watched. The fleet figure is `mem_available_mib` when the fleet sends it, else the existing RAM figure. |
 | Child exits, the load timeout passes, or the load stalls (7.6: measured upload, no new acknowledged bytes for `load_stall_timeout`, default 180 s), during `starting` | Instance → `stopping`. Waiters get `502` with the last lines of the child's output (a stall says `load stalled: no bytes acknowledged by the workers for 3m0s (sent 549 of 14334446752)`). The **profile** is backed off 60 s, doubling per repeat up to 10 min, reset when the profile next reaches `ready`. During backoff its requests fail fast with `503`, and any entry for it is answered `503` and deleted. Nodes are not quarantined: the pre-flight already cleared them. |
 | Child exits while `ready` or `draining` | In-flight requests fail; instance → `absent`. |
-| A remote node in use is offline in, or absent from, a live view for 30 s continuously | Node loss: instance → `stopping` with SIGKILL; in-flight requests fail. Needed because a blocked RPC socket does not make the child exit. The 30 s counter resets whenever the feed reconnects, so a fleet console restart is not read as every node vanishing. |
+| A remote node in use is offline in, or absent from, a live view for 30 s continuously | Node loss: instance → `stopping` with SIGKILL; in-flight requests fail. Needed because a blocked RPC socket does not make the child exit. The 30 s counter resets whenever the feed reconnects, so a fleet console restart is not read as every node vanishing. The node is then kept as `hung` (8.4a) until a live view shows it online again, so a recovery request (8.4b) can be sent for it. |
 | A forced node (`force_nodes`) is absent from, or offline in, a live fleet view for `forced_node_grace` (default 30 s) continuously | Fail fast: the profile's waiting and new requests get `503`, reason `forced nodes unavailable`, `Retry-After: 30` (the same as the queue timeout), with a message naming the node and saying whether it is `absent from the fleet` or `offline in the fleet`, instead of waiting out `queue_timeout`. The grace lets a node that is re-registering (fleet console or PS5 worker restart) come back. The clock restarts when the feed reconnects and does not count while the view is stale (then today's behaviour applies: the request queues and the "fleet view stale" reason can follow). A forced node that is present and online but busy is not a fail-fast case; it queues. Excluded nodes fail as before (6). |
 | A streaming response sends nothing for `stall_timeout` **after its first chunk** | That request is aborted with an error event. The instance is not stopped. Time before the first chunk (prompt processing) is never timed. |
 | A non-streaming request hangs | Not detected in v1, other than by node loss. `POST /api/unload` with `force` clears it. |
-| A remote worker in use is `hung` (8.4a: two health channels silent, or one channel alone silent for 3 x `worker_silence` with nothing known ok: the heartbeat, or the connect probe when enabled) | Log ERROR `worker hung`, the node is quarantined, `workerHealth` event and `health` in `/api/status`. Detection only: instances are not stopped by this rule; node loss, load stall and the load timeout do that, unchanged. |
+| A remote worker in use is `hung` (8.4a: two health channels silent, or one channel alone silent for 3 x `worker_silence` with nothing known ok: the heartbeat, or the connect probe when enabled) | Log ERROR `worker hung`, the node is quarantined, `workerHealth` event and `health` in `/api/status`. Detection only: instances are not stopped by this rule; node loss, load stall and the load timeout do that, unchanged. A node that node loss killed an instance on stays `hung` after the instance is gone (8.4a). |
 | Fleet feed down | Reconnect SSE with backoff; poll `GET /api/fleet` every 5 s meanwhile. View age is the time since the last byte from the feed, pings included. Loaded instances keep serving. Past `stale_after`, remote nodes are not eligible; the local node still is. |
 
 ### 8.4a Worker health
@@ -1110,9 +1114,10 @@ ok: the heartbeat alone (the normal case with the probe off: an idle loaded
 model, so no upload is going on, whose node stopped reporting; with the probe
 enabled, a probe that is `ok` keeps it `suspect`), or the probe alone while the
 heartbeat is `unknown` (a stale view: the only evidence left is the worker's own
-port). Node loss (8.4) still kills the instance after 30 s of missing node, which
-ends the tracking, so the heartbeat-alone escalation is only seen when
-4 x `worker_silence` is below 30 s. Once
+port). Node loss (8.4) kills the instance after 30 s of missing node; with the
+default `worker_silence` of 30 s the heartbeat channel only turns silent at that
+same moment, so the heartbeat-alone escalation is never reached first. That is
+what the *lost node* rule below is for. Once
 hung, a worker is `ok` again only when no channel is silent and at least one is
 known to be healthy; unknown channels do not block that, but they do not prove
 recovery either.
@@ -1125,10 +1130,28 @@ unchanged), so nothing new is placed on it. Leaving `hung` logs one INFO line
 `worker recovered` with `hung_for`. The check runs before the node-loss rule
 in the same step, so a worker that is hung when node loss kills its instance is
 still named. If the last instance on a hung worker ends, its health is dropped
-and an INFO line `worker health no longer tracked` says so.
+and an INFO line `worker health no longer tracked` says so, with one exception.
+
+*A lost node stays hung.* With the default settings a node that hangs (it stops
+reporting to the fleet) is killed off by the node-loss rule at 30 s, which stops
+its instance; no instance uses the node any more, so the tracking above would
+forget it before it was ever `hung`, and no recovery request (8.4b) would be
+sent, in the very case that feature exists for. So when the node-loss rule fires
+for a node (it was in use and offline or absent in a live view), the node is
+kept as `hung` with the heartbeat channel `silent` (the other two `unknown`),
+its episode starting when the node went missing, and is quarantined (the
+ordinary quarantine of 8.4). It stays tracked with no instance using it, shown in
+`/api/status` with its `health` (a node that has left the fleet view altogether
+is listed with only `id`, `addr`, `health` and `recovery`), until a **live**
+view shows it online again. A stale view never decides the node is back. Then
+it logs INFO `worker recovered` with `hung_for`, sends a `workerHealth` event
+for `ok`, and the health is cleared on the next step. A node that was already
+`hung` keeps its own episode start. Recovery requests, when enabled, run on this
+episode exactly as for any hung node and end with it.
 
 *Reporting.* Each node of `GET /api/status` `view.nodes` that an instance uses
-has `health`; nodes no instance uses have none.
+has `health`; nodes no instance uses have none, except a lost node kept as hung
+(above).
 
 ```json
 "health": {"state": "hung", "since": 1795055906526,
@@ -1198,8 +1221,14 @@ fails too the status stays `error`. A failed send only logs.
    `min_interval`) send the first action.
 2. After step N, wait `step_wait`. If the node is still `hung`, the view is live
    and `min_interval` has passed since the last request, send step N+1. A step
-   whose request was refused or failed still counts as sent (a refused record
-   never reached the node, but escalating on a timer is what was specified).
+   whose request failed (5xx, timeout) still counts as sent and the sequence
+   goes on. A step whose request was **refused** (a non-retry status: `400`,
+   `403`, `404`, `409`, `410`, `422`, `429`, any 4xx) **stops the sequence for
+   that hung episode**: the record never reached the node, so a later step (a
+   reboot after a refused restart) must not follow on a timer. WARN `recovery
+   sequence stopped` (`node`, `action`, `status`, `reason`) says so, and a
+   `recoverySequenceStopped` history event is written. The next hung episode
+   starts the sequence again.
 3. If the node reported the nonce of the request in flight with outcome
    `failed`, do not wait out `step_wait`: send the next step as soon as
    `min_interval` allows.
@@ -1227,7 +1256,8 @@ the scheduler did not ask for (`ours: false` in the log).
 *Logging.* INFO `recovery request sent` (`node`, `action`, `nonce`, `reason`,
 `step`, `of`); INFO `recovery request stored` for a `200`; WARN `recovery
 request refused` (4xx) or `recovery request failed` (5xx, timeout) with
-`status` and the last 200 bytes of the response `body`; INFO `recovery outcome`
+`status` and the last 200 bytes of the response `body`; WARN `recovery sequence
+stopped` after a refusal; INFO `recovery outcome`
 (`node`, `action`, `outcome`, `nonce`, `reason`, `duration_ms`, `ours`); INFO
 `recovery episode started` and `recovery sequence reset`.
 
@@ -1309,7 +1339,8 @@ gets its own process group, so nothing is left behind.
 | `POST /api/models/unload/{model}` | llama-swap compatible: stop that instance if idle. |
 | `ANY /upstream/{model}/...` | llama-swap compatible passthrough to a `ready` or `draining` instance. Never starts a load and never waits: otherwise `503` at once. |
 | `GET /api/events`, `GET /api/metrics/activity` | llama-swap compatible, for the hub's llama panel. Appendix A. |
-| `GET /ui/` | A one-line page linking to `/api/status`. |
+| `GET /ui/` | The read-only dashboard (9.1): one self-contained page embedded in the binary. |
+| `GET /api/history`, `GET /api/history/summary`, `GET /api/history/export`, `GET /api/about` | The event history and what the dashboard header shows (9.1). Read-only. |
 | `GET /health` | `200` whenever the scheduler is running. |
 | `GET /api/status` | Instances, placements, per-device memory from the last pre-flight, claims, queue, quarantines, backoffs, node view and its age. A starting instance also shows its load progress and its `load` report (7.6a). The top-level `recent_loads` lists the outcomes of load attempts finished in the last 120 s. Each node in `view.nodes` that an instance uses also has `health` (8.4a), and a node that was sent a recovery request or reported an outcome also has `recovery` (8.4b). |
 | `POST /api/plan` `{model}` | Dry run: what would happen if this model were requested now (placement, plan with victims, or the reason for neither). Changes nothing. |
@@ -1321,6 +1352,116 @@ an explicit admin call.
 
 Streaming: `httputil.ReverseProxy` with immediate flush; no response-header
 timeout; client cancellation propagates upstream.
+
+### 9.1 Event history and dashboard
+
+The scheduler's safety and lifecycle events are kept so they can be found
+later: a file-backed history inside the scheduler, queried over HTTP, and one
+read-only page. There is no new service and no database. The package is
+`internal/history`; the core only appends events at the places where it already
+logs a fact (`internal/scheduler/history.go`).
+
+*Never in the way of scheduling.* The core never writes a file. After each step
+the runner hands the step's events to the store with `Record`, which only
+appends to a bounded in-memory ring (under a mutex) and tries to put the event
+on a buffered channel; if the channel is full the event is counted as dropped
+(it is still in memory). A separate writer goroutine does all file I/O. A bad
+`history_dir` warns once at start and history stays off; a write error warns
+once and the run continues with memory only. Neither can reach the scheduler.
+
+*Format.* `history_dir` (empty = off: nothing written, the endpoints answer with
+an empty list and `"history":"off"`) holds JSON Lines files named
+`events-<UTC yyyymmddThhmmssZ>.jsonl`, so a listing sorts by time. A file is
+rotated when the next line would take it past `history_max_file_mib` (default
+16); files beyond `history_keep_files` (default 20) are deleted, oldest first;
+only files matching that name are ever touched. At start the newest events (up
+to `history_memory_events`, default 5000) are loaded back into memory, and the
+newest file is reused when it has room, so history survives restarts and image
+swaps. A torn last line (a crash) is skipped. Compose mounts
+`./history:/var/lib/llm-scheduler/history`.
+
+*Record.* One event per line:
+
+```json
+{"ts": 1795055906526, "seq": 41, "type": "loadFinished", "severity": "info",
+ "profile": "gemma-4-12b", "model_file": "gemma-4-12b.gguf",
+ "nodes": ["ps5-062e1d84", "ps5-0a1b2c3d"], "session_id": "ld-1795055840000-3",
+ "summary": "gemma-4-12b finished loading in 66.1 s (101.4 MB/s).",
+ "data": {"outcome": "ready", "load_s": 66.1, "bytes": 6700000000, "avg_mb_s": 101.4}}
+```
+
+`ts` is unix ms; `seq` is monotonic per process (events reloaded from an earlier
+run keep theirs); `severity` is `info`, `warn` or `error`; `nodes` are hostnames
+(else ids); `summary` is one plain sentence and is what the dashboard shows.
+Per-request chat traffic is never recorded (only a count, in `instanceUnloaded`).
+
+*Types and their `data`.*
+
+| `type` | Sev. | When, and the `data` keys |
+|---|---|---|
+| `schedulerStarted` | info | At start. `version`, `profiles`, `listen`, `safety` (the margins, floor, stall and silence settings, recovery on/off), `history`. |
+| `schedulerStopping` | info | When shutdown begins. `reason` (the signal). |
+| `loadStarted` | info | A child started. `workers`, `bytes_total`, `need_mib`, `need_basis`. |
+| `loadFinished` | info / warn / error | Ready, cancelled or failed. `outcome`, `reason`, `load_s`, `bytes`, `bytes_measured`, `avg_mb_s`, `nodes_detail` (per node: `node`, `bytes` for a remote worker, `memory_mib` from the load log). |
+| `requestRefused` | warn | Requests answered 503 before any start: does not fit, forced node missing or offline, forced nodes do not fit, node excluded, queue timeout, backoff, fleet stale, nodes quarantined, no address. `reason`, `status`, `message`, `waiters`, `retry_after_s`; `need_mib`, `required_mib`, `capacity_mib` for does-not-fit. The same profile and reason is recorded at most every 30 s; `suppressed_since_last` counts the others. A bad model name, a failed load (it has `loadFinished`), a shutdown and a client that left are not recorded. |
+| `loadStalled` | error | The load stall rule (7.6). `stalled_s`, `limit_s`, `bytes_sent`, `bytes_total`, `per_worker_bytes`. |
+| `loadCancelledLowMemory` | error | The memory watch (7.2a). `node`, `available_mib`, `floor_mib`, `elapsed_s`. |
+| `nodeLost` | error | Node loss (8.4). `missing_for_s`, `in_flight`, `waiters`, `nodes_in_instance`. |
+| `eviction` | info | A claim stops or drains a victim (8.3), one event per victim. `victim`, `for_profile`, `waited_s`, `waiters`, `victim_busy`. |
+| `instanceUnloaded` | info / warn | A loaded instance ended. `reason` (`ttl`, `api`, `eviction`, `shutdown`, `node loss`, `child exited`), `loaded_for_s`, `requests_served`, `exit`. |
+| `childExited` | error | The child exited while ready or draining. `exit`, `state`, `in_flight`, `requests_served`. |
+| `workerHealth` | info / warn / error | A watched worker changed state (8.4a). `state`, `previous`, `channels`, `silent`, `instances`, `addr`, `node_lost`; `hung_for_s` on recovery. |
+| `nodeQuarantined`, `quarantineEnded` | warn, info | 8.4. `for_s`, `level`, `cause`. |
+| `profileBackedOff` | warn | 8.4. `for_s`, `level`. |
+| `recoveryRequest` | info | A recovery POST was sent (8.4b). `action`, `nonce`, `step`, `of`, `reason`. |
+| `recoveryResponse` | info / warn | The fleet manager's answer. `action`, `nonce`, `outcome` (`stored`, `refused`, `error`), `http_status`, `body` or `err`. |
+| `recoveryOutcome` | info / warn | The node's reported outcome. `action`, `outcome`, `nonce`, `reason`, `duration_ms`, `ours`. |
+| `recoverySequenceStopped` | warn | A refusal stopped the escalation (8.4b), or every action was sent and the worker is still hung. `reason`, `action`, `http_status`. |
+| `fleetViewStale`, `fleetViewRecovered` | warn, info | The fleet view crossed `stale_after`. `age_s`, `stale_after_s`; `stale_for_s`. |
+| `fleetFeedDisconnected`, `fleetFeedRecovered` | warn, info | The fleet SSE stream. `down_for_s`. |
+| `preflightFailed` | warn | A pre-flight failed (7.5). `kind`, `addr`, `duration_s`, `err`. |
+| `learnedNeed` | info | A load measured its memory need (7.2a). `measured_mib`, `highest_mib`, `per_node`. |
+| `needsMibTooLow` | warn | A measurement exceeded the configured `needs_mib`. `configured_mib`, `measured_mib`. |
+| `nodeMemory` | info | A compact sample for one shared-memory node: every 60 s while it backs an instance, and at load start and load end. `reason` (`periodic`, `load_start`, `load_end`), `available_mib`, `total_mib`, `used_mib`, `budget_mib`. |
+
+*Endpoints* (read-only; a bad parameter is `400` in the usual error shape):
+
+- `GET /api/history`: `since`, `until` (unix ms), `type` (comma list),
+  `severity` (minimum), `node`, `profile`, `session_id`, `q` (substring of the
+  summary, case-insensitive), `limit` (default 200, at most 2000), `order`
+  (`desc` default, or `asc`). Answers `{"events": [...], "total_matching": N,
+  "oldest_ts": ..., "history": "on"|"off", "truncated": bool}`. The newest
+  events come from memory. A query that reaches back past the memory window
+  reads the files, newest file first (oldest first for `asc`) and stops as soon
+  as the limit is reached, so it never loads everything. `total_matching`
+  counts matches in the memory window plus the file parts actually read;
+  `truncated` is true when more may exist.
+- `GET /api/history/summary?since=&until=`: `events`, `by_type`, `by_severity`,
+  `loads` (`ready`, `failed`, `cancelled`), `profiles` (per profile: `loads`,
+  `ready`, `failed`, `cancelled`, and over the ready loads `min_s`,
+  `median_s`, `max_s`, `avg_mb_s`), `nodes` (per node: `hung`, `lost`,
+  `low_memory`) and `incidents` (every error-severity event, newest first, at
+  most 500, `incidents_truncated`). It streams the range, so a long range is
+  slower.
+- `GET /api/history/export?since=&until=`: the matching events as JSON Lines
+  (`application/x-ndjson`), oldest first, streamed.
+- `GET /api/about`: `version`, `started_at`, `now`, `uptime_s`, `history`,
+  `oldest_ts`; the dashboard header.
+
+*Dashboard.* `GET /ui/` is one HTML file embedded in the binary (`embed`): no
+external script, font or stylesheet, no build step, plain JavaScript, and it
+works from another machine on the LAN (`http://<omen>:3122/ui/`). It only
+reads: it offers no load, unload or any other action. Sections, top to bottom:
+header (version, uptime, history on or off, oldest event, live feed state); Now
+(a tile per node from `/api/status` every 2 s, redrawn at once on live
+`/api/events`: hostname, tier, online, excluded, health, usable memory, what is
+loaded or loading with a progress bar and this node's bytes, plus the queue);
+a time range bar (1 h, 6 h, 24 h, 7 d, custom) for the rest, with a download
+link to the export; Incidents (warn and error events, newest first, each
+expandable to the full record, a copy-as-JSON button and the other events of the
+same `session_id`); Loads (finished loads, sortable, profile and outcome
+filter); Timeline (all events, filtered by type, severity, node, profile and
+text); Summary (counts and per-profile load statistics).
 
 ## 10. Packaging and rollout
 

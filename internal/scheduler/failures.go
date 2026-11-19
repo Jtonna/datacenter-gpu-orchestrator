@@ -8,6 +8,7 @@ import (
 
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/fleet"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
 )
 
 // quarantine is design 8.4: 30 s, doubling per repeat up to 10 min.
@@ -21,6 +22,9 @@ func (c *schedCore) quarantine(id core.NodeID, cause error) {
 	ns.quarUntil = c.now.Add(d)
 	ns.quarOpen = true
 	c.log.Warn("node quarantined", "node", id, "for", d, "until", ns.quarUntil, "level", ns.quarLevel, "err", cause)
+	c.record(history.TNodeQuarantined, history.Warn, "",
+		fmt.Sprintf("Node %s was quarantined for %s (level %d): %v.", c.nodeName(id), d, ns.quarLevel, cause),
+		[]string{c.nodeName(id)}, "", map[string]any{"for_s": secs(d), "level": ns.quarLevel, "cause": fmt.Sprint(cause)})
 	c.changed = true
 }
 
@@ -40,6 +44,9 @@ func (c *schedCore) startBackoff(profile string) {
 	b.until = c.now.Add(d)
 	b.open = true
 	c.log.Warn("profile backed off", "profile", profile, "for", d, "until", b.until, "level", b.level)
+	c.record(history.TProfileBackedOff, history.Warn, profile,
+		fmt.Sprintf("Profile %s is backed off for %s after a failed load (level %d).", profile, d, b.level),
+		nil, "", map[string]any{"for_s": secs(d), "level": b.level})
 	if e := c.entries[profile]; e != nil {
 		c.answerEntry(e, err503(ReasonBackoff, fmt.Sprintf("profile %s is backed off after a failed load", profile), d))
 	}
@@ -64,6 +71,7 @@ func (c *schedCore) refreshView() {
 	}
 	c.age = c.view.Age()
 	c.fresh = c.age <= c.cfg.Fleet.StaleAfter
+	c.trackView()
 
 	// A post-settle fetch replaces the view's figures until the view
 	// reports something new for the node.
@@ -224,6 +232,7 @@ func (c *schedCore) timers() {
 	// which node loss kills its instance is still named.
 	c.workerHealthStep()
 	c.recoveryStep()
+	c.memorySamples()
 	for _, id := range c.sortedNodeIDs() {
 		ns := c.nodes[id]
 		if ns == nil {
@@ -232,6 +241,8 @@ func (c *schedCore) timers() {
 		if ns.quarOpen && !c.now.Before(ns.quarUntil) {
 			ns.quarOpen = false
 			c.log.Info("node released from quarantine", "node", id)
+			c.record(history.TQuarantineEnded, history.Info, "",
+				fmt.Sprintf("Node %s was released from quarantine.", c.nodeName(id)), []string{c.nodeName(id)}, "", nil)
 		}
 		if !ns.ovUntil.IsZero() && !c.now.Before(ns.ovUntil) {
 			ns.ovUntil = timeZero // the 10-minute limit of the override
@@ -317,8 +328,15 @@ func (c *schedCore) lostNode(in *inst) core.NodeID {
 // returned instance (7.5), keeping its creation time and clock; the
 // profile is not backed off.
 func (c *schedCore) nodeLost(in *inst, id core.NodeID) {
+	missing := c.now.Sub(c.ns(id).missingSince)
 	c.log.Error("node lost", "profile", in.prof.Name, "node", id,
-		"missing_for", c.now.Sub(c.ns(id).missingSince), "in_flight", in.inFlight, "waiters", len(in.waiters))
+		"missing_for", missing, "in_flight", in.inFlight, "waiters", len(in.waiters))
+	c.record(history.TNodeLost, history.Error, in.prof.Name,
+		fmt.Sprintf("Node %s was lost: offline or absent for %s, so the %s instance was killed (%d requests in flight).",
+			c.nodeName(id), missing.Round(time.Second), in.prof.Name, in.inFlight),
+		[]string{c.nodeName(id)}, in.sessionID, map[string]any{"missing_for_s": secs(missing), "in_flight": in.inFlight,
+			"waiters": len(in.waiters), "nodes_in_instance": c.placementNames(in)})
+	c.keepLostNodeHung(id, in) // design 8.4a: the node stays tracked as hung until it is back
 	ws := in.waiters
 	in.waiters = nil
 	c.stopFor(in, stopKill, "node loss")

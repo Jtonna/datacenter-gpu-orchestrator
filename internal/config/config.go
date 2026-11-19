@@ -13,12 +13,20 @@ type Config struct {
 	ModelsDir string
 	// ChildLogDir, when set, receives one file per child start holding its
 	// complete stdout and stderr; ChildLogKeep is how many such files to keep.
-	ChildLogDir   string
-	ChildLogKeep  int
-	LocalProbeCmd string
-	Defaults      Defaults
-	Tiers         []TierRule
-	NodeOverrides map[string]NodeOverride
+	ChildLogDir  string
+	ChildLogKeep int
+	// HistoryDir, when set, holds the event history (JSON Lines, rotated by
+	// size); empty turns history off. HistoryMaxFileMiB is the size at which a
+	// file is rotated, HistoryKeepFiles how many files are kept and
+	// HistoryMemoryEvents how many recent events are held in memory for queries.
+	HistoryDir          string
+	HistoryMaxFileMiB   int
+	HistoryKeepFiles    int
+	HistoryMemoryEvents int
+	LocalProbeCmd       string
+	Defaults            Defaults
+	Tiers               []TierRule
+	NodeOverrides       map[string]NodeOverride
 	// ExcludeNodes lists nodes that are never used: each entry is a node id or a
 	// hostname glob (case-insensitive). See Excluded.
 	ExcludeNodes []string

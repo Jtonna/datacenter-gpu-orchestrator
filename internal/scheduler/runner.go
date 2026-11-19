@@ -28,6 +28,9 @@ type Options struct {
 	Needs          NeedProvider           // default &ConfigNeeds{Cfg: cfg}
 	Build          *instance.BuildOptions // default instance.OptionsFromConfig(cfg)
 	Logger         *slog.Logger           // default slog.Default()
+	// History receives the safety and lifecycle events (design 9.1); nil drops
+	// them. Record must never block.
+	History HistorySink
 }
 
 // Scheduler is the scheduler core plus the one goroutine (Run) that owns
@@ -168,6 +171,13 @@ func (s *Scheduler) step(ev event) {
 	s.snap.Store(&snapshot{running: s.core.runningList(), recent: s.core.recentLoads(), profiles: s.core.profileStates(), upstream: up})
 	for _, ef := range s.core.takeEffects() {
 		s.exec(ef)
+	}
+	// The history hand-off only appends to a bounded in-memory ring and a
+	// buffered channel: it never blocks the loop (file writes are off the loop).
+	if evs := s.core.takeHistory(); len(evs) > 0 && s.opts.History != nil {
+		for _, e := range evs {
+			s.opts.History.Record(e)
+		}
 	}
 	if feed := s.core.takeFeed(); len(feed) > 0 {
 		s.publish(feed)

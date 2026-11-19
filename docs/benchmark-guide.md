@@ -74,7 +74,8 @@ Errors use this shape: `{"error":{"message":"...","type":"...","param":null,"cod
 | ANY | `/upstream/{model}/...` | Passes straight to a model that is already ready. Never loads. `503 not ready` otherwise. | `curl -s $B/upstream/b-gemma-2ps5/props` |
 | GET | `/api/events` | Server-sent events stream for the hub panel. | `curl -sN $B/api/events` |
 | GET | `/api/metrics/activity` | Last 200 finished requests: model, path, status, duration, token counts, tokens per second. | `curl -s $B/api/metrics/activity` |
-| GET | `/ui/` | One line linking to `/api/status`. | |
+| GET | `/ui/` | The read-only dashboard: nodes, queue, incidents, finished loads (time, MB/s, memory), timeline, summary. Open `http://<omen>:3122/ui/`. | |
+| GET | `/api/history`, `/api/history/summary`, `/api/history/export` | The event history behind the dashboard (`history_dir`). The summary has load seconds (min, median, max) and average MB/s per profile; the export is JSON Lines, so a benchmark run can be saved with `curl -s "$B/api/history/export?since=<ms>"`. | `curl -s "$B/api/history?type=loadFinished&limit=20"` |
 
 Other paths give 404. `/v1/*` with a method other than POST gives 405. A body without `model` on the admin paths gives 400 (`body must be JSON with a "model" field`).
 

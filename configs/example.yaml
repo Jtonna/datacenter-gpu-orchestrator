@@ -9,6 +9,10 @@ fleet:
 models_dir: /models
 # child_log_dir: /var/log/llm-children   # optional: keep each child llama-server's full output, one file per start
 # child_log_keep: 200              # most files kept in child_log_dir; the oldest are deleted
+# history_dir: /var/lib/llm-scheduler/history   # optional: keep the scheduler's safety and lifecycle events (loads, stalls, hung workers, quarantines, recovery requests, ...) as JSON Lines, for GET /api/history and the dashboard at /ui/. Empty = off
+# history_max_file_mib: 16         # a history file is rotated at this size
+# history_keep_files: 20           # most history files kept; the oldest are deleted
+# history_memory_events: 5000      # newest events held in memory for queries (reloaded from the files at start)
 
 defaults:
   ttl: 300s                # unload after this long idle; 0 = never

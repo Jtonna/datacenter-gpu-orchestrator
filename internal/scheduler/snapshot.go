@@ -194,6 +194,12 @@ func (c *schedCore) statusDoc() Status {
 	for _, id := range c.sortedNodeIDs() {
 		n, ok := c.node(id)
 		if !ok {
+			// A node that left the fleet view altogether is still listed while
+			// it is tracked as hung after node loss (design 8.4a).
+			if h := c.health[id]; h != nil {
+				st.View.Nodes = append(st.View.Nodes, NodeStatus{ID: id, Addr: h.addr, Health: c.healthStatus(h),
+					Recovery: c.recoveryStatus(c.recov[id])})
+			}
 			continue
 		}
 		s := NodeStatus{ID: id, Hostname: n.Hostname, Local: n.Local, Online: n.Online, Addr: n.Addr, Priority: n.Priority,

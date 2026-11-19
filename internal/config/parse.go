@@ -32,6 +32,15 @@ func DefaultDefaults() Defaults {
 // DefaultChildLogKeep is how many child log files are kept by default.
 const DefaultChildLogKeep = 200
 
+// Defaults of the history settings (see internal/history).
+const (
+	DefaultHistoryMaxFileMiB   = 16
+	DefaultHistoryKeepFiles    = 20
+	DefaultHistoryMemoryEvents = 5000
+	// MaxHistoryMemoryEvents bounds history_memory_events (a sanity limit on memory use).
+	MaxHistoryMemoryEvents = 200000
+)
+
 // DefaultLocalProbeCmd is the nvidia-smi query of design 5.1.
 const DefaultLocalProbeCmd = "nvidia-smi --query-gpu=memory.total,memory.used --format=csv,noheader,nounits"
 
@@ -53,10 +62,11 @@ func Parse(data []byte) (*Config, error) { return ParseWithOptions(data, Options
 // ParseWithOptions is Parse with injectable behaviour.
 func ParseWithOptions(data []byte, o Options) (*Config, error) {
 	raw := rawConfig{
-		Listen:        ":8080",
-		Fleet:         rawFleet{StaleAfter: duration(60 * time.Second)},
-		ModelsDir:     "/models",
-		ChildLogKeep:  DefaultChildLogKeep,
+		Listen:            ":8080",
+		Fleet:             rawFleet{StaleAfter: duration(60 * time.Second)},
+		ModelsDir:         "/models",
+		ChildLogKeep:      DefaultChildLogKeep,
+		HistoryMaxFileMiB: DefaultHistoryMaxFileMiB, HistoryKeepFiles: DefaultHistoryKeepFiles, HistoryMemoryEvents: DefaultHistoryMemoryEvents,
 		LocalProbeCmd: DefaultLocalProbeCmd,
 		Defaults:      rawDefaultsFrom(DefaultDefaults()),
 		Recovery:      rawRecoveryFrom(DefaultRecovery()),
@@ -67,17 +77,19 @@ func ParseWithOptions(data []byte, o Options) (*Config, error) {
 		return nil, fmt.Errorf("config: %w", err)
 	}
 	c := &Config{
-		Listen:        raw.Listen,
-		Fleet:         Fleet{URL: raw.Fleet.URL, LocalNode: raw.Fleet.LocalNode, StaleAfter: time.Duration(raw.Fleet.StaleAfter)},
-		ModelsDir:     raw.ModelsDir,
-		ChildLogDir:   strings.TrimSpace(raw.ChildLogDir),
-		ChildLogKeep:  raw.ChildLogKeep,
-		LocalProbeCmd: raw.LocalProbeCmd,
-		Defaults:      raw.Defaults.value(),
-		NodeOverrides: map[string]NodeOverride{},
-		ExcludeNodes:  trimAll(raw.ExcludeNodes),
-		Recovery:      raw.Recovery.value(),
-		Profiles:      map[string]*core.Profile{},
+		Listen:       raw.Listen,
+		Fleet:        Fleet{URL: raw.Fleet.URL, LocalNode: raw.Fleet.LocalNode, StaleAfter: time.Duration(raw.Fleet.StaleAfter)},
+		ModelsDir:    raw.ModelsDir,
+		ChildLogDir:  strings.TrimSpace(raw.ChildLogDir),
+		ChildLogKeep: raw.ChildLogKeep,
+		HistoryDir:   strings.TrimSpace(raw.HistoryDir), HistoryMaxFileMiB: raw.HistoryMaxFileMiB, HistoryKeepFiles: raw.HistoryKeepFiles,
+		HistoryMemoryEvents: raw.HistoryMemoryEvents,
+		LocalProbeCmd:       raw.LocalProbeCmd,
+		Defaults:            raw.Defaults.value(),
+		NodeOverrides:       map[string]NodeOverride{},
+		ExcludeNodes:        trimAll(raw.ExcludeNodes),
+		Recovery:            raw.Recovery.value(),
+		Profiles:            map[string]*core.Profile{},
 	}
 	for _, t := range raw.Tiers {
 		c.Tiers = append(c.Tiers, TierRule{
@@ -122,18 +134,22 @@ func trimAll(in []string) []string {
 func (c *Config) modelPath(p *core.Profile) string { return filepath.Join(c.ModelsDir, p.Model) }
 
 type rawConfig struct {
-	Listen        string                 `yaml:"listen"`
-	Fleet         rawFleet               `yaml:"fleet"`
-	ModelsDir     string                 `yaml:"models_dir"`
-	ChildLogDir   string                 `yaml:"child_log_dir"`
-	ChildLogKeep  int                    `yaml:"child_log_keep"`
-	LocalProbeCmd string                 `yaml:"local_probe_cmd"`
-	Defaults      rawDefaults            `yaml:"defaults"`
-	Tiers         []rawTier              `yaml:"tiers"`
-	NodeOverrides map[string]rawOverride `yaml:"node_overrides"`
-	ExcludeNodes  []string               `yaml:"exclude_nodes"`
-	Recovery      rawRecovery            `yaml:"recovery"`
-	Profiles      map[string]*rawProfile `yaml:"profiles"`
+	Listen              string                 `yaml:"listen"`
+	Fleet               rawFleet               `yaml:"fleet"`
+	ModelsDir           string                 `yaml:"models_dir"`
+	ChildLogDir         string                 `yaml:"child_log_dir"`
+	ChildLogKeep        int                    `yaml:"child_log_keep"`
+	HistoryDir          string                 `yaml:"history_dir"`
+	HistoryMaxFileMiB   int                    `yaml:"history_max_file_mib"`
+	HistoryKeepFiles    int                    `yaml:"history_keep_files"`
+	HistoryMemoryEvents int                    `yaml:"history_memory_events"`
+	LocalProbeCmd       string                 `yaml:"local_probe_cmd"`
+	Defaults            rawDefaults            `yaml:"defaults"`
+	Tiers               []rawTier              `yaml:"tiers"`
+	NodeOverrides       map[string]rawOverride `yaml:"node_overrides"`
+	ExcludeNodes        []string               `yaml:"exclude_nodes"`
+	Recovery            rawRecovery            `yaml:"recovery"`
+	Profiles            map[string]*rawProfile `yaml:"profiles"`
 }
 
 type rawFleet struct {
