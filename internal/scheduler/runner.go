@@ -16,13 +16,18 @@ import (
 // Options are the scheduler's collaborators. View, Prober and Launcher are
 // required.
 type Options struct {
-	Clock    Clock                  // default RealClock
-	View     fleet.View             // the node view (fleet.Client)
-	Prober   instance.Prober        // pre-flight (instance.ExecProber)
-	Launcher instance.Launcher      // children (instance.ProcessLauncher)
-	Needs    NeedProvider           // default &ConfigNeeds{Cfg: cfg}
-	Build    *instance.BuildOptions // default instance.OptionsFromConfig(cfg)
-	Logger   *slog.Logger           // default slog.Default()
+	Clock  Clock           // default RealClock
+	View   fleet.View      // the node view (fleet.Client)
+	Prober instance.Prober // pre-flight (instance.ExecProber)
+	// WorkerProber is the worker health connect probe; default TCPConnectProber.
+	WorkerProber WorkerProber
+	// RecoveryPoster sends recovery requests to the fleet manager; default
+	// HTTPRecoveryPoster. Used only when recovery.enabled.
+	RecoveryPoster RecoveryPoster
+	Launcher       instance.Launcher      // children (instance.ProcessLauncher)
+	Needs          NeedProvider           // default &ConfigNeeds{Cfg: cfg}
+	Build          *instance.BuildOptions // default instance.OptionsFromConfig(cfg)
+	Logger         *slog.Logger           // default slog.Default()
 }
 
 // Scheduler is the scheduler core plus the one goroutine (Run) that owns
@@ -67,6 +72,12 @@ func New(cfg *config.Config, o Options) (*Scheduler, error) {
 	}
 	if o.Clock == nil {
 		o.Clock = RealClock{}
+	}
+	if o.WorkerProber == nil {
+		o.WorkerProber = TCPConnectProber{}
+	}
+	if o.RecoveryPoster == nil {
+		o.RecoveryPoster = HTTPRecoveryPoster{}
 	}
 	if o.Needs == nil {
 		o.Needs = &ConfigNeeds{Cfg: cfg}
@@ -222,6 +233,19 @@ func (s *Scheduler) exec(ef effect) {
 		s.goBg(func(context.Context) {
 			sc, err := ef.counter.SentBytes(ef.peers)
 			s.post(context.Background(), evLoadSample{iid: ef.iid, bytes: sc.Bytes, sockets: sc.Sockets, peers: sc.Peers, err: err})
+		})
+	case effWorkerProbe:
+		// A plain connect with a timeout, off the event loop.
+		s.goBg(func(ctx context.Context) {
+			err := s.opts.WorkerProber.Connect(ctx, ef.addr, workerProbeTimeout)
+			s.post(context.Background(), evWorkerProbe{id: ef.id, gen: ef.gen, err: err})
+		})
+	case effRecoveryPost:
+		// The POST to the fleet manager, off the event loop.
+		s.goBg(func(ctx context.Context) {
+			r, err := s.opts.RecoveryPoster.Post(ctx, ef.url, ef.body, ef.timeout)
+			s.post(context.Background(), evRecoveryPosted{id: ef.id, epoch: ef.epoch, action: ef.action, nonce: ef.nonce,
+				status: r.Status, tail: r.BodyTail, err: err})
 		})
 	case effFetch:
 		s.goBg(func(ctx context.Context) {

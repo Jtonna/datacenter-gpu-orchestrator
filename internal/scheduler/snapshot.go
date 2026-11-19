@@ -155,7 +155,7 @@ func (c *schedCore) instStatus(in *inst) InstanceStatus {
 }
 
 func (c *schedCore) statusDoc() Status {
-	st := Status{Time: c.now, ShuttingDown: c.shutdown, RecentLoads: c.recentLoads()}
+	st := Status{Time: c.now, ShuttingDown: c.shutdown, RecentLoads: c.recentLoads(), LearnedNeeds: c.learnedNeeds()}
 	for _, in := range c.sortedInsts() {
 		st.Instances = append(st.Instances, c.instStatus(in))
 	}
@@ -212,6 +212,10 @@ func (c *schedCore) statusDoc() Status {
 			}
 			s.MissingSince = ns.missingSince
 		}
+		if h := c.health[id]; h != nil {
+			s.Health = c.healthStatus(h)
+		}
+		s.Recovery = c.recoveryStatus(c.recov[id])
 		st.View.Nodes = append(st.View.Nodes, s)
 	}
 	return st
@@ -256,6 +260,7 @@ func (c *schedCore) dryPlan(profile string) PlanReport {
 		return r
 	}
 	r.NeedMiB, r.Measured = info.Need.MiB, info.Need.Measured
+	r.FitNeedMiB, r.NeedBasis = info.Need.WithMargin(), c.needBasis(info)
 	if in := c.insts[profile]; in != nil {
 		r.Instance = in.state.String()
 		r.Placement = c.placedStatus(in.placement)
@@ -305,11 +310,7 @@ func (c *schedCore) dryPlan(profile string) PlanReport {
 // applyForcedFit adds the forced_fit_check outcome to a plan that would
 // start: a refusal in reject mode, a warning in warn mode.
 func (c *schedCore) applyForcedFit(r *PlanReport, p *core.Profile, pl core.Placement) {
-	ids := make([]core.NodeID, len(pl.Nodes))
-	for i, n := range pl.Nodes {
-		ids[i] = n.ID
-	}
-	ff := c.forcedFitCheck(p, ids)
+	ff := c.forcedFitCheck(p, pl)
 	if ff == nil {
 		return
 	}

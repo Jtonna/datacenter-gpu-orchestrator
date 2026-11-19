@@ -18,15 +18,18 @@ package fakefleet
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
-// Endpoint names one of the three served endpoints.
+// Endpoint names one of the served endpoints.
 type Endpoint int
 
 const (
@@ -36,6 +39,8 @@ const (
 	EpNode
 	// EpStream is GET /api/stream.
 	EpStream
+	// EpRecovery is POST /api/recovery/:id.
+	EpRecovery
 	numEndpoints
 )
 
@@ -66,6 +71,47 @@ type Member struct {
 	GPUUtilPct *float64 `json:"gpu_util_pct"`
 	GPUTempC   *float64 `json:"gpu_temp_c"`
 	FanRPM     *float64 `json:"fan_rpm"`
+	// LastRecovery is the node's reported recovery outcome; null when none.
+	LastRecovery *RecoveryAction `json:"last_recovery_action"`
+}
+
+// RecoveryAction is a member's last_recovery_action.
+type RecoveryAction struct {
+	Action     string `json:"action"`
+	At         int64  `json:"at"` // unix ms
+	Outcome    string `json:"outcome"`
+	Reason     string `json:"reason"`
+	Nonce      string `json:"nonce"`
+	DurationMs int64  `json:"duration_ms"`
+}
+
+// RecoveryRequest is one POST /api/recovery/:id the fake received.
+type RecoveryRequest struct {
+	// Path is the decoded URL path, RawPath the percent-encoded one as sent.
+	Path, RawPath string
+	// NodeID is the decoded id segment.
+	NodeID string
+	Body   []byte
+	// Status is what the fake answered.
+	Status int
+}
+
+// RecoveryRecord is the JSON body of a recovery request (contract v1).
+type RecoveryRecord struct {
+	V            int    `json:"v"`
+	TargetNodeID string `json:"target_node_id"`
+	Action       string `json:"action"`
+	Reason       string `json:"reason"`
+	IssuedAt     int64  `json:"issued_at"`
+	ExpiresAt    int64  `json:"expires_at"`
+	Nonce        string `json:"nonce"`
+}
+
+// Record decodes the request body.
+func (r RecoveryRequest) Record() (RecoveryRecord, error) {
+	var rec RecoveryRecord
+	err := json.Unmarshal(r.Body, &rec)
+	return rec, err
 }
 
 // Ptr returns a pointer to v, for nullable Member fields.
@@ -111,6 +157,9 @@ type Fleet struct {
 	hang     [numEndpoints]bool
 	hangWake chan struct{} // closed and replaced by Heal
 	reqs     [numEndpoints]int
+	recov    []RecoveryRequest
+	recovSeq []int // statuses for the next recovery requests, consumed in order
+	nonces   map[string]bool
 	streams  map[*stream]struct{}
 	conns    int
 	closed   chan struct{}
@@ -123,6 +172,7 @@ func New(t testing.TB) *Fleet {
 	mux.HandleFunc("/api/fleet", f.handleFleet)
 	mux.HandleFunc("/api/nodes/", f.handleNode)
 	mux.HandleFunc("/api/stream", f.handleStream)
+	mux.HandleFunc("/api/recovery/", f.handleRecovery)
 	f.srv = httptest.NewServer(mux)
 	t.Cleanup(f.Close)
 	return f
@@ -193,6 +243,28 @@ func (f *Fleet) Modify(id string, fn func(*Member)) {
 			fn(&f.members[i])
 		}
 	}
+}
+
+// RecoveryRequests is every recovery POST received so far, oldest first.
+func (f *Fleet) RecoveryRequests() []RecoveryRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]RecoveryRequest(nil), f.recov...)
+}
+
+// QueueRecoveryStatus makes the next recovery requests answer with these
+// statuses, one each in order, before Fail(EpRecovery, ...) or the normal
+// handling applies again. 200 stores the request.
+func (f *Fleet) QueueRecoveryStatus(codes ...int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.recovSeq = append(f.recovSeq, codes...)
+}
+
+// SetLastRecovery sets (or with nil clears) last_recovery_action on a member,
+// as the node's reported outcome would.
+func (f *Fleet) SetLastRecovery(id string, a *RecoveryAction) {
+	f.Modify(id, func(m *Member) { m.LastRecovery = a })
 }
 
 // Push sends the current fleet snapshot to every open stream.
@@ -405,6 +477,81 @@ func (f *Fleet) handleNode(w http.ResponseWriter, r *http.Request) {
 	}
 	b, _ := json.Marshal(found)
 	w.Write(b)
+}
+
+// handleRecovery is POST /api/recovery/:id. Like the real manager it answers
+// 400 for a body that is not the v1 record (or whose target does not match the
+// path), 404 for an unknown node, 410 for a record already expired, 409 for a
+// nonce seen before and 200 when stored. Every request is recorded, with the
+// status it got, whatever that was. Queued statuses and Fail(EpRecovery, n)
+// override the handling.
+func (f *Fleet) handleRecovery(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	req := RecoveryRequest{Path: r.URL.Path, RawPath: r.URL.EscapedPath(), NodeID: strings.TrimPrefix(r.URL.Path, "/api/recovery/"), Body: body}
+	f.mu.Lock()
+	f.reqs[EpRecovery]++
+	f.recov = append(f.recov, req)
+	idx := len(f.recov) - 1
+	f.mu.Unlock()
+	finish := func(status int, msg string) {
+		f.mu.Lock()
+		f.recov[idx].Status = status
+		f.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		if status == 200 {
+			io.WriteString(w, `{"ok":true}`)
+			return
+		}
+		fmt.Fprintf(w, `{"error":%q}`, msg)
+	}
+	if r.Method != http.MethodPost {
+		finish(405, "POST only")
+		return
+	}
+	f.mu.Lock()
+	forced := 0
+	if len(f.recovSeq) > 0 {
+		forced, f.recovSeq = f.recovSeq[0], f.recovSeq[1:]
+	} else {
+		forced = f.fail[EpRecovery]
+	}
+	f.mu.Unlock()
+	if forced != 0 && forced != 200 {
+		finish(forced, "injected failure")
+		return
+	}
+	var rec RecoveryRecord
+	if err := json.Unmarshal(body, &rec); err != nil || rec.V != 1 || rec.TargetNodeID != req.NodeID || rec.Nonce == "" {
+		finish(400, "malformed")
+		return
+	}
+	f.mu.Lock()
+	known := false
+	for _, m := range f.members {
+		if m.ID == req.NodeID {
+			known = true
+		}
+	}
+	dup := f.nonces[rec.Nonce]
+	stored := known && !dup && rec.ExpiresAt > time.Now().UnixMilli()
+	if stored {
+		if f.nonces == nil {
+			f.nonces = map[string]bool{}
+		}
+		f.nonces[rec.Nonce] = true
+	}
+	f.mu.Unlock()
+	switch {
+	case !known:
+		finish(404, "unknown node")
+	case dup:
+		finish(409, "duplicate nonce")
+	case !stored:
+		finish(410, "expired")
+	default:
+		finish(200, "")
+	}
 }
 
 func (f *Fleet) handleStream(w http.ResponseWriter, r *http.Request) {

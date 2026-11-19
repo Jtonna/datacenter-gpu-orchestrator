@@ -220,6 +220,10 @@ func (c *schedCore) failFastForced(p *core.Profile, waiters int) *Error {
 
 // timers applies every time-based rule that is due at c.now.
 func (c *schedCore) timers() {
+	// Worker health runs first, so a worker that is hung in the same step in
+	// which node loss kills its instance is still named.
+	c.workerHealthStep()
+	c.recoveryStep()
 	for _, id := range c.sortedNodeIDs() {
 		ns := c.nodes[id]
 		if ns == nil {
@@ -259,6 +263,20 @@ func (c *schedCore) timers() {
 		if in.state == stStarting && in.phase == phLoading && !c.now.Before(in.loadDL) {
 			c.failLoad(in, fmt.Sprintf("load timeout (%v) passed", in.loadTimeout), nil, false)
 			continue
+		}
+		// Load stall: the upload is measured and stopped moving.
+		if in.state == stStarting && in.phase == phLoading {
+			if quiet, stalled := c.loadStalled(in); stalled {
+				c.failStalledLoad(in, quiet)
+				continue
+			}
+		}
+		// Memory watch: a node the load runs on ran low on memory.
+		if in.state == stStarting && in.phase == phLoading {
+			if label, avail, hit := c.memoryFloorHit(in); hit {
+				c.cancelLowMemoryLoad(in, label, avail)
+				continue
+			}
 		}
 		// Node loss.
 		if lost := c.lostNode(in); lost != "" {

@@ -67,6 +67,16 @@ func (c *Config) EffectiveStallTimeout(p *core.Profile) time.Duration {
 	return c.Defaults.StallTimeout
 }
 
+// EffectiveLoadStallTimeout is how long a measured upload may acknowledge no
+// new bytes before the load fails: the profile's own, else the default; 0
+// means disabled.
+func (c *Config) EffectiveLoadStallTimeout(p *core.Profile) time.Duration {
+	if p.LoadStallTimeout != nil {
+		return *p.LoadStallTimeout
+	}
+	return c.Defaults.LoadStallTimeout
+}
+
 // EffectiveLoadTimeout returns the configured load timeout: the profile's
 // own, else command_load_timeout for kind: command. ok is false for a llama
 // profile without one; the caller then computes the design 7.6 formula.

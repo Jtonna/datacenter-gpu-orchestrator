@@ -24,10 +24,12 @@ func TestParseDefaultsApplied(t *testing.T) {
 	want := Defaults{
 		TTL: 300 * time.Second, MinHold: 30 * time.Second, MaxHold: 900 * time.Second,
 		DrainAfter: 60 * time.Second, QueueTimeout: 600 * time.Second,
-		StallTimeout: 300 * time.Second, CommandLoadTimeout: 900 * time.Second,
+		StallTimeout: 300 * time.Second, CommandLoadTimeout: 900 * time.Second, LoadStallTimeout: 180 * time.Second,
 		ShutdownGrace: 300 * time.Second, MaxPool: 4, DeviceOverheadMiB: 600,
 		MinShareMiB: 1024, CacheRAMMiB: 2048, ServerBin: "llama-server-rpc", LocalDevice: "CUDA0",
 		ForcedNodeGrace: 30 * time.Second, ForcedFitCheck: ForcedFitOff,
+		WorkerSilence:   30 * time.Second,
+		SplitSkewMargin: 0.15, EstimateMargin: 0.05, LoadMemoryFloorMiB: 768,
 	}
 	if d != want {
 		t.Fatalf("defaults = %+v\nwant      %+v", d, want)

@@ -50,7 +50,7 @@ func startScheduler(t *testing.T, nodes []core.Node, profiles ...*core.Profile) 
 	f := &runFixture{t: t, clk: clk, view: view, prober: newFakeProber(view),
 		launcher: &fakeLauncher{nextPort: 5800, autoHealthy: true, autoExit: true}, cfg: cfg, runErr: make(chan error, 1)}
 	s, err := New(cfg, Options{
-		Clock: clk, View: view, Prober: f.prober, Launcher: f.launcher,
+		Clock: clk, View: view, Prober: f.prober, Launcher: f.launcher, WorkerProber: newFakeWorkerProber(),
 		Needs: NeedFunc(func(p *core.Profile) (NeedInfo, error) {
 			if p.Name == "upload" {
 				return NeedInfo{Need: placer.Measured(p.NeedsMiB), FileBytes: 1100 * mb}, nil

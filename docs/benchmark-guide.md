@@ -83,7 +83,8 @@ Other paths give 404. `/v1/*` with a method other than POST gives 405. A body wi
 - Machines sit in tiers: PS5s (tier 1), Alienware (tier 2), OMEN GPU (tier 3). Lower number is preferred. A machine in no tier is never used.
 - Auto profile: the scheduler picks the best tier that can hold the model, one machine first, then a pool of up to `max_pool` (4). It uses `needs_mib` if set, else an estimate from the GGUF file.
 - Forced profile (`force_nodes`): exactly those machines, in that order, with no fit check. `tensor_split` sets each machine's share. All `b-*`, `m-*` and `bench-*` profiles are forced except the `auto` ones.
-- `defaults.forced_fit_check` is off in the benchmark config, so a forced profile is never fit-checked. A model that does not fit fails during the upload (the PS5 `rpc-server` can crash and restart by itself). Do not turn it on for the benchmark.
+- `defaults.forced_fit_check` is off in the benchmark config, so a forced profile is never fit-checked. A model that does not fit fails during the upload (the PS5 `rpc-server` can crash and restart by itself). Do not turn it on for the benchmark. Outside the benchmark, `reject` is the recommended setting: on llama.cpp upstream HEAD (2026-11-19) a forced load that does not fit took a PS5 down until it was power cycled. On PS5 (shared memory) nodes the check uses free minus tier headroom, not raw free.
+- PS5 memory safety (design 7.2a): a load that exhausts a PS5 makes it unreachable for about 18 minutes, so a placement of two or more nodes with a PS5 must fit each PS5's share, `need x split fraction x 1.15` (`defaults.split_skew_margin`), in its usable memory (about 12.4 GB). With `forced_fit_check: reject` a forced profile that fails this gets `503` "forced nodes do not fit" naming the node, its expected share and its usable figure; with the check off it starts anyway, so keep the benchmark `tensor_split` shares within each PS5's usable memory. A need without `needs_mib` is raised 5% (`estimate_margin`). While a load runs, a PS5 whose available memory falls below `load_memory_floor_mib` (768) cancels it: `502` `load cancelled: <node> ran low on memory during the load (available N MiB, floor M MiB)`, `recent_loads` outcome `failed`, node not quarantined.
 - Each machine serves one model at a time. A request for a model that cannot start now waits in a queue (one entry per profile). Waiting longer than `queue_timeout` (1800 s live) without a claim gives `503 cluster busy`. A forced machine that is present but busy is not an error: the request queues.
 - Eviction: to make room, the scheduler stops idle models, or drains busy ones after `drain_after` (60 s). A model is protected for its hold time: its load time, clamped between `min_hold` (30 s) and `max_hold` (900 s).
 - After a model leaves a machine, the machine is unusable for a short settle time (PS5 3 s) while the scheduler re-reads its memory.
@@ -204,7 +205,7 @@ All from the code. Statuses are HTTP codes; `reason` is in the JSON error.
 | 400 `bad request` | Admin body has no `model`, or the `/v1` body cannot be read. |
 | 405 | Wrong method on `/v1/*` (only POST). |
 | 409 `busy` | Unload refused: a request is in flight (or the model is still loading). Wait, or use `force:true`. |
-| 502 `load failed` | Child exited or the load timed out. The message ends with the last 40 child output lines. The full output is in the child log file. The profile is then backed off. |
+| 502 `load failed` | Child exited, the load timed out, or the load stalled (message `load stalled: no bytes acknowledged by the workers for 3m0s (sent N of M)`: a measured upload got no new acknowledged bytes for `defaults.load_stall_timeout`, 180 s, `0` = off, also a profile key; the hung child is stopped, nodes are not quarantined, `recent_loads` shows `failed` with that reason). The message ends with the last 40 child output lines. The full output is in the child log file. The profile is then backed off. |
 | 503 `backoff` | Profile failed a load recently. Waits 60 s, doubling to 10 min; clears when the profile next reaches ready. See `backoffs` in `/api/status`. |
 | 503 `cluster busy` | Waited `queue_timeout` (1800 s) with no machine free. Message "too many request bodies are waiting in the queue" is the same reason (queue memory cap, 256 MiB). Retry after 30 s. |
 | 503 `forced nodes unavailable` | Fail fast (section 9). A machine named in `force_nodes` is absent from the fleet or offline for longer than `defaults.forced_node_grace` (30 s). The message names the node and says "absent from the fleet" or "offline in the fleet". `Retry-After: 30`. `/api/plan` gives the same text. A machine that is present but busy is not this error: the request queues. |
@@ -246,6 +247,7 @@ Network note (2026-11-18, about 14:00 to 14:31 UTC): the OMEN's link to the PS5 
 ```
    - `source` is `measured` (TCP acknowledged bytes) or `estimated`. Worker `state` is `waiting`, `receiving` or `done`, taken from each worker's own bytes. Workers receive one at a time, in an order llama.cpp chooses, which may differ from the `--rpc` order.
    - Load MB/s: `load.bytes_sent / load.elapsed_s`.
+   - If `bytes_sent` stops rising for more than 15 s, `eta_s` is left out and `stalled_s` (seconds since the last rise) appears. At `defaults.load_stall_timeout` (180 s) the load fails (see the errors table). Only a measured upload under 99% sent is judged.
    - The flat fields `load_elapsed_s`, `load_bytes_total`, `load_bytes_sent`, `load_progress`, `load_eta_s`, `load_progress_source` are still on the `/api/status` instance.
    - The scheduler also logs a `load progress` line every 30 s.
 4. `recent_loads`. A top-level key of `/running` and `/api/status`, next to `running`. It lists load attempts that finished in the last 120 s, newest first, and is an empty array when there are none:
@@ -254,6 +256,11 @@ Network note (2026-11-18, about 14:00 to 14:31 UTC): the OMEN's link to the PS5 
  "outcome":"ready","reason":"","finished_at":1794995221087,"load_s":215.1}
 ```
    `outcome` is `ready`, `failed` or `cancelled` (see design 7.6a). The same object arrives in the `loadFinished` event on `/api/events`; `loadStarted` is sent when the child starts. Poll often enough (under 120 s) not to miss a load.
+
+Worker health (design 8.4a). Every PS5 that backs a loaded or loading model is watched on its upload progress and the fleet heartbeat (a third channel, a TCP connect to port 50052, exists but is off by default), and `/api/status` shows `view.nodes[].health` with `state` `ok`, `suspect` or `hung`. `hung` logs an ERROR `worker hung`, quarantines the node and sends a `workerHealth` event on `/api/events`; it does not stop anything, so for a benchmark watch the state and power cycle a hung PS5 yourself. Leave `defaults.worker_probe_interval` at its default `0`: an rpc-server accepts one client and does not accept() again until it leaves, so connect probes fill its listen backlog and then all time out (healthy PS5s read `probe: silent`). The same applies to any TCP check of port 50052 you run by hand during a benchmark.
+
+Recovery requests (design 8.4b) are off by default (`recovery.enabled: false`), so a hung PS5 is not touched; leave it off for a benchmark, because a restart ends the run on that PS5 and `restart_docker` and `reboot` would interrupt everything on it.
+If you turn it on, `/api/status` shows `view.nodes[].recovery` (last request, last outcome, step) for each PS5 that was sent one.
 
 ## 10. Known gaps
 

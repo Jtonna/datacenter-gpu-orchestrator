@@ -70,6 +70,8 @@ type options struct {
 	env      map[string]string // extra environment for the scheduler (and so its children)
 	fleetURL string            // override the fake fleet's URL (e.g. an unreachable one)
 	exclude  string            // YAML list for exclude_nodes, e.g. `["ps5-test*"]`; empty for none
+	defaults string            // extra lines under "defaults:", each indented two spaces and ending in a newline
+	topLevel string            // extra top-level YAML (say a recovery: block), ending in a newline
 }
 
 // cluster is a running llm-scheduler with its fakes.
@@ -125,12 +127,12 @@ defaults:
   stall_timeout: 0s
   shutdown_grace: 10s
   server_bin: "%s"
-tiers:
+%stiers:
   - {match: {hostname: "ps5-*"}, priority: 1, headroom_mib: 1024, shared_memory: true, link_mb_s: 1000, settle: 100ms}
   - {match: {local: true}, priority: 3, headroom_mib: 256, settle: 100ms}
-%sprofiles:
+%s%sprofiles:
 %s
-`, port, fleetURL, slash(models), slash(fake), slash(fake), excludeLine, o.profiles)
+`, port, fleetURL, slash(models), slash(fake), slash(fake), o.defaults, excludeLine, o.topLevel, o.profiles)
 	cfgPath := filepath.Join(dir, "config.yaml")
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)
@@ -158,7 +160,7 @@ tiers:
 		select {
 		case <-c.done:
 		default:
-			c.cmd.Process.Kill()
+			killTree(c.cmd)
 			<-c.done
 		}
 		if t.Failed() {

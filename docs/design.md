@@ -270,6 +270,7 @@ defaults:
   queue_timeout: 600s      # max time an entry may wait without a claim
   stall_timeout: 300s      # max gap between chunks once streaming has begun
   command_load_timeout: 900s   # for kind: command profiles
+  # load_stall_timeout: 180s  # fail a load whose measured upload gets no new acknowledged bytes for this long (a hung child); 0 = off; per-profile override of the same name
   shutdown_grace: 300s
   max_pool: 4
   device_overhead_mib: 600 # per-device cost added to estimated needs only
@@ -279,6 +280,12 @@ defaults:
   local_device: CUDA0
   forced_node_grace: 30s   # forced node absent/offline this long: fail fast (8.4)
   forced_fit_check: off    # off | warn | reject: fit check for force_nodes profiles (7.2)
+  # split_skew_margin: 0.15     # per-node fit on shared-memory nodes: share = need x fraction x (1 + this) (7.2a)
+  # estimate_margin: 0.05       # added to a need that is an estimate (7.2, 7.2a)
+  # load_memory_floor_mib: 768  # cancel a load when a shared-memory node's available memory falls below this; 0 = off (7.2a, 8.4)
+  # worker_silence: 30s         # a worker's upload or heartbeat channel is silent after this long (8.4a)
+  # worker_probe_interval: 0    # TCP connect probe (8.4a); 0 = never runs (default; harmful for rpc-server workers)
+  # worker_probe_during_inference: false  # only with the probe on: probe while a request is in flight
 
 tiers:                     # first match wins; lower number preferred;
                            # a node matching no tier is never used
@@ -376,7 +383,19 @@ Fields for `kind: llama` (the default):
 | `force_nodes` | Exact nodes, in device order. May include the local node. |
 | `tensor_split` | Only with `force_nodes`; same length. |
 | `extra_args` | Appended last. |
-| `ttl`, `aliases`, `load_timeout`, `stall_timeout` | Per-profile overrides. |
+| `ttl`, `aliases`, `load_timeout`, `stall_timeout`, `load_stall_timeout` | Per-profile overrides. |
+
+Worker health (8.4a) is configured in `defaults` only:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `worker_probe_interval` | `0` | How often each worker that backs an instance gets a TCP connect probe (2 s timeout, nothing sent). `0` (default) means the probe never runs and its channel is always `unknown`; the rest of worker health is always on. Opt-in only, and not for `rpc-server` workers (8.4a). Must not be negative. |
+| `worker_silence` | `30s` | How long a worker's upload progress or fleet heartbeat may be quiet before that channel is silent. Must be positive. |
+| `worker_probe_during_inference` | `false` | Only with the probe on: also probe while the instance has a request in flight. Off by default. |
+
+Recovery requests (8.4b) are configured in the top-level `recovery:` block
+(`enabled`, `actions`, `min_interval`, `step_wait`, `request_ttl`,
+`http_timeout`; defaults and rules in 8.4b). It is off by default.
 
 Fields for `kind: command`: `cmd` (with `${PORT}`), `check_endpoint`,
 `needs_mib` (required), `ttl`, `aliases`, timeouts. Always placed on the local
@@ -485,7 +504,11 @@ measurement already contains them.
 - `kv = n_layer × (ctx × parallel) × (n_embd_k_gqa + n_embd_v_gqa) × b`, from
   GGUF metadata, with `b` as in 3.1.
 
-A set of nodes fits when `Σ (budget_i − device_overhead) ≥ need × 1.05`. The
+A set of nodes fits when `Σ (budget_i − device_overhead) ≥ need × (1 +
+estimate_margin)`, the margin being `defaults.estimate_margin` (default 0.05,
+the 5% of earlier versions; hardware showed an estimate 2% low: 13991 MiB
+estimated, 14248 MiB measured). Plans and messages call such a need
+`estimated, +5% margin`. The
 overhead and margin stand in for compute buffers, which the estimate cannot
 see. This is deliberately cautious, and it is far too high for sliding-window
 models (several times too high for Gemma at 64K), so those profiles must carry
@@ -527,10 +550,24 @@ about 13.5 GB free; the upload started, the PS5 `rpc-server` crashed mid-upload
 itself. `forced_fit_check` adds a guard
 with three values: `off` (the default: today's behaviour, no check), `warn`
 and `reject`. The comparison is the profile's need (`needs_mib` when measured,
-else the estimate of this section) against the sum of the forced nodes' FREE
-memory as the scheduler holds it after the pre-flight (7.5), with no tier
-headroom taken off: forced profiles may eat into headroom, and only a need
-above the whole free figure counts. `warn` logs one WARN line, `forced profile
+else the estimate of this section) against the sum of the forced nodes' usable
+memory as the scheduler holds it after the pre-flight (7.5). On a dedicated-VRAM
+tier that is raw FREE memory with no tier headroom taken off (forced profiles
+may eat into headroom there). On a tier with `shared_memory: true` (the PS5:
+GPU memory is system RAM and the pre-flight reports nearly all of it as free)
+it is the SMALLER of the fleet-based budget (the figure the automatic placer
+uses: fleet-reported free minus the tier headroom) and the pre-flight free minus
+the tier headroom, because the Vulkan pre-flight overstates what shared memory
+can give (live 2026-11-19: fleet budget 12472 MiB against 13856 MiB from the
+pre-flight; the smaller is used, so the plan and a real request agree). Real case, 2026-11-19: a model needing about 13991 MiB forced
+onto one PS5 whose pre-flight said 14875 MiB free of 14947 would have passed
+against raw free, but the load exhausted the machine's memory and the PS5 was
+unreachable until a physical power cycle; its budget was 12380 MiB, which
+correctly says it does not fit. On llama.cpp upstream HEAD (2026-11-19) a
+forced load that does not fit takes a PS5 down until it is power cycled, so
+`reject` is the recommended production setting. Messages say per node which
+figure was used, e.g. `need 14691 MiB (estimated, +5% margin; the estimate is 13991 MiB), but the nodes it is forced onto have only 12380 MiB usable in total (usable 12380 MiB on
+ps5-9032a330 (shared memory, headroom kept, from fleet figures))`. `warn` logs one WARN line, `forced profile
 may not fit`, with `need_mib`, `free_mib`, `nodes` and `measured`, and starts
 anyway. `reject` fails the request before a child is started, with `503`,
 reason `forced nodes do not fit` and a `Retry-After` like the other placement
@@ -541,6 +578,68 @@ node is quarantined, and the nodes are released at once. `POST /api/plan`
 reports the same outcome from the free figures it holds (no probe is run): in
 `reject` mode `action: reject` with the message in `reason`, in `warn` mode
 the usual `start` plus a `warning` field.
+
+### 7.2a Memory safety on shared-memory nodes
+
+The PS5 workers have no container memory limit, and on the current llama.cpp a
+load that exhausts a PS5's memory makes the whole machine unreachable for about
+18 minutes. So the scheduler plans loads that fit, and watches while they run.
+Usable memory per PS5 is about 12.4 to 12.5 GB (fleet free minus the 1024 MiB
+tier headroom); the Vulkan pre-flight (about 14.9 GB free) overstates it, so
+for a `shared_memory` node every fit decision, automatic or forced, uses the
+smaller of the fleet-based and the pre-flight budget.
+
+**Per-node fit (`defaults.split_skew_margin`, default 0.15).** A split model
+does not land evenly: `--tensor-split 33,33,34` of a 7.1 GB model gave buffers
+of 2210, 2048 and 2519 MiB (the largest 11% over an even share). For every
+placement of two or more nodes that includes a shared-memory node, each such
+node's expected share must fit its own budget:
+
+    share_i = need x fraction_i x (1 + split_skew_margin)  <=  budget_i
+
+`fraction_i` comes from the split the child is given (`instance.SplitFractions`:
+the profile's `tensor_split` for a forced placement, the node budgets for an
+automatic one). A single-node placement takes no margin, and dedicated-VRAM
+nodes are not checked this way.
+
+- Automatic placements: the placer applies the rule in its search
+  (`placer.Request.SkewPermille`, `Candidate.Shared`). Before this rule the
+  split followed the budgets, so every node's share equalled its budget share
+  of the need and only the total was checked, which left no room for skew. Now
+  a set whose total fits but whose split would overfill a shared-memory node is
+  not chosen: the placer takes another set, or adds a node (up to `max_pool`),
+  and refuses (503 "does not fit", with `required` including the margin) only
+  when nothing fits. The pre-flight re-check applies the same rule to the exact
+  figures.
+- Forced placements: checked with `forced_fit_check` `reject` (503 "forced
+  nodes do not fit", message naming the node, its expected share and its usable
+  figure, for example `node c: expected share 10868 MiB (need 27793 MiB x 34% of
+  the split x 1.15 skew margin) but usable 10000 MiB (shared memory, headroom
+  kept, from fleet figures)`) or `warn` (the same text in the WARN log and
+  `POST /api/plan` `warning`); `off` is unchanged.
+
+**Measured sizes are learned.** After a load succeeds, the memory the child's
+log reported (the `memory_mib` total and each node's figure) is kept for the
+life of the process, keyed by profile. A later fit decision for the same profile
+uses it as `measured this run` instead of the estimate (no estimate margin); the
+per-node figures replace the skew margin when the node set and the split are the
+same. A learned figure never lowers a configured `needs_mib`; if it is higher,
+one WARN per profile (`configured needs_mib is too low`, both numbers) is logged
+and the higher figure is used. `GET /api/status` shows them in `learned_needs`.
+Nothing is written to the config.
+
+**Memory watch during a load (`defaults.load_memory_floor_mib`, default 768, 0
+= off).** See 8.4. On these machines the worker allocates its whole buffer
+within the first seconds of a load, so the fleet's available figure during the
+load already contains the model: the rule is simply "available now is below the
+floor". A stale fleet view disables it.
+
+**Concurrent placements.** A node held by an instance (from its placement
+through its load and for as long as it runs), or claimed by a queue entry, is
+not offered to any other placement; after the instance goes the node settles and
+is re-read before it is used again (7.1). So two loads cannot both count the same
+free memory, whatever the fleet figures say in the meantime. Tests:
+`TestConcurrent_*`.
 
 ### 7.3 Choosing nodes
 
@@ -657,6 +756,28 @@ Example: 10 GB (10^10 bytes) to a PS5 at 100 MB/s gives about 5 minutes (320 s).
 (On the old 1 GbE link the figure was 80 MB/s, which gave 370 s.)
 `kind: command` profiles use `command_load_timeout`.
 
+**Load stall.** A hung child (seen on real hardware: a remote worker dropped
+during a load, the child stayed alive doing nothing, and the acknowledged
+bytes stayed at 549 for 732 s) would otherwise hold the load until this
+timeout, an hour on the benchmark profiles. So a load also fails when its
+upload stops moving: `defaults.load_stall_timeout` (default `180s`; `0`
+disables; profile override of the same name, where an explicit `0` disables it
+for that profile). It trips when all of these hold: the progress source is
+`measured` (7.6a); the total acknowledged bytes have not risen for the whole
+timeout; and the upload is not finished (bytes sent below 99% of
+`bytes_total`). The clock starts at the first measured reading and restarts
+every time the byte count rises, so the quiet start of a large model (0 bytes
+for 10 to 15 s while the file is mapped) is covered by the default, and a load
+that never sends anything is stalled too. It never applies to an estimate, to
+a local-only load, before the first measured reading, or after the upload is
+complete (context creation and warmup are quiet by nature). A stalled load is
+a load failure (8.4): the child is stopped as for a load timeout, waiting
+requests get `502` `load failed` with `load stalled: no bytes acknowledged by
+the workers for 3m0s (sent 549 of 14334446752)`, the profile is backed off,
+nodes are not quarantined, and `recent_loads` / `loadFinished` record
+`outcome: "failed"` with that reason. An ERROR line `load stalled` carries the
+profile, bytes, the quiet time and each worker's bytes.
+
 ### 7.6a Load progress
 
 The child prints nothing while it uploads the model to the remote workers (the
@@ -671,14 +792,14 @@ once the instance is ready:
 | `load_bytes_total` | Bytes the remote workers must receive: the model file size times the remote nodes' share of the tensor split. Absent for a placement with no remote worker (local GPU only: nothing is uploaded, so only `load_elapsed_s` is shown). |
 | `load_bytes_sent` | Bytes the workers have acknowledged. Only when measured. |
 | `load_progress` | 0 to 1, never above 0.99 until the instance is ready. Absent when it cannot be known (not measured and no `link_mb_s` figure in the nodes' tiers). |
-| `load_eta_s` | Seconds left at the current rate. |
+| `load_eta_s` | Seconds left at the current rate. Absent while a measured load has had no new acknowledged bytes for more than 15 s (a stale figure would only mislead). |
 | `load_progress_source` | `"measured"` or `"estimated"`. |
 
 `GET /running` gains one number, `load_progress`, on an entry that is loading a
 remote model, and the structured `load` object and `recent_loads` described
 below; its other fields are unchanged (Appendix A.1). The scheduler also
 logs one INFO line, `load progress`, every 30 s per loading instance with
-`elapsed`, `percent`, `eta`, `source` and the byte counts.
+`elapsed`, `percent`, `eta`, `source` and the byte counts; when the bytes have not moved for over 15 s it says `stalled=<duration>` instead of `eta`.
 
 *Measured.* On Linux the scheduler reads the kernel's TCP statistics for the
 child's connections to the workers (netlink `sock_diag`, the source of
@@ -736,7 +857,8 @@ above stay exactly as they are.
 | `session_id` | Unique per load attempt and the same for its whole life; it is the `session_id` later seen in `recent_loads` and in the load events (A.3). Built as `ld-<start time in unix ms>-<instance id>`: the instance id restarts from 1 with the scheduler, the start time makes it unique across restarts. |
 | `started_at` | Unix ms at which the child started. |
 | `elapsed_s` | Seconds since `started_at`. (`load_elapsed_s` counts from the instance's creation, so it also includes pre-flight.) |
-| `bytes_total`, `bytes_sent`, `progress`, `eta_s`, `source` | The same figures as `load_bytes_total`, `load_bytes_sent`, `load_progress`, `load_eta_s`, `load_progress_source`, with the same omissions: `bytes_total` is absent for a load with no remote worker, `bytes_sent` unless measured, `progress` (0 to 0.99) and `eta_s` when unknown. |
+| `bytes_total`, `bytes_sent`, `progress`, `eta_s`, `source` | The same figures as `load_bytes_total`, `load_bytes_sent`, `load_progress`, `load_eta_s`, `load_progress_source`, with the same omissions: `bytes_total` is absent for a load with no remote worker, `bytes_sent` unless measured, `progress` (0 to 0.99) and `eta_s` when unknown or when the bytes have not moved for more than 15 s. |
+| `stalled_s` | Seconds since the acknowledged bytes last rose. Present only on a measured, unfinished upload when that is above 15; `eta_s` is absent then. At `load_stall_timeout` the load fails (7.6). |
 | `workers` | The remote workers in `--rpc` list order. Workers receive one at a time, but llama.cpp decides the order, so it is not guaranteed to match the array. Always present, empty for a local-GPU-only load. |
 
 A worker is `{addr, bytes_total, bytes_sent?, state}`:
@@ -917,13 +1039,233 @@ Rules that hold throughout:
 | Event | Response |
 |---|---|
 | Pre-flight fails for a node | Node quarantined 30 s, doubling per repeat up to 10 min, reset by a successful pre-flight. The instance is returned (7.5). |
-| Child exits, or the load timeout passes, during `starting` | Instance → `stopping`. Waiters get `502` with the last lines of the child's output. The **profile** is backed off 60 s, doubling per repeat up to 10 min, reset when the profile next reaches `ready`. During backoff its requests fail fast with `503`, and any entry for it is answered `503` and deleted. Nodes are not quarantined: the pre-flight already cleared them. |
+| A node a load runs on (shared-memory tier) reports available memory below `load_memory_floor_mib` (default 768) at any time during the load, in a live fleet view (7.2a) | Cancelled at once: the child is killed, waiters get `502` (as for any load failure) with `load cancelled: <node> ran low on memory during the load (available N MiB, floor M MiB)`, the outcome in `recent_loads` / `loadFinished` is `failed`, an ERROR line gives every watched node's figure, and the profile is backed off as below. The node is not quarantined. A stale view, an unreported figure, an offline node and a dedicated-VRAM node are not watched. The fleet figure is `mem_available_mib` when the fleet sends it, else the existing RAM figure. |
+| Child exits, the load timeout passes, or the load stalls (7.6: measured upload, no new acknowledged bytes for `load_stall_timeout`, default 180 s), during `starting` | Instance → `stopping`. Waiters get `502` with the last lines of the child's output (a stall says `load stalled: no bytes acknowledged by the workers for 3m0s (sent 549 of 14334446752)`). The **profile** is backed off 60 s, doubling per repeat up to 10 min, reset when the profile next reaches `ready`. During backoff its requests fail fast with `503`, and any entry for it is answered `503` and deleted. Nodes are not quarantined: the pre-flight already cleared them. |
 | Child exits while `ready` or `draining` | In-flight requests fail; instance → `absent`. |
 | A remote node in use is offline in, or absent from, a live view for 30 s continuously | Node loss: instance → `stopping` with SIGKILL; in-flight requests fail. Needed because a blocked RPC socket does not make the child exit. The 30 s counter resets whenever the feed reconnects, so a fleet console restart is not read as every node vanishing. |
 | A forced node (`force_nodes`) is absent from, or offline in, a live fleet view for `forced_node_grace` (default 30 s) continuously | Fail fast: the profile's waiting and new requests get `503`, reason `forced nodes unavailable`, `Retry-After: 30` (the same as the queue timeout), with a message naming the node and saying whether it is `absent from the fleet` or `offline in the fleet`, instead of waiting out `queue_timeout`. The grace lets a node that is re-registering (fleet console or PS5 worker restart) come back. The clock restarts when the feed reconnects and does not count while the view is stale (then today's behaviour applies: the request queues and the "fleet view stale" reason can follow). A forced node that is present and online but busy is not a fail-fast case; it queues. Excluded nodes fail as before (6). |
 | A streaming response sends nothing for `stall_timeout` **after its first chunk** | That request is aborted with an error event. The instance is not stopped. Time before the first chunk (prompt processing) is never timed. |
 | A non-streaming request hangs | Not detected in v1, other than by node loss. `POST /api/unload` with `force` clears it. |
+| A remote worker in use is `hung` (8.4a: two health channels silent, or one channel alone silent for 3 x `worker_silence` with nothing known ok: the heartbeat, or the connect probe when enabled) | Log ERROR `worker hung`, the node is quarantined, `workerHealth` event and `health` in `/api/status`. Detection only: instances are not stopped by this rule; node loss, load stall and the load timeout do that, unchanged. |
 | Fleet feed down | Reconnect SSE with backoff; poll `GET /api/fleet` every 5 s meanwhile. View age is the time since the last byte from the feed, pings included. Loaded instances keep serving. Past `stale_after`, remote nodes are not eligible; the local node still is. |
+
+### 8.4a Worker health
+
+A remote worker that hangs does not always take its container with it. Seen on
+real hardware: a PS5 ran out of memory, its `rpc-server` stopped answering,
+its container stayed "running", the machine stopped reporting to the fleet
+manager after about 10 s, and it was unreachable for 18 minutes. The rules of
+8.4 and 7.6 act on that (node loss at 30 s, load stall, load timeout), but
+nothing said in one place "this worker is hung", nothing looked at the
+worker's own port, and nothing covered a model that was already loaded and idle.
+This feature is **detection and reporting only**: it sends nothing to a worker,
+kills nothing and starts nothing (an optional, separate feature, 8.4b, can ask
+the fleet manager to relay a recovery request for a hung worker). Node loss, load stall and the load timeout
+keep ending instances exactly as before.
+
+*What is watched.* Every remote worker address that currently backs an instance
+that is loading (child running) or ready or draining. A worker no instance uses
+is never probed and has no health.
+
+*Three channels per worker.*
+
+| Channel | Source | `silent` when | `unknown` when |
+|---|---|---|---|
+| `upload` (A) | The measured acknowledged-byte count of that worker (7.6a). | The worker is `receiving` and has acknowledged no new bytes for `worker_silence`. | The worker is not receiving (waiting, done, no load), or the count is only estimated. |
+| `heartbeat` (B) | The fleet view (the same counter as node loss, 8.4). | The node has been offline in, or absent from, a **live** view for `worker_silence`. | The view is stale. A stale view never makes this channel silent. |
+| `probe` (C) | **Off by default.** With `worker_probe_interval` above 0: a plain TCP connect to the worker's rpc address every interval, 2 s timeout, closed at once, nothing sent. It runs off the event loop and its result is an event, like every slow job. | Three consecutive connect failures. | Always, when the probe is off (the default). Otherwise: it has not run yet, or may not run now (below). |
+
+Otherwise a channel is `ok`. Each channel's `silent_for_s` counts from the
+moment it became silent (for the heartbeat that is `worker_silence` after the
+node went missing; for the probe it is the third failure).
+
+*Why the probe is off (hardware finding).* A TCP connect is not a valid health
+signal for these workers and is harmful. An `rpc-server` accepts one client and
+does not call `accept()` again until that client leaves, so extra connections
+are completed by the kernel's listen backlog: the first few probes "succeed"
+whatever state the server is in, each opened-and-closed probe stays in the
+backlog, and after about a minute of 10 s probes the backlog was full and every
+connect timed out. Healthy PS5s serving a model then read `probe: silent`, state
+`suspect`. The same applies to any external TCP check of port 50052 (monitoring,
+load balancer health checks, `nc -z`): do not point one at a worker. Health
+tracking (upload, heartbeat, state, quarantine, status, event) is therefore
+always on, and `worker_probe_interval` only controls the probe channel, default
+`0` = never runs. The probe code stays for workers that accept parallel
+connections.
+
+*When the probe does not run (even when enabled).* These workers serve one client at a time, and it
+is not known whether an extra connection that is opened and closed without
+sending anything disturbs a live session. So the probe is skipped, and its
+channel is `unknown`: (a) for a worker that is `receiving` an upload (7.6a), and
+also while an upload to it cannot be ruled out because the byte count is only
+estimated; (b) while an instance using the worker has a request in flight, unless
+`defaults.worker_probe_during_inference` is `true` (default `false`). The
+price of (b): a worker that hangs during a generation shows only the heartbeat
+channel until the request ends.
+
+*State.* `ok`; `suspect` when exactly one channel is silent (unknown does not
+count as silent); `hung` when at least two channels are silent, or when one
+channel alone has been silent for 3 x `worker_silence` and nothing else is known
+ok: the heartbeat alone (the normal case with the probe off: an idle loaded
+model, so no upload is going on, whose node stopped reporting; with the probe
+enabled, a probe that is `ok` keeps it `suspect`), or the probe alone while the
+heartbeat is `unknown` (a stale view: the only evidence left is the worker's own
+port). Node loss (8.4) still kills the instance after 30 s of missing node, which
+ends the tracking, so the heartbeat-alone escalation is only seen when
+4 x `worker_silence` is below 30 s. Once
+hung, a worker is `ok` again only when no channel is silent and at least one is
+known to be healthy; unknown channels do not block that, but they do not prove
+recovery either.
+
+*Effects.* Entering `hung` logs one ERROR line `worker hung` (`node`, `addr`,
+`silent`: each silent channel with how long, `instances`: the profiles on it)
+and quarantines the node with the ordinary quarantine of 8.4 (30 s doubling to
+10 min; the release rules, including the reset by a successful pre-flight, are
+unchanged), so nothing new is placed on it. Leaving `hung` logs one INFO line
+`worker recovered` with `hung_for`. The check runs before the node-loss rule
+in the same step, so a worker that is hung when node loss kills its instance is
+still named. If the last instance on a hung worker ends, its health is dropped
+and an INFO line `worker health no longer tracked` says so.
+
+*Reporting.* Each node of `GET /api/status` `view.nodes` that an instance uses
+has `health`; nodes no instance uses have none.
+
+```json
+"health": {"state": "hung", "since": 1795055906526,
+  "channels": {"upload": "unknown", "heartbeat": "silent", "probe": "silent"},
+  "silent_for_s": {"heartbeat": 12.4, "probe": 31.0}}
+```
+
+`since` is unix ms, when the state was entered. `silent_for_s` has only the
+silent channels. `GET /api/events` sends a `workerHealth` event whenever a
+worker's state changes (A.3).
+
+*Configuration* (`defaults`): `worker_probe_interval` (default `0`: the probe
+never runs; the rest of the feature is always on), `worker_silence` (default
+`30s`; must be positive), `worker_probe_during_inference` (default `false`;
+only with the probe on). Negative values fail validation.
+
+### 8.4b Recovery requests
+
+Optional, **off by default**, and separate from 8.4a: nothing is ever sent
+unless `recovery.enabled` is `true`. When worker health marks a remote worker
+`hung`, the scheduler asks the fleet manager to relay a *recovery request* to
+that node. A small service on the node polls the fleet manager, performs the
+action and reports the outcome back through the fleet data. **The scheduler
+never contacts the node itself**: its only new outbound call is one HTTP POST
+to the fleet manager it already talks to (`fleet.url`). There is no signing key;
+the fleet manager decides which sources it accepts.
+
+*Which nodes.* Any remote node that worker health tracks, that is, a remote
+worker that backs a loading, ready or draining instance, whatever its tier
+(`shared_memory` or not). Reason: `restart_rpc_server` is harmless on any
+worker, and `hung` is already restricted to workers an instance was using; the
+tier says nothing about whether the node can be asked to restart. Never the
+local node, never an excluded node, never a node no instance uses (a node whose
+last instance ends stops being tracked, which ends its episode).
+
+*Request.* `POST <fleet.url>/api/recovery/<node_id>`, `<node_id>` being the
+node's fleet `id` exactly as `/api/fleet` returns it (a MAC-style id such as
+`70:66:2a:a9:a7:65`), percent-encoded as one path segment (colons become `%3A`).
+Body (JSON):
+
+```json
+{"v":1,"target_node_id":"70:66:2a:a9:a7:65","action":"restart_rpc_server",
+ "reason":"hung: heartbeat silent 95s, upload silent 40s",
+ "issued_at":1795058743515,"expires_at":1795058788515,
+ "nonce":"529a35e343727f1c3f403fc090490810"}
+```
+
+`issued_at` and `expires_at` are unix ms (`expires_at` is `request_ttl`, at most
+60 s, after `issued_at`); `nonce` is 32 lowercase hex characters from 16 random
+bytes (`crypto/rand`), new for every request. `reason` lists the silent
+channels with how long each has been silent (`hung: probe silent 70s`), plus a
+note on later steps (`; escalating after restart_rpc_server`) and on a retry.
+
+*Answers.* `200` stored. `400` malformed, `403` source not allowed, `404`
+unknown node, `409` duplicate nonce, `410` already expired, `422` invalid
+values, `429` rate limited: **not retried** (the record is dropped; the status
+shows `refused`). A `5xx` or a timeout (`recovery.http_timeout`) is retried
+**exactly once**, 10 s later, with a new nonce and fresh `issued_at` and
+`expires_at` (and only if the node is still hung and the view is live); if that
+fails too the status stays `error`. A failed send only logs.
+
+*Sequence.* `recovery.actions` is the ordered list (default
+`[restart_rpc_server]`; at most one each of `restart_rpc_server`,
+`restart_docker`, `reboot`, always in that order). Per node and hung episode:
+
+1. On entering `hung` (view live, no request for the node within
+   `min_interval`) send the first action.
+2. After step N, wait `step_wait`. If the node is still `hung`, the view is live
+   and `min_interval` has passed since the last request, send step N+1. A step
+   whose request was refused or failed still counts as sent (a refused record
+   never reached the node, but escalating on a timer is what was specified).
+3. If the node reported the nonce of the request in flight with outcome
+   `failed`, do not wait out `step_wait`: send the next step as soon as
+   `min_interval` allows.
+4. If the node's health returns to `ok` (or no instance uses it any more) the
+   episode ends and the step counter resets. `min_interval` still counts from
+   the last request sent, across episodes, so a node that hangs again at once
+   is not hammered.
+5. At most `len(actions)` steps per episode (a retry repeats the same step).
+   When the last step has had its `step_wait` and the node is still hung, one
+   WARN `recovery sequence finished and worker still hung` says so, and
+   nothing more is sent.
+
+*Never on a stale view.* Every send, including the retry and each escalation,
+waits for a live fleet view. A send never blocks or delays the scheduler: the
+POST runs off the event loop (`effRecoveryPost`) and its answer comes back as
+an event (`evRecoveryPosted`), like every other slow job.
+
+*Outcomes.* The node's report arrives as `last_recovery_action` on its member
+in `/api/fleet`: `{"action","at" (unix ms),"outcome":"ok"|"failed","reason",
+"nonce","duration_ms"}`, or `null`; an older fleet manager has no such field
+(parsed as absent). A new outcome (a new nonce or `at`) is logged and sent as
+an event, for any remote node while `recovery.enabled` is on, including one
+the scheduler did not ask for (`ours: false` in the log).
+
+*Logging.* INFO `recovery request sent` (`node`, `action`, `nonce`, `reason`,
+`step`, `of`); INFO `recovery request stored` for a `200`; WARN `recovery
+request refused` (4xx) or `recovery request failed` (5xx, timeout) with
+`status` and the last 200 bytes of the response `body`; INFO `recovery outcome`
+(`node`, `action`, `outcome`, `nonce`, `reason`, `duration_ms`, `ours`); INFO
+`recovery episode started` and `recovery sequence reset`.
+
+*Reporting.* Each node of `GET /api/status` `view.nodes` that was sent a
+request, or whose outcome was seen, has `recovery` (omitted otherwise):
+
+```json
+"recovery": {
+  "last_request": {"action": "restart_rpc_server", "nonce": "529a35e343727f1c3f403fc090490810",
+                   "sent_at": 1795058743515, "status": "stored", "http_status": 200},
+  "last_outcome": {"action": "restart_rpc_server", "at": 1795058743518, "outcome": "ok",
+                   "reason": "rpc-server restarted", "nonce": "529a35e343727f1c3f403fc090490810",
+                   "duration_ms": 1700},
+  "step": 1, "episode_started": 1795058743515}
+```
+
+`last_request.status` is `pending` (posted, no answer yet), `stored`,
+`refused` or `error`; `http_status` is `0` until an answer arrives (and after a
+timeout). `last_outcome` is the fleet's object, as is. `step` is how many steps
+this episode has sent; `episode_started` (unix ms) is present only while the
+node is in a hung episode. `GET /api/events` sends a `recoveryRequest` event
+when a request is sent (`phase: "sent"`) and when an outcome is seen
+(`phase: "outcome"`) (A.3).
+
+*Configuration* (top-level `recovery:` block; validated even when disabled):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | Nothing is ever sent unless `true`. |
+| `actions` | `[restart_rpc_server]` | Escalation order. Allowed: `restart_rpc_server`, `restart_docker`, `reboot`; no duplicates; this order when more than one; not empty. |
+| `min_interval` | `120s` | Least time between two requests for one node (across episodes). At least `60s`. |
+| `step_wait` | `90s` | How long a step gets to take effect before the next one. Positive. |
+| `request_ttl` | `45s` | `expires_at - issued_at`. Positive, at most `60s`. |
+| `http_timeout` | `3s` | Timeout of the POST to the fleet manager. Positive. |
+
+**`restart_docker` and `reboot` interrupt everything on that machine** (every
+model it serves, every container, every other job). They are not in the default
+`actions`.
 
 ### 8.5 Clarifications settled during the build
 
@@ -969,7 +1311,7 @@ gets its own process group, so nothing is left behind.
 | `GET /api/events`, `GET /api/metrics/activity` | llama-swap compatible, for the hub's llama panel. Appendix A. |
 | `GET /ui/` | A one-line page linking to `/api/status`. |
 | `GET /health` | `200` whenever the scheduler is running. |
-| `GET /api/status` | Instances, placements, per-device memory from the last pre-flight, claims, queue, quarantines, backoffs, node view and its age. A starting instance also shows its load progress and its `load` report (7.6a). The top-level `recent_loads` lists the outcomes of load attempts finished in the last 120 s. |
+| `GET /api/status` | Instances, placements, per-device memory from the last pre-flight, claims, queue, quarantines, backoffs, node view and its age. A starting instance also shows its load progress and its `load` report (7.6a). The top-level `recent_loads` lists the outcomes of load attempts finished in the last 120 s. Each node in `view.nodes` that an instance uses also has `health` (8.4a), and a node that was sent a recovery request or reported an outcome also has `recovery` (8.4b). |
 | `POST /api/plan` `{model}` | Dry run: what would happen if this model were requested now (placement, plan with victims, or the reason for neither). Changes nothing. |
 | `POST /api/load` `{model}` | Start loading ahead of time. Returns `202` at once. |
 | `POST /api/unload` `{model, force}` | Stop one instance if idle; `force: true` stops it even if busy. |
@@ -1164,6 +1506,22 @@ data: {"type":"inflight","data":"{\"operation\":\"snapshot\",\"requests\":[]}"}
 data: {"type":"loadStarted","data":"{\"model\":\"big\",\"session_id\":\"ld-1794995021087-3\",\"started_at\":1794995021087,\"workers\":[\"10.0.0.101:50052\",\"10.0.0.122:50052\"]}"}
 
 data: {"type":"loadFinished","data":"{\"finished_at\":1794995221087,\"load_s\":215.1,\"model\":\"big\",\"outcome\":\"ready\",\"reason\":\"\",\"session_id\":\"ld-1794995021087-3\",\"workers\":[\"10.0.0.101:50052\",\"10.0.0.122:50052\"]}"}
+```
+- `workerHealth`: sent when a watched worker's health state changes (8.4a).
+  `data` is `{node, addr, health}`, `health` being the object of `/api/status`
+  (`{state, since, channels, silent_for_s}`). When the last instance on a
+  non-`ok` worker ends, one more event is sent with no `health`.
+
+```
+data: {"type":"workerHealth","data":"{\"addr\":\"10.0.0.101:50052\",\"health\":{\"channels\":{\"heartbeat\":\"silent\",\"probe\":\"silent\",\"upload\":\"unknown\"},\"silent_for_s\":{\"heartbeat\":0,\"probe\":0.1},\"since\":1795055906526,\"state\":\"hung\"},\"node\":\"ps5-a\"}"}
+```
+- `recoveryRequest`: sent only with `recovery.enabled` (8.4b), when a recovery
+  request is sent (`phase` `sent`) and when a node's outcome is seen (`phase`
+  `outcome`). `data` is `{node, phase, recovery}`, `recovery` being the object
+  of `/api/status` (`{last_request, last_outcome, step, episode_started}`).
+
+```
+data: {"type":"recoveryRequest","data":"{\"node\":\"ps5-a\",\"phase\":\"sent\",\"recovery\":{\"episode_started\":1795058743515,\"last_request\":{\"action\":\"restart_rpc_server\",\"http_status\":0,\"nonce\":\"529a35e343727f1c3f403fc090490810\",\"sent_at\":1795058743515,\"status\":\"pending\"},\"step\":1}}"}
 ```
 - Each event is flushed at once. The connection may stay open for an hour.
   A comment line (`: ping`) is sent every 15 s.

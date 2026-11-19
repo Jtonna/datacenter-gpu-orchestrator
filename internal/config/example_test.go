@@ -1,9 +1,11 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
@@ -87,5 +89,25 @@ func TestDeployConfigMatchesExample(t *testing.T) {
 	b.ChildLogDir = a.ChildLogDir
 	if !reflect.DeepEqual(a, b) {
 		t.Fatalf("deploy/config.yaml parses differently from configs/example.yaml: %+v vs %+v", a, b)
+	}
+}
+
+// The memory safety keys are documented as commented defaults in both files,
+// with the same default values the parser applies.
+func TestExampleConfigsDocumentTheMemorySafetyDefaults(t *testing.T) {
+	for _, rel := range []string{"configs/example.yaml", "deploy/config.yaml"} {
+		b, err := os.ReadFile(filepath.Join("..", "..", rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{"# split_skew_margin: 0.15", "# estimate_margin: 0.05", "# load_memory_floor_mib: 768"} {
+			if !strings.Contains(string(b), want) {
+				t.Errorf("%s lacks %q", rel, want)
+			}
+		}
+	}
+	d := DefaultDefaults()
+	if d.SplitSkewMargin != 0.15 || d.EstimateMargin != 0.05 || d.LoadMemoryFloorMiB != 768 {
+		t.Errorf("defaults %+v", d)
 	}
 }

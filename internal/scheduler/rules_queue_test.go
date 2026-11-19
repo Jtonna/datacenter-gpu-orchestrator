@@ -233,7 +233,7 @@ func TestEvictable_BusyOnlyAfterDrainAfter(t *testing.T) {
 
 func TestStep4_VictimsExitedAndSettled_StartsOnClaim(t *testing.T) {
 	h := newHarness(t).nodes(ps5("a", 2, 15000), ps5("b", 4, 9000))
-	h.llama("big", 20000) // a + b
+	h.llama("big", 18000) // a + b
 	h.llama("other", 12000)
 	h.autoExit = false
 	h.autoFetch = false
@@ -309,7 +309,7 @@ func TestStep4_RefitFails_DropsClaimAndRecordsEmpty(t *testing.T) {
 
 func TestStep5_ClaimedNodeOffline_DropsClaimDrainingVictimsReturnToReady(t *testing.T) {
 	h := newHarness(t).nodes(ps5("a", 2, 15000), ps5("b", 4, 9000))
-	h.llama("big", 20000)
+	h.llama("big", 18000)
 	h.llama("other", 20000)
 	g := h.ready("big")
 	w := h.request("other")
@@ -405,7 +405,7 @@ func TestStep6_ClaimDroppedWithoutWaiters_Deleted(t *testing.T) {
 
 func TestRule_ClaimedNodesInvisibleToLaterEntries(t *testing.T) {
 	h := newHarness(t).nodes(ps5("a", 2, 15000), ps5("b", 4, 9000))
-	h.llama("big", 20000) // a + b
+	h.llama("big", 18000) // a + b
 	h.llama("other", 20000)
 	h.llama("small", 7000)
 	h.autoExit = false

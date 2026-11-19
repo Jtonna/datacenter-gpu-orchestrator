@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -288,6 +289,46 @@ func probeFail(addr string) error {
 	return &instance.ProbeError{Kind: instance.ProbeTimeout, Addr: addr, Detail: "busy worker"}
 }
 
+// ---- fake worker connect prober ----
+
+// fakeWorkerProber answers the worker health probe: it connects unless the
+// address is in down.
+type fakeWorkerProber struct {
+	mu    sync.Mutex
+	down  map[string]bool
+	calls []string
+}
+
+func newFakeWorkerProber() *fakeWorkerProber { return &fakeWorkerProber{down: map[string]bool{}} }
+
+func (p *fakeWorkerProber) Connect(_ context.Context, addr string, _ time.Duration) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.calls = append(p.calls, addr)
+	if p.down[addr] {
+		return errors.New("connect: i/o timeout")
+	}
+	return nil
+}
+
+func (p *fakeWorkerProber) setDown(addr string, down bool) {
+	p.mu.Lock()
+	p.down[addr] = down
+	p.mu.Unlock()
+}
+
+func (p *fakeWorkerProber) callsTo(addr string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := 0
+	for _, a := range p.calls {
+		if a == addr {
+			n++
+		}
+	}
+	return n
+}
+
 // ---- fake launcher and child ----
 
 type fakeLauncher struct {
@@ -520,4 +561,57 @@ func (l *capLog) find(msg string, match ...any) []logRec {
 		}
 	}
 	return out
+}
+
+// ---- fake recovery poster ----
+
+// recPost is one recovery POST the scheduler made.
+type recPost struct {
+	At      time.Time
+	URL     string
+	Body    []byte
+	Timeout time.Duration
+}
+
+// record decodes the body.
+func (p recPost) record(t fatalT) recoveryRecord {
+	t.Helper()
+	var r recoveryRecord
+	if err := json.Unmarshal(p.Body, &r); err != nil {
+		t.Fatalf("recovery body %s: %v", p.Body, err)
+	}
+	return r
+}
+
+// fakeRecoveryPoster records every POST and answers from a script (one entry
+// per call, in order), then with 200.
+type fakeRecoveryPoster struct {
+	mu     sync.Mutex
+	clk    *fakeClock
+	posts  []recPost
+	script []recResp
+}
+
+type recResp struct {
+	status int
+	body   string
+	err    error
+}
+
+func (p *fakeRecoveryPoster) Post(_ context.Context, url string, body []byte, timeout time.Duration) (RecoveryResponse, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.posts = append(p.posts, recPost{At: p.clk.Now(), URL: url, Body: append([]byte(nil), body...), Timeout: timeout})
+	if len(p.script) == 0 {
+		return RecoveryResponse{Status: 200, BodyTail: `{"ok":true}`}, nil
+	}
+	r := p.script[0]
+	p.script = p.script[1:]
+	return RecoveryResponse{Status: r.status, BodyTail: r.body}, r.err
+}
+
+func (p *fakeRecoveryPoster) all() []recPost {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]recPost(nil), p.posts...)
 }

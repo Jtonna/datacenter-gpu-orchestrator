@@ -71,6 +71,10 @@ func (h *hub) run(feed <-chan scheduler.FeedEvent) {
 			h.broadcastLocked(frame("inflight", map[string]any{"operation": "upsert", "request": r}))
 		case scheduler.FeedLoadStarted:
 			h.broadcastLocked(frame("loadStarted", jsonView(ev.LoadStarted)))
+		case scheduler.FeedWorkerHealth:
+			h.broadcastLocked(frame("workerHealth", jsonView(ev.Worker)))
+		case scheduler.FeedRecovery:
+			h.broadcastLocked(frame("recoveryRequest", jsonView(ev.Recovery)))
 		case scheduler.FeedLoadFinished:
 			h.broadcastLocked(frame("loadFinished", jsonView(ev.Outcome)))
 		case scheduler.FeedFinished:

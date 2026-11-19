@@ -33,6 +33,7 @@ defaults:
   queue_timeout: 600s      # max time an entry may wait without a claim
   stall_timeout: 300s      # max gap between chunks once streaming has begun
   command_load_timeout: 900s   # for kind: command profiles
+  # load_stall_timeout: 180s  # fail a load whose measured upload gets no new acknowledged bytes for this long (a hung child); 0 = off; per-profile override of the same name
   shutdown_grace: 300s
   max_pool: 4
   device_overhead_mib: 600 # per-device cost added to estimated needs only
@@ -41,7 +42,15 @@ defaults:
   server_bin: llama-server-rpc
   local_device: CUDA0
   # forced_node_grace: 30s  # a force_nodes node absent or offline this long in a live fleet view fails the request now (not after queue_timeout)
-  # forced_fit_check: off   # off | warn | reject. A force_nodes profile skips the placer's fit check; with warn or reject its need is compared with the forced nodes' FREE memory at pre-flight (no headroom taken off): warn logs and starts anyway, reject answers 503 "forced nodes do not fit"
+  # forced_fit_check: off   # off | warn | reject. A force_nodes profile skips the placer's fit check; with warn or reject its need is compared with the forced nodes' usable memory at pre-flight (shared_memory tiers such as the PS5: free minus tier headroom, the placer's budget; dedicated-VRAM tiers: raw free, no headroom taken off): warn logs and starts anyway, reject answers 503 "forced nodes do not fit". Recommended in production: on llama.cpp upstream HEAD (2026-11-19) a forced load that does not fit took a PS5 down until it was power cycled
+  # Memory safety on shared-memory nodes (PS5s: GPU memory is system RAM, the workers have no container limit, and a load that exhausts a PS5 makes the whole machine unreachable for about 18 minutes). The scheduler plans so a load fits and watches while it runs:
+  # split_skew_margin: 0.15      # 0 to 1. A split model does not land evenly (measured: one node 11% over an even share). Every placement of two or more nodes that includes a shared-memory node must fit each such node's expected share, need x split fraction x (1 + this), into that node's own usable memory (free minus tier headroom, the smaller of the fleet and pre-flight figures). Applies to automatic and forced placements (forced: with forced_fit_check warn or reject); a single-node placement takes no margin. Refusal: "node X: expected share N MiB (...) but usable M MiB (...)"
+  # estimate_margin: 0.05        # 0 to 1. Added to every need that is an estimate (a profile without needs_mib): need x (1 + this), shown as "estimated, +5% margin". A profile with needs_mib is used as is. A load that succeeds teaches the scheduler the measured size for the rest of the run (GET /api/status learned_needs); it replaces an estimate and replaces needs_mib only when higher (with a WARN that needs_mib is too low)
+  # load_memory_floor_mib: 768   # 0 = off. While a load runs on shared-memory nodes, a node whose fleet-reported available memory (mem_available_mib when the fleet sends it, else the existing figure) falls below this is cancelled at once: the child is killed, waiting requests get 502 "load cancelled: <node> ran low on memory during the load (available N MiB, floor M MiB)", the profile is backed off, the node is not quarantined. Never acts on a stale fleet view
+  # Worker health (design 8.4a) is always on for every remote worker that backs an instance: upload progress and the fleet heartbeat are watched, a worker with both silent is hung and its node is quarantined, reported as nodes[].health in GET /api/status. Only the TCP connect probe is optional.
+  # worker_silence: 30s         # a worker's upload progress or fleet heartbeat counts as silent after this long without news; heartbeat alone silent for 3x this (no channel known ok) is also hung
+  # worker_probe_interval: 0    # DEFAULT 0 = the TCP connect probe never runs. Do NOT enable it for rpc-server workers (PS5s): hardware showed an rpc-server accepts one client and does not accept() again until it leaves, so extra connections are completed by the kernel listen backlog (the first few "succeed" whatever the server's state), each opened-and-closed probe stays in the backlog, and after about a minute of 10 s probes the backlog was full and every connect timed out: healthy PS5s serving a model read "probe: silent" (suspect). The same applies to any external TCP check of port 50052. Set e.g. 10s only for workers that accept parallel connections
+  # worker_probe_during_inference: false  # only with the probe on: also probe while the instance has a request in flight (off by default)
 
 tiers:                     # first match wins; lower number preferred;
                            # a node matching no tier is never used
@@ -83,6 +92,21 @@ tiers:                     # first match wins; lower number preferred;
 # exclude_nodes:
 #   - ps5-abc123
 #   - ps5-test*
+
+# Optional: recovery requests (design 8.4b). OFF by default; nothing is ever sent unless enabled is true.
+# When worker health marks a remote worker "hung" (a PS5 that stopped answering), the scheduler can ask the
+# fleet manager to relay a recovery request to that node; a small service on the node polls the fleet manager,
+# acts, and reports the outcome (last_recovery_action in /api/fleet, shown as nodes[].recovery in
+# GET /api/status). The scheduler never contacts the node itself, and never sends on a stale fleet view.
+# WARNING: restart_docker and reboot interrupt EVERYTHING on that machine (every model it serves, every
+# container, every other job). Leave them out of actions unless you want that.
+# recovery:
+#   enabled: false                 # true = send requests
+#   actions: [restart_rpc_server]  # escalation order; allowed: restart_rpc_server, restart_docker, reboot (in this order, each once)
+#   min_interval: 120s             # least time between two requests for one node; at least 60s
+#   step_wait: 90s                 # how long a step gets to take effect before the next step is sent
+#   request_ttl: 45s               # how long a request stays valid at the node; at most 60s
+#   http_timeout: 3s               # timeout of the POST to the fleet manager; one retry after 10s on a 5xx or timeout
 
 profiles:
   qwen3.5-4b:

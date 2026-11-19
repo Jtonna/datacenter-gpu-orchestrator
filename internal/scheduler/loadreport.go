@@ -45,7 +45,8 @@ type LoadReport struct {
 	BytesSent  *int64 // nil when it cannot be measured
 	Progress   *float64
 	EtaS       *float64
-	Source     *string // "measured" or "estimated"
+	StalledS   *float64 // seconds since the bytes last rose; only when over 15 and measured
+	Source     *string  // "measured" or "estimated"
 	Workers    []LoadWorker
 }
 
@@ -93,6 +94,7 @@ func (c *schedCore) beginLoad(in *inst) {
 	in.sessionID = sessionID(c.now, in.iid)
 	in.sessionDone = false
 	in.peerSent = map[string]int64{}
+	in.peerGrowth = map[string]time.Time{}
 	c.emit(FeedLoadStarted, in.prof.Name, func(e *FeedEvent) {
 		e.LoadStarted = &LoadStart{SessionID: in.sessionID, Model: in.prof.Name, StartedAt: c.now.UnixMilli(),
 			Workers: append([]string{}, in.peers...)}
@@ -205,7 +207,7 @@ func (c *schedCore) loadReport(in *inst) *LoadReport {
 	v := c.loadView(in)
 	r := &LoadReport{SessionID: in.sessionID, StartedAt: in.sessionAt.UnixMilli(),
 		ElapsedS:   round(c.now.Sub(in.sessionAt).Seconds(), 1),
-		BytesTotal: v.total, BytesSent: v.sent, Progress: v.progress, EtaS: v.eta, Source: v.source, Workers: []LoadWorker{}}
+		BytesTotal: v.total, BytesSent: v.sent, Progress: v.progress, EtaS: v.eta, StalledS: v.stalled, Source: v.source, Workers: []LoadWorker{}}
 	if v.total != nil {
 		r.Workers = c.loadWorkers(in, v.sent != nil && in.peerKnown)
 	}

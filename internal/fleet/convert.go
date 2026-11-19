@@ -44,10 +44,21 @@ func nodeFromMember(cfg *config.Config, m Member, local bool) (core.Node, bool) 
 	if m.VRAMTotal != nil && m.VRAMUsed != nil {
 		n.FreeMiB = clampZero(n.TotalMiB - gbToMiB(*m.VRAMUsed))
 	}
+	vramKnown := m.VRAMTotal != nil && m.VRAMUsed != nil
+	n.FreeUnknown = !vramKnown
 	if tier.SharedMemory {
-		ramFree := 0
-		if m.RAMTotalGB != nil && m.RAMUsedGB != nil {
-			ramFree = clampZero(gbToMiB(*m.RAMTotalGB) - gbToMiB(*m.RAMUsedGB))
+		ramFree, ramKnown := 0, false
+		switch {
+		case m.MemAvailableMiB != nil:
+			ramFree, ramKnown = clampZero(*m.MemAvailableMiB), true
+		case m.RAMTotalGB != nil && m.RAMUsedGB != nil:
+			ramFree, ramKnown = clampZero(gbToMiB(*m.RAMTotalGB)-gbToMiB(*m.RAMUsedGB)), true
+		}
+		switch {
+		case !ramKnown:
+			n.FreeUnknown = true
+		case !vramKnown && m.MemAvailableMiB != nil:
+			n.FreeMiB, n.FreeUnknown = ramFree, false // the newer figure stands alone
 		}
 		if ramFree < n.FreeMiB {
 			n.FreeMiB = ramFree
@@ -55,6 +66,10 @@ func nodeFromMember(cfg *config.Config, m Member, local bool) (core.Node, bool) 
 	}
 	if !local {
 		n.Addr = addrFor(cfg, m)
+		if r := m.LastRecoveryAction; r != nil {
+			n.Recovery = core.RecoveryOutcome{Present: true, Action: r.Action, At: r.At, Outcome: r.Outcome,
+				Reason: r.Reason, Nonce: r.Nonce, DurationMs: r.DurationMs}
+		}
 	}
 	return n, true
 }

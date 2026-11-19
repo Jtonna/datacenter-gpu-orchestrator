@@ -87,7 +87,7 @@ func TestScenario_ClaimedEntryVictimDrainsLongGeneration_SmallRequestsUseOnlyUnc
 func TestScenario_ClaimedNodeGoesOfflineMidPlan(t *testing.T) {
 	h := newHarness(t).nodes(ps5("a", 2, 15000), ps5("b", 4, 9000))
 	h.llama("big", 12000)
-	h.llama("huge", 20000)
+	h.llama("huge", 18000)
 	g := h.ready("big") // a
 	wh := h.request("huge")
 	h.advance(61 * time.Second)
@@ -134,7 +134,7 @@ func TestScenario_LoadFailsWhileOtherEntriesHoldClaims(t *testing.T) {
 
 func TestScenario_ForcedNodesProfileWhileThoseNodesRunBusyModel(t *testing.T) {
 	h := newHarness(t).nodes(ps5("a", 2, 9000), ps5("b", 4, 9000), alien("al", 7800))
-	h.llama("m", 14000) // a + b
+	h.llama("m", 13500) // a + b
 	h.llama("bench", 1, func(p *core.Profile) {
 		p.ForceNodes = []string{"b", "a"}
 		p.TensorSplit = []int{60, 40}
@@ -205,7 +205,7 @@ func TestScenario_FeedReconnectsEmpty_NodesNeverReturn_InstancesKilled(t *testin
 
 func TestScenario_CommandProfileOnLocalEvictsIdleLLMIncludingLocal(t *testing.T) {
 	h := newHarness(t).nodes(ps5("a", 2, 9000), omen(8000))
-	h.llama("llm", 14000) // a pool of the PS5 and the OMEN
+	h.llama("llm", 13000) // a pool of the PS5 and the OMEN
 	h.command("whisper", 5400)
 	h.release(h.ready("llm"))
 	h.wantNodes("llm", "a", "omen")
@@ -257,7 +257,7 @@ func TestScenario_NeedThatCanNeverFit(t *testing.T) {
 	}
 	h.noEntry("huge")
 	// Fits the capacity, but the nodes are full of something else: it queues.
-	h.llama("fits", 29000)
+	h.llama("fits", 26000)
 	w2 := h.request("fits")
 	h.pending(w2)
 	h.advance(600 * time.Second)

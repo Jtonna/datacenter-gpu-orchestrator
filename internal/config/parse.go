@@ -20,10 +20,12 @@ func DefaultDefaults() Defaults {
 	return Defaults{
 		TTL: 300 * time.Second, MinHold: 30 * time.Second, MaxHold: 900 * time.Second,
 		DrainAfter: 60 * time.Second, QueueTimeout: 600 * time.Second,
-		StallTimeout: 300 * time.Second, CommandLoadTimeout: 900 * time.Second,
+		StallTimeout: 300 * time.Second, CommandLoadTimeout: 900 * time.Second, LoadStallTimeout: 180 * time.Second,
 		ShutdownGrace: 300 * time.Second, MaxPool: 4, DeviceOverheadMiB: 600,
 		MinShareMiB: 1024, CacheRAMMiB: 2048, ServerBin: "llama-server-rpc", LocalDevice: "CUDA0",
 		ForcedNodeGrace: 30 * time.Second, ForcedFitCheck: ForcedFitOff,
+		WorkerSilence:   30 * time.Second,
+		SplitSkewMargin: 0.15, EstimateMargin: 0.05, LoadMemoryFloorMiB: 768,
 	}
 }
 
@@ -57,6 +59,7 @@ func ParseWithOptions(data []byte, o Options) (*Config, error) {
 		ChildLogKeep:  DefaultChildLogKeep,
 		LocalProbeCmd: DefaultLocalProbeCmd,
 		Defaults:      rawDefaultsFrom(DefaultDefaults()),
+		Recovery:      rawRecoveryFrom(DefaultRecovery()),
 	}
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
@@ -73,6 +76,7 @@ func ParseWithOptions(data []byte, o Options) (*Config, error) {
 		Defaults:      raw.Defaults.value(),
 		NodeOverrides: map[string]NodeOverride{},
 		ExcludeNodes:  trimAll(raw.ExcludeNodes),
+		Recovery:      raw.Recovery.value(),
 		Profiles:      map[string]*core.Profile{},
 	}
 	for _, t := range raw.Tiers {
@@ -128,6 +132,7 @@ type rawConfig struct {
 	Tiers         []rawTier              `yaml:"tiers"`
 	NodeOverrides map[string]rawOverride `yaml:"node_overrides"`
 	ExcludeNodes  []string               `yaml:"exclude_nodes"`
+	Recovery      rawRecovery            `yaml:"recovery"`
 	Profiles      map[string]*rawProfile `yaml:"profiles"`
 }
 
@@ -159,23 +164,24 @@ type rawMatch struct {
 
 // rawProfile uses pointers wherever "absent" must be told from zero.
 type rawProfile struct {
-	Kind          string    `yaml:"kind"`
-	Model         string    `yaml:"model"`
-	Ctx           *int      `yaml:"ctx"`
-	Parallel      *int      `yaml:"parallel"`
-	KVQuant       string    `yaml:"kv_quant"`
-	FlashAttn     *bool     `yaml:"flash_attn"`
-	NeedsMiB      int       `yaml:"needs_mib"`
-	AllowTiers    []int     `yaml:"allow_tiers"`
-	ForceNodes    []string  `yaml:"force_nodes"`
-	TensorSplit   []int     `yaml:"tensor_split"`
-	ExtraArgs     []string  `yaml:"extra_args"`
-	Cmd           string    `yaml:"cmd"`
-	CheckEndpoint string    `yaml:"check_endpoint"`
-	Aliases       []string  `yaml:"aliases"`
-	TTL           *duration `yaml:"ttl"`
-	LoadTimeout   duration  `yaml:"load_timeout"`
-	StallTimeout  *duration `yaml:"stall_timeout"`
+	Kind             string    `yaml:"kind"`
+	Model            string    `yaml:"model"`
+	Ctx              *int      `yaml:"ctx"`
+	Parallel         *int      `yaml:"parallel"`
+	KVQuant          string    `yaml:"kv_quant"`
+	FlashAttn        *bool     `yaml:"flash_attn"`
+	NeedsMiB         int       `yaml:"needs_mib"`
+	AllowTiers       []int     `yaml:"allow_tiers"`
+	ForceNodes       []string  `yaml:"force_nodes"`
+	TensorSplit      []int     `yaml:"tensor_split"`
+	ExtraArgs        []string  `yaml:"extra_args"`
+	Cmd              string    `yaml:"cmd"`
+	CheckEndpoint    string    `yaml:"check_endpoint"`
+	Aliases          []string  `yaml:"aliases"`
+	TTL              *duration `yaml:"ttl"`
+	LoadTimeout      duration  `yaml:"load_timeout"`
+	StallTimeout     *duration `yaml:"stall_timeout"`
+	LoadStallTimeout *duration `yaml:"load_stall_timeout"`
 }
 
 func (r *rawProfile) toCore(name string) *core.Profile {
@@ -185,6 +191,7 @@ func (r *rawProfile) toCore(name string) *core.Profile {
 		TensorSplit: r.TensorSplit, ExtraArgs: r.ExtraArgs, Cmd: r.Cmd,
 		CheckEndpoint: r.CheckEndpoint, Aliases: r.Aliases,
 		TTL: r.TTL.ptr(), LoadTimeout: time.Duration(r.LoadTimeout), StallTimeout: r.StallTimeout.ptr(),
+		LoadStallTimeout: r.LoadStallTimeout.ptr(),
 	}
 	if p.Kind == "" {
 		p.Kind = core.KindLlama
@@ -244,6 +251,7 @@ type rawDefaults struct {
 	QueueTimeout       duration `yaml:"queue_timeout"`
 	StallTimeout       duration `yaml:"stall_timeout"`
 	CommandLoadTimeout duration `yaml:"command_load_timeout"`
+	LoadStallTimeout   duration `yaml:"load_stall_timeout"`
 	ShutdownGrace      duration `yaml:"shutdown_grace"`
 	MaxPool            int      `yaml:"max_pool"`
 	DeviceOverheadMiB  int      `yaml:"device_overhead_mib"`
@@ -253,19 +261,50 @@ type rawDefaults struct {
 	LocalDevice        string   `yaml:"local_device"`
 	ForcedNodeGrace    duration `yaml:"forced_node_grace"`
 	ForcedFitCheck     string   `yaml:"forced_fit_check"`
+
+	WorkerProbeInterval        duration `yaml:"worker_probe_interval"`
+	WorkerSilence              duration `yaml:"worker_silence"`
+	WorkerProbeDuringInference bool     `yaml:"worker_probe_during_inference"`
+
+	SplitSkewMargin    float64 `yaml:"split_skew_margin"`
+	EstimateMargin     float64 `yaml:"estimate_margin"`
+	LoadMemoryFloorMiB int     `yaml:"load_memory_floor_mib"`
 }
 
 func rawDefaultsFrom(d Defaults) rawDefaults {
 	return rawDefaults{duration(d.TTL), duration(d.MinHold), duration(d.MaxHold), duration(d.DrainAfter),
 		duration(d.QueueTimeout), duration(d.StallTimeout), duration(d.CommandLoadTimeout),
-		duration(d.ShutdownGrace), d.MaxPool, d.DeviceOverheadMiB, d.MinShareMiB, d.CacheRAMMiB,
-		d.ServerBin, d.LocalDevice, duration(d.ForcedNodeGrace), d.ForcedFitCheck}
+		duration(d.LoadStallTimeout), duration(d.ShutdownGrace), d.MaxPool, d.DeviceOverheadMiB, d.MinShareMiB, d.CacheRAMMiB,
+		d.ServerBin, d.LocalDevice, duration(d.ForcedNodeGrace), d.ForcedFitCheck,
+		duration(d.WorkerProbeInterval), duration(d.WorkerSilence), d.WorkerProbeDuringInference,
+		d.SplitSkewMargin, d.EstimateMargin, d.LoadMemoryFloorMiB}
 }
 
 func (r rawDefaults) value() Defaults {
 	return Defaults{time.Duration(r.TTL), time.Duration(r.MinHold), time.Duration(r.MaxHold),
 		time.Duration(r.DrainAfter), time.Duration(r.QueueTimeout), time.Duration(r.StallTimeout),
-		time.Duration(r.CommandLoadTimeout), time.Duration(r.ShutdownGrace), r.MaxPool,
+		time.Duration(r.CommandLoadTimeout), time.Duration(r.LoadStallTimeout), time.Duration(r.ShutdownGrace), r.MaxPool,
 		r.DeviceOverheadMiB, r.MinShareMiB, r.CacheRAMMiB, r.ServerBin, r.LocalDevice,
-		time.Duration(r.ForcedNodeGrace), r.ForcedFitCheck}
+		time.Duration(r.ForcedNodeGrace), r.ForcedFitCheck,
+		time.Duration(r.WorkerProbeInterval), time.Duration(r.WorkerSilence), r.WorkerProbeDuringInference,
+		r.SplitSkewMargin, r.EstimateMargin, r.LoadMemoryFloorMiB}
+}
+
+type rawRecovery struct {
+	Enabled     bool     `yaml:"enabled"`
+	Actions     []string `yaml:"actions"`
+	MinInterval duration `yaml:"min_interval"`
+	StepWait    duration `yaml:"step_wait"`
+	RequestTTL  duration `yaml:"request_ttl"`
+	HTTPTimeout duration `yaml:"http_timeout"`
+}
+
+func rawRecoveryFrom(r Recovery) rawRecovery {
+	return rawRecovery{r.Enabled, append([]string(nil), r.Actions...), duration(r.MinInterval),
+		duration(r.StepWait), duration(r.RequestTTL), duration(r.HTTPTimeout)}
+}
+
+func (r rawRecovery) value() Recovery {
+	return Recovery{r.Enabled, trimAll(r.Actions), time.Duration(r.MinInterval),
+		time.Duration(r.StepWait), time.Duration(r.RequestTTL), time.Duration(r.HTTPTimeout)}
 }

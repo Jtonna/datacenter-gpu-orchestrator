@@ -19,6 +19,10 @@ type Node struct {
 
 	TotalMiB int // total device memory
 	FreeMiB  int // free memory, already reduced per the shared-memory rule (design 7.1)
+	// FreeUnknown: the fleet did not report the figures FreeMiB comes from, so
+	// it is 0 only because "unknown is not free". The load memory watch must
+	// not read such a zero as a real reading.
+	FreeUnknown bool
 
 	// Settings of the matched tier.
 	Priority     int           // lower is preferred
@@ -26,6 +30,22 @@ type Node struct {
 	SharedMemory bool          // GPU memory is system RAM
 	LinkMBs      float64       // link speed in MB/s, used to size load timeouts
 	Settle       time.Duration // unusable for this long after an instance releases it
+
+	// Recovery is the node's last reported recovery outcome (the fleet's
+	// last_recovery_action); Present is false when there is none or the fleet
+	// manager is too old to report it. Comparable, so Node stays comparable.
+	Recovery RecoveryOutcome
+}
+
+// RecoveryOutcome is what a node reported after acting on a recovery request.
+type RecoveryOutcome struct {
+	Present    bool
+	Action     string
+	At         int64  // unix ms
+	Outcome    string // ok or failed
+	Reason     string
+	Nonce      string
+	DurationMs int64
 }
 
 // LiveBudgetMiB is the memory the scheduler may use on a node nobody
@@ -80,6 +100,9 @@ type Profile struct {
 	// LoadTimeout of 0 means "use the default" (design 7.6 formula for
 	// llama, command_load_timeout for command).
 	LoadTimeout time.Duration
+	// LoadStallTimeout is nil for "use the default"; an explicit 0 disables
+	// the load stall rule for this profile.
+	LoadStallTimeout *time.Duration
 }
 
 // PlacedNode is one node chosen for an instance.

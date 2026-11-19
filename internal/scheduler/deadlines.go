@@ -43,6 +43,9 @@ func (c *schedCore) nextDeadline() (time.Time, bool) {
 			if in.phase == phLoading {
 				add(in.loadDL)
 				add(in.nextLoadLog)
+				if limit := c.cfg.EffectiveLoadStallTimeout(in.prof); limit > 0 && in.measured && !in.lastGrowth.IsZero() {
+					add(in.lastGrowth.Add(limit))
+				}
 				if c.wantsSample(in) && !in.sampling {
 					add(in.nextSample)
 				}
@@ -88,6 +91,9 @@ func (c *schedCore) nextDeadline() (time.Time, bool) {
 			add(c.now.Add(staleRecheck))
 		}
 	}
+
+	c.healthDeadlines(add)
+	c.recoveryDeadlines(add)
 
 	if c.shutdown && !c.stopAll {
 		add(c.shutdownDL)

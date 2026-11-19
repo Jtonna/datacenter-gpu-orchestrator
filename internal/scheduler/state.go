@@ -126,6 +126,7 @@ type inst struct {
 	linkMBs     float64   // slowest remote tier link, MB/s; 0 when unknown
 	sentBytes   int64     // largest acknowledged count seen
 	measured    bool      // the last count read was good
+	lastGrowth  time.Time // first measured reading, then each time the acknowledged total rose
 	samples     []byteSample
 	nextSample  time.Time
 	sampling    bool // a count is being read
@@ -136,9 +137,10 @@ type inst struct {
 	sessionID   string
 	sessionAt   time.Time
 	sessionDone bool
-	workerEst   []int64          // per worker (in peers order): share of the file by the tensor split
-	peerSent    map[string]int64 // per worker: largest acknowledged count seen
-	peerKnown   bool             // the last count carried per-worker figures
+	workerEst   []int64              // per worker (in peers order): share of the file by the tensor split
+	peerSent    map[string]int64     // per worker: largest acknowledged count seen
+	peerKnown   bool                 // the last count carried per-worker figures
+	peerGrowth  map[string]time.Time // per worker: when its count was first seen or last rose
 
 	served     int    // requests admitted (logged when the instance stops)
 	stopReason string // why it is being stopped (first reason wins), for the log
@@ -275,20 +277,26 @@ type schedCore struct {
 	now, last time.Time
 	seq       uint64
 
-	insts    map[string]*inst
-	entries  map[string]*entry
-	nodes    map[core.NodeID]*nodeState
-	backoffs map[string]*backoff
-	waiters  map[uint64]*waiter
-	leases   map[uint64]*lease
-	needs_   map[string]NeedInfo
+	insts     map[string]*inst
+	entries   map[string]*entry
+	nodes     map[core.NodeID]*nodeState
+	backoffs  map[string]*backoff
+	waiters   map[uint64]*waiter
+	leases    map[uint64]*lease
+	needs_    map[string]NeedInfo // provider results, before the estimate margin and learned figures
+	learned   map[string]*learnedNeed
+	warnedLow map[string]bool // profiles whose too-low needs_mib was already warned about
 
 	raw           map[core.NodeID]core.Node // view this step
 	fresh         bool
 	age           time.Duration
 	seenReconnect time.Time
-	excludedSeen  map[core.NodeID]bool // excluded nodes already logged
-	forcedGone    map[string]time.Time // force_nodes name -> when it was first seen absent or offline in a live view
+	excludedSeen  map[core.NodeID]bool          // excluded nodes already logged
+	forcedGone    map[string]time.Time          // force_nodes name -> when it was first seen absent or offline in a live view
+	health        map[core.NodeID]*workerHealth // worker health (workerhealth.go)
+	probeGen      uint64
+	recov         map[core.NodeID]*recoveryNode // recovery requests (recovery.go)
+	nonceFn       func() string                 // nonce source; nil: crypto/rand (tests set it)
 
 	shutdown   bool
 	shutdownDL time.Time
@@ -313,8 +321,9 @@ func newCore(cfg *config.Config, clock Clock, view fleet.View, needs NeedProvide
 		cfg: cfg, clock: clock, view: view, needs: needs, build: build, log: log,
 		insts: map[string]*inst{}, entries: map[string]*entry{}, nodes: map[core.NodeID]*nodeState{},
 		backoffs: map[string]*backoff{}, waiters: map[uint64]*waiter{}, leases: map[uint64]*lease{},
-		needs_: map[string]NeedInfo{}, raw: map[core.NodeID]core.Node{}, excludedSeen: map[core.NodeID]bool{},
-		forcedGone: map[string]time.Time{},
+		needs_: map[string]NeedInfo{}, learned: map[string]*learnedNeed{}, warnedLow: map[string]bool{}, raw: map[core.NodeID]core.Node{}, excludedSeen: map[core.NodeID]bool{},
+		forcedGone: map[string]time.Time{}, health: map[core.NodeID]*workerHealth{},
+		recov: map[core.NodeID]*recoveryNode{},
 	}
 }
 
@@ -407,7 +416,15 @@ func (c *schedCore) freeMiB(id core.NodeID, n core.Node) int {
 	return n.FreeMiB
 }
 
+// liveBudget is the memory the scheduler may use on a free node. On a
+// shared-memory node it is the smaller of the fleet-based and the pre-flight
+// figure (sharedBudget), because the worker's Vulkan device reports about
+// 2.5 GB more free than the machine can give.
 func (c *schedCore) liveBudget(id core.NodeID, n core.Node) int {
+	if n.SharedMemory {
+		b, _ := c.sharedBudget(id, n)
+		return b
+	}
 	return c.freeMiB(id, n) - n.HeadroomMiB
 }
 
@@ -501,6 +518,7 @@ func (c *schedCore) request(p *core.Profile) (placer.Request, NeedInfo, error) {
 	req := placer.Request{
 		Need: info.Need, AllowTiers: p.AllowTiers, TensorSplit: p.TensorSplit,
 		MaxPool: max(d.MaxPool, 1), MinShareMiB: d.MinShareMiB, DeviceOverheadMiB: d.DeviceOverheadMiB,
+		SkewPermille: permille(d.SplitSkewMargin),
 	}
 	if localOnly(p) {
 		req.MaxPool = 1
@@ -516,16 +534,19 @@ func (c *schedCore) request(p *core.Profile) (placer.Request, NeedInfo, error) {
 	return req, info, nil
 }
 
+// need is the profile's memory need as every fit decision sees it: the
+// provider's figure (cached), with the estimate margin on an estimate, and the
+// measurement learned this run where there is one (effectiveNeed).
 func (c *schedCore) need(p *core.Profile) (NeedInfo, error) {
-	if info, ok := c.needs_[p.Name]; ok {
-		return info, nil
+	base, ok := c.needs_[p.Name]
+	if !ok {
+		var err error
+		if base, err = c.needs.Need(p); err != nil {
+			return NeedInfo{}, err
+		}
+		c.needs_[p.Name] = base
 	}
-	info, err := c.needs.Need(p)
-	if err != nil {
-		return NeedInfo{}, err
-	}
-	c.needs_[p.Name] = info
-	return info, nil
+	return c.effectiveNeed(p, base), nil
 }
 
 func (c *schedCore) backoffActive(p string) (*backoff, bool) {

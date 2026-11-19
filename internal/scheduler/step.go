@@ -57,6 +57,22 @@ type (
 		peers   map[string]int64 // per worker, by address; nil when not counted per worker
 		err     error
 	}
+	// evWorkerProbe: a worker connect probe finished (see effWorkerProbe).
+	evWorkerProbe struct {
+		id  core.NodeID
+		gen uint64
+		err error
+	}
+	// evRecoveryPosted: a recovery POST finished (see effRecoveryPost).
+	evRecoveryPosted struct {
+		id     core.NodeID
+		epoch  uint64
+		action string
+		nonce  string
+		status int
+		tail   string
+		err    error
+	}
 	evViewChanged struct{}
 	evTick        struct{}
 	evUnload      struct {
@@ -70,21 +86,23 @@ type (
 	evQuery struct{ fn func(c *schedCore) }
 )
 
-func (evAcquire) isEvent()      {}
-func (evCancel) isEvent()       {}
-func (evRelease) isEvent()      {}
-func (evPreflight) isEvent()    {}
-func (evChildStarted) isEvent() {}
-func (evHealthy) isEvent()      {}
-func (evExited) isEvent()       {}
-func (evFetched) isEvent()      {}
-func (evLoadSample) isEvent()   {}
-func (evViewChanged) isEvent()  {}
-func (evTick) isEvent()         {}
-func (evUnload) isEvent()       {}
-func (evUnloadIdle) isEvent()   {}
-func (evShutdown) isEvent()     {}
-func (evQuery) isEvent()        {}
+func (evAcquire) isEvent()        {}
+func (evCancel) isEvent()         {}
+func (evRelease) isEvent()        {}
+func (evPreflight) isEvent()      {}
+func (evChildStarted) isEvent()   {}
+func (evHealthy) isEvent()        {}
+func (evExited) isEvent()         {}
+func (evFetched) isEvent()        {}
+func (evLoadSample) isEvent()     {}
+func (evWorkerProbe) isEvent()    {}
+func (evRecoveryPosted) isEvent() {}
+func (evViewChanged) isEvent()    {}
+func (evTick) isEvent()           {}
+func (evUnload) isEvent()         {}
+func (evUnloadIdle) isEvent()     {}
+func (evShutdown) isEvent()       {}
+func (evQuery) isEvent()          {}
 
 type probeOutcome struct {
 	id     core.NodeID
@@ -133,6 +151,24 @@ type (
 		id  core.NodeID
 		gen uint64
 	}
+	// effWorkerProbe: TCP connect to a worker's rpc address (off the event
+	// loop, nothing sent); send evWorkerProbe.
+	effWorkerProbe struct {
+		id   core.NodeID
+		addr string
+		gen  uint64
+	}
+	// effRecoveryPost: POST a recovery record to the fleet manager (off the
+	// event loop); send evRecoveryPosted.
+	effRecoveryPost struct {
+		id      core.NodeID
+		epoch   uint64
+		action  string
+		nonce   string
+		url     string
+		body    []byte
+		timeout time.Duration
+	}
 	// effReply: deliver an answer to a waiter's channel (never blocks:
 	// the channel has room for exactly one answer).
 	effReply struct {
@@ -148,6 +184,8 @@ func (effStop) isEffect()         {}
 func (effSample) isEffect()       {}
 func (effFetch) isEffect()        {}
 func (effReply) isEffect()        {}
+func (effWorkerProbe) isEffect()  {}
+func (effRecoveryPost) isEffect() {}
 
 // checkInvariantsEachStep makes handle verify every invariant after each
 // step and panic on a violation. Tests switch it on.
@@ -182,6 +220,10 @@ func (c *schedCore) handle(ev event) {
 		c.fetched(e.id, e.gen, e.node, e.err)
 	case evLoadSample:
 		c.loadSampled(e.iid, e.bytes, e.sockets, e.peers, e.err)
+	case evWorkerProbe:
+		c.workerProbed(e.id, e.gen, e.err)
+	case evRecoveryPosted:
+		c.recoveryPosted(e)
 	case evViewChanged, evTick:
 	case evUnload:
 		err := c.unload(e.profile, e.force)

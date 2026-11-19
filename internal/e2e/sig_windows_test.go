@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"os/exec"
+	"strconv"
 	"syscall"
 )
 
@@ -11,6 +12,15 @@ import (
 // The Go runtime turns CTRL_BREAK into os.Interrupt for signal.Notify.
 func prepareCmd(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP}
+}
+
+// killTree ends the scheduler and its whole process tree. Process.Kill alone
+// leaves the fakellama children it started running (Windows has no process
+// groups that die with the parent), and enough of them exhaust the port range.
+func killTree(cmd *exec.Cmd) {
+	if err := exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(cmd.Process.Pid)).Run(); err != nil {
+		cmd.Process.Kill()
+	}
 }
 
 func interrupt(cmd *exec.Cmd) error {

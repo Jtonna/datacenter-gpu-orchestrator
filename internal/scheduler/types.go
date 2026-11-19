@@ -127,6 +127,10 @@ const (
 	FeedLoadStarted
 	// FeedLoadFinished: a load attempt ended (Outcome).
 	FeedLoadFinished
+	// FeedWorkerHealth: a watched worker's health state changed (Worker).
+	FeedWorkerHealth
+	// FeedRecovery: a recovery request was sent, or a node's outcome was seen (Recovery).
+	FeedRecovery
 )
 
 // FeedEvent is one entry of the subscription feed (design A.3, A.4).
@@ -137,11 +141,13 @@ type FeedEvent struct {
 	Kind        FeedKind
 	Time        time.Time
 	Profile     string
-	State       RunningState // FeedInstance
-	ReadySince  time.Time    // FeedInstance, when ready
-	RequestID   uint64       // FeedAdmitted, FeedFinished
-	LoadStarted *LoadStart   // FeedLoadStarted
-	Outcome     *LoadOutcome // FeedLoadFinished
+	State       RunningState       // FeedInstance
+	ReadySince  time.Time          // FeedInstance, when ready
+	RequestID   uint64             // FeedAdmitted, FeedFinished
+	LoadStarted *LoadStart         // FeedLoadStarted
+	Outcome     *LoadOutcome       // FeedLoadFinished
+	Worker      *WorkerHealthEvent // FeedWorkerHealth
+	Recovery    *RecoveryEvent     // FeedRecovery
 }
 
 // Status is the /api/status document.
@@ -155,6 +161,10 @@ type Status struct {
 	// RecentLoads: load attempts finished within RecentLoadRetention, newest first.
 	RecentLoads []LoadOutcome
 	View        ViewStatus
+	// LearnedNeeds: per profile, the memory the last successful loads of this
+	// run measured and the need fit decisions use now (memfit.go). Empty until
+	// a profile has loaded.
+	LearnedNeeds map[string]LearnedNeed
 }
 
 // InstanceStatus describes one instance.
@@ -279,6 +289,73 @@ type NodeStatus struct {
 	SettleUntil     time.Time
 	Quarantined     time.Time // zero unless quarantined
 	MissingSince    time.Time // node-loss counter start (design 8.4), zero if not counting
+	// Health is set for a remote worker an instance uses, while worker health
+	// detection is on (design 8.4a); nil fields are left out of the JSON.
+	Health *WorkerHealthStatus
+	// Recovery is set once a recovery request was sent for the node or the node
+	// reported an outcome (design 8.4b); nil is left out of the JSON.
+	Recovery *RecoveryStatus
+}
+
+// RecoveryStatus is status.recovery of a node (design 8.4b).
+type RecoveryStatus struct {
+	LastRequest *RecoveryRequestStatus
+	// LastOutcome is the node's last_recovery_action as the fleet reports it.
+	LastOutcome *RecoveryOutcomeStatus
+	// Step is how many steps of the actions list the current hung episode has sent.
+	Step int
+	// EpisodeStarted is unix ms; set only while the node is in a hung episode.
+	EpisodeStarted *int64
+}
+
+// RecoveryRequestStatus is the last request the scheduler sent for a node.
+type RecoveryRequestStatus struct {
+	Action     string
+	Nonce      string
+	SentAt     int64  // unix ms
+	Status     string // pending, stored, refused or error
+	HTTPStatus int    // 0 until an answer arrives (or on a timeout)
+}
+
+// RecoveryOutcomeStatus is a node's reported recovery outcome.
+type RecoveryOutcomeStatus struct {
+	Action     string
+	At         int64 // unix ms
+	Outcome    string
+	Reason     string
+	Nonce      string
+	DurationMs int64
+}
+
+// RecoveryEvent is the payload of the recoveryRequest feed event. Phase is
+// "sent" (a request was posted) or "outcome" (the node's outcome was seen).
+type RecoveryEvent struct {
+	Node     core.NodeID
+	Phase    string
+	Recovery *RecoveryStatus
+}
+
+// WorkerHealthStatus is the health of one worker (design 8.4a).
+type WorkerHealthStatus struct {
+	State      string // ok, suspect, hung
+	Since      int64  // unix ms: when the state was entered
+	Channels   WorkerChannels
+	SilentForS map[string]float64 // only the silent channels: seconds since each became silent
+}
+
+// WorkerChannels are the three health channels of a worker: ok, silent or unknown.
+type WorkerChannels struct {
+	Upload    string
+	Heartbeat string
+	Probe     string
+}
+
+// WorkerHealthEvent is the payload of the workerHealth feed event. Health is
+// nil when the worker is no longer tracked (no instance uses it).
+type WorkerHealthEvent struct {
+	Node   core.NodeID
+	Addr   string
+	Health *WorkerHealthStatus
 }
 
 // PlanAction is the outcome of a dry-run Plan.
@@ -303,8 +380,14 @@ type PlanReport struct {
 	Placement []PlacedNodeStatus
 	Victims   []PlanVictim
 	Reason    string // why there is no placement (queue, reject, backoff)
-	NeedMiB   int
+	NeedMiB   int    // the profile's need before the estimate margin
 	Measured  bool
+	// FitNeedMiB is the need the fit rules use (NeedMiB with the estimate
+	// margin when it is an estimate), and NeedBasis says where it comes from:
+	// "measured, needs_mib", "estimated, +5% margin; the estimate is N MiB" or
+	// "measured this run".
+	FitNeedMiB int
+	NeedBasis  string
 	// Warning is set when defaults.forced_fit_check is warn and the forced
 	// nodes' free memory is below the need: the load would start anyway.
 	Warning string

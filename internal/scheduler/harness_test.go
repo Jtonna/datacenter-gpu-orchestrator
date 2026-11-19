@@ -31,6 +31,8 @@ type harness struct {
 	clk      *fakeClock
 	view     *fakeView
 	prober   *fakeProber
+	wprober  *fakeWorkerProber
+	rposter  *fakeRecoveryPoster
 	launcher *fakeLauncher
 	cfg      *config.Config
 	needs    map[string]NeedInfo
@@ -39,6 +41,8 @@ type harness struct {
 	logs     *capLog
 
 	autoProbe, autoStart, autoExit, autoFetch, autoSample bool
+	holdWorkerProbes                                      bool // worker connect probes wait in wprobes
+	wprobes                                               []effWorkerProbe
 
 	probes   []effProbe
 	starts   []effStart
@@ -54,6 +58,9 @@ func ptrDur(d time.Duration) *time.Duration { return &d }
 
 func testConfig() *config.Config {
 	d := config.DefaultDefaults()
+	// The connect probe is off by default; most health tests exercise it, so
+	// the harness turns it on. Tests of the default set WorkerProbeInterval = 0.
+	d.WorkerProbeInterval = 10 * time.Second
 	return &config.Config{
 		Fleet:     config.Fleet{LocalNode: "omen", StaleAfter: 60 * time.Second},
 		ModelsDir: "/models",
@@ -66,7 +73,7 @@ func newHarness(t fatalT) *harness {
 	clk := newFakeClock()
 	view := newFakeView(clk)
 	h := &harness{
-		t: t, clk: clk, view: view, prober: newFakeProber(view), launcher: newFakeLauncher(),
+		t: t, clk: clk, view: view, prober: newFakeProber(view), wprober: newFakeWorkerProber(), rposter: &fakeRecoveryPoster{clk: clk}, launcher: newFakeLauncher(),
 		cfg: testConfig(), needs: map[string]NeedInfo{}, needErr: map[string]error{},
 		autoProbe: true, autoStart: true, autoExit: true, autoFetch: true, autoSample: true,
 		children: map[uint64]*fakeChild{}, logs: &capLog{},
@@ -201,6 +208,16 @@ func (h *harness) drain() {
 			} else {
 				h.fetches = append(h.fetches, ef)
 			}
+		case effWorkerProbe:
+			if h.holdWorkerProbes {
+				h.wprobes = append(h.wprobes, ef)
+			} else {
+				h.queue = append(h.queue, evWorkerProbe{id: ef.id, gen: ef.gen, err: h.wprober.Connect(nil, ef.addr, workerProbeTimeout)})
+			}
+		case effRecoveryPost:
+			r, err := h.rposter.Post(nil, ef.url, ef.body, ef.timeout)
+			h.queue = append(h.queue, evRecoveryPosted{id: ef.id, epoch: ef.epoch, action: ef.action, nonce: ef.nonce,
+				status: r.Status, tail: r.BodyTail, err: err})
 		case effCancelHealth:
 		case effSample:
 			if h.autoSample {

@@ -36,6 +36,23 @@ type Member struct {
 	RAMUsedGB  *float64 `json:"ram_used_gb"`
 	VRAMTotal  *float64 `json:"vram_total"` // GB
 	VRAMUsed   *float64 `json:"vram_used"`  // GB
+	// MemAvailableMiB is the node's available memory in MiB, if the fleet
+	// reports it (a newer field; may be absent). For a shared-memory node it
+	// replaces the RAM total minus used figure.
+	MemAvailableMiB *int `json:"mem_available_mib"`
+	// LastRecoveryAction is the node's last reported recovery outcome (a newer
+	// field; absent from older fleet managers, null when none).
+	LastRecoveryAction *RecoveryAction `json:"last_recovery_action"`
+}
+
+// RecoveryAction is a member's last_recovery_action.
+type RecoveryAction struct {
+	Action     string `json:"action"`
+	At         int64  `json:"at"`
+	Outcome    string `json:"outcome"`
+	Reason     string `json:"reason"`
+	Nonce      string `json:"nonce"`
+	DurationMs int64  `json:"duration_ms"`
 }
 
 // ProbeRunner runs the local probe command line and returns its stdout.

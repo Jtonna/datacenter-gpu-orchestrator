@@ -18,13 +18,33 @@ import (
 type Need struct {
 	MiB      int
 	Measured bool
+	// MarginPermille is the margin on an estimated need, in thousandths
+	// (defaults.estimate_margin; Estimated gives 50, the design's 5%). It is
+	// not used for a measured need.
+	MarginPermille int
 }
+
+// DefaultEstimateMarginPermille is the margin Estimated gives: 5%.
+const DefaultEstimateMarginPermille = 50
 
 // Measured returns a measured need (profile needs_mib).
 func Measured(mib int) Need { return Need{MiB: mib, Measured: true} }
 
 // Estimated returns an estimated need (estimate.NeedMiB).
-func Estimated(mib int) Need { return Need{MiB: mib} }
+func Estimated(mib int) Need { return Need{MiB: mib, MarginPermille: DefaultEstimateMarginPermille} }
+
+// EstimatedMargin returns an estimated need with an explicit margin in
+// thousandths.
+func EstimatedMargin(mib, permille int) Need { return Need{MiB: mib, MarginPermille: max(permille, 0)} }
+
+// WithMargin is the need the fit rules ask for: MiB for a measured need, MiB
+// raised by the margin for an estimated one.
+func (n Need) WithMargin() int {
+	if n.Measured {
+		return n.MiB
+	}
+	return estimate.MarginMiB(n.MiB, n.MarginPermille)
+}
 
 // ForcedNode is one force_nodes entry. Name is as written in config; ID is
 // what the caller resolved it to under design section 6 (an id, or the
@@ -46,6 +66,11 @@ type Request struct {
 	MaxPool           int   // defaults.max_pool, at least 1 (not checked when forced)
 	MinShareMiB       int   // defaults.min_share_mib
 	DeviceOverheadMiB int   // defaults.device_overhead_mib (estimated needs only)
+	// SkewPermille is defaults.split_skew_margin in thousandths. When a
+	// placement of two or more nodes includes a shared-memory node, that
+	// node's expected share, need x split fraction x (1 + skew), must fit its
+	// own budget (see FitsNodes). 0 turns the rule off.
+	SkewPermille int
 }
 
 // Candidate is one node offered to the placer.
@@ -64,13 +89,17 @@ type Candidate struct {
 	Local     bool
 	Priority  int // matched tier's priority; lower is preferred
 	BudgetMiB int // live budget (free node) or plan budget (held node), design 7.1
+	// Shared marks a shared-memory node (a PS5): a load that overfills it
+	// takes the whole machine down, so a split placement is checked on this
+	// node's own budget, with the skew margin.
+	Shared bool
 }
 
 // FromNode builds a Candidate from a node view entry and the budget the
 // caller computed for it (n.LiveBudgetMiB() for a free node, the plan
 // budget for a held one).
 func FromNode(n core.Node, budgetMiB int) Candidate {
-	return Candidate{ID: n.ID, Addr: n.Addr, Local: n.Local, Priority: n.Priority, BudgetMiB: budgetMiB}
+	return Candidate{ID: n.ID, Addr: n.Addr, Local: n.Local, Priority: n.Priority, BudgetMiB: budgetMiB, Shared: n.SharedMemory}
 }
 
 // Evictable is an instance the caller has found evictable for the entry
@@ -192,19 +221,30 @@ func CheckCapacity(req Request, eligible []Candidate) error {
 	if err != nil {
 		return err
 	}
-	budgets := make([]int, len(nodes))
+	sort.Slice(nodes, func(i, j int) bool {
+		if nodes[i].BudgetMiB != nodes[j].BudgetMiB {
+			return nodes[i].BudgetMiB > nodes[j].BudgetMiB
+		}
+		return nodes[i].ID < nodes[j].ID
+	})
+	if len(nodes) > req.MaxPool {
+		nodes = nodes[:req.MaxPool]
+	}
+	// A set of the largest k budgets is the best k-node pool (the fit rules
+	// are monotone in budgets), so the need can fit some placement exactly
+	// when one of these prefixes fits.
+	top := make([]Candidate, len(nodes))
 	for i, c := range nodes {
-		budgets[i] = c.BudgetMiB
+		top[i] = c.Candidate
 	}
-	sort.Sort(sort.Reverse(sort.IntSlice(budgets)))
-	if len(budgets) > req.MaxPool {
-		budgets = budgets[:req.MaxPool]
-	}
-	if len(budgets) > 0 && fits(req, budgets) {
-		return nil
+	for k := 1; k <= len(top); k++ {
+		if fitsSet(req, top[:k]) {
+			return nil
+		}
 	}
 	capacity := 0
-	for _, b := range budgets {
+	for _, c := range top {
+		b := c.BudgetMiB
 		if !req.Need.Measured {
 			b -= req.DeviceOverheadMiB
 		}
@@ -212,7 +252,11 @@ func CheckCapacity(req Request, eligible []Candidate) error {
 			capacity += b
 		}
 	}
-	return &NoPlacement{Reason: ExceedsCapacity, NeedMiB: req.Need.MiB, RequiredMiB: required(req.Need), CapacityMiB: capacity}
+	required := required(req.Need)
+	if skewApplies(req, top) {
+		required = estimate.MarginMiB(required, req.SkewPermille)
+	}
+	return &NoPlacement{Reason: ExceedsCapacity, NeedMiB: req.Need.MiB, RequiredMiB: required, CapacityMiB: capacity}
 }
 
 // Fits reports whether the given budgets together hold the need under the
@@ -223,6 +267,18 @@ func Fits(req Request, budgetsMiB []int) bool {
 		return true
 	}
 	return fits(req, budgetsMiB)
+}
+
+// FitsNodes is Fits for a placement whose nodes are known: with two or more
+// nodes, one of them shared-memory, it also holds that node's expected share
+// (need x split fraction x (1 + skew), the fraction being the node's budget
+// over the sum, the split the child is given for an automatic placement) to
+// its own budget. A forced request always fits.
+func FitsNodes(req Request, nodes []Candidate) bool {
+	if len(req.Force) > 0 {
+		return true
+	}
+	return fitsSet(req, nodes)
 }
 
 // ---- internals ----
@@ -236,15 +292,64 @@ func fits(req Request, budgets []int) bool {
 	if req.Need.Measured {
 		return estimate.FitsMeasured(budgets, req.Need.MiB)
 	}
-	return estimate.FitsEstimated(budgets, req.Need.MiB, req.DeviceOverheadMiB)
+	return estimate.FitsEstimatedMargin(budgets, req.Need.MiB, req.DeviceOverheadMiB, req.Need.MarginPermille)
 }
 
-// required is what the fit rule asks Σ to reach: need, or ceil(need × 1.05).
-func required(n Need) int {
-	if n.Measured {
-		return n.MiB
+// required is what the fit rule asks the summed budgets to reach: the need, or
+// the need raised by its estimate margin (5% unless configured).
+func required(n Need) int { return n.WithMargin() }
+
+// skewApplies: the per-node skew rule covers a placement of two or more nodes
+// of which at least one is shared-memory.
+func skewApplies(req Request, set []Candidate) bool {
+	if req.SkewPermille <= 0 || len(set) < 2 {
+		return false
 	}
-	return (n.MiB*105 + 99) / 100
+	for _, c := range set {
+		if c.Shared {
+			return true
+		}
+	}
+	return false
+}
+
+// fitsSet is the fit rule for a chosen set: the summed budgets reach the
+// need, and (skewApplies) every shared-memory node holds its own expected
+// share. The child splits an automatic placement by budget, as
+// instance.BuildArgs does (weight max(budget, 1)), so a node's fraction is its
+// weight over the sum; its share is need x fraction x (1 + skew), plus the
+// device overhead for an estimated need. A single node takes no margin.
+func fitsSet(req Request, set []Candidate) bool {
+	budgets := make([]int, len(set))
+	for i, c := range set {
+		budgets[i] = c.BudgetMiB
+	}
+	if !fits(req, budgets) {
+		return false
+	}
+	if !skewApplies(req, set) {
+		return true
+	}
+	var sum int64
+	for _, c := range set {
+		sum += int64(max(c.BudgetMiB, 1))
+	}
+	need := int64(req.Need.WithMargin())
+	for _, c := range set {
+		if !c.Shared {
+			continue
+		}
+		num := need * int64(max(c.BudgetMiB, 1)) * int64(1000+req.SkewPermille)
+		den := sum * 1000
+		share := (num + den - 1) / den
+		if !req.Need.Measured {
+			share += int64(req.DeviceOverheadMiB)
+		}
+		if share > int64(c.BudgetMiB) {
+			return false
+		}
+	}
+	return true
 }
 
 func invalid(format string, a ...any) error {
@@ -542,7 +647,7 @@ func (s searcher) bestPool(level []cand, k int) []cand {
 	var walk func(start int)
 	walk = func(start int) {
 		if len(chosen) == k {
-			if !fits(s.req, budgets) {
+			if !fitsSet(s.req, candidatesOf(chosen)) {
 				return
 			}
 			key := s.poolKey(chosen)
@@ -567,6 +672,14 @@ func (s searcher) bestPool(level []cand, k int) []cand {
 	}
 	walk(0)
 	return best
+}
+
+func candidatesOf(cs []cand) []Candidate {
+	out := make([]Candidate, len(cs))
+	for i, c := range cs {
+		out[i] = c.Candidate
+	}
+	return out
 }
 
 func budgetsOf(cs []cand) []int {

@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 const baseHeader = `
@@ -34,6 +35,11 @@ func TestValidateRejects(t *testing.T) {
 		{"unknown profile field", prof(llama + "    ctxx: 1\n"), []string{"ctxx"}},
 		{"forced_node_grace zero", baseHeader + "defaults: {forced_node_grace: 0}\nprofiles: {}\n", []string{"forced_node_grace", "positive"}},
 		{"forced_node_grace negative", baseHeader + "defaults: {forced_node_grace: -5s}\nprofiles: {}\n", []string{"forced_node_grace", "positive"}},
+		{"split_skew_margin above 1", baseHeader + "defaults: {split_skew_margin: 1.5}\nprofiles: {}\n", []string{"split_skew_margin", "between 0 and 1"}},
+		{"split_skew_margin negative", baseHeader + "defaults: {split_skew_margin: -0.1}\nprofiles: {}\n", []string{"split_skew_margin", "between 0 and 1"}},
+		{"estimate_margin above 1", baseHeader + "defaults: {estimate_margin: 2}\nprofiles: {}\n", []string{"estimate_margin", "between 0 and 1"}},
+		{"estimate_margin negative", baseHeader + "defaults: {estimate_margin: -0.05}\nprofiles: {}\n", []string{"estimate_margin", "between 0 and 1"}},
+		{"load_memory_floor_mib negative", baseHeader + "defaults: {load_memory_floor_mib: -1}\nprofiles: {}\n", []string{"load_memory_floor_mib", "negative"}},
 		{"forced_fit_check unknown", baseHeader + "defaults: {forced_fit_check: maybe}\nprofiles: {}\n", []string{"forced_fit_check", "off", "warn", "reject"}},
 		{"child_log_keep zero", baseHeader + "child_log_keep: 0\nprofiles: {}\n", []string{"child_log_keep", "at least 1"}},
 		{"unknown defaults field", baseHeader + "defaults: {ttll: 5s}\n", []string{"ttll"}},
@@ -211,6 +217,32 @@ func TestValidateAcceptsZeroTTLAndStallTimeout(t *testing.T) {
 	}
 }
 
+func TestLoadStallTimeoutConfig(t *testing.T) {
+	c := mustParse(t, "defaults: {load_stall_timeout: 45s}\nprofiles:\n  a: {model: m.gguf, ctx: 4096, load_stall_timeout: 0}\n  b: {model: m.gguf, ctx: 4096, load_stall_timeout: 9s}\n  c: {model: m.gguf, ctx: 4096}\n")
+	if c.Defaults.LoadStallTimeout != 45*time.Second {
+		t.Fatalf("default = %v", c.Defaults.LoadStallTimeout)
+	}
+	for name, want := range map[string]time.Duration{"a": 0, "b": 9 * time.Second, "c": 45 * time.Second} {
+		if got := c.EffectiveLoadStallTimeout(c.Profiles[name]); got != want {
+			t.Errorf("profile %s: %v, want %v", name, got, want)
+		}
+	}
+	if z := mustParse(t, "defaults: {load_stall_timeout: 0s}\nprofiles: {}\n"); z.Defaults.LoadStallTimeout != 0 {
+		t.Errorf("0 must disable, got %v", z.Defaults.LoadStallTimeout)
+	}
+	if got := mustParse(t, "profiles: {}\n").Defaults.LoadStallTimeout; got != 180*time.Second {
+		t.Errorf("built-in default = %v", got)
+	}
+	for _, y := range []string{
+		baseHeader + "defaults: {load_stall_timeout: -1s}\nprofiles: {}\n",
+		baseHeader + "profiles:\n  a: {model: m.gguf, ctx: 4096, load_stall_timeout: -1s}\n",
+	} {
+		if err := parseErr(y, nil); err == nil || !strings.Contains(err.Error(), "load_stall_timeout") {
+			t.Errorf("want a load_stall_timeout error, got %v", err)
+		}
+	}
+}
+
 func TestValidateExcludeNodes(t *testing.T) {
 	llama := "  p:\n    model: m.gguf\n    ctx: 4096\n"
 	tests := []struct {
@@ -245,5 +277,30 @@ func TestValidateExcludeNodes(t *testing.T) {
 	ok := prof(llama+"    force_nodes: [\"70:66:2a:a9:a7:65\"]\n") + "exclude_nodes: [\"ps5-*\"]\n"
 	if err := parseErr(ok, nil); err != nil {
 		t.Fatalf("glob vs id must be left to runtime: %v", err)
+	}
+}
+
+func TestWorkerHealthConfig(t *testing.T) {
+	d := mustParse(t, "profiles: {}\n").Defaults
+	if d.WorkerProbeInterval != 0 || d.WorkerSilence != 30*time.Second || d.WorkerProbeDuringInference {
+		t.Fatalf("defaults: %v %v %v", d.WorkerProbeInterval, d.WorkerSilence, d.WorkerProbeDuringInference)
+	}
+	d = mustParse(t, "defaults: {worker_probe_interval: 5s, worker_silence: 20s, worker_probe_during_inference: true}\nprofiles: {}\n").Defaults
+	if d.WorkerProbeInterval != 5*time.Second || d.WorkerSilence != 20*time.Second || !d.WorkerProbeDuringInference {
+		t.Fatalf("set: %v %v %v", d.WorkerProbeInterval, d.WorkerSilence, d.WorkerProbeDuringInference)
+	}
+	// 0 (the default) turns only the connect probe off; worker_silence stays required.
+	d = mustParse(t, "defaults: {worker_probe_interval: 0}\nprofiles: {}\n").Defaults
+	if d.WorkerProbeInterval != 0 {
+		t.Fatalf("interval 0 = %v", d.WorkerProbeInterval)
+	}
+	for y, key := range map[string]string{
+		"defaults: {worker_probe_interval: -1s}\nprofiles: {}\n": "worker_probe_interval",
+		"defaults: {worker_silence: -1s}\nprofiles: {}\n":        "worker_silence",
+		"defaults: {worker_silence: 0}\nprofiles: {}\n":          "worker_silence",
+	} {
+		if err := parseErr(baseHeader+y, nil); err == nil || !strings.Contains(err.Error(), key) {
+			t.Errorf("%q: want a %s error, got %v", y, key, err)
+		}
 	}
 }

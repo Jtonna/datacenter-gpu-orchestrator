@@ -26,14 +26,17 @@ func argValue(argv []string, flag string) string {
 
 func TestPreflight_AllSucceed_OverrideAndSplitFromProbe(t *testing.T) {
 	h := newHarness(t).nodes(ps5("a", 2, 9000), ps5("b", 4, 9000))
-	h.llama("m", 14000)
+	h.llama("m", 13000)
 	h.prober.free["10.0.0.2:50052"] = 8500
 	h.prober.free["10.0.0.4:50052"] = 9500
 	h.request("m")
 	h.wantNodes("m", "a", "b")
 	argv := h.child("m").Argv()
-	if got := argValue(argv, "--tensor-split"); got != "7500,8500" && got != "8500,7500" {
-		t.Fatalf("--tensor-split %q, want the pre-flight budgets 7500 and 8500", got)
+	// A shared-memory node's budget is the smaller of the fleet figure (9000 -
+	// 1000 headroom = 8000) and the pre-flight figure (8500 and 9500 minus
+	// 1000): the Vulkan pre-flight overstates what a PS5 can give.
+	if got := argValue(argv, "--tensor-split"); got != "7500,8000" && got != "8000,7500" {
+		t.Fatalf("--tensor-split %q, want the smaller of fleet and pre-flight budgets, 7500 and 8000", got)
 	}
 	if got := argValue(argv, "--rpc"); !strings.Contains(got, "10.0.0.2:50052") || !strings.Contains(got, "10.0.0.4:50052") {
 		t.Fatalf("--rpc %q", got)
@@ -202,7 +205,8 @@ func TestCapacity_NeverFits_503AtOnceWithFigures(t *testing.T) {
 	h.llama("huge", 40000)
 	w := h.request("huge")
 	e := h.failed(w, http.StatusServiceUnavailable, ReasonDoesNotFit)
-	if e.NeedMiB != 40000 || e.RequiredMiB != 40000 || e.CapacityMiB != 15000+7800 {
+	// 40000 x 1.15: the set includes a shared-memory node, so the split skew margin applies.
+	if e.NeedMiB != 40000 || e.RequiredMiB != 46000 || e.CapacityMiB != 15000+7800 {
 		t.Fatalf("figures need %d required %d capacity %d", e.NeedMiB, e.RequiredMiB, e.CapacityMiB)
 	}
 	if e.RetryAfter != 0 {

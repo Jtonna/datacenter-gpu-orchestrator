@@ -39,7 +39,23 @@ func (RealClock) AfterFunc(d time.Duration, f func()) func() bool {
 type NeedInfo struct {
 	Need      placer.Need
 	FileBytes int64
+
+	// Set by the core (schedCore.need), not by a NeedProvider: where Need
+	// comes from, and the figure the provider gave before the core applied
+	// the estimate margin or a measurement learned this run.
+	Source  NeedSource
+	BaseMiB int
 }
+
+// NeedSource says where a need comes from, in the words the messages and the
+// plan use.
+type NeedSource string
+
+const (
+	NeedConfigured NeedSource = "measured, needs_mib"
+	NeedEstimated  NeedSource = "estimated"
+	NeedLearned    NeedSource = "measured this run"
+)
 
 // NeedProvider gives a profile's memory need (design 7.2). An error is a
 // load failure for that profile (502 and backoff), never a crash. It is

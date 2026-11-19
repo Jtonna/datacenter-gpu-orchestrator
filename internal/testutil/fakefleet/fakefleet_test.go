@@ -129,3 +129,78 @@ func TestFailAndHang(t *testing.T) {
 		t.Fatal("expected timeout")
 	}
 }
+
+func postRecovery(t *testing.T, base, id string, body string) int {
+	t.Helper()
+	resp, err := http.Post(base+"/api/recovery/"+id, "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode
+}
+
+func recBody(id, nonce string, expires int64) string {
+	b, _ := json.Marshal(fakefleet.RecoveryRecord{V: 1, TargetNodeID: id, Action: "restart_rpc_server", Reason: "t",
+		IssuedAt: expires - 45000, ExpiresAt: expires, Nonce: nonce})
+	return string(b)
+}
+
+func TestRecoveryEndpoint(t *testing.T) {
+	f := fakefleet.New(t)
+	id := "70:66:2a:a9:a7:65"
+	f.SetMembers(fakefleet.PS5(id, "ps5-1", "10.0.0.2", 12, 4.5, 14.1, 3.2))
+	soon := time.Now().Add(time.Minute).UnixMilli()
+	enc := "70%3A66%3A2a%3Aa9%3Aa7%3A65"
+	if got := postRecovery(t, f.URL(), enc, recBody(id, "n1", soon)); got != 200 {
+		t.Fatalf("stored = %d", got)
+	}
+	for _, c := range []struct {
+		name, id, body string
+		want           int
+	}{
+		{"duplicate nonce", enc, recBody(id, "n1", soon), 409},
+		{"unknown node", "nope", recBody("nope", "n2", soon), 404},
+		{"malformed", enc, "{", 400},
+		{"target mismatch", enc, recBody("other", "n3", soon), 400},
+		{"expired", enc, recBody(id, "n4", time.Now().Add(-time.Second).UnixMilli()), 410},
+	} {
+		if got := postRecovery(t, f.URL(), c.id, c.body); got != c.want {
+			t.Errorf("%s = %d, want %d", c.name, got, c.want)
+		}
+	}
+	reqs := f.RecoveryRequests()
+	if len(reqs) != 6 || reqs[0].NodeID != id || reqs[0].RawPath != "/api/recovery/"+enc || reqs[0].Status != 200 || reqs[1].Status != 409 {
+		t.Fatalf("requests %+v", reqs)
+	}
+	if rec, err := reqs[0].Record(); err != nil || rec.Nonce != "n1" {
+		t.Fatalf("record %+v %v", rec, err)
+	}
+	// Forced statuses: queued ones first, then Fail.
+	f.QueueRecoveryStatus(500, 429)
+	f.Fail(fakefleet.EpRecovery, 403)
+	for i, want := range []int{500, 429, 403} {
+		if got := postRecovery(t, f.URL(), enc, recBody(id, "n9"+string(rune('a'+i)), soon)); got != want {
+			t.Errorf("forced %d = %d, want %d", i, got, want)
+		}
+	}
+	f.Heal(fakefleet.EpRecovery)
+	if got := postRecovery(t, f.URL(), enc, recBody(id, "n9z", soon)); got != 200 {
+		t.Errorf("after heal = %d", got)
+	}
+}
+
+func TestLastRecoveryActionOnAMember(t *testing.T) {
+	f := fakefleet.New(t)
+	f.SetMembers(fakefleet.PS5("a", "ps5-1", "10.0.0.2", 12, 4.5, 14.1, 3.2))
+	_, body := get(t, f.URL()+"/api/fleet")
+	if !strings.Contains(string(body), `"last_recovery_action":null`) {
+		t.Fatalf("want null by default: %s", body)
+	}
+	f.SetLastRecovery("a", &fakefleet.RecoveryAction{Action: "restart_rpc_server", At: 5, Outcome: "ok", Nonce: "n", DurationMs: 9})
+	_, body = get(t, f.URL()+"/api/fleet")
+	if !strings.Contains(string(body), `"last_recovery_action":{"action":"restart_rpc_server","at":5,"outcome":"ok","reason":"","nonce":"n","duration_ms":9}`) {
+		t.Fatalf("%s", body)
+	}
+}

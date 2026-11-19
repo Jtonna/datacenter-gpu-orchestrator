@@ -22,7 +22,40 @@ type Config struct {
 	// ExcludeNodes lists nodes that are never used: each entry is a node id or a
 	// hostname glob (case-insensitive). See Excluded.
 	ExcludeNodes []string
-	Profiles     map[string]*core.Profile
+	// Recovery is the optional recovery-request feature (design 8.4b).
+	Recovery Recovery
+	Profiles map[string]*core.Profile
+}
+
+// Recovery actions, in the only order they may be configured.
+const (
+	RecoveryRestartRPC    = "restart_rpc_server"
+	RecoveryRestartDocker = "restart_docker"
+	RecoveryReboot        = "reboot"
+)
+
+// RecoveryActions lists the allowed actions from least to most disruptive.
+var RecoveryActions = []string{RecoveryRestartRPC, RecoveryRestartDocker, RecoveryReboot}
+
+// Recovery configures recovery requests for hung workers (design 8.4b).
+type Recovery struct {
+	Enabled bool // false: nothing is ever sent
+	// Actions is the escalation order; each is allowed once.
+	Actions []string
+	// MinInterval is the least time between two requests for one node.
+	MinInterval time.Duration
+	// StepWait is how long a step gets to take effect before the next one.
+	StepWait time.Duration
+	// RequestTTL is how long a request stays valid (expires_at - issued_at).
+	RequestTTL time.Duration
+	// HTTPTimeout bounds the POST to the fleet manager.
+	HTTPTimeout time.Duration
+}
+
+// DefaultRecovery returns the built-in recovery settings (disabled).
+func DefaultRecovery() Recovery {
+	return Recovery{Actions: []string{RecoveryRestartRPC}, MinInterval: 120 * time.Second,
+		StepWait: 90 * time.Second, RequestTTL: 45 * time.Second, HTTPTimeout: 3 * time.Second}
 }
 
 // Fleet is the fleet console connection.
@@ -41,13 +74,16 @@ type Defaults struct {
 	QueueTimeout       time.Duration
 	StallTimeout       time.Duration
 	CommandLoadTimeout time.Duration
-	ShutdownGrace      time.Duration
-	MaxPool            int
-	DeviceOverheadMiB  int
-	MinShareMiB        int
-	CacheRAMMiB        int
-	ServerBin          string
-	LocalDevice        string
+	// LoadStallTimeout fails a load whose measured upload acknowledges no new
+	// bytes for this long; 0 disables the rule.
+	LoadStallTimeout  time.Duration
+	ShutdownGrace     time.Duration
+	MaxPool           int
+	DeviceOverheadMiB int
+	MinShareMiB       int
+	CacheRAMMiB       int
+	ServerBin         string
+	LocalDevice       string
 	// ForcedNodeGrace is how long a forced node may be absent or offline in a
 	// live fleet view before requests for the profile fail fast.
 	ForcedNodeGrace time.Duration
@@ -56,6 +92,34 @@ type Defaults struct {
 	// (no check, the default), ForcedFitWarn (log and start) or
 	// ForcedFitReject (fail the request).
 	ForcedFitCheck string
+	// WorkerProbeInterval is how often a remote worker that backs an instance
+	// gets a plain TCP connect probe (design 8.4a). 0 (the default) means the
+	// probe never runs; the rest of worker health detection is always on. The
+	// probe is harmful for rpc-server workers (one client, extra connections
+	// fill the listen backlog): enable it only for workers that accept
+	// parallel connections.
+	WorkerProbeInterval time.Duration
+	// WorkerSilence is how long a worker's upload progress or fleet heartbeat
+	// may stay quiet before that channel counts as silent.
+	WorkerSilence time.Duration
+	// WorkerProbeDuringInference lets the connect probe run while the instance
+	// has a request in flight. Off by default: a worker serves one client at a
+	// time, and an extra connection might disturb a live session.
+	WorkerProbeDuringInference bool
+
+	// SplitSkewMargin is the extra share a node of a split model may receive
+	// beyond its tensor-split fraction (llama.cpp does not land a split
+	// evenly: 11% over was measured). Every multi-node placement on
+	// shared-memory nodes is fitted per node with share = need x fraction x
+	// (1 + this). 0 to 1; default 0.15.
+	SplitSkewMargin float64
+	// EstimateMargin is added to every memory need that is an estimate (a
+	// profile without needs_mib): need x (1 + this). 0 to 1; default 0.05.
+	EstimateMargin float64
+	// LoadMemoryFloorMiB cancels a load when a shared-memory node's
+	// fleet-reported available memory falls below it during the load (a live
+	// fleet view only). 0 disables. Default 768.
+	LoadMemoryFloorMiB int
 }
 
 // Values of defaults.forced_fit_check.

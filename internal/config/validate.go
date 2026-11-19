@@ -34,6 +34,7 @@ func (c *Config) validate(raw map[string]*rawProfile, exists func(string) bool) 
 	add := func(format string, a ...any) { errs = append(errs, fmt.Errorf(format, a...)) }
 
 	c.validateDefaults(add)
+	c.validateRecovery(add)
 	c.validateTiers(add)
 	for i, e := range c.ExcludeNodes {
 		switch {
@@ -83,6 +84,9 @@ func (c *Config) validate(raw map[string]*rawProfile, exists func(string) bool) 
 		}
 		if p.StallTimeout != nil && *p.StallTimeout < 0 {
 			pf("stall_timeout", "must not be negative")
+		}
+		if p.LoadStallTimeout != nil && *p.LoadStallTimeout < 0 {
+			pf("load_stall_timeout", "must not be negative")
 		}
 		if p.LoadTimeout < 0 {
 			pf("load_timeout", "must not be negative")
@@ -229,7 +233,8 @@ func (c *Config) validateDefaults(add func(string, ...any)) {
 	for _, x := range []struct {
 		name string
 		v    time.Duration
-	}{{"ttl", d.TTL}, {"stall_timeout", d.StallTimeout}} {
+	}{{"ttl", d.TTL}, {"stall_timeout", d.StallTimeout}, {"load_stall_timeout", d.LoadStallTimeout},
+		{"worker_probe_interval", d.WorkerProbeInterval}, {"worker_silence", d.WorkerSilence}} {
 		if x.v < 0 {
 			add("defaults: %s: must not be negative", x.name)
 		}
@@ -246,8 +251,19 @@ func (c *Config) validateDefaults(add func(string, ...any)) {
 			add("defaults: %s: must be positive, got %v", x.name, x.v)
 		}
 	}
+	if d.WorkerSilence <= 0 {
+		add("defaults: worker_silence: must be positive, got %v", d.WorkerSilence)
+	}
 	if d.MinHold > d.MaxHold {
 		add("defaults: max_hold: must be at least min_hold (%v), got %v", d.MinHold, d.MaxHold)
+	}
+	for _, x := range []struct {
+		name string
+		v    float64
+	}{{"split_skew_margin", d.SplitSkewMargin}, {"estimate_margin", d.EstimateMargin}} {
+		if !(x.v >= 0 && x.v <= 1) { // also rejects NaN
+			add("defaults: %s: must be between 0 and 1, got %v", x.name, x.v)
+		}
 	}
 	if d.MaxPool < 1 {
 		add("defaults: max_pool: must be at least 1, got %d", d.MaxPool)
@@ -255,7 +271,8 @@ func (c *Config) validateDefaults(add func(string, ...any)) {
 	for _, x := range []struct {
 		name string
 		v    int
-	}{{"device_overhead_mib", d.DeviceOverheadMiB}, {"min_share_mib", d.MinShareMiB}, {"cache_ram_mib", d.CacheRAMMiB}} {
+	}{{"device_overhead_mib", d.DeviceOverheadMiB}, {"min_share_mib", d.MinShareMiB}, {"cache_ram_mib", d.CacheRAMMiB},
+		{"load_memory_floor_mib", d.LoadMemoryFloorMiB}} {
 		if x.v < 0 {
 			add("defaults: %s: must not be negative", x.name)
 		}
@@ -276,5 +293,47 @@ func (c *Config) validateDefaults(add func(string, ...any)) {
 	}
 	if c.Fleet.StaleAfter <= 0 {
 		add("fleet: stale_after: must be positive, got %v", c.Fleet.StaleAfter)
+	}
+}
+
+// validateRecovery checks the recovery block whether or not it is enabled, so
+// a mistake is found before the feature is switched on.
+func (c *Config) validateRecovery(add func(string, ...any)) {
+	r := c.Recovery
+	if len(r.Actions) == 0 {
+		add("recovery: actions: must list at least one of %s", strings.Join(RecoveryActions, ", "))
+	}
+	rank := map[string]int{}
+	for i, a := range RecoveryActions {
+		rank[a] = i
+	}
+	seen := map[string]bool{}
+	last := -1
+	for _, a := range r.Actions {
+		i, ok := rank[a]
+		switch {
+		case !ok:
+			add("recovery: actions: unknown action %q (allowed: %s)", a, strings.Join(RecoveryActions, ", "))
+			continue
+		case seen[a]:
+			add("recovery: actions: %q is listed twice", a)
+			continue
+		case i < last:
+			add("recovery: actions: %q must come before %q (order: %s)", a, RecoveryActions[last], strings.Join(RecoveryActions, ", "))
+		}
+		seen[a] = true
+		last = max(last, i)
+	}
+	if r.MinInterval < 60*time.Second {
+		add("recovery: min_interval: must be at least 60s, got %v", r.MinInterval)
+	}
+	if r.StepWait <= 0 {
+		add("recovery: step_wait: must be positive, got %v", r.StepWait)
+	}
+	if r.RequestTTL <= 0 || r.RequestTTL > 60*time.Second {
+		add("recovery: request_ttl: must be positive and at most 60s, got %v", r.RequestTTL)
+	}
+	if r.HTTPTimeout <= 0 {
+		add("recovery: http_timeout: must be positive, got %v", r.HTTPTimeout)
 	}
 }

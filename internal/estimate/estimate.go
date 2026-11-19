@@ -92,3 +92,28 @@ func FitsMeasured(budgetsMiB []int, needsMiB int) bool {
 	}
 	return sum >= int64(needsMiB)
 }
+
+// MarginMiB returns ceil(miB × (1000 + permille) / 1000): miB raised by a
+// margin given in thousandths, in integer arithmetic.
+func MarginMiB(miB, permille int) int {
+	if miB <= 0 {
+		return 0
+	}
+	if permille <= 0 {
+		return miB
+	}
+	return int((int64(miB)*int64(1000+permille) + 999) / 1000)
+}
+
+// FitsEstimatedMargin is FitsEstimated with the margin in thousandths:
+// Σ(budget − overhead) ≥ need × (1 + permille/1000). FitsEstimated is the
+// permille = 50 case.
+func FitsEstimatedMargin(budgetsMiB []int, needMiB, deviceOverheadMiB, permille int) bool {
+	var sum int64
+	for _, b := range budgetsMiB {
+		if v := b - deviceOverheadMiB; v > 0 {
+			sum += int64(v)
+		}
+	}
+	return sum >= int64(MarginMiB(needMiB, permille))
+}

@@ -262,3 +262,24 @@ func runningOnly(t *testing.T, e *env) string {
 	b, _ := json.Marshal(map[string]json.RawMessage{"running": m["running"]})
 	return string(b)
 }
+
+// A stalled measured load shows stalled_s and leaves eta_s out.
+func TestLoadObjectJSON_StalledOmitsEtaAndShowsStalledSeconds(t *testing.T) {
+	total, sent, progress, stalled, src := int64(14334446752), int64(549), 0.0, 20.0, "measured"
+	r := &scheduler.LoadReport{SessionID: "ld-1-1", StartedAt: 1000, ElapsedS: 732.5, BytesTotal: &total, BytesSent: &sent,
+		Progress: &progress, StalledS: &stalled, Source: &src, Workers: []scheduler.LoadWorker{}}
+	got := jsonView(r).(map[string]any)
+	if _, has := got["eta_s"]; has {
+		t.Fatalf("eta_s present: %v", got)
+	}
+	if got["stalled_s"] != 20.0 {
+		t.Fatalf("stalled_s = %v", got["stalled_s"])
+	}
+	t.Logf("stalled load object:\n%s", pretty(got))
+	eta := 143.0
+	r.StalledS, r.EtaS = nil, &eta
+	got = jsonView(r).(map[string]any)
+	if _, has := got["stalled_s"]; has || got["eta_s"] != 143.0 {
+		t.Fatalf("moving load: %v", got)
+	}
+}

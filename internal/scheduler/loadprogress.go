@@ -2,7 +2,9 @@ package scheduler
 
 import (
 	"errors"
+	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
@@ -15,11 +17,12 @@ import (
 // ByteCounter) and otherwise estimates it from the tier link speed.
 
 const (
-	sampleEvery  = time.Second      // least gap between two byte counts of one instance
-	loadLogEvery = 30 * time.Second // "load progress" log line period
-	sampleWindow = 20 * time.Second // measured rate is taken over this much history
-	minRateSpan  = 2 * time.Second  // least history for a measured rate
-	maxProgress  = 0.99             // progress is 1 only when the instance is ready
+	sampleEvery      = time.Second      // least gap between two byte counts of one instance
+	loadLogEvery     = 30 * time.Second // "load progress" log line period
+	sampleWindow     = 20 * time.Second // measured rate is taken over this much history
+	minRateSpan      = 2 * time.Second  // least history for a measured rate
+	stalledShowAfter = 15 * time.Second // no new bytes for this long: drop the eta, show stalled_s
+	maxProgress      = 0.99             // progress is 1 only when the instance is ready
 )
 
 type byteSample struct {
@@ -97,7 +100,9 @@ func (c *schedCore) loadTimers(in *inst) {
 		if v.progress != nil {
 			attrs = append(attrs, "percent", math.Round(*v.progress*1000)/10, "source", *v.source)
 		}
-		if v.eta != nil {
+		if v.stalled != nil {
+			attrs = append(attrs, "stalled", (time.Duration(*v.stalled * float64(time.Second))).Round(time.Second))
+		} else if v.eta != nil {
 			attrs = append(attrs, "eta", (time.Duration(*v.eta * float64(time.Second))).Round(time.Second))
 		}
 		c.log.Info("load progress", attrs...)
@@ -122,6 +127,9 @@ func (c *schedCore) loadSampled(iid uint64, bytes int64, sockets int, peers map[
 		in.measured = false
 	default:
 		in.measured = true
+		if in.lastGrowth.IsZero() || bytes > in.sentBytes {
+			in.lastGrowth = c.now // the stall clock starts at the first reading and restarts on growth
+		}
 		if bytes > in.sentBytes {
 			in.sentBytes = bytes // never backwards: a closed socket takes its count with it
 		}
@@ -129,6 +137,9 @@ func (c *schedCore) loadSampled(iid uint64, bytes int64, sockets int, peers map[
 		for addr, b := range peers {
 			if b > in.peerSent[addr] {
 				in.peerSent[addr] = b // never backwards, per worker too
+				in.peerGrowth[addr] = c.now
+			} else if _, seen := in.peerGrowth[addr]; !seen {
+				in.peerGrowth[addr] = c.now // first reading of this worker
 			}
 		}
 		in.samples = append(in.samples, byteSample{at: c.now, bytes: in.sentBytes})
@@ -157,6 +168,7 @@ type loadViewData struct {
 	sent     *int64
 	progress *float64
 	eta      *float64
+	stalled  *float64 // seconds since the acknowledged bytes last rose; only when over stalledShowAfter
 	source   *string
 }
 
@@ -199,7 +211,10 @@ func (c *schedCore) loadView(in *inst) loadViewData {
 	p := math.Min(sent/float64(total), maxProgress)
 	p = round(p, 4)
 	v.progress = &p
-	if rate > 0 {
+	if quiet, ok := c.uploadQuiet(in); ok && quiet > stalledShowAfter {
+		s := round(quiet.Seconds(), 0)
+		v.stalled = &s // a stale time remaining is worse than none
+	} else if rate > 0 {
 		eta := round(math.Max(float64(total)-sent, 0)/rate, 0)
 		v.eta = &eta
 	}
@@ -216,4 +231,44 @@ func (c *schedCore) measuredRate(in *inst, fallback float64) float64 {
 		}
 	}
 	return fallback
+}
+
+// uploadQuiet is how long a measured, unfinished upload has acknowledged no
+// new bytes. ok is false when the rule does not apply: the figure is
+// estimated, there is no upload, no reading was taken yet, or the upload is
+// complete (context creation and warmup are quiet and must not count).
+func (c *schedCore) uploadQuiet(in *inst) (time.Duration, bool) {
+	if !in.measured || in.remoteBytes <= 0 || in.lastGrowth.IsZero() ||
+		float64(in.sentBytes) >= maxProgress*float64(in.remoteBytes) {
+		return 0, false
+	}
+	return c.now.Sub(in.lastGrowth), true
+}
+
+// loadStalled reports whether the load stall rule has tripped, and for how long.
+func (c *schedCore) loadStalled(in *inst) (time.Duration, bool) {
+	limit := c.cfg.EffectiveLoadStallTimeout(in.prof)
+	if limit <= 0 {
+		return 0, false
+	}
+	quiet, ok := c.uploadQuiet(in)
+	return quiet, ok && quiet >= limit
+}
+
+// failStalledLoad fails a load that the workers stopped acknowledging.
+func (c *schedCore) failStalledLoad(in *inst, quiet time.Duration) {
+	limit := c.cfg.EffectiveLoadStallTimeout(in.prof)
+	c.log.Error("load stalled", "profile", in.prof.Name, "bytes_sent", in.sentBytes, "bytes_total", in.remoteBytes,
+		"stalled", quiet.Round(time.Second), "limit", limit, "workers", c.workerBytesText(in))
+	c.failLoad(in, fmt.Sprintf("load stalled: no bytes acknowledged by the workers for %v (sent %d of %d)",
+		limit, in.sentBytes, in.remoteBytes), nil, false)
+}
+
+// workerBytesText is "addr=bytes" per worker, for the log.
+func (c *schedCore) workerBytesText(in *inst) string {
+	parts := make([]string, 0, len(in.peers))
+	for _, p := range in.peers {
+		parts = append(parts, fmt.Sprintf("%s=%d", p, in.peerSent[p]))
+	}
+	return strings.Join(parts, " ")
 }

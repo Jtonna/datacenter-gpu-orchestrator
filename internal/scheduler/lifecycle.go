@@ -107,7 +107,7 @@ func (c *schedCore) preflightDone(iid uint64, results []probeOutcome) {
 		c.failLoad(in, err.Error(), nil, false)
 		return
 	}
-	if ff := c.forcedFitCheck(in.prof, in.nodeIDs()); ff != nil {
+	if ff := c.forcedFitCheck(in.prof, in.placement); ff != nil {
 		if ff.mode == config.ForcedFitReject {
 			// Up front, before anything is uploaded. Not a load failure: no
 			// backoff, no quarantine; the nodes are released unsettled.
@@ -125,12 +125,14 @@ func (c *schedCore) preflightDone(iid uint64, results []probeOutcome) {
 	pl := in.placement
 	pl.Nodes = slices.Clone(pl.Nodes)
 	budgets := make([]int, len(pl.Nodes))
+	cands := make([]placer.Candidate, len(pl.Nodes))
 	for i, pn := range pl.Nodes {
 		n, _ := c.node(pn.ID)
 		budgets[i] = c.liveBudget(pn.ID, n)
 		pl.Nodes[i].BudgetMiB = budgets[i]
+		cands[i] = placer.FromNode(n, budgets[i])
 	}
-	if !placer.Fits(req, budgets) {
+	if !placer.FitsNodes(req, cands) {
 		c.returnInst(in, "exact pre-flight figures do not fit", budgets)
 		return
 	}
@@ -228,6 +230,7 @@ func (c *schedCore) childStarted(iid uint64, ch instance.Child, err error) {
 	}
 	in.phase = phLoading
 	in.loadDL = c.now.Add(in.loadTimeout)
+	in.lastGrowth = time.Time{}
 	in.loadStart, in.nextSample, in.nextLoadLog = c.now, c.now.Add(sampleEvery), c.now.Add(loadLogEvery)
 	c.changed = true
 }
@@ -242,6 +245,7 @@ func (c *schedCore) healthy(iid uint64, err error) {
 	in.readyAt, in.lastUsed = c.now, c.now
 	in.loadDuration = c.now.Sub(in.created)
 	delete(c.backoffs, in.prof.Name) // reset when the profile next reaches ready
+	c.learnNeed(in)
 	for _, n := range in.placement.Nodes {
 		ns := c.ns(n.ID)
 		ns.hasPF, ns.hasClaim = false, false // forgotten when a load on the node succeeds
@@ -382,6 +386,11 @@ func (c *schedCore) exited(iid uint64, st instance.ExitStatus) {
 // no process exists any more (it exited, or Start failed); the nodes then
 // settle only if a child ran on them.
 func (c *schedCore) failLoad(in *inst, msg string, tail []string, gone bool) {
+	c.failLoadMode(in, msg, tail, gone, stopGraceful)
+}
+
+// failLoadMode is failLoad with the way the child is stopped.
+func (c *schedCore) failLoadMode(in *inst, msg string, tail []string, gone bool, mode instance.StopMode) {
 	if tail == nil && in.child != nil {
 		tail = in.child.Tail(failureTailLines)
 	}
@@ -402,7 +411,7 @@ func (c *schedCore) failLoad(in *inst, msg string, tail []string, gone bool) {
 	case gone:
 		c.removeInst(in, in.childRan)
 	case in.child != nil || in.phase == phLaunching:
-		c.stopInst(in, stopGraceful)
+		c.stopInst(in, mode)
 	default:
 		c.removeInst(in, false)
 	}

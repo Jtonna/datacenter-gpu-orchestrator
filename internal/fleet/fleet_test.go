@@ -916,3 +916,60 @@ func TestFeedLossAndStalenessLoggedOncePerOutage(t *testing.T) {
 	e.f.DropStreams()
 	eventually(t, func() bool { return e.log.count("feed disconnected") == 2 }, "a new outage warns again")
 }
+
+// mem_available_mib (a newer field) replaces the RAM total minus used figure
+// of a shared-memory node when present, and an unreported figure is marked
+// unknown so the load memory watch does not read its zero as a reading.
+func TestNodeFromMemberMemAvailableAndUnknown(t *testing.T) {
+	cfg := testConfig()
+	avail := 9000
+	m := toMember(fakefleet.PS5("a8", "ps5-1", "10.0.0.2", 12, 1, 14, 5))
+	m.MemAvailableMiB = &avail
+	n, _ := nodeFromMember(cfg, m, false)
+	if n.FreeMiB != 9000 || n.FreeUnknown { // min(vram free 11264, mem_available 9000)
+		t.Errorf("with mem_available_mib: %+v", n)
+	}
+	n, _ = nodeFromMember(cfg, toMember(fakefleet.PS5("a8", "ps5-1", "10.0.0.2", 12, 1, 14, 5)), false)
+	if n.FreeMiB != 9216 || n.FreeUnknown { // without it: RAM 14 - 5 GB
+		t.Errorf("without mem_available_mib: %+v", n)
+	}
+	nullRAM := fakefleet.PS5("p", "ps5-1", "10.0.0.2", 12, 1, 14, 1)
+	nullRAM.RAMTotalGB = nil
+	if n, _ := nodeFromMember(cfg, toMember(nullRAM), false); n.FreeMiB != 0 || !n.FreeUnknown {
+		t.Errorf("unknown ram: %+v", n)
+	}
+	nullVRAM := fakefleet.Relay("alienware-llm", "alienware-llm", "10.0.0.12", 8, 2)
+	nullVRAM.VRAMTotal, nullVRAM.VRAMUsed = nil, nil
+	if n, _ := nodeFromMember(cfg, toMember(nullVRAM), false); n.FreeMiB != 0 || !n.FreeUnknown {
+		t.Errorf("unknown vram: %+v", n)
+	}
+	// An unknown vram on a shared-memory node with the newer field: that figure stands alone.
+	m = toMember(fakefleet.PS5("a8", "ps5-1", "10.0.0.2", 12, 1, 14, 5))
+	m.VRAMTotal, m.VRAMUsed, m.MemAvailableMiB = nil, nil, &avail
+	if n, _ := nodeFromMember(cfg, m, false); n.FreeMiB != 9000 || n.FreeUnknown {
+		t.Errorf("mem_available_mib without vram: %+v", n)
+	}
+}
+
+// last_recovery_action (a newer, optional field) is parsed into the node;
+// absent or null means no outcome.
+func TestNodeFromMemberLastRecoveryAction(t *testing.T) {
+	cfg := testConfig()
+	m := fakefleet.PS5("70:66:2a:a9:a7:65", "ps5-1", "10.0.0.2", 12, 1, 14, 5)
+	if n, _ := nodeFromMember(cfg, toMember(m), false); n.Recovery.Present {
+		t.Errorf("null last_recovery_action gave %+v", n.Recovery)
+	}
+	m.LastRecovery = &fakefleet.RecoveryAction{Action: "restart_docker", At: 1763300123456, Outcome: "failed",
+		Reason: "docker not running", Nonce: "0123456789abcdef0123456789abcdef", DurationMs: 4200}
+	n, _ := nodeFromMember(cfg, toMember(m), false)
+	want := core.RecoveryOutcome{Present: true, Action: "restart_docker", At: 1763300123456, Outcome: "failed",
+		Reason: "docker not running", Nonce: "0123456789abcdef0123456789abcdef", DurationMs: 4200}
+	if n.Recovery != want {
+		t.Errorf("got %+v, want %+v", n.Recovery, want)
+	}
+	// An older fleet manager sends no such key at all.
+	var old Member
+	if err := json.Unmarshal([]byte(`{"id":"a","hostname":"ps5-1","role":"ps5-linux","source":"self","online":true}`), &old); err != nil || old.LastRecoveryAction != nil {
+		t.Errorf("absent field: %+v %v", old, err)
+	}
+}
