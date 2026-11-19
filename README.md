@@ -18,6 +18,8 @@ scheduler", benchmark guide section 12). All of it is in the one binary and
 container; with no `data_dir` the benchmark feature is off and nothing else
 changes.
 
+AI agents can operate it over MCP at `/mcp` on the same port (46 tools that run the same code as the REST API; design 9.5, runbook "Let an AI agent operate the scheduler").
+
 ## Tests
 
 ```

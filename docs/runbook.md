@@ -521,6 +521,56 @@ accepts the same origin or a LAN origin. `ws_max_clients` (32) limits clients.
 Test it from a shell with any WebSocket client, for example
 `websocat ws://localhost:3122/ws`.
 
+### Let an AI agent operate the scheduler (MCP, design 9.5)
+
+The scheduler is also an MCP server at `http://<omen>:3122/mcp` (same port, no
+authentication, LAN only). Every tool runs the same code as the REST endpoint
+of the same name; nothing needs configuring.
+
+Connect Claude Code:
+
+```sh
+claude mcp add --transport http llm-scheduler http://<omen>:3122/mcp
+```
+
+Any other client that speaks Streamable HTTP takes a URL, for example:
+
+```json
+{
+  "mcpServers": {
+    "llm-scheduler": { "type": "http", "url": "http://<omen>:3122/mcp" }
+  }
+}
+```
+
+Check it from a shell without a client (the session id comes back in the
+`Mcp-Session-Id` response header; it is optional):
+
+```sh
+curl -s http://<omen>:3122/mcp -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+Three example calls an agent makes (arguments as JSON):
+
+1. `get_status` with `{}` returns the model-centric summary: what is loaded or
+   loading (state, nodes, memory, requests in flight, load progress and ETA),
+   then nodes and queue.
+2. `plan_load` with `{"model":"gemma-4-12b"}` says whether it fits and what it
+   would evict; if the plan is good, `load_model` with
+   `{"model":"gemma-4-12b","actor":"nightly-check"}` starts it (HTTP 202, the
+   load takes minutes: poll `get_status`).
+3. `update_settings` with `{"settings":{"queue_timeout":"2m"},"comment":"longer
+   queue while benchmarking","dry_run":true}` validates a change without
+   saving it; repeat without `dry_run` to apply it. `query_audit` then shows it
+   with `source: mcp` and the client name, and `rollback_config` undoes it.
+
+Notes: configuration tools exist only in a build that has the configuration
+API; on an older build the call answers "this server build does not have that
+endpoint". Benchmark tools need `data_dir`, like the REST API. An agent that
+should not change anything can be given a client configuration that allows only
+the tools marked read-only.
+
 ### Child output logs
 
 The scheduler writes each child llama-server's complete stdout and stderr to a new file under `/opt/llm-scheduler/logs` on the OMEN (`child_log_dir` in `config.yaml`, mounted by compose). One file per start, named `<UTC time>-<profile>-<instance id>.log`, so `ls` sorts by time. This is where the KV cache size, the memory breakdown and the exact out-of-memory error are, beyond the last 40 lines in a `502`.
