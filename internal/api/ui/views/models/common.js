@@ -9,6 +9,7 @@ import { h } from '../../core/dom.js';
 import { href } from '../../core/router.js';
 import { badge, nodeChips, stat, bar, memoryRow, progress, steps, banner, more } from '../../core/ui.js';
 import { num, gb, gbNum, mib, bytes, tps, dur, ago, until, plural, clock, toMs, now, DASH } from '../../core/format.js';
+import { avatar } from '../../core/avatar.js';
 import { nodeName, nodeByAddr, instanceNodeNames, nodeMemory, instanceBadge, healthBadge, findNode, drift, machines, shortReason, plainReason } from '../../core/status.js';
 
 // ---- phrases about a catalog model ----
@@ -40,9 +41,17 @@ export function fitOf(m, st) {
   }
   if (!f || !f.need_mib) return { need: null, text: 'Not known yet', sub: '', kind: 'unknown' };
   if (f.basis === 'measured') {
-    const n = f.ran_on_nodes || f.min_nodes || 1;
-    return { need: f.need_mib, nodes: n, text: `Runs on ${machines(st, n)}`, sub: 'measured', kind: n > 1 ? 'several' : 'one',
-      title: `${mib(f.need_mib)} measured on a load across ${machines(st, n)}` };
+    const ran = f.ran_on_nodes || f.min_nodes || 1;
+    // It was measured on `ran` machines, but that only says which
+    // configurations happened to be run: when the measured need fits on
+    // fewer, that is the answer, marked as an estimate.
+    if (f.min_nodes > 0 && f.min_nodes < ran) {
+      const n = f.min_nodes;
+      return { need: f.need_mib, nodes: n, ranOn: ran, estimate: true, text: `Should fit on ${machines(st, n)}`, sub: 'measured', kind: n > 1 ? 'several' : 'one',
+        title: `${mib(f.need_mib)} measured on a load across ${machines(st, ran)}. That fits on ${machines(st, n)} of the empty cluster, but it has not been loaded on so few yet, so the machine count is an estimate.` };
+    }
+    return { need: f.need_mib, nodes: ran, text: `Runs on ${machines(st, ran)}`, sub: 'measured', kind: ran > 1 ? 'several' : 'one',
+      title: `${mib(f.need_mib)} measured on a load across ${machines(st, ran)}` };
   }
   const word = f.basis === 'configured' ? 'set in the profile' : 'estimated';
   if (f.min_nodes === 0) {
@@ -50,8 +59,18 @@ export function fitOf(m, st) {
       title: `${mib(f.need_mib)} ${word}; the empty cluster holds ${mib(f.cluster_budget_mib)}` };
   }
   if (f.min_nodes == null) return { need: f.need_mib, text: 'Not known yet', sub: word, kind: 'unknown' };
-  return { need: f.need_mib, nodes: f.min_nodes, text: `Should need ${machines(st, f.min_nodes)}`, sub: word, kind: f.min_nodes > 1 ? 'several' : 'one',
+  return { need: f.need_mib, nodes: f.min_nodes, estimate: true, text: `Should need ${machines(st, f.min_nodes)}`, sub: word, kind: f.min_nodes > 1 ? 'several' : 'one',
     title: `${mib(f.need_mib)} ${word}; not loaded yet, so this is a guide` };
+}
+
+// runsOnCell(m, st) -> the "Runs on" cell of a model row: the fewest machines
+// it fits on, "(estimate)" when it has not run on that few, and what it was
+// measured on when that is more.
+export function runsOnCell(m, st) {
+  const f = fitOf(m, st), no = cannotRun(m);
+  if (f.kind === 'none' || f.kind === 'unknown' || f.kind === 'cmd') return h('span', { title: f.title }, f.text, no && f.kind !== 'none' ? h('span.sub', no) : null);
+  return h('span', { title: f.title }, h('span.nowrap', machines(st, f.nodes), f.estimate ? h('span.quiet', ' (estimate)') : null),
+    f.ranOn ? h('span.sub', `measured on ${f.ranOn}`) : no ? h('span.sub', no) : null);
 }
 
 // runsLine(m, st) -> "Runs on 1 PS5 · 7.2 GB" for a header.
@@ -81,6 +100,7 @@ function head(st, inst, model, extra) {
   const names = instanceNodeNames(st, inst);
   const key = model ? model.key : inst.model_file;
   return h('div.ch',
+    avatar(model || { name: inst.model_file || inst.profile }, 28),
     h('h2.name', key ? h('a', { href: href('models', [key]), style: 'color:inherit' }, model ? model.name : inst.model_file) : inst.profile),
     instanceBadge(inst), extra, staleMark(inst),
     h('span.mut', { style: 'font-weight:600' }, 'on ', nodeChips(names),

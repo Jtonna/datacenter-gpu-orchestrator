@@ -18,6 +18,8 @@ import { num, mib, ctx, plural, DASH } from '../core/format.js';
 import { plainReason, plainBasis } from '../core/status.js';
 import { loadSchema, loadConfig, fieldsOf, clone, fieldOfMessage } from '../core/configdata.js';
 import { pendingBar, reviewChanges, savedBanner, watchConfig, noticeBanner } from '../core/changes.js';
+import { catalog, onCatalog, needCatalog } from '../core/catalog.js';
+import { avatar } from '../core/avatar.js';
 
 // Unsaved profile changes live outside the view so they survive a visit to another screen.
 // id -> {type: 'create' | 'update' | 'delete', profile, errors: [messages]}
@@ -363,7 +365,9 @@ registerView({
         const isCmd = key === '￿command';
         tr.push(h('tr.grp', { key: 'g-' + key },
           h('td', { colspan: '6' }, h('div.row', { style: 'gap:6px 14px' },
-            isCmd ? h('b', 'Commands') : h('a.mono', { href: href('models', [key]), title: 'Open the page of this model', style: 'font-weight:500;color:var(--text)' }, key === '￾none' ? 'No model file' : key),
+            avatar(isCmd ? { kind: 'command' } : catalog.byKey[key] || { name: key === '￾none' ? '?' : key }, 28),
+            isCmd ? h('b', 'Commands') : catalog.byKey[key] ? h('a', { href: href('models', [key]), title: 'Open the page of this model', style: 'font-weight:700;color:var(--text)' }, catalog.byKey[key].name) : null,
+            isCmd ? null : h('a.mono', { href: href('models', [key]), title: 'Open the page of this model', style: 'font-weight:500;color:var(--text-2)' }, key === '￾none' ? 'No model file' : key),
             h('span.quiet', { style: 'font-size:13px' }, isCmd ? 'Programs the scheduler starts on this machine' : [hand.length ? plural(hand.length, 'profile') + ' by hand' : null, generated.length ? `${num(generated.length)} generated` : null].filter(Boolean).join(' · ')),
             generated.length && !forceOpen && hand.length + generated.length > 0 ? h('span.right', more(isOpen, () => { if (openGroups.has(key)) openGroups.delete(key); else openGroups.add(key); view.refresh(); },
               `Show the ${num(generated.length)} generated`, 'Hide the generated')) : null))));
@@ -418,9 +422,11 @@ registerView({
       ];
     };
     const view = liveView(el, render, ['status', 'conn']);
+    const offCatalog = onCatalog(() => view.refresh());
+    needCatalog();
     load();
     return {
-      unmount() { alive = false; watch.off(); view.unmount(); },
+      unmount() { alive = false; watch.off(); offCatalog(); view.unmount(); },
       update(r) { route = r; syncEditor(); view.refresh(); },
     };
   },
