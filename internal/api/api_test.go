@@ -434,7 +434,7 @@ func TestUIPageLinksToStatus(t *testing.T) {
 	e := newEnv(t, chatOK)
 	resp := e.get("/ui/")
 	b := body(t, resp)
-	if resp.StatusCode != 200 || !strings.Contains(b, `href="/api/status"`) || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") {
+	if resp.StatusCode != 200 || !strings.Contains(b, `href="../api/status"`) || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") {
 		t.Fatalf("status %d ct %q body %s", resp.StatusCode, resp.Header.Get("Content-Type"), b)
 	}
 }

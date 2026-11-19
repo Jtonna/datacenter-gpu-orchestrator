@@ -226,25 +226,16 @@ func TestUIPage(t *testing.T) {
 	if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "text/html; charset=utf-8" {
 		t.Fatalf("status %d ct %q", resp.StatusCode, resp.Header.Get("Content-Type"))
 	}
-	// Self-contained: nothing is loaded from, or points at, another host.
-	if m := regexp.MustCompile(`(?i)https?://|//[a-z0-9.-]+\.[a-z]{2,}/|@import|<link[^>]+href=["']?[^/"' ]`).FindString(b); m != "" {
-		t.Fatalf("external reference %q", m)
-	}
-	if regexp.MustCompile(`(?i)<script[^>]+src=`).MatchString(b) {
-		t.Fatal("external script")
-	}
-	// Every section of the design is there.
-	for _, id := range []string{`id="head"`, `id="now"`, `id="incidents"`, `id="loads"`, `id="timeline"`, `id="summary"`,
-		`href="/api/status"`, "/api/history/export", "/api/events"} {
-		if !strings.Contains(b, id) {
-			t.Errorf("page lacks %s", id)
+	// The page is the shell of the web UI: its stylesheet and its entry module are
+	// local files (ui_test.go checks every file, that nothing points at another
+	// host and that there is no load or unload control).
+	for _, want := range []string{`href="app.css"`, `<script type="module" src="app.js">`, `id="main"`} {
+		if !strings.Contains(b, want) {
+			t.Errorf("page lacks %s", want)
 		}
 	}
-	// Read-only: it reads with GET only and has no form and no action.
-	for _, bad := range []string{"POST", "method:", "<form", "/api/load", "/api/unload", "/api/models/unload", "XMLHttpRequest"} {
-		if strings.Contains(b, bad) {
-			t.Errorf("page contains %q: it must be read-only", bad)
-		}
+	if regexp.MustCompile(`(?i)(src|href)=["']?(https?:)?//`).MatchString(b) {
+		t.Fatal("the page points at another host")
 	}
 	if resp := e.get("/ui"); resp.StatusCode != 200 { // redirected to /ui/
 		t.Fatalf("/ui: %d", resp.StatusCode)
