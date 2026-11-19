@@ -190,7 +190,7 @@ registerView({
                 ],
                 empty: empty(historyOn ? 'No request was turned away' : 'History is off',
                   historyOn ? 'Requests that cannot be served (the model does not fit, a node is missing, the time limit passed) are listed here.'
-                    : 'Refused requests are kept in the event history, which is not switched on (history_dir is empty).'),
+                    : 'Refused requests are kept in the event history, which is not switched on (the scheduler was started without --history-dir).'),
               }))),
           h('div.side',
             h('section.card',

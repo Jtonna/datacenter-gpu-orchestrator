@@ -88,6 +88,9 @@ export function plainReason(raw) {
     return stale + `Needs ${n(m[1])} MiB` + (m[2] !== m[1] ? ` (${n(m[2])} MiB with the safety margins)` : '') + '; the nodes that are free now do not have that much.';
   }
   if ((m = s.match(/^forced nodes? in use: (.+)$/i))) return stale + `It is tied to ${m[1]}, which ${m[1].includes(',') ? 'are' : 'is'} in use by another model.`;
+  if ((m = s.match(/^joins the queued entry \((\d+) waiting, claimed (true|false)\)$/i))) {
+    return stale + (m[2] === 'true' ? 'Requests for it are already waiting and have claimed their nodes; this one would join them.' : 'Requests for it are already waiting for room; this one would join them.');
+  }
   if ((m = s.match(/^a placement is available/i))) return stale + 'A node is free; it starts at the next pass.';
   if (!s) return stale.trim();
   s = s.charAt(0).toUpperCase() + s.slice(1);

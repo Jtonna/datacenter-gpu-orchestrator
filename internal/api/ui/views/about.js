@@ -92,8 +92,8 @@ registerView({
                 h('dt', 'This page'), h('dd', h('span.row', { style: 'gap:8px' }, h('span', { class: 'dot ' + conn.dot }), h('b', conn.title), h('span.mut', conn.note))),
                 h('dt', 'Fleet feed'), h('dd', !st || !st.view ? DASH : st.view.stale ? h('span.warn-t', `Stale: the last update is ${dur(Math.round(st.view.age))} old. Remote nodes are not used for new loads.`)
                   : !st.view.connected ? h('span.warn-t', 'Disconnected. The scheduler keeps retrying.') : 'Fresh: the fleet manager reports the nodes as they change.'),
-                h('dt', 'Event history'), h('dd', hello.history === 'off' ? 'Off (history_dir is not set)' : hello.history === 'on' ? ['On', about && about.oldest_ts ? [' · oldest event ', ago(about.oldest_ts)] : null] : DASH),
-                h('dt', 'Benchmarks'), h('dd', hello.bench === 'off' ? 'Off (data_dir is not set, or the database could not be opened)' : hello.bench === 'on' ? 'On' : DASH),
+                h('dt', 'Event history'), h('dd', hello.history === 'off' ? 'Off (started without --history-dir)' : hello.history === 'on' ? ['On', about && about.oldest_ts ? [' · oldest event ', ago(about.oldest_ts)] : null] : DASH),
+                h('dt', 'Benchmarks'), h('dd', hello.bench === 'off' ? 'Off (no data directory, or the database could not be opened)' : hello.bench === 'on' ? 'On' : DASH),
                 h('dt', 'Who may connect'), h('dd.mut', (sys && sys.origin_policy) || DASH),
                 h('dt', 'Signing in'), h('dd.mut', 'There is none. Anyone who can reach this address on the network can read this page and change the configuration; every change is recorded in the ', h('a', { href: href('audit') }, 'audit trail'), '.')))),
             h('section.card',

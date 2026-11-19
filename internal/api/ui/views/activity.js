@@ -218,7 +218,8 @@ registerView({
         [chips(RANGES.map(x => ({ id: x[0], label: x[1] })), r[0], id => setQuery({ range: id }), 'Time range'),
           h('a.btn', { href: api.url('/api/history/export', { since: since() }), download: '', title: 'Every event of this time range as JSON Lines' }, 'Download')]);
       if (events && !historyOn) {
-        return [head, h('section.card', empty('History is off', 'The scheduler keeps its decisions only when history_dir is set in its configuration. Nothing is recorded now, so there is nothing to show here. The Models, Nodes and Queue screens still show the live state.')),
+        return [pageHead('Activity', 'What the scheduler decided, and the requests it served'),
+          h('section.card', empty('History is off', 'The scheduler keeps its decisions only when it is started with a history directory (--history-dir). Nothing is recorded now, so there is nothing to show here. The Models, Nodes and Queue screens still show the live state.')),
           requestsCard()];
       }
       const typeChips = [{ id: 'all', label: 'All' }].concat(Object.keys(GROUPS).map(g => ({ id: g, label: GROUPS[g][0] })));
