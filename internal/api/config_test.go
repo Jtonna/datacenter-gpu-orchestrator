@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/bench"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/cfgstore"
@@ -237,5 +238,23 @@ func TestRuntimeActionsAreAudited(t *testing.T) {
 	}
 	if st, mm := e.cdo("GET", "/api/config", "", nil); st != 200 || mm["revision"] != float64(0) {
 		t.Fatalf("a runtime action created a revision: %v", mm)
+	}
+}
+
+func TestWSHelloCarriesRevisionAndConfigTopicAnnouncesChanges(t *testing.T) {
+	e, _, _ := cfgEnv(t)
+	c := dialWS(t, e, nil)
+	hello := c.until(t, "hello", 3*time.Second)
+	var h map[string]any
+	_ = json.Unmarshal(hello.Data, &h)
+	if rev, ok := h["config_revision"]; !ok || rev != float64(0) || !strings.Contains(string(hello.Data), `"config"`) {
+		t.Fatalf("hello: %s", hello.Data)
+	}
+	e.cdo("POST", "/api/config/profiles", newProfile, map[string]string{"X-Source": "ui", "X-Actor": "jacob"})
+	m := c.until(t, "config", 3*time.Second)
+	var d map[string]any
+	_ = json.Unmarshal(m.Data, &d)
+	if d["revision"] != float64(1) || d["section"] != "profiles" || d["target"] != "p1" || d["source"] != "ui" || d["actor"] != "jacob" || len(d["audit_entry_ids"].([]any)) != 1 {
+		t.Fatalf("%s", m.Data)
 	}
 }

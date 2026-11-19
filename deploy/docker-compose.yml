@@ -21,18 +21,20 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - ./config.yaml:/etc/llm-scheduler/config.yaml:ro
       - /srv/llama-swap/models:/models:ro
-      # Full output of every child llama-server, one file per start (child_log_dir
-      # in config.yaml). Created on first start if missing; old files are pruned.
+      # Full output of every child llama-server, one file per start (the child log
+      # directory, LLM_SCHEDULER_CHILD_LOG_DIR). Created on first start; old files are pruned.
       - ./logs:/var/log/llm-children
-      # The event history (history_dir in config.yaml): JSON Lines, rotated by size,
+      # The event history (LLM_SCHEDULER_HISTORY_DIR): JSON Lines, rotated by size,
       # read by GET /api/history and the dashboard at /ui/. Survives image swaps.
       - ./history:/var/lib/llm-scheduler/history
-      # The scheduler database (data_dir in config.yaml): benchmarks, suites and every run's
-      # results in scheduler.db (SQLite, WAL). Back it up with the container stopped, or with
-      # sqlite3 .backup (runbook "Benchmarks"). Survives image swaps.
+      # The scheduler database (LLM_SCHEDULER_DATA_DIR): ALL configuration (profiles, tiers,
+      # settings), its revisions and the audit log, plus benchmarks and runs, in scheduler.db
+      # (SQLite, WAL). Back it up with the container stopped, or with sqlite3 .backup
+      # (runbook "Backup and restore"). Survives image swaps. There is no config file to mount.
       - ./data:/var/lib/llm-scheduler/data
+      # Used once, by `import-config`, on first install (runbook "First install and import").
+      - ./seed-config.yaml:/seed/seed-config.yaml:ro
       # No /run/avahi-daemon mount: the scheduler uses IP addresses only.
     networks:
       - sched

@@ -22,7 +22,7 @@ Total first-time cost: about 45 minutes, plus model loads.
 Tick every box. If one fails, stop: do not cut over.
 
 1. [ ] Fleet manager runs the **fleet-scheduler-fields** version (members carry `ip` and `rpc_port`).
-2. [ ] The hub patch `hub-member-ip` (branch of `omen-runner-fleet-manager`) is deployed. It went live on 2026-11-17 23:36 UTC, and the fleet list now reports `10.0.0.3:50052` for the Alienware, so no `node_overrides` entry is needed. (If you ever run against a hub without the patch, relayed members show `ip: null`; uncomment the example `node_overrides` entry in `deploy/config.yaml` for the Alienware.)
+2. [ ] The hub patch `hub-member-ip` (branch of `omen-runner-fleet-manager`) is deployed. It went live on 2026-11-17 23:36 UTC, and the fleet list now reports `10.0.0.3:50052` for the Alienware, so no `node_overrides` entry is needed. (If you ever run against a hub without the patch, relayed members show `ip: null`; add a `node_overrides` entry for the Alienware, in the seed file before the import or later with `PUT /api/config/node-overrides`.)
 3. [ ] Docker works: `docker ps`
 4. [ ] Base image exists: `docker image inspect llama-swap-whisper:rpc-330f018 --format '{{.Id}}'`
 5. [ ] Model files exist for every profile in the config (script below checks).
@@ -31,7 +31,7 @@ Next action: run the host pre-flight.
 
 ```sh
 cd ~/ps5-ai-datacenter-load-balancer
-sh deploy/scripts/preflight-host.sh deploy/config.yaml
+sh deploy/scripts/preflight-host.sh deploy/seed-config.yaml
 ```
 
 Expected: lines of `OK`, ending `PRE-FLIGHT PASSED`. A `FAIL` on the **firewall** line is expected until section C; any other `FAIL`: fix it first. `WARN ... ip: null` means a member has no address; check the hub patch, or add a `node_overrides` entry for it.
@@ -69,16 +69,25 @@ Expected: a version line (the stamp replaces the default `0.1.0` with your git v
 
 ```sh
 sudo mkdir -p /opt/llm-scheduler && sudo chown admin:admin /opt/llm-scheduler
-cp deploy/docker-compose.yml deploy/config.yaml /opt/llm-scheduler/
+cp deploy/docker-compose.yml deploy/seed-config.yaml /opt/llm-scheduler/
+mkdir -p /opt/llm-scheduler/data /opt/llm-scheduler/history /opt/llm-scheduler/logs
 ```
 
-6. Validate the config with the real binary (no hardware touched).
+6. Validate the seed configuration with the real binary (no hardware touched, nothing written).
 
 ```sh
-docker run --rm -v /opt/llm-scheduler/config.yaml:/etc/llm-scheduler/config.yaml:ro -v /srv/llama-swap/models:/models:ro --entrypoint llm-scheduler llm-scheduler:local --check-config --config /etc/llm-scheduler/config.yaml; echo "exit=$?"
+cd /opt/llm-scheduler && docker compose run --rm --no-deps llm-scheduler import-config --check /seed/seed-config.yaml; echo "exit=$?"
 ```
 
-Expected: `exit=0`. On `exit=1` read the message (unknown field, missing model file, ...), fix `/opt/llm-scheduler/config.yaml` (and `deploy/config.yaml` in the repo), rerun. The PLACEHOLDER `needs_mib` values are valid; they are replaced in section G.
+Expected: `valid: ...` and `exit=0`. On `exit=1` read the messages (unknown field, missing model file, ...), fix `/opt/llm-scheduler/seed-config.yaml` (and `deploy/seed-config.yaml` in the repo), rerun. The PLACEHOLDER `needs_mib` values are valid; they are replaced in section G.
+
+7. Import it once into the database (revision 1). This is the only time the seed file is read; after it the database is the configuration ("Configuration lives in the database" in section I).
+
+```sh
+docker compose run --rm --no-deps llm-scheduler import-config --actor "$USER" /seed/seed-config.yaml
+```
+
+Expected: `imported ... as revision 1`.
 
 ---
 
@@ -168,7 +177,7 @@ If any step fails and you cannot fix it in 5 minutes: section F.
 
 ```sh
 cd ~/ps5-ai-datacenter-load-balancer
-CONFIG=/opt/llm-scheduler/config.yaml sh deploy/scripts/smoke.sh http://127.0.0.1:3122
+CONFIG=/opt/llm-scheduler/seed-config.yaml sh deploy/scripts/smoke.sh http://127.0.0.1:3122
 ```
 
 Expected: `PASS` for `/health`, every profile in `/v1/models`, `/running` shape; then one line per profile from `POST /api/plan` showing its `action` (`serve`, `wait`, `start`, `evict`, `queue`, `backoff` or `reject`) with `placement` (the nodes) or `reason`; ends `SMOKE PASSED`. Read the plan lines: a profile that says no placement because a node is offline is normal if that node is off.
@@ -186,7 +195,7 @@ Expected: the nodes (PS5s, `alienware-llm`, `omen-runner`) with fresh view age (
 4. One real request on the cheapest model (loads it).
 
 ```sh
-CONFIG=/opt/llm-scheduler/config.yaml sh deploy/scripts/smoke.sh http://127.0.0.1:3122 --load tinyllama
+CONFIG=/opt/llm-scheduler/seed-config.yaml sh deploy/scripts/smoke.sh http://127.0.0.1:3122 --load tinyllama
 ```
 
 Expected: a chat reply, wall time, `tokens/s`, and a per-device memory table. If the table is empty, the instance has no `nodes[].memory` rows: run `curl -s http://127.0.0.1:3122/api/status | jq '.instances[] | {profile, state, nodes}'` to see what the scheduler reports.
@@ -230,12 +239,12 @@ Rule: `needs_mib` is the whole footprint (weights + KV + compute buffers), no ma
 
 For each variant you want to measure, one at a time. Nodes must be online and free. To re-check 64k, use the same steps with `ctx: 65536`.
 
-1. Uncomment the `gemma-measure` template at the end of `/opt/llm-scheduler/config.yaml`. Set `ctx` to the variant (`49152`, `65536` or `98304`), keep `kv_quant: q8_0` and `flash_attn: true`, and set `force_nodes` / `tensor_split` to the pool you expect it to run on in practice (for example a PS5 and the Alienware). The compute buffer is per device, so the sum depends on the number of devices: measure on the pool size you will really use (the design does not say more; this is an assumption).
+1. Create the measuring profile (the commented `gemma-measure` template at the end of `/opt/llm-scheduler/seed-config.yaml` shows the fields). Set `ctx` to the variant (`49152`, `65536` or `98304`), keep `kv_quant: q8_0` and `flash_attn: true`, and set `force_nodes` / `tensor_split` to the pool you expect it to run on in practice (for example a PS5 and the Alienware). The compute buffer is per device, so the sum depends on the number of devices: measure on the pool size you will really use (the design does not say more; this is an assumption).
 
-2. Validate and restart (restart stops anything running).
+2. Create it through the API (no restart, nothing running is stopped):
 
 ```sh
-docker run --rm -v /opt/llm-scheduler/config.yaml:/etc/llm-scheduler/config.yaml:ro -v /srv/llama-swap/models:/models:ro --entrypoint llm-scheduler llm-scheduler:local --check-config --config /etc/llm-scheduler/config.yaml && cd /opt/llm-scheduler && docker compose restart
+curl -s -X POST http://127.0.0.1:3122/api/config/profiles -H "X-Actor: jacob" -H "X-Comment: measure gemma 48k" -d '{"id":"gemma-measure","model":"gemma-4-12b-it-Q4_K_M.gguf","ctx":49152,"kv_quant":"q8_0","flash_attn":true,"force_nodes":["ps5-a","alienware-llm"],"tensor_split":[50,50]}' | jq .
 ```
 
 Expected: `exit` 0 then the container restarts.
@@ -288,13 +297,124 @@ All commands and expected results: `deploy/scripts/hardware-checks.md`. Do H1, H
 
 ## I. Day-2
 
-### Add a model profile (10 min)
+### Configuration lives in the database (design 6.0)
+
+There is no config file any more. All configuration (profiles, tiers, `exclude_nodes`, `node_overrides`, the `defaults` settings, `recovery`, fleet settings, retention, `ws_max_clients`, bench settings) is stored in `scheduler.db` in the data directory (`./data` on the box). Every change is a numbered revision and is written to the audit log. Changes take effect at once, without a restart (design 6.0.6), except the few settings the schema marks `restart_required`. Only five deployment paths stay outside: `--listen`, `--data-dir`, `--models-dir`, `--history-dir`, `--child-log-dir` (environment `LLM_SCHEDULER_LISTEN`, `_DATA_DIR`, `_MODELS_DIR`, `_HISTORY_DIR`, `_CHILD_LOG_DIR`; compose and the Dockerfile set them).
+
+All examples use `H=http://127.0.0.1:3122`. There is no authentication (LAN tool). Add `-H 'X-Actor: your-name'` and `-H 'X-Comment: why'` to a write so the audit log says who and why; the web page sends `X-Source: ui`, everything else is recorded as `rest`.
+
+#### First install and import
+
+1. Put `deploy/docker-compose.yml` and `deploy/seed-config.yaml` in `/opt/llm-scheduler/` (section B step 5). `./data` must be on a volume.
+2. Validate the seed with the real binary; nothing is written:
+
+```sh
+cd /opt/llm-scheduler && docker compose run --rm --no-deps llm-scheduler import-config --check /seed/seed-config.yaml
+```
+
+Expected: `valid: N profiles, N tiers, ...`. An error lists every violation (missing model file, bad field, ...). Add `--no-model-check` only to validate on a machine that does not have the model files.
+
+3. Import it once, as revision 1:
+
+```sh
+docker compose run --rm --no-deps llm-scheduler import-config --actor "$USER" /seed/seed-config.yaml
+```
+
+Expected: `imported ... as revision 1 into /var/lib/llm-scheduler/data/scheduler.db`. It refuses if the database already has a configuration; `--replace` makes a new revision instead (the old one stays in the history). Starting the scheduler on an empty database also works: it logs `no configuration yet`, has no profiles and uses no node until you import or create them.
+
+4. Start and check: `docker compose up -d`, then `curl -s $H/api/config | jq '{revision, configured}'` (expect `1`, `true`).
+
+#### Change a setting (curl)
+
+```sh
+H=http://127.0.0.1:3122
+curl -s $H/api/config/settings | jq .settings.ttl                      # read the effective value
+curl -s $H/api/config/schema | jq '.fields[] | select(.key=="ttl")'    # type, default, bounds, description
+# dry run: validate and show the diff, write nothing
+curl -s -X PATCH "$H/api/config/settings?dry_run=1" -d '{"ttl":"10m"}' | jq .
+# apply (If-Match makes it fail with 409 if someone else changed the configuration meanwhile)
+curl -s -X PATCH $H/api/config/settings -H 'If-Match: 3' -H 'X-Actor: jacob' -H 'X-Comment: longer idle time' -d '{"ttl":"10m"}' | jq .
+curl -s -X PATCH $H/api/config/settings -d '{"ttl":null}'              # null resets a key to its default
+```
+
+The answer has `revision`, `audit_entry_ids`, `diff`, `warnings` and `restart_required` (keys that apply at the next start). A change that would make the configuration invalid is refused with `400` and the same messages as the old `--check-config`; nothing is written. The other write endpoints: `POST /api/config/profiles` (201, 409 if the id exists), `PUT/DELETE /api/config/profiles/{id}`, `PUT /api/config/tiers`, `PUT /api/config/exclude-nodes`, `PUT /api/config/node-overrides`, `PUT|PATCH /api/config/recovery`, `PUT|PATCH /api/config/fleet`. Deleting a profile that benchmarks refer to answers `409` with the warnings; repeat with `?force=1` to delete anyway. Requests queued for a deleted profile fail at once with `404`; a loaded instance of a changed or deleted profile keeps serving and shows `stale_profile: true` in `/api/status` until its next load.
+
+#### Read the audit log
+
+```sh
+curl -s "$H/api/audit?limit=20" | jq '.entries[] | {id, ts, source, actor, action, section, target, revision, comment}'
+curl -s "$H/api/audit?section=profiles&target=gemma-4-12b" | jq .          # one profile's history
+curl -s "$H/api/audit?source=ui&since=1790000000000" | jq .total_matching     # filters: since until source actor section target action q limit order
+curl -s $H/api/audit/42 | jq '{before, after, diff}'                       # what exactly changed
+```
+
+`source` is `ui`, `rest`, `mcp`, `import` or `system`, decided by the server. Loads and unloads asked for over REST are in section `runtime` (no revision). The log is append-only and is kept forever unless you set `audit_retention_days`.
+
+#### Roll back
+
+```sh
+curl -s "$H/api/config/revisions?limit=10" | jq .                  # revision, ts, source, actor, comment
+curl -s $H/api/config/revisions/7 | jq .config                     # the whole configuration at revision 7
+curl -s -X POST $H/api/config/revisions/7/rollback -H 'X-Comment: bad tiers' | jq .   # creates a NEW revision equal to 7
+```
+
+#### Back up and restore the database
+
+The configuration, its revisions, the audit log and the benchmark results are all in `/opt/llm-scheduler/data/scheduler.db` (WAL mode: also `-wal` and `-shm`).
+
+```sh
+# backup, container stopped (simplest and always consistent)
+cd /opt/llm-scheduler && docker compose stop && cp -a data data.bak-$(date -u +%Y%m%dT%H%M%SZ) && docker compose start
+# backup while running (needs sqlite3 on the host)
+sqlite3 data/scheduler.db ".backup 'scheduler-$(date -u +%Y%m%dT%H%M%SZ).db'"
+# configuration only, as one JSON file (no audit log, no benchmark results)
+curl -s $H/api/config/export > config-export.json
+```
+
+Restore the database: `docker compose stop`, replace `data/scheduler.db` with the backup and delete `data/scheduler.db-wal` and `data/scheduler.db-shm`, `docker compose start`. Restore a configuration export into any scheduler: `curl -s -X POST "$H/api/config/import?replace=1" -H 'X-Comment: restore' -d @config-export.json` (without `replace=1` it is refused unless the database is empty). An export from one box can set up another.
+
+#### Migrate a Docker deployment that has `./config.yaml`
+
+Assumes the old layout: `/opt/llm-scheduler/` with `docker-compose.yml`, `config.yaml` (mounted at `/etc/llm-scheduler/config.yaml`), `./data`, `./history`, `./logs`. Stopping the container stops every loaded model, so check `curl -s http://127.0.0.1:3122/running` first.
+
+```sh
+cd /opt/llm-scheduler
+# 1. keep what is needed to go back
+docker tag llm-scheduler:local llm-scheduler:previous
+cp config.yaml config.yaml.pre-db-migration
+cp docker-compose.yml docker-compose.yml.pre-db-migration
+# 2. build the new image from the repo checkout (section B) and take the new compose file
+cd ~/ps5-ai-datacenter-load-balancer && docker build -f deploy/Dockerfile -t llm-scheduler:local --build-arg VERSION=$(git describe --always --dirty) .
+cp deploy/docker-compose.yml /opt/llm-scheduler/docker-compose.yml
+# 3. the old config file becomes the seed (the compose file mounts ./seed-config.yaml at /seed/seed-config.yaml)
+cd /opt/llm-scheduler && cp config.yaml seed-config.yaml
+# 4. stop the old container, validate, import once
+docker compose down
+docker compose run --rm --no-deps llm-scheduler import-config --check /seed/seed-config.yaml
+docker compose run --rm --no-deps llm-scheduler import-config --actor "$USER" --comment "migration from config.yaml" /seed/seed-config.yaml
+# 5. start and verify
+docker compose up -d
+sleep 5; curl -s http://127.0.0.1:3122/api/config | jq '{revision, configured, profiles: (.profiles|length)}'
+curl -s "http://127.0.0.1:3122/api/audit?action=import" | jq '.entries[0] | {source, actor, revision}'
+sh deploy/scripts/smoke.sh http://127.0.0.1:3122
+```
+
+The data volume is the same `./data`: the existing `scheduler.db` (benchmarks, runs) is migrated in place and keeps its contents; the configuration tables are added next to them. If `./data` was not mounted before, nothing is lost: the database is created. From now on edit configuration with the API, not the file; `config.yaml` is no longer read by anything.
+
+To go back (the old image and file are untouched): `docker compose down && cp docker-compose.yml.pre-db-migration docker-compose.yml && docker tag llm-scheduler:previous llm-scheduler:local && docker compose up -d`. The old binary ignores the new tables in `scheduler.db`.
+
+### Add a model profile (5 min)
 
 1. Download the GGUF to `/srv/llama-swap/models` (as in the llama-swap README).
-2. Add a profile to `/opt/llm-scheduler/config.yaml` (name `model:variant`; see design 6 for fields). Sliding-window model: set a measured `needs_mib` (section G); the scheduler only warns if you forget.
-3. Validate with `--check-config` (section B step 6), then restart: `cd /opt/llm-scheduler && docker compose restart`. The design does not mention hot config reload, so assume restart is required, and it stops anything running.
+2. Create the profile (name `model:variant`; fields in design 6, `GET /api/config/schema` lists them with defaults). Validate first with `?dry_run=1`. Sliding-window model: set a measured `needs_mib` (section G); the scheduler only warns if you forget.
+
+```sh
+curl -s -X POST "http://127.0.0.1:3122/api/config/profiles?dry_run=1" -d '{"id":"qwen3.5-4b","model":"Qwen_Qwen3.5-4B-Q4_K_M.gguf","ctx":16384,"needs_mib":3400}' | jq .
+curl -s -X POST http://127.0.0.1:3122/api/config/profiles -H "X-Actor: jacob" -d '{"id":"qwen3.5-4b","model":"Qwen_Qwen3.5-4B-Q4_K_M.gguf","ctx":16384,"needs_mib":3400}' | jq .
+```
+
+3. No restart: it is usable at once and nothing running is stopped.
 4. `sh deploy/scripts/smoke.sh http://127.0.0.1:3122` and look at the new profile's `/api/plan` line.
-5. Copy the file back into the repo's `deploy/config.yaml`.
 
 ### Add a PS5 (no config change)
 
@@ -307,21 +427,19 @@ Nodes come from the fleet manager (design 4). Verify only:
 
 ### Keeping a machine out of the pool
 
-Use `exclude_nodes` when a machine must never receive a model (for example a PS5 under test) but you still want the `ps5-*` tier to find every other PS5. It is a top-level list in `/opt/llm-scheduler/config.yaml`. Each entry is a node id (a MAC such as `70:66:2a:a9:a7:65`) or a hostname glob. Matching ignores case.
+Use `exclude_nodes` when a machine must never receive a model (for example a PS5 under test) but you still want the `ps5-*` tier to find every other PS5. It is the `exclude_nodes` list of the configuration. Each entry is a node id (a MAC such as `70:66:2a:a9:a7:65`) or a hostname glob. Matching ignores case.
 
-```yaml
-exclude_nodes:
-  - ps5-abc123        # one machine, by hostname
-  - ps5-test*         # every machine whose hostname starts with ps5-test
-  - 70:66:2a:a9:a7:65 # by id
+```sh
+curl -s -X PUT http://127.0.0.1:3122/api/config/exclude-nodes -H "X-Actor: jacob" -d '["ps5-abc123", "ps5-test*", "70:66:2a:a9:a7:65"]' | jq .
+# one machine by hostname, every machine starting with ps5-test, one by id; the whole list is replaced
 ```
 
-1. Add the entry, validate with `--check-config`, restart (`cd /opt/llm-scheduler && docker compose restart`). Restart stops anything running.
+1. Send the new list as above (add `?dry_run=1` to check it first). It applies to the next placement decision, with no restart; models already running on that machine keep running.
 2. Check `curl -s http://127.0.0.1:3122/api/status`: under `view.nodes` the machine shows `"excluded": true` and `"eligible": false`. The log has one INFO line at start listing the entries, and one `excluded node in fleet view` line the first time each excluded machine appears.
 3. An excluded machine is never used, never counted in capacity checks and never pre-flighted. A plan or wait reason that involves it says `node <hostname> is excluded by config`.
-4. Excluding wins over forcing. A profile whose `force_nodes` names an excluded node fails `--check-config` when config alone can tell. When it cannot (for example `force_nodes` uses the MAC and the entry is a hostname glob), the request fails at once with 503 `node excluded` and no `Retry-After`. Remove the entry, or the node from `force_nodes`.
+4. Excluding wins over forcing. A profile whose `force_nodes` names an excluded node is refused when the configuration alone can tell. When it cannot (for example `force_nodes` uses the MAC and the entry is a hostname glob), the request fails at once with 503 `node excluded` and no `Retry-After`. Remove the entry, or the node from `force_nodes`.
 5. You can exclude the local node (`omen-runner`). The OMEN GPU is then never used, and `kind: command` profiles (Whisper, FLUX) fail with "does not fit" because they run on the local node only.
-6. To bring the machine back, delete the entry and restart.
+6. To bring the machine back, send the list without the entry.
 
 ### Benchmarking only the PS5s from a test deployment
 
@@ -366,7 +484,7 @@ The profile's need (`needs_mib`, else the estimate) is compared with the forced 
 
 ### Memory safety on shared-memory nodes (PS5s)
 
-The PS5 workers have no container memory limit, and a load that exhausts a PS5 makes the machine unreachable for about 18 minutes, so the scheduler plans conservatively (design 7.2a). Three settings, all in `defaults:` and shown as commented defaults in `deploy/config.yaml`:
+The PS5 workers have no container memory limit, and a load that exhausts a PS5 makes the machine unreachable for about 18 minutes, so the scheduler plans conservatively (design 7.2a). Three settings (`split_skew_margin`, `estimate_margin`, `load_memory_floor_mib`; change them with `PATCH /api/config/settings`, they apply from the next evaluation; defaults are in `GET /api/config/schema`):
 
 ```yaml
 defaults:
@@ -384,7 +502,7 @@ defaults:
 
 When a PS5 is `hung` (see the troubleshooting row for `health.state`), the scheduler can ask the fleet manager to relay a recovery request; a small service on the PS5 polls the fleet manager, acts, and reports the outcome. The scheduler never talks to the PS5 itself, and never sends while the fleet view is stale. Design 8.4b.
 
-Turn it on (a top-level block in the config, shown as comments in `deploy/config.yaml`; restart the scheduler, it reads the file at start):
+Turn it on (the `recovery` section of the configuration, applied at once with `PUT /api/config/recovery`; shown as comments in `deploy/seed-config.yaml`). In YAML form the keys are:
 
 ```yaml
 recovery:
@@ -415,7 +533,7 @@ Read it in `GET /api/status`: each node that was sent a request, or whose outcom
 
 ### Event history and the dashboard
 
-The scheduler keeps its safety and lifecycle events (loads and how they ended, stalls, low-memory cancels, lost and hung nodes, quarantines, recovery requests and answers, evictions, unloads with their reason, fleet view and feed trouble, per-minute memory of the PS5s in use) in `/opt/llm-scheduler/history` on the OMEN (`history_dir` in `config.yaml`, mounted by compose as `./history`). JSON Lines, files named `events-<UTC time>.jsonl`, rotated at 16 MiB, 20 files kept (`history_max_file_mib`, `history_keep_files`). It survives restarts and image swaps; the newest 5000 events are reloaded into memory at start. If startup logs `history_dir is not usable` the history is off until the directory is fixed and the scheduler restarted; scheduling is never affected.
+The scheduler keeps its safety and lifecycle events (loads and how they ended, stalls, low-memory cancels, lost and hung nodes, quarantines, recovery requests and answers, evictions, unloads with their reason, fleet view and feed trouble, per-minute memory of the PS5s in use) in `/opt/llm-scheduler/history` on the OMEN (`--history-dir` / `LLM_SCHEDULER_HISTORY_DIR`, mounted by compose as `./history`). JSON Lines, files named `events-<UTC time>.jsonl`, rotated at 16 MiB, 20 files kept (`history_max_file_mib`, `history_keep_files`). It survives restarts and image swaps; the newest 5000 events are reloaded into memory at start. If startup logs a history directory problem the history is off until the directory is fixed and the scheduler restarted; scheduling is never affected.
 
 Open the dashboard from any machine on the LAN: `http://<omen>:3122/ui/`. It is read-only. Pick a time range at the top, read Incidents first, click a row for the full record and the other events of the same load (`session_id`).
 
@@ -437,7 +555,7 @@ curl -s "$B/api/history/export?since=$SINCE" > history-last6h.jsonl     # the sa
 ls /opt/llm-scheduler/history                                              # the raw files, jq works on them too
 ```
 
-`history` in the answer says `off` when `history_dir` is empty. `truncated: true` means more events match than were returned: narrow the range or raise `limit` (at most 2000).
+`history` in the answer says `off` when no history directory is set. `truncated: true` means more events match than were returned: narrow the range or raise `limit` (at most 2000).
 
 ### Benchmarks run by the scheduler (design 9.3)
 
@@ -447,15 +565,10 @@ compare with the last run. It uses its own HTTP API on loopback, so a
 benchmark loads and serves exactly like a client's request does, and it never
 skips the fit checks.
 
-1. **Turn it on.** Set `data_dir: /var/lib/llm-scheduler/data` in `config.yaml`
-   (the shipped `deploy/config.yaml` has it) and keep the compose volume
-   `./data:/var/lib/llm-scheduler/data`. Restart the container. The log says
-   `benchmark feature on database=...`. If it says the database cannot be opened
-   the feature stays off (its endpoints answer `503`) and serving is not
-   affected; fix the directory permissions and restart.
-2. **Define.** Either put a `bench:` block in `config.yaml` (a commented
-   example is at the end of the file; it is written to the database at every
-   start and never overwrites something created through the API), or use the
+1. **Turn it on.** It is on by default (the `bench_enabled` setting) and needs the database, which every deployment has (`./data:/var/lib/llm-scheduler/data` in compose). The log says `benchmark feature on database=...`. If the database cannot be opened the feature stays off (its endpoints answer `503`) and serving is not affected; fix the directory permissions and restart. Changing `bench_enabled` or the regression thresholds needs a restart (they are `restart_required`).
+2. **Define.** Either put a `bench:` block in the YAML file you give to
+   `import-config` (a commented example is at the end of `seed-config.yaml`;
+   stored once, with an audit entry), or use the
    API:
 ```sh
 B=http://localhost:3122
@@ -523,14 +636,14 @@ Test it from a shell with any WebSocket client, for example
 
 ### Child output logs
 
-The scheduler writes each child llama-server's complete stdout and stderr to a new file under `/opt/llm-scheduler/logs` on the OMEN (`child_log_dir` in `config.yaml`, mounted by compose). One file per start, named `<UTC time>-<profile>-<instance id>.log`, so `ls` sorts by time. This is where the KV cache size, the memory breakdown and the exact out-of-memory error are, beyond the last 40 lines in a `502`.
+The scheduler writes each child llama-server's complete stdout and stderr to a new file under `/opt/llm-scheduler/logs` on the OMEN (`--child-log-dir` / `LLM_SCHEDULER_CHILD_LOG_DIR`, mounted by compose). One file per start, named `<UTC time>-<profile>-<instance id>.log`, so `ls` sorts by time. This is where the KV cache size, the memory breakdown and the exact out-of-memory error are, beyond the last 40 lines in a `502`.
 
 ```sh
 curl -s http://127.0.0.1:3122/api/status | jq '.instances[] | {profile, log_file}'   # path inside the container
 ls -t /opt/llm-scheduler/logs | head
 ```
 
-The oldest files are deleted past `child_log_keep` (200). If startup logs `child_log_dir is not usable`, the directory could not be created or written: fix its permissions or the mount, then restart; until then loads work but no files are kept. The container's own log (`docker logs`) rotates at 50 MB, 5 files.
+The oldest files are deleted past `child_log_keep` (200). If startup logs a child log directory problem, the directory could not be created or written: fix its permissions or the mount, then restart; until then loads work but no files are kept. The container's own log (`docker logs`) rotates at 50 MB, 5 files.
 
 ### Phase out an alias
 
@@ -544,7 +657,7 @@ Each hit is a WARN line `msg="deprecated model alias used"` with `alias=`, `prof
 
 ### Tune hold and timeouts
 
-All in `defaults:` (design 6, 8.3, 13 item 6). Change one value, restart, watch.
+All are settings of the same names (design 6, 8.3, 13 item 6). Change one value with `PATCH /api/config/settings` (no restart), watch.
 
 | Symptom | Value | Direction |
 |---|---|---|

@@ -204,7 +204,8 @@ clients ──HTTP──▶ ┌──────────────── 
 
 | Package | Job |
 |---|---|
-| `internal/config` | Load and validate the YAML file. |
+| `internal/config` | The configuration document, settings schema, validation, and the YAML parser used only by `import-config` and tests. |
+| `internal/audit`, `internal/cfgstore`, `internal/cfgsvc` | Audit entry and origin; revisions and audit log in SQLite; the one service every configuration change goes through. |
 | `internal/gguf` | Read the GGUF header fields needed for memory estimates. |
 | `internal/estimate` | Memory need per profile (pure functions). |
 | `internal/fleet` | Fleet console client (SSE, polling fallback, single-node fetch), local GPU probe, merged node view in MiB. |
@@ -246,12 +247,153 @@ published as a remote node, and both of the member's names resolve to that id.
 
 ## 6. Configuration
 
-One YAML file. Nodes are not listed; only how to rank them.
+Configuration lives in the scheduler database, not in a file. A deployment
+has five bootstrap values (paths, 6.0.1) and everything else is stored in
+`scheduler.db` under the data directory: profiles, tiers, `exclude_nodes`,
+`node_overrides`, the `defaults` timing, safety, hold and worker-health
+settings, `recovery`, fleet settings, retention numbers, `ws_max_clients` and
+the bench settings. There is no backwards compatibility with the old
+`--config file.yaml` start: the server never reads YAML. The YAML parser is
+kept only for the one-time `import-config` command (6.0.5) and for tests.
+
+### 6.0 The database configuration
+
+**6.0.1 Bootstrap (the only things outside the database).** Deployment facts,
+not scheduler policy, set by flag or environment variable (a flag wins):
+
+| Flag | Environment | Default | Meaning |
+|---|---|---|---|
+| `--listen` | `LLM_SCHEDULER_LISTEN` | `:8080` | address to listen on |
+| `--data-dir` | `LLM_SCHEDULER_DATA_DIR` | `/var/lib/llm-scheduler/data` | directory of `scheduler.db` (configuration, revisions, audit log, benchmarks) |
+| `--models-dir` | `LLM_SCHEDULER_MODELS_DIR` | `/models` | where the model files are |
+| `--history-dir` | `LLM_SCHEDULER_HISTORY_DIR` | empty (history off) | event history files (9.1) |
+| `--child-log-dir` | `LLM_SCHEDULER_CHILD_LOG_DIR` | empty (none kept) | full output of each child (7.3a) |
+
+The Dockerfile sets the five variables to the container layout.
+
+**6.0.2 Document, revisions.** The configuration is one JSON document with the
+sections `settings`, `tiers`, `profiles`, `exclude_nodes`, `node_overrides`,
+`recovery`, `fleet`. `settings` stores only the keys that were set; every
+other key has its built-in default, and `null` in a PATCH resets a key. Every
+committed change writes a new, whole revision (`config_revisions`: monotonic
+integer, time, source, actor, comment, document), so revision *n* can be read
+back in full and rolled back to (a rollback creates a new revision equal to
+*n*). A write that changes nothing creates no revision.
+
+**6.0.3 Validation.** The existing validation (the same messages as with the
+YAML file) runs on the whole resulting configuration before anything is
+written. An invalid change is rejected with `400` and every message; nothing is
+written, nothing is audited. Model files are checked against the models
+directory at change time. At start, a stored revision whose model file went
+missing still loads (a warning is logged): a missing file must not stop
+serving.
+
+**6.0.4 Audit log.** Table `audit_log`, append-only (a trigger refuses
+`UPDATE`; the application never deletes): `id, ts (unix ms), source, actor,
+remote_addr, user_agent, action, section, target, before, after, diff, revision,
+comment`. One change writes one entry per touched `(section, target)`: a
+profile id, a settings key, `tiers`, `exclude_nodes`, a node override, a
+recovery or fleet key. `diff` is a list of `{path, old, new}`. The config
+revision and its entries are committed in one transaction.
+
+- **source** is decided by the server: `ui` only when the request carries
+  `X-Source: ui`; `mcp` only for calls an in-process MCP layer marks with
+  `audit.WithSource`; `import` for the import command; `system`; anything else
+  is `rest`. An outside client cannot claim `mcp` or `import` with a header.
+- **actor** is the `X-Actor` header (free text) or the MCP client name;
+  default `anonymous`. `X-Comment` (or a `comment` field in the body) is the
+  comment. `remote_addr` and `user_agent` are recorded.
+- `load` and `unload` asked for over REST or MCP are audited as section
+  `runtime`, without a revision. They go through a bounded queue to one
+  writer goroutine: a database problem never delays or fails the action.
+- `audit_retention_days` (default 0 = keep everything): when above 0, entries
+  older than that are removed at start. That is the only delete in the
+  application and is off by default.
+
+**6.0.5 First start and migration.** An empty database starts: built-in
+defaults, no profiles, no tier (so no node is used), a WARN line "no
+configuration yet", `configured: false` in `GET /api/config` and
+`GET /api/status`. `llm-scheduler import-config --data-dir DIR [--models-dir
+DIR] [--replace] [--check] [--no-model-check] file.yaml` reads a YAML file in
+the old format (`configs/example.yaml` documents it), validates it, and writes
+it as revision 1 with source `import`. It refuses when the database already
+has a configuration unless `--replace` (then a new revision). The `listen`,
+`models_dir`, `data_dir`, `history_dir` and `child_log_dir` keys of the file
+are not stored. Benchmarks and suites of its `bench` block go into the
+benchmark tables. If the database cannot be opened at start the scheduler
+still starts with the defaults and no profiles; models already loaded are
+unaffected by any later database failure because the running configuration is
+a snapshot in memory.
+
+**6.0.6 Live apply.** A committed change reaches the scheduler core as an
+event carrying a new immutable `Config` snapshot, swapped between two steps
+(no I/O, nothing blocks the loop); request goroutines see the snapshot at
+once. Rules as implemented:
+
+- A loaded or loading instance keeps the profile definition it started with.
+  When its profile has since changed or been deleted, `GET /api/status` shows
+  `stale_profile: true` on it; the new definition is used at its next load.
+- Queued requests are re-evaluated: their queue entries take the new profile
+  definition and the new timing; the requests of a deleted profile fail at
+  once with `404 unknown model` and the message `profile "x" was deleted by a
+  configuration change`. New requests for a deleted name get `404`.
+- Tier, `exclude_nodes` and `node_overrides` changes: the fleet client
+  rebuilds its node view at once, and the scheduler reads exclusions at each
+  decision, so they govern the next placement decision; running instances are
+  not moved.
+- Timing, safety, hold, worker-health and recovery settings are read from
+  the snapshot at each evaluation: they apply from the next one.
+- Cached memory needs and learned needs of a changed or deleted profile are
+  dropped.
+- `restart_required` settings are stored and audited at once, listed in the
+  response (`restart_required`) and take effect at the next start, because a
+  long-lived component reads them once: `server_bin` (the pre-flight prober),
+  `fleet.url` and `fleet.local_node` (the fleet client base address and node
+  identity), `child_log_keep` (the child launcher), `history_max_file_mib`,
+  `history_keep_files`, `history_memory_events` (the history store is opened
+  at start), `ws_max_clients` (the live hub is sized at start), and
+  `bench_enabled`, `bench_regress_load_pct`, `bench_regress_decode_pct`,
+  `bench_max_run_minutes` (the benchmark manager is built at start).
+
+**6.0.7 REST.** `GET /api/config`, `GET /api/config/schema` (every field of
+settings, recovery, fleet, profile and tier with key, scope, section, type,
+enum, default, min, max, unit, description, `restart_required`),
+`/api/config/profiles[/{id}]`, `/api/config/tiers`, `/api/config/settings`
+(`PATCH`), `/api/config/exclude-nodes`, `/api/config/node-overrides`,
+`/api/config/recovery`, `/api/config/fleet`, `/api/config/revisions`,
+`/api/config/revisions/{n}[/rollback]`, `/api/config/export`,
+`/api/config/import`, `/api/audit`, `/api/audit/{id}`. Every write accepts
+`?dry_run=1`, `If-Match: <revision>` (`409` with `current_revision` when stale)
+and a comment; the answer has `revision`, `audit_entry_ids`, `diff`,
+`warnings` and `restart_required`. Deleting a profile that benchmarks refer to
+is refused with `409` and the warnings unless `?force=1`. There is no
+authentication anywhere (LAN tool). Loading and unloading models stays out of
+the web UI but is available over REST (and MCP).
+
+The WebSocket `hello` carries `config_revision`; the `config` topic announces
+`{revision, audit_entry_ids, section, target, source, actor}` on every change;
+`status` carries `config_revision` and `configured`.
+
+**6.0.8 The keys.** The text below describes each key. It is written in YAML
+because that is the format of the import file and of `configs/example.yaml`;
+the same keys are the database settings (`defaults.*` are the plain setting
+names `ttl`, `min_hold`, ...; `recovery.*` and `fleet.*` are their own
+sections; the top-level retention and bench keys are settings named
+`child_log_keep`, `history_*`, `ws_max_clients`, `bench_enabled`,
+`bench_regress_load_pct`, `bench_regress_decode_pct`, `bench_max_run_minutes`,
+plus `local_probe_cmd` and `audit_retention_days`).
+`GET /api/config/schema` is the authoritative list with defaults.
+
+Nodes are not listed; only how to rank them.
 
 **Node identity.** Internally nodes are keyed by the fleet `id`. Where config
 names a node (`force_nodes`, `node_overrides`, `fleet.local_node`), the name
 may be an `id` or a `hostname`. A hostname shared by two online members is
 ambiguous: it matches neither, and the scheduler logs an error naming both ids.
+
+The block below is the format of the import file (6.0.5); `listen`, `models_dir`,
+`data_dir`, `history_dir` and `child_log_dir` are bootstrap flags (6.0.1) and are
+not stored.
 
 ```yaml
 listen: ":8080"                    # mapped to 3122 by compose
@@ -266,14 +408,14 @@ history_dir: ""                    # optional; the event history (9.1). Empty = 
 history_max_file_mib: 16           # a history file is rotated at this size
 history_keep_files: 20             # files kept in history_dir; the oldest are deleted
 history_memory_events: 5000        # newest events held in memory for queries (1 to 200000)
-data_dir: ""                       # optional; the scheduler database (9.3). Empty = benchmark feature off
+data_dir: ""                       # bootstrap flag --data-dir (6.0.1); not stored
 ws_max_clients: 32                 # concurrent /ws clients (9.2); 1 to 1000
 bench:                             # 9.3; every key optional
-  enabled: true                    # default true when data_dir is set; true without data_dir is an error
+  enabled: true                    # setting bench_enabled (default true)
   regress_load_pct: 15             # a load more than this much slower than the baseline's is a regression
   regress_decode_pct: 7            # decode tokens/s more than this much lower is a regression
   max_run_minutes: 240             # a run that takes longer is stopped and marked failed
-  benchmarks: []                   # seeded into the database at start (source "config")
+  benchmarks: []                   # stored by import-config (source "config"); later edits use the API
   suites: []
 
 defaults:
@@ -1352,13 +1494,14 @@ gets its own process group, so nothing is left behind.
 | `GET /ui/` | The read-only dashboard (9.1): one self-contained page embedded in the binary. |
 | `GET /api/history`, `GET /api/history/summary`, `GET /api/history/export`, `GET /api/about` | The event history and what the dashboard header shows (9.1). Read-only. |
 | `GET /ws` | The live channel, a WebSocket (9.2): hello, status, event, bench, ping. |
-| `/api/bench/...` | Benchmarks, suites, runs, exports, trends (9.3). `503` when `data_dir` is not set. |
+| `/api/bench/...` | Benchmarks, suites, runs, exports, trends (9.3). `503` when the `bench_enabled` setting is off or the database is not open. |
+| `/api/config/...`, `GET /api/audit[/{id}]` | The configuration (profiles, tiers, settings, exclusions, overrides, recovery, fleet), its revisions, export/import and the audit log (6.0). |
 | `GET /api/profiles`, `GET /api/system` | Every profile with its need and dry-run plan; configuration and storage summary (9.4). Read-only. |
 | `GET /health` | `200` whenever the scheduler is running. |
 | `GET /api/status` | Instances, placements, per-device memory from the last pre-flight, claims, queue, quarantines, backoffs, node view and its age. A starting instance also shows its load progress and its `load` report (7.6a). The top-level `recent_loads` lists the outcomes of load attempts finished in the last 120 s. Each node in `view.nodes` that an instance uses also has `health` (8.4a), and a node that was sent a recovery request or reported an outcome also has `recovery` (8.4b). |
 | `POST /api/plan` `{model}` | Dry run: what would happen if this model were requested now (placement, plan with victims, or the reason for neither). Changes nothing. |
-| `POST /api/load` `{model}` | Start loading ahead of time. Returns `202` at once. |
-| `POST /api/unload` `{model, force}` | Stop one instance if idle; `force: true` stops it even if busy. |
+| `POST /api/load` `{model}` | Start loading ahead of time. Returns `202` at once. Audited (section `runtime`). |
+| `POST /api/unload` `{model, force}` | Stop one instance if idle; `force: true` stops it even if busy. Audited. |
 
 `force: true` is the one way a running generation can be cut off, and only by
 an explicit admin call.
@@ -1519,9 +1662,9 @@ someone on the LAN to reach the scheduler; it is not authentication.
 Defining benchmarks, grouping them into suites, running them through the
 scheduler itself and keeping every result. Packages: `internal/benchspec`
 (shapes and validation), `internal/bench` (store, runner, statistics, export),
-`internal/api/bench.go` (REST). All of it is off when `data_dir` is empty or
-the database cannot be opened: the endpoints answer `503` with a message
-naming `data_dir`; everything else is unaffected.
+`internal/api/bench.go` (REST). All of it is off when the `bench_enabled` setting
+is false or the database cannot be opened: the endpoints answer `503`;
+everything else is unaffected.
 
 **Concepts.**
 
@@ -1631,12 +1774,11 @@ newer build is refused. JSON columns hold the open shapes.
 | `run_steps` | `id` PK, `run_id` FK, `idx`, `grp` (parallel step id), `benchmark_id`, `name`, `profile`, `state`, `outcome`, `reason`, `http_status`, `log_file`, `started_at`, `finished_at`, `error`, JSON: `spec`, `plan`, `load`, `stats`, `expect`, `comparison` |
 | `requests` | `id` PK, `step_id` FK, `run_id`, `seq`, `name`, `phase` (`load`/`warmup`/`measured`), `status`, `wall_ms`, `ttft_ms`, `prompt_n`, `prompt_ms`, `prompt_tps`, `predicted_n`, `predicted_ms`, `decode_tps`, `cache_n`, `timings` JSON, `output_sha256`, `output_head`, `deterministic`, `error`, `started_at` |
 
-*Seeding.* The config's `bench.benchmarks` and `bench.suites` (same shapes as
-the API, YAML) are upserted at every start with `source: "config"`. An item
-created through the API has `source: "api"` and is never overwritten by config.
-Editing a config item through the API makes it an api item; deleting one makes
-it reappear at the next start. Config validation checks every seed against the
-profiles.
+*Seeding.* The `bench.benchmarks` and `bench.suites` of a YAML file given to
+`import-config` (same shapes as the API) are stored once, with `source: "config"`
+(and an audit entry, section `bench`, action `import`). Nothing is seeded at
+start any more: the database is the source of truth. Validation checks every
+seed against the profiles at import time.
 
 *History.* The JSONL history is unchanged and not migrated. A run writes
 `benchRunStarted`, `benchStepFinished` and `benchRunFinished` (all with
@@ -1720,8 +1862,10 @@ schema version, child log directory).
   3. Run the runbook's smoke checks, starting with `POST /api/plan` for each
      profile, which changes nothing.
   4. Roll back by stopping the scheduler and starting llama-swap.
+- The configuration is in the database under the mounted data directory (no config
+  file is mounted). A first install imports `deploy/seed-config.yaml` once (6.0.5).
 - The build deploys nothing. It produces the image recipe, compose file,
-  example config and runbook. The owner deploys.
+  seed config and runbook. The owner deploys.
 
 ## 11. Testing
 

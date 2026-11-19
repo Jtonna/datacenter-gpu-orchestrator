@@ -1,10 +1,10 @@
 #!/bin/sh
-# Usage: preflight-host.sh [config-path]    (default /opt/llm-scheduler/config.yaml)
+# Usage: preflight-host.sh [config-path]    (default /opt/llm-scheduler/seed-config.yaml)
 # Run on the OMEN BEFORE cutover. Read-only: changes nothing, adds no firewall rule.
 # Exit 0 = every check passed, 1 = at least one FAIL, 2 = cannot run.
 set -eu
 
-CONFIG="${1:-/opt/llm-scheduler/config.yaml}"
+CONFIG="${1:-/opt/llm-scheduler/seed-config.yaml}"
 MODELS_HOST_DIR="${MODELS_HOST_DIR:-/srv/llama-swap/models}"
 BASE_IMAGE="${BASE_IMAGE:-llama-swap-whisper:rpc-330f018}"
 FLEET_URL="${FLEET_URL:-http://127.0.0.1:8090}"
