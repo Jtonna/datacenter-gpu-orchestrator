@@ -417,7 +417,7 @@ a.cfg:hover{color:var(--mint-text)}
 /* a cell that gives way: its text is cut with an ellipsis so the figures beside it never clip */
 .tbl td.clip{max-width:0;width:100%}
 .tbl td.clip>span,.tbl td.clip .mono{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.tbl td.mname{min-width:300px}
+.tbl td.mname{min-width:250px;width:30%}
 
 /* ---- round 3: charts, avatars, dots, drawer, MCP ---- */
 /* the content column: the connection warning (only when something is wrong), then the screen */

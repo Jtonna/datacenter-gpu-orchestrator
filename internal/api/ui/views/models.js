@@ -74,7 +74,7 @@ function catalogCard(st, models, error, filter, query, setFilter, searchBox) {
   else if (!rows.length) body = empty('No model matches', q ? `Nothing matches "${query}". Search looks at the name, the file name and the configuration names.` : 'No model is in this group right now.');
   else {
     body = table({
-      minWidth: 1080, rows, key: m => m.key, onRow: m => navigate('models', [m.key]),
+      minWidth: 1000, rows, key: m => m.key, onRow: m => navigate('models', [m.key]),
       columns: [
         { label: 'Model', cls: 'mname', render: m => h('span.named', avatar(m, 40),
           h('span.grow', h('a.name', { href: href('models', [m.key]), title: m.file || m.name }, m.name),

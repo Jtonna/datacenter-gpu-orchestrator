@@ -111,7 +111,7 @@ function activityViz(m) {
   return viz('Activity', useDays ? 'Per day, the last 7 days' : 'Per hour, the last 24 hours', h('div.viz-pair',
     h('div.viz-row', h('span.viz-rl', 'Loads and refused requests'), columns(rows, { series: [{ key: 'ok', color: 'mint' }, { key: 'failed', color: 'coral' }, { key: 'refusals', color: 'amber' }], label, height: 92, alt,
       tip: b => tipText(span(b), [plural(b.loads || 0, 'load') + (b.failed ? `, ${num(b.failed)} failed` : ''), b.refusals ? plural(b.refusals, 'refused request') : null]), empty: 'No load in this time' })),
-    h('div.viz-row', h('span.viz-rl', 'Requests served'), columns(rows, { series: [{ key: 'requests', color: 'mut' }], label, height: 76, alt: 'Requests served',
+    h('div.viz-row', h('span.viz-rl', 'Requests served'), columns(rows, { series: [{ key: 'requests', color: 'mut' }], label, height: 92, alt: 'Requests served',
       tip: b => tipText(span(b), [plural(b.requests || 0, 'request') + ' served', 'Counted when the model unloaded']), empty: 'No request counted in this time' }))),
   { key: 'v-act', cls: 'wide', alt, legend: legendItems([[colorSwatch('mint'), 'Loaded'], [colorSwatch('coral'), 'Load failed'], [colorSwatch('amber'), 'Refused request'], [colorSwatch('mut'), 'Requests served, counted at unload']]) });
 }
@@ -295,9 +295,9 @@ function changeIcon(m, done) {
     : avatar(m, size));
   function draw() {
     const cur = m.icon;
-    box.replaceChildren(
+    box.replaceChildren(...[
       h('p', 'The picture shown next to this model. Without one, the page draws a tile with the family’s letters. PNG, JPEG, WebP or SVG, at most 256 kB; a square image works best. An SVG that carries a script is refused.'),
-      h('div.icon-prev', tile(72), tile(40), tile(28), h('span.mut', previewURL ? 'The new icon, at the sizes the page uses' : cur ? (cur.scope === 'family' ? `The icon of the ${family || 'family'}` : 'The icon set for this model') : 'The drawn avatar (no icon is set)')),
+      h('div.icon-prev', tile(72), tile(40), tile(28), h('span.mut', previewURL ? 'The new icon, at the sizes the page uses' : cur ? (cur.scope === 'family' ? `The icon of the ${family ? family + ' family' : 'family'}` : 'The icon set for this model') : 'The drawn avatar (no icon is set)')),
       h('div.field', h('label', 'Image file'), picker),
       family ? h('div.field', h('label', 'Use it for'),
         h('div.row', { style: 'gap:8px' },
@@ -306,9 +306,10 @@ function changeIcon(m, done) {
         h('span.help', scope === 'family' ? `One upload serves every model of the ${family} family that has no icon of its own.` : 'Other models of the family keep theirs.')) : null,
       error ? h('div.banner.err', { role: 'alert' }, error) : null,
       h('div.dlg-foot',
-        cur ? h('button', { type: 'button', class: 'btn lg dng', disabled: busy, style: 'margin-right:auto', onclick: () => remove(cur.scope) }, cur.scope === 'family' ? `Remove the ${family || 'family'} icon` : 'Remove icon') : null,
+        cur ? h('button', { type: 'button', class: 'btn lg dng', disabled: busy, style: 'margin-right:auto', onclick: () => remove(cur.scope) }, cur.scope === 'family' ? `Remove the ${family ? family + ' family' : 'family'} icon` : 'Remove icon') : null,
         h('button', { type: 'button', class: 'btn lg', onclick: () => close(undefined) }, 'Cancel'),
-        h('button', { type: 'button', class: 'btn lg pri', disabled: !file || busy || !!error, onclick: save }, busy ? 'Saving…' : 'Save icon')));
+        h('button', { type: 'button', class: 'btn lg pri', disabled: !file || busy || !!error, onclick: save }, busy ? 'Saving…' : 'Save icon')),
+    ].filter(Boolean));
   }
   draw();
   return dialog({ title: 'Icon of ' + m.name, body: c => { close = c; return box; } }).then(() => { if (previewURL) URL.revokeObjectURL(previewURL); });

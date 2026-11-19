@@ -16,7 +16,7 @@ import { nodeName, nodeByAddr, instanceNodeNames, nodeMemory, instanceBadge, hea
 
 // sizeLine(m) -> "12B · Q4_K_M · 6.6 GB": what the file is, in one line.
 export function sizeLine(m) {
-  if (m.kind === 'command') return 'A program on this machine, not a model file';
+  if (m.kind === 'command') return 'A program on this machine';
   return [m.parameters, m.quant, m.size_bytes ? bytes(m.size_bytes) : null].filter(Boolean).join(' · ') || 'Size not known';
 }
 
