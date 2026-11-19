@@ -295,6 +295,10 @@ type NodeStatus struct {
 	// Recovery is set once a recovery request was sent for the node or the node
 	// reported an outcome (design 8.4b); nil is left out of the JSON.
 	Recovery *RecoveryStatus
+	// RPCServerMemMiB and RPCServerVersion are what the fleet reports about the
+	// node's rpc-server; informational only, left out when not reported.
+	RPCServerMemMiB  *float64
+	RPCServerVersion *string
 }
 
 // RecoveryStatus is status.recovery of a node (design 8.4b).

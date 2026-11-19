@@ -40,9 +40,15 @@ type Member struct {
 	// reports it (a newer field; may be absent). For a shared-memory node it
 	// replaces the RAM total minus used figure.
 	MemAvailableMiB *int `json:"mem_available_mib"`
+	// RPCServerMemMiB and RPCServerVersion are informational only (newer
+	// fields; never used for decisions).
+	RPCServerMemMiB  *float64 `json:"rpc_server_mem_mib"`
+	RPCServerVersion *string  `json:"rpc_server_version"`
 	// LastRecoveryAction is the node's last reported recovery outcome (a newer
 	// field; absent from older fleet managers, null when none).
 	LastRecoveryAction *RecoveryAction `json:"last_recovery_action"`
+
+	problems []memberProblem // fields ignored while decoding (see UnmarshalJSON)
 }
 
 // RecoveryAction is a member's last_recovery_action.
@@ -80,6 +86,7 @@ type Client struct {
 
 	mu              sync.Mutex
 	members         []Member
+	warned          map[string]time.Time
 	haveByte        bool
 	lastByte        time.Time
 	connected       bool
@@ -277,6 +284,7 @@ func (c *Client) fetchMember(ctx context.Context, memberID string, isLocal bool,
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&m); err != nil {
 		return core.Node{}, fmt.Errorf("fleet: fetch node %s: %w", id, err)
 	}
+	c.warnProblems(m)
 	n, ok := nodeFromMember(c.cfg, m, isLocal)
 	if !ok {
 		return core.Node{}, fmt.Errorf("fleet: node %s matches no tier", id)
@@ -495,7 +503,34 @@ func (c *Client) applySnapshot(ms []Member) {
 // ---- feed ----
 
 type fleetDoc struct {
-	Members *[]Member `json:"members"`
+	Members *[]json.RawMessage `json:"members"`
+}
+
+// warnInterval is the least time between two warnings about the same
+// ignored field.
+const warnInterval = 10 * time.Minute
+
+// warnProblems logs one WARN per distinct ignored field, at most once per
+// warnInterval, so a persistent problem is not logged on every update.
+func (c *Client) warnProblems(m Member) {
+	for _, p := range m.problems {
+		c.warnOnce("field:"+p.Field, "fleet member field ignored", "field", p.Field, "member", m.ID, "err", p.Err)
+	}
+}
+
+func (c *Client) warnOnce(key, msg string, args ...any) {
+	c.mu.Lock()
+	now := c.opts.Clock()
+	if c.warned == nil {
+		c.warned = map[string]time.Time{}
+	}
+	if at, ok := c.warned[key]; ok && now.Sub(at) < warnInterval {
+		c.mu.Unlock()
+		return
+	}
+	c.warned[key] = now
+	c.mu.Unlock()
+	c.opts.Logger.Warn(msg, args...)
 }
 
 func (c *Client) applyDoc(data []byte) bool {
@@ -508,7 +543,20 @@ func (c *Client) applyDoc(data []byte) bool {
 		c.opts.Logger.Warn("bad fleet payload ignored", "err", err)
 		return false
 	}
-	c.applySnapshot(*d.Members)
+	ms := make([]Member, 0, len(*d.Members))
+	for i, raw := range *d.Members {
+		var m Member
+		if err := json.Unmarshal(raw, &m); err != nil || m.ID == "" {
+			if err == nil {
+				err = errNoID
+			}
+			c.warnOnce("member", "unusable fleet member skipped", "index", i, "err", err)
+			continue
+		}
+		c.warnProblems(m)
+		ms = append(ms, m)
+	}
+	c.applySnapshot(ms)
 	return true
 }
 

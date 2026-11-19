@@ -151,7 +151,7 @@ All **[verified]**.
   `hostname`.
 - `FleetMember` fields used here: `id`, `hostname`, `role`, `source`, `online`,
   `rpc`, `ip`, `rpc_port`, `vram_total`, `vram_used`, `ram_total_gb`,
-  `ram_used_gb`.
+  `ram_used_gb`; newer optional fields: `mem_available_mib` (any number, rounded down), `rpc_server_mem_mib` and `rpc_server_version` (informational, shown in `/api/status`). Numbers are read as int or float; a field of the wrong type is ignored with a rate-limited WARN naming it, and a bad field never discards its member, nor a bad member the payload.
 - `vram_total` and `vram_used` are in **GB**. For relayed nodes the hub
   truncates the total to an integer and derives used from a percentage,
   measured every 5 s. PS5s report amdgpu GTT figures.
