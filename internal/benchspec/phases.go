@@ -69,7 +69,15 @@ type Phase struct {
 
 	// concurrent_requests
 	N int `json:"n,omitempty" yaml:"n,omitempty"`
+
+	// soft marks the unload that the simple form's unload_after expands to: it
+	// only unloads what the run itself loaded.
+	soft bool
 }
+
+// OnlyIfLoadedByRun is set on the unload of the simple form (unload_after): it
+// leaves a model alone that somebody else had loaded before the run.
+func (p *Phase) OnlyIfLoadedByRun() bool { return p.soft }
 
 // Title is the label, else the type.
 func (p *Phase) Title() string {
@@ -177,7 +185,7 @@ func (b *Benchmark) Expand() []Phase {
 	}
 	out = append(out, Phase{Type: PhaseRequests, Requests: b.Requests, Repeats: b.RepeatCount()})
 	if b.UnloadsAfter() {
-		out = append(out, Phase{Type: PhaseUnload})
+		out = append(out, Phase{Type: PhaseUnload, soft: true})
 	}
 	return out
 }

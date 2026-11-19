@@ -257,7 +257,9 @@ type PhaseResult struct {
 	Turns      []TurnResult      `json:"turns,omitempty"`
 	Concurrent *ConcurrentResult `json:"concurrent,omitempty"`
 	HeldS      *float64          `json:"held_s,omitempty"`
-	Unload     *UnloadResult     `json:"unload,omitempty"`
+	// LoadedAfterHold says whether the model was still loaded when a hold phase ended (hold phases only).
+	LoadedAfterHold *bool         `json:"loaded_after_hold,omitempty"`
+	Unload          *UnloadResult `json:"unload,omitempty"`
 }
 
 // WorkerEnv is a worker's identity at the time of a run.
