@@ -38,6 +38,12 @@ func nodeFromMember(cfg *config.Config, m Member, local bool) (core.Node, bool) 
 		Priority: tier.Priority, HeadroomMiB: tier.HeadroomMiB, SharedMemory: tier.SharedMemory,
 		LinkMBs: tier.LinkMBs, Settle: tier.Settle,
 	}
+	if m.RPCServerMemMiB != nil {
+		n.RPCServerMemMiB, n.RPCServerMemKnown = *m.RPCServerMemMiB, true
+	}
+	if m.RPCServerVersion != nil {
+		n.RPCServerVersion = *m.RPCServerVersion
+	}
 	if m.VRAMTotal != nil {
 		n.TotalMiB = gbToMiB(*m.VRAMTotal)
 	}

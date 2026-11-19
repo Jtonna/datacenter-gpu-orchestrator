@@ -223,6 +223,14 @@ func (c *schedCore) statusDoc() Status {
 			s.Health = c.healthStatus(h)
 		}
 		s.Recovery = c.recoveryStatus(c.recov[id])
+		if n.RPCServerMemKnown {
+			v := n.RPCServerMemMiB
+			s.RPCServerMemMiB = &v
+		}
+		if n.RPCServerVersion != "" {
+			v := n.RPCServerVersion
+			s.RPCServerVersion = &v
+		}
 		st.View.Nodes = append(st.View.Nodes, s)
 	}
 	return st
