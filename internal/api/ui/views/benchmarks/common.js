@@ -170,7 +170,7 @@ export function describe(bm, modelFile) {
         s = plural(total, 'measured request') + ((p.repeats || 1) > 1 && per ? ` (${plural(per, 'prompt')}, ${p.repeats} times each)` : '');
         break;
       }
-      case 'conversation': s = `a ${plural((p.turns || []).length, 'turn')} conversation${p.cache_prompt === false ? ' without prompt caching' : ''}`; break;
+      case 'conversation': s = `a ${(p.turns || []).length}-turn conversation${p.cache_prompt === false ? ' without prompt caching' : ''}`; break;
       case 'hold': s = `holds the model idle for ${dur(p.seconds == null ? 60 : p.seconds)}, then one request`; break;
       case 'concurrent_requests': s = `${p.n || 2} requests at the same moment`; break;
       case 'unload': s = 'unloads'; break;

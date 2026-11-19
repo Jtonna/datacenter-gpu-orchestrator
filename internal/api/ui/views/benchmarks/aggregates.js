@@ -42,10 +42,10 @@ function trendCard(agg, redraw) {
   else {
     const m = b && b.metrics && b.metrics[aggState.metric];
     const pts = aggState.trend.points.map((p, i, arr) => ({ x: p.started_at, y: p.value, title: p.run_id, flag: !!(m && m.regression && i === arr.length - 1) }));
-    chart = h('div.cb', lineChart({ series: [{ name: def.label, color: 'mint', points: pts }], unit: def.unit, time: true, height: 240, label: `${def.label} of ${aggState.benchmark} over time` }));
+    chart = h('div.cb', { style: 'max-width:760px' }, lineChart({ series: [{ name: def.label, color: 'mint', points: pts }], time: true, height: 240, label: `${def.label} of ${aggState.benchmark} over time, in ${def.unit}` }));
   }
   return h('section.card', { key: 'trend' },
-    h('div.ch', h('h2', 'Trend'), h('span.note', 'One benchmark, one figure, over its runs'),
+    h('div.ch', h('h2', 'Trend'), h('span.note', `One benchmark, one figure, over its runs. The axis is in ${def.unit}.`),
       h('span.right.row', { style: 'gap:8px' },
         h('select.select', { 'aria-label': 'Benchmark', style: 'width:auto;min-width:180px', onchange: e => { aggState.benchmark = e.target.value; redraw(); } },
           benches.map(x => h('option', { value: x.benchmark_id, selected: x.benchmark_id === aggState.benchmark }, x.name || x.benchmark_id))),

@@ -14,6 +14,9 @@ import { cache, loadSchema, loadProfiles, loadModelProfiles, loadBenchmarks, loa
 
 const clone = v => JSON.parse(JSON.stringify(v));
 const slug = s => String(s || '').toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[^a-z0-9]+/, '').replace(/-+$/, '').slice(0, 64);
+const EXPECT_LABEL = { outcome: 'Expected outcome', max_load_s: 'Load time, at most', min_decode_tps: 'Decode speed, at least', min_prefill_tps: 'Prefill speed, at least',
+  max_ttft_ms: 'Time to first token, at most', output_sha256: 'Output hash', min_reused_tokens: 'Reused prompt tokens, at least', max_concurrent_wall_s: 'Simultaneous requests, wall time at most',
+  max_errors: 'Failed simultaneous requests, at most', max_unload_s: 'Unload time, at most' };
 const OPT_TYPE = { integer: 'int', number: 'float', boolean: 'bool', string: 'string', text: 'text', enum: 'enum' };
 
 // An option of the schema as a schemaForm field.
@@ -45,6 +48,8 @@ function parseErrors(msg) {
     ['idle_wait_s', 'idle_wait_s'], ['schedule', 'schedule'], ['baseline', 'baseline'], ['benchmarks', 'benchmarks'], ['parallel', 'parallel']];
   for (const line of String(msg || '').split('\n').map(s => s.trim()).filter(Boolean)) {
     let m = /^phases\[(\d+)\](?:\s*\([^)]*\))?[:.]?\s*(.*)$/.exec(line);
+    const alt = /^benchmark \S+ phase (\d+) \([^)]*\):\s*(.*)$/.exec(line); // the dev mock's wording
+    if (alt) m = [alt[0], String(alt[1] - 1), alt[2]];
     if (m) {
       const P = out.phases[m[1]] || (out.phases[m[1]] = { general: [], fields: {} });
       const rest = m[2], key = (/^([a-z_]+)/.exec(rest) || [])[1];
@@ -81,7 +86,7 @@ export function benchmarkEditor(o) {
   const el = h('div.col', { 'data-keep': '' }, h('section.card', skeleton(4)));
   let dead = false, bm = null, original = null, stage = 'loading', idTouched = false, errs = parseErrors(''), saving = false, loadError = '';
   const isNew = !o.id;
-  const draw = () => { if (!dead) el.replaceChildren(...(stage === 'loading' ? [h('section.card', loadError ? empty('This benchmark could not be opened', loadError) : skeleton(4))] : stage === 'pick' ? pick() : edit())); };
+  const draw = () => { if (!dead) el.replaceChildren(...(stage === 'loading' ? [h('section.card', loadError ? empty('This benchmark could not be opened', loadError) : skeleton(4))] : stage === 'pick' ? pick() : edit()).filter(Boolean)); };
   let summaryEl = null;
   const updateSummary = () => {
     if (summaryEl) summaryEl.textContent = describe(bm, modelOf(bm.profile) || bm.profile) || 'Add a phase to say what this benchmark does.';
@@ -151,7 +156,7 @@ export function benchmarkEditor(o) {
         mk('name', 'Name', nameIn), mk('id', 'Id', idIn, { help: 'Used in suites and in the API.' }),
         mk('description', 'Description', descIn, { wide: true }),
         parallel ? null : mk('profile', 'Profile', profSel, { help: 'The model to benchmark.' }),
-        parallel ? null : mk('timeout_s', 'Time limit', timeoutForm.el, { plain: true }),
+        parallel ? null : timeoutForm.el,
         mk('tags', 'Tags', tagsCtl, { plain: true, help: 'Optional, for filtering.' }))));
 
     summaryEl = h('p', { style: 'font-weight:600;font-size:15px' });
@@ -176,7 +181,7 @@ export function benchmarkEditor(o) {
     const keys = (schema.expect_keys || []).filter(k => !k.needs || phTypes.has(k.needs) || (bm.expect && bm.expect[k.name] !== undefined));
     const exFields = keys.map(k => ({ key: k.name, type: k.name === 'outcome' ? 'enum' : k.type === 'integer' ? 'int' : k.type === 'number' ? 'float' : 'string',
       enum: k.name === 'outcome' ? ['ready', 'refused', 'failed'] : undefined, default: k.name === 'outcome' ? 'ready' : undefined, unit: k.unit, description: k.description,
-      label: k.name.replace(/^max_|^min_/, m => (m === 'max_' ? 'At most: ' : 'At least: ')).replace(/_/g, ' ') }));
+      label: EXPECT_LABEL[k.name] || k.name }));
     if (!bm.expect) bm.expect = {};
     const exForm = parallel ? null : bindForm(bm.expect, exFields, () => {}, null);
     const expectCard = parallel ? null : section('Expectations', 'The benchmark fails when one of these does not hold. All are optional.', h('div.cb', exForm.el));
@@ -249,7 +254,7 @@ export function benchmarkEditor(o) {
     }
     return h('div', { style: 'border:1px solid var(--line-2);border-radius:12px;overflow:hidden' },
       h('div.ch', { style: 'background:var(--inset);padding:10px 14px' },
-        h('span', { class: 'mono', style: 'color:var(--mut)' }, i + 1), h('h2', { style: 'font-size:15px' }, ps.title), badge(p.type, 'n'),
+        h('span', { class: 'mono', style: 'color:var(--mut)' }, i + 1), h('h2', { style: 'font-size:15px' }, ps.title),
         h('span.mut.grow', { style: 'font-size:12px;font-weight:600;min-width:200px' }, ps.description),
         h('span.row', { style: 'gap:6px;flex-wrap:nowrap' },
           smallBtn('↑', () => move(-1), '', { 'aria-label': 'Move up', disabled: i === 0 }), smallBtn('↓', () => move(1), '', { 'aria-label': 'Move down', disabled: i === bm.phases.length - 1 }),
@@ -355,7 +360,7 @@ export function suiteEditor(o) {
   const el = h('div.col', { 'data-keep': '' }, h('section.card', skeleton(4)));
   let dead = false, su = null, runs = [], stage = 'loading', loadError = '', idTouched = false, errs = parseErrors(''), saving = false;
   const isNew = !o.id;
-  const draw = () => { if (!dead) el.replaceChildren(...(stage === 'loading' ? [h('section.card', loadError ? empty('This suite could not be opened', loadError) : skeleton(4))] : edit())); };
+  const draw = () => { if (!dead) el.replaceChildren(...(stage === 'loading' ? [h('section.card', loadError ? empty('This suite could not be opened', loadError) : skeleton(4))] : edit()).filter(Boolean)); };
   let summaryEl = null;
 
   (async () => {
