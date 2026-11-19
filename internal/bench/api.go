@@ -23,6 +23,11 @@ import (
 type API interface {
 	// Plan is POST /api/plan (changes nothing).
 	Plan(ctx context.Context, model string) (*PlanInfo, error)
+	// Load is POST /api/load: start loading a profile without sending a chat
+	// request. It answers at once (202 when the load is under way or not
+	// needed, else the refusal a request would get); the runner then watches
+	// Status until the instance is ready.
+	Load(ctx context.Context, model string) (*LoadAnswer, error)
 	// Unload is POST /api/unload.
 	Unload(ctx context.Context, model string, force bool) (*UnloadInfo, error)
 	// Status is GET /api/status, reduced to what the runner reads.
@@ -39,7 +44,15 @@ type API interface {
 type PlanInfo struct {
 	Action string
 	Reason string
+	Nodes  []string // the nodes the plan would use (ids)
 	Raw    json.RawMessage
+}
+
+// LoadAnswer is the answer of /api/load.
+type LoadAnswer struct {
+	Status int
+	Msg    string // the scheduler's words for a refusal
+	Reason string
 }
 
 // UnloadInfo is the answer of /api/unload.
@@ -62,6 +75,7 @@ type LoadInfo struct {
 // InstanceNodeInfo is one placed node of an instance with its measured memory.
 type InstanceNodeInfo struct {
 	ID        string
+	Local     bool
 	MemoryMiB float64
 }
 
@@ -72,9 +86,19 @@ type InstanceInfo struct {
 	InFlight       int
 	Waiters        int
 	LogFile        string
+	Cmd            string
+	ModelFile      string
 	DeviceTotalMiB float64
 	Load           *LoadInfo
 	Nodes          []InstanceNodeInfo
+}
+
+// WorkerInfo is a node of the scheduler's view with what it reports about its rpc-server.
+type WorkerInfo struct {
+	ID               string
+	Hostname         string
+	Local            bool
+	RPCServerVersion string
 }
 
 // RecentLoad is an entry of recent_loads.
@@ -94,7 +118,11 @@ type StatusInfo struct {
 	QueueLen    int
 	RecentLoads []RecentLoad
 	Hostnames   map[string]string // node id to hostname
-	Time        time.Time
+	Workers     []WorkerInfo
+	// ConfigRevision is the revision of the scheduler's configuration when the
+	// status exposes one (it does not on every build); empty otherwise.
+	ConfigRevision string
+	Time           time.Time
 }
 
 // Instance finds the instance of a profile.
@@ -225,13 +253,52 @@ func (h *HTTPAPI) Plan(ctx context.Context, model string) (*PlanInfo, error) {
 		return nil, fmt.Errorf("/api/plan answered %d: %s", resp.StatusCode, Head(string(raw), 300))
 	}
 	var p struct {
-		Action string `json:"action"`
-		Reason string `json:"reason"`
+		Action    string `json:"action"`
+		Reason    string `json:"reason"`
+		Nodes     []any  `json:"nodes"`
+		Placement []struct {
+			ID string `json:"id"`
+		} `json:"placement"`
 	}
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, fmt.Errorf("/api/plan: %w", err)
 	}
-	return &PlanInfo{Action: p.Action, Reason: p.Reason, Raw: raw}, nil
+	info := &PlanInfo{Action: p.Action, Reason: p.Reason, Raw: raw}
+	for _, n := range p.Nodes {
+		switch v := n.(type) {
+		case string:
+			info.Nodes = append(info.Nodes, v)
+		case map[string]any:
+			if id, ok := v["id"].(string); ok {
+				info.Nodes = append(info.Nodes, id)
+			}
+		}
+	}
+	for _, n := range p.Placement {
+		info.Nodes = append(info.Nodes, n.ID)
+	}
+	return info, nil
+}
+
+// Load implements API.
+func (h *HTTPAPI) Load(ctx context.Context, model string) (*LoadAnswer, error) {
+	b, _ := json.Marshal(map[string]any{"model": model})
+	resp, err := h.do(ctx, "POST", "/api/load", b, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw := readLimited(resp.Body)
+	out := &LoadAnswer{Status: resp.StatusCode}
+	if resp.StatusCode >= 300 {
+		var eb errBody
+		if json.Unmarshal(raw, &eb) == nil && eb.Error.Message != "" {
+			out.Msg, out.Reason = eb.Error.Message, eb.Error.Reason
+		} else {
+			out.Msg = strings.TrimSpace(Head(string(raw), 1000))
+		}
+	}
+	return out, nil
 }
 
 // Unload implements API.
@@ -265,6 +332,8 @@ type statusWire struct {
 		InFlight       int     `json:"in_flight"`
 		Waiters        int     `json:"waiters"`
 		LogFile        string  `json:"log_file"`
+		Cmd            string  `json:"cmd"`
+		ModelFile      string  `json:"model_file"`
 		DeviceTotalMiB float64 `json:"device_total_mib"`
 		Load           *struct {
 			SessionID  string   `json:"session_id"`
@@ -276,6 +345,7 @@ type statusWire struct {
 		} `json:"load"`
 		Nodes []struct {
 			ID     string `json:"id"`
+			Local  bool   `json:"local"`
 			Memory []struct {
 				TotalMiB float64 `json:"total_mib"`
 			} `json:"memory"`
@@ -293,11 +363,36 @@ type statusWire struct {
 	} `json:"recent_loads"`
 	View struct {
 		Nodes []struct {
-			ID       string `json:"id"`
-			Hostname string `json:"hostname"`
+			ID               string `json:"id"`
+			Hostname         string `json:"hostname"`
+			Local            bool   `json:"local"`
+			RPCServerVersion string `json:"rpc_server_version"`
 		} `json:"nodes"`
 	} `json:"view"`
+	ConfigRevision json.RawMessage `json:"config_revision"`
+	Config         struct {
+		Revision json.RawMessage `json:"revision"`
+	} `json:"config"`
 }
+
+// scalarText renders a JSON string or number as text ("" for anything else).
+func scalarText(raw json.RawMessage) string {
+	raw = bytesTrim(raw)
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var s string
+	if raw[0] == '"' && json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var n json.Number
+	if json.Unmarshal(raw, &n) == nil {
+		return n.String()
+	}
+	return ""
+}
+
+func bytesTrim(b []byte) []byte { return bytes.TrimSpace(b) }
 
 // Status implements API.
 func (h *HTTPAPI) Status(ctx context.Context) (*StatusInfo, error) {
@@ -330,7 +425,8 @@ func ParseStatus(raw []byte) (*StatusInfo, error) {
 		out.Time = t
 	}
 	for i, in := range w.Instances {
-		ii := InstanceInfo{Profile: in.Profile, State: in.State, InFlight: in.InFlight, Waiters: in.Waiters, LogFile: in.LogFile, DeviceTotalMiB: in.DeviceTotalMiB}
+		ii := InstanceInfo{Profile: in.Profile, State: in.State, InFlight: in.InFlight, Waiters: in.Waiters, LogFile: in.LogFile, DeviceTotalMiB: in.DeviceTotalMiB,
+			Cmd: in.Cmd, ModelFile: in.ModelFile}
 		if in.Load != nil {
 			li := &LoadInfo{SessionID: in.Load.SessionID, ElapsedS: in.Load.ElapsedS, BytesTotal: in.Load.BytesTotal, BytesSent: in.Load.BytesSent, Progress: in.Load.Progress, EtaS: in.Load.EtaS}
 			if i < len(envelope.Instances) {
@@ -343,7 +439,7 @@ func ParseStatus(raw []byte) (*StatusInfo, error) {
 			for _, m := range n.Memory {
 				mem += m.TotalMiB
 			}
-			ii.Nodes = append(ii.Nodes, InstanceNodeInfo{ID: n.ID, MemoryMiB: mem})
+			ii.Nodes = append(ii.Nodes, InstanceNodeInfo{ID: n.ID, Local: n.Local, MemoryMiB: mem})
 		}
 		out.Instances = append(out.Instances, ii)
 	}
@@ -354,6 +450,11 @@ func ParseStatus(raw []byte) (*StatusInfo, error) {
 		if n.Hostname != "" {
 			out.Hostnames[n.ID] = n.Hostname
 		}
+		out.Workers = append(out.Workers, WorkerInfo{ID: n.ID, Hostname: n.Hostname, Local: n.Local, RPCServerVersion: n.RPCServerVersion})
+	}
+	out.ConfigRevision = scalarText(w.ConfigRevision)
+	if out.ConfigRevision == "" {
+		out.ConfigRevision = scalarText(w.Config.Revision)
 	}
 	return out, nil
 }

@@ -1494,7 +1494,7 @@ gets its own process group, so nothing is left behind.
 | `GET /ui/` | The read-only dashboard (9.1): one self-contained page embedded in the binary. |
 | `GET /api/history`, `GET /api/history/summary`, `GET /api/history/export`, `GET /api/about` | The event history and what the dashboard header shows (9.1). Read-only. |
 | `GET /ws` | The live channel, a WebSocket (9.2): hello, status, event, bench, ping. |
-| `/api/bench/...` | Benchmarks, suites, runs, exports, trends (9.3). `503` when the `bench_enabled` setting is off or the database is not open. |
+| `/api/bench/...` | Benchmarks (with phases), suites, runs, progress, exports, trends, aggregates and the editor schema (9.3). `503` when the `bench_enabled` setting is off or the database is not open. |
 | `/api/config/...`, `GET /api/audit[/{id}]` | The configuration (profiles, tiers, settings, exclusions, overrides, recovery, fleet), its revisions, export/import and the audit log (6.0). |
 | `GET /api/profiles`, `GET /api/system` | Every profile with its need and dry-run plan; configuration and storage summary (9.4). Read-only. |
 | `GET /health` | `200` whenever the scheduler is running. |
@@ -1634,7 +1634,7 @@ Go). Package `internal/api` (`ws.go`).
 | `hello` | server | First message. `version`, `started_at`, `server_time` (unix ms), `history` (`on`/`off`), `bench` (`on`/`off`), `topics`, `ws_max_clients`. |
 | `status` | server | The object `GET /api/status` returns (with the model-centric additions of 9.4). A full snapshot on connect, then whenever it changed, looked at every 250 ms so at most 4 a second; while a load is in progress at least one a second (so progress moves); at least one every 5 s. A change in only the clock, the fleet view age or a queue entry's age is not a change. |
 | `event` | server | Every history event as recorded: the record of `GET /api/history`, including `seq` and `data.bench_run`. Only when `history_dir` is set (history off records nothing). |
-| `bench` | server | Benchmark feature events (9.3). `data.kind` is `state` (on connect: the `GET /api/bench/state` document), `run`, `step_started`, `step_finished`, `progress` or `load`. |
+| `bench` | server | Benchmark feature events (9.3). `data.kind` is `state` (on connect: the `GET /api/bench/state` document), `run`, `progress` (the run's progress model), `step_started`, `step_finished`, `request`, `load` or `aggregate_updated`; see 9.3. |
 | `ping` | server | Every 15 s, `data: {}`. |
 | `subscribe` | client | `{"type":"subscribe","topics":["status","event","bench"]}`. Default is all three. Replaces the set; `hello` and `ping` always arrive. Newly subscribing to `status` or `bench` sends a fresh snapshot at once. |
 | `pong` | client | `{"type":"pong"}`; accepted and ignored (any traffic keeps the connection alive). Unknown messages are ignored. |
@@ -1661,27 +1661,73 @@ someone on the LAN to reach the scheduler; it is not authentication.
 
 Defining benchmarks, grouping them into suites, running them through the
 scheduler itself and keeping every result. Packages: `internal/benchspec`
-(shapes and validation), `internal/bench` (store, runner, statistics, export),
-`internal/api/bench.go` (REST). All of it is off when the `bench_enabled` setting
-is false or the database cannot be opened: the endpoints answer `503`;
+(shapes, phases, validation, the editor schema), `internal/bench` (store,
+runner, progress model, statistics, aggregates, export), `internal/api/bench.go`
+(REST). All of it is off when the `bench_enabled` setting is false or the
+database cannot be opened: the endpoints answer `503`;
 everything else is unaffected.
 
 **Concepts.**
 
-*Benchmark* (a test case): `id` (slug), `name`, `description`, `profile` (a
-profile id or alias; unknown ones are rejected when it is saved), `cold`
-(default true: unload the profile first so the load is measured), `requests`
-(1 to 64 of `{name, messages | prompt, max_tokens (default 128), temperature
-(default 0), seed (default 42), cache_prompt (default false), stream (default
-false; when true time to first token is measured)}`), `repeats` (default 1,
-per request), `warmup_requests` (default 1), `timeout_s` (default 600, the
-whole benchmark including the load), `expect`, `unload_after` (default true),
-`tags`. A `prompt` is sent as one user message. `expect`: `outcome`
-(`ready` default, `refused`, `failed`), `min_decode_tps`, `max_load_s`,
-`output_sha256` (pins the output of the first request). *Concurrent step*:
-`{"id": ..., "parallel": [<benchmark ids>]}` (2 to 8 plain benchmarks with
-different profiles): their first requests, and so their loads, are fired at
-the same moment.
+*Benchmark* (a test case): `id` (slug), `name`, `description` (free text, shown
+while the benchmark runs), `profile` (a profile id or alias; unknown ones are
+rejected when it is saved), `timeout_s` (default 600, the whole benchmark
+including the load and the holds), `expect`, `tags`, and either **`phases`** or
+the **simple form**.
+
+*Phases.* `phases` is an ordered list of `{type, label?, ...options}`. The
+options belong to the type; an option that does not belong is rejected with a
+message that names what the type takes. `GET /api/bench/schema` lists all of
+it for an editor (below).
+
+| `type` | What it does | Options (default) | What it records |
+|---|---|---|---|
+| `load` | Cold load only. If the profile has an instance it is unloaded first (not forced; a busy profile fails the step), then `POST /api/load` starts the load, **no chat request is sent**, and the runner waits until the instance is ready or the load fails. | none | load seconds, bytes, average MB/s, per node bytes and measured memory (`load`), the scheduler's plan (on the step) |
+| `warmup` | `count` requests, recorded but left out of the statistics. | `count` (1, 0 to 10), `request` (the first request of the `requests` phase) | the requests |
+| `requests` | The measured requests: each is sent `repeats` times. | `requests` (1 to 64 of `{name, messages \| prompt, max_tokens (128), temperature (0), seed (42), cache_prompt (false), stream (false)}`), `repeats` (1), and `max_tokens`, `temperature`, `seed`, `cache_prompt`, `stream` as defaults for requests that leave them out | decode and prefill tokens per second, time to first token (streaming), wall time, output hash; statistics |
+| `conversation` | A multi-turn exchange. Each turn is sent with the optional `system` message, every earlier user turn and the model's reply to it. | `system`, `turns` (1 to 64 of `{name?, content, max_tokens?}`), `max_tokens`, `temperature`, `seed`, `stream`, `cache_prompt` (**true**) | per turn: prompt tokens (`prompt_n` plus `cache_n`), reused prompt tokens (`cache_n`), prefill and decode speed, time to first token, wall time |
+| `hold` | Keeps the model loaded and idle for `seconds`, then sends one request, to see what happens after idle time. | `seconds` (60, 1 to 3600), `request` (as for warmup) | idle seconds, whether the model was still loaded afterwards, the request |
+| `concurrent_requests` | `n` requests to the same profile at the same moment. A failed request is counted, not fatal. | `n` (2, 2 to 16), `request` (as for warmup) | per request: status, wait (time before the model started on it), decode speed, wall time; total wall time; errors |
+| `unload` | `POST /api/unload` (forced only when the step already failed or was cancelled) and the wait until the instance is gone. | none | seconds until the instance is gone |
+
+*The simple form* (no `phases`) stays valid and is expanded internally:
+`cold` (default true) gives a `load` phase, `warmup_requests` (default 1) a
+`warmup` phase, `requests` and `repeats` a `requests` phase, and `unload_after`
+(default true) an `unload` phase that only unloads what the run itself loaded.
+So `cold: false` with `unload_after: false` is a single `requests` phase. "Load
+only" is `phases: [{"type":"load"},{"type":"unload"}]`. `phases` replaces
+`cold`, `requests`, `repeats`, `warmup_requests` and `unload_after`: mixing the
+two forms is a validation error. When a phase that sends requests (`warmup`,
+`requests`, `conversation`, `hold`, `concurrent_requests`) finds the profile
+not loaded, it loads it first, the way the `load` phase does but without making
+it cold, and records that load on the step. The sum of the `hold` seconds plus 30
+must fit in `timeout_s`.
+
+*`expect`*: `outcome` (`ready` default, `refused`, `failed`), `max_load_s`,
+`min_decode_tps`, `min_prefill_tps`, `max_ttft_ms` (needs a phase that streams),
+`output_sha256` (pins the output of the first request of the first `requests`
+phase), `min_reused_tokens` (every conversation turn after the first reuses at
+least this many prompt tokens), `max_unload_s`, `max_concurrent_wall_s` and
+`max_errors` (for `concurrent_requests`). A key whose phase the benchmark does
+not have is rejected when it is saved. Speed and time to first token are the
+means over the benchmark's `requests` phases, or, for a benchmark without one,
+over its conversation turns, hold request or simultaneous requests (in that
+order).
+
+*Concurrent step*: `{"id": ..., "parallel": [<benchmark ids>]}` (2 to 8 plain
+benchmarks with different profiles): their loads are fired at the same moment
+(each member gets as far as the point where it would start its load, then all
+go).
+
+*`GET /api/bench/schema`*: `phase_types` (each with `type`, `title`,
+`description`, `records` and `options`: `name`, `type` (`string`, `text`,
+`integer`, `number`, `boolean`, `enum`, `list`, `request`), `default`, `min`,
+`max`, `unit`, `description`), `request_options`, `turn_options`,
+`benchmark_options`, `expect_keys` (`name`, `type`, `unit`, `needs`,
+`description`), `limits` and five `templates` ("Load only", "Load and
+requests", "Load and conversation", "Requests on a loaded model",
+"Simultaneous requests"; each `benchmark` is a valid body whose profile is the
+placeholder `your-profile`), so an editor can be drawn from it.
 
 *Suite*: `id`, `name`, `benchmarks` (ordered list of benchmark ids, or inline
 benchmarks, whose id defaults to `<suite>-<position>`), `stop_on_failure`
@@ -1693,45 +1739,46 @@ run id; default the previous completed run of the suite).
 *Run*: one execution of a suite; states `queued`, `running`, `paused` (waiting
 for idle), `completed`, `failed`, `cancelled`, `skipped`. One run at a time,
 others queue (at most 20). A run stores the suite and every benchmark it named
-as they were when it was queued.
+as they were when it was queued, and the environment it ran in (below).
 
 **Execution.** The runner is a goroutine of the same process that drives the
 scheduler only through its public HTTP API on its own loopback address
-(`/api/plan`, `/api/status`, `/api/unload`, `/v1/chat/completions`,
-`/api/history`), so a benchmark takes exactly the path a client takes and the
-scheduler's fit checks cannot be bypassed. Every request carries
-`X-Bench-Run: <run id>`; the scheduler copies it into the history records of
-the load that request causes and of a refusal (`data.bench_run`). That is the
-only change in the core and it changes no behaviour. Per benchmark:
+(`/api/plan`, `/api/status`, `/api/load`, `/api/unload`,
+`/v1/chat/completions`, `/api/history`), so a benchmark takes exactly the path a
+client takes and the scheduler's fit checks cannot be bypassed. Every chat
+request carries `X-Bench-Run: <run id>`; the scheduler copies it into the
+history records of the load such a request causes and of a refusal
+(`data.bench_run`). A `load` phase sends no chat request and `POST /api/load`
+has no such tag, so the load of a `load` phase is joined to its step through the
+load session id (`load.session_id`; `GET /api/history?session_id=...`). Per
+benchmark:
 
-1. `POST /api/plan` is recorded. If `cold` and the profile has an instance, it
-   is unloaded (not forced; a busy profile fails the step) and the runner waits
-   until it is gone. In a concurrent step every member gets this far, then all
-   fire together.
-2. First request = `requests[0]` (phase `load`), unless the profile is already
-   ready. While it is in flight the runner reads `/api/status` every second,
-   publishes the instance's `load` object on the live channel and remembers the
-   child's `log_file`. Afterwards the load is read from the scheduler: the
-   `recent_loads` entry (session id, outcome, reason), the history `loadFinished`
-   record of that session (bytes, MB/s, per node bytes and memory), the
-   instance's `device_total_mib`. Without history only `recent_loads`, the last
-   observed progress and the request's own wall time are available and
-   `load.source` says so.
-3. `warmup_requests` copies of `requests[0]` (phase `warmup`), then every
-   request `repeats` times (phase `measured`). Per request: status, wall time,
-   time to first token (streaming), the `timings` object, `prompt_n`,
-   `predicted_n`, `cache_n`, prompt and decode tokens per second, the sha256 of
-   the canonical JSON of the whole message object, its first 400 characters.
-   A request that does not return 200 ends the step (outcome `failed`).
-4. A refused (`503` or 4xx) or failed (502 and the like) first request is a
-   result, not a runner error: the status code, the scheduler's reason text and
-   the child's log file are stored. `refused` is a 503 or 4xx before a load
-   started; `failed` is the rest; `error` means the runner itself could not do
-   its job; `cancelled`; `skipped`.
-5. The step is unloaded if the run loaded it and `unload_after` is true. At the
-   end of the run (however it ended) everything the run loaded is unloaded
-   (`unload_after: false` keeps a model for the *following benchmarks of the
-   same run*).
+1. `POST /api/plan` is recorded (`plan`, and the nodes it would use).
+2. The phases run in order, each stored as a row of `run_phases` when it starts
+   and again when it ends, so the run detail fills in while the run goes.
+3. A `load` phase unloads, fires `POST /api/load` and then reads `/api/status`
+   every second (`LoadPoll`) until the instance is `ready`. While it waits it
+   feeds the instance's `load` object to the progress model and to the live
+   channel and remembers the child's `log_file`. A refusal answered by
+   `/api/load` itself (`503` or 4xx) is outcome `refused`; an instance that
+   disappears, or a `recent_loads` entry that did not end `ready`, is outcome
+   `failed` with the scheduler's reason. Afterwards the load is read from the
+   scheduler: the `recent_loads` entry (session id, outcome, reason), the
+   history `loadFinished` record of that session (bytes, MB/s, per node bytes
+   and memory) and the instance's `device_total_mib`. Without history only
+   `recent_loads`, the last observed progress and the measured wall time are
+   available and `load.source` says so.
+4. A request that does not return 200 ends the step (outcome `failed`), except
+   in `concurrent_requests`, where it is counted. A failed or refused step marks
+   its remaining phases `skipped`, except `unload`, which still cleans up (with
+   force, for a failed or cancelled step).
+5. `refused` is a refusal before a load started; `failed` is a load or request
+   that failed after; `error` means the runner itself could not do its job;
+   `cancelled`; `skipped`. At the end of the run (however it ended) everything
+   the run loaded and did not unload is unloaded.
+
+The step also records `model_file` and `node_count` (the worker nodes the
+instance was placed on), which the aggregates group by.
 
 *Safety.* `only_when_idle` (default true): the run does not start, and pauses
 between benchmarks, while the scheduler has an instance this run did not load,
@@ -1739,40 +1786,137 @@ a request in flight or waiting that is not this run's, or a queue entry. It
 waits up to `idle_wait_s`, then the run ends `skipped` (benchmarks already done
 keep their results; the rest are recorded as skipped). Cancel
 (`POST /api/bench/runs/{id}/cancel`) stops after the current request (a load in
-progress is abandoned at once and force-unloaded, since nobody wants it), marks
-the run `cancelled` and unloads what the run loaded. On shutdown the running
-run is cancelled the same way with the reason "scheduler shutting down", before
-the HTTP server stops. At start, a run found `running` or `paused` is marked
-`failed` with `failed (interrupted)` and a `queued` one `cancelled`. A run that
-exceeds `bench.max_run_minutes` is stopped and marked `failed`. Scheduled runs
-are queued by a check every 30 s and not queued twice for one suite.
+progress or a hold is abandoned at once and the load force-unloaded, since
+nobody wants it), marks the run `cancelled` and unloads what the run loaded. On
+shutdown the running run is cancelled the same way with the reason "scheduler
+shutting down", before the HTTP server stops. At start, a run found `running`
+or `paused` is marked `failed` with `failed (interrupted)` and a `queued` one
+`cancelled`. A run that exceeds `bench.max_run_minutes` is stopped and marked
+`failed`. Scheduled runs are queued by a check every 30 s and not queued twice
+for one suite.
 
 *Statistics and comparison.* Per step: mean, median, min, max and sample
 standard deviation of decode tokens/s, prefill tokens/s, time to first token
-and wall time over the measured requests that returned 200; warmup and the load
-request are never included. A step passes when its `expect` holds (default: the
-outcome is `ready`). Against the baseline run: percent change of load time
-(positive is slower), decode, prefill and time to first token; `regression` is
-true when the load is more than `bench.regress_load_pct` (15) slower, decode
-more than `bench.regress_decode_pct` (7) slower, the output hash of a
-deterministic (temperature 0) request differs, or a benchmark that loaded in the
-baseline no longer does. A request whose repeats produced different outputs is
-marked `varies` and is not compared.
+and wall time over the measured requests that returned 200; warmup requests are
+never included. Each phase has its own statistics too. A step passes when its
+`expect` holds (default: the outcome is `ready`). Against the baseline run:
+percent change of load time (positive is slower), decode, prefill and time to
+first token; `regression` is true when the load is more than
+`bench.regress_load_pct` (15) slower, decode more than `bench.regress_decode_pct`
+(7) slower, the output hash of a deterministic (temperature 0) request differs,
+or a benchmark that loaded in the baseline no longer does. A request whose
+repeats produced different outputs is marked `varies` and is not compared.
+
+**Progress model.** While a run is active the manager keeps a progress object,
+returned as `run` by `GET /api/bench/state` (`null` when no run is active) and
+published on the `bench` topic as `{"kind": "progress", "run": {...}}`: once
+on every phase or step change and otherwise at most twice a second.
+
+```
+run: { id, suite_id, suite_name, state, percent (0-100, whole run), started_at (unix ms),
+       elapsed_s, eta_s (null when unknown), steps_total, steps_done,
+       current: { index, benchmark_id, name, description, profile, model_file, nodes,
+                  phase: { index, type, label, phases_total },
+                  percent (0-100, this benchmark), detail },
+       next: { benchmark_id, name, description, profile } | null,
+       queue: [ids of the benchmarks still to run, in order] }
+```
+
+Indexes are 0-based. `current` is `null` before the first benchmark starts.
+For a concurrent step `current` is the step: its `profile` joins the members'
+with ` + `, `percent` is the mean of the members', `phase` is the least
+advanced member's and `detail.members` lists them.
+
+*Whole-run percent* is weighted by each suite entry's expected duration: the
+median duration of that benchmark in the (newest 20) earlier completed runs.
+An entry with no history gets the median of the known ones; when nothing is
+known all entries weigh the same. It includes the part of the current benchmark
+that is done and is capped at 99.9 until the run is `completed`, and it never
+decreases.
+
+*The current benchmark's percent* is computed from its phases, each weighted
+by its expected duration (the median of that phase, by position and type, in
+earlier runs; else a default: load 60 s, 5 s per warm-up or measured request,
+8 s per conversation turn, the hold seconds plus 5, 15 s for simultaneous
+requests, 3 s for an unload). Within a phase: `load` follows the scheduler's
+real `load.progress` (0 to 0.99, from the instance's `load` object; without it
+an estimate that never reaches the end), so a load-only benchmark's percent is
+essentially the model's load percent; request phases follow requests completed
+out of planned plus, when streaming, the tokens generated out of `max_tokens`
+for the request in flight; `hold` follows elapsed time; `concurrent_requests`
+the requests finished. It is 100 only when the benchmark has ended.
+
+`detail` has a sentence in `text` and, depending on the phase, `load` (the
+scheduler's own `load` object, passed through: bytes total and sent, ETA and
+per worker bytes and state, so a UI can show each worker), `tokens` and
+`max_tokens`, `turn` and `turns`, `held_s` and `hold_s`. `eta_s` is the sum of
+the expected remaining durations of the current benchmark's phases and of the
+entries after it; it is `null` when no benchmark involved has a history.
+
+**Aggregates (run history that aggregates).** `GET /api/bench/aggregates` adds
+the stored runs up. Filters: `suite`, `benchmark`, `profile`, `since` and
+`until` (unix ms or seconds, RFC 3339, or a span back from now: `24h`, `7d`),
+`limit_runs` (the newest this many runs; default 200, at most 1000) and
+`env=same` (only runs whose environment equals the newest matching run's).
+Only runs that ended (`completed`, `failed`, `cancelled`) count.
+
+```
+{ generated_at, filter, runs_considered, environment (the newest run's),
+  benchmarks: [ { benchmark_id, name, profile, runs, steps, pass_rate,
+                  outcomes: {ready, refused, failed, (error, cancelled)},
+                  metrics: { load_s, load_mb_s, decode_tps, prefill_tps, ttft_ms,
+                             memory_mib, unload_s, concurrent_wall_s:
+                     { count, min, median, mean, max, stdev, last, best,
+                       change_pct, threshold_pct, regression, points: [{run_id, at, value} x 30] } },
+                  turns: [ { phase, turn, metrics: { decode_tps, prefill_tps, ttft_ms,
+                             wall_ms, prompt_tokens, reused_tokens } } ],
+                  last_run_id, last_at } ],
+  suites: [ { suite_id, name, runs, states, pass_rate, mean_duration_s, last_run } ],
+  by_model: [ { model_file, runs, steps, benchmarks, profiles, metrics } ],
+  by_model_nodes: [ { model_file, nodes, runs, steps, benchmarks, profiles, metrics } ] }
+```
+
+Only a step that loaded and served (`ready`) contributes numbers. `best` is
+the lowest value for times, memory and wall time and the highest for speeds and
+reused tokens. `change_pct` is the last value against the median of the earlier
+ones (`null` with fewer than two values) and `regression` is set when the last
+value is worse than that median by more than the threshold of the metric
+(`bench.regress_load_pct` for times and memory, `bench.regress_decode_pct` for
+speeds; prompt tokens are never flagged). `pass_rate` of a benchmark is the
+share of its steps whose `expect` held; of a suite, the share of its runs that
+completed with no failed step. `by_model` and `by_model_nodes` group the ready
+steps by the step's `model_file`, and by `model_file` and the number of worker
+nodes (`node_count`: placed nodes that are not the scheduler's own host), so
+the same model's behaviour on 1, 2 and 3 workers sits side by side. When a run
+ends the manager publishes `{"kind": "aggregate_updated", "run_id", "suite_id",
+"state", "benchmarks": [...]}` on the `bench` topic.
+
+*Environment.* A run records, in `runs.env`, what it ran in: `scheduler_version`,
+`config_revision` (when `/api/status` exposes `config_revision`, or
+`config.revision`; absent otherwise), `llama_binary` (the program of the first
+child's `cmd` seen during the run) and `workers` (`node`, `rpc_server_version`
+from `view.nodes[]`, remote nodes only). It is read at the start and merged as
+instances appear. `env=same` compares these.
 
 **Storage.** `data_dir/scheduler.db`, SQLite via `modernc.org/sqlite` (pure Go,
 no cgo; the Docker build is the plain `go build`), WAL mode, one writer
 goroutine (one transaction per write), reads through a pool. Schema versions
 are rows of `migrations (version, name, applied_at)`; a database written by a
-newer build is refused. JSON columns hold the open shapes.
+newer build is refused. JSON columns hold the open shapes. Migration 2
+("benchmark phases, run environment, aggregates") upgrades a database made by
+the first builder in place: it adds `runs.env`, `run_steps.model_file`,
+`run_steps.node_count`, the `run_phases` table, and rebuilds `requests` with
+the wider `phase` check and three new columns, keeping every row.
 
 | Table | Columns |
 |---|---|
 | `migrations` | `version` PK, `name`, `applied_at` |
 | `benchmarks` | `id` PK, `name`, `source` (`config`/`api`), `spec` JSON, `created_at`, `updated_at` |
 | `suites` | same as benchmarks |
-| `runs` | `id` PK, `suite_id`, `suite_name`, `state`, `note`, `triggered_by` (`manual`/`schedule`), `baseline_run_id`, `queued_at`, `started_at`, `finished_at`, `error`, `version`, `suite` JSON (suite + benchmarks snapshot), `summary` JSON |
-| `run_steps` | `id` PK, `run_id` FK, `idx`, `grp` (parallel step id), `benchmark_id`, `name`, `profile`, `state`, `outcome`, `reason`, `http_status`, `log_file`, `started_at`, `finished_at`, `error`, JSON: `spec`, `plan`, `load`, `stats`, `expect`, `comparison` |
-| `requests` | `id` PK, `step_id` FK, `run_id`, `seq`, `name`, `phase` (`load`/`warmup`/`measured`), `status`, `wall_ms`, `ttft_ms`, `prompt_n`, `prompt_ms`, `prompt_tps`, `predicted_n`, `predicted_ms`, `decode_tps`, `cache_n`, `timings` JSON, `output_sha256`, `output_head`, `deterministic`, `error`, `started_at` |
+| `runs` | `id` PK, `suite_id`, `suite_name`, `state`, `note`, `triggered_by` (`manual`/`schedule`), `baseline_run_id`, `queued_at`, `started_at`, `finished_at`, `error`, `version`, `suite` JSON (suite + benchmarks snapshot), `summary` JSON, `env` JSON |
+| `run_steps` | `id` PK, `run_id` FK, `idx`, `grp` (parallel step id), `benchmark_id`, `name`, `profile`, `state`, `outcome`, `reason`, `http_status`, `log_file`, `started_at`, `finished_at`, `error`, `model_file`, `node_count`, JSON: `spec`, `plan`, `load`, `stats`, `expect`, `comparison` |
+| `run_phases` | `id` PK, `step_id` FK, `run_id`, `idx` (position in the benchmark's phases), `type`, `label`, `state` (`running`/`done`/`failed`/`cancelled`/`skipped`), `outcome` (`ok`, `refused`, ...), `error`, `started_at`, `finished_at`, `result` JSON (`duration_s`, `load`, `stats`, `turns`, `concurrent`, `held_s`, `loaded_after_hold`, `unload`) |
+| `requests` | `id` PK, `step_id` FK, `run_id`, `seq`, `name`, `phase` (`warmup`/`measured`/`conversation`/`hold`/`concurrent`; `load` in rows written by the first builder), `phase_idx`, `turn`, `wait_ms`, `status`, `wall_ms`, `ttft_ms`, `prompt_n`, `prompt_ms`, `prompt_tps`, `predicted_n`, `predicted_ms`, `decode_tps`, `cache_n`, `timings` JSON, `output_sha256`, `output_head`, `deterministic`, `error`, `started_at` |
 
 *Seeding.* The `bench.benchmarks` and `bench.suites` of a YAML file given to
 `import-config` (same shapes as the API) are stored once, with `source: "config"`
@@ -1782,8 +1926,15 @@ seed against the profiles at import time.
 
 *History.* The JSONL history is unchanged and not migrated. A run writes
 `benchRunStarted`, `benchStepFinished` and `benchRunFinished` (all with
-`data.bench_run`); the load of a benchmark's first request and its refusals carry
+`data.bench_run`); the load a chat request causes and its refusals carry
 `data.bench_run` too.
+
+*Audit.* Creating, updating and deleting a benchmark or a suite, starting a run
+and cancelling a run each call an `AuditHook` (`internal/api/bench.go`) with
+action (`create`, `update`, `delete`, `run_start`, `run_cancel`), section
+`bench`, target (`benchmark:<id>`, `suite:<id>`, `run:<id>`) and the state
+before and after. The default does nothing; the audit log's recorder is plugged
+in with `Server.SetAuditHook`.
 
 **REST** (pull and push only; a bad body is `400`, a failed validation `422`,
 an unknown id `404`, a conflict `409`, off `503`):
@@ -1795,22 +1946,27 @@ an unknown id `404`, a conflict `409`, off `503`):
 | `GET /api/bench/suites`, `POST`, `GET/PUT/DELETE /api/bench/suites/{id}` | The same for suites; the list adds `last_run`. |
 | `POST /api/bench/suites/{id}/run` | Body optional `{"baseline": "<run id>", "note": "..."}`. `202` with the run (`queued`); `429` when 20 runs are queued. |
 | `GET /api/bench/runs?suite=&state=&limit=` | `{"runs": [...]}` newest first, without steps. |
-| `GET /api/bench/runs/{id}` | The run with `steps`, their `requests`, `stats`, `expect`, `comparison`, `load`, `plan`. |
+| `GET /api/bench/runs/{id}` | The run with `env`, `steps`, their `phases` (results per phase), `requests`, `stats`, `expect`, `comparison`, `load`, `plan`, `model_file`, `node_count`. |
 | `POST /api/bench/runs/{id}/cancel` | `202`; `409` for a finished run. |
-| `GET /api/bench/runs/{id}/export?format=json\|csv\|md` | Download. `md` is a table, one row per benchmark: profile, nodes, load s, MB/s, prefill and decode tokens/s, decode standard deviation, memory MiB, outcome, change against the baseline. `csv` is one row per step. |
-| `GET /api/bench/trends?benchmark=&metric=load_s\|decode_tps\|prefill_tps&limit=` | `{"benchmark","metric","points":[{run_id,started_at,value}]}` oldest first (the newest `limit`), ready steps of completed or failed runs. |
-| `GET /api/bench/state` | `{"enabled","current","queue","next_scheduled"}`. |
+| `GET /api/bench/runs/{id}/export?format=json\|csv\|md` | Download. `md` is a table, one row per benchmark (profile, nodes, load s, MB/s, prefill and decode tokens/s, decode standard deviation, memory MiB, outcome, change against the baseline), followed by a table of phases for each step and of the turns of each conversation. `csv` is one row per step (with `model_file`, `worker_nodes`, `phases`); `format=csv&detail=phases` one row per phase; `detail=turns` one row per conversation turn. |
+| `GET /api/bench/trends?benchmark=&metric=&limit=` | `metric` is `load_s`, `load_mb_s`, `memory_mib`, `decode_tps`, `prefill_tps`, `ttft_ms`, `unload_s` or `concurrent_wall_s`. `{"benchmark","metric","points":[{run_id,started_at,value}]}` oldest first (the newest `limit`), ready steps of completed or failed runs. |
+| `GET /api/bench/aggregates?suite=&benchmark=&profile=&since=&until=&limit_runs=&env=` | The aggregates above. |
+| `GET /api/bench/schema` | The editor schema above. |
+| `GET /api/bench/state` | `{"enabled","run","current","queue","next_scheduled"}`: `run` is the progress object, `current` the run in the older brief form. |
 | `GET /api/bench/profiles` | Valid profile ids (and aliases) for an editor. |
 
 **`bench` WebSocket messages** (`data.kind`): `state` (on connect; the
 `/api/bench/state` document), `run` (`data.run`: id, suite, state, trigger,
 times, note, baseline, error, summary, `progress` with `steps_total`,
-`steps_done`, the step in flight and `paused_because`), `step_started`
-(`run_id`, `step`), `step_finished` (`run_id`, `step`: outcome, reason, load,
-stats, expect, comparison, no requests), `progress` (`run_id`, `idx`,
-`benchmark_id`, `phase`, `request`, `seq`, `state` `started`/`streaming`,
-`tokens` and `elapsed_ms` while streaming), `load` (`run_id`, `idx`,
-`benchmark_id`, `load`: the status `load` object of the step in flight).
+`steps_done`, the step in flight and `paused_because`), `progress` (`run`: the
+progress object above), `step_started` (`run_id`, `step`), `step_finished`
+(`run_id`, `step`: outcome, reason, load, stats, expect, comparison, no
+requests), `request` (`run_id`, `idx`, `benchmark_id`, `phase`, `request`,
+`seq`, `state` `started`/`streaming`, `tokens` and `elapsed_ms` while
+streaming; this was called `progress` in the first version of the feature),
+`load` (`run_id`, `idx`, `benchmark_id`, `load`: the status `load` object of the
+step in flight), `aggregate_updated` (`run_id`, `suite_id`, `state`,
+`benchmarks`).
 
 ### 9.4 Model-centric status, `/api/profiles`, `/api/system`
 

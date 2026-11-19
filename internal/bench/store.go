@@ -111,6 +111,61 @@ CREATE TABLE requests (
 );
 CREATE INDEX requests_step ON requests (step_id, seq);
 `},
+	{"benchmark phases, run environment, aggregates", `
+ALTER TABLE runs ADD COLUMN env TEXT CHECK (env IS NULL OR json_valid(env));
+ALTER TABLE run_steps ADD COLUMN model_file TEXT NOT NULL DEFAULT '';
+ALTER TABLE run_steps ADD COLUMN node_count INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX run_steps_model ON run_steps (model_file);
+CREATE TABLE run_phases (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  step_id     INTEGER NOT NULL REFERENCES run_steps (id) ON DELETE CASCADE,
+  run_id      TEXT NOT NULL,
+  idx         INTEGER NOT NULL,
+  type        TEXT NOT NULL,
+  label       TEXT NOT NULL DEFAULT '',
+  state       TEXT NOT NULL,
+  outcome     TEXT NOT NULL DEFAULT '',
+  error       TEXT NOT NULL DEFAULT '',
+  started_at  INTEGER NOT NULL DEFAULT 0,
+  finished_at INTEGER NOT NULL DEFAULT 0,
+  result      TEXT CHECK (result IS NULL OR json_valid(result))
+);
+CREATE INDEX run_phases_step ON run_phases (step_id, idx);
+CREATE TABLE requests_v2 (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  step_id       INTEGER NOT NULL REFERENCES run_steps (id) ON DELETE CASCADE,
+  run_id        TEXT NOT NULL,
+  seq           INTEGER NOT NULL,
+  name          TEXT NOT NULL DEFAULT '',
+  phase         TEXT NOT NULL CHECK (phase IN ('load','warmup','measured','conversation','hold','concurrent')),
+  status        INTEGER NOT NULL DEFAULT 0,
+  wall_ms       REAL NOT NULL DEFAULT 0,
+  ttft_ms       REAL,
+  prompt_n      INTEGER NOT NULL DEFAULT 0,
+  prompt_ms     REAL NOT NULL DEFAULT 0,
+  prompt_tps    REAL NOT NULL DEFAULT 0,
+  predicted_n   INTEGER NOT NULL DEFAULT 0,
+  predicted_ms  REAL NOT NULL DEFAULT 0,
+  decode_tps    REAL NOT NULL DEFAULT 0,
+  cache_n       INTEGER NOT NULL DEFAULT 0,
+  timings       TEXT CHECK (timings IS NULL OR json_valid(timings)),
+  output_sha256 TEXT NOT NULL DEFAULT '',
+  output_head   TEXT NOT NULL DEFAULT '',
+  deterministic INTEGER NOT NULL DEFAULT 0,
+  error         TEXT NOT NULL DEFAULT '',
+  started_at    INTEGER NOT NULL DEFAULT 0,
+  phase_idx     INTEGER NOT NULL DEFAULT 0,
+  turn          INTEGER NOT NULL DEFAULT 0,
+  wait_ms       REAL
+);
+INSERT INTO requests_v2 (id, step_id, run_id, seq, name, phase, status, wall_ms, ttft_ms, prompt_n, prompt_ms, prompt_tps, predicted_n, predicted_ms, decode_tps,
+  cache_n, timings, output_sha256, output_head, deterministic, error, started_at)
+  SELECT id, step_id, run_id, seq, name, phase, status, wall_ms, ttft_ms, prompt_n, prompt_ms, prompt_tps, predicted_n, predicted_ms, decode_tps,
+  cache_n, timings, output_sha256, output_head, deterministic, error, started_at FROM requests;
+DROP TABLE requests;
+ALTER TABLE requests_v2 RENAME TO requests;
+CREATE INDEX requests_step ON requests (step_id, seq);
+`},
 }
 
 type job struct {
@@ -133,7 +188,10 @@ type Store struct {
 
 // OpenStore creates dir if needed, opens dir/scheduler.db in WAL mode and
 // applies the migrations. An error means the benchmark feature stays off.
-func OpenStore(dir string) (*Store, error) {
+func OpenStore(dir string) (*Store, error) { return openStore(dir, len(migrations)) }
+
+// openStore applies at most upTo migrations (tests use it to build an older database).
+func openStore(dir string, upTo int) (*Store, error) {
 	if strings.TrimSpace(dir) == "" {
 		return nil, errors.New("no data directory")
 	}
@@ -152,7 +210,7 @@ func OpenStore(dir string) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{db: db, path: path, jobs: make(chan job, 64)}
-	if err := s.migrate(); err != nil {
+	if err := s.migrate(upTo); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrating %s: %w", path, err)
 	}
@@ -161,7 +219,7 @@ func OpenStore(dir string) (*Store, error) {
 	return s, nil
 }
 
-func (s *Store) migrate() error {
+func (s *Store) migrate(upTo int) error {
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at INTEGER NOT NULL)`); err != nil {
 		return err
 	}
@@ -172,7 +230,7 @@ func (s *Store) migrate() error {
 	if have > len(migrations) {
 		return fmt.Errorf("the database is at schema version %d but this build knows %d: it was written by a newer scheduler", have, len(migrations))
 	}
-	for i := have; i < len(migrations); i++ {
+	for i := have; i < upTo && i < len(migrations); i++ {
 		tx, err := s.db.Begin()
 		if err != nil {
 			return err
@@ -495,10 +553,17 @@ func (s *Store) CreateRun(r *Run) error {
 	if trig == "" {
 		trig = "manual"
 	}
+	var env any
+	if r.Env != nil {
+		var err error
+		if env, err = nullJSON(r.Env); err != nil {
+			return err
+		}
+	}
 	return s.write(func(tx *sql.Tx) error {
-		_, err := tx.Exec(`INSERT INTO runs (id, suite_id, suite_name, state, note, triggered_by, baseline_run_id, queued_at, started_at, finished_at, error, version, suite, summary)
-		  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, r.ID, r.SuiteID, r.SuiteName, r.State, r.Note, trig, r.BaselineRunID, r.QueuedAt,
-			r.StartedAt, r.FinishedAt, r.Error, r.Version, suite, sum)
+		_, err := tx.Exec(`INSERT INTO runs (id, suite_id, suite_name, state, note, triggered_by, baseline_run_id, queued_at, started_at, finished_at, error, version, suite, summary, env)
+		  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, r.ID, r.SuiteID, r.SuiteName, r.State, r.Note, trig, r.BaselineRunID, r.QueuedAt,
+			r.StartedAt, r.FinishedAt, r.Error, r.Version, suite, sum, env)
 		return err
 	})
 }
@@ -520,6 +585,21 @@ func (s *Store) SetRunState(id, state string, startedAt, finishedAt int64, errTe
 	})
 }
 
+// SetRunEnv stores the environment a run ran in.
+func (s *Store) SetRunEnv(id string, env *Environment) error {
+	var v any
+	if env != nil {
+		var err error
+		if v, err = nullJSON(env); err != nil {
+			return err
+		}
+	}
+	return s.write(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE runs SET env=? WHERE id=?`, v, id)
+		return err
+	})
+}
+
 // SetRunSummary stores the step counts and the baseline used.
 func (s *Store) SetRunSummary(id string, sum *RunSummary, baseline string) error {
 	v, err := nullJSON(sum)
@@ -532,17 +612,18 @@ func (s *Store) SetRunSummary(id string, sum *RunSummary, baseline string) error
 	})
 }
 
-const runCols = `id, suite_id, suite_name, state, note, triggered_by, baseline_run_id, queued_at, started_at, finished_at, error, version, suite, summary`
+const runCols = `id, suite_id, suite_name, state, note, triggered_by, baseline_run_id, queued_at, started_at, finished_at, error, version, suite, summary, env`
 
 func scanRun(sc interface{ Scan(...any) error }) (*Run, error) {
 	var r Run
 	var suite string
-	var sum sql.NullString
+	var sum, env sql.NullString
 	if err := sc.Scan(&r.ID, &r.SuiteID, &r.SuiteName, &r.State, &r.Note, &r.Trigger, &r.BaselineRunID, &r.QueuedAt,
-		&r.StartedAt, &r.FinishedAt, &r.Error, &r.Version, &suite, &sum); err != nil {
+		&r.StartedAt, &r.FinishedAt, &r.Error, &r.Version, &suite, &sum, &env); err != nil {
 		return nil, err
 	}
 	r.Suite = json.RawMessage(suite)
+	unmarshalNull(env, &r.Env)
 	if sum.Valid {
 		var rs RunSummary
 		if err := json.Unmarshal([]byte(sum.String), &rs); err == nil {
@@ -666,9 +747,9 @@ func (s *Store) AddStep(st *Step) error {
 		return err
 	}
 	return s.write(func(tx *sql.Tx) error {
-		res, err := tx.Exec(`INSERT INTO run_steps (run_id, idx, grp, benchmark_id, name, profile, state, outcome, reason, http_status, log_file, started_at, finished_at, error, spec, plan, load, stats, expect, comparison)
-		  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, st.RunID, st.Idx, st.Group, st.BenchmarkID, st.Name, st.Profile, st.State, st.Outcome,
-			st.Reason, st.HTTPStatus, st.LogFile, st.StartedAt, st.FinishedAt, st.Error, vals[0], vals[1], vals[2], vals[3], vals[4], vals[5])
+		res, err := tx.Exec(`INSERT INTO run_steps (run_id, idx, grp, benchmark_id, name, profile, state, outcome, reason, http_status, log_file, started_at, finished_at, error, spec, plan, load, stats, expect, comparison, model_file, node_count)
+		  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, st.RunID, st.Idx, st.Group, st.BenchmarkID, st.Name, st.Profile, st.State, st.Outcome,
+			st.Reason, st.HTTPStatus, st.LogFile, st.StartedAt, st.FinishedAt, st.Error, vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], st.ModelFile, st.NodeCount)
 		if err != nil {
 			return err
 		}
@@ -717,23 +798,26 @@ func (s *Store) UpdateStep(st *Step) error {
 	}
 	return s.write(func(tx *sql.Tx) error {
 		_, err := tx.Exec(`UPDATE run_steps SET grp=?, name=?, profile=?, state=?, outcome=?, reason=?, http_status=?, log_file=?, started_at=?, finished_at=?, error=?,
-		  spec=?, plan=?, load=?, stats=?, expect=?, comparison=? WHERE id=?`, st.Group, st.Name, st.Profile, st.State, st.Outcome, st.Reason, st.HTTPStatus,
-			st.LogFile, st.StartedAt, st.FinishedAt, st.Error, vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], st.ID)
+		  spec=?, plan=?, load=?, stats=?, expect=?, comparison=?, model_file=?, node_count=? WHERE id=?`, st.Group, st.Name, st.Profile, st.State, st.Outcome, st.Reason, st.HTTPStatus,
+			st.LogFile, st.StartedAt, st.FinishedAt, st.Error, vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], st.ModelFile, st.NodeCount, st.ID)
 		return err
 	})
 }
 
 // AddRequest inserts one request result and sets its ID.
 func (s *Store) AddRequest(r *RequestResult) error {
-	var ttft any
+	var ttft, wait any
 	if r.TTFTMS != nil {
 		ttft = *r.TTFTMS
 	}
+	if r.WaitMS != nil {
+		wait = *r.WaitMS
+	}
 	return s.write(func(tx *sql.Tx) error {
 		res, err := tx.Exec(`INSERT INTO requests (step_id, run_id, seq, name, phase, status, wall_ms, ttft_ms, prompt_n, prompt_ms, prompt_tps, predicted_n, predicted_ms, decode_tps,
-		  cache_n, timings, output_sha256, output_head, deterministic, error, started_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		  cache_n, timings, output_sha256, output_head, deterministic, error, started_at, phase_idx, turn, wait_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			r.StepID, r.RunID, r.Seq, r.Name, r.Phase, r.Status, r.WallMS, ttft, r.PromptN, r.PromptMS, r.PromptTPS, r.PredictedN, r.PredictedMS, r.DecodeTPS,
-			r.CacheN, rawOrNull(r.Timings), r.OutputSHA256, r.OutputHead, r.Deterministic, r.Error, r.StartedAt)
+			r.CacheN, rawOrNull(r.Timings), r.OutputSHA256, r.OutputHead, r.Deterministic, r.Error, r.StartedAt, r.PhaseIdx, r.Turn, wait)
 		if err != nil {
 			return err
 		}
@@ -742,9 +826,12 @@ func (s *Store) AddRequest(r *RequestResult) error {
 	})
 }
 
-func (s *Store) steps(runID string) ([]Step, error) {
+func (s *Store) steps(runID string) ([]Step, error) { return s.stepsOpt(runID, true) }
+
+// stepsOpt loads a run's steps with their phases, and their request rows when requests is set.
+func (s *Store) stepsOpt(runID string, requests bool) ([]Step, error) {
 	rows, err := s.db.Query(`SELECT id, run_id, idx, grp, benchmark_id, name, profile, state, outcome, reason, http_status, log_file, started_at, finished_at, error,
-	  spec, plan, load, stats, expect, comparison FROM run_steps WHERE run_id=? ORDER BY idx, id`, runID)
+	  spec, plan, load, stats, expect, comparison, model_file, node_count FROM run_steps WHERE run_id=? ORDER BY idx, id`, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -754,7 +841,7 @@ func (s *Store) steps(runID string) ([]Step, error) {
 		var st Step
 		var spec, plan, load, stats, expect, cmp sql.NullString
 		if err := rows.Scan(&st.ID, &st.RunID, &st.Idx, &st.Group, &st.BenchmarkID, &st.Name, &st.Profile, &st.State, &st.Outcome, &st.Reason,
-			&st.HTTPStatus, &st.LogFile, &st.StartedAt, &st.FinishedAt, &st.Error, &spec, &plan, &load, &stats, &expect, &cmp); err != nil {
+			&st.HTTPStatus, &st.LogFile, &st.StartedAt, &st.FinishedAt, &st.Error, &spec, &plan, &load, &stats, &expect, &cmp, &st.ModelFile, &st.NodeCount); err != nil {
 			return nil, err
 		}
 		unmarshalNull(spec, &st.Spec)
@@ -772,11 +859,18 @@ func (s *Store) steps(runID string) ([]Step, error) {
 	}
 	rows.Close()
 	for i := range out {
-		reqs, err := s.requests(out[i].ID)
+		if requests {
+			reqs, err := s.requests(out[i].ID)
+			if err != nil {
+				return nil, err
+			}
+			out[i].Requests = reqs
+		}
+		phases, err := s.phases(out[i].ID)
 		if err != nil {
 			return nil, err
 		}
-		out[i].Requests = reqs
+		out[i].Phases = phases
 	}
 	return out, nil
 }
@@ -793,7 +887,7 @@ func unmarshalNull[T any](s sql.NullString, into **T) {
 
 func (s *Store) requests(stepID int64) ([]RequestResult, error) {
 	rows, err := s.db.Query(`SELECT id, step_id, run_id, seq, name, phase, status, wall_ms, ttft_ms, prompt_n, prompt_ms, prompt_tps, predicted_n, predicted_ms, decode_tps,
-	  cache_n, timings, output_sha256, output_head, deterministic, error, started_at FROM requests WHERE step_id=? ORDER BY seq, id`, stepID)
+	  cache_n, timings, output_sha256, output_head, deterministic, error, started_at, phase_idx, turn, wait_ms FROM requests WHERE step_id=? ORDER BY seq, id`, stepID)
 	if err != nil {
 		return nil, err
 	}
@@ -801,11 +895,16 @@ func (s *Store) requests(stepID int64) ([]RequestResult, error) {
 	var out []RequestResult
 	for rows.Next() {
 		var r RequestResult
-		var ttft sql.NullFloat64
+		var ttft, wait sql.NullFloat64
 		var timings sql.NullString
 		if err := rows.Scan(&r.ID, &r.StepID, &r.RunID, &r.Seq, &r.Name, &r.Phase, &r.Status, &r.WallMS, &ttft, &r.PromptN, &r.PromptMS, &r.PromptTPS,
-			&r.PredictedN, &r.PredictedMS, &r.DecodeTPS, &r.CacheN, &timings, &r.OutputSHA256, &r.OutputHead, &r.Deterministic, &r.Error, &r.StartedAt); err != nil {
+			&r.PredictedN, &r.PredictedMS, &r.DecodeTPS, &r.CacheN, &timings, &r.OutputSHA256, &r.OutputHead, &r.Deterministic, &r.Error, &r.StartedAt,
+			&r.PhaseIdx, &r.Turn, &wait); err != nil {
 			return nil, err
+		}
+		if wait.Valid {
+			v := wait.Float64
+			r.WaitMS = &v
 		}
 		if ttft.Valid {
 			v := ttft.Float64
@@ -819,10 +918,73 @@ func (s *Store) requests(stepID int64) ([]RequestResult, error) {
 	return out, rows.Err()
 }
 
+// ---- phases ----
+
+func phaseBody(p *PhaseResult) (string, error) {
+	b, err := json.Marshal(p)
+	return string(b), err
+}
+
+// AddPhase inserts a phase result of a step and sets its ID.
+func (s *Store) AddPhase(p *PhaseResult) error {
+	body, err := phaseBody(p)
+	if err != nil {
+		return err
+	}
+	return s.write(func(tx *sql.Tx) error {
+		res, err := tx.Exec(`INSERT INTO run_phases (step_id, run_id, idx, type, label, state, outcome, error, started_at, finished_at, result) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+			p.StepID, p.RunID, p.Idx, p.Type, p.Label, p.State, p.Outcome, p.Error, p.StartedAt, p.FinishedAt, body)
+		if err != nil {
+			return err
+		}
+		p.ID, err = res.LastInsertId()
+		return err
+	})
+}
+
+// UpdatePhase rewrites a phase result that has an ID.
+func (s *Store) UpdatePhase(p *PhaseResult) error {
+	body, err := phaseBody(p)
+	if err != nil {
+		return err
+	}
+	return s.write(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE run_phases SET label=?, state=?, outcome=?, error=?, started_at=?, finished_at=?, result=? WHERE id=?`,
+			p.Label, p.State, p.Outcome, p.Error, p.StartedAt, p.FinishedAt, body, p.ID)
+		return err
+	})
+}
+
+func (s *Store) phases(stepID int64) ([]PhaseResult, error) {
+	rows, err := s.db.Query(`SELECT id, step_id, run_id, idx, type, label, state, outcome, error, started_at, finished_at, result FROM run_phases WHERE step_id=? ORDER BY idx, id`, stepID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PhaseResult
+	for rows.Next() {
+		var p PhaseResult
+		var body sql.NullString
+		if err := rows.Scan(&p.ID, &p.StepID, &p.RunID, &p.Idx, &p.Type, &p.Label, &p.State, &p.Outcome, &p.Error, &p.StartedAt, &p.FinishedAt, &body); err != nil {
+			return nil, err
+		}
+		if body.Valid {
+			var full PhaseResult // the JSON holds the measurements; the columns are authoritative for the rest
+			if json.Unmarshal([]byte(body.String), &full) == nil {
+				full.ID, full.StepID, full.RunID, full.Idx, full.Type, full.Label = p.ID, p.StepID, p.RunID, p.Idx, p.Type, p.Label
+				full.State, full.Outcome, full.Error, full.StartedAt, full.FinishedAt = p.State, p.Outcome, p.Error, p.StartedAt, p.FinishedAt
+				p = full
+			}
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // ---- trends ----
 
 // TrendMetrics are the metrics /api/bench/trends accepts.
-var TrendMetrics = []string{"load_s", "decode_tps", "prefill_tps"}
+var TrendMetrics = []string{"load_s", "load_mb_s", "memory_mib", "decode_tps", "prefill_tps", "ttft_ms", "unload_s", "concurrent_wall_s"}
 
 // Trend returns up to limit points of a metric for a benchmark over past
 // runs, oldest first (the newest limit points).
@@ -835,6 +997,16 @@ func (s *Store) Trend(benchmark, metric string, limit int) ([]TrendPoint, error)
 		expr = `json_extract(s.stats,'$.decode_tps.mean')`
 	case "prefill_tps":
 		expr = `json_extract(s.stats,'$.prefill_tps.mean')`
+	case "ttft_ms":
+		expr = `json_extract(s.stats,'$.ttft_ms.mean')`
+	case "load_mb_s":
+		expr = `json_extract(s.load,'$.avg_mb_s')`
+	case "memory_mib":
+		expr = `json_extract(s.load,'$.memory_mib')`
+	case "unload_s": // from the phase results
+		expr = `(SELECT json_extract(p.result,'$.unload.unload_s') FROM run_phases p WHERE p.step_id=s.id AND p.type='unload' AND p.state='done' ORDER BY p.idx LIMIT 1)`
+	case "concurrent_wall_s":
+		expr = `(SELECT json_extract(p.result,'$.concurrent.wall_ms')/1000.0 FROM run_phases p WHERE p.step_id=s.id AND p.type='concurrent_requests' AND p.state='done' ORDER BY p.idx LIMIT 1)`
 	default:
 		return nil, fmt.Errorf("metric must be one of %s", strings.Join(TrendMetrics, ", "))
 	}

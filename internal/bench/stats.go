@@ -37,16 +37,35 @@ func Summarize(xs []float64) *Summary {
 	return &Summary{N: len(s), Mean: mean, Median: med, Min: s[0], Max: s[len(s)-1], Stdev: sd}
 }
 
+// statsKinds is the order in which the kinds of request rows speak for a step:
+// the measured requests first, and, for a benchmark that has none, the
+// conversation turns, then the request after a hold, then the simultaneous ones.
+var statsKinds = []string{PhaseMeasured, PhaseConversation, PhaseHold, PhaseConcurrent}
+
 // ComputeStats works out the statistics of one step from its measured
-// requests. Warmup requests are never included.
+// requests (or, when it has none, the first other kind that it has). Warmup
+// requests are never included.
 func ComputeStats(reqs []RequestResult) *Stats {
+	for _, kind := range statsKinds {
+		var rows []RequestResult
+		for _, r := range reqs {
+			if r.Phase == kind {
+				rows = append(rows, r)
+			}
+		}
+		if len(rows) > 0 {
+			return statsOf(rows)
+		}
+	}
+	return &Stats{}
+}
+
+// statsOf works out the statistics of the given request rows, whatever their phase.
+func statsOf(reqs []RequestResult) *Stats {
 	st := &Stats{}
 	var decode, prefill, ttft, wall []float64
 	hashes := map[string]map[string]bool{}
 	for _, r := range reqs {
-		if r.Phase != PhaseMeasured {
-			continue
-		}
 		st.Requests++
 		if r.Status != 200 {
 			st.Failed++
@@ -113,6 +132,7 @@ func Evaluate(spec *benchspec.Benchmark, st *Step) *ExpectResult {
 	if e == nil || want != benchspec.OutcomeReady {
 		return res
 	}
+	evaluateMetrics(spec, st, e, add)
 	if e.MaxLoadS != nil {
 		switch {
 		case st.Load == nil:
@@ -135,8 +155,11 @@ func Evaluate(spec *benchspec.Benchmark, st *Step) *ExpectResult {
 	}
 	if e.OutputSHA256 != "" {
 		first := ""
-		if len(spec.Requests) > 0 && st.Stats != nil {
-			first = st.Stats.OutputHashes[spec.Requests[0].Name]
+		for _, p := range spec.Expand() {
+			if p.Type == benchspec.PhaseRequests && len(p.Requests) > 0 && st.Stats != nil {
+				first = st.Stats.OutputHashes[p.Requests[0].Name]
+				break
+			}
 		}
 		switch {
 		case first == "":
@@ -233,4 +256,93 @@ func Compare(cur, base *Step, baselineRunID string, th Thresholds) *Comparison {
 		}
 	}
 	return c
+}
+
+// evaluateMetrics checks the expect keys that look at phases other than the
+// first request series: time to first token, prefill speed, unload time,
+// simultaneous requests and the prompt reuse of a conversation.
+func evaluateMetrics(spec *benchspec.Benchmark, st *Step, e *benchspec.Expect, add func(string, bool, string)) {
+	if e.MinPrefillTPS != nil {
+		switch {
+		case st.Stats == nil || st.Stats.Prefill == nil:
+			add("min_prefill_tps", false, "no prefill speed was measured")
+		default:
+			add("min_prefill_tps", st.Stats.Prefill.Mean >= *e.MinPrefillTPS, fmt.Sprintf("prefill %.1f tok/s, minimum %.1f", st.Stats.Prefill.Mean, *e.MinPrefillTPS))
+		}
+	}
+	if e.MaxTTFTMS != nil {
+		switch {
+		case st.Stats == nil || st.Stats.TTFT == nil:
+			add("max_ttft_ms", false, "no time to first token was measured")
+		default:
+			add("max_ttft_ms", st.Stats.TTFT.Mean <= *e.MaxTTFTMS, fmt.Sprintf("first token after %.0f ms, limit %.0f ms", st.Stats.TTFT.Mean, *e.MaxTTFTMS))
+		}
+	}
+	if e.MaxUnloadS != nil {
+		worst, seen := 0.0, false
+		for _, p := range st.Phases {
+			if p.Type == benchspec.PhaseUnload && p.Unload != nil && p.Unload.Loaded {
+				seen = true
+				if p.Unload.UnloadS > worst {
+					worst = p.Unload.UnloadS
+				}
+			}
+		}
+		switch {
+		case !seen:
+			add("max_unload_s", false, "no unload was measured")
+		default:
+			add("max_unload_s", worst <= *e.MaxUnloadS, fmt.Sprintf("the instance was gone after %.1f s, limit %.1f s", worst, *e.MaxUnloadS))
+		}
+	}
+	if e.MaxConcurrentWall != nil || e.MaxErrors != nil {
+		var wall float64
+		errs, seen := 0, false
+		for _, p := range st.Phases {
+			if p.Type == benchspec.PhaseConcurrent && p.Concurrent != nil {
+				seen = true
+				if p.Concurrent.WallMS/1000 > wall {
+					wall = p.Concurrent.WallMS / 1000
+				}
+				errs += p.Concurrent.Errors
+			}
+		}
+		if e.MaxConcurrentWall != nil {
+			if !seen {
+				add("max_concurrent_wall_s", false, "the simultaneous requests did not run")
+			} else {
+				add("max_concurrent_wall_s", wall <= *e.MaxConcurrentWall, fmt.Sprintf("all requests were done after %.1f s, limit %.1f s", wall, *e.MaxConcurrentWall))
+			}
+		}
+		if e.MaxErrors != nil {
+			if !seen {
+				add("max_errors", false, "the simultaneous requests did not run")
+			} else {
+				add("max_errors", errs <= *e.MaxErrors, fmt.Sprintf("%d requests failed, at most %d allowed", errs, *e.MaxErrors))
+			}
+		}
+	}
+	if e.MinReusedTokens != nil {
+		least, turns := -1, 0
+		for _, p := range st.Phases {
+			if p.Type != benchspec.PhaseConversation {
+				continue
+			}
+			for _, t := range p.Turns {
+				if t.Turn < 2 {
+					continue
+				}
+				turns++
+				if least < 0 || t.CacheN < least {
+					least = t.CacheN
+				}
+			}
+		}
+		switch {
+		case turns == 0:
+			add("min_reused_tokens", false, "no conversation turn after the first was measured")
+		default:
+			add("min_reused_tokens", least >= *e.MinReusedTokens, fmt.Sprintf("the least a later turn reused was %d prompt tokens, minimum %d", least, *e.MinReusedTokens))
+		}
+	}
 }

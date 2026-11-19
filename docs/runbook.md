@@ -579,15 +579,74 @@ curl -s -X POST $B/api/bench/benchmarks -H 'Content-Type: application/json' -d '
 curl -s -X POST $B/api/bench/suites -H 'Content-Type: application/json' -d '{
   "id": "gemma-scaling", "benchmarks": ["gemma12b-1ps5-cold"], "cooldown_s": 10}'
 ```
+   That is the simple form. For anything else write `phases` (below).
+   `curl -s $B/api/bench/schema | jq` lists the phase types, every option with
+   its default, limit and unit, the `expect` keys and five templates ("Load
+   only", "Load and requests", "Load and conversation", "Requests on a loaded
+   model", "Simultaneous requests") to start from.
+
+   *A load-only benchmark* (no chat request is sent; it measures the load and
+   nothing else):
+```sh
+curl -s -X POST $B/api/bench/benchmarks -H 'Content-Type: application/json' -d '{
+  "id": "gemma12b-load-1ps5", "name": "Gemma 12B load, 1 PS5",
+  "description": "Cold load, then unload. Load time, upload rate, bytes and memory.",
+  "profile": "bench-gemma12b-1a-2048",
+  "phases": [{"type": "load"}, {"type": "unload"}],
+  "expect": {"max_load_s": 120}}'
+```
+   *A conversation benchmark* (load, a multi-turn exchange, unload; each turn
+   carries the earlier turns and replies; the result has prefill, decode, time
+   to first token and reused prompt tokens per turn):
+```sh
+curl -s -X POST $B/api/bench/benchmarks -H 'Content-Type: application/json' -d '{
+  "id": "gemma12b-conversation", "name": "Gemma 12B conversation",
+  "description": "Cold load, then 3 turns with prompt caching.",
+  "profile": "bench-gemma12b-1a-2048", "timeout_s": 900,
+  "phases": [{"type": "load"},
+    {"type": "conversation", "max_tokens": 96, "stream": true, "turns": [
+      {"content": "Explain what a load balancer does."},
+      {"content": "Give one example of a balancing rule."},
+      {"content": "Now say both answers in one sentence."}]},
+    {"type": "unload"}],
+  "expect": {"min_reused_tokens": 20}}'
+```
+   The other phase types are `warmup` (requests left out of the statistics),
+   `requests` (the measured ones), `hold` (stay loaded and idle for `seconds`,
+   then one request) and `concurrent_requests` (`n` requests at the same
+   moment). `phases` replaces `cold`, `requests`, `repeats`, `warmup_requests`
+   and `unload_after`; the simple form keeps working (it is expanded to
+   `load`, `warmup`, `requests`, `unload`). Hold seconds must fit in
+   `timeout_s`.
    Unknown profiles, bad ids and unknown fields are rejected (`400` or `422`
    with the reason). A benchmark that is *supposed* to be refused (a model that
    does not fit) has `"expect": {"outcome": "refused"}`; it passes when the
    scheduler refuses.
 3. **Run.** `curl -s -X POST $B/api/bench/suites/gemma-scaling/run -d '{"note":"after the PS5 firmware update"}'`
-   returns the run (`queued`). Runs go one at a time; others queue. Watch with
-   `curl -s $B/api/bench/state`, or on `/ws` (`bench` messages). Cancel with
-   `POST /api/bench/runs/<id>/cancel`: it stops after the current request and
-   unloads what the run loaded.
+   returns the run (`queued`). Runs go one at a time; others queue. Cancel with
+   `POST /api/bench/runs/<id>/cancel`: it stops after the current request (a
+   load or a hold is abandoned at once) and unloads what the run loaded.
+
+   *Progress.* While a run is active:
+```sh
+curl -s $B/api/bench/state | jq .run
+# { "id": "run-...", "state": "running", "percent": 41.2, "elapsed_s": 130.5, "eta_s": 180.0,
+#   "steps_total": 3, "steps_done": 1,
+#   "current": { "index": 1, "benchmark_id": "gemma12b-load-1ps5", "name": "Gemma 12B load, 1 PS5",
+#                "description": "...", "profile": "bench-gemma12b-1a-2048", "model_file": "...gguf",
+#                "nodes": ["ps5-a"], "percent": 62.0,
+#                "phase": { "index": 0, "type": "load", "label": "load", "phases_total": 2 },
+#                "detail": { "text": "Loading ...: 4.1 of 6.7 GB sent", "load": { ...the scheduler load object... } } },
+#   "next": { "benchmark_id": "...", "name": "...", "description": "...", "profile": "..." },
+#   "queue": ["..."] }
+```
+   `run.percent` is the whole run, weighted by how long each benchmark took in
+   earlier runs (equal weights for a benchmark never run); `current.percent` is
+   this benchmark, and for a load-only benchmark it is essentially the model's
+   load percent. `eta_s` is `null` until the benchmarks have run once. The same
+   object arrives on `/ws` as `bench` messages with `kind: "progress"`, at most
+   twice a second and on every phase change (`websocat ws://localhost:3122/ws`).
+   Indexes start at 0.
 4. **`only_when_idle` (default true).** Benchmarks load and unload models on the
    real cluster, so a run does not start, and pauses between benchmarks, while
    the scheduler has a model this run did not load, a request in flight that is
@@ -600,20 +659,45 @@ curl -s -X POST $B/api/bench/suites -H 'Content-Type: application/json' -d '{
 5. **Read.** `GET /api/bench/runs?suite=gemma-scaling` lists runs;
    `GET /api/bench/runs/<id>` has every step, its load numbers (load seconds,
    bytes, MB/s, per node bytes and memory, the child's log file), every request
-   (phase `load`, `warmup` or `measured`, timings, output hash) and the
-   statistics. The warmup request and the load request are never in the
-   statistics. A step that was refused or failed is a result with the
-   scheduler's reason, not an error. Each load is also in the event history
-   with `data.bench_run`: `GET /api/history?session_id=<session>`.
+   (phase `warmup`, `measured`, `conversation`, `hold` or `concurrent`,
+   timings, output hash), the result of every phase (`steps[].phases[]`: load
+   numbers, conversation turns, simultaneous requests, unload time) and the
+   statistics. Warmup requests are never in the statistics. A step that was
+   refused or failed is a result with the scheduler's reason, not an error.
+   A load phase sends no chat request, so its history records are found by the
+   load session: `GET /api/history?session_id=<steps[].load.session_id>`. The
+   run also records its environment (`env`: scheduler version, configuration
+   revision when the status has one, llama binary, each PS5's rpc-server
+   version).
 6. **Compare.** Each run is compared with the previous completed run of the
    same suite (or the `baseline` you named when you ran it). `regression: true`
    means the load was more than 15% slower (`bench.regress_load_pct`), decode
    more than 7% slower (`bench.regress_decode_pct`), or the output of a
    temperature-0 request changed.
 7. **Export.** `GET /api/bench/runs/<id>/export?format=md` is a table to paste
-   into a document; `format=csv` one row per step; `format=json` everything.
+   into a document (plus a table of phases and of conversation turns);
+   `format=csv` one row per step (`&detail=phases` one row per phase,
+   `&detail=turns` one per conversation turn); `format=json` everything.
    `GET /api/bench/trends?benchmark=gemma12b-1ps5-cold&metric=load_s` gives the
-   points over past runs for a chart.
+   points over past runs for a chart (`metric` is `load_s`, `load_mb_s`,
+   `memory_mib`, `decode_tps`, `prefill_tps`, `ttft_ms`, `unload_s` or
+   `concurrent_wall_s`).
+   **Aggregates (the history added up):**
+```sh
+curl -s "$B/api/bench/aggregates?suite=gemma-scaling&since=30d" | jq '.benchmarks[] | {benchmark_id, runs, pass_rate, load_s: .metrics.load_s | {median, last, best, change_pct, regression}}'
+curl -s "$B/api/bench/aggregates?benchmark=gemma12b-load-1ps5&env=same" | jq .by_model_nodes   # the same model on 1, 2, 3 workers
+```
+   Filters: `suite`, `benchmark`, `profile`, `since`, `until` (unix ms, an RFC
+   3339 time, or `24h`, `7d`), `limit_runs` (newest N, default 200) and
+   `env=same` (only runs made in the same environment as the newest one). Per
+   benchmark: runs, pass rate, outcome counts, and for `load_s`, `load_mb_s`,
+   `decode_tps`, `prefill_tps`, `ttft_ms`, `memory_mib` the count, min, median,
+   mean, max, standard deviation, last, best, percent change of the last run
+   against the median of the earlier ones, a regression flag and the last 30
+   points; per turn for conversations; per suite the state counts, pass rate,
+   mean duration and last run; and the groupings `by_model` and
+   `by_model_nodes`. A `bench` message `kind: "aggregate_updated"` arrives on
+   `/ws` when a run ends.
 8. **Schedule.** `"schedule": {"at": "03:00"}` (local time of the container,
    normally UTC) or `{"every": "24h"}` in a suite queues it by itself.
 9. **Back up the database.** All results are in `/opt/llm-scheduler/data/scheduler.db`

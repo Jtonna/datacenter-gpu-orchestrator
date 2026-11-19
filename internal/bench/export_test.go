@@ -76,3 +76,61 @@ func TestCSVExport(t *testing.T) {
 		t.Errorf("%v", recs[2])
 	}
 }
+
+func phasedRun() *Run {
+	r := exportRun()
+	ttft := 31.5
+	held := 30.0
+	still := true
+	r.Steps = r.Steps[:1]
+	r.Steps[0].ModelFile, r.Steps[0].NodeCount = "gemma.gguf", 2
+	r.Steps[0].Phases = []PhaseResult{
+		{Idx: 0, Type: "load", Label: "cold load", State: PhaseDone, Outcome: PhaseOK, DurationS: 66.2, Load: &LoadResult{LoadS: 66.1, AvgMBs: 101.4, Bytes: 6700000000, MemoryMiB: 7900}},
+		{Idx: 1, Type: "conversation", State: PhaseDone, Outcome: PhaseOK, DurationS: 9, Stats: &Stats{Requests: 2, Decode: &Summary{N: 2, Mean: 20}},
+			Turns: []TurnResult{{Turn: 1, Name: "turn-1", Status: 200, PromptTokens: 30, PromptN: 30, DecodeTPS: 20, PrefillTPS: 100, TTFTMS: &ttft, WallMS: 500},
+				{Turn: 2, Name: "turn-2", Status: 200, PromptTokens: 90, PromptN: 20, CacheN: 70, DecodeTPS: 19, PrefillTPS: 120, WallMS: 450}}},
+		{Idx: 2, Type: "hold", State: PhaseDone, Outcome: PhaseOK, DurationS: 31, HeldS: &held, LoadedAfterHold: &still},
+		{Idx: 3, Type: "concurrent_requests", State: PhaseDone, Outcome: PhaseOK, DurationS: 4, Concurrent: &ConcurrentResult{N: 3, WallMS: 4200, Errors: 1}},
+		{Idx: 4, Type: "unload", State: PhaseDone, Outcome: PhaseOK, DurationS: 2, Unload: &UnloadResult{Loaded: true, Gone: true, UnloadS: 1.84}},
+	}
+	return r
+}
+
+func TestExportsAreAwareOfPhases(t *testing.T) {
+	r := phasedRun()
+	md := ExportMarkdown(r)
+	t.Log("\n" + md)
+	for _, want := range []string{
+		"## Gemma cold phases", "| 1 | cold load (load) | done | 66.2 | load 66.1 s, 101.4 MB/s, 6.70 GB, 7900 MiB |",
+		"Conversation (phase 2):", "| 2 | 90 | 70 | 120.0 | 19.00 | - | 450.0 |", "idle 30.0 s", "3 together, 4.2 s, 1 errors", "gone after 1.84 s",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("markdown lacks %q", want)
+		}
+	}
+	out, err := ExportCSV(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recs, _ := csv.NewReader(strings.NewReader(out)).ReadAll()
+	last := recs[1][len(recs[1])-3:]
+	if recs[0][len(recs[0])-1] != "phases" || last[0] != "gemma.gguf" || last[1] != "2" || last[2] != "load:done;conversation:done;hold:done;concurrent_requests:done;unload:done" {
+		t.Fatalf("%v", recs[1])
+	}
+	pcsv, err := ExportCSVPhases(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recs, err = csv.NewReader(strings.NewReader(pcsv)).ReadAll()
+	if err != nil || len(recs) != 6 || recs[1][5] != "load" || recs[1][10] != "66.1" || recs[5][19] != "1.84" || recs[4][22] != "1" {
+		t.Fatalf("%v %v", recs, err)
+	}
+	tcsv, err := ExportCSVTurns(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recs, _ = csv.NewReader(strings.NewReader(tcsv)).ReadAll()
+	if len(recs) != 3 || recs[2][8] != "70" || recs[1][11] != "31.5" || recs[2][11] != "" {
+		t.Fatalf("%v", recs)
+	}
+}
