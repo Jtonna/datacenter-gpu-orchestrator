@@ -42,7 +42,7 @@ function trendCard(agg, redraw) {
   else {
     const m = b && b.metrics && b.metrics[aggState.metric];
     const pts = aggState.trend.points.map((p, i, arr) => ({ x: p.started_at, y: p.value, title: p.run_id, flag: !!(m && m.regression && i === arr.length - 1) }));
-    chart = h('div.cb', lineChart({ series: [{ name: def.label, color: 'mint', points: pts }], time: true, height: 240, unit: def.unit, width: 760, label: `${def.label} of ${aggState.benchmark} over time, in ${def.unit}` }));
+    chart = h('div.cb', lineChart({ series: [{ name: def.label, color: 'mint', points: pts }], time: true, height: 240, unit: def.unit, width: 1080, label: `${def.label} of ${aggState.benchmark} over time, in ${def.unit}` }));
   }
   return h('section.card', { key: 'trend' },
     h('div.ch', h('h2', 'Trend'), h('span.note', `One benchmark, one figure, over its runs. The axis is in ${def.unit}.`),

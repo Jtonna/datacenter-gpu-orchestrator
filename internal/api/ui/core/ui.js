@@ -257,6 +257,13 @@ export const humanize = key => {
 };
 const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
+// fieldLabel(field) -> its label; a unit that the control already shows is not repeated ("Min share", not "Min share MiB").
+export function fieldLabel(f) {
+  if (f.label) return f.label;
+  const l = humanize(f.key);
+  return f.unit && l.toLowerCase().endsWith(' ' + String(f.unit).toLowerCase()) ? l.slice(0, -String(f.unit).length - 1) : l;
+}
+
 // tagInput(values, onChange, placeholder) -> a list-of-strings editor.
 export function tagInput(values, onChange, placeholder) {
   let vals = (values || []).map(String);
@@ -363,7 +370,7 @@ export function schemaForm(o) {
     const range = f.min != null && f.max != null ? `${f.min} to ${f.max}` : f.min != null ? `at least ${f.min}` : f.max != null ? `at most ${f.max}` : '';
     const help = [f.description, range ? `Allowed: ${range}.` : ''].filter(Boolean).join(' ');
     return h('div', { class: 'field' + (f.type === 'text' || f.wide || !['bool', 'enum', 'int', 'float', 'duration', 'string', 'list', 'text'].includes(f.type) ? ' wide' : '') },
-      h(f.type === 'bool' || f.type === 'list' ? 'div.lab' : 'label', { for: f.type === 'bool' || f.type === 'list' ? null : id }, f.label || humanize(f.key), m),
+      h(f.type === 'bool' || f.type === 'list' ? 'div.lab' : 'label', { for: f.type === 'bool' || f.type === 'list' ? null : id }, fieldLabel(f), m),
       c, help ? h('span.help', help) : null, e);
   }
   function check(f, v) {
