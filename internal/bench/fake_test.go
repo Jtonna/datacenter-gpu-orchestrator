@@ -21,6 +21,7 @@ type fakeProf struct {
 	chatDelay time.Duration
 	nodes     []string
 	modelFile string
+	chatCode  int // a status other than 200 for every chat request (after the load)
 }
 
 type fakeInst struct {
@@ -292,6 +293,10 @@ func (f *fakeAPI) Chat(ctx context.Context, runID string, req ChatRequest, onPro
 		}
 	}
 	f.mu.Lock()
+	if p.chatCode != 0 {
+		f.mu.Unlock()
+		return &ChatResponse{Status: p.chatCode, ErrMessage: "scripted failure"}, nil
+	}
 	in.inflight++
 	decode := p.decode
 	if f.slowOnce[body.Model] { // the first request after a load is slow on this hardware

@@ -960,7 +960,9 @@ func (s *Store) phases(stepID int64) ([]PhaseResult, error) {
 		if body.Valid {
 			var full PhaseResult // the JSON holds the measurements; the columns are authoritative for the rest
 			if json.Unmarshal([]byte(body.String), &full) == nil {
-				p.Load, p.Stats, p.Turns, p.Concurrent, p.HeldS, p.Unload, p.DurationS = full.Load, full.Stats, full.Turns, full.Concurrent, full.HeldS, full.Unload, full.DurationS
+				full.ID, full.StepID, full.RunID, full.Idx, full.Type, full.Label = p.ID, p.StepID, p.RunID, p.Idx, p.Type, p.Label
+				full.State, full.Outcome, full.Error, full.StartedAt, full.FinishedAt = p.State, p.Outcome, p.Error, p.StartedAt, p.FinishedAt
+				p = full
 			}
 		}
 		out = append(out, p)
