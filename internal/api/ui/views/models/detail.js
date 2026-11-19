@@ -211,7 +211,7 @@ export function mountDetail(el, key) {
           m.size_bytes ? stat('File size', bytes(m.size_bytes).replace(/ [A-Za-z]+$/, ''), bytes(m.size_bytes).split(' ')[1]) : null,
           m.context_length ? stat('Trained context', ctx(m.context_length), 'tokens') : null,
           stat('Configurations', num(m.profile_count || 0), m.generated_count ? `${num(hand)} by hand` : null),
-          stat('Start now', num(m.startable_count || 0), `of ${num(m.profile_count || 0)}`, { title: 'How many of its configurations a request could start right now' })),
+          stat('Could start now', num(m.startable_count || 0), `of ${num(m.profile_count || 0)}`, { title: 'How many of its configurations a request could start right now' })),
         m.file ? h('div.cs', h('dl.kv',
           h('dt', 'File'), h('dd', h('code.cmd', { style: 'font-size:13px;color:var(--text)' }, m.file)),
           m.publisher ? [h('dt', 'Published by'), h('dd', m.publisher)] : null,

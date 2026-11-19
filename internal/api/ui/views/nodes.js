@@ -44,8 +44,9 @@ function tile(st, n) {
   const freeRaw = Math.max(0, n.free_mib || 0);
   const free = Math.min(freeRaw, total);
   const disagree = total > 0 && freeRaw > total;
-  const used = Math.max(0, total - free);
-  const model = mem ? Math.min(used, mem.total_mib) : 0;
+  // what the model placed here is known to hold counts as used even when the free figure says otherwise
+  const model = mem ? Math.min(total, mem.total_mib) : 0;
+  const used = Math.max(0, total - free, model);
   const other = Math.max(0, used - model);
   const usable = Math.min(Math.max(0, n.live_budget_mib || 0), free);
   const headroom = Math.max(0, free - usable);
@@ -84,7 +85,7 @@ function tile(st, n) {
   const overridden = toMs(n.override_until) && toMs(n.override_until) > now();
   if (disagree) {
     note('', [overridden ? 'The last pre-load check measured ' : 'The fleet reports ', h('b', gb(freeRaw)), ' free, more than the ', gb(total),
-      ' it reports in total. Free is shown as the total and in use as 0', overridden ? ['; the measured figure is used ', until(n.override_until)] : '', '.']);
+      ' it reports in total, so free is shown as the total', overridden ? ['; the measured figure is used ', until(n.override_until)] : '', '.']);
   } else if (overridden) {
     note('', ['The last pre-load check measured ', h('b', gb(n.override_free_mib)), ' free; that figure is used ', until(n.override_until), '.']);
   }
