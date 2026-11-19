@@ -15,6 +15,7 @@ import './views/profiles.js';
 import './views/tiers.js';
 import './views/settings.js';
 import './views/audit.js';
+import './views/mcp.js';
 import './views/about.js';
 
 startShell(document.getElementById('app'));

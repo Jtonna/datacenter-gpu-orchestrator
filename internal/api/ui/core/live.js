@@ -5,7 +5,7 @@
 import { state, set, emit, publish } from './store.js';
 import { setServerTime } from './format.js';
 
-const TOPICS = ['status', 'event', 'bench', 'config'];
+const TOPICS = ['status', 'event', 'bench', 'config', 'models'];
 const SILENCE_MS = 40000;
 const MAX_EVENTS = 300;
 

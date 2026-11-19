@@ -50,13 +50,19 @@ export function sourceBadge(source) {
 export const SECTION_NAMES = {
   profiles: 'Profiles', tiers: 'Tiers', settings: 'Settings', exclude_nodes: 'Excluded nodes', node_overrides: 'Node overrides',
   recovery: 'Recovery', fleet: 'Fleet', bench: 'Benchmarks', benchmarks: 'Benchmarks', suites: 'Suites', runtime: 'Runtime', config: 'Configuration',
+  agents: 'Agents', models: 'Models',
 };
 export const sectionName = s => SECTION_NAMES[s] || s || 'Unknown';
 
 export const ACTION_NAMES = {
   create: 'Created', update: 'Changed', delete: 'Deleted', import: 'Imported', rollback: 'Rolled back', load: 'Loaded', unload: 'Unloaded',
   run: 'Started a run', cancel: 'Cancelled a run', run_start: 'Started a run of', run_cancel: 'Cancelled a run of',
+  rotate: 'Replaced the key of', revoke: 'Revoked',
 };
+
+// agentName('agent:claude-code') -> 'claude-code' when the actor of an entry
+// is an agent (it presented its key), else ''.
+export const agentName = actor => (typeof actor === 'string' && actor.startsWith('agent:') ? actor.slice(6) : '');
 export const actionName = a => ACTION_NAMES[a] || (a ? a.charAt(0).toUpperCase() + a.slice(1) : 'Changed');
 
 // A one-line plain sentence for an audit entry.
@@ -72,6 +78,13 @@ export function entrySentence(e) {
     if (kind === 'run') return `${e.action === 'cancel' ? 'Cancelled' : e.action === 'create' || e.action === 'run' ? 'Started' : actionName(e.action)} benchmark run ${id}`;
     return `${actionName(e.action)} ${kind} ${id}`;
   }
+  if (sec === 'agents') {
+    const name = (e.after && e.after.name) || (e.before && e.before.name) || t;
+    if (e.action === 'update' && e.before && e.after && e.before.name !== e.after.name) return `Renamed agent ${e.before.name} to ${e.after.name}`;
+    if (e.action === 'update') return `Changed the description of agent ${name}`;
+    return `${actionName(e.action)} agent ${name}`;
+  }
+  if (sec === 'models') return e.action === 'delete' ? `Removed the ${t}` : `Set the ${t}`;
   if (sec === 'profiles') return `${actionName(e.action)} profile ${t}`;
   if (sec === 'tiers') return `${actionName(e.action)} the tier list`;
   if (sec === 'exclude_nodes') return `${actionName(e.action)} the excluded nodes`;

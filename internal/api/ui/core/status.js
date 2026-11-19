@@ -63,18 +63,11 @@ export function drift() {
   return Math.min(5, Math.max(0, (Date.now() - state.statusAt) / 1000));
 }
 
-// staleBanner() -> a banner when the page shows old or degraded data, else null.
-export function staleBanner() {
-  const st = state.status;
-  if (state.conn === 'reconnecting') {
-    return h('div.banner.warn', { role: 'status' }, 'The connection to the scheduler was lost. What you see is the last known state; it updates again once the connection is back.');
-  }
-  if (st && st.shutting_down) return h('div.banner.warn', { role: 'status' }, 'The scheduler is shutting down. It finishes the requests in flight and takes no new ones.');
-  if (st && st.view && st.view.stale) {
-    return h('div.banner.warn', { role: 'status' }, 'The fleet feed is stale. Remote nodes are not used for new loads until it recovers; models that are already loaded keep serving.');
-  }
-  return null;
-}
+// staleBanner() used to draw the warning for a lost connection or a stale
+// fleet feed inside each Monitor screen. The shell now shows it once, above
+// every screen (core/shell.js, connection()), so this returns nothing; the
+// calls stay where the warning used to sit.
+export function staleBanner() { return null; }
 
 // The reason strings in plain words live in reasons.js (no DOM, testable).
 export { plainReason, shortReason, explain, plainBasis, refusalWord } from './reasons.js';

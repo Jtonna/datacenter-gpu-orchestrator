@@ -11,7 +11,7 @@ import { state, on } from '../core/store.js';
 import * as api from '../core/api.js';
 import { liveView, pageHead, badge, stat, empty, skeleton, button, toast, humanize } from '../core/ui.js';
 import { num, bytes, dur, ago, at, plural, now, DASH } from '../core/format.js';
-import { connection } from '../core/shell.js';
+import { connectionFacts } from '../core/shell.js';
 
 const origin = () => location.origin + api.url('');
 const wsOrigin = () => origin().replace(/^http/, 'ws');
@@ -63,7 +63,7 @@ registerView({
     const view = liveView(el, () => {
       const hello = state.hello || {};
       const st = state.status;
-      const conn = connection();
+      const conn = connectionFacts();
       const started = (sys && sys.started_at) || hello.started_at;
       const version = (sys && sys.version) || hello.version;
       const storage = (sys && sys.storage) || {};

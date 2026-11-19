@@ -1,5 +1,8 @@
 // The app shell: the navigation pane (a drawer under a top bar on a phone),
-// the connection indicator and the name that signs changes.
+// the connection warning and the name that signs changes. There is no "Live"
+// indicator: a healthy connection shows nothing. When the live channel is
+// down or the fleet feed is stale, a slim bar says so above the screen, and
+// goes away by itself.
 
 import { h, morph, icon } from './dom.js';
 import { state, on } from './store.js';
@@ -27,6 +30,7 @@ export const NAV = [
     { id: 'audit', label: 'Audit', icon: 'M6 3h8v14H6zM9 7h2M9 10h2M9 13h2M3 6v8M17 6v8' },
   ] },
   { group: 'System', items: [
+    { id: 'mcp', label: 'MCP', icon: [{ tag: 'circle', cx: 5, cy: 10, r: 2.2 }, { tag: 'circle', cx: 15, cy: 5, r: 2.2 }, { tag: 'circle', cx: 15, cy: 15, r: 2.2 }, 'M7 9l6-3M7 11l6 3'] },
     { id: 'about', label: 'About', icon: [{ tag: 'circle', cx: 10, cy: 10, r: 7 }, 'M10 9v5M10 6v.5'] },
   ] },
 ];
@@ -45,8 +49,9 @@ function counts() {
   return { models: inst.length || null, queue: waiting || null, nodesBad: bad || null };
 }
 
-// connection() -> {dot, title, note} for the indicator.
-export function connection() {
+// connectionFacts() -> {dot, title, note}: the state of the connection in
+// words, healthy or not (the About screen lists it among its facts).
+export function connectionFacts() {
   const st = state.status, view = st && st.view;
   if (state.conn === 'connecting') return { dot: 'off pulse', title: 'Connecting…', note: 'Waiting for the scheduler' };
   if (state.conn === 'reconnecting') {
@@ -58,6 +63,29 @@ export function connection() {
   if (view.stale) return { dot: 'warn', title: 'Live', note: 'Fleet feed stale' + (age != null ? ' · ' + dur(Math.round(age)) + ' old' : ''), warn: true };
   if (!view.connected) return { dot: 'warn', title: 'Live', note: 'Fleet feed disconnected', warn: true };
   return { dot: '', title: 'Live', note: 'Fleet feed fresh' + (age != null ? ' · updated ' + durShort(age) + ' ago' : '') };
+}
+
+// How long the first connection may take before the page says anything.
+const CONNECT_GRACE_MS = 2500;
+
+// connection() -> null when all is well, else {title, note}: what is wrong
+// with the picture on the screen, in the order that matters.
+export function connection() {
+  const st = state.status, view = st && st.view;
+  if (state.conn === 'connecting') {
+    if (Date.now() - state.connSince < CONNECT_GRACE_MS) return null;
+    return { title: 'Connecting to the scheduler…', note: 'Nothing is shown until it answers. Check that it is running and reachable from this device.' };
+  }
+  if (state.conn === 'reconnecting') {
+    const since = state.statusAt ? durShort((Date.now() - state.statusAt) / 1000) + ' ago' : 'never';
+    return { title: 'The connection to the scheduler was lost.', note: `What you see is the last known state (updated ${since}). It updates again once the connection is back.` };
+  }
+  if (st && st.shutting_down) return { title: 'The scheduler is shutting down.', note: 'It finishes the requests in flight and takes no new ones.' };
+  if (!view) return null;
+  const age = view.age >= 0 ? view.age + (Date.now() - state.statusAt) / 1000 : null;
+  if (view.stale) return { title: 'The fleet feed is stale' + (age != null ? ` (${dur(Math.round(age))} old).` : '.'), note: 'Remote nodes are not used for new loads until it recovers; models that are already loaded keep serving.' };
+  if (!view.connected) return { title: 'The fleet feed is disconnected.', note: 'The node figures may be old. The scheduler keeps trying to reconnect.' };
+  return null;
 }
 
 const slots = {};
@@ -88,7 +116,7 @@ function placeSlots() {
   }
 }
 
-let root = null, activeId = 'models';
+let root = null, activeId = 'models', connBar = null;
 
 function navNode() {
   const c = counts();
@@ -117,9 +145,12 @@ function draw() {
   if (!root) return;
   const conn = connection();
   const topbar = root.querySelector('.topbar'), pane = root.querySelector('.pane');
+  if (connBar) {
+    connBar.hidden = !conn;
+    if (conn) morph(connBar, [h('span.dot.pulse'), h('span', h('b', conn.title), ' ', conn.note)]);
+  }
   morph(topbar, [
     h('a.brand', { href: href('models') }, mark(28), h('div', h('b', 'LLM Scheduler'))),
-    h('span.conn-mini', { title: conn.note }, h('span', { class: 'dot ' + conn.dot }), conn.title),
     h('button.btn.icon.menu', { type: 'button', 'aria-label': 'Menu', 'aria-expanded': root.classList.contains('menu-open') ? 'true' : 'false',
       onclick: () => root.classList.toggle('menu-open') }, icon('M3 5h14M3 10h14M3 15h14')),
   ]);
@@ -128,9 +159,6 @@ function draw() {
     navNode(),
     h('div.pane-foot',
       h('div.slotbox', { key: 'slots', 'data-keep': '' }),
-      h('div.conn', { role: 'status', 'aria-live': 'polite' },
-        h('b', h('span', { class: 'dot ' + conn.dot }), conn.title),
-        h('span', { class: conn.warn ? 'warn-t' : null }, conn.note)),
       h('div.actor', h('span', 'Changes are signed as ', h('b.txt2', getActor())),
         h('button', { type: 'button', onclick: changeActor }, 'Change'))),
   ]);
@@ -150,6 +178,12 @@ async function changeActor() {
 
 export function startShell(app) {
   root = app;
+  // the content column: the connection warning, then the router's outlet
+  const main = root.querySelector('.main');
+  connBar = h('div.connbar', { role: 'status', 'aria-live': 'polite', hidden: true });
+  const stage = h('div.stage');
+  main.replaceWith(stage);
+  stage.append(connBar, main);
   strip = h('div.slotbox.topslots', { 'data-keep': '' });
   root.querySelector('.topbar').after(strip);
   narrow.addEventListener('change', placeSlots);

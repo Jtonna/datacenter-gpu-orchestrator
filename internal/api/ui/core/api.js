@@ -80,6 +80,17 @@ export async function send(method, path, body, opts = {}) {
   return parse(resp);
 }
 
+// upload('PUT', '/api/models/<key>/icon', file, {params: {scope: 'family'}})
+// sends a file (or a Blob) as the raw body with its own content type.
+export async function upload(method, path, blob, opts = {}) {
+  const headers = { Accept: 'application/json', 'X-Source': 'ui', 'X-Actor': hdr(getActor()), 'Content-Type': blob.type || 'application/octet-stream' };
+  let resp;
+  try { resp = await fetch(url(path, opts.params), { method, headers, body: blob }); } catch {
+    throw new ApiError(0, 'The scheduler did not answer. Nothing was changed.', null);
+  }
+  return parse(resp);
+}
+
 export const post = (path, body, opts) => send('POST', path, body, opts);
 export const put = (path, body, opts) => send('PUT', path, body, opts);
 export const patch = (path, body, opts) => send('PATCH', path, body, opts);
