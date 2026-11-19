@@ -213,6 +213,7 @@ type ProfileSpec struct {
 	Cmd              string    `yaml:"cmd" json:"cmd,omitempty"`
 	CheckEndpoint    string    `yaml:"check_endpoint" json:"check_endpoint,omitempty"`
 	Aliases          []string  `yaml:"aliases" json:"aliases,omitempty"`
+	Generated        *bool     `yaml:"generated" json:"generated,omitempty"`
 	TTL              *duration `yaml:"ttl" json:"ttl,omitempty"`
 	LoadTimeout      duration  `yaml:"load_timeout" json:"load_timeout,omitempty"`
 	StallTimeout     *duration `yaml:"stall_timeout" json:"stall_timeout,omitempty"`
@@ -224,7 +225,7 @@ func (r *ProfileSpec) toCore(name string) *core.Profile {
 		Name: name, Kind: core.Kind(r.Kind), Model: r.Model, KVQuant: r.KVQuant,
 		NeedsMiB: r.NeedsMiB, AllowTiers: r.AllowTiers, ForceNodes: r.ForceNodes,
 		TensorSplit: r.TensorSplit, ExtraArgs: r.ExtraArgs, Cmd: r.Cmd,
-		CheckEndpoint: r.CheckEndpoint, Aliases: r.Aliases,
+		CheckEndpoint: r.CheckEndpoint, Aliases: r.Aliases, Generated: r.Generated,
 		TTL: r.TTL.ptr(), LoadTimeout: time.Duration(r.LoadTimeout), StallTimeout: r.StallTimeout.ptr(),
 		LoadStallTimeout: r.LoadStallTimeout.ptr(),
 	}

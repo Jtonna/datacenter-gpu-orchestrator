@@ -75,6 +75,7 @@ type Options struct {
 	Audit  AuditStore
 
 	statusSource func(ctx context.Context) (any, error) // tests replace the status the hub sends
+	modelFiles   func() []ModelFile                     // the dev harness replaces the models directory scan
 }
 
 // Server is the http.Handler for the whole API.
@@ -93,6 +94,7 @@ type Server struct {
 	ws       *wsHub
 	activity *activityLog
 	hist     *history.Store
+	files    modelFileCache // metadata of the files in models_dir (models.go)
 
 	auditQ    chan audit.Entry
 	auditQuit chan struct{}
@@ -187,6 +189,8 @@ func (s *Server) routes() *http.ServeMux {
 	s.benchRoutes(m)
 	s.configRoutes(m) // /api/config, /api/audit (config.go)
 	m.HandleFunc("GET /api/profiles", s.handleProfiles)
+	m.HandleFunc("GET /api/models", s.handleModelCatalog)
+	m.HandleFunc("GET /api/models/{key...}", s.handleModelDetail)
 	m.HandleFunc("GET /api/metrics/activity", s.handleActivity)
 	m.HandleFunc("GET /ui/{$}", s.handleUI)
 	m.HandleFunc("GET /ui/", s.handleUIFile)

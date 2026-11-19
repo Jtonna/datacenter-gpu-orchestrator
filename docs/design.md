@@ -548,6 +548,7 @@ Fields for `kind: llama` (the default):
 | `tensor_split` | Only with `force_nodes`; same length. |
 | `extra_args` | Appended last. |
 | `ttl`, `aliases`, `load_timeout`, `stall_timeout`, `load_stall_timeout` | Per-profile overrides. |
+| `generated` | Optional marker: a tool made this profile (9.4). No effect on placement. |
 
 Worker health (8.4a) is configured in `defaults` only:
 
@@ -1512,6 +1513,7 @@ gets its own process group, so nothing is left behind.
 | `GET /api/bench/runs`, `GET /api/bench/runs/{id}`, `POST /api/bench/runs/{id}/cancel`, `GET /api/bench/runs/{id}/export`, `GET /api/bench/trends`, `GET /api/bench/aggregates`, `GET /api/bench/schema`, `GET /api/bench/state`, `GET /api/bench/profiles` | Runs, progress, exports, trends, aggregates, the editor schema, the engine state and the profile ids a benchmark may name (9.3). |
 | `POST /mcp` | The MCP server for AI agents (9.5): the same operations as the REST API, as tools. |
 | `GET /api/profiles`, `GET /api/system` | Every profile with its need and dry-run plan; configuration and storage summary (9.4). Read-only. |
+| `GET /api/models`, `GET /api/models/{key}` | The model catalog: one entry per model file, with its profiles, instances, history and benchmark figures (9.4). Read-only. |
 | `GET /health` | `200` whenever the scheduler is running. |
 | `GET /api/status` | Instances, placements, per-device memory from the last pre-flight, claims, queue, quarantines, backoffs, node view and its age. A starting instance also shows its load progress and its `load` report (7.6a). The top-level `recent_loads` lists the outcomes of load attempts finished in the last 120 s. Each node in `view.nodes` that an instance uses also has `health` (8.4a), and a node that was sent a recovery request or reported an outcome also has `recovery` (8.4b). |
 | `POST /api/plan` `{model}` | Dry run: what would happen if this model were requested now (placement, plan with victims, or the reason for neither). Changes nothing. |
@@ -2010,7 +2012,44 @@ existing keys are unchanged.
 (when set), `needs_mib` with `needs_basis` (`measured, needs_mib`, `estimated,
 +5% margin; ...` or `measured this run`) and `needs_measured`, and `plan`
 (the dry-run of `POST /api/plan`: `action`, `would_start`, `nodes` as hostnames,
-`reason`, `instance`, `warning`). Read-only; it runs one plan per profile.
+`reason`, `instance`, `warning`), and `generated` (below). Read-only; it runs
+one plan per profile.
+
+`GET /api/models` is the model catalog: one entry per model FILE, not per
+profile (a model usually has several profiles, and a benchmark matrix adds
+dozens). It joins the profiles and their plans, the status, the event history
+and the benchmark aggregates with the file's own metadata. Each entry: `key`
+(the file name, or `command:<profile id>` for a profile of kind command),
+`kind`, `file`, `exists`, `size_bytes`, `name`, `publisher`, `family` (the GGUF
+architecture), `parameters` ("12B"), `quant`, `context_length`, `meta_source`
+(`gguf` when the header was read, else `file_name`), `state` (`ready`,
+`loading`, `not_loaded`), `profiles` (each: `id`, `ctx`, `parallel`,
+`placement` `automatic` or `forced`, `force_nodes`, `tensor_split`,
+`needs_mib`, `needs_basis`, `needs_measured`, `aliases`, `generated`, `plan`),
+`profile_count`, `generated_count`, `startable_count`, `instances` (each
+loaded or loading instance of any of its profiles: `profile`, `state`, `nodes`
+as hostnames, `memory_mib`, `since`, `in_flight`, `waiters`,
+`requests_served`, `last_used`, `last_request_tps`, `load_progress`,
+`load_eta_s`, `stale_profile`), `measured` (memory per node count, from the
+loads in the history and this run's learned needs; the lowest figure per node
+count), `fit` (`need_mib`, `basis` `measured`, `configured` or `estimated`,
+`min_nodes`: on how few nodes of the EMPTY cluster the need fits by their
+plan budgets, 0 when it is more than the whole cluster; it is a guide, the
+placer's own rules decide a real placement), `loads` (`count`, `ready`,
+`failed`, `cancelled`, `unloads`, `refusals`, `last`, `by_nodes` with
+`median_s`, `avg_mb_s`), `last_loaded`, `last_active`, `requests_served`,
+`last_refusal` (the newer of the status's and the history's) and `bench`
+(`benchmarks`, `runs`, `by_nodes` with the medians of the benchmark
+aggregates), or null. `GET /api/models/{key}` is one entry plus `events` (its
+newest 200 history events) and `bench.detail`. File metadata is read on the
+request's goroutine and cached by name, size and modification time; the
+history part covers the newest 2000 events of the types it reads. Read-only.
+
+A profile is **generated** when a tool made it (a benchmark matrix, a sweep)
+rather than a person. The optional profile field `generated` (true or false)
+says so explicitly; when it is not set, the id decides: `bench-*`, `b-*` and
+`m-*` count as generated. It changes nothing about placement; clients use it to
+keep generated configurations out of model lists.
 
 `GET /api/system`: version, uptime, `listen`, the safety settings (the same
 summary as the `schedulerStarted` event), the benchmark settings, live client
@@ -2067,6 +2106,7 @@ tool errors.
 | `get_status` | `GET /api/status`, summarised model-centric: per instance the profile, model file, state, nodes (hostname, budget, memory), `in_flight`, `requests_served`, load progress, ETA and `last_request`; then nodes, queue, quarantines, backoffs, the five newest `recent_loads` and the fleet view state. `verbose: true` returns the full object. |
 | `list_nodes`, `get_queue` | The nodes (full) or the queue with quarantines and backoffs, from `GET /api/status`. |
 | `list_models`, `list_profiles`, `get_profile` | `GET /v1/models`, `GET /api/profiles`, `GET /api/config/profiles/{id}` |
+| `list_model_files`, `get_model_file` | `GET /api/models`, `GET /api/models/{key}` |
 | `plan_load` | `POST /api/plan` |
 | `query_history`, `get_history_summary` | `GET /api/history` (all its filters), `GET /api/history/summary` |
 | `get_system_info` | `GET /api/system` |

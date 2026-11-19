@@ -38,31 +38,38 @@ func (s *Server) statusView(ctx context.Context) (any, error) {
 // memory need (and where the figure comes from) and what a request for it
 // would do now (the dry-run plan). Read-only.
 func (s *Server) handleProfiles(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"profiles": s.profileEntries(r.Context())})
+}
+
+// profileEntries builds the entries of GET /api/profiles (the model catalog
+// reads them too).
+func (s *Server) profileEntries(ctx context.Context) []map[string]any {
 	names := make([]string, 0, len(s.conf().Profiles))
 	for n := range s.conf().Profiles {
 		names = append(names, n)
 	}
 	sort.Strings(names)
 	host := map[string]string{}
-	if st, err := s.sched.Status(r.Context()); err == nil {
+	if st, err := s.sched.Status(ctx); err == nil {
 		for _, n := range st.View.Nodes {
 			if n.Hostname != "" {
 				host[string(n.ID)] = n.Hostname
 			}
 		}
 	}
-	out := make([]any, 0, len(names))
+	out := make([]map[string]any, 0, len(names))
 	for _, n := range names {
 		p := s.conf().Profiles[n]
 		e := map[string]any{"id": n, "kind": string(p.Kind), "model": p.Model, "ctx": p.Ctx, "parallel": p.Parallel,
-			"aliases": nonNil(p.Aliases), "force_nodes": nonNil(p.ForceNodes), "tensor_split": p.TensorSplit}
+			"aliases": nonNil(p.Aliases), "force_nodes": nonNil(p.ForceNodes), "tensor_split": p.TensorSplit,
+			"generated": IsGeneratedProfile(n, p.Generated)}
 		if p.TensorSplit == nil {
 			e["tensor_split"] = []int{}
 		}
 		if p.NeedsMiB > 0 {
 			e["needs_mib_configured"] = p.NeedsMiB
 		}
-		rep, err := s.sched.Plan(r.Context(), n)
+		rep, err := s.sched.Plan(ctx, n)
 		if err != nil {
 			e["plan"] = map[string]any{"action": "unknown", "reason": err.Error()}
 		} else {
@@ -88,7 +95,7 @@ func (s *Server) handleProfiles(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, e)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"profiles": out})
+	return out
 }
 
 func nonNil(s []string) []string {

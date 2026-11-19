@@ -46,7 +46,7 @@ func TestSchemaCoversEveryYAMLKey(t *testing.T) {
 		}
 	}
 	for _, k := range []string{"kind", "model", "ctx", "parallel", "kv_quant", "flash_attn", "needs_mib", "allow_tiers", "force_nodes", "tensor_split",
-		"extra_args", "cmd", "check_endpoint", "aliases", "ttl", "load_timeout", "stall_timeout", "load_stall_timeout"} {
+		"extra_args", "cmd", "check_endpoint", "aliases", "generated", "ttl", "load_timeout", "stall_timeout", "load_stall_timeout"} {
 		if !have["profile."+k] {
 			t.Errorf("profile key %s missing", k)
 		}
@@ -77,7 +77,7 @@ exclude_nodes: [ps5-x*]
 node_overrides: {a: {rpc: "10.0.0.3:50052"}}
 recovery: {enabled: true, actions: [restart_rpc_server, reboot]}
 profiles:
-  a: {model: a.gguf, ctx: 1024, needs_mib: 100, ttl: 0, aliases: [al]}
+  a: {model: a.gguf, ctx: 1024, needs_mib: 100, ttl: 0, aliases: [al], generated: true}
   c: {kind: command, cmd: "x --port ${PORT}", needs_mib: 10, stall_timeout: 0s}
 `
 	imp, err := ParseYAMLImport([]byte(yml), Bootstrap{ModelsDir: "/m"}, Options{FileExists: always})
@@ -105,6 +105,9 @@ profiles:
 	}
 	if p := c.Profiles["a"]; p.TTL == nil || *p.TTL != 0 || p.Aliases[0] != "al" {
 		t.Fatalf("ttl 0 (never unload) was lost: %+v", p)
+	}
+	if a, cmd := c.Profiles["a"], c.Profiles["c"]; a.Generated == nil || !*a.Generated || cmd.Generated != nil {
+		t.Fatalf("generated: a %v (want true), c %v (want not set)", a.Generated, cmd.Generated)
 	}
 	if p := c.Profiles["c"]; p.StallTimeout == nil || *p.StallTimeout != 0 {
 		t.Fatalf("stall_timeout 0 was lost: %+v", p)

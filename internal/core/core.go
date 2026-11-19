@@ -97,6 +97,11 @@ type Profile struct {
 
 	NeedsMiB int      // measured memory need; 0 means estimate (required for command)
 	Aliases  []string // old names that resolve to this profile
+	// Generated marks a profile a tool made (a benchmark matrix, a sweep), as
+	// opposed to one a person wrote. Nil means "not said": clients then fall
+	// back to the naming rule (see api.IsGeneratedProfile). It changes nothing
+	// about how the profile is placed or loaded.
+	Generated *bool
 
 	// TTL and StallTimeout use nil for "not set, use the default", because
 	// an explicit 0 means "never unload" and "disabled" respectively.
