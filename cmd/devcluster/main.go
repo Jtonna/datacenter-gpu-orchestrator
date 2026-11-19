@@ -92,6 +92,7 @@ func main() {
 	h.relay = newRelay(h.c.url, !h.bare, h.cfg.current, h.engine.stateDoc)
 	h.cfg.notify = func(d map[string]any) { h.relay.inject("config", d) }
 	h.engine.emit = func(ev map[string]any) { h.relay.inject("bench", ev) }
+	h.engine.revision = h.cfg.current
 	if h.c.hist.On() {
 		h.engine.record = h.c.hist.Record
 	}
