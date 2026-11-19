@@ -34,6 +34,8 @@ const (
 const (
 	SectionBench   = "bench"
 	SectionRuntime = "runtime"
+	SectionAgents  = "agents" // agent identities (keys that name an AI agent in this log)
+	SectionModels  = "models" // per-model settings that are not configuration (the icon)
 )
 
 // DefaultActor is used when a request names no actor.
@@ -62,6 +64,9 @@ type Entry struct {
 	Diff       []DiffItem      `json:"diff"`
 	Revision   int64           `json:"revision"` // 0 when no configuration revision was created
 	Comment    string          `json:"comment"`
+	// AgentID is the id of the agent whose key came with the request ("" when
+	// none did); Actor is then "agent:<name>".
+	AgentID string `json:"agent_id,omitempty"`
 }
 
 // Recorder appends an entry to the audit log and returns its id.
@@ -76,11 +81,15 @@ type Origin struct {
 	RemoteAddr string
 	UserAgent  string
 	Comment    string
+	AgentID    string
 }
 
 // Apply copies the origin onto an entry.
 func (o Origin) Apply(e *Entry) {
 	e.Source, e.Actor, e.RemoteAddr, e.UserAgent = o.Source, o.Actor, o.RemoteAddr, o.UserAgent
+	if e.AgentID == "" {
+		e.AgentID = o.AgentID
+	}
 	if e.Comment == "" {
 		e.Comment = o.Comment
 	}
@@ -95,6 +104,26 @@ type ctxVal struct{ source, actor string }
 // process can set it; an external client cannot claim it with a header.
 func WithSource(ctx context.Context, source, actor string) context.Context {
 	return context.WithValue(ctx, ctxKey{}, ctxVal{source, actor})
+}
+
+type agentKey struct{}
+
+type agentVal struct{ id, name string }
+
+// AgentPrefix starts the actor of an entry made with an agent key.
+const AgentPrefix = "agent:"
+
+// WithAgent marks a context as acting for a named agent: the server sets it
+// after it resolved the key a request carried (it is identity for this log,
+// not access control). FromRequest then reports the actor "agent:<name>".
+func WithAgent(ctx context.Context, id, name string) context.Context {
+	return context.WithValue(ctx, agentKey{}, agentVal{id, name})
+}
+
+// AgentFrom returns the agent a context acts for.
+func AgentFrom(ctx context.Context) (id, name string, ok bool) {
+	v, ok := ctx.Value(agentKey{}).(agentVal)
+	return v.id, v.name, ok
 }
 
 // FromRequest decides the origin of a request. The source is "mcp" or
@@ -119,6 +148,14 @@ func FromRequest(r *http.Request) Origin {
 		if v.actor != "" {
 			o.Actor = v.actor
 		}
+	}
+	// A request that carried a valid agent key is recorded under that agent's
+	// name, whatever X-Actor says; the source stays what it was (mcp or rest).
+	if id, name, ok := AgentFrom(r.Context()); ok {
+		if v, isMCP := r.Context().Value(ctxKey{}).(ctxVal); isMCP && v.actor != "" && o.UserAgent == "" {
+			o.UserAgent = clip("mcp client: "+v.actor, 300)
+		}
+		o.Actor, o.AgentID = AgentPrefix+name, id
 	}
 	return o
 }

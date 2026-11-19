@@ -51,6 +51,38 @@ CREATE INDEX audit_ts ON audit_log (ts);
 CREATE INDEX audit_section ON audit_log (section, target);
 CREATE INDEX audit_revision ON audit_log (revision);
 CREATE TRIGGER audit_log_no_update BEFORE UPDATE ON audit_log BEGIN SELECT RAISE(ABORT, 'the audit log is append-only'); END;
+`, `
+CREATE TABLE agents (
+  id             TEXT PRIMARY KEY,
+  name           TEXT NOT NULL,
+  description    TEXT NOT NULL DEFAULT '',
+  key_hash       TEXT NOT NULL,
+  key_prefix     TEXT NOT NULL,
+  created_at     INTEGER NOT NULL,
+  created_source TEXT NOT NULL DEFAULT '',
+  created_actor  TEXT NOT NULL DEFAULT '',
+  rotated_at     INTEGER NOT NULL DEFAULT 0,
+  last_used_at   INTEGER NOT NULL DEFAULT 0,
+  revoked_at     INTEGER NOT NULL DEFAULT 0,
+  request_count  INTEGER NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX agents_key ON agents (key_hash);
+ALTER TABLE audit_log ADD COLUMN agent_id TEXT NOT NULL DEFAULT '';
+CREATE INDEX audit_agent ON audit_log (agent_id);
+CREATE TABLE model_icons (
+  key          TEXT PRIMARY KEY,
+  content_type TEXT NOT NULL,
+  data         BLOB NOT NULL,
+  etag         TEXT NOT NULL,
+  updated_at   INTEGER NOT NULL
+);
+CREATE TABLE model_file_meta (
+  path    TEXT PRIMARY KEY,
+  size    INTEGER NOT NULL,
+  mtime   INTEGER NOT NULL,
+  meta    TEXT NOT NULL CHECK (json_valid(meta)),
+  read_at INTEGER NOT NULL
+);
 `}
 
 // Store is the revision and audit store.
@@ -237,9 +269,9 @@ func insertEntry(tx *sql.Tx, e audit.Entry) (int64, error) {
 	if e.Diff == nil {
 		diff = []byte("[]")
 	}
-	res, err := tx.Exec(`INSERT INTO audit_log (ts, source, actor, remote_addr, user_agent, action, section, target, before, after, diff, revision, comment)
-	  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, e.TS, e.Source, e.Actor, e.RemoteAddr, e.UserAgent, e.Action, e.Section, e.Target,
-		nullable(e.Before), nullable(e.After), string(diff), e.Revision, e.Comment)
+	res, err := tx.Exec(`INSERT INTO audit_log (ts, source, actor, remote_addr, user_agent, action, section, target, before, after, diff, revision, comment, agent_id)
+	  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, e.TS, e.Source, e.Actor, e.RemoteAddr, e.UserAgent, e.Action, e.Section, e.Target,
+		nullable(e.Before), nullable(e.After), string(diff), e.Revision, e.Comment, e.AgentID)
 	if err != nil {
 		return 0, err
 	}
@@ -266,6 +298,7 @@ func (s *Store) Record(ctx context.Context, e audit.Entry) (int64, error) {
 type Filter struct {
 	Since, Until                                  int64 // unix ms, inclusive; 0 = unbounded
 	Source, Actor, Section, Target, Action, Query string
+	Agent                                         string // an agent id (audit_log.agent_id)
 	Limit                                         int
 	Ascending                                     bool
 }
@@ -281,7 +314,7 @@ func (s *Store) Query(ctx context.Context, f Filter) ([]audit.Entry, int, error)
 	if f.Until > 0 {
 		add("ts <= ?", f.Until)
 	}
-	for col, v := range map[string]string{"source": f.Source, "actor": f.Actor, "section": f.Section, "target": f.Target, "action": f.Action} {
+	for col, v := range map[string]string{"source": f.Source, "actor": f.Actor, "section": f.Section, "target": f.Target, "action": f.Action, "agent_id": f.Agent} {
 		if v != "" {
 			add(col+" = ?", v)
 		}
@@ -307,7 +340,7 @@ func (s *Store) Query(ctx context.Context, f Filter) ([]audit.Entry, int, error)
 	if f.Ascending {
 		order = "ASC"
 	}
-	rows, err := s.db.DB().QueryContext(ctx, `SELECT id, ts, source, actor, remote_addr, user_agent, action, section, target, before, after, diff, revision, comment
+	rows, err := s.db.DB().QueryContext(ctx, `SELECT id, ts, source, actor, remote_addr, user_agent, action, section, target, before, after, diff, revision, comment, agent_id
 	  FROM audit_log`+w+` ORDER BY id `+order+` LIMIT ?`, append(args, limit)...)
 	if err != nil {
 		return nil, 0, err
@@ -328,7 +361,7 @@ func scanEntry(r interface{ Scan(...any) error }) (audit.Entry, error) {
 	var e audit.Entry
 	var before, after sql.NullString
 	var diff string
-	if err := r.Scan(&e.ID, &e.TS, &e.Source, &e.Actor, &e.RemoteAddr, &e.UserAgent, &e.Action, &e.Section, &e.Target, &before, &after, &diff, &e.Revision, &e.Comment); err != nil {
+	if err := r.Scan(&e.ID, &e.TS, &e.Source, &e.Actor, &e.RemoteAddr, &e.UserAgent, &e.Action, &e.Section, &e.Target, &before, &after, &diff, &e.Revision, &e.Comment, &e.AgentID); err != nil {
 		return e, err
 	}
 	e.Before, e.After = json.RawMessage("null"), json.RawMessage("null")
@@ -347,7 +380,7 @@ func scanEntry(r interface{ Scan(...any) error }) (audit.Entry, error) {
 
 // GetEntry returns one audit entry.
 func (s *Store) GetEntry(ctx context.Context, id int64) (*audit.Entry, error) {
-	row := s.db.DB().QueryRowContext(ctx, `SELECT id, ts, source, actor, remote_addr, user_agent, action, section, target, before, after, diff, revision, comment FROM audit_log WHERE id = ?`, id)
+	row := s.db.DB().QueryRowContext(ctx, `SELECT id, ts, source, actor, remote_addr, user_agent, action, section, target, before, after, diff, revision, comment, agent_id FROM audit_log WHERE id = ?`, id)
 	e, err := scanEntry(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
