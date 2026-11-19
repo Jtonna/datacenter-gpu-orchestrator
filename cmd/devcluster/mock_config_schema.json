@@ -1,0 +1,764 @@
+{
+  "fields": [
+    {
+      "key": "ttl",
+      "scope": "settings",
+      "section": "timing",
+      "type": "duration",
+      "default": "5m0s",
+      "min": 0,
+      "unit": "seconds",
+      "description": "How long a model may sit idle before it is unloaded; 0 means never unload.",
+      "restart_required": false
+    },
+    {
+      "key": "min_hold",
+      "scope": "settings",
+      "section": "timing",
+      "type": "duration",
+      "default": "30s",
+      "min": 1,
+      "unit": "seconds",
+      "description": "Least time an instance is protected from being displaced by other requests.",
+      "restart_required": false
+    },
+    {
+      "key": "max_hold",
+      "scope": "settings",
+      "section": "timing",
+      "type": "duration",
+      "default": "15m0s",
+      "min": 1,
+      "unit": "seconds",
+      "description": "Longest time an instance is protected from being displaced; must be at least min_hold.",
+      "restart_required": false
+    },
+    {
+      "key": "drain_after",
+      "scope": "settings",
+      "section": "timing",
+      "type": "duration",
+      "default": "1m0s",
+      "min": 1,
+      "unit": "seconds",
+      "description": "How long a busy model is left alone before a waiting request asks it to drain.",
+      "restart_required": false
+    },
+    {
+      "key": "queue_timeout",
+      "scope": "settings",
+      "section": "timing",
+      "type": "duration",
+      "default": "10m0s",
+      "min": 1,
+      "unit": "seconds",
+      "description": "Longest a request may wait in the queue without being given a model.",
+      "restart_required": false
+    },
+    {
+      "key": "stall_timeout",
+      "scope": "settings",
+      "section": "timing",
+      "type": "duration",
+      "default": "5m0s",
+      "min": 0,
+      "unit": "seconds",
+      "description": "Longest gap between streamed chunks once a response has begun; 0 disables the check.",
+      "restart_required": false
+    },
+    {
+      "key": "command_load_timeout",
+      "scope": "settings",
+      "section": "timing",
+      "type": "duration",
+      "default": "15m0s",
+      "min": 1,
+      "unit": "seconds",
+      "description": "Load timeout for profiles of kind command.",
+      "restart_required": false
+    },
+    {
+      "key": "load_stall_timeout",
+      "scope": "settings",
+      "section": "timing",
+      "type": "duration",
+      "default": "3m0s",
+      "min": 0,
+      "unit": "seconds",
+      "description": "Fail a load whose measured upload acknowledges no new bytes for this long; 0 turns the rule off.",
+      "restart_required": false
+    },
+    {
+      "key": "shutdown_grace",
+      "scope": "settings",
+      "section": "timing",
+      "type": "duration",
+      "default": "5m0s",
+      "min": 1,
+      "unit": "seconds",
+      "description": "How long a clean shutdown waits for in-flight requests before killing children.",
+      "restart_required": false
+    },
+    {
+      "key": "forced_node_grace",
+      "scope": "settings",
+      "section": "timing",
+      "type": "duration",
+      "default": "30s",
+      "min": 1,
+      "unit": "seconds",
+      "description": "How long a forced node may be absent or offline before requests for the profile fail at once.",
+      "restart_required": false
+    },
+    {
+      "key": "max_pool",
+      "scope": "settings",
+      "section": "capacity",
+      "type": "int",
+      "default": 4,
+      "min": 1,
+      "unit": "nodes",
+      "description": "Most nodes a single model may be split across.",
+      "restart_required": false
+    },
+    {
+      "key": "device_overhead_mib",
+      "scope": "settings",
+      "section": "capacity",
+      "type": "int",
+      "default": 600,
+      "min": 0,
+      "unit": "MiB",
+      "description": "Per-device memory cost added to estimated needs only.",
+      "restart_required": false
+    },
+    {
+      "key": "min_share_mib",
+      "scope": "settings",
+      "section": "capacity",
+      "type": "int",
+      "default": 1024,
+      "min": 0,
+      "unit": "MiB",
+      "description": "Least memory a node must be able to hold to take part in a split.",
+      "restart_required": false
+    },
+    {
+      "key": "cache_ram_mib",
+      "scope": "settings",
+      "section": "capacity",
+      "type": "int",
+      "default": 2048,
+      "min": 0,
+      "unit": "MiB",
+      "description": "Per-instance prompt cache limit on the host.",
+      "restart_required": false
+    },
+    {
+      "key": "server_bin",
+      "scope": "settings",
+      "section": "runtime",
+      "type": "string",
+      "default": "llama-server-rpc",
+      "description": "The llama.cpp server binary started for each model; read once at start because pre-flight probing uses it.",
+      "restart_required": true
+    },
+    {
+      "key": "local_device",
+      "scope": "settings",
+      "section": "runtime",
+      "type": "string",
+      "default": "CUDA0",
+      "description": "The llama.cpp device name of the local GPU (for example CUDA0).",
+      "restart_required": false
+    },
+    {
+      "key": "local_probe_cmd",
+      "scope": "settings",
+      "section": "runtime",
+      "type": "string",
+      "default": "nvidia-smi --query-gpu=memory.total,memory.used --format=csv,noheader,nounits",
+      "description": "Command that reports the local GPU's total and used memory.",
+      "restart_required": false
+    },
+    {
+      "key": "forced_fit_check",
+      "scope": "settings",
+      "section": "safety",
+      "type": "enum",
+      "enum": [
+        "off",
+        "warn",
+        "reject"
+      ],
+      "default": "off",
+      "description": "What a profile with force_nodes does when its memory need exceeds the forced nodes' free memory: off, warn (log and start) or reject.",
+      "restart_required": false
+    },
+    {
+      "key": "split_skew_margin",
+      "scope": "settings",
+      "section": "safety",
+      "type": "float",
+      "default": 0.15,
+      "min": 0,
+      "max": 1,
+      "description": "Extra share a node of a split model may receive beyond its split fraction (0 to 1).",
+      "restart_required": false
+    },
+    {
+      "key": "estimate_margin",
+      "scope": "settings",
+      "section": "safety",
+      "type": "float",
+      "default": 0.05,
+      "min": 0,
+      "max": 1,
+      "description": "Margin added to every memory need that is only an estimate (0 to 1).",
+      "restart_required": false
+    },
+    {
+      "key": "load_memory_floor_mib",
+      "scope": "settings",
+      "section": "safety",
+      "type": "int",
+      "default": 768,
+      "min": 0,
+      "unit": "MiB",
+      "description": "Cancel a load when a shared-memory node's available memory falls below this; 0 turns the watch off.",
+      "restart_required": false
+    },
+    {
+      "key": "worker_silence",
+      "scope": "settings",
+      "section": "workers",
+      "type": "duration",
+      "default": "30s",
+      "min": 1,
+      "unit": "seconds",
+      "description": "How long a worker's upload progress or fleet heartbeat may stay quiet before it counts as silent.",
+      "restart_required": false
+    },
+    {
+      "key": "worker_probe_interval",
+      "scope": "settings",
+      "section": "workers",
+      "type": "duration",
+      "default": "0s",
+      "min": 0,
+      "unit": "seconds",
+      "description": "How often a TCP connect probe checks workers; 0 turns it off (leave it off for rpc-server workers).",
+      "restart_required": false
+    },
+    {
+      "key": "worker_probe_during_inference",
+      "scope": "settings",
+      "section": "workers",
+      "type": "bool",
+      "default": false,
+      "description": "Let the connect probe run while the instance has a request in flight.",
+      "restart_required": false
+    },
+    {
+      "key": "child_log_keep",
+      "scope": "settings",
+      "section": "retention",
+      "type": "int",
+      "default": 200,
+      "min": 1,
+      "unit": "files",
+      "description": "Most child log files kept in the child log directory; the oldest are deleted.",
+      "restart_required": true
+    },
+    {
+      "key": "history_max_file_mib",
+      "scope": "settings",
+      "section": "retention",
+      "type": "int",
+      "default": 16,
+      "min": 1,
+      "unit": "MiB",
+      "description": "Size at which an event history file is rotated.",
+      "restart_required": true
+    },
+    {
+      "key": "history_keep_files",
+      "scope": "settings",
+      "section": "retention",
+      "type": "int",
+      "default": 20,
+      "min": 1,
+      "unit": "files",
+      "description": "Most event history files kept; the oldest are deleted.",
+      "restart_required": true
+    },
+    {
+      "key": "history_memory_events",
+      "scope": "settings",
+      "section": "retention",
+      "type": "int",
+      "default": 5000,
+      "min": 1,
+      "max": 200000,
+      "unit": "events",
+      "description": "Newest events held in memory for history queries.",
+      "restart_required": true
+    },
+    {
+      "key": "audit_retention_days",
+      "scope": "settings",
+      "section": "retention",
+      "type": "int",
+      "default": 0,
+      "min": 0,
+      "unit": "days",
+      "description": "Audit entries older than this many days may be pruned by an operator; the application itself never deletes entries (0 keeps everything and is the default).",
+      "restart_required": false
+    },
+    {
+      "key": "ws_max_clients",
+      "scope": "settings",
+      "section": "api",
+      "type": "int",
+      "default": 32,
+      "min": 1,
+      "max": 1000,
+      "unit": "clients",
+      "description": "Most concurrent live (WebSocket) clients.",
+      "restart_required": true
+    },
+    {
+      "key": "bench_enabled",
+      "scope": "settings",
+      "section": "bench",
+      "type": "bool",
+      "default": true,
+      "description": "Turn the benchmark feature on or off.",
+      "restart_required": true
+    },
+    {
+      "key": "bench_regress_load_pct",
+      "scope": "settings",
+      "section": "bench",
+      "type": "float",
+      "default": 15,
+      "min": 0.001,
+      "max": 1000,
+      "description": "A load this much slower than the baseline run's is flagged as a regression.",
+      "restart_required": true
+    },
+    {
+      "key": "bench_regress_decode_pct",
+      "scope": "settings",
+      "section": "bench",
+      "type": "float",
+      "default": 7,
+      "min": 0.001,
+      "max": 100,
+      "description": "Decode tokens per second this much lower than the baseline's is flagged as a regression.",
+      "restart_required": true
+    },
+    {
+      "key": "bench_max_run_minutes",
+      "scope": "settings",
+      "section": "bench",
+      "type": "int",
+      "default": 240,
+      "min": 1,
+      "max": 10080,
+      "unit": "minutes",
+      "description": "A benchmark run that takes longer than this is stopped and marked failed.",
+      "restart_required": true
+    },
+    {
+      "key": "enabled",
+      "scope": "recovery",
+      "section": "recovery",
+      "type": "bool",
+      "default": false,
+      "description": "Send recovery requests for hung workers; off means nothing is ever sent.",
+      "restart_required": false
+    },
+    {
+      "key": "actions",
+      "scope": "recovery",
+      "section": "recovery",
+      "type": "list",
+      "enum": [
+        "restart_rpc_server",
+        "restart_docker",
+        "reboot"
+      ],
+      "default": [
+        "restart_rpc_server"
+      ],
+      "description": "Recovery actions in escalation order; each may appear once, in the order restart_rpc_server, restart_docker, reboot.",
+      "restart_required": false
+    },
+    {
+      "key": "min_interval",
+      "scope": "recovery",
+      "section": "recovery",
+      "type": "duration",
+      "default": "2m0s",
+      "min": 60,
+      "unit": "seconds",
+      "description": "Least time between two recovery requests for one node.",
+      "restart_required": false
+    },
+    {
+      "key": "step_wait",
+      "scope": "recovery",
+      "section": "recovery",
+      "type": "duration",
+      "default": "1m30s",
+      "min": 1,
+      "unit": "seconds",
+      "description": "How long a recovery step gets to take effect before the next one is sent.",
+      "restart_required": false
+    },
+    {
+      "key": "request_ttl",
+      "scope": "recovery",
+      "section": "recovery",
+      "type": "duration",
+      "default": "45s",
+      "min": 1,
+      "max": 60,
+      "unit": "seconds",
+      "description": "How long a recovery request stays valid at the node.",
+      "restart_required": false
+    },
+    {
+      "key": "http_timeout",
+      "scope": "recovery",
+      "section": "recovery",
+      "type": "duration",
+      "default": "3s",
+      "min": 1,
+      "unit": "seconds",
+      "description": "Timeout of the request that hands a recovery request to the fleet manager.",
+      "restart_required": false
+    },
+    {
+      "key": "url",
+      "scope": "fleet",
+      "section": "fleet",
+      "type": "string",
+      "default": "",
+      "description": "Base URL of the fleet console; empty means only the local node is used. Read once when the fleet client starts.",
+      "restart_required": true
+    },
+    {
+      "key": "local_node",
+      "scope": "fleet",
+      "section": "fleet",
+      "type": "string",
+      "default": "",
+      "description": "The fleet name of the host the scheduler runs on. Read once when the fleet client starts.",
+      "restart_required": true
+    },
+    {
+      "key": "stale_after",
+      "scope": "fleet",
+      "section": "fleet",
+      "type": "duration",
+      "default": "1m0s",
+      "min": 1,
+      "unit": "seconds",
+      "description": "Age of the fleet view beyond which remote nodes are not used.",
+      "restart_required": false
+    },
+    {
+      "key": "kind",
+      "scope": "profile",
+      "section": "identity",
+      "type": "enum",
+      "enum": [
+        "llama",
+        "command"
+      ],
+      "default": "llama",
+      "description": "How the profile is started: llama (a llama-server the scheduler places on nodes) or command (a fixed command on the local node).",
+      "restart_required": false
+    },
+    {
+      "key": "model",
+      "scope": "profile",
+      "section": "model",
+      "type": "string",
+      "default": null,
+      "description": "Model file name under the models directory.",
+      "restart_required": false,
+      "required": true,
+      "applies_to": "llama"
+    },
+    {
+      "key": "ctx",
+      "scope": "profile",
+      "section": "model",
+      "type": "int",
+      "default": null,
+      "min": 1,
+      "unit": "tokens",
+      "description": "Context size per slot.",
+      "restart_required": false,
+      "required": true,
+      "applies_to": "llama"
+    },
+    {
+      "key": "parallel",
+      "scope": "profile",
+      "section": "model",
+      "type": "int",
+      "default": 1,
+      "min": 1,
+      "description": "Number of parallel slots.",
+      "restart_required": false,
+      "applies_to": "llama"
+    },
+    {
+      "key": "kv_quant",
+      "scope": "profile",
+      "section": "model",
+      "type": "enum",
+      "enum": [
+        "f16",
+        "q8_0",
+        "q4_0"
+      ],
+      "default": "f16",
+      "description": "Key-value cache precision; q8_0 and q4_0 need flash_attn.",
+      "restart_required": false,
+      "applies_to": "llama"
+    },
+    {
+      "key": "flash_attn",
+      "scope": "profile",
+      "section": "model",
+      "type": "bool",
+      "default": false,
+      "description": "Turn flash attention on.",
+      "restart_required": false,
+      "applies_to": "llama"
+    },
+    {
+      "key": "needs_mib",
+      "scope": "profile",
+      "section": "memory",
+      "type": "int",
+      "default": 0,
+      "min": 0,
+      "unit": "MiB",
+      "description": "Measured memory need; 0 means estimate from the model file (required for kind command).",
+      "restart_required": false
+    },
+    {
+      "key": "allow_tiers",
+      "scope": "profile",
+      "section": "placement",
+      "type": "list",
+      "default": null,
+      "description": "Tier priorities this profile may use; empty means all.",
+      "restart_required": false,
+      "applies_to": "llama"
+    },
+    {
+      "key": "force_nodes",
+      "scope": "profile",
+      "section": "placement",
+      "type": "list",
+      "default": null,
+      "description": "Node ids or hostnames, in device order, to use instead of automatic placement.",
+      "restart_required": false,
+      "applies_to": "llama"
+    },
+    {
+      "key": "tensor_split",
+      "scope": "profile",
+      "section": "placement",
+      "type": "list",
+      "default": null,
+      "description": "Explicit split weights, one per forced node.",
+      "restart_required": false,
+      "applies_to": "llama"
+    },
+    {
+      "key": "extra_args",
+      "scope": "profile",
+      "section": "model",
+      "type": "list",
+      "default": null,
+      "description": "Extra llama-server arguments appended last; flags the scheduler manages are refused.",
+      "restart_required": false,
+      "applies_to": "llama"
+    },
+    {
+      "key": "cmd",
+      "scope": "profile",
+      "section": "command",
+      "type": "string",
+      "default": null,
+      "description": "Command line containing ${PORT}.",
+      "restart_required": false,
+      "required": true,
+      "applies_to": "command"
+    },
+    {
+      "key": "check_endpoint",
+      "scope": "profile",
+      "section": "command",
+      "type": "string",
+      "default": null,
+      "description": "Readiness path polled on the command's port.",
+      "restart_required": false,
+      "applies_to": "command"
+    },
+    {
+      "key": "aliases",
+      "scope": "profile",
+      "section": "identity",
+      "type": "list",
+      "default": null,
+      "description": "Other names that resolve to this profile.",
+      "restart_required": false
+    },
+    {
+      "key": "ttl",
+      "scope": "profile",
+      "section": "timing",
+      "type": "duration",
+      "default": null,
+      "min": 0,
+      "unit": "seconds",
+      "description": "Idle unload time for this profile; empty uses the default, 0 never unloads.",
+      "restart_required": false,
+      "nullable": true
+    },
+    {
+      "key": "load_timeout",
+      "scope": "profile",
+      "section": "timing",
+      "type": "duration",
+      "default": "0s",
+      "min": 0,
+      "unit": "seconds",
+      "description": "Load timeout for this profile; 0 uses the computed default.",
+      "restart_required": false
+    },
+    {
+      "key": "stall_timeout",
+      "scope": "profile",
+      "section": "timing",
+      "type": "duration",
+      "default": null,
+      "min": 0,
+      "unit": "seconds",
+      "description": "Longest gap between streamed chunks; empty uses the default, 0 disables the check.",
+      "restart_required": false,
+      "nullable": true
+    },
+    {
+      "key": "load_stall_timeout",
+      "scope": "profile",
+      "section": "timing",
+      "type": "duration",
+      "default": null,
+      "min": 0,
+      "unit": "seconds",
+      "description": "Fail a load with no acknowledged upload progress for this long; empty uses the default, 0 turns it off.",
+      "restart_required": false,
+      "nullable": true
+    },
+    {
+      "key": "match.hostname",
+      "scope": "tier",
+      "section": "match",
+      "type": "string",
+      "default": null,
+      "description": "Case-insensitive hostname glob a node must match.",
+      "restart_required": false
+    },
+    {
+      "key": "match.role",
+      "scope": "tier",
+      "section": "match",
+      "type": "string",
+      "default": null,
+      "description": "Fleet role a node must have.",
+      "restart_required": false
+    },
+    {
+      "key": "match.source",
+      "scope": "tier",
+      "section": "match",
+      "type": "string",
+      "default": null,
+      "description": "Fleet source a node must have.",
+      "restart_required": false
+    },
+    {
+      "key": "match.local",
+      "scope": "tier",
+      "section": "match",
+      "type": "bool",
+      "default": null,
+      "description": "True matches only the local host, false only remote nodes.",
+      "restart_required": false,
+      "nullable": true
+    },
+    {
+      "key": "priority",
+      "scope": "tier",
+      "section": "tier",
+      "type": "int",
+      "default": null,
+      "min": 1,
+      "description": "Tier priority; lower is preferred.",
+      "restart_required": false,
+      "required": true
+    },
+    {
+      "key": "headroom_mib",
+      "scope": "tier",
+      "section": "tier",
+      "type": "int",
+      "default": 0,
+      "min": 0,
+      "unit": "MiB",
+      "description": "Memory kept free on a node of this tier.",
+      "restart_required": false
+    },
+    {
+      "key": "shared_memory",
+      "scope": "tier",
+      "section": "tier",
+      "type": "bool",
+      "default": false,
+      "description": "The node's GPU memory is system RAM.",
+      "restart_required": false
+    },
+    {
+      "key": "link_mb_s",
+      "scope": "tier",
+      "section": "tier",
+      "type": "float",
+      "default": 0,
+      "min": 0,
+      "unit": "MB/s",
+      "description": "Link speed used to size load timeouts.",
+      "restart_required": false
+    },
+    {
+      "key": "settle",
+      "scope": "tier",
+      "section": "tier",
+      "type": "duration",
+      "default": "0s",
+      "min": 0,
+      "unit": "seconds",
+      "description": "How long a node is unusable after an instance releases it.",
+      "restart_required": false
+    }
+  ]
+}
