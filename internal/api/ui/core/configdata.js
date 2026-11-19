@@ -4,9 +4,9 @@
 //
 // REST: GET /api/config, GET /api/config/schema (cached for the page's life).
 
-import { h } from '../../core/dom.js';
-import * as api from '../../core/api.js';
-import { badge } from '../../core/ui.js';
+import { h } from './dom.js';
+import * as api from './api.js';
+import { badge } from './ui.js';
 
 let schemaPromise = null;
 // loadSchema() -> the schema fields ({key, scope, section, type, ...}), fetched once.

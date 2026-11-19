@@ -15,8 +15,8 @@ import { state } from '../core/store.js';
 import { liveView, pageHead, badge, nodeChips, nodeChip, table, empty, banner, skeleton, button, dialog, schemaForm, confirm } from '../core/ui.js';
 import { num, mib, plural, DASH } from '../core/format.js';
 import { viewNodes } from '../core/status.js';
-import { loadSchema, loadConfig, fieldsOf, clone, same } from './configure/data.js';
-import { pendingBar, reviewChanges, savedBanner, watchConfig, noticeBanner } from './configure/changes.js';
+import { loadSchema, loadConfig, fieldsOf, clone, same } from '../core/configdata.js';
+import { pendingBar, reviewChanges, savedBanner, watchConfig, noticeBanner } from '../core/changes.js';
 
 // Unsaved edits survive a visit to another screen: {tiers, exclude, overrides} or null.
 let draft = null;

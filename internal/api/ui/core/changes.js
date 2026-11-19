@@ -11,13 +11,13 @@
 // On a 409 stale_revision: GET /api/audit (the entries after the revision the
 // user started from, each with its diff).
 
-import { h } from '../../core/dom.js';
-import * as api from '../../core/api.js';
-import { dialog, diffView, badge, banner, button } from '../../core/ui.js';
-import { ago, plural } from '../../core/format.js';
-import { listen } from '../../core/store.js';
-import { href } from '../../core/router.js';
-import { SOURCES, SECTION_NAMES, sourceBadge, sectionName } from './data.js';
+import { h } from './dom.js';
+import * as api from './api.js';
+import { dialog, diffView, badge, banner, button } from './ui.js';
+import { ago, plural } from './format.js';
+import { listen } from './store.js';
+import { href } from './router.js';
+import { SOURCES, SECTION_NAMES, sourceBadge, sectionName } from './configdata.js';
 
 let saving = 0;
 export const isSaving = () => saving > 0;
@@ -47,7 +47,9 @@ export function savedBanner(result, onClose) {
     button('Dismiss', onClose, 'sm'));
 }
 
-const shortKey = k => String(k).replace(/^settings\./, '');
+// restartKey('settings.server_bin') -> 'server_bin'; 'fleet.url' stays. The one place that knows the prefix.
+export const restartKey = k => String(k).replace(/^settings\./, '');
+const shortKey = restartKey;
 const who = ev => `${ev.actor || 'someone'} (${(SOURCES[ev.source] || [ev.source || 'unknown'])[0]})`;
 
 // watchConfig({revision, pending, refresh, redraw}) listens for "config" messages.

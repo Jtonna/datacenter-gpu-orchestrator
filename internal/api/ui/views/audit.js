@@ -16,8 +16,8 @@ import { listen } from '../core/store.js';
 import * as api from '../core/api.js';
 import { liveView, pageHead, badge, table, empty, banner, skeleton, chips, tabs, button, diffView, dialog, toast } from '../core/ui.js';
 import { num, plural, ago, at, dayLabel, now, DASH } from '../core/format.js';
-import { sourceBadge, SOURCES, SECTION_NAMES, sectionName, actionName, entrySentence, searchBox } from './configure/data.js';
-import { reviewChanges } from './configure/changes.js';
+import { sourceBadge, SOURCES, SECTION_NAMES, sectionName, actionName, entrySentence, searchBox } from '../core/configdata.js';
+import { reviewChanges } from '../core/changes.js';
 
 const RANGES = [['1h', 'Last hour', 3600e3], ['24h', 'Last 24 hours', 86400e3], ['7d', 'Last 7 days', 7 * 86400e3], ['30d', 'Last 30 days', 30 * 86400e3], ['all', 'All time', 0]];
 const SECTION_ORDER = ['profiles', 'tiers', 'settings', 'exclude_nodes', 'node_overrides', 'recovery', 'fleet', 'bench', 'runtime'];
@@ -126,6 +126,19 @@ registerView({
       } catch (e) { revError = e.message; revs = revs || []; }
       if (alive) view.refresh();
     }
+
+    // Audited actions the "config" topic does not announce (a load or unload
+    // asked over REST or MCP, a benchmark or suite edit): the trail is read
+    // again when the live channel hints at one (a load started, a model was
+    // unloaded through the API, a benchmark run changed state), after a
+    // reconnect, and when the page becomes visible again. Never on a timer.
+    let softTimer = 0;
+    const soft = () => { clearTimeout(softTimer); softTimer = setTimeout(() => { if (alive && tab() === 'trail') loadTrail(); }, 1200); };
+    const offEvent = listen('event', e => { if (e && (e.type === 'loadStarted' || (e.type === 'instanceUnloaded' && e.data && e.data.reason === 'api'))) soft(); });
+    const offBench = listen('bench', d => { if (d && (d.kind === 'run' || d.kind === 'aggregate_updated')) soft(); });
+    const offHello = listen('hello', soft);
+    const onVisible = () => { if (!document.hidden) soft(); };
+    document.addEventListener('visibilitychange', onVisible);
 
     // a change announced on the "config" topic: put the new entries at the top
     const off = listen('config', async ev => {
@@ -264,7 +277,7 @@ registerView({
     loadTrail();
     if (tab() === 'revisions') loadRevs();
     return {
-      unmount() { alive = false; off(); clearTimeout(qTimer); view.unmount(); },
+      unmount() { alive = false; off(); offEvent(); offBench(); offHello(); document.removeEventListener('visibilitychange', onVisible); clearTimeout(softTimer); clearTimeout(qTimer); view.unmount(); },
       update(r) {
         const prev = route; route = r;
         if (tab() === 'revisions' && !revs) loadRevs();

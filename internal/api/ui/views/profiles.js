@@ -15,8 +15,9 @@ import { state } from '../core/store.js';
 import * as api from '../core/api.js';
 import { liveView, pageHead, badge, nodeChips, table, empty, banner, skeleton, chips, button, schemaForm, confirm } from '../core/ui.js';
 import { num, mib, ctx, plural, DASH } from '../core/format.js';
-import { loadSchema, loadConfig, fieldsOf, clone, fieldOfMessage, searchBox } from './configure/data.js';
-import { pendingBar, reviewChanges, savedBanner, watchConfig, noticeBanner } from './configure/changes.js';
+import { plainReason } from '../core/status.js';
+import { loadSchema, loadConfig, fieldsOf, clone, fieldOfMessage, searchBox } from '../core/configdata.js';
+import { pendingBar, reviewChanges, savedBanner, watchConfig, noticeBanner } from '../core/changes.js';
 
 // Unsaved profile changes live outside the view so they survive a visit to another screen.
 // id -> {type: 'create' | 'update' | 'delete', profile, errors: [messages]}
@@ -74,7 +75,7 @@ function makeEditor(o) {
     ttl: 'Same as the ttl setting', stall_timeout: 'Same as the stall_timeout setting', load_stall_timeout: 'Same as the load_stall_timeout setting', load_timeout: 'Worked out from the model size',
     needs_mib: '0 = estimate from the model file', model: 'for example gemma-4-12b-it-Q4_K_M.gguf' };
   const fieldDef = f => Object.assign({}, f, { label: LABELS[f.key], type: f.key === 'extra_args' ? 'text' : f.type,
-    default: f.default === null ? undefined : f.default, placeholder: PLACEHOLDER[f.key],
+    placeholder: PLACEHOLDER[f.key],
     description: f.key === 'extra_args' ? f.description + ' One argument per line.' : f.description });
 
   function collect() {
@@ -183,11 +184,11 @@ function planLine(plan) {
     case 'start': return h('span', nodes, ' ', h('span.mut', 'would start now'));
     case 'serve': case 'wait': return h('span.mut', 'Already loaded or loading', nodes ? [' on ', nodes] : null);
     case 'evict': return h('span', nodes, ' ', h('span.mut', 'after making room by unloading another model'));
-    case 'queue': return h('span', h('span.mut', 'Would wait in the queue'), plan.reason ? h('span.sub', plan.reason) : null);
-    case 'backoff': return h('span.err-t', 'Held back after a failed load', plan.reason ? [': ', plan.reason] : null);
-    case 'reject': return h('span.err-t', 'Cannot be placed: ', plan.reason || '');
+    case 'queue': return h('span', { title: plan.reason ? 'The scheduler says: ' + plan.reason : null }, h('span.mut', 'Would wait in the queue'), plan.reason ? h('span.sub', plainReason(plan.reason)) : null);
+    case 'backoff': return h('span.err-t', { title: plan.reason ? 'The scheduler says: ' + plan.reason : null }, 'Held back after a failed load');
+    case 'reject': return h('span.err-t', { title: plan.reason ? 'The scheduler says: ' + plan.reason : null }, 'Cannot be placed', plan.reason ? h('span.sub', { style: 'color:inherit' }, plainReason(plan.reason)) : null);
   }
-  return h('span.mut', plan.reason || 'Not known');
+  return h('span.mut', { title: plan.reason || null }, plainReason(plan.reason) || 'Not known');
 }
 
 // ---- the view ----

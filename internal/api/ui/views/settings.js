@@ -15,8 +15,8 @@ import { registerView } from '../core/router.js';
 import * as api from '../core/api.js';
 import { liveView, pageHead, badge, banner, skeleton, button, schemaForm, toggle, confirm, empty } from '../core/ui.js';
 import { num, plural, parseGoDuration } from '../core/format.js';
-import { loadSchema, loadConfig, same, fieldOfMessage, searchBox } from './configure/data.js';
-import { pendingBar, reviewChanges, savedBanner, watchConfig, noticeBanner } from './configure/changes.js';
+import { loadSchema, loadConfig, same, fieldOfMessage, searchBox } from '../core/configdata.js';
+import { pendingBar, reviewChanges, savedBanner, watchConfig, noticeBanner } from '../core/changes.js';
 
 // Unsaved edits survive a visit to another screen: "<scope>.<key>" -> value (null = reset).
 const pending = new Map();

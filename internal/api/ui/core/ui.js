@@ -307,7 +307,7 @@ export function schemaForm(o) {
     const f = o.fields.find(x => x.key === k);
     if (!marks[k] || !f) return;
     const cur = getPath(vals, k);
-    const offDefault = o.showDefaults !== false && f.default !== undefined && cur !== undefined && !same(cur, f.default);
+    const offDefault = o.showDefaults !== false && f.default != null && cur !== undefined && !same(cur, f.default);
     marks[k].replaceChildren(
       offDefault ? h('span', { class: 'b b-load', title: 'The default is ' + show(f.default) + (f.unit ? ' ' + f.unit : '') }, 'Changed from default') : '',
       !same(cur, getPath(initial, k)) ? h('span', { class: 'b b-q' }, 'Edited') : '',
@@ -361,7 +361,7 @@ export function schemaForm(o) {
     const m = marks[f.key] = h('span.row', { style: 'gap:6px' });
     const e = errEls[f.key] = h('span.err', { role: 'alert' });
     const range = f.min != null && f.max != null ? `${f.min} to ${f.max}` : f.min != null ? `at least ${f.min}` : f.max != null ? `at most ${f.max}` : '';
-    const help = [f.description, range ? `Allowed: ${range}${f.unit ? ' ' + f.unit : ''}.` : ''].filter(Boolean).join(' ');
+    const help = [f.description, range ? `Allowed: ${range}.` : ''].filter(Boolean).join(' ');
     return h('div', { class: 'field' + (f.type === 'text' || f.wide || !['bool', 'enum', 'int', 'float', 'duration', 'string', 'list', 'text'].includes(f.type) ? ' wide' : '') },
       h(f.type === 'bool' || f.type === 'list' ? 'div.lab' : 'label', { for: f.type === 'bool' || f.type === 'list' ? null : id }, f.label || humanize(f.key), m),
       c, help ? h('span.help', help) : null, e);
@@ -371,8 +371,8 @@ export function schemaForm(o) {
     if (f.type === 'int' || f.type === 'float') {
       if (typeof v !== 'number') return 'Enter a number.';
       if (f.type === 'int' && !Number.isInteger(v)) return 'Enter a whole number.';
-      if (f.min != null && v < f.min) return `At least ${f.min}${f.unit ? ' ' + f.unit : ''}.`;
-      if (f.max != null && v > f.max) return `At most ${f.max}${f.unit ? ' ' + f.unit : ''}.`;
+      if (f.min != null && v < f.min) return `At least ${f.min}.`;
+      if (f.max != null && v > f.max) return `At most ${f.max}.`;
     }
     if (f.type === 'duration' && parseGoDuration(v) == null) return 'Enter a duration such as 90s, 15m or 1h30m.';
     return '';
