@@ -1,6 +1,7 @@
 package bench
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -322,4 +323,123 @@ func TestStoreReportsSizeAndPath(t *testing.T) {
 	if n, err := s.SizeBytes(); err != nil || n <= 0 {
 		t.Fatalf("%d %v", n, err)
 	}
+}
+
+// The earlier builder's schema (migration 1 only) upgrades in place: rows
+// survive, old request rows keep their phase, new tables and columns exist.
+func TestMigrationFromTheFirstSchemaKeepsTheData(t *testing.T) {
+	dir := t.TempDir()
+	old, err := openStore(dir, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := old.SchemaVersion(); v != 1 {
+		t.Fatalf("version %d", v)
+	}
+	// rows written with the version 1 columns only
+	mustExec := func(q string, a ...any) {
+		t.Helper()
+		if _, err := old.db.Exec(q, a...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustExec(`INSERT INTO runs (id, suite_id, suite_name, state, queued_at, started_at, finished_at, version, suite) VALUES ('run-old','s','S','completed',100,110,200,'v0','{}')`)
+	mustExec(`INSERT INTO run_steps (id, run_id, idx, benchmark_id, name, profile, state, outcome, started_at, finished_at, load, stats) VALUES
+	  (7,'run-old',0,'gemma','Gemma','gemma-4','done','ready',111,190,'{"load_s":66.1,"avg_mb_s":101.4}','{"requests":3,"decode_tps":{"n":3,"mean":30}}')`)
+	mustExec(`INSERT INTO requests (step_id, run_id, seq, name, phase, status, wall_ms, decode_tps) VALUES (7,'run-old',1,'q','load',200,66000,6),(7,'run-old',2,'q','warmup',200,100,30),(7,'run-old',3,'q','measured',200,100,30)`)
+	old.Close()
+
+	s, err := OpenStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if v, _ := s.SchemaVersion(); v != len(migrations) || v < 2 {
+		t.Fatalf("version %d", v)
+	}
+	r, err := s.GetRun("run-old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Env != nil || len(r.Steps) != 1 {
+		t.Fatalf("%+v", r)
+	}
+	st := r.Steps[0]
+	if st.Load == nil || st.Load.LoadS != 66.1 || st.Stats.Decode.Mean != 30 || st.ModelFile != "" || st.NodeCount != 0 || len(st.Phases) != 0 {
+		t.Fatalf("%+v", st)
+	}
+	if len(st.Requests) != 3 || st.Requests[0].Phase != PhaseLoad || st.Requests[2].Phase != PhaseMeasured || st.Requests[2].PhaseIdx != 0 {
+		t.Fatalf("%+v", st.Requests)
+	}
+	// the widened phase check accepts the new kinds, and old ids keep counting up
+	rq := &RequestResult{StepID: 7, RunID: "run-old", Seq: 4, Name: "turn-1", Phase: PhaseConversation, Status: 200, Turn: 1, PhaseIdx: 2}
+	if err := s.AddRequest(rq); err != nil || rq.ID <= 3 {
+		t.Fatalf("%v %d", err, rq.ID)
+	}
+	if err := s.AddRequest(&RequestResult{StepID: 7, RunID: "run-old", Seq: 5, Name: "x", Phase: "bogus"}); err == nil {
+		t.Fatal("an unknown request phase was stored")
+	}
+	// the foreign key and cascade survived the table rebuild
+	if err := s.write(func(tx *sql.Tx) error { _, err := tx.Exec(`DELETE FROM runs WHERE id='run-old'`); return err }); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	s.db.QueryRow(`SELECT COUNT(*) FROM requests`).Scan(&n)
+	if n != 0 {
+		t.Fatalf("%d request rows left after deleting the run", n)
+	}
+}
+
+func TestPhasesEnvironmentAndNewColumnsRoundTrip(t *testing.T) {
+	s, _ := openTemp(t)
+	env := &Environment{SchedulerVersion: "1.2.3", ConfigRevision: "r7", LlamaBinary: "llama-server-rpc",
+		Workers: []WorkerEnv{{Node: "ps5-b", RPCServerVersion: "b2"}, {Node: "ps5-a", RPCServerVersion: "b1"}}}
+	r := newRun("run-1", "s1", 100)
+	r.Env = env
+	if err := s.CreateRun(r); err != nil {
+		t.Fatal(err)
+	}
+	st := &Step{RunID: "run-1", Idx: 0, BenchmarkID: "a", Name: "A", Profile: "p", State: StepRunning, ModelFile: "gemma.gguf", NodeCount: 2}
+	s.AddStep(st)
+	pr := &PhaseResult{StepID: st.ID, RunID: "run-1", Idx: 0, Type: "load", State: PhaseRunning, StartedAt: 5}
+	if err := s.AddPhase(pr); err != nil || pr.ID == 0 {
+		t.Fatalf("%v", err)
+	}
+	pr.State, pr.Outcome, pr.FinishedAt, pr.DurationS = PhaseDone, OutcomeReady, 9, 4
+	pr.Load = &LoadResult{LoadS: 3.5, Bytes: 100}
+	if err := s.UpdatePhase(pr); err != nil {
+		t.Fatal(err)
+	}
+	p2 := &PhaseResult{StepID: st.ID, RunID: "run-1", Idx: 1, Type: "conversation", State: PhaseDone, Turns: []TurnResult{{Turn: 1, PromptTokens: 20, CacheN: 0}, {Turn: 2, PromptTokens: 60, CacheN: 18}}}
+	s.AddPhase(p2)
+	s.AddRequest(&RequestResult{StepID: st.ID, RunID: "run-1", Seq: 1, Name: "turn-1", Phase: PhaseConversation, Status: 200, Turn: 1, PhaseIdx: 1})
+	w := 12.5
+	s.AddRequest(&RequestResult{StepID: st.ID, RunID: "run-1", Seq: 2, Name: "c", Phase: PhaseConcurrent, Status: 200, Turn: 2, PhaseIdx: 2, WaitMS: &w})
+	got, err := s.GetRun("run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Env == nil || got.Env.ConfigRevision != "r7" || got.Env.Key() != env.Key() {
+		t.Fatalf("env %+v", got.Env)
+	}
+	gs := got.Steps[0]
+	if gs.ModelFile != "gemma.gguf" || gs.NodeCount != 2 || len(gs.Phases) != 2 {
+		t.Fatalf("%+v", gs)
+	}
+	if p := gs.Phases[0]; p.State != PhaseDone || p.Outcome != OutcomeReady || p.Load == nil || p.Load.LoadS != 3.5 || p.DurationS != 4 || p.FinishedAt != 9 {
+		t.Fatalf("%+v", p)
+	}
+	if p := gs.Phases[1]; len(p.Turns) != 2 || p.Turns[1].CacheN != 18 {
+		t.Fatalf("%+v", p)
+	}
+	if gs.Requests[1].WaitMS == nil || *gs.Requests[1].WaitMS != 12.5 || gs.Requests[1].Turn != 2 || gs.Requests[1].PhaseIdx != 2 {
+		t.Fatalf("%+v", gs.Requests)
+	}
+	// the environment key ignores the order of the workers
+	rev := &Environment{SchedulerVersion: "1.2.3", ConfigRevision: "r7", LlamaBinary: "llama-server-rpc",
+		Workers: []WorkerEnv{{Node: "ps5-a", RPCServerVersion: "b1"}, {Node: "ps5-b", RPCServerVersion: "b2"}}}
+	if rev.Key() != env.Key() {
+		t.Fatal("worker order changed the environment key")
+	}
+	s.SetRunEnv("run-1", rev)
 }

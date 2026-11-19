@@ -7,6 +7,7 @@ package bench
 import (
 	"encoding/json"
 	"errors"
+	"sort"
 
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/benchspec"
 )
@@ -57,11 +58,23 @@ const (
 	OutcomeSkipped   = "skipped"   // never started (stop_on_failure, cancel)
 )
 
-// Request phases.
+// Request phases: what a stored request row was for.
 const (
-	PhaseLoad     = "load" // the first request of a cold step: it triggers the load, so its time includes it
-	PhaseWarmup   = "warmup"
-	PhaseMeasured = "measured"
+	PhaseLoad         = "load" // rows written by the first benchmark runner: the request that triggered the load (it is no longer sent)
+	PhaseWarmup       = "warmup"
+	PhaseMeasured     = "measured"
+	PhaseConversation = "conversation"
+	PhaseHold         = "hold"
+	PhaseConcurrent   = "concurrent"
+)
+
+// Phase states.
+const (
+	PhaseRunning   = "running"
+	PhaseDone      = "done"
+	PhaseFailed    = "failed"
+	PhaseCancelled = "cancelled"
+	PhaseSkipped   = "skipped"
 )
 
 // ErrNotFound is returned when an id does not exist.
@@ -179,6 +192,98 @@ type RequestResult struct {
 	Deterministic bool            `json:"deterministic"`
 	Error         string          `json:"error,omitempty"`
 	StartedAt     int64           `json:"started_at"`
+	PhaseIdx      int             `json:"phase_idx"`         // the phase of the benchmark this request belongs to
+	Turn          int             `json:"turn,omitempty"`    // conversation turn (1-based) or simultaneous request (1-based)
+	WaitMS        *float64        `json:"wait_ms,omitempty"` // simultaneous requests: time before the model started on it
+}
+
+// TurnResult is one turn of a conversation phase.
+type TurnResult struct {
+	Turn         int      `json:"turn"`
+	Name         string   `json:"name"`
+	Status       int      `json:"status"`
+	PromptTokens int      `json:"prompt_tokens"` // the whole prompt: processed (prompt_n) plus reused (cache_n)
+	PromptN      int      `json:"prompt_n"`      // processed by this request
+	CacheN       int      `json:"cache_n"`       // reused from the earlier turns
+	PrefillTPS   float64  `json:"prefill_tps"`
+	DecodeTPS    float64  `json:"decode_tps"`
+	TTFTMS       *float64 `json:"ttft_ms,omitempty"`
+	WallMS       float64  `json:"wall_ms"`
+	PredictedN   int      `json:"predicted_n"`
+}
+
+// ConcurrentItem is one request of a concurrent_requests phase.
+type ConcurrentItem struct {
+	Index      int      `json:"index"`
+	Status     int      `json:"status"`
+	WaitMS     *float64 `json:"wait_ms,omitempty"`
+	WallMS     float64  `json:"wall_ms"`
+	DecodeTPS  float64  `json:"decode_tps,omitempty"`
+	PrefillTPS float64  `json:"prefill_tps,omitempty"`
+	Error      string   `json:"error,omitempty"`
+}
+
+// ConcurrentResult is what a concurrent_requests phase measured.
+type ConcurrentResult struct {
+	N      int              `json:"n"`
+	WallMS float64          `json:"wall_ms"` // from the first send to the last answer
+	Errors int              `json:"errors"`
+	Items  []ConcurrentItem `json:"items"`
+}
+
+// UnloadResult is what an unload phase measured.
+type UnloadResult struct {
+	Loaded  bool    `json:"was_loaded"` // the profile had an instance when the phase began
+	Gone    bool    `json:"gone"`
+	UnloadS float64 `json:"unload_s"` // from the request until the instance was gone
+}
+
+// PhaseResult is what one phase of a step did and measured.
+type PhaseResult struct {
+	ID         int64             `json:"-"`
+	StepID     int64             `json:"-"`
+	RunID      string            `json:"-"`
+	Idx        int               `json:"idx"`
+	Type       string            `json:"type"`
+	Label      string            `json:"label,omitempty"`
+	State      string            `json:"state"`
+	Outcome    string            `json:"outcome,omitempty"` // ready, refused, failed, error, cancelled; empty while running
+	Error      string            `json:"error,omitempty"`
+	StartedAt  int64             `json:"started_at,omitempty"`
+	FinishedAt int64             `json:"finished_at,omitempty"`
+	DurationS  float64           `json:"duration_s"`
+	Load       *LoadResult       `json:"load,omitempty"`
+	Stats      *Stats            `json:"stats,omitempty"`
+	Turns      []TurnResult      `json:"turns,omitempty"`
+	Concurrent *ConcurrentResult `json:"concurrent,omitempty"`
+	HeldS      *float64          `json:"held_s,omitempty"`
+	Unload     *UnloadResult     `json:"unload,omitempty"`
+}
+
+// WorkerEnv is a worker's identity at the time of a run.
+type WorkerEnv struct {
+	Node             string `json:"node"`
+	RPCServerVersion string `json:"rpc_server_version,omitempty"`
+}
+
+// Environment is what a run ran on, so that results of different setups are not mixed up.
+type Environment struct {
+	SchedulerVersion string      `json:"scheduler_version,omitempty"`
+	ConfigRevision   string      `json:"config_revision,omitempty"`
+	LlamaBinary      string      `json:"llama_binary,omitempty"`
+	Workers          []WorkerEnv `json:"workers,omitempty"`
+}
+
+// Key is a canonical string; two environments are the same when their keys are.
+func (e *Environment) Key() string {
+	if e == nil {
+		return ""
+	}
+	c := *e
+	c.Workers = append([]WorkerEnv(nil), e.Workers...)
+	sort.Slice(c.Workers, func(i, j int) bool { return c.Workers[i].Node < c.Workers[j].Node })
+	b, _ := json.Marshal(c)
+	return string(b)
 }
 
 // Step is one benchmark execution within a run.
@@ -204,6 +309,9 @@ type Step struct {
 	Expect      *ExpectResult        `json:"expect,omitempty"`
 	Comparison  *Comparison          `json:"comparison,omitempty"`
 	Error       string               `json:"error,omitempty"`
+	ModelFile   string               `json:"model_file,omitempty"` // the model file the profile loaded
+	NodeCount   int                  `json:"node_count,omitempty"` // worker nodes the model was spread over
+	Phases      []PhaseResult        `json:"phases,omitempty"`
 	Requests    []RequestResult      `json:"requests,omitempty"`
 }
 
@@ -230,6 +338,7 @@ type Run struct {
 	Error         string          `json:"error,omitempty"`
 	Version       string          `json:"version,omitempty"`
 	Suite         json.RawMessage `json:"suite,omitempty"` // the suite as it was when the run was queued
+	Env           *Environment    `json:"env,omitempty"`   // what the run ran on
 	Summary       *RunSummary     `json:"summary,omitempty"`
 	Steps         []Step          `json:"steps,omitempty"`
 }
