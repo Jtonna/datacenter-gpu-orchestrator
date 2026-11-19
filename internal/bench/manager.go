@@ -431,7 +431,10 @@ func (m *Manager) finishUnstarted(r *Run, state, why string) {
 
 // StateDoc is GET /api/bench/state.
 type StateDoc struct {
-	Enabled       bool             `json:"enabled"`
+	Enabled bool `json:"enabled"`
+	// Run is the progress of the running run (design 9.3): percent, the benchmark
+	// and phase in flight, the next one, the queue and the eta; null when idle.
+	Run           map[string]any   `json:"run"`
 	Current       map[string]any   `json:"current"`
 	Queue         []map[string]any `json:"queue"`
 	NextScheduled []ScheduledRun   `json:"next_scheduled"`
@@ -449,7 +452,7 @@ type ScheduledRun struct {
 // State is the current run, the queue and the next scheduled runs.
 func (m *Manager) State() StateDoc {
 	m.checkSchedules(false)
-	d := StateDoc{Enabled: true, Queue: []map[string]any{}, NextScheduled: []ScheduledRun{}}
+	d := StateDoc{Enabled: true, Queue: []map[string]any{}, NextScheduled: []ScheduledRun{}, Run: m.Progress()}
 	m.mu.Lock()
 	var cur *Run
 	if m.cur != nil {

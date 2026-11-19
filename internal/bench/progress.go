@@ -472,7 +472,10 @@ func (m *Manager) progressDoc(ar *activeRun) map[string]any {
 	}
 	doc := map[string]any{"id": r.ID, "suite_id": r.SuiteID, "suite_name": r.SuiteName, "state": r.State, "percent": round1(pct),
 		"started_at": started, "elapsed_s": elapsed, "eta_s": eta, "steps_total": ar.total, "steps_done": ar.done,
-		"current": current, "next": next, "queue": queue}
+		"current": nil, "next": next, "queue": queue}
+	if current != nil {
+		doc["current"] = current
+	}
 	if ar.paused != "" {
 		doc["paused_because"] = ar.paused
 	}
