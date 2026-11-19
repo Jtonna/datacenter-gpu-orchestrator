@@ -16,9 +16,11 @@ core/api.js         REST helper: get(), send(), post/put/patch/del (X-Source, X-
 core/router.js      hash router and the view registry
 core/shell.js       navigation, connection indicator, the name that signs changes
 core/status.js      helpers that read the status document
+core/reasons.js     the scheduler's reason strings in plain words (no DOM)
 core/ui.js          the shared components (below)
 core/charts.js      sparkline(), lineChart(), barMeter(): inline SVG
 views/<id>.js       one module per screen; it registers itself
+views/models/       the instance card and the model page of the Models screen
 fonts/              Manrope (variable) and JetBrains Mono, with their licences (OFL)
 ```
 
@@ -33,7 +35,9 @@ One screenshot: `scripts/ui-screens.sh http://127.0.0.1:8790 models loading desk
 2. **No load, unload, force load or cancel load control, anywhere.** Running a
    benchmark suite is the one action that causes loads, and it sits behind a
    confirm dialog that says so. `internal/api/ui_test.go` fails the build if a
-   UI file names `/api/load`, `/api/unload` or `/api/models/unload`.
+   UI file names `/api/load`, `/api/unload` or `/api/models/unload`. (The
+   catalog `GET /api/models` and `GET /api/models/<key>` are read-only and are
+   what the Models screen reads.)
 3. **WebSocket for live, REST for pull and push.** Live data comes from the
    store (`core/store.js`). REST is for lists and detail on demand and for
    writes. Never call REST on a timer. To refresh a list, react to a WebSocket
@@ -50,12 +54,27 @@ One screenshot: `scripts/ui-screens.sh http://127.0.0.1:8790 models loading desk
 7. **Phone width (390 px) must work.** Tables go inside `.scroll` (the `table()`
    helper does it) with a `minWidth`; rows of things use `.cols`, `.grid`,
    `.stats`, `.row`, which wrap.
-8. **Copy.** Plain words, short sentences. Units always (`MiB`, `GB`, `tok/s`,
-   `s`). Times as "38 min ago" with the absolute time on hover: use `ago()`,
+8. **Copy.** Plain words, short sentences. Units always (`GB`, `tok/s`, `s`;
+   see Units below). Times as "38 min ago" with the absolute time on hover: use `ago()`,
    `until()`, `at()`. Sentence case. No exclamation marks. Say why something
-   waits or fails in the scheduler's own words (`wait_reason`, `reason`).
+   waits or fails in plain words: pass the scheduler's `wait_reason` or
+   `reason` through `plainReason()` and keep the raw text one click away (a
+   tooltip, or `more()` with a `.raw` block). Never print a raw reason string,
+   a setting key or a status field name as the sentence.
    Every list has an empty state (`empty()`), and a loading state (`skeleton()`).
-9. **Identifiers and numbers are mono** (`.mono`): profile ids, node names,
+9. **A model is a model file, not a profile.** Monitor screens name the
+   model (`name` of the catalog) and show the profile id as the small mono
+   "configuration". Profiles whose `generated` is true (benchmark matrices)
+   are never listed as rows of their own outside Profiles and a model's page:
+   they are counted ("24 generated") and folded behind a toggle.
+10. **Units.** Anything read at a glance is GB with one decimal, and 1 GB is
+   1,024 MiB (2^30 bytes) for memory and file sizes alike: `gb(mib)`,
+   `gbNum(mib)`, `bytes(n)`. MiB (`mib()`) appears only in tooltips, in the
+   configuration tables (where the setting itself is in MiB) and in the
+   benchmark figure tables. Rates stay MB/s as the server measured them. A
+   figure is never negative: when two sources disagree, clamp and say so in
+   a note (see the Nodes screen).
+11. **Identifiers and numbers are mono** (`.mono`): profile ids, node names,
    file names, MiB, counts in tables. Prose is Manrope.
 
 ## Tokens (`:root` in app.css)
@@ -150,7 +169,16 @@ markup it produces, so the markup can also be written with `h()` directly.
 | Node chip | `nodeChip(name)`, `nodeChips(names)` | `span.node` (mono, on `--fill`). Every node name in prose or a table is a chip. |
 | Button | `button(label, onclick, kind)` | `button.btn` + `pri` (one per screen: the main action), `dng` (outline coral), `dng solid` (confirm of a dangerous action), `sm`, `lg`, `ghost`, `icon`. |
 | Stat row | `h('div.stats', stat(label, value, unit, {title, small}))` | `div.stat > span + b (> small)`. Label above, 20 px figure, unit small and muted. |
-| Memory bar | `memoryRow(name, {model_mib, kv_mib, compute_mib, total_mib}, budgetMiB, extra)` | `div.nr`: node name, segmented `.bar` (`m` model, `k` KV cache, `c` compute, `o` other), "used / usable MiB", the split. One row per node. Show the legend once per screen: `legend([['m','Model'],['k','KV cache'],['c','Compute']])`. |
+| Memory bar | `memoryRow(name, {model_mib, kv_mib, compute_mib, total_mib}, budgetMiB, extra)` | `div.nr`: node name, segmented `.bar` (`m` model, `k` KV cache, `c` compute, `o` other), "used / usable GB", the split. One row per node. Show the legend once per screen: `legend([['m','Model'],['k','KV cache'],['c','Compute']])`. |
+| Node memory | `memBar({model, other, total, limit}, ariaLabel)` | `div.membar > div.track > span.m + span.o` and one `i.lim`. One node's whole memory on one track: solid segments for models and other use, the rest of the track is free, and a single marker line where a new model must stop (free minus headroom). No outlined boxes; the marker is left out when it would sit at the end. |
+| Facts (aligned) | `facts([[label, node, title]])` | `dl.facts`: small aligned label / value pairs with mono values (a card footer: address, priority, worker). |
+| Copy | `copyButton(text, what)` | `button.copy`: next to a long identifier that is shown shortened (`shortId(s, 12)`, the full value in the `title`). |
+| Fold | `more(open, onToggle, show, hide)` | `button.more`: a quiet text button that unfolds something long (the scheduler's own words in a `.raw` block, the generated profiles, the command line). Keep the open state in the view, not in the DOM. |
+| Back link | `backLink(label, href)` | `a.back`: above the page header of a detail page. |
+| Section title | `h('div.sec-title', h('h2', …), h('span.note', …))` | A heading between cards, when a group of cards needs a name. |
+| Toolbar | `h('div.toolbar', searchInput, chips(...))` | Search first, then the filter chips, under a card header. Build the input once with `data-keep` so the caret survives a redraw. |
+| Grouped table | `table.tbl.dense` with `tr.grp` (a group header row, `colspan`) and `tr.sub` (its rows) | A long list grouped by something (profiles by model file). |
+| Clipped cell | column `cls: 'clip'` | The cell gives way and cuts its text with an ellipsis, so the figures beside it never clip in a narrow side table. |
 | Bar | `bar([{cls, value, title}], total, ariaLabel, size)` | `div.bar > span.<cls>`. Classes: `m k c o` (memory), `a` amber, `x` coral, `l` lilac, `ld` striped (expected), `rsv` outline (reserved). Sizes: default 10 px, `lg` 14 px, `sm` 8 px. Always pass an aria label that says the figures. |
 | Progress | `progress({fraction, cls, left, mid, right, foot: [l, r], striped, label})` | `div.prog`: a line above (percent as `span.pct`, time left, deadline), a 14 px bar, a mono line below (started, deadline). |
 | Step tracker | `steps([{label, note, state}])` | `div.steps > div.step(.done|.now|.fail)`. The phases of one load or one benchmark, left to right; `note` is the live figure of the current step. |
@@ -190,7 +218,15 @@ return a `<time>` with the absolute time as its title), `agoText(t)`,
 `parseGoDuration('15m')`, `now()` (the server's clock), `DASH`.
 Times may be unix milliseconds or RFC 3339 strings.
 
-Status helpers (`core/status.js`): `nodeName(st, id)`, `findNode(st, idOrHost)`,
+Reasons (`core/reasons.js`, re-exported by `core/status.js`): `plainReason(raw)`
+(a plain sentence), `shortReason(raw)` (a few words for a table cell),
+`plainBasis(raw)` (where a memory need comes from), `refusalWord(reason)`.
+The patterns were written from the strings the real system produced
+(`cmd/devcluster/realdata`); an unknown wording is only tidied, never guessed.
+When the scheduler gains a reason, add its pattern there.
+
+Status helpers (`core/status.js`): `machines(st, n)` ("3 PS5s", or "3 nodes"
+when the pool is mixed), `nodeName(st, id)`, `findNode(st, idOrHost)`,
 `nodeByAddr(st, addr)`, `instanceNodeNames(st, inst)`, `nodeMemory(placed)`,
 `instanceBadge(inst)`, `healthBadge(node)`, `drift()`, `staleBanner()`.
 
@@ -248,6 +284,26 @@ For the Configure group. The exact shapes are in `internal/api/config.go` and
 - The status has `configured` and, per instance, `stale_profile: true` when the
   profile was changed or deleted after the model loaded (Models shows "Older
   definition").
+
+## The model catalog (as built on the server)
+
+`GET /api/models` -> `{models: [...], models_dir, history}`: one entry per
+model file (`internal/api/models.go`, `docs/design.md` 9.4). An entry: `key`
+(the file name, or `command:<profile id>`), `kind`, `file`, `exists`,
+`size_bytes`, `name`, `publisher`, `family`, `parameters`, `quant`,
+`context_length`, `meta_source`, `state` (`ready`, `loading`, `not_loaded`),
+`profiles[]` (`id, ctx, parallel, placement, force_nodes, tensor_split,
+needs_mib, needs_basis, needs_measured, aliases, generated, plan`),
+`profile_count`, `generated_count`, `startable_count`, `instances[]`,
+`measured[]` (`nodes, memory_mib, profile, ctx, at, source`), `fit`
+(`need_mib, basis, min_nodes, ran_on_nodes, node_budget_mib,
+cluster_budget_mib`), `loads` (`count, ready, failed, cancelled, unloads,
+refusals, last, by_nodes[]`), `last_loaded`, `last_active`,
+`requests_served`, `last_refusal`, `bench` (`benchmarks, runs, by_nodes[]`).
+`GET /api/models/<key>` adds `events[]` and `bench.detail[]`. The instance
+cards are drawn from the WebSocket status (they need the live load figures);
+the catalog is fetched on open and again when the placement picture of the
+status changes, an event of a load arrives or the configuration changes.
 
 ## The benchmark contract (as built on the server)
 
@@ -320,6 +376,10 @@ before drawing a field.
 `scripts/ui-dev.sh [scenario]` runs `cmd/devcluster` on `127.0.0.1:8790`: the real
 scheduler server, a scripted status per scenario, seeded history, and the mock
 of the endpoints above. `GET /dev/scenarios` lists the scenarios;
-`POST /dev/scenario?name=<name>` switches. Scenario data for a screen group
+`POST /dev/scenario?name=<name>` switches. `scripts/ui-dev.sh real` replays a
+recording of the real cluster instead (254 profiles, real reason strings,
+real history, benchmark runs and audit trail; read-only; `real-loading` is the
+same at the moment of a load): look at every change with it too, because the
+scripted states are small and tidy and the real one is not. Scenario data for a screen group
 goes into its own file in `cmd/devcluster`. Screenshots go to `docs/ui-screens/`
 (`<screen>-<scenario>-<desktop|phone>.png`).

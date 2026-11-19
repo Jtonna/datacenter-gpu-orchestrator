@@ -417,3 +417,4 @@ a.cfg:hover{color:var(--mint-text)}
 /* a cell that gives way: its text is cut with an ellipsis so the figures beside it never clip */
 .tbl td.clip{max-width:0;width:100%}
 .tbl td.clip>span,.tbl td.clip .mono{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tbl td.mname{min-width:230px}

@@ -57,7 +57,7 @@ function catalog(st, models, error, filter, query, setFilter, setQuery, searchBo
     body = table({
       minWidth: 920, rows, key: m => m.key, onRow: m => navigate('models', [m.key]),
       columns: [
-        { label: 'Model', render: m => h('span', h('a.name', { href: href('models', [m.key]), title: m.file || m.name }, m.name),
+        { label: 'Model', cls: 'mname', render: m => h('span', h('a.name', { href: href('models', [m.key]), title: m.file || m.name }, m.name),
           h('span.sub', sizeLine(m), m.kind === 'llama' && !m.exists ? h('span.err-t', ' · file missing') : null)) },
         { label: 'State', cls: 'tight', render: m => stateBadge(m, st) },
         { label: 'Needs', cls: 'r', title: 'The memory its lightest configuration needs on the nodes', render: m => {

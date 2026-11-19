@@ -65,7 +65,8 @@ export function runsLine(m, st) {
 export function cannotRun(m) {
   const ps = m.profiles || [];
   if (!ps.length) return m.kind === 'llama' ? 'No configuration uses this file yet' : '';
-  if (m.state !== 'not_loaded' || ps.some(p => p.plan && (p.plan.would_start || p.plan.action === 'evict' || p.plan.action === 'queue' && /in use/.test(p.plan.reason || '')))) return '';
+  // waiting for a busy node is not "cannot run": only a refusal of every configuration is
+  if (m.state !== 'not_loaded' || ps.some(p => !p.plan || p.plan.would_start || (p.plan.action !== 'reject' && p.plan.action !== 'backoff'))) return '';
   const hand = ps.filter(p => !p.generated);
   const p = (hand.length ? hand : ps)[0];
   return shortReason(p.plan && p.plan.reason) || 'Cannot be placed right now';
