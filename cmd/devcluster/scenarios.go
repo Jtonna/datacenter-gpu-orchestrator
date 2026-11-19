@@ -23,12 +23,27 @@ import (
 // (for creeping figures); nil means live (the real scheduler answers).
 // Bench is the frozen benchmark run to show: "", "load", "conversation" or
 // "last" (see freeze in mock_bench_engine.go).
+//
+// BenchSetup, when set, runs after the bench mock is reseeded (and after
+// the frozen run, if any) and before the bench state frame goes out. It may
+// change the seeded data in place: take e.store.mu while touching
+// e.store.benchmarks, e.store.suites or e.store.runs (types in
+// mock_bench.go; fillStep, newSteps and benchEnv in mock_bench_seed.go
+// build runs), and call e.enqueue(suiteID, "", note, "manual") without any
+// lock held to start or queue runs. Example, no suites at all:
+//
+//	BenchSetup: func(e *benchEngine, now time.Time) {
+//		e.store.mu.Lock()
+//		defer e.store.mu.Unlock()
+//		e.store.suites, e.store.runs = map[string]map[string]any{}, nil
+//	},
 type scenario struct {
 	Name        string
 	Description string
 	StartupOnly bool // selectable only with --scenario at startup
 	Status      func(now time.Time, t time.Duration) *statusBuilder
 	Bench       string
+	BenchSetup  func(e *benchEngine, now time.Time)
 }
 
 // registerScenario adds a scenario; a duplicate name panics at startup.
