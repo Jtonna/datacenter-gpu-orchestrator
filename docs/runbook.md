@@ -348,7 +348,7 @@ curl -s "$H/api/audit?source=ui&since=1790000000000" | jq .total_matching     # 
 curl -s $H/api/audit/42 | jq '{before, after, diff}'                       # what exactly changed
 ```
 
-`source` is `ui`, `rest`, `mcp`, `import` or `system`, decided by the server. Loads and unloads asked for over REST are in section `runtime` (no revision). The log is append-only and is kept forever unless you set `audit_retention_days`.
+`source` is `ui`, `rest`, `mcp`, `import` or `system`, decided by the server (a client cannot claim `mcp` or `import`). Loads and unloads asked for over REST or MCP are in section `runtime` (no revision). Benchmark and suite changes, run starts and run cancels are in section `bench` (targets `benchmark:<id>`, `suite:<id>`, `run:<id>`). The loads and unloads a benchmark run makes by itself are in section `runtime` with source `system` and actor `bench run <run id>`: `curl -s "$H/api/audit?source=system"` lists exactly the scheduler's own actions, and everything a person or an agent did is the rest. The log is append-only and is kept forever unless you set `audit_retention_days`.
 
 #### Roll back
 
@@ -762,11 +762,33 @@ Three example calls an agent makes (arguments as JSON):
    saving it; repeat without `dry_run` to apply it. `query_audit` then shows it
    with `source: mcp` and the client name, and `rollback_config` undoes it.
 
-Notes: configuration tools exist only in a build that has the configuration
-API; on an older build the call answers "this server build does not have that
-endpoint". Benchmark tools need `data_dir`, like the REST API. An agent that
-should not change anything can be given a client configuration that allows only
-the tools marked read-only.
+What the write tools send (each is one REST request; the answer is the REST
+answer, errors included):
+
+| Tool | Request |
+|---|---|
+| `create_profile` | `POST /api/config/profiles`, body = `profile` (with `id`) |
+| `update_profile` | `PUT /api/config/profiles/{id}`, body = the whole `profile` |
+| `delete_profile` | `DELETE /api/config/profiles/{id}` (`409` while a benchmark names it) |
+| `update_settings` | `PATCH /api/config/settings`, body = `settings` (only the keys to change) |
+| `set_tiers`, `set_exclude_nodes`, `set_node_overrides`, `set_recovery_settings`, `set_fleet_settings` | `PUT /api/config/<section>`, body = `value` (a list for tiers and exclude_nodes, an object for the others) |
+| `rollback_config` | `POST /api/config/revisions/{revision}/rollback` |
+| `create_benchmark`, `update_benchmark`, `create_suite`, `update_suite` | `POST` or `PUT /api/bench/benchmarks[/{id}]` and `/suites[/{id}]`, body = `benchmark` or `suite` |
+| `run_suite`, `cancel_run` | `POST /api/bench/suites/{id}/run` `{baseline, note}`, `POST /api/bench/runs/{id}/cancel` |
+| `load_model`, `unload_model` | `POST /api/load` `{model}`, `POST /api/unload` `{model, force}` |
+
+The configuration tools also take `comment` (the audit comment), `dry_run`
+(validate and report the diff, save nothing, audit nothing) and `if_revision`
+(refuse with `409 stale_revision` if the configuration moved on; read it with
+`get_config`, `list_config_revisions` or any write answer). Every write tool
+takes `actor`, a label for the task, recorded as `<actor> (via <client>)`.
+The read tools for the audit log and the results are `query_audit`,
+`get_bench_aggregates` (since and until accept `24h` or `7d`; `env: "same"`
+keeps only runs in the newest run's environment), `get_bench_trends`,
+`get_bench_schema` and `export_run`. Benchmark tools need the database like the
+REST API does, and answer `503` otherwise. An agent that should not change
+anything can be given a client configuration that allows only the tools marked
+read-only.
 
 ### Child output logs
 

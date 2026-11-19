@@ -11,7 +11,7 @@ The scheduler keeps its safety and lifecycle events in a file-backed history
 
 Everything live goes over one WebSocket, `GET /ws` (status, history events,
 benchmark progress; design 9.2). It can also run benchmarks itself: define
-benchmarks and suites (config or `/api/bench/...`), run them through its own
+benchmarks and suites (`import-config`, `/api/bench/...` or MCP), run them through its own
 API, and keep every result and the comparison with the last run in a SQLite
 database under the data directory (design 9.3, runbook "Benchmarks run by the
 scheduler", benchmark guide section 12). All of it is in the one binary and
@@ -35,7 +35,7 @@ documents that input format and `deploy/seed-config.yaml` is the production seed
 (runbook "Configuration lives in the database"). Starting on an empty database works:
 no profiles, "no configuration yet".
 
-AI agents can operate it over MCP at `/mcp` on the same port (46 tools that run the same code as the REST API; design 9.5, runbook "Let an AI agent operate the scheduler").
+AI agents can operate it over MCP at `/mcp` on the same port (46 tools that run the same code as the REST API; design 9.5, runbook "Let an AI agent operate the scheduler"). Everything an agent changes lands in the same audit log with source `mcp` and the client's name; benchmark and suite changes and runs are audited in section `bench`, and the loads a benchmark run makes by itself are tagged in the history and logged as source `system`.
 
 ## Tests
 
@@ -53,7 +53,8 @@ Add `-race` where cgo is available (needs gcc on Windows; the Linux run in the
 - `internal/` packages named in design section 5 (`config`, `gguf`, `estimate`,
   `fleet`, `placer`, `instance`, `scheduler`, `proxy`, `api`) plus `history`,
   `audit`, `cfgstore`, `cfgsvc` (audit log, revisions, the one configuration service),
-  `benchspec` and `bench` (benchmarks: store, runner, statistics, export); each
+  `benchspec` and `bench` (benchmarks: store, runner, progress model, statistics,
+  aggregates, export), `mcpserver` (the MCP server, tools as REST recipes); each
   has a `doc.go` or package comment stating its job.
 - `internal/testutil/fakellama/` fake `llama-server-rpc` for integration tests
   (see its README).

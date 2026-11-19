@@ -292,6 +292,14 @@ or what happens after the model sat idle. It needs the database (the `./data`
 volume) and the `bench_enabled` setting (on by default); without them
 `/api/bench/...` answers `503`.
 
+The runner sends every request, the `load` and `unload` calls included, with
+`X-Bench-Run: <run id>`. The history then tags the load with `data.bench_run`,
+and the audit log lists the run's own loads and unloads as source `system`,
+actor `bench run <run id>` (section `runtime`), so they are not confused with a
+person loading a model. Defining and running benchmarks through REST, the web
+page or MCP (`create_benchmark`, `create_suite`, `run_suite`, `get_run`,
+`get_bench_aggregates`) is audited in section `bench`.
+
 What the by-hand method of section 6 maps to:
 
 | By hand | In the scheduler |

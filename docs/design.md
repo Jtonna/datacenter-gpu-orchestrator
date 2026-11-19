@@ -306,6 +306,14 @@ revision and its entries are committed in one transaction.
 - `load` and `unload` asked for over REST or MCP are audited as section
   `runtime`, without a revision. They go through a bounded queue to one
   writer goroutine: a database problem never delays or fails the action.
+  The loads and unloads of a benchmark run (the runner calls the API on
+  loopback with `X-Bench-Run: <run id>`) are audited too, but as source
+  `system`, actor `bench run <id>` and `after.bench_run`; they are never
+  mistaken for a person's action, and the header does not hide a call (it only
+  changes its label). The history record of such a load carries
+  `data.bench_run` (9.3).
+- Benchmark and suite changes, run starts and run cancels are audited in
+  section `bench` (9.3), with the same source and actor rules.
 - `audit_retention_days` (default 0 = keep everything): when above 0, entries
   older than that are removed at start. That is the only delete in the
   application and is off by default.
@@ -1494,8 +1502,12 @@ gets its own process group, so nothing is left behind.
 | `GET /ui/` | The read-only dashboard (9.1): one self-contained page embedded in the binary. |
 | `GET /api/history`, `GET /api/history/summary`, `GET /api/history/export`, `GET /api/about` | The event history and what the dashboard header shows (9.1). Read-only. |
 | `GET /ws` | The live channel, a WebSocket (9.2): hello, status, event, bench, ping. |
-| `/api/bench/...` | Benchmarks (with phases), suites, runs, progress, exports, trends, aggregates and the editor schema (9.3). `503` when the `bench_enabled` setting is off or the database is not open. |
-| `/api/config/...`, `GET /api/audit[/{id}]` | The configuration (profiles, tiers, settings, exclusions, overrides, recovery, fleet), its revisions, export/import and the audit log (6.0). |
+| `GET /api/config`, `GET /api/config/schema`, `GET`/`POST /api/config/profiles`, `GET`/`PUT`/`DELETE /api/config/profiles/{id}` | The configuration document with its revision, the settings schema `{"fields": [...]}`, and profiles (6.0.2). Section GETs are wrapped: `{"revision": N, "<section>": ...}`. Writes take `?dry_run=1`, `If-Match: <revision>`, `X-Comment`, `X-Actor`, `X-Source: ui`, and answer with the new revision, the diff and `restart_required`. |
+| `GET /api/config/{tiers,settings,exclude-nodes,node-overrides,recovery,fleet}`; `PUT` the same except settings; `PATCH` settings, recovery and fleet | The other sections (6.0.2). |
+| `GET /api/config/revisions`, `GET /api/config/revisions/{n}`, `POST /api/config/revisions/{n}/rollback`, `GET /api/config/export`, `POST /api/config/import` | Revisions, rollback (a new revision), export and import (6.0.3). |
+| `GET /api/audit`, `GET /api/audit/{id}` | The audit log (6.0.4): filters `since`, `until`, `source`, `actor`, `section`, `target`, `action`, `q`, `limit`, `order`. |
+| `GET`/`POST /api/bench/benchmarks`, `GET`/`PUT`/`DELETE /api/bench/benchmarks/{id}`, `GET`/`POST /api/bench/suites`, `GET`/`PUT`/`DELETE /api/bench/suites/{id}`, `POST /api/bench/suites/{id}/run` | Benchmark and suite definitions (with phases) and starting a run (9.3). `503` when the `bench_enabled` setting is off or the database is not open. |
+| `GET /api/bench/runs`, `GET /api/bench/runs/{id}`, `POST /api/bench/runs/{id}/cancel`, `GET /api/bench/runs/{id}/export`, `GET /api/bench/trends`, `GET /api/bench/aggregates`, `GET /api/bench/schema`, `GET /api/bench/state`, `GET /api/bench/profiles` | Runs, progress, exports, trends, aggregates, the editor schema, the engine state and the profile ids a benchmark may name (9.3). |
 | `POST /mcp` | The MCP server for AI agents (9.5): the same operations as the REST API, as tools. |
 | `GET /api/profiles`, `GET /api/system` | Every profile with its need and dry-run plan; configuration and storage summary (9.4). Read-only. |
 | `GET /health` | `200` whenever the scheduler is running. |
@@ -1749,10 +1761,12 @@ scheduler only through its public HTTP API on its own loopback address
 client takes and the scheduler's fit checks cannot be bypassed. Every chat
 request carries `X-Bench-Run: <run id>`; the scheduler copies it into the
 history records of the load such a request causes and of a refusal
-(`data.bench_run`). A `load` phase sends no chat request and `POST /api/load`
-has no such tag, so the load of a `load` phase is joined to its step through the
-load session id (`load.session_id`; `GET /api/history?session_id=...`). Per
-benchmark:
+(`data.bench_run`). A `load` phase sends no chat request, so its
+`POST /api/load` (and the unloads) carry the same `X-Bench-Run` header: the
+scheduler tags the load's history records with `data.bench_run` too, and the
+audit log records the call as source `system`, actor `bench run <id>` (6.0.4),
+never as a person's. The load session id (`load.session_id`; `GET
+/api/history?session_id=...`) stays the other join key. Per benchmark:
 
 1. `POST /api/plan` is recorded (`plan`, and the nodes it would use).
 2. The phases run in order, each stored as a row of `run_phases` when it starts
@@ -1905,7 +1919,7 @@ goroutine (one transaction per write), reads through a pool. Schema versions
 are rows of `migrations (version, name, applied_at)`; a database written by a
 newer build is refused. JSON columns hold the open shapes. Migration 2
 ("benchmark phases, run environment, aggregates") upgrades a database made by
-the first builder in place: it adds `runs.env`, `run_steps.model_file`,
+an earlier build in place: it adds `runs.env`, `run_steps.model_file`,
 `run_steps.node_count`, the `run_phases` table, and rebuilds `requests` with
 the wider `phase` check and three new columns, keeping every row.
 
@@ -1917,7 +1931,7 @@ the wider `phase` check and three new columns, keeping every row.
 | `runs` | `id` PK, `suite_id`, `suite_name`, `state`, `note`, `triggered_by` (`manual`/`schedule`), `baseline_run_id`, `queued_at`, `started_at`, `finished_at`, `error`, `version`, `suite` JSON (suite + benchmarks snapshot), `summary` JSON, `env` JSON |
 | `run_steps` | `id` PK, `run_id` FK, `idx`, `grp` (parallel step id), `benchmark_id`, `name`, `profile`, `state`, `outcome`, `reason`, `http_status`, `log_file`, `started_at`, `finished_at`, `error`, `model_file`, `node_count`, JSON: `spec`, `plan`, `load`, `stats`, `expect`, `comparison` |
 | `run_phases` | `id` PK, `step_id` FK, `run_id`, `idx` (position in the benchmark's phases), `type`, `label`, `state` (`running`/`done`/`failed`/`cancelled`/`skipped`), `outcome` (`ok`, `refused`, ...), `error`, `started_at`, `finished_at`, `result` JSON (`duration_s`, `load`, `stats`, `turns`, `concurrent`, `held_s`, `loaded_after_hold`, `unload`) |
-| `requests` | `id` PK, `step_id` FK, `run_id`, `seq`, `name`, `phase` (`warmup`/`measured`/`conversation`/`hold`/`concurrent`; `load` in rows written by the first builder), `phase_idx`, `turn`, `wait_ms`, `status`, `wall_ms`, `ttft_ms`, `prompt_n`, `prompt_ms`, `prompt_tps`, `predicted_n`, `predicted_ms`, `decode_tps`, `cache_n`, `timings` JSON, `output_sha256`, `output_head`, `deterministic`, `error`, `started_at` |
+| `requests` | `id` PK, `step_id` FK, `run_id`, `seq`, `name`, `phase` (`warmup`/`measured`/`conversation`/`hold`/`concurrent`; `load` in rows written by an earlier build), `phase_idx`, `turn`, `wait_ms`, `status`, `wall_ms`, `ttft_ms`, `prompt_n`, `prompt_ms`, `prompt_tps`, `predicted_n`, `predicted_ms`, `decode_tps`, `cache_n`, `timings` JSON, `output_sha256`, `output_head`, `deterministic`, `error`, `started_at` |
 
 *Seeding.* The `bench.benchmarks` and `bench.suites` of a YAML file given to
 `import-config` (same shapes as the API) are stored once, with `source: "config"`
@@ -1934,8 +1948,12 @@ seed against the profiles at import time.
 and cancelling a run each call an `AuditHook` (`internal/api/bench.go`) with
 action (`create`, `update`, `delete`, `run_start`, `run_cancel`), section
 `bench`, target (`benchmark:<id>`, `suite:<id>`, `run:<id>`) and the state
-before and after. The default does nothing; the audit log's recorder is plugged
-in with `Server.SetAuditHook`.
+before and after. `api.New` plugs the audit log's recorder in whenever
+`Options.Audit` is set (`internal/api/benchaudit.go`; `Server.SetAuditHook`
+replaces it), so the entries carry the source and actor of the request: `ui`
+for `X-Source: ui`, `mcp` through the MCP server, else `rest`. The entry holds
+`before`, `after` and a `diff`; a failure to record is logged and never fails
+the change.
 
 **REST** (pull and push only; a bad body is `400`, a failed validation `422`,
 an unknown id `404`, a conflict `409`, off `503`):
@@ -2028,15 +2046,14 @@ a recipe (method, path, which arguments are path parts, query parameters or
 body). A call builds an HTTP request and runs it **in-process** through the same
 `http.Handler` that serves REST (a small recorder instead of a socket), then
 returns the answer body as the tool result. So a tool cannot differ from its
-REST endpoint, validation, status codes and error text included, and a tool for
-an endpoint that is added later works as soon as the route exists. A 2xx answer
+REST endpoint, validation, status codes and error text included. A 2xx answer
 is the result; any other status is a tool error (`isError: true`) carrying
 `HTTP <status> from <method> <path>: <body>`. When the route does not exist in
 the build (the mux's `404 no such path`) the error says "this server build does
-not have that endpoint". The only tools that reshape an answer are the status
-views (`get_status`, `list_nodes`, `get_queue`, below) and `get_profile` (falls
-back to the entry of `GET /api/profiles` when `/api/config/profiles/{id}` is
-absent). Arguments are validated against the tool's own schema before anything
+not have that endpoint" (a safety net for an older scheduler; every route the
+tools use exists in this build). The only tools that reshape an answer are the
+status views (`get_status`, `list_nodes`, `get_queue`, below); `get_profile`
+returns the real `{revision, id, profile}` answer. Arguments are validated against the tool's own schema before anything
 is sent (unknown or missing arguments, wrong types, enum values) and fail as
 tool errors.
 
@@ -2051,23 +2068,27 @@ tool errors.
 | `plan_load` | `POST /api/plan` |
 | `query_history`, `get_history_summary` | `GET /api/history` (all its filters), `GET /api/history/summary` |
 | `get_system_info` | `GET /api/system` |
-| `get_config`, `get_config_schema` | `GET /api/config`, `GET /api/config/schema` |
-| `list_config_revisions`, `get_config_revision` | `GET /api/config/revisions`, `.../{revision}` |
-| `query_audit` | `GET /api/audit` (since, until, source, actor, section, target, action, q, limit) |
+| `get_config`, `get_config_schema` | `GET /api/config`, `GET /api/config/schema` (`{"fields": [...]}`, the settings) |
+| `list_config_revisions`, `get_config_revision` | `GET /api/config/revisions?limit=` (`{revisions, current}`), `.../{revision}` |
+| `query_audit` | `GET /api/audit` (since, until, source, actor, section, target, action, q, limit, order); answers `{entries, total_matching}`. `source` is one of ui, rest, mcp, import, system; `section` a configuration section, `bench` or `runtime`. |
 | `list_benchmarks`, `get_benchmark`, `list_suites`, `get_suite` | `GET /api/bench/benchmarks`, `.../{id}`, `/suites`, `/suites/{id}` |
-| `get_bench_state`, `list_runs`, `get_run`, `export_run` | `GET /api/bench/state`, `/runs`, `/runs/{id}`, `/runs/{id}/export?format=md\|csv\|json` |
-| `get_bench_aggregates`, `get_bench_trends`, `get_bench_schema` | `GET /api/bench/aggregates`, `/trends`, `/schema` |
+| `get_bench_state`, `list_runs`, `get_run`, `export_run` | `GET /api/bench/state`, `/runs`, `/runs/{id}`, `/runs/{id}/export?format=md\|csv\|json[&detail=phases\|turns]` (the tool also accepts `markdown` for `md`) |
+| `get_bench_aggregates`, `get_bench_trends`, `get_bench_schema` | `GET /api/bench/aggregates` (suite, benchmark, profile, since and until as a time or a span such as `7d`, limit_runs, `env=same`), `/trends` (benchmark, metric: load_s, load_mb_s, memory_mib, decode_tps, prefill_tps, ttft_ms, unload_s, concurrent_wall_s; limit), `/schema` |
 | `load_model`, `unload_model` | `POST /api/load` `{model}`, `POST /api/unload` `{model, force}` |
-| `update_settings` | `PATCH /api/config/settings` (body = `settings`) |
-| `create_profile`, `update_profile`, `delete_profile` | `POST /api/config/profiles`, `PUT` and `DELETE /api/config/profiles/{id}` |
-| `set_tiers`, `set_exclude_nodes`, `set_node_overrides`, `set_recovery_settings`, `set_fleet_settings` | `PUT /api/config/tiers`, `/exclude-nodes`, `/node-overrides`, `/recovery`, `/fleet` (body = `value`, the new section as `get_config` shows it) |
-| `rollback_config` | `POST /api/config/revisions/{revision}/rollback` |
+| `update_settings` | `PATCH /api/config/settings`; the body is the `settings` object itself (only the keys to change; an unknown key is `400`) |
+| `create_profile`, `update_profile`, `delete_profile` | `POST /api/config/profiles` (body = the `profile` object with its `id`), `PUT /api/config/profiles/{id}` (body = the whole `profile`, not a patch), `DELETE /api/config/profiles/{id}` |
+| `set_tiers`, `set_exclude_nodes`, `set_node_overrides`, `set_recovery_settings`, `set_fleet_settings` | `PUT /api/config/tiers` (body = `value`: a list of tiers), `/exclude-nodes` (a list of node patterns), `/node-overrides` (an object of node id to override), `/recovery`, `/fleet` (an object). The body is `value` itself, a bare JSON array or object, which the handlers accept. |
+| `rollback_config` | `POST /api/config/revisions/{revision}/rollback` (no body; the reason goes in `comment`, sent as `X-Comment`) |
 | `create_benchmark`, `update_benchmark`, `delete_benchmark`, `create_suite`, `update_suite`, `delete_suite` | `POST /api/bench/benchmarks`, `PUT`, `DELETE .../{id}`, and the same for `/suites` |
 | `run_suite`, `cancel_run` | `POST /api/bench/suites/{id}/run` `{baseline, note}`, `POST /api/bench/runs/{id}/cancel` |
 
 Tools that change configuration (the `/api/config` ones) take `comment`
 (header `X-Comment`), `dry_run` (`?dry_run=1`) and `if_revision` (header
-`If-Match`). Every write tool takes an optional `actor` label.
+`If-Match: <revision number>`; a stale one is `409` `stale_revision` with
+`current_revision`). Every write tool takes an optional `actor` label. The
+answer of a configuration write carries `revision`, `diff`, `restart_required`
+and `audit_entry_ids`; with `dry_run` the revision is unchanged and nothing is
+saved or audited.
 
 *Resources.* `llm-scheduler://status` (`GET /api/status`),
 `llm-scheduler://config` (`GET /api/config`) and
@@ -2081,7 +2102,10 @@ cannot claim to be MCP. The audit log records such a change with
 `source: "mcp"`, and the actor is the client name and version from the
 `initialize` handshake, or `<actor argument> (via <client>)` when the write
 tool was given `actor`. `Options.Bridge` is the single hook that copies the
-marker into the audit package's own context value.
+marker into the audit package's own context value; `cmd/llm-scheduler`
+sets it to `audit.WithSource(ctx, "mcp", actor)`. Through MCP, benchmark and
+suite changes and run start and cancel (section `bench`) and `load_model` and
+`unload_model` (section `runtime`) are audited with source `mcp` as well.
 
 ## 10. Packaging and rollout
 
