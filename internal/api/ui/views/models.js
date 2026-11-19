@@ -236,7 +236,7 @@ registerView({
           insts.some(i => i.state !== 'starting') ? legend([['m', 'Model'], ['k', 'KV cache'], ['c', 'Compute']]) : null),
         staleBanner(),
         st.configured === false ? h('div.banner.info', { role: 'status' },
-          h('span.grow', h('b', 'No configuration yet. '), 'The scheduler has no profiles and no tiers, so it cannot place a model. Import a configuration file with ',
+          h('span.grow', h('b', 'No configuration has been imported yet. '), 'The scheduler runs with its defaults and has no profiles and no tiers, so it cannot place a model. Import a configuration file with ',
             h('span.mono', 'llm-scheduler import-config'), ' or add tiers and profiles under Configure.'),
           h('a.btn.sm', { href: href('profiles') }, 'Open Profiles')) : null,
         failed.map(l => h('div.banner.err', { key: 'fail-' + l.session_id, role: 'status' },

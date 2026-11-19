@@ -93,15 +93,15 @@ func perfOf(profile string) perfBase {
 }
 
 type scriptInst struct {
-	profile  string
-	hosts    []string
+	profile   string
+	hosts     []string
 	realStart time.Time // real time the load began
-	readyAt  time.Time // real time the load ends
-	vstart   time.Time // clock time the load began
-	vready   time.Time
-	ready    bool
-	freeze   float64 // >0: the load stays at this fraction
-	inflight int
+	readyAt   time.Time // real time the load ends
+	vstart    time.Time // clock time the load began
+	vready    time.Time
+	ready     bool
+	freeze    float64 // >0: the load stays at this fraction
+	inflight  int
 }
 
 // scriptedAPI is the scheduler as the scripted runs see it.
@@ -290,7 +290,7 @@ func (a *scriptedAPI) Unload(ctx context.Context, model string, force bool) (*be
 		return &bench.UnloadInfo{Status: 409, Msg: "the instance has requests in flight"}, nil
 	}
 	delete(a.insts, model)
-	a.clock.advanceTo(a.clock.Now().Add(time.Duration(2.2*a.noise("unload:"+model, 0.15)*float64(time.Second))))
+	a.clock.advanceTo(a.clock.Now().Add(time.Duration(2.2 * a.noise("unload:"+model, 0.15) * float64(time.Second))))
 	return &bench.UnloadInfo{Status: 200, Msg: "unloaded"}, nil
 }
 

@@ -33,7 +33,7 @@ function suitesCard(running) {
       { label: 'Suite', render: s => h('span', h('a', { href: href('benchmarks', ['edit', 'suite', s.id]), style: 'font-weight:700' }, suiteTitle(s)),
         s.description ? h('span.sub', s.description) : h('span.sub.mono', s.id)) },
       { label: 'Benchmarks', cls: 'r', render: s => num((s.benchmarks || []).length) },
-      { label: 'Schedule', render: s => h('span', scheduleText(s.schedule), s.only_when_idle === false ? h('span.sub', 'Does not wait for idle') : null) },
+      { label: 'Schedule', cls: 'tight', render: s => h('span', scheduleText(s.schedule), s.only_when_idle === false ? h('span.sub', 'Does not wait for idle') : null) },
       { label: 'Last run', render: s => lastRunCell(s) },
       { label: 'Pass rate', cls: 'tight', render: s => { const a = aggs.find(x => x.suite_id === s.id); return a ? rateBadge(a.pass_rate) : h('span.mut', DASH); } },
       { label: '', cls: 'tight', render: s => h('span.row', { style: 'gap:8px;justify-content:flex-end;flex-wrap:nowrap' },

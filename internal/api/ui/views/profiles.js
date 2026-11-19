@@ -93,7 +93,7 @@ function makeEditor(o) {
     for (const [sec, title] of SECTIONS) {
       const fs = fields.filter(f => f.section === sec && applicable(f, kind));
       if (!fs.length) continue;
-      const form = schemaForm({ fields: fs.map(fieldDef), values: current, showDefaults: true, onChange: (k, v) => {
+      const form = schemaForm({ fields: fs.map(fieldDef), values: current, showDefaults: false, onChange: (k, v) => {
         current[k] = v;
         if (k === 'kind') { collect(); build(); const sel = host.querySelector('select'); if (sel) sel.focus(); }
       } });

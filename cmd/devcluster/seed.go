@@ -174,8 +174,8 @@ func seedBenchmarks() []struct {
 				rq("refactor", "Refactor this loop into a map call: for i in range(10): out.append(i*i)", 128, true), rq("explain", "Explain a mutex to a new programmer.", 160, false)}, "repeats", 2, "stream", true),
 				ph("unload")}, "timeout_s": 900, "expect": map[string]any{"outcome": "ready", "min_decode_tps": 6.5, "max_ttft_ms": 4000}, "tags": []any{"load", "code"}}},
 		{"ui", map[string]any{"id": "gemma-idle-hold", "name": "Gemma 12B after two idle minutes", "description": "Load on one PS5, one request, two minutes idle, one more request: is the model still loaded and as fast?",
-			"profile": "bench-gemma-12b-1w",
-			"phases": []any{ph("load"), ph("requests", "requests", []any{rq("short", "Say hello in five words.", 32, false)}), ph("hold", "seconds", 120, "request", rq("after idle", "Say hello in five words.", 32, true)), ph("unload")},
+			"profile":   "bench-gemma-12b-1w",
+			"phases":    []any{ph("load"), ph("requests", "requests", []any{rq("short", "Say hello in five words.", 32, false)}), ph("hold", "seconds", 120, "request", rq("after idle", "Say hello in five words.", 32, true)), ph("unload")},
 			"timeout_s": 600, "expect": map[string]any{"outcome": "ready", "min_decode_tps": 12}, "tags": []any{"idle"}}},
 		{"rest", map[string]any{"id": "tour-every-phase", "name": "Every phase type, quickly", "description": "Qwen 4B through each phase type once: load, warm-up, requests, a two-turn conversation, a 10 s hold, three at once, unload. About a minute.",
 			"profile": "qwen3.5-4b",
@@ -210,8 +210,8 @@ func seedSuites() []struct {
 			"stop_on_failure": true, "cooldown_s": 0, "only_when_idle": true, "idle_wait_s": 600}},
 		{"mcp", map[string]any{"id": "side-by-side", "name": "Side by side", "description": "Two models loading at the same moment, then the Gemma conversation.", "benchmarks": []any{"qwen-and-gemma", "gemma-conversation"},
 			"cooldown_s": 0}},
-		{"ui", map[string]any{"id": "phase-tour", "name": "Phase tour", "description": "Every phase type once on Qwen 4B, then the two-worker Gemma load: a run of about a minute and a half.",
-			"benchmarks": []any{"tour-every-phase", "gemma-load-2w"}, "cooldown_s": 3, "only_when_idle": true, "idle_wait_s": 120}},
+		{"ui", map[string]any{"id": "phase-tour", "name": "Phase tour", "description": "Every phase type once on Qwen 4B, the two-worker Gemma load, then the five-turn Gemma conversation: a run of about a minute.",
+			"benchmarks": []any{"tour-every-phase", "gemma-load-2w", "gemma-conversation"}, "cooldown_s": 3, "only_when_idle": true, "idle_wait_s": 120}},
 		{"ui", map[string]any{"id": "soak", "name": "Idle soak", "description": "Does a model stay loaded and fast through two idle minutes?", "benchmarks": []any{"gemma-idle-hold"}, "cooldown_s": 5}},
 	}
 }
