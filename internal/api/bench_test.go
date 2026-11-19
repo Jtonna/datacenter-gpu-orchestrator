@@ -161,7 +161,7 @@ func TestSuiteRunThroughTheRealSchedulerAndExports(t *testing.T) {
 	})
 	steps := detail["steps"].([]any)
 	step := steps[0].(map[string]any)
-	if step["outcome"] != "ready" || step["stats"] == nil || len(step["requests"].([]any)) != 4 { // load + warmup + 2 measured
+	if step["outcome"] != "ready" || step["stats"] == nil || len(step["requests"].([]any)) != 3 { // warmup + 2 measured: the load itself sends no request
 		t.Fatalf("%v", step)
 	}
 	if lr := step["load"]; lr == nil {
