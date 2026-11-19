@@ -6,11 +6,11 @@ package mcpserver
 func arr(v any) []any         { a, _ := v.([]any); return a }
 func mp(v any) map[string]any { m, _ := v.(map[string]any); return m }
 
-// pick copies the listed keys that are present (and not null).
+// pick copies the listed keys that are present (not null, not an empty string).
 func pick(src map[string]any, keys ...string) map[string]any {
 	out := map[string]any{}
 	for _, k := range keys {
-		if v, ok := src[k]; ok && v != nil {
+		if v, ok := src[k]; ok && v != nil && v != "" {
 			out[k] = v
 		}
 	}
