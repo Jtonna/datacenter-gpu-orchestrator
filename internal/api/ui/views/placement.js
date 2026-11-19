@@ -13,7 +13,7 @@ import { state, on, listen } from '../core/store.js';
 import * as api from '../core/api.js';
 import { liveView, pageHead, badge, bar, stat, empty, skeleton, banner } from '../core/ui.js';
 import { num, mib, ctx, plural, DASH } from '../core/format.js';
-import { nodeName, findNode, staleBanner } from '../core/status.js';
+import { nodeName, findNode, staleBanner, plainReason } from '../core/status.js';
 
 const ACTION = {
   serve: ['Already loaded', 'ready', 'A loaded copy would answer the request at once.'],
@@ -48,7 +48,8 @@ function detail(st, p, plan, error) {
       plan.required_mib ? stat('It would need', num(plan.required_mib), 'MiB', { cls: 'err-t' }) : null),
     plan.need_basis ? h('div.cb.mut', { style: 'font-size:13px;font-weight:600;margin-top:-6px' }, 'The need is ', plan.need_basis, plan.fit_need_mib && plan.need_mib && plan.fit_need_mib !== plan.need_mib ? ` (${mib(plan.need_mib)} before the margin)` : '', '.') : null,
     plan.warning ? h('div.cb', banner('warn', plan.warning)) : null,
-    plan.reason ? h('div.cb', banner(plan.action === 'reject' || plan.action === 'backoff' ? 'err' : '', [h('b', plan.action === 'queue' ? 'Why it would wait: ' : 'Why: '), plan.reason])) : null,
+    plan.reason ? h('div.cb', banner(plan.action === 'reject' || plan.action === 'backoff' ? 'err' : '', [h('b', plan.action === 'queue' ? 'Why it would wait: ' : 'Why: '), plainReason(plan.reason),
+      h('div.mono', { style: 'font-size:12px;margin-top:6px;opacity:.8;font-weight:400' }, 'The scheduler says: ', plan.reason)])) : null,
     plan.capacity_mib && plan.required_mib ? h('div.cb', bar([{ cls: 'x', value: plan.capacity_mib }], plan.required_mib,
       `The cluster can hold ${mib(plan.capacity_mib)} of the ${mib(plan.required_mib)} this profile would need`, 'lg'),
     h('div.mono.mut', { style: 'font-size:12px;margin-top:6px' }, `${num(plan.capacity_mib)} of ${num(plan.required_mib)} MiB: the whole cluster is too small for it`)) : null,
@@ -110,7 +111,7 @@ registerView({
         pageHead('Placement preview', 'What a request for a profile would do right now. Nothing is loaded from here.'),
         staleBanner(),
         h('div.cols',
-          h('section.card.side', { style: 'gap:0;max-width:400px;flex:1 1 300px' },
+          h('section.card.side', { style: 'gap:0;max-width:440px;flex:1 1 340px' },
             h('div.ch.split', h('h2', 'Profiles'), profiles ? h('span.note', plural(profiles.length, 'profile')) : null),
             error ? empty('The profile list could not be read', error) : !profiles ? skeleton(6)
               : !profiles.length ? empty('No profiles yet', 'A profile says which model file to load and how. Add one under Configure, Profiles.')
@@ -118,7 +119,7 @@ registerView({
                   const [label, kind] = act((x.plan || {}).action);
                   return h('a', { key: 'pp-' + x.id, href: href('placement', [x.id]), 'aria-current': x.id === id ? 'true' : null,
                     style: 'display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;padding:10px 20px;border-top:1px solid var(--line);color:var(--text);font-weight:500;align-items:center;' + (x.id === id ? 'background:var(--fill);box-shadow:inset 3px 0 0 var(--mint)' : '') },
-                  h('span.mono.wrap-any', x.id), badge(label, kind),
+                  h('span.mono', { style: 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap', title: x.id }, x.id), badge(label, kind),
                   h('span.mono.mut', { style: 'font-size:12px;grid-column:1/-1' }, x.needs_mib ? mib(x.needs_mib) : 'need not known', ' · ', ctx(x.ctx), ' context'));
                 })),
           h('div.wide',

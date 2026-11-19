@@ -81,8 +81,7 @@ function tile(st, n) {
   return h('section', { class: 'card ' + (kind === 'fail' ? 'flag-err' : kind === 'aside' ? 'flag-err' : kind === 'load' && !inst ? 'flag-warn' : ''), key: 'node-' + n.id, 'aria-label': name },
     h('div.ch', { style: 'padding-bottom:10px' },
       h('h2.mono', { class: dim ? 'mut' : null }, name), badge(label, kind),
-      n.local ? badge('This machine', 'n', 'The local node: models are read from disk, nothing is uploaded') : null,
-      h('span.mut.right', { style: 'font-size:12px;font-weight:600' }, n.tier ? String(n.tier) : n.priority ? `Priority ${n.priority}` : n.excluded ? '' : 'No tier')),
+      n.local ? badge('This machine', 'n', 'The local node: models are read from disk, nothing is uploaded') : null),
     h('div.cb', { style: 'display:flex;flex-direction:column;gap:12px' },
       // what is on it
       h('div', { style: 'min-height:22px' },
@@ -109,6 +108,7 @@ function tile(st, n) {
         })) : null,
       facts.length ? h('div', { style: 'display:flex;flex-direction:column;gap:7px' }, facts) : null),
     h('div.cs.mono.mut', { style: 'font-size:12px;display:flex;flex-wrap:wrap;gap:2px 16px;padding-top:10px;padding-bottom:12px' },
+      h('span', { title: 'Lower numbers are preferred when a model is placed' }, n.tier ? 'tier ' + n.tier : n.priority ? 'priority ' + n.priority : 'no tier'),
       n.addr ? h('span', { title: 'Worker address' }, n.addr) : h('span', n.local ? 'local' : 'no address known'),
       h('span', { title: 'Node id' }, n.id),
       n.rpc_server_version ? h('span', { title: 'Worker version' }, 'rpc-server ' + n.rpc_server_version) : null,

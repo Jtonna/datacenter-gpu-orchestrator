@@ -13,7 +13,7 @@ import { state, on, listen } from '../core/store.js';
 import * as api from '../core/api.js';
 import { liveView, pageHead, badge, nodeChips, stat, bar, legend, memoryRow, progress, steps, table, empty, banner, skeleton } from '../core/ui.js';
 import { num, mib, bytes, tps, dur, ago, at, until, ctx, plural, clock, dateTime, agoText, toMs, now, DASH } from '../core/format.js';
-import { nodeName, nodeByAddr, instanceNodeNames, nodeMemory, instanceBadge, healthBadge, findNode, drift, staleBanner } from '../core/status.js';
+import { nodeName, nodeByAddr, instanceNodeNames, nodeMemory, instanceBadge, healthBadge, findNode, drift, staleBanner, plainReason } from '../core/status.js';
 
 // ---- a loaded instance ----
 
@@ -137,9 +137,9 @@ function whereCell(p, st) {
     case 'start': return h('span', nodes, h('span.mut', nodes ? ' · would start now' : 'Would start now'), plan.warning ? h('span.sub.warn-t', plan.warning) : null);
     case 'serve': case 'wait': return h('span.mut', 'Already loaded or loading');
     case 'evict': return h('span', nodes, h('span.mut', nodes ? ' · after making room by unloading another model' : 'After unloading another model'));
-    case 'queue': return h('span', h('span.mut', 'Would wait in the queue'), plan.reason ? h('span.sub', plan.reason) : null);
-    case 'backoff': return h('span.err-t', 'Held back after a failed load', backoff ? [', ', until(backoff.until)] : null, plan.reason ? h('span.sub', plan.reason) : null);
-    case 'reject': return h('span.err-t', 'Cannot be placed', plan.reason ? h('span.sub', { style: 'color:inherit' }, plan.reason) : null);
+    case 'queue': return h('span', { title: plan.reason ? 'The scheduler says: ' + plan.reason : null }, h('span.mut', 'Would wait in the queue'), plan.reason ? h('span.sub', plainReason(plan.reason)) : null);
+    case 'backoff': return h('span.err-t', { title: plan.reason ? 'The scheduler says: ' + plan.reason : null }, 'Held back after a failed load', backoff ? [', ', until(backoff.until)] : null);
+    case 'reject': return h('span.err-t', { title: plan.reason ? 'The scheduler says: ' + plan.reason : null }, 'Cannot be placed', plan.reason ? h('span.sub', { style: 'color:inherit' }, plainReason(plan.reason)) : null);
   }
   return h('span.mut', plan.reason || 'Not known');
 }

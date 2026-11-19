@@ -71,10 +71,8 @@ function detailOf(e) {
       if (d.need_mib) parts.push('needs ' + mib(d.need_mib) + (d.need_basis ? ` (${d.need_basis})` : ''));
       break;
     case 'loadFinished':
-      if (d.load_s != null) parts.push('took ' + dur(d.load_s));
-      if (d.bytes) parts.push(bytes(d.bytes));
-      if (d.avg_mb_s) parts.push(num(d.avg_mb_s, 1) + ' MB/s');
-      if (d.reason) parts.push(d.reason);
+      if (d.bytes) parts.push(bytes(d.bytes) + ' uploaded');
+      if (d.outcome !== 'ready' && d.load_s != null) parts.push('after ' + dur(d.load_s));
       break;
     case 'loadStalled':
       parts.push(`no new bytes for ${dur(d.stalled_s)} (the limit is ${dur(d.limit_s)})`);
@@ -111,9 +109,6 @@ function detailOf(e) {
     case 'preflightFailed':
       if (d.err) parts.push(d.err);
       break;
-    case 'learnedNeed':
-      if (d.measured_mib) parts.push('measured ' + mib(d.measured_mib));
-      break;
     case 'needsMibTooLow':
       parts.push(`configured ${mib(d.configured_mib)}, measured ${mib(d.measured_mib)}`);
       break;
@@ -129,7 +124,7 @@ function detailOf(e) {
       if (d.reason) parts.push(d.reason);
       break;
   }
-  if (d.bench_run) parts.push('benchmark run ' + d.bench_run);
+  if (d.bench_run && !e.type.startsWith('bench')) parts.push('caused by benchmark run ' + d.bench_run);
   return parts.join(' · ');
 }
 
@@ -138,14 +133,13 @@ function eventRow(e, open, toggle) {
   const key = e.seq + '-' + e.ts;
   const detail = detailOf(e);
   return h('div', { class: 'ev sev-' + (e.severity || 'info'), key: 'ev-' + key },
-    h('time.mono', { title: dateTime(e.ts), datetime: new Date(e.ts).toISOString() }, agoText(e.ts)),
+    h('time', { title: dateTime(e.ts), datetime: new Date(e.ts).toISOString() }, agoText(e.ts)),
     h('span', badge(label, kind)),
     h('div', { style: 'min-width:0' },
       h('p', e.summary || e.type, (e.nodes || []).length ? [' ', nodeChips(e.nodes)] : null),
-      detail ? h('p.d', detail) : null,
-      h('p', { style: 'margin-top:4px' }, h('button', { type: 'button', class: 'btn ghost sm', style: 'height:22px;padding:0', 'aria-expanded': open ? 'true' : 'false', onclick: () => toggle(key) }, open ? 'Hide the record' : 'Show the record')),
-      open ? h('pre.mono.wrap-any', { style: 'margin:8px 0 0;padding:10px 12px;background:var(--inset);border:1px solid var(--line);border-radius:8px;white-space:pre-wrap;font-size:12px;color:var(--text-2)' },
-        JSON.stringify(e, null, 2)) : null));
+      detail ? h('p.d', detail) : null),
+    h('button.more', { type: 'button', 'aria-expanded': open ? 'true' : 'false', title: 'The full record as the scheduler stored it', onclick: () => toggle(key) }, open ? 'Hide record' : 'Record'),
+    open ? h('pre.mono', JSON.stringify(e, null, 2)) : null);
 }
 
 registerView({
@@ -255,24 +249,24 @@ registerView({
               : rows.length ? rows
                 : empty('Nothing happened that matches', `No event of this kind in the last ${r[1]}. Try a longer time range or another filter.`),
             events && events.length && truncated ? h('div.cs', button(busy ? 'Reading…' : 'Show earlier', loadEarlier, 'sm', { disabled: busy })) : null),
-          h('div.side', { style: 'max-width:470px;flex-basis:380px' },
+          h('div.side', { style: 'max-width:500px;flex-basis:420px' },
             h('section.card',
               h('div.ch.split', h('h2', 'Incidents'), h('span.note', 'last ' + r[1])),
               !summary ? skeleton(2) : [
                 h('div.stats', stat('Events', num(summary.events || 0), null, { small: true }), stat('Warnings', num(bySev.warn || 0), null, { small: true, cls: bySev.warn ? 'warn-t' : null }),
                   stat('Errors', num(bySev.error || 0), null, { small: true, cls: bySev.error ? 'err-t' : null })),
-                incidents.length ? incidents.map(e => h('div.bl', { key: 'inc-' + e.seq + '-' + e.ts }, h('span', e.summary), h('time.mono.mut', { title: dateTime(e.ts) }, agoText(e.ts))))
+                incidents.length ? incidents.map(e => h('div.bl', { key: 'inc-' + e.seq + '-' + e.ts }, h('span', e.summary), h('time', { title: dateTime(e.ts) }, agoText(e.ts))))
                   : h('div.cs.mut', 'No error in this time range.'),
               ]),
             h('section.card',
               h('div.ch.split', h('h2', 'Loads'), summary && summary.loads ? h('span.note', `${num(summary.loads.ready || 0)} ready · ${num((summary.loads.failed || 0) + (summary.loads.cancelled || 0))} failed or cancelled`) : null),
               !loads ? skeleton(3) : table({
-                rows: loads.slice(0, 12), key: e => e.seq + '-' + e.ts, minWidth: 400,
+                rows: loads.slice(0, 12), key: e => e.seq + '-' + e.ts, minWidth: 360,
                 columns: [
                   { label: 'Finished', cls: 'tight', render: e => h('time', { title: dateTime(e.ts) }, agoText(e.ts)) },
-                  { label: 'Model', render: e => h('span.mono', e.profile, (e.data || {}).outcome !== 'ready' ? [' ', badge((e.data || {}).outcome === 'cancelled' ? 'Cancelled' : 'Failed', (e.data || {}).outcome === 'cancelled' ? 'aside' : 'fail')] : null,
-                    (e.nodes || []).length ? h('span.sub', (e.nodes || []).join(', ')) : null) },
-                  { label: 'Took', cls: 'r', render: e => dur((e.data || {}).load_s) },
+                  { label: 'Model', render: e => h('span', { title: (e.nodes || []).join(', ') }, h('span.mono.nowrap', e.profile),
+                    h('span.sub', (e.data || {}).outcome !== 'ready' ? h('span.err-t', (e.data || {}).outcome === 'cancelled' ? 'Cancelled · ' : 'Failed · ') : null, plural((e.nodes || []).length, 'node'))) },
+                  { label: 'Took', cls: 'r', render: e => ((e.data || {}).load_s != null ? num(e.data.load_s, 1) + ' s' : '–') },
                   { label: 'MB/s', cls: 'r', render: e => ((e.data || {}).avg_mb_s ? num(e.data.avg_mb_s, 1) : '–') },
                 ],
                 empty: empty('No load finished', `No model finished loading in the last ${r[1]}.`),
@@ -287,7 +281,7 @@ registerView({
           rows: requests.slice(0, 10), key: r => r.id, minWidth: 400,
           columns: [
             { label: 'Finished', cls: 'tight', render: r => h('time', { title: dateTime(r.timestamp) }, agoText(r.timestamp)) },
-            { label: 'Model', render: r => h('span.mono', r.model, r.resp_status_code !== 200 ? [' ', badge('HTTP ' + r.resp_status_code, 'aside')] : null) },
+            { label: 'Model', render: r => h('span', h('span.mono.nowrap', r.model), r.resp_status_code !== 200 ? h('span.sub.err-t', 'HTTP ' + r.resp_status_code) : null) },
             { label: 'Tokens', cls: 'r', title: 'Tokens generated', render: r => (r.tokens && r.tokens.output_tokens >= 0 ? num(r.tokens.output_tokens) : '–') },
             { label: 'tok/s', cls: 'r', render: r => (r.tokens ? tps(r.tokens.tokens_per_second) : '–') },
             { label: 'Took', cls: 'r', render: r => dur((r.duration_ms || 0) / 1000) },

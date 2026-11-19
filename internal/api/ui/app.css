@@ -43,7 +43,9 @@ button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit
 :focus-visible{outline:2px solid var(--mint);outline-offset:2px;border-radius:4px}
 [hidden]{display:none!important}
 time[title],[title].hint{cursor:help}
-.mono{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:var(--fs-md)}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:var(--fs-md);font-weight:400}
+/* only 400 and 500 are bundled: a mono run never goes bolder than 500 */
+b.mono,a.mono,.mono b,h1 .mono,h2 .mono,h3 .mono,b .mono{font-weight:500}
 .mut{color:var(--mut)}
 .txt2{color:var(--text-2)}
 .warn-t{color:var(--amber-text)}
@@ -223,20 +225,26 @@ table.tbl{width:100%;border-collapse:collapse}
 .kv dd{margin:0;min-width:0;overflow-wrap:anywhere}
 .bl{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 12px;padding:13px 20px;border-top:1px solid var(--line);align-items:baseline}
 .bl>:nth-child(n+3){grid-column:1/-1}
+.bl>time,.bl>.when{font-size:var(--fs-md);font-weight:600;color:var(--text-2);white-space:nowrap;font-variant-numeric:tabular-nums}
 .why{display:grid;grid-template-columns:20px minmax(0,1fr) auto;gap:8px 12px;align-items:baseline}
 .why>i{width:10px;height:10px;border-radius:3px;justify-self:center;align-self:center;background:#59625e}
+.why>.b{justify-self:end}
 .why>i.a{background:var(--amber)}.why>i.x{background:var(--coral)}.why>i.l{background:var(--lilac)}.why>i.m{background:var(--mint)}.why>i.s{background:var(--text-2)}
 .hit{display:grid;grid-template-columns:10px minmax(0,1fr);gap:10px;align-items:baseline}
 .hit>i{width:10px;height:10px;border-radius:3px;background:var(--mut);align-self:center}
 .hit>i.x{background:var(--coral)}.hit>i.a{background:var(--amber)}.hit>i.m{background:var(--mint)}
 code.cmd{font-family:var(--mono);font-size:var(--fs-sm);color:var(--text-2);overflow-wrap:anywhere}
 /* event row: time | type tag | text */
-.ev{display:grid;grid-template-columns:86px 128px minmax(0,1fr);gap:4px 14px;align-items:baseline;padding:12px 20px;border-top:1px solid var(--line)}
+.ev{display:grid;grid-template-columns:104px 124px minmax(0,1fr) auto;gap:4px 14px;align-items:baseline;padding:12px 20px;border-top:1px solid var(--line)}
 .ev p{margin:0}
 .ev .d{color:var(--mut);font-size:var(--fs-md)}
 .ev.sev-warn{box-shadow:inset 3px 0 0 var(--amber)}
 .ev.sev-error{box-shadow:inset 3px 0 0 var(--coral)}
-@media(max-width:700px){.ev{grid-template-columns:86px 1fr}.ev>:nth-child(3){grid-column:1/-1}}
+.ev>time{font-size:var(--fs-md);font-weight:600;color:var(--text-2);white-space:nowrap}
+.ev .more{border:0;background:none;padding:0;color:var(--mut);font-size:var(--fs-sm);font-weight:700;cursor:pointer;white-space:nowrap}
+.ev .more:hover{color:var(--mint-text)}
+.ev pre{grid-column:1/-1;margin:6px 0 0;padding:10px 12px;background:var(--inset);border:1px solid var(--line);border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--fs-sm);color:var(--text-2)}
+@media(max-width:700px){.ev{grid-template-columns:auto 1fr auto;padding:12px 16px}.ev>:nth-child(3){grid-column:1/-1;grid-row:2}}
 
 /* ---------- banners, empty states ---------- */
 .banner{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;padding:11px 16px;border:1px solid var(--line-2);border-radius:10px;font-weight:600;background:var(--card)}

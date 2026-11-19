@@ -38,7 +38,7 @@ function settingValue(k, v) {
   }
   return v == null || v === '' ? DASH : String(v);
 }
-const settingLabel = k => humanize(k.replace(/_(s|pct|minutes)$/, ''));
+const settingLabel = k => humanize(k.replace(/_(s|pct|minutes|mib)$/, ''));
 
 function storageRow(title, s, extra) {
   if (!s) return null;
@@ -70,7 +70,7 @@ registerView({
       const safety = (sys && sys.safety) || null;
       const bench = (sys && sys.bench) || null;
       return [
-        pageHead('About', version ? ['LLM Scheduler ', h('b.mono', version)] : 'LLM Scheduler'),
+        pageHead('About', version ? ['Version ', h('span.mono.txt2', version)] : 'LLM Scheduler'),
         error ? h('div.banner.err', 'The system details could not be read: ' + error) : null,
         h('div.cols',
           h('div.wide',
@@ -114,11 +114,11 @@ registerView({
             h('section.card',
               h('div.ch.split', h('h2', 'Safety settings in force'), h('a', { href: href('settings'), style: 'font-size:13px' }, 'Settings')),
               !sys ? skeleton(4) : safety && Object.keys(safety).length
-                ? h('div.cs', { style: 'border-top:0;padding-top:0' }, h('dl.kv', Object.keys(safety).sort().map(k => [h('dt', settingLabel(k)), h('dd.mono', settingValue(k, safety[k]))])))
+                ? h('div.cs', { style: 'border-top:0;padding-top:0' }, h('dl.kv', Object.keys(safety).sort().map(k => [h('dt', settingLabel(k)), h('dd', settingValue(k, safety[k]))])))
                 : empty('Not reported', 'This server does not list its safety settings.')),
             bench ? h('section.card',
               h('div.ch.split', h('h2', 'Benchmark settings'), h('a', { href: href('benchmarks'), style: 'font-size:13px' }, 'Benchmarks')),
-              h('div.cs', { style: 'border-top:0;padding-top:0' }, h('dl.kv', Object.keys(bench).sort().map(k => [h('dt', settingLabel(k)), h('dd.mono', settingValue(k, bench[k]))])))) : null)),
+              h('div.cs', { style: 'border-top:0;padding-top:0' }, h('dl.kv', Object.keys(bench).sort().map(k => [h('dt', settingLabel(k)), h('dd', settingValue(k, bench[k]))])))) : null)),
       ];
     }, ['status', 'conn', 'hello', 'tick']);
     load();

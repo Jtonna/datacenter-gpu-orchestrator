@@ -14,28 +14,37 @@ import { state, listen } from '../core/store.js';
 import * as api from '../core/api.js';
 import { liveView, pageHead, badge, nodeChip, nodeChips, bar, table, empty, skeleton } from '../core/ui.js';
 import { num, dur, ago, at, until, plural, toMs, now, clock, parseGoDuration } from '../core/format.js';
-import { viewNodes, nodeName, drift, staleBanner } from '../core/status.js';
+import { viewNodes, nodeName, drift, staleBanner, plainReason } from '../core/status.js';
 
-const sentence = s => { s = String(s || '').trim(); if (!s) return ''; s = s.charAt(0).toUpperCase() + s.slice(1); return /[.!?]$/.test(s) ? s : s + '.'; };
+const sentence = s => { s = String(s || '').trim().replace(/^placer:\s*/i, ''); if (!s) return ''; s = s.charAt(0).toUpperCase() + s.slice(1); return /[.!?]$/.test(s) ? s : s + '.'; };
 
 // The facts about the nodes that explain a wait, from the status alone.
 function nodeFacts(st, entry) {
   const rows = [];
-  const claim = new Set(entry.claim || []);
+  const victims = new Set(entry.claimed ? entry.victims || [] : []);
+  // nodes that hold the same model are one line
+  const byHolder = new Map();
+  for (const n of viewNodes(st)) {
+    if (n.excluded || !n.online || !n.holder || n.holder === entry.profile || victims.has(n.holder)) continue;
+    if ((st.quarantines || []).some(x => x.node === n.id) || n.settling) continue;
+    if (!byHolder.has(n.holder)) byHolder.set(n.holder, []);
+    byHolder.get(n.holder).push(n.hostname || n.id);
+  }
+  for (const [profile, names] of byHolder) {
+    const holder = (st.instances || []).find(i => i.profile === profile) || { profile };
+    rows.push(['', [nodeChips(names), names.length > 1 ? ' are ' : ' is ', holder.state === 'starting' ? 'loading ' : 'busy with ', h('span.mono', profile),
+      holder.in_flight > 0 ? `, which has ${plural(holder.in_flight, 'request')} in flight` : holder.state === 'ready' ? ', which is idle but still inside its minimum hold time' : ''],
+    holder.state === 'draining' ? badge('Draining', 'settle') : null]);
+  }
   for (const n of viewNodes(st)) {
     if (n.excluded) continue;
     const chip = nodeChip(n.hostname || n.id);
     const q = (st.quarantines || []).find(x => x.node === n.id);
-    const holder = n.holder && (st.instances || []).find(i => i.profile === n.holder);
+    const holder = n.holder;
     if (!n.online) rows.push(['', [chip, ' is offline'], null]);
     else if (q) rows.push(['x', [chip, ' is set aside until ', at(q.until), ' after a failed check'], badge(dur(Math.max(0, (toMs(q.until) - now()) / 1000)), 'aside')]);
     else if (n.settling) rows.push(['s', [chip, ' is settling after an unload', n.settle_until ? [' until ', at(n.settle_until)] : null], n.settle_until ? badge(dur(Math.max(0, (toMs(n.settle_until) - now()) / 1000)), 'settle') : null]);
-    else if (holder && holder.profile !== entry.profile) {
-      const busy = holder.state === 'starting' ? 'is loading ' : 'is busy with ';
-      rows.push([claim.has(n.id) ? 'a' : '', [chip, ' ', busy, h('span.mono', holder.profile),
-        holder.in_flight > 0 ? `, which has ${plural(holder.in_flight, 'request')} in flight` : holder.state === 'ready' ? ', which is idle' : ''],
-      holder.state === 'draining' ? badge('Draining', 'settle') : null]);
-    } else if (n.claimed_by && n.claimed_by !== entry.profile) rows.push(['l', [chip, ' is claimed for ', h('span.mono', n.claimed_by)], null]);
+    else if (!holder && n.claimed_by && n.claimed_by !== entry.profile) rows.push(['l', [chip, ' is claimed for ', h('span.mono', n.claimed_by)], null]);
   }
   return rows;
 }
@@ -55,7 +64,7 @@ function entryCard(st, e, limitS) {
     } else head = 'Its nodes are claimed. The load starts as soon as they have settled.';
   } else {
     tag = badge('Waiting for room', 'n');
-    head = sentence(e.wait_reason) || 'No node can take it right now.';
+    head = plainReason(e.wait_reason) || 'No node can take it right now.';
   }
   const why = [];
   if (e.claimed) {
@@ -73,11 +82,11 @@ function entryCard(st, e, limitS) {
       h('h3.mono', { style: 'font-size:16px;font-weight:500' }, e.profile),
       h('span.mono.mut', plural(Math.max(1, e.waiters || 0), 'request')),
       h('span.right', tag)),
-    h('p', { style: 'font-size:16px;font-weight:600;max-width:72ch' }, head),
+    h('p', { style: 'font-size:16px;font-weight:600;max-width:72ch', title: !e.claimed && e.wait_reason ? 'The scheduler says: ' + e.wait_reason : null }, head),
     h('div', { style: 'display:flex;flex-direction:column;gap:6px' },
       h('div', { style: 'display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 16px;font-size:13px;font-weight:600' },
-        h('span', 'Waited ', h('time.mono', { title: 'Queued ' + clock(e.created) }, dur(Math.round(waited)))),
-        limitS ? h('span.mut', e.claimed ? 'Claimed: the time limit is paused' : ['Gives up after ', h('span.mono', dur(limitS)), ' without a claim'])
+        h('span', 'Waited ', h('time', { title: 'Queued ' + clock(e.created) }, dur(Math.round(waited)))),
+        limitS ? h('span.mut', e.claimed ? 'Claimed: the time limit is paused' : `Gives up after ${dur(limitS)} without a claim`)
           : null),
       limitS ? bar([{ cls: e.claimed ? 'l' : clockS / limitS > 0.75 ? 'x' : clockS / limitS > 0.4 ? 'a' : 'm', value: Math.min(clockS, limitS) }], limitS,
         `Waited ${dur(Math.round(clockS))} of a ${dur(limitS)} limit`, 'sm') : null),
@@ -175,9 +184,9 @@ registerView({
                 minWidth: 640, rows: refused, key: e => e.seq + '-' + e.ts,
                 columns: [
                   { label: 'When', cls: 'tight', render: e => ago(e.ts) },
-                  { label: 'Profile', render: e => h('span.mono', e.profile || '–') },
+                  { label: 'Profile', render: e => h('span.mono.nowrap', e.profile || '–') },
                   { label: 'Requests', cls: 'r', render: e => num(((e.data || {}).waiters || 1) + ((e.data || {}).suppressed_since_last || 0)) },
-                  { label: 'Why', render: e => h('span', h('span.err-t', sentence((e.data || {}).reason)), (e.data || {}).message ? h('span.sub', (e.data || {}).message) : null) },
+                  { label: 'Why', render: e => h('span', h('span.err-t', sentence((e.data || {}).reason)), (e.data || {}).message ? h('span.sub', { title: 'The scheduler says: ' + (e.data || {}).message }, plainReason(String((e.data || {}).message).replace(/^profile \S+ needs \d+ MiB \(fit rule requires (\d+) MiB\) but the cluster can hold at most (\d+) MiB/i, (m0, a, b) => `need ${a} MiB (requires ${a} MiB) exceeds cluster capacity ${b} MiB`))) : null) },
                 ],
                 empty: empty(historyOn ? 'No request was turned away' : 'History is off',
                   historyOn ? 'Requests that cannot be served (the model does not fit, a node is missing, the time limit passed) are listed here.'
@@ -186,7 +195,7 @@ registerView({
           h('div.side',
             h('section.card',
               h('div.ch', h('h2', 'What frees up next')),
-              next.length ? next.map(i => h('div.bl', h('span', i.what), i.t != null ? h('time.mono', { title: clock(i.t) }, (i.approx ? 'in ≈ ' : 'in ') + dur(Math.max(0, Math.round((i.t - now()) / 1000)))) : h('span.mono', i.when),
+              next.length ? next.map(i => h('div.bl', h('span', i.what), i.t != null ? h('time', { title: clock(i.t) }, (i.approx ? 'in ≈ ' : 'in ') + dur(Math.max(0, Math.round((i.t - now()) / 1000)))) : h('span.when', i.when),
                 h('span.mut', { style: 'font-size:13px' }, i.detail)))
                 : empty('Nothing is pending', 'No node is settling or set aside, and no load is in progress.')),
             h('section.card',
