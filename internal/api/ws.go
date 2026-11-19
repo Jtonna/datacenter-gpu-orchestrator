@@ -554,8 +554,8 @@ func (s *Server) newWSHub() *wsHub {
 		h.status = func(ctx context.Context) (any, error) {
 			return s.statusView(ctx)
 		}
-		h.onStatus = s.catalogStatus
 	}
+	h.onStatus = s.catalogStatus
 	h.models = func(ctx context.Context) []byte {
 		snap, err := s.catalogGet(ctx)
 		if err != nil {

@@ -123,7 +123,10 @@ type clusterOpts struct {
 	// with the history off.
 	bare         bool
 	statusSource func(ctx context.Context) (any, error)
-	seedHistory  func(*history.Store)
+	// catalogSource is what the model catalog of the real server is joined
+	// from while a scripted or recorded scenario is shown (DEV-ONLY).
+	catalogSource func(ctx context.Context, have string) (api.CatalogInput, string, bool)
+	seedHistory   func(*history.Store)
 	// recorded: the history is a recording (scenario real); the harness's own
 	// start is not written into it.
 	recorded bool
@@ -292,6 +295,9 @@ func startCluster(log *slog.Logger, o clusterOpts) (*cluster, error) {
 	}
 	// DEV-ONLY: the live channel's status frames come from the scenario (devhooks.go).
 	ao = ao.WithStatusSource(o.statusSource)
+	if o.catalogSource != nil {
+		ao = ao.WithCatalogSource(o.catalogSource)
+	}
 	c.api = api.New(cfg, c.sched, ao)
 	started.Store(true)
 	c.mcp = mcpserver.New(c.api, mcpserver.Options{Version: devVersion, Guide: docs.BenchmarkGuide,

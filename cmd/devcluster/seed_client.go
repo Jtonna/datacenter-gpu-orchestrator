@@ -78,9 +78,37 @@ func (s *seedClient) do(method, path string, w who, body any) (map[string]any, e
 	return out, nil
 }
 
+// doKey sends a JSON request as an agent using REST with its key.
+func (s *seedClient) doKey(method, path, key string, body any) (map[string]any, error) {
+	b, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest(method, s.base+path, bytes.NewReader(b))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "python-httpx/0.27")
+	req.Header.Set("X-Agent-Key", key)
+	resp, err := s.hc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var out map[string]any
+	json.Unmarshal(raw, &out)
+	if resp.StatusCode >= 300 {
+		return out, fmt.Errorf("%s %s: %d %s", method, path, resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	return out, nil
+}
+
 // mcpClient is one MCP session on the real /mcp endpoint.
 type mcpClient struct {
 	url string
+	key string // an agent key, sent as Authorization: Bearer (optional)
 	sid string
 	n   int
 	hc  *http.Client
@@ -93,6 +121,9 @@ func (m *mcpClient) post(body string) (*http.Response, []byte, error) {
 	if m.sid != "" {
 		req.Header.Set("Mcp-Session-Id", m.sid)
 	}
+	if m.key != "" {
+		req.Header.Set("Authorization", "Bearer "+m.key)
+	}
 	resp, err := m.hc.Do(req)
 	if err != nil {
 		return nil, nil, err
@@ -104,7 +135,12 @@ func (m *mcpClient) post(body string) (*http.Response, []byte, error) {
 
 // newMCP opens a session as the client name and version (the agent the audit names).
 func newMCP(base, name, version string) (*mcpClient, error) {
-	m := &mcpClient{url: base + "/mcp", hc: &http.Client{Timeout: 30 * time.Second}}
+	return newMCPWithKey(base, name, version, "")
+}
+
+// newMCPWithKey is newMCP for an agent that presents its key.
+func newMCPWithKey(base, name, version, key string) (*mcpClient, error) {
+	m := &mcpClient{url: base + "/mcp", key: key, hc: &http.Client{Timeout: 30 * time.Second}}
 	init := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":%q,"version":%q}}}`, name, version)
 	resp, b, err := m.post(init)
 	if err != nil {

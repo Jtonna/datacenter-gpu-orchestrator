@@ -77,6 +77,12 @@ type Options struct {
 
 	statusSource func(ctx context.Context) (any, error) // tests replace the status the hub sends
 	modelFiles   func() []ModelFile                     // the dev harness replaces the models directory scan
+	// catalogSource, when set and answering true, is what the model catalog is
+	// joined from instead of this server's own status, profiles, events,
+	// aggregates and files (the dev harness shows a scripted or recorded cluster).
+	// It is called with the signature of the catalog the server has; when its
+	// own signature is the same it need not gather the input again.
+	catalogSource func(ctx context.Context, have string) (in CatalogInput, sig string, ok bool)
 }
 
 // Server is the http.Handler for the whole API.

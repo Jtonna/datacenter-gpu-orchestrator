@@ -28,6 +28,16 @@ func (o Options) WithModelFiles(f func() []ModelFile) Options {
 	return o
 }
 
+// WithCatalogSource returns a copy of o whose model catalog (GET /api/models,
+// the models topic of /ws, the icon endpoints) is joined from what f returns
+// while f answers ok. f gets the signature of the catalog the server holds
+// ("" to force) and returns its own; when both are equal the input it returns
+// is not used, so it need not gather it. The icons are still this server's.
+func (o Options) WithCatalogSource(f func(ctx context.Context, have string) (in CatalogInput, sig string, ok bool)) Options {
+	o.catalogSource = f
+	return o
+}
+
 // viaJSON turns a tagged struct into the plain JSON value a client would decode.
 func viaJSON(v any) map[string]any {
 	b, err := json.Marshal(v)

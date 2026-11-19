@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/api"
+	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/bench"
 	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
 )
 
@@ -254,10 +255,11 @@ func (rp *replay) plan(model string, status map[string]any) (map[string]any, boo
 
 // audit answers GET /api/audit and /api/audit/{id} from the recorded trail,
 // with the filters the page uses.
-func (rp *replay) audit(w http.ResponseWriter, r *http.Request) {
+func (rp *replay) audit(w http.ResponseWriter, r *http.Request, own []any) {
 	v, _ := rp.doc("/api/audit")
 	m, _ := v.(map[string]any)
-	all, _ := m["entries"].([]any)
+	rec, _ := m["entries"].([]any)
+	all := append(append([]any{}, own...), rec...) // what was done in this harness is newer than the recording
 	if id := strings.TrimPrefix(r.URL.Path, "/api/audit"); id != "" && id != "/" {
 		for _, e := range all {
 			if em, _ := e.(map[string]any); fmt.Sprint(em["id"]) == strings.TrimPrefix(id, "/") || jsonNumber(em["id"]) == strings.TrimPrefix(id, "/") {
@@ -293,6 +295,9 @@ func (rp *replay) audit(w http.ResponseWriter, r *http.Request) {
 				skip = true
 			}
 		}
+		if want := q.Get("agent"); want != "" && em["agent_id"] != want {
+			skip = true
+		}
 		if text != "" {
 			b, _ := json.Marshal(em)
 			skip = skip || !strings.Contains(strings.ToLower(string(b)), text)
@@ -321,6 +326,13 @@ func (h *harness) serveReal(w http.ResponseWriter, r *http.Request) bool {
 	rp := h.rp
 	p := r.URL.Path
 	if !strings.HasPrefix(p, "/api/") && !strings.HasPrefix(p, "/v1/") && p != "/mcp" {
+		return false
+	}
+	// The parts that are not a recording: the model catalog (the real code on
+	// the recorded data), the icons, the agents and the MCP tool list are the
+	// real server's own, with its own database.
+	if p == "/api/models" || (strings.HasPrefix(p, "/api/models/") && p != "/api/models/unload" && !strings.HasPrefix(p, "/api/models/unload/")) ||
+		p == "/api/agents" || strings.HasPrefix(p, "/api/agents/") || p == "/api/mcp/tools" {
 		return false
 	}
 	if strings.HasPrefix(p, "/api/history") || p == "/api/events" {
@@ -353,15 +365,18 @@ func (h *harness) serveReal(w http.ResponseWriter, r *http.Request) bool {
 	case p == "/api/status":
 		writeJSON(w, 200, status())
 		return true
-	case p == "/api/models" || strings.HasPrefix(p, "/api/models/"):
-		key, _ := url.PathUnescape(strings.TrimPrefix(strings.TrimPrefix(p, "/api/models"), "/"))
-		h.writeCatalog(w, h.realCatalogInput(status()), key)
-		return true
 	case p == "/api/profiles":
 		writeJSON(w, 200, map[string]any{"profiles": rp.profiles()})
 		return true
 	case p == "/api/audit" || strings.HasPrefix(p, "/api/audit/"):
-		rp.audit(w, r)
+		rp.audit(w, r, h.ownAudit(r.Context()))
+		return true
+	case p == "/api/bench/aggregates":
+		writeJSON(w, 200, h.realAggregates())
+		return true
+	case strings.HasPrefix(p, "/api/bench/benchmarks/") && strings.HasSuffix(p, "/results"):
+		id, _ := url.PathUnescape(strings.TrimSuffix(strings.TrimPrefix(p, "/api/bench/benchmarks/"), "/results"))
+		writeJSON(w, 200, map[string]any{"benchmark": id, "results": bench.ResultsOf(rp.runs(), id)})
 		return true
 	case strings.HasPrefix(p, "/api/config/profiles/"):
 		id, _ := url.PathUnescape(strings.TrimPrefix(p, "/api/config/profiles/"))
@@ -400,9 +415,7 @@ func (h *harness) serveReal(w http.ResponseWriter, r *http.Request) bool {
 func (h *harness) realCatalogInput(status map[string]any) api.CatalogInput {
 	ev := h.c.hist.Query(history.Query{Limit: history.MaxLimit}).Events
 	in := api.CatalogInput{Status: status, Profiles: h.rp.profiles(), Events: ev, HistoryOn: h.c.hist.On(), Files: h.rp.modelFiles(ev)}
-	if v, ok := h.rp.doc("/api/bench/aggregates"); ok {
-		in.Aggregates, _ = v.(map[string]any)
-	}
+	in.Aggregates = h.realAggregates()
 	return in
 }
 

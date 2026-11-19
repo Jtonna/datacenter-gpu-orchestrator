@@ -190,6 +190,14 @@ func (s *Server) catalogStatus(v any) {
 	if snap == nil || time.Since(snap.builtAt) < catalogMinGap {
 		return
 	}
+	if s.opts.catalogSource != nil {
+		if _, sig, ok := s.opts.catalogSource(context.Background(), snap.sig); ok {
+			if sig != snap.sig {
+				c.poke()
+			}
+			return
+		}
+	}
 	if catalogSig(v) != snap.sig {
 		c.poke()
 	}
@@ -268,6 +276,21 @@ func (s *Server) seedEvents() {
 // its loop) and nothing else: no file is read and the history is not queried.
 func (s *Server) catalogGet(ctx context.Context) (*catalogSnap, error) {
 	c := &s.catalog
+	if s.opts.catalogSource != nil {
+		c.mu.Lock()
+		snap, dirty := c.snap, c.dirty
+		c.mu.Unlock()
+		have := ""
+		if snap != nil && !dirty {
+			have = snap.sig
+		}
+		if in, sig, ok := s.opts.catalogSource(ctx, have); ok {
+			if have != "" && sig == have {
+				return snap, nil
+			}
+			return s.catalogBuildFrom(ctx, in, sig), nil
+		}
+	}
 	st, err := s.statusView(ctx)
 	if err != nil {
 		return nil, err
@@ -281,10 +304,44 @@ func (s *Server) catalogGet(ctx context.Context) (*catalogSnap, error) {
 	return s.catalogBuild(ctx, st)
 }
 
+// CatalogStatusSig is what of a status document the catalog depends on (for
+// the dev harness, which says with it when its scripted cluster changed).
+func CatalogStatusSig(status any) string { return catalogSig(status) }
+
+// catalogBuildFrom publishes the catalog of an input the dev harness gave.
+func (s *Server) catalogBuildFrom(ctx context.Context, in CatalogInput, sig string) *catalogSnap {
+	c := &s.catalog
+	c.buildMu.Lock()
+	defer c.buildMu.Unlock()
+	c.mu.Lock()
+	prev := c.snap
+	c.dirty, c.aggOld = false, false
+	c.mu.Unlock()
+	c.builds.Add(1)
+	if s.store != nil {
+		in.Icons, _ = s.store.IconTags(ctx)
+	}
+	in.Now = time.Now()
+	snap := newCatalogSnap(in, prev, "/models")
+	snap.sig, snap.builtAt = sig, time.Now()
+	c.mu.Lock()
+	c.snap = snap
+	c.mu.Unlock()
+	if s.ws != nil && prev != nil && snap.version != prev.version {
+		s.ws.publishModels(snap, prev)
+	}
+	return snap
+}
+
 // catalogBuild joins the catalog again and publishes it (st may be nil: the
 // status is then asked for).
 func (s *Server) catalogBuild(ctx context.Context, st any) (*catalogSnap, error) {
 	c := &s.catalog
+	if s.opts.catalogSource != nil {
+		if in, sig, ok := s.opts.catalogSource(ctx, ""); ok {
+			return s.catalogBuildFrom(ctx, in, sig), nil
+		}
+	}
 	c.buildMu.Lock()
 	defer c.buildMu.Unlock()
 	if st == nil {

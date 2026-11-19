@@ -108,7 +108,7 @@ func main() {
 		h.real, h.rp, realReplay = true, rp, rp
 	}
 	fmt.Fprintf(os.Stderr, "devcluster: building fakellama and starting the real scheduler...\n")
-	o := clusterOpts{bare: h.bare, statusSource: h.st.statusSource}
+	o := clusterOpts{bare: h.bare, statusSource: h.st.statusSource, catalogSource: h.catalogSource}
 	if h.real {
 		o.seedHistory, o.recorded = h.rp.seedHistory, true
 	} else if !h.bare {
@@ -124,6 +124,12 @@ func main() {
 	liveProfiles = h.c.profileDefs
 	h.st.configState = func() (int, bool) { return int(h.c.svc.Revision()), h.c.svc.Config().Configured }
 	h.relay = newRelay(h.c.url)
+	h.watchCatalog()
+	if !h.bare {
+		if err := seedAgents(h.c); err != nil {
+			fmt.Fprintf(os.Stderr, "devcluster: agents: %v\n", err)
+		}
+	}
 
 	if h.real {
 		close(h.seeded) // the recording has its own benchmarks and configuration: nothing is seeded
@@ -166,16 +172,8 @@ func main() {
 			h.c.root.ServeHTTP(w, r)
 		}
 	})
-	mux.HandleFunc("GET /api/models", func(w http.ResponseWriter, r *http.Request) {
-		if !h.handleModels(w, r) {
-			h.c.root.ServeHTTP(w, r)
-		}
-	})
-	mux.HandleFunc("GET /api/models/{key...}", func(w http.ResponseWriter, r *http.Request) {
-		if !h.handleModels(w, r) {
-			h.c.root.ServeHTTP(w, r)
-		}
-	})
+	// GET /api/models and the models topic of /ws are the real server's: its
+	// catalog is joined from the scenario (catalogSource, models_front.go).
 	mux.HandleFunc("POST /api/plan", func(w http.ResponseWriter, r *http.Request) {
 		if !h.st.handlePlan(w, r) {
 			h.c.root.ServeHTTP(w, r)
