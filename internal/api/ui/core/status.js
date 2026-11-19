@@ -77,4 +77,4 @@ export function staleBanner() {
 }
 
 // The reason strings in plain words live in reasons.js (no DOM, testable).
-export { plainReason, shortReason, explain, plainBasis } from './reasons.js';
+export { plainReason, shortReason, explain, plainBasis, refusalWord } from './reasons.js';

@@ -136,3 +136,24 @@ export function plainBasis(raw) {
   if (/^measured this run/i.test(s)) return 'Measured on its last load';
   return s ? cap(s) : '';
 }
+
+// refusalWord(reason) -> the short reason of a refused request (the `reason`
+// of a requestRefused event or of status.last_refusals) in plain words.
+const REFUSAL = {
+  'forced nodes do not fit': 'It does not fit on the nodes it is tied to',
+  'does not fit': 'It is too big for the cluster',
+  'cluster busy': 'It waited too long for room',
+  'forced nodes unavailable': 'The nodes it is tied to were not available',
+  'fleet view stale': 'The fleet feed was stale',
+  'load failed': 'Its load failed',
+  backoff: 'It was held back after a failed load',
+  'backed off': 'It was held back after a failed load',
+  'shutting down': 'The scheduler was shutting down',
+  'nodes quarantined': 'The nodes that could take it were set aside',
+  'node has no address': 'A node it needs has no known address',
+  'node excluded': 'A node it needs is excluded from use',
+  unloaded: 'It was unloaded while it loaded',
+  'client gone': 'The caller went away',
+  'unknown model': 'No profile has that name',
+};
+export const refusalWord = reason => REFUSAL[String(reason || '').trim().toLowerCase()] || (reason ? stop(cap(String(reason))).replace(/\.$/, '') : 'Refused');

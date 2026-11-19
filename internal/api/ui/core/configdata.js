@@ -55,7 +55,7 @@ export const sectionName = s => SECTION_NAMES[s] || s || 'Unknown';
 
 export const ACTION_NAMES = {
   create: 'Created', update: 'Changed', delete: 'Deleted', import: 'Imported', rollback: 'Rolled back', load: 'Loaded', unload: 'Unloaded',
-  run: 'Started a run', cancel: 'Cancelled a run',
+  run: 'Started a run', cancel: 'Cancelled a run', run_start: 'Started a run of', run_cancel: 'Cancelled a run of',
 };
 export const actionName = a => ACTION_NAMES[a] || (a ? a.charAt(0).toUpperCase() + a.slice(1) : 'Changed');
 
@@ -63,7 +63,7 @@ export const actionName = a => ACTION_NAMES[a] || (a ? a.charAt(0).toUpperCase()
 export function entrySentence(e) {
   const t = e.target;
   const sec = e.section;
-  if (sec === 'runtime') return `${actionName(e.action)} model ${t}`;
+  if (sec === 'runtime') return t === '*' || !t ? `${actionName(e.action)} every model` : `${actionName(e.action)} ${t}`;
   if (sec === 'bench' || sec === 'benchmarks' || sec === 'suites') {
     // the server writes the target as "suite:<id>", "benchmark:<id>" or "run:<id>"
     const m = /^(suite|benchmark|run):(.*)$/.exec(t || '');

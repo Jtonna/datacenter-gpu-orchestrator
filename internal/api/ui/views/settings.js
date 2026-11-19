@@ -49,6 +49,8 @@ const pkey = (scope, key) => scope + '.' + key;
 // Two values are the same setting when they parse to the same thing ("5m" and "5m0s").
 const norm = (f, v) => (f.type === 'duration' ? (parseGoDuration(v) ?? v) : v);
 const sameValue = (f, a, b) => same(norm(f, a), norm(f, b));
+// The server writes a duration as "15m0s"; a person writes "15m". Zero parts are dropped for display.
+const tidyDur = v => (typeof v === 'string' && /\d[hms]/.test(v) ? v.replace(/(?<=[hm])0s$/, '').replace(/(?<=h)0m$/, '') : v);
 
 // A checkbox list for recovery.actions: the enum values in escalation order.
 function actionsControl(f, value, onChange) {
@@ -116,7 +118,7 @@ registerView({
       const f = r.f, id = pkey(f.scope, f.key);
       const edited = pending.has(id);
       const setNow = edited ? pending.get(id) !== null && !sameValue(f, pending.get(id), f.default) : isSet(f);
-      const def0 = f.default === null || f.default === undefined || f.default === '' ? 'none' : String(f.default) + (f.type !== 'duration' && f.unit ? ' ' + f.unit : '');
+      const def0 = f.default === null || f.default === undefined || f.default === '' ? 'none' : f.type === 'duration' ? String(tidyDur(f.default)) : (typeof f.default === 'number' ? num(f.default, f.default % 1 ? 2 : 0) : String(f.default)) + (f.unit ? ' ' + f.unit : '');
       const def = def0.length > 36 ? def0.slice(0, 34) + '…' : def0;
       r.meta.replaceChildren(frag(
         h('span.mono.mut', { style: 'font-size:var(--fs-xs)' }, f.key),
@@ -133,7 +135,7 @@ registerView({
       r.f = f;
       const lab = f.key === 'actions' && f.scope === 'recovery' ? 'Actions' : undefined;
       const def = Object.assign({}, f, { label: lab, required: f.type !== 'string' && f.type !== 'list' && f.type !== 'bool' ? true : f.required });
-      const values = { [f.key]: shown(f) };
+      const values = { [f.key]: f.type === 'duration' ? tidyDur(shown(f)) : shown(f) };
       r.form = f.type === 'list' && f.enum ? actionsControl(f, values[f.key], v => stage(f, v))
         : schemaForm({ fields: [def], values, showDefaults: false, onChange: (k, v) => stage(f, v) });
       if (f.type === 'list' && f.enum) {

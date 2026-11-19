@@ -61,10 +61,10 @@ function benchmarksCard() {
         b.description ? h('span.sub', { style: 'font-weight:500' }, b.description) : null) },
       { label: 'Profile', cls: 'tight', render: b => (b.parallel ? h('span.mut', 'Several') : h('span', h('span.mono.nowrap', b.profile), modelOf(b.profile) ? h('span.sub.mono', modelOf(b.profile)) : null)) },
       { label: 'Phases', render: b => phaseChips(b) },
-      { label: 'Last result', cls: 'tight', render: b => {
+      { label: 'Passed', cls: 'tight', title: 'The share of its steps that passed, over the stored runs', render: b => {
         const a = aggs.find(x => x.benchmark_id === b.id);
         if (!a || !a.steps) return h('span.mut', 'Not run yet');
-        return h('span', rateBadge(a.pass_rate), h('span.sub', a.last_at ? ['Last ', ago(a.last_at)] : null));
+        return h('span', rateBadge(a.pass_rate), h('span.sub', a.last_at ? ['last run ', ago(a.last_at)] : null));
       } },
     ],
   });

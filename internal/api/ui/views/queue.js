@@ -14,7 +14,7 @@ import { state, listen } from '../core/store.js';
 import * as api from '../core/api.js';
 import { liveView, pageHead, badge, nodeChip, nodeChips, bar, table, empty, skeleton } from '../core/ui.js';
 import { num, dur, ago, at, until, plural, toMs, now, clock, parseGoDuration } from '../core/format.js';
-import { viewNodes, nodeName, drift, staleBanner, plainReason } from '../core/status.js';
+import { viewNodes, nodeName, drift, staleBanner, plainReason, refusalWord } from '../core/status.js';
 
 const sentence = s => { s = String(s || '').trim().replace(/^placer:\s*/i, ''); if (!s) return ''; s = s.charAt(0).toUpperCase() + s.slice(1); return /[.!?]$/.test(s) ? s : s + '.'; };
 
@@ -186,7 +186,7 @@ registerView({
                   { label: 'When', cls: 'tight', render: e => ago(e.ts) },
                   { label: 'Profile', render: e => h('span.mono.nowrap', e.profile || '–') },
                   { label: 'Requests', cls: 'r', render: e => num(((e.data || {}).waiters || 1) + ((e.data || {}).suppressed_since_last || 0)) },
-                  { label: 'Why', render: e => h('span', h('span.err-t', sentence((e.data || {}).reason)), (e.data || {}).message ? h('span.sub', { title: 'The scheduler says: ' + (e.data || {}).message }, plainReason(String((e.data || {}).message).replace(/^profile \S+ needs \d+ MiB \(fit rule requires (\d+) MiB\) but the cluster can hold at most (\d+) MiB/i, (m0, a, b) => `need ${a} MiB (requires ${a} MiB) exceeds cluster capacity ${b} MiB`))) : null) },
+                  { label: 'Why', render: e => { const d = e.data || {}; return h('span', { title: d.message ? 'The scheduler says: ' + d.message : null }, h('span', { style: 'font-weight:700' }, refusalWord(d.reason) + '.'), d.message ? h('span.sub', plainReason(d.message)) : null); } },
                 ],
                 empty: empty(historyOn ? 'No request was turned away' : 'History is off',
                   historyOn ? 'Requests that cannot be served (the model does not fit, a node is missing, the time limit passed) are listed here.'

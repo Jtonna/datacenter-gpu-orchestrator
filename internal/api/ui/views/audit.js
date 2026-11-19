@@ -209,7 +209,7 @@ registerView({
         h('span', sourceBadge(e.source)),
         h('div', { style: 'min-width:0' },
           h('p', h('b', entrySentence(e)), ' ', e.section && !['profiles', 'tiers', 'settings'].includes(e.section) ? badge(sectionName(e.section), 'n') : null),
-          h('p.d', 'by ', h('b.txt2', e.actor || 'anonymous'), e.target && !['tiers', 'bench', 'exclude_nodes'].includes(e.section) ? [' · ', h('span.mono', e.target)] : null,
+          h('p.d', 'by ', h('b.txt2', e.actor || 'anonymous'), e.target && !['tiers', 'bench', 'exclude_nodes', 'runtime', 'profiles'].includes(e.section) ? [' · ', h('span.mono', e.target)] : null,
             e.revision ? [' · ', h('a', { href: href('audit', ['revisions'], { rev: e.revision }), onclick: ev => { ev.preventDefault(); showRevision(e.revision); } }, 'Revision ' + e.revision)] : null,
             ' · ', h('a', { href: '#', 'aria-expanded': isOpen ? 'true' : 'false', onclick: ev => { ev.preventDefault(); if (isOpen) open.delete(e.id); else open.add(e.id); view.refresh(); } }, isOpen ? 'Hide details' : 'Show details')),
           e.comment ? h('p.d', { style: 'color:var(--text-2)' }, '“' + e.comment + '”') : null,

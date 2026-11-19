@@ -13,10 +13,10 @@ import { h } from '../core/dom.js';
 import { registerView, href, navigate } from '../core/router.js';
 import { state } from '../core/store.js';
 import * as api from '../core/api.js';
-import { liveView, pageHead, badge, nodeChips, table, empty, banner, skeleton, chips, button, schemaForm, confirm } from '../core/ui.js';
+import { liveView, pageHead, badge, nodeChips, empty, banner, skeleton, chips, button, schemaForm, confirm, more } from '../core/ui.js';
 import { num, mib, ctx, plural, DASH } from '../core/format.js';
-import { plainReason } from '../core/status.js';
-import { loadSchema, loadConfig, fieldsOf, clone, fieldOfMessage, searchBox } from '../core/configdata.js';
+import { plainReason, plainBasis } from '../core/status.js';
+import { loadSchema, loadConfig, fieldsOf, clone, fieldOfMessage } from '../core/configdata.js';
 import { pendingBar, reviewChanges, savedBanner, watchConfig, noticeBanner } from '../core/changes.js';
 
 // Unsaved profile changes live outside the view so they survive a visit to another screen.
@@ -159,9 +159,8 @@ function placementCell(p) {
   if ((p.force_nodes || []).length) {
     bits.push(nodeChips(p.force_nodes));
     if ((p.tensor_split || []).length) bits.push(h('span.sub', 'split ' + p.tensor_split.join(' / ')));
-    else bits.push(h('span.sub', 'forced, in this order'));
   } else {
-    bits.push(h('span.mut', 'Automatic'));
+    bits.push(h('span.quiet', 'Automatic'));
     if ((p.allow_tiers || []).length) bits.push(h('span.sub', 'tiers ' + p.allow_tiers.join(', ') + ' only'));
   }
   return h('span', bits);
@@ -169,24 +168,25 @@ function placementCell(p) {
 
 function memoryCell(p, plan) {
   if (p.kind === 'command' || !plan) {
-    return p.needs_mib ? h('span', mib(p.needs_mib), h('span.sub', 'configured')) : h('span.mut', DASH);
+    return p.needs_mib ? h('span', mib(p.needs_mib), h('span.sub', 'set by hand')) : h('span.mut', DASH);
   }
   if (!plan.needs_mib && !p.needs_mib) return h('span.mut', DASH);
   const configured = plan.needs_mib_configured > 0;
   const need = plan.needs_mib || p.needs_mib;
-  return h('span', { title: plan.needs_basis || '' }, mib(need), h('span.sub', configured ? 'configured' : plan.needs_measured ? 'learned' : 'estimated'));
+  return h('span', { title: plainBasis(plan.needs_basis) }, mib(need), h('span.sub', configured ? 'set by hand' : plan.needs_measured ? 'measured' : 'estimated'));
 }
 
 function planLine(plan) {
   if (!plan) return h('span.mut', 'Not known yet');
   const nodes = plan.nodes && plan.nodes.length ? nodeChips(plan.nodes) : null;
+  const raw = plan.reason ? 'The scheduler says: ' + plan.reason : null;
   switch (plan.action) {
-    case 'start': return h('span', nodes, ' ', h('span.mut', 'would start now'));
-    case 'serve': case 'wait': return h('span.mut', 'Already loaded or loading', nodes ? [' on ', nodes] : null);
-    case 'evict': return h('span', nodes, ' ', h('span.mut', 'after making room by unloading another model'));
-    case 'queue': return h('span', { title: plan.reason ? 'The scheduler says: ' + plan.reason : null }, h('span.mut', 'Would wait in the queue'), plan.reason ? h('span.sub', plainReason(plan.reason)) : null);
-    case 'backoff': return h('span.err-t', { title: plan.reason ? 'The scheduler says: ' + plan.reason : null }, 'Held back after a failed load');
-    case 'reject': return h('span.err-t', { title: plan.reason ? 'The scheduler says: ' + plan.reason : null }, 'Cannot be placed', plan.reason ? h('span.sub', { style: 'color:inherit' }, plainReason(plan.reason)) : null);
+    case 'start': return h('span', h('b', 'It would start now'), nodes ? [' on ', nodes] : null, '.');
+    case 'serve': case 'wait': return h('span', h('b', 'It is loaded or loading already'), nodes ? [' on ', nodes] : null, '.');
+    case 'evict': return h('span', h('b', 'It would start after making room'), nodes ? [' on ', nodes] : null, ': another model is unloaded first.');
+    case 'queue': return h('span', { title: raw }, h('b', 'It would wait in the queue. '), plainReason(plan.reason));
+    case 'backoff': return h('span', { title: raw }, h('b', 'It is held back for now. '), 'Its last load failed.');
+    case 'reject': return h('span', { title: raw }, h('b', 'It cannot be placed. '), plainReason(plan.reason));
   }
   return h('span.mut', { title: plan.reason || null }, plainReason(plan.reason) || 'Not known');
 }
@@ -196,7 +196,11 @@ function planLine(plan) {
 registerView({
   id: 'profiles', title: 'Profiles',
   mount(el, route0) {
-    let route = route0, cfg = null, fields = null, plans = {}, error = '', search = '', filter = 'all', saved = null, alive = true;
+    let route = route0, cfg = null, fields = null, plans = {}, error = '', search = route0.query.q || '', filter = 'all', saved = null, alive = true;
+    const openGroups = new Set();
+    // built once (data-keep): the caret stays put while the list redraws
+    const searchInput = h('input.input', { type: 'search', value: search, placeholder: 'Search by name, alias or model file', 'aria-label': 'Search profiles', autocomplete: 'off', spellcheck: 'false', 'data-keep': '', key: 'search', style: 'width:320px' });
+    searchInput.addEventListener('input', () => { search = searchInput.value; view.refresh(); });
     let editor = null, editorKey = '';
 
     const rev = () => (cfg ? cfg.revision : 0);
@@ -289,6 +293,10 @@ registerView({
     }
 
     // ---- drawing ----
+    // The list is grouped by model file: a real configuration has a dozen models
+    // and hundreds of profiles, most of them generated for benchmarks. The
+    // generated ones of a model stay folded until asked for, searched or filtered.
+    const isGenerated = (id, p) => (p && typeof p.generated === 'boolean' ? p.generated : plans[id] && typeof plans[id].generated === 'boolean' ? plans[id].generated : /^(bench|b|m)-/.test(id));
     function listCard(st) {
       const loaded = new Map((st && st.instances || []).map(i => [i.profile, i]));
       const all = Object.keys(profiles());
@@ -299,18 +307,17 @@ registerView({
         const p = get(id);
         return !q || id.toLowerCase().includes(q) || (p.model || '').toLowerCase().includes(q) || (p.aliases || []).some(a => a.toLowerCase().includes(q));
       };
+      const gen = id => isGenerated(id, get(id));
       const counts = {
-        all: all.length, loaded: all.filter(id => loaded.has(id)).length, notloaded: all.filter(id => !loaded.has(id)).length,
-        forced: all.filter(id => (get(id).force_nodes || []).length).length, auto: all.filter(id => !(get(id).force_nodes || []).length).length,
+        all: all.length, hand: all.filter(id => !gen(id)).length, generated: all.filter(gen).length, loaded: all.filter(id => loaded.has(id)).length,
         changed: all.filter(id => pending.has(id)).length,
       };
-      const inFilter = id => filter === 'all' || (filter === 'loaded' && loaded.has(id)) || (filter === 'notloaded' && !loaded.has(id))
-        || (filter === 'forced' && (get(id).force_nodes || []).length) || (filter === 'auto' && !(get(id).force_nodes || []).length) || (filter === 'changed' && pending.has(id));
+      const inFilter = id => filter === 'all' || (filter === 'hand' && !gen(id)) || (filter === 'generated' && gen(id)) || (filter === 'loaded' && loaded.has(id)) || (filter === 'changed' && pending.has(id));
       const rows = all.filter(id => match(id) && inFilter(id)).sort();
-      const tools = h('div.cs', { style: 'display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;border-top:0;padding-top:0' },
-        searchBox(search, v => { search = v; view.refresh(); }, 'Search by name, alias or model file', 'Search profiles'),
-        chips([{ id: 'all', label: 'All', count: counts.all }, { id: 'loaded', label: 'Loaded now', count: counts.loaded }, { id: 'notloaded', label: 'Not loaded', count: counts.notloaded },
-          { id: 'forced', label: 'Forced nodes', count: counts.forced }, { id: 'auto', label: 'Automatic', count: counts.auto }, ...(counts.changed ? [{ id: 'changed', label: 'Unsaved', count: counts.changed }] : [])],
+      const tools = h('div.toolbar',
+        searchInput,
+        chips([{ id: 'all', label: 'All', count: counts.all }, { id: 'hand', label: 'Made by hand', count: counts.hand }, { id: 'generated', label: 'Generated', count: counts.generated },
+          { id: 'loaded', label: 'Loaded now', count: counts.loaded }, ...(counts.changed ? [{ id: 'changed', label: 'Unsaved', count: counts.changed }] : [])],
         filter, id => { filter = id; view.refresh(); }, 'Filter profiles'));
       const status = id => {
         const inst = loaded.get(id), p = pending.get(id);
@@ -319,32 +326,60 @@ registerView({
         if (p && p.errors && p.errors.length) b.push(badge('Not accepted', 'fail', 'The server refused this profile. Open it to see why.'));
         if (inst) b.push(inst.state === 'starting' ? badge('Loading', 'load') : badge('Loaded', 'use', 'A model of this profile is loaded now'));
         if (inst && inst.stale_profile) b.push(badge('Older definition', 'settle', 'Its profile was changed or deleted after it loaded. It keeps running as it was; the new definition is used at its next load.'));
-        if (!b.length) b.push(badge('Not loaded', 'n'));
-        return h('span', { style: 'display:flex;flex-wrap:wrap;gap:4px' }, b);
+        return b.length ? h('span', { style: 'display:flex;flex-wrap:wrap;gap:4px' }, b) : h('span.quiet', 'Not loaded');
       };
+      // groups, by model file; commands last
+      const groups = new Map();
+      for (const id of rows) {
+        const p = get(id);
+        const key = p.kind === 'command' ? '￿command' : (p.model || '￾none');
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(id);
+      }
+      const keys = [...groups.keys()].sort((x, y) => x.toLowerCase().localeCompare(y.toLowerCase()));
+      const forceOpen = !!q || filter === 'generated' || filter === 'loaded' || filter === 'changed';
+      const tr = [];
+      const row = id => {
+        const p = get(id), del = pending.has(id) && pending.get(id).type === 'delete';
+        return h('tr', { key: 'p-' + id, class: 'click sub' + (del ? ' mut' : ''), tabindex: '0', onclick: () => navigate('profiles', [id]), onkeydown: e => { if (e.key === 'Enter') navigate('profiles', [id]); } },
+          h('td', h('span.mono.nowrap', { style: 'font-weight:500' }, id), gen(id) ? null : null,
+            (p.aliases || []).length ? h('span.sub', 'also ' + p.aliases.join(', ')) : null,
+            p.kind === 'command' ? h('span.sub.mono.wrap-any', p.cmd || '') : null,
+            pending.has(id) && pending.get(id).errors && pending.get(id).errors.length ? h('span.sub.err-t', pending.get(id).errors[0]) : null),
+          h('td.r', p.kind === 'command' ? h('span.mut', DASH) : [ctx(p.ctx), (p.parallel || 1) > 1 ? h('span.sub', `${p.parallel} slots`) : null]),
+          h('td', placementCell(p)),
+          h('td.r', memoryCell(p, plans[id])),
+          h('td.tight', status(id)),
+          h('td.tight', h('span.row', { style: 'gap:6px 14px;justify-content:flex-end;flex-wrap:nowrap' },
+            del ? button('Undo', e => { e.stopPropagation(); undo(id); }, 'sm')
+              : [h('button.more', { type: 'button', onclick: e => { e.stopPropagation(); navigate('profiles', ['new'], { from: id }); } }, 'Copy'),
+                h('button.more', { type: 'button', onclick: e => { e.stopPropagation(); stageDelete(id); } }, 'Delete'),
+                button('Edit', e => { e.stopPropagation(); navigate('profiles', [id]); }, 'sm')])));
+      };
+      for (const key of keys) {
+        const ids = groups.get(key);
+        const hand = ids.filter(id => !gen(id)), generated = ids.filter(gen);
+        const isOpen = forceOpen || openGroups.has(key) || !hand.length && keys.length === 1;
+        const isCmd = key === '￿command';
+        tr.push(h('tr.grp', { key: 'g-' + key },
+          h('td', { colspan: '6' }, h('div.row', { style: 'gap:6px 14px' },
+            isCmd ? h('b', 'Commands') : h('a.mono', { href: href('models', [key]), title: 'Open the page of this model', style: 'font-weight:500;color:var(--text)' }, key === '￾none' ? 'No model file' : key),
+            h('span.quiet', { style: 'font-size:13px' }, isCmd ? 'Programs the scheduler starts on this machine' : [hand.length ? plural(hand.length, 'profile') + ' by hand' : null, generated.length ? `${num(generated.length)} generated` : null].filter(Boolean).join(' · ')),
+            generated.length && !forceOpen && hand.length + generated.length > 0 ? h('span.right', more(isOpen, () => { if (openGroups.has(key)) openGroups.delete(key); else openGroups.add(key); view.refresh(); },
+              `Show the ${num(generated.length)} generated`, 'Hide the generated')) : null))));
+        for (const id of hand) tr.push(row(id));
+        if (isOpen) for (const id of generated) tr.push(row(id));
+      }
       const body = !rows.length ? empty(all.length ? 'No profile matches' : 'No profiles yet',
         all.length ? 'Change the search or the filter.' : 'A profile names a model file and how to load it. Add the first one to let the scheduler place a model.',
         all.length ? null : button('Add the first profile', () => navigate('profiles', ['new']), 'pri sm'))
-        : table({
-          minWidth: 1020, rows, key: id => id, onRow: id => navigate('profiles', [id]),
-          rowClass: id => (pending.has(id) && pending.get(id).type === 'delete' ? 'mut' : ''),
-          columns: [
-            { label: 'Profile', render: id => h('span', h('span.mono.nowrap', { style: 'font-weight:500' }, id), get(id).aliases && get(id).aliases.length ? h('span.sub', 'also ' + get(id).aliases.join(', ')) : null,
-              pending.has(id) && pending.get(id).errors && pending.get(id).errors.length ? h('span.sub.err-t', pending.get(id).errors[0]) : null) },
-            { label: 'Model file', render: id => { const p = get(id); return p.kind === 'command' ? h('span', badge('Command', 'n'), h('span.sub.mono.wrap-any', p.cmd || ''))
-              : h('span', h('span.mono.wrap-any', p.model || DASH), (p.extra_args || []).length ? h('span.sub', plural(p.extra_args.length, 'extra argument')) : null); } },
-            { label: 'Context', cls: 'r', render: id => { const p = get(id); return p.kind === 'command' ? h('span.mut', DASH) : h('span', ctx(p.ctx), (p.parallel || 1) > 1 ? h('span.sub', `${p.parallel} slots`) : null); } },
-            { label: 'Placement', render: id => placementCell(get(id)) },
-            { label: 'Memory need', cls: 'r', title: 'Configured, learned from a finished load, or estimated from the model file', render: id => memoryCell(get(id), plans[id]) },
-            { label: 'State', cls: 'tight', render: status },
-            { label: '', cls: 'tight', render: id => h('span.row', { style: 'gap:6px;justify-content:flex-end;flex-wrap:nowrap' },
-              pending.has(id) && pending.get(id).type === 'delete' ? button('Undo', e => { e.stopPropagation(); undo(id); }, 'sm')
-                : [button('Edit', e => { e.stopPropagation(); navigate('profiles', [id]); }, 'sm'),
-                  button('Copy', e => { e.stopPropagation(); navigate('profiles', ['new'], { from: id }); }, 'sm'),
-                  button('Delete', e => { e.stopPropagation(); stageDelete(id); }, 'sm dng')]) },
-          ],
-        });
-      return h('section.card', { key: 'list' }, h('div.ch', h('h2', 'Profiles'), h('span.note', 'Click a profile to edit it. Models of a changed profile keep their old definition until they load again.')), tools, body);
+        : h('div.scroll', h('table.tbl.dense', { style: 'min-width:940px' },
+          h('thead', h('tr', h('th', { scope: 'col' }, 'Profile'), h('th.r', { scope: 'col' }, 'Context'), h('th', { scope: 'col' }, 'Placement'),
+            h('th.r', { scope: 'col', title: 'Set by hand, learned from a finished load, or estimated from the model file' }, 'Memory need'), h('th', { scope: 'col' }, 'State'), h('th', { scope: 'col' }, h('span.sr', 'Actions')))),
+          h('tbody', tr)));
+      return h('section.card', { key: 'list' },
+        h('div.ch', h('h2', 'Profiles by model'), h('span.note', `${plural(keys.length, 'group')} · a changed profile takes effect at the model's next load`)),
+        tools, body);
     }
 
     function editorCard(st) {

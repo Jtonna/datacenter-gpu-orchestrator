@@ -14,7 +14,8 @@ import { registerView, navigate } from '../core/router.js';
 import { state, on, listen } from '../core/store.js';
 import * as api from '../core/api.js';
 import { liveView, pageHead, badge, nodeChips, chips, stat, table, empty, skeleton, button } from '../core/ui.js';
-import { num, mib, bytes, tps, dur, ago, plural, now, dayLabel, dateTime, agoText } from '../core/format.js';
+import { num, gb, bytes, tps, dur, plural, now, dayLabel, dateTime, agoText } from '../core/format.js';
+import { plainReason } from '../core/status.js';
 
 const RANGES = [['1h', '1 h', 3600], ['6h', '6 h', 21600], ['24h', '24 h', 86400], ['7d', '7 d', 604800]];
 const GROUPS = {
@@ -68,7 +69,7 @@ function detailOf(e) {
   switch (e.type) {
     case 'loadStarted':
       if (d.bytes_total) parts.push(bytes(d.bytes_total) + ' to upload');
-      if (d.need_mib) parts.push('needs ' + mib(d.need_mib) + (d.need_basis ? ` (${d.need_basis})` : ''));
+      if (d.need_mib) parts.push('needs ' + gb(d.need_mib) + (/^estimated/.test(d.need_basis || '') ? ' (estimated)' : ''));
       break;
     case 'loadFinished':
       if (d.bytes) parts.push(bytes(d.bytes) + ' uploaded');
@@ -79,18 +80,15 @@ function detailOf(e) {
       if (d.bytes_total) parts.push(`${bytes(d.bytes_sent || 0)} of ${bytes(d.bytes_total)} sent`);
       break;
     case 'loadCancelledLowMemory':
-      parts.push(`${mib(d.available_mib)} available, the floor is ${mib(d.floor_mib)}`);
+      parts.push(`${gb(d.available_mib)} available, the floor is ${gb(d.floor_mib)}`);
       break;
     case 'requestRefused':
-      if (d.message) parts.push(d.message);
       if (d.waiters > 1) parts.push(plural(d.waiters, 'request'));
       if (d.suppressed_since_last) parts.push(`${num(d.suppressed_since_last)} more since the last record`);
       if (d.retry_after_s) parts.push('retry after ' + dur(d.retry_after_s));
       break;
     case 'instanceUnloaded':
       if (d.reason) parts.push({ ttl: 'idle too long', api: 'asked through the API', eviction: 'evicted to make room', shutdown: 'the scheduler stopped' }[d.reason] || d.reason);
-      if (d.loaded_for_s != null) parts.push('was loaded for ' + dur(d.loaded_for_s));
-      if (d.requests_served != null) parts.push(plural(d.requests_served, 'request') + ' served');
       break;
     case 'eviction':
       if (d.for_profile) parts.push('to make room for ' + d.for_profile);
@@ -110,10 +108,9 @@ function detailOf(e) {
       if (d.err) parts.push(d.err);
       break;
     case 'needsMibTooLow':
-      parts.push(`configured ${mib(d.configured_mib)}, measured ${mib(d.measured_mib)}`);
       break;
     case 'nodeMemory':
-      parts.push(`${mib(d.available_mib)} available of ${mib(d.total_mib)}`);
+      if (d.budget_mib != null) parts.push(`${gb(d.budget_mib)} usable for a model`);
       break;
     case 'recoveryRequest':
       if (d.step) parts.push(`step ${d.step} of ${d.of}`);
@@ -124,8 +121,33 @@ function detailOf(e) {
       if (d.reason) parts.push(d.reason);
       break;
   }
-  if (d.bench_run && !e.type.startsWith('bench')) parts.push('caused by benchmark run ' + d.bench_run);
+  if (d.bench_run && !e.type.startsWith('bench')) parts.push('part of a benchmark run');
   return parts.join(' · ');
+}
+
+// sentenceOf(event) -> the event as one short plain sentence. The scheduler's
+// own summary (kept in the record, behind "Details") is used for the types that
+// have no shorter wording here.
+function sentenceOf(e) {
+  const d = e.data || {};
+  const p = e.profile ? h('span.mono', e.profile) : null;
+  switch (e.type) {
+    case 'loadStarted': return ['Loading ', p, '.'];
+    case 'loadFinished':
+      if (d.outcome === 'ready') return [p, ' is ready: loaded in ', dur(d.load_s), d.avg_mb_s ? ` at ${num(d.avg_mb_s)} MB/s` : '', '.'];
+      return [p, d.outcome === 'cancelled' ? ' stopped loading' : ' failed to load', d.load_s != null ? ` after ${dur(d.load_s)}` : '', d.reason ? ['. ', plainReason(d.reason)] : '.'];
+    case 'requestRefused': return ['A request for ', p, ' was refused. ', plainReason(d.message || d.reason)];
+    case 'instanceUnloaded': return [p, ' was unloaded', d.loaded_for_s != null ? ` after ${dur(d.loaded_for_s)}` : '', d.requests_served != null ? ` and ${plural(d.requests_served, 'request')}` : '', '.'];
+    case 'learnedNeed': return ['Measured ', p, ': it needs ', gb(d.measured_mib), '.'];
+    case 'needsMibTooLow': return ['The memory need set for ', p, ' is too low: ', gb(d.configured_mib), ' set, ', gb(d.measured_mib), ' measured. The measured figure is used.'];
+    case 'nodeMemory': return [gb(d.available_mib), ' free of ', gb(d.total_mib), d.reason ? ` (${String(d.reason).replace(/_/g, ' ')})` : '', '.'];
+    case 'benchStepFinished': return ['Benchmark ', h('span.mono', d.benchmark || ''), d.pass ? ' passed' : d.outcome === 'refused' ? ' was refused' : ' did not pass',
+      d.load_s != null ? `: load ${dur(d.load_s)}` : '', d.decode_tps ? `, ${num(d.decode_tps, 1)} tok/s` : '', d.regression ? ', slower than before' : '', '.'];
+    case 'benchRunStarted': return [`A benchmark run of suite ${d.suite || ''} started (${plural(d.steps || 0, 'step')}).`];
+    case 'benchRunFinished': return [`The benchmark run of suite ${d.suite || ''} ${d.state || 'finished'}: ${num(d.passed || 0)} passed, ${num(d.failed || 0)} failed`,
+      d.regressions ? `, ${plural(d.regressions, 'regression')}` : '', '.'];
+  }
+  return [e.summary || e.type];
 }
 
 function eventRow(e, open, toggle) {
@@ -136,10 +158,10 @@ function eventRow(e, open, toggle) {
     h('time', { title: dateTime(e.ts), datetime: new Date(e.ts).toISOString() }, agoText(e.ts)),
     h('span', badge(label, kind)),
     h('div', { style: 'min-width:0' },
-      h('p', e.summary || e.type, (e.nodes || []).length ? [' ', nodeChips(e.nodes)] : null),
+      h('p', sentenceOf(e), (e.nodes || []).length ? [' ', nodeChips(e.nodes)] : null),
       detail ? h('p.d', detail) : null),
-    h('button.more', { type: 'button', 'aria-expanded': open ? 'true' : 'false', title: 'The full record as the scheduler stored it', onclick: () => toggle(key) }, open ? 'Hide record' : 'Record'),
-    open ? h('pre.mono', JSON.stringify(e, null, 2)) : null);
+    h('button.more', { type: 'button', 'aria-expanded': open ? 'true' : 'false', title: 'The full record as the scheduler stored it', onclick: () => toggle(key) }, open ? 'Hide' : 'Details'),
+    open ? h('pre.mono', (e.summary ? e.summary + '\n\n' : '') + JSON.stringify(e, null, 2)) : null);
 }
 
 registerView({
@@ -262,13 +284,13 @@ registerView({
             h('section.card',
               h('div.ch.split', h('h2', 'Loads'), summary && summary.loads ? h('span.note', `${num(summary.loads.ready || 0)} ready · ${num((summary.loads.failed || 0) + (summary.loads.cancelled || 0))} failed or cancelled`) : null),
               !loads ? skeleton(3) : table({
-                rows: loads.slice(0, 12), key: e => e.seq + '-' + e.ts, minWidth: 360,
+                rows: loads.slice(0, 10), key: e => e.seq + '-' + e.ts,
                 columns: [
                   { label: 'Finished', cls: 'tight', render: e => h('time', { title: dateTime(e.ts) }, agoText(e.ts)) },
-                  { label: 'Model', render: e => h('span', { title: (e.nodes || []).join(', ') }, h('span.mono.nowrap', e.profile),
+                  { label: 'Model', cls: 'clip', render: e => h('span', { title: e.profile + ' on ' + (e.nodes || []).join(', ') }, h('span.mono', e.profile),
                     h('span.sub', (e.data || {}).outcome !== 'ready' ? h('span.err-t', (e.data || {}).outcome === 'cancelled' ? 'Cancelled · ' : 'Failed · ') : null, plural((e.nodes || []).length, 'node'))) },
-                  { label: 'Took', cls: 'r', render: e => ((e.data || {}).load_s != null ? num(e.data.load_s, 1) + ' s' : '–') },
-                  { label: 'MB/s', cls: 'r', render: e => ((e.data || {}).avg_mb_s ? num(e.data.avg_mb_s, 1) : '–') },
+                  { label: 'Took', cls: 'r', title: 'Load time in seconds', render: e => ((e.data || {}).load_s != null ? num(e.data.load_s) + ' s' : '–') },
+                  { label: 'MB/s', cls: 'r', render: e => ((e.data || {}).avg_mb_s ? num(e.data.avg_mb_s) : '–') },
                 ],
                 empty: empty('No load finished', `No model finished loading in the last ${r[1]}.`),
               })),
@@ -279,10 +301,10 @@ registerView({
       return h('section.card',
         h('div.ch.split', h('h2', 'Recent requests'), h('span.note', requests && requests.length ? `the last ${num(requests.length)} since the scheduler started` : null)),
         !requests ? skeleton(3) : table({
-          rows: requests.slice(0, 10), key: r => r.id, minWidth: 400,
+          rows: requests.slice(0, 10), key: r => r.id,
           columns: [
             { label: 'Finished', cls: 'tight', render: r => h('time', { title: dateTime(r.timestamp) }, agoText(r.timestamp)) },
-            { label: 'Model', render: r => h('span', h('span.mono.nowrap', r.model), r.resp_status_code !== 200 ? h('span.sub.err-t', 'HTTP ' + r.resp_status_code) : null) },
+            { label: 'Model', cls: 'clip', render: r => h('span', { title: r.model }, h('span.mono', r.model), r.resp_status_code !== 200 ? h('span.sub.err-t', 'HTTP ' + r.resp_status_code) : null) },
             { label: 'Tokens', cls: 'r', title: 'Tokens generated', render: r => (r.tokens && r.tokens.output_tokens >= 0 ? num(r.tokens.output_tokens) : '–') },
             { label: 'tok/s', cls: 'r', render: r => (r.tokens ? tps(r.tokens.tokens_per_second) : '–') },
             { label: 'Took', cls: 'r', render: r => dur((r.duration_ms || 0) / 1000) },

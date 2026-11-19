@@ -153,7 +153,7 @@ function benchCard(m) {
     table({
       rows, key: b => b.benchmark_id, minWidth: 760,
       columns: [
-        { label: 'Benchmark', render: b => h('span', h('a.name', { href: href('benchmarks', ['benchmarks', b.benchmark_id]) }, b.name || b.benchmark_id), h('span.sub.mono', b.profile)) },
+        { label: 'Benchmark', render: b => h('span', h('a.name', { href: href('benchmarks', ['edit', 'benchmark', b.benchmark_id]) }, b.name || b.benchmark_id), h('span.sub.mono', b.profile)) },
         { label: 'Runs', cls: 'r', render: b => num(b.runs) },
         { label: 'Passed', cls: 'r', render: b => (b.pass_rate != null ? pct(b.pass_rate * 100) : DASH) },
         { label: 'Load', cls: 'r', title: 'Load time of the last run', render: b => (b.load_s ? dur(b.load_s.last) : DASH) },
