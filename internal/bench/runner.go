@@ -297,6 +297,15 @@ run:
 	ar.setRun(func(r *Run) { r.Env = env })
 	m.publishRun(ar.snapshot())
 	m.emitProgress(ar, true)
+	var ids []string
+	seenID := map[string]bool{}
+	for _, st := range steps {
+		if st.Outcome != OutcomeSkipped && !seenID[st.BenchmarkID] {
+			seenID[st.BenchmarkID] = true
+			ids = append(ids, st.BenchmarkID)
+		}
+	}
+	m.emit(map[string]any{"kind": "aggregate_updated", "run_id": r.ID, "suite_id": r.SuiteID, "state": state, "benchmarks": ids})
 	sev := history.Info
 	if state == RunFailed || sum.Failed > 0 || sum.Regressions > 0 {
 		sev = history.Warn

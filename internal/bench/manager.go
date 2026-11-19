@@ -429,6 +429,11 @@ func (m *Manager) finishUnstarted(r *Run, state, why string) {
 		map[string]any{"bench_run": r.ID, "suite": r.SuiteID, "state": state, "error": why})
 }
 
+// Aggregates is GET /api/bench/aggregates: the stored runs, aggregated.
+func (m *Manager) Aggregates(f AggFilter) (*AggregatesDoc, error) {
+	return m.o.Store.Aggregate(f, m.o.Thresholds, m.o.Now())
+}
+
 // StateDoc is GET /api/bench/state.
 type StateDoc struct {
 	Enabled bool `json:"enabled"`

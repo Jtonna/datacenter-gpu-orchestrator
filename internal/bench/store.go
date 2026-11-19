@@ -553,9 +553,12 @@ func (s *Store) CreateRun(r *Run) error {
 	if trig == "" {
 		trig = "manual"
 	}
-	env, err := nullJSON(r.Env)
-	if err != nil {
-		return err
+	var env any
+	if r.Env != nil {
+		var err error
+		if env, err = nullJSON(r.Env); err != nil {
+			return err
+		}
 	}
 	return s.write(func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT INTO runs (id, suite_id, suite_name, state, note, triggered_by, baseline_run_id, queued_at, started_at, finished_at, error, version, suite, summary, env)
@@ -584,9 +587,12 @@ func (s *Store) SetRunState(id, state string, startedAt, finishedAt int64, errTe
 
 // SetRunEnv stores the environment a run ran in.
 func (s *Store) SetRunEnv(id string, env *Environment) error {
-	v, err := nullJSON(env)
-	if err != nil {
-		return err
+	var v any
+	if env != nil {
+		var err error
+		if v, err = nullJSON(env); err != nil {
+			return err
+		}
 	}
 	return s.write(func(tx *sql.Tx) error {
 		_, err := tx.Exec(`UPDATE runs SET env=? WHERE id=?`, v, id)
@@ -820,7 +826,10 @@ func (s *Store) AddRequest(r *RequestResult) error {
 	})
 }
 
-func (s *Store) steps(runID string) ([]Step, error) {
+func (s *Store) steps(runID string) ([]Step, error) { return s.stepsOpt(runID, true) }
+
+// stepsOpt loads a run's steps with their phases, and their request rows when requests is set.
+func (s *Store) stepsOpt(runID string, requests bool) ([]Step, error) {
 	rows, err := s.db.Query(`SELECT id, run_id, idx, grp, benchmark_id, name, profile, state, outcome, reason, http_status, log_file, started_at, finished_at, error,
 	  spec, plan, load, stats, expect, comparison, model_file, node_count FROM run_steps WHERE run_id=? ORDER BY idx, id`, runID)
 	if err != nil {
@@ -850,11 +859,13 @@ func (s *Store) steps(runID string) ([]Step, error) {
 	}
 	rows.Close()
 	for i := range out {
-		reqs, err := s.requests(out[i].ID)
-		if err != nil {
-			return nil, err
+		if requests {
+			reqs, err := s.requests(out[i].ID)
+			if err != nil {
+				return nil, err
+			}
+			out[i].Requests = reqs
 		}
-		out[i].Requests = reqs
 		phases, err := s.phases(out[i].ID)
 		if err != nil {
 			return nil, err
