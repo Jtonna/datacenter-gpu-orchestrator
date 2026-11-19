@@ -1,8 +1,11 @@
-// DEV-ONLY MOCK of a server contract that is not built yet: the benchmark
-// engine. It plays a suite run in real time, compressed (each step about 12
-// to 25 s), emits the bench WebSocket frames (run, step_started,
-// step_finished, progress), stores the finished run and records the bench
-// history events. The bench-* scenarios freeze a run part way through.
+// DEV-ONLY MOCK of the benchmark runner of feat/bench-phases. It plays a
+// suite run in real time, compressed (each step about 12 to 30 s; the
+// members of a parallel step run side by side), emits the bench WebSocket
+// frames of the real Manager (state, run, progress, step_started,
+// step_finished, request, load, aggregate_updated), stores the finished run
+// and records the bench history events. The progress document follows
+// internal/bench/progress.go. The bench-* scenarios freeze a run part way
+// through.
 
 package main
 
@@ -10,6 +13,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,25 +23,52 @@ import (
 )
 
 type benchEngine struct {
-	mu     sync.Mutex
-	store  *benchStore
-	emit   func(ev map[string]any) // a bench frame's data, to every live client
-	record func(history.Event)     // nil when history is off
-	cur    *activeRun
-	queue  []*mRun
-	rnd    *rand.Rand
+	mu       sync.Mutex
+	store    *benchStore
+	emit     func(ev map[string]any) // a bench frame's data, to every live client
+	record   func(history.Event)     // nil when history is off
+	revision func() int              // the config revision a run records in env
+	cur      *activeRun
+	queue    []*mRun
+	rnd      *rand.Rand
+}
+
+// track is the live progress of one step (progress.go benchTrack).
+type track struct {
+	step       *mStep
+	phases     []phaseSpec
+	reqs       [][]reqPlan
+	durs       []float64 // expected seconds per phase
+	cur        int       // -1 before the first phase
+	frac       float64   // of the current phase
+	detail     map[string]any
+	load       map[string]any
+	finished   bool
+	maxPct     float64
+	start      time.Time
+	phaseAt    []time.Time // when each started phase began
+	lastReq    int         // the request in flight (index into reqs[cur]); -1 none
+	reqStarted time.Time
+}
+
+// runItem is one entry of the suite: a benchmark or a parallel step.
+type runItem struct {
+	id, name, desc, profile string
+	steps                   []*mStep
+	expected                float64
 }
 
 type activeRun struct {
 	run       *mRun
+	items     []runItem
+	cur       int // item in flight; -1 before the first
+	tracks    []*track
+	done      int // steps finished
+	maxPct    float64
 	frozen    string // "", "load", "conversation", "last"
 	frozenAt  time.Time
 	stop      chan struct{}
 	cancelled bool
-	stepIdx   int
-	phaseIdx  int
-	phaseFrac float64
-	detail    map[string]any
 }
 
 func newBenchEngine(store *benchStore) *benchEngine {
@@ -54,6 +85,123 @@ func (e *benchEngine) rec(typ, sev, profile, summary string, data map[string]any
 	if e.record != nil {
 		e.record(history.Event{Ts: time.Now().UnixMilli(), Type: typ, Severity: sev, Profile: profile, ModelFile: modelFileOf(profile), Summary: summary, Data: data})
 	}
+}
+
+// ---- tracks ----
+
+// phaseSeconds is how long a phase is expected to take: compressed for the
+// player, about real for the frozen scenarios.
+func phaseSeconds(s *mStep, p phaseSpec, reqs []reqPlan, compressed bool, rnd *rand.Rand) float64 {
+	n := float64(max(len(reqs), 1))
+	refused := len(s.nodes) == 0
+	if compressed {
+		switch p.Type {
+		case "load":
+			if refused {
+				return 2
+			}
+			return 6 + rnd.Float64()*4
+		case "warmup":
+			return 1.6 * n
+		case "requests":
+			return math.Min(1.6*n, 12)
+		case "conversation":
+			return math.Min(2.2*n, 13)
+		case "hold":
+			return 4.5
+		case "concurrent_requests":
+			return 4
+		}
+		return 1
+	}
+	switch p.Type {
+	case "load":
+		if refused {
+			return 0.3
+		}
+		return perf[s.Profile].load
+	case "warmup":
+		return 3 * n
+	case "requests":
+		return 9 * n
+	case "conversation":
+		return 16 * n
+	case "hold":
+		return float64(intOpt(p.Opts, "seconds", 60)) + 5
+	case "concurrent_requests":
+		return 15
+	}
+	return 1
+}
+
+func newTrack(s *mStep, compressed bool, rnd *rand.Rand) *track {
+	t := &track{step: s, phases: expandPhases(s.Spec), cur: -1, detail: map[string]any{}, lastReq: -1}
+	for i, p := range t.phases {
+		r := phaseRequests(t.phases, i)
+		t.reqs = append(t.reqs, r)
+		t.durs = append(t.durs, phaseSeconds(s, p, r, compressed, rnd))
+	}
+	return t
+}
+
+func (t *track) total() float64 {
+	sum := 0.0
+	for _, d := range t.durs {
+		sum += d
+	}
+	return sum
+}
+
+// percent is how much of the step is done, never going back.
+func (t *track) percent() float64 {
+	var total, done float64
+	for i, w := range t.durs {
+		total += w
+		switch {
+		case t.finished || i < t.cur:
+			done += w
+		case i == t.cur:
+			done += w * t.frac
+		}
+	}
+	pct := 0.0
+	if total > 0 {
+		pct = 100 * done / total
+	}
+	if !t.finished && pct > 99.9 {
+		pct = 99.9
+	}
+	if t.finished {
+		pct = 100
+	}
+	pct = math.Max(pct, t.maxPct)
+	t.maxPct = pct
+	return pct
+}
+
+func (t *track) remaining() float64 {
+	if t.finished {
+		return 0
+	}
+	secs := 0.0
+	for i, w := range t.durs {
+		switch {
+		case i == t.cur:
+			secs += w * (1 - t.frac)
+		case i > t.cur:
+			secs += w
+		}
+	}
+	return secs
+}
+
+func (t *track) phaseDoc() map[string]any {
+	i := max(t.cur, 0)
+	d := map[string]any{"index": i, "type": "", "label": "", "phases_total": len(t.phases)}
+	if i < len(t.phases) {
+		d["type"], d["label"] = t.phases[i].Type, t.phases[i].title()
+	}
+	return d
 }
 
 // ---- state and progress ----
@@ -75,11 +223,14 @@ func (e *benchEngine) stateDoc() map[string]any {
 	return e.stateLocked()
 }
 
+// stateLocked is Manager.State: {enabled, run, current, queue, next_scheduled}.
 func (e *benchEngine) stateLocked() map[string]any {
 	now := time.Now()
 	doc := map[string]any{"enabled": true, "current": nil, "queue": []any{}, "next_scheduled": []any{}, "run": nil}
 	if e.cur != nil {
-		doc["current"] = e.cur.run.brief()
+		b := e.cur.run.brief()
+		b["progress"] = map[string]any{"steps_total": len(e.cur.run.Steps), "steps_done": e.cur.done}
+		doc["current"] = b
 		doc["run"] = e.progressLocked(now)
 	}
 	q := []any{}
@@ -89,15 +240,17 @@ func (e *benchEngine) stateLocked() map[string]any {
 	doc["queue"] = q
 	e.store.mu.Lock()
 	ns := []any{}
-	for _, id := range sortedKeysOf(e.store.suites) {
+	for _, id := range sortedKeys(e.store.suites) {
 		su := e.store.suites[id]
 		sc := asMap(su["schedule"])
+		name := strOpt(su, "name")
+		if name == "" {
+			name = id
+		}
 		if at, ok := sc["at"].(string); ok {
-			name, _ := su["name"].(string)
 			ns = append(ns, map[string]any{"suite_id": id, "name": name, "at": at, "next": nextAt(at, now).UnixMilli()})
 		} else if every, ok := sc["every"].(string); ok {
 			d, _ := time.ParseDuration(every)
-			name, _ := su["name"].(string)
 			ns = append(ns, map[string]any{"suite_id": id, "name": name, "every": every, "next": now.Add(d).UnixMilli()})
 		}
 	}
@@ -106,90 +259,189 @@ func (e *benchEngine) stateLocked() map[string]any {
 	return doc
 }
 
-func stepRef(s *mStep) map[string]any {
-	return map[string]any{"benchmark_id": s.BenchmarkID, "name": s.Name, "description": s.Description, "profile": s.Profile}
+// itemsOf groups the steps of a run into suite items (the members of a
+// parallel step share its group).
+func (e *benchEngine) itemsOf(run *mRun) []runItem {
+	var out []runItem
+	for _, s := range run.Steps {
+		if s.Group != "" && len(out) > 0 && len(out[len(out)-1].steps) > 0 && out[len(out)-1].steps[0].Group == s.Group {
+			it := &out[len(out)-1]
+			it.steps = append(it.steps, s)
+			it.profile += " + " + s.Profile
+			continue
+		}
+		it := runItem{id: s.BenchmarkID, name: s.Name, desc: s.desc, profile: s.Profile, steps: []*mStep{s}}
+		if s.Group != "" {
+			bm := e.store.benchmarks[s.Group]
+			it.id, it.name, it.desc = s.Group, benchTitle(bm), strOpt(bm, "description")
+			if it.name == "" {
+				it.name = s.Group
+			}
+		}
+		out = append(out, it)
+	}
+	for i := range out {
+		for _, s := range out[i].steps {
+			out[i].expected = math.Max(out[i].expected, newTrack(s, false, e.rnd).total())
+		}
+	}
+	return out
 }
 
+func r1(v float64) float64 { return math.Round(v*10) / 10 }
+
+// progressLocked is Manager.progressDoc.
 func (e *benchEngine) progressLocked(now time.Time) map[string]any {
 	a := e.cur
-	run := a.run
-	done := 0
-	for _, s := range run.Steps {
-		if s.State == bench.StepDone || s.State == bench.StepFailed {
-			done++
+	r := a.run
+	var totalW, doneW float64
+	for i, it := range a.items {
+		totalW += it.expected
+		if i < a.cur {
+			doneW += it.expected
 		}
 	}
-	total := len(run.Steps)
-	var cur, next any
-	stepPct := 0.0
+	var current any
+	curRemaining := 0.0
+	if a.cur >= 0 && a.cur < len(a.items) {
+		it := a.items[a.cur]
+		var lead *track
+		leadPct, sumPct := 101.0, 0.0
+		var model, nodes []string
+		seen := map[string]bool{}
+		for _, t := range a.tracks {
+			p := t.percent()
+			sumPct += p
+			if p < leadPct && !t.finished || lead == nil {
+				lead, leadPct = t, p
+			}
+			if mf := modelFileOf(t.step.Profile); mf != "" {
+				model = append(model, mf)
+			}
+			for _, n := range t.step.nodes {
+				if !seen[n] {
+					seen[n] = true
+					nodes = append(nodes, n)
+				}
+			}
+			curRemaining = math.Max(curRemaining, t.remaining())
+		}
+		pct := 0.0
+		if len(a.tracks) > 0 {
+			pct = sumPct / float64(len(a.tracks))
+		}
+		if nodes == nil {
+			nodes = []string{}
+		}
+		c := map[string]any{"index": a.cur, "benchmark_id": it.id, "name": it.name, "description": it.desc, "profile": it.profile,
+			"model_file": strings.Join(model, ", "), "nodes": nodes, "percent": r1(pct)}
+		if lead != nil {
+			c["phase"] = lead.phaseDoc()
+			d := map[string]any{}
+			for k, v := range lead.detail {
+				d[k] = v
+			}
+			if lead.load != nil {
+				d["load"] = lead.load
+			}
+			if len(a.tracks) > 1 {
+				var members []map[string]any
+				for _, t := range a.tracks {
+					md := map[string]any{"benchmark_id": t.step.BenchmarkID, "profile": t.step.Profile, "percent": r1(t.percent()), "phase": t.phaseDoc()}
+					if t.load != nil {
+						md["load"] = t.load
+						if d["load"] == nil {
+							d["load"] = t.load
+						}
+					}
+					members = append(members, md)
+				}
+				d["members"] = members
+			}
+			c["detail"] = d
+		} else {
+			c["phase"] = map[string]any{"index": 0, "type": "", "label": "", "phases_total": 0}
+			c["detail"] = map[string]any{}
+		}
+		current = c
+		doneW += it.expected * pct / 100
+	}
+	pct := 0.0
+	if totalW > 0 {
+		pct = 100 * doneW / totalW
+	}
+	final := bench.IsFinal(r.State)
+	if !final && pct > 99.9 {
+		pct = 99.9
+	}
+	if r.State == bench.RunCompleted {
+		pct = 100
+	}
+	pct = math.Max(pct, a.maxPct)
+	a.maxPct = pct
+	first := a.cur + 1
+	if a.cur < 0 {
+		first = 0
+	}
+	rem := curRemaining
+	var next any
 	queue := []string{}
-	for _, s := range run.Steps {
-		queue = append(queue, s.BenchmarkID)
-	}
-	if a.stepIdx < total && run.State == bench.RunRunning {
-		s := run.Steps[a.stepIdx]
-		n := max(len(s.Phases), 1)
-		stepPct = (float64(a.phaseIdx) + a.phaseFrac) / float64(n)
-		var phase any
-		if a.phaseIdx < len(s.Phases) {
-			p := s.Phases[a.phaseIdx]
-			phase = map[string]any{"index": p.Index, "type": p.Type, "label": p.Label, "of": len(s.Phases)}
-		}
-		detail := a.detail
-		if detail == nil {
-			detail = map[string]any{}
-		}
-		cur = map[string]any{"index": a.stepIdx, "benchmark_id": s.BenchmarkID, "name": s.Name, "description": s.Description, "profile": s.Profile,
-			"model_file": s.ModelFile, "nodes": s.Nodes, "phase": phase, "percent": math.Round(stepPct*1000) / 10, "detail": detail}
-		if a.stepIdx+1 < total {
-			next = stepRef(run.Steps[a.stepIdx+1])
+	for i := first; i < len(a.items); i++ {
+		rem += a.items[i].expected
+		queue = append(queue, a.items[i].id)
+		if next == nil {
+			next = map[string]any{"benchmark_id": a.items[i].id, "name": a.items[i].name, "description": a.items[i].desc, "profile": a.items[i].profile}
 		}
 	}
-	percent := 0.0
-	if total > 0 {
-		percent = math.Round((float64(done)+stepPct)/float64(total)*1000) / 10
-	}
-	if run.State != bench.RunRunning && bench.IsFinal(run.State) {
-		percent = 100
+	if final {
+		rem = 0
 	}
 	elapsed := 0.0
-	if run.StartedAt > 0 {
-		elapsed = math.Round(float64(now.UnixMilli()-run.StartedAt)/100) / 10
+	if r.StartedAt > 0 {
+		end := now.UnixMilli()
+		if r.FinishedAt > 0 {
+			end = r.FinishedAt
+		}
+		elapsed = r1(float64(end-r.StartedAt) / 1000)
 	}
-	var eta any
-	if percent >= 2 && percent < 100 {
-		eta = math.Round(elapsed/(percent/100) - elapsed)
-	}
-	return map[string]any{"id": run.ID, "suite_id": run.SuiteID, "suite_name": run.SuiteName, "state": run.State, "percent": percent,
-		"started_at": run.StartedAt, "elapsed_s": elapsed, "eta_s": eta, "steps_total": total, "steps_done": done,
-		"current": cur, "next": next, "queue": queue}
+	return map[string]any{"id": r.ID, "suite_id": r.SuiteID, "suite_name": r.SuiteName, "state": r.State, "percent": r1(pct),
+		"started_at": r.StartedAt, "elapsed_s": elapsed, "eta_s": r1(rem), "steps_total": len(r.Steps), "steps_done": a.done,
+		"current": current, "next": next, "queue": queue}
 }
 
 func (e *benchEngine) emitProgressLocked() {
 	if e.cur == nil {
 		return
 	}
-	e.send(map[string]any{"kind": "progress", "run_id": e.cur.run.ID, "run": e.progressLocked(time.Now())})
+	e.send(map[string]any{"kind": "progress", "run": e.progressLocked(time.Now())})
 }
 
 func (e *benchEngine) emitRunLocked(r *mRun) {
 	e.send(map[string]any{"kind": "run", "run": r.brief()})
 }
 
+func (e *benchEngine) emitRequest(s *mStep, extra map[string]any) {
+	ev := map[string]any{"kind": "request", "run_id": e.cur.run.ID, "idx": s.Idx, "benchmark_id": s.BenchmarkID}
+	for k, v := range extra {
+		ev[k] = v
+	}
+	e.send(ev)
+}
+
 // ---- details ----
 
-// loadDetail is a synthetic load object (the snake_case LoadReport) at
-// progress p of a phase that lasts dur.
-func loadDetail(s *mStep, started time.Time, p float64, dur time.Duration) map[string]any {
-	total := modelBytes[s.ModelFile]
-	if len(s.Nodes) == 0 || total == 0 {
-		return map[string]any{}
+// loadObject is a synthetic scheduler load object (the snake_case LoadReport
+// of /api/status) at progress p of a load phase that lasts dur.
+func loadObject(s *mStep, started time.Time, p float64, dur time.Duration) map[string]any {
+	total := modelBytes[modelFileOf(s.Profile)]
+	if len(s.nodes) == 0 || total == 0 {
+		return nil
 	}
-	fr := fractions(mustProfile(s.Profile), len(s.Nodes))
+	fr := fractions(mustProfile(s.Profile), len(s.nodes))
 	sent := int64(float64(total) * p)
 	remaining := sent
 	workers := []any{}
-	for i, h := range s.Nodes {
+	for i, h := range s.nodes {
 		n, _ := nodeByHost(h)
 		wt := int64(float64(total) * fr[i])
 		ws := min(remaining, wt)
@@ -202,30 +454,157 @@ func loadDetail(s *mStep, started time.Time, p float64, dur time.Duration) map[s
 		}
 		workers = append(workers, map[string]any{"addr": n.Addr(), "bytes_total": wt, "bytes_sent": ws, "state": state})
 	}
-	el := time.Since(started).Seconds()
-	return map[string]any{"session_id": sessionID(started, int(s.ID%97)), "started_at": started.UnixMilli(), "elapsed_s": round1(el),
+	return map[string]any{"session_id": sessionID(started, int(s.ID%97)), "started_at": started.UnixMilli(), "elapsed_s": round1(time.Since(started).Seconds()),
 		"bytes_total": total, "bytes_sent": sent, "progress": math.Round(p*1000) / 1000, "eta_s": math.Round((1 - p) * dur.Seconds()),
 		"source": "measured", "workers": workers}
 }
 
-func requestDetail(phaseType string, done, total int, name string, inReq time.Duration, tps float64, turn, turns int) map[string]any {
-	tokens := int(inReq.Seconds() * tps)
-	state := "streaming"
-	if tokens == 0 {
-		state = "started"
+func loadText(profile string, l map[string]any) string {
+	text := "Loading " + profile
+	if l != nil {
+		sent, _ := l["bytes_sent"].(int64)
+		total, _ := l["bytes_total"].(int64)
+		if total > 0 {
+			text += fmt.Sprintf(": %.1f of %.1f GB sent", float64(sent)/1e9, float64(total)/1e9)
+		}
 	}
-	d := map[string]any{"requests_done": done, "requests_total": total, "request": name, "state": state, "tokens": tokens,
-		"elapsed_ms": inReq.Milliseconds(), "tokens_per_second": tps}
-	if phaseType == "conversation" {
-		d["turn"], d["turns_total"] = turn, turns
+	return text
+}
+
+// requestText is the progress line of a request phase with k units done of n.
+func requestText(kind string, k, n int) string {
+	switch kind {
+	case "warmup":
+		return fmt.Sprintf("Warm-up: %d of %d requests", k, n)
+	case "measured":
+		return fmt.Sprintf("Measured requests: %d of %d", k, n)
+	case "conversation":
+		return fmt.Sprintf("Conversation: turn %d of %d", min(k+1, n), n)
+	case "concurrent":
+		return fmt.Sprintf("Simultaneous requests: %d of %d done", k, n)
 	}
-	if phaseType == "concurrent_requests" {
-		d["in_flight"] = total - done
+	return "Sending a request after the idle time"
+}
+
+// seqBefore is the 1-based sequence number of request k of phase i.
+func (t *track) seqBefore(i, k int) int {
+	n := 0
+	for j := 0; j < i; j++ {
+		n += len(t.reqs[j])
 	}
-	return d
+	return n + k + 1
+}
+
+// advance moves a played track to el seconds after its start and emits the
+// request and load frames of what it is doing.
+func (e *benchEngine) advance(t *track, el float64, emit bool) {
+	s := t.step
+	acc := 0.0
+	i := 0
+	for i < len(t.durs) && el >= acc+t.durs[i] {
+		acc += t.durs[i]
+		i++
+	}
+	if i >= len(t.durs) {
+		t.finished = true
+		return
+	}
+	for t.cur < i {
+		t.cur++
+		off := 0.0
+		for j := 0; j < t.cur; j++ {
+			off += t.durs[j]
+		}
+		at := t.start.Add(time.Duration(off * float64(time.Second)))
+		t.phaseAt = append(t.phaseAt, at)
+		p := t.phases[t.cur]
+		s.Phases = append(s.Phases, mPhase{Idx: t.cur, Type: p.Type, Label: p.Label, State: "running", StartedAt: at.UnixMilli()})
+		if t.cur > 0 {
+			prev := &s.Phases[t.cur-1]
+			prev.State, prev.Outcome, prev.FinishedAt = "done", "ok", at.UnixMilli()
+			prev.DurationS = round3(float64(prev.FinishedAt-prev.StartedAt) / 1000)
+		}
+		t.detail, t.load, t.lastReq = map[string]any{}, nil, -1
+		switch p.Type {
+		case "load":
+			t.detail["text"] = "Loading " + s.Profile
+		case "unload":
+			t.detail["text"] = "Unloading " + s.Profile
+		default:
+			t.detail["text"] = "Starting " + p.Type
+		}
+	}
+	p := t.phases[i]
+	dur := t.durs[i]
+	in := el - acc
+	t.frac = math.Min(in/dur, 1)
+	reqs := t.reqs[i]
+	switch {
+	case p.Type == "load":
+		t.load = loadObject(s, t.phaseAt[i], t.frac, time.Duration(dur*float64(time.Second)))
+		t.detail = map[string]any{"text": loadText(s.Profile, t.load)}
+		if emit && t.load != nil {
+			e.send(map[string]any{"kind": "load", "run_id": e.cur.run.ID, "idx": s.Idx, "benchmark_id": s.BenchmarkID, "load": t.load})
+		}
+	case p.Type == "hold" && t.frac < 0.7:
+		secs := intOpt(p.Opts, "seconds", 60)
+		t.detail["text"] = fmt.Sprintf("Holding the model idle: %.0f of %d s", t.frac/0.7*float64(secs), secs)
+	case len(reqs) > 0:
+		n := len(reqs)
+		var k int
+		var within float64
+		if p.Type == "hold" {
+			k, within = 0, (in-0.7*dur)/(0.3*dur)
+		} else if p.Type == "concurrent_requests" {
+			k, within = 0, t.frac
+		} else {
+			per := dur / float64(n)
+			k = min(int(in/per), n-1)
+			within = (in - float64(k)*per) / per
+		}
+		rp := reqs[k]
+		tokens := int(math.Min(within, 0.99) * float64(rp.max))
+		if p.Type == "concurrent_requests" {
+			done := min(int(t.frac*float64(n)), n)
+			t.detail["text"] = requestText(rp.kind, done, n)
+			t.frac = math.Min(t.frac, 0.99)
+		} else {
+			t.detail["text"] = requestText(rp.kind, k, n)
+			t.detail["tokens"], t.detail["max_tokens"] = tokens, rp.max
+			if rp.kind == "conversation" {
+				t.detail["turn"], t.detail["turns"] = k+1, n
+			}
+			if p.Type == "hold" {
+				t.frac = 0.7 + 0.3*math.Min(within, 0.99)
+			} else {
+				t.frac = (float64(k) + math.Min(within, 0.99)) / float64(n)
+			}
+		}
+		if k != t.lastReq {
+			t.lastReq, t.reqStarted = k, time.Now()
+			if p.Type == "concurrent_requests" {
+				for j, c := range reqs {
+					e.emitRequest(s, map[string]any{"phase": c.kind, "request": c.name, "seq": t.seqBefore(i, j), "state": "started"})
+				}
+			} else {
+				e.emitRequest(s, map[string]any{"phase": rp.kind, "request": rp.name, "seq": t.seqBefore(i, k), "state": "started"})
+			}
+		} else if emit && p.Type != "concurrent_requests" {
+			e.emitRequest(s, map[string]any{"phase": rp.kind, "request": rp.name, "seq": t.seqBefore(i, k), "state": "streaming",
+				"tokens": tokens, "elapsed_ms": time.Since(t.reqStarted).Milliseconds()})
+		}
+	}
 }
 
 // ---- enqueue, cancel, play ----
+
+func (e *benchEngine) envNow() *mEnv {
+	rev := 14
+	if e.revision != nil {
+		rev = e.revision()
+	}
+	return benchEnv(rev, rpcNew)
+}
 
 func (e *benchEngine) enqueue(suiteID, baseline, note, trigger string) (mRun, int, string) {
 	e.mu.Lock()
@@ -246,7 +625,11 @@ func (e *benchEngine) enqueue(suiteID, baseline, note, trigger string) (mRun, in
 	}
 	now := time.Now()
 	e.store.runSeq++
-	run := &mRun{ID: runID(now, suiteID, e.store.runSeq), SuiteID: suiteID, SuiteName: fmt.Sprint(su["name"]), State: bench.RunQueued,
+	name := strOpt(su, "name")
+	if name == "" {
+		name = suiteID
+	}
+	run := &mRun{ID: runID(now, suiteID, e.store.runSeq), SuiteID: suiteID, SuiteName: name, State: bench.RunQueued,
 		Note: note, Trigger: trigger, QueuedAt: now.UnixMilli(), Version: devVersion, Suite: cloneMap(su)}
 	if baseline == "" {
 		if b := e.store.lastCompleted(suiteID, 0); b != nil {
@@ -254,11 +637,7 @@ func (e *benchEngine) enqueue(suiteID, baseline, note, trigger string) (mRun, in
 		}
 	}
 	run.BaselineRunID = baseline
-	for i, id := range asList(su["benchmarks"]) {
-		if bm := e.store.benchmarks[fmt.Sprint(id)]; bm != nil {
-			run.Steps = append(run.Steps, e.store.newStep(specOf(bm), i))
-		}
-	}
+	run.Steps = e.store.newSteps(su)
 	e.store.runs = append(e.store.runs, run)
 	out := run.short()
 	e.store.mu.Unlock()
@@ -272,8 +651,11 @@ func (e *benchEngine) enqueue(suiteID, baseline, note, trigger string) (mRun, in
 }
 
 func (e *benchEngine) startLocked(run *mRun) {
-	run.State, run.StartedAt = bench.RunRunning, time.Now().UnixMilli()
-	a := &activeRun{run: run, stop: make(chan struct{})}
+	run.State, run.StartedAt, run.Env = bench.RunRunning, time.Now().UnixMilli(), e.envNow()
+	a := &activeRun{run: run, cur: -1, stop: make(chan struct{})}
+	e.store.mu.Lock()
+	a.items = e.itemsOf(run)
+	e.store.mu.Unlock()
 	e.cur = a
 	e.emitRunLocked(run)
 	e.rec(history.TBenchRunStarted, history.Info, "", fmt.Sprintf("Benchmark run %s of suite %s started (%d steps).", run.ID, run.SuiteName, len(run.Steps)),
@@ -318,29 +700,6 @@ func (e *benchEngine) cancel(id string) (int, string) {
 	return 409, fmt.Sprintf("run %s is %s: only a queued or running run can be cancelled", id, r.State)
 }
 
-// phaseDuration is how long the compressed player spends in a phase.
-func (e *benchEngine) phaseDuration(s *mStep, p phaseSpec, n int) time.Duration {
-	sec := func(v float64) time.Duration { return time.Duration(v * float64(time.Second)) }
-	switch p.Type {
-	case "load":
-		if len(s.Nodes) == 0 {
-			return 2 * time.Second
-		}
-		return sec(6 + e.rnd.Float64()*4)
-	case "warmup":
-		return sec(1.6 * float64(max(n, 1)))
-	case "requests", "measured":
-		return sec(math.Min(1.6*float64(max(n, 1)), 12))
-	case "conversation":
-		return sec(math.Min(2.2*float64(max(n, 1)), 13))
-	case "hold":
-		return sec(4.5)
-	case "concurrent_requests":
-		return sec(4)
-	}
-	return time.Second
-}
-
 // play runs one active run to its end. It holds e.mu only to change state.
 func (e *benchEngine) play(a *activeRun) {
 	run := a.run
@@ -349,96 +708,70 @@ func (e *benchEngine) play(a *activeRun) {
 	e.store.mu.Lock()
 	baseline := e.store.runByID(run.BaselineRunID)
 	e.store.mu.Unlock()
-	for i, s := range run.Steps {
+	for ii, it := range a.items {
 		if a.cancelled {
 			break
 		}
 		e.mu.Lock()
-		stepStart := time.Now()
-		s.State, s.StartedAt = bench.StepRunning, stepStart.UnixMilli()
-		a.stepIdx, a.phaseIdx, a.phaseFrac, a.detail = i, 0, 0, map[string]any{}
-		e.send(map[string]any{"kind": "step_started", "run_id": run.ID, "step": stepBrief(s)})
-		e.mu.Unlock()
-		sp := specOf(s.Spec)
-		ps, simple := phasesOf(s.Spec)
-		tps := perf[s.Profile].decode
-		if tps == 0 {
-			tps = 14
-		}
-		var phaseTimes [][2]int64
-		for pi, p := range ps {
-			reqs := requestsOf(sp.bm, p, simple)
-			dur := e.phaseDuration(s, p, len(reqs))
-			start := time.Now()
-			e.mu.Lock()
-			a.phaseIdx, a.phaseFrac = pi, 0
-			s.Phases[pi].State, s.Phases[pi].StartedAt = "running", start.UnixMilli()
+		if e.cur != a {
 			e.mu.Unlock()
-			lastEmit := time.Time{}
-			for {
-				el := time.Since(start)
-				frac := math.Min(el.Seconds()/dur.Seconds(), 1)
-				e.mu.Lock()
-				a.phaseFrac = frac
-				switch {
-				case p.Type == "load":
-					a.detail = loadDetail(s, start, frac, dur)
-				case p.Type == "unload" || len(reqs) == 0:
-					a.detail = map[string]any{}
-				case p.Type == "concurrent_requests":
-					a.detail = requestDetail(p.Type, 0, len(reqs), reqs[0].name, el, tps*0.42, 0, 0)
-				default:
-					per := dur / time.Duration(len(reqs))
-					k := min(int(el/per), len(reqs)-1)
-					a.detail = requestDetail(p.Type, k, len(reqs), reqs[k].name, el-time.Duration(k)*per, tps, reqs[k].turn, len(reqs))
-				}
-				if time.Since(lastEmit) >= 500*time.Millisecond {
-					lastEmit = time.Now()
-					e.emitProgressLocked()
-				}
-				e.mu.Unlock()
-				if frac >= 1 || a.cancelled {
-					break
-				}
-				select {
-				case <-tick.C:
-				case <-a.stop:
-				}
-			}
-			phaseTimes = append(phaseTimes, [2]int64{start.UnixMilli(), time.Now().UnixMilli()})
-			if a.cancelled {
-				break
-			}
+			return
 		}
-		e.mu.Lock()
-		if a.cancelled {
-			s.State, s.Outcome, s.FinishedAt = bench.StepCancelled, bench.OutcomeCancelled, time.Now().UnixMilli()
-			for k := range s.Phases {
-				switch {
-				case k < len(phaseTimes)-1:
-					s.Phases[k].State = "done"
-				case k == len(phaseTimes)-1:
-					s.Phases[k].State = "cancelled"
-				default:
-					s.Phases[k].State = "skipped"
-				}
-			}
-		} else {
-			e.store.mu.Lock()
-			e.store.fillStep(s, sp, stepStart, e.rnd, 1, baseline)
-			e.store.mu.Unlock()
-			for k, pt := range phaseTimes {
-				if s.Phases[k].State != "skipped" {
-					s.Phases[k].StartedAt, s.Phases[k].FinishedAt, s.Phases[k].WallMS = pt[0], pt[1], float64(pt[1]-pt[0])
-				}
-			}
-			s.FinishedAt = time.Now().UnixMilli()
-			e.recordStepLocked(run, s)
+		start := time.Now()
+		a.cur, a.tracks = ii, nil
+		for _, s := range it.steps {
+			s.State, s.StartedAt, s.ModelFile, s.NodeCount = bench.StepRunning, start.UnixMilli(), modelFileOf(s.Profile), len(s.nodes)
+			t := newTrack(s, true, e.rnd)
+			t.start = start
+			a.tracks = append(a.tracks, t)
+			e.send(map[string]any{"kind": "step_started", "run_id": run.ID, "step": stepBrief(s)})
 		}
-		e.send(map[string]any{"kind": "step_finished", "run_id": run.ID, "step": stepBrief(s)})
 		e.emitProgressLocked()
 		e.mu.Unlock()
-		if !a.cancelled && i+1 < len(run.Steps) {
+		lastEmit := time.Time{}
+		for {
+			e.mu.Lock()
+			if e.cur != a {
+				e.mu.Unlock()
+				return
+			}
+			emit := time.Since(lastEmit) >= 500*time.Millisecond
+			left := 0
+			for _, t := range a.tracks {
+				if t.finished {
+					continue
+				}
+				e.advance(t, time.Since(start).Seconds(), emit)
+				if t.finished {
+					e.finishStepLocked(a, t, baseline)
+				} else {
+					left++
+				}
+			}
+			if emit {
+				lastEmit = time.Now()
+				e.emitProgressLocked()
+			}
+			e.mu.Unlock()
+			if left == 0 || a.cancelled {
+				break
+			}
+			select {
+			case <-tick.C:
+			case <-a.stop:
+			}
+		}
+		if a.cancelled {
+			e.mu.Lock()
+			for _, t := range a.tracks {
+				if !t.finished {
+					e.cancelStepLocked(a, t)
+				}
+			}
+			e.mu.Unlock()
+			break
+		}
+		if ii+1 < len(a.items) {
 			select {
 			case <-time.After(time.Second):
 			case <-a.stop:
@@ -451,6 +784,49 @@ func (e *benchEngine) play(a *activeRun) {
 		return // reset by a scenario switch
 	}
 	e.finishLocked(a)
+}
+
+// finishStepLocked writes the results of a played step, keeping the times it really took.
+func (e *benchEngine) finishStepLocked(a *activeRun, t *track, baseline *mRun) {
+	s := t.step
+	times := map[int][2]int64{}
+	for _, p := range s.Phases {
+		times[p.Idx] = [2]int64{p.StartedAt, p.FinishedAt}
+	}
+	e.store.mu.Lock()
+	e.store.fillStep(s, t.start, e.rnd, 1, baseline)
+	e.store.mu.Unlock()
+	now := time.Now().UnixMilli()
+	for k := range s.Phases {
+		p := &s.Phases[k]
+		if tm, ok := times[p.Idx]; ok {
+			p.StartedAt, p.FinishedAt = tm[0], tm[1]
+			if p.FinishedAt == 0 {
+				p.FinishedAt = now
+			}
+			p.DurationS = round3(float64(p.FinishedAt-p.StartedAt) / 1000)
+		}
+	}
+	s.StartedAt, s.FinishedAt = t.start.UnixMilli(), now
+	t.finished, t.detail, t.load = true, map[string]any{}, nil
+	a.done++
+	e.send(map[string]any{"kind": "step_finished", "run_id": a.run.ID, "step": stepBrief(s)})
+	e.recordStepLocked(a.run, s)
+}
+
+func (e *benchEngine) cancelStepLocked(a *activeRun, t *track) {
+	s := t.step
+	now := time.Now().UnixMilli()
+	e.store.mu.Lock()
+	s.State, s.Outcome, s.FinishedAt, s.Error = bench.StepCancelled, bench.OutcomeCancelled, now, "cancelled"
+	if n := len(s.Phases); n > 0 {
+		p := &s.Phases[n-1]
+		p.State, p.Outcome, p.Error, p.FinishedAt = "cancelled", bench.OutcomeCancelled, "cancelled", now
+		p.DurationS = round3(float64(p.FinishedAt-p.StartedAt) / 1000)
+	}
+	e.store.mu.Unlock()
+	t.finished = true
+	e.send(map[string]any{"kind": "step_finished", "run_id": a.run.ID, "step": stepBrief(s)})
 }
 
 func (e *benchEngine) recordStepLocked(run *mRun, s *mStep) {
@@ -492,17 +868,25 @@ func (e *benchEngine) finishLocked(a *activeRun) {
 		for _, s := range run.Steps {
 			if s.State == bench.StepPending {
 				s.State, s.Outcome = bench.StepSkipped, bench.OutcomeSkipped
-				for k := range s.Phases {
-					s.Phases[k].State = "skipped"
-				}
 			}
 		}
 	}
 	run.State, run.FinishedAt = state, now.UnixMilli()
 	run.Summary = summaryOf(run.Steps)
+	var ids []string
+	seen := map[string]bool{}
+	for _, s := range run.Steps {
+		if !seen[s.BenchmarkID] {
+			seen[s.BenchmarkID] = true
+			ids = append(ids, s.BenchmarkID)
+		}
+	}
 	e.store.mu.Unlock()
+	a.tracks = nil
+	e.emitProgressLocked()
 	e.cur = nil
 	e.emitRunLocked(run)
+	e.send(map[string]any{"kind": "aggregate_updated", "run_id": run.ID, "suite_id": run.SuiteID, "state": state, "benchmarks": ids})
 	sev := history.Info
 	if run.Summary.Failed > 0 || run.Summary.Regressions > 0 || state != bench.RunCompleted {
 		sev = history.Warn
@@ -537,9 +921,24 @@ func shiftStep(s *mStep, d int64) {
 	}
 }
 
+// frozen describes the three frozen nightly runs: the step in flight, its
+// phase, how many units of that phase are done and how long it has run.
+var frozenAt = map[string]struct {
+	step, phase, done int
+	inPhase           time.Duration
+}{
+	"load":         {6, 0, 0, 42 * time.Second},
+	"conversation": {3, 1, 2, 40 * time.Second},
+	"last":         {7, 1, 4, 41 * time.Second},
+}
+
 // freeze builds a nightly run frozen in the middle: kind is load,
 // conversation or last. since is when the scenario was selected.
 func (e *benchEngine) freeze(kind string, since time.Time) {
+	fz, ok := frozenAt[kind]
+	if !ok {
+		return
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.store.mu.Lock()
@@ -548,53 +947,58 @@ func (e *benchEngine) freeze(kind string, since time.Time) {
 		e.store.mu.Unlock()
 		return
 	}
-	cur := map[string]int{"load": 6, "conversation": 3, "last": 7}[kind]
-	phase := map[string]int{"load": 0, "conversation": 1, "last": 1}[kind]
 	e.store.runSeq++
 	start := since.Add(-2 * time.Hour)
-	run := &mRun{ID: runID(start, "nightly", e.store.runSeq), SuiteID: "nightly", SuiteName: fmt.Sprint(su["name"]), State: bench.RunRunning,
-		Trigger: "manual", Note: "run by hand after the link change", Version: devVersion, Suite: cloneMap(su)}
+	run := &mRun{ID: runID(start, "nightly", e.store.runSeq), SuiteID: "nightly", SuiteName: strOpt(su, "name"), State: bench.RunRunning,
+		Trigger: "manual", Note: "run by hand after the link change", Version: devVersion, Suite: cloneMap(su), Env: e.envNow()}
 	baseline := e.store.lastCompleted("nightly", 0)
 	if baseline != nil {
 		run.BaselineRunID = baseline.ID
 	}
 	rnd := rand.New(rand.NewSource(11))
+	run.Steps = e.store.newSteps(su)
 	t := start
-	for i, id := range asList(su["benchmarks"]) {
-		sp := specOf(e.store.benchmarks[fmt.Sprint(id)])
-		s := e.store.newStep(sp, i)
-		run.Steps = append(run.Steps, s)
-		if i < cur {
-			t = e.store.fillStep(s, sp, t, rnd, 1, baseline).Add(10 * time.Second)
+	for i := 0; i < fz.step; i++ {
+		t = e.store.fillStep(run.Steps[i], t, rnd, 1, baseline).Add(10 * time.Second)
+	}
+	// the step in flight: its full results, cut back to the phases and requests done so far
+	s := run.Steps[fz.step]
+	e.store.fillStep(s, t, rnd, 1, nil)
+	phaseStart := since.Add(-fz.inPhase)
+	shiftStep(s, phaseStart.UnixMilli()-s.Phases[fz.phase].StartedAt)
+	kept := 0
+	for _, r := range s.Requests {
+		if r.PhaseIdx < fz.phase {
+			kept++
 		}
 	}
-	// the current step: its earlier phases are done
-	s := run.Steps[cur]
-	curStart := map[string]time.Duration{"load": 130 * time.Second, "conversation": 50*time.Second + 45*time.Second, "last": 95*time.Second + 50*time.Second}[kind]
-	stepStart := since.Add(-curStart)
-	delta := stepStart.Add(-10*time.Second).UnixMilli() - t.UnixMilli()
-	for i := 0; i < cur; i++ {
+	s.Requests = s.Requests[:kept+fz.done]
+	s.Phases = s.Phases[:fz.phase+1]
+	cp := &s.Phases[fz.phase]
+	cp.State, cp.Outcome, cp.FinishedAt, cp.DurationS, cp.Stats, cp.Load, cp.Unload = "running", "", 0, 0, nil, nil, nil
+	if len(cp.Turns) > fz.done {
+		cp.Turns = cp.Turns[:fz.done]
+	}
+	if fz.phase == 0 {
+		s.Load = nil
+	}
+	s.State, s.Outcome, s.FinishedAt, s.Stats, s.Expect, s.Comparison, s.LogFile = bench.StepRunning, "", 0, nil, nil, nil, ""
+	// the earlier steps end 10 s before this one began
+	delta := s.StartedAt - 10_000 - t.Add(-10*time.Second).UnixMilli()
+	for i := 0; i < fz.step; i++ {
 		shiftStep(run.Steps[i], delta)
 	}
 	run.StartedAt = start.UnixMilli() + delta
 	run.QueuedAt = run.StartedAt - 2000
-	s.State, s.StartedAt = bench.StepRunning, stepStart.UnixMilli()
-	pt := stepStart
-	for k := range s.Phases {
-		switch {
-		case k < phase:
-			d := map[string]time.Duration{"conversation": 50 * time.Second, "last": 95 * time.Second}[kind]
-			s.Phases[k].State, s.Phases[k].StartedAt, s.Phases[k].FinishedAt, s.Phases[k].WallMS = "done", pt.UnixMilli(), pt.Add(d).UnixMilli(), float64(d.Milliseconds())
-			pt = pt.Add(d)
-		case k == phase:
-			s.Phases[k].State, s.Phases[k].StartedAt = "running", pt.UnixMilli()
-		}
-	}
 	e.store.runs = append(e.store.runs, run)
+	a := &activeRun{run: run, cur: fz.step, frozen: kind, frozenAt: since, stop: make(chan struct{}), done: fz.step}
+	a.items = e.itemsOf(run)
 	e.store.mu.Unlock()
-	a := &activeRun{run: run, frozen: kind, frozenAt: since, stop: make(chan struct{}), stepIdx: cur, phaseIdx: phase}
+	tr := newTrack(s, false, rnd)
+	tr.cur, tr.start = fz.phase, time.UnixMilli(s.StartedAt)
+	a.tracks = []*track{tr}
 	e.cur = a
-	e.updateFrozenLocked(a)
+	e.updateFrozenLocked(a, false)
 	go func() {
 		tk := time.NewTicker(500 * time.Millisecond)
 		defer tk.Stop()
@@ -609,7 +1013,7 @@ func (e *benchEngine) freeze(kind string, since time.Time) {
 				e.mu.Unlock()
 				return
 			}
-			e.updateFrozenLocked(a)
+			e.updateFrozenLocked(a, true)
 			e.emitProgressLocked()
 			e.mu.Unlock()
 		}
@@ -618,42 +1022,52 @@ func (e *benchEngine) freeze(kind string, since time.Time) {
 
 // updateFrozenLocked moves the ticking figures of a frozen run: the load
 // progress creeps and wraps, tokens count up and start over.
-func (e *benchEngine) updateFrozenLocked(a *activeRun) {
-	t := time.Since(a.frozenAt)
-	s := a.run.Steps[a.stepIdx]
+func (e *benchEngine) updateFrozenLocked(a *activeRun, emit bool) {
+	el := time.Since(a.frozenAt)
+	t := a.tracks[0]
+	s := t.step
+	fz := frozenAt[a.frozen]
 	switch a.frozen {
 	case "load":
-		b := loadingOf(s.Profile, time.Now(), t, false)
+		b := loadingOf(s.Profile, time.Now(), el, false)
 		in := b.st.Instances[0]
-		a.detail = api.StatusJSON(in.Load).(map[string]any)
-		a.phaseFrac = *in.Load.Progress
-	case "conversation":
-		cycle := 16 * time.Second
-		in := t % cycle
-		a.detail = requestDetail("conversation", 2, 5, "turn-3", in, 11.8, 3, 5)
-		a.phaseFrac = (2 + 0.5) / 5
-	case "last":
-		cycle := 18 * time.Second
-		in := t % cycle
-		a.detail = requestDetail("requests", 4, 6, "refactor", in, 8.0, 0, 0)
-		a.phaseFrac = (4 + 0.5) / 6
+		t.load, _ = api.StatusJSON(in.Load).(map[string]any)
+		t.frac = *in.Load.Progress
+		text := "Loading " + s.Profile
+		if in.Load.BytesTotal != nil && in.Load.BytesSent != nil && *in.Load.BytesTotal > 0 {
+			text += fmt.Sprintf(": %.1f of %.1f GB sent", float64(*in.Load.BytesSent)/1e9, float64(*in.Load.BytesTotal)/1e9)
+		}
+		t.detail = map[string]any{"text": text}
+		if emit {
+			e.send(map[string]any{"kind": "load", "run_id": a.run.ID, "idx": s.Idx, "benchmark_id": s.BenchmarkID, "load": t.load})
+		}
+	case "conversation", "last":
+		reqs := t.reqs[fz.phase]
+		n := len(reqs)
+		rp := reqs[fz.done]
+		cycle := map[string]time.Duration{"conversation": 16 * time.Second, "last": 18 * time.Second}[a.frozen]
+		in := el % cycle
+		tokens := int(float64(rp.max) * 0.95 * in.Seconds() / cycle.Seconds())
+		t.detail = map[string]any{"text": requestText(rp.kind, fz.done, n), "tokens": tokens, "max_tokens": rp.max}
+		if rp.kind == "conversation" {
+			t.detail["turn"], t.detail["turns"] = fz.done+1, n
+		}
+		t.frac = (float64(fz.done) + float64(tokens)/float64(rp.max)) / float64(n)
+		if emit {
+			state := "streaming"
+			if tokens == 0 {
+				state = "started"
+			}
+			e.emitRequest(s, map[string]any{"phase": rp.kind, "request": rp.name, "seq": t.seqBefore(fz.phase, fz.done), "state": state,
+				"tokens": tokens, "elapsed_ms": in.Milliseconds()})
+		}
 	}
 }
 
 func (e *benchEngine) finishFrozenLocked(a *activeRun) {
 	close(a.stop)
 	a.cancelled = true
-	e.store.mu.Lock()
-	s := a.run.Steps[a.stepIdx]
-	s.State, s.Outcome, s.FinishedAt = bench.StepCancelled, bench.OutcomeCancelled, time.Now().UnixMilli()
-	for k := range s.Phases {
-		if s.Phases[k].State == "running" {
-			s.Phases[k].State = "cancelled"
-		} else if s.Phases[k].State == "pending" {
-			s.Phases[k].State = "skipped"
-		}
-	}
-	e.store.mu.Unlock()
+	e.cancelStepLocked(a, a.tracks[0])
 	e.finishLocked(a)
 }
 
