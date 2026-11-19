@@ -5,7 +5,7 @@ import * as api from '../../core/api.js';
 import { href, navigate } from '../../core/router.js';
 import { badge, table, chips, empty, skeleton, stat, banner } from '../../core/ui.js';
 import { num, mib, bytes, dur, ago, at, dateTime, plural, DASH } from '../../core/format.js';
-import { cache, runBadge, passBadge, outcomeBadge, phaseTitle, changeMark, withUnit, fmtMetric, metricDef, errorBanner } from './common.js';
+import { cache, runBadge, passBadge, outcomeBadge, phaseTitle, changeMark, withUnit, fmtMetric, metricDef, errorBanner, reasonNode } from './common.js';
 
 // ---------- the list ----------
 
@@ -108,7 +108,7 @@ function loadBlock(l, withNodes = true) {
       stat('Uploaded', bytes(l.bytes || null)),
       stat('Memory', l.memory_mib ? num(Math.round(l.memory_mib)) : DASH, l.memory_mib ? 'MiB' : null),
       l.outcome && l.outcome !== 'ready' ? stat('Load result', l.outcome) : null),
-    l.reason ? h('div.cb', banner('err', l.reason)) : null,
+    l.reason ? h('div.cb', banner('err', reasonNode(l.reason))) : null,
     withNodes && (l.nodes || []).length ? table({
       minWidth: 480, rows: l.nodes, key: n => n.node,
       columns: [
@@ -201,7 +201,7 @@ function phaseBlock(step, p) {
     h('div.day', { style: 'display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center' },
       h('b', { style: 'color:var(--text)' }, `Phase ${p.idx + 1}: ${p.label || phaseTitle(p.type)}`), badge(sl, sk),
       p.duration_s ? h('span.mono', dur(p.duration_s)) : null),
-    p.error ? h('div.cb', { style: 'padding-top:10px' }, banner('err', p.error)) : null,
+    p.error ? h('div.cb', { style: 'padding-top:10px' }, banner('err', reasonNode(p.error))) : null,
     body.filter(Boolean));
 }
 
@@ -215,7 +215,7 @@ function stepCard(step) {
       h('span.mono.mut', step.profile), step.node_count ? h('span.mut', plural(step.node_count, 'worker')) : null,
       step.model_file ? h('span.mono.mut.right.wrap-any', { title: 'Model file' }, step.model_file) : null),
     step.reason || step.error ? h('div.cb', banner(step.outcome === 'refused' ? 'warn' : 'err',
-      [step.outcome === 'refused' ? 'The scheduler refused it: ' : step.outcome === 'failed' ? 'It failed: ' : '', step.reason || step.error, step.http_status ? ` (HTTP ${step.http_status})` : ''])) : null,
+      [step.outcome === 'refused' ? 'The scheduler refused it: ' : step.outcome === 'failed' ? 'It failed: ' : '', reasonNode(step.reason || step.error), step.http_status ? ` (HTTP ${step.http_status})` : ''])) : null,
     h('div.stats', { style: 'padding-top:2px' },
       stat('Started', step.started_at ? at(step.started_at) : DASH),
       stat('Took', step.started_at && step.finished_at ? dur((step.finished_at - step.started_at) / 1000) : DASH),
@@ -235,7 +235,7 @@ export function runDetail(run, error) {
   const id = run.id;
   return [
     h('div.row', h('a', { href: href('benchmarks', ['runs']) }, '← All runs')),
-    run.error ? errorBanner(run.error) : null,
+    run.error ? errorBanner(reasonNode(run.error)) : null,
     h('section.card', { key: 'head' },
       h('div.ch', h('h2.mono', id), runBadge(run.state), run.trigger === 'schedule' ? badge('Scheduled', 'n') : null,
         h('span.right.row', { style: 'gap:8px' }, exportLink(id, 'Markdown', { format: 'md' }), exportLink(id, 'CSV', { format: 'csv' }), exportLink(id, 'JSON', { format: 'json' }),

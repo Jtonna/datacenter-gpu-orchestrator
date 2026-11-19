@@ -11,7 +11,7 @@ import { setShellSlot } from '../../core/shell.js';
 import { badge, bar, progress, button, confirm, toast, nodeChips, banner } from '../../core/ui.js';
 import { nodeByAddr, healthBadge } from '../../core/status.js';
 import { num, bytes, dur, clock, now, DASH, plural } from '../../core/format.js';
-import { cache, suiteById, benchmarkById, phaseTitle } from './common.js';
+import { cache, suiteById, benchmarkById, phaseTitle, reasonNode } from './common.js';
 
 // ---------- what the live messages add to the progress object ----------
 
@@ -217,7 +217,7 @@ export function livePanel() {
         cur.description ? h('p.mut', { style: 'max-width:80ch' }, cur.description) : null,
         cur.model_file ? h('span.mono.mut.wrap-any', { title: 'Model file' }, cur.model_file) : null,
         h('div', { style: 'display:flex;flex-direction:column;gap:6px' },
-          h('span.txt2', { style: 'font-weight:700' }, total ? `Phase ${ph.index + 1} of ${total}: ` : 'Phase: ', h('span', { style: 'color:var(--amber-text)' }, ph.label || phaseTitle(ph.type))),
+          h('span.txt2', { style: 'font-weight:700' }, total ? `Phase ${ph.index + 1} of ${total}: ` : 'Phase: ', h('span', { style: 'color:var(--amber-text)' }, (ph.label && ph.label !== ph.type ? ph.label : phaseTitle(ph.type)))),
           total ? bar(Array.from({ length: total }, (_, i) => ({ cls: i < ph.index ? 'm' : i === ph.index ? 'a' : 'o', value: 1 })), total, `Phase ${ph.index + 1} of ${total}`, 'sm') : null),
         progress({
           fraction: pctOf(cur.percent) / 100, cls: 'a', label: `${Math.round(pctOf(cur.percent))} percent of this benchmark is done`,
@@ -239,7 +239,7 @@ export function livePanel() {
       h('h2', run.suite_name || run.suite_id), run.state === 'paused' ? badge('Waiting for idle', 'settle') : badge('Running', 'load'),
       queued.length ? h('span.note', `${plural(queued.length, 'more run')} queued after this one`) : null,
       h('span.right', button('Cancel run', () => cancelRun(run), 'dng sm'))),
-    why ? h('div.cb', banner('warn', 'Waiting for the scheduler to be idle: ' + why)) : null,
+    why ? h('div.cb', banner('warn', ['Waiting for the scheduler to be idle: ', reasonNode(why)])) : null,
     h('div.cb', overall),
     h('div.cols', { style: 'gap:0' },
       h('div.wide', { style: 'gap:0;flex-basis:520px' }, curNode, nextNode),

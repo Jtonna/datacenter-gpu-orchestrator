@@ -5,6 +5,7 @@
 import { h } from '../../core/dom.js';
 import * as api from '../../core/api.js';
 import { badge } from '../../core/ui.js';
+import { plainReason } from '../../core/status.js';
 import { num, dur, plural, DASH } from '../../core/format.js';
 
 // ---------- data cache ----------
@@ -191,3 +192,6 @@ export function scheduleText(sc) {
 export const modelOf = profileId => (cache.modelProfiles && cache.modelProfiles[profileId] && cache.modelProfiles[profileId].model) || '';
 
 export const errorBanner = msg => h('div.banner.err', { role: 'alert' }, h('span.grow', msg));
+
+// A scheduler reason in plain words; the raw text stays in the tooltip.
+export const reasonNode = raw => h('span', { title: raw }, plainReason(raw) || raw);

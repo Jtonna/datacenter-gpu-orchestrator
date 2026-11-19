@@ -63,10 +63,11 @@ function errMessages(e) {
   return (body && (body.message || body.messages)) ? [].concat(body.message || body.messages).join('\n') : e.message;
 }
 
-const label = (text, ...rest) => h('label', text, ...rest);
 function field(text, control, o = {}) {
   const err = h('span.err', { role: 'alert' });
-  const node = h('div', { class: 'field' + (o.wide ? ' wide' : '') }, o.plain ? h('div.lab', text) : label(text), control, o.help ? h('span.help', o.help) : null, err);
+  let id = null;
+  if (!o.plain && control && /^(INPUT|SELECT|TEXTAREA)$/.test(control.nodeName)) { id = 'bf-' + Math.random().toString(36).slice(2, 8); control.id = id; }
+  const node = h('div', { class: 'field' + (o.wide ? ' wide' : '') }, o.plain ? h('div.lab', text) : h('label', { for: id }, text), control, o.help ? h('span.help', o.help) : null, err);
   return { node, setErr: m => { err.textContent = m || ''; const inp = node.querySelector('input,select,textarea'); if (inp) inp.setAttribute('aria-invalid', m ? 'true' : 'false'); } };
 }
 
