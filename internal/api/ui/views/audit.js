@@ -7,7 +7,9 @@
 // GET /api/config/revisions/{n}; WebSocket "config" (prepend the new entries,
 // refresh the revision list). Writes: POST /api/config/revisions/{n}/rollback
 // (dry run first, then If-Match and a comment).
-// Routes: #/audit[?section=&target=&source=&actor=&action=&q=&range=],
+// GET /api/agents gives the agent names for the filter. An entry made with an
+// agent key shows the agent's name with an "Agent" badge.
+// Routes: #/audit[?section=&target=&source=&actor=&agent=&action=&q=&range=],
 // #/audit/revisions.
 
 import { h, frag } from '../core/dom.js';
@@ -16,12 +18,12 @@ import { listen } from '../core/store.js';
 import * as api from '../core/api.js';
 import { liveView, pageHead, badge, table, empty, banner, skeleton, chips, tabs, button, diffView, dialog, toast } from '../core/ui.js';
 import { num, plural, ago, at, dayLabel, now, DASH } from '../core/format.js';
-import { sourceBadge, SOURCES, SECTION_NAMES, sectionName, actionName, entrySentence, searchBox } from '../core/configdata.js';
+import { sourceBadge, SOURCES, SECTION_NAMES, sectionName, actionName, entrySentence, searchBox, agentName } from '../core/configdata.js';
 import { reviewChanges } from '../core/changes.js';
 
 const RANGES = [['1h', 'Last hour', 3600e3], ['24h', 'Last 24 hours', 86400e3], ['7d', 'Last 7 days', 7 * 86400e3], ['30d', 'Last 30 days', 30 * 86400e3], ['all', 'All time', 0]];
-const SECTION_ORDER = ['profiles', 'tiers', 'settings', 'exclude_nodes', 'node_overrides', 'recovery', 'fleet', 'bench', 'runtime'];
-const ACTIONS = ['create', 'update', 'delete', 'import', 'rollback', 'load', 'unload'];
+const SECTION_ORDER = ['profiles', 'tiers', 'settings', 'exclude_nodes', 'node_overrides', 'recovery', 'fleet', 'bench', 'runtime', 'agents', 'models'];
+const ACTIONS = ['create', 'update', 'delete', 'import', 'rollback', 'load', 'unload', 'rotate', 'revoke'];
 const PAGE = 100;
 
 const json = v => JSON.stringify(v, null, 2);
@@ -81,11 +83,14 @@ registerView({
     let entries = null, total = 0, error = '', limit = PAGE, knownActors = new Set(), open = new Set(), fresh = new Map(), reqId = 0, qTimer = 0, qText = null;
     // revisions
     let revs = null, current = 0, revError = '';
+    // the agents, for the filter and for a name when an agent was renamed since
+    let agents = [];
+    const loadAgents = async () => { try { agents = (await api.get('/api/agents')).agents || []; if (alive) view.refresh(); } catch { /* no database: no agents */ } };
 
     const tab = () => (route.rest[0] === 'revisions' ? 'revisions' : 'trail');
     const filters = () => {
       const q = route.query;
-      return { range: q.range || '7d', source: q.source || '', actor: q.actor || '', section: q.section || '', action: q.action || '', target: q.target || '', q: q.q || '' };
+      return { range: q.range || '7d', source: q.source || '', actor: q.actor || '', agent: q.agent || '', section: q.section || '', action: q.action || '', target: q.target || '', q: q.q || '' };
     };
     const setFilter = patch => {
       const f = Object.assign(filters(), patch);
@@ -94,17 +99,17 @@ registerView({
       limit = PAGE;
       navigate('audit', null, query, true);
     };
-    const hasFilters = () => { const f = filters(); return !!(f.source || f.actor || f.section || f.action || f.target || f.q); };
+    const hasFilters = () => { const f = filters(); return !!(f.source || f.actor || f.agent || f.section || f.action || f.target || f.q); };
 
     function params() {
       const f = filters();
       const r = RANGES.find(x => x[0] === f.range) || RANGES[2];
-      return { since: r[2] ? Math.round(now() - r[2]) : '', source: f.source, actor: f.actor, section: f.section, action: f.action, target: f.target, q: f.q, limit };
+      return { since: r[2] ? Math.round(now() - r[2]) : '', source: f.source, actor: f.actor, agent: f.agent, section: f.section, action: f.action, target: f.target, q: f.q, limit };
     }
     const matches = e => {
       const f = filters();
       const r = RANGES.find(x => x[0] === f.range) || RANGES[2];
-      return (!r[2] || e.ts >= now() - r[2]) && (!f.source || e.source === f.source) && (!f.actor || e.actor === f.actor) && (!f.section || e.section === f.section)
+      return (!r[2] || e.ts >= now() - r[2]) && (!f.source || e.source === f.source) && (!f.actor || e.actor === f.actor) && (!f.agent || e.agent_id === f.agent) && (!f.section || e.section === f.section)
         && (!f.action || e.action === f.action) && (!f.target || e.target === f.target)
         && (!f.q || JSON.stringify(e).toLowerCase().includes(f.q.toLowerCase()));
     };
@@ -182,8 +187,10 @@ registerView({
       const sel = (label, key, options) => h('label', { style: 'display:flex;flex-direction:column;gap:4px;font-size:var(--fs-sm);font-weight:700;color:var(--mut);min-width:0' }, label,
         h('select.select', { style: 'min-width:150px', 'aria-label': label, onchange: e => setFilter({ [key]: e.target.value }) },
           h('option', { value: '', selected: !f[key] }, 'Any'), options.map(([v, t]) => h('option', { value: v, selected: f[key] === v }, t))));
-      const actors = [...knownActors];
+      const actors = [...knownActors].filter(a => !agentName(a)); // agents have their own filter
       if (f.actor && !actors.includes(f.actor)) actors.push(f.actor);
+      const agentOpts = agents.map(a => [a.id, a.name + (a.revoked ? ' (revoked)' : '')]);
+      if (f.agent && !agentOpts.some(o => o[0] === f.agent)) agentOpts.push([f.agent, f.agent]);
       const secs = SECTION_ORDER.slice();
       if (f.section && !secs.includes(f.section)) secs.push(f.section);
       return h('div.cs', { style: 'display:flex;flex-direction:column;gap:12px;border-top:0;padding-top:0' },
@@ -196,6 +203,7 @@ registerView({
         h('div.row', { style: 'gap:10px 16px;align-items:flex-end' },
           sel('Source', 'source', Object.entries(SOURCES).map(([k, v]) => [k, v[0]])),
           sel('Actor', 'actor', actors.sort().map(a => [a, a])),
+          agentOpts.length ? sel('Agent', 'agent', agentOpts) : null,
           sel('Section', 'section', secs.map(s => [s, sectionName(s)])),
           sel('Action', 'action', ACTIONS.map(a => [a, actionName(a)])),
           f.target ? h('span.row', { style: 'gap:6px' }, h('span.mut', 'Target'), h('span.node', f.target), button('Clear', () => setFilter({ target: '' }), 'sm ghost')) : null,
@@ -209,7 +217,10 @@ registerView({
         h('span', sourceBadge(e.source)),
         h('div', { style: 'min-width:0' },
           h('p', h('b', entrySentence(e)), ' ', e.section && !['profiles', 'tiers', 'settings'].includes(e.section) ? badge(sectionName(e.section), 'n') : null),
-          h('p.d', 'by ', h('b.txt2', e.actor || 'anonymous'), e.target && !['tiers', 'bench', 'exclude_nodes', 'runtime', 'profiles'].includes(e.section) ? [' · ', h('span.mono', e.target)] : null,
+          h('p.d', 'by ', agentName(e.actor)
+            ? [h('a', { href: href('audit', null, { agent: e.agent_id, range: 'all' }), style: 'font-weight:700', title: 'Show everything this agent did' }, agentName(e.actor)), ' ',
+              badge('Agent', 'n', 'An AI agent that presented its key. The key says who it is; it is not a permission.')]
+            : h('b.txt2', e.actor || 'anonymous'), e.target && !['tiers', 'bench', 'exclude_nodes', 'runtime', 'profiles', 'agents', 'models'].includes(e.section) ? [' · ', h('span.mono', e.target)] : null,
             e.revision ? [' · ', h('a', { href: href('audit', ['revisions'], { rev: e.revision }), onclick: ev => { ev.preventDefault(); showRevision(e.revision); } }, 'Revision ' + e.revision)] : null,
             ' · ', h('a', { href: '#', 'aria-expanded': isOpen ? 'true' : 'false', onclick: ev => { ev.preventDefault(); if (isOpen) open.delete(e.id); else open.add(e.id); view.refresh(); } }, isOpen ? 'Hide details' : 'Show details')),
           e.comment ? h('p.d', { style: 'color:var(--text-2)' }, '“' + e.comment + '”') : null,
@@ -275,6 +286,7 @@ registerView({
     };
     const view = liveView(el, render, ['conn', 'tick']);
     loadTrail();
+    loadAgents();
     if (tab() === 'revisions') loadRevs();
     return {
       unmount() { alive = false; off(); offEvent(); offBench(); offHello(); document.removeEventListener('visibilitychange', onVisible); clearTimeout(softTimer); clearTimeout(qTimer); view.unmount(); },
