@@ -301,23 +301,28 @@ type pastRun struct {
 	note     string
 	rpc      string
 	revision string
-	slow     map[string]float64 // decode factor by profile (the regression)
+	slow     map[string]float64 // decode factor by profile
+	slowLoad map[string]float64 // load time factor by profile
 }
 
 func pastRuns() []pastRun {
 	return []pastRun{
-		{6, "03:00", "nightly", "schedule", "scheduled", "b4501", "4", nil},
-		{5, "03:00", "nightly", "schedule", "scheduled", "b4501", "4", nil},
-		{5, "14:20", "load-scaling", "manual", "after moving the PS5s to the new switch", "b4501", "5", nil},
-		{4, "03:00", "nightly", "schedule", "scheduled", "b4567", "6", nil},
-		{4, "11:05", "smoke", "manual", "after the rpc-server update to b4567", "b4567", "6", nil},
-		{3, "03:00", "nightly", "schedule", "scheduled", "b4567", "8", nil},
-		{3, "16:40", "side-by-side", "manual", "", "b4567", "8", nil},
-		{2, "03:00", "nightly", "schedule", "scheduled", "b4567", "11", map[string]float64{"bench-devstral-24b": 0.82}},
-		{2, "10:15", "load-scaling", "manual", "checking the loads after last night's slow decode", "b4567", "11", nil},
-		{1, "03:00", "nightly", "schedule", "scheduled", "b4567", "13", nil},
-		{1, "09:30", "smoke", "manual", "", "b4567", "13", nil},
-		{1, "15:00", "phase-tour", "manual", "trying the new phase types", "b4567", "14", nil},
+		{6, "03:00", "nightly", "schedule", "scheduled", "b4501", "4", nil, nil},
+		{5, "03:00", "nightly", "schedule", "scheduled", "b4501", "4", nil, nil},
+		{5, "14:20", "load-scaling", "manual", "after moving the PS5s to the new switch", "b4501", "5", nil, nil},
+		{4, "03:00", "nightly", "schedule", "scheduled", "b4567", "6", nil, nil},
+		{4, "11:05", "smoke", "manual", "after the rpc-server update to b4567", "b4567", "6", nil, nil},
+		{3, "03:00", "nightly", "schedule", "scheduled", "b4567", "8", nil, nil},
+		{3, "16:40", "side-by-side", "manual", "", "b4567", "8", nil, nil},
+		// two days ago: Devstral decodes below its minimum, a real failed step
+		{2, "03:00", "nightly", "schedule", "scheduled", "b4567", "11", map[string]float64{"bench-devstral-24b": 0.78}, nil},
+		{2, "10:15", "load-scaling", "manual", "checking the loads after last night's slow decode", "b4567", "11", nil, nil},
+		// the newest nightly: the 3-worker Gemma load is 22% slower than its
+		// baseline (a regression, within its expectation); 1.155 is 22% with
+		// this run's load noise against the baseline's
+		{1, "03:00", "nightly", "schedule", "scheduled", "b4567", "13", nil, map[string]float64{"bench-gemma-12b-3w": 1.155}},
+		{1, "09:30", "smoke", "manual", "", "b4567", "13", nil, nil},
+		{1, "15:00", "phase-tour", "manual", "trying the new phase types", "b4567", "14", nil, nil},
 	}
 }
 
@@ -355,7 +360,7 @@ func seedBenchRuns(c *cluster, log *slog.Logger) error {
 		if sa.factor == nil {
 			sa.factor = map[string]float64{}
 		}
-		sa.loadFactor = 1
+		sa.loadFactor, sa.loadBy = 1, pr.slowLoad
 		if pr.rpc == "b4501" { // the older rpc-server build loaded a little slower
 			sa.loadFactor = 1.08
 		}

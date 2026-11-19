@@ -47,7 +47,8 @@ func TestSeedDefinitionsValid(t *testing.T) {
 
 // A real manager runs the nightly suite against the scripted scheduler: every
 // step ends as expected, the refusal is refused, and a slower decode on the
-// second run is a regression of that benchmark only.
+// second run is a regression of that benchmark only, and a 22% slower load
+// on the third is a regression that still meets its expectation.
 func TestScriptedNightly(t *testing.T) {
 	st, err := bench.OpenStore(t.TempDir())
 	if err != nil {
@@ -84,9 +85,9 @@ func TestScriptedNightly(t *testing.T) {
 	defer cancel()
 	m.Start(ctx)
 	defer m.Stop(context.Background())
-	run := func(slow map[string]float64) *bench.Run {
+	run := func(slow, slowLoad map[string]float64) *bench.Run {
 		sa.mu.Lock()
-		sa.factor = slow
+		sa.factor, sa.loadBy = slow, slowLoad
 		sa.mu.Unlock()
 		r, err := m.Enqueue("nightly", bench.EnqueueOptions{Trigger: "schedule"})
 		if err != nil {
@@ -102,7 +103,7 @@ func TestScriptedNightly(t *testing.T) {
 			}
 		}
 	}
-	first := run(map[string]float64{})
+	first := run(map[string]float64{}, nil)
 	if first.State != bench.RunCompleted || len(first.Steps) != 8 {
 		t.Fatalf("first run: %s, %d steps, %s", first.State, len(first.Steps), first.Error)
 	}
@@ -116,12 +117,20 @@ func TestScriptedNightly(t *testing.T) {
 			t.Errorf("%s: outcome %s, expect %s", s.BenchmarkID, s.Outcome, b)
 		}
 	}
-	second := run(map[string]float64{"bench-devstral-24b": 0.82})
+	second := run(map[string]float64{"bench-devstral-24b": 0.82}, nil)
 	for _, s := range second.Steps {
 		reg := s.Comparison != nil && s.Comparison.Regression
 		if reg != (s.BenchmarkID == "devstral-load-requests") {
 			b, _ := json.Marshal(s.Comparison)
 			t.Errorf("%s: regression %v: %s", s.BenchmarkID, reg, b)
+		}
+	}
+	third := run(map[string]float64{}, map[string]float64{"bench-gemma-12b-3w": 1.22})
+	for _, s := range third.Steps {
+		reg := s.Comparison != nil && s.Comparison.Regression
+		if reg != (s.BenchmarkID == "gemma-load-3w") || (s.BenchmarkID == "gemma-load-3w" && (s.Expect == nil || !s.Expect.Pass)) {
+			b, _ := json.Marshal(s.Comparison)
+			t.Errorf("third run %s: regression %v: %s", s.BenchmarkID, reg, b)
 		}
 	}
 	if second.Steps[0].StartedAt-first.Steps[0].StartedAt < 60_000 {

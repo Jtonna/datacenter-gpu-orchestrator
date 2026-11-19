@@ -115,6 +115,7 @@ type scriptedAPI struct {
 	rpcVersion string             // rpc_server_version of the PS5 workers
 	factor     map[string]float64 // decode multiplier by profile (1 when absent)
 	loadFactor float64            // load time multiplier
+	loadBy     map[string]float64 // load time multiplier by profile (1 when absent)
 	jitter     int64              // seeds the per-run noise
 
 	// freezes (frozen scenarios)
@@ -192,7 +193,11 @@ func (a *scriptedAPI) tickLocked() {
 			continue
 		}
 		p := perfOf(name)
-		loadS := round1(p.load * a.loadFactor * a.noise("load:"+name, 0.04))
+		f := a.loadFactor
+		if m, ok := a.loadBy[name]; ok {
+			f *= m
+		}
+		loadS := round1(p.load * f * a.noise("load:"+name, 0.04))
 		in.vready = in.vstart.Add(time.Duration(loadS * float64(time.Second)))
 		a.clock.advanceTo(in.vready)
 		in.ready = true

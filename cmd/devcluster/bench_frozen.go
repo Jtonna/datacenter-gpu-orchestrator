@@ -66,6 +66,9 @@ type frozenWorld struct {
 	mgr  *bench.Manager
 	srv  *api.Server
 	stop func()
+	// restore puts back the suite the run was started with zero cooldown,
+	// once the run stands at its point (nil when there is nothing to restore).
+	restore func()
 }
 
 var frozenSeq atomic.Int64
@@ -91,20 +94,21 @@ func startFrozen(c *cluster, log *slog.Logger, spec *frozenSpec, emit func(map[s
 			fw.close()
 		}
 	}()
-	// No schedules in the snapshot: they would fire on their own.
-	suites, _ := st.ListSuites()
-	now := time.Now().UnixMilli()
-	for _, su := range suites {
-		if su.Spec.Schedule != nil || (su.Spec.ID == spec.Suite) {
-			cp := *su.Spec
-			cp.Schedule = nil
-			if cp.ID == spec.Suite {
-				zero := 0
-				cp.CooldownS = &zero
-			}
-			if err := st.SaveSuite(&cp, su.Source, now); err != nil {
+	// The suites keep their schedules (an "at" schedule is next due at its
+	// next clock time, and the run's clock never passes the real time), so the
+	// suite list reads as on the real server. Only the frozen suite runs with
+	// no cooldown, so the steps before the point take no real time; its
+	// stored spec is put back by settle.
+	if spec.Suite != "" {
+		if su, err := st.GetSuite(spec.Suite); err == nil {
+			orig := *su.Spec
+			cp := orig
+			zero := 0
+			cp.CooldownS = &zero
+			if err := st.SaveSuite(&cp, su.Source, su.UpdatedAt); err != nil {
 				return nil, err
 			}
+			fw.restore = func() { _ = st.SaveSuite(&orig, su.Source, su.UpdatedAt) }
 		}
 	}
 	if spec.Prepare != nil {
@@ -164,8 +168,12 @@ func startFrozen(c *cluster, log *slog.Logger, spec *frozenSpec, emit func(map[s
 
 // settle waits (at most d) until the run stands at its frozen point: its
 // current benchmark and step count have not changed for two and a half
-// seconds (a step before the point may take a second of real time).
+// seconds (a step before the point may take a second of real time). Then the
+// frozen suite's stored spec is put back.
 func (fw *frozenWorld) settle(d time.Duration) {
+	if fw.restore != nil {
+		defer fw.restore()
+	}
 	deadline := time.Now().Add(d)
 	last, still := "", 0
 	for time.Now().Before(deadline) {

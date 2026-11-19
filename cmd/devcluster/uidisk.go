@@ -72,18 +72,18 @@ func uiDiskHandler(dir string) http.HandlerFunc {
 // Chrome will not lay a window out narrower than about 500 px).
 func devFrame(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	dim := func(name string, def int) (int, bool) {
+	dim := func(name string, def, max int) (int, bool) {
 		v := q.Get(name)
 		if v == "" {
 			return def, true
 		}
 		n, err := strconv.Atoi(v)
-		return n, err == nil && n >= 200 && n <= 4000
+		return n, err == nil && n >= 200 && n <= max
 	}
-	fw, ok1 := dim("w", 390)
-	fh, ok2 := dim("h", 844)
+	fw, ok1 := dim("w", 390, 4000)
+	fh, ok2 := dim("h", 844, 12000)
 	if !ok1 || !ok2 {
-		writeErr(w, 400, "w and h must be whole numbers from 200 to 4000", "bad request")
+		writeErr(w, 400, "w must be a whole number from 200 to 4000 and h one from 200 to 12000", "bad request")
 		return
 	}
 	route := strings.TrimPrefix(q.Get("route"), "/")
