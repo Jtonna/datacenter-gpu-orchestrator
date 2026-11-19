@@ -167,6 +167,7 @@ func (s *Server) routes() *http.ServeMux {
 	m.HandleFunc("GET /api/profiles", s.handleProfiles)
 	m.HandleFunc("GET /api/metrics/activity", s.handleActivity)
 	m.HandleFunc("GET /ui/{$}", s.handleUI)
+	m.HandleFunc("GET /ui/", s.handleUIFile)
 	m.HandleFunc("GET /ui", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/ui/", http.StatusMovedPermanently) })
 	m.HandleFunc("GET /api/status", s.handleStatus)
 	m.HandleFunc("GET /api/history", s.handleHistory)
