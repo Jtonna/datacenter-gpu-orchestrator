@@ -64,9 +64,9 @@ func TestMCPReadAndControlToolsThroughTheRealAPI(t *testing.T) {
 	if m := mcpJSON(t, h, "list_models", `{}`); m["data"] == nil {
 		t.Fatalf("%v", m)
 	}
-	// get_profile has no /api/config route here: it falls back to the list.
-	if p := mcpJSON(t, h, "get_profile", `{"id":"alpha"}`); p["model"] != "a.gguf" {
-		t.Fatalf("%v", p)
+	// without the configuration service the config tools say so (503), they do not crash
+	if o := mcpTool(t, h, "get_profile", `{"id":"alpha"}`); !o.IsError || !strings.Contains(o.Text, "HTTP 503") {
+		t.Fatalf("%+v", o)
 	}
 
 	// plan, then load, then the instance shows up in the model-centric status.
@@ -114,14 +114,17 @@ func TestMCPReadAndControlToolsThroughTheRealAPI(t *testing.T) {
 		t.Fatalf("%v", sys)
 	}
 
-	// endpoints another branch adds: a clear message, no crash
-	for _, tool := range []string{"get_config", "get_config_schema", "list_config_revisions", "query_audit", "get_bench_aggregates", "get_bench_schema"} {
+	// the configuration, audit and bench endpoints answer 503 with their reason when their service is off
+	for _, tool := range []string{"get_config", "list_config_revisions", "query_audit", "get_bench_aggregates"} {
 		o := mcpTool(t, h, tool, `{}`)
-		if !o.IsError || !strings.Contains(o.Text, "does not have that endpoint") {
+		if !o.IsError || !strings.Contains(o.Text, "HTTP 503") {
 			t.Errorf("%s: %+v", tool, o)
 		}
 	}
-	if o := mcpTool(t, h, "set_tiers", `{"value":[]}`); !o.IsError || !strings.Contains(o.Text, "does not have that endpoint") {
+	if o := mcpTool(t, h, "get_config_schema", `{}`); o.IsError || !strings.Contains(o.Text, `"fields"`) {
+		t.Errorf("the settings schema needs no service: %+v", o)
+	}
+	if o := mcpTool(t, h, "set_tiers", `{"value":[]}`); !o.IsError || !strings.Contains(o.Text, "HTTP 503") {
 		t.Errorf("set_tiers: %+v", o)
 	}
 	// benchmarks are off without data_dir: the real 503 text reaches the agent

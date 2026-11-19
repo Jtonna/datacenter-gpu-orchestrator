@@ -118,7 +118,7 @@ func (x *exec) runBenchmark(b *benchspec.Benchmark, idx int, group string, g *ga
 	x.a.mu.Unlock()
 	m.emit(map[string]any{"kind": "step_started", "run_id": st.RunID, "step": stepBrief(st)})
 
-	ctx, cancelCtx := context.WithTimeout(context.Background(), b.Timeout())
+	ctx, cancelCtx := context.WithTimeout(WithRun(context.Background(), st.RunID), b.Timeout())
 	defer cancelCtx()
 	br := &benchRun{x: x, st: st, b: b, ctx: ctx, g: g, member: member}
 	br.track = x.startTrack(b, idx)
@@ -865,7 +865,7 @@ func (br *benchRun) phaseUnload(p *benchspec.Phase, pr *PhaseResult) {
 		return
 	}
 	// a fresh context: the benchmark's own may have run out, and a failed or cancelled step must still clean up
-	ctx, cancel := context.WithTimeout(context.Background(), x.m.o.GoneTimeout+30*time.Second)
+	ctx, cancel := context.WithTimeout(WithRun(context.Background(), st.RunID), x.m.o.GoneTimeout+30*time.Second)
 	defer cancel()
 	force := st.Outcome == OutcomeFailed || st.Outcome == OutcomeCancelled
 	status, err := x.m.o.API.Status(ctx)

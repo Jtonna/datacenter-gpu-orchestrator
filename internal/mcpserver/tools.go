@@ -216,7 +216,7 @@ func (t *tool) build(args map[string]any) (restReq, error) {
 
 const (
 	cfgNote = " Configuration changes are audited and can be rolled back with rollback_config."
-	valNote = "The new value of the section, in the same shape get_config shows for it."
+	valNote = "The new value of the whole section, in the shape get_config shows for it (tiers: a list; exclude_nodes: a list of node ids; node_overrides: an object of node id to override; recovery and fleet: an object). Sent as the request body."
 )
 
 func rd(name, desc string, props P, req []string, method, path string, query ...string) *tool {
@@ -235,7 +235,7 @@ func allTools() []*tool {
 		{Name: "get_queue", Desc: "Show the requests waiting for a model to load: each queue entry with its age, waiters, claimed nodes and why it has not been placed, plus quarantined nodes and backed-off profiles.",
 			ReadOnly: true, Method: "GET", Path: "/api/status", Derive: deriveQueue},
 		rd("list_profiles", "List every profile (model configuration) with its memory need and what a request for it would do right now (a dry-run plan).", nil, nil, "GET", "/api/profiles"),
-		{Name: "get_profile", Desc: "Get one profile's configuration by id.", Props: idArg("profile"), Required: []string{"id"}, ReadOnly: true, Method: "GET", Path: "/api/config/profiles/{id}",
+		{Name: "get_profile", Desc: "Get one profile's configuration by id (answers {revision, id, profile}).", Props: idArg("profile"), Required: []string{"id"}, ReadOnly: true, Method: "GET", Path: "/api/config/profiles/{id}",
 			Fallback: &fallback{Method: "GET", Path: "/api/profiles", Reshape: profileFromList}},
 		{Name: "plan_load", Desc: "Dry run: what would happen if this model were requested now (placement, which instances would be evicted, or why it cannot be placed). Changes nothing. Call this before load_model.",
 			Props: P{"model": s("Profile id or alias.")}, Required: []string{"model"}, ReadOnly: true, Method: "POST", Path: "/api/plan", Body: []string{"model"}},
@@ -249,14 +249,16 @@ func allTools() []*tool {
 			"since": i("Range start, unix milliseconds."), "until": i("Range end, unix milliseconds.")}, nil, "GET", "/api/history/summary", "since", "until"),
 		rd("get_system_info", "Scheduler version, uptime, listen address, safety settings, benchmark settings and storage locations with sizes.", nil, nil, "GET", "/api/system"),
 		rd("get_config", "The full current configuration (profiles, tiers, settings, exclude_nodes, node_overrides, recovery, fleet) with its revision number.", nil, nil, "GET", "/api/config"),
-		rd("get_config_schema", "The schema of the configuration: every field, its type, default and limits. Read it before writing configuration.", nil, nil, "GET", "/api/config/schema"),
-		rd("list_config_revisions", "List the saved configuration revisions, newest first, with time, source, actor and comment.", nil, nil, "GET", "/api/config/revisions"),
+		rd("get_config_schema", "The schema of the settings: {\"fields\":[...]} with each key, type, default, limits and whether a change needs a restart. Read it before update_settings.", nil, nil, "GET", "/api/config/schema"),
+		rd("list_config_revisions", "List the saved configuration revisions, newest first, with time, source, actor and comment, and the current revision.", P{"limit": i("Maximum revisions.")}, nil, "GET", "/api/config/revisions", "limit"),
 		rd("get_config_revision", "Get one saved configuration revision by number.", P{"revision": i("Revision number.")}, []string{"revision"}, "GET", "/api/config/revisions/{revision}"),
 		rd("query_audit", "Search the audit log of configuration and control changes (who changed what, through REST or MCP).", P{
 			"since": s("Start time, unix milliseconds or RFC 3339."), "until": s("End time, unix milliseconds or RFC 3339."),
-			"source": s("Where the change came from, for example rest, mcp, ui, config."), "actor": s("Who made it."), "section": s("Configuration section, for example profiles or tiers."),
-			"target": s("The item changed, for example a profile id."), "action": s("The action, for example create, update, delete, rollback, load, unload."),
-			"q": s("Free-text search."), "limit": i("Maximum entries.")}, nil, "GET", "/api/audit", "since", "until", "source", "actor", "section", "target", "action", "q", "limit"),
+			"source": en("Where the change came from: ui (the web page), rest, mcp, import (import-config or /api/config/import) or system (the scheduler itself, for example a benchmark run's loads).", "ui", "rest", "mcp", "import", "system"),
+			"actor":  s("Who made it (the MCP client name, or the X-Actor of a REST call)."), "section": s("A configuration section (profiles, tiers, settings, exclude_nodes, node_overrides, recovery, fleet), bench (benchmarks, suites, runs) or runtime (load and unload)."),
+			"target": s("The item changed, for example a profile id, benchmark:<id>, suite:<id> or run:<id>."), "action": s("create, update, delete, rollback, import, load, unload, run_start or run_cancel."),
+			"q": s("Free-text search."), "limit": i("Maximum entries (newest first by default)."), "order": en("Sort order.", "desc", "asc")},
+			nil, "GET", "/api/audit", "since", "until", "source", "actor", "section", "target", "action", "q", "limit", "order"),
 		rd("list_benchmarks", "List the benchmark definitions (test cases). Needs data_dir; otherwise the call fails and says so.", nil, nil, "GET", "/api/bench/benchmarks"),
 		rd("get_benchmark", "Get one benchmark definition by id.", idArg("benchmark"), []string{"id"}, "GET", "/api/bench/benchmarks/{id}"),
 		rd("list_suites", "List the benchmark suites with their last run.", nil, nil, "GET", "/api/bench/suites"),
@@ -265,12 +267,15 @@ func allTools() []*tool {
 		rd("list_runs", "List benchmark runs, newest first, without steps.", P{"suite": s("Only runs of this suite id."), "state": en("Only runs in this state.", "queued", "running", "paused", "completed", "failed", "cancelled", "skipped"),
 			"limit": i("Maximum runs.")}, nil, "GET", "/api/bench/runs", "suite", "state", "limit"),
 		rd("get_run", "Get one benchmark run with its steps, requests, statistics and comparison against the baseline.", idArg("run"), []string{"id"}, "GET", "/api/bench/runs/{id}"),
-		rd("export_run", "Export a benchmark run as a markdown table, CSV or JSON, returned as text.", P{"id": s("The run id."), "format": en("Export format (markdown by default).", "markdown", "csv", "json")},
-			[]string{"id"}, "GET", "/api/bench/runs/{id}/export", "format"),
-		rd("get_bench_aggregates", "Aggregated benchmark statistics across runs, filtered by suite, benchmark, profile, time range and environment.", P{
-			"suite": s("Suite id."), "benchmark": s("Benchmark id."), "profile": s("Profile id."), "since": s("Start time."), "until": s("End time."), "env": s("Environment label.")},
-			nil, "GET", "/api/bench/aggregates", "suite", "benchmark", "profile", "since", "until", "env"),
-		rd("get_bench_trends", "A metric of one benchmark over successive runs, oldest first.", P{"benchmark": s("Benchmark id."), "metric": en("Metric.", "load_s", "decode_tps", "prefill_tps"),
+		rd("export_run", "Export a benchmark run as a markdown table, CSV or JSON, returned as text.", P{"id": s("The run id."), "format": en("Export format (json by default).", "markdown", "csv", "json"),
+			"detail": en("csv only: phases or turns for one row per phase or per turn (default one row per benchmark).", "phases", "turns")},
+			[]string{"id"}, "GET", "/api/bench/runs/{id}/export", "format", "detail"),
+		rd("get_bench_aggregates", "Aggregated benchmark statistics across completed runs (per benchmark and profile: counts, load, decode and prefill figures), filtered by suite, benchmark, profile, time range and environment.", P{
+			"suite": s("Suite id."), "benchmark": s("Benchmark id."), "profile": s("Profile id."),
+			"since": s("Start: unix milliseconds or seconds, an RFC 3339 time, or a span back from now such as 24h, 7d or 90m."), "until": s("End, same forms as since."),
+			"limit_runs": i("Use only the newest N runs."), "env": en("same: only runs whose environment equals the newest run's (comparable runs). Leave out for all.", "same")},
+			nil, "GET", "/api/bench/aggregates", "suite", "benchmark", "profile", "since", "until", "limit_runs", "env"),
+		rd("get_bench_trends", "A metric of one benchmark over successive runs, oldest first.", P{"benchmark": s("Benchmark id."), "metric": en("Metric.", "load_s", "load_mb_s", "memory_mib", "decode_tps", "prefill_tps", "ttft_ms", "unload_s", "concurrent_wall_s"),
 			"limit": i("Newest N points.")}, []string{"benchmark", "metric"}, "GET", "/api/bench/trends", "benchmark", "metric", "limit"),
 		rd("get_bench_schema", "The schema of benchmark and suite definitions: every field, type, default and limit. Read it before create_benchmark or create_suite.", nil, nil, "GET", "/api/bench/schema"),
 

@@ -129,6 +129,9 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 	s.ws = s.newWSHub()
 	s.mux = s.routes()
 	s.startAudit()
+	if o.Audit != nil {
+		s.SetAuditHook(s.recorderHook(o.Audit)) // benchmark changes and runs are audited too (section bench)
+	}
 	return s
 }
 
@@ -572,7 +575,7 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.sched.Load(r.Context(), req.Model); err != nil {
+	if err := s.sched.LoadFor(r.Context(), req.Model, benchRunHeader(r.Header.Get("X-Bench-Run"))); err != nil {
 		s.writeErr(w, err)
 		return
 	}

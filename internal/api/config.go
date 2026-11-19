@@ -638,6 +638,18 @@ func (s *Server) auditRuntime(r *http.Request, action, target string, after map[
 	}
 	e := audit.Entry{Action: action, Section: audit.SectionRuntime, Target: target, Before: json.RawMessage("null"), After: raw(after)}
 	audit.FromRequest(r).Apply(&e)
+	if run := benchRunHeader(r.Header.Get("X-Bench-Run")); run != "" {
+		// A load or unload made by a benchmark run (the runner calls the API on
+		// loopback) is the system working, not a person: it stays in the log,
+		// as source "system", so it is visible but never mistaken for a human
+		// action. The history record of the load carries data.bench_run too.
+		e.Source, e.Actor = audit.SourceSystem, "bench run "+run
+		merged := map[string]any{"bench_run": run}
+		for k, v := range after {
+			merged[k] = v
+		}
+		e.After = raw(merged)
+	}
 	e.TS = time.Now().UnixMilli()
 	select {
 	case s.auditQ <- e:

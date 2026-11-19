@@ -113,8 +113,8 @@ func TestBenchSuiteEndToEnd(t *testing.T) {
 	t.Logf("run JSON:\n%s", js)
 
 	// History and results join: the run and its steps are tagged with the run id, and the
-	// load phase of the step names the scheduler's load session (POST /api/load carries no
-	// run tag, so the session id is the join key for the load itself).
+	// load phase of the step names the scheduler's load session (the runner's POST /api/load
+	// carries X-Bench-Run, so the load's own records are tagged too; the session id is the other join key).
 	sid, _ := s0["load"].(map[string]any)["session_id"].(string)
 	if sid == "" {
 		t.Fatalf("the step's load names no session: %v", s0["load"])

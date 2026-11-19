@@ -428,7 +428,7 @@ func (x *exec) cleanup() {
 	}
 	sort.Strings(names)
 	for _, p := range names {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(WithRun(context.Background(), x.a.run.ID), 30*time.Second)
 		res, err := x.m.o.API.Unload(ctx, p, true)
 		cancel()
 		switch {

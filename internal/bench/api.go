@@ -210,6 +210,15 @@ func (h *HTTPAPI) client() *http.Client {
 	return http.DefaultClient
 }
 
+type runCtxKey struct{}
+
+// WithRun marks a context as belonging to a benchmark run: every request the
+// HTTP API sends with it carries X-Bench-Run, so the scheduler tags the load
+// in the history (data.bench_run) and does not audit it as a human action.
+func WithRun(ctx context.Context, runID string) context.Context {
+	return context.WithValue(ctx, runCtxKey{}, runID)
+}
+
 func (h *HTTPAPI) do(ctx context.Context, method, path string, body []byte, hdr map[string]string) (*http.Response, error) {
 	var rd io.Reader
 	if body != nil {
@@ -221,6 +230,9 @@ func (h *HTTPAPI) do(ctx context.Context, method, path string, body []byte, hdr 
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if id, _ := ctx.Value(runCtxKey{}).(string); id != "" {
+		req.Header.Set("X-Bench-Run", id)
 	}
 	for k, v := range hdr {
 		req.Header.Set(k, v)

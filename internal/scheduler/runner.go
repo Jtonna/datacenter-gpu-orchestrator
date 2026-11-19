@@ -393,11 +393,17 @@ func (s *Scheduler) lease(a answer) (*Lease, error) {
 // needed, else the *Error a request would get now (unknown, backoff,
 // does not fit, shutting down).
 func (s *Scheduler) Load(ctx context.Context, model string) error {
+	return s.LoadFor(ctx, model, "")
+}
+
+// LoadFor is Load for a request that carries a bench run id (the X-Bench-Run
+// header): the id only tags the history records of the load (data.bench_run).
+func (s *Scheduler) LoadFor(ctx context.Context, model, benchRun string) error {
 	p, _, ok := s.Config().Resolve(model)
 	if !ok {
 		return errUnknown(model)
 	}
-	w := &waiter{profile: p.Name, synthetic: true, reply: make(chan answer, 1)}
+	w := &waiter{profile: p.Name, synthetic: true, reply: make(chan answer, 1), benchRun: benchRun}
 	if !s.post(ctx, evAcquire{w: w}) {
 		return errShutting()
 	}
