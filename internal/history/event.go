@@ -62,6 +62,14 @@ const (
 	TBenchRunStarted    = "benchRunStarted"
 	TBenchStepFinished  = "benchStepFinished"
 	TBenchRunFinished   = "benchRunFinished"
+
+	// Agents membership (agent contract): a worker launch refused or
+	// failed, a launch that exited, node membership changes and the
+	// operator's node actions.
+	TWorkerLaunchFailed = "workerLaunchFailed"
+	TWorkerExited       = "workerExited"
+	TNodeMembership     = "nodeMembership"
+	TNodeAdmin          = "nodeAdmin"
 )
 
 // Event is one history record. Ts is unix milliseconds; Seq is monotonic per

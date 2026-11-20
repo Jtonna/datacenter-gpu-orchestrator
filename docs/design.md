@@ -1077,6 +1077,69 @@ attempts that started a child, newest first, each kept for
 - A load refused before a child starts (no fit, backoff, failed pre-flight,
   child that could not be started) does not appear.
 
+### 7.7 Agent membership and worker launches
+
+With `defaults.membership: agents` (read at start; default `fleet`) the pool
+comes from `potluck-agent` (docs/agent-contract.md) and the fleet feed is not
+read at all. `internal/pool` holds the agent registry, implements the node
+view the core reads, and runs the worker launches.
+
+- **Programs.** `--programs-dir` (`LLM_SCHEDULER_PROGRAMS_DIR`) holds
+  `<release>/release.json` and its folders. At start every file named in each
+  folder's `SHA256SUMS` is hashed; one missing or wrong file means the release
+  is not served: the scheduler still starts, `/api/system` `programs.error`
+  says why, agents are refused (`release_unavailable`) and loads are refused.
+  Potluck's release is the build variable `main.potluckRelease` (default
+  `0.1.0`), separate from `version`.
+- **Same build.** `server_bin --version` must report the commit of
+  `builds.llama` (a prefix match of at least 7 hex digits). Otherwise every
+  load is refused with the reason, and `/api/system` shows `host_build_error`.
+- **Nodes.** Node id = agent id, address = the agent's `addr` (worker
+  `addr:50052`, agent `addr:50060`). Tiers match on hostname = the agent's
+  `name` and source `agent`. Placement memory is the first device of the
+  node's platform backend; for a device that shares system memory the usable
+  figure is `min(device free, mem_available_mib - watchdog_floor_mib)`
+  (`watchdog_floor_mib`, default 1000). The local node still comes from
+  `local_probe_cmd`; an agent whose id or name is `fleet.local_node` is the
+  host machine's and is not published as a remote node.
+- **States.** A node is lost after 10 s without a heartbeat (shown offline;
+  the load on it is killed at once, no recovery request is ever sent),
+  `left` after its deregister, `removed` after `DELETE /api/nodes/{id}` until
+  `POST /api/nodes/{id}/readmit`. Pause and removal are stored in the
+  database (`node_admin`). A paused node takes no new load; a load on it
+  continues.
+- **Loads.** The worker launches replace the pre-flight: no `--list-devices`
+  probe runs, so nothing holds a worker's single client slot before the child
+  connects. Each remote node gets `POST /launch` (role worker, the release,
+  a 20 s lease, `min_mem_available_mib` = the watchdog floor, plus the node's
+  budget on a shared-memory device, `model_dir` from `worker_model_dir`).
+  The child starts once every launch is `ready`. Leases are renewed every
+  5 s; the state is read 4 times a second while starting, then each second;
+  the launch log is copied to `child_log_dir` as
+  `worker-<name>-<launch id>.log`. After the instance is gone (its child has
+  exited, or none ran) the launches are stopped.
+- **Failures.** An agent refusal fails the load with the agent's reason and
+  message (history `workerLaunchFailed`); `model_source_unreachable` keeps
+  the request queued and leaves the node out for 5 s, until the queue timeout.
+  A launch that exits fails the instance (or stops a ready one) and stops the
+  other members (history `workerExited`); `watchdog` and `oom_kill` raise the
+  profile's learned need by a tenth (at least 256 MiB). A Docker agent that
+  restarts during a launch ends it with `agent_restarted`. After a scheduler
+  restart no launch is held: the next heartbeat gets `410` and the agent's
+  re-registration is answered `stop_launch`.
+- **Force unload** (`POST /api/nodes/{id}/force-unload`, MCP
+  `force_unload_node`): the instance on the node is killed and its waiters go
+  back to the queue; that node's launch gets `DELETE ?force=1` and, if it is
+  not `exited` within 5 s, `POST /reset`. The other members get a normal
+  stop; a lost node is not waited for.
+- **Status.** In agents membership each node of `/api/status` `view.nodes`
+  has an `agent` object (state, install, release, platform, programs, model
+  source, paused, launch id and state, devices, the last stats object as raw
+  JSON) and `agents` lists every agent node, lost, left and removed ones too.
+  A stats object whose `stats_version` is not 1 is not kept and shows
+  `stats_note: "stats version not supported"`; a missing or bad `stats` never
+  rejects a heartbeat.
+
 ## 8. Runtime behaviour
 
 ### 8.1 Instance states

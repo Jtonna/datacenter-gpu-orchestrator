@@ -328,6 +328,17 @@ func allTools() []*tool {
 			Required: []string{"id"}, Method: "POST", Path: "/api/bench/suites/{id}/run", Body: []string{"baseline", "note"}},
 		{Name: "cancel_run", Desc: "Cancel a queued or running benchmark run; what it loaded is unloaded.",
 			Props: idArg("run"), Required: []string{"id"}, Destructive: true, Idempotent: true, Method: "POST", Path: "/api/bench/runs/{id}/cancel"},
+
+		// ---- agent nodes (membership agents; agent contract 7.2) ----
+		{Name: "pause_node", Desc: "Pause an agent node: no new load is placed on it; a load already using it continues. Stored, survives restarts. Only with membership agents.",
+			Props: P{"id": s("The node id (the agent's id, a MAC address)."), "comment": s("Required: why, stored in the audit log.")}, Required: []string{"id", "comment"}, Idempotent: true,
+			Method: "POST", Path: "/api/nodes/{id}/pause", Body: []string{"comment"}},
+		{Name: "unpause_node", Desc: "Return a paused agent node to the pool. Only with membership agents.",
+			Props: P{"id": s("The node id."), "comment": s("Required: why, stored in the audit log.")}, Required: []string{"id", "comment"}, Idempotent: true,
+			Method: "POST", Path: "/api/nodes/{id}/unpause", Body: []string{"comment"}},
+		{Name: "force_unload_node", Desc: "Force unload an agent node: the model instance using it is killed (requests in flight are cut off) and the node's launch is stopped with force, then the agent is reset if it does not stop within 5 s. Use it only when the owner asked. Only with membership agents.",
+			Props: P{"id": s("The node id."), "comment": s("Required: why, stored in the audit log.")}, Required: []string{"id", "comment"}, Destructive: true, Idempotent: true,
+			Method: "POST", Path: "/api/nodes/{id}/force-unload", Body: []string{"comment"}},
 	}
 	for _, t := range T {
 		if !t.ReadOnly {

@@ -328,6 +328,9 @@ var expected = map[string]struct {
 	"delete_suite":          {`{"id":"s"}`, "DELETE", "/api/bench/suites/s", "", "", nil},
 	"run_suite":             {`{"id":"s","baseline":"br-0","note":"n"}`, "POST", "/api/bench/suites/s/run", "", `{"baseline":"br-0","note":"n"}`, nil},
 	"cancel_run":            {`{"id":"br-2"}`, "POST", "/api/bench/runs/br-2/cancel", "", "", nil},
+	"pause_node":            {`{"id":"02:00:00:00:00:01","comment":"fan noise"}`, "POST", "/api/nodes/02:00:00:00:00:01/pause", "", `{"comment":"fan noise"}`, nil},
+	"unpause_node":          {`{"id":"n1","comment":"fixed"}`, "POST", "/api/nodes/n1/unpause", "", `{"comment":"fixed"}`, nil},
+	"force_unload_node":     {`{"id":"n1","comment":"hung"}`, "POST", "/api/nodes/n1/force-unload", "", `{"comment":"hung"}`, nil},
 }
 
 func TestEveryToolMapsToItsRESTRequest(t *testing.T) {

@@ -72,6 +72,7 @@ type options struct {
 	exclude  string            // YAML list for exclude_nodes, e.g. `["ps5-test*"]`; empty for none
 	defaults string            // extra lines under "defaults:", each indented two spaces and ending in a newline
 	topLevel string            // extra top-level YAML (say a recovery: block), ending in a newline
+	args     []string          // extra scheduler flags (say --programs-dir)
 }
 
 // cluster is a running llm-scheduler with its fakes.
@@ -164,6 +165,7 @@ defaults:
 	if historyDir != "" {
 		args = append(args, "--history-dir", historyDir)
 	}
+	args = append(args, o.args...)
 	c.cmd = exec.Command(schedBin, args...)
 	for _, kv := range os.Environ() {
 		if !strings.HasPrefix(kv, "FAKELLAMA_") && !strings.HasPrefix(kv, "LLAMA_ARG_") {

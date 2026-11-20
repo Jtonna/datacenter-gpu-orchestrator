@@ -270,6 +270,14 @@ func (c *Config) validateDefaults(add func(string, ...any)) {
 	if d.MaxPool < 1 {
 		add("defaults: max_pool: must be at least 1, got %d", d.MaxPool)
 	}
+	switch d.Membership {
+	case MembershipFleet, MembershipAgents:
+	default:
+		add("defaults: membership: must be %s or %s, got %q", MembershipFleet, MembershipAgents, d.Membership)
+	}
+	if d.WatchdogFloorMiB < 0 {
+		add("defaults: watchdog_floor_mib: must not be negative, got %d", d.WatchdogFloorMiB)
+	}
 	for _, x := range []struct {
 		name string
 		v    int

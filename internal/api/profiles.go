@@ -31,6 +31,7 @@ func (s *Server) statusView(ctx context.Context) (any, error) {
 			}
 		}
 	}
+	s.agentStatus(v)
 	return v, nil
 }
 

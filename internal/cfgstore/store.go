@@ -83,6 +83,13 @@ CREATE TABLE model_file_meta (
   meta    TEXT NOT NULL CHECK (json_valid(meta)),
   read_at INTEGER NOT NULL
 );
+`, `
+CREATE TABLE node_admin (
+  id         TEXT PRIMARY KEY,
+  paused     INTEGER NOT NULL DEFAULT 0,
+  removed    INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL
+);
 `}
 
 // Store is the revision and audit store.

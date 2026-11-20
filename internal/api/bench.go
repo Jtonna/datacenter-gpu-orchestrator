@@ -32,6 +32,8 @@ type SystemInfo struct {
 	ChildLogDir string
 	ModelsDir   string
 	Bench       map[string]any
+	// Programs is the program release served to agents (nil: not reported).
+	Programs func() map[string]any
 }
 
 // AuditHook records who changed what in the benchmark section. The audit log
@@ -701,10 +703,14 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 		b, n := dirBytes(sys.ChildLogDir)
 		storage["child_logs"] = map[string]any{"dir": sys.ChildLogDir, "bytes": b, "files": n}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	out := map[string]any{
 		"version": s.opts.Version, "started_at": s.start.UnixMilli(), "now": now.UnixMilli(), "uptime_s": int64(now.Sub(s.start) / time.Second),
 		"listen": sys.Listen, "models_dir": sys.ModelsDir, "safety": sys.Safety, "bench": sys.Bench, "storage": storage,
 		"live_clients": s.ws.clientCount(), "live_clients_max": s.ws.max, "profiles": len(s.conf().Profiles),
 		"origin_policy": "same origin, or an origin on a loopback or private-network address (the live channel has no authentication)",
-	})
+	}
+	if sys.Programs != nil {
+		out["programs"] = sys.Programs()
+	}
+	writeJSON(w, http.StatusOK, out)
 }

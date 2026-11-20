@@ -246,7 +246,9 @@ func (c *schedCore) handle(ev event) {
 	case evQuery:
 		e.fn(c)
 	default:
-		panic(fmt.Sprintf("scheduler: unknown event %T", ev))
+		if !c.handleAgents(ev) {
+			panic(fmt.Sprintf("scheduler: unknown event %T", ev))
+		}
 	}
 
 	c.timers()
