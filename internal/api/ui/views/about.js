@@ -70,7 +70,7 @@ registerView({
       const safety = (sys && sys.safety) || null;
       const bench = (sys && sys.bench) || null;
       return [
-        pageHead('About', version ? ['Version ', h('span.mono.txt2', version)] : 'LLM Scheduler'),
+        pageHead('About', version ? ['Version ', h('span.mono.txt2', version)] : 'Potluck'),
         error ? h('div.banner.err', 'The system details could not be read: ' + error) : null,
         h('div.cols',
           h('div.wide',

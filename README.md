@@ -1,69 +1,75 @@
-# ps5-ai-datacenter-load-balancer
+# datacenter-gpu-orchestrator
 
-`llm-scheduler` is a Go replacement for llama-swap on the OMEN host. When a
-model is requested it decides, from live fleet state, which machines (PS5s,
-Alienware, OMEN) run it, and queues requests when nothing is free. See
-[docs/design.md](docs/design.md) for the full design.
+**Potluck** pools mixed machines, game consoles included, into one GPU cluster that runs large language models behind an OpenAI-compatible API. When a model is too big for one machine, Potluck splits it across several.
 
-The scheduler keeps its safety and lifecycle events in a file-backed history
-(`--history-dir`) and serves a read-only dashboard at `/ui/` and the history at
-`/api/history` (design 9.1, runbook "Event history and the dashboard").
+Potluck is the name of the application. This repository holds its scheduler, its web UI and its documentation.
 
-Everything live goes over one WebSocket, `GET /ws` (status, history events,
-benchmark progress; design 9.2). It can also run benchmarks itself: define
-benchmarks and suites (`import-config`, `/api/bench/...` or MCP), run them through its own
-API, and keep every result and the comparison with the last run in a SQLite
-database under the data directory (design 9.3, runbook "Benchmarks run by the
-scheduler", benchmark guide section 12). All of it is in the one binary and
-container.
+## What it does
 
-## Configuration
+- **One API for the whole pool.** Clients send ordinary OpenAI-style requests (`/v1/chat/completions`). Potluck decides which machines run the model, loads it, and forwards the request.
+- **Splits models across machines.** A model that needs more graphics memory than one machine has is spread over several, using llama.cpp's RPC workers.
+- **Places by measured memory.** It reads each model file, estimates what it needs, checks what every machine has free, and refuses a load that would not fit instead of letting a machine run out of memory.
+- **Queues and swaps.** When the pool is busy, requests wait in a queue. Idle models are unloaded to make room for the one that was asked for.
+- **Watches loads.** Per-machine load progress, stall detection, hung-worker detection, and a memory floor that stops a load before a machine freezes.
+- **Configuration in a database, with a full audit log.** Every change is a numbered revision that records who made it and from where (web UI, REST or an AI agent), applies without a restart, and can be rolled back.
+- **Built-in benchmarks.** Define benchmarks and suites, run them through the scheduler itself, and compare every run with the last one: load time, tokens per second, regressions.
+- **A web UI and live updates.** Models, machines, activity, benchmarks and settings in the browser, updated over one WebSocket.
+- **Operable by AI agents.** An MCP server on the same port exposes the same operations as the REST API, with the same audit trail.
 
-All scheduler configuration (profiles, tiers, settings, exclusions, recovery,
-fleet) is stored in the SQLite database in the data directory, not in a file.
-Every change is a numbered revision with an audit entry (who, when, from the web
-UI, REST or MCP, what changed), applies at once without a restart, and can be
-rolled back. Read it at `GET /api/config`, change it over REST (`/api/config/...`,
-`GET /api/config/schema` describes every field), read the log at `GET /api/audit`
-(design 6.0). Only five deployment paths are set outside the database, by flag or
-environment: `--listen`, `--data-dir`, `--models-dir`, `--history-dir`,
-`--child-log-dir` (`LLM_SCHEDULER_LISTEN`, `_DATA_DIR`, `_MODELS_DIR`,
-`_HISTORY_DIR`, `_CHILD_LOG_DIR`). The `--config file.yaml` start is gone: a first
-install (or a migration) imports a YAML file once with
-`llm-scheduler import-config --data-dir DIR file.yaml`; `configs/example.yaml`
-documents that input format and `deploy/seed-config.yaml` is the production seed
-(runbook "Configuration lives in the database"). Starting on an empty database works:
-no profiles, "no configuration yet".
+It is one Go binary in one container. It starts `llama-server` processes itself and needs no other service.
 
-AI agents can operate it over MCP at `/mcp` on the same port (46 tools that run the same code as the REST API; design 9.5, runbook "Let an AI agent operate the scheduler"). Everything an agent changes lands in the same audit log with source `mcp` and the client's name; benchmark and suite changes and runs are audited in section `bench`, and the loads a benchmark run makes by itself are tagged in the history and logged as source `system`.
+## Status
 
-## Tests
+**Runs today:** the scheduler, the web UI, the REST and MCP APIs, benchmarks, and split loads across several machines. It has been serving a small cluster of consoles and laptops, with models from 4 to 72 billion parameters split over up to three machines.
+
+**In progress:** `potluck-agent`, a small service that each machine runs to join the pool. It registers the machine, fetches the right llama.cpp programs for its hardware, starts them per load, and reports the machine's stats. Until it lands, pool membership comes from a separate fleet manager, and parts of the code, tests and documents still describe the first deployment. The contract the agent is built against is in [docs/agent-contract.md](docs/agent-contract.md) and [docs/stats-contract.md](docs/stats-contract.md).
+
+**Supported hardware today:** Linux machines with AMD graphics through Vulkan (the consoles) and with Nvidia cards through CUDA. Windows with Nvidia is planned.
+
+There is no authentication. Run it on a network you trust.
+
+## Related projects
+
+- Built on our llama.cpp fork: https://github.com/Jtonna/llama.cpp-for-datacenter-gpu-orchestrator. The fork carries the changes Potluck needs for loading a model across machines: parallel upload to workers, loader fixes, and workers that read model files themselves from a shared folder.
+- Reference deployment: a rack of PlayStation 5 consoles managed by the PS5 AI Datacenter project (a separate, private repository).
+
+## Run the tests
 
 ```
 go vet ./...
 go test ./...
 ```
 
-Add `-race` where cgo is available (needs gcc on Windows; the Linux run in the
-`golang:1.25` image has it).
+Add `-race` where cgo is available (it needs gcc on Windows; the `golang:1.25` image on Linux has it). The tests use a fake `llama-server` and a fake fleet, so they need no GPU.
+
+## Try the web UI without a cluster
+
+```
+go run ./cmd/devcluster --listen 127.0.0.1:8790 --scenario demo
+```
+
+This starts the real scheduler against simulated machines and opens the UI at `http://127.0.0.1:8790/ui/`.
+
+## Configuration
+
+All configuration (model profiles, hardware tiers, settings) is stored in a SQLite database in the data directory, not in a file. Read it at `GET /api/config`, change it over REST (`/api/config/...`; `GET /api/config/schema` describes every field), and read the change log at `GET /api/audit`. Only five paths are set outside the database, by flag or environment variable: `--listen`, `--data-dir`, `--models-dir`, `--history-dir`, `--child-log-dir`. A first install imports a YAML file once with `llm-scheduler import-config --data-dir DIR file.yaml`; [configs/example.yaml](configs/example.yaml) documents that format. Starting on an empty database works.
 
 ## Layout
 
-- `cmd/llm-scheduler/` entry point.
-- `internal/` packages named in design section 5 (`config`, `gguf`, `estimate`,
-  `fleet`, `placer`, `instance`, `scheduler`, `proxy`, `api`) plus `history`,
-  `audit`, `cfgstore`, `cfgsvc` (audit log, revisions, the one configuration service),
-  `benchspec` and `bench` (benchmarks: store, runner, progress model, statistics,
-  aggregates, export), `mcpserver` (the MCP server, tools as REST recipes); each
-  has a `doc.go` or package comment stating its job.
-- `internal/testutil/fakellama/` fake `llama-server-rpc` for integration tests
-  (see its README).
-- `internal/testutil/harness/` test helpers: build `fakellama` once, free
-  ports, wait for HTTP endpoints.
+- `cmd/llm-scheduler/`: the entry point.
+- `cmd/devcluster/`: the development harness used above.
+- `internal/`: the packages. `gguf` and `estimate` (reading model files and estimating memory), `fleet` and `placer` (which machines exist and where a model goes), `instance` and `scheduler` (starting, supervising and stopping models; the queue), `proxy` and `api` (the HTTP surface and the web UI), `cfgstore`, `cfgsvc` and `audit` (configuration, revisions, audit log), `bench` and `benchspec` (benchmarks), `history`, and `mcpserver`.
+- `internal/testutil/`: the fake `llama-server`, the fake fleet and test helpers.
+- `deploy/`: the container image, the compose file and the build recipe for the llama.cpp client.
 
-## Docs
+## Documents
 
-- [docs/design.md](docs/design.md) the design.
-- [docs/runbook.md](docs/runbook.md) deploying and running it on the OMEN.
-- [docs/benchmark-guide.md](docs/benchmark-guide.md) running model benchmarks through the scheduler, by hand and (section 12) from the scheduler itself.
-- [docs/hardware-test/](docs/hardware-test) results of the hardware tests: `RESULTS.md`, `RESULTS-run2.md`, `RESULTS-run3.md`, `RESULTS-run4.md` and the merged tables in `BENCHMARKS.md`.
+- [docs/design.md](docs/design.md): the design.
+- [docs/runbook.md](docs/runbook.md): deploying and running it.
+- [docs/benchmark-guide.md](docs/benchmark-guide.md): running benchmarks, by hand and from the scheduler.
+- [docs/agent-contract.md](docs/agent-contract.md) and [docs/stats-contract.md](docs/stats-contract.md): the contract for `potluck-agent` (not built yet).
+- [docs/hardware-test/](docs/hardware-test): results of the tests on real hardware.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).

@@ -1,4 +1,4 @@
-# LLM Scheduler web UI
+# Potluck web UI
 
 Static files embedded in the scheduler binary and served below `/ui/`
 (`internal/api/uifiles.go`). Plain JavaScript modules, one stylesheet, two

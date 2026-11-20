@@ -99,9 +99,11 @@ func TestRecoveryRequestFlowFromHungToReset(t *testing.T) {
 	if h := nodeStatus(c, id)["health"].(map[string]any); h["state"] != "ok" {
 		t.Fatalf("health %v", h)
 	}
-	if !strings.Contains(c.stderr.String(), "recovery sequence reset") {
-		t.Fatalf("no reset log line:\n%s", c.stderr.String())
-	}
+	// The status changes before the log line has travelled through the child's stderr
+	// pipe, so wait for the line instead of reading the buffer once.
+	c.waitFor("reset log line", 5*time.Second, func() bool {
+		return strings.Contains(c.stderr.String(), "recovery sequence reset")
+	})
 	time.Sleep(2 * time.Second)
 	if n := len(c.fleet.RecoveryRequests()); n != 1 {
 		t.Fatalf("%d requests in all, want exactly 1", n)

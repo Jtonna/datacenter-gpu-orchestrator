@@ -49,7 +49,7 @@ function render() {
   const route = parse(location.hash);
   const view = views.get(route.id);
   for (const fn of onChange) fn(route, view);
-  document.title = (view ? view.title + ' · ' : '') + 'LLM Scheduler';
+  document.title = (view ? view.title + ' · ' : '') + 'Potluck';
   if (current && current.id === route.id && current.handle && current.handle.update) {
     current.handle.update(route);
     return;

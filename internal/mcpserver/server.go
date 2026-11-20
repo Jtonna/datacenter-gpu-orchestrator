@@ -23,7 +23,7 @@ var protocolVersions = []string{"2025-11-25", "2025-06-18", "2025-03-26", "2024-
 const (
 	maxBody        = 4 << 20
 	defaultSessMax = 256
-	instructions   = "Operate the LLM scheduler (llama.cpp on PS5 workers). Start with get_status. " +
+	instructions   = "Operate Potluck, the LLM scheduler (llama.cpp across pooled machines). Start with get_status. " +
 		"Before load_model call plan_load: it says whether the model fits and what it would evict. Loads take minutes (the call returns at once; poll get_status). " +
 		"Never unload a model that has requests in flight unless the owner asked; unload_model force=true cuts generations off. " +
 		"Configuration changes are audited (who, what, when) and can be rolled back with rollback_config; read get_config_schema before writing, " +

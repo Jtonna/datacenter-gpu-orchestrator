@@ -1,4 +1,4 @@
-// Command devcluster is a dev harness for the LLM Scheduler web UI. It runs
+// Command devcluster is a dev harness for the Potluck web UI. It runs
 // the REAL server, wired as cmd/llm-scheduler's serve: the configuration
 // service on a real database (seeded through the real import path, then
 // through real REST and MCP writes), the audit log, the scheduler, the

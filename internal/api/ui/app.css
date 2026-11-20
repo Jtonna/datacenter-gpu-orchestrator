@@ -1,4 +1,4 @@
-/* LLM Scheduler UI: the design system. One stylesheet, no build step.
+/* Potluck UI: the design system. One stylesheet, no build step.
    Tokens first, then the shell, then the shared components (see README.md).
    Views do not add their own stylesheet: they use these classes, and a new
    shared pattern is added here. */

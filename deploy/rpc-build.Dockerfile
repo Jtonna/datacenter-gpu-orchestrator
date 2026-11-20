@@ -1,7 +1,7 @@
 # llama-server-rpc image for this fleet.
 #
 # Builds the llama.cpp `llama-server` binary from the PS5 datacenter fork
-# (https://github.com/Jtonna/ps5-ai-datacenter-llama.cpp, formerly Jtonna/llama.cpp) and
+# (https://github.com/Jtonna/llama.cpp-for-datacenter-gpu-orchestrator) and
 # installs it as `llama-server-rpc`.
 #
 # Pinned fork commit: a01665d30de2885879a64eae999067ef3ef5fd4b (branch ps5-loader-fixes):
@@ -16,7 +16,7 @@
 #
 # The stock pre-fork variant is kept as `rpc-build.Dockerfile.stock` for rollback.
 FROM nvidia/cuda:13.3.1-devel-ubuntu24.04 AS build
-ARG LLAMA_REMOTE=https://github.com/Jtonna/ps5-ai-datacenter-llama.cpp.git
+ARG LLAMA_REMOTE=https://github.com/Jtonna/llama.cpp-for-datacenter-gpu-orchestrator.git
 ARG LLAMA_COMMIT=a01665d30de2885879a64eae999067ef3ef5fd4b
 ARG JOBS=12
 RUN apt-get update && apt-get install -y --no-install-recommends git cmake ninja-build g++ ca-certificates \
