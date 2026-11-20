@@ -26,6 +26,7 @@ import (
 
 type survProc struct {
 	unit string
+	r    *survRunner
 	mu   sync.Mutex
 	sigs []osx.Sig
 	done chan struct{}
@@ -36,41 +37,112 @@ func (p *survProc) PID() int              { return 4242 }
 func (p *survProc) Done() <-chan struct{} { return p.done }
 func (p *survProc) Exit() runner.Exit {
 	<-p.done
-	return runner.Exit{Known: true, Code: 143, Signal: "TERM"}
+	return runner.Exit{Known: true, Code: 137, Signal: "KILL"}
 }
 func (p *survProc) Signal(s osx.Sig) error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.sigs = append(p.sigs, s)
+	p.mu.Unlock()
+	if p.r != nil && p.r.isStubborn(p.unit) {
+		if s == osx.SigKill {
+			return errors.New("systemctl kill: failed to connect to bus")
+		}
+		return nil // SIGTERM is ignored
+	}
+	p.finish()
+	return nil
+}
+func (p *survProc) finish() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	select {
 	case <-p.done:
 	default:
 		close(p.done)
 	}
-	return nil
 }
-func (p *survProc) signals() int { p.mu.Lock(); defer p.mu.Unlock(); return len(p.sigs) }
+func (p *survProc) alive() bool {
+	select {
+	case <-p.done:
+		return false
+	default:
+		return true
+	}
+}
+func (p *survProc) signals() []osx.Sig {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]osx.Sig(nil), p.sigs...)
+}
 
 type survRunner struct {
 	mu        sync.Mutex
 	procs     map[string]*survProc
 	stopped   []string
 	adoptErrs int
+	// stubborn units ignore SIGTERM, and systemctl kill and stop fail on them.
+	stubborn map[string]bool
+	// launchGate, when set, holds the start of a launch unit until it is
+	// closed; launchEntered tells that a start is waiting.
+	launchGate    chan struct{}
+	launchEntered chan struct{}
 }
 
 func newSurvRunner(units ...string) *survRunner {
-	r := &survRunner{procs: map[string]*survProc{}}
+	r := &survRunner{procs: map[string]*survProc{}, stubborn: map[string]bool{}}
 	for _, u := range units {
-		r.procs[u] = &survProc{unit: u, done: make(chan struct{})}
+		r.revive(u)
 	}
 	return r
 }
 
-func (r *survRunner) Start(ctx context.Context, s runner.Spec) (runner.Proc, error) {
+// revive puts a live unit of that name in place, as an agent that died
+// without stopping it leaves it.
+func (r *survRunner) revive(unit string) *survProc {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	p := &survProc{unit: s.Unit, done: make(chan struct{})}
-	r.procs[s.Unit] = p
+	p := &survProc{unit: unit, r: r, done: make(chan struct{})}
+	r.procs[unit] = p
+	return p
+}
+
+func (r *survRunner) proc(unit string) *survProc {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.procs[unit]
+}
+
+func (r *survRunner) isStubborn(unit string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.stubborn[unit]
+}
+
+func (r *survRunner) setStubborn(unit string) { r.mu.Lock(); r.stubborn[unit] = true; r.mu.Unlock() }
+
+func (r *survRunner) Start(ctx context.Context, s runner.Spec) (runner.Proc, error) {
+	r.mu.Lock()
+	gate, entered := r.launchGate, r.launchEntered
+	if old, ok := r.procs[s.Unit]; ok && old.alive() {
+		r.mu.Unlock()
+		return nil, runner.ErrExists
+	}
+	r.mu.Unlock()
+	var err error
+	if gate != nil && strings.HasPrefix(s.Unit, agentproto.LaunchUnitPrefix) {
+		entered <- struct{}{}
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			// systemd-run is killed with its context, but systemd has the
+			// job: the unit starts all the same.
+			err = ctx.Err()
+		}
+	}
+	p := r.revive(s.Unit)
+	if err != nil {
+		return nil, err
+	}
 	return p, nil
 }
 
@@ -92,12 +164,8 @@ func (r *survRunner) List(ctx context.Context, prefix string) ([]string, error) 
 	defer r.mu.Unlock()
 	var out []string
 	for u, p := range r.procs {
-		select {
-		case <-p.done:
-		default:
-			if strings.HasPrefix(u, prefix) {
-				out = append(out, u)
-			}
+		if p.alive() && strings.HasPrefix(u, prefix) {
+			out = append(out, u)
 		}
 	}
 	return out, nil
@@ -106,10 +174,13 @@ func (r *survRunner) List(ctx context.Context, prefix string) ([]string, error) 
 func (r *survRunner) Stop(ctx context.Context, unit string) error {
 	r.mu.Lock()
 	r.stopped = append(r.stopped, unit)
-	p := r.procs[unit]
+	p, stubborn := r.procs[unit], r.stubborn[unit]
 	r.mu.Unlock()
+	if stubborn {
+		return errors.New("systemctl stop: failed to connect to bus")
+	}
 	if p != nil {
-		p.Signal(osx.SigKill)
+		p.finish()
 	}
 	return nil
 }
@@ -155,8 +226,8 @@ func TestLaunchRecoveredWithoutIdentity(t *testing.T) {
 	e := newTenvWith(t, func(o *Options, d *Deps) { d.Runner, d.Net = sr, noNet{} })
 	e.leftLaunch(-time.Second) // the lease ended while the agent was away
 	e.start()
-	p := sr.procs["potluck-launch-ln-1"]
-	agenttest.Eventually(t, 5*time.Second, "lease expiry stops the launch", func() bool { return p.signals() >= 1 })
+	p := sr.proc("potluck-launch-ln-1")
+	agenttest.Eventually(t, 5*time.Second, "lease expiry stops the launch", func() bool { return len(p.signals()) >= 1 })
 	if e.pl.nRegisters() != 0 {
 		t.Fatal("registered without an identity")
 	}
@@ -184,7 +255,7 @@ func TestLeftoverExportersStoppedBeforePortCheck(t *testing.T) {
 	if id := e.pl.lastRegister().LaunchID; id == nil || *id != "ln-1" {
 		t.Fatalf("registration does not name the running launch: %v", id)
 	}
-	if sr.procs["potluck-launch-ln-1"].signals() != 0 {
+	if len(sr.proc("potluck-launch-ln-1").signals()) != 0 {
 		t.Fatal("the running launch was signalled")
 	}
 }
@@ -252,7 +323,7 @@ func TestBindRetried(t *testing.T) {
 	e.leftLaunch(-time.Second)
 	e.start()
 	// The launch's lease is enforced while the port is still taken.
-	agenttest.Eventually(t, 5*time.Second, "lease expiry", func() bool { return sr.procs["potluck-launch-ln-1"].signals() >= 1 })
+	agenttest.Eventually(t, 5*time.Second, "lease expiry", func() bool { return len(sr.proc("potluck-launch-ln-1").signals()) >= 1 })
 	agenttest.Eventually(t, 5*time.Second, "registration", func() bool { return e.pl.nRegisters() >= 1 })
 	mu.Lock()
 	defer mu.Unlock()

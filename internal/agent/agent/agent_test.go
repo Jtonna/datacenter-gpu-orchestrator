@@ -147,8 +147,10 @@ func (m fakeMem) MemInfo() (osx.MemInfo, error) {
 }
 
 type fakeProcs struct {
-	mu   sync.Mutex
-	list []osx.ProcInfo
+	mu        sync.Mutex
+	list      []osx.ProcInfo
+	signalled []int
+	onSignal  func(pid int)
 }
 
 func (f *fakeProcs) List() ([]osx.ProcInfo, error) {
@@ -156,8 +158,17 @@ func (f *fakeProcs) List() ([]osx.ProcInfo, error) {
 	defer f.mu.Unlock()
 	return f.list, nil
 }
-func (f *fakeProcs) Signal(int, osx.Sig) error { return nil }
-func (f *fakeProcs) Self() int                 { return os.Getpid() }
+func (f *fakeProcs) Signal(pid int, _ osx.Sig) error {
+	f.mu.Lock()
+	f.signalled = append(f.signalled, pid)
+	on := f.onSignal
+	f.mu.Unlock()
+	if on != nil {
+		on(pid)
+	}
+	return nil
+}
+func (f *fakeProcs) Self() int { return os.Getpid() }
 
 // dialSockets answers Listening by connecting (tests only; the real agent
 // reads the socket table and never connects).
@@ -222,6 +233,8 @@ type tenv struct {
 	expSpecs []agentproto.ExporterSpec
 	nodePort int
 	stateDir string
+	opt      Options
+	deps     Deps
 	cancel   context.CancelFunc
 	done     chan struct{}
 	runner   runner.Runner
@@ -281,8 +294,9 @@ func newTenvWith(t *testing.T, mod func(*Options, *Deps)) *tenv {
 		ExporterPorts: []int{e.nodePort}, WorkerPort: freePort(t), HostPort: freePort(t), Logger: testLogger()}
 	if mod != nil {
 		mod(&opt, &deps)
-		e.runner = deps.Runner
+		e.runner, e.stateDir, e.clock = deps.Runner, opt.StateDir, deps.Clock.(*osx.FakeClock)
 	}
+	e.opt, e.deps = opt, deps
 	a, err := New(opt, deps)
 	if err != nil {
 		t.Fatal(err)

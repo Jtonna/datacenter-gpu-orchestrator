@@ -624,86 +624,144 @@ func TestWorkerHasNoFileLoadEnv(t *testing.T) {
 	}
 }
 
-// A kill that systemctl cannot deliver falls back to signalling the
-// processes of the launch's own unit, and only those, and goes on until the
-// process is gone.
-func TestKillFailsThenDirectFallback(t *testing.T) {
+// advanceUntil moves the fake clock in steps until cond holds.
+func (e *env) advanceUntil(what string, step time.Duration, cond func() bool) {
+	e.t.Helper()
+	agenttest.Eventually(e.t, 10*time.Second, what, func() bool {
+		if cond() {
+			return true
+		}
+		e.clock.Advance(step)
+		e.settle(2)
+		return cond()
+	})
+}
+
+var unitProcs = []osx.ProcInfo{
+	{PID: 700, Cgroup: "0::/system.slice/potluck-launch-ln-1.service"},
+	{PID: 701, Cgroup: "0::/system.slice/potluck-launch-ln-10.service"},
+	{PID: 702, Cgroup: "0::/system.slice/ssh.service"},
+	{PID: 1, Cgroup: "0::/init.scope"},
+}
+
+// An ordinary stop escalates: SIGTERM, after the 10 s wait SIGKILL, then a
+// stop of the unit, then SIGKILL sent directly to the processes of the
+// launch's own unit, and only those.
+func TestStopEscalation(t *testing.T) {
 	e := newEnv(t, true)
+	e.runner.ignoreTerm = true
+	e.runner.stopErr = errors.New("systemctl stop: failed to connect to bus")
+	e.run()
+	e.startReady("ln-1")
+	p := e.runner.proc("potluck-launch-ln-1")
+	p.mu.Lock()
+	p.killDeaf = 1 << 30 // systemctl kill is accepted and does nothing
+	p.mu.Unlock()
+	e.procs.set(unitProcs)
+	e.procs.mu.Lock()
+	e.procs.onKill = func(pid int) {
+		if pid == 700 {
+			p.finish(runner.Exit{Known: true, Code: 137, Signal: "KILL"})
+		}
+	}
+	e.procs.mu.Unlock()
+
+	e.m.Stop("ln-1", false)
+	agenttest.Eventually(t, 5*time.Second, "TERM", func() bool { return len(p.signals()) == 1 })
+	e.settle(5)
+	if s := p.signals(); len(s) != 1 || s[0] != osx.SigTerm {
+		t.Fatalf("before the 10 s wait: %v", s)
+	}
+	e.clock.Advance(10 * time.Second)
+	agenttest.Eventually(t, 5*time.Second, "KILL", func() bool { s := p.signals(); return len(s) == 2 && s[1] == osx.SigKill })
+	e.settle(5)
+	if len(p.signals()) != 2 || len(e.runner.stops()) != 0 {
+		t.Fatal("the next attempt came before the retry wait")
+	}
+	e.clock.Advance(time.Second)
+	agenttest.Eventually(t, 5*time.Second, "stop of the unit", func() bool { return len(e.runner.stops()) == 1 })
+	e.settle(5)
+	if len(e.procs.kills()) != 0 {
+		t.Fatal("direct kill before the retry wait")
+	}
+	e.clock.Advance(250 * time.Millisecond) // the stop failed: the short wait
+	e.portClosed()
+	st := e.waitState(agentproto.StateExited)
+	if k := e.procs.kills(); len(k) != 1 || k[0] != 700 {
+		t.Fatalf("signalled directly: %v, want only pid 700 of the launch unit", k)
+	}
+	if st.Exit.Reason != agentproto.ExitStopped || len(p.signals()) != 2 || e.runner.stops()[0] != "potluck-launch-ln-1" {
+		t.Fatalf("%s, signals %v, stops %v", st.Exit.Reason, p.signals(), e.runner.stops())
+	}
+}
+
+// The watchdog sends SIGKILL at once, with no SIGTERM, and escalates in the
+// same way when that does not work.
+func TestWatchdogKillsFirstThenEscalates(t *testing.T) {
+	e := newEnv(t, true)
+	e.runner.stopKills = true
 	e.run()
 	e.startReady("ln-1")
 	p := e.runner.proc("potluck-launch-ln-1")
 	p.mu.Lock()
 	p.killErrs = 1 << 30 // systemctl kill never works
 	p.mu.Unlock()
-	e.procs.set([]osx.ProcInfo{
-		{PID: 700, Cgroup: "0::/system.slice/potluck-launch-ln-1.service"},
-		{PID: 701, Cgroup: "0::/system.slice/potluck-launch-ln-10.service"},
-		{PID: 702, Cgroup: "0::/system.slice/ssh.service"},
-		{PID: 1, Cgroup: "0::/init.scope"},
-	})
 	e.mem.set(900)
-	agenttest.Eventually(t, 5*time.Second, "direct kill", func() bool { return len(e.procs.kills()) >= 1 })
-	if e.m.State().State != agentproto.StateStopping {
-		t.Fatal("not exited before the process is gone")
-	}
-	// The process is still there: the kill goes on (the clock moves so the
-	// retry wait passes).
-	n := len(p.signals())
-	e.clock.Advance(2 * time.Second)
-	agenttest.Eventually(t, 5*time.Second, "kill again", func() bool { return len(p.signals()) > n })
-	for _, pid := range e.procs.kills() {
-		if pid != 700 {
-			t.Fatalf("signalled pid %d, which is not in the launch unit", pid)
-		}
-	}
-	p.finish(runner.Exit{Known: true, Code: 137, Signal: "KILL"})
-	e.portClosed()
-	if st := e.waitState(agentproto.StateExited); st.Exit.Reason != agentproto.ExitWatchdog {
-		t.Fatal(st.Exit.Reason)
-	}
-}
-
-// With no process to signal directly, a failed kill is tried again on the
-// next round, without waiting.
-func TestKillErrorRetriedEveryRound(t *testing.T) {
-	e := newEnv(t, true)
-	e.run()
-	e.startReady("ln-1")
-	p := e.runner.proc("potluck-launch-ln-1")
-	p.mu.Lock()
-	p.killErrs = 3
-	p.mu.Unlock()
-	e.mem.set(900)
-	e.portClosed()
-	st := e.waitState(agentproto.StateExited) // the fourth attempt works; the clock never moved
-	if st.Exit.Reason != agentproto.ExitWatchdog || len(p.signals()) != 4 {
-		t.Fatalf("%s after %d signals", st.Exit.Reason, len(p.signals()))
-	}
-}
-
-// A kill that was delivered but did not end the process is sent again after
-// the retry wait.
-func TestKillRepeatedWhileProcessLives(t *testing.T) {
-	e := newEnv(t, true)
-	e.run()
-	e.startReady("ln-1")
-	p := e.runner.proc("potluck-launch-ln-1")
-	p.mu.Lock()
-	p.killDeaf = 2
-	p.mu.Unlock()
-	e.m.Stop("ln-1", true)
-	agenttest.Eventually(t, 5*time.Second, "first KILL", func() bool { return len(p.signals()) == 1 })
+	agenttest.Eventually(t, 5*time.Second, "KILL", func() bool { return len(p.signals()) == 1 })
 	e.settle(5)
-	if len(p.signals()) != 1 {
-		t.Fatal("kill repeated before the retry wait")
+	if s := p.signals(); len(s) != 1 || s[0] != osx.SigKill || len(e.runner.stops()) != 0 {
+		t.Fatalf("signals %v, stops %v", s, e.runner.stops())
 	}
-	e.clock.Advance(time.Second)
-	agenttest.Eventually(t, 5*time.Second, "second KILL", func() bool { return len(p.signals()) == 2 })
-	e.clock.Advance(time.Second)
+	if e.m.State().State != agentproto.StateStopping {
+		t.Fatal("exited before the process is gone")
+	}
+	e.clock.Advance(250 * time.Millisecond)
 	e.portClosed()
-	if st := e.waitState(agentproto.StateExited); st.Exit.Reason != agentproto.ExitForced || len(p.signals()) != 3 {
-		t.Fatalf("%s after %d signals", st.Exit.Reason, len(p.signals()))
+	st := e.waitState(agentproto.StateExited)
+	if st.Exit.Reason != agentproto.ExitWatchdog || len(e.runner.stops()) != 1 {
+		t.Fatalf("%s, stops %v", st.Exit.Reason, e.runner.stops())
 	}
+}
+
+// When nothing works the kill is tried for ever, but never more than about
+// four times a second.
+func TestKillNeverGivesUpAndIsRateBounded(t *testing.T) {
+	e := newEnv(t, true)
+	e.runner.stopErr = errors.New("systemctl stop: failed to connect to bus")
+	e.run()
+	e.startReady("ln-1")
+	p := e.runner.proc("potluck-launch-ln-1")
+	p.mu.Lock()
+	p.killErrs = 1 << 30
+	p.mu.Unlock()
+	attempts := func() int {
+		e.procs.mu.Lock()
+		defer e.procs.mu.Unlock()
+		return len(p.signals()) + len(e.runner.stops()) + e.procs.lists
+	}
+	e.m.Stop("ln-1", true)
+	for i := 0; i < 100; i++ { // one second, 10 ms at a time
+		e.clock.Advance(10 * time.Millisecond)
+		e.settle(2)
+	}
+	if n := attempts(); n < 4 || n > 5 {
+		t.Fatalf("%d kill attempts in one second, want four or five", n)
+	}
+	for i := 0; i < 240; i++ { // one more minute
+		e.clock.Advance(250 * time.Millisecond)
+		e.settle(2)
+	}
+	if n := attempts(); n < 200 {
+		t.Fatalf("the kill was given up: %d attempts after a minute", n)
+	}
+	if e.m.State().State != agentproto.StateStopping {
+		t.Fatal("not stopping")
+	}
+	p.mu.Lock()
+	p.killErrs = 0
+	p.mu.Unlock()
+	e.portClosed()
+	e.advanceUntil("exited", 250*time.Millisecond, func() bool { return e.m.State().State == agentproto.StateExited })
 }
 
 // A restarted agent does not trust a kill recorded by the earlier process.

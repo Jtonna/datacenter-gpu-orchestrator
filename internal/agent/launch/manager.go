@@ -67,7 +67,8 @@ type Config struct {
 
 	Tick               time.Duration // loop period; default 100ms (watchdog needs >= 4 Hz)
 	StopWait           time.Duration // TERM to KILL; default 10s
-	KillRetry          time.Duration // KILL sent again while the process lives; default 1s
+	KillRetry          time.Duration // next kill attempt after one that was delivered; default 1s
+	KillRetryFail      time.Duration // next kill attempt after one that failed; default 250ms
 	StartTimeout       time.Duration // starting the unit; default 30s
 	PortRetry          time.Duration // port_in_use retry; default 3s
 	WorkerProbeTimeout time.Duration // default 5s
@@ -180,6 +181,9 @@ func New(cfg Config, deps Deps) *Manager {
 	}
 	if cfg.KillRetry == 0 {
 		cfg.KillRetry = time.Second
+	}
+	if cfg.KillRetryFail == 0 {
+		cfg.KillRetryFail = 250 * time.Millisecond
 	}
 	if cfg.StartTimeout == 0 {
 		cfg.StartTimeout = 30 * time.Second
@@ -762,11 +766,14 @@ func (m *Manager) stopLocked(r *launchRun, cause, msg string, force bool) {
 		return
 	}
 	if p := r.proc; p != nil {
+		id := r.rec.LaunchID
 		go func() {
-			// A TERM that fails is covered by the KILL after StopWait.
+			// A TERM that fails is covered by the kill after StopWait.
 			if err := p.Signal(osx.SigTerm); err != nil {
-				m.log.Warn("signal", "launch_id", r.rec.LaunchID, "sig", osx.SigTerm.String(), "err", err)
+				m.log.Error("stop: SIGTERM failed", "launch_id", id, "err", err)
+				return
 			}
+			m.log.Info("stop: SIGTERM sent", "launch_id", id)
 		}()
 	}
 }
@@ -783,9 +790,14 @@ func procGone(p runner.Proc) bool {
 	}
 }
 
-// killLocked starts one SIGKILL attempt unless one is running. The tick
-// calls it again every KillRetry while the process lives, and on the next
-// round after an attempt that failed.
+// killLocked starts one kill attempt unless one is running. The tick calls
+// it again until the process is gone; it never gives up. The attempts
+// escalate, round after round: SIGKILL through the runner (systemctl kill),
+// then a stop of the unit (systemctl stop), then SIGKILL sent directly to
+// the processes of the unit's own cgroup. The next attempt comes KillRetry
+// after one that was delivered and KillRetryFail after one that failed, so
+// there are never more than about four a second. Every attempt writes one
+// log line.
 func (m *Manager) killLocked(r *launchRun, now time.Duration) {
 	p := r.proc
 	if p == nil || r.killBusy {
@@ -795,24 +807,36 @@ func (m *Manager) killLocked(r *launchRun, now time.Duration) {
 	r.killTries++
 	n, id, unit := r.killTries, r.rec.LaunchID, r.rec.Unit
 	go func() {
-		err := p.Signal(osx.SigKill)
+		how, err := m.killStep(n, p, unit)
 		if err != nil {
-			// systemctl could not do it: signal the unit's processes directly.
-			direct := m.killUnitProcs(unit)
-			if n == 1 || n%50 == 0 {
-				m.log.Error("kill failed; the unit's processes were signalled directly", "launch_id", id, "attempt", n, "err", err, "signalled", direct)
-			}
-			if direct > 0 {
-				err = nil
-			}
+			m.log.Error("kill attempt failed", "launch_id", id, "attempt", n, "how", how, "err", err)
+		} else {
+			m.log.Warn("kill attempt", "launch_id", id, "attempt", n, "how", how)
 		}
 		m.mu.Lock()
 		r.killBusy = false
 		if err != nil {
-			r.killNext = 0
+			r.killNext = now + m.cfg.KillRetryFail
 		}
 		m.mu.Unlock()
 	}()
+}
+
+// killStep runs attempt n of the kill escalation.
+func (m *Manager) killStep(n int, p runner.Proc, unit string) (string, error) {
+	switch (n - 1) % 3 {
+	case 0:
+		return "SIGKILL", p.Signal(osx.SigKill)
+	case 1:
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		return "stop of the unit", m.deps.Runner.Stop(ctx, unit)
+	}
+	k := m.killUnitProcs(unit)
+	if k == 0 {
+		return "SIGKILL to the unit's processes", errors.New("no process found in the unit's cgroup")
+	}
+	return fmt.Sprintf("SIGKILL to the unit's %d processes", k), nil
 }
 
 // InUnitCgroup reports whether a /proc/<pid>/cgroup text places the process
@@ -973,8 +997,8 @@ func (m *Manager) tick(ctx context.Context) {
 	if r.state == agentproto.StateStopping && !r.kill && r.rec.StopReqAt != 0 && now-time.Duration(r.rec.StopReqAt) >= m.cfg.StopWait {
 		r.kill = true
 	}
-	// A kill is repeated until the process is gone: one attempt can fail, and
-	// a kill recorded by an earlier agent process is not trusted.
+	// A kill is repeated, escalating, until the process is gone: one attempt
+	// can fail, and a kill recorded by an earlier agent process is not trusted.
 	if r.kill && now >= r.killNext && !procGone(r.proc) {
 		m.killLocked(r, now)
 	}

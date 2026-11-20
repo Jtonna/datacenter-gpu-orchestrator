@@ -93,6 +93,8 @@ type fakeRunner struct {
 	ignoreTerm bool
 	nextPID    int
 	stopped    []string
+	stopErr    error
+	stopKills  bool // Stop ends the unit, as systemctl stop does
 }
 
 func newFakeRunner(survives bool) *fakeRunner {
@@ -146,8 +148,21 @@ func (r *fakeRunner) List(ctx context.Context, prefix string) ([]string, error) 
 func (r *fakeRunner) Stop(ctx context.Context, unit string) error {
 	r.mu.Lock()
 	r.stopped = append(r.stopped, unit)
+	p, err, kills := r.procs[unit], r.stopErr, r.stopKills
 	r.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if kills && p != nil {
+		p.finish(runner.Exit{Known: true, Code: 137, Signal: "KILL"})
+	}
 	return ctx.Err()
+}
+
+func (r *fakeRunner) stops() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.stopped...)
 }
 func (r *fakeRunner) Kind() string   { return "fake" }
 func (r *fakeRunner) Survives() bool { return r.survives }
@@ -224,17 +239,24 @@ type fakeProcs struct {
 	mu     sync.Mutex
 	list   []osx.ProcInfo
 	killed []int
+	lists  int
+	onKill func(pid int)
 }
 
 func (f *fakeProcs) List() ([]osx.ProcInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.lists++
 	return f.list, nil
 }
 func (f *fakeProcs) Signal(pid int, s osx.Sig) error {
 	f.mu.Lock()
 	f.killed = append(f.killed, pid)
+	on := f.onKill
 	f.mu.Unlock()
+	if on != nil {
+		on(pid)
+	}
 	return nil
 }
 func (f *fakeProcs) kills() []int {

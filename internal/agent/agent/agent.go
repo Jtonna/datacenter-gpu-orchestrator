@@ -360,13 +360,40 @@ func serveOn(ctx context.Context, l net.Listener, h http.Handler) {
 }
 
 // checkPorts verifies the exporter ports are free (section 3).
-func (a *Agent) checkPorts() error {
-	for _, p := range a.deps.ExporterPorts {
-		if err := a.deps.PortFree("127.0.0.1", p); err != nil {
-			return fmt.Errorf("port %d is taken: %v", p, err)
+// A port still held by the agent's own exporter unit (one that an earlier
+// agent process left and that could not be stopped) is not a reason to stay
+// out of the pool: the agent never refuses to start over its own leftovers.
+// The supervisor replaces that unit when it can, and reads it until then.
+func (a *Agent) checkPorts(ctx context.Context) error {
+	own := []string{agentproto.NodeExporterUnit, agentproto.NvidiaExporterUnit}
+	for i, p := range a.deps.ExporterPorts {
+		err := a.deps.PortFree("127.0.0.1", p)
+		if err == nil {
+			continue
 		}
+		if i < len(own) && a.ownUnitAlive(ctx, own[i]) {
+			a.log.Warn("exporter port is held by this agent's own leftover unit; going on", "port", p, "unit", own[i])
+			continue
+		}
+		return fmt.Errorf("port %d is taken: %v", p, err)
 	}
 	return nil
+}
+
+func (a *Agent) ownUnitAlive(ctx context.Context, unit string) bool {
+	if !a.deps.Runner.Survives() {
+		return false
+	}
+	units, err := a.deps.Runner.List(ctx, unit)
+	if err != nil {
+		return false
+	}
+	for _, u := range units {
+		if u == unit {
+			return true
+		}
+	}
+	return false
 }
 
 // Run runs the agent until ctx ends. It serves port 50060 itself when
@@ -406,7 +433,7 @@ func (a *Agent) Run(ctx context.Context) error {
 			if a.deps.Runner.Survives() {
 				a.Export.StopLeftovers(ctx)
 			}
-			if err = a.checkPorts(); err != nil {
+			if err = a.checkPorts(ctx); err != nil {
 				a.setError("registration not attempted: " + err.Error())
 			}
 		}
