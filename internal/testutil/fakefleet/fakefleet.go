@@ -128,11 +128,11 @@ func PS5(id, hostname, ip string, vramTotalGB, vramUsedGB, ramTotalGB, ramUsedGB
 }
 
 // Relay builds an online member relayed by the host machine hub (role "worker",
-// source "relay:omen-hub", rpc port 50052).
+// source "relay:hostNode-hub", rpc port 50052).
 func Relay(id, hostname, ip string, vramTotalGB, vramUsedGB float64) Member {
 	return Member{
 		ID: id, Hostname: hostname, Name: hostname, IP: Ptr(ip),
-		Role: "worker", Source: "relay:omen-hub", Online: true, RPC: Ptr(true), RPCPort: Ptr(50052), OS: "orbis",
+		Role: "worker", Source: "relay:hostNode-hub", Online: true, RPC: Ptr(true), RPCPort: Ptr(50052), OS: "orbis",
 		RAMTotalGB: Ptr(16.0), RAMUsedGB: Ptr(4.0),
 		VRAMTotal: Ptr(vramTotalGB), VRAMUsed: Ptr(vramUsedGB), GPUName: Ptr("NVIDIA GeForce RTX 3070 Ti"),
 	}

@@ -206,7 +206,7 @@ The scheduler treats a PS5 as able to host only when `server_api_port` is presen
 
 ### 7.1 Choosing the host
 
-New profile field `host` with values `auto` (default), `omen`, `ps5`.
+New profile field `host` with values `auto` (default), `host`, `ps5`.
 
 `auto` in step 1: PS5-hosted when the profile runs on exactly one PS5 and does not force host machine or Nvidia laptop members. Otherwise host machine-hosted. The choice depends on the profile only, not on the PS5's state at that moment: a PS5 that cannot host right now (share unreachable, agent API absent, build not on the allowlist) gives a reported, retried load, not a host machine-hosted one.
 

@@ -37,7 +37,7 @@ func newStatus(now time.Time) *statusBuilder {
 	for _, n := range allNodes {
 		ns := &scheduler.NodeStatus{ID: core.NodeID(n.ID), Hostname: n.Host, Local: n.Local, Online: true, Addr: n.Addr(),
 			Priority: n.Priority, Eligible: true, TotalMiB: n.TotalMiB, EmptyMiB: n.TotalMiB, PlanBudgetMiB: n.Budget()}
-		if n.Host == alien.Host {
+		if n.Host == laptop.Host {
 			ns.Excluded, ns.Eligible = true, false
 			ns.Addr = "192.0.2.3:50052"
 			ns.PlanBudgetMiB = n.TotalMiB - n.Headroom
@@ -345,12 +345,12 @@ func (b *statusBuilder) finish() map[string]any {
 			ns.MissingSince = b.now
 		}
 		base := n.TotalMiB
-		if n.Host == alien.Host {
+		if n.Host == laptop.Host {
 			base = 7782
 		}
 		ns.FreeMiB = max(base-b.used[n.Host], 0)
 		ns.LiveBudgetMiB = max(ns.FreeMiB-n.Headroom, 0)
-		if n.Host == alien.Host {
+		if n.Host == laptop.Host {
 			ns.LiveBudgetMiB = 7526
 			ns.PlanBudgetMiB = 7936
 			ns.EmptyMiB = 8192

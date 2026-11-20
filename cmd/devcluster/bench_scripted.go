@@ -157,7 +157,7 @@ func hostsOf(profile string) []string {
 	if len(p.ForceNodes) > 0 {
 		return p.ForceNodes
 	}
-	return []string{ps5A.Host}
+	return []string{consoleA.Host}
 }
 
 // statusLocked builds the scheduler status of the scripted state. The caller holds a.mu.
@@ -180,7 +180,7 @@ func (a *scriptedAPI) statusLocked() *statusBuilder {
 	}
 	b.st.RecentLoads = append(b.st.RecentLoads, a.recent...)
 	ver := a.rpcVersion
-	for _, n := range []nodeDef{ps5A, ps5B, ps5C} {
+	for _, n := range []nodeDef{consoleA, consoleB, consoleC} {
 		b.nodes[n.Host].RPCServerVersion = &ver
 	}
 	return b

@@ -107,7 +107,7 @@ Two related numbers:
 
 ## After the PS5 fixes (2026-11-18)
 
-Two fixes were made on the PS5 side (not in this repo): the `rpc-server` tensor cache was turned off, and the PS5 GPU clock was pinned at 2230 MHz (it sat at 500 MHz; decode about 2.4x faster on a two-PS5 split). Every load is now a full upload and there are no cached reloads. Sources: load times and memory come from the scheduler's log lines (`load_duration`, "instance ready"); decode speeds come from the separate benchmark agent (full tables in `C:\Users\J\documents\ps5llm\benchmarks.md`, outside this repo). Details and context: `RESULTS-run4.md`.
+Two fixes were made on the PS5 side (not in this repo): the `rpc-server` tensor cache was turned off, and the PS5 GPU clock was pinned at 2230 MHz (it sat at 500 MHz; decode about 2.4x faster on a two-PS5 split). Every load is now a full upload and there are no cached reloads. Sources: load times and memory come from the scheduler's log lines (`load_duration`, "instance ready"); decode speeds come from the separate benchmark agent (full tables in a results file kept outside this repository, outside this repo). Details and context: `RESULTS-run4.md`.
 
 ### Upload rates after the fixes
 
@@ -124,7 +124,7 @@ The rows above were measured on the old 1 GbE link (the host machine's built-in 
 
 #### After the network upgrade (2026-11-18, about 14:00 to 14:31 UTC)
 
-The host machine's link to the PS5 switch moved to a USB-C adapter (interface `enx6c1ff7c349ea`) negotiated at 2500 Mb/s. The PS5s still have 1 GbE ports.
+The host machine's link to the PS5 switch moved to a USB-C adapter (interface `enx020000000010`) negotiated at 2500 Mb/s. The PS5s still have 1 GbE ports.
 
 | Case | 1 GbE (old link) | 2.5 GbE |
 |---|---|---|

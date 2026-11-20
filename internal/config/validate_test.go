@@ -91,7 +91,7 @@ func TestValidateRejects(t *testing.T) {
 		{"tier bad glob", "tiers:\n  - match: { hostname: \"[\" }\n    priority: 1\n", []string{"tiers[0]", "hostname"}},
 		{"tier negative headroom", "tiers:\n  - match: { local: true }\n    priority: 1\n    headroom_mib: -1\n", []string{"tiers[0]", "headroom_mib"}},
 		{"override rpc no port", baseHeader + "node_overrides:\n  n: { rpc: \"192.0.2.3\" }\n", []string{`node_overrides "n"`, "rpc"}},
-		{"override rpc hostname", baseHeader + "node_overrides:\n  n: { rpc: \"alien:50052\" }\n", []string{`node_overrides "n"`, "rpc"}},
+		{"override rpc hostname", baseHeader + "node_overrides:\n  n: { rpc: \"laptop:50052\" }\n", []string{`node_overrides "n"`, "rpc"}},
 		{"override rpc port range", baseHeader + "node_overrides:\n  n: { rpc: \"192.0.2.3:70000\" }\n", []string{`node_overrides "n"`, "rpc"}},
 		{"override rpc ipv6", baseHeader + "node_overrides:\n  n: { rpc: \"[::1]:5\" }\n", []string{`node_overrides "n"`, "rpc"}},
 		{"defaults max_pool zero", baseHeader + "defaults: {max_pool: 0}\n", []string{"defaults", "max_pool"}},

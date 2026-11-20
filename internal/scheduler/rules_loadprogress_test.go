@@ -236,7 +236,7 @@ func TestLoadProgress_SampleAfterTheLoadIsIgnored(t *testing.T) {
 }
 
 func TestLoadProgress_LocalOnlyPlacementHasNoUpload(t *testing.T) {
-	h := newHarness(t).nodes(omen(7000))
+	h := newHarness(t).nodes(hostNode(7000))
 	h.llama("m", 4000)
 	h.request("m")
 	h.wantState("m", "starting")
@@ -252,7 +252,7 @@ func TestLoadProgress_LocalOnlyPlacementHasNoUpload(t *testing.T) {
 }
 
 func TestLoadProgress_BytesTotalIsTheRemoteShareOfTheFile(t *testing.T) {
-	h := newHarness(t).nodes(omen(7000), ps5("a", 2, 15000))
+	h := newHarness(t).nodes(hostNode(7000), ps5("a", 2, 15000))
 	h.llama("m", 8000, func(p *core.Profile) {
 		p.ForceNodes = []string{"host-1", "a"}
 		p.TensorSplit = []int{1, 3}
@@ -321,7 +321,7 @@ func TestLoadProgress_LoggedEvery30Seconds(t *testing.T) {
 }
 
 func TestLoadProgress_LoggedForLocalLoadsToo(t *testing.T) {
-	h := newHarness(t).nodes(omen(7000))
+	h := newHarness(t).nodes(hostNode(7000))
 	h.llama("m", 4000)
 	h.request("m")
 	h.advance(31 * time.Second)

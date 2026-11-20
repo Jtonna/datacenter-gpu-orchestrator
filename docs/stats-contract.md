@@ -580,14 +580,14 @@ node_load5 1.09
 node_load15 1.21
 # HELP node_network_up Value is 1 if operstate is 'up', 0 otherwise.
 node_network_up{device="eno1"} 0
-node_network_up{device="enx6c1ff7c349ea"} 1
+node_network_up{device="enx020000000010"} 1
 # HELP node_network_receive_bytes_total Network device statistic receive_bytes.
 # TYPE node_network_receive_bytes_total counter
-node_network_receive_bytes_total{device="enx6c1ff7c349ea"} 2.2462712753e+10
-node_network_transmit_bytes_total{device="enx6c1ff7c349ea"} 8.80881274607e+11
+node_network_receive_bytes_total{device="enx020000000010"} 2.2462712753e+10
+node_network_transmit_bytes_total{device="enx020000000010"} 8.80881274607e+11
 # HELP node_network_speed_bytes Network device property: speed_bytes
 node_network_speed_bytes{device="eno1"} -125000
-node_network_speed_bytes{device="enx6c1ff7c349ea"} 6.25e+08
+node_network_speed_bytes{device="enx020000000010"} 6.25e+08
 ```
 
 The laptop has 256 `node_cpu_seconds_total` series (32 logical CPUs times 8 modes). The sample counter values above are from the first author run; the speed and counters were not re-checked in the second run.
@@ -662,7 +662,7 @@ Memory: Nvidia total 8,546,942,976, used 2,097,152, reserved 465,567,744. AMD: t
   "memory": { "total_bytes": 32099495936, "available_bytes": 27607855104 },
   "load": { "load1": 1.69, "load5": 1.09, "load15": 1.21 },
   "net": [
-    { "name": "enx6c1ff7c349ea", "primary": true, "up": true, "rx_mbps": 0.4, "tx_mbps": 1.2, "link_mbps": 5000 },
+    { "name": "enx020000000010", "primary": true, "up": true, "rx_mbps": 0.4, "tx_mbps": 1.2, "link_mbps": 5000 },
     { "name": "eno1", "up": false }
   ],
   "temps": [
@@ -710,4 +710,4 @@ Memory: Nvidia total 8,546,942,976, used 2,097,152, reserved 465,567,744. AMD: t
 }
 ```
 
-Note: the fan entry shows that rpm 0 and duty 0 are sent as real readings; `fan_percent` is omitted on the Nvidia GPU because the exporter had no fan series. The `i2c_*` memory-module sensors read 0 and were dropped (section 4.6). The `primary` flag on `enx6c1ff7c349ea` is illustrative: which interface carries the route to Potluck on that laptop is not known.
+Note: the fan entry shows that rpm 0 and duty 0 are sent as real readings; `fan_percent` is omitted on the Nvidia GPU because the exporter had no fan series. The `i2c_*` memory-module sensors read 0 and were dropped (section 4.6). The `primary` flag on `enx020000000010` is illustrative: which interface carries the route to Potluck on that laptop is not known.

@@ -247,7 +247,7 @@ func TestLog_NoInfoPerRequestOnHotPath(t *testing.T) {
 // Defect 2 at the scheduler: a remote-only placement starts its child with
 // CUDA_VISIBLE_DEVICES emptied, a placement with the local node does not.
 func TestLaunchEnvHidesHostGPUOnlyForRemoteOnlyPlacements(t *testing.T) {
-	h := newHarness(t).nodes(ps5("a", 2, 15000), omen(8000))
+	h := newHarness(t).nodes(ps5("a", 2, 15000), hostNode(8000))
 	h.autoStart = false
 	h.llama("remote", 8000, func(p *core.Profile) { p.ForceNodes = []string{"a"} })
 	h.llama("local", 6000, func(p *core.Profile) { p.ForceNodes = []string{"host-1"} })

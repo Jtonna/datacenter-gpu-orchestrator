@@ -40,15 +40,15 @@ func (n nodeDef) Budget() int { return n.TotalMiB - n.Headroom }
 const ps5TotalMiB = 13722 // 13.4 GiB usable RAM per PS5 as the fleet reports it
 
 var (
-	ps5A  = nodeDef{ID: "02:00:00:00:01:01", Host: "console-1", IP: "192.0.2.21", Priority: 1, TotalMiB: ps5TotalMiB, Headroom: 1024}
-	ps5B  = nodeDef{ID: "02:00:00:00:01:02", Host: "console-2", IP: "192.0.2.22", Priority: 1, TotalMiB: ps5TotalMiB, Headroom: 1024}
-	ps5C  = nodeDef{ID: "02:00:00:00:01:03", Host: "console-3", IP: "192.0.2.23", Priority: 1, TotalMiB: ps5TotalMiB, Headroom: 1024}
-	alien = nodeDef{ID: "02:00:00:00:00:12", Host: "laptop-2", IP: "192.0.2.3", Priority: 2, TotalMiB: 8192, Headroom: 256}
-	omen  = nodeDef{ID: "host-1", Host: "host-1", Local: true, Priority: 3, TotalMiB: 8151, Headroom: 450}
+	consoleA = nodeDef{ID: "02:00:00:00:01:01", Host: "console-1", IP: "192.0.2.21", Priority: 1, TotalMiB: ps5TotalMiB, Headroom: 1024}
+	consoleB = nodeDef{ID: "02:00:00:00:01:02", Host: "console-2", IP: "192.0.2.22", Priority: 1, TotalMiB: ps5TotalMiB, Headroom: 1024}
+	consoleC = nodeDef{ID: "02:00:00:00:01:03", Host: "console-3", IP: "192.0.2.23", Priority: 1, TotalMiB: ps5TotalMiB, Headroom: 1024}
+	laptop   = nodeDef{ID: "02:00:00:00:00:12", Host: "laptop-2", IP: "192.0.2.3", Priority: 2, TotalMiB: 8192, Headroom: 256}
+	hostNode = nodeDef{ID: "host-1", Host: "host-1", Local: true, Priority: 3, TotalMiB: 8151, Headroom: 450}
 )
 
 // allNodes is the order of view.nodes in the scripted status.
-var allNodes = []nodeDef{ps5A, ps5B, ps5C, alien, omen}
+var allNodes = []nodeDef{consoleA, consoleB, consoleC, laptop, hostNode}
 
 func nodeByHost(h string) (nodeDef, bool) {
 	for _, n := range allNodes {
@@ -97,11 +97,11 @@ var profiles = []profileDef{
 	{ID: "qwen3.8-27b", Model: fileQwen27, Ctx: 16384, Parallel: 2, NeedsMiB: 19600, KVQuant: "q8_0", FlashAttn: true, Aliases: []string{"qwen-27b"}},
 	{ID: "kimi-dev-72b-iq2s", Model: fileKimi, Ctx: 8192, NeedsMiB: 26800, Aliases: []string{"kimi-dev-72b"}},
 	{ID: "llama33-70b-q2", Model: fileLlama70, Ctx: 131072, NeedsMiB: 47800},
-	{ID: "bench-gemma-12b-1w", Model: fileGemma, Ctx: 8192, NeedsMiB: 7900, ForceNodes: []string{ps5A.Host}},
-	{ID: "bench-gemma-12b-2w", Model: fileGemma, Ctx: 8192, NeedsMiB: 7900, ForceNodes: []string{ps5A.Host, ps5B.Host}, TensorSplit: []int{50, 50}},
-	{ID: "bench-gemma-12b-3w", Model: fileGemma, Ctx: 8192, NeedsMiB: 7900, ForceNodes: []string{ps5A.Host, ps5B.Host, ps5C.Host}, TensorSplit: []int{34, 33, 33}},
+	{ID: "bench-gemma-12b-1w", Model: fileGemma, Ctx: 8192, NeedsMiB: 7900, ForceNodes: []string{consoleA.Host}},
+	{ID: "bench-gemma-12b-2w", Model: fileGemma, Ctx: 8192, NeedsMiB: 7900, ForceNodes: []string{consoleA.Host, consoleB.Host}, TensorSplit: []int{50, 50}},
+	{ID: "bench-gemma-12b-3w", Model: fileGemma, Ctx: 8192, NeedsMiB: 7900, ForceNodes: []string{consoleA.Host, consoleB.Host, consoleC.Host}, TensorSplit: []int{34, 33, 33}},
 	{ID: "bench-devstral-24b", Model: fileDevstral, Ctx: 8192, NeedsMiB: 12100},
-	{ID: "bench-kimi-72b-3w", Model: fileKimi, Ctx: 8192, NeedsMiB: 26800, ForceNodes: []string{ps5A.Host, ps5B.Host, ps5C.Host}, TensorSplit: []int{34, 33, 33}},
+	{ID: "bench-kimi-72b-3w", Model: fileKimi, Ctx: 8192, NeedsMiB: 26800, ForceNodes: []string{consoleA.Host, consoleB.Host, consoleC.Host}, TensorSplit: []int{34, 33, 33}},
 }
 
 // liveProfiles, when set, lists the profiles of the configuration in force

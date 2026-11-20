@@ -441,7 +441,7 @@ func TestRecovery_NeverForAnExcludedNode(t *testing.T) {
 
 func TestRecovery_NeverForTheLocalNode(t *testing.T) {
 	h := hungHarness(t, "a", recoveryCfg())
-	h.view.set(ps5("a", 2, 15000), ps5("b", 4, 15000), omen(8000))
+	h.view.set(ps5("a", 2, 15000), ps5("b", 4, 15000), hostNode(8000))
 	h.goLive()
 	for _, p := range h.wantPosts(1) {
 		if r := p.record(t); r.TargetNodeID == "host-1" || strings.HasSuffix(p.URL, "/host-1") {
@@ -452,7 +452,7 @@ func TestRecovery_NeverForTheLocalNode(t *testing.T) {
 		t.Fatal("recoveryAllowed(local) is true")
 	}
 	// A local-only profile gives the local node no worker health, so no request.
-	h2 := newHarness(t).nodes(omen(8000))
+	h2 := newHarness(t).nodes(hostNode(8000))
 	recoveryCfg()(h2)
 	h2.llama("l", 3000, func(p *core.Profile) { p.TTL = ptrDur(0) })
 	h2.release(h2.ready("l"))

@@ -105,7 +105,7 @@ func TestExclude_PlanDoesNotEvictOntoExcludedNode(t *testing.T) {
 }
 
 func TestExclude_LocalNodeNeverUsed(t *testing.T) {
-	h := newHarness(t).nodes(omen(7000), ps5("a", 2, 15000))
+	h := newHarness(t).nodes(hostNode(7000), ps5("a", 2, 15000))
 	h.cfg.ExcludeNodes = []string{"host-1"}
 	h.llama("m", 6000)
 	h.ready("m")

@@ -115,7 +115,7 @@ All **[verified]** against source unless tagged otherwise.
   once 246 s each (27 MB/s each).
 - **[measured 2026-11-18, about 14:00 to 14:31 UTC]** The host machine's link to the
   PS5 switch moved from its built-in 1 GbE port to a USB-C adapter (interface
-  `enx6c1ff7c349ea`) negotiated at 2500 Mb/s. The PS5s still have 1 GbE ports.
+  `enx020000000010`) negotiated at 2500 Mb/s. The PS5s still have 1 GbE ports.
   A single stream to one PS5 is now limited by that PS5's own port (about 100
   to 125 MB/s). Loads to different PS5s no longer share one gigabit. Load times
   at ctx 2048, before (1 GbE) and after (2.5 GbE): Gemma 12B on one PS5 89 s,
@@ -2257,9 +2257,8 @@ groups and signals sit behind one small OS-specific file.
 
 ## Appendix A. llama-swap compatible shapes
 
-Taken from the consumers' code in `host-1-fleet-manager`:
-`host/omen-hub-nodes.py` (the hub's push loop), `apps/omen-hub/nginx.conf` and
-`apps/omen-hub/web/src/lib/llama.ts` (the hub's llama panel). These are the
+Taken from the consumers' code in the host machine's hub (a separate repository):
+the hub's push loop, its nginx configuration and its llama panel. These are the
 contract; M5 tests assert them. The only other caller of port 3122's
 non-chat paths, `apps/imagine-dispatch`, uses `POST /v1/images/generations`.
 

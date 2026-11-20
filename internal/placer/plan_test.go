@@ -106,7 +106,7 @@ func TestPlan(t *testing.T) {
 			ev: []Evictable{
 				idle("i1", m, m, nd("p1", 1, 10000)),
 				idle("i2", m, m, nd("p2", 1, 10000)),
-				idle("i3", m, m, nd("alien", 2, 12000)),
+				idle("i3", m, m, nd("laptop", 2, 12000)),
 			},
 			want: []string{"p1", "p2"}, wantVictims: []string{"i1", "i2"},
 		},
@@ -145,7 +145,7 @@ func TestPlan(t *testing.T) {
 		{
 			name:       "allow_tiers and min_share apply to held nodes",
 			req:        with(base(Measured(5000)), func(r *Request) { r.AllowTiers = []int{1} }),
-			ev:         []Evictable{idle("i1", m, m, nd("alien", 2, 7629), nd("p1", 1, 1000))},
+			ev:         []Evictable{idle("i1", m, m, nd("laptop", 2, 7629), nd("p1", 1, 1000))},
 			wantReason: NoFit,
 		},
 		{
@@ -188,8 +188,8 @@ func TestPlan(t *testing.T) {
 }
 
 func TestCheckCapacity(t *testing.T) {
-	omen := local("host-1", 3, 8151-256)
-	alien := nd("laptop-1", 2, 7885-256)
+	hostNode := local("host-1", 3, 8151-256)
+	laptop := nd("laptop-1", 2, 7885-256)
 	three := []Candidate{nd("a", 1, 5000), nd("b", 1, 4000), nd("c", 1, 3000)}
 	cases := []struct {
 		name     string
@@ -200,10 +200,10 @@ func TestCheckCapacity(t *testing.T) {
 	}{
 		{
 			name: "worked check: Devstral 14K on both laptops exceeds capacity",
-			req:  base(Estimated(14828)), eligible: []Candidate{omen, alien},
+			req:  base(Estimated(14828)), eligible: []Candidate{hostNode, laptop},
 			want: NoPlacement{Reason: ExceedsCapacity, NeedMiB: 14828, RequiredMiB: 15570, CapacityMiB: 14324},
 		},
-		{name: "worked check: gemma 7800 within capacity", req: base(Measured(7800)), eligible: []Candidate{alien, omen}, wantOK: true},
+		{name: "worked check: gemma 7800 within capacity", req: base(Measured(7800)), eligible: []Candidate{laptop, hostNode}, wantOK: true},
 		{name: "best max_pool of them: fits", req: with(base(Measured(9000)), func(r *Request) { r.MaxPool = 2 }), eligible: three, wantOK: true},
 		{
 			name: "best max_pool of them: one more MiB exceeds",
@@ -212,7 +212,7 @@ func TestCheckCapacity(t *testing.T) {
 		},
 		{
 			name: "allow_tiers applied",
-			req:  with(base(Measured(7800)), func(r *Request) { r.AllowTiers = []int{1, 2} }), eligible: []Candidate{omen, alien},
+			req:  with(base(Measured(7800)), func(r *Request) { r.AllowTiers = []int{1, 2} }), eligible: []Candidate{hostNode, laptop},
 			want: NoPlacement{Reason: ExceedsCapacity, NeedMiB: 7800, RequiredMiB: 7800, CapacityMiB: 7629},
 		},
 		{

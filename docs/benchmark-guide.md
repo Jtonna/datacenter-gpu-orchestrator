@@ -206,7 +206,7 @@ All from the code. Statuses are HTTP codes; `reason` is in the JSON error.
 
 Items 1 and 2 were checked live on the host machine on 2026-11-18 at 09:43 UTC (version `test-da67241+failfast+childlog`). Items 3 and 4 came with `+progress+loadreport2`; load progress was checked live (measured from TCP acknowledged bytes, matching about 80 MB/s on the old 1 GbE link).
 
-Network note (2026-11-18, about 14:00 to 14:31 UTC): the host machine's link to the PS5 switch moved from its built-in 1 GbE port to a USB-C adapter, interface `enx6c1ff7c349ea`, at 2500 Mb/s. The PS5s still have 1 GbE ports. To read tx bytes on the host, use `enx6c1ff7c349ea` (older logs used `eno1`). Load times at ctx 2048, 1 GbE then 2.5 GbE: Gemma 12B on one PS5 89 s then 66 s; Qwen 27B on three PS5s 216 s then 170 s; Kimi-Dev 72B IQ2_S on three PS5s 363 s then 286 s; two Gemma 12B at once 167 s each then 66 s each; three at once 246 s each then 77 s each (about 280 MB/s in total). A single stream is now limited by the PS5's own 1 GbE port (about 100 to 125 MB/s). A split model still uploads to one PS5 at a time. Label any new number with the link it was measured on.
+Network note (2026-11-18, about 14:00 to 14:31 UTC): the host machine's link to the PS5 switch moved from its built-in 1 GbE port to a USB-C adapter, interface `enx020000000010`, at 2500 Mb/s. The PS5s still have 1 GbE ports. To read tx bytes on the host, use `enx020000000010` (older logs used `eno1`). Load times at ctx 2048, 1 GbE then 2.5 GbE: Gemma 12B on one PS5 89 s then 66 s; Qwen 27B on three PS5s 216 s then 170 s; Kimi-Dev 72B IQ2_S on three PS5s 363 s then 286 s; two Gemma 12B at once 167 s each then 66 s each; three at once 246 s each then 77 s each (about 280 MB/s in total). A single stream is now limited by the PS5's own 1 GbE port (about 100 to 125 MB/s). A split model still uploads to one PS5 at a time. Label any new number with the link it was measured on.
 
 1. Fail fast. A request for a profile forced onto a machine that is absent from the fleet or offline gets HTTP 503 after the grace period, instead of waiting the whole queue timeout (1800 s). Live reply for an absent machine:
 ```json
@@ -261,7 +261,7 @@ Rules:
 - Do not run a `llama-server-rpc` directly against a PS5 while the scheduler has a model loaded on it. The workers take one client at a time. If a direct run is needed, unload first, and say so in that benchmark row.
 - Change configuration only through `llm-scheduler-test`'s own `/api/config` endpoints (every change is audited; send `X-Actor`) and restart only `llm-scheduler-test`. Tell the orchestrator before each restart.
 
-Results file: `C:\Users\J\documents\ps5llm\benchmarks.md`. You own its layout (phase tables are fine). Two requirements:
+Results file: a results file kept outside this repository. You own its layout (phase tables are fine). Two requirements:
 - Every row says whether it was measured direct or via the load balancer.
 - Rows measured before the two PS5 fixes (tensor cache off, GPU clock pinned) are kept apart from rows measured after.
 

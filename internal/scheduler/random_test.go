@@ -115,12 +115,12 @@ func newRandWorld(seed int64) *randWorld {
 	h.autoProbe, h.autoStart, h.autoExit, h.autoFetch = false, false, false, false
 	w := &randWorld{h: h, leased: map[*waiter]bool{}}
 
-	nodes := []core.Node{omen(6000 + 500*r.Intn(5))}
+	nodes := []core.Node{hostNode(6000 + 500*r.Intn(5))}
 	for i := 0; i < 1+r.Intn(3); i++ {
 		nodes = append(nodes, ps5(fmt.Sprintf("ps5-%d", i), 10+i, 9000+1000*r.Intn(7)))
 	}
 	if r.Intn(2) == 0 {
-		nodes = append(nodes, alien("laptop-1", 6000+500*r.Intn(4)))
+		nodes = append(nodes, laptop("laptop-1", 6000+500*r.Intn(4)))
 	}
 	h.nodes(nodes...)
 	for _, n := range nodes {

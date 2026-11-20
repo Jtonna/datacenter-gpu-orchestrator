@@ -114,7 +114,7 @@ Devstral 24B forced onto one PS5 does not fit: it needs about 13991 MiB against 
 | Qwen2.5 72B Q2_K | 8.5 |
 | Devstral 24B (two PS5s) | 17.8 |
 
-Mixtral 8x7B (TheBloke Q4_K_M file) failed to load for a file-format reason (`tensor 'blk.0.ffn_down_exps.weight' not found`), not memory. The full tables are outside this repo, in `C:\Users\J\documents\ps5llm\benchmarks.md`.
+Mixtral 8x7B (TheBloke Q4_K_M file) failed to load for a file-format reason (`tensor 'blk.0.ffn_down_exps.weight' not found`), not memory. The full tables are outside this repo, in a results file kept outside this repository.
 
 ### Bug found and fixed (new code)
 
@@ -132,7 +132,7 @@ The scheduler can stand in for llama-swap on port 3122. The hub polls `/running`
 
 ## After the network upgrade (2026-11-18, about 14:00 to 14:31 UTC)
 
-The host machine's link to the PS5 switch moved from its built-in 1 GbE port to a USB-C adapter (interface `enx6c1ff7c349ea`) negotiated at 2500 Mb/s. The PS5s still have 1 GbE ports. Load times through the scheduler at ctx 2048. The "1 GbE" column is the old link, the "2.5 GbE" column is the new one.
+The host machine's link to the PS5 switch moved from its built-in 1 GbE port to a USB-C adapter (interface `enx020000000010`) negotiated at 2500 Mb/s. The PS5s still have 1 GbE ports. Load times through the scheduler at ctx 2048. The "1 GbE" column is the old link, the "2.5 GbE" column is the new one.
 
 | Load | 1 GbE | 2.5 GbE |
 |---|---|---|

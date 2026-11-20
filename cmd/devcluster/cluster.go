@@ -109,11 +109,11 @@ func buildFakeLlama(root, dir string) (string, error) {
 
 func fleetMembers() []fakefleet.Member {
 	var ms []fakefleet.Member
-	for _, n := range []nodeDef{ps5A, ps5B, ps5C} {
+	for _, n := range []nodeDef{consoleA, consoleB, consoleC} {
 		// 16 GB of RAM with 2.6 used: 13.4 GiB available, the shared-memory free figure.
 		ms = append(ms, fakefleet.PS5(n.ID, n.Host, n.IP, 13.4, 0, 16, 2.6))
 	}
-	ms = append(ms, fakefleet.Relay(alien.ID, alien.Host, alien.IP, 8, 0.4))
+	ms = append(ms, fakefleet.Relay(laptop.ID, laptop.Host, laptop.IP, 8, 0.4))
 	return ms
 }
 
@@ -229,7 +229,7 @@ func startCluster(log *slog.Logger, o clusterOpts) (*cluster, error) {
 	fcfg := cfg
 	if o.bare { // the built-in defaults name no fleet; the fake one stands in so the nodes show
 		cp := *cfg
-		cp.Fleet.URL, cp.Fleet.LocalNode = c.fleet.URL(), omen.Host
+		cp.Fleet.URL, cp.Fleet.LocalNode = c.fleet.URL(), hostNode.Host
 		fcfg = &cp
 	}
 	c.fc = fleet.New(fcfg, fleet.Options{Logger: log})

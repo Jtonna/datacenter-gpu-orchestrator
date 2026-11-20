@@ -154,22 +154,22 @@ func pastEvents(now time.Time) []history.Event {
 		evicted string // unloaded by eviction for this profile
 	}
 	rot := []sess{
-		{3, "gemma-4-12b", []string{ps5A.Host}, 16, 41, ""},
-		{6, "qwen3.5-4b", []string{omen.Host}, 31, 88, ""},
+		{3, "gemma-4-12b", []string{consoleA.Host}, 16, 41, ""},
+		{6, "qwen3.5-4b", []string{hostNode.Host}, 31, 88, ""},
 		{24, "qwen3.8-27b", ps3, 22, 17, ""},
-		{49, "devstral-24b", []string{ps5B.Host}, 12, 9, ""},
-		{52, "gemma-4-12b:48k", []string{ps5A.Host, ps5C.Host}, 11, 6, ""},
-		{91, "gemma-4-12b", []string{ps5A.Host}, 23, 64, "qwen3.8-27b"},
+		{49, "devstral-24b", []string{consoleB.Host}, 12, 9, ""},
+		{52, "gemma-4-12b:48k", []string{consoleA.Host, consoleC.Host}, 11, 6, ""},
+		{91, "gemma-4-12b", []string{consoleA.Host}, 23, 64, "qwen3.8-27b"},
 		{116, "qwen3.8-27b", ps3, 28, 21, ""},
-		{148, "qwen3.5-4b", []string{omen.Host}, 40, 120, ""},
-		{151, "devstral-24b", []string{ps5C.Host}, 9, 5, ""},
-		{168, "gemma-4-12b", []string{ps5B.Host}, 19, 47, ""},
+		{148, "qwen3.5-4b", []string{hostNode.Host}, 40, 120, ""},
+		{151, "devstral-24b", []string{consoleC.Host}, 9, 5, ""},
+		{168, "gemma-4-12b", []string{consoleB.Host}, 19, 47, ""},
 		{196, "kimi-dev-72b-iq2s", ps3, 14, 3, ""},
-		{219, "bench-gemma-12b-1w", []string{ps5A.Host}, 1.5, 6, ""},
-		{223, "bench-gemma-12b-2w", []string{ps5A.Host, ps5B.Host}, 1.4, 5, ""},
+		{219, "bench-gemma-12b-1w", []string{consoleA.Host}, 1.5, 6, ""},
+		{223, "bench-gemma-12b-2w", []string{consoleA.Host, consoleB.Host}, 1.4, 5, ""},
 		{231, "qwen3.8-27b", ps3, 33, 26, ""},
-		{268, "gemma-4-12b", []string{ps5C.Host}, 60, 39, ""},
-		{272, "qwen3.5-4b", []string{omen.Host}, 60, 15, ""},
+		{268, "gemma-4-12b", []string{consoleC.Host}, 60, 39, ""},
+		{272, "qwen3.5-4b", []string{hostNode.Host}, 60, 15, ""},
 	}
 	learned := map[string]bool{}
 	for i, s := range rot {
@@ -194,11 +194,11 @@ func pastEvents(now time.Time) []history.Event {
 
 	// a few periodic memory samples while qwen3.8-27b is loaded
 	for k := 0; k < 4; k++ {
-		g.memSample(at(240+float64(k)*5), ps5B.Host, "qwen3.8-27b", "periodic", 6520+k*12)
+		g.memSample(at(240+float64(k)*5), consoleB.Host, "qwen3.8-27b", "periodic", 6520+k*12)
 	}
 
 	// needs_mib too low on the 48k variant
-	g.add(at(52).Add(68*time.Second), history.TNeedsMiBTooLow, history.Warn, "gemma-4-12b:48k", []string{ps5A.Host, ps5C.Host}, sessionID(at(52), 7),
+	g.add(at(52).Add(68*time.Second), history.TNeedsMiBTooLow, history.Warn, "gemma-4-12b:48k", []string{consoleA.Host, consoleC.Host}, sessionID(at(52), 7),
 		"The configured needs_mib of gemma-4-12b:48k (8000 MiB) is too low: the load measured 8206 MiB, which is used from now on.",
 		map[string]any{"configured_mib": 8000, "measured_mib": 8206})
 
@@ -228,27 +228,27 @@ func pastEvents(now time.Time) []history.Event {
 	g.add(st, history.TLoadStalled, history.Error, "kimi-dev-72b-iq2s", ps3, ks,
 		fmt.Sprintf("Loading kimi-dev-72b-iq2s stalled: the workers acknowledged no new bytes for 3m0s (%d of %d bytes sent).", sent, modelBytes[fileKimi]),
 		map[string]any{"stalled_s": 180.0, "limit_s": 180.0, "bytes_sent": sent, "bytes_total": modelBytes[fileKimi],
-			"per_worker_bytes": map[string]any{ps5A.Addr(): w, ps5B.Addr(): w / 5, ps5C.Addr(): 0}})
+			"per_worker_bytes": map[string]any{consoleA.Addr(): w, consoleB.Addr(): w / 5, consoleC.Addr(): 0}})
 	g.add(st.Add(200*time.Millisecond), history.TLoadFinished, history.Error, "kimi-dev-72b-iq2s", ps3, ks,
 		"Loading kimi-dev-72b-iq2s failed after 309.2 s: load stalled: no bytes acknowledged by the workers for 3m0s (sent "+fmt.Sprint(sent)+" of "+fmt.Sprint(modelBytes[fileKimi])+").",
 		map[string]any{"outcome": "failed", "reason": fmt.Sprintf("load stalled: no bytes acknowledged by the workers for 3m0s (sent %d of %d)", sent, modelBytes[fileKimi]),
 			"load_s": 309.2, "bytes": sent, "bytes_measured": true, "avg_mb_s": round1(float64(sent) / 1e6 / 309.2),
-			"nodes_detail": []map[string]any{{"node": ps5A.Host, "bytes": w}, {"node": ps5B.Host, "bytes": w / 5}, {"node": ps5C.Host, "bytes": 0}}})
+			"nodes_detail": []map[string]any{{"node": consoleA.Host, "bytes": w}, {"node": consoleB.Host, "bytes": w / 5}, {"node": consoleC.Host, "bytes": 0}}})
 	g.add(st.Add(300*time.Millisecond), history.TProfileBackedOff, history.Warn, "kimi-dev-72b-iq2s", nil, "",
 		"Profile kimi-dev-72b-iq2s is backed off for 1m0s after a failed load (level 1).", map[string]any{"for_s": 60.0, "level": 1})
 	refuse(st.Add(20*time.Second), "kimi-dev-72b-iq2s", "backoff", 503, "profile kimi-dev-72b-iq2s is backed off after a failed load", map[string]any{"retry_after_s": 40.0})
 
 	// a hung worker, quarantine, recovery request and outcome
 	ht := at(130)
-	b := ps5B.Host
+	b := consoleB.Host
 	ch := func(up, hb string) map[string]any {
 		return map[string]any{"upload": up, "heartbeat": hb, "probe": "unknown"}
 	}
 	g.add(ht, history.TWorkerHealth, history.Warn, "", []string{b}, "", fmt.Sprintf("Worker %s health is now suspect (was ok).", b),
-		map[string]any{"state": "suspect", "previous": "ok", "addr": ps5B.Addr(), "instances": "qwen3.8-27b", "channels": ch("silent", "ok"),
+		map[string]any{"state": "suspect", "previous": "ok", "addr": consoleB.Addr(), "instances": "qwen3.8-27b", "channels": ch("silent", "ok"),
 			"silent": "upload silent for 31s", "node_lost": false})
 	g.add(ht.Add(31*time.Second), history.TWorkerHealth, history.Error, "", []string{b}, "", fmt.Sprintf("Worker %s is hung (upload silent for 62s, heartbeat silent for 31s); its node is quarantined.", b),
-		map[string]any{"state": "hung", "previous": "suspect", "addr": ps5B.Addr(), "instances": "qwen3.8-27b", "channels": ch("silent", "silent"),
+		map[string]any{"state": "hung", "previous": "suspect", "addr": consoleB.Addr(), "instances": "qwen3.8-27b", "channels": ch("silent", "silent"),
 			"silent": "upload silent for 62s, heartbeat silent for 31s", "node_lost": false})
 	g.add(ht.Add(31*time.Second+5*time.Millisecond), history.TNodeQuarantined, history.Warn, "", []string{b}, "",
 		fmt.Sprintf("Node %s was quarantined for 5m0s (level 1): worker hung.", b), map[string]any{"for_s": 300.0, "level": 1, "cause": "worker hung"})
@@ -264,7 +264,7 @@ func pastEvents(now time.Time) []history.Event {
 		fmt.Sprintf("Node %s reported ok of restart_rpc_server after 8240 ms.", b),
 		map[string]any{"action": "restart_rpc_server", "outcome": "ok", "nonce": nonce, "reason": "", "duration_ms": 8240, "ours": true, "at": ht.Add(79 * time.Second).UnixMilli()})
 	g.add(ht.Add(106*time.Second), history.TWorkerHealth, history.Info, "", []string{b}, "", fmt.Sprintf("Worker %s recovered after being hung for 1m15s.", b),
-		map[string]any{"state": "ok", "previous": "hung", "addr": ps5B.Addr(), "instances": "qwen3.8-27b", "channels": ch("ok", "ok"), "silent": "", "node_lost": false, "hung_for_s": 75.0})
+		map[string]any{"state": "ok", "previous": "hung", "addr": consoleB.Addr(), "instances": "qwen3.8-27b", "channels": ch("ok", "ok"), "silent": "", "node_lost": false, "hung_for_s": 75.0})
 	g.add(ht.Add(331*time.Second), history.TQuarantineEnded, history.Info, "", []string{b}, "", fmt.Sprintf("Node %s was released from quarantine.", b), nil)
 
 	// the fleet view goes stale for a while
@@ -277,9 +277,9 @@ func pastEvents(now time.Time) []history.Event {
 		map[string]any{"retry_after_s": 30.0})
 
 	// a pre-flight failure
-	g.add(at(186), history.TPreflightFailed, history.Warn, "devstral-24b", []string{ps5C.Host}, "",
+	g.add(at(186), history.TPreflightFailed, history.Warn, "devstral-24b", []string{consoleC.Host}, "",
 		"Pre-flight of devstral-24b failed for console-3 (timeout): list-devices did not finish within 20s.",
-		map[string]any{"kind": "timeout", "addr": ps5C.Addr(), "duration_s": 20.0, "err": "list-devices did not finish within 20s"})
+		map[string]any{"kind": "timeout", "addr": consoleC.Addr(), "duration_s": 20.0, "err": "list-devices did not finish within 20s"})
 
 	sort.SliceStable(g.out, func(i, j int) bool { return g.out[i].Ts < g.out[j].Ts })
 	return g.out

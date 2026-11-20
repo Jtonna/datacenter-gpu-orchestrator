@@ -126,7 +126,7 @@ func TestLoadStall_NotAppliedOnceTheUploadIsComplete(t *testing.T) {
 }
 
 func TestLoadStall_NotAppliedToALocalOnlyLoad(t *testing.T) {
-	h := newHarness(t).nodes(omen(8000))
+	h := newHarness(t).nodes(hostNode(8000))
 	h.llama("m", 6000, func(p *core.Profile) { p.LoadTimeout = time.Hour })
 	w := h.request("m")
 	h.wantState("m", "starting")

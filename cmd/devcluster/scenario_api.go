@@ -159,7 +159,7 @@ func planFor(profile string, st scheduler.Status, now time.Time) scheduler.PlanR
 	}
 	if req := int(math.Ceil(float64(p.NeedsMiB) * 1.15)); p.NeedsMiB > capacity || req > capacity {
 		r.Action, r.RequiredMiB, r.CapacityMiB = scheduler.PlanReject, req, capacity
-		r.Reason = fmt.Sprintf("placer: need %d MiB (requires %d MiB) exceeds cluster capacity %d MiB; nodes excluded by config and not counted: %s", p.NeedsMiB, req, capacity, alien.Host)
+		r.Reason = fmt.Sprintf("placer: need %d MiB (requires %d MiB) exceeds cluster capacity %d MiB; nodes excluded by config and not counted: %s", p.NeedsMiB, req, capacity, laptop.Host)
 		return r
 	}
 	for _, e := range st.Queue {

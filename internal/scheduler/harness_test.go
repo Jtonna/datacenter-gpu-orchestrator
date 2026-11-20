@@ -100,12 +100,12 @@ func ps5(id string, n int, free int) core.Node {
 		TotalMiB: 16000, FreeMiB: free, Priority: 1, HeadroomMiB: 1000, SharedMemory: true, LinkMBs: 11, Settle: 3 * time.Second}
 }
 
-func alien(id string, free int) core.Node {
+func laptop(id string, free int) core.Node {
 	return core.Node{ID: core.NodeID(id), Hostname: id, Online: true, Addr: "192.0.2.3:50052",
 		TotalMiB: 8000, FreeMiB: free, Priority: 2, HeadroomMiB: 200, LinkMBs: 11, Settle: 8 * time.Second}
 }
 
-func omen(free int) core.Node {
+func hostNode(free int) core.Node {
 	return core.Node{ID: "host-1", Hostname: "host-1", Local: true, Online: true,
 		TotalMiB: 8000, FreeMiB: free, Priority: 3, HeadroomMiB: 200, Settle: 2 * time.Second}
 }

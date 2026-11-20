@@ -117,7 +117,7 @@ func toMember(fm fakefleet.Member) Member {
 	return m
 }
 
-func omenMember() fakefleet.Member {
+func hostMember() fakefleet.Member {
 	m := fakefleet.Relay("3c:52:82:11", "host-1", "192.0.2.1", 8, 2)
 	m.Role, m.RPCPort = "host", nil
 	return m
@@ -224,8 +224,8 @@ func TestNodeFromMember(t *testing.T) {
 		{name: "null ip gives empty addr", m: noIP, ok: true, total: 12288, free: 11264, addr: "", prio: 1, shared: true},
 		{name: "null port gives empty addr", m: noPort, ok: true, total: 12288, free: 11264, addr: "", prio: 1, shared: true},
 		{name: "no tier", m: fakefleet.Relay("x", "mystery", "192.0.2.9", 8, 2), ok: false},
-		{name: "local flag selects local tier", m: omenMember(), local: true, ok: true, total: 8192, free: 6144, addr: "", prio: 3},
-		{name: "remote host-1 has no tier", m: omenMember(), ok: false},
+		{name: "local flag selects local tier", m: hostMember(), local: true, ok: true, total: 8192, free: 6144, addr: "", prio: 3},
+		{name: "remote host-1 has no tier", m: hostMember(), ok: false},
 	}
 	for _, c := range cases {
 		n, ok := nodeFromMember(cfg, toMember(c.m), c.local)
@@ -641,7 +641,7 @@ func TestResolve(t *testing.T) {
 func TestLocalProbePublishesLocalNodeAndHidesFleetEntry(t *testing.T) {
 	e := newEnv(t)
 	e.probe.set("8151, 2100\n8192, 7\n", nil)
-	e.f.SetMembers(omenMember(), fakefleet.PS5("a8", "ps5-1", "192.0.2.2", 12, 4.5, 14.1, 3.2))
+	e.f.SetMembers(hostMember(), fakefleet.PS5("a8", "ps5-1", "192.0.2.2", 12, 4.5, 14.1, 3.2))
 	e.f.SetOnline("3c:52:82:11", false) // the probe must not care
 	c := e.start()
 	eventually(t, func() bool { return len(c.Nodes()) == 2 }, "local + one remote")
@@ -685,7 +685,7 @@ func TestLocalProbeWorksWithoutFleet(t *testing.T) {
 
 func TestLocalProbeFailureFallsBackToFleetAndWarnsOnce(t *testing.T) {
 	e := newEnv(t) // probe fails by default
-	e.f.SetMembers(omenMember(), fakefleet.PS5("a8", "ps5-1", "192.0.2.2", 12, 4.5, 14.1, 3.2))
+	e.f.SetMembers(hostMember(), fakefleet.PS5("a8", "ps5-1", "192.0.2.2", 12, 4.5, 14.1, 3.2))
 	c := e.start()
 	eventually(t, func() bool { return e.probe.count() >= 5 }, "several probe attempts")
 	eventually(t, func() bool { return len(c.Nodes()) == 2 }, "fallback node")
@@ -706,7 +706,7 @@ func TestLocalProbeFailureFallsBackToFleetAndWarnsOnce(t *testing.T) {
 func TestLocalProbeGarbageCountsAsFailure(t *testing.T) {
 	e := newEnv(t)
 	e.probe.set("No devices were found\n", nil)
-	e.f.SetMembers(omenMember())
+	e.f.SetMembers(hostMember())
 	c := e.start()
 	eventually(t, func() bool { n, ok := e.nodeByID("host-1"); return ok && n.TotalMiB == 8192 && n.Local }, "fleet fallback after garbage")
 	if e.log.count("level=WARN") != 1 {
@@ -718,7 +718,7 @@ func TestLocalProbeGarbageCountsAsFailure(t *testing.T) {
 func TestFetchNodeForLocalUsesProbe(t *testing.T) {
 	e := newEnv(t)
 	e.probe.set("8151, 100\n", nil)
-	e.f.SetMembers(omenMember())
+	e.f.SetMembers(hostMember())
 	c := e.start()
 	eventually(t, func() bool { _, ok := e.nodeByID("host-1"); return ok }, "local node")
 	e.probe.set("8151, 4000\n", nil)
@@ -734,7 +734,7 @@ func TestFetchNodeForLocalUsesProbe(t *testing.T) {
 func TestResolveLocalNodeName(t *testing.T) {
 	e := newEnv(t)
 	e.probe.set("8151, 100\n", nil)
-	e.f.SetMembers(omenMember())
+	e.f.SetMembers(hostMember())
 	c := e.start()
 	eventually(t, func() bool { _, ok := e.nodeByID("host-1"); return ok }, "local node")
 	if id, err := c.Resolve("host-1"); err != nil || id != "host-1" {
@@ -792,7 +792,7 @@ func TestLocalIDStableAcrossMemberAppearance(t *testing.T) {
 				}
 			}
 			for round := 0; round < 2; round++ {
-				e.f.Upsert(omenMember())
+				e.f.Upsert(hostMember())
 				e.f.Push()
 				eventually(t, func() bool { _, err := c.Resolve("3c:52:82:11"); return err == nil }, "member known")
 				eventually(t, func() bool { _, ok := e.nodeByID("host-1"); return ok }, "local present after member appears")
@@ -839,7 +839,7 @@ func TestResolveLocalByIDHostnameAndName(t *testing.T) {
 				}
 			}
 			check("before")
-			e.f.SetMembers(omenMember())
+			e.f.SetMembers(hostMember())
 			e.f.Push()
 			eventually(t, func() bool {
 				i1, e1 := c.Resolve("host-1")
@@ -856,7 +856,7 @@ func TestResolveLocalByIDHostnameAndName(t *testing.T) {
 
 func TestFetchNodeLocalFallsBackToMemberNeverLocalIDOnConsole(t *testing.T) {
 	e := newEnv(t) // probe fails
-	e.f.SetMembers(omenMember())
+	e.f.SetMembers(hostMember())
 	c := e.start()
 	eventually(t, func() bool { _, ok := e.nodeByID("host-1"); return ok }, "fallback local node")
 	n, err := c.FetchNode(context.Background(), "host-1")

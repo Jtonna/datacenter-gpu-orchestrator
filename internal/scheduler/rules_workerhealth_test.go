@@ -151,7 +151,7 @@ func TestWorkerHealth_ProbeResumesWhenTheRequestEnds(t *testing.T) {
 }
 
 func TestWorkerHealth_NeverProbesAWorkerNoInstanceUses(t *testing.T) {
-	h := newHarness(t).nodes(ps5("a", 2, 15000), ps5("b", 4, 15000), ps5("c", 6, 15000), omen(8000))
+	h := newHarness(t).nodes(ps5("a", 2, 15000), ps5("b", 4, 15000), ps5("c", 6, 15000), hostNode(8000))
 	h.llama("m", 8000, func(p *core.Profile) {
 		p.ForceNodes, p.TensorSplit, p.TTL = []string{"a", "b"}, []int{1, 1}, ptrDur(0)
 	})

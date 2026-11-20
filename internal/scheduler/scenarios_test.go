@@ -133,7 +133,7 @@ func TestScenario_LoadFailsWhileOtherEntriesHoldClaims(t *testing.T) {
 }
 
 func TestScenario_ForcedNodesProfileWhileThoseNodesRunBusyModel(t *testing.T) {
-	h := newHarness(t).nodes(ps5("a", 2, 9000), ps5("b", 4, 9000), alien("al", 7800))
+	h := newHarness(t).nodes(ps5("a", 2, 9000), ps5("b", 4, 9000), laptop("al", 7800))
 	h.llama("m", 13500) // a + b
 	h.llama("bench", 1, func(p *core.Profile) {
 		p.ForceNodes = []string{"b", "a"}
@@ -204,7 +204,7 @@ func TestScenario_FeedReconnectsEmpty_NodesNeverReturn_InstancesKilled(t *testin
 }
 
 func TestScenario_CommandProfileOnLocalEvictsIdleLLMIncludingLocal(t *testing.T) {
-	h := newHarness(t).nodes(ps5("a", 2, 9000), omen(8000))
+	h := newHarness(t).nodes(ps5("a", 2, 9000), hostNode(8000))
 	h.llama("llm", 13000) // a pool of the PS5 and the host machine
 	h.command("whisper", 5400)
 	h.release(h.ready("llm"))

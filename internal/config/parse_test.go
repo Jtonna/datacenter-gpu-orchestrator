@@ -57,7 +57,7 @@ tiers:
     link_mb_s: 11
     settle: 3s
 node_overrides:
-  alien: { rpc: "192.0.2.3:50052" }
+  laptop: { rpc: "192.0.2.3:50052" }
 `)
 	if c.Listen != ":9" || c.ModelsDir != "/m" || c.LocalProbeCmd != "fake-smi" {
 		t.Errorf("top-level: %+v", c)
@@ -81,7 +81,7 @@ node_overrides:
 	if tr.Match.Hostname != "ps5-*" || tr.Match.Local == nil || *tr.Match.Local {
 		t.Errorf("match: %+v", tr.Match)
 	}
-	if c.NodeOverrides["alien"].RPC != "192.0.2.3:50052" {
+	if c.NodeOverrides["laptop"].RPC != "192.0.2.3:50052" {
 		t.Errorf("overrides: %+v", c.NodeOverrides)
 	}
 }

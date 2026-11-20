@@ -383,7 +383,7 @@ func (h *harness) setScenario(w http.ResponseWriter, r *http.Request) {
 // recordRefused writes the fresh history events the refused scenario promises.
 func (h *harness) recordRefused(now time.Time) {
 	fin := now.Add(-50 * time.Second)
-	ps := []string{ps5A.Host, ps5B.Host, ps5C.Host}
+	ps := []string{consoleA.Host, consoleB.Host, consoleC.Host}
 	reason := "load stalled: no new bytes acknowledged for 180 s (8.5 of 25.5 GB sent); the child was stopped"
 	h.c.hist.Record(history.Event{Ts: fin.UnixMilli(), Type: history.TLoadFinished, Severity: history.Error, Profile: "kimi-dev-72b-iq2s",
 		ModelFile: modelFileOf("kimi-dev-72b-iq2s"), Nodes: ps, SessionID: sessionID(fin.Add(-71*time.Second), 12),

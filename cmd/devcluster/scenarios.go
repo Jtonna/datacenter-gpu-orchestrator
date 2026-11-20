@@ -94,15 +94,15 @@ func scenarioByName(n string) (scenario, bool) {
 }
 
 var (
-	ps3 = []string{ps5A.Host, ps5B.Host, ps5C.Host}
+	ps3 = []string{consoleA.Host, consoleB.Host, consoleC.Host}
 )
 
 func scEmpty(now time.Time, t time.Duration) *statusBuilder { return newStatus(now) }
 
 func scReady(now time.Time, t time.Duration) *statusBuilder {
 	b := newStatus(now)
-	b.ready("gemma-4-12b", []string{ps5A.Host}, instOpts{readyAgo: 38 * time.Minute, served: 212, lastTPS: 14.2, lastAgo: 4*time.Minute + 12*time.Second})
-	b.learned("gemma-4-12b", []string{ps5A.Host})
+	b.ready("gemma-4-12b", []string{consoleA.Host}, instOpts{readyAgo: 38 * time.Minute, served: 212, lastTPS: 14.2, lastAgo: 4*time.Minute + 12*time.Second})
+	b.learned("gemma-4-12b", []string{consoleA.Host})
 	return b
 }
 
@@ -115,15 +115,15 @@ func scStale(now time.Time, t time.Duration) *statusBuilder {
 func scSplit(now time.Time, t time.Duration) *statusBuilder {
 	b := newStatus(now)
 	b.ready("qwen3.8-27b", ps3, instOpts{readyAgo: 1*time.Hour + 12*time.Minute, served: 87, inFlight: 2, lastTPS: 9.8, lastAgo: 41 * time.Second})
-	b.ready("qwen3.5-4b", []string{omen.Host}, instOpts{readyAgo: 22 * time.Minute, served: 46, lastTPS: 61.3, lastAgo: 2 * time.Minute})
+	b.ready("qwen3.5-4b", []string{hostNode.Host}, instOpts{readyAgo: 22 * time.Minute, served: 46, lastTPS: 61.3, lastAgo: 2 * time.Minute})
 	b.learned("qwen3.8-27b", ps3)
 	return b
 }
 
 func scTwins(now time.Time, t time.Duration) *statusBuilder {
 	b := newStatus(now)
-	b.ready("devstral-24b", []string{ps5A.Host}, instOpts{readyAgo: 51 * time.Minute, served: 133, lastTPS: 7.9, lastAgo: 3 * time.Minute})
-	b.ready("bench-devstral-24b", []string{ps5B.Host}, instOpts{readyAgo: 6 * time.Minute, served: 4, lastTPS: 8.1, lastAgo: 40 * time.Second})
+	b.ready("devstral-24b", []string{consoleA.Host}, instOpts{readyAgo: 51 * time.Minute, served: 133, lastTPS: 7.9, lastAgo: 3 * time.Minute})
+	b.ready("bench-devstral-24b", []string{consoleB.Host}, instOpts{readyAgo: 6 * time.Minute, served: 4, lastTPS: 8.1, lastAgo: 40 * time.Second})
 	b.staleProfile = map[string]bool{"bench-devstral-24b": true} // edited after it loaded
 	return b
 }
@@ -148,7 +148,7 @@ func loadingOf(profile string, now time.Time, t time.Duration, stalled bool) *st
 	b.loading(profile, ps3, o)
 	if stalled {
 		since := now.Add(-time.Duration(o.stalledS * float64(time.Second)))
-		b.health(ps5B.Host, "suspect", since.Add(30*time.Second), "silent", "ok", map[string]float64{"upload": round1(o.stalledS)})
+		b.health(consoleB.Host, "suspect", since.Add(30*time.Second), "silent", "ok", map[string]float64{"upload": round1(o.stalledS)})
 	}
 	return b
 }
@@ -164,11 +164,11 @@ func scQueued(now time.Time, t time.Duration) *statusBuilder {
 	b.queue(scheduler.EntryStatus{Profile: "devstral-24b", Created: now.Add(-125 * time.Second), Waiters: 2,
 		WaitReason: "placer: need 12100 MiB (requires 12100 MiB) does not fit the available nodes"})
 	b.queue(scheduler.EntryStatus{Profile: "gemma-4-12b", Created: now.Add(-40 * time.Second), Waiters: 1, Claimed: true,
-		Claim: []core.NodeID{core.NodeID(ps5C.ID)}, Victims: []string{"qwen3.8-27b"}})
+		Claim: []core.NodeID{core.NodeID(consoleC.ID)}, Victims: []string{"qwen3.8-27b"}})
 	b.st.Backoffs = append(b.st.Backoffs, scheduler.BackoffStatus{Profile: "kimi-dev-72b-iq2s", Until: now.Add(4 * time.Minute), Level: 2})
 	q := now.Add(90 * time.Second)
-	b.st.Quarantines = append(b.st.Quarantines, scheduler.QuarantineStatus{Node: core.NodeID(omen.ID), Until: q, Level: 1})
-	b.nodes[omen.Host].Quarantined = q
+	b.st.Quarantines = append(b.st.Quarantines, scheduler.QuarantineStatus{Node: core.NodeID(hostNode.ID), Until: q, Level: 1})
+	b.nodes[hostNode.Host].Quarantined = q
 	return b
 }
 
@@ -176,7 +176,7 @@ func scRefused(now time.Time, t time.Duration) *statusBuilder {
 	b := scReady(now, t)
 	fin := now.Add(-50 * time.Second)
 	b.st.RecentLoads = append(b.st.RecentLoads, scheduler.LoadOutcome{SessionID: sessionID(fin.Add(-71*time.Second), 12), Model: "kimi-dev-72b-iq2s",
-		Workers: []string{ps5A.Addr(), ps5B.Addr(), ps5C.Addr()}, Outcome: scheduler.LoadFailed,
+		Workers: []string{consoleA.Addr(), consoleB.Addr(), consoleC.Addr()}, Outcome: scheduler.LoadFailed,
 		Reason: "load stalled: no new bytes acknowledged for 180 s (8.5 of 25.5 GB sent); the child was stopped", FinishedAt: fin.UnixMilli(), LoadS: 71.4})
 	b.st.Backoffs = append(b.st.Backoffs, scheduler.BackoffStatus{Profile: "kimi-dev-72b-iq2s", Until: now.Add(2*time.Minute + 10*time.Second), Level: 1})
 	return b
@@ -187,30 +187,30 @@ func scHung(now time.Time, t time.Duration) *statusBuilder {
 	b.ready("qwen3.8-27b", ps3, instOpts{readyAgo: 2*time.Hour + 4*time.Minute, served: 190, lastTPS: 9.1, lastAgo: 3*time.Minute + 30*time.Second})
 	b.learned("qwen3.8-27b", ps3)
 	hungSince := now.Add(-62 * time.Second)
-	b.health(ps5B.Host, "hung", hungSince, "silent", "silent", map[string]float64{"heartbeat": 92, "upload": 124})
+	b.health(consoleB.Host, "hung", hungSince, "silent", "silent", map[string]float64{"heartbeat": 92, "upload": 124})
 	q := now.Add(4*time.Minute + 30*time.Second)
-	b.nodes[ps5B.Host].Quarantined = q
-	b.st.Quarantines = append(b.st.Quarantines, scheduler.QuarantineStatus{Node: core.NodeID(ps5B.ID), Until: q, Level: 1})
+	b.nodes[consoleB.Host].Quarantined = q
+	b.st.Quarantines = append(b.st.Quarantines, scheduler.QuarantineStatus{Node: core.NodeID(consoleB.ID), Until: q, Level: 1})
 	ep := hungSince.UnixMilli()
-	b.nodes[ps5B.Host].Recovery = &scheduler.RecoveryStatus{Step: 1, EpisodeStarted: &ep,
+	b.nodes[consoleB.Host].Recovery = &scheduler.RecoveryStatus{Step: 1, EpisodeStarted: &ep,
 		LastRequest: &scheduler.RecoveryRequestStatus{Action: "restart_rpc_server", Nonce: "rq-7f3a91c2", SentAt: now.Add(-48 * time.Second).UnixMilli(), Status: "pending"}}
-	c := b.nodes[ps5C.Host]
+	c := b.nodes[consoleC.Host]
 	c.Online = false
 	c.MissingSince = now.Add(-25 * time.Second)
-	b.health(ps5C.Host, "suspect", now.Add(-25*time.Second), "unknown", "silent", map[string]float64{"heartbeat": 25})
+	b.health(consoleC.Host, "suspect", now.Add(-25*time.Second), "unknown", "silent", map[string]float64{"heartbeat": 25})
 	return b
 }
 
 func scDemo(now time.Time, t time.Duration) *statusBuilder {
 	b := newStatus(now)
-	two := []string{ps5A.Host, ps5B.Host}
+	two := []string{consoleA.Host, consoleB.Host}
 	b.ready("qwen3.8-27b", two, instOpts{readyAgo: 1*time.Hour + 3*time.Minute, served: 148, inFlight: 2, lastTPS: 10.4, lastAgo: 12 * time.Second})
-	b.ready("qwen3.5-4b", []string{omen.Host}, instOpts{readyAgo: 19 * time.Minute, served: 57, lastTPS: 62.7, lastAgo: 75 * time.Second})
-	b.loading("gemma-4-12b", []string{ps5C.Host}, loadOpts{startedAgo: 41*time.Second + t, progress: creep(0.55, 0.3, t), waiters: 2, rateMBs: 101})
+	b.ready("qwen3.5-4b", []string{hostNode.Host}, instOpts{readyAgo: 19 * time.Minute, served: 57, lastTPS: 62.7, lastAgo: 75 * time.Second})
+	b.loading("gemma-4-12b", []string{consoleC.Host}, loadOpts{startedAgo: 41*time.Second + t, progress: creep(0.55, 0.3, t), waiters: 2, rateMBs: 101})
 	b.queue(scheduler.EntryStatus{Profile: "devstral-24b", Created: now.Add(-95 * time.Second), Waiters: 1,
 		WaitReason: "placer: need 12100 MiB (requires 12100 MiB) does not fit the available nodes"})
 	b.learned("qwen3.8-27b", two)
-	b.learned("qwen3.5-4b", []string{omen.Host})
+	b.learned("qwen3.5-4b", []string{hostNode.Host})
 	return b
 }
 
@@ -220,32 +220,32 @@ func scBenchLoad(now time.Time, t time.Duration) *statusBuilder {
 
 func scBenchConversation(now time.Time, t time.Duration) *statusBuilder {
 	b := newStatus(now)
-	b.ready("bench-gemma-12b-2w", []string{ps5A.Host, ps5B.Host}, instOpts{readyAgo: 50 * time.Second, served: 3, inFlight: 1, lastTPS: 11.8, lastAgo: 6 * time.Second})
+	b.ready("bench-gemma-12b-2w", []string{consoleA.Host, consoleB.Host}, instOpts{readyAgo: 50 * time.Second, served: 3, inFlight: 1, lastTPS: 11.8, lastAgo: 6 * time.Second})
 	return b
 }
 
 func scBenchHold(now time.Time, t time.Duration) *statusBuilder {
 	b := newStatus(now)
-	b.ready("qwen3.5-4b", []string{ps5A.Host}, instOpts{readyAgo: 70 * time.Second, served: 7, lastTPS: 30.8, lastAgo: 20 * time.Second})
+	b.ready("qwen3.5-4b", []string{consoleA.Host}, instOpts{readyAgo: 70 * time.Second, served: 7, lastTPS: 30.8, lastAgo: 20 * time.Second})
 	return b
 }
 
 func scBenchConcurrent(now time.Time, t time.Duration) *statusBuilder {
 	b := newStatus(now)
-	b.ready("qwen3.5-4b", []string{ps5A.Host}, instOpts{readyAgo: 40 * time.Second, served: 11, inFlight: 3, lastTPS: 18.2, lastAgo: 2 * time.Second})
+	b.ready("qwen3.5-4b", []string{consoleA.Host}, instOpts{readyAgo: 40 * time.Second, served: 11, inFlight: 3, lastTPS: 18.2, lastAgo: 2 * time.Second})
 	return b
 }
 
 func scBenchParallel(now time.Time, t time.Duration) *statusBuilder {
 	b := newStatus(now)
-	b.ready("qwen3.5-4b", []string{ps5B.Host}, instOpts{readyAgo: 30 * time.Second, served: 3, inFlight: 1, lastTPS: 31.2, lastAgo: 3 * time.Second})
-	b.loading("bench-gemma-12b-1w", []string{ps5A.Host}, loadOpts{startedAgo: 45*time.Second + t, progress: 0.6, rateMBs: 101})
+	b.ready("qwen3.5-4b", []string{consoleB.Host}, instOpts{readyAgo: 30 * time.Second, served: 3, inFlight: 1, lastTPS: 31.2, lastAgo: 3 * time.Second})
+	b.loading("bench-gemma-12b-1w", []string{consoleA.Host}, loadOpts{startedAgo: 45*time.Second + t, progress: 0.6, rateMBs: 101})
 	return b
 }
 
 func scBenchLast(now time.Time, t time.Duration) *statusBuilder {
 	b := newStatus(now)
-	b.ready("bench-devstral-24b", []string{ps5B.Host}, instOpts{readyAgo: 95 * time.Second, served: 6, inFlight: 1, lastTPS: 8.0, lastAgo: 4 * time.Second})
+	b.ready("bench-devstral-24b", []string{consoleB.Host}, instOpts{readyAgo: 95 * time.Second, served: 6, inFlight: 1, lastTPS: 8.0, lastAgo: 4 * time.Second})
 	return b
 }
 

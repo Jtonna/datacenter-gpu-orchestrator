@@ -78,7 +78,7 @@ func TestUpstream_ReadyOrDrainingOnly(t *testing.T) {
 }
 
 func TestStatus_LoadLogMatchedToNodesByEndpoint(t *testing.T) {
-	h := newHarness(t).nodes(ps5("a", 2, 9000), ps5("b", 4, 9000), omen(8000))
+	h := newHarness(t).nodes(ps5("a", 2, 9000), ps5("b", 4, 9000), hostNode(8000))
 	h.llama("m", 20000)
 	h.request("m")
 	ch := h.child("m")
@@ -180,7 +180,7 @@ func TestPlan_DryRunChangesNothing(t *testing.T) {
 // fake "--port 0". A llama command is shown without the port flag (the hub
 // still finds --rpc and --ctx-size); a kind: command line is not shown.
 func TestRunning_PreflightCmdHasNoFakePort(t *testing.T) {
-	h := newHarness(t).nodes(ps5("a", 2, 15000), omen(8000))
+	h := newHarness(t).nodes(ps5("a", 2, 15000), hostNode(8000))
 	h.llama("m", 8000)
 	h.command("whisper", 2000)
 	h.autoProbe, h.autoStart = false, false

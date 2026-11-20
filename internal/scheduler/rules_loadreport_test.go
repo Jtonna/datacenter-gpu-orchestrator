@@ -226,7 +226,7 @@ func TestLoadReport_NoPerWorkerFiguresMeansNoGuessing(t *testing.T) {
 }
 
 func TestLoadReport_LocalOnlyLoadHasNoUploadFields(t *testing.T) {
-	h := newHarness(t).nodes(omen(7000))
+	h := newHarness(t).nodes(hostNode(7000))
 	h.llama("m", 4000)
 	h.request("m")
 	h.advance(12 * time.Second)
@@ -334,7 +334,7 @@ func TestRecentLoads_NewestFirstAndExpireAfterRetention(t *testing.T) {
 	if RecentLoadRetention != 120*time.Second {
 		t.Fatalf("retention = %v", RecentLoadRetention)
 	}
-	h := newHarness(t).nodes(omen(7000))
+	h := newHarness(t).nodes(hostNode(7000))
 	h.llama("m", 4000)
 	h.request("m")
 	h.healthy("m")

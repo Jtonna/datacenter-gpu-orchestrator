@@ -100,7 +100,7 @@ func TestPreflight_ExactFiguresDoNotFit_ReturnedAndOverrideStopsRepeat(t *testin
 }
 
 func TestPreflight_LocalNotProbed(t *testing.T) {
-	h := newHarness(t).nodes(omen(8000))
+	h := newHarness(t).nodes(hostNode(8000))
 	h.llama("m", 6000)
 	h.request("m")
 	if len(h.prober.calls) != 0 {
@@ -201,7 +201,7 @@ func TestEmpty_ForgottenOnSuccessfulLoad(t *testing.T) {
 }
 
 func TestCapacity_NeverFits_503AtOnceWithFigures(t *testing.T) {
-	h := newHarness(t).nodes(ps5("a", 2, 15000), alien("al", 7000))
+	h := newHarness(t).nodes(ps5("a", 2, 15000), laptop("al", 7000))
 	h.llama("huge", 40000)
 	w := h.request("huge")
 	e := h.failed(w, http.StatusServiceUnavailable, ReasonDoesNotFit)
@@ -240,7 +240,7 @@ func TestCapacity_SkippedWhileStale_TimesOutStale(t *testing.T) {
 }
 
 func TestCapacity_EstimatedNeedUsesOverheadAndMargin(t *testing.T) {
-	h := newHarness(t).nodes(omen(8151+200-256), alien("al", 7885-200+256))
+	h := newHarness(t).nodes(hostNode(8151+200-256), laptop("al", 7885-200+256))
 	// 7.2 worked check: Devstral 14K, estimated 14828, both laptops do not fit.
 	h.llama("devstral", 0)
 	h.needs["devstral"] = NeedInfo{Need: placer.Estimated(14828)}
@@ -258,7 +258,7 @@ func TestCapacity_EstimatedNeedUsesOverheadAndMargin(t *testing.T) {
 }
 
 func TestEligibility_StaleView_RemoteIneligibleLocalOK(t *testing.T) {
-	h := newHarness(t).nodes(ps5("a", 2, 15000), omen(8000))
+	h := newHarness(t).nodes(ps5("a", 2, 15000), hostNode(8000))
 	h.llama("m", 6000)
 	h.view.stale()
 	h.advance(61 * time.Second)
@@ -276,7 +276,7 @@ func TestEligibility_NoAddressNotUsed(t *testing.T) {
 }
 
 func TestEligibility_AllowTiers(t *testing.T) {
-	h := newHarness(t).nodes(omen(8000), alien("al", 7800))
+	h := newHarness(t).nodes(hostNode(8000), laptop("al", 7800))
 	h.llama("m", 6000, func(p *core.Profile) { p.AllowTiers = []int{3} })
 	h.request("m")
 	h.wantNodes("m", "host-1")
@@ -301,7 +301,7 @@ func TestForced_UnresolvedAndAmbiguousNamesUnavailable(t *testing.T) {
 }
 
 func TestForced_PlacedInConfigOrderWithProfileSplit(t *testing.T) {
-	h := newHarness(t).nodes(ps5("a", 2, 15000), alien("al", 7800))
+	h := newHarness(t).nodes(ps5("a", 2, 15000), laptop("al", 7800))
 	h.llama("bench", 1, func(p *core.Profile) {
 		p.ForceNodes = []string{"al", "a"}
 		p.TensorSplit = []int{40, 60}
@@ -325,7 +325,7 @@ func TestLoadTimeout_FormulaForLlama(t *testing.T) {
 }
 
 func TestLoadTimeout_CommandUsesCommandLoadTimeout(t *testing.T) {
-	h := newHarness(t).nodes(omen(8000))
+	h := newHarness(t).nodes(hostNode(8000))
 	h.command("whisper", 5000)
 	h.request("whisper")
 	if got := h.inst("whisper").loadTimeout; got != 900*time.Second {
@@ -338,7 +338,7 @@ func TestLoadTimeout_CommandUsesCommandLoadTimeout(t *testing.T) {
 }
 
 func TestCommand_LocalNodeOnly(t *testing.T) {
-	h := newHarness(t).nodes(ps5("a", 2, 15000), omen(4000))
+	h := newHarness(t).nodes(ps5("a", 2, 15000), hostNode(4000))
 	h.command("whisper", 5000)
 	w := h.request("whisper") // live budget 3800 on the local node; the PS5 is never used
 	h.pending(w)
@@ -352,7 +352,7 @@ func TestCommand_LocalNodeOnly(t *testing.T) {
 // it stays its holder, and stays evictable, when the view's local entry is
 // refreshed or replaced; the settle fetch then targets that same id.
 func TestLocalNode_HolderAndEvictionSurviveViewRefresh(t *testing.T) {
-	h := newHarness(t).nodes(omen(8000))
+	h := newHarness(t).nodes(hostNode(8000))
 	h.llama("m", 6000)
 	g := h.ready("m")
 	h.release(g)
@@ -363,7 +363,7 @@ func TestLocalNode_HolderAndEvictionSurviveViewRefresh(t *testing.T) {
 	h.viewChanged()
 	h.view.remove("host-1")
 	h.viewChanged()
-	h.view.set(omen(7800))
+	h.view.set(hostNode(7800))
 	h.viewChanged()
 	if got := h.c.nodes["host-1"].holder; got != "m" {
 		t.Fatalf("holder of host-1 = %q, want m", got)
@@ -388,7 +388,7 @@ func TestLocalNode_HolderAndEvictionSurviveViewRefresh(t *testing.T) {
 // figure is below its headroom must not make the load fail with a negative
 // tensor-split weight.
 func TestForced_NegativeBudgetStillLoadsWithClampedSplit(t *testing.T) {
-	h := newHarness(t).nodes(ps5("a", 2, 15000), alien("al", 7800))
+	h := newHarness(t).nodes(ps5("a", 2, 15000), laptop("al", 7800))
 	h.llama("bench", 1, func(p *core.Profile) { p.ForceNodes = []string{"al", "a"} })
 	h.prober.free["192.0.2.2:50052"] = 600 // below the PS5 tier's 1000 MiB headroom
 	w := h.request("bench")
