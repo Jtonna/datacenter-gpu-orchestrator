@@ -1,0 +1,26 @@
+# llama-server with RPC, same llama.cpp commit as the llama-swap image and the Alienware rpc-server.
+# Installed as llama-server-rpc beside the stock llama-server; nothing existing is replaced.
+FROM nvidia/cuda:13.3.1-devel-ubuntu24.04 AS build
+ARG LLAMA_COMMIT=330f0189c9fc71ef631f40211660a87d99251cc1
+ARG JOBS=12
+RUN apt-get update && apt-get install -y --no-install-recommends git cmake ninja-build g++ ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+RUN git init . && git remote add origin https://github.com/ggml-org/llama.cpp.git \
+    && git fetch --depth 1 origin ${LLAMA_COMMIT} && git checkout FETCH_HEAD \
+    && test "$(git rev-parse HEAD)" = "${LLAMA_COMMIT}"
+RUN cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+      -DGGML_RPC=ON -DGGML_CUDA=ON -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=ON \
+      -DBUILD_SHARED_LIBS=OFF -DGGML_NATIVE=OFF -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DCMAKE_CUDA_ARCHITECTURES=120 \
+      -DCMAKE_EXE_LINKER_FLAGS=-Wl,-rpath-link=/usr/local/cuda/lib64/stubs \
+      -DCMAKE_LIBRARY_PATH=/usr/local/cuda/lib64/stubs \
+    && cmake --build build --target llama-server -j ${JOBS}
+
+FROM llama-swap-whisper:local
+COPY --from=build /src/build/bin/llama-server /usr/local/bin/llama-server-rpc
+# Resolve .local names through the host avahi socket (mounted at /run/avahi-daemon).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libnss-mdns \
+    && rm -rf /var/lib/apt/lists/* \
+    && sed -i "s/^hosts:.*/hosts: files mdns4_minimal [NOTFOUND=return] dns/" /etc/nsswitch.conf \
+    && grep -q mdns4_minimal /etc/nsswitch.conf

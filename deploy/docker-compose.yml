@@ -21,7 +21,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - /srv/llama-swap/models:/models:ro
+      - models:/models:ro             # the models volume, defined at the bottom
       # Full output of every child llama-server, one file per start (the child log
       # directory, LLM_SCHEDULER_CHILD_LOG_DIR). Created on first start; old files are pruned.
       - ./logs:/var/log/llm-children
@@ -45,6 +45,41 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+
+  # The share: a read-only NFSv4 export of the models volume, for PS5s that read model
+  # files themselves (docs/server-mode-interface.md section 7.6). No code of ours: a pinned
+  # third-party image around the kernel NFS server. A separate container so that a scheduler
+  # redeploy does not cut the share, and so that the scheduler runs without SYS_ADMIN.
+  # Host requirement: kernel modules nfs and nfsd loaded (a file in /etc/modules-load.d/).
+  llm-share:
+    image: erichough/nfs-server@sha256:784ef30907aa318b8324c4c49bd258b11a740ab0eea9f09b5ccf9df378fa77ca
+    container_name: llm-scheduler-share
+    restart: unless-stopped
+    cap_add:
+      - SYS_ADMIN                     # the minimum the kernel NFS server needs; not privileged
+    security_opt:
+      - apparmor=unconfined
+    ports:
+      - "10.0.0.1:2049:2049/tcp"      # the PS5 link address only. Never 0.0.0.0.
+    environment:
+      NFS_EXPORT_0: "/models 10.0.0.0/24(ro,no_subtree_check,fsid=0,insecure,all_squash)"
+      NFS_DISABLE_VERSION_3: "1"
+    volumes:
+      - models:/models:ro
+      - /lib/modules:/lib/modules:ro
+    networks:
+      - sched
+
+volumes:
+  # One volume for the model files, mounted read-only by the scheduler and by the share.
+  # A bind to the existing directory: nothing is copied and llama-swap keeps reading it.
+  models:
+    name: llm-models
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /srv/llama-swap/models
 
 networks:
   sched:
