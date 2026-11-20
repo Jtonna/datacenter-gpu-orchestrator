@@ -110,13 +110,12 @@ func (c *counterState) update(m Metrics, t time.Duration) {
 	}
 
 	// Network (3.1).
-	// CONTRACT-QUESTION: rule 2 says "if any cur < prev ... discard that
-	// sample". Applying it to the whole scrape would let one re-created
-	// container interface (veth*, lxc*: denylisted, re-created often) blank
-	// every rate on the machine. The agent applies it per counter: one
-	// interface direction going backwards gives no rate for that
-	// interface direction only; a device missing from the previous scrape is
-	// a first sample for that device.
+	// Rule 2 (draft 3): resets are detected per interface and per direction.
+	// cur < prev on one counter omits only that interface's rx_mbps (or
+	// tx_mbps) for this interval; the other direction and every other
+	// interface are unaffected, and the counter restarts from cur (the
+	// deferred assignment above). A device missing from the previous scrape
+	// is a first sample for that device (rule 1).
 	rate := func(cur float64, prevMap map[string]float64, dev string) *float64 {
 		prev, ok := prevMap[dev]
 		if !ok || cur < prev {

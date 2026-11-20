@@ -36,6 +36,8 @@ func Normalize(in Input) agentproto.Stats {
 	}
 	var gpus []agentproto.GPUStat
 	var nvPCI map[string]bool
+	var drmChips map[string]string
+	var node *nodeView
 	if in.Nvidia != nil {
 		var nv []agentproto.GPUStat
 		nv, nvPCI = nvidiaGPUs(in.Nvidia)
@@ -43,13 +45,15 @@ func Normalize(in Input) agentproto.Stats {
 	}
 	if in.Node != nil {
 		n := newNodeView(in.Node)
+		node = n
 		s.CPU = n.cpu(in.Rates)
 		s.Memory = n.memory()
 		s.Load = n.load()
 		s.Net = n.net(in.Rates, in.Primary)
-		s.Temps = n.temps()
 		s.Fans = n.fans()
-		for _, g := range n.drmGPUs() {
+		var drm []agentproto.GPUStat
+		drm, drmChips = n.drmGPUs()
+		for _, g := range drm {
 			// 5.4 rule 2: a drm card at the PCI address of an Nvidia entry
 			// is dropped; the Nvidia entry is kept.
 			if g.PCIAddress != "" && nvPCI[g.PCIAddress] {
@@ -64,6 +68,16 @@ func Normalize(in Input) agentproto.Stats {
 	}
 	if gpus != nil {
 		s.GPUs = gpus
+	}
+	if node != nil {
+		// 4.6: a GPU chip is the hwmon chip of a drm card actually in gpus.
+		gpuChips := map[string]bool{}
+		for _, g := range s.GPUs {
+			if c, ok := drmChips[g.ID]; ok && c != "" {
+				gpuChips[c] = true
+			}
+		}
+		s.Temps = node.temps(gpuChips)
 	}
 	s.HeadlineTempC = headline(s.Temps, s.GPUs)
 	return s
@@ -209,8 +223,9 @@ func (n *nodeView) net(r Rates, primary string) []agentproto.NetIf {
 	}
 
 	out := []agentproto.NetIf{}
-	// CONTRACT-QUESTION: `up` is required, so an interface (even the
-	// primary one) with no node_network_up series is not sent.
+	// 4.5 (draft 3): an interface with no node_network_up series is not
+	// sent, even the primary one; then no entry is marked primary (devs and
+	// rest come from node_network_up only, and rest never holds primary).
 	if _, ok := up[primary]; ok && primary != "" {
 		out = append(out, build(primary))
 	}
@@ -238,27 +253,50 @@ func (n *nodeView) net(r Rates, primary string) []agentproto.NetIf {
 
 func validTemp(v float64) bool { return v > 0 && v < 125 }
 
-// 4.6
-func (n *nodeView) temps() []agentproto.Temp {
-	out := []agentproto.Temp{}
+// cpuChipNames and cpuLabelPrefixes recognise a CPU chip (4.6).
+var (
+	cpuChipNames     = map[string]bool{"k10temp": true, "coretemp": true, "zenpower": true}
+	cpuLabelPrefixes = []string{"Tctl", "Tdie", "Package"}
+)
+
+func isCPUSensor(chipName, label string) bool {
+	if cpuChipNames[chipName] {
+		return true
+	}
+	for _, p := range cpuLabelPrefixes {
+		if strings.HasPrefix(label, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// temps builds temps[] (4.6, draft 3). Valid sensors only (0 < v < 125).
+// The cap of 16 keeps, in this order: the sensors on GPU chips (the hwmon
+// chip of a drm card in gpus, given as gpuChips) and on CPU chips (chip_name
+// k10temp, coretemp or zenpower, or a label starting with Tctl, Tdie or
+// Package), then every other sensor; each group keeps the exporter's own
+// output order. The sent list is in that same order.
+func (n *nodeView) temps(gpuChips map[string]bool) []agentproto.Temp {
+	var first, rest []agentproto.Temp
 	for _, s := range n.m["node_hwmon_temp_celsius"] {
 		if !validTemp(s.Value) {
 			continue
 		}
 		chip, sensor := s.Labels["chip"], s.Labels["sensor"]
-		out = append(out, agentproto.Temp{
+		t := agentproto.Temp{
 			ID:       chip + "/" + sensor,
 			Label:    n.sensorLbl[chipSensor(chip, sensor)],
 			ChipName: n.chipNames[chip],
 			Celsius:  s.Value,
-		})
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Celsius != out[j].Celsius {
-			return out[i].Celsius > out[j].Celsius
 		}
-		return out[i].ID < out[j].ID
-	})
+		if gpuChips[chip] || isCPUSensor(t.ChipName, t.Label) {
+			first = append(first, t)
+		} else {
+			rest = append(rest, t)
+		}
+	}
+	out := append(append([]agentproto.Temp{}, first...), rest...)
 	if len(out) > agentproto.MaxTemps {
 		out = out[:agentproto.MaxTemps]
 	}
@@ -292,10 +330,8 @@ func headlineExcluded(chipName string) bool {
 
 // headline is the maximum over the sent temps entries not excluded by
 // chip_name plus every sent gpus[].temp_c; nil when both sets are empty.
-// CONTRACT-QUESTION: "every valid temps entry" is read as the entries that
-// are sent (after the cap of 16, highest first), so the headline is always
-// one of the visible readings. Since the cap keeps the highest, this differs
-// only when 16 or more excluded sensors are hotter than every included one.
+// 4.6 (draft 3): temps is the list actually sent (after the cap of 16), so a
+// sensor dropped by the cap can never be the headline.
 func headline(temps []agentproto.Temp, gpus []agentproto.GPUStat) *float64 {
 	var best *float64
 	consider := func(v float64) {
@@ -406,9 +442,10 @@ func drmPCIAddress(chip string) (string, bool) {
 
 const twoGiB = 2 << 30
 
-// 5.1 to 5.5 for drm (AMD) cards.
-func (n *nodeView) drmGPUs() []agentproto.GPUStat {
-	var out []agentproto.GPUStat
+// 5.1 to 5.5 for drm (AMD) cards. chips maps each returned GPU id to the
+// card's hwmon chip label (for the 4.6 cap order).
+func (n *nodeView) drmGPUs() (out []agentproto.GPUStat, chips map[string]string) {
+	chips = map[string]string{}
 	seen := map[string]bool{}
 	for _, info := range n.m["node_drm_card_info"] {
 		// 5.3: only vendor="amd" is processed (exact, lower-case as reported).
@@ -428,11 +465,11 @@ func (n *nodeView) drmGPUs() []agentproto.GPUStat {
 			continue // required memory fields missing: element not sent
 		}
 		g := agentproto.GPUStat{Vendor: "amd"}
-		// CONTRACT-QUESTION: with no gtt_size series, rule 5.3.2 cannot hold,
-		// so the card is read as discrete (VRAM-only figures, never adding
-		// host memory). If it qualifies as integrated but gtt_used is
-		// missing, the required mem_used_bytes cannot be computed by the
-		// integrated formula and the element is not sent.
+		// 5.3 (draft 3): a card with no gtt_size series is discrete, with
+		// mem_source drm_vram and the VRAM-only formula (the else branch).
+		// CONTRACT-QUESTION: if the card qualifies as integrated but
+		// gtt_used is missing, the required mem_used_bytes cannot be
+		// computed by the integrated formula, so the element is not sent.
 		if okGS && vramSize <= twoGiB && gttSize >= 8*vramSize {
 			if !okGU {
 				continue
@@ -475,9 +512,10 @@ func (n *nodeView) drmGPUs() []agentproto.GPUStat {
 		if s, ok := lowestNumbered(pw, "power"); ok {
 			g.PowerW = f64(s.Value)
 		}
+		chips[g.ID] = chip
 		out = append(out, g)
 	}
-	return out
+	return out, chips
 }
 
 // drmTemp: the sensor labelled "edge" on the card's chip, else the

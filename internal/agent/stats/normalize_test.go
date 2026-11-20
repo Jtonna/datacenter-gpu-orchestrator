@@ -51,9 +51,11 @@ func TestNormalizePS5AppendixB1(t *testing.T) {
 		t.Fatalf("temps = %+v", s.Temps)
 	}
 	wantTemps := []agentproto.Temp{
-		{ID: "platform_ps5_fan/temp1", Label: "MainSoC", Celsius: 51},
+		// 4.6 cap order: GPU-chip and CPU-chip sensors first (exporter order),
+		// then the rest.
 		{ID: "pci0000:00_0000:00:18_3/temp1", Label: "Tctl", Celsius: 50.5},
 		{ID: "0000:00:08_1_0000:20:00_0/temp1", Label: "edge", Celsius: 47},
+		{ID: "platform_ps5_fan/temp1", Label: "MainSoC", Celsius: 51},
 	}
 	for i, w := range wantTemps {
 		if s.Temps[i] != w {
@@ -128,12 +130,12 @@ func TestNormalizeHostAppendixB2(t *testing.T) {
 
 	// Headline 64.5: nvme (47.85) and mt7921_phy0 (46) excluded, spd5118 (0) dropped.
 	wantF(t, "headline", s.HeadlineTempC, 64.5)
-	wantIDs := []string{
-		"pci0000:00_0000:00:18_3/temp1",
-		"thermal_thermal_zone0/temp2",
+	wantIDs := []string{ // GPU and CPU chips first, then exporter order
 		"0000:00:08_1_0000:06:00_0/temp1",
-		"nvme_nvme0/temp2",
+		"pci0000:00_0000:00:18_3/temp1",
 		"ieee80211_phy0/temp1",
+		"nvme_nvme0/temp2",
+		"thermal_thermal_zone0/temp2",
 	}
 	if len(s.Temps) != len(wantIDs) {
 		t.Fatalf("temps = %+v", s.Temps)
@@ -143,8 +145,8 @@ func TestNormalizeHostAppendixB2(t *testing.T) {
 			t.Fatalf("temps[%d] = %+v, want id %s", i, s.Temps[i], id)
 		}
 	}
-	if s.Temps[0].Label != "Tctl" || s.Temps[0].ChipName != "k10temp" || s.Temps[1].Label != "" || s.Temps[1].ChipName != "acpitz" {
-		t.Fatalf("temp labels = %+v", s.Temps[:2])
+	if s.Temps[1].Label != "Tctl" || s.Temps[1].ChipName != "k10temp" || s.Temps[4].Label != "" || s.Temps[4].ChipName != "acpitz" {
+		t.Fatalf("temp labels = %+v", s.Temps)
 	}
 
 	// Net: primary first with link 5000; eno1 down with link omitted (-125000).
@@ -301,21 +303,68 @@ func TestTempsValidityAndCap(t *testing.T) {
 	if len(s.Temps) != agentproto.MaxTemps {
 		t.Fatalf("temps len = %d", len(s.Temps))
 	}
-	if s.Temps[0].ID != "z/temp4" || s.Temps[0].Celsius != 124.9 {
-		t.Fatalf("temps[0] = %+v", s.Temps[0])
-	}
-	for i := 1; i < len(s.Temps); i++ {
-		if s.Temps[i].Celsius > s.Temps[i-1].Celsius {
-			t.Fatal("not highest first")
-		}
-		if s.Temps[i].Celsius <= 0 || s.Temps[i].Celsius >= 125 {
-			t.Fatalf("invalid temp kept: %+v", s.Temps[i])
+	// No GPU or CPU chip: the first 16 valid sensors in the exporter's
+	// order; "highest first" is gone, so z/temp4 (124.9, listed last) is cut.
+	for i, tp := range s.Temps {
+		if want := fmt.Sprintf("c/temp%d", i); tp.ID != want {
+			t.Fatalf("temps[%d] = %+v, want %s", i, tp, want)
 		}
 	}
-	// lowest kept: 124.9 then 49..35 (15 entries)
-	if s.Temps[15].Celsius != 35 {
-		t.Fatalf("last = %+v", s.Temps[15])
+	wantF(t, "headline from the sent sensors only", s.HeadlineTempC, 45)
+}
+
+// 4.6 (draft 3): more than 16 sensors; hot peripheral and excluded sensors
+// must not push the CPU and GPU sensors out of the cap, and a sensor cut by
+// the cap is never the headline.
+func TestTempsCapOrderProcessorsFirst(t *testing.T) {
+	var b strings.Builder
+	// An AMD drm card whose hwmon chip is "gpuchip" (5.3 integrated).
+	b.WriteString(`node_drm_card_info{card="card0",chip="gpuchip",vendor="amd"} 1
+node_drm_memory_vram_size_bytes{card="card0"} 536870912
+node_drm_memory_vram_used_bytes{card="card0"} 1000
+node_drm_memory_gtt_size_bytes{card="card0"} 15000000000
+node_drm_memory_gtt_used_bytes{card="card0"} 2000
+node_hwmon_chip_names{chip="nvmechip",chip_name="nvme"} 1
+node_hwmon_chip_names{chip="cpu_a",chip_name="k10temp"} 1
+node_hwmon_chip_names{chip="cpu_b",chip_name="coretemp"} 1
+node_hwmon_chip_names{chip="cpu_c",chip_name="zenpower"} 1
+node_hwmon_sensor_label{chip="board",sensor="temp9",label="Package id 0"} 1
+node_hwmon_sensor_label{chip="board",sensor="temp8",label="Tdie"} 1
+`)
+	// Exporter order: a hot excluded sensor first, then 17 hot peripheral
+	// sensors, then the processor sensors last.
+	b.WriteString("node_hwmon_temp_celsius{chip=\"nvmechip\",sensor=\"temp1\"} 110\n")
+	for i := 0; i < 17; i++ {
+		fmt.Fprintf(&b, "node_hwmon_temp_celsius{chip=\"p%02d\",sensor=\"temp1\"} %d\n", i, 80+i)
 	}
+	b.WriteString(`node_hwmon_temp_celsius{chip="cpu_a",sensor="temp1"} 60
+node_hwmon_temp_celsius{chip="board",sensor="temp9"} 61
+node_hwmon_temp_celsius{chip="gpuchip",sensor="temp1"} 55
+node_hwmon_temp_celsius{chip="cpu_b",sensor="temp1"} 62
+node_hwmon_temp_celsius{chip="board",sensor="temp8"} 63
+node_hwmon_temp_celsius{chip="cpu_c",sensor="temp1"} 64
+node_hwmon_temp_celsius{chip="board",sensor="temp7"} 99
+`)
+	s := Normalize(Input{Sources: okSources("node"), Node: parseText(t, b.String(), keepNode)})
+	var got []string
+	for _, tp := range s.Temps {
+		got = append(got, tp.ID)
+	}
+	want := []string{
+		// GPU-chip and CPU-chip sensors, in the exporter's order: by
+		// chip_name (k10temp, coretemp, zenpower), by label (Package, Tdie),
+		// and the drm card's chip.
+		"cpu_a/temp1", "board/temp9", "gpuchip/temp1", "cpu_b/temp1", "board/temp8", "cpu_c/temp1",
+		// Then the rest in the exporter's order until 16: the excluded nvme
+		// sensor and p00..p08; p09..p16 and board/temp7 (99) are cut.
+		"nvmechip/temp1", "p00/temp1", "p01/temp1", "p02/temp1", "p03/temp1", "p04/temp1", "p05/temp1", "p06/temp1", "p07/temp1", "p08/temp1",
+	}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("temps\n got %v\nwant %v", got, want)
+	}
+	// Headline: max over the sent, not excluded entries (p08 = 88) and the
+	// GPU temp; nvme (110, excluded) and the cut sensors (up to 99) never win.
+	wantF(t, "headline", s.HeadlineTempC, 88)
 }
 
 func TestFansPairingRPMOnlyAndCap(t *testing.T) {
@@ -521,5 +570,31 @@ nvidia_smi_memory_total_bytes{uuid="GPU-c"} 2e9
 	wantNil(t, "reserved", b.MemReservedBytes)
 	if s.Temps != nil || s.CPU != nil {
 		t.Fatal("node objects without node data")
+	}
+}
+
+// Draft 3 confirmations: 4.5 (no node_network_up: not sent, even the
+// primary, and then nothing is primary) and 5.3 (no gtt_size series:
+// discrete, drm_vram, VRAM-only figures).
+func TestDraft3NetUpAndNoGTT(t *testing.T) {
+	in := `node_network_up{device="eth0"} 1
+node_network_receive_bytes_total{device="eth0"} 10
+node_network_receive_bytes_total{device="enp1s0"} 99999
+node_network_transmit_bytes_total{device="enp1s0"} 99999
+node_drm_card_info{card="card0",chip="0000:00:08_1_0000:20:00_0",vendor="amd"} 1
+node_drm_memory_vram_size_bytes{card="card0"} 536870912
+node_drm_memory_vram_used_bytes{card="card0"} 1000
+node_drm_memory_gtt_used_bytes{card="card0"} 2000
+`
+	s := Normalize(Input{Sources: okSources("node"), Node: parseText(t, in, keepNode), Primary: "enp1s0"})
+	if len(s.Net) != 1 || s.Net[0].Name != "eth0" || s.Net[0].Primary {
+		t.Fatalf("net = %+v", s.Net)
+	}
+	if len(s.GPUs) != 1 {
+		t.Fatalf("gpus = %+v", s.GPUs)
+	}
+	g := s.GPUs[0]
+	if g.Kind != "discrete" || g.MemSource != "drm_vram" || g.MemTotalBytes != 536870912 || g.MemUsedBytes != 1000 {
+		t.Fatalf("no-GTT card = %+v", g)
 	}
 }
