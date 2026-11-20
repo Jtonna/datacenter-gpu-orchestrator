@@ -47,11 +47,11 @@ node_load5 1.09
 node_load15 1.21
 # HELP node_network_up Value is 1 if operstate is 'up', 0 otherwise.
 node_network_up{device="eno1"} 0
-node_network_up{device="enx6c1ff7c349ea"} 1
+node_network_up{device="enx020000000010"} 1
 # HELP node_network_receive_bytes_total Network device statistic receive_bytes.
 # TYPE node_network_receive_bytes_total counter
-node_network_receive_bytes_total{device="enx6c1ff7c349ea"} 2.2462712753e+10
-node_network_transmit_bytes_total{device="enx6c1ff7c349ea"} 8.80881274607e+11
+node_network_receive_bytes_total{device="enx020000000010"} 2.2462712753e+10
+node_network_transmit_bytes_total{device="enx020000000010"} 8.80881274607e+11
 # HELP node_network_speed_bytes Network device property: speed_bytes
 node_network_speed_bytes{device="eno1"} -125000
-node_network_speed_bytes{device="enx6c1ff7c349ea"} 6.25e+08
+node_network_speed_bytes{device="enx020000000010"} 6.25e+08

@@ -41,12 +41,12 @@ func TestResolve(t *testing.T) {
 		t.Fatalf("%+v", id)
 	}
 	// Route through a bridge: fall back to the default route's interface.
-	id, _ = Resolve(fakeNet{src: "10.0.0.2", owners: map[string]string{"10.0.0.2": "br0"}, def: "eno1", physical: phys, macs: macs}, potluck)
+	id, _ = Resolve(fakeNet{src: "192.0.2.2", owners: map[string]string{"192.0.2.2": "br0"}, def: "eno1", physical: phys, macs: macs}, potluck)
 	if id.ID != "02:00:00:00:00:0b" || id.RouteIface != "br0" {
 		t.Fatalf("%+v", id)
 	}
 	// No physical interface at all: no id.
-	if _, err := Resolve(fakeNet{src: "10.0.0.2", owners: map[string]string{"10.0.0.2": "br0"}, def: "docker0", physical: phys, macs: macs}, potluck); err == nil {
+	if _, err := Resolve(fakeNet{src: "192.0.2.2", owners: map[string]string{"192.0.2.2": "br0"}, def: "docker0", physical: phys, macs: macs}, potluck); err == nil {
 		t.Fatal("want error")
 	}
 	if _, err := Resolve(fakeNet{}, potluck); err == nil {

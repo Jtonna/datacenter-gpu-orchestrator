@@ -16,7 +16,7 @@ func newTestCollector(clock *fakeClock, srcs ...SourceConfig) *Collector {
 	return New(Config{
 		Sources:    srcs,
 		Now:        clock.Now,
-		Primary:    func() string { return "enx6c1ff7c349ea" },
+		Primary:    func() string { return "enx020000000010" },
 		HTTPClient: &http.Client{Transport: &http.Transport{DisableKeepAlives: true}},
 		Timeout:    4 * time.Second,
 	})

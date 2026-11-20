@@ -1,6 +1,6 @@
 # Agent contract: Potluck and `potluck-agent`
 
-Status: DRAFT 4, 2026-11-20 (drafts 1 to 3 reviewed by the PS5 side; change requests CR-1 and CR-2 folded in). Nothing in this document is built. It is task C1 of the plan "Potluck Cleanup Tasks". It becomes binding when the scheduler side and the fleet console agent both accept it.
+Status: DRAFT 5, 2026-11-20 (drafts 1 to 3 reviewed by the PS5 side; change requests CR-1, CR-2 and CR-3 folded in). Nothing in this document is built. It is task C1 of the plan "Potluck Cleanup Tasks". It becomes binding when the scheduler side and the fleet console agent both accept it.
 
 Authors: the scheduler agent (`ps5-ai-datacenter-load-balancer-32`) wrote it; the fleet console agent (`fix-fleet-console-tiles`) reviews it against the PS5 side (boot chain, RAM-only, payload delivery).
 
@@ -467,6 +467,21 @@ Answered on `127.0.0.1:50060` only, read-only, for the machine's own screen. No 
 ```
 
 `model` is the host's model file name, or the `label` of a worker launch. `last_error` is the reason and message of the last refused registration, failed program check or abnormal exit.
+
+### 6.10 Details fixed while building the agent (CR-3)
+
+Accepted by both sides on 2026-11-20. They are part of the contract.
+
+- **Malformed launch request**: a model name that leaves the model folder, `extra_args` the agent sets itself, a missing or wrong `tensor_split`, `model_dir` on a `push` node, a bad `launch_id` or `role`. Answer `400`, reason `invalid_request`.
+- **Wrong launch id**: `DELETE /launch/{id}` answers `409` with reason `not_current`. A lease renewal for a wrong id, or for a launch that has exited, answers `404` with the same word.
+- **Body fields**: a `worker_unreachable` refusal lists the workers in `failed_workers`. `POST /reset` answers `200` with `{"killed": [{"pid", "exe", "unit", "launch_id"}]}`.
+- **Watchdog**: it kills with SIGKILL at once, with no SIGTERM and no 10 s wait.
+- **Model source**: `--model-source dir:<path>` is reported as kind `share` with the path as target. A model folder with no file in it counts as unreachable, which also catches an empty mount point.
+- **Programs**: after three failed downloads the error is reported and the whole fetch is tried again every 60 s.
+- **Stopping**: the wait for the launch port to close is at most 10 s, so a foreign listener cannot hold a launch in `stopping` for ever.
+- **No GPU access**: when `llama-server --list-devices` prints `(none)`, the node reports "the agent must run as root or in the render and video groups" in `programs_error`, stays not ready, and reads the list again every 60 s. The listing is always taken from `llama-server`; `rpc-server` has no such option.
+- **Strict file load** (host launches, phase 6): `strict_file_load: true` sets the environment variable `LLAMA_RPC_FILE_LOAD=required` on the host program; false sets `LLAMA_RPC_FILE_LOAD=1`. Value `0` means the host never asks workers to read files and pushes the weights.
+- **Starter settings**: the starter takes `POTLUCK_URL` (`http://<IPv4>:<port>`), and optionally `POTLUCK_MODEL_SOURCE` and `POTLUCK_WATCHDOG_FLOOR_MIB`, from its environment or from `/etc/potluck/starter.env`. Missing or malformed settings make it wait and read them again.
 
 ## 7. Stats and controls
 

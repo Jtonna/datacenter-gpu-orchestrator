@@ -83,7 +83,7 @@ func TestNormalizePS5AppendixB1(t *testing.T) {
 func normalizeB2(t *testing.T) agentproto.Stats {
 	node, _ := parseFile(t, "host_node.prom", keepNode)
 	nv, _ := parseFile(t, "host_nvidia.prom", keepNvidia)
-	return Normalize(Input{Sources: okSources("node", "nvidia"), Node: node, Nvidia: nv, Primary: "enx6c1ff7c349ea"})
+	return Normalize(Input{Sources: okSources("node", "nvidia"), Node: node, Nvidia: nv, Primary: "enx020000000010"})
 }
 
 // Appendix B.2: Linux laptop with an Nvidia card and an AMD iGPU.
@@ -148,7 +148,7 @@ func TestNormalizeHostAppendixB2(t *testing.T) {
 	}
 
 	// Net: primary first with link 5000; eno1 down with link omitted (-125000).
-	if len(s.Net) != 2 || s.Net[0].Name != "enx6c1ff7c349ea" || !s.Net[0].Primary || !s.Net[0].Up {
+	if len(s.Net) != 2 || s.Net[0].Name != "enx020000000010" || !s.Net[0].Primary || !s.Net[0].Up {
 		t.Fatalf("net = %+v", s.Net)
 	}
 	wantF(t, "link", s.Net[0].LinkMbps, 5000)

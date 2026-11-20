@@ -20,9 +20,9 @@ func TestParseFlagsDefaults(t *testing.T) {
 		t.Fatalf("%+v", o)
 	}
 	o, _ = parseFlags([]string{"--potluck", "192.0.2.1:3122", "--model-source", "share:192.0.2.1:/", "--install", "docker",
-		"--allow-from", "172.30.0.0/24", "--allow-from", "10.0.0.5", "--watchdog-floor-mib", "1500"}, &errb)
+		"--allow-from", "172.30.0.0/24", "--allow-from", "192.0.2.5", "--watchdog-floor-mib", "1500"}, &errb)
 	if o.DataDir != "/var/lib/potluck-agent" || o.ModelsDir != "/models" || len(o.AllowFrom) != 2 ||
-		o.AllowFrom[1].String() != "10.0.0.5/32" || o.WatchdogFloorMiB != 1500 {
+		o.AllowFrom[1].String() != "192.0.2.5/32" || o.WatchdogFloorMiB != 1500 {
 		t.Fatalf("%+v", o)
 	}
 	o, _ = parseFlags([]string{"--potluck", "192.0.2.1:3122", "--model-source", "dir:/srv/models"}, &errb)

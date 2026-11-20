@@ -147,7 +147,7 @@ func newStarter(t *testing.T) *starterEnv {
 	dir := t.TempDir()
 	s := &starterEnv{t: t, sh: sh, bin: filepath.Join(dir, "bin"), fake: filepath.Join(dir, "fake"),
 		etc: filepath.Join(dir, "etc"), shm: filepath.Join(dir, "shm"), omit: map[string]bool{},
-		env: map[string]string{"POTLUCK_URL": "http://10.0.0.1:3122"}}
+		env: map[string]string{"POTLUCK_URL": "http://192.0.2.1:3122"}}
 	for _, d := range []string{s.bin, s.fake, s.etc} {
 		os.MkdirAll(d, 0o755)
 	}
@@ -262,12 +262,12 @@ func TestStarterUnreachableThenReachable(t *testing.T) {
 	s.write("unreachable", "3\n")
 	s.run()
 	s.wantCode(0)
-	s.wantStarted("10.0.0.1:3122", "share:10.0.0.1:/", "1000")
+	s.wantStarted("192.0.2.1:3122", "share:192.0.2.1:/", "1000")
 	if got := strings.Fields(s.read("sleeps")); strings.Join(got, ",") != "5,10,20" {
 		t.Fatalf("waits %v", got)
 	}
 	logs := strings.Fields(s.read("curl.log"))
-	if logs[len(logs)-1] != "http://10.0.0.1:3122/api/agents/binary/0.1.0/linux-amd64" {
+	if logs[len(logs)-1] != "http://192.0.2.1:3122/api/agents/binary/0.1.0/linux-amd64" {
 		t.Fatal(logs)
 	}
 }
@@ -287,7 +287,7 @@ func TestStarterChecksumMismatchThenGood(t *testing.T) {
 	s.write("bad", "1\n")
 	s.run()
 	s.wantCode(0)
-	s.wantStarted("10.0.0.1:3122", "share:10.0.0.1:/", "1000")
+	s.wantStarted("192.0.2.1:3122", "share:192.0.2.1:/", "1000")
 	if !strings.Contains(s.out, "checksum mismatch") || strings.TrimSpace(s.read("sleeps")) != "5" {
 		t.Fatalf("output:\n%s\nsleeps %q", s.out, s.read("sleeps"))
 	}
@@ -316,7 +316,7 @@ func TestStarterEnvFile(t *testing.T) {
 	os.WriteFile(filepath.Join(s2.etc, "starter.env"), []byte("POTLUCK_URL=http://192.0.2.7:3122\n"), 0o644)
 	s2.run()
 	s2.wantCode(0)
-	s2.wantStarted("10.0.0.1:3122", "push", "1000")
+	s2.wantStarted("192.0.2.1:3122", "push", "1000")
 }
 
 func TestStarterLocalFaults(t *testing.T) {

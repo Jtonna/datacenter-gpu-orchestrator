@@ -7,7 +7,7 @@
 # Settings, each read from the environment first, else from the file
 # /etc/potluck/starter.env (lines NAME=value; blank lines and lines starting
 # with # are ignored; the file is read, never sourced):
-#   POTLUCK_URL                  required, for example http://10.0.0.1:3122
+#   POTLUCK_URL                  required, for example http://192.0.2.1:3122
 #   POTLUCK_MODEL_SOURCE         default share:<host part of POTLUCK_URL>:/
 #   POTLUCK_WATCHDOG_FLOOR_MIB   default 1000
 #
@@ -111,7 +111,7 @@ load_settings() {
 	case $ADDR in
 		*[!A-Za-z0-9.:_-]* | "") log "POTLUCK_URL has an odd host part: '$URL'"; return 1 ;;
 		*:*) ;;
-		*) log "POTLUCK_URL needs a port, for example http://10.0.0.1:3122"; return 1 ;;
+		*) log "POTLUCK_URL needs a port, for example http://192.0.2.1:3122"; return 1 ;;
 	esac
 	HOST=${ADDR%:*}
 	case $HOST in
