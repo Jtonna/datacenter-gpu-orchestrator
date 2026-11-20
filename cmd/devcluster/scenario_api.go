@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/api"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/scheduler"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/api"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 )
 
 // scenarioState is the current scenario and when it was selected (animated

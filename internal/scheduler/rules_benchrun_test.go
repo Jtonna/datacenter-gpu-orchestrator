@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 )
 
 // A request that carries a bench run id (X-Bench-Run) tags the load it causes:

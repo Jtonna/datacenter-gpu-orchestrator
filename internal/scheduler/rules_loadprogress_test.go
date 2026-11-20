@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/placer"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/placer"
 )
 
 // Load progress: what /api/status and /running show for an instance that is

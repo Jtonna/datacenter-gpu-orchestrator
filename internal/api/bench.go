@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/bench"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/benchspec"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/proxy"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/proxy"
 )
 
 // The benchmark REST endpoints (design 9.3). They are pull and push only: the

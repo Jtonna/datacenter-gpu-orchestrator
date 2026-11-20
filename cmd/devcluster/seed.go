@@ -22,7 +22,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/bench"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
 )
 
 // seedConfig makes the configuration history.

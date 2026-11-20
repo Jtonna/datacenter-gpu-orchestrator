@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/scheduler"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 )
 
 // Recovery on GET /api/status and the recoveryRequest event (design 8.4b).

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/bench"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
 )
 
 func benchEnv(t *testing.T) *env {

@@ -6,12 +6,12 @@ import (
 	"sort"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/config"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/fleet"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/instance"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/placer"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/fleet"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/placer"
 )
 
 // Fixed policy values from the design that are not configurable.

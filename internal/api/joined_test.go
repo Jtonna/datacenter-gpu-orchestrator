@@ -11,12 +11,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/audit"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/bench"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/cfgstore"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/cfgsvc"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/config"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/mcpserver"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/audit"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgstore"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgsvc"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/mcpserver"
 )
 
 // joinedEnv is the whole system in one process: configuration and audit on a

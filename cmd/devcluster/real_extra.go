@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/bench"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/cfgstore"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgstore"
 )
 
 // What the "real" scenarios add to the recording, DEV-ONLY.

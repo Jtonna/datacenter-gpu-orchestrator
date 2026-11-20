@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/fleet"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/placer"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/fleet"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/placer"
 )
 
 // Design 7.1, 7.2, 7.5, 7.6 as they apply to the stateful core.

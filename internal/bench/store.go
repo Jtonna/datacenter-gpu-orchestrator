@@ -13,7 +13,7 @@ import (
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (no cgo)
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/benchspec"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
 )
 
 // DBFile is the database file name inside data_dir.

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 )
 
 func openStore(t *testing.T, mod ...func(*history.Options)) *history.Store {

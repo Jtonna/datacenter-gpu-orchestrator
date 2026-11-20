@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/config"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 )
 
 func gbToMiB(gb float64) int { return int(math.Round(gb * 1024)) }

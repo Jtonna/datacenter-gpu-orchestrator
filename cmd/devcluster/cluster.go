@@ -16,20 +16,20 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/docs"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/api"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/audit"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/bench"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/cfgstore"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/cfgsvc"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/config"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/fleet"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/instance"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/mcpserver"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/scheduler"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/testutil/fakefleet"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/testutil/ggufgen"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/docs"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/api"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/audit"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgstore"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgsvc"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/fleet"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/mcpserver"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/fakefleet"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/ggufgen"
 )
 
 // cluster is the REAL server underneath the harness, wired as
@@ -72,7 +72,7 @@ const devVersion = "0.1.0-devcluster"
 func moduleRoot() (string, error) {
 	isRoot := func(dir string) bool {
 		b, err := os.ReadFile(filepath.Join(dir, "go.mod"))
-		return err == nil && bytes.Contains(b, []byte("module github.com/Jtonna/ps5-ai-datacenter-load-balancer"))
+		return err == nil && bytes.Contains(b, []byte("module github.com/Jtonna/datacenter-gpu-orchestrator"))
 	}
 	if wd, err := os.Getwd(); err == nil {
 		for d := wd; ; d = filepath.Dir(d) {

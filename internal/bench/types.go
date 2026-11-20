@@ -9,7 +9,7 @@ import (
 	"errors"
 	"sort"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/benchspec"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
 )
 
 // Item sources: where a benchmark or suite came from.

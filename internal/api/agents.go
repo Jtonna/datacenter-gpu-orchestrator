@@ -14,8 +14,8 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/audit"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/cfgstore"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/audit"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgstore"
 )
 
 // Agents (design 9.6). This system has no login and no access control: the

@@ -11,9 +11,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/bench"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/proxy"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/proxy"
 )
 
 // The model catalog is kept in memory (design 9.4). It is built once, in the

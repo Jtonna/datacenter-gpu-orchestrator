@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/benchspec"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
 )
 
 func near(a, b float64) bool { return math.Abs(a-b) < 1e-6 }

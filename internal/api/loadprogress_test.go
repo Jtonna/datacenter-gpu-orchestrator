@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/config"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/instance"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/placer"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/scheduler"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/placer"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 )
 
 // A load that is still uploading to a remote worker: /api/status shows the

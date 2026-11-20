@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 )
 
 const realMember = `{"id":"70:66:2a:a9:a7:65","hostname":"ps5-9032a330","ip":"10.0.0.101","role":"ps5-linux","source":"self","rpc_port":50052,"online":true,"ram_total_gb":14.1,"ram_used_gb":0.91,"vram_total":14.1,"vram_used":0.05,"payload_version":"d466ff91a994-5736b8df","mem_available_mib":13281.54,"rpc_server_mem_mib":74.92,"rpc_server_version":"9958d7ddcab4152720f64df958a876352085dfaf311db66859a6450607ff5ee7","last_recovery_action":null,"future_field":{"a":1}}`

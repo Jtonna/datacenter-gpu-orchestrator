@@ -12,7 +12,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 )
 
 type wsMsg struct {

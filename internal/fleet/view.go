@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 )
 
 // NeverReceived is the Age reported before the first byte has arrived.

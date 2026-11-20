@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/audit"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/bench"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/benchspec"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/audit"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 )
 
 // A database written by the build before agents existed (configuration

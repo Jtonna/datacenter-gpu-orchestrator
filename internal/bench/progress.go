@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/benchspec"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
 )
 
 // The progress model (design 9.3): how far a run is, which benchmark and phase

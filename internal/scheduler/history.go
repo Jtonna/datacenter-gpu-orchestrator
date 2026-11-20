@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/fleet"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/fleet"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 )
 
 // Event history (design 9.1). The core never writes anything: at the points

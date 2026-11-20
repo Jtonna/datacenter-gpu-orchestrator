@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/api"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/api"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 )
 
 // The model catalog in the scripted and recorded scenarios. GET /api/models,

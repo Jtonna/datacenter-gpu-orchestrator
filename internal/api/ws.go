@@ -14,8 +14,8 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/proxy"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/proxy"
 )
 
 // The live channel (design 9.2): GET /ws, a WebSocket that carries JSON text

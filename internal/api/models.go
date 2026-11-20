@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/gguf"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/gguf"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 )
 
 // The model catalog (GET /api/models, GET /api/models/{key}): one entry per

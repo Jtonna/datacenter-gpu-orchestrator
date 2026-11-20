@@ -5,7 +5,7 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 )
 
 // Per-node fit on shared-memory nodes: a split model does not land evenly

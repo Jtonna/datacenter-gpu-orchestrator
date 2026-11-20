@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/mcpserver"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/mcpserver"
 )
 
 // The MCP tools run through the real REST handler of a real scheduler on

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/config"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 )
 
 // startedEvent is the schedulerStarted history record: the version, how many

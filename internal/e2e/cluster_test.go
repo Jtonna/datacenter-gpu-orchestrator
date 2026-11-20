@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/testutil/fakefleet"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/testutil/harness"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/fakefleet"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/harness"
 )
 
 var (

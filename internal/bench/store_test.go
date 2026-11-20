@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/benchspec"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
 )
 
 func openTemp(t *testing.T) (*Store, string) {

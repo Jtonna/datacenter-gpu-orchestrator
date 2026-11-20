@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/benchspec"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 )
 
 // activeRun is the run being executed.

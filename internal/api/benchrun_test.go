@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 )
 
 // The X-Bench-Run header tags the history records of the load a request

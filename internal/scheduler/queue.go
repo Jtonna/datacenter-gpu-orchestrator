@@ -5,9 +5,9 @@ import (
 	"slices"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/placer"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/placer"
 )
 
 var timeZero time.Time

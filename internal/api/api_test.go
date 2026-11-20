@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/scheduler"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 )
 
 func jsonOf(t *testing.T, s string) map[string]any {

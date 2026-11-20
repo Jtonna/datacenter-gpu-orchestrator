@@ -6,9 +6,9 @@ import (
 	"net"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/bench"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/cfgsvc"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgsvc"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 )
 
 // loopbackURL is where the benchmark runner reaches the scheduler's own API.

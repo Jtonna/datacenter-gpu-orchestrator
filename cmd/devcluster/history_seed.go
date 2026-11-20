@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 )
 
 // seedHistory writes about five hours of past events into the REAL history

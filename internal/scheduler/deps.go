@@ -7,11 +7,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/config"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/estimate"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/gguf"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/placer"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/estimate"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/gguf"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/placer"
 )
 
 // Clock is the time source of the scheduler. The core only calls Now; the

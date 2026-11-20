@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 )
 
 // exclude_nodes (design 6): an excluded node is never used, never counted,

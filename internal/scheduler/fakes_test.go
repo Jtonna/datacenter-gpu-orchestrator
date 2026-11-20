@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/fleet"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/instance"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/fleet"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
 )
 
 func init() { checkInvariantsEachStep = true }

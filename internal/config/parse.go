@@ -13,8 +13,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/benchspec"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 )
 
 // DefaultDefaults returns the built-in policy defaults (design section 6).

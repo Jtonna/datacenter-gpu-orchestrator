@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/audit"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/cfgsvc"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/audit"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgsvc"
 )
 
 // recorderHook adapts an audit.Recorder to AuditHook: benchmark and suite

@@ -5,7 +5,7 @@ import (
 	"math"
 	"sort"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/benchspec"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
 )
 
 // Summarize returns mean, median, min, max and the sample standard deviation

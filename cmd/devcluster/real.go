@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/api"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/bench"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/api"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 )
 
 // The "real" scenarios replay a recording of a real scheduler (realdata/,

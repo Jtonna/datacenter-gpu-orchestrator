@@ -14,9 +14,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/audit"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/cfgstore"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/audit"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgstore"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 )
 
 // ValidationError is a rejected change; Messages are the validation messages.

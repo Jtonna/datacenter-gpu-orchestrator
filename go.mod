@@ -1,4 +1,4 @@
-module github.com/Jtonna/ps5-ai-datacenter-load-balancer
+module github.com/Jtonna/datacenter-gpu-orchestrator
 
 go 1.25
 

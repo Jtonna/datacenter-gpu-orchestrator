@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/proxy"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/proxy"
 )
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

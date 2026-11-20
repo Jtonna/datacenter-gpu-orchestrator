@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"sort"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/scheduler"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 )
 
 // statusView is the /api/status document, with one addition per instance for

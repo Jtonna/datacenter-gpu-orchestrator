@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/bench"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/cfgstore"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/cfgsvc"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgstore"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgsvc"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 )
 
 // cfgEnv is an API with the configuration service on a real database. The

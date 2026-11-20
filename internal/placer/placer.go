@@ -6,8 +6,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/estimate"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/estimate"
 )
 
 // Need is a profile's memory need: measured (needs_mib) or estimated

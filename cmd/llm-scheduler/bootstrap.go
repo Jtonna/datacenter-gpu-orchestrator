@@ -4,7 +4,7 @@ import (
 	"flag"
 	"os"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 )
 
 // Environment variables for the bootstrap values; a flag wins over its variable.

@@ -3,7 +3,7 @@ package instance
 import (
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 )
 
 // BaseLoadTimeout is the fixed part of the load allowance (design 7.6).

@@ -41,7 +41,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Jtonna/ps5-ai-datacenter-load-balancer/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 )
 
 type harness struct {
