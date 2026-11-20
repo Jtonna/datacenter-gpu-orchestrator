@@ -1,0 +1,23 @@
+# HELP nvidia_smi_clocks_current_graphics_clock_hz clocks.current.graphics [MHz]
+# TYPE nvidia_smi_clocks_current_graphics_clock_hz gauge
+nvidia_smi_clocks_current_graphics_clock_hz{uuid="11111111-2222-4333-8444-555555555555"} 1.8e+08
+nvidia_smi_clocks_current_memory_clock_hz{uuid="11111111-2222-4333-8444-555555555555"} 4.05e+08
+nvidia_smi_gpu_info{compute_cap="12.0",cuda_version="13.2",driver_model_current="[N/A]",driver_model_pending="[N/A]",driver_version="595.99.02",index="0",name="NVIDIA GeForce RTX 5060 Laptop GPU",pci_bus_id="00000000:01:00.0",pci_sub_device_id="0x8E35103C",serial="0",uuid="11111111-2222-4333-8444-555555555555",vbios_version="98.06.2A.40.D9"} 1
+# HELP nvidia_smi_memory_free_bytes memory.free [MiB]
+# TYPE nvidia_smi_memory_free_bytes gauge
+nvidia_smi_memory_free_bytes{uuid="11111111-2222-4333-8444-555555555555"} 8.081375232e+09
+# HELP nvidia_smi_memory_reserved_bytes memory.reserved [MiB]
+# TYPE nvidia_smi_memory_reserved_bytes gauge
+nvidia_smi_memory_reserved_bytes{uuid="11111111-2222-4333-8444-555555555555"} 4.65567744e+08
+nvidia_smi_memory_total_bytes{uuid="11111111-2222-4333-8444-555555555555"} 8.546942976e+09
+nvidia_smi_memory_used_bytes{uuid="11111111-2222-4333-8444-555555555555"} 2.097152e+06
+# HELP nvidia_smi_power_draw_watts power.draw [W]
+# TYPE nvidia_smi_power_draw_watts gauge
+nvidia_smi_power_draw_watts{uuid="11111111-2222-4333-8444-555555555555"} 11.27
+nvidia_smi_temperature_gpu{uuid="11111111-2222-4333-8444-555555555555"} 52
+# HELP nvidia_smi_utilization_gpu_ratio utilization.gpu [%]
+# TYPE nvidia_smi_utilization_gpu_ratio gauge
+nvidia_smi_utilization_gpu_ratio{uuid="11111111-2222-4333-8444-555555555555"} 0
+nvidia_gpu_exporter_build_info{branch="HEAD",goarch="amd64",goos="linux",goversion="go1.27.4",revision="e1f17c9567c2ee570e72e125fdd10dbcaf31b93e",tags="fips140v1.0",version="2.0.0"} 1
+nvidia_smi_command_exit_code 0
+nvidia_smi_failed_scrapes_total 0

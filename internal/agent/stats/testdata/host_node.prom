@@ -1,0 +1,57 @@
+# HELP node_drm_card_info Card information
+# TYPE node_drm_card_info gauge
+node_drm_card_info{card="card2",chip="0000:00:08_1_0000:06:00_0",memory_vendor="",power_performance_level="auto",unique_id="",vendor="amd"} 1
+node_drm_gpu_busy_percent{card="card2"} 0
+node_drm_memory_gtt_size_bytes{card="card2"} 1.604974592e+10
+node_drm_memory_gtt_used_bytes{card="card2"} 1.4143488e+07
+node_drm_memory_vram_size_bytes{card="card2"} 5.36870912e+08
+node_drm_memory_vram_used_bytes{card="card2"} 2.4932352e+07
+node_drm_memory_vis_vram_size_bytes{card="card2"} 5.36870912e+08
+node_hwmon_freq_freq_mhz{chip="0000:00:08_1_0000:06:00_0",sensor="sclk"} 600
+node_hwmon_power_watt{chip="0000:00:08_1_0000:06:00_0",sensor="power1"} 19.814
+node_hwmon_sensor_label{chip="0000:00:08_1_0000:06:00_0",label="PPT",sensor="power1"} 1
+node_hwmon_sensor_label{chip="0000:00:08_1_0000:06:00_0",label="edge",sensor="temp1"} 1
+node_hwmon_temp_celsius{chip="0000:00:08_1_0000:06:00_0",sensor="temp1"} 58
+# HELP node_hwmon_chip_names Annotation metric for human-readable chip names
+# TYPE node_hwmon_chip_names gauge
+node_hwmon_chip_names{chip="0000:00:08_1_0000:06:00_0",chip_name="amdgpu"} 1
+node_hwmon_chip_names{chip="i2c_1_1_0050",chip_name="spd5118"} 1
+node_hwmon_chip_names{chip="ieee80211_phy0",chip_name="mt7921_phy0"} 1
+node_hwmon_chip_names{chip="nvme_nvme0",chip_name="nvme"} 1
+node_hwmon_chip_names{chip="pci0000:00_0000:00:18_3",chip_name="k10temp"} 1
+node_hwmon_chip_names{chip="platform_hp_wmi",chip_name="hp"} 1
+node_hwmon_chip_names{chip="thermal_thermal_zone0",chip_name="acpitz"} 1
+# HELP node_hwmon_temp_celsius Hardware monitor for temperature (input)
+node_hwmon_temp_celsius{chip="i2c_1_1_0050",sensor="temp1"} 0
+node_hwmon_temp_celsius{chip="ieee80211_phy0",sensor="temp1"} 46
+node_hwmon_temp_celsius{chip="nvme_nvme0",sensor="temp2"} 47.85
+node_hwmon_temp_celsius{chip="pci0000:00_0000:00:18_3",sensor="temp1"} 64.5
+node_hwmon_temp_celsius{chip="thermal_thermal_zone0",sensor="temp2"} 64.5
+node_hwmon_sensor_label{chip="pci0000:00_0000:00:18_3",label="Tctl",sensor="temp1"} 1
+node_hwmon_pwm{chip="platform_hp_wmi",sensor="pwm1"} 0
+node_hwmon_fan_rpm{chip="platform_hp_wmi",sensor="fan1"} 0
+# HELP node_cpu_seconds_total Seconds the CPUs spent in each mode.
+# TYPE node_cpu_seconds_total counter
+node_cpu_seconds_total{cpu="0",mode="idle"} 19807.53
+node_cpu_seconds_total{cpu="0",mode="iowait"} 71.9
+node_cpu_seconds_total{cpu="0",mode="irq"} 0
+node_cpu_seconds_total{cpu="0",mode="nice"} 1
+node_cpu_seconds_total{cpu="0",mode="softirq"} 45.81
+node_cpu_seconds_total{cpu="0",mode="steal"} 0
+# HELP node_memory_MemTotal_bytes Memory information field MemTotal_bytes.
+node_memory_MemTotal_bytes 3.2099495936e+10
+node_memory_MemAvailable_bytes 2.7607855104e+10
+# HELP node_load1 1m load average.
+node_load1 1.69
+node_load5 1.09
+node_load15 1.21
+# HELP node_network_up Value is 1 if operstate is 'up', 0 otherwise.
+node_network_up{device="eno1"} 0
+node_network_up{device="enx6c1ff7c349ea"} 1
+# HELP node_network_receive_bytes_total Network device statistic receive_bytes.
+# TYPE node_network_receive_bytes_total counter
+node_network_receive_bytes_total{device="enx6c1ff7c349ea"} 2.2462712753e+10
+node_network_transmit_bytes_total{device="enx6c1ff7c349ea"} 8.80881274607e+11
+# HELP node_network_speed_bytes Network device property: speed_bytes
+node_network_speed_bytes{device="eno1"} -125000
+node_network_speed_bytes{device="enx6c1ff7c349ea"} 6.25e+08

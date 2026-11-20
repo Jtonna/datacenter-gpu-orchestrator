@@ -1,0 +1,356 @@
+#!/bin/sh
+# potluck-agent-uninstall - take a node out of the pool and remove everything
+# potluck-agent put on it (docs/agent-contract.md section 10). Run as root.
+#
+#   potluck-agent-uninstall [--potluck addr:port] [--marker]
+#
+#   --potluck  Potluck address. Default: the "potluck" field of
+#              http://127.0.0.1:50060/status.
+#   --marker   Write /etc/potluck/disabled even when no starter was detected.
+#              By default the marker is written on a node that has a starter
+#              (the agent unit is transient, or /dev/shm/potluck/potluck-agent
+#              exists), so the starter does nothing at the next boot or apply.
+#
+# Handles the bare-metal install (systemd unit or starter's transient unit)
+# and the Docker install. Every step is best effort. Exit status is 0 unless
+# something important is still running at the end.
+
+set -eu
+
+SELF=potluck-agent-uninstall
+MARKER=/etc/potluck/disabled
+UNIT_FILE=/etc/systemd/system/potluck-agent.service
+MODELS_MOUNT_DIR=/var/lib/potluck-agent/models
+SHARE_MOUNT=/run/potluck/models
+
+NL='
+'
+TAB=$(printf '\t')
+CR=$(printf '\r')
+
+POTLUCK=""
+FORCE_MARKER=0
+HAS_STARTER=0
+STILL=""
+
+log() {
+	printf '%s: %s\n' "$SELF" "$*" >&2
+}
+
+die() {
+	log "error: $*"
+	exit 1
+}
+
+# json_str TEXT KEY: sets JVAL to the string value of "KEY": "..." (first
+# occurrence), whatever the whitespace around the colon.
+json_str() {
+	js_pat="*\"$2\""
+	js_rest=${1#$js_pat}
+	[ "$js_rest" != "$1" ] || return 1
+	js_rest=${js_rest#*:}
+	while :; do
+		case $js_rest in
+			" "*|"$TAB"*|"$NL"*|"$CR"*) js_rest=${js_rest#?} ;;
+			*) break ;;
+		esac
+	done
+	case $js_rest in
+		\"*) ;;
+		*) return 1 ;;
+	esac
+	js_rest=${js_rest#\"}
+	JVAL=${js_rest%%\"*}
+	[ -n "$JVAL" ] || return 1
+	return 0
+}
+
+have() {
+	command -v "$1" >/dev/null 2>&1
+}
+
+# is_mounted PATH: true when PATH is a mount point per /proc/mounts.
+is_mounted() {
+	[ -r /proc/mounts ] || return 1
+	while read -r im_dev im_dir im_rest; do
+		if [ "$im_dir" = "$1" ]; then
+			return 0
+		fi
+	done < /proc/mounts
+	return 1
+}
+
+parse_args() {
+	while [ $# -gt 0 ]; do
+		case $1 in
+			--potluck)
+				[ $# -ge 2 ] || die "--potluck needs a value"
+				POTLUCK=$2; shift 2 ;;
+			--marker)
+				FORCE_MARKER=1; shift ;;
+			-h|--help)
+				log "usage: potluck-agent-uninstall [--potluck addr:port] [--marker]"
+				exit 0 ;;
+			*)
+				die "unknown option: $1" ;;
+		esac
+	done
+	if [ -n "$POTLUCK" ]; then
+		case $POTLUCK in
+			*:*) ;;
+			*) die "--potluck must be addr:port" ;;
+		esac
+		case $POTLUCK in
+			*[!A-Za-z0-9.:_-]*) die "odd characters in --potluck" ;;
+		esac
+	fi
+}
+
+# Decide before anything is stopped: a transient unit vanishes when stopped.
+detect_starter() {
+	if have systemctl; then
+		ds_tr=$(systemctl show -p Transient potluck-agent.service 2>/dev/null || true)
+		# "Transient=yes" (with or without --value support)
+		ds_tr=${ds_tr#Transient=}
+		if [ "$ds_tr" = yes ]; then
+			HAS_STARTER=1
+		fi
+	fi
+	if [ -e /dev/shm/potluck/potluck-agent ]; then
+		HAS_STARTER=1
+	fi
+}
+
+find_potluck() {
+	[ -z "$POTLUCK" ] || return 0
+	have curl || return 0
+	fp_body=$(curl -s --max-time 3 http://127.0.0.1:50060/status 2>/dev/null) || fp_body=""
+	[ -n "$fp_body" ] || return 0
+	if json_str "$fp_body" potluck; then
+		POTLUCK=$JVAL
+		log "Potluck address from the agent: $POTLUCK"
+	fi
+}
+
+# Prints the node id on stdout using whichever agent binary exists.
+node_id() {
+	ni_out=""
+	if [ -x /usr/local/bin/potluck-agent ]; then
+		ni_out=$(/usr/local/bin/potluck-agent id --potluck "$POTLUCK" 2>/dev/null) || ni_out=""
+	fi
+	if [ -z "$ni_out" ] && [ -x /dev/shm/potluck/potluck-agent ]; then
+		ni_out=$(/dev/shm/potluck/potluck-agent id --potluck "$POTLUCK" 2>/dev/null) || ni_out=""
+	fi
+	if [ -z "$ni_out" ] && have docker; then
+		ni_out=$(docker exec potluck-agent potluck-agent id --potluck "$POTLUCK" 2>/dev/null) || ni_out=""
+	fi
+	ni_out=${ni_out%%"$NL"*}
+	ni_out=${ni_out%"$CR"}
+	printf '%s' "$ni_out"
+}
+
+step_deregister() {
+	if [ -z "$POTLUCK" ]; then
+		log "deregister: no Potluck address known, skipping"
+		return 0
+	fi
+	if ! have curl; then
+		log "deregister: curl not found, skipping"
+		return 0
+	fi
+	sd_id=$(node_id)
+	case $sd_id in
+		??:??:??:??:??:??) ;;
+		*) log "deregister: cannot get the node id, skipping"; return 0 ;;
+	esac
+	if curl -fsS --connect-timeout 3 --max-time 5 -X POST -o /dev/null \
+		"http://$POTLUCK/api/agents/$sd_id/deregister"; then
+		log "deregistered $sd_id from Potluck"
+	else
+		log "deregister: Potluck did not accept the request (unreachable?), going on"
+	fi
+}
+
+step_marker() {
+	if [ "$FORCE_MARKER" = 1 ] || [ "$HAS_STARTER" = 1 ]; then
+		if mkdir -p /etc/potluck && : > "$MARKER"; then
+			log "wrote marker $MARKER"
+		else
+			log "warning: could not write $MARKER"
+		fi
+	else
+		log "no starter detected, not writing a marker (use --marker to force)"
+	fi
+}
+
+stop_unit() {
+	if systemctl stop "$1" >/dev/null 2>&1; then
+		log "stopped $1"
+	else
+		log "could not stop $1 (not running?)"
+	fi
+	systemctl reset-failed "$1" >/dev/null 2>&1 || true
+}
+
+stop_launches() {
+	sl_list=$(systemctl list-units --all --plain --no-legend 'potluck-launch-*' 2>/dev/null || true)
+	[ -n "$sl_list" ] || return 0
+	printf '%s\n' "$sl_list" | while read -r sl_unit sl_rest; do
+		[ -n "$sl_unit" ] || continue
+		stop_unit "$sl_unit"
+	done
+}
+
+stop_exporters() {
+	stop_unit potluck-node-exporter.service
+	stop_unit potluck-nvidia-exporter.service
+}
+
+step_stop_services() {
+	if ! have systemctl; then
+		log "systemctl not found, skipping unit handling"
+		return 0
+	fi
+	stop_launches
+	stop_exporters
+	if systemctl disable potluck-agent.service >/dev/null 2>&1; then
+		log "disabled potluck-agent.service"
+	fi
+	stop_unit potluck-agent.service
+	if [ -e "$UNIT_FILE" ]; then
+		rm -f "$UNIT_FILE" && log "removed $UNIT_FILE"
+	fi
+	systemctl daemon-reload >/dev/null 2>&1 || true
+	systemctl reset-failed potluck-agent.service >/dev/null 2>&1 || true
+	# A restarting agent may have started something between the steps above.
+	stop_launches
+	stop_exporters
+}
+
+step_docker() {
+	have docker || return 0
+	sdk_ids=$(docker ps -aq --filter name='^potluck-agent$' 2>/dev/null || true)
+	if [ -n "$sdk_ids" ]; then
+		if docker rm -f potluck-agent >/dev/null 2>&1; then
+			log "removed container potluck-agent"
+		else
+			log "could not remove container potluck-agent"
+		fi
+	fi
+	sdk_images=$(docker images --format '{{.Repository}}:{{.Tag}}' potluck-agent 2>/dev/null || true)
+	if [ -n "$sdk_images" ]; then
+		printf '%s\n' "$sdk_images" | while read -r sdk_img; do
+			[ -n "$sdk_img" ] || continue
+			if docker rmi "$sdk_img" >/dev/null 2>&1; then
+				log "removed image $sdk_img"
+			else
+				log "could not remove image $sdk_img"
+			fi
+		done
+	fi
+}
+
+step_models_mount_unit() {
+	have systemctl || return 0
+	if have systemd-escape; then
+		smu_unit=$(systemd-escape -p --suffix=mount "$MODELS_MOUNT_DIR" 2>/dev/null) || smu_unit=""
+	else
+		smu_unit=""
+	fi
+	if [ -z "$smu_unit" ]; then
+		smu_unit='var-lib-potluck\x2dagent-models.mount'
+	fi
+	smu_file=/etc/systemd/system/$smu_unit
+	if [ -e "$smu_file" ] || [ "$(systemctl is-active "$smu_unit" 2>/dev/null || true)" = active ]; then
+		systemctl stop "$smu_unit" >/dev/null 2>&1 || log "could not stop $smu_unit"
+		systemctl disable "$smu_unit" >/dev/null 2>&1 || true
+		rm -f "$smu_file"
+		systemctl daemon-reload >/dev/null 2>&1 || true
+		systemctl reset-failed "$smu_unit" >/dev/null 2>&1 || true
+		log "removed mount unit $smu_unit"
+	fi
+	if is_mounted "$MODELS_MOUNT_DIR"; then
+		log "warning: $MODELS_MOUNT_DIR is still mounted"
+		STILL="$STILL mount:$MODELS_MOUNT_DIR"
+	fi
+}
+
+step_share_umount() {
+	if is_mounted "$SHARE_MOUNT"; then
+		# plain umount only; a lazy unmount would hide a busy mount
+		if umount "$SHARE_MOUNT" 2>/dev/null; then
+			log "unmounted $SHARE_MOUNT"
+		else
+			log "warning: could not unmount $SHARE_MOUNT (busy?), leaving it and /run/potluck"
+			STILL="$STILL mount:$SHARE_MOUNT"
+		fi
+	fi
+}
+
+step_delete_files() {
+	rm -rf /dev/shm/potluck
+	log "removed /dev/shm/potluck"
+	# Never recurse into a share that is still mounted.
+	if is_mounted "$MODELS_MOUNT_DIR"; then
+		log "warning: not deleting /var/lib/potluck-agent, the share is still mounted"
+	else
+		rm -rf /var/lib/potluck-agent
+		log "removed /var/lib/potluck-agent"
+	fi
+	if is_mounted "$SHARE_MOUNT"; then
+		log "warning: not deleting /run/potluck, the share is still mounted"
+	else
+		rm -rf /run/potluck
+		log "removed /run/potluck"
+	fi
+	rm -f /usr/local/bin/potluck-agent
+	log "removed /usr/local/bin/potluck-agent"
+}
+
+final_check() {
+	if have systemctl; then
+		fc_state=$(systemctl is-active potluck-agent.service 2>/dev/null || true)
+		case $fc_state in
+			active|activating|reloading|deactivating) STILL="$STILL potluck-agent.service($fc_state)" ;;
+		esac
+		fc_list=$(systemctl list-units --plain --no-legend 'potluck-launch-*' 2>/dev/null || true)
+		if [ -n "$fc_list" ]; then
+			STILL="$STILL potluck-launch-units"
+		fi
+	fi
+	if have docker; then
+		fc_ids=$(docker ps -q --filter name='^potluck-agent$' 2>/dev/null || true)
+		if [ -n "$fc_ids" ]; then
+			STILL="$STILL container:potluck-agent"
+		fi
+	fi
+}
+
+main() {
+	parse_args "$@"
+	[ "$(id -u)" = 0 ] || die "must run as root"
+
+	detect_starter
+	find_potluck
+
+	log "step 1: deregister"
+	step_deregister
+	log "step 2: marker"
+	step_marker
+	log "step 3: stop launches, exporters, agent"
+	step_stop_services
+	step_docker
+	step_models_mount_unit
+	step_share_umount
+	step_delete_files
+	final_check
+
+	if [ -n "$STILL" ]; then
+		log "something is still there:$STILL"
+		exit 1
+	fi
+	log "done; nothing of potluck-agent is left running"
+	exit 0
+}
+
+main "$@"

@@ -1,0 +1,691 @@
+// Package agent is potluck-agent's core: registration, heartbeat, the
+// program pipeline, devices, stats wiring, local status and the HTTP API
+// (agent contract sections 4 to 9). The OS is reached only through the
+// interfaces in Deps, so the whole flow is tested against a fake Potluck.
+package agent
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
+	"net/netip"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/devices"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/exporters"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/hw"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/identity"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/launch"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/modelsrc"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/osx"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/programs"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/runner"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/stats"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
+)
+
+// Options are the agent's install options (section 9) and paths.
+type Options struct {
+	Potluck          string // "<ip>:<port>"
+	Release          string // the agent's own release
+	Name             string // display label; hostname by default
+	Install          string // bare or docker
+	RAMOnly          bool
+	ModelSource      modelsrc.Spec
+	WatchdogFloorMiB int64
+	AllowFrom        []netip.Prefix
+	DataDir          string // programs and launch logs
+	StateDir         string // state files and the share mount point
+	ModelsDir        string // the node's model folder ("" for push)
+}
+
+// Hardware is the machine facts the agent reports.
+type Hardware interface {
+	GPUs() []hw.GPUInfo
+	Backends(gpus []hw.GPUInfo) []string
+	MissingLibs(path string) ([]string, error)
+}
+
+// Updater replaces the agent on agent_too_old (5.4).
+type Updater interface {
+	Update(ctx context.Context, required string) error
+}
+
+// Deps are the OS boundaries.
+type Deps struct {
+	Clock    osx.Clock
+	Runner   runner.Runner
+	Mem      osx.MemReader
+	Sockets  osx.Sockets
+	Procs    osx.Procs
+	KLog     osx.KernelLog
+	Net      identity.NetOS
+	Hardware Hardware
+	Mounter  modelsrc.Mounter
+	Prober   modelsrc.ProbeStarter
+	DiskFree func(string) (uint64, error)
+	PortFree func(addr string, port int) error
+	// DevicesRun runs the llama program for --list-devices.
+	DevicesRun  devices.Runner
+	HostHealthy func(ctx context.Context, addr string) bool
+	Updater     Updater
+	HTTP        *http.Client
+	Logger      *slog.Logger
+
+	// Timing; zero values get the contract values.
+	RegisterRetry   time.Duration // after a refusal; default 60s
+	ErrorRetry      time.Duration // after a network error; default 5s (grows to 60s)
+	ProgramsRetry   time.Duration // after a failed program check; default 60s
+	LaunchTick      time.Duration
+	ProbeEvery      time.Duration
+	ProbeTimeout    time.Duration
+	StatsMin        time.Duration
+	ProgramsRetryIn time.Duration // pause between download attempts; default 2s
+	// ExporterPorts checked at start; default 50070, 50071.
+	ExporterPorts []int
+	// WorkerPort and HostPort override 50052 and 50061 (tests only).
+	WorkerPort, HostPort int
+}
+
+// Agent is one running agent.
+type Agent struct {
+	opt  Options
+	deps Deps
+	log  *slog.Logger
+
+	startID   string
+	startedAt time.Duration
+	potluckIP net.IP
+	base      string
+
+	Launch   *launch.Manager
+	Programs *programs.Manager
+	Source   *modelsrc.Source
+	Stats    *stats.Collector
+	Export   *exporters.Supervisor
+
+	mu          sync.Mutex
+	ident       identity.Identity
+	identOK     bool
+	registered  bool
+	paused      bool
+	hbEvery     time.Duration
+	seq         uint64
+	lastErr     string
+	lastErrAt   time.Duration
+	platform    string
+	pipelineOK  bool
+	devs        []agentproto.Device
+	devsAt      time.Duration
+	devRead     sync.Mutex
+	gpus        []hw.GPUInfo
+	pipeCancel  context.CancelFunc
+	pipeGen     int
+	answerProgs []agentproto.ProgramEntry
+}
+
+// New builds an agent. Call Run.
+func New(opt Options, deps Deps) (*Agent, error) {
+	host, _, err := net.SplitHostPort(opt.Potluck)
+	if err != nil {
+		return nil, fmt.Errorf("--potluck %q: %w", opt.Potluck, err)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return nil, fmt.Errorf("--potluck %q: the host must be an IP address", opt.Potluck)
+	}
+	if deps.Logger == nil {
+		deps.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	if deps.HTTP == nil {
+		deps.HTTP = &http.Client{Timeout: 5 * time.Second}
+	}
+	if deps.RegisterRetry == 0 {
+		deps.RegisterRetry = 60 * time.Second
+	}
+	if deps.ErrorRetry == 0 {
+		deps.ErrorRetry = 5 * time.Second
+	}
+	if deps.ProgramsRetry == 0 {
+		deps.ProgramsRetry = 60 * time.Second
+	}
+	if deps.ExporterPorts == nil {
+		deps.ExporterPorts = []int{agentproto.PortNodeExporter, agentproto.PortNvidiaExporter}
+	}
+	if deps.PortFree == nil {
+		deps.PortFree = launch.BindFree
+	}
+	if deps.DevicesRun == nil {
+		deps.DevicesRun = devices.ExecRunner
+	}
+	b := make([]byte, 3)
+	rand.Read(b)
+	a := &Agent{opt: opt, deps: deps, log: deps.Logger, startID: hex.EncodeToString(b),
+		startedAt: deps.Clock.Now(), potluckIP: ip, base: "http://" + opt.Potluck, hbEvery: 2 * time.Second}
+
+	progRoot := filepath.Join(opt.DataDir, "programs")
+	a.Programs = programs.New(programs.Config{Root: progRoot, Release: opt.Release, BaseURL: a.base,
+		DiskFree: deps.DiskFree, MissingLibs: deps.Hardware.MissingLibs, RetryWait: deps.ProgramsRetryIn,
+		LibChecked: []string{agentproto.ProgramLlamaServer, agentproto.ProgramRPCServer}, Logger: deps.Logger})
+
+	a.Source = modelsrc.New(modelsrc.Config{Spec: opt.ModelSource, Dir: opt.ModelsDir,
+		Mount:  opt.ModelSource.Kind == modelsrc.KindShare && opt.Install == agentproto.InstallBare,
+		NodeIP: func() string { a.mu.Lock(); defer a.mu.Unlock(); return a.ident.Addr },
+		Every:  deps.ProbeEvery, Timeout: deps.ProbeTimeout, Clock: deps.Clock, Mounter: deps.Mounter,
+		Prober: deps.Prober, Logger: deps.Logger, OnError: a.setError,
+		LaunchExists: func() bool { return a.Launch.CurrentID() != nil }})
+
+	a.Launch = launch.New(launch.Config{
+		StateDir: opt.StateDir, LogDir: filepath.Join(opt.DataDir, "launch"), ProgramRoot: progRoot,
+		ModelDir: opt.ModelsDir, PushOnly: opt.ModelSource.Kind == modelsrc.KindPush,
+		WatchdogFloorMiB: opt.WatchdogFloorMiB, Tick: deps.LaunchTick,
+		WorkerPort: deps.WorkerPort, HostPort: deps.HostPort,
+	}, launch.Deps{Clock: deps.Clock, Runner: deps.Runner, Mem: deps.Mem, Sockets: deps.Sockets,
+		Procs: deps.Procs, KLog: deps.KLog, PortFree: deps.PortFree, HostHealthy: deps.HostHealthy,
+		Gate: a, Programs: a.Programs, Logger: deps.Logger, OnError: a.setError,
+		OnExit: func(agentproto.LaunchState) { a.afterLaunchExit() }})
+
+	a.Export = &exporters.Supervisor{Runner: deps.Runner, Path: a.Programs.Path, Logger: deps.Logger}
+	a.Stats = stats.New(stats.Config{Now: deps.Clock.Now, MinInterval: deps.StatsMin, Logger: deps.Logger,
+		Primary: func() string { a.mu.Lock(); defer a.mu.Unlock(); return a.ident.RouteIface }})
+	return a, nil
+}
+
+func (a *Agent) setError(msg string) {
+	a.mu.Lock()
+	a.lastErr, a.lastErrAt = msg, a.deps.Clock.Now()
+	a.mu.Unlock()
+	a.log.Warn("last_error", "msg", msg)
+}
+
+// --- launch.Gate ---
+
+// Paused implements launch.Gate.
+func (a *Agent) Paused() bool { a.mu.Lock(); defer a.mu.Unlock(); return a.paused }
+
+// Release implements launch.Gate.
+func (a *Agent) Release() string { return a.opt.Release }
+
+// ProgramsReady is true once the programs are verified, the exporters were
+// started and the devices were read (5.3 steps 4 to 7).
+func (a *Agent) ProgramsReady() bool {
+	a.mu.Lock()
+	ok := a.pipelineOK
+	a.mu.Unlock()
+	return ok && a.Programs.Ready()
+}
+
+// ModelSourceReachable implements launch.Gate.
+func (a *Agent) ModelSourceReachable() bool { return a.Source.Reachable() }
+
+// WaitDevicesRead implements launch.Gate.
+func (a *Agent) WaitDevicesRead() { a.devRead.Lock(); a.devRead.Unlock() }
+
+// ID returns the node id, "" until resolved.
+func (a *Agent) ID() string { a.mu.Lock(); defer a.mu.Unlock(); return a.ident.ID }
+
+// Addr returns the node's address that reaches Potluck.
+func (a *Agent) Addr() string { a.mu.Lock(); defer a.mu.Unlock(); return a.ident.Addr }
+
+// ResolveIdentity computes the id (4.1).
+func (a *Agent) ResolveIdentity() error {
+	id, err := identity.Resolve(a.deps.Net, a.potluckIP)
+	if err != nil {
+		a.setError("no identity: " + err.Error())
+		return err
+	}
+	a.mu.Lock()
+	a.ident, a.identOK = id, true
+	a.mu.Unlock()
+	a.Launch.SetBindAddr(id.Addr)
+	return nil
+}
+
+// Prepare runs the start steps that need no Potluck: leftovers, ports,
+// program re-hash, launch re-adoption, share mount.
+func (a *Agent) Prepare(ctx context.Context) error {
+	if a.deps.Runner.Survives() {
+		a.Export.StopLeftovers(ctx)
+	}
+	if _, err := a.Programs.Prepare(); err != nil {
+		return fmt.Errorf("program folder: %w", err)
+	}
+	if err := a.Launch.Recover(ctx); err != nil {
+		a.setError("launch re-adoption: " + err.Error())
+	}
+	return nil
+}
+
+// checkPorts verifies the exporter ports are free (section 3).
+func (a *Agent) checkPorts() error {
+	for _, p := range a.deps.ExporterPorts {
+		if err := a.deps.PortFree("127.0.0.1", p); err != nil {
+			return fmt.Errorf("port %d is taken: %v", p, err)
+		}
+	}
+	return nil
+}
+
+// Run runs the agent until ctx ends. The HTTP listeners are served by the
+// caller with Handler and LocalHandler.
+func (a *Agent) Run(ctx context.Context) error {
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	wg.Add(1)
+	go func() { defer wg.Done(); a.Launch.Run(ctx) }()
+	wg.Add(1)
+	go func() { defer wg.Done(); a.Stats.Run(ctx) }()
+
+	// Identity and ports, retried until they work.
+	for {
+		err := a.ResolveIdentity()
+		if err == nil {
+			if err = a.checkPorts(); err != nil {
+				a.setError("registration not attempted: " + err.Error())
+			}
+		}
+		if err == nil {
+			break
+		}
+		if !sleep(ctx, a.deps.RegisterRetry) {
+			return ctx.Err()
+		}
+	}
+	if err := a.Prepare(ctx); err != nil {
+		a.setError(err.Error())
+	}
+	if err := a.Source.Start(ctx); err != nil {
+		a.setError("share mount: " + err.Error())
+	}
+	wg.Add(1)
+	go func() { defer wg.Done(); a.Source.Run(ctx) }()
+
+	errWait := a.deps.ErrorRetry
+	for ctx.Err() == nil {
+		ans, err := a.register(ctx)
+		if err != nil {
+			a.log.Warn("register failed", "err", err)
+			a.setError("registration failed: " + err.Error())
+			if !sleep(ctx, errWait) {
+				break
+			}
+			if errWait *= 2; errWait > 60*time.Second {
+				errWait = 60 * time.Second
+			}
+			continue
+		}
+		errWait = a.deps.ErrorRetry
+		if !ans.Accepted {
+			a.refused(ctx, ans)
+			if !sleep(ctx, a.deps.RegisterRetry) {
+				break
+			}
+			continue
+		}
+		a.accepted(ctx, ans)
+		a.heartbeatLoop(ctx)
+	}
+	a.mu.Lock()
+	if a.pipeCancel != nil {
+		a.pipeCancel()
+	}
+	a.mu.Unlock()
+	a.Export.StopAll()
+	return ctx.Err()
+}
+
+func sleep(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
+}
+
+// RegisterRequest builds the registration body (4.2).
+func (a *Agent) RegisterRequest() agentproto.RegisterRequest {
+	a.mu.Lock()
+	id := a.ident
+	a.mu.Unlock()
+	gpus := a.deps.Hardware.GPUs()
+	a.mu.Lock()
+	a.gpus = gpus
+	a.mu.Unlock()
+	req := agentproto.RegisterRequest{ID: id.ID, Name: a.opt.Name, AgentRelease: a.opt.Release,
+		AgentStartID: a.startID, OS: runtime.GOOS, Arch: runtime.GOARCH, Install: a.opt.Install,
+		Addr: id.Addr, Backends: a.deps.Hardware.Backends(gpus), RAMOnly: a.opt.RAMOnly,
+		ModelSource: a.opt.ModelSource.Wire(), Programs: a.Programs.Held(), LaunchID: a.Launch.CurrentID(),
+		ForeignProcesses: a.foreignProcesses()}
+	for _, g := range gpus {
+		req.GPUs = append(req.GPUs, g.GPU)
+	}
+	if mi, err := a.deps.Mem.MemInfo(); err == nil {
+		req.MemTotalMiB = mi.TotalMiB
+	}
+	req.FillEmpty()
+	return req
+}
+
+// foreignProcesses lists rpc-server and llama-server processes the agent did
+// not start (4.2).
+func (a *Agent) foreignProcesses() []agentproto.ForeignProcess {
+	out := []agentproto.ForeignProcess{}
+	if a.deps.Procs == nil {
+		return out
+	}
+	list, err := a.deps.Procs.List()
+	if err != nil {
+		return out
+	}
+	self, launchPID := a.deps.Procs.Self(), a.Launch.PID()
+	for _, p := range list {
+		base := osx.ExeBase(p.Exe)
+		if base != agentproto.ProgramRPCServer && base != agentproto.ProgramLlamaServer {
+			continue
+		}
+		if p.PID == launchPID || p.PPID == self || p.PID == self || strings.Contains(p.Cgroup, agentproto.LaunchUnitPrefix) {
+			continue
+		}
+		out = append(out, agentproto.ForeignProcess{PID: p.PID, Exe: p.Exe})
+	}
+	return out
+}
+
+func (a *Agent) post(ctx context.Context, path string, body any) (*http.Response, error) {
+	b, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.base+path, bytes.NewReader(b))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return a.deps.HTTP.Do(req)
+}
+
+func (a *Agent) register(ctx context.Context) (agentproto.RegisterAnswer, error) {
+	var ans agentproto.RegisterAnswer
+	resp, err := a.post(ctx, agentproto.PathRegister, a.RegisterRequest())
+	if err != nil {
+		return ans, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ans, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&ans); err != nil {
+		return ans, fmt.Errorf("answer: %w", err)
+	}
+	return ans, nil
+}
+
+// refused handles a refusal: start nothing, keep the reason on /status, and
+// update on agent_too_old when no launch exists.
+func (a *Agent) refused(ctx context.Context, ans agentproto.RegisterAnswer) {
+	a.mu.Lock()
+	a.registered = false
+	a.pipelineOK = false
+	if a.pipeCancel != nil {
+		a.pipeCancel()
+		a.pipeCancel = nil
+	}
+	a.mu.Unlock()
+	a.Export.StopAll()
+	a.Stats.SetSources(nil)
+	a.setError(ans.Reason + ": " + ans.Message)
+	a.log.Warn("registration refused", "reason", ans.Reason, "message", ans.Message)
+	if ans.Reason == agentproto.ReasonAgentTooOld && a.deps.Updater != nil {
+		if a.Launch.CurrentID() != nil {
+			a.log.Info("update waits for the launch to end", "required", ans.RequiredRelease)
+			return
+		}
+		if err := a.deps.Updater.Update(ctx, ans.RequiredRelease); err != nil {
+			a.setError("update to " + ans.RequiredRelease + " failed: " + err.Error())
+		}
+	}
+}
+
+func (a *Agent) accepted(ctx context.Context, ans agentproto.RegisterAnswer) {
+	a.mu.Lock()
+	a.registered, a.paused, a.platform = true, ans.Paused, ans.Platform
+	if ans.HeartbeatEveryS > 0 {
+		a.hbEvery = time.Duration(ans.HeartbeatEveryS * float64(time.Second))
+	}
+	if a.lastErr != "" && (strings.HasPrefix(a.lastErr, "registration failed") || isRefusal(a.lastErr)) {
+		a.lastErr = ""
+	}
+	a.mu.Unlock()
+	a.Launch.SetCUDA(strings.HasSuffix(ans.Platform, "-"+agentproto.BackendCUDA))
+	a.log.Info("registered", "release", ans.Release, "platform", ans.Platform, "paused", ans.Paused)
+	if ans.StopLaunch != nil {
+		if _, err := a.Launch.Stop(*ans.StopLaunch, false); err != nil {
+			a.log.Warn("stop_launch", "launch_id", *ans.StopLaunch, "err", err)
+		}
+	}
+	a.startPipeline(ctx, ans)
+}
+
+func isRefusal(s string) bool {
+	for _, r := range []string{agentproto.ReasonAgentTooOld, agentproto.ReasonPotluckTooOld, agentproto.ReasonUnsupportedHardware,
+		agentproto.ReasonDuplicateID, agentproto.ReasonForeignProcess, agentproto.ReasonRemoved} {
+		if strings.HasPrefix(s, r+":") {
+			return true
+		}
+	}
+	return false
+}
+
+// startPipeline runs 5.3 steps 2 to 7 in the background, replacing a
+// pipeline still running from an earlier registration.
+func (a *Agent) startPipeline(ctx context.Context, ans agentproto.RegisterAnswer) {
+	a.mu.Lock()
+	if a.pipeCancel != nil {
+		a.pipeCancel()
+	}
+	pctx, cancel := context.WithCancel(ctx)
+	a.pipeCancel = cancel
+	a.pipeGen++
+	gen := a.pipeGen
+	a.answerProgs = ans.Programs
+	a.mu.Unlock()
+	go a.pipeline(pctx, gen, ans)
+}
+
+func (a *Agent) pipeline(ctx context.Context, gen int, ans agentproto.RegisterAnswer) {
+	for ctx.Err() == nil {
+		err := a.Programs.Sync(ctx, ans.Programs, a.waitIdle)
+		if ctx.Err() != nil {
+			return
+		}
+		if err != nil {
+			a.mu.Lock()
+			a.pipelineOK = false
+			a.mu.Unlock()
+			a.setError("programs: " + err.Error())
+			if !sleep(ctx, a.deps.ProgramsRetry) {
+				return
+			}
+			continue
+		}
+		// 5. exporters
+		srcs, refused := a.Export.Set(ctx, ans.Exporters)
+		for _, r := range refused {
+			a.setError(r)
+		}
+		a.Stats.SetSources(srcs)
+		// 6. devices
+		a.readDevices(ctx)
+		// 7. ready
+		a.mu.Lock()
+		if a.pipeGen == gen {
+			a.pipelineOK = true
+		}
+		a.mu.Unlock()
+		a.Programs.DeleteOldReleases(a.Launch.CurrentID() != nil)
+		return
+	}
+}
+
+func (a *Agent) waitIdle(ctx context.Context) bool {
+	for a.Launch.Busy() {
+		if !sleep(ctx, 500*time.Millisecond) {
+			return false
+		}
+	}
+	return true
+}
+
+func (a *Agent) cuda() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return strings.HasSuffix(a.platform, "-"+agentproto.BackendCUDA)
+}
+
+// readDevices reads llama's device list; a POST /launch waits meanwhile.
+func (a *Agent) readDevices(ctx context.Context) {
+	path, ok := a.Programs.Path(agentproto.ProgramLlamaServer)
+	if !ok {
+		return
+	}
+	a.devRead.Lock()
+	defer a.devRead.Unlock()
+	var env []string
+	if a.cuda() {
+		env = append(env, "CUDA_DEVICE_ORDER=PCI_BUS_ID")
+	}
+	a.mu.Lock()
+	gpus := a.gpus
+	a.mu.Unlock()
+	devs, err := devices.Read(ctx, a.deps.DevicesRun, path, env, hw.DeviceGPUs(gpus), 30*time.Second)
+	if err != nil {
+		a.setError("devices: " + err.Error())
+		return
+	}
+	a.mu.Lock()
+	a.devs, a.devsAt = devs, a.deps.Clock.Now()
+	a.mu.Unlock()
+}
+
+func (a *Agent) afterLaunchExit() {
+	a.readDevices(context.Background())
+	a.Programs.DeleteOldReleases(false)
+}
+
+// Heartbeat builds the heartbeat body (4.3).
+func (a *Agent) Heartbeat() agentproto.Heartbeat {
+	now := a.deps.Clock.Now()
+	a.mu.Lock()
+	a.seq++
+	hb := agentproto.Heartbeat{AgentStartID: a.startID, Seq: a.seq, UptimeS: float64((now - a.startedAt).Milliseconds()) / 1000}
+	devs := append([]agentproto.Device{}, a.devs...)
+	devsAt := a.devsAt
+	a.mu.Unlock()
+	for i := range devs {
+		devs[i].ReadAgeS = float64((now - devsAt).Milliseconds()) / 1000
+	}
+	hb.Role, hb.LaunchID = a.Launch.Role(), a.Launch.CurrentID()
+	hb.ProgramsReady, hb.ProgramsError = a.ProgramsReady(), a.Programs.Error()
+	hb.ModelSource, hb.Devices = a.Source.State(), devs
+	if mi, err := a.deps.Mem.MemInfo(); err == nil {
+		hb.MemAvailableMiB = mi.AvailableMiB
+	}
+	st := a.Stats.Snapshot()
+	hb.Stats = &st
+	return hb
+}
+
+// heartbeatLoop sends heartbeats until Potluck asks for a new registration
+// (410, or a different release) or ctx ends. The three failure cases (4.3):
+// a heartbeat that cannot be sent changes nothing; 410 re-registers at once
+// and does not touch the launch; a different release re-registers.
+func (a *Agent) heartbeatLoop(ctx context.Context) {
+	a.mu.Lock()
+	every := a.hbEvery
+	a.mu.Unlock()
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		a.mu.Lock()
+		id := a.ident.ID
+		a.mu.Unlock()
+		hctx, cancel := context.WithTimeout(ctx, every+3*time.Second)
+		resp, err := a.post(hctx, fmt.Sprintf(agentproto.PathHeartbeatFmt, id), a.Heartbeat())
+		if err != nil {
+			cancel()
+			a.log.Debug("heartbeat not sent", "err", err)
+			continue
+		}
+		var ans agentproto.HeartbeatAnswer
+		decErr := json.NewDecoder(resp.Body).Decode(&ans)
+		resp.Body.Close()
+		cancel()
+		switch {
+		case resp.StatusCode == http.StatusGone:
+			a.log.Info("heartbeat answered 410; registering again")
+			a.mu.Lock()
+			a.registered = false
+			a.mu.Unlock()
+			return
+		case resp.StatusCode != http.StatusOK || decErr != nil:
+			continue
+		}
+		a.mu.Lock()
+		a.paused = ans.Paused
+		a.mu.Unlock()
+		if ans.Release != a.opt.Release {
+			a.log.Info("Potluck names another release; registering again", "release", ans.Release)
+			return
+		}
+	}
+}
+
+// Status builds GET /status (6.9).
+func (a *Agent) Status() agentproto.Status {
+	// Launch calls are made before a.mu is taken: the launch manager calls
+	// setError (a.mu) while holding its own lock.
+	ls := a.Launch.State()
+	model := a.Launch.Model()
+	now := a.deps.Clock.Now()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	st := agentproto.Status{Registered: a.registered, Potluck: a.opt.Potluck, Release: a.opt.Release,
+		Paused: a.paused, Role: agentproto.RoleIdle, State: ls.State, Load: ls.Load}
+	if ls.State == agentproto.StateStarting || ls.State == agentproto.StateReady || ls.State == agentproto.StateStopping {
+		st.Role = ls.Role
+	}
+	if ls.State != agentproto.StateNone {
+		st.Model = model
+	}
+	if a.lastErr != "" {
+		e := a.lastErr
+		age := float64((now - a.lastErrAt).Milliseconds()) / 1000
+		st.LastError, st.LastErrorAgeS = &e, &age
+	}
+	return st
+}
+
+// ErrDockerUpdate tells the caller to exit with code 75 (5.4).
+var ErrDockerUpdate = errors.New("docker install: exit 75 so the image can be replaced")

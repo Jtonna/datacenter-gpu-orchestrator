@@ -1,0 +1,520 @@
+#!/bin/sh
+# potluck-agent-setup - install potluck-agent on a machine that keeps its
+# drive (docs/agent-contract.md section 9). Run as root.
+#
+#   potluck-agent-setup (--bare | --docker) --potluck addr:port
+#       --model-source share:<target>|dir:<path>|push
+#       [--watchdog-floor-mib N] [--allow-from ADDR|CIDR]... [--name LABEL]
+#       [--image REF] [--gpus auto|all|none]       (the last two: --docker only)
+#
+# A RAM-only node does not use this script; it uses potluck-starter.sh.
+# Values given to options must not contain whitespace, quotes, backslash,
+# "$" or "%" (they are written into a systemd unit / passed word-split).
+
+set -eu
+
+SELF=potluck-agent-setup
+MARKER=/etc/potluck/disabled
+BIN=/usr/local/bin/potluck-agent
+UNIT_FILE=/etc/systemd/system/potluck-agent.service
+MODELS_MOUNT_DIR=/var/lib/potluck-agent/models
+
+NL='
+'
+TAB=$(printf '\t')
+CR=$(printf '\r')
+
+MODE=""
+POTLUCK=""
+MODEL_SOURCE=""
+FLOOR=""
+ALLOW_LIST=""
+NAME=""
+IMAGE=""
+GPUS=auto
+BUILD_DIR=""
+RELEASE=""
+RELEASE_JSON=""
+AGENT_PATH=""
+AGENT_SHA=""
+
+log() {
+	printf '%s: %s\n' "$SELF" "$*" >&2
+}
+
+die() {
+	log "error: $*"
+	exit 1
+}
+
+cleanup() {
+	if [ -n "$BUILD_DIR" ]; then
+		rm -rf "$BUILD_DIR"
+	fi
+}
+trap cleanup EXIT
+
+usage() {
+	cat >&2 <<'EOF'
+usage: potluck-agent-setup (--bare | --docker) --potluck addr:port
+         --model-source share:<target>|dir:<path>|push
+         [--watchdog-floor-mib N] [--allow-from ADDR|CIDR]... [--name LABEL]
+         [--image REF] [--gpus auto|all|none]    (docker only)
+EOF
+	exit 2
+}
+
+# json_obj TEXT KEY: sets JOBJ to the text between the first "{" after "KEY"
+# and the next "}".
+json_obj() {
+	jo_pat="*\"$2\""
+	jo_rest=${1#$jo_pat}
+	[ "$jo_rest" != "$1" ] || return 1
+	jo_open='{'
+	jo_rest=${jo_rest#*"$jo_open"}
+	jo_close='}'
+	JOBJ=${jo_rest%%"$jo_close"*}
+	[ "$JOBJ" != "$jo_rest" ] || return 1
+	return 0
+}
+
+# json_str TEXT KEY: sets JVAL to the string value of "KEY": "..." (first
+# occurrence), whatever the whitespace around the colon.
+json_str() {
+	js_pat="*\"$2\""
+	js_rest=${1#$js_pat}
+	[ "$js_rest" != "$1" ] || return 1
+	js_rest=${js_rest#*:}
+	while :; do
+		case $js_rest in
+			" "*|"$TAB"*|"$NL"*|"$CR"*) js_rest=${js_rest#?} ;;
+			*) break ;;
+		esac
+	done
+	case $js_rest in
+		\"*) ;;
+		*) return 1 ;;
+	esac
+	js_rest=${js_rest#\"}
+	JVAL=${js_rest%%\"*}
+	[ -n "$JVAL" ] || return 1
+	return 0
+}
+
+# check_plain NAME VALUE: refuse values that would break a unit file or
+# the word splitting used for the agent arguments.
+check_plain() {
+	case $2 in
+		"") die "$1 must not be empty" ;;
+		*[[:space:]]*|*\"*|*\'*|*\\*|*\$*|*%*|*\;*|*\&*|*\|*|*\<*|*\>*|*\`*)
+			die "$1 must not contain whitespace, quotes, backslash, \$, %, or shell characters: '$2'" ;;
+	esac
+}
+
+parse_args() {
+	while [ $# -gt 0 ]; do
+		case $1 in
+			--bare)
+				[ -z "$MODE" ] || die "give exactly one of --bare and --docker"
+				MODE=bare; shift ;;
+			--docker)
+				[ -z "$MODE" ] || die "give exactly one of --bare and --docker"
+				MODE=docker; shift ;;
+			--potluck)
+				[ $# -ge 2 ] || usage
+				POTLUCK=$2; shift 2 ;;
+			--model-source)
+				[ $# -ge 2 ] || usage
+				MODEL_SOURCE=$2; shift 2 ;;
+			--watchdog-floor-mib)
+				[ $# -ge 2 ] || usage
+				FLOOR=$2; shift 2 ;;
+			--allow-from)
+				[ $# -ge 2 ] || usage
+				check_plain --allow-from "$2"
+				ALLOW_LIST="$ALLOW_LIST $2"; shift 2 ;;
+			--name)
+				[ $# -ge 2 ] || usage
+				NAME=$2; shift 2 ;;
+			--image)
+				[ $# -ge 2 ] || usage
+				IMAGE=$2; shift 2 ;;
+			--gpus)
+				[ $# -ge 2 ] || usage
+				GPUS=$2; shift 2 ;;
+			-h|--help)
+				usage ;;
+			*)
+				log "unknown option: $1"; usage ;;
+		esac
+	done
+
+	[ -n "$MODE" ] || die "give one of --bare and --docker"
+	[ -n "$POTLUCK" ] || die "--potluck addr:port is required"
+	[ -n "$MODEL_SOURCE" ] || die "--model-source is required"
+	check_plain --potluck "$POTLUCK"
+	case $POTLUCK in
+		*:*) ;;
+		*) die "--potluck must be addr:port, got '$POTLUCK'" ;;
+	esac
+	check_plain --model-source "$MODEL_SOURCE"
+	case $MODEL_SOURCE in
+		share:?*:*|push) ;;
+		dir:/?*) ;;
+		share:*) die "--model-source share needs <ip>:/<path>, got '$MODEL_SOURCE'" ;;
+		dir:*) die "--model-source dir needs an absolute path, got '$MODEL_SOURCE'" ;;
+		*) die "--model-source must be share:<target>, dir:<path> or push" ;;
+	esac
+	if [ -n "$FLOOR" ]; then
+		case $FLOOR in
+			*[!0-9]*) die "--watchdog-floor-mib must be a number" ;;
+		esac
+	fi
+	if [ -n "$NAME" ]; then
+		check_plain --name "$NAME"
+	fi
+	if [ -n "$IMAGE" ]; then
+		check_plain --image "$IMAGE"
+	fi
+	case $GPUS in
+		auto|all|none) ;;
+		*) die "--gpus must be auto, all or none" ;;
+	esac
+	if [ "$MODE" = bare ]; then
+		if [ -n "$IMAGE" ] || [ "$GPUS" != auto ]; then
+			die "--image and --gpus are for --docker only"
+		fi
+	fi
+	POTLUCK_HOST=${POTLUCK%:*}
+}
+
+require_root() {
+	[ "$(id -u)" = 0 ] || die "must run as root"
+}
+
+# Agent options common to both paths; $1 is the model source to hand over.
+common_args() {
+	CARGS="--potluck $POTLUCK --model-source $1"
+	if [ -n "$FLOOR" ]; then
+		CARGS="$CARGS --watchdog-floor-mib $FLOOR"
+	fi
+	# ALLOW_LIST already starts with a blank per entry; build --allow-from pairs.
+	set -f
+	for ca_item in $ALLOW_LIST; do
+		CARGS="$CARGS --allow-from $ca_item"
+	done
+	set +f
+	if [ -n "$NAME" ]; then
+		CARGS="$CARGS --name $NAME"
+	fi
+}
+
+agent_present() {
+	ap_state=$(systemctl is-active potluck-agent.service 2>/dev/null || true)
+	case $ap_state in
+		active|activating|reloading|deactivating) return 0 ;;
+	esac
+	if command -v docker >/dev/null 2>&1; then
+		ap_ids=$(docker ps -q --filter name='^potluck-agent$' 2>/dev/null || true)
+		[ -z "$ap_ids" ] || return 0
+	fi
+	return 1
+}
+
+check_ports() {
+	if ! command -v ss >/dev/null 2>&1; then
+		log "warning: ss not found, not checking ports 50060, 50070, 50071"
+		return 0
+	fi
+	if agent_present; then
+		log "an existing potluck-agent is running; skipping the port check"
+		return 0
+	fi
+	cp_out=$(ss -ltn 2>/dev/null) || cp_out=""
+	for cp_port in 50060 50070 50071; do
+		case $cp_out in
+			*":$cp_port "*) die "port $cp_port is already in use" ;;
+		esac
+	done
+}
+
+remove_marker() {
+	if [ -e "$MARKER" ]; then
+		rm -f "$MARKER"
+		log "removed $MARKER"
+	fi
+}
+
+resolve_platform() {
+	rp_os=$(uname -s | tr '[:upper:]' '[:lower:]')
+	rp_machine=$(uname -m)
+	case $rp_machine in
+		x86_64|amd64) rp_arch=amd64 ;;
+		aarch64|arm64) rp_arch=arm64 ;;
+		*) rp_arch=$rp_machine ;;
+	esac
+	PLATFORM="$rp_os-$rp_arch"
+}
+
+# Fetch /api/agents/release once; sets RELEASE, AGENT_PATH, AGENT_SHA.
+load_release() {
+	[ -z "$RELEASE_JSON" ] || return 0
+	command -v curl >/dev/null 2>&1 || die "curl is required"
+	command -v sha256sum >/dev/null 2>&1 || die "sha256sum is required"
+	resolve_platform
+	RELEASE_JSON=$(curl -fsS --connect-timeout 5 --max-time 20 "http://$POTLUCK/api/agents/release") \
+		|| die "cannot read http://$POTLUCK/api/agents/release"
+	json_str "$RELEASE_JSON" release || die "release answer has no release"
+	RELEASE=$JVAL
+	json_obj "$RELEASE_JSON" "$PLATFORM" || die "release has no agent for $PLATFORM"
+	lr_obj=$JOBJ
+	json_str "$lr_obj" path || die "release has no agent path for $PLATFORM"
+	AGENT_PATH=$JVAL
+	json_str "$lr_obj" sha256 || die "release has no agent sha256 for $PLATFORM"
+	AGENT_SHA=$JVAL
+	case $AGENT_PATH in
+		/*) ;;
+		*) die "agent path is not absolute: $AGENT_PATH" ;;
+	esac
+	check_plain release "$RELEASE"
+	log "Potluck release $RELEASE, agent for $PLATFORM"
+}
+
+# fetch_agent DEST: download the agent to DEST (via DEST.part), verify, chmod.
+fetch_agent() {
+	load_release
+	rm -f "$1.part"
+	curl -fsS --connect-timeout 5 --max-time 900 -o "$1.part" "http://$POTLUCK$AGENT_PATH" \
+		|| { rm -f "$1.part"; die "download of $AGENT_PATH failed"; }
+	fa_line=$(sha256sum "$1.part") || { rm -f "$1.part"; die "sha256sum failed"; }
+	# first word of the output is the digest
+	set -- "$1" $fa_line
+	if [ "$2" != "$AGENT_SHA" ]; then
+		rm -f "$1.part"
+		die "checksum mismatch for the agent (got $2, want $AGENT_SHA)"
+	fi
+	chmod 755 "$1.part"
+	mv -f "$1.part" "$1"
+}
+
+# ---------------------------------------------------------------- bare path
+
+install_bare() {
+	command -v systemctl >/dev/null 2>&1 || die "systemd is required for --bare"
+	# A node that runs the starter has a transient unit of the same name;
+	# a unit file cannot replace it.
+	ib_tr=$(systemctl show -p Transient potluck-agent.service 2>/dev/null || true)
+	if [ "$ib_tr" = "Transient=yes" ]; then
+		die "potluck-agent.service is a transient unit (started by the starter); run potluck-agent-uninstall first"
+	fi
+
+	mkdir -p /usr/local/bin
+	fetch_agent "$BIN"
+	log "installed $BIN"
+
+	common_args "$MODEL_SOURCE"
+	# CONTRACT-QUESTION: --install bare is the agent's default; passed
+	# explicitly anyway so the unit file documents it.
+	ib_args="$CARGS --install bare"
+
+	if [ -e "$UNIT_FILE" ]; then
+		log "replacing existing $UNIT_FILE"
+	fi
+	cat > "$UNIT_FILE" <<EOF
+[Unit]
+Description=Potluck agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=$BIN $ib_args
+Restart=always
+RestartSec=5
+# Stopping or restarting the agent must never kill a launch. Launches run
+# as separate transient units (potluck-launch-<id>) so they are not in this
+# unit's control group anyway; KillMode=process is a second guard so that
+# nothing else the agent spawned is killed along with it.
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
+EOF
+	chmod 644 "$UNIT_FILE"
+	systemctl daemon-reload
+	systemctl enable potluck-agent.service
+	# restart (not --now) so that an already running agent picks up the new
+	# binary and options; a running launch is its own unit and keeps running.
+	systemctl restart potluck-agent.service
+	log "potluck-agent.service enabled and running"
+}
+
+# -------------------------------------------------------------- docker path
+
+# node_ip_for HOST: sets NODE_IP to the "src" of "ip route get HOST".
+node_ip_for() {
+	command -v ip >/dev/null 2>&1 || die "the ip command is required to find this node's address"
+	ni_out=$(ip route get "$1" 2>/dev/null) || die "no route to $1"
+	NODE_IP=""
+	set -f
+	set -- $ni_out
+	set +f
+	while [ $# -gt 0 ]; do
+		if [ "$1" = src ] && [ $# -ge 2 ]; then
+			NODE_IP=$2
+			break
+		fi
+		shift
+	done
+	[ -n "$NODE_IP" ] || die "cannot work out this node's address from: $ni_out"
+}
+
+# Writes and starts the systemd mount unit for the share (docker path).
+setup_models_mount() {
+	sm_target=${MODEL_SOURCE#share:}
+	# CONTRACT-QUESTION: the brief says addr=<potluck ip>; the share server
+	# is the host part of the share target, which is Potluck's address in
+	# every case the contract describes. Using the share target's host so a
+	# share on another address still works.
+	sm_server=${sm_target%%:*}
+	node_ip_for "$sm_server"
+	command -v systemd-escape >/dev/null 2>&1 || die "systemd-escape is required"
+	sm_unit=$(systemd-escape -p --suffix=mount "$MODELS_MOUNT_DIR") || die "systemd-escape failed"
+	sm_file=/etc/systemd/system/$sm_unit
+	mkdir -p "$MODELS_MOUNT_DIR"
+	cat > "$sm_file" <<EOF
+[Unit]
+Description=Potluck model share (read-only)
+After=network-online.target
+Wants=network-online.target
+
+[Mount]
+What=$sm_target
+Where=$MODELS_MOUNT_DIR
+Type=nfs4
+Options=ro,hard,vers=4.2,addr=$sm_server,clientaddr=$NODE_IP,rsize=1048576,nofail
+
+[Install]
+WantedBy=multi-user.target
+EOF
+	chmod 644 "$sm_file"
+	systemctl daemon-reload
+	systemctl enable "$sm_unit"
+	sm_state=$(systemctl is-active "$sm_unit" 2>/dev/null || true)
+	if [ "$sm_state" = active ]; then
+		# never unmount a share in use: a remount drops the page cache
+		log "$sm_unit already mounted, leaving it"
+	else
+		systemctl start "$sm_unit" || die "cannot mount the share ($sm_unit); see: systemctl status $sm_unit"
+	fi
+	log "share mounted read-only at $MODELS_MOUNT_DIR"
+}
+
+write_dockerfile() {
+	# Keep in sync with deploy/agent/Dockerfile.
+	cat > "$1" <<'EOF'
+FROM nvidia/cuda:13.3.1-runtime-ubuntu24.04
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG AGENT_BIN=potluck-agent-linux-amd64
+COPY ${AGENT_BIN} /usr/local/bin/potluck-agent
+RUN chmod 755 /usr/local/bin/potluck-agent
+
+ENTRYPOINT ["/usr/local/bin/potluck-agent"]
+EOF
+}
+
+ensure_image() {
+	if [ -z "$IMAGE" ]; then
+		load_release
+		IMAGE=potluck-agent:$RELEASE
+	fi
+	if docker image inspect "$IMAGE" >/dev/null 2>&1; then
+		log "image $IMAGE is present locally"
+		return 0
+	fi
+	log "image $IMAGE not found locally, trying docker pull"
+	if docker pull "$IMAGE"; then
+		return 0
+	fi
+	log "pull failed, building $IMAGE locally"
+	BUILD_DIR=$(mktemp -d) || die "mktemp failed"
+	load_release
+	ei_bin=potluck-agent-$PLATFORM
+	fetch_agent "$BUILD_DIR/$ei_bin"
+	write_dockerfile "$BUILD_DIR/Dockerfile"
+	docker build -t "$IMAGE" --build-arg "AGENT_BIN=$ei_bin" "$BUILD_DIR" \
+		|| die "docker build failed"
+}
+
+install_docker() {
+	command -v docker >/dev/null 2>&1 || die "docker is required for --docker"
+
+	dk_args_source=$MODEL_SOURCE
+	dk_models_mount=""
+	case $MODEL_SOURCE in
+		share:*)
+			setup_models_mount
+			dk_models_mount=$MODELS_MOUNT_DIR
+			# the container uses /models; the agent is told the same share
+			# target it reports at registration
+			;;
+		dir:*)
+			dk_models_mount=${MODEL_SOURCE#dir:}
+			[ -d "$dk_models_mount" ] || die "model folder $dk_models_mount does not exist"
+			dk_args_source=dir:/models
+			;;
+		push) ;;
+	esac
+
+	case $GPUS in
+		all) dk_gpus=1 ;;
+		none) dk_gpus=0 ;;
+		*)
+			if command -v nvidia-smi >/dev/null 2>&1; then dk_gpus=1; else dk_gpus=0; fi ;;
+	esac
+
+	ensure_image
+
+	common_args "$dk_args_source"
+	dk_agent_args="$CARGS --install docker"
+
+	docker rm -f potluck-agent >/dev/null 2>&1 || true
+
+	# Own PID namespace (never --pid=host) with a reaping init; host network so
+	# the contract's ports are the machine's own. Agent state stays inside the
+	# container: no extra volumes.
+	set -- run -d --name potluck-agent --restart unless-stopped --init --network host
+	if [ "$dk_gpus" = 1 ]; then
+		set -- "$@" --gpus all
+	fi
+	if [ -n "$dk_models_mount" ]; then
+		set -- "$@" -v "$dk_models_mount:/models:ro"
+	fi
+	set -- "$@" "$IMAGE"
+	# The agent arguments hold no whitespace inside values (checked above), so
+	# word splitting is intended here.
+	set -f
+	# shellcheck disable=SC2086
+	set -- "$@" $dk_agent_args
+	set +f
+	docker "$@" >/dev/null || die "docker run failed"
+	log "container potluck-agent started from $IMAGE"
+}
+
+main() {
+	parse_args "$@"
+	require_root
+	check_ports
+	remove_marker
+	case $MODE in
+		bare) install_bare ;;
+		docker) install_docker ;;
+	esac
+	log "done; the node should appear in Potluck shortly"
+}
+
+main "$@"

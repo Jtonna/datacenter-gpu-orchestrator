@@ -1,0 +1,46 @@
+# Stats contract Appendix A.1 (PS5, node_exporter 1.13.1), verbatim:
+node_drm_card_info{card="card0",chip="0000:00:08_1_0000:20:00_0",memory_vendor="",power_performance_level="",unique_id="",vendor="amd"} 1
+node_drm_gpu_busy_percent{card="card0"} 0
+node_drm_memory_gtt_size_bytes{card="card0"} 1.5137001472e+10
+node_drm_memory_gtt_used_bytes{card="card0"} 3.7711872e+07
+node_drm_memory_vis_vram_size_bytes{card="card0"} 5.36870912e+08
+node_drm_memory_vis_vram_used_bytes{card="card0"} 1.2120064e+07
+node_drm_memory_vram_size_bytes{card="card0"} 5.36870912e+08
+node_drm_memory_vram_used_bytes{card="card0"} 1.2120064e+07
+node_hwmon_freq_freq_mhz{chip="0000:00:08_1_0000:20:00_0",sensor="sclk"} 1250
+node_hwmon_pwm{chip="platform_ps5_fan",sensor="pwm1"} 26
+node_hwmon_sensor_label{chip="0000:00:08_1_0000:20:00_0",label="edge",sensor="temp1"} 1
+node_hwmon_sensor_label{chip="0000:00:08_1_0000:20:00_0",label="sclk",sensor="freq1"} 1
+node_hwmon_sensor_label{chip="pci0000:00_0000:00:18_3",label="Tctl",sensor="temp1"} 1
+node_hwmon_sensor_label{chip="platform_ps5_fan",label="Local1",sensor="temp2"} 1
+node_network_up{device="enp64s0f2"} 1
+# The contract records only the names of the series below for the PS5; the
+# values are the illustrative ones from Appendix B.1 (not measured).
+node_hwmon_sensor_label{chip="platform_ps5_fan",label="MainSoC",sensor="temp1"} 1
+node_hwmon_temp_celsius{chip="platform_ps5_fan",sensor="temp1"} 51
+node_hwmon_temp_celsius{chip="pci0000:00_0000:00:18_3",sensor="temp1"} 50.5
+node_hwmon_temp_celsius{chip="0000:00:08_1_0000:20:00_0",sensor="temp1"} 47
+node_memory_MemTotal_bytes 1.6e+10
+node_memory_MemAvailable_bytes 1.2e+10
+node_load1 0.12
+node_network_up{device="lo"} 0
+node_network_receive_bytes_total{device="enp64s0f2"} 1.0e+06
+node_network_transmit_bytes_total{device="enp64s0f2"} 5.0e+05
+node_network_receive_bytes_total{device="lo"} 9.0e+09
+node_network_transmit_bytes_total{device="lo"} 9.0e+09
+node_cpu_seconds_total{cpu="0",mode="idle"} 1000
+node_cpu_seconds_total{cpu="0",mode="user"} 10
+node_cpu_seconds_total{cpu="1",mode="idle"} 1000
+node_cpu_seconds_total{cpu="1",mode="user"} 10
+node_cpu_seconds_total{cpu="2",mode="idle"} 1000
+node_cpu_seconds_total{cpu="2",mode="user"} 10
+node_cpu_seconds_total{cpu="3",mode="idle"} 1000
+node_cpu_seconds_total{cpu="3",mode="user"} 10
+node_cpu_seconds_total{cpu="4",mode="idle"} 1000
+node_cpu_seconds_total{cpu="4",mode="user"} 10
+node_cpu_seconds_total{cpu="5",mode="idle"} 1000
+node_cpu_seconds_total{cpu="5",mode="user"} 10
+node_cpu_seconds_total{cpu="6",mode="idle"} 1000
+node_cpu_seconds_total{cpu="6",mode="user"} 10
+node_cpu_seconds_total{cpu="7",mode="idle"} 1000
+node_cpu_seconds_total{cpu="7",mode="user"} 10
