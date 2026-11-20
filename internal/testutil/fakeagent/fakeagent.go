@@ -215,7 +215,7 @@ func (a *Agent) ExitLaunch(reason, msg string) {
 	}
 }
 
-// Deregister sends POST /api/agents/{id}/deregister.
+// Deregister sends POST /api/pool/nodes/{id}/deregister.
 func (a *Agent) Deregister() (int, error) {
 	resp, err := http.Post(a.Potluck+fmt.Sprintf(agentproto.PathDeregisterFmt, a.ID), "application/json", nil)
 	if err != nil {

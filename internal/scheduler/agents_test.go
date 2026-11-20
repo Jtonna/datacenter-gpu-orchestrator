@@ -267,3 +267,41 @@ func TestAgents_LoadGateRefusesTheLoad(t *testing.T) {
 		t.Fatalf("%q %d", e.Message, len(h.wlaunches))
 	}
 }
+
+// Force unload clears a bad state: requests waiting for the instance fail at
+// once with an error naming the force unload and the node (they do not go
+// back to the queue). Node loss, by contrast, requeues them.
+func TestAgents_ForceUnloadFailsTheWaitersOfAStartingInstance(t *testing.T) {
+	h := agentsHarness(t)
+	w := h.request("m") // the instance waits for its worker launches
+	h.pending(w)
+	var r forceResult
+	h.step(evQuery{fn: func(c *schedCore) { r = c.forceUnload("a") }})
+	h.step(evTick{})
+	if r.profile != "m" {
+		t.Fatalf("result %+v", r)
+	}
+	err := h.failed(w, 502, ReasonLoadFailed)
+	if !strings.Contains(err.Message, "force unload of node a") {
+		t.Fatalf("message %q", err.Message)
+	}
+	h.wantState("m", "absent")
+	if n := len(h.wlaunches); n != 1 {
+		t.Fatalf("the failed request was put back and launched again: %d launches", n)
+	}
+	// Not a load failure of the profile: the next request starts a load at once.
+	w2 := h.request("m")
+	h.pending(w2)
+	if n := len(h.wlaunches); n != 2 {
+		t.Fatalf("profile held back after a force unload: %d launches", n)
+	}
+}
+
+func TestAgents_LostNodeRequeuesTheWaitersOfAStartingInstance(t *testing.T) {
+	h := agentsHarness(t)
+	w := h.request("m")
+	h.view.modify("a", func(n *core.Node) { n.Online = false })
+	h.viewChanged()
+	h.step(evTick{})
+	h.pending(w)
+}

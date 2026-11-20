@@ -287,13 +287,15 @@ func (c *schedCore) raiseNeedOnKill(in *inst, node core.NodeID, ex *agentproto.E
 }
 
 // forceUnload is agent contract 7.2's force unload of a node: the instance on
-// it is killed (its waiters go back to the queue) and the node's launch is
-// stopped with force. With no instance on the node, the node's launch is
-// stopped with force all the same.
+// it is killed and the node's launch is stopped with force. With no instance
+// on the node, the node's launch is stopped with force all the same.
 //
-// CONTRACT-QUESTION: 7.2 does not say what happens to requests waiting for a
-// starting instance that is force unloaded; they go back to the queue, as for
-// node loss, rather than failing.
+// Force unload exists to clear a bad state, so requests waiting for that
+// instance fail at once with an error naming the force unload and the node
+// (answered by the PS5 side to the contract question on 7.2); they are not put
+// back in the queue as for node loss. Requests in flight on a ready instance
+// are cut off as with any kill. The profile is not held back: the next
+// request starts a new load.
 func (c *schedCore) forceUnload(id core.NodeID) forceResult {
 	for _, in := range c.sortedInsts() {
 		for _, pn := range in.placement.Nodes {
@@ -306,8 +308,9 @@ func (c *schedCore) forceUnload(id core.NodeID) forceResult {
 			}
 			ws := in.waiters
 			in.waiters = nil
-			c.stopFor(in, stopKill, "force unload")
-			c.requeue(in, ws)
+			why := fmt.Sprintf("force unload of node %s", id)
+			c.stopFor(in, stopKill, why)
+			c.failAll(ws, err502(fmt.Sprintf("loading %s was ended by the %s", in.prof.Name, why), nil))
 			return forceResult{profile: in.prof.Name}
 		}
 	}

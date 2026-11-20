@@ -59,7 +59,7 @@ All ports are fixed. Ports 50060, 50070 and 50071 must be free when the agent st
 - `name`: a display label. The agent sends the machine's hostname as the default. Potluck may hold a different label. Nothing is keyed by `name`.
 - Consequence to accept: the host machine's id today is the string `host-1`. It becomes its MAC. No profile forces it, so nothing breaks.
 
-### 4.2 `POST /api/agents/register` (agent to Potluck)
+### 4.2 `POST /api/pool/register` (agent to Potluck)
 
 Sent at agent start, and again whenever Potluck answers a heartbeat with `410`.
 
@@ -104,7 +104,7 @@ Answer `200`:
   "platform": "linux-amd64-vulkan",
   "heartbeat_every_s": 2,
   "programs": [
-    {"name": "rpc-server", "path": "/api/agents/programs/0.1.0/linux-amd64-vulkan/rpc-server",
+    {"name": "rpc-server", "path": "/api/pool/programs/0.1.0/linux-amd64-vulkan/rpc-server",
      "sha256": "…", "bytes": 81234567, "build": "a01665d30"},
     {"name": "llama-server", "path": "…", "sha256": "…", "bytes": 0, "build": "a01665d30"},
     {"name": "node_exporter", "path": "…", "sha256": "…", "bytes": 0, "build": "1.13.1"}
@@ -134,7 +134,7 @@ Refusals, all `200` with `"accepted": false`, a `reason` word and a `message`:
 
 A refused agent starts no program and no exporter, keeps answering `GET /status` with the reason, and registers again every 60 s.
 
-### 4.3 `POST /api/agents/{id}/heartbeat` (agent to Potluck)
+### 4.3 `POST /api/pool/nodes/{id}/heartbeat` (agent to Potluck)
 
 Every `heartbeat_every_s`. It carries everything Potluck needs to know about an idle node, so Potluck never polls an idle agent.
 
@@ -237,7 +237,7 @@ programs/
 
 Platform choice, done by Potluck from the registration: `cuda` in `backends` and an Nvidia GPU present gives `…-cuda`; otherwise `vulkan` in `backends` gives `…-vulkan`; otherwise `unsupported_hardware`.
 
-### 5.3 `GET /api/agents/programs/{release}/{platform}/{file}` (agent from Potluck)
+### 5.3 `GET /api/pool/programs/{release}/{platform}/{file}` (agent from Potluck)
 
 Plain file download with `Content-Length`. The agent:
 
@@ -255,11 +255,11 @@ A failed check is retried three times, then reported in `programs_error`. The ag
 
 ### 5.4 How a node gets and updates the agent
 
-`GET /api/agents/release` (no parameters) answers:
+`GET /api/pool/release` (no parameters) answers:
 
 ```json
 {"release": "0.1.0",
- "agents": {"linux-amd64": {"path": "/api/agents/programs/0.1.0/agent/potluck-agent-linux-amd64", "sha256": "…"}}}
+ "agents": {"linux-amd64": {"path": "/api/pool/programs/0.1.0/agent/potluck-agent-linux-amd64", "sha256": "…"}}}
 ```
 
 | Install | First agent | On `agent_too_old` |
@@ -275,7 +275,7 @@ With a launch, an agent waits for the launch to end before it updates.
 1. needs only a POSIX shell, `curl` and `sha256sum`;
 2. does nothing and exits 0 when the marker file `/etc/potluck/disabled` exists (section 10);
 3. does nothing and exits 0 when `potluck-agent.service` is active. It never stops a running agent or launch, so it is safe on every payload apply;
-4. otherwise asks `GET /api/agents/release`, downloads the agent for its platform into `/dev/shm/potluck/`, checks the sha256, and starts it as the systemd transient unit `potluck-agent.service` with the RAM-only options;
+4. otherwise asks `GET /api/pool/release`, downloads the agent for its platform into `/dev/shm/potluck/`, checks the sha256, and starts it as the systemd transient unit `potluck-agent.service` with the RAM-only options;
 5. retries forever with a growing wait (5 s up to 60 s) while Potluck is unreachable or a check fails.
 
 **What the payload side guarantees** (PS5 side): a payload apply never restarts `potluck-agent.service`, never touches `/dev/shm/potluck` or `/run/potluck`, and never stops a `potluck-launch-*` unit, unless the starter itself changed.
@@ -546,7 +546,7 @@ There are two different things, and they have different effects.
 
 **Uninstall, from the node** (`potluck-agent-uninstall`). The script does the work; the agent cannot delete itself and finish.
 
-1. Best effort: `POST /api/agents/{id}/deregister` on Potluck. If Potluck is unreachable the script goes on.
+1. Best effort: `POST /api/pool/nodes/{id}/deregister` on Potluck. If Potluck is unreachable the script goes on.
 2. On a node with a starter: write the marker file `/etc/potluck/disabled` (one empty file; it must survive reboots, so it cannot be under `/run`). The starter does nothing while it exists.
 3. Stop the launch, the exporters and the agent; unmount the share if the agent mounted it; delete the program folder, the launch log, the state files, the unit or container and image, and the agent binary.
 4. Nothing of Potluck's keeps running on the machine.

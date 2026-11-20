@@ -19,17 +19,14 @@ import (
 //
 // potluck-agent to Potluck (contract 4 and 5), on the contract's paths:
 //
-//	POST /api/agents/register
-//	POST /api/agents/{id}/heartbeat
-//	POST /api/agents/{id}/deregister
-//	GET  /api/agents/release
-//	GET  /api/agents/programs/{release}/{platform}/{file}
+//	POST /api/pool/register
+//	POST /api/pool/nodes/{id}/heartbeat
+//	POST /api/pool/nodes/{id}/deregister
+//	GET  /api/pool/release
+//	GET  /api/pool/programs/{release}/{platform}/{file}
 //
-// These share the /api/agents prefix with the AI-agent identity routes
-// (agents.go: GET/POST /api/agents, PATCH/DELETE /api/agents/{id},
-// POST /api/agents/{id}/rotate). No pattern overlaps: every new one differs
-// in method, in segment count or in a literal segment, and an agent-key id
-// ("ag_...") never reaches them. ServeMux would panic at start on a conflict.
+// They have their own /api/pool prefix; /api/agents belongs to the AI-agent
+// identity routes (agents.go).
 //
 // Operator actions on a node (contract 7.2 and 10), each with a required
 // comment (body "comment" or the X-Comment header) and an audit entry:
@@ -45,10 +42,10 @@ const SectionNodes = "nodes"
 
 func (s *Server) nodeRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST "+agentproto.PathRegister, s.agentRegister)
-	m.HandleFunc("POST /api/agents/{id}/heartbeat", s.agentHeartbeat)
-	m.HandleFunc("POST /api/agents/{id}/deregister", s.agentDeregister)
+	m.HandleFunc("POST /api/pool/nodes/{id}/heartbeat", s.agentHeartbeat)
+	m.HandleFunc("POST /api/pool/nodes/{id}/deregister", s.agentDeregister)
 	m.HandleFunc("GET "+agentproto.PathRelease, s.agentRelease)
-	m.HandleFunc("GET /api/agents/programs/{release}/{platform}/{file}", s.agentProgram)
+	m.HandleFunc("GET /api/pool/programs/{release}/{platform}/{file}", s.agentProgram)
 
 	m.HandleFunc("POST /api/nodes/{id}/pause", func(w http.ResponseWriter, r *http.Request) { s.nodePause(w, r, true) })
 	m.HandleFunc("POST /api/nodes/{id}/unpause", func(w http.ResponseWriter, r *http.Request) { s.nodePause(w, r, false) })

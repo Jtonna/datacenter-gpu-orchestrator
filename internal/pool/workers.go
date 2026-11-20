@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
@@ -28,11 +29,9 @@ import (
 
 var _ scheduler.WorkerLauncher = (*Pool)(nil)
 
-// WorkerStartTimeout bounds how long a worker launch may stay starting.
-//
-// CONTRACT-QUESTION: the contract gives no limit on a worker launch's
-// starting state; the load fails after 2 minutes with worker_start_timeout.
-const WorkerStartTimeout = 2 * time.Minute
+// How long a worker launch may stay starting is the setting
+// worker_start_timeout (default 15 s, answered by the PS5 side to the
+// contract question); the load then fails with worker_start_timeout.
 
 // ReasonWorkerStartTimeout fails a load whose worker did not become ready.
 const ReasonWorkerStartTimeout = "worker_start_timeout"
@@ -182,7 +181,11 @@ func (p *Pool) Launch(ctx context.Context, spec scheduler.WorkerLaunchSpec, repo
 	p.log.Info("worker launches sent", "profile", spec.Profile, "launches", ids)
 
 	// Wait until every launch is ready.
-	deadline := time.NewTimer(WorkerStartTimeout)
+	limit := p.o.Config().Defaults.WorkerStartTimeout
+	if limit <= 0 {
+		limit = config.DefaultDefaults().WorkerStartTimeout
+	}
+	deadline := time.NewTimer(limit)
 	defer deadline.Stop()
 	for {
 		ready := 0
@@ -202,8 +205,15 @@ func (p *Pool) Launch(ctx context.Context, spec scheduler.WorkerLaunchSpec, repo
 		case <-ctx.Done():
 			return scheduler.WorkerResult{LaunchIDs: ids, Reason: ReasonAgentUnreachable, Message: "the scheduler is stopping"}
 		case <-deadline.C:
-			return scheduler.WorkerResult{LaunchIDs: ids, Node: ls[0].node, Reason: ReasonWorkerStartTimeout,
-				Message: fmt.Sprintf("the worker launches were not ready within %v", WorkerStartTimeout)}
+			late := ls[0]
+			for _, l := range ls {
+				if l.stateName() != agentproto.StateReady {
+					late = l
+					break
+				}
+			}
+			return scheduler.WorkerResult{LaunchIDs: ids, Node: late.node, Reason: ReasonWorkerStartTimeout,
+				Message: fmt.Sprintf("the worker launch on %s was not ready within %v (worker_start_timeout)", late.node, limit)}
 		case <-time.After(100 * time.Millisecond):
 		}
 	}

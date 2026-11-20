@@ -74,7 +74,7 @@ func register(t *testing.T, e *env, id string) agentproto.RegisterAnswer {
 func TestAgentEndpointsOffInFleetMembership(t *testing.T) {
 	e := newEnv(t, chatOK)
 	for _, c := range []struct{ method, path string }{
-		{"POST", agentproto.PathRegister}, {"POST", "/api/agents/02:00:00:00:00:01/heartbeat"}, {"GET", agentproto.PathRelease},
+		{"POST", agentproto.PathRegister}, {"POST", "/api/pool/nodes/02:00:00:00:00:01/heartbeat"}, {"GET", agentproto.PathRelease},
 		{"POST", "/api/nodes/n1/pause"}, {"POST", "/api/nodes/n1/force-unload"}, {"DELETE", "/api/nodes/n1"},
 	} {
 		req, _ := http.NewRequest(c.method, e.front.URL+c.path, strings.NewReader(`{"comment":"x"}`))
@@ -108,8 +108,8 @@ func TestAgentRegisterHeartbeatAndPrograms(t *testing.T) {
 	if b := body(t, resp); resp.StatusCode != 200 || b != "RPC-SERVER" || resp.Header.Get("X-Checksum-Sha256") != rpc.SHA256 {
 		t.Fatalf("download: %d %q", resp.StatusCode, b)
 	}
-	for _, bad := range []string{"/api/agents/programs/0.1.0/linux-amd64-vulkan/SHA256SUMS", "/api/agents/programs/0.2.0/linux-amd64-vulkan/rpc-server",
-		"/api/agents/programs/0.1.0/linux-amd64-vulkan/..%2frelease.json"} {
+	for _, bad := range []string{"/api/pool/programs/0.1.0/linux-amd64-vulkan/SHA256SUMS", "/api/pool/programs/0.2.0/linux-amd64-vulkan/rpc-server",
+		"/api/pool/programs/0.1.0/linux-amd64-vulkan/..%2frelease.json"} {
 		if resp := e.get(bad); resp.StatusCode != http.StatusNotFound {
 			t.Errorf("%s: %d", bad, resp.StatusCode)
 		}
@@ -117,21 +117,21 @@ func TestAgentRegisterHeartbeatAndPrograms(t *testing.T) {
 	resp = e.get(agentproto.PathRelease)
 	var ri agentproto.ReleaseInfo
 	json.Unmarshal([]byte(body(t, resp)), &ri)
-	if ri.Release != "0.1.0" || ri.Agents["linux-amd64"].Path != "/api/agents/programs/0.1.0/agent/potluck-agent-linux-amd64" {
+	if ri.Release != "0.1.0" || ri.Agents["linux-amd64"].Path != "/api/pool/programs/0.1.0/agent/potluck-agent-linux-amd64" {
 		t.Fatalf("%+v", ri)
 	}
-	resp = e.post("/api/agents/02:00:00:00:00:01/heartbeat", `{"agent_start_id":"s1","devices":[],"stats":{"stats_version":7}}`)
+	resp = e.post("/api/pool/nodes/02:00:00:00:00:01/heartbeat", `{"agent_start_id":"s1","devices":[],"stats":{"stats_version":7}}`)
 	if b := body(t, resp); resp.StatusCode != 200 || !strings.Contains(b, `"release":"0.1.0"`) {
 		t.Fatalf("heartbeat %d %s", resp.StatusCode, b)
 	}
-	if resp := e.post("/api/agents/02:00:00:00:00:09/heartbeat", `{}`); resp.StatusCode != http.StatusGone {
+	if resp := e.post("/api/pool/nodes/02:00:00:00:00:09/heartbeat", `{}`); resp.StatusCode != http.StatusGone {
 		t.Fatalf("unknown heartbeat %d", resp.StatusCode)
 	}
 	st := body(t, e.get("/api/status"))
 	if !strings.Contains(st, `"agents":[`) || !strings.Contains(st, "stats version not supported") {
 		t.Fatalf("status %s", st)
 	}
-	if resp := e.post("/api/agents/02:00:00:00:00:01/deregister", ``); resp.StatusCode != 200 {
+	if resp := e.post("/api/pool/nodes/02:00:00:00:00:01/deregister", ``); resp.StatusCode != 200 {
 		t.Fatalf("deregister %d", resp.StatusCode)
 	}
 	if st := body(t, e.get("/api/status")); !strings.Contains(st, `"state":"left"`) {

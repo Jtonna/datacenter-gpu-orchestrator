@@ -159,6 +159,9 @@ type Defaults struct {
 	// 6.7); for a device that shares system memory the usable figure is
 	// min(device free, mem_available_mib - this). Default 1000.
 	WatchdogFloorMiB int
+	// WorkerStartTimeout is how long the worker launches of a load may stay
+	// starting before the load fails with worker_start_timeout. Default 15 s.
+	WorkerStartTimeout time.Duration
 }
 
 // Values of defaults.membership.

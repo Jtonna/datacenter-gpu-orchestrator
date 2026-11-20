@@ -320,6 +320,15 @@ func TestMembershipSetting(t *testing.T) {
 	if _, err := ParseWithOptions([]byte("defaults: {watchdog_floor_mib: -1}\nprofiles: {}\n"), Options{}); err == nil {
 		t.Fatal("negative floor accepted")
 	}
+	if c := mustParse(t, "defaults: {worker_start_timeout: 40s}\nprofiles: {}\n"); c.Defaults.WorkerStartTimeout != 40*time.Second {
+		t.Fatalf("worker_start_timeout = %v", c.Defaults.WorkerStartTimeout)
+	}
+	if _, err := ParseWithOptions([]byte("defaults: {worker_start_timeout: 0s}\nprofiles: {}\n"), Options{}); err == nil {
+		t.Fatal("worker_start_timeout 0 accepted")
+	}
+	if f, ok := SettingFieldByKey(ScopeSettings, "worker_start_timeout"); !ok || f.Section != "agents" || f.Default != "15s" || f.RestartRequired {
+		t.Fatalf("worker_start_timeout field = %+v", f)
+	}
 	f, ok := SettingFieldByKey(ScopeSettings, "membership")
 	if !ok || !f.RestartRequired || f.Default != "fleet" {
 		t.Fatalf("membership field = %+v", f)

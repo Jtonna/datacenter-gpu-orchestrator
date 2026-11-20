@@ -167,7 +167,7 @@ step_deregister() {
 		*) log "deregister: cannot get the node id, skipping"; return 0 ;;
 	esac
 	if curl -fsS --connect-timeout 3 --max-time 5 -X POST -o /dev/null \
-		"http://$POTLUCK/api/agents/$sd_id/deregister"; then
+		"http://$POTLUCK/api/pool/nodes/$sd_id/deregister"; then
 		log "deregistered $sd_id from Potluck"
 	else
 		log "deregister: Potluck did not accept the request (unreachable?), going on"

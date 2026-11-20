@@ -166,7 +166,7 @@ func (p *Pool) nodeFromAgentLocked(cfg *config.Config, a *agent) (core.Node, boo
 	if a.hb == nil {
 		return n, true
 	}
-	d, ok := pickDevice(a)
+	d, _, ok := pickDevice(a)
 	if !ok {
 		return n, true
 	}
@@ -180,23 +180,35 @@ func (p *Pool) nodeFromAgentLocked(cfg *config.Config, a *agent) (core.Node, boo
 }
 
 // pickDevice is the device a worker of this node serves: the first one of
-// the node's platform backend, else the first one.
+// the node's platform backend, else the first one. extra counts the other
+// devices of that backend, which are not used.
 //
-// CONTRACT-QUESTION: the heartbeat lists every device of the node's llama
-// program, but a worker (rpc-server) exposes one device and the contract does
-// not say which; the first device of the platform's backend is used.
-func pickDevice(a *agent) (dev agentproto.Device, ok bool) {
+// One device per node (answered by the PS5 side to the contract question): a
+// worker (rpc-server) exposes one device. When a node lists more than one
+// device of its platform's backend, the first is used and the rest are not
+// guessed at silently: the node's status has extra_devices_ignored and the
+// log warns once per registration (Heartbeat).
+func pickDevice(a *agent) (dev agentproto.Device, extra int, ok bool) {
+	if a.hb == nil || len(a.hb.Devices) == 0 {
+		return dev, 0, false
+	}
 	ds := a.hb.Devices
-	if len(ds) == 0 {
-		return dev, false
-	}
 	backend := a.platform[strings.LastIndex(a.platform, "-")+1:]
+	found := false
 	for _, d := range ds {
-		if strings.EqualFold(d.Backend, backend) {
-			return d, true
+		if !strings.EqualFold(d.Backend, backend) {
+			continue
 		}
+		if found {
+			extra++
+			continue
+		}
+		dev, found = d, true
 	}
-	return ds[0], true
+	if !found {
+		return ds[0], 0, true
+	}
+	return dev, extra, true
 }
 
 // ---- local probe ----
@@ -265,6 +277,9 @@ type NodeFacts struct {
 	MemAvailMiB   *int64          `json:"mem_available_mib,omitempty"`
 	Stats         json.RawMessage `json:"stats,omitempty"`
 	StatsNote     string          `json:"stats_note,omitempty"`
+	// ExtraDevicesIgnored counts the node's devices of its platform backend
+	// beyond the first, which no worker uses (one device per node).
+	ExtraDevicesIgnored int `json:"extra_devices_ignored"`
 }
 
 // Facts lists every agent node Potluck knows, removed ones included.
@@ -293,6 +308,7 @@ func (p *Pool) Facts() []NodeFacts {
 			f.ModelSource, f.Devices = hb.ModelSource, hb.Devices
 			m := hb.MemAvailableMiB
 			f.MemAvailMiB = &m
+			_, f.ExtraDevicesIgnored, _ = pickDevice(a)
 		}
 		for _, l := range p.launches {
 			if l.node == core.NodeID(id) {

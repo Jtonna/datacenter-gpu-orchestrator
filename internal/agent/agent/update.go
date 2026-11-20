@@ -14,7 +14,7 @@ import (
 )
 
 // SelfUpdater replaces the agent binary and restarts it (bare metal and
-// RAM-only, 5.4): download the agent of GET /api/agents/release for this
+// RAM-only, 5.4): download the agent of GET /api/pool/release for this
 // OS and architecture, check its sha256, rename it over the running binary,
 // then call Restart (exec of the new binary with the same arguments).
 type SelfUpdater struct {
@@ -26,7 +26,7 @@ type SelfUpdater struct {
 
 // Update implements Updater.
 func (u SelfUpdater) Update(ctx context.Context, required string) error {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.Base+"/api/agents/release", nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.Base+"/api/pool/release", nil)
 	resp, err := u.HTTP.Do(req)
 	if err != nil {
 		return err

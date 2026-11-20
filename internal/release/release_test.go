@@ -36,7 +36,7 @@ func TestLoadVerifiesEveryFolder(t *testing.T) {
 		t.Fatalf("programs %+v", ps)
 	}
 	for _, p := range ps {
-		if !strings.HasPrefix(p.Path, "/api/agents/programs/0.1.0/linux-amd64-cuda/") || len(p.SHA256) != 64 || p.Bytes == 0 {
+		if !strings.HasPrefix(p.Path, "/api/pool/programs/0.1.0/linux-amd64-cuda/") || len(p.SHA256) != 64 || p.Bytes == 0 {
 			t.Fatalf("entry %+v", p)
 		}
 		switch p.Name {
@@ -59,7 +59,7 @@ func TestLoadVerifiesEveryFolder(t *testing.T) {
 		t.Fatalf("vulkan exporters %+v", ex)
 	}
 	ag := r.Agents()
-	if a, ok := ag["linux-amd64"]; !ok || a.Path != "/api/agents/programs/0.1.0/agent/potluck-agent-linux-amd64" || len(ag) != 1 {
+	if a, ok := ag["linux-amd64"]; !ok || a.Path != "/api/pool/programs/0.1.0/agent/potluck-agent-linux-amd64" || len(ag) != 1 {
 		t.Fatalf("agents %+v", ag)
 	}
 	if _, ok := r.File("0.1.0", "linux-amd64-vulkan", "rpc-server"); !ok {

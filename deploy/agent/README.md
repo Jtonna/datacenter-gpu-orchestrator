@@ -20,7 +20,7 @@ These files install, start and remove `potluck-agent` on a node. The rules they 
 
 Nothing here has been executed. Only `sh -n` was run.
 
-- Starter on a PS5: the JSON parsing against a real `/api/agents/release` answer, `systemd-run` with the transient unit, running it twice, with the marker, and while the unit is restarting.
+- Starter on a PS5: the JSON parsing against a real `/api/pool/release` answer, `systemd-run` with the transient unit, running it twice, with the marker, and while the unit is restarting.
 - Setup `--bare` on a Linux box: the unit starts, the agent registers, re-running replaces the unit and keeps a running launch.
 - Setup `--docker` with `share:`: the mount unit name and options, `clientaddr`, the container sees `/models`, the local-build fallback, `--gpus` handling.
 - Uninstall on each path: the `Transient` detection, the launch unit listing, the umount of `/run/potluck/models`, a second run being harmless.

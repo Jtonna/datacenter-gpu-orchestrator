@@ -1099,7 +1099,10 @@ view the core reads, and runs the worker launches.
   `name` and source `agent`. Placement memory is the first device of the
   node's platform backend; for a device that shares system memory the usable
   figure is `min(device free, mem_available_mib - watchdog_floor_mib)`
-  (`watchdog_floor_mib`, default 1000). The local node still comes from
+  (`watchdog_floor_mib`, default 1000). One device per node: a node that
+  lists more than one device of its backend uses the first; its status shows
+  `extra_devices_ignored` and the log warns once per registration. The local
+  node still comes from
   `local_probe_cmd`; an agent whose id or name is `fleet.local_node` is the
   host machine's and is not published as a remote node.
 - **States.** A node is lost after 10 s without a heartbeat (shown offline;
@@ -1113,7 +1116,9 @@ view the core reads, and runs the worker launches.
   connects. Each remote node gets `POST /launch` (role worker, the release,
   a 20 s lease, `min_mem_available_mib` = the watchdog floor, plus the node's
   budget on a shared-memory device, `model_dir` from `worker_model_dir`).
-  The child starts once every launch is `ready`. Leases are renewed every
+  The child starts once every launch is `ready`; a launch not `ready`
+  within `worker_start_timeout` (default 15 s) fails the load with
+  `worker_start_timeout`. Leases are renewed every
   5 s; the state is read 4 times a second while starting, then each second;
   the launch log is copied to `child_log_dir` as
   `worker-<name>-<launch id>.log`. After the instance is gone (its child has
@@ -1128,8 +1133,11 @@ view the core reads, and runs the worker launches.
   restart no launch is held: the next heartbeat gets `410` and the agent's
   re-registration is answered `stop_launch`.
 - **Force unload** (`POST /api/nodes/{id}/force-unload`, MCP
-  `force_unload_node`): the instance on the node is killed and its waiters go
-  back to the queue; that node's launch gets `DELETE ?force=1` and, if it is
+  `force_unload_node`): the instance on the node is killed; requests waiting
+  for it fail at once with a 502 naming the force unload and the node
+  (unlike node loss, they are not put back in the queue), and requests in
+  flight are cut off as with any kill. The profile is not backed off. That
+  node's launch gets `DELETE ?force=1` and, if it is
   not `exited` within 5 s, `POST /reset`. The other members get a normal
   stop; a lost node is not waited for.
 - **Status.** In agents membership each node of `/api/status` `view.nodes`

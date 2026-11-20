@@ -14,7 +14,7 @@
 # Runs as root, with no TTY and possibly no HOME. Needs only a POSIX shell,
 # curl, sha256sum, sed, head, uname, mkdir, chmod, mv, rm, sleep and
 # systemd-run/systemctl. No jq or python: the two values it needs from
-# GET /api/agents/release are read with sed; the layout that answer must keep
+# GET /api/pool/release are read with sed; the layout that answer must keep
 # is documented on agentproto.ReleaseInfo.
 #
 # Exit status:
@@ -188,8 +188,8 @@ release_field() {
 # $SHM_DIR/potluck-agent is the verified binary, 1 on a fault that waiting
 # may fix (Potluck down, bad answer, checksum mismatch).
 fetch() {
-	f_json=$(curl -fsS --connect-timeout 5 --max-time 20 "$URL/api/agents/release") || {
-		log "Potluck at $URL not reachable (or GET /api/agents/release failed)"
+	f_json=$(curl -fsS --connect-timeout 5 --max-time 20 "$URL/api/pool/release") || {
+		log "Potluck at $URL not reachable (or GET /api/pool/release failed)"
 		return 1
 	}
 	f_path=$(release_field "$f_json" path)

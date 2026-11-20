@@ -816,6 +816,13 @@ curl -X DELETE localhost:3122/api/nodes/02:00:00:00:00:01            -d '{"comme
 curl -X POST localhost:3122/api/nodes/02:00:00:00:00:01/readmit      -d '{"comment":"why"}'
 ```
 
+Force unload fails the requests waiting for the instance on that node (the
+502 says "force unload of node <id>"); use pause when you only want the node
+to stop taking new loads. A node with more than one GPU of its backend shows
+`extra_devices_ignored` in its `agent` status: only the first device is used.
+A load whose workers are not ready within `worker_start_timeout` (default
+15 s) fails with `worker_start_timeout`; raise the setting for slow nodes.
+
 Worker launch logs are copied into `child_log_dir` as
 `worker-<node name>-<launch id>.log`. A load that fails on an agent shows the
 agent's reason in the 502 and in history (`workerLaunchFailed`,

@@ -10,7 +10,7 @@
 #   (--network host). Never use --pid=host.
 # - Build context must contain the agent binary, named by AGENT_BIN, for
 #   example: docker build --build-arg AGENT_BIN=potluck-agent-linux-amd64 .
-#   (download it from Potluck, GET /api/agents/release, and check its sha256).
+#   (download it from Potluck, GET /api/pool/release, and check its sha256).
 # - The image tag is the release, for example potluck-agent:0.1.0.
 FROM nvidia/cuda:13.3.1-runtime-ubuntu24.04
 

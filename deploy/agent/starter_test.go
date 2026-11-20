@@ -23,7 +23,7 @@ const (
 	badSum  = "2222222222222222222222222222222222222222222222222222222222222222"
 )
 
-// release is the answer of GET /api/agents/release, one entry per line, as
+// release is the answer of GET /api/pool/release, one entry per line, as
 // agentproto.ReleaseInfo's layout rule allows.
 const release = `{"release":"0.1.0","agents":{
 "linux-arm64":{"path":"/api/agents/binary/0.1.0/linux-arm64","sha256":"` + badSum + `"},
@@ -43,7 +43,7 @@ while [ $# -gt 0 ]; do
 done
 printf '%s\n' "$url" >> "$FAKE_DIR/curl.log"
 case $url in
-	*/api/agents/release)
+	*/api/pool/release)
 		n=0; [ -f "$FAKE_DIR/unreachable" ] && read -r n < "$FAKE_DIR/unreachable"
 		if [ "$n" -gt 0 ]; then
 			printf '%s\n' $((n - 1)) > "$FAKE_DIR/unreachable"

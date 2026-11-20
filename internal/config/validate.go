@@ -275,6 +275,9 @@ func (c *Config) validateDefaults(add func(string, ...any)) {
 	default:
 		add("defaults: membership: must be %s or %s, got %q", MembershipFleet, MembershipAgents, d.Membership)
 	}
+	if d.WorkerStartTimeout <= 0 {
+		add("defaults: worker_start_timeout: must be positive, got %v", d.WorkerStartTimeout)
+	}
 	if d.WatchdogFloorMiB < 0 {
 		add("defaults: watchdog_floor_mib: must not be negative, got %d", d.WatchdogFloorMiB)
 	}

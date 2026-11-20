@@ -158,11 +158,11 @@ const (
 
 // Paths on Potluck (agent to Potluck). {id} is the node id.
 const (
-	PathRegister       = "/api/agents/register"
-	PathHeartbeatFmt   = "/api/agents/%s/heartbeat"  // fmt with id
-	PathDeregisterFmt  = "/api/agents/%s/deregister" // fmt with id
-	PathRelease        = "/api/agents/release"
-	PathProgramsPrefix = "/api/agents/programs/"
+	PathRegister       = "/api/pool/register"
+	PathHeartbeatFmt   = "/api/pool/nodes/%s/heartbeat"  // fmt with id
+	PathDeregisterFmt  = "/api/pool/nodes/%s/deregister" // fmt with id
+	PathRelease        = "/api/pool/release"
+	PathProgramsPrefix = "/api/pool/programs/"
 )
 
 // Paths on the agent (Potluck to agent, port 50060).
@@ -204,7 +204,7 @@ type ModelSource struct {
 	Target string `json:"target,omitempty"` // share: the export or folder; absent for push
 }
 
-// RegisterRequest is the body of POST /api/agents/register.
+// RegisterRequest is the body of POST /api/pool/register.
 // Slices are always sent as arrays, never null: use NewRegisterRequest or
 // set them to empty slices.
 type RegisterRequest struct {
@@ -302,7 +302,7 @@ type Device struct {
 	ReadAgeS           float64 `json:"read_age_s"`
 }
 
-// Heartbeat is the body of POST /api/agents/{id}/heartbeat.
+// Heartbeat is the body of POST /api/pool/nodes/{id}/heartbeat.
 type Heartbeat struct {
 	AgentStartID    string           `json:"agent_start_id"`
 	Seq             uint64           `json:"seq"`
@@ -333,7 +333,7 @@ type AgentBinary struct {
 	SHA256 string `json:"sha256"`
 }
 
-// ReleaseInfo is the answer to GET /api/agents/release. Agents is keyed by
+// ReleaseInfo is the answer to GET /api/pool/release. Agents is keyed by
 // "<os>-<arch>", for example "linux-amd64".
 //
 // LAYOUT RULE: deploy/agent/potluck-starter.sh reads this answer with sed

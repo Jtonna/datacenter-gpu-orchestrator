@@ -41,7 +41,7 @@ func newFakePotluck(t *testing.T) *fakePotluck {
 }
 
 func (f *fakePotluck) add(name string, body string) (path, sum string) {
-	path = "/api/agents/programs/0.1.0/linux-amd64-vulkan/" + name
+	path = "/api/pool/programs/0.1.0/linux-amd64-vulkan/" + name
 	s := sha256.Sum256([]byte(body))
 	f.mu.Lock()
 	f.files[path] = []byte(body)

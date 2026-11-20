@@ -99,7 +99,7 @@ func (p *fakePotluck) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *fakePotluck) addFile(name string, body []byte) agentproto.ProgramEntry {
-	path := "/api/agents/programs/0.1.0/linux-amd64-vulkan/" + name
+	path := "/api/pool/programs/0.1.0/linux-amd64-vulkan/" + name
 	s := sha256.Sum256(body)
 	p.mu.Lock()
 	p.files[path] = body
@@ -623,7 +623,7 @@ func TestSelfUpdater(t *testing.T) {
 	body := []byte("NEW AGENT")
 	sum := sha256.Sum256(body)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/agents/release" {
+		if r.URL.Path == "/api/pool/release" {
 			fmt.Fprintf(w, `{"release":"0.2.0","agents":{"%s":{"path":"/bin/agent","sha256":"%s"}}}`, goosArch(), hex.EncodeToString(sum[:]))
 			return
 		}

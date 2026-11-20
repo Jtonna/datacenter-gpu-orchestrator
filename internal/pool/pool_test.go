@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -89,7 +90,16 @@ type rig struct {
 
 	mu     sync.Mutex
 	forced []core.NodeID
+	logs   logBuf
 }
+
+type logBuf struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *logBuf) Write(p []byte) (int, error) { l.mu.Lock(); defer l.mu.Unlock(); return l.b.Write(p) }
+func (l *logBuf) String() string              { l.mu.Lock(); defer l.mu.Unlock(); return l.b.String() }
 
 func testRelease(t *testing.T) *release.Release {
 	root := progtree.Write(t, t.TempDir(), progtree.Tree{Release: "0.1.0", Llama: llamaBuild,
@@ -131,7 +141,8 @@ func newRig(t *testing.T) *rig {
 func (r *rig) start() {
 	p, err := New(Options{Config: func() *config.Config { return r.cfg }, Programs: Programs{Release: r.rel},
 		PotluckRelease: "0.1.0", Store: r.store, History: r.hist, Clock: r.clk.now,
-		AgentPort: r.agentPort, WorkerPort: r.workerPort, LeaseEvery: 100 * time.Millisecond, LogDir: r.t.TempDir()})
+		AgentPort: r.agentPort, WorkerPort: r.workerPort, LeaseEvery: 100 * time.Millisecond, LogDir: r.t.TempDir(),
+		Logger: slog.New(slog.NewTextHandler(&r.logs, nil))})
 	if err != nil {
 		r.t.Fatal(err)
 	}
@@ -150,7 +161,7 @@ func (r *rig) start() {
 // serve stands in for the API's agent endpoints (internal/api/nodes.go).
 func (r *rig) serve(w http.ResponseWriter, req *http.Request) {
 	p := r.p
-	parts := strings.Split(strings.TrimPrefix(req.URL.Path, "/api/agents/"), "/")
+	parts := strings.Split(strings.TrimPrefix(req.URL.Path, "/api/pool/nodes/"), "/")
 	switch {
 	case req.URL.Path == agentproto.PathRegister:
 		var rr agentproto.RegisterRequest
@@ -636,4 +647,65 @@ func eventually(t testing.TB, d time.Duration, cond func() bool, what string) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// A worker serves one device. A node listing more than one device of its
+// platform's backend uses the first; the rest are named in its status and
+// warned about once per registration, never guessed at silently.
+func TestExtraDevicesOfTheBackendAreReported(t *testing.T) {
+	r := newRig(t)
+	r.p.Register(regReq("02:00:00:00:00:72"))
+	hb := `{"agent_start_id":"s1","seq":1,"programs_ready":true,"mem_available_mib":30000,"devices":[
+		{"name":"Vulkan0","backend":"vulkan","total_mib":8000,"free_mib":7000},
+		{"name":"Vulkan1","backend":"vulkan","total_mib":16000,"free_mib":15000},
+		{"name":"Vulkan2","backend":"vulkan","total_mib":16000,"free_mib":15000},
+		{"name":"CPU","backend":"cpu","total_mib":30000,"free_mib":30000}]}`
+	for i := 0; i < 3; i++ {
+		if res := r.p.Heartbeat("02:00:00:00:00:72", []byte(hb)); res.Status != 200 {
+			t.Fatalf("%+v", res)
+		}
+	}
+	if n, _ := r.node("02:00:00:00:00:72"); n.TotalMiB != 8000 || n.FreeMiB != 7000 {
+		t.Fatalf("not the first vulkan device: %+v", n)
+	}
+	if f := r.p.Facts()[0]; f.ExtraDevicesIgnored != 2 {
+		t.Fatalf("facts %+v", f)
+	}
+	b, _ := json.Marshal(r.p.Facts()[0])
+	if !strings.Contains(string(b), `"extra_devices_ignored":2`) {
+		t.Fatalf("status %s", b)
+	}
+	if n := strings.Count(r.logs.String(), "extra devices ignored"); n != 1 {
+		t.Fatalf("%d warnings for one registration:\n%s", n, r.logs.String())
+	}
+	r.p.Register(regReq("02:00:00:00:00:72")) // registers again: warned again
+	r.p.Heartbeat("02:00:00:00:00:72", []byte(hb))
+	if n := strings.Count(r.logs.String(), "extra devices ignored"); n != 2 {
+		t.Fatalf("%d warnings for two registrations", n)
+	}
+	one := strings.Replace(hb, `"backend":"vulkan","total_mib":16000`, `"backend":"cuda","total_mib":16000`, 2)
+	r.p.Heartbeat("02:00:00:00:00:72", []byte(one))
+	if f := r.p.Facts()[0]; f.ExtraDevicesIgnored != 0 {
+		t.Fatalf("one vulkan device left: %+v", f)
+	}
+}
+
+// The worker launches of a load must be ready within worker_start_timeout.
+func TestWorkerStartTimeoutFailsTheLoad(t *testing.T) {
+	r := newRig(t)
+	r.cfg.Defaults.WorkerStartTimeout = 300 * time.Millisecond
+	a1 := r.agent(1)
+	a2 := r.agent(2, func(a *fakeagent.Agent) { a.ReadyAfter = time.Minute })
+	r.waitNode(a1.ID)
+	r.waitNode(a2.ID)
+	start := time.Now()
+	res := r.p.Launch(context.Background(), spec(3, a1, a2), func(scheduler.WorkerReport) {})
+	if res.Reason != ReasonWorkerStartTimeout || res.Node != core.NodeID(a2.ID) || !strings.Contains(res.Message, "300ms") {
+		t.Fatalf("%+v", res)
+	}
+	if d := time.Since(start); d > 10*time.Second {
+		t.Fatalf("took %v", d)
+	}
+	r.p.Stop(3, nil)
+	r.p.WaitStops(10 * time.Second)
 }

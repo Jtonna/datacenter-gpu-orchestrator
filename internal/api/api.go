@@ -227,7 +227,7 @@ func (s *Server) routes() *http.ServeMux {
 	m.HandleFunc("PUT /api/models/{key...}", s.handleIconPut)     // only /api/models/{key}/icon
 	m.HandleFunc("DELETE /api/models/{key...}", s.handleIconDelete)
 	s.agentRoutes(m) // /api/agents, /api/mcp/tools (agents.go)
-	s.nodeRoutes(m)  // potluck-agent's /api/agents/..., /api/nodes/{id}/... (nodes.go)
+	s.nodeRoutes(m)  // potluck-agent's /api/pool/..., /api/nodes/{id}/... (nodes.go)
 	m.HandleFunc("GET /api/metrics/activity", s.handleActivity)
 	m.HandleFunc("GET /ui/{$}", s.handleUI)
 	m.HandleFunc("GET /ui/", s.handleUIFile)

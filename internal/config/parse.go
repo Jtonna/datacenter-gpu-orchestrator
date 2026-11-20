@@ -28,7 +28,7 @@ func DefaultDefaults() Defaults {
 		ForcedNodeGrace: 30 * time.Second, ForcedFitCheck: ForcedFitOff,
 		WorkerSilence:   30 * time.Second,
 		SplitSkewMargin: 0.15, EstimateMargin: 0.05, LoadMemoryFloorMiB: 768,
-		Membership: MembershipFleet, WatchdogFloorMiB: 1000,
+		Membership: MembershipFleet, WatchdogFloorMiB: 1000, WorkerStartTimeout: 15 * time.Second,
 	}
 }
 
@@ -310,6 +310,8 @@ type rawDefaults struct {
 	Membership       string `yaml:"membership" json:"membership,omitempty"`
 	WorkerModelDir   bool   `yaml:"worker_model_dir" json:"worker_model_dir,omitempty"`
 	WatchdogFloorMiB int    `yaml:"watchdog_floor_mib" json:"watchdog_floor_mib,omitempty"`
+
+	WorkerStartTimeout duration `yaml:"worker_start_timeout" json:"worker_start_timeout,omitempty"`
 }
 
 func rawDefaultsFrom(d Defaults) rawDefaults {
@@ -319,7 +321,7 @@ func rawDefaultsFrom(d Defaults) rawDefaults {
 		d.ServerBin, d.LocalDevice, duration(d.ForcedNodeGrace), d.ForcedFitCheck,
 		duration(d.WorkerProbeInterval), duration(d.WorkerSilence), d.WorkerProbeDuringInference,
 		d.SplitSkewMargin, d.EstimateMargin, d.LoadMemoryFloorMiB,
-		d.Membership, d.WorkerModelDir, d.WatchdogFloorMiB}
+		d.Membership, d.WorkerModelDir, d.WatchdogFloorMiB, duration(d.WorkerStartTimeout)}
 }
 
 func (r rawDefaults) value() Defaults {
@@ -330,7 +332,7 @@ func (r rawDefaults) value() Defaults {
 		time.Duration(r.ForcedNodeGrace), r.ForcedFitCheck,
 		time.Duration(r.WorkerProbeInterval), time.Duration(r.WorkerSilence), r.WorkerProbeDuringInference,
 		r.SplitSkewMargin, r.EstimateMargin, r.LoadMemoryFloorMiB,
-		r.Membership, r.WorkerModelDir, r.WatchdogFloorMiB}
+		r.Membership, r.WorkerModelDir, r.WatchdogFloorMiB, time.Duration(r.WorkerStartTimeout)}
 }
 
 type rawRecovery struct {

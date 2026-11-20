@@ -122,6 +122,9 @@ type agent struct {
 	stats        json.RawMessage
 	statsNote    string
 	lost, left   bool
+	// extraWarned: the warning about extra devices of the backend was given
+	// for this registration.
+	extraWarned bool
 }
 
 // Pool is the agent registry, node view and worker launcher.
@@ -217,7 +220,7 @@ func (p *Pool) LoadGate() error {
 
 // ---- registration ----
 
-// Register is POST /api/agents/register (4.2).
+// Register is POST /api/pool/register (4.2).
 func (p *Pool) Register(req agentproto.RegisterRequest) agentproto.RegisterAnswer {
 	now := p.o.Clock()
 	refuse := func(reason, format string, args ...any) agentproto.RegisterAnswer {
@@ -306,7 +309,7 @@ type HeartbeatResult struct {
 	Err    string
 }
 
-// Heartbeat is POST /api/agents/{id}/heartbeat (4.3).
+// Heartbeat is POST /api/pool/nodes/{id}/heartbeat (4.3).
 func (p *Pool) Heartbeat(id string, body []byte) HeartbeatResult {
 	var hb heartbeat
 	if err := json.Unmarshal(body, &hb); err != nil {
@@ -341,6 +344,11 @@ func (p *Pool) Heartbeat(id string, body []byte) HeartbeatResult {
 	a.lastSeen, a.lost = now, false
 	a.hb = &hb
 	a.stats, a.statsNote = parseStats(hb.Stats)
+	if d, extra, ok := pickDevice(a); ok && extra > 0 && !a.extraWarned {
+		a.extraWarned = true
+		p.log.Warn("agent node lists more than one device of its backend; extra devices ignored, the worker uses the first",
+			"id", id, "name", a.reg.Name, "platform", a.platform, "device", d.Name, "extra_devices_ignored", extra)
+	}
 	if wasLost {
 		p.log.Info("lost agent is back", "id", id, "name", a.reg.Name)
 		p.recordLocked(history.TNodeMembership, history.Info, a,
@@ -368,7 +376,7 @@ func parseStats(raw json.RawMessage) (json.RawMessage, string) {
 	return append(json.RawMessage(nil), raw...), ""
 }
 
-// Deregister is POST /api/agents/{id}/deregister (10): the node's instance is
+// Deregister is POST /api/pool/nodes/{id}/deregister (10): the node's instance is
 // stopped as in a force unload and the node is marked left. It returns false
 // for an unknown id.
 func (p *Pool) Deregister(ctx context.Context, id string) bool {

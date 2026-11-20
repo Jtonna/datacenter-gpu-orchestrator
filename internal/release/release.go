@@ -279,7 +279,7 @@ func ProgramPath(release, folder, file string) string {
 	return agentproto.PathProgramsPrefix + release + "/" + folder + "/" + file
 }
 
-// Agents is GET /api/agents/release's "agents": every agent binary in the
+// Agents is GET /api/pool/release's "agents": every agent binary in the
 // agent folder, keyed by "<os>-<arch>" (from potluck-agent-<os>-<arch>[.exe]).
 func (r *Release) Agents() map[string]agentproto.AgentBinary {
 	out := map[string]agentproto.AgentBinary{}

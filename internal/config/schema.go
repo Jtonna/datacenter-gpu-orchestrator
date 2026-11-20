@@ -94,6 +94,7 @@ func buildSettingFields() []Field {
 			ptr:         func(c *Config) any { return &c.Defaults.Membership }},
 		b("worker_model_dir", "agents", "Ask agent workers to read model files themselves (model_dir in the worker launch); off sends the weights over the worker connection.", func(c *Config) *bool { return &c.Defaults.WorkerModelDir }),
 		i("watchdog_floor_mib", "agents", "The agents' memory watchdog floor; a device that shares system memory counts at most the node's available memory minus this.", "MiB", func(c *Config) *int { return &c.Defaults.WatchdogFloorMiB }, num(0), nil),
+		d("worker_start_timeout", "agents", "How long the worker launches of a load may stay starting before the load fails with worker_start_timeout.", func(c *Config) *time.Duration { return &c.Defaults.WorkerStartTimeout }, num(1)),
 		i("child_log_keep", "retention", "Most child log files kept in the child log directory; the oldest are deleted.", "files", func(c *Config) *int { return &c.ChildLogKeep }, num(1), nil),
 		i("history_max_file_mib", "retention", "Size at which an event history file is rotated.", "MiB", func(c *Config) *int { return &c.HistoryMaxFileMiB }, num(1), nil),
 		i("history_keep_files", "retention", "Most event history files kept; the oldest are deleted.", "files", func(c *Config) *int { return &c.HistoryKeepFiles }, num(1), nil),
