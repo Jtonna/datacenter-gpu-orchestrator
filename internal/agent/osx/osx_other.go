@@ -22,6 +22,10 @@ func (c *ProcessClock) Now() time.Duration { return time.Since(c.start) }
 
 func signalPID(pid int, sig Sig) error { return ErrUnsupported }
 
+func pinPID(pid int) (send func(Sig) error, done func(), err error) {
+	return func(sig Sig) error { return signalPID(pid, sig) }, func() {}, nil
+}
+
 // StatfsFree returns ErrUnsupported.
 func StatfsFree(path string) (uint64, error) { return 0, ErrUnsupported }
 

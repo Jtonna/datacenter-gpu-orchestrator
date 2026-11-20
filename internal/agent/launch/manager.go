@@ -792,12 +792,14 @@ func procGone(p runner.Proc) bool {
 
 // killLocked starts one kill attempt unless one is running. The tick calls
 // it again until the process is gone; it never gives up. The attempts
-// escalate, round after round: SIGKILL through the runner (systemctl kill),
-// then a stop of the unit (systemctl stop), then SIGKILL sent directly to
-// the processes of the unit's own cgroup. The next attempt comes KillRetry
-// after one that was delivered and KillRetryFail after one that failed, so
-// there are never more than about four a second. Every attempt writes one
-// log line.
+// escalate: 1 SIGKILL through the runner (systemctl kill), 2 a stop of the
+// unit (systemctl stop), 3 SIGKILL sent directly to the processes of the
+// unit's own cgroup, and from 4 on both SIGKILLs together, for ever. (An
+// ordinary stop or a lease expiry has sent SIGTERM and waited StopWait
+// before attempt 1; a forced stop and the watchdog start with attempt 1.)
+// The next attempt comes KillRetry after one that was delivered and
+// KillRetryFail after one that failed, so there are never more than about
+// four a second. Every attempt writes one log line: number, method, error.
 func (m *Manager) killLocked(r *launchRun, now time.Duration) {
 	p := r.proc
 	if p == nil || r.killBusy {
@@ -824,19 +826,30 @@ func (m *Manager) killLocked(r *launchRun, now time.Duration) {
 
 // killStep runs attempt n of the kill escalation.
 func (m *Manager) killStep(n int, p runner.Proc, unit string) (string, error) {
-	switch (n - 1) % 3 {
-	case 0:
-		return "SIGKILL", p.Signal(osx.SigKill)
+	direct := func() (string, error) {
+		k := m.killUnitProcs(unit)
+		if k == 0 {
+			return "SIGKILL to the unit's processes", errors.New("no process found in the unit's cgroup")
+		}
+		return fmt.Sprintf("SIGKILL to the unit's %d processes", k), nil
+	}
+	switch n {
 	case 1:
+		return "SIGKILL", p.Signal(osx.SigKill)
+	case 2:
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		return "stop of the unit", m.deps.Runner.Stop(ctx, unit)
+	case 3:
+		return direct()
 	}
-	k := m.killUnitProcs(unit)
-	if k == 0 {
-		return "SIGKILL to the unit's processes", errors.New("no process found in the unit's cgroup")
+	// From here on both, each time; one of them delivered is a delivery.
+	err := p.Signal(osx.SigKill)
+	how, derr := direct()
+	if err != nil && derr != nil {
+		return "SIGKILL and " + how, fmt.Errorf("%v; %v", err, derr)
 	}
-	return fmt.Sprintf("SIGKILL to the unit's %d processes", k), nil
+	return "SIGKILL and " + how, nil
 }
 
 // InUnitCgroup reports whether a /proc/<pid>/cgroup text places the process
@@ -866,6 +879,16 @@ func (m *Manager) killUnitProcs(unit string) int {
 	n := 0
 	for _, p := range procs {
 		if p.PID <= 1 || p.PID == m.deps.Procs.Self() || !InUnitCgroup(p.Cgroup, unit) {
+			continue
+		}
+		// The pid may have ended and been given to another process since
+		// the list was read: where the OS allows it the process is pinned
+		// and its cgroup read again right before the signal.
+		if v, ok := m.deps.Procs.(osx.VerifiedSignaller); ok {
+			sent, err := v.SignalVerified(p.PID, osx.SigKill, func(cg string) bool { return InUnitCgroup(cg, unit) })
+			if sent && err == nil {
+				n++
+			}
 			continue
 		}
 		if m.deps.Procs.Signal(p.PID, osx.SigKill) == nil {

@@ -88,6 +88,16 @@ type Procs interface {
 	Self() int
 }
 
+// VerifiedSignaller is implemented by a Procs that can close the window in
+// which a pid ends and is given to another process between the reading of
+// the process table and the signal.
+type VerifiedSignaller interface {
+	// SignalVerified pins the process, reads its cgroup text again and
+	// sends sig only when check accepts it. sent is false when the process
+	// is gone or check refused it.
+	SignalVerified(pid int, sig Sig, check func(cgroup string) bool) (sent bool, err error)
+}
+
 // MemInfo is the part of /proc/meminfo the agent uses.
 type MemInfo struct {
 	TotalMiB     int64

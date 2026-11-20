@@ -735,9 +735,9 @@ func TestKillNeverGivesUpAndIsRateBounded(t *testing.T) {
 	p.killErrs = 1 << 30
 	p.mu.Unlock()
 	attempts := func() int {
-		e.procs.mu.Lock()
-		defer e.procs.mu.Unlock()
-		return len(p.signals()) + len(e.runner.stops()) + e.procs.lists
+		e.m.mu.Lock()
+		defer e.m.mu.Unlock()
+		return e.m.cur.killTries
 	}
 	e.m.Stop("ln-1", true)
 	for i := 0; i < 100; i++ { // one second, 10 ms at a time
@@ -753,6 +753,14 @@ func TestKillNeverGivesUpAndIsRateBounded(t *testing.T) {
 	}
 	if n := attempts(); n < 200 {
 		t.Fatalf("the kill was given up: %d attempts after a minute", n)
+	}
+	// Attempt 2 is the one stop of the unit; from attempt 4 on every attempt
+	// is SIGKILL together with the direct kill.
+	e.procs.mu.Lock()
+	lists := e.procs.lists
+	e.procs.mu.Unlock()
+	if n := attempts(); len(e.runner.stops()) != 1 || len(p.signals()) < n-3 || lists < n-3 {
+		t.Fatalf("%d attempts: %d stops, %d SIGKILLs, %d direct tries", n, len(e.runner.stops()), len(p.signals()), lists)
 	}
 	if e.m.State().State != agentproto.StateStopping {
 		t.Fatal("not stopping")
@@ -849,5 +857,37 @@ func TestInUnitCgroup(t *testing.T) {
 		if got := InUnitCgroup(cg, "potluck-launch-ln-1"); got != want {
 			t.Errorf("%q: %v", cg, got)
 		}
+	}
+}
+
+// verifyingProcs is a process table in which a pid can have gone to another
+// process since the list was read.
+type verifyingProcs struct {
+	*fakeProcs
+	now map[int]string // pid -> its cgroup at the moment of the signal
+}
+
+func (v verifyingProcs) SignalVerified(pid int, s osx.Sig, check func(string) bool) (bool, error) {
+	if !check(v.now[pid]) {
+		return false, nil
+	}
+	return true, v.fakeProcs.Signal(pid, s)
+}
+
+// The direct kill reads a process's cgroup again right before the signal: a
+// pid that was reused by a process outside the launch unit gets nothing.
+func TestDirectKillRechecksCgroup(t *testing.T) {
+	e := newEnv(t, true)
+	unit := "0::/system.slice/potluck-launch-ln-1.service"
+	e.procs.set([]osx.ProcInfo{{PID: 700, Cgroup: unit}, {PID: 703, Cgroup: unit}})
+	m := New(e.cfg, Deps{Clock: e.clock, Runner: e.runner, Procs: verifyingProcs{e.procs, map[int]string{
+		700: "0::/system.slice/ssh.service", // pid 700 ended and was given to sshd
+		703: unit,
+	}}})
+	if n := m.killUnitProcs("potluck-launch-ln-1"); n != 1 {
+		t.Fatalf("%d processes counted as signalled", n)
+	}
+	if k := e.procs.kills(); len(k) != 1 || k[0] != 703 {
+		t.Fatalf("signalled %v, want only 703", k)
 	}
 }
