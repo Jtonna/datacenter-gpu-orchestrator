@@ -338,14 +338,17 @@ func TestRunRecordsEnvironmentAndEmitsAggregateUpdated(t *testing.T) {
 	if r.Env == nil || r.Env.ConfigRevision != "rev-9" || r.Env.LlamaBinary != "llama-server-rpc" || r.Env.SchedulerVersion != "test" {
 		t.Fatalf("%+v", r.Env)
 	}
-	time.Sleep(30 * time.Millisecond)
-	tm.evMu.Lock()
-	defer tm.evMu.Unlock()
+	// The message is sent after the run is stored as finished, so wait for it
+	// instead of sleeping a fixed time (30 ms was too short on a loaded machine).
 	found := false
-	for _, e := range tm.events {
-		if e["kind"] == "aggregate_updated" && e["run_id"] == r.ID && e["suite_id"] == "s" {
-			found = true
+	for deadline := time.Now().Add(3 * time.Second); !found && time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		tm.evMu.Lock()
+		for _, e := range tm.events {
+			if e["kind"] == "aggregate_updated" && e["run_id"] == r.ID && e["suite_id"] == "s" {
+				found = true
+			}
 		}
+		tm.evMu.Unlock()
 	}
 	if !found {
 		t.Fatal("no aggregate_updated message")

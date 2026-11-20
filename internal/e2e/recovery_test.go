@@ -85,9 +85,9 @@ func TestRecoveryRequestFlowFromHungToReset(t *testing.T) {
 		t.Fatalf("during the episode: %v", rs)
 	}
 	t.Logf("status nodes[].recovery:\n%s", mustJSON(rs))
-	if !strings.Contains(c.stderr.String(), "recovery outcome") {
-		t.Fatalf("no outcome log line:\n%s", c.stderr.String())
-	}
+	c.waitFor("outcome log line", 5*time.Second, func() bool {
+		return strings.Contains(c.stderr.String(), "recovery outcome")
+	})
 
 	// 4. The node comes back: health ok, the sequence resets, nothing more is sent.
 	c.fleet.SetOnline(id, true)
