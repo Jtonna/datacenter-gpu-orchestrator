@@ -24,6 +24,8 @@ type fakeProc struct {
 	exit       runner.Exit
 	sigs       []osx.Sig
 	ignoreTerm bool
+	killErrs   int // this many KILLs fail with an error
+	killDeaf   int // this many KILLs are accepted but do not end the process
 }
 
 func (p *fakeProc) Unit() string          { return p.unit }
@@ -35,6 +37,16 @@ func (p *fakeProc) Signal(s osx.Sig) error {
 	p.mu.Lock()
 	p.sigs = append(p.sigs, s)
 	ignore := p.ignoreTerm
+	if s == osx.SigKill && p.killErrs > 0 {
+		p.killErrs--
+		p.mu.Unlock()
+		return errors.New("systemctl kill: failed to connect to bus")
+	}
+	if s == osx.SigKill && p.killDeaf > 0 {
+		p.killDeaf--
+		p.mu.Unlock()
+		return nil
+	}
 	p.mu.Unlock()
 	switch {
 	case s == osx.SigKill:
@@ -80,6 +92,7 @@ type fakeRunner struct {
 	startErr   error
 	ignoreTerm bool
 	nextPID    int
+	stopped    []string
 }
 
 func newFakeRunner(survives bool) *fakeRunner {
@@ -89,6 +102,9 @@ func newFakeRunner(survives bool) *fakeRunner {
 func (r *fakeRunner) Start(ctx context.Context, s runner.Spec) (runner.Proc, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err // as exec.CommandContext does
+	}
 	if r.startErr != nil {
 		return nil, r.startErr
 	}
@@ -127,9 +143,14 @@ func (r *fakeRunner) List(ctx context.Context, prefix string) ([]string, error) 
 	return out, nil
 }
 
-func (r *fakeRunner) Stop(ctx context.Context, unit string) error { return nil }
-func (r *fakeRunner) Kind() string                                { return "fake" }
-func (r *fakeRunner) Survives() bool                              { return r.survives }
+func (r *fakeRunner) Stop(ctx context.Context, unit string) error {
+	r.mu.Lock()
+	r.stopped = append(r.stopped, unit)
+	r.mu.Unlock()
+	return ctx.Err()
+}
+func (r *fakeRunner) Kind() string   { return "fake" }
+func (r *fakeRunner) Survives() bool { return r.survives }
 
 func (r *fakeRunner) proc(unit string) *fakeProc {
 	r.mu.Lock()
@@ -205,14 +226,24 @@ type fakeProcs struct {
 	killed []int
 }
 
-func (f *fakeProcs) List() ([]osx.ProcInfo, error) { return f.list, nil }
+func (f *fakeProcs) List() ([]osx.ProcInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.list, nil
+}
 func (f *fakeProcs) Signal(pid int, s osx.Sig) error {
 	f.mu.Lock()
 	f.killed = append(f.killed, pid)
 	f.mu.Unlock()
 	return nil
 }
-func (f *fakeProcs) Self() int { return 1 }
+func (f *fakeProcs) kills() []int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]int(nil), f.killed...)
+}
+func (f *fakeProcs) set(l []osx.ProcInfo) { f.mu.Lock(); f.list = l; f.mu.Unlock() }
+func (f *fakeProcs) Self() int            { return 1 }
 
 type fakeKLog struct{ oom map[int]bool }
 

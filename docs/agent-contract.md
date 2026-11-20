@@ -483,6 +483,18 @@ Accepted by both sides on 2026-11-20. They are part of the contract.
 - **Strict file load** (host launches, phase 6): `strict_file_load: true` sets the environment variable `LLAMA_RPC_FILE_LOAD=required` on the host program; false sets `LLAMA_RPC_FILE_LOAD=1`. Value `0` means the host never asks workers to read files and pushes the weights.
 - **Starter settings**: the starter takes `POTLUCK_URL` (`http://<IPv4>:<port>`), and optionally `POTLUCK_MODEL_SOURCE` and `POTLUCK_WATCHDOG_FLOOR_MIB`, from its environment or from `/etc/potluck/starter.env`. Missing or malformed settings make it wait and read them again.
 
+### 6.11 Details fixed after the agent code review
+
+Proposed by the agent side; the scheduler side has not accepted them yet.
+
+- **Agent start order**: a launch left by an earlier agent process is re-adopted first. Its lease and its memory watchdog run before the agent has an identity, a free port, a registration or a reachable Potluck. Exporter units of the earlier agent process (`potluck-node-exporter`, `potluck-nvidia-exporter`) are stopped before the port check of section 3.
+- **`503 agent_starting`**: until the re-adoption is done, every call on port 50060 except `POST /reset` answers `503` with reason `agent_starting` and `Retry-After: 1`. The agent never answers `GET /launch` with `none` for a launch it has not looked for yet, and it does not register before the re-adoption. Potluck treats this answer as "state not known yet", not as a lost launch.
+- **Port 50060 taken**: the agent does not exit. It tries to bind again after 5 s, growing to 60 s, and does not register until both addresses are bound.
+- **Kill**: a SIGKILL (forced stop, watchdog, end of the 10 s wait) is sent again every second until the process is gone, and on the next watchdog reading when the attempt itself failed. When `systemctl kill` fails, the agent signals the processes directly, and only those whose cgroup is the launch's own `potluck-launch-<launch_id>` unit. A restarted agent kills a `stopping` launch again; it does not trust a kill sent before the restart.
+- **Start**: starting the unit is not tied to the `POST /launch` request (30 s limit of its own). When the start fails, the unit name is stopped before the launch is reported `start_failed`.
+- **Launch unit**: it runs with `OOMScoreAdjust=900`, so the kernel's OOM killer takes the launch before the agent or sshd, and with the agent's `LD_LIBRARY_PATH`, the one the library check used.
+- **Update (5.4)**: before a downloaded agent replaces the running one, it is asked for its release (`potluck-agent version`); a binary that reports another release is not installed. One release and sha256 is tried once: the attempt is kept in `<state-dir>/update-attempt`, so an update that changed nothing is not downloaded and started again every 60 s. A download that fails or has a wrong sha256 is tried again. The binary is never replaced while a launch exists.
+
 ## 7. Stats and controls
 
 ### 7.1 Stats

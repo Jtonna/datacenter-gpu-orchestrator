@@ -221,6 +221,7 @@ type tenv struct {
 	entries  []agentproto.ProgramEntry
 	expSpecs []agentproto.ExporterSpec
 	nodePort int
+	stateDir string
 	cancel   context.CancelFunc
 	done     chan struct{}
 	runner   runner.Runner
@@ -230,7 +231,10 @@ type tenv struct {
 
 const devicesOut = "Available devices:\n  Vulkan0: AMD Custom GPU 0405 (RADV GFX1013) (14336 MiB, 14010 MiB free)\n"
 
-func newTenv(t *testing.T) *tenv {
+func newTenv(t *testing.T) *tenv { t.Helper(); return newTenvWith(t, nil) }
+
+// newTenvWith lets a test change the options and the OS boundaries.
+func newTenvWith(t *testing.T, mod func(*Options, *Deps)) *tenv {
 	t.Helper()
 	pl := newFakePotluck(t)
 	dir := t.TempDir()
@@ -258,11 +262,13 @@ func newTenv(t *testing.T) *tenv {
 	os.MkdirAll(models, 0o755)
 	os.WriteFile(filepath.Join(models, "m.gguf"), []byte("GGUF"), 0o644)
 	e.runner = runner.NewChild()
-	a, err := New(Options{Potluck: pl.addr(), Release: "0.1.0", Name: "console-5", Install: agentproto.InstallDocker,
+	e.stateDir = filepath.Join(dir, "run")
+	opt := Options{Potluck: pl.addr(), Release: "0.1.0", Name: "console-5", Install: agentproto.InstallDocker,
 		RAMOnly: true, ModelSource: modelsrc.Spec{Kind: modelsrc.KindShare, Target: "192.0.2.1:/"},
 		WatchdogFloorMiB: 1000, AllowFrom: []netip.Prefix{netip.MustParsePrefix("172.30.0.0/24")},
-		DataDir: filepath.Join(dir, "shm"), StateDir: filepath.Join(dir, "run"), ModelsDir: models,
-	}, Deps{Clock: e.clock, Runner: e.runner, Mem: fakeMem{avail: 12000}, Sockets: dialSockets{},
+		DataDir: filepath.Join(dir, "shm"), StateDir: e.stateDir, ModelsDir: models,
+	}
+	deps := Deps{Clock: e.clock, Runner: e.runner, Mem: fakeMem{avail: 12000}, Sockets: dialSockets{},
 		Procs: e.procs, KLog: osx.Kmsg{}, Net: fakeNet{}, Hardware: fakeHW{}, Prober: okProber{},
 		DiskFree: func(string) (uint64, error) { return 1 << 40, nil },
 		DevicesRun: func(ctx context.Context, path string, args, env []string) ([]byte, error) {
@@ -272,7 +278,12 @@ func newTenv(t *testing.T) *tenv {
 		Updater: e.upd, RegisterRetry: 30 * time.Millisecond, ErrorRetry: 20 * time.Millisecond,
 		ProgramsRetry: 30 * time.Millisecond, ProgramsRetryIn: time.Millisecond, LaunchTick: 5 * time.Millisecond,
 		ProbeEvery: 20 * time.Millisecond, ProbeTimeout: time.Second, StatsMin: 30 * time.Millisecond,
-		ExporterPorts: []int{e.nodePort}, WorkerPort: freePort(t), HostPort: freePort(t), Logger: testLogger()})
+		ExporterPorts: []int{e.nodePort}, WorkerPort: freePort(t), HostPort: freePort(t), Logger: testLogger()}
+	if mod != nil {
+		mod(&opt, &deps)
+		e.runner = deps.Runner
+	}
+	a, err := New(opt, deps)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -451,6 +462,7 @@ func TestHeartbeatFailureCases(t *testing.T) {
 
 func TestSourceAddressRule(t *testing.T) {
 	e := newTenv(t)
+	e.a.RecoverLaunch(context.Background())
 	if w := e.do("GET", "/launch", nil, fromPotluck); w.Code != 200 || w.Body.String() != "{\"state\":\"none\"}\n" {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}

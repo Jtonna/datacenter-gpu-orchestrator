@@ -49,6 +49,9 @@ type Options struct {
 	DataDir          string // programs and launch logs
 	StateDir         string // state files and the share mount point
 	ModelsDir        string // the node's model folder ("" for push)
+	// LDLibraryPath is the agent's LD_LIBRARY_PATH, the one the library
+	// check used; launches get the same value.
+	LDLibraryPath string
 }
 
 // Hardware is the machine facts the agent reports.
@@ -77,6 +80,9 @@ type Deps struct {
 	Prober   modelsrc.ProbeStarter
 	DiskFree func(string) (uint64, error)
 	PortFree func(addr string, port int) error
+	// Listen binds a TCP address for the agent API (port 50060). When nil
+	// the agent binds nothing and the caller serves Handler and LocalHandler.
+	Listen func(addr string) (net.Listener, error)
 	// DevicesRun runs the llama program for --list-devices.
 	DevicesRun  devices.Runner
 	HostHealthy func(ctx context.Context, addr string) bool
@@ -86,6 +92,8 @@ type Deps struct {
 
 	// Timing; zero values get the contract values.
 	RegisterRetry   time.Duration // after a refusal; default 60s
+	BindRetry       time.Duration // after a failed bind of port 50060; default 5s (grows to 60s)
+	RecoverRetry    time.Duration // after a failed launch re-adoption; default 1s
 	ErrorRetry      time.Duration // after a network error; default 5s (grows to 60s)
 	ProgramsRetry   time.Duration // after a failed program check; default 60s
 	LaunchTick      time.Duration
@@ -135,6 +143,12 @@ type Agent struct {
 	pipeGen     int
 	answerProgs []agentproto.ProgramEntry
 	devErr      string // set while llama-server lists no device (no access)
+
+	recovered     chan struct{} // closed once the launch re-adoption is done
+	recoverOnce   sync.Once
+	localBound    bool // Run's goroutine only
+	nodeBound     bool
+	updateSkipped bool
 }
 
 // New builds an agent. Call Run.
@@ -156,6 +170,12 @@ func New(opt Options, deps Deps) (*Agent, error) {
 	if deps.RegisterRetry == 0 {
 		deps.RegisterRetry = 60 * time.Second
 	}
+	if deps.BindRetry == 0 {
+		deps.BindRetry = 5 * time.Second
+	}
+	if deps.RecoverRetry == 0 {
+		deps.RecoverRetry = time.Second
+	}
 	if deps.ErrorRetry == 0 {
 		deps.ErrorRetry = 5 * time.Second
 	}
@@ -174,7 +194,8 @@ func New(opt Options, deps Deps) (*Agent, error) {
 	b := make([]byte, 3)
 	rand.Read(b)
 	a := &Agent{opt: opt, deps: deps, log: deps.Logger, startID: hex.EncodeToString(b),
-		startedAt: deps.Clock.Now(), potluckIP: ip, base: "http://" + opt.Potluck, hbEvery: 2 * time.Second}
+		startedAt: deps.Clock.Now(), potluckIP: ip, base: "http://" + opt.Potluck, hbEvery: 2 * time.Second,
+		recovered: make(chan struct{})}
 
 	progRoot := filepath.Join(opt.DataDir, "programs")
 	a.Programs = programs.New(programs.Config{Root: progRoot, Release: opt.Release, BaseURL: a.base,
@@ -190,7 +211,7 @@ func New(opt Options, deps Deps) (*Agent, error) {
 
 	a.Launch = launch.New(launch.Config{
 		StateDir: opt.StateDir, LogDir: filepath.Join(opt.DataDir, "launch"), ProgramRoot: progRoot,
-		ModelDir: opt.ModelsDir, PushOnly: opt.ModelSource.Kind == modelsrc.KindPush,
+		ModelDir: opt.ModelsDir, PushOnly: opt.ModelSource.Kind == modelsrc.KindPush, LibraryPath: opt.LDLibraryPath,
 		WatchdogFloorMiB: opt.WatchdogFloorMiB, Tick: deps.LaunchTick,
 		WorkerPort: deps.WorkerPort, HostPort: deps.HostPort,
 	}, launch.Deps{Clock: deps.Clock, Runner: deps.Runner, Mem: deps.Mem, Sockets: deps.Sockets,
@@ -254,19 +275,88 @@ func (a *Agent) ResolveIdentity() error {
 	return nil
 }
 
-// Prepare runs the start steps that need no Potluck: leftovers, ports,
-// program re-hash, launch re-adoption, share mount.
+// Prepare re-hashes the program folder.
 func (a *Agent) Prepare(ctx context.Context) error {
-	if a.deps.Runner.Survives() {
-		a.Export.StopLeftovers(ctx)
-	}
 	if _, err := a.Programs.Prepare(); err != nil {
 		return fmt.Errorf("program folder: %w", err)
 	}
-	if err := a.Launch.Recover(ctx); err != nil {
-		a.setError("launch re-adoption: " + err.Error())
-	}
 	return nil
+}
+
+// RecoverLaunch re-adopts a launch left by an earlier agent process (one
+// attempt). Until it has worked the API answers 503 and the agent does not
+// register: a GET /launch answering "none" or a registration without the
+// launch id would make Potluck fail a healthy load.
+func (a *Agent) RecoverLaunch(ctx context.Context) error {
+	c, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	if err := a.Launch.Recover(c); err != nil {
+		return err
+	}
+	a.recoverOnce.Do(func() { close(a.recovered) })
+	return nil
+}
+
+func (a *Agent) launchRecovered() bool {
+	select {
+	case <-a.recovered:
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *Agent) recoverLoop(ctx context.Context) {
+	for {
+		err := a.RecoverLaunch(ctx)
+		if err == nil {
+			return
+		}
+		a.setError("launch re-adoption: " + err.Error())
+		if !sleep(ctx, a.deps.RecoverRetry) {
+			return
+		}
+	}
+}
+
+// bindAPI binds what is not bound yet of port 50060: 127.0.0.1 at once,
+// the node's address once the identity is known. An address that cannot be
+// bound is tried again by Run; the agent never exits over it.
+func (a *Agent) bindAPI(ctx context.Context) error {
+	if a.deps.Listen == nil {
+		return nil
+	}
+	port := fmt.Sprint(agentproto.PortAgent)
+	if !a.localBound {
+		l, err := a.deps.Listen(net.JoinHostPort("127.0.0.1", port))
+		if err != nil {
+			return fmt.Errorf("port %s is taken: %v", port, err)
+		}
+		a.localBound = true
+		serveOn(ctx, l, a.LocalHandler())
+	}
+	addr := a.Addr()
+	if addr == "" || a.nodeBound {
+		return nil
+	}
+	a.nodeBound = true
+	if addr == "127.0.0.1" {
+		a.log.Warn("Potluck is reached over loopback; the Potluck API is not served")
+		return nil
+	}
+	l, err := a.deps.Listen(net.JoinHostPort(addr, port))
+	if err != nil {
+		a.nodeBound = false
+		return fmt.Errorf("cannot listen on %s port %s: %v", addr, port, err)
+	}
+	serveOn(ctx, l, a.Handler())
+	return nil
+}
+
+func serveOn(ctx context.Context, l net.Listener, h http.Handler) {
+	srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}
+	go srv.Serve(l)
+	go func() { <-ctx.Done(); srv.Close() }()
 }
 
 // checkPorts verifies the exporter ports are free (section 3).
@@ -279,22 +369,43 @@ func (a *Agent) checkPorts() error {
 	return nil
 }
 
-// Run runs the agent until ctx ends. The HTTP listeners are served by the
-// caller with Handler and LocalHandler.
+// Run runs the agent until ctx ends. It serves port 50060 itself when
+// Deps.Listen is set; otherwise the caller serves Handler and LocalHandler.
 func (a *Agent) Run(ctx context.Context) error {
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// An existing launch first: its lease and its watchdog need no identity,
+	// no free port, no registration and no Potluck.
+	wg.Add(1)
+	go func() { defer wg.Done(); a.recoverLoop(ctx) }()
 	wg.Add(1)
 	go func() { defer wg.Done(); a.Launch.Run(ctx) }()
 	wg.Add(1)
 	go func() { defer wg.Done(); a.Stats.Run(ctx) }()
 
 	// Identity and ports, retried until they work.
+	bindWait := a.deps.BindRetry
 	for {
-		err := a.ResolveIdentity()
-		if err == nil {
+		wait := a.deps.RegisterRetry
+		idErr := a.ResolveIdentity()
+		err := a.bindAPI(ctx)
+		switch {
+		case err != nil:
+			a.setError("registration not attempted: " + err.Error())
+			wait = bindWait
+			if bindWait *= 2; bindWait > 60*time.Second {
+				bindWait = 60 * time.Second
+			}
+		case idErr != nil:
+			err = idErr
+		default:
+			// Exporter units of an earlier agent process hold the exporter
+			// ports; they are ours, so they go before the check.
+			if a.deps.Runner.Survives() {
+				a.Export.StopLeftovers(ctx)
+			}
 			if err = a.checkPorts(); err != nil {
 				a.setError("registration not attempted: " + err.Error())
 			}
@@ -302,9 +413,15 @@ func (a *Agent) Run(ctx context.Context) error {
 		if err == nil {
 			break
 		}
-		if !sleep(ctx, a.deps.RegisterRetry) {
+		if !sleep(ctx, wait) {
 			return ctx.Err()
 		}
+	}
+	// Registration names the launch, so it waits for the re-adoption.
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-a.recovered:
 	}
 	if err := a.Prepare(ctx); err != nil {
 		a.setError(err.Error())
@@ -458,7 +575,14 @@ func (a *Agent) refused(ctx context.Context, ans agentproto.RegisterAnswer) {
 			a.log.Info("update waits for the launch to end", "required", ans.RequiredRelease)
 			return
 		}
-		if err := a.deps.Updater.Update(ctx, ans.RequiredRelease); err != nil {
+		err := a.deps.Updater.Update(ctx, ans.RequiredRelease)
+		if errors.Is(err, ErrUpdateNotRepeated) {
+			if a.updateSkipped {
+				return // said once
+			}
+			a.updateSkipped = true
+		}
+		if err != nil {
 			a.setError("update to " + ans.RequiredRelease + " failed: " + err.Error())
 		}
 	}

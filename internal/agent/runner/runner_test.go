@@ -99,12 +99,13 @@ func (f *fakeSystemctl) called(prefix string) bool {
 func TestSystemdStartArgs(t *testing.T) {
 	s := &Systemd{}
 	got := s.StartArgs(Spec{Unit: "potluck-launch-ln-1", Path: "/dev/shm/potluck/programs/0.1.0/rpc-server",
-		Args: []string{"--host", "192.0.2.101", "--port", "50052"}, Env: []string{"CUDA_DEVICE_ORDER=PCI_BUS_ID"},
+		Args: []string{"--host", "192.0.2.101", "--port", "50052"}, Env: []string{"CUDA_DEVICE_ORDER=PCI_BUS_ID"}, OOMScoreAdjust: 900,
 		LogPath: "/dev/shm/potluck/launch/ln-1.log", ExitPath: "/run/potluck/launch/ln-1.exit"})
 	line := strings.Join(got, " ")
 	for _, want := range []string{
 		"--unit=potluck-launch-ln-1.service",
 		"--setenv=CUDA_DEVICE_ORDER=PCI_BUS_ID",
+		"-p OOMScoreAdjust=900",
 		"StandardOutput=append:/dev/shm/potluck/launch/ln-1.log",
 		"StandardError=append:/dev/shm/potluck/launch/ln-1.log",
 		`ExecStopPost=/bin/sh -c "echo $$EXIT_CODE $$EXIT_STATUS > /run/potluck/launch/ln-1.exit"`,
