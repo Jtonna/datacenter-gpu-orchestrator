@@ -1,6 +1,6 @@
 # Agent contract: Potluck and `potluck-agent`
 
-Status: DRAFT 3, 2026-11-20 (PS5-side review of drafts 1 and 2 folded in). Nothing in this document is built. It is task C1 of the plan "Potluck Cleanup Tasks". It becomes binding when the scheduler side and the fleet console agent both accept it.
+Status: DRAFT 4, 2026-11-20 (drafts 1 to 3 reviewed by the PS5 side; change requests CR-1 and CR-2 folded in). Nothing in this document is built. It is task C1 of the plan "Potluck Cleanup Tasks". It becomes binding when the scheduler side and the fleet console agent both accept it.
 
 Authors: the scheduler agent (`ps5-ai-datacenter-load-balancer-32`) wrote it; the fleet console agent (`fix-fleet-console-tiles`) reviews it against the PS5 side (boot chain, RAM-only, payload delivery).
 
@@ -230,7 +230,8 @@ programs/
 }
 ```
 
-- Requirements on the llama programs: `llama-server` and `rpc-server` in every platform folder come from the same fork commit, and are single files with no shared libraries of their own (`BUILD_SHARED_LIBS=OFF`). They may depend on what the machine already has: the C library, the Vulkan loader, and for `cuda` the Nvidia CUDA runtime libraries.
+- Requirements on the llama programs: `llama-server` and `rpc-server` in every platform folder come from the same fork commit, and are single files with no shared libraries of their own (`BUILD_SHARED_LIBS=OFF`). They may depend on what the machine already has: the C library, the GNU OpenMP runtime (`libgomp.so.1`), the Vulkan loader, and for `cuda` the Nvidia CUDA runtime libraries of the toolkit version the programs were built with (13.3 for release 0.1.0). The agent checks for these before it reports `programs_ready`, and names a missing one in `programs_error`; the setup script and the Docker node image (`nvidia/cuda:13.3.1-runtime-ubuntu24.04` plus `libgomp1`) provide them.
+- Files at the release root that no `SHA256SUMS` names (licence texts, notes) are ignored by Potluck.
 - The `agent/` folder is filled by the scheduler side, the platform folders by the fleet console agent (B4) until the builds are automated (B2).
 - Potluck checks every file against `SHA256SUMS` when it starts and refuses to serve a release with a mismatch or a missing file.
 
@@ -278,6 +279,19 @@ With a launch, an agent waits for the launch to end before it updates.
 5. retries forever with a growing wait (5 s up to 60 s) while Potluck is unreachable or a check fails.
 
 **What the payload side guarantees** (PS5 side): a payload apply never restarts `potluck-agent.service`, never touches `/dev/shm/potluck` or `/run/potluck`, and never stops a `potluck-launch-*` unit, unless the starter itself changed.
+
+### 5.5 Planned for phase 7, not part of release 0.1.0: llama releases that update by themselves (CR-1)
+
+Requested by the owner on 2026-11-20. Nothing in release 0.1.0 is held to this section.
+
+- **Two version numbers.** The Potluck release covers the scheduler, the agent, the starter and the exporters, and stays an equality check at registration. The llama release is a separate set of `llama-server` and `rpc-server` builds that moves on its own schedule.
+- **Rule for a load.** Every member of a load, the host included, runs the same llama release. The launch request names it and the agent refuses one it does not hold.
+- **Where releases come from.** The fork's automated build publishes a release with a manifest: release tag, commit, RPC protocol version, the minimum contract version it needs, and per platform the operating system, architecture, backend, what the programs need from the machine, and the files with sha256 and size. The repository address is a Potluck setting that defaults to the fork. Trust is TLS plus the manifest's checksums.
+- **Potluck's own host program** is fetched from the staged release into Potluck's data volume, not built into its image. Potluck refuses a release that its own image, or a node's reported runtime, cannot run.
+- **Rollout.** Stage: every idle node downloads and verifies the new release next to the current one, after a free-memory check on a RAM-only node. Trial: when every node holds it, the next load uses it; ready plus one served request promotes it. A start failure, a crash or a load timeout on the trial rolls back automatically, marks the release bad, and retries the request on the old release. After promotion the nodes delete the old set; Potluck keeps it for a manual one-step rollback.
+- **Settings.** Automatic update on (default), off, or pinned to one release.
+
+The manifest format is drafted by the scheduler side when this work starts.
 
 ## 6. Launches
 
