@@ -27,8 +27,8 @@ func forcedFitHarness(t *testing.T, mode string, need placer.Need) *harness {
 	h.cfg.Defaults.ForcedFitCheck = mode
 	h.llama("f", 0, func(p *core.Profile) { p.ForceNodes = []string{"a", "b"} })
 	h.needs["f"] = NeedInfo{Need: need, FileBytes: 1 << 30}
-	h.prober.free["10.0.0.2:50052"] = 6912
-	h.prober.free["10.0.0.4:50052"] = 6912
+	h.prober.free["192.0.2.2:50052"] = 6912
+	h.prober.free["192.0.2.4:50052"] = 6912
 	return h
 }
 
@@ -112,8 +112,8 @@ func TestForcedFit_UsesPreflightFigureNotFleetFigure(t *testing.T) {
 func TestForcedFit_RejectThenFitsAfterMemoryFreed(t *testing.T) {
 	h := forcedFitHarness(t, config.ForcedFitReject, placer.Measured(14336))
 	h.failed(h.request("f"), http.StatusServiceUnavailable, ReasonForcedDoesNotFit)
-	h.prober.free["10.0.0.2:50052"] = 7500
-	h.prober.free["10.0.0.4:50052"] = 7500
+	h.prober.free["192.0.2.2:50052"] = 7500
+	h.prober.free["192.0.2.4:50052"] = 7500
 	h.request("f")
 	h.wantState("f", "starting")
 }
@@ -122,7 +122,7 @@ func TestForcedFit_NotForcedProfilesUnaffected(t *testing.T) {
 	h := newHarness(t).nodes(ps5("a", 2, 15000))
 	h.cfg.Defaults.ForcedFitCheck = config.ForcedFitReject
 	h.llama("m", 8000)
-	h.prober.free["10.0.0.2:50052"] = 9000
+	h.prober.free["192.0.2.2:50052"] = 9000
 	w := h.request("m")
 	h.wantState("m", "starting")
 	h.pending(w)
@@ -156,23 +156,23 @@ func TestForcedFit_PlanReportsTheSameOutcome(t *testing.T) {
 	}
 }
 
-// sharedHarness: one shared-memory PS5 "ps5-9032a330" whose pre-flight says
+// sharedHarness: one shared-memory PS5 "console-1" whose pre-flight says
 // 14875 MiB free and whose tier headroom leaves a budget of 12380 MiB.
 func sharedHarness(t *testing.T, mode string) *harness {
-	n := ps5("ps5-9032a330", 2, 14875)
+	n := ps5("console-1", 2, 14875)
 	n.TotalMiB, n.HeadroomMiB = 14947, 14875-12380
 	h := newHarness(t).nodes(n)
 	h.cfg.Defaults.ForcedFitCheck = mode
-	h.llama("f", 0, func(p *core.Profile) { p.ForceNodes = []string{"ps5-9032a330"} })
+	h.llama("f", 0, func(p *core.Profile) { p.ForceNodes = []string{"console-1"} })
 	h.needs["f"] = NeedInfo{Need: placer.Estimated(13991), FileBytes: 1 << 30}
-	h.prober.free["10.0.0.2:50052"] = 14875
+	h.prober.free["192.0.2.2:50052"] = 14875
 	return h
 }
 
 func TestForcedFit_SharedMemoryUsesBudgetReject(t *testing.T) {
 	h := sharedHarness(t, config.ForcedFitReject)
 	e := h.failed(h.request("f"), http.StatusServiceUnavailable, ReasonForcedDoesNotFit)
-	for _, want := range []string{"need 14691 MiB (estimated, +5% margin; the estimate is 13991 MiB)", "usable 12380 MiB on ps5-9032a330 (shared memory, headroom kept, from fleet figures)"} {
+	for _, want := range []string{"need 14691 MiB (estimated, +5% margin; the estimate is 13991 MiB)", "usable 12380 MiB on console-1 (shared memory, headroom kept, from fleet figures)"} {
 		if !strings.Contains(e.Message, want) {
 			t.Errorf("message %q lacks %q", e.Message, want)
 		}
@@ -197,7 +197,7 @@ func TestForcedFit_SharedMemoryPlanRejects(t *testing.T) {
 	h := sharedHarness(t, config.ForcedFitReject)
 	h.viewChanged()
 	r := h.c.dryPlan("f")
-	if r.Action != PlanReject || !strings.Contains(r.Reason, "usable 12380 MiB on ps5-9032a330 (shared memory, headroom kept, from fleet figures)") {
+	if r.Action != PlanReject || !strings.Contains(r.Reason, "usable 12380 MiB on console-1 (shared memory, headroom kept, from fleet figures)") {
 		t.Fatalf("plan %+v", r)
 	}
 }
@@ -206,16 +206,16 @@ func TestForcedFit_SharedMemoryPlanRejects(t *testing.T) {
 // the worker's Vulkan pre-flight overstates free at 14880. The smaller wins,
 // and the plan and the real request must agree.
 func TestForcedFit_SharedMemoryUsesSmallerOfFleetAndPreflight(t *testing.T) {
-	n := ps5("ps5-31bd9dc4", 2, 13496) // fleet free 13496 - headroom 1024 = 12472
+	n := ps5("console-2", 2, 13496) // fleet free 13496 - headroom 1024 = 12472
 	n.TotalMiB, n.HeadroomMiB = 14947, 1024
 	h := newHarness(t).nodes(n)
 	h.cfg.Defaults.ForcedFitCheck = config.ForcedFitReject
-	h.llama("f", 0, func(p *core.Profile) { p.ForceNodes = []string{"ps5-31bd9dc4"} })
+	h.llama("f", 0, func(p *core.Profile) { p.ForceNodes = []string{"console-2"} })
 	h.needs["f"] = NeedInfo{Need: placer.Estimated(13000), FileBytes: 1 << 30}
-	h.prober.free["10.0.0.2:50052"] = 14880 // pre-flight budget would be 13856
+	h.prober.free["192.0.2.2:50052"] = 14880 // pre-flight budget would be 13856
 
 	e := h.failed(h.request("f"), http.StatusServiceUnavailable, ReasonForcedDoesNotFit)
-	want := "usable 12472 MiB on ps5-31bd9dc4 (shared memory, headroom kept, from fleet figures)"
+	want := "usable 12472 MiB on console-2 (shared memory, headroom kept, from fleet figures)"
 	if !strings.Contains(e.Message, want) || e.CapacityMiB != 12472 {
 		t.Fatalf("request: message %q capacity %d, want %q / 12472", e.Message, e.CapacityMiB, want)
 	}
@@ -231,15 +231,15 @@ func TestForcedFit_SharedMemoryUsesSmallerOfFleetAndPreflight(t *testing.T) {
 
 // With no live pre-flight (a plan before any request), the fleet figure is used.
 func TestForcedFit_SharedMemoryFleetOnlyIsUsed(t *testing.T) {
-	n := ps5("ps5-31bd9dc4", 2, 13496)
+	n := ps5("console-2", 2, 13496)
 	n.TotalMiB, n.HeadroomMiB = 14947, 1024
 	h := newHarness(t).nodes(n)
 	h.cfg.Defaults.ForcedFitCheck = config.ForcedFitReject
-	h.llama("f", 0, func(p *core.Profile) { p.ForceNodes = []string{"ps5-31bd9dc4"} })
+	h.llama("f", 0, func(p *core.Profile) { p.ForceNodes = []string{"console-2"} })
 	h.needs["f"] = NeedInfo{Need: placer.Estimated(13000), FileBytes: 1 << 30}
 	h.viewChanged()
 	r := h.c.dryPlan("f")
-	if want := "usable 12472 MiB on ps5-31bd9dc4 (shared memory, headroom kept, from fleet figures)"; r.Action != PlanReject || !strings.Contains(r.Reason, want) {
+	if want := "usable 12472 MiB on console-2 (shared memory, headroom kept, from fleet figures)"; r.Action != PlanReject || !strings.Contains(r.Reason, want) {
 		t.Fatalf("plan %+v lacks %q", r, want)
 	}
 }
@@ -252,7 +252,7 @@ func TestForcedFit_DedicatedVRAMStillUsesRawFree(t *testing.T) {
 	h.cfg.Defaults.ForcedFitCheck = config.ForcedFitReject
 	h.llama("f", 0, func(p *core.Profile) { p.ForceNodes = []string{"lap"} })
 	h.needs["f"] = NeedInfo{Need: placer.Measured(14000), FileBytes: 1 << 30}
-	h.prober.free["10.0.0.2:50052"] = 14875
+	h.prober.free["192.0.2.2:50052"] = 14875
 	w := h.request("f")
 	h.wantState("f", "starting")
 	h.pending(w)
@@ -269,8 +269,8 @@ func TestForcedFit_MixedNodesSumsEachNodesOwnFigure(t *testing.T) {
 		h.cfg.Defaults.ForcedFitCheck = config.ForcedFitReject
 		h.llama("f", 0, func(p *core.Profile) { p.ForceNodes = []string{"d", "s"} })
 		h.needs["f"] = NeedInfo{Need: placer.Measured(need), FileBytes: 1 << 30}
-		h.prober.free["10.0.0.2:50052"] = 6000
-		h.prober.free["10.0.0.4:50052"] = 6000
+		h.prober.free["192.0.2.2:50052"] = 6000
+		h.prober.free["192.0.2.4:50052"] = 6000
 		return h
 	}
 	h := build(11500)

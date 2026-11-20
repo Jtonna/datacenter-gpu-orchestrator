@@ -11,7 +11,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 )
 
-const realMember = `{"id":"70:66:2a:a9:a7:65","hostname":"ps5-9032a330","ip":"10.0.0.101","role":"ps5-linux","source":"self","rpc_port":50052,"online":true,"ram_total_gb":14.1,"ram_used_gb":0.91,"vram_total":14.1,"vram_used":0.05,"payload_version":"d466ff91a994-5736b8df","mem_available_mib":13281.54,"rpc_server_mem_mib":74.92,"rpc_server_version":"9958d7ddcab4152720f64df958a876352085dfaf311db66859a6450607ff5ee7","last_recovery_action":null,"future_field":{"a":1}}`
+const realMember = `{"id":"02:00:00:00:00:01","hostname":"ps5-a","ip":"192.0.2.101","role":"ps5-linux","source":"self","rpc_port":50052,"online":true,"ram_total_gb":14.1,"ram_used_gb":0.91,"vram_total":14.1,"vram_used":0.05,"payload_version":"d466ff91a994-5736b8df","mem_available_mib":13281.54,"rpc_server_mem_mib":74.92,"rpc_server_version":"9958d7ddcab4152720f64df958a876352085dfaf311db66859a6450607ff5ee7","last_recovery_action":null,"future_field":{"a":1}}`
 
 // body serves one fleet payload on GET /api/fleet and as the SSE fleet event.
 type payloadServer struct {
@@ -68,14 +68,14 @@ func TestRealFleetMemberDecodes(t *testing.T) {
 	forBothPaths(t, func(t *testing.T, sse bool) {
 		e, _ := runPayload(t, sse, `{"members":[`+realMember+`]}`)
 		var n core.Node
-		eventually(t, func() bool { var ok bool; n, ok = e.nodeByID("70:66:2a:a9:a7:65"); return ok }, "the member")
+		eventually(t, func() bool { var ok bool; n, ok = e.nodeByID("02:00:00:00:00:01"); return ok }, "the member")
 		if n.FreeMiB != 13281 || n.FreeUnknown {
 			t.Errorf("free %d (unknown %v), want 13281 (13281.54 rounded down)", n.FreeMiB, n.FreeUnknown)
 		}
 		if !n.RPCServerMemKnown || n.RPCServerMemMiB != 74.92 || !strings.HasPrefix(n.RPCServerVersion, "9958d7dd") {
 			t.Errorf("rpc-server info: %+v", n)
 		}
-		if n.Addr != "10.0.0.101:50052" {
+		if n.Addr != "192.0.2.101:50052" {
 			t.Errorf("addr %q", n.Addr)
 		}
 		if e.log.count("bad fleet payload") != 0 || e.log.count("ignored") != 0 {
@@ -85,7 +85,7 @@ func TestRealFleetMemberDecodes(t *testing.T) {
 }
 
 func TestOneBadFieldKeepsEveryMember(t *testing.T) {
-	bad := `{"id":"b","hostname":"ps5-2","ip":"10.0.0.102","role":"ps5-linux","source":"self","rpc_port":50052.0,"online":true,` +
+	bad := `{"id":"b","hostname":"ps5-2","ip":"192.0.2.102","role":"ps5-linux","source":"self","rpc_port":50052.0,"online":true,` +
 		`"ram_total_gb":14,"ram_used_gb":4.5,"vram_total":14.1,"vram_used":0.05,"mem_available_mib":"oops","rpc_server_mem_mib":"x"}`
 	noID := `{"hostname":"ps5-3","online":true}`
 	forBothPaths(t, func(t *testing.T, sse bool) {
@@ -93,7 +93,7 @@ func TestOneBadFieldKeepsEveryMember(t *testing.T) {
 		var good, b core.Node
 		eventually(t, func() bool {
 			var ok1, ok2 bool
-			good, ok1 = e.nodeByID("70:66:2a:a9:a7:65")
+			good, ok1 = e.nodeByID("02:00:00:00:00:01")
 			b, ok2 = e.nodeByID("b")
 			return ok1 && ok2
 		}, "both members")
@@ -101,7 +101,7 @@ func TestOneBadFieldKeepsEveryMember(t *testing.T) {
 			t.Errorf("good member free %d", good.FreeMiB)
 		}
 		// the bad field is ignored: the RAM figure (14 - 4.5 GB) stands, the port float is read
-		if b.FreeMiB != 9728 || b.Addr != "10.0.0.102:50052" || b.RPCServerMemKnown {
+		if b.FreeMiB != 9728 || b.Addr != "192.0.2.102:50052" || b.RPCServerMemKnown {
 			t.Errorf("bad-field member: %+v", b)
 		}
 		if len(e.c.Nodes()) != 2 {

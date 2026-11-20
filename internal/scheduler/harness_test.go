@@ -64,7 +64,7 @@ func testConfig() *config.Config {
 	// the harness turns it on. Tests of the default set WorkerProbeInterval = 0.
 	d.WorkerProbeInterval = 10 * time.Second
 	return &config.Config{
-		Fleet:     config.Fleet{LocalNode: "omen", StaleAfter: 60 * time.Second},
+		Fleet:     config.Fleet{LocalNode: "host-1", StaleAfter: 60 * time.Second},
 		ModelsDir: "/models",
 		Defaults:  d,
 		Profiles:  map[string]*core.Profile{},
@@ -96,17 +96,17 @@ func newHarness(t fatalT) *harness {
 // ---- cluster fixtures ----
 
 func ps5(id string, n int, free int) core.Node {
-	return core.Node{ID: core.NodeID(id), Hostname: id, Online: true, Addr: fmt.Sprintf("10.0.0.%d:50052", n),
+	return core.Node{ID: core.NodeID(id), Hostname: id, Online: true, Addr: fmt.Sprintf("192.0.2.%d:50052", n),
 		TotalMiB: 16000, FreeMiB: free, Priority: 1, HeadroomMiB: 1000, SharedMemory: true, LinkMBs: 11, Settle: 3 * time.Second}
 }
 
 func alien(id string, free int) core.Node {
-	return core.Node{ID: core.NodeID(id), Hostname: id, Online: true, Addr: "10.0.0.3:50052",
+	return core.Node{ID: core.NodeID(id), Hostname: id, Online: true, Addr: "192.0.2.3:50052",
 		TotalMiB: 8000, FreeMiB: free, Priority: 2, HeadroomMiB: 200, LinkMBs: 11, Settle: 8 * time.Second}
 }
 
 func omen(free int) core.Node {
-	return core.Node{ID: "omen", Hostname: "omen", Local: true, Online: true,
+	return core.Node{ID: "host-1", Hostname: "host-1", Local: true, Online: true,
 		TotalMiB: 8000, FreeMiB: free, Priority: 3, HeadroomMiB: 200, Settle: 2 * time.Second}
 }
 

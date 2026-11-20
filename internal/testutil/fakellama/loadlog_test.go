@@ -24,11 +24,11 @@ func waitStderr(t *testing.T, p *proc, want string) string {
 func TestLoadLogAutoUsesDeviceNamesAndRPCBufferNames(t *testing.T) {
 	port := fmt.Sprint(harness.FreePort(t))
 	p := startProc(t, map[string]string{"FAKELLAMA_LOAD_LOG": "auto"},
-		"--port", port, "-lv", "4", "--rpc", "10.0.0.2:50052,10.0.0.3:50052", "--device", "RPC0,RPC1,CUDA0")
+		"--port", port, "-lv", "4", "--rpc", "192.0.2.2:50052,192.0.2.3:50052", "--device", "RPC0,RPC1,CUDA0")
 	out := waitStderr(t, p, "listening on")
 	for _, want := range []string{
-		"RPC0[10.0.0.2:50052] model buffer size =  1000.00 MiB",
-		"RPC0[10.0.0.3:50052] KV buffer size =   200.00 MiB",
+		"RPC0[192.0.2.2:50052] model buffer size =  1000.00 MiB",
+		"RPC0[192.0.2.3:50052] KV buffer size =   200.00 MiB",
 		"CUDA0 compute buffer size =   100.00 MiB",
 		"CPU_Mapped model buffer size =   360.00 MiB",
 	} {

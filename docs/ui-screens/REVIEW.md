@@ -1,5 +1,7 @@
 # UI screenshot review
 
+> The screenshots named on this page were removed from the repository; they can be regenerated with `go run ./cmd/devcluster`.
+
 Screenshots are taken with `scripts/ui-screens.sh` against the dev harness
 (`scripts/ui-dev.sh`). File names: `<screen>-<scenario>-<desktop|phone>.png`
 (desktop 1440 px wide, phone 390 px wide; the height is chosen to show the
@@ -131,7 +133,7 @@ Left as is, on purpose:
 | Requirement | Result |
 |---|---|
 | Model-centric home: one card per loaded or loading instance, stating its nodes | Yes. `models-demo-desktop.png`, `models-split-desktop.png`. |
-| Two instances of one model are two cards | Yes. `models-twins-desktop.png`: `devstral-24b` on `ps5-9032a330` and `bench-devstral-24b` on `ps5-31bd9dc4`, each naming the other. |
+| Two instances of one model are two cards | Yes. `models-twins-desktop.png`: `devstral-24b` on `console-1` and `bench-devstral-24b` on `console-2`, each naming the other. |
 | No load or unload control anywhere | Yes. No such button exists; `TestUIHasNoLoadOrUnloadControl` fails the build if a UI file names `/api/load`, `/api/unload` or `/api/models/unload`, and it passes. Running a suite is the one action that causes loads; it is behind a confirm that says so. |
 | Benchmarks configurable in the UI, one click to run | Yes. Created "Qwen 4B load only" from the "Load only" template and ran "Smoke test" with one click plus the confirm, on the real backend. |
 | The running-benchmark panel: overall percent, the current benchmark with its description and its own percent, the next one, load-derived progress for a load benchmark | Yes. `benchmarks-live-load-desktop.png`; the compact indicator shows on every screen (`models-during-benchmark-desktop.png`). |

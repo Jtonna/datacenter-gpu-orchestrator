@@ -16,7 +16,7 @@ tiers:
   - match: { hostname: "ps5-*" }
     priority: 1
     headroom_mib: 1024
-  - match: { hostname: "alienware*", role: console }
+  - match: { hostname: "laptop-*", role: console }
     priority: 2
   - match: { local: true }
     priority: 3
@@ -96,12 +96,12 @@ func TestMatchTier(t *testing.T) {
 		wantPriority    int
 		wantOK          bool
 	}{
-		{"glob match", "ps5-062e1d84", "", "", false, 1, true},
+		{"glob match", "ps5-a", "", "", false, 1, true},
 		{"first match wins over later", "ps5-special", "", "", false, 1, true},
-		{"all keys must hold: role mismatch", "alienware-llm", "node", "", false, 0, false},
-		{"all keys must hold: role ok", "alienware-llm", "console", "", false, 2, true},
-		{"local", "omen-runner", "", "", true, 3, true},
-		{"local flag only for local nodes", "omen-runner", "", "", false, 0, false},
+		{"all keys must hold: role mismatch", "laptop-1", "node", "", false, 0, false},
+		{"all keys must hold: role ok", "laptop-1", "console", "", false, 2, true},
+		{"local", "host-1", "", "", true, 3, true},
+		{"local flag only for local nodes", "host-1", "", "", false, 0, false},
 		{"source exact", "other", "", "relay", false, 4, true},
 		{"source is not a glob", "other", "", "relay2", false, 0, false},
 		{"no tier matches", "laptop", "", "", false, 0, false},
@@ -170,7 +170,7 @@ func TestProfilesWithoutNeedsMiB(t *testing.T) {
 }
 
 func TestExcluded(t *testing.T) {
-	c := mustParse(t, "exclude_nodes: [\"70:66:2A:A9:A7:65\", \"ps5-abc123\", \"PS5-test*\", omen-runner]\ntiers:\n  - match: { local: true }\n    priority: 1\n")
+	c := mustParse(t, "exclude_nodes: [\"02:00:00:00:00:AB\", \"ps5-abc123\", \"PS5-test*\", host-1]\ntiers:\n  - match: { local: true }\n    priority: 1\n")
 	if got := c.ExcludeNodes; len(got) != 4 {
 		t.Fatalf("ExcludeNodes = %v", got)
 	}
@@ -178,15 +178,15 @@ func TestExcluded(t *testing.T) {
 		id, host string
 		want     bool
 	}{
-		{"70:66:2a:a9:a7:65", "ps5-zzz", true}, // id, case-insensitive
-		{"70:66:2A:A9:A7:65", "", true},        // id, same case
+		{"02:00:00:00:00:ab", "ps5-zzz", true}, // id, case-insensitive
+		{"02:00:00:00:00:AB", "", true},        // id, same case
 		{"aa:bb", "PS5-ABC123", true},          // hostname exact, case-insensitive
 		{"aa:bb", "ps5-test9", true},           // hostname glob
 		{"aa:bb", "ps5-tes", false},            // glob needs the t
-		{"omen-runner", "omen-runner", true},   // local node by id
+		{"host-1", "host-1", true},             // local node by id
 		{"aa:bb", "ps5-other", false},
 		{"ps5-abc123x", "ps5-abc123x", false}, // an entry is not a prefix match
-		{"ps5-test1", "alienware", false},     // a glob is matched against the hostname only
+		{"ps5-test1", "laptop-1", false},      // a glob is matched against the hostname only
 	}
 	for _, tt := range tests {
 		if got := c.Excluded(core.NodeID(tt.id), tt.host); got != tt.want {

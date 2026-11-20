@@ -85,43 +85,43 @@ func runPlaceCases(t *testing.T, cases []placeCase) {
 	}
 }
 
-// Golden: design 7.2 "Worked checks" (OMEN 8151, Alienware 7885, headroom
+// Golden: design 7.2 "Worked checks" (host machine 8151, Nvidia laptop 7885, headroom
 // 256 -> live budgets 7895 and 7629).
 func TestPlaceWorkedChecks(t *testing.T) {
-	omen := local("omen", 3, 8151-256)
-	alien := nd("alienware", 2, 7885-256)
+	omen := local("host-1", 3, 8151-256)
+	alien := nd("laptop-1", 2, 7885-256)
 	runPlaceCases(t, []placeCase{
-		{name: "gemma 7800 on OMEN alone fits", req: base(Measured(7800)), free: []Candidate{omen}, want: []string{"omen"}},
-		{name: "gemma 7800 on Alienware alone does not fit", req: base(Measured(7800)), free: []Candidate{alien}, wantReason: NoFit},
+		{name: "gemma 7800 on host machine alone fits", req: base(Measured(7800)), free: []Candidate{omen}, want: []string{"host-1"}},
+		{name: "gemma 7800 on Nvidia laptop alone does not fit", req: base(Measured(7800)), free: []Candidate{alien}, wantReason: NoFit},
 		{name: "devstral 14828 estimated on both laptops does not fit", req: base(Estimated(14828)), free: []Candidate{omen, alien}, wantReason: NoFit},
-		{name: "gemma 7800 with both laptops free goes to the OMEN", req: base(Measured(7800)), free: []Candidate{alien, omen}, want: []string{"omen"}},
+		{name: "gemma 7800 with both laptops free goes to the host machine", req: base(Measured(7800)), free: []Candidate{alien, omen}, want: []string{"host-1"}},
 	})
 }
 
 func TestPlaceTierWalk(t *testing.T) {
 	runPlaceCases(t, []placeCase{
 		{
-			name: "pool of PS5s before a single Alienware that fits",
+			name: "pool of PS5s before a single Nvidia laptop that fits",
 			req:  base(Measured(12000)),
 			free: []Candidate{nd("ps5-a", 1, 7000), nd("ps5-b", 1, 7000), nd("alien", 2, 12500)},
 			want: []string{"ps5-a", "ps5-b"},
 		},
 		{
-			name: "OMEN reached only when tiers 1 and 2 cannot hold the model",
+			name: "host machine reached only when tiers 1 and 2 cannot hold the model",
 			req:  base(Measured(7700)),
-			free: []Candidate{nd("ps5-a", 1, 3000), nd("alien", 2, 7629), local("omen", 3, 7895)},
+			free: []Candidate{nd("ps5-a", 1, 3000), nd("alien", 2, 7629), local("host-1", 3, 7895)},
 			want: []string{"ps5-a", "alien"},
 		},
 		{
-			name: "OMEN used when tiers 1 and 2 together are too small",
+			name: "host machine used when tiers 1 and 2 together are too small",
 			req:  base(Measured(11000)),
-			free: []Candidate{nd("ps5-a", 1, 3000), nd("alien", 2, 7629), local("omen", 3, 7895)},
-			want: []string{"alien", "omen"},
+			free: []Candidate{nd("ps5-a", 1, 3000), nd("alien", 2, 7629), local("host-1", 3, 7895)},
+			want: []string{"alien", "host-1"},
 		},
 		{
 			name: "single node in tier 1 beats everything",
 			req:  base(Measured(5000)),
-			free: []Candidate{local("omen", 3, 7895), nd("alien", 2, 7629), nd("ps5-a", 1, 13000)},
+			free: []Candidate{local("host-1", 3, 7895), nd("alien", 2, 7629), nd("ps5-a", 1, 13000)},
 			want: []string{"ps5-a"},
 		},
 		{
@@ -163,8 +163,8 @@ func TestPlaceTierWalk(t *testing.T) {
 		{
 			name: "device order: better tier first, then larger budget, then ID",
 			req:  with(base(Measured(16000)), func(r *Request) { r.MaxPool = 5 }),
-			free: []Candidate{local("omen", 3, 7895), nd("alien", 2, 2000), nd("ps5-b", 1, 2000), nd("ps5-a", 1, 2000), nd("ps5-c", 1, 3000)},
-			want: []string{"ps5-c", "ps5-a", "ps5-b", "alien", "omen"},
+			free: []Candidate{local("host-1", 3, 7895), nd("alien", 2, 2000), nd("ps5-b", 1, 2000), nd("ps5-a", 1, 2000), nd("ps5-c", 1, 3000)},
+			want: []string{"ps5-c", "ps5-a", "ps5-b", "alien", "host-1"},
 		},
 		{
 			name: "estimated rule: overhead and 5% margin applied",
@@ -207,9 +207,9 @@ func TestPlaceLimits(t *testing.T) {
 			want: []string{"a"},
 		},
 		{
-			name:       "allow_tiers excludes the OMEN",
+			name:       "allow_tiers excludes the host machine",
 			req:        with(base(Measured(7800)), func(r *Request) { r.AllowTiers = []int{1, 2} }),
-			free:       []Candidate{local("omen", 3, 7895), nd("alien", 2, 7629)},
+			free:       []Candidate{local("host-1", 3, 7895), nd("alien", 2, 7629)},
 			wantReason: NoFit,
 		},
 		{
@@ -231,10 +231,10 @@ func TestPlaceForced(t *testing.T) {
 		}
 		return r
 	}
-	free := []Candidate{nd("ps5-a", 1, 13000), nd("alien", 2, 7629), local("omen", 3, 7895)}
+	free := []Candidate{nd("ps5-a", 1, 13000), nd("alien", 2, 7629), local("host-1", 3, 7895)}
 	runPlaceCases(t, []placeCase{
 		{name: "forced nodes present, config order kept", req: forced("alien", "ps5-a"), free: free, want: []string{"alien", "ps5-a"}},
-		{name: "forced nodes in a different order", req: forced("omen", "alien", "ps5-a"), free: free, want: []string{"omen", "alien", "ps5-a"}},
+		{name: "forced nodes in a different order", req: forced("host-1", "alien", "ps5-a"), free: free, want: []string{"host-1", "alien", "ps5-a"}},
 		{
 			name: "forced tensor split copied",
 			req:  with(forced("ps5-a", "alien"), func(r *Request) { r.TensorSplit = []int{60, 40} }),
@@ -254,18 +254,18 @@ func TestPlaceForced(t *testing.T) {
 			free: []Candidate{nd("alien", 2, 500)}, wantReason: ForcedUnavailable, wantMissing: []string{"alien"},
 		},
 		{name: "forced with empty input", req: forced("alien"), free: nil, wantReason: ForcedUnavailable, wantMissing: []string{"alien"}},
-		{name: "forced ignores max_pool", req: with(forced("omen", "alien", "ps5-a"), func(r *Request) { r.MaxPool = 1 }), free: free, want: []string{"omen", "alien", "ps5-a"}},
+		{name: "forced ignores max_pool", req: with(forced("host-1", "alien", "ps5-a"), func(r *Request) { r.MaxPool = 1 }), free: free, want: []string{"host-1", "alien", "ps5-a"}},
 	})
 }
 
 func TestPlaceCarriesNodeDetails(t *testing.T) {
-	p, err := Place(base(Measured(10000)), []Candidate{local("omen", 3, 7895), nd("ps5-a", 1, 3000)})
+	p, err := Place(base(Measured(10000)), []Candidate{local("host-1", 3, 7895), nd("ps5-a", 1, 3000)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []core.PlacedNode{
 		{ID: "ps5-a", Addr: "ps5-a:50052", BudgetMiB: 3000},
-		{ID: "omen", Local: true, BudgetMiB: 7895},
+		{ID: "host-1", Local: true, BudgetMiB: 7895},
 	}
 	if !reflect.DeepEqual(p.Nodes, want) {
 		t.Fatalf("nodes %+v, want %+v", p.Nodes, want)
@@ -301,9 +301,9 @@ func TestPlaceInvalidInput(t *testing.T) {
 
 func TestNoPlacementMessages(t *testing.T) {
 	_, err := Place(with(base(Measured(1)), func(r *Request) {
-		r.Force = []ForcedNode{{Name: "ps5-x", ID: "x"}, {Name: "alienware-llm", ID: "y"}}
+		r.Force = []ForcedNode{{Name: "ps5-x", ID: "x"}, {Name: "laptop-1", ID: "y"}}
 	}), nil)
-	if err == nil || !strings.Contains(err.Error(), "ps5-x, alienware-llm") {
+	if err == nil || !strings.Contains(err.Error(), "ps5-x, laptop-1") {
 		t.Fatalf("message %v should name the missing forced nodes", err)
 	}
 }

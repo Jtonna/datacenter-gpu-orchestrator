@@ -25,8 +25,8 @@ func TestParseListDevices(t *testing.T) {
 		want    ProbeResult
 		wantErr ProbeFailure
 	}{
-		{"fakellama style", "Available devices:\n  RPC0: 10.0.0.2:50052 (15000 MiB, 14000 MiB free)\n", ProbeResult{15000, 14000}, 0},
-		{"other devices ignored", "Available devices:\n  CUDA0: NVIDIA GeForce RTX 5060 (8151 MiB, 7000 MiB free)\n  RPC0: 10.0.0.2:50052 (15000 MiB, 14000 MiB free)\n", ProbeResult{15000, 14000}, 0},
+		{"fakellama style", "Available devices:\n  RPC0: 192.0.2.2:50052 (15000 MiB, 14000 MiB free)\n", ProbeResult{15000, 14000}, 0},
+		{"other devices ignored", "Available devices:\n  CUDA0: NVIDIA GeForce RTX 5060 (8151 MiB, 7000 MiB free)\n  RPC0: 192.0.2.2:50052 (15000 MiB, 14000 MiB free)\n", ProbeResult{15000, 14000}, 0},
 		{"description with parentheses and colons", "Available devices:\n  RPC0: AMD Radeon (TM) Graphics: gfx1013 (rev 0) [host:port] (14948 MiB, 9021 MiB free)\n", ProbeResult{14948, 9021}, 0},
 		{"CRLF", "Available devices:\r\n  RPC0: x (100 MiB, 50 MiB free)\r\n", ProbeResult{100, 50}, 0},
 		{"no leading spaces", "RPC0: x (100 MiB, 50 MiB free)\n", ProbeResult{100, 50}, 0},
@@ -86,7 +86,7 @@ func probeFake(t *testing.T, timeout time.Duration, env map[string]string) (Prob
 		t.Setenv(k, v)
 	}
 	p := &ExecProber{ServerBin: harness.BuildFakeLlama(t), Timeout: timeout}
-	return p.Probe(context.Background(), "10.0.0.2:50052")
+	return p.Probe(context.Background(), "192.0.2.2:50052")
 }
 
 func probeKind(t *testing.T, err error) ProbeFailure {
@@ -198,7 +198,7 @@ func TestExecProberScrubsEnvironment(t *testing.T) {
 	if rec.Mode != "list-devices" {
 		t.Fatalf("mode %q", rec.Mode)
 	}
-	if strings.Join(rec.Argv, " ") != "--rpc 10.0.0.2:50052 --list-devices" {
+	if strings.Join(rec.Argv, " ") != "--rpc 192.0.2.2:50052 --list-devices" {
 		t.Fatalf("argv = %q", rec.Argv)
 	}
 	for k := range rec.Env {
@@ -214,16 +214,16 @@ func TestExecProberScrubsEnvironment(t *testing.T) {
 // The probe hides CUDA on purpose, so llama.cpp always prints a CUDA init
 // failure on stderr. It must not lead the reason, and the stack trace is noise.
 const realConnectRefusedStderr = "0.00.021.162 E ggml_cuda_init: failed to initialize CUDA: no CUDA-capable device is detected\n" +
-	"/src/ggml/src/ggml-rpc/ggml-rpc.cpp:653: Failed to connect to 10.0.0.250:50052\n\n" +
+	"/src/ggml/src/ggml-rpc/ggml-rpc.cpp:653: Failed to connect to 192.0.2.250:50052\n\n" +
 	"llama-server-rpc(+0x1c95a7b)[0x5a9a3448ea7b]\nllama-server-rpc(+0x1c9606c)[0x5a9a3448f06c]\n" +
 	"/lib/x86_64-linux-gnu/libc.so.6(+0x2a1ca)[0x73d8f7f9a1ca]\n" +
 	"/lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x8b)[0x73d8f7f9a28b]\nllama-server-rpc(+0x238205)[0x5a9a32a31205]"
 
 func TestProbeErrorLeadsWithRealCauseNotCUDANoise(t *testing.T) {
-	e := &ProbeError{Kind: ProbeExit, Addr: "10.0.0.250:50052", Detail: "signal: aborted (core dumped)", Stderr: realConnectRefusedStderr}
+	e := &ProbeError{Kind: ProbeExit, Addr: "192.0.2.250:50052", Detail: "signal: aborted (core dumped)", Stderr: realConnectRefusedStderr}
 	got := e.Error()
-	want := "pre-flight of 10.0.0.250:50052 failed (exit): ggml-rpc.cpp:653: Failed to connect to 10.0.0.250:50052 (signal: aborted (core dumped))"
-	if !strings.HasPrefix(got, "pre-flight of 10.0.0.250:50052 failed (exit): ") || !strings.Contains(got, "Failed to connect to 10.0.0.250:50052") {
+	want := "pre-flight of 192.0.2.250:50052 failed (exit): ggml-rpc.cpp:653: Failed to connect to 192.0.2.250:50052 (signal: aborted (core dumped))"
+	if !strings.HasPrefix(got, "pre-flight of 192.0.2.250:50052 failed (exit): ") || !strings.Contains(got, "Failed to connect to 192.0.2.250:50052") {
 		t.Fatalf("reason = %q, want it to lead with the connect failure (e.g. %q)", got, want)
 	}
 	for _, noise := range []string{"ggml_cuda_init", "CUDA", "libc.so", "llama-server-rpc(+0x", "\n"} {

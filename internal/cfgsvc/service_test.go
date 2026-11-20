@@ -66,7 +66,7 @@ func TestEmptyDatabaseStartsUnconfigured(t *testing.T) {
 func TestProfileLifecycleRevisionsAndAudit(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	res, err := e.svc.CreateProfile(ctx, ui("jacob"), "a", llama("a.gguf", 1024))
+	res, err := e.svc.CreateProfile(ctx, ui("alex"), "a", llama("a.gguf", 1024))
 	if err != nil || res.Revision != 1 || len(res.AuditEntryIDs) != 1 || !res.Changed {
 		t.Fatalf("%+v %v", res, err)
 	}
@@ -76,7 +76,7 @@ func TestProfileLifecycleRevisionsAndAudit(t *testing.T) {
 	if _, err := e.svc.CreateProfile(ctx, ui("x"), "a", llama("a.gguf", 1024)); !errors.Is(err, ErrExists) {
 		t.Fatalf("duplicate create: %v", err)
 	}
-	res, err = e.svc.UpdateProfile(ctx, ui("jacob"), "a", llama("a.gguf", 2048))
+	res, err = e.svc.UpdateProfile(ctx, ui("alex"), "a", llama("a.gguf", 2048))
 	if err != nil || res.Revision != 2 {
 		t.Fatalf("%+v %v", res, err)
 	}
@@ -90,11 +90,11 @@ func TestProfileLifecycleRevisionsAndAudit(t *testing.T) {
 		t.Fatalf("diff %+v", res.Diff)
 	}
 	es, total, err := e.cs.Query(ctx, cfgstore.Filter{Section: "profiles", Target: "a", Ascending: true})
-	if err != nil || total != 2 || es[0].Action != "create" || es[1].Action != "update" || es[1].Actor != "jacob" || es[1].Source != "ui" || es[1].Revision != 2 || es[1].Comment != "test" {
+	if err != nil || total != 2 || es[0].Action != "create" || es[1].Action != "update" || es[1].Actor != "alex" || es[1].Source != "ui" || es[1].Revision != 2 || es[1].Comment != "test" {
 		t.Fatalf("%+v %v", es, err)
 	}
 	// An unchanged write makes no revision.
-	res, _ = e.svc.UpdateProfile(ctx, ui("jacob"), "a", llama("a.gguf", 2048))
+	res, _ = e.svc.UpdateProfile(ctx, ui("alex"), "a", llama("a.gguf", 2048))
 	if res.Changed || res.Revision != 2 || e.svc.Revision() != 2 {
 		t.Fatalf("no-op wrote a revision: %+v", res)
 	}

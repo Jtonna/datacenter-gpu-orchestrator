@@ -63,7 +63,7 @@ func TestLog_StartupSequence(t *testing.T) {
 	h.mustLog("pre-flight ok", "node", "a", "free_mib", 15000)
 	h.mustHaveAttrs(h.mustLog("pre-flight ok", "node", "a"), "duration", "addr")
 	cs := h.mustLog("child started", "profile", "m", "port", 5801, "pid", 6801)
-	if !strings.Contains(cs.Attrs["cmd"].(string), "--rpc 10.0.0.2:50052") {
+	if !strings.Contains(cs.Attrs["cmd"].(string), "--rpc 192.0.2.2:50052") {
 		t.Errorf("cmd = %v", cs.Attrs["cmd"])
 	}
 	rd := h.mustLog("instance ready", "profile", "m")
@@ -152,7 +152,7 @@ func TestLog_LoadFailureBackoffStartAndEnd(t *testing.T) {
 func TestLog_PreflightFailureQuarantineReleaseAndReturn(t *testing.T) {
 	h := newHarness(t).nodes(ps5("a", 2, 15000), ps5("b", 4, 15000))
 	h.llama("m", 8000)
-	h.prober.fail["10.0.0.2:50052"] = probeFail("10.0.0.2:50052")
+	h.prober.fail["192.0.2.2:50052"] = probeFail("192.0.2.2:50052")
 	h.request("m")
 	pf := h.mustLog("pre-flight failed", "node", "a", "kind", "timeout")
 	if pf.Level != slog.LevelWarn {
@@ -250,7 +250,7 @@ func TestLaunchEnvHidesHostGPUOnlyForRemoteOnlyPlacements(t *testing.T) {
 	h := newHarness(t).nodes(ps5("a", 2, 15000), omen(8000))
 	h.autoStart = false
 	h.llama("remote", 8000, func(p *core.Profile) { p.ForceNodes = []string{"a"} })
-	h.llama("local", 6000, func(p *core.Profile) { p.ForceNodes = []string{"omen"} })
+	h.llama("local", 6000, func(p *core.Profile) { p.ForceNodes = []string{"host-1"} })
 	h.request("remote")
 	h.request("local")
 	if len(h.starts) != 2 {
@@ -272,7 +272,7 @@ func TestLog_InstanceReadyCountsPlacedDevicesNotHostRows(t *testing.T) {
 	h.llama("m", 8000)
 	h.request("m")
 	h.child("m").load = instance.LoadStats{Devices: []instance.DeviceMem{
-		{Name: "RPC0[10.0.0.2:50052]", ModelMiB: 7000, KVMiB: 500, ComputeMiB: 100},
+		{Name: "RPC0[192.0.2.2:50052]", ModelMiB: 7000, KVMiB: 500, ComputeMiB: 100},
 		{Name: "CPU_Mapped", Host: true, ModelMiB: 300},
 		{Name: "CPU", Host: true, ComputeMiB: 20},
 	}}
@@ -289,13 +289,13 @@ func TestLog_PreflightFailureLeadsWithCauseAndKeepsRawAtDebug(t *testing.T) {
 	h := newHarness(t).nodes(ps5("a", 2, 15000))
 	h.llama("m", 8000)
 	raw := "0.00.021.162 E ggml_cuda_init: failed to initialize CUDA: no CUDA-capable device is detected\n" +
-		"/src/ggml/src/ggml-rpc/ggml-rpc.cpp:653: Failed to connect to 10.0.0.2:50052\n"
-	h.prober.fail["10.0.0.2:50052"] = &instance.ProbeError{Kind: instance.ProbeExit, Addr: "10.0.0.2:50052",
+		"/src/ggml/src/ggml-rpc/ggml-rpc.cpp:653: Failed to connect to 192.0.2.2:50052\n"
+	h.prober.fail["192.0.2.2:50052"] = &instance.ProbeError{Kind: instance.ProbeExit, Addr: "192.0.2.2:50052",
 		Detail: "signal: aborted (core dumped)", Stderr: raw}
 	h.request("m")
 	w := h.mustLog("pre-flight failed", "node", "a")
 	msg := fmt.Sprint(w.Attrs["err"])
-	if !strings.Contains(msg, "Failed to connect to 10.0.0.2:50052") || strings.Contains(msg, "CUDA") {
+	if !strings.Contains(msg, "Failed to connect to 192.0.2.2:50052") || strings.Contains(msg, "CUDA") {
 		t.Fatalf("warning err = %q", msg)
 	}
 	d := h.mustLog("pre-flight raw output", "node", "a")

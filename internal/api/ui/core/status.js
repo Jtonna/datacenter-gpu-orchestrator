@@ -13,7 +13,7 @@ export function nodeName(st, id) {
   return (n && n.hostname) || id;
 }
 export const findNode = (st, idOrHost) => viewNodes(st).find(x => x.id === idOrHost || x.hostname === idOrHost) || null;
-// nodeByAddr(st, '10.0.0.21:50052') -> the view node with that rpc address.
+// nodeByAddr(st, '192.0.2.21:50052') -> the view node with that rpc address.
 export const nodeByAddr = (st, addr) => viewNodes(st).find(x => x.addr && x.addr === addr) || null;
 
 // instanceNodeNames(st, inst) -> the hostnames an instance is placed on.

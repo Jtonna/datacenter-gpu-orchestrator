@@ -1,4 +1,4 @@
-# llm-scheduler image (design section 10). Build from the REPO ROOT on the OMEN:
+# llm-scheduler image (design section 10). Build from the REPO ROOT on the host machine:
 #   docker build -f deploy/Dockerfile -t llm-scheduler:local \
 #     --build-arg VERSION=$(git describe --always --dirty) .
 #

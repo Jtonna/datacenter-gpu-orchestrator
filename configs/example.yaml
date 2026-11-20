@@ -1,18 +1,24 @@
 # Example INPUT FILE of `llm-scheduler import-config` (design sections 6 and 6.1).
-# This is the documented format of the one-time import: the scheduler itself never
-# reads YAML. The file is validated with the normal rules and written into an empty
-# configuration database as revision 1; afterwards the database is the source of truth
-# (REST /api/config, MCP, web UI) and this file is only a record of the starting point.
-# listen, models_dir, data_dir, history_dir and child_log_dir below are deployment paths:
-# they are not imported, they are set by flags or LLM_SCHEDULER_* variables.
-# Nodes are not listed here; only how to rank them.
+# Copy it, change the node names, tiers and profiles to match your machines, and
+# import it once. The scheduler itself never reads YAML: the file is validated with
+# the normal rules and written into an empty configuration database as revision 1;
+# afterwards the database is the source of truth (REST /api/config, MCP, web UI).
+# listen, models_dir, data_dir, history_dir and child_log_dir below are deployment
+# paths: they are not imported, they are set by flags or LLM_SCHEDULER_* variables.
+# Nodes are not listed here: the fleet console reports them. This file only says
+# how to rank them (tiers) and what to run on them (profiles).
+#
+# Example pool used below: one host machine with an Nvidia GPU (host-1, where the
+# scheduler runs), one Nvidia laptop (laptop-1) and a few consoles (console-1,
+# console-2, ...) whose GPU memory is system RAM. Each remote node runs a llama.cpp
+# rpc-server on port 50052.
 
-listen: ":8080"                    # mapped to 3122 by compose
+listen: ":8080"                    # address the scheduler's HTTP API listens on (compose maps it to 3122)
 fleet:
-  url: http://host.docker.internal:8090
-  local_node: omen-runner
-  stale_after: 60s                 # view age beyond which remote nodes are not used
-models_dir: /models
+  url: http://host.docker.internal:8090   # base URL of the fleet console; empty = only the local node is used
+  local_node: host-1               # the fleet name of the host the scheduler runs on
+  stale_after: 60s                 # age of the fleet view beyond which remote nodes are not used
+models_dir: /models                # directory that holds the model files (GGUF) named by the profiles
 # child_log_dir: /var/log/llm-children   # optional: keep each child llama-server's full output, one file per start
 # child_log_keep: 200              # most files kept in child_log_dir; the oldest are deleted
 # history_dir: /var/lib/llm-scheduler/history   # optional: keep the scheduler's safety and lifecycle events (loads, stalls, hung workers, quarantines, recovery requests, ...) as JSON Lines, for GET /api/history and the dashboard at /ui/. Empty = off
@@ -23,80 +29,68 @@ models_dir: /models
 # ws_max_clients: 32               # most concurrent /ws (WebSocket) clients; the next one is refused with 503. /ws allows same-origin and private-LAN origins only
 
 defaults:
-  ttl: 300s                # unload after this long idle; 0 = never
-  min_hold: 30s            # hold time floor (8.3)
-  max_hold: 900s           # hold time ceiling
-  drain_after: 60s         # wait before a busy model is asked to drain
-  queue_timeout: 600s      # max time an entry may wait without a claim
-  stall_timeout: 300s      # max gap between chunks once streaming has begun
-  command_load_timeout: 900s   # for kind: command profiles
+  ttl: 300s                # unload a model after this long idle; 0 = never
+  min_hold: 30s            # least time an instance is protected from being displaced (8.3)
+  max_hold: 900s           # longest time an instance is protected from being displaced
+  drain_after: 60s         # how long a busy model is left alone before a waiting request asks it to drain
+  queue_timeout: 600s      # longest a request may wait in the queue without being given a model
+  stall_timeout: 300s      # longest gap between streamed chunks once a response has begun; 0 = no check
+  command_load_timeout: 900s   # load timeout for kind: command profiles
   # load_stall_timeout: 180s  # fail a load whose measured upload gets no new acknowledged bytes for this long (a hung child); 0 = off; per-profile override of the same name
-  shutdown_grace: 300s
-  max_pool: 4
-  device_overhead_mib: 600 # per-device cost added to estimated needs only
-  min_share_mib: 1024      # least a node must be able to hold
+  shutdown_grace: 300s     # how long a clean shutdown waits for in-flight requests before killing children
+  max_pool: 4              # most nodes a single model may be split across
+  device_overhead_mib: 600 # per-device memory cost added to estimated needs only
+  min_share_mib: 1024      # least memory a node must be able to hold to take part in a split
   cache_ram_mib: 2048      # per-instance prompt cache limit on the host
-  server_bin: llama-server-rpc
-  local_device: CUDA0
+  server_bin: llama-server-rpc   # the llama.cpp server binary started for each model
+  local_device: CUDA0      # the llama.cpp device name of the local GPU
   # forced_node_grace: 30s  # a force_nodes node absent or offline this long in a live fleet view fails the request now (not after queue_timeout)
-  # forced_fit_check: off   # off | warn | reject. A force_nodes profile skips the placer's fit check; with warn or reject its need is compared with the forced nodes' usable memory at pre-flight (shared_memory tiers such as the PS5: free minus tier headroom, the placer's budget; dedicated-VRAM tiers: raw free, no headroom taken off): warn logs and starts anyway, reject answers 503 "forced nodes do not fit". Recommended in production: on llama.cpp upstream HEAD (2026-11-19) a forced load that does not fit took a PS5 down until it was power cycled
-  # Memory safety on shared-memory nodes (PS5s: GPU memory is system RAM, the workers have no container limit, and a load that exhausts a PS5 makes the whole machine unreachable for about 18 minutes). The scheduler plans so a load fits and watches while it runs:
-  # split_skew_margin: 0.15      # 0 to 1. A split model does not land evenly (measured: one node 11% over an even share). Every placement of two or more nodes that includes a shared-memory node must fit each such node's expected share, need x split fraction x (1 + this), into that node's own usable memory (free minus tier headroom, the smaller of the fleet and pre-flight figures). Applies to automatic and forced placements (forced: with forced_fit_check warn or reject); a single-node placement takes no margin. Refusal: "node X: expected share N MiB (...) but usable M MiB (...)"
-  # estimate_margin: 0.05        # 0 to 1. Added to every need that is an estimate (a profile without needs_mib): need x (1 + this), shown as "estimated, +5% margin". A profile with needs_mib is used as is. A load that succeeds teaches the scheduler the measured size for the rest of the run (GET /api/status learned_needs); it replaces an estimate and replaces needs_mib only when higher (with a WARN that needs_mib is too low)
-  # load_memory_floor_mib: 768   # 0 = off. While a load runs on shared-memory nodes, a node whose fleet-reported available memory (mem_available_mib when the fleet sends it, else the existing figure) falls below this is cancelled at once: the child is killed, waiting requests get 502 "load cancelled: <node> ran low on memory during the load (available N MiB, floor M MiB)", the profile is backed off, the node is not quarantined. Never acts on a stale fleet view
-  # Worker health (design 8.4a) is always on for every remote worker that backs an instance: upload progress and the fleet heartbeat are watched, a worker with both silent is hung and its node is quarantined, reported as nodes[].health in GET /api/status. Only the TCP connect probe is optional.
-  # worker_silence: 30s         # a worker's upload progress or fleet heartbeat counts as silent after this long without news; heartbeat alone silent for 3x this (no channel known ok) is also hung
-  # worker_probe_interval: 0    # DEFAULT 0 = the TCP connect probe never runs. Do NOT enable it for rpc-server workers (PS5s): hardware showed an rpc-server accepts one client and does not accept() again until it leaves, so extra connections are completed by the kernel listen backlog (the first few "succeed" whatever the server's state), each opened-and-closed probe stays in the backlog, and after about a minute of 10 s probes the backlog was full and every connect timed out: healthy PS5s serving a model read "probe: silent" (suspect). The same applies to any external TCP check of port 50052. Set e.g. 10s only for workers that accept parallel connections
-  # worker_probe_during_inference: false  # only with the probe on: also probe while the instance has a request in flight (off by default)
+  # forced_fit_check: off   # off | warn | reject. A force_nodes profile skips the placer's fit check; with warn or reject its need is compared with the forced nodes' usable memory at pre-flight: warn logs and starts anyway, reject answers 503 "forced nodes do not fit"
+  # Memory safety on shared-memory nodes (GPU memory is system RAM; a load that exhausts it can make the whole machine unreachable). The scheduler plans so a load fits and watches while it runs:
+  # split_skew_margin: 0.15      # 0 to 1. A split model does not land evenly: every multi-node placement that includes a shared-memory node must fit that node's expected share, need x split fraction x (1 + this), into its usable memory
+  # estimate_margin: 0.05        # 0 to 1. Added to every need that is an estimate (a profile without needs_mib): need x (1 + this). A successful load teaches the scheduler the measured size for the rest of the run
+  # load_memory_floor_mib: 768   # 0 = off. While a load runs on shared-memory nodes, a node whose available memory falls below this is cancelled at once (the child is killed, waiting requests get 502)
+  # Worker health (design 8.4a) is always on for every remote worker that backs an instance: upload progress and the fleet heartbeat are watched, a worker with both silent is hung and its node is quarantined. Only the TCP connect probe is optional.
+  # worker_silence: 30s         # a worker's upload progress or fleet heartbeat counts as silent after this long without news
+  # worker_probe_interval: 0    # DEFAULT 0 = the TCP connect probe never runs. Leave it off for rpc-server workers: an rpc-server accepts one client at a time, so repeated connect probes fill its listen backlog. Set e.g. 10s only for workers that accept parallel connections
+  # worker_probe_during_inference: false  # only with the probe on: also probe while the instance has a request in flight
 
-tiers:                     # first match wins; lower number preferred;
-                           # a node matching no tier is never used
-  - match: { hostname: "ps5-*" }
-    priority: 1
-    headroom_mib: 1024
-    shared_memory: true    # GPU memory is system RAM
-    link_mb_s: 100         # used to size load timeouts. Per PS5, measured 2026-11-18 on the 2.5 GbE OMEN
-                           # link (one Gemma 12B load: about 100 to 108 MB/s). Was about 80 in total and
-                           # shared between loads on the old 1 GbE port (75 to 84 MB/s; two at once 167 s
-                           # each, three at once 246 s each). Now two at once 66 s each, three at once 77 s
-    settle: 3s
-  - match: { hostname: "alienware*" }
+tiers:                     # how nodes are ranked. First match wins; a node matching no tier is never used
+  - match: { hostname: "console-*" }   # case-insensitive hostname glob a node must match
+    priority: 1            # lower is preferred: models go to these nodes first
+    headroom_mib: 1024     # memory kept free on each node of this tier
+    shared_memory: true    # the node's GPU memory is system RAM
+    link_mb_s: 100         # link speed in MB/s, used to size load timeouts
+    settle: 3s             # how long a node is unusable after an instance releases it
+  - match: { hostname: "laptop-*" }
     priority: 2
     headroom_mib: 256      # dedicated VRAM; pre-flight gives exact figures
-    link_mb_s: 60          # measured 2026-11-17: 77 MB/s (qwen3.5-4b cold, 3.0 GB in 39 s)
-    settle: 8s             # relayed figures are measured every 5 s
-  - match: { local: true }
+    link_mb_s: 60
+    settle: 8s
+  - match: { local: true } # true matches only the host the scheduler runs on
     priority: 3
-    headroom_mib: 450      # measured 2026-11-17: nvidia-smi reports 8151 MiB but llama.cpp can use
-                           # only 7707 (a 444 MiB gap); each child on the GPU also adds ~120 MiB of
-                           # CUDA context that the load log does not show
+    headroom_mib: 450      # what the driver reports minus what llama.cpp can really use
     settle: 2s
 
-# Optional: wins over the fleet's ip/rpc_port. Not needed now. The hub patch
-# (hub-member-ip) went live on 2026-11-17 23:36 UTC and the fleet list reports
-# 10.0.0.3:50052 for the Alienware (verified on hardware: the scheduler found it
-# with no override). Uncomment only to pin a node whose fleet address is missing
-# or wrong, for example against a hub without the patch.
+# Optional: an address that wins over the one the fleet reports (ip and rpc_port).
+# Use it only to pin a node whose fleet address is missing or wrong.
 # node_overrides:
-#   alienware-llm: { rpc: "10.0.0.3:50052" }
+#   laptop-1: { rpc: "192.0.2.3:50052" }   # hostname or node id -> rpc-server address
 
 # Optional: nodes that are never used. Each entry is a node id (a MAC such as
-# 70:66:2a:a9:a7:65) or a hostname glob; matching ignores case. An excluded node
+# 02:00:00:00:00:01) or a hostname glob; matching ignores case. An excluded node
 # gets no model, is not counted in capacity checks and is never pre-flighted, but
-# it still shows in /api/status (excluded: true). The ps5-* tier keeps finding
-# every other PS5. Excluding wins over force_nodes. Excluding the local node
-# (omen-runner) means the OMEN GPU is never used.
+# it still shows in /api/status (excluded: true). The console-* tier keeps finding
+# every other console. Excluding wins over force_nodes. Excluding the local node
+# (host-1) means the host machine's GPU is never used.
 # exclude_nodes:
-#   - ps5-abc123
-#   - ps5-test*
+#   - console-test*
 
 # Optional: recovery requests (design 8.4b). OFF by default; nothing is ever sent unless enabled is true.
-# When worker health marks a remote worker "hung" (a PS5 that stopped answering), the scheduler can ask the
-# fleet manager to relay a recovery request to that node; a small service on the node polls the fleet manager,
-# acts, and reports the outcome (last_recovery_action in /api/fleet, shown as nodes[].recovery in
-# GET /api/status). The scheduler never contacts the node itself, and never sends on a stale fleet view.
-# WARNING: restart_docker and reboot interrupt EVERYTHING on that machine (every model it serves, every
-# container, every other job). Leave them out of actions unless you want that.
+# When worker health marks a remote worker "hung", the scheduler can ask the fleet manager to relay a
+# recovery request to that node; a small service on the node polls the fleet manager, acts, and reports
+# the outcome (shown as nodes[].recovery in GET /api/status). The scheduler never contacts the node itself.
+# WARNING: restart_docker and reboot interrupt EVERYTHING on that machine. Leave them out unless you want that.
 # recovery:
 #   enabled: false                 # true = send requests
 #   actions: [restart_rpc_server]  # escalation order; allowed: restart_rpc_server, restart_docker, reboot (in this order, each once)
@@ -105,120 +99,26 @@ tiers:                     # first match wins; lower number preferred;
 #   request_ttl: 45s               # how long a request stays valid at the node; at most 60s
 #   http_timeout: 3s               # timeout of the POST to the fleet manager; one retry after 10s on a 5xx or timeout
 
-profiles:
-  qwen3.5-4b:
-    model: Qwen_Qwen3.5-4B-Q4_K_M.gguf
-    ctx: 16384
-    needs_mib: 3400        # measured 2026-11-17: 3343 MiB (load log sum) on one PS5 (.122) and on
-                           # the Alienware; the GGUF estimate (4986) is 1.5x too high
+profiles:                  # what clients can ask for; the key is the model name in API requests
+  qwen3-4b:
+    model: Qwen3-4B-Q4_K_M.gguf   # model file name under models_dir
+    ctx: 16384             # context size per slot, in tokens
+    needs_mib: 3400        # measured memory need; leave it out to estimate from the model file
+    aliases: [qwen-small]  # other names that resolve to this profile
 
-  gemma-4-12b:             # bare name = the default variant
-    model: gemma-4-12b-it-Q4_K_M.gguf
+  gemma-3-12b:             # a bare name is the default variant
+    model: gemma-3-12b-it-Q4_K_M.gguf
     ctx: 8192
-    needs_mib: 7900        # measured 2026-11-18 (load log sum, ctx 8192): 7514 MiB on one PS5, 7831 on
-                           # two, 7852 on three (2026-11-17: 7514 on the OMEN alone, +124 MiB CUDA
-                           # context = 7638 in nvidia-smi); see 7.2
-    aliases: [gemma-4-12b-1pool-8k, gemma-4-12b-2pool-8k]
+    needs_mib: 7900
 
-  # Gemma is a sliding-window model: the estimate is far too high, so each
-  # variant needs a measured needs_mib (design 7.2). 8K, 48k, 64k and 96k are
-  # measured (2026-11-17 and 2026-11-18).
-  "gemma-4-12b:48k":
-    model: gemma-4-12b-it-Q4_K_M.gguf
-    ctx: 49152
-    kv_quant: q8_0
-    flash_attn: true
-    needs_mib: 8250        # measured 2026-11-18: 8206 MiB on two PS5s (load log sum)
-    aliases: [gemma-4-12b-2pool-48k]
-
-  "gemma-4-12b:64k":
-    model: gemma-4-12b-it-Q4_K_M.gguf
-    ctx: 65536
-    kv_quant: q8_0
-    flash_attn: true
-    needs_mib: 8600        # measured 2026-11-17: 8578 MiB on Alienware + OMEN (2 devices; KV 799
-                           # MiB q8_0, compute 535 + 467); one device would be about 8100
-    aliases: [gemma-4-12b-2pool-64k, gemma-4-12b-3pool-64k]
-
-  "gemma-4-12b:96k":
-    model: gemma-4-12b-it-Q4_K_M.gguf
-    ctx: 98304
-    kv_quant: q8_0
-    flash_attn: true
-    needs_mib: 9050        # measured 2026-11-18: 8998 MiB on two PS5s (load log sum)
-    aliases: [gemma-4-12b-3pool-96k]
-
-  devstral-24b:
-    model: Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf
-    ctx: 8192
-    needs_mib: 14300       # measured 2026-11-18: 14248 MiB on two PS5s (load log sum). Does not fit
-                           # one PS5 (about 13991 needed, about 13.5 GB free)
-    aliases: [devstral-24b-f16]
-
-  "devstral-24b:14k":
-    model: Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf
-    ctx: 14336
-    kv_quant: q8_0
-    flash_attn: true
-    aliases: [devstral-24b-q8, devstral-24b-3way]
-
-  "devstral-24b:24k":      # untested
-    model: Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf
-    ctx: 24576
-    kv_quant: q4_0
-    flash_attn: true
-    aliases: [devstral-24b-q4]
-
-  # Laptops-only arrangement for when no PS5 is online (design 6.1).
-  # The automatic placer cannot accept this (163 MiB to spare), so it is forced.
-  "devstral-24b:14k-laptops":
-    model: Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf
-    ctx: 14336
-    kv_quant: q8_0
-    flash_attn: true
-    force_nodes: [alienware-llm, omen-runner]
-    tensor_split: [50, 50]
-
-  tinyllama:
-    model: tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
-    ctx: 2048
-    needs_mib: 700         # measured 2026-11-17: 696 MiB on the Alienware (RPC) and on the OMEN
-    aliases: [tinyllama-ps5]
-
-  # kind: command profiles run on the local node alone. Commands are taken
-  # from omen-runner-fleet-manager/apps/llama-swap/config.yaml.
-  flux-1-schnell:
-    kind: command
-    cmd: >-
-      sd-server --listen-ip 127.0.0.1 --listen-port ${PORT}
-      --diffusion-model /models/flux/flux1-schnell-Q4_K_S.gguf
-      --clip_l /models/flux/clip_l.safetensors
-      --t5xxl /models/flux/t5-v1_1-xxl-encoder-Q4_K_S.gguf
-      --vae /models/flux/ae.safetensors
-      --steps 4 --cfg-scale 1.0 --sampling-method euler
-    check_endpoint: /v1/models   # sd-server has no /health
-    needs_mib: 7000              # PLACEHOLDER (no VRAM figure in the llama-swap README), TODO measure
-    stall_timeout: 0             # image generation sends nothing until done
-
-  flux-1-dev:
-    kind: command
-    cmd: >-
-      sd-server --listen-ip 127.0.0.1 --listen-port ${PORT}
-      --diffusion-model /models/flux-dev/flux1-dev-Q4_K_S.gguf
-      --clip_l /models/flux/clip_l.safetensors
-      --t5xxl /models/flux/t5-v1_1-xxl-encoder-Q4_K_S.gguf
-      --vae /models/flux/ae.safetensors
-      --steps 28 --cfg-scale 3.5 --sampling-method euler
-    check_endpoint: /v1/models
-    needs_mib: 7500              # PLACEHOLDER (no VRAM figure in the llama-swap README), TODO measure
-    stall_timeout: 0
-
-  large-v3-turbo:
-    kind: command
-    cmd: env -u LD_LIBRARY_PATH /opt/whisper-server/venv/bin/python /opt/whisper-server/server.py --host 127.0.0.1 --port ${PORT} --model large-v3-turbo
-    check_endpoint: /health
-    needs_mib: 5400              # 5.4 GB per the llama-swap README
-    stall_timeout: 0             # a transcription sends nothing until it finishes
+  "gemma-3-12b:32k":       # a variant: same model, other settings, addressed as name:variant
+    model: gemma-3-12b-it-Q4_K_M.gguf
+    ctx: 32768
+    kv_quant: q8_0         # key-value cache precision: f16 (default), q8_0 or q4_0; q8_0 and q4_0 need flash_attn
+    flash_attn: true       # turn flash attention on
+    allow_tiers: [1, 2]    # tier priorities this profile may use; empty means all
+    # force_nodes: [console-1, console-2]   # node ids or hostnames, in device order, instead of automatic placement
+    # tensor_split: [50, 50]                # explicit split weights, one per forced node
 
 # Benchmarks (design 9.3, runbook "Benchmarks"): test cases and groups of them ("suites") that the
 # scheduler runs through its own HTTP API, storing every result in data_dir/scheduler.db. Seeds below are
@@ -230,9 +130,9 @@ profiles:
 #   regress_decode_pct: 7      # decode tokens/s this much lower than the baseline's is flagged
 #   max_run_minutes: 240       # a run that takes longer is stopped and marked failed
 #   benchmarks:
-#     - id: tinyllama-cold     # a slug: letters, digits, . - _
-#       name: TinyLlama cold start
-#       profile: tinyllama     # a profile of this file
+#     - id: qwen-cold          # a slug: letters, digits, . - _
+#       name: Qwen 4B cold start
+#       profile: qwen3-4b      # a profile of this file
 #       cold: true             # unload first so the load is measured (default true)
 #       warmup_requests: 1     # extra request after the load, recorded separately, left out of the statistics
 #       repeats: 3             # each request is measured this many times
@@ -240,7 +140,7 @@ profiles:
 #         - {name: short, prompt: "Say hello in five words.", max_tokens: 32}
 #         - {name: streamed, prompt: "Count from one to ten.", max_tokens: 64, stream: true}   # also measures time to first token
 #     - id: gemma-cold
-#       profile: gemma-4-12b
+#       profile: gemma-3-12b
 #       repeats: 3
 #       requests:
 #         - name: summary
@@ -250,11 +150,11 @@ profiles:
 #           max_tokens: 96
 #       expect: {outcome: ready, max_load_s: 120}
 #     - id: both-at-once       # a concurrent step: these two loads start at the same moment
-#       parallel: [tinyllama-cold, gemma-cold]
+#       parallel: [qwen-cold, gemma-cold]
 #   suites:
 #     - id: smoke
 #       name: Smoke test
-#       benchmarks: [tinyllama-cold, gemma-cold, both-at-once]
+#       benchmarks: [qwen-cold, gemma-cold, both-at-once]
 #       stop_on_failure: false
 #       cooldown_s: 10         # pause between benchmarks (default 5)
 #       only_when_idle: true   # wait while anything else uses the scheduler (default true)

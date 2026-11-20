@@ -110,13 +110,13 @@ func TestRecovery_DisabledByDefaultSendsNothing(t *testing.T) {
 }
 
 func TestRecovery_HungSendsOneWellFormedRequest(t *testing.T) {
-	id := "70:66:2a:a9:a7:65"
+	id := "02:00:00:00:00:01"
 	h := hungHarness(t, id, recoveryCfg())
 	h.wantPosts(0) // the view is stale: nothing yet
 	h.goLive()
 	ps := h.wantPosts(1)
 	p := ps[0]
-	if want := testFleetURL + "/api/recovery/70%3A66%3A2a%3Aa9%3Aa7%3A65"; p.URL != want {
+	if want := testFleetURL + "/api/recovery/02%3A00%3A00%3A00%3A00%3A01"; p.URL != want {
 		t.Fatalf("url = %s, want %s", p.URL, want)
 	}
 	if p.Timeout != 3*time.Second {
@@ -444,11 +444,11 @@ func TestRecovery_NeverForTheLocalNode(t *testing.T) {
 	h.view.set(ps5("a", 2, 15000), ps5("b", 4, 15000), omen(8000))
 	h.goLive()
 	for _, p := range h.wantPosts(1) {
-		if r := p.record(t); r.TargetNodeID == "omen" || strings.HasSuffix(p.URL, "/omen") {
+		if r := p.record(t); r.TargetNodeID == "host-1" || strings.HasSuffix(p.URL, "/host-1") {
 			t.Fatalf("request for the local node: %s", p.Body)
 		}
 	}
-	if h.c.recoveryAllowed("omen") {
+	if h.c.recoveryAllowed("host-1") {
 		t.Fatal("recoveryAllowed(local) is true")
 	}
 	// A local-only profile gives the local node no worker health, so no request.

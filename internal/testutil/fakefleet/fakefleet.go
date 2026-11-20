@@ -127,7 +127,7 @@ func PS5(id, hostname, ip string, vramTotalGB, vramUsedGB, ramTotalGB, ramUsedGB
 	}
 }
 
-// Relay builds an online member relayed by the OMEN hub (role "worker",
+// Relay builds an online member relayed by the host machine hub (role "worker",
 // source "relay:omen-hub", rpc port 50052).
 func Relay(id, hostname, ip string, vramTotalGB, vramUsedGB float64) Member {
 	return Member{

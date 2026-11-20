@@ -1,8 +1,8 @@
 # llm-scheduler: fourth on-hardware test (stopped early, then re-measured after the PS5 fixes)
 
-Date: 2026-11-18. Three PS5s as rpc workers, OMEN as host, one gigabit port (the numbers marked 1 GbE were measured on that port; see "After the network upgrade" at the end).
+Date: 2026-11-18. Three PS5s as rpc workers, host machine as host, one gigabit port (the numbers marked 1 GbE were measured on that port; see "After the network upgrade" at the end).
 
-**Run 4 was stopped early by the owner.** The part before the stop was our own tester's partial run. The logs folder `logs/run4/` is partial: it was copied part way through the run and it only covers that part. The after-fix numbers on this page do not come from that folder. They come from the scheduler's log lines and from the separate benchmark agent, as marked below.
+**Run 4 was stopped early by the owner.** The part before the stop was our own tester's partial run. The run's logs folder (raw logs are not kept in the repository) is partial: it was copied part way through the run and it only covers that part. The after-fix numbers on this page do not come from that folder. They come from the scheduler's log lines and from the separate benchmark agent, as marked below.
 
 ## Verdict
 
@@ -10,7 +10,7 @@ Date: 2026-11-18. Three PS5s as rpc workers, OMEN as host, one gigabit port (the
 
 ## Part 1: before the PS5 fixes (our tester, partial run)
 
-Source: `logs/run4/` (the run was stopped when the upload bottleneck was found). Loads here ran with the PS5 tensor cache on.
+Source: the run's logs, not kept in the repository (the run was stopped when the upload bottleneck was found). Loads here ran with the PS5 tensor cache on.
 
 | Test | Placement | Load | Cache |
 |---|---|---|---|
@@ -21,7 +21,7 @@ Source: `logs/run4/` (the run was stopped when the upload bottleneck was found).
 | Devstral 24B | two PS5s | 4963 s (83 minutes) | cold |
 | Devstral 24B | two PS5s | 298 s | cached |
 
-- The `exclude_nodes` check passed in this run (`logs/run4/scheduler-exclude-check.log`, `status-X-exclude.json`).
+- The `exclude_nodes` check passed in this run (its exclude check log and status snapshot; raw logs are not kept in the repository).
 - These numbers describe a PS5 that wrote every tensor to USB storage. They are not valid for the current setup. See `BENCHMARKS.md` for the older rows, marked as measured before the fixes.
 
 ## The cause and the two PS5-side fixes
@@ -35,7 +35,7 @@ Both fixes were made on the PS5 side and are not in this repo.
 
 ### Upload speed (scheduler log and tester)
 
-- 75 to 84 MB/s in total out of the OMEN, the same for 1, 2 or 3 PS5s in one load.
+- 75 to 84 MB/s in total out of the host machine, the same for 1, 2 or 3 PS5s in one load.
 - A split model uploads to one PS5 at a time, in an order llama.cpp chooses (seen: first, third, second of the `--rpc` list).
 - Simultaneous loads share the rate:
 
@@ -132,7 +132,7 @@ The scheduler can stand in for llama-swap on port 3122. The hub polls `/running`
 
 ## After the network upgrade (2026-11-18, about 14:00 to 14:31 UTC)
 
-The OMEN's link to the PS5 switch moved from its built-in 1 GbE port to a USB-C adapter (interface `enx6c1ff7c349ea`) negotiated at 2500 Mb/s. The PS5s still have 1 GbE ports. Load times through the scheduler at ctx 2048. The "1 GbE" column is the old link, the "2.5 GbE" column is the new one.
+The host machine's link to the PS5 switch moved from its built-in 1 GbE port to a USB-C adapter (interface `enx6c1ff7c349ea`) negotiated at 2500 Mb/s. The PS5s still have 1 GbE ports. Load times through the scheduler at ctx 2048. The "1 GbE" column is the old link, the "2.5 GbE" column is the new one.
 
 | Load | 1 GbE | 2.5 GbE |
 |---|---|---|
@@ -147,4 +147,4 @@ Reading: a single stream to one PS5 is now limited by that PS5's own 1 GbE port 
 
 ## Files
 
-`logs/run4/` (partial): `config-run4*.yaml`, `scheduler-run4-all.log`, per-test `D-*`, `L-*`, `M-*` files, `status-*.json`, `fleet-sample.jsonl`, `ps5-checks.txt`, the exclude check files.
+The run produced (partial; raw logs are not kept in the repository): `config-run4*.yaml`, `scheduler-run4-all.log`, per-test `D-*`, `L-*`, `M-*` files, `status-*.json`, `fleet-sample.jsonl`, `ps5-checks.txt`, the exclude check files.

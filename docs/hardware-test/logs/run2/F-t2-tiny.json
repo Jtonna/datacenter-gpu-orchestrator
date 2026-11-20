@@ -1,1 +1,0 @@
-{"model": "tinyllama:t2", "t_sent": "15:32:09", "status": 200, "total_s": 43.44, "ttft_s": 43.22, "chunks": 32, "predicted_n": 30, "gen_tps": 128.86, "prompt_n": 18, "prompt_tps": 917.99, "text": "The word \"absolutely\" is a contraction of the two words \"absolutely\" and \"yes.\" It is commonly used to indicate"}

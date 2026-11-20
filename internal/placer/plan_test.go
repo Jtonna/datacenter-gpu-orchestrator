@@ -100,7 +100,7 @@ func TestPlan(t *testing.T) {
 			want: []string{"q", "f"}, wantVictims: []string{"i2"},
 		},
 		{
-			name: "tier rules before victims: two-victim PS5 pool over one-victim pool with the Alienware",
+			name: "tier rules before victims: two-victim PS5 pool over one-victim pool with the Nvidia laptop",
 			req:  base(Measured(20000)),
 			free: []Candidate{nd("p3", 1, 8000)},
 			ev: []Evictable{
@@ -188,8 +188,8 @@ func TestPlan(t *testing.T) {
 }
 
 func TestCheckCapacity(t *testing.T) {
-	omen := local("omen", 3, 8151-256)
-	alien := nd("alienware", 2, 7885-256)
+	omen := local("host-1", 3, 8151-256)
+	alien := nd("laptop-1", 2, 7885-256)
 	three := []Candidate{nd("a", 1, 5000), nd("b", 1, 4000), nd("c", 1, 3000)}
 	cases := []struct {
 		name     string
@@ -274,9 +274,9 @@ func TestFits(t *testing.T) {
 }
 
 func TestFromNode(t *testing.T) {
-	n := core.Node{ID: "x", Addr: "10.0.0.2:50052", Priority: 1, FreeMiB: 14000, HeadroomMiB: 1024}
+	n := core.Node{ID: "x", Addr: "192.0.2.2:50052", Priority: 1, FreeMiB: 14000, HeadroomMiB: 1024}
 	got := FromNode(n, n.LiveBudgetMiB())
-	want := Candidate{ID: "x", Addr: "10.0.0.2:50052", Priority: 1, BudgetMiB: 12976}
+	want := Candidate{ID: "x", Addr: "192.0.2.2:50052", Priority: 1, BudgetMiB: 12976}
 	if got != want {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}

@@ -20,8 +20,8 @@ import (
 // the loadStarted / loadFinished events.
 
 const (
-	workerA = "10.0.0.101:50052"
-	workerB = "10.0.0.122:50052"
+	workerA = "192.0.2.101:50052"
+	workerB = "192.0.2.122:50052"
 )
 
 type twoView struct{ fakeView }
@@ -64,7 +64,7 @@ func twoWorkerEnv(t *testing.T) *env {
 	t.Helper()
 	cfg, err := config.ParseWithOptions([]byte(`
 listen: ":0"
-fleet: {url: "http://127.0.0.1:1", local_node: omen}
+fleet: {url: "http://127.0.0.1:1", local_node: host-1}
 models_dir: /models
 tiers:
   - match: {hostname: "ps5-*"}

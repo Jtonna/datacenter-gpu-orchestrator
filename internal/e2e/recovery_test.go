@@ -16,7 +16,7 @@ func TestRecoveryRequestFlowFromHungToReset(t *testing.T) {
 	const id = "aa:bb:cc:00:00:01"
 	const encoded = "aa%3Abb%3Acc%3A00%3A00%3A01"
 	c := startCluster(t, options{
-		members:  []ps5Member{ps5(id, "ps5-062e1d84", "10.0.0.2")},
+		members:  []ps5Member{ps5(id, "ps5-a", "192.0.2.2")},
 		profiles: profilesBasic,
 		// Worker health: the heartbeat alone, silent for 3 x worker_silence with
 		// no other channel known ok, makes a worker hung (8.4a).
@@ -119,7 +119,7 @@ func TestRecoveryRequestFlowFromHungToReset(t *testing.T) {
 func TestRecoveryOffByDefaultSendsNothing(t *testing.T) {
 	const id = "aa:bb:cc:00:00:01"
 	c := startCluster(t, options{
-		members:  []ps5Member{ps5(id, "ps5-062e1d84", "10.0.0.2")},
+		members:  []ps5Member{ps5(id, "ps5-a", "192.0.2.2")},
 		profiles: profilesBasic,
 		defaults: "  worker_silence: 1s\n",
 	})

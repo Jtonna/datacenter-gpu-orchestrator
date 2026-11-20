@@ -118,7 +118,7 @@ func startCluster(t *testing.T, o options) *cluster {
 		excludeLine = "exclude_nodes: " + o.exclude + "\n"
 	}
 	cfg := fmt.Sprintf(`listen: "127.0.0.1:%d"
-fleet: {url: "%s", local_node: omen-runner, stale_after: 60s}
+fleet: {url: "%s", local_node: host-1, stale_after: 60s}
 models_dir: "%s"
 local_probe_cmd: "%s --nvidia-smi 8151 0"
 defaults:

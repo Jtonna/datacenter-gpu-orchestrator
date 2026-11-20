@@ -205,17 +205,17 @@ func TestScenario_FeedReconnectsEmpty_NodesNeverReturn_InstancesKilled(t *testin
 
 func TestScenario_CommandProfileOnLocalEvictsIdleLLMIncludingLocal(t *testing.T) {
 	h := newHarness(t).nodes(ps5("a", 2, 9000), omen(8000))
-	h.llama("llm", 13000) // a pool of the PS5 and the OMEN
+	h.llama("llm", 13000) // a pool of the PS5 and the host machine
 	h.command("whisper", 5400)
 	h.release(h.ready("llm"))
-	h.wantNodes("llm", "a", "omen")
+	h.wantNodes("llm", "a", "host-1")
 	ww := h.request("whisper")
 	h.advance(30 * time.Second) // hold passes; llm is idle: stopped
 	h.wantState("llm", "absent")
-	h.wantClaim("whisper", "omen")
-	h.advance(2 * time.Second) // the OMEN settles (2 s)
+	h.wantClaim("whisper", "host-1")
+	h.advance(2 * time.Second) // the host machine settles (2 s)
 	h.wantState("whisper", "starting")
-	h.wantNodes("whisper", "omen")
+	h.wantNodes("whisper", "host-1")
 	h.healthy("whisper")
 	h.granted(ww)
 	// The PS5 was released but not claimed.
@@ -315,8 +315,8 @@ func TestScenario_ReturnedEntryKeepsPlaceInQueue(t *testing.T) {
 	h := newHarness(t).nodes(ps5("a", 2, 15000), ps5("b", 4, 15000))
 	h.llama("m", 12000)
 	h.llama("n", 12000, func(p *core.Profile) { p.ForceNodes = []string{"a"} })
-	h.prober.fail["10.0.0.2:50052"] = probeFail("10.0.0.2:50052")
-	h.prober.fail["10.0.0.4:50052"] = probeFail("10.0.0.4:50052")
+	h.prober.fail["192.0.2.2:50052"] = probeFail("192.0.2.2:50052")
+	h.prober.fail["192.0.2.4:50052"] = probeFail("192.0.2.4:50052")
 	h.autoProbe = false
 	wm := h.request("m")
 	h.advance(time.Second)

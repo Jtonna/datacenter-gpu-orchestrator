@@ -169,7 +169,7 @@ async function changeActor() {
   const v = await promptText({
     title: 'Your name for the audit trail',
     intro: 'Every change made from this page is recorded with this name, so it is clear later who changed what. It is kept in this browser only.',
-    label: 'Name', value: getActor() === 'web' ? '' : getActor(), placeholder: 'for example jacob', maxlength: 64,
+    label: 'Name', value: getActor() === 'web' ? '' : getActor(), placeholder: 'for example alex', maxlength: 64,
   });
   if (v == null) return;
   setActor(v);

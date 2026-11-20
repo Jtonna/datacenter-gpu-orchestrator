@@ -57,16 +57,16 @@ func registerScenario(sc scenario) {
 }
 
 var scenarios = []scenario{
-	{Name: "demo", Description: "Default. qwen3.8-27b on two PS5s with 2 in flight, qwen3.5-4b on omen-runner, gemma-4-12b loading on the third PS5 (about 55%), devstral-24b queued.", Status: scDemo},
+	{Name: "demo", Description: "Default. qwen3.8-27b on two PS5s with 2 in flight, qwen3.5-4b on host-1, gemma-4-12b loading on the third PS5 (about 55%), devstral-24b queued.", Status: scDemo},
 	{Name: "empty", Description: "Nothing loaded, empty queue, all three PS5s online and free.", Status: scEmpty},
-	{Name: "ready", Description: "gemma-4-12b ready on ps5-9032a330 for 38 min, idle, 212 requests served, last request 14.2 tok/s.", Status: scReady},
-	{Name: "split", Description: "qwen3.8-27b split across all three PS5s with 2 in flight; qwen3.5-4b ready on omen-runner.", Status: scSplit},
-	{Name: "twins", Description: "devstral-24b on ps5-9032a330 and bench-devstral-24b on ps5-31bd9dc4: one model file, two instances; third PS5 free.", Status: scTwins},
+	{Name: "ready", Description: "gemma-4-12b ready on console-1 for 38 min, idle, 212 requests served, last request 14.2 tok/s.", Status: scReady},
+	{Name: "split", Description: "qwen3.8-27b split across all three PS5s with 2 in flight; qwen3.5-4b ready on host-1.", Status: scSplit},
+	{Name: "twins", Description: "devstral-24b on console-1 and bench-devstral-24b on console-2: one model file, two instances; third PS5 free.", Status: scTwins},
 	{Name: "loading", Description: "kimi-dev-72b-iq2s loading across three PS5s, measured progress about 40% (creeping), workers done / receiving / waiting, 1 waiter.", Status: scLoading},
 	{Name: "stalled", Description: "The kimi-dev-72b-iq2s load stalled (stalled_s grows from 48), second worker stuck, its node suspect with upload silent.", Status: scStalled},
 	{Name: "queued", Description: "qwen3.8-27b on three PS5s with 1 in flight; devstral-24b waiting unclaimed, gemma-4-12b claimed with qwen3.8-27b as victim; a backoff and a quarantine.", Status: scQueued},
 	{Name: "refused", Description: "gemma-4-12b ready; a failed kimi-dev-72b-iq2s load 50 s ago with a backoff; fresh requestRefused and loadFinished failed history events.", Status: scRefused},
-	{Name: "hung", Description: "qwen3.8-27b on three PS5s; ps5-31bd9dc4 hung and quarantined with a pending recovery request; ps5-407c8925 offline.", Status: scHung},
+	{Name: "hung", Description: "qwen3.8-27b on three PS5s; console-2 hung and quarantined with a pending recovery request; console-3 offline.", Status: scHung},
 	{Name: "stale", Description: "Like ready, but the fleet view is stale and disconnected (age 95 s).", Status: scStale},
 	{Name: "bare", Description: "First start on an empty database (nothing imported): the real configured false and revision 0, no profiles, no tiers (no node eligible), history off, no benchmarks, empty audit. Only with --scenario bare at startup (history cannot be switched off at runtime).", StartupOnly: true, Status: scBare},
 	{Name: "live", Description: "The real scheduler, nothing scripted: a chat request to /v1/chat/completions really loads a model through fakellama."},

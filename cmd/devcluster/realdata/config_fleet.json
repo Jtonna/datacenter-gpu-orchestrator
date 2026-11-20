@@ -1,6 +1,6 @@
 {
  "fleet": {
-  "local_node": "omen-runner",
+  "local_node": "host-1",
   "stale_after": "1m0s",
   "url": "http://host.docker.internal:8090"
  },

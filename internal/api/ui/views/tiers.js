@@ -97,7 +97,7 @@ function tierDialog(fields, initial, index, isNew) {
 
 function overrideDialog(nodes, initial) {
   const name = h('input', { class: 'input mono', type: 'text', value: initial ? initial.node : '', placeholder: 'node id or host name', list: 'known-nodes', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Node' });
-  const rpc = h('input', { class: 'input mono', type: 'text', value: initial ? initial.rpc : '', placeholder: '10.0.0.3:50052', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'RPC address' });
+  const rpc = h('input', { class: 'input mono', type: 'text', value: initial ? initial.rpc : '', placeholder: '192.0.2.3:50052', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'RPC address' });
   const err = h('span.err', { role: 'alert' });
   return dialog({
     title: initial ? 'Edit the override' : 'Add a node override',
@@ -105,11 +105,11 @@ function overrideDialog(nodes, initial) {
       h('p', 'Use this address for the rpc-server of the node instead of the one the fleet console reports.'),
       h('datalist', { id: 'known-nodes' }, nodes.map(n => h('option', { value: n.hostname || n.id }))),
       h('div.field', h('label', 'Node'), name, h('span.help', 'The node id or its host name.')),
-      h('div.field', h('label', 'RPC address'), rpc, h('span.help', 'host:port of the worker, for example 10.0.0.3:50052.'), err),
+      h('div.field', h('label', 'RPC address'), rpc, h('span.help', 'host:port of the worker, for example 192.0.2.3:50052.'), err),
       h('div.dlg-foot', button('Cancel', () => close(undefined), 'lg'), button('Apply', () => {
         const n = name.value.trim(), r = rpc.value.trim();
         if (!n) { err.textContent = 'Name the node.'; name.focus(); return; }
-        if (!/^[^\s:]+:\d{1,5}$/.test(r)) { err.textContent = 'Write the address as host:port, for example 10.0.0.3:50052.'; rpc.focus(); return; }
+        if (!/^[^\s:]+:\d{1,5}$/.test(r)) { err.textContent = 'Write the address as host:port, for example 192.0.2.3:50052.'; rpc.focus(); return; }
         close({ node: n, rpc: r });
       }, 'lg pri'))),
   });

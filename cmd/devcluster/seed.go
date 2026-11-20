@@ -69,8 +69,8 @@ func seedConfig(c *cluster, log *slog.Logger) error {
 		"comment": "temporary profile for a context-length experiment", "actor": "ctx sweep"})
 	step("mcp create scratch", err)
 
-	step("exclude test consoles", put("/api/config/exclude-nodes", asAlex.say("a test console is on the bench this week; keep every ps5-test-* out of the pool"),
-		map[string]any{"exclude_nodes": []string{"alienware-m15", "ps5-test-*"}}))
+	step("exclude test consoles", put("/api/config/exclude-nodes", asAlex.say("a test console is on the bench this week; keep every console-test-* out of the pool"),
+		map[string]any{"exclude_nodes": []string{"laptop-2", "console-test-*"}}))
 
 	_, err = s.do("PATCH", "/api/config/settings", asAlex.say("Queue longer: the nightly benchmarks hold the PS5s for a while"),
 		map[string]any{"queue_timeout": "900s", "drain_after": "45s"})
@@ -86,11 +86,11 @@ func seedConfig(c *cluster, log *slog.Logger) error {
 	_, err = s.do("PATCH", "/api/config/recovery", asCurl.say("fewer restarts: one recovery request per node every 15 minutes"), map[string]any{"min_interval": "900s"})
 	step("recovery", err)
 
-	step("node overrides", put("/api/config/node-overrides", asAlex.say("pin the Alienware's rpc port while it is on the bench"),
-		map[string]any{"node_overrides": map[string]any{"alienware-m15": map[string]any{"rpc": "10.0.0.3:50053"}}}))
+	step("node overrides", put("/api/config/node-overrides", asAlex.say("pin the Nvidia laptop's rpc port while it is on the bench"),
+		map[string]any{"node_overrides": map[string]any{"laptop-2": map[string]any{"rpc": "192.0.2.3:50053"}}}))
 
 	step("exclude back", put("/api/config/exclude-nodes", asCurl.say("test console returned"),
-		map[string]any{"exclude_nodes": []string{"alienware-m15"}}))
+		map[string]any{"exclude_nodes": []string{"laptop-2"}}))
 
 	_, err = s.do("POST", "/api/config/profiles", asAlex.say("Devstral with a 16k context for longer diffs"),
 		map[string]any{"id": "devstral-24b:16k", "model": fileDevstral, "ctx": 16384, "needs_mib": 13300, "kv_quant": "q8_0", "flash_attn": true})

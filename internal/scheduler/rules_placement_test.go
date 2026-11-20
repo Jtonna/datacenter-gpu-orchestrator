@@ -27,8 +27,8 @@ func argValue(argv []string, flag string) string {
 func TestPreflight_AllSucceed_OverrideAndSplitFromProbe(t *testing.T) {
 	h := newHarness(t).nodes(ps5("a", 2, 9000), ps5("b", 4, 9000))
 	h.llama("m", 13000)
-	h.prober.free["10.0.0.2:50052"] = 8500
-	h.prober.free["10.0.0.4:50052"] = 9500
+	h.prober.free["192.0.2.2:50052"] = 8500
+	h.prober.free["192.0.2.4:50052"] = 9500
 	h.request("m")
 	h.wantNodes("m", "a", "b")
 	argv := h.child("m").Argv()
@@ -38,7 +38,7 @@ func TestPreflight_AllSucceed_OverrideAndSplitFromProbe(t *testing.T) {
 	if got := argValue(argv, "--tensor-split"); got != "7500,8000" && got != "8000,7500" {
 		t.Fatalf("--tensor-split %q, want the smaller of fleet and pre-flight budgets, 7500 and 8000", got)
 	}
-	if got := argValue(argv, "--rpc"); !strings.Contains(got, "10.0.0.2:50052") || !strings.Contains(got, "10.0.0.4:50052") {
+	if got := argValue(argv, "--rpc"); !strings.Contains(got, "192.0.2.2:50052") || !strings.Contains(got, "192.0.2.4:50052") {
 		t.Fatalf("--rpc %q", got)
 	}
 	ns := h.c.nodes["a"]
@@ -56,7 +56,7 @@ func TestPreflight_NodeFails_QuarantinedAndReturned(t *testing.T) {
 		t.Fatalf("fixture: big on %v", h.nodesOf("big"))
 	}
 	h.cfg.Defaults.DrainAfter = time.Hour
-	h.prober.fail["10.0.0.4:50052"] = probeFail("10.0.0.4:50052")
+	h.prober.fail["192.0.2.4:50052"] = probeFail("192.0.2.4:50052")
 	h.autoProbe = false
 	h.view.modify("b", func(n *core.Node) { n.Online = false })
 	w := h.request("m") // queued: b offline, a busy
@@ -80,7 +80,7 @@ func TestPreflight_NodeFails_QuarantinedAndReturned(t *testing.T) {
 func TestPreflight_ExactFiguresDoNotFit_ReturnedAndOverrideStopsRepeat(t *testing.T) {
 	h := newHarness(t).nodes(ps5("a", 2, 15000), ps5("b", 4, 15000))
 	h.llama("m", 12000)
-	h.prober.free["10.0.0.2:50052"] = 9000 // fleet says 15000; a is really fuller
+	h.prober.free["192.0.2.2:50052"] = 9000 // fleet says 15000; a is really fuller
 	h.autoProbe = false
 	w := h.request("m")
 	first := h.nodesOf("m")
@@ -115,13 +115,13 @@ func TestPreflight_LocalNotProbed(t *testing.T) {
 func TestOverride_ExpiresAfter10Minutes(t *testing.T) {
 	h := newHarness(t).nodes(ps5("a", 2, 15000))
 	h.llama("m", 12000)
-	h.prober.free["10.0.0.2:50052"] = 9000
+	h.prober.free["192.0.2.2:50052"] = 9000
 	w := h.request("m") // returned: does not fit on the exact figure
 	h.wantState("m", "absent")
 	if got := h.c.freeMiB("a", h.viewNode("a")); got != 9000 {
 		t.Fatalf("free = %d, want override 9000", got)
 	}
-	delete(h.prober.free, "10.0.0.2:50052")
+	delete(h.prober.free, "192.0.2.2:50052")
 	h.advance(10*time.Minute - time.Second)
 	h.wantState("m", "absent")
 	h.advance(time.Second)
@@ -132,7 +132,7 @@ func TestOverride_ExpiresAfter10Minutes(t *testing.T) {
 func TestOverride_ClearedWhenInstanceReleasedAfterChildRan(t *testing.T) {
 	h := newHarness(t).nodes(ps5("a", 2, 15000))
 	h.llama("m", 8000)
-	h.prober.free["10.0.0.2:50052"] = 14000
+	h.prober.free["192.0.2.2:50052"] = 14000
 	h.release(h.ready("m"))
 	if h.c.nodes["a"].ovUntil.IsZero() {
 		t.Fatalf("no override after pre-flight")
@@ -190,7 +190,7 @@ func TestEmpty_ForgottenOnSuccessfulLoad(t *testing.T) {
 	h.llama("m", 8000)
 	ns := h.c.ns("a")
 	ns.emptyClaim, ns.hasClaim = 9000, true
-	h.prober.free["10.0.0.2:50052"] = 14000
+	h.prober.free["192.0.2.2:50052"] = 14000
 	h.ready("m")
 	if ns.hasClaim || ns.hasPF {
 		t.Fatalf("empty figures kept after a successful load: %+v", ns)
@@ -245,7 +245,7 @@ func TestCapacity_EstimatedNeedUsesOverheadAndMargin(t *testing.T) {
 	h.llama("devstral", 0)
 	h.needs["devstral"] = NeedInfo{Need: placer.Estimated(14828)}
 	h.c.nodes = map[core.NodeID]*nodeState{}
-	n1, _ := h.view.get("omen")
+	n1, _ := h.view.get("host-1")
 	n1.TotalMiB, n1.FreeMiB, n1.HeadroomMiB = 8151, 8151, 256
 	n2, _ := h.view.get("al")
 	n2.TotalMiB, n2.FreeMiB, n2.HeadroomMiB = 7885, 7885, 256
@@ -263,7 +263,7 @@ func TestEligibility_StaleView_RemoteIneligibleLocalOK(t *testing.T) {
 	h.view.stale()
 	h.advance(61 * time.Second)
 	h.request("m")
-	h.wantNodes("m", "omen")
+	h.wantNodes("m", "host-1")
 }
 
 func TestEligibility_NoAddressNotUsed(t *testing.T) {
@@ -279,7 +279,7 @@ func TestEligibility_AllowTiers(t *testing.T) {
 	h := newHarness(t).nodes(omen(8000), alien("al", 7800))
 	h.llama("m", 6000, func(p *core.Profile) { p.AllowTiers = []int{3} })
 	h.request("m")
-	h.wantNodes("m", "omen")
+	h.wantNodes("m", "host-1")
 }
 
 func TestForced_UnresolvedAndAmbiguousNamesUnavailable(t *testing.T) {
@@ -308,7 +308,7 @@ func TestForced_PlacedInConfigOrderWithProfileSplit(t *testing.T) {
 	})
 	h.request("bench")
 	argv := h.child("bench").Argv()
-	if argValue(argv, "--rpc") != "10.0.0.3:50052,10.0.0.2:50052" || argValue(argv, "--tensor-split") != "40,60" {
+	if argValue(argv, "--rpc") != "192.0.2.3:50052,192.0.2.2:50052" || argValue(argv, "--tensor-split") != "40,60" {
 		t.Fatalf("argv %v", argv)
 	}
 }
@@ -356,17 +356,17 @@ func TestLocalNode_HolderAndEvictionSurviveViewRefresh(t *testing.T) {
 	h.llama("m", 6000)
 	g := h.ready("m")
 	h.release(g)
-	h.wantNodes("m", "omen")
+	h.wantNodes("m", "host-1")
 
 	// refreshed figures, then replaced (removed and re-added) entry
-	h.view.modify("omen", func(n *core.Node) { n.FreeMiB = 1500; n.Hostname = "omen-runner" })
+	h.view.modify("host-1", func(n *core.Node) { n.FreeMiB = 1500; n.Hostname = "host-1" })
 	h.viewChanged()
-	h.view.remove("omen")
+	h.view.remove("host-1")
 	h.viewChanged()
 	h.view.set(omen(7800))
 	h.viewChanged()
-	if got := h.c.nodes["omen"].holder; got != "m" {
-		t.Fatalf("holder of omen = %q, want m", got)
+	if got := h.c.nodes["host-1"].holder; got != "m" {
+		t.Fatalf("holder of host-1 = %q, want m", got)
 	}
 	if len(h.c.nodes) != 1 {
 		t.Fatalf("ghost node ids: %v", h.c.nodes)
@@ -390,7 +390,7 @@ func TestLocalNode_HolderAndEvictionSurviveViewRefresh(t *testing.T) {
 func TestForced_NegativeBudgetStillLoadsWithClampedSplit(t *testing.T) {
 	h := newHarness(t).nodes(ps5("a", 2, 15000), alien("al", 7800))
 	h.llama("bench", 1, func(p *core.Profile) { p.ForceNodes = []string{"al", "a"} })
-	h.prober.free["10.0.0.2:50052"] = 600 // below the PS5 tier's 1000 MiB headroom
+	h.prober.free["192.0.2.2:50052"] = 600 // below the PS5 tier's 1000 MiB headroom
 	w := h.request("bench")
 	h.wantState("bench", "starting")
 	h.healthy("bench")

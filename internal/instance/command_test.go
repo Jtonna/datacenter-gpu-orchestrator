@@ -21,7 +21,7 @@ func remote(id, addr string, budget int) core.PlacedNode {
 }
 
 func local(budget int) core.PlacedNode {
-	return core.PlacedNode{ID: "omen", Local: true, BudgetMiB: budget}
+	return core.PlacedNode{ID: "host-1", Local: true, BudgetMiB: budget}
 }
 
 func llamaProfile() core.Profile {
@@ -67,26 +67,26 @@ func TestBuildArgsLlama(t *testing.T) {
 	}{
 		{"local only", llamaProfile(), core.Placement{Nodes: []core.PlacedNode{local(7000)}},
 			cat(base("5801", "8192", "1"), []string{"--device", "CUDA0"})},
-		{"one remote q8 flash", q8, core.Placement{Nodes: []core.PlacedNode{remote("ps5", "10.0.0.2:50052", 14000)}},
-			cat(base("5801", "65536", "1"), []string{"--rpc", "10.0.0.2:50052", "--device", "RPC0", "-ctk", "q8_0", "-ctv", "q8_0", "--flash-attn", "on"})},
-		{"two remotes split from budgets", llamaProfile(), core.Placement{Nodes: []core.PlacedNode{remote("a", "10.0.0.2:50052", 14000), remote("b", "10.0.0.3:50052", 7000)}},
-			cat(base("5801", "8192", "1"), []string{"--rpc", "10.0.0.2:50052,10.0.0.3:50052", "--device", "RPC0,RPC1", "--tensor-split", "14000,7000"})},
-		{"local first then remotes", llamaProfile(), core.Placement{Nodes: []core.PlacedNode{local(7895), remote("a", "10.0.0.2:50052", 14000), remote("b", "10.0.0.3:50052", 7000)}},
-			cat(base("5801", "8192", "1"), []string{"--rpc", "10.0.0.2:50052,10.0.0.3:50052", "--device", "CUDA0,RPC0,RPC1", "--tensor-split", "7895,14000,7000"})},
-		{"local in the middle counts only remotes", llamaProfile(), core.Placement{Nodes: []core.PlacedNode{remote("a", "10.0.0.2:50052", 100), local(200), remote("b", "10.0.0.3:50052", 300)}},
-			cat(base("5801", "8192", "1"), []string{"--rpc", "10.0.0.2:50052,10.0.0.3:50052", "--device", "RPC0,CUDA0,RPC1", "--tensor-split", "100,200,300"})},
+		{"one remote q8 flash", q8, core.Placement{Nodes: []core.PlacedNode{remote("ps5", "192.0.2.2:50052", 14000)}},
+			cat(base("5801", "65536", "1"), []string{"--rpc", "192.0.2.2:50052", "--device", "RPC0", "-ctk", "q8_0", "-ctv", "q8_0", "--flash-attn", "on"})},
+		{"two remotes split from budgets", llamaProfile(), core.Placement{Nodes: []core.PlacedNode{remote("a", "192.0.2.2:50052", 14000), remote("b", "192.0.2.3:50052", 7000)}},
+			cat(base("5801", "8192", "1"), []string{"--rpc", "192.0.2.2:50052,192.0.2.3:50052", "--device", "RPC0,RPC1", "--tensor-split", "14000,7000"})},
+		{"local first then remotes", llamaProfile(), core.Placement{Nodes: []core.PlacedNode{local(7895), remote("a", "192.0.2.2:50052", 14000), remote("b", "192.0.2.3:50052", 7000)}},
+			cat(base("5801", "8192", "1"), []string{"--rpc", "192.0.2.2:50052,192.0.2.3:50052", "--device", "CUDA0,RPC0,RPC1", "--tensor-split", "7895,14000,7000"})},
+		{"local in the middle counts only remotes", llamaProfile(), core.Placement{Nodes: []core.PlacedNode{remote("a", "192.0.2.2:50052", 100), local(200), remote("b", "192.0.2.3:50052", 300)}},
+			cat(base("5801", "8192", "1"), []string{"--rpc", "192.0.2.2:50052,192.0.2.3:50052", "--device", "RPC0,CUDA0,RPC1", "--tensor-split", "100,200,300"})},
 		{"parallel multiplies ctx", par, core.Placement{Nodes: []core.PlacedNode{local(7000)}},
 			cat(base("5801", "8192", "2"), []string{"--device", "CUDA0"})},
 		{"parallel zero means one", zeroPar, core.Placement{Nodes: []core.PlacedNode{local(7000)}},
 			cat(base("5801", "8192", "1"), []string{"--device", "CUDA0"})},
-		{"profile tensor split wins over budgets", forced, core.Placement{Nodes: []core.PlacedNode{remote("a", "10.0.0.2:50052", 1), remote("b", "10.0.0.3:50052", 1)}},
-			cat(base("5801", "8192", "1"), []string{"--rpc", "10.0.0.2:50052,10.0.0.3:50052", "--device", "RPC0,RPC1", "--tensor-split", "60,40"})},
-		{"placement tensor split wins", llamaProfile(), core.Placement{Nodes: []core.PlacedNode{remote("a", "10.0.0.2:50052", 1), remote("b", "10.0.0.3:50052", 1)}, TensorSplit: []int{1, 3}},
-			cat(base("5801", "8192", "1"), []string{"--rpc", "10.0.0.2:50052,10.0.0.3:50052", "--device", "RPC0,RPC1", "--tensor-split", "1,3"})},
+		{"profile tensor split wins over budgets", forced, core.Placement{Nodes: []core.PlacedNode{remote("a", "192.0.2.2:50052", 1), remote("b", "192.0.2.3:50052", 1)}},
+			cat(base("5801", "8192", "1"), []string{"--rpc", "192.0.2.2:50052,192.0.2.3:50052", "--device", "RPC0,RPC1", "--tensor-split", "60,40"})},
+		{"placement tensor split wins", llamaProfile(), core.Placement{Nodes: []core.PlacedNode{remote("a", "192.0.2.2:50052", 1), remote("b", "192.0.2.3:50052", 1)}, TensorSplit: []int{1, 3}},
+			cat(base("5801", "8192", "1"), []string{"--rpc", "192.0.2.2:50052,192.0.2.3:50052", "--device", "RPC0,RPC1", "--tensor-split", "1,3"})},
 		{"single device omits split even when one is given", forced, core.Placement{Nodes: []core.PlacedNode{local(5)}, TensorSplit: []int{100}},
 			cat(base("5801", "8192", "1"), []string{"--device", "CUDA0"})},
-		{"extra args last", extra, core.Placement{Nodes: []core.PlacedNode{remote("a", "10.0.0.2:50052", 14000)}},
-			cat(base("5801", "8192", "1"), []string{"--rpc", "10.0.0.2:50052", "--device", "RPC0", "--no-webui", "--threads", "4"})},
+		{"extra args last", extra, core.Placement{Nodes: []core.PlacedNode{remote("a", "192.0.2.2:50052", 14000)}},
+			cat(base("5801", "8192", "1"), []string{"--rpc", "192.0.2.2:50052", "--device", "RPC0", "--no-webui", "--threads", "4"})},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -108,11 +108,11 @@ func TestBuildArgsMatchesAppendixA1(t *testing.T) {
 	p.Ctx = 65536
 	p.KVQuant = "q8_0"
 	p.FlashAttn = true
-	argv, err := BuildArgs(p, core.Placement{Nodes: []core.PlacedNode{remote("ps5", "10.0.0.2:50052", 14000)}}, 5801, testOpts)
+	argv, err := BuildArgs(p, core.Placement{Nodes: []core.PlacedNode{remote("ps5", "192.0.2.2:50052", 14000)}}, 5801, testOpts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "llama-server-rpc --host 127.0.0.1 --port 5801 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 65536 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.2:50052 --device RPC0 -ctk q8_0 -ctv q8_0 --flash-attn on"
+	want := "llama-server-rpc --host 127.0.0.1 --port 5801 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 65536 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 192.0.2.2:50052 --device RPC0 -ctk q8_0 -ctv q8_0 --flash-attn on"
 	if got := RenderCommand(argv); got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
@@ -228,12 +228,12 @@ func TestRenderCommandHubRegexes(t *testing.T) {
 	p := llamaProfile()
 	p.Ctx = 4096
 	p.Parallel = 3
-	argv, err := BuildArgs(p, core.Placement{Nodes: []core.PlacedNode{remote("a", "10.0.0.2:50052", 5), remote("b", "10.0.0.3:50052", 5)}}, 5801, testOpts)
+	argv, err := BuildArgs(p, core.Placement{Nodes: []core.PlacedNode{remote("a", "192.0.2.2:50052", 5), remote("b", "192.0.2.3:50052", 5)}}, 5801, testOpts)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := RenderCommand(argv)
-	if m := rpcRe.FindStringSubmatch(s); m == nil || m[1] != "10.0.0.2:50052,10.0.0.3:50052" {
+	if m := rpcRe.FindStringSubmatch(s); m == nil || m[1] != "192.0.2.2:50052,192.0.2.3:50052" {
 		t.Errorf("rpc regex on %q: %v", s, m)
 	}
 	if m := ctxRe.FindStringSubmatch(s); m == nil || m[1] != "12288" {
@@ -286,8 +286,8 @@ func TestBuildArgsCommandKindHasNoVerbosityFlag(t *testing.T) {
 // costs ~102 MiB of the host GPU per child. A placement without the local node
 // hides the GPU from the child; one with it leaves the variable inherited.
 func TestChildEnvOverrides(t *testing.T) {
-	remoteOnly := core.Placement{Nodes: []core.PlacedNode{remote("a", "10.0.0.2:50052", 1), remote("b", "10.0.0.3:50052", 1)}}
-	withLocal := core.Placement{Nodes: []core.PlacedNode{remote("a", "10.0.0.2:50052", 1), local(1)}}
+	remoteOnly := core.Placement{Nodes: []core.PlacedNode{remote("a", "192.0.2.2:50052", 1), remote("b", "192.0.2.3:50052", 1)}}
+	withLocal := core.Placement{Nodes: []core.PlacedNode{remote("a", "192.0.2.2:50052", 1), local(1)}}
 	localOnly := core.Placement{Nodes: []core.PlacedNode{local(1)}}
 	cmdProf := core.Profile{Name: "c", Kind: core.KindCommand, Cmd: "x ${PORT}"}
 

@@ -1,5 +1,7 @@
 # UI rework: review against the real system and the reference design
 
+> The screenshots named on this page were removed from the repository; they can be regenerated with `go run ./cmd/devcluster`.
+
 The UI was built against a small scripted cluster. On the real one (three
 PS5s, 254 profiles of 13 model files, 241 of them generated benchmark
 configurations) it did not hold up. This is the record of the rework: what was
@@ -94,7 +96,7 @@ settings tables (the setting is in MiB) and in the benchmark figure tables.
   Reference: `reference-queue.png`. After: `queue-after-real.png`.
 - Wrong with real data: "Forced nodes do not fit." and the refusal paragraph.
 - Changed: each refusal is "It does not fit on the nodes it is tied to." with
-  one plain line under it ("Needs about 14.3 GB; ps5-9032a330 can give
+  one plain line under it ("Needs about 14.3 GB; console-1 can give
   12.1 GB."); the raw text is the tooltip.
 
 ### Activity
@@ -153,11 +155,11 @@ profiles and the refused requests of the history) and the formats in
 
 | The scheduler says | The page says |
 |---|---|
-| `profile …: need 19452 MiB (estimated, +5% margin; the estimate is 18525 MiB), but the nodes it is forced onto have only 12370 MiB usable in total (…) (defaults.forced_fit_check is reject)` | Needs about 19.0 GB; ps5-9032a330 can give 12.1 GB. |
-| `… split over the forced nodes, node ps5-407c8925: expected share 12724 MiB (need 32541 MiB x 34% of the split x 1.15 skew margin) but usable 12234 MiB (…)` | Needs about 31.8 GB split over its nodes. The share for ps5-407c8925 would be 12.4 GB with the safety margin, and it has 11.9 GB free. |
-| `placer: need 36885 MiB (requires 44540 MiB) exceeds cluster capacity 38442 MiB; nodes excluded by config and not counted: alienware-llm, omen-runner` | Needs 36.0 GB (43.5 GB with the safety margins); the whole cluster holds 37.5 GB. Not counted, because excluded: alienware-llm and omen-runner. |
-| `node alienware-llm is excluded by config; node omen-runner is excluded by config` | The nodes that could take it (alienware-llm and omen-runner) are excluded from use. |
-| `placer: need 7500 MiB (requires 7500 MiB) exceeds cluster capacity 0 MiB; nodes excluded by config and not counted: omen-runner` | No node can run it: omen-runner is excluded from use. |
+| `profile …: need 19452 MiB (estimated, +5% margin; the estimate is 18525 MiB), but the nodes it is forced onto have only 12370 MiB usable in total (…) (defaults.forced_fit_check is reject)` | Needs about 19.0 GB; console-1 can give 12.1 GB. |
+| `… split over the forced nodes, node console-3: expected share 12724 MiB (need 32541 MiB x 34% of the split x 1.15 skew margin) but usable 12234 MiB (…)` | Needs about 31.8 GB split over its nodes. The share for console-3 would be 12.4 GB with the safety margin, and it has 11.9 GB free. |
+| `placer: need 36885 MiB (requires 44540 MiB) exceeds cluster capacity 38442 MiB; nodes excluded by config and not counted: laptop-1, host-1` | Needs 36.0 GB (43.5 GB with the safety margins); the whole cluster holds 37.5 GB. Not counted, because excluded: laptop-1 and host-1. |
+| `node laptop-1 is excluded by config; node host-1 is excluded by config` | The nodes that could take it (laptop-1 and host-1) are excluded from use. |
+| `placer: need 7500 MiB (requires 7500 MiB) exceeds cluster capacity 0 MiB; nodes excluded by config and not counted: host-1` | No node can run it: host-1 is excluded from use. |
 
 ## The three passes
 

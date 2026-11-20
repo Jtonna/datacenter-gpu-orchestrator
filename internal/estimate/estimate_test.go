@@ -111,12 +111,12 @@ func TestFitsMeasuredBoundary(t *testing.T) {
 // Worked checks from design section 7.2.
 func TestWorkedChecks(t *testing.T) {
 	omen, alien := 7895, 7629 // 8151-256, 7885-256
-	t.Run("gemma OMEN alone fits", func(t *testing.T) {
+	t.Run("gemma host machine alone fits", func(t *testing.T) {
 		if !FitsMeasured([]int{omen}, 7800) {
 			t.Fatal("want fit")
 		}
 	})
-	t.Run("gemma Alienware alone does not fit", func(t *testing.T) {
+	t.Run("gemma Nvidia laptop alone does not fit", func(t *testing.T) {
 		if FitsMeasured([]int{alien}, 7800) {
 			t.Fatal("want no fit")
 		}

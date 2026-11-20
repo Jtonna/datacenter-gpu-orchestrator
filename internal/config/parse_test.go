@@ -44,7 +44,7 @@ func TestParseOverridesDefaultsIncludingZero(t *testing.T) {
 listen: ":9"
 models_dir: /m
 local_probe_cmd: fake-smi
-fleet: {url: "http://x:1", local_node: omen, stale_after: 5s}
+fleet: {url: "http://x:1", local_node: host-1, stale_after: 5s}
 defaults:
   ttl: 0
   command_load_timeout: 2s
@@ -57,12 +57,12 @@ tiers:
     link_mb_s: 11
     settle: 3s
 node_overrides:
-  alien: { rpc: "10.0.0.3:50052" }
+  alien: { rpc: "192.0.2.3:50052" }
 `)
 	if c.Listen != ":9" || c.ModelsDir != "/m" || c.LocalProbeCmd != "fake-smi" {
 		t.Errorf("top-level: %+v", c)
 	}
-	if c.Fleet.URL != "http://x:1" || c.Fleet.LocalNode != "omen" || c.Fleet.StaleAfter != 5*time.Second {
+	if c.Fleet.URL != "http://x:1" || c.Fleet.LocalNode != "host-1" || c.Fleet.StaleAfter != 5*time.Second {
 		t.Errorf("fleet: %+v", c.Fleet)
 	}
 	if c.Defaults.TTL != 0 || c.Defaults.CommandLoadTimeout != 2*time.Second || c.Defaults.MaxPool != 2 {
@@ -81,7 +81,7 @@ node_overrides:
 	if tr.Match.Hostname != "ps5-*" || tr.Match.Local == nil || *tr.Match.Local {
 		t.Errorf("match: %+v", tr.Match)
 	}
-	if c.NodeOverrides["alien"].RPC != "10.0.0.3:50052" {
+	if c.NodeOverrides["alien"].RPC != "192.0.2.3:50052" {
 		t.Errorf("overrides: %+v", c.NodeOverrides)
 	}
 }

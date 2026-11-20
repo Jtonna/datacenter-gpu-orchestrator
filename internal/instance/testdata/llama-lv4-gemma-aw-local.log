@@ -1,5 +1,5 @@
 # Buffer-size lines in the exact format llama-server prints at -lv 4, for
-# gemma-4-12b on Alienware (RPC) + OMEN (CUDA0), 2026-11-17. The model lines
+# gemma-4-12b on Nvidia laptop (RPC) + host machine (CUDA0), 2026-11-17. The model lines
 # are real (see llama-lv4-ps5-aw-pool.log for the verbatim originals); the KV
 # and compute figures are the ones /api/status reported for this run
 # (docs/hardware-test/logs/status-E-gemma-aw-local.json), written back in the
@@ -7,13 +7,13 @@
 0.00.413.421 I load_tensors: loading model tensors, this can take a while... (load_mode = mmap)
 0.01.119.244 I load_tensors: offloaded 49/49 layers to GPU
 0.01.119.247 I load_tensors:   CPU_Mapped model buffer size =   540.00 MiB
-0.01.119.248 I load_tensors: RPC0[10.0.0.3:50052] model buffer size =  3118.45 MiB
+0.01.119.248 I load_tensors: RPC0[192.0.2.3:50052] model buffer size =  3118.45 MiB
 0.01.119.248 I load_tensors:        CUDA0 model buffer size =  3658.46 MiB
 0.01.311.100 I llama_kv_cache:        CUDA0 KV buffer size =   152.00 MiB
-0.01.311.101 I llama_kv_cache: RPC0[10.0.0.3:50052] KV buffer size =   152.00 MiB
+0.01.311.101 I llama_kv_cache: RPC0[192.0.2.3:50052] KV buffer size =   152.00 MiB
 0.01.311.200 I llama_kv_cache:        CUDA0 KV buffer size =   152.00 MiB
-0.01.311.201 I llama_kv_cache: RPC0[10.0.0.3:50052] KV buffer size =   152.00 MiB
+0.01.311.201 I llama_kv_cache: RPC0[192.0.2.3:50052] KV buffer size =   152.00 MiB
 0.01.312.028 I sched_reserve: reserving ...
 0.01.315.300 I sched_reserve:        CUDA0 compute buffer size =   189.07 MiB
-0.01.315.301 I sched_reserve: RPC0[10.0.0.3:50052] compute buffer size =   256.59 MiB
+0.01.315.301 I sched_reserve: RPC0[192.0.2.3:50052] compute buffer size =   256.59 MiB
 0.01.315.302 I sched_reserve:          CPU compute buffer size =   113.11 MiB

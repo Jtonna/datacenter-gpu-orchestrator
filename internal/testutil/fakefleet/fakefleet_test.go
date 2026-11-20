@@ -26,8 +26,8 @@ func get(t *testing.T, url string) (int, []byte) {
 func TestFleetEnvelopeAndMembers(t *testing.T) {
 	f := fakefleet.New(t)
 	f.SetMembers(
-		fakefleet.PS5("a8:5e", "ps5-1", "10.0.0.2", 12, 4.5, 14.1, 3.2),
-		fakefleet.Relay("alienware-llm", "alienware-llm", "10.0.0.12", 8, 2),
+		fakefleet.PS5("a8:5e", "ps5-1", "192.0.2.2", 12, 4.5, 14.1, 3.2),
+		fakefleet.Relay("laptop-1", "laptop-1", "192.0.2.12", 8, 2),
 	)
 	code, body := get(t, f.URL()+"/api/fleet")
 	if code != 200 {
@@ -54,7 +54,7 @@ func TestFleetEnvelopeAndMembers(t *testing.T) {
 
 func TestNodeEndpoint(t *testing.T) {
 	f := fakefleet.New(t)
-	f.SetMembers(fakefleet.PS5("a8:5e:45", "ps5-1", "10.0.0.2", 12, 4.5, 14.1, 3.2))
+	f.SetMembers(fakefleet.PS5("a8:5e:45", "ps5-1", "192.0.2.2", 12, 4.5, 14.1, 3.2))
 	code, body := get(t, f.URL()+"/api/nodes/a8:5e:45")
 	if code != 200 || !strings.Contains(string(body), `"hostname":"ps5-1"`) {
 		t.Fatalf("%d %s", code, body)
@@ -66,7 +66,7 @@ func TestNodeEndpoint(t *testing.T) {
 
 func TestSSEConnectPushPingDrop(t *testing.T) {
 	f := fakefleet.New(t)
-	f.SetMembers(fakefleet.PS5("p1", "ps5-1", "10.0.0.2", 12, 1, 14, 1))
+	f.SetMembers(fakefleet.PS5("p1", "ps5-1", "192.0.2.2", 12, 1, 14, 1))
 	resp, err := http.Get(f.URL() + "/api/stream?topics=fleet,models")
 	if err != nil {
 		t.Fatal(err)
@@ -149,10 +149,10 @@ func recBody(id, nonce string, expires int64) string {
 
 func TestRecoveryEndpoint(t *testing.T) {
 	f := fakefleet.New(t)
-	id := "70:66:2a:a9:a7:65"
-	f.SetMembers(fakefleet.PS5(id, "ps5-1", "10.0.0.2", 12, 4.5, 14.1, 3.2))
+	id := "02:00:00:00:00:01"
+	f.SetMembers(fakefleet.PS5(id, "ps5-1", "192.0.2.2", 12, 4.5, 14.1, 3.2))
 	soon := time.Now().Add(time.Minute).UnixMilli()
-	enc := "70%3A66%3A2a%3Aa9%3Aa7%3A65"
+	enc := "02%3A00%3A00%3A00%3A00%3A01"
 	if got := postRecovery(t, f.URL(), enc, recBody(id, "n1", soon)); got != 200 {
 		t.Fatalf("stored = %d", got)
 	}
@@ -193,7 +193,7 @@ func TestRecoveryEndpoint(t *testing.T) {
 
 func TestLastRecoveryActionOnAMember(t *testing.T) {
 	f := fakefleet.New(t)
-	f.SetMembers(fakefleet.PS5("a", "ps5-1", "10.0.0.2", 12, 4.5, 14.1, 3.2))
+	f.SetMembers(fakefleet.PS5("a", "ps5-1", "192.0.2.2", 12, 4.5, 14.1, 3.2))
 	_, body := get(t, f.URL()+"/api/fleet")
 	if !strings.Contains(string(body), `"last_recovery_action":null`) {
 		t.Fatalf("want null by default: %s", body)

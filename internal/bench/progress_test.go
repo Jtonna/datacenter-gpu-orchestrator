@@ -179,7 +179,7 @@ func TestProgressOfALoadOnlyBenchmarkFollowsTheLoad(t *testing.T) {
 	ar.cur = 0
 	tr := newTrack(b, 0, nil)
 	tr.cur, tr.useDirect, tr.direct = 0, true, 0.37
-	tr.load = json.RawMessage(`{"progress":0.37,"workers":[{"addr":"10.0.0.2:50052","bytes_total":10,"bytes_sent":4}]}`)
+	tr.load = json.RawMessage(`{"progress":0.37,"workers":[{"addr":"192.0.2.2:50052","bytes_total":10,"bytes_sent":4}]}`)
 	ar.tracks["b"] = tr
 	d := docOf(t, tm, ar)
 	cur := d["current"].(map[string]any)

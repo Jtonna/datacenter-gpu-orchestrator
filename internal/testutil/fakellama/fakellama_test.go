@@ -189,7 +189,7 @@ func readStartLog(t *testing.T, path string) []map[string]any {
 var deviceLine = regexp.MustCompile(`^  (\S+): (.+) \((\d+) MiB, (\d+) MiB free\)$`)
 
 func TestListDevicesDefaultHasOneRPCDevicePerEndpointPlusCUDA(t *testing.T) {
-	out, code := listDevices(t, nil, "--rpc", "10.0.0.2:50052,10.0.0.3:50052")
+	out, code := listDevices(t, nil, "--rpc", "192.0.2.2:50052,192.0.2.3:50052")
 	if code != 0 {
 		t.Fatalf("exit code %d, output %q", code, out)
 	}
@@ -299,7 +299,7 @@ func TestStartLogAppendsOneLinePerStart(t *testing.T) {
 func TestUnknownFlagsWithAndWithoutValuesAreTolerated(t *testing.T) {
 	_, base := startHealthy(t, nil,
 		"--tensor-split", "60,40", "--ctx-size", "8192", "--parallel", "2",
-		"--rpc", "10.0.0.2:50052", "--device", "RPC0",
+		"--rpc", "192.0.2.2:50052", "--device", "RPC0",
 		"--some-future-flag", "--another", "value", "--neg", "-1", "-x", "--eq=1")
 	if code, _ := getJSON(t, base+"/props"); code != 200 {
 		t.Fatalf("props %d", code)
@@ -547,11 +547,11 @@ func TestFakeNvidiaSmiMode(t *testing.T) {
 }
 
 func TestListDevicesHangOnlyForNamedEndpoints(t *testing.T) {
-	env := map[string]string{"FAKELLAMA_LIST_DEVICES_HANG_ADDR": "10.0.0.2:50052, 10.0.0.9:50052"}
-	hung := startProc(t, env, "--rpc", "10.0.0.2:50052", "--list-devices")
-	ok := startProc(t, env, "--rpc", "10.0.0.4:50052", "--list-devices")
+	env := map[string]string{"FAKELLAMA_LIST_DEVICES_HANG_ADDR": "192.0.2.2:50052, 192.0.2.9:50052"}
+	hung := startProc(t, env, "--rpc", "192.0.2.2:50052", "--list-devices")
+	ok := startProc(t, env, "--rpc", "192.0.2.4:50052", "--list-devices")
 	ok.waitExit(t)
-	if !strings.Contains(ok.stdout.String(), "RPC0: 10.0.0.4:50052") {
+	if !strings.Contains(ok.stdout.String(), "RPC0: 192.0.2.4:50052") {
 		t.Fatalf("unlisted endpoint should answer, got %q", ok.stdout.String())
 	}
 	time.Sleep(300 * time.Millisecond)

@@ -21,7 +21,7 @@ func TestRunning_DrainingShownAsReady_CmdRendered(t *testing.T) {
 		t.Fatalf("running %+v", got)
 	}
 	if !strings.HasPrefix(got[0].Cmd, "llama-server-rpc --host 127.0.0.1 --port 5801 --model /models/big.gguf") ||
-		!strings.Contains(got[0].Cmd, "--rpc 10.0.0.2:50052 --device RPC0") || !strings.Contains(got[0].Cmd, "--ctx-size 4096") {
+		!strings.Contains(got[0].Cmd, "--rpc 192.0.2.2:50052 --device RPC0") || !strings.Contains(got[0].Cmd, "--ctx-size 4096") {
 		t.Fatalf("cmd %q", got[0].Cmd)
 	}
 	_ = g
@@ -83,8 +83,8 @@ func TestStatus_LoadLogMatchedToNodesByEndpoint(t *testing.T) {
 	h.request("m")
 	ch := h.child("m")
 	ch.load = instance.LoadStats{Devices: []instance.DeviceMem{
-		{Name: "RPC0[10.0.0.4:50052]", ModelMiB: 4000, KVMiB: 500, ComputeMiB: 300},
-		{Name: "RPC0[10.0.0.2:50052]", ModelMiB: 3000, KVMiB: 400, ComputeMiB: 200},
+		{Name: "RPC0[192.0.2.4:50052]", ModelMiB: 4000, KVMiB: 500, ComputeMiB: 300},
+		{Name: "RPC0[192.0.2.2:50052]", ModelMiB: 3000, KVMiB: 400, ComputeMiB: 200},
 		{Name: "CUDA0", ModelMiB: 2000, KVMiB: 100, ComputeMiB: 100},
 		{Name: "CPU", Host: true, ModelMiB: 300},
 	}}
@@ -103,8 +103,8 @@ func TestStatus_LoadLogMatchedToNodesByEndpoint(t *testing.T) {
 	if m := byID["a"].Memory; len(m) != 1 || m[0].TotalMiB != 3600 {
 		t.Fatalf("a memory %+v", m)
 	}
-	if m := byID["omen"].Memory; len(m) != 1 || m[0].Name != "CUDA0" {
-		t.Fatalf("omen memory %+v", m)
+	if m := byID["host-1"].Memory; len(m) != 1 || m[0].Name != "CUDA0" {
+		t.Fatalf("host-1 memory %+v", m)
 	}
 	if len(in.HostMemory) != 1 || in.DeviceTotalMiB != 4800+3600+2200 {
 		t.Fatalf("host %+v total %v", in.HostMemory, in.DeviceTotalMiB)
@@ -195,7 +195,7 @@ func TestRunning_PreflightCmdHasNoFakePort(t *testing.T) {
 			t.Errorf("%s: cmd shows a fake port: %q", r.Profile, r.Cmd)
 		}
 	}
-	if m := got[0]; m.Profile != "m" || !strings.Contains(m.Cmd, "--rpc 10.0.0.2:50052") || !strings.Contains(m.Cmd, "--ctx-size 4096") {
+	if m := got[0]; m.Profile != "m" || !strings.Contains(m.Cmd, "--rpc 192.0.2.2:50052") || !strings.Contains(m.Cmd, "--ctx-size 4096") {
 		t.Errorf("llama pre-flight cmd %q", m.Cmd)
 	}
 	if got[1].Cmd != "" {

@@ -1,7 +1,7 @@
 {
  "exclude_nodes": [
-  "omen-runner",
-  "alienware*"
+  "host-1",
+  "laptop-*"
  ],
  "revision": 1
 }

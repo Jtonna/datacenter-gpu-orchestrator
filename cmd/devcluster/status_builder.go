@@ -39,7 +39,7 @@ func newStatus(now time.Time) *statusBuilder {
 			Priority: n.Priority, Eligible: true, TotalMiB: n.TotalMiB, EmptyMiB: n.TotalMiB, PlanBudgetMiB: n.Budget()}
 		if n.Host == alien.Host {
 			ns.Excluded, ns.Eligible = true, false
-			ns.Addr = "10.0.0.3:50052"
+			ns.Addr = "192.0.2.3:50052"
 			ns.PlanBudgetMiB = n.TotalMiB - n.Headroom
 		}
 		b.nodes[n.Host] = ns

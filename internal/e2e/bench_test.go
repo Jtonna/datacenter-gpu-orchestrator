@@ -24,7 +24,7 @@ func benchCluster(t *testing.T) *cluster {
 	dir := t.TempDir()
 	top := "data_dir: \"" + filepath.ToSlash(filepath.Join(dir, "data")) + "\"\nhistory_dir: \"" + filepath.ToSlash(filepath.Join(dir, "history")) + "\"\n"
 	o := options{profiles: benchProfiles, topLevel: top}
-	o.members = append(o.members, ps5(psA, "ps5-062e1d84", "10.0.0.2"))
+	o.members = append(o.members, ps5(psA, "ps5-a", "192.0.2.2"))
 	return startCluster(t, o)
 }
 
@@ -165,7 +165,7 @@ collect:
 // With the bench_enabled setting off the feature is off and the rest works.
 func TestBenchOffWhenSettingOff(t *testing.T) {
 	o := options{profiles: profilesBasic, topLevel: "bench:\n  enabled: false\n"}
-	o.members = append(o.members, ps5(psA, "ps5-062e1d84", "10.0.0.2"))
+	o.members = append(o.members, ps5(psA, "ps5-a", "192.0.2.2"))
 	c := startCluster(t, o)
 	st, b, _ := c.do("GET", "/api/bench/suites", "")
 	if st != 503 {
@@ -328,9 +328,9 @@ func TestBenchLoadPhaseRefusedAfterAccept(t *testing.T) {
     model: forced-big.gguf
     ctx: 4096
     needs_mib: 40000
-    force_nodes: [ps5-062e1d84]
+    force_nodes: [ps5-a]
 `, topLevel: top, defaults: "  forced_fit_check: reject\n"}
-	o.members = append(o.members, ps5(psA, "ps5-062e1d84", "10.0.0.2"))
+	o.members = append(o.members, ps5(psA, "ps5-a", "192.0.2.2"))
 	c := startCluster(t, o)
 
 	mustStatus(t, c, "POST", "/api/bench/benchmarks", `{"id":"forced-load","name":"Forced load","profile":"forced-big","timeout_s":30,

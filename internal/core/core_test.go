@@ -8,8 +8,8 @@ func TestNodeLiveBudgetMiB(t *testing.T) {
 		node Node
 		want int
 	}{
-		{"omen empty", Node{FreeMiB: 8151, HeadroomMiB: 256}, 7895},
-		{"alienware empty", Node{FreeMiB: 7885, HeadroomMiB: 256}, 7629},
+		{"host empty", Node{FreeMiB: 8151, HeadroomMiB: 256}, 7895},
+		{"laptop empty", Node{FreeMiB: 7885, HeadroomMiB: 256}, 7629},
 		{"below headroom is negative", Node{FreeMiB: 100, HeadroomMiB: 256}, -156},
 		{"no headroom", Node{FreeMiB: 500}, 500},
 	}

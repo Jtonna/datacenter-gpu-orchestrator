@@ -3,8 +3,8 @@
   "b-devstral-2ps5": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "3h0m0s",
    "model": "Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf",
@@ -16,9 +16,9 @@
   "b-devstral-3ps5": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "3h0m0s",
    "model": "Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf",
@@ -31,7 +31,7 @@
   "b-gemma-1ps5": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "3h0m0s",
    "model": "gemma-4-12b-it-Q4_K_M.gguf"
@@ -39,7 +39,7 @@
   "b-gemma-1ps5c": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "3h0m0s",
    "model": "gemma-4-12b-it-Q4_K_M.gguf"
@@ -47,8 +47,8 @@
   "b-gemma-2ps5": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "3h0m0s",
    "model": "gemma-4-12b-it-Q4_K_M.gguf",
@@ -60,8 +60,8 @@
   "b-qwen27-2ps5": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "3h0m0s",
    "model": "Qwen3.8-27B-Q4_K_M.gguf",
@@ -73,9 +73,9 @@
   "b-qwen27-3ps5": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "3h0m0s",
    "model": "Qwen3.8-27B-Q4_K_M.gguf",
@@ -88,7 +88,7 @@
   "b-qwen4b-1ps5": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "3h0m0s",
    "model": "Qwen_Qwen3.5-4B-Q4_K_M.gguf"
@@ -96,8 +96,8 @@
   "b-qwen4b-2ps5": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "3h0m0s",
    "model": "Qwen_Qwen3.5-4B-Q4_K_M.gguf",
@@ -109,7 +109,7 @@
   "b-qwen4b-ps5b": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "3h0m0s",
    "model": "Qwen_Qwen3.5-4B-Q4_K_M.gguf"
@@ -117,7 +117,7 @@
   "b-qwen4b-ps5c": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "3h0m0s",
    "model": "Qwen_Qwen3.5-4B-Q4_K_M.gguf"
@@ -125,7 +125,7 @@
   "bench-deepseek-v2-lite-1a-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "DeepSeek-V2-Lite-Chat.Q4_K_M.gguf"
@@ -133,7 +133,7 @@
   "bench-deepseek-v2-lite-1a-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "DeepSeek-V2-Lite-Chat.Q4_K_M.gguf"
@@ -141,7 +141,7 @@
   "bench-deepseek-v2-lite-1a-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "DeepSeek-V2-Lite-Chat.Q4_K_M.gguf"
@@ -149,7 +149,7 @@
   "bench-deepseek-v2-lite-1b-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "DeepSeek-V2-Lite-Chat.Q4_K_M.gguf"
@@ -157,7 +157,7 @@
   "bench-deepseek-v2-lite-1b-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "DeepSeek-V2-Lite-Chat.Q4_K_M.gguf"
@@ -165,7 +165,7 @@
   "bench-deepseek-v2-lite-1b-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "DeepSeek-V2-Lite-Chat.Q4_K_M.gguf"
@@ -173,7 +173,7 @@
   "bench-deepseek-v2-lite-1c-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "DeepSeek-V2-Lite-Chat.Q4_K_M.gguf"
@@ -181,7 +181,7 @@
   "bench-deepseek-v2-lite-1c-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "DeepSeek-V2-Lite-Chat.Q4_K_M.gguf"
@@ -189,7 +189,7 @@
   "bench-deepseek-v2-lite-1c-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "DeepSeek-V2-Lite-Chat.Q4_K_M.gguf"
@@ -197,8 +197,8 @@
   "bench-deepseek-v2-lite-2-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "DeepSeek-V2-Lite-Chat.Q4_K_M.gguf",
@@ -210,8 +210,8 @@
   "bench-deepseek-v2-lite-2-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "DeepSeek-V2-Lite-Chat.Q4_K_M.gguf",
@@ -223,8 +223,8 @@
   "bench-deepseek-v2-lite-2-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "DeepSeek-V2-Lite-Chat.Q4_K_M.gguf",
@@ -236,9 +236,9 @@
   "bench-deepseek-v2-lite-3-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "DeepSeek-V2-Lite-Chat.Q4_K_M.gguf",
@@ -251,9 +251,9 @@
   "bench-deepseek-v2-lite-3-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "DeepSeek-V2-Lite-Chat.Q4_K_M.gguf",
@@ -266,9 +266,9 @@
   "bench-deepseek-v2-lite-3-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "DeepSeek-V2-Lite-Chat.Q4_K_M.gguf",
@@ -296,7 +296,7 @@
   "bench-devstral24b-1a-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf"
@@ -304,7 +304,7 @@
   "bench-devstral24b-1a-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf"
@@ -312,7 +312,7 @@
   "bench-devstral24b-1a-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf"
@@ -320,7 +320,7 @@
   "bench-devstral24b-1b-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf"
@@ -328,7 +328,7 @@
   "bench-devstral24b-1b-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf"
@@ -336,7 +336,7 @@
   "bench-devstral24b-1b-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf"
@@ -344,7 +344,7 @@
   "bench-devstral24b-1c-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf"
@@ -352,7 +352,7 @@
   "bench-devstral24b-1c-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf"
@@ -360,7 +360,7 @@
   "bench-devstral24b-1c-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf"
@@ -368,8 +368,8 @@
   "bench-devstral24b-2-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf",
@@ -381,8 +381,8 @@
   "bench-devstral24b-2-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf",
@@ -394,8 +394,8 @@
   "bench-devstral24b-2-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf",
@@ -407,9 +407,9 @@
   "bench-devstral24b-3-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf",
@@ -422,9 +422,9 @@
   "bench-devstral24b-3-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf",
@@ -437,9 +437,9 @@
   "bench-devstral24b-3-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf",
@@ -467,7 +467,7 @@
   "bench-gemma12b-1a-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "gemma-4-12b-it-Q4_K_M.gguf"
@@ -475,7 +475,7 @@
   "bench-gemma12b-1a-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "gemma-4-12b-it-Q4_K_M.gguf"
@@ -483,7 +483,7 @@
   "bench-gemma12b-1a-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "gemma-4-12b-it-Q4_K_M.gguf"
@@ -491,7 +491,7 @@
   "bench-gemma12b-1b-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "gemma-4-12b-it-Q4_K_M.gguf"
@@ -499,7 +499,7 @@
   "bench-gemma12b-1b-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "gemma-4-12b-it-Q4_K_M.gguf"
@@ -507,7 +507,7 @@
   "bench-gemma12b-1b-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "gemma-4-12b-it-Q4_K_M.gguf"
@@ -515,7 +515,7 @@
   "bench-gemma12b-1c-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "gemma-4-12b-it-Q4_K_M.gguf"
@@ -523,7 +523,7 @@
   "bench-gemma12b-1c-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "gemma-4-12b-it-Q4_K_M.gguf"
@@ -531,7 +531,7 @@
   "bench-gemma12b-1c-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "gemma-4-12b-it-Q4_K_M.gguf"
@@ -539,8 +539,8 @@
   "bench-gemma12b-2-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "gemma-4-12b-it-Q4_K_M.gguf",
@@ -552,8 +552,8 @@
   "bench-gemma12b-2-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "gemma-4-12b-it-Q4_K_M.gguf",
@@ -565,8 +565,8 @@
   "bench-gemma12b-2-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "gemma-4-12b-it-Q4_K_M.gguf",
@@ -578,9 +578,9 @@
   "bench-gemma12b-3-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "gemma-4-12b-it-Q4_K_M.gguf",
@@ -593,9 +593,9 @@
   "bench-gemma12b-3-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "gemma-4-12b-it-Q4_K_M.gguf",
@@ -608,9 +608,9 @@
   "bench-gemma12b-3-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "gemma-4-12b-it-Q4_K_M.gguf",
@@ -638,7 +638,7 @@
   "bench-glm4-32b-1a-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "THUDM_GLM-4-32B-0414-Q4_K_M.gguf"
@@ -646,7 +646,7 @@
   "bench-glm4-32b-1a-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "THUDM_GLM-4-32B-0414-Q4_K_M.gguf"
@@ -654,7 +654,7 @@
   "bench-glm4-32b-1a-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "THUDM_GLM-4-32B-0414-Q4_K_M.gguf"
@@ -662,7 +662,7 @@
   "bench-glm4-32b-1b-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "THUDM_GLM-4-32B-0414-Q4_K_M.gguf"
@@ -670,7 +670,7 @@
   "bench-glm4-32b-1b-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "THUDM_GLM-4-32B-0414-Q4_K_M.gguf"
@@ -678,7 +678,7 @@
   "bench-glm4-32b-1b-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "THUDM_GLM-4-32B-0414-Q4_K_M.gguf"
@@ -686,7 +686,7 @@
   "bench-glm4-32b-1c-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "THUDM_GLM-4-32B-0414-Q4_K_M.gguf"
@@ -694,7 +694,7 @@
   "bench-glm4-32b-1c-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "THUDM_GLM-4-32B-0414-Q4_K_M.gguf"
@@ -702,7 +702,7 @@
   "bench-glm4-32b-1c-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "THUDM_GLM-4-32B-0414-Q4_K_M.gguf"
@@ -710,8 +710,8 @@
   "bench-glm4-32b-2-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "THUDM_GLM-4-32B-0414-Q4_K_M.gguf",
@@ -723,8 +723,8 @@
   "bench-glm4-32b-2-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "THUDM_GLM-4-32B-0414-Q4_K_M.gguf",
@@ -736,8 +736,8 @@
   "bench-glm4-32b-2-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "THUDM_GLM-4-32B-0414-Q4_K_M.gguf",
@@ -749,9 +749,9 @@
   "bench-glm4-32b-3-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "THUDM_GLM-4-32B-0414-Q4_K_M.gguf",
@@ -764,9 +764,9 @@
   "bench-glm4-32b-3-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "THUDM_GLM-4-32B-0414-Q4_K_M.gguf",
@@ -779,9 +779,9 @@
   "bench-glm4-32b-3-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "THUDM_GLM-4-32B-0414-Q4_K_M.gguf",
@@ -809,8 +809,8 @@
   "bench-kimi-dev-72b-iq2s-2-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "moonshotai_Kimi-Dev-72B-IQ2_S.gguf",
@@ -822,8 +822,8 @@
   "bench-kimi-dev-72b-iq2s-2-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "moonshotai_Kimi-Dev-72B-IQ2_S.gguf",
@@ -835,8 +835,8 @@
   "bench-kimi-dev-72b-iq2s-2-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "moonshotai_Kimi-Dev-72B-IQ2_S.gguf",
@@ -848,9 +848,9 @@
   "bench-kimi-dev-72b-iq2s-3-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "moonshotai_Kimi-Dev-72B-IQ2_S.gguf",
@@ -863,9 +863,9 @@
   "bench-kimi-dev-72b-iq2s-3-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "moonshotai_Kimi-Dev-72B-IQ2_S.gguf",
@@ -878,9 +878,9 @@
   "bench-kimi-dev-72b-iq2s-3-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "moonshotai_Kimi-Dev-72B-IQ2_S.gguf",
@@ -908,7 +908,7 @@
   "bench-llama33-70b-q2-1a-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "Llama-3.3-70B-Instruct-Q2_K.gguf"
@@ -916,7 +916,7 @@
   "bench-llama33-70b-q2-1a-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "Llama-3.3-70B-Instruct-Q2_K.gguf"
@@ -924,7 +924,7 @@
   "bench-llama33-70b-q2-1a-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "Llama-3.3-70B-Instruct-Q2_K.gguf"
@@ -932,7 +932,7 @@
   "bench-llama33-70b-q2-1b-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Llama-3.3-70B-Instruct-Q2_K.gguf"
@@ -940,7 +940,7 @@
   "bench-llama33-70b-q2-1b-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Llama-3.3-70B-Instruct-Q2_K.gguf"
@@ -948,7 +948,7 @@
   "bench-llama33-70b-q2-1b-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Llama-3.3-70B-Instruct-Q2_K.gguf"
@@ -956,7 +956,7 @@
   "bench-llama33-70b-q2-1c-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Llama-3.3-70B-Instruct-Q2_K.gguf"
@@ -964,7 +964,7 @@
   "bench-llama33-70b-q2-1c-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Llama-3.3-70B-Instruct-Q2_K.gguf"
@@ -972,7 +972,7 @@
   "bench-llama33-70b-q2-1c-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Llama-3.3-70B-Instruct-Q2_K.gguf"
@@ -980,8 +980,8 @@
   "bench-llama33-70b-q2-2-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Llama-3.3-70B-Instruct-Q2_K.gguf",
@@ -993,8 +993,8 @@
   "bench-llama33-70b-q2-2-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Llama-3.3-70B-Instruct-Q2_K.gguf",
@@ -1006,8 +1006,8 @@
   "bench-llama33-70b-q2-2-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Llama-3.3-70B-Instruct-Q2_K.gguf",
@@ -1019,9 +1019,9 @@
   "bench-llama33-70b-q2-3-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Llama-3.3-70B-Instruct-Q2_K.gguf",
@@ -1034,9 +1034,9 @@
   "bench-llama33-70b-q2-3-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Llama-3.3-70B-Instruct-Q2_K.gguf",
@@ -1049,9 +1049,9 @@
   "bench-llama33-70b-q2-3-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Llama-3.3-70B-Instruct-Q2_K.gguf",
@@ -1079,7 +1079,7 @@
   "bench-mixtral-8x7b-1a-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf"
@@ -1087,7 +1087,7 @@
   "bench-mixtral-8x7b-1a-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf"
@@ -1095,7 +1095,7 @@
   "bench-mixtral-8x7b-1a-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf"
@@ -1103,7 +1103,7 @@
   "bench-mixtral-8x7b-1b-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf"
@@ -1111,7 +1111,7 @@
   "bench-mixtral-8x7b-1b-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf"
@@ -1119,7 +1119,7 @@
   "bench-mixtral-8x7b-1b-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf"
@@ -1127,7 +1127,7 @@
   "bench-mixtral-8x7b-1c-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf"
@@ -1135,7 +1135,7 @@
   "bench-mixtral-8x7b-1c-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf"
@@ -1143,7 +1143,7 @@
   "bench-mixtral-8x7b-1c-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf"
@@ -1151,8 +1151,8 @@
   "bench-mixtral-8x7b-2-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf",
@@ -1164,8 +1164,8 @@
   "bench-mixtral-8x7b-2-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf",
@@ -1177,8 +1177,8 @@
   "bench-mixtral-8x7b-2-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf",
@@ -1190,9 +1190,9 @@
   "bench-mixtral-8x7b-3-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf",
@@ -1205,9 +1205,9 @@
   "bench-mixtral-8x7b-3-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf",
@@ -1220,9 +1220,9 @@
   "bench-mixtral-8x7b-3-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf",
@@ -1250,7 +1250,7 @@
   "bench-qwen25-72b-q2-1a-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen2.5-72B-Instruct-Q2_K.gguf"
@@ -1258,7 +1258,7 @@
   "bench-qwen25-72b-q2-1a-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen2.5-72B-Instruct-Q2_K.gguf"
@@ -1266,7 +1266,7 @@
   "bench-qwen25-72b-q2-1a-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen2.5-72B-Instruct-Q2_K.gguf"
@@ -1274,7 +1274,7 @@
   "bench-qwen25-72b-q2-1b-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen2.5-72B-Instruct-Q2_K.gguf"
@@ -1282,7 +1282,7 @@
   "bench-qwen25-72b-q2-1b-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen2.5-72B-Instruct-Q2_K.gguf"
@@ -1290,7 +1290,7 @@
   "bench-qwen25-72b-q2-1b-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen2.5-72B-Instruct-Q2_K.gguf"
@@ -1298,7 +1298,7 @@
   "bench-qwen25-72b-q2-1c-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen2.5-72B-Instruct-Q2_K.gguf"
@@ -1306,7 +1306,7 @@
   "bench-qwen25-72b-q2-1c-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen2.5-72B-Instruct-Q2_K.gguf"
@@ -1314,7 +1314,7 @@
   "bench-qwen25-72b-q2-1c-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen2.5-72B-Instruct-Q2_K.gguf"
@@ -1322,8 +1322,8 @@
   "bench-qwen25-72b-q2-2-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen2.5-72B-Instruct-Q2_K.gguf",
@@ -1335,8 +1335,8 @@
   "bench-qwen25-72b-q2-2-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen2.5-72B-Instruct-Q2_K.gguf",
@@ -1348,8 +1348,8 @@
   "bench-qwen25-72b-q2-2-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen2.5-72B-Instruct-Q2_K.gguf",
@@ -1361,9 +1361,9 @@
   "bench-qwen25-72b-q2-3-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen2.5-72B-Instruct-Q2_K.gguf",
@@ -1376,9 +1376,9 @@
   "bench-qwen25-72b-q2-3-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen2.5-72B-Instruct-Q2_K.gguf",
@@ -1391,9 +1391,9 @@
   "bench-qwen25-72b-q2-3-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen2.5-72B-Instruct-Q2_K.gguf",
@@ -1421,7 +1421,7 @@
   "bench-qwen27b-1a-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3.8-27B-Q4_K_M.gguf"
@@ -1429,7 +1429,7 @@
   "bench-qwen27b-1a-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3.8-27B-Q4_K_M.gguf"
@@ -1437,7 +1437,7 @@
   "bench-qwen27b-1a-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3.8-27B-Q4_K_M.gguf"
@@ -1445,7 +1445,7 @@
   "bench-qwen27b-1b-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3.8-27B-Q4_K_M.gguf"
@@ -1453,7 +1453,7 @@
   "bench-qwen27b-1b-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3.8-27B-Q4_K_M.gguf"
@@ -1461,7 +1461,7 @@
   "bench-qwen27b-1b-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3.8-27B-Q4_K_M.gguf"
@@ -1469,7 +1469,7 @@
   "bench-qwen27b-1c-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3.8-27B-Q4_K_M.gguf"
@@ -1477,7 +1477,7 @@
   "bench-qwen27b-1c-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3.8-27B-Q4_K_M.gguf"
@@ -1485,7 +1485,7 @@
   "bench-qwen27b-1c-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3.8-27B-Q4_K_M.gguf"
@@ -1493,8 +1493,8 @@
   "bench-qwen27b-2-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3.8-27B-Q4_K_M.gguf",
@@ -1506,8 +1506,8 @@
   "bench-qwen27b-2-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3.8-27B-Q4_K_M.gguf",
@@ -1519,8 +1519,8 @@
   "bench-qwen27b-2-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3.8-27B-Q4_K_M.gguf",
@@ -1532,9 +1532,9 @@
   "bench-qwen27b-3-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3.8-27B-Q4_K_M.gguf",
@@ -1547,9 +1547,9 @@
   "bench-qwen27b-3-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3.8-27B-Q4_K_M.gguf",
@@ -1562,9 +1562,9 @@
   "bench-qwen27b-3-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3.8-27B-Q4_K_M.gguf",
@@ -1592,7 +1592,7 @@
   "bench-qwen3-coder-30b-1a-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
@@ -1600,7 +1600,7 @@
   "bench-qwen3-coder-30b-1a-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
@@ -1608,7 +1608,7 @@
   "bench-qwen3-coder-30b-1a-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
@@ -1616,7 +1616,7 @@
   "bench-qwen3-coder-30b-1b-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
@@ -1624,7 +1624,7 @@
   "bench-qwen3-coder-30b-1b-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
@@ -1632,7 +1632,7 @@
   "bench-qwen3-coder-30b-1b-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
@@ -1640,7 +1640,7 @@
   "bench-qwen3-coder-30b-1c-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
@@ -1648,7 +1648,7 @@
   "bench-qwen3-coder-30b-1c-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
@@ -1656,7 +1656,7 @@
   "bench-qwen3-coder-30b-1c-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
@@ -1664,8 +1664,8 @@
   "bench-qwen3-coder-30b-2-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf",
@@ -1677,8 +1677,8 @@
   "bench-qwen3-coder-30b-2-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf",
@@ -1690,8 +1690,8 @@
   "bench-qwen3-coder-30b-2-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf",
@@ -1703,9 +1703,9 @@
   "bench-qwen3-coder-30b-3-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf",
@@ -1718,9 +1718,9 @@
   "bench-qwen3-coder-30b-3-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf",
@@ -1733,9 +1733,9 @@
   "bench-qwen3-coder-30b-3-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf",
@@ -1763,7 +1763,7 @@
   "bench-qwen30b-a3b-1a-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf"
@@ -1771,7 +1771,7 @@
   "bench-qwen30b-a3b-1a-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf"
@@ -1779,7 +1779,7 @@
   "bench-qwen30b-a3b-1a-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf"
@@ -1787,7 +1787,7 @@
   "bench-qwen30b-a3b-1b-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf"
@@ -1795,7 +1795,7 @@
   "bench-qwen30b-a3b-1b-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf"
@@ -1803,7 +1803,7 @@
   "bench-qwen30b-a3b-1b-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf"
@@ -1811,7 +1811,7 @@
   "bench-qwen30b-a3b-1c-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf"
@@ -1819,7 +1819,7 @@
   "bench-qwen30b-a3b-1c-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf"
@@ -1827,7 +1827,7 @@
   "bench-qwen30b-a3b-1c-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf"
@@ -1835,8 +1835,8 @@
   "bench-qwen30b-a3b-2-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf",
@@ -1848,8 +1848,8 @@
   "bench-qwen30b-a3b-2-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf",
@@ -1861,8 +1861,8 @@
   "bench-qwen30b-a3b-2-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf",
@@ -1874,9 +1874,9 @@
   "bench-qwen30b-a3b-3-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf",
@@ -1889,9 +1889,9 @@
   "bench-qwen30b-a3b-3-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf",
@@ -1904,9 +1904,9 @@
   "bench-qwen30b-a3b-3-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf",
@@ -1934,7 +1934,7 @@
   "bench-qwen4b-1a-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3.5-4B-Q4_K_M.gguf"
@@ -1942,7 +1942,7 @@
   "bench-qwen4b-1a-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3.5-4B-Q4_K_M.gguf"
@@ -1950,7 +1950,7 @@
   "bench-qwen4b-1a-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3.5-4B-Q4_K_M.gguf"
@@ -1958,7 +1958,7 @@
   "bench-qwen4b-1b-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3.5-4B-Q4_K_M.gguf"
@@ -1966,7 +1966,7 @@
   "bench-qwen4b-1b-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3.5-4B-Q4_K_M.gguf"
@@ -1974,7 +1974,7 @@
   "bench-qwen4b-1b-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3.5-4B-Q4_K_M.gguf"
@@ -1982,7 +1982,7 @@
   "bench-qwen4b-1c-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3.5-4B-Q4_K_M.gguf"
@@ -1990,7 +1990,7 @@
   "bench-qwen4b-1c-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3.5-4B-Q4_K_M.gguf"
@@ -1998,7 +1998,7 @@
   "bench-qwen4b-1c-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3.5-4B-Q4_K_M.gguf"
@@ -2006,8 +2006,8 @@
   "bench-qwen4b-2-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3.5-4B-Q4_K_M.gguf",
@@ -2019,8 +2019,8 @@
   "bench-qwen4b-2-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3.5-4B-Q4_K_M.gguf",
@@ -2032,8 +2032,8 @@
   "bench-qwen4b-2-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3.5-4B-Q4_K_M.gguf",
@@ -2045,9 +2045,9 @@
   "bench-qwen4b-3-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3.5-4B-Q4_K_M.gguf",
@@ -2060,9 +2060,9 @@
   "bench-qwen4b-3-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3.5-4B-Q4_K_M.gguf",
@@ -2075,9 +2075,9 @@
   "bench-qwen4b-3-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "Qwen_Qwen3.5-4B-Q4_K_M.gguf",
@@ -2105,7 +2105,7 @@
   "bench-tinyllama-1a-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
@@ -2113,7 +2113,7 @@
   "bench-tinyllama-1a-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
@@ -2121,7 +2121,7 @@
   "bench-tinyllama-1a-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "1h0m0s",
    "model": "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
@@ -2129,7 +2129,7 @@
   "bench-tinyllama-1b-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
@@ -2137,7 +2137,7 @@
   "bench-tinyllama-1b-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
@@ -2145,7 +2145,7 @@
   "bench-tinyllama-1b-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-31bd9dc4"
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
@@ -2153,7 +2153,7 @@
   "bench-tinyllama-1c-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
@@ -2161,7 +2161,7 @@
   "bench-tinyllama-1c-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
@@ -2169,7 +2169,7 @@
   "bench-tinyllama-1c-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-407c8925"
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
@@ -2177,8 +2177,8 @@
   "bench-tinyllama-2-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
@@ -2190,8 +2190,8 @@
   "bench-tinyllama-2-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
@@ -2203,8 +2203,8 @@
   "bench-tinyllama-2-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "1h0m0s",
    "model": "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
@@ -2216,9 +2216,9 @@
   "bench-tinyllama-3-2048": {
    "ctx": 2048,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
@@ -2231,9 +2231,9 @@
   "bench-tinyllama-3-32768": {
    "ctx": 32768,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
@@ -2246,9 +2246,9 @@
   "bench-tinyllama-3-8192": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4",
-    "ps5-407c8925"
+    "console-1",
+    "console-2",
+    "console-3"
    ],
    "load_timeout": "1h0m0s",
    "model": "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
@@ -2364,8 +2364,8 @@
   "m-devstral-8k": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "3h0m0s",
    "model": "Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf",
@@ -2378,8 +2378,8 @@
    "ctx": 49152,
    "flash_attn": true,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "kv_quant": "q8_0",
    "load_timeout": "3h0m0s",
@@ -2392,7 +2392,7 @@
   "m-gemma-8k-1ps5": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330"
+    "console-1"
    ],
    "load_timeout": "3h0m0s",
    "model": "gemma-4-12b-it-Q4_K_M.gguf"
@@ -2401,8 +2401,8 @@
    "ctx": 98304,
    "flash_attn": true,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "kv_quant": "q8_0",
    "load_timeout": "3h0m0s",
@@ -2415,8 +2415,8 @@
   "m-qwen27-8k": {
    "ctx": 8192,
    "force_nodes": [
-    "ps5-9032a330",
-    "ps5-31bd9dc4"
+    "console-1",
+    "console-2"
    ],
    "load_timeout": "3h0m0s",
    "model": "Qwen3.8-27B-Q4_K_M.gguf",

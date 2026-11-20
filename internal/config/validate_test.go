@@ -90,9 +90,9 @@ func TestValidateRejects(t *testing.T) {
 		{"tier empty match", "tiers:\n  - match: {}\n    priority: 1\n", []string{"tiers[0]", "match"}},
 		{"tier bad glob", "tiers:\n  - match: { hostname: \"[\" }\n    priority: 1\n", []string{"tiers[0]", "hostname"}},
 		{"tier negative headroom", "tiers:\n  - match: { local: true }\n    priority: 1\n    headroom_mib: -1\n", []string{"tiers[0]", "headroom_mib"}},
-		{"override rpc no port", baseHeader + "node_overrides:\n  n: { rpc: \"10.0.0.3\" }\n", []string{`node_overrides "n"`, "rpc"}},
+		{"override rpc no port", baseHeader + "node_overrides:\n  n: { rpc: \"192.0.2.3\" }\n", []string{`node_overrides "n"`, "rpc"}},
 		{"override rpc hostname", baseHeader + "node_overrides:\n  n: { rpc: \"alien:50052\" }\n", []string{`node_overrides "n"`, "rpc"}},
-		{"override rpc port range", baseHeader + "node_overrides:\n  n: { rpc: \"10.0.0.3:70000\" }\n", []string{`node_overrides "n"`, "rpc"}},
+		{"override rpc port range", baseHeader + "node_overrides:\n  n: { rpc: \"192.0.2.3:70000\" }\n", []string{`node_overrides "n"`, "rpc"}},
 		{"override rpc ipv6", baseHeader + "node_overrides:\n  n: { rpc: \"[::1]:5\" }\n", []string{`node_overrides "n"`, "rpc"}},
 		{"defaults max_pool zero", baseHeader + "defaults: {max_pool: 0}\n", []string{"defaults", "max_pool"}},
 		{"stale_after zero", baseHeader + "fleet: {stale_after: 0s}\n", []string{"fleet", "stale_after", "positive"}},
@@ -200,7 +200,7 @@ func TestValidateAcceptsValid(t *testing.T) {
     model: m.gguf
     ctx: 4096
     aliases: [old2]
-`) + "node_overrides:\n  n: { rpc: \"10.0.0.3:50052\" }\n"
+`) + "node_overrides:\n  n: { rpc: \"192.0.2.3:50052\" }\n"
 	if err := parseErr(y, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -257,12 +257,12 @@ func TestValidateExcludeNodes(t *testing.T) {
 		{"empty entry", baseHeader + "exclude_nodes: [\"\"]\n", []string{"exclude_nodes", "empty"}},
 		{"blank entry", baseHeader + "exclude_nodes: [\"  \"]\n", []string{"exclude_nodes", "empty"}},
 		{"bad glob", baseHeader + "exclude_nodes: [\"ps5-[\"]\n", []string{"exclude_nodes", "invalid glob", "ps5-["}},
-		{"forced profile names excluded id", prof(llama+"    force_nodes: [\"70:66:2A:A9:A7:65\"]\n") +
-			"exclude_nodes: [\"70:66:2a:a9:a7:65\"]\n", []string{`profile "p"`, "force_nodes", "70:66:2A:A9:A7:65", "excluded"}},
-		{"forced profile names hostname matched by glob", prof(llama+"    force_nodes: [alienware-llm, ps5-test1]\n") +
+		{"forced profile names excluded id", prof(llama+"    force_nodes: [\"02:00:00:00:00:AB\"]\n") +
+			"exclude_nodes: [\"02:00:00:00:00:ab\"]\n", []string{`profile "p"`, "force_nodes", "02:00:00:00:00:AB", "excluded"}},
+		{"forced profile names hostname matched by glob", prof(llama+"    force_nodes: [laptop-1, ps5-test1]\n") +
 			"exclude_nodes: [\"PS5-TEST*\"]\n", []string{`profile "p"`, "force_nodes", "ps5-test1", "excluded"}},
-		{"forced profile names excluded local node", prof(llama+"    force_nodes: [omen-runner]\n") +
-			"exclude_nodes: [omen-runner]\n", []string{`profile "p"`, "omen-runner", "excluded"}},
+		{"forced profile names excluded local node", prof(llama+"    force_nodes: [host-1]\n") +
+			"exclude_nodes: [host-1]\n", []string{`profile "p"`, "host-1", "excluded"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -278,7 +278,7 @@ func TestValidateExcludeNodes(t *testing.T) {
 		})
 	}
 	// A forced name that only a runtime lookup can tie to an exclusion is not a load-time error.
-	ok := prof(llama+"    force_nodes: [\"70:66:2a:a9:a7:65\"]\n") + "exclude_nodes: [\"ps5-*\"]\n"
+	ok := prof(llama+"    force_nodes: [\"02:00:00:00:00:ab\"]\n") + "exclude_nodes: [\"ps5-*\"]\n"
 	if err := parseErr(ok, nil); err != nil {
 		t.Fatalf("glob vs id must be left to runtime: %v", err)
 	}

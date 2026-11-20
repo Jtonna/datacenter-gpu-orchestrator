@@ -31,13 +31,13 @@ func TestExclude_AutoPlacementSkipsExcludedNode(t *testing.T) {
 	h.llama("m", 6000)
 	h.ready("m")
 	h.wantNodes("m", "b")
-	if slices.Contains(h.prober.calls, "10.0.0.2:50052") {
+	if slices.Contains(h.prober.calls, "192.0.2.2:50052") {
 		t.Fatalf("excluded node was pre-flighted: %v", h.prober.calls)
 	}
 }
 
 func TestExclude_ByHostnameGlob(t *testing.T) {
-	a := ps5("70:66:2a:a9:a7:65", 2, 15000)
+	a := ps5("02:00:00:00:00:01", 2, 15000)
 	a.Hostname = "ps5-test7"
 	a.FreeMiB = 8500
 	h := newHarness(t).nodes(a, ps5("b", 4, 15000))
@@ -106,14 +106,14 @@ func TestExclude_PlanDoesNotEvictOntoExcludedNode(t *testing.T) {
 
 func TestExclude_LocalNodeNeverUsed(t *testing.T) {
 	h := newHarness(t).nodes(omen(7000), ps5("a", 2, 15000))
-	h.cfg.ExcludeNodes = []string{"omen"}
+	h.cfg.ExcludeNodes = []string{"host-1"}
 	h.llama("m", 6000)
 	h.ready("m")
 	h.wantNodes("m", "a")
 	h.command("whisper", 1000)
 	w := h.request("whisper") // command profiles run on the local node only
 	e := h.failed(w, http.StatusServiceUnavailable, ReasonDoesNotFit)
-	if e.RetryAfter != 0 || !strings.Contains(e.Message, "excluded by config") || !strings.Contains(e.Message, "omen") {
+	if e.RetryAfter != 0 || !strings.Contains(e.Message, "excluded by config") || !strings.Contains(e.Message, "host-1") {
 		t.Fatalf("error = %+v", e)
 	}
 }
@@ -121,11 +121,11 @@ func TestExclude_LocalNodeNeverUsed(t *testing.T) {
 func TestExclude_ForcedProfileNamingExcludedNodeFailsPermanently(t *testing.T) {
 	// The exclusion is a glob on the hostname; the profile names the node by id,
 	// so config load could not tell. The request fails with no Retry-After.
-	a := ps5("70:66:2a:a9:a7:65", 2, 15000)
+	a := ps5("02:00:00:00:00:01", 2, 15000)
 	a.Hostname = "ps5-test7"
 	h := newHarness(t).nodes(a, ps5("b", 4, 15000))
 	h.cfg.ExcludeNodes = []string{"ps5-test*"}
-	h.llama("f", 8000, func(p *core.Profile) { p.ForceNodes = []string{"70:66:2a:a9:a7:65", "b"} })
+	h.llama("f", 8000, func(p *core.Profile) { p.ForceNodes = []string{"02:00:00:00:00:01", "b"} })
 	h.step(evTick{})
 	r := h.c.dryPlan("f")
 	if r.Action != PlanReject || !strings.Contains(r.Reason, "node ps5-test7 is excluded by config") {

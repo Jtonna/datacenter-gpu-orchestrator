@@ -1,32 +1,32 @@
 # Benchmark guide: running model benchmarks through the scheduler
 
-Written 2026-11-18 from the repo code, the repo docs and a read-only look at the OMEN. Updated the same day after the new build went live (version string below), and again after the load progress and load report build.
+Written 2026-11-18 from the repo code, the repo docs and a read-only look at the host machine. Updated the same day after the new build went live (version string below), and again after the load progress and load report build.
 Anything not confirmed is marked "unverified". "Scheduler" and "load balancer" mean the same thing here.
 
 ## 1. What this is and where it runs
 
 - `llm-scheduler` decides which machines run a model, loads it, queues requests and unloads it later.
-- It runs on the OMEN as container `llm-scheduler-test` (image `llm-scheduler:test`), host port 3122. llama-swap is stopped and must stay stopped.
+- It runs on the host machine as container `llm-scheduler-test` (image `llm-scheduler:test`), host port 3122. llama-swap is stopped and must stay stopped.
 - Scheduler version string: `test-da67241+failfast+childlog+progress+loadreport2`.
 - Config: in the scheduler database (`~/llm-scheduler-test/data/scheduler.db`), read and changed over REST: `GET http://localhost:3122/api/config`. A change takes effect at once, with no restart, and is audited (runbook "Configuration lives in the database"). A test deployment is first set up with `llm-scheduler import-config` from a YAML file (the old `config.yaml` is the input format).
 - Models are GGUF files in `/srv/llama-swap/models` (mounted at `/models`). Machines come from the fleet manager at `localhost:8090`, not from the config.
-- Machines: three PS5s (each serves one client at a time), the Alienware laptop, and the OMEN's own GPU. For these benchmarks only the three PS5s receive models. The OMEN and the Alienware are excluded (section 4). Do not remove that exclusion.
+- Machines: three PS5s (each serves one client at a time), the Nvidia laptop laptop, and the host machine's own GPU. For these benchmarks only the three PS5s receive models. The host machine and the Nvidia laptop are excluded (section 4). Do not remove that exclusion.
 - PS5 fleet, all rpc port 50052:
 
 | Hostname | Address |
 |---|---|
-| ps5-9032a330 | 10.0.0.101 |
-| ps5-31bd9dc4 | 10.0.0.122 |
-| ps5-407c8925 | 10.0.0.114 |
+| console-1 | 192.0.2.101 |
+| console-2 | 192.0.2.122 |
+| console-3 | 192.0.2.114 |
 
-  There is no PS5 at 10.0.0.100 or 10.0.0.102. Addresses can change after a PS5 restart, so always read the current list from `curl -s localhost:8090/api/fleet` (a JSON object with a `members` array). Profiles force machines by hostname, not by IP.
-- As of 2026-11-18 the PS5 tensor cache is off, so every PS5 load is a full upload and there are no fast cached reloads. PS5 GPU clock is pinned at 2230 MHz. Upload speed is 75 to 84 MB/s in total out of the OMEN, the same for 1, 2 or 3 PS5s, and simultaneous loads share it. A split model uploads to one PS5 at a time, in an order llama.cpp chooses.
+  There is no PS5 at 192.0.2.100 or 192.0.2.102. Addresses can change after a PS5 restart, so always read the current list from `curl -s localhost:8090/api/fleet` (a JSON object with a `members` array). Profiles force machines by hostname, not by IP.
+- As of 2026-11-18 the PS5 tensor cache is off, so every PS5 load is a full upload and there are no fast cached reloads. PS5 GPU clock is pinned at 2230 MHz. Upload speed is 75 to 84 MB/s in total out of the host machine, the same for 1, 2 or 3 PS5s, and simultaneous loads share it. A split model uploads to one PS5 at a time, in an order llama.cpp chooses.
 
-Run all commands below on the OMEN (`ssh omen-runner`). Examples use `B=http://localhost:3122`.
+Run all commands below on the host machine (`ssh host-1`). Examples use `B=http://localhost:3122`.
 
 ## 2. Quick start
 
-1. Check it is healthy and idle. Expect `healthy`, `instances` and `queue` empty, the three PS5s `online: true`. The OMEN and the Alienware show `excluded: true`, `eligible: false`.
+1. Check it is healthy and idle. Expect `healthy`, `instances` and `queue` empty, the three PS5s `online: true`. The host machine and the Nvidia laptop show `excluded: true`, `eligible: false`.
 ```sh
 B=http://localhost:3122
 docker inspect -f '{{.State.Health.Status}}' llm-scheduler-test
@@ -76,14 +76,14 @@ Errors use this shape: `{"error":{"message":"...","type":"...","param":null,"cod
 | GET | `/api/metrics/activity` | Last 200 finished requests: model, path, status, duration, token counts, tokens per second. | `curl -s $B/api/metrics/activity` |
 | GET | `/ws` | Live channel (WebSocket), see section 12 and design 9.2. | `websocat ws://localhost:3122/ws` |
 | ANY | `/api/bench/...` | Benchmarks, suites and runs run by the scheduler itself (section 12). | `curl -s $B/api/bench/state` |
-| GET | `/ui/` | The read-only dashboard: nodes, queue, incidents, finished loads (time, MB/s, memory), timeline, summary. Open `http://<omen>:3122/ui/`. | |
+| GET | `/ui/` | The read-only dashboard: nodes, queue, incidents, finished loads (time, MB/s, memory), timeline, summary. Open `http://<host>:3122/ui/`. | |
 | GET | `/api/history`, `/api/history/summary`, `/api/history/export` | The event history behind the dashboard (`history_dir`). The summary has load seconds (min, median, max) and average MB/s per profile; the export is JSON Lines, so a benchmark run can be saved with `curl -s "$B/api/history/export?since=<ms>"`. | `curl -s "$B/api/history?type=loadFinished&limit=20"` |
 
 Other paths give 404. `/v1/*` with a method other than POST gives 405. A body without `model` on the admin paths gives 400 (`body must be JSON with a "model" field`).
 
 ## 4. How placement works
 
-- Machines sit in tiers: PS5s (tier 1), Alienware (tier 2), OMEN GPU (tier 3). Lower number is preferred. A machine in no tier is never used.
+- Machines sit in tiers: PS5s (tier 1), Nvidia laptop (tier 2), host machine GPU (tier 3). Lower number is preferred. A machine in no tier is never used.
 - Auto profile: the scheduler picks the best tier that can hold the model, one machine first, then a pool of up to `max_pool` (4). It uses `needs_mib` if set, else an estimate from the GGUF file.
 - Forced profile (`force_nodes`): exactly those machines, in that order, with no fit check. `tensor_split` sets each machine's share. All `b-*`, `m-*` and `bench-*` profiles are forced except the `auto` ones.
 - `defaults.forced_fit_check` is off in the benchmark config, so a forced profile is never fit-checked. A model that does not fit fails during the upload (the PS5 `rpc-server` can crash and restart by itself). Do not turn it on for the benchmark. Outside the benchmark, `reject` is the recommended setting: on llama.cpp upstream HEAD (2026-11-19) a forced load that does not fit took a PS5 down until it was power cycled. On PS5 (shared memory) nodes the check uses free minus tier headroom, not raw free.
@@ -91,8 +91,8 @@ Other paths give 404. `/v1/*` with a method other than POST gives 405. A body wi
 - Each machine serves one model at a time. A request for a model that cannot start now waits in a queue (one entry per profile). Waiting longer than `queue_timeout` (1800 s live) without a claim gives `503 cluster busy`. A forced machine that is present but busy is not an error: the request queues.
 - Eviction: to make room, the scheduler stops idle models, or drains busy ones after `drain_after` (60 s). A model is protected for its hold time: its load time, clamped between `min_hold` (30 s) and `max_hold` (900 s).
 - After a model leaves a machine, the machine is unusable for a short settle time (PS5 3 s) while the scheduler re-reads its memory.
-- `excluded` (in `view.nodes`) means the config's `exclude_nodes` keeps that machine out of the pool. The live config has `exclude_nodes: [omen-runner, "alienware*"]` (owner request, for the benchmarks). `/api/status` shows both with `excluded: true, eligible: false`. Only the three PS5s receive models. Do not remove the exclusion.
-- Because of that, the profile `devstral-24b:14k-laptops` is commented out in the live config (lines start with `# BENCH-OFF`). The config check rejects a profile forced onto an excluded machine. Do not add a profile that forces `omen-runner` or an Alienware node.
+- `excluded` (in `view.nodes`) means the config's `exclude_nodes` keeps that machine out of the pool. The live config has `exclude_nodes: [host-1, "laptop-*"]` (owner request, for the benchmarks). `/api/status` shows both with `excluded: true, eligible: false`. Only the three PS5s receive models. Do not remove the exclusion.
+- Because of that, the profile `devstral-24b:14k-laptops` is commented out in the live config (lines start with `# BENCH-OFF`). The config check rejects a profile forced onto an excluded machine. Do not add a profile that forces `host-1` or an Nvidia laptop node.
 - A model that never gets a request unloads after `ttl` (900 s live). Benchmark profiles set `load_timeout: 10800s` so slow uploads do not time out.
 
 ## 5. Adding a benchmark profile for a new model
@@ -123,10 +123,10 @@ A='-H X-Actor:benchmark-agent'
 curl -s -X POST $H/api/config/profiles $A -d '{"id":"qwen3-30b-auto-8k","model":"Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf","ctx":8192}'
 
 # forced onto two PS5s, split 50/50, ctx 2048
-curl -s -X POST $H/api/config/profiles $A -d '{"id":"b-qwen3-30b-2ps5","model":"Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf","ctx":2048,"load_timeout":"10800s","force_nodes":["ps5-9032a330","ps5-31bd9dc4"],"tensor_split":[50,50]}'
+curl -s -X POST $H/api/config/profiles $A -d '{"id":"b-qwen3-30b-2ps5","model":"Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf","ctx":2048,"load_timeout":"10800s","force_nodes":["console-1","console-2"],"tensor_split":[50,50]}'
 
 # forced onto three PS5s, split 33/33/34, bigger context (quantised KV needs flash_attn)
-curl -s -X POST $H/api/config/profiles $A -d '{"id":"b-qwen3-30b-3ps5-8k","model":"Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf","ctx":8192,"load_timeout":"10800s","force_nodes":["ps5-9032a330","ps5-31bd9dc4","ps5-407c8925"],"tensor_split":[33,33,34],"kv_quant":"q8_0","flash_attn":true}'
+curl -s -X POST $H/api/config/profiles $A -d '{"id":"b-qwen3-30b-3ps5-8k","model":"Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf","ctx":8192,"load_timeout":"10800s","force_nodes":["console-1","console-2","console-3"],"tensor_split":[33,33,34],"kv_quant":"q8_0","flash_attn":true}'
 ```
 3. Rules the loader enforces (from `docs/design.md`): `tensor_split` needs `force_nodes` and the same length; `kv_quant` other than f16 needs `flash_attn: true`; `force_nodes` and `allow_tiers` cannot both be set; the model file must exist; unknown fields are errors; a forced node must not be excluded. `ctx` is per slot. `force_nodes` accepts a hostname or a node id. A request that breaks a rule answers `400` with every message and writes nothing.
 4. Check the result. No restart is needed and nothing loaded is stopped; the profile is usable at once.
@@ -164,7 +164,7 @@ Method: for each profile, `plan`, then one request (this includes the load), the
 
 - Scheduler log: `docker logs llm-scheduler-test` (stdout, key=value lines). Key events: `queue entry created`, `placement chosen` (nodes, budgets, `need_mib`), `pre-flight ok`, `child started` (the full llama-server command line), `instance ready`, `instance stopping/stopped`, `fleet console unreachable` / `fleet feed recovered`.
 - The container's own log now rotates at 50 MB x 5 files. It survives `docker restart` but is lost if the container is recreated (`docker compose up` after a compose change). A saved copy from before the redeploy is at `~/llm-scheduler-test/scheduler-log-before-redeploy-*.log`.
-- llama-server child logs (confirmed live): config keys `child_log_dir: /var/log/llm-children` and `child_log_keep: 500` (top level). On the OMEN the files are in `~/llm-scheduler-test/child-logs/`, one file per model start, named like `20261118T094330Z-tinyllama-5.log` (UTC start time, profile with unsafe characters replaced by `_`, instance id). Each file has the complete llama-server output (188 lines for tinyllama). Each instance in `GET /api/status` has `log_file` with the in-container path, for example `/var/log/llm-children/20261118T094330Z-tinyllama-5.log`. Map `/var/log/llm-children/` to `~/llm-scheduler-test/child-logs/` on the host. Files are owned by root but world-readable. The oldest files beyond 500 are deleted automatically. These files survive container restarts and recreation.
+- llama-server child logs (confirmed live): config keys `child_log_dir: /var/log/llm-children` and `child_log_keep: 500` (top level). On the host machine the files are in `~/llm-scheduler-test/child-logs/`, one file per model start, named like `20261118T094330Z-tinyllama-5.log` (UTC start time, profile with unsafe characters replaced by `_`, instance id). Each file has the complete llama-server output (188 lines for tinyllama). Each instance in `GET /api/status` has `log_file` with the in-container path, for example `/var/log/llm-children/20261118T094330Z-tinyllama-5.log`. Map `/var/log/llm-children/` to `~/llm-scheduler-test/child-logs/` on the host. Files are owned by root but world-readable. The oldest files beyond 500 are deleted automatically. These files survive container restarts and recreation.
 - A failed load also shows the last 40 child lines inside the `502 load failed` reply.
 - Fleet manager: `localhost:8090/api/fleet` (read only). Do not restart it.
 - `~/llm-scheduler-test/logs`, `logs-run1` to `logs-run3` exist from earlier tests. Their contents are unverified. Do not delete them; use new names.
@@ -204,9 +204,9 @@ All from the code. Statuses are HTTP codes; `reason` is in the JSON error.
 
 ## 9. New in this build (live since 2026-11-18)
 
-Items 1 and 2 were checked live on the OMEN on 2026-11-18 at 09:43 UTC (version `test-da67241+failfast+childlog`). Items 3 and 4 came with `+progress+loadreport2`; load progress was checked live (measured from TCP acknowledged bytes, matching about 80 MB/s on the old 1 GbE link).
+Items 1 and 2 were checked live on the host machine on 2026-11-18 at 09:43 UTC (version `test-da67241+failfast+childlog`). Items 3 and 4 came with `+progress+loadreport2`; load progress was checked live (measured from TCP acknowledged bytes, matching about 80 MB/s on the old 1 GbE link).
 
-Network note (2026-11-18, about 14:00 to 14:31 UTC): the OMEN's link to the PS5 switch moved from its built-in 1 GbE port to a USB-C adapter, interface `enx6c1ff7c349ea`, at 2500 Mb/s. The PS5s still have 1 GbE ports. To read tx bytes on the host, use `enx6c1ff7c349ea` (older logs used `eno1`). Load times at ctx 2048, 1 GbE then 2.5 GbE: Gemma 12B on one PS5 89 s then 66 s; Qwen 27B on three PS5s 216 s then 170 s; Kimi-Dev 72B IQ2_S on three PS5s 363 s then 286 s; two Gemma 12B at once 167 s each then 66 s each; three at once 246 s each then 77 s each (about 280 MB/s in total). A single stream is now limited by the PS5's own 1 GbE port (about 100 to 125 MB/s). A split model still uploads to one PS5 at a time. Label any new number with the link it was measured on.
+Network note (2026-11-18, about 14:00 to 14:31 UTC): the host machine's link to the PS5 switch moved from its built-in 1 GbE port to a USB-C adapter, interface `enx6c1ff7c349ea`, at 2500 Mb/s. The PS5s still have 1 GbE ports. To read tx bytes on the host, use `enx6c1ff7c349ea` (older logs used `eno1`). Load times at ctx 2048, 1 GbE then 2.5 GbE: Gemma 12B on one PS5 89 s then 66 s; Qwen 27B on three PS5s 216 s then 170 s; Kimi-Dev 72B IQ2_S on three PS5s 363 s then 286 s; two Gemma 12B at once 167 s each then 66 s each; three at once 246 s each then 77 s each (about 280 MB/s in total). A single stream is now limited by the PS5's own 1 GbE port (about 100 to 125 MB/s). A split model still uploads to one PS5 at a time. Label any new number with the link it was measured on.
 
 1. Fail fast. A request for a profile forced onto a machine that is absent from the fleet or offline gets HTTP 503 after the grace period, instead of waiting the whole queue timeout (1800 s). Live reply for an absent machine:
 ```json
@@ -223,7 +223,7 @@ Network note (2026-11-18, about 14:00 to 14:31 UTC): the OMEN's link to the PS5 
 ```json
 "load": {"session_id":"ld-1794995021087-3","started_at":1794995021087,"elapsed_s":42.1,
   "bytes_total":11628266644,"bytes_sent":5580799366,"progress":0.4799,"eta_s":605,"source":"measured",
-  "workers":[{"addr":"10.0.0.101:50052","bytes_total":5814133322,"bytes_sent":5580799366,"state":"receiving"}]}
+  "workers":[{"addr":"192.0.2.101:50052","bytes_total":5814133322,"bytes_sent":5580799366,"state":"receiving"}]}
 ```
    - `source` is `measured` (TCP acknowledged bytes) or `estimated`. Worker `state` is `waiting`, `receiving` or `done`, taken from each worker's own bytes. Workers receive one at a time, in an order llama.cpp chooses, which may differ from the `--rpc` order.
    - Load MB/s: `load.bytes_sent / load.elapsed_s`.
@@ -232,7 +232,7 @@ Network note (2026-11-18, about 14:00 to 14:31 UTC): the OMEN's link to the PS5 
    - The scheduler also logs a `load progress` line every 30 s.
 4. `recent_loads`. A top-level key of `/running` and `/api/status`, next to `running`. It lists load attempts that finished in the last 120 s, newest first, and is an empty array when there are none:
 ```json
-{"session_id":"ld-1794995021087-3","model":"big","workers":["10.0.0.101:50052","10.0.0.122:50052"],
+{"session_id":"ld-1794995021087-3","model":"big","workers":["192.0.2.101:50052","192.0.2.122:50052"],
  "outcome":"ready","reason":"","finished_at":1794995221087,"load_s":215.1}
 ```
    `outcome` is `ready`, `failed` or `cancelled` (see design 7.6a). The same object arrives in the `loadFinished` event on `/api/events`; `loadStarted` is sent when the child starts. Poll often enough (under 120 s) not to miss a load.
@@ -253,9 +253,9 @@ If you turn it on, `/api/status` shows `view.nodes[].recovery` (last request, la
 ## 11. Rules, protocol and how to report an issue
 
 Rules:
-- Do not SSH into the PS5s or the Alienware.
+- Do not SSH into the PS5s or the Nvidia laptop.
 - Do not touch the fleet console, the hub or any other container.
-- Do not change PS5 or OMEN system settings.
+- Do not change PS5 or host machine system settings.
 - Do not start llama-swap.
 - Do not remove `exclude_nodes` from the config.
 - Do not run a `llama-server-rpc` directly against a PS5 while the scheduler has a model loaded on it. The workers take one client at a time. If a direct run is needed, unload first, and say so in that benchmark row.

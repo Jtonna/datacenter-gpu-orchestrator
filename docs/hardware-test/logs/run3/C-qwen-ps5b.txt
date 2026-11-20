@@ -1,9 +1,0 @@
-== C-qwen-ps5b start 23:44:32
-gpu_before 10 MiB
-gpu_loaded 10 MiB
-{"model":"qwen3.5-4b:ps5b","msg":"ok"}
-
-unloaded 23:45:04
-{"model":"qwen3.5-4b:ps5b","msg":"ok"}
-
-== C-qwen-ps5b done 23:45:43 gpu 10 MiB

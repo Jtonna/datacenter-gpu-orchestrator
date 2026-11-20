@@ -110,7 +110,7 @@ func TestSlidingWindowWarning(t *testing.T) {
   gemma-forced:
     model: gemma-forced.gguf
     ctx: 8192
-    force_nodes: [ps5-a, omen]
+    force_nodes: [ps5-a, host-1]
   plain:
     model: plain.gguf
     ctx: 8192

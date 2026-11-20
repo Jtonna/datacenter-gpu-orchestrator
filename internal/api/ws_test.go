@@ -295,7 +295,7 @@ func TestWSClientLimit(t *testing.T) {
 func TestWSOriginCheck(t *testing.T) {
 	cases := map[string]bool{
 		"": true, "http://127.0.0.1:3122": true, "http://localhost:3122": true, "http://192.168.1.20:3122": true,
-		"http://10.0.0.5": true, "http://172.20.1.1": true, "http://omen:3122": true, "http://omen.local:3122": true,
+		"http://10.20.30.5": true, "http://172.20.1.1": true, "http://host-1:3122": true, "http://host-1.local:3122": true,
 		"http://[::1]:3122": true, "https://evil.example.com": false, "http://8.8.8.8": false, "null": false, "http://203.0.113.9:80": false,
 	}
 	for origin, want := range cases {

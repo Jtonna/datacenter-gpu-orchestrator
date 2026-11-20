@@ -1,4 +1,4 @@
-# llama-server with RPC, same llama.cpp commit as the llama-swap image and the Alienware rpc-server.
+# llama-server with RPC, same llama.cpp commit as the llama-swap image and the Nvidia laptop rpc-server.
 # Installed as llama-server-rpc beside the stock llama-server; nothing existing is replaced.
 FROM nvidia/cuda:13.3.1-devel-ubuntu24.04 AS build
 ARG LLAMA_COMMIT=330f0189c9fc71ef631f40211660a87d99251cc1

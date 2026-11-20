@@ -254,7 +254,7 @@ func TestLoadProgress_LocalOnlyPlacementHasNoUpload(t *testing.T) {
 func TestLoadProgress_BytesTotalIsTheRemoteShareOfTheFile(t *testing.T) {
 	h := newHarness(t).nodes(omen(7000), ps5("a", 2, 15000))
 	h.llama("m", 8000, func(p *core.Profile) {
-		p.ForceNodes = []string{"omen", "a"}
+		p.ForceNodes = []string{"host-1", "a"}
 		p.TensorSplit = []int{1, 3}
 	})
 	h.needs["m"] = NeedInfo{Need: placer.Measured(8000), FileBytes: 4000 * mb}

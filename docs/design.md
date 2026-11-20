@@ -4,7 +4,7 @@ Status: v1.1. Approved after three review passes; built; first hardware test
 run 2026-11-17 (results in `docs/hardware-test/RESULTS.md`). Owner: Jacob.
 Changes to behaviour go into this document first.
 
-A drop-in replacement for llama-swap on the OMEN that decides at load time which
+A drop-in replacement for llama-swap on the host machine that decides at load time which
 machines a model runs on. Working name of the binary: `llm-scheduler`.
 
 Tags used below:
@@ -20,7 +20,7 @@ Tags used below:
 llama-swap maps one model name to one fixed command. In this cluster the command
 depends on which machines are free, so the config has become a table of
 model x context size x pool: 10 Gemma and Devstral entries for 2 model files
-(`omen-runner-fleet-manager/apps/llama-swap/config.yaml`). Every added node
+(`host-1-fleet-manager/apps/llama-swap/config.yaml`). Every added node
 multiplies it.
 
 Wanted: ask for `gemma-4-12b:64k` and have the system pick the machines, using
@@ -32,10 +32,10 @@ These are requirements, not proposals. Reviewers should check that the design
 meets them, not reopen them.
 
 1. Custom scheduler that **replaces** llama-swap. Not a layer above it.
-2. Written in Go, one Docker container on the OMEN.
+2. Written in Go, one Docker container on the host machine.
 3. Drop-in for existing apps: same port (3122), same OpenAI-style endpoints.
 4. Nodes come from the fleet manager at run time. Nodes join and leave.
-5. Priority tiers: PS5s first, Alienware second, OMEN (host) last.
+5. Priority tiers: PS5s first, Nvidia laptop second, host machine (host) last.
 6. One profile per model + context size. No pool count in the name.
    "If it fits, it fits": one node when it fits, several when it does not.
 7. A profile may force specific nodes, for benchmarks.
@@ -45,7 +45,7 @@ meets them, not reopen them.
    generation is never interrupted by scheduling; a model is unloaded to make
    room only once nothing is running on it.
 10. Built test-first (TDD).
-11. Registration structure stays as it is: PCs register with the OMEN hub, PS5s
+11. Registration structure stays as it is: PCs register with the host machine hub, PS5s
     push to the fleet manager, the hub relays PCs into the fleet manager, and
     other programs (this one included) only **pull** from the fleet manager.
 
@@ -53,9 +53,9 @@ meets them, not reopen them.
 
 | Node | GPU | Memory | RPC address | Fleet source |
 |---|---|---|---|---|
-| OMEN (host) | RTX 5060, CUDA | 8 GB VRAM | local | relayed by hub; read locally instead (5.1) |
-| Alienware (`alienware-llm`) | RTX 3070 Ti, CUDA | 8 GB VRAM | `10.0.0.3:50052` | relayed by hub |
-| PS5 (`ps5-062e1d84`) | AMD Oberon, Vulkan | about 14-15 GB shared | `10.0.0.2:50052` | pushes itself |
+| host machine (host) | RTX 5060, CUDA | 8 GB VRAM | local | relayed by hub; read locally instead (5.1) |
+| Nvidia laptop (`laptop-1`) | RTX 3070 Ti, CUDA | 8 GB VRAM | `192.0.2.3:50052` | relayed by hub |
+| PS5 (`console-4`) | AMD Oberon, Vulkan | about 14-15 GB shared | `192.0.2.2:50052` | pushes itself |
 | more PS5s | same | same | from fleet manager | push themselves |
 
 ### 3.1 llama.cpp facts (commit `330f0189`)
@@ -95,25 +95,25 @@ All **[verified]** against source unless tagged otherwise.
 - **[verified]** The current image (`llama-swap-whisper:rpc-330f018`) contains
   `llama-server` (CUDA, no RPC), `llama-server-rpc` (CUDA + RPC), `sd-server`
   (FLUX) and a Python Whisper server.
-- **[verified by owner]** PS5 and Alienware firewalls admit port 50052 from the
-  OMEN only. llama-swap reaches both today from a bridged container. Every head
-  process must run on the OMEN.
+- **[verified by owner]** PS5 and Nvidia laptop firewalls admit port 50052 from the
+  host machine only. llama-swap reaches both today from a bridged container. Every head
+  process must run on the host machine.
 - **[measured 2026-11-17, superseded]** Before the PS5-side fixes, PS5 uploads
   ran at about 13.9 MB/s for one upload and under 5.6 MB/s each with two at
   once. The cause was the PS5 `rpc-server` tensor cache, which wrote every
   tensor to USB storage at about 3 MB/s (a cold 14.3 GB load took 83 minutes).
-  The Alienware took 77 MB/s.
+  The Nvidia laptop took 77 MB/s.
 - **[measured 2026-11-18]** Two PS5-side fixes landed (they are not in this
   repo): the tensor cache was turned off, and the PS5 GPU clock was pinned at
   2230 MHz (it sat at 500 MHz), which raised decode speed about 2.4x on a
   two-PS5 split. With the cache off, every load is a full upload and there are
-  no fast cached reloads. On the old link (the OMEN's built-in 1 GbE port)
-  upload speed was 75 to 84 MB/s in total out of the OMEN, the same for 1, 2 or
+  no fast cached reloads. On the old link (the host machine's built-in 1 GbE port)
+  upload speed was 75 to 84 MB/s in total out of the host machine, the same for 1, 2 or
   3 PS5s in one load. A split model uploads to one PS5 at a time, in an order
   llama.cpp chooses. Loads that ran at the same time shared that rate: one
   Gemma 12B load took 89 s, two at once 167 s each (40 MB/s each), three at
   once 246 s each (27 MB/s each).
-- **[measured 2026-11-18, about 14:00 to 14:31 UTC]** The OMEN's link to the
+- **[measured 2026-11-18, about 14:00 to 14:31 UTC]** The host machine's link to the
   PS5 switch moved from its built-in 1 GbE port to a USB-C adapter (interface
   `enx6c1ff7c349ea`) negotiated at 2500 Mb/s. The PS5s still have 1 GbE ports.
   A single stream to one PS5 is now limited by that PS5's own port (about 100
@@ -126,12 +126,12 @@ All **[verified]** against source unless tagged otherwise.
   total, close to the 2.5 GbE link). Devstral 24B on two PS5s together with
   Gemma 12B on the third took 149 s and 67 s (no earlier run of this pair;
   Devstral alone was 183 s on 1 GbE). A split model still uploads to one PS5 at
-  a time. Config uses `link_mb_s` 100 per PS5 and 60 for the Alienware.
+  a time. Config uses `link_mb_s` 100 per PS5 and 60 for the Nvidia laptop.
 - **[measured 2026-11-17]** H1, H2 and H3 below all hold on this cluster, and
   the container reached the fleet console on 8090 without an extra firewall rule.
 - **[verified by owner]** The old "wedges on client close" and "stalls over
   500 MiB" problems belonged to the PS5LM app, not PS5 Linux.
-- **[verified]** The OMEN's host firewall admits only ports 22, 9443 and 5353
+- **[verified]** The host machine's host firewall admits only ports 22, 9443 and 5353
   by default. Reaching the fleet console on 8090 from a container needs a rule.
 - **[assumed] H1.** `nvidia-smi` is available inside the container.
 - **[assumed] H2.** Each worker's `rpc-server` exposes exactly one device.
@@ -160,8 +160,8 @@ All **[verified]**.
 - `ip` (IPv4 or null) and `rpc_port` (number or null) are on the fleet console
   branch `fleet-scheduler-fields` (going live). Relayed members show
   `ip: null` until the hub patch is deployed (branch `hub-member-ip` of
-  `omen-runner-fleet-manager`, written, not deployed): it sends the Alienware
-  as `10.0.0.3` / `50052` and the OMEN as `10.0.0.1` / `null`.
+  `host-1-fleet-manager`, written, not deployed): it sends the Nvidia laptop
+  as `192.0.2.3` / `50052` and the host machine as `192.0.2.1` / `null`.
 
 ## 4. Goals and non-goals
 
@@ -169,7 +169,7 @@ Goals:
 
 - One endpoint; placement decided per load from live state.
 - Config holds profiles and policy only. Adding a PS5 needs no config edit.
-- Existing clients and the OMEN hub's llama panel keep working.
+- Existing clients and the host machine hub's llama panel keep working.
 - Correct under concurrency: many agents arriving at random times.
 
 Non-goals for v1 (see section 14 for the planned follow-ups):
@@ -181,14 +181,14 @@ Non-goals for v1 (see section 14 for the planned follow-ups):
 - Learning memory needs automatically.
 - Moving a loaded model without a reload; several replicas of one profile.
 - Using free nodes that an earlier request has claimed while it waits (no backfill).
-- Budgeting host RAM on the OMEN. Nodes are exclusive, so there are never more
+- Budgeting host RAM on the host machine. Nodes are exclusive, so there are never more
   instances than nodes, and each instance's host prompt cache is capped.
 - Authentication (unchanged: LAN-only firewall). The dashboard at /ui/ is read-only (9.1); the live channel (9.2) and benchmarks (9.3) are the only additions.
 - Starting or stopping `rpc-server` on nodes.
 
 ## 5. Architecture
 
-One Go process in one container on the OMEN.
+One Go process in one container on the host machine.
 
 ```
 clients ──HTTP──▶ ┌──────────────── llm-scheduler ────────────────┐
@@ -196,7 +196,7 @@ clients ──HTTP──▶ ┌──────────────── 
  hub panel)       │              (one goroutine)        │         │      │ --rpc a,b
                   │                 │  ▲             prober ──────┼─▶ --list-devices (pre-flight)
                   │              placer │                         │      ▼
-                  │                 ▼  │                          │   rpc-server on PS5s / Alienware
+                  │                 ▼  │                          │   rpc-server on PS5s / Nvidia laptop
                   │   node view ◀─ fleet client ◀── SSE ── fleet console (:8090)
                   │       ▲─────── local GPU probe (nvidia-smi)   │
                   └───────────────────────────────────────────────┘
@@ -228,7 +228,7 @@ is testable with fakes.
 
 ### 5.1 The local node
 
-The OMEN's GPU is read with
+The host machine's GPU is read with
 `nvidia-smi --query-gpu=memory.total,memory.used --format=csv,noheader,nounits`
 every 2 s (H1), not from the fleet manager: exact MiB, and `kind: command`
 profiles keep working when the fleet console or the hub is down. If
@@ -238,7 +238,7 @@ otherwise ignored. The probe command is a config value (`local_probe_cmd`), so
 tests point it at a fake.
 
 The local tier's `headroom_mib` is 450. `nvidia-smi` reports 8151 MiB on the
-OMEN's GPU but llama.cpp can use 7707, and each child that uses the GPU adds
+host machine's GPU but llama.cpp can use 7707, and each child that uses the GPU adds
 about 120 MiB of CUDA context that the load log does not show.
 
 The local node has one fixed id for the life of the process: the value of
@@ -407,7 +407,7 @@ not stored.
 listen: ":8080"                    # mapped to 3122 by compose
 fleet:
   url: http://host.docker.internal:8090
-  local_node: omen-runner
+  local_node: host-1
   stale_after: 60s                 # view age beyond which remote nodes are not used
 models_dir: /models
 child_log_dir: ""                  # optional; see "Child output on disk" below
@@ -453,13 +453,13 @@ defaults:
 
 tiers:                     # first match wins; lower number preferred;
                            # a node matching no tier is never used
-  - match: { hostname: "ps5-*" }
+  - match: { hostname: "console-*" }
     priority: 1
     headroom_mib: 1024
     shared_memory: true    # GPU memory is system RAM
     link_mb_s: 8           # measured; used to size load timeouts
     settle: 3s
-  - match: { hostname: "alienware*" }
+  - match: { hostname: "laptop-*" }
     priority: 2
     headroom_mib: 256      # dedicated VRAM; pre-flight gives exact figures
     link_mb_s: 60
@@ -470,12 +470,12 @@ tiers:                     # first match wins; lower number preferred;
     settle: 2s
 
 node_overrides:            # optional; wins over the fleet's ip/rpc_port
-  alienware-llm: { rpc: "10.0.0.3:50052" }
+  laptop-1: { rpc: "192.0.2.3:50052" }
 
 exclude_nodes:             # optional; nodes that are never used (see below)
   - ps5-abc123             # a hostname
   - ps5-test*              # a hostname glob
-  - 70:66:2a:a9:a7:65      # a node id
+  - 02:00:00:00:00:01      # a node id
 
 profiles:
   gemma-4-12b:             # bare name = the default variant
@@ -487,15 +487,15 @@ profiles:
     model: Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf
     ctx: 14336
     kv_quant: q8_0
-    allow_tiers: [1, 2]              # never the OMEN's GPU
+    allow_tiers: [1, 2]              # never the host machine's GPU
   gemma-bench-2pool:                  # benchmark: forced placement
     model: gemma-4-12b-it-Q4_K_M.gguf
     ctx: 65536
     kv_quant: q8_0
     flash_attn: true
-    force_nodes: [ps5-062e1d84, alienware-llm]
+    force_nodes: [console-4, laptop-1]
     tensor_split: [60, 40]
-  large-v3-turbo:                     # non-LLM: fixed command on the OMEN
+  large-v3-turbo:                     # non-LLM: fixed command on the host machine
     kind: command
     cmd: env -u LD_LIBRARY_PATH /opt/whisper-server/venv/bin/python /opt/whisper-server/server.py --host 127.0.0.1 --port ${PORT} --model large-v3-turbo
     check_endpoint: /health
@@ -510,7 +510,7 @@ profiles:
 matches a node when it equals the node id, or matches the node's hostname as a
 glob (the same matching as a tier's `hostname`); both are case-insensitive. It
 lets the owner keep a machine (a PS5 under test, say) from ever receiving a
-model without giving up the `ps5-*` tier for the others.
+model without giving up the `console-*` tier for the others.
 
 - An excluded node is not *reachable* (7.1), so it is never eligible, never
   placed, never claimed, never counted in the capacity check (7.2) or in a
@@ -520,7 +520,7 @@ model without giving up the `ps5-*` tier for the others.
   `node <hostname> is excluded by config`. When the capacity check fails, the
   message lists the excluded nodes that were left out.
 - The local node can be excluded (by `fleet.local_node` or its hostname). The
-  OMEN GPU is then never used, and `kind: command` profiles, which run only on
+  host machine GPU is then never used, and `kind: command` profiles, which run only on
   the local node, fail as "does not fit".
 - Excluding wins over forcing. A profile whose `force_nodes` names an excluded
   node fails config validation when config alone can tell (the name equals an
@@ -611,7 +611,7 @@ includes one forced profile:
     ctx: 14336
     kv_quant: q8_0
     flash_attn: true
-    force_nodes: [alienware-llm, omen-runner]
+    force_nodes: [laptop-1, host-1]
     tensor_split: [50, 50]
 ```
 
@@ -696,13 +696,13 @@ only, quarantined and settling nodes still count, because they will be back
 shortly. The check is skipped while the fleet view is stale: the request
 queues, and if nothing changes it times out with the "fleet view stale" reason.
 
-Worked checks, used as golden placer tests (OMEN 8151 MiB, Alienware 7885 MiB,
+Worked checks, used as golden placer tests (host machine 8151 MiB, Nvidia laptop 7885 MiB,
 both empty, headroom 256):
 
 | Case | Arithmetic | Result |
 |---|---|---|
-| `gemma-4-12b`, `needs_mib: 7800`, OMEN alone | 8151 − 256 = 7895 ≥ 7800 | fits |
-| same, Alienware alone | 7885 − 256 = 7629 < 7800 | does not fit |
+| `gemma-4-12b`, `needs_mib: 7800`, host machine alone | 8151 − 256 = 7895 ≥ 7800 | fits |
+| same, Nvidia laptop alone | 7885 − 256 = 7629 < 7800 | does not fit |
 | Devstral 14K q8, estimated about 14828, both laptops | (7895 − 600) + (7629 − 600) = 14324 < 15570 | does not fit (see 6.1) |
 
 **Optional fit check for forced profiles (`defaults.forced_fit_check`).** A
@@ -732,7 +732,7 @@ correctly says it does not fit. On llama.cpp upstream HEAD (2026-11-19) a
 forced load that does not fit takes a PS5 down until it is power cycled, so
 `reject` is the recommended production setting. Messages say per node which
 figure was used, e.g. `need 14691 MiB (estimated, +5% margin; the estimate is 13991 MiB), but the nodes it is forced onto have only 12380 MiB usable in total (usable 12380 MiB on
-ps5-9032a330 (shared memory, headroom kept, from fleet figures))`. `warn` logs one WARN line, `forced profile
+console-1 (shared memory, headroom kept, from fleet figures))`. `warn` logs one WARN line, `forced profile
 may not fit`, with `need_mib`, `free_mib`, `nodes` and `measured`, and starts
 anyway. `reject` fails the request before a child is started, with `503`,
 reason `forced nodes do not fit` and a `Retry-After` like the other placement
@@ -823,8 +823,8 @@ placement or nothing.
       among equal sizes, the best worst-tier, then the largest total budget.
    c. Else go to the next tier level.
 
-So a pool of PS5s is chosen before anything that touches the Alienware, and the
-OMEN is reached only when tiers 1 and 2 together cannot hold the model.
+So a pool of PS5s is chosen before anything that touches the Nvidia laptop, and the
+host machine is reached only when tiers 1 and 2 together cannot hold the model.
 
 ### 7.3a Child output on disk
 
@@ -874,7 +874,7 @@ llama-server-rpc --host 127.0.0.1 --port <p> --model /models/<file>
   All spellings of the verbosity flags are managed flags.
 - A llama child whose placement has no local node is started with
   `CUDA_VISIBLE_DEVICES=""`. Without it llama.cpp initialises CUDA whatever
-  `--device` says and takes about 100 MiB of the OMEN's VRAM per child.
+  `--device` says and takes about 100 MiB of the host machine's VRAM per child.
 
 ### 7.5 Pre-flight
 
@@ -1013,8 +1013,8 @@ above stay exactly as they are.
   "eta_s": 605,
   "source": "measured",
   "workers": [
-    {"addr": "10.0.0.101:50052", "bytes_total": 5814133322, "bytes_sent": 5580799366, "state": "receiving"},
-    {"addr": "10.0.0.122:50052", "bytes_total": 5814133322, "bytes_sent": 0, "state": "waiting"}
+    {"addr": "192.0.2.101:50052", "bytes_total": 5814133322, "bytes_sent": 5580799366, "state": "receiving"},
+    {"addr": "192.0.2.122:50052", "bytes_total": 5814133322, "bytes_sent": 0, "state": "waiting"}
   ]
 }
 ```
@@ -1039,7 +1039,7 @@ A worker is `{addr, bytes_total, bytes_sent?, state}`:
   profile's, else the node budgets, so equal shares for equal budgets). When
   the child's output prints the real size, it replaces the estimate: the
   scheduler reads the `model buffer size` line of each remote device from the
-  same load log that fills `memory_mib` (`load_tensors: RPC0[10.0.0.101:50052]
+  same load log that fills `memory_mib` (`load_tensors: RPC0[192.0.2.101:50052]
   model buffer size = 6686.84 MiB`; the device label is `RPC0[...]` for every
   worker, so the address inside the brackets is the key; MiB is 1048576
   bytes). The totals sum to roughly `bytes_total`; they are not forced to.
@@ -1062,7 +1062,7 @@ attempts that started a child, newest first, each kept for
 `RecentLoadRetention` (120 s) after it finished:
 
 ```json
-{"session_id": "ld-1794995021087-3", "model": "big", "workers": ["10.0.0.101:50052", "10.0.0.122:50052"],
+{"session_id": "ld-1794995021087-3", "model": "big", "workers": ["192.0.2.101:50052", "192.0.2.122:50052"],
  "outcome": "ready", "reason": "", "finished_at": 1794995221087, "load_s": 215.1}
 ```
 
@@ -1197,7 +1197,7 @@ Rules that hold throughout:
   stale, since they could not be reloaded.
 - Known cost: free nodes inside a claim sit unused while the claim's victims
   drain. Accepted for v1.
-- Known behaviour: an idle LLM instance that includes the OMEN's GPU is evicted
+- Known behaviour: an idle LLM instance that includes the host machine's GPU is evicted
   when Whisper or FLUX is requested, and may evict them back later. `hold`
   limits how often.
 
@@ -1352,11 +1352,11 @@ last instance ends stops being tracked, which ends its episode).
 
 *Request.* `POST <fleet.url>/api/recovery/<node_id>`, `<node_id>` being the
 node's fleet `id` exactly as `/api/fleet` returns it (a MAC-style id such as
-`70:66:2a:a9:a7:65`), percent-encoded as one path segment (colons become `%3A`).
+`02:00:00:00:00:01`), percent-encoded as one path segment (colons become `%3A`).
 Body (JSON):
 
 ```json
-{"v":1,"target_node_id":"70:66:2a:a9:a7:65","action":"restart_rpc_server",
+{"v":1,"target_node_id":"02:00:00:00:00:01","action":"restart_rpc_server",
  "reason":"hung: heartbeat silent 95s, upload silent 40s",
  "issued_at":1795058743515,"expires_at":1795058788515,
  "nonce":"529a35e343727f1c3f403fc090490810"}
@@ -1558,7 +1558,7 @@ swaps. A torn last line (a crash) is skipped. Compose mounts
 ```json
 {"ts": 1795055906526, "seq": 41, "type": "loadFinished", "severity": "info",
  "profile": "gemma-4-12b", "model_file": "gemma-4-12b.gguf",
- "nodes": ["ps5-062e1d84", "ps5-0a1b2c3d"], "session_id": "ld-1795055840000-3",
+ "nodes": ["console-4", "console-6"], "session_id": "ld-1795055840000-3",
  "summary": "gemma-4-12b finished loading in 66.1 s (101.4 MB/s).",
  "data": {"outcome": "ready", "load_s": 66.1, "bytes": 6700000000, "avg_mb_s": 101.4}}
 ```
@@ -1623,7 +1623,7 @@ Per-request chat traffic is never recorded (only a count, in `instanceUnloaded`)
 
 *Dashboard.* `GET /ui/` is one HTML file embedded in the binary (`embed`): no
 external script, font or stylesheet, no build step, plain JavaScript, and it
-works from another machine on the LAN (`http://<omen>:3122/ui/`). It only
+works from another machine on the LAN (`http://<host>:3122/ui/`). It only
 reads: it offers no load, unload or any other action. Sections, top to bottom:
 header (version, uptime, history on or off, oldest event, live feed state); Now
 (a tile per node from `/api/status` every 2 s, redrawn at once on live
@@ -1639,8 +1639,8 @@ text); Summary (counts and per-profile load statistics).
 ### 9.2 The live channel (`GET /ws`)
 
 One WebSocket for everything that is live; REST is for what a client pulls or
-pushes. It is in the same process and port as the rest (`http://<omen>:3122` ->
-`ws://<omen>:3122/ws`). The SSE stream `/api/events` (A.3) is unchanged and
+pushes. It is in the same process and port as the rest (`http://<host>:3122` ->
+`ws://<host>:3122/ws`). The SSE stream `/api/events` (A.3) is unchanged and
 stays for the hub's llama panel. Library: `github.com/coder/websocket` (pure
 Go). Package `internal/api` (`ws.go`).
 
@@ -1671,7 +1671,7 @@ unless there is no `Origin` (not a browser), it is the same origin as the
 request, or its host is a loopback or private IP (`127.0.0.0/8`, `::1`,
 `10/8`, `172.16/12`, `192.168/16`, `fc00::/7`, link-local), `localhost`, a name
 ending in `.local`, `.lan`, `.home.arpa` or `.internal`, or a single-label name
-such as `omen`. This stops a page on the internet from using the browser of
+such as `host-1`. This stops a page on the internet from using the browser of
 someone on the LAN to reach the scheduler; it is not authentication.
 
 ### 9.3 Benchmarks
@@ -2059,7 +2059,7 @@ schema version, child log directory).
 ### 9.5 MCP server (`/mcp`)
 
 AI agents operate the scheduler through the Model Context Protocol, in the same
-binary and on the same port: `http://<omen>:3122/mcp`. Package
+binary and on the same port: `http://<host>:3122/mcp`. Package
 `internal/mcpserver`. No authentication (LAN tool, like the rest).
 
 *Transport.* Streamable HTTP in its stateless form: every `POST /mcp` carries
@@ -2233,9 +2233,9 @@ groups and signals sit behind one small OS-specific file.
 2. PS5 usable memory: sources disagree (12 GB, 14.1 GB, 14948 MiB). The
    scheduler uses the pre-flight figure at load time; the hardware checks
    compare it with what actually loads.
-3. `qwen3.5-4b` runs at 76 tokens/s on the OMEN's GPU today. Under the tier
+3. `qwen3.5-4b` runs at 76 tokens/s on the host machine's GPU today. Under the tier
    order it moves to a PS5, which is probably slower. A `prefer_tiers` field
-   could keep it on the OMEN if that matters.
+   could keep it on the host machine if that matters.
 4. The hub's llama panel shows one loaded model and assumes a 300 s TTL. With
    several models loaded at once it will show only one until the panel is updated.
 5. Token counts in A.4 are filled on a best-effort basis from the tail of each
@@ -2257,7 +2257,7 @@ groups and signals sit behind one small OS-specific file.
 
 ## Appendix A. llama-swap compatible shapes
 
-Taken from the consumers' code in `omen-runner-fleet-manager`:
+Taken from the consumers' code in `host-1-fleet-manager`:
 `host/omen-hub-nodes.py` (the hub's push loop), `apps/omen-hub/nginx.conf` and
 `apps/omen-hub/web/src/lib/llama.ts` (the hub's llama panel). These are the
 contract; M5 tests assert them. The only other caller of port 3122's
@@ -2270,7 +2270,7 @@ Polled by the hub every 1 s with a 1 s timeout on a keep-alive connection.
 ```json
 { "running": [
   { "model": "gemma-4-12b:64k", "state": "ready", "name": "gemma-4-12b:64k",
-    "cmd": "llama-server-rpc --host 127.0.0.1 --port 5801 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 65536 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.2:50052 --device RPC0 -ctk q8_0 -ctv q8_0 --flash-attn on" }
+    "cmd": "llama-server-rpc --host 127.0.0.1 --port 5801 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 65536 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 192.0.2.2:50052 --device RPC0 -ctk q8_0 -ctv q8_0 --flash-attn on" }
 ] }
 ```
 
@@ -2332,9 +2332,9 @@ data: {"type":"inflight","data":"{\"operation\":\"snapshot\",\"requests\":[]}"}
   still sent on every instance state change.
 
 ```
-data: {"type":"loadStarted","data":"{\"model\":\"big\",\"session_id\":\"ld-1794995021087-3\",\"started_at\":1794995021087,\"workers\":[\"10.0.0.101:50052\",\"10.0.0.122:50052\"]}"}
+data: {"type":"loadStarted","data":"{\"model\":\"big\",\"session_id\":\"ld-1794995021087-3\",\"started_at\":1794995021087,\"workers\":[\"192.0.2.101:50052\",\"192.0.2.122:50052\"]}"}
 
-data: {"type":"loadFinished","data":"{\"finished_at\":1794995221087,\"load_s\":215.1,\"model\":\"big\",\"outcome\":\"ready\",\"reason\":\"\",\"session_id\":\"ld-1794995021087-3\",\"workers\":[\"10.0.0.101:50052\",\"10.0.0.122:50052\"]}"}
+data: {"type":"loadFinished","data":"{\"finished_at\":1794995221087,\"load_s\":215.1,\"model\":\"big\",\"outcome\":\"ready\",\"reason\":\"\",\"session_id\":\"ld-1794995021087-3\",\"workers\":[\"192.0.2.101:50052\",\"192.0.2.122:50052\"]}"}
 ```
 - `workerHealth`: sent when a watched worker's health state changes (8.4a).
   `data` is `{node, addr, health}`, `health` being the object of `/api/status`
@@ -2342,7 +2342,7 @@ data: {"type":"loadFinished","data":"{\"finished_at\":1794995221087,\"load_s\":2
   non-`ok` worker ends, one more event is sent with no `health`.
 
 ```
-data: {"type":"workerHealth","data":"{\"addr\":\"10.0.0.101:50052\",\"health\":{\"channels\":{\"heartbeat\":\"silent\",\"probe\":\"silent\",\"upload\":\"unknown\"},\"silent_for_s\":{\"heartbeat\":0,\"probe\":0.1},\"since\":1795055906526,\"state\":\"hung\"},\"node\":\"ps5-a\"}"}
+data: {"type":"workerHealth","data":"{\"addr\":\"192.0.2.101:50052\",\"health\":{\"channels\":{\"heartbeat\":\"silent\",\"probe\":\"silent\",\"upload\":\"unknown\"},\"silent_for_s\":{\"heartbeat\":0,\"probe\":0.1},\"since\":1795055906526,\"state\":\"hung\"},\"node\":\"ps5-a\"}"}
 ```
 - `recoveryRequest`: sent only with `recovery.enabled` (8.4b), when a recovery
   request is sent (`phase` `sent`) and when a node's outcome is seen (`phase`

@@ -493,7 +493,7 @@ func TestRule_IdleUnloadTTLZeroNever(t *testing.T) {
 func TestRule_IdleUnloadPausedForRemoteWhileStale(t *testing.T) {
 	h := newHarness(t).nodes(ps5("a", 2, 15000), omen(8000))
 	h.llama("remote", 8000, func(p *core.Profile) { p.ForceNodes = []string{"a"} })
-	h.llama("local", 6000, func(p *core.Profile) { p.ForceNodes = []string{"omen"} })
+	h.llama("local", 6000, func(p *core.Profile) { p.ForceNodes = []string{"host-1"} })
 	h.release(h.ready("remote"))
 	h.release(h.ready("local"))
 	h.view.stale()

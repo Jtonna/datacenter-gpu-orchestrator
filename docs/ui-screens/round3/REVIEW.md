@@ -1,5 +1,7 @@
 # Round 3: review against the owner's feedback
 
+> The screenshots named on this page were removed from the repository; they can be regenerated with `go run ./cmd/devcluster`.
+
 Pictures are of the `real` scenario (a recording of the real cluster: 16
 models, 254 profiles, two benchmark runs) unless the name ends in `-demo` (the
 scripted cluster, which has more runs). `-before` is the build this round
@@ -152,7 +154,7 @@ on the page. Measured on the `real` recording, on this machine:
 
 What made the first open slow on the real system was not this endpoint: it
 answers in 30 to 60 ms there. `curl` from this machine shows 2.7 s spent
-resolving the name `omen-runner.local` on the first request and 0.02 s
+resolving the name `host-1.local` on the first request and 0.02 s
 afterwards. The page used to show "Connecting" for that long because it drew
 nothing until the socket had delivered a status. It now draws at once and
 asks for the catalog over REST and the socket at the same time.

@@ -18,7 +18,7 @@ import (
 func TestQuarantine_DoublesPerRepeatAndResetsOnSuccess(t *testing.T) {
 	h := newHarness(t).nodes(ps5("a", 2, 15000))
 	h.llama("m", 8000)
-	h.prober.fail["10.0.0.2:50052"] = probeFail("10.0.0.2:50052")
+	h.prober.fail["192.0.2.2:50052"] = probeFail("192.0.2.2:50052")
 	w := h.request("m")
 	want := []time.Duration{30 * time.Second, 60 * time.Second, 120 * time.Second}
 	for i, d := range want {
@@ -28,7 +28,7 @@ func TestQuarantine_DoublesPerRepeatAndResetsOnSuccess(t *testing.T) {
 		}
 		h.advance(d) // expires; the entry is placed and probed again
 	}
-	delete(h.prober.fail, "10.0.0.2:50052")
+	delete(h.prober.fail, "192.0.2.2:50052")
 	h.advance(240 * time.Second)
 	h.wantState("m", "starting")
 	if ns := h.c.nodes["a"]; ns.quarLevel != 0 || h.c.quarantined("a") {

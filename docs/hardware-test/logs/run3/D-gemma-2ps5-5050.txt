@@ -1,6 +1,0 @@
-== D-gemma-2ps5-5050 start 23:49:12
-gpu_before 10 MiB
-gpu_loaded 10 MiB
-{"model":"gemma-4-12b:2ps5-5050","msg":"ok"}
-
-== D-gemma-2ps5-5050 done 23:50:32 gpu 10 MiB

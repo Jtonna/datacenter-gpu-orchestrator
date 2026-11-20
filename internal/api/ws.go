@@ -492,7 +492,7 @@ func wsOriginAllowed(r *http.Request) bool {
 		strings.HasSuffix(h, ".home.arpa") || strings.HasSuffix(h, ".internal") {
 		return true
 	}
-	return !strings.Contains(h, ".") // a single-label name such as "omen" is a LAN host
+	return !strings.Contains(h, ".") // a single-label name such as "host-1" is a LAN host
 }
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {

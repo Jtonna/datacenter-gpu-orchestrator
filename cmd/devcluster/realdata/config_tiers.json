@@ -5,7 +5,7 @@
    "headroom_mib": 1024,
    "link_mb_s": 100,
    "match": {
-    "hostname": "ps5-*"
+    "hostname": "console-*"
    },
    "priority": 1,
    "settle": "3s",
@@ -15,7 +15,7 @@
    "headroom_mib": 256,
    "link_mb_s": 60,
    "match": {
-    "hostname": "alienware*"
+    "hostname": "laptop-*"
    },
    "priority": 2,
    "settle": "8s"

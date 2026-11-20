@@ -1,1 +1,0 @@
-{"model": "tinyllama", "t_sent": "15:29:21", "status": 200, "total_s": 14.0, "ttft_s": 13.66, "chunks": 42, "predicted_n": 40, "gen_tps": 115.84, "prompt_n": 21, "prompt_tps": 909.96, "text": "Sure! Here's an example sentence using the verb \"say\" with an appropriate object:\n\n\"I said hi!\"\n\nIn this sentence, \"hi!\""}

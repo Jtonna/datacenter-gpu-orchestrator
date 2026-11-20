@@ -13,7 +13,7 @@ type NodeID string
 type Node struct {
 	ID       NodeID // fleet id
 	Hostname string // fleet hostname (may be shared by two consoles)
-	Local    bool   // true for the host the scheduler runs on (the OMEN)
+	Local    bool   // true for the host the scheduler runs on (the host machine)
 	Online   bool   // currently online in a fresh enough view
 	Addr     string // rpc ip:port; empty for the local node
 

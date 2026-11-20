@@ -1,5 +1,7 @@
 # Review of the Benchmarks screens
 
+> The screenshots named on this page were removed from the repository; they can be regenerated with `go run ./cmd/devcluster`.
+
 Screenshots are in this folder (`benchmarks-<scenario>-<desktop|phone>.png`), taken with
 `scripts/ui-screens.sh` against `cmd/devcluster` on 127.0.0.1:8792. Behaviour was also driven in a
 headless Chrome through the DevTools protocol (a throwaway script, not committed).

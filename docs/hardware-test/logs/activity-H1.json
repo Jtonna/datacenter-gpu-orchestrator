@@ -1,1 +1,0 @@
-{"data":[{"duration_ms":4795,"id":1,"model":"qwen3.5-4b","req_path":"/v1/chat/completions","resp_status_code":200,"timestamp":"2026-11-17T15:52:22.365Z","tokens":{"input_tokens":17,"output_tokens":128,"tokens_per_second":38.887118045061904}}]}

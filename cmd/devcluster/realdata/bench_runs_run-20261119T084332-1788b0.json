@@ -6,18 +6,18 @@
   "scheduler_version": "v2-eff1011",
   "workers": [
    {
-    "node": "alienware-llm"
+    "node": "laptop-1"
    },
    {
-    "node": "ps5-31bd9dc4",
+    "node": "console-2",
     "rpc_server_version": "9958d7ddcab4152720f64df958a876352085dfaf311db66859a6450607ff5ee7"
    },
    {
-    "node": "ps5-407c8925",
+    "node": "console-3",
     "rpc_server_version": "9958d7ddcab4152720f64df958a876352085dfaf311db66859a6450607ff5ee7"
    },
    {
-    "node": "ps5-9032a330",
+    "node": "console-1",
     "rpc_server_version": "9958d7ddcab4152720f64df958a876352085dfaf311db66859a6450607ff5ee7"
    }
   ]
@@ -64,26 +64,26 @@
      {
       "bytes": 2317441658,
       "memory_mib": 2630.6,
-      "node": "ps5-9032a330"
+      "node": "console-1"
      },
      {
       "bytes": 2147522794,
       "memory_mib": 2381,
-      "node": "ps5-31bd9dc4"
+      "node": "console-2"
      },
      {
       "bytes": 2586825828,
       "memory_mib": 2840,
-      "node": "ps5-407c8925"
+      "node": "console-3"
      }
     ],
     "outcome": "ready",
     "session_id": "ld-1795077812812-3",
     "source": "history",
     "workers": [
-     "10.0.0.101:50052",
-     "10.0.0.122:50052",
-     "10.0.0.114:50052"
+     "192.0.2.101:50052",
+     "192.0.2.122:50052",
+     "192.0.2.114:50052"
     ]
    },
    "log_file": "/var/log/llm-children/20261119T084332Z-bench-gemma12b-3-2048-3.log",
@@ -105,26 +105,26 @@
        {
         "bytes": 2317441658,
         "memory_mib": 2630.6,
-        "node": "ps5-9032a330"
+        "node": "console-1"
        },
        {
         "bytes": 2147522794,
         "memory_mib": 2381,
-        "node": "ps5-31bd9dc4"
+        "node": "console-2"
        },
        {
         "bytes": 2586825828,
         "memory_mib": 2840,
-        "node": "ps5-407c8925"
+        "node": "console-3"
        }
       ],
       "outcome": "ready",
       "session_id": "ld-1795077812812-3",
       "source": "history",
       "workers": [
-       "10.0.0.101:50052",
-       "10.0.0.122:50052",
-       "10.0.0.114:50052"
+       "192.0.2.101:50052",
+       "192.0.2.122:50052",
+       "192.0.2.114:50052"
       ]
      },
      "outcome": "ok",
@@ -159,23 +159,23 @@
     "need_mib": 8104,
     "placement": [
      {
-      "addr": "10.0.0.101:50052",
+      "addr": "192.0.2.101:50052",
       "budget_mib": 12363,
-      "id": "70:66:2a:a9:a7:65",
+      "id": "02:00:00:00:00:01",
       "local": false,
       "memory": []
      },
      {
-      "addr": "10.0.0.122:50052",
+      "addr": "192.0.2.122:50052",
       "budget_mib": 12402,
-      "id": "c0:15:1b:3d:6a:7a",
+      "id": "02:00:00:00:00:02",
       "local": false,
       "memory": []
      },
      {
-      "addr": "10.0.0.114:50052",
+      "addr": "192.0.2.114:50052",
       "budget_mib": 12231,
-      "id": "0c:70:43:5c:08:0e",
+      "id": "02:00:00:00:00:03",
       "local": false,
       "memory": []
      }
@@ -248,14 +248,14 @@
      {
       "bytes": 2857599515,
       "memory_mib": 2880.8,
-      "node": "ps5-9032a330"
+      "node": "console-1"
      }
     ],
     "outcome": "ready",
     "session_id": "ld-1795077846896-6",
     "source": "history",
     "workers": [
-     "10.0.0.101:50052"
+     "192.0.2.101:50052"
     ]
    },
    "log_file": "/var/log/llm-children/20261119T084406Z-bench-qwen4b-1a-2048-6.log",
@@ -277,14 +277,14 @@
        {
         "bytes": 2857599515,
         "memory_mib": 2880.8,
-        "node": "ps5-9032a330"
+        "node": "console-1"
        }
       ],
       "outcome": "ready",
       "session_id": "ld-1795077846896-6",
       "source": "history",
       "workers": [
-       "10.0.0.101:50052"
+       "192.0.2.101:50052"
       ]
      },
      "outcome": "ok",
@@ -399,9 +399,9 @@
     "need_mib": 3138,
     "placement": [
      {
-      "addr": "10.0.0.101:50052",
+      "addr": "192.0.2.101:50052",
       "budget_mib": 12369,
-      "id": "70:66:2a:a9:a7:65",
+      "id": "02:00:00:00:00:01",
       "local": false,
       "memory": []
      }
@@ -603,7 +603,7 @@
     "found": false,
     "regression": false
    },
-   "error": "forced nodes do not fit: profile bench-devstral24b-1a-2048: need 14691 MiB (estimated, +5% margin; the estimate is 13991 MiB), but the nodes it is forced onto have only 12368 MiB usable in total (usable 12368 MiB on ps5-9032a330 (shared memory, headroom kept, from fleet figures)) (defaults.forced_fit_check is reject)",
+   "error": "forced nodes do not fit: profile bench-devstral24b-1a-2048: need 14691 MiB (estimated, +5% margin; the estimate is 13991 MiB), but the nodes it is forced onto have only 12368 MiB usable in total (usable 12368 MiB on console-1 (shared memory, headroom kept, from fleet figures)) (defaults.forced_fit_check is reject)",
    "expect": {
     "checks": [
      {
@@ -625,7 +625,7 @@
    "phases": [
     {
      "duration_s": 1.002,
-     "error": "forced nodes do not fit: profile bench-devstral24b-1a-2048: need 14691 MiB (estimated, +5% margin; the estimate is 13991 MiB), but the nodes it is forced onto have only 12368 MiB usable in total (usable 12368 MiB on ps5-9032a330 (shared memory, headroom kept, from fleet figures)) (defaults.forced_fit_check is reject)",
+     "error": "forced nodes do not fit: profile bench-devstral24b-1a-2048: need 14691 MiB (estimated, +5% margin; the estimate is 13991 MiB), but the nodes it is forced onto have only 12368 MiB usable in total (usable 12368 MiB on console-1 (shared memory, headroom kept, from fleet figures)) (defaults.forced_fit_check is reject)",
      "finished_at": 1795077891823,
      "idx": 0,
      "outcome": "refused",
@@ -646,20 +646,20 @@
     "need_mib": 13991,
     "placement": [
      {
-      "addr": "10.0.0.101:50052",
+      "addr": "192.0.2.101:50052",
       "budget_mib": 12368,
-      "id": "70:66:2a:a9:a7:65",
+      "id": "02:00:00:00:00:01",
       "local": false,
       "memory": []
      }
     ],
-    "reason": "profile bench-devstral24b-1a-2048: need 14691 MiB (estimated, +5% margin; the estimate is 13991 MiB), but the nodes it is forced onto have only 12368 MiB usable in total (usable 12368 MiB on ps5-9032a330 (shared memory, headroom kept, from fleet figures)) (defaults.forced_fit_check is reject)",
+    "reason": "profile bench-devstral24b-1a-2048: need 14691 MiB (estimated, +5% margin; the estimate is 13991 MiB), but the nodes it is forced onto have only 12368 MiB usable in total (usable 12368 MiB on console-1 (shared memory, headroom kept, from fleet figures)) (defaults.forced_fit_check is reject)",
     "required_mib": 0,
     "victims": [],
     "warning": ""
    },
    "profile": "bench-devstral24b-1a-2048",
-   "reason": "forced nodes do not fit: profile bench-devstral24b-1a-2048: need 14691 MiB (estimated, +5% margin; the estimate is 13991 MiB), but the nodes it is forced onto have only 12368 MiB usable in total (usable 12368 MiB on ps5-9032a330 (shared memory, headroom kept, from fleet figures)) (defaults.forced_fit_check is reject)",
+   "reason": "forced nodes do not fit: profile bench-devstral24b-1a-2048: need 14691 MiB (estimated, +5% margin; the estimate is 13991 MiB), but the nodes it is forced onto have only 12368 MiB usable in total (usable 12368 MiB on console-1 (shared memory, headroom kept, from fleet figures)) (defaults.forced_fit_check is reject)",
    "spec": {
     "description": "A model that does not fit on one PS5 must be refused before any upload.",
     "expect": {

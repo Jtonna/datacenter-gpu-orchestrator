@@ -85,7 +85,7 @@ func healthEnvWith(t *testing.T, extra string, poster scheduler.RecoveryPoster) 
 	t.Helper()
 	cfg, err := config.ParseWithOptions([]byte(`
 listen: ":0"
-fleet: {url: "http://127.0.0.1:1", local_node: omen}
+fleet: {url: "http://127.0.0.1:1", local_node: host-1}
 models_dir: /models
 `+extra+`
 defaults: {ttl: 0s, worker_probe_interval: 20ms, worker_silence: 200ms}

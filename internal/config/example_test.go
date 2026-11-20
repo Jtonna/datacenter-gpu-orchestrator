@@ -7,8 +7,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-
-	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 )
 
 func TestExampleConfigParses(t *testing.T) {
@@ -22,11 +20,7 @@ func TestExampleConfigParses(t *testing.T) {
 		got = append(got, n)
 	}
 	sort.Strings(got)
-	want := []string{
-		"devstral-24b", "devstral-24b:14k", "devstral-24b:14k-laptops", "devstral-24b:24k",
-		"flux-1-dev", "flux-1-schnell", "gemma-4-12b", "gemma-4-12b:48k", "gemma-4-12b:64k",
-		"gemma-4-12b:96k", "large-v3-turbo", "qwen3.5-4b", "tinyllama",
-	}
+	want := []string{"gemma-3-12b", "gemma-3-12b:32k", "qwen3-4b"}
 	if len(got) != len(want) {
 		t.Fatalf("profiles = %v, want %v", got, want)
 	}
@@ -35,44 +29,35 @@ func TestExampleConfigParses(t *testing.T) {
 			t.Fatalf("profiles = %v, want %v", got, want)
 		}
 	}
-	for old, new := range map[string]string{
-		"gemma-4-12b-1pool-8k": "gemma-4-12b", "gemma-4-12b-3pool-64k": "gemma-4-12b:64k",
-		"devstral-24b-3way": "devstral-24b:14k", "devstral-24b-q4": "devstral-24b:24k",
-		"tinyllama-ps5": "tinyllama", "devstral-24b-f16": "devstral-24b",
-	} {
-		if p, isAlias, ok := c.Resolve(old); !ok || !isAlias || p.Name != new {
-			t.Errorf("alias %q -> %v %v %v, want %q", old, p, isAlias, ok, new)
-		}
+	if p, isAlias, ok := c.Resolve("qwen-small"); !ok || !isAlias || p.Name != "qwen3-4b" {
+		t.Errorf("alias qwen-small -> %v %v %v, want qwen3-4b", p, isAlias, ok)
 	}
-	if p := c.Profiles["devstral-24b:14k-laptops"]; len(p.ForceNodes) != 2 || p.TensorSplit[0] != 50 {
-		t.Errorf("laptops profile: %+v", p)
+	if p := c.Profiles["gemma-3-12b:32k"]; p.KVQuant != "q8_0" || !p.FlashAttn || len(p.AllowTiers) != 2 || p.Ctx != 32768 {
+		t.Errorf("gemma 32k variant: %+v", p)
 	}
-	if p := c.Profiles["large-v3-turbo"]; p.Kind != core.KindCommand || p.NeedsMiB != 5400 ||
-		*p.StallTimeout != 0 {
-		t.Errorf("whisper: %+v", p)
-	}
-	// Measured on hardware, 2026-11-17 and 2026-11-18 (docs/hardware-test/).
-	for name, want := range map[string]int{"gemma-4-12b": 7900, "gemma-4-12b:48k": 8250, "gemma-4-12b:64k": 8600,
-		"gemma-4-12b:96k": 9050, "devstral-24b": 14300, "qwen3.5-4b": 3400, "tinyllama": 700} {
+	for name, want := range map[string]int{"qwen3-4b": 3400, "gemma-3-12b": 7900, "gemma-3-12b:32k": 0} {
 		if p := c.Profiles[name]; p.NeedsMiB != want {
 			t.Errorf("%s needs_mib = %d, want %d", name, p.NeedsMiB, want)
 		}
 	}
-	for host, want := range map[string]int{"ps5-062e1d84": 100, "alienware-llm": 60} {
+	for host, want := range map[string]int{"console-1": 100, "laptop-1": 60} {
 		if tier, ok := c.MatchTier(host, "", "", false); !ok || tier.LinkMBs != float64(want) {
 			t.Errorf("%s link_mb_s = %+v, want %d", host, tier, want)
 		}
 	}
-	if tier, ok := c.MatchTier("omen-runner", "", "", true); !ok || tier.HeadroomMiB != 450 {
+	if tier, ok := c.MatchTier("host-1", "", "", true); !ok || tier.HeadroomMiB != 450 {
 		t.Errorf("local tier headroom = %+v, want 450", tier)
 	}
-	if tier, ok := c.MatchTier("ps5-062e1d84", "", "", false); !ok || tier.Priority != 1 {
-		t.Errorf("ps5 tier: %+v %v", tier, ok)
+	if tier, ok := c.MatchTier("console-1", "", "", false); !ok || tier.Priority != 1 || !tier.SharedMemory {
+		t.Errorf("console tier: %+v %v", tier, ok)
+	}
+	if c.Fleet.LocalNode != "host-1" {
+		t.Errorf("local_node = %q", c.Fleet.LocalNode)
 	}
 }
 
-// deploy/seed-config.yaml is configs/example.yaml with a header and a commented
-// template added: the two must stay in sync.
+// deploy/seed-config.yaml is configs/example.yaml with a header, the deployment
+// paths and a commented template added: the two must stay in sync.
 func TestDeployConfigMatchesExample(t *testing.T) {
 	load := func(rel string) *Config {
 		c, err := LoadWithOptions(filepath.Join("..", "..", rel), Options{FileExists: existsAll})

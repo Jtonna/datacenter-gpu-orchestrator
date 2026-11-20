@@ -44,7 +44,7 @@ const profilesBasic = `  "tiny:2k":
 func withPS5(t *testing.T, env map[string]string) *cluster {
 	t.Helper()
 	o := options{profiles: profilesBasic, env: env}
-	o.members = append(o.members, ps5(psA, "ps5-062e1d84", "10.0.0.2"))
+	o.members = append(o.members, ps5(psA, "ps5-a", "192.0.2.2"))
 	return startCluster(t, o)
 }
 
@@ -68,10 +68,10 @@ func TestChatTriggersPreflightLoadAndStreams(t *testing.T) {
 	if len(starts) != 2 || starts[0].Mode != "list-devices" || starts[1].Mode != "serve" {
 		t.Fatalf("starts = %+v, want one list-devices probe then one serve", starts)
 	}
-	if !strings.Contains(strings.Join(starts[0].Argv, " "), "--rpc 10.0.0.2:50052") {
+	if !strings.Contains(strings.Join(starts[0].Argv, " "), "--rpc 192.0.2.2:50052") {
 		t.Fatalf("probe argv = %v", starts[0].Argv)
 	}
-	if got := strings.Join(starts[1].Argv, " "); !strings.Contains(got, "--rpc 10.0.0.2:50052") || !strings.Contains(got, "--device RPC0") || !strings.Contains(got, "--fit off") {
+	if got := strings.Join(starts[1].Argv, " "); !strings.Contains(got, "--rpc 192.0.2.2:50052") || !strings.Contains(got, "--device RPC0") || !strings.Contains(got, "--fit off") {
 		t.Fatalf("serve argv = %s", got)
 	}
 }
@@ -151,7 +151,7 @@ func TestRunningShapeAndHubRegexes(t *testing.T) {
 	cmd := r["cmd"].(string)
 	rpc := regexp.MustCompile(`--rpc[= ]+(\S+)`).FindStringSubmatch(cmd)
 	ctx := regexp.MustCompile(`(?:--ctx-size|-c)[= ]+(\d+)`).FindStringSubmatch(cmd)
-	if rpc == nil || rpc[1] != "10.0.0.2:50052" || ctx == nil || ctx[1] != "2048" {
+	if rpc == nil || rpc[1] != "192.0.2.2:50052" || ctx == nil || ctx[1] != "2048" {
 		t.Fatalf("hub regexes on %q: rpc=%v ctx=%v", cmd, rpc, ctx)
 	}
 }
@@ -347,13 +347,13 @@ func TestPreflightFailureQuarantinesAndFallsOver(t *testing.T) {
 		t.Skip("takes about 10 s: the pre-flight timeout")
 	}
 	// psA is smaller, so the placer tries it first ("smallest budget that fits").
-	small := ps5(psA, "ps5-aaaa", "10.0.0.2")
+	small := ps5(psA, "ps5-aaaa", "192.0.2.2")
 	small.VRAMTotal, small.VRAMUsed = ptr(12.0), ptr(0.0)
-	good := ps5(psB, "ps5-bbbb", "10.0.0.4")
+	good := ps5(psB, "ps5-bbbb", "192.0.2.4")
 	c := startCluster(t, options{
 		members:  []ps5Member{small, good},
 		profiles: profilesBasic,
-		env:      map[string]string{"FAKELLAMA_LIST_DEVICES_HANG_ADDR": "10.0.0.2:50052"},
+		env:      map[string]string{"FAKELLAMA_LIST_DEVICES_HANG_ADDR": "192.0.2.2:50052"},
 	})
 	status, body := c.chat("tiny:2k", false)
 	if status != 200 {
@@ -365,8 +365,8 @@ func TestPreflightFailureQuarantinesAndFallsOver(t *testing.T) {
 		t.Fatalf("quarantines = %v, want %s", q, psA)
 	}
 	run := c.running()
-	if len(run) != 1 || !strings.Contains(run[0].Cmd, "--rpc 10.0.0.4:50052") || strings.Contains(run[0].Cmd, "10.0.0.2") {
-		t.Fatalf("running = %+v, want the model on 10.0.0.4", run)
+	if len(run) != 1 || !strings.Contains(run[0].Cmd, "--rpc 192.0.2.4:50052") || strings.Contains(run[0].Cmd, "192.0.2.2") {
+		t.Fatalf("running = %+v, want the model on 192.0.2.4", run)
 	}
 	var probes []string
 	for _, s := range c.starts() {
@@ -445,7 +445,7 @@ func TestChildVerbosityFeedsMemoryAndStderrStaysQuiet(t *testing.T) {
 		t.Fatalf("chat: %d %s", status, body)
 	}
 	run := c.running()
-	if len(run) != 1 || !strings.Contains(run[0].Cmd, "--cache-ram 2048 -lv 4 --rpc 10.0.0.2:50052 --device RPC0") {
+	if len(run) != 1 || !strings.Contains(run[0].Cmd, "--cache-ram 2048 -lv 4 --rpc 192.0.2.2:50052 --device RPC0") {
 		t.Fatalf("cmd = %v", run)
 	}
 	insts, _ := c.jsonGet("/api/status")["instances"].([]any)
@@ -480,7 +480,7 @@ func TestRemoteOnlyChildHidesHostGPULocalChildInherits(t *testing.T) {
 		}
 		cmd := strings.Join(s.Argv, " ")
 		switch {
-		case strings.Contains(cmd, "--rpc 10.0.0.2:50052"):
+		case strings.Contains(cmd, "--rpc 192.0.2.2:50052"):
 			remoteEnv = s.Env
 		case strings.Contains(cmd, "--device CUDA0") && !strings.Contains(cmd, "--rpc"):
 			localEnv = s.Env
@@ -504,14 +504,14 @@ func TestRemoteOnlyChildHidesHostGPULocalChildInherits(t *testing.T) {
 func TestExcludedNodeAppearsMidRunAndReceivesNothing(t *testing.T) {
 	const psC = "aa:bb:cc:00:00:03"
 	c := startCluster(t, options{
-		members:  []ps5Member{ps5(psA, "ps5-aaaa", "10.0.0.2"), ps5(psB, "ps5-bbbb", "10.0.0.4")},
+		members:  []ps5Member{ps5(psA, "ps5-aaaa", "192.0.2.2"), ps5(psB, "ps5-bbbb", "192.0.2.4")},
 		profiles: profilesBasic, exclude: `["PS5-TEST*"]`,
 	})
 	if status, body := c.chat("tiny:2k", false); status != 200 {
 		t.Fatalf("first request: %d %s", status, body)
 	}
 	// A smaller PS5 (so the placer's smallest-fit rule would pick it) joins and is excluded.
-	smallPS5 := ps5(psC, "ps5-test1", "10.0.0.6")
+	smallPS5 := ps5(psC, "ps5-test1", "192.0.2.6")
 	smallPS5.VRAMTotal, smallPS5.VRAMUsed = ptr(14.0), ptr(0.0)
 	c.fleet.Upsert(smallPS5)
 	c.fleet.Push()
@@ -535,12 +535,12 @@ func TestExcludedNodeAppearsMidRunAndReceivesNothing(t *testing.T) {
 		t.Fatalf("big-a: %d %s", status, body)
 	}
 	for _, s := range c.starts() {
-		if strings.Contains(strings.Join(s.Argv, " "), "10.0.0.6") {
+		if strings.Contains(strings.Join(s.Argv, " "), "192.0.2.6") {
 			t.Fatalf("excluded node was used (%s): %v", s.Mode, s.Argv)
 		}
 	}
 	for _, r := range c.running() {
-		if strings.Contains(r.Cmd, "10.0.0.6") {
+		if strings.Contains(r.Cmd, "192.0.2.6") {
 			t.Fatalf("running on the excluded node: %+v", r)
 		}
 	}

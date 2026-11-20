@@ -1,4 +1,4 @@
-# llm-scheduler: replaces llama-swap on the OMEN (design section 10).
+# llm-scheduler: replaces llama-swap on the host machine (design section 10).
 # Deploy to /opt/llm-scheduler (owner admin), next to the old /opt/llama-swap.
 # NEVER run this and llama-swap at the same time: a worker serves one client.
 name: llm-scheduler
@@ -59,10 +59,14 @@ services:
       - SYS_ADMIN                     # the minimum the kernel NFS server needs; not privileged
     security_opt:
       - apparmor=unconfined
+    # POTLUCK_SHARE_BIND and POTLUCK_SHARE_NET MUST be set to the pool network of this
+    # deployment (for example in an .env file next to this file): the host's address on the
+    # link to the workers, and that link's subnet. The defaults are documentation addresses
+    # (192.0.2.0/24) that match no real network.
     ports:
-      - "10.0.0.1:2049:2049/tcp"      # the PS5 link address only. Never 0.0.0.0.
+      - "${POTLUCK_SHARE_BIND:-192.0.2.1}:2049:2049/tcp"   # the pool link address only. Never 0.0.0.0.
     environment:
-      NFS_EXPORT_0: "/models 10.0.0.0/24(ro,no_subtree_check,fsid=0,insecure,all_squash)"
+      NFS_EXPORT_0: "/models ${POTLUCK_SHARE_NET:-192.0.2.0/24}(ro,no_subtree_check,fsid=0,insecure,all_squash)"
       NFS_DISABLE_VERSION_3: "1"
     volumes:
       - models:/models:ro

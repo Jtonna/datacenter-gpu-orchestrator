@@ -184,7 +184,7 @@ func TestModelCatalogWarmCallReadsNothing(t *testing.T) {
 	}
 
 	// a load finishes: the catalog follows, without asking the history store again
-	st.Record(history.Event{Ts: time.Now().UnixMilli(), Type: history.TLoadFinished, Severity: "info", Profile: "alpha", ModelFile: "a.gguf", Nodes: []string{"omen"},
+	st.Record(history.Event{Ts: time.Now().UnixMilli(), Type: history.TLoadFinished, Severity: "info", Profile: "alpha", ModelFile: "a.gguf", Nodes: []string{"host-1"},
 		Data: map[string]any{"outcome": "ready", "load_s": 12.5, "avg_mb_s": 90.0}})
 	eventually(t, "the new load in the catalog", func() bool {
 		for _, m := range get()["models"].([]any) {
@@ -261,7 +261,7 @@ func TestWSModelsTopic(t *testing.T) {
 	if err := json.Unmarshal(w.until(t, "models", 3*time.Second).Data, &full); err != nil || len(full.Models) != 3 || full.Version < 1 || full.Dir != "/models" {
 		t.Fatalf("the snapshot: %v %+v", err, full)
 	}
-	st.Record(history.Event{Ts: time.Now().UnixMilli(), Type: history.TLoadFinished, Severity: "info", Profile: "beta", ModelFile: "b.gguf", Nodes: []string{"omen"},
+	st.Record(history.Event{Ts: time.Now().UnixMilli(), Type: history.TLoadFinished, Severity: "info", Profile: "beta", ModelFile: "b.gguf", Nodes: []string{"host-1"},
 		Data: map[string]any{"outcome": "failed", "load_s": 3.0, "reason": "x"}})
 	var d struct {
 		Version, Base int64
@@ -331,7 +331,7 @@ func TestAgentKeysAttributeActionsInTheAudit(t *testing.T) {
 	mcp := mcpserver.New(e.api, mcpserver.Options{Version: "test", Identify: e.api.IdentifyAgent,
 		Bridge: func(ctx context.Context, actor string) context.Context { return audit.WithSource(ctx, "mcp", actor) }})
 	e.api.SetMCPTools(mcp.ToolInfo)
-	ui := map[string]string{"X-Source": "ui", "X-Actor": "jacob", "Content-Type": "application/json"}
+	ui := map[string]string{"X-Source": "ui", "X-Actor": "alex", "Content-Type": "application/json"}
 
 	// create: the key is shown once, only its hash is stored
 	st, m := e.cdo("POST", "/api/agents", `{"name":"claude-code laptop","description":"my coding agent"}`, ui)
@@ -342,7 +342,7 @@ func TestAgentKeysAttributeActionsInTheAudit(t *testing.T) {
 	ag := m["agent"].(map[string]any)
 	id := ag["id"].(string)
 	if !strings.HasPrefix(key, "lls_") || len(key) < 28 || ag["name"] != "claude-code laptop" || ag["key_prefix"] != key[:10] || ag["actor"] != "agent:claude-code laptop" ||
-		ag["created_by"].(map[string]any)["actor"] != "jacob" || ag["created_by"].(map[string]any)["source"] != "ui" {
+		ag["created_by"].(map[string]any)["actor"] != "alex" || ag["created_by"].(map[string]any)["source"] != "ui" {
 		t.Fatalf("created agent: key %q, %v", key, ag)
 	}
 	stored, err := cs.Agent(context.Background(), id)
@@ -418,7 +418,7 @@ func TestAgentKeysAttributeActionsInTheAudit(t *testing.T) {
 		t.Errorf("filter by agent: %d entries, want the 3 the agent made", len(es))
 	}
 	// the agent itself is in the log too (section agents), made by the web UI user
-	if es := auditOf(t, e, "section=agents"); len(es) != 1 || es[0]["action"] != "create" || es[0]["actor"] != "jacob" || es[0]["source"] != "ui" || es[0]["target"] != id ||
+	if es := auditOf(t, e, "section=agents"); len(es) != 1 || es[0]["action"] != "create" || es[0]["actor"] != "alex" || es[0]["source"] != "ui" || es[0]["target"] != id ||
 		strings.Contains(string(rawJSON(es[0])), key) {
 		t.Errorf("audit of the agent: %v", es)
 	}
@@ -505,7 +505,7 @@ var pngBytes = append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, 64)...)
 
 func TestModelIcons(t *testing.T) {
 	e, _, _ := cfgEnv(t)
-	ui := map[string]string{"X-Source": "ui", "X-Actor": "jacob", "Content-Type": "image/png"}
+	ui := map[string]string{"X-Source": "ui", "X-Actor": "alex", "Content-Type": "image/png"}
 	e.cdo("POST", "/api/config/profiles", `{"id":"g1","model":"gemma-4-12b-it-Q4_K_M.gguf","ctx":2048,"needs_mib":100}`, nil)
 	e.cdo("POST", "/api/config/profiles", `{"id":"g2","model":"gemma-3-27b-it-Q4_K_M.gguf","ctx":2048,"needs_mib":100}`, nil)
 	e.cdo("POST", "/api/config/profiles", `{"id":"q1","model":"Qwen_Qwen3.5-4B-Q4_K_M.gguf","ctx":2048,"needs_mib":100}`, nil)
@@ -593,7 +593,7 @@ func TestModelIcons(t *testing.T) {
 	if len(es) != 3 {
 		t.Fatalf("audit entries: %d, want 3 (set, set for the family, remove)", len(es))
 	}
-	if a := es[2]; a["action"] != "create" || a["source"] != "ui" || a["actor"] != "jacob" || a["target"] != "icon of "+g1 {
+	if a := es[2]; a["action"] != "create" || a["source"] != "ui" || a["actor"] != "alex" || a["target"] != "icon of "+g1 {
 		t.Errorf("the first entry: %v", a)
 	}
 	if a := es[1]; a["source"] != "rest" || a["target"] != "icon of the gemma family" {

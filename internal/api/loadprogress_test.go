@@ -23,7 +23,7 @@ import (
 type remoteView struct{ fakeView }
 
 func (v *remoteView) Nodes() []core.Node {
-	return []core.Node{{ID: "ps5-a", Hostname: "ps5-a", Online: true, Addr: "10.0.0.2:50052", TotalMiB: 16000, FreeMiB: 15000,
+	return []core.Node{{ID: "ps5-a", Hostname: "ps5-a", Online: true, Addr: "192.0.2.2:50052", TotalMiB: 16000, FreeMiB: 15000,
 		Priority: 1, HeadroomMiB: 1000, LinkMBs: 10, SharedMemory: true}}
 }
 func (v *remoteView) FetchNode(context.Context, core.NodeID) (core.Node, error) {
@@ -49,7 +49,7 @@ func loadingEnv(t *testing.T) *env {
 	t.Helper()
 	cfg, err := config.ParseWithOptions([]byte(`
 listen: ":0"
-fleet: {url: "http://127.0.0.1:1", local_node: omen}
+fleet: {url: "http://127.0.0.1:1", local_node: host-1}
 models_dir: /models
 tiers:
   - match: {hostname: "ps5-*"}

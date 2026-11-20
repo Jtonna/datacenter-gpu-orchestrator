@@ -211,7 +211,7 @@ func pastEvents(now time.Time) []history.Event {
 		g.add(t, history.TRequestRefused, history.Warn, profile, nil, "",
 			fmt.Sprintf("Request for %s refused before start (%s): %s.", profile, reason, strings.TrimRight(msg, ".")), data)
 	}
-	tooBig := "profile llama33-70b-q2 needs 47800 MiB (fit rule requires 54970 MiB) but the cluster can hold at most 45795 MiB; nodes excluded by config and not counted: alienware-m15"
+	tooBig := "profile llama33-70b-q2 needs 47800 MiB (fit rule requires 54970 MiB) but the cluster can hold at most 45795 MiB; nodes excluded by config and not counted: laptop-2"
 	refuse(at(38), "llama33-70b-q2", "does not fit", 503, tooBig, map[string]any{"need_mib": 47800, "required_mib": 54970, "capacity_mib": 45795})
 	refuse(at(205), "llama33-70b-q2", "does not fit", 503, tooBig, map[string]any{"need_mib": 47800, "required_mib": 54970, "capacity_mib": 45795, "suppressed_since_last": 2})
 	refuse(at(141), "devstral-24b", "cluster busy", 503, "waited 600s without a placement: placer: need 12100 MiB (requires 12100 MiB) does not fit the available nodes",
@@ -220,7 +220,7 @@ func pastEvents(now time.Time) []history.Event {
 	// a stalled load of kimi, a failure and a backoff
 	kt := at(70)
 	ks := sessionID(kt, 2)
-	g.add(kt, history.TLoadStarted, history.Info, "kimi-dev-72b-iq2s", ps3, ks, "Loading kimi-dev-72b-iq2s onto ps5-9032a330, ps5-31bd9dc4 and ps5-407c8925.",
+	g.add(kt, history.TLoadStarted, history.Info, "kimi-dev-72b-iq2s", ps3, ks, "Loading kimi-dev-72b-iq2s onto console-1, console-2 and console-3.",
 		map[string]any{"workers": addrsOf(ps3), "bytes_total": modelBytes[fileKimi], "need_mib": 26800, "need_basis": "measured, needs_mib"})
 	w := modelBytes[fileKimi] / 3
 	sent := w + w/5
@@ -278,7 +278,7 @@ func pastEvents(now time.Time) []history.Event {
 
 	// a pre-flight failure
 	g.add(at(186), history.TPreflightFailed, history.Warn, "devstral-24b", []string{ps5C.Host}, "",
-		"Pre-flight of devstral-24b failed for ps5-407c8925 (timeout): list-devices did not finish within 20s.",
+		"Pre-flight of devstral-24b failed for console-3 (timeout): list-devices did not finish within 20s.",
 		map[string]any{"kind": "timeout", "addr": ps5C.Addr(), "duration_s": 20.0, "err": "list-devices did not finish within 20s"})
 
 	sort.SliceStable(g.out, func(i, j int) bool { return g.out[i].Ts < g.out[j].Ts })

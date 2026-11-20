@@ -14,19 +14,19 @@ import (
 const sampleLoadLog = `llama_model_loader: loaded meta data with 35 key-value pairs
 load_tensors: offloaded 49/49 layers to GPU
 load_tensors:   CPU_Mapped model buffer size =   360.00 MiB
-load_tensors:  RPC0[10.0.0.2:50052] model buffer size =  4000.50 MiB
-load_tensors:  RPC0[10.0.0.3:50052] model buffer size =  3000.25 MiB
+load_tensors:  RPC0[192.0.2.2:50052] model buffer size =  4000.50 MiB
+load_tensors:  RPC0[192.0.2.3:50052] model buffer size =  3000.25 MiB
 load_tensors:        CUDA0 model buffer size =  1000.00 MiB
 llama_context: n_ctx         = 8192
-llama_kv_cache:  RPC0[10.0.0.2:50052] KV buffer size =   200.00 MiB
-llama_kv_cache:  RPC0[10.0.0.3:50052] KV buffer size =   150.00 MiB
+llama_kv_cache:  RPC0[192.0.2.2:50052] KV buffer size =   200.00 MiB
+llama_kv_cache:  RPC0[192.0.2.3:50052] KV buffer size =   150.00 MiB
 llama_kv_cache:      CUDA0 KV buffer size =    50.00 MiB
 llama_kv_cache:      CUDA0 rotation buffer size =     1.00 MiB
 llama_context:  CUDA_Host  output buffer size =     0.98 MiB
 llama_context: CUDA0 compute buffer size is 266.0000 MiB, matches expectation of 266.0000 MiB
 llama_context:      CUDA0 compute buffer size =   266.00 MiB
-llama_context:  RPC0[10.0.0.2:50052] compute buffer size =   100.00 MiB
-llama_context:  RPC0[10.0.0.3:50052] compute buffer size =    90.00 MiB
+llama_context:  RPC0[192.0.2.2:50052] compute buffer size =   100.00 MiB
+llama_context:  RPC0[192.0.2.3:50052] compute buffer size =    90.00 MiB
 llama_context:  CUDA_Host compute buffer size =    20.00 MiB
 `
 
@@ -44,9 +44,9 @@ func TestLoadLogSample(t *testing.T) {
 	s := l.Snapshot()
 
 	want := map[string][3]float64{ // model, kv, compute
-		"RPC0[10.0.0.2:50052]": {4000.50, 200, 100},
-		"RPC0[10.0.0.3:50052]": {3000.25, 150, 90},
-		"CUDA0":                {1000, 50, 266},
+		"RPC0[192.0.2.2:50052]": {4000.50, 200, 100},
+		"RPC0[192.0.2.3:50052]": {3000.25, 150, 90},
+		"CUDA0":                 {1000, 50, 266},
 	}
 	got := map[string]DeviceMem{}
 	for _, d := range s.Devices {
@@ -76,7 +76,7 @@ func TestLoadLogSample(t *testing.T) {
 		t.Errorf("devices = %d: %+v", len(s.Devices), s.Devices)
 	}
 	// first-seen order is stable
-	if s.Devices[0].Name != "CPU_Mapped" || s.Devices[1].Name != "RPC0[10.0.0.2:50052]" {
+	if s.Devices[0].Name != "CPU_Mapped" || s.Devices[1].Name != "RPC0[192.0.2.2:50052]" {
 		t.Errorf("order: %+v", s.Devices)
 	}
 }
@@ -218,8 +218,8 @@ func devByName(s LoadStats, name string) (DeviceMem, bool) {
 // hardware test, run with -lv 4.
 func TestLoadLogRealFixturesWithTimestampPrefix(t *testing.T) {
 	s := readFixture(t, "llama-lv4-ps5-aw-pool.log")
-	a, ok1 := devByName(s, "RPC0[10.0.0.122:50052]")
-	b, ok2 := devByName(s, "RPC0[10.0.0.3:50052]")
+	a, ok1 := devByName(s, "RPC0[192.0.2.122:50052]")
+	b, ok2 := devByName(s, "RPC0[192.0.2.3:50052]")
 	c, ok3 := devByName(s, "CPU_Mapped")
 	if !ok1 || !ok2 || !ok3 || !near(a.ModelMiB, 4257.94) || !near(b.ModelMiB, 2518.93) || !c.Host || !near(c.ModelMiB, 540) {
 		t.Fatalf("devices = %+v", s.Devices)
@@ -229,7 +229,7 @@ func TestLoadLogRealFixturesWithTimestampPrefix(t *testing.T) {
 	}
 
 	s = readFixture(t, "llama-lv4-ps5-single.log")
-	if d, ok := devByName(s, "RPC0[10.0.0.101:50052]"); !ok || !near(d.ModelMiB, 6776.84) {
+	if d, ok := devByName(s, "RPC0[192.0.2.101:50052]"); !ok || !near(d.ModelMiB, 6776.84) {
 		t.Fatalf("devices = %+v", s.Devices)
 	}
 
@@ -243,7 +243,7 @@ func TestLoadLogRealFixturesWithTimestampPrefix(t *testing.T) {
 // together reproduce the figures /api/status showed for the run.
 func TestLoadLogGemmaTwoDeviceFixture(t *testing.T) {
 	s := readFixture(t, "llama-lv4-gemma-aw-local.log")
-	rpc, _ := devByName(s, "RPC0[10.0.0.3:50052]")
+	rpc, _ := devByName(s, "RPC0[192.0.2.3:50052]")
 	cuda, _ := devByName(s, "CUDA0")
 	if !near(rpc.TotalMiB(), 3679.04) || !near(cuda.TotalMiB(), 4151.53) {
 		t.Fatalf("rpc %+v cuda %+v", rpc, cuda)
@@ -282,7 +282,7 @@ func TestLoadStatsDeviceCountIgnoresHostRows(t *testing.T) {
 	l := NewLoadLog()
 	for _, line := range []string{
 		"load_tensors:   CPU_Mapped model buffer size =   300.00 MiB",
-		"load_tensors: RPC0[10.0.0.2:50052] model buffer size =  7000.00 MiB",
+		"load_tensors: RPC0[192.0.2.2:50052] model buffer size =  7000.00 MiB",
 		"load_tensors:        CUDA0 model buffer size =  1000.00 MiB",
 		"llama_context:        CPU compute buffer size =    20.00 MiB",
 		"load_tensors:  CUDA_Host model buffer size =    10.00 MiB",

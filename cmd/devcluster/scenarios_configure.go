@@ -9,7 +9,7 @@ import "time"
 // save; a long extra_args list by a PUT of a profile).
 
 func init() {
-	registerScenario(scenario{Name: "cfg-nodes", Description: "Configure screens: ps5-31bd9dc4 excluded, ps5-407c8925 offline, the OMEN matches no tier, one PS5 eligible.", Status: scCfgNodes})
+	registerScenario(scenario{Name: "cfg-nodes", Description: "Configure screens: console-2 excluded, console-3 offline, the host machine matches no tier, one PS5 eligible.", Status: scCfgNodes})
 	registerScenario(scenario{Name: "cfg-stale", Description: "Configure screens: qwen3.8-27b and gemma-4-12b ready, both running an older profile definition.", Status: scCfgStale})
 }
 

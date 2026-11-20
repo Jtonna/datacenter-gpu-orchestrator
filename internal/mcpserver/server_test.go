@@ -482,7 +482,7 @@ func TestStatusSummary(t *testing.T) {
 	 "nodes":[{"id":"aa","addr":"x","budget_mib":9000,"memory":[{"name":"RPC0","total_mib":4000},{"name":"CPU","total_mib":500}]}]}],
 	 "queue":[{"profile":"big","age":3,"waiters":2,"claimed":false,"wait_reason":"does not fit","created":"c"}],
 	 "quarantines":[],"backoffs":[],"recent_loads":[1,2,3,4,5,6,7],"learned_needs":{"gemma":{}},
-	 "view":{"age":1.5,"connected":true,"stale":false,"nodes":[{"id":"aa","hostname":"ps5-1","online":true,"total_mib":12000,"free_mib":11000,"addr":"10.0.0.2","priority":1}]}}`
+	 "view":{"age":1.5,"connected":true,"stale":false,"nodes":[{"id":"aa","hostname":"ps5-1","online":true,"total_mib":12000,"free_mib":11000,"addr":"192.0.2.2","priority":1}]}}`
 	h := newTest(&fakeInner{body: full})
 	out := callTool(t, h, nil, "get_status", `{}`)
 	var st map[string]any
@@ -515,7 +515,7 @@ func TestStatusSummary(t *testing.T) {
 	}
 	var nodes map[string]any
 	json.Unmarshal([]byte(callTool(t, h, nil, "list_nodes", `{}`).Content[0].Text), &nodes)
-	if nodes["nodes"].([]any)[0].(map[string]any)["addr"] != "10.0.0.2" {
+	if nodes["nodes"].([]any)[0].(map[string]any)["addr"] != "192.0.2.2" {
 		t.Errorf("nodes: %v", nodes)
 	}
 }

@@ -12,7 +12,7 @@ Plan decisions this draft relies on: D1, D2 (the agent is a machine service and 
 
 Each term has one meaning in this document.
 
-- **Potluck**: the scheduler. One instance, on the OMEN, port 3122.
+- **Potluck**: the scheduler. One instance, on the host machine, port 3122.
 - **agent**: `potluck-agent`, one static Go binary, one per pool machine.
 - **node**: a machine that runs an agent.
 - **program**: a binary the agent runs but does not contain: `llama-server`, `rpc-server`, `node_exporter`, `nvidia_gpu_exporter`.
@@ -33,14 +33,14 @@ Each term has one meaning in this document.
 6. **No fallback.** A node that cannot do what a load needs is reported and the load is refused or retried. A load never changes shape silently.
 7. **Membership is registration only.** From the first agent release (phase 4) a machine without a registered agent is not in the pool. Potluck reads no other membership source.
 
-**Accepted risk, stated once.** With no firewall on the PS5 link and no authentication, any device on that link can take a worker's single client slot or call an agent's ports from a spoofed address. Potluck's own port 3122 is bound to all interfaces of the OMEN, so pause, force unload and node removal are open to the home network too. The owner has accepted no authentication.
+**Accepted risk, stated once.** With no firewall on the PS5 link and no authentication, any device on that link can take a worker's single client slot or call an agent's ports from a spoofed address. Potluck's own port 3122 is bound to all interfaces of the host machine, so pause, force unload and node removal are open to the home network too. The owner has accepted no authentication.
 
 ## 3. Ports
 
 | Port | Program | Bind address | Who connects |
 |---|---|---|---|
-| 3122 | Potluck: API, UI, agent registration, program download | all interfaces of the OMEN, as today | agents, clients |
-| 2049 | share (NFSv4) | `10.0.0.1` | nodes that mount the share |
+| 3122 | Potluck: API, UI, agent registration, program download | all interfaces of the host machine, as today | agents, clients |
+| 2049 | share (NFSv4) | `192.0.2.1` | nodes that mount the share |
 | 50060 | agent API | the node's address that reaches Potluck, and `127.0.0.1` | Potluck; local programs for `GET /status` only |
 | 50052 | `rpc-server` during a worker launch | the node's address that reaches Potluck | the host of that load (Potluck's own host in phase 4, a host node from phase 6) |
 | 50061 | `llama-server` during a host launch (phase 6) | same address | Potluck only |
@@ -53,11 +53,11 @@ All ports are fixed. Ports 50060, 50070 and 50071 must be free when the agent st
 
 ### 4.1 Identity
 
-- `id`: the lowercase MAC address of one physical network interface, for example `70:66:2a:a9:a7:65`. It is computed at every agent start and never stored, so a cloned drive or a swapped network card cannot carry a wrong id.
-- Which interface: the one the route to the configured Potluck address leaves by. When that address belongs to the machine itself (the OMEN), the interface that owns the address. When the result is not a physical interface (loopback, bridge, VLAN, `docker0`, `veth`), the interface of the default route. If no physical interface is found, the agent does not register and reports why on `GET /status`.
+- `id`: the lowercase MAC address of one physical network interface, for example `02:00:00:00:00:01`. It is computed at every agent start and never stored, so a cloned drive or a swapped network card cannot carry a wrong id.
+- Which interface: the one the route to the configured Potluck address leaves by. When that address belongs to the machine itself (the host machine), the interface that owns the address. When the result is not a physical interface (loopback, bridge, VLAN, `docker0`, `veth`), the interface of the default route. If no physical interface is found, the agent does not register and reports why on `GET /status`.
 - On a PS5 this is the Ethernet interface, which is the id the five consoles have in Potluck today.
 - `name`: a display label. The agent sends the machine's hostname as the default. Potluck may hold a different label. Nothing is keyed by `name`.
-- Consequence to accept: the OMEN's id today is the string `omen-runner`. It becomes its MAC. No profile forces it, so nothing breaks.
+- Consequence to accept: the host machine's id today is the string `host-1`. It becomes its MAC. No profile forces it, so nothing breaks.
 
 ### 4.2 `POST /api/agents/register` (agent to Potluck)
 
@@ -65,21 +65,21 @@ Sent at agent start, and again whenever Potluck answers a heartbeat with `410`.
 
 ```json
 {
-  "id": "70:66:2a:a9:a7:65",
-  "name": "ps5-6b46d0e7",
+  "id": "02:00:00:00:00:01",
+  "name": "console-5",
   "agent_release": "0.1.0",
   "agent_start_id": "k3f9a2",
   "os": "linux",
   "arch": "amd64",
   "install": "bare",
-  "addr": "10.0.0.101",
+  "addr": "192.0.2.101",
   "gpus": [
     {"vendor": "amd", "model": "AMD Custom GPU 0405", "integrated": true}
   ],
   "backends": ["vulkan"],
   "mem_total_mib": 15258,
   "ram_only": true,
-  "model_source": {"kind": "share", "target": "10.0.0.1:/"},
+  "model_source": {"kind": "share", "target": "192.0.2.1:/"},
   "programs": [],
   "launch_id": null,
   "foreign_processes": []
@@ -117,7 +117,7 @@ Answer `200`:
 }
 ```
 
-- **Addresses.** The agent talks to the Potluck address it was configured with (`10.0.0.1:3122` on the PS5 link; a home-network machine uses another address of the same Potluck). Every `path` Potluck returns is relative and the agent appends it to its configured address. Potluck never returns an address of its own.
+- **Addresses.** The agent talks to the Potluck address it was configured with (`192.0.2.1:3122` on the PS5 link; a home-network machine uses another address of the same Potluck). Every `path` Potluck returns is relative and the agent appends it to its configured address. Potluck never returns an address of its own.
 - `exporters[].args` come from the stats contract (section 7). The agent adds nothing to them, and refuses a listen address that is not on `127.0.0.1`.
 - `stop_launch`: when the registration carried a `launch_id` Potluck does not know (Potluck restarted and lost it), Potluck names it here and the agent stops it. Registering never touches a launch Potluck does know.
 
@@ -323,7 +323,7 @@ Stopping a launch is always: SIGTERM, wait up to 10 s, SIGKILL. A forced stop sk
   "model": "gemma-4-12b-it-Q4_K_M.gguf",
   "ctx": 8192,
   "parallel": 1,
-  "workers": ["10.0.0.122:50052"],
+  "workers": ["192.0.2.122:50052"],
   "tensor_split": [50, 50],
   "strict_file_load": true,
   "extra_args": []
@@ -440,7 +440,7 @@ Answered on `127.0.0.1:50060` only, read-only, for the machine's own screen. No 
 ```json
 {
   "registered": true,
-  "potluck": "10.0.0.1:3122",
+  "potluck": "192.0.2.1:3122",
   "release": "0.1.0",
   "paused": false,
   "role": "worker",
@@ -479,7 +479,7 @@ A node has exactly one model source, set at install and reported at registration
 
 | `kind` | Meaning | Who |
 |---|---|---|
-| `share` | The node reads model files itself from a folder that holds the same files as the share. | PS5s and the Alienware (NFS mount of the share), the OMEN (the model folder itself). |
+| `share` | The node reads model files itself from a folder that holds the same files as the share. | PS5s and the Nvidia laptop (NFS mount of the share), the host machine (the model folder itself). |
 | `push` | The node cannot read model files. As a worker it receives its weights from the host over the worker connection. It cannot be a host. | Windows, later. |
 
 **Bare-metal install with `share`.** The agent mounts the share itself, read-only, at `/run/potluck/models`. It does not use `fstab`, so a missing share cannot block boot. The exact command, with `clientaddr` computed at mount time from the address that reaches Potluck:
@@ -493,7 +493,7 @@ mount -t nfs4 -o ro,hard,vers=4.2,addr=<potluck ip>,clientaddr=<node ip>,rsize=1
 - At start the agent looks for an existing mount at that path and uses it. It never mounts twice.
 - It never unmounts or remounts while a launch exists, and never uses a lazy unmount. A remount drops the page cache, which turns a 4.5 s warm reload into a 45 s cold one, so the agent remounts only after five failed probes in a row with no launch.
 
-**Docker install with `share`.** The machine mounts the share, not the container. The setup script writes a systemd mount unit on the machine with the same options plus `nofail`, and the container gets that folder bind-mounted read-only at `/models`. The container needs no mount capability. On the OMEN the folder is the model directory itself. The agent only probes the folder.
+**Docker install with `share`.** The machine mounts the share, not the container. The setup script writes a systemd mount unit on the machine with the same options plus `nofail`, and the container gets that folder bind-mounted read-only at `/models`. The container needs no mount capability. On the host machine the folder is the model directory itself. The agent only probes the folder.
 
 **The share probe.** A `stat` on a hard mount can block forever when the server is down, and can be answered from the attribute cache while it is down. So the probe is a separate short-lived process that reads the first 4 KiB of one model file with `O_DIRECT`, with a 2 s timeout, every 5 s. At most one probe process is outstanding; while one hangs the result is "unreachable". `model_source.reachable` is the result of the last finished probe.
 
@@ -507,7 +507,7 @@ One setup script, `potluck-agent-setup`, with two paths. Common options: `--potl
 
 - **Bare metal** (`--bare`): places the agent binary, writes one systemd unit `potluck-agent.service` that starts at boot, starts it. A RAM-only node does not use the setup script; it uses the starter (section 5.4), which passes `--ram-only`.
 - **Docker** (`--docker`): starts one container `potluck-agent` from the image tagged with the release, with restart policy `unless-stopped`, `--init`, its own PID namespace, host networking, the GPU passed in when one exists, and the model folder mounted read-only.
-- `--allow-from` adds source addresses the agent accepts requests from. It is needed on the machine that runs Potluck itself: Potluck runs in a container there, so its requests to the local agent arrive from Potluck's container network (`172.30.0.0/24` in the compose file) and not from the configured address. No other node uses it. That requests to the PS5s arrive from `10.0.0.1` is checked in the first phase 4 test.
+- `--allow-from` adds source addresses the agent accepts requests from. It is needed on the machine that runs Potluck itself: Potluck runs in a container there, so its requests to the local agent arrive from Potluck's container network (`172.30.0.0/24` in the compose file) and not from the configured address. No other node uses it. That requests to the PS5s arrive from `192.0.2.1` is checked in the first phase 4 test.
 
 After either path the node appears in Potluck with programs fetched and stats flowing, with no other step.
 
@@ -530,10 +530,10 @@ In both cases Potluck keeps: history, benchmark runs and learned memory needs th
 
 ## 11. What Potluck does with all this
 
-- **Membership** is registrations and heartbeats only, from the first agent release (phase 4, plan task D1). In that release every pool machine has an agent: the five PS5s, the OMEN and the Alienware. Potluck no longer reads the datacenter's fleet feed.
+- **Membership** is registrations and heartbeats only, from the first agent release (phase 4, plan task D1). In that release every pool machine has an agent: the five PS5s, the host machine and the Nvidia laptop. Potluck no longer reads the datacenter's fleet feed.
 - **Placement memory.** Potluck places on the node's llama device figures. For a device with `shares_system_memory`, the usable figure is the smaller of the device's free memory and `mem_available_mib` minus the watchdog floor, so programs and logs held in RAM are accounted for without a special case.
 - **Phase 4 loads.** Potluck's own `llama-server` child is the host, unchanged. For each worker node of a load Potluck sends `POST /launch` with `role: worker`, waits for `ready`, then starts its child with those workers. On unload it stops the worker launches after its child has exited.
-- **Phase 6 loads.** Potluck sends the worker launches first, then one `role: host` launch, and forwards requests to the host node's port 50061. The scheduler-child host is removed only after an agent-hosted load on the OMEN matches it.
+- **Phase 6 loads.** Potluck sends the worker launches first, then one `role: host` launch, and forwards requests to the host node's port 50061. The scheduler-child host is removed only after an agent-hosted load on the host machine matches it.
 - **Exit handling.** An `exited` launch at any time fails the instance with the agent's reason, and Potluck stops the other members. `watchdog` and `oom_kill` raise the learned memory need of that model. `start_failed` is recorded with its log lines and not retried.
 - **Lost node with a launch.** A node that loses power cannot report or expire anything. When a node with a launch is marked lost, Potluck fails the instance at once and stops the other members. It never tries to restart or recover the node. When the node's agent returns and reports a launch Potluck no longer holds, Potluck tells it to stop it (section 4.2).
 - **Potluck restart.** Potluck holds no launches after a restart. Each agent's next heartbeat gets `410`, the agent registers with its `launch_id`, and Potluck answers `stop_launch`. Launches whose agent cannot reach Potluck end by their lease.
@@ -542,7 +542,7 @@ In both cases Potluck keeps: history, benchmark runs and learned memory needs th
 ## 12. Open questions
 
 1. **Worker per load, or always running.** This draft starts `rpc-server` per load (D2). Start cost measured for a host process on a PS5 is under 1.5 s. To confirm in phase 4: that a fresh worker per load does not slow warm loads, since the page cache belongs to the machine and not to the process.
-2. **Source address of Potluck's requests** as seen by a PS5 (expected `10.0.0.1`) and by the OMEN's own agent (expected Potluck's container network). First phase 4 test.
+2. **Source address of Potluck's requests** as seen by a PS5 (expected `192.0.2.1`) and by the host machine's own agent (expected Potluck's container network). First phase 4 test.
 3. **What llama's device list prints** on the PS5 and CUDA builds (names, order, no PCI address expected), needed to match devices to the stats contract's GPU entries.
 
 Settled in review, 2026-11-20:
@@ -552,7 +552,7 @@ Settled in review, 2026-11-20:
 - Nvidia nodes use the Docker install for now; bare-metal Nvidia stays documented as untested.
 - The PS5 GPU clock stays a datacenter-side service. It watches for a unit with the prefix `potluck-launch-`.
 - Local read access is `GET /status` on `127.0.0.1`.
-- The Alienware can mount the share (10.0.0.3 reaches 10.0.0.1:2049, checked by the PS5 side).
+- The Nvidia laptop can mount the share (192.0.2.3 reaches 192.0.2.1:2049, checked by the PS5 side).
 - The strict-mode and timeout log tokens are final as quoted in section 6.3.
 - The fork's `rpc-server` sets `SO_REUSEADDR`, so launches one after another can bind the same port.
 

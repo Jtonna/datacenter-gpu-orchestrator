@@ -25,7 +25,7 @@ import (
 type fakeView struct{ ch chan struct{} }
 
 func (v *fakeView) Nodes() []core.Node {
-	return []core.Node{{ID: "omen", Hostname: "omen", Local: true, Online: true, TotalMiB: 8151, FreeMiB: 8000,
+	return []core.Node{{ID: "host-1", Hostname: "host-1", Local: true, Online: true, TotalMiB: 8151, FreeMiB: 8000,
 		Priority: 1, HeadroomMiB: 256}}
 }
 func (v *fakeView) Age() time.Duration                       { return 0 }
@@ -86,7 +86,7 @@ func (c *fakeChild) Stop(instance.StopMode) {
 
 const testYAML = `
 listen: ":0"
-fleet: {url: "http://127.0.0.1:1", local_node: omen}
+fleet: {url: "http://127.0.0.1:1", local_node: host-1}
 models_dir: /models
 defaults: {ttl: 0s, min_hold: 1ms, max_hold: 1s, stall_timeout: 0s}
 tiers:

@@ -81,7 +81,7 @@ func TestRemoteShares(t *testing.T) {
 	link := func(id core.NodeID) float64 { return links[id] }
 	pl := core.Placement{Nodes: []core.PlacedNode{
 		{ID: "a", Addr: "x:1", BudgetMiB: 14000},
-		{ID: "omen", Local: true, BudgetMiB: 7000},
+		{ID: "host-1", Local: true, BudgetMiB: 7000},
 		{ID: "b", Addr: "y:1", BudgetMiB: 7000},
 	}}
 	got := RemoteShares(core.Profile{}, pl, link)
@@ -109,7 +109,7 @@ func TestRemoteShares(t *testing.T) {
 }
 
 func TestSplitFractions(t *testing.T) {
-	pl := core.Placement{Nodes: []core.PlacedNode{{ID: "omen", Local: true, BudgetMiB: 6000}, {ID: "a", BudgetMiB: 3000}, {ID: "b", BudgetMiB: 1000}}}
+	pl := core.Placement{Nodes: []core.PlacedNode{{ID: "host-1", Local: true, BudgetMiB: 6000}, {ID: "a", BudgetMiB: 3000}, {ID: "b", BudgetMiB: 1000}}}
 	near := func(got []float64, want ...float64) {
 		t.Helper()
 		if len(got) != len(want) {

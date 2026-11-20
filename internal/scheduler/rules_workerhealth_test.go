@@ -157,10 +157,10 @@ func TestWorkerHealth_NeverProbesAWorkerNoInstanceUses(t *testing.T) {
 	})
 	h.release(h.ready("m"))
 	h.advance(60 * time.Second)
-	if got := h.wprober.callsTo("10.0.0.6:50052"); got != 0 {
+	if got := h.wprober.callsTo("192.0.2.6:50052"); got != 0 {
 		t.Fatalf("unused worker c probed %d times", got)
 	}
-	if h.nodeHealth("c") != nil || h.nodeHealth("omen") != nil {
+	if h.nodeHealth("c") != nil || h.nodeHealth("host-1") != nil {
 		t.Fatal("an unused or local node has a health object")
 	}
 	if h.wprober.callsTo(addrA) == 0 {

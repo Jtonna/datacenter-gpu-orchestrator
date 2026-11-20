@@ -19,8 +19,8 @@ import (
 const mib = 1 << 20
 
 const (
-	addrA = "10.0.0.2:50052"
-	addrB = "10.0.0.4:50052"
+	addrA = "192.0.2.2:50052"
+	addrB = "192.0.2.4:50052"
 )
 
 // twoWorkers loads "m" onto workers a and b (an even tensor split unless one

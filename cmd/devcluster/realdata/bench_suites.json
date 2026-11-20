@@ -17,18 +17,18 @@
      "scheduler_version": "v2-eff1011",
      "workers": [
       {
-       "node": "alienware-llm"
+       "node": "laptop-1"
       },
       {
-       "node": "ps5-31bd9dc4",
+       "node": "console-2",
        "rpc_server_version": "9958d7ddcab4152720f64df958a876352085dfaf311db66859a6450607ff5ee7"
       },
       {
-       "node": "ps5-407c8925",
+       "node": "console-3",
        "rpc_server_version": "9958d7ddcab4152720f64df958a876352085dfaf311db66859a6450607ff5ee7"
       },
       {
-       "node": "ps5-9032a330",
+       "node": "console-1",
        "rpc_server_version": "9958d7ddcab4152720f64df958a876352085dfaf311db66859a6450607ff5ee7"
       }
      ]

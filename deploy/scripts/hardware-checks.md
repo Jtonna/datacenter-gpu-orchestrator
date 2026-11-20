@@ -1,7 +1,7 @@
 # Hardware checks (design 3.2 H1-H3, design 11 "On hardware")
 
-Run on the OMEN with the scheduler container up (`container_name: llama-swap`).
-Rules: the PS5 or Alienware under test must be idle (a busy `rpc-server` makes
+Run on the host machine with the scheduler container up (`container_name: llama-swap`).
+Rules: the PS5 or Nvidia laptop under test must be idle (a busy `rpc-server` makes
 `--list-devices` block forever, so every command is wrapped in `timeout`).
 Nothing here is destructive except check 8 (you power a worker off on purpose).
 Record each result in the table at the bottom.
@@ -13,7 +13,7 @@ docker exec llama-swap nvidia-smi --query-gpu=memory.total,memory.used --format=
 ```
 
 Expect: one line, two integers, e.g. `8151, 412`. If it errors: the scheduler
-logs a warning and falls back to the fleet's figure for `omen-runner` (design 5.1).
+logs a warning and falls back to the fleet's figure for `host-1` (design 5.1).
 Check the log for no such warning:
 
 ```sh
@@ -24,10 +24,10 @@ Expect: no output.
 
 ## H2. Each worker exposes exactly one device
 
-Run once per worker (PS5 `10.0.0.2:50052`, Alienware `10.0.0.3:50052`, any other PS5):
+Run once per worker (PS5 `192.0.2.2:50052`, Nvidia laptop `192.0.2.3:50052`, any other PS5):
 
 ```sh
-docker exec llama-swap timeout 10 llama-server-rpc --rpc 10.0.0.2:50052 --list-devices | grep -c '^ *RPC'
+docker exec llama-swap timeout 10 llama-server-rpc --rpc 192.0.2.2:50052 --list-devices | grep -c '^ *RPC'
 ```
 
 Expect: `1`. Any other number fails H2: the pre-flight will quarantine that
@@ -38,7 +38,7 @@ find out why before going on.
 ## H3. `--list-devices` is clean with no local GPU
 
 ```sh
-docker exec llama-swap sh -c 'CUDA_VISIBLE_DEVICES="" timeout 10 llama-server-rpc --rpc 10.0.0.2:50052 --list-devices; echo "exit=$?"'
+docker exec llama-swap sh -c 'CUDA_VISIBLE_DEVICES="" timeout 10 llama-server-rpc --rpc 192.0.2.2:50052 --list-devices; echo "exit=$?"'
 ```
 
 Expect: exactly one line of the form `  RPC0: <description> (<total> MiB, <free> MiB free)`,
@@ -50,7 +50,7 @@ Compare with the same command without the variable to see the difference.
 ## 4. PS5 usable memory (design 13 item 2)
 
 ```sh
-docker exec llama-swap timeout 10 llama-server-rpc --rpc 10.0.0.2:50052 --list-devices
+docker exec llama-swap timeout 10 llama-server-rpc --rpc 192.0.2.2:50052 --list-devices
 ```
 
 Note the `<free> MiB free` figure. Sources disagree (12 GB, 14.1 GB, 14948 MiB).
@@ -58,7 +58,7 @@ Later, after a load, compare it with what the model really took (check 7).
 
 ## 5. `--device` and `--tensor-split` behaviour on a PS5 pool
 
-Needs two PS5s (or one PS5 and the Alienware) online. Use a forced profile
+Needs two PS5s (or one PS5 and the Nvidia laptop) online. Use a forced profile
 (for example the `gemma-measure` template in `config.yaml`).
 
 ```sh
@@ -106,7 +106,7 @@ offline in the fleet view for 30 s, in-flight requests fail, no hang.
 ```sh
 # 1. start a long generation on a model placed on the PS5 (note which node)
 curl -N -H 'Content-Type: application/json' -d '{"model":"gemma-4-12b","stream":true,"max_tokens":2000,"messages":[{"role":"user","content":"Write a long story."}]}' http://127.0.0.1:3122/v1/chat/completions
-# 2. in another shell, power the worker off (PS5 or Alienware), then watch:
+# 2. in another shell, power the worker off (PS5 or Nvidia laptop), then watch:
 watch -n 5 "curl -s http://127.0.0.1:3122/running; echo; docker logs --tail 5 llama-swap"
 ```
 

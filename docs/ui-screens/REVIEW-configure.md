@@ -1,5 +1,7 @@
 # Review of the Configure screens and Audit
 
+> The screenshots named on this page were removed from the repository; they can be regenerated with `go run ./cmd/devcluster`.
+
 Screens: Profiles, Tiers and nodes, Settings, Audit. Every picture is in this folder, named
 `<screen>-<scenario>-<desktop|phone>.png`. Behaviour was driven in headless Chrome through the
 DevTools protocol against the harness (edit, review, save, 400, 409, rollback, live prepend).

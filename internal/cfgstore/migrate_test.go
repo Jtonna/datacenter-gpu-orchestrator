@@ -34,12 +34,12 @@ func TestMigrationInPlaceKeepsConfigurationBenchmarksAndAudit(t *testing.T) {
 		if _, err := tx.Exec(`INSERT INTO cfg_migrations (version, applied_at) VALUES (1, 1000)`); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`INSERT INTO config_revisions (revision, ts, source, actor, comment, doc) VALUES (1, 2000, 'import', 'cli:jacob', 'first import', ?)`, mustDoc(t)); err != nil {
+		if _, err := tx.Exec(`INSERT INTO config_revisions (revision, ts, source, actor, comment, doc) VALUES (1, 2000, 'import', 'cli:alex', 'first import', ?)`, mustDoc(t)); err != nil {
 			return err
 		}
 		for _, target := range []string{"gemma:8k", "queue_timeout"} {
 			if _, err := tx.Exec(`INSERT INTO audit_log (ts, source, actor, action, section, target, before, after, diff, revision, comment)
-			  VALUES (2000, 'ui', 'jacob', 'update', 'profiles', ?, NULL, '{"ctx":8192}', '[]', 1, 'kept')`, target); err != nil {
+			  VALUES (2000, 'ui', 'alex', 'update', 'profiles', ?, NULL, '{"ctx":8192}', '[]', 1, 'kept')`, target); err != nil {
 				return err
 			}
 		}
@@ -70,7 +70,7 @@ func TestMigrationInPlaceKeepsConfigurationBenchmarksAndAudit(t *testing.T) {
 			t.Fatalf("pass %d: configuration tables at version %d (%v), want %d", pass, ver, err, len(migrations))
 		}
 		rev, err := cs.Latest(ctx)
-		if err != nil || rev.Revision != 1 || rev.Actor != "cli:jacob" || rev.Comment != "first import" {
+		if err != nil || rev.Revision != 1 || rev.Actor != "cli:alex" || rev.Comment != "first import" {
 			t.Fatalf("pass %d: the configuration revision did not survive: %+v %v", pass, rev, err)
 		}
 		es, total, err := cs.Query(ctx, Filter{})
@@ -78,7 +78,7 @@ func TestMigrationInPlaceKeepsConfigurationBenchmarksAndAudit(t *testing.T) {
 			t.Fatalf("pass %d: audit rows %d (%v), want %d", pass, total, err, 2+pass)
 		}
 		old := es[len(es)-1]
-		if old.Actor != "jacob" || old.Comment != "kept" || old.AgentID != "" || string(old.After) != `{"ctx":8192}` {
+		if old.Actor != "alex" || old.Comment != "kept" || old.AgentID != "" || string(old.After) != `{"ctx":8192}` {
 			t.Fatalf("pass %d: an old audit row changed: %+v", pass, old)
 		}
 		if b, err := db.GetBenchmark("b1"); err != nil || b.Spec == nil || b.Spec.Name != "Kept benchmark" {

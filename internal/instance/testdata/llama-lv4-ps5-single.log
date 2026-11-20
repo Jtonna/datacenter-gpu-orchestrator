@@ -9,5 +9,5 @@
 0.07.215.661 I load_tensors: offloading 47 repeating layers to GPU
 0.07.215.661 I load_tensors: offloaded 49/49 layers to GPU
 0.07.215.666 I load_tensors:   CPU_Mapped model buffer size =   540.00 MiB
-0.07.215.666 I load_tensors: RPC0[10.0.0.101:50052] model buffer size =  6776.84 MiB
+0.07.215.666 I load_tensors: RPC0[192.0.2.101:50052] model buffer size =  6776.84 MiB
 0.58.021.244 E recv failed (bytes_recv=0, size_to_recv=8)

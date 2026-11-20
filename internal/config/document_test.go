@@ -66,7 +66,7 @@ func TestSchemaCoversEveryYAMLKey(t *testing.T) {
 func TestYAMLImportRoundTripsThroughTheDocument(t *testing.T) {
 	yml := `
 listen: ":9999"
-fleet: {url: "http://f:8090", local_node: omen, stale_after: 90s}
+fleet: {url: "http://f:8090", local_node: host-1, stale_after: 90s}
 defaults: {ttl: 600s, forced_fit_check: reject, worker_probe_interval: 10s}
 history_keep_files: 7
 ws_max_clients: 5
@@ -74,7 +74,7 @@ tiers:
   - {match: {hostname: "ps5-*"}, priority: 1, headroom_mib: 1024, shared_memory: true, link_mb_s: 100, settle: 3s}
   - {match: {local: true}, priority: 3}
 exclude_nodes: [ps5-x*]
-node_overrides: {a: {rpc: "10.0.0.3:50052"}}
+node_overrides: {a: {rpc: "192.0.2.3:50052"}}
 recovery: {enabled: true, actions: [restart_rpc_server, reboot]}
 profiles:
   a: {model: a.gguf, ctx: 1024, needs_mib: 100, ttl: 0, aliases: [al], generated: true}

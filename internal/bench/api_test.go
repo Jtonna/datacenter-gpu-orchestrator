@@ -17,7 +17,7 @@ func fakeSchedulerServer(t *testing.T) (*httptest.Server, *[]string) {
 	var seen []string
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/plan", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"model":"m","action":"start","reason":"","placement":[{"id":"aa:01","addr":"10.0.0.2:50052"}],"need_mib":7900}`)
+		fmt.Fprint(w, `{"model":"m","action":"start","reason":"","placement":[{"id":"aa:01","addr":"192.0.2.2:50052"}],"need_mib":7900}`)
 	})
 	mux.HandleFunc("POST /api/unload", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"msg":"ok","model":"m"}`)
@@ -27,7 +27,7 @@ func fakeSchedulerServer(t *testing.T) (*httptest.Server, *[]string) {
 		 "device_total_mib":7900.5,"nodes":[{"id":"aa:01","memory":[{"total_mib":7000},{"total_mib":900.5}]}],
 		 "load":{"session_id":"ld-1-1","elapsed_s":4.5,"bytes_total":1000,"bytes_sent":500,"progress":0.5,"eta_s":4,"workers":[]}}],
 		 "queue":[{"profile":"x"}],
-		 "recent_loads":[{"session_id":"ld-0-1","model":"m","outcome":"ready","reason":"","finished_at":1795055906526,"load_s":66.1,"workers":["10.0.0.2:50052"]}],
+		 "recent_loads":[{"session_id":"ld-0-1","model":"m","outcome":"ready","reason":"","finished_at":1795055906526,"load_s":66.1,"workers":["192.0.2.2:50052"]}],
 		 "view":{"nodes":[{"id":"aa:01","hostname":"ps5-a"}]}}`)
 	})
 	mux.HandleFunc("GET /api/history", func(w http.ResponseWriter, r *http.Request) {

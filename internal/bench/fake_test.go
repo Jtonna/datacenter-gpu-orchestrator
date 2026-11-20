@@ -159,7 +159,7 @@ func (f *fakeAPI) beginLoad(model string, p *fakeProf) {
 			return
 		}
 		in.state = "ready"
-		f.recent = append([]RecentLoad{{SessionID: sid, Model: model, Outcome: "ready", FinishedAt: time.Now().UnixMilli(), LoadS: p.loadS, Workers: []string{"10.0.0.2:50052"}}}, f.recent...)
+		f.recent = append([]RecentLoad{{SessionID: sid, Model: model, Outcome: "ready", FinishedAt: time.Now().UnixMilli(), LoadS: p.loadS, Workers: []string{"192.0.2.2:50052"}}}, f.recent...)
 		var nodes []NodeLoad
 		for _, nn := range p.nodes {
 			b, mem := int64(6700000000), 7900.0
@@ -247,12 +247,12 @@ func (f *fakeAPI) Status(ctx context.Context) (*StatusInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	st := &StatusInfo{Hostnames: map[string]string{"n1": "ps5-a", "n2": "ps5-b", "n3": "ps5-c"}, RecentLoads: append([]RecentLoad(nil), f.recent...), LastRefusals: append([]Refusal(nil), f.lastRef...), ConfigRevision: f.revision}
-	st.Workers = []WorkerInfo{{ID: "n0", Hostname: "omen", Local: true}, {ID: "n1", Hostname: "ps5-a", RPCServerVersion: f.version},
+	st.Workers = []WorkerInfo{{ID: "n0", Hostname: "host-1", Local: true}, {ID: "n1", Hostname: "ps5-a", RPCServerVersion: f.version},
 		{ID: "n2", Hostname: "ps5-b", RPCServerVersion: f.version}, {ID: "n3", Hostname: "ps5-c", RPCServerVersion: f.version}}
 	for name, in := range f.insts {
 		p := f.profs[name]
 		ii := InstanceInfo{Profile: name, State: in.state, InFlight: in.inflight, LogFile: "/var/log/llm-children/" + name + ".log",
-			Cmd: "/opt/llama/llama-server-rpc --model x --rpc 10.0.0.2:50052", DeviceTotalMiB: 7900}
+			Cmd: "/opt/llama/llama-server-rpc --model x --rpc 192.0.2.2:50052", DeviceTotalMiB: 7900}
 		if p != nil {
 			ii.ModelFile = p.modelFile
 			for k := range p.nodes {
@@ -270,7 +270,7 @@ func (f *fakeAPI) Status(ctx context.Context) (*StatusInfo, error) {
 			tot := int64(1000)
 			sent := int64(prog * 1000)
 			ii.Load = &LoadInfo{SessionID: "ld-live", BytesSent: &sent, BytesTotal: &tot, Progress: &prog,
-				Raw: json.RawMessage(fmt.Sprintf(`{"session_id":"ld-live","progress":%.4f,"bytes_total":1000,"bytes_sent":%d,"workers":[{"addr":"10.0.0.2:50052","bytes_total":1000,"bytes_sent":%d,"state":"receiving"}]}`, prog, sent, sent))}
+				Raw: json.RawMessage(fmt.Sprintf(`{"session_id":"ld-live","progress":%.4f,"bytes_total":1000,"bytes_sent":%d,"workers":[{"addr":"192.0.2.2:50052","bytes_total":1000,"bytes_sent":%d,"state":"receiving"}]}`, prog, sent, sent))}
 		}
 		st.Instances = append(st.Instances, ii)
 	}

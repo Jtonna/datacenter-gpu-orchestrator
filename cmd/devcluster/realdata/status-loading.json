@@ -5,7 +5,7 @@
  "instances": [
   {
    "addr": "127.0.0.1:5800",
-   "cmd": "llama-server-rpc --host 127.0.0.1 --port 5800 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 2048 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 10.0.0.101:50052,10.0.0.122:50052,10.0.0.114:50052 --device RPC0,RPC1,RPC2 --tensor-split 33,33,34",
+   "cmd": "llama-server-rpc --host 127.0.0.1 --port 5800 --model /models/gemma-4-12b-it-Q4_K_M.gguf --n-gpu-layers 999 --fit off --ctx-size 2048 --parallel 1 --jinja --cache-ram 2048 -lv 4 --rpc 192.0.2.101:50052,192.0.2.122:50052,192.0.2.114:50052 --device RPC0,RPC1,RPC2 --tensor-split 33,33,34",
    "created": "2026-11-19T08:43:32.664Z",
    "device_total_mib": 6776.849999999999,
    "host_memory": [
@@ -30,19 +30,19 @@
     "started_at": 1795077812812,
     "workers": [
      {
-      "addr": "10.0.0.101:50052",
+      "addr": "192.0.2.101:50052",
       "bytes_sent": 2317441658,
       "bytes_total": 2317342474,
       "state": "done"
      },
      {
-      "addr": "10.0.0.122:50052",
+      "addr": "192.0.2.122:50052",
       "bytes_sent": 2147522794,
       "bytes_total": 2147431219,
       "state": "done"
      },
      {
-      "addr": "10.0.0.114:50052",
+      "addr": "192.0.2.114:50052",
       "bytes_sent": 2469133836,
       "bytes_total": 2641268572,
       "state": "receiving"
@@ -61,46 +61,46 @@
    "model_file": "gemma-4-12b-it-Q4_K_M.gguf",
    "nodes": [
     {
-     "addr": "10.0.0.101:50052",
+     "addr": "192.0.2.101:50052",
      "budget_mib": 12363,
-     "id": "70:66:2a:a9:a7:65",
+     "id": "02:00:00:00:00:01",
      "local": false,
      "memory": [
       {
        "compute_mib": 0,
        "kv_mib": 0,
        "model_mib": 2209.99,
-       "name": "RPC0[10.0.0.101:50052]",
+       "name": "RPC0[192.0.2.101:50052]",
        "total_mib": 2209.99
       }
      ]
     },
     {
-     "addr": "10.0.0.122:50052",
+     "addr": "192.0.2.122:50052",
      "budget_mib": 12402,
-     "id": "c0:15:1b:3d:6a:7a",
+     "id": "02:00:00:00:00:02",
      "local": false,
      "memory": [
       {
        "compute_mib": 0,
        "kv_mib": 0,
        "model_mib": 2047.95,
-       "name": "RPC0[10.0.0.122:50052]",
+       "name": "RPC0[192.0.2.122:50052]",
        "total_mib": 2047.95
       }
      ]
     },
     {
-     "addr": "10.0.0.114:50052",
+     "addr": "192.0.2.114:50052",
      "budget_mib": 12231,
-     "id": "0c:70:43:5c:08:0e",
+     "id": "02:00:00:00:00:03",
      "local": false,
      "memory": [
       {
        "compute_mib": 0,
        "kv_mib": 0,
        "model_mib": 2518.91,
-       "name": "RPC0[10.0.0.114:50052]",
+       "name": "RPC0[192.0.2.114:50052]",
        "total_mib": 2518.91
       }
      ]
@@ -130,7 +130,7 @@
   "connected": true,
   "nodes": [
    {
-    "addr": "10.0.0.114:50052",
+    "addr": "192.0.2.114:50052",
     "claimed_by": "",
     "eligible": true,
     "empty_mib": 14438,
@@ -147,8 +147,8 @@
      "state": "ok"
     },
     "holder": "bench-gemma12b-3-2048",
-    "hostname": "ps5-407c8925",
-    "id": "0c:70:43:5c:08:0e",
+    "hostname": "console-3",
+    "id": "02:00:00:00:00:03",
     "live_budget_mib": 9701,
     "local": false,
     "missing_since": null,
@@ -165,7 +165,7 @@
     "total_mib": 14438
    },
    {
-    "addr": "10.0.0.101:50052",
+    "addr": "192.0.2.101:50052",
     "claimed_by": "",
     "eligible": true,
     "empty_mib": 14438,
@@ -182,8 +182,8 @@
      "state": "ok"
     },
     "holder": "bench-gemma12b-3-2048",
-    "hostname": "ps5-9032a330",
-    "id": "70:66:2a:a9:a7:65",
+    "hostname": "console-1",
+    "id": "02:00:00:00:00:01",
     "live_budget_mib": 10331,
     "local": false,
     "missing_since": null,
@@ -200,15 +200,15 @@
     "total_mib": 14438
    },
    {
-    "addr": "10.0.0.3:50052",
+    "addr": "192.0.2.3:50052",
     "claimed_by": "",
     "eligible": false,
     "empty_mib": 8192,
     "excluded": true,
     "free_mib": 7854,
     "holder": "",
-    "hostname": "alienware-llm",
-    "id": "b4:45:06:ca:2c:8f",
+    "hostname": "laptop-1",
+    "id": "02:00:00:00:00:11",
     "live_budget_mib": 7598,
     "local": false,
     "missing_since": null,
@@ -223,7 +223,7 @@
     "total_mib": 8192
    },
    {
-    "addr": "10.0.0.122:50052",
+    "addr": "192.0.2.122:50052",
     "claimed_by": "",
     "eligible": true,
     "empty_mib": 14438,
@@ -240,8 +240,8 @@
      "state": "ok"
     },
     "holder": "bench-gemma12b-3-2048",
-    "hostname": "ps5-31bd9dc4",
-    "id": "c0:15:1b:3d:6a:7a",
+    "hostname": "console-2",
+    "id": "02:00:00:00:00:02",
     "live_budget_mib": 10387,
     "local": false,
     "missing_since": null,
@@ -265,8 +265,8 @@
     "excluded": true,
     "free_mib": 8141,
     "holder": "",
-    "hostname": "omen-runner",
-    "id": "omen-runner",
+    "hostname": "host-1",
+    "id": "host-1",
     "live_budget_mib": 7691,
     "local": true,
     "missing_since": null,

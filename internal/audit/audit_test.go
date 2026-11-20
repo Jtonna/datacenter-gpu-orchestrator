@@ -7,10 +7,10 @@ import (
 
 func TestFromRequestSourceAndActor(t *testing.T) {
 	r := httptest.NewRequest("POST", "/x", nil)
-	r.RemoteAddr = "10.0.0.5:4321"
+	r.RemoteAddr = "192.0.2.5:4321"
 	r.Header.Set("User-Agent", "curl/8")
 	o := FromRequest(r)
-	if o.Source != SourceREST || o.Actor != DefaultActor || o.RemoteAddr != "10.0.0.5" || o.UserAgent != "curl/8" {
+	if o.Source != SourceREST || o.Actor != DefaultActor || o.RemoteAddr != "192.0.2.5" || o.UserAgent != "curl/8" {
 		t.Fatalf("%+v", o)
 	}
 	r.Header.Set("X-Source", "ui")

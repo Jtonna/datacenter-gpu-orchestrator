@@ -63,7 +63,7 @@ func TestLoadOnlyUsesApiLoadAndSendsNoChat(t *testing.T) {
 		t.Fatalf("environment %+v", r.Env)
 	}
 	for _, w := range r.Env.Workers {
-		if w.Node == "omen" {
+		if w.Node == "host-1" {
 			t.Fatal("the local node is not a worker")
 		}
 	}

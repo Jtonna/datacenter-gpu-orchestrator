@@ -73,7 +73,7 @@ func TestConfigEmptyThenCreateProfileWithAuditSources(t *testing.T) {
 			t.Fatalf("GET /api/config lacks %s", k)
 		}
 	}
-	st, m = e.cdo("POST", "/api/config/profiles", newProfile, map[string]string{"X-Source": "ui", "X-Actor": "jacob", "X-Comment": "first"})
+	st, m = e.cdo("POST", "/api/config/profiles", newProfile, map[string]string{"X-Source": "ui", "X-Actor": "alex", "X-Comment": "first"})
 	if st != 201 || m["revision"] != float64(1) || len(m["audit_entry_ids"].([]any)) != 1 {
 		t.Fatalf("%d %v", st, m)
 	}
@@ -85,7 +85,7 @@ func TestConfigEmptyThenCreateProfileWithAuditSources(t *testing.T) {
 	if st != 200 || m["total_matching"] != float64(3) || len(es) != 3 {
 		t.Fatalf("%d %v", st, m)
 	}
-	want := [][3]string{{"ui", "jacob", "create"}, {"rest", "agent-7", "update"}, {"rest", "anonymous", "update"}}
+	want := [][3]string{{"ui", "alex", "create"}, {"rest", "agent-7", "update"}, {"rest", "anonymous", "update"}}
 	for i, w := range want {
 		got := es[i].(map[string]any)
 		if got["source"] != w[0] || got["actor"] != w[1] || got["action"] != w[2] || got["section"] != "profiles" {
@@ -174,14 +174,14 @@ func TestConfigSchemaRevisionsRollbackExportImport(t *testing.T) {
 	if st, mm := e.cdo("PUT", "/api/config/exclude-nodes", `{"exclude_nodes":["ps5-x*"],"comment":"c"}`, nil); st != 200 && st != 201 {
 		t.Fatalf("step 3: %d %v", st, mm)
 	}
-	if st, mm := e.cdo("PUT", "/api/config/node-overrides", `{"a":{"rpc":"10.0.0.3:50052"}}`, nil); st != 200 && st != 201 {
+	if st, mm := e.cdo("PUT", "/api/config/node-overrides", `{"a":{"rpc":"192.0.2.3:50052"}}`, nil); st != 200 && st != 201 {
 		t.Fatalf("step 4: %d %v", st, mm)
 	}
 	st, m = e.cdo("PUT", "/api/config/recovery", `{"enabled":true,"actions":["restart_rpc_server"]}`, nil) // 5
 	if st != 200 || m["revision"] != float64(5) {
 		t.Fatalf("%d %v", st, m)
 	}
-	st, m = e.cdo("PUT", "/api/config/fleet", `{"url":"http://f:8090","local_node":"omen"}`, nil) // 6
+	st, m = e.cdo("PUT", "/api/config/fleet", `{"url":"http://f:8090","local_node":"host-1"}`, nil) // 6
 	if st != 200 || len(m["restart_required"].([]any)) != 2 {
 		t.Fatalf("restart_required: %d %v", st, m)
 	}
@@ -250,11 +250,11 @@ func TestWSHelloCarriesRevisionAndConfigTopicAnnouncesChanges(t *testing.T) {
 	if rev, ok := h["config_revision"]; !ok || rev != float64(0) || !strings.Contains(string(hello.Data), `"config"`) {
 		t.Fatalf("hello: %s", hello.Data)
 	}
-	e.cdo("POST", "/api/config/profiles", newProfile, map[string]string{"X-Source": "ui", "X-Actor": "jacob"})
+	e.cdo("POST", "/api/config/profiles", newProfile, map[string]string{"X-Source": "ui", "X-Actor": "alex"})
 	m := c.until(t, "config", 3*time.Second)
 	var d map[string]any
 	_ = json.Unmarshal(m.Data, &d)
-	if d["revision"] != float64(1) || d["section"] != "profiles" || d["target"] != "p1" || d["source"] != "ui" || d["actor"] != "jacob" || len(d["audit_entry_ids"].([]any)) != 1 {
+	if d["revision"] != float64(1) || d["section"] != "profiles" || d["target"] != "p1" || d["source"] != "ui" || d["actor"] != "alex" || len(d["audit_entry_ids"].([]any)) != 1 {
 		t.Fatalf("%s", m.Data)
 	}
 }

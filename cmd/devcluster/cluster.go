@@ -473,7 +473,7 @@ func (c *cluster) close() {
 // exclude_nodes, recovery, fleet, bench settings and the profiles.
 func clusterYAML(fleetURL, fake string) string {
 	slash := filepath.ToSlash
-	return fmt.Sprintf(`fleet: {url: %q, local_node: omen-runner, stale_after: 60s}
+	return fmt.Sprintf(`fleet: {url: %q, local_node: host-1, stale_after: 60s}
 local_probe_cmd: "%s --nvidia-smi 8151 0"
 defaults:
   ttl: 300s
@@ -488,12 +488,12 @@ defaults:
   forced_fit_check: warn
   estimate_margin: 0.1
 tiers:
-  - {match: {hostname: "ps5-*"}, priority: 1, headroom_mib: 1024, shared_memory: true, link_mb_s: 100, settle: 3s}
-  - {match: {hostname: "alienware*"}, priority: 2, headroom_mib: 256, link_mb_s: 60, settle: 8s}
+  - {match: {hostname: "console-*"}, priority: 1, headroom_mib: 1024, shared_memory: true, link_mb_s: 100, settle: 3s}
+  - {match: {hostname: "laptop-*"}, priority: 2, headroom_mib: 256, link_mb_s: 60, settle: 8s}
   - {match: {local: true}, priority: 3, headroom_mib: 450, settle: 2s}
 node_overrides:
-  alienware-m15: {rpc: "10.0.0.3:50052"}
-exclude_nodes: ["alienware-m15"]
+  laptop-2: {rpc: "192.0.2.3:50052"}
+exclude_nodes: ["laptop-2"]
 recovery:
   enabled: true
   actions: [restart_rpc_server, restart_docker]

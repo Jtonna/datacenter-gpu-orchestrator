@@ -1,4 +1,0 @@
-{"m":"gemma-4-12b:t1","inst":[{"profile":"gemma-4-12b:t1","state":"ready","n":["10.0.0.101:50052"]}]}
-{"m":"qwen3.5-4b:t1","inst":[{"profile":"gemma-4-12b:t1","state":"ready","n":["10.0.0.101:50052"]},{"profile":"qwen3.5-4b:t1","state":"ready","n":["10.0.0.122:50052"]}]}
-{"m":"tinyllama:t1","inst":[{"profile":"qwen3.5-4b:t1","state":"ready","n":["10.0.0.122:50052"]},{"profile":"tinyllama:t1","state":"ready","n":["10.0.0.101:50052"]}]}
-{"m":"2ps5","inst":[{"profile":"gemma-4-12b:2ps5","state":"ready","n":["10.0.0.122:50052","10.0.0.101:50052"]}]}

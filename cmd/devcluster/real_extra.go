@@ -110,7 +110,7 @@ func (h *harness) ownAudit(ctx context.Context) []any {
 // to show. Their keys are thrown away: make a new agent to try one.
 func seedAgents(c *cluster) error {
 	sc := newSeedClient(c.url)
-	asJacob := who{source: "ui", actor: "jacob"}
+	asJacob := who{source: "ui", actor: "alex"}
 	mk := func(name, desc string) (string, error) {
 		out, err := sc.do("POST", "/api/agents", asJacob, map[string]any{"name": name, "description": desc})
 		if err != nil {

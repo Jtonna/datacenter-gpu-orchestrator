@@ -7,7 +7,7 @@ import (
 )
 
 // The cluster the harness pretends to be: three PS5s, an excluded laptop and
-// the local OMEN GPU, with about a dozen profiles. Everything scripted (status,
+// the local host machine GPU, with about a dozen profiles. Everything scripted (status,
 // history, benchmark results) refers to these.
 
 type nodeDef struct {
@@ -40,11 +40,11 @@ func (n nodeDef) Budget() int { return n.TotalMiB - n.Headroom }
 const ps5TotalMiB = 13722 // 13.4 GiB usable RAM per PS5 as the fleet reports it
 
 var (
-	ps5A  = nodeDef{ID: "a8:47:4a:90:32:a3", Host: "ps5-9032a330", IP: "10.0.0.21", Priority: 1, TotalMiB: ps5TotalMiB, Headroom: 1024}
-	ps5B  = nodeDef{ID: "a8:47:4a:31:bd:9c", Host: "ps5-31bd9dc4", IP: "10.0.0.22", Priority: 1, TotalMiB: ps5TotalMiB, Headroom: 1024}
-	ps5C  = nodeDef{ID: "a8:47:4a:40:7c:89", Host: "ps5-407c8925", IP: "10.0.0.23", Priority: 1, TotalMiB: ps5TotalMiB, Headroom: 1024}
-	alien = nodeDef{ID: "6c:2b:59:0e:a1:77", Host: "alienware-m15", IP: "10.0.0.3", Priority: 2, TotalMiB: 8192, Headroom: 256}
-	omen  = nodeDef{ID: "omen-runner", Host: "omen-runner", Local: true, Priority: 3, TotalMiB: 8151, Headroom: 450}
+	ps5A  = nodeDef{ID: "02:00:00:00:01:01", Host: "console-1", IP: "192.0.2.21", Priority: 1, TotalMiB: ps5TotalMiB, Headroom: 1024}
+	ps5B  = nodeDef{ID: "02:00:00:00:01:02", Host: "console-2", IP: "192.0.2.22", Priority: 1, TotalMiB: ps5TotalMiB, Headroom: 1024}
+	ps5C  = nodeDef{ID: "02:00:00:00:01:03", Host: "console-3", IP: "192.0.2.23", Priority: 1, TotalMiB: ps5TotalMiB, Headroom: 1024}
+	alien = nodeDef{ID: "02:00:00:00:00:12", Host: "laptop-2", IP: "192.0.2.3", Priority: 2, TotalMiB: 8192, Headroom: 256}
+	omen  = nodeDef{ID: "host-1", Host: "host-1", Local: true, Priority: 3, TotalMiB: 8151, Headroom: 450}
 )
 
 // allNodes is the order of view.nodes in the scripted status.

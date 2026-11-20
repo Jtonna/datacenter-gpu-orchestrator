@@ -1,6 +1,6 @@
 #!/bin/sh
 # Usage: preflight-host.sh [config-path]    (default /opt/llm-scheduler/seed-config.yaml)
-# Run on the OMEN BEFORE cutover. Read-only: changes nothing, adds no firewall rule.
+# Run on the host machine BEFORE cutover. Read-only: changes nothing, adds no firewall rule.
 # Exit 0 = every check passed, 1 = at least one FAIL, 2 = cannot run.
 set -eu
 
@@ -25,7 +25,7 @@ if have docker; then ok "docker present ($(docker --version))"; else fail "docke
 if have docker && docker image inspect "$BASE_IMAGE" >/dev/null 2>&1; then
   ok "base image present: $BASE_IMAGE"
 else
-  fail "base image missing: $BASE_IMAGE (rebuild per apps/llama-swap/README.md in omen-runner-fleet-manager)"
+  fail "base image missing: $BASE_IMAGE (rebuild per apps/llama-swap/README.md in host-1-fleet-manager)"
 fi
 if have docker && docker image inspect llm-scheduler:local >/dev/null 2>&1; then
   ok "llm-scheduler:local is built"
@@ -63,7 +63,7 @@ else
     fail "members have no ip/rpc_port fields: fleet manager is not on branch fleet-scheduler-fields"
   fi
   if printf '%s' "$FLEET_JSON" | grep -q '"ip" *: *null'; then
-    warn "some members show ip: null (relayed nodes until hub patch hub-member-ip is live; node_overrides covers the Alienware)"
+    warn "some members show ip: null (relayed nodes until hub patch hub-member-ip is live; node_overrides covers the Nvidia laptop)"
   fi
 fi
 
@@ -102,7 +102,7 @@ else
     if have timeout && have bash && timeout 3 bash -c "exec 3<>/dev/tcp/$h/$p" 2>/dev/null; then
       ok "$t accepts connections"
     else
-      fail "$t did not accept a TCP connect within 3 s (node off, or its firewall does not admit the OMEN)"
+      fail "$t did not accept a TCP connect within 3 s (node off, or its firewall does not admit the host machine)"
     fi
   done
 fi

@@ -7,7 +7,7 @@
   {
    "at": "2026-11-19T08:44:50.952Z",
    "bench_run": "run-20261119T084332-1788b0",
-   "message": "profile bench-devstral24b-1a-2048: need 14691 MiB (estimated, +5% margin; the estimate is 13991 MiB), but the nodes it is forced onto have only 12368 MiB usable in total (usable 12368 MiB on ps5-9032a330 (shared memory, headroom kept, from fleet figures)) (defaults.forced_fit_check is reject)",
+   "message": "profile bench-devstral24b-1a-2048: need 14691 MiB (estimated, +5% margin; the estimate is 13991 MiB), but the nodes it is forced onto have only 12368 MiB usable in total (usable 12368 MiB on console-1 (shared memory, headroom kept, from fleet figures)) (defaults.forced_fit_check is reject)",
    "profile": "bench-devstral24b-1a-2048",
    "reason": "forced nodes do not fit",
    "status": 503
@@ -23,17 +23,17 @@
     {
      "fraction": 0.33,
      "mib": 2631,
-     "node": "70:66:2a:a9:a7:65"
+     "node": "02:00:00:00:00:01"
     },
     {
      "fraction": 0.33,
      "mib": 2382,
-     "node": "c0:15:1b:3d:6a:7a"
+     "node": "02:00:00:00:00:02"
     },
     {
      "fraction": 0.34,
      "mib": 2840,
-     "node": "0c:70:43:5c:08:0e"
+     "node": "02:00:00:00:00:03"
     }
    ],
    "source": "measured this run"
@@ -47,7 +47,7 @@
     {
      "fraction": 1,
      "mib": 2881,
-     "node": "70:66:2a:a9:a7:65"
+     "node": "02:00:00:00:00:01"
     }
    ],
    "source": "measured this run"
@@ -63,15 +63,15 @@
   "connected": true,
   "nodes": [
    {
-    "addr": "10.0.0.114:50052",
+    "addr": "192.0.2.114:50052",
     "claimed_by": "",
     "eligible": true,
     "empty_mib": 14438,
     "excluded": false,
     "free_mib": 13250,
     "holder": "",
-    "hostname": "ps5-407c8925",
-    "id": "0c:70:43:5c:08:0e",
+    "hostname": "console-3",
+    "id": "02:00:00:00:00:03",
     "live_budget_mib": 12226,
     "local": false,
     "missing_since": null,
@@ -88,15 +88,15 @@
     "total_mib": 14438
    },
    {
-    "addr": "10.0.0.101:50052",
+    "addr": "192.0.2.101:50052",
     "claimed_by": "",
     "eligible": true,
     "empty_mib": 14438,
     "excluded": false,
     "free_mib": 14872,
     "holder": "",
-    "hostname": "ps5-9032a330",
-    "id": "70:66:2a:a9:a7:65",
+    "hostname": "console-1",
+    "id": "02:00:00:00:00:01",
     "live_budget_mib": 12368,
     "local": false,
     "missing_since": null,
@@ -113,15 +113,15 @@
     "total_mib": 14438
    },
    {
-    "addr": "10.0.0.3:50052",
+    "addr": "192.0.2.3:50052",
     "claimed_by": "",
     "eligible": false,
     "empty_mib": 8192,
     "excluded": true,
     "free_mib": 7854,
     "holder": "",
-    "hostname": "alienware-llm",
-    "id": "b4:45:06:ca:2c:8f",
+    "hostname": "laptop-1",
+    "id": "02:00:00:00:00:11",
     "live_budget_mib": 7598,
     "local": false,
     "missing_since": null,
@@ -136,15 +136,15 @@
     "total_mib": 8192
    },
    {
-    "addr": "10.0.0.122:50052",
+    "addr": "192.0.2.122:50052",
     "claimed_by": "",
     "eligible": true,
     "empty_mib": 14438,
     "excluded": false,
     "free_mib": 13434,
     "holder": "",
-    "hostname": "ps5-31bd9dc4",
-    "id": "c0:15:1b:3d:6a:7a",
+    "hostname": "console-2",
+    "id": "02:00:00:00:00:02",
     "live_budget_mib": 12410,
     "local": false,
     "missing_since": null,
@@ -168,8 +168,8 @@
     "excluded": true,
     "free_mib": 8141,
     "holder": "",
-    "hostname": "omen-runner",
-    "id": "omen-runner",
+    "hostname": "host-1",
+    "id": "host-1",
     "live_budget_mib": 7691,
     "local": true,
     "missing_since": null,

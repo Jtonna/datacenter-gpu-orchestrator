@@ -462,7 +462,7 @@ Questions still open. Answered questions from draft 1 are removed.
 
 ## Appendix A. Real sample lines
 
-Machine labels: PS5 = PS5 console running Ubuntu, node_exporter 1.13.1 (earlier measurements, 2026-11-20). LAPTOP-NV = Linux laptop with RTX 5060 8 GB, nvidia_gpu_exporter 2.0.0 (earlier measurements, 2026-11-20). OMEN = Linux laptop (Ubuntu 26.04, kernel 7.0.0-43) with RTX 5060 and an AMD Raphael integrated GPU, sampled again on 2026-11-20 with the command lines in 2.3. The Nvidia lines in A.2 are from the OMEN run and match the LAPTOP-NV lines where both exist; the LAPTOP-NV measurements were not attributed to a host name, so they are not assumed to be the same unit.
+Machine labels: PS5 = PS5 console running Ubuntu, node_exporter 1.13.1 (earlier measurements, 2026-11-20). LAPTOP-NV = Linux laptop with RTX 5060 8 GB, nvidia_gpu_exporter 2.0.0 (earlier measurements, 2026-11-20). host machine = Linux laptop (Ubuntu 26.04, kernel 7.0.0-43) with RTX 5060 and an AMD Raphael integrated GPU, sampled again on 2026-11-20 with the command lines in 2.3. The Nvidia lines in A.2 are from the host machine run and match the LAPTOP-NV lines where both exist; the LAPTOP-NV measurements were not attributed to a host name, so they are not assumed to be the same unit.
 
 ### A.1 PS5 (node_exporter)
 
@@ -486,29 +486,29 @@ node_network_up{device="enp64s0f2"} 1
 
 Also present on the PS5 (names only, values not quoted): `node_hwmon_temp_celsius` (labels MainSoC, Local1, Local2, Local3 on `platform_ps5_fan`; Tctl; edge; one Wi-Fi sensor), `node_memory_MemAvailable_bytes`, `node_memory_MemTotal_bytes`, `node_network_receive_bytes_total`, `node_network_transmit_bytes_total`, `node_cpu_seconds_total`, `node_load1`. The PS5's `node_hwmon_chip_names` lines were not recorded.
 
-### A.2 Nvidia exporter (LAPTOP-NV / OMEN, RTX 5060)
+### A.2 Nvidia exporter (LAPTOP-NV / host machine, RTX 5060)
 
 ```
 # HELP nvidia_smi_clocks_current_graphics_clock_hz clocks.current.graphics [MHz]
 # TYPE nvidia_smi_clocks_current_graphics_clock_hz gauge
-nvidia_smi_clocks_current_graphics_clock_hz{uuid="39e607e0-c805-1bfd-ccb4-b16f3b75a42d"} 1.8e+08
-nvidia_smi_clocks_current_memory_clock_hz{uuid="39e607e0-c805-1bfd-ccb4-b16f3b75a42d"} 4.05e+08
-nvidia_smi_gpu_info{compute_cap="12.0",cuda_version="13.2",driver_model_current="[N/A]",driver_model_pending="[N/A]",driver_version="595.99.02",index="0",name="NVIDIA GeForce RTX 5060 Laptop GPU",pci_bus_id="00000000:01:00.0",pci_sub_device_id="0x8E35103C",serial="0",uuid="39e607e0-c805-1bfd-ccb4-b16f3b75a42d",vbios_version="98.06.2A.40.D9"} 1
+nvidia_smi_clocks_current_graphics_clock_hz{uuid="11111111-2222-4333-8444-555555555555"} 1.8e+08
+nvidia_smi_clocks_current_memory_clock_hz{uuid="11111111-2222-4333-8444-555555555555"} 4.05e+08
+nvidia_smi_gpu_info{compute_cap="12.0",cuda_version="13.2",driver_model_current="[N/A]",driver_model_pending="[N/A]",driver_version="595.99.02",index="0",name="NVIDIA GeForce RTX 5060 Laptop GPU",pci_bus_id="00000000:01:00.0",pci_sub_device_id="0x8E35103C",serial="0",uuid="11111111-2222-4333-8444-555555555555",vbios_version="98.06.2A.40.D9"} 1
 # HELP nvidia_smi_memory_free_bytes memory.free [MiB]
 # TYPE nvidia_smi_memory_free_bytes gauge
-nvidia_smi_memory_free_bytes{uuid="39e607e0-c805-1bfd-ccb4-b16f3b75a42d"} 8.081375232e+09
+nvidia_smi_memory_free_bytes{uuid="11111111-2222-4333-8444-555555555555"} 8.081375232e+09
 # HELP nvidia_smi_memory_reserved_bytes memory.reserved [MiB]
 # TYPE nvidia_smi_memory_reserved_bytes gauge
-nvidia_smi_memory_reserved_bytes{uuid="39e607e0-c805-1bfd-ccb4-b16f3b75a42d"} 4.65567744e+08
-nvidia_smi_memory_total_bytes{uuid="39e607e0-c805-1bfd-ccb4-b16f3b75a42d"} 8.546942976e+09
-nvidia_smi_memory_used_bytes{uuid="39e607e0-c805-1bfd-ccb4-b16f3b75a42d"} 2.097152e+06
+nvidia_smi_memory_reserved_bytes{uuid="11111111-2222-4333-8444-555555555555"} 4.65567744e+08
+nvidia_smi_memory_total_bytes{uuid="11111111-2222-4333-8444-555555555555"} 8.546942976e+09
+nvidia_smi_memory_used_bytes{uuid="11111111-2222-4333-8444-555555555555"} 2.097152e+06
 # HELP nvidia_smi_power_draw_watts power.draw [W]
 # TYPE nvidia_smi_power_draw_watts gauge
-nvidia_smi_power_draw_watts{uuid="39e607e0-c805-1bfd-ccb4-b16f3b75a42d"} 11.27
-nvidia_smi_temperature_gpu{uuid="39e607e0-c805-1bfd-ccb4-b16f3b75a42d"} 52
+nvidia_smi_power_draw_watts{uuid="11111111-2222-4333-8444-555555555555"} 11.27
+nvidia_smi_temperature_gpu{uuid="11111111-2222-4333-8444-555555555555"} 52
 # HELP nvidia_smi_utilization_gpu_ratio utilization.gpu [%]
 # TYPE nvidia_smi_utilization_gpu_ratio gauge
-nvidia_smi_utilization_gpu_ratio{uuid="39e607e0-c805-1bfd-ccb4-b16f3b75a42d"} 0
+nvidia_smi_utilization_gpu_ratio{uuid="11111111-2222-4333-8444-555555555555"} 0
 nvidia_gpu_exporter_build_info{branch="HEAD",goarch="amd64",goos="linux",goversion="go1.27.4",revision="e1f17c9567c2ee570e72e125fdd10dbcaf31b93e",tags="fips140v1.0",version="2.0.0"} 1
 nvidia_smi_command_exit_code 0
 nvidia_smi_failed_scrapes_total 0
@@ -516,7 +516,7 @@ nvidia_smi_failed_scrapes_total 0
 
 `nvidia_smi_fan_speed_ratio` was absent. The exporter also emits `nvidia_smi_pstate`, `nvidia_smi_temperature_gpu_tlimit`, `nvidia_smi_utilization_memory_ratio` and many others that this contract does not use.
 
-### A.3 OMEN: node_exporter next to the Nvidia card (author's samples)
+### A.3 host machine: node_exporter next to the Nvidia card (author's samples)
 
 AMD iGPU through drm (the Nvidia card is not listed by drm):
 
@@ -592,7 +592,7 @@ node_network_speed_bytes{device="enx6c1ff7c349ea"} 6.25e+08
 
 The laptop has 256 `node_cpu_seconds_total` series (32 logical CPUs times 8 modes). The sample counter values above are from the first author run; the speed and counters were not re-checked in the second run.
 
-### A.4 Scrape timing (OMEN, author's samples, three runs each)
+### A.4 Scrape timing (host machine, author's samples, three runs each)
 
 ```
 node_exporter     0.956 s, 0.945 s, 0.898 s   154 KB   (RSS 21244 kB)
@@ -647,7 +647,7 @@ Memory figures use the measured sizes: total = 536,870,912 + 15,137,001,472 = 15
 
 Note: there is no `nvidia` key in `sources`. `duty_percent` 10.2 is 26 / 255 * 100. `link_mbps`, `rpm`, `name`, `index`, `mem_reserved_bytes`, `fan_percent` and `power_w` are omitted because the PS5 does not provide them (section 6).
 
-### B.2 Linux with Nvidia (and an AMD integrated GPU), from the OMEN samples
+### B.2 Linux with Nvidia (and an AMD integrated GPU), from the host machine samples
 
 Memory: Nvidia total 8,546,942,976, used 2,097,152, reserved 465,567,744. AMD: total 536,870,912 + 16,049,745,920 = 16,586,616,832; used 24,932,352 + 14,143,488 = 39,075,840. The headline is 64.5 (CPU `k10temp` and `acpitz` both 64.5); the Wi-Fi and nvme sensors are excluded by `chip_name`, and the GPUs at 52 and 58 are lower. `age_ms` and `scrape_ms` are illustrative (the `scrape_ms` values are the measured 0.95 s and 0.11 s rounded).
 
@@ -678,7 +678,7 @@ Memory: Nvidia total 8,546,942,976, used 2,097,152, reserved 465,567,744. AMD: t
   ],
   "gpus": [
     {
-      "id": "nvidia:39e607e0-c805-1bfd-ccb4-b16f3b75a42d",
+      "id": "nvidia:11111111-2222-4333-8444-555555555555",
       "vendor": "nvidia",
       "name": "NVIDIA GeForce RTX 5060 Laptop GPU",
       "index": 0,

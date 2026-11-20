@@ -120,7 +120,7 @@ func newRandWorld(seed int64) *randWorld {
 		nodes = append(nodes, ps5(fmt.Sprintf("ps5-%d", i), 10+i, 9000+1000*r.Intn(7)))
 	}
 	if r.Intn(2) == 0 {
-		nodes = append(nodes, alien("alienware", 6000+500*r.Intn(4)))
+		nodes = append(nodes, alien("laptop-1", 6000+500*r.Intn(4)))
 	}
 	h.nodes(nodes...)
 	for _, n := range nodes {

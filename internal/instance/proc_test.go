@@ -296,7 +296,7 @@ func TestChildEnvironmentIsScrubbed(t *testing.T) {
 func TestLoadStatsFromChildOutput(t *testing.T) {
 	t.Setenv("FAKELLAMA_LOAD_LOG", "auto")
 	l := newLauncher(t)
-	c := start(t, l, fakeSpec(t, "-lv", "4", "--rpc", "10.0.0.2:50052,10.0.0.3:50052", "--device", "RPC0,RPC1,CUDA0"))
+	c := start(t, l, fakeSpec(t, "-lv", "4", "--rpc", "192.0.2.2:50052,192.0.2.3:50052", "--device", "RPC0,RPC1,CUDA0"))
 	waitHealthy(t, c)
 	// output is read asynchronously; the lines precede listening, but poll anyway
 	deadline := time.Now().Add(waitFor)
@@ -314,7 +314,7 @@ func TestLoadStatsFromChildOutput(t *testing.T) {
 	for _, d := range s.Devices {
 		names = append(names, d.Name)
 	}
-	if !strings.Contains(strings.Join(names, ","), "RPC0[10.0.0.3:50052]") {
+	if !strings.Contains(strings.Join(names, ","), "RPC0[192.0.2.3:50052]") {
 		t.Fatalf("names = %v", names)
 	}
 }

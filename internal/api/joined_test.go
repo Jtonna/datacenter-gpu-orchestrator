@@ -202,21 +202,21 @@ func TestMCPConfigAndAuditToolsAgainstTheRealHandlers(t *testing.T) {
 	if r := j.ok(sid, "set_exclude_nodes", `{"value":["ps5-x*"]}`); r["revision"] != 5.0 {
 		t.Fatalf("%v", r)
 	}
-	if r := j.ok(sid, "set_node_overrides", `{"value":{"a":{"rpc":"10.0.0.3:50052"}}}`); r["revision"] != 6.0 {
+	if r := j.ok(sid, "set_node_overrides", `{"value":{"a":{"rpc":"192.0.2.3:50052"}}}`); r["revision"] != 6.0 {
 		t.Fatalf("%v", r)
 	}
 	if r := j.ok(sid, "set_recovery_settings", `{"value":{"enabled":true,"actions":["restart_rpc_server"]}}`); r["revision"] != 7.0 {
 		t.Fatalf("%v", r)
 	}
-	if r := j.ok(sid, "set_fleet_settings", `{"value":{"url":"http://f:8090","local_node":"omen"},"dry_run":true}`); r["dry_run"] != true || r["revision"] != 7.0 {
+	if r := j.ok(sid, "set_fleet_settings", `{"value":{"url":"http://f:8090","local_node":"host-1"},"dry_run":true}`); r["dry_run"] != true || r["revision"] != 7.0 {
 		t.Fatalf("fleet dry run: %v", r)
 	}
-	if r := j.ok(sid, "set_fleet_settings", `{"value":{"url":"http://f:8090","local_node":"omen"}}`); r["revision"] != 8.0 {
+	if r := j.ok(sid, "set_fleet_settings", `{"value":{"url":"http://f:8090","local_node":"host-1"}}`); r["revision"] != 8.0 {
 		t.Fatalf("%v", r)
 	}
 	full := j.ok(sid, "get_config", `{}`)
 	if full["revision"] != 8.0 || len(full["tiers"].([]any)) != 1 || full["exclude_nodes"].([]any)[0] != "ps5-x*" || full["node_overrides"].(map[string]any)["a"] == nil ||
-		full["recovery"].(map[string]any)["enabled"] != true || full["fleet"].(map[string]any)["local_node"] != "omen" {
+		full["recovery"].(map[string]any)["enabled"] != true || full["fleet"].(map[string]any)["local_node"] != "host-1" {
 		t.Fatalf("%v", full)
 	}
 
@@ -323,7 +323,7 @@ func TestMCPBenchToolsAggregatesSchemaAndBenchAudit(t *testing.T) {
 	loadOnly := `{"id":"load-only","name":"Load only","profile":"mcp-alpha","phases":[{"type":"load"},{"type":"unload"}]}`
 	j.ok(sid, "create_benchmark", `{"benchmark":`+loadOnly+`,"actor":"bench-agent"}`)
 	j.fails(sid, "create_benchmark", `{"benchmark":{"id":"g","profile":"ghost","phases":[{"type":"load"}]}}`, "HTTP 4")
-	if st, _ := j.cdo("POST", "/api/bench/benchmarks", `{"id":"rest-b","profile":"mcp-alpha","phases":[{"type":"load"}]}`, map[string]string{"X-Source": "ui", "X-Actor": "jacob"}); st != 201 {
+	if st, _ := j.cdo("POST", "/api/bench/benchmarks", `{"id":"rest-b","profile":"mcp-alpha","phases":[{"type":"load"}]}`, map[string]string{"X-Source": "ui", "X-Actor": "alex"}); st != 201 {
 		t.Fatal(st)
 	}
 	if st, _ := j.cdo("POST", "/api/bench/benchmarks", `{"id":"rest-c","profile":"mcp-alpha","phases":[{"type":"load"}]}`, nil); st != 201 {
@@ -392,7 +392,7 @@ func TestMCPBenchToolsAggregatesSchemaAndBenchAudit(t *testing.T) {
 	}
 	for _, w := range []row{
 		{"mcp", "bench-agent (via claude-code 1.0)", "create", "benchmark:load-only"},
-		{"ui", "jacob", "create", "benchmark:rest-b"},
+		{"ui", "alex", "create", "benchmark:rest-b"},
 		{"rest", "anonymous", "create", "benchmark:rest-c"},
 		{"mcp", "claude-code 1.0", "update", "benchmark:load-only"},
 		{"mcp", "claude-code 1.0", "create", "suite:quick"},

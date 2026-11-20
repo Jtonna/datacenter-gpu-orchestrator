@@ -13,7 +13,7 @@ without a value.
 
 ```
 Available devices:
-  RPC0: 10.0.0.2:50052 (15000 MiB, 14000 MiB free)
+  RPC0: 192.0.2.2:50052 (15000 MiB, 14000 MiB free)
   CUDA0: NVIDIA GeForce RTX 5060 (8151 MiB, 7000 MiB free)
 ```
 
