@@ -1,6 +1,6 @@
 # Agent contract: Potluck and `potluck-agent`
 
-Status: DRAFT 5, 2026-11-20 (drafts 1 to 3 reviewed by the PS5 side; change requests CR-1, CR-2 and CR-3 folded in). Nothing in this document is built. It is task C1 of the plan "Potluck Cleanup Tasks". It becomes binding when the scheduler side and the fleet console agent both accept it.
+Status: DRAFT 5, 2026-11-20 (drafts 1 to 3 reviewed by the PS5 side; change requests CR-1, CR-2 and CR-3 folded in; CR-5, accepted 2026-11-20, adds section 11.1 and the lines marked CR-5). Nothing in this document is built. It is task C1 of the plan "Potluck Cleanup Tasks". It becomes binding when the scheduler side and the fleet console agent both accept it.
 
 Authors: the scheduler agent (`ps5-ai-datacenter-load-balancer-32`) wrote it; the fleet console agent (`fix-fleet-console-tiles`) reviews it against the PS5 side (boot chain, RAM-only, payload delivery).
 
@@ -131,6 +131,9 @@ Refusals, all `200` with `"accepted": false`, a `reason` word and a `message`:
 | `duplicate_id` | Another live agent with a different `addr` holds this `id`. |
 | `foreign_process` | `foreign_processes` is not empty. |
 | `removed` | The node was removed in Potluck and has not been re-admitted (section 10). |
+| `release_unavailable` | Potluck serves no verified program release (its `programs/<release>` folder is missing or failed its check, section 5.2), so it has nothing to hand out. The `message` says why. (CR-5, accepted 2026-11-20) |
+
+**Order of the checks** (CR-5, accepted 2026-11-20). The first that fails is the answer: a release is served (`release_unavailable`); the node is not removed (`removed`); the releases are equal (`agent_too_old`, then `potluck_too_old`); no foreign process (`foreign_process`); the id is not held by another live agent (`duplicate_id`); a platform matches (`unsupported_hardware`). A registration with an empty `id` is refused before all of these, with `unsupported_hardware`.
 
 A refused agent starts no program and no exporter, keeps answering `GET /status` with the reason, and registers again every 60 s.
 
@@ -169,7 +172,7 @@ Answer `200`: `{"release": "0.1.0", "paused": false}`.
 | Case | Agent does |
 |---|---|
 | Heartbeat cannot be sent (no connection, timeout, `5xx`) | Keeps its state, its launch and its exporters. Sends the next heartbeat on time. Nothing else. The lease decides the fate of a launch. |
-| Heartbeat answered `410` (Potluck does not know this agent) | Registers again at once. Does not touch its launch. |
+| Heartbeat answered `410` (Potluck does not know this agent, or the heartbeat's `agent_start_id` is not the one of the agent's last registration: CR-5, accepted 2026-11-20) | Registers again at once. Does not touch its launch. |
 | Heartbeat answer names a `release` different from the agent's | Registers again; the answer to that decides (`agent_too_old`, `potluck_too_old`). |
 
 **Lost node.** Potluck marks a node lost after 10 s without a heartbeat. Section 11 says what follows.
@@ -567,6 +570,33 @@ In both cases Potluck keeps: history, benchmark runs and learned memory needs th
 - **Lost node with a launch.** A node that loses power cannot report or expire anything. When a node with a launch is marked lost, Potluck fails the instance at once and stops the other members. It never tries to restart or recover the node. When the node's agent returns and reports a launch Potluck no longer holds, Potluck tells it to stop it (section 4.2).
 - **Potluck restart.** Potluck holds no launches after a restart. Each agent's next heartbeat gets `410`, the agent registers with its `launch_id`, and Potluck answers `stop_launch`. Launches whose agent cannot reach Potluck end by their lease.
 - **One feed** (plan task D4) for other systems is built from the heartbeats and Potluck's own instance state. It is a separate page of this repository, not part of this contract.
+
+### 11.1 Details fixed while building the scheduler side (CR-5)
+
+CR-5, accepted 2026-11-20. They are part of the contract. Each line says what Potluck does.
+
+- **Register refusal `release_unavailable`** and **the order of the register checks**: section 4.2.
+- **Heartbeat with a changed `agent_start_id`**: answered `410`, as for an agent Potluck does not know. The agent registers again, and the registration decides about its launch (`stop_launch`, or `agent_restarted` for a launch Potluck holds that the agent no longer reports).
+- **Tiers.** A node gets its tier settings (priority, headroom, link speed, settle time) from the first tier of Potluck's configuration that matches it. For an agent node a tier can match on what the agent reports, so it does not depend on the hostname, which a console changes at each flash:
+  - `platform`: exact, the platform Potluck chose at registration, for example `linux-amd64-vulkan`;
+  - `device`: a case-insensitive glob (the syntax of the hostname matcher) that one of the node's device names must match. The device names are the `gpus[].model` of the registration and, once a heartbeat has arrived, its `devices[].name`.
+
+  A node matches a tier when every matcher the tier sets holds. The older matchers still apply to an agent node when a tier sets them: `hostname` against the node's `name`, `source` against the word `agent`, `role` against the empty string, `local` against false. A node from the fleet feed reports no platform and no device, so a tier that sets one of them never matches it.
+- **A node that matches no tier** is never silent. It stays registered, is listed in `GET /api/status` (in `view.nodes` and in `agents`) with `unplaced: "no_tier_match"`, is not eligible, is not counted in capacity and gets no load. One log line is written per registration, not per heartbeat.
+- **A node that cannot take a load yet** is listed with the reason and gets no load while the reason holds; a request that needs it stays queued and the profile is not backed off:
+  - `programs_not_ready`: the last heartbeat said `programs_ready: false`, or no heartbeat has arrived since the registration;
+  - `model_source_unreachable`: worker launches ask for `model_dir` and the last heartbeat did not say `model_source.reachable: true`. When worker launches do not ask for `model_dir`, the model source is not looked at;
+  - `orphan_launch`: next line.
+- **A heartbeat that names a launch Potluck does not hold** (the node was lost, its load was given up, and the node came back; or a start request got no answer). Potluck sends `DELETE /launch/{launch_id}` (section 6.5, not forced) once for that launch, and again only if the request could not be delivered. The node gets no load until a heartbeat reports no launch. This is in addition to `stop_launch` at registration.
+- **The host machine's agent.** In phase 4 the local node comes from Potluck's own probe. An agent whose `id` or `name` equals Potluck's `fleet.local_node` setting (ignoring case) is the host machine's. It stays registered and is shown in status (`host_agent: true`), but is not published as a remote node and gets no worker launch.
+- **One device per node.** A worker serves one device. Potluck uses the first device of the heartbeat's `devices` whose `backend` is the backend of the node's platform; when no device has that backend, the first device listed. Further devices of that backend are not used: the node's status counts them in `extra_devices_ignored` and the log warns once per registration.
+- **Lost node with a launch.** The instance goes through Potluck's node-loss path at once (the 10 s without a heartbeat are the wait): it is killed and its other members are stopped. Requests that were waiting for an instance that was still loading are queued again and get no error; requests in flight on a ready instance are cut off. The profile is not backed off. **Force unload** differs: requests waiting for that instance fail at once with an error that names the force unload and the node.
+- **`min_mem_available_mib`** of a worker launch is Potluck's watchdog floor setting (`watchdog_floor_mib`, default 1000). For a node whose memory is shared (its device has `shares_system_memory`, or its tier says so) the node's budget for the load is added.
+- **No forced-fit pre-flight with agents.** Potluck's check of a forced placement against freshly probed worker memory is not run: a probe would take the worker's single client slot. The host starts on the placement as made. A load that does not fit a node with shared memory is ended by that agent's watchdog: the load fails with the agent's reason and the launches of every member are stopped.
+- **Learned need after a memory kill.** When a worker launch exits with `watchdog` or `oom_kill`, the model's learned memory need is raised by a tenth, at least 256 MiB. Like every learned need it holds until Potluck restarts.
+- **Reading the launch state.** "While a load is in progress on that node" (section 6.3) is from the start request until Potluck's instance is ready or the agent reports `load.state: "done"`, whichever comes first. A worker is `ready` before its load starts, so `ready` does not slow the reads.
+
+**Not on the wire: the watchdog floor.** The agent's floor is its install option (section 9, default 1000 MiB). Potluck's figure is its own setting (default 1000 MiB), used for placement memory and for `min_mem_available_mib`. Neither side tells the other, so the two must be set to the same value by hand. Open point for the next change request.
 
 ## 12. Open questions
 

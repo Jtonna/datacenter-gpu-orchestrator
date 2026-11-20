@@ -2,6 +2,7 @@ package config
 
 import (
 	"path"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -29,26 +30,59 @@ func (c *Config) Resolve(name string) (profile *core.Profile, isAlias bool, ok b
 // match clause holds for the node; every key set in one clause must hold.
 // hostname is a case-insensitive glob; role and source are exact. A node
 // matching no tier is never used, so ok is false then.
+//
+// A tier that sets platform or device never matches here: those are matched
+// on what an agent reports (MatchTierNode).
 func (c *Config) MatchTier(hostname, role, source string, local bool) (core.Tier, bool) {
+	return c.MatchTierNode(TierQuery{Hostname: hostname, Role: role, Source: source, Local: local})
+}
+
+// TierQuery is what a node is matched to a tier on. Platform and Devices are
+// what an agent node reports (agent contract 11); they are empty for a node
+// from the fleet feed and for the local node.
+type TierQuery struct {
+	Hostname string
+	Role     string
+	Source   string
+	Local    bool
+	Platform string   // the platform given at registration, for example linux-amd64-vulkan
+	Devices  []string // the device names the node reports
+}
+
+// MatchTierNode is MatchTier with the agent matchers: platform is exact, and
+// device is a case-insensitive glob (the hostname syntax) that one of the
+// node's device names must match. Every key set in a clause must hold, so a
+// tier that sets only platform and device does not depend on the hostname.
+func (c *Config) MatchTierNode(q TierQuery) (core.Tier, bool) {
 	for _, t := range c.Tiers {
 		m := t.Match
-		if m.Hostname != "" {
-			if ok, err := path.Match(strings.ToLower(m.Hostname), strings.ToLower(hostname)); err != nil || !ok {
-				continue
-			}
-		}
-		if m.Role != "" && m.Role != role {
+		if m.Hostname != "" && !globFold(m.Hostname, q.Hostname) {
 			continue
 		}
-		if m.Source != "" && m.Source != source {
+		if m.Role != "" && m.Role != q.Role {
 			continue
 		}
-		if m.Local != nil && *m.Local != local {
+		if m.Source != "" && m.Source != q.Source {
+			continue
+		}
+		if m.Local != nil && *m.Local != q.Local {
+			continue
+		}
+		if m.Platform != "" && m.Platform != q.Platform {
+			continue
+		}
+		if m.Device != "" && !slices.ContainsFunc(q.Devices, func(d string) bool { return globFold(m.Device, d) }) {
 			continue
 		}
 		return t.Tier, true
 	}
 	return core.Tier{}, false
+}
+
+// globFold matches name against a glob, ignoring case; a bad glob matches nothing.
+func globFold(glob, name string) bool {
+	ok, err := path.Match(strings.ToLower(glob), strings.ToLower(name))
+	return err == nil && ok
 }
 
 // EffectiveTTL is the profile's idle-unload time; 0 means never unload.

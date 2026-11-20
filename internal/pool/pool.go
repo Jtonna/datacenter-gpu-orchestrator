@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"sort"
 	"strconv"
@@ -26,6 +27,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/release"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 )
 
 // Contract figures.
@@ -40,7 +42,7 @@ const (
 // ReasonReleaseUnavailable refuses a registration while Potluck serves no
 // verified release.
 //
-// CONTRACT-QUESTION: 4.2 has no refusal word for "Potluck has no usable
+// Settled as built by CR-5 (agent contract 11.1). The question was: 4.2 has no refusal word for "Potluck has no usable
 // program set"; the agent retries any unknown reason every 60 s, which is
 // what is wanted, so this word is used with a plain message.
 const ReasonReleaseUnavailable = "release_unavailable"
@@ -125,6 +127,13 @@ type agent struct {
 	// extraWarned: the warning about extra devices of the backend was given
 	// for this registration.
 	extraWarned bool
+	// noTierLogged: the line about matching no tier was written for this
+	// registration.
+	noTierLogged bool
+	// orphan is a launch the agent's heartbeat names that this run does not
+	// hold; the node takes no load until the agent reports no launch.
+	// orphanAsked is the launch the stop was sent for (once per launch).
+	orphan, orphanAsked string
 }
 
 // Pool is the agent registry, node view and worker launcher.
@@ -137,7 +146,7 @@ type Pool struct {
 	admin      map[string]cfgstore.NodeAdmin
 	nodes      []core.Node
 	notify     chan struct{}
-	noTier     map[string]bool
+	unplaced   map[core.NodeID]string // why a listed node takes no new load (view.go)
 	probeOK    bool
 	probeTotal int
 	probeUsed  int
@@ -179,7 +188,7 @@ func New(o Options) (*Pool, error) {
 		o.ProbeEvery = 2 * time.Second
 	}
 	p := &Pool{o: o, log: o.Logger, agents: map[string]*agent{}, admin: map[string]cfgstore.NodeAdmin{},
-		notify: make(chan struct{}, 1), noTier: map[string]bool{},
+		notify: make(chan struct{}, 1), unplaced: map[core.NodeID]string{},
 		launches: map[string]*launch{}, byIID: map[uint64][]*launch{}, stopped: map[uint64]bool{}}
 	if o.Store != nil {
 		a, err := o.Store.NodeAdmins()
@@ -237,7 +246,7 @@ func (p *Pool) Register(req agentproto.RegisterRequest) agentproto.RegisterAnswe
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	// CONTRACT-QUESTION: 4.2 lists the refusals without an order. They are
+	// Settled as built by CR-5 (agent contract 11.1). The question was: 4.2 lists the refusals without an order. They are
 	// checked: release served, removed, release (both directions), foreign
 	// process, duplicate id, platform.
 	if p.admin[req.ID].Removed {
@@ -334,7 +343,7 @@ func (p *Pool) Heartbeat(id string, body []byte) HeartbeatResult {
 		return HeartbeatResult{Status: http.StatusGone, Err: "unknown agent; register again"}
 	}
 	if hb.AgentStartID != a.reg.AgentStartID {
-		// CONTRACT-QUESTION: 4.2 says a new agent_start_id tells Potluck the
+		// Settled as built by CR-5 (agent contract 11.1). The question was: 4.2 says a new agent_start_id tells Potluck the
 		// agent restarted, but not what a heartbeat with one means without a
 		// registration first. It is answered 410 so the agent registers and
 		// its launch is checked again.
@@ -354,8 +363,52 @@ func (p *Pool) Heartbeat(id string, body []byte) HeartbeatResult {
 		p.recordLocked(history.TNodeMembership, history.Info, a,
 			fmt.Sprintf("Node %s is back: its heartbeat arrived again.", a.reg.Name), map[string]any{"state": StateActive})
 	}
+	p.checkOrphanLocked(a, &hb)
 	p.rebuildLocked()
 	return HeartbeatResult{Status: http.StatusOK, Answer: agentproto.HeartbeatAnswer{Release: p.o.PotluckRelease, Paused: p.admin[id].Paused}}
+}
+
+// checkOrphanLocked handles a heartbeat's launch_id (agent contract 11, "lost
+// node with a launch"). A launch this run does not hold on that node is an
+// orphan: its load was given up while the node was lost, or its start request
+// got no answer. The agent is told to stop it (DELETE /launch/{id}, 6.5), once
+// per launch, and the node takes no load until the agent reports no launch;
+// otherwise the launch would end only by its lease and a new load placed
+// meanwhile would be refused as busy.
+func (p *Pool) checkOrphanLocked(a *agent, hb *heartbeat) {
+	lid := ""
+	if hb.LaunchID != nil {
+		lid = *hb.LaunchID
+	}
+	if l := p.launches[lid]; lid == "" || (l != nil && l.node == core.NodeID(a.reg.ID)) {
+		a.orphan, a.orphanAsked = "", ""
+		return
+	}
+	a.orphan = lid
+	if a.orphanAsked == lid {
+		return
+	}
+	a.orphanAsked = lid
+	base := "http://" + net.JoinHostPort(a.reg.Addr, strconv.Itoa(p.o.AgentPort))
+	p.log.Warn("agent reports a launch Potluck does not hold; telling it to stop the launch", "id", a.reg.ID, "name", a.reg.Name, "launch", lid)
+	p.recordLocked(history.TNodeMembership, history.Warn, a,
+		fmt.Sprintf("Node %s reported launch %s, which Potluck does not hold; it was told to stop it.", a.reg.Name, lid),
+		map[string]any{"state": StateActive, "launch_id": lid, "unplaced": scheduler.UnplacedOrphanLaunch})
+	p.stops.Add(1)
+	go func() {
+		defer p.stops.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := p.deleteLaunch(ctx, base, lid, false); err != nil {
+			p.log.Warn("stopping a launch Potluck does not hold failed; a later heartbeat that still names it sends the stop again",
+				"id", a.reg.ID, "launch", lid, "err", err)
+			p.mu.Lock()
+			if a.orphanAsked == lid {
+				a.orphanAsked = "" // not delivered: "once" is once delivered
+			}
+			p.mu.Unlock()
+		}
+	}()
 }
 
 // parseStats keeps a stats object of the supported stats_version (stats

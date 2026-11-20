@@ -89,6 +89,7 @@ func TestValidateRejects(t *testing.T) {
 		{"tier priority zero", "tiers:\n  - match: { local: true }\n    priority: 0\n", []string{"tiers[0]", "priority"}},
 		{"tier empty match", "tiers:\n  - match: {}\n    priority: 1\n", []string{"tiers[0]", "match"}},
 		{"tier bad glob", "tiers:\n  - match: { hostname: \"[\" }\n    priority: 1\n", []string{"tiers[0]", "hostname"}},
+		{"tier bad device glob", "tiers:\n  - match: { device: \"[\" }\n    priority: 1\n", []string{"tiers[0]", "match.device"}},
 		{"tier negative headroom", "tiers:\n  - match: { local: true }\n    priority: 1\n    headroom_mib: -1\n", []string{"tiers[0]", "headroom_mib"}},
 		{"override rpc no port", baseHeader + "node_overrides:\n  n: { rpc: \"192.0.2.3\" }\n", []string{`node_overrides "n"`, "rpc"}},
 		{"override rpc hostname", baseHeader + "node_overrides:\n  n: { rpc: \"laptop:50052\" }\n", []string{`node_overrides "n"`, "rpc"}},

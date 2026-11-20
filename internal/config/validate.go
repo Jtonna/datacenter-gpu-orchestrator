@@ -211,11 +211,14 @@ func (c *Config) validateTiers(add func(string, ...any)) {
 			tf("priority", "must be at least 1, got %d", t.Priority)
 		}
 		m := t.Match
-		if m.Hostname == "" && m.Role == "" && m.Source == "" && m.Local == nil {
-			tf("match", "must set at least one of hostname, role, source, local")
+		if m.Hostname == "" && m.Role == "" && m.Source == "" && m.Local == nil && m.Platform == "" && m.Device == "" {
+			tf("match", "must set at least one of hostname, role, source, local, platform, device")
 		}
 		if _, err := path.Match(m.Hostname, ""); err != nil {
 			tf("match.hostname", "invalid glob %q", m.Hostname)
+		}
+		if _, err := path.Match(m.Device, ""); err != nil {
+			tf("match.device", "invalid glob %q", m.Device)
 		}
 		if t.HeadroomMiB < 0 {
 			tf("headroom_mib", "must not be negative")

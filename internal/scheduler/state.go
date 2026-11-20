@@ -316,6 +316,7 @@ type schedCore struct {
 	age           time.Duration
 	seenReconnect time.Time
 	excludedSeen  map[core.NodeID]bool          // excluded nodes already logged
+	unplaced      map[core.NodeID]string        // why a listed node takes no new load (NodeGate), read with the view
 	forcedGone    map[string]time.Time          // force_nodes name -> when it was first seen absent or offline in a live view
 	health        map[core.NodeID]*workerHealth // worker health (workerhealth.go)
 	probeGen      uint64
@@ -495,8 +496,8 @@ func (c *schedCore) excluded(n core.Node) bool { return c.cfg.Excluded(n.ID, n.H
 
 // reachable: the local node, or online in a fresh view with an address.
 func (c *schedCore) reachable(n core.Node) bool {
-	if c.excluded(n) {
-		return false
+	if c.excluded(n) || c.unplaced[n.ID] == UnplacedNoTierMatch {
+		return false // agents.go: a node without a tier is outside the pool
 	}
 	if n.Local {
 		return true
@@ -528,8 +529,8 @@ func (c *schedCore) isFree(id core.NodeID) bool {
 	if !c.eligible(id) {
 		return false
 	}
-	if n, _ := c.node(id); n.Paused || c.agentHeld(id) {
-		return false // agents.go: a paused or held node takes no new load
+	if n, _ := c.node(id); n.Paused || c.agentHeld(id) || c.unplaced[id] != "" {
+		return false // agents.go: a paused, held or unplaced node takes no new load
 	}
 	ns := c.nodes[id]
 	return ns == nil || (ns.holder == "" && ns.claim == "" && ns.settle == setNone)

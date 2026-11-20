@@ -124,3 +124,44 @@ func freeLoopbackPort(t *testing.T) int {
 	defer l.Close()
 	return l.Addr().(*net.TCPAddr).Port
 }
+
+// TestAgentNodeWithoutATierIsListed: an agent node that matches no tier is
+// never silent. It is in the node list of GET /api/status, not placeable, with
+// the reason no_tier_match (agent contract 11, CR-5).
+func TestAgentNodeWithoutATierIsListed(t *testing.T) {
+	agentPort, workerPort := freeLoopbackPort(t), freeLoopbackPort(t)
+	programs := progtree.Write(t, t.TempDir(), progtree.Tree{Release: "0.1.0",
+		Llama: "a01665d30de2885879a64eae999067ef3ef5fd4b",
+		Folders: map[string]map[string][]byte{
+			"agent":              {"potluck-agent-linux-amd64": []byte("agent")},
+			"linux-amd64-vulkan": {"llama-server": []byte("llama-server"), "rpc-server": []byte("rpc-server")},
+		}})
+	c := startCluster(t, options{
+		defaults: "  membership: agents\n",
+		args:     []string{"--programs-dir", programs},
+		env: map[string]string{"LLM_SCHEDULER_TEST_AGENT_PORT": strconv.Itoa(agentPort),
+			"LLM_SCHEDULER_TEST_WORKER_PORT": strconv.Itoa(workerPort)},
+	})
+	a := &fakeagent.Agent{ID: "02:00:00:00:00:09", Name: "stray-1", Addr: "127.0.0.2",
+		AgentPort: agentPort, WorkerPort: workerPort, Potluck: c.url, MemAvail: 14000,
+		GPUs:    []agentproto.GPU{{Vendor: "amd", Integrated: true}},
+		Devices: []agentproto.Device{{Name: "Vulkan0", Backend: "vulkan", TotalMiB: 14336, FreeMiB: 14000, SharesSystemMemory: true}}}
+	if err := a.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(a.Close)
+	var node map[string]any
+	c.waitFor("the node without a tier in the node list", 10*time.Second, func() bool {
+		for _, nd := range c.jsonGet("/api/status")["view"].(map[string]any)["nodes"].([]any) {
+			if m := nd.(map[string]any); m["id"] == a.ID {
+				node = m
+				return true
+			}
+		}
+		return false
+	})
+	ag, _ := node["agent"].(map[string]any)
+	if node["unplaced"] != "no_tier_match" || node["eligible"] != false || ag["unplaced"] != "no_tier_match" || ag["placeable"] != false {
+		t.Fatalf("node %+v", node)
+	}
+}

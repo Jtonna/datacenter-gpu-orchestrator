@@ -290,14 +290,18 @@ type ViewStatus struct {
 
 // NodeStatus is one node with its budgets and bookkeeping (design 7.1).
 type NodeStatus struct {
-	ID              core.NodeID
-	Hostname        string
-	Local           bool
-	Online          bool
-	Addr            string
-	Priority        int
-	Eligible        bool // ignoring the profile-specific rules (allow_tiers, min_share)
-	Excluded        bool // kept out of the pool by exclude_nodes; never eligible
+	ID       core.NodeID
+	Hostname string
+	Local    bool
+	Online   bool
+	Addr     string
+	Priority int
+	Eligible bool // ignoring the profile-specific rules (allow_tiers, min_share)
+	Excluded bool // kept out of the pool by exclude_nodes; never eligible
+	// Unplaced is why the node takes no new load although it is listed
+	// (agents membership): no_tier_match, programs_not_ready,
+	// model_source_unreachable or orphan_launch. Empty when it may take one.
+	Unplaced        string
 	TotalMiB        int
 	FreeMiB         int // figure used for the live budget (fleet, fetch, or pre-flight override)
 	LiveBudgetMiB   int
