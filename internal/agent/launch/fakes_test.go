@@ -95,6 +95,7 @@ type fakeRunner struct {
 	stopped    []string
 	stopErr    error
 	stopKills  bool // Stop ends the unit, as systemctl stop does
+	stopHang   chan struct{} // Stop blocks until it is closed
 }
 
 func newFakeRunner(survives bool) *fakeRunner {
@@ -148,8 +149,11 @@ func (r *fakeRunner) List(ctx context.Context, prefix string) ([]string, error) 
 func (r *fakeRunner) Stop(ctx context.Context, unit string) error {
 	r.mu.Lock()
 	r.stopped = append(r.stopped, unit)
-	p, err, kills := r.procs[unit], r.stopErr, r.stopKills
+	p, err, kills, hang := r.procs[unit], r.stopErr, r.stopKills, r.stopHang
 	r.mu.Unlock()
+	if hang != nil {
+		<-hang
+	}
 	if err != nil {
 		return err
 	}

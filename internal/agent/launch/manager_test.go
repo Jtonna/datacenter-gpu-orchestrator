@@ -891,3 +891,49 @@ func TestDirectKillRechecksCgroup(t *testing.T) {
 		t.Fatalf("signalled %v, want only 703", k)
 	}
 }
+
+// The stop of the unit can block for many seconds (systemctl stop waits for
+// the unit). It runs outside the manager's lock: meanwhile GET /launch
+// answers, the loop goes on reading memory, a lease call is answered, and no
+// second kill attempt is started beside it.
+func TestHangingStopStepBlocksNothing(t *testing.T) {
+	e := newEnv(t, true)
+	e.runner.stopHang = make(chan struct{})
+	e.runner.stopKills = true
+	e.run()
+	e.startReady("ln-1")
+	p := e.runner.proc("potluck-launch-ln-1")
+	p.mu.Lock()
+	p.killDeaf = 1 << 30
+	p.mu.Unlock()
+	e.m.Stop("ln-1", true) // attempt 1: SIGKILL, no effect
+	agenttest.Eventually(t, 5*time.Second, "KILL", func() bool { return len(p.signals()) == 1 })
+	e.clock.Advance(time.Second) // attempt 2: the stop of the unit, which hangs
+	agenttest.Eventually(t, 5*time.Second, "stop of the unit", func() bool { return len(e.runner.stops()) == 1 })
+
+	answered := make(chan agentproto.LaunchState, 1)
+	go func() { answered <- e.m.State() }()
+	select {
+	case st := <-answered:
+		if st.State != agentproto.StateStopping {
+			t.Fatal(st.State)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("GET /launch does not answer while the stop of the unit hangs")
+	}
+	e.mem.set(4321)
+	agenttest.Eventually(t, 2*time.Second, "the loop still reads memory", func() bool { return e.m.State().MemAvailableMiB == 4321 })
+	if !e.m.Renew("ln-1") || e.m.CurrentID() == nil || !e.m.Busy() {
+		t.Fatal("lease and state calls")
+	}
+	e.clock.Advance(time.Minute)
+	e.settle(10)
+	if len(p.signals()) != 1 || len(e.runner.stops()) != 1 {
+		t.Fatalf("a second attempt ran beside the hanging one: %d signals, %d stops", len(p.signals()), len(e.runner.stops()))
+	}
+	close(e.runner.stopHang)
+	e.portClosed()
+	if st := e.waitState(agentproto.StateExited); st.Exit.Reason != agentproto.ExitForced {
+		t.Fatal(st.Exit.Reason)
+	}
+}
