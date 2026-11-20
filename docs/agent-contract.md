@@ -487,7 +487,7 @@ Accepted by both sides on 2026-11-20. They are part of the contract.
 
 ### 7.1 Stats
 
-The agent scrapes its local exporters and puts the result in the heartbeat's `stats` object. Metric names, units, scrape rules, exporter versions and exporter arguments are defined in the stats contract (`docs/stats-contract.md`, plan task E1, written by the fleet console agent; copied from its draft 2, commit `38f866d` of the datacenter manager repo). This document defines nothing about stats beyond:
+The agent scrapes its local exporters and puts the result in the heartbeat's `stats` object. Metric names, units, scrape rules, exporter versions and exporter arguments are defined in the stats contract (`docs/stats-contract.md`, plan task E1, written by the fleet console agent; copied from its draft 3, commit `07b7ac5` of the datacenter manager repo). This document defines nothing about stats beyond:
 
 - the exporters listen on `127.0.0.1` only, the agent is the only network reader, and Potluck is the only place other systems read stats from;
 - an exporter that is missing or keeps crashing is reported as absent in `stats` and shown as a warning on the node. It never stops the node from taking loads;

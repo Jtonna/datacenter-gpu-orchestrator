@@ -1,8 +1,16 @@
-# Potluck Stats Contract (DRAFT 2)
+# Potluck Stats Contract (DRAFT 3)
 
-Status: DRAFT 2. Draft 1 was reviewed by the Potluck team; this draft applies their changes.
+Status: DRAFT 3. Draft 1 was reviewed by the Potluck team; draft 2 applied their changes; draft 3 adds four implementation points agreed with them.
 Contract version: `stats_version` = 1 (draft).
 Measurements were taken on 2026-11-20. Anything not marked as measured is marked Proposed or Estimate.
+
+## Changes since draft 2
+
+1. Counter resets are detected per interface and per direction (receive and transmit separately), not per scrape. A reset on one counter discards only that one rate for that interval (3.1).
+2. An interface for which `node_network_up` is not reported is not sent at all, even if it would be the primary interface. Then no entry is marked `primary`; this is not an error (4.5).
+3. The headline temperature is taken over the temperatures actually sent (after the cap of 16) plus every `gpus[].temp_c`. A sensor dropped by the cap cannot be the headline. The cap's selection order is now defined (Proposed): GPU-chip and CPU-chip sensors first, then the rest in the exporter's order (4.6).
+4. An AMD drm device with no `node_drm_memory_gtt_size_bytes` series is `kind: "discrete"` with `mem_source: "drm_vram"` (5.3).
+5. Example values made generic: GPU UUID, interface name and host labels in the appendix and the JSON examples. Metric names and values are unchanged.
 
 ## Changes since draft 1
 
@@ -151,7 +159,7 @@ Let `dt` be the monotonic seconds between two successive successful scrapes of t
 Rules:
 
 1. The first scrape after agent start (or after an exporter restart) produces no rate. The rate field is omitted until a second successful scrape.
-2. If any `cur < prev` (counter reset, exporter restart, interface re-created), discard that sample and start again from `cur`. Do not report a negative or huge rate.
+2. Counter resets are detected per interface and per direction, not per scrape. If `cur < prev` for the receive counter of one interface, only that interface's `rx_mbps` is omitted for that interval; its `tx_mbps` and every other interface are unaffected (and the same the other way round). That counter then restarts from `cur`. This covers exporter restarts and re-created interfaces. Do not report a negative or huge rate.
 3. If `dt` is below 0.5 s or above 30 s, discard the sample (the interval is not trustworthy). Estimate, not measured.
 4. The rate is for the interval between the last two successful scrapes. No smoothing is applied by the agent. Proposed. Dashboards may smooth.
 
@@ -222,7 +230,11 @@ For display and cross-checking only (section 1.1).
 | `link_mbps` | number | megabits per second | optional | `node_network_speed_bytes{device}` | `value * 8 / 1e6`. Omit if absent or value <= 0. See section 6. |
 
 Interface selection. Proposed: report every interface except `lo` and names starting with `veth`, `docker`, `br-`, `virbr`, `cilium`, `lxc`, `flannel`, `cni`, `tailscale`, `tun`, `tap`. Weakness: a denylist by name needs upkeep, and a VPN or bridge with an unlisted name would show up. Measured on the laptop: 15 or more interfaces including `cilium_*`, `lxc*`, `lo`, `tailscale0`, one wired USB adapter and a Wi-Fi interface.
-Cap: at most 8 interfaces sent. The primary interface is always sent, even if its name matches the denylist, and is always the first element. The other slots go to the remaining interfaces with the highest `rx+tx` byte counter.
+Cap: at most 8 interfaces sent. The primary interface is always sent, even if its name matches the denylist, and is always the first element, with one exception below.
+
+An interface for which `node_network_up` is not reported is not sent at all, because `up` is required. This applies even if it would be the primary interface. In that case no entry in `net` has `primary: true`. That is not an error; consumers treat "no primary entry" as "primary unknown".
+
+The remaining slots in the cap go to the remaining interfaces with the highest `rx+tx` byte counter.
 
 ### 4.6 `temps` and the headline temperature
 
@@ -235,14 +247,16 @@ Cap: at most 8 interfaces sent. The primary interface is always sent, even if it
 | `chip_name` | string | none | optional | `node_hwmon_chip_names{chip,chip_name}` | The `chip_name` label of the series whose `chip` label equals this sensor's `chip`. It is the Linux driver name (for example `nvme`, `k10temp`, `amdgpu`), not a machine name. Omit if there is no such series. |
 | `celsius` | number | degrees Celsius | required | `node_hwmon_temp_celsius{chip,sensor}` | As is. |
 
-Validity: drop a sensor if the value is <= 0 or >= 125. Measured: two memory-module sensors on the laptop reported exactly 0, which is not a temperature. Send at most 16 temperatures, highest first.
+Validity: drop a sensor if the value is <= 0 or >= 125. Measured: two memory-module sensors on the laptop reported exactly 0, which is not a temperature. Send at most 16 temperatures. Selection order for the cap (Proposed): first the sensors on GPU chips and on CPU chips, then all other sensors in the exporter's own output order; within each group the exporter's order is kept. A GPU chip is a chip whose `chip` label equals the `chip` label of a drm card in `gpus`. A CPU chip is one whose `chip_name` is `k10temp`, `coretemp` or `zenpower`, or whose sensor `label` starts with `Tctl`, `Tdie` or `Package`. Of these names only `k10temp` and the labels `Tctl` appeared in real output; the others come from general knowledge of Linux drivers. When more than 16 valid sensors exist, the first 16 in this order are sent and the rest are dropped.
 
 Headline rule (Proposed): `headline_temp_c` is the maximum of:
 
-1. `celsius` over every valid `temps` entry whose `chip_name` is not in the excluded list below (an entry with no `chip_name` is included), and
+1. `celsius` over every `temps` entry actually sent (that is, after the cap of 16 is applied) whose `chip_name` is not in the excluded list below (an entry with no `chip_name` is included), and
 2. `temp_c` of every entry in `gpus`.
 
 If both sets are empty, omit `headline_temp_c`.
+
+Consequence, stated plainly: a sensor dropped by the cap can never be the headline, even if it is the hottest on the machine. So the cap's selection order matters. The order above puts GPU and CPU sensors first so that the cap drops peripheral sensors before processor sensors. Its weakness: it depends on the CPU-chip recognition above; a processor sensor on a chip not recognised as a CPU chip competes with all other sensors for the remaining slots. A machine with more than 16 valid sensors was not seen (the laptop had about 12 valid ones).
 
 Why the second term exists: an Nvidia card is not in hwmon, so its temperature is not in `temps`. Without the `gpus` term it could never be the headline, even when it is the hottest part of the machine.
 
@@ -343,7 +357,7 @@ Rule (Proposed): the card is `integrated` when both hold:
 1. `node_drm_memory_vram_size_bytes` <= 2 GiB (2,147,483,648 bytes), and
 2. `node_drm_memory_gtt_size_bytes` >= 8 x `node_drm_memory_vram_size_bytes`.
 
-Otherwise it is `discrete`. Adding GTT to a discrete card's figure would over-count (GTT there is host RAM the card can borrow, not on-card memory), so a discrete card uses the VRAM-only formula in 5.2. This is a Proposed rule for the future AMD discrete case and is not tested.
+Otherwise it is `discrete`. A card that reports no `node_drm_memory_gtt_size_bytes` series at all is also `discrete` (rule 2 cannot be evaluated), with `mem_source: "drm_vram"`; the VRAM-only formula in 5.2 is used. Adding GTT to a discrete card's figure would over-count (GTT there is host RAM the card can borrow, not on-card memory), so a discrete card uses the VRAM-only formula in 5.2. This is a Proposed rule for the future AMD discrete case and is not tested.
 
 Test against measured data: PS5 gives 512 MB VRAM and 14.1 GB GTT (ratio about 28), laptop iGPU gives 512 MB and 16.05 GB (ratio about 30). Both pass.
 
@@ -462,7 +476,7 @@ Questions still open. Answered questions from draft 1 are removed.
 
 ## Appendix A. Real sample lines
 
-Machine labels: PS5 = PS5 console running Ubuntu, node_exporter 1.13.1 (earlier measurements, 2026-11-20). LAPTOP-NV = Linux laptop with RTX 5060 8 GB, nvidia_gpu_exporter 2.0.0 (earlier measurements, 2026-11-20). host machine = Linux laptop (Ubuntu 26.04, kernel 7.0.0-43) with RTX 5060 and an AMD Raphael integrated GPU, sampled again on 2026-11-20 with the command lines in 2.3. The Nvidia lines in A.2 are from the host machine run and match the LAPTOP-NV lines where both exist; the LAPTOP-NV measurements were not attributed to a host name, so they are not assumed to be the same unit.
+Machine labels: PS5 = PS5 console running Ubuntu, node_exporter 1.13.1 (earlier measurements, 2026-11-20). laptop-2 = Linux laptop with RTX 5060 8 GB, nvidia_gpu_exporter 2.0.0 (earlier measurements, 2026-11-20). laptop-1 = Linux laptop (Ubuntu 26.04, kernel 7.0.0-43) with RTX 5060 and an AMD Raphael integrated GPU, sampled again on 2026-11-20 with the command lines in 2.3. The Nvidia lines in A.2 are from the laptop-1 run and match the laptop-2 lines where both exist; the laptop-2 measurements were not attributed to a host name, so they are not assumed to be the same unit.
 
 ### A.1 PS5 (node_exporter)
 
@@ -486,29 +500,29 @@ node_network_up{device="enp64s0f2"} 1
 
 Also present on the PS5 (names only, values not quoted): `node_hwmon_temp_celsius` (labels MainSoC, Local1, Local2, Local3 on `platform_ps5_fan`; Tctl; edge; one Wi-Fi sensor), `node_memory_MemAvailable_bytes`, `node_memory_MemTotal_bytes`, `node_network_receive_bytes_total`, `node_network_transmit_bytes_total`, `node_cpu_seconds_total`, `node_load1`. The PS5's `node_hwmon_chip_names` lines were not recorded.
 
-### A.2 Nvidia exporter (LAPTOP-NV / host machine, RTX 5060)
+### A.2 Nvidia exporter (laptop-2 / laptop-1, RTX 5060)
 
 ```
 # HELP nvidia_smi_clocks_current_graphics_clock_hz clocks.current.graphics [MHz]
 # TYPE nvidia_smi_clocks_current_graphics_clock_hz gauge
-nvidia_smi_clocks_current_graphics_clock_hz{uuid="11111111-2222-4333-8444-555555555555"} 1.8e+08
-nvidia_smi_clocks_current_memory_clock_hz{uuid="11111111-2222-4333-8444-555555555555"} 4.05e+08
-nvidia_smi_gpu_info{compute_cap="12.0",cuda_version="13.2",driver_model_current="[N/A]",driver_model_pending="[N/A]",driver_version="595.99.02",index="0",name="NVIDIA GeForce RTX 5060 Laptop GPU",pci_bus_id="00000000:01:00.0",pci_sub_device_id="0x8E35103C",serial="0",uuid="11111111-2222-4333-8444-555555555555",vbios_version="98.06.2A.40.D9"} 1
+nvidia_smi_clocks_current_graphics_clock_hz{uuid="GPU-00000000-0000-0000-0000-000000000001"} 1.8e+08
+nvidia_smi_clocks_current_memory_clock_hz{uuid="GPU-00000000-0000-0000-0000-000000000001"} 4.05e+08
+nvidia_smi_gpu_info{compute_cap="12.0",cuda_version="13.2",driver_model_current="[N/A]",driver_model_pending="[N/A]",driver_version="595.99.02",index="0",name="NVIDIA GeForce RTX 5060 Laptop GPU",pci_bus_id="00000000:01:00.0",pci_sub_device_id="0x8E35103C",serial="0",uuid="GPU-00000000-0000-0000-0000-000000000001",vbios_version="98.06.2A.40.D9"} 1
 # HELP nvidia_smi_memory_free_bytes memory.free [MiB]
 # TYPE nvidia_smi_memory_free_bytes gauge
-nvidia_smi_memory_free_bytes{uuid="11111111-2222-4333-8444-555555555555"} 8.081375232e+09
+nvidia_smi_memory_free_bytes{uuid="GPU-00000000-0000-0000-0000-000000000001"} 8.081375232e+09
 # HELP nvidia_smi_memory_reserved_bytes memory.reserved [MiB]
 # TYPE nvidia_smi_memory_reserved_bytes gauge
-nvidia_smi_memory_reserved_bytes{uuid="11111111-2222-4333-8444-555555555555"} 4.65567744e+08
-nvidia_smi_memory_total_bytes{uuid="11111111-2222-4333-8444-555555555555"} 8.546942976e+09
-nvidia_smi_memory_used_bytes{uuid="11111111-2222-4333-8444-555555555555"} 2.097152e+06
+nvidia_smi_memory_reserved_bytes{uuid="GPU-00000000-0000-0000-0000-000000000001"} 4.65567744e+08
+nvidia_smi_memory_total_bytes{uuid="GPU-00000000-0000-0000-0000-000000000001"} 8.546942976e+09
+nvidia_smi_memory_used_bytes{uuid="GPU-00000000-0000-0000-0000-000000000001"} 2.097152e+06
 # HELP nvidia_smi_power_draw_watts power.draw [W]
 # TYPE nvidia_smi_power_draw_watts gauge
-nvidia_smi_power_draw_watts{uuid="11111111-2222-4333-8444-555555555555"} 11.27
-nvidia_smi_temperature_gpu{uuid="11111111-2222-4333-8444-555555555555"} 52
+nvidia_smi_power_draw_watts{uuid="GPU-00000000-0000-0000-0000-000000000001"} 11.27
+nvidia_smi_temperature_gpu{uuid="GPU-00000000-0000-0000-0000-000000000001"} 52
 # HELP nvidia_smi_utilization_gpu_ratio utilization.gpu [%]
 # TYPE nvidia_smi_utilization_gpu_ratio gauge
-nvidia_smi_utilization_gpu_ratio{uuid="11111111-2222-4333-8444-555555555555"} 0
+nvidia_smi_utilization_gpu_ratio{uuid="GPU-00000000-0000-0000-0000-000000000001"} 0
 nvidia_gpu_exporter_build_info{branch="HEAD",goarch="amd64",goos="linux",goversion="go1.27.4",revision="e1f17c9567c2ee570e72e125fdd10dbcaf31b93e",tags="fips140v1.0",version="2.0.0"} 1
 nvidia_smi_command_exit_code 0
 nvidia_smi_failed_scrapes_total 0
@@ -516,7 +530,7 @@ nvidia_smi_failed_scrapes_total 0
 
 `nvidia_smi_fan_speed_ratio` was absent. The exporter also emits `nvidia_smi_pstate`, `nvidia_smi_temperature_gpu_tlimit`, `nvidia_smi_utilization_memory_ratio` and many others that this contract does not use.
 
-### A.3 host machine: node_exporter next to the Nvidia card (author's samples)
+### A.3 laptop-1: node_exporter next to the Nvidia card (author's samples)
 
 AMD iGPU through drm (the Nvidia card is not listed by drm):
 
@@ -592,7 +606,7 @@ node_network_speed_bytes{device="enx020000000010"} 6.25e+08
 
 The laptop has 256 `node_cpu_seconds_total` series (32 logical CPUs times 8 modes). The sample counter values above are from the first author run; the speed and counters were not re-checked in the second run.
 
-### A.4 Scrape timing (host machine, author's samples, three runs each)
+### A.4 Scrape timing (laptop-1, author's samples, three runs each)
 
 ```
 node_exporter     0.956 s, 0.945 s, 0.898 s   154 KB   (RSS 21244 kB)
@@ -647,7 +661,7 @@ Memory figures use the measured sizes: total = 536,870,912 + 15,137,001,472 = 15
 
 Note: there is no `nvidia` key in `sources`. `duty_percent` 10.2 is 26 / 255 * 100. `link_mbps`, `rpm`, `name`, `index`, `mem_reserved_bytes`, `fan_percent` and `power_w` are omitted because the PS5 does not provide them (section 6).
 
-### B.2 Linux with Nvidia (and an AMD integrated GPU), from the host machine samples
+### B.2 Linux with Nvidia (and an AMD integrated GPU), from the laptop-1 samples
 
 Memory: Nvidia total 8,546,942,976, used 2,097,152, reserved 465,567,744. AMD: total 536,870,912 + 16,049,745,920 = 16,586,616,832; used 24,932,352 + 14,143,488 = 39,075,840. The headline is 64.5 (CPU `k10temp` and `acpitz` both 64.5); the Wi-Fi and nvme sensors are excluded by `chip_name`, and the GPUs at 52 and 58 are lower. `age_ms` and `scrape_ms` are illustrative (the `scrape_ms` values are the measured 0.95 s and 0.11 s rounded).
 
@@ -678,7 +692,7 @@ Memory: Nvidia total 8,546,942,976, used 2,097,152, reserved 465,567,744. AMD: t
   ],
   "gpus": [
     {
-      "id": "nvidia:11111111-2222-4333-8444-555555555555",
+      "id": "nvidia:GPU-00000000-0000-0000-0000-000000000001",
       "vendor": "nvidia",
       "name": "NVIDIA GeForce RTX 5060 Laptop GPU",
       "index": 0,
