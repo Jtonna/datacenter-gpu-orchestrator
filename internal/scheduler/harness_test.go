@@ -54,6 +54,11 @@ type harness struct {
 	trace    []string
 	feedLog  []FeedEvent     // every feed event taken after a step
 	histLog  []history.Event // every history event taken after a step
+
+	// Agents membership (agents_test.go).
+	wlaunches []effLaunchWorkers
+	wstops    []effStopWorkers
+	wforce    []core.NodeID
 }
 
 func ptrDur(d time.Duration) *time.Duration { return &d }
@@ -226,6 +231,12 @@ func (h *harness) drain() {
 				sc, err := ef.counter.SentBytes(ef.peers)
 				h.queue = append(h.queue, evLoadSample{iid: ef.iid, bytes: sc.Bytes, sockets: sc.Sockets, peers: sc.Peers, err: err})
 			}
+		case effLaunchWorkers:
+			h.wlaunches = append(h.wlaunches, ef)
+		case effStopWorkers:
+			h.wstops = append(h.wstops, ef)
+		case effForceNode:
+			h.wforce = append(h.wforce, ef.node)
 		default:
 			h.t.Fatalf("unknown effect %T", ef)
 		}

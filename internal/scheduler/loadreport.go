@@ -183,6 +183,7 @@ func (c *schedCore) loadWorkers(in *inst, measured bool) []LoadWorker {
 			ws[i].BytesSent = &s
 		}
 	}
+	c.agentWorkerLoad(in, ws)
 	if !measured {
 		return ws
 	}
@@ -190,6 +191,9 @@ func (c *schedCore) loadWorkers(in *inst, measured bool) []LoadWorker {
 	// at a time, but llama.cpp picks the order, so nothing is inferred from
 	// the other workers.
 	for i := range ws {
+		if in.agentLoad[ws[i].Addr] != nil {
+			continue // the agent's own figures (agentWorkerLoad)
+		}
 		switch {
 		case totals[i] > 0 && float64(sent[i]) >= doneFraction*float64(totals[i]):
 			ws[i].State = WorkerDone

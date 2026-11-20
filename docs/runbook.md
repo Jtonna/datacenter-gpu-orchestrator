@@ -790,6 +790,38 @@ REST API does, and answer `503` otherwise. An agent that should not change
 anything can be given a client configuration that allows only the tools marked
 read-only.
 
+### Agent membership (potluck-agent nodes, design 7.7)
+
+1. Put the release on the host: `programs/0.1.0/release.json`, `agent/`,
+   one folder per platform, each with its `SHA256SUMS`.
+2. Start the scheduler with `--programs-dir /path/to/programs` (or
+   `LLM_SCHEDULER_PROGRAMS_DIR`) and set `membership: agents` in the settings
+   (restart required). The fleet feed is then not read.
+3. Check `GET /api/system`: `programs.served` must be `true` and there must be
+   no `host_build_error`. If `served` is false, `programs.error` names the
+   missing or mismatched file. If `host_build_error` is set, `server_bin` is not
+   the release's llama build and every load is refused until it is.
+4. Install the agents. Each one shows up in `GET /api/status` under `agents`
+   with `state: active`. A refused agent logs `agent registration refused`
+   with the reason (`agent_too_old`, `potluck_too_old`, `unsupported_hardware`,
+   `duplicate_id`, `foreign_process`, `removed`, `release_unavailable`).
+
+Node actions (each needs a comment, each is in the audit log, section `nodes`):
+
+```sh
+curl -X POST localhost:3122/api/nodes/02:00:00:00:00:01/pause        -d '{"comment":"why"}'
+curl -X POST localhost:3122/api/nodes/02:00:00:00:00:01/unpause      -d '{"comment":"why"}'
+curl -X POST localhost:3122/api/nodes/02:00:00:00:00:01/force-unload -d '{"comment":"why"}'
+curl -X DELETE localhost:3122/api/nodes/02:00:00:00:00:01            -d '{"comment":"why"}'
+curl -X POST localhost:3122/api/nodes/02:00:00:00:00:01/readmit      -d '{"comment":"why"}'
+```
+
+Worker launch logs are copied into `child_log_dir` as
+`worker-<node name>-<launch id>.log`. A load that fails on an agent shows the
+agent's reason in the 502 and in history (`workerLaunchFailed`,
+`workerExited`). `LLM_SCHEDULER_TEST_AGENT_PORT` and
+`LLM_SCHEDULER_TEST_WORKER_PORT` exist for tests only; never set them.
+
 ### Child output logs
 
 The scheduler writes each child llama-server's complete stdout and stderr to a new file under `/opt/llm-scheduler/logs` on the host machine (`--child-log-dir` / `LLM_SCHEDULER_CHILD_LOG_DIR`, mounted by compose). One file per start, named `<UTC time>-<profile>-<instance id>.log`, so `ls` sorts by time. This is where the KV cache size, the memory breakdown and the exact out-of-memory error are, beyond the last 40 lines in a `502`.

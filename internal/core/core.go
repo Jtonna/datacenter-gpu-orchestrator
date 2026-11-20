@@ -15,7 +15,10 @@ type Node struct {
 	Hostname string // fleet hostname (may be shared by two consoles)
 	Local    bool   // true for the host the scheduler runs on (the host machine)
 	Online   bool   // currently online in a fresh enough view
-	Addr     string // rpc ip:port; empty for the local node
+	// Paused: the node takes no new load (agents membership, agent contract
+	// 7.2). A load already on it continues; it stays counted in capacity.
+	Paused bool
+	Addr   string // rpc ip:port; empty for the local node
 
 	TotalMiB int // total device memory
 	FreeMiB  int // free memory, already reduced per the shared-memory rule (design 7.1)

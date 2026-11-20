@@ -137,6 +137,9 @@ func (c *schedCore) recoveryOn() bool { return c.cfg.Recovery.Enabled }
 // recoveryStep runs the whole feature for one step, after worker health: read
 // outcomes, then start, continue or reset each node's episode.
 func (c *schedCore) recoveryStep() {
+	if !c.recoveryOn() || c.agents { // agent contract 11: a lost node is never recovered
+		return
+	}
 	if !c.recoveryOn() {
 		return
 	}

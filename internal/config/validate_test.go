@@ -308,3 +308,20 @@ func TestWorkerHealthConfig(t *testing.T) {
 		}
 	}
 }
+
+func TestMembershipSetting(t *testing.T) {
+	c := mustParse(t, "defaults: {membership: agents, worker_model_dir: true, watchdog_floor_mib: 1200}\nprofiles: {}\n")
+	if !c.AgentsMode() || !c.Defaults.WorkerModelDir || c.Defaults.WatchdogFloorMiB != 1200 {
+		t.Fatalf("defaults = %+v", c.Defaults)
+	}
+	if _, err := ParseWithOptions([]byte("defaults: {membership: both}\nprofiles: {}\n"), Options{}); err == nil {
+		t.Fatal("membership both accepted")
+	}
+	if _, err := ParseWithOptions([]byte("defaults: {watchdog_floor_mib: -1}\nprofiles: {}\n"), Options{}); err == nil {
+		t.Fatal("negative floor accepted")
+	}
+	f, ok := SettingFieldByKey(ScopeSettings, "membership")
+	if !ok || !f.RestartRequired || f.Default != "fleet" {
+		t.Fatalf("membership field = %+v", f)
+	}
+}

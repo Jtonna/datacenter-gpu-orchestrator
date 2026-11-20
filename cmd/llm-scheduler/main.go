@@ -2,7 +2,7 @@
 //
 // Usage:
 //
-//	llm-scheduler [--listen ADDR] [--data-dir DIR] [--models-dir DIR] [--history-dir DIR] [--child-log-dir DIR] [--version]
+//	llm-scheduler [--listen ADDR] [--data-dir DIR] [--models-dir DIR] [--history-dir DIR] [--child-log-dir DIR] [--programs-dir DIR] [--version]
 //	llm-scheduler import-config --data-dir DIR [--replace] [--check] file.yaml
 //
 // Everything except those deployment paths is configuration kept in the
@@ -42,11 +42,24 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/mcpserver"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/pool"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
 var version = "0.1.0"
+
+// potluckRelease is the program release Potluck serves to agents and
+// requires of them (agent contract 5.1), separate from version. Set it at
+// build time with -ldflags "-X main.potluckRelease=...".
+var potluckRelease = "0.1.0"
+
+// Test-only overrides of the agent contract's fixed ports, so an end-to-end
+// test can run several fake agents on one machine. Never set in production.
+const (
+	envTestAgentPort  = "LLM_SCHEDULER_TEST_AGENT_PORT"
+	envTestWorkerPort = "LLM_SCHEDULER_TEST_WORKER_PORT"
+)
 
 const (
 	// Children listen on 127.0.0.1 in this range (design 7.4 example: 5801).
@@ -158,6 +171,7 @@ func serve(boot config.Bootstrap, log *slog.Logger) int {
 	var (
 		sched   *scheduler.Scheduler
 		fc      *fleet.Client
+		pl      *pool.Pool
 		apiSrv  *api.Server
 		started atomic.Bool // set once the pieces above exist; guards the service callbacks
 	)
@@ -167,7 +181,12 @@ func serve(boot config.Bootstrap, log *slog.Logger) int {
 			if !started.Load() {
 				return
 			}
-			fc.SetConfig(c)
+			if fc != nil {
+				fc.SetConfig(c)
+			}
+			if pl != nil {
+				pl.Refresh()
+			}
 			sched.ApplyConfig(c)
 		},
 		OnChange: func(ev cfgsvc.ChangeEvent) {
@@ -205,17 +224,33 @@ func serve(boot config.Bootstrap, log *slog.Logger) int {
 
 	bg, bgCancel := context.WithCancel(context.Background())
 	defer bgCancel()
-	fc = fleet.New(cfg, fleet.Options{Logger: log})
-	fleetDone := make(chan struct{})
-	go func() { fc.Run(bg); close(fleetDone) }()
-	go checkFleet(bg, cfg, log)
-
 	launcher := &instance.ProcessLauncher{Ports: ports, LogDir: cfg.ChildLogDir, LogKeep: cfg.ChildLogKeep, Logger: log}
 	if err := launcher.PrepareLogDir(); err != nil {
 		log.Warn("child_log_dir is not usable; children run without full log files", "dir", cfg.ChildLogDir, "err", err)
 		launcher.LogDir = ""
 	} else if launcher.LogDir != "" {
 		log.Info("keeping each child's full output", "dir", launcher.LogDir, "keep", cfg.ChildLogKeep)
+	}
+
+	// The node view: the fleet feed, or (membership agents) the agents'
+	// registrations, in which case the fleet feed is not read at all.
+	var view fleet.View
+	fleetDone := make(chan struct{})
+	if cfg.AgentsMode() {
+		close(fleetDone)
+		pl, err = newPool(bg, svc, cs, launcher.LogDir, log)
+		if err != nil {
+			log.Error("agent membership", "err", err)
+			ln.Close()
+			return 1
+		}
+		view = pl
+		go pl.Run(bg)
+	} else {
+		fc = fleet.New(cfg, fleet.Options{Logger: log})
+		go func() { fc.Run(bg); close(fleetDone) }()
+		go checkFleet(bg, cfg, log)
+		view = fc
 	}
 
 	// The event history: opened before the scheduler so that its first events are kept. It
@@ -226,13 +261,19 @@ func serve(boot config.Bootstrap, log *slog.Logger) int {
 	hist.Record(startedEvent(cfg, version, time.Now()))
 
 	so := scheduler.Options{
-		View:     fc,
+		View:     view,
 		Prober:   &instance.ExecProber{ServerBin: cfg.Defaults.ServerBin},
 		Launcher: launcher,
 		Logger:   log,
 	}
 	if hist.On() {
 		so.History = hist
+	}
+	if pl != nil {
+		so.Workers, so.LoadGate = pl, pl.LoadGate
+		if hist.On() {
+			pl.SetHistory(hist)
+		}
 	}
 	sched, err = scheduler.New(cfg, so)
 	if err != nil {
@@ -242,6 +283,9 @@ func serve(boot config.Bootstrap, log *slog.Logger) int {
 	}
 	schedDone := make(chan struct{})
 	go func() { sched.Run(bg); close(schedDone) }()
+	if pl != nil {
+		pl.SetForceUnload(sched.ForceUnloadNode)
+	}
 
 	benchStore, benchMgr := openBench(svc, dbStore, ln, hist, log)
 	ao := api.Options{Logger: log, History: hist, Version: version, WSMaxClients: cfg.WSMaxClients, Bench: benchMgr, BenchStore: benchStore, Config: svc,
@@ -250,6 +294,10 @@ func serve(boot config.Bootstrap, log *slog.Logger) int {
 				"regress_decode_pct": cfg.Bench.RegressDecodePct, "max_run_minutes": cfg.Bench.MaxRunMinutes}}}
 	if cs != nil {
 		ao.Audit = cs
+	}
+	if pl != nil {
+		ao.Pool = pl
+		ao.System.Programs = pl.ReleaseStatus
 	}
 	apiSrv = api.New(cfg, sched, ao)
 	started.Store(true)
@@ -312,6 +360,9 @@ func serve(boot config.Bootstrap, log *slog.Logger) int {
 	defer hcancel()
 	if err := httpSrv.Shutdown(hctx); err != nil {
 		httpSrv.Close()
+	}
+	if pl != nil {
+		pl.WaitStops(10 * time.Second) // the worker launches of the last instances
 	}
 	bgCancel()
 	<-schedDone

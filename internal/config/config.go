@@ -16,6 +16,10 @@ type Config struct {
 	// complete stdout and stderr; ChildLogKeep is how many such files to keep.
 	ChildLogDir  string
 	ChildLogKeep int
+	// ProgramsDir holds the program sets handed out to agents (agent contract
+	// 5.2): <dir>/<release>/release.json and its folders. Empty: no release
+	// is served and every agent is refused.
+	ProgramsDir string
 	// HistoryDir, when set, holds the event history (JSON Lines, rotated by
 	// size); empty turns history off. HistoryMaxFileMiB is the size at which a
 	// file is rotated, HistoryKeepFiles how many files are kept and
@@ -143,7 +147,28 @@ type Defaults struct {
 	// fleet-reported available memory falls below it during the load (a live
 	// fleet view only). 0 disables. Default 768.
 	LoadMemoryFloorMiB int
+
+	// Membership is where the pool's nodes come from: MembershipFleet (the
+	// fleet console feed, the default) or MembershipAgents (registrations and
+	// heartbeats of potluck-agent, agent contract 2.7). Read at start.
+	Membership string
+	// WorkerModelDir is the worker launch's model_dir (agent contract 6.2):
+	// true lets a worker read model files itself. Off by default.
+	WorkerModelDir bool
+	// WatchdogFloorMiB is the agents' memory watchdog floor (agent contract
+	// 6.7); for a device that shares system memory the usable figure is
+	// min(device free, mem_available_mib - this). Default 1000.
+	WatchdogFloorMiB int
 }
+
+// Values of defaults.membership.
+const (
+	MembershipFleet  = "fleet"
+	MembershipAgents = "agents"
+)
+
+// AgentsMode reports whether the pool comes from agents.
+func (c *Config) AgentsMode() bool { return c.Defaults.Membership == MembershipAgents }
 
 // Values of defaults.forced_fit_check.
 const (

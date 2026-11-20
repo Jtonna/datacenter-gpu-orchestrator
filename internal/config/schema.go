@@ -89,6 +89,11 @@ func buildSettingFields() []Field {
 		d("worker_silence", "workers", "How long a worker's upload progress or fleet heartbeat may stay quiet before it counts as silent.", func(c *Config) *time.Duration { return &c.Defaults.WorkerSilence }, num(1)),
 		d("worker_probe_interval", "workers", "How often a TCP connect probe checks workers; 0 turns it off (leave it off for rpc-server workers).", func(c *Config) *time.Duration { return &c.Defaults.WorkerProbeInterval }, num(0)),
 		b("worker_probe_during_inference", "workers", "Let the connect probe run while the instance has a request in flight.", func(c *Config) *bool { return &c.Defaults.WorkerProbeDuringInference }),
+		{Key: "membership", Scope: S, Section: "agents", Type: "enum", Enum: []string{MembershipFleet, MembershipAgents},
+			Description: "Where the pool's nodes come from: fleet (the fleet console feed) or agents (registrations of potluck-agent). Read once at start.",
+			ptr:         func(c *Config) any { return &c.Defaults.Membership }},
+		b("worker_model_dir", "agents", "Ask agent workers to read model files themselves (model_dir in the worker launch); off sends the weights over the worker connection.", func(c *Config) *bool { return &c.Defaults.WorkerModelDir }),
+		i("watchdog_floor_mib", "agents", "The agents' memory watchdog floor; a device that shares system memory counts at most the node's available memory minus this.", "MiB", func(c *Config) *int { return &c.Defaults.WatchdogFloorMiB }, num(0), nil),
 		i("child_log_keep", "retention", "Most child log files kept in the child log directory; the oldest are deleted.", "files", func(c *Config) *int { return &c.ChildLogKeep }, num(1), nil),
 		i("history_max_file_mib", "retention", "Size at which an event history file is rotated.", "MiB", func(c *Config) *int { return &c.HistoryMaxFileMiB }, num(1), nil),
 		i("history_keep_files", "retention", "Most event history files kept; the oldest are deleted.", "files", func(c *Config) *int { return &c.HistoryKeepFiles }, num(1), nil),
@@ -114,7 +119,7 @@ func buildSettingFields() []Field {
 	// Restart-required: read once at startup by long-lived components.
 	restart := map[string]string{"server_bin": S, "child_log_keep": S, "history_max_file_mib": S, "history_keep_files": S,
 		"history_memory_events": S, "ws_max_clients": S, "bench_enabled": S, "bench_regress_load_pct": S, "bench_regress_decode_pct": S,
-		"bench_max_run_minutes": S, "url": F, "local_node": F}
+		"bench_max_run_minutes": S, "url": F, "local_node": F, "membership": S}
 	base := newBase(Bootstrap{})
 	for n := range fs {
 		if sc, ok := restart[fs[n].Key]; ok && sc == fs[n].Scope {

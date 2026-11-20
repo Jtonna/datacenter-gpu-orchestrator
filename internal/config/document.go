@@ -22,6 +22,7 @@ type Bootstrap struct {
 	DataDir     string
 	HistoryDir  string
 	ChildLogDir string
+	ProgramsDir string
 }
 
 // Document is the stored configuration (one per revision). Settings holds
@@ -98,7 +99,7 @@ func newBase(b Bootstrap) *Config {
 		models = "/models"
 	}
 	return &Config{
-		Listen: listen, ModelsDir: models, DataDir: b.DataDir, HistoryDir: b.HistoryDir, ChildLogDir: b.ChildLogDir,
+		Listen: listen, ModelsDir: models, DataDir: b.DataDir, HistoryDir: b.HistoryDir, ChildLogDir: b.ChildLogDir, ProgramsDir: b.ProgramsDir,
 		Fleet:        Fleet{StaleAfter: 60 * time.Second},
 		ChildLogKeep: DefaultChildLogKeep, HistoryMaxFileMiB: DefaultHistoryMaxFileMiB, HistoryKeepFiles: DefaultHistoryKeepFiles,
 		HistoryMemoryEvents: DefaultHistoryMemoryEvents, LocalProbeCmd: DefaultLocalProbeCmd, WSMaxClients: DefaultWSMaxClients,

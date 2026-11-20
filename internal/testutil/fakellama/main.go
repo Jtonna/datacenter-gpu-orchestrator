@@ -36,6 +36,10 @@ func main() {
 		fakeNvidiaSmi(os.Args[2:])
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "--version" {
+		fakeVersion()
+		return
+	}
 	cfg := parseArgs(os.Args[1:])
 	mode := "serve"
 	if cfg.listDevices {
@@ -49,6 +53,17 @@ func main() {
 		return
 	}
 	serve(cfg)
+}
+
+// fakeVersion answers `--version` as llama.cpp does: the build number and
+// the short commit on stderr, then the compiler line. FAKELLAMA_BUILD sets the
+// commit (default a01665d30).
+func fakeVersion() {
+	commit := os.Getenv("FAKELLAMA_BUILD")
+	if commit == "" {
+		commit = "a01665d30"
+	}
+	fmt.Fprintf(os.Stderr, "version: 6123 (%s)\nbuilt with cc (Ubuntu 13.3.0) 13.3.0 for x86_64-linux-gnu\n", commit)
 }
 
 // fakeNvidiaSmi stands in for `nvidia-smi --query-gpu=memory.total,memory.used

@@ -119,3 +119,7 @@ func parseSMI(out []byte) (total, used int, err error) {
 	}
 	return 0, 0, fmt.Errorf("probe output is empty")
 }
+
+// ParseSMI parses the local probe output ("total, used" in MiB), for a node
+// view other than Client that runs the same local_probe_cmd.
+func ParseSMI(out []byte) (total, used int, err error) { return parseSMI(out) }

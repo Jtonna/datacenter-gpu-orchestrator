@@ -28,6 +28,7 @@ func DefaultDefaults() Defaults {
 		ForcedNodeGrace: 30 * time.Second, ForcedFitCheck: ForcedFitOff,
 		WorkerSilence:   30 * time.Second,
 		SplitSkewMargin: 0.15, EstimateMargin: 0.05, LoadMemoryFloorMiB: 768,
+		Membership: MembershipFleet, WatchdogFloorMiB: 1000,
 	}
 }
 
@@ -305,6 +306,10 @@ type rawDefaults struct {
 	SplitSkewMargin    float64 `yaml:"split_skew_margin" json:"split_skew_margin,omitempty"`
 	EstimateMargin     float64 `yaml:"estimate_margin" json:"estimate_margin,omitempty"`
 	LoadMemoryFloorMiB int     `yaml:"load_memory_floor_mib" json:"load_memory_floor_mib,omitempty"`
+
+	Membership       string `yaml:"membership" json:"membership,omitempty"`
+	WorkerModelDir   bool   `yaml:"worker_model_dir" json:"worker_model_dir,omitempty"`
+	WatchdogFloorMiB int    `yaml:"watchdog_floor_mib" json:"watchdog_floor_mib,omitempty"`
 }
 
 func rawDefaultsFrom(d Defaults) rawDefaults {
@@ -313,7 +318,8 @@ func rawDefaultsFrom(d Defaults) rawDefaults {
 		duration(d.LoadStallTimeout), duration(d.ShutdownGrace), d.MaxPool, d.DeviceOverheadMiB, d.MinShareMiB, d.CacheRAMMiB,
 		d.ServerBin, d.LocalDevice, duration(d.ForcedNodeGrace), d.ForcedFitCheck,
 		duration(d.WorkerProbeInterval), duration(d.WorkerSilence), d.WorkerProbeDuringInference,
-		d.SplitSkewMargin, d.EstimateMargin, d.LoadMemoryFloorMiB}
+		d.SplitSkewMargin, d.EstimateMargin, d.LoadMemoryFloorMiB,
+		d.Membership, d.WorkerModelDir, d.WatchdogFloorMiB}
 }
 
 func (r rawDefaults) value() Defaults {
@@ -323,7 +329,8 @@ func (r rawDefaults) value() Defaults {
 		r.DeviceOverheadMiB, r.MinShareMiB, r.CacheRAMMiB, r.ServerBin, r.LocalDevice,
 		time.Duration(r.ForcedNodeGrace), r.ForcedFitCheck,
 		time.Duration(r.WorkerProbeInterval), time.Duration(r.WorkerSilence), r.WorkerProbeDuringInference,
-		r.SplitSkewMargin, r.EstimateMargin, r.LoadMemoryFloorMiB}
+		r.SplitSkewMargin, r.EstimateMargin, r.LoadMemoryFloorMiB,
+		r.Membership, r.WorkerModelDir, r.WatchdogFloorMiB}
 }
 
 type rawRecovery struct {

@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/fleet"
@@ -73,6 +74,9 @@ const (
 	phLaunching                  // Launcher.Start called; result pending
 	phLoading                    // child running, waiting for health
 	phRunning                    // child healthy (ready or later)
+	// phWorkers (agents membership): the worker launches are being started on
+	// the agents; no child yet. It takes the place of the pre-flight.
+	phWorkers
 )
 
 func (p phase) String() string {
@@ -85,6 +89,8 @@ func (p phase) String() string {
 		return "loading"
 	case phRunning:
 		return "running"
+	case phWorkers:
+		return "workers"
 	}
 	return ""
 }
@@ -142,6 +148,13 @@ type inst struct {
 	peerSent    map[string]int64     // per worker: largest acknowledged count seen
 	peerKnown   bool                 // the last count carried per-worker figures
 	peerGrowth  map[string]time.Time // per worker: when its count was first seen or last rose
+
+	// Agent worker launches (agents.go); zero in fleet membership.
+	workers    bool                                // worker launches were requested; they are stopped when the instance goes
+	forceNodes []core.NodeID                       // nodes whose launch is stopped with force (force unload)
+	launchIDs  map[core.NodeID]string              // the launch on each worker node
+	agentLoad  map[string]*agentproto.LoadProgress // per worker rpc address: the agent's own load figures
+	workerExit *WorkerReport                       // a launch exited while the others were starting
 
 	benchRun   string // the bench run whose request started this instance (history records only)
 	served     int    // requests admitted (logged when the instance stops)
@@ -252,6 +265,10 @@ type nodeState struct {
 	quarOpen  bool // quarantined and the release not yet logged
 
 	missingSince time.Time
+
+	// agentHold: a worker launch on the node was refused with
+	// model_source_unreachable; the node is not used until then (agents.go).
+	agentHold time.Time
 }
 
 type backoff struct {
@@ -276,6 +293,10 @@ type schedCore struct {
 	needs NeedProvider
 	build instance.BuildOptions
 	log   *slog.Logger
+	// agents: membership is agents (a WorkerLauncher is set): worker launches
+	// replace the pre-flight, node loss acts at once, recovery requests are off.
+	agents   bool
+	loadGate func() error
 
 	now, last time.Time
 	seq       uint64
@@ -506,6 +527,9 @@ func (c *schedCore) eligible(id core.NodeID) bool {
 func (c *schedCore) isFree(id core.NodeID) bool {
 	if !c.eligible(id) {
 		return false
+	}
+	if n, _ := c.node(id); n.Paused || c.agentHeld(id) {
+		return false // agents.go: a paused or held node takes no new load
 	}
 	ns := c.nodes[id]
 	return ns == nil || (ns.holder == "" && ns.claim == "" && ns.settle == setNone)

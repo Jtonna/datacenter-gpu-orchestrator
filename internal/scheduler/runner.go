@@ -31,6 +31,13 @@ type Options struct {
 	// History receives the safety and lifecycle events (design 9.1); nil drops
 	// them. Record must never block.
 	History HistorySink
+	// Workers starts and stops the worker launches on agents. Required with
+	// defaults.membership agents, unused otherwise (agents.go).
+	Workers WorkerLauncher
+	// LoadGate, with agents, is asked before every load; an error refuses
+	// the load with its text (no verified release, or the host program is
+	// not the release's build, agent contract 5.1).
+	LoadGate func() error
 }
 
 // Scheduler is the scheduler core plus the one goroutine (Run) that owns
@@ -92,6 +99,9 @@ func New(cfg *config.Config, o Options) (*Scheduler, error) {
 	if o.Logger == nil {
 		o.Logger = slog.Default()
 	}
+	if cfg.AgentsMode() && o.Workers == nil {
+		return nil, errors.New("scheduler: membership agents needs a WorkerLauncher")
+	}
 	s := &Scheduler{
 		opts:   o,
 		core:   newCore(cfg, o.Clock, o.View, o.Needs, *o.Build, o.Logger),
@@ -99,6 +109,8 @@ func New(cfg *config.Config, o Options) (*Scheduler, error) {
 		loopDone: make(chan struct{}), runDone: make(chan struct{}),
 		healthCancel: map[uint64]context.CancelFunc{}, subs: map[*subscriber]struct{}{},
 	}
+	s.core.agents = cfg.AgentsMode()
+	s.core.loadGate = o.LoadGate
 	s.cfg.Store(cfg)
 	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
 	s.snap.Store(&snapshot{profiles: s.core.profileStates(), upstream: map[string]string{}})
@@ -263,6 +275,8 @@ func (s *Scheduler) exec(ef effect) {
 			n, err := s.opts.View.FetchNode(ctx, ef.id)
 			s.post(context.Background(), evFetched{id: ef.id, gen: ef.gen, node: n, err: err})
 		})
+	default:
+		s.execAgents(ef)
 	}
 }
 

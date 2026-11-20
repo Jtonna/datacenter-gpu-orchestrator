@@ -54,6 +54,12 @@ func (c *schedCore) startInstance(p *core.Profile, pl core.Placement, waiters []
 	c.emitState(in, RunningStarting)
 	c.logPlacement(in)
 
+	if c.agents && c.loadGate != nil {
+		if err := c.loadGate(); err != nil {
+			c.failLoad(in, err.Error(), nil, false)
+			return
+		}
+	}
 	var targets []probeTarget
 	for _, n := range pl.Nodes {
 		if !n.Local {
@@ -62,6 +68,10 @@ func (c *schedCore) startInstance(p *core.Profile, pl core.Placement, waiters []
 	}
 	if len(targets) == 0 {
 		c.launch(in) // the local node is not probed (7.5)
+		return
+	}
+	if c.agents {
+		c.launchWorkers(in) // agents.go: the worker launches replace the pre-flight
 		return
 	}
 	c.effects = append(c.effects, effProbe{iid: in.iid, targets: targets})
@@ -112,6 +122,12 @@ func (c *schedCore) preflightDone(iid uint64, results []probeOutcome) {
 		c.returnInst(in, "pre-flight failed", nil)
 		return
 	}
+	c.fitAndLaunch(in)
+}
+
+// fitAndLaunch is the end of the pre-flight (7.5): the forced fit check and
+// the fit at exact figures, then the child is started.
+func (c *schedCore) fitAndLaunch(in *inst) {
 	req, _, err := c.request(in.prof)
 	if err != nil {
 		c.failLoad(in, err.Error(), nil, false)
@@ -291,7 +307,7 @@ func (c *schedCore) stopInst(in *inst, mode instance.StopMode) {
 		}
 		return
 	}
-	if in.phase == phPreflight {
+	if in.phase == phPreflight || in.phase == phWorkers {
 		c.removeInst(in, false)
 		return
 	}
@@ -332,6 +348,7 @@ func (c *schedCore) removeInst(in *inst, settle bool) {
 	for _, n := range in.placement.Nodes {
 		c.releaseNode(n.ID, in.prof.Name, settle)
 	}
+	c.stopWorkers(in) // agents.go: after the child has exited (or none ran)
 	delete(c.insts, in.prof.Name)
 	c.changed = true
 	c.finishLoad(in, LoadCancelled, cancelReason(in.stopReason)) // only if still open

@@ -312,7 +312,7 @@ func (c *schedCore) lostNode(in *inst) core.NodeID {
 		if pn.Local {
 			continue
 		}
-		if ns := c.nodes[pn.ID]; ns != nil && !ns.missingSince.IsZero() && c.now.Sub(ns.missingSince) >= nodeLossAfter {
+		if ns := c.nodes[pn.ID]; ns != nil && !ns.missingSince.IsZero() && c.now.Sub(ns.missingSince) >= c.nodeLossAfter() {
 			return pn.ID
 		}
 	}

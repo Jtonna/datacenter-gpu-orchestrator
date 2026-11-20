@@ -65,7 +65,7 @@ func (c *schedCore) nextDeadline() (time.Time, bool) {
 			add(ns.settleAt)
 		}
 		if !ns.missingSince.IsZero() {
-			add(ns.missingSince.Add(nodeLossAfter))
+			add(ns.missingSince.Add(c.nodeLossAfter()))
 		}
 		if ns.quarOpen {
 			add(ns.quarUntil) // the release is logged then
@@ -75,6 +75,9 @@ func (c *schedCore) nextDeadline() (time.Time, bool) {
 				add(ns.ovUntil)
 			}
 			add(ns.quarUntil)
+			if !ns.agentHold.IsZero() {
+				add(ns.agentHold) // agents.go: the node may be used again
+			}
 		}
 	}
 	for _, b := range c.backoffs {

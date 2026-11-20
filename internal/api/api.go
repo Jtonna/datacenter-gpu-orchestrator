@@ -27,6 +27,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgstore"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/pool"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/proxy"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 )
@@ -74,6 +75,9 @@ type Options struct {
 	// Config is the configuration service (REST /api/config); Audit receives the audit entries of runtime actions. Nil turns the endpoints off (503).
 	Config *cfgsvc.Service
 	Audit  AuditStore
+	// Pool is the agent membership (defaults.membership agents); nil in fleet
+	// membership, where the agent and node endpoints answer 503 (nodes.go).
+	Pool *pool.Pool
 
 	statusSource func(ctx context.Context) (any, error) // tests replace the status the hub sends
 	modelFiles   func() []ModelFile                     // the dev harness replaces the models directory scan
@@ -223,6 +227,7 @@ func (s *Server) routes() *http.ServeMux {
 	m.HandleFunc("PUT /api/models/{key...}", s.handleIconPut)     // only /api/models/{key}/icon
 	m.HandleFunc("DELETE /api/models/{key...}", s.handleIconDelete)
 	s.agentRoutes(m) // /api/agents, /api/mcp/tools (agents.go)
+	s.nodeRoutes(m)  // potluck-agent's /api/agents/..., /api/nodes/{id}/... (nodes.go)
 	m.HandleFunc("GET /api/metrics/activity", s.handleActivity)
 	m.HandleFunc("GET /ui/{$}", s.handleUI)
 	m.HandleFunc("GET /ui/", s.handleUIFile)
