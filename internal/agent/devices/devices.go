@@ -44,7 +44,7 @@ const (
 // machine has no supported GPU.
 var ErrNoDevices = errors.New("llama-server lists no GPU device: the agent must run as root or in the render and video groups (or this machine has no supported GPU)")
 
-var deviceLineRE =regexp.MustCompile(`^\s*([A-Za-z][A-Za-z_]*?)(\d+)\s*:\s*(.*?)\s*\(\s*(\d+)\s*MiB\s*,\s*(\d+)\s*MiB\s+free\s*\)\s*$`)
+var deviceLineRE = regexp.MustCompile(`^\s*([A-Za-z][A-Za-z_]*?)(\d+)\s*:\s*(.*?)\s*\(\s*(\d+)\s*MiB\s*,\s*(\d+)\s*MiB\s+free\s*\)\s*$`)
 
 // Parsed is one device line.
 type Parsed struct {

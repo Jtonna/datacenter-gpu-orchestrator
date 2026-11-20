@@ -2,6 +2,7 @@ package agentproto
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -50,6 +51,30 @@ func TestRegisterFillEmpty(t *testing.T) {
 			t.Errorf("missing %s", want)
 		}
 	}
+}
+
+// The release answer must stay readable by the starter's sed patterns (see
+// ReleaseInfo). These are the same patterns in Go syntax.
+func TestReleaseInfoStarterLayout(t *testing.T) {
+	sum := strings.Repeat("ab", 32)
+	ri := ReleaseInfo{Release: "0.1.0", Agents: map[string]AgentBinary{
+		"linux-arm64": {Path: "/api/agents/binary/0.1.0/linux-arm64", SHA256: strings.Repeat("cd", 32)},
+		"linux-amd64": {Path: "/api/agents/binary/0.1.0/linux-amd64", SHA256: sum},
+	}}
+	b, _ := json.Marshal(ri)
+	pathRE := regexp.MustCompile(`"linux-amd64"[ \t]*:[ \t]*\{[^}]*"path"[ \t]*:[ \t]*"([^"]*)"`)
+	sumRE := regexp.MustCompile(`"linux-amd64"[ \t]*:[ \t]*\{[^}]*"sha256"[ \t]*:[ \t]*"([0-9a-f]{64})"`)
+	for _, line := range strings.Split(string(b), "\n") {
+		p, s := pathRE.FindStringSubmatch(line), sumRE.FindStringSubmatch(line)
+		if p == nil || s == nil {
+			continue
+		}
+		if p[1] != "/api/agents/binary/0.1.0/linux-amd64" || s[1] != sum {
+			t.Fatalf("%q %q", p[1], s[1])
+		}
+		return
+	}
+	t.Fatalf("starter cannot read %s", b)
 }
 
 func TestRefusalStatuses(t *testing.T) {

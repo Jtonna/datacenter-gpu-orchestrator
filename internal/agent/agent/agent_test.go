@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -223,6 +224,8 @@ type tenv struct {
 	cancel   context.CancelFunc
 	done     chan struct{}
 	runner   runner.Runner
+	devOut   atomic.Value // string printed by llama-server --list-devices
+	devPath  atomic.Value // last program asked for its devices
 }
 
 const devicesOut = "Available devices:\n  Vulkan0: AMD Custom GPU 0405 (RADV GFX1013) (14336 MiB, 14010 MiB free)\n"
@@ -232,6 +235,7 @@ func newTenv(t *testing.T) *tenv {
 	pl := newFakePotluck(t)
 	dir := t.TempDir()
 	e := &tenv{t: t, pl: pl, clock: osx.NewFakeClock(time.Hour), procs: &fakeProcs{}, upd: &fakeUpdater{}}
+	e.devOut.Store(devicesOut)
 	// Programs: real fake binaries served by the fake Potluck.
 	binDir := t.TempDir()
 	rpc, _ := os.ReadFile(agenttest.Install(t, binDir, "rpc-server"))
@@ -262,7 +266,8 @@ func newTenv(t *testing.T) *tenv {
 		Procs: e.procs, KLog: osx.Kmsg{}, Net: fakeNet{}, Hardware: fakeHW{}, Prober: okProber{},
 		DiskFree: func(string) (uint64, error) { return 1 << 40, nil },
 		DevicesRun: func(ctx context.Context, path string, args, env []string) ([]byte, error) {
-			return []byte(devicesOut), nil
+			e.devPath.Store(filepath.Base(path))
+			return []byte(e.devOut.Load().(string)), nil
 		},
 		Updater: e.upd, RegisterRetry: 30 * time.Millisecond, ErrorRetry: 20 * time.Millisecond,
 		ProgramsRetry: 30 * time.Millisecond, ProgramsRetryIn: time.Millisecond, LaunchTick: 5 * time.Millisecond,
@@ -647,3 +652,29 @@ func TestSelfUpdater(t *testing.T) {
 }
 
 func goosArch() string { return runtimeGOOS + "-" + runtimeGOARCH }
+
+func TestNoDeviceAccess(t *testing.T) {
+	e := newTenv(t)
+	e.devOut.Store("==\n== CUDA ==\nlicence banner\nAvailable devices:\n  (none)\n")
+	e.start()
+	agenttest.Eventually(t, 20*time.Second, "programs_error says why", func() bool {
+		if e.pl.nBeats() == 0 {
+			return false
+		}
+		hb := e.pl.lastBeat()
+		return !hb.ProgramsReady && hb.ProgramsError != nil && strings.Contains(*hb.ProgramsError, "render and video groups") && len(hb.Devices) == 0
+	})
+	if s := e.a.Status(); s.LastError == nil || !strings.Contains(*s.LastError, "root") {
+		t.Fatalf("%+v", s)
+	}
+	if p, _ := e.devPath.Load().(string); p != "llama-server" {
+		t.Fatalf("devices read with %q, want llama-server", p)
+	}
+	// Access granted (for example the agent restarted in the right groups):
+	// the next read clears the error.
+	e.devOut.Store(devicesOut)
+	e.waitReady()
+	if hb := e.pl.lastBeat(); hb.ProgramsError != nil || len(hb.Devices) != 1 {
+		t.Fatalf("%+v", hb)
+	}
+}

@@ -219,15 +219,20 @@ var launchIDRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 var (
 	workerOwnFlags = []string{"--host", "-H", "--port", "-p", "--model-dir"}
 	hostOwnFlags   = []string{"--host", "--port", "-m", "--model", "-c", "--ctx-size", "-np", "--parallel",
-		"--rpc", "-ts", "--tensor-split", hostStrictFlag}
+		"--rpc", "-ts", "--tensor-split"}
 )
 
-// hostStrictFlag is passed to llama-server when strict_file_load is true.
-// CONTRACT-QUESTION: the contract names the strict_file_load field and the
-// fork's rpc_file_load_required token but not the llama-server flag that
-// turns strict mode on. This name is a placeholder to confirm against the
-// fork (phase 6, host launches only).
-const hostStrictFlag = "--rpc-strict-file-load"
+// EnvRPCFileLoad is read by the fork's llama-server (host process only):
+// "0" never asks workers to read files (weights are pushed), "1" uses a
+// worker's files where it offers them and falls back per worker, "required"
+// fails the load unless every worker reads from its files. A host launch
+// sets "required" when strict_file_load is true, else "1". There is no
+// llama-server flag for it.
+const (
+	EnvRPCFileLoad          = "LLAMA_RPC_FILE_LOAD"
+	RPCFileLoadRequired     = "required"
+	RPCFileLoadWhereOffered = "1"
+)
 
 func hasOwnFlag(args, own []string) string {
 	for _, a := range args {
@@ -437,14 +442,18 @@ func (m *Manager) Start(ctx context.Context, req agentproto.LaunchRequest) (agen
 			}
 			args = append(args, "--rpc", strings.Join(h.Workers, ","), "--tensor-split", strings.Join(ts, ","))
 		}
-		if h.StrictFileLoad {
-			args = append(args, hostStrictFlag)
-		}
 		args = append(args, h.ExtraArgs...)
 	}
 	var env []string
 	if m.cuda() {
 		env = append(env, "CUDA_DEVICE_ORDER=PCI_BUS_ID")
+	}
+	if req.Host != nil {
+		mode := RPCFileLoadWhereOffered
+		if req.Host.StrictFileLoad {
+			mode = RPCFileLoadRequired
+		}
+		env = append(env, EnvRPCFileLoad+"="+mode)
 	}
 
 	// Replace the previous launch: its log and state files go (the log is

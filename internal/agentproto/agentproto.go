@@ -335,6 +335,28 @@ type AgentBinary struct {
 
 // ReleaseInfo is the answer to GET /api/agents/release. Agents is keyed by
 // "<os>-<arch>", for example "linux-amd64".
+//
+// LAYOUT RULE: deploy/agent/potluck-starter.sh reads this answer with sed
+// (no jq or python on a console), so the layout must stay parseable that
+// way. The starter relies on exactly this:
+//
+//  1. The whole entry of one platform, from its key to the closing brace of
+//     its object, is on ONE line: "linux-amd64":{"path":"...","sha256":"..."}
+//     (json.Marshal of this type, which puts the whole answer on one line,
+//     satisfies it; so does one entry per line).
+//  2. That object is flat: no nested object, so no "}" before its end.
+//  3. path and sha256 are plain strings without '"' or backslash escapes;
+//     path is absolute ("/..."); sha256 is 64 lower-case hex digits.
+//  4. Whitespace around ':' and ',' is allowed; key order inside the object
+//     is free; unknown fields may be added to the object if they are plain
+//     strings or numbers.
+//
+// The starter's patterns (with P the platform key):
+//
+//	sed -n 's/.*"P"[[:space:]]*:[[:space:]]*{[^}]*"path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+//	sed -n 's/.*"P"[[:space:]]*:[[:space:]]*{[^}]*"sha256"[[:space:]]*:[[:space:]]*"\([0-9a-f]\{64\}\)".*/\1/p'
+//
+// Both take the first matching line (the starter pipes through "head -n 1").
 type ReleaseInfo struct {
 	Release string                 `json:"release"`
 	Agents  map[string]AgentBinary `json:"agents"`

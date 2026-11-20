@@ -556,11 +556,12 @@ func TestHostLaunch(t *testing.T) {
 	}
 	sp := e.runner.lastSpec()
 	got := strings.Join(sp.Args, " ")
-	want := "--host 192.0.2.101 --port 50061 -m " + filepath.Join(e.cfg.ModelDir, "m.gguf") + " -c 16384 --parallel 2 --rpc 192.0.2.122:50052 --tensor-split 50,50 " + hostStrictFlag + " --flash-attn"
+	want := "--host 192.0.2.101 --port 50061 -m " + filepath.Join(e.cfg.ModelDir, "m.gguf") + " -c 16384 --parallel 2 --rpc 192.0.2.122:50052 --tensor-split 50,50 --flash-attn"
 	if got != want {
 		t.Fatalf("args\n got %s\nwant %s", got, want)
 	}
-	if len(sp.Env) != 1 || sp.Env[0] != "CUDA_DEVICE_ORDER=PCI_BUS_ID" {
+	// strict_file_load is the fork's LLAMA_RPC_FILE_LOAD in the host's environment.
+	if strings.Join(sp.Env, " ") != "CUDA_DEVICE_ORDER=PCI_BUS_ID LLAMA_RPC_FILE_LOAD=required" {
 		t.Fatal(sp.Env)
 	}
 	e.appendLog("h1", "load_progress: fraction=0.25\n")
@@ -587,5 +588,38 @@ func TestNoneState(t *testing.T) {
 	b, _ := json.Marshal(e.m.State())
 	if string(b) != `{"state":"none"}` {
 		t.Fatal(string(b))
+	}
+}
+
+func TestHostFileLoadEnv(t *testing.T) {
+	e := newEnv(t, true)
+	e.run()
+	os.WriteFile(filepath.Join(e.cfg.ModelDir, "m.gguf"), []byte("GGUF"), 0o644)
+	req := agentproto.LaunchRequest{LaunchID: "h2", Role: agentproto.RoleHost, Release: "0.1.0", LeaseTTLS: 20,
+		Host: &agentproto.HostSpec{Model: "m.gguf", Ctx: 4096, Parallel: 1, StrictFileLoad: false}}
+	if _, ref := e.m.Start(context.Background(), req); ref != nil {
+		t.Fatal(ref)
+	}
+	sp := e.runner.lastSpec()
+	if strings.Join(sp.Env, " ") != "LLAMA_RPC_FILE_LOAD=1" {
+		t.Fatal(sp.Env)
+	}
+	for _, a := range sp.Args {
+		if strings.Contains(a, "strict") {
+			t.Fatal("no strict flag exists:", sp.Args)
+		}
+	}
+}
+
+func TestWorkerHasNoFileLoadEnv(t *testing.T) {
+	e := newEnv(t, false)
+	e.run()
+	if _, ref := e.m.Start(context.Background(), workerReq("w9")); ref != nil {
+		t.Fatal(ref)
+	}
+	for _, v := range e.runner.lastSpec().Env {
+		if strings.HasPrefix(v, "LLAMA_RPC_FILE_LOAD=") {
+			t.Fatal(v)
+		}
 	}
 }

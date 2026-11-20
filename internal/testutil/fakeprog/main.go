@@ -17,6 +17,7 @@
 //	                        fork's "[file_load] progress bytes=N total=M" lines
 //	FAKEPROG_LINES          extra lines printed at start, separated by "|"
 //	FAKEPROG_START_LOG      file to which argv is appended, one line per start
+//	FAKEPROG_PRINT_ENV      comma-separated names; print "env NAME=value" for each at start
 package main
 
 import (
@@ -121,6 +122,11 @@ func rpc() {
 			fmt.Println("exiting with", code)
 			os.Exit(code)
 		}()
+	}
+	for _, name := range strings.Split(os.Getenv("FAKEPROG_PRINT_ENV"), ",") {
+		if name != "" {
+			fmt.Printf("env %s=%s\n", name, os.Getenv(name))
+		}
 	}
 	fmt.Println("Starting RPC server v3.0.0")
 	fmt.Printf("  endpoint       : %s:%s\n", host, port)

@@ -134,6 +134,7 @@ type Agent struct {
 	pipeCancel  context.CancelFunc
 	pipeGen     int
 	answerProgs []agentproto.ProgramEntry
+	devErr      string // set while llama-server lists no device (no access)
 }
 
 // New builds an agent. Call Run.
@@ -531,8 +532,17 @@ func (a *Agent) pipeline(ctx context.Context, gen int, ans agentproto.RegisterAn
 			a.setError(r)
 		}
 		a.Stats.SetSources(srcs)
-		// 6. devices
-		a.readDevices(ctx)
+		// 6. devices. An empty list (no access to the GPU device node) keeps
+		// programs_ready false, reports why in programs_error and is read
+		// again after ProgramsRetry; any other device error is only logged.
+		for errors.Is(a.readDevices(ctx), devices.ErrNoDevices) {
+			a.mu.Lock()
+			a.pipelineOK = false
+			a.mu.Unlock()
+			if !sleep(ctx, a.deps.ProgramsRetry) {
+				return
+			}
+		}
 		// 7. ready
 		a.mu.Lock()
 		if a.pipeGen == gen {
@@ -559,11 +569,12 @@ func (a *Agent) cuda() bool {
 	return strings.HasSuffix(a.platform, "-"+agentproto.BackendCUDA)
 }
 
-// readDevices reads llama's device list; a POST /launch waits meanwhile.
-func (a *Agent) readDevices(ctx context.Context) {
+// readDevices reads the device list with llama-server (rpc-server has no
+// --list-devices, also on a worker node); a POST /launch waits meanwhile.
+func (a *Agent) readDevices(ctx context.Context) error {
 	path, ok := a.Programs.Path(agentproto.ProgramLlamaServer)
 	if !ok {
-		return
+		return errors.New("llama-server is not verified")
 	}
 	a.devRead.Lock()
 	defer a.devRead.Unlock()
@@ -575,13 +586,37 @@ func (a *Agent) readDevices(ctx context.Context) {
 	gpus := a.gpus
 	a.mu.Unlock()
 	devs, err := devices.Read(ctx, a.deps.DevicesRun, path, env, hw.DeviceGPUs(gpus), 30*time.Second)
+	if errors.Is(err, devices.ErrNoDevices) {
+		a.mu.Lock()
+		a.devErr = err.Error()
+		a.devs, a.devsAt = nil, a.deps.Clock.Now()
+		a.mu.Unlock()
+		a.setError(err.Error())
+		return err
+	}
 	if err != nil {
 		a.setError("devices: " + err.Error())
-		return
+		return err
 	}
 	a.mu.Lock()
-	a.devs, a.devsAt = devs, a.deps.Clock.Now()
+	a.devs, a.devsAt, a.devErr = devs, a.deps.Clock.Now(), ""
 	a.mu.Unlock()
+	return nil
+}
+
+// programsError is the heartbeat's programs_error: a program fault first,
+// else the no-device-access message.
+func (a *Agent) programsError() *string {
+	if e := a.Programs.Error(); e != nil {
+		return e
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.devErr == "" {
+		return nil
+	}
+	s := a.devErr
+	return &s
 }
 
 func (a *Agent) afterLaunchExit() {
@@ -602,7 +637,7 @@ func (a *Agent) Heartbeat() agentproto.Heartbeat {
 		devs[i].ReadAgeS = float64((now - devsAt).Milliseconds()) / 1000
 	}
 	hb.Role, hb.LaunchID = a.Launch.Role(), a.Launch.CurrentID()
-	hb.ProgramsReady, hb.ProgramsError = a.ProgramsReady(), a.Programs.Error()
+	hb.ProgramsReady, hb.ProgramsError = a.ProgramsReady(), a.programsError()
 	hb.ModelSource, hb.Devices = a.Source.State(), devs
 	if mi, err := a.deps.Mem.MemInfo(); err == nil {
 		hb.MemAvailableMiB = mi.AvailableMiB

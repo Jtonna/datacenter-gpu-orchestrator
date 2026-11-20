@@ -119,6 +119,9 @@ detect_starter() {
 	if [ -e /dev/shm/potluck/potluck-agent ]; then
 		HAS_STARTER=1
 	fi
+	if [ -e /etc/potluck/starter.env ]; then
+		HAS_STARTER=1
+	fi
 }
 
 find_potluck() {

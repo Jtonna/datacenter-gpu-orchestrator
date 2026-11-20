@@ -184,7 +184,8 @@ func TestChildRunner(t *testing.T) {
 	logPath := filepath.Join(dir, "out.log")
 	exitPath := filepath.Join(dir, "out.exit")
 	p, err := c.Start(context.Background(), Spec{Unit: "potluck-launch-a", Path: prog,
-		Args: []string{"--host", "127.0.0.1", "--port", fmt.Sprint(port)}, LogPath: logPath, ExitPath: exitPath})
+		Args: []string{"--host", "127.0.0.1", "--port", fmt.Sprint(port)}, LogPath: logPath, ExitPath: exitPath,
+		Env: []string{"FAKEPROG_PRINT_ENV=LLAMA_RPC_FILE_LOAD", "LLAMA_RPC_FILE_LOAD=required"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,6 +193,9 @@ func TestChildRunner(t *testing.T) {
 		b, _ := os.ReadFile(logPath)
 		return strings.Contains(string(b), "Starting RPC server")
 	})
+	if b, _ := os.ReadFile(logPath); !strings.Contains(string(b), "env LLAMA_RPC_FILE_LOAD=required\n") {
+		t.Fatalf("the launch environment did not reach the process: %q", b)
+	}
 	if u, _ := c.List(context.Background(), "potluck-launch-"); len(u) != 1 {
 		t.Fatalf("list %v", u)
 	}
