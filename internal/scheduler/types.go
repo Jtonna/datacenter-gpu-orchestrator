@@ -196,7 +196,11 @@ type InstanceStatus struct {
 	// StaleProfile: the profile was changed or deleted after this instance started; it keeps the definition it started with until its next load.
 	StaleProfile bool
 	VictimOf     string // profile of the claimed entry this instance drains or stops for
-	Nodes        []PlacedNodeStatus
+	// LoadMode is how the instance's nodes get the weights: file_read (the
+	// workers read the model file), pushed (the host sends them), local (no
+	// remote worker); empty for a command profile or when not known.
+	LoadMode string
+	Nodes    []PlacedNodeStatus
 	// HostMemory lists host-side buffers from the load log (CPU, *_Host);
 	// they are not part of the per-device sums.
 	HostMemory []DeviceMemory
@@ -429,6 +433,12 @@ type PlanReport struct {
 	Warning string
 	// RequiredMiB and CapacityMiB are set for a reject on capacity.
 	RequiredMiB, CapacityMiB int
+	// LoadMode is how the placement's nodes would get the weights
+	// (file_read, pushed, local; empty when not known), and ReloadFromCache
+	// the reload rule for each placed node. Both are set only with a
+	// placement.
+	LoadMode        string
+	ReloadFromCache []NodeReload
 }
 
 // PlanVictim is an instance a plan would stop or drain.

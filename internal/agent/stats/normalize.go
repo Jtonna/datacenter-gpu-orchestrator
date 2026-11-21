@@ -160,7 +160,12 @@ func (n *nodeView) memory() *agentproto.Memory {
 	if !ok1 || !ok2 {
 		return nil
 	}
-	return &agentproto.Memory{TotalBytes: roundInt(total), AvailableBytes: roundInt(avail)}
+	m := &agentproto.Memory{TotalBytes: roundInt(total), AvailableBytes: roundInt(avail)}
+	if c, ok := n.single("node_memory_Cached_bytes"); ok {
+		v := roundInt(c)
+		m.CachedBytes = &v
+	}
+	return m
 }
 
 // 4.4: load1 required; load5/load15 optional.

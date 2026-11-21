@@ -233,6 +233,17 @@ func TestProfilesEndpoint(t *testing.T) {
 	if plan["action"] != "start" || plan["would_start"] != true || len(plan["nodes"].([]any)) != 1 {
 		t.Fatalf("%v", plan)
 	}
+	// How the weights would travel, and the reload rule per placed node.
+	if m, _ := plan["load_mode"].(string); m == "" {
+		t.Fatalf("no load_mode: %v", plan)
+	}
+	rl, _ := plan["reload_from_cache"].([]any)
+	if len(rl) != 1 {
+		t.Fatalf("reload_from_cache %v", plan["reload_from_cache"])
+	}
+	if r := rl[0].(map[string]any); r["node"] == "" || r["verdict"] == "" {
+		t.Fatalf("reload entry %v", r)
+	}
 }
 
 func TestStatusIsModelCentric(t *testing.T) {

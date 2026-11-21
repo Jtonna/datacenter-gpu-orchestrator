@@ -9,6 +9,7 @@ import { sparkline, lineChart } from '../../core/charts.js';
 import { num, dur, ago, plural, DASH } from '../../core/format.js';
 import { cache, METRICS, metricDef, fmtMetric, changeMark, rateBadge, runBadge, withUnit } from './common.js';
 import { passDots } from '../../core/rate.js';
+import { loadModeText, LOAD_MODE } from '../../core/stepfacts.js';
 
 // The view's own state: it survives re-drawing and tab changes within the screen.
 export const aggState = { same: false, benchmark: '', metric: 'decode_tps', trend: null, trendFor: '', trendErr: null, loadingTrend: false, modelMetric: 'load_s' };
@@ -128,6 +129,33 @@ function modelNodesCard(agg, redraw) {
     }) : empty('No model has a run yet', 'Run the same model on different numbers of workers to compare them here.'));
 }
 
+// The same model and number of workers, split by how the weights reached the
+// nodes: file read, pushed or local. Steps stored before the load mode was
+// recorded form their own "Not recorded" column.
+function loadModeCard(agg) {
+  const groups = (agg && agg.by_model_load_mode) || [];
+  const mk = aggState.modelMetric;
+  const order = ['file_read', 'pushed', 'local', 'not_recorded'];
+  const modes = order.filter(m => groups.some(g => g.load_mode === m)).concat(Array.from(new Set(groups.map(g => g.load_mode))).filter(m => m && !order.includes(m)));
+  const rowKey = g => `${g.model_file}|${g.nodes == null ? 0 : g.nodes}`;
+  const rows = Array.from(new Map(groups.map(g => [rowKey(g), g])).values());
+  const cell = (row, mode) => {
+    const g = groups.find(x => rowKey(x) === rowKey(row) && x.load_mode === mode);
+    const m = g && g.metrics && g.metrics[mk];
+    if (!m) return h('span.mut', DASH);
+    return h('span', fmtMetric(mk, m.median), h('span.sub', `${plural(m.count, 'run')}`));
+  };
+  return h('section.card', { key: 'byloadmode' },
+    h('div.ch', h('h2', 'By load mode'), h('span.note', `Median ${metricDef(mk).label.toLowerCase()} in ${metricDef(mk).unit}, for the same model on the same number of workers. Pick the figure above.`)),
+    rows.length && modes.length ? table({
+      minWidth: 640, rows, key: rowKey,
+      columns: [
+        { label: 'Model file', render: g => h('span.mono.wrap-any', g.model_file) },
+        { label: 'Workers', cls: 'r', render: g => (g.nodes ? num(g.nodes) : 'Local') },
+      ].concat(modes.map(m => ({ label: loadModeText(m), cls: 'r', title: (LOAD_MODE[m] || [])[1], render: g => cell(g, m) }))),
+    }) : empty('No load mode recorded yet', 'Runs from now on record whether the workers read the file or the host pushed the weights.'));
+}
+
 export function aggregatesView(redraw) {
   const agg = currentAgg();
   const err = cache.errors.agg;
@@ -139,5 +167,5 @@ export function aggregatesView(redraw) {
   if (err && !agg) return [controls, h('section.card', empty('The aggregates could not be read', err.message))];
   if (!agg) return [controls, h('section.card', skeleton(5))];
   if (!agg.runs_considered) return [controls, h('section.card', empty('No finished runs yet', aggState.same ? 'No run matches the current setup. Turn the switch off to see all runs.' : 'Run a suite. Once a run has ended, its figures are added up here.'))];
-  return [controls, trendCard(agg, redraw), suitesCard(agg), (agg.benchmarks || []).map(b => benchCard(b, redraw)), modelNodesCard(agg, redraw)];
+  return [controls, trendCard(agg, redraw), suitesCard(agg), (agg.benchmarks || []).map(b => benchCard(b, redraw)), modelNodesCard(agg, redraw), loadModeCard(agg)];
 }

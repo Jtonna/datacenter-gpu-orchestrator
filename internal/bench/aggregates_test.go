@@ -15,6 +15,8 @@ type fakeStep struct {
 	decode, prefill, ttft float64
 	turns                 []TurnResult
 	unloadS               float64
+	loadMode              string
+	lowMiB                int64
 }
 
 // addRun stores a finished run with the given steps.
@@ -39,7 +41,11 @@ func addRun(t *testing.T, s *Store, id, suiteID string, at int64, env *Environme
 			sum.Failed++
 		}
 		if fs.loadS > 0 {
-			st.Load = &LoadResult{LoadS: fs.loadS, AvgMBs: fs.mbs, MemoryMiB: fs.mem}
+			st.Load = &LoadResult{LoadS: fs.loadS, AvgMBs: fs.mbs, MemoryMiB: fs.mem, LoadMode: fs.loadMode}
+		}
+		if fs.lowMiB > 0 {
+			low := fs.lowMiB
+			st.MemLow = []NodeMemLow{{ID: "n1", Node: "ps5-a", StepMiB: &low, Samples: 10}}
 		}
 		if fs.decode > 0 || fs.prefill > 0 || fs.ttft > 0 {
 			st.Stats = &Stats{Requests: 3}
@@ -359,5 +365,43 @@ func TestRunRecordsEnvironmentAndEmitsAggregateUpdated(t *testing.T) {
 	}
 	if mn := doc.ByModelNodes; len(mn) != 1 || mn[0].ModelFile != "gemma.gguf" || *mn[0].Nodes != 1 {
 		t.Fatalf("%+v", mn)
+	}
+}
+
+// The same model on the same nodes, loaded with the file read by the workers
+// and with the weights pushed, falls into two groups; steps stored before the
+// load mode was recorded form a "not_recorded" group. The lowest available
+// memory is a metric of each group.
+func TestAggregateGroupsByLoadMode(t *testing.T) {
+	s, _ := openTemp(t)
+	addRun(t, s, "r1", "s", 1000, nil, RunCompleted, fakeStep{bench: "b", profile: "p", model: "m.gguf", nodes: 2, pass: true, loadS: 20, loadMode: LoadModeFileRead, lowMiB: 2100})
+	addRun(t, s, "r2", "s", 2000, nil, RunCompleted, fakeStep{bench: "b", profile: "p", model: "m.gguf", nodes: 2, pass: true, loadS: 60, loadMode: LoadModePushed, lowMiB: 3000})
+	addRun(t, s, "r3", "s", 3000, nil, RunCompleted, fakeStep{bench: "b", profile: "p", model: "m.gguf", nodes: 2, pass: true, loadS: 22, loadMode: LoadModeFileRead, lowMiB: 1900})
+	addRun(t, s, "r4", "s", 4000, nil, RunCompleted, fakeStep{bench: "b", profile: "p", model: "m.gguf", nodes: 2, pass: true, loadS: 50})
+	d, err := s.Aggregate(AggFilter{}, th, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.ByModelLoadMode) != 3 {
+		t.Fatalf("groups %+v", d.ByModelLoadMode)
+	}
+	want := []struct {
+		mode  string
+		steps int
+		load  float64
+		low   float64 // the minimum of the lowest available memory; 0 when none
+	}{{LoadModeFileRead, 2, 21, 1900}, {LoadModeNotRecorded, 1, 50, 0}, {LoadModePushed, 1, 60, 3000}}
+	for i, w := range want {
+		g := d.ByModelLoadMode[i]
+		if g.LoadMode == nil || *g.LoadMode != w.mode || g.Steps != w.steps || g.Nodes == nil || *g.Nodes != 2 || !close2(g.Metrics["load_s"].Mean, w.load) {
+			t.Fatalf("group %d: %+v, want %+v", i, g, w)
+		}
+		lm := g.Metrics["lowest_available_mib"]
+		if (w.low == 0) != (lm == nil) || lm != nil && lm.Min != w.low {
+			t.Fatalf("group %d lowest %+v, want %v", i, lm, w.low)
+		}
+	}
+	if d.ByModelNodes[0].LoadMode != nil {
+		t.Fatalf("the by-nodes grouping carries no load mode")
 	}
 }

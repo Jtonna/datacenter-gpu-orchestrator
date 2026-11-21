@@ -5,7 +5,7 @@ import { href, navigate } from '../../core/router.js';
 import { state } from '../../core/store.js';
 import { badge, button, table, empty, skeleton } from '../../core/ui.js';
 import { num, plural, ago, dur, DASH } from '../../core/format.js';
-import { cache, suiteTitle, runBadge, rateBadge, phaseChips, scheduleText, describe, modelOf, errorBanner } from './common.js';
+import { cache, suiteTitle, suiteStatusBadge, suiteNotRunnable, runBadge, rateBadge, phaseChips, scheduleText, describe, modelOf, errorBanner } from './common.js';
 import { runSuite } from './runconfirm.js';
 import { passDots } from '../../core/rate.js';
 import { catalog } from '../../core/catalog.js';
@@ -33,15 +33,15 @@ function suitesCard(running) {
   else body = table({
     minWidth: 960, rows: suites, key: s => s.id, onRow: s => navigate('benchmarks', ['suite', s.id]),
     columns: [
-      { label: 'Suite', render: s => h('span', h('a', { href: href('benchmarks', ['suite', s.id]), style: 'font-weight:700', onclick: e => e.stopPropagation() }, suiteTitle(s)),
-        s.description ? h('span.sub', s.description) : h('span.sub.mono', s.id)) },
+      { label: 'Suite', render: s => h('span', h('span.row', { style: 'gap:8px' }, h('a', { href: href('benchmarks', ['suite', s.id]), style: 'font-weight:700', onclick: e => e.stopPropagation() }, suiteTitle(s)), suiteStatusBadge(s)),
+        s.reason ? h('span.sub', s.reason) : s.description ? h('span.sub', s.description) : h('span.sub.mono', s.id)) },
       { label: 'Benchmarks', cls: 'r', render: s => num((s.benchmarks || []).length) },
       { label: 'Schedule', cls: 'tight', render: s => h('span', scheduleText(s.schedule), s.only_when_idle === false ? h('span.sub', 'Does not wait for idle') : null) },
-      { label: 'Last run', render: s => lastRunCell(s) },
+      { label: 'Last run', render: s => (s.status && !s.last_run ? h('span.mut', 'Cannot run yet') : lastRunCell(s)) },
       { label: 'Pass rate', cls: 'tight', title: 'One dot per run, oldest left. Mint: every benchmark passed. Amber: some failed. Coral: failed.', render: s => { const a = aggs.find(x => x.suite_id === s.id); return passDots(a && a.recent, a && a.pass_rate, { label: `Runs of ${suiteTitle(s)}, oldest first` }); } },
       { label: '', cls: 'tight', render: s => h('span.row', { style: 'gap:8px;justify-content:flex-end;flex-wrap:nowrap' },
         h('a', { class: 'btn sm', href: href('benchmarks', ['suite', s.id], { edit: 1 }), title: 'Open the configuration of the suite', onclick: e => e.stopPropagation() }, 'Configure'),
-        h('button', { class: 'btn sm', type: 'button', disabled: !!cache.off, title: running ? 'A run is active; this one is queued behind it' : 'Run the suite now',
+        h('button', { class: 'btn sm', type: 'button', disabled: !!cache.off || !!suiteNotRunnable(s), title: suiteNotRunnable(s) || (running ? 'A run is active; this one is queued behind it' : 'Run the suite now'),
           onclick: e => { e.stopPropagation(); runSuite(s); } }, 'Run')) },
     ],
   });

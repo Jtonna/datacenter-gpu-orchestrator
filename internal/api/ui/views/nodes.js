@@ -24,6 +24,13 @@ import { agentsMode, agentOf, notPlaceable, holdsSomething, pauseAction, sendNod
 const CHANNEL = { ok: ['ok', 'ok-t'], silent: ['silent', 'err-t'], unknown: ['not known', 'mut'] };
 const ACTION = { restart_rpc_server: 'restart the worker', restart_docker: 'restart Docker', reboot: 'reboot the machine' };
 
+// cachedMiBOf(agent) -> the page cache in MiB its agent last reported, or null
+// when unknown (no agent, no stats, or an agent too old to send it).
+export function cachedMiBOf(agent) {
+  const m = agent && agent.stats && agent.stats.memory;
+  return m && typeof m.cached_bytes === 'number' ? Math.round(m.cached_bytes / 1048576) : null;
+}
+
 // stateOf(node) -> [label, badge kind, sort rank]
 function stateOf(st, n, inst) {
   const q = (st.quarantines || []).find(x => x.node === n.id);
@@ -186,6 +193,8 @@ function tile(st, n, refresh) {
     note('', ['The last pre-load check measured ', h('b', gb(n.override_free_mib)), ' free; that figure is used ', until(n.override_until), '.']);
   }
 
+  // the page cache its agent reports (stats.memory.cached_bytes; an older agent sends none)
+  const cachedMiB = cachedMiBOf(agent);
   const version = n.rpc_server_version || '';
   const onIt = n.holder ? h('span', inst && inst.state === 'starting' ? 'Loading ' : 'Holds ', h('a.mono', { href: href('models', inst && inst.model_file ? [inst.model_file] : null), title: n.holder }, n.holder),
     inst && inst.in_flight > 0 ? h('span.mut', ` · ${plural(inst.in_flight, 'request')} in flight`) : null)
@@ -222,6 +231,7 @@ function tile(st, n, refresh) {
           return [i ? ' · ' : '', c + ' ', h('span', { class: cls }, txt)];
         }), ['upload', 'heartbeat', 'probe'].every(c => !n.health.channels[c] || n.health.channels[c] === 'unknown') ? h('span.mut', 'no report yet') : null), 'The channels the scheduler watches the worker on'] : null,
         version ? ['Worker', [h('span', { title: version }, shortId(version, 12)), copyButton(version, 'the worker version')], 'The version of its rpc-server: ' + version] : null,
+        cachedMiB != null ? ['File cache', h('span', gb(cachedMiB)), `${mib(cachedMiB)} of memory holds cached files, such as a model file it read. On a machine whose model shares that memory, a reload is fast only while the file stays cached`] : null,
         n.rpc_server_mem_mib ? ['Worker memory', h('span', mib(n.rpc_server_mem_mib)), 'Memory the worker process itself holds'] : null,
         ['Node id', h('span', n.id, logsLink(state.status, ' Logs', nodeQuery(n.id), null, null, 'Open the last hour of this node\'s log lines in a new tab'))],
       ])));

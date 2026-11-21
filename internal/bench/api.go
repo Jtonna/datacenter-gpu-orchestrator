@@ -79,7 +79,11 @@ type PlanInfo struct {
 	Action string
 	Reason string
 	Nodes  []string // the nodes the plan would use (ids)
-	Raw    json.RawMessage
+	// LoadMode and Reload are the plan's load_mode and reload_from_cache
+	// (node ids in Reload[].ID, no names); empty from an older scheduler.
+	LoadMode string
+	Reload   []NodeReload
+	Raw      json.RawMessage
 }
 
 // LoadAnswer is the answer of /api/load.
@@ -125,6 +129,7 @@ type InstanceInfo struct {
 	DeviceTotalMiB float64
 	Load           *LoadInfo
 	Nodes          []InstanceNodeInfo
+	LoadMode       string // file_read, pushed, local; empty from an older scheduler
 }
 
 // WorkerInfo is a node of the scheduler's view with what it reports about its rpc-server.
@@ -133,6 +138,9 @@ type WorkerInfo struct {
 	Hostname         string
 	Local            bool
 	RPCServerVersion string
+	// AvailMiB is the node's available memory: its agent's mem_available_mib,
+	// else the node's free figure (the local host); nil when neither is known.
+	AvailMiB *int64
 }
 
 // RecentLoad is an entry of recent_loads.
@@ -307,11 +315,26 @@ func (h *HTTPAPI) Plan(ctx context.Context, model string) (*PlanInfo, error) {
 		Placement []struct {
 			ID string `json:"id"`
 		} `json:"placement"`
+		LoadMode string `json:"load_mode"`
+		Reload   []struct {
+			ID        string   `json:"id"`
+			Verdict   string   `json:"verdict"`
+			Shared    bool     `json:"shared"`
+			FileMiB   int      `json:"file_mib"`
+			ModelMiB  int      `json:"model_mib"`
+			MemoryMiB int      `json:"memory_mib"`
+			MarginMiB int      `json:"margin_mib"`
+			CachedPct *float64 `json:"cached_pct"`
+		} `json:"reload_from_cache"`
 	}
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, fmt.Errorf("/api/plan: %w", err)
 	}
-	info := &PlanInfo{Action: p.Action, Reason: p.Reason, Raw: raw}
+	info := &PlanInfo{Action: p.Action, Reason: p.Reason, Raw: raw, LoadMode: p.LoadMode}
+	for _, r := range p.Reload {
+		info.Reload = append(info.Reload, NodeReload{ID: r.ID, Node: r.ID, Verdict: r.Verdict, CachedPct: r.CachedPct, Shared: r.Shared,
+			FileMiB: r.FileMiB, ModelMiB: r.ModelMiB, MemoryMiB: r.MemoryMiB, MarginMiB: r.MarginMiB})
+	}
 	for _, n := range p.Nodes {
 		switch v := n.(type) {
 		case string:
@@ -383,6 +406,7 @@ type statusWire struct {
 		Cmd            string  `json:"cmd"`
 		ModelFile      string  `json:"model_file"`
 		DeviceTotalMiB float64 `json:"device_total_mib"`
+		LoadMode       string  `json:"load_mode"`
 		Load           *struct {
 			SessionID  string   `json:"session_id"`
 			ElapsedS   float64  `json:"elapsed_s"`
@@ -415,6 +439,10 @@ type statusWire struct {
 			Hostname         string `json:"hostname"`
 			Local            bool   `json:"local"`
 			RPCServerVersion string `json:"rpc_server_version"`
+			FreeMiB          *int64 `json:"free_mib"`
+			Agent            *struct {
+				MemAvailMiB *int64 `json:"mem_available_mib"`
+			} `json:"agent"`
 		} `json:"nodes"`
 	} `json:"view"`
 	LastRefusals []struct {
@@ -482,7 +510,7 @@ func ParseStatus(raw []byte) (*StatusInfo, error) {
 	}
 	for i, in := range w.Instances {
 		ii := InstanceInfo{Profile: in.Profile, State: in.State, InFlight: in.InFlight, Waiters: in.Waiters, LogFile: in.LogFile, DeviceTotalMiB: in.DeviceTotalMiB,
-			Cmd: in.Cmd, ModelFile: in.ModelFile}
+			Cmd: in.Cmd, ModelFile: in.ModelFile, LoadMode: in.LoadMode}
 		if in.Load != nil {
 			li := &LoadInfo{SessionID: in.Load.SessionID, ElapsedS: in.Load.ElapsedS, BytesTotal: in.Load.BytesTotal, BytesSent: in.Load.BytesSent, Progress: in.Load.Progress, EtaS: in.Load.EtaS}
 			if i < len(envelope.Instances) {
@@ -513,7 +541,11 @@ func ParseStatus(raw []byte) (*StatusInfo, error) {
 		if n.Hostname != "" {
 			out.Hostnames[n.ID] = n.Hostname
 		}
-		out.Workers = append(out.Workers, WorkerInfo{ID: n.ID, Hostname: n.Hostname, Local: n.Local, RPCServerVersion: n.RPCServerVersion})
+		wi := WorkerInfo{ID: n.ID, Hostname: n.Hostname, Local: n.Local, RPCServerVersion: n.RPCServerVersion, AvailMiB: n.FreeMiB}
+		if n.Agent != nil && n.Agent.MemAvailMiB != nil {
+			wi.AvailMiB = n.Agent.MemAvailMiB
+		}
+		out.Workers = append(out.Workers, wi)
 	}
 	out.ConfigRevision = scalarText(w.ConfigRevision)
 	if out.ConfigRevision == "" {

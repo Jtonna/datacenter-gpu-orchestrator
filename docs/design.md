@@ -1179,7 +1179,8 @@ view the core reads, and runs the worker launches.
   `left` after its deregister, `removed` after `DELETE /api/nodes/{id}` until
   `POST /api/nodes/{id}/readmit`. Pause and removal are stored in the
   database (`node_admin`). A paused node takes no new load; a load on it
-  continues.
+  continues. A pause also breaks a claim on the node for a waiting request
+  (step 5 of the queue), so the request is planned again.
 - **Loads.** The worker launches replace the pre-flight: no `--list-devices`
   probe runs, so nothing holds a worker's single client slot before the child
   connects. Each remote node gets `POST /launch` (role worker, the release,
@@ -1316,7 +1317,9 @@ full upload, so the hold is worth keeping.
    treat the entry as unclaimed in this same pass. The recorded figures stop
    the same plan from being chosen again.
 5. If a claimed node stops being eligible (offline, quarantined, or the fleet
-   view goes stale): drop the claim. Victims still `draining` return to
+   view goes stale), or stops taking new load (paused, or listed with an
+   unplaced reason, after the claim was made): drop the claim. Pause wins
+   over a claim: the paused node does not get the load. Victims still `draining` return to
    `ready`. Victims already `stopping` or gone stay so. The entry is unclaimed
    again and is evaluated in this same pass.
 6. A claimed entry with no waiters:
@@ -1899,6 +1902,15 @@ benchmarks, whose id defaults to `<suite>-<position>`), `stop_on_failure`
 least 10 minutes, or `{"at":"03:00"}` local time; default none), `baseline` (a
 run id; default the previous completed run of the suite).
 
+*Planned or blocked suite*: a scenario that cannot be run yet is a suite with
+`status` set to `planned` or `blocked` and a `reason` (required then, at most
+500 characters). It may list no benchmark (0 to 100); a normal suite still
+needs 1 to 100, and has neither field. It cannot have a schedule. It is listed
+with a badge and its reason, and running it is refused with `409` and the
+reason (`POST /api/bench/suites/{id}/run`, the MCP `run_suite` tool). The REST
+routes, the MCP `create_suite` tool and the configuration import and export
+accept it as they accept any suite. To run it, remove the status.
+
 *Run*: one execution of a suite; states `queued`, `running`, `paused` (waiting
 for idle), `completed`, `failed`, `cancelled`, `skipped`. One run at a time,
 others queue (at most 20). A run stores the suite and every benchmark it named
@@ -1943,7 +1955,51 @@ never as a person's. The load session id (`load.session_id`; `GET
    the run loaded and did not unload is unloaded.
 
 The step also records `model_file` and `node_count` (the worker nodes the
-instance was placed on), which the aggregates group by.
+instance was placed on), which the aggregates group by, and since this was
+added (a step stored before has none of these; the UI says "Not recorded"):
+
+- `mem_low`: per node that took part (the scheduler host, the plan's nodes and
+  the instance's nodes), the lowest available memory during the load
+  (`load_mib`) and during the whole step (`step_mib`), with the number of
+  `samples`. The runner samples `/api/status` about twice a second
+  (`ManagerOptions.MemSample`, 500 ms) and also uses every status it reads for
+  the load and at the end of each phase. The figure is the agent's
+  `mem_available_mib`, or the node's free figure when it has no agent. A
+  benchmark result carries the lowest of them as `lowest_available_mib`.
+- `load.load_mode` (and each `load` phase's): `file_read` (the workers read
+  the model file from the shared folder), `pushed` (the host sent the weights)
+  or `local` (no remote worker). The scheduler reports it on the instance and
+  in the plan. The aggregates group by it in `by_model_load_mode` (model file,
+  workers, load mode; `not_recorded` for older steps).
+- `roles`: the `host` (the scheduler machine, which runs llama-server) and the
+  `worker`s (the remote nodes of the instance, or of the plan when it never
+  started), each with its share of the model's memory when known. A result
+  carries `host` and `workers` (names) for the compact "Host: x · Workers: n
+  (names)".
+- `reload_from_cache`: the plan's reload figure per node (below).
+
+*Reload from cache.* Whether a reload of a model can come from a node's file
+cache instead of the disk or the network. One pure function
+(`scheduler.ReloadFromCache`) decides it per node of a placement:
+
+- `unknown` when the node does not read the model file (`pushed` weights), or
+  a figure it needs is not known (system memory, file share, model share);
+- otherwise `room` = the node's system memory, minus the margin (the watchdog
+  floor, plus the tier headroom on a node whose GPU shares system memory),
+  minus the node's share of the loaded model when the GPU shares system memory;
+- `full` when `room` is at least the node's share of the file, `none` when
+  `room` is 0 or less, else `partial` with `cached_pct` = room / file share.
+
+A node's file share and model share are the file size and the model's memory
+times the node's split fraction. The scheduler host always reads the file; with
+`pushed` weights it reads all of it to send it, so its share is the whole file.
+A dedicated GPU (the scheduler host's own card) holds the model outside system
+memory, so its file share only has to fit in system memory for `full`. The two
+measured cases on a 14 GB console: 7.0 GB file and 7.5 GB model gives `partial`,
+about 63%, and reloads slowly; 2.7 GB and 2.9 GB gives `full` and reloads fast.
+The verdict is in the plan (`POST /api/plan`, `GET /api/profiles` plan
+`load_mode` and `reload_from_cache`) and stored with the benchmark step. The UI
+shows it as "Reload from cache: partial, about 63% of the file".
 
 *Safety.* `only_when_idle` (default true): the run does not start, and pauses
 between benchmarks, while the scheduler has an instance this run did not load,

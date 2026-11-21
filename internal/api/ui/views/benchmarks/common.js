@@ -42,6 +42,18 @@ export const benchmarkById = id => (cache.benchmarks || []).find(b => b.id === i
 export const suiteById = id => (cache.suites || []).find(s => s.id === id) || null;
 export const suiteTitle = s => s.name || s.id;
 
+// A suite with a status of planned or blocked is a scenario that cannot run
+// yet; it carries a reason and may list no benchmark.
+const SUITE_STATUS = { planned: ['Planned', 'n'], blocked: ['Blocked', 'aside'] };
+export const suiteRunnable = s => !s || !s.status;
+export const suiteStatusBadge = s => {
+  if (suiteRunnable(s)) return null;
+  const [t, k] = SUITE_STATUS[s.status] || [s.status, 'n'];
+  return badge(t, k, s.reason || null);
+};
+// Why the Run button of a suite is off, or null.
+export const suiteNotRunnable = s => (suiteRunnable(s) ? null : `This suite is ${s.status} and cannot be run yet: ${s.reason || 'no reason given'}`);
+
 // ---------- metrics ----------
 
 export const METRICS = [
@@ -51,6 +63,7 @@ export const METRICS = [
   { key: 'prefill_tps', label: 'Prefill speed', unit: 'tok/s', better: 'higher', digits: 1 },
   { key: 'ttft_ms', label: 'Time to first token', unit: 'ms', better: 'lower', digits: 0 },
   { key: 'memory_mib', label: 'Memory', unit: 'MiB', better: 'lower', digits: 0 },
+  { key: 'lowest_available_mib', label: 'Lowest available memory', unit: 'MiB', better: 'higher', digits: 0 },
   { key: 'unload_s', label: 'Unload time', unit: 's', better: 'lower', digits: 1 },
   { key: 'concurrent_wall_s', label: 'Simultaneous requests, wall time', unit: 's', better: 'lower', digits: 1 },
 ];

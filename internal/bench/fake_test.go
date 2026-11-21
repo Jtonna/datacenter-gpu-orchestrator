@@ -69,6 +69,12 @@ type fakeAPI struct {
 	lastRef  []Refusal // status last_refusals
 	histRef  []Refusal // history refusal events
 	runOf    map[string]string
+	// mem gives a node's available memory for the status (nil: unknown);
+	// loading says whether an instance is starting, chats counts the chat
+	// requests sent so far.
+	mem      func(id string, loading bool, chats int) *int64
+	loadMode string       // instances' load_mode
+	reload   []NodeReload // the plan's reload_from_cache
 }
 
 func newFake() *fakeAPI {
@@ -119,7 +125,8 @@ func (f *fakeAPI) Plan(ctx context.Context, model string) (*PlanInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.log("plan:" + model)
-	return &PlanInfo{Action: "start", Nodes: []string{"n1"}, Raw: json.RawMessage(`{"model":"` + model + `","action":"start"}`)}, nil
+	return &PlanInfo{Action: "start", Nodes: []string{"n1"}, LoadMode: f.loadMode, Reload: append([]NodeReload(nil), f.reload...),
+		Raw: json.RawMessage(`{"model":"` + model + `","action":"start"}`)}, nil
 }
 
 // beginLoad starts the load of a profile that has no instance (the caller holds f.mu).
@@ -252,7 +259,7 @@ func (f *fakeAPI) Status(ctx context.Context) (*StatusInfo, error) {
 	for name, in := range f.insts {
 		p := f.profs[name]
 		ii := InstanceInfo{Profile: name, State: in.state, InFlight: in.inflight, LogFile: "/var/log/llm-children/" + name + ".log",
-			Cmd: "/opt/llama/llama-server-rpc --model x --rpc 192.0.2.2:50052", DeviceTotalMiB: 7900}
+			Cmd: "/opt/llama/llama-server-rpc --model x --rpc 192.0.2.2:50052", DeviceTotalMiB: 7900, LoadMode: f.loadMode}
 		if p != nil {
 			ii.ModelFile = p.modelFile
 			for k := range p.nodes {
@@ -276,6 +283,18 @@ func (f *fakeAPI) Status(ctx context.Context) (*StatusInfo, error) {
 	}
 	for name := range f.external {
 		st.Instances = append(st.Instances, InstanceInfo{Profile: name, State: "ready", InFlight: f.extReq})
+	}
+	if f.mem != nil {
+		loading, chats := false, 0
+		for _, in := range f.insts {
+			loading = loading || in.state == "starting"
+		}
+		for _, n := range f.nChat {
+			chats += n
+		}
+		for i := range st.Workers {
+			st.Workers[i].AvailMiB = f.mem(st.Workers[i].ID, loading, chats)
+		}
 	}
 	for name, until := range f.gone { // an unloaded instance lingers for a moment
 		if time.Now().Before(until) {

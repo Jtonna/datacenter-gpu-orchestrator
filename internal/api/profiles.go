@@ -93,7 +93,32 @@ func (s *Server) profileEntries(ctx context.Context) []map[string]any {
 			if rep.Warning != "" {
 				plan["warning"] = rep.Warning
 			}
+			if rep.LoadMode != "" {
+				plan["load_mode"] = rep.LoadMode
+			}
+			if len(rep.ReloadFromCache) > 0 {
+				plan["reload_from_cache"] = reloadEntries(rep.ReloadFromCache, host)
+			}
 			e["plan"] = plan
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// reloadEntries is the reload rule of a plan's nodes with their host names
+// (design, "Reload from cache").
+func reloadEntries(rs []scheduler.NodeReload, host map[string]string) []map[string]any {
+	out := make([]map[string]any, 0, len(rs))
+	for _, r := range rs {
+		name := host[string(r.ID)]
+		if name == "" {
+			name = string(r.ID)
+		}
+		e := map[string]any{"id": string(r.ID), "node": name, "verdict": r.Verdict, "shared_memory": r.Shared,
+			"file_mib": r.FileMiB, "model_mib": r.ModelMiB, "memory_mib": r.MemoryMiB, "margin_mib": r.MarginMiB}
+		if r.CachedPct != nil {
+			e["cached_pct"] = *r.CachedPct
 		}
 		out = append(out, e)
 	}

@@ -137,3 +137,43 @@ func TestHead(t *testing.T) {
 		t.Fatal("Head")
 	}
 }
+
+// The figures a step records come from the status (available memory per node,
+// the instance's load mode) and the plan (load mode, reload from cache). An
+// older scheduler sends none of them, and they stay empty.
+func TestParseStatusAndPlanStepFacts(t *testing.T) {
+	s, err := ParseStatus([]byte(`{"instances":[{"profile":"m","state":"starting","load_mode":"file_read","nodes":[{"id":"a"}]}],
+	  "view":{"nodes":[{"id":"h","hostname":"host-1","local":true,"free_mib":7000},
+	    {"id":"a","hostname":"ps5-a","free_mib":9000,"agent":{"mem_available_mib":11000}},
+	    {"id":"b","hostname":"ps5-b"}]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Instances[0].LoadMode != "file_read" {
+		t.Fatalf("load mode %q", s.Instances[0].LoadMode)
+	}
+	want := map[string]int64{"h": 7000, "a": 11000}
+	for _, w := range s.Workers {
+		if v, ok := want[w.ID]; ok != (w.AvailMiB != nil) || ok && *w.AvailMiB != v {
+			t.Fatalf("%s: %v, want %v", w.ID, w.AvailMiB, want[w.ID])
+		}
+	}
+	old, _ := ParseStatus([]byte(`{"instances":[{"profile":"m","state":"ready"}],"view":{"nodes":[{"id":"a"}]}}`))
+	if old.Instances[0].LoadMode != "" || old.Workers[0].AvailMiB != nil {
+		t.Fatalf("%+v", old)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"model":"m","action":"start","placement":[{"id":"a"}],"load_mode":"file_read",
+		  "reload_from_cache":[{"id":"a","verdict":"partial","shared":true,"file_mib":6676,"model_mib":7153,"memory_mib":13351,"margin_mib":2000,"cached_pct":63}]}`))
+	}))
+	defer srv.Close()
+	p, err := (&HTTPAPI{Base: srv.URL}).Plan(t.Context(), "m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.LoadMode != "file_read" || len(p.Reload) != 1 || p.Reload[0].ID != "a" || p.Reload[0].Verdict != "partial" || *p.Reload[0].CachedPct != 63 ||
+		!p.Reload[0].Shared || p.Reload[0].FileMiB != 6676 || p.Reload[0].MemoryMiB != 13351 {
+		t.Fatalf("%+v", p)
+	}
+}

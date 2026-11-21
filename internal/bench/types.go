@@ -140,6 +140,57 @@ type LoadResult struct {
 	Workers   []string   `json:"workers,omitempty"`
 	Nodes     []NodeLoad `json:"nodes,omitempty"`
 	Source    string     `json:"source,omitempty"` // history, recent_loads or observed
+	// LoadMode is how the nodes got the weights: file_read (the workers read
+	// the model file), pushed (the host sent them) or local (no remote
+	// worker). Empty in rows written before it was recorded.
+	LoadMode string `json:"load_mode,omitempty"`
+}
+
+// Load modes as the scheduler reports them (scheduler.LoadMode*).
+const (
+	LoadModeFileRead = "file_read"
+	LoadModePushed   = "pushed"
+	LoadModeLocal    = "local"
+)
+
+// NodeMemLow is the lowest available memory of one node during a step, from
+// the scheduler's status sampled about twice a second: the agent's
+// mem_available_mib, or the node's free figure when there is no agent (the
+// local host).
+type NodeMemLow struct {
+	ID      string `json:"id"`
+	Node    string `json:"node"`
+	LoadMiB *int64 `json:"load_mib,omitempty"` // lowest while the model was loading
+	StepMiB *int64 `json:"step_mib,omitempty"` // lowest during the whole step
+	Samples int    `json:"samples"`
+}
+
+// Node roles in a step.
+const (
+	RoleHost   = "host"   // runs llama-server (the scheduler's machine)
+	RoleWorker = "worker" // runs rpc-server with a share of the model
+)
+
+// NodeRole is one node's role in a step and its share of the model's memory.
+type NodeRole struct {
+	ID        string   `json:"id,omitempty"`
+	Node      string   `json:"node"`
+	Role      string   `json:"role"`
+	MemoryMiB *float64 `json:"memory_mib,omitempty"`
+}
+
+// NodeReload is the scheduler's reload-from-cache figure for one node of the
+// step's plan (design, "Reload from cache").
+type NodeReload struct {
+	ID        string   `json:"id"`
+	Node      string   `json:"node"`
+	Verdict   string   `json:"verdict"` // full, partial, none, unknown
+	CachedPct *float64 `json:"cached_pct,omitempty"`
+	Shared    bool     `json:"shared_memory,omitempty"`
+	FileMiB   int      `json:"file_mib,omitempty"`
+	ModelMiB  int      `json:"model_mib,omitempty"`
+	MemoryMiB int      `json:"memory_mib,omitempty"`
+	MarginMiB int      `json:"margin_mib,omitempty"`
 }
 
 // Check is one expectation and whether it held.
@@ -315,6 +366,11 @@ type Step struct {
 	NodeCount   int                  `json:"node_count,omitempty"` // worker nodes the model was spread over
 	Phases      []PhaseResult        `json:"phases,omitempty"`
 	Requests    []RequestResult      `json:"requests,omitempty"`
+	// MemLow, Roles and Reload are recorded since the Benchmarks page shows
+	// them; a step stored before has none of them ("not recorded").
+	MemLow []NodeMemLow `json:"mem_low,omitempty"`
+	Roles  []NodeRole   `json:"roles,omitempty"`
+	Reload []NodeReload `json:"reload_from_cache,omitempty"`
 }
 
 // RunSummary counts a run's steps.

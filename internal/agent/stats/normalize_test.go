@@ -77,6 +77,10 @@ func TestNormalizePS5AppendixB1(t *testing.T) {
 	if s.Memory == nil || s.Memory.TotalBytes != 16000000000 || s.Memory.AvailableBytes != 12000000000 {
 		t.Fatalf("memory = %+v", s.Memory)
 	}
+	// The page-cache figure (node_memory_Cached_bytes, /proc/meminfo Cached).
+	if s.Memory.CachedBytes == nil || *s.Memory.CachedBytes != 5500000000 {
+		t.Fatalf("cached = %v", s.Memory.CachedBytes)
+	}
 	if s.Load == nil || s.Load.Load1 != 0.12 || s.Load.Load5 != nil || s.Load.Load15 != nil {
 		t.Fatalf("load = %+v", s.Load)
 	}
@@ -172,6 +176,10 @@ func TestNormalizeHostAppendixB2(t *testing.T) {
 	wantF(t, "load15", s.Load.Load15, 1.21)
 	if s.Memory == nil || s.Memory.TotalBytes != 32099495936 || s.Memory.AvailableBytes != 27607855104 {
 		t.Fatalf("memory = %+v", s.Memory)
+	}
+	// No node_memory_Cached_bytes in the scrape: the field is omitted.
+	if s.Memory.CachedBytes != nil {
+		t.Fatalf("cached = %d, want omitted", *s.Memory.CachedBytes)
 	}
 	if s.CPU == nil || s.CPU.LogicalCPUs == nil || *s.CPU.LogicalCPUs != 1 {
 		t.Fatalf("cpu = %+v", s.CPU)

@@ -8,6 +8,7 @@ import { num, mib, bytes, dur, ago, at, dateTime, plural, DASH } from '../../cor
 import { cache, runBadge, passBadge, outcomeBadge, phaseTitle, changeMark, withUnit, fmtMetric, metricDef, errorBanner, reasonNode } from './common.js';
 import { state } from '../../core/store.js';
 import { logsLink, padded } from '../../core/logs.js';
+import { loadModeNode, reloadText, rolesText, RELOAD_TIP } from '../../core/stepfacts.js';
 
 // runLogs(run) -> a link to every log line written while the run ran (all
 // sources and nodes: a benchmark touches the whole fleet), a minute either
@@ -118,6 +119,7 @@ function loadBlock(l, withNodes = true) {
       stat('Average upload', l.avg_mb_s ? num(l.avg_mb_s, 0) : DASH, l.avg_mb_s ? 'MB/s' : null),
       stat('Uploaded', bytes(l.bytes || null)),
       stat('Memory', l.memory_mib ? num(Math.round(l.memory_mib)) : DASH, l.memory_mib ? 'MiB' : null),
+      h('div.stat', { title: 'How the weights reached the nodes' }, h('span', 'Load mode'), h('b', { style: 'font-size:16px' }, loadModeNode(l.load_mode))),
       l.outcome && l.outcome !== 'ready' ? stat('Load result', l.outcome) : null),
     l.reason ? h('div.cb', banner('err', reasonNode(l.reason))) : null,
     withNodes && (l.nodes || []).length ? table({
@@ -163,6 +165,42 @@ function turnsTable(turns) {
       { label: 'Status', cls: 'r', render: t => (t.status === 200 ? '200' : h('span.err-t', t.status || 'error')) },
     ],
   });
+}
+
+// ---------- the setup of a step: roles, lowest available memory, reload ----------
+
+const ROLE_WORD = { host: 'Host', worker: 'Worker' };
+const notRecorded = () => h('span.mut', 'Not recorded');
+
+// "Host: host-1 · Workers: 2 (ps5-a, ps5-b)", or '' when not recorded.
+const stepRoles = step => rolesText((step.roles || []).filter(r => r.role === 'host').map(r => r.node)[0],
+  (step.roles || []).filter(r => r.role === 'worker').map(r => r.node).sort());
+
+function setupBlock(step) {
+  const roles = step.roles || [], low = step.mem_low || [], reload = step.reload_from_cache || [];
+  const byNode = {};
+  const row = (id, node) => (byNode[id || node] = byNode[id || node] || { key: id || node, node, role: null, share: null, low: null, reload: null });
+  for (const r of roles) Object.assign(row(r.id, r.node), { role: r.role, share: r.memory_mib });
+  for (const m of low) row(m.id, m.node).low = m;
+  for (const r of reload) row(r.id, r.node).reload = r;
+  const rows = Object.values(byNode).sort((a, b) => (a.role === 'host' ? -1 : 0) - (b.role === 'host' ? -1 : 0));
+  if (!rows.length) {
+    return h('div.cs', h('div', { style: 'font-weight:700;margin-bottom:4px' }, 'Nodes'),
+      h('span.mut', 'Roles, lowest available memory and reload from cache: not recorded for this run.'));
+  }
+  const memCell = v => (v != null ? mib(v) : notRecorded());
+  return h('div.cs', h('div', { style: 'font-weight:700;margin-bottom:8px' }, 'Nodes'),
+    table({
+      minWidth: 760, rows, key: r => r.key,
+      columns: [
+        { label: 'Node', render: r => h('span.node', r.node) },
+        { label: 'Role', cls: 'tight', title: 'The host runs llama-server; a worker runs rpc-server with a share of the model', render: r => (r.role ? ROLE_WORD[r.role] || r.role : h('span.mut', DASH)) },
+        { label: 'Model share', cls: 'r', render: r => (r.share != null ? mib(r.share) : h('span.mut', DASH)) },
+        { label: 'Lowest available, load', cls: 'r', title: 'The lowest available memory while the model was loading, sampled about twice a second', render: r => (r.low ? memCell(r.low.load_mib) : notRecorded()) },
+        { label: 'Lowest available, step', cls: 'r', title: 'The lowest available memory during the whole benchmark', render: r => (r.low ? memCell(r.low.step_mib) : notRecorded()) },
+        { label: 'Reload from cache', title: RELOAD_TIP, render: r => (r.reload ? h('span', { title: RELOAD_TIP }, reloadText(r.reload).replace('Reload from cache: ', '')) : h('span.mut', DASH)) },
+      ],
+    }));
 }
 
 const PH_STATE = { done: ['Done', 'use'], failed: ['Failed', 'fail'], cancelled: ['Cancelled', 'n'], skipped: ['Skipped', 'settle'], running: ['Running', 'load'] };
@@ -223,7 +261,7 @@ function stepCard(step) {
   return h('section', { class: 'card ' + (bad || (step.expect && !step.expect.pass) ? 'flag-err' : ''), key: 'step-' + step.idx },
     h('div.ch',
       h('h2', step.name || step.benchmark_id), passBadge(step), outcomeBadge(step.outcome), step.comparison && step.comparison.regression ? badge('Regression', 'aside') : null,
-      h('span.mono.mut', step.profile), step.node_count ? h('span.mut', plural(step.node_count, 'worker')) : null,
+      h('span.mono.mut', step.profile), stepRoles(step) ? h('span.mut', stepRoles(step)) : step.node_count ? h('span.mut', plural(step.node_count, 'worker')) : null,
       step.model_file ? h('span.mono.mut.right.wrap-any', { title: 'Model file' }, step.model_file) : null),
     step.reason || step.error ? h('div.cb', banner(step.outcome === 'refused' ? 'warn' : 'err',
       [step.outcome === 'refused' ? 'The scheduler refused it: ' : step.outcome === 'failed' ? 'It failed: ' : '', reasonNode(step.reason || step.error), step.http_status ? ` (HTTP ${step.http_status})` : ''])) : null,
@@ -231,7 +269,7 @@ function stepCard(step) {
       stat('Started', step.started_at ? at(step.started_at) : DASH),
       stat('Took', step.started_at && step.finished_at ? dur((step.finished_at - step.started_at) / 1000) : DASH),
       step.stats && step.stats.requests ? stat('Measured requests', num(step.stats.requests - (step.stats.failed || 0)), `of ${num(step.stats.requests)}`) : null),
-    checks(step), comparison(step),
+    checks(step), comparison(step), setupBlock(step),
     hasPhases ? ph.map(p => phaseBlock(step, p)) : [
       step.load ? h('div', h('div.day', h('b', { style: 'color:var(--text)' }, 'Load')), loadBlock(step.load)) : null,
       step.stats ? statsTable(step.stats) : null],

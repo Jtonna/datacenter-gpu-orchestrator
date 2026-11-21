@@ -149,3 +149,18 @@ func TestUIForcedFitCheckNamesTheAgentRefusal(t *testing.T) {
 		t.Fatal("views/settings.js: the forced_fit_check note does not say that agent machines are always checked")
 	}
 }
+
+// The page cache the agent reports (stats.memory.cached_bytes) is shown next to
+// the memory figures, and nothing is shown when an older agent does not send it.
+func TestUINodesShowTheFileCache(t *testing.T) {
+	view := uiText(t, "views/nodes.js")
+	for _, want := range []string{
+		`agent.stats && agent.stats.memory`,
+		`typeof m.cached_bytes === 'number'`,
+		`cachedMiB != null ? ['File cache'`,
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("views/nodes.js lacks %s", want)
+		}
+	}
+}

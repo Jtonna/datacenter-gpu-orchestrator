@@ -243,7 +243,9 @@ func (c *schedCore) evictable(in *inst, clock time.Duration) bool {
 }
 
 // claimBroken is step 5: a claimed node stopped being eligible (offline,
-// gone from the view, quarantined, or the view went stale).
+// gone from the view, quarantined, or the view went stale), or it takes no new
+// load any more (paused, held or unplaced after the claim was made): pause
+// wins over a claim, and the request is planned again.
 //
 // DESIGN: 7.1's eligibility includes "budget >= min_share", but a claimed
 // node held by a victim has almost no live budget until the victim exits,
@@ -254,7 +256,7 @@ func (c *schedCore) evictable(in *inst, clock time.Duration) bool {
 func (c *schedCore) claimBroken(e *entry) bool {
 	for _, id := range e.claim {
 		n, ok := c.node(id)
-		if !ok || !c.eligible(id) {
+		if !ok || !c.eligible(id) || c.noNewLoad(id) {
 			return true
 		}
 		if len(e.prof.AllowTiers) > 0 && !slices.Contains(e.prof.AllowTiers, n.Priority) {

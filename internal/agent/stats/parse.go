@@ -199,6 +199,7 @@ var (
 		"node_cpu_seconds_total":            true,
 		"node_memory_MemTotal_bytes":        true,
 		"node_memory_MemAvailable_bytes":    true,
+		"node_memory_Cached_bytes":          true,
 		"node_load1":                        true,
 		"node_load5":                        true,
 		"node_load15":                       true,

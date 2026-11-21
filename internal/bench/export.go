@@ -162,7 +162,8 @@ func ExportCSV(r *Run) (string, error) {
 	head := []string{"run_id", "suite", "idx", "group", "benchmark", "profile", "nodes", "state", "outcome", "http_status", "reason", "pass",
 		"load_s", "avg_mb_s", "memory_mib", "requests", "failed_requests",
 		"prefill_tps_mean", "prefill_tps_stdev", "decode_tps_mean", "decode_tps_median", "decode_tps_min", "decode_tps_max", "decode_tps_stdev",
-		"ttft_ms_mean", "baseline_run_id", "load_vs_baseline_pct", "decode_vs_baseline_pct", "regression", "model_file", "worker_nodes", "phases"}
+		"ttft_ms_mean", "baseline_run_id", "load_vs_baseline_pct", "decode_vs_baseline_pct", "regression", "model_file", "worker_nodes", "phases",
+		"load_mode", "host", "workers", "lowest_available_mib", "reload_from_cache"}
 	if err := w.Write(head); err != nil {
 		return "", err
 	}
@@ -212,6 +213,19 @@ func ExportCSV(r *Run) (string, error) {
 			ph = append(ph, p.Type+":"+p.State)
 		}
 		row = append(row, st.ModelFile, strconv.Itoa(st.NodeCount), strings.Join(ph, ";"))
+		low := ""
+		if v := LowestMiB(st); v != nil {
+			low = strconv.FormatInt(*v, 10)
+		}
+		var rl []string
+		for _, r := range st.Reload {
+			t := r.Node + ":" + r.Verdict
+			if r.CachedPct != nil {
+				t += fmt.Sprintf("(%.0f%%)", *r.CachedPct)
+			}
+			rl = append(rl, t)
+		}
+		row = append(row, StepLoadMode(st), StepHost(st), strings.Join(StepWorkers(st), ";"), low, strings.Join(rl, ";"))
 		if err := w.Write(row); err != nil {
 			return "", err
 		}

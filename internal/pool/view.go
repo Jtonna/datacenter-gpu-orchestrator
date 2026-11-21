@@ -203,7 +203,7 @@ func (p *Pool) nodeFromAgentLocked(cfg *config.Config, a *agent) (core.Node, boo
 	n := core.Node{ID: core.NodeID(a.reg.ID), Hostname: a.reg.Name, Online: !a.lost,
 		Addr:     net.JoinHostPort(a.reg.Addr, strconv.Itoa(p.o.WorkerPort)),
 		Priority: t.Priority, HeadroomMiB: t.HeadroomMiB, SharedMemory: t.SharedMemory, LinkMBs: t.LinkMBs, Settle: t.Settle,
-		Paused: p.admin[a.reg.ID].Paused, FreeUnknown: true,
+		Paused: p.admin[a.reg.ID].Paused, FreeUnknown: true, SystemMiB: int(a.reg.MemTotalMiB),
 		// The floor is the node's own when its agent reports it (CR-9).
 		WatchdogFloorMiB: int(nodeFloor(cfg, a))}
 	if a.hb == nil {

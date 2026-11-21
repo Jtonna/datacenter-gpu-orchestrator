@@ -166,6 +166,11 @@ DROP TABLE requests;
 ALTER TABLE requests_v2 RENAME TO requests;
 CREATE INDEX requests_step ON requests (step_id, seq);
 `},
+	{"lowest available memory, roles and reload from cache per step", `
+ALTER TABLE run_steps ADD COLUMN mem_low TEXT CHECK (mem_low IS NULL OR json_valid(mem_low));
+ALTER TABLE run_steps ADD COLUMN roles TEXT CHECK (roles IS NULL OR json_valid(roles));
+ALTER TABLE run_steps ADD COLUMN reload TEXT CHECK (reload IS NULL OR json_valid(reload));
+`},
 }
 
 type job struct {
@@ -747,9 +752,10 @@ func (s *Store) AddStep(st *Step) error {
 		return err
 	}
 	return s.write(func(tx *sql.Tx) error {
-		res, err := tx.Exec(`INSERT INTO run_steps (run_id, idx, grp, benchmark_id, name, profile, state, outcome, reason, http_status, log_file, started_at, finished_at, error, spec, plan, load, stats, expect, comparison, model_file, node_count)
-		  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, st.RunID, st.Idx, st.Group, st.BenchmarkID, st.Name, st.Profile, st.State, st.Outcome,
-			st.Reason, st.HTTPStatus, st.LogFile, st.StartedAt, st.FinishedAt, st.Error, vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], st.ModelFile, st.NodeCount)
+		res, err := tx.Exec(`INSERT INTO run_steps (run_id, idx, grp, benchmark_id, name, profile, state, outcome, reason, http_status, log_file, started_at, finished_at, error, spec, plan, load, stats, expect, comparison, model_file, node_count, mem_low, roles, reload)
+		  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, st.RunID, st.Idx, st.Group, st.BenchmarkID, st.Name, st.Profile, st.State, st.Outcome,
+			st.Reason, st.HTTPStatus, st.LogFile, st.StartedAt, st.FinishedAt, st.Error, vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], st.ModelFile, st.NodeCount,
+			vals[6], vals[7], vals[8])
 		if err != nil {
 			return err
 		}
@@ -758,9 +764,24 @@ func (s *Store) AddStep(st *Step) error {
 	})
 }
 
-func stepJSON(st *Step) ([6]any, error) {
-	var out [6]any
+func stepJSON(st *Step) ([9]any, error) {
+	var out [9]any
 	var err error
+	if len(st.MemLow) > 0 {
+		if out[6], err = nullJSON(st.MemLow); err != nil {
+			return out, err
+		}
+	}
+	if len(st.Roles) > 0 {
+		if out[7], err = nullJSON(st.Roles); err != nil {
+			return out, err
+		}
+	}
+	if len(st.Reload) > 0 {
+		if out[8], err = nullJSON(st.Reload); err != nil {
+			return out, err
+		}
+	}
 	if st.Spec != nil {
 		if out[0], err = nullJSON(st.Spec); err != nil {
 			return out, err
@@ -798,8 +819,8 @@ func (s *Store) UpdateStep(st *Step) error {
 	}
 	return s.write(func(tx *sql.Tx) error {
 		_, err := tx.Exec(`UPDATE run_steps SET grp=?, name=?, profile=?, state=?, outcome=?, reason=?, http_status=?, log_file=?, started_at=?, finished_at=?, error=?,
-		  spec=?, plan=?, load=?, stats=?, expect=?, comparison=?, model_file=?, node_count=? WHERE id=?`, st.Group, st.Name, st.Profile, st.State, st.Outcome, st.Reason, st.HTTPStatus,
-			st.LogFile, st.StartedAt, st.FinishedAt, st.Error, vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], st.ModelFile, st.NodeCount, st.ID)
+		  spec=?, plan=?, load=?, stats=?, expect=?, comparison=?, model_file=?, node_count=?, mem_low=?, roles=?, reload=? WHERE id=?`, st.Group, st.Name, st.Profile, st.State, st.Outcome, st.Reason, st.HTTPStatus,
+			st.LogFile, st.StartedAt, st.FinishedAt, st.Error, vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], st.ModelFile, st.NodeCount, vals[6], vals[7], vals[8], st.ID)
 		return err
 	})
 }
@@ -831,7 +852,7 @@ func (s *Store) steps(runID string) ([]Step, error) { return s.stepsOpt(runID, t
 // stepsOpt loads a run's steps with their phases, and their request rows when requests is set.
 func (s *Store) stepsOpt(runID string, requests bool) ([]Step, error) {
 	rows, err := s.db.Query(`SELECT id, run_id, idx, grp, benchmark_id, name, profile, state, outcome, reason, http_status, log_file, started_at, finished_at, error,
-	  spec, plan, load, stats, expect, comparison, model_file, node_count FROM run_steps WHERE run_id=? ORDER BY idx, id`, runID)
+	  spec, plan, load, stats, expect, comparison, model_file, node_count, mem_low, roles, reload FROM run_steps WHERE run_id=? ORDER BY idx, id`, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -839,11 +860,15 @@ func (s *Store) stepsOpt(runID string, requests bool) ([]Step, error) {
 	var out []Step
 	for rows.Next() {
 		var st Step
-		var spec, plan, load, stats, expect, cmp sql.NullString
+		var spec, plan, load, stats, expect, cmp, memLow, roles, reload sql.NullString
 		if err := rows.Scan(&st.ID, &st.RunID, &st.Idx, &st.Group, &st.BenchmarkID, &st.Name, &st.Profile, &st.State, &st.Outcome, &st.Reason,
-			&st.HTTPStatus, &st.LogFile, &st.StartedAt, &st.FinishedAt, &st.Error, &spec, &plan, &load, &stats, &expect, &cmp, &st.ModelFile, &st.NodeCount); err != nil {
+			&st.HTTPStatus, &st.LogFile, &st.StartedAt, &st.FinishedAt, &st.Error, &spec, &plan, &load, &stats, &expect, &cmp, &st.ModelFile, &st.NodeCount,
+			&memLow, &roles, &reload); err != nil {
 			return nil, err
 		}
+		unmarshalSlice(memLow, &st.MemLow)
+		unmarshalSlice(roles, &st.Roles)
+		unmarshalSlice(reload, &st.Reload)
 		unmarshalNull(spec, &st.Spec)
 		if plan.Valid {
 			st.Plan = json.RawMessage(plan.String)
@@ -873,6 +898,18 @@ func (s *Store) stepsOpt(runID string, requests bool) ([]Step, error) {
 		out[i].Phases = phases
 	}
 	return out, nil
+}
+
+// unmarshalSlice reads a JSON array column; NULL (a row written before the
+// column existed) leaves the slice nil.
+func unmarshalSlice[T any](s sql.NullString, into *[]T) {
+	if !s.Valid {
+		return
+	}
+	var v []T
+	if err := json.Unmarshal([]byte(s.String), &v); err == nil {
+		*into = v
+	}
 }
 
 func unmarshalNull[T any](s sql.NullString, into **T) {
@@ -984,7 +1021,7 @@ func (s *Store) phases(stepID int64) ([]PhaseResult, error) {
 // ---- trends ----
 
 // TrendMetrics are the metrics /api/bench/trends accepts.
-var TrendMetrics = []string{"load_s", "load_mb_s", "memory_mib", "decode_tps", "prefill_tps", "ttft_ms", "unload_s", "concurrent_wall_s"}
+var TrendMetrics = []string{"load_s", "load_mb_s", "memory_mib", "decode_tps", "prefill_tps", "ttft_ms", "unload_s", "concurrent_wall_s", "lowest_available_mib"}
 
 // Trend returns up to limit points of a metric for a benchmark over past
 // runs, oldest first (the newest limit points).
@@ -1007,6 +1044,8 @@ func (s *Store) Trend(benchmark, metric string, limit int) ([]TrendPoint, error)
 		expr = `(SELECT json_extract(p.result,'$.unload.unload_s') FROM run_phases p WHERE p.step_id=s.id AND p.type='unload' AND p.state='done' ORDER BY p.idx LIMIT 1)`
 	case "concurrent_wall_s":
 		expr = `(SELECT json_extract(p.result,'$.concurrent.wall_ms')/1000.0 FROM run_phases p WHERE p.step_id=s.id AND p.type='concurrent_requests' AND p.state='done' ORDER BY p.idx LIMIT 1)`
+	case "lowest_available_mib": // the lowest node of the step; NULL for a step stored before
+		expr = `(SELECT MIN(json_extract(m.value,'$.step_mib')) FROM json_each(s.mem_low) m)`
 	default:
 		return nil, fmt.Errorf("metric must be one of %s", strings.Join(TrendMetrics, ", "))
 	}

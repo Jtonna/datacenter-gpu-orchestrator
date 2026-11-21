@@ -75,6 +75,9 @@ type CPU struct {
 type Memory struct {
 	TotalBytes     int64 `json:"total_bytes"`
 	AvailableBytes int64 `json:"available_bytes"`
+	// CachedBytes is the page cache (Cached in /proc/meminfo). Optional and
+	// additive: an older agent does not send it.
+	CachedBytes *int64 `json:"cached_bytes,omitempty"`
 }
 
 // Load is stats.load (4.4).
