@@ -10,7 +10,7 @@ import { href } from '../../core/router.js';
 import { badge, nodeChips, stat, bar, memoryRow, progress, steps, banner, more } from '../../core/ui.js';
 import { num, gb, gbNum, mib, bytes, tps, dur, ago, until, plural, clock, toMs, now, DASH } from '../../core/format.js';
 import { avatar } from '../../core/avatar.js';
-import { nodeName, nodeByAddr, instanceNodeNames, nodeMemory, instanceBadge, healthBadge, findNode, drift, machines, shortReason, plainReason } from '../../core/status.js';
+import { nodeName, nodeByAddr, instanceNodeNames, nodeMemory, instanceBadge, healthBadge, machineBadge, findNode, drift, machines, shortReason, plainReason } from '../../core/status.js';
 
 // ---- phrases about a catalog model ----
 
@@ -139,7 +139,7 @@ function readyCard(st, inst, model, open, toggle) {
       host > 0 ? stat('Host RAM', gbNum(host), 'GB', { title: mib(host) + ' on the machine that runs the scheduler' }) : null),
     (inst.nodes || []).map(n => {
       const name = nodeName(st, n.id), mem = nodeMemory(n);
-      const hb = healthBadge(findNode(st, n.id));
+      const hb = healthBadge(findNode(st, n.id)) || machineBadge(st, findNode(st, n.id));
       if (!mem.total_mib) {
         return h('div.nr', { key: 'mem-' + name }, h('span.mono', name, hb ? [' ', hb] : null), bar([], 1, 'No memory report'),
           h('span.mono.fig.mut', n.budget_mib ? `– / ${gb(n.budget_mib)}` : DASH), h('span.mut.split', 'No memory was reported for this node'));
@@ -193,7 +193,7 @@ function loadingCard(st, inst, model, open, toggle) {
       const node = nodeByAddr(st, w.addr);
       const name = node ? node.hostname || node.id : w.addr;
       const [label, kind] = WORKER[w.state] || [w.state, 'n'];
-      const hb = healthBadge(node);
+      const hb = healthBadge(node) || machineBadge(st, node);
       return h('div.nr', { key: 'w-' + w.addr },
         h('span.mono', name),
         bar([{ cls: w.state === 'done' ? 'm' : 'a', value: w.bytes_sent || 0 }], w.bytes_total, `${name}: ${label}`),

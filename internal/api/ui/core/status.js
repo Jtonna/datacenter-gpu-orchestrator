@@ -4,6 +4,7 @@
 import { h } from './dom.js';
 import { badge } from './ui.js';
 import { state } from './store.js';
+import { agentOf, notPlaceable } from './nodeactions.js';
 
 export const viewNodes = st => (st && st.view && st.view.nodes) || [];
 
@@ -55,6 +56,16 @@ export function healthBadge(node) {
   return null;
 }
 
+// machineBadge(st, node) -> in agents mode, a badge for a machine that takes
+// no new model: "Paused", or "Not placeable" with the reason on hover. Null
+// for a machine that may take one, and always null in fleet-feed mode.
+export function machineBadge(st, node) {
+  const np = notPlaceable(node, agentOf(st, node));
+  if (!np) return null;
+  if (np.paused && np.code === 'paused') return badge('Paused', 'settle', np.text);
+  return badge(np.paused ? 'Paused · not placeable' : 'Not placeable', 'aside', np.known ? np.text : 'The scheduler gives this reason: ' + np.code);
+}
+
 // drift() is how many seconds passed since the newest status arrived, for
 // counters that should keep moving between two status messages (at most 5 s,
 // and 0 while disconnected so stale data does not pretend to be live).
@@ -71,3 +82,5 @@ export function staleBanner() { return null; }
 
 // The reason strings in plain words live in reasons.js (no DOM, testable).
 export { plainReason, shortReason, explain, plainBasis, refusalWord } from './reasons.js';
+// Agent machines: the reason words and the two operator actions (no DOM).
+export { agentsMode, agentOf, notPlaceable, unplacedReason } from './nodeactions.js';

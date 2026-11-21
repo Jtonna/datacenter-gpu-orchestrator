@@ -172,6 +172,14 @@ func main() {
 			h.c.root.ServeHTTP(w, r)
 		}
 	})
+	// DEV-ONLY: the operator actions on a machine in the scripted agents scenario.
+	for _, a := range []string{"pause", "unpause", "force-unload"} {
+		mux.HandleFunc("POST /api/nodes/{id}/"+a, func(w http.ResponseWriter, r *http.Request) {
+			if !h.st.handleNodeAction(w, r, a) {
+				h.c.root.ServeHTTP(w, r)
+			}
+		})
+	}
 	// GET /api/models and the models topic of /ws are the real server's: its
 	// catalog is joined from the scenario (catalogSource, models_front.go).
 	mux.HandleFunc("POST /api/plan", func(w http.ResponseWriter, r *http.Request) {

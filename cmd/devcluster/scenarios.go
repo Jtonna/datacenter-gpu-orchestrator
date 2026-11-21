@@ -41,7 +41,10 @@ type scenario struct {
 	Description string
 	StartupOnly bool // selectable only with --scenario at startup
 	Status      func(now time.Time, t time.Duration) *statusBuilder
-	Bench       *frozenSpec
+	// Decorate, when set, changes the scripted status document after it was
+	// built (facts the scheduler.Status struct does not carry: agents_scenario.go).
+	Decorate func(v map[string]any)
+	Bench    *frozenSpec
 	// Real marks a scenario that replays the recording of a real scheduler
 	// (real.go); Raw is its status document.
 	Real bool

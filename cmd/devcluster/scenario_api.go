@@ -84,7 +84,11 @@ func (s *scenarioState) statusSource(ctx context.Context) (any, error) {
 		return sc.Raw()
 	}
 	if b := s.scripted(); b != nil {
-		return s.decorate(b.finish()), nil
+		v := b.finish()
+		if sc, _ := s.get(); sc.Decorate != nil {
+			sc.Decorate(v)
+		}
+		return s.decorate(v), nil
 	}
 	v, err := s.realGet(ctx, "/api/status")
 	return s.decorate(v), err

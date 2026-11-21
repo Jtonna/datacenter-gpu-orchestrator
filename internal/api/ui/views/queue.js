@@ -14,7 +14,7 @@ import { state, listen } from '../core/store.js';
 import * as api from '../core/api.js';
 import { liveView, pageHead, badge, nodeChip, nodeChips, bar, table, empty, skeleton } from '../core/ui.js';
 import { num, dur, ago, at, until, plural, toMs, now, clock, parseGoDuration } from '../core/format.js';
-import { viewNodes, nodeName, drift, staleBanner, plainReason, refusalWord } from '../core/status.js';
+import { viewNodes, nodeName, drift, staleBanner, plainReason, refusalWord, agentOf, notPlaceable } from '../core/status.js';
 
 const sentence = s => { s = String(s || '').trim().replace(/^placer:\s*/i, ''); if (!s) return ''; s = s.charAt(0).toUpperCase() + s.slice(1); return /[.!?]$/.test(s) ? s : s + '.'; };
 
@@ -45,6 +45,12 @@ function nodeFacts(st, entry) {
     else if (q) rows.push(['x', [chip, ' is set aside until ', at(q.until), ' after a failed check'], badge(dur(Math.max(0, (toMs(q.until) - now()) / 1000)), 'aside')]);
     else if (n.settling) rows.push(['s', [chip, ' is settling after an unload', n.settle_until ? [' until ', at(n.settle_until)] : null], n.settle_until ? badge(dur(Math.max(0, (toMs(n.settle_until) - now()) / 1000)), 'settle') : null]);
     else if (!holder && n.claimed_by && n.claimed_by !== entry.profile) rows.push(['l', [chip, ' is claimed for ', h('span.mono', n.claimed_by)], null]);
+    else if (!holder) {
+      // agents mode: a free machine that takes no new model (paused by an operator, or the reason the scheduler gives)
+      const np = notPlaceable(n, agentOf(st, n));
+      if (np && np.code === 'paused') rows.push(['s', [chip, ' is paused by an operator and takes no new model'], badge('Paused', 'settle')]);
+      else if (np) rows.push(['a', [chip, ' takes no new model. ', np.known ? np.text : ['The scheduler gives this reason: ', h('span.mono', np.code)]], null]);
+    }
   }
   return rows;
 }
