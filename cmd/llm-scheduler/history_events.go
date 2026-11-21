@@ -38,5 +38,6 @@ func safetySummary(cfg *config.Config) map[string]any {
 		"worker_probe_interval_s": d.WorkerProbeInterval.Seconds(),
 		"recovery_enabled":        cfg.Recovery.Enabled, "recovery_actions": cfg.Recovery.Actions,
 		"exclude_nodes": len(cfg.ExcludeNodes),
+		"no_auto_nodes": len(cfg.NoAutoNodes),
 	}
 }

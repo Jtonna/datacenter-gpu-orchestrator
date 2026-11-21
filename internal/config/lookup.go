@@ -151,7 +151,22 @@ func (c *Config) Excluded(id core.NodeID, hostname string) bool {
 
 // ExcludedBy is Excluded that also returns the matching entry.
 func (c *Config) ExcludedBy(id core.NodeID, hostname string) (string, bool) {
-	for _, e := range c.ExcludeNodes {
+	return matchNodeList(c.ExcludeNodes, id, hostname)
+}
+
+// NoAuto reports whether automatic placement must never pick the node
+// (no_auto_nodes, CR-9 review): the matching of Excluded. A forced profile may
+// still use the node; an excluded node stays excluded.
+func (c *Config) NoAuto(id core.NodeID, hostname string) bool {
+	_, ok := matchNodeList(c.NoAutoNodes, id, hostname)
+	return ok
+}
+
+// matchNodeList is the matching of exclude_nodes and no_auto_nodes: an entry
+// equals the node id (case-insensitive) or matches the hostname as a glob
+// (case-insensitive). A hostname of "" matches no glob.
+func matchNodeList(list []string, id core.NodeID, hostname string) (string, bool) {
+	for _, e := range list {
 		if strings.EqualFold(e, string(id)) {
 			return e, true
 		}

@@ -40,13 +40,18 @@ func (c *Config) validate(raw map[string]*ProfileSpec, exists func(string) bool)
 	c.validateBench(add)
 	c.validateLogs(add)
 	c.validateTiers(add)
-	for i, e := range c.ExcludeNodes {
-		switch {
-		case e == "":
-			add("exclude_nodes[%d]: entry must not be empty", i)
-		default:
-			if _, err := path.Match(e, ""); err != nil {
-				add("exclude_nodes[%d]: invalid glob %q", i, e)
+	for _, l := range []struct {
+		key  string
+		list []string
+	}{{"exclude_nodes", c.ExcludeNodes}, {"no_auto_nodes", c.NoAutoNodes}} {
+		for i, e := range l.list {
+			switch {
+			case e == "":
+				add("%s[%d]: entry must not be empty", l.key, i)
+			default:
+				if _, err := path.Match(e, ""); err != nil {
+					add("%s[%d]: invalid glob %q", l.key, i, e)
+				}
 			}
 		}
 	}

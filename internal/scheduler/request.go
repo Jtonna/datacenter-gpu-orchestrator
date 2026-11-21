@@ -125,10 +125,22 @@ func (c *schedCore) excludedNote(p *core.Profile) string {
 		}
 		names = append(names, nodeLabel(id, n))
 	}
-	if len(names) == 0 {
-		return ""
+	out := ""
+	if len(names) > 0 {
+		out = "; nodes excluded by config and not counted: " + strings.Join(names, ", ")
 	}
-	return "; nodes excluded by config and not counted: " + strings.Join(names, ", ")
+	var noAuto []string
+	for _, id := range c.sortedNodeIDs() {
+		n, ok := c.node(id)
+		if !ok || c.excluded(n) || !c.autoOff(p, n) || !(n.Local || n.Online) || (localOnly(p) && !n.Local) {
+			continue
+		}
+		noAuto = append(noAuto, nodeLabel(id, n))
+	}
+	if len(noAuto) > 0 {
+		out += "; nodes in no_auto_nodes (used only by profiles that force them) and not counted: " + strings.Join(noAuto, ", ")
+	}
+	return out
 }
 
 // capacity is the fail-fast check of design 7.2: the need against the plan
@@ -147,7 +159,7 @@ func (c *schedCore) capacity(profile string) error {
 	var cands []placer.Candidate
 	for _, id := range c.sortedNodeIDs() {
 		n, ok := c.node(id)
-		if !ok || !c.reachable(n) || (localOnly(p) && !n.Local) {
+		if !ok || !c.reachable(n) || (localOnly(p) && !n.Local) || c.autoOff(p, n) {
 			continue
 		}
 		cands = append(cands, placer.FromNode(n, c.planBudget(id, n)))

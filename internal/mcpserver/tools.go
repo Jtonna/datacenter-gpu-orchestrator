@@ -216,7 +216,7 @@ func (t *tool) build(args map[string]any) (restReq, error) {
 
 const (
 	cfgNote = " Configuration changes are audited and can be rolled back with rollback_config."
-	valNote = "The new value of the whole section, in the shape get_config shows for it (tiers: a list; exclude_nodes: a list of node ids; node_overrides: an object of node id to override; recovery and fleet: an object). Sent as the request body."
+	valNote = "The new value of the whole section, in the shape get_config shows for it (tiers: a list; exclude_nodes and no_auto_nodes: a list of node ids or hostname globs; node_overrides: an object of node id to override; recovery and fleet: an object). Sent as the request body."
 )
 
 func rd(name, desc string, props P, req []string, method, path string, query ...string) *tool {
@@ -250,14 +250,14 @@ func allTools() []*tool {
 		rd("get_history_summary", "Aggregate the event history over a time range: counts by type and severity, load statistics per profile, per-node incidents and every error event.", P{
 			"since": i("Range start, unix milliseconds."), "until": i("Range end, unix milliseconds.")}, nil, "GET", "/api/history/summary", "since", "until"),
 		rd("get_system_info", "Scheduler version, uptime, listen address, safety settings, benchmark settings and storage locations with sizes.", nil, nil, "GET", "/api/system"),
-		rd("get_config", "The full current configuration (profiles, tiers, settings, exclude_nodes, node_overrides, recovery, fleet) with its revision number.", nil, nil, "GET", "/api/config"),
+		rd("get_config", "The full current configuration (profiles, tiers, settings, exclude_nodes, no_auto_nodes, node_overrides, recovery, fleet) with its revision number.", nil, nil, "GET", "/api/config"),
 		rd("get_config_schema", "The schema of the settings: {\"fields\":[...]} with each key, type, default, limits and whether a change needs a restart. Read it before update_settings.", nil, nil, "GET", "/api/config/schema"),
 		rd("list_config_revisions", "List the saved configuration revisions, newest first, with time, source, actor and comment, and the current revision.", P{"limit": i("Maximum revisions.")}, nil, "GET", "/api/config/revisions", "limit"),
 		rd("get_config_revision", "Get one saved configuration revision by number.", P{"revision": i("Revision number.")}, []string{"revision"}, "GET", "/api/config/revisions/{revision}"),
 		rd("query_audit", "Search the audit log of configuration and control changes (who changed what, through REST or MCP).", P{
 			"since": s("Start time, unix milliseconds or RFC 3339."), "until": s("End time, unix milliseconds or RFC 3339."),
 			"source": en("Where the change came from: ui (the web page), rest, mcp, import (import-config or /api/config/import) or system (the scheduler itself, for example a benchmark run's loads).", "ui", "rest", "mcp", "import", "system"),
-			"actor":  s("Who made it (the MCP client name, or the X-Actor of a REST call)."), "section": s("A configuration section (profiles, tiers, settings, exclude_nodes, node_overrides, recovery, fleet), bench (benchmarks, suites, runs) or runtime (load and unload)."),
+			"actor":  s("Who made it (the MCP client name, or the X-Actor of a REST call)."), "section": s("A configuration section (profiles, tiers, settings, exclude_nodes, no_auto_nodes, node_overrides, recovery, fleet), bench (benchmarks, suites, runs) or runtime (load and unload)."),
 			"target": s("The item changed, for example a profile id, benchmark:<id>, suite:<id> or run:<id>."), "action": s("create, update, delete, rollback, import, load, unload, run_start or run_cancel."),
 			"q": s("Free-text search."), "limit": i("Maximum entries (newest first by default)."), "order": en("Sort order.", "desc", "asc")},
 			nil, "GET", "/api/audit", "since", "until", "source", "actor", "section", "target", "action", "q", "limit", "order"),
@@ -300,6 +300,8 @@ func allTools() []*tool {
 			Props: P{"value": anyv(valNote)}, Required: []string{"value"}, Destructive: true, Idempotent: true, Method: "PUT", Path: "/api/config/tiers", BodyArg: "value"},
 		{Name: "set_exclude_nodes", Desc: "Replace the list of nodes kept out of the pool." + cfgNote,
 			Props: P{"value": anyv(valNote)}, Required: []string{"value"}, Destructive: true, Idempotent: true, Method: "PUT", Path: "/api/config/exclude-nodes", BodyArg: "value"},
+		{Name: "set_no_auto_nodes", Desc: "Replace the list of nodes that automatic placement never picks. A profile that names such a node in force_nodes can still use it; exclude_nodes still wins." + cfgNote,
+			Props: P{"value": anyv(valNote)}, Required: []string{"value"}, Destructive: true, Idempotent: true, Method: "PUT", Path: "/api/config/no-auto-nodes", BodyArg: "value"},
 		{Name: "set_node_overrides", Desc: "Replace the per-node overrides (address, port and similar for nodes the fleet reports incompletely)." + cfgNote,
 			Props: P{"value": anyv(valNote)}, Required: []string{"value"}, Destructive: true, Idempotent: true, Method: "PUT", Path: "/api/config/node-overrides", BodyArg: "value"},
 		{Name: "set_recovery_settings", Desc: "Replace the worker-health and recovery-request settings." + cfgNote,

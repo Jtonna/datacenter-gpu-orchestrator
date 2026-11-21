@@ -195,6 +195,7 @@ function tile(st, n, refresh) {
       h('h2.mono', name), np && label === 'Free' ? null : badge(label, kind),
       np && np.paused ? badge('Paused', 'settle', 'Paused by an operator: it takes no new model') : null,
       np && np.code !== 'paused' ? badge('Not placeable', 'aside', np.known ? np.short : np.code) : null,
+      n.auto === false && !n.excluded ? badge('Forced only', 'line', 'In no_auto_nodes: only a profile that names this node in force_nodes puts a model here') : null,
       n.local ? badge('This machine', 'n', 'The scheduler runs here: models are read from disk, nothing is uploaded') : null),
     h('div.body',
       h('div.on-it', onIt),

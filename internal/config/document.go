@@ -32,6 +32,7 @@ type Document struct {
 	Tiers         []TierSpec                  `json:"tiers"`
 	Profiles      map[string]*ProfileSpec     `json:"profiles"`
 	ExcludeNodes  []string                    `json:"exclude_nodes"`
+	NoAutoNodes   []string                    `json:"no_auto_nodes"`
 	NodeOverrides map[string]NodeOverrideSpec `json:"node_overrides"`
 	Recovery      map[string]any              `json:"recovery"`
 	Fleet         map[string]any              `json:"fleet"`
@@ -40,7 +41,7 @@ type Document struct {
 // NewDocument is an empty configuration: the defaults, no profiles, no tiers.
 func NewDocument() *Document {
 	return &Document{Settings: map[string]any{}, Tiers: []TierSpec{}, Profiles: map[string]*ProfileSpec{},
-		ExcludeNodes: []string{}, NodeOverrides: map[string]NodeOverrideSpec{}, Recovery: map[string]any{}, Fleet: map[string]any{}}
+		ExcludeNodes: []string{}, NoAutoNodes: []string{}, NodeOverrides: map[string]NodeOverrideSpec{}, Recovery: map[string]any{}, Fleet: map[string]any{}}
 }
 
 // Normalize replaces nil collections with empty ones (stable JSON).
@@ -56,6 +57,9 @@ func (d *Document) Normalize() {
 	}
 	if d.ExcludeNodes == nil {
 		d.ExcludeNodes = []string{}
+	}
+	if d.NoAutoNodes == nil {
+		d.NoAutoNodes = []string{}
 	}
 	if d.NodeOverrides == nil {
 		d.NodeOverrides = map[string]NodeOverrideSpec{}
@@ -155,6 +159,7 @@ func Build(doc *Document, b Bootstrap, o Options) (*Config, error) {
 		c.NodeOverrides[k] = NodeOverride{RPC: v.RPC}
 	}
 	c.ExcludeNodes = trimAll(doc.ExcludeNodes)
+	c.NoAutoNodes = trimAll(doc.NoAutoNodes)
 	c.Recovery.Actions = trimAll(c.Recovery.Actions)
 	raws := map[string]*ProfileSpec{}
 	for name, rp := range doc.Profiles {
@@ -233,6 +238,7 @@ func ParseYAMLImport(data []byte, b Bootstrap, o Options) (*Import, error) {
 		doc.NodeOverrides[k] = v
 	}
 	doc.ExcludeNodes = append(doc.ExcludeNodes, trimAll(raw.ExcludeNodes)...)
+	doc.NoAutoNodes = append(doc.NoAutoNodes, trimAll(raw.NoAutoNodes)...)
 	for k, v := range rawProfiles {
 		doc.Profiles[k] = v
 	}

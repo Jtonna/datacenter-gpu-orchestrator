@@ -39,6 +39,8 @@ func (s *Server) configRoutes(m *http.ServeMux) {
 	m.HandleFunc("PATCH /api/config/settings", s.cfgPatch(func(sv *cfgsvc.Service) patchFn { return sv.PatchSettings }))
 	m.HandleFunc("GET /api/config/exclude-nodes", s.cfgSectionGet("exclude_nodes"))
 	m.HandleFunc("PUT /api/config/exclude-nodes", s.cfgExcludePut)
+	m.HandleFunc("GET /api/config/no-auto-nodes", s.cfgSectionGet("no_auto_nodes"))
+	m.HandleFunc("PUT /api/config/no-auto-nodes", s.cfgNoAutoPut)
 	m.HandleFunc("GET /api/config/node-overrides", s.cfgSectionGet("node_overrides"))
 	m.HandleFunc("PUT /api/config/node-overrides", s.cfgOverridesPut)
 	m.HandleFunc("GET /api/config/recovery", s.cfgSectionGet("recovery"))
@@ -183,6 +185,8 @@ func (s *Server) cfgSectionGet(section string) http.HandlerFunc {
 			out["settings"], out["settings_set"] = v.Settings, v.SettingsSet
 		case "exclude_nodes":
 			out["exclude_nodes"] = v.ExcludeNodes
+		case "no_auto_nodes":
+			out["no_auto_nodes"] = v.NoAutoNodes
 		case "node_overrides":
 			out["node_overrides"] = v.NodeOverrides
 		case "recovery":
@@ -376,6 +380,30 @@ func (s *Server) cfgExcludePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := sv.SetExcludeNodes(r.Context(), o, list)
+	if err != nil {
+		s.cfgErr(w, err)
+		return
+	}
+	s.respondWrite(w, http.StatusOK, res, nil)
+}
+
+// cfgNoAutoPut is PUT /api/config/no-auto-nodes (CR-9 review): nodes that
+// automatic placement never picks; a forced profile may still use them.
+func (s *Server) cfgNoAutoPut(w http.ResponseWriter, r *http.Request) {
+	sv := s.svc(w)
+	if sv == nil {
+		return
+	}
+	var list []string
+	comment, ok := listBody(w, r, "no_auto_nodes", &list)
+	if !ok {
+		return
+	}
+	o, ok := s.writeOpts(w, r, comment)
+	if !ok {
+		return
+	}
+	res, err := sv.SetNoAutoNodes(r.Context(), o, list)
 	if err != nil {
 		s.cfgErr(w, err)
 		return

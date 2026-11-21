@@ -670,6 +670,7 @@ CR-5, accepted 2026-11-20. They are part of the contract. Each line says what Po
 
 **Known limits.**
 
+- **Nodes for forced profiles only** (CR-9 review). Potluck's `no_auto_nodes` list keeps a node out of automatic placement; only a profile that names it in `force_nodes` uses it, and the forced-fit refusal of section 11.2 item 1 applies as for any forced node. It is Potluck configuration only: nothing on the wire changes and the agent does not know about it.
 - **The lease is enforced by the agent.** While the agent process is dead, nothing ends its launch: the worker runs on until the agent is back and finds the lease run out (section 6.4).
 - **`worker_model_dir` is one setting for the whole pool.** While it is on, a node whose model source is `push` is not placeable (`model_source_unreachable`). A choice per worker is planned (CR-7).
 - **Potluck in a container on a pool machine.** The machine's own firewall must let the container network reach the agent and worker ports (section 9, `--allow-from`).

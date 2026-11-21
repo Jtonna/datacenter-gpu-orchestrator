@@ -42,6 +42,11 @@ type Config struct {
 	// ExcludeNodes lists nodes that are never used: each entry is a node id or a
 	// hostname glob (case-insensitive). See Excluded.
 	ExcludeNodes []string
+	// NoAutoNodes lists nodes that automatic placement never picks (CR-9
+	// review): same entries and matching as ExcludeNodes. A profile that names
+	// such a node in force_nodes may still use it. ExcludeNodes wins over
+	// both. See NoAuto.
+	NoAutoNodes []string
 	// Recovery is the optional recovery-request feature (design 8.4b).
 	Recovery Recovery
 	Profiles map[string]*core.Profile

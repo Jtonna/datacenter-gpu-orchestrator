@@ -495,6 +495,16 @@ func (c *schedCore) planBudget(id core.NodeID, n core.Node) int {
 // capacity checks or plans, and never pre-flighted.
 func (c *schedCore) excluded(n core.Node) bool { return c.cfg.Excluded(n.ID, n.Hostname) }
 
+// noAuto: no_auto_nodes keeps automatic placement off the node (CR-9 review).
+// It stays eligible; only a profile that names it in force_nodes uses it.
+func (c *schedCore) noAuto(n core.Node) bool { return c.cfg.NoAuto(n.ID, n.Hostname) }
+
+// autoOff: profile p is placed automatically (no force_nodes) and n is in
+// no_auto_nodes, so p may neither be placed on n nor evict what runs there.
+func (c *schedCore) autoOff(p *core.Profile, n core.Node) bool {
+	return len(p.ForceNodes) == 0 && c.noAuto(n)
+}
+
 // reachable: the local node, or online in a fresh view with an address.
 func (c *schedCore) reachable(n core.Node) bool {
 	if c.excluded(n) || c.unplaced[n.ID] == UnplacedNoTierMatch || c.unplaced[n.ID] == UnplacedBadFloor {
@@ -545,7 +555,7 @@ func (c *schedCore) freeCandidates(p *core.Profile) []placer.Candidate {
 	var out []placer.Candidate
 	for _, id := range c.sortedNodeIDs() {
 		n, ok := c.node(id)
-		if !ok || !c.isFree(id) || (localOnly(p) && !n.Local) {
+		if !ok || !c.isFree(id) || (localOnly(p) && !n.Local) || c.autoOff(p, n) {
 			continue
 		}
 		out = append(out, placer.FromNode(n, c.liveBudget(id, n)))

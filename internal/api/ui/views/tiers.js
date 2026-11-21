@@ -1,12 +1,12 @@
 // Tiers and nodes (Configure): the ordered tier list (first match wins), which
-// tier each known node matches right now, the excluded nodes and the node
-// overrides. Edits collect in the pending bar; Review changes does a dry run
+// tier each known node matches right now, the excluded nodes, the forced-only
+// nodes (no_auto_nodes) and the node overrides. Edits collect in the pending bar; Review changes does a dry run
 // and saves with If-Match and a comment.
 //
 // Reads: REST GET /api/config, GET /api/config/schema (scope "tier");
 // WebSocket "status" (view.nodes: hostname, priority, eligible, excluded,
-// online) and "config". Writes: PUT /api/config/tiers, /api/config/exclude-nodes,
-// /api/config/node-overrides (whole lists, only the ones that changed).
+// auto, online) and "config". Writes: PUT /api/config/tiers, /api/config/exclude-nodes,
+// /api/config/no-auto-nodes, /api/config/node-overrides (whole lists, only the ones that changed).
 // Route: #/tiers.
 
 import { h } from '../core/dom.js';
@@ -18,7 +18,7 @@ import { viewNodes } from '../core/status.js';
 import { loadSchema, loadConfig, fieldsOf, clone, same } from '../core/configdata.js';
 import { pendingBar, reviewChanges, savedBanner, watchConfig, noticeBanner } from '../core/changes.js';
 
-// Unsaved edits survive a visit to another screen: {tiers, exclude, overrides} or null.
+// Unsaved edits survive a visit to another screen: {tiers, exclude, noauto, overrides} or null.
 let draft = null;
 
 const ORDINAL = ['1st', '2nd', '3rd'];
@@ -118,24 +118,28 @@ function overrideDialog(nodes, initial) {
 registerView({
   id: 'tiers', title: 'Tiers and nodes',
   mount(el) {
-    let cfg = null, fields = null, error = '', saved = null, alive = true, addText = '', addErr = '';
+    let cfg = null, fields = null, error = '', saved = null, alive = true;
+    const addText = { exclude: '', noauto: '' }, addErr = { exclude: '', noauto: '' };
 
     const rev = () => (cfg ? cfg.revision : 0);
-    const savedState = () => ({ tiers: clone(cfg.tiers || []), exclude: clone(cfg.exclude_nodes || []), overrides: clone(cfg.node_overrides || {}) });
+    const savedState = () => ({ tiers: clone(cfg.tiers || []), exclude: clone(cfg.exclude_nodes || []), noauto: clone(cfg.no_auto_nodes || []), overrides: clone(cfg.node_overrides || {}) });
     const work = () => draft || savedState();
     const edit = fn => { if (!draft) draft = savedState(); fn(draft); if (!dirtyAny()) draft = null; saved = null; view.refresh(); };
     const dirtyTiers = () => !!draft && !same(draft.tiers, cfg.tiers || []);
     const dirtyExclude = () => !!draft && !same(draft.exclude, cfg.exclude_nodes || []);
+    const dirtyNoAuto = () => !!draft && !same(draft.noauto, cfg.no_auto_nodes || []);
     const dirtyOverrides = () => !!draft && !same(draft.overrides, cfg.node_overrides || {});
-    const dirtyAny = () => dirtyTiers() || dirtyExclude() || dirtyOverrides();
+    const dirtyAny = () => dirtyTiers() || dirtyExclude() || dirtyNoAuto() || dirtyOverrides();
     const pendingCount = () => {
       if (!cfg || !draft) return 0;
       const e0 = new Set(cfg.exclude_nodes || []), e1 = new Set(draft.exclude);
       const exN = [...e1].filter(x => !e0.has(x)).length + [...e0].filter(x => !e1.has(x)).length;
+      const n0 = new Set(cfg.no_auto_nodes || []), n1 = new Set(draft.noauto);
+      const naN = [...n1].filter(x => !n0.has(x)).length + [...n0].filter(x => !n1.has(x)).length;
       const o0 = cfg.node_overrides || {}, o1 = draft.overrides;
       const ovN = new Set([...Object.keys(o0), ...Object.keys(o1)]);
       let ov = 0; for (const k of ovN) if (!same(o0[k], o1[k])) ov++;
-      return (dirtyTiers() ? 1 : 0) + exN + ov;
+      return (dirtyTiers() ? 1 : 0) + exN + naN + ov;
     };
 
     async function load() {
@@ -154,6 +158,7 @@ registerView({
         summary: h('div.col', { style: 'gap:4px' }, h('span.mut', 'The tier list would be, in the order it is checked:'),
           draft.tiers.map((t, i) => h('span', h('span.mono', (i + 1) + '. '), ruleSentence(t), h('span.mut', ' · priority ' + (t.priority ?? DASH))))) });
       if (dirtyExclude()) ops.push({ label: 'Excluded nodes', method: 'PUT', path: '/api/config/exclude-nodes', body: { exclude_nodes: draft.exclude }, count: Math.max(1, Math.abs(draft.exclude.length - (cfg.exclude_nodes || []).length)) });
+      if (dirtyNoAuto()) ops.push({ label: 'Forced-only nodes', method: 'PUT', path: '/api/config/no-auto-nodes', body: { no_auto_nodes: draft.noauto }, count: Math.max(1, Math.abs(draft.noauto.length - (cfg.no_auto_nodes || []).length)) });
       if (dirtyOverrides()) ops.push({ label: 'Node overrides', method: 'PUT', path: '/api/config/node-overrides', body: { node_overrides: draft.overrides } });
       return ops;
     };
@@ -164,7 +169,7 @@ registerView({
       await load();
     }
     const discard = async () => {
-      if (await confirm({ title: 'Discard unsaved changes?', intro: 'The tier list, excluded nodes and overrides go back to what is saved. Nothing on the server changes.', confirmLabel: 'Discard', danger: true })) {
+      if (await confirm({ title: 'Discard unsaved changes?', intro: 'The tier list, excluded nodes, forced-only nodes and overrides go back to what is saved. Nothing on the server changes.', confirmLabel: 'Discard', danger: true })) {
         draft = null; view.refresh();
       }
     };
@@ -189,14 +194,7 @@ registerView({
       if (ok) edit(w => { w.tiers.splice(i, 1); });
     }
 
-    // ---- exclusions and overrides ----
-    function addExclude() {
-      const v = addText.trim();
-      if (!v) { addErr = 'Write a node id, a host name or a pattern such as ps5-test*.'; view.refresh(); return; }
-      if (work().exclude.includes(v)) { addErr = v + ' is already excluded.'; view.refresh(); return; }
-      addErr = ''; addText = '';
-      edit(w => { w.exclude.push(v); });
-    }
+    // ---- overrides ----
     async function editOverride(node) {
       const cur = node ? { node, rpc: (work().overrides[node] || {}).rpc || '' } : null;
       const v = await overrideDialog(viewNodes(state.status), cur);
@@ -253,6 +251,7 @@ registerView({
         dirty ? { label: 'With your unsaved tiers', render: n => { const m = matchTier(n, tiers); return m.index < 0 ? h('span.err-t', 'No tier: never used') : h('span', h('span.mono', 'Tier ' + (m.index + 1)), m.certain ? null : h('span.sub', 'depends on role or source')); } } : null,
         { label: 'Eligible', cls: 'tight', title: 'Eligible nodes can receive a model now', render: n => (n.eligible ? badge('Eligible', 'use') : badge('Not eligible', 'n', n.excluded ? 'Excluded by configuration' : !n.online ? 'Offline' : 'No tier matches, or the node is held back')) },
         { label: 'Excluded', cls: 'tight', render: n => (n.excluded ? badge('Excluded', 'dash', 'An excluded node never receives a model') : h('span.mut', 'No')) },
+        { label: 'Automatic', cls: 'tight', render: n => (n.auto === false ? badge('Forced only', 'line', 'Only a profile that forces this node uses it') : h('span.mut', 'Yes')) },
         { label: 'Online', cls: 'tight', render: n => (n.online ? h('span.ok-t', 'Online') : h('span.err-t', 'Offline')) },
       ].filter(Boolean);
       return h('section.card', { key: 'nodes' },
@@ -261,23 +260,38 @@ registerView({
           : empty('No nodes known yet', 'The scheduler has not heard of any node. When the fleet feed connects, they appear here.'));
     }
 
-    function excludeCard(nodes) {
-      const list = work().exclude;
+    // The two node lists: exclude_nodes and no_auto_nodes. Same entries
+    // (node id, host name or pattern); only what they do differs.
+    const LISTS = {
+      exclude: { key: 'exclude_nodes', title: 'Excluded nodes', note: 'An excluded node never receives a model. Excluding wins over a profile that forces the node.',
+        none: 'No node is excluded.', verb: 'Exclude', already: 'is already excluded.', remove: 'Stop excluding ', input: 'Node to exclude' },
+      noauto: { key: 'no_auto_nodes', title: 'Forced only', note: 'A node here gets a model only from a profile that names it in force_nodes. Automatic placement never picks it and never evicts what runs on it.',
+        none: 'Every node can be picked automatically.', verb: 'Forced only', already: 'is already forced only.', remove: 'Make automatic again: ', input: 'Node to keep for forced profiles' },
+    };
+    function addTo(which) {
+      const L = LISTS[which], v = (addText[which] || '').trim();
+      if (!v) { addErr[which] = 'Write a node id, a host name or a pattern such as ps5-test*.'; view.refresh(); return; }
+      if (work()[which].includes(v)) { addErr[which] = v + ' ' + L.already; view.refresh(); return; }
+      addErr[which] = ''; addText[which] = '';
+      edit(w => { w[which].push(v); });
+    }
+    function listCard(nodes, which) {
+      const L = LISTS[which], list = work()[which];
       const known = nodes.map(n => n.hostname || n.id).filter(n => !list.includes(n));
-      const e0 = cfg.exclude_nodes || [];
-      return h('section.card', { key: 'exclude' },
-        h('div.ch', h('h2', 'Excluded nodes'), h('span.note', 'An excluded node never receives a model. Excluding wins over a profile that forces the node.')),
+      const e0 = cfg[L.key] || [];
+      return h('section.card', { key: which },
+        h('div.ch', h('h2', L.title), h('span.note', L.note)),
         h('div.cb', { style: 'display:flex;flex-direction:column;gap:12px' },
-          list.length ? h('div.tags', { style: 'border:0;background:none;padding:0' }, list.map(x => h('span.node', { key: 'ex-' + x }, x, e0.includes(x) ? null : h('span', { class: 'b b-q', style: 'margin-left:6px;height:18px' }, 'new'),
-            h('button', { type: 'button', 'aria-label': 'Stop excluding ' + x, onclick: () => edit(w => { w.exclude = w.exclude.filter(y => y !== x); }) }, '×'))))
-            : h('span.mut', 'No node is excluded.'),
+          list.length ? h('div.tags', { style: 'border:0;background:none;padding:0' }, list.map(x => h('span.node', { key: which + '-' + x }, x, e0.includes(x) ? null : h('span', { class: 'b b-q', style: 'margin-left:6px;height:18px' }, 'new'),
+            h('button', { type: 'button', 'aria-label': L.remove + x, onclick: () => edit(w => { w[which] = w[which].filter(y => y !== x); }) }, '×'))))
+            : h('span.mut', L.none),
           h('div.row', { style: 'gap:8px' },
-            h('input', { class: 'input mono', style: 'max-width:340px', type: 'text', value: addText, placeholder: 'Node id, name or pattern', 'aria-label': 'Node to exclude', autocomplete: 'off', spellcheck: 'false',
-              oninput: e => { addText = e.target.value; }, onkeydown: e => { if (e.key === 'Enter') addExclude(); } }),
-            button('Exclude', addExclude, 'sm')),
-          addErr ? h('span.err-t', { role: 'alert' }, addErr) : null,
+            h('input', { class: 'input mono', style: 'max-width:340px', type: 'text', value: addText[which] || '', placeholder: 'Node id, name or pattern', 'aria-label': L.input, autocomplete: 'off', spellcheck: 'false',
+              oninput: e => { addText[which] = e.target.value; }, onkeydown: e => { if (e.key === 'Enter') addTo(which); } }),
+            button(L.verb, () => addTo(which), 'sm')),
+          addErr[which] ? h('span.err-t', { role: 'alert' }, addErr[which]) : null,
           known.length ? h('div.row', { style: 'gap:6px 8px' }, h('span.mut', { style: 'font-size:var(--fs-sm);font-weight:600' }, 'Known nodes:'),
-            known.map(k => h('button.fc', { key: 'k-' + k, type: 'button', style: 'height:26px;font-family:var(--mono);font-size:var(--fs-sm)', onclick: () => edit(w => { w.exclude.push(k); }) }, '+ ' + k))) : null));
+            known.map(k => h('button.fc', { key: which + '-k-' + k, type: 'button', style: 'height:26px;font-family:var(--mono);font-size:var(--fs-sm)', onclick: () => edit(w => { w[which].push(k); }) }, '+ ' + k))) : null));
     }
 
     function overridesCard() {
@@ -309,7 +323,7 @@ registerView({
         savedBanner(saved, () => { saved = null; view.refresh(); }),
         cfg.configured === false ? banner('info', [h('b', 'No configuration has been imported yet. '),
           'There are no tiers, so no node is used. Import a configuration file with ', h('span.mono', 'llm-scheduler import-config'), ' or add the first tier below.']) : null,
-        h('div.cols', { key: 'cols' }, h('div.wide', tiersCard(nodes), nodesCard(nodes)), h('div.side', excludeCard(nodes), overridesCard())),
+        h('div.cols', { key: 'cols' }, h('div.wide', tiersCard(nodes), nodesCard(nodes)), h('div.side', listCard(nodes, 'exclude'), listCard(nodes, 'noauto'), overridesCard())),
         pendingBar({ count: pendingCount(), what: 'tiers and nodes', onReview: review, onDiscard: discard }),
       ];
     };

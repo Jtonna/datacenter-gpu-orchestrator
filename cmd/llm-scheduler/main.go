@@ -218,6 +218,9 @@ func serve(boot config.Bootstrap, log *slog.Logger) int {
 	if len(cfg.ExcludeNodes) > 0 {
 		log.Info("exclude_nodes configured: these nodes are never used", "entries", strings.Join(cfg.ExcludeNodes, ", "))
 	}
+	if len(cfg.NoAutoNodes) > 0 {
+		log.Info("no_auto_nodes configured: only profiles that force these nodes use them", "entries", strings.Join(cfg.NoAutoNodes, ", "))
+	}
 
 	ports, err := instance.NewPortAllocator(childPortLo, childPortHi)
 	if err != nil {

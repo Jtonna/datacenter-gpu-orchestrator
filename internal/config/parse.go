@@ -102,6 +102,7 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 		Defaults:      raw.Defaults.value(),
 		NodeOverrides: map[string]NodeOverride{},
 		ExcludeNodes:  trimAll(raw.ExcludeNodes),
+		NoAutoNodes:   trimAll(raw.NoAutoNodes),
 		Recovery:      raw.Recovery.value(),
 		Logs:          DefaultLogs(), // set in the stored configuration only, not in the old YAML format
 		Profiles:      map[string]*core.Profile{},
@@ -170,6 +171,7 @@ type rawConfig struct {
 	Tiers               []TierSpec                  `yaml:"tiers" json:"tiers,omitempty"`
 	NodeOverrides       map[string]NodeOverrideSpec `yaml:"node_overrides" json:"node_overrides,omitempty"`
 	ExcludeNodes        []string                    `yaml:"exclude_nodes" json:"exclude_nodes,omitempty"`
+	NoAutoNodes         []string                    `yaml:"no_auto_nodes" json:"no_auto_nodes,omitempty"`
 	Recovery            rawRecovery                 `yaml:"recovery" json:"recovery,omitempty"`
 	Profiles            map[string]*ProfileSpec     `yaml:"profiles" json:"profiles,omitempty"`
 }

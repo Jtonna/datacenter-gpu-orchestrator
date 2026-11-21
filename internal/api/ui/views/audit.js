@@ -22,7 +22,7 @@ import { sourceBadge, SOURCES, SECTION_NAMES, sectionName, actionName, entrySent
 import { reviewChanges } from '../core/changes.js';
 
 const RANGES = [['1h', 'Last hour', 3600e3], ['24h', 'Last 24 hours', 86400e3], ['7d', 'Last 7 days', 7 * 86400e3], ['30d', 'Last 30 days', 30 * 86400e3], ['all', 'All time', 0]];
-const SECTION_ORDER = ['profiles', 'tiers', 'settings', 'exclude_nodes', 'node_overrides', 'recovery', 'fleet', 'bench', 'runtime', 'agents', 'models'];
+const SECTION_ORDER = ['profiles', 'tiers', 'settings', 'exclude_nodes', 'no_auto_nodes', 'node_overrides', 'recovery', 'fleet', 'bench', 'runtime', 'agents', 'models'];
 const ACTIONS = ['create', 'update', 'delete', 'import', 'rollback', 'load', 'unload', 'rotate', 'revoke'];
 const PAGE = 100;
 
@@ -220,7 +220,7 @@ registerView({
           h('p.d', 'by ', agentName(e.actor)
             ? [h('a', { href: href('audit', null, { agent: e.agent_id, range: 'all' }), style: 'font-weight:700', title: 'Show everything this agent did' }, agentName(e.actor)), ' ',
               badge('Agent', 'n', 'An AI agent that presented its key. The key says who it is; it is not a permission.')]
-            : h('b.txt2', e.actor || 'anonymous'), e.target && !['tiers', 'bench', 'exclude_nodes', 'runtime', 'profiles', 'agents', 'models'].includes(e.section) ? [' · ', h('span.mono', e.target)] : null,
+            : h('b.txt2', e.actor || 'anonymous'), e.target && !['tiers', 'bench', 'exclude_nodes', 'no_auto_nodes', 'runtime', 'profiles', 'agents', 'models'].includes(e.section) ? [' · ', h('span.mono', e.target)] : null,
             e.revision ? [' · ', h('a', { href: href('audit', ['revisions'], { rev: e.revision }), onclick: ev => { ev.preventDefault(); showRevision(e.revision); } }, 'Revision ' + e.revision)] : null,
             ' · ', h('a', { href: '#', 'aria-expanded': isOpen ? 'true' : 'false', onclick: ev => { ev.preventDefault(); if (isOpen) open.delete(e.id); else open.add(e.id); view.refresh(); } }, isOpen ? 'Hide details' : 'Show details')),
           e.comment ? h('p.d', { style: 'color:var(--text-2)' }, '“' + e.comment + '”') : null,

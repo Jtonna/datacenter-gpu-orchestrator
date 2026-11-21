@@ -74,7 +74,7 @@ type sectionChange struct {
 func sectionChanges(before, after *config.Document) []sectionChange {
 	a, b := toAny(before).(map[string]any), toAny(after).(map[string]any)
 	var out []sectionChange
-	for _, sec := range []string{"settings", "tiers", "profiles", "exclude_nodes", "node_overrides", "recovery", "fleet"} {
+	for _, sec := range []string{"settings", "tiers", "profiles", "exclude_nodes", "no_auto_nodes", "node_overrides", "recovery", "fleet"} {
 		av, bv := a[sec], b[sec]
 		am, aok := av.(map[string]any)
 		bm, bok := bv.(map[string]any)

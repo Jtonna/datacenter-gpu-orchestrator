@@ -435,7 +435,8 @@ func BuildModelCatalog(in CatalogInput, detailKey string) []map[string]any {
 		if h := jstr(nm["hostname"]); h != "" {
 			host[jstr(nm["id"])] = h
 		}
-		if !jbool(nm["excluded"]) && jbool(nm["eligible"]) {
+		// A node in no_auto_nodes (auto false) takes no automatic load.
+		if !jbool(nm["excluded"]) && jbool(nm["eligible"]) && nm["auto"] != false {
 			if b := jnum(nm["plan_budget_mib"]); b > 0 {
 				budgets = append(budgets, b)
 			}

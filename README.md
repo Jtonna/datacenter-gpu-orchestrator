@@ -62,6 +62,8 @@ This starts the real scheduler against simulated machines and opens the UI at `h
 
 All configuration (model profiles, hardware tiers, settings) is stored in a SQLite database in the data directory, not in a file. Read it at `GET /api/config`, change it over REST (`/api/config/...`; `GET /api/config/schema` describes every field), and read the change log at `GET /api/audit`. Only five paths are set outside the database, by flag or environment variable: `--listen`, `--data-dir`, `--models-dir`, `--history-dir`, `--child-log-dir`. A first install imports a YAML file once with `llm-scheduler import-config --data-dir DIR file.yaml`; [configs/example.yaml](configs/example.yaml) documents that format. Starting on an empty database works.
 
+Two node lists take a node id or a hostname pattern: `exclude_nodes` (never used) and `no_auto_nodes` (used only by profiles that name the node in `force_nodes`; automatic placement never picks it or evicts from it). Excluding wins. See design section 6 and the runbook.
+
 ## Layout
 
 - `cmd/llm-scheduler/`: the entry point.

@@ -167,3 +167,24 @@ func TestAgents_ForcedRefusalIgnoresForcedFitCheckOff(t *testing.T) {
 		t.Fatalf("something was sent: %d launches, %d starts", len(h.wlaunches), len(h.starts))
 	}
 }
+
+// CR-9 review, C: the forced-fit check still applies to a forced profile on a
+// no_auto node.
+func TestAgents_ForcedFitStillAppliesOnANoAutoNode(t *testing.T) {
+	h := agentsHarness(t)
+	h.cfg.NoAutoNodes = []string{"a", "b"}
+	h.view.modify("a", func(n *core.Node) { n.FreeMiB = 4599 })
+	h.viewChanged()
+	w := h.request("m")
+	h.failed(w, 503, ReasonForcedDoesNotFit)
+	if len(h.wlaunches) != 0 || len(h.starts) != 0 {
+		t.Fatalf("something was sent: %d launches, %d starts", len(h.wlaunches), len(h.starts))
+	}
+	// With room it starts: no_auto does not stop a forced profile.
+	h2 := agentsHarness(t)
+	h2.cfg.NoAutoNodes = []string{"a", "b"}
+	h2.request("m")
+	if len(h2.wlaunches) != 1 {
+		t.Fatalf("%d launches, want 1", len(h2.wlaunches))
+	}
+}
