@@ -762,7 +762,12 @@ func (m *Manager) stopLocked(r *launchRun, cause, msg string, force bool) {
 	}
 	m.persist(r)
 	if r.kill {
-		m.killLocked(r, now)
+		// A stop that arrives while a kill is under way (Potluck's ordinary
+		// stop after the watchdog's kill) does not start the next attempt
+		// early: the ladder keeps its own spacing.
+		if now >= r.killNext && !procGone(r.proc) {
+			m.killLocked(r, now)
+		}
 		return
 	}
 	if p := r.proc; p != nil {
@@ -800,6 +805,8 @@ func procGone(p runner.Proc) bool {
 // The next attempt comes KillRetry after one that was delivered and
 // KillRetryFail after one that failed, so there are never more than about
 // four a second. Every attempt writes one log line: number, method, error.
+// Before every attempt after the first the unit is looked for again: when it
+// is gone, the attempt is not made and nothing is logged as failed.
 func (m *Manager) killLocked(r *launchRun, now time.Duration) {
 	p := r.proc
 	if p == nil || r.killBusy {
@@ -809,6 +816,14 @@ func (m *Manager) killLocked(r *launchRun, now time.Duration) {
 	r.killTries++
 	n, id, unit := r.killTries, r.rec.LaunchID, r.rec.Unit
 	go func() {
+		if n > 1 && m.unitGone(p, unit) {
+			m.log.Debug("kill: the unit is gone; no further attempt", "launch_id", id, "attempts", n-1)
+			m.mu.Lock()
+			r.killBusy, r.killTries = false, n-1
+			r.killNext = now + m.cfg.KillRetryFail // looked at again soon; the exit ends the ladder
+			m.mu.Unlock()
+			return
+		}
 		how, err := m.killStep(n, p, unit)
 		if err != nil {
 			m.log.Error("kill attempt failed", "launch_id", id, "attempt", n, "how", how, "err", err)
@@ -822,6 +837,27 @@ func (m *Manager) killLocked(r *launchRun, now time.Duration) {
 		}
 		m.mu.Unlock()
 	}()
+}
+
+// unitGone reports whether the launch's unit no longer exists: its process
+// was seen gone, or the runner no longer lists it. An error of the listing
+// is not taken as gone.
+func (m *Manager) unitGone(p runner.Proc, unit string) bool {
+	if procGone(p) {
+		return true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	units, err := m.deps.Runner.List(ctx, unit)
+	if err != nil {
+		return false
+	}
+	for _, u := range units {
+		if u == unit {
+			return false
+		}
+	}
+	return true
 }
 
 // killStep runs attempt n of the kill escalation.
@@ -1099,6 +1135,10 @@ func (m *Manager) tick(ctx context.Context) {
 		return
 	}
 	m.scanLog(r) // last lines
+	m.mu.Lock()
+	r.scan.flush(&r.partial) // and a last line without a line end
+	m.applyProgressLocked(r)
+	m.mu.Unlock()
 	var exit runner.Exit
 	if proc != nil {
 		exit = proc.Exit()
@@ -1185,18 +1225,39 @@ func (m *Manager) finishLocked(r *launchRun, exit runner.Exit, reason, msg strin
 	os.Remove(r.rec.LeasePath)
 	m.persist(r)
 	m.log.Info("launch exited", "launch_id", r.rec.LaunchID, "reason", reason, "message", msg)
-	normal := reason == agentproto.ExitStopped || reason == agentproto.ExitForced || reason == agentproto.ExitReset
-	if !normal && m.deps.OnError != nil {
-		text := "launch " + r.rec.LaunchID + " exited: " + reason
-		if msg != "" {
-			text += ": " + msg
-		}
+	if text, abnormal := exitError(r.rec.LaunchID, ei); abnormal && m.deps.OnError != nil {
 		m.deps.OnError(text)
 	}
 	if m.deps.OnExit != nil {
 		st := m.stateLocked(r)
 		go m.deps.OnExit(st)
 	}
+}
+
+// exitError is the last_error text of an exit; abnormal is false for a stop
+// that was asked for.
+func exitError(id string, e *agentproto.ExitInfo) (text string, abnormal bool) {
+	if e.Reason == agentproto.ExitStopped || e.Reason == agentproto.ExitForced || e.Reason == agentproto.ExitReset {
+		return "", false
+	}
+	text = "launch " + id + " exited: " + e.Reason
+	if e.Message != "" {
+		text += ": " + e.Message
+	}
+	return text, true
+}
+
+// LastExitError returns the last_error text of the exited launch and when it
+// exited; ok is false when there is none or it was stopped on request. It
+// gives an agent that restarted its last_error back (the exit is persisted).
+func (m *Manager) LastExitError() (text string, at time.Duration, ok bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cur == nil || m.cur.exit == nil {
+		return "", 0, false
+	}
+	text, ok = exitError(m.cur.rec.LaunchID, m.cur.exit)
+	return text, m.cur.exitAt, ok
 }
 
 func (m *Manager) persist(r *launchRun) {

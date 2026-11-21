@@ -41,6 +41,10 @@ type (
 	evExited struct {
 		iid    uint64
 		status instance.ExitStatus
+		// workers: the load's worker launches that had ended by themselves
+		// when the child exited (agents membership; read by the runner
+		// before the event is posted).
+		workers []WorkerReport
 	}
 	// evFetched: the post-settle fetch of a node finished.
 	evFetched struct {
@@ -219,7 +223,7 @@ func (c *schedCore) handle(ev event) {
 	case evHealthy:
 		c.healthy(e.iid, e.err)
 	case evExited:
-		c.exited(e.iid, e.status)
+		c.exited(e.iid, e.status, e.workers)
 	case evFetched:
 		c.fetched(e.id, e.gen, e.node, e.err)
 	case evLoadSample:

@@ -10,6 +10,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
 )
 
 // Agents membership (agent contract). The pool comes from potluck-agent
@@ -107,6 +108,7 @@ const (
 	UnplacedProgramsNotReady       = "programs_not_ready"       // the agent has not verified its programs (5.1)
 	UnplacedModelSourceUnreachable = "model_source_unreachable" // a worker launch would need the model source (8)
 	UnplacedOrphanLaunch           = "orphan_launch"            // the agent reports a launch Potluck does not hold (11)
+	UnplacedSilent                 = "silent"                   // no heartbeat for 10 s while its launch is kept (4.3, CR-6)
 )
 
 // modelSourceHold is how long a node whose launch was refused with
@@ -152,8 +154,9 @@ type forceResult struct {
 }
 
 // nodeLossAfter is how long a remote node may be missing before the load on
-// it is lost: design 8.4's 30 s, or at once with agents (the 10 s heartbeat
-// silence already happened, agent contract 4.3).
+// it is lost: design 8.4's 30 s, or at once with agents (the heartbeat
+// silence already happened: 10 s, or the 20 s lease TTL for a node that runs
+// a launch, agent contract 4.3 and CR-6).
 //
 // Settled as built by CR-5 (agent contract 11.1). The question was: 11 says a lost node with a launch "fails the instance at
 // once". The existing node-loss path is used: the instance is killed at once
@@ -197,6 +200,28 @@ func (c *schedCore) launchWorkers(in *inst) {
 	}
 	c.log.Info("starting worker launches", "profile", in.prof.Name, "workers", len(spec.Workers))
 	c.effects = append(c.effects, effLaunchWorkers{spec: spec})
+}
+
+// EnvRPCFileLoad tells the host llama-server how its RPC workers get the
+// model: "required" makes every worker read the file itself and fails the
+// load when one cannot; "0" never asks the workers and sends the weights
+// over the worker connection.
+const EnvRPCFileLoad = "LLAMA_RPC_FILE_LOAD"
+
+// rpcFileLoadEnv is the host child's LLAMA_RPC_FILE_LOAD for a load with
+// agent workers: the workers were launched with or without model_dir by the
+// same setting (worker_model_dir), so the host must be told the same thing
+// and not inherit whatever the scheduler's own environment holds. A load
+// without agent workers is left as inherited. (Profiles carry no environment
+// of their own, so there is nothing that could override it.)
+func (c *schedCore) rpcFileLoadEnv(in *inst) []string {
+	if !in.workers || in.prof.Kind == core.KindCommand {
+		return nil
+	}
+	if c.cfg.Defaults.WorkerModelDir {
+		return []string{EnvRPCFileLoad + "=required"}
+	}
+	return []string{EnvRPCFileLoad + "=0"}
 }
 
 // stopWorkers asks for the instance's worker launches to stop. removeInst
@@ -266,6 +291,23 @@ func (c *schedCore) workerReported(r WorkerReport) {
 	if r.Exit == nil || in.state == stStopping {
 		return
 	}
+	msg := c.noteWorkerExit(in, r)
+	switch in.state {
+	case stStarting:
+		if in.phase == phWorkers {
+			return // Launch reports it as its result
+		}
+		c.failLoadMode(in, msg, nil, false, stopKill)
+	default: // ready, draining
+		in.stopReason = "worker exited"
+		c.stopFor(in, stopKill, "worker exited")
+	}
+}
+
+// noteWorkerExit logs and records a worker launch that ended by itself
+// (workerExited), applies the memory-kill rule to the learned need and
+// returns the failure text.
+func (c *schedCore) noteWorkerExit(in *inst, r WorkerReport) string {
 	name := c.nodeName(r.Node)
 	msg := fmt.Sprintf("worker on %s exited: %s", name, r.Exit.Reason)
 	if r.Exit.Message != "" {
@@ -277,16 +319,63 @@ func (c *schedCore) workerReported(r WorkerReport) {
 		fmt.Sprintf("The worker of %s on %s exited (%s) while the instance was %s.", in.prof.Name, name, r.Exit.Reason, in.state),
 		[]string{name}, in.sessionID, map[string]any{"exit": r.Exit, "state": in.state.String(), "in_flight": in.inFlight})
 	c.raiseNeedOnKill(in, r.Node, r.Exit)
-	switch in.state {
-	case stStarting:
-		if in.phase == phWorkers {
-			return // Launch reports it as its result
+	return msg
+}
+
+// ownWorkerExit picks, from the launches read when the child exited, the one
+// that explains it: a memory kill first, else the first that ended by itself.
+func ownWorkerExit(rs []WorkerReport) *WorkerReport {
+	var first *WorkerReport
+	for i := range rs {
+		if rs[i].Exit == nil {
+			continue
 		}
-		c.failLoadMode(in, msg, nil, false, stopKill)
-	default: // ready, draining
-		in.stopReason = "worker exited"
-		c.stopFor(in, stopKill, "worker exited")
+		if rs[i].Exit.Reason == agentproto.ExitWatchdog || rs[i].Exit.Reason == agentproto.ExitOOMKill {
+			return &rs[i]
+		}
+		if first == nil {
+			first = &rs[i]
+		}
 	}
+	return first
+}
+
+// workerEndedInstance handles a child that exited after (or together with) a
+// worker launch that ended by itself: the worker's reason is the failure
+// reason in the answer, the log and history, and the child's exit is named
+// beside it.
+func (c *schedCore) workerEndedInstance(in *inst, r WorkerReport, st instance.ExitStatus) {
+	msg := c.noteWorkerExit(in, r)
+	if in.state == stStarting {
+		c.failLoad(in, msg+"; the host program then ended: "+st.String(), st.Tail, true)
+		return
+	}
+	in.stopReason = "worker exited"
+	c.removeInst(in, true)
+}
+
+// WorkerExitReader is implemented by a WorkerLauncher that can say which
+// launches of a load ended by themselves. The scheduler asks when a child
+// exits without having been stopped, before it handles the exit: the agent
+// keeps the exit record of its last launch. The call is bounded (2 s);
+// launches that were stopped on request are not returned.
+type WorkerExitReader interface {
+	Exits(ctx context.Context, iid uint64) []WorkerReport
+}
+
+// workerExits reads the ended launches of a load whose child just exited.
+func (s *Scheduler) workerExits(iid uint64, st instance.ExitStatus) []WorkerReport {
+	r, ok := s.opts.Workers.(WorkerExitReader)
+	if !ok || st.Requested {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	rs := r.Exits(ctx, iid)
+	for i := range rs {
+		rs[i].IID = iid
+	}
+	return rs
 }
 
 // raiseNeedOnKill raises the profile's learned need after the agent's memory

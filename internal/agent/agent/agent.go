@@ -149,6 +149,14 @@ type Agent struct {
 	localBound    bool // Run's goroutine only
 	nodeBound     bool
 	updateSkipped bool
+	leftoversDone bool   // Run's goroutine only
+	regWhy        string // why the next registration is sent (log only; Run's goroutine)
+	// runCtx is Run's context: the exporters live as long as the agent
+	// process, not as long as one registration.
+	runCtx context.Context
+	// statusWait is how long GET /status waits for the launch re-adoption
+	// before it answers 503; default 2 s.
+	statusWait time.Duration
 }
 
 // New builds an agent. Call Run.
@@ -222,6 +230,7 @@ func New(opt Options, deps Deps) (*Agent, error) {
 	a.Export = &exporters.Supervisor{Runner: deps.Runner, Path: a.Programs.Path, Logger: deps.Logger}
 	a.Stats = stats.New(stats.Config{Now: deps.Clock.Now, MinInterval: deps.StatsMin, Logger: deps.Logger,
 		Primary: func() string { a.mu.Lock(); defer a.mu.Unlock(); return a.ident.RouteIface }})
+	a.Export.OnStart = func(program string) { a.Stats.Restarted(exporters.SourceName(program)) }
 	return a, nil
 }
 
@@ -293,7 +302,18 @@ func (a *Agent) RecoverLaunch(ctx context.Context) error {
 	if err := a.Launch.Recover(c); err != nil {
 		return err
 	}
-	a.recoverOnce.Do(func() { close(a.recovered) })
+	a.recoverOnce.Do(func() {
+		// last_error of an abnormal exit is kept across an agent restart: it
+		// is in the launch's exit record. Any other last_error is not stored.
+		if text, at, ok := a.Launch.LastExitError(); ok {
+			a.mu.Lock()
+			if a.lastErr == "" {
+				a.lastErr, a.lastErrAt = text, at
+			}
+			a.mu.Unlock()
+		}
+		close(a.recovered)
+	})
 	return nil
 }
 
@@ -403,6 +423,9 @@ func (a *Agent) Run(ctx context.Context) error {
 	defer wg.Wait()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	a.mu.Lock()
+	a.runCtx = ctx
+	a.mu.Unlock()
 	// An existing launch first: its lease and its watchdog need no identity,
 	// no free port, no registration and no Potluck.
 	wg.Add(1)
@@ -411,6 +434,8 @@ func (a *Agent) Run(ctx context.Context) error {
 	go func() { defer wg.Done(); a.Launch.Run(ctx) }()
 	wg.Add(1)
 	go func() { defer wg.Done(); a.Stats.Run(ctx) }()
+	wg.Add(1)
+	go func() { defer wg.Done(); a.reviveLoop(ctx) }()
 
 	// Identity and ports, retried until they work.
 	bindWait := a.deps.BindRetry
@@ -429,8 +454,11 @@ func (a *Agent) Run(ctx context.Context) error {
 			err = idErr
 		default:
 			// Exporter units of an earlier agent process hold the exporter
-			// ports; they are ours, so they go before the check.
-			if a.deps.Runner.Survives() {
+			// ports; they are ours, so they go before the check. Once per
+			// process, before this process has started an exporter: later
+			// registrations never come here.
+			if a.deps.Runner.Survives() && !a.leftoversDone {
+				a.leftoversDone = true
 				a.Export.StopLeftovers(ctx)
 			}
 			if err = a.checkPorts(ctx); err != nil {
@@ -491,6 +519,15 @@ func (a *Agent) Run(ctx context.Context) error {
 	a.mu.Unlock()
 	a.Export.StopAll()
 	return ctx.Err()
+}
+
+// reviveLoop starts an exporter again that should run and does not (its
+// process is gone and its scrape fails); the supervisor limits it to one
+// start per exporter every 30 s.
+func (a *Agent) reviveLoop(ctx context.Context) {
+	for sleep(ctx, 5*time.Second) {
+		a.Export.Revive(a.Stats.Failing)
+	}
 }
 
 func sleep(ctx context.Context, d time.Duration) bool {
@@ -626,7 +663,12 @@ func (a *Agent) accepted(ctx context.Context, ans agentproto.RegisterAnswer) {
 	}
 	a.mu.Unlock()
 	a.Launch.SetCUDA(strings.HasSuffix(ans.Platform, "-"+agentproto.BackendCUDA))
-	a.log.Info("registered", "release", ans.Release, "platform", ans.Platform, "paused", ans.Paused)
+	why := a.regWhy
+	if why == "" {
+		why = "agent start"
+	}
+	a.regWhy = ""
+	a.log.Info("registered", "release", ans.Release, "platform", ans.Platform, "paused", ans.Paused, "why", why)
 	if ans.StopLaunch != nil {
 		if _, err := a.Launch.Stop(*ans.StopLaunch, false); err != nil {
 			a.log.Warn("stop_launch", "launch_id", *ans.StopLaunch, "err", err)
@@ -677,8 +719,19 @@ func (a *Agent) pipeline(ctx context.Context, gen int, ans agentproto.RegisterAn
 			}
 			continue
 		}
-		// 5. exporters
-		srcs, refused := a.Export.Set(ctx, ans.Exporters)
+		// 5. exporters. They are tied to the agent's run, not to this
+		// pipeline: a later registration cancels the pipeline, and its own
+		// pipeline keeps the exporters whose spec is unchanged.
+		a.mu.Lock()
+		current, runCtx := a.pipeGen == gen, a.runCtx
+		a.mu.Unlock()
+		if !current {
+			return
+		}
+		if runCtx == nil {
+			runCtx = context.Background()
+		}
+		srcs, refused := a.Export.Set(runCtx, ans.Exporters)
 		for _, r := range refused {
 			a.setError(r)
 		}
@@ -752,6 +805,11 @@ func (a *Agent) readDevices(ctx context.Context) error {
 	a.mu.Lock()
 	a.devs, a.devsAt, a.devErr = devs, a.deps.Clock.Now(), ""
 	a.mu.Unlock()
+	var list []string
+	for _, d := range devs {
+		list = append(list, fmt.Sprintf("%s (%d MiB, %d MiB free)", d.Name, d.TotalMiB, d.FreeMiB))
+	}
+	a.log.Info("devices read", "count", len(devs), "devices", strings.Join(list, ", "))
 	return nil
 }
 
@@ -808,6 +866,17 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 	a.mu.Unlock()
 	t := time.NewTicker(every)
 	defer t.Stop()
+	// One WARN at the first heartbeat that fails, then nothing until one
+	// works again.
+	var failedAt time.Duration
+	failing := false
+	failed := func(why any) {
+		a.log.Debug("heartbeat failed", "why", why)
+		if !failing {
+			failing, failedAt = true, a.deps.Clock.Now()
+			a.log.Warn("Potluck unreachable: the heartbeat failed; trying again every heartbeat", "potluck", a.opt.Potluck, "why", why)
+		}
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -821,7 +890,9 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 		resp, err := a.post(hctx, fmt.Sprintf(agentproto.PathHeartbeatFmt, id), a.Heartbeat())
 		if err != nil {
 			cancel()
-			a.log.Debug("heartbeat not sent", "err", err)
+			if ctx.Err() == nil {
+				failed(err)
+			}
 			continue
 		}
 		var ans agentproto.HeartbeatAnswer
@@ -830,23 +901,35 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 		cancel()
 		switch {
 		case resp.StatusCode == http.StatusGone:
-			a.log.Info("heartbeat answered 410; registering again")
+			a.regWhy = "heartbeat answered 410"
+			a.log.Debug("heartbeat answered 410; registering again")
 			a.mu.Lock()
 			a.registered = false
 			a.mu.Unlock()
 			return
-		case resp.StatusCode != http.StatusOK || decErr != nil:
+		case resp.StatusCode != http.StatusOK:
+			failed(fmt.Sprintf("HTTP %d", resp.StatusCode))
 			continue
+		case decErr != nil:
+			failed("answer: " + decErr.Error())
+			continue
+		}
+		if failing {
+			failing = false
+			a.log.Info("Potluck reachable again: the heartbeat works", "failed_for_s", secs(a.deps.Clock.Now()-failedAt))
 		}
 		a.mu.Lock()
 		a.paused = ans.Paused
 		a.mu.Unlock()
 		if ans.Release != a.opt.Release {
-			a.log.Info("Potluck names another release; registering again", "release", ans.Release)
+			a.regWhy = "Potluck names release " + ans.Release
+			a.log.Debug("Potluck names another release; registering again", "release", ans.Release)
 			return
 		}
 	}
 }
+
+func secs(d time.Duration) float64 { return float64(d.Milliseconds()) / 1000 }
 
 // Status builds GET /status (6.9).
 func (a *Agent) Status() agentproto.Status {
@@ -859,15 +942,22 @@ func (a *Agent) Status() agentproto.Status {
 	defer a.mu.Unlock()
 	st := agentproto.Status{Registered: a.registered, Potluck: a.opt.Potluck, Release: a.opt.Release,
 		Paused: a.paused, Role: agentproto.RoleIdle, State: ls.State, Load: ls.Load}
-	if ls.State == agentproto.StateStarting || ls.State == agentproto.StateReady || ls.State == agentproto.StateStopping {
-		st.Role = ls.Role
-	}
-	if ls.State != agentproto.StateNone {
-		st.Model = model
+	switch ls.State {
+	case agentproto.StateStarting, agentproto.StateReady, agentproto.StateStopping:
+		st.Role, st.Model = ls.Role, model
+	case agentproto.StateExited:
+		// The node runs no model: the exited launch's model is named as the
+		// last launch's, not as the current one.
+		ll := agentproto.LastLaunch{ID: ls.LaunchID, Model: model, Load: ls.Load}
+		st.Load = nil
+		if ls.Exit != nil {
+			ll.Reason, ll.EndedAgeS = ls.Exit.Reason, ls.Exit.AgeS
+		}
+		st.LastLaunch = &ll
 	}
 	if a.lastErr != "" {
 		e := a.lastErr
-		age := float64((now - a.lastErrAt).Milliseconds()) / 1000
+		age := max(secs(now-a.lastErrAt), 0)
 		st.LastError, st.LastErrorAgeS = &e, &age
 	}
 	return st

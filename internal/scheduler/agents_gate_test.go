@@ -11,7 +11,7 @@ import (
 // waits, nothing is sent to the agent, and the load starts once the reason is
 // gone. The reason is in the node's status.
 func TestAgents_UnplacedNodeTakesNoLoadAndTheRequestWaits(t *testing.T) {
-	for _, why := range []string{UnplacedProgramsNotReady, UnplacedModelSourceUnreachable, UnplacedOrphanLaunch} {
+	for _, why := range []string{UnplacedProgramsNotReady, UnplacedModelSourceUnreachable, UnplacedOrphanLaunch, UnplacedSilent} {
 		h := agentsHarness(t)
 		h.view.setUnplaced("a", why)
 		h.viewChanged()

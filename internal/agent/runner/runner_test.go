@@ -104,6 +104,7 @@ func TestSystemdStartArgs(t *testing.T) {
 	line := strings.Join(got, " ")
 	for _, want := range []string{
 		"--unit=potluck-launch-ln-1.service",
+		"--collect -p ExecStopPost=", // no failed unit record stays
 		"--setenv=CUDA_DEVICE_ORDER=PCI_BUS_ID",
 		"-p OOMScoreAdjust=900",
 		"StandardOutput=append:/dev/shm/potluck/launch/ln-1.log",
@@ -114,6 +115,16 @@ func TestSystemdStartArgs(t *testing.T) {
 		if !strings.Contains(line, want) {
 			t.Errorf("missing %q in\n%s", want, line)
 		}
+	}
+}
+
+// A unit without an exit file is not collected: its exit status is read from
+// the failed unit, which reset-failed then clears.
+func TestSystemdUnitWithoutExitFileIsNotCollected(t *testing.T) {
+	s := &Systemd{}
+	got := s.StartArgs(Spec{Unit: "potluck-node-exporter", Path: "/x/node_exporter"})
+	if line := strings.Join(got, " "); strings.Contains(line, "--collect") || strings.Contains(line, "ExecStopPost") {
+		t.Fatal(line)
 	}
 }
 
@@ -222,5 +233,34 @@ func TestChildRunner(t *testing.T) {
 	}
 	if u, _ := c.List(context.Background(), "potluck-launch-"); len(u) != 0 {
 		t.Fatalf("list after exit %v", u)
+	}
+}
+
+// errSystemctl fails stop and kill as systemctl does for a unit that is gone.
+type errSystemctl struct{ fakeSystemctl }
+
+func (f *errSystemctl) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if name == "systemctl" && (args[0] == "stop" || args[0] == "kill") {
+		u := args[len(args)-1]
+		return nil, fmt.Errorf("systemctl %s: exit status 5: Failed to %s %s: Unit %s not loaded.", strings.Join(args, " "), args[0], u, u)
+	}
+	return f.fakeSystemctl.Run(ctx, name, args...)
+}
+
+// H. systemctl saying the unit is not loaded means the unit is gone: a stop
+// or a signal of it has nothing left to do and is not an error.
+func TestSystemdUnitNotLoadedIsNotAnError(t *testing.T) {
+	f := &errSystemctl{fakeSystemctl{units: map[string]string{"potluck-launch-ln-3.service": "active"}, pids: map[string]int{}}}
+	s := &Systemd{Cmd: f, Poll: time.Hour}
+	ctx := context.Background()
+	if err := s.Stop(ctx, "potluck-launch-ln-3"); err != nil {
+		t.Fatalf("stop of a unit that is gone: %v", err)
+	}
+	p, err := s.Adopt(ctx, "potluck-launch-ln-3", "")
+	if err != nil || p == nil {
+		t.Fatal(p, err)
+	}
+	if err := p.Signal(osx.SigKill); err != nil {
+		t.Fatalf("signal of a unit that is gone: %v", err)
 	}
 }

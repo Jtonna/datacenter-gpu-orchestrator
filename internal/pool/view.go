@@ -232,6 +232,8 @@ func tierDevices(a *agent) []string {
 //
 //   - no_tier_match: no tier matches it (it is outside the pool).
 //   - orphan_launch: it reports a launch this run does not hold (Heartbeat).
+//   - silent: no heartbeat for LostAfter while it runs a launch of ours; it
+//     is lost after LeaseTTL (CheckLost).
 //   - programs_not_ready: its programs are not verified, or it has not sent a
 //     heartbeat yet; the agent would refuse a launch with release_mismatch
 //     (5.1, 6.2).
@@ -245,6 +247,9 @@ func (p *Pool) unplacedLocked(cfg *config.Config, a *agent) string {
 	}
 	if a.orphan != "" {
 		return scheduler.UnplacedOrphanLaunch
+	}
+	if a.silent {
+		return scheduler.UnplacedSilent
 	}
 	if a.hb == nil || !a.hb.ProgramsReady {
 		return scheduler.UnplacedProgramsNotReady
@@ -357,7 +362,7 @@ type NodeFacts struct {
 	// beyond the first, which no worker uses (one device per node).
 	ExtraDevicesIgnored int `json:"extra_devices_ignored"`
 	// Placeable: the node may take a new load. Unplaced is why not, when the
-	// node itself is the reason: no_tier_match, orphan_launch,
+	// node itself is the reason: no_tier_match, orphan_launch, silent,
 	// programs_not_ready or model_source_unreachable. A paused, lost, left or
 	// removed node and the host machine's agent are not placeable either;
 	// their own fields say so.

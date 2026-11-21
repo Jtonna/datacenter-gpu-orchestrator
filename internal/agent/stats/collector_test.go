@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -310,5 +312,48 @@ func TestUnknownSourceAndConfig(t *testing.T) {
 	s := c.Snapshot()
 	if len(s.Sources) != 1 || s.StatsVersion != agentproto.StatsVersion {
 		t.Fatalf("sources = %+v", s.Sources)
+	}
+}
+
+// A failed scrape is not warned about during the first 5 s after the source
+// was added or its exporter was started: the exporter is not listening yet.
+func TestScrapeWarningWaitsForTheExporterStart(t *testing.T) {
+	clock := &fakeClock{}
+	var logs strings.Builder
+	c := New(Config{Now: clock.Now, Logger: slog.New(slog.NewTextHandler(&logs, nil)),
+		Sources: []SourceConfig{{Name: agentproto.SourceNode, URL: "http://127.0.0.1:1/metrics"}}})
+	warned := func() int { return strings.Count(logs.String(), "exporter scrape failing") }
+	ctx := context.Background()
+	for _, step := range []struct {
+		advance time.Duration
+		want    int
+		what    string
+	}{
+		{0, 0, "at once after the start"},
+		{4 * time.Second, 0, "4 s after the start"},
+		{2 * time.Second, 1, "6 s after the start"},
+		{10 * time.Second, 1, "still failing: said once"},
+	} {
+		clock.Advance(step.advance)
+		if err := c.ScrapeOnce(ctx, agentproto.SourceNode); err == nil {
+			t.Fatal("the scrape of a closed port worked")
+		}
+		if !c.Failing(agentproto.SourceNode) {
+			t.Fatal("not failing")
+		}
+		if got := warned(); got != step.want {
+			t.Fatalf("%s: %d warnings, want %d", step.what, got, step.want)
+		}
+	}
+	// The exporter is started again: quiet for 5 s more.
+	logs.Reset()
+	c.SetSources(nil)
+	c.SetSources([]SourceConfig{{Name: agentproto.SourceNode, URL: "http://127.0.0.1:1/metrics"}})
+	clock.Advance(10 * time.Second)
+	c.Restarted(agentproto.SourceNode)
+	clock.Advance(3 * time.Second)
+	c.ScrapeOnce(ctx, agentproto.SourceNode)
+	if warned() != 0 {
+		t.Fatal("warned 3 s after the exporter was started again")
 	}
 }

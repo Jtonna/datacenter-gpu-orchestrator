@@ -38,7 +38,10 @@ type Config struct {
 	HTTPClient *http.Client // optional
 	// Defaults 2 s, 10 s and 4 s (contract section 3).
 	MinInterval, MaxInterval, Timeout time.Duration
-	Logger                            *slog.Logger // optional
+	// StartGrace is how long after a source was added, or its exporter was
+	// started (Restarted), a failed scrape is not warned about; default 5 s.
+	StartGrace time.Duration
+	Logger     *slog.Logger // optional
 }
 
 // Errors returned by ScrapeOnce besides scrape failures.
@@ -59,7 +62,9 @@ type sourceState struct {
 	latest    Metrics
 	goodStart time.Duration // start of the scrape that produced latest
 	scrapeDur time.Duration // duration of the most recent successful scrape
-	failing   bool          // for log transitions only
+	failing   bool          // the last scrape failed
+	warned    bool          // the failure was logged (log transitions only)
+	since     time.Duration // when the source was added or its exporter started
 
 	counters counterState // node only
 }
@@ -93,6 +98,9 @@ func New(cfg Config) *Collector {
 	}
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 4 * time.Second
+	}
+	if cfg.StartGrace <= 0 {
+		cfg.StartGrace = 5 * time.Second
 	}
 	c := &Collector{cfg: cfg, client: cfg.HTTPClient, log: cfg.Logger, srcs: map[string]*sourceState{}}
 	if c.client == nil {
@@ -149,7 +157,7 @@ func (c *Collector) SetSources(srcs []SourceConfig) {
 		if _, ok := c.srcs[name]; ok {
 			continue
 		}
-		st := &sourceState{cfg: w, interval: c.cfg.MinInterval}
+		st := &sourceState{cfg: w, interval: c.cfg.MinInterval, since: c.cfg.Now()}
 		c.srcs[name] = st
 		if c.runCtx != nil {
 			c.startLoopLocked(st)
@@ -271,16 +279,18 @@ func (c *Collector) scrape(ctx context.Context, st *sourceState) error {
 	// A failed scrape counts with its elapsed time (section 3).
 	st.interval = nextInterval(dur, c.cfg.MinInterval, c.cfg.MaxInterval)
 	if err != nil {
-		if !st.failing {
+		// An exporter that was just started is not listening yet.
+		if !st.warned && c.cfg.Now()-st.since >= c.cfg.StartGrace {
+			st.warned = true
 			c.log.Warn("stats: exporter scrape failing; keeping last good values", "source", cfg.Name, "err", err)
 		}
 		st.failing = true
 		return err
 	}
-	if st.failing {
+	if st.warned {
 		c.log.Info("stats: exporter scrape recovered", "source", cfg.Name)
 	}
-	st.failing = false
+	st.failing, st.warned = false, false
 	st.everOK = true
 	st.latest = m
 	st.goodStart = start
@@ -318,6 +328,25 @@ func (c *Collector) fetch(ctx context.Context, cfg SourceConfig) (Metrics, error
 		c.log.Debug("stats: skipped malformed exporter lines", "source", cfg.Name, "lines", bad)
 	}
 	return m, nil
+}
+
+// Restarted tells the collector that the source's exporter was just started:
+// a failed scrape is not warned about during the next StartGrace.
+func (c *Collector) Restarted(name string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if st := c.srcs[name]; st != nil {
+		st.since = c.cfg.Now()
+	}
+}
+
+// Failing reports whether the last scrape of a source failed (false for a
+// source that is not configured or was not scraped yet).
+func (c *Collector) Failing(name string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	st := c.srcs[name]
+	return st != nil && st.failing
 }
 
 // Interval returns the current scrape interval of a source (0 if not

@@ -519,7 +519,7 @@ func TestStopSkipsALostNode(t *testing.T) {
 		t.Fatalf("%+v", res)
 	}
 	a1.SetHeartbeats(false)
-	r.clk.advance(11 * time.Second)
+	r.clk.advance(21 * time.Second) // a node with a launch is lost after the lease TTL (CR-6)
 	r.p.CheckLost()
 	if f := r.p.Facts(); f[0].State != StateLost || f[1].State != StateActive {
 		// a2 kept sending; re-check after its next heartbeat

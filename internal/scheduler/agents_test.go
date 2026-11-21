@@ -10,6 +10,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
 )
 
 // agentsHarness is a harness in agents membership with two remote nodes
@@ -304,4 +305,109 @@ func TestAgents_LostNodeRequeuesTheWaitersOfAStartingInstance(t *testing.T) {
 	h.viewChanged()
 	h.step(evTick{})
 	h.pending(w)
+}
+
+// G. The host program aborts within milliseconds of losing a worker, so its
+// exit is seen before the worker's. The launches are read when the child
+// exits: a launch that ended by itself is the failure reason (502, log,
+// history) and a memory kill raises the learned need.
+func TestAgents_ChildExitIsAttributedToTheWorkerThatEnded(t *testing.T) {
+	h := agentsHarness(t)
+	w := h.request("m")
+	h.launched(readyIDs())
+	in := h.inst("m")
+	before, _ := h.c.need(in.prof)
+	ch := h.children[in.iid]
+	if ch == nil || !ch.exit(instance.ExitStatus{Code: -1, Signal: "aborted"}) {
+		t.Fatal("no child to end")
+	}
+	delete(h.children, in.iid)
+	h.step(evExited{iid: in.iid, status: <-ch.exitCh, workers: []WorkerReport{
+		{IID: in.iid, Node: "b", Exit: &agentproto.ExitInfo{Reason: agentproto.ExitCrashed}},
+		{IID: in.iid, Node: "a", Addr: "192.0.2.2:50052", Exit: &agentproto.ExitInfo{Reason: agentproto.ExitWatchdog,
+			Message: "MemAvailable 900 MiB fell below the watchdog floor of 1000 MiB"}}}})
+	e := h.failed(w, 502, ReasonLoadFailed)
+	if !strings.Contains(e.Message, "exited: watchdog (MemAvailable 900 MiB") || !strings.Contains(e.Message, "the host program then ended") {
+		t.Fatalf("502 message %q", e.Message)
+	}
+	h.step(evTick{})
+	h.wantState("m", "absent")
+	evs := h.histTypes(history.TWorkerExited)
+	if len(evs) != 1 || len(h.wstops) != 1 {
+		t.Fatalf("history %+v stops %+v", evs, h.wstops)
+	}
+	after, _ := h.c.need(h.cfg.Profiles["m"])
+	if after.Need.MiB != before.Need.MiB+max(before.Need.MiB/10, needRaiseMinMiB) || after.Source != NeedLearned {
+		t.Fatalf("need %d -> %d (%v)", before.Need.MiB, after.Need.MiB, after.Source)
+	}
+}
+
+// G. No launch ended by itself: the child's exit is the reason, as before.
+// A ready instance whose worker ended is recorded as workerExited.
+func TestAgents_ChildExitWithoutAWorkerExitAndOnAReadyInstance(t *testing.T) {
+	h := agentsHarness(t)
+	w := h.request("m")
+	h.launched(readyIDs())
+	h.exit("m", 1)
+	if e := h.failed(w, 502, ReasonLoadFailed); !strings.Contains(e.Message, "child exited during load") {
+		t.Fatalf("%q", e.Message)
+	}
+	if len(h.histTypes(history.TWorkerExited)) != 0 {
+		t.Fatal("a worker exit was recorded")
+	}
+
+	h = agentsHarness(t)
+	h.release(h.agentReady("m"))
+	in := h.inst("m")
+	ch := h.children[in.iid]
+	ch.exit(instance.ExitStatus{Code: -1, Signal: "aborted"})
+	delete(h.children, in.iid)
+	h.step(evExited{iid: in.iid, status: <-ch.exitCh, workers: []WorkerReport{
+		{IID: in.iid, Node: "a", Exit: &agentproto.ExitInfo{Reason: agentproto.ExitOOMKill}}}})
+	h.wantState("m", "absent")
+	if len(h.histTypes(history.TWorkerExited)) != 1 || len(h.histTypes(history.TLearnedNeed)) != 1 || len(h.histTypes(history.TChildExited)) != 0 {
+		t.Fatalf("history %+v", h.histLog)
+	}
+}
+
+// F. The host child of a load with agent workers is told how its workers get
+// the model: LLAMA_RPC_FILE_LOAD=required with worker_model_dir, =0 without.
+func TestAgents_HostChildGetsRPCFileLoadFromWorkerModelDir(t *testing.T) {
+	for _, tc := range []struct {
+		modelDir bool
+		want     string
+	}{{true, "LLAMA_RPC_FILE_LOAD=required"}, {false, "LLAMA_RPC_FILE_LOAD=0"}} {
+		h := agentsHarness(t)
+		h.autoStart = false
+		h.cfg.Defaults.WorkerModelDir = tc.modelDir
+		h.request("m")
+		h.launched(readyIDs())
+		if len(h.starts) != 1 {
+			t.Fatalf("starts %d", len(h.starts))
+		}
+		n := 0
+		for _, kv := range h.starts[0].spec.Env {
+			if strings.HasPrefix(kv, "LLAMA_RPC_FILE_LOAD=") {
+				n++
+				if kv != tc.want {
+					t.Fatalf("worker_model_dir %v: %q, want %q", tc.modelDir, kv, tc.want)
+				}
+			}
+		}
+		if n != 1 {
+			t.Fatalf("worker_model_dir %v: env %v", tc.modelDir, h.starts[0].spec.Env)
+		}
+	}
+	// Fleet membership (no agent workers): left as inherited.
+	h := newHarness(t).nodes(ps5("a", 2, 15000))
+	h.autoStart = false
+	h.llama("m", 8000)
+	h.request("m")
+	for _, s := range h.starts {
+		for _, kv := range s.spec.Env {
+			if strings.HasPrefix(kv, "LLAMA_RPC_FILE_LOAD=") {
+				t.Fatalf("set without agent workers: %v", s.spec.Env)
+			}
+		}
+	}
 }

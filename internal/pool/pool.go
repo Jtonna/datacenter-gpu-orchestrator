@@ -32,11 +32,15 @@ import (
 
 // Contract figures.
 const (
-	HeartbeatEvery = 2 * time.Second  // heartbeat_every_s in the registration answer
-	LostAfter      = 10 * time.Second // a node is lost after this long without a heartbeat (4.3)
+	HeartbeatEvery = 2 * time.Second // heartbeat_every_s in the registration answer
+	// LostAfter: a node takes no new load after this long without a heartbeat,
+	// and is lost unless it runs a launch of ours; then it is lost only after
+	// LeaseTTL, when the agent has ended the launch by itself (4.3, CR-6).
+	LostAfter      = 10 * time.Second
 	LeaseTTL       = 20 * time.Second // lease_ttl_s of a launch (6.2)
 	LeaseEvery     = 5 * time.Second  // lease renewal (6.4)
 	ForceResetWait = 5 * time.Second  // forced stop, then /reset (7.2)
+	ExitReadWait   = 2 * time.Second  // reading the launches of a load whose host program ended (11.1)
 )
 
 // ReasonReleaseUnavailable refuses a registration while Potluck serves no
@@ -96,6 +100,9 @@ type Options struct {
 	ProbeEvery time.Duration
 	// LeaseEvery is the lease renewal period; default LeaseEvery (tests shorten it).
 	LeaseEvery time.Duration
+	// ExitReadWait bounds Exits: how long a launch that has not exited is
+	// read again; default ExitReadWait (tests shorten it).
+	ExitReadWait time.Duration
 }
 
 // heartbeat is a decoded heartbeat. Stats stays raw: a missing or bad stats
@@ -124,6 +131,9 @@ type agent struct {
 	stats        json.RawMessage
 	statsNote    string
 	lost, left   bool
+	// silent: no heartbeat for LostAfter, not lost yet because the node runs
+	// a launch of ours whose lease has not run out (CR-6). It takes no new load.
+	silent bool
 	// extraWarned: the warning about extra devices of the backend was given
 	// for this registration.
 	extraWarned bool
@@ -186,6 +196,9 @@ func New(o Options) (*Pool, error) {
 	}
 	if o.ProbeEvery <= 0 {
 		o.ProbeEvery = 2 * time.Second
+	}
+	if o.ExitReadWait <= 0 {
+		o.ExitReadWait = ExitReadWait
 	}
 	p := &Pool{o: o, log: o.Logger, agents: map[string]*agent{}, admin: map[string]cfgstore.NodeAdmin{},
 		notify: make(chan struct{}, 1), unplaced: map[core.NodeID]string{},
@@ -350,7 +363,7 @@ func (p *Pool) Heartbeat(id string, body []byte) HeartbeatResult {
 		return HeartbeatResult{Status: http.StatusGone, Err: "agent_start_id changed; register again"}
 	}
 	wasLost := a.lost
-	a.lastSeen, a.lost = now, false
+	a.lastSeen, a.lost, a.silent = now, false, false
 	a.hb = &hb
 	a.stats, a.statsNote = parseStats(hb.Stats)
 	if d, extra, ok := pickDevice(a); ok && extra > 0 && !a.extraWarned {
@@ -537,8 +550,11 @@ func (p *Pool) setAdminLocked(id string, a cfgstore.NodeAdmin) error {
 	return nil
 }
 
-// CheckLost marks agents without a heartbeat for LostAfter as lost. Run calls
-// it every second; tests call it directly.
+// CheckLost marks agents without a heartbeat for LostAfter as lost. An agent
+// whose node runs a launch of ours is only silent then (no new load), and
+// lost after LeaseTTL: an agent restart that takes longer than LostAfter
+// re-adopts its launch, which must not be given up before the agent itself
+// would end it (CR-6). Run calls it every second; tests call it directly.
 func (p *Pool) CheckLost() {
 	now := p.o.Clock()
 	p.mu.Lock()
@@ -549,13 +565,22 @@ func (p *Pool) CheckLost() {
 		if a.lost || a.left || now.Sub(a.lastSeen) < LostAfter {
 			continue
 		}
-		a.lost, changed = true, true
 		var held []string
 		for _, l := range p.launches {
 			if l.node == core.NodeID(id) {
 				held = append(held, l.id)
 			}
 		}
+		sort.Strings(held)
+		if len(held) > 0 && now.Sub(a.lastSeen) < LeaseTTL {
+			if !a.silent {
+				a.silent, changed = true, true
+				p.log.Warn("agent silent: no heartbeat; its launch is kept until the lease ends, the node takes no new load",
+					"id", id, "name", a.reg.Name, "silent_for", now.Sub(a.lastSeen).Round(time.Second), "launches", held)
+			}
+			continue
+		}
+		a.lost, a.silent, changed = true, false, true
 		p.log.Error("agent lost: no heartbeat", "id", id, "name", a.reg.Name, "silent_for", now.Sub(a.lastSeen).Round(time.Second), "launches", held)
 		p.recordLocked(history.TNodeMembership, history.Error, a,
 			fmt.Sprintf("Node %s was lost: no heartbeat for %s.", a.reg.Name, now.Sub(a.lastSeen).Round(time.Second)),
