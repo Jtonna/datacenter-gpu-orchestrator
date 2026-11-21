@@ -35,19 +35,31 @@ type LaunchTail struct {
 	tokens  float64
 	last    time.Time
 	wasOn   bool
+	begun   bool
 }
 
-// Run follows launch logs until ctx ends. The launch that exists when it
-// starts (re-adopted after an agent restart) is followed from its end, as
-// the journal is: its earlier lines were shipped by the agent before.
+// Begin takes the starting point: the launch that exists now (re-adopted
+// after an agent restart) is followed from its current end, as the journal
+// is; its earlier lines were shipped by the agent before. Run calls it when
+// it was not called; a caller that must know the point is taken (a test)
+// calls it first, in its own goroutine, before Run.
+func (t *LaunchTail) Begin() {
+	if t.begun {
+		return
+	}
+	t.begun = true
+	if id, lf, ok := t.Current(); ok {
+		t.id, t.off = id, lf.Size()
+	}
+}
+
+// Run follows launch logs until ctx ends (Begin first).
 func (t *LaunchTail) Run(ctx context.Context) {
 	every := t.Every
 	if every <= 0 {
 		every = 250 * time.Millisecond
 	}
-	if id, lf, ok := t.Current(); ok {
-		t.id, t.off = id, lf.Size()
-	}
+	t.Begin()
 	tk := time.NewTicker(every)
 	defer tk.Stop()
 	for {

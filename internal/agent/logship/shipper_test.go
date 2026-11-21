@@ -47,17 +47,36 @@ func TestRequestShape(t *testing.T) {
 	for i := 0; i < 200; i++ {
 		r.agentLine(fmt.Sprintf("a longer line number %d with some words in it", i))
 	}
-	eventually(t, 5*time.Second, "gzipped batch", func() bool {
+	// The sender may take the 200 lines in one batch or, if a round falls
+	// while they are added, in two; one of them is large enough for gzip.
+	eventually(t, 5*time.Second, "all lines, gzipped", func() bool {
+		gz := false
 		for _, q := range r.sink.requests() {
-			if q.header.Get("Content-Encoding") == "gzip" && len(q.lines) == 200 {
-				return true
-			}
+			gz = gz || (q.header.Get("Content-Encoding") == "gzip" && len(q.lines) >= 100)
 		}
-		return false
+		return gz && len(r.sink.msgs(nil)) == 203
 	})
-	if f := r.ship.Figures(); f == nil || f.LinesSent != 203 || f.LinesDropped != 0 || f.LastError != "" {
-		t.Fatalf("figures %+v", f)
+	// The sink records a request before the sender has read its answer and
+	// counted it: wait for the figures.
+	waitFigures(t, r, "203 sent, no error", func(f *agentproto.LogShipping) bool {
+		return f.LinesSent == 203 && f.LinesDropped == 0 && f.LastError == ""
+	})
+}
+
+// waitFigures waits until the shipper's figures satisfy ok. The sender counts
+// a batch only after it has read Potluck's answer, which is after the fake
+// Potluck recorded the request.
+func waitFigures(t *testing.T, r *rig, what string, ok func(*agentproto.LogShipping) bool) {
+	t.Helper()
+	var last *agentproto.LogShipping
+	end := time.Now().Add(5 * time.Second)
+	for time.Now().Before(end) {
+		if last = r.ship.Figures(); last != nil && ok(last) {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
+	t.Fatalf("figures: want %s, have %+v", what, last)
 }
 
 // Lines carry Potluck's time from the anchor, never the node's wall clock:
@@ -165,9 +184,9 @@ func TestBatchSplitOn413(t *testing.T) {
 			t.Fatalf("order: %v", got)
 		}
 	}
-	if f := r.ship.Figures(); f.LinesSent != 10 || f.LinesDropped != 0 || !strings.HasPrefix(f.LastError, "413") {
-		t.Fatalf("%+v", f)
-	}
+	waitFigures(t, r, "10 sent, last error 413", func(f *agentproto.LogShipping) bool {
+		return f.LinesSent == 10 && f.LinesDropped == 0 && strings.HasPrefix(f.LastError, "413")
+	})
 }
 
 // 429 with Retry-After: the sender waits that long and sends the same batch.
@@ -189,9 +208,9 @@ func TestPauseOn429WithRetryAfter(t *testing.T) {
 	if msgOf(q[1].lines[0]) != "one" || len(q) != 2 {
 		t.Fatalf("%+v", q)
 	}
-	if f := r.ship.Figures(); f.LastError != "429" || f.LinesSent != 1 {
-		t.Fatalf("%+v", f)
-	}
+	waitFigures(t, r, "1 sent, last error 429", func(f *agentproto.LogShipping) bool {
+		return f.LastError == "429" && f.LinesSent == 1
+	})
 	// Without Retry-After (503) the pause grows from FirstPause.
 	r.sink.setAnswer(func(n int, lines []map[string]any) (int, http.Header) {
 		if n < 5 {
@@ -219,6 +238,9 @@ func TestStopOn410UntilRegistered(t *testing.T) {
 	r.register(testObj(1))
 	r.agentLine("one")
 	eventually(t, 5*time.Second, "first request", func() bool { return len(r.sink.requests()) == 1 })
+	// The registration below must come after the sender took the 410, or
+	// the 410 would stop it again after the registration cleared it.
+	eventually(t, 5*time.Second, "sender stopped", r.ship.isGone)
 	r.agentLine("two")
 	time.Sleep(300 * time.Millisecond)
 	if n := len(r.sink.requests()); n != 1 {
@@ -239,6 +261,9 @@ func TestStopOn410UntilRegistered(t *testing.T) {
 	})
 	r.agentLine("three")
 	eventually(t, 5*time.Second, "410 again", func() bool { return len(r.sink.requests()) == 4 })
+	// The sink saw the request before the sender read the answer: wait until
+	// the sender has stopped, so the clock moves after the 410 was taken.
+	eventually(t, 5*time.Second, "sender stopped", r.ship.isGone)
 	time.Sleep(200 * time.Millisecond)
 	if n := len(r.sink.requests()); n != 4 {
 		t.Fatalf("%d requests", n)
@@ -269,9 +294,9 @@ func TestRejectedBatchIsDroppedAndCounted(t *testing.T) {
 	if !strings.Contains(msgOf(m[0]), "3 lines of this source were dropped") || msgOf(m[1]) != "good" {
 		t.Fatalf("%v", m)
 	}
-	if f := r.ship.Figures(); f.LinesDropped != 3 || f.LinesSent != 2 || !strings.HasPrefix(f.LastError, "400") || f.LastErrorAgeS == nil {
-		t.Fatalf("%+v", f)
-	}
+	waitFigures(t, r, "3 dropped, 2 sent, last error 400", func(f *agentproto.LogShipping) bool {
+		return f.LinesDropped == 3 && f.LinesSent == 2 && strings.HasPrefix(f.LastError, "400") && f.LastErrorAgeS != nil
+	})
 }
 
 // The byte rate is kept by the sender itself.
@@ -279,13 +304,15 @@ func TestByteRateKept(t *testing.T) {
 	r := newRig(t, 0)
 	obj := testObj(1)
 	obj.Limits.MaxBytesPerS, obj.Limits.MaxBatchBytes = 20_000, 4_000
-	r.register(obj)
-	// Random text, so gzip saves little and the wire bytes are near the line bytes.
+	// Random text, so gzip saves little and the wire bytes are near the
+	// line bytes. The lines are in the ring before shipping goes on, and the
+	// time is taken from then, so the sender cannot have started earlier.
 	rnd := rand.New(rand.NewSource(1))
 	for i := 0; i < 400; i++ {
 		r.agentLine(fmt.Sprintf("%016x%016x%016x%016x", rnd.Uint64(), rnd.Uint64(), rnd.Uint64(), rnd.Uint64()))
 	}
 	start := time.Now()
+	r.register(obj)
 	eventually(t, 10*time.Second, "all sent", func() bool { return len(r.sink.msgs(nil)) == 400 })
 	took := time.Since(start)
 	var wire int64

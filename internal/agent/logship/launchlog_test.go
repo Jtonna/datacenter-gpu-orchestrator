@@ -67,6 +67,9 @@ func TestLaunchTailLines(t *testing.T) {
 	cur := &current{}
 	cur.set("ln-0", old)
 	tail := &LaunchTail{Ship: r.ship, Current: cur.get, Every: 10 * time.Millisecond}
+	// The starting point is taken before Run's goroutine exists, so the
+	// line appended below is after it, whichever goroutine runs first.
+	tail.Begin()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { tail.Run(ctx); close(done) }()
@@ -98,24 +101,25 @@ func TestLaunchTailLines(t *testing.T) {
 // A launch that writes much faster than shipping is never held up: it
 // writes into its log file, never into a pipe the agent must drain. Here a
 // real child process (the Docker install's runner) writes 64 MB while
-// Potluck never answers a push; it finishes as fast as it can write, the
-// tail skips what it cannot ship and says so, and the ring stays bounded.
+// nothing is ever sent (the sender does not run, as with a Potluck that
+// never answers): it finishes as fast as it can write, the tail skips what
+// it cannot ship and says so, and the ring stays bounded.
 func TestFastLaunchIsNeverBlocked(t *testing.T) {
-	r := newRig(t, 1<<20)
-	r.sink.mu.Lock()
-	r.sink.hang = make(chan struct{})
-	r.sink.mu.Unlock()
+	// No sender: the test is the ring's only reader.
+	ship := New(Config{Now: func() time.Duration { return 0 }, BufferBytes: 1 << 20})
 	obj := testObj(1)
 	obj.Limits.MaxBytesPerS, obj.Limits.MaxBatchBytes = 256<<10, 64<<10
-	r.register(obj)
+	ship.Registered(testNode, obj, T0.UnixMilli(), 0, 0)
 	dir := t.TempDir()
 	lf := &launch.LogFile{Path: filepath.Join(dir, "ln-1.log"), Cap: 1 << 40}
 	cur := &current{}
-	tail := &LaunchTail{Ship: r.ship, Current: cur.get, Every: 20 * time.Millisecond}
+	tail := &LaunchTail{Ship: ship, Current: cur.get, Every: 20 * time.Millisecond}
+	tail.Begin()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { tail.Run(ctx); close(done) }()
-	defer func() { cancel(); <-done }()
+	stopTail := func() { cancel(); <-done }
+	defer stopTail()
 
 	exe, _ := os.Executable()
 	t.Setenv("LOGSHIP_FLOOD_LINES", "500000") // about 64 MB
@@ -137,18 +141,27 @@ func TestFastLaunchIsNeverBlocked(t *testing.T) {
 	if lf.Size() < 60<<20 {
 		t.Fatalf("the launch wrote only %d bytes", lf.Size())
 	}
-	time.Sleep(100 * time.Millisecond)
-	if b := r.ship.Ring().Bytes(); b > 1<<20 {
+	// The tail counts a skip and adds its line in the same round: wait for
+	// the count, stop the tail (its round is over then), read the ring.
+	eventually(t, 10*time.Second, "output skipped", func() bool { return ship.Ring().DroppedTotal() > 0 })
+	stopTail()
+	if b := ship.Ring().Bytes(); b > 1<<20 {
 		t.Fatalf("ring %d bytes", b)
 	}
-	k := Key{Source: agentproto.LogSourceLaunch, LaunchID: "ln-1"}
-	_, lines, _, _ := r.ship.Ring().Take(1<<30, estimate(1<<20))
+	var lines []Line
+	for {
+		_, l, _, ok := ship.Ring().Take(1<<30, estimate(1<<20))
+		if !ok {
+			break
+		}
+		lines = append(lines, l...)
+	}
 	skipped := false
 	for _, l := range lines {
 		skipped = skipped || strings.Contains(l.Msg, "bytes of this launch's output were skipped")
 	}
-	if !skipped || r.ship.Ring().DroppedTotal() == 0 {
-		t.Fatalf("no skip said for %v (%d lines kept)", k, len(lines))
+	if !skipped {
+		t.Fatalf("no skip said (%d lines kept)", len(lines))
 	}
 	t.Logf("64 MB written in %v; %d lines kept", took, len(lines))
 }
