@@ -5,6 +5,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -166,21 +167,84 @@ func TestCallBackCheck_FailedStateReadPutsTheNodeBack(t *testing.T) {
 }
 
 // A connection to an agent that cannot be established fails after the
-// connect timeout (5 s), not after the request's own 30 s. 192.0.2.1 is a
-// documentation address: nothing answers there.
+// connect timeout (5 s), not after the request's own 30 s. The dialer here
+// never connects: it waits for as long as it is allowed to.
 func TestLaunchRequestConnectTimeout(t *testing.T) {
 	cfg := &config.Config{Defaults: config.DefaultDefaults()}
-	p, err := New(Options{Config: func() *config.Config { return cfg }, PotluckRelease: "0.1.0", ConnectTimeout: 300 * time.Millisecond})
+	var allowed atomic.Int64
+	hang := func(ctx context.Context, _, _ string) (net.Conn, error) {
+		if dl, ok := ctx.Deadline(); ok {
+			allowed.Store(int64(time.Until(dl)))
+		}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	p, err := New(Options{Config: func() *config.Config { return cfg }, PotluckRelease: "0.1.0", Dial: hang})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.o.ConnectTimeout != 5*time.Second {
+		t.Fatalf("default connect timeout %v, want 5 s", p.o.ConnectTimeout)
+	}
+	p, err = New(Options{Config: func() *config.Config { return cfg }, PotluckRelease: "0.1.0", Dial: hang, ConnectTimeout: 50 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
 	began := time.Now()
 	_, ref, err := p.postLaunch(context.Background(), "http://192.0.2.1:50060", agentproto.LaunchRequest{LaunchID: "ln-1"})
 	if err == nil || ref != nil {
-		t.Fatalf("answer from a documentation address: %v %v", ref, err)
+		t.Fatalf("answer without a connection: %v %v", ref, err)
 	}
-	if d := time.Since(began); d > 3*time.Second {
-		t.Fatalf("the launch request took %v to fail, want the connect timeout (0.3 s here)", d)
+	if d := time.Since(began); d > 5*time.Second {
+		t.Fatalf("the launch request took %v to fail, want the connect timeout (50 ms here)", d)
+	}
+	if d := time.Duration(allowed.Load()); d <= 0 || d > 50*time.Millisecond {
+		t.Fatalf("the dialer was allowed %v, want at most the connect timeout (50 ms here), not the request's 30 s", d)
+	}
+}
+
+// An agent that registers again while a launch of ours runs on it (an agent
+// restart that re-adopted the launch, same launch id) keeps the instance. The
+// node is not placeable until the call-back answers; that must not end or
+// disturb the running launch or its lease renewals.
+func TestCallBackCheck_RegisteringAgainKeepsARunningLaunch(t *testing.T) {
+	r := newRig(t)
+	a := r.agent(1)
+	r.waitNode(a.ID)
+	rep := &reports{}
+	if res := r.p.Launch(context.Background(), spec(6, a), rep.add); res.Reason != "" {
+		t.Fatalf("%+v", res)
+	}
+	id := a.LaunchState().LaunchID
+	r.failCallBack("dial tcp: i/o timeout") // the call-back does not answer for a while
+	q := regReq(a.ID)
+	q.Name, q.Addr, q.AgentStartID, q.LaunchID = a.Name, a.Addr, a.StartID, &id
+	ans := r.p.Register(q)
+	if !ans.Accepted || ans.StopLaunch != nil {
+		t.Fatalf("registration with our launch: %+v", ans)
+	}
+	if got := r.unplaced(a.ID); got != scheduler.UnplacedAgentUnreachable {
+		t.Fatalf("unplaced %q while the call-back has not answered", got)
+	}
+	before := a.Leases()
+	eventually(t, 5*time.Second, func() bool { return a.Leases() >= before+3 }, "leases renewed while the node is not placeable")
+	if f := r.fact(a.ID); f.PotluckLaunchID == nil || *f.PotluckLaunchID != id || f.LaunchState != agentproto.StateReady {
+		t.Fatalf("the launch is not held any more: %+v", f)
+	}
+	r.failCallBack("")
+	eventually(t, 5*time.Second, func() bool { return r.unplaced(a.ID) == "" }, "placeable again")
+	before = a.Leases()
+	eventually(t, 5*time.Second, func() bool { return a.Leases() >= before+2 }, "leases renewed afterwards")
+	if st := a.LaunchState(); st.LaunchID != id || st.State != agentproto.StateReady {
+		t.Fatalf("the launch was disturbed: %+v", st)
+	}
+	if len(rep.exits()) != 0 || a.Has("DELETE /launch/") {
+		t.Fatalf("the launch was ended: exits %+v calls %v", rep.exits(), a.Calls())
+	}
+	r.p.Stop(6, nil)
+	r.p.WaitStops(10 * time.Second)
+	if !a.Has("DELETE /launch/" + id) {
+		t.Fatalf("the launch is still stopped on request: %v", a.Calls())
 	}
 }
 

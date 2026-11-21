@@ -119,6 +119,9 @@ type Options struct {
 	// ConnectTimeout bounds connecting to an agent when HTTP is nil; default
 	// ConnectTimeout (tests shorten it).
 	ConnectTimeout time.Duration
+	// Dial makes the connections to agents when HTTP is nil; default a
+	// net.Dialer (tests replace it).
+	Dial func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
 // heartbeat is a decoded heartbeat. Stats stays raw: a missing or bad stats
@@ -218,7 +221,16 @@ func New(o Options) (*Pool, error) {
 	}
 	if o.HTTP == nil {
 		tr := http.DefaultTransport.(*http.Transport).Clone()
-		tr.DialContext = (&net.Dialer{Timeout: o.ConnectTimeout, KeepAlive: 30 * time.Second}).DialContext
+		dial := o.Dial
+		if dial == nil {
+			dial = (&net.Dialer{KeepAlive: 30 * time.Second}).DialContext
+		}
+		limit := o.ConnectTimeout
+		tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			ctx, cancel := context.WithTimeout(ctx, limit)
+			defer cancel()
+			return dial(ctx, network, addr)
+		}
 		o.HTTP = &http.Client{Transport: tr}
 	}
 	if o.AgentPort == 0 {
