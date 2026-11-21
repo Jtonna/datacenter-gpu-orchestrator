@@ -105,7 +105,7 @@ func (c *schedCore) instStatus(in *inst) InstanceStatus {
 		Cmd: c.cmdline(in), LogFile: in.logFile, Created: in.created, LastUsed: in.lastUsed, LoadDuration: in.loadDuration,
 		InFlight: in.inFlight, Waiters: len(in.waiters), VictimOf: in.victimOf,
 		ModelFile: in.prof.Model, RequestsServed: in.served,
-		StaleProfile: c.staleProfile(in),
+		StaleProfile: c.staleProfile(in), LoadMode: c.loadModeFor(in.prof, in.placement),
 	}
 	if in.state == stStarting {
 		s.Phase = in.phase.String()
@@ -255,9 +255,16 @@ func (c *schedCore) placedStatus(pl core.Placement) []PlacedNodeStatus {
 
 // dryPlan is POST /api/plan: what a request for profile would meet now.
 // It changes nothing (the need provider's result may be cached).
-func (c *schedCore) dryPlan(profile string) PlanReport {
-	r := PlanReport{Profile: profile}
+func (c *schedCore) dryPlan(profile string) (r PlanReport) {
+	r = PlanReport{Profile: profile}
 	p := c.cfg.Profiles[profile]
+	var placed *core.Placement
+	defer func() {
+		if placed != nil && len(r.Placement) > 0 {
+			r.LoadMode = c.loadModeFor(p, *placed)
+			r.ReloadFromCache = c.reloadPlan(p, *placed, r.LoadMode)
+		}
+	}()
 	if p == nil {
 		r.Action, r.Reason = PlanReject, string(ReasonUnknownModel)
 		return r
@@ -287,7 +294,7 @@ func (c *schedCore) dryPlan(profile string) PlanReport {
 	r.FitNeedMiB, r.NeedBasis = info.Need.WithMargin(), c.needBasis(info)
 	if in := c.insts[profile]; in != nil {
 		r.Instance = in.state.String()
-		r.Placement = c.placedStatus(in.placement)
+		r.Placement, placed = c.placedStatus(in.placement), &in.placement
 		switch in.state {
 		case stReady:
 			r.Action = PlanServe
@@ -313,7 +320,7 @@ func (c *schedCore) dryPlan(profile string) PlanReport {
 	}
 	pl, perr := placer.Place(req, c.freeCandidates(p))
 	if perr == nil {
-		r.Action, r.Placement = PlanStart, c.placedStatus(pl)
+		r.Action, r.Placement, placed = PlanStart, c.placedStatus(pl), &pl
 		c.applyForcedFit(&r, p, pl)
 		return r
 	}
@@ -323,7 +330,7 @@ func (c *schedCore) dryPlan(profile string) PlanReport {
 				r.Action, r.Reason, r.Placement = PlanReject, fe.Message, c.placedStatus(res.Placement)
 				return r
 			}
-			r.Action, r.Placement = PlanEvict, c.placedStatus(res.Placement)
+			r.Action, r.Placement, placed = PlanEvict, c.placedStatus(res.Placement), &res.Placement
 			for _, v := range res.Victims {
 				r.Victims = append(r.Victims, PlanVictim{Profile: v, Busy: c.insts[v].inFlight > 0})
 			}

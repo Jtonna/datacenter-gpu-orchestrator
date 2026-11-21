@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"log/slog"
+	"os"
 	"slices"
 	"sort"
 	"time"
@@ -287,6 +288,12 @@ type lease struct {
 // on one goroutine, and depends on its collaborators only through
 // interfaces. Slow work is emitted as effects for the runner.
 type schedCore struct {
+	// localSysMiB is this machine's system memory (0 when unknown) and
+	// envFileLoad the LLAMA_RPC_FILE_LOAD the host child inherits; both are
+	// read once, for the reload-from-cache figure and the load mode.
+	localSysMiB int
+	envFileLoad string
+
 	cfg   *config.Config
 	clock Clock
 	view  fleet.View
@@ -361,6 +368,7 @@ func newCore(cfg *config.Config, clock Clock, view fleet.View, needs NeedProvide
 		needs_: map[string]NeedInfo{}, learned: map[string]*learnedNeed{}, warnedLow: map[string]bool{}, raw: map[core.NodeID]core.Node{}, excludedSeen: map[core.NodeID]bool{},
 		forcedGone: map[string]time.Time{}, health: map[core.NodeID]*workerHealth{},
 		recov: map[core.NodeID]*recoveryNode{}, memNext: map[core.NodeID]time.Time{}, refused: map[string]*refusal{}, lastRefusal: map[string]RefusalStatus{},
+		localSysMiB: localSystemMiB(), envFileLoad: os.Getenv(EnvRPCFileLoad),
 	}
 }
 

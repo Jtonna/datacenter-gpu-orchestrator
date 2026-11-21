@@ -158,7 +158,8 @@ func TestReadyInstanceHasNoLoadFields(t *testing.T) {
 	}
 	i0 := jsonOf(t, body(t, e.get("/api/status")))["instances"].([]any)[0].(map[string]any)
 	for k := range i0 {
-		if len(k) > 5 && k[:5] == "load_" && k != "load_duration" && k != "load_deadline" {
+		// load_mode (how the weights travel) belongs to the instance, not to its progress
+		if len(k) > 5 && k[:5] == "load_" && k != "load_duration" && k != "load_deadline" && k != "load_mode" {
 			t.Errorf("ready instance has %s", k)
 		}
 	}
