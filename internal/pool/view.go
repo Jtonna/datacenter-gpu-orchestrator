@@ -51,6 +51,20 @@ func (p *Pool) Unplaced() map[core.NodeID]string {
 	return out
 }
 
+var _ scheduler.NodeGateDetail = (*Pool)(nil)
+
+// UnplacedDetail is scheduler.NodeGateDetail: the message of a reason that
+// has one (agent_unreachable).
+func (p *Pool) UnplacedDetail() map[core.NodeID]string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make(map[core.NodeID]string, len(p.unplacedMsg))
+	for id, msg := range p.unplacedMsg {
+		out[id] = msg
+	}
+	return out
+}
+
 // Nodes is the node list, sorted by id.
 func (p *Pool) Nodes() []core.Node {
 	p.mu.Lock()
@@ -137,7 +151,7 @@ func (p *Pool) isHostAgentLocked(a *agent) bool {
 func (p *Pool) rebuildLocked() {
 	cfg := p.o.Config()
 	var nodes []core.Node
-	unplaced := map[core.NodeID]string{}
+	unplaced, msgs := map[core.NodeID]string{}, map[core.NodeID]string{}
 	for _, id := range p.sortedIDsLocked() {
 		a := p.agents[id]
 		if a.left || p.admin[id].Removed || p.isHostAgentLocked(a) {
@@ -155,6 +169,9 @@ func (p *Pool) rebuildLocked() {
 		if why != "" {
 			unplaced[n.ID] = why
 		}
+		if why == scheduler.UnplacedAgentUnreachable {
+			msgs[n.ID] = a.reachMsg
+		}
 		nodes = append(nodes, n)
 	}
 	if p.probeOK {
@@ -166,8 +183,9 @@ func (p *Pool) rebuildLocked() {
 		}
 	}
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
-	if (!reflect.DeepEqual(nodes, p.nodes) && !(len(nodes) == 0 && len(p.nodes) == 0)) || !reflect.DeepEqual(unplaced, p.unplaced) {
-		p.nodes, p.unplaced = nodes, unplaced
+	if (!reflect.DeepEqual(nodes, p.nodes) && !(len(nodes) == 0 && len(p.nodes) == 0)) || !reflect.DeepEqual(unplaced, p.unplaced) ||
+		!reflect.DeepEqual(msgs, p.unplacedMsg) {
+		p.nodes, p.unplaced, p.unplacedMsg = nodes, unplaced, msgs
 		select {
 		case p.notify <- struct{}{}:
 		default:
@@ -234,6 +252,10 @@ func tierDevices(a *agent) []string {
 //   - orphan_launch: it reports a launch this run does not hold (Heartbeat).
 //   - silent: no heartbeat for LostAfter while it runs a launch of ours; it
 //     is lost after LeaseTTL (CheckLost).
+//   - agent_unreachable: Potluck has not reached its agent API since its
+//     registration, or a launch request or state read got no answer since
+//     (the call-back check, CR-8); a launch would cost the connect timeout
+//     and fail.
 //   - programs_not_ready: its programs are not verified, or it has not sent a
 //     heartbeat yet; the agent would refuse a launch with release_mismatch
 //     (5.1, 6.2).
@@ -250,6 +272,9 @@ func (p *Pool) unplacedLocked(cfg *config.Config, a *agent) string {
 	}
 	if a.silent {
 		return scheduler.UnplacedSilent
+	}
+	if !a.reachable {
+		return scheduler.UnplacedAgentUnreachable
 	}
 	if a.hb == nil || !a.hb.ProgramsReady {
 		return scheduler.UnplacedProgramsNotReady
@@ -338,36 +363,44 @@ func (p *Pool) probeOnce(ctx context.Context) {
 
 // NodeFacts is what status shows about an agent node.
 type NodeFacts struct {
-	ID            string          `json:"id"`
-	Name          string          `json:"name"`
-	Addr          string          `json:"addr"`
-	State         string          `json:"state"` // active, lost, left, removed
-	Install       string          `json:"install,omitempty"`
-	Release       string          `json:"release,omitempty"`
-	Platform      string          `json:"platform,omitempty"`
-	ProgramsReady bool            `json:"programs_ready"`
-	ProgramsError *string         `json:"programs_error"`
-	ModelSource   any             `json:"model_source,omitempty"`
-	Paused        bool            `json:"paused"`
-	HostAgent     bool            `json:"host_agent,omitempty"`
-	LastSeenAgoS  *float64        `json:"last_seen_ago_s,omitempty"`
-	Role          string          `json:"role,omitempty"`
-	LaunchID      *string         `json:"launch_id"`
-	LaunchState   string          `json:"launch_state,omitempty"`
-	Devices       any             `json:"devices,omitempty"`
-	MemAvailMiB   *int64          `json:"mem_available_mib,omitempty"`
-	Stats         json.RawMessage `json:"stats,omitempty"`
-	StatsNote     string          `json:"stats_note,omitempty"`
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	Addr          string   `json:"addr"`
+	State         string   `json:"state"` // active, lost, left, removed
+	Install       string   `json:"install,omitempty"`
+	Release       string   `json:"release,omitempty"`
+	Platform      string   `json:"platform,omitempty"`
+	ProgramsReady bool     `json:"programs_ready"`
+	ProgramsError *string  `json:"programs_error"`
+	ModelSource   any      `json:"model_source,omitempty"`
+	Paused        bool     `json:"paused"`
+	HostAgent     bool     `json:"host_agent,omitempty"`
+	LastSeenAgoS  *float64 `json:"last_seen_ago_s,omitempty"`
+	// Role and LaunchID are what the agent last reported in its heartbeat.
+	Role     string  `json:"role,omitempty"`
+	LaunchID *string `json:"launch_id"`
+	// PotluckLaunchID is the launch Potluck holds for the node (sent or about
+	// to be sent, whatever the agent reports) and LaunchState its state as
+	// Potluck last read it.
+	PotluckLaunchID *string         `json:"potluck_launch_id,omitempty"`
+	LaunchState     string          `json:"launch_state,omitempty"`
+	Devices         any             `json:"devices,omitempty"`
+	MemAvailMiB     *int64          `json:"mem_available_mib,omitempty"`
+	Stats           json.RawMessage `json:"stats,omitempty"`
+	StatsNote       string          `json:"stats_note,omitempty"`
 	// ExtraDevicesIgnored counts the node's devices of its platform backend
 	// beyond the first, which no worker uses (one device per node).
 	ExtraDevicesIgnored int `json:"extra_devices_ignored"`
 	// Placeable: the node may take a new load. Unplaced is why not, when the
-	// node itself is the reason: no_tier_match, orphan_launch, silent,
-	// programs_not_ready or model_source_unreachable. A paused, lost, left or
-	// removed node and the host machine's agent are not placeable either;
-	// their own fields say so.
-	Placeable bool   `json:"placeable"`
-	Unplaced  string `json:"unplaced,omitempty"`
+	// node itself is the reason: host_machine, no_tier_match, orphan_launch,
+	// silent, agent_unreachable, programs_not_ready or
+	// model_source_unreachable; UnplacedMessage says more when there is more
+	// to say (agent_unreachable: the address, the port and what to check). A
+	// paused, lost, left or removed node is not placeable either; its own
+	// fields say so.
+	Placeable       bool   `json:"placeable"`
+	Unplaced        string `json:"unplaced,omitempty"`
+	UnplacedMessage string `json:"unplaced_message,omitempty"`
 }
 
 // Facts lists every agent node Potluck knows, removed ones included.
@@ -402,11 +435,19 @@ func (p *Pool) Facts() []NodeFacts {
 		for _, l := range p.launches {
 			if l.node == core.NodeID(id) {
 				lid := l.id
-				f.LaunchID, f.LaunchState = &lid, l.stateName()
+				f.PotluckLaunchID, f.LaunchState = &lid, l.stateName()
 			}
 		}
 		if f.State == StateActive || f.State == StateLost {
 			f.Unplaced = p.unplacedLocked(cfg, a)
+			if f.HostAgent {
+				// The host machine's agent is not a remote node: the
+				// scheduler's own child is the host (isHostAgentLocked).
+				f.Unplaced = scheduler.UnplacedHostMachine
+			}
+			if f.Unplaced == scheduler.UnplacedAgentUnreachable {
+				f.UnplacedMessage = a.reachMsg
+			}
 		}
 		f.Placeable = f.State == StateActive && !f.Paused && !f.HostAgent && f.Unplaced == ""
 		out = append(out, f)

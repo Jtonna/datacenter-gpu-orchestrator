@@ -485,7 +485,7 @@ func TestStatusSummary(t *testing.T) {
 	 "nodes":[{"id":"aa","addr":"x","budget_mib":9000,"memory":[{"name":"RPC0","total_mib":4000},{"name":"CPU","total_mib":500}]}]}],
 	 "queue":[{"profile":"big","age":3,"waiters":2,"claimed":false,"wait_reason":"does not fit","created":"c"}],
 	 "quarantines":[],"backoffs":[],"recent_loads":[1,2,3,4,5,6,7],"learned_needs":{"gemma":{}},
-	 "view":{"age":1.5,"connected":true,"stale":false,"nodes":[{"id":"aa","hostname":"ps5-1","online":true,"total_mib":12000,"free_mib":11000,"addr":"192.0.2.2","priority":1}]}}`
+	 "view":{"age":1.5,"connected":true,"stale":false,"nodes":[{"id":"aa","hostname":"ps5-1","online":true,"unplaced":"agent_unreachable","unplaced_message":"cannot reach 192.0.2.2:50060","total_mib":12000,"free_mib":11000,"addr":"192.0.2.2","priority":1}]}}`
 	h := newTest(&fakeInner{body: full})
 	out := callTool(t, h, nil, "get_status", `{}`)
 	var st map[string]any
@@ -500,7 +500,8 @@ func TestStatusSummary(t *testing.T) {
 	if len(st["recent_loads"].([]any)) != 5 || st["learned_needs"] != nil || len(st["queue"].([]any)) != 1 {
 		t.Errorf("summary: %v", st)
 	}
-	if nd := st["nodes"].([]any)[0].(map[string]any); nd["addr"] != nil || nd["hostname"] != "ps5-1" {
+	if nd := st["nodes"].([]any)[0].(map[string]any); nd["addr"] != nil || nd["hostname"] != "ps5-1" ||
+		nd["unplaced"] != "agent_unreachable" || nd["unplaced_message"] != "cannot reach 192.0.2.2:50060" {
 		t.Errorf("node: %v", nd)
 	}
 	if len(out.Content[0].Text) >= len(full) {

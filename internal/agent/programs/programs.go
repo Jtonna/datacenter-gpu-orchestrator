@@ -233,6 +233,13 @@ func (m *Manager) Sync(ctx context.Context, entries []agentproto.ProgramEntry, w
 		}
 		for _, e := range need {
 			if err := m.fetch(ctx, e); err != nil {
+				if ctx.Err() != nil {
+					// Cancelled by the caller (a registration again replaces
+					// this Sync, or the agent stops): not a fault of the
+					// programs, and the next Sync starts at once.
+					m.log.Debug("program download cancelled", "name", e.Name, "err", err)
+					return ctx.Err()
+				}
 				return m.setError("%s: %v", e.Name, err)
 			}
 			verified[e.Name] = e
@@ -287,6 +294,9 @@ func (m *Manager) fetch(ctx context.Context, e agentproto.ProgramEntry) error {
 		last = m.fetchOnce(ctx, e)
 		if last == nil {
 			return nil
+		}
+		if ctx.Err() != nil {
+			return last // cancelled: Sync says so, at debug level
 		}
 		m.log.Warn("program download failed", "name", e.Name, "attempt", attempt, "err", last)
 	}

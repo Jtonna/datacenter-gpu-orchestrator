@@ -11,9 +11,10 @@ import (
 // waits, nothing is sent to the agent, and the load starts once the reason is
 // gone. The reason is in the node's status.
 func TestAgents_UnplacedNodeTakesNoLoadAndTheRequestWaits(t *testing.T) {
-	for _, why := range []string{UnplacedProgramsNotReady, UnplacedModelSourceUnreachable, UnplacedOrphanLaunch, UnplacedSilent} {
+	for _, why := range []string{UnplacedProgramsNotReady, UnplacedModelSourceUnreachable, UnplacedOrphanLaunch, UnplacedSilent, UnplacedAgentUnreachable} {
 		h := agentsHarness(t)
 		h.view.setUnplaced("a", why)
+		h.view.setUnplacedMsg("a", "more about "+why)
 		h.viewChanged()
 		w := h.request("m")
 		h.pending(w)
@@ -21,7 +22,7 @@ func TestAgents_UnplacedNodeTakesNoLoadAndTheRequestWaits(t *testing.T) {
 			t.Fatalf("%s: a worker launch was sent to a node that is not placeable", why)
 		}
 		h.wantState("m", "absent")
-		if s := h.nodeStatus("a"); s.Unplaced != why || s.Online != true {
+		if s := h.nodeStatus("a"); s.Unplaced != why || s.UnplacedMessage != "more about "+why || s.Online != true {
 			t.Fatalf("%s: status %+v", why, s)
 		}
 		if s := h.nodeStatus("b"); s.Unplaced != "" {
@@ -31,7 +32,11 @@ func TestAgents_UnplacedNodeTakesNoLoadAndTheRequestWaits(t *testing.T) {
 			t.Fatalf("%s: the profile was backed off", why)
 		}
 		h.view.setUnplaced("a", "")
+		h.view.setUnplacedMsg("a", "")
 		h.viewChanged()
+		if s := h.nodeStatus("a"); s.Unplaced != "" || s.UnplacedMessage != "" {
+			t.Fatalf("%s: status after the reason went %+v", why, s)
+		}
 		if len(h.wlaunches) != 1 {
 			t.Fatalf("%s: %d launches after the node became placeable, want 1", why, len(h.wlaunches))
 		}

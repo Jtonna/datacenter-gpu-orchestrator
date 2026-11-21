@@ -816,6 +816,29 @@ curl -X DELETE localhost:3122/api/nodes/02:00:00:00:00:01            -d '{"comme
 curl -X POST localhost:3122/api/nodes/02:00:00:00:00:01/readmit      -d '{"comment":"why"}'
 ```
 
+A node that is `active` and still gets no load says why in `unplaced` (in
+`agents[]` and `view.nodes[]` of `GET /api/status`, and in the MCP status):
+
+- `agent_unreachable`: the node reaches Potluck, but Potluck cannot reach the
+  node's agent. `unplaced_message` names the address and port it tried. Check,
+  on the node: the firewall allows TCP from Potluck to `50060` and `50052`
+  (`ufw status`; `potluck-agent-setup` adds the rules when ufw is active,
+  firewalld you set yourself); the agent listens (`ss -ltn | grep 50060`).
+  From the Potluck machine: `curl -m 3 http://<node>:50060/launch` must
+  answer. When Potluck runs in a container on the same machine as an agent,
+  that agent needs `--allow-from <container network>`. Potluck tries again
+  every 15 s and logs `agent reachable` when it works; nothing has to be
+  restarted. The log has one `agent unreachable` warning per failure.
+- `programs_not_ready`, `model_source_unreachable`, `orphan_launch`, `silent`,
+  `no_tier_match`: agent contract 11.1. `host_machine`: the agent of the
+  machine Potluck runs on; it is never a remote node.
+
+In `agents[]`, `launch_id` and `role` are what the agent reported;
+`potluck_launch_id` is the launch Potluck holds for the node.
+
+Restarting or updating Potluck ends every loaded model: the agents stop the
+launches a restarted Potluck no longer knows.
+
 Force unload fails the requests waiting for the instance on that node (the
 502 says "force unload of node <id>"); use pause when you only want the node
 to stop taking new loads. A node with more than one GPU of its backend shows
@@ -886,6 +909,7 @@ First look, always: `curl -s http://127.0.0.1:3122/api/status` and `docker logs 
 | `502` "load cancelled: <node> ran low on memory during the load (available N MiB, floor M MiB)" | The memory watch (design 7.2a, 8.4) saw that PS5's available memory fall below `load_memory_floor_mib` during the load. The profile is backed off; the node is not quarantined | Find what takes the PS5's memory, check the model's size against the node (`learned_needs` in `/api/status` after a successful load), retry after the backoff. |
 | A forced profile starts uploading, then the PS5 `rpc-server` crashes mid-upload (child log: "Remote RPC server crashed or returned malformed response"); the worker restarts by itself | The model does not fit the forced nodes. Measured 2026-11-18: Devstral 24B forced onto one PS5 needs about 13991 MiB against about 13.5 GB free. A `force_nodes` profile skips the fit check unless `forced_fit_check` is set | Force enough nodes (Devstral 24B fits on two PS5s: 14248 MiB measured at ctx 8192). Set `defaults.forced_fit_check: reject` or `warn` (see "Fit check for forced profiles"). The profile is backed off after the failed load; wait it out. |
 | A PS5 shows `hung` (`GET /api/status`, `view.nodes[].health.state`, ERROR log `worker hung`, `workerHealth` event) | Two of its health channels are silent (design 8.4a): upload (a receiving worker got no new bytes for `worker_silence`, 30 s) and heartbeat (offline in the live fleet view for 30 s); or the heartbeat alone for 3 x `worker_silence` with no channel known ok (an idle loaded model whose node stopped reporting). The TCP connect probe (port 50052) is off by default and is not used on PS5s: an rpc-server accepts one client, so probes pile up in its listen backlog and then all time out, which made healthy PS5s read `probe: silent`; the same goes for any external TCP check of port 50052, do not add one. The incident this was built for: the PS5 ran out of memory, its `rpc-server` hung, the container stayed "running" and the machine stopped reporting. The scheduler only names and quarantines it; it does not touch the PS5 | Look at `health.channels` and `silent_for_s` to see which evidence is missing. Power cycle or restart the PS5 worker (it recovers by itself only if the process comes back), or turn on recovery requests so the fleet manager's PS5 service restarts the rpc-server for you (section I, "Recovery requests for a hung PS5"). The state returns to `ok` once no channel is silent and at least one is known ok; the log says `worker recovered`. A model loaded on it is ended by the existing rules (node loss at 30 s, load stall, load timeout), not by this one. `suspect` is one silent channel only: watch it, nothing is quarantined. `defaults.worker_probe_interval` is `0` (probe never runs, its channel is always `unknown`); do not set it above 0 for PS5 workers. |
+| A load on an agent node fails with `agent_unreachable`, or the node shows `unplaced: agent_unreachable` | Potluck cannot connect to the node's agent on port 50060 (or got no answer to a start request or state read). The usual cause is a firewall on the node that drops inbound connections; the node still registers and sends heartbeats, because those go the other way | Section I, "Agent membership": open TCP 50060 and 50052 from Potluck on the node, then wait up to 15 s. `unplaced_message` in `/api/status` names the address. |
 | A node stuck quarantined | Its pre-flight keeps failing: quarantine is 30 s, doubling to 10 min, reset by a successful pre-flight (design 8.4) | Run the H2/H3 commands against that node. Fix the node (worker down, busy, more than one device: pin `-d` on it, firewall). The design has no clear-quarantine command; wait up to 10 min after fixing, or restart the container (that the state is in memory only is assumed, not stated for the scheduler). |
 | Pre-flight timeouts (10 s probe fails) | Another client holds that `rpc-server` (single-client; a blocked probe never returns), or the worker is silent | Look for a second head: old llama-swap still running (`docker ps -a`), a hand-run `llama-server-rpc`. Stop it. Never run two heads. |
 | Fleet view stale | No byte from the fleet console for `stale_after` (60 s): console down, wrong URL, or the firewall rule is missing. Remote nodes become ineligible; the host machine still works (design 8.4) | `docker exec llama-swap curl -fsS http://host.docker.internal:8090/api/fleet`; check rule (C) and that the console runs on `:8090`. The console keeps state in memory: after its restart the view is empty until nodes report. |

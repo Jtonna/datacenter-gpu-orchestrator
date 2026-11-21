@@ -3,6 +3,7 @@ package pool
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -95,6 +96,22 @@ type rig struct {
 	mu     sync.Mutex
 	forced []core.NodeID
 	logs   logBuf
+
+	// cbErr, when set, is what the call-back check of every agent answers;
+	// cbCalls counts the checks. Unset, an agent at 192.0.2.x (a registration
+	// made by the test itself, with nothing listening) counts as reached and
+	// any other agent is really called.
+	cbErr   atomic.Pointer[error]
+	cbCalls atomic.Int64
+}
+
+func (r *rig) failCallBack(msg string) {
+	if msg == "" {
+		r.cbErr.Store(nil)
+		return
+	}
+	err := errors.New(msg)
+	r.cbErr.Store(&err)
 }
 
 type logBuf struct {
@@ -146,9 +163,22 @@ func (r *rig) start() {
 	p, err := New(Options{Config: func() *config.Config { return r.cfg }, Programs: Programs{Release: r.rel},
 		PotluckRelease: "0.1.0", Store: r.store, History: r.hist, Clock: r.clk.now,
 		AgentPort: r.agentPort, WorkerPort: r.workerPort, LeaseEvery: 100 * time.Millisecond, LogDir: r.t.TempDir(),
-		Logger: slog.New(slog.NewTextHandler(&r.logs, nil))})
+		CallBackEvery: 20 * time.Millisecond,
+		Logger:        slog.New(slog.NewTextHandler(&r.logs, nil))})
 	if err != nil {
 		r.t.Fatal(err)
+	}
+	p.inlineCallBack = true
+	real := p.callBack
+	p.callBack = func(ctx context.Context, base string) error {
+		r.cbCalls.Add(1)
+		if e := r.cbErr.Load(); e != nil {
+			return *e
+		}
+		if strings.HasPrefix(base, "http://192.0.2.") {
+			return nil
+		}
+		return real(ctx, base)
 	}
 	p.SetForceUnload(func(_ context.Context, id core.NodeID) (string, error) {
 		r.mu.Lock()
@@ -423,7 +453,7 @@ func TestWorkerLaunchesAroundALoad(t *testing.T) {
 		}
 	}
 	eventually(t, 5*time.Second, func() bool { return a1.Leases() >= 2 && a2.Leases() >= 2 }, "leases renewed")
-	if f := r.p.Facts(); f[0].LaunchID == nil || f[0].LaunchState != agentproto.StateReady {
+	if f := r.p.Facts(); f[0].PotluckLaunchID == nil || f[0].LaunchState != agentproto.StateReady {
 		t.Fatalf("facts %+v", f[0])
 	}
 	r.p.Stop(1, nil)

@@ -96,6 +96,31 @@ type fakeView struct {
 	fetchCalls    map[core.NodeID]int
 	changed       chan struct{}
 	unplaced      map[core.NodeID]string // NodeGate: why a listed node takes no new load
+	unplacedMsg   map[core.NodeID]string // NodeGateDetail
+}
+
+// UnplacedDetail is NodeGateDetail.
+func (v *fakeView) UnplacedDetail() map[core.NodeID]string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	out := map[core.NodeID]string{}
+	for id, msg := range v.unplacedMsg {
+		out[id] = msg
+	}
+	return out
+}
+
+func (v *fakeView) setUnplacedMsg(id core.NodeID, msg string) {
+	v.mu.Lock()
+	if v.unplacedMsg == nil {
+		v.unplacedMsg = map[core.NodeID]string{}
+	}
+	if msg == "" {
+		delete(v.unplacedMsg, id)
+	} else {
+		v.unplacedMsg[id] = msg
+	}
+	v.mu.Unlock()
 }
 
 // Unplaced is NodeGate.

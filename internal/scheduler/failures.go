@@ -65,6 +65,10 @@ func (c *schedCore) refreshView() {
 	if g, ok := c.view.(NodeGate); ok {
 		c.unplaced = g.Unplaced()
 	}
+	c.unplacedMsg = nil
+	if g, ok := c.view.(NodeGateDetail); ok {
+		c.unplacedMsg = g.UnplacedDetail()
+	}
 	for _, id := range c.sortedNodeIDs() {
 		if n, ok := raw[id]; ok && !c.excludedSeen[id] {
 			if entry, hit := c.cfg.ExcludedBy(n.ID, n.Hostname); hit {
