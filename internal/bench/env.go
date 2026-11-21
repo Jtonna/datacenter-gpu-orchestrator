@@ -75,8 +75,9 @@ func (x *exec) captureEnv() {
 		in = &s.Instances[0]
 	}
 	x.noteEnv(s, in)
-	x.a.setRun(func(r *Run) { e := x.a.env; r.Env = &e })
-	x.m.o.Store.SetRunEnv(x.a.run.ID, x.envSnapshot())
+	env := x.envSnapshot() // a copy under the lock: the runner keeps adding to it
+	x.a.setRun(func(r *Run) { r.Env = env })
+	x.m.o.Store.SetRunEnv(x.a.run.ID, env)
 }
 
 func (x *exec) envSnapshot() *Environment {
