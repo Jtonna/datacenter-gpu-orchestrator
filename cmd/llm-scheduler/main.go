@@ -386,6 +386,9 @@ func serve(boot config.Bootstrap, log *slog.Logger) int {
 		benchMgr.Stop(bmctx)
 		bmcancel()
 	}
+	if logRelay != nil {
+		logRelay.StopReads() // a reader of /logs/ that streams must not hold the shutdown up
+	}
 	code = exitCodeAfterShutdown(code, apiSrv.Shutdown(sctx), log)
 	hctx, hcancel := context.WithTimeout(context.Background(), apiGrace)
 	defer hcancel()

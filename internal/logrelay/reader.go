@@ -57,6 +57,9 @@ type reader struct {
 	client  *http.Client
 	tr      http.RoundTripper
 	timeout time.Duration
+	// stopped ends every read in flight (StopReads, at shutdown).
+	stopped context.Context
+	stop    context.CancelFunc
 }
 
 func newReader(o Options) *reader {
@@ -78,7 +81,8 @@ func newReader(o Options) *reader {
 	if t <= 0 {
 		t = QueryTimeout
 	}
-	return &reader{slots: make(chan struct{}, MaxReads), tr: tr, timeout: t,
+	stopped, stop := context.WithCancel(context.Background())
+	return &reader{slots: make(chan struct{}, MaxReads), tr: tr, timeout: t, stopped: stopped, stop: stop,
 		client: &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 }
 
@@ -93,6 +97,19 @@ func (rd *reader) take() bool {
 }
 
 func (rd *reader) give() { <-rd.slots }
+
+// bind gives req a context that also ends with StopReads; call the returned
+// function when the read is over.
+func (rd *reader) bind(req *http.Request) (*http.Request, func()) {
+	ctx, cancel := context.WithCancel(req.Context())
+	stop := context.AfterFunc(rd.stopped, cancel)
+	return req.WithContext(ctx), func() { stop(); cancel() }
+}
+
+// StopReads ends every read in flight (a streaming read of /logs/ may run as
+// long as its reader stays) and refuses new ones with 503. Potluck calls it at
+// shutdown, so shutting down never waits on the store or on a reader.
+func (r *Relay) StopReads() { r.read.stop() }
 
 // ReadsInFlight is how many reads run now.
 func (r *Relay) ReadsInFlight() int { return len(r.read.slots) }
@@ -166,6 +183,12 @@ func (r *Relay) ServePages(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	defer r.read.give()
+	if r.read.stopped.Err() != nil {
+		reply(w, http.StatusServiceUnavailable, ReasonStoreUnavailable, "Potluck is shutting down", 5)
+		return
+	}
+	req, done := r.read.bind(req)
+	defer done()
 	target, err := url.Parse(r.base)
 	if err != nil {
 		reply(w, http.StatusServiceUnavailable, ReasonStoreUnavailable, "the log store address is not usable", 5)
@@ -234,6 +257,12 @@ func (r *Relay) ServeQuery(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	defer r.read.give()
+	if r.read.stopped.Err() != nil {
+		reply(w, http.StatusServiceUnavailable, ReasonStoreUnavailable, "Potluck is shutting down", 5)
+		return
+	}
+	req, done := r.read.bind(req)
+	defer done()
 	ctx, cancel := context.WithTimeout(req.Context(), r.read.timeout)
 	defer cancel()
 	out, err := http.NewRequestWithContext(ctx, http.MethodPost, r.base+"/select/logsql/query", strings.NewReader(form.Encode()))

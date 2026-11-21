@@ -49,7 +49,16 @@ type fakeStore struct {
 	got  []post
 	hang atomic.Bool
 	n    atomic.Int32
+	// waiting counts the hung requests whose client is still there.
+	waiting atomic.Int32
+	// release ends every hung request; closed when the test ends, before
+	// the server is closed, so a request the client never gives up shows as a
+	// failed check, not as a test that never ends.
+	release chan struct{}
+	once    sync.Once
 }
+
+func (s *fakeStore) unhang() { s.once.Do(func() { close(s.release) }) }
 
 type post struct {
 	path  string
@@ -59,11 +68,19 @@ type post struct {
 }
 
 func newFakeStore(t *testing.T) *fakeStore {
-	s := &fakeStore{}
+	s := &fakeStore{release: make(chan struct{})}
 	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.n.Add(1)
 		if s.hang.Load() {
-			<-r.Context().Done()
+			// Read the body first: the server notices a client that went away
+			// (and ends r.Context()) only once the body has been read.
+			io.Copy(io.Discard, r.Body)
+			s.waiting.Add(1)
+			defer s.waiting.Add(-1)
+			select {
+			case <-r.Context().Done():
+			case <-s.release:
+			}
 			return
 		}
 		var body io.Reader = r.Body
@@ -95,6 +112,7 @@ func newFakeStore(t *testing.T) *fakeStore {
 		s.mu.Unlock()
 	}))
 	t.Cleanup(s.srv.Close)
+	t.Cleanup(s.unhang) // runs first
 	return s
 }
 
@@ -162,7 +180,16 @@ func (s *setup) run(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { s.ship.Run(ctx); close(done) }()
-	t.Cleanup(func() { cancel(); <-done })
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Error("the sender did not stop within 10 s of its context ending: a push to the store was not cancelled")
+			s.store.unhang()
+			<-done
+		}
+	})
 }
 
 func allLines(ps []post) []string {
@@ -393,4 +420,74 @@ func TestHungStoreSlowsNeitherChildNorLogging(t *testing.T) {
 	if worstLog > time.Second {
 		t.Errorf("a log call took %v with the store hung", worstLog)
 	}
+}
+
+// A store that takes the request and never answers: the sender gives the
+// push up at its client's time limit, says so in its figures, tries again
+// later, and once the store answers again the lines kept arrive. It never
+// sits in one request for ever.
+func TestSenderGivesUpOnASilentStore(t *testing.T) {
+	s := newSetup(t, func(o *Options) { o.HTTP = &http.Client{Timeout: 300 * time.Millisecond} })
+	s.store.hang.Store(true)
+	s.run(t)
+	waitFor(t, "shipping on", s.ship.ship.On)
+	s.log.Info("written while the store is silent")
+	waitFor(t, "the push given up and tried again", func() bool {
+		f := s.ship.Figures()
+		return f != nil && f.LastError != "" && s.store.n.Load() >= 2
+	})
+	if f := s.ship.Figures(); f.LinesSent != 0 {
+		t.Errorf("figures with a silent store: %+v", f)
+	}
+	s.store.hang.Store(false)
+	s.log.Info("written after the store came back")
+	waitFor(t, "both lines at the store", func() bool {
+		var a, b bool
+		for _, l := range allLines(s.store.posts()) {
+			a = a || strings.Contains(l, "written while the store is silent")
+			b = b || strings.Contains(l, "written after the store came back")
+		}
+		return a && b
+	})
+	if f := s.ship.Figures(); f.LinesSent < 2 {
+		t.Errorf("figures after the store came back: %+v", f)
+	}
+}
+
+// Stopping the sender (Potluck shuts down) gives up a push in flight at once,
+// even with a client that has no time limit.
+func TestStopCancelsAPushInFlight(t *testing.T) {
+	s := newSetup(t, func(o *Options) { o.HTTP = &http.Client{} })
+	s.store.hang.Store(true)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { s.ship.Run(ctx); close(done) }()
+	s.log.Info("a line")
+	waitFor(t, "a push at the store", func() bool { return s.store.n.Load() >= 1 })
+	if s.store.waiting.Load() == 0 {
+		waitFor(t, "the push held at the store", func() bool { return s.store.waiting.Load() == 1 })
+	}
+	t0 := time.Now()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		s.store.unhang()
+		<-done
+		t.Fatal("the sender did not stop within 10 s: the push in flight was not cancelled")
+	}
+	t.Logf("stopped %v after the cancel", time.Since(t0))
+	waitFor(t, "the store to see the push given up", func() bool { return s.store.waiting.Load() == 0 })
+}
+
+// Logging turned off gives up a push in flight too.
+func TestOffCancelsAPushInFlight(t *testing.T) {
+	s := newSetup(t, func(o *Options) { o.HTTP = &http.Client{} })
+	s.store.hang.Store(true)
+	s.run(t)
+	waitFor(t, "shipping on", s.ship.ship.On)
+	s.log.Info("a line")
+	waitFor(t, "a push at the store", func() bool { return s.store.n.Load() >= 1 })
+	s.on.Store(false)
+	waitFor(t, "the push given up", func() bool { return !s.ship.ship.On() && s.store.waiting.Load() == 0 })
 }

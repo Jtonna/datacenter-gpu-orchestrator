@@ -464,3 +464,91 @@ func TestParseStoreFlagValues(t *testing.T) {
 		}
 	}
 }
+
+// A streaming read ends when its reader goes away: the store's request ends
+// and the place is free again.
+func TestReadProxyEndsWhenTheReaderLeaves(t *testing.T) {
+	g := newReadRig(t, withPrefix)
+	block := make(chan struct{})
+	g.store.mu.Lock()
+	g.store.block = block
+	g.store.mu.Unlock()
+	t.Cleanup(func() { close(block) })
+	ctx, cancel := context.WithCancel(context.Background())
+	req, _ := http.NewRequestWithContext(ctx, "GET", g.front.URL+"/logs/select/logsql/tail?query=*", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if line, _ := bufio.NewReader(resp.Body).ReadString('\n'); line != "first line\n" {
+		t.Fatalf("first line %q", line)
+	}
+	cancel()
+	resp.Body.Close()
+	waitUntil(t, "the read to end at the store and in Potluck", func() bool { return g.store.in.Load() == 0 && g.relay.ReadsInFlight() == 0 })
+}
+
+// StopReads (Potluck shuts down) ends a streaming read whose reader stays,
+// and refuses new reads.
+func TestStopReadsEndsStreams(t *testing.T) {
+	g := newReadRig(t, withPrefix)
+	block := make(chan struct{})
+	g.store.mu.Lock()
+	g.store.block = block
+	g.store.mu.Unlock()
+	t.Cleanup(func() { close(block) })
+	resp, err := http.Get(g.front.URL + "/logs/select/logsql/tail?query=*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	br := bufio.NewReader(resp.Body)
+	if line, _ := br.ReadString('\n'); line != "first line\n" {
+		t.Fatalf("first line %q", line)
+	}
+	g.relay.StopReads()
+	ended := make(chan struct{})
+	go func() { io.Copy(io.Discard, br); close(ended) }()
+	select {
+	case <-ended:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the streaming read did not end within 10 s of StopReads")
+	}
+	waitUntil(t, "the read to end at the store and in Potluck", func() bool { return g.store.in.Load() == 0 && g.relay.ReadsInFlight() == 0 })
+	for _, p := range []string{"/logs/select/vmui/", "/api/logs/query?query=*"} {
+		if st, body, _ := doReq(t, "GET", g.front.URL+p, ""); st != 503 || reasonOf(body) != ReasonStoreUnavailable {
+			t.Errorf("after StopReads %s: %d %s", p, st, body)
+		}
+	}
+}
+
+// A store that takes a read and never begins its answer: the read ends at the
+// transport's header limit with 503, not never.
+func TestReadProxySilentStore(t *testing.T) {
+	g := newReadRig(t, withPrefix, func(o *Options) {
+		o.ReadTransport = &http.Transport{ResponseHeaderTimeout: 300 * time.Millisecond}
+	})
+	g.store.mu.Lock()
+	g.store.queryHang = true
+	g.store.mu.Unlock()
+	t0 := time.Now()
+	st, body, _ := doReq(t, "POST", g.front.URL+"/logs/select/logsql/query", "query=*", "Content-Type", "application/x-www-form-urlencoded")
+	if st != 503 || reasonOf(body) != ReasonStoreUnavailable {
+		t.Errorf("silent store: %d %s", st, body)
+	}
+	if d := time.Since(t0); d > 5*time.Second {
+		t.Errorf("took %v with a header limit of 300ms", d)
+	}
+	waitUntil(t, "the read to end at the store and in Potluck", func() bool { return g.store.in.Load() == 0 && g.relay.ReadsInFlight() == 0 })
+}
+
+func waitUntil(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}

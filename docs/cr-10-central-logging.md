@@ -436,6 +436,11 @@ Tests:
 - Own lines and child output (`internal/selflog/selflog_test.go`):
   `TestOwnLinesReachTheStore`, `TestChildOutputReachesTheStore`,
   `TestDroppedLinesNotice`, `TestChildRateLimit`, `TestOffShipsNothing`.
+- A store that takes a request and never answers: `TestSenderGivesUpOnASilentStore`
+  (the push ends at the client's limit, is tried again, the lines arrive once
+  the store answers), `TestStopCancelsAPushInFlight`, `TestOffCancelsAPushInFlight`;
+  on the read side `TestReadProxySilentStore`, `TestReadProxyEndsWhenTheReaderLeaves`,
+  `TestStopReadsEndsStreams`.
 - Never blocking: `TestOwnLoggingDoesNotSlowRequests` (`internal/api`) and
   `TestHungStoreSlowsNeitherChildNorLogging` (`internal/selflog`).
 - The MCP tool: the `query_logs` row of the tool table test
