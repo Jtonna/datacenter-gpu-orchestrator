@@ -12,7 +12,9 @@
 #              exists), so the starter does nothing at the next boot or apply.
 #
 # Firewall rules the setup added to ufw (listed in /etc/potluck/firewall-rules)
-# are removed, exactly those. firewalld is not touched.
+# are removed, exactly those, whatever their ports (an older setup also opened
+# 50061). firewalld is not touched. A Docker install also loses the volume
+# potluck-agent-data and the drop-in docker.service.d/potluck-models.conf.
 #
 # Handles the bare-metal install (systemd unit or starter's transient unit)
 # and the Docker install. Every step is best effort. Exit status is 0 unless
@@ -24,7 +26,9 @@ set -eu
 # node.
 #   POTLUCK_AGENT_TEST_PATH  replaces PATH (the directory of fake tools)
 #   POTLUCK_AGENT_TEST_ETC   replaces /etc/potluck
-#   POTLUCK_AGENT_TEST_ONLY  "firewall": run the firewall step and nothing else
+#   POTLUCK_AGENT_TEST_ONLY  "firewall": run the firewall step and nothing else;
+#                            "docker": run the Docker and mount steps only
+#   POTLUCK_AGENT_TEST_ROOT  put in front of /etc/systemd/system
 if [ -n "${POTLUCK_AGENT_TEST_PATH:-}" ]; then
 	PATH=$POTLUCK_AGENT_TEST_PATH
 fi
@@ -33,7 +37,11 @@ SELF=potluck-agent-uninstall
 ETC_DIR=${POTLUCK_AGENT_TEST_ETC:-/etc/potluck}
 MARKER=$ETC_DIR/disabled
 FW_STATE=$ETC_DIR/firewall-rules
-UNIT_FILE=/etc/systemd/system/potluck-agent.service
+SYSTEMD_DIR=${POTLUCK_AGENT_TEST_ROOT:-}/etc/systemd/system
+UNIT_FILE=$SYSTEMD_DIR/potluck-agent.service
+DOCKER_DROPIN_DIR=$SYSTEMD_DIR/docker.service.d
+DOCKER_DROPIN=$DOCKER_DROPIN_DIR/potluck-models.conf
+DATA_VOLUME=potluck-agent-data
 MODELS_MOUNT_DIR=/var/lib/potluck-agent/models
 SHARE_MOUNT=/run/potluck/models
 
@@ -254,6 +262,13 @@ step_docker() {
 			log "could not remove container potluck-agent"
 		fi
 	fi
+	if docker volume inspect "$DATA_VOLUME" >/dev/null 2>&1; then
+		if docker volume rm "$DATA_VOLUME" >/dev/null 2>&1; then
+			log "removed volume $DATA_VOLUME"
+		else
+			log "warning: could not remove volume $DATA_VOLUME"
+		fi
+	fi
 	sdk_images=$(docker images --format '{{.Repository}}:{{.Tag}}' potluck-agent 2>/dev/null || true)
 	if [ -n "$sdk_images" ]; then
 		printf '%s\n' "$sdk_images" | while read -r sdk_img; do
@@ -300,7 +315,7 @@ step_models_mount_unit() {
 	if [ -z "$smu_unit" ]; then
 		smu_unit='var-lib-potluck\x2dagent-models.mount'
 	fi
-	smu_file=/etc/systemd/system/$smu_unit
+	smu_file=$SYSTEMD_DIR/$smu_unit
 	if [ -e "$smu_file" ] || [ "$(systemctl is-active "$smu_unit" 2>/dev/null || true)" = active ]; then
 		systemctl stop "$smu_unit" >/dev/null 2>&1 || log "could not stop $smu_unit"
 		systemctl disable "$smu_unit" >/dev/null 2>&1 || true
@@ -308,6 +323,13 @@ step_models_mount_unit() {
 		systemctl daemon-reload >/dev/null 2>&1 || true
 		systemctl reset-failed "$smu_unit" >/dev/null 2>&1 || true
 		log "removed mount unit $smu_unit"
+	fi
+	# The drop-in that orders docker.service after the mount: that file only,
+	# and its folder only when nothing else is in it.
+	if [ -e "$DOCKER_DROPIN" ]; then
+		rm -f "$DOCKER_DROPIN" && log "removed $DOCKER_DROPIN"
+		rmdir "$DOCKER_DROPIN_DIR" 2>/dev/null || true
+		systemctl daemon-reload >/dev/null 2>&1 || true
 	fi
 	if is_mounted "$MODELS_MOUNT_DIR"; then
 		log "warning: $MODELS_MOUNT_DIR is still mounted"
@@ -370,6 +392,11 @@ main() {
 	parse_args "$@"
 	if [ "${POTLUCK_AGENT_TEST_ONLY:-}" = firewall ]; then
 		step_firewall
+		exit 0
+	fi
+	if [ "${POTLUCK_AGENT_TEST_ONLY:-}" = docker ]; then
+		step_docker
+		step_models_mount_unit
 		exit 0
 	fi
 	[ "$(id -u)" = 0 ] || die "must run as root"

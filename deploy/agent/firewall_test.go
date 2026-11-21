@@ -92,17 +92,24 @@ func (f *fwEnv) run(script string, args ...string) {
 	}
 }
 
+// fwPorts are the ports the setup opens: the agent API and the worker. 50061
+// (an agent-hosted server, phase 6) is not opened yet (CR-9 review, D3).
+var fwPorts = []string{"50060", "50052"}
+
 func allow(src string) []string {
 	var out []string
-	for _, port := range []string{"50060", "50052", "50061"} {
+	for _, port := range fwPorts {
 		out = append(out, "allow proto tcp from "+src+" to any port "+port+" comment potluck-agent")
 	}
 	return out
 }
 
-func remove(src string) []string {
+func remove(src string, ports ...string) []string {
+	if len(ports) == 0 {
+		ports = fwPorts
+	}
 	var out []string
-	for _, port := range []string{"50060", "50052", "50061"} {
+	for _, port := range ports {
 		out = append(out, "delete allow proto tcp from "+src+" to any port "+port)
 	}
 	return out
@@ -118,7 +125,7 @@ func same(t *testing.T, what string, got, want []string) {
 var setupArgs = []string{"--bare", "--potluck", "192.0.2.1:3122", "--model-source", "push"}
 
 // With ufw active the setup allows TCP from Potluck, and from every
-// --allow-from network, to the agent, worker and server ports; the uninstall
+// --allow-from network, to the agent and worker ports; the uninstall
 // removes exactly those rules.
 func TestSetupOpensUfwAndUninstallClosesIt(t *testing.T) {
 	f := newFw(t, "ufw", "firewall-cmd")
@@ -179,10 +186,37 @@ func TestSetupPrintsAnInstructionForFirewalld(t *testing.T) {
 	f := newFw(t, "firewall-cmd")
 	f.set("firewalld.running", "")
 	f.run("potluck-agent-setup", setupArgs...)
-	for _, want := range []string{"firewalld is active", "192.0.2.1", "50060", "50052", "50061"} {
+	for _, want := range []string{"firewalld is active", "192.0.2.1", "50060", "50052"} {
 		if !strings.Contains(f.out, want) {
 			t.Fatalf("the instruction does not say %q:\n%s", want, f.out)
 		}
 	}
+	if strings.Contains(f.out, "50061") {
+		t.Fatalf("the instruction names 50061, which is not opened yet:\n%s", f.out)
+	}
 	same(t, "firewall-cmd calls", f.lines("firewall-cmd.log"), []string{"--state"})
+}
+
+// CR-9 review, D3: an older setup also opened 50061. Its rules are listed in
+// /etc/potluck/firewall-rules; the uninstall removes them all, and a new setup
+// removes the 50061 ones it no longer asks for.
+func TestOlder50061RulesAreRemoved(t *testing.T) {
+	old := "192.0.2.1 50060\n192.0.2.1 50052\n192.0.2.1 50061\n"
+	f := newFw(t, "ufw")
+	f.set("ufw.status", "Status: active\n")
+	os.MkdirAll(f.etc, 0o755)
+	os.WriteFile(filepath.Join(f.etc, "firewall-rules"), []byte(old), 0o644)
+	f.run("potluck-agent-uninstall")
+	same(t, "ufw calls of the uninstall", f.lines("ufw.log"), remove("192.0.2.1", "50060", "50052", "50061"))
+
+	f = newFw(t, "ufw")
+	f.set("ufw.status", "Status: active\n")
+	os.MkdirAll(f.etc, 0o755)
+	os.WriteFile(filepath.Join(f.etc, "firewall-rules"), []byte(old), 0o644)
+	f.run("potluck-agent-setup", setupArgs...)
+	same(t, "ufw calls of the setup", f.lines("ufw.log"), append(allow("192.0.2.1"), remove("192.0.2.1", "50061")...))
+	b, _ := os.ReadFile(filepath.Join(f.etc, "firewall-rules"))
+	if string(b) != "192.0.2.1 50060\n192.0.2.1 50052\n" {
+		t.Fatalf("rule list %q", b)
+	}
 }
