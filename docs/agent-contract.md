@@ -312,6 +312,8 @@ The manifest format is drafted by the scheduler side when this work starts.
 | Network | The machine's. | Host networking, so the ports of section 3 are the machine's own. |
 | Model files | Section 8. | Section 8. |
 
+**Restarting the agent, in words.** On a Docker install a launch is a child process inside the agent's container, so stopping or restarting the container (or the agent in it) ends the launch. Potluck then ends the instance with reason `agent_restarted`, sends no stop for a launch it knows has ended this way, and loads the model again on the next request. On a bare install the launch is its own systemd unit and survives an agent restart (CR-6, section 6.12). The agent's last log line says which of the two applies.
+
 Nvidia launches are started with `CUDA_DEVICE_ORDER=PCI_BUS_ID`, so llama's `CUDA<n>` is the card with `nvidia-smi` index `n`.
 
 Stopping a launch is always: SIGTERM, wait up to 10 s, SIGKILL. A forced stop skips the wait.

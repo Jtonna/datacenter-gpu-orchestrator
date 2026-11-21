@@ -271,6 +271,16 @@ func serve(opt agent.Options, stderr io.Writer) int {
 	// registers.
 	log.Info("potluck-agent starting", "release", opt.Release, "install", opt.Install, "ram_only", opt.RAMOnly)
 	a.Run(ctx)
-	log.Info("potluck-agent stopped; a running launch unit keeps running")
+	log.Info(stoppedMessage(rn.Survives()))
 	return 0
+}
+
+// stoppedMessage is the agent's last log line. A launch outlives the agent
+// only where the runner's processes do (systemd launch units); a child
+// process of the agent (Docker install) ends with it.
+func stoppedMessage(survives bool) string {
+	if survives {
+		return "potluck-agent stopped; a running launch unit keeps running"
+	}
+	return "potluck-agent stopped; a running launch ends with the agent (it is a child process of it)"
 }

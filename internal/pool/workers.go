@@ -164,7 +164,7 @@ func (p *Pool) Launch(ctx context.Context, spec scheduler.WorkerLaunchSpec, repo
 		p.seq++
 		l := &launch{p: p, iid: spec.IID, node: w.Node, name: a.reg.Name, rpcAddr: w.Addr,
 			id:      fmt.Sprintf("ln-%d-%d-%d", p.o.Clock().UnixMilli(), spec.IID, p.seq),
-			base:    "http://" + net.JoinHostPort(a.reg.Addr, strconv.Itoa(p.o.AgentPort)),
+			base:    p.agentBase(a), // the address the call-back check reached
 			changed: make(chan struct{}, 1), done: make(chan struct{})}
 		ls = append(ls, l)
 		p.launches[l.id] = l
@@ -582,6 +582,15 @@ func (p *Pool) stopLaunch(l *launch, force, lost bool) {
 	}()
 	if lost {
 		p.log.Info("worker launch not stopped: its node is lost", "launch", l.id, "node", l.node)
+		return
+	}
+	l.mu.Lock()
+	gone := l.goneWhy
+	l.mu.Unlock()
+	if gone != "" {
+		// The agent restarted and no longer has this launch: a stop would be
+		// answered 409 (its current launch is another one) or find none.
+		p.log.Debug("worker launch not stopped: it ended with its agent", "launch", l.id, "node", l.node, "reason", gone)
 		return
 	}
 	ctx, done := context.WithTimeout(context.Background(), 30*time.Second)

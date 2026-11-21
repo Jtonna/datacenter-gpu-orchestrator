@@ -652,6 +652,14 @@ func TestDockerAgentRestartEndsItsLaunch(t *testing.T) {
 	}
 	r.p.Stop(7, nil)
 	r.p.WaitStops(10 * time.Second)
+	// The launch is known to have ended with the agent: no stop is sent for
+	// it (the agent would answer 409 or none) and nothing is warned about.
+	if a.Has("DELETE /launch/") {
+		t.Fatalf("a stop was sent for a launch that ended with its agent: %v", a.Calls())
+	}
+	if strings.Contains(r.logs.String(), "stopping worker launch failed") {
+		t.Fatalf("warning for a launch that ended with its agent: %s", r.logs.String())
+	}
 }
 
 func TestForceNodeWithoutAnInstance(t *testing.T) {
