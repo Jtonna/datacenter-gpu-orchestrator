@@ -94,7 +94,7 @@ type fakeRunner struct {
 	nextPID    int
 	stopped    []string
 	stopErr    error
-	stopKills  bool // Stop ends the unit, as systemctl stop does
+	stopKills  bool          // Stop ends the unit, as systemctl stop does
 	stopHang   chan struct{} // Stop blocks until it is closed
 }
 
