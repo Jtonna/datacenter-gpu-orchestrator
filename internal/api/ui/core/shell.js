@@ -10,6 +10,7 @@ import { href, onRoute, parse } from './router.js';
 import { getActor, setActor } from './api.js';
 import { dur, durShort, plural } from './format.js';
 import { promptText } from './ui.js';
+import { LOGS_PAGE, logsOn, logsURL } from './logs.js';
 
 // The navigation. A view module registers under the same id (views/<id>.js).
 export const NAV = [
@@ -30,6 +31,9 @@ export const NAV = [
     { id: 'audit', label: 'Audit', icon: 'M6 3h8v14H6zM9 7h2M9 10h2M9 13h2M3 6v8M17 6v8' },
   ] },
   { group: 'System', items: [
+    // Logs is not a view of this page: it opens the log store's own search
+    // page in a new tab (core/logs.js), and is there only while logging is on.
+    { id: 'logs', label: 'Logs', external: true, icon: 'M4 4h12M4 8h12M4 12h8M4 16h10' },
     { id: 'mcp', label: 'MCP', icon: [{ tag: 'circle', cx: 5, cy: 10, r: 2.2 }, { tag: 'circle', cx: 15, cy: 5, r: 2.2 }, { tag: 'circle', cx: 15, cy: 15, r: 2.2 }, 'M7 9l6-3M7 11l6 3'] },
     { id: 'about', label: 'About', icon: [{ tag: 'circle', cx: 10, cy: 10, r: 7 }, 'M10 9v5M10 6v.5'] },
   ] },
@@ -123,6 +127,11 @@ function navNode() {
   return NAV.map(g => h('nav.nav-group', { 'aria-label': g.group },
     h('div.gl', g.group),
     g.items.map(it => {
+      if (it.external) {
+        if (it.id !== 'logs' || !logsOn(state.status)) return null;
+        return h('a.ni', { href: logsURL('*'), target: '_blank', rel: 'noopener', title: 'Search the central log in a new tab (' + LOGS_PAGE + ')', onclick: closeMenu },
+          icon(it.icon), it.label, h('span.ext', { 'aria-hidden': 'true' }, '↗'));
+      }
       let nb = null;
       if (it.id === 'models' && c.models) nb = h('span.nb', { title: plural(c.models, 'model') + ' loaded or loading' }, c.models);
       if (it.id === 'queue' && c.queue) nb = h('span.nb', { title: plural(c.queue, 'request') + ' waiting' }, c.queue);

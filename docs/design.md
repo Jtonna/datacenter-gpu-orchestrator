@@ -1133,7 +1133,7 @@ view the core reads, and runs the worker launches.
   is not served: the scheduler still starts, `/api/system` `programs.error`
   says why, agents are refused (`release_unavailable`) and loads are refused.
   Potluck's release is the build variable `main.potluckRelease` (default
-  `agentproto.Release`, `0.1.1`), separate from `version`.
+  `agentproto.Release`, `0.1.2`), separate from `version`.
 - **Same build.** `server_bin --version` must report the commit of
   `builds.llama` (a prefix match of at least 7 hex digits). Otherwise every
   load is refused with the reason, and `/api/system` shows `host_build_error`.
@@ -2230,6 +2230,7 @@ tool errors.
 | `list_model_files`, `get_model_file` | `GET /api/models`, `GET /api/models/{key}` |
 | `plan_load` | `POST /api/plan` |
 | `query_history`, `get_history_summary` | `GET /api/history` (all its filters), `GET /api/history/summary` |
+| `query_logs` | `GET /api/logs/query?query=&limit=&start=&end=` (CR-10; the tool sets `limit` 100 when not given; `404` while central logging is off) |
 | `get_system_info` | `GET /api/system` |
 | `get_config`, `get_config_schema` | `GET /api/config`, `GET /api/config/schema` (`{"fields": [...]}`, the settings) |
 | `list_config_revisions`, `get_config_revision` | `GET /api/config/revisions?limit=` (`{revisions, current}`), `.../{revision}` |

@@ -10,6 +10,7 @@ import { href } from '../../core/router.js';
 import { badge, nodeChips, stat, bar, memoryRow, progress, steps, banner, more } from '../../core/ui.js';
 import { num, gb, gbNum, mib, bytes, tps, dur, ago, until, plural, clock, toMs, now, DASH } from '../../core/format.js';
 import { avatar } from '../../core/avatar.js';
+import { logsLink, profileQuery, padded } from '../../core/logs.js';
 import { nodeName, nodeByAddr, instanceNodeNames, nodeMemory, instanceBadge, healthBadge, machineBadge, findNode, drift, machines, shortReason, plainReason } from '../../core/status.js';
 
 // ---- phrases about a catalog model ----
@@ -105,7 +106,17 @@ function head(st, inst, model, extra) {
     instanceBadge(inst), extra, staleMark(inst),
     h('span.mut', { style: 'font-weight:600' }, 'on ', nodeChips(names),
       inst.waiters > 0 && inst.state === 'starting' ? ` · ${plural(inst.waiters, 'request')} waiting for it` : null),
-    h('span.cfg.right', { title: 'The configuration (profile) it was loaded with' }, inst.profile));
+    h('span.cfg.right', { title: 'The configuration (profile) it was loaded with' }, inst.profile),
+    instanceLogs(st, inst));
+}
+
+// instanceLogs -> a link to this instance's log lines (its program's output
+// and the nodes' launch lines carry its profile), from a minute before it
+// was started until now; null while central logging is off.
+function instanceLogs(st, inst) {
+  const from = toMs(inst.created);
+  return logsLink(st, 'Logs', profileQuery(inst.profile), from != null ? padded(from, null)[0] : null, null,
+    'Open the log lines of ' + inst.profile + ' since it was started, in a new tab');
 }
 
 // The command line and the log file are long: they stay folded until asked for.

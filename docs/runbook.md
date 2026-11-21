@@ -820,12 +820,13 @@ read-only.
 
 1. Put the release on the host: `programs/<release>/release.json`, `agent/`,
    one folder per platform, each with its `SHA256SUMS`. The release is the
-   scheduler's own (`agentproto.Release`, 0.1.1 since the CR-9 review; it was
-   0.1.0 before). Going from 0.1.0 to 0.1.1: make `programs/0.1.1/` (the
-   platform folders can be copied unchanged; `agent/` holds the 0.1.1 agent;
-   `release.json` says `"release": "0.1.1"`; new `SHA256SUMS`). Agents of
-   release 0.1.0 are then refused with `agent_too_old` and update themselves;
-   a Docker node needs the image `potluck-agent:0.1.1` (agent contract 5.4).
+   scheduler's own (`agentproto.Release`, 0.1.2 since CR-10's last batch;
+   0.1.1 after the CR-9 review, 0.1.0 before). Going to 0.1.2: make
+   `programs/0.1.2/` (the platform folders can be copied unchanged; `agent/`
+   holds the 0.1.2 agent; `release.json` says `"release": "0.1.2"`; new
+   `SHA256SUMS`). Agents of an older release are then refused with
+   `agent_too_old` and update themselves; a Docker node needs the image
+   `potluck-agent:0.1.2` (agent contract 5.4).
 2. Start the scheduler with `--programs-dir /path/to/programs` (or
    `LLM_SCHEDULER_PROGRAMS_DIR`) and set `membership: agents` in the settings
    (restart required). The fleet feed is then not read.
@@ -890,35 +891,87 @@ in the container's environment is not used for these loads.
 `LLM_SCHEDULER_TEST_AGENT_PORT` and
 `LLM_SCHEDULER_TEST_WORKER_PORT` exist for tests only; never set them.
 
-### Central logging (CR-10; batch 1 is built, not deployed)
+### Central logging (CR-10; built, not deployed)
 
-Potluck passes log lines through to a log store (VictoriaLogs). This batch
-is the Potluck side only: no agent ships lines yet, and the compose entry of
-the store and the search page come later. Design:
-`docs/cr-10-central-logging.md`; routes, limits and answers: agent contract
-11.3.
+Potluck sends log lines to a log store (VictoriaLogs) and serves the store's
+search page. Design: `docs/cr-10-central-logging.md`; routes, limits and
+answers: agent contract 11.3.
 
-- **`LLM_SCHEDULER_LOGS_STORE_URL`** is the address at which Potluck reaches
-  the store, for example `http://potluck-logs:9428` (the store's container
-  name on the compose network; its port is not published). It is read once
-  at start and has no flag. It is not a setting, because it differs per
-  deployment.
-- Unset: central logging is off. Nothing is handed out to agents, the log
-  routes answer `404`, and everything else works as before. The start log
-  says `central logging is off: no log store address`.
-- Set to something that is not an `http://` or `https://` address: an error
-  is logged (`the log store address is not usable`) and it is taken as
-  unset. Potluck starts all the same.
-- With the address set, the settings decide: `logs_enabled` (default on),
-  `logs_client_intake` (default on), `logs_push_url` (default empty). They
-  are live: `PATCH /api/config/settings`, no restart.
-  `logs_retention_days` and `logs_max_disk_gib` are kept for the store;
-  nothing passes them on yet.
-- Check: `GET /api/status` has `logs` with `"enabled": true, "store": true`,
-  and each entry of `agents` has `logs` with the bytes Potluck accepted from
-  the node and its refusals by reason. `in_flight` never goes above 8.
-- The store down or slow never slows scheduling: log requests are answered
-  `503` after 5 s at most and the senders keep their lines and try again.
+**What is shipped, per install**
+
+| Where | What | `source` |
+|---|---|---|
+| The Potluck host | Potluck's own log (what `docker logs` shows) | `scheduler` |
+| The Potluck host | The output of every `llama-server` it starts, with `profile`, `instance_id` and `stream` | `host` |
+| A node, bare install (also RAM-only) | The agent's log, each launch's output, the machine's journal | `agent`, `launch`, `journal` |
+| A node, Docker install | The agent's log and each launch's output; the journal only with `--journal-dir` | `agent`, `launch`, `journal` |
+| Clients (benchmark runner and the like) | What they push to `POST /api/logs` | `client` |
+
+The files stay: `./logs` (child output), the launch logs on the nodes,
+`docker logs`. Central logging is a copy, and the copy may drop lines when the
+store is slow (a line says how many); the files never do.
+
+**On and off**
+
+- The compose file has the store (`potluck-logs`) and the scheduler's
+  `LLM_SCHEDULER_LOGS_STORE_URL: http://potluck-logs:9428/logs`. With both,
+  logging is on.
+- Off for a while, no restart: `PATCH /api/config/settings` with
+  `{"logs_enabled": false}`. Agents stop shipping within one heartbeat,
+  Potluck stops sending its own lines, `/logs/` and `/api/logs/query`
+  answer `404`, the "Logs" entry and links leave the UI. The store keeps
+  what it has.
+- Off for good: remove the `LLM_SCHEDULER_LOGS_STORE_URL` line, then
+  `docker compose up -d llm-scheduler`, and `docker compose stop
+  potluck-logs` (or remove the service). The start log says
+  `central logging is off: no log store address`.
+- On a node: `potluck-agent --logs off` builds no shipper at all.
+- Check: `GET /api/status` has `logs` with `"enabled": true, "store": true`;
+  each entry of `agents` has `logs` with the bytes Potluck accepted from the
+  node and its refusals by reason.
+
+**Reading**
+
+- The UI's "Logs" entry opens the store's search page in a new tab
+  (`/logs/select/vmui/`). Node tiles, model cards, failed loads and
+  benchmark runs have "Logs" links with the query and time filled in.
+- Scripts: `curl -s 'http://127.0.0.1:3122/api/logs/query?query=source:=host+_time:15m&limit=50'`.
+  JSON lines; at most 10000; 30 s at most.
+- The MCP tool `query_logs` does the same.
+- Only reads pass: writing, deleting and the store's admin pages under
+  `/logs/` answer `403`. At most 8 reads at once; one more gets `429`.
+
+**Where the data is, retention, disk**
+
+- The store's data is in `./logs-store` next to the compose file
+  (`/opt/llm-scheduler/logs-store`). Its port is not published; only Potluck
+  reaches it.
+- Retention and the disk cap are **start flags of the store**, in the
+  compose file: `-retentionPeriod=14d`, `-retention.maxDiskSpaceUsageBytes=20GiB`.
+  The settings `logs_retention_days` and `logs_max_disk_gib` do not change
+  them. Potluck reads the store's flags at start and every 10 minutes; when
+  they differ from the settings, `/api/status` `logs.warnings` says so and
+  the log has `central logging: logs_retention_days is ...`. To change the
+  retention, edit the flag and the setting together, then
+  `docker compose up -d potluck-logs`.
+- The store has a memory limit of 512 MiB.
+
+**Wipe it**
+
+```sh
+cd /opt/llm-scheduler
+docker compose stop potluck-logs
+sudo rm -rf ./logs-store
+docker compose up -d potluck-logs
+```
+
+The store starts empty. Nothing else is touched: the files under `./logs`,
+the history and the database stay.
+
+**When the store is down or slow** scheduling does not change: agents and
+clients get `503` after 5 s at most and keep their lines; Potluck's own
+lines wait in an 8 MiB ring and the oldest go first. A child writing more
+than 256 KiB/s has the rest skipped in the store (not in its file).
 
 ### Child output logs
 

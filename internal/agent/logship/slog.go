@@ -18,13 +18,20 @@ import (
 type Handler struct {
 	inner  slog.Handler
 	ship   *Shipper
+	key    Key
 	attrs  string // attributes of WithAttrs, already formatted
 	prefix string // group prefix, "a.b."
 }
 
-// NewHandler wraps inner.
+// NewHandler wraps inner; the lines go into the ring under AgentKey.
 func NewHandler(inner slog.Handler, ship *Shipper) *Handler {
-	return &Handler{inner: inner, ship: ship}
+	return NewHandlerKey(inner, ship, AgentKey)
+}
+
+// NewHandlerKey wraps inner; the lines go into the ring under k (Potluck's
+// own lines use source scheduler).
+func NewHandlerKey(inner slog.Handler, ship *Shipper, k Key) *Handler {
+	return &Handler{inner: inner, ship: ship, key: k}
 }
 
 // AgentKey is the ring key of the agent's own lines.
@@ -43,7 +50,7 @@ func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
 		writeAttr(&b, h.prefix, a)
 		return true
 	})
-	h.ship.Add(AgentKey, Line{Mono: h.ship.Now(), Msg: b.String(), Level: levelWord(r.Level)})
+	h.ship.Add(h.key, Line{Mono: h.ship.Now(), Msg: b.String(), Level: levelWord(r.Level)})
 	return err
 }
 
@@ -54,7 +61,7 @@ func (h *Handler) WithAttrs(as []slog.Attr) slog.Handler {
 	for _, a := range as {
 		writeAttr(&b, h.prefix, a)
 	}
-	return &Handler{inner: h.inner.WithAttrs(as), ship: h.ship, attrs: b.String(), prefix: h.prefix}
+	return &Handler{inner: h.inner.WithAttrs(as), ship: h.ship, key: h.key, attrs: b.String(), prefix: h.prefix}
 }
 
 // WithGroup implements slog.Handler.
@@ -62,7 +69,7 @@ func (h *Handler) WithGroup(name string) slog.Handler {
 	if name == "" {
 		return h
 	}
-	return &Handler{inner: h.inner.WithGroup(name), ship: h.ship, attrs: h.attrs, prefix: h.prefix + name + "."}
+	return &Handler{inner: h.inner.WithGroup(name), ship: h.ship, key: h.key, attrs: h.attrs, prefix: h.prefix + name + "."}
 }
 
 func levelWord(l slog.Level) string {

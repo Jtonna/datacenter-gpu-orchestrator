@@ -1,9 +1,12 @@
 # CR-10: central logging through Potluck (proposal, revision 3)
 
 Status: **accepted** (approved by Jacob and by the project manager). To be
-built as part of phase 5. Batch 1, the Potluck side, and the agent batch,
-the shipper in `potluck-agent`, are built on branches (section 13 says what
-they hold and where they differ from this text). Nothing is deployed yet.
+built as part of phase 5. **Built, not deployed.** All three batches are
+built on branches: batch 1, the Potluck side; the agent batch, the shipper
+in `potluck-agent`; the last batch, the read side, Potluck's own lines and
+the store's container (section 13 says what they hold and where they differ
+from this text). Release 0.1.2 carries the last two. Nothing is deployed
+yet.
 
 ## Decisions so far
 
@@ -325,7 +328,7 @@ section 2 (no time set by a node) against "time" in the per-line fields of
 ### 13.2 Agent batch (the shipper in `potluck-agent`)
 
 Built on a branch, not deployed, not in a release yet (the release string
-stays 0.1.1; the lead decides which release carries it). Code:
+was 0.1.1 then; release 0.1.2 carries it, see 13.3). Code:
 `internal/agent/logship`, wired in `internal/agent/agent`, flags in
 `cmd/potluck-agent`. The wire text is agent contract 11.3, items 11 to 15.
 
@@ -380,9 +383,84 @@ Known limits:
 - The starter (`deploy/agent/potluck-starter.sh`) is unchanged: shipping is
   on by default, so it needs no new option.
 
+### 13.3 Last batch: the read side, Potluck's own lines, the store's container
+
+Built on a branch, not deployed. Release 0.1.2 carries it with the agent
+batch. Code: `internal/logrelay` (`reader.go`, `storeflags.go`),
+`internal/selflog`, the tap in `internal/instance`, the routes in
+`internal/api/logs.go`, the UI in `internal/api/ui/core/logs.js`, the MCP
+tool `query_logs`, the service `potluck-logs` in `deploy/docker-compose.yml`.
+The wire text is agent contract 11.3, items 16 to 19; the runbook section
+"Central logging" says how to run it.
+
+**Never blocks.** Potluck's log handler and a child's output writer put a
+line into one RAM ring (8 MiB) and return; the ring's lock is held for
+memory work only; when it is full the oldest lines go first. One goroutine
+sends, with its own HTTP client. Nothing on a request path, in the pool or
+in the scheduler waits on the store. Two tests prove it with a store that
+never answers and a full ring: a chat request keeps its normal time while
+four goroutines log as fast as they can, and a real child writing 16 MiB as
+fast as it can runs to its end with every byte in its log file.
+
+| Section | As built | Why |
+|---|---|---|
+| 2 | The store runs with `-http.pathPrefix=/logs`, so `LLM_SCHEDULER_LOGS_STORE_URL` is `http://potluck-logs:9428/logs` | Then `/logs/...` on Potluck is the same path on the store: no rewriting of the search page's links or of its API calls |
+| 2 | Retention and the disk cap stay start flags of the store, in the compose file. Potluck reads the store's set flags back (`/flags`, at start and every 10 minutes) and warns in `/api/status` (`logs.warnings`) and once in its log when they differ from `logs_retention_days` and `logs_max_disk_gib` | The store has no API to change them. A flag the store was started without is its default (7 days, no cap; `app/vlstorage/main.go`) |
+| 2 | Image pinned by digest: `victoriametrics/victoria-logs:v1.54.0@sha256:ee4e820c...` (the multi-platform index). Data in `./logs-store` next to the compose file, a bind folder like `./logs`, `./history` and `./data` | Digest read from Docker Hub on 2026-11-21 three ways: the registry's `Docker-Content-Digest`, the SHA-256 of the index it served, and the Hub tag API. A bind folder is easy to find and to wipe |
+| 4.5 | Potluck's own lines and child output go straight to the store's `/insert/jsonline`, with the trusted fields of contract 11.3 item 6 set by Potluck; `node_id` and `node_name` are the local node's (`fleet.local_node`, else `local`) | They do not come from a node; the agent route needs a node and a start id |
+| 4.5 | Child output is taken at the line writer that already feeds the last-40-lines ring and the load parser, in the copy goroutine of `os/exec`, just before the child's log file. Not by tailing the file | It works without a child log folder, it knows stdout from stderr (`stream`), and the work is a token-bucket check and a ring insert under a short lock: no I/O, nothing that waits. The flood test shows the child is not held up |
+| 4.5 | Per child at most 256 KiB/s; the rest is skipped and one line says how many bytes, before the next kept line and when the child ends. The file keeps everything | One model's flood must not push every other line out of the ring |
+| 4.5 | Lines from Potluck's start are kept until the sender first checks whether logging is on, then sent or dropped | The start of the log matters most and comes before the configuration is read |
+| 7 | `/logs/` is a read allowlist, not a deny list: `GET`/`HEAD` on `/`, `/select/...`, `/flags`, `/metrics`, `/health`, `/robots.txt`, `/favicon.ico`; `POST` only on `/select/...`. `/select/vmalert/...` is refused too. Everything else `403` `read_only`. A path with `.`, `..`, empty segments, a backslash or NUL is refused, because the store folds `//` into `/` | The store has `GET` routes that change things (`/internal/force_merge`, `/delete/...`); a deny list would miss the next one. Routes read from the store's source, v1.54.0: `app/vlselect/main.go`, `app/victoria-logs/main.go`, `lib/httpserver/httpserver.go` |
+| 7 | At most 8 reads at once for `/logs/` and `/api/logs/query` together, apart from the 8 places of the write side; the 9th is `429` `too_many_reads` at once. Own transport, no compression, answers stream | A slow query must not take a place a node needs to push |
+| 7 | `GET /api/logs/query` answers the store's JSON lines unchanged; limit default 1000, at most 10000 (a larger one is cut; `X-Potluck-Limit` says which); 30 s timeout; the store's `400` is `400` `store_rejected` with its words | The store's own format is what LogsQL users know |
+| 7 | The "Logs" entry and the links open the search page **in a new tab**, not in a frame | It is a whole single-page application with its own hash routes and layout; in a tab all of it works and the address can be shared. A frame would need sizing, a second scroll bar and care with its routes, for nothing |
+| 7 | The links: a node, `node_id:="<id>"`, the last hour; an instance, `profile:="<profile>"` from a minute before it started; a failed load, `profile:="<profile>"` over the load's time plus a minute either side; a benchmark run, `*` over the run plus a minute either side | Launch ids are not in the status the UI has; the profile covers the host's output and every node's launch lines (Potluck sets `profile` on them) |
+| 7 | The link format is vmui's own: `/logs/select/vmui/#/?query=<LogsQL>&g0.end_input=<ISO time>&g0.range_input=<N>s&g0.relative_time=none`, or `g0.relative_time=last_1_hour` | Read from the vmui source of v1.54.0 (`app/vmui/packages/vmui/src`): `constants/logs.ts` and `pages/QueryPage/hooks/useQueryController.ts` (query), `pages/QueryPage/hooks/useTimePeriod.ts` (the three `g0.*` keys), `utils/time/relative.ts` (preset ids), `utils/time/duration.ts` (the range format) |
+| 7 | All of it is hidden while `status.logs` is missing or says `enabled: false` or `store: false` | Nothing to open then; the routes answer `404` |
+| 7 | MCP tool `query_logs`, limit 100 unless given | An MCP answer is held whole |
+
+Tests:
+
+- The proxy rules (`internal/logrelay/reader_test.go`):
+  `TestReadProxyPassesReads` (allowed), `TestReadProxyRefusesWritesAndAdmin`
+  (forbidden, also with `..` and `//`), `TestReadSideOff` (no store,
+  `logs_enabled` off), `TestReadProxyCap` (8 at once, `429` at once),
+  `TestReadProxyStreams` (streaming).
+- The query: `TestQueryPassThrough` (default limit, cap, bad parameters, the
+  store's `400` and `500`), `TestQueryTimeout`.
+- The store's flags: `TestStoreSettingsWarning`, `TestParseStoreFlagValues`.
+- Through the API: `TestLogPagesThroughTheAPI`, and the off cases in
+  `TestLogsOffChangesNothing`.
+- The UI: `TestUILogsEntryAndLinks` (`internal/api/ui_logs_test.go`).
+- Own lines and child output (`internal/selflog/selflog_test.go`):
+  `TestOwnLinesReachTheStore`, `TestChildOutputReachesTheStore`,
+  `TestDroppedLinesNotice`, `TestChildRateLimit`, `TestOffShipsNothing`.
+- Never blocking: `TestOwnLoggingDoesNotSlowRequests` (`internal/api`) and
+  `TestHungStoreSlowsNeitherChildNorLogging` (`internal/selflog`).
+- The MCP tool: the `query_logs` row of the tool table test
+  (`internal/mcpserver`).
+- The compose file: `TestComposeLogStore` (`deploy/compose_test.go`).
+- The release: `TestRelease012AndOlderAgents` (`internal/pool`).
+
+Not checked yet; needs a real store or a browser: the search page through
+the proxy (its assets, its `POST` queries and the live tail); the links
+opening the right query and range; the `/flags` text of a running store;
+Potluck's own lines and child output arriving with the right fields in a
+real store; `ignore_fields` (as in 13.1).
+
 ## Sources
 
 - VictoriaLogs security and authentication:
   https://docs.victoriametrics.com/victorialogs/security-and-lb/
 - VictoriaLogs data ingestion (JSON lines, extra fields, the `_time`
   formats): https://docs.victoriametrics.com/victorialogs/data-ingestion/
+- VictoriaLogs source, tag v1.54.0 (github.com/VictoriaMetrics/VictoriaLogs):
+  the read routes (`app/vlselect/main.go`), the path prefix and the built-in
+  pages such as `/flags` (`lib/httpserver/httpserver.go`), the retention and
+  disk flags and their defaults (`app/vlstorage/main.go`), and the search
+  page's link format (`app/vmui/packages/vmui/src`, files named in 13.3).
+- VictoriaLogs querying (LogsQL, `/select/logsql/query` and its `limit`,
+  `start`, `end`): https://docs.victoriametrics.com/victorialogs/querying/
+- VictoriaLogs retention and disk flags (the sections on retention and on
+  the disk usage limit): https://docs.victoriametrics.com/victorialogs/

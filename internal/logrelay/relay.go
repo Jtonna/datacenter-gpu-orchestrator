@@ -87,6 +87,10 @@ type Options struct {
 	Transport http.RoundTripper
 	// ForwardTimeout replaces ForwardTimeout (tests).
 	ForwardTimeout time.Duration
+	// ReadTransport replaces the read side's own transport to the store
+	// (tests). QueryTimeout replaces QueryTimeout (tests).
+	ReadTransport http.RoundTripper
+	QueryTimeout  time.Duration
 }
 
 // Counters are the figures of one sender.
@@ -122,7 +126,10 @@ type Relay struct {
 	o      Options
 	log    *slog.Logger
 	insert string // <store>/insert/jsonline, "" without a store
+	base   string // the store address without a trailing slash, "" without a store
 	client *http.Client
+	read   *reader    // the read side: /logs/ and /api/logs/query (reader.go)
+	flags  storeFlags // what the store says its retention and disk cap are (storeflags.go)
 
 	mu             sync.Mutex
 	inFlight       int
@@ -163,7 +170,8 @@ func New(o Options) (*Relay, error) {
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.RawQuery != "" || u.Fragment != "" {
 			return nil, fmt.Errorf("logrelay: the log store address must look like http://host:port, got %q", o.StoreURL)
 		}
-		r.insert = strings.TrimRight(u.String(), "/") + "/insert/jsonline"
+		r.base = strings.TrimRight(u.String(), "/")
+		r.insert = r.base + "/insert/jsonline"
 	}
 	tr := o.Transport
 	if tr == nil {
@@ -181,6 +189,7 @@ func New(o Options) (*Relay, error) {
 		}
 	}
 	r.client = &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	r.read = newReader(o)
 	return r, nil
 }
 
@@ -198,6 +207,20 @@ func (r *Relay) On() bool {
 // passOn reports whether the pass-through routes are on: logging is on and
 // Potluck has a store to forward to.
 func (r *Relay) passOn() bool { return r.insert != "" && r.o.Config().Enabled }
+
+// StoreOn reports whether Potluck has a log store and logging_enabled is on:
+// then its own lines go to the store and the store's pages are served.
+func (r *Relay) StoreOn() bool { return r.passOn() }
+
+// InsertURL is the store's intake address with these fields set for the whole
+// request (and every other trusted field ignored), as the pass-through sends
+// it. "" without a store. Potluck's own sender posts there directly.
+func (r *Relay) InsertURL(fields []Field) string {
+	if r.insert == "" {
+		return ""
+	}
+	return r.insert + "?" + storeQuery(fields)
+}
 
 // Revision is the revision of the logs object, 0 while logging is off. It is
 // a figure computed from every logging setting and from whether there is a
@@ -709,13 +732,21 @@ type Status struct {
 	ClientIntake  bool     `json:"client_intake"`
 	Clients       Counters `json:"clients"`
 	UnknownSender int64    `json:"unknown_sender"` // requests answered 410
+	// ReadsInFlight and MaxReads: the read side (/logs/, /api/logs/query).
+	ReadsInFlight int `json:"reads_in_flight"`
+	MaxReads      int `json:"max_reads"`
+	// StoreSettings is what the store runs with (its /flags page), absent
+	// until it was read; Warnings says where the settings differ from it.
+	StoreSettings *StoreSettings `json:"store_settings,omitempty"`
+	Warnings      []string       `json:"warnings,omitempty"`
 }
 
 // Status returns the relay's figures.
 func (r *Relay) Status() Status {
 	c := r.o.Config()
 	st := Status{Enabled: r.On(), Store: r.insert != "", Revision: r.Revision(), MaxInFlight: MaxInFlight,
-		ClientIntake: c.ClientIntake && r.On()}
+		ClientIntake: c.ClientIntake && r.On(), ReadsInFlight: r.ReadsInFlight(), MaxReads: MaxReads}
+	st.StoreSettings, st.Warnings = r.settingsWarnings()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	st.InFlight, st.PeakInFlight, st.Clients, st.UnknownSender = r.inFlight, r.peak, r.clientC.clone(), r.unknown

@@ -40,7 +40,7 @@ import (
 )
 
 // Release is the agent's release (agentproto.Release); it can be set at
-// build time with -ldflags "-X main.Release=0.1.1".
+// build time with -ldflags "-X main.Release=0.1.2".
 var Release = agentproto.Release
 
 func main() {

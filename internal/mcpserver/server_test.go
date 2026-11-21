@@ -291,6 +291,7 @@ var expected = map[string]struct {
 	"plan_load":             {`{"model":"gemma"}`, "POST", "/api/plan", "", `{"model":"gemma"}`, nil},
 	"query_history":         {`{"since":5,"type":"nodeLost,loadFinished","severity":"warn","limit":10,"order":"asc","q":"x y"}`, "GET", "/api/history", "limit=10&order=asc&q=x+y&severity=warn&since=5&type=nodeLost%2CloadFinished", "", nil},
 	"get_history_summary":   {`{"since":1,"until":2}`, "GET", "/api/history/summary", "since=1&until=2", "", nil},
+	"query_logs":            {`{"query":"node_id:=\"02:00:00:00:00:01\" _time:5m","start":"1h"}`, "GET", "/api/logs/query", "limit=100&query=node_id%3A%3D%2202%3A00%3A00%3A00%3A00%3A01%22+_time%3A5m&start=1h", "", nil},
 	"get_system_info":       {`{}`, "GET", "/api/system", "", "", nil},
 	"get_config":            {`{}`, "GET", "/api/config", "", "", nil},
 	"get_config_schema":     {`{}`, "GET", "/api/config/schema", "", "", nil},

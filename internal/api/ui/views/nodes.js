@@ -18,6 +18,7 @@ import * as api from '../core/api.js';
 import { liveView, pageHead, badge, button, dialog, toast, stat, empty, skeleton, memBar, facts, copyButton } from '../core/ui.js';
 import { num, mib, gb, gbNum, dur, ago, until, at, plural, toMs, now, shortId, DASH } from '../core/format.js';
 import { viewNodes, nodeMemory, staleBanner } from '../core/status.js';
+import { logsLink, nodeQuery } from '../core/logs.js';
 import { agentsMode, agentOf, notPlaceable, holdsSomething, pauseAction, sendNodeAction, NODE_ACTIONS } from '../core/nodeactions.js';
 
 const CHANNEL = { ok: ['ok', 'ok-t'], silent: ['silent', 'err-t'], unknown: ['not known', 'mut'] };
@@ -222,7 +223,7 @@ function tile(st, n, refresh) {
         }), ['upload', 'heartbeat', 'probe'].every(c => !n.health.channels[c] || n.health.channels[c] === 'unknown') ? h('span.mut', 'no report yet') : null), 'The channels the scheduler watches the worker on'] : null,
         version ? ['Worker', [h('span', { title: version }, shortId(version, 12)), copyButton(version, 'the worker version')], 'The version of its rpc-server: ' + version] : null,
         n.rpc_server_mem_mib ? ['Worker memory', h('span', mib(n.rpc_server_mem_mib)), 'Memory the worker process itself holds'] : null,
-        ['Node id', h('span', n.id)],
+        ['Node id', h('span', n.id, logsLink(state.status, ' Logs', nodeQuery(n.id), null, null, 'Open the last hour of this node\'s log lines in a new tab'))],
       ])));
 }
 

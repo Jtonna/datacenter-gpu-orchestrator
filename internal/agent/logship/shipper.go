@@ -42,6 +42,15 @@ type Config struct {
 	// Quiet is the least time between two of the shipper's own warnings of
 	// one kind (default 60 s), so its errors cannot flood the ring.
 	Quiet time.Duration
+	// Target, when set, is the whole address a batch of key k is posted to,
+	// used as it is: no source or launch_id argument and no agent_start_id
+	// header are added. Potluck's own sender (internal/selflog) posts
+	// straight to the store's intake with it. Empty: the batch is dropped.
+	// nil: the logs object's url, as the agent does.
+	Target func(k Key) string
+	// Who starts the line that says lines were dropped (default
+	// "potluck-agent").
+	Who string
 }
 
 type mode int32
@@ -134,6 +143,9 @@ func New(cfg Config) *Shipper {
 	}
 	if cfg.Quiet <= 0 {
 		cfg.Quiet = time.Minute
+	}
+	if cfg.Who == "" {
+		cfg.Who = "potluck-agent"
 	}
 	s := &Shipper{cfg: cfg, ring: NewRing(cfg.BufferBytes), wake: make(chan struct{}, 1),
 		fetch: make(chan int64, 1), warned: map[string]time.Time{}}
@@ -235,6 +247,17 @@ func (s *Shipper) Registered(nodeID string, obj *agentproto.Logs, serverMs int64
 	s.apply(nodeID, obj)
 }
 
+// Use puts a logs object in force (nil: ship nothing, drop what is kept)
+// without a registration. Potluck's own sender calls it: it has no
+// registration and decides itself whether logging is on.
+func (s *Shipper) Use(obj *agentproto.Logs) { s.apply(s.conf.Load().nodeID, obj) }
+
+// Anchor sets the time of the clock: unixNs is the time at mono on Config.Now.
+// Potluck's own sender sets it once, from its own clock.
+func (s *Shipper) Anchor(unixNs int64, mono time.Duration) {
+	s.anchor.Store(&anchor{mono: mono, unixNs: unixNs})
+}
+
 // Refused is called with a refused registration: nothing is sent until the
 // agent is accepted again.
 func (s *Shipper) Refused(serverMs int64, sent, recv time.Duration) {
@@ -285,8 +308,10 @@ func (s *Shipper) apply(nodeID string, obj *agentproto.Logs) {
 	if old.mode != c.mode {
 		if c.mode == modeOn {
 			s.log.Load().Info("log shipping on", "revision", obj.Revision, "url", obj.URL)
-		} else if old.mode == modeOn {
+		} else if old.mode == modeOn && s.cfg.Who == "potluck-agent" {
 			s.log.Load().Info("log shipping off: Potluck hands out no logs object")
+		} else if old.mode == modeOn {
+			s.log.Load().Info("log shipping off: central logging is off")
 		}
 	}
 	s.poke()
@@ -505,7 +530,7 @@ func (s *Shipper) take(c *conf) *batch {
 			mono = lines[0].Mono
 		}
 		add(&Line{Mono: mono, Level: "warn", Msg: fmt.Sprintf(
-			"potluck-agent: %d lines of this source were dropped before this one (log buffer full, over the byte rate, too long to read, or refused)", dropped)})
+			"%s: %d lines of this source were dropped before this one (log buffer full, over the byte rate, too long to read, or refused)", s.cfg.Who, dropped)})
 	}
 	for i := range lines {
 		add(&lines[i])
@@ -647,17 +672,25 @@ const (
 
 // post sends one request and says what to do with its lines.
 func (s *Shipper) post(ctx context.Context, c *conf, k Key, body []byte, gz bool) (result, time.Duration) {
-	u := c.obj.URL
-	if !strings.Contains(u, "://") {
-		u = s.cfg.Base + u
-	}
-	q := url.Values{"source": {k.Source}}
-	if k.Source == agentproto.LogSourceLaunch {
-		q.Set("launch_id", k.LaunchID)
-	}
-	sep := "?"
-	if strings.Contains(u, "?") {
-		sep = "&"
+	var u string
+	if s.cfg.Target != nil {
+		if u = s.cfg.Target(k); u == "" {
+			return resDrop, 0
+		}
+	} else {
+		u = c.obj.URL
+		if !strings.Contains(u, "://") {
+			u = s.cfg.Base + u
+		}
+		q := url.Values{"source": {k.Source}}
+		if k.Source == agentproto.LogSourceLaunch {
+			q.Set("launch_id", k.LaunchID)
+		}
+		sep := "?"
+		if strings.Contains(u, "?") {
+			sep = "&"
+		}
+		u += sep + q.Encode()
 	}
 	rctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -668,13 +701,15 @@ func (s *Shipper) post(ctx context.Context, c *conf, k Key, body []byte, gz bool
 	if s.conf.Load().gen != c.gen {
 		return resRetry, time.Millisecond
 	}
-	req, err := http.NewRequestWithContext(rctx, http.MethodPost, u+sep+q.Encode(), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(rctx, http.MethodPost, u, bytes.NewReader(body))
 	if err != nil {
 		s.setErr("request", "bad push address: "+err.Error())
 		return resDrop, 0
 	}
 	req.Header.Set("Content-Type", "application/stream+json")
-	req.Header.Set(agentproto.HeaderAgentStartID, s.cfg.StartID)
+	if s.cfg.Target == nil {
+		req.Header.Set(agentproto.HeaderAgentStartID, s.cfg.StartID)
+	}
 	if gz {
 		req.Header.Set("Content-Encoding", "gzip")
 	}

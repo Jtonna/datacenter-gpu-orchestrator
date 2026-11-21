@@ -36,6 +36,10 @@ services:
       # Used once, by `import-config`, on first install (runbook "First install and import").
       - ./seed-config.yaml:/seed/seed-config.yaml:ro
       # No /run/avahi-daemon mount: the scheduler uses IP addresses only.
+    environment:
+      # Central logging (CR-10): the log store below, on the compose network, behind its
+      # path prefix. Remove this line to turn central logging off (runbook "Central logging").
+      LLM_SCHEDULER_LOGS_STORE_URL: http://potluck-logs:9428/logs
     networks:
       - sched
     deploy:
@@ -71,6 +75,29 @@ services:
     volumes:
       - models:/models:ro
       - /lib/modules:/lib/modules:ro
+    networks:
+      - sched
+
+  # The log store of central logging (CR-10, docs/cr-10-central-logging.md): VictoriaLogs.
+  # Its port is NOT published: only the scheduler reaches it, over the sched network, and
+  # serves its search page read only under /logs/. Pinned by digest (the multi-platform
+  # index of victoriametrics/victoria-logs:v1.54.0, read from Docker Hub on 2026-11-21).
+  # Retention and the disk cap are these start flags, not Potluck settings: Potluck reads
+  # them back from the store and warns in /api/status (logs.warnings) when they differ from
+  # logs_retention_days and logs_max_disk_gib. Change both together, then recreate this service.
+  potluck-logs:
+    image: victoriametrics/victoria-logs:v1.54.0@sha256:ee4e820cac3721f5f5d91641b950c22439593adc4224f9655e5333d5a84c1dfe
+    container_name: potluck-logs
+    restart: unless-stopped
+    command:
+      - -http.pathPrefix=/logs
+      - -retentionPeriod=14d
+      - -retention.maxDiskSpaceUsageBytes=20GiB
+      - -storageDataPath=/storage
+    mem_limit: 512m
+    volumes:
+      # The stored log lines. Delete this folder (with the service stopped) to wipe them.
+      - ./logs-store:/storage
     networks:
       - sched
 

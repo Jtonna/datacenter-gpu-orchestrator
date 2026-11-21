@@ -14,6 +14,7 @@ Potluck is the name of the application. This repository holds its scheduler, its
 - **Configuration in a database, with a full audit log.** Every change is a numbered revision that records who made it and from where (web UI, REST or an AI agent), applies without a restart, and can be rolled back.
 - **Built-in benchmarks.** Define benchmarks and suites, run them through the scheduler itself, and compare every run with the last one: load time, tokens per second, regressions.
 - **A web UI and live updates.** Models, machines, activity, benchmarks and settings in the browser, updated over one WebSocket.
+- **Central logging** (built, not deployed yet). Potluck's own log, the output of the programs it starts, and every node's agent log, launch output and system journal go to one log store (VictoriaLogs, its own container). Its search page is under `/logs/`, read only, with links from nodes, models and benchmark runs; scripts and AI agents query it through `GET /api/logs/query`. Logging never slows scheduling: senders drop the oldest lines instead of waiting.
 - **Operable by AI agents.** An MCP server on the same port exposes the same operations as the REST API, with the same audit trail.
 
 It is one Go binary in one container. It starts `llama-server` processes itself and needs no other service.
