@@ -466,14 +466,25 @@ type ResetAnswer struct {
 
 // Status is the answer to GET /status on 127.0.0.1:50060.
 type Status struct {
-	Registered    bool          `json:"registered"`
-	Potluck       string        `json:"potluck"`
-	Release       string        `json:"release"`
-	Paused        bool          `json:"paused"`
-	Role          string        `json:"role"`
-	Model         *string       `json:"model"`
-	State         string        `json:"state"`
-	Load          *LoadProgress `json:"load"`
-	LastError     *string       `json:"last_error"`
-	LastErrorAgeS *float64      `json:"last_error_age_s"`
+	Registered bool          `json:"registered"`
+	Potluck    string        `json:"potluck"`
+	Release    string        `json:"release"`
+	Paused     bool          `json:"paused"`
+	Role       string        `json:"role"`
+	Model      *string       `json:"model"`
+	State      string        `json:"state"`
+	Load       *LoadProgress `json:"load"`
+	// LastLaunch is the launch that has exited (state "exited"), else null.
+	// Model is null then: the node runs no model.
+	LastLaunch    *LastLaunch `json:"last_launch"`
+	LastError     *string     `json:"last_error"`
+	LastErrorAgeS *float64    `json:"last_error_age_s"`
+}
+
+// LastLaunch is the exited launch in GET /status (6.9).
+type LastLaunch struct {
+	ID        string  `json:"id"`
+	Model     *string `json:"model"`
+	Reason    string  `json:"reason"`
+	EndedAgeS float64 `json:"ended_age_s"`
 }

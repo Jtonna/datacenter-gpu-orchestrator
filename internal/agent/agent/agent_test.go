@@ -568,9 +568,14 @@ func TestWorkerLaunchEndToEnd(t *testing.T) {
 		t.Fatalf("%+v", st.Exit)
 	}
 	agenttest.Eventually(t, 5*time.Second, "idle again", func() bool { return e.pl.lastBeat().Role == "idle" })
-	// Status shows the last launch's model.
-	if s := e.a.Status(); s.Model == nil || *s.Model != "Devstral.gguf" || s.State != "exited" {
+	// Status names the exited launch's model as the last launch's, not as the
+	// current model.
+	s := e.a.Status()
+	if s.Role != "idle" || s.Model != nil || s.State != "exited" || s.LastLaunch == nil {
 		t.Fatalf("%+v", s)
+	}
+	if ll := s.LastLaunch; ll.ID != "ln-1" || ll.Model == nil || *ll.Model != "Devstral.gguf" || ll.Reason != "forced" || ll.EndedAgeS < 0 {
+		t.Fatalf("%+v", ll)
 	}
 }
 

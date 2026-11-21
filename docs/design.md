@@ -1102,7 +1102,7 @@ view the core reads, and runs the worker launches.
   tier is listed with `unplaced: no_tier_match` and takes no load; a node
   whose programs are not ready, whose model source a worker launch needs and
   cannot reach, or that reports a launch Potluck does not hold is listed with
-  `programs_not_ready`, `model_source_unreachable` or `orphan_launch` and
+  `programs_not_ready`, `model_source_unreachable`, `orphan_launch` or `silent` and
   takes no load until that passes. Placement memory is the first device of the
   node's platform backend; for a device that shares system memory the usable
   figure is `min(device free, mem_available_mib - watchdog_floor_mib)`

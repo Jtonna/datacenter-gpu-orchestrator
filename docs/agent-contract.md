@@ -1,6 +1,6 @@
 # Agent contract: Potluck and `potluck-agent`
 
-Status: DRAFT 5, 2026-11-20 (drafts 1 to 3 reviewed by the PS5 side; change requests CR-1, CR-2 and CR-3 folded in; CR-5, accepted 2026-11-20, adds section 11.1 and the lines marked CR-5). Nothing in this document is built. It is task C1 of the plan "Potluck Cleanup Tasks". It becomes binding when the scheduler side and the fleet console agent both accept it.
+Status: DRAFT 5, 2026-11-20 (drafts 1 to 3 reviewed by the PS5 side; change requests CR-1, CR-2 and CR-3 folded in; CR-5, accepted 2026-11-20, adds section 11.1 and the lines marked CR-5; CR-6, proposed 2026-11-20 after the first run on a real machine, adds section 6.12 and the lines marked CR-6). Nothing in this document is built. It is task C1 of the plan "Potluck Cleanup Tasks". It becomes binding when the scheduler side and the fleet console agent both accept it.
 
 Authors: the scheduler agent (`ps5-ai-datacenter-load-balancer-32`) wrote it; the fleet console agent (`fix-fleet-console-tiles`) reviews it against the PS5 side (boot chain, RAM-only, payload delivery).
 
@@ -176,6 +176,8 @@ Answer `200`: `{"release": "0.1.0", "paused": false}`.
 | Heartbeat answer names a `release` different from the agent's | Registers again; the answer to that decides (`agent_too_old`, `potluck_too_old`). |
 
 **Lost node.** Potluck marks a node lost after 10 s without a heartbeat. Section 11 says what follows.
+
+**Silent node with a launch (CR-6, proposed).** A node that runs a launch Potluck holds is not lost after 10 s. It is lost after 20 s without a heartbeat, the `lease_ttl_s` of the launch (section 6.2): only then has the agent ended the launch by itself. From 10 s on the node takes no new load (`unplaced: "silent"`). Reason: an agent restart keeps its launch (section 6.1) and can take longer than 10 s; with the old rule Potluck gave the load up at 10 s and answered `stop_launch` to the agent that had just re-adopted it. A node without a launch is lost after 10 s as before.
 
 ## 5. Programs and versions
 
@@ -464,12 +466,19 @@ Answered on `127.0.0.1:50060` only, read-only, for the machine's own screen. No 
   "model": "Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf",
   "state": "ready",
   "load": {"fraction": null, "bytes_total": 4470000000, "bytes_loaded": 4470000000, "state": "done"},
+  "last_launch": null,
   "last_error": null,
   "last_error_age_s": null
 }
 ```
 
 `model` is the host's model file name, or the `label` of a worker launch. `last_error` is the reason and message of the last refused registration, failed program check or abnormal exit.
+
+CR-6, proposed:
+
+- `role` and `model` describe a launch that exists (`starting`, `ready`, `stopping`). Once the launch has exited, `role` is `idle`, `model` is `null`, and the launch is named in `last_launch`: `{"id": "ln-...", "model": "<file name or label>", "reason": "<exit reason>", "ended_age_s": 12.5}`. `last_launch` is `null` in every other state.
+- Right after an agent restart the answer waits for the re-adoption of section 6.11 (normally well under a second). When that takes longer than 2 s the answer is `503` with reason `agent_starting`, as on the node's address. A launch that runs is never shown as `idle`.
+- `last_error` of an abnormal exit is kept across an agent restart (it is read from the launch's exit record, with its real age). Any other `last_error` is not stored and is gone after a restart.
 
 ### 6.10 Details fixed while building the agent (CR-3)
 
@@ -572,6 +581,15 @@ On deregister, Potluck stops any instance with a launch on that node, as in forc
 
 In both cases Potluck keeps: history, benchmark runs and learned memory needs that name the node, and the audit entry. Potluck forgets: the node's pause state, its programs state and its place in the pool. A profile that forces such a node stays in the configuration and is refused at load with the reason "forced node is not in the pool".
 
+### 6.12 Details fixed after the first run on a real machine (CR-6, proposed)
+
+Proposed 2026-11-20. Not accepted yet.
+
+- **Exporters across a re-registration.** Exporter units left by an earlier agent process are stopped once, at process start (section 6.11). A later registration of the same agent process (heartbeat answered `410`, or another release named) does not stop the exporters: one whose entry in the answer's `exporters` is unchanged keeps running, one that is missing or changed is started. Before, the re-registration stopped the running exporter and did not start it again, so the stats went stale until the agent restarted.
+- **Exporter found not running.** When an exporter the agent should run is not running and its scrape fails, the agent starts it again, at most once every 30 s per exporter, with one log line.
+- **No failed unit records.** Launch units are started with `systemd-run --collect`, so a killed launch leaves no failed unit in systemd. The exit status still comes from the `ExecStopPost` file. Exporter units have no exit file; their status is read from the unit, then `systemctl reset-failed` clears it.
+- **Stats warning.** A failed scrape is not warned about during the first 5 s after its exporter was started.
+
 ## 11. What Potluck does with all this
 
 - **Membership** is registrations and heartbeats only, from the first agent release (phase 4, plan task D1). In that release every pool machine has an agent: the five PS5s, the host machine and the Nvidia laptop. Potluck no longer reads the datacenter's fleet feed.
@@ -579,7 +597,8 @@ In both cases Potluck keeps: history, benchmark runs and learned memory needs th
 - **Phase 4 loads.** Potluck's own `llama-server` child is the host, unchanged. For each worker node of a load Potluck sends `POST /launch` with `role: worker`, waits for `ready`, then starts its child with those workers. On unload it stops the worker launches after its child has exited.
 - **Phase 6 loads.** Potluck sends the worker launches first, then one `role: host` launch, and forwards requests to the host node's port 50061. The scheduler-child host is removed only after an agent-hosted load on the host machine matches it.
 - **Exit handling.** An `exited` launch at any time fails the instance with the agent's reason, and Potluck stops the other members. `watchdog` and `oom_kill` raise the learned memory need of that model. `start_failed` is recorded with its log lines and not retried.
-- **Lost node with a launch.** A node that loses power cannot report or expire anything. When a node with a launch is marked lost, Potluck fails the instance at once and stops the other members. It never tries to restart or recover the node. When the node's agent returns and reports a launch Potluck no longer holds, Potluck tells it to stop it (section 4.2).
+- **Lost node with a launch.** A node that loses power cannot report or expire anything. When a node with a launch is marked lost (after 20 s without a heartbeat, section 4.3: CR-6, proposed), Potluck fails the instance at once and stops the other members. It never tries to restart or recover the node. When the node's agent returns and reports a launch Potluck no longer holds, Potluck tells it to stop it (section 4.2).
+- **Agent restart with a launch (CR-6, proposed).** The launch keeps running (section 6.1). While the agent is away the node is silent, not lost, for up to 20 s. When the agent registers again within that time with the same `launch_id`, Potluck keeps the instance and sends no `stop_launch`.
 - **Potluck restart.** Potluck holds no launches after a restart. Each agent's next heartbeat gets `410`, the agent registers with its `launch_id`, and Potluck answers `stop_launch`. Launches whose agent cannot reach Potluck end by their lease.
 - **One feed** (plan task D4) for other systems is built from the heartbeats and Potluck's own instance state. It is a separate page of this repository, not part of this contract.
 
@@ -598,11 +617,12 @@ CR-5, accepted 2026-11-20. They are part of the contract. Each line says what Po
 - **A node that cannot take a load yet** is listed with the reason and gets no load while the reason holds; a request that needs it stays queued and the profile is not backed off:
   - `programs_not_ready`: the last heartbeat said `programs_ready: false`, or no heartbeat has arrived since the registration;
   - `model_source_unreachable`: worker launches ask for `model_dir` and the last heartbeat did not say `model_source.reachable: true`. When worker launches do not ask for `model_dir`, the model source is not looked at;
-  - `orphan_launch`: next line.
+  - `orphan_launch`: next line;
+  - `silent` (CR-6, proposed): no heartbeat for 10 s from a node that runs a launch Potluck holds. It ends with the next heartbeat or registration, or with the node being lost at 20 s.
 - **A heartbeat that names a launch Potluck does not hold** (the node was lost, its load was given up, and the node came back; or a start request got no answer). Potluck sends `DELETE /launch/{launch_id}` (section 6.5, not forced) once for that launch, and again only if the request could not be delivered. The node gets no load until a heartbeat reports no launch. This is in addition to `stop_launch` at registration.
 - **The host machine's agent.** In phase 4 the local node comes from Potluck's own probe. An agent whose `id` or `name` equals Potluck's `fleet.local_node` setting (ignoring case) is the host machine's. It stays registered and is shown in status (`host_agent: true`), but is not published as a remote node and gets no worker launch.
 - **One device per node.** A worker serves one device. Potluck uses the first device of the heartbeat's `devices` whose `backend` is the backend of the node's platform; when no device has that backend, the first device listed. Further devices of that backend are not used: the node's status counts them in `extra_devices_ignored` and the log warns once per registration.
-- **Lost node with a launch.** The instance goes through Potluck's node-loss path at once (the 10 s without a heartbeat are the wait): it is killed and its other members are stopped. Requests that were waiting for an instance that was still loading are queued again and get no error; requests in flight on a ready instance are cut off. The profile is not backed off. **Force unload** differs: requests waiting for that instance fail at once with an error that names the force unload and the node.
+- **Lost node with a launch.** The instance goes through Potluck's node-loss path at once (the time without a heartbeat is the wait: 20 s for a node with a launch, the lease TTL, instead of 10 s: CR-6, proposed): it is killed and its other members are stopped. Requests that were waiting for an instance that was still loading are queued again and get no error; requests in flight on a ready instance are cut off. The profile is not backed off. **Force unload** differs: requests waiting for that instance fail at once with an error that names the force unload and the node.
 - **`min_mem_available_mib`** of a worker launch is Potluck's watchdog floor setting (`watchdog_floor_mib`, default 1000). For a node whose memory is shared (its device has `shares_system_memory`, or its tier says so) the node's budget for the load is added.
 - **No forced-fit pre-flight with agents.** Potluck's check of a forced placement against freshly probed worker memory is not run: a probe would take the worker's single client slot. The host starts on the placement as made. A load that does not fit a node with shared memory is ended by that agent's watchdog: the load fails with the agent's reason and the launches of every member are stopped.
 - **Learned need after a memory kill.** When a worker launch exits with `watchdog` or `oom_kill`, the model's learned memory need is raised by a tenth, at least 256 MiB. Like every learned need it holds until Potluck restarts.

@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -195,6 +196,7 @@ func (m *Manager) Sync(ctx context.Context, entries []agentproto.ProgramEntry, w
 	m.mu.Lock()
 	m.ready = false
 	m.mu.Unlock()
+	began := time.Now()
 	var need []agentproto.ProgramEntry
 	verified := map[string]agentproto.ProgramEntry{}
 	for _, e := range entries {
@@ -263,6 +265,12 @@ func (m *Manager) Sync(ctx context.Context, entries []agentproto.ProgramEntry, w
 	m.mu.Lock()
 	m.ready, m.errMsg = true, ""
 	m.mu.Unlock()
+	var fetched int64
+	for _, e := range need {
+		fetched += e.Bytes
+	}
+	m.log.Info("programs downloaded and verified", "count", len(verified), "downloaded", len(need), "bytes", fetched,
+		"seconds", math.Round(time.Since(began).Seconds()*10)/10)
 	return nil
 }
 

@@ -1185,18 +1185,39 @@ func (m *Manager) finishLocked(r *launchRun, exit runner.Exit, reason, msg strin
 	os.Remove(r.rec.LeasePath)
 	m.persist(r)
 	m.log.Info("launch exited", "launch_id", r.rec.LaunchID, "reason", reason, "message", msg)
-	normal := reason == agentproto.ExitStopped || reason == agentproto.ExitForced || reason == agentproto.ExitReset
-	if !normal && m.deps.OnError != nil {
-		text := "launch " + r.rec.LaunchID + " exited: " + reason
-		if msg != "" {
-			text += ": " + msg
-		}
+	if text, abnormal := exitError(r.rec.LaunchID, ei); abnormal && m.deps.OnError != nil {
 		m.deps.OnError(text)
 	}
 	if m.deps.OnExit != nil {
 		st := m.stateLocked(r)
 		go m.deps.OnExit(st)
 	}
+}
+
+// exitError is the last_error text of an exit; abnormal is false for a stop
+// that was asked for.
+func exitError(id string, e *agentproto.ExitInfo) (text string, abnormal bool) {
+	if e.Reason == agentproto.ExitStopped || e.Reason == agentproto.ExitForced || e.Reason == agentproto.ExitReset {
+		return "", false
+	}
+	text = "launch " + id + " exited: " + e.Reason
+	if e.Message != "" {
+		text += ": " + e.Message
+	}
+	return text, true
+}
+
+// LastExitError returns the last_error text of the exited launch and when it
+// exited; ok is false when there is none or it was stopped on request. It
+// gives an agent that restarted its last_error back (the exit is persisted).
+func (m *Manager) LastExitError() (text string, at time.Duration, ok bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cur == nil || m.cur.exit == nil {
+		return "", 0, false
+	}
+	text, ok = exitError(m.cur.rec.LaunchID, m.cur.exit)
+	return text, m.cur.exitAt, ok
 }
 
 func (m *Manager) persist(r *launchRun) {

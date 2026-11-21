@@ -107,6 +107,7 @@ const (
 	UnplacedProgramsNotReady       = "programs_not_ready"       // the agent has not verified its programs (5.1)
 	UnplacedModelSourceUnreachable = "model_source_unreachable" // a worker launch would need the model source (8)
 	UnplacedOrphanLaunch           = "orphan_launch"            // the agent reports a launch Potluck does not hold (11)
+	UnplacedSilent                 = "silent"                   // no heartbeat for 10 s while its launch is kept (4.3, CR-6)
 )
 
 // modelSourceHold is how long a node whose launch was refused with
@@ -152,8 +153,9 @@ type forceResult struct {
 }
 
 // nodeLossAfter is how long a remote node may be missing before the load on
-// it is lost: design 8.4's 30 s, or at once with agents (the 10 s heartbeat
-// silence already happened, agent contract 4.3).
+// it is lost: design 8.4's 30 s, or at once with agents (the heartbeat
+// silence already happened: 10 s, or the 20 s lease TTL for a node that runs
+// a launch, agent contract 4.3 and CR-6).
 //
 // Settled as built by CR-5 (agent contract 11.1). The question was: 11 says a lost node with a launch "fails the instance at
 // once". The existing node-loss path is used: the instance is killed at once

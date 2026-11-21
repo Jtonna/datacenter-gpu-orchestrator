@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/netip"
 	"strconv"
+	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/launch"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
@@ -98,11 +99,30 @@ func (a *Agent) Handler() http.Handler {
 	})
 }
 
-// LocalHandler serves 127.0.0.1:50060: GET /status only (6.9).
+// LocalHandler serves 127.0.0.1:50060: GET /status only (6.9). Like the
+// Potluck-facing API it does not answer from a launch state that is not read
+// yet: right after an agent restart it waits for the re-adoption (a moment),
+// and answers 503 when that takes longer than 2 s. A launch that runs is
+// never shown as role idle.
 func (a *Agent) LocalHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != agentproto.PathStatus {
 			writeJSON(w, 403, refusalBody(ReasonForbidden, "only GET /status is answered on 127.0.0.1"))
+			return
+		}
+		wait := a.statusWait
+		if wait == 0 {
+			wait = 2 * time.Second
+		}
+		t := time.NewTimer(wait)
+		defer t.Stop()
+		select {
+		case <-a.recovered:
+		case <-r.Context().Done():
+			return
+		case <-t.C:
+			w.Header().Set("Retry-After", "1")
+			writeJSON(w, http.StatusServiceUnavailable, refusalBody(ReasonStarting, "the agent is starting; the launch state is not read yet"))
 			return
 		}
 		writeJSON(w, 200, a.Status())

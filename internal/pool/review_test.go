@@ -119,7 +119,7 @@ func TestOrphanLaunchInAHeartbeatIsStoppedOnce(t *testing.T) {
 	lid := a.LaunchState().LaunchID
 	a.SetHeartbeats(false)
 	time.Sleep(100 * time.Millisecond) // a heartbeat on its way
-	r.clk.advance(11 * time.Second)
+	r.clk.advance(21 * time.Second)    // past the lease TTL: a node with a launch is lost only then (CR-6)
 	r.p.CheckLost()
 	r.p.Stop(9, nil) // the lost node is not waited for; its launch stays
 	r.p.WaitStops(10 * time.Second)
@@ -292,4 +292,83 @@ func TestNoTierMatchIsListedAndLoggedOncePerRegistration(t *testing.T) {
 	if n, _ := r.node(id); n.Priority != 3 || r.unplaced(id) != "" {
 		t.Fatalf("after the tier was added: %+v unplaced %q", n, r.unplaced(id))
 	}
+}
+
+// CR-6. An agent restart that takes longer than 10 s must not cost a healthy
+// load: a silent node that runs a launch of ours is lost only after the lease
+// TTL (20 s). After 10 s it takes no new load (reason silent). When the agent
+// registers again with the same launch, nothing is stopped.
+func TestSilentNodeWithALaunchIsKeptUntilTheLeaseTTL(t *testing.T) {
+	r := newRig(t)
+	a := r.agent(1)
+	r.waitNode(a.ID)
+	rep := &reports{}
+	if res := r.p.Launch(context.Background(), spec(8, a), rep.add); res.Reason != "" {
+		t.Fatalf("%+v", res)
+	}
+	lid := *r.fact(a.ID).LaunchID
+	a.SetHeartbeats(false)
+	time.Sleep(100 * time.Millisecond) // a heartbeat under way
+	r.clk.advance(12 * time.Second)
+	r.p.CheckLost()
+	if n, _ := r.node(a.ID); !n.Online {
+		t.Fatal("a node with a running launch was lost before the lease TTL")
+	}
+	if f := r.fact(a.ID); f.State != StateActive || f.Placeable || f.Unplaced != scheduler.UnplacedSilent || r.unplaced(a.ID) != scheduler.UnplacedSilent {
+		t.Fatalf("after 12 s of silence: %+v", f)
+	}
+	if strings.Contains(r.logs.String(), "agent lost") {
+		t.Fatal("logged as lost")
+	}
+	// The restarted agent registers with the launch it re-adopted.
+	q := regReq(a.ID)
+	q.Addr, q.AgentStartID, q.LaunchID = a.Addr, "s-new", &lid
+	ans := r.p.Register(q)
+	if !ans.Accepted || ans.StopLaunch != nil {
+		t.Fatalf("the re-adopted launch must not be stopped: %+v", ans)
+	}
+	if len(rep.exits()) != 0 {
+		t.Fatalf("the instance was ended: %+v", rep.exits())
+	}
+	if got := r.unplaced(a.ID); got == "silent" {
+		t.Fatal("still silent after the registration")
+	}
+	if a.Has("DELETE") {
+		t.Fatalf("a stop was sent: %v", a.Calls())
+	}
+	r.p.Stop(8, nil)
+	r.p.WaitStops(10 * time.Second)
+}
+
+// CR-6. Past the lease TTL the node is lost as before; a silent node without
+// a launch is lost after 10 s.
+func TestSilentNodeWithALaunchIsLostAfterTheLeaseTTL(t *testing.T) {
+	r := newRig(t)
+	a1, a2 := r.agent(1), r.agent(2)
+	r.waitNode(a1.ID)
+	r.waitNode(a2.ID)
+	if res := r.p.Launch(context.Background(), spec(9, a1), func(scheduler.WorkerReport) {}); res.Reason != "" {
+		t.Fatalf("%+v", res)
+	}
+	a1.SetHeartbeats(false)
+	a2.SetHeartbeats(false)
+	time.Sleep(100 * time.Millisecond)
+	r.clk.advance(12 * time.Second)
+	r.p.CheckLost()
+	if n, _ := r.node(a2.ID); n.Online || r.fact(a2.ID).State != StateLost {
+		t.Fatal("a silent node without a launch is lost after 10 s")
+	}
+	if n, _ := r.node(a1.ID); !n.Online {
+		t.Fatal("lost before the lease TTL")
+	}
+	r.clk.advance(9 * time.Second)
+	r.p.CheckLost()
+	if n, _ := r.node(a1.ID); n.Online || r.fact(a1.ID).State != StateLost {
+		t.Fatalf("not lost after 21 s: %+v", r.fact(a1.ID))
+	}
+	if !strings.Contains(r.logs.String(), "agent lost") {
+		t.Fatal("no log line")
+	}
+	r.p.Stop(9, nil)
+	r.p.WaitStops(10 * time.Second)
 }

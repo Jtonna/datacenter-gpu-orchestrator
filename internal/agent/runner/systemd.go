@@ -22,7 +22,8 @@ import (
 // Exit status: a transient unit that ends cleanly is garbage-collected at
 // once, so its status cannot be read afterwards with systemctl. Each unit
 // therefore gets an ExecStopPost that writes "$EXIT_CODE $EXIT_STATUS" to
-// Spec.ExitPath, which also survives an agent restart.
+// Spec.ExitPath, which also survives an agent restart. Such a unit is run
+// with --collect, so it leaves no failed unit record either.
 type Systemd struct {
 	Cmd  osx.Commander
 	Poll time.Duration // how often a unit's state is read; default 250ms
@@ -95,7 +96,13 @@ func (s *Systemd) StartArgs(sp Spec) []string {
 		// $$ is systemd's escape for a literal $, so the shell expands the
 		// variables systemd sets for ExecStopPost. The path holds no quote or
 		// $ (agent-built from a validated launch id).
-		args = append(args, "-p", fmt.Sprintf(`ExecStopPost=%s -c "echo $$EXIT_CODE $$EXIT_STATUS > %s"`, s.shell(), sp.ExitPath))
+		args = append(args, "--collect", "-p", fmt.Sprintf(`ExecStopPost=%s -c "echo $$EXIT_CODE $$EXIT_STATUS > %s"`, s.shell(), sp.ExitPath))
+		// A unit that ends killed or with an error would stay in systemd as a
+		// failed unit record until reset-failed; --collect unloads it at once,
+		// also when no agent is there to do it. ExecStopPost runs before that,
+		// and the exit status is read from its file. A unit without an exit
+		// file is not collected: its status is read from the failed unit
+		// (finish), which then runs reset-failed.
 	}
 	args = append(args, "--", sp.Path)
 	args = append(args, sp.Args...)

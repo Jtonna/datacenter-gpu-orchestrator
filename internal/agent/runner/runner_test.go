@@ -104,6 +104,7 @@ func TestSystemdStartArgs(t *testing.T) {
 	line := strings.Join(got, " ")
 	for _, want := range []string{
 		"--unit=potluck-launch-ln-1.service",
+		"--collect -p ExecStopPost=", // no failed unit record stays
 		"--setenv=CUDA_DEVICE_ORDER=PCI_BUS_ID",
 		"-p OOMScoreAdjust=900",
 		"StandardOutput=append:/dev/shm/potluck/launch/ln-1.log",
@@ -114,6 +115,16 @@ func TestSystemdStartArgs(t *testing.T) {
 		if !strings.Contains(line, want) {
 			t.Errorf("missing %q in\n%s", want, line)
 		}
+	}
+}
+
+// A unit without an exit file is not collected: its exit status is read from
+// the failed unit, which reset-failed then clears.
+func TestSystemdUnitWithoutExitFileIsNotCollected(t *testing.T) {
+	s := &Systemd{}
+	got := s.StartArgs(Spec{Unit: "potluck-node-exporter", Path: "/x/node_exporter"})
+	if line := strings.Join(got, " "); strings.Contains(line, "--collect") || strings.Contains(line, "ExecStopPost") {
+		t.Fatal(line)
 	}
 }
 

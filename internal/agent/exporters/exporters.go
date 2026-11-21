@@ -73,6 +73,11 @@ type Supervisor struct {
 	Logger     *slog.Logger
 	MinBackoff time.Duration // default 1s
 	MaxBackoff time.Duration // default 60s
+	// ReviveEvery is the shortest time between two starts by Revive of one
+	// exporter; default 30s.
+	ReviveEvery time.Duration
+	// OnStart is called after an exporter was started (optional).
+	OnStart func(program string)
 
 	mu      sync.Mutex
 	running map[string]*supervised
@@ -81,8 +86,24 @@ type Supervisor struct {
 
 type supervised struct {
 	spec   agentproto.ExporterSpec
+	ctx    context.Context
 	cancel context.CancelFunc
 	done   chan struct{}
+	kick   chan struct{} // ends the wait before the next start (Revive)
+	// under Supervisor.mu
+	up        bool // the exporter's process runs
+	revived   bool
+	revivedAt time.Time
+}
+
+// ended: the supervision is over or ending (its context ended).
+func (r *supervised) ended() bool {
+	select {
+	case <-r.done:
+		return true
+	default:
+		return r.ctx.Err() != nil
+	}
 }
 
 func (s *Supervisor) log() *slog.Logger {
@@ -93,7 +114,10 @@ func (s *Supervisor) log() *slog.Logger {
 }
 
 // Set replaces the running set with specs. It returns the stats sources of
-// the exporters it runs and the refusals.
+// the exporters it runs and the refusals. An exporter whose spec is unchanged
+// keeps running; one that is missing, changed, or whose supervision has ended
+// is started. ctx must live as long as the exporters should: when it ends,
+// they are stopped.
 func (s *Supervisor) Set(ctx context.Context, specs []agentproto.ExporterSpec) ([]stats.SourceConfig, []string) {
 	s.mu.Lock()
 	if s.running == nil {
@@ -121,7 +145,7 @@ func (s *Supervisor) Set(ctx context.Context, specs []agentproto.ExporterSpec) (
 	s.mu.Lock()
 	var stop []*supervised
 	for name, r := range s.running {
-		if w, ok := want[name]; !ok || strings.Join(w.Args, "\x00") != strings.Join(r.spec.Args, "\x00") {
+		if w, ok := want[name]; !ok || strings.Join(w.Args, "\x00") != strings.Join(r.spec.Args, "\x00") || r.ended() {
 			stop = append(stop, r)
 			delete(s.running, name)
 		}
@@ -139,7 +163,7 @@ func (s *Supervisor) Set(ctx context.Context, specs []agentproto.ExporterSpec) (
 	}
 	for _, sp := range start {
 		c, cancel := context.WithCancel(ctx)
-		r := &supervised{spec: sp, cancel: cancel, done: make(chan struct{})}
+		r := &supervised{spec: sp, ctx: c, cancel: cancel, done: make(chan struct{}), kick: make(chan struct{}, 1)}
 		s.mu.Lock()
 		s.running[sp.Name] = r
 		s.mu.Unlock()
@@ -171,6 +195,40 @@ func (s *Supervisor) StopLeftovers(ctx context.Context) {
 	}
 }
 
+// Revive starts again, now, every exporter that should run and does not: its
+// process is gone (the supervisor is waiting to start it again) and failing
+// says the scrape of its stats source fails. One exporter is revived at most
+// once per ReviveEvery; each start writes one log line.
+func (s *Supervisor) Revive(failing func(source string) bool) {
+	every := s.ReviveEvery
+	if every == 0 {
+		every = 30 * time.Second
+	}
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for name, r := range s.running {
+		if r.up || r.ended() || (r.revived && now.Sub(r.revivedAt) < every) {
+			continue
+		}
+		if src := SourceName(name); src != "" && failing != nil && !failing(src) {
+			continue
+		}
+		r.revived, r.revivedAt = true, now
+		s.log().Info("exporter is not running; starting it again", "name", name, "unit", UnitName(name))
+		select {
+		case r.kick <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func (s *Supervisor) setUp(r *supervised, up bool) {
+	s.mu.Lock()
+	r.up = up
+	s.mu.Unlock()
+}
+
 func (s *Supervisor) loop(ctx context.Context, r *supervised) {
 	defer close(r.done)
 	unit := UnitName(r.spec.Name)
@@ -183,6 +241,13 @@ func (s *Supervisor) loop(ctx context.Context, r *supervised) {
 	}
 	backoff := minB
 	for {
+		if ctx.Err() != nil {
+			return
+		}
+		select {
+		case <-r.kick: // a Revive that came while the exporter ran
+		default:
+		}
 		path, ok := s.Path(r.spec.Name)
 		var proc runner.Proc
 		var err error
@@ -197,6 +262,10 @@ func (s *Supervisor) loop(ctx context.Context, r *supervised) {
 			s.log().Warn("exporter start failed", "name", r.spec.Name, "err", err)
 		} else {
 			startedAt := time.Now()
+			s.setUp(r, true)
+			if s.OnStart != nil {
+				s.OnStart(r.spec.Name)
+			}
 			select {
 			case <-ctx.Done():
 				_ = proc.Signal(15)
@@ -205,8 +274,10 @@ func (s *Supervisor) loop(ctx context.Context, r *supervised) {
 				case <-time.After(5 * time.Second):
 					_ = proc.Signal(9)
 				}
+				s.setUp(r, false)
 				return
 			case <-proc.Done():
+				s.setUp(r, false)
 				s.log().Warn("exporter exited", "name", r.spec.Name, "exit", proc.Exit())
 				if time.Since(startedAt) > 2*maxB {
 					backoff = minB // it ran for a while: not a crash loop
@@ -217,6 +288,7 @@ func (s *Supervisor) loop(ctx context.Context, r *supervised) {
 		case <-ctx.Done():
 			return
 		case <-time.After(backoff):
+		case <-r.kick:
 		}
 		backoff *= 2
 		if backoff > maxB {
