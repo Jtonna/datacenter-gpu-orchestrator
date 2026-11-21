@@ -106,6 +106,7 @@ func newBase(b Bootstrap) *Config {
 		Bench:         Bench{EnabledSetting: true, RegressLoadPct: DefaultRegressLoadPct, RegressDecodePct: DefaultRegressDecodePct, MaxRunMinutes: DefaultMaxRunMinutes},
 		Defaults:      DefaultDefaults(),
 		Recovery:      DefaultRecovery(),
+		Logs:          DefaultLogs(),
 		NodeOverrides: map[string]NodeOverride{},
 		Profiles:      map[string]*core.Profile{},
 	}

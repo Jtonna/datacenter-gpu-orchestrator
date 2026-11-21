@@ -46,12 +46,36 @@ type Config struct {
 	Recovery Recovery
 	Profiles map[string]*core.Profile
 
+	// Logs are the central logging settings (CR-10).
+	Logs Logs
+
 	// AuditRetentionDays is informational (the application never deletes audit entries); 0 keeps everything.
 	AuditRetentionDays int
 	// Revision is the configuration revision this snapshot was built from and
 	// Configured is false for the built-in defaults of an empty database.
 	Revision   int64
 	Configured bool
+}
+
+// Logs are the central logging settings (docs/cr-10-central-logging.md). The
+// address of the log store is not here: it is a deployment fact
+// (LLM_SCHEDULER_LOGS_STORE_URL).
+type Logs struct {
+	// Enabled false: no logs object is handed out and the log routes answer 404.
+	Enabled bool
+	// RetentionDays and MaxDiskGiB are passed to the log store when it starts.
+	RetentionDays int
+	MaxDiskGiB    int
+	// PushURL, when set, is the address senders are told to push to instead
+	// of Potluck's own route.
+	PushURL string
+	// ClientIntake false: POST /api/logs and GET /api/logs/config answer 404.
+	ClientIntake bool
+}
+
+// DefaultLogs returns the built-in logging settings.
+func DefaultLogs() Logs {
+	return Logs{Enabled: true, RetentionDays: 14, MaxDiskGiB: 20, ClientIntake: true}
 }
 
 // Recovery actions, in the only order they may be configured.

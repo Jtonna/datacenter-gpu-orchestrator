@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"net/url"
 	"path"
 	"sort"
 	"strings"
@@ -37,6 +38,7 @@ func (c *Config) validate(raw map[string]*ProfileSpec, exists func(string) bool)
 	c.validateDefaults(add)
 	c.validateRecovery(add)
 	c.validateBench(add)
+	c.validateLogs(add)
 	c.validateTiers(add)
 	for i, e := range c.ExcludeNodes {
 		switch {
@@ -423,5 +425,28 @@ func (c *Config) validateBench(add func(string, ...any)) {
 			add("bench.suites[%d]: duplicate id %q", i, s.ID)
 		}
 		seen[s.ID] = true
+	}
+}
+
+// Bounds of the logging settings (sanity limits).
+const (
+	MaxLogsRetentionDays = 3650
+	MaxLogsMaxDiskGiB    = 100000
+)
+
+// validateLogs checks the central logging settings (CR-10).
+func (c *Config) validateLogs(add func(string, ...any)) {
+	l := c.Logs
+	if l.RetentionDays < 1 || l.RetentionDays > MaxLogsRetentionDays {
+		add("logs_retention_days must be 1 to %d, got %d", MaxLogsRetentionDays, l.RetentionDays)
+	}
+	if l.MaxDiskGiB < 1 || l.MaxDiskGiB > MaxLogsMaxDiskGiB {
+		add("logs_max_disk_gib must be 1 to %d, got %d", MaxLogsMaxDiskGiB, l.MaxDiskGiB)
+	}
+	if l.PushURL != "" {
+		u, err := url.Parse(l.PushURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.Fragment != "" {
+			add("logs_push_url must be empty or an http:// or https:// address without a user or a fragment, got %q", l.PushURL)
+		}
 	}
 }

@@ -869,6 +869,36 @@ in the container's environment is not used for these loads.
 `LLM_SCHEDULER_TEST_AGENT_PORT` and
 `LLM_SCHEDULER_TEST_WORKER_PORT` exist for tests only; never set them.
 
+### Central logging (CR-10; batch 1 is built, not deployed)
+
+Potluck passes log lines through to a log store (VictoriaLogs). This batch
+is the Potluck side only: no agent ships lines yet, and the compose entry of
+the store and the search page come later. Design:
+`docs/cr-10-central-logging.md`; routes, limits and answers: agent contract
+11.3.
+
+- **`LLM_SCHEDULER_LOGS_STORE_URL`** is the address at which Potluck reaches
+  the store, for example `http://potluck-logs:9428` (the store's container
+  name on the compose network; its port is not published). It is read once
+  at start and has no flag. It is not a setting, because it differs per
+  deployment.
+- Unset: central logging is off. Nothing is handed out to agents, the log
+  routes answer `404`, and everything else works as before. The start log
+  says `central logging is off: no log store address`.
+- Set to something that is not an `http://` or `https://` address: an error
+  is logged (`the log store address is not usable`) and it is taken as
+  unset. Potluck starts all the same.
+- With the address set, the settings decide: `logs_enabled` (default on),
+  `logs_client_intake` (default on), `logs_push_url` (default empty). They
+  are live: `PATCH /api/config/settings`, no restart.
+  `logs_retention_days` and `logs_max_disk_gib` are kept for the store;
+  nothing passes them on yet.
+- Check: `GET /api/status` has `logs` with `"enabled": true, "store": true`,
+  and each entry of `agents` has `logs` with the bytes Potluck accepted from
+  the node and its refusals by reason. `in_flight` never goes above 8.
+- The store down or slow never slows scheduling: log requests are answered
+  `503` after 5 s at most and the senders keep their lines and try again.
+
 ### Child output logs
 
 The scheduler writes each child llama-server's complete stdout and stderr to a new file under `/opt/llm-scheduler/logs` on the host machine (`--child-log-dir` / `LLM_SCHEDULER_CHILD_LOG_DIR`, mounted by compose). One file per start, named `<UTC time>-<profile>-<instance id>.log`, so `ls` sorts by time. This is where the KV cache size, the memory breakdown and the exact out-of-memory error are, beyond the last 40 lines in a `502`.

@@ -1,7 +1,9 @@
 # CR-10: central logging through Potluck (proposal, revision 3)
 
 Status: **accepted** (approved by Jacob and by the project manager). To be
-built as part of phase 5. Nothing here is built or deployed yet.
+built as part of phase 5. Batch 1, the Potluck side, is built on a branch
+(section 13 says what it holds and where it differs from this text).
+Nothing is deployed yet.
 
 ## Decisions so far
 
@@ -277,6 +279,46 @@ firewall change and no third container.
 ## 12. Open questions
 
 None. All questions of the earlier revisions are decided (table at the top).
+
+## 13. Batch 1 as built (Potluck side), and where it differs from the text above
+
+Built on a branch, not deployed: settings, the `logs` object, the
+pass-through with limits and counters, the snapshot from the pool, the flood
+test. Not in this batch: the compose entry, Potluck's own lines (4.5), the
+agent (5), the `/logs/` page and query pass-through (7), the Nodes page. The
+wire text is agent contract 11.3.
+
+Where it differs from sections 2 to 10, and what those sections left open:
+
+| Section | As built | Why |
+|---|---|---|
+| 2 | The store's address is the environment variable `LLM_SCHEDULER_LOGS_STORE_URL`, not a setting. Without it logging is off (no `logs` object, routes `404`), unless `logs_push_url` is set: then the object is handed out with that address and only Potluck's own `POST` routes stay `404` | The address differs per deployment. One rule for "no store" |
+| 2 | `logs_retention_days` and `logs_max_disk_gib` exist as settings; nothing passes them to the store yet | The compose entry is a later batch |
+| 3 | `revision` is a number computed from the logging settings and from whether there is a store address. It is not a counter, and it is the same again after a restart | Needs no stored state. Compare for equality only |
+| 3 | When logging is off the heartbeat answer has no `logs_revision`; the agent takes that as "stop shipping" | The `GET` would answer `404` |
+| 3 | `auth`, when a later change sets it, is `{"header", "value"}`. Always `null` now. `deny_units` is always empty: there is no setting for it | The text gave no shape and no setting |
+| 4.1 | The header is `X-Agent-Start-Id` | The text named no header |
+| 4.2 | The trusted fields go to the store as `extra_fields=name=value,name=value`. The store splits that argument at every comma and has no escape, so a comma in a value is stored as `%2C` and a percent sign as `%25`; a control character becomes a space; a value is cut at about 256 bytes; a field with an empty value is left out (the store refuses an empty value for the whole request) | Read from the store's source, v1.54.0: `app/vlinsert/insertutil/common_params.go` (`getExtraFields`, `getArray`) and `lib/httputil/array.go` (`GetArray`) |
+| 4.2, 6, 8 | Every trusted field a request does not set is passed as `ignore_fields`, so a line cannot set it either (a client's line cannot name a `node_id`; a node's line cannot name a `profile`) | `extra_fields` only wins for the names it sets. **Not checked against the real store yet**; the trial of section 9 did not cover `ignore_fields` |
+| 4.2 | `profile` is set when Potluck holds the launch for that node, or held it lately (the last 256 ended launches). An unknown `launch_id` is passed on as given, without `profile` | The last lines of a launch arrive after Potluck dropped it |
+| 4.2 | The store's `2xx` becomes `204`; its `400` becomes `400` (`store_rejected`); every other answer, no answer and no connection become `503` | "Returns the store's answer" would hand the store's own texts to senders |
+| 4.3 | More answers than the five listed: `400` (`bad_request`, `store_rejected`, `body_read`), `404` (logging off), `415` (an encoding other than gzip) | A wrong request needs an answer |
+| 4.3 | The sender's body must arrive within 4.5 s (`400` `body_read`), inside the 5 s of the forward | A sender that stalls must not hold a place, and must not look like a silent store |
+| 4.3 | Bytes are counted on the wire, so compressed bytes for a gzip body | The body is never decoded |
+| 4.3 | A body with a declared length is checked against the rate before it is read. A chunked body is let in while the node has any budget left and charged after it streamed. A chunked body that passes 1 MiB is cut (`413`); lines already passed may be stored | The length is not known before |
+| 4.3, 4.4 | A refused request is not read to its end. With a declared body of at most 64 KiB the connection is kept; otherwise it is closed with the answer | Closing on every refusal would make a busy sender open a connection per request |
+| 4.3 | Refusals are counted per node in `/api/status`. The Nodes page does not show them yet | UI is not in this batch |
+| 6 | Of the 8 places at most 2 are for clients at the same time | Clients are not identified. Without this, eight slow client requests would shut every node out |
+| 6 | Bursts: 1 MiB per client address, 2 MiB for all clients together. At most 1024 client addresses are remembered; idle ones are forgotten | The text gave rates only |
+
+Measured by the flood test on a development machine: 80 senders, about
+240 000 log requests in 2 s against a store that never answers and about
+280 000 against a store that takes 60 ms; the slowest heartbeat was 6 ms
+and the slowest chat request 6 ms; never more than 8 forwards in flight.
+
+Open for the agent batch: rule 1 of the agent contract's section 2 (no time
+set by a node) against "time" in the per-line fields of 4.1 and 8. A line
+without `_time` gets the time at which the store took it.
 
 ## Sources
 

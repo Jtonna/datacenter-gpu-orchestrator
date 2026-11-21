@@ -103,6 +103,7 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 		NodeOverrides: map[string]NodeOverride{},
 		ExcludeNodes:  trimAll(raw.ExcludeNodes),
 		Recovery:      raw.Recovery.value(),
+		Logs:          DefaultLogs(), // set in the stored configuration only, not in the old YAML format
 		Profiles:      map[string]*core.Profile{},
 	}
 	for _, t := range raw.Tiers {

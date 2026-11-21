@@ -273,6 +273,7 @@ func (s *Server) agentStatus(v map[string]any) {
 		return
 	}
 	facts := s.opts.Pool.Facts()
+	s.logFacts(facts) // CR-10: what the log route counted per node
 	byID := map[string]pool.NodeFacts{}
 	for _, f := range facts {
 		byID[f.ID] = f
