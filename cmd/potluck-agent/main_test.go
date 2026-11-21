@@ -64,7 +64,11 @@ func TestSubcommands(t *testing.T) {
 	if code := run([]string{"probe-read", dir}, &out, &errb); code != 0 {
 		t.Fatal(errb.String())
 	}
-	if code := run([]string{"--potluck", "192.0.2.1:3122", "--model-source", "push", "--install", "docker"}, &out, &errb); runtime.GOOS != "linux" && code != 1 {
-		t.Fatalf("non-Linux must refuse to run: %d %s", code, errb.String())
+	// On Linux this would start a real agent, which runs until it is signalled
+	// (it retries for ever, it never exits over an unreachable Potluck).
+	if runtime.GOOS != "linux" {
+		if code := run([]string{"--potluck", "192.0.2.1:3122", "--model-source", "push", "--install", "docker"}, &out, &errb); code != 1 {
+			t.Fatalf("non-Linux must refuse to run: %d %s", code, errb.String())
+		}
 	}
 }
