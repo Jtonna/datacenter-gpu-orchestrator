@@ -162,6 +162,9 @@ type Agent struct {
 	Export   *exporters.Supervisor
 	// Ship is the log shipper (CR-10); nil with --logs off.
 	Ship *logship.Shipper
+	// launchTail follows launch output; its starting point is taken when the
+	// re-adoption is done, before anything waiting for it goes on.
+	launchTail *logship.LaunchTail
 
 	mu          sync.Mutex
 	ident       identity.Identity
@@ -280,6 +283,9 @@ func New(opt Options, deps Deps) (*Agent, error) {
 		Gate: a, Device: a.workerDevice, Programs: a.Programs, Logger: deps.Logger, OnError: a.setError,
 		OnExit: func(agentproto.LaunchState) { a.afterLaunchExit() }})
 
+	if ship != nil {
+		a.launchTail = &logship.LaunchTail{Ship: ship, Current: a.Launch.CurrentLog, Every: deps.LaunchLogEvery}
+	}
 	a.Export = &exporters.Supervisor{Runner: deps.Runner, Path: a.Programs.Path, Logger: deps.Logger}
 	a.Stats = stats.New(stats.Config{Now: deps.Clock.Now, MinInterval: deps.StatsMin, Logger: deps.Logger,
 		Primary: func() string { a.mu.Lock(); defer a.mu.Unlock(); return a.ident.RouteIface }})
@@ -420,6 +426,12 @@ func (a *Agent) RecoverLaunch(ctx context.Context) error {
 				a.lastErr, a.lastErrAt = text, at
 			}
 			a.mu.Unlock()
+		}
+		// The launch tail's starting point: a re-adopted launch is followed
+		// from its end. Taken before close(a.recovered), so no launch can
+		// start in between (registration waits for the close).
+		if a.launchTail != nil {
+			a.launchTail.Begin()
 		}
 		close(a.recovered)
 	})
@@ -651,8 +663,7 @@ func (a *Agent) startLogShipping(ctx context.Context, wg *sync.WaitGroup) {
 			return
 		case <-a.recovered:
 		}
-		t := &logship.LaunchTail{Ship: a.Ship, Current: a.Launch.CurrentLog, Every: a.deps.LaunchLogEvery}
-		t.Run(ctx)
+		a.launchTail.Run(ctx)
 	}()
 	// The system log: the machine's own journal on a bare install; on a
 	// Docker install only a journal folder given with --journal-dir.

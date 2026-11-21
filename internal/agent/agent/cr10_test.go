@@ -246,10 +246,14 @@ func TestAgentFollowsTheLogsObject(t *testing.T) {
 	// Logging switched off in Potluck.
 	e.pl.set(func() { e.pl.hbAnswer.LogsRevision = 0 })
 	agenttest.Eventually(t, 10*time.Second, "stopped", func() bool { return !e.a.Ship.On() && e.pl.lastBeat().Logs == nil })
-	n := len(sink.all())
+	// A push that was on its way when logging went off may still land; what
+	// counts is that nothing logged after it is kept or sent.
 	e.a.log.Info("not shipped")
+	if e.a.Ship.Ring().Len() != 0 {
+		t.Fatal("kept a line with logging off")
+	}
 	time.Sleep(200 * time.Millisecond)
-	if len(sink.all()) != n || e.a.Ship.Ring().Len() != 0 {
+	if sink.find("source=agent", "not shipped") != nil {
 		t.Fatal("shipped with logging off")
 	}
 }
