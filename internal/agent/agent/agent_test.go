@@ -58,6 +58,11 @@ type fakePotluck struct {
 	left        bool
 	deregStatus int
 	deregHang   chan struct{}
+	// logs, when set, serves the CR-10 log routes, outside mu: a log push
+	// that hangs must not hold up the heartbeat. beatAt is when each
+	// heartbeat arrived.
+	logs   atomic.Pointer[http.HandlerFunc]
+	beatAt []time.Time
 }
 
 func newFakePotluck(t *testing.T) *fakePotluck {
@@ -70,6 +75,10 @@ func newFakePotluck(t *testing.T) *fakePotluck {
 func (p *fakePotluck) addr() string { return strings.TrimPrefix(p.srv.URL, "http://") }
 
 func (p *fakePotluck) serve(w http.ResponseWriter, r *http.Request) {
+	if h := p.logs.Load(); h != nil && strings.HasSuffix(r.URL.Path, "/logs") {
+		(*h)(w, r)
+		return
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	switch {
@@ -89,6 +98,7 @@ func (p *fakePotluck) serve(w http.ResponseWriter, r *http.Request) {
 		var hb agentproto.Heartbeat
 		json.NewDecoder(r.Body).Decode(&hb)
 		p.beats = append(p.beats, hb)
+		p.beatAt = append(p.beatAt, time.Now())
 		w.WriteHeader(p.hbStatus)
 		if p.hbStatus == 200 {
 			json.NewEncoder(w).Encode(p.hbAnswer)
