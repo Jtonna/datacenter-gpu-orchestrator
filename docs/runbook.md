@@ -452,6 +452,21 @@ curl -s -X PUT http://127.0.0.1:3122/api/config/exclude-nodes -H "X-Actor: alex"
 5. You can exclude the local node (`host-1`). The host machine GPU is then never used, and `kind: command` profiles (Whisper, FLUX) fail with "does not fit" because they run on the local node only.
 6. To bring the machine back, send the list without the entry.
 
+### Keeping a machine for forced profiles only
+
+Use `no_auto_nodes` when a machine may run a model only when a profile asks for it by name in `force_nodes` (for example a laptop someone works on). The entries and matching are those of `exclude_nodes`.
+
+```sh
+curl -s -X PUT http://127.0.0.1:3122/api/config/no-auto-nodes -H "X-Actor: alex" -d '["laptop-*"]' | jq .
+# the whole list is replaced; add ?dry_run=1 to check it first
+```
+
+1. Automatic placement never picks the machine and never evicts what runs on it. It is not counted in capacity checks for profiles without `force_nodes`.
+2. A profile that names it in `force_nodes` still starts there. The forced-fit checks still apply.
+3. `exclude_nodes` wins: a machine on both lists is never used, and the configuration refuses a `force_nodes` entry that names an excluded machine.
+4. Check `curl -s http://127.0.0.1:3122/api/status`: under `view.nodes` the machine shows `"auto": false`. The Nodes page shows "Forced only"; the list is edited on the Tiers and nodes page. The MCP tool is `set_no_auto_nodes`.
+5. To make it automatic again, send the list without the entry.
+
 ### Benchmarking only the PS5s from a test deployment
 
 A second copy of the scheduler can stand in on port 3122 while you benchmark the PS5s alone. Give it a config with `exclude_nodes` listing the host machine (`host-1`) and the Nvidia laptop (`laptop-1`), so only PS5s get models. Keep `forced_fit_check` off for the benchmark. The PS5 dashboards path keeps working: the hub polls `/running` on 3122, relays the `load` object and `recent_loads` to the fleet manager's `/api/models`, and shows them (verified 2026-11-18). Steps and the profile set are in `docs/benchmark-guide.md`. When done, put the production config and image back (section D, and F if you need llama-swap).
@@ -782,7 +797,7 @@ answer, errors included):
 | `update_profile` | `PUT /api/config/profiles/{id}`, body = the whole `profile` |
 | `delete_profile` | `DELETE /api/config/profiles/{id}` (`409` while a benchmark names it) |
 | `update_settings` | `PATCH /api/config/settings`, body = `settings` (only the keys to change) |
-| `set_tiers`, `set_exclude_nodes`, `set_node_overrides`, `set_recovery_settings`, `set_fleet_settings` | `PUT /api/config/<section>`, body = `value` (a list for tiers and exclude_nodes, an object for the others) |
+| `set_tiers`, `set_exclude_nodes`, `set_no_auto_nodes`, `set_node_overrides`, `set_recovery_settings`, `set_fleet_settings` | `PUT /api/config/<section>`, body = `value` (a list for tiers, exclude_nodes and no_auto_nodes, an object for the others) |
 | `rollback_config` | `POST /api/config/revisions/{revision}/rollback` |
 | `create_benchmark`, `update_benchmark`, `create_suite`, `update_suite` | `POST` or `PUT /api/bench/benchmarks[/{id}]` and `/suites[/{id}]`, body = `benchmark` or `suite` |
 | `run_suite`, `cancel_run` | `POST /api/bench/suites/{id}/run` `{baseline, note}`, `POST /api/bench/runs/{id}/cancel` |
@@ -803,8 +818,14 @@ read-only.
 
 ### Agent membership (potluck-agent nodes, design 7.7)
 
-1. Put the release on the host: `programs/0.1.0/release.json`, `agent/`,
-   one folder per platform, each with its `SHA256SUMS`.
+1. Put the release on the host: `programs/<release>/release.json`, `agent/`,
+   one folder per platform, each with its `SHA256SUMS`. The release is the
+   scheduler's own (`agentproto.Release`, 0.1.1 since the CR-9 review; it was
+   0.1.0 before). Going from 0.1.0 to 0.1.1: make `programs/0.1.1/` (the
+   platform folders can be copied unchanged; `agent/` holds the 0.1.1 agent;
+   `release.json` says `"release": "0.1.1"`; new `SHA256SUMS`). Agents of
+   release 0.1.0 are then refused with `agent_too_old` and update themselves;
+   a Docker node needs the image `potluck-agent:0.1.1` (agent contract 5.4).
 2. Start the scheduler with `--programs-dir /path/to/programs` (or
    `LLM_SCHEDULER_PROGRAMS_DIR`) and set `membership: agents` in the settings
    (restart required). The fleet feed is then not read.

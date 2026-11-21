@@ -42,6 +42,11 @@ type Config struct {
 	// ExcludeNodes lists nodes that are never used: each entry is a node id or a
 	// hostname glob (case-insensitive). See Excluded.
 	ExcludeNodes []string
+	// NoAutoNodes lists nodes that automatic placement never picks (CR-9
+	// review): same entries and matching as ExcludeNodes. A profile that names
+	// such a node in force_nodes may still use it. ExcludeNodes wins over
+	// both. See NoAuto.
+	NoAutoNodes []string
 	// Recovery is the optional recovery-request feature (design 8.4b).
 	Recovery Recovery
 	Profiles map[string]*core.Profile
@@ -141,7 +146,10 @@ type Defaults struct {
 	// ForcedFitCheck is what a profile with force_nodes does when its memory
 	// need exceeds the forced nodes' free memory at pre-flight: ForcedFitOff
 	// (no check, the default), ForcedFitWarn (log and start) or
-	// ForcedFitReject (fail the request).
+	// ForcedFitReject (fail the request). In agents membership the agents'
+	// own check (would_not_fit, and a node with no memory figure) refuses a
+	// forced placement whatever this says; that cannot be switched off
+	// (agent contract 11.2, item 1).
 	ForcedFitCheck string
 	// WorkerProbeInterval is how often a remote worker that backs an instance
 	// gets a plain TCP connect probe (design 8.4a). 0 (the default) means the

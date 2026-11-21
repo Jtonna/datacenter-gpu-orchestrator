@@ -298,6 +298,9 @@ type NodeStatus struct {
 	Priority int
 	Eligible bool // ignoring the profile-specific rules (allow_tiers, min_share)
 	Excluded bool // kept out of the pool by exclude_nodes; never eligible
+	// Auto is false for a node in no_auto_nodes (CR-9 review): automatic
+	// placement never picks it; a profile that forces it still may.
+	Auto bool
 	// Unplaced is why the node takes no new load although it is listed
 	// (agents membership): no_tier_match, programs_not_ready,
 	// model_source_unreachable, orphan_launch, silent or agent_unreachable.

@@ -48,7 +48,7 @@ export function sourceBadge(source) {
 }
 
 export const SECTION_NAMES = {
-  profiles: 'Profiles', tiers: 'Tiers', settings: 'Settings', exclude_nodes: 'Excluded nodes', node_overrides: 'Node overrides',
+  profiles: 'Profiles', tiers: 'Tiers', settings: 'Settings', exclude_nodes: 'Excluded nodes', no_auto_nodes: 'Forced-only nodes', node_overrides: 'Node overrides',
   recovery: 'Recovery', fleet: 'Fleet', bench: 'Benchmarks', benchmarks: 'Benchmarks', suites: 'Suites', runtime: 'Runtime', config: 'Configuration',
   agents: 'Agents', models: 'Models',
 };

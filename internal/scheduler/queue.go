@@ -181,7 +181,7 @@ func (c *schedCore) plan(e *entry) bool {
 func (c *schedCore) evictables(p *core.Profile, clock time.Duration) []placer.Evictable {
 	var out []placer.Evictable
 	for _, in := range c.sortedInsts() {
-		if !c.evictable(in, clock) {
+		if !c.evictable(in, clock) || c.onNoAuto(p, in) {
 			continue
 		}
 		ev := placer.Evictable{Instance: in.prof.Name, Busy: in.inFlight > 0, LoadDuration: in.loadDuration}
@@ -200,6 +200,17 @@ func (c *schedCore) evictables(p *core.Profile, clock time.Duration) []placer.Ev
 		}
 	}
 	return out
+}
+
+// onNoAuto: an automatic profile p never evicts an instance that runs on a
+// no_auto node, even when the instance also uses other nodes (CR-9 review).
+func (c *schedCore) onNoAuto(p *core.Profile, in *inst) bool {
+	for _, pn := range in.placement.Nodes {
+		if n, ok := c.node(pn.ID); ok && c.autoOff(p, n) {
+			return true
+		}
+	}
+	return false
 }
 
 // evictable: ready, past its hold, and idle or the entry has been unclaimed

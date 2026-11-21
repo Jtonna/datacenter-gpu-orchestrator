@@ -411,7 +411,7 @@ Everything about them is in `core/nodeactions.js` (no DOM, no import):
   the machine the scheduler runs on, which has no agent).
 - `notPlaceable(node, agent)` -> null, or `{short, text, known, code,
   paused}`: why the machine takes no new model. The reason words
-  (`no_tier_match`, `programs_not_ready`, `model_source_unreachable`,
+  (`no_tier_match`, `bad_floor`, `programs_not_ready`, `model_source_unreachable`,
   `orphan_launch`, `silent`, `agent_unreachable`, `host_machine`) are mapped to
   a few words and a sentence in `UNPLACED`; a word that is not in the table is
   shown as it is (`known: false`), never guessed at. A paused machine without

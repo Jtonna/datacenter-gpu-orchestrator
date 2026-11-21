@@ -108,12 +108,14 @@ func (c *schedCore) filteredWhy(p *core.Profile, req placer.Request) (Reason, st
 	}
 	var parts []string
 	var until time.Time
-	var noAddr, excluded []string
+	var noAddr, excluded, noAuto []string
 	for _, cd := range cands {
 		n, _ := c.node(cd.ID)
 		switch {
 		case c.excluded(n):
 			excluded = append(excluded, nodeLabel(cd.ID, n))
+		case c.autoOff(p, n):
+			noAuto = append(noAuto, nodeLabel(cd.ID, n))
 		case c.quarantined(cd.ID):
 			if u := c.nodes[cd.ID].quarUntil; u.After(until) {
 				until = u
@@ -140,6 +142,10 @@ func (c *schedCore) filteredWhy(p *core.Profile, req placer.Request) (Reason, st
 		if reason == ReasonClusterBusy {
 			reason = ReasonNodeExcluded
 		}
+	}
+	slices.Sort(noAuto)
+	for _, name := range noAuto {
+		parts = append(parts, fmt.Sprintf("node %s is in no_auto_nodes: only a profile that forces it uses it", name))
 	}
 	if len(parts) == 0 {
 		return "", "", false

@@ -194,6 +194,7 @@ type View struct {
 	Tiers         []config.TierSpec                  `json:"tiers"`
 	Profiles      map[string]*config.ProfileSpec     `json:"profiles"`
 	ExcludeNodes  []string                           `json:"exclude_nodes"`
+	NoAutoNodes   []string                           `json:"no_auto_nodes"`
 	NodeOverrides map[string]config.NodeOverrideSpec `json:"node_overrides"`
 	Recovery      map[string]any                     `json:"recovery"`
 	Fleet         map[string]any                     `json:"fleet"`
@@ -210,7 +211,8 @@ func (s *Service) View() View {
 func (s *Service) viewOf(rev, upd int64, doc *config.Document, cfg *config.Config, errText string) View {
 	v := View{Revision: rev, UpdatedAt: upd, Configured: rev > 0 && errText == "", Error: errText,
 		Settings: map[string]any{}, Recovery: map[string]any{}, Fleet: map[string]any{},
-		Tiers: doc.Tiers, Profiles: doc.Profiles, ExcludeNodes: doc.ExcludeNodes, NodeOverrides: doc.NodeOverrides, SettingsSet: []string{}}
+		Tiers: doc.Tiers, Profiles: doc.Profiles, ExcludeNodes: doc.ExcludeNodes, NoAutoNodes: doc.NoAutoNodes,
+		NodeOverrides: doc.NodeOverrides, SettingsSet: []string{}}
 	for _, f := range config.SettingFields(config.ScopeSettings) {
 		v.Settings[f.Key] = config.SettingValue(cfg, f.Scope, f.Key)
 	}

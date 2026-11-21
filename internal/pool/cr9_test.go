@@ -2,6 +2,7 @@ package pool
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -152,5 +153,62 @@ func TestPausedNodeHasAnUnplacedReason(t *testing.T) {
 	r.p.Heartbeat("02:00:00:00:00:70", hbBody("s1", "", false, "true"))
 	if f := r.fact("02:00:00:00:00:70"); f.Unplaced != scheduler.UnplacedProgramsNotReady {
 		t.Fatalf("paused and programs not ready: %q", f.Unplaced)
+	}
+}
+
+// CR-9 review, A2: a node that a tier says shares system memory is placed on
+// min(device free, mem_available - floor) even when its device does not say
+// so, the figure the agent tests a device held to MemAvailable against.
+func TestTierSharedMemoryUsesTheSmallerFigure(t *testing.T) {
+	r := newRig(t)
+	r.cfg.Tiers[0].Tier.SharedMemory = true
+	r.p.Register(regReq("02:00:00:00:00:70"))
+	body := strings.Replace(string(hbBody("s1", "", true, "true")), `"shares_system_memory":true`, `"shares_system_memory":false`, 1)
+	r.p.Heartbeat("02:00:00:00:00:70", []byte(body))
+	n, ok := r.node("02:00:00:00:00:70")
+	if !ok || !n.SharedMemory || n.FreeMiB != 8000 { // min(14000, 9000 - 1000)
+		t.Fatalf("node %+v, want shared with 8000 MiB usable", n)
+	}
+}
+
+// CR-9 review, B2: a reported watchdog floor larger than half the node's
+// memory, or larger than 16384 MiB, makes the node unplaced (bad_floor) with
+// a message, instead of driving its placement memory to 0 in silence.
+func TestBadWatchdogFloorIsUnplaced(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		total int64
+		floor int64
+		bad   bool
+	}{
+		{"half of the memory is fine", 16000, 8000, false},
+		{"more than half", 16000, 8001, true},
+		{"more than 16384 MiB", 64000, 16385, true},
+		{"16384 MiB on a big node is fine", 64000, 16384, false},
+		{"no total known: only the absolute bound", 0, 9000, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRig(t)
+			req := regReq("02:00:00:00:00:70")
+			req.MemTotalMiB, req.WatchdogFloorMiB = tc.total, tc.floor
+			r.p.Register(req)
+			r.p.Heartbeat("02:00:00:00:00:70", hbBody("s1", "", true, "true"))
+			f := r.fact("02:00:00:00:00:70")
+			if !tc.bad {
+				if f.Unplaced == scheduler.UnplacedBadFloor {
+					t.Fatalf("unplaced bad_floor: %+v", f)
+				}
+				return
+			}
+			if f.Unplaced != scheduler.UnplacedBadFloor || f.Placeable || !strings.Contains(f.UnplacedMessage, fmt.Sprint(tc.floor)) {
+				t.Fatalf("facts %+v, want bad_floor naming %d", f, tc.floor)
+			}
+			if r.unplaced("02:00:00:00:00:70") != scheduler.UnplacedBadFloor {
+				t.Fatalf("the scheduler's gate says %q", r.unplaced("02:00:00:00:00:70"))
+			}
+			if msg := r.p.UnplacedDetail()[core.NodeID("02:00:00:00:00:70")]; !strings.Contains(msg, "watchdog floor") {
+				t.Fatalf("detail %q", msg)
+			}
+		})
 	}
 }

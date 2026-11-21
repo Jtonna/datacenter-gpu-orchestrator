@@ -27,8 +27,14 @@ func TestParseFlagsDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	if o.DataDir != "/dev/shm/potluck" || o.StateDir != "/run/potluck" || o.ModelsDir != "/run/potluck/models" ||
-		o.WatchdogFloorMiB != 1000 || o.Install != "bare" || !o.RAMOnly || o.Release != Release {
+		o.WatchdogFloorMiB != 1000 || o.Install != "bare" || !o.RAMOnly || o.Release != Release || o.SharedMemory != "auto" {
 		t.Fatalf("%+v", o)
+	}
+	for _, v := range []string{"true", "false", "auto"} {
+		o, err := parseFlags([]string{"--potluck", "192.0.2.1:3122", "--model-source", "push", "--shared-memory", v}, &errb)
+		if err != nil || o.SharedMemory != v {
+			t.Fatalf("--shared-memory %s: %q %v", v, o.SharedMemory, err)
+		}
 	}
 	o, _ = parseFlags([]string{"--potluck", "192.0.2.1:3122", "--model-source", "share:192.0.2.1:/", "--install", "docker",
 		"--allow-from", "172.30.0.0/24", "--allow-from", "192.0.2.5", "--watchdog-floor-mib", "1500"}, &errb)
@@ -55,6 +61,7 @@ func TestParseFlagsErrors(t *testing.T) {
 		{"--potluck", "192.0.2.1:3122", "--model-source", "push", "--install", "podman"},
 		{"--potluck", "192.0.2.1:3122", "--model-source", "push", "--allow-from", "nonsense"},
 		{"--potluck", "192.0.2.1:3122", "--model-source", "push", "extra"},
+		{"--potluck", "192.0.2.1:3122", "--model-source", "push", "--shared-memory", "yes"},
 	} {
 		if _, err := parseFlags(args, &bytes.Buffer{}); err == nil {
 			t.Errorf("%v accepted", args)

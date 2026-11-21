@@ -16,6 +16,13 @@
 // the node's CLOCK_BOOTTIME.
 package agentproto
 
+// Release is the release this code is: Potluck serves it and requires it of
+// agents, and the agent reports it (agent contract 5.1). The two commands
+// take it as the default of their -ldflags -X variables. 0.1.1 is the first
+// release with CR-9 and CR-10 batch 1; a release 0.1.0 agent is refused with
+// agent_too_old and updates as section 5.4 says.
+const Release = "0.1.1"
+
 // Ports, all fixed (agent contract section 3).
 const (
 	PortPotluck          = 3122

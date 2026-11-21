@@ -514,6 +514,12 @@ func (p *Pool) checkFloorLocked(a *agent) {
 		return
 	}
 	cfg := p.o.Config()
+	if bad := badFloor(a); bad != "" {
+		a.floorLogged = true
+		p.log.Warn("agent watchdog floor is out of bounds; the node takes no load (bad_floor)",
+			"id", a.reg.ID, "name", a.reg.Name, "agent_floor_mib", reportedFloor(a), "mem_total_mib", a.reg.MemTotalMiB, "why", bad)
+		return
+	}
 	if floorMismatch(cfg, a) == "" {
 		return
 	}

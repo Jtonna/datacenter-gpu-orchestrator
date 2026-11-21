@@ -92,6 +92,13 @@ tiers:                     # how nodes are ranked. First match wins; a node matc
 # exclude_nodes:
 #   - console-test*
 
+# Optional: nodes for forced profiles only. Same entries and matching as
+# exclude_nodes. Automatic placement never picks such a node and never evicts
+# what runs on it; a profile that names it in force_nodes still uses it.
+# /api/status shows auto: false for it. exclude_nodes wins.
+# no_auto_nodes:
+#   - laptop-*
+
 # Optional: recovery requests (design 8.4b). OFF by default; nothing is ever sent unless enabled is true.
 # When worker health marks a remote worker "hung", the scheduler can ask the fleet manager to relay a
 # recovery request to that node; a small service on the node polls the fleet manager, acts, and reports

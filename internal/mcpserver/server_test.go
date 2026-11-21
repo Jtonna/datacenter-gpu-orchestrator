@@ -316,6 +316,7 @@ var expected = map[string]struct {
 	"delete_profile":        {`{"id":"p","comment":"gone"}`, "DELETE", "/api/config/profiles/p", "", "", map[string]string{"X-Comment": "gone"}},
 	"set_tiers":             {`{"value":[{"priority":1}]}`, "PUT", "/api/config/tiers", "", `[{"priority":1}]`, nil},
 	"set_exclude_nodes":     {`{"value":["ps5-1"]}`, "PUT", "/api/config/exclude-nodes", "", `["ps5-1"]`, nil},
+	"set_no_auto_nodes":     {`{"value":["laptop-1"]}`, "PUT", "/api/config/no-auto-nodes", "", `["laptop-1"]`, nil},
 	"set_node_overrides":    {`{"value":{"x":{"ip":"1.2.3.4"}}}`, "PUT", "/api/config/node-overrides", "", `{"x":{"ip":"1.2.3.4"}}`, nil},
 	"set_recovery_settings": {`{"value":{"enabled":true}}`, "PUT", "/api/config/recovery", "", `{"enabled":true}`, nil},
 	"set_fleet_settings":    {`{"value":{"url":"u"},"dry_run":true}`, "PUT", "/api/config/fleet", "dry_run=1", `{"url":"u"}`, nil},

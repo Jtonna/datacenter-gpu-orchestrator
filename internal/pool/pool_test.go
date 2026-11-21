@@ -217,7 +217,7 @@ func (r *rig) serve(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *rig) agent(n int, mod ...func(*fakeagent.Agent)) *fakeagent.Agent {
-	a := &fakeagent.Agent{ID: "02:00:00:00:00:0" + strconv.Itoa(n), Name: "node-" + strconv.Itoa(n),
+	a := &fakeagent.Agent{ID: "02:00:00:00:00:0" + strconv.Itoa(n), Name: "node-" + strconv.Itoa(n), Release: "0.1.0", // the rig's Potluck is release 0.1.0
 		Addr: "127.0.0." + strconv.Itoa(n+1), AgentPort: r.agentPort, WorkerPort: r.workerPort, Potluck: r.srv.URL,
 		GPUs: []agentproto.GPU{{Vendor: "amd", Integrated: true}}, MemAvail: 14000, HeartbeatEvery: 50 * time.Millisecond,
 		Devices: []agentproto.Device{{Name: "Vulkan0", Backend: "vulkan", TotalMiB: 14336, FreeMiB: 14000, SharesSystemMemory: true}}}

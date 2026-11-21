@@ -10,9 +10,10 @@
 #
 # A RAM-only node does not use this script; it uses potluck-starter.sh.
 #
-# Firewall: Potluck connects to this machine on TCP 50060 (agent API), 50052
-# (worker) and 50061 (server, later). When ufw is active the script allows
-# these ports from Potluck's address and from every --allow-from entry (rules
+# Firewall: Potluck connects to this machine on TCP 50060 (agent API) and
+# 50052 (worker). Port 50061 (an agent-hosted server, phase 6) is not opened:
+# no Potluck release uses it yet; a later setup will add it. When ufw is
+# active the script allows these ports from Potluck's address and from every --allow-from entry (rules
 # with the comment "potluck-agent", listed in /etc/potluck/firewall-rules so
 # the uninstall removes exactly those). When firewalld is active it only says
 # what to allow. --no-firewall skips all of it. On the Potluck machine itself,
@@ -27,7 +28,10 @@ set -eu
 # node.
 #   POTLUCK_AGENT_TEST_PATH  replaces PATH (the directory of fake tools)
 #   POTLUCK_AGENT_TEST_ETC   replaces /etc/potluck
-#   POTLUCK_AGENT_TEST_ONLY  "firewall": run the firewall step and nothing else
+#   POTLUCK_AGENT_TEST_ONLY  "firewall": run the firewall step and nothing else;
+#                            "docker": run the Docker install and nothing else
+#   POTLUCK_AGENT_TEST_ROOT  put in front of /etc/systemd/system and of the
+#                            folder made for the share mount
 if [ -n "${POTLUCK_AGENT_TEST_PATH:-}" ]; then
 	PATH=$POTLUCK_AGENT_TEST_PATH
 fi
@@ -36,11 +40,20 @@ SELF=potluck-agent-setup
 ETC_DIR=${POTLUCK_AGENT_TEST_ETC:-/etc/potluck}
 MARKER=$ETC_DIR/disabled
 FW_STATE=$ETC_DIR/firewall-rules
-FW_PORTS="50060 50052 50061"
+# 50061 (phase 6, an agent-hosted server) is opened by a later release.
+FW_PORTS="50060 50052"
 FW_COMMENT=potluck-agent
 BIN=/usr/local/bin/potluck-agent
-UNIT_FILE=/etc/systemd/system/potluck-agent.service
+TEST_ROOT=${POTLUCK_AGENT_TEST_ROOT:-}
+SYSTEMD_DIR=$TEST_ROOT/etc/systemd/system
+UNIT_FILE=$SYSTEMD_DIR/potluck-agent.service
 MODELS_MOUNT_DIR=/var/lib/potluck-agent/models
+# Docker starts after the share is mounted (drop-in for docker.service).
+DOCKER_DROPIN_DIR=$SYSTEMD_DIR/docker.service.d
+DOCKER_DROPIN=$DOCKER_DROPIN_DIR/potluck-models.conf
+# The agent's data (programs, launch logs) in a Docker install.
+DATA_VOLUME=potluck-agent-data
+DATA_DIR_IN_CONTAINER=/var/lib/potluck-agent
 
 NL='
 '
@@ -283,8 +296,7 @@ ufw_rule_ok() {
 	return 0
 }
 
-# Potluck connects to this machine: the agent API, the worker and (later) the
-# server port. ufw: allow them from Potluck and every --allow-from entry.
+# Potluck connects to this machine: the agent API and the worker port. ufw: allow them from Potluck and every --allow-from entry.
 # firewalld: say what to allow. Nothing else is touched.
 setup_firewall() {
 	if [ "$FIREWALL" != 1 ]; then
@@ -485,8 +497,8 @@ setup_models_mount() {
 	node_ip_for "$sm_server"
 	command -v systemd-escape >/dev/null 2>&1 || die "systemd-escape is required"
 	sm_unit=$(systemd-escape -p --suffix=mount "$MODELS_MOUNT_DIR") || die "systemd-escape failed"
-	sm_file=/etc/systemd/system/$sm_unit
-	mkdir -p "$MODELS_MOUNT_DIR"
+	sm_file=$SYSTEMD_DIR/$sm_unit
+	mkdir -p "$SYSTEMD_DIR" "$TEST_ROOT$MODELS_MOUNT_DIR"
 	cat > "$sm_file" <<EOF
 [Unit]
 Description=Potluck model share (read-only)
@@ -513,6 +525,33 @@ EOF
 		systemctl start "$sm_unit" || die "cannot mount the share ($sm_unit); see: systemctl status $sm_unit"
 	fi
 	log "share mounted read-only at $MODELS_MOUNT_DIR"
+	write_docker_dropin "$sm_unit"
+}
+
+# write_docker_dropin UNIT: Docker starts after the share's mount unit, so at
+# boot the container never binds an empty folder. Wants= and not Requires=:
+# Docker still starts when the share cannot be mounted.
+write_docker_dropin() {
+	mkdir -p "$DOCKER_DROPIN_DIR"
+	cat > "$DOCKER_DROPIN" <<EOF
+# Written by potluck-agent-setup; removed by potluck-agent-uninstall.
+[Unit]
+Wants=$1
+After=$1
+EOF
+	chmod 644 "$DOCKER_DROPIN"
+	systemctl daemon-reload
+	log "docker.service now starts after $1 ($DOCKER_DROPIN)"
+}
+
+# remove_docker_dropin: a setup without a share drops the drop-in of an
+# earlier one. The folder goes only when it is empty.
+remove_docker_dropin() {
+	[ -e "$DOCKER_DROPIN" ] || return 0
+	rm -f "$DOCKER_DROPIN"
+	rmdir "$DOCKER_DROPIN_DIR" 2>/dev/null || true
+	systemctl daemon-reload
+	log "removed $DOCKER_DROPIN"
 }
 
 write_dockerfile() {
@@ -560,10 +599,14 @@ install_docker() {
 
 	dk_args_source=$MODEL_SOURCE
 	dk_models_mount=""
+	dk_models_opts=ro
 	case $MODEL_SOURCE in
 		share:*)
 			setup_models_mount
 			dk_models_mount=$MODELS_MOUNT_DIR
+			# rslave: a mount of the share made after the container started
+			# (a remount, a late boot) reaches the container too.
+			dk_models_opts=ro,rslave
 			# the container uses /models; the agent is told the same share
 			# target it reports at registration
 			;;
@@ -573,6 +616,10 @@ install_docker() {
 			dk_args_source=dir:/models
 			;;
 		push) ;;
+	esac
+	case $MODEL_SOURCE in
+		share:*) ;;
+		*) remove_docker_dropin ;;
 	esac
 
 	case $GPUS in
@@ -590,14 +637,17 @@ install_docker() {
 	docker rm -f potluck-agent >/dev/null 2>&1 || true
 
 	# Own PID namespace (never --pid=host) with a reaping init; host network so
-	# the contract's ports are the machine's own. Agent state stays inside the
-	# container: no extra volumes.
-	set -- run -d --name potluck-agent --restart unless-stopped --init --network host
+	# the contract's ports are the machine's own. The agent's data folder is the
+	# named volume potluck-agent-data, so programs and launch logs survive a new
+	# container; its state (/run/potluck) stays inside the container. The models
+	# are at /models, outside that folder.
+	set -- run -d --name potluck-agent --restart unless-stopped --init --network host \
+		-v "$DATA_VOLUME:$DATA_DIR_IN_CONTAINER"
 	if [ "$dk_gpus" = 1 ]; then
 		set -- "$@" --gpus all
 	fi
 	if [ -n "$dk_models_mount" ]; then
-		set -- "$@" -v "$dk_models_mount:/models:ro"
+		set -- "$@" -v "$dk_models_mount:/models:$dk_models_opts"
 	fi
 	set -- "$@" "$IMAGE"
 	# The agent arguments hold no whitespace inside values (checked above), so
@@ -614,6 +664,10 @@ main() {
 	parse_args "$@"
 	if [ "${POTLUCK_AGENT_TEST_ONLY:-}" = firewall ]; then
 		setup_firewall
+		exit 0
+	fi
+	if [ "${POTLUCK_AGENT_TEST_ONLY:-}" = docker ]; then
+		install_docker
 		exit 0
 	fi
 	require_root

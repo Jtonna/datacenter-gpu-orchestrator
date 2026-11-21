@@ -113,6 +113,10 @@ const (
 	// UnplacedNoTierMatch: the node matches no tier. It is outside the pool:
 	// never eligible and not counted in capacity, like an excluded node.
 	UnplacedNoTierMatch = "no_tier_match"
+	// UnplacedBadFloor: the agent reports a watchdog floor larger than half
+	// the node's memory or larger than 16384 MiB (CR-9 review). It is outside
+	// the pool like no_tier_match: it does not pass by itself.
+	UnplacedBadFloor = "bad_floor"
 	// The other reasons pass by themselves. The node stays counted in
 	// capacity, so a request that needs it waits in the queue (as for a paused
 	// node) and is not refused or backed off.

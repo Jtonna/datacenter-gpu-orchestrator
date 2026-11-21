@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/docs"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/api"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/audit"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
@@ -47,12 +48,12 @@ import (
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
-var version = "0.1.0"
+var version = "0.1.1"
 
 // potluckRelease is the program release Potluck serves to agents and
 // requires of them (agent contract 5.1), separate from version. Set it at
 // build time with -ldflags "-X main.potluckRelease=...".
-var potluckRelease = "0.1.0"
+var potluckRelease = agentproto.Release
 
 // Test-only overrides of the agent contract's fixed ports, so an end-to-end
 // test can run several fake agents on one machine. Never set in production.
@@ -216,6 +217,9 @@ func serve(boot config.Bootstrap, log *slog.Logger) int {
 	warnSlidingWindow(cfg, log)
 	if len(cfg.ExcludeNodes) > 0 {
 		log.Info("exclude_nodes configured: these nodes are never used", "entries", strings.Join(cfg.ExcludeNodes, ", "))
+	}
+	if len(cfg.NoAutoNodes) > 0 {
+		log.Info("no_auto_nodes configured: only profiles that force these nodes use them", "entries", strings.Join(cfg.NoAutoNodes, ", "))
 	}
 
 	ports, err := instance.NewPortAllocator(childPortLo, childPortHi)

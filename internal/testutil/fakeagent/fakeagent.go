@@ -104,7 +104,7 @@ func (s *syncBuf) Bytes() []byte {
 // Start serves the agent API and starts registering and heartbeating.
 func (a *Agent) Start() error {
 	if a.Release == "" {
-		a.Release = "0.1.0"
+		a.Release = agentproto.Release
 	}
 	if a.Install == "" {
 		a.Install = agentproto.InstallBare
@@ -507,21 +507,30 @@ func (a *Agent) becomeReady(run *launchRun, addr string) {
 	}
 }
 
-// wouldNotFitLocked is the agent's pre-launch memory check (CR-9), on the
-// first device: without expect_mib nothing is checked.
+// wouldNotFitLocked is the agent's pre-launch memory check (CR-9, with the
+// review's rule), on the first device: without expect_mib nothing is
+// checked. Every test that applies must pass: the device's free figure when a
+// device is known, and MemAvailable minus the floor unless the device is a
+// CUDA device that does not share system memory (no device: MemAvailable).
 func (a *Agent) wouldNotFitLocked(req agentproto.LaunchRequest) *agentproto.LaunchRefusal {
-	if req.Worker == nil || req.Worker.ExpectMiB <= 0 || len(a.Devices) == 0 {
+	if req.Worker == nil || req.Worker.ExpectMiB <= 0 {
 		return nil
 	}
-	floor, expect, d := a.WatchdogFloorMiB, req.Worker.ExpectMiB, a.Devices[0]
+	floor, expect := a.WatchdogFloorMiB, req.Worker.ExpectMiB
 	if floor == 0 {
 		floor = 1000
 	}
+	var d agentproto.Device
+	haveDev := len(a.Devices) > 0
+	if haveDev {
+		d = a.Devices[0]
+	}
+	memTest := !haveDev || d.SharesSystemMemory || !strings.EqualFold(d.Backend, agentproto.BackendCUDA)
 	switch {
-	case d.SharesSystemMemory && a.MemAvail-expect < floor:
+	case memTest && a.MemAvail-expect < floor:
 		return &agentproto.LaunchRefusal{Reason: agentproto.ReasonWouldNotFit, Message: fmt.Sprintf(
 			"MemAvailable %d MiB minus the expected %d MiB leaves less than the watchdog floor of %d MiB", a.MemAvail, expect, floor)}
-	case !d.SharesSystemMemory && d.FreeMiB-expect < 0:
+	case haveDev && d.FreeMiB-expect < 0:
 		return &agentproto.LaunchRefusal{Reason: agentproto.ReasonWouldNotFit, Message: fmt.Sprintf(
 			"device %s has %d MiB free, less than the expected %d MiB", d.Name, d.FreeMiB, expect)}
 	}

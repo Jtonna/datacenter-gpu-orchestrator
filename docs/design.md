@@ -377,7 +377,7 @@ once. Rules as implemented:
 settings, recovery, fleet, profile and tier with key, scope, section, type,
 enum, default, min, max, unit, description, `restart_required`),
 `/api/config/profiles[/{id}]`, `/api/config/tiers`, `/api/config/settings`
-(`PATCH`), `/api/config/exclude-nodes`, `/api/config/node-overrides`,
+(`PATCH`), `/api/config/exclude-nodes`, `/api/config/no-auto-nodes`, `/api/config/node-overrides`,
 `/api/config/recovery`, `/api/config/fleet`, `/api/config/revisions`,
 `/api/config/revisions/{n}[/rollback]`, `/api/config/export`,
 `/api/config/import`, `/api/audit`, `/api/audit/{id}`. Every write accepts
@@ -487,6 +487,9 @@ exclude_nodes:             # optional; nodes that are never used (see below)
   - ps5-test*              # a hostname glob
   - 02:00:00:00:00:01      # a node id
 
+no_auto_nodes:             # optional; nodes used only by profiles that force them
+  - laptop-*
+
 profiles:
   gemma-4-12b:             # bare name = the default variant
     model: gemma-4-12b-it-Q4_K_M.gguf
@@ -542,6 +545,31 @@ model without giving up the `console-*` tier for the others.
   case it is only re-registering, then fails fast (8.4).
 - The scheduler logs the entries once at startup and, at INFO, the first time
   each excluded node appears in the fleet view.
+
+**Nodes for forced profiles only** (CR-9 review). `no_auto_nodes` is an
+optional list with the entries and matching of `exclude_nodes`. It keeps a
+machine (a laptop someone works on, say) for the profiles that name it in
+`force_nodes`:
+
+- Automatic placement (a profile without `force_nodes`) never picks the node:
+  it is not a candidate in Place or Plan (7.3), is not counted in the
+  capacity check (7.2), and is never pre-flighted for such a profile.
+- An instance that runs on the node is never a victim of automatic eviction:
+  a profile without `force_nodes` does not evict it, even when the instance
+  also uses other nodes.
+- A profile that names the node in `force_nodes` uses it as before, and every
+  forced-placement check still applies (`forced_fit_check`; with agents the
+  forced-fit refusal of the agent contract 11.2).
+- `exclude_nodes` wins: a node on both lists is excluded, and a forced profile
+  that names it fails as for any excluded node. Config validation accepts
+  `force_nodes` on a `no_auto_nodes` node and refuses it on an excluded one.
+- The node stays eligible. `/api/status` `view.nodes` shows `auto: false` for
+  it (`true` for every other node); the Nodes page shows a "Forced only" badge.
+  A wait reason that involves it says `node <hostname> is in no_auto_nodes`;
+  a failed capacity check lists the `no_auto_nodes` nodes that were left out.
+- `GET`/`PUT /api/config/no-auto-nodes` and the MCP tool `set_no_auto_nodes`
+  read and replace the list, with no restart; it is part of export and import
+  and of the audit (section `no_auto_nodes`).
 
 Fields for `kind: llama` (the default):
 
@@ -1105,7 +1133,7 @@ view the core reads, and runs the worker launches.
   is not served: the scheduler still starts, `/api/system` `programs.error`
   says why, agents are refused (`release_unavailable`) and loads are refused.
   Potluck's release is the build variable `main.potluckRelease` (default
-  `0.1.0`), separate from `version`.
+  `agentproto.Release`, `0.1.1`), separate from `version`.
 - **Same build.** `server_bin --version` must report the commit of
   `builds.llama` (a prefix match of at least 7 hex digits). Otherwise every
   load is refused with the reason, and `/api/system` shows `host_build_error`.
@@ -1599,7 +1627,7 @@ gets its own process group, so nothing is left behind.
 | `GET /api/history`, `GET /api/history/summary`, `GET /api/history/export`, `GET /api/about` | The event history and what the dashboard header shows (9.1). Read-only. |
 | `GET /ws` | The live channel, a WebSocket (9.2): hello, status, event, bench, ping. |
 | `GET /api/config`, `GET /api/config/schema`, `GET`/`POST /api/config/profiles`, `GET`/`PUT`/`DELETE /api/config/profiles/{id}` | The configuration document with its revision, the settings schema `{"fields": [...]}`, and profiles (6.0.2). Section GETs are wrapped: `{"revision": N, "<section>": ...}`. Writes take `?dry_run=1`, `If-Match: <revision>`, `X-Comment`, `X-Actor`, `X-Source: ui`, and answer with the new revision, the diff and `restart_required`. |
-| `GET /api/config/{tiers,settings,exclude-nodes,node-overrides,recovery,fleet}`; `PUT` the same except settings; `PATCH` settings, recovery and fleet | The other sections (6.0.2). |
+| `GET /api/config/{tiers,settings,exclude-nodes,no-auto-nodes,node-overrides,recovery,fleet}`; `PUT` the same except settings; `PATCH` settings, recovery and fleet | The other sections (6.0.2). |
 | `GET /api/config/revisions`, `GET /api/config/revisions/{n}`, `POST /api/config/revisions/{n}/rollback`, `GET /api/config/export`, `POST /api/config/import` | Revisions, rollback (a new revision), export and import (6.0.3). |
 | `GET /api/audit`, `GET /api/audit/{id}` | The audit log (6.0.4): filters `since`, `until`, `source`, `actor`, `section`, `target`, `action`, `q`, `limit`, `order`. |
 | `GET`/`POST /api/bench/benchmarks`, `GET`/`PUT`/`DELETE /api/bench/benchmarks/{id}`, `GET`/`POST /api/bench/suites`, `GET`/`PUT`/`DELETE /api/bench/suites/{id}`, `POST /api/bench/suites/{id}/run` | Benchmark and suite definitions (with phases) and starting a run (9.3). `503` when the `bench_enabled` setting is off or the database is not open. |
@@ -2212,7 +2240,7 @@ tool errors.
 | `load_model`, `unload_model` | `POST /api/load` `{model}`, `POST /api/unload` `{model, force}` |
 | `update_settings` | `PATCH /api/config/settings`; the body is the `settings` object itself (only the keys to change; an unknown key is `400`) |
 | `create_profile`, `update_profile`, `delete_profile` | `POST /api/config/profiles` (body = the `profile` object with its `id`), `PUT /api/config/profiles/{id}` (body = the whole `profile`, not a patch), `DELETE /api/config/profiles/{id}` |
-| `set_tiers`, `set_exclude_nodes`, `set_node_overrides`, `set_recovery_settings`, `set_fleet_settings` | `PUT /api/config/tiers` (body = `value`: a list of tiers), `/exclude-nodes` (a list of node patterns), `/node-overrides` (an object of node id to override), `/recovery`, `/fleet` (an object). The body is `value` itself, a bare JSON array or object, which the handlers accept. |
+| `set_tiers`, `set_exclude_nodes`, `set_no_auto_nodes`, `set_node_overrides`, `set_recovery_settings`, `set_fleet_settings` | `PUT /api/config/tiers` (body = `value`: a list of tiers), `/exclude-nodes` and `/no-auto-nodes` (a list of node patterns), `/node-overrides` (an object of node id to override), `/recovery`, `/fleet` (an object). The body is `value` itself, a bare JSON array or object, which the handlers accept. |
 | `rollback_config` | `POST /api/config/revisions/{revision}/rollback` (no body; the reason goes in `comment`, sent as `X-Comment`) |
 | `create_benchmark`, `update_benchmark`, `delete_benchmark`, `create_suite`, `update_suite`, `delete_suite` | `POST /api/bench/benchmarks`, `PUT`, `DELETE .../{id}`, and the same for `/suites` |
 | `run_suite`, `cancel_run` | `POST /api/bench/suites/{id}/run` `{baseline, note}`, `POST /api/bench/runs/{id}/cancel` |

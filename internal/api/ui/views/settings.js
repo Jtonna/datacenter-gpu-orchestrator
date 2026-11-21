@@ -36,7 +36,7 @@ const SECTIONS = [
 
 // What loosening a safety setting risks, one plain line each (the schema text says what it does).
 const RISK = {
-  forced_fit_check: 'Set to off or warn, a profile with forced nodes can start even though its model does not fit, and the node can run out of memory.',
+  forced_fit_check: 'Set to off or warn, a profile with forced nodes can start even though its model does not fit, and the node can run out of memory. Machines that join through agents are always checked: a forced model that their agent would refuse is never started, whatever this says.',
   split_skew_margin: 'A larger margin lets one node of a split model take more than its share, which can push that node over its memory.',
   estimate_margin: 'A smaller margin trusts the memory estimate more. If the estimate is low, a load can run a node out of memory.',
   load_memory_floor_mib: 'Set lower, or to 0, a load that is eating a shared-memory node (a PS5) is no longer stopped in time, and the console can crash.',

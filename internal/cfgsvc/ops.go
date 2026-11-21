@@ -100,6 +100,17 @@ func (s *Service) SetExcludeNodes(ctx context.Context, o WriteOpts, list []strin
 	}})
 }
 
+// SetNoAutoNodes replaces no_auto_nodes (CR-9 review).
+func (s *Service) SetNoAutoNodes(ctx context.Context, o WriteOpts, list []string) (*Result, error) {
+	return s.mutate(ctx, o, mutation{fn: func(d *config.Document) error {
+		if list == nil {
+			list = []string{}
+		}
+		d.NoAutoNodes = list
+		return nil
+	}})
+}
+
 // SetNodeOverrides replaces node_overrides.
 func (s *Service) SetNodeOverrides(ctx context.Context, o WriteOpts, m map[string]config.NodeOverrideSpec) (*Result, error) {
 	return s.mutate(ctx, o, mutation{fn: func(d *config.Document) error {

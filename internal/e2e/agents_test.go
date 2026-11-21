@@ -23,7 +23,7 @@ import (
 // answers a request, and its unload stops both worker launches.
 func TestAgentMembershipSplitLoad(t *testing.T) {
 	agentPort, workerPort := freeLoopbackPort(t), freeLoopbackPort(t)
-	programs := progtree.Write(t, t.TempDir(), progtree.Tree{Release: "0.1.0",
+	programs := progtree.Write(t, t.TempDir(), progtree.Tree{Release: agentproto.Release,
 		Llama: "a01665d30de2885879a64eae999067ef3ef5fd4b", // fakellama --version reports a01665d30
 		Folders: map[string]map[string][]byte{
 			"agent":              {"potluck-agent-linux-amd64": []byte("agent")},
@@ -137,7 +137,7 @@ func freeLoopbackPort(t *testing.T) int {
 // the reason no_tier_match (agent contract 11, CR-5).
 func TestAgentNodeWithoutATierIsListed(t *testing.T) {
 	agentPort, workerPort := freeLoopbackPort(t), freeLoopbackPort(t)
-	programs := progtree.Write(t, t.TempDir(), progtree.Tree{Release: "0.1.0",
+	programs := progtree.Write(t, t.TempDir(), progtree.Tree{Release: agentproto.Release,
 		Llama: "a01665d30de2885879a64eae999067ef3ef5fd4b",
 		Folders: map[string]map[string][]byte{
 			"agent":              {"potluck-agent-linux-amd64": []byte("agent")},
@@ -181,7 +181,7 @@ func TestAgentNodeWithoutATierIsListed(t *testing.T) {
 // The host child gets LLAMA_RPC_FILE_LOAD=required (worker_model_dir is on).
 func TestAgentWorkerKilledForMemoryIsTheFailureReason(t *testing.T) {
 	agentPort, workerPort := freeLoopbackPort(t), freeLoopbackPort(t)
-	programs := progtree.Write(t, t.TempDir(), progtree.Tree{Release: "0.1.0",
+	programs := progtree.Write(t, t.TempDir(), progtree.Tree{Release: agentproto.Release,
 		Llama: "a01665d30de2885879a64eae999067ef3ef5fd4b",
 		Folders: map[string]map[string][]byte{
 			"agent":              {"potluck-agent-linux-amd64": []byte("agent")},

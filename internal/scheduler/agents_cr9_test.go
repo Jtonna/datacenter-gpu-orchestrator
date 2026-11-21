@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 )
@@ -129,5 +130,61 @@ func TestAgents_ForcedPlacementThatWouldNotFitIsRefusedWhenPlaced(t *testing.T) 
 	h.request("m")
 	if len(h.wlaunches) != 1 {
 		t.Fatalf("%d launches, want 1", len(h.wlaunches))
+	}
+}
+
+// CR-9 review, A1: a forced node whose memory figure is unknown (its agent
+// reported no usable device) is refused under the fit check, never sent
+// unchecked. The refusal names the node and says its figure is unknown.
+func TestAgents_ForcedNodeWithUnknownFigureIsRefused(t *testing.T) {
+	h := agentsHarness(t) // forced_fit_check is off
+	h.view.modify("a", func(n *core.Node) { n.FreeUnknown = true })
+	h.viewChanged()
+	w := h.request("m")
+	e := h.failed(w, 503, ReasonForcedDoesNotFit)
+	if !strings.Contains(e.Message, "node a") || !strings.Contains(e.Message, "memory figure is unknown") {
+		t.Fatalf("message %q", e.Message)
+	}
+	if len(h.wlaunches) != 0 || len(h.starts) != 0 {
+		t.Fatalf("something was sent: %d launches, %d starts", len(h.wlaunches), len(h.starts))
+	}
+	if rep := h.c.dryPlan("m"); rep.Action != PlanReject || !strings.Contains(rep.Reason, "unknown") {
+		t.Fatalf("plan %+v", rep)
+	}
+}
+
+// CR-9 review, A3: in agents membership the forced-placement refusal does not
+// depend on defaults.forced_fit_check: with the setting "off" a forced
+// placement that does not fit is still refused, and nothing is sent.
+func TestAgents_ForcedRefusalIgnoresForcedFitCheckOff(t *testing.T) {
+	h := agentsHarness(t)
+	h.cfg.Defaults.ForcedFitCheck = config.ForcedFitOff
+	h.view.modify("a", func(n *core.Node) { n.FreeMiB = 4599 })
+	h.viewChanged()
+	w := h.request("m")
+	h.failed(w, 503, ReasonForcedDoesNotFit)
+	if len(h.wlaunches) != 0 || len(h.starts) != 0 {
+		t.Fatalf("something was sent: %d launches, %d starts", len(h.wlaunches), len(h.starts))
+	}
+}
+
+// CR-9 review, C: the forced-fit check still applies to a forced profile on a
+// no_auto node.
+func TestAgents_ForcedFitStillAppliesOnANoAutoNode(t *testing.T) {
+	h := agentsHarness(t)
+	h.cfg.NoAutoNodes = []string{"a", "b"}
+	h.view.modify("a", func(n *core.Node) { n.FreeMiB = 4599 })
+	h.viewChanged()
+	w := h.request("m")
+	h.failed(w, 503, ReasonForcedDoesNotFit)
+	if len(h.wlaunches) != 0 || len(h.starts) != 0 {
+		t.Fatalf("something was sent: %d launches, %d starts", len(h.wlaunches), len(h.starts))
+	}
+	// With room it starts: no_auto does not stop a forced profile.
+	h2 := agentsHarness(t)
+	h2.cfg.NoAutoNodes = []string{"a", "b"}
+	h2.request("m")
+	if len(h2.wlaunches) != 1 {
+		t.Fatalf("%d launches, want 1", len(h2.wlaunches))
 	}
 }
