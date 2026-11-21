@@ -540,11 +540,18 @@ func (c *schedCore) isFree(id core.NodeID) bool {
 	if !c.eligible(id) {
 		return false
 	}
-	if n, _ := c.node(id); n.Paused || c.agentHeld(id) || c.unplaced[id] != "" {
-		return false // agents.go: a paused, held or unplaced node takes no new load
+	if c.noNewLoad(id) {
+		return false
 	}
 	ns := c.nodes[id]
 	return ns == nil || (ns.holder == "" && ns.claim == "" && ns.settle == setNone)
+}
+
+// noNewLoad: a paused, held or unplaced node takes no new load (agents.go). A
+// load already on it continues, but it is neither placed on nor evicted for.
+func (c *schedCore) noNewLoad(id core.NodeID) bool {
+	n, _ := c.node(id)
+	return n.Paused || c.agentHeld(id) || c.unplaced[id] != ""
 }
 
 // localOnly restricts kind: command profiles to the local node.

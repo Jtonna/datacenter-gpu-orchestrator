@@ -787,6 +787,25 @@ reports the same outcome from the free figures it holds (no probe is run): in
 `reject` mode `action: reject` with the message in `reason`, in `warn` mode
 the usual `start` plus a `warning` field.
 
+**Checked before any eviction.** When the forced nodes are held by other
+instances, the placement is a plan with victims (8.3 step 2). Before any victim
+is stopped, the forced fit check (`reject` only; and in agents membership the
+always-on check of agent contract 11.2) runs on the memory each node would have
+with nothing of ours loaded on it: the free figure the scheduler holds now plus
+what the instance holding the node is expected to take there (its share as
+`expect_mib` gives it: measured this run, else its need with the estimate
+margin times its split fraction). A pre-flight figure still in force on the
+node is used as is, because it was taken while the node was free. A profile
+that cannot fit even then is refused at once, with the same `503` "forced nodes
+do not fit" and a message that says "even with nothing loaded on it", and no
+model is stopped. Before this, the victim was stopped, the node was waited for
+(about 30 s on the cluster) and only then was the request refused (seen twice on
+hardware: Qwen 4B unloaded for a Devstral 24B request that needed 14691 MiB on
+a console with 12484 MiB usable). When the profile could fit, the eviction goes
+ahead and the check runs again on the real figures after it, because the "nothing
+loaded" figure is an estimate. With `warn` or `off` (fleet membership) nothing
+changes. `POST /api/plan` shows the same refusal in place of `evict`.
+
 ### 7.2a Memory safety on shared-memory nodes
 
 The PS5 workers have no container memory limit, and on the current llama.cpp a
@@ -1271,6 +1290,12 @@ For each remaining entry:
    If several plans are possible, the placer's tier rules pick the nodes;
    ties go to the plan with the fewest victims, then idle victims over busy,
    then the shortest `load_duration`, then the longest idle.
+   A forced profile's plan is first checked on the nodes' memory with nothing
+   of ours loaded (7.2, "Checked before any eviction"): one that cannot fit
+   even then is refused before any victim is stopped. A node that takes no new
+   load (paused, or listed with an unplaced reason) is not offered as an
+   evictable node, so its instance is never stopped for a load the node may
+   not take.
 3. **Skip.** Otherwise the entry stays unclaimed and the pass moves on.
 
 An instance is **evictable** for an entry when it is `ready`,

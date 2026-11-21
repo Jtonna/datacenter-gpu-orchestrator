@@ -38,14 +38,19 @@ type forcedFit struct {
 	nodes    []string
 	detail   []string    // per node: which figure was used, in plain words
 	short    []nodeShort // shared-memory nodes whose own share does not fit
+	empty    bool        // the figures are the nodes' with nothing of ours loaded on them
 }
 
 // message is the plain-words account used in the 503, the warning and the plan.
 func (f *forcedFit) message(profile string) string {
 	var parts []string
 	if f.total {
-		parts = append(parts, fmt.Sprintf("profile %s: need %d MiB (%s), but the nodes it is forced onto have only %d MiB usable in total (%s)",
-			profile, f.need, f.basis, f.free, strings.Join(f.detail, "; ")))
+		have := "have only"
+		if f.empty {
+			have = "would have only"
+		}
+		parts = append(parts, fmt.Sprintf("profile %s: need %d MiB (%s), but the nodes it is forced onto %s %d MiB usable in total%s (%s)",
+			profile, f.need, f.basis, have, f.free, emptyWords(f.empty, "them"), strings.Join(f.detail, "; ")))
 	}
 	for _, s := range f.short {
 		parts = append(parts, fmt.Sprintf("profile %s: need %d MiB (%s) split over the forced nodes, %s", profile, f.need, f.basis, s.text()))
@@ -59,6 +64,14 @@ func (f *forcedFit) message(profile string) string {
 // minus tier headroom, on shared-memory nodes. It returns nil when the check
 // is off, the profile is not forced, the need is unknown, or everything fits.
 func (c *schedCore) forcedFitCheck(p *core.Profile, pl core.Placement) *forcedFit {
+	return c.forcedFitCheckOn(p, pl, false)
+}
+
+// forcedFitCheckOn is forcedFitCheck on the figures the scheduler holds now,
+// or, with empty, on the figures the nodes would have with nothing of ours
+// loaded on them (fitUsable). With empty it also returns nil when such a
+// figure cannot be told.
+func (c *schedCore) forcedFitCheckOn(p *core.Profile, pl core.Placement, empty bool) *forcedFit {
 	mode := c.cfg.Defaults.ForcedFitCheck
 	if (mode != config.ForcedFitWarn && mode != config.ForcedFitReject) || len(p.ForceNodes) == 0 || len(pl.Nodes) == 0 {
 		return nil
@@ -67,27 +80,116 @@ func (c *schedCore) forcedFitCheck(p *core.Profile, pl core.Placement) *forcedFi
 	if err != nil {
 		return nil
 	}
-	f := &forcedFit{mode: mode, need: info.Need.WithMargin(), measured: info.Need.Measured, basis: c.needBasis(info)}
+	f := &forcedFit{mode: mode, need: info.Need.WithMargin(), measured: info.Need.Measured, basis: c.needBasis(info), empty: empty}
 	for _, pn := range pl.Nodes {
 		n, ok := c.node(pn.ID)
 		if !ok {
 			return nil
 		}
 		label := nodeLabel(pn.ID, n)
-		usable, how := c.freeMiB(pn.ID, n), "free memory, no headroom kept"
-		if n.SharedMemory {
-			usable, how = c.sharedBudget(pn.ID, n)
+		usable, how, ok := c.fitUsable(pn.ID, n, empty)
+		if !ok {
+			return nil
 		}
 		f.free += usable
 		f.nodes = append(f.nodes, label)
 		f.detail = append(f.detail, fmt.Sprintf("usable %d MiB on %s (%s)", usable, label, how))
 	}
 	f.total = f.need > f.free
-	f.short = c.sharedShortfalls(p, info, pl)
+	short, ok := c.sharedShortfalls(p, info, pl, empty)
+	if !ok {
+		return nil
+	}
+	f.short = short
 	if !f.total && len(f.short) == 0 {
 		return nil
 	}
 	return f
+}
+
+// fitUsable is the usable figure forced_fit_check holds node id to: on a
+// dedicated-VRAM node its free memory with no headroom kept, on a
+// shared-memory node sharedBudget. With empty it is the figure the node would
+// have with nothing of ours loaded on it (emptyFree in place of the fleet's
+// free figure; a pre-flight figure is used as is, because the pre-flight ran
+// while the node was free). ok is false when that cannot be told.
+func (c *schedCore) fitUsable(id core.NodeID, n core.Node, empty bool) (usable int, how string, ok bool) {
+	if !empty {
+		if n.SharedMemory {
+			usable, how = c.sharedBudget(id, n)
+			return usable, how, true
+		}
+		return c.freeMiB(id, n), "free memory, no headroom kept", true
+	}
+	free, note, ok := c.emptyFree(id, n)
+	if !ok {
+		return 0, "", false
+	}
+	if n.SharedMemory {
+		usable, how = c.sharedBudgetFrom(id, n, free)
+		return usable, how + note, true
+	}
+	if pf, on := c.preflightFree(id); on {
+		return pf, "free memory from the pre-flight taken before the node's load, no headroom kept", true
+	}
+	return free, "free memory, no headroom kept" + note, true
+}
+
+// emptyFree is node id's free figure as the view gives it (core.Node.FreeMiB:
+// the device's free memory, or on a node whose device shares system memory
+// the smaller of that and available memory minus the watchdog floor) plus
+// what the instance holding the node is expected to hold there (heldOn): the
+// free figure the node would have with nothing of ours loaded on it. It is an
+// estimate; the checks made when the instance is placed after the eviction
+// stay. note says what was added, in plain words. ok is false when the held
+// figure cannot be told.
+func (c *schedCore) emptyFree(id core.NodeID, n core.Node) (free int, note string, ok bool) {
+	held, who, ok := c.heldOn(id)
+	if !ok {
+		return 0, "", false
+	}
+	if held > 0 {
+		note = fmt.Sprintf(", counting the %d MiB %s holds there as freed", held, who)
+	}
+	return n.FreeMiB + held, note, true
+}
+
+// heldOn is what the instance holding node id is expected to hold there: its
+// share as expectShares gives it (measured by a load of this run when there
+// is one, else its need with the estimate margin times its split fraction).
+// 0 when nothing holds the node; ok is false when the share cannot be told.
+func (c *schedCore) heldOn(id core.NodeID) (mib int, profile string, ok bool) {
+	ns := c.nodes[id]
+	if ns == nil || ns.holder == "" {
+		return 0, "", true
+	}
+	in := c.insts[ns.holder]
+	if in == nil {
+		return 0, "", true
+	}
+	shares := c.expectShares(in.prof, in.placement)
+	for i, pn := range in.placement.Nodes {
+		if pn.ID == id && i < len(shares) {
+			return shares[i], in.prof.Name, true
+		}
+	}
+	return 0, "", false
+}
+
+// preflightFree is the pre-flight override of node id while it lasts.
+func (c *schedCore) preflightFree(id core.NodeID) (int, bool) {
+	if ns := c.nodes[id]; ns != nil && !ns.ovUntil.IsZero() && c.now.Before(ns.ovUntil) {
+		return ns.ovFree, true
+	}
+	return 0, false
+}
+
+// emptyWords marks a figure taken with nothing loaded, in plain words.
+func emptyWords(empty bool, what string) string {
+	if !empty {
+		return ""
+	}
+	return " even with nothing loaded on " + what
 }
 
 // forcedFitErr is the refusal for reject mode: 503, like the other
@@ -145,6 +247,15 @@ func (c *schedCore) expectShares(p *core.Profile, pl core.Placement) []int {
 // defaults.forced_fit_check, which adds the tier headroom on top. Nil when
 // the placement is not forced, not in agents membership, or fits.
 func (c *schedCore) agentForcedFit(p *core.Profile, pl core.Placement) *Error {
+	return c.agentForcedFitOn(p, pl, false)
+}
+
+// agentForcedFitOn is agentForcedFit on the figures the agents report now, or,
+// with empty, on the figures the nodes would have with nothing of ours loaded
+// on them (emptyFree). With empty a node whose held figure cannot be told is
+// taken as fitting (the check after the eviction decides); a node whose own
+// figure is unknown is refused either way.
+func (c *schedCore) agentForcedFitOn(p *core.Profile, pl core.Placement, empty bool) *Error {
 	if !c.agents || len(p.ForceNodes) == 0 {
 		return nil
 	}
@@ -168,7 +279,14 @@ func (c *schedCore) agentForcedFit(p *core.Profile, pl core.Placement) *Error {
 			need += shares[i]
 			continue
 		}
-		usable := c.freeMiB(pn.ID, n)
+		usable, note := c.freeMiB(pn.ID, n), ""
+		if empty {
+			free, nt, ok := c.emptyFree(pn.ID, n)
+			if !ok {
+				continue
+			}
+			usable, note = free, nt
+		}
 		need, usableSum = need+shares[i], usableSum+usable
 		if shares[i] <= usable {
 			continue
@@ -181,15 +299,44 @@ func (c *schedCore) agentForcedFit(p *core.Profile, pl core.Placement) *Error {
 			}
 			how = fmt.Sprintf("available memory minus the watchdog floor of %d MiB", floor)
 		}
-		parts = append(parts, fmt.Sprintf("node %s is expected to take %d MiB but has %d MiB usable (%s)", nodeLabel(pn.ID, n), shares[i], usable, how))
+		has := "has"
+		if empty {
+			has = "would have only"
+		}
+		parts = append(parts, fmt.Sprintf("node %s is expected to take %d MiB but %s %d MiB usable%s (%s%s)",
+			nodeLabel(pn.ID, n), shares[i], has, usable, emptyWords(empty, "it"), how, note))
 	}
 	if len(parts) == 0 {
 		return nil
 	}
-	e := err503(ReasonForcedDoesNotFit, fmt.Sprintf("profile %s does not fit the nodes it is forced onto: %s; the node's agent would refuse the launch (would_not_fit), so it is not sent",
-		p.Name, strings.Join(parts, "; ")), queueRetryAfter)
+	msg := fmt.Sprintf("profile %s does not fit the nodes it is forced onto: %s; the node's agent would refuse the launch (would_not_fit), so it is not sent",
+		p.Name, strings.Join(parts, "; "))
+	if empty {
+		msg += " and nothing loaded is stopped for it"
+	}
+	e := err503(ReasonForcedDoesNotFit, msg, queueRetryAfter)
 	e.NeedMiB, e.CapacityMiB = need, usableSum
 	return e
+}
+
+// forcedRefusalBeforeEvict is the fit check of a forced placement made before
+// any victim is stopped for it, on the memory the forced nodes would have with
+// nothing of ours loaded on them: a request that can never fit there is
+// refused at once and costs no loaded model. It applies agentForcedFit in
+// agents membership, and defaults.forced_fit_check when that is reject (with
+// warn or off nothing changes here). The checks made after the eviction stay:
+// the "nothing loaded" figure is an estimate.
+func (c *schedCore) forcedRefusalBeforeEvict(p *core.Profile, pl core.Placement) *Error {
+	if len(p.ForceNodes) == 0 {
+		return nil
+	}
+	if e := c.agentForcedFitOn(p, pl, true); e != nil {
+		return e
+	}
+	if ff := c.forcedFitCheckOn(p, pl, true); ff != nil && ff.mode == config.ForcedFitReject {
+		return ff.err(p.Name)
+	}
+	return nil
 }
 
 // agentForcedGate applies agentForcedFit and, as the pre-flight does in fleet
