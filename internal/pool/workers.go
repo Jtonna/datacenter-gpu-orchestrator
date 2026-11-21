@@ -24,8 +24,9 @@ import (
 
 // Worker launches (agent contract 6, 11 "Phase 4 loads"). Every launch has a
 // supervisor goroutine from the moment it is sent until it is stopped: it
-// renews the lease every 5 s, reads the launch state (4 Hz while starting,
-// 1 Hz after), copies the launch log, and reports load progress and an exit.
+// renews the lease every 5 s, reads the launch state (4 Hz while it starts and
+// while its load is in progress, 1 Hz after: contract 6.3), copies the launch
+// log, and reports load progress and an exit.
 
 var _ scheduler.WorkerLauncher = (*Pool)(nil)
 
@@ -52,6 +53,7 @@ type launch struct {
 	goneMsg  string
 	report   func(scheduler.WorkerReport)
 	reported bool // the exit was reported
+	loaded   bool // the scheduler said the load is over (LoadDone)
 	lastLoad string
 	logOff   int64
 	changed  chan struct{}
@@ -86,6 +88,43 @@ func (l *launch) wake() {
 	select {
 	case l.changed <- struct{}{}:
 	default:
+	}
+}
+
+// How often GET /launch is read (6.3).
+const (
+	pollLoading   = 250 * time.Millisecond
+	pollAfterLoad = time.Second
+)
+
+// loading: a load is in progress on the launch's node, as far as is known. A
+// worker is ready before the host connects and the load starts, so ready does
+// not end it. It ends when the scheduler says the load is over (LoadDone),
+// when the agent reports the node's part of the load done, or with the launch.
+func (l *launch) loading() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.loaded || l.goneWhy != "" {
+		return false
+	}
+	if !l.have {
+		return true
+	}
+	if l.st.State == agentproto.StateExited || l.st.State == agentproto.StateStopping {
+		return false
+	}
+	return l.st.Load == nil || l.st.Load.State != agentproto.LoadDone
+}
+
+// LoadDone is scheduler.WorkerLauncher.LoadDone.
+func (p *Pool) LoadDone(iid uint64) {
+	p.mu.Lock()
+	ls := append([]*launch(nil), p.byIID[iid]...)
+	p.mu.Unlock()
+	for _, l := range ls {
+		l.mu.Lock()
+		l.loaded = true
+		l.mu.Unlock()
 	}
 }
 
@@ -261,8 +300,9 @@ func (p *Pool) supervise(l *launch) {
 		defer lease.Stop()
 		logs := time.NewTicker(2 * time.Second)
 		defer logs.Stop()
-		// The state is read 4 times a second while starting, then once a second.
-		poll := time.NewTicker(250 * time.Millisecond)
+		// The state is read 4 times a second while a load is in progress on
+		// the node, then once a second (6.3).
+		poll := time.NewTicker(pollLoading)
 		defer poll.Stop()
 		fast := true
 		for {
@@ -276,9 +316,9 @@ func (p *Pool) supervise(l *launch) {
 			case <-poll.C:
 				p.poll(ctx, l)
 				p.reportIfNeeded(l)
-				if fast && l.stateName() != agentproto.StateStarting {
+				if fast && !l.loading() {
 					fast = false
-					poll.Reset(time.Second)
+					poll.Reset(pollAfterLoad)
 				}
 			case <-l.changed:
 				p.reportIfNeeded(l)

@@ -51,7 +51,7 @@ func TestSchemaCoversEveryYAMLKey(t *testing.T) {
 			t.Errorf("profile key %s missing", k)
 		}
 	}
-	for _, k := range []string{"match.hostname", "match.role", "match.source", "match.local", "priority", "headroom_mib", "shared_memory", "link_mb_s", "settle"} {
+	for _, k := range []string{"match.hostname", "match.role", "match.source", "match.local", "match.platform", "match.device", "priority", "headroom_mib", "shared_memory", "link_mb_s", "settle"} {
 		if !have["tier."+k] {
 			t.Errorf("tier key %s missing", k)
 		}

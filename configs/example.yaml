@@ -67,6 +67,12 @@ tiers:                     # how nodes are ranked. First match wins; a node matc
     headroom_mib: 256      # dedicated VRAM; pre-flight gives exact figures
     link_mb_s: 60
     settle: 8s
+  # With membership: agents a node can also be matched on what its agent reports,
+  # so the tier does not depend on a hostname (a console gets a new one at each flash):
+  # - match: { platform: "linux-amd64-vulkan", device: "AMD Custom GPU*" }   # platform is exact; device is a case-insensitive glob on a reported GPU model or device name
+  #   priority: 1
+  #   headroom_mib: 1024
+  #   shared_memory: true
   - match: { local: true } # true matches only the host the scheduler runs on
     priority: 3
     headroom_mib: 450      # what the driver reports minus what llama.cpp can really use

@@ -144,7 +144,8 @@ func Build(doc *Document, b Bootstrap, o Options) (*Config, error) {
 	c.Bench.Enabled = c.DataDir != "" && c.Bench.EnabledSetting
 	for _, t := range doc.Tiers {
 		c.Tiers = append(c.Tiers, TierRule{
-			Match: Match{Hostname: t.Match.Hostname, Role: t.Match.Role, Source: t.Match.Source, Local: t.Match.Local},
+			Match: Match{Hostname: t.Match.Hostname, Role: t.Match.Role, Source: t.Match.Source, Local: t.Match.Local,
+				Platform: t.Match.Platform, Device: t.Match.Device},
 			Tier: core.Tier{Priority: t.Priority, HeadroomMiB: t.HeadroomMiB, SharedMemory: t.SharedMemory,
 				LinkMBs: t.LinkMBs, Settle: time.Duration(t.Settle)},
 		})

@@ -107,7 +107,8 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 	}
 	for _, t := range raw.Tiers {
 		c.Tiers = append(c.Tiers, TierRule{
-			Match: Match{Hostname: t.Match.Hostname, Role: t.Match.Role, Source: t.Match.Source, Local: t.Match.Local},
+			Match: Match{Hostname: t.Match.Hostname, Role: t.Match.Role, Source: t.Match.Source, Local: t.Match.Local,
+				Platform: t.Match.Platform, Device: t.Match.Device},
 			Tier: core.Tier{Priority: t.Priority, HeadroomMiB: t.HeadroomMiB, SharedMemory: t.SharedMemory,
 				LinkMBs: t.LinkMBs, Settle: time.Duration(t.Settle)},
 		})
@@ -196,6 +197,8 @@ type MatchSpec struct {
 	Role     string `yaml:"role" json:"role,omitempty"`
 	Source   string `yaml:"source" json:"source,omitempty"`
 	Local    *bool  `yaml:"local" json:"local,omitempty"`
+	Platform string `yaml:"platform" json:"platform,omitempty"`
+	Device   string `yaml:"device" json:"device,omitempty"`
 }
 
 // ProfileSpec uses pointers wherever "absent" must be told from zero.

@@ -95,6 +95,31 @@ type fakeView struct {
 	fetchErr      map[core.NodeID]error
 	fetchCalls    map[core.NodeID]int
 	changed       chan struct{}
+	unplaced      map[core.NodeID]string // NodeGate: why a listed node takes no new load
+}
+
+// Unplaced is NodeGate.
+func (v *fakeView) Unplaced() map[core.NodeID]string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	out := map[core.NodeID]string{}
+	for id, why := range v.unplaced {
+		out[id] = why
+	}
+	return out
+}
+
+func (v *fakeView) setUnplaced(id core.NodeID, why string) {
+	v.mu.Lock()
+	if v.unplaced == nil {
+		v.unplaced = map[core.NodeID]string{}
+	}
+	if why == "" {
+		delete(v.unplaced, id)
+	} else {
+		v.unplaced[id] = why
+	}
+	v.mu.Unlock()
 }
 
 func newFakeView(clk *fakeClock) *fakeView {

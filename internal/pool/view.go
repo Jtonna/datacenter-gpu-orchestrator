@@ -16,6 +16,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/fleet"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 )
 
 // The node view (fleet.View) built from the agents. Remote nodes are the
@@ -27,11 +28,28 @@ var _ fleet.View = (*Pool)(nil)
 
 // SourceAgent is the tier match "source" of an agent node.
 //
-// CONTRACT-QUESTION: the contract does not say how agent nodes meet the
-// configured tiers (priority, headroom, link speed, settle). A tier is matched
-// with hostname = the agent's name, role empty and source "agent"; a node that
-// matches no tier is left out of the pool and logged, as in fleet membership.
+// An agent node meets the configured tiers (priority, headroom, link speed,
+// settle) on what its agent reports (agent contract 11, CR-5): platform (the
+// one Potluck gave it at registration) and device (the GPU models of its
+// registration and the device names of its heartbeat). The older matchers
+// still apply to it when a tier sets them: hostname = the agent's name, role
+// empty, source "agent". A console gets a new hostname at each flash, so its
+// tier should set platform and device only. A node that matches no tier is
+// listed with the reason no_tier_match and takes no load.
 const SourceAgent = "agent"
+
+var _ scheduler.NodeGate = (*Pool)(nil)
+
+// Unplaced is scheduler.NodeGate: why a listed node takes no new load.
+func (p *Pool) Unplaced() map[core.NodeID]string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make(map[core.NodeID]string, len(p.unplaced))
+	for id, why := range p.unplaced {
+		out[id] = why
+	}
+	return out
+}
 
 // Nodes is the node list, sorted by id.
 func (p *Pool) Nodes() []core.Node {
@@ -106,7 +124,7 @@ func (p *Pool) isLocalNameLocked(name string) bool {
 
 // isHostAgentLocked: the agent runs on the scheduler's own machine.
 //
-// CONTRACT-QUESTION: in phase 4 the scheduler's own child is the host and the
+// Settled as built by CR-5 (agent contract 11.1). The question was: in phase 4 the scheduler's own child is the host and the
 // local node comes from local_probe_cmd; the host machine's agent (4.1: its id
 // becomes its MAC) is not told apart by anything in the contract. An agent
 // whose id or name equals fleet.local_node is taken as the host machine's and
@@ -119,18 +137,23 @@ func (p *Pool) isHostAgentLocked(a *agent) bool {
 func (p *Pool) rebuildLocked() {
 	cfg := p.o.Config()
 	var nodes []core.Node
+	unplaced := map[core.NodeID]string{}
 	for _, id := range p.sortedIDsLocked() {
 		a := p.agents[id]
 		if a.left || p.admin[id].Removed || p.isHostAgentLocked(a) {
 			continue
 		}
-		n, ok := p.nodeFromAgentLocked(cfg, a)
-		if !ok {
-			if !p.noTier[id] {
-				p.noTier[id] = true
-				p.log.Info("agent node matches no tier, excluded", "id", id, "name", a.reg.Name, "source", SourceAgent)
-			}
-			continue
+		// A node without a tier is listed all the same (with no tier
+		// settings), so it is never silent.
+		n, _ := p.nodeFromAgentLocked(cfg, a)
+		why := p.unplacedLocked(cfg, a)
+		if why == scheduler.UnplacedNoTierMatch && !a.noTierLogged {
+			a.noTierLogged = true // once per registration: Register makes a new agent
+			p.log.Warn("agent node matches no tier: it is listed as no_tier_match and takes no load; add a tier that matches its platform and device",
+				"id", id, "name", a.reg.Name, "platform", a.platform, "devices", tierDevices(a), "source", SourceAgent)
+		}
+		if why != "" {
+			unplaced[n.ID] = why
 		}
 		nodes = append(nodes, n)
 	}
@@ -143,8 +166,8 @@ func (p *Pool) rebuildLocked() {
 		}
 	}
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
-	if !reflect.DeepEqual(nodes, p.nodes) && !(len(nodes) == 0 && len(p.nodes) == 0) {
-		p.nodes = nodes
+	if (!reflect.DeepEqual(nodes, p.nodes) && !(len(nodes) == 0 && len(p.nodes) == 0)) || !reflect.DeepEqual(unplaced, p.unplaced) {
+		p.nodes, p.unplaced = nodes, unplaced
 		select {
 		case p.notify <- struct{}{}:
 		default:
@@ -154,21 +177,21 @@ func (p *Pool) rebuildLocked() {
 
 // nodeFromAgentLocked is the core node of an agent (agent contract 11,
 // placement memory).
+//
+// ok is false when the node matches no tier; the node is then returned with
+// no tier settings.
 func (p *Pool) nodeFromAgentLocked(cfg *config.Config, a *agent) (core.Node, bool) {
-	t, ok := cfg.MatchTier(a.reg.Name, "", SourceAgent, false)
-	if !ok {
-		return core.Node{}, false
-	}
+	t, tiered := agentTier(cfg, a)
 	n := core.Node{ID: core.NodeID(a.reg.ID), Hostname: a.reg.Name, Online: !a.lost,
 		Addr:     net.JoinHostPort(a.reg.Addr, strconv.Itoa(p.o.WorkerPort)),
 		Priority: t.Priority, HeadroomMiB: t.HeadroomMiB, SharedMemory: t.SharedMemory, LinkMBs: t.LinkMBs, Settle: t.Settle,
 		Paused: p.admin[a.reg.ID].Paused, FreeUnknown: true}
 	if a.hb == nil {
-		return n, true
+		return n, tiered
 	}
 	d, _, ok := pickDevice(a)
 	if !ok {
-		return n, true
+		return n, tiered
 	}
 	n.TotalMiB, n.FreeMiB, n.FreeUnknown = int(d.TotalMiB), int(max(d.FreeMiB, 0)), false
 	if d.SharesSystemMemory {
@@ -176,7 +199,60 @@ func (p *Pool) nodeFromAgentLocked(cfg *config.Config, a *agent) (core.Node, boo
 		usable := a.hb.MemAvailableMiB - int64(cfg.Defaults.WatchdogFloorMiB)
 		n.FreeMiB = int(max(min(d.FreeMiB, usable), 0))
 	}
-	return n, true
+	return n, tiered
+}
+
+// agentTier matches an agent node to a tier.
+func agentTier(cfg *config.Config, a *agent) (core.Tier, bool) {
+	return cfg.MatchTierNode(config.TierQuery{Hostname: a.reg.Name, Source: SourceAgent,
+		Platform: a.platform, Devices: tierDevices(a)})
+}
+
+// tierDevices are the device names a tier's device matcher is tried on: the
+// GPU models of the registration, then the device names of the last
+// heartbeat (llama's own list, known once the programs are verified).
+func tierDevices(a *agent) []string {
+	var out []string
+	for _, g := range a.reg.GPUs {
+		if g.Model != "" {
+			out = append(out, g.Model)
+		}
+	}
+	if a.hb != nil {
+		for _, d := range a.hb.Devices {
+			if d.Name != "" {
+				out = append(out, d.Name)
+			}
+		}
+	}
+	return out
+}
+
+// unplacedLocked is why the node takes no new load, "" when it may.
+//
+//   - no_tier_match: no tier matches it (it is outside the pool).
+//   - orphan_launch: it reports a launch this run does not hold (Heartbeat).
+//   - programs_not_ready: its programs are not verified, or it has not sent a
+//     heartbeat yet; the agent would refuse a launch with release_mismatch
+//     (5.1, 6.2).
+//   - model_source_unreachable: worker launches ask for model_dir
+//     (worker_model_dir) and its last share probe did not succeed; the agent
+//     would refuse with model_source_unreachable (6.2, 8). Without model_dir a
+//     worker needs no model source, so it is not looked at.
+func (p *Pool) unplacedLocked(cfg *config.Config, a *agent) string {
+	if _, ok := agentTier(cfg, a); !ok {
+		return scheduler.UnplacedNoTierMatch
+	}
+	if a.orphan != "" {
+		return scheduler.UnplacedOrphanLaunch
+	}
+	if a.hb == nil || !a.hb.ProgramsReady {
+		return scheduler.UnplacedProgramsNotReady
+	}
+	if r := a.hb.ModelSource.Reachable; cfg.Defaults.WorkerModelDir && (r == nil || !*r) {
+		return scheduler.UnplacedModelSourceUnreachable
+	}
+	return ""
 }
 
 // pickDevice is the device a worker of this node serves: the first one of
@@ -280,11 +356,19 @@ type NodeFacts struct {
 	// ExtraDevicesIgnored counts the node's devices of its platform backend
 	// beyond the first, which no worker uses (one device per node).
 	ExtraDevicesIgnored int `json:"extra_devices_ignored"`
+	// Placeable: the node may take a new load. Unplaced is why not, when the
+	// node itself is the reason: no_tier_match, orphan_launch,
+	// programs_not_ready or model_source_unreachable. A paused, lost, left or
+	// removed node and the host machine's agent are not placeable either;
+	// their own fields say so.
+	Placeable bool   `json:"placeable"`
+	Unplaced  string `json:"unplaced,omitempty"`
 }
 
 // Facts lists every agent node Potluck knows, removed ones included.
 func (p *Pool) Facts() []NodeFacts {
 	now := p.o.Clock()
+	cfg := p.o.Config()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	var out []NodeFacts
@@ -316,6 +400,10 @@ func (p *Pool) Facts() []NodeFacts {
 				f.LaunchID, f.LaunchState = &lid, l.stateName()
 			}
 		}
+		if f.State == StateActive || f.State == StateLost {
+			f.Unplaced = p.unplacedLocked(cfg, a)
+		}
+		f.Placeable = f.State == StateActive && !f.Paused && !f.HostAgent && f.Unplaced == ""
 		out = append(out, f)
 	}
 	for id, adm := range p.admin {

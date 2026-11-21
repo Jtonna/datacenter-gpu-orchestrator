@@ -186,6 +186,12 @@ type Match struct {
 	Role     string
 	Source   string
 	Local    *bool
+	// Platform and Device match what an agent node reports (agent contract
+	// 11): its platform (exact) and a device name (glob, as Hostname). A node
+	// from the fleet feed reports neither, so a tier that sets one never
+	// matches it.
+	Platform string
+	Device   string
 }
 
 // TierRule is one tiers[] entry: a match clause and the settings it grants.

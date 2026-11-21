@@ -267,6 +267,9 @@ func (c *schedCore) healthy(iid uint64, err error) {
 		return // exits and timeouts arrive as their own events
 	}
 	in.state, in.phase = stReady, phRunning
+	if in.workers {
+		c.effects = append(c.effects, effWorkersLoaded{iid: in.iid}) // agents.go: the launches are read slower now
+	}
 	c.finishLoad(in, LoadReady, "")
 	in.readyAt, in.lastUsed = c.now, c.now
 	in.loadDuration = c.now.Sub(in.created)

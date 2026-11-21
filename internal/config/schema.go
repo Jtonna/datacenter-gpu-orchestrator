@@ -298,6 +298,8 @@ var tierFields = []Field{
 	{Key: "match.role", Section: "match", Type: "string", Description: "Fleet role a node must have."},
 	{Key: "match.source", Section: "match", Type: "string", Description: "Fleet source a node must have."},
 	{Key: "match.local", Section: "match", Type: "bool", Nullable: true, Description: "True matches only the local host, false only remote nodes."},
+	{Key: "match.platform", Section: "match", Type: "string", Description: "Platform an agent node must have been given at registration, exact (for example linux-amd64-vulkan). Never matches a node from the fleet feed."},
+	{Key: "match.device", Section: "match", Type: "string", Description: "Case-insensitive glob one of the device names an agent node reports must match: a GPU model of its registration or a device of its heartbeat. Never matches a node from the fleet feed."},
 	{Key: "priority", Section: "tier", Type: "int", Required: true, Min: num(1), Description: "Tier priority; lower is preferred."},
 	{Key: "headroom_mib", Section: "tier", Type: "int", Default: 0.0, Min: num(0), Unit: "MiB", Description: "Memory kept free on a node of this tier."},
 	{Key: "shared_memory", Section: "tier", Type: "bool", Default: false, Description: "The node's GPU memory is system RAM."},

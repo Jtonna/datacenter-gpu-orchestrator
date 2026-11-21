@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -77,8 +78,11 @@ func (h *hist) Record(e history.Event) { h.mu.Lock(); h.ev = append(h.ev, e); h.
 const llamaBuild = "a01665d30de2885879a64eae999067ef3ef5fd4b"
 
 type rig struct {
-	t          *testing.T
+	t *testing.T
+	// p is the pool, for the test's own goroutine. serve runs on HTTP
+	// goroutines and reads cur, which start swaps (a Potluck restart).
 	p          *Pool
+	cur        atomic.Pointer[Pool]
 	clk        *clock
 	store      *memStore
 	hist       *hist
@@ -153,6 +157,7 @@ func (r *rig) start() {
 		return "", nil
 	})
 	r.p = p
+	r.cur.Store(p)
 	if r.srv == nil {
 		r.srv = httptest.NewServer(http.HandlerFunc(r.serve))
 	}
@@ -160,7 +165,7 @@ func (r *rig) start() {
 
 // serve stands in for the API's agent endpoints (internal/api/nodes.go).
 func (r *rig) serve(w http.ResponseWriter, req *http.Request) {
-	p := r.p
+	p := r.cur.Load()
 	parts := strings.Split(strings.TrimPrefix(req.URL.Path, "/api/pool/nodes/"), "/")
 	switch {
 	case req.URL.Path == agentproto.PathRegister:
@@ -547,9 +552,9 @@ func TestPauseIsStoredAndSentInTheHeartbeatAnswer(t *testing.T) {
 	// A Potluck restart keeps the pause; the agent re-registers on 410.
 	r.start()
 	eventually(t, 5*time.Second, func() bool { n, ok := r.node(a.ID); return ok && n.Paused }, "paused after restart")
-	if ans := a.Answer(); ans == nil || !ans.Paused {
-		t.Fatalf("registration answer %+v", ans)
-	}
+	// The agent stores the new registration's answer a moment after the pool
+	// lists the node.
+	eventually(t, 5*time.Second, func() bool { ans := a.Answer(); return ans != nil && ans.Paused }, "paused in the registration answer")
 	r.p.SetPaused(a.ID, false)
 	eventually(t, 5*time.Second, func() bool { return !a.Paused() }, "unpaused")
 }
@@ -588,7 +593,7 @@ func TestDeregisterRemovalAndReadmission(t *testing.T) {
 	if _, ok := r.node(a.ID); ok {
 		t.Fatal("removed node in the view")
 	}
-	if r.store.m[a.ID] != (cfgstore.NodeAdmin{Removed: true}) {
+	if m, _ := r.store.NodeAdmins(); m[a.ID] != (cfgstore.NodeAdmin{Removed: true}) {
 		t.Fatalf("store %+v", r.store.m)
 	}
 	if err := r.p.Readmit(a.ID); err != nil {

@@ -59,6 +59,7 @@ type harness struct {
 	wlaunches []effLaunchWorkers
 	wstops    []effStopWorkers
 	wforce    []core.NodeID
+	wloaded   []uint64 // effWorkersLoaded
 }
 
 func ptrDur(d time.Duration) *time.Duration { return &d }
@@ -237,6 +238,8 @@ func (h *harness) drain() {
 			h.wstops = append(h.wstops, ef)
 		case effForceNode:
 			h.wforce = append(h.wforce, ef.node)
+		case effWorkersLoaded:
+			h.wloaded = append(h.wloaded, ef.iid)
 		default:
 			h.t.Fatalf("unknown effect %T", ef)
 		}

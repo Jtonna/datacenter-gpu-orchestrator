@@ -82,7 +82,32 @@ type WorkerLauncher interface {
 	// ForceNode stops whatever launch the node runs (forced DELETE, then
 	// /reset), for a force unload of a node no load of this run holds.
 	ForceNode(node core.NodeID)
+	// LoadDone says the load of iid is over (its instance is ready): from now
+	// on its launches are read once a second, not four times (agent contract
+	// 6.3). It does not wait.
+	LoadDone(iid uint64)
 }
+
+// NodeGate is implemented by a node view that knows why a node it lists takes
+// no new load (agents membership). The scheduler reads it with the node list.
+type NodeGate interface {
+	// Unplaced maps a node to its reason word; a node that may take a load
+	// is absent.
+	Unplaced() map[core.NodeID]string
+}
+
+// Reasons a listed node takes no new load (NodeStatus.Unplaced).
+const (
+	// UnplacedNoTierMatch: the node matches no tier. It is outside the pool:
+	// never eligible and not counted in capacity, like an excluded node.
+	UnplacedNoTierMatch = "no_tier_match"
+	// The other reasons pass by themselves. The node stays counted in
+	// capacity, so a request that needs it waits in the queue (as for a paused
+	// node) and is not refused or backed off.
+	UnplacedProgramsNotReady       = "programs_not_ready"       // the agent has not verified its programs (5.1)
+	UnplacedModelSourceUnreachable = "model_source_unreachable" // a worker launch would need the model source (8)
+	UnplacedOrphanLaunch           = "orphan_launch"            // the agent reports a launch Potluck does not hold (11)
+)
 
 // modelSourceHold is how long a node whose launch was refused with
 // model_source_unreachable is left out of placements: the request stays
@@ -99,7 +124,8 @@ type (
 		iid   uint64
 		force []core.NodeID
 	}
-	effForceNode struct{ node core.NodeID }
+	effForceNode     struct{ node core.NodeID }
+	effWorkersLoaded struct{ iid uint64 }
 
 	evWorkersLaunched struct {
 		iid uint64
@@ -115,6 +141,7 @@ type (
 func (effLaunchWorkers) isEffect() {}
 func (effStopWorkers) isEffect()   {}
 func (effForceNode) isEffect()     {}
+func (effWorkersLoaded) isEffect() {}
 func (evWorkersLaunched) isEvent() {}
 func (evWorkerReport) isEvent()    {}
 func (evForceUnload) isEvent()     {}
@@ -128,7 +155,7 @@ type forceResult struct {
 // it is lost: design 8.4's 30 s, or at once with agents (the 10 s heartbeat
 // silence already happened, agent contract 4.3).
 //
-// CONTRACT-QUESTION: 11 says a lost node with a launch "fails the instance at
+// Settled as built by CR-5 (agent contract 11.1). The question was: 11 says a lost node with a launch "fails the instance at
 // once". The existing node-loss path is used: the instance is killed at once
 // and its other members stopped, but the waiters of a starting instance go
 // back to the queue (they get no 502), as design 8.4 settled for node loss;
@@ -158,7 +185,7 @@ func (c *schedCore) launchWorkers(in *inst) {
 			continue
 		}
 		n, _ := c.node(pn.ID)
-		// CONTRACT-QUESTION: 6.2 says min_mem_available_mib comes "from the
+		// Settled as built by CR-5 (agent contract 11.1). The question was: 6.2 says min_mem_available_mib comes "from the
 		// budget" without a formula. A node whose device shares system memory
 		// needs its budget plus the watchdog floor available; any other node
 		// is asked for the floor only (the weights go to its own VRAM).
@@ -190,7 +217,7 @@ func (c *schedCore) workersLaunched(iid uint64, res WorkerResult) {
 	}
 	in.launchIDs = res.LaunchIDs
 	if res.Reason == "" {
-		// CONTRACT-QUESTION: the contract does not say whether the
+		// Settled as built by CR-5 (agent contract 11.1). The question was: the contract does not say whether the
 		// pre-flight's forced-fit check and fit at exact figures (design 7.5)
 		// still run. They need a probe of the workers, which agents mode does
 		// not do; the child starts on the placement as made.
@@ -265,7 +292,7 @@ func (c *schedCore) workerReported(r WorkerReport) {
 // raiseNeedOnKill raises the profile's learned need after the agent's memory
 // watchdog or the kernel's OOM killer ended a worker (agent contract 6.7).
 //
-// CONTRACT-QUESTION: the contract says such an exit "raises the learned memory
+// Settled as built by CR-5 (agent contract 11.1). The question was: the contract says such an exit "raises the learned memory
 // need" without an amount; the need is raised by a tenth (at least 256 MiB)
 // and kept for this run, as any learned need.
 func (c *schedCore) raiseNeedOnKill(in *inst, node core.NodeID, ex *agentproto.ExitInfo) {
@@ -354,6 +381,8 @@ func (s *Scheduler) execAgents(ef effect) bool {
 		w.Stop(ef.iid, ef.force)
 	case effForceNode:
 		w.ForceNode(ef.node)
+	case effWorkersLoaded:
+		w.LoadDone(ef.iid)
 	default:
 		return false
 	}
