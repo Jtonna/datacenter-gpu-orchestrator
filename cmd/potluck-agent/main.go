@@ -239,18 +239,24 @@ func serve(opt agent.Options, stderr io.Writer) int {
 		log.Error("own path", "err", err)
 		return 1
 	}
-	machine := hw.Machine{Root: "/", LDLibraryPath: os.Getenv("LD_LIBRARY_PATH")}
+	// One library path for the library check and for the launches.
+	opt.LDLibraryPath = os.Getenv("LD_LIBRARY_PATH")
+	machine := hw.Machine{Root: "/", LDLibraryPath: opt.LDLibraryPath}
 	base := "http://" + opt.Potluck
 	httpc := &http.Client{Timeout: 5 * time.Second}
-	var upd agent.Updater = agent.SelfUpdater{Base: base, HTTP: &http.Client{Timeout: 10 * time.Minute}, Exe: exe, Restart: restartExec}
+	var a *agent.Agent
+	var upd agent.Updater = agent.SelfUpdater{Base: base, HTTP: &http.Client{Timeout: 10 * time.Minute}, Exe: exe, Restart: restartExec,
+		Version: agent.ExecVersion, AttemptPath: filepath.Join(opt.StateDir, "update-attempt"), Logger: log,
+		Busy: func() bool { return a != nil && a.Launch.Busy() }}
 	if opt.Install == agentproto.InstallDocker {
 		upd = agent.DockerUpdater{Exit: os.Exit}
 	}
-	a, err := agent.New(opt, agent.Deps{
+	a, err = agent.New(opt, agent.Deps{
 		Clock: clock, Runner: rn, Mem: osx.MemInfoFile{}, Sockets: osx.ProcNetSockets{}, Procs: osx.ProcFS{},
 		KLog: osx.Kmsg{}, Net: realNet(machine), Hardware: machineHW{machine},
 		Mounter: modelsrc.ExecMounter{Cmd: osx.ExecCommander{}}, Prober: modelsrc.ExecProber{Exe: exe},
 		DiskFree: osx.StatfsFree, HostHealthy: hostHealthy, Updater: upd, HTTP: httpc, Logger: log,
+		Listen: func(addr string) (net.Listener, error) { return net.Listen("tcp", addr) },
 	})
 	if err != nil {
 		log.Error("start", "err", err)
@@ -259,38 +265,11 @@ func serve(opt agent.Options, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// 127.0.0.1:50060 first, so the local screen can read why the agent does
-	// not register (no identity, a port taken).
-	port := strconv.Itoa(agentproto.PortAgent)
-	local, err := net.Listen("tcp", "127.0.0.1:"+port)
-	if err != nil {
-		log.Error("port 50060 is taken; not registering", "err", err)
-		return 1
-	}
-	go http.Serve(local, a.LocalHandler())
-	defer local.Close()
-
-	for a.ResolveIdentity() != nil {
-		log.Error("no identity; retrying in 60 s")
-		select {
-		case <-ctx.Done():
-			return 0
-		case <-time.After(60 * time.Second):
-		}
-	}
-	if a.Addr() != "127.0.0.1" {
-		l, err := net.Listen("tcp", net.JoinHostPort(a.Addr(), port))
-		if err != nil {
-			log.Error("cannot listen on the node address", "addr", a.Addr(), "err", err)
-			return 1
-		}
-		srv := &http.Server{Handler: a.Handler(), ReadHeaderTimeout: 10 * time.Second}
-		go srv.Serve(l)
-		defer srv.Close()
-	} else {
-		log.Warn("Potluck is reached over loopback; the Potluck API is not served")
-	}
-	log.Info("potluck-agent starting", "release", opt.Release, "id", a.ID(), "addr", a.Addr(), "install", opt.Install, "ram_only", opt.RAMOnly)
+	// Run re-adopts an existing launch first, then binds port 50060 (again
+	// and again while it is taken: under the starter's Restart=always an exit
+	// here would be an endless restart loop), resolves the identity and
+	// registers.
+	log.Info("potluck-agent starting", "release", opt.Release, "install", opt.Install, "ram_only", opt.RAMOnly)
 	a.Run(ctx)
 	log.Info("potluck-agent stopped; a running launch unit keeps running")
 	return 0

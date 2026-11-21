@@ -623,3 +623,317 @@ func TestWorkerHasNoFileLoadEnv(t *testing.T) {
 		}
 	}
 }
+
+// advanceUntil moves the fake clock in steps until cond holds.
+func (e *env) advanceUntil(what string, step time.Duration, cond func() bool) {
+	e.t.Helper()
+	agenttest.Eventually(e.t, 10*time.Second, what, func() bool {
+		if cond() {
+			return true
+		}
+		e.clock.Advance(step)
+		e.settle(2)
+		return cond()
+	})
+}
+
+var unitProcs = []osx.ProcInfo{
+	{PID: 700, Cgroup: "0::/system.slice/potluck-launch-ln-1.service"},
+	{PID: 701, Cgroup: "0::/system.slice/potluck-launch-ln-10.service"},
+	{PID: 702, Cgroup: "0::/system.slice/ssh.service"},
+	{PID: 1, Cgroup: "0::/init.scope"},
+}
+
+// An ordinary stop escalates: SIGTERM, after the 10 s wait SIGKILL, then a
+// stop of the unit, then SIGKILL sent directly to the processes of the
+// launch's own unit, and only those.
+func TestStopEscalation(t *testing.T) {
+	e := newEnv(t, true)
+	e.runner.ignoreTerm = true
+	e.runner.stopErr = errors.New("systemctl stop: failed to connect to bus")
+	e.run()
+	e.startReady("ln-1")
+	p := e.runner.proc("potluck-launch-ln-1")
+	p.mu.Lock()
+	p.killDeaf = 1 << 30 // systemctl kill is accepted and does nothing
+	p.mu.Unlock()
+	e.procs.set(unitProcs)
+	e.procs.mu.Lock()
+	e.procs.onKill = func(pid int) {
+		if pid == 700 {
+			p.finish(runner.Exit{Known: true, Code: 137, Signal: "KILL"})
+		}
+	}
+	e.procs.mu.Unlock()
+
+	e.m.Stop("ln-1", false)
+	agenttest.Eventually(t, 5*time.Second, "TERM", func() bool { return len(p.signals()) == 1 })
+	e.settle(5)
+	if s := p.signals(); len(s) != 1 || s[0] != osx.SigTerm {
+		t.Fatalf("before the 10 s wait: %v", s)
+	}
+	e.clock.Advance(10 * time.Second)
+	agenttest.Eventually(t, 5*time.Second, "KILL", func() bool { s := p.signals(); return len(s) == 2 && s[1] == osx.SigKill })
+	e.settle(5)
+	if len(p.signals()) != 2 || len(e.runner.stops()) != 0 {
+		t.Fatal("the next attempt came before the retry wait")
+	}
+	e.clock.Advance(time.Second)
+	agenttest.Eventually(t, 5*time.Second, "stop of the unit", func() bool { return len(e.runner.stops()) == 1 })
+	e.settle(5)
+	if len(e.procs.kills()) != 0 {
+		t.Fatal("direct kill before the retry wait")
+	}
+	e.clock.Advance(250 * time.Millisecond) // the stop failed: the short wait
+	e.portClosed()
+	st := e.waitState(agentproto.StateExited)
+	if k := e.procs.kills(); len(k) != 1 || k[0] != 700 {
+		t.Fatalf("signalled directly: %v, want only pid 700 of the launch unit", k)
+	}
+	if st.Exit.Reason != agentproto.ExitStopped || len(p.signals()) != 2 || e.runner.stops()[0] != "potluck-launch-ln-1" {
+		t.Fatalf("%s, signals %v, stops %v", st.Exit.Reason, p.signals(), e.runner.stops())
+	}
+}
+
+// The watchdog sends SIGKILL at once, with no SIGTERM, and escalates in the
+// same way when that does not work.
+func TestWatchdogKillsFirstThenEscalates(t *testing.T) {
+	e := newEnv(t, true)
+	e.runner.stopKills = true
+	e.run()
+	e.startReady("ln-1")
+	p := e.runner.proc("potluck-launch-ln-1")
+	p.mu.Lock()
+	p.killErrs = 1 << 30 // systemctl kill never works
+	p.mu.Unlock()
+	e.mem.set(900)
+	agenttest.Eventually(t, 5*time.Second, "KILL", func() bool { return len(p.signals()) == 1 })
+	e.settle(5)
+	if s := p.signals(); len(s) != 1 || s[0] != osx.SigKill || len(e.runner.stops()) != 0 {
+		t.Fatalf("signals %v, stops %v", s, e.runner.stops())
+	}
+	if e.m.State().State != agentproto.StateStopping {
+		t.Fatal("exited before the process is gone")
+	}
+	e.clock.Advance(250 * time.Millisecond)
+	e.portClosed()
+	st := e.waitState(agentproto.StateExited)
+	if st.Exit.Reason != agentproto.ExitWatchdog || len(e.runner.stops()) != 1 {
+		t.Fatalf("%s, stops %v", st.Exit.Reason, e.runner.stops())
+	}
+}
+
+// When nothing works the kill is tried for ever, but never more than about
+// four times a second.
+func TestKillNeverGivesUpAndIsRateBounded(t *testing.T) {
+	e := newEnv(t, true)
+	e.runner.stopErr = errors.New("systemctl stop: failed to connect to bus")
+	e.run()
+	e.startReady("ln-1")
+	p := e.runner.proc("potluck-launch-ln-1")
+	p.mu.Lock()
+	p.killErrs = 1 << 30
+	p.mu.Unlock()
+	attempts := func() int {
+		e.m.mu.Lock()
+		defer e.m.mu.Unlock()
+		return e.m.cur.killTries
+	}
+	e.m.Stop("ln-1", true)
+	for i := 0; i < 100; i++ { // one second, 10 ms at a time
+		e.clock.Advance(10 * time.Millisecond)
+		e.settle(2)
+	}
+	if n := attempts(); n < 4 || n > 5 {
+		t.Fatalf("%d kill attempts in one second, want four or five", n)
+	}
+	for i := 0; i < 240; i++ { // one more minute
+		e.clock.Advance(250 * time.Millisecond)
+		e.settle(2)
+	}
+	if n := attempts(); n < 200 {
+		t.Fatalf("the kill was given up: %d attempts after a minute", n)
+	}
+	// Attempt 2 is the one stop of the unit; from attempt 4 on every attempt
+	// is SIGKILL together with the direct kill.
+	e.procs.mu.Lock()
+	lists := e.procs.lists
+	e.procs.mu.Unlock()
+	if n := attempts(); len(e.runner.stops()) != 1 || len(p.signals()) < n-3 || lists < n-3 {
+		t.Fatalf("%d attempts: %d stops, %d SIGKILLs, %d direct tries", n, len(e.runner.stops()), len(p.signals()), lists)
+	}
+	if e.m.State().State != agentproto.StateStopping {
+		t.Fatal("not stopping")
+	}
+	p.mu.Lock()
+	p.killErrs = 0
+	p.mu.Unlock()
+	e.portClosed()
+	e.advanceUntil("exited", 250*time.Millisecond, func() bool { return e.m.State().State == agentproto.StateExited })
+}
+
+// A restarted agent does not trust a kill recorded by the earlier process.
+func TestRestartKillsStoppingLaunchAgain(t *testing.T) {
+	e := newEnv(t, true)
+	e.run()
+	e.startReady("ln-1")
+	p := e.runner.proc("potluck-launch-ln-1")
+	p.mu.Lock()
+	p.killDeaf = 1 // the kill of the first agent process had no effect
+	p.mu.Unlock()
+	e.m.Stop("ln-1", true)
+	agenttest.Eventually(t, 5*time.Second, "first KILL", func() bool { return len(p.signals()) == 1 })
+	e.stop()
+	e.m = e.newManager()
+	if err := e.m.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if st := e.m.State(); st.State != agentproto.StateStopping {
+		t.Fatal(st.State)
+	}
+	e.run()
+	e.portClosed()
+	if st := e.waitState(agentproto.StateExited); st.Exit.Reason != agentproto.ExitForced || len(p.signals()) != 2 {
+		t.Fatalf("%s after %d signals", st.Exit.Reason, len(p.signals()))
+	}
+}
+
+// The unit start is not tied to the HTTP request that asked for it.
+func TestStartSurvivesCancelledRequest(t *testing.T) {
+	e := newEnv(t, true)
+	e.run()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	st, ref := e.m.Start(ctx, workerReq("ln-1"))
+	if ref != nil || st.State != agentproto.StateStarting {
+		t.Fatalf("%v %+v", ref, st)
+	}
+	if e.m.CurrentID() == nil {
+		t.Fatal("the launch has no record")
+	}
+}
+
+// A failed start stops the unit name, so a unit that started anyway does not
+// keep the port with no lease or watchdog.
+func TestStartFailureStopsUnit(t *testing.T) {
+	e := newEnv(t, true)
+	e.run()
+	e.runner.startErr = errors.New("systemd-run: timed out")
+	st, ref := e.m.Start(context.Background(), workerReq("ln-1"))
+	if ref != nil || st.State != agentproto.StateExited || st.Exit.Reason != agentproto.ExitStartFailed {
+		t.Fatalf("%v %+v", ref, st)
+	}
+	e.runner.mu.Lock()
+	defer e.runner.mu.Unlock()
+	if len(e.runner.stopped) != 1 || e.runner.stopped[0] != "potluck-launch-ln-1" {
+		t.Fatalf("stopped %v", e.runner.stopped)
+	}
+}
+
+func TestLaunchUnitHardening(t *testing.T) {
+	e := newEnv(t, true)
+	e.cfg.LibraryPath = "/opt/llama/lib"
+	e.m = e.newManager()
+	e.run()
+	e.startReady("ln-1")
+	sp := e.runner.lastSpec()
+	if sp.OOMScoreAdjust != 900 {
+		t.Fatalf("OOM score adjust %d", sp.OOMScoreAdjust)
+	}
+	if !strings.Contains(strings.Join(sp.Env, " "), "LD_LIBRARY_PATH=/opt/llama/lib") {
+		t.Fatalf("env %v", sp.Env)
+	}
+}
+
+func TestInUnitCgroup(t *testing.T) {
+	for cg, want := range map[string]bool{
+		"0::/system.slice/potluck-launch-ln-1.service":                   true,
+		"1:name=systemd:/system.slice/potluck-launch-ln-1.service\n0::/": true,
+		"0::/system.slice/potluck-launch-ln-1.service/sub":               true,
+		"0::/system.slice/potluck-launch-ln-10.service":                  false,
+		"0::/system.slice/xpotluck-launch-ln-1.service":                  false,
+		"": false,
+	} {
+		if got := InUnitCgroup(cg, "potluck-launch-ln-1"); got != want {
+			t.Errorf("%q: %v", cg, got)
+		}
+	}
+}
+
+// verifyingProcs is a process table in which a pid can have gone to another
+// process since the list was read.
+type verifyingProcs struct {
+	*fakeProcs
+	now map[int]string // pid -> its cgroup at the moment of the signal
+}
+
+func (v verifyingProcs) SignalVerified(pid int, s osx.Sig, check func(string) bool) (bool, error) {
+	if !check(v.now[pid]) {
+		return false, nil
+	}
+	return true, v.fakeProcs.Signal(pid, s)
+}
+
+// The direct kill reads a process's cgroup again right before the signal: a
+// pid that was reused by a process outside the launch unit gets nothing.
+func TestDirectKillRechecksCgroup(t *testing.T) {
+	e := newEnv(t, true)
+	unit := "0::/system.slice/potluck-launch-ln-1.service"
+	e.procs.set([]osx.ProcInfo{{PID: 700, Cgroup: unit}, {PID: 703, Cgroup: unit}})
+	m := New(e.cfg, Deps{Clock: e.clock, Runner: e.runner, Procs: verifyingProcs{e.procs, map[int]string{
+		700: "0::/system.slice/ssh.service", // pid 700 ended and was given to sshd
+		703: unit,
+	}}})
+	if n := m.killUnitProcs("potluck-launch-ln-1"); n != 1 {
+		t.Fatalf("%d processes counted as signalled", n)
+	}
+	if k := e.procs.kills(); len(k) != 1 || k[0] != 703 {
+		t.Fatalf("signalled %v, want only 703", k)
+	}
+}
+
+// The stop of the unit can block for many seconds (systemctl stop waits for
+// the unit). It runs outside the manager's lock: meanwhile GET /launch
+// answers, the loop goes on reading memory, a lease call is answered, and no
+// second kill attempt is started beside it.
+func TestHangingStopStepBlocksNothing(t *testing.T) {
+	e := newEnv(t, true)
+	e.runner.stopHang = make(chan struct{})
+	e.runner.stopKills = true
+	e.run()
+	e.startReady("ln-1")
+	p := e.runner.proc("potluck-launch-ln-1")
+	p.mu.Lock()
+	p.killDeaf = 1 << 30
+	p.mu.Unlock()
+	e.m.Stop("ln-1", true) // attempt 1: SIGKILL, no effect
+	agenttest.Eventually(t, 5*time.Second, "KILL", func() bool { return len(p.signals()) == 1 })
+	e.clock.Advance(time.Second) // attempt 2: the stop of the unit, which hangs
+	agenttest.Eventually(t, 5*time.Second, "stop of the unit", func() bool { return len(e.runner.stops()) == 1 })
+
+	answered := make(chan agentproto.LaunchState, 1)
+	go func() { answered <- e.m.State() }()
+	select {
+	case st := <-answered:
+		if st.State != agentproto.StateStopping {
+			t.Fatal(st.State)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("GET /launch does not answer while the stop of the unit hangs")
+	}
+	e.mem.set(4321)
+	agenttest.Eventually(t, 2*time.Second, "the loop still reads memory", func() bool { return e.m.State().MemAvailableMiB == 4321 })
+	if !e.m.Renew("ln-1") || e.m.CurrentID() == nil || !e.m.Busy() {
+		t.Fatal("lease and state calls")
+	}
+	e.clock.Advance(time.Minute)
+	e.settle(10)
+	if len(p.signals()) != 1 || len(e.runner.stops()) != 1 {
+		t.Fatalf("a second attempt ran beside the hanging one: %d signals, %d stops", len(p.signals()), len(e.runner.stops()))
+	}
+	close(e.runner.stopHang)
+	e.portClosed()
+	if st := e.waitState(agentproto.StateExited); st.Exit.Reason != agentproto.ExitForced {
+		t.Fatal(st.Exit.Reason)
+	}
+}

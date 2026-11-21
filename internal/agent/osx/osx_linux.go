@@ -50,6 +50,33 @@ func signalPID(pid int, sig Sig) error {
 	return syscall.Kill(pid, syscall.Signal(sig))
 }
 
+// Syscall numbers of the unified table (the same on amd64 and arm64).
+const (
+	sysPidfdSendSignal = 424
+	sysPidfdOpen       = 434
+)
+
+// pinPID returns a function that signals exactly the process that pid names
+// now. It holds a pidfd where the kernel has one (Linux 5.3); otherwise the
+// function is a plain kill(2). An error means the process does not exist.
+func pinPID(pid int) (send func(Sig) error, done func(), err error) {
+	fd, _, e := syscall.Syscall(sysPidfdOpen, uintptr(pid), 0, 0)
+	switch e {
+	case 0:
+		send = func(sig Sig) error {
+			if _, _, e := syscall.Syscall6(sysPidfdSendSignal, fd, uintptr(sig), 0, 0, 0, 0); e != 0 {
+				return e
+			}
+			return nil
+		}
+		return send, func() { syscall.Close(int(fd)) }, nil
+	case syscall.ESRCH:
+		return nil, nil, e
+	}
+	// ENOSYS and the like: no pidfd on this kernel.
+	return func(sig Sig) error { return signalPID(pid, sig) }, func() {}, nil
+}
+
 // StatfsFree returns the bytes available to unprivileged users on the
 // filesystem holding path.
 func StatfsFree(path string) (uint64, error) {

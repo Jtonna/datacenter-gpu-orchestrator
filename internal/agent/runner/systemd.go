@@ -80,6 +80,9 @@ func (s *Systemd) StartArgs(sp Spec) []string {
 		"-p", "SendSIGKILL=yes",
 		"-p", "TimeoutStopSec=15s",
 	}
+	if sp.OOMScoreAdjust != 0 {
+		args = append(args, "-p", "OOMScoreAdjust="+strconv.Itoa(sp.OOMScoreAdjust))
+	}
 	for _, e := range sp.Env {
 		args = append(args, "--setenv="+e)
 	}

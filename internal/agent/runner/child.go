@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -81,6 +82,10 @@ func (c *Child) Start(ctx context.Context, s Spec) (Proc, error) {
 	}
 	if logf != nil {
 		logf.Close() // the child holds its own copy of the descriptor
+	}
+	if s.OOMScoreAdjust != 0 {
+		// Best effort; the file exists on Linux only.
+		_ = os.WriteFile(fmt.Sprintf("/proc/%d/oom_score_adj", cmd.Process.Pid), []byte(strconv.Itoa(s.OOMScoreAdjust)), 0o644)
 	}
 	p := &childProc{unit: s.Unit, cmd: cmd, done: make(chan struct{})}
 	go func() {

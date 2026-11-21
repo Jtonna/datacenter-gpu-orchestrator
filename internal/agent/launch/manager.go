@@ -56,6 +56,9 @@ type Config struct {
 	ModelDir    string // the node's model folder; "" for push
 	PushOnly    bool   // model source is push
 	CUDA        bool   // start launches with CUDA_DEVICE_ORDER=PCI_BUS_ID
+	// LibraryPath is the LD_LIBRARY_PATH the agent's library check used; a
+	// launch gets the same value ("" sets nothing).
+	LibraryPath string
 
 	WatchdogFloorMiB int64
 
@@ -64,6 +67,9 @@ type Config struct {
 
 	Tick               time.Duration // loop period; default 100ms (watchdog needs >= 4 Hz)
 	StopWait           time.Duration // TERM to KILL; default 10s
+	KillRetry          time.Duration // next kill attempt after one that was delivered; default 1s
+	KillRetryFail      time.Duration // next kill attempt after one that failed; default 250ms
+	StartTimeout       time.Duration // starting the unit; default 30s
 	PortRetry          time.Duration // port_in_use retry; default 3s
 	WorkerProbeTimeout time.Duration // default 5s
 	PortCloseWait      time.Duration // after exit, wait at most this for the port to close; default 10s
@@ -131,7 +137,10 @@ type launchRun struct {
 	scanOff    int64
 	partial    []byte
 	log        *LogFile
-	killSent   bool
+	kill       bool          // SIGKILL is wanted until the process is gone
+	killBusy   bool          // a kill attempt is running
+	killNext   time.Duration // earliest time of the next attempt
+	killTries  int
 	everReady  bool
 	clientNow  bool
 	clientSeen bool
@@ -169,6 +178,15 @@ func New(cfg Config, deps Deps) *Manager {
 	}
 	if cfg.StopWait == 0 {
 		cfg.StopWait = 10 * time.Second
+	}
+	if cfg.KillRetry == 0 {
+		cfg.KillRetry = time.Second
+	}
+	if cfg.KillRetryFail == 0 {
+		cfg.KillRetryFail = 250 * time.Millisecond
+	}
+	if cfg.StartTimeout == 0 {
+		cfg.StartTimeout = 30 * time.Second
 	}
 	if cfg.PortRetry == 0 {
 		cfg.PortRetry = 3 * time.Second
@@ -229,6 +247,10 @@ var (
 // sets "required" when strict_file_load is true, else "1". There is no
 // llama-server flag for it.
 const (
+	// LaunchOOMScoreAdjust makes the kernel's OOM killer pick the launch
+	// before the agent or sshd.
+	LaunchOOMScoreAdjust = 900
+
 	EnvRPCFileLoad          = "LLAMA_RPC_FILE_LOAD"
 	RPCFileLoadRequired     = "required"
 	RPCFileLoadWhereOffered = "1"
@@ -448,6 +470,9 @@ func (m *Manager) Start(ctx context.Context, req agentproto.LaunchRequest) (agen
 	if m.cuda() {
 		env = append(env, "CUDA_DEVICE_ORDER=PCI_BUS_ID")
 	}
+	if m.cfg.LibraryPath != "" {
+		env = append(env, "LD_LIBRARY_PATH="+m.cfg.LibraryPath)
+	}
 	if req.Host != nil {
 		mode := RPCFileLoadWhereOffered
 		if req.Host.StrictFileLoad {
@@ -498,8 +523,20 @@ func (m *Manager) Start(ctx context.Context, req agentproto.LaunchRequest) (agen
 	}
 	m.persist(run)
 
-	proc, err := m.deps.Runner.Start(ctx, runner.Spec{Unit: rec.Unit, Path: path, Args: args, Env: env,
-		LogPath: rec.LogPath, ExitPath: rec.ExitPath})
+	// The start does not end with the HTTP request: a request cancelled while
+	// systemd-run runs would leave a unit with no record, lease or watchdog.
+	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), m.cfg.StartTimeout)
+	proc, err := m.deps.Runner.Start(sctx, runner.Spec{Unit: rec.Unit, Path: path, Args: args, Env: env,
+		LogPath: rec.LogPath, ExitPath: rec.ExitPath, OOMScoreAdjust: LaunchOOMScoreAdjust})
+	cancel()
+	if err != nil {
+		// The unit may have started all the same; it must not keep the port.
+		stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), m.cfg.StartTimeout)
+		if serr := m.deps.Runner.Stop(stopCtx, rec.Unit); serr != nil {
+			m.log.Warn("stop after a failed start", "launch_id", rec.LaunchID, "err", serr)
+		}
+		cancel()
+	}
 	m.mu.Lock()
 	m.cur = run
 	if err != nil {
@@ -719,20 +756,146 @@ func (m *Manager) stopLocked(r *launchRun, cause, msg string, force bool) {
 	if r.state != agentproto.StateStopping {
 		r.state, r.stateSince = agentproto.StateStopping, now
 	}
-	sig := osx.SigTerm
 	if force {
 		r.rec.Force = true
-		sig = osx.SigKill
-		r.killSent = true
+		r.kill = true
 	}
 	m.persist(r)
+	if r.kill {
+		m.killLocked(r, now)
+		return
+	}
 	if p := r.proc; p != nil {
+		id := r.rec.LaunchID
 		go func() {
-			if err := p.Signal(sig); err != nil {
-				m.log.Warn("signal", "launch_id", r.rec.LaunchID, "sig", sig.String(), "err", err)
+			// A TERM that fails is covered by the kill after StopWait.
+			if err := p.Signal(osx.SigTerm); err != nil {
+				m.log.Error("stop: SIGTERM failed", "launch_id", id, "err", err)
+				return
 			}
+			m.log.Info("stop: SIGTERM sent", "launch_id", id)
 		}()
 	}
+}
+
+func procGone(p runner.Proc) bool {
+	if p == nil {
+		return true
+	}
+	select {
+	case <-p.Done():
+		return true
+	default:
+		return false
+	}
+}
+
+// killLocked starts one kill attempt unless one is running. The tick calls
+// it again until the process is gone; it never gives up. The attempts
+// escalate: 1 SIGKILL through the runner (systemctl kill), 2 a stop of the
+// unit (systemctl stop), 3 SIGKILL sent directly to the processes of the
+// unit's own cgroup, and from 4 on both SIGKILLs together, for ever. (An
+// ordinary stop or a lease expiry has sent SIGTERM and waited StopWait
+// before attempt 1; a forced stop and the watchdog start with attempt 1.)
+// The next attempt comes KillRetry after one that was delivered and
+// KillRetryFail after one that failed, so there are never more than about
+// four a second. Every attempt writes one log line: number, method, error.
+func (m *Manager) killLocked(r *launchRun, now time.Duration) {
+	p := r.proc
+	if p == nil || r.killBusy {
+		return
+	}
+	r.killBusy, r.killNext = true, now+m.cfg.KillRetry
+	r.killTries++
+	n, id, unit := r.killTries, r.rec.LaunchID, r.rec.Unit
+	go func() {
+		how, err := m.killStep(n, p, unit)
+		if err != nil {
+			m.log.Error("kill attempt failed", "launch_id", id, "attempt", n, "how", how, "err", err)
+		} else {
+			m.log.Warn("kill attempt", "launch_id", id, "attempt", n, "how", how)
+		}
+		m.mu.Lock()
+		r.killBusy = false
+		if err != nil {
+			r.killNext = now + m.cfg.KillRetryFail
+		}
+		m.mu.Unlock()
+	}()
+}
+
+// killStep runs attempt n of the kill escalation.
+func (m *Manager) killStep(n int, p runner.Proc, unit string) (string, error) {
+	direct := func() (string, error) {
+		k := m.killUnitProcs(unit)
+		if k == 0 {
+			return "SIGKILL to the unit's processes", errors.New("no process found in the unit's cgroup")
+		}
+		return fmt.Sprintf("SIGKILL to the unit's %d processes", k), nil
+	}
+	switch n {
+	case 1:
+		return "SIGKILL", p.Signal(osx.SigKill)
+	case 2:
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		return "stop of the unit", m.deps.Runner.Stop(ctx, unit)
+	case 3:
+		return direct()
+	}
+	// From here on both, each time; one of them delivered is a delivery.
+	err := p.Signal(osx.SigKill)
+	how, derr := direct()
+	if err != nil && derr != nil {
+		return "SIGKILL and " + how, fmt.Errorf("%v; %v", err, derr)
+	}
+	return "SIGKILL and " + how, nil
+}
+
+// InUnitCgroup reports whether a /proc/<pid>/cgroup text places the process
+// in the systemd unit (a path segment "<unit>.service").
+func InUnitCgroup(cgroup, unit string) bool {
+	for _, line := range strings.Split(cgroup, "\n") {
+		f := strings.SplitN(strings.TrimSpace(line), ":", 3)
+		for _, seg := range strings.Split(f[len(f)-1], "/") {
+			if seg == unit+".service" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// killUnitProcs sends SIGKILL to every process whose cgroup is the launch
+// unit, and to no other. It returns how many were signalled.
+func (m *Manager) killUnitProcs(unit string) int {
+	if m.deps.Procs == nil || !strings.HasPrefix(unit, agentproto.LaunchUnitPrefix) {
+		return 0
+	}
+	procs, err := m.deps.Procs.List()
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, p := range procs {
+		if p.PID <= 1 || p.PID == m.deps.Procs.Self() || !InUnitCgroup(p.Cgroup, unit) {
+			continue
+		}
+		// The pid may have ended and been given to another process since
+		// the list was read: where the OS allows it the process is pinned
+		// and its cgroup read again right before the signal.
+		if v, ok := m.deps.Procs.(osx.VerifiedSignaller); ok {
+			sent, err := v.SignalVerified(p.PID, osx.SigKill, func(cg string) bool { return InUnitCgroup(cg, unit) })
+			if sent && err == nil {
+				n++
+			}
+			continue
+		}
+		if m.deps.Procs.Signal(p.PID, osx.SigKill) == nil {
+			n++
+		}
+	}
+	return n
 }
 
 // Reset kills every launch unit or child and every process run from the
@@ -854,11 +1017,13 @@ func (m *Manager) tick(ctx context.Context) {
 		m.stopLocked(r, agentproto.ExitLeaseExpired, "", false)
 	}
 	// TERM, wait, KILL.
-	if r.state == agentproto.StateStopping && !r.killSent && r.rec.StopReqAt != 0 && now-time.Duration(r.rec.StopReqAt) >= m.cfg.StopWait {
-		r.killSent = true
-		if p := r.proc; p != nil {
-			go p.Signal(osx.SigKill)
-		}
+	if r.state == agentproto.StateStopping && !r.kill && r.rec.StopReqAt != 0 && now-time.Duration(r.rec.StopReqAt) >= m.cfg.StopWait {
+		r.kill = true
+	}
+	// A kill is repeated, escalating, until the process is gone: one attempt
+	// can fail, and a kill recorded by an earlier agent process is not trusted.
+	if r.kill && now >= r.killNext && !procGone(r.proc) {
+		m.killLocked(r, now)
 	}
 	state, role, port, proc := r.state, r.rec.Role, r.rec.Port, r.proc
 	started := r.scan.started
@@ -1123,7 +1288,9 @@ func (m *Manager) Recover(ctx context.Context) error {
 	switch {
 	case rec.StopReqAt != 0:
 		run.state, run.stateSince = agentproto.StateStopping, now
-		run.killSent = rec.Force
+		// Whatever the earlier agent process sent, the process still exists:
+		// the tick kills it again.
+		run.kill = rec.Force
 	case rec.ReadyAt != 0:
 		run.state, run.stateSince, run.everReady = agentproto.StateReady, time.Duration(rec.ReadyAt), true
 	default:

@@ -18,6 +18,10 @@ import (
 // "not_current".
 const ReasonNotCurrent = "not_current"
 
+// ReasonStarting answers 503 while the agent has not yet re-adopted a launch
+// left by an earlier agent process: the launch state is not known yet.
+const ReasonStarting = "agent_starting"
+
 // ReasonForbidden answers a request from an address that is not allowed.
 const ReasonForbidden = "forbidden"
 
@@ -82,6 +86,12 @@ func (a *Agent) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !a.Allowed(r.RemoteAddr) {
 			writeJSON(w, 403, refusalBody(ReasonForbidden, "source address not allowed"))
+			return
+		}
+		// POST /reset needs no launch state and stays open.
+		if r.URL.Path != "/reset" && !a.launchRecovered() {
+			w.Header().Set("Retry-After", "1")
+			writeJSON(w, http.StatusServiceUnavailable, refusalBody(ReasonStarting, "the agent is starting; the launch state is not read yet"))
 			return
 		}
 		mux.ServeHTTP(w, r)

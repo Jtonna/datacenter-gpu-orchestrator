@@ -3,6 +3,7 @@ package osx
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -99,5 +100,28 @@ func TestFakeClock(t *testing.T) {
 	c.Advance(10)
 	if c.Now() != 15 {
 		t.Fatal(c.Now())
+	}
+}
+
+func TestSignalVerifiedChecksTheCgroupFirst(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "5000000"), 0o755)
+	os.WriteFile(filepath.Join(root, "5000000", "cgroup"), []byte("0::/system.slice/ssh.service\n"), 0o644)
+	p := ProcFS{Root: root}
+	var seen string
+	// Pid 5000000 does not exist (it is above the kernel's pid limit), so on
+	// Linux the process counts as gone; elsewhere the cgroup is refused.
+	sent, err := p.SignalVerified(5000000, SigKill, func(cg string) bool { seen = cg; return false })
+	if sent || err != nil {
+		t.Fatalf("sent %v, err %v", sent, err)
+	}
+	if runtime.GOOS != "linux" && seen != "0::/system.slice/ssh.service" {
+		t.Fatalf("cgroup read %q", seen)
+	}
+	if sent, _ := p.SignalVerified(5000001, SigKill, func(string) bool { return true }); sent {
+		t.Fatal("a process with no cgroup file was signalled")
+	}
+	if sent, _ := p.SignalVerified(1, SigKill, func(string) bool { return true }); sent {
+		t.Fatal("pid 1 was signalled")
 	}
 }

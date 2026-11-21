@@ -28,6 +28,9 @@ type Spec struct {
 	// exits (systemd: written by ExecStopPost so it survives an agent
 	// restart; child: written by the runner).
 	ExitPath string
+	// OOMScoreAdjust, when not 0, is the process's OOM score adjustment
+	// (systemd: OOMScoreAdjust=; child: /proc/<pid>/oom_score_adj).
+	OOMScoreAdjust int
 }
 
 // Exit is how a process ended.

@@ -72,6 +72,27 @@ func parseStatPPID(stat string) int {
 // Signal implements Procs.
 func (ProcFS) Signal(pid int, sig Sig) error { return signalPID(pid, sig) }
 
+// SignalVerified implements VerifiedSignaller. On Linux 5.3 and later the
+// process is pinned with a pidfd before its cgroup is read, so the signal
+// can only reach the process whose cgroup was checked (a pid that was reused
+// in between gets nothing: the pidfd still names the ended process). On an
+// older kernel the cgroup is read again right before a plain kill(2).
+func (p ProcFS) SignalVerified(pid int, sig Sig, check func(cgroup string) bool) (bool, error) {
+	if pid <= 1 {
+		return false, nil
+	}
+	send, done, err := pinPID(pid)
+	if err != nil {
+		return false, nil // the process is gone
+	}
+	defer done()
+	b, err := os.ReadFile(filepath.Join(p.root(), strconv.Itoa(pid), "cgroup"))
+	if err != nil || !check(strings.TrimSpace(string(b))) {
+		return false, nil
+	}
+	return true, send(sig)
+}
+
 // ExeBase returns the base name of an exe path, without a " (deleted)" suffix.
 func ExeBase(exe string) string {
 	exe = strings.TrimSuffix(exe, " (deleted)")
