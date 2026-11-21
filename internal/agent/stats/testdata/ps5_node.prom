@@ -22,6 +22,7 @@ node_hwmon_temp_celsius{chip="pci0000:00_0000:00:18_3",sensor="temp1"} 50.5
 node_hwmon_temp_celsius{chip="0000:00:08_1_0000:20:00_0",sensor="temp1"} 47
 node_memory_MemTotal_bytes 1.6e+10
 node_memory_MemAvailable_bytes 1.2e+10
+node_memory_Cached_bytes 5.5e+09
 node_load1 0.12
 node_network_up{device="lo"} 0
 node_network_receive_bytes_total{device="enp64s0f2"} 1.0e+06
