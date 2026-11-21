@@ -186,8 +186,21 @@ defaults:
 		select {
 		case <-c.done:
 		default:
-			killTree(c.cmd)
-			<-c.done
+			// Ask for a clean shutdown first: it stops the children, which run
+			// in process groups of their own and would outlive a kill of the
+			// scheduler and keep files in the test's temp dir busy.
+			if runtime.GOOS != "windows" && interrupt(c.cmd) == nil {
+				select {
+				case <-c.done:
+				case <-time.After(10 * time.Second):
+				}
+			}
+			select {
+			case <-c.done:
+			default:
+				killTree(c.cmd)
+				<-c.done
+			}
 		}
 		if t.Failed() {
 			t.Logf("llm-scheduler stderr:\n%s", c.stderr.String())
