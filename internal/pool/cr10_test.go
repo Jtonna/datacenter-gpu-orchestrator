@@ -218,11 +218,16 @@ func TestServerTimeOnlyWithLogging(t *testing.T) {
 	}
 	rev := int64(7)
 	r.p.o.Logs = testLogs(&rev)
-	want := r.p.o.Clock().UnixMilli()
+	// The rig's clock is the real one, so the answers may fall in a later
+	// millisecond than the reading taken before them.
+	before := r.p.o.Clock().UnixMilli()
 	ans := r.p.Register(regReq(id))
 	hb := r.p.Heartbeat(id, hbBody("s1", "", true, "true"))
-	if ans.ServerTimeUnixMs != want || hb.Answer.ServerTimeUnixMs != want {
-		t.Fatalf("server time: registration %d heartbeat %d, want %d", ans.ServerTimeUnixMs, hb.Answer.ServerTimeUnixMs, want)
+	after := r.p.o.Clock().UnixMilli()
+	for _, got := range []int64{ans.ServerTimeUnixMs, hb.Answer.ServerTimeUnixMs} {
+		if got < before || got > after {
+			t.Fatalf("server time: registration %d heartbeat %d, want within %d..%d", ans.ServerTimeUnixMs, hb.Answer.ServerTimeUnixMs, before, after)
+		}
 	}
 	b, _ := json.Marshal(hb.Answer)
 	if !strings.Contains(string(b), `"server_time_unix_ms":`) {
