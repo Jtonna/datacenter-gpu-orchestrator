@@ -9,6 +9,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/logrelay"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/pool"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/selflog"
 )
 
 // envLogsStoreURL is the address at which Potluck reaches the log store
@@ -44,4 +45,28 @@ func newLogRelay(conf func() *config.Config, getPool func() *pool.Pool, log *slo
 		log.Info("central logging is off: no log store address", "env", envLogsStoreURL)
 	}
 	return r
+}
+
+// newSelfLog builds Potluck's own log shipper (CR-10, design 4.5): its lines
+// (source scheduler) and its children's output (source host) go straight to
+// the store's intake while the relay has a store and logs_enabled is on.
+// relay and conf may return nil until they exist.
+func newSelfLog(relay func() *logrelay.Relay, conf func() *config.Config) *selflog.Shipper {
+	return selflog.New(selflog.Options{
+		On: func() bool { r := relay(); return r != nil && r.StoreOn() },
+		InsertURL: func(f []logrelay.Field) string {
+			if r := relay(); r != nil {
+				return r.InsertURL(f)
+			}
+			return ""
+		},
+		Node: func() (string, string) {
+			// The local node, as the pool and the fleet client name it.
+			if c := conf(); c != nil && c.Fleet.LocalNode != "" {
+				return c.Fleet.LocalNode, c.Fleet.LocalNode
+			}
+			return "local", "local"
+		},
+		Release: potluckRelease,
+	})
 }

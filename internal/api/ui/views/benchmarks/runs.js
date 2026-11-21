@@ -6,6 +6,17 @@ import { href, navigate } from '../../core/router.js';
 import { badge, table, chips, empty, skeleton, stat, banner } from '../../core/ui.js';
 import { num, mib, bytes, dur, ago, at, dateTime, plural, DASH } from '../../core/format.js';
 import { cache, runBadge, passBadge, outcomeBadge, phaseTitle, changeMark, withUnit, fmtMetric, metricDef, errorBanner, reasonNode } from './common.js';
+import { state } from '../../core/store.js';
+import { logsLink, padded } from '../../core/logs.js';
+
+// runLogs(run) -> a link to every log line written while the run ran (all
+// sources and nodes: a benchmark touches the whole fleet), a minute either
+// side; null before it started or while central logging is off.
+function runLogs(run) {
+  if (!run.started_at) return null;
+  const [from, to] = padded(run.started_at, run.finished_at || null);
+  return logsLink(state.status, 'Logs', '*', from, to, 'Open the log lines written while this run ran, in a new tab');
+}
 
 // ---------- the list ----------
 
@@ -238,7 +249,7 @@ export function runDetail(run, error) {
     run.error ? errorBanner(reasonNode(run.error)) : null,
     h('section.card', { key: 'head' },
       h('div.ch', h('h2.mono', id), runBadge(run.state), run.trigger === 'schedule' ? badge('Scheduled', 'n') : null,
-        h('span.right.row', { style: 'gap:8px' }, exportLink(id, 'Markdown', { format: 'md' }), exportLink(id, 'CSV', { format: 'csv' }), exportLink(id, 'JSON', { format: 'json' }),
+        h('span.right.row', { style: 'gap:8px' }, runLogs(run), exportLink(id, 'Markdown', { format: 'md' }), exportLink(id, 'CSV', { format: 'csv' }), exportLink(id, 'JSON', { format: 'json' }),
           h('details', { style: 'position:relative' }, h('summary.btn.sm', { style: 'list-style:none' }, 'More exports'),
             h('div', { style: 'position:absolute;right:0;top:36px;z-index:5;background:var(--card);border:1px solid var(--line-2);border-radius:10px;padding:8px;display:flex;flex-direction:column;gap:6px;min-width:200px' },
               exportLink(id, 'CSV, one row per phase', { format: 'csv', detail: 'phases' }), exportLink(id, 'CSV, one row per turn', { format: 'csv', detail: 'turns' }))))),

@@ -16,6 +16,8 @@ import (
 //	POST /api/pool/nodes/{id}/logs     a node's log lines (?source=agent|launch|journal[&launch_id=...])
 //	GET  /api/logs/config              the clients' logs object
 //	POST /api/logs                     a client's log lines
+//	GET  /api/logs/query               a read-only LogsQL query, passed to the store
+//	     /logs/...                     the store's own pages and query API, read only
 //
 // The work is in internal/logrelay. These handlers take no lock of the pool
 // or of the scheduler: the relay reads the pool's published snapshot and the
@@ -49,6 +51,18 @@ func (s *Server) logRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST "+agentproto.PathClientLogs, func(w http.ResponseWriter, r *http.Request) {
 		if !off(w, r) {
 			s.opts.Logs.ServeClient(w, r)
+		}
+	})
+	// The read side (design section 7): the store's own search page and
+	// query API under /logs/ (read only), and one query passed through.
+	m.HandleFunc("GET "+agentproto.PathLogsQuery, func(w http.ResponseWriter, r *http.Request) {
+		if !off(w, r) {
+			s.opts.Logs.ServeQuery(w, r)
+		}
+	})
+	m.HandleFunc(agentproto.PathLogsPages, func(w http.ResponseWriter, r *http.Request) {
+		if !off(w, r) {
+			s.opts.Logs.ServePages(w, r)
 		}
 	})
 }

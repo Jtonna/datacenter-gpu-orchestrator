@@ -18,10 +18,11 @@ package agentproto
 
 // Release is the release this code is: Potluck serves it and requires it of
 // agents, and the agent reports it (agent contract 5.1). The two commands
-// take it as the default of their -ldflags -X variables. 0.1.1 is the first
-// release with CR-9 and CR-10 batch 1; a release 0.1.0 agent is refused with
-// agent_too_old and updates as section 5.4 says.
-const Release = "0.1.1"
+// take it as the default of their -ldflags -X variables. 0.1.1 was the first
+// release with CR-9 and CR-10 batch 1; 0.1.2 adds the rest of CR-10 (the
+// agent's log shipper, Potluck's own lines, the read side). An agent of an
+// older release is refused with agent_too_old and updates as section 5.4 says.
+const Release = "0.1.2"
 
 // Ports, all fixed (agent contract section 3).
 const (
@@ -178,6 +179,11 @@ const (
 	PathNodeLogsFmt      = "/api/pool/nodes/%s/logs" // fmt with id: GET the logs object, POST lines
 	PathClientLogs       = "/api/logs"               // POST lines (clients)
 	PathClientLogsConfig = "/api/logs/config"        // GET the clients' logs object
+	PathLogsQuery        = "/api/logs/query"         // GET: a read-only LogsQL query (readers, scripts, MCP)
+	// PathLogsPages is where Potluck serves the store's own pages and query
+	// API, read only. The store runs with -http.pathPrefix=/logs, so paths
+	// pass through unchanged; its search page is PathLogsPages+"select/vmui/".
+	PathLogsPages = "/logs/"
 	// HeaderAgentStartID carries agent_start_id on the node log routes, whose
 	// body is not a JSON object (CR-10).
 	HeaderAgentStartID = "X-Agent-Start-Id"

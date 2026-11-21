@@ -249,6 +249,10 @@ func allTools() []*tool {
 			nil, "GET", "/api/history", "since", "until", "type", "severity", "node", "profile", "session_id", "q", "limit", "order"),
 		rd("get_history_summary", "Aggregate the event history over a time range: counts by type and severity, load statistics per profile, per-node incidents and every error event.", P{
 			"since": i("Range start, unix milliseconds."), "until": i("Range end, unix milliseconds.")}, nil, "GET", "/api/history/summary", "since", "until"),
+		rd("query_logs", "Search the central log store (CR-10) with a LogsQL query: Potluck's own log (source:=scheduler), the output of the programs it starts (source:=host), each agent's log, launch output and machine journal (source:=agent, launch, journal). Fields: node_id, node_name, source, profile, launch_id, level, unit, _msg, _time. Examples: node_id:=\"02:00:00:00:00:01\" level:=error; profile:=\"gemma-4-12b\" _time:1h. Answers JSON lines, newest last; answers 404 when central logging is off.", P{
+			"query": s("A LogsQL query. Add a _time filter (for example _time:15m) to keep it fast."), "limit": i("Maximum lines (100 when left out here; the REST route allows at most 10000)."),
+			"start": s("Start: RFC 3339, Unix seconds, or a span back from now such as 1h."), "end": s("End, same forms as start.")},
+			[]string{"query"}, "GET", "/api/logs/query", "query", "limit", "start", "end"),
 		rd("get_system_info", "Scheduler version, uptime, listen address, safety settings, benchmark settings and storage locations with sizes.", nil, nil, "GET", "/api/system"),
 		rd("get_config", "The full current configuration (profiles, tiers, settings, exclude_nodes, no_auto_nodes, node_overrides, recovery, fleet) with its revision number.", nil, nil, "GET", "/api/config"),
 		rd("get_config_schema", "The schema of the settings: {\"fields\":[...]} with each key, type, default, limits and whether a change needs a restart. Read it before update_settings.", nil, nil, "GET", "/api/config/schema"),
@@ -346,6 +350,13 @@ func allTools() []*tool {
 		if !t.ReadOnly {
 			t.write = true
 			t.configWrite = strings.HasPrefix(t.Path, "/api/config")
+		}
+		if t.Name == "query_logs" {
+			t.Pre = func(a map[string]any) {
+				if _, ok := a["limit"]; !ok {
+					a["limit"] = 100 // an answer is held in memory whole; keep it small unless asked
+				}
+			}
 		}
 		if t.Name == "export_run" {
 			t.Pre = func(a map[string]any) {

@@ -18,6 +18,16 @@ import { liveView, pageHead, legend, table, chips, empty, skeleton } from '../co
 import { num, gb, dur, ago, plural, agoText, dateTime, DASH } from '../core/format.js';
 import { staleBanner, machines, shortReason } from '../core/status.js';
 import { catalog, onCatalog, needCatalog } from '../core/catalog.js';
+import { logsLink, profileQuery, padded } from '../core/logs.js';
+
+// loadLogs(st, load) -> a link to the log lines of a load (recent_loads: its
+// model is the profile name), over the time it took plus a minute either
+// side; null while central logging is off.
+function loadLogs(st, l) {
+  if (!l.finished_at) return null;
+  const [from, to] = padded(l.finished_at - (l.load_s || 0) * 1000, l.finished_at);
+  return logsLink(st, 'Logs', profileQuery(l.model), from, to, 'Open the log lines of this load in a new tab');
+}
 import { avatar } from '../core/avatar.js';
 import { loadSpark, tipText } from '../core/charts.js';
 import { instanceCard, sizeLine, stateBadge, fitOf, cannotRun, runsOnCell } from './models/common.js';
@@ -139,7 +149,8 @@ function mountHome(el) {
       failed.map(l => h('div.banner.err', { key: 'fail-' + l.session_id, role: 'status' },
         h('span.grow', h('span.mono', l.model), l.outcome === 'cancelled' ? ' stopped loading ' : ' failed to load ', ago(l.finished_at),
           l.load_s ? ` after ${dur(l.load_s)}.` : '.'),
-        h('a', { href: href('activity', null, { session: l.session_id }) }, 'See what happened'))),
+        h('a', { href: href('activity', null, { session: l.session_id }) }, 'See what happened'),
+        loadLogs(st, l))),
       !st ? h('section.card', { key: 'none' }, h('div.strip', skeleton(1)))
         : insts.length ? insts.map(inst => instanceCard(st, inst, catalog.byProfile[inst.profile] || catalog.byKey[inst.model_file] || null, open, toggle))
           : view_.configured === false ? null : h('section.card', { key: 'none' }, h('div.strip', h('b', 'Nothing is loaded right now.'),

@@ -18,6 +18,9 @@ const (
 	FieldProfile    = "profile"
 	FieldActor      = "actor"
 	FieldClientAddr = "client_addr"
+	// FieldInstanceID is set on Potluck's own host output (source host): the
+	// instance of the program that wrote the line. Not a trusted field.
+	FieldInstanceID = "instance_id"
 )
 
 // trustedFields is every trusted field name, in a fixed order.

@@ -42,13 +42,14 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/gguf"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/logrelay"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/mcpserver"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/pool"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
-var version = "0.1.1"
+var version = "0.1.2"
 
 // potluckRelease is the program release Potluck serves to agents and
 // requires of them (agent contract 5.1), separate from version. Set it at
@@ -155,6 +156,14 @@ func exitCodeAfterShutdown(code int, shutdownErr error, log *slog.Logger) int {
 }
 
 func serve(boot config.Bootstrap, log *slog.Logger) int {
+	// CR-10: Potluck's own lines also go to the log store (source scheduler),
+	// through a RAM ring and one background sender; the printed log stays as
+	// it is. The lines from here on are kept until the sender starts and
+	// learns whether logging is on (selfLog, logs.go).
+	var relayAt atomic.Pointer[logrelay.Relay]
+	var cfgAt atomic.Pointer[config.Config]
+	self := newSelfLog(relayAt.Load, cfgAt.Load)
+	log = slog.New(self.Handler(log.Handler()))
 	// The database holds the configuration. If it cannot be opened the scheduler
 	// still starts (built-in defaults, no profiles); configuration changes then answer 503.
 	var dbStore *bench.Store
@@ -184,6 +193,7 @@ func serve(boot config.Bootstrap, log *slog.Logger) int {
 		ProfileRefs: func(id string) []string { return benchmarksUsing(dbStore, id) },
 		Apply: func(c *config.Config) {
 			curCfg.Store(c)
+			cfgAt.Store(c)
 			if !started.Load() {
 				return
 			}
@@ -203,7 +213,9 @@ func serve(boot config.Bootstrap, log *slog.Logger) int {
 	svc := cfgsvc.New(context.Background(), so0)
 	cfg := svc.Config()
 	curCfg.CompareAndSwap(nil, cfg)
+	cfgAt.Store(cfg)
 	logRelay := newLogRelay(curCfg.Load, curPl.Load, log)
+	relayAt.Store(logRelay)
 	if cs != nil {
 		if n, err := cs.PruneAudit(cfg.AuditRetentionDays); err != nil {
 			log.Warn("audit retention", "err", err)
@@ -235,7 +247,13 @@ func serve(boot config.Bootstrap, log *slog.Logger) int {
 
 	bg, bgCancel := context.WithCancel(context.Background())
 	defer bgCancel()
-	launcher := &instance.ProcessLauncher{Ports: ports, LogDir: cfg.ChildLogDir, LogKeep: cfg.ChildLogKeep, Logger: log}
+	self.SetLogger(log)
+	go self.Run(bg)
+	if logRelay != nil {
+		go logRelay.WatchStore(bg) // warns when the store's retention or disk cap differ from the settings
+	}
+	launcher := &instance.ProcessLauncher{Ports: ports, LogDir: cfg.ChildLogDir, LogKeep: cfg.ChildLogKeep, Logger: log,
+		Tap: func(profile string, id uint64) instance.ChildTap { return self.ChildTap(profile, id) }}
 	if err := launcher.PrepareLogDir(); err != nil {
 		log.Warn("child_log_dir is not usable; children run without full log files", "dir", cfg.ChildLogDir, "err", err)
 		launcher.LogDir = ""

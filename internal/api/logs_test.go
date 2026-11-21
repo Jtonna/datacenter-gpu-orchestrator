@@ -169,7 +169,7 @@ func TestLogsOffChangesNothing(t *testing.T) {
 		t.Fatalf("status names logs: %s", st)
 	}
 	for _, c := range [][2]string{{"GET", "/api/pool/nodes/" + id + "/logs"}, {"POST", "/api/pool/nodes/" + id + "/logs?source=agent"},
-		{"POST", "/api/logs"}, {"GET", "/api/logs/config"}} {
+		{"POST", "/api/logs"}, {"GET", "/api/logs/config"}, {"GET", "/api/logs/query?query=*"}, {"GET", "/logs/select/vmui/"}, {"POST", "/logs/select/logsql/query"}} {
 		if st, b, _ := e.ldo(c[0], c[1], logLines, agentproto.HeaderAgentStartID, "s1"); st != http.StatusNotFound {
 			t.Errorf("%s %s: %d %s", c[0], c[1], st, b)
 		}

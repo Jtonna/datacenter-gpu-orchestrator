@@ -37,6 +37,14 @@ type ProcessLauncher struct {
 	LogKeep int
 	Logger  *slog.Logger
 
+	// Tap, when set, is called once per start and gets a copy of every line
+	// of the child's output (CR-10: Potluck's own sender, internal/selflog).
+	// Its Line is called from the goroutines that copy the child's stdout
+	// and stderr, before the line reaches the log file, so it must never
+	// wait: a slow Line would fill the child's pipe and hold the child up.
+	// Close is called once, after the last line.
+	Tap func(profile string, instanceID uint64) ChildTap
+
 	warnOnce sync.Once
 }
 
@@ -95,11 +103,21 @@ func (l *ProcessLauncher) Start(spec StartSpec) (Child, error) {
 	if p.grace <= 0 {
 		p.grace = DefaultStopGrace
 	}
-	sink := func(line string) {
-		p.ring.Add(line)
-		p.load.Feed(line)
+	var tap ChildTap
+	if l.Tap != nil {
+		tap = l.Tap(spec.Profile, spec.InstanceID)
 	}
-	p.stdout, p.stderr = NewLineWriter(sink), NewLineWriter(sink)
+	sink := func(stream string) func(string) {
+		return func(line string) {
+			p.ring.Add(line)
+			p.load.Feed(line)
+			if tap != nil {
+				tap.Line(stream, line)
+			}
+		}
+	}
+	p.stdout, p.stderr = NewLineWriter(sink("stdout")), NewLineWriter(sink("stderr"))
+	p.tap = tap
 
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = overrideEnv(scrubEnv(base), spec.Env)
@@ -136,6 +154,7 @@ type proc struct {
 	stdout   *LineWriter
 	stderr   *LineWriter
 	logSink  *fileSink // nil when the child has no log file
+	tap      ChildTap  // nil without ProcessLauncher.Tap
 
 	mu      sync.Mutex
 	stopReq bool // Stop was called
@@ -174,6 +193,9 @@ func (p *proc) wait() {
 	p.stderr.Close()
 	if p.logSink != nil {
 		p.logSink.Close()
+	}
+	if p.tap != nil {
+		p.tap.Close()
 	}
 
 	st := ExitStatus{Requested: requested, Tail: p.ring.Lines()}
@@ -258,4 +280,11 @@ func (p *proc) WaitHealthy(ctx context.Context) error {
 
 func (p *proc) exitedErr() error {
 	return fmt.Errorf("%w: %s", ErrChildExited, p.status)
+}
+
+// ChildTap receives a copy of a child's output, line by line
+// (ProcessLauncher.Tap). Line must return at once.
+type ChildTap interface {
+	Line(stream, text string)
+	Close()
 }

@@ -11,7 +11,7 @@
 # - Build context must contain the agent binary, named by AGENT_BIN, for
 #   example: docker build --build-arg AGENT_BIN=potluck-agent-linux-amd64 .
 #   (download it from Potluck, GET /api/pool/release, and check its sha256).
-# - The image tag is the release, for example potluck-agent:0.1.1.
+# - The image tag is the release, for example potluck-agent:0.1.2.
 FROM nvidia/cuda:13.3.1-runtime-ubuntu24.04
 
 RUN apt-get update \

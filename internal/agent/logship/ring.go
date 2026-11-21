@@ -30,6 +30,10 @@ const lineOverhead = 128
 type Key struct {
 	Source   string // agent, launch or journal
 	LaunchID string // only for launch
+	// Profile and Instance name the program a line of Potluck's own host
+	// output comes from (internal/selflog). The agent leaves them empty.
+	Profile  string
+	Instance string
 }
 
 // Line is one log line in the ring.
