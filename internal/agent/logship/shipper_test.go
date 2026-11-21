@@ -221,8 +221,14 @@ func TestPauseOn429WithRetryAfter(t *testing.T) {
 	r.agentLine("two")
 	eventually(t, 5*time.Second, "accepted", func() bool { return len(r.sink.requests()) == 6 })
 	q = r.sink.requests()
-	if g1, g2 := q[3].at.Sub(q[2].at), q[4].at.Sub(q[3].at); g2 < g1 || g1 < 40*time.Millisecond {
-		t.Fatalf("pauses %v then %v", g1, g2)
+	// The pause starts after the answer was read, which is after the fake
+	// Potluck recorded the request, and a timer never fires early: each gap
+	// is at least its pause (50 ms, then 100 ms, then 200 ms). Only lower
+	// bounds, so a slow machine cannot fail it.
+	for i, want := range []time.Duration{50, 100, 200} {
+		if gap := q[3+i].at.Sub(q[2+i].at); gap < want*time.Millisecond {
+			t.Fatalf("pause %d: %v, want at least %v ms", i+1, gap, want)
+		}
 	}
 }
 
@@ -282,11 +288,16 @@ func TestRejectedBatchIsDroppedAndCounted(t *testing.T) {
 		}
 		return http.StatusNoContent, nil
 	})
-	r.register(testObj(1))
+	// The three lines are in the ring before shipping goes on, so the first
+	// batch carries all three, whenever the sender wakes.
 	for i := 0; i < 3; i++ {
 		r.agentLine("bad")
 	}
+	r.register(testObj(1))
 	eventually(t, 5*time.Second, "first request", func() bool { return len(r.sink.requests()) == 1 })
+	if q := r.sink.requests(); len(q[0].lines) != 3 {
+		t.Fatalf("first request: %v", q[0].lines)
+	}
 	r.agentLine("good")
 	// The count goes first, alone or with the next line.
 	eventually(t, 5*time.Second, "the rest", func() bool { return len(r.sink.msgs(nil)) == 5 })
