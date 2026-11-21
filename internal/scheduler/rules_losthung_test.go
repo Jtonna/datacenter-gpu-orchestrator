@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -105,8 +106,16 @@ func TestNodeLoss_KeepsTrackingTheNodeAsHungUntilItReturns(t *testing.T) {
 	if h.nodeHealth("b") != nil && h.nodeHealth("b").State != HealthOK {
 		t.Fatalf("b: %+v", h.nodeHealth("b"))
 	}
-	if w := h.logs.find("worker hung", "node", "a"); len(w) != 1 {
-		t.Fatalf("worker hung logged %d times", len(w))
+	// CR-9 review, B8: node loss is logged as node loss, not as a hung worker.
+	if w := h.logs.find("worker hung", "node", "a"); len(w) != 0 {
+		t.Fatalf("node loss logged as worker hung %d times", len(w))
+	}
+	if w := h.logs.find("worker node lost; kept as hung until it is back", "node", "a"); len(w) != 1 {
+		t.Fatalf("node loss logged %d times", len(w))
+	}
+	if q := h.logs.find("node quarantined", "node", "a"); len(q) != 1 || !strings.Contains(fmt.Sprint(q[0].Attrs["err"]), "node lost") ||
+		strings.Contains(fmt.Sprint(q[0].Attrs["err"]), "worker hung") {
+		t.Fatalf("quarantine records %+v", q)
 	}
 	// Still tracked, with no instance using it, for as long as it stays gone.
 	h.advance(10 * time.Minute)

@@ -51,6 +51,13 @@ type fakePotluck struct {
 	hbAnswer  agentproto.HeartbeatAnswer
 	downloads int
 	deregs    []string // paths of the deregister calls
+	// left: the node has deregistered; a second call is answered 404, as the
+	// real handler does. deregStatus, when set, is the answer to every call;
+	// deregHang, when set, holds the answer until the caller gives up or it
+	// is closed.
+	left        bool
+	deregStatus int
+	deregHang   chan struct{}
 }
 
 func newFakePotluck(t *testing.T) *fakePotluck {
@@ -87,8 +94,29 @@ func (p *fakePotluck) serve(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(p.hbAnswer)
 		}
 	case strings.HasSuffix(r.URL.Path, "/deregister"):
+		// As internal/api agentDeregister: 200 {"left":true}, then 404.
 		p.deregs = append(p.deregs, r.Method+" "+r.URL.Path)
-		w.WriteHeader(http.StatusNoContent)
+		switch {
+		case p.deregHang != nil:
+			hang := p.deregHang
+			p.mu.Unlock()
+			select {
+			case <-r.Context().Done():
+			case <-hang:
+			}
+			p.mu.Lock()
+		case p.deregStatus != 0:
+			w.WriteHeader(p.deregStatus)
+		case p.left:
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprintf(w, `{"error":"no registered agent %s"}`, strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/pool/nodes/"), "/deregister"))
+		default:
+			p.left = true
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"left":true}`))
+		}
 	case strings.HasPrefix(r.URL.Path, agentproto.PathProgramsPrefix):
 		b, ok := p.files[r.URL.Path]
 		if !ok {

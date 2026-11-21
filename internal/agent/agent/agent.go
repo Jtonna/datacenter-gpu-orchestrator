@@ -326,7 +326,15 @@ func (a *Agent) leaveOnPurpose() {
 	}
 	io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
 	resp.Body.Close()
-	a.log.Info("leave marker found: deregistered before stopping", "marker", a.opt.LeaveMarker, "status", resp.StatusCode)
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		a.log.Info("leave marker found: deregistered before stopping", "marker", a.opt.LeaveMarker, "status", resp.StatusCode)
+	case resp.StatusCode == http.StatusNotFound:
+		// The uninstall script deregistered first: the node has already left.
+		a.log.Info("leave marker found: Potluck no longer knows this node (already deregistered)", "marker", a.opt.LeaveMarker, "status", resp.StatusCode)
+	default:
+		a.log.Warn("leave marker found, but Potluck refused the deregister call; it will show the node as lost", "marker", a.opt.LeaveMarker, "status", resp.StatusCode)
+	}
 }
 
 // ID returns the node id, "" until resolved.

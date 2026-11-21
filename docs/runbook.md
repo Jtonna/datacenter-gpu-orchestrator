@@ -803,8 +803,14 @@ read-only.
 
 ### Agent membership (potluck-agent nodes, design 7.7)
 
-1. Put the release on the host: `programs/0.1.0/release.json`, `agent/`,
-   one folder per platform, each with its `SHA256SUMS`.
+1. Put the release on the host: `programs/<release>/release.json`, `agent/`,
+   one folder per platform, each with its `SHA256SUMS`. The release is the
+   scheduler's own (`agentproto.Release`, 0.1.1 since the CR-9 review; it was
+   0.1.0 before). Going from 0.1.0 to 0.1.1: make `programs/0.1.1/` (the
+   platform folders can be copied unchanged; `agent/` holds the 0.1.1 agent;
+   `release.json` says `"release": "0.1.1"`; new `SHA256SUMS`). Agents of
+   release 0.1.0 are then refused with `agent_too_old` and update themselves;
+   a Docker node needs the image `potluck-agent:0.1.1` (agent contract 5.4).
 2. Start the scheduler with `--programs-dir /path/to/programs` (or
    `LLM_SCHEDULER_PROGRAMS_DIR`) and set `membership: agents` in the settings
    (restart required). The fleet feed is then not read.

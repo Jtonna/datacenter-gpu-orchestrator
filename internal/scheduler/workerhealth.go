@@ -399,6 +399,14 @@ func (c *schedCore) setHealth(id core.NodeID, h *workerHealth, u *workerUse, nex
 		"channels": map[string]any{"upload": h.ch[chUpload], "heartbeat": h.ch[chHeartbeat], "probe": h.ch[chProbe]},
 		"silent":   c.silentText(h), "node_lost": h.lost}
 	switch {
+	case next == HealthHung && h.lost:
+		// keepLostNodeHung: the node was lost (no report for the loss time;
+		// with agents, its launch's lease ran out). Said as such, not as a
+		// hung worker (CR-9 review).
+		c.log.Error("worker node lost; kept as hung until it is back", "node", id, "addr", h.addr, "silent", c.silentText(h), "instances", insts)
+		c.record(history.TWorkerHealth, history.Error, "",
+			fmt.Sprintf("Node %s was lost (%s); its worker is kept as hung and the node quarantined until it is back.", name, c.silentText(h)), []string{name}, "", data)
+		c.quarantine(id, errNodeLost)
 	case next == HealthHung:
 		c.log.Error("worker hung", "node", id, "addr", h.addr, "silent", c.silentText(h), "instances", insts)
 		c.record(history.TWorkerHealth, history.Error, "",
@@ -420,7 +428,12 @@ func (c *schedCore) setHealth(id core.NodeID, h *workerHealth, u *workerUse, nex
 	}
 }
 
-var errWorkerHung = errors.New("worker hung")
+var (
+	errWorkerHung = errors.New("worker hung")
+	// errNodeLost: node loss, not a hang. With agents a node with a launch is
+	// lost when its lease time passes without a heartbeat (contract 4.3).
+	errNodeLost = errors.New("node lost: no report from it within the loss time (with agents: its launch lease expired)")
+)
 
 // dropHealth forgets a worker no instance uses any more. If it was not ok,
 // clients are told with an event that carries no health.

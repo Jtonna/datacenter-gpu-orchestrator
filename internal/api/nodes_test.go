@@ -217,3 +217,33 @@ func TestAgentReleaseAnswerIsSedReadable(t *testing.T) {
 		t.Fatalf("no one-line flat linux-amd64 entry in %q", raw)
 	}
 }
+
+// CR-9 review, B7: stop_reason and stop_message from the agent's heartbeat
+// are in the node's entry of agents in GET /api/status.
+func TestStatusShowsTheAgentsStopReason(t *testing.T) {
+	e, _, _ := agentsEnv(t)
+	register(t, e, "02:00:00:00:00:01")
+	hb := `{"agent_start_id":"s1","role":"worker","launch_id":null,"devices":[],` +
+		`"stop_reason":"watchdog","stop_message":"MemAvailable 912 MiB fell below the watchdog floor of 1000 MiB"}`
+	if resp := e.post("/api/pool/nodes/02:00:00:00:00:01/heartbeat", hb); resp.StatusCode != 200 {
+		t.Fatalf("heartbeat %d", resp.StatusCode)
+	}
+	var st struct {
+		Agents []struct {
+			ID          string `json:"id"`
+			StopReason  string `json:"stop_reason"`
+			StopMessage string `json:"stop_message"`
+		} `json:"agents"`
+	}
+	if err := json.Unmarshal([]byte(body(t, e.get("/api/status"))), &st); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Agents) != 1 || st.Agents[0].StopReason != "watchdog" || !strings.Contains(st.Agents[0].StopMessage, "912 MiB") {
+		t.Fatalf("agents %+v", st.Agents)
+	}
+	// Without the fields (a running launch, or a release 0.1.0 agent) they are absent.
+	e.post("/api/pool/nodes/02:00:00:00:00:01/heartbeat", `{"agent_start_id":"s1","devices":[]}`)
+	if b := body(t, e.get("/api/status")); strings.Contains(b, `"stop_reason"`) {
+		t.Fatalf("stop_reason still shown: %s", b)
+	}
+}

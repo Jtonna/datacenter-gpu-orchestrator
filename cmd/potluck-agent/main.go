@@ -38,9 +38,9 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
 )
 
-// Release is the agent's release; set at build time with
-// -ldflags "-X main.Release=0.1.0".
-var Release = "0.1.0"
+// Release is the agent's release (agentproto.Release); it can be set at
+// build time with -ldflags "-X main.Release=0.1.1".
+var Release = agentproto.Release
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))

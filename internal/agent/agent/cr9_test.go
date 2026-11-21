@@ -1,7 +1,10 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
+	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -194,4 +197,142 @@ func TestStaleDeviceFigure(t *testing.T) {
 	if code != 409 || !strings.Contains(ref.Message, "Vulkan0") {
 		t.Fatalf("%d %+v, want would_not_fit from the device's 14010 MiB", code, ref)
 	}
+}
+
+// String is the log so far (syncBuf is in fix3a_test.go).
+func (l *syncBuf) String() string { l.mu.Lock(); defer l.mu.Unlock(); return l.b.String() }
+
+// leaveEnv is an agent with the leave marker in place and its log captured.
+func leaveEnv(t *testing.T, mod func(*Options, *Deps)) (*tenv, *syncBuf) {
+	t.Helper()
+	marker := filepath.Join(t.TempDir(), "disabled")
+	if err := os.WriteFile(marker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	logs := &syncBuf{}
+	e := newTenvWith(t, func(o *Options, d *Deps) {
+		o.LeaveMarker = marker
+		d.Logger = slog.New(slog.NewTextHandler(logs, nil))
+		if mod != nil {
+			mod(o, d)
+		}
+	})
+	return e, logs
+}
+
+// CR-9 review, B4 and B7: a deregister that fails is logged as a failure
+// with its status, at Warn, not as "deregistered".
+func TestLeaveDeregisterFailureIsLoggedAsSuch(t *testing.T) {
+	e, logs := leaveEnv(t, nil)
+	e.pl.set(func() { e.pl.deregStatus = http.StatusServiceUnavailable })
+	e.start()
+	e.waitReady()
+	e.stop()
+	out := logs.String()
+	if strings.Contains(out, "deregistered before stopping") {
+		t.Fatalf("a 503 was logged as a success:\n%s", out)
+	}
+	if !strings.Contains(out, "level=WARN") || !strings.Contains(out, "status=503") {
+		t.Fatalf("want a WARN line with status=503:\n%s", out)
+	}
+}
+
+// CR-9 review, B4: a deregister answered 200 is logged at Info.
+func TestLeaveDeregisterSuccessIsLoggedAtInfo(t *testing.T) {
+	e, logs := leaveEnv(t, nil)
+	e.start()
+	e.waitReady()
+	e.stop()
+	if out := logs.String(); !strings.Contains(out, "level=INFO msg=\"leave marker found: deregistered before stopping\"") {
+		t.Fatalf("no Info line for the deregister:\n%s", out)
+	}
+}
+
+// CR-9 review, B7: the second deregister (the uninstall script already
+// deregistered) is answered 404; the agent only logs it, as already left.
+func TestLeaveSecondDeregisterAnswers404(t *testing.T) {
+	e, logs := leaveEnv(t, nil)
+	e.pl.set(func() { e.pl.left = true }) // the uninstall script came first
+	e.start()
+	e.waitReady()
+	e.stop()
+	out := logs.String()
+	if len(e.pl.deregs) != 1 || !strings.Contains(out, "status=404") || !strings.Contains(out, "already") {
+		t.Fatalf("calls %v, log:\n%s", e.pl.deregs, out)
+	}
+	if strings.Contains(out, "level=WARN msg=\"leave marker") {
+		t.Fatalf("a 404 (already left) is not a failure:\n%s", out)
+	}
+}
+
+// CR-9 review, B7: a deregister that hangs is given up after 3 s; the agent
+// still stops.
+func TestLeaveDeregisterHangIsBounded(t *testing.T) {
+	e, logs := leaveEnv(t, nil)
+	hang := make(chan struct{})
+	e.pl.set(func() { e.pl.deregHang = hang })
+	defer close(hang)
+	e.start()
+	e.waitReady()
+	began := time.Now()
+	e.cancel()
+	select {
+	case <-e.done:
+	case <-time.After(6 * time.Second):
+		t.Fatal("the agent did not stop within 6 s of a hanging deregister")
+	}
+	if d := time.Since(began); d < 2500*time.Millisecond || d > 5*time.Second {
+		t.Fatalf("stopped after %v, want about the 3 s bound", d)
+	}
+	e.cancel = nil
+	e.a.Launch.Reset(context.Background())
+	if out := logs.String(); !strings.Contains(out, "level=WARN") || !strings.Contains(out, "deregister") {
+		t.Fatalf("no warning for the hanging deregister:\n%s", out)
+	}
+}
+
+// CR-9 review, B3: a leave with a launch running deregisters and leaves the
+// launch to Potluck's stop and the machine: the agent does not stop it on the
+// way out (on a bare install the launch unit outlives the agent, section
+// 6.1; the uninstall script stops it).
+func TestLeaveWithALaunchDoesNotStopIt(t *testing.T) {
+	sr := newSurvRunner("potluck-launch-ln-1")
+	e, _ := leaveEnv(t, func(o *Options, d *Deps) { d.Runner = sr })
+	e.leftLaunch(time.Hour)
+	e.start()
+	agenttest.Eventually(t, 5*time.Second, "registration with the launch", func() bool {
+		return e.pl.nRegisters() >= 1 && e.pl.lastRegister().LaunchID != nil
+	})
+	e.cancel()
+	<-e.done
+	e.cancel = nil
+	if len(e.pl.deregs) != 1 {
+		t.Fatalf("deregister calls %v", e.pl.deregs)
+	}
+	p := sr.proc("potluck-launch-ln-1")
+	if !p.alive() || len(p.signals()) != 0 {
+		t.Fatalf("the agent stopped the launch on the way out: alive %v, signals %v", p.alive(), p.signals())
+	}
+	p.finish()
+}
+
+// CR-9 review, B7: while its launch is stopping, the agent's heartbeat
+// carries stop_reason (and stop_message when there is one).
+func TestHeartbeatCarriesStopReason(t *testing.T) {
+	sr := newSurvRunner("potluck-launch-ln-1")
+	sr.setStubborn("potluck-launch-ln-1") // SIGTERM is ignored: the launch stays stopping
+	e := newTenvWith(t, func(o *Options, d *Deps) { d.Runner = sr })
+	e.leftLaunch(time.Hour)
+	e.start()
+	agenttest.Eventually(t, 5*time.Second, "a heartbeat", func() bool { return e.pl.nBeats() > 0 })
+	if hb := e.pl.lastBeat(); hb.StopReason != "" || hb.StopMessage != "" {
+		t.Fatalf("stop_reason %q on a running launch", hb.StopReason)
+	}
+	if _, err := e.a.Launch.Stop("ln-1", false); err != nil {
+		t.Fatal(err)
+	}
+	agenttest.Eventually(t, 5*time.Second, "stop_reason in the heartbeat", func() bool {
+		return e.pl.lastBeat().StopReason == agentproto.ExitStopped
+	})
+	sr.proc("potluck-launch-ln-1").finish()
 }

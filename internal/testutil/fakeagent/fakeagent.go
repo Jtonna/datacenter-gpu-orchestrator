@@ -104,7 +104,7 @@ func (s *syncBuf) Bytes() []byte {
 // Start serves the agent API and starts registering and heartbeating.
 func (a *Agent) Start() error {
 	if a.Release == "" {
-		a.Release = "0.1.0"
+		a.Release = agentproto.Release
 	}
 	if a.Install == "" {
 		a.Install = agentproto.InstallBare
