@@ -283,6 +283,14 @@ run:
 		}
 	}
 	end := m.o.Now().UnixMilli()
+	// The final environment is stored before the run is marked finished: a
+	// reader that waits for the finished state must find the llama binary and
+	// the workers the run saw, not the environment noted when it started.
+	env := x.envSnapshot()
+	if err := m.o.Store.SetRunEnv(r.ID, env); err != nil {
+		m.log.Warn("cannot store a run environment", "run", r.ID, "err", err)
+	}
+	ar.setRun(func(r *Run) { r.Env = env })
 	if err := m.o.Store.SetRunSummary(r.ID, sum, ""); err != nil {
 		m.log.Warn("cannot store a run summary", "run", r.ID, "err", err)
 	}
@@ -290,11 +298,6 @@ run:
 		m.log.Error("cannot finish a benchmark run", "run", r.ID, "err", err)
 	}
 	ar.setRun(func(r *Run) { r.State, r.FinishedAt, r.Error, r.Summary = state, end, errText, sum })
-	env := x.envSnapshot()
-	if err := m.o.Store.SetRunEnv(r.ID, env); err != nil {
-		m.log.Warn("cannot store a run environment", "run", r.ID, "err", err)
-	}
-	ar.setRun(func(r *Run) { r.Env = env })
 	m.publishRun(ar.snapshot())
 	m.emitProgress(ar, true)
 	var ids []string
