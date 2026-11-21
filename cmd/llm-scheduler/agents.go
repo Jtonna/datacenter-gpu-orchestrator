@@ -10,13 +10,14 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgstore"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgsvc"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/logrelay"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/pool"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/release"
 )
 
 // newPool builds the agent membership: the program release is loaded and
 // verified first (agent contract 5), then the pool with its stored node state.
-func newPool(ctx context.Context, svc *cfgsvc.Service, cs *cfgstore.Store, logDir string, log *slog.Logger) (*pool.Pool, error) {
+func newPool(ctx context.Context, svc *cfgsvc.Service, cs *cfgstore.Store, logDir string, logs *logrelay.Relay, log *slog.Logger) (*pool.Pool, error) {
 	cfg := svc.Config()
 	o := pool.Options{Config: svc.Config, Programs: loadPrograms(ctx, cfg, log), PotluckRelease: potluckRelease,
 		Logger: log, LogDir: logDir}
@@ -24,6 +25,9 @@ func newPool(ctx context.Context, svc *cfgsvc.Service, cs *cfgstore.Store, logDi
 		o.Store = cs
 	} else {
 		log.Warn("the database is not available: node pause and removal are kept in memory only")
+	}
+	if logs != nil {
+		o.Logs = logs.Object // CR-10: the logs object of the registration answer
 	}
 	o.AgentPort = envPort(envTestAgentPort, log)
 	o.WorkerPort = envPort(envTestWorkerPort, log)

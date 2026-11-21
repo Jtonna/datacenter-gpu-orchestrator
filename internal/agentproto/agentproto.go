@@ -167,6 +167,31 @@ const (
 	PathDeregisterFmt  = "/api/pool/nodes/%s/deregister" // fmt with id
 	PathRelease        = "/api/pool/release"
 	PathProgramsPrefix = "/api/pool/programs/"
+	// Central logging (CR-10).
+	PathNodeLogsFmt      = "/api/pool/nodes/%s/logs" // fmt with id: GET the logs object, POST lines
+	PathClientLogs       = "/api/logs"               // POST lines (clients)
+	PathClientLogsConfig = "/api/logs/config"        // GET the clients' logs object
+	// HeaderAgentStartID carries agent_start_id on the node log routes, whose
+	// body is not a JSON object (CR-10).
+	HeaderAgentStartID = "X-Agent-Start-Id"
+)
+
+// Central logging (CR-10): the format word of the logs object, the sources
+// of a line and the figures of the limits object.
+const (
+	LogsFormatJSONLine = "jsonline"
+
+	LogSourceScheduler = "scheduler"
+	LogSourceHost      = "host"
+	LogSourceAgent     = "agent"
+	LogSourceLaunch    = "launch"
+	LogSourceJournal   = "journal"
+	LogSourceClient    = "client"
+
+	LogsMaxBatchBytes = 1 << 20   // one request body
+	LogsMaxLineBytes  = 8 << 10   // the sender cuts its lines to this
+	LogsMaxBytesPerS  = 256 << 10 // per node
+	LogsEveryS        = 2         // a sender pushes at most this often
 )
 
 // Paths on the agent (Potluck to agent, port 50060).
@@ -278,10 +303,53 @@ type RegisterAnswer struct {
 	Exporters       []ExporterSpec `json:"exporters,omitempty"`
 	Paused          bool           `json:"paused"`
 	StopLaunch      *string        `json:"stop_launch"`
+	// Logs says where and how to push log lines (CR-10). Absent or null: the
+	// agent ships nothing. Release 0.1.0 ignores it.
+	Logs *Logs `json:"logs,omitempty"`
 
 	Reason          string `json:"reason,omitempty"`
 	Message         string `json:"message,omitempty"`
 	RequiredRelease string `json:"required_release,omitempty"`
+}
+
+// Logs is the logs object (CR-10): where a sender pushes its log lines, in
+// which format and within which limits. It is part of the registration answer
+// and the answer to GET /api/pool/nodes/{id}/logs and GET /api/logs/config.
+type Logs struct {
+	// Revision changes whenever a logging setting changes.
+	Revision int64 `json:"revision"`
+	// URL without a host is a path on the Potluck the sender talks to; with a
+	// host it is a full address.
+	URL    string `json:"url"`
+	Format string `json:"format"` // jsonline
+	// Auth is null in the default setup: no credential is handed out.
+	Auth      *LogsAuth  `json:"auth"`
+	Limits    LogsLimits `json:"limits"`
+	DenyUnits []string   `json:"deny_units"` // system log units the sender drops
+}
+
+// LogsAuth is a credential for the push address: one request header.
+type LogsAuth struct {
+	Header string `json:"header"`
+	Value  string `json:"value"`
+}
+
+// LogsLimits are the limits a sender keeps to.
+type LogsLimits struct {
+	MaxBatchBytes int64   `json:"max_batch_bytes"`
+	MaxLineBytes  int64   `json:"max_line_bytes"`
+	MaxBytesPerS  int64   `json:"max_bytes_per_s"`
+	EveryS        float64 `json:"every_s"`
+}
+
+// LogShipping is what an agent reports about its log shipping in a heartbeat
+// (CR-10). The counts are since the agent started.
+type LogShipping struct {
+	LinesSent    uint64 `json:"lines_sent"`
+	LinesDropped uint64 `json:"lines_dropped"`
+	// LastError is the last push error; empty when there was none.
+	LastError     string   `json:"last_error,omitempty"`
+	LastErrorAgeS *float64 `json:"last_error_age_s,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -329,12 +397,17 @@ type Heartbeat struct {
 	// while the launch is stopping (CR-9, optional; see LaunchState).
 	StopReason  string `json:"stop_reason,omitempty"`
 	StopMessage string `json:"stop_message,omitempty"`
+	// Logs are the agent's log shipping figures (CR-10, optional).
+	Logs *LogShipping `json:"logs,omitempty"`
 }
 
 // HeartbeatAnswer is the 200 answer to a heartbeat. 410 means "register again".
 type HeartbeatAnswer struct {
 	Release string `json:"release"`
 	Paused  bool   `json:"paused"`
+	// LogsRevision is the revision of the node's logs object (CR-10). Absent:
+	// there is no logs object and the agent ships nothing.
+	LogsRevision int64 `json:"logs_revision,omitempty"`
 }
 
 // ---------------------------------------------------------------------------

@@ -174,10 +174,15 @@ func serve(boot config.Bootstrap, log *slog.Logger) int {
 		pl      *pool.Pool
 		apiSrv  *api.Server
 		started atomic.Bool // set once the pieces above exist; guards the service callbacks
+		// What the log routes read without waiting for anything (CR-10): the
+		// configuration in force and the pool, each behind an atomic pointer.
+		curCfg atomic.Pointer[config.Config]
+		curPl  atomic.Pointer[pool.Pool]
 	)
 	so0 := cfgsvc.Options{Store: cs, Boot: boot, Logger: log,
 		ProfileRefs: func(id string) []string { return benchmarksUsing(dbStore, id) },
 		Apply: func(c *config.Config) {
+			curCfg.Store(c)
 			if !started.Load() {
 				return
 			}
@@ -196,6 +201,8 @@ func serve(boot config.Bootstrap, log *slog.Logger) int {
 		}}
 	svc := cfgsvc.New(context.Background(), so0)
 	cfg := svc.Config()
+	curCfg.CompareAndSwap(nil, cfg)
+	logRelay := newLogRelay(curCfg.Load, curPl.Load, log)
 	if cs != nil {
 		if n, err := cs.PruneAudit(cfg.AuditRetentionDays); err != nil {
 			log.Warn("audit retention", "err", err)
@@ -238,12 +245,13 @@ func serve(boot config.Bootstrap, log *slog.Logger) int {
 	fleetDone := make(chan struct{})
 	if cfg.AgentsMode() {
 		close(fleetDone)
-		pl, err = newPool(bg, svc, cs, launcher.LogDir, log)
+		pl, err = newPool(bg, svc, cs, launcher.LogDir, logRelay, log)
 		if err != nil {
 			log.Error("agent membership", "err", err)
 			ln.Close()
 			return 1
 		}
+		curPl.Store(pl)
 		view = pl
 		go pl.Run(bg)
 	} else {
@@ -299,6 +307,7 @@ func serve(boot config.Bootstrap, log *slog.Logger) int {
 		ao.Pool = pl
 		ao.System.Programs = pl.ReleaseStatus
 	}
+	ao.Logs = logRelay
 	apiSrv = api.New(cfg, sched, ao)
 	started.Store(true)
 	// MCP at /mcp on the same port; its tools run in-process through apiSrv (design 9.5).

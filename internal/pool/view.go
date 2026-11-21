@@ -413,6 +413,10 @@ type NodeFacts struct {
 	// heartbeat, while the launch is stopping (CR-9).
 	StopReason  string `json:"stop_reason,omitempty"`
 	StopMessage string `json:"stop_message,omitempty"`
+	// Logs is the node's central logging part (CR-10). The pool fills in what
+	// the agent reports; the API adds what its log route counted. Absent when
+	// there is neither.
+	Logs *NodeLogs `json:"logs,omitempty"`
 }
 
 // Facts lists every agent node Potluck knows, removed ones included.
@@ -444,6 +448,9 @@ func (p *Pool) Facts() []NodeFacts {
 			f.MemAvailMiB = &m
 			_, f.ExtraDevicesIgnored, _ = pickDevice(a)
 			f.StopReason, f.StopMessage = hb.StopReason, hb.StopMessage
+			if sh := parseShipping(hb.Logs); sh != nil {
+				f.Logs = &NodeLogs{Refused: map[string]int64{}, Agent: sh}
+			}
 		}
 		if fl := reportedFloor(a); fl > 0 {
 			f.WatchdogFloorMiB, f.FloorMismatch = &fl, floorMismatch(cfg, a)

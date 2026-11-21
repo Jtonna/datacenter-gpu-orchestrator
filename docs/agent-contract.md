@@ -1,6 +1,6 @@
 # Agent contract: Potluck and `potluck-agent`
 
-Status: built, and in use as release 0.1.0 since 2026-11-21 (five machines). The text is DRAFT 5 of 2026-11-20 with the change requests folded in: CR-1, CR-2 and CR-3 (drafts 1 to 3, reviewed by the PS5 side); CR-5, accepted 2026-11-20, section 11.1 and the lines marked CR-5; CR-6, accepted 2026-11-21, from the first run on a real machine, section 6.12 and the lines marked CR-6; CR-8, accepted 2026-11-21, the call-back check. CR-9 (section 11.2 and the lines marked "CR-9, proposed") is proposed and not deployed: release 0.1.0 does not contain it. It is task C1 of the plan "Potluck Cleanup Tasks".
+Status: built, and in use as release 0.1.0 since 2026-11-21 (five machines). The text is DRAFT 5 of 2026-11-20 with the change requests folded in: CR-1, CR-2 and CR-3 (drafts 1 to 3, reviewed by the PS5 side); CR-5, accepted 2026-11-20, section 11.1 and the lines marked CR-5; CR-6, accepted 2026-11-21, from the first run on a real machine, section 6.12 and the lines marked CR-6; CR-8, accepted 2026-11-21, the call-back check. CR-9 (section 11.2 and the lines marked "CR-9, proposed") is proposed and not deployed: release 0.1.0 does not contain it. CR-10 (central logging; section 11.3 and the lines marked CR-10) is accepted; its first batch, the Potluck side, is built and not deployed. It is task C1 of the plan "Potluck Cleanup Tasks".
 
 Authors: the scheduler agent (`ps5-ai-datacenter-load-balancer-32`) wrote it; the fleet console agent (`fix-fleet-console-tiles`) reviews it against the PS5 side (boot chain, RAM-only, payload delivery).
 
@@ -121,6 +121,7 @@ Answer `200`:
 - **Addresses.** The agent talks to the Potluck address it was configured with (`192.0.2.1:3122` on the PS5 link; a home-network machine uses another address of the same Potluck). Every `path` Potluck returns is relative and the agent appends it to its configured address. Potluck never returns an address of its own.
 - `exporters[].args` come from the stats contract (section 7). The agent adds nothing to them, and refuses a listen address that is not on `127.0.0.1`.
 - `stop_launch`: when the registration carried a `launch_id` Potluck does not know (Potluck restarted and lost it), Potluck names it here and the agent stops it. Registering never touches a launch Potluck does know.
+- `logs` (CR-10, accepted, batch 1 built, not deployed; optional, ignored by release 0.1.0): where and how the agent pushes its log lines. Absent or `null`: the agent ships nothing. Section 11.3, item 2.
 
 Refusals, all `200` with `"accepted": false`, a `reason` word and a `message`:
 
@@ -173,7 +174,9 @@ Every `heartbeat_every_s`. It carries everything Potluck needs to know about an 
   | `stop_reason` | Only while the node's launch is `stopping`: why the agent is stopping it (`watchdog`, `lease_expired`, `forced`, `stopped`, `reset`). |
   | `stop_message` | Only with `stop_reason`, when there is more to say (the watchdog's figures). |
 
-Answer `200`: `{"release": "0.1.0", "paused": false}`.
+- CR-10, accepted, batch 1 built, not deployed; optional, not sent by release 0.1.0: `logs`, the agent's log shipping figures (section 11.3, item 4).
+
+Answer `200`: `{"release": "0.1.0", "paused": false}`. With central logging on (CR-10, accepted, batch 1 built, not deployed) the answer also has `logs_revision` (section 11.3, item 3); release 0.1.0 ignores it.
 
 **The agent's three failure cases, kept apart:**
 
@@ -685,6 +688,97 @@ Every field it adds is optional, so a CR-9 side works with a release 0.1.0 side 
 5. **A paused node says why.** In an entry of `agents` in `GET /api/status`, a paused node that has no other reason has `unplaced: "paused"`. Before, it had `placeable: false` and no reason. Another reason of the node itself (`programs_not_ready` and the like) comes first; `paused: true` is unchanged.
 
 Tests: the agent's launch manager (the refusal for both kinds of device, no check without `expect_mib`, `stop_reason` while stopping), the agent (the floor in both bodies, the refusal over HTTP, a stop with and without the marker), Potluck's pool against the fake agent (the field is sent, the refusal comes back, the reported floor, the mismatch, the `stopping` read, the paused reason) and Potluck's scheduler core (the shares, the failed load, the forced placement refused when placed).
+
+### 11.3 CR-10, accepted (2026-11-21), batch 1 built, not deployed: central logging through Potluck
+
+CR-10, accepted. Batch 1 is the Potluck side: the settings, the `logs` object, the pass-through with its limits and counters. It is built on a branch and not deployed: no machine runs it and release 0.1.0 does not contain it. The agent's shipper, the search page under `/logs/`, Potluck's own lines and the compose entry of the store are later batches. The design, with its reasons and the trial against the store, is `docs/cr-10-central-logging.md`.
+
+Every field it adds is optional and every route is new, so a CR-10 side works with a release 0.1.0 side in both directions: a release 0.1.0 agent ignores `logs` and `logs_revision`, ships nothing and works as today; a CR-10 agent that gets no `logs` object ships nothing. The release string does not change with CR-10 alone.
+
+1. **When logging is on.** The setting `logs_enabled` is on (the default) and Potluck has an address for the log store. That address is a deployment fact, not a setting: the environment variable `LLM_SCHEDULER_LOGS_STORE_URL` of Potluck, for example `http://potluck-logs:9428`. Without it logging is off: no `logs` object is handed out, the heartbeat answer has no `logs_revision`, status has no `logs`, and the four routes below answer `404`. One exception: when the setting `logs_push_url` names another address, the `logs` object is handed out with that address even without a store address; Potluck's own two `POST` routes still answer `404` then, because it has nothing to forward to. An address that is not `http://` or `https://` is logged as an error and taken as unset. Potluck schedules the same with or without logging.
+
+2. **The `logs` object.** In the registration answer (section 4.2), and the answer to `GET /api/pool/nodes/{id}/logs`:
+
+   ```json
+   {
+     "revision": 1830412345,
+     "url": "/api/pool/nodes/02:00:00:00:00:01/logs",
+     "format": "jsonline",
+     "auth": null,
+     "limits": {"max_batch_bytes": 1048576, "max_line_bytes": 8192, "max_bytes_per_s": 262144, "every_s": 2},
+     "deny_units": []
+   }
+   ```
+
+   - `url` without a host is a path on the Potluck the agent registered with (the address rule of section 4.2). With `logs_push_url` set it is that address, as written in the setting.
+   - `format` is always `jsonline`: one JSON object per line, in the store's own field names (`_msg` for the message; `level`, `unit`, `stream` as the sender sets them).
+   - `auth` is `null`: no credential is handed out. When a later change adds one it is `{"header": "<name>", "value": "<value>"}`, a request header to send with every push.
+   - `limits`: the largest body, the length the sender cuts its lines to, the node's byte rate, and how often at most the sender pushes.
+   - `deny_units`: system log units the sender drops. Always empty in this batch; there is no setting for it yet.
+   - `revision` is a number computed from all logging settings and from whether Potluck has a store address. It changes when one of them changes, and it is the same after a Potluck restart with the same settings. It is not a counter: compare it for equality only.
+   - `logs` absent or `null`: the agent ships nothing.
+
+3. **`logs_revision` in the heartbeat answer** (section 4.3) is the revision of the node's `logs` object. When it differs from the one the agent holds, the agent reads the object again with `GET /api/pool/nodes/{id}/logs`. When it is absent, logging is off: the agent stops shipping and need not ask (the `GET` would answer `404`). A changed setting so reaches every agent within one heartbeat.
+
+4. **Shipping figures in the heartbeat** (section 4.3), optional: `"logs": {"lines_sent": 120, "lines_dropped": 3, "last_error": "429 rate_limited", "last_error_age_s": 4.5}`. The counts are since the agent started. `last_error` and `last_error_age_s` are left out when there was no error. An unreadable `logs` never makes a heartbeat invalid; it is taken as not reported.
+
+5. **The routes.** All on Potluck's one port.
+
+   | Route | Who | Answer |
+   |---|---|---|
+   | `GET /api/pool/nodes/{id}/logs` | agent | `200` the `logs` object; `410`; `404` when logging is off |
+   | `POST /api/pool/nodes/{id}/logs?source=<agent\|launch\|journal>[&launch_id=<id>]` | agent | `204` accepted; else the table of item 7 |
+   | `GET /api/logs/config` | client | `200` the clients' `logs` object (`url` `/api/logs`, `max_bytes_per_s` 65536); `404` when logging or `logs_client_intake` is off |
+   | `POST /api/logs` | client | `204` accepted; else the table of item 7; `404` when logging or `logs_client_intake` is off |
+
+   - **Who sends** is checked like the heartbeat: the node id in the path, and the `agent_start_id` of the node's last registration in the header `X-Agent-Start-Id` (the body is not a JSON object, so it cannot carry it). A node Potluck does not know, one that left or was removed, or another `agent_start_id`: `410`, and the agent registers again as after a heartbeat `410`.
+   - **Body**: JSON lines, at most 1 MiB, with `Content-Encoding: gzip` or without one. One request carries lines of one `source`, and for `launch` of one launch. `launch_id` is required for `source=launch` (1 to 128 letters, digits, `.`, `-`, `_`, `:`) and ignored otherwise. An empty body is answered `204` and not forwarded.
+   - Potluck streams the body to the store as it is. It never decodes it, re-encodes it or holds it in memory, so it does not look at the lines and a line that is not JSON is the store's to skip.
+
+6. **Trusted fields.** Potluck sets them for the whole request; the store lets them win over fields of the same name inside a line (checked against the store, `docs/cr-10-central-logging.md` section 9). A sender cannot write under another node's name.
+
+   | Request | Fields Potluck sets |
+   |---|---|
+   | from a node | `node_id`, `node_name`, `platform`, `release` (the agent's, from its registration), `source` |
+   | from a node, `source=launch` | the same, and `launch_id`, and `profile` when Potluck holds that launch for that node or held it lately (the last 256 ended launches are remembered, so the last lines of a launch still get their profile) |
+   | from a client | `source` = `client`, `client_addr` (the address the request came from), `actor` (the `X-Actor` header, when sent) |
+
+   - Every trusted field a request does not set is dropped from its lines (the store's `ignore_fields`), so a client's line cannot name a `node_id` and a node's line cannot name a `profile` or an `actor`.
+   - The store has no way to write a comma inside such a value. A comma in a value is stored as `%2C` and a percent sign as `%25`; a control character becomes a space; the value is cut at about 256 bytes. A field whose value is empty is not set. Node ids, with their colons, are stored unchanged.
+   - Stream fields of every request: `source`, `node_id`, `unit`.
+
+7. **Limits and answers.** Every refusal has the usual error body with a `reason` word.
+
+   | Limit | Value | Answer | `reason` |
+   |---|---|---|---|
+   | Request body | 1 MiB, counted while it streams | `413` | `too_large` |
+   | Per node | 256 KiB/s, burst 2 MiB | `429` with `Retry-After` (seconds) | `rate_limited` |
+   | Per node, at the same time | 1 request | `429` with `Retry-After: 1` | `node_busy` |
+   | All log requests at the same time | 8, of which at most 2 from clients | `429` with `Retry-After: 1`, at once, no waiting | `too_many_requests` |
+   | Per client address | 64 KiB/s, burst 1 MiB | `429` with `Retry-After` | `rate_limited` |
+   | All clients together | 1 MiB/s, burst 2 MiB | `429` with `Retry-After` | `rate_limited` |
+   | The whole forward | 5 s | `503` with `Retry-After: 5` | `store_unavailable` |
+   | The sender's body | must arrive within 4.5 s | `400` | `body_read` |
+
+   Other answers: `204` accepted (whatever `2xx` the store answered); `410` (`unknown_sender`); `404` (`logs_off`); `400` `bad_request` (no or a wrong `source`, `source=launch` without a usable `launch_id`); `415` `unsupported_encoding` (a `Content-Encoding` other than gzip); `400` `store_rejected` (the store answered `400`, for example because no line of the body was JSON); `503` `store_unavailable` also when the store is down or gives any other answer.
+
+   - A sender waits on `429` and `503` (`Retry-After`) and sends the same batch again. On `413` and on `400` sending the same batch again does not help.
+   - Bytes are counted as they are on the wire: for a gzip body, the compressed bytes.
+   - A body with a declared length is checked against the rate before it is read. A body without one (chunked) is let in while the sender has any budget left and charged after it streamed; the sender then waits that much longer. When such a body passes 1 MiB the forward is cut and answered `413`; lines that had already passed may be stored.
+   - A refused request is never read to its end. When its declared body is at most 64 KiB the connection is kept; otherwise it is closed with the answer, and a sender in the middle of writing a large body may see a broken connection instead of the status. It treats that like `429`.
+   - There is no queue in Potluck. What is refused stays in the sender's buffer.
+
+8. **Off the scheduler's paths.** The log routes take no lock of the pool or of the scheduler. They read a snapshot the pool publishes at each registration, each node that leaves or is removed and each launch that starts or ends (a heartbeat publishes nothing), and the configuration snapshot. Potluck's requests to the store use their own connections. A test in the build floods the routes with a slow store and with one that never answers and checks that heartbeats and a chat request keep their normal time and that never more than 8 forwards are in flight.
+
+9. **Status.** In an entry of `agents` in `GET /api/status`, `logs` holds what Potluck counted for the node since Potluck started and what the agent reports: `{"accepted_bytes", "accepted_requests", "refused": {"<reason>": <count>}, "agent": {the figures of item 4}}`. `agent` is absent when the agent reports none. The top level has `logs`: `enabled`, `store` (Potluck has a store address), `revision`, `in_flight`, `peak_in_flight`, `max_in_flight`, `client_intake`, `clients` (the same counters for all clients together) and `unknown_sender` (requests answered `410`). Without a store address and without `logs_push_url` neither is there. With a store address and `logs_enabled` off, the top-level one stays and says `"enabled": false`.
+
+10. **Settings**, all live (no restart): `logs_enabled` (default on), `logs_retention_days` (14), `logs_max_disk_gib` (20), `logs_push_url` (empty), `logs_client_intake` (default on). `logs_retention_days` and `logs_max_disk_gib` are for the store: nothing passes them on yet (the compose entry is a later batch).
+
+**Open point for the agent batch.** Rule 1 of section 2 says no field is a time set by a node. A line without `_time` gets the time at which the store took it, which is Potluck's host clock and within one push period (2 s) of the real time. Whether the agent sends the journal's own time as well is for the agent batch to settle; this batch does not look at the lines.
+
+**Not checked against the real store in this batch:** `ignore_fields` (item 6). `extra_fields` and `_stream_fields` were checked in the trial. The syntax of all three was read from the store's source (VictoriaLogs v1.54.0).
+
+Tests: the wire types (the object as shown above, release 0.1.0 bodies in both directions), the pool (the object and the revision in the answers, the figures from the heartbeat, the snapshot and that reading it does not wait for the pool's lock, the profile of a running and of an ended launch), the relay against a fake store (trusted fields, values with commas, equals signs, colons and percent signs read back with the store's own parsing rules, every limit and answer, a stalled sender, a silent store), the API (everything off without a store address, the whole path, live settings) and the flood test.
 
 ## 12. Open questions
 

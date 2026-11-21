@@ -44,6 +44,7 @@ type launch struct {
 	id      string
 	node    core.NodeID
 	name    string
+	profile string // the profile the load is for (CR-10: a trusted field of the launch's log lines)
 	base    string // http://addr:50060
 	rpcAddr string
 
@@ -162,7 +163,7 @@ func (p *Pool) Launch(ctx context.Context, spec scheduler.WorkerLaunchSpec, repo
 			return scheduler.WorkerResult{Node: w.Node, Reason: ReasonAgentUnreachable, Message: "the node's agent is not registered or is lost"}
 		}
 		p.seq++
-		l := &launch{p: p, iid: spec.IID, node: w.Node, name: a.reg.Name, rpcAddr: w.Addr,
+		l := &launch{p: p, iid: spec.IID, node: w.Node, name: a.reg.Name, rpcAddr: w.Addr, profile: spec.Profile,
 			id:      fmt.Sprintf("ln-%d-%d-%d", p.o.Clock().UnixMilli(), spec.IID, p.seq),
 			base:    p.agentBase(a), // the address the call-back check reached
 			changed: make(chan struct{}, 1), done: make(chan struct{})}
@@ -170,6 +171,7 @@ func (p *Pool) Launch(ctx context.Context, spec scheduler.WorkerLaunchSpec, repo
 		p.launches[l.id] = l
 	}
 	p.byIID[spec.IID] = ls
+	p.publishLogSnapLocked()
 	p.mu.Unlock()
 
 	// Send every launch at once.
@@ -275,16 +277,18 @@ func (p *Pool) dropLaunches(iid uint64, ls []*launch) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, l := range ls {
-		delete(p.launches, l.id)
+		p.endLaunchLocked(l)
 	}
 	delete(p.byIID, iid)
+	p.publishLogSnapLocked()
 }
 
 // forget drops a launch that the agent refused (nothing runs to stop).
 func (p *Pool) forget(l *launch) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	delete(p.launches, l.id)
+	p.endLaunchLocked(l)
+	p.publishLogSnapLocked()
 	ls := p.byIID[l.iid]
 	for i, x := range ls {
 		if x == l {
@@ -586,7 +590,8 @@ func (p *Pool) stopLaunch(l *launch, force, lost bool) {
 	}
 	defer func() {
 		p.mu.Lock()
-		delete(p.launches, l.id)
+		p.endLaunchLocked(l)
+		p.publishLogSnapLocked()
 		p.mu.Unlock()
 	}()
 	if lost {

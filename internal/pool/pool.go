@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
@@ -122,6 +123,10 @@ type Options struct {
 	// Dial makes the connections to agents when HTTP is nil; default a
 	// net.Dialer (tests replace it).
 	Dial func(ctx context.Context, network, addr string) (net.Conn, error)
+	// Logs returns the logs object of a node (CR-10), nil while central
+	// logging is off. It must not block. Nil: no logs object is handed out
+	// and the heartbeat answer has no logs_revision.
+	Logs func(nodeID string) *agentproto.Logs
 }
 
 // heartbeat is a decoded heartbeat. Stats stays raw: a missing or bad stats
@@ -143,6 +148,9 @@ type heartbeat struct {
 	WatchdogFloorMiB int64  `json:"watchdog_floor_mib,omitempty"`
 	StopReason       string `json:"stop_reason,omitempty"`
 	StopMessage      string `json:"stop_message,omitempty"`
+	// CR-10, optional: the agent's log shipping figures. Raw, like stats: a
+	// bad object must never reject the heartbeat.
+	Logs json.RawMessage `json:"logs,omitempty"`
 }
 
 type agent struct {
@@ -207,6 +215,11 @@ type Pool struct {
 
 	forceUnload func(ctx context.Context, id core.NodeID) (string, error)
 	stops       sync.WaitGroup // stop goroutines under way
+
+	// CR-10 (logsnap.go): what the log routes read without taking mu, and
+	// the launches that ended lately, whose last lines may still arrive.
+	logSnap atomic.Pointer[LogSnapshot]
+	ended   []endedLaunch
 }
 
 // New builds a pool. It loads the operator state from the store.
@@ -266,6 +279,7 @@ func New(o Options) (*Pool, error) {
 		p.admin = a
 	}
 	p.callBack = p.readLaunchState
+	p.logSnap.Store(&LogSnapshot{})
 	return p, nil
 }
 
@@ -367,6 +381,9 @@ func (p *Pool) register(req agentproto.RegisterRequest) (agentproto.RegisterAnsw
 	ans := agentproto.RegisterAnswer{Accepted: true, Release: rel.Release, Platform: platform,
 		HeartbeatEveryS: HeartbeatEvery.Seconds(), Programs: rel.Programs(platform), Exporters: rel.Exporters(platform),
 		Paused: p.admin[req.ID].Paused}
+	if p.o.Logs != nil {
+		ans.Logs = p.o.Logs(req.ID) // CR-10: where to push log lines; nil while logging is off
+	}
 	// A launch the node reports that this run does not hold is stopped
 	// (4.2, 11); a launch this run holds on the node that the node no longer
 	// reports is gone with the agent's restart (6.1, agent_restarted).
@@ -393,6 +410,7 @@ func (p *Pool) register(req agentproto.RegisterRequest) (agentproto.RegisterAnsw
 			map[string]any{"state": StateActive, "addr": req.Addr, "platform": platform, "install": req.Install})
 	}
 	p.rebuildLocked()
+	p.publishLogSnapLocked()
 	return ans, a
 }
 
@@ -452,7 +470,13 @@ func (p *Pool) Heartbeat(id string, body []byte) HeartbeatResult {
 	}
 	p.checkOrphanLocked(a, &hb)
 	p.rebuildLocked()
-	return HeartbeatResult{Status: http.StatusOK, Answer: agentproto.HeartbeatAnswer{Release: p.o.PotluckRelease, Paused: p.admin[id].Paused}}
+	ans := agentproto.HeartbeatAnswer{Release: p.o.PotluckRelease, Paused: p.admin[id].Paused}
+	if p.o.Logs != nil {
+		if l := p.o.Logs(id); l != nil {
+			ans.LogsRevision = l.Revision // CR-10: the agent reads the object again when this differs from its own
+		}
+	}
+	return HeartbeatResult{Status: http.StatusOK, Answer: ans}
 }
 
 // reportedFloor is the watchdog floor the agent reports (CR-9): the last
@@ -697,6 +721,7 @@ func (p *Pool) Deregister(ctx context.Context, id string) bool {
 	p.recordLocked(history.TNodeMembership, history.Info, a,
 		fmt.Sprintf("Node %s left the pool (deregistered by its uninstall).", a.reg.Name), map[string]any{"state": StateLeft})
 	p.rebuildLocked()
+	p.publishLogSnapLocked()
 	return true
 }
 
@@ -751,6 +776,7 @@ func (p *Pool) Remove(ctx context.Context, id string) error {
 	}
 	delete(p.agents, id) // its programs state and place in the pool are forgotten
 	p.rebuildLocked()
+	p.publishLogSnapLocked()
 	return nil
 }
 

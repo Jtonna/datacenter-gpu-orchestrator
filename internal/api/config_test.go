@@ -18,6 +18,12 @@ import (
 // scheduler behind it starts from the test YAML; the first applied revision replaces it.
 func cfgEnv(t *testing.T) (*env, *cfgsvc.Service, *cfgstore.Store) {
 	t.Helper()
+	return cfgEnvWith(t)
+}
+
+// cfgEnvWith is cfgEnv with further options for the API.
+func cfgEnvWith(t *testing.T, mod ...func(*Options)) (*env, *cfgsvc.Service, *cfgstore.Store) {
+	t.Helper()
 	st, err := bench.OpenStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -31,7 +37,7 @@ func cfgEnv(t *testing.T) (*env, *cfgsvc.Service, *cfgstore.Store) {
 	svc := cfgsvc.New(context.Background(), cfgsvc.Options{Store: cs, Parse: config.Options{FileExists: func(string) bool { return true }},
 		Apply:    func(c *config.Config) { e.sched.ApplyConfig(c) },
 		OnChange: func(ev cfgsvc.ChangeEvent) { e.api.PublishConfig(ev) }})
-	e = newEnv(t, okUpstream(), func(o *Options) { o.Config, o.Audit = svc, cs })
+	e = newEnv(t, okUpstream(), append([]func(*Options){func(o *Options) { o.Config, o.Audit = svc, cs }}, mod...)...)
 	return e, svc, cs
 }
 
