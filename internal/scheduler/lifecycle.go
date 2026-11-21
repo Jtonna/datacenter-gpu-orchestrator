@@ -71,6 +71,9 @@ func (c *schedCore) startInstance(p *core.Profile, pl core.Placement, waiters []
 		return
 	}
 	if c.agents {
+		if !c.agentForcedGate(in) { // forcedfit.go: a forced placement the agents would refuse
+			return
+		}
 		c.launchWorkers(in) // agents.go: the worker launches replace the pre-flight
 		return
 	}

@@ -93,6 +93,9 @@ const (
 	ReasonLowMemory              = "low_memory"
 	ReasonWorkerUnreachable      = "worker_unreachable"
 	ReasonPortInUse              = "port_in_use"
+	// ReasonWouldNotFit (CR-9): the launch's expect_mib does not fit the
+	// node's memory; nothing was started.
+	ReasonWouldNotFit = "would_not_fit"
 
 	// ReasonInvalidRequest is not a contract word.
 	// CONTRACT-QUESTION: section 6.2 says the agent "refuses" a host model
@@ -112,6 +115,7 @@ var LaunchRefusalStatus = map[string]int{
 	ReasonLowMemory:              507,
 	ReasonWorkerUnreachable:      502,
 	ReasonPortInUse:              409,
+	ReasonWouldNotFit:            409,
 	ReasonInvalidRequest:         400,
 }
 
@@ -224,6 +228,9 @@ type RegisterRequest struct {
 	Programs         []ProgramHash    `json:"programs"`
 	LaunchID         *string          `json:"launch_id"`
 	ForeignProcesses []ForeignProcess `json:"foreign_processes"`
+	// WatchdogFloorMiB is the agent's memory watchdog floor (CR-9). Optional:
+	// an agent of release 0.1.0 does not send it.
+	WatchdogFloorMiB int64 `json:"watchdog_floor_mib,omitempty"`
 }
 
 // FillEmpty replaces nil slices by empty ones so they encode as [].
@@ -316,6 +323,12 @@ type Heartbeat struct {
 	MemAvailableMiB int64            `json:"mem_available_mib"`
 	// Stats is the stats contract object. A heartbeat without it is valid.
 	Stats *Stats `json:"stats,omitempty"`
+	// WatchdogFloorMiB is the agent's memory watchdog floor (CR-9, optional).
+	WatchdogFloorMiB int64 `json:"watchdog_floor_mib,omitempty"`
+	// StopReason and StopMessage: why the agent is stopping its launch, sent
+	// while the launch is stopping (CR-9, optional; see LaunchState).
+	StopReason  string `json:"stop_reason,omitempty"`
+	StopMessage string `json:"stop_message,omitempty"`
 }
 
 // HeartbeatAnswer is the 200 answer to a heartbeat. 410 means "register again".
@@ -369,6 +382,9 @@ type ReleaseInfo struct {
 type WorkerSpec struct {
 	ModelDir  bool     `json:"model_dir"`
 	ExtraArgs []string `json:"extra_args"`
+	// ExpectMiB is the memory Potluck expects this launch to take on the node
+	// (CR-9). Optional: without it the agent makes no would_not_fit check.
+	ExpectMiB int64 `json:"expect_mib,omitempty"`
 }
 
 // HostSpec is the host part of a launch request (phase 6).
@@ -430,6 +446,12 @@ type LaunchState struct {
 	Exit            *ExitInfo     `json:"exit"`
 	// LeaseExpiresInS is null once the launch has exited.
 	LeaseExpiresInS *float64 `json:"lease_expires_in_s"`
+	// StopReason is set as soon as the agent has decided to stop the launch
+	// (watchdog, lease_expired, forced, stopped, reset), while State is still
+	// "stopping"; StopMessage says more when there is more (CR-9, optional).
+	// The final word is exit.reason: it can differ (oom_kill, crashed).
+	StopReason  string `json:"stop_reason,omitempty"`
+	StopMessage string `json:"stop_message,omitempty"`
 }
 
 // LaunchRefusal is the body of every refused launch call (6.2) and of a stop

@@ -26,6 +26,11 @@ type Node struct {
 	// it is 0 only because "unknown is not free". The load memory watch must
 	// not read such a zero as a real reading.
 	FreeUnknown bool
+	// WatchdogFloorMiB is the memory watchdog floor of an agent node: the one
+	// its agent reports, else the scheduler's setting (agent contract CR-9).
+	// It is already taken off FreeMiB when the node shares system memory. 0
+	// for a node that is not an agent's.
+	WatchdogFloorMiB int
 
 	// Settings of the matched tier.
 	Priority     int           // lower is preferred

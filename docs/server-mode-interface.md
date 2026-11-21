@@ -1,6 +1,8 @@
 # PS5-hosted server mode: interface between the scheduler and the PS5 side
 
-Status: DRAFT 3, 2026-11-19. Nothing in this document is built. It needs the owner's approval before either side builds on it.
+**Superseded by `docs/agent-contract.md`** (built, in use as release 0.1.0 since 2026-11-21). This document was never built as written. It is kept as the record of the measurements and of the share's container configuration (sections 2 and 7.6); for anything else read the agent contract.
+
+Status at the time it was superseded: DRAFT 3, 2026-11-19. Nothing in this document is built. It needs the owner's approval before either side builds on it.
 
 Draft 3 folds in four decisions the owner gave in the PS5-side session on 2026-11-19, relayed by the fleet console agent and not yet confirmed to the scheduler side first-hand: no fallback (sections 3, 6, 7.1), the share belongs to the scheduler stack (sections 4, 7.6, 8), model storage as a named volume (section 7.6), and real progress on short loads (sections 5.2, 7.4).
 

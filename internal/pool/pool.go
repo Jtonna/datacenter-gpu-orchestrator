@@ -139,6 +139,10 @@ type heartbeat struct {
 	Devices         []agentproto.Device         `json:"devices"`
 	MemAvailableMiB int64                       `json:"mem_available_mib"`
 	Stats           json.RawMessage             `json:"stats,omitempty"`
+	// CR-9, all optional: an agent of release 0.1.0 sends none of them.
+	WatchdogFloorMiB int64  `json:"watchdog_floor_mib,omitempty"`
+	StopReason       string `json:"stop_reason,omitempty"`
+	StopMessage      string `json:"stop_message,omitempty"`
 }
 
 type agent struct {
@@ -159,6 +163,9 @@ type agent struct {
 	// noTierLogged: the line about matching no tier was written for this
 	// registration.
 	noTierLogged bool
+	// floorLogged: the line about a watchdog floor that differs from
+	// Potluck's setting was written for this registration (CR-9).
+	floorLogged bool
 	// orphan is a launch the agent's heartbeat names that this run does not
 	// hold; the node takes no load until the agent reports no launch.
 	// orphanAsked is the launch the stop was sent for (once per launch).
@@ -356,6 +363,7 @@ func (p *Pool) register(req agentproto.RegisterRequest) (agentproto.RegisterAnsw
 		a.reachWarned = old.reachWarned // one warning per failure, not per registration
 	}
 	p.agents[req.ID] = a
+	p.checkFloorLocked(a)
 	ans := agentproto.RegisterAnswer{Accepted: true, Release: rel.Release, Platform: platform,
 		HeartbeatEveryS: HeartbeatEvery.Seconds(), Programs: rel.Programs(platform), Exporters: rel.Exporters(platform),
 		Paused: p.admin[req.ID].Paused}
@@ -431,6 +439,7 @@ func (p *Pool) Heartbeat(id string, body []byte) HeartbeatResult {
 	a.lastSeen, a.lost, a.silent = now, false, false
 	a.hb = &hb
 	a.stats, a.statsNote = parseStats(hb.Stats)
+	p.checkFloorLocked(a)
 	if d, extra, ok := pickDevice(a); ok && extra > 0 && !a.extraWarned {
 		a.extraWarned = true
 		p.log.Warn("agent node lists more than one device of its backend; extra devices ignored, the worker uses the first",
@@ -444,6 +453,49 @@ func (p *Pool) Heartbeat(id string, body []byte) HeartbeatResult {
 	p.checkOrphanLocked(a, &hb)
 	p.rebuildLocked()
 	return HeartbeatResult{Status: http.StatusOK, Answer: agentproto.HeartbeatAnswer{Release: p.o.PotluckRelease, Paused: p.admin[id].Paused}}
+}
+
+// reportedFloor is the watchdog floor the agent reports (CR-9): the last
+// heartbeat's, else the registration's; 0 when it reports none (release 0.1.0).
+func reportedFloor(a *agent) int64 {
+	if a.hb != nil && a.hb.WatchdogFloorMiB > 0 {
+		return a.hb.WatchdogFloorMiB
+	}
+	return max(a.reg.WatchdogFloorMiB, 0)
+}
+
+// nodeFloor is the watchdog floor used for the node's placement memory: the
+// one its agent reports, else defaults.watchdog_floor_mib.
+func nodeFloor(cfg *config.Config, a *agent) int64 {
+	if f := reportedFloor(a); f > 0 {
+		return f
+	}
+	return int64(cfg.Defaults.WatchdogFloorMiB)
+}
+
+// floorMismatch says, for status, that the agent's floor differs from
+// Potluck's setting; "" when it does not or the agent reports none.
+func floorMismatch(cfg *config.Config, a *agent) string {
+	f := reportedFloor(a)
+	if f == 0 || f == int64(cfg.Defaults.WatchdogFloorMiB) {
+		return ""
+	}
+	return fmt.Sprintf("the agent's watchdog floor is %d MiB, defaults.watchdog_floor_mib is %d MiB; the agent's is used for this node",
+		f, cfg.Defaults.WatchdogFloorMiB)
+}
+
+// checkFloorLocked logs a floor mismatch once per registration.
+func (p *Pool) checkFloorLocked(a *agent) {
+	if a.floorLogged {
+		return
+	}
+	cfg := p.o.Config()
+	if floorMismatch(cfg, a) == "" {
+		return
+	}
+	a.floorLogged = true
+	p.log.Warn("agent watchdog floor differs from defaults.watchdog_floor_mib; the agent's is used for this node's placement memory",
+		"id", a.reg.ID, "name", a.reg.Name, "agent_floor_mib", reportedFloor(a), "setting_mib", cfg.Defaults.WatchdogFloorMiB)
 }
 
 // checkOrphanLocked handles a heartbeat's launch_id (agent contract 11, "lost

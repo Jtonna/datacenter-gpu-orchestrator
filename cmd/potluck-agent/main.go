@@ -242,6 +242,9 @@ func serve(opt agent.Options, stderr io.Writer) int {
 	// One library path for the library check and for the launches.
 	opt.LDLibraryPath = os.Getenv("LD_LIBRARY_PATH")
 	machine := hw.Machine{Root: "/", LDLibraryPath: opt.LDLibraryPath}
+	if opt.LeaveMarker == "" {
+		opt.LeaveMarker = agent.LeaveMarkerPath
+	}
 	base := "http://" + opt.Potluck
 	httpc := &http.Client{Timeout: 5 * time.Second}
 	var a *agent.Agent

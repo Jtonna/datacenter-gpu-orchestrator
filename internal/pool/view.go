@@ -203,7 +203,9 @@ func (p *Pool) nodeFromAgentLocked(cfg *config.Config, a *agent) (core.Node, boo
 	n := core.Node{ID: core.NodeID(a.reg.ID), Hostname: a.reg.Name, Online: !a.lost,
 		Addr:     net.JoinHostPort(a.reg.Addr, strconv.Itoa(p.o.WorkerPort)),
 		Priority: t.Priority, HeadroomMiB: t.HeadroomMiB, SharedMemory: t.SharedMemory, LinkMBs: t.LinkMBs, Settle: t.Settle,
-		Paused: p.admin[a.reg.ID].Paused, FreeUnknown: true}
+		Paused: p.admin[a.reg.ID].Paused, FreeUnknown: true,
+		// The floor is the node's own when its agent reports it (CR-9).
+		WatchdogFloorMiB: int(nodeFloor(cfg, a))}
 	if a.hb == nil {
 		return n, tiered
 	}
@@ -214,7 +216,7 @@ func (p *Pool) nodeFromAgentLocked(cfg *config.Config, a *agent) (core.Node, boo
 	n.TotalMiB, n.FreeMiB, n.FreeUnknown = int(d.TotalMiB), int(max(d.FreeMiB, 0)), false
 	if d.SharesSystemMemory {
 		n.SharedMemory = true
-		usable := a.hb.MemAvailableMiB - int64(cfg.Defaults.WatchdogFloorMiB)
+		usable := a.hb.MemAvailableMiB - int64(n.WatchdogFloorMiB)
 		n.FreeMiB = int(max(min(d.FreeMiB, usable), 0))
 	}
 	return n, tiered
@@ -396,11 +398,21 @@ type NodeFacts struct {
 	// silent, agent_unreachable, programs_not_ready or
 	// model_source_unreachable; UnplacedMessage says more when there is more
 	// to say (agent_unreachable: the address, the port and what to check). A
-	// paused, lost, left or removed node is not placeable either; its own
-	// fields say so.
+	// node that is paused and has no reason of its own has paused (CR-9). A
+	// lost, left or removed node is not placeable either; its state says so.
 	Placeable       bool   `json:"placeable"`
 	Unplaced        string `json:"unplaced,omitempty"`
 	UnplacedMessage string `json:"unplaced_message,omitempty"`
+	// WatchdogFloorMiB is the watchdog floor the agent reports (CR-9); absent
+	// for an agent that reports none (release 0.1.0). FloorMismatch says so
+	// when it differs from defaults.watchdog_floor_mib; the agent's is used
+	// for the node.
+	WatchdogFloorMiB *int64 `json:"watchdog_floor_mib,omitempty"`
+	FloorMismatch    string `json:"floor_mismatch,omitempty"`
+	// StopReason is why the agent is stopping its launch, from its last
+	// heartbeat, while the launch is stopping (CR-9).
+	StopReason  string `json:"stop_reason,omitempty"`
+	StopMessage string `json:"stop_message,omitempty"`
 }
 
 // Facts lists every agent node Potluck knows, removed ones included.
@@ -431,6 +443,10 @@ func (p *Pool) Facts() []NodeFacts {
 			m := hb.MemAvailableMiB
 			f.MemAvailMiB = &m
 			_, f.ExtraDevicesIgnored, _ = pickDevice(a)
+			f.StopReason, f.StopMessage = hb.StopReason, hb.StopMessage
+		}
+		if fl := reportedFloor(a); fl > 0 {
+			f.WatchdogFloorMiB, f.FloorMismatch = &fl, floorMismatch(cfg, a)
 		}
 		for _, l := range p.launches {
 			if l.node == core.NodeID(id) {
@@ -447,6 +463,9 @@ func (p *Pool) Facts() []NodeFacts {
 			}
 			if f.Unplaced == scheduler.UnplacedAgentUnreachable {
 				f.UnplacedMessage = a.reachMsg
+			}
+			if f.Unplaced == "" && f.Paused && f.State == StateActive {
+				f.Unplaced = scheduler.UnplacedPaused // CR-9: never placeable false with no reason
 			}
 		}
 		f.Placeable = f.State == StateActive && !f.Paused && !f.HostAgent && f.Unplaced == ""

@@ -4,6 +4,15 @@ Status: v1.1. Approved after three review passes; built; first hardware test
 run 2026-11-17 (results in `docs/hardware-test/RESULTS.md`). Owner: Jacob.
 Changes to behaviour go into this document first.
 
+Two sources of membership. This document was written for the fleet feed: the
+nodes come from the fleet console (`defaults.membership: fleet`, still the
+default). Since 2026-11-21 the cluster runs in agents mode
+(`defaults.membership: agents`, release 0.1.0): each machine runs
+`potluck-agent`, registers with the scheduler and starts its worker per load.
+Section 7.7 says what changes in the scheduler; the wire between the two is
+`docs/agent-contract.md`. Where a section below says the nodes come from the
+fleet feed (3.3, 5, 7.1, 7.5), read it as the fleet mode.
+
 A drop-in replacement for llama-swap on the host machine that decides at load time which
 machines a model runs on. Working name of the binary: `llm-scheduler`.
 
@@ -140,7 +149,8 @@ All **[verified]** against source unless tagged otherwise.
 
 ### 3.3 Fleet manager facts
 
-All **[verified]**.
+All **[verified]**. They apply to fleet membership; in agents mode the fleet
+feed is not read (section 7.7, `docs/agent-contract.md`).
 
 - Fleet console backend on `0.0.0.0:8090`, state in memory only (a restart
   empties it until nodes report again). `GET /api/fleet`,
@@ -618,6 +628,11 @@ includes one forced profile:
 ## 7. Placement
 
 ### 7.1 Node view and budgets
+
+In agents mode the node view comes from the agents' registrations and
+heartbeats instead of the fleet client; the figures below then come from the
+heartbeat (section 7.7 "Nodes", agent contract section 11). The
+budgets and everything after them are the same in both modes.
 
 The fleet client and local probe produce, per node, in MiB:
 

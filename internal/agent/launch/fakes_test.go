@@ -289,6 +289,7 @@ type env struct {
 	klog    fakeKLog
 	cfg     Config
 	portErr error
+	device  *agentproto.Device // the device a worker serves; nil: none known
 	probeOK map[string]bool
 	healthy bool
 	exits   chan agentproto.LaunchState
@@ -335,6 +336,12 @@ func (e *env) newManager() *Manager {
 			e.mu.Lock()
 			defer e.mu.Unlock()
 			return e.healthy
+		},
+		Device: func() (agentproto.Device, bool) {
+			if e.device == nil {
+				return agentproto.Device{}, false
+			}
+			return *e.device, true
 		},
 		Gate: e.gate, Programs: fakePrograms{dir: e.cfg.ProgramRoot},
 		OnExit:  func(st agentproto.LaunchState) { e.exits <- st },

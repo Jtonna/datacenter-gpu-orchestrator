@@ -1,10 +1,10 @@
 # Agent contract: Potluck and `potluck-agent`
 
-Status: DRAFT 5, 2026-11-20 (drafts 1 to 3 reviewed by the PS5 side; change requests CR-1, CR-2 and CR-3 folded in; CR-5, accepted 2026-11-20, adds section 11.1 and the lines marked CR-5; CR-6, accepted 2026-11-21, from the first run on a real machine, adds section 6.12 and the lines marked CR-6). Nothing in this document is built. It is task C1 of the plan "Potluck Cleanup Tasks". It becomes binding when the scheduler side and the fleet console agent both accept it.
+Status: built, and in use as release 0.1.0 since 2026-11-21 (five machines). The text is DRAFT 5 of 2026-11-20 with the change requests folded in: CR-1, CR-2 and CR-3 (drafts 1 to 3, reviewed by the PS5 side); CR-5, accepted 2026-11-20, section 11.1 and the lines marked CR-5; CR-6, accepted 2026-11-21, from the first run on a real machine, section 6.12 and the lines marked CR-6; CR-8, accepted 2026-11-21, the call-back check. CR-9 (section 11.2 and the lines marked "CR-9, proposed") is proposed and not deployed: release 0.1.0 does not contain it. It is task C1 of the plan "Potluck Cleanup Tasks".
 
 Authors: the scheduler agent (`ps5-ai-datacenter-load-balancer-32`) wrote it; the fleet console agent (`fix-fleet-console-tiles`) reviews it against the PS5 side (boot chain, RAM-only, payload delivery).
 
-It replaces `docs/server-mode-interface.md` (DRAFT 3) once accepted. That document stays as the record of the measurements and of the share's container config (its sections 2 and 7.6).
+It replaces `docs/server-mode-interface.md` (DRAFT 3). That document stays as the record of the measurements and of the share's container config (its sections 2 and 7.6).
 
 Plan decisions this draft relies on: D1, D2 (the agent is a machine service and flips role per load), D4 (no PS5-specific code in Potluck), D8 (Potluck hands out programs), D9 (node_exporter), D11, D12 (two install paths, setup and uninstall scripts), D14 (agents are workers only in phase 4; hosting comes in phase 6), D15 (identity is hardware-derived).
 
@@ -94,6 +94,7 @@ Sent at agent start, and again whenever Potluck answers a heartbeat with `410`.
 - `programs`: what the agent already holds and has just re-hashed, as `[{"name", "sha256"}]`, so an agent restart does not fetch again.
 - `launch_id`: a launch that exists on the node at registration (the agent restarted, or Potluck did).
 - `foreign_processes`: any `rpc-server` or `llama-server` process on the node that the agent did not start, as `[{"pid", "exe"}]`. Not empty means the agent sends the registration, is refused (`foreign_process`), and starts nothing.
+- `watchdog_floor_mib` (CR-9, proposed; optional, not sent by release 0.1.0): the agent's memory watchdog floor in MiB (section 6.7), for example `"watchdog_floor_mib": 1000`. Section 11.2, item 2.
 
 Answer `200`:
 
@@ -164,6 +165,13 @@ Every `heartbeat_every_s`. It carries everything Potluck needs to know about an 
 - `mem_available_mib` is read by the agent itself from `/proc/meminfo`, not from an exporter. It is read after the programs are in place, so on a RAM-only node it already excludes them.
 - `stats` is the object defined by the stats contract (section 7). A missing or unreadable `stats` never makes a heartbeat invalid.
 - `model_source.reachable`: section 8.
+- CR-9, proposed; all optional, none sent by release 0.1.0 (section 11.2):
+
+  | Field | Meaning |
+  |---|---|
+  | `watchdog_floor_mib` | The agent's memory watchdog floor in MiB, as in the registration. |
+  | `stop_reason` | Only while the node's launch is `stopping`: why the agent is stopping it (`watchdog`, `lease_expired`, `forced`, `stopped`, `reset`). |
+  | `stop_message` | Only with `stop_reason`, when there is more to say (the watchdog's figures). |
 
 Answer `200`: `{"release": "0.1.0", "paused": false}`.
 
@@ -337,6 +345,8 @@ Stopping a launch is always: SIGTERM, wait up to 10 s, SIGKILL. A forced stop sk
 
 `role: "worker"` (phase 4). The agent starts `rpc-server` on port 50052, bound as in section 3. `model_dir: true` adds `--model-dir <the node's model folder>` so the worker can read model files itself (the direct-pull build); it is refused on a node whose model source is `push`. `label` is for display on the node's own screen only.
 
+`worker.expect_mib` (CR-9, proposed; optional, not sent by release 0.1.0): the memory in MiB that Potluck expects this launch to take on the node, for example `"expect_mib": 6200`. With it the agent makes the `would_not_fit` check below; without it the agent behaves as release 0.1.0. Section 11.2, item 1.
+
 `role: "host"` (phase 6) replaces the `worker` object with:
 
 ```json
@@ -367,6 +377,7 @@ Checks before anything starts. Each failure is a refusal with a `reason` word an
 | `503` | `model_source_unreachable` | For a host, or a worker with `model_dir`: the last share probe succeeded (section 8). |
 | `404` | `model_not_found` | Host only: the model file exists and is readable. |
 | `507` | `low_memory` | `MemAvailable` is at least `min_mem_available_mib`. |
+| `409` | `would_not_fit` | CR-9, proposed. Worker with `expect_mib` only. A device that shares system memory: `MemAvailable - expect_mib` is at least the watchdog floor; the message names the three numbers. A device with memory of its own: the device's `free_mib` is at least `expect_mib`. |
 | `502` | `worker_unreachable` | Host only: every worker accepts a TCP connection within 5 s. The agent closes each connection at once and sends no bytes (see below). The body lists the ones that failed. |
 | `409` | `port_in_use` | The launch port is free. A bind failure is retried for 3 s before it is reported, because the previous launch's port can take a moment to free. |
 
@@ -411,6 +422,7 @@ Answer on success: `202` with the state object of 6.3. The start is asynchronous
   - Worker receiving pushed weights: the agent has no count. `load` is `null` and Potluck keeps using the byte count it has on the sending side.
   - After the load, `load` stays with its final values.
 - `exit`, when `state` is `exited`: `{"code": 137, "signal": "KILL", "reason": "…", "age_s": 3.1, "log_tail": ["…"]}`. `log_tail` is the last 40 log lines.
+- `stop_reason`, `stop_message` (CR-9, proposed; optional, not sent by release 0.1.0): present only while `state` is `stopping`, from the moment the agent has decided to stop the launch: `"stop_reason": "watchdog", "stop_message": "MemAvailable 912 MiB fell below the watchdog floor of 1000 MiB"`. The words are those of line 1 of the table below. Once the launch is `exited`, `exit.reason` counts. Section 11.2, item 4.
 - The last `exited` state stays readable until the next launch starts. With no launch ever: `{"state": "none"}`.
 
 Exit reasons, in the order the agent decides them. An earlier line wins over a later one, so a token in the log always wins over what the exit signal suggests:
@@ -586,6 +598,8 @@ There are two different things, and they have different effects.
 3. Stop the launch, the exporters and the agent; unmount the share if the agent mounted it; delete the program folder, the launch log, the state files, the unit or container and image, and the agent binary.
 4. Nothing of Potluck's keeps running on the machine.
 
+CR-9, proposed (section 11.2, item 3): an agent that is stopped while the marker file exists sends the deregister call itself before it exits, so a node that was disabled by hand, without the uninstall script, also shows `left`.
+
 On deregister, Potluck stops any instance with a launch on that node, as in force unload, and marks the node `left`. A `left` node that registers again is admitted like a new one, with the same `id`. Installing again removes the marker.
 
 **Removal, from Potluck** (`DELETE /api/nodes/{id}`, audited, with a comment), for a machine that is gone or unwanted. Potluck stops any instance on it and marks the node `removed`. A `removed` node that registers is refused (`removed`) until someone re-admits it in Potluck (`POST /api/nodes/{id}/readmit`, audited).
@@ -640,8 +654,8 @@ CR-5, accepted 2026-11-20. They are part of the contract. Each line says what Po
 - **Lost node with a launch.** The instance goes through Potluck's node-loss path at once (the time without a heartbeat is the wait: 20 s for a node with a launch, the lease TTL, instead of 10 s: CR-6, accepted 2026-11-21): it is killed and its other members are stopped. Requests that were waiting for an instance that was still loading are queued again and get no error; requests in flight on a ready instance are cut off. The profile is not backed off. **Force unload** differs: requests waiting for that instance fail at once with an error that names the force unload and the node.
 - **Reading the launches when the host program ends (CR-6, accepted 2026-11-21).** Potluck's host program aborts within milliseconds of losing a worker, so Potluck often sees its exit before the worker's. When the host program of a load with agent workers ends without having been stopped, Potluck reads `GET /launch` on every member in parallel, again every 100 ms, for at most 2 s, before it handles the exit. A launch that ended by itself (`watchdog`, `oom_kill`, `lease_expired`, `start_failed`, `crashed` and the like; not `stopped`, `forced`, `reset`) is the failure reason, with its message, in the 502, the log and history (`workerExited`), and the memory-kill rule below applies. When no launch ended by itself, the host program's exit is the reason, as before.
 - **`LLAMA_RPC_FILE_LOAD` on Potluck's host program (CR-6, accepted 2026-11-21).** For a load with agent workers Potluck sets it in the environment of the host `llama-server` it starts: `required` when `worker_model_dir` is on (the workers were launched with `model_dir` and must read the file themselves), `0` when it is off (the host sends the weights). It no longer passes on whatever its own environment holds. Profiles carry no environment of their own.
-- **`min_mem_available_mib`** of a worker launch is Potluck's watchdog floor setting (`watchdog_floor_mib`, default 1000). For a node whose memory is shared (its device has `shares_system_memory`, or its tier says so) the node's budget for the load is added.
-- **No forced-fit pre-flight with agents.** Potluck's check of a forced placement against freshly probed worker memory is not run: a probe would take the worker's single client slot. The host starts on the placement as made. A load that does not fit a node with shared memory is ended by that agent's watchdog: the load fails with the agent's reason and the launches of every member are stopped.
+- **`min_mem_available_mib`** of a worker launch is Potluck's watchdog floor setting (`watchdog_floor_mib`, default 1000). For a node whose memory is shared (its device has `shares_system_memory`, or its tier says so) the node's budget for the load is added. (CR-9, proposed: the node's own reported floor in place of the setting, section 11.2, item 2.)
+- **No forced-fit pre-flight with agents.** Potluck's check of a forced placement against freshly probed worker memory is not run: a probe would take the worker's single client slot. The host starts on the placement as made. A load that does not fit a node with shared memory is ended by that agent's watchdog: the load fails with the agent's reason and the launches of every member are stopped. (CR-9, proposed, replaces this line: section 11.2, item 1. The watchdog was measured to be too slow for a load that does not fit.)
 - **Learned need after a memory kill.** When a worker launch exits with `watchdog` or `oom_kill`, the model's learned memory need is raised by a tenth, at least 256 MiB. Like every learned need it holds until Potluck restarts.
 - **Reading the launch state.** "While a load is in progress on that node" (section 6.3) is from the start request until Potluck's instance is ready or the agent reports `load.state: "done"`, whichever comes first. A worker is `ready` before its load starts, so `ready` does not slow the reads.
 
@@ -652,14 +666,31 @@ CR-5, accepted 2026-11-20. They are part of the contract. Each line says what Po
 - **Potluck in a container on a pool machine.** The machine's own firewall must let the container network reach the agent and worker ports (section 9, `--allow-from`).
 - **Reaching the agent is checked, not assumed** (the call-back check above; CR-8, accepted 2026-11-21). Port 50052 is not checked before a load: a firewall that lets 50060 through and drops 50052 shows up only as a failed load.
 
-**Not on the wire: the watchdog floor.** The agent's floor is its install option (section 9, default 1000 MiB). Potluck's figure is its own setting (default 1000 MiB), used for placement memory and for `min_mem_available_mib`. Neither side tells the other, so the two must be set to the same value by hand. Open point for the next change request.
+**Not on the wire: the watchdog floor.** The agent's floor is its install option (section 9, default 1000 MiB). Potluck's figure is its own setting (default 1000 MiB), used for placement memory and for `min_mem_available_mib`. Neither side tells the other, so the two must be set to the same value by hand. This is how release 0.1.0 works; CR-9, proposed, puts the floor on the wire (section 11.2, item 2).
+
+### 11.2 CR-9, proposed (2026-11-21): memory check before a launch, the watchdog floor on the wire, leaving on purpose, the cause while stopping
+
+CR-9, proposed. It is built on a branch and not deployed: no machine runs it and release 0.1.0 does not contain it. It comes from the first day of release 0.1.0 on the real machines.
+
+Every field it adds is optional, so a CR-9 side works with a release 0.1.0 side in both directions: a release 0.1.0 agent ignores `expect_mib` and behaves as today; a release 0.1.0 Potluck ignores `watchdog_floor_mib`, `stop_reason` and `stop_message`; a CR-9 Potluck that gets none of them from an agent uses its own setting and waits for `exited` as today. The release string does not change with CR-9 alone.
+
+1. **Memory check before a launch.** Measured: a worker takes the model's whole device memory in one step, 4 to 6 GB within one second. The watchdog (section 6.7: four reads a second, floor 1000 MiB) cannot stop a load that does not fit; the machine is out of memory before the kill takes effect.
+   - Potluck sends `worker.expect_mib` with every worker launch (section 6.2): the memory it expects this launch to take on that node. It is the whole need of the model when the node is the only member. Otherwise it is the node's share of the split: the figure a load of this run measured on that node for the same members and split when there is one, else need x the node's fraction of the tensor split, raised by `split_skew_margin` on a node with shared memory (the figure Potluck's fit rules already hold such a node to).
+   - The agent refuses the launch before it starts anything: `409`, reason `would_not_fit` (section 6.2). For a node whose device shares system memory (`devices[].shares_system_memory`) the test is `MemAvailable - expect_mib < watchdog floor`, and the message names the three numbers. For a device with memory of its own the test is `free_mib - expect_mib < 0`, with the device's `free_mib` of the last device read. The device is the one Potluck uses for the node (section 11.1, one device per node). Without `expect_mib` the agent makes no such check.
+   - Potluck treats `would_not_fit` as a failed load: the 502 and history (`workerLaunchFailed`) carry the agent's reason and message, the launches of the other members are stopped, the profile is backed off as after any failed load. The node is not quarantined and stays placeable, and the model's learned need is not raised: nothing ran, so nothing was measured.
+   - Potluck does not place tighter than the agent's test. Placement memory of a node with shared memory is already `min(device free, mem_available_mib - watchdog floor)` and the fit rules keep each such node's share inside it. A forced placement has no fit rule, so this replaces the line "No forced-fit pre-flight with agents" of section 11.1: before the launches are sent, Potluck compares each remote member's `expect_mib` with that node's placement memory (no tier headroom taken off). When one is larger the request is refused at once with `503`, reason "forced nodes do not fit", and a message that names the node and both figures; no launch is sent, the profile is not backed off, and `POST /api/plan` shows the same refusal. This does not depend on `forced_fit_check`; when that setting is `warn` or `reject` its own check (with headroom) runs here as well, from the agents' figures.
+2. **The watchdog floor on the wire.** This replaces "Not on the wire: the watchdog floor" of section 11.1. The agent sends its floor as `watchdog_floor_mib` in the registration (section 4.2) and in every heartbeat (section 4.3). Potluck uses the node's own floor, when it has one, for that node's placement memory, for item 1 and for `min_mem_available_mib`; else its setting `watchdog_floor_mib`. When the two differ, the node's entry in `agents` of `GET /api/status` has `floor_mismatch` (a sentence with both figures) beside the reported `watchdog_floor_mib`, and Potluck logs one warning per registration. The two no longer have to be set to the same value by hand.
+3. **Leaving on purpose.** When the agent is stopped (SIGTERM or SIGINT) and the marker file `/etc/potluck/disabled` exists (section 10), it calls `POST /api/pool/nodes/{id}/deregister` once before it exits, with a limit of 3 s. The node then shows `left`, not `lost` after 10 s. Without the marker a stop is as before: the agent says nothing and its launch is treated as section 6.1 says. A Docker install has no marker inside its container, so nothing changes there. Deregistering twice (the uninstall script already did) is harmless: the second call is answered `404`, which the agent only logs.
+4. **The cause while stopping.** The launch state (section 6.3) has `stop_reason`, and `stop_message` when there is more to say, from the moment the agent has decided to stop a launch, while `state` is still `stopping`: `watchdog`, `lease_expired`, `forced`, `stopped` or `reset`. The heartbeat carries the same two fields while its launch is stopping (section 4.3); Potluck shows them in the node's entry in `agents`. They are absent in every other state; once the launch is `exited`, `exit.reason` is the word that counts (it can differ: a launch that was being stopped can still end as `oom_kill`). When Potluck reads the launches of a load whose host program ended (section 11.1), a `stopping` launch with `stop_reason` `watchdog`, `oom_kill` or `lease_expired` is taken as the cause at once, with its message, without waiting for `exited` within the 2 s. This settles the former open question 4 of section 12.
+5. **A paused node says why.** In an entry of `agents` in `GET /api/status`, a paused node that has no other reason has `unplaced: "paused"`. Before, it had `placeable: false` and no reason. Another reason of the node itself (`programs_not_ready` and the like) comes first; `paused: true` is unchanged.
+
+Tests: the agent's launch manager (the refusal for both kinds of device, no check without `expect_mib`, `stop_reason` while stopping), the agent (the floor in both bodies, the refusal over HTTP, a stop with and without the marker), Potluck's pool against the fake agent (the field is sent, the refusal comes back, the reported floor, the mismatch, the `stopping` read, the paused reason) and Potluck's scheduler core (the shares, the failed load, the forced placement refused when placed).
 
 ## 12. Open questions
 
 1. **Worker per load, or always running.** This draft starts `rpc-server` per load (D2). Start cost measured for a host process on a PS5 is under 1.5 s. To confirm in phase 4: that a fresh worker per load does not slow warm loads, since the page cache belongs to the machine and not to the process.
 2. **Source address of Potluck's requests** as seen by a PS5 (expected `192.0.2.1`) and by the host machine's own agent (expected Potluck's container network). First phase 4 test.
 3. **What llama's device list prints** on the PS5 and CUDA builds (names, order, no PCI address expected), needed to match devices to the stats contract's GPU entries.
-4. **Cause while stopping.** `GET /launch` shows why a launch ends only once it is `exited`; while it is `stopping` Potluck cannot tell a watchdog kill from its own stop. Potluck therefore reads a launch for up to 2 s when its host program ends (section 11.1). A `cause` field on a `stopping` launch would remove that wait. Not decided.
 
 Settled in review, 2026-11-20:
 

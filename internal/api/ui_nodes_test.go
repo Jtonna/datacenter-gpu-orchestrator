@@ -20,7 +20,7 @@ import (
 func TestUIUnplacedReasonsAreMapped(t *testing.T) {
 	text := uiText(t, "core/nodeactions.js")
 	codes := []string{scheduler.UnplacedNoTierMatch, scheduler.UnplacedProgramsNotReady, scheduler.UnplacedModelSourceUnreachable,
-		scheduler.UnplacedOrphanLaunch, scheduler.UnplacedSilent, "agent_unreachable", "host_machine"}
+		scheduler.UnplacedOrphanLaunch, scheduler.UnplacedSilent, "agent_unreachable", "host_machine", scheduler.UnplacedPaused}
 	for _, c := range codes {
 		m := regexp.MustCompile(`(?m)^\s+` + regexp.QuoteMeta(c) + `: \{ short: '([^']+)',\s*text: '([^']+)' \},`).FindStringSubmatch(text)
 		if m == nil {

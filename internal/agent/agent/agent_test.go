@@ -50,6 +50,7 @@ type fakePotluck struct {
 	hbStatus  int
 	hbAnswer  agentproto.HeartbeatAnswer
 	downloads int
+	deregs    []string // paths of the deregister calls
 }
 
 func newFakePotluck(t *testing.T) *fakePotluck {
@@ -85,6 +86,9 @@ func (p *fakePotluck) serve(w http.ResponseWriter, r *http.Request) {
 		if p.hbStatus == 200 {
 			json.NewEncoder(w).Encode(p.hbAnswer)
 		}
+	case strings.HasSuffix(r.URL.Path, "/deregister"):
+		p.deregs = append(p.deregs, r.Method+" "+r.URL.Path)
+		w.WriteHeader(http.StatusNoContent)
 	case strings.HasPrefix(r.URL.Path, agentproto.PathProgramsPrefix):
 		b, ok := p.files[r.URL.Path]
 		if !ok {
