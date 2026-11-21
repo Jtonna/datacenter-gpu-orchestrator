@@ -241,15 +241,18 @@ func (c *schedCore) learnedNeeds() map[string]LearnedNeed {
 // The pre-flight reads the Vulkan device, which overstates what a
 // shared-memory machine can give. If only one figure is known, that one is used.
 func (c *schedCore) sharedBudget(id core.NodeID, n core.Node) (int, string) {
+	return c.sharedBudgetFrom(id, n, n.FreeMiB)
+}
+
+// sharedBudgetFrom is sharedBudget with fleetFree in place of the fleet's
+// free figure (emptyFree: the figure with nothing of ours on the node).
+func (c *schedCore) sharedBudgetFrom(id core.NodeID, n core.Node, fleetFree int) (int, string) {
 	const fleet, preflight = "shared memory, headroom kept, from fleet figures", "shared memory, headroom kept, from pre-flight"
-	pfKnown, pfFree := false, 0
-	if ns := c.nodes[id]; ns != nil && !ns.ovUntil.IsZero() && c.now.Before(ns.ovUntil) {
-		pfKnown, pfFree = true, ns.ovFree
-	}
-	if pfKnown && (n.FreeMiB <= 0 || pfFree < n.FreeMiB) {
+	pfFree, pfKnown := c.preflightFree(id)
+	if pfKnown && (fleetFree <= 0 || pfFree < fleetFree) {
 		return pfFree - n.HeadroomMiB, preflight
 	}
-	return n.FreeMiB - n.HeadroomMiB, fleet
+	return fleetFree - n.HeadroomMiB, fleet
 }
 
 // nodeShort is a shared-memory node whose expected share of a placement is
@@ -260,9 +263,14 @@ type nodeShort struct {
 	usable  int // MiB it has (its budget)
 	fitText string
 	how     string // where the usable figure comes from
+	empty   bool   // usable is the figure with nothing of ours loaded on the node
 }
 
 func (s nodeShort) text() string {
+	if s.empty {
+		return fmt.Sprintf("node %s: expected share %d MiB (%s) but it would have only %d MiB usable even with nothing loaded on it (%s)",
+			s.label, s.share, s.fitText, s.usable, s.how)
+	}
 	return fmt.Sprintf("node %s: expected share %d MiB (%s) but usable %d MiB (%s)", s.label, s.share, s.fitText, s.usable, s.how)
 }
 
@@ -275,23 +283,28 @@ func (s nodeShort) text() string {
 // (instance.SplitFractions). A node whose share was measured by a load this
 // run with the same node set and split uses that figure and no margin. A
 // single-node placement takes no margin and is not checked here.
-func (c *schedCore) sharedShortfalls(p *core.Profile, info NeedInfo, pl core.Placement) []nodeShort {
+//
+// With empty the usable figure is the one with nothing of ours loaded on the
+// node (fitUsable); ok is false when that cannot be told.
+func (c *schedCore) sharedShortfalls(p *core.Profile, info NeedInfo, pl core.Placement, empty bool) (out []nodeShort, ok bool) {
 	if len(pl.Nodes) < 2 {
-		return nil
+		return nil, true
 	}
 	fracs := instance.SplitFractions(*p, pl)
 	if len(fracs) != len(pl.Nodes) {
-		return nil
+		return nil, true
 	}
 	skew := c.cfg.Defaults.SplitSkewMargin
 	need := info.Need.WithMargin()
-	var out []nodeShort
 	for i, pn := range pl.Nodes {
 		n, ok := c.node(pn.ID)
 		if !ok || !n.SharedMemory {
 			continue
 		}
-		usable, how := c.sharedBudget(pn.ID, n)
+		usable, how, ok := c.fitUsable(pn.ID, n, empty)
+		if !ok {
+			return nil, false
+		}
 		var share int
 		var fit string
 		if m, ok := c.learned[p.Name].shareFor(pl, fracs, pn.ID); ok {
@@ -302,10 +315,10 @@ func (c *schedCore) sharedShortfalls(p *core.Profile, info NeedInfo, pl core.Pla
 				need, strconv.FormatFloat(math.Round(fracs[i]*1000)/10, 'f', -1, 64), strconv.FormatFloat(1+skew, 'f', -1, 64))
 		}
 		if share > usable {
-			out = append(out, nodeShort{label: nodeLabel(pn.ID, n), share: share, usable: usable, fitText: fit, how: how})
+			out = append(out, nodeShort{label: nodeLabel(pn.ID, n), share: share, usable: usable, fitText: fit, how: how, empty: empty})
 		}
 	}
-	return out
+	return out, true
 }
 
 // ---- memory watch during a load ----

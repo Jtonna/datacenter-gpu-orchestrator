@@ -319,6 +319,10 @@ func (c *schedCore) dryPlan(profile string) PlanReport {
 	}
 	if ev := c.evictables(p, 0); len(ev) > 0 {
 		if res, err := placer.Plan(req, c.freeCandidates(p), ev); err == nil {
+			if fe := c.forcedRefusalBeforeEvict(p, res.Placement); fe != nil {
+				r.Action, r.Reason, r.Placement = PlanReject, fe.Message, c.placedStatus(res.Placement)
+				return r
+			}
 			r.Action, r.Placement = PlanEvict, c.placedStatus(res.Placement)
 			for _, v := range res.Victims {
 				r.Victims = append(r.Victims, PlanVictim{Profile: v, Busy: c.insts[v].inFlight > 0})

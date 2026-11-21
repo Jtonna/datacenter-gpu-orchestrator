@@ -145,6 +145,19 @@ func (c *schedCore) plan(e *entry) bool {
 	if err != nil {
 		return false
 	}
+	// A forced profile that could not fit its nodes even with nothing loaded
+	// on them is refused now, before any victim is stopped (forcedfit.go).
+	if ferr := c.forcedRefusalBeforeEvict(e.prof, res.Placement); ferr != nil {
+		var nodes []string
+		for _, n := range res.Placement.Nodes {
+			nodes = append(nodes, string(n.ID))
+		}
+		c.log.Warn("forced profile cannot fit even with its nodes empty; refused before any eviction", "profile", e.prof.Name,
+			"need_mib", ferr.NeedMiB, "free_mib", ferr.CapacityMiB, "nodes", nodes,
+			"would_evict", slices.Clone(res.Victims), "reason", ferr.Message)
+		c.answerEntry(e, ferr)
+		return true
+	}
 	e.claim = make([]core.NodeID, 0, len(res.Placement.Nodes))
 	for _, n := range res.Placement.Nodes {
 		e.claim = append(e.claim, n.ID)
@@ -190,7 +203,9 @@ func (c *schedCore) evictables(p *core.Profile, clock time.Duration) []placer.Ev
 		}
 		for _, pn := range in.placement.Nodes {
 			n, ok := c.node(pn.ID)
-			if !ok || !c.eligible(pn.ID) || (localOnly(p) && !n.Local) {
+			// A node that takes no new load is not offered: evicting its
+			// instance would stop a model to make room the node may not use.
+			if !ok || !c.eligible(pn.ID) || c.noNewLoad(pn.ID) || (localOnly(p) && !n.Local) {
 				continue
 			}
 			ev.Nodes = append(ev.Nodes, placer.FromNode(n, c.planBudget(pn.ID, n)))
