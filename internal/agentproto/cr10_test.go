@@ -82,3 +82,36 @@ func TestCR10FieldsAreOptionalOnTheWire(t *testing.T) {
 		t.Fatalf("a 0.1.0-shaped decoder failed on a CR-10 heartbeat answer: %+v %v", oldHA, err)
 	}
 }
+
+// CR-10, agent batch: server_time_unix_ms is optional in both answers. A
+// release 0.1.0 decoder is not disturbed by it, and a body without it
+// decodes to 0 (no server time).
+func TestServerTimeIsOptional(t *testing.T) {
+	b, _ := json.Marshal(HeartbeatAnswer{Release: "0.1.0", LogsRevision: 7, ServerTimeUnixMs: 1700000000123})
+	if string(b) != `{"release":"0.1.0","paused":false,"logs_revision":7,"server_time_unix_ms":1700000000123}` {
+		t.Fatalf("heartbeat answer: %s", b)
+	}
+	var old struct {
+		Release string `json:"release"`
+		Paused  bool   `json:"paused"`
+	}
+	if err := json.Unmarshal(b, &old); err != nil || old.Release != "0.1.0" {
+		t.Fatalf("0.1.0 decoder: %+v %v", old, err)
+	}
+	rb, _ := json.Marshal(RegisterAnswer{Accepted: true, Release: "0.1.0", ServerTimeUnixMs: 5})
+	var oldReg struct {
+		Accepted bool   `json:"accepted"`
+		Release  string `json:"release"`
+	}
+	if err := json.Unmarshal(rb, &oldReg); err != nil || !oldReg.Accepted || !strings.Contains(string(rb), `"server_time_unix_ms":5`) {
+		t.Fatalf("registration answer: %s %v", rb, err)
+	}
+	var ha HeartbeatAnswer
+	var ra RegisterAnswer
+	if json.Unmarshal([]byte(`{"release":"0.1.0","paused":false}`), &ha); ha.ServerTimeUnixMs != 0 {
+		t.Fatal(ha)
+	}
+	if json.Unmarshal([]byte(`{"accepted":true,"release":"0.1.0","paused":false,"stop_launch":null}`), &ra); ra.ServerTimeUnixMs != 0 {
+		t.Fatal(ra)
+	}
+}

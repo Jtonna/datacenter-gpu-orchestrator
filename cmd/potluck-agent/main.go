@@ -5,6 +5,7 @@
 //	              [--shared-memory auto|true|false]
 //	              [--install bare|docker] [--name LABEL]
 //	              [--data-dir DIR] [--state-dir DIR] [--models-dir DIR]
+//	              [--logs on|off] [--log-buffer-mib N] [--journal-dir DIR]
 //	potluck-agent id --potluck <addr:port>   print the node id and exit
 //	potluck-agent version                   print the release and exit
 //	potluck-agent probe-read <dir>          (internal) one share probe
@@ -110,7 +111,8 @@ func parseFlags(args []string, stderr io.Writer) (agent.Options, error) {
 	fs.SetOutput(stderr)
 	var o agent.Options
 	var allow multiFlag
-	var source string
+	var source, logs string
+	var bufMiB int
 	host, _ := os.Hostname()
 	fs.StringVar(&o.Potluck, "potluck", "", "Potluck address <ip>:<port> (required)")
 	fs.StringVar(&source, "model-source", "", "share:<ip>:/<export> | dir:<path> | push (required)")
@@ -124,9 +126,23 @@ func parseFlags(args []string, stderr io.Writer) (agent.Options, error) {
 	fs.StringVar(&o.DataDir, "data-dir", "", "programs and launch logs (default /dev/shm/potluck with --ram-only, else /var/lib/potluck-agent)")
 	fs.StringVar(&o.StateDir, "state-dir", "/run/potluck", "state files and the share mount point")
 	fs.StringVar(&o.ModelsDir, "models-dir", "", "model folder (default <state-dir>/models for a bare share, /models in Docker, the path for dir:)")
+	fs.StringVar(&logs, "logs", "on", "on or off: ship this machine's log lines to Potluck when Potluck hands out a logs object")
+	fs.IntVar(&bufMiB, "log-buffer-mib", 8, "RAM for log lines not yet shipped; the oldest go first when it is full")
+	fs.StringVar(&o.JournalDir, "journal-dir", "", "a journal folder to ship (Docker install: the host's journal, mounted read-only); a bare install ships its own journal")
 	if err := fs.Parse(args); err != nil {
 		return o, err
 	}
+	switch logs {
+	case "on":
+	case "off":
+		o.LogsOff = true
+	default:
+		return o, fmt.Errorf("--logs %q: want on or off", logs)
+	}
+	if bufMiB < 1 || bufMiB > 4096 {
+		return o, fmt.Errorf("--log-buffer-mib %d: want 1 to 4096", bufMiB)
+	}
+	o.LogBufferBytes = bufMiB << 20
 	if fs.NArg() > 0 {
 		return o, fmt.Errorf("unexpected argument %q", fs.Arg(0))
 	}

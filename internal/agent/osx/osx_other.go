@@ -40,3 +40,6 @@ type Kmsg struct{ Path string }
 
 // OOMKilled implements KernelLog.
 func (Kmsg) OOMKilled(pid int) bool { return false }
+
+// MonotonicNow returns ErrUnsupported: the journal exists only on Linux.
+func MonotonicNow() (time.Duration, error) { return 0, ErrUnsupported }

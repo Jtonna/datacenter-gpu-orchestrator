@@ -380,3 +380,14 @@ func OOMLineNames(line string, pid int) bool {
 
 // DiskFree returns the free bytes of the filesystem holding path.
 type DiskFree func(path string) (uint64, error)
+
+// BootID returns the kernel's boot id as the journal writes it in _BOOT_ID
+// (32 hex digits, no dashes), read from /proc/sys/kernel/random/boot_id.
+// "" when it cannot be read.
+func BootID() string {
+	b, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	if err != nil {
+		return ""
+	}
+	return strings.ReplaceAll(strings.TrimSpace(string(b)), "-", "")
+}

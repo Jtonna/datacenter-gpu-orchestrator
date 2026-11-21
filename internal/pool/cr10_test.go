@@ -205,3 +205,31 @@ func TestLogSnapshotKnowsTheProfileOfALaunch(t *testing.T) {
 		t.Fatal("the oldest ended launch was not forgotten")
 	}
 }
+
+// CR-10, agent batch: with logging on, both answers carry Potluck's own
+// clock (server_time_unix_ms), from which the agent stamps its log lines.
+// With logging off they do not, so they stay the answers of release 0.1.0
+// (checked byte for byte in TestLogsObjectInRegistrationAndRevisionInHeartbeat).
+func TestServerTimeOnlyWithLogging(t *testing.T) {
+	r := newRig(t)
+	const id = "02:00:00:00:00:71"
+	if ans := r.p.Register(regReq(id)); ans.ServerTimeUnixMs != 0 {
+		t.Fatalf("server time without logging: %+v", ans)
+	}
+	rev := int64(7)
+	r.p.o.Logs = testLogs(&rev)
+	want := r.p.o.Clock().UnixMilli()
+	ans := r.p.Register(regReq(id))
+	hb := r.p.Heartbeat(id, hbBody("s1", "", true, "true"))
+	if ans.ServerTimeUnixMs != want || hb.Answer.ServerTimeUnixMs != want {
+		t.Fatalf("server time: registration %d heartbeat %d, want %d", ans.ServerTimeUnixMs, hb.Answer.ServerTimeUnixMs, want)
+	}
+	b, _ := json.Marshal(hb.Answer)
+	if !strings.Contains(string(b), `"server_time_unix_ms":`) {
+		t.Fatalf("heartbeat answer: %s", b)
+	}
+	rev = 0
+	if hb = r.p.Heartbeat(id, hbBody("s1", "", true, "true")); hb.Answer.ServerTimeUnixMs != 0 {
+		t.Fatalf("server time with logging switched off: %+v", hb.Answer)
+	}
+}

@@ -1070,6 +1070,18 @@ func (m *Manager) Log(since int64, max int) (data []byte, next, dropped int64, o
 	return d, n, dr, true
 }
 
+// CurrentLog returns the id and log file of the current or last launch
+// (CR-10: the log shipper follows it). The lock is held only to read the
+// pointer; the caller reads the file without it.
+func (m *Manager) CurrentLog() (id string, lf *LogFile, ok bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cur == nil {
+		return "", nil, false
+	}
+	return m.cur.rec.LaunchID, m.cur.log, true
+}
+
 // Run drives every launch rule until ctx is done.
 func (m *Manager) Run(ctx context.Context) {
 	t := time.NewTicker(m.cfg.Tick)

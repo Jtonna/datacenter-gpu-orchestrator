@@ -29,6 +29,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/hw"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/identity"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/launch"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/logship"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/modelsrc"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/osx"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/programs"
@@ -62,6 +63,14 @@ type Options struct {
 	// (LeaveMarkerPath on a real machine; "" checks nothing). When it exists
 	// as the agent stops, the agent deregisters first (CR-9).
 	LeaveMarker string
+	// Central logging (CR-10). LogsOff is --logs off: no shipper at all.
+	// LogBufferBytes is the ring (--log-buffer-mib; 0: 8 MiB). JournalDir is
+	// --journal-dir: a mounted journal folder for a Docker install, which
+	// ships no system log without it. A bare install follows the machine's
+	// own journal.
+	LogsOff        bool
+	LogBufferBytes int
+	JournalDir     string
 }
 
 // LeaveMarkerPath is the marker the uninstall writes and the starter checks
@@ -107,6 +116,17 @@ type Deps struct {
 	HTTP        *http.Client
 	Logger      *slog.Logger
 
+	// Central logging (CR-10). LogsHTTP is the log sender's own client (nil:
+	// its own default). Journal starts the journal follower (nil:
+	// journalctl). Monotonic reads CLOCK_MONOTONIC and BootID the boot id,
+	// for journal entries (nil: the real ones). LaunchLogEvery is how often
+	// the launch log is read (default 250 ms).
+	LogsHTTP       *http.Client
+	Journal        logship.JournalStart
+	Monotonic      func() (time.Duration, error)
+	BootID         func() string
+	LaunchLogEvery time.Duration
+
 	// Timing; zero values get the contract values.
 	RegisterRetry   time.Duration // after a refusal; default 60s
 	BindRetry       time.Duration // after a failed bind of port 50060; default 5s (grows to 60s)
@@ -140,6 +160,8 @@ type Agent struct {
 	Source   *modelsrc.Source
 	Stats    *stats.Collector
 	Export   *exporters.Supervisor
+	// Ship is the log shipper (CR-10); nil with --logs off.
+	Ship *logship.Shipper
 
 	mu          sync.Mutex
 	ident       identity.Identity
@@ -168,6 +190,10 @@ type Agent struct {
 	updateSkipped bool
 	leftoversDone bool   // Run's goroutine only
 	regWhy        string // why the next registration is sent (log only; Run's goroutine)
+	// regSent and regRecv bracket the last registration on the agent's
+	// clock (Run's goroutine): its answer's server time anchors the log
+	// lines' time (CR-10).
+	regSent, regRecv time.Duration
 	// runCtx is Run's context: the exporters live as long as the agent
 	// process, not as long as one registration.
 	runCtx context.Context
@@ -218,7 +244,17 @@ func New(opt Options, deps Deps) (*Agent, error) {
 	}
 	b := make([]byte, 3)
 	rand.Read(b)
-	a := &Agent{opt: opt, deps: deps, log: deps.Logger, startID: hex.EncodeToString(b),
+	startID := hex.EncodeToString(b)
+	// The log shipper first: every component logs through its handler. It
+	// copies each line into the ring and never waits (CR-10).
+	var ship *logship.Shipper
+	if !opt.LogsOff {
+		ship = logship.New(logship.Config{Base: "http://" + opt.Potluck, StartID: startID, Now: deps.Clock.Now,
+			HTTP: deps.LogsHTTP, BufferBytes: opt.LogBufferBytes})
+		deps.Logger = slog.New(logship.NewHandler(deps.Logger.Handler(), ship))
+		ship.SetLogger(deps.Logger)
+	}
+	a := &Agent{Ship: ship, opt: opt, deps: deps, log: deps.Logger, startID: startID,
 		startedAt: deps.Clock.Now(), potluckIP: ip, base: "http://" + opt.Potluck, hbEvery: 2 * time.Second,
 		recovered: make(chan struct{})}
 
@@ -510,6 +546,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	go func() { defer wg.Done(); a.Stats.Run(ctx) }()
 	wg.Add(1)
 	go func() { defer wg.Done(); a.reviveLoop(ctx) }()
+	a.startLogShipping(ctx, &wg)
 
 	// Identity and ports, retried until they work.
 	bindWait := a.deps.BindRetry
@@ -593,6 +630,44 @@ func (a *Agent) Run(ctx context.Context) error {
 	a.mu.Unlock()
 	a.Export.StopAll()
 	return ctx.Err()
+}
+
+// startLogShipping starts the log sender and the readers that feed it
+// (CR-10), each in its own goroutine. None of them is waited for by any
+// other part of the agent.
+func (a *Agent) startLogShipping(ctx context.Context, wg *sync.WaitGroup) {
+	if a.Ship == nil {
+		return
+	}
+	wg.Add(1)
+	go func() { defer wg.Done(); a.Ship.Run(ctx) }()
+	// Launch output: after the re-adoption, so a launch of an earlier agent
+	// process is followed from its end.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		select {
+		case <-ctx.Done():
+			return
+		case <-a.recovered:
+		}
+		t := &logship.LaunchTail{Ship: a.Ship, Current: a.Launch.CurrentLog, Every: a.deps.LaunchLogEvery}
+		t.Run(ctx)
+	}()
+	// The system log: the machine's own journal on a bare install; on a
+	// Docker install only a journal folder given with --journal-dir.
+	if a.opt.Install == agentproto.InstallBare || a.opt.JournalDir != "" {
+		mono, boot := a.deps.Monotonic, a.deps.BootID
+		if mono == nil {
+			mono = osx.MonotonicNow
+		}
+		if boot == nil {
+			boot = osx.BootID
+		}
+		j := &logship.Journal{Ship: a.Ship, Start: a.deps.Journal, Dir: a.opt.JournalDir, Monotonic: mono, BootID: boot()}
+		wg.Add(1)
+		go func() { defer wg.Done(); j.Run(ctx) }()
+	}
 }
 
 // reviveLoop starts an exporter again that should run and does not (its
@@ -679,7 +754,10 @@ func (a *Agent) post(ctx context.Context, path string, body any) (*http.Response
 
 func (a *Agent) register(ctx context.Context) (agentproto.RegisterAnswer, error) {
 	var ans agentproto.RegisterAnswer
-	resp, err := a.post(ctx, agentproto.PathRegister, a.RegisterRequest())
+	body := a.RegisterRequest()
+	a.regSent = a.deps.Clock.Now()
+	resp, err := a.post(ctx, agentproto.PathRegister, body)
+	a.regRecv = a.deps.Clock.Now()
 	if err != nil {
 		return ans, err
 	}
@@ -708,6 +786,9 @@ func (a *Agent) refused(ctx context.Context, ans agentproto.RegisterAnswer) {
 	a.Stats.SetSources(nil)
 	a.setError(ans.Reason + ": " + ans.Message)
 	a.log.Warn("registration refused", "reason", ans.Reason, "message", ans.Message)
+	if a.Ship != nil {
+		a.Ship.Refused(ans.ServerTimeUnixMs, a.regSent, a.regRecv)
+	}
 	if ans.Reason == agentproto.ReasonAgentTooOld && a.deps.Updater != nil {
 		if a.Launch.CurrentID() != nil {
 			a.log.Info("update waits for the launch to end", "required", ans.RequiredRelease)
@@ -737,6 +818,9 @@ func (a *Agent) accepted(ctx context.Context, ans agentproto.RegisterAnswer) {
 	}
 	a.mu.Unlock()
 	a.Launch.SetCUDA(strings.HasSuffix(ans.Platform, "-"+agentproto.BackendCUDA))
+	if a.Ship != nil {
+		a.Ship.Registered(a.ID(), ans.Logs, ans.ServerTimeUnixMs, a.regSent, a.regRecv)
+	}
 	why := a.regWhy
 	if why == "" {
 		why = "agent start"
@@ -937,6 +1021,9 @@ func (a *Agent) Heartbeat() agentproto.Heartbeat {
 	}
 	st := a.Stats.Snapshot()
 	hb.Stats = &st
+	if a.Ship != nil {
+		hb.Logs = a.Ship.Figures() // nil while nothing is shipped
+	}
 	return hb
 }
 
@@ -971,7 +1058,9 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 		id := a.ident.ID
 		a.mu.Unlock()
 		hctx, cancel := context.WithTimeout(ctx, every+3*time.Second)
-		resp, err := a.post(hctx, fmt.Sprintf(agentproto.PathHeartbeatFmt, id), a.Heartbeat())
+		body := a.Heartbeat()
+		sent := a.deps.Clock.Now()
+		resp, err := a.post(hctx, fmt.Sprintf(agentproto.PathHeartbeatFmt, id), body)
 		if err != nil {
 			cancel()
 			if ctx.Err() == nil {
@@ -983,6 +1072,7 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 		decErr := json.NewDecoder(resp.Body).Decode(&ans)
 		resp.Body.Close()
 		cancel()
+		recv := a.deps.Clock.Now()
 		switch {
 		case resp.StatusCode == http.StatusGone:
 			a.regWhy = "heartbeat answered 410"
@@ -1005,6 +1095,11 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 		a.mu.Lock()
 		a.paused = ans.Paused
 		a.mu.Unlock()
+		if a.Ship != nil {
+			// Returns at once: a new revision is read by the shipper's own
+			// goroutine, never by the heartbeat.
+			a.Ship.HeartbeatAnswered(ans.LogsRevision, ans.ServerTimeUnixMs, sent, recv)
+		}
 		if ans.Release != a.opt.Release {
 			a.regWhy = "Potluck names release " + ans.Release
 			a.log.Debug("Potluck names another release; registering again", "release", ans.Release)

@@ -90,3 +90,25 @@ func TestSubcommands(t *testing.T) {
 		}
 	}
 }
+
+// CR-10: --logs on|off (default on), --log-buffer-mib (default 8),
+// --journal-dir (default none).
+func TestParseFlagsLogs(t *testing.T) {
+	base := []string{"--potluck", "192.0.2.1:3122", "--model-source", "push"}
+	o, err := parseFlags(base, &bytes.Buffer{})
+	if err != nil || o.LogsOff || o.LogBufferBytes != 8<<20 || o.JournalDir != "" {
+		t.Fatalf("defaults %+v %v", o, err)
+	}
+	o, err = parseFlags(append(base, "--logs", "off", "--log-buffer-mib", "2", "--journal-dir", "/host/journal"), &bytes.Buffer{})
+	if err != nil || !o.LogsOff || o.LogBufferBytes != 2<<20 || o.JournalDir != "/host/journal" {
+		t.Fatalf("%+v %v", o, err)
+	}
+	if o, err = parseFlags(append(base, "--logs", "on"), &bytes.Buffer{}); err != nil || o.LogsOff {
+		t.Fatalf("%+v %v", o, err)
+	}
+	for _, bad := range [][]string{{"--logs", "maybe"}, {"--log-buffer-mib", "0"}, {"--log-buffer-mib", "-1"}, {"--log-buffer-mib", "4097"}} {
+		if _, err := parseFlags(append(append([]string{}, base...), bad...), &bytes.Buffer{}); err == nil {
+			t.Errorf("%v accepted", bad)
+		}
+	}
+}
