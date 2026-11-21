@@ -11,14 +11,28 @@
 #              (the agent unit is transient, or /dev/shm/potluck/potluck-agent
 #              exists), so the starter does nothing at the next boot or apply.
 #
+# Firewall rules the setup added to ufw (listed in /etc/potluck/firewall-rules)
+# are removed, exactly those. firewalld is not touched.
+#
 # Handles the bare-metal install (systemd unit or starter's transient unit)
 # and the Docker install. Every step is best effort. Exit status is 0 unless
 # something important is still running at the end.
 
 set -eu
 
+# TEST HOOKS, used ONLY by deploy/agent/firewall_test.go; never set them on a
+# node.
+#   POTLUCK_AGENT_TEST_PATH  replaces PATH (the directory of fake tools)
+#   POTLUCK_AGENT_TEST_ETC   replaces /etc/potluck
+#   POTLUCK_AGENT_TEST_ONLY  "firewall": run the firewall step and nothing else
+if [ -n "${POTLUCK_AGENT_TEST_PATH:-}" ]; then
+	PATH=$POTLUCK_AGENT_TEST_PATH
+fi
+
 SELF=potluck-agent-uninstall
-MARKER=/etc/potluck/disabled
+ETC_DIR=${POTLUCK_AGENT_TEST_ETC:-/etc/potluck}
+MARKER=$ETC_DIR/disabled
+FW_STATE=$ETC_DIR/firewall-rules
 UNIT_FILE=/etc/systemd/system/potluck-agent.service
 MODELS_MOUNT_DIR=/var/lib/potluck-agent/models
 SHARE_MOUNT=/run/potluck/models
@@ -176,7 +190,7 @@ step_deregister() {
 
 step_marker() {
 	if [ "$FORCE_MARKER" = 1 ] || [ "$HAS_STARTER" = 1 ]; then
-		if mkdir -p /etc/potluck && : > "$MARKER"; then
+		if mkdir -p "$ETC_DIR" && : > "$MARKER"; then
 			log "wrote marker $MARKER"
 		else
 			log "warning: could not write $MARKER"
@@ -251,6 +265,29 @@ step_docker() {
 			fi
 		done
 	fi
+}
+
+# Remove the ufw rules the setup added: the ones listed in FW_STATE, no other.
+step_firewall() {
+	[ -r "$FW_STATE" ] || return 0
+	if ! have ufw; then
+		log "warning: $FW_STATE lists firewall rules but ufw is not found; leaving the rules and the list"
+		return 0
+	fi
+	while read -r sf_src sf_port sf_rest; do
+		case $sf_src in
+			""|*[!0-9A-Fa-f.:/]*) continue ;;
+		esac
+		case $sf_port in
+			""|*[!0-9]*) continue ;;
+		esac
+		if ufw delete allow proto tcp from "$sf_src" to any port "$sf_port" >/dev/null 2>&1 </dev/null; then
+			log "removed the ufw rule for $sf_src port $sf_port"
+		else
+			log "warning: could not remove the ufw rule for $sf_src port $sf_port"
+		fi
+	done < "$FW_STATE"
+	rm -f "$FW_STATE"
 }
 
 step_models_mount_unit() {
@@ -331,6 +368,10 @@ final_check() {
 
 main() {
 	parse_args "$@"
+	if [ "${POTLUCK_AGENT_TEST_ONLY:-}" = firewall ]; then
+		step_firewall
+		exit 0
+	fi
 	[ "$(id -u)" = 0 ] || die "must run as root"
 
 	detect_starter
@@ -343,6 +384,7 @@ main() {
 	log "step 3: stop launches, exporters, agent"
 	step_stop_services
 	step_docker
+	step_firewall
 	step_models_mount_unit
 	step_share_umount
 	step_delete_files

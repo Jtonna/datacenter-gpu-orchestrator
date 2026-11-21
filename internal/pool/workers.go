@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -163,7 +164,7 @@ func (p *Pool) Launch(ctx context.Context, spec scheduler.WorkerLaunchSpec, repo
 		p.seq++
 		l := &launch{p: p, iid: spec.IID, node: w.Node, name: a.reg.Name, rpcAddr: w.Addr,
 			id:      fmt.Sprintf("ln-%d-%d-%d", p.o.Clock().UnixMilli(), spec.IID, p.seq),
-			base:    "http://" + net.JoinHostPort(a.reg.Addr, strconv.Itoa(p.o.AgentPort)),
+			base:    p.agentBase(a), // the address the call-back check reached
 			changed: make(chan struct{}, 1), done: make(chan struct{})}
 		ls = append(ls, l)
 		p.launches[l.id] = l
@@ -214,6 +215,10 @@ func (p *Pool) Launch(ctx context.Context, spec scheduler.WorkerLaunchSpec, repo
 			return scheduler.WorkerResult{LaunchIDs: ids, Node: l.node, Reason: r.ref.Reason, Message: r.ref.Message}
 		case r.err != nil:
 			p.forget(l)
+			var ue *url.Error
+			if errors.As(r.err, &ue) && ctx.Err() == nil { // no answer at all, and not our own stop
+				p.agentUnreachable(l.node, r.err)
+			}
 			return scheduler.WorkerResult{LaunchIDs: ids, Node: l.node, Reason: ReasonAgentUnreachable, Message: r.err.Error()}
 		}
 	}
@@ -349,6 +354,9 @@ func (p *Pool) poll(ctx context.Context, l *launch) {
 	req, _ := http.NewRequestWithContext(rctx, http.MethodGet, l.base+agentproto.PathLaunch, nil)
 	resp, err := p.o.HTTP.Do(req)
 	if err != nil {
+		if ctx.Err() == nil { // not the launch's own stop
+			p.agentUnreachable(l.node, err)
+		}
 		return
 	}
 	defer resp.Body.Close()
@@ -576,6 +584,15 @@ func (p *Pool) stopLaunch(l *launch, force, lost bool) {
 		p.log.Info("worker launch not stopped: its node is lost", "launch", l.id, "node", l.node)
 		return
 	}
+	l.mu.Lock()
+	gone := l.goneWhy
+	l.mu.Unlock()
+	if gone != "" {
+		// The agent restarted and no longer has this launch: a stop would be
+		// answered 409 (its current launch is another one) or find none.
+		p.log.Debug("worker launch not stopped: it ended with its agent", "launch", l.id, "node", l.node, "reason", gone)
+		return
+	}
 	ctx, done := context.WithTimeout(context.Background(), 30*time.Second)
 	defer done()
 	p.log.Info("stopping worker launch", "launch", l.id, "node", l.node, "force", force)
@@ -675,7 +692,10 @@ func (p *Pool) ForceNode(node core.NodeID) {
 // transport failure or an answer that is neither.
 func (p *Pool) postLaunch(ctx context.Context, base string, lr agentproto.LaunchRequest) (agentproto.LaunchState, *agentproto.LaunchRefusal, error) {
 	b, _ := json.Marshal(lr)
-	rctx, cancel := context.WithTimeout(ctx, 30*time.Second) // the agent may wait for a device read and a port
+	// The agent may wait for a device read and a port, so the answer may take
+	// long; a connection that cannot be made fails after ConnectTimeout (the
+	// HTTP client's dialer).
+	rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(rctx, http.MethodPost, base+agentproto.PathLaunch, bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")

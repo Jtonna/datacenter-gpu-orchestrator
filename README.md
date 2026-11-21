@@ -22,11 +22,19 @@ It is one Go binary in one container. It starts `llama-server` processes itself 
 
 **Runs today:** the scheduler, the web UI, the REST and MCP APIs, benchmarks, and split loads across several machines. It has been serving a small cluster of consoles and laptops, with models from 4 to 72 billion parameters split over up to three machines.
 
-**In progress:** `potluck-agent`, a small service that each machine runs to join the pool. It registers the machine, fetches the right llama.cpp programs for its hardware, starts them per load, and reports the machine's stats. Until it lands, pool membership comes from a separate fleet manager, and parts of the code, tests and documents still describe the first deployment. The contract the agent is built against is in [docs/agent-contract.md](docs/agent-contract.md) and [docs/stats-contract.md](docs/stats-contract.md).
+**`potluck-agent`** is the small service that each machine runs to join the pool. It registers the machine, fetches the right llama.cpp programs for its hardware, starts them per load, and reports the machine's stats. It exists and has run on a console (bare metal, from RAM) and in Docker on two laptops. Its contract is in [docs/agent-contract.md](docs/agent-contract.md) and [docs/stats-contract.md](docs/stats-contract.md).
+
+**In progress:** the changeover of the first deployment from a separate fleet manager to agents (until it is done, parts of the code, tests and documents still describe that deployment), and Windows.
 
 **Supported hardware today:** Linux machines with AMD graphics through Vulkan (the consoles) and with Nvidia cards through CUDA. Windows with Nvidia is planned.
 
 There is no authentication. Run it on a network you trust.
+
+## Operating notes
+
+- **Restarting or updating Potluck ends every loaded model.** Potluck keeps its launches in memory. After a restart it knows none, and each agent stops the launch Potluck no longer knows when it registers again. Plan a restart like an outage of every model.
+- **Ports a machine must accept from Potluck** (TCP, inbound): `50060` (the agent API) and `50052` (the worker during a load); `50061` (a server on the machine) comes later. A machine whose firewall drops them registers fine but gets no load: its status says `agent_unreachable`. `potluck-agent-setup` opens them in ufw when ufw is active.
+- **No authentication**, on Potluck's port or on the agents' ports. Anyone who can reach them can use and change the pool.
 
 ## Related projects
 
@@ -67,7 +75,7 @@ All configuration (model profiles, hardware tiers, settings) is stored in a SQLi
 - [docs/design.md](docs/design.md): the design.
 - [docs/runbook.md](docs/runbook.md): deploying and running it.
 - [docs/benchmark-guide.md](docs/benchmark-guide.md): running benchmarks, by hand and from the scheduler.
-- [docs/agent-contract.md](docs/agent-contract.md) and [docs/stats-contract.md](docs/stats-contract.md): the contract for `potluck-agent` (not built yet).
+- [docs/agent-contract.md](docs/agent-contract.md) and [docs/stats-contract.md](docs/stats-contract.md): the contract for `potluck-agent`.
 - [docs/hardware-test/](docs/hardware-test): results of the tests on real hardware.
 
 ## Licence

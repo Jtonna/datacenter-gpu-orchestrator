@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -41,6 +42,15 @@ const (
 	LeaseEvery     = 5 * time.Second  // lease renewal (6.4)
 	ForceResetWait = 5 * time.Second  // forced stop, then /reset (7.2)
 	ExitReadWait   = 2 * time.Second  // reading the launches of a load whose host program ended (11.1)
+	// The call-back check (CR-8): after each registration Potluck reads the
+	// agent's launch state once, with CallBackTimeout; while that fails it is
+	// tried again every CallBackEvery and the node takes no new load.
+	CallBackTimeout = 3 * time.Second
+	CallBackEvery   = 15 * time.Second
+	// ConnectTimeout: a connection to an agent that is not established within
+	// this time fails (a firewall that drops the packets), whatever the
+	// request's own timeout is.
+	ConnectTimeout = 5 * time.Second
 )
 
 // ReasonReleaseUnavailable refuses a registration while Potluck serves no
@@ -103,6 +113,15 @@ type Options struct {
 	// ExitReadWait bounds Exits: how long a launch that has not exited is
 	// read again; default ExitReadWait (tests shorten it).
 	ExitReadWait time.Duration
+	// CallBackEvery is the retry period of the call-back check; default
+	// CallBackEvery (tests shorten it).
+	CallBackEvery time.Duration
+	// ConnectTimeout bounds connecting to an agent when HTTP is nil; default
+	// ConnectTimeout (tests shorten it).
+	ConnectTimeout time.Duration
+	// Dial makes the connections to agents when HTTP is nil; default a
+	// net.Dialer (tests replace it).
+	Dial func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
 // heartbeat is a decoded heartbeat. Stats stays raw: a missing or bad stats
@@ -144,6 +163,12 @@ type agent struct {
 	// hold; the node takes no load until the agent reports no launch.
 	// orphanAsked is the launch the stop was sent for (once per launch).
 	orphan, orphanAsked string
+	// The call-back check (CR-8). reachable: Potluck reached the agent's API
+	// since this registration and no launch or state read failed to since.
+	// reachMsg says why not. reachWarned: the warning was written for this
+	// failure. checking: a call-back loop runs for this agent.
+	reachable, reachWarned, checking bool
+	reachMsg                         string
 }
 
 // Pool is the agent registry, node view and worker launcher.
@@ -151,12 +176,18 @@ type Pool struct {
 	o   Options
 	log *slog.Logger
 
-	mu         sync.Mutex
-	agents     map[string]*agent
-	admin      map[string]cfgstore.NodeAdmin
-	nodes      []core.Node
-	notify     chan struct{}
-	unplaced   map[core.NodeID]string // why a listed node takes no new load (view.go)
+	mu          sync.Mutex
+	agents      map[string]*agent
+	admin       map[string]cfgstore.NodeAdmin
+	nodes       []core.Node
+	notify      chan struct{}
+	unplaced    map[core.NodeID]string // why a listed node takes no new load (view.go)
+	unplacedMsg map[core.NodeID]string // more about that reason, when there is more to say
+	// inlineCallBack makes Register run the first call-back check itself
+	// before it returns (tests only; the check is otherwise a goroutine).
+	inlineCallBack bool
+	// callBack is one call-back check of the agent API at base.
+	callBack   func(ctx context.Context, base string) error
 	probeOK    bool
 	probeTotal int
 	probeUsed  int
@@ -182,8 +213,25 @@ func New(o Options) (*Pool, error) {
 	if o.Logger == nil {
 		o.Logger = slog.Default()
 	}
+	if o.ConnectTimeout <= 0 {
+		o.ConnectTimeout = ConnectTimeout
+	}
+	if o.CallBackEvery <= 0 {
+		o.CallBackEvery = CallBackEvery
+	}
 	if o.HTTP == nil {
-		o.HTTP = &http.Client{}
+		tr := http.DefaultTransport.(*http.Transport).Clone()
+		dial := o.Dial
+		if dial == nil {
+			dial = (&net.Dialer{KeepAlive: 30 * time.Second}).DialContext
+		}
+		limit := o.ConnectTimeout
+		tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			ctx, cancel := context.WithTimeout(ctx, limit)
+			defer cancel()
+			return dial(ctx, network, addr)
+		}
+		o.HTTP = &http.Client{Transport: tr}
 	}
 	if o.AgentPort == 0 {
 		o.AgentPort = agentproto.PortAgent
@@ -201,7 +249,7 @@ func New(o Options) (*Pool, error) {
 		o.ExitReadWait = ExitReadWait
 	}
 	p := &Pool{o: o, log: o.Logger, agents: map[string]*agent{}, admin: map[string]cfgstore.NodeAdmin{},
-		notify: make(chan struct{}, 1), unplaced: map[core.NodeID]string{},
+		notify: make(chan struct{}, 1), unplaced: map[core.NodeID]string{}, unplacedMsg: map[core.NodeID]string{},
 		launches: map[string]*launch{}, byIID: map[uint64][]*launch{}, stopped: map[uint64]bool{}}
 	if o.Store != nil {
 		a, err := o.Store.NodeAdmins()
@@ -210,6 +258,7 @@ func New(o Options) (*Pool, error) {
 		}
 		p.admin = a
 	}
+	p.callBack = p.readLaunchState
 	return p, nil
 }
 
@@ -242,13 +291,25 @@ func (p *Pool) LoadGate() error {
 
 // ---- registration ----
 
-// Register is POST /api/pool/register (4.2).
+// Register is POST /api/pool/register (4.2). An accepted registration starts
+// the call-back check of the agent (CR-8).
 func (p *Pool) Register(req agentproto.RegisterRequest) agentproto.RegisterAnswer {
+	ans, a := p.register(req)
+	if a != nil {
+		if p.inlineCallBack {
+			p.callBackOnce(a)
+		}
+		p.startCallBack(a)
+	}
+	return ans
+}
+
+func (p *Pool) register(req agentproto.RegisterRequest) (agentproto.RegisterAnswer, *agent) {
 	now := p.o.Clock()
-	refuse := func(reason, format string, args ...any) agentproto.RegisterAnswer {
+	refuse := func(reason, format string, args ...any) (agentproto.RegisterAnswer, *agent) {
 		msg := fmt.Sprintf(format, args...)
 		p.log.Warn("agent registration refused", "id", req.ID, "name", req.Name, "addr", req.Addr, "reason", reason, "message", msg)
-		return agentproto.RegisterAnswer{Accepted: false, Reason: reason, Message: msg}
+		return agentproto.RegisterAnswer{Accepted: false, Reason: reason, Message: msg}, nil
 	}
 	if req.ID == "" {
 		return refuse(agentproto.ReasonUnsupportedHardware, "the registration has no id")
@@ -267,9 +328,9 @@ func (p *Pool) Register(req agentproto.RegisterRequest) agentproto.RegisterAnswe
 	}
 	switch c := compareRelease(req.AgentRelease, p.o.PotluckRelease); {
 	case c < 0:
-		a := refuse(agentproto.ReasonAgentTooOld, "agent release %s is older than Potluck's %s", req.AgentRelease, p.o.PotluckRelease)
+		a, _ := refuse(agentproto.ReasonAgentTooOld, "agent release %s is older than Potluck's %s", req.AgentRelease, p.o.PotluckRelease)
 		a.RequiredRelease = p.o.PotluckRelease
-		return a
+		return a, nil
 	case c > 0:
 		return refuse(agentproto.ReasonPotluckTooOld, "agent release %s is newer than Potluck's %s; the node waits for Potluck", req.AgentRelease, p.o.PotluckRelease)
 	}
@@ -290,6 +351,10 @@ func (p *Pool) Register(req agentproto.RegisterRequest) agentproto.RegisterAnswe
 
 	old := p.agents[req.ID]
 	a := &agent{reg: req, platform: platform, registeredAt: now, lastSeen: now}
+	a.reachMsg = p.unreachableMsg(a, "the call-back check has not answered yet")
+	if old != nil && old.reg.Addr == req.Addr && !old.reachable {
+		a.reachWarned = old.reachWarned // one warning per failure, not per registration
+	}
 	p.agents[req.ID] = a
 	ans := agentproto.RegisterAnswer{Accepted: true, Release: rel.Release, Platform: platform,
 		HeartbeatEveryS: HeartbeatEvery.Seconds(), Programs: rel.Programs(platform), Exporters: rel.Exporters(platform),
@@ -320,7 +385,7 @@ func (p *Pool) Register(req agentproto.RegisterRequest) agentproto.RegisterAnswe
 			map[string]any{"state": StateActive, "addr": req.Addr, "platform": platform, "install": req.Install})
 	}
 	p.rebuildLocked()
-	return ans
+	return ans, a
 }
 
 // HeartbeatResult is the outcome of a heartbeat: Status 200 with Answer,
@@ -422,6 +487,117 @@ func (p *Pool) checkOrphanLocked(a *agent, hb *heartbeat) {
 			p.mu.Unlock()
 		}
 	}()
+}
+
+// ---- call-back check (CR-8) ----
+
+func (p *Pool) agentBase(a *agent) string {
+	return "http://" + net.JoinHostPort(a.reg.Addr, strconv.Itoa(p.o.AgentPort))
+}
+
+// unreachableMsg is the message of the agent_unreachable reason.
+func (p *Pool) unreachableMsg(a *agent, why string) string {
+	return fmt.Sprintf("Potluck cannot reach the agent of %s at %s (%s). The usual cause is a firewall on the node that drops inbound connections: "+
+		"allow TCP from Potluck to port %d (agent) and port %d (worker).",
+		a.reg.Name, net.JoinHostPort(a.reg.Addr, strconv.Itoa(p.o.AgentPort)), why, p.o.AgentPort, p.o.WorkerPort)
+}
+
+// readLaunchState is the call-back: GET /launch on the agent port.
+func (p *Pool) readLaunchState(ctx context.Context, base string) error {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+agentproto.PathLaunch, nil)
+	resp, err := p.o.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("GET %s answered %d", agentproto.PathLaunch, resp.StatusCode)
+	}
+	return nil
+}
+
+// startCallBack starts the call-back loop of an agent that is not known to
+// be reachable, unless one runs already.
+func (p *Pool) startCallBack(a *agent) {
+	p.mu.Lock()
+	if a.reachable || a.checking || p.agents[a.reg.ID] != a {
+		p.mu.Unlock()
+		return
+	}
+	a.checking = true
+	p.mu.Unlock()
+	go func() {
+		for !p.callBackOnce(a) {
+			time.Sleep(p.o.CallBackEvery)
+		}
+	}()
+}
+
+// callBackOnce runs one call-back check. It returns true when the loop is
+// over: the agent answered, or it is no longer the node's registration.
+func (p *Pool) callBackOnce(a *agent) bool {
+	p.mu.Lock()
+	if p.agents[a.reg.ID] != a || a.left || a.reachable {
+		a.checking = false
+		p.mu.Unlock()
+		return true
+	}
+	p.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), CallBackTimeout)
+	err := p.callBack(ctx, p.agentBase(a))
+	cancel()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.agents[a.reg.ID] != a || a.left {
+		a.checking = false
+		return true
+	}
+	if err != nil {
+		p.unreachableLocked(a, err)
+		return false
+	}
+	a.reachable, a.reachMsg, a.checking = true, "", false
+	lvl := slog.LevelDebug // the ordinary case is not worth a line per registration
+	if a.reachWarned {
+		lvl = slog.LevelInfo
+	}
+	a.reachWarned = false
+	p.log.Log(context.Background(), lvl, "agent reachable: the call-back check answered", "id", a.reg.ID, "name", a.reg.Name,
+		"addr", net.JoinHostPort(a.reg.Addr, strconv.Itoa(p.o.AgentPort)))
+	p.rebuildLocked()
+	return true
+}
+
+// unreachableLocked puts the node into the agent_unreachable state: it takes
+// no new load until a call-back check answers. One warning per failure.
+func (p *Pool) unreachableLocked(a *agent, err error) {
+	a.reachable, a.reachMsg = false, p.unreachableMsg(a, err.Error())
+	if !a.reachWarned {
+		a.reachWarned = true
+		p.log.Warn("agent unreachable: Potluck cannot call the agent back; the node takes no new load until it can (checked again every "+
+			p.o.CallBackEvery.String()+"). The usual cause is a firewall on the node that drops inbound connections",
+			"id", a.reg.ID, "name", a.reg.Name, "addr", net.JoinHostPort(a.reg.Addr, strconv.Itoa(p.o.AgentPort)),
+			"worker_port", p.o.WorkerPort, "err", err)
+	}
+	p.rebuildLocked()
+}
+
+// agentUnreachable is called when a launch request or a state read of a node
+// failed without an answer: the node goes back to agent_unreachable and the
+// call-back check runs again.
+func (p *Pool) agentUnreachable(node core.NodeID, err error) {
+	p.mu.Lock()
+	a := p.agents[string(node)]
+	if a == nil || a.left {
+		p.mu.Unlock()
+		return
+	}
+	if a.reachable {
+		p.unreachableLocked(a, err)
+	}
+	p.mu.Unlock()
+	p.startCallBack(a)
 }
 
 // parseStats keeps a stats object of the supported stats_version (stats

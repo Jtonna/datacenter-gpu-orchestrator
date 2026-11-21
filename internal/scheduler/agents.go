@@ -97,6 +97,14 @@ type NodeGate interface {
 	Unplaced() map[core.NodeID]string
 }
 
+// NodeGateDetail is implemented by a NodeGate that can say more about a
+// reason than its word (agent_unreachable: the address and what to check).
+type NodeGateDetail interface {
+	// UnplacedDetail maps a node to the message of its reason; a node whose
+	// reason has no message is absent.
+	UnplacedDetail() map[core.NodeID]string
+}
+
 // Reasons a listed node takes no new load (NodeStatus.Unplaced).
 const (
 	// UnplacedNoTierMatch: the node matches no tier. It is outside the pool:
@@ -109,6 +117,11 @@ const (
 	UnplacedModelSourceUnreachable = "model_source_unreachable" // a worker launch would need the model source (8)
 	UnplacedOrphanLaunch           = "orphan_launch"            // the agent reports a launch Potluck does not hold (11)
 	UnplacedSilent                 = "silent"                   // no heartbeat for 10 s while its launch is kept (4.3, CR-6)
+	UnplacedAgentUnreachable       = ReasonAgentUnreachable     // Potluck cannot call the agent back (the call-back check, CR-8)
+	// UnplacedHostMachine: the agent runs on the scheduler's own machine. It
+	// is shown in the agent's status only: the node is not listed as a remote
+	// node at all.
+	UnplacedHostMachine = "host_machine"
 )
 
 // modelSourceHold is how long a node whose launch was refused with

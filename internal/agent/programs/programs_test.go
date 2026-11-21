@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -195,3 +197,67 @@ func TestBadNameAndOldReleases(t *testing.T) {
 }
 
 type entry = agentproto.ProgramEntry
+
+type lockedBuf struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *lockedBuf) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+func (l *lockedBuf) String() string { l.mu.Lock(); defer l.mu.Unlock(); return l.b.String() }
+
+// A registration again cancels the download of the registration before it;
+// the next one starts at once. That is the agent's own doing, not a fault:
+// nothing is logged above DEBUG and programs_error stays empty.
+func TestCancelledDownloadIsNotAnError(t *testing.T) {
+	started, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	body := "NODE"
+	sum := sha256.Sum256([]byte(body))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "4")
+		w.Write([]byte("NO"))
+		w.(http.Flusher).Flush()
+		first := false
+		once.Do(func() { first = true; close(started) })
+		if first {
+			select { // the first download hangs half way until it is cancelled
+			case <-release:
+			case <-r.Context().Done():
+			}
+			return
+		}
+		w.Write([]byte("DE"))
+	}))
+	defer srv.Close()
+	defer close(release)
+	var logs lockedBuf
+	m := New(Config{Root: filepath.Join(t.TempDir(), "programs"), Release: "0.1.0", BaseURL: srv.URL, RetryWait: 1,
+		Logger: slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))})
+	m.Prepare()
+	entries := []entry{{Name: "node_exporter", Path: "/p/node_exporter", SHA256: hex.EncodeToString(sum[:]), Bytes: 4}}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- m.Sync(ctx, entries, nil) }()
+	<-started
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Sync after its cancellation: %v", err)
+	}
+	if out := logs.String(); strings.Contains(out, "level=ERROR") || strings.Contains(out, "level=WARN") {
+		t.Fatalf("a cancelled download was logged as a fault:\n%s", out)
+	}
+	if out := logs.String(); !strings.Contains(out, "level=DEBUG") || !strings.Contains(out, "node_exporter") {
+		t.Fatalf("the cancellation is not in the debug log:\n%s", out)
+	}
+	if e := m.Error(); e != nil {
+		t.Fatalf("programs_error %q after a cancellation", *e)
+	}
+	if err := m.Sync(context.Background(), entries, nil); err != nil || !m.Ready() {
+		t.Fatalf("the next download: %v", err)
+	}
+}

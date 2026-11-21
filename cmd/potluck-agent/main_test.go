@@ -9,6 +9,17 @@ import (
 	"testing"
 )
 
+// The last log line says what happens to a running launch: a systemd launch
+// unit outlives the agent, a child process (Docker install) does not.
+func TestStoppedMessageDependsOnTheRunner(t *testing.T) {
+	if m := stoppedMessage(true); !strings.Contains(m, "keeps running") {
+		t.Fatalf("systemd runner: %q", m)
+	}
+	if m := stoppedMessage(false); strings.Contains(m, "keeps running") || !strings.Contains(m, "ends with") {
+		t.Fatalf("child runner: %q", m)
+	}
+}
+
 func TestParseFlagsDefaults(t *testing.T) {
 	var errb bytes.Buffer
 	o, err := parseFlags([]string{"--potluck", "192.0.2.1:3122", "--ram-only", "--model-source", "share:192.0.2.1:/"}, &errb)

@@ -317,6 +317,7 @@ type schedCore struct {
 	seenReconnect time.Time
 	excludedSeen  map[core.NodeID]bool          // excluded nodes already logged
 	unplaced      map[core.NodeID]string        // why a listed node takes no new load (NodeGate), read with the view
+	unplacedMsg   map[core.NodeID]string        // the message of that reason (NodeGateDetail), when it has one
 	forcedGone    map[string]time.Time          // force_nodes name -> when it was first seen absent or offline in a live view
 	health        map[core.NodeID]*workerHealth // worker health (workerhealth.go)
 	probeGen      uint64

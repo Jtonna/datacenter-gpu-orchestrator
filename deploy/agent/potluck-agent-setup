@@ -5,16 +5,39 @@
 #   potluck-agent-setup (--bare | --docker) --potluck addr:port
 #       --model-source share:<target>|dir:<path>|push
 #       [--watchdog-floor-mib N] [--allow-from ADDR|CIDR]... [--name LABEL]
+#       [--no-firewall]
 #       [--image REF] [--gpus auto|all|none]       (the last two: --docker only)
 #
 # A RAM-only node does not use this script; it uses potluck-starter.sh.
+#
+# Firewall: Potluck connects to this machine on TCP 50060 (agent API), 50052
+# (worker) and 50061 (server, later). When ufw is active the script allows
+# these ports from Potluck's address and from every --allow-from entry (rules
+# with the comment "potluck-agent", listed in /etc/potluck/firewall-rules so
+# the uninstall removes exactly those). When firewalld is active it only says
+# what to allow. --no-firewall skips all of it. On the Potluck machine itself,
+# with the scheduler in a container, the source is the container network:
+# give it as --allow-from CIDR.
 # Values given to options must not contain whitespace, quotes, backslash,
 # "$" or "%" (they are written into a systemd unit / passed word-split).
 
 set -eu
 
+# TEST HOOKS, used ONLY by deploy/agent/firewall_test.go; never set them on a
+# node.
+#   POTLUCK_AGENT_TEST_PATH  replaces PATH (the directory of fake tools)
+#   POTLUCK_AGENT_TEST_ETC   replaces /etc/potluck
+#   POTLUCK_AGENT_TEST_ONLY  "firewall": run the firewall step and nothing else
+if [ -n "${POTLUCK_AGENT_TEST_PATH:-}" ]; then
+	PATH=$POTLUCK_AGENT_TEST_PATH
+fi
+
 SELF=potluck-agent-setup
-MARKER=/etc/potluck/disabled
+ETC_DIR=${POTLUCK_AGENT_TEST_ETC:-/etc/potluck}
+MARKER=$ETC_DIR/disabled
+FW_STATE=$ETC_DIR/firewall-rules
+FW_PORTS="50060 50052 50061"
+FW_COMMENT=potluck-agent
 BIN=/usr/local/bin/potluck-agent
 UNIT_FILE=/etc/systemd/system/potluck-agent.service
 MODELS_MOUNT_DIR=/var/lib/potluck-agent/models
@@ -29,6 +52,7 @@ POTLUCK=""
 MODEL_SOURCE=""
 FLOOR=""
 ALLOW_LIST=""
+FIREWALL=1
 NAME=""
 IMAGE=""
 GPUS=auto
@@ -59,6 +83,7 @@ usage() {
 usage: potluck-agent-setup (--bare | --docker) --potluck addr:port
          --model-source share:<target>|dir:<path>|push
          [--watchdog-floor-mib N] [--allow-from ADDR|CIDR]... [--name LABEL]
+         [--no-firewall]
          [--image REF] [--gpus auto|all|none]    (docker only)
 EOF
 	exit 2
@@ -133,6 +158,8 @@ parse_args() {
 				[ $# -ge 2 ] || usage
 				check_plain --allow-from "$2"
 				ALLOW_LIST="$ALLOW_LIST $2"; shift 2 ;;
+			--no-firewall)
+				FIREWALL=0; shift ;;
 			--name)
 				[ $# -ge 2 ] || usage
 				NAME=$2; shift 2 ;;
@@ -243,6 +270,84 @@ remove_marker() {
 		rm -f "$MARKER"
 		log "removed $MARKER"
 	fi
+}
+
+# ufw_rule_ok SRC PORT: the two words are safe to hand to ufw.
+ufw_rule_ok() {
+	case $1 in
+		""|*[!0-9A-Fa-f.:/]*) return 1 ;;
+	esac
+	case $2 in
+		""|*[!0-9]*) return 1 ;;
+	esac
+	return 0
+}
+
+# Potluck connects to this machine: the agent API, the worker and (later) the
+# server port. ufw: allow them from Potluck and every --allow-from entry.
+# firewalld: say what to allow. Nothing else is touched.
+setup_firewall() {
+	if [ "$FIREWALL" != 1 ]; then
+		log "--no-firewall: the firewall is left as it is; Potluck must reach TCP ports $FW_PORTS"
+		return 0
+	fi
+	sf_host=$POTLUCK_HOST
+	case $sf_host in
+		"["*"]") sf_host=${sf_host#?}; sf_host=${sf_host%?} ;;
+	esac
+	sf_srcs="$sf_host$ALLOW_LIST"
+	sf_status=""
+	if command -v ufw >/dev/null 2>&1; then
+		sf_status=$(ufw status 2>/dev/null) || sf_status=""
+	fi
+	case $sf_status in
+		*"Status: active"*) ;;
+		*)
+			sf_fwd=""
+			if command -v firewall-cmd >/dev/null 2>&1; then
+				sf_fwd=$(firewall-cmd --state 2>/dev/null) || sf_fwd=""
+			fi
+			if [ "$sf_fwd" = running ]; then
+				log "firewalld is active and this script does not change it. Potluck must reach TCP ports $FW_PORTS;"
+				log "allow them yourself (family ipv6 for an IPv6 source), then run: firewall-cmd --reload"
+				set -f
+				for sf_src in $sf_srcs; do
+					for sf_port in $FW_PORTS; do
+						log "  firewall-cmd --permanent --add-rich-rule='rule family=ipv4 source address=$sf_src port port=$sf_port protocol=tcp accept'"
+					done
+				done
+				set +f
+			fi
+			return 0 ;;
+	esac
+	sf_new=""
+	set -f
+	for sf_src in $sf_srcs; do
+		for sf_port in $FW_PORTS; do
+			if ufw_rule_ok "$sf_src" "$sf_port" \
+				&& ufw allow proto tcp from "$sf_src" to any port "$sf_port" comment "$FW_COMMENT" >/dev/null </dev/null; then
+				sf_new="$sf_new$sf_src $sf_port$NL"
+			else
+				log "warning: no ufw rule for $sf_src port $sf_port (ufw wants an IP address or a network); add it yourself:"
+				log "  ufw allow proto tcp from <address> to any port $sf_port comment $FW_COMMENT"
+			fi
+		done
+	done
+	set +f
+	# Rules of an earlier setup that this one did not ask for go away.
+	if [ -r "$FW_STATE" ]; then
+		while read -r sf_osrc sf_oport sf_rest; do
+			ufw_rule_ok "$sf_osrc" "$sf_oport" || continue
+			case "$NL$sf_new" in
+				*"$NL$sf_osrc $sf_oport$NL"*) continue ;;
+			esac
+			ufw delete allow proto tcp from "$sf_osrc" to any port "$sf_oport" >/dev/null 2>&1 </dev/null \
+				|| log "warning: could not remove the old ufw rule for $sf_osrc port $sf_oport"
+		done < "$FW_STATE"
+	fi
+	mkdir -p "$ETC_DIR"
+	printf '%s' "$sf_new" > "$FW_STATE"
+	log "ufw is active: allowed TCP from $sf_srcs to ports $FW_PORTS (comment $FW_COMMENT)"
 }
 
 resolve_platform() {
@@ -507,9 +612,14 @@ install_docker() {
 
 main() {
 	parse_args "$@"
+	if [ "${POTLUCK_AGENT_TEST_ONLY:-}" = firewall ]; then
+		setup_firewall
+		exit 0
+	fi
 	require_root
 	check_ports
 	remove_marker
+	setup_firewall
 	case $MODE in
 		bare) install_bare ;;
 		docker) install_docker ;;

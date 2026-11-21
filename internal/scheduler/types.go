@@ -300,8 +300,11 @@ type NodeStatus struct {
 	Excluded bool // kept out of the pool by exclude_nodes; never eligible
 	// Unplaced is why the node takes no new load although it is listed
 	// (agents membership): no_tier_match, programs_not_ready,
-	// model_source_unreachable, orphan_launch or silent. Empty when it may take one.
+	// model_source_unreachable, orphan_launch, silent or agent_unreachable.
+	// Empty when it may take one. UnplacedMessage says more when the reason
+	// has more to say (agent_unreachable: the address, the port, what to check).
 	Unplaced        string
+	UnplacedMessage string
 	TotalMiB        int
 	FreeMiB         int // figure used for the live budget (fleet, fetch, or pre-flight override)
 	LiveBudgetMiB   int
