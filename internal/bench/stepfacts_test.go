@@ -1,6 +1,7 @@
 package bench
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -83,3 +84,29 @@ func TestStepFactsRoundTrip(t *testing.T) {
 		t.Fatalf("results %+v", res)
 	}
 }
+
+// The trend of the lowest available memory: the lowest node of each step; a
+// step stored before it was recorded has no point.
+func TestTrendOfLowestAvailable(t *testing.T) {
+	s, _ := openTemp(t)
+	for i, low := range []*int64{nil, ptrI64(3000), ptrI64(2500)} {
+		id := fmt.Sprintf("r%d", i)
+		if err := s.CreateRun(&Run{ID: id, SuiteID: "s", SuiteName: "S", State: RunCompleted, QueuedAt: int64(10 + i), StartedAt: int64(10 + i), Suite: []byte(`{}`)}); err != nil {
+			t.Fatal(err)
+		}
+		st := &Step{RunID: id, BenchmarkID: "b", Profile: "p", State: StepDone, Outcome: OutcomeReady}
+		if low != nil {
+			other := *low + 9000
+			st.MemLow = []NodeMemLow{{ID: "h", Node: "host-1", StepMiB: &other}, {ID: "w", Node: "ps5-a", StepMiB: low}}
+		}
+		if err := s.AddStep(st); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pts, err := s.Trend("b", "lowest_available_mib", 10)
+	if err != nil || len(pts) != 2 || pts[0].Value != 3000 || pts[1].Value != 2500 {
+		t.Fatalf("%+v %v", pts, err)
+	}
+}
+
+func ptrI64(v int64) *int64 { return &v }

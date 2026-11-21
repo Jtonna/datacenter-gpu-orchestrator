@@ -648,6 +648,19 @@ curl -s -X POST $B/api/bench/benchmarks -H 'Content-Type: application/json' -d '
    with the reason). A benchmark that is *supposed* to be refused (a model that
    does not fit) has `"expect": {"outcome": "refused"}`; it passes when the
    scheduler refuses.
+
+   *A scenario you cannot run yet* (hardware not there, a link not set up) is a
+   suite with `status` `planned` or `blocked` and a `reason`; it may list no
+   benchmark:
+```sh
+curl -s -X POST $B/api/bench/suites -H 'Content-Type: application/json' -d '{
+  "id": "five-consoles", "name": "Consoles only, 5", "status": "planned",
+  "reason": "the fifth console is not set up yet", "benchmarks": []}'
+```
+   The Benchmarks page lists it with a badge and the reason, and its Run
+   button is off. Running it answers `409` with the reason. Remove `status`
+   and `reason` (and add benchmarks) when it can run. A planned or blocked
+   suite cannot have a schedule.
 3. **Run.** `curl -s -X POST $B/api/bench/suites/gemma-scaling/run -d '{"note":"after the PS5 firmware update"}'`
    returns the run (`queued`). Runs go one at a time; others queue. Cancel with
    `POST /api/bench/runs/<id>/cancel`: it stops after the current request (a
@@ -695,6 +708,20 @@ curl -s $B/api/bench/state | jq .run
    run also records its environment (`env`: scheduler version, configuration
    revision when the status has one, llama binary, each PS5's rpc-server
    version).
+
+   Each step also records what tells one hardware setup from another (steps
+   stored before this was added have none of it; the UI says "Not recorded"):
+   `mem_low` (per node, the lowest available memory while loading and during
+   the whole step, sampled about twice a second), `load.load_mode`
+   (`file_read`, `pushed` or `local`), `roles` (the host and the workers, with
+   each one's share of the model) and `reload_from_cache` (per node: `full`,
+   `partial` with `cached_pct`, `none` or `unknown`; design 9.3, "Reload from
+   cache"). `GET /api/bench/benchmarks/<id>/results` carries
+   `lowest_available_mib`, `load_mode`, `host` and `workers` per run. The plan
+   of a profile (`GET /api/profiles`, the Models page) shows the same reload
+   figure before you load: "Reload from cache: partial, about 63% of the
+   file" means the next load of that model reads about a third of the file
+   from the disk or the network again.
 6. **Compare.** Each run is compared with the previous completed run of the
    same suite (or the `baseline` you named when you ran it). `regression: true`
    means the load was more than 15% slower (`bench.regress_load_pct`), decode
@@ -706,12 +733,13 @@ curl -s $B/api/bench/state | jq .run
    `&detail=turns` one per conversation turn); `format=json` everything.
    `GET /api/bench/trends?benchmark=gemma12b-1ps5-cold&metric=load_s` gives the
    points over past runs for a chart (`metric` is `load_s`, `load_mb_s`,
-   `memory_mib`, `decode_tps`, `prefill_tps`, `ttft_ms`, `unload_s` or
-   `concurrent_wall_s`).
+   `memory_mib`, `decode_tps`, `prefill_tps`, `ttft_ms`, `unload_s`,
+   `concurrent_wall_s` or `lowest_available_mib`).
    **Aggregates (the history added up):**
 ```sh
 curl -s "$B/api/bench/aggregates?suite=gemma-scaling&since=30d" | jq '.benchmarks[] | {benchmark_id, runs, pass_rate, load_s: .metrics.load_s | {median, last, best, change_pct, regression}}'
 curl -s "$B/api/bench/aggregates?benchmark=gemma12b-load-1ps5&env=same" | jq .by_model_nodes   # the same model on 1, 2, 3 workers
+curl -s "$B/api/bench/aggregates" | jq .by_model_load_mode   # the same again, split by file read or pushed
 ```
    Filters: `suite`, `benchmark`, `profile`, `since`, `until` (unix ms, an RFC
    3339 time, or `24h`, `7d`), `limit_runs` (newest N, default 200) and
