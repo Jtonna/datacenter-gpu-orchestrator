@@ -3,6 +3,7 @@ package modelsrc
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -228,5 +229,42 @@ func TestProbeRead(t *testing.T) {
 	}
 	if b := alignedBuf(4096); len(b) != 4096 {
 		t.Fatal(len(b))
+	}
+}
+
+// One log line for the share probe at its first result and at each change of
+// result, with the reason when it failed; a repeated result says nothing.
+func TestProbeResultIsLoggedOnChangeOnly(t *testing.T) {
+	var logs strings.Builder
+	pr := &fakeProber{mode: "ok"}
+	launch := true
+	s := New(Config{Spec: Spec{KindShare, "192.0.2.1:/"}, Dir: "/run/potluck/models", Mount: true,
+		NodeIP: func() string { return "192.0.2.101" }, Timeout: 20 * time.Millisecond,
+		Clock: osx.NewFakeClock(time.Hour), Mounter: &fakeMounter{mounted: true}, Prober: pr,
+		LaunchExists: func() bool { return launch }, Logger: slog.New(slog.NewTextHandler(&logs, nil))})
+	ctx := context.Background()
+	ok := func() int { return strings.Count(logs.String(), `level=INFO msg="share probe ok`) }
+	failed := func() int { return strings.Count(logs.String(), `msg="share probe failed`) }
+	for i := 0; i < 3; i++ {
+		s.ProbeOnce(ctx)
+	}
+	if ok() != 1 || failed() != 0 {
+		t.Fatalf("three good probes: %d ok lines, %d failed\n%s", ok(), failed(), logs.String())
+	}
+	pr.set("hang")
+	for i := 0; i < 4; i++ {
+		s.ProbeOnce(ctx)
+	}
+	if ok() != 1 || failed() != 1 || !strings.Contains(logs.String(), "why=") {
+		t.Fatalf("four failed probes: %d ok lines, %d failed\n%s", ok(), failed(), logs.String())
+	}
+	pr.mu.Lock()
+	pr.hung[0].release()
+	pr.mu.Unlock()
+	pr.set("ok")
+	s.ProbeOnce(ctx)
+	s.ProbeOnce(ctx)
+	if ok() != 2 || failed() != 1 {
+		t.Fatalf("back: %d ok lines, %d failed\n%s", ok(), failed(), logs.String())
 	}
 }

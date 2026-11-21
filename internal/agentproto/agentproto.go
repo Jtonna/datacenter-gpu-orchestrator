@@ -475,7 +475,7 @@ type Status struct {
 	State      string        `json:"state"`
 	Load       *LoadProgress `json:"load"`
 	// LastLaunch is the launch that has exited (state "exited"), else null.
-	// Model is null then: the node runs no model.
+	// Model and Load are null then: the node runs no model and loads nothing.
 	LastLaunch    *LastLaunch `json:"last_launch"`
 	LastError     *string     `json:"last_error"`
 	LastErrorAgeS *float64    `json:"last_error_age_s"`
@@ -487,4 +487,6 @@ type LastLaunch struct {
 	Model     *string `json:"model"`
 	Reason    string  `json:"reason"`
 	EndedAgeS float64 `json:"ended_age_s"`
+	// Load is the launch's last load progress, null when it had none.
+	Load *LoadProgress `json:"load"`
 }

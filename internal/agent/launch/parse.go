@@ -16,7 +16,10 @@ import (
 var workerStartedRE = regexp.MustCompile(`(?i)(starting rpc server|listening)`)
 
 var (
-	fileLoadRE     = regexp.MustCompile(`\[file_load\] progress bytes=(\d+) total=(\d+)`)
+	// Any [file_load] line with both figures counts, not only "progress": a
+	// closing line ("done bytes=N total=N") must not leave the last figure
+	// one progress step short.
+	fileLoadRE     = regexp.MustCompile(`\[file_load\][^\n]*?\bbytes=(\d+)[^\n]*?\btotal=(\d+)`)
 	hostProgressRE = regexp.MustCompile(`load_progress: fraction=([0-9]*\.?[0-9]+)`)
 	requiredRE     = regexp.MustCompile(`rpc_file_load_required:.*\breason=([A-Za-z_]+)`)
 )
@@ -87,6 +90,15 @@ func (s *logScan) feed(partial *[]byte, b []byte) {
 		buf = nil
 	}
 	*partial = append([]byte(nil), buf...)
+}
+
+// flush takes a last line that has no line end (the process is gone; nothing
+// more will come).
+func (s *logScan) flush(partial *[]byte) {
+	if len(*partial) > 0 {
+		s.line(string(*partial))
+		*partial = nil
+	}
 }
 
 func indexByte(b []byte, c byte) int {

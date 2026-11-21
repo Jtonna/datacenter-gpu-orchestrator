@@ -992,3 +992,25 @@ func TestNoFurtherKillAttemptOnceTheUnitIsGone(t *testing.T) {
 		t.Fatalf("attempts on a unit that is gone: stops %v signals %v tries %d", s, p.signals(), tries)
 	}
 }
+
+// I. The last progress of a load is not lost when the launch ends: a closing
+// [file_load] line counts whatever its word, also when it is the last line
+// of the log and has no line end.
+func TestLastProgressLineIsKeptAtExit(t *testing.T) {
+	e := newEnv(t, true)
+	e.run()
+	e.startReady("ln-1")
+	e.sockets.set(50052, true, true)
+	e.appendLog("ln-1", "[file_load] progress bytes=2858035200 total=2873882624\n")
+	agenttest.Eventually(t, 5*time.Second, "progress", func() bool {
+		s := e.m.State()
+		return s.Load != nil && *s.Load.BytesLoaded == 2858035200 && s.Load.State == agentproto.LoadReceiving
+	})
+	e.appendLog("ln-1", "[file_load] done bytes=2873882624 total=2873882624") // no line end
+	e.m.Stop("ln-1", true)
+	e.portClosed()
+	st := e.waitState(agentproto.StateExited)
+	if st.Load == nil || *st.Load.BytesLoaded != 2873882624 || st.Load.State != agentproto.LoadDone {
+		t.Fatalf("load at exit: %+v", st.Load)
+	}
+}

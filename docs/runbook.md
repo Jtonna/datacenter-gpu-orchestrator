@@ -827,7 +827,7 @@ Worker launch logs are copied into `child_log_dir` as
 `worker-<node name>-<launch id>.log`. A load that fails on an agent shows the
 agent's reason in the 502 and in history (`workerLaunchFailed`,
 `workerExited`); when the host program dies first (it aborts as soon as a
-worker is gone), the scheduler reads the launches for up to 1 s and still
+worker is gone), the scheduler reads the launches for up to 2 s and still
 names the worker's reason (`watchdog`, `oom_kill`, ...). For a load with agent
 workers the scheduler sets `LLAMA_RPC_FILE_LOAD` on the host `llama-server`
 itself: `required` when `worker_model_dir` is on, `0` when it is off; a value

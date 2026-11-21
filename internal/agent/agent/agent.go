@@ -948,7 +948,8 @@ func (a *Agent) Status() agentproto.Status {
 	case agentproto.StateExited:
 		// The node runs no model: the exited launch's model is named as the
 		// last launch's, not as the current one.
-		ll := agentproto.LastLaunch{ID: ls.LaunchID, Model: model}
+		ll := agentproto.LastLaunch{ID: ls.LaunchID, Model: model, Load: ls.Load}
+		st.Load = nil
 		if ls.Exit != nil {
 			ll.Reason, ll.EndedAgeS = ls.Exit.Reason, ls.Exit.AgeS
 		}

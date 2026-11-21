@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -180,5 +182,35 @@ func TestOperatorLogLines(t *testing.T) {
 	e.pl.set(func() { e.pl.hbStatus = 200 })
 	if c := logs.count("level=INFO msg=\"heartbeat answered 410"); c != 0 {
 		t.Fatalf("%d extra INFO lines per re-registration", c)
+	}
+}
+
+// I. After a launch has exited GET /status shows no load: the node loads
+// nothing. The launch's last progress is kept under last_launch.
+func TestStatusHasNoLoadAfterTheLaunchExited(t *testing.T) {
+	e := newTenv(t)
+	e.start()
+	e.waitReady()
+	if w := e.do("POST", "/launch", workerReq("ln-1"), fromPotluck); w.Code != 202 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	f, err := os.OpenFile(filepath.Join(e.opt.DataDir, "launch", "ln-1.log"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString("[file_load] progress bytes=100 total=400\n")
+	f.Close()
+	agenttest.Eventually(t, 10*time.Second, "load in status", func() bool {
+		s := e.a.Status()
+		return s.Load != nil && s.Load.BytesLoaded != nil && *s.Load.BytesLoaded == 100 && s.Role == "worker"
+	})
+	if w := e.do("DELETE", "/launch/ln-1?force=1", nil, fromPotluck); w.Code != 200 {
+		t.Fatal(w.Code)
+	}
+	agenttest.Eventually(t, 20*time.Second, "exited", func() bool { return e.a.Status().State == "exited" })
+	s := e.a.Status()
+	if s.Load != nil || s.Role != "idle" || s.LastLaunch == nil || s.LastLaunch.Load == nil ||
+		*s.LastLaunch.Load.BytesLoaded != 100 || *s.LastLaunch.Load.BytesTotal != 400 {
+		t.Fatalf("%+v last_launch %+v", s, s.LastLaunch)
 	}
 }

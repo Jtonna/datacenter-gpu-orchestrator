@@ -1135,6 +1135,10 @@ func (m *Manager) tick(ctx context.Context) {
 		return
 	}
 	m.scanLog(r) // last lines
+	m.mu.Lock()
+	r.scan.flush(&r.partial) // and a last line without a line end
+	m.applyProgressLocked(r)
+	m.mu.Unlock()
 	var exit runner.Exit
 	if proc != nil {
 		exit = proc.Exit()

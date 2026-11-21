@@ -40,7 +40,7 @@ const (
 	LeaseTTL       = 20 * time.Second // lease_ttl_s of a launch (6.2)
 	LeaseEvery     = 5 * time.Second  // lease renewal (6.4)
 	ForceResetWait = 5 * time.Second  // forced stop, then /reset (7.2)
-	ExitReadWait   = time.Second      // reading the launches of a load whose host program ended (11.1)
+	ExitReadWait   = 2 * time.Second  // reading the launches of a load whose host program ended (11.1)
 )
 
 // ReasonReleaseUnavailable refuses a registration while Potluck serves no

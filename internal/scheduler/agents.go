@@ -357,7 +357,7 @@ func (c *schedCore) workerEndedInstance(in *inst, r WorkerReport, st instance.Ex
 // WorkerExitReader is implemented by a WorkerLauncher that can say which
 // launches of a load ended by themselves. The scheduler asks when a child
 // exits without having been stopped, before it handles the exit: the agent
-// keeps the exit record of its last launch. The call is bounded (about 1 s);
+// keeps the exit record of its last launch. The call is bounded (2 s);
 // launches that were stopped on request are not returned.
 type WorkerExitReader interface {
 	Exits(ctx context.Context, iid uint64) []WorkerReport
@@ -369,7 +369,7 @@ func (s *Scheduler) workerExits(iid uint64, st instance.ExitStatus) []WorkerRepo
 	if !ok || st.Requested {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	rs := r.Exits(ctx, iid)
 	for i := range rs {

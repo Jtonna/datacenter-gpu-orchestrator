@@ -261,8 +261,11 @@ func (s *Source) Run(ctx context.Context) {
 	}
 }
 
+// record keeps a probe result. One log line at the first result and at each
+// change of result; a result that repeats is not logged again.
 func (s *Source) record(ok bool, why string) {
 	s.mu.Lock()
+	changed := !s.have || s.reachable != ok
 	s.have, s.reachable, s.checkedAt = true, ok, s.cfg.Clock.Now()
 	if ok {
 		s.fails = 0
@@ -270,8 +273,15 @@ func (s *Source) record(ok bool, why string) {
 		s.fails++
 	}
 	s.mu.Unlock()
-	if !ok {
-		s.log.Warn("share probe failed", "why", why)
+	switch {
+	case !changed:
+		if !ok {
+			s.log.Debug("share probe failed", "why", why)
+		}
+	case ok:
+		s.log.Info("share probe ok: the model source is reachable", "target", s.cfg.Spec.Target, "dir", s.cfg.Dir)
+	default:
+		s.log.Warn("share probe failed: the model source is not reachable", "target", s.cfg.Spec.Target, "dir", s.cfg.Dir, "why", why)
 	}
 }
 
