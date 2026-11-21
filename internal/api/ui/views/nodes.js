@@ -1,15 +1,24 @@
 // Nodes: the machines, as a secondary view. One tile per node: its state, its
 // memory, what is on it, and anything wrong with it (health, quarantine,
-// recovery). Read-only.
+// recovery).
 //
-// Reads: WebSocket "status" only (view.nodes, instances, quarantines).
+// Reads: WebSocket "status" only (view.nodes, instances, quarantines, and in
+// agents mode `membership`, `agents` and each node's `unplaced` and `agent`).
+//
+// Writes, in agents mode only, and only these two per machine (no load and
+// no ordinary unload): Pause / Unpause and Force unload, each with a required
+// comment (the requests are built in core/nodeactions.js).
+// Nothing is shown as done before the next status says so; a card only shows
+// that its request is on the way.
 
 import { h } from '../core/dom.js';
 import { registerView, href } from '../core/router.js';
-import { state } from '../core/store.js';
-import { liveView, pageHead, badge, stat, empty, skeleton, memBar, facts, copyButton } from '../core/ui.js';
+import { state, on } from '../core/store.js';
+import * as api from '../core/api.js';
+import { liveView, pageHead, badge, button, dialog, toast, stat, empty, skeleton, memBar, facts, copyButton } from '../core/ui.js';
 import { num, mib, gb, gbNum, dur, ago, until, at, plural, toMs, now, shortId, DASH } from '../core/format.js';
 import { viewNodes, nodeMemory, staleBanner } from '../core/status.js';
+import { agentsMode, agentOf, notPlaceable, holdsSomething, pauseAction, sendNodeAction, NODE_ACTIONS } from '../core/nodeactions.js';
 
 const CHANNEL = { ok: ['ok', 'ok-t'], silent: ['silent', 'err-t'], unknown: ['not known', 'mut'] };
 const ACTION = { restart_rpc_server: 'restart the worker', restart_docker: 'restart Docker', reboot: 'reboot the machine' };
@@ -29,14 +38,93 @@ function stateOf(st, n, inst) {
   return ['Free', 'line', 7];
 }
 
-function tile(st, n) {
+// The requests on their way, by node id: {action, sent}. An entry stays after
+// the server said yes (sent) until the next status arrives, so the card shows
+// "Pausing…" until the page really knows the new state.
+const pending = new Map();
+
+// askAction(id, action, refresh) opens the dialog of one action on one machine:
+// what will happen, the required comment, then the request. A refusal of the
+// server is shown in the dialog, in the server's words.
+function askAction(id, action, refresh) {
+  const st = state.status;
+  const n = viewNodes(st).find(x => x.id === id);
+  if (!n || pending.has(id)) return null;
   const name = n.hostname || n.id;
+  const act = NODE_ACTIONS[action];
+  const force = action === 'force';
+  const inst = n.holder ? (st.instances || []).find(i => i.profile === n.holder) : null;
+  const hits = force ? [
+    { kind: 'x', text: n.holder ? ['It stops ', h('span.mono', n.holder), ' at once, on every machine that model is spread over.'] : 'It stops the worker that runs on this machine at once.' },
+    { kind: 'x', text: inst && inst.in_flight > 0 ? `${plural(inst.in_flight, 'request')} in flight and every request waiting on that model will fail.` : 'Requests waiting on that model will fail.' },
+    { kind: '', text: 'The machine itself stays in the pool. Pause it if it should not get a new model.' },
+  ] : action === 'pause' ? [
+    { kind: 'a', text: 'It takes no new model until someone unpauses it.' },
+    { kind: '', text: n.holder ? ['It keeps ', h('span.mono', n.holder), ', which goes on serving requests.'] : 'Nothing is loaded on it, so nothing is interrupted.' },
+  ] : [
+    { kind: 'm', text: 'It may take a new model again, as soon as nothing else holds it back.' },
+  ];
+  return dialog({
+    title: [act.label + ' ', h('span.mono', name), '?'],
+    body: close => {
+      const comment = h('textarea.textarea', { rows: 2, maxlength: 400, placeholder: 'Why? It is kept in the audit log.', 'aria-label': 'Comment' });
+      const err = h('span.err', { role: 'alert' });
+      const go = button(act.label, null, 'lg ' + (force ? 'dng solid' : 'pri'));
+      const cancel = button('Cancel', () => close(false), 'lg');
+      go.addEventListener('click', async () => {
+        const c = comment.value.trim();
+        if (!c) { err.textContent = 'A comment is required. Say why, in a few words.'; comment.focus(); return; }
+        err.textContent = '';
+        go.disabled = cancel.disabled = comment.disabled = true;
+        go.textContent = act.busy + '…';
+        pending.set(id, { action, sent: false });
+        refresh();
+        try {
+          await sendNodeAction(api, id, action, c);
+          pending.set(id, { action, sent: true });
+          toast(`${act.done}: ${name}`, 'ok');
+          close(true);
+        } catch (e) {
+          pending.delete(id);
+          const msg = (e && e.message) || 'The request failed.';
+          err.textContent = msg;
+          if (!err.isConnected) toast(`${act.label} ${name}: ${msg}`, 'err'); // the dialog was closed meanwhile
+          go.disabled = cancel.disabled = comment.disabled = false;
+          go.textContent = act.label;
+        }
+        refresh();
+      });
+      return h('div.col', { style: 'gap:14px' },
+        h('div', { style: 'display:flex;flex-direction:column;gap:8px' }, hits.map(x => h('div.hit', h('i', { class: x.kind }), h('span', x.text)))),
+        h('div.field', h('label', 'Comment (required)'), comment, err),
+        h('div.dlg-foot', cancel, go));
+    },
+  });
+}
+
+// controls(n, agent, refresh) -> the two buttons of an agent machine.
+function controls(n, agent, refresh) {
+  const p = pending.get(n.id);
+  const pa = pauseAction(agent);
+  const holds = holdsSomething(n, agent);
+  const label = a => (p && p.action === a ? NODE_ACTIONS[a].busy + '…' : NODE_ACTIONS[a].label);
+  return h('div.acts', { 'aria-busy': p ? 'true' : null },
+    button(label(pa), () => askAction(n.id, pa, refresh), 'sm', { disabled: !!p,
+      title: pa === 'pause' ? 'It keeps what it holds and takes no new model' : 'It may take a new model again' }),
+    button(label('force'), () => askAction(n.id, 'force', refresh), 'sm dng', { disabled: !!p || !holds,
+      title: holds ? 'Stops the model on this machine at once; requests waiting on it fail' : 'Nothing runs on this machine, so there is nothing to unload' }));
+}
+
+function tile(st, n, refresh) {
+  const name = n.hostname || n.id;
+  const agent = agentOf(st, n);
+  const np = notPlaceable(n, agent);
   const inst = n.holder ? (st.instances || []).find(i => i.profile === n.holder) : null;
   const placed = inst ? (inst.nodes || []).find(p => p.id === n.id) : null;
   const mem = placed ? nodeMemory(placed) : null;
   const q = (st.quarantines || []).find(x => x.node === n.id);
   const [label, kind] = stateOf(st, n, inst);
-  const usableNode = n.online && !n.excluded;
+  const usableNode = n.online && !n.excluded && !np; // a paused or not placeable machine takes nothing now
   // The figures come from two places (the fleet's total, a free figure that a
   // pre-load check may have measured later), so they can disagree. Nothing
   // negative is ever shown: "in use" is clamped at 0 and the note says why.
@@ -54,8 +142,15 @@ function tile(st, n) {
   const note = (cls, node) => notes.push(h('div.hit', h('i', { class: cls }), h('span', node)));
 
   if (n.excluded) note('', 'Excluded in the configuration: it gets no model and is not counted in the capacity.');
-  if (!n.online && !n.excluded) note('x', ['Offline', n.missing_since ? [': missing from the fleet feed since ', at(n.missing_since), ' (', ago(n.missing_since), ')'] : '.']);
-  else if (n.missing_since) note('a', ['Missing from the fleet feed since ', at(n.missing_since), '.']);
+  if (np && np.paused) note('', 'Paused by an operator: it keeps what it holds and takes no new model until it is unpaused.');
+  if (np && np.code !== 'paused') {
+    note('a', h('span', { title: np.code ? 'The scheduler says: ' + np.code : null }, h('b', 'Not placeable. '),
+      np.known ? np.text : ['The scheduler gives this reason: ', h('span.mono', np.code)],
+      agent.programs_error ? [' The agent says: ', agent.programs_error] : null));
+  }
+  const gone = agent ? 'its agent has not reported since ' : 'missing from the fleet feed since ';
+  if (!n.online && !n.excluded) note('x', ['Offline', n.missing_since ? [': ', gone, at(n.missing_since), ' (', ago(n.missing_since), ')'] : '.']);
+  else if (n.missing_since) note('a', [agent ? 'Its agent has not reported since ' : 'Missing from the fleet feed since ', at(n.missing_since), '.']);
   if (q || n.quarantined) {
     note('x', ['Set aside ', q ? ['until ', at(q.until), ' (', until(q.until), ')'] : ['since ', at(n.quarantined)],
       q && q.level > 1 ? ` after ${plural(q.level, 'failed check')} in a row` : ' after a failed pre-load check or a worker that stopped answering', '. It gets no new model until then.']);
@@ -95,9 +190,11 @@ function tile(st, n) {
     inst && inst.in_flight > 0 ? h('span.mut', ` · ${plural(inst.in_flight, 'request')} in flight`) : null)
     : n.claimed_by ? h('span', 'Claimed for ', h('a.mono', { href: href('queue') }, n.claimed_by))
       : h('span.mut', n.excluded ? 'Never used' : !n.online ? 'Nothing can be placed here' : 'Nothing loaded');
-  return h('section', { class: 'card ncard ' + (n.excluded ? 'quiet ' : '') + (kind === 'fail' || kind === 'aside' ? 'flag-err' : kind === 'load' && !inst ? 'flag-warn' : ''), key: 'node-' + n.id, 'aria-label': name },
+  return h('section', { class: 'card ncard ' + (n.excluded ? 'quiet ' : '') + (kind === 'fail' || kind === 'aside' ? 'flag-err' : kind === 'load' && !inst ? 'flag-warn' : np && np.code !== 'paused' ? 'flag-warn' : ''), key: 'node-' + n.id, 'aria-label': name },
     h('div.ch', { style: 'padding-bottom:10px' },
-      h('h2.mono', name), badge(label, kind),
+      h('h2.mono', name), np && label === 'Free' ? null : badge(label, kind),
+      np && np.paused ? badge('Paused', 'settle', 'Paused by an operator: it takes no new model') : null,
+      np && np.code !== 'paused' ? badge('Not placeable', 'aside', np.known ? np.short : np.code) : null,
       n.local ? badge('This machine', 'n', 'The scheduler runs here: models are read from disk, nothing is uploaded') : null),
     h('div.body',
       h('div.on-it', onIt),
@@ -113,6 +210,7 @@ function tile(st, n) {
           stat('Free', gbNum(free), 'GB', { small: true, title: `${mib(free)}, as the fleet reports it` + (headroom ? `; ${mib(headroom)} of it is kept as headroom` : '') }),
           stat('When empty', n.plan_budget_mib ? gbNum(n.plan_budget_mib) : DASH, n.plan_budget_mib ? 'GB' : null, { small: true, title: n.plan_budget_mib ? `${mib(n.plan_budget_mib)}: what the scheduler plans with once nothing is loaded here` : null })),
       notes.length ? h('div', { style: 'display:flex;flex-direction:column;gap:8px' }, h('div.note-s', { style: 'display:flex;flex-direction:column;gap:8px' }, notes)) : null),
+    agent ? controls(n, agent, refresh) : null,
     h('div.foot',
       facts([
         ['Address', h('span', n.addr || (n.local ? 'this machine' : 'not known')), n.addr ? 'The address of its worker' : null],
@@ -130,24 +228,33 @@ function tile(st, n) {
 registerView({
   id: 'nodes', title: 'Nodes',
   mount(el) {
+    // a request the server accepted stops being "on the way" with the next status
+    const off = on('status', () => { for (const [id, p] of pending) if (p.sent) pending.delete(id); });
+    const refresh = () => view.refresh();
     const view = liveView(el, () => {
       const st = state.status;
+      const agents = agentsMode(st);
       if (!st) return [pageHead('Nodes'), staleBanner(), h('section.card', skeleton(4))];
       const nodes = viewNodes(st).slice().sort((a, b) => (a.excluded - b.excluded) || ((a.priority || 99) - (b.priority || 99)) || String(a.hostname || a.id).localeCompare(String(b.hostname || b.id)));
       const pool = nodes.filter(n => !n.excluded);
       const online = pool.filter(n => n.online).length;
-      const bad = pool.filter(n => !n.online || n.quarantined || (st.quarantines || []).some(q => q.node === n.id) || (n.health && n.health.state && n.health.state !== 'ok')).length;
+      // agents mode: a machine that takes no new model for a reason other than an operator's pause needs a look
+      const unplaced = n => { const np = notPlaceable(n, agentOf(st, n)); return !!np && np.code !== 'paused'; };
+      const paused = agents ? pool.filter(n => { const a = agentOf(st, n); return a && a.paused; }).length : 0;
+      const bad = pool.filter(n => !n.online || n.quarantined || (st.quarantines || []).some(q => q.node === n.id) || (n.health && n.health.state && n.health.state !== 'ok') || unplaced(n)).length;
       const excluded = nodes.length - pool.length;
-      const usable = pool.filter(n => n.online).reduce((s, n) => s + Math.max(0, n.live_budget_mib || 0), 0);
+      const usable = pool.filter(n => n.online && !notPlaceable(n, agentOf(st, n))).reduce((s, n) => s + Math.max(0, n.live_budget_mib || 0), 0);
       return [
         pageHead('Nodes', [h('b', num(online)), ' of ', h('b', num(pool.length)), ' online', bad ? [' · ', h('b.err-t', num(bad)), ' need a look'] : null,
-          excluded ? [' · ', h('b', num(excluded)), ' excluded'] : null, ' · ', h('b', gb(usable)), ' usable now'],
+          excluded ? [' · ', h('b', num(excluded)), ' excluded'] : null, paused ? [' · ', h('b', num(paused)), ' paused'] : null, ' · ', h('b', gb(usable)), ' usable now'],
           h('div.legend', h('span', h('span.sw.m'), 'Model'), h('span', h('span.sw.o'), 'Other use'), h('span', h('span.sw.free'), 'Free'), h('span', h('span.sw.lim'), 'Limit for a new model'))),
         staleBanner(),
-        nodes.length ? h('div.ngrid', nodes.map(n => tile(st, n)))
-          : h('section.card', empty('No nodes are known yet', 'Nodes come from the fleet feed. None has been reported so far; check that the fleet manager is reachable (About shows the connection).')),
+        nodes.length ? h('div.ngrid', nodes.map(n => tile(st, n, refresh)))
+          : h('section.card', agents
+            ? empty('No machines have joined yet', 'Machines join through their agent. None has registered so far; start the agent on a machine and it appears here.')
+            : empty('No nodes are known yet', 'Nodes come from the fleet feed. None has been reported so far; check that the fleet manager is reachable (About shows the connection).')),
       ];
     }, ['status', 'tick', 'conn']);
-    return view;
+    return { refresh, unmount() { off(); view.unmount(); } };
   },
 });

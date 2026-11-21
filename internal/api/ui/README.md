@@ -17,6 +17,7 @@ core/router.js      hash router and the view registry
 core/shell.js       navigation, the connection warning, the name that signs changes
 core/status.js      helpers that read the status document
 core/reasons.js     the scheduler's reason strings in plain words (no DOM)
+core/nodeactions.js agent machines: why one takes no new model, and the two operator actions (no DOM)
 core/ui.js          the shared components (below)
 core/charts.js      every chart and the chart tooltip: inline SVG and plain boxes ("Charts" below)
 core/catalog.js     the model catalog, kept for the life of the page (fed by the live channel)
@@ -41,7 +42,11 @@ One screenshot: `scripts/ui-screens.sh http://127.0.0.1:8790 models loading desk
    confirm dialog that says so. `internal/api/ui_test.go` fails the build if a
    UI file names `/api/load`, `/api/unload` or `/api/models/unload`. (The
    catalog `GET /api/models` and `GET /api/models/<key>` are read-only and are
-   what the Models screen reads.)
+   what the Models screen reads.) The one exception, decided by the owner: in
+   agents membership a machine card on Nodes has Pause / Unpause and Force
+   unload, and nothing else ("Machines that join through agents" below).
+   `internal/api/ui_nodes_test.go` fails the build if the UI gains a third
+   node action or names `/api/nodes` outside `core/nodeactions.js`.
 3. **WebSocket for live, REST for pull and push.** Live data comes from the
    store (`core/store.js`). REST is for lists and detail on demand and for
    writes. Never call REST on a timer. To refresh a list, react to a WebSocket
@@ -269,6 +274,7 @@ markup it produces, so the markup can also be written with `h()` directly.
 | Repeatable block | `subBlock(title, actions, ...body)`, `orderButtons({index, count, onMove, onRemove, what})` | `div.sub-block > div.sub-head + fields`: one item of an ordered list inside a form (a phase, a request, a turn, a tier) with its up, down and Remove buttons. Put a `schemaForm(...).el` in the body. |
 | Pending changes | `pendingBar(o)`, `reviewChanges(o)`, `savedBanner(result, onClose)`, `noticeBanner(notice, o)`, `watchConfig(o)`, `restartKey(k)` (`core/changes.js`) | The save flow of every Configure screen: a bar that counts staged changes, the review dialog (dry run, diff, warnings, keys that need a restart, comment, save with `If-Match`, the 409 path that shows what changed and applies again), the "Saved as revision N" banner, and the notice when someone else changed the configuration while you edit. Read the header of `core/changes.js` for the options. |
 | Config helpers | `sourceBadge(source)`, `searchBox(value, onInput, placeholder, label)`, `fieldOfMessage(msg, keys)`, `entrySentence(e)`, `sectionName`, `actionName` (`core/configdata.js`) | Source badges (web UI, REST, MCP, import, system), a search input, mapping a validation message to its field, one sentence for an audit entry. |
+| Machine actions | `div.acts` in a `section.card.ncard` (see `views/nodes.js`) | The row of small buttons of a machine card, between the body and the foot: `button(label, fn, 'sm')` and `button('Force unload', fn, 'sm dng')`. While a request is on its way the row has `aria-busy` and both buttons are disabled; the one that was pressed reads "Pausing…". |
 | Shell slot | `setShellSlot(name, node or null)` (`core/shell.js`) | Shows a node in the pane above the connection card, or under the top bar at phone width. The benchmark run indicator uses `run`. Update the node in place; the shell never re-creates it. |
 
 Formatting (`core/format.js`): `num(v, digits)`, `mib(v)`, `gib(v)`,
@@ -289,7 +295,9 @@ When the scheduler gains a reason, add its pattern there.
 Status helpers (`core/status.js`): `machines(st, n)` ("3 PS5s", or "3 nodes"
 when the pool is mixed), `nodeName(st, id)`, `findNode(st, idOrHost)`,
 `nodeByAddr(st, addr)`, `instanceNodeNames(st, inst)`, `nodeMemory(placed)`,
-`instanceBadge(inst)`, `healthBadge(node)`, `drift()`, `staleBanner()`.
+`instanceBadge(inst)`, `healthBadge(node)`, `machineBadge(st, node)` (agents
+membership: "Paused" or "Not placeable" with the reason on hover, else null),
+`drift()`, `staleBanner()`.
 
 ## The configuration and audit contract (as built on the server)
 
@@ -383,6 +391,62 @@ going back to Models draws at once. The instance cards are drawn from the
 WebSocket status (they need the live load figures). A model's icon: `PUT`
 (raw image body), `GET`, `DELETE /api/models/<key>/icon[?scope=family]`
 (`api.upload`, `api.del`).
+
+## Machines that join through agents (as built on the server)
+
+With `defaults.membership: agents` the status (`GET /api/status` and the
+WebSocket `status` message) has `membership: "agents"` and `agents[]`: the
+facts of every agent node (`internal/pool` `NodeFacts`: `id, name, addr,
+state` (`active`, `lost`, `left`, `removed`), `platform, programs_ready,
+programs_error, model_source, paused, host_agent, role, launch_id,
+launch_state, devices, mem_available_mib, stats, placeable, unplaced`). Each
+`view.nodes[]` entry has `unplaced` (a reason word, or empty), `eligible`
+and `agent` (its facts). In fleet-feed mode none of these exist. Not to be
+confused with the AI-agent identities of the next section (`/api/agents`).
+
+Everything about them is in `core/nodeactions.js` (no DOM, no import):
+
+- `agentsMode(st)`: membership is agents and the status has `agents`.
+  `agentOf(st, node)`: the facts of a view node, or null (fleet-feed mode, and
+  the machine the scheduler runs on, which has no agent).
+- `notPlaceable(node, agent)` -> null, or `{short, text, known, code,
+  paused}`: why the machine takes no new model. The reason words
+  (`no_tier_match`, `programs_not_ready`, `model_source_unreachable`,
+  `orphan_launch`, `silent`, `agent_unreachable`, `host_machine`) are mapped to
+  a few words and a sentence in `UNPLACED`; a word that is not in the table is
+  shown as it is (`known: false`), never guessed at. A paused machine without
+  another reason has `code: 'paused'`. When the scheduler gains a reason word,
+  add it to `UNPLACED` and to the list in `internal/api/ui_nodes_test.go`.
+- `sendNodeAction(api, id, action, comment)` with `action` `pause`, `unpause`
+  or `force`: `POST /api/nodes/{id}/pause | unpause | force-unload`
+  (`internal/api/nodes.go`). The comment is required; it goes in the body
+  (`{comment}`, kept exactly) and in `X-Comment`. Each call writes an audit
+  entry (section `nodes`, target `node:<id>`).
+
+Where it shows:
+
+- **Nodes.** A card gets a "Paused" badge (`settle`) and, for any other
+  reason, a "Not placeable" badge (`aside`) with the sentence as a note in the
+  card (the raw word is the tooltip of the note). "Free" is not shown for a
+  machine that takes nothing, its "Usable now" is a dash, and it is left out of
+  "usable now" in the page header; machines that are not placeable for a reason
+  other than a pause count as "need a look". The two controls sit in
+  `div.acts`: **Pause / Unpause** (one button, by `agent.paused`) and **Force
+  unload** (outline coral; enabled only when the machine has a launch or holds
+  an instance: `holdsSomething`). Both open a dialog that says what will
+  happen (the force unload: the model stops at once and requests waiting on it
+  fail; its button is solid coral), with a required comment. The server's
+  refusal is shown in the dialog in its own words. Nothing is drawn as done
+  early: after the server said yes the card reads "Pausing…" until the next
+  status message. A machine without agent facts has no controls, so there are
+  none in fleet-feed mode.
+- **Models.** A machine row of an instance card shows `machineBadge` when the
+  machine has no health badge.
+- **Queue.** "Why it waits" lists a free machine that is paused or not
+  placeable, with the sentence.
+
+Agent nodes that are no longer in `view.nodes` (left or removed) are not drawn
+yet; re-admit and remove have no control in the UI.
 
 ## Agents and MCP (as built on the server)
 
@@ -482,7 +546,11 @@ before drawing a field.
 `scripts/ui-dev.sh [scenario]` runs `cmd/devcluster` on `127.0.0.1:8790`: the real
 scheduler server, a scripted status per scenario, seeded history, and the mock
 of the endpoints above. `GET /dev/scenarios` lists the scenarios;
-`POST /dev/scenario?name=<name>` switches. `scripts/ui-dev.sh real` replays a
+`POST /dev/scenario?name=<name>` switches. `scripts/ui-dev.sh agents` shows
+agents membership, scripted (`cmd/devcluster/agents_scenario.go`): a machine
+with a model, a paused one, one that matches no tier and a free one; Pause,
+Unpause and Force unload change that scripted status (no audit entry is
+written there). `scripts/ui-dev.sh real` replays a
 recording of the real cluster instead (254 profiles, real reason strings,
 real history, benchmark runs and audit trail; read-only; `real-loading` is the
 same at the moment of a load): look at every change with it too, because the
