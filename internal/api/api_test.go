@@ -486,7 +486,13 @@ func TestActivityKeepsLast200(t *testing.T) {
 	for i := 0; i < 205; i++ {
 		e.post("/v1/chat/completions", chat("alpha")).Body.Close()
 	}
-	data := jsonOf(t, body(t, e.get("/api/metrics/activity")))["data"].([]any)
+	// A request's record is written after its answer has gone out, so the
+	// last one can arrive a moment after the client has its response.
+	var data []any
+	eventually(t, "the last record", func() bool {
+		data = jsonOf(t, body(t, e.get("/api/metrics/activity")))["data"].([]any)
+		return len(data) == 200 && data[0].(map[string]any)["id"].(float64) == 6
+	})
 	if len(data) != 200 {
 		t.Fatalf("len = %d", len(data))
 	}
