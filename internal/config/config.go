@@ -141,7 +141,10 @@ type Defaults struct {
 	// ForcedFitCheck is what a profile with force_nodes does when its memory
 	// need exceeds the forced nodes' free memory at pre-flight: ForcedFitOff
 	// (no check, the default), ForcedFitWarn (log and start) or
-	// ForcedFitReject (fail the request).
+	// ForcedFitReject (fail the request). In agents membership the agents'
+	// own check (would_not_fit, and a node with no memory figure) refuses a
+	// forced placement whatever this says; that cannot be switched off
+	// (agent contract 11.2, item 1).
 	ForcedFitCheck string
 	// WorkerProbeInterval is how often a remote worker that backs an instance
 	// gets a plain TCP connect probe (design 8.4a). 0 (the default) means the

@@ -169,8 +169,8 @@ func (p *Pool) rebuildLocked() {
 		if why != "" {
 			unplaced[n.ID] = why
 		}
-		if why == scheduler.UnplacedAgentUnreachable {
-			msgs[n.ID] = a.reachMsg
+		if m := p.unplacedMsgLocked(a, why); m != "" {
+			msgs[n.ID] = m
 		}
 		nodes = append(nodes, n)
 	}
@@ -214,7 +214,9 @@ func (p *Pool) nodeFromAgentLocked(cfg *config.Config, a *agent) (core.Node, boo
 		return n, tiered
 	}
 	n.TotalMiB, n.FreeMiB, n.FreeUnknown = int(d.TotalMiB), int(max(d.FreeMiB, 0)), false
-	if d.SharesSystemMemory {
+	// Shared by the device or by the tier (CR-9 review): the agent holds such
+	// a device to MemAvailable too, so Potluck places on the same figure.
+	if d.SharesSystemMemory || n.SharedMemory {
 		n.SharedMemory = true
 		usable := a.hb.MemAvailableMiB - int64(n.WatchdogFloorMiB)
 		n.FreeMiB = int(max(min(d.FreeMiB, usable), 0))
@@ -251,6 +253,9 @@ func tierDevices(a *agent) []string {
 // unplacedLocked is why the node takes no new load, "" when it may.
 //
 //   - no_tier_match: no tier matches it (it is outside the pool).
+//   - bad_floor: its agent reports a watchdog floor that cannot be right
+//     (badFloor); it would drive the node's placement memory to 0. Like
+//     no_tier_match it is outside the pool until the agent is set up again.
 //   - orphan_launch: it reports a launch this run does not hold (Heartbeat).
 //   - silent: no heartbeat for LostAfter while it runs a launch of ours; it
 //     is lost after LeaseTTL (CheckLost).
@@ -269,6 +274,9 @@ func (p *Pool) unplacedLocked(cfg *config.Config, a *agent) string {
 	if _, ok := agentTier(cfg, a); !ok {
 		return scheduler.UnplacedNoTierMatch
 	}
+	if badFloor(a) != "" {
+		return scheduler.UnplacedBadFloor
+	}
 	if a.orphan != "" {
 		return scheduler.UnplacedOrphanLaunch
 	}
@@ -283,6 +291,34 @@ func (p *Pool) unplacedLocked(cfg *config.Config, a *agent) string {
 	}
 	if r := a.hb.ModelSource.Reachable; cfg.Defaults.WorkerModelDir && (r == nil || !*r) {
 		return scheduler.UnplacedModelSourceUnreachable
+	}
+	return ""
+}
+
+// Bounds of a reported watchdog floor (CR-9 review): larger than half the
+// node's memory, or larger than maxFloorMiB, is a setup mistake.
+const maxFloorMiB = 16384
+
+// badFloor says why the floor the agent reports cannot be right; "" when it
+// can (or none is reported).
+func badFloor(a *agent) string {
+	f := reportedFloor(a)
+	switch {
+	case f > maxFloorMiB:
+		return fmt.Sprintf("the agent reports a watchdog floor of %d MiB, more than %d MiB; set the agent's --watchdog-floor-mib again (default 1000)", f, maxFloorMiB)
+	case a.reg.MemTotalMiB > 0 && f > a.reg.MemTotalMiB/2:
+		return fmt.Sprintf("the agent reports a watchdog floor of %d MiB, more than half of the node's %d MiB of memory; set the agent's --watchdog-floor-mib again (default 1000)", f, a.reg.MemTotalMiB)
+	}
+	return ""
+}
+
+// unplacedMsgLocked is the message of a reason that has one.
+func (p *Pool) unplacedMsgLocked(a *agent, why string) string {
+	switch why {
+	case scheduler.UnplacedAgentUnreachable:
+		return a.reachMsg
+	case scheduler.UnplacedBadFloor:
+		return badFloor(a)
 	}
 	return ""
 }
@@ -394,10 +430,11 @@ type NodeFacts struct {
 	// beyond the first, which no worker uses (one device per node).
 	ExtraDevicesIgnored int `json:"extra_devices_ignored"`
 	// Placeable: the node may take a new load. Unplaced is why not, when the
-	// node itself is the reason: host_machine, no_tier_match, orphan_launch,
+	// node itself is the reason: host_machine, no_tier_match, bad_floor, orphan_launch,
 	// silent, agent_unreachable, programs_not_ready or
 	// model_source_unreachable; UnplacedMessage says more when there is more
-	// to say (agent_unreachable: the address, the port and what to check). A
+	// to say (agent_unreachable: the address, the port and what to check;
+	// bad_floor: the floor and the bound it breaks). A
 	// node that is paused and has no reason of its own has paused (CR-9). A
 	// lost, left or removed node is not placeable either; its state says so.
 	Placeable       bool   `json:"placeable"`
@@ -468,9 +505,7 @@ func (p *Pool) Facts() []NodeFacts {
 				// scheduler's own child is the host (isHostAgentLocked).
 				f.Unplaced = scheduler.UnplacedHostMachine
 			}
-			if f.Unplaced == scheduler.UnplacedAgentUnreachable {
-				f.UnplacedMessage = a.reachMsg
-			}
+			f.UnplacedMessage = p.unplacedMsgLocked(a, f.Unplaced)
 			if f.Unplaced == "" && f.Paused && f.State == StateActive {
 				f.Unplaced = scheduler.UnplacedPaused // CR-9: never placeable false with no reason
 			}

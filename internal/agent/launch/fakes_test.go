@@ -209,14 +209,19 @@ func (s *fakeSockets) set(p int, listen, est bool) {
 type fakeMem struct {
 	mu    sync.Mutex
 	avail int64
+	err   error // MemInfo fails with it when set
 }
 
 func (m *fakeMem) MemInfo() (osx.MemInfo, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.err != nil {
+		return osx.MemInfo{}, m.err
+	}
 	return osx.MemInfo{TotalMiB: 16000, AvailableMiB: m.avail}, nil
 }
-func (m *fakeMem) set(v int64) { m.mu.Lock(); m.avail = v; m.mu.Unlock() }
+func (m *fakeMem) set(v int64)      { m.mu.Lock(); m.avail = v; m.mu.Unlock() }
+func (m *fakeMem) setErr(err error) { m.mu.Lock(); m.err = err; m.mu.Unlock() }
 
 type fakeGate struct {
 	mu        sync.Mutex

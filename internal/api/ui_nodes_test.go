@@ -20,7 +20,8 @@ import (
 func TestUIUnplacedReasonsAreMapped(t *testing.T) {
 	text := uiText(t, "core/nodeactions.js")
 	codes := []string{scheduler.UnplacedNoTierMatch, scheduler.UnplacedProgramsNotReady, scheduler.UnplacedModelSourceUnreachable,
-		scheduler.UnplacedOrphanLaunch, scheduler.UnplacedSilent, "agent_unreachable", "host_machine", scheduler.UnplacedPaused}
+		scheduler.UnplacedOrphanLaunch, scheduler.UnplacedSilent, "agent_unreachable", "host_machine", scheduler.UnplacedPaused,
+		scheduler.UnplacedBadFloor}
 	for _, c := range codes {
 		m := regexp.MustCompile(`(?m)^\s+` + regexp.QuoteMeta(c) + `: \{ short: '([^']+)',\s*text: '([^']+)' \},`).FindStringSubmatch(text)
 		if m == nil {
@@ -137,5 +138,14 @@ func TestUINodeRequestIsAcceptedAndAudited(t *testing.T) {
 	}
 	if want := "pause=fan is loud – café,unpause=quiet again,force_unload=stuck"; strings.Join(got, ",") != want {
 		t.Fatalf("audit %v, want %s", got, want)
+	}
+}
+
+// CR-9 review, A3: the settings page says that agent machines are checked
+// whatever forced_fit_check is.
+func TestUIForcedFitCheckNamesTheAgentRefusal(t *testing.T) {
+	text := uiText(t, "views/settings.js")
+	if !strings.Contains(text, "Machines that join through agents are always checked") {
+		t.Fatal("views/settings.js: the forced_fit_check note does not say that agent machines are always checked")
 	}
 }

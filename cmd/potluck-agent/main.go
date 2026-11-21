@@ -2,6 +2,7 @@
 //
 //	potluck-agent --potluck <addr:port> --model-source share:<target>|dir:<path>|push
 //	              [--watchdog-floor-mib N] [--allow-from ADDR|CIDR]... [--ram-only]
+//	              [--shared-memory auto|true|false]
 //	              [--install bare|docker] [--name LABEL]
 //	              [--data-dir DIR] [--state-dir DIR] [--models-dir DIR]
 //	potluck-agent id --potluck <addr:port>   print the node id and exit
@@ -30,6 +31,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/agent"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/hw"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/identity"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/launch"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/modelsrc"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/osx"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/runner"
@@ -113,6 +115,8 @@ func parseFlags(args []string, stderr io.Writer) (agent.Options, error) {
 	fs.StringVar(&o.Potluck, "potluck", "", "Potluck address <ip>:<port> (required)")
 	fs.StringVar(&source, "model-source", "", "share:<ip>:/<export> | dir:<path> | push (required)")
 	fs.Int64Var(&o.WatchdogFloorMiB, "watchdog-floor-mib", 1000, "kill a launch when MemAvailable falls below this")
+	fs.StringVar(&o.SharedMemory, "shared-memory", launch.SharedMemoryAuto,
+		"auto, true or false: whether the GPU uses system memory, so a launch must also fit MemAvailable (auto: every device except a CUDA one)")
 	fs.Var(&allow, "allow-from", "extra source address or network accepted on the agent API (repeatable)")
 	fs.BoolVar(&o.RAMOnly, "ram-only", false, "RAM-only node: programs and logs under /dev/shm/potluck")
 	fs.StringVar(&o.Install, "install", agentproto.InstallBare, "bare or docker")
@@ -145,6 +149,11 @@ func parseFlags(args []string, stderr io.Writer) (agent.Options, error) {
 	}
 	if o.Install != agentproto.InstallBare && o.Install != agentproto.InstallDocker {
 		return o, fmt.Errorf("--install %q: want bare or docker", o.Install)
+	}
+	switch o.SharedMemory {
+	case launch.SharedMemoryAuto, launch.SharedMemoryTrue, launch.SharedMemoryFalse:
+	default:
+		return o, fmt.Errorf("--shared-memory %q: want auto, true or false", o.SharedMemory)
 	}
 	if o.WatchdogFloorMiB <= 0 {
 		return o, errors.New("--watchdog-floor-mib must be positive")

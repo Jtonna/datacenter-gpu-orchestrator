@@ -155,8 +155,17 @@ func (c *schedCore) agentForcedFit(p *core.Profile, pl core.Placement) *Error {
 	var parts []string
 	need, usableSum := 0, 0
 	for i, pn := range pl.Nodes {
+		if pn.Local {
+			continue
+		}
 		n, ok := c.node(pn.ID)
-		if pn.Local || !ok || n.FreeUnknown {
+		if !ok || n.FreeUnknown {
+			// No figure is never "start unchecked" (CR-9 review): the
+			// agent would fall back to MemAvailable, but Potluck cannot
+			// tell whether the share fits, so it does not send it.
+			parts = append(parts, fmt.Sprintf("node %s is expected to take %d MiB but its memory figure is unknown (its agent reports no usable device)",
+				nodeLabel(pn.ID, n), shares[i]))
+			need += shares[i]
 			continue
 		}
 		usable := c.freeMiB(pn.ID, n)

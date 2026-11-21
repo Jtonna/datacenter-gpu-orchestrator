@@ -23,6 +23,8 @@ export function agentOf(st, n) {
 export const UNPLACED = {
   no_tier_match: { short: 'No tier matches',
     text: 'No tier in the configuration matches this machine, so it is outside the pool and is not counted in the capacity. Add a tier that matches its platform or device.' },
+  bad_floor: { short: 'Watchdog floor too high',
+    text: 'Its agent reports a memory watchdog floor larger than half the memory of the machine or larger than 16 GiB, so no model would fit. It is outside the pool until the agent is set up again with a sensible floor.' },
   programs_not_ready: { short: 'Programs not ready',
     text: 'Its agent has not finished fetching and checking its programs, so no worker can start here yet.' },
   model_source_unreachable: { short: 'Cannot reach the models',

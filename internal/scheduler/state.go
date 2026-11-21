@@ -497,7 +497,7 @@ func (c *schedCore) excluded(n core.Node) bool { return c.cfg.Excluded(n.ID, n.H
 
 // reachable: the local node, or online in a fresh view with an address.
 func (c *schedCore) reachable(n core.Node) bool {
-	if c.excluded(n) || c.unplaced[n.ID] == UnplacedNoTierMatch {
+	if c.excluded(n) || c.unplaced[n.ID] == UnplacedNoTierMatch || c.unplaced[n.ID] == UnplacedBadFloor {
 		return false // agents.go: a node without a tier is outside the pool
 	}
 	if n.Local {

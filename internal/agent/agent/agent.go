@@ -46,10 +46,15 @@ type Options struct {
 	RAMOnly          bool
 	ModelSource      modelsrc.Spec
 	WatchdogFloorMiB int64
-	AllowFrom        []netip.Prefix
-	DataDir          string // programs and launch logs
-	StateDir         string // state files and the share mount point
-	ModelsDir        string // the node's model folder ("" for push)
+	// SharedMemory is --shared-memory: auto ("" too), true or false. It
+	// overrides the heuristic that decides whether a device shares system
+	// memory (launch.TestsSystemMemory); the devices are reported with the
+	// result, so Potluck places on the same figure the agent tests.
+	SharedMemory string
+	AllowFrom    []netip.Prefix
+	DataDir      string // programs and launch logs
+	StateDir     string // state files and the share mount point
+	ModelsDir    string // the node's model folder ("" for push)
 	// LDLibraryPath is the agent's LD_LIBRARY_PATH, the one the library
 	// check used; launches get the same value.
 	LDLibraryPath string
@@ -232,7 +237,7 @@ func New(opt Options, deps Deps) (*Agent, error) {
 	a.Launch = launch.New(launch.Config{
 		StateDir: opt.StateDir, LogDir: filepath.Join(opt.DataDir, "launch"), ProgramRoot: progRoot,
 		ModelDir: opt.ModelsDir, PushOnly: opt.ModelSource.Kind == modelsrc.KindPush, LibraryPath: opt.LDLibraryPath,
-		WatchdogFloorMiB: opt.WatchdogFloorMiB, Tick: deps.LaunchTick,
+		WatchdogFloorMiB: opt.WatchdogFloorMiB, SharedMemory: opt.SharedMemory, Tick: deps.LaunchTick,
 		WorkerPort: deps.WorkerPort, HostPort: deps.HostPort,
 	}, launch.Deps{Clock: deps.Clock, Runner: deps.Runner, Mem: deps.Mem, Sockets: deps.Sockets,
 		Procs: deps.Procs, KLog: deps.KLog, PortFree: deps.PortFree, HostHealthy: deps.HostHealthy,
@@ -851,6 +856,12 @@ func (a *Agent) readDevices(ctx context.Context) error {
 	gpus := a.gpus
 	a.mu.Unlock()
 	devs, err := devices.Read(ctx, a.deps.DevicesRun, path, env, hw.DeviceGPUs(gpus), 30*time.Second)
+	// shares_system_memory is reported as the launch check uses it (CR-9):
+	// true for every device that is held to MemAvailable, so Potluck's
+	// placement figure is min(device free, MemAvailable - floor) there too.
+	for i := range devs {
+		devs[i].SharesSystemMemory = launch.TestsSystemMemory(a.opt.SharedMemory, devs[i])
+	}
 	if errors.Is(err, devices.ErrNoDevices) {
 		a.mu.Lock()
 		a.devErr = err.Error()

@@ -61,6 +61,9 @@ type Config struct {
 	LibraryPath string
 
 	WatchdogFloorMiB int64
+	// SharedMemory is the --shared-memory option: SharedMemoryAuto ("" too),
+	// SharedMemoryTrue or SharedMemoryFalse (TestsSystemMemory).
+	SharedMemory string
 
 	WorkerPort int // default 50052
 	HostPort   int // default 50061
@@ -331,6 +334,33 @@ func (m *Manager) PID() int {
 // WatchdogFloorMiB is the floor the watchdog uses, as reported to Potluck.
 func (m *Manager) WatchdogFloorMiB() int64 { return m.cfg.WatchdogFloorMiB }
 
+// Values of the --shared-memory option.
+const (
+	SharedMemoryAuto  = "auto"
+	SharedMemoryTrue  = "true"
+	SharedMemoryFalse = "false"
+)
+
+// TestsSystemMemory reports whether a worker launch on device d is held to
+// the MemAvailable test (MemAvailable - expect_mib >= watchdog floor) as well
+// as to the device's own free figure (agent contract 11.2, item 1).
+//
+// Only a device known to have memory of its own is held to its own figure
+// alone: with mode "false" (the operator says so), or in auto when it is a
+// CUDA device that does not report shares_system_memory. Every other device,
+// and any doubt, is held to MemAvailable too: shares_system_memory comes from
+// a heuristic (devices.SharesSystemMemory), and a console's Vulkan device
+// reports nearly all the RAM as free. Mode "true" holds every device to it.
+func TestsSystemMemory(mode string, d agentproto.Device) bool {
+	switch mode {
+	case SharedMemoryTrue:
+		return true
+	case SharedMemoryFalse:
+		return false
+	}
+	return d.SharesSystemMemory || !strings.EqualFold(d.Backend, agentproto.BackendCUDA)
+}
+
 func (m *Manager) memAvailable() (int64, error) {
 	mi, err := m.deps.Mem.MemInfo()
 	if err != nil {
@@ -420,9 +450,26 @@ func (m *Manager) Start(ctx context.Context, req agentproto.LaunchRequest) (agen
 			return agentproto.LaunchState{}, refuse(agentproto.ReasonModelNotFound, "%s: %v", req.Host.Model, err)
 		}
 	}
-	// 6. memory
+	// 6. memory. With expect_mib (CR-9) the device and the test are decided
+	// first: a launch with expect_mib is never started without a memory test.
+	var expect int64
+	if req.Role == agentproto.RoleWorker {
+		expect = req.Worker.ExpectMiB
+	}
+	var dev agentproto.Device
+	haveDev := false
+	if expect > 0 && m.deps.Device != nil {
+		dev, haveDev = m.deps.Device()
+	}
+	// No device figure, or a device not known to have memory of its own:
+	// MemAvailable is tested too.
+	memTest := expect > 0 && (!haveDev || TestsSystemMemory(m.cfg.SharedMemory, dev))
 	avail, err := m.memAvailable()
 	if err != nil {
+		if memTest {
+			return agentproto.LaunchState{}, refuse(agentproto.ReasonWouldNotFit,
+				"no memory figure could be read for the expected %d MiB: no usable device figure, and MemAvailable: %v", expect, err)
+		}
 		return agentproto.LaunchState{}, refuse(agentproto.ReasonLowMemory, "cannot read MemAvailable: %v", err)
 	}
 	if avail < req.MinMemAvailableMiB {
@@ -430,21 +477,21 @@ func (m *Manager) Start(ctx context.Context, req agentproto.LaunchRequest) (agen
 	}
 	// 6b. expected memory (CR-9). A worker takes the model's whole device
 	// memory within a second, faster than the watchdog can act, so a launch
-	// that would leave less than the watchdog floor is not started at all.
-	if req.Role == agentproto.RoleWorker && req.Worker.ExpectMiB > 0 && m.deps.Device != nil {
-		if d, ok := m.deps.Device(); ok {
-			expect := req.Worker.ExpectMiB
-			if d.SharesSystemMemory {
-				if avail-expect < m.cfg.WatchdogFloorMiB {
-					return agentproto.LaunchState{}, refuse(agentproto.ReasonWouldNotFit,
-						"MemAvailable %d MiB minus the expected %d MiB leaves less than the watchdog floor of %d MiB",
-						avail, expect, m.cfg.WatchdogFloorMiB)
-				}
-			} else if d.FreeMiB-expect < 0 {
-				return agentproto.LaunchState{}, refuse(agentproto.ReasonWouldNotFit,
-					"device %s has %d MiB free, less than the expected %d MiB", d.Name, d.FreeMiB, expect)
-			}
+	// that would not fit is not started at all. Both tests that apply are
+	// made and the stricter one decides: the same figure the scheduler places
+	// on, min(device free, MemAvailable - floor) for a shared device.
+	if memTest && avail-expect < m.cfg.WatchdogFloorMiB {
+		what := "MemAvailable"
+		if !haveDev {
+			what = "no device figure is known; MemAvailable"
 		}
+		return agentproto.LaunchState{}, refuse(agentproto.ReasonWouldNotFit,
+			"%s %d MiB minus the expected %d MiB leaves less than the watchdog floor of %d MiB",
+			what, avail, expect, m.cfg.WatchdogFloorMiB)
+	}
+	if haveDev && dev.FreeMiB-expect < 0 {
+		return agentproto.LaunchState{}, refuse(agentproto.ReasonWouldNotFit,
+			"device %s has %d MiB free, less than the expected %d MiB", dev.Name, dev.FreeMiB, expect)
 	}
 	// 7. workers (host)
 	if req.Role == agentproto.RoleHost && len(req.Host.Workers) > 0 {

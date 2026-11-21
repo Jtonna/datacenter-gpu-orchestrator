@@ -81,7 +81,7 @@ func buildSettingFields() []Field {
 		s("local_device", "runtime", "The llama.cpp device name of the local GPU (for example CUDA0).", func(c *Config) *string { return &c.Defaults.LocalDevice }),
 		s("local_probe_cmd", "runtime", "Command that reports the local GPU's total and used memory.", func(c *Config) *string { return &c.LocalProbeCmd }),
 		{Key: "forced_fit_check", Scope: S, Section: "safety", Type: "enum", Enum: []string{ForcedFitOff, ForcedFitWarn, ForcedFitReject},
-			Description: "What a profile with force_nodes does when its memory need exceeds the forced nodes' free memory: off, warn (log and start) or reject.",
+			Description: "What a profile with force_nodes does when its memory need exceeds the forced nodes' free memory: off, warn (log and start) or reject. With agents, a forced placement that a node's agent would refuse (would_not_fit, or a node whose memory figure is unknown) is refused whatever this says; that refusal cannot be switched off, because such a machine cannot be recovered remotely when it runs out of memory.",
 			ptr:         func(c *Config) any { return &c.Defaults.ForcedFitCheck }},
 		f("split_skew_margin", "safety", "Extra share a node of a split model may receive beyond its split fraction (0 to 1).", func(c *Config) *float64 { return &c.Defaults.SplitSkewMargin }, num(0), num(1)),
 		f("estimate_margin", "safety", "Margin added to every memory need that is only an estimate (0 to 1).", func(c *Config) *float64 { return &c.Defaults.EstimateMargin }, num(0), num(1)),
