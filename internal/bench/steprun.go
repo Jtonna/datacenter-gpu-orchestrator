@@ -79,6 +79,15 @@ type benchRun struct {
 	loaded bool // this benchmark knows the profile is loaded
 
 	lastLoad *LoadResult // the load measured last
+
+	// What the step ran on (stepfacts.go): the lowest available memory per
+	// node, the plan, the instance's nodes as last seen, the local host, and
+	// the load mode the scheduler reported for the instance.
+	watch    *memWatch
+	plan     *PlanInfo
+	nodes    []InstanceNodeInfo
+	localID  string
+	loadMode string
 }
 
 func (br *benchRun) fail(outcome, why string) {
@@ -120,7 +129,8 @@ func (x *exec) runBenchmark(b *benchspec.Benchmark, idx int, group string, g *ga
 
 	ctx, cancelCtx := context.WithTimeout(WithRun(context.Background(), st.RunID), b.Timeout())
 	defer cancelCtx()
-	br := &benchRun{x: x, st: st, b: b, ctx: ctx, g: g, member: member}
+	br := &benchRun{x: x, st: st, b: b, ctx: ctx, g: g, member: member, watch: newMemWatch()}
+	br.watch.start(m.o.MemSample, m.o.API.Status)
 	br.track = x.startTrack(b, idx)
 	st.ModelFile = br.track.modelFile
 	defer func() {
@@ -137,6 +147,9 @@ func (x *exec) runBenchmark(b *benchspec.Benchmark, idx int, group string, g *ga
 		return st
 	}
 	st.Plan = plan.Raw
+	br.mu.Lock()
+	br.plan = plan
+	br.mu.Unlock()
 	planned := x.hostnames(plan.Nodes)
 	x.track(br.track, false, func(t *benchTrack) { t.nodes = planned })
 
@@ -218,6 +231,7 @@ func (br *benchRun) runPhase(i int, p *benchspec.Phase) {
 	if rows := br.rowsOf(i); len(rows) > 0 && pr.Stats == nil {
 		pr.Stats = statsOf(rows)
 	}
+	br.sampleNow() // the phase's last memory figures
 	if err := x.m.o.Store.UpdatePhase(pr); err != nil {
 		x.m.log.Warn("cannot store a phase", "err", err)
 	}
@@ -256,9 +270,18 @@ func (br *benchRun) noteInstance(s *StatusInfo, in *InstanceInfo) {
 	x.a.mu.Lock()
 	x.a.hosts = mergeHosts(x.a.hosts, s.Hostnames)
 	x.a.mu.Unlock()
+	br.observe(s)
 	if in == nil {
 		return
 	}
+	br.mu.Lock()
+	if len(in.Nodes) > 0 {
+		br.nodes = append([]InstanceNodeInfo(nil), in.Nodes...)
+	}
+	if in.LoadMode != "" {
+		br.loadMode = in.LoadMode
+	}
+	br.mu.Unlock()
 	if in.ModelFile != "" {
 		st.ModelFile = in.ModelFile
 	}
@@ -372,6 +395,8 @@ func (br *benchRun) loadModel(cold bool) bool {
 		return false
 	}
 	x.a.markLoaded(b.Profile, true) // the load may be running: it is unloaded with force at the end
+	br.watch.loading.Store(true)
+	defer br.watch.loading.Store(false)
 	ready, failure := false, ""
 	var refused *Refusal
 	seen := false
@@ -560,6 +585,17 @@ func (br *benchRun) captureLoad(startMS int64, start time.Time, obs *loadObs, re
 			return
 		}
 	}
+	if in := s.Instance(b.Profile); in != nil && in.LoadMode != "" {
+		lr.LoadMode = in.LoadMode
+	}
+	br.mu.Lock()
+	if lr.LoadMode == "" {
+		lr.LoadMode = br.loadMode
+	}
+	if lr.LoadMode == "" && br.plan != nil {
+		lr.LoadMode = br.plan.LoadMode
+	}
+	br.mu.Unlock()
 	if lr.SessionID != "" {
 		if h, err := x.m.o.API.LoadHistory(cctx, lr.SessionID); err == nil && h != nil {
 			lr.Source = "history"
@@ -998,6 +1034,8 @@ func round1(v float64) float64 { return float64(int64(v*10+0.5)) / 10 }
 // finish completes a step: statistics, expectations, comparison, storage and events.
 func (x *exec) finish(br *benchRun) {
 	m, st, b := x.m, br.st, br.b
+	br.watch.stop()
+	br.stepFacts()
 	if st.Outcome == "" {
 		st.Outcome = OutcomeError
 		if st.Error == "" {

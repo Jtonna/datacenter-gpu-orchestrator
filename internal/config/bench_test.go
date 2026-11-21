@@ -121,3 +121,26 @@ func TestCommentedBenchExampleParsesWhenUncommented(t *testing.T) {
 		t.Fatalf("the example seeds nothing: %+v", c.Bench)
 	}
 }
+
+// A planned or blocked scenario imports from the config with no benchmark
+// and its reason; a normal suite without one is still refused.
+func TestBenchPlannedSuiteImports(t *testing.T) {
+	c := mustParse(t, `data_dir: /d
+bench:
+  suites:
+    - id: five-consoles
+      status: planned
+      reason: the fifth console is not set up yet
+      benchmarks: []
+    - id: gbe
+      status: blocked
+      reason: waiting for the switch
+`+benchProfiles)
+	if len(c.Bench.Suites) != 2 || c.Bench.Suites[0].Status != "planned" || c.Bench.Suites[1].Reason != "waiting for the switch" {
+		t.Fatalf("%+v", c.Bench.Suites)
+	}
+	y := "data_dir: /d\nbench:\n  suites:\n    - {id: s, status: blocked}\n" + benchProfiles
+	if _, err := ParseWithOptions([]byte(y), Options{FileExists: existsAll}); err == nil {
+		t.Fatal("a blocked suite without a reason was accepted")
+	}
+}

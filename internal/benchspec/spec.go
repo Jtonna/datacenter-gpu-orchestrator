@@ -417,7 +417,24 @@ type Suite struct {
 	IdleWaitS     *int        `json:"idle_wait_s,omitempty" yaml:"idle_wait_s,omitempty"`
 	Schedule      *Schedule   `json:"schedule,omitempty" yaml:"schedule,omitempty"`
 	Baseline      string      `json:"baseline,omitempty" yaml:"baseline,omitempty"`
+	// Status marks a scenario that cannot be run yet: planned or blocked,
+	// with a Reason (required then). Such a suite may list no benchmark, is
+	// listed with its reason and cannot be run. Empty for a normal suite.
+	Status string `json:"status,omitempty" yaml:"status,omitempty"`
+	Reason string `json:"reason,omitempty" yaml:"reason,omitempty"`
 }
+
+// Suite statuses.
+const (
+	SuitePlanned = "planned"
+	SuiteBlocked = "blocked"
+)
+
+// MaxSuiteReason bounds a planned or blocked suite's reason.
+const MaxSuiteReason = 500
+
+// Runnable says whether the suite can be run (it is neither planned nor blocked).
+func (s *Suite) Runnable() bool { return s.Status == "" }
 
 // Cooldown is the pause between benchmarks (default 5 s).
 func (s *Suite) Cooldown() time.Duration {
@@ -479,8 +496,33 @@ func (s *Suite) Validate(profileOK func(string) bool, look Lookup) error {
 	if len(s.Description) > 2000 {
 		add("description is longer than 2000 characters")
 	}
-	if len(s.Benchmarks) == 0 || len(s.Benchmarks) > MaxSuiteItems {
-		add("benchmarks: between 1 and %d entries are required", MaxSuiteItems)
+	switch s.Status {
+	case "":
+		if s.Reason != "" {
+			add("reason is only for a suite whose status is planned or blocked")
+		}
+		if len(s.Benchmarks) == 0 || len(s.Benchmarks) > MaxSuiteItems {
+			add("benchmarks: between 1 and %d entries are required", MaxSuiteItems)
+		}
+	case SuitePlanned, SuiteBlocked:
+		if s.Benchmarks == nil {
+			s.Benchmarks = []SuiteItem{} // listed as an empty list, never null
+		}
+		s.Reason = strings.TrimSpace(s.Reason)
+		if s.Reason == "" {
+			add("reason is required for a %s suite: say why it cannot be run yet", s.Status)
+		}
+		if len(s.Reason) > MaxSuiteReason {
+			add("reason is longer than %d characters", MaxSuiteReason)
+		}
+		if len(s.Benchmarks) > MaxSuiteItems {
+			add("benchmarks: at most %d entries", MaxSuiteItems)
+		}
+		if s.Schedule != nil {
+			add("a %s suite cannot have a schedule: it cannot be run", s.Status)
+		}
+	default:
+		add("status %q is not known: leave it out, or use planned or blocked", s.Status)
 	}
 	if s.CooldownS != nil && (*s.CooldownS < 0 || *s.CooldownS > 3600) {
 		add("cooldown_s must be 0 to 3600")

@@ -25,6 +25,9 @@ var ErrInvalid = errors.New("invalid")
 // ErrQueueFull means too many runs are waiting.
 var ErrQueueFull = errors.New("too many runs are queued")
 
+// ErrNotRunnable means the suite is planned or blocked (a 409 with its reason).
+var ErrNotRunnable = errors.New("not runnable")
+
 // ManagerOptions configure a Manager. Store and API are required.
 type ManagerOptions struct {
 	Store      *Store
@@ -46,6 +49,10 @@ type ManagerOptions struct {
 	LoadPoll time.Duration
 	// GoneTimeout is how long to wait for an unloaded model to leave (default 2 min).
 	GoneTimeout time.Duration
+	// MemSample is how often a step samples the nodes' available memory in
+	// the background (default 500 ms); a negative value turns the background
+	// sampling off (the step still samples at its load polls and phase ends).
+	MemSample time.Duration
 }
 
 // runPlan is the suite and every benchmark it names, as they were when the run
@@ -100,6 +107,9 @@ func NewManager(o ManagerOptions) (*Manager, error) {
 	}
 	if o.LoadPoll <= 0 {
 		o.LoadPoll = time.Second
+	}
+	if o.MemSample == 0 {
+		o.MemSample = DefaultMemSample
 	}
 	if o.GoneTimeout <= 0 {
 		o.GoneTimeout = 2 * time.Minute
@@ -346,6 +356,9 @@ func (m *Manager) Enqueue(suiteID string, o EnqueueOptions) (*Run, error) {
 	if err != nil {
 		return nil, err
 	}
+	if !ss.Spec.Runnable() {
+		return nil, fmt.Errorf("%w: suite %q is %s and cannot be run: %s", ErrNotRunnable, suiteID, ss.Spec.Status, ss.Spec.Reason)
+	}
 	if len(o.Note) > 500 {
 		return nil, fmt.Errorf("%w: note is longer than 500 characters", ErrInvalid)
 	}
@@ -527,7 +540,7 @@ func (m *Manager) checkSchedules(fire bool) {
 	live := map[string]bool{}
 	for _, su := range suites {
 		sc := su.Spec.Schedule
-		if sc == nil {
+		if sc == nil || !su.Spec.Runnable() { // a planned or blocked suite never runs
 			continue
 		}
 		live[su.Spec.ID] = true

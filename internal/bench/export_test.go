@@ -113,8 +113,13 @@ func TestExportsAreAwareOfPhases(t *testing.T) {
 		t.Fatal(err)
 	}
 	recs, _ := csv.NewReader(strings.NewReader(out)).ReadAll()
-	last := recs[1][len(recs[1])-3:]
-	if recs[0][len(recs[0])-1] != "phases" || last[0] != "gemma.gguf" || last[1] != "2" || last[2] != "load:done;conversation:done;hold:done;concurrent_requests:done;unload:done" {
+	// by name: newer columns (load mode, roles, memory) come after phases
+	at := map[string]int{}
+	for i, h := range recs[0] {
+		at[h] = i
+	}
+	if _, ok := at["phases"]; !ok || recs[1][at["model_file"]] != "gemma.gguf" || recs[1][at["worker_nodes"]] != "2" ||
+		recs[1][at["phases"]] != "load:done;conversation:done;hold:done;concurrent_requests:done;unload:done" {
 		t.Fatalf("%v", recs[1])
 	}
 	pcsv, err := ExportCSVPhases(r)
@@ -132,5 +137,33 @@ func TestExportsAreAwareOfPhases(t *testing.T) {
 	recs, _ = csv.NewReader(strings.NewReader(tcsv)).ReadAll()
 	if len(recs) != 3 || recs[2][8] != "70" || recs[1][11] != "31.5" || recs[2][11] != "" {
 		t.Fatalf("%v", recs)
+	}
+}
+
+// The CSV carries what each step ran on: load mode, host, workers, the lowest
+// available memory and the reload figure; empty for a step without them.
+func TestCSVExportStepFacts(t *testing.T) {
+	r := exportRun()
+	r.Steps = r.Steps[:2]
+	low, mem, pct := int64(1900), 7900.0, 63.0
+	r.Steps[0].Load.LoadMode = LoadModeFileRead
+	r.Steps[0].MemLow = []NodeMemLow{{ID: "n1", Node: "ps5-a", StepMiB: &low}}
+	r.Steps[0].Roles = []NodeRole{{Node: "host-1", Role: RoleHost}, {Node: "ps5-b", Role: RoleWorker, MemoryMiB: &mem}, {Node: "ps5-a", Role: RoleWorker}}
+	r.Steps[0].Reload = []NodeReload{{Node: "ps5-a", Verdict: "partial", CachedPct: &pct}}
+	out, err := ExportCSV(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recs, _ := csv.NewReader(strings.NewReader(out)).ReadAll()
+	col := map[string]int{}
+	for i, h := range recs[0] {
+		col[h] = i
+	}
+	got := []string{recs[1][col["load_mode"]], recs[1][col["host"]], recs[1][col["workers"]], recs[1][col["lowest_available_mib"]], recs[1][col["reload_from_cache"]]}
+	if strings.Join(got, "|") != "file_read|host-1|ps5-a;ps5-b|1900|ps5-a:partial(63%)" {
+		t.Fatalf("%v", got)
+	}
+	if recs[2][col["load_mode"]] != "" || recs[2][col["lowest_available_mib"]] != "" {
+		t.Fatalf("%v", recs[2])
 	}
 }

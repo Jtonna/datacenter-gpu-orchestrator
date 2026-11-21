@@ -75,6 +75,7 @@ var metricDefs = []metricDef{
 	{"wall_ms", true, true, false},
 	{"reused_tokens", false, false, false},
 	{"prompt_tokens", false, false, true},
+	{"lowest_available_mib", false, false, true}, // the lowest available memory of any node (stepfacts.go)
 }
 
 func defOf(name string) metricDef {
@@ -184,8 +185,11 @@ type SuiteAgg struct {
 
 // ModelAgg is a model file (on a number of worker nodes) over the runs.
 type ModelAgg struct {
-	ModelFile  string                `json:"model_file"`
-	Nodes      *int                  `json:"nodes,omitempty"` // worker nodes; set in the by-nodes grouping
+	ModelFile string `json:"model_file"`
+	Nodes     *int   `json:"nodes,omitempty"` // worker nodes; set in the by-nodes grouping
+	// LoadMode is set in the by-load-mode grouping: file_read, pushed, local,
+	// or "not_recorded" for steps stored before the load mode was recorded.
+	LoadMode   *string               `json:"load_mode,omitempty"`
 	Runs       int                   `json:"runs"`
 	Steps      int                   `json:"steps"`
 	Benchmarks []string              `json:"benchmarks"`
@@ -203,7 +207,13 @@ type AggregatesDoc struct {
 	Suites         []SuiteAgg     `json:"suites"`
 	ByModel        []ModelAgg     `json:"by_model"`
 	ByModelNodes   []ModelAgg     `json:"by_model_nodes"`
+	// ByModelLoadMode groups by model file, worker nodes and load mode.
+	ByModelLoadMode []ModelAgg `json:"by_model_load_mode"`
 }
+
+// LoadModeNotRecorded is the by-load-mode group of steps stored before the
+// load mode was recorded.
+const LoadModeNotRecorded = "not_recorded"
 
 func runTime(r *Run) int64 {
 	if r.StartedAt > 0 {
@@ -305,6 +315,9 @@ func stepValues(st *Step) map[string]float64 {
 			v["ttft_ms"] = s.TTFT.Mean
 		}
 	}
+	if low := LowestMiB(st); low != nil {
+		v["lowest_available_mib"] = float64(*low)
+	}
 	for _, p := range st.Phases {
 		switch {
 		case p.Type == "unload" && p.Unload != nil && p.Unload.Loaded && p.Unload.Gone:
@@ -350,7 +363,7 @@ func (s *Store) Aggregate(f AggFilter, th Thresholds, now time.Time) (*Aggregate
 	if err != nil {
 		return nil, err
 	}
-	doc := &AggregatesDoc{GeneratedAt: now.UnixMilli(), Benchmarks: []BenchmarkAgg{}, Suites: []SuiteAgg{}, ByModel: []ModelAgg{}, ByModelNodes: []ModelAgg{},
+	doc := &AggregatesDoc{GeneratedAt: now.UnixMilli(), Benchmarks: []BenchmarkAgg{}, Suites: []SuiteAgg{}, ByModel: []ModelAgg{}, ByModelNodes: []ModelAgg{}, ByModelLoadMode: []ModelAgg{},
 		Filter: map[string]any{"suite": f.Suite, "benchmark": f.Benchmark, "profile": f.Profile, "since": f.Since, "until": f.Until, "limit_runs": f.LimitRuns, "env": ""}}
 	if len(runs) > 0 {
 		doc.Environment = runs[0].Env
@@ -386,6 +399,7 @@ func (s *Store) Aggregate(f AggFilter, th Thresholds, now time.Time) (*Aggregate
 	type modelKey struct {
 		file  string
 		nodes int
+		mode  string
 	}
 	type modelAcc struct {
 		runs     map[string]bool
@@ -396,6 +410,7 @@ func (s *Store) Aggregate(f AggFilter, th Thresholds, now time.Time) (*Aggregate
 	}
 	byModel := map[string]*modelAcc{}
 	byNodes := map[modelKey]*modelAcc{}
+	byMode := map[modelKey]*modelAcc{}
 	suites := map[string]*SuiteAgg{}
 	suiteDur := map[string][]float64{}
 	suitePass := map[string]int{}
@@ -485,13 +500,24 @@ func (s *Store) Aggregate(f AggFilter, th Thresholds, now time.Time) (*Aggregate
 					byModel[st.ModelFile] = ma
 				}
 				add(ma)
-				k := modelKey{st.ModelFile, st.NodeCount}
+				k := modelKey{file: st.ModelFile, nodes: st.NodeCount}
 				na := byNodes[k]
 				if na == nil {
 					na = &modelAcc{runs: map[string]bool{}, benches: map[string]bool{}, profiles: map[string]bool{}, metrics: metricSet{}}
 					byNodes[k] = na
 				}
 				add(na)
+				mode := StepLoadMode(st)
+				if mode == "" {
+					mode = LoadModeNotRecorded
+				}
+				k.mode = mode
+				la := byMode[k]
+				if la == nil {
+					la = &modelAcc{runs: map[string]bool{}, benches: map[string]bool{}, profiles: map[string]bool{}, metrics: metricSet{}}
+					byMode[k] = la
+				}
+				add(la)
 			}
 		}
 	}
@@ -557,6 +583,26 @@ func (s *Store) Aggregate(f AggFilter, th Thresholds, now time.Time) (*Aggregate
 	for _, k := range keys {
 		n := k.nodes
 		doc.ByModelNodes = append(doc.ByModelNodes, mk(k.file, &n, byNodes[k]))
+	}
+	keys = keys[:0]
+	for k := range byMode {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		a, b := keys[i], keys[j]
+		if a.file != b.file {
+			return a.file < b.file
+		}
+		if a.nodes != b.nodes {
+			return a.nodes < b.nodes
+		}
+		return a.mode < b.mode
+	})
+	for _, k := range keys {
+		n, mode := k.nodes, k.mode
+		ma := mk(k.file, &n, byMode[k])
+		ma.LoadMode = &mode
+		doc.ByModelLoadMode = append(doc.ByModelLoadMode, ma)
 	}
 	return doc, nil
 }

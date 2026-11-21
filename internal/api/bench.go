@@ -173,6 +173,8 @@ func (s *Server) storeErr(w http.ResponseWriter, err error) {
 		apiErr(w, http.StatusNotFound, "not found")
 	case errors.Is(err, bench.ErrInvalid):
 		apiErr(w, http.StatusUnprocessableEntity, "%v", strings.TrimPrefix(err.Error(), "invalid: "))
+	case errors.Is(err, bench.ErrNotRunnable):
+		apiErr(w, http.StatusConflict, "%v", strings.TrimPrefix(err.Error(), "not runnable: "))
 	case errors.Is(err, bench.ErrQueueFull):
 		w.Header().Set("Retry-After", "60")
 		apiErr(w, http.StatusTooManyRequests, "%v: wait for a run to finish or cancel one", err)
