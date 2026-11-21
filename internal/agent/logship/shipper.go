@@ -101,8 +101,8 @@ type Shipper struct {
 	warned    map[string]time.Time
 
 	// The sender goroutine's own state.
-	pending *batch
-	pause   time.Duration
+	pending  *batch
+	pause    time.Duration
 	notUntil time.Time // 429/503 pause
 	rateAt   time.Time // byte rate: the time the sent bytes are paid for
 }

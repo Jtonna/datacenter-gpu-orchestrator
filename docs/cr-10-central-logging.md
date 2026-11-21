@@ -1,9 +1,9 @@
 # CR-10: central logging through Potluck (proposal, revision 3)
 
 Status: **accepted** (approved by Jacob and by the project manager). To be
-built as part of phase 5. Batch 1, the Potluck side, is built on a branch
-(section 13 says what it holds and where it differs from this text).
-Nothing is deployed yet.
+built as part of phase 5. Batch 1, the Potluck side, and the agent batch,
+the shipper in `potluck-agent`, are built on branches (section 13 says what
+they hold and where they differ from this text). Nothing is deployed yet.
 
 ## Decisions so far
 
@@ -280,7 +280,9 @@ firewall change and no third container.
 
 None. All questions of the earlier revisions are decided (table at the top).
 
-## 13. Batch 1 as built (Potluck side), and where it differs from the text above
+## 13. As built, and where it differs from the text above
+
+### 13.1 Batch 1 (Potluck side)
 
 Built on a branch, not deployed: settings, the `logs` object, the
 pass-through with limits and counters, the snapshot from the pool, the flood
@@ -316,13 +318,71 @@ Measured by the flood test on a development machine: 80 senders, about
 280 000 against a store that takes 60 ms; the slowest heartbeat was 6 ms
 and the slowest chat request 6 ms; never more than 8 forwards in flight.
 
-Open for the agent batch: rule 1 of the agent contract's section 2 (no time
-set by a node) against "time" in the per-line fields of 4.1 and 8. A line
-without `_time` gets the time at which the store took it.
+Open for the agent batch (settled in 13.2): rule 1 of the agent contract's
+section 2 (no time set by a node) against "time" in the per-line fields of
+4.1 and 8.
+
+### 13.2 Agent batch (the shipper in `potluck-agent`)
+
+Built on a branch, not deployed, not in a release yet (the release string
+stays 0.1.1; the lead decides which release carries it). Code:
+`internal/agent/logship`, wired in `internal/agent/agent`, flags in
+`cmd/potluck-agent`. The wire text is agent contract 11.3, items 11 to 15.
+
+**Time.** Rule 1 of the contract's section 2 stays: a line's time is
+Potluck's, never the node's. Potluck puts its own clock into the
+registration answer and every heartbeat answer (`server_time_unix_ms`, only
+while it hands out a `logs` object). The agent keeps an anchor: Potluck's
+time at the middle of that request's round trip, on the agent's monotonic
+clock (`CLOCK_BOOTTIME`). A line is stamped when it is produced: anchor plus
+the monotonic time since. Every answer sets the anchor again. A line from
+before the first anchor keeps its monotonic stamp and gets its time when it
+is sent. `_time` is RFC3339 with nanoseconds in UTC, the store's default
+time field (VictoriaLogs data-ingestion documentation: `_time` in ISO8601 /
+RFC3339, fractional seconds allowed, nanoseconds since v1.9.0). Without an
+anchor (a Potluck that sends no server time) a line has no `_time` and the
+store uses the time it took it.
+
+**Never blocks.** A producer puts a line into the ring and returns. The
+ring's lock is held only for memory work; nothing does I/O under it, and no
+lock of the heartbeat, the launch manager or the watchdog is held while a
+log line is handled. The heartbeat only reads atomics and hands values over
+(the anchor, the revision); a new object is read by the shipper's own
+goroutine. One goroutine sends, one reads the object, one follows launch
+output, one follows the journal. The sender has its own HTTP client.
+
+| Section | As built | Why |
+|---|---|---|
+| 5 | Launch output is read from the launch's log file (the one `GET /launch/log` serves) on **both** installs, not from the child's pipes nor from the unit's journal | The launch's stdout and stderr already go to that file: systemd writes it (`StandardOutput=append:`), so the unit's journal has no output; the Docker child has the file as its stdout. Reading a file by offset can never hold the launch up; a pipe could. The file mixes both streams, so a line has no `stream` field |
+| 5 | Launch output over `max_bytes_per_s` is skipped, not read; one line says how many bytes, and it counts as one dropped line | Reading a flood to drop it would cost CPU for nothing |
+| 5 | A launch that exists when the agent starts (re-adopted) is followed from its end | Its earlier lines were shipped by the agent before the restart; the same rule as the journal |
+| 5 | The journal is followed only while a `logs` object is held, from "now" at that moment, by `journalctl --follow --lines=0 --output=json` (needs systemd 236 or later for `--output-fields`). Missing `journalctl`: one warning, no journal | Without an object nothing may change on the node (section 10). No cgo in the agent |
+| 5 | The agent's own unit (`potluck-agent.service`) is not shipped from the journal | Its lines are shipped as `source: agent` already; shipping both doubles them and lets a sender error come back as a journal line |
+| 5 | A journal entry's time is its `__MONOTONIC_TIMESTAMP` (`CLOCK_MONOTONIC`) taken as an age off the agent's clock, through the same anchor. An entry of another boot gets the time it arrived and `time_source: arrival` | The realtime field is the node's wall clock |
+| 5 | The journal reader keeps to `max_bytes_per_s` with a bucket of one batch; a line over it is dropped before it is parsed. A journal line longer than 64 KiB is dropped unread | Drop, never buffer |
+| 5 | The agent's own lines from its start are kept until the first registration answer; an answer without `logs` throws them away | So the start of the log is not lost, and a node without logging keeps nothing |
+| 5 | `every_s` is one round: each source with lines gets one batch in it, one request at a time, within the byte rate (a burst of one batch) | Otherwise three sources would share one request per 2 s |
+| 5 | Answers: `429`, `503`, `404`, any other answer and a broken connection make the sender wait (`Retry-After`, else 1 s doubling to 30 s) and send the same batch again. `410` stops sending until the next registration, or for at most 60 s of the agent's clock (a `410` from the log route alone). `413` halves the batch; a single line answered `413` is dropped and counted. `400` and `415` drop the batch and count it | The contract's answers, and one rule for those it does not name |
+| 5 | Lines dropped count: ring overflow, readers over the rate, too-long journal lines, rejected batches. Each source's next batch starts with one line saying how many of its lines were lost | Per source, because a request carries one source |
+| 5 | `max_line_bytes` bounds the whole JSON line with its newline; `_msg` is cut on a character boundary to fit and the line gets `truncated: true`. Lines are also cut when they enter the ring | The store skips, it does not cut, an over-long line |
+| 5 | The heartbeat carries `logs` (figures) only while a `logs` object is held | Without logging the heartbeat stays that of release 0.1.0 |
+| 5 | Flags: `--logs on\|off` (default on), `--log-buffer-mib` (default 8, 1 to 4096), `--journal-dir` | As the text, plus the Docker journal folder |
+| 3, 10 | `server_time_unix_ms` is added to both answers, set by Potluck, only while it hands out a `logs` object | The time rule above. With logging off the answers stay byte for byte those of release 0.1.0 |
+
+Known limits:
+
+- After a pause in which the monotonic clock did not count (a suspended
+  virtual machine, for example), the lines produced between the end of the
+  pause and the next answer are early by the pause. The next answer, within
+  one heartbeat (2 s), corrects every later line.
+- The Docker image has no `journalctl`; `--journal-dir` logs "journalctl not
+  found" there until the image installs it (the `systemd` package).
+- The starter (`deploy/agent/potluck-starter.sh`) is unchanged: shipping is
+  on by default, so it needs no new option.
 
 ## Sources
 
 - VictoriaLogs security and authentication:
   https://docs.victoriametrics.com/victorialogs/security-and-lb/
-- VictoriaLogs data ingestion (JSON lines, extra fields):
-  https://docs.victoriametrics.com/victorialogs/data-ingestion/
+- VictoriaLogs data ingestion (JSON lines, extra fields, the `_time`
+  formats): https://docs.victoriametrics.com/victorialogs/data-ingestion/

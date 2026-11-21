@@ -1,6 +1,6 @@
 # Agent contract: Potluck and `potluck-agent`
 
-Status: built, and in use as release 0.1.0 since 2026-11-21 (five machines). The text is DRAFT 5 of 2026-11-20 with the change requests folded in: CR-1, CR-2 and CR-3 (drafts 1 to 3, reviewed by the PS5 side); CR-5, accepted 2026-11-20, section 11.1 and the lines marked CR-5; CR-6, accepted 2026-11-21, from the first run on a real machine, section 6.12 and the lines marked CR-6; CR-8, accepted 2026-11-21, the call-back check. CR-9 (section 11.2 and the lines marked "CR-9, proposed") is proposed and not deployed: release 0.1.0 does not contain it; it ships as release 0.1.1, together with CR-10 batch 1. CR-10 (central logging; section 11.3 and the lines marked CR-10) is accepted; its first batch, the Potluck side, is built and not deployed. It is task C1 of the plan "Potluck Cleanup Tasks".
+Status: built, and in use as release 0.1.0 since 2026-11-21 (five machines). The text is DRAFT 5 of 2026-11-20 with the change requests folded in: CR-1, CR-2 and CR-3 (drafts 1 to 3, reviewed by the PS5 side); CR-5, accepted 2026-11-20, section 11.1 and the lines marked CR-5; CR-6, accepted 2026-11-21, from the first run on a real machine, section 6.12 and the lines marked CR-6; CR-8, accepted 2026-11-21, the call-back check. CR-9 (section 11.2 and the lines marked "CR-9, proposed") is proposed and not deployed: release 0.1.0 does not contain it; it ships as release 0.1.1, together with CR-10 batch 1. CR-10 (central logging; section 11.3 and the lines marked CR-10) is accepted; its first batch, the Potluck side, and its agent batch, the shipper, are built and not deployed. It is task C1 of the plan "Potluck Cleanup Tasks".
 
 A change request (CR) to this document becomes binding when both sides, the scheduler side and the fleet console agent, accept it. Until then it is "proposed" and nothing may rely on it.
 
@@ -124,6 +124,7 @@ Answer `200`:
 - `exporters[].args` come from the stats contract (section 7). The agent adds nothing to them, and refuses a listen address that is not on `127.0.0.1`.
 - `stop_launch`: when the registration carried a `launch_id` Potluck does not know (Potluck restarted and lost it), Potluck names it here and the agent stops it. Registering never touches a launch Potluck does know.
 - `logs` (CR-10, accepted, batch 1 built, not deployed; optional, ignored by release 0.1.0): where and how the agent pushes its log lines. Absent or `null`: the agent ships nothing. Section 11.3, item 2.
+- `server_time_unix_ms` (CR-10, agent batch, built, not deployed; optional, ignored by release 0.1.0): Potluck's own clock when it answered, in Unix milliseconds, sent only with `logs`. The agent stamps its log lines from it. Section 11.3, item 11.
 
 Refusals, all `200` with `"accepted": false`, a `reason` word and a `message`:
 
@@ -179,7 +180,7 @@ Every `heartbeat_every_s`. It carries everything Potluck needs to know about an 
 
 - CR-10, accepted, batch 1 built, not deployed; optional, not sent by release 0.1.0: `logs`, the agent's log shipping figures (section 11.3, item 4).
 
-Answer `200`: `{"release": "0.1.0", "paused": false}`. With central logging on (CR-10, accepted, batch 1 built, not deployed) the answer also has `logs_revision` (section 11.3, item 3); release 0.1.0 ignores it.
+Answer `200`: `{"release": "0.1.0", "paused": false}`. With central logging on (CR-10, accepted, batch 1 built, not deployed) the answer also has `logs_revision` (section 11.3, item 3) and `server_time_unix_ms` (item 11); release 0.1.0 ignores both.
 
 **The agent's three failure cases, kept apart:**
 
@@ -580,6 +581,8 @@ One setup script, `potluck-agent-setup`, with two paths. Common options: `--potl
 
 The agent itself also takes `--shared-memory true|false|auto` (CR-9, proposed; default `auto`): whether a launch on the node's device must also fit `MemAvailable` (section 11.2, item 1). Leave it at `auto` unless the rule picks wrong for a machine: `false` for a GPU with memory of its own that is not CUDA, `true` for one that uses system memory but is reported otherwise. Neither the setup script nor the starter sets it.
 
+Log shipping options (CR-10, agent batch, built, not deployed; section 11.3, item 15): `--logs on|off` (default `on`), `--log-buffer-mib N` (default 8), `--journal-dir PATH` (Docker install: a journal folder of the host, mounted read-only). Neither the setup script nor the starter sets them.
+
 - **Bare metal** (`--bare`): places the agent binary, writes one systemd unit `potluck-agent.service` that starts at boot, starts it. A RAM-only node does not use the setup script; it uses the starter (section 5.4), which passes `--ram-only`.
 - **Docker** (`--docker`): starts one container `potluck-agent` from the image tagged with the release, with restart policy `unless-stopped`, `--init`, its own PID namespace, host networking, the GPU passed in when one exists, and the model folder mounted read-only.
   - CR-9 review: the agent's data folder (programs, launch logs) is the named volume `potluck-agent-data`, mounted at `/var/lib/potluck-agent` in the container, so a new container does not fetch the programs again. The models stay at `/models`; nothing else is mounted there.
@@ -715,7 +718,7 @@ Tests: the agent's launch manager (the refusal for both kinds of device, the str
 
 ### 11.3 CR-10, accepted (2026-11-21), batch 1 built, not deployed: central logging through Potluck
 
-CR-10, accepted. Batch 1 is the Potluck side: the settings, the `logs` object, the pass-through with its limits and counters. It is built on a branch and not deployed: no machine runs it and release 0.1.0 does not contain it. The agent's shipper, the search page under `/logs/`, Potluck's own lines and the compose entry of the store are later batches. The design, with its reasons and the trial against the store, is `docs/cr-10-central-logging.md`.
+CR-10, accepted. Batch 1 is the Potluck side: the settings, the `logs` object, the pass-through with its limits and counters. It is built on a branch and not deployed: no machine runs it and release 0.1.0 does not contain it. The agent batch, the shipper in `potluck-agent` (items 11 to 15), is built on a branch and not deployed; no release carries it yet. The search page under `/logs/`, Potluck's own lines and the compose entry of the store are later batches. The design, with its reasons and the trial against the store, is `docs/cr-10-central-logging.md`.
 
 Every field it adds is optional and every route is new, so a CR-10 side works with a release 0.1.0 side in both directions: a release 0.1.0 agent ignores `logs` and `logs_revision`, ships nothing and works as today; a CR-10 agent that gets no `logs` object ships nothing. Batch 1 ships in release 0.1.1 with CR-9 (section 11.2).
 
@@ -798,11 +801,36 @@ Every field it adds is optional and every route is new, so a CR-10 side works wi
 
 10. **Settings**, all live (no restart): `logs_enabled` (default on), `logs_retention_days` (14), `logs_max_disk_gib` (20), `logs_push_url` (empty), `logs_client_intake` (default on). `logs_retention_days` and `logs_max_disk_gib` are for the store: nothing passes them on yet (the compose entry is a later batch).
 
-**Open point for the agent batch.** Rule 1 of section 2 says no field is a time set by a node. A line without `_time` gets the time at which the store took it, which is Potluck's host clock and within one push period (2 s) of the real time. Whether the agent sends the journal's own time as well is for the agent batch to settle; this batch does not look at the lines.
+11. **Time of a line** (agent batch). Rule 1 of section 2 stays: no time set by a node. A line's `_time` is Potluck's time, worked out by the agent:
+    - Potluck sends `server_time_unix_ms`, its own clock in Unix milliseconds, in the registration answer (section 4.2) and in every heartbeat answer (section 4.3), only while it hands out a `logs` object. With logging off neither answer has it, so they stay those of release 0.1.0.
+    - The agent keeps an anchor: that time at the middle of the request's round trip, on its monotonic clock (`CLOCK_BOOTTIME`). Every such answer sets it again. A line's time is the anchor plus the monotonic time from the anchor to the moment the line was produced. A line produced before the first anchor keeps its monotonic stamp and gets its time when it is sent.
+    - A journal entry's time is its `__MONOTONIC_TIMESTAMP` (`CLOCK_MONOTONIC`), taken as an age off the agent's clock. An entry of an earlier boot gets the time it arrived, with `time_source: arrival`. The journal's realtime field is never used.
+    - `_time` is RFC3339 with nanoseconds, in UTC (`2026-11-21T10:00:00.123456789Z`). With no anchor (a Potluck without `server_time_unix_ms`) a line has no `_time`, and the store uses the time at which it took it.
+
+12. **Fields of a line** set by the agent: `_msg`; `_time` (item 11); `level` (`debug`, `info`, `warn`, `error`; from the journal also `emerg`, `alert`, `crit`, `notice`); `unit` (journal: the systemd unit, else the syslog identifier); `stream` (not set yet: launch output is read from the launch log, which mixes stdout and stderr); `truncated: true` when the message was cut; `time_source: arrival` (item 11). The agent never sets a trusted field (item 6). Each line, with its newline, is at most `max_line_bytes`: the agent cuts `_msg` on a character boundary to fit.
+
+13. **What the agent ships.** Its own log lines (`source=agent`), still printed as before. Launch output (`source=launch&launch_id=<id>`), read from the launch log file (section 6.6) on both installs. The machine's journal (`source=journal`): all of it on a bare install, less the units of `deny_units` and less the agent's own unit (already shipped as `agent`); on a Docker install only with `--journal-dir`, a mounted journal folder. The journal and a launch that exists at agent start are followed from "now". The ring is in RAM, `--log-buffer-mib` (8 MiB); when it is full the oldest lines go first, and the next batch of that source starts with one line that says how many were lost.
+
+14. **The sender on each answer.** One request at a time, lines of one source per request, at most `max_batch_bytes` per body, gzip when that makes the body smaller; per round of `every_s` one batch per source; within `max_bytes_per_s` on the wire.
+
+    | Answer | The sender |
+    |---|---|
+    | `2xx` | counts the lines as sent |
+    | `429`, `503` | waits `Retry-After`, else 1 s doubling to 30 s, and sends the same batch again |
+    | `410` | stops sending until the agent registers again, or for at most 60 s of its own clock (a `410` from the log route alone); keeps the batch |
+    | `413` | sends the batch again in halves; a single line answered `413` is dropped and counted |
+    | `400`, `415` | drops the batch and counts its lines as dropped; never sends it again |
+    | `404`, any other answer, no answer, a broken connection | as `429` |
+
+    A new `logs_revision` in a heartbeat answer makes the agent read `GET /api/pool/nodes/{id}/logs` in its own goroutine and use the new object (limits, url, `auth`, `deny_units`) at once; a `404` there means logging is off. A heartbeat answer without `logs_revision`, or a registration answer without `logs`, stops shipping: the ring is emptied, the journal reader stops, the heartbeat no longer has `logs`.
+
+15. **Never blocking.** Shipping never makes the heartbeat, a launch call or the watchdog wait: a producer puts a line into the ring and returns, the ring's lock is held for memory work only, the readers drop by the byte rate instead of buffering, a launch writes into its log file and never into a pipe the agent must drain, and only the sender's own goroutine (with its own HTTP client) waits on Potluck. Agent options (section 9): `--logs on|off` (default on; `off` builds no shipper at all), `--log-buffer-mib N` (default 8), `--journal-dir PATH`. The figures of item 4 are sent only while a `logs` object is held.
 
 **Not checked against the real store in this batch:** `ignore_fields` (item 6). `extra_fields` and `_stream_fields` were checked in the trial. The syntax of all three was read from the store's source (VictoriaLogs v1.54.0).
 
-Tests: the wire types (the object as shown above, release 0.1.0 bodies in both directions), the pool (the object and the revision in the answers, the figures from the heartbeat, the snapshot and that reading it does not wait for the pool's lock, the profile of a running and of an ended launch), the relay against a fake store (trusted fields, values with commas, equals signs, colons and percent signs read back with the store's own parsing rules, every limit and answer, a stalled sender, a silent store), the API (everything off without a store address, the whole path, live settings) and the flood test.
+Tests of the agent batch: the wire type and the pool (`server_time_unix_ms` only with logging on, release 0.1.0 decoders), the shipper against a fake Potluck (time from the anchor with a node clock two months off, lines before the anchor, a pause, every answer of item 14, the byte rate, a new revision, logging off, a hung Potluck), the ring (oldest first, the count line, the bound under a flood), the journal reader (times, other boot, `deny_units`, a flood dropped by rate, no `journalctl`), launch output (a real child writing 64 MB while Potluck hangs), and the agent (its lines, launch output and journal shipped; a heartbeat and a launch start on time while the sender hangs, the ring is full and the journal floods; no `logs` object ships nothing; `--logs off`).
+
+Tests of batch 1: the wire types (the object as shown above, release 0.1.0 bodies in both directions), the pool (the object and the revision in the answers, the figures from the heartbeat, the snapshot and that reading it does not wait for the pool's lock, the profile of a running and of an ended launch), the relay against a fake store (trusted fields, values with commas, equals signs, colons and percent signs read back with the store's own parsing rules, every limit and answer, a stalled sender, a silent store), the API (everything off without a store address, the whole path, live settings) and the flood test.
 
 ## 12. Open questions
 

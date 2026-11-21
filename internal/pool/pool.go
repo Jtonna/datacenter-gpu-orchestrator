@@ -479,7 +479,7 @@ func (p *Pool) Heartbeat(id string, body []byte) HeartbeatResult {
 	ans := agentproto.HeartbeatAnswer{Release: p.o.PotluckRelease, Paused: p.admin[id].Paused}
 	if p.o.Logs != nil {
 		if l := p.o.Logs(id); l != nil {
-			ans.LogsRevision = l.Revision // CR-10: the agent reads the object again when this differs from its own
+			ans.LogsRevision = l.Revision          // CR-10: the agent reads the object again when this differs from its own
 			ans.ServerTimeUnixMs = now.UnixMilli() // CR-10: Potluck's time for the agent's log lines
 		}
 	}
