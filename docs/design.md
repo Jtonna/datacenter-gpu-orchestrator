@@ -1179,7 +1179,8 @@ view the core reads, and runs the worker launches.
   `left` after its deregister, `removed` after `DELETE /api/nodes/{id}` until
   `POST /api/nodes/{id}/readmit`. Pause and removal are stored in the
   database (`node_admin`). A paused node takes no new load; a load on it
-  continues.
+  continues. A pause also breaks a claim on the node for a waiting request
+  (step 5 of the queue), so the request is planned again.
 - **Loads.** The worker launches replace the pre-flight: no `--list-devices`
   probe runs, so nothing holds a worker's single client slot before the child
   connects. Each remote node gets `POST /launch` (role worker, the release,
@@ -1316,7 +1317,9 @@ full upload, so the hold is worth keeping.
    treat the entry as unclaimed in this same pass. The recorded figures stop
    the same plan from being chosen again.
 5. If a claimed node stops being eligible (offline, quarantined, or the fleet
-   view goes stale): drop the claim. Victims still `draining` return to
+   view goes stale), or stops taking new load (paused, or listed with an
+   unplaced reason, after the claim was made): drop the claim. Pause wins
+   over a claim: the paused node does not get the load. Victims still `draining` return to
    `ready`. Victims already `stopping` or gone stay so. The entry is unclaimed
    again and is evaluated in this same pass.
 6. A claimed entry with no waiters:
