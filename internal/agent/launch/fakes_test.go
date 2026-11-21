@@ -96,6 +96,7 @@ type fakeRunner struct {
 	stopErr    error
 	stopKills  bool          // Stop ends the unit, as systemctl stop does
 	stopHang   chan struct{} // Stop blocks until it is closed
+	unlisted   bool          // List names no unit: systemd has unloaded it, the watcher has not seen it yet
 }
 
 func newFakeRunner(survives bool) *fakeRunner {
@@ -139,7 +140,7 @@ func (r *fakeRunner) List(ctx context.Context, prefix string) ([]string, error) 
 	defer r.mu.Unlock()
 	var out []string
 	for u, p := range r.procs {
-		if strings.HasPrefix(u, prefix) && p.alive() {
+		if strings.HasPrefix(u, prefix) && p.alive() && !r.unlisted {
 			out = append(out, u)
 		}
 	}

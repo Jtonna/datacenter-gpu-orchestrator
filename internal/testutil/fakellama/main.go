@@ -156,6 +156,9 @@ func appendStartLog(mode string) {
 	if v, ok := os.LookupEnv("CUDA_VISIBLE_DEVICES"); ok {
 		env["CUDA_VISIBLE_DEVICES"] = v // set-but-empty matters to the pre-flight (H3)
 	}
+	if v, ok := os.LookupEnv("LLAMA_RPC_FILE_LOAD"); ok {
+		env["LLAMA_RPC_FILE_LOAD"] = v
+	}
 	line, _ := json.Marshal(map[string]any{
 		"time": time.Now().UTC().Format(time.RFC3339Nano),
 		"pid":  os.Getpid(),

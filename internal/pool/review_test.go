@@ -372,3 +372,46 @@ func TestSilentNodeWithALaunchIsLostAfterTheLeaseTTL(t *testing.T) {
 	r.p.Stop(9, nil)
 	r.p.WaitStops(10 * time.Second)
 }
+
+// G. The host program ended without being stopped: the launches of its load
+// are read. A launch that ended by itself is returned with its reason, also
+// when the agent reports the exit a moment after the host program died.
+func TestExitsReadsTheLaunchThatEndedByItself(t *testing.T) {
+	r := newRig(t)
+	a1, a2 := r.agent(1), r.agent(2)
+	r.waitNode(a1.ID)
+	r.waitNode(a2.ID)
+	if res := r.p.Launch(context.Background(), spec(11, a1, a2), func(scheduler.WorkerReport) {}); res.Reason != "" {
+		t.Fatalf("%+v", res)
+	}
+	// Nothing ended: an empty answer after the bound, not before.
+	began := time.Now()
+	if rs := r.p.Exits(context.Background(), 11); len(rs) != 0 {
+		t.Fatalf("%+v", rs)
+	}
+	if d := time.Since(began); d < ExitReadWait-100*time.Millisecond || d > ExitReadWait+2*time.Second {
+		t.Fatalf("read for %v, want about %v", d, ExitReadWait)
+	}
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		a2.ExitLaunch(agentproto.ExitWatchdog, "MemAvailable 900 MiB fell below the watchdog floor of 1000 MiB")
+	}()
+	began = time.Now()
+	rs := r.p.Exits(context.Background(), 11)
+	if len(rs) != 1 || string(rs[0].Node) != a2.ID || rs[0].Exit == nil || rs[0].Exit.Reason != agentproto.ExitWatchdog ||
+		!strings.Contains(rs[0].Exit.Message, "watchdog floor") || rs[0].Addr == "" {
+		t.Fatalf("%+v", rs)
+	}
+	if d := time.Since(began); d > 900*time.Millisecond {
+		t.Fatalf("waited %v after the exit was readable", d)
+	}
+	if rs := r.p.Exits(context.Background(), 999); rs != nil {
+		t.Fatalf("unknown load: %+v", rs)
+	}
+	r.p.Stop(11, nil)
+	r.p.WaitStops(10 * time.Second)
+	// A launch stopped on request is not an exit of its own.
+	if rs := r.p.Exits(context.Background(), 11); len(rs) != 0 {
+		t.Fatalf("after the stop: %+v", rs)
+	}
+}

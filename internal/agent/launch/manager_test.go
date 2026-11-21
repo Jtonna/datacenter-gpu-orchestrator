@@ -937,3 +937,58 @@ func TestHangingStopStepBlocksNothing(t *testing.T) {
 		t.Fatal(st.Exit.Reason)
 	}
 }
+
+// H. The watchdog's kill was delivered; Potluck's ordinary stop arrives a
+// moment later. It must not start the next attempt early: attempt 2 comes
+// KillRetry (1 s) after attempt 1.
+func TestStopDuringAKillDoesNotStartTheNextAttemptEarly(t *testing.T) {
+	e := newEnv(t, true)
+	e.runner.stopKills = true
+	e.run()
+	e.startReady("ln-1")
+	p := e.runner.proc("potluck-launch-ln-1")
+	p.mu.Lock()
+	p.killDeaf = 1 << 30 // delivered, but the process is still there
+	p.mu.Unlock()
+	e.mem.set(900)
+	agenttest.Eventually(t, 5*time.Second, "KILL", func() bool { return len(p.signals()) == 1 })
+	e.settle(3)
+	e.clock.Advance(150 * time.Millisecond)
+	if _, err := e.m.Stop("ln-1", false); err != nil {
+		t.Fatal(err)
+	}
+	e.settle(5)
+	if s := e.runner.stops(); len(s) != 0 || len(p.signals()) != 1 {
+		t.Fatalf("a second kill attempt 150 ms after the first: stops %v signals %v", s, p.signals())
+	}
+	e.clock.Advance(900 * time.Millisecond)
+	agenttest.Eventually(t, 5*time.Second, "attempt 2 after the full second", func() bool { return len(e.runner.stops()) == 1 })
+}
+
+// H. Before a further attempt the unit is looked for: when systemd no longer
+// has it, no attempt is made and nothing is logged as failed.
+func TestNoFurtherKillAttemptOnceTheUnitIsGone(t *testing.T) {
+	e := newEnv(t, true)
+	e.runner.stopErr = errors.New("systemctl stop: exit status 5: Failed to stop: Unit not loaded.")
+	e.run()
+	e.startReady("ln-1")
+	p := e.runner.proc("potluck-launch-ln-1")
+	p.mu.Lock()
+	p.killDeaf = 1 << 30 // delivered, but the process is still there
+	p.mu.Unlock()
+	e.m.Stop("ln-1", true)
+	agenttest.Eventually(t, 5*time.Second, "KILL", func() bool { return len(p.signals()) == 1 })
+	e.runner.mu.Lock()
+	e.runner.unlisted = true // the unit is gone; the watcher has not reported it yet
+	e.runner.mu.Unlock()
+	for i := 0; i < 30; i++ {
+		e.clock.Advance(250 * time.Millisecond)
+		e.settle(2)
+	}
+	e.m.mu.Lock()
+	tries := e.m.cur.killTries
+	e.m.mu.Unlock()
+	if s := e.runner.stops(); len(s) != 0 || len(p.signals()) != 1 || tries != 1 {
+		t.Fatalf("attempts on a unit that is gone: stops %v signals %v tries %d", s, p.signals(), tries)
+	}
+}

@@ -300,7 +300,7 @@ func (s *Scheduler) startChild(ctx context.Context, ef effStart) {
 	s.goBg(func(context.Context) {
 		st, ok := <-ch.Exited()
 		if ok {
-			s.post(context.Background(), evExited{iid: ef.iid, status: st})
+			s.post(context.Background(), evExited{iid: ef.iid, status: st, workers: s.workerExits(ef.iid, st)})
 		}
 	})
 	s.goBg(func(context.Context) {

@@ -40,6 +40,7 @@ const (
 	LeaseTTL       = 20 * time.Second // lease_ttl_s of a launch (6.2)
 	LeaseEvery     = 5 * time.Second  // lease renewal (6.4)
 	ForceResetWait = 5 * time.Second  // forced stop, then /reset (7.2)
+	ExitReadWait   = time.Second      // reading the launches of a load whose host program ended (11.1)
 )
 
 // ReasonReleaseUnavailable refuses a registration while Potluck serves no
@@ -99,6 +100,9 @@ type Options struct {
 	ProbeEvery time.Duration
 	// LeaseEvery is the lease renewal period; default LeaseEvery (tests shorten it).
 	LeaseEvery time.Duration
+	// ExitReadWait bounds Exits: how long a launch that has not exited is
+	// read again; default ExitReadWait (tests shorten it).
+	ExitReadWait time.Duration
 }
 
 // heartbeat is a decoded heartbeat. Stats stays raw: a missing or bad stats
@@ -192,6 +196,9 @@ func New(o Options) (*Pool, error) {
 	}
 	if o.ProbeEvery <= 0 {
 		o.ProbeEvery = 2 * time.Second
+	}
+	if o.ExitReadWait <= 0 {
+		o.ExitReadWait = ExitReadWait
 	}
 	p := &Pool{o: o, log: o.Logger, agents: map[string]*agent{}, admin: map[string]cfgstore.NodeAdmin{},
 		notify: make(chan struct{}, 1), unplaced: map[core.NodeID]string{},

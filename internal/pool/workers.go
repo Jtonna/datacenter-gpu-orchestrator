@@ -446,6 +446,80 @@ func (p *Pool) copyLog(ctx context.Context, l *launch) {
 	l.mu.Unlock()
 }
 
+var _ scheduler.WorkerExitReader = (*Pool)(nil)
+
+// Exits is scheduler.WorkerExitReader: the launches of load iid that ended by
+// themselves (watchdog, oom_kill, lease_expired, start_failed, crashed ...).
+// The scheduler calls it when the load's host program ended without being
+// stopped: the host aborts within milliseconds of losing a worker, so the
+// worker's own exit is often not read yet, and the agent may still report
+// the launch as stopping. Every member is read in parallel, again every
+// 100 ms, until one has exited by itself or ExitReadWait has passed.
+func (p *Pool) Exits(ctx context.Context, iid uint64) []scheduler.WorkerReport {
+	p.mu.Lock()
+	ls := append([]*launch(nil), p.byIID[iid]...)
+	p.mu.Unlock()
+	if len(ls) == 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, p.o.ExitReadWait)
+	defer cancel()
+	out := make([]*agentproto.ExitInfo, len(ls))
+	var wg sync.WaitGroup
+	for i, l := range ls {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if out[i] = p.ownExit(ctx, l); out[i] != nil {
+				cancel() // one explains the exit; the others are not waited for
+			}
+		}()
+	}
+	wg.Wait()
+	var rs []scheduler.WorkerReport
+	for i, l := range ls {
+		if out[i] != nil {
+			p.log.Info("worker launch had ended by itself when the host program ended", "launch", l.id, "node", l.node,
+				"reason", out[i].Reason, "message", out[i].Message)
+			rs = append(rs, scheduler.WorkerReport{IID: iid, Node: l.node, Addr: l.rpcAddr, Exit: out[i]})
+		}
+	}
+	return rs
+}
+
+// ownExit reads the launch until it has exited or ctx ends. It returns the
+// exit when the launch ended by itself, nil when it was stopped on request,
+// is another launch, or did not exit in time.
+func (p *Pool) ownExit(ctx context.Context, l *launch) *agentproto.ExitInfo {
+	for {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, l.base+agentproto.PathLaunch, nil)
+		if resp, err := p.o.HTTP.Do(req); err == nil {
+			var st agentproto.LaunchState
+			derr := json.NewDecoder(resp.Body).Decode(&st)
+			resp.Body.Close()
+			switch {
+			case derr != nil || resp.StatusCode != http.StatusOK:
+			case st.State == agentproto.StateNone || st.LaunchID != l.id:
+				return nil
+			case st.State == agentproto.StateExited:
+				if st.Exit == nil {
+					return nil
+				}
+				switch st.Exit.Reason {
+				case agentproto.ExitStopped, agentproto.ExitForced, agentproto.ExitReset:
+					return nil
+				}
+				return st.Exit
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
 // Stop is scheduler.WorkerLauncher.Stop: every launch of load iid is
 // stopped (force for the nodes in force), off the caller's goroutine.
 func (p *Pool) Stop(iid uint64, force []core.NodeID) {

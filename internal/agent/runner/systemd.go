@@ -181,11 +181,25 @@ func (s *Systemd) List(ctx context.Context, prefix string) ([]string, error) {
 	return units, nil
 }
 
-// Stop implements Runner.
+// Stop implements Runner. A unit that does not exist is stopped: that is not
+// an error.
 func (s *Systemd) Stop(ctx context.Context, unit string) error {
 	_, err := s.Cmd.Run(ctx, "systemctl", "stop", service(unit))
 	_, _ = s.Cmd.Run(ctx, "systemctl", "reset-failed", service(unit))
+	if unitMissing(err) {
+		return nil
+	}
 	return err
+}
+
+// unitMissing reports whether a systemctl error says the unit does not exist
+// ("Unit x.service not loaded.", "Unit x.service not found.", exit status 5).
+func unitMissing(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "not loaded") || strings.Contains(s, "not found") || strings.Contains(s, "No such unit")
 }
 
 type unitState struct {
@@ -274,6 +288,9 @@ func (p *unitProc) Signal(sig osx.Sig) error {
 	defer cancel()
 	// Default --kill-whom=all: every process of the unit's cgroup.
 	_, err := p.s.Cmd.Run(ctx, "systemctl", "kill", "--signal=SIG"+sig.String(), service(p.unit))
+	if unitMissing(err) {
+		return nil // nothing left to signal
+	}
 	return err
 }
 

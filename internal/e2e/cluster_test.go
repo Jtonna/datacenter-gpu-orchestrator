@@ -281,6 +281,7 @@ type startEntry struct {
 	Mode string            `json:"mode"`
 	Argv []string          `json:"argv"`
 	Env  map[string]string `json:"env"`
+	Time time.Time         `json:"time"`
 }
 
 // starts returns the fakellama start log: one entry per list-devices probe

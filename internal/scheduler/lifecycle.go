@@ -217,7 +217,7 @@ func (c *schedCore) launch(in *inst) {
 	c.effects = append(c.effects, effStart{iid: in.iid, spec: instance.StartSpec{
 		Build:      func(port int) ([]string, error) { return instance.BuildArgs(p, pl, port, opts) },
 		HealthPath: health,
-		Env:        instance.ChildEnvOverrides(p, pl),
+		Env:        append(instance.ChildEnvOverrides(p, pl), c.rpcFileLoadEnv(in)...),
 		Profile:    p.Name,
 		InstanceID: in.iid,
 	}})
@@ -394,12 +394,19 @@ func (c *schedCore) releaseNode(id core.NodeID, holder string, settle bool) {
 	ns.fetched = nil
 }
 
-func (c *schedCore) exited(iid uint64, st instance.ExitStatus) {
+func (c *schedCore) exited(iid uint64, st instance.ExitStatus, workers []WorkerReport) {
 	in := c.instByIID(iid)
 	if in == nil || in.child == nil {
 		return
 	}
 	in.exit = st.String()
+	// The host program ends within milliseconds when a worker goes away, so
+	// its exit is often seen before the worker's. When a worker launch ended
+	// by itself, that is the failure, not the host's abort.
+	if r := ownWorkerExit(workers); r != nil && in.workers && in.state != stStopping {
+		c.workerEndedInstance(in, *r, st)
+		return
+	}
 	switch in.state {
 	case stStarting:
 		c.failLoad(in, "child exited during load: "+st.String(), st.Tail, true)

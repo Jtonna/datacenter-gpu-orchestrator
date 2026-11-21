@@ -826,7 +826,13 @@ A load whose workers are not ready within `worker_start_timeout` (default
 Worker launch logs are copied into `child_log_dir` as
 `worker-<node name>-<launch id>.log`. A load that fails on an agent shows the
 agent's reason in the 502 and in history (`workerLaunchFailed`,
-`workerExited`). `LLM_SCHEDULER_TEST_AGENT_PORT` and
+`workerExited`); when the host program dies first (it aborts as soon as a
+worker is gone), the scheduler reads the launches for up to 1 s and still
+names the worker's reason (`watchdog`, `oom_kill`, ...). For a load with agent
+workers the scheduler sets `LLAMA_RPC_FILE_LOAD` on the host `llama-server`
+itself: `required` when `worker_model_dir` is on, `0` when it is off; a value
+in the container's environment is not used for these loads.
+`LLM_SCHEDULER_TEST_AGENT_PORT` and
 `LLM_SCHEDULER_TEST_WORKER_PORT` exist for tests only; never set them.
 
 ### Child output logs
