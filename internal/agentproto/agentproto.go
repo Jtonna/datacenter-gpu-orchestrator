@@ -313,6 +313,11 @@ type RegisterAnswer struct {
 	// Logs says where and how to push log lines (CR-10). Absent or null: the
 	// agent ships nothing. Release 0.1.0 ignores it.
 	Logs *Logs `json:"logs,omitempty"`
+	// ServerTimeUnixMs is Potluck's own clock when it answered, in Unix
+	// milliseconds (CR-10). The agent stamps its log lines from it: it is
+	// Potluck's time, never the node's. Optional: 0 and absent mean none;
+	// release 0.1.0 ignores it.
+	ServerTimeUnixMs int64 `json:"server_time_unix_ms,omitempty"`
 
 	Reason          string `json:"reason,omitempty"`
 	Message         string `json:"message,omitempty"`
@@ -415,6 +420,9 @@ type HeartbeatAnswer struct {
 	// LogsRevision is the revision of the node's logs object (CR-10). Absent:
 	// there is no logs object and the agent ships nothing.
 	LogsRevision int64 `json:"logs_revision,omitempty"`
+	// ServerTimeUnixMs is Potluck's clock when it answered (CR-10, as in
+	// RegisterAnswer). Optional.
+	ServerTimeUnixMs int64 `json:"server_time_unix_ms,omitempty"`
 }
 
 // ---------------------------------------------------------------------------

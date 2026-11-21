@@ -135,3 +135,17 @@ func (k Kmsg) OOMKilled(pid int) bool {
 	}
 	return false
 }
+
+const clockMonotonic = 1 // CLOCK_MONOTONIC
+
+// MonotonicNow reads CLOCK_MONOTONIC: the clock of the journal's
+// __MONOTONIC_TIMESTAMP (CR-10). It stops while the machine sleeps;
+// CLOCK_BOOTTIME (BootClock) does not.
+func MonotonicNow() (time.Duration, error) {
+	var ts syscall.Timespec
+	_, _, e := syscall.Syscall(syscall.SYS_CLOCK_GETTIME, clockMonotonic, uintptr(unsafe.Pointer(&ts)), 0)
+	if e != 0 {
+		return 0, e
+	}
+	return time.Duration(ts.Nano()), nil
+}

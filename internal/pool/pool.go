@@ -383,6 +383,12 @@ func (p *Pool) register(req agentproto.RegisterRequest) (agentproto.RegisterAnsw
 		Paused: p.admin[req.ID].Paused}
 	if p.o.Logs != nil {
 		ans.Logs = p.o.Logs(req.ID) // CR-10: where to push log lines; nil while logging is off
+		if ans.Logs != nil {
+			// The agent stamps its log lines with Potluck's time, from this
+			// answer and every heartbeat answer. Sent only with logging on,
+			// so the answers with logging off stay those of release 0.1.0.
+			ans.ServerTimeUnixMs = now.UnixMilli()
+		}
 	}
 	// A launch the node reports that this run does not hold is stopped
 	// (4.2, 11); a launch this run holds on the node that the node no longer
@@ -474,6 +480,7 @@ func (p *Pool) Heartbeat(id string, body []byte) HeartbeatResult {
 	if p.o.Logs != nil {
 		if l := p.o.Logs(id); l != nil {
 			ans.LogsRevision = l.Revision // CR-10: the agent reads the object again when this differs from its own
+			ans.ServerTimeUnixMs = now.UnixMilli() // CR-10: Potluck's time for the agent's log lines
 		}
 	}
 	return HeartbeatResult{Status: http.StatusOK, Answer: ans}
