@@ -103,8 +103,11 @@ func TestLoadingInstanceShowsProgressInStatusAndRunning(t *testing.T) {
 		if len(list) != 1 {
 			return false
 		}
-		_, ok := list[0].(map[string]any)["load_progress"]
-		return ok
+		// The structured report ("load") can appear a moment after the figure.
+		m := list[0].(map[string]any)
+		_, ok := m["load_progress"]
+		_, rep := m["load"]
+		return ok && rep
 	})
 	r := running["running"].([]any)[0].(map[string]any)
 	keys := []string{}
