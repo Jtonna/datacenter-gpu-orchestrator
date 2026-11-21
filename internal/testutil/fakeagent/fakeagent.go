@@ -56,6 +56,10 @@ type Agent struct {
 	Refuse func(agentproto.LaunchRequest) *agentproto.LaunchRefusal
 	// IgnoreForce: a forced stop leaves the launch stopping (only /reset ends it).
 	IgnoreForce bool
+	// WatchdogFloorMiB, when set, is sent as watchdog_floor_mib in the
+	// registration and the heartbeat (CR-9); 0 sends none, as release 0.1.0.
+	// The would_not_fit check uses it, or 1000.
+	WatchdogFloorMiB int64
 
 	mu         sync.Mutex
 	srv        *http.Server
@@ -74,6 +78,8 @@ type Agent struct {
 type launchRun struct {
 	req     agentproto.LaunchRequest
 	state   string
+	stopWhy string // stop_reason while stopping (CR-9)
+	stopMsg string
 	exit    *agentproto.ExitInfo
 	cmd     *exec.Cmd
 	ln      net.Listener
@@ -266,7 +272,7 @@ func (a *Agent) register(ctx context.Context) bool {
 	req := agentproto.RegisterRequest{ID: a.ID, Name: a.Name, AgentRelease: a.Release, AgentStartID: a.StartID,
 		OS: "linux", Arch: "amd64", Install: a.Install, Addr: a.Addr, GPUs: a.GPUs, Backends: a.Backends,
 		MemTotalMiB: 16000, ModelSource: agentproto.ModelSource{Kind: agentproto.ModelSourceShare, Target: "192.0.2.1:/"},
-		LaunchID: lid, ForeignProcesses: a.Foreign}
+		LaunchID: lid, ForeignProcesses: a.Foreign, WatchdogFloorMiB: a.WatchdogFloorMiB}
 	a.mu.Unlock()
 	req.FillEmpty()
 	var ans agentproto.RegisterAnswer
@@ -304,6 +310,12 @@ func (a *Agent) heartbeat(ctx context.Context) int {
 	}
 	if a.Stats != nil {
 		hb["stats"] = a.Stats
+	}
+	if a.WatchdogFloorMiB > 0 {
+		hb["watchdog_floor_mib"] = a.WatchdogFloorMiB
+	}
+	if a.cur != nil && a.cur.state == agentproto.StateStopping && a.cur.stopWhy != "" {
+		hb["stop_reason"], hb["stop_message"] = a.cur.stopWhy, a.cur.stopMsg
 	}
 	a.mu.Unlock()
 	var ans agentproto.HeartbeatAnswer
@@ -376,6 +388,10 @@ func (a *Agent) handler() http.Handler {
 		if req.MinMemAvailableMiB > a.MemAvail {
 			writeJSON(w, 507, agentproto.LaunchRefusal{Reason: agentproto.ReasonLowMemory,
 				Message: fmt.Sprintf("MemAvailable %d MiB is below the required %d MiB", a.MemAvail, req.MinMemAvailableMiB)})
+			return
+		}
+		if ref := a.wouldNotFitLocked(req); ref != nil {
+			writeJSON(w, agentproto.LaunchRefusalStatus[ref.Reason], ref)
 			return
 		}
 		run := &launchRun{req: req, state: agentproto.StateStarting, started: time.Now()}
@@ -491,6 +507,37 @@ func (a *Agent) becomeReady(run *launchRun, addr string) {
 	}
 }
 
+// wouldNotFitLocked is the agent's pre-launch memory check (CR-9), on the
+// first device: without expect_mib nothing is checked.
+func (a *Agent) wouldNotFitLocked(req agentproto.LaunchRequest) *agentproto.LaunchRefusal {
+	if req.Worker == nil || req.Worker.ExpectMiB <= 0 || len(a.Devices) == 0 {
+		return nil
+	}
+	floor, expect, d := a.WatchdogFloorMiB, req.Worker.ExpectMiB, a.Devices[0]
+	if floor == 0 {
+		floor = 1000
+	}
+	switch {
+	case d.SharesSystemMemory && a.MemAvail-expect < floor:
+		return &agentproto.LaunchRefusal{Reason: agentproto.ReasonWouldNotFit, Message: fmt.Sprintf(
+			"MemAvailable %d MiB minus the expected %d MiB leaves less than the watchdog floor of %d MiB", a.MemAvail, expect, floor)}
+	case !d.SharesSystemMemory && d.FreeMiB-expect < 0:
+		return &agentproto.LaunchRefusal{Reason: agentproto.ReasonWouldNotFit, Message: fmt.Sprintf(
+			"device %s has %d MiB free, less than the expected %d MiB", d.Name, d.FreeMiB, expect)}
+	}
+	return nil
+}
+
+// BeginStop puts the current launch into stopping with a stop_reason, as an
+// agent that has decided to stop it and whose process has not gone yet (CR-9).
+func (a *Agent) BeginStop(reason, msg string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.cur != nil && a.cur.state != agentproto.StateExited {
+		a.cur.state, a.cur.stopWhy, a.cur.stopMsg = agentproto.StateStopping, reason, msg
+	}
+}
+
 func (a *Agent) endLocked(reason string) {
 	run := a.cur
 	if run.cmd != nil && run.cmd.Process != nil {
@@ -515,6 +562,9 @@ func (a *Agent) stateLocked() agentproto.LaunchState {
 	if r.state != agentproto.StateExited {
 		ttl := r.req.LeaseTTLS
 		st.LeaseExpiresInS = &ttl
+	}
+	if r.state == agentproto.StateStopping {
+		st.StopReason, st.StopMessage = r.stopWhy, r.stopMsg
 	}
 	return st
 }

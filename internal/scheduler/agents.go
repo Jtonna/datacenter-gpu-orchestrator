@@ -31,6 +31,9 @@ type WorkerTarget struct {
 	Addr string
 	// MinMemAvailableMiB is the launch's min_mem_available_mib.
 	MinMemAvailableMiB int64
+	// ExpectMiB is the launch's expect_mib (CR-9): the node's share of the
+	// profile's need. 0 sends none.
+	ExpectMiB int64
 }
 
 // WorkerLaunchSpec is every worker launch of one load.
@@ -122,6 +125,10 @@ const (
 	// is shown in the agent's status only: the node is not listed as a remote
 	// node at all.
 	UnplacedHostMachine = "host_machine"
+	// UnplacedPaused: the operator paused the node (7.2). It is shown in the
+	// agent's status when the node has no reason of its own (CR-9); the
+	// scheduler itself reads the node's Paused flag.
+	UnplacedPaused = "paused"
 )
 
 // modelSourceHold is how long a node whose launch was refused with
@@ -195,12 +202,17 @@ func (c *schedCore) launchWorkers(in *inst) {
 	in.phase = phWorkers
 	in.workers = true
 	spec := WorkerLaunchSpec{IID: in.iid, Profile: in.prof.Name, Label: path.Base(in.prof.Model)}
-	floor := int64(c.cfg.Defaults.WatchdogFloorMiB)
-	for _, pn := range in.placement.Nodes {
+	expect := c.expectShares(in.prof, in.placement)
+	for i, pn := range in.placement.Nodes {
 		if pn.Local {
 			continue
 		}
 		n, _ := c.node(pn.ID)
+		// The node's own watchdog floor when its agent reports one (CR-9).
+		floor := int64(c.cfg.Defaults.WatchdogFloorMiB)
+		if n.WatchdogFloorMiB > 0 {
+			floor = int64(n.WatchdogFloorMiB)
+		}
 		// Settled as built by CR-5 (agent contract 11.1). The question was: 6.2 says min_mem_available_mib comes "from the
 		// budget" without a formula. A node whose device shares system memory
 		// needs its budget plus the watchdog floor available; any other node
@@ -209,7 +221,11 @@ func (c *schedCore) launchWorkers(in *inst) {
 		if n.SharedMemory {
 			min += int64(pn.BudgetMiB)
 		}
-		spec.Workers = append(spec.Workers, WorkerTarget{Node: pn.ID, Addr: pn.Addr, MinMemAvailableMiB: min})
+		wt := WorkerTarget{Node: pn.ID, Addr: pn.Addr, MinMemAvailableMiB: min}
+		if expect != nil {
+			wt.ExpectMiB = int64(expect[i]) // CR-9: the agent refuses a launch that would not fit
+		}
+		spec.Workers = append(spec.Workers, wt)
 	}
 	c.log.Info("starting worker launches", "profile", in.prof.Name, "workers", len(spec.Workers))
 	c.effects = append(c.effects, effLaunchWorkers{spec: spec})
@@ -258,7 +274,9 @@ func (c *schedCore) workersLaunched(iid uint64, res WorkerResult) {
 		// Settled as built by CR-5 (agent contract 11.1). The question was: the contract does not say whether the
 		// pre-flight's forced-fit check and fit at exact figures (design 7.5)
 		// still run. They need a probe of the workers, which agents mode does
-		// not do; the child starts on the placement as made.
+		// not do; the child starts on the placement as made. CR-9 restores
+		// the forced fit check before the launches are sent, from the agents'
+		// own figures (forcedfit.go, agentForcedGate).
 		c.log.Info("worker launches ready", "profile", in.prof.Name, "launches", len(res.LaunchIDs))
 		c.launch(in)
 		return
@@ -282,6 +300,9 @@ func (c *schedCore) workersLaunched(iid uint64, res WorkerResult) {
 		c.quarantine(res.Node, errors.New(res.Message))
 		c.returnInst(in, "agent unreachable", nil)
 	default:
+		// would_not_fit (CR-9) ends here too: a failed load with the agent's
+		// reason and message, no quarantine (the node did nothing wrong) and
+		// nothing learned (nothing was started, so nothing was measured).
 		if res.Exit != nil {
 			c.raiseNeedOnKill(in, res.Node, res.Exit)
 		}

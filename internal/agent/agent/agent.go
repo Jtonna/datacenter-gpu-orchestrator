@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -52,7 +53,18 @@ type Options struct {
 	// LDLibraryPath is the agent's LD_LIBRARY_PATH, the one the library
 	// check used; launches get the same value.
 	LDLibraryPath string
+	// LeaveMarker is the file that says the node was taken out on purpose
+	// (LeaveMarkerPath on a real machine; "" checks nothing). When it exists
+	// as the agent stops, the agent deregisters first (CR-9).
+	LeaveMarker string
 }
+
+// LeaveMarkerPath is the marker the uninstall writes and the starter checks
+// (deploy/agent: $ETC_DIR/disabled).
+const LeaveMarkerPath = "/etc/potluck/disabled"
+
+// leaveTimeout bounds the deregister call of a stop with the leave marker.
+const leaveTimeout = 3 * time.Second
 
 // Hardware is the machine facts the agent reports.
 type Hardware interface {
@@ -224,7 +236,7 @@ func New(opt Options, deps Deps) (*Agent, error) {
 		WorkerPort: deps.WorkerPort, HostPort: deps.HostPort,
 	}, launch.Deps{Clock: deps.Clock, Runner: deps.Runner, Mem: deps.Mem, Sockets: deps.Sockets,
 		Procs: deps.Procs, KLog: deps.KLog, PortFree: deps.PortFree, HostHealthy: deps.HostHealthy,
-		Gate: a, Programs: a.Programs, Logger: deps.Logger, OnError: a.setError,
+		Gate: a, Device: a.workerDevice, Programs: a.Programs, Logger: deps.Logger, OnError: a.setError,
 		OnExit: func(agentproto.LaunchState) { a.afterLaunchExit() }})
 
 	a.Export = &exporters.Supervisor{Runner: deps.Runner, Path: a.Programs.Path, Logger: deps.Logger}
@@ -263,6 +275,54 @@ func (a *Agent) ModelSourceReachable() bool { return a.Source.Reachable() }
 
 // WaitDevicesRead implements launch.Gate.
 func (a *Agent) WaitDevicesRead() { a.devRead.Lock(); a.devRead.Unlock() }
+
+// workerDevice is the device a worker of this node serves, as Potluck picks
+// it from the heartbeat (contract 11: one device per node): the first device
+// of the platform's backend, else the first one. It is the launch manager's
+// device for the would_not_fit check (CR-9).
+func (a *Agent) workerDevice() (agentproto.Device, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(a.devs) == 0 {
+		return agentproto.Device{}, false
+	}
+	backend := a.platform[strings.LastIndex(a.platform, "-")+1:]
+	for _, d := range a.devs {
+		if strings.EqualFold(d.Backend, backend) {
+			return d, true
+		}
+	}
+	return a.devs[0], true
+}
+
+// leaveOnPurpose deregisters when the leave marker exists (CR-9): a node
+// that was taken out on purpose shows as left, not as lost. One attempt,
+// bounded by leaveTimeout; a failure only delays the same outcome (the node
+// is lost after the heartbeat silence).
+func (a *Agent) leaveOnPurpose() {
+	if a.opt.LeaveMarker == "" {
+		return
+	}
+	if _, err := os.Stat(a.opt.LeaveMarker); err != nil {
+		return
+	}
+	a.mu.Lock()
+	id, ok := a.ident.ID, a.identOK
+	a.mu.Unlock()
+	if !ok || id == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), leaveTimeout)
+	defer cancel()
+	resp, err := a.post(ctx, fmt.Sprintf(agentproto.PathDeregisterFmt, id), struct{}{})
+	if err != nil {
+		a.log.Warn("leave marker found, but the deregister call failed; Potluck will show the node as lost", "marker", a.opt.LeaveMarker, "err", err)
+		return
+	}
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
+	resp.Body.Close()
+	a.log.Info("leave marker found: deregistered before stopping", "marker", a.opt.LeaveMarker, "status", resp.StatusCode)
+}
 
 // ID returns the node id, "" until resolved.
 func (a *Agent) ID() string { a.mu.Lock(); defer a.mu.Unlock(); return a.ident.ID }
@@ -423,6 +483,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	defer wg.Wait()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	defer a.leaveOnPurpose() // first of all, while the process still has its 3 s
 	a.mu.Lock()
 	a.runCtx = ctx
 	a.mu.Unlock()
@@ -554,7 +615,7 @@ func (a *Agent) RegisterRequest() agentproto.RegisterRequest {
 		AgentStartID: a.startID, OS: runtime.GOOS, Arch: runtime.GOARCH, Install: a.opt.Install,
 		Addr: id.Addr, Backends: a.deps.Hardware.Backends(gpus), RAMOnly: a.opt.RAMOnly,
 		ModelSource: a.opt.ModelSource.Wire(), Programs: a.Programs.Held(), LaunchID: a.Launch.CurrentID(),
-		ForeignProcesses: a.foreignProcesses()}
+		ForeignProcesses: a.foreignProcesses(), WatchdogFloorMiB: a.Launch.WatchdogFloorMiB()}
 	for _, g := range gpus {
 		req.GPUs = append(req.GPUs, g.GPU)
 	}
@@ -846,6 +907,10 @@ func (a *Agent) Heartbeat() agentproto.Heartbeat {
 		devs[i].ReadAgeS = float64((now - devsAt).Milliseconds()) / 1000
 	}
 	hb.Role, hb.LaunchID = a.Launch.Role(), a.Launch.CurrentID()
+	hb.WatchdogFloorMiB = a.Launch.WatchdogFloorMiB()
+	if ls := a.Launch.State(); ls.State == agentproto.StateStopping {
+		hb.StopReason, hb.StopMessage = ls.StopReason, ls.StopMessage
+	}
 	hb.ProgramsReady, hb.ProgramsError = a.ProgramsReady(), a.programsError()
 	hb.ModelSource, hb.Devices = a.Source.State(), devs
 	if mi, err := a.deps.Mem.MemInfo(); err == nil {

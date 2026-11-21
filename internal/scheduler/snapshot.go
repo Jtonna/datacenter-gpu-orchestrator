@@ -334,6 +334,10 @@ func (c *schedCore) dryPlan(profile string) PlanReport {
 // applyForcedFit adds the forced_fit_check outcome to a plan that would
 // start: a refusal in reject mode, a warning in warn mode.
 func (c *schedCore) applyForcedFit(r *PlanReport, p *core.Profile, pl core.Placement) {
+	if e := c.agentForcedFit(p, pl); e != nil {
+		r.Action, r.Reason = PlanReject, e.Message
+		return
+	}
 	ff := c.forcedFitCheck(p, pl)
 	if ff == nil {
 		return

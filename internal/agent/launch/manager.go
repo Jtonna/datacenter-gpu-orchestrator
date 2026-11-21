@@ -91,8 +91,11 @@ type Deps struct {
 	// HostHealthy asks llama-server's /health.
 	HostHealthy func(ctx context.Context, addr string) bool
 	Gate        Gate
-	Programs    Programs
-	Logger      *slog.Logger
+	// Device is the device a worker of this node serves, as the heartbeat
+	// reports it; false when none is known. Nil makes no would_not_fit check.
+	Device   func() (agentproto.Device, bool)
+	Programs Programs
+	Logger   *slog.Logger
 	// OnExit is called (in its own goroutine) after a launch reached exited.
 	OnExit func(st agentproto.LaunchState)
 	// OnError records the agent's last_error (6.9).
@@ -325,6 +328,9 @@ func (m *Manager) PID() int {
 	return m.cur.proc.PID()
 }
 
+// WatchdogFloorMiB is the floor the watchdog uses, as reported to Potluck.
+func (m *Manager) WatchdogFloorMiB() int64 { return m.cfg.WatchdogFloorMiB }
+
 func (m *Manager) memAvailable() (int64, error) {
 	mi, err := m.deps.Mem.MemInfo()
 	if err != nil {
@@ -421,6 +427,24 @@ func (m *Manager) Start(ctx context.Context, req agentproto.LaunchRequest) (agen
 	}
 	if avail < req.MinMemAvailableMiB {
 		return agentproto.LaunchState{}, refuse(agentproto.ReasonLowMemory, "MemAvailable %d MiB is below the required %d MiB", avail, req.MinMemAvailableMiB)
+	}
+	// 6b. expected memory (CR-9). A worker takes the model's whole device
+	// memory within a second, faster than the watchdog can act, so a launch
+	// that would leave less than the watchdog floor is not started at all.
+	if req.Role == agentproto.RoleWorker && req.Worker.ExpectMiB > 0 && m.deps.Device != nil {
+		if d, ok := m.deps.Device(); ok {
+			expect := req.Worker.ExpectMiB
+			if d.SharesSystemMemory {
+				if avail-expect < m.cfg.WatchdogFloorMiB {
+					return agentproto.LaunchState{}, refuse(agentproto.ReasonWouldNotFit,
+						"MemAvailable %d MiB minus the expected %d MiB leaves less than the watchdog floor of %d MiB",
+						avail, expect, m.cfg.WatchdogFloorMiB)
+				}
+			} else if d.FreeMiB-expect < 0 {
+				return agentproto.LaunchState{}, refuse(agentproto.ReasonWouldNotFit,
+					"device %s has %d MiB free, less than the expected %d MiB", d.Name, d.FreeMiB, expect)
+			}
+		}
 	}
 	// 7. workers (host)
 	if req.Role == agentproto.RoleHost && len(req.Host.Workers) > 0 {
@@ -666,6 +690,9 @@ func (m *Manager) stateLocked(r *launchRun) agentproto.LaunchState {
 	if r.load != nil {
 		l := *r.load
 		st.Load = &l
+	}
+	if r.state == agentproto.StateStopping {
+		st.StopReason, st.StopMessage = r.rec.Cause, r.rec.CauseMsg // CR-9: the cause before the exit
 	}
 	if r.exit != nil {
 		e := *r.exit

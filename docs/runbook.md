@@ -3,6 +3,13 @@
 Owner: Jacob. Spec: `docs/design.md` (section numbers below refer to it).
 Everything runs **on the host machine** as `admin`. Nothing here deploys itself.
 
+Membership: the scheduler gets its machines either from the fleet feed
+(`membership: fleet`, the default, which most sections below were written
+for) or from `potluck-agent` on each machine (`membership: agents`, in use as
+release 0.1.0 since 2026-11-21). For agents mode see section I, "Agent
+membership", and `docs/agent-contract.md`; the steps below that read the fleet
+console (`:8090/api/fleet`) do not apply to it.
+
 Where things live on the box (same convention as llama-swap):
 
 | What | Path |
@@ -418,7 +425,11 @@ curl -s -X POST http://127.0.0.1:3122/api/config/profiles -H "X-Actor: alex" -d 
 
 ### Add a PS5 (no config change)
 
-Nodes come from the fleet manager (design 4). Verify only:
+In agents mode a machine joins by running the agent ("Agent membership"
+below; `docs/agent-contract.md` sections 5.4 and 9), not through the fleet
+manager; check it in `agents` of `/api/status` instead of the steps here.
+
+With fleet membership, nodes come from the fleet manager (design 4). Verify only:
 
 1. The PS5 appears online in the fleet console: `curl -s http://127.0.0.1:8090/api/fleet` shows its `ip` and `rpc_port` (not null).
 2. Its hostname matches `console-*` (the tier match). Otherwise it is **never used**.

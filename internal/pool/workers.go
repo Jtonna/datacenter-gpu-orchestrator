@@ -185,7 +185,8 @@ func (p *Pool) Launch(ctx context.Context, spec scheduler.WorkerLaunchSpec, repo
 			defer wg.Done()
 			req := agentproto.LaunchRequest{LaunchID: l.id, Role: agentproto.RoleWorker, Release: p.o.PotluckRelease,
 				Label: spec.Label, LeaseTTLS: LeaseTTL.Seconds(), MinMemAvailableMiB: spec.Workers[i].MinMemAvailableMiB,
-				Worker: &agentproto.WorkerSpec{ModelDir: cfg.Defaults.WorkerModelDir, ExtraArgs: []string{}}}
+				Worker: &agentproto.WorkerSpec{ModelDir: cfg.Defaults.WorkerModelDir, ExtraArgs: []string{},
+					ExpectMiB: spec.Workers[i].ExpectMiB}}
 			st, ref, err := p.postLaunch(ctx, l.base, req)
 			if err == nil && ref == nil {
 				l.mu.Lock()
@@ -461,7 +462,8 @@ var _ scheduler.WorkerExitReader = (*Pool)(nil)
 // The scheduler calls it when the load's host program ended without being
 // stopped: the host aborts within milliseconds of losing a worker, so the
 // worker's own exit is often not read yet, and the agent may still report
-// the launch as stopping. Every member is read in parallel, again every
+// the launch as stopping; a stopping launch whose stop_reason is watchdog,
+// oom_kill or lease_expired is taken as that cause at once (CR-9). Every member is read in parallel, again every
 // 100 ms, until one has exited by itself or ExitReadWait has passed.
 func (p *Pool) Exits(ctx context.Context, iid uint64) []scheduler.WorkerReport {
 	p.mu.Lock()
@@ -495,8 +497,8 @@ func (p *Pool) Exits(ctx context.Context, iid uint64) []scheduler.WorkerReport {
 	return rs
 }
 
-// ownExit reads the launch until it has exited or ctx ends. It returns the
-// exit when the launch ended by itself, nil when it was stopped on request,
+// ownExit reads the launch until it has exited, is stopping for a cause of
+// its own, or ctx ends. It returns the exit when the launch ended by itself, nil when it was stopped on request,
 // is another launch, or did not exit in time.
 func (p *Pool) ownExit(ctx context.Context, l *launch) *agentproto.ExitInfo {
 	for {
@@ -518,6 +520,13 @@ func (p *Pool) ownExit(ctx context.Context, l *launch) *agentproto.ExitInfo {
 					return nil
 				}
 				return st.Exit
+			case st.State == agentproto.StateStopping:
+				// CR-9: the agent has decided to stop the launch for a cause of
+				// its own and says so before the process has gone.
+				switch st.StopReason {
+				case agentproto.ExitWatchdog, agentproto.ExitOOMKill, agentproto.ExitLeaseExpired:
+					return &agentproto.ExitInfo{Reason: st.StopReason, Message: st.StopMessage, LogTail: []string{}}
+				}
 			}
 		}
 		select {
