@@ -1,6 +1,7 @@
 # CR-10: central logging through Potluck (proposal, revision 3)
 
-Status: **proposed, design only**. Nothing here is built or deployed.
+Status: **accepted** (approved by Jacob and by the project manager). To be
+built as part of phase 5. Nothing here is built or deployed yet.
 
 ## Decisions so far
 
@@ -10,6 +11,9 @@ Status: **proposed, design only**. Nothing here is built or deployed.
 | Machine's system log | Shipped in full. A deny list stays as a tool, empty by default |
 | Who tells a machine where to push | Potluck, at registration, and it can change later without touching the machine |
 | What stands in front of the store | **Potluck itself** is the proxy. No separate gate (no vmauth) |
+| Retention | 14 days, 20 GiB |
+| Laptops in Docker | No system log from the host by default |
+| Client intake | **On by default**, with the limits of section 6; a setting switches it off |
 
 The principle: a machine knows only Potluck's address. Role, programs and
 now the logging endpoint are handed out by Potluck.
@@ -59,7 +63,7 @@ reachable from the network.
 | `logs_retention_days` | 14 | Passed to the store |
 | `logs_max_disk_gib` | 20 | Passed to the store |
 | `logs_push_url` | empty | Empty: Potluck's own route (section 3). Set: senders are told this address instead |
-| `logs_client_intake` | off | Section 6 |
+| `logs_client_intake` | on | Section 6 |
 
 - If the store is missing or down, Potluck schedules exactly as before.
 
@@ -126,7 +130,7 @@ No queue in Potluck. The agent's ring (section 5) is the only buffer.
 | Limit | Value | When exceeded |
 |---|---|---|
 | Request body | 1 MiB (counted while streaming) | 413 |
-| One line | 8 KiB | the line is cut by the store's own limit |
+| One line | 8 KiB | the agent cuts its lines to this itself. The store skips (does not cut) a line above its own limit of 256 KiB and logs a warning |
 | Per node | 256 KiB/s, burst 2 MiB | 429 with `Retry-After` |
 | Per node, at the same time | 1 request | 429 |
 | All log requests at the same time | 8 | 429 at once, no waiting |
@@ -188,16 +192,18 @@ The files it writes today stay.
 
 ## 6. Clients
 
-- `POST /api/logs`, the same pass-through with its own limits. Off by
-  default (`logs_client_intake`); the route answers 404 while off.
+- `POST /api/logs`, the same pass-through with its own limits. **On by
+  default**; `logs_client_intake: false` switches it off (the route then
+  answers 404).
 - Potluck sets `source: client` and the caller's address itself; `actor`
   comes from the `X-Actor` header. A client cannot set `node_id` or
   another `source`.
 - Limits: 64 KiB/s per client address, 1 MiB/s for all clients together,
   inside the same cap of 8 requests.
-- Off by default because the API has no authentication: an open intake is
-  an open way to fill the disk. The retention settings bound the damage
-  when it is on.
+- The API has no authentication, so this intake is open to every machine
+  that can reach Potluck. What bounds it: the limits above, and retention
+  by time and disk size (the oldest logs of everybody go first when the
+  disk cap is reached).
 
 ## 7. How a reader gets to it
 
@@ -220,17 +226,21 @@ The files it writes today stay.
 `source` is one of `scheduler`, `host`, `agent`, `launch`, `journal`,
 `client`.
 
-## 9. To confirm in a trial before building
+## 9. Trial results
 
-One hour, throwaway container on the Potluck host:
+Run once on the Potluck host with a throwaway container
+(`victoriametrics/victoria-logs:v1.54.0`), removed afterwards.
 
-1. The store's intake accepts fixed fields for a whole request from the
-   proxy, and they win over fields of the same name inside a line. (If
-   not: the fallback of 4.2.)
-2. The store's line-size limit and how it treats a longer line.
-3. Memory in use with a day of our lines.
-4. The search page works behind the `/logs/` path prefix.
-5. The version to pin.
+| Question | Result |
+|---|---|
+| Fixed fields for a whole request, set by the proxy | Works, as a query argument (`extra_fields=`) and as a request header (`VL-Extra-Fields`). **They win over fields of the same name inside a line**: a line that carried another `node_id` and `source` was stored with the proxy's values. The streaming design of 4.2 holds; the fallback is not needed |
+| Stream fields per request | Works the same way (`_stream_fields=` or `VL-Stream-Fields`) |
+| Line-size limit | Flag `-insert.maxLineSizeBytes`, default 256 KiB. A longer line is skipped with a warning, not cut; the lines after it are stored |
+| Search page behind a path prefix | Works with `-http.pathPrefix=/logs` (page at `/logs/select/vmui/`) |
+| Memory | 4 MiB at rest. A push of 400 000 real journal lines (32 MB of message text) in 1.5 s ran without a failed request inside a 512 MiB memory limit; without a limit it took about 1 GiB and kept it. The compose entry sets a limit of 512 MiB |
+| Disk | 5 MB on disk for those 400 000 lines: about 0.15 MB per MB of journal text |
+| Search speed | A word search over the 400 000 lines answered in 0.01 s |
+| Version to pin | v1.54.0 (image 14 MB) |
 
 ## 10. Compatibility with release 0.1.0
 
@@ -255,7 +265,7 @@ log and is lost on a restart.
 
 | Part | Size |
 |---|---|
-| Trial (section 9) | 1 hour |
+| Trial (section 9) | done |
 | Potluck: settings, `logs` object, pass-through with limits and counters, snapshot from the pool, compose entry, own lines, the flood test | 1 builder batch |
 | Potluck: `/logs/` proxy, UI entry and links, query pass-through | half a batch |
 | Agent: ring, non-blocking sender, own lines, launch output, journal reader, flags, heartbeat figures | 1 to 2 batches |
@@ -264,15 +274,13 @@ log and is lost on a restart.
 Total 3 to 4 batches. A batch is the size of one of the phase-4 batches. No
 firewall change and no third container.
 
-## 12. Open questions for Jacob
+## 12. Open questions
 
-1. Retention: 14 days and 20 GiB as defaults?
-2. Laptops in Docker: accept "no system log from the host" by default?
-3. Client intake: off by default?
+None. All questions of the earlier revisions are decided (table at the top).
 
 ## Sources
 
 - VictoriaLogs security and authentication:
   https://docs.victoriametrics.com/victorialogs/security-and-lb/
-- VictoriaLogs data ingestion (JSON lines):
+- VictoriaLogs data ingestion (JSON lines, extra fields):
   https://docs.victoriametrics.com/victorialogs/data-ingestion/
