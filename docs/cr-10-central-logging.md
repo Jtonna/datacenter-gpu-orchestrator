@@ -1,152 +1,177 @@
-# CR-10: central logging through Potluck (proposal, revision 2)
+# CR-10: central logging through Potluck (proposal, revision 3)
 
 Status: **proposed, design only**. Nothing here is built or deployed.
 
-Revision 2 follows two decisions and one change of direction:
+## Decisions so far
 
-- Decided: the store is **VictoriaLogs**.
-- Decided: a machine's system log is shipped **in full**. A deny list stays
-  as a tool, empty by default.
-- Changed: senders push **straight to the store**. Potluck no longer carries
-  the lines. Potluck tells every sender where to push and with which
-  credential, so the store can move without touching a machine.
+| Question | Decision |
+|---|---|
+| Which store | VictoriaLogs |
+| Machine's system log | Shipped in full. A deny list stays as a tool, empty by default |
+| Who tells a machine where to push | Potluck, at registration, and it can change later without touching the machine |
+| What stands in front of the store | **Potluck itself** is the proxy. No separate gate (no vmauth) |
+
+The principle: a machine knows only Potluck's address. Role, programs and
+now the logging endpoint are handed out by Potluck.
+
+History: revision 1 put a queue inside Potluck; revision 2 let senders push
+straight to the store behind a separate gate. Revision 3 keeps the dynamic
+hand-out of revision 2 and puts a thin pass-through in Potluck instead of
+the gate.
 
 ## Goal
 
-One place to read every log of the cluster. Everybody still needs to know
-one address only: Potluck. Potluck answers "where do logs go".
-
 - Potluck starts and owns the log store on its host.
-- Agents and clients ask Potluck for the push address and credential, then
-  push to the store themselves.
 - Everything lands there: Potluck's own log, the output of the programs it
   starts, each agent's log, the output of each launch, each machine's
   system log.
 - Nothing is written to a console's USB stick. The journal in RAM stays as
   the local buffer.
 
-## 1. Which store (decided: VictoriaLogs)
+## 1. The store
 
-| Criterion | VictoriaLogs | Grafana Loki | OpenObserve | Splunk |
-|---|---|---|---|---|
-| Containers | 1 (2 with its auth proxy, section 3.2) | 2 (needs Grafana for a UI) | 1 | 1, large |
-| Search UI built in | yes | no | yes | yes |
-| Retention | flags for time and disk size | configuration file | setting | setting |
-| Runs offline | yes | yes | yes | yes, with licence limits |
-| Licence | Apache 2.0 | AGPL | AGPL | proprietary |
+VictoriaLogs: one container with its own search page, indexes every field,
+flags for retention by time and by disk size, runs offline, Apache 2.0.
 
-- It indexes every field of a line; Loki indexes labels only and limits how
-  many we may use.
-- Not Splunk: proprietary, the free licence caps the daily volume, and it is
-  several times the size of Potluck.
+Considered and not chosen: Grafana Loki (needs Grafana as a second
+container for any UI; limits the number of labels), OpenObserve (always
+requires its own accounts; heavier), Splunk (proprietary; the free licence
+caps the daily volume; several times the size of Potluck).
+
+Checked in its documentation: VictoriaLogs has no API keys and no
+per-sender rules of its own, only one optional Basic-Auth user for the whole
+server. With Potluck in front, that does not matter: the store is never
+reachable from the network.
 
 ## 2. How Potluck runs the store
 
-- Containers in Potluck's compose file, like the share container:
-  `potluck-logs` (the store) and `potluck-logs-gate` (its auth proxy, see
-  3.2).
-- Only the gate's port is published on the cluster network. The store's own
-  port is not published.
+- Two containers in all: Potluck and `potluck-logs` (the store), in one
+  compose file, like the share container today.
+- **The store's port is not published.** Only Potluck reaches it, over the
+  compose network. No new firewall rule: every machine already reaches
+  Potluck's port.
 - Data in a folder on the Potluck host, set in the compose file.
-- Settings (ordinary Potluck settings): `logs_enabled` (default on),
-  `logs_retention_days` (default 14), `logs_max_disk_gib` (default 20),
-  `logs_push_url` (default: this host, the gate's port),
-  `logs_client_intake` (default off).
-- If the store is missing or down, Potluck works exactly as before. Logging
-  is never a condition for scheduling.
+- Settings (ordinary Potluck settings):
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `logs_enabled` | on | Off: no `logs` object is handed out, the routes answer 404 |
+| `logs_retention_days` | 14 | Passed to the store |
+| `logs_max_disk_gib` | 20 | Passed to the store |
+| `logs_push_url` | empty | Empty: Potluck's own route (section 3). Set: senders are told this address instead |
+| `logs_client_intake` | off | Section 6 |
+
+- If the store is missing or down, Potluck schedules exactly as before.
 
 ## 3. Where to push: the `logs` object
-
-### 3.1 What Potluck hands out
 
 The registration answer carries a `logs` object:
 
 ```json
 {
   "revision": 7,
-  "url": "http://192.0.2.1:9428/insert/jsonline",
+  "url": "/api/pool/nodes/02:00:00:00:00:01/logs",
   "format": "jsonline",
-  "auth": {"type": "basic", "username": "agents", "password": "..."},
-  "stream_fields": ["source", "node_id", "unit"],
-  "labels": {"node_id": "02:00:00:00:00:01", "node_name": "node-a", "platform": "linux-amd64-vulkan", "release": "0.2.0"},
+  "auth": null,
   "limits": {"max_batch_bytes": 1048576, "max_line_bytes": 8192, "max_bytes_per_s": 262144, "every_s": 2},
   "deny_units": []
 }
 ```
 
-- `format` is the store's own JSON-lines intake. A line is one JSON object;
-  the sender sets the fields in `labels` on every line, unchanged.
-- `limits` are limits the sender keeps itself (see section 5 for what that
-  means).
+- `url` without a host means "the Potluck you registered with". If
+  `logs_push_url` is set, `url` is a full address and `auth` may carry a
+  credential. That is how the store can move, or a real gate can be added
+  later, by changing one setting.
+- `format` is the store's own JSON-lines intake: one JSON object per line.
 - The heartbeat answer carries `logs_revision`. When it differs from the
   agent's, the agent reads the new object from
-  `GET /api/pool/nodes/{id}/logs`. A changed setting in Potluck therefore
-  reaches every agent within one heartbeat (2 s), without a restart.
+  `GET /api/pool/nodes/{id}/logs`. A changed setting reaches every agent
+  within one heartbeat (2 s), without a restart.
 - `logs` absent or `null`: the sender ships nothing.
+- No credential is handed to any machine in the default setup.
 
-Clients do not register. They read the same kind of object from
-`GET /api/logs/config`. It answers 404 while `logs_client_intake` is off.
-The object carries the clients' credential and `labels: {"source":
-"client"}`.
+## 4. Potluck's pass-through
 
-### 3.2 Authentication: what the store offers (checked in its documentation)
+### 4.1 Route for agents
 
-- VictoriaLogs itself has **no API keys** and no per-sender rules. Its HTTP
-  server has one optional Basic-Auth user (`-httpAuth.username`,
-  `-httpAuth.password`) for the whole server: writing, reading and the
-  search page alike.
-- Per-sender credentials and rules come from **vmauth**, a separate small
-  proxy by the same makers. Per user it can limit which paths are allowed
-  (for example `/insert/` only) and set fixed request headers, including the
-  tenant (`AccountID`, `ProjectID`).
+`POST /api/pool/nodes/{id}/logs?source=<agent|launch|journal>[&launch_id=…]`
 
-Recommendation: run vmauth as the gate from the start (one more small
-container). Reason: with the store's own Basic Auth, the one credential that
-lets a console write would also let it read and delete everything, and the
-whole server would be open on the network. With the gate:
+- Identification like the heartbeat: node id in the path, `agent_start_id`
+  in a header. Unknown node or stale start id: 410.
+- Body: JSON lines, optionally gzip. One request carries lines of **one
+  source**, and for `launch` of one launch. The agent groups its batches
+  that way.
+- Per line the sender sets only what belongs to the line: time, message,
+  `level`, `unit`, `stream`.
 
-| Credential | May do | Tenant |
+### 4.2 What Potluck does with a request
+
+1. Checks the sender and the limits (4.3).
+2. Adds the **trusted fields** for the whole request: `node_id`,
+   `node_name`, `platform`, `release`, `source`, and for a launch
+   `launch_id` and `profile` (looked up from the launch id). They are passed
+   to the store as fixed fields of the request, so the **body is streamed
+   through untouched**: not decoded, not re-encoded, not held in memory.
+3. Forwards to the store and returns the store's answer.
+
+A sender cannot write under another node's name: the fields that say who
+sent a line come from Potluck. (Fallback if the trial shows the store does
+not let fixed fields win over fields inside a line: Potluck rewrites each
+line. More CPU, same behaviour. See section 9.)
+
+No queue in Potluck. The agent's ring (section 5) is the only buffer.
+
+### 4.3 Limits
+
+| Limit | Value | When exceeded |
 |---|---|---|
-| `agents` | `/insert/` only | 0 |
-| `clients` (only if client intake is on) | `/insert/` only | 1 |
-| none | nothing | |
+| Request body | 1 MiB (counted while streaming) | 413 |
+| One line | 8 KiB | the line is cut by the store's own limit |
+| Per node | 256 KiB/s, burst 2 MiB | 429 with `Retry-After` |
+| Per node, at the same time | 1 request | 429 |
+| All log requests at the same time | 8 | 429 at once, no waiting |
+| Store does not answer | 5 s for the whole forward | 503 |
 
-- Reading stays closed on the network. Readers go through Potluck
-  (section 6).
-- Client lines land in their own tenant, so a client cannot write into the
-  cluster's own logs at all.
-- Potluck generates the gate's configuration file and the passwords, and
-  can rotate them: new password in the file, new `revision`, agents pick it
-  up at the next heartbeat.
+Answers: 204 accepted, 413, 429, 503, 410. Every refusal is counted per
+node and shown in `/api/status` and on the Nodes page, so a noisy node is
+visible.
 
-One shared credential per class is enough for a start. A credential per
-node is possible later (Potluck writes one gate user per node) and would
-buy back the trusted node label; see section 5.
+### 4.4 Keeping it off the scheduler's paths
 
-Stated plainly: Potluck's API has no authentication, so any machine that can
-reach Potluck can read the push credential. The credential keeps strangers'
-lines and accidents out and lets us move or rotate; it does not stop a
-hostile machine inside the network.
+A log flood must not be able to slow a heartbeat, a load or a request.
 
-To confirm in the trial (one hour, throwaway containers on the Potluck
-host, versions pinned there): the gate's path rule and tenant header work as
-documented; whether the gate can also force a fixed field on each request
-(needed for per-node credentials); the store's line-size limit flag; memory
-in use with a day of our lines; the search page behind a path prefix.
+- **No lock shared with the pool or the scheduler.** The log handler reads
+  a snapshot (node id to start id, name, platform; launch id to profile)
+  that the pool publishes whenever it changes. Reading it takes no lock.
+- **A hard cap** of 8 log requests in flight. The ninth is refused at once;
+  it never waits and never holds a connection open.
+- **Its own client to the store**, with its own connection pool and the 5 s
+  limit, so a slow store cannot use up anything the scheduler needs.
+- **Bounded memory:** streaming with small fixed buffers; at most 8 requests
+  times one buffer.
+- **Same port.** It stays on Potluck's one address. The cap, not a second
+  port, is what protects the API.
+- A test in the build proves it: heartbeats and a chat request stay within
+  their normal times while log senders flood the route.
 
-## 4. Agent side
+### 4.5 Potluck's own lines
 
-Kept from revision 1:
+Potluck's log and the output of the programs it starts (`llama-server`) go
+to the store with the same non-blocking sender the agent uses (section 5),
+`source: scheduler` and `source: host`, with `profile` and the instance id.
+The files it writes today stay.
 
-- **Shipping never blocks the agent.** Lines go into a ring without waiting;
-  one background sender drains it. Heartbeat, launch control and watchdog
-  never wait on a log line.
-- The ring is **in RAM only**, 8 MiB by default, oldest lines dropped first.
-  Never disk on a console.
-- When lines were dropped, the next batch starts with one line that says how
-  many.
-- Store unreachable: the sender retries with a growing pause (up to 30 s);
-  the ring absorbs what it can.
+## 5. Agent side
+
+- **Shipping never blocks the agent.** Lines go into a ring without
+  waiting; one background sender drains it. Heartbeat, launch control and
+  watchdog never wait on a log line.
+- The ring is **in RAM only**, 8 MiB by default, oldest lines dropped
+  first. Never disk on a console.
+- When lines were dropped, the next batch starts with one line that says
+  how many.
+- On 429 or 503 the sender waits (`Retry-After`, else a growing pause up to
+  30 s). The ring absorbs what it can.
 
 | What | Bare install (consoles, root) | Docker install (laptops) |
 |---|---|---|
@@ -157,43 +182,27 @@ Kept from revision 1:
 - `deny_units` from the `logs` object drops named units. Empty by default.
 - After an agent restart the journal reader starts at "now": lines written
   while the agent was down are not shipped. Accepted, and stated here.
-- The agent reports in every heartbeat: lines sent, lines dropped, last push
-  error and its age. Potluck shows them per node in `/api/status` and on the
-  Nodes page. This replaces the refusal counters of revision 1.
+- The agent reports in its heartbeat: lines sent, lines dropped, last push
+  error. Shown per node next to Potluck's refusal counters.
 - Flags: `--logs off`, `--log-buffer-mib` (default 8).
 
-Potluck ships its own lines and the output of the programs it starts
-(`llama-server`) with the same non-blocking sender, `source: scheduler` and
-`source: host`. The files it writes today stay.
+## 6. Clients
 
-## 5. What this direction loses and gains
+- `POST /api/logs`, the same pass-through with its own limits. Off by
+  default (`logs_client_intake`); the route answers 404 while off.
+- Potluck sets `source: client` and the caller's address itself; `actor`
+  comes from the `X-Actor` header. A client cannot set `node_id` or
+  another `source`.
+- Limits: 64 KiB/s per client address, 1 MiB/s for all clients together,
+  inside the same cap of 8 requests.
+- Off by default because the API has no authentication: an open intake is
+  an open way to fill the disk. The retention settings bound the damage
+  when it is on.
 
-### Lost against revision 1 (Potluck in the data path)
+## 7. How a reader gets to it
 
-| Lost | Covered by | Still open |
-|---|---|---|
-| Potluck wrote the node labels itself. Now a sender sets them, so a machine can write under another node's name | Clients are kept apart for certain (own tenant). Per-node credentials later would fix it for agents, if the trial shows the gate can force a field | With one shared `agents` credential: open. Acceptable on a network where every machine is ours |
-| Per-node byte limit enforced by Potluck | The agent keeps `limits` itself; the store's line-size limit; the gate's limit on parallel requests per user; retention by time and disk size bounds the total | A broken or hostile sender can ignore `limits`. The disk cap is then the only bound, and it works by deleting the oldest logs of everybody |
-| Store port closed to the network | Only the gate is open, and only for `/insert/` with a credential | The gate's port must be reachable by every machine, and by clients if they push: **one firewall rule on the Potluck host** (needs root, so Jacob) |
-| Refusal counters in Potluck | Heartbeat figures from each agent (section 4) | Nothing comparable for clients |
-
-### Gained
-
-- Potluck's process is out of the data path: no queue, no back-pressure
-  code, and a log flood cannot touch scheduling at all.
-- The store can move to another machine by changing one setting.
-- Standard shippers can push to the same address later (for a machine that
-  runs no agent).
-- Less to build (section 10).
-
-## 6. How a reader gets to it
-
-- Potluck serves the store's search page under `/logs/` (a reverse proxy
-  over the internal network).
-- The proxy is **still worth it**: the gate opens writing only. Without the
-  proxy we would have to open reading on the network too, with a second
-  credential for people. With it, readers keep one address and no login,
-  like the rest of Potluck.
+- Potluck serves the store's search page under `/logs/` (a reverse proxy).
+  One address, no login, like the rest of Potluck.
 - A "Logs" entry in the Potluck UI's navigation.
 - Links with the query filled in: from a node, from an instance or a failed
   load (that launch's lines on every node that took part), from a benchmark
@@ -201,76 +210,69 @@ Potluck ships its own lines and the output of the programs it starts
 - `GET /api/logs/query` passes a read-only query through, for scripts and
   for an MCP tool later.
 
-## 7. Clients
-
-- Off by default (`logs_client_intake`).
-- When on: the client reads `GET /api/logs/config` and pushes to the store
-  with the `clients` credential. Its lines land in the clients' tenant.
-- The client is asked to set `actor` (its name) on each line. Nothing
-  enforces it.
-- Limits are the ones in the object, kept by the client itself, plus the
-  disk cap. See "still open" in section 5.
-
 ## 8. Fields on every line
 
-Set by the sender from the `logs` object: `node_id`, `node_name`,
-`platform`, `release`. Set per line: `source` (`scheduler`, `host`, `agent`,
-`launch`, `journal`, `client`), `level`, `unit`, `launch_id`, `profile`,
-`stream`. The store's own fields: `_time`, `_msg`.
+| Set by | Fields |
+|---|---|
+| Potluck (trusted) | `node_id`, `node_name`, `platform`, `release`, `source`, `launch_id`, `profile`; for clients `actor`, `client_addr` |
+| Sender, per line | time, message, `level`, `unit`, `stream` |
 
-`profile` on launch output: Potluck sends the profile name with the launch
-request, so the agent can set it. (In revision 1 Potluck looked it up
-itself.)
+`source` is one of `scheduler`, `host`, `agent`, `launch`, `journal`,
+`client`.
 
-## 9. Compatibility with release 0.1.0
+## 9. To confirm in a trial before building
+
+One hour, throwaway container on the Potluck host:
+
+1. The store's intake accepts fixed fields for a whole request from the
+   proxy, and they win over fields of the same name inside a line. (If
+   not: the fallback of 4.2.)
+2. The store's line-size limit and how it treats a longer line.
+3. Memory in use with a day of our lines.
+4. The search page works behind the `/logs/` path prefix.
+5. The version to pin.
+
+## 10. Compatibility with release 0.1.0
 
 Additive only.
 
 - The registration answer gains `logs`; the heartbeat answer gains
-  `logs_revision`; the heartbeat gains the shipping figures; the launch
-  request gains `profile`. A 0.1.0 agent ignores the unknown fields, ships
-  nothing and keeps working unchanged.
+  `logs_revision`; the heartbeat gains the shipping figures. A 0.1.0 agent
+  ignores the unknown fields, ships nothing and keeps working unchanged.
 - A new agent that gets no `logs` object (older Potluck) ships nothing.
-- New routes only: `GET /api/pool/nodes/{id}/logs`, `GET /api/logs/config`,
-  `GET /api/logs/query`, `/logs/`. No existing route changes.
+- New routes only. No existing route changes. The launch request does not
+  change (Potluck looks the profile up itself).
 - Shipping needs a new agent binary, so it arrives with the next agent
   release, rolled out by the usual canary.
 
-## 10. Which phase, and size of the work
+## 11. Which phase, and size of the work
 
 Phase 5 (Potluck stands alone): Potluck's containers come under one compose
 file there, and the main source of journal noise on the consoles (a login
-every 5 s by the old dashboard backend) ends there. Until CR-10 is live, the
-journal in RAM on each console (48 MB) is the only copy of its system log
-and is lost on a restart.
+every 5 s by the old dashboard backend) ends there. Until CR-10 is live,
+the journal in RAM on each console (48 MB) is the only copy of its system
+log and is lost on a restart.
 
 | Part | Size |
 |---|---|
-| Trial of the store and the gate on the Potluck host | 1 hour |
-| Potluck: settings, `logs` object and routes, gate configuration and passwords, compose entries, own lines, heartbeat figures in status | 1 builder batch |
+| Trial (section 9) | 1 hour |
+| Potluck: settings, `logs` object, pass-through with limits and counters, snapshot from the pool, compose entry, own lines, the flood test | 1 builder batch |
 | Potluck: `/logs/` proxy, UI entry and links, query pass-through | half a batch |
 | Agent: ring, non-blocking sender, own lines, launch output, journal reader, flags, heartbeat figures | 1 to 2 batches |
 | Contract and runbook text, end-to-end test, canary on one console | half a batch |
 
-Total 3 to 4 batches (revision 1: 4 to 5). A batch is the size of one of the
-phase-4 batches. Outside the batches: one firewall rule on the Potluck host
-for the gate's port.
+Total 3 to 4 batches. A batch is the size of one of the phase-4 batches. No
+firewall change and no third container.
 
-## 11. Open questions for Jacob
+## 12. Open questions for Jacob
 
-1. The gate (vmauth, a third container) from the start, as recommended, or
-   the store's single Basic-Auth user for a start (then reading is open to
-   every machine that can write)?
-2. One shared credential for all agents for a start (a machine could write
-   under another node's name), or a credential per node from the start?
-3. Retention: 14 days and 20 GiB as defaults?
-4. Laptops in Docker: accept "no system log from the host" by default?
-5. Client intake off by default?
+1. Retention: 14 days and 20 GiB as defaults?
+2. Laptops in Docker: accept "no system log from the host" by default?
+3. Client intake: off by default?
 
 ## Sources
 
 - VictoriaLogs security and authentication:
   https://docs.victoriametrics.com/victorialogs/security-and-lb/
-- vmauth: https://docs.victoriametrics.com/victoriametrics/vmauth/
-- VictoriaLogs data ingestion (JSON lines, stream fields):
+- VictoriaLogs data ingestion (JSON lines):
   https://docs.victoriametrics.com/victorialogs/data-ingestion/
