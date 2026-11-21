@@ -488,7 +488,7 @@ Accepted by both sides on 2026-11-20. They are part of the contract.
 
 ### 6.11 Details fixed after the agent code review
 
-Proposed by the agent side; the scheduler side has not accepted them yet.
+Found by the code review before the first run on a real machine. Accepted by both sides on 2026-11-21.
 
 - **Agent start order**: a launch left by an earlier agent process is re-adopted first. Its lease and its memory watchdog run before the agent has an identity, a free port, a registration or a reachable Potluck. Exporter units of the earlier agent process (`potluck-node-exporter`, `potluck-nvidia-exporter`) are stopped before the port check of section 3. When such a unit cannot be stopped and still holds its port, the agent goes on and registers all the same: it never stays out of the pool over its own leftovers. It reads that exporter until it can replace it. A port held by anything else still blocks registration.
 - **`503 agent_starting`**: until the re-adoption is done, every call on port 50060 except `POST /reset` answers `503` with reason `agent_starting` and `Retry-After: 1`. The agent never answers `GET /launch` with `none` for a launch it has not looked for yet, and it does not register before the re-adoption. Potluck treats this answer as "state not known yet", not as a lost launch.
