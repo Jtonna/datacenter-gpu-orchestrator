@@ -413,6 +413,7 @@ export function suiteEditor(o) {
     });
     const listCard = section('Benchmarks', 'They run in this order',
       h('div.cb', h('div.col', { style: 'gap:8px' },
+        su.status ? h('p.mut', `This suite is ${su.status}: ${su.reason || ''} It is kept as it is when saved and cannot be run. It may list no benchmark yet.`) : null,
         rows.length ? rows : h('p.mut', 'No benchmark yet. Add one below.'),
         errs.top.benchmarks ? h('p.err-t', errs.top.benchmarks) : null,
         all.length ? h('div.row', { style: 'gap:8px' }, addSel, smallBtn('+ Add', () => { if (addSel.value) { su.benchmarks.push(addSel.value); draw(); } })) : h('p.mut', 'There is no benchmark to add. ', h('a', { href: '#/benchmarks/edit/benchmark/new' }, 'Create one first.')))));
@@ -466,7 +467,7 @@ export function suiteEditor(o) {
     errs = parseErrors('');
     const local = {};
     if (!su.id) local.id = 'Give it an id. It is filled in from the name; you can change it.';
-    if (!su.benchmarks.length) local.benchmarks = 'Add at least one benchmark.';
+    if (!su.benchmarks.length && !su.status) local.benchmarks = 'Add at least one benchmark.';
     if (Object.keys(local).length) { errs.top = local; draw(); toast('Fix the marked fields first.', 'err'); return; }
     saving = true;
     try {

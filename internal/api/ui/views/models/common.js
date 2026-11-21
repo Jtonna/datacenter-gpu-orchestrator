@@ -11,6 +11,7 @@ import { badge, nodeChips, stat, bar, memoryRow, progress, steps, banner, more }
 import { num, gb, gbNum, mib, bytes, tps, dur, ago, until, plural, clock, toMs, now, DASH } from '../../core/format.js';
 import { avatar } from '../../core/avatar.js';
 import { logsLink, profileQuery, padded } from '../../core/logs.js';
+import { reloadLine } from '../../core/stepfacts.js';
 import { nodeName, nodeByAddr, instanceNodeNames, nodeMemory, instanceBadge, healthBadge, machineBadge, findNode, drift, machines, shortReason, plainReason } from '../../core/status.js';
 
 // ---- phrases about a catalog model ----
@@ -227,11 +228,13 @@ export function planCell(p, st) {
   const plan = p.plan || {};
   const raw = plan.reason ? 'The scheduler says: ' + plan.reason : null;
   const nodes = plan.nodes && plan.nodes.length ? nodeChips(plan.nodes) : null;
+  // Whether a reload of the model can come from the nodes' file cache.
+  const reload = reloadLine(plan.reload_from_cache, r => r.node || nodeName(st, r.id));
   switch (plan.action) {
-    case 'start': return h('span', h('span.ok-t', { style: 'font-weight:700' }, 'Yes'), nodes ? [h('span.mut', ' · on '), nodes] : null, plan.warning ? h('span.sub.warn-t', plan.warning) : null);
-    case 'serve': return h('span.ok-t', { style: 'font-weight:700' }, 'Loaded now');
+    case 'start': return h('span', h('span.ok-t', { style: 'font-weight:700' }, 'Yes'), nodes ? [h('span.mut', ' · on '), nodes] : null, plan.warning ? h('span.sub.warn-t', plan.warning) : null, reload);
+    case 'serve': return h('span', h('span.ok-t', { style: 'font-weight:700' }, 'Loaded now'), reload);
     case 'wait': return h('span.warn-t', { style: 'font-weight:700' }, 'Loading now');
-    case 'evict': return h('span', h('span', { style: 'font-weight:700' }, 'Yes, after making room'), nodes ? [h('span.mut', ' · on '), nodes] : null);
+    case 'evict': return h('span', h('span', { style: 'font-weight:700' }, 'Yes, after making room'), nodes ? [h('span.mut', ' · on '), nodes] : null, reload);
     case 'queue': return h('span', { title: raw }, h('span', { style: 'font-weight:700' }, 'Would wait'), h('span.sub', plainReason(plan.reason)));
     case 'backoff': return h('span', { title: raw }, h('span.err-t', { style: 'font-weight:700' }, 'Held back'), h('span.sub', 'Its last load failed'));
     case 'reject': return h('span', { title: raw }, h('span', { style: 'font-weight:700' }, 'No'), h('span.sub', plainReason(plan.reason)));

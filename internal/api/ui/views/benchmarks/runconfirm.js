@@ -6,7 +6,7 @@ import * as api from '../../core/api.js';
 import { state } from '../../core/store.js';
 import { confirm, toast, nodeChips } from '../../core/ui.js';
 import { plural, dur, DASH } from '../../core/format.js';
-import { benchmarkById, suiteTitle, cache } from './common.js';
+import { benchmarkById, suiteTitle, suiteNotRunnable, cache } from './common.js';
 
 // The benchmarks of a suite, in order, with parallel members expanded.
 export function suiteBenchmarks(suite) {
@@ -29,6 +29,8 @@ export function profilesOf(list) {
 }
 
 export async function runSuite(suite) {
+  const why = suiteNotRunnable(suite);
+  if (why) { toast(why, 'err'); return null; }
   const st = state.status || {};
   const list = suiteBenchmarks(suite);
   const profiles = profilesOf(list);
@@ -75,7 +77,7 @@ export async function runSuite(suite) {
     toast(run && run.state === 'queued' ? 'The run is queued and starts shortly.' : 'The run was started.', 'ok');
     return run;
   } catch (e) {
-    toast(e.status === 429 ? 'Too many runs are queued. Wait for one to finish or cancel one. ' + e.message : 'The run did not start: ' + e.message, 'err');
+    toast(e.status === 409 ? 'The suite cannot be run: ' + e.message : e.status === 429 ? 'Too many runs are queued. Wait for one to finish or cancel one. ' + e.message : 'The run did not start: ' + e.message, 'err');
     return null;
   }
 }

@@ -10,7 +10,7 @@
 import { h } from '../../core/dom.js';
 import * as api from '../../core/api.js';
 import { href, navigate } from '../../core/router.js';
-import { badge, button, table, empty, skeleton, stat, backLink } from '../../core/ui.js';
+import { badge, button, table, empty, skeleton, stat, backLink, banner } from '../../core/ui.js';
 import { num, dur, ago, agoText, dateTime, clock, plural, gb, DASH } from '../../core/format.js';
 import { machines } from '../../core/status.js';
 import { state } from '../../core/store.js';
@@ -18,8 +18,9 @@ import { viz, lineChart, columns, tipText, legendItems, colorSwatch } from '../.
 import { passDots, RESULT_WORD } from '../../core/rate.js';
 import { catalog } from '../../core/catalog.js';
 import { avatar } from '../../core/avatar.js';
-import { cache, suiteById, benchmarkById, suiteTitle, runBadge, phaseChips, scheduleText, describe, modelOf, outcomeBadge, signedPct } from './common.js';
+import { cache, suiteById, benchmarkById, suiteTitle, suiteStatusBadge, suiteNotRunnable, runBadge, phaseChips, scheduleText, describe, modelOf, outcomeBadge, signedPct } from './common.js';
 import { runSuite, suiteBenchmarks } from './runconfirm.js';
+import { loadModeNode, rolesText, reloadText, RELOAD_TIP } from '../../core/stepfacts.js';
 
 // The page's own data, kept while the screen is open.
 export const pageData = { suiteRuns: {}, results: {}, errors: {} };
@@ -56,6 +57,20 @@ function versus(now, before, better) {
   return h('span', { class: worse ? 'warn-t' : 'ok-t', style: 'font-weight:700' }, signedPct(pct));
 }
 
+// The node with the lowest available memory of a result, or ''.
+function lowestNode(r) {
+  const m = (r.mem_low || []).filter(x => x.step_mib != null).sort((a, b) => a.step_mib - b.step_mib)[0];
+  return m ? 'on ' + m.node : '';
+}
+// The reload figure of a result's workers: the worst one, as a short phrase.
+function reloadCell(r) {
+  const rs = (r.reload_from_cache || []).filter(x => x.verdict);
+  if (!rs.length) return h('span.mut', DASH);
+  const rank = { none: 0, partial: 1, unknown: 2, full: 3 };
+  const w = rs.slice().sort((a, b) => (rank[a.verdict] ?? 2) - (rank[b.verdict] ?? 2))[0];
+  return h('span', { title: RELOAD_TIP + (rs.length > 1 ? ' The node that keeps the least is shown.' : '') }, reloadText(w).replace('Reload from cache: ', ''), rs.length > 1 ? h('span.sub', 'on ' + w.node) : null);
+}
+
 const notFound = (what, id) => [backLink('Benchmarks', href('benchmarks')), h('section.card', empty(`There is no ${what} ${id}`, `It may have been deleted. Go back to Benchmarks to see the ones that exist.`))];
 
 // ---------- a suite ----------
@@ -74,12 +89,14 @@ export function suitePage(id) {
   const running = state.bench.run && state.bench.run.suite_id === id;
 
   const head = h('div.page-head', { key: 'head' },
-    h('h1', suiteTitle(s)), h('span.sub', 'Suite · ', h('span.mono', s.id)),
+    h('h1', suiteTitle(s), suiteStatusBadge(s) ? [' ', suiteStatusBadge(s)] : null), h('span.sub', 'Suite · ', h('span.mono', s.id)),
     h('div.actions',
       h('a.btn', { href: href('benchmarks', ['suite', id], { edit: 1 }) }, 'Open configuration'),
-      h('button', { class: 'btn pri', type: 'button', disabled: !!cache.off, title: state.bench.run ? 'A run is active; this one is queued behind it' : 'Run the suite now', onclick: () => runSuite(s) }, running ? 'Run again' : 'Run')));
+      h('button', { class: 'btn pri', type: 'button', disabled: !!cache.off || !!suiteNotRunnable(s), title: suiteNotRunnable(s) || (state.bench.run ? 'A run is active; this one is queued behind it' : 'Run the suite now'), onclick: () => runSuite(s) }, running ? 'Run again' : 'Run')));
 
   const facts = h('section.card', { key: 'facts' },
+    s.status ? h('div.cb', { style: 'padding-top:16px;padding-bottom:0' }, banner(s.status === 'blocked' ? 'warn' : 'info',
+      [h('b', s.status === 'blocked' ? 'Blocked: ' : 'Planned: '), s.reason || '', ' It cannot be run until its status is removed.'])) : null,
     s.description ? h('div.cb', { style: 'padding-top:16px;padding-bottom:0' }, h('p', { style: 'color:var(--text-2);max-width:90ch' }, s.description)) : null,
     h('div.stats', { style: 'padding-top:16px' },
       stat('Benchmarks', num(list.length)),
@@ -145,7 +162,7 @@ export function suitePage(id) {
         { label: 'Phases', render: b => phaseChips(b) },
         { label: 'Passed', cls: 'tight', render: b => { const a = benchAggs.find(x => x.benchmark_id === b.id); return passDots(a && a.recent, a && a.pass_rate, { label: `Runs of ${b.name || b.id}, oldest first` }); } },
       ],
-    }) : empty('No benchmark in this suite', 'Open the configuration to add some.'));
+    }) : empty('No benchmark in this suite', s.status ? 'A planned or blocked suite may list none yet.' : 'Open the configuration to add some.'));
 
   return [back, head, facts,
     h('section.card', { key: 'history' }, h('div.ch', h('h2', 'Run history'), h('span.note', 'Newest first. Open a run for every figure.')), history),
@@ -234,17 +251,22 @@ export function benchmarkPage(id) {
   else {
     const list = results.slice().reverse();
     rows = table({
-      minWidth: 980, rows: list, key: r => r.run_id, onRow: r => navigate('benchmarks', ['runs', r.run_id]),
+      minWidth: 1320, rows: list, key: r => r.run_id, onRow: r => navigate('benchmarks', ['runs', r.run_id]),
       columns: [
         { label: 'When', cls: 'tight', render: r => ago(r.at) },
         { label: 'Result', cls: 'tight', render: r => h('span', resultBadge(r.result), r.regression ? [' ', badge('Regression', 'aside')] : null) },
         { label: 'Outcome', cls: 'tight', render: r => outcomeBadge(r.outcome) || h('span.mut', DASH) },
         { label: 'Suite', render: r => h('a', { href: href('benchmarks', ['suite', r.suite_id]), onclick: e => e.stopPropagation(), style: 'color:inherit' }, r.suite_name || r.suite_id) },
-        { label: 'On', cls: 'tight', render: r => (r.nodes ? machines(st, r.nodes) : h('span.mut', DASH)) },
+        { label: 'On', render: r => (r.host || (r.workers || []).length ? h('span', { style: 'font-size:13px' }, rolesText(r.host, r.workers))
+          : r.nodes ? machines(st, r.nodes) : h('span.mut', DASH)) },
+        { label: 'Load mode', cls: 'tight', title: 'How the weights reached the nodes', render: r => loadModeNode(r.load_mode) },
         { label: 'Load time', cls: 'r', render: r => (r.load_s != null ? dur(r.load_s) : DASH) },
         { label: 'Upload', cls: 'r', render: r => (r.load_mb_s != null ? num(r.load_mb_s) + ' MB/s' : DASH) },
         { label: 'Answer speed', cls: 'r', render: r => (r.decode_tps != null ? num(r.decode_tps, 1) + ' tok/s' : DASH) },
         { label: 'Memory', cls: 'r', render: r => (r.memory_mib != null ? gb(r.memory_mib) : DASH) },
+        { label: 'Lowest available', cls: 'r', title: 'The lowest available memory of any node during the benchmark, sampled about twice a second', render: r => (r.lowest_available_mib != null
+          ? h('span', gb(r.lowest_available_mib), lowestNode(r) ? h('span.sub', lowestNode(r)) : null) : h('span.mut', 'Not recorded')) },
+        { label: 'Reload from cache', title: RELOAD_TIP, render: r => reloadCell(r) },
         { label: '', cls: 'tight', render: r => h('a', { href: href('benchmarks', ['runs', r.run_id]), onclick: e => e.stopPropagation() }, 'Open run') },
       ],
     });
