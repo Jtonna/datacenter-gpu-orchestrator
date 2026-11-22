@@ -14,6 +14,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -235,21 +236,51 @@ func (s *Store) Put(r Record) error {
 	})
 }
 
-// Delete removes the shape's row; no row is not an error.
+// Delete removes the shape's row, and any row of that shape still left under
+// a profile (so it cannot come back); no row is not an error.
 func (s *Store) Delete(shape string) error {
-	return s.db.Write(func(tx *sql.Tx) error {
-		_, err := tx.Exec(`DELETE FROM needs_by_shape WHERE shape = ?`, shape)
+	var left []string
+	err := s.scan(`SELECT '', profile, updated_at, record FROM learned_needs`, func(_, profile string, _ int64, doc string) {
+		var r Record
+		if usable(profile, doc, &r) == "" && r.Shape() == shape {
+			left = append(left, profile)
+		}
+	})
+	if err != nil {
 		return err
+	}
+	return s.db.Write(func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`DELETE FROM needs_by_shape WHERE shape = ?`, shape); err != nil {
+			return err
+		}
+		for _, p := range left {
+			if _, err := tx.Exec(`DELETE FROM learned_needs WHERE profile = ?`, p); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 
-// All returns every usable row, ordered by shape, and the rows it skipped: a
-// row that cannot be read, that has another schema, or that holds no figure,
-// and every row still left under its profile. Skipped rows are left in place.
+// All returns every usable measurement once per shape, ordered by shape, and
+// the rows it skipped (a row that cannot be read, that has another schema,
+// or that holds no figure; skipped rows are left in place). A usable row
+// still under its profile in learned_needs (written there by an older build
+// after the migration) counts too: when a shape has rows in both tables, the
+// newer one wins.
 func (s *Store) All() ([]Record, []Skipped, error) {
-	var out []Record
+	type cand struct {
+		r  Record
+		at int64
+	}
+	best := map[string]cand{}
 	var skipped []Skipped
-	err := s.scan(`SELECT shape, profile, record FROM needs_by_shape ORDER BY shape`, func(shape, profile, doc string) {
+	take := func(r Record, at int64) {
+		if c, ok := best[r.Shape()]; !ok || at > c.at {
+			best[r.Shape()] = cand{r, at}
+		}
+	}
+	err := s.scan(`SELECT shape, profile, updated_at, record FROM needs_by_shape`, func(shape, profile string, at int64, doc string) {
 		var r Record
 		why := usable(profile, doc, &r)
 		if why == "" && r.Shape() != shape {
@@ -259,26 +290,35 @@ func (s *Store) All() ([]Record, []Skipped, error) {
 			skipped = append(skipped, Skipped{Profile: profile, Reason: why})
 			return
 		}
-		out = append(out, r)
+		take(r, at)
 	})
 	if err != nil {
 		return nil, nil, err
 	}
-	err = s.scan(`SELECT '', profile, record FROM learned_needs ORDER BY profile`, func(_, profile, doc string) {
+	err = s.scan(`SELECT '', profile, updated_at, record FROM learned_needs ORDER BY profile`, func(_, profile string, at int64, doc string) {
 		var r Record
-		why := usable(profile, doc, &r)
-		if why == "" {
-			why = "left under its profile"
+		if why := usable(profile, doc, &r); why != "" {
+			skipped = append(skipped, Skipped{Profile: profile, Reason: why})
+			return
 		}
-		skipped = append(skipped, Skipped{Profile: profile, Reason: why})
+		take(r, at)
 	})
 	if err != nil {
 		return nil, nil, err
+	}
+	shapes := make([]string, 0, len(best))
+	for k := range best {
+		shapes = append(shapes, k)
+	}
+	sort.Strings(shapes)
+	out := make([]Record, 0, len(shapes))
+	for _, k := range shapes {
+		out = append(out, best[k].r)
 	}
 	return out, skipped, nil
 }
 
-func (s *Store) scan(q string, fn func(shape, profile, doc string)) error {
+func (s *Store) scan(q string, fn func(shape, profile string, at int64, doc string)) error {
 	rows, err := s.db.DB().Query(q)
 	if err != nil {
 		return err
@@ -286,10 +326,11 @@ func (s *Store) scan(q string, fn func(shape, profile, doc string)) error {
 	defer rows.Close()
 	for rows.Next() {
 		var shape, profile, doc string
-		if err := rows.Scan(&shape, &profile, &doc); err != nil {
+		var at int64
+		if err := rows.Scan(&shape, &profile, &at, &doc); err != nil {
 			return err
 		}
-		fn(shape, profile, doc)
+		fn(shape, profile, at, doc)
 	}
 	return rows.Err()
 }

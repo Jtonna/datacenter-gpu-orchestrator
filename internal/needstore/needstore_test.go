@@ -249,3 +249,46 @@ func TestStoreMigratesProfileRowsToShapes(t *testing.T) {
 		t.Fatalf("after a second open %+v", again)
 	}
 }
+
+// A database that holds a usable row in both tables (an older build wrote
+// under the profile after the migration) gives each measurement once: the
+// newer row wins, whichever table it is in. Delete removes both.
+func TestStoreBothTablesNewerWins(t *testing.T) {
+	for _, legacyNewer := range []bool{true, false} {
+		db := openDB(t)
+		st, err := Open(db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := sample("m")
+		if err := st.Put(r); err != nil { // updated_at is now
+			t.Fatal(err)
+		}
+		legacy := sample("legacy") // same shape as "m", other profile name
+		legacy.Model, legacy.TotalMiB = r.Model, 12500
+		b, _ := json.Marshal(legacy)
+		at := time.Now().Add(-time.Hour).UnixMilli()
+		if legacyNewer {
+			at = time.Now().Add(time.Hour).UnixMilli()
+		}
+		if err := db.Write(func(tx *sql.Tx) error {
+			_, err := tx.Exec(`INSERT INTO learned_needs (profile, updated_at, record) VALUES (?,?,?)`, "legacy", at, string(b))
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		got, skipped, err := st.All()
+		if err != nil || len(skipped) != 0 || len(got) != 1 {
+			t.Fatalf("legacy newer %v: all %+v skipped %+v err %v", legacyNewer, got, skipped, err)
+		}
+		if want := map[bool]string{true: "legacy", false: "m"}[legacyNewer]; got[0].Profile != want {
+			t.Fatalf("legacy newer %v: kept %s, want %s", legacyNewer, got[0].Profile, want)
+		}
+		if err := st.Delete(r.Shape()); err != nil {
+			t.Fatal(err)
+		}
+		if got, _, _ := st.All(); len(got) != 0 {
+			t.Fatalf("after delete %+v", got)
+		}
+	}
+}
