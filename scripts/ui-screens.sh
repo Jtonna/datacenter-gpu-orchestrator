@@ -12,7 +12,7 @@
 #   wait-ms   how long the page may run before the picture is taken (default 5000)
 #
 # Example:
-#   scripts/ui-screens.sh http://127.0.0.1:8790 models loading desktop docs/ui-screens/models-loading-desktop.png
+#   scripts/ui-screens.sh http://127.0.0.1:8790 models loading desktop models-loading-desktop.png
 #
 # Look at the picture afterwards. A picture that shows only grey placeholder
 # bars was taken before the data arrived: take it again.

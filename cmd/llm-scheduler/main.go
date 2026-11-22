@@ -1,4 +1,4 @@
-// Command llm-scheduler is the cluster scheduler (see docs/design.md).
+// Command llm-scheduler is the cluster scheduler (see docs/architecture.md).
 //
 // Usage:
 //

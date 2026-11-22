@@ -28,7 +28,7 @@ func (c *schedCore) staleProfile(in *inst) bool {
 	return p == nil || !reflect.DeepEqual(*p, *in.prof)
 }
 
-// applyConfig swaps in a new snapshot (see docs/design.md, live apply).
+// applyConfig swaps in a new snapshot (live apply: a change takes effect without a restart).
 //   - Loaded instances keep the profile they started with (inst.prof); they are
 //     reported stale and are replaced at their next load.
 //   - Queue entries take the new definition; those of a deleted profile fail.

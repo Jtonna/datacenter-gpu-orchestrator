@@ -30,7 +30,7 @@ func SeverityRank(s string) int {
 	return 0
 }
 
-// Event types. The data object of each is described in docs/design.md 9.1.
+// Event types.
 const (
 	TSchedulerStarted   = "schedulerStarted"
 	TSchedulerStopping  = "schedulerStopping"
