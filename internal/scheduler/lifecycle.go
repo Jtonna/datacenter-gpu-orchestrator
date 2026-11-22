@@ -169,6 +169,13 @@ func (c *schedCore) fitAndLaunch(in *inst) {
 		c.returnInst(in, "exact pre-flight figures do not fit", budgets)
 		return
 	}
+	// The gate on the pre-flight's figures (review SB2): the placer alone
+	// holds each node to its budget share, not to the measured per-node
+	// figure, and passes any forced profile.
+	if g := c.reserveGate(in.prof, pl, nil); g != "" {
+		c.returnInst(in, g, budgets)
+		return
+	}
 	in.placement = pl
 	c.launch(in)
 }
@@ -202,6 +209,9 @@ func (c *schedCore) requeue(in *inst, ws []*waiter) {
 
 // launch starts the child (after a successful or skipped pre-flight).
 func (c *schedCore) launch(in *inst) {
+	if !c.agents {
+		c.checkGated(in)
+	}
 	p := *in.prof
 	pl := in.placement
 	info, err := c.need(in.prof)

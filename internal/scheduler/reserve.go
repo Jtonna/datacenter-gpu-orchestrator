@@ -520,6 +520,7 @@ func rowsShort(rows []PlanMemoryNode) (node string, by int) {
 // it fits, the gate is off (the defaults) or the need is unknown (the other
 // checks decide then).
 func (c *schedCore) reserveGate(p *core.Profile, pl core.Placement, victims []string) string {
+	c.gated = gateMark{profile: p.Name, nodes: placementIDs(pl), step: c.steps}
 	if !c.gateOn() {
 		return ""
 	}
@@ -634,4 +635,39 @@ func (c *schedCore) hypotheticalPlacement(p *core.Profile) core.Placement {
 	}
 	pl.Nodes = cands
 	return pl
+}
+
+// gateMark is the latest gate call: the profile, the node set and the step
+// it was made in (checkGated).
+type gateMark struct {
+	profile string
+	nodes   []string
+	step    uint64
+}
+
+// checkGateBeforeLaunch makes every launch check that the gate was asked
+// about this profile and node set in the same step (the tests turn it on):
+// a launch path that skips the gate panics (review SB2).
+var checkGateBeforeLaunch = false
+
+// checkGated is called where an instance starts to take memory: the child
+// launch in fleet membership and the worker launches with agents.
+func (c *schedCore) checkGated(in *inst) {
+	if !checkGateBeforeLaunch {
+		return
+	}
+	g := c.gated
+	if g.profile != in.prof.Name || g.step != c.steps || !slices.Equal(g.nodes, placementIDs(in.placement)) {
+		panic(fmt.Sprintf("scheduler: %s launched on %v without the gate in this step (last gate: %s on %v, step %d of %d)",
+			in.prof.Name, placementIDs(in.placement), g.profile, g.nodes, g.step, c.steps))
+	}
+}
+
+// placementIDs is pl's node ids in device order.
+func placementIDs(pl core.Placement) []string {
+	out := make([]string, len(pl.Nodes))
+	for i, n := range pl.Nodes {
+		out[i] = string(n.ID)
+	}
+	return out
 }

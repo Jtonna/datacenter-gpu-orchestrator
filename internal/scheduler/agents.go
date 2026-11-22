@@ -210,6 +210,7 @@ func (c *schedCore) agentHeld(id core.NodeID) bool {
 
 // launchWorkers starts the worker launches of a new instance.
 func (c *schedCore) launchWorkers(in *inst) {
+	c.checkGated(in)
 	in.phase = phWorkers
 	in.workers = true
 	spec := WorkerLaunchSpec{IID: in.iid, Profile: in.prof.Name, Label: path.Base(in.prof.Model)}

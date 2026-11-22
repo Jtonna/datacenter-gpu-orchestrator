@@ -202,6 +202,7 @@ var checkInvariantsEachStep = false
 // handle is the step function: it applies one event, then the time-based
 // rules, then the queue pass of design 8.3. It never blocks.
 func (c *schedCore) handle(ev event) {
+	c.steps++
 	c.now = c.clock.Now()
 	if c.now.Before(c.last) {
 		c.now = c.last // never let time run backwards inside the core
