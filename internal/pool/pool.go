@@ -161,7 +161,11 @@ type agent struct {
 	hb           *heartbeat
 	stats        json.RawMessage
 	statsNote    string
-	lost, left   bool
+	// cachedMiB is the file cache figure of the last stats object
+	// (memory.cached_bytes); cachedKnown is false when it had none.
+	cachedMiB   int
+	cachedKnown bool
+	lost, left  bool
 	// silent: no heartbeat for LostAfter, not lost yet because the node runs
 	// a launch of ours whose lease has not run out (CR-6). It takes no new load.
 	silent bool
@@ -184,6 +188,12 @@ type agent struct {
 	// failure. checking: a call-back loop runs for this agent.
 	reachable, reachWarned, checking bool
 	reachMsg                         string
+	// toldPaused is the pause state carried by the last registration or
+	// heartbeat answer sent to the agent: what the agent believes. The agent
+	// refuses a launch while it believes it is paused, so the node stays
+	// paused for placement until an answer has told it otherwise (unpause
+	// delivery, agent contract 7.2).
+	toldPaused bool
 }
 
 // Pool is the agent registry, node view and worker launcher.
@@ -377,6 +387,7 @@ func (p *Pool) register(req agentproto.RegisterRequest) (agentproto.RegisterAnsw
 		a.reachWarned = old.reachWarned // one warning per failure, not per registration
 	}
 	p.agents[req.ID] = a
+	a.toldPaused = p.admin[req.ID].Paused // carried by this answer
 	p.checkFloorLocked(a)
 	ans := agentproto.RegisterAnswer{Accepted: true, Release: rel.Release, Platform: platform,
 		HeartbeatEveryS: HeartbeatEvery.Seconds(), Programs: rel.Programs(platform), Exporters: rel.Exporters(platform),
@@ -463,6 +474,7 @@ func (p *Pool) Heartbeat(id string, body []byte) HeartbeatResult {
 	a.lastSeen, a.lost, a.silent = now, false, false
 	a.hb = &hb
 	a.stats, a.statsNote = parseStats(hb.Stats)
+	a.cachedMiB, a.cachedKnown = statsCachedMiB(a.stats)
 	p.checkFloorLocked(a)
 	if d, extra, ok := pickDevice(a); ok && extra > 0 && !a.extraWarned {
 		a.extraWarned = true
@@ -475,8 +487,12 @@ func (p *Pool) Heartbeat(id string, body []byte) HeartbeatResult {
 			fmt.Sprintf("Node %s is back: its heartbeat arrived again.", a.reg.Name), map[string]any{"state": StateActive})
 	}
 	p.checkOrphanLocked(a, &hb)
-	p.rebuildLocked()
 	ans := agentproto.HeartbeatAnswer{Release: p.o.PotluckRelease, Paused: p.admin[id].Paused}
+	if a.toldPaused && !ans.Paused {
+		p.log.Info("unpause delivered to the agent; the node takes load again", "id", id, "name", a.reg.Name)
+	}
+	a.toldPaused = ans.Paused
+	p.rebuildLocked()
 	if p.o.Logs != nil {
 		if l := p.o.Logs(id); l != nil {
 			ans.LogsRevision = l.Revision          // CR-10: the agent reads the object again when this differs from its own
@@ -707,6 +723,23 @@ func parseStats(raw json.RawMessage) (json.RawMessage, string) {
 	return append(json.RawMessage(nil), raw...), ""
 }
 
+// statsCachedMiB is memory.cached_bytes of a stats object in MiB; ok is false
+// when the object has none (an older agent, or the node source is absent).
+func statsCachedMiB(raw json.RawMessage) (int, bool) {
+	if len(raw) == 0 {
+		return 0, false
+	}
+	var v struct {
+		Memory *struct {
+			CachedBytes *int64 `json:"cached_bytes"`
+		} `json:"memory"`
+	}
+	if json.Unmarshal(raw, &v) != nil || v.Memory == nil || v.Memory.CachedBytes == nil || *v.Memory.CachedBytes < 0 {
+		return 0, false
+	}
+	return int(*v.Memory.CachedBytes >> 20), true
+}
+
 // Deregister is POST /api/pool/nodes/{id}/deregister (10): the node's instance is
 // stopped as in a force unload and the node is marked left. It returns false
 // for an unknown id.
@@ -763,8 +796,23 @@ func (p *Pool) SetPaused(id string, paused bool) (bool, error) {
 	if err := p.setAdminLocked(id, a); err != nil {
 		return prev, err
 	}
+	if ag := p.agents[id]; !paused && ag != nil && ag.toldPaused {
+		p.log.Info("node unpaused; it takes load once its agent has been told (next heartbeat answer)", "id", id, "name", ag.reg.Name)
+	}
 	p.rebuildLocked()
 	return prev, nil
+}
+
+// pausedLocked: the node takes no new load because of a pause, either the
+// operator's or one its agent has not yet been told is over.
+func (p *Pool) pausedLocked(id string, a *agent) bool {
+	return p.admin[id].Paused || p.unpausePendingLocked(id, a)
+}
+
+// unpausePendingLocked: the node was unpaused, but no answer has told its
+// agent yet, so the agent would still refuse a launch as paused.
+func (p *Pool) unpausePendingLocked(id string, a *agent) bool {
+	return a != nil && a.toldPaused && !p.admin[id].Paused
 }
 
 // Remove is DELETE /api/nodes/{id} (10): the instance on the node is stopped

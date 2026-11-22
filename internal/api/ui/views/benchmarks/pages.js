@@ -20,7 +20,7 @@ import { catalog } from '../../core/catalog.js';
 import { avatar } from '../../core/avatar.js';
 import { cache, suiteById, benchmarkById, suiteTitle, suiteStatusBadge, suiteNotRunnable, runBadge, phaseChips, scheduleText, describe, modelOf, outcomeBadge, signedPct } from './common.js';
 import { runSuite, suiteBenchmarks } from './runconfirm.js';
-import { loadModeNode, rolesText, reloadText, RELOAD_TIP } from '../../core/stepfacts.js';
+import { loadModeNode, rolesText, reloadAmount, cacheOccupied, RELOAD_TIP } from '../../core/stepfacts.js';
 
 // The page's own data, kept while the screen is open.
 export const pageData = { suiteRuns: {}, results: {}, errors: {} };
@@ -57,9 +57,10 @@ function versus(now, before, better) {
   return h('span', { class: worse ? 'warn-t' : 'ok-t', style: 'font-weight:700' }, signedPct(pct));
 }
 
-// The node with the lowest available memory of a result, or ''.
-function lowestNode(r) {
-  const m = (r.mem_low || []).filter(x => x.step_mib != null).sort((a, b) => a.step_mib - b.step_mib)[0];
+// The node with the lowest available memory of a result among the nodes whose
+// figure is of the given kind ('system', also rows without a kind, or 'gpu'), or ''.
+function lowestNode(r, kind) {
+  const m = (r.mem_low || []).filter(x => x.step_mib != null && (x.kind || 'system') === kind).sort((a, b) => a.step_mib - b.step_mib)[0];
   return m ? 'on ' + m.node : '';
 }
 // The reload figure of a result's workers: the worst one, as a short phrase.
@@ -68,7 +69,8 @@ function reloadCell(r) {
   if (!rs.length) return h('span.mut', DASH);
   const rank = { none: 0, partial: 1, unknown: 2, full: 3 };
   const w = rs.slice().sort((a, b) => (rank[a.verdict] ?? 2) - (rank[b.verdict] ?? 2))[0];
-  return h('span', { title: RELOAD_TIP + (rs.length > 1 ? ' The node that keeps the least is shown.' : '') }, reloadText(w).replace('Reload from cache: ', ''), rs.length > 1 ? h('span.sub', 'on ' + w.node) : null);
+  return h('span', { title: RELOAD_TIP + (rs.length > 1 ? ' The node that keeps the least is shown.' : '') }, reloadAmount(w), rs.length > 1 ? h('span.sub', 'on ' + w.node) : null,
+    rs.some(cacheOccupied) ? h('span.sub.warn-t', 'Cache occupied by other files') : null);
 }
 
 const notFound = (what, id) => [backLink('Benchmarks', href('benchmarks')), h('section.card', empty(`There is no ${what} ${id}`, `It may have been deleted. Go back to Benchmarks to see the ones that exist.`))];
@@ -264,9 +266,11 @@ export function benchmarkPage(id) {
         { label: 'Upload', cls: 'r', render: r => (r.load_mb_s != null ? num(r.load_mb_s) + ' MB/s' : DASH) },
         { label: 'Answer speed', cls: 'r', render: r => (r.decode_tps != null ? num(r.decode_tps, 1) + ' tok/s' : DASH) },
         { label: 'Memory', cls: 'r', render: r => (r.memory_mib != null ? gb(r.memory_mib) : DASH) },
-        { label: 'Lowest available', cls: 'r', title: 'The lowest available memory of any node during the benchmark, sampled about twice a second', render: r => (r.lowest_available_mib != null
-          ? h('span', gb(r.lowest_available_mib), lowestNode(r) ? h('span.sub', lowestNode(r)) : null) : h('span.mut', 'Not recorded')) },
-        { label: 'Reload from cache', title: RELOAD_TIP, render: r => reloadCell(r) },
+        { label: 'Lowest available (system)', cls: 'r', title: 'The lowest available system memory of the nodes that use system memory for the model (consoles), during the benchmark, sampled about twice a second', render: r => (r.lowest_available_mib != null
+          ? h('span', gb(r.lowest_available_mib), lowestNode(r, 'system') ? h('span.sub', lowestNode(r, 'system')) : null) : h('span.mut', 'Not recorded')) },
+        { label: 'Lowest available (GPU)', cls: 'r', title: 'The lowest free memory of the nodes whose GPU has memory of its own, during the benchmark', render: r => (r.lowest_available_gpu_mib != null
+          ? h('span', gb(r.lowest_available_gpu_mib), lowestNode(r, 'gpu') ? h('span.sub', lowestNode(r, 'gpu')) : null) : h('span.mut', DASH)) },
+        { label: 'Can stay in the file cache', title: RELOAD_TIP, render: r => reloadCell(r) },
         { label: '', cls: 'tight', render: r => h('a', { href: href('benchmarks', ['runs', r.run_id]), onclick: e => e.stopPropagation() }, 'Open run') },
       ],
     });

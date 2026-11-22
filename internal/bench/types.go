@@ -163,6 +163,12 @@ type NodeMemLow struct {
 	LoadMiB *int64 `json:"load_mib,omitempty"` // lowest while the model was loading
 	StepMiB *int64 `json:"step_mib,omitempty"` // lowest during the whole step
 	Samples int    `json:"samples"`
+	// Kind is which memory the figures are: "system" (available system
+	// memory) or "gpu" (the GPU's free memory, on a node whose GPU has memory
+	// of its own). Absent on rows stored before it was recorded: system.
+	// Note says why a node with a dedicated GPU has a system figure.
+	Kind string `json:"kind,omitempty"`
+	Note string `json:"note,omitempty"`
 }
 
 // Node roles in a step.
@@ -191,6 +197,14 @@ type NodeReload struct {
 	ModelMiB  int      `json:"model_mib,omitempty"`
 	MemoryMiB int      `json:"memory_mib,omitempty"`
 	MarginMiB int      `json:"margin_mib,omitempty"`
+	// CachedNowMiB is what the node's file cache held when the plan was made,
+	// CacheRoomMiB the room for the file once that is counted, CacheOccupied
+	// set when that room is below the file share (the first reloads are likely
+	// to read part of the file again). Absent when the node reports no cache
+	// figure, and on steps stored before they were recorded.
+	CachedNowMiB  *int `json:"cached_now_mib,omitempty"`
+	CacheRoomMiB  *int `json:"cache_room_mib,omitempty"`
+	CacheOccupied bool `json:"cache_occupied,omitempty"`
 }
 
 // Check is one expectation and whether it held.

@@ -8,7 +8,7 @@ import { num, mib, bytes, dur, ago, at, dateTime, plural, DASH } from '../../cor
 import { cache, runBadge, passBadge, outcomeBadge, phaseTitle, changeMark, withUnit, fmtMetric, metricDef, errorBanner, reasonNode } from './common.js';
 import { state } from '../../core/store.js';
 import { logsLink, padded } from '../../core/logs.js';
-import { loadModeNode, reloadText, rolesText, RELOAD_TIP } from '../../core/stepfacts.js';
+import { loadModeNode, reloadAmount, cacheOccupied, occupiedText, rolesText, RELOAD_TIP } from '../../core/stepfacts.js';
 
 // runLogs(run) -> a link to every log line written while the run ran (all
 // sources and nodes: a benchmark touches the whole fleet), a minute either
@@ -186,9 +186,12 @@ function setupBlock(step) {
   const rows = Object.values(byNode).sort((a, b) => (a.role === 'host' ? -1 : 0) - (b.role === 'host' ? -1 : 0));
   if (!rows.length) {
     return h('div.cs', h('div', { style: 'font-weight:700;margin-bottom:4px' }, 'Nodes'),
-      h('span.mut', 'Roles, lowest available memory and reload from cache: not recorded for this run.'));
+      h('span.mut', 'Roles, lowest available memory and what can stay in the file cache: not recorded for this run.'));
   }
-  const memCell = v => (v != null ? mib(v) : notRecorded());
+  // Which memory the figure is: the GPU's free memory on a node whose GPU has
+  // memory of its own, else available system memory (rows without a kind).
+  const kindWord = low => (low.kind === 'gpu' ? '(GPU)' : '(system)');
+  const memCell = (v, low) => (v != null ? h('span', { title: low.note || null }, mib(v), h('span.sub', ' ' + kindWord(low))) : notRecorded());
   return h('div.cs', h('div', { style: 'font-weight:700;margin-bottom:8px' }, 'Nodes'),
     table({
       minWidth: 760, rows, key: r => r.key,
@@ -196,9 +199,10 @@ function setupBlock(step) {
         { label: 'Node', render: r => h('span.node', r.node) },
         { label: 'Role', cls: 'tight', title: 'The host runs llama-server; a worker runs rpc-server with a share of the model', render: r => (r.role ? ROLE_WORD[r.role] || r.role : h('span.mut', DASH)) },
         { label: 'Model share', cls: 'r', render: r => (r.share != null ? mib(r.share) : h('span.mut', DASH)) },
-        { label: 'Lowest available, load', cls: 'r', title: 'The lowest available memory while the model was loading, sampled about twice a second', render: r => (r.low ? memCell(r.low.load_mib) : notRecorded()) },
-        { label: 'Lowest available, step', cls: 'r', title: 'The lowest available memory during the whole benchmark', render: r => (r.low ? memCell(r.low.step_mib) : notRecorded()) },
-        { label: 'Reload from cache', title: RELOAD_TIP, render: r => (r.reload ? h('span', { title: RELOAD_TIP }, reloadText(r.reload).replace('Reload from cache: ', '')) : h('span.mut', DASH)) },
+        { label: 'Lowest available, load', cls: 'r', title: 'The lowest available memory while the model was loading, sampled about twice a second. (GPU): the free memory of a GPU with memory of its own; (system): available system memory', render: r => (r.low ? memCell(r.low.load_mib, r.low) : notRecorded()) },
+        { label: 'Lowest available, step', cls: 'r', title: 'The lowest available memory during the whole benchmark. (GPU): the free memory of a GPU with memory of its own; (system): available system memory', render: r => (r.low ? memCell(r.low.step_mib, r.low) : notRecorded()) },
+        { label: 'Can stay in the file cache', title: RELOAD_TIP, render: r => (r.reload ? h('span', { title: RELOAD_TIP }, reloadAmount(r.reload),
+          cacheOccupied(r.reload) ? h('span.sub.warn-t', occupiedText(r.node)) : null) : h('span.mut', DASH)) },
       ],
     }));
 }

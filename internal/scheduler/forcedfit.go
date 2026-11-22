@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
@@ -337,6 +338,64 @@ func (c *schedCore) forcedRefusalBeforeEvict(p *core.Profile, pl core.Placement)
 		return ff.err(p.Name)
 	}
 	return nil
+}
+
+// forcedNeverFits is forcedRefusalBeforeEvict run when a request for forced
+// profile p arrives and each time its queue entry is looked at again while it
+// waits, on the placement the forced nodes make (config order, each at the
+// budget a plan would give it). So a request that can never fit is refused at
+// once, whatever is in the way: a holder younger than min_hold, a holder with
+// a request in flight, or another entry's claim. Same error, same wording.
+//
+// It returns nil (the request waits, or the start path decides) when:
+//   - a forced node is not in the view, not eligible (offline, lost, stale
+//     view, quarantined, its fetch failed), or unplaced for any reason but a
+//     pause (re-registering, programs not ready, silent, ...): it may come
+//     back with other figures;
+//   - a forced node's memory figure is unknown (that stays a wait);
+//   - every forced node is free: the start path checks the real figures in
+//     the same step (pre-flight in fleet membership, agentForcedGate in
+//     agents membership).
+func (c *schedCore) forcedNeverFits(p *core.Profile) *Error {
+	if len(p.ForceNodes) == 0 {
+		return nil
+	}
+	var pl core.Placement
+	allFree := true
+	for _, name := range p.ForceNodes {
+		id, err := c.view.Resolve(name)
+		if err != nil {
+			return nil
+		}
+		n, ok := c.node(id)
+		if !ok || !c.eligible(id) || n.FreeUnknown {
+			return nil
+		}
+		if why := c.unplaced[id]; why != "" && why != UnplacedPaused {
+			return nil
+		}
+		budget := c.planBudget(id, n)
+		if c.isFree(id) {
+			budget = c.liveBudget(id, n)
+		} else {
+			allFree = false
+		}
+		pl.Nodes = append(pl.Nodes, core.PlacedNode{ID: id, Addr: n.Addr, Local: n.Local, BudgetMiB: budget})
+	}
+	if allFree {
+		return nil
+	}
+	if len(p.TensorSplit) > 0 {
+		pl.TensorSplit = slices.Clone(p.TensorSplit)
+	}
+	return c.forcedRefusalBeforeEvict(p, pl)
+}
+
+// refuseNeverFits logs a forcedNeverFits refusal; at says where it was made
+// ("arrival" or "queue").
+func (c *schedCore) refuseNeverFits(p *core.Profile, e *Error, at string) {
+	c.log.Warn("forced profile cannot fit even with its nodes empty; refused before any eviction", "profile", p.Name,
+		"need_mib", e.NeedMiB, "free_mib", e.CapacityMiB, "nodes", slices.Clone(p.ForceNodes), "at", at, "reason", e.Message)
 }
 
 // agentForcedGate applies agentForcedFit and, as the pre-flight does in fleet

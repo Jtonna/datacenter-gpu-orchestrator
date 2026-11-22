@@ -138,9 +138,15 @@ type WorkerInfo struct {
 	Hostname         string
 	Local            bool
 	RPCServerVersion string
-	// AvailMiB is the node's available memory: its agent's mem_available_mib,
-	// else the node's free figure (the local host); nil when neither is known.
-	AvailMiB *int64
+	// AvailMiB is the node's available memory: for an agent node whose
+	// device has memory of its own, the GPU's free memory from its live stats;
+	// else its agent's mem_available_mib; for the local host the node's free
+	// figure (its GPU). Nil when none is known. AvailKind says which
+	// (MemKindSystem or MemKindGPU; empty is system), AvailNote why a dedicated
+	// GPU's node has a system figure (memkind.go).
+	AvailMiB  *int64
+	AvailKind string
+	AvailNote string
 }
 
 // RecentLoad is an entry of recent_loads.
@@ -325,6 +331,9 @@ func (h *HTTPAPI) Plan(ctx context.Context, model string) (*PlanInfo, error) {
 			MemoryMiB int      `json:"memory_mib"`
 			MarginMiB int      `json:"margin_mib"`
 			CachedPct *float64 `json:"cached_pct"`
+			CachedNow *int     `json:"cached_now_mib"`
+			CacheRoom *int     `json:"cache_room_mib"`
+			Occupied  bool     `json:"cache_occupied"`
 		} `json:"reload_from_cache"`
 	}
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -333,7 +342,8 @@ func (h *HTTPAPI) Plan(ctx context.Context, model string) (*PlanInfo, error) {
 	info := &PlanInfo{Action: p.Action, Reason: p.Reason, Raw: raw, LoadMode: p.LoadMode}
 	for _, r := range p.Reload {
 		info.Reload = append(info.Reload, NodeReload{ID: r.ID, Node: r.ID, Verdict: r.Verdict, CachedPct: r.CachedPct, Shared: r.Shared,
-			FileMiB: r.FileMiB, ModelMiB: r.ModelMiB, MemoryMiB: r.MemoryMiB, MarginMiB: r.MarginMiB})
+			FileMiB: r.FileMiB, ModelMiB: r.ModelMiB, MemoryMiB: r.MemoryMiB, MarginMiB: r.MarginMiB,
+			CachedNowMiB: r.CachedNow, CacheRoomMiB: r.CacheRoom, CacheOccupied: r.Occupied})
 	}
 	for _, n := range p.Nodes {
 		switch v := n.(type) {
@@ -435,14 +445,12 @@ type statusWire struct {
 	} `json:"recent_loads"`
 	View struct {
 		Nodes []struct {
-			ID               string `json:"id"`
-			Hostname         string `json:"hostname"`
-			Local            bool   `json:"local"`
-			RPCServerVersion string `json:"rpc_server_version"`
-			FreeMiB          *int64 `json:"free_mib"`
-			Agent            *struct {
-				MemAvailMiB *int64 `json:"mem_available_mib"`
-			} `json:"agent"`
+			ID               string       `json:"id"`
+			Hostname         string       `json:"hostname"`
+			Local            bool         `json:"local"`
+			RPCServerVersion string       `json:"rpc_server_version"`
+			FreeMiB          *int64       `json:"free_mib"`
+			Agent            *statusAgent `json:"agent"`
 		} `json:"nodes"`
 	} `json:"view"`
 	LastRefusals []struct {
@@ -542,8 +550,16 @@ func ParseStatus(raw []byte) (*StatusInfo, error) {
 			out.Hostnames[n.ID] = n.Hostname
 		}
 		wi := WorkerInfo{ID: n.ID, Hostname: n.Hostname, Local: n.Local, RPCServerVersion: n.RPCServerVersion, AvailMiB: n.FreeMiB}
-		if n.Agent != nil && n.Agent.MemAvailMiB != nil {
-			wi.AvailMiB = n.Agent.MemAvailMiB
+		if n.FreeMiB != nil {
+			wi.AvailKind = MemKindSystem
+			if n.Local {
+				wi.AvailKind = MemKindGPU // the scheduler's own probe: its GPU's free memory
+			}
+		}
+		if n.Agent != nil {
+			if v, kind, note := agentAvail(n.Agent); v != nil {
+				wi.AvailMiB, wi.AvailKind, wi.AvailNote = v, kind, note
+			}
 		}
 		out.Workers = append(out.Workers, wi)
 	}

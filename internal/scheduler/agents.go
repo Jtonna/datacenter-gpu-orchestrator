@@ -140,6 +140,12 @@ const (
 // queued and is tried again (agent contract 6.4).
 const modelSourceHold = 5 * time.Second
 
+// pausedRefusalHold is how long a node whose launch its agent refused as
+// "paused" is left out of placements. The pool lists a node as paused until
+// an answer has told its agent it is unpaused, so this happens only when the
+// launch overtook that answer; the next heartbeat (every 2 s) settles it.
+const pausedRefusalHold = 3 * time.Second
+
 // needRaise is how much a watchdog or OOM kill of a worker raises the
 // profile's learned need: a tenth, at least this many MiB.
 const needRaiseMinMiB = 256
@@ -195,7 +201,8 @@ func (c *schedCore) nodeLossAfter() time.Duration {
 }
 
 // agentHeld: the node's last worker launch was refused because it could not
-// reach the model source; it is skipped until the hold ends.
+// reach the model source, or because its agent still believed it was paused;
+// it is skipped until the hold ends.
 func (c *schedCore) agentHeld(id core.NodeID) bool {
 	ns := c.nodes[id]
 	return ns != nil && c.now.Before(ns.agentHold)
@@ -303,6 +310,14 @@ func (c *schedCore) workersLaunched(iid uint64, res WorkerResult) {
 	case ReasonAgentUnreachable:
 		c.quarantine(res.Node, errors.New(res.Message))
 		c.returnInst(in, "agent unreachable", nil)
+	case agentproto.ReasonPaused:
+		// Not a failed load: the node takes no new load for a moment and the
+		// request is planned again, with no backoff (the agent had not heard
+		// of the unpause yet, or the node was paused meanwhile).
+		c.log.Info("worker launch refused: the node's agent still believes it is paused; planning again", "profile", in.prof.Name,
+			"node", res.Node, "hold", pausedRefusalHold)
+		c.ns(res.Node).agentHold = c.now.Add(pausedRefusalHold)
+		c.returnInst(in, "worker launch refused: node paused", nil)
 	default:
 		// would_not_fit (CR-9) ends here too: a failed load with the agent's
 		// reason and message, no quarantine (the node did nothing wrong) and

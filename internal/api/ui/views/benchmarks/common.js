@@ -63,7 +63,8 @@ export const METRICS = [
   { key: 'prefill_tps', label: 'Prefill speed', unit: 'tok/s', better: 'higher', digits: 1 },
   { key: 'ttft_ms', label: 'Time to first token', unit: 'ms', better: 'lower', digits: 0 },
   { key: 'memory_mib', label: 'Memory', unit: 'MiB', better: 'lower', digits: 0 },
-  { key: 'lowest_available_mib', label: 'Lowest available memory', unit: 'MiB', better: 'higher', digits: 0 },
+  { key: 'lowest_available_mib', label: 'Lowest available memory (system)', unit: 'MiB', better: 'higher', digits: 0 },
+  { key: 'lowest_available_gpu_mib', label: 'Lowest available memory (GPU)', unit: 'MiB', better: 'higher', digits: 0 },
   { key: 'unload_s', label: 'Unload time', unit: 's', better: 'lower', digits: 1 },
   { key: 'concurrent_wall_s', label: 'Simultaneous requests, wall time', unit: 's', better: 'lower', digits: 1 },
 ];

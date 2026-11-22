@@ -712,16 +712,27 @@ curl -s $B/api/bench/state | jq .run
    Each step also records what tells one hardware setup from another (steps
    stored before this was added have none of it; the UI says "Not recorded"):
    `mem_low` (per node, the lowest available memory while loading and during
-   the whole step, sampled about twice a second), `load.load_mode`
+   the whole step, sampled about twice a second; `kind` says whether it is
+   system memory or, on a node with a dedicated GPU, the GPU's free memory;
+   a `note` says when such a node had no live GPU figure, so its system memory
+   was recorded), `load.load_mode`
    (`file_read`, `pushed` or `local`), `roles` (the host and the workers, with
    each one's share of the model) and `reload_from_cache` (per node: `full`,
    `partial` with `cached_pct`, `none` or `unknown`; design 9.3, "Reload from
    cache"). `GET /api/bench/benchmarks/<id>/results` carries
-   `lowest_available_mib`, `load_mode`, `host` and `workers` per run. The plan
-   of a profile (`GET /api/profiles`, the Models page) shows the same reload
-   figure before you load: "Reload from cache: partial, about 63% of the
-   file" means the next load of that model reads about a third of the file
-   from the disk or the network again.
+   `lowest_available_mib` (system memory), `lowest_available_gpu_mib` (GPU
+   memory), `load_mode`, `host` and `workers` per run. The plan
+   of a profile (`GET /api/profiles`, the Models page) shows the same figure
+   before you load: "Can stay in the file cache: about 63%" means at most
+   about two thirds of the file can stay cached next to the loaded model, so
+   every load reads at least a third of it from the disk or the network. "All
+   of it" is not a promise either: after other large models the first reloads
+   still read part of the file again. The line "The cache on <node> is
+   occupied by other files now; expect the first reloads to be slower"
+   (`cache_occupied`, with `cached_now_mib` and `cache_room_mib`) says the
+   node's file cache holds so much now that the file does not fit next to it;
+   it can also show right after the same model was loaded, because the cache
+   figure does not say whose files it holds.
 6. **Compare.** Each run is compared with the previous completed run of the
    same suite (or the `baseline` you named when you ran it). `regression: true`
    means the load was more than 15% slower (`bench.regress_load_pct`), decode
@@ -734,7 +745,7 @@ curl -s $B/api/bench/state | jq .run
    `GET /api/bench/trends?benchmark=gemma12b-1ps5-cold&metric=load_s` gives the
    points over past runs for a chart (`metric` is `load_s`, `load_mb_s`,
    `memory_mib`, `decode_tps`, `prefill_tps`, `ttft_ms`, `unload_s`,
-   `concurrent_wall_s` or `lowest_available_mib`).
+   `concurrent_wall_s`, `lowest_available_mib` or `lowest_available_gpu_mib`).
    **Aggregates (the history added up):**
 ```sh
 curl -s "$B/api/bench/aggregates?suite=gemma-scaling&since=30d" | jq '.benchmarks[] | {benchmark_id, runs, pass_rate, load_s: .metrics.load_s | {median, last, best, change_pct, regression}}'
@@ -891,6 +902,11 @@ A node that is `active` and still gets no load says why in `unplaced` (in
   that agent needs `--allow-from <container network>`. Potluck tries again
   every 15 s and logs `agent reachable` when it works; nothing has to be
   restarted. The log has one `agent unreachable` warning per failure.
+- `paused` with `unpause_pending: true` and the message "unpaused; the node
+  takes load once its agent has been told ...": the node was just unpaused
+  and its agent has not had a heartbeat answer since. It clears within a few
+  seconds; if it stays, the node is not sending heartbeats (it is `lost`, or
+  its agent is stopped).
 - `programs_not_ready`, `model_source_unreachable`, `orphan_launch`, `silent`,
   `no_tier_match`: agent contract 11.1. `host_machine`: the agent of the
   machine Potluck runs on; it is never a remote node.
@@ -1049,7 +1065,7 @@ First look, always: `curl -s http://127.0.0.1:3122/api/status` and `docker logs 
 | `503` "cluster busy" with `Retry-After: 30` | The profile's queue entry waited `queue_timeout` (600 s) with no claim: every node it could use is held, claimed, quarantined or settling, and nothing was evictable yet (held models are protected for `hold`) | Retry. See `/api/status` queue and holders. Free a node: `POST /api/models/unload/{model}` (idle only). Tune hold (I). |
 | `503` "does not fit", message with need and capacity | The profile's need exceeds the combined plan budgets of the best `max_pool` nodes, even if all were empty (design 7.2) | Is `needs_mib` a stale PLACEHOLDER? Measure (G). Is a PS5/laptop offline or missing `ip` in the fleet? Raise nothing blindly: compare the need in the message with the node sizes in `/api/status`. Skipped while the fleet view is stale (the request then queues). |
 | `503` "forced nodes unavailable" within about 30 s, message `forced node X is absent from the fleet` or `... offline in the fleet` | A node named in the profile's `force_nodes` has been missing from the live fleet view for `forced_node_grace` (30 s). Absent means the fleet console does not list it (worker or console down, wrong name); offline means it is listed but not online | Bring the machine back (start the worker, check `GET /api/fleet`), or fix the name in `force_nodes`. Then retry. If the fleet view itself is stale, this does not fire: see "Fleet view stale". |
-| `503` "forced nodes do not fit", message with need, free, the nodes and `measured` or `estimated` | `defaults.forced_fit_check` is `reject` and the profile's need is above the forced nodes' usable memory as the pre-flight saw it (PS5 and other shared-memory nodes: free minus headroom; dedicated-VRAM nodes: raw free). The message says per node which figure was used. Nothing was started; the profile is not backed off. When the message says "even with nothing loaded on it", the check ran before any eviction, on the memory the nodes would have if what is loaded there were gone: the profile can never fit those nodes, and nothing loaded was stopped for it | Free memory on those nodes (stop what holds it), pick other nodes, or lower the need if it is only an estimate (measure it, G). `warn` would start anyway, `off` disables the check. |
+| `503` "forced nodes do not fit", message with need, free, the nodes and `measured` or `estimated` | `defaults.forced_fit_check` is `reject` and the profile's need is above the forced nodes' usable memory as the pre-flight saw it (PS5 and other shared-memory nodes: free minus headroom; dedicated-VRAM nodes: raw free). The message says per node which figure was used. Nothing was started; the profile is not backed off. When the message says "even with nothing loaded on it", the check ran before any eviction, on the memory the nodes would have if what is loaded there were gone: the profile can never fit those nodes, and nothing loaded was stopped for it. That answer comes when the request arrives, also while the model holding the node is younger than `min_hold` or busy; it does not come while a forced node is offline, re-registering or has no memory figure (the request waits) | Free memory on those nodes (stop what holds it), pick other nodes, or lower the need if it is only an estimate (measure it, G). `warn` would start anyway, `off` disables the check. |
 | `502` "load cancelled: <node> ran low on memory during the load (available N MiB, floor M MiB)" | The memory watch (design 7.2a, 8.4) saw that PS5's available memory fall below `load_memory_floor_mib` during the load. The profile is backed off; the node is not quarantined | Find what takes the PS5's memory, check the model's size against the node (`learned_needs` in `/api/status` after a successful load), retry after the backoff. |
 | A forced profile starts uploading, then the PS5 `rpc-server` crashes mid-upload (child log: "Remote RPC server crashed or returned malformed response"); the worker restarts by itself | The model does not fit the forced nodes. Measured 2026-11-18: Devstral 24B forced onto one PS5 needs about 13991 MiB against about 13.5 GB free. A `force_nodes` profile skips the fit check unless `forced_fit_check` is set | Force enough nodes (Devstral 24B fits on two PS5s: 14248 MiB measured at ctx 8192). Set `defaults.forced_fit_check: reject` or `warn` (see "Fit check for forced profiles"). The profile is backed off after the failed load; wait it out. |
 | A PS5 shows `hung` (`GET /api/status`, `view.nodes[].health.state`, ERROR log `worker hung`, `workerHealth` event) | Two of its health channels are silent (design 8.4a): upload (a receiving worker got no new bytes for `worker_silence`, 30 s) and heartbeat (offline in the live fleet view for 30 s); or the heartbeat alone for 3 x `worker_silence` with no channel known ok (an idle loaded model whose node stopped reporting). The TCP connect probe (port 50052) is off by default and is not used on PS5s: an rpc-server accepts one client, so probes pile up in its listen backlog and then all time out, which made healthy PS5s read `probe: silent`; the same goes for any external TCP check of port 50052, do not add one. The incident this was built for: the PS5 ran out of memory, its `rpc-server` hung, the container stayed "running" and the machine stopped reporting. The scheduler only names and quarantines it; it does not touch the PS5 | Look at `health.channels` and `silent_for_s` to see which evidence is missing. Power cycle or restart the PS5 worker (it recovers by itself only if the process comes back), or turn on recovery requests so the fleet manager's PS5 service restarts the rpc-server for you (section I, "Recovery requests for a hung PS5"). The state returns to `ok` once no channel is silent and at least one is known ok; the log says `worker recovered`. A model loaded on it is ended by the existing rules (node loss at 30 s, load stall, load timeout), not by this one. `suspect` is one silent channel only: watch it, nothing is quarantined. `defaults.worker_probe_interval` is `0` (probe never runs, its channel is always `unknown`); do not set it above 0 for PS5 workers. |

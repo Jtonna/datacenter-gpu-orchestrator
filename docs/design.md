@@ -806,6 +806,20 @@ ahead and the check runs again on the real figures after it, because the "nothin
 loaded" figure is an estimate. With `warn` or `off` (fleet membership) nothing
 changes. `POST /api/plan` shows the same refusal in place of `evict`.
 
+**Checked when the request arrives.** The same check runs when a request for
+the forced profile arrives (8.2, before it is queued) and each time its queue
+entry is looked at again while it waits (8.3), on the forced nodes as they are:
+whatever holds them, whatever is in flight there, whoever has claimed them.
+Before, the check ran only when a plan with victims was made, so a holder
+younger than `min_hold` (30 s) kept the request waiting until `queue_timeout`
+and it failed as "cluster busy" (seen on hardware). Same `503`, same message.
+It is skipped, and the request waits, when a forced node is not in the view,
+not eligible (offline, lost, stale view, quarantined), listed with an unplaced
+reason other than a pause (re-registering, programs not ready, silent), or has
+an unknown memory figure; and when every forced node is free, because the start
+path then checks the real figures in the same pass. `POST /api/plan` and
+`/api/profiles` give the same answer.
+
 ### 7.2a Memory safety on shared-memory nodes
 
 The PS5 workers have no container memory limit, and on the current llama.cpp a
@@ -1180,7 +1194,12 @@ view the core reads, and runs the worker launches.
   `POST /api/nodes/{id}/readmit`. Pause and removal are stored in the
   database (`node_admin`). A paused node takes no new load; a load on it
   continues. A pause also breaks a claim on the node for a waiting request
-  (step 5 of the queue), so the request is planned again.
+  (step 5 of the queue), so the request is planned again. An unpause takes
+  effect once a heartbeat or registration answer has told the agent (agent
+  contract 7.2, "Unpause delivery"): until then the node stays paused for
+  placement, because the agent refuses a launch while it believes it is
+  paused. A launch the agent still refuses as `paused` is planned again after
+  3 s, without a failed load or a backoff.
 - **Loads.** The worker launches replace the pre-flight: no `--list-devices`
   probe runs, so nothing holds a worker's single client slot before the child
   connects. Each remote node gets `POST /launch` (role worker, the release,
@@ -1249,7 +1268,11 @@ kill of the process tree.
    - `ready` → proxy; `in_flight++` until the response ends or the client goes.
    - `starting` → wait for it, then proxy.
    - `draining`, `stopping`, or no instance → join that profile's queue entry,
-     creating it (with the current time) if there is none.
+     creating it (with the current time) if there is none. With no instance, a
+     forced profile that cannot fit its forced nodes even with nothing loaded
+     on them is refused first (`503` "forced nodes do not fit", 7.2 "Checked
+     when the request arrives"), like the capacity check of 7.2 for an
+     automatic profile.
 4. All waiting requests for one profile share one entry.
 5. A client that disconnects while waiting is removed, whether it was waiting
    in an entry or on a `starting` instance. A `starting` instance carries on
@@ -1293,7 +1316,10 @@ For each remaining entry:
    then the shortest `load_duration`, then the longest idle.
    A forced profile's plan is first checked on the nodes' memory with nothing
    of ours loaded (7.2, "Checked before any eviction"): one that cannot fit
-   even then is refused before any victim is stopped. A node that takes no new
+   even then is refused before any victim is stopped; the same check also runs
+   on every pass over a waiting, unclaimed entry (and at arrival, 8.2), so the
+   refusal does not wait for a holder's `min_hold` or a request in flight.
+   A node that takes no new
    load (paused, or listed with an unplaced reason) is not offered as an
    evictable node, so its instance is never stopped for a load the node may
    not take.
@@ -1963,9 +1989,28 @@ added (a step stored before has none of these; the UI says "Not recorded"):
   (`load_mib`) and during the whole step (`step_mib`), with the number of
   `samples`. The runner samples `/api/status` about twice a second
   (`ManagerOptions.MemSample`, 500 ms) and also uses every status it reads for
-  the load and at the end of each phase. The figure is the agent's
-  `mem_available_mib`, or the node's free figure when it has no agent. A
-  benchmark result carries the lowest of them as `lowest_available_mib`.
+  the load and at the end of each phase. Each node's entry has a `kind` that
+  says which memory the figure is, because a model uses system memory on a
+  console but the GPU's own memory on a machine with a dedicated GPU:
+  - `system`: the agent's `mem_available_mib`, on a node whose device shares
+    system memory (a console);
+  - `gpu`: the GPU's free memory (`mem_total_bytes - mem_used_bytes -
+    mem_reserved_bytes` of the matching discrete entry of the agent's stats
+    `gpus`, stats contract 5.6), on a node whose device has memory of its own,
+    when the GPU exporter's source is `ok`; and the scheduler's own free figure
+    on the local node (its GPU);
+  - a node with a dedicated GPU but no live GPU figure (no exporter, stale or
+    absent source, no matching entry) is recorded as `system` with a `note`
+    saying so. The device list's `free_mib` is never used: the agent reads it
+    only at registration and after a launch exits, so it is stale during a load.
+
+  A node keeps one kind per step (a GPU figure replaces earlier system
+  samples). Rows stored before the kind was recorded have none and count as
+  `system`. The two kinds are never mixed: a benchmark result carries the
+  lowest system figure as `lowest_available_mib` and the lowest GPU figure as
+  `lowest_available_gpu_mib`; the aggregates and trends have both metrics;
+  the CSV has `lowest_available_gpu_mib` and `mem_low` (`node:kind:MiB` per
+  node). The UI shows "Lowest available (system)" and "(GPU)".
 - `load.load_mode` (and each `load` phase's): `file_read` (the workers read
   the model file from the shared folder), `pushed` (the host sent the weights)
   or `local` (no remote worker). The scheduler reports it on the instance and
@@ -1978,8 +2023,12 @@ added (a step stored before has none of these; the UI says "Not recorded"):
   (names)".
 - `reload_from_cache`: the plan's reload figure per node (below).
 
-*Reload from cache.* Whether a reload of a model can come from a node's file
-cache instead of the disk or the network. One pure function
+*Reload from cache.* How much of a model's file CAN stay in a node's file
+cache next to the loaded model, so that a later load can read it from memory
+instead of the disk or the network. It is about capacity, not a promise that
+the next load is warm: the cache is shared with the files of models loaded
+earlier, and after other large models the first reloads still read part of
+the file again (measured below). One pure function
 (`scheduler.ReloadFromCache`) decides it per node of a placement:
 
 - `unknown` when the node does not read the model file (`pushed` weights), or
@@ -1999,7 +2048,28 @@ measured cases on a 14 GB console: 7.0 GB file and 7.5 GB model gives `partial`,
 about 63%, and reloads slowly; 2.7 GB and 2.9 GB gives `full` and reloads fast.
 The verdict is in the plan (`POST /api/plan`, `GET /api/profiles` plan
 `load_mode` and `reload_from_cache`) and stored with the benchmark step. The UI
-shows it as "Reload from cache: partial, about 63% of the file".
+shows it as "Can stay in the file cache: all of it / about 63% / none", with
+the tooltip "After other large models the first reloads still read part of
+the file again."
+
+*What the cache holds now.* Measured on consoles (memory 14435 MiB, margin 2024
+MiB, model share 5576 MiB, file share 4512 MiB: verdict `full`): on two
+consoles whose cache already held 7 to 8 GB of other files, three load/unload
+rounds took 44.2 s, 24.6 s and 13.6 s (the cache grew 6959, 8708, 8959, 9046
+MiB: the new file share only got the room that was left and won a little more
+at each reload); a third console with 1184 MiB cached took the whole share at
+the first read and was warm from the second load on; after a cache drop the
+model reloaded in 3.5 s. So, when the node's agent reports its cache
+(`cached_bytes` in the stats, stats contract 4.3), each node's entry also has
+`cached_now_mib`, `cache_room_mib` = (memory - margin - model share, as the
+rule computes `room`) - `cached_now_mib`, and `cache_occupied` when
+`cache_room_mib` is below the file share (`scheduler.CacheRoom`). The UI shows
+it as a second line, "The cache on <node> is occupied by other files now;
+expect the first reloads to be slower". It is not folded into the verdict:
+the cache figure cannot tell whether the cached data is this model's own
+file, so right after this model was loaded (its own file cached) the line
+can show although the next load is warm. Nodes that report no cache figure
+(older agents, the scheduler host) have none of the three fields.
 
 *Safety.* `only_when_idle` (default true): the run does not start, and pauses
 between benchmarks, while the scheduler has an instance this run did not load,
