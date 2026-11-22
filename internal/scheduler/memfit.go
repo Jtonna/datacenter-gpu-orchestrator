@@ -105,6 +105,38 @@ func (l *learnedNeed) shareFor(pl core.Placement, fracs []float64, id core.NodeI
 	return got, found
 }
 
+// learnedShares is the per-node figures measured on pl's node set and split
+// (fracs) for p's shape, for a need of need MiB on that many devices. It is
+// nil when there are none, or when the measurement is not trusted (a
+// restored figure of another llama build says nothing per node). When they
+// add up to less than need (the need comes from another row: a smaller
+// count scaled up, or a higher total) they are scaled up to it, the
+// measured skew kept. It is the one source of stored per-node figures:
+// expect_mib and the cache prediction (expectShares), the forced check
+// (sharedShortfalls) and the reserved figures (reservedShares); fourth
+// review, FS1.
+func (c *schedCore) learnedShares(p *core.Profile, pl core.Placement, fracs []float64, need int) []int {
+	l := c.learnedAt(p, len(pl.Nodes))
+	if l == nil || !c.trusted(l) || len(pl.Nodes) == 0 {
+		return nil
+	}
+	out := make([]int, len(pl.Nodes))
+	sum := 0
+	for i, pn := range pl.Nodes {
+		m, ok := l.shareFor(pl, fracs, pn.ID)
+		if !ok {
+			return nil
+		}
+		out[i], sum = m, sum+m
+	}
+	if sum > 0 && sum < need {
+		for i, m := range out {
+			out[i] = int(math.Ceil(float64(m)*float64(need)/float64(sum) - 1e-6))
+		}
+	}
+	return out
+}
+
 // effectiveNeed applies the estimate margin and the learned measurement to a
 // provider's need.
 //
@@ -432,6 +464,7 @@ func (c *schedCore) sharedShortfalls(p *core.Profile, info NeedInfo, pl core.Pla
 	skew := c.cfg.Defaults.SplitSkewMargin
 	need := info.Need.WithMargin()
 	dev := c.deviceCost(info)
+	learned := c.learnedShares(p, pl, fracs, need)
 	for i, pn := range pl.Nodes {
 		n, ok := c.node(pn.ID)
 		if !ok || !n.SharedMemory {
@@ -443,12 +476,14 @@ func (c *schedCore) sharedShortfalls(p *core.Profile, info NeedInfo, pl core.Pla
 		}
 		var share int
 		var fit string
-		if l := c.learnedAt(p, len(pl.Nodes)); l != nil {
-			if m, ok := l.shareFor(pl, fracs, pn.ID); ok {
-				share, fit = m, "measured this run for this node set and split"
-				if l.restored {
-					fit = fmt.Sprintf("measured on %s for this node set and split", dateOf(l.at))
-				}
+		if learned != nil {
+			l := c.learnedAt(p, len(pl.Nodes))
+			share, fit = learned[i], "measured this run for this node set and split"
+			if l.restored {
+				fit = fmt.Sprintf("measured on %s for this node set and split", dateOf(l.at))
+			}
+			if m, _ := l.shareFor(pl, fracs, pn.ID); share > m {
+				fit += fmt.Sprintf(", %d MiB raised to the need on %d devices", m, len(pl.Nodes))
 			}
 		}
 		if fit == "" {

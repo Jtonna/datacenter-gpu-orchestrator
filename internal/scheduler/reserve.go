@@ -211,20 +211,7 @@ func (c *schedCore) reservedShares(p *core.Profile, pl core.Placement) ([]reserv
 	// load than the need's): never below the need, the measured skew kept.
 	var learnedMiB []int
 	if len(pl.Nodes) > 1 {
-		sum := 0
-		for _, pn := range pl.Nodes {
-			m, ok := c.learnedAt(p, len(pl.Nodes)).shareFor(pl, fracs, pn.ID)
-			if !ok {
-				learnedMiB, sum = nil, 0
-				break
-			}
-			learnedMiB, sum = append(learnedMiB, m), sum+m
-		}
-		if sum > 0 && sum < need {
-			for i, m := range learnedMiB {
-				learnedMiB[i] = int(math.Ceil(float64(m)*float64(need)/float64(sum) - 1e-6))
-			}
-		}
+		learnedMiB = c.learnedShares(p, pl, fracs, need)
 	}
 	out := make([]reservedShare, len(pl.Nodes))
 	for i, pn := range pl.Nodes {
