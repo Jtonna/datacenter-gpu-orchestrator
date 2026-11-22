@@ -177,10 +177,10 @@ func TestExclude_StatusShowsExcludedNode(t *testing.T) {
 	h.cfg.ExcludeNodes = []string{"a"}
 	h.step(evTick{})
 	a, b := h.nodeStatus("a"), h.nodeStatus("b")
-	if !a.Excluded || a.Eligible {
+	if !a.Excluded || a.Eligible || a.ExcludedBy != "a" {
 		t.Fatalf("a: excluded=%v eligible=%v", a.Excluded, a.Eligible)
 	}
-	if b.Excluded || !b.Eligible {
+	if b.Excluded || !b.Eligible || b.ExcludedBy != "" {
 		t.Fatalf("b: excluded=%v eligible=%v", b.Excluded, b.Eligible)
 	}
 }

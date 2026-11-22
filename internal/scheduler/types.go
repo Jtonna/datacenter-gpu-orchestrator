@@ -302,6 +302,9 @@ type NodeStatus struct {
 	Priority int
 	Eligible bool // ignoring the profile-specific rules (allow_tiers, min_share)
 	Excluded bool // kept out of the pool by exclude_nodes; never eligible
+	// ExcludedBy is the exclude_nodes entry that matches the node ("" when
+	// not excluded).
+	ExcludedBy string
 	// Auto is false for a node in no_auto_nodes (CR-9 review): automatic
 	// placement never picks it; a profile that forces it still may.
 	Auto bool

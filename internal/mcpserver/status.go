@@ -67,7 +67,7 @@ func deriveStatus(doc map[string]any, args map[string]any) any {
 	}
 	nodes := []any{}
 	for _, x := range arr(mp(doc["view"])["nodes"]) {
-		nodes = append(nodes, pick(mp(x), "id", "hostname", "local", "online", "excluded", "auto", "eligible", "unplaced", "unplaced_message", "total_mib", "free_mib",
+		nodes = append(nodes, pick(mp(x), "id", "hostname", "local", "online", "excluded", "excluded_by", "auto", "eligible", "unplaced", "unplaced_message", "total_mib", "free_mib",
 			"live_budget_mib", "holder", "claimed_by", "settling", "quarantined", "health", "recovery"))
 	}
 	recent := arr(doc["recent_loads"])

@@ -35,10 +35,14 @@ export function cachedMiBOf(agent) {
   return m && typeof m.cached_bytes === 'number' ? Math.round(m.cached_bytes / 1048576) : null;
 }
 
+// excludedOf(node, agent): exclude_nodes names the machine (the view's
+// excluded, or its agent facts' excluded).
+const excludedOf = (n, a) => !!(n.excluded || (a && a.excluded));
+
 // stateOf(node) -> [label, badge kind, sort rank]
-function stateOf(st, n, inst) {
+function stateOf(st, n, inst, agent) {
   const q = (st.quarantines || []).find(x => x.node === n.id);
-  if (n.excluded) return ['Excluded', 'dash', 9];
+  if (excludedOf(n, agent)) return ['Excluded', 'dash', 9];
   if (!n.online) return ['Offline', 'n', 8];
   if (n.health && n.health.state === 'hung') return ['Not answering', 'fail', 0];
   if (q || n.quarantined) return ['Set aside', 'aside', 1];
@@ -166,12 +170,16 @@ function tile(st, n, refresh) {
   const name = n.hostname || n.id;
   const agent = agentOf(st, n);
   const np = notPlaceable(n, agent);
+  // Excluded (exclude_nodes): the view says so, and so do the agent facts, with the entry.
+  const excl = excludedOf(n, agent);
+  const exBy = excl_by || (agent && agent.excluded_by) || '';
+  const npOther = np && np.code !== 'paused' && np.code !== 'excluded'; // a reason other than a pause or the exclusion
   const inst = n.holder ? (st.instances || []).find(i => i.profile === n.holder) : null;
   const placed = inst ? (inst.nodes || []).find(p => p.id === n.id) : null;
   const mem = placed ? nodeMemory(placed) : null;
   const q = (st.quarantines || []).find(x => x.node === n.id);
-  const [label, kind] = stateOf(st, n, inst);
-  const usableNode = n.online && !n.excluded && !np; // a paused or not placeable machine takes nothing now
+  const [label, kind] = stateOf(st, n, inst, agent);
+  const usableNode = n.online && !excl && !np; // a paused or not placeable machine takes nothing now
   // The figures come from two places (the fleet's total, a free figure that a
   // pre-load check may have measured later), so they can disagree. Nothing
   // negative is ever shown: "in use" is clamped at 0 and the note says why.
@@ -193,15 +201,15 @@ function tile(st, n, refresh) {
   const notes = [];
   const note = (cls, node) => notes.push(h('div.hit', h('i', { class: cls }), h('span', node)));
 
-  if (n.excluded) note('', 'Excluded in the configuration: it gets no model and is not counted in the capacity.');
+  if (excl) note('', ['Excluded in the configuration', exBy ? [' (exclude_nodes: ', h('span.mono', exBy), ')'] : '', ': it gets no model and is not counted in the capacity.']);
   if (np && np.paused) note('', 'Paused by an operator: it keeps what it holds and takes no new model until it is unpaused.');
-  if (np && np.code !== 'paused') {
+  if (npOther) {
     note('a', h('span', { title: np.code ? 'The scheduler says: ' + np.code : null }, h('b', 'Not placeable. '),
       np.known ? np.text : ['The scheduler gives this reason: ', h('span.mono', np.code)],
       agent.programs_error ? [' The agent says: ', agent.programs_error] : null));
   }
   const gone = agent ? 'its agent has not reported since ' : poolText(pool, 'missing from the fleet feed since ');
-  if (!n.online && !n.excluded) note('x', ['Offline', n.missing_since ? [': ', gone, at(n.missing_since), ' (', ago(n.missing_since), ')'] : '.']);
+  if (!n.online && !excl) note('x', ['Offline', n.missing_since ? [': ', gone, at(n.missing_since), ' (', ago(n.missing_since), ')'] : '.']);
   else if (n.missing_since) note('a', [agent ? 'Its agent has not reported since ' : poolText(pool, 'Missing from the fleet feed since '), at(n.missing_since), '.']);
   if (q || n.quarantined) {
     note('x', ['Set aside ', q ? ['until ', at(q.until), ' (', until(q.until), ')'] : ['since ', at(n.quarantined)],
@@ -243,13 +251,13 @@ function tile(st, n, refresh) {
   const onIt = n.holder ? h('span', inst && inst.state === 'starting' ? 'Loading ' : 'Holds ', h('a.mono', { href: href('models', inst && inst.model_file ? [inst.model_file] : null), title: n.holder }, n.holder),
     inst && inst.in_flight > 0 ? h('span.mut', ` · ${plural(inst.in_flight, 'request')} in flight`) : null)
     : n.claimed_by ? h('span', 'Claimed for ', h('a.mono', { href: href('queue') }, n.claimed_by))
-      : h('span.mut', n.excluded ? 'Never used' : !n.online ? 'Nothing can be placed here' : 'Nothing loaded');
-  return h('section', { class: 'card ncard ' + (n.excluded ? 'quiet ' : '') + (kind === 'fail' || kind === 'aside' ? 'flag-err' : kind === 'load' && !inst ? 'flag-warn' : np && np.code !== 'paused' ? 'flag-warn' : ''), key: 'node-' + n.id, 'aria-label': name },
+      : h('span.mut', excl ? 'Never used' : !n.online ? 'Nothing can be placed here' : 'Nothing loaded');
+  return h('section', { class: 'card ncard ' + (excl ? 'quiet ' : '') + (kind === 'fail' || kind === 'aside' ? 'flag-err' : kind === 'load' && !inst ? 'flag-warn' : npOther ? 'flag-warn' : ''), key: 'node-' + n.id, 'aria-label': name },
     h('div.ch', { style: 'padding-bottom:10px' },
-      h('h2.mono', name), np && label === 'Free' ? null : badge(label, kind),
+      h('h2.mono', name), np && label === 'Free' ? null : badge(label, kind, label === 'Excluded' && exBy ? 'excluded by exclude_nodes: ' + exBy : undefined),
       np && np.paused ? badge('Paused', 'settle', 'Paused by an operator: it takes no new model') : null,
-      np && np.code !== 'paused' ? badge('Not placeable', 'aside', np.known ? np.short : np.code) : null,
-      n.auto === false && !n.excluded ? badge('Forced only', 'line', 'In no_auto_nodes: only a profile that names this node in force_nodes puts a model here') : null,
+      npOther ? badge('Not placeable', 'aside', np.known ? np.short : np.code) : null,
+      n.auto === false && !excl ? badge('Forced only', 'line', 'In no_auto_nodes: only a profile that names this node in force_nodes puts a model here') : null,
       n.local ? badge('This machine', 'n', 'The scheduler runs here: models are read from disk, nothing is uploaded') : null),
     h('div.body',
       h('div.on-it', onIt),
@@ -257,7 +265,7 @@ function tile(st, n, refresh) {
         memBar({ model, other, total, limit: usableNode && headroom > 0 ? used + usable : null },
           `${name}: ${gb(used)} in use of ${gb(total)}` + (usableNode ? `, ${gb(usable)} usable for a new model` : '')),
         h('div.memline', h('span', h('b', gbNum(used)), ' GB in use', model > 0 && other > 0 ? ` · ${gbNum(model)} by the model` : ''), h('span', gbNum(total), ' GB total'))) : null,
-      n.excluded
+      excl
         ? h('div.trio', stat('Free', gbNum(free), 'GB', { small: true, title: mib(free) + asReported }),
           stat('Total', gbNum(total), 'GB', { small: true, title: mib(total) }))
         : h('div.trio',
@@ -271,7 +279,7 @@ function tile(st, n, refresh) {
       facts([
         ['Address', h('span', n.addr || (n.local ? 'this machine' : 'not known')), n.addr ? 'The address of its worker' : null],
         ['Priority', h('span', n.priority ? String(n.priority) : 'no tier matches', n.priority ? h('span.mut', { style: 'font-family:var(--sans);font-weight:600' }, n.priority === 1 ? ' · used first' : '') : null), 'Lower numbers are used first when a model is placed'],
-        n.health && n.health.channels && !n.excluded ? ['Health', h('span', { style: 'font-family:var(--sans);font-weight:600' }, ['upload', 'heartbeat', 'probe'].filter(c => n.health.channels[c] && n.health.channels[c] !== 'unknown').map((c, i) => {
+        n.health && n.health.channels && !excl ? ['Health', h('span', { style: 'font-family:var(--sans);font-weight:600' }, ['upload', 'heartbeat', 'probe'].filter(c => n.health.channels[c] && n.health.channels[c] !== 'unknown').map((c, i) => {
           const [txt, cls] = CHANNEL[n.health.channels[c]] || [n.health.channels[c], 'mut'];
           return [i ? ' · ' : '', c + ' ', h('span', { class: cls }, txt)];
         }), ['upload', 'heartbeat', 'probe'].every(c => !n.health.channels[c] || n.health.channels[c] === 'unknown') ? h('span.mut', 'no report yet') : null), 'The channels the scheduler watches the worker on'] : null,
@@ -297,7 +305,7 @@ registerView({
       const pool = nodes.filter(n => !n.excluded);
       const online = pool.filter(n => n.online).length;
       // agents mode: a machine that takes no new model for a reason other than an operator's pause needs a look
-      const unplaced = n => { const np = notPlaceable(n, agentOf(st, n)); return !!np && np.code !== 'paused'; };
+      const unplaced = n => { const np = notPlaceable(n, agentOf(st, n)); return !!np && np.code !== 'paused' && np.code !== 'excluded'; };
       const paused = agents ? pool.filter(n => { const a = agentOf(st, n); return a && a.paused; }).length : 0;
       const bad = pool.filter(n => !n.online || n.quarantined || (st.quarantines || []).some(q => q.node === n.id) || (n.health && n.health.state && n.health.state !== 'ok') || unplaced(n)).length;
       const excluded = nodes.length - pool.length;

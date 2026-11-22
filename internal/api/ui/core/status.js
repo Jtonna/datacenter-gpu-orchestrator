@@ -63,6 +63,10 @@ export function machineBadge(st, node) {
   const np = notPlaceable(node, agentOf(st, node));
   if (!np) return null;
   if (np.paused && np.code === 'paused') return badge('Paused', 'settle', np.text);
+  if (np.code === 'excluded') {
+    const by = node.excluded_by || (agentOf(st, node) || {}).excluded_by;
+    return badge('Excluded', 'dash', by ? 'excluded by exclude_nodes: ' + by : np.text);
+  }
   return badge(np.paused ? 'Paused · not placeable' : 'Not placeable', 'aside', np.known ? np.text : 'The scheduler gives this reason: ' + np.code);
 }
 
