@@ -48,6 +48,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/pool"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/release"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -177,6 +178,8 @@ func stepDone(step string, st *bench.Store) {
 }
 
 func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) int {
+	fatal := newFatalPath()
+	defer fatal.disarm() // the first defer, so the last to run: main exits right after
 	// CR-10: Potluck's own lines also go to the log store (source scheduler),
 	// through a RAM ring and one background sender; the printed log stays as
 	// it is. The lines from here on are kept until the sender starts and
@@ -185,6 +188,16 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 	var cfgAt atomic.Pointer[config.Config]
 	self := newSelfLog(relayAt.Load, cfgAt.Load)
 	log = slog.New(self.Handler(log.Handler()))
+	// Background-task isolation: a recovered failure is logged (and so
+	// shipped with Potluck's own lines), recorded in the history and counted;
+	// one that must not continue ends the process through the fatal path.
+	var histAt atomic.Pointer[history.Store]
+	supervise.Configure(supervise.Options{Logger: log, Fatal: fatal.trigger,
+		Record: func(f supervise.Failure) {
+			if h := histAt.Load(); h != nil {
+				h.Record(failureEvent(f))
+			}
+		}})
 	// The database holds the configuration. If it cannot be opened the scheduler
 	// still starts (built-in defaults, no profiles); configuration changes then answer 503.
 	var dbStore *bench.Store
@@ -311,6 +324,7 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 	hist := history.Open(history.Options{Dir: cfg.HistoryDir, MaxFileBytes: int64(cfg.HistoryMaxFileMiB) << 20,
 		KeepFiles: cfg.HistoryKeepFiles, MemoryEvents: cfg.HistoryMemoryEvents, Logger: log})
 	defer hist.Close()
+	histAt.Store(hist)
 	hist.Record(startedEvent(cfg, version, time.Now()))
 
 	so := scheduler.Options{
@@ -366,7 +380,15 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 		return 1
 	}
 	schedDone := make(chan struct{})
-	go func() { sched.Run(bg); close(schedDone) }()
+	// The scheduler's single event loop is NOT restarted after a failure: it
+	// owns the instances, waiters, leases, node claims and memory
+	// reservations, mutated in place with no store to rebuild them from, so a
+	// panic half way leaves them inconsistent (over-committed node memory, a
+	// waiter never answered). Policy Exit: the fatal path ends the process and
+	// the container starts it again from the database. Only the foreign code
+	// the loop calls (history and bench subscribers) is guarded.
+	supervise.Go(bg, supervise.Spec{Name: "scheduler.loop", Policy: supervise.Exit, Done: func() { close(schedDone) }},
+		func(ctx context.Context) { sched.Run(ctx) })
 	if pl != nil {
 		pl.SetForceUnload(sched.ForceUnloadNode)
 	}
@@ -416,6 +438,8 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 		log.Error("HTTP server failed", "err", err)
 		hist.Record(stoppingEvent("HTTP server failed: "+err.Error(), time.Now()))
 		code = 1
+	case reason := <-fatal.ch:
+		return fatalStop(reason, log, hist, ln, launcher, bgCancel)
 	}
 
 	// Design 8.6: stop accepting, then let the scheduler answer waiters,
@@ -461,6 +485,9 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 	// on return: nothing writes to it once "stopped" is logged.
 	apiSrv.Close()
 	stepDone("api closed", nil)
+	if fatal.fired.Load() { // a task failed for good during the shutdown
+		code = supervise.ExitCode
+	}
 	log.Info("stopped")
 	return code
 }

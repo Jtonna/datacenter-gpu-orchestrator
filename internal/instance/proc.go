@@ -46,6 +46,39 @@ type ProcessLauncher struct {
 	Tap func(profile string, instanceID uint64) ChildTap
 
 	warnOnce sync.Once
+
+	liveMu sync.Mutex
+	live   map[*proc]struct{} // started and not yet reaped (KillAll)
+}
+
+// KillAll kills every child this launcher started that has not been reaped
+// yet. It is the scheduler's fatal path: the loop that knows the children
+// may be dead, and the children run in their own process groups, so they
+// would outlive the process otherwise. It does not wait.
+func (l *ProcessLauncher) KillAll() int {
+	l.liveMu.Lock()
+	ps := make([]*proc, 0, len(l.live))
+	for p := range l.live {
+		ps = append(ps, p)
+	}
+	l.liveMu.Unlock()
+	for _, p := range ps {
+		p.Stop(StopKill)
+	}
+	return len(ps)
+}
+
+func (l *ProcessLauncher) track(p *proc, on bool) {
+	l.liveMu.Lock()
+	defer l.liveMu.Unlock()
+	if !on {
+		delete(l.live, p)
+		return
+	}
+	if l.live == nil {
+		l.live = map[*proc]struct{}{}
+	}
+	l.live[p] = struct{}{}
 }
 
 var _ Launcher = (*ProcessLauncher)(nil)
@@ -136,6 +169,8 @@ func (l *ProcessLauncher) Start(spec StartSpec) (Child, error) {
 		return nil, fmt.Errorf("instance: starting %s: %w", argv[0], err)
 	}
 	p.cmd = cmd
+	p.untrack = func() { l.track(p, false) }
+	l.track(p, true)
 	go p.wait()
 	return p, nil
 }
@@ -155,6 +190,7 @@ type proc struct {
 	stderr   *LineWriter
 	logSink  *fileSink // nil when the child has no log file
 	tap      ChildTap  // nil without ProcessLauncher.Tap
+	untrack  func()    // leaves the launcher's live set (KillAll)
 
 	mu      sync.Mutex
 	stopReq bool // Stop was called
@@ -208,6 +244,9 @@ func (p *proc) wait() {
 		st.Err = err
 	}
 	p.status = st
+	if p.untrack != nil {
+		p.untrack()
+	}
 	p.ports.Release(p.port)
 	close(p.done)
 	p.exitCh <- st

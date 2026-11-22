@@ -11,6 +11,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/fleet"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // Options are the scheduler's collaborators. View, Prober and Launcher are
@@ -209,6 +210,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 // effects and publishes the feed. The snapshot comes first so that a caller
 // woken by a reply (say, a new lease) already sees the state it implies.
 func (s *Scheduler) step(ev event) {
+	supervise.Point("scheduler.loop") // test hook: a panic here must end the process (cmd/llm-scheduler)
 	s.core.handle(ev)
 	up := map[string]string{}
 	for name := range s.core.insts {
