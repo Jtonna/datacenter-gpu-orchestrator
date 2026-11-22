@@ -166,6 +166,16 @@ func serve(boot config.Bootstrap, log *slog.Logger) int {
 
 // serveUntil runs the scheduler until the first value on sigs (a second one
 // stops everything at once).
+// shutdownStep, when set (tests), is told each step of the shutdown that
+// matters for the database, in order.
+var shutdownStep func(step string, st *bench.Store)
+
+func stepDone(step string, st *bench.Store) {
+	if f := shutdownStep; f != nil {
+		f(step, st)
+	}
+}
+
 func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) int {
 	// CR-10: Potluck's own lines also go to the log store (source scheduler),
 	// through a RAM ring and one background sender; the printed log stays as
@@ -183,7 +193,7 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 		log.Error("the database cannot be opened; running with built-in defaults and no profiles, configuration changes are unavailable", "data_dir", boot.DataDir, "err", err)
 	} else {
 		dbStore = st
-		defer dbStore.Close()
+		defer func() { dbStore.Close(); stepDone("store closed", dbStore) }() // the last step: every user of the store has stopped
 		if cs, err = cfgstore.Open(st); err != nil {
 			log.Error("the configuration tables cannot be opened; configuration changes are unavailable", "err", err)
 			cs = nil
@@ -257,6 +267,7 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 	}
 
 	bg, bgCancel := context.WithCancel(context.Background())
+	poolDone := make(chan struct{}) // closed when the pool's loop has returned (agents membership)
 	defer bgCancel()
 	self.SetLogger(log)
 	go self.Run(bg)
@@ -287,7 +298,7 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 		}
 		curPl.Store(pl)
 		view = pl
-		go pl.Run(bg)
+		go func() { pl.Run(bg); close(poolDone) }()
 	} else {
 		fc = fleet.New(cfg, fleet.Options{Logger: log})
 		go func() { fc.Run(bg); close(fleetDone) }()
@@ -434,8 +445,16 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 		pl.WaitStops(10 * time.Second) // the worker launches of the last instances
 	}
 	bgCancel()
-	<-schedDone
+	<-schedDone // the scheduler and its learned-need writer have written what was queued
 	<-fleetDone
+	if pl != nil {
+		<-poolDone
+	}
+	// The API server's background work (the catalog build, the audit queue,
+	// the agents table) is stopped and flushed before the database is closed
+	// on return: nothing writes to it once "stopped" is logged.
+	apiSrv.Close()
+	stepDone("api closed", nil)
 	log.Info("stopped")
 	return code
 }

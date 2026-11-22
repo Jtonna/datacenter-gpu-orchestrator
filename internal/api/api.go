@@ -95,6 +95,12 @@ type Options struct {
 
 // Server is the http.Handler for the whole API.
 type Server struct {
+	// bg is cancelled by Close, which then waits for bgWG: the background
+	// work started outside a request (Warm) that reads the store.
+	bg       context.Context
+	bgCancel context.CancelFunc
+	bgWG     sync.WaitGroup
+
 	cfg   *config.Config
 	sched *scheduler.Scheduler
 	opts  Options
@@ -149,6 +155,7 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 	}
 	s := &Server{cfg: cfg, sched: sched, opts: o, log: o.Logger, start: o.Now(), hist: o.History,
 		activity: newActivityLog(200), aliasSeen: map[string]time.Time{}}
+	s.bg, s.bgCancel = context.WithCancel(context.Background())
 	s.store, _ = o.Audit.(*cfgstore.Store)
 	s.agents.store = s.store
 	s.hub = newHub(sched, o.Now)
@@ -186,8 +193,13 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return err
 }
 
-// Close stops the feed goroutine and closes every event stream.
+// Close stops the feed goroutine and closes every event stream, cancels and
+// waits for the background catalog build, and writes what the audit queue
+// and the agents table hold. Nothing of the server uses the store after it
+// returns, so the caller may close the database then.
 func (s *Server) Close() {
+	s.bgCancel()
+	s.bgWG.Wait()
 	s.stopCatalog()
 	s.hub.close()
 	s.ws.close()

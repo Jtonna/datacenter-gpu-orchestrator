@@ -450,8 +450,10 @@ func (snap *catalogSnap) delta(prev *catalogSnap) map[string]any {
 // Warm builds the catalog in the background, so that the first request and
 // the first live-channel client find it ready. Call it once after New.
 func (s *Server) Warm() {
+	s.bgWG.Add(1)
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer s.bgWG.Done()
+		ctx, cancel := context.WithTimeout(s.bg, 30*time.Second)
 		defer cancel()
 		if _, err := s.catalogBuild(ctx, nil); err != nil {
 			s.log.Debug("the model catalog could not be built at start; the first request builds it", "err", err)
