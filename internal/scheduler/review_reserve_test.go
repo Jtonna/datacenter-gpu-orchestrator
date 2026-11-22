@@ -383,7 +383,7 @@ func TestReview_N1_DefaultsWriteNoPeaks(t *testing.T) {
 // max_pool for an automatic profile) against a measurement stored on 2
 // (review SB1, SS4), in fleet membership, fleet membership with a lower
 // pre-flight, and agents membership. A third of the situations (8640 of
-// 25920) store measurements on two or three device counts with an
+// 30240) store measurements on two or three device counts with an
 // untrusted row among them (third review, TN5): "counts-untrusted" has a
 // trusted 1-device row and an untrusted 3-device row below it (TB1),
 // "counts-between" trusted rows on 1 and 3 devices and an untrusted one on
@@ -396,7 +396,7 @@ func TestReview_GeneralRule(t *testing.T) {
 		uses         bool
 	}
 	n := 0
-	for _, need := range []int{8000, 16000, 20000, 23000, 26000, 30000} {
+	for _, need := range []int{8000, 16000, 20000, 23000, 26000, 30000, 40000} { // 40000: never fits three nodes
 		for _, cBudget := range []int{12400, 9000} {
 			for _, avgDrop := range []int{0, 2500} {
 				for _, tg := range []tight{{8, 300, true}, {64, 100, true}, {8, 1000, false}, {0, 300, true}, {8, 0, true}} {
@@ -416,8 +416,8 @@ func TestReview_GeneralRule(t *testing.T) {
 			}
 		}
 	}
-	if n != 25920 {
-		t.Fatalf("%d situations, the table says 25920", n)
+	if n != 30240 {
+		t.Fatalf("%d situations, the table says 30240", n)
 	}
 }
 
@@ -536,6 +536,7 @@ func checkGeneralRule(t *testing.T, need, cBudget, avgDrop, fill, margin int, us
 		if r.Action == PlanStart {
 			t.Errorf("%s: the plan starts but the placer finds nothing", name())
 		}
+		agrees(t, h, r, mode, name)
 		return
 	}
 	freed := map[string]bool{"m": true}
@@ -560,7 +561,7 @@ func checkGeneralRule(t *testing.T, need, cBudget, avgDrop, fill, margin int, us
 		}
 	}
 	// what a request does (every launch also checks the gate: checkGated)
-	h.request("m")
+	agrees(t, h, r, mode, name)
 	in := h.c.insts["m"]
 	switch {
 	case mode == "agents":
@@ -574,5 +575,33 @@ func checkGeneralRule(t *testing.T, need, cBudget, avgDrop, fill, margin int, us
 		if node, by := rowsShort(rows); ok && by > 0 {
 			t.Errorf("%s: launched, but node %s is short by %d MiB on the figures its pre-flight left", name(), node, by)
 		}
+	}
+}
+
+// agrees sends a request for "m" and checks it against the plan: a plan that
+// rejects is a request refused at once, and a request refused at once had a
+// plan that rejects (in fleet membership a plan that starts may still be
+// refused by the pre-flight in the same step); one that queues is not
+// answered (the live finding after 0.1.6: never fits must be refused, and
+// what may fit later must wait).
+func agrees(t *testing.T, h *harness, r PlanReport, mode string, name func() string) {
+	t.Helper()
+	// nothing of ours is loaded in these situations: a plan held back by
+	// the reservation rule would wait for nothing, unless a pre-flight's
+	// figure stands in for the view's for a while (the override dimension)
+	overridden := h.c.overridden("a") || h.c.overridden("b") || h.c.overridden("c")
+	if len(h.c.insts) == 0 && !overridden && r.Action == PlanQueue && strings.HasPrefix(r.Reason, "memory reservation") {
+		t.Errorf("%s: plan queue on the reservation rule with nothing loaded (%s): it can never fit and must be refused", name(), r.Reason)
+	}
+	w := h.request("m")
+	a, answered := h.peek(w)
+	refused := answered && a.err != nil
+	switch {
+	case r.Action == PlanReject && !refused:
+		t.Errorf("%s: plan reject (%s) but the request was not refused at once", name(), r.Reason)
+	case refused && r.Action != PlanReject && !(mode != "agents" && r.Action == PlanStart):
+		t.Errorf("%s: plan %s (%s) but the request was refused: %v", name(), r.Action, r.Reason, a.err)
+	case r.Action == PlanQueue && answered:
+		t.Errorf("%s: plan queue but the request was answered", name())
 	}
 }

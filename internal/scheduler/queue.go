@@ -129,7 +129,16 @@ func (c *schedCore) place(e *entry) bool {
 		return true
 	}
 	pl, err := placer.Place(req, c.freeCandidates(e.prof))
-	if err != nil || c.reserveGate(e.prof, pl, nil) != "" {
+	if err != nil {
+		return false
+	}
+	if c.reserveGate(e.prof, pl, nil) != "" {
+		if ne := c.gateNeverFits(e.prof, pl); ne != nil { // neverfits.go
+			c.log.Warn("request cannot fit even with nothing of ours in the way; refused", "profile", e.prof.Name,
+				"need_mib", ne.NeedMiB, "available_mib", ne.CapacityMiB, "nodes", placementIDs(pl), "reason", ne.Message)
+			c.answerEntry(e, ne)
+			return true
+		}
 		return false
 	}
 	c.deleteEntry(e)

@@ -357,6 +357,13 @@ func (c *schedCore) dryPlan(profile string) (r PlanReport) {
 			}
 		}
 	}
+	if gate != "" && perr == nil {
+		if ne := c.gateNeverFits(p, pl); ne != nil { // neverfits.go: as place refuses it
+			r.Action, r.Reason, r.Placement = PlanReject, ne.Message, c.placedStatus(pl)
+			r.RequiredMiB, r.CapacityMiB = ne.NeedMiB, ne.CapacityMiB
+			return r
+		}
+	}
 	r.Action = PlanQueue
 	_, r.Reason = c.waitWhy(p)
 	if gate != "" {
