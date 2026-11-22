@@ -67,7 +67,10 @@ func tooBigEstimate(t *testing.T, mode string) *harness {
 	h.cfg.Configured = true
 	h.llama("f", 0, func(p *core.Profile) { p.ForceNodes, p.LoadTimeout = []string{"a"}, time.Hour })
 	h.needs["f"] = NeedInfo{Need: placer.Estimated(14000), FileBytes: 1 << 30}
-	h.c.buildRelease = "0.1.3"
+	// the host program and release 0.1.3's release.json name one llama
+	// build: measurements are stored with it and trusted after a restart
+	h.c.buildRelease, h.c.llamaBuild = "0.1.3", "aaaaaaa1"
+	h.c.releaseBuild = func(rel string) string { return map[string]string{"0.1.3": "aaaaaaa1"}[rel] }
 	return h
 }
 
@@ -428,7 +431,8 @@ func TestStoredNeed_SchedulerRestoresAtNewAndWritesBeforeRunReturns(t *testing.T
 	cfg.Profiles["f"] = llamaP("f", 0, func(p *core.Profile) { p.ForceNodes = []string{"a"} })
 	cfg.Profiles["g"] = llamaP("g", 4000)
 	s, err := New(cfg, Options{Clock: clk, View: view, Prober: newFakeProber(view), Launcher: newFakeLauncher(),
-		WorkerProber: newFakeWorkerProber(), NeedStore: st, Release: "0.1.3",
+		WorkerProber: newFakeWorkerProber(), NeedStore: st, Release: "0.1.3", LlamaBuild: "aaaaaaa1",
+		ReleaseBuild: func(rel string) string { return map[string]string{"0.1.3": "aaaaaaa1"}[rel] },
 		Needs: NeedFunc(func(p *core.Profile) (NeedInfo, error) {
 			if p.Name == "f" {
 				return NeedInfo{Need: placer.Estimated(14000), FileBytes: 1 << 30}, nil

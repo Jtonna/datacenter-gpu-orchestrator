@@ -16,7 +16,7 @@ import (
 // measured 11000 MiB, estimate 14000 (14700 with the margin) on a 12000 MiB
 // node.
 func TestReview2_SS2_RowsWithoutABuildAreStampedWhenTheReleaseHadThisBuild(t *testing.T) {
-	builds := map[string]string{"0.1.4": "aaaaaaa1f00d", "0.1.3": "ccccccc3"} // what each older release's release.json says
+	builds := map[string]string{"0.1.6": "aaaaaaa1", "0.1.4": "aaaaaaa1f00d", "0.1.3": "ccccccc3"} // what each release's release.json says
 	cases := []struct {
 		release string
 		trusted bool

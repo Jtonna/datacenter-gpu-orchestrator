@@ -337,7 +337,8 @@ type schedCore struct {
 	buildRelease string                          // this build's release, stored with each measurement
 	steps        uint64                          // events handled (checkGated)
 	llamaBuild   string                          // the llama.cpp commit loads run on; "" when not known (needcount.go)
-	releaseBuild func(string) string             // the llama build an older release shipped; "" when not known (nil: none)
+	releaseBuild func(string) string             // the llama build a release's release.json names; "" when not known (nil: none)
+	servedBuild  string                          // the llama build the served release names, read at restore ("" : not known; nothing restored is trusted)
 	gated        gateMark                        // the latest gate call (checkGated)
 	warnedLow    map[string]bool                 // profiles whose too-low needs_mib was already warned about
 

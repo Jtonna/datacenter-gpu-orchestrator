@@ -3,6 +3,7 @@ package scheduler
 import (
 	"errors"
 	"fmt"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/release"
 	"log/slog"
 	"slices"
 	"strings"
@@ -182,6 +183,20 @@ func (c *schedCore) restoreNeeds(st NeedStore) {
 	for _, r := range recs {
 		c.putLearned(learnedFromRecord(r))
 		restored++
+	}
+	c.servedBuild = ""
+	if c.releaseBuild != nil && c.buildRelease != "" {
+		c.servedBuild = c.releaseBuild(c.buildRelease)
+	}
+	switch {
+	case len(recs) == 0:
+	case c.llamaBuild == "":
+		c.log.Warn("the llama build of the host program is not known: stored memory needs only raise the estimates", "rows", len(recs))
+	case c.servedBuild == "":
+		c.log.Warn("the llama build of the served release is not known (release.json): stored memory needs only raise the estimates", "release", c.buildRelease, "rows", len(recs))
+	case !release.SameCommit(c.llamaBuild, c.servedBuild):
+		c.log.Warn("the host program's llama build is not the served release's: stored memory needs only raise the estimates",
+			"host_build", c.llamaBuild, "release", c.buildRelease, "release_build", c.servedBuild, "rows", len(recs))
 	}
 	c.stampBuilds()
 	for _, p := range c.cfg.Profiles {

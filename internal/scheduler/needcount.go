@@ -97,16 +97,23 @@ type learnedFig struct {
 	at       time.Time
 }
 
-// trusted: l was measured this run, or on this llama build (on this release
-// when either build is not known).
+// trusted: l was measured this run, or it was measured on the llama build
+// that runs now on both sides: the host program's build and the build the
+// served release names (the workers run the served release). It fails
+// closed: when either build is not known, or they differ, no restored
+// measurement is trusted (third review, TS3); an untrusted one only raises.
 func (c *schedCore) trusted(l *learnedNeed) bool {
 	if !l.restored {
 		return true
 	}
-	if l.build != "" && c.llamaBuild != "" {
-		return release.SameCommit(l.build, c.llamaBuild)
-	}
-	return l.release != "" && l.release == c.buildRelease
+	return c.buildsAgree(l.build)
+}
+
+// buildsAgree reports whether b is the host program's build and the served
+// release's build, all three known.
+func (c *schedCore) buildsAgree(b string) bool {
+	return b != "" && c.llamaBuild != "" && c.servedBuild != "" &&
+		release.SameCommit(b, c.llamaBuild) && release.SameCommit(b, c.servedBuild)
 }
 
 // perDeviceCost is the estimator's cost of one more device: the fixed
@@ -258,14 +265,15 @@ func (c *schedCore) forgetShape(shape string) bool {
 }
 
 // stampBuilds gives every restored measurement without a llama build (made
-// by a release before builds were recorded) the build served now, when the
-// release it was measured on shipped that build: the release served now, or
-// an older one whose build releaseBuild knows. It is then trusted across a
-// release bump that kept the llama build (the 0.1.6 rollout). The stamp is
-// written back once and logged once. A measurement whose release had
-// another build, or is not known, keeps no build and is not trusted.
+// by a release before builds were recorded) the build that runs now, when
+// the release it was measured on names that build in its release.json and
+// the build is the host program's and the served release's (buildsAgree).
+// It is then trusted across a release bump that kept the llama build (the
+// 0.1.6 rollout). Never by release name alone: a release whose release.json
+// is missing or unreadable is not stamped, the served one included. The
+// stamp is written back once and logged once.
 func (c *schedCore) stampBuilds() {
-	if c.llamaBuild == "" {
+	if !c.buildsAgree(c.llamaBuild) || c.releaseBuild == nil {
 		return
 	}
 	stamped := 0
@@ -275,14 +283,7 @@ func (c *schedCore) stampBuilds() {
 			if !l.restored || l.build != "" || l.release == "" {
 				continue
 			}
-			rb := ""
-			switch {
-			case l.release == c.buildRelease:
-				rb = c.llamaBuild
-			case c.releaseBuild != nil:
-				rb = c.releaseBuild(l.release)
-			}
-			if rb == "" || !release.SameCommit(rb, c.llamaBuild) {
+			if !c.buildsAgree(c.releaseBuild(l.release)) {
 				continue
 			}
 			l.build = c.llamaBuild

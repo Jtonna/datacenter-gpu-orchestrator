@@ -320,16 +320,19 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 		Logger:   log,
 		Release:  potluckRelease,
 	}
-	// The llama build loads run on (the host program's): stored with each
-	// learned need; a stored need of another build is not trusted.
+	// The llama build of the host program: stored with each learned need. A
+	// stored need is trusted only when its build is this one and the one the
+	// served release's release.json names (the workers'); otherwise, or when
+	// either is not known, it only raises the estimate.
 	if b, err := release.HostBuild(bg, cfg.Defaults.ServerBin); err == nil {
 		so.LlamaBuild = b
 	} else {
-		log.Warn("the llama build of the host program is not known; stored memory needs are trusted by release", "err", err)
+		log.Warn("the llama build of the host program is not known; stored memory needs only raise the estimates", "err", err)
 	}
-	// The llama build an older release shipped, from its release.json in the
-	// programs folder: a stored need measured before builds were recorded is
-	// kept trusted across a release bump that kept the build.
+	// The llama build a release shipped, from its release.json in the
+	// programs folder: the served release's is what the workers run, and a
+	// stored need measured before builds were recorded is kept trusted
+	// across a release bump that kept the build.
 	so.ReleaseBuild = func(rel string) string {
 		b, _ := release.LlamaBuildOf(cfg.ProgramsDir, rel)
 		return b
