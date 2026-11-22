@@ -112,8 +112,9 @@ func TestExclude_LocalNodeNeverUsed(t *testing.T) {
 	h.wantNodes("m", "a")
 	h.command("whisper", 1000)
 	w := h.request("whisper") // command profiles run on the local node only
-	e := h.failed(w, http.StatusServiceUnavailable, ReasonDoesNotFit)
-	if e.RetryAfter != 0 || !strings.Contains(e.Message, "excluded by config") || !strings.Contains(e.Message, "host-1") {
+	e := h.failed(w, http.StatusServiceUnavailable, ReasonNodeExcluded)
+	if e.RetryAfter != 0 || !strings.Contains(e.Message, "excluded by config") || !strings.Contains(e.Message, "host-1") ||
+		!strings.Contains(e.Message, "exclude_nodes") {
 		t.Fatalf("error = %+v", e)
 	}
 }
