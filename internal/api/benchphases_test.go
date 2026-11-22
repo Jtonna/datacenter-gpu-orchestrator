@@ -62,8 +62,14 @@ func TestSchemaEndpointDescribesPhasesAndTemplates(t *testing.T) {
 	if secs == nil || secs["type"] != "integer" || secs["default"].(float64) != 60 || secs["min"].(float64) != 1 || secs["max"].(float64) != 3600 || secs["unit"] != "s" || secs["description"] == "" {
 		t.Fatalf("seconds option %v", secs)
 	}
-	if len(m["expect_keys"].([]any)) < 8 || len(m["templates"].([]any)) != 5 || m["limits"] == nil {
+	if len(m["expect_keys"].([]any)) < 8 || len(m["templates"].([]any)) != 6 || m["limits"] == nil {
 		t.Fatalf("%v", m)
+	}
+	// the load phase's cold option, the suite options and the cold, reload, loaded template
+	if !strings.Contains(b, `{"name":"cold","type":"boolean","default":false,"description":"Drop the model file from the file cache`) ||
+		!strings.Contains(b, `"suite_options":[`) || !strings.Contains(b, `{"name":"evict_others","type":"boolean"`) ||
+		!strings.Contains(b, `"id":"cold-reload-loaded","name":"Cold, reload, loaded"`) || !strings.Contains(b, `{"type":"load","label":"cold load","cold":true}`) {
+		t.Fatalf("cold, evict_others or the template missing: %s", b)
 	}
 	// every template can be saved as it is, once its profile is replaced
 	for _, tp := range m["templates"].([]any) {

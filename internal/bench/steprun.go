@@ -88,6 +88,11 @@ type benchRun struct {
 	nodes    []InstanceNodeInfo
 	localID  string
 	loadMode string
+
+	// wantCold asks loadModel to drop the model file from the file caches
+	// before the load (the load phase's cold option); cold is the result.
+	wantCold bool
+	cold     *ColdResult
 }
 
 func (br *benchRun) fail(outcome, why string) {
@@ -201,7 +206,7 @@ func (br *benchRun) runPhase(i int, p *benchspec.Phase) {
 	x.setPhase(br.track, i, firstText(p.Type, br.b.Profile))
 	switch p.Type {
 	case benchspec.PhaseLoad:
-		br.phaseLoad(pr)
+		br.phaseLoad(p, pr)
 	case benchspec.PhaseWarmup:
 		br.phaseWarmup(i, p, pr)
 	case benchspec.PhaseRequests:
@@ -364,6 +369,9 @@ func (br *benchRun) loadModel(cold bool) bool {
 		}
 		in = nil
 	}
+	if br.wantCold {
+		br.cold = br.makeCold()
+	}
 	if in != nil && in.State == "ready" { // nothing to load: someone has it loaded already
 		br.syncGate()
 		br.loaded = true
@@ -476,6 +484,7 @@ func (br *benchRun) loadModel(cold bool) bool {
 	}
 	br.loaded = true
 	br.captureLoad(startMS, start, obs, true)
+	br.checkColdPlacement(br.cold)
 	return true
 }
 
@@ -656,9 +665,14 @@ func (br *benchRun) captureLoad(startMS int64, start time.Time, obs *loadObs, re
 	br.mu.Unlock()
 }
 
-// phaseLoad is the load phase: cold load, no chat request.
-func (br *benchRun) phaseLoad(pr *PhaseResult) {
-	if !br.loadModel(true) {
+// phaseLoad is the load phase: cold load, no chat request. With the cold
+// option the model file is dropped from the file caches first (cold.go).
+func (br *benchRun) phaseLoad(p *benchspec.Phase, pr *PhaseResult) {
+	br.wantCold, br.cold = p.EvictsCache(), nil
+	ok := br.loadModel(true)
+	br.wantCold = false
+	pr.Cold, br.cold = br.cold, nil
+	if !ok {
 		br.mu.Lock()
 		pr.Load = br.lastLoad
 		br.mu.Unlock()

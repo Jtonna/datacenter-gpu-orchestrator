@@ -70,6 +70,9 @@ type Phase struct {
 	// concurrent_requests
 	N int `json:"n,omitempty" yaml:"n,omitempty"`
 
+	// load: drop the model file from the file caches before the load.
+	Cold *bool `json:"cold,omitempty" yaml:"cold,omitempty"`
+
 	// soft marks the unload that the simple form's unload_after expands to: it
 	// only unloads what the run itself loaded.
 	soft bool
@@ -78,6 +81,10 @@ type Phase struct {
 // OnlyIfLoadedByRun is set on the unload of the simple form (unload_after): it
 // leaves a model alone that somebody else had loaded before the run.
 func (p *Phase) OnlyIfLoadedByRun() bool { return p.soft }
+
+// EvictsCache is a load phase's cold option (default false): drop the model
+// file from the file cache of the nodes and of the scheduler's machine first.
+func (p *Phase) EvictsCache() bool { return p.Type == PhaseLoad && p.Cold != nil && *p.Cold }
 
 // Title is the label, else the type.
 func (p *Phase) Title() string {
@@ -240,7 +247,7 @@ func (b *Benchmark) hasPhase(t string) bool {
 
 // allowed lists the options (besides type and label) each phase type takes.
 var allowed = map[string][]string{
-	PhaseLoad:         {},
+	PhaseLoad:         {"cold"},
 	PhaseWarmup:       {"count", "request"},
 	PhaseRequests:     {"requests", "repeats", "max_tokens", "temperature", "seed", "cache_prompt", "stream"},
 	PhaseConversation: {"system", "turns", "max_tokens", "temperature", "seed", "cache_prompt", "stream"},
@@ -270,6 +277,7 @@ func (p *Phase) setOptions() []string {
 	add(len(p.Turns) > 0, "turns")
 	add(p.Seconds != nil, "seconds")
 	add(p.N != 0, "n")
+	add(p.Cold != nil, "cold")
 	return s
 }
 

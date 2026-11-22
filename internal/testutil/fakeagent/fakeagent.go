@@ -60,6 +60,11 @@ type Agent struct {
 	// registration and the heartbeat (CR-9); 0 sends none, as release 0.1.0.
 	// The would_not_fit check uses it, or 1000.
 	WatchdogFloorMiB int64
+	// Capabilities is sent as the registration's capabilities (6.13).
+	// CacheEvict answers POST /cache/evict: the status and the body; nil
+	// answers 404 (an agent without the request).
+	Capabilities []string
+	CacheEvict   func(agentproto.CacheEvictRequest) (int, any)
 
 	mu         sync.Mutex
 	srv        *http.Server
@@ -272,7 +277,7 @@ func (a *Agent) register(ctx context.Context) bool {
 	req := agentproto.RegisterRequest{ID: a.ID, Name: a.Name, AgentRelease: a.Release, AgentStartID: a.StartID,
 		OS: "linux", Arch: "amd64", Install: a.Install, Addr: a.Addr, GPUs: a.GPUs, Backends: a.Backends,
 		MemTotalMiB: 16000, ModelSource: agentproto.ModelSource{Kind: agentproto.ModelSourceShare, Target: "192.0.2.1:/"},
-		LaunchID: lid, ForeignProcesses: a.Foreign, WatchdogFloorMiB: a.WatchdogFloorMiB}
+		LaunchID: lid, ForeignProcesses: a.Foreign, WatchdogFloorMiB: a.WatchdogFloorMiB, Capabilities: a.Capabilities}
 	a.mu.Unlock()
 	req.FillEmpty()
 	var ans agentproto.RegisterAnswer
@@ -474,6 +479,17 @@ func (a *Agent) handler() http.Handler {
 		}
 		w.Header().Set(agentproto.HeaderNextOffset, strconv.Itoa(len(data)))
 		w.Write(data[since:])
+	})
+	mux.HandleFunc("POST "+agentproto.PathCacheEvict, func(w http.ResponseWriter, r *http.Request) {
+		note(r)
+		if a.CacheEvict == nil {
+			w.WriteHeader(404)
+			return
+		}
+		var req agentproto.CacheEvictRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		code, body := a.CacheEvict(req)
+		writeJSON(w, code, body)
 	})
 	mux.HandleFunc("POST /reset", func(w http.ResponseWriter, r *http.Request) {
 		note(r)

@@ -53,6 +53,13 @@ type ManagerOptions struct {
 	// the background (default 500 ms); a negative value turns the background
 	// sampling off (the step still samples at its load polls and phase ends).
 	MemSample time.Duration
+	// ColdRetry is how long a cold load keeps asking a node that is still
+	// stopping its launch or evicted a moment ago (default 20 s, negative:
+	// once); ColdSettle is the wait before the plan is read again after the
+	// eviction, so the nodes' file cache figures are fresh (default 2.5 s,
+	// negative: none).
+	ColdRetry  time.Duration
+	ColdSettle time.Duration
 }
 
 // runPlan is the suite and every benchmark it names, as they were when the run
@@ -110,6 +117,12 @@ func NewManager(o ManagerOptions) (*Manager, error) {
 	}
 	if o.MemSample == 0 {
 		o.MemSample = DefaultMemSample
+	}
+	if o.ColdRetry == 0 {
+		o.ColdRetry = DefaultColdRetry
+	}
+	if o.ColdSettle == 0 {
+		o.ColdSettle = DefaultColdSettle
 	}
 	if o.GoneTimeout <= 0 {
 		o.GoneTimeout = 2 * time.Minute

@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/agenttest"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/modelsrc"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/agenttest"
 )
 
 // cacheSys pretends the whole file is cached until it is dropped.
@@ -66,8 +66,11 @@ func TestCacheEvictRequest(t *testing.T) {
 
 func TestCacheEvictNotAdvertisedWithoutTheCalls(t *testing.T) {
 	for name, mod := range map[string]func(*Options, *Deps){
-		"no calls":   nil,
-		"push nodes": func(o *Options, d *Deps) { d.FileCache = &cacheSys{}; o.ModelSource = modelsrc.Spec{Kind: modelsrc.KindPush} },
+		"no calls": nil,
+		"push nodes": func(o *Options, d *Deps) {
+			d.FileCache = &cacheSys{}
+			o.ModelSource = modelsrc.Spec{Kind: modelsrc.KindPush}
+		},
 	} {
 		e := newTenvWith(t, mod)
 		e.a.RecoverLaunch(context.Background())

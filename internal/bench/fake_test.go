@@ -33,6 +33,9 @@ type fakeProf struct {
 	refuseReason string // reason code of that refusal (default "forced nodes do not fit")
 	refuseText   string
 	refuseTag    string // bench run tag the refusal carries (default: the run that sent the load)
+	// loadErr makes /api/load start the load and then fail on the way back
+	// (a connection reset after the scheduler accepted it).
+	loadErr bool
 }
 
 type fakeInst struct {
@@ -75,6 +78,14 @@ type fakeAPI struct {
 	mem      func(id string, loading bool, chats int) *int64
 	loadMode string       // instances' load_mode
 	reload   []NodeReload // the plan's reload_from_cache
+	// The file cache eviction (POST /api/cache/evict): planNodes are the
+	// nodes the plan names (default n1); evictNode scripts a node's answers
+	// in turn (the last one repeats; default: dropped to 0); evictLocal is
+	// the scheduler machine's answer; evictErr fails the call.
+	planNodes  []string
+	evictNode  map[string][]NodeEvict
+	evictLocal *LocalEvict
+	evictErr   error
 }
 
 func newFake() *fakeAPI {
@@ -125,7 +136,11 @@ func (f *fakeAPI) Plan(ctx context.Context, model string) (*PlanInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.log("plan:" + model)
-	return &PlanInfo{Action: "start", Nodes: []string{"n1"}, LoadMode: f.loadMode, Reload: append([]NodeReload(nil), f.reload...),
+	nodes := f.planNodes
+	if nodes == nil {
+		nodes = []string{"n1"}
+	}
+	return &PlanInfo{Action: "start", Nodes: append([]string(nil), nodes...), LoadMode: f.loadMode, Reload: append([]NodeReload(nil), f.reload...),
 		Raw: json.RawMessage(`{"model":"` + model + `","action":"start"}`)}, nil
 }
 
@@ -230,7 +245,39 @@ func (f *fakeAPI) Load(ctx context.Context, model string) (*LoadAnswer, error) {
 		f.runOf[model] = id
 	}
 	f.beginLoad(model, p)
+	if p.loadErr {
+		return nil, fmt.Errorf("read tcp: connection reset by peer")
+	}
 	return &LoadAnswer{Status: 202, Msg: "loading"}, nil
+}
+
+func (f *fakeAPI) EvictCache(ctx context.Context, req CacheEvictRequest) (*CacheEvictAnswer, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.log(fmt.Sprintf("evict:%s nodes=%s local=%v", req.Model, strings.Join(req.Nodes, ","), req.Local))
+	if f.evictErr != nil {
+		return nil, f.evictErr
+	}
+	ans := &CacheEvictAnswer{Model: req.Model, File: req.Model + ".gguf", Nodes: []NodeEvict{}}
+	if req.Local {
+		ans.Local = &LocalEvict{EvictFigures: &EvictFigures{FileBytes: 1000, CachedBefore: 1000}}
+		if f.evictLocal != nil {
+			l := *f.evictLocal
+			ans.Local = &l
+		}
+	}
+	for _, id := range req.Nodes {
+		n := NodeEvict{Capable: true, Status: 200, EvictFigures: &EvictFigures{FileBytes: 1000, CachedBefore: 900}}
+		if seq := f.evictNode[id]; len(seq) > 0 {
+			n = seq[0]
+			if len(seq) > 1 {
+				f.evictNode[id] = seq[1:]
+			}
+		}
+		n.ID = id
+		ans.Nodes = append(ans.Nodes, n)
+	}
+	return ans, nil
 }
 
 func (f *fakeAPI) Unload(ctx context.Context, model string, force bool) (*UnloadInfo, error) {
