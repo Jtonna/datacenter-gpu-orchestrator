@@ -133,6 +133,11 @@ services:
     profiles: [local-agent]
     image: potluck-agent:0.1.4
     container_name: potluck-agent
+    # The node's display name: the agent's --name defaults to the hostname, which without
+    # this line is the container's random id and changes when the container is re-created
+    # (the node id stays, it comes from the fixed MAC below). A hostname rather than --name,
+    # so the name inside the container and the one in the node feed are the same.
+    hostname: potluck-agent
     restart: unless-stopped
     init: true
     command: ["--potluck", "172.30.0.2:8080", "--model-source", "dir:/models", "--install", "docker"]

@@ -17,6 +17,7 @@ import (
 type composeService struct {
 	Image         string            `yaml:"image"`
 	ContainerName string            `yaml:"container_name"`
+	Hostname      string            `yaml:"hostname"`
 	Restart       string            `yaml:"restart"`
 	Command       []string          `yaml:"command"`
 	Environment   map[string]string `yaml:"environment"`
@@ -229,8 +230,9 @@ func TestComposeStandingLayout(t *testing.T) {
 
 // The optional agent on the scheduler's host: off by default (a profile), on
 // the compose network with a fixed address and MAC (its node id comes from
-// the MAC), the GPUs, the models read only, its own data volume, and
-// Potluck's address and in-container port on that network.
+// the MAC), a fixed hostname (its display name), the GPUs, the models read
+// only, its own data volume, and Potluck's address and in-container port on
+// that network.
 func TestComposeLocalAgent(t *testing.T) {
 	c := loadCompose(t)
 	a, ok := c.Services["potluck-agent"]
@@ -265,6 +267,11 @@ func TestComposeLocalAgent(t *testing.T) {
 	}
 	if a.Restart != "unless-stopped" {
 		t.Errorf("restart %q", a.Restart)
+	}
+	// The display name defaults to the hostname; without a fixed one it is the
+	// container's random id and changes when the container is re-created.
+	if a.Hostname != "potluck-agent" {
+		t.Errorf("hostname %q, want potluck-agent (a stable display name)", a.Hostname)
 	}
 }
 
