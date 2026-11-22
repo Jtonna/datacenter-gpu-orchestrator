@@ -5,17 +5,23 @@
 // or a field read on undefined is found without a browser.
 //
 // usage: node scripts/ui-exec.mjs cases.json
-//        node scripts/ui-exec.mjs --base http://HOST:PORT [--tiles N] [--reserved]
+//        node scripts/ui-exec.mjs --base http://HOST:PORT [--tiles N] [--reserved] [--local-ui]
 //
-// --base: the live check. It loads app.js, the page's start module, with
-// every view it imports, the way the browser does; reads GET /api/status of
-// that server; then mounts every screen in turn, with the server's real
+// --base: the live check. It downloads the page FROM THAT SERVER: <base>/ui/
+// index.html, its module script and every module it imports, statically or
+// dynamically, followed recursively, into a temporary folder; a module the
+// server does not serve, or that does not parse as an ES module, fails the
+// run with its name. Then it loads app.js, the page's start module, from
+// those files, the way the browser does; reads GET /api/status of that
+// server; and mounts every screen in turn, with the server's real
 // answers (GET only; the dry-run POST /api/plan passes, every other write is
 // refused, so nothing changes on the server). The Nodes page line lists each
 // machine tile and whether its reserved-against-measured block is drawn.
 // --tiles N fails unless the Nodes page draws exactly N tiles; --reserved
 // fails unless every tile of a machine that is not excluded has the block.
 // Exit status 0 when every screen drew without a runtime error, else 1.
+// --local-ui (development only): take the page from this checkout
+// (internal/api/ui) instead of the server; only the answers come from it.
 //
 // cases.json:
 //   {"ui": "<path of internal/api/ui>",
@@ -31,7 +37,9 @@
 // "could not be drawn" / "failed to start" banner, or an expected text that
 // is missing. Output: one line per case; exit status 1 when any case fails.
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import os from 'node:os';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -283,8 +291,64 @@ const flag = k => { const i = argv.indexOf(k); return i < 0 ? null : (argv[i + 1
 const live = flag('--base');
 const here = path.dirname(fileURLToPath(import.meta.url));
 const LIVE_SCREENS = ['models', 'nodes', 'queue', 'activity', 'placement', 'benchmarks', 'benchmarks/runs', 'benchmarks/trends', 'profiles', 'tiers', 'settings', 'audit', 'mcp', 'about'];
+// mirrorUI downloads the page from the server, as a browser would load it,
+// into a temporary folder: index.html, its module scripts and modulepreload
+// links, and every relative import of every module (static, re-export and
+// dynamic), recursively. Each module must be served (200) and parse as an
+// ES module (node --check on an .mjs copy; a .js file is not checked as a
+// module).
+async function mirrorUI(root) {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'ui-exec-'));
+  process.on('exit', () => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* left in the temp folder */ } });
+  writeFileSync(path.join(dir, 'package.json'), '{"type":"module"}\n'); // the .js files are ES modules, as the browser loads them
+  const uiURL = root + '/ui/';
+  const problems = [];
+  const get = async rel => {
+    let r;
+    try { r = await realFetch(uiURL + rel); } catch (e) { problems.push(`${rel}: could not be fetched: ${e.message}`); return null; }
+    if (r.status !== 200) { problems.push(`${rel}: the server answered ${r.status}`); return null; }
+    const text = await r.text();
+    mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    writeFileSync(path.join(dir, rel), text);
+    return text;
+  };
+  const html = await get('index.html');
+  if (html == null) return { dir, count: 0, problems };
+  const queue = [];
+  for (const m of html.matchAll(/<script[^>]*type="module"[^>]*src="([^"]+)"/g)) queue.push(m[1]);
+  for (const m of html.matchAll(/<link[^>]*rel="modulepreload"[^>]*href="([^"]+)"/g)) queue.push(m[1]);
+  const seen = new Set();
+  const norm = rel => path.posix.normalize(rel).replace(/^\.\//, '');
+  while (queue.length) {
+    const rel = norm(queue.shift());
+    if (seen.has(rel)) continue;
+    seen.add(rel);
+    const src = await get(rel);
+    if (src == null) continue;
+    const check = spawnSync(process.execPath, ['--check', '--input-type=module'], { input: src, encoding: 'utf8' });
+    if (check.status !== 0) {
+      const why = (check.stderr || '').split('\n').filter(l => /Error/.test(l))[0] || 'does not parse';
+      const at = ((check.stderr || '').match(/\[stdin\]:(\d+)/) || [])[1];
+      problems.push(`${rel}${at ? ':' + at : ''}: does not parse as an ES module: ${why.trim()}`);
+    }
+    const from = path.posix.dirname(rel);
+    for (const m of src.matchAll(/(?:^|[\s;}])(?:import|export)\s[^'"`;]*?from\s*['"](\.{1,2}\/[^'"]+)['"]|(?:^|[\s;])import\s*['"](\.{1,2}\/[^'"]+)['"]|import\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*\)/gm)) {
+      queue.push(path.posix.join(from, m[1] || m[2] || m[3]));
+    }
+  }
+  return { dir, count: seen.size, problems };
+}
+
+let uiDir = path.join(here, '..', 'internal', 'api', 'ui');
+if (live && !flag('--local-ui')) {
+  const mirror = await mirrorUI(String(live).replace(/\/$/, ''));
+  console.log(`${mirror.problems.length ? 'FAIL' : 'ok  '} fetched ${mirror.count} modules from ${String(live).replace(/\/$/, '')}/ui/` +
+    (mirror.problems.length ? '\n  ' + mirror.problems.join('\n  ') : ''));
+  if (mirror.problems.length) { console.log('FAILED: the page the server serves cannot load'); process.exit(1); }
+  uiDir = mirror.dir;
+} else if (live) console.log('note: --local-ui: the page comes from this checkout, not from the server');
 const spec = live
-  ? { ui: path.join(here, '..', 'internal', 'api', 'ui'), base: String(live), app: true,
+  ? { ui: uiDir, base: String(live), app: true,
       cases: LIVE_SCREENS.map(r => ({ name: r, route: '#/' + r, status: 'fetch' })) }
   : JSON.parse(readFileSync(argv[0], 'utf8'));
 base = spec.base ? spec.base.replace(/\/$/, '') : null;
@@ -292,8 +356,11 @@ const ui = path.resolve(spec.ui);
 const mod = rel => import(pathToFileURL(path.join(ui, rel)).href);
 const settle = async () => { for (let i = 0; i < 20; i++) await new Promise(r => setTimeout(r, 0)); };
 
-const router = await mod('core/router.js');
-const store = await mod('core/store.js');
+let router, store;
+try { router = await mod('core/router.js'); store = await mod('core/store.js'); } catch (e) {
+  console.log('FAIL core/router.js or core/store.js did not load: ' + (e.stack || e));
+  process.exit(1);
+}
 let outlet;
 if (spec.app) {
   // The page as index.html builds it: its body's elements (up to the

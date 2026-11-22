@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -201,4 +203,61 @@ func TestUI016ScreensExecute(t *testing.T) {
 			"expect": []string{"Memory, with the context filled"}},
 	}
 	uiExec(t, map[string]any{"modules": []string{"views/benchmarks.js", "views/placement.js"}, "fetch": fetch, "cases": cases})
+}
+
+// uiExecBase runs `scripts/ui-exec.mjs --base URL` and returns its output and
+// exit code.
+func uiExecBase(t *testing.T, url string) (string, int) {
+	t.Helper()
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed: the UI execution test (scripts/ui-exec.mjs) needs it; install Node.js 18 or later to run it")
+	}
+	_, here, _, _ := runtime.Caller(0)
+	cmd := exec.Command(node, filepath.Join(filepath.Dir(here), "..", "..", "scripts", "ui-exec.mjs"), "--base", url)
+	out, err := cmd.CombinedOutput()
+	code := 0
+	if ee, ok := err.(*exec.ExitError); ok {
+		code = ee.ExitCode()
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	return string(out), code
+}
+
+// --base takes the page from the server, not from the checkout: the page
+// this API serves loads and every screen draws (exit 0); the same server
+// with one module that does not parse, or one module it does not serve,
+// fails (exit 1) and the output names that module.
+func TestUIExecBaseUsesTheServersPage(t *testing.T) {
+	e := newEnv(t, chatOK)
+	out, code := uiExecBase(t, e.front.URL)
+	if code != 0 || !strings.Contains(out, "modules from "+e.front.URL+"/ui/") || !strings.Contains(out, "ok   start module app.js") ||
+		!strings.Contains(out, "PASS: 14 screens") {
+		t.Fatalf("good page: exit %d\n%s", code, out)
+	}
+	for _, c := range []struct{ name, path, body, want string }{
+		{"does not parse", "/ui/views/benchmarks/editor.js", "export const x = 'users' idle';\n", "views/benchmarks/editor.js:1: does not parse as an ES module"},
+		{"not served", "/ui/core/reserve.js", "", "core/reserve.js: the server answered 404"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == c.path {
+					if c.body == "" {
+						http.NotFound(w, r)
+						return
+					}
+					w.Header().Set("Content-Type", "text/javascript")
+					w.Write([]byte(c.body))
+					return
+				}
+				e.api.ServeHTTP(w, r)
+			}))
+			defer bad.Close()
+			out, code := uiExecBase(t, bad.URL)
+			if code != 1 || !strings.Contains(out, c.want) {
+				t.Fatalf("exit %d, want 1 naming %q:\n%s", code, c.want, out)
+			}
+		})
+	}
 }
