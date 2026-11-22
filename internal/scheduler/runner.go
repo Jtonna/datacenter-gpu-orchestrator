@@ -421,7 +421,11 @@ func (s *Scheduler) lease(a answer) (*Lease, error) {
 		return nil, a.err
 	}
 	g := a.grant
-	stall := s.Config().EffectiveStallTimeout(s.Config().Profiles[g.Profile])
+	cfg := s.Config()
+	stall := cfg.Defaults.StallTimeout // the profile was deleted since the grant
+	if p := cfg.Profiles[g.Profile]; p != nil {
+		stall = cfg.EffectiveStallTimeout(p)
+	}
 	return &Lease{ID: g.ID, Addr: g.Addr, Profile: g.Profile, Alias: g.Alias, StallTimeout: stall, s: s}, nil
 }
 
