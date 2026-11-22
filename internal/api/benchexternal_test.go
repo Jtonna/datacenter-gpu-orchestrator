@@ -138,3 +138,25 @@ func TestExternalValidationOverHTTP(t *testing.T) {
 		}
 	}
 }
+
+// The read-only MCP tools reach the external sets, and a REST change is
+// audited with the caller's source and actor.
+func TestExternalThroughMCPAndAudit(t *testing.T) {
+	j := newJoined(t)
+	sid := j.session("claude-code")
+	if st, m := j.cdo("POST", "/api/bench/external", extBody, map[string]string{"X-Source": "ui", "X-Actor": "alex"}); st != 201 {
+		t.Fatalf("%d %v", st, m)
+	}
+	list := j.ok(sid, "list_external_results", `{}`)
+	if l := list["external"].([]any); len(l) != 1 || l[0].(map[string]any)["id"] != "ctx-1" {
+		t.Fatalf("%v", list)
+	}
+	if one := j.ok(sid, "get_external_results", `{"id":"ctx-1"}`); len(one["tables"].([]any)[0].(map[string]any)["rows"].([]any)) != 2 {
+		t.Fatalf("%v", one)
+	}
+	j.fails(sid, "get_external_results", `{"id":"ghost"}`, "HTTP 404")
+	es := j.waitAudit("external audit", "target=external:ctx-1", 1)
+	if e0 := es[0]; e0["action"] != "create" || e0["section"] != "bench" || e0["source"] != "ui" || e0["actor"] != "alex" {
+		t.Fatalf("%v", e0)
+	}
+}

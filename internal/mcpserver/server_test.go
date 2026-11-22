@@ -309,6 +309,8 @@ var expected = map[string]struct {
 	"get_bench_aggregates":  {`{"suite":"s","benchmark":"b","profile":"p","since":"7d","until":"2","limit_runs":4,"env":"same"}`, "GET", "/api/bench/aggregates", "benchmark=b&env=same&limit_runs=4&profile=p&since=7d&suite=s&until=2", "", nil},
 	"get_bench_trends":      {`{"benchmark":"b","metric":"load_s","limit":9}`, "GET", "/api/bench/trends", "benchmark=b&limit=9&metric=load_s", "", nil},
 	"get_bench_schema":      {`{}`, "GET", "/api/bench/schema", "", "", nil},
+	"list_external_results": {`{}`, "GET", "/api/bench/external", "", "", nil},
+	"get_external_results":  {`{"id":"ctx-1"}`, "GET", "/api/bench/external/ctx-1", "", "", nil},
 	"load_model":            {`{"model":"gemma","actor":"task-7"}`, "POST", "/api/load", "", `{"model":"gemma"}`, nil},
 	"unload_model":          {`{"model":"gemma","force":true}`, "POST", "/api/unload", "", `{"force":true,"model":"gemma"}`, nil},
 	"update_settings":       {`{"settings":{"queue_timeout":"2m"},"comment":"why","dry_run":true,"if_revision":4}`, "PATCH", "/api/config/settings", "dry_run=1", `{"queue_timeout":"2m"}`, map[string]string{"X-Comment": "why", "If-Match": "4"}},
