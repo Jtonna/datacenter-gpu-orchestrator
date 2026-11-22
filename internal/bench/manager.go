@@ -183,7 +183,7 @@ func (m *Manager) loop(ctx context.Context) {
 		}
 		select {
 		case <-ctx.Done():
-			m.Stop(context.Background())
+			m.Stop(ctx) // ctx is done: Stop cancels the runs and does not wait for this loop
 			return
 		case <-m.wake:
 		case <-tick.C:
