@@ -36,11 +36,9 @@ func oracleKey(set []oracleNode, ev []Evictable) []int64 {
 	owners := map[int]bool{}
 	var nBusy, load, idleSum int64
 	worst, total := 0, 0
-	var ids []string
 	for _, n := range set {
 		worst = max(worst, n.c.Priority)
 		total += n.c.BudgetMiB
-		ids = append(ids, string(n.c.ID))
 		if n.owner >= 0 && !owners[n.owner] {
 			owners[n.owner] = true
 			e := ev[n.owner]

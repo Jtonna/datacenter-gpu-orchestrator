@@ -16,8 +16,6 @@ import (
 // split skew margin, the margin on an estimate, learned needs, the memory
 // watch during a load, and concurrent placements.
 
-const addrC = "192.0.2.6:50052"
-
 // psNode is a PS5 whose live and plan budgets (free and total minus the 1000
 // MiB headroom) are both budget.
 func psNode(id string, n, budget int) core.Node {

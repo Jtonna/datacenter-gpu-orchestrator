@@ -119,7 +119,6 @@ type env struct {
 	front    *httptest.Server
 	upstream *httptest.Server
 	logs     *syncBuf
-	now      func() time.Time
 	nowMu    sync.Mutex
 	clock    time.Time
 }

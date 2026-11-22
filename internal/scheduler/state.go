@@ -155,7 +155,6 @@ type inst struct {
 	forceNodes []core.NodeID                       // nodes whose launch is stopped with force (force unload)
 	launchIDs  map[core.NodeID]string              // the launch on each worker node
 	agentLoad  map[string]*agentproto.LoadProgress // per worker rpc address: the agent's own load figures
-	workerExit *WorkerReport                       // a launch exited while the others were starting
 
 	benchRun   string // the bench run whose request started this instance (history records only)
 	served     int    // requests admitted (logged when the instance stops)

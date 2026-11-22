@@ -132,11 +132,6 @@ func FactsOf(r *Record) Facts {
 	return Facts{BootID: r.BootID, AgentStartS: r.AgentStartS, UserspaceStartS: r.UserspaceStartS, SoftReboots: r.SoftReboots}
 }
 
-// FactsFromReport returns the facts of an agent's report.
-func FactsFromReport(s *agentproto.Startup) Facts {
-	return Facts{BootID: s.BootID, AgentStartS: s.AgentStartS, UserspaceStartS: s.UserspaceStartS, SoftReboots: s.SoftReboots}
-}
-
 // Classify says what kind of start cur is, given the node's previous record
 // (nil when it has none), from the facts only:
 //

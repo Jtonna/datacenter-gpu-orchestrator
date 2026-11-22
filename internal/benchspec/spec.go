@@ -591,14 +591,3 @@ func (s *Suite) checkMembers(i int, b *Benchmark, resolve Lookup, add func(strin
 		}
 	}
 }
-
-// Slug reports whether s is a valid benchmark, suite or tag id.
-func Slug(s string) bool { return slugRe.MatchString(s) }
-
-// FirstLine trims an error for a one-line message.
-func FirstLine(err error) string {
-	if err == nil {
-		return ""
-	}
-	return strings.TrimSpace(strings.SplitN(err.Error(), "\n", 2)[0])
-}

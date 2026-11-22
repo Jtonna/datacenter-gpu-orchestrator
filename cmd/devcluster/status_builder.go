@@ -126,15 +126,14 @@ func (b *statusBuilder) cmdLine(p profileDef, hosts []string, port int) string {
 }
 
 type instOpts struct {
-	readyAgo  time.Duration // ready since now - this
-	createdAt time.Time     // for a starting instance
-	served    int
-	inFlight  int
-	waiters   int
-	lastTPS   float64 // 0: no last_request
-	lastAgo   time.Duration
-	victimOf  string
-	state     string // "" = ready; draining
+	readyAgo time.Duration // ready since now - this
+	served   int
+	inFlight int
+	waiters  int
+	lastTPS  float64 // 0: no last_request
+	lastAgo  time.Duration
+	victimOf string
+	state    string // "" = ready; draining
 }
 
 // place records an instance's memory on its nodes and returns the placed nodes.
@@ -225,7 +224,6 @@ type loadOpts struct {
 func i64(v int64) *int64                  { return &v }
 func f64(v float64) *float64              { return &v }
 func strp(v string) *string               { return &v }
-func ms(t time.Time) int64                { return t.UnixMilli() }
 func sessionID(t time.Time, n int) string { return fmt.Sprintf("ld-%d-%d", t.UnixMilli(), n) }
 
 // loading adds a starting instance in phase loading with a measured load report.

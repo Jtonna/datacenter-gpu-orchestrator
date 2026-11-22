@@ -65,39 +65,3 @@ func qInt(r *http.Request, name string, def int) int {
 	}
 	return def
 }
-
-func qInt64(r *http.Request, name string) int64 {
-	if v := r.URL.Query().Get(name); v != "" {
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
-			return n
-		}
-	}
-	return 0
-}
-
-// clone deep-copies a JSON-shaped value.
-func clone(v any) any {
-	b, _ := json.Marshal(v)
-	var out any
-	json.Unmarshal(b, &out)
-	return out
-}
-
-func cloneMap(v map[string]any) map[string]any {
-	m, _ := clone(v).(map[string]any)
-	if m == nil {
-		m = map[string]any{}
-	}
-	return m
-}
-
-func jsonEqual(a, b any) bool {
-	x, _ := json.Marshal(a)
-	y, _ := json.Marshal(b)
-	return string(x) == string(y)
-}
-
-func jsonRaw(v any) (json.RawMessage, error) {
-	b, err := json.Marshal(v)
-	return json.RawMessage(b), err
-}

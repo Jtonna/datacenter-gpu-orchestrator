@@ -56,7 +56,6 @@ type benchTrack struct {
 	planned   int // work units of the current phase (requests, turns, ...)
 	done      int
 	inflight  float64 // 0..1 of the unit in flight (tokens out of max_tokens)
-	holdFrac  float64 // set by hold phases
 	direct    float64 // fraction set directly (load progress, unload)
 	useDirect bool
 	detail    map[string]any
@@ -319,10 +318,6 @@ func (x *exec) finishTrack(t *benchTrack) {
 }
 
 // ---- the document ----
-
-func briefOf(b *benchspec.Benchmark) map[string]any {
-	return map[string]any{"benchmark_id": b.ID, "name": b.Title(), "description": b.Description, "profile": b.Profile}
-}
 
 // progressDoc builds the progress object (GET /api/bench/state "run", and the
 // "progress" message on the live channel). The caller holds ar.mu.

@@ -81,7 +81,6 @@ type Supervisor struct {
 
 	mu      sync.Mutex
 	running map[string]*supervised
-	errs    []string
 }
 
 type supervised struct {

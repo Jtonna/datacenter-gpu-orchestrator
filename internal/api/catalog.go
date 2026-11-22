@@ -54,7 +54,6 @@ type catalogCache struct {
 	events  []history.Event // newest first: the catalog's own copy of the events it reads
 	seeded  bool
 	pending []history.Event // arrived before the seed
-	version int64
 
 	buildMu  sync.Mutex
 	kick     chan struct{}

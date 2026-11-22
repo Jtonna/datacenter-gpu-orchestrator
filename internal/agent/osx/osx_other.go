@@ -10,16 +10,6 @@ import (
 // NewBootClock returns ErrUnsupported: CLOCK_BOOTTIME exists only on Linux.
 func NewBootClock() (Clock, error) { return nil, ErrUnsupported }
 
-// ProcessClock is a monotonic clock since process start, for running the
-// agent on a development machine only (it does not survive restarts).
-type ProcessClock struct{ start time.Time }
-
-// NewProcessClock returns a ProcessClock.
-func NewProcessClock() *ProcessClock { return &ProcessClock{start: time.Now()} }
-
-// Now implements Clock.
-func (c *ProcessClock) Now() time.Duration { return time.Since(c.start) }
-
 func signalPID(pid int, sig Sig) error { return ErrUnsupported }
 
 func pinPID(pid int) (send func(Sig) error, done func(), err error) {
