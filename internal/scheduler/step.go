@@ -91,6 +91,8 @@ type (
 	evShutdown   struct{ force bool }
 	// evQuery runs fn inside the core goroutine (snapshots, dry runs).
 	evQuery struct{ fn func(c *schedCore) }
+	// evBuilds: both llama builds are known after a background read (FS2).
+	evBuilds struct{ host, served string }
 )
 
 func (evAcquire) isEvent()        {}
@@ -111,6 +113,7 @@ func (evUnload) isEvent()         {}
 func (evUnloadIdle) isEvent()     {}
 func (evShutdown) isEvent()       {}
 func (evQuery) isEvent()          {}
+func (evBuilds) isEvent()         {}
 
 type probeOutcome struct {
 	id     core.NodeID
@@ -250,6 +253,8 @@ func (c *schedCore) handle(ev event) {
 		c.beginShutdown(e.force)
 	case evQuery:
 		e.fn(c)
+	case evBuilds:
+		c.buildsKnown(e.host, e.served)
 	default:
 		if !c.handleAgents(ev) {
 			panic(fmt.Sprintf("scheduler: unknown event %T", ev))

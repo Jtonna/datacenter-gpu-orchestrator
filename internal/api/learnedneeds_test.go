@@ -78,6 +78,11 @@ func TestNeedsListAndForgetByShape(t *testing.T) {
 	if rows, ok := got["needs"].([]any); !ok || len(rows) != 0 {
 		t.Fatalf("needs %v", got["needs"])
 	}
+	for _, k := range []string{"host_build", "release", "served_build"} { // the builds trust depends on (FS2)
+		if _, ok := got[k]; !ok {
+			t.Fatalf("no %q in %v", k, got)
+		}
+	}
 	code, got = e.cdo("POST", "/api/needs/forget", `{"shape":"[\"llama\",\"m.gguf\",8192,1,\"f16\",false,[]]"}`, nil)
 	if code != 200 || got["forgotten"] != false || got["msg"] != "nothing learned" {
 		t.Fatalf("forget: %d %v", code, got)
@@ -98,7 +103,7 @@ func TestNeedRowJSON(t *testing.T) {
 	var m map[string]any
 	json.Unmarshal(b, &m)
 	for _, k := range []string{"shape", "kind", "model", "ctx", "parallel", "kv_quant", "flash_attn", "extra_args", "devices", "total_mib",
-		"placement", "measured_by", "measured_at", "release", "llama_build", "restored", "trusted", "profiles"} {
+		"placement", "measured_by", "measured_at", "release", "llama_build", "restored", "trusted", "untrusted_reason", "profiles"} {
 		if _, ok := m[k]; !ok {
 			t.Errorf("no %q in %s", k, b)
 		}

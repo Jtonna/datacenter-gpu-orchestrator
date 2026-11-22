@@ -337,6 +337,9 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 		b, _ := release.LlamaBuildOf(cfg.ProgramsDir, rel)
 		return b
 	}
+	// When a build is not known yet, the scheduler reads both again in the
+	// background until they are (a slow share at boot).
+	so.HostBuild = func(ctx context.Context) (string, error) { return release.HostBuild(ctx, cfg.Defaults.ServerBin) }
 	if hist.On() {
 		so.History = hist
 	}

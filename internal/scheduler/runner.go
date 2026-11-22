@@ -47,11 +47,17 @@ type Options struct {
 	// program's); stored with each measurement, and a restored measurement
 	// of another build is not trusted (needcount.go). "" when not known.
 	LlamaBuild string
-	// ReleaseBuild gives the llama build an older program release shipped
-	// ("" when not known): a stored need without a build, measured on a
-	// release that shipped the build served now, is stamped with it at
-	// start (needcount.go). nil: only the release served now is known.
+	// ReleaseBuild gives the llama build a program release's release.json
+	// names ("" when not known): the served release's is what the workers
+	// run, and a stored need without a build is stamped through its own
+	// release's (needcount.go). nil: none is known.
 	ReleaseBuild func(release string) string
+	// HostBuild reads the host program's llama build again. When the host
+	// build or the served release's build is not known at start, Run reads
+	// both again in the background (backoff from 5 s to 5 min) until they
+	// are, then decides trust (builds.go; fourth review, FS2). nil: the host
+	// build is only LlamaBuild.
+	HostBuild func(ctx context.Context) (string, error)
 }
 
 // Scheduler is the scheduler core plus the one goroutine (Run) that owns
@@ -153,6 +159,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		go s.needs.run()
 		defer s.needs.close() // what is queued is written before Run returns
 	}
+	s.startBuildReads() // builds.go
 	var stopTimer func() bool
 	var timerAt time.Time
 	ctxDone := ctx.Done()
@@ -582,6 +589,14 @@ func (s *Scheduler) ForgetNeed(ctx context.Context, model string) (bool, error) 
 // (GET /api/needs).
 func (s *Scheduler) LearnedRows(ctx context.Context) ([]LearnedRow, error) {
 	return ask(s, ctx, func(c *schedCore) []LearnedRow { return c.learnedRows() })
+}
+
+// Needs is GET /api/needs: the stored measurements and the two llama builds
+// their trust depends on.
+func (s *Scheduler) Needs(ctx context.Context) (NeedsDoc, error) {
+	return ask(s, ctx, func(c *schedCore) NeedsDoc {
+		return NeedsDoc{HostBuild: c.llamaBuild, Release: c.buildRelease, ServedBuild: c.servedBuild, Rows: c.learnedRows()}
+	})
 }
 
 // ForgetShape drops every learned memory need of a shape (a LearnedRow's

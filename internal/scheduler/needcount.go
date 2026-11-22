@@ -219,8 +219,19 @@ type LearnedRow struct {
 	Restored   bool
 	// Trusted is false for a restored measurement of another llama build:
 	// it counts only where it is above the estimate.
-	Trusted  bool
-	Profiles []string
+	Trusted bool
+	// UntrustedWhy says why it is not trusted ("" when it is).
+	UntrustedWhy string
+	Profiles     []string
+}
+
+// NeedsDoc is GET /api/needs: the two llama builds trust depends on ("" when
+// not known yet) and every stored measurement.
+type NeedsDoc struct {
+	HostBuild   string
+	Release     string
+	ServedBuild string
+	Rows        []LearnedRow
 }
 
 // learnedRows lists every measurement, by shape and device count.
@@ -235,7 +246,8 @@ func (c *schedCore) learnedRows() []LearnedRow {
 			r := LearnedRow{Shape: shape, Kind: l.key.kind, Model: l.key.model, Ctx: l.key.ctx, Parallel: l.key.parallel,
 				KVQuant: l.key.kvQuant, FlashAttn: l.key.flashAttn, Devices: l.count(), TotalMiB: l.TotalMiB,
 				Placement: slices.Clone(l.placement), MeasuredBy: l.profile, MeasuredAt: l.at, Release: l.release,
-				LlamaBuild: l.build, Restored: l.restored, Trusted: c.trusted(l), Profiles: slices.Sorted(slices.Values(users[shape]))}
+				LlamaBuild: l.build, Restored: l.restored, Trusted: c.trusted(l), UntrustedWhy: c.untrustedWhy(l),
+				Profiles: slices.Sorted(slices.Values(users[shape]))}
 			if l.key.extraArgs != "" {
 				r.ExtraArgs = strings.Split(l.key.extraArgs, "\x00")
 			}

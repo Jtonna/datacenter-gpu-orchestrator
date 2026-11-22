@@ -33,14 +33,16 @@ type needRow struct {
 	LlamaBuild string    `json:"llama_build"`
 	Restored   bool      `json:"restored"`
 	Trusted    bool      `json:"trusted"`
-	Profiles   []string  `json:"profiles"`
+	// UntrustedReason says why a row is not trusted ("" when it is).
+	UntrustedReason string   `json:"untrusted_reason"`
+	Profiles        []string `json:"profiles"`
 }
 
 func needRowJSON(r scheduler.LearnedRow) needRow {
 	out := needRow{Shape: r.Shape, Kind: string(r.Kind), Model: r.Model, Ctx: r.Ctx, Parallel: r.Parallel, KVQuant: r.KVQuant,
 		FlashAttn: r.FlashAttn, ExtraArgs: r.ExtraArgs, Devices: r.Devices, TotalMiB: r.TotalMiB, Placement: []string{},
 		MeasuredBy: r.MeasuredBy, MeasuredAt: r.MeasuredAt, Release: r.Release, LlamaBuild: r.LlamaBuild, Restored: r.Restored,
-		Trusted: r.Trusted, Profiles: r.Profiles}
+		Trusted: r.Trusted, UntrustedReason: r.UntrustedWhy, Profiles: r.Profiles}
 	if out.ExtraArgs == nil {
 		out.ExtraArgs = []string{}
 	}
@@ -54,16 +56,18 @@ func needRowJSON(r scheduler.LearnedRow) needRow {
 }
 
 func (s *Server) handleNeeds(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.sched.LearnedRows(r.Context())
+	doc, err := s.sched.Needs(r.Context())
 	if err != nil {
 		s.writeErr(w, err)
 		return
 	}
-	out := make([]needRow, 0, len(rows))
-	for _, row := range rows {
+	out := make([]needRow, 0, len(doc.Rows))
+	for _, row := range doc.Rows {
 		out = append(out, needRowJSON(row))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"needs": out})
+	// the two llama builds trust depends on ("" while not known)
+	writeJSON(w, http.StatusOK, map[string]any{"needs": out, "host_build": doc.HostBuild, "release": doc.Release,
+		"served_build": doc.ServedBuild})
 }
 
 // handleForgetShape drops every learned need of a shape (in memory and in
