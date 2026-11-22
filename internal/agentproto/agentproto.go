@@ -20,9 +20,13 @@ package agentproto
 // agents, and the agent reports it (agent contract 5.1). The two commands
 // take it as the default of their -ldflags -X variables. 0.1.1 was the first
 // release with CR-9 and CR-10 batch 1; 0.1.2 adds the rest of CR-10 (the
-// agent's log shipper, Potluck's own lines, the read side). An agent of an
+// agent's log shipper, Potluck's own lines, the read side). 0.1.3 adds the
+// forced-fit check before any eviction, paused and unplaced nodes never
+// evicted and a pause winning after a claim, the benchmark step facts (lowest
+// available memory, load mode, roles, the reload-from-cache verdict), planned
+// and blocked suites, and the agent's cached_bytes figure. An agent of an
 // older release is refused with agent_too_old and updates as section 5.4 says.
-const Release = "0.1.2"
+const Release = "0.1.3"
 
 // Ports, all fixed (agent contract section 3).
 const (

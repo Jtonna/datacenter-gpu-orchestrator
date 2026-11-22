@@ -1152,7 +1152,7 @@ view the core reads, and runs the worker launches.
   is not served: the scheduler still starts, `/api/system` `programs.error`
   says why, agents are refused (`release_unavailable`) and loads are refused.
   Potluck's release is the build variable `main.potluckRelease` (default
-  `agentproto.Release`, `0.1.2`), separate from `version`.
+  `agentproto.Release`, `0.1.3`), separate from `version`.
 - **Same build.** `server_bin --version` must report the commit of
   `builds.llama` (a prefix match of at least 7 hex digits). Otherwise every
   load is refused with the reason, and `/api/system` shows `host_build_error`.

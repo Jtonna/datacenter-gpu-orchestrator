@@ -49,7 +49,7 @@ import (
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
-var version = "0.1.2"
+var version = "0.1.3"
 
 // potluckRelease is the program release Potluck serves to agents and
 // requires of them (agent contract 5.1), separate from version. Set it at

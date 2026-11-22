@@ -66,7 +66,7 @@ func TestOwnLoggingDoesNotSlowRequests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	self := selflog.New(selflog.Options{On: relay.StoreOn, InsertURL: relay.InsertURL, Release: "0.1.2",
+	self := selflog.New(selflog.Options{On: relay.StoreOn, InsertURL: relay.InsertURL, Release: "0.1.3",
 		BufferBytes: 64 << 10, HTTP: &http.Client{Timeout: 30 * time.Second}})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
