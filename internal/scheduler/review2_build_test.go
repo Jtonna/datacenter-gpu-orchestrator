@@ -22,7 +22,7 @@ func TestReview2_SS2_AnotherBuildsMeasurementIsNotTrusted(t *testing.T) {
 		{"same build, abbreviated", "aaaaaaa1f00", "0.1.5", 7000, true},
 		{"another build", "ccccccc3", "0.1.6", 7000, false},
 		{"another build, higher than the estimate", "ccccccc3", "0.1.6", 10000, true}, // max(estimate, stored) is the stored
-		{"no build, same release", "", "0.1.6", 7000, false}, // trusted only once stamped through release.json (TS3)
+		{"no build, same release", "", "0.1.6", 7000, false},                          // trusted only once stamped through release.json (TS3)
 		{"no build, another release", "", "0.1.5", 7000, false},
 		{"nothing known", "", "", 7000, false},
 	}
