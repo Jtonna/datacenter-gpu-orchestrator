@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // Defaults for ProcessLauncher fields left at zero.
@@ -171,7 +173,7 @@ func (l *ProcessLauncher) Start(spec StartSpec) (Child, error) {
 	p.cmd = cmd
 	p.untrack = func() { l.track(p, false) }
 	l.track(p, true)
-	go p.wait()
+	go supervise.Once("instance.reap", p.wait, nil) // wait's own finisher publishes the exit on a failure
 	return p, nil
 }
 
@@ -219,12 +221,38 @@ func (p *proc) Exited() <-chan ExitStatus { return p.exitCh }
 
 // wait reaps the child, finalises its status, releases the port, and then
 // publishes the exit. It is the only place the child is waited on.
+//
+// A failure part way (in a line writer's or a tap's Close) still finishes:
+// the deferred finisher marks the child reaped, releases the port, closes
+// done and delivers an exit with Err set, so the core gets its exit event.
 func (p *proc) wait() {
+	var released, doneClosed, published bool
+	defer func() {
+		if published {
+			return
+		}
+		p.mu.Lock()
+		p.reaped = true
+		p.mu.Unlock()
+		p.status.Err = errors.New("internal error while reaping the child")
+		if p.untrack != nil {
+			p.untrack()
+		}
+		if !released {
+			p.ports.Release(p.port)
+		}
+		if !doneClosed {
+			close(p.done)
+		}
+		p.exitCh <- p.status
+		close(p.exitCh)
+	}()
 	err := p.cmd.Wait()
 	p.mu.Lock()
 	p.reaped = true
 	requested := p.stopReq
 	p.mu.Unlock()
+	supervise.Point("instance.reap")
 	p.stdout.Close()
 	p.stderr.Close()
 	if p.logSink != nil {
@@ -248,7 +276,10 @@ func (p *proc) wait() {
 		p.untrack()
 	}
 	p.ports.Release(p.port)
+	released = true
 	close(p.done)
+	doneClosed = true
+	published = true
 	p.exitCh <- st
 	close(p.exitCh)
 }
@@ -273,7 +304,7 @@ func (p *proc) Stop(mode StopMode) {
 	}
 	p.termed = true
 	terminate(p.cmd.Process, true)
-	go func() {
+	go supervise.Once("instance.grace_kill", func() {
 		t := time.NewTimer(p.grace)
 		defer t.Stop()
 		select {
@@ -281,7 +312,7 @@ func (p *proc) Stop(mode StopMode) {
 		case <-t.C:
 			p.Stop(StopKill)
 		}
-	}()
+	}, nil)
 }
 
 // WaitHealthy implements Child.
