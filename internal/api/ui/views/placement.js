@@ -3,7 +3,8 @@
 // placed. A dry run; nothing is loaded or changed.
 //
 // Reads: REST GET /api/profiles (the list with a short plan each) and
-// POST /api/plan {"model": id} (the full dry-run plan of the picked profile),
+// POST /api/plan {"model": id} (the full dry-run plan of the picked profile,
+// with its memory table, core/reserve.js),
 // both again when the placement picture in the WebSocket "status" changes.
 // Route: #/placement/<profile id>
 
@@ -13,6 +14,7 @@ import { state, on, listen } from '../core/store.js';
 import * as api from '../core/api.js';
 import { liveView, pageHead, badge, bar, stat, empty, skeleton, banner, more } from '../core/ui.js';
 import { num, mib, gb, gbNum, ctx, plural, DASH } from '../core/format.js';
+import { memoryTable } from '../core/reserve.js';
 import { nodeName, findNode, staleBanner, plainReason, plainBasis, machines } from '../core/status.js';
 
 const ACTION = {
@@ -71,7 +73,8 @@ function detail(st, p, plan, error, rawOpen, toggleRaw) {
           h('span.mono.fig', { title: `about ${mib(expect)} of ${mib(n.budget_mib)} usable` }, `≈ ${gbNum(expect)} / ${gb(n.budget_mib)}`),
           h('span.mut.split', s ? `${Math.round(s.fraction * 100)}% of the model, as measured on its last load` : placement.length > 1 ? 'An even share; the real split is known after a load' : node && node.holder ? 'After ' + node.holder + ' is unloaded' : 'The whole model'));
       }),
-    ] : null);
+    ] : null,
+    plan.memory ? memoryTable(plan.memory, id => nodeName(st, id)) : null);
 }
 
 registerView({

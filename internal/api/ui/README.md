@@ -19,6 +19,7 @@ core/status.js      helpers that read the status document
 core/reasons.js     the scheduler's reason strings in plain words (no DOM)
 core/nodeactions.js agent machines: why one takes no new model, and the two operator actions (no DOM)
 core/startup.js     start-up figures of agent machines: the words, and GET /api/startups on demand (no DOM)
+core/reserve.js     the memory reservation rule: a node's reserved list and a plan's memory table
 core/ui.js          the shared components (below)
 core/charts.js      every chart and the chart tooltip: inline SVG and plain boxes ("Charts" below)
 core/catalog.js     the model catalog, kept for the life of the page (fed by the live channel)
