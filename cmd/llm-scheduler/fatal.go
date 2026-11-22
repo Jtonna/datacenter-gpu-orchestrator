@@ -1,9 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
-	"net"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -24,7 +25,12 @@ import (
 // exits with code 3, all within fatalWatchdog. The container then starts
 // Potluck again, which rebuilds everything from the database.
 
-const fatalWatchdog = 5 * time.Second
+const (
+	fatalWatchdog = 5 * time.Second
+	// fatalAnswerGrace is how long the fatal path lets requests in flight
+	// finish their answer (streams are cut after it).
+	fatalAnswerGrace = time.Second
+)
 
 // fatalExit ends the process when the fatal path overruns its watchdog
 // (tests replace it).
@@ -65,10 +71,16 @@ func (f *fatalPath) disarm() {
 }
 
 // fatalStop is the fatal path proper, run by serveUntil.
-func fatalStop(reason string, log *slog.Logger, hist *history.Store, ln net.Listener, launcher *instance.ProcessLauncher, stopBg func()) int {
+func fatalStop(reason string, log *slog.Logger, hist *history.Store, srv *http.Server, launcher *instance.ProcessLauncher, stopBg func()) int {
 	log.Error("a background task failed and must not continue: Potluck stops now so that it is started again (exit code 3)", "reason", reason)
 	hist.Record(stoppingEvent("internal failure in "+reason, time.Now()))
-	ln.Close()
+	// Stop accepting, and give the requests in flight a moment to answer
+	// (a configuration change that failed to apply answers 500 first).
+	sctx, cancel := context.WithTimeout(context.Background(), fatalAnswerGrace)
+	if srv.Shutdown(sctx) != nil {
+		srv.Close()
+	}
+	cancel()
 	if n := launcher.KillAll(); n > 0 {
 		log.Error("the model children were killed", "children", n)
 	}

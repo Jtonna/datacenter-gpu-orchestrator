@@ -449,7 +449,7 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 		hist.Record(stoppingEvent("HTTP server failed: "+err.Error(), time.Now()))
 		code = 1
 	case reason := <-fatal.ch:
-		return fatalStop(reason, log, hist, ln, launcher, bgCancel)
+		return fatalStop(reason, log, hist, httpSrv, launcher, bgCancel)
 	}
 
 	// Design 8.6: stop accepting, then let the scheduler answer waiters,

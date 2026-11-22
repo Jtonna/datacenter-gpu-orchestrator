@@ -17,6 +17,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/audit"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgstore"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // ValidationError is a rejected change; Messages are the validation messages.
@@ -39,6 +40,9 @@ var (
 	ErrExists   = errors.New("already exists")
 	ErrNotFound = errors.New("not found")
 	ErrNoStore  = errors.New("the configuration database is not available")
+	// ErrApplyFailed: the change is committed, but applying it to the
+	// running pieces failed, so Potluck restarts to apply it from the store.
+	ErrApplyFailed = errors.New("the change is saved, but applying it to the running scheduler failed; Potluck restarts now to apply it")
 )
 
 // RefError means a delete is refused because benchmarks refer to the profile.
@@ -346,14 +350,22 @@ func (s *Service) mutate(ctx context.Context, o WriteOpts, m mutation) (*Result,
 	s.cbNext++
 	locked = false
 	s.mu.Unlock()
-	s.callbacksInOrder(ticket, cfg, ev)
+	if err := s.callbacksInOrder(ticket, cfg, ev); err != nil {
+		return nil, err
+	}
 	return res, nil
 }
 
 // callbacksInOrder runs Apply and OnChange for one committed change, after
 // those of every earlier change. The caller does not hold mu, so a callback
 // may read the service (a callback that writes to it would wait for itself).
-func (s *Service) callbacksInOrder(ticket uint64, cfg *config.Config, ev ChangeEvent) {
+//
+// A failure there is NOT recovered and continued: the change is already the
+// store's truth and only partly applied to the running pieces (fleet client,
+// pool, scheduler, API), and the only rebuild that reaches all of them
+// together is a start from the store. It ends the process through the fatal
+// path (supervise.GuardExit) and the caller answers ErrApplyFailed first.
+func (s *Service) callbacksInOrder(ticket uint64, cfg *config.Config, ev ChangeEvent) error {
 	s.cbMu.Lock()
 	if s.cbCond == nil {
 		s.cbCond = sync.NewCond(&s.cbMu)
@@ -368,12 +380,18 @@ func (s *Service) callbacksInOrder(ticket uint64, cfg *config.Config, ev ChangeE
 		s.cbCond.Broadcast()
 		s.cbMu.Unlock()
 	}()
-	if s.o.Apply != nil {
-		s.o.Apply(cfg)
+	if supervise.GuardExit("config.apply", func() {
+		supervise.Point("config.apply")
+		if s.o.Apply != nil {
+			s.o.Apply(cfg)
+		}
+		if s.o.OnChange != nil {
+			s.o.OnChange(ev)
+		}
+	}) {
+		return ErrApplyFailed
 	}
-	if s.o.OnChange != nil {
-		s.o.OnChange(ev)
-	}
+	return nil
 }
 
 func restartKeys(diff []audit.DiffItem) []string {
