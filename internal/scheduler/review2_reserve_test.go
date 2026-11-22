@@ -104,3 +104,29 @@ func TestReview2_SB2_FleetLaunchAgreesWithTheGate(t *testing.T) {
 		}
 	}
 }
+
+// SS3: what an eviction frees on a node is what the holder's own load
+// reported there, bounded by its reserved figure; never memory another
+// process took on the node since the holder was placed. The case: the
+// holder's log reports 8000 on a, another process takes 3000 more; 2400 is
+// free: 10400 with nothing of ours loaded, not 13400.
+func TestReview2_SS3_FreedIsTheHoldersOwnFigure(t *testing.T) {
+	h := newHarness(t).nodes(psNode("a", 2, 12400))
+	reserveOnSettings(h)
+	h.llama("m", 8000, func(p *core.Profile) { p.Ctx = 65536 })
+	h.request("m")
+	setLoad(h, "m", rpcDev(addrA, 7000, 700, 300)) // 8000 by the log
+	h.healthy("m")
+	h.view.modify("a", func(n *core.Node) { n.FreeMiB -= 8000 + 3000 })
+	h.viewChanged()
+	n, _ := h.c.node("a")
+	if free, _, ok := h.c.emptyFree("a", n); !ok || free != 2400+8000 {
+		t.Fatalf("empty free %d (ok %v), want 2400 + the holder's 8000", free, ok)
+	}
+	// While its log has not reported, its reserved figure bounds what the
+	// node gave up: need 8000 + fill 512.
+	setLoad(h, "m")
+	if free, _, ok := h.c.emptyFree("a", n); !ok || free != 2400+8512 {
+		t.Fatalf("no report: empty free %d (ok %v), want 2400 + its reserved 8512", free, ok)
+	}
+}

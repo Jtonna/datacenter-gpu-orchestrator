@@ -170,15 +170,24 @@ func (c *schedCore) heldOn(id core.NodeID) (mib int, profile string, ok bool) {
 		return 0, "", true
 	}
 	if c.newRules() {
-		// reserve.go: what the node gave up for the holder when that is
-		// known, else its reserved figure; never the margin.
+		// reserve.go: what the holder's own load reported on the node,
+		// bounded by its reserved figure (review SS3: never what other
+		// processes took there since); before its log reports, what the
+		// node gave up bounded by the reserved figure, or that figure.
+		_, r, haveR := c.reservedOn(id)
+		if rep, known := c.reportedOn(in, id); known {
+			if haveR {
+				rep = min(rep, r.Total)
+			}
+			return rep, in.prof.Name, true
+		}
+		if !haveR {
+			return 0, "", false
+		}
 		if used, known := c.measuredUse(in, id); known {
-			return used, in.prof.Name, true
+			return min(used, r.Total), in.prof.Name, true
 		}
-		if _, r, ok := c.reservedOn(id); ok {
-			return r.Total, in.prof.Name, true
-		}
-		return 0, "", false
+		return r.Total, in.prof.Name, true
 	}
 	shares := c.expectShares(in.prof, in.placement)
 	for i, pn := range in.placement.Nodes {

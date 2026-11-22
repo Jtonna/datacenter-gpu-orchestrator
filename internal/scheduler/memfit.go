@@ -165,6 +165,50 @@ func dateOf(t time.Time) string {
 	return t.UTC().Format("2006-01-02")
 }
 
+// loadByNode is what load reports on each node of in's placement (device
+// order), and whether the node had a device in the report.
+func (c *schedCore) loadByNode(in *inst, load instance.LoadStats) ([]float64, []bool) {
+	byKey := map[string]int{}
+	for i, pn := range in.placement.Nodes {
+		if pn.Local {
+			byKey[c.build.LocalDevice] = i
+		} else {
+			byKey[pn.Addr] = i
+		}
+	}
+	mib := make([]float64, len(in.placement.Nodes))
+	seen := make([]bool, len(mib))
+	for _, d := range load.Devices {
+		if d.Host {
+			continue
+		}
+		key := endpointOf(d.Name)
+		if key == "" {
+			key = d.Name
+		}
+		if i, ok := byKey[key]; ok {
+			mib[i] += d.TotalMiB()
+			seen[i] = true
+		}
+	}
+	return mib, seen
+}
+
+// reportedOn is what in's own load log reported on node id (MiB, rounded
+// up); false before the log reports or when it names no device there.
+func (c *schedCore) reportedOn(in *inst, id core.NodeID) (int, bool) {
+	if in.child == nil {
+		return 0, false
+	}
+	mib, seen := c.loadByNode(in, in.child.Load())
+	for i, pn := range in.placement.Nodes {
+		if pn.ID == id && seen[i] {
+			return int(math.Ceil(mib[i] - 1e-6)), true
+		}
+	}
+	return 0, false
+}
+
 // learnNeed records what a load that just became ready measured: the device
 // total (the figure the log's memory_mib reports) and each node's own figure.
 // A measurement above a configured needs_mib is warned about, once per profile.
@@ -196,31 +240,9 @@ func (c *schedCore) learnNeed(in *inst) {
 	oldNodes, oldPlacement, oldPeakAt := l.Nodes, l.placement, l.peakAt
 	l.placement = in.nodeIDs()
 	l.Nodes, l.peakAt = nil, time.Time{}
-	byKey := map[string]int{}
-	for i, pn := range in.placement.Nodes {
-		if pn.Local {
-			byKey[c.build.LocalDevice] = i
-		} else {
-			byKey[pn.Addr] = i
-		}
-	}
 	fracs := instance.SplitFractions(*in.prof, in.placement)
 	l.split = slices.Clone(fracs)
-	mib := make([]float64, len(in.placement.Nodes))
-	seen := make([]bool, len(mib))
-	for _, d := range load.Devices {
-		if d.Host {
-			continue
-		}
-		key := endpointOf(d.Name)
-		if key == "" {
-			key = d.Name
-		}
-		if i, ok := byKey[key]; ok {
-			mib[i] += d.TotalMiB()
-			seen[i] = true
-		}
-	}
+	mib, seen := c.loadByNode(in, load)
 	complete := len(mib) > 0 && len(fracs) == len(mib)
 	for _, s := range seen {
 		complete = complete && s
