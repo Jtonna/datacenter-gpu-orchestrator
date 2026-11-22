@@ -2,8 +2,8 @@
 // lives and how large it is, the safety settings in force, and the addresses
 // other programs (and agents, through MCP) use. Read-only.
 //
-// Reads: REST GET /api/system and GET /api/about (on open and after a
-// reconnect); WebSocket "hello" and "status" for the connection facts.
+// Reads: REST GET /api/system and GET /api/about (on open, after a
+// reconnect and with a status message every 30 s); WebSocket "hello" and "status" for the connection facts.
 
 import { h } from '../core/dom.js';
 import { registerView, href } from '../core/router.js';
@@ -41,6 +41,33 @@ function settingValue(k, v) {
 }
 const settingLabel = k => humanize(k.replace(/_(s|pct|minutes|mib)$/, ''));
 
+// The background tasks the scheduler supervises (GET /api/system "tasks"):
+// a task that fails is restarted alone, or turns its failure into its
+// result; a failure that must not continue stops Potluck so that it is
+// started again. Failures are also on the Activity page (internalFailure).
+const POLICY = { restart: 'Restarts alone', exit: 'Stops Potluck', once: 'One-shot', guard: 'Guarded call', report: 'Reported' };
+function tasksCard(sys) {
+  const tasks = (sys && sys.tasks) || [];
+  const hour = now() - 3600 * 1000;
+  const recent = tasks.some(t => t.last_failure_at && t.last_failure_at >= hour);
+  return h('section.card',
+    h('div.ch.split', h('h2', 'Background tasks'), h('a', { href: href('activity'), style: 'font-size:13px' }, 'Activity')),
+    !sys ? skeleton(3) : [
+      recent ? h('div.banner.err', { role: 'status' }, 'A background task failed in the last hour and was handled (restarted, or its result became an error); see Activity.') : null,
+      h('div.cs', { style: 'border-top:0;padding-top:0' }, h('div.mut', { style: 'font-size:13px;margin-bottom:6px' },
+        sys.internal_failures_total ? plural(sys.internal_failures_total, 'failure') + ' recovered since start.' : 'No failure since start.')),
+      tasks.length ? h('div.scroll', h('table.tbl.dense',
+        h('thead', h('tr', h('th', 'Task'), h('th', 'After a failure'), h('th', 'State'), h('th', 'Restarts'), h('th', 'Last minute'), h('th', 'Last failure'))),
+        h('tbody', tasks.map(t => h('tr',
+          h('td.mono', t.name),
+          h('td', POLICY[t.policy] || t.policy),
+          h('td', t.state),
+          h('td.mono', num(t.restarts || 0)),
+          h('td.mono', num(t.failures_last_min || 0)),
+          h('td', t.last_failure_at ? [ago(t.last_failure_at), h('div.mut.wrap-any', { style: 'font-size:12px' }, t.last_failure || '')] : DASH)))))) : null,
+    ]);
+}
+
 function storageRow(title, s, extra) {
   if (!s) return null;
   const on_ = s.on !== false && (s.dir || s.path);
@@ -56,10 +83,15 @@ registerView({
   mount(el) {
     let sys = null, about = null, error = '', alive = true;
     const load = async () => {
+      loadedAt = now();
       try { [sys, about] = await Promise.all([api.get('/api/system'), api.get('/api/about')]); error = ''; } catch (e) { error = e.message; }
       if (alive) view.refresh();
     };
     const offHello = on('hello', load); // a reconnect may mean a restart: read again
+    // The background tasks' figures move without a reconnect: read again
+    // with a status message at most every 30 s.
+    let loadedAt = 0;
+    const offStatus = on('status', () => { if (now() - loadedAt >= 30000) load(); });
 
     const view = liveView(el, () => {
       const hello = state.hello || {};
@@ -87,6 +119,7 @@ registerView({
                 h('dt', 'Started at'), h('dd', started ? at(started) : DASH, started ? h('span.mut', ' · up ', dur(Math.max(0, Math.round((now() - started) / 1000)))) : null),
                 h('dt', 'Listens on'), h('dd.mono', (sys && sys.listen) || DASH),
                 h('dt', 'Models directory'), h('dd.mono', (sys && sys.models_dir) || DASH)))),
+            tasksCard(sys),
             h('section.card',
               h('div.ch', h('h2', 'Connection')),
               h('div.cs', { style: 'border-top:0;padding-top:0' }, h('dl.kv',
@@ -124,6 +157,6 @@ registerView({
       ];
     }, ['status', 'conn', 'hello', 'tick']);
     load();
-    return { unmount() { alive = false; offHello(); view.unmount(); } };
+    return { unmount() { alive = false; offHello(); offStatus(); view.unmount(); } };
   },
 });
