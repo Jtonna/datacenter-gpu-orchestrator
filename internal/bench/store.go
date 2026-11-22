@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (no cgo)
@@ -199,7 +200,13 @@ type Store struct {
 	mu     sync.RWMutex // guards closed against senders
 	closed bool
 	wg     sync.WaitGroup
+	late   atomic.Int64 // writes refused because the store was closed (LateWrites)
 }
+
+// LateWrites is how many writes were refused because the store was already
+// closed: a shutdown that stops every writer before closing the store keeps
+// it at 0.
+func (s *Store) LateWrites() int64 { return s.late.Load() }
 
 // OpenStore creates dir if needed, opens dir/scheduler.db in WAL mode and
 // applies the migrations. An error means the benchmark feature stays off.
@@ -318,6 +325,7 @@ func (s *Store) write(fn func(*sql.Tx) error) error {
 	s.mu.RLock()
 	if s.closed {
 		s.mu.RUnlock()
+		s.late.Add(1)
 		return errors.New("store is closed")
 	}
 	j := job{fn: fn, done: make(chan error, 1)}

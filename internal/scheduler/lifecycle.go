@@ -47,8 +47,10 @@ func (c *schedCore) startInstance(p *core.Profile, pl core.Placement, waiters []
 		}
 		ns.holder = p.Name
 		ns.claim = ""
+		ns.heldChanged = c.now
 	}
 	c.insts[p.Name] = in
+	c.recordBaseFree(in) // reserve.go
 	c.initLoadProgress(in)
 	c.changed = true
 	c.emitState(in, RunningStarting)
@@ -67,6 +69,9 @@ func (c *schedCore) startInstance(p *core.Profile, pl core.Placement, waiters []
 		}
 	}
 	if len(targets) == 0 {
+		if c.agents {
+			c.checkGated(in) // launch checks only in fleet membership (it also runs after the workers loaded)
+		}
 		c.launch(in) // the local node is not probed (7.5)
 		return
 	}
@@ -153,6 +158,8 @@ func (c *schedCore) fitAndLaunch(in *inst) {
 	}
 	pl := in.placement
 	pl.Nodes = slices.Clone(pl.Nodes)
+	c.fitting = in // reserve.go: its own reservation is not counted against it
+	defer func() { c.fitting = nil }()
 	budgets := make([]int, len(pl.Nodes))
 	cands := make([]placer.Candidate, len(pl.Nodes))
 	for i, pn := range pl.Nodes {
@@ -163,6 +170,13 @@ func (c *schedCore) fitAndLaunch(in *inst) {
 	}
 	if !placer.FitsNodes(req, cands) {
 		c.returnInst(in, "exact pre-flight figures do not fit", budgets)
+		return
+	}
+	// The gate on the pre-flight's figures (review SB2): the placer alone
+	// holds each node to its budget share, not to the measured per-node
+	// figure, and passes any forced profile.
+	if g := c.reserveGate(in.prof, pl, nil); g != "" {
+		c.returnInst(in, g, budgets)
 		return
 	}
 	in.placement = pl
@@ -198,6 +212,9 @@ func (c *schedCore) requeue(in *inst, ws []*waiter) {
 
 // launch starts the child (after a successful or skipped pre-flight).
 func (c *schedCore) launch(in *inst) {
+	if !c.agents {
+		c.checkGated(in)
+	}
 	p := *in.prof
 	pl := in.placement
 	info, err := c.need(in.prof)
@@ -352,6 +369,7 @@ func (c *schedCore) removeInst(in *inst, settle bool) {
 			e.victims = slices.DeleteFunc(e.victims, func(v string) bool { return v == in.prof.Name })
 		}
 	}
+	c.endPeakCycle(in) // reserve.go
 	for _, n := range in.placement.Nodes {
 		c.releaseNode(n.ID, in.prof.Name, settle)
 	}
@@ -379,6 +397,7 @@ func (c *schedCore) releaseNode(id core.NodeID, holder string, settle bool) {
 		return
 	}
 	ns.holder = ""
+	ns.heldChanged = c.now
 	if !settle {
 		// DESIGN: 7.1 ends the pre-flight override "when an instance is
 		// next released from the node", but 7.5 says a returned instance
@@ -467,7 +486,7 @@ func (c *schedCore) failLoadMode(in *inst, msg string, tail []string, gone bool,
 // logPlacement logs the placement chosen for a new instance.
 func (c *schedCore) logPlacement(in *inst) {
 	need, measured := 0, false
-	if info, err := c.need(in.prof); err == nil {
+	if info, err := c.needAt(in.prof, len(in.placement.Nodes)); err == nil {
 		need, measured = info.Need.MiB, info.Need.Measured
 	}
 	budgets := make([]int, len(in.placement.Nodes))

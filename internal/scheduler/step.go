@@ -91,6 +91,8 @@ type (
 	evShutdown   struct{ force bool }
 	// evQuery runs fn inside the core goroutine (snapshots, dry runs).
 	evQuery struct{ fn func(c *schedCore) }
+	// evBuilds: both llama builds are known after a background read (FS2).
+	evBuilds struct{ host, served string }
 )
 
 func (evAcquire) isEvent()        {}
@@ -111,6 +113,7 @@ func (evUnload) isEvent()         {}
 func (evUnloadIdle) isEvent()     {}
 func (evShutdown) isEvent()       {}
 func (evQuery) isEvent()          {}
+func (evBuilds) isEvent()         {}
 
 type probeOutcome struct {
 	id     core.NodeID
@@ -202,6 +205,7 @@ var checkInvariantsEachStep = false
 // handle is the step function: it applies one event, then the time-based
 // rules, then the queue pass of design 8.3. It never blocks.
 func (c *schedCore) handle(ev event) {
+	c.steps++
 	c.now = c.clock.Now()
 	if c.now.Before(c.last) {
 		c.now = c.last // never let time run backwards inside the core
@@ -249,6 +253,8 @@ func (c *schedCore) handle(ev event) {
 		c.beginShutdown(e.force)
 	case evQuery:
 		e.fn(c)
+	case evBuilds:
+		c.buildsKnown(e.host, e.served)
 	default:
 		if !c.handleAgents(ev) {
 			panic(fmt.Sprintf("scheduler: unknown event %T", ev))
@@ -256,6 +262,7 @@ func (c *schedCore) handle(ev event) {
 	}
 
 	c.timers()
+	c.trackPeaks() // reserve.go
 	c.pruneRecent()
 	c.runPasses()
 	c.shutdownProgress()

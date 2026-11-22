@@ -156,6 +156,13 @@ type inst struct {
 	launchIDs  map[core.NodeID]string              // the launch on each worker node
 	agentLoad  map[string]*agentproto.LoadProgress // per worker rpc address: the agent's own load figures
 
+	// baseFree is each node's free figure when the instance was created
+	// (reserve.go): what the node gives up for it is measured against it.
+	baseFree map[core.NodeID]int
+	// cyclePeak is the most each node gave up for this instance in this
+	// load-to-unload cycle (reserve.go, endPeakCycle).
+	cyclePeak map[core.NodeID]int
+
 	benchRun   string // the bench run whose request started this instance (history records only)
 	served     int    // requests admitted (logged when the instance stops)
 	stopReason string // why it is being stopped (first reason wins), for the log
@@ -257,6 +264,11 @@ type nodeState struct {
 	ovFree  int
 	ovUntil time.Time // pre-flight override; zero when none
 
+	// heldChanged is when what is placed on the node last changed (placed or
+	// released): the average free figure is not used for a window after it
+	// (reserve.go, avgStale).
+	heldChanged time.Time
+
 	emptyPF, emptyClaim int
 	hasPF, hasClaim     bool
 
@@ -318,12 +330,17 @@ type schedCore struct {
 	backoffs     map[string]*backoff
 	waiters      map[uint64]*waiter
 	leases       map[uint64]*lease
-	needs_       map[string]NeedInfo // provider results, before the estimate margin and learned figures
-	learned      map[string]*learnedNeed
-	needOps      []needOp        // learned-need store writes, taken by the runner after each step (needs.go)
-	persist      bool            // a need store is attached: learned needs are queued for it
-	buildRelease string          // this build's release, stored with each measurement
-	warnedLow    map[string]bool // profiles whose too-low needs_mib was already warned about
+	needs_       map[string]NeedInfo             // provider results, before the estimate margin and learned figures
+	learned      map[string]map[int]*learnedNeed // by shape and device count (needcount.go)
+	needOps      []needOp                        // learned-need store writes, taken by the runner after each step (needs.go)
+	persist      bool                            // a need store is attached: learned needs are queued for it
+	buildRelease string                          // this build's release, stored with each measurement
+	steps        uint64                          // events handled (checkGated)
+	llamaBuild   string                          // the llama.cpp commit loads run on; "" when not known (needcount.go)
+	releaseBuild func(string) string             // the llama build a release's release.json names; "" when not known (nil: none)
+	servedBuild  string                          // the llama build the served release names, read at restore ("" : not known; nothing restored is trusted)
+	gated        gateMark                        // the latest gate call (checkGated)
+	warnedLow    map[string]bool                 // profiles whose too-low needs_mib was already warned about
 
 	raw           map[core.NodeID]core.Node // view this step
 	fresh         bool
@@ -362,6 +379,10 @@ type schedCore struct {
 	staleAt     time.Time
 	downAt      time.Time
 	changed     bool
+
+	// fitting is the instance whose own placement is being checked at exact
+	// figures (fitAndLaunch); its reservation does not count against it.
+	fitting *inst
 }
 
 func newCore(cfg *config.Config, clock Clock, view fleet.View, needs NeedProvider, build instance.BuildOptions, log *slog.Logger) *schedCore {
@@ -372,7 +393,7 @@ func newCore(cfg *config.Config, clock Clock, view fleet.View, needs NeedProvide
 		cfg: cfg, clock: clock, view: view, needs: needs, build: build, log: log,
 		insts: map[string]*inst{}, entries: map[string]*entry{}, nodes: map[core.NodeID]*nodeState{},
 		backoffs: map[string]*backoff{}, waiters: map[uint64]*waiter{}, leases: map[uint64]*lease{},
-		needs_: map[string]NeedInfo{}, learned: map[string]*learnedNeed{}, warnedLow: map[string]bool{}, raw: map[core.NodeID]core.Node{}, excludedSeen: map[core.NodeID]bool{},
+		needs_: map[string]NeedInfo{}, learned: map[string]map[int]*learnedNeed{}, warnedLow: map[string]bool{}, raw: map[core.NodeID]core.Node{}, excludedSeen: map[core.NodeID]bool{},
 		forcedGone: map[string]time.Time{}, health: map[core.NodeID]*workerHealth{},
 		recov: map[core.NodeID]*recoveryNode{}, memNext: map[core.NodeID]time.Time{}, refused: map[string]*refusal{}, lastRefusal: map[string]RefusalStatus{},
 		localSysMiB: localSystemMiB(), envFileLoad: os.Getenv(EnvRPCFileLoad),
@@ -479,11 +500,16 @@ func (c *schedCore) freeMiB(id core.NodeID, n core.Node) int {
 // figure (sharedBudget), because the worker's Vulkan device reports about
 // 2.5 GB more free than the machine can give.
 func (c *schedCore) liveBudget(id core.NodeID, n core.Node) int {
+	old := c.freeMiB(id, n) - n.HeadroomMiB
 	if n.SharedMemory {
-		b, _ := c.sharedBudget(id, n)
-		return b
+		old, _ = c.sharedBudget(id, n)
 	}
-	return c.freeMiB(id, n) - n.HeadroomMiB
+	if !c.cfg.Defaults.PlacementUsesReserved {
+		return old
+	}
+	// reserve.go: the reserved figure (the lower of latest and average, less
+	// what is reserved there but not measured yet), never above the old one.
+	return min(old, c.reservedBudget(id, n))
 }
 
 // emptyMiB is the best known figure for the node with nothing of ours on
@@ -600,6 +626,13 @@ func (c *schedCore) request(p *core.Profile) (placer.Request, NeedInfo, error) {
 		MaxPool: max(d.MaxPool, 1), MinShareMiB: d.MinShareMiB, DeviceOverheadMiB: d.DeviceOverheadMiB + info.DeviceMiB,
 		SkewPermille: permille(d.SplitSkewMargin),
 	}
+	if len(info.figs) > 0 { // needcount.go: the need of every device count the placer may try
+		req.ByCount = make([]placer.CountNeed, max(req.MaxPool, len(p.ForceNodes), 1)+1)
+		for k := 1; k < len(req.ByCount); k++ {
+			req.ByCount[k] = placer.CountNeed{Need: info.at(k).Need}
+		}
+	}
+	c.applyReserve(&req, p, info) // reserve.go: no change with the defaults
 	if localOnly(p) {
 		req.MaxPool = 1
 		req.AllowTiers = nil

@@ -77,7 +77,7 @@ func (c *schedCore) forcedFitCheckOn(p *core.Profile, pl core.Placement, empty b
 	if (mode != config.ForcedFitWarn && mode != config.ForcedFitReject) || len(p.ForceNodes) == 0 || len(pl.Nodes) == 0 {
 		return nil
 	}
-	info, err := c.need(p)
+	info, err := c.needAt(p, len(pl.Nodes))
 	if err != nil {
 		return nil
 	}
@@ -152,7 +152,8 @@ func (c *schedCore) emptyFree(id core.NodeID, n core.Node) (free int, note strin
 	if held > 0 {
 		note = fmt.Sprintf(", counting the %d MiB %s holds there as freed", held, who)
 	}
-	return n.FreeMiB + held, note, true
+	// never above the node's total: what is freed cannot exceed what is there
+	return min(n.FreeMiB+held, n.TotalMiB), note, true
 }
 
 // heldOn is what the instance holding node id is expected to hold there: its
@@ -167,6 +168,26 @@ func (c *schedCore) heldOn(id core.NodeID) (mib int, profile string, ok bool) {
 	in := c.insts[ns.holder]
 	if in == nil {
 		return 0, "", true
+	}
+	if c.newRules() {
+		// reserve.go: what the holder's own load reported on the node,
+		// bounded by its reserved figure (review SS3: never what other
+		// processes took there since); before its log reports, what the
+		// node gave up bounded by the reserved figure, or that figure.
+		_, r, haveR := c.reservedOn(id)
+		if rep, known := c.reportedOn(in, id); known {
+			if haveR {
+				rep = min(rep, r.Total)
+			}
+			return rep, in.prof.Name, true
+		}
+		if !haveR {
+			return 0, "", false
+		}
+		if used, known := c.measuredUse(in, id); known {
+			return min(used, r.Total), in.prof.Name, true
+		}
+		return r.Total, in.prof.Name, true
 	}
 	shares := c.expectShares(in.prof, in.placement)
 	for i, pn := range in.placement.Nodes {
@@ -211,7 +232,20 @@ func (f *forcedFit) err(profile string) *Error {
 // estimate, what every device holds beyond its share (deviceCost). Nil when
 // the need is unknown.
 func (c *schedCore) expectShares(p *core.Profile, pl core.Placement) []int {
-	info, err := c.need(p)
+	if c.newRules() {
+		// reserve.go: the reserved figure (need share + fill reserve, or the
+		// stored peak) plus the node's margin.
+		shares, _ := c.reservedShares(p, pl)
+		if shares == nil {
+			return nil
+		}
+		out := make([]int, len(shares))
+		for i, r := range shares {
+			out[i] = r.Total + r.Margin
+		}
+		return out
+	}
+	info, err := c.needAt(p, len(pl.Nodes))
 	if err != nil || info.Need.MiB <= 0 || len(pl.Nodes) == 0 {
 		return nil
 	}
@@ -225,9 +259,10 @@ func (c *schedCore) expectShares(p *core.Profile, pl core.Placement) []int {
 		return nil
 	}
 	out := make([]int, len(pl.Nodes))
+	learned := c.learnedShares(p, pl, fracs, need)
 	for i, pn := range pl.Nodes {
-		if m, ok := c.learnedFor(p).shareFor(pl, fracs, pn.ID); ok {
-			out[i] = m
+		if learned != nil {
+			out[i] = learned[i]
 			continue
 		}
 		share := float64(need) * fracs[i]

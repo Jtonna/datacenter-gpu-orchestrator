@@ -29,6 +29,7 @@ func DefaultDefaults() Defaults {
 		WorkerSilence:   30 * time.Second,
 		SplitSkewMargin: 0.15, EstimateMargin: 0.05, LoadMemoryFloorMiB: 768,
 		Membership: MembershipFleet, WatchdogFloorMiB: 1000, WorkerStartTimeout: 15 * time.Second,
+		ReservedDriftWarnMiB: 500, FreeAverageWindow: 30 * time.Second,
 	}
 }
 
@@ -322,6 +323,14 @@ type rawDefaults struct {
 	WatchdogFloorMiB int    `yaml:"watchdog_floor_mib" json:"watchdog_floor_mib,omitempty"`
 
 	WorkerStartTimeout duration `yaml:"worker_start_timeout" json:"worker_start_timeout,omitempty"`
+
+	FillReserveKiBPerToken int      `yaml:"fill_reserve_kib_per_token" json:"fill_reserve_kib_per_token,omitempty"`
+	PlacementUsesReserved  bool     `yaml:"placement_uses_reserved" json:"placement_uses_reserved,omitempty"`
+	ReservedDriftWarnMiB   int      `yaml:"reserved_drift_warn_mib" json:"reserved_drift_warn_mib,omitempty"`
+	MarginMeasuredMiB      int      `yaml:"margin_measured_mib" json:"margin_measured_mib,omitempty"`
+	MarginEstimatedPercent int      `yaml:"margin_estimated_percent" json:"margin_estimated_percent,omitempty"`
+	MarginEstimatedMinMiB  int      `yaml:"margin_estimated_min_mib" json:"margin_estimated_min_mib,omitempty"`
+	FreeAverageWindow      duration `yaml:"free_average_window" json:"free_average_window,omitempty"`
 }
 
 func rawDefaultsFrom(d Defaults) rawDefaults {
@@ -331,7 +340,9 @@ func rawDefaultsFrom(d Defaults) rawDefaults {
 		d.ServerBin, d.LocalDevice, duration(d.ForcedNodeGrace), d.ForcedFitCheck,
 		duration(d.WorkerProbeInterval), duration(d.WorkerSilence), d.WorkerProbeDuringInference,
 		d.SplitSkewMargin, d.EstimateMargin, d.LoadMemoryFloorMiB,
-		d.Membership, d.WorkerModelDir, d.WatchdogFloorMiB, duration(d.WorkerStartTimeout)}
+		d.Membership, d.WorkerModelDir, d.WatchdogFloorMiB, duration(d.WorkerStartTimeout),
+		d.FillReserveKiBPerToken, d.PlacementUsesReserved, d.ReservedDriftWarnMiB, d.MarginMeasuredMiB,
+		d.MarginEstimatedPercent, d.MarginEstimatedMinMiB, duration(d.FreeAverageWindow)}
 }
 
 func (r rawDefaults) value() Defaults {
@@ -342,7 +353,9 @@ func (r rawDefaults) value() Defaults {
 		time.Duration(r.ForcedNodeGrace), r.ForcedFitCheck,
 		time.Duration(r.WorkerProbeInterval), time.Duration(r.WorkerSilence), r.WorkerProbeDuringInference,
 		r.SplitSkewMargin, r.EstimateMargin, r.LoadMemoryFloorMiB,
-		r.Membership, r.WorkerModelDir, r.WatchdogFloorMiB, time.Duration(r.WorkerStartTimeout)}
+		r.Membership, r.WorkerModelDir, r.WatchdogFloorMiB, time.Duration(r.WorkerStartTimeout),
+		r.FillReserveKiBPerToken, r.PlacementUsesReserved, r.ReservedDriftWarnMiB, r.MarginMeasuredMiB,
+		r.MarginEstimatedPercent, r.MarginEstimatedMinMiB, time.Duration(r.FreeAverageWindow)}
 }
 
 type rawRecovery struct {

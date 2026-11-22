@@ -16,7 +16,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
 )
 
-func init() { checkInvariantsEachStep = true }
+func init() { checkInvariantsEachStep, checkGateBeforeLaunch = true, true }
 
 var t0 = time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC)
 

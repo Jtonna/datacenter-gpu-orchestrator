@@ -33,7 +33,7 @@ func (s *Server) statusView(ctx context.Context) (any, error) {
 			}
 		}
 	}
-	s.agentStatus(v)
+	s.agentStatus(v, &st)
 	s.logStatus(v)
 	return v, nil
 }
@@ -60,12 +60,14 @@ func (s *Server) profileEntriesOf(ctx context.Context, cfg *config.Config) []map
 	}
 	sort.Strings(names)
 	host := map[string]string{}
+	learned := map[string]scheduler.LearnedNeed{}
 	if st, err := s.sched.Status(ctx); err == nil {
 		for _, n := range st.View.Nodes {
 			if n.Hostname != "" {
 				host[string(n.ID)] = n.Hostname
 			}
 		}
+		learned = st.LearnedNeeds
 	}
 	out := make([]map[string]any, 0, len(names))
 	for _, n := range names {
@@ -92,6 +94,9 @@ func (s *Server) profileEntriesOf(ctx context.Context, cfg *config.Config) []map
 				e["needs_basis"] = rep.NeedBasis
 				e["needs_measured"] = rep.Measured
 			}
+			if l, ok := learned[n]; ok && l.PeakMiB > 0 {
+				e["peak_mib"], e["peak_basis"] = l.PeakMiB, l.PeakBasis // the memory reservation rule's stored peak
+			}
 			var nodes []string
 			for _, pn := range rep.Placement {
 				name := host[string(pn.ID)]
@@ -110,6 +115,9 @@ func (s *Server) profileEntriesOf(ctx context.Context, cfg *config.Config) []map
 			}
 			if len(rep.ReloadFromCache) > 0 {
 				plan["reload_from_cache"] = reloadEntries(rep.ReloadFromCache, host)
+			}
+			if rep.Memory != nil {
+				plan["memory"] = jsonView(rep.Memory)
 			}
 			e["plan"] = plan
 		}

@@ -43,6 +43,21 @@ type Options struct {
 	// measurement.
 	NeedStore NeedStore
 	Release   string
+	// LlamaBuild is the llama.cpp commit the loads run on (the host
+	// program's); stored with each measurement, and a restored measurement
+	// of another build is not trusted (needcount.go). "" when not known.
+	LlamaBuild string
+	// ReleaseBuild gives the llama build a program release's release.json
+	// names ("" when not known): the served release's is what the workers
+	// run, and a stored need without a build is stamped through its own
+	// release's (needcount.go). nil: none is known.
+	ReleaseBuild func(release string) string
+	// HostBuild reads the host program's llama build again. When the host
+	// build or the served release's build is not known at start, Run reads
+	// both again in the background (backoff from 5 s to 5 min) until they
+	// are, then decides trust (builds.go; fourth review, FS2). nil: the host
+	// build is only LlamaBuild.
+	HostBuild func(ctx context.Context) (string, error)
 }
 
 // Scheduler is the scheduler core plus the one goroutine (Run) that owns
@@ -119,6 +134,7 @@ func New(cfg *config.Config, o Options) (*Scheduler, error) {
 	s.core.agents = cfg.AgentsMode()
 	s.core.loadGate = o.LoadGate
 	s.core.buildRelease = o.Release
+	s.core.llamaBuild, s.core.releaseBuild = o.LlamaBuild, o.ReleaseBuild
 	if o.NeedStore != nil {
 		// Read before Run, so the first request is planned with them.
 		s.core.restoreNeeds(o.NeedStore)
@@ -143,6 +159,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		go s.needs.run()
 		defer s.needs.close() // what is queued is written before Run returns
 	}
+	s.startBuildReads() // builds.go
 	var stopTimer func() bool
 	var timerAt time.Time
 	ctxDone := ctx.Done()
@@ -463,7 +480,23 @@ func (s *Scheduler) LoadFor(ctx context.Context, model, benchRun string) error {
 	return nil
 }
 
-// query runs fn on the core goroutine and waits for it.
+// ask runs fn on the core goroutine and returns its result. The result
+// travels over a channel the query owns, so a caller that gave up (its
+// context ended while the loop was busy) gets the context error and a zero
+// T, and the loop, when it runs fn later, writes nothing the caller holds.
+// Every method that needs an answer from the core goes through ask.
+func ask[T any](s *Scheduler, ctx context.Context, fn func(c *schedCore) T) (T, error) {
+	out := make(chan T, 1)
+	if err := s.query(ctx, func(c *schedCore) { out <- fn(c) }); err != nil {
+		var zero T
+		return zero, err
+	}
+	return <-out, nil // query returned nil: fn has run and sent
+}
+
+// query runs fn on the core goroutine and waits for it, or for ctx. fn may
+// still run after query returned (ctx ended first), so it must not write
+// memory of the caller's: use ask for a result.
 func (s *Scheduler) query(ctx context.Context, fn func(c *schedCore)) error {
 	done := make(chan struct{})
 	if !s.post(ctx, evQuery{fn: func(c *schedCore) { fn(c); close(done) }}) {
@@ -495,8 +528,8 @@ func (s *Scheduler) Unload(ctx context.Context, model string, force bool) error 
 	if !ok {
 		return errUnknown(model)
 	}
-	var err error
-	if qerr := s.query(ctx, func(c *schedCore) { err = c.unload(p.Name, force) }); qerr != nil {
+	err, qerr := ask(s, ctx, func(c *schedCore) error { return c.unload(p.Name, force) })
+	if qerr != nil {
 		return qerr
 	}
 	return err
@@ -505,16 +538,12 @@ func (s *Scheduler) Unload(ctx context.Context, model string, force bool) error 
 // UnloadAllIdle stops every ready instance with nothing in flight
 // (POST /api/models/unload, GET /unload) and returns their profiles.
 func (s *Scheduler) UnloadAllIdle(ctx context.Context) ([]string, error) {
-	var got []string
-	err := s.query(ctx, func(c *schedCore) { got = c.unloadIdle() })
-	return got, err
+	return ask(s, ctx, func(c *schedCore) []string { return c.unloadIdle() })
 }
 
 // Status is the /api/status document.
 func (s *Scheduler) Status(ctx context.Context) (Status, error) {
-	var st Status
-	err := s.query(ctx, func(c *schedCore) { st = c.statusDoc() })
-	return st, err
+	return ask(s, ctx, func(c *schedCore) Status { return c.statusDoc() })
 }
 
 // Plan is POST /api/plan: what a request for model would meet now. It
@@ -524,10 +553,12 @@ func (s *Scheduler) Plan(ctx context.Context, model string) (PlanReport, error) 
 	if !ok {
 		return PlanReport{}, errUnknown(model)
 	}
-	var r PlanReport
-	err := s.query(ctx, func(c *schedCore) { r = c.dryPlan(p.Name) })
+	r, err := ask(s, ctx, func(c *schedCore) PlanReport { return c.dryPlan(p.Name) })
+	if err != nil {
+		return PlanReport{}, err
+	}
 	r.Alias = alias
-	return r, err
+	return r, nil
 }
 
 // ForgetNeed drops the learned memory need of model (a profile name or
@@ -539,15 +570,39 @@ func (s *Scheduler) ForgetNeed(ctx context.Context, model string) (bool, error) 
 	if p, _, ok := s.Config().Resolve(model); ok {
 		name = p.Name
 	}
-	var had bool
-	var err error
-	if qerr := s.query(ctx, func(c *schedCore) { had, err = c.forgetNeed(name) }); qerr != nil {
+	type forgot struct {
+		had bool
+		err error
+	}
+	a, qerr := ask(s, ctx, func(c *schedCore) forgot { had, err := c.forgetNeed(name); return forgot{had, err} })
+	if qerr != nil {
 		return false, qerr
 	}
+	had, err := a.had, a.err
 	if errors.Is(err, ErrNoProfile) {
 		return false, errUnknown(model)
 	}
 	return had, err
+}
+
+// LearnedRows lists every learned memory need, by shape and device count
+// (GET /api/needs).
+func (s *Scheduler) LearnedRows(ctx context.Context) ([]LearnedRow, error) {
+	return ask(s, ctx, func(c *schedCore) []LearnedRow { return c.learnedRows() })
+}
+
+// Needs is GET /api/needs: the stored measurements and the two llama builds
+// their trust depends on.
+func (s *Scheduler) Needs(ctx context.Context) (NeedsDoc, error) {
+	return ask(s, ctx, func(c *schedCore) NeedsDoc {
+		return NeedsDoc{HostBuild: c.llamaBuild, Release: c.buildRelease, ServedBuild: c.servedBuild, Rows: c.learnedRows()}
+	})
+}
+
+// ForgetShape drops every learned memory need of a shape (a LearnedRow's
+// Shape), in memory and in the database; it reports whether there was one.
+func (s *Scheduler) ForgetShape(ctx context.Context, shape string) (bool, error) {
+	return ask(s, ctx, func(c *schedCore) bool { return c.forgetShape(shape) })
 }
 
 // Upstream is the address for /upstream/{model}: set only while the

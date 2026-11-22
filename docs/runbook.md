@@ -242,7 +242,13 @@ sh deploy/scripts/measure-needs.sh $H gemma-measure
 
 3. Put the number in the real profile (`PUT /api/config/profiles/{id}`), unload, and delete the measuring profile.
 
-A successful load also teaches the scheduler the measured size (`learned_needs` in `/api/status`). It is kept across restarts and dropped when the profile's model or memory settings change. Forget it by hand with `curl -s -X POST $H/api/forget-need -d '{"model":"<profile>"}'`.
+A successful load also teaches the scheduler the measured size (`learned_needs` in `/api/status`). It is kept across restarts by the shape of the load (kind, model file, context, slots, KV cache type, flash attention, extra arguments) and the number of devices it ran on, not by profile name: profiles of the same shape share it, and deleting, renaming or changing a profile removes nothing. Every device holds its own compute buffer, so a measurement on one node is not used as is for three. The need on k devices is never below a measured total on fewer devices plus the estimate's per-device cost for each extra device, nor below a measured total on more devices less that cost for each missing one; with nothing measured on k or fewer devices it is the total measured on the closest count above, as it was taken. Above the largest measured count the estimate still counts. This applies with every reservation setting off too: a placement on more devices than were measured can queue where it used to start, and a count with its own measurement uses it even when another count measured more. After a restart, a stored figure is not lowered by the first load until that load ends normally (an unload, ttl, eviction or shutdown).
+
+A measurement records the llama build it was made on. A stored measurement is trusted only when that build is both the scheduler's own `llama-server-rpc` build and the build the served release's `release.json` names (what the workers run). Otherwise it only ever raises the need, until a load measures it again. When either build cannot be read at start (a share that is slow right after a boot, a `release.json` briefly unreadable), nothing stored is trusted, and the start logs a warning saying which. Both are then read again in the background (after 5 s, doubling up to every 5 minutes) until they are known; the log line "llama builds known: stored memory needs of this build are trusted" says when trust was decided, and no restart is needed. `GET /api/needs` shows `host_build`, `release` and `served_build` ("" while not known), and for each row that is not trusted, `untrusted_reason`. Measurements made before builds were recorded (0.1.5 and earlier) carry only their release: at start they are stamped with the current build, and trusted, when their release's `release.json` in the programs folder names that same build (log line "stored memory needs stamped with the current llama build"); never by release name alone. Keep the previous release's `programs/<release>/release.json` in place at a rollout (the file alone is enough); without it those measurements count only above the estimate until each profile loads again.
+
+List every stored measurement with `curl -s $H/api/needs` (shape, device count, total, who measured it, when, release, llama build, `trusted`, and the profiles that use it now). It is dropped when the model file's size changes; a model file replaced by one of the same size is not detected, so forget it by hand: for every profile of that shape with `curl -s -X POST $H/api/forget-need -d '{"model":"<profile>"}'` (the reply lists those profiles in `profiles_of_shape`), or by shape with `curl -s -X POST $H/api/needs/forget -d '{"shape":"<shape from /api/needs>"}'`.
+
+Rolling back to a release before shape keys (0.1.5 and earlier) keeps the measurements: the older release reads its own table, which is left in place and also receives every new measurement under the profile that made it. It sees, for each profile, the highest figure of that profile's shape over every device count, written when that profile last measured; a profile whose shape was measured only by another profile falls back to its estimate until it loads once. Rolling forward again reads what the older release wrote; the higher figure wins.
 
 ---
 
@@ -349,6 +355,21 @@ A node whose GPU uses system memory freezes when a load takes all of it, so the 
 - `load_memory_floor_mib` (768): a load is cancelled when a node's available memory falls below this. Waiting requests get `502` "load cancelled: <node> ran low on memory during the load". `0` turns it off.
 
 The agent's own watchdog (`--watchdog-floor-mib`, default 1000) kills a launch whose node falls below its floor.
+
+#### Tightening or loosening the reservation
+
+The memory reservation rule is off by default. It is changed at run time like any setting, and `GET /api/system` shows what is in force under `reserve`:
+
+- `fill_reserve_kib_per_token` (0, recommended 8): every node of a placement keeps this x the profile's context for the growth while the conversation fills the context (180 to 460 MiB per node was measured). A stored peak (the most a node gave up for the profile in its latest load-to-unload cycle that ended normally) can raise that figure, never lower it. One spike holds until the next normal cycle ends; to clear it at once, forget the learned need (`POST /api/forget-need`). A peak above need + fill reserve means the fill reserve is too small for that profile: it is worth raising `fill_reserve_kib_per_token` rather than relying on the peak, since one short normal cycle (a force unload counts as normal) replaces the peak and the profile is back to need + fill reserve.
+- `placement_uses_reserved` (off): place on the smaller of the latest and the 30 s average free memory (`free_average_window`), and count what is placed on a node at the larger of its reserved figure and what the node measures (this lowers the figure shown for a held node; held nodes are not placed on). The average is not used for one window after a node's model changes. A budget is never above the one the default rules give. With any reservation setting on, every placement is held to the plan's `memory` rows, so the plan's `fits` is the decision (`decides: true`).
+- `margin_measured_mib` (unset): per-node margin for a measured need, in place of `split_skew_margin`. `margin_estimated_percent` with `margin_estimated_min_mib` (unset): the same for an estimate.
+- `reserved_drift_warn_mib` (500): a node that uses this much more than is reserved on it is flagged in the node view.
+
+To tighten, raise the fill reserve or the margins; to loosen, lower them or set them back to 0. Check a profile before and after with `POST /api/plan`: its `memory` section shows per node what it will take, what the node has and what remains.
+
+```sh
+curl -s -X PATCH $H/api/config/settings -H 'X-Comment: reserve on' -d '{"fill_reserve_kib_per_token": 8, "placement_uses_reserved": true, "margin_measured_mib": 300}'
+```
 
 ### Event history
 

@@ -71,6 +71,65 @@ type Request struct {
 	// node's expected share, need x split fraction x (1 + skew), must fit its
 	// own budget (see FitsNodes). 0 turns the rule off.
 	SkewPermille int
+
+	// The memory reservation rule; all zero keeps the rules above exactly.
+	//
+	// PerNodeReserveMiB is the fill reserve: memory every node of the
+	// placement keeps for the growth while the context fills. Each budget
+	// counts this much less in the sum rule, and a shared-memory node's
+	// share check adds it.
+	PerNodeReserveMiB int
+	// MarginMiB (a measured need) or MarginPermille with MarginMinMiB (an
+	// estimate) replace the skew margin on shared-memory nodes when set:
+	// share + reserve + margin must fit the node's budget, for a placement of
+	// any size. The share is need x fraction (plus the device overhead for an
+	// estimate); the percent margin is max(share x permille, MarginMinMiB).
+	MarginMiB      int
+	MarginPermille int
+	MarginMinMiB   int
+
+	// ByCount, when set, is the need of a placement of n nodes at index n
+	// (a measured need depends on the device count: each device holds its
+	// own compute buffer). An entry whose Need.MiB is above 0 replaces Need
+	// and the margins above for a set of that many nodes (For).
+	ByCount []CountNeed
+}
+
+// CountNeed is the need and margins of a placement of one node count.
+type CountNeed struct {
+	Need           Need
+	MarginMiB      int
+	MarginPermille int
+	MarginMinMiB   int
+}
+
+// For is req for a set of n nodes: its ByCount entry in place of the need and
+// margins, when there is one.
+func (req Request) For(n int) Request {
+	if n > 0 && n < len(req.ByCount) && req.ByCount[n].Need.MiB > 0 {
+		c := req.ByCount[n]
+		req.Need, req.MarginMiB, req.MarginPermille, req.MarginMinMiB = c.Need, c.MarginMiB, c.MarginPermille, c.MarginMinMiB
+	}
+	return req
+}
+
+// nodeMargins: the request replaces the skew margin with a configured one.
+func (req Request) nodeMargins() bool { return req.MarginMiB > 0 || req.MarginPermille > 0 }
+
+// NodeMarginMiB is the configured margin on a shared-memory node whose share
+// is shareMiB (0 when the request uses the skew margin).
+func (req Request) NodeMarginMiB(shareMiB int) int {
+	switch {
+	case req.MarginMiB > 0:
+		return req.MarginMiB
+	case req.MarginPermille > 0:
+		m := 0
+		if shareMiB > 0 {
+			m = int((int64(shareMiB)*int64(req.MarginPermille) + 999) / 1000)
+		}
+		return max(m, req.MarginMinMiB)
+	}
+	return 0
 }
 
 // Candidate is one node offered to the placer.
@@ -242,6 +301,7 @@ func CheckCapacity(req Request, eligible []Candidate) error {
 			return nil
 		}
 	}
+	req = req.For(len(top))
 	capacity := 0
 	for _, c := range top {
 		b := c.BudgetMiB
@@ -253,9 +313,20 @@ func CheckCapacity(req Request, eligible []Candidate) error {
 		}
 	}
 	required := required(req.Need)
-	if skewApplies(req, top) {
+	switch {
+	case req.nodeMargins():
+		// the configured margin on every shared node counted, as fitsSet
+		// applies it (review N4)
+		share := (required + len(top) - 1) / len(top)
+		for _, c := range top {
+			if c.Shared {
+				required += req.NodeMarginMiB(share)
+			}
+		}
+	case skewApplies(req, top):
 		required = estimate.MarginMiB(required, req.SkewPermille)
 	}
+	required += len(top) * req.PerNodeReserveMiB // the fill reserve on every node
 	return &NoPlacement{Reason: ExceedsCapacity, NeedMiB: req.Need.MiB, RequiredMiB: required, CapacityMiB: capacity}
 }
 
@@ -289,6 +360,14 @@ type cand struct {
 }
 
 func fits(req Request, budgets []int) bool {
+	req = req.For(len(budgets))
+	if req.PerNodeReserveMiB > 0 {
+		less := make([]int, len(budgets))
+		for i, b := range budgets {
+			less[i] = b - req.PerNodeReserveMiB
+		}
+		budgets = less
+	}
 	if req.Need.Measured {
 		return estimate.FitsMeasured(budgets, req.Need.MiB)
 	}
@@ -320,6 +399,7 @@ func skewApplies(req Request, set []Candidate) bool {
 // weight over the sum; its share is need x fraction x (1 + skew), plus the
 // device overhead for an estimated need. A single node takes no margin.
 func fitsSet(req Request, set []Candidate) bool {
+	req = req.For(len(set))
 	budgets := make([]int, len(set))
 	for i, c := range set {
 		budgets[i] = c.BudgetMiB
@@ -327,7 +407,7 @@ func fitsSet(req Request, set []Candidate) bool {
 	if !fits(req, budgets) {
 		return false
 	}
-	if !skewApplies(req, set) {
+	if !req.nodeMargins() && !skewApplies(req, set) {
 		return true
 	}
 	var sum int64
@@ -339,13 +419,23 @@ func fitsSet(req Request, set []Candidate) bool {
 		if !c.Shared {
 			continue
 		}
-		num := need * int64(max(c.BudgetMiB, 1)) * int64(1000+req.SkewPermille)
-		den := sum * 1000
-		share := (num + den - 1) / den
-		if !req.Need.Measured {
-			share += int64(req.DeviceOverheadMiB)
+		var share int64
+		if req.nodeMargins() {
+			num := need * int64(max(c.BudgetMiB, 1))
+			share = (num + sum - 1) / sum
+			if !req.Need.Measured {
+				share += int64(req.DeviceOverheadMiB)
+			}
+			share += int64(req.NodeMarginMiB(int(share)))
+		} else {
+			num := need * int64(max(c.BudgetMiB, 1)) * int64(1000+req.SkewPermille)
+			den := sum * 1000
+			share = (num + den - 1) / den
+			if !req.Need.Measured {
+				share += int64(req.DeviceOverheadMiB)
+			}
 		}
-		if share > int64(c.BudgetMiB) {
+		if share+int64(req.PerNodeReserveMiB) > int64(c.BudgetMiB) {
 			return false
 		}
 	}
@@ -560,7 +650,7 @@ func (s searcher) bestSingle(level []cand) []cand {
 	var bestV victimKey
 	for i := range level {
 		c := &level[i]
-		if !fits(s.req, []int{c.BudgetMiB}) {
+		if !fitsSet(s.req, []Candidate{c.Candidate}) {
 			continue
 		}
 		v := s.victims([]cand{*c})

@@ -4,7 +4,8 @@
 //
 // Reads: WebSocket "status" (view.nodes, instances, quarantines, and in
 // agents mode `membership`, `agents` and each node's `unplaced` and `agent`,
-// with its `last_startup`). GET /api/startups only when someone opens the
+// with its `last_startup`; the reservation figures of each view node,
+// core/reserve.js). GET /api/startups only when someone opens the
 // marks of a start (core/startup.js).
 //
 // Writes, in agents mode only, and only these two per machine (no load and
@@ -23,6 +24,7 @@ import { viewNodes, nodeMemory, staleBanner } from '../core/status.js';
 import { logsLink, nodeQuery } from '../core/logs.js';
 import { agentsMode, agentOf, notPlaceable, holdsSomething, pauseAction, sendNodeAction, NODE_ACTIONS } from '../core/nodeactions.js';
 import { poolText } from '../core/words.js';
+import { reservedPart } from '../core/reserve.js';
 import { startupText, markLabel, secs, requestedText, NOT_INCLUDED, startups, loadStartups, onStartups, lastRecord } from '../core/startup.js';
 
 const CHANNEL = { ok: ['ok', 'ok-t'], silent: ['silent', 'err-t'], unknown: ['not known', 'mut'] };
@@ -272,6 +274,7 @@ function tile(st, n, refresh) {
           stat('Usable now', usableNode ? gbNum(usable) : DASH, usableNode ? 'GB' : null, { small: true, title: usableNode ? `${mib(usable)}: the free memory minus the headroom of its tier; what a new model may take right now` : 'Nothing can be placed here now' }),
           stat('Free', gbNum(free), 'GB', { small: true, title: mib(free) + asReported + (headroom ? `; ${mib(headroom)} of it is kept as headroom` : '') }),
           stat('When empty', n.plan_budget_mib ? gbNum(n.plan_budget_mib) : DASH, n.plan_budget_mib ? 'GB' : null, { small: true, title: n.plan_budget_mib ? `${mib(n.plan_budget_mib)}: what the scheduler plans with once nothing is loaded here` : null })),
+      n.excluded ? null : reservedPart(n),
       notes.length ? h('div', { style: 'display:flex;flex-direction:column;gap:8px' }, h('div.note-s', { style: 'display:flex;flex-direction:column;gap:8px' }, notes)) : null,
       agent && agent.last_startup ? startupPart(n, agent.last_startup, refresh) : null),
     agent ? controls(n, agent, refresh) : null,

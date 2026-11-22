@@ -238,6 +238,9 @@ type agent struct {
 	// rec is the start-up record of this agent process (nil for an agent
 	// that sends no start-up report).
 	rec *startups.Record
+	// mem holds the memory figures of the heartbeats within
+	// defaults.free_average_window, oldest first (memavg.go).
+	mem []memSample
 }
 
 // Pool is the agent registry, node view and worker launcher.
@@ -547,6 +550,7 @@ func (p *Pool) Heartbeat(id string, body []byte) HeartbeatResult {
 	a.stats, a.statsNote = parseStats(hb.Stats)
 	a.cachedMiB, a.cachedKnown = statsCachedMiB(a.stats)
 	p.checkFloorLocked(a)
+	p.sampleMemLocked(a, now)
 	if d, extra, ok := pickDevice(a); ok && extra > 0 && !a.extraWarned {
 		a.extraWarned = true
 		p.log.Warn("agent node lists more than one device of its backend; extra devices ignored, the worker uses the first",

@@ -338,6 +338,22 @@ type NodeStatus struct {
 	// node's rpc-server; informational only, left out when not reported.
 	RPCServerMemMiB  *float64
 	RPCServerVersion *string
+
+	// The memory reservation rule (reserve.go). Reserved lists what is
+	// placed, loading or loaded on the node with its reserved figure;
+	// MeasuredUsedMiB is what the node gave up for it since it was placed
+	// (nil when not measurable) and DriftMiB that less ReservedMiB.
+	// DriftWarning is set when the drift exceeds reserved_drift_warn_mib.
+	// FreeForNewLoadMiB is the node's budget for a new load now (before the
+	// profile's own margin). FreeAvgMiB is the short average of the free
+	// figure (nil when not known).
+	Reserved          []NodeReservation
+	ReservedMiB       int
+	MeasuredUsedMiB   *int
+	DriftMiB          *int
+	DriftWarning      string
+	FreeForNewLoadMiB int
+	FreeAvgMiB        *int
 }
 
 // RecoveryStatus is status.recovery of a node (design 8.4b).
@@ -442,6 +458,78 @@ type PlanReport struct {
 	// placement.
 	LoadMode        string
 	ReloadFromCache []NodeReload
+	// Memory is the pre-calculation of the memory reservation rule: per
+	// node, what the profile will take assuming its context is filled
+	// completely, what the node has free, what is reserved there and what
+	// remains; and whether it fits. Nil when the need is unknown.
+	Memory *PlanMemory
+}
+
+// PlanMemory is the memory section of a plan (reserve.go).
+type PlanMemory struct {
+	Nodes []PlanMemoryNode
+	// Fits: every node of the placement keeps remains_mib >= 0. With
+	// Hypothetical (no placement was found) it is false.
+	Fits bool
+	// ShortNode and ShortfallMiB name the node that falls shortest and by
+	// how much, when it does not fit.
+	ShortNode    string
+	ShortfallMiB int
+	// Hypothetical: there is no placement; the nodes are the ones it would
+	// be spread over (the forced nodes, or the best max_pool nodes).
+	Hypothetical bool
+	// PlacementUsesReserved is the setting the available figures follow.
+	PlacementUsesReserved bool
+	// Decides: the decision holds every placement to Fits (any reservation
+	// setting is on). With the defaults Fits is shown only; the old rules
+	// decide.
+	Decides bool
+	Note    string
+}
+
+// PlanMemoryNode is one node of PlanMemory. AvailableMiB is the figure the
+// placement is held to (the node's budget): with placement_uses_reserved,
+// min(free now, free average) less what is reserved there and not measured
+// yet, less headroom; else free now less headroom. RemainsMiB = AvailableMiB
+// - WillTakeMiB - MarginMiB.
+type PlanMemoryNode struct {
+	ID             core.NodeID
+	Node           string
+	Shared         bool
+	TotalMiB       int
+	WeightsMiB     int
+	ContextMiB     int
+	FillReserveMiB int
+	WillTakeMiB    int
+	Basis          string // measured, peak or estimated
+	FreeNowMiB     int
+	FreeAvgMiB     int
+	FreeAvgKnown   bool
+	ReservedBy     []PlanReservedBy
+	HeadroomMiB    int
+	AvailableMiB   int
+	MarginMiB      int
+	MarginRule     string
+	RemainsMiB     int
+}
+
+// PlanReservedBy is what another (or the same) profile holds on a node.
+type PlanReservedBy struct {
+	Profile string
+	MiB     int
+	State   string
+}
+
+// NodeReservation is one entry of a node's reserved list.
+type NodeReservation struct {
+	Profile        string
+	State          string
+	Basis          string
+	Ctx            int
+	WeightsMiB     int
+	ContextMiB     int
+	FillReserveMiB int
+	TotalMiB       int
 }
 
 // PlanVictim is an instance a plan would stop or drain.

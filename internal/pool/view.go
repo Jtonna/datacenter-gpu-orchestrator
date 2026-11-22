@@ -184,13 +184,18 @@ func (p *Pool) rebuildLocked() {
 		}
 	}
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
-	if (!reflect.DeepEqual(nodes, p.nodes) && !(len(nodes) == 0 && len(p.nodes) == 0)) || !reflect.DeepEqual(unplaced, p.unplaced) ||
+	// With placement_uses_reserved off no decision reads the average, so a
+	// change of the average alone is kept without notifying (review N2).
+	useAvg := cfg.Defaults.PlacementUsesReserved
+	if (!sameNodes(nodes, p.nodes, useAvg) && !(len(nodes) == 0 && len(p.nodes) == 0)) || !reflect.DeepEqual(unplaced, p.unplaced) ||
 		!reflect.DeepEqual(msgs, p.unplacedMsg) {
 		p.nodes, p.unplaced, p.unplacedMsg = nodes, unplaced, msgs
 		select {
 		case p.notify <- struct{}{}:
 		default:
 		}
+	} else {
+		p.nodes = nodes
 	}
 	p.evaluateStartupsLocked()
 }
@@ -216,12 +221,19 @@ func (p *Pool) nodeFromAgentLocked(cfg *config.Config, a *agent) (core.Node, boo
 		return n, tiered
 	}
 	n.TotalMiB, n.FreeMiB, n.FreeUnknown = int(d.TotalMiB), int(max(d.FreeMiB, 0)), false
+	_, avgDev, avgOK := a.memAverage()
+	if avgOK {
+		n.FreeAvgMiB, n.FreeAvgKnown = int(max(avgDev, 0)), true
+	}
 	// Shared by the device or by the tier (CR-9 review): the agent holds such
 	// a device to MemAvailable too, so Potluck places on the same figure.
 	if d.SharesSystemMemory || n.SharedMemory {
 		n.SharedMemory = true
 		usable := a.hb.MemAvailableMiB - int64(n.WatchdogFloorMiB)
 		n.FreeMiB = int(max(min(d.FreeMiB, usable), 0))
+		if avg, ok := a.sharedAverage(int64(n.WatchdogFloorMiB)); ok {
+			n.FreeAvgMiB, n.FreeAvgKnown = int(max(avg, 0)), true
+		}
 	}
 	return n, tiered
 }
@@ -426,12 +438,15 @@ type NodeFacts struct {
 	// PotluckLaunchID is the launch Potluck holds for the node (sent or about
 	// to be sent, whatever the agent reports) and LaunchState its state as
 	// Potluck last read it.
-	PotluckLaunchID *string         `json:"potluck_launch_id,omitempty"`
-	LaunchState     string          `json:"launch_state,omitempty"`
-	Devices         any             `json:"devices,omitempty"`
-	MemAvailMiB     *int64          `json:"mem_available_mib,omitempty"`
-	Stats           json.RawMessage `json:"stats,omitempty"`
-	StatsNote       string          `json:"stats_note,omitempty"`
+	PotluckLaunchID *string `json:"potluck_launch_id,omitempty"`
+	LaunchState     string  `json:"launch_state,omitempty"`
+	Devices         any     `json:"devices,omitempty"`
+	MemAvailMiB     *int64  `json:"mem_available_mib,omitempty"`
+	// MemAvailAvgMiB is mem_available_mib averaged over the heartbeats of
+	// defaults.free_average_window (memavg.go). Additive.
+	MemAvailAvgMiB *int64          `json:"mem_available_avg_mib,omitempty"`
+	Stats          json.RawMessage `json:"stats,omitempty"`
+	StatsNote      string          `json:"stats_note,omitempty"`
 	// ExtraDevicesIgnored counts the node's devices of its platform backend
 	// beyond the first, which no worker uses (one device per node).
 	ExtraDevicesIgnored int `json:"extra_devices_ignored"`
@@ -472,6 +487,17 @@ type NodeFacts struct {
 	// an agent that reports neither.
 	HostUptimeS *float64 `json:"host_uptime_s,omitempty"`
 	BootID      string   `json:"boot_id,omitempty"`
+	// The memory reservation rule (scheduler/reserve.go), filled in by the
+	// API from the scheduler's node status; absent for a node the scheduler
+	// does not list. Reserved lists what is placed, loading or loaded there
+	// with its reserved figure; DriftMiB is MeasuredUsedMiB - ReservedMiB;
+	// FreeForNewLoadMiB is the node's budget for a new load now.
+	Reserved          any    `json:"reserved,omitempty"`
+	ReservedMiB       *int   `json:"reserved_mib,omitempty"`
+	MeasuredUsedMiB   *int   `json:"measured_used_mib,omitempty"`
+	DriftMiB          *int   `json:"drift_mib,omitempty"`
+	DriftWarning      string `json:"drift_warning,omitempty"`
+	FreeForNewLoadMiB *int   `json:"free_for_new_load_mib,omitempty"`
 	// LastStartup is the node's last start as Potluck recorded it: its kind
 	// and the seconds from boot start to ready for model loads, or the
 	// condition still missing. Absent for an agent that sends no start-up
@@ -529,6 +555,9 @@ func (p *Pool) Facts() []NodeFacts {
 			f.ModelSource, f.Devices = FeedModelSource{hb.ModelSource, a.reg.ModelSource.Target}, hb.Devices
 			m := hb.MemAvailableMiB
 			f.MemAvailMiB = &m
+			if avg, _, ok := a.memAverage(); ok {
+				f.MemAvailAvgMiB = &avg
+			}
 			_, f.ExtraDevicesIgnored, _ = pickDevice(a)
 			f.StopReason, f.StopMessage = hb.StopReason, hb.StopMessage
 			f.HostUptimeS, f.BootID = hb.HostUptimeS, hb.BootID
@@ -602,4 +631,20 @@ func (p *Pool) ReleaseStatus() map[string]any {
 		m["host_build_error"] = pr.HostErr
 	}
 	return m
+}
+
+// sameNodes compares two node lists; without useAvg the average free
+// figures are left out of the comparison.
+func sameNodes(a, b []core.Node, useAvg bool) bool {
+	if useAvg || len(a) != len(b) {
+		return reflect.DeepEqual(a, b)
+	}
+	for i := range a {
+		x, y := a[i], b[i]
+		x.FreeAvgMiB, x.FreeAvgKnown, y.FreeAvgMiB, y.FreeAvgKnown = 0, false, 0, false
+		if !reflect.DeepEqual(x, y) {
+			return false
+		}
+	}
+	return true
 }

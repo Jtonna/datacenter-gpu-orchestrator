@@ -2,9 +2,12 @@ package release
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -80,4 +83,29 @@ func clip(s string, n int) string {
 		return s[:n] + "..."
 	}
 	return s
+}
+
+// LlamaBuildOf is the llama build (builds.llama) that release rel of the
+// programs folder root shipped, read from its release.json only: an older
+// release whose folder keeps nothing else still answers. It is used to tell
+// whether a memory need measured on rel was measured on the build served now.
+func LlamaBuildOf(root, rel string) (string, error) {
+	if root == "" || rel == "" || strings.ContainsAny(rel, `/\`) || rel == "." || rel == ".." {
+		return "", fmt.Errorf("release %q: not a valid folder name or no programs folder", rel)
+	}
+	b, err := os.ReadFile(filepath.Join(root, rel, "release.json"))
+	if err != nil {
+		return "", fmt.Errorf("release %s: %w", rel, err)
+	}
+	var m Manifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		return "", fmt.Errorf("release %s: release.json: %w", rel, err)
+	}
+	if m.Release != rel {
+		return "", fmt.Errorf("release %s: release.json names release %q", rel, m.Release)
+	}
+	if strings.TrimSpace(m.Builds["llama"]) == "" {
+		return "", fmt.Errorf("release %s: release.json has no builds.llama", rel)
+	}
+	return strings.TrimSpace(m.Builds["llama"]), nil
 }

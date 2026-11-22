@@ -34,6 +34,11 @@ type Node struct {
 	// it is 0 only because "unknown is not free". The load memory watch must
 	// not read such a zero as a real reading.
 	FreeUnknown bool
+	// FreeAvgMiB is FreeMiB averaged over defaults.free_average_window, valid
+	// when FreeAvgKnown (agents membership: from the heartbeats the pool
+	// receives). placement_uses_reserved places on min(FreeMiB, FreeAvgMiB).
+	FreeAvgMiB   int
+	FreeAvgKnown bool
 	// WatchdogFloorMiB is the memory watchdog floor of an agent node: the one
 	// its agent reports, else the scheduler's setting (agent contract CR-9).
 	// It is already taken off FreeMiB when the node shares system memory. 0

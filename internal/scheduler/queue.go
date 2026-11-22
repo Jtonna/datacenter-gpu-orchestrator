@@ -129,7 +129,7 @@ func (c *schedCore) place(e *entry) bool {
 		return true
 	}
 	pl, err := placer.Place(req, c.freeCandidates(e.prof))
-	if err != nil {
+	if err != nil || c.reserveGate(e.prof, pl, nil) != "" {
 		return false
 	}
 	c.deleteEntry(e)
@@ -149,7 +149,7 @@ func (c *schedCore) plan(e *entry) bool {
 		return false
 	}
 	res, err := placer.Plan(req, c.freeCandidates(e.prof), ev)
-	if err != nil {
+	if err != nil || c.reserveGate(e.prof, res.Placement, res.Victims) != "" {
 		return false
 	}
 	// A forced profile that could not fit its nodes even with nothing loaded
@@ -304,7 +304,7 @@ func (c *schedCore) startOnClaim(e *entry) bool {
 		cands = append(cands, placer.FromNode(n, c.liveBudget(id, n)))
 	}
 	pl, err := placer.Place(req, cands)
-	if err == nil {
+	if err == nil && c.reserveGate(e.prof, pl, nil) == "" {
 		c.dropClaim(e) // nodes it does not use are released
 		c.deleteEntry(e)
 		c.startInstance(e.prof, pl, e.waiters, e)

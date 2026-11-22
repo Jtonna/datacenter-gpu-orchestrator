@@ -200,6 +200,37 @@ type Defaults struct {
 	// WorkerStartTimeout is how long the worker launches of a load may stay
 	// starting before the load fails with worker_start_timeout. Default 15 s.
 	WorkerStartTimeout time.Duration
+
+	// The memory reservation rule (docs/architecture.md, "Reserve"). Every
+	// default keeps the placement of the release before it.
+	//
+	// FillReserveKiBPerToken is the memory a node holding a share of a
+	// profile is expected to gain while the conversation fills the context:
+	// this x the profile's context (ctx x parallel) on every node of the
+	// placement, added to the need share. 0 (the default) turns the reserve
+	// off; 8 covers the growth measured on shared-memory nodes. While it is
+	// on, a stored peak replaces need share + reserve.
+	FillReserveKiBPerToken int
+	// PlacementUsesReserved places on min(latest free, average free) and
+	// counts what is placed or loading on a node at the larger of its reserved
+	// figure and what the node measures as used. Off by default: the measured
+	// free figure, as before.
+	PlacementUsesReserved bool
+	// ReservedDriftWarnMiB: a node whose measured use exceeds its reserved sum
+	// by more than this is flagged in the node view (never an error).
+	ReservedDriftWarnMiB int
+	// MarginMeasuredMiB is the per-node margin on a shared-memory node, on top
+	// of the watchdog floor, when every need on it is measured or a stored
+	// peak. 0 (unset) keeps the split skew margin.
+	MarginMeasuredMiB int
+	// MarginEstimatedPercent is the per-node margin on a shared-memory node,
+	// in percent of the node's share, when the need is an estimate, at least
+	// MarginEstimatedMinMiB. 0 (unset) keeps the split skew margin.
+	MarginEstimatedPercent int
+	MarginEstimatedMinMiB  int
+	// FreeAverageWindow is the window of the average free memory of a node
+	// (from its heartbeats). Default 30 s.
+	FreeAverageWindow time.Duration
 }
 
 // Values of defaults.membership. MembershipFleet is the legacy mode, kept
