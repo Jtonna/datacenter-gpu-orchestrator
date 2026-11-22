@@ -12,6 +12,8 @@ import (
 	"os"
 	"strings"
 	"sync"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // Error is a request-level failure with the HTTP status to answer.
@@ -241,36 +243,22 @@ func (b *replayBody) startPrefetch(onErr func(error), interrupt func()) {
 		return
 	}
 	b.pumping, b.interrupt = true, interrupt
-	go b.pump(onErr)
+	// A failure fails this request's upload (500) and wakes its reader.
+	go supervise.Once("proxy.prefetch", func() { b.pump(onErr) }, func(p any) {
+		err := &Error{Status: http.StatusInternalServerError, Message: fmt.Sprint("buffering upload: internal error: ", p)}
+		b.mu.Lock()
+		b.err, b.pumping = err, false
+		b.cond.Broadcast()
+		b.mu.Unlock()
+		onErr(err)
+	})
 }
 
 func (b *replayBody) pump(onErr func(error)) {
 	buf := make([]byte, 32<<10)
 	for {
 		n, err := b.rest.Read(buf)
-		b.mu.Lock()
-		if n > 0 && !b.closed {
-			if _, werr := b.sp.Write(buf[:n]); werr != nil {
-				switch {
-				case b.sp.tooBig:
-					err = tooLarge("multipart upload", b.sp.max)
-				case b.sp.failure != nil:
-					err = &Error{Status: http.StatusInternalServerError, Message: "buffering upload: " + b.sp.failure.Error()}
-				default:
-					err = werr
-				}
-			}
-		}
-		stop := b.handed
-		if err != nil {
-			b.err = err
-		}
-		report := err != nil && !errors.Is(err, io.EOF) && !stop
-		if err != nil || stop {
-			b.pumping = false
-		}
-		b.cond.Broadcast()
-		b.mu.Unlock()
+		report, stop, err := b.took(buf, n, err)
 		if report {
 			onErr(err)
 		}
@@ -278,6 +266,36 @@ func (b *replayBody) pump(onErr func(error)) {
 			return
 		}
 	}
+}
+
+// took stores what one read of the upload gave, under b.mu (unlocked by
+// defer, so a failure never leaves it held).
+func (b *replayBody) took(buf []byte, n int, err error) (report, stop bool, _ error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if n > 0 && !b.closed {
+		if _, werr := b.sp.Write(buf[:n]); werr != nil {
+			switch {
+			case b.sp.tooBig:
+				err = tooLarge("multipart upload", b.sp.max)
+			case b.sp.failure != nil:
+				err = &Error{Status: http.StatusInternalServerError, Message: "buffering upload: " + b.sp.failure.Error()}
+			default:
+				err = werr
+			}
+		}
+	}
+	supervise.Point("proxy.prefetch")
+	stop = b.handed
+	if err != nil {
+		b.err = err
+	}
+	report = err != nil && !errors.Is(err, io.EOF) && !stop
+	if err != nil || stop {
+		b.pumping = false
+	}
+	b.cond.Broadcast()
+	return report, stop, err
 }
 
 func (b *replayBody) Read(p []byte) (int, error) {
