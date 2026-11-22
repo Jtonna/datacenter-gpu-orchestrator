@@ -372,3 +372,36 @@ func TestProbeResultIsLoggedOnChangeOnly(t *testing.T) {
 		t.Fatalf("back: %d ok lines, %d failed\n%s", ok(), failed(), logs.String())
 	}
 }
+
+// A dir:<path> source is reported as kind share on the wire (agent contract
+// 6.10), so its log lines say "model folder", not "share", and name the
+// folder only: nothing about it is a share.
+func TestDirProbeLogSaysModelFolder(t *testing.T) {
+	var logs strings.Builder
+	pr := &fakeProber{mode: "ok"}
+	s := New(Config{Spec: Spec{KindDir, "/models"}, Dir: "/models", Timeout: 20 * time.Millisecond,
+		Clock: osx.NewFakeClock(time.Hour), Mounter: &fakeMounter{}, Prober: pr, LaunchExists: func() bool { return false },
+		Logger: slog.New(slog.NewTextHandler(&logs, nil))})
+	ctx := context.Background()
+	s.ProbeOnce(ctx)
+	pr.set("fail")
+	s.ProbeOnce(ctx)
+	pr.set("ok")
+	s.ProbeOnce(ctx)
+	out := logs.String()
+	for _, want := range []string{
+		`level=INFO msg="model folder probe ok: the model source is reachable" dir=/models`,
+		`level=WARN msg="model folder probe failed: the model source is not reachable" dir=/models`,
+		`level=INFO msg="model folder probe ok: the model source is reachable" dir=/models unreachable_s=`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no line %s\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "share") || strings.Contains(out, "target=") {
+		t.Errorf("a dir source's log speaks of a share\n%s", out)
+	}
+	if s.State().Kind != "share" {
+		t.Errorf("wire kind %q, want share (contract 6.10)", s.State().Kind)
+	}
+}

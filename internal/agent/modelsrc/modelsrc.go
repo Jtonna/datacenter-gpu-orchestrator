@@ -304,18 +304,23 @@ func (s *Source) record(ok bool, why string) {
 	if ok && s.cfg.OnReachable != nil {
 		s.cfg.OnReachable()
 	}
+	// A dir source is reported as kind share (Wire), so its log says "model
+	// folder" and names the folder only: nothing about it is a share.
+	what, where := "share", []any{"target", s.cfg.Spec.Target, "dir", s.cfg.Dir}
+	if s.cfg.Spec.Kind == KindDir {
+		what, where = "model folder", []any{"dir", s.cfg.Dir}
+	}
 	switch {
 	case !changed:
 		if !ok {
-			s.log.Debug("share probe failed", "why", why)
+			s.log.Debug(what+" probe failed", "why", why)
 		}
 	case recovered:
-		s.log.Info("share probe ok: the model source is reachable", "target", s.cfg.Spec.Target, "dir", s.cfg.Dir,
-			"unreachable_s", int64(since.Seconds()))
+		s.log.Info(what+" probe ok: the model source is reachable", append(where, "unreachable_s", int64(since.Seconds()))...)
 	case ok:
-		s.log.Info("share probe ok: the model source is reachable", "target", s.cfg.Spec.Target, "dir", s.cfg.Dir)
+		s.log.Info(what+" probe ok: the model source is reachable", where...)
 	default:
-		s.log.Warn("share probe failed: the model source is not reachable", "target", s.cfg.Spec.Target, "dir", s.cfg.Dir, "why", why)
+		s.log.Warn(what+" probe failed: the model source is not reachable", append(where, "why", why)...)
 	}
 }
 

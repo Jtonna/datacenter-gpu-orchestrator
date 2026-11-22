@@ -500,7 +500,11 @@ For a dashboard backend that polls the nodes: `{"time", "seq", "nodes"}`.
 Each entry of `nodes` is an entry of `agents` of `/api/status`, unchanged;
 the last one is Potluck's own machine, with `"local": true`. `host_uptime_s`
 and `boot_id` are the machine's uptime since its kernel booted and its boot id
-(absent for an older agent). Keep the last `seq` you read: an answer with the
+(absent for an older agent). `model_source` is `{"kind", "target",
+"reachable", "checked_age_s"}`; `kind` is `share` both for a share and for a
+model folder on the node's own disk (`--model-source dir:<path>`, agent
+contract 6.10): the `target` tells them apart, an absolute path for a folder,
+`host:export` for a share. Keep the last `seq` you read: an answer with the
 same `seq` has nothing new but ages and uptimes. Agents membership only; with
 the fleet feed it answers `503`.
 
