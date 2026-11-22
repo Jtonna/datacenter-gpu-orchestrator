@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -279,4 +280,44 @@ func (c *schedCore) forgetShape(shape string) bool {
 		c.dropLearned(shape, "", "forgotten by an operator")
 	}
 	return had
+}
+
+// stampBuilds gives every restored measurement without a llama build (made
+// by a release before builds were recorded) the build served now, when the
+// release it was measured on shipped that build: the release served now, or
+// an older one whose build releaseBuild knows. It is then trusted across a
+// release bump that kept the llama build (the 0.1.6 rollout). The stamp is
+// written back once and logged once. A measurement whose release had
+// another build, or is not known, keeps no build and is not trusted.
+func (c *schedCore) stampBuilds() {
+	if c.llamaBuild == "" {
+		return
+	}
+	stamped := 0
+	from := map[string]bool{}
+	for _, ls := range c.learned {
+		for _, l := range ls {
+			if !l.restored || l.build != "" || l.release == "" {
+				continue
+			}
+			rb := ""
+			switch {
+			case l.release == c.buildRelease:
+				rb = c.llamaBuild
+			case c.releaseBuild != nil:
+				rb = c.releaseBuild(l.release)
+			}
+			if rb == "" || !release.SameCommit(rb, c.llamaBuild) {
+				continue
+			}
+			l.build = c.llamaBuild
+			c.storeLearned(l)
+			stamped++
+			from[l.release] = true
+		}
+	}
+	if stamped > 0 {
+		c.log.Info("stored memory needs stamped with the current llama build", "stamped", stamped,
+			"llama_build", c.llamaBuild, "releases", slices.Sorted(maps.Keys(from)))
+	}
 }

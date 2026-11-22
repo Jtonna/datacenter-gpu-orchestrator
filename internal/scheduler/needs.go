@@ -183,6 +183,7 @@ func (c *schedCore) restoreNeeds(st NeedStore) {
 		c.putLearned(learnedFromRecord(r))
 		restored++
 	}
+	c.stampBuilds()
 	for _, p := range c.cfg.Profiles {
 		if len(c.learnedOf(p)) > 0 {
 			used++

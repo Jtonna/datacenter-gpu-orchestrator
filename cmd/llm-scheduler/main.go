@@ -316,6 +316,13 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 	} else {
 		log.Warn("the llama build of the host program is not known; stored memory needs are trusted by release", "err", err)
 	}
+	// The llama build an older release shipped, from its release.json in the
+	// programs folder: a stored need measured before builds were recorded is
+	// kept trusted across a release bump that kept the build.
+	so.ReleaseBuild = func(rel string) string {
+		b, _ := release.LlamaBuildOf(cfg.ProgramsDir, rel)
+		return b
+	}
 	if hist.On() {
 		so.History = hist
 	}

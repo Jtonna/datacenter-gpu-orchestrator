@@ -47,6 +47,11 @@ type Options struct {
 	// program's); stored with each measurement, and a restored measurement
 	// of another build is not trusted (needcount.go). "" when not known.
 	LlamaBuild string
+	// ReleaseBuild gives the llama build an older program release shipped
+	// ("" when not known): a stored need without a build, measured on a
+	// release that shipped the build served now, is stamped with it at
+	// start (needcount.go). nil: only the release served now is known.
+	ReleaseBuild func(release string) string
 }
 
 // Scheduler is the scheduler core plus the one goroutine (Run) that owns
@@ -123,7 +128,7 @@ func New(cfg *config.Config, o Options) (*Scheduler, error) {
 	s.core.agents = cfg.AgentsMode()
 	s.core.loadGate = o.LoadGate
 	s.core.buildRelease = o.Release
-	s.core.llamaBuild = o.LlamaBuild
+	s.core.llamaBuild, s.core.releaseBuild = o.LlamaBuild, o.ReleaseBuild
 	if o.NeedStore != nil {
 		// Read before Run, so the first request is planned with them.
 		s.core.restoreNeeds(o.NeedStore)
