@@ -24,6 +24,7 @@ type fakeProf struct {
 	chatCode  int // a status other than 200 for every chat request (after the load)
 
 	loadCode    int    // /api/load answers this status (with the scheduler's words) instead of 202
+	loadMsg     string // the words of that answer; "scripted load answer" when empty
 	failOutcome string // outcome of a failed load in recent_loads (default "failed")
 	failReason  string // reason of a failed load (default "child exited during load")
 	// refuseAfter makes the scheduler accept the load (202), show the instance
@@ -244,7 +245,11 @@ func (f *fakeAPI) Load(ctx context.Context, model string) (*LoadAnswer, error) {
 		return &LoadAnswer{Status: 503, Msg: "does not fit: needs 99999 MiB", Reason: "does not fit"}, nil
 	}
 	if p.loadCode != 0 {
-		return &LoadAnswer{Status: p.loadCode, Msg: "scripted load answer"}, nil
+		msg := p.loadMsg
+		if msg == "" {
+			msg = "scripted load answer"
+		}
+		return &LoadAnswer{Status: p.loadCode, Msg: msg}, nil
 	}
 	if f.runOf == nil {
 		f.runOf = map[string]string{}

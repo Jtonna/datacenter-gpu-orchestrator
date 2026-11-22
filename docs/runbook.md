@@ -149,7 +149,7 @@ curl -s -X DELETE $H/api/nodes/02:00:00:00:00:01            -d '{"comment":"why"
 curl -s -X POST $H/api/nodes/02:00:00:00:00:01/readmit      -d '{"comment":"why"}'
 ```
 
-- **Pause**: no new load; a running load continues. Kept across restarts.
+- **Pause**: no new load; a running load continues. Kept across restarts. A new request for a profile forced onto a paused node is refused at once (503 `forced nodes unavailable`, "paused by an operator", Retry-After 30 s); a request that was already waiting keeps waiting and is served after the unpause.
 - **Force unload**: stops every model that uses the node now. Requests waiting for it fail with a 502 that names the force unload. Use pause when the node should only stop taking new loads.
 - **Remove**: for a machine that is gone. It is refused at registration until it is re-admitted.
 - **Uninstall** (on the node): `potluck-agent-uninstall` deregisters the node and removes everything the setup put there.
@@ -218,6 +218,8 @@ cd /opt/potluck && docker compose up -d potluck
 ```
 
 The agents register again by themselves. Models load again on the next request.
+
+**Canary with a paused console.** When a roll-out pauses a console on the live scheduler (to point it at a throwaway scheduler for the canary), every new request for a profile forced onto that console is refused at once with Retry-After for as long as the pause lasts: for example, all the `*-6ps5` profiles. Requests that were already waiting keep waiting. So pause benchmark traffic for those profiles during the canary. The bench runner does not retry: it records such a step as `refused`, with the reason "paused by an operator", so a report shows why.
 
 To roll back: `docker tag llm-scheduler:previous llm-scheduler:local && docker compose up -d potluck`. An older image may refuse a configuration that uses settings it does not know; remove those settings first (`PATCH /api/config/settings` with the key set to `null`).
 

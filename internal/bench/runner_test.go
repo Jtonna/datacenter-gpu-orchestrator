@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -791,5 +793,29 @@ func TestLoadPhaseGenericDisappearance(t *testing.T) {
 	_, st := runLoadOnly(t, api, "ready")
 	if st.Outcome != OutcomeFailed || st.Reason != "the instance disappeared during the load" || time.Since(start) > 10*time.Second {
 		t.Fatalf("%+v after %s", st, time.Since(start))
+	}
+}
+
+// A load refused because a forced node is paused (sixth review SS3): the
+// step is recorded as refused, not retried, and its reason says why. The
+// scheduler's error body is read by HTTPAPI.Load into the message.
+func TestLoadRefusedOnAPausedNodeSaysWhy(t *testing.T) {
+	text := "forced nodes unavailable: profile m forces node a, but node a is paused by an operator; it cannot start until the node is unpaused, so this fails now instead of waiting for queue_timeout"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "30")
+		w.WriteHeader(503)
+		b, _ := json.Marshal(map[string]any{"error": map[string]any{"message": text, "type": "server_error", "code": 503, "reason": "forced nodes unavailable"}})
+		w.Write(b)
+	}))
+	defer srv.Close()
+	ans, err := (&HTTPAPI{Base: srv.URL}).Load(t.Context(), "m")
+	if err != nil || ans.Status != 503 || ans.Msg != text || ans.Reason != "forced nodes unavailable" {
+		t.Fatalf("load answer %+v %v", ans, err)
+	}
+	api := newFake().prof("m", fakeProf{loadCode: 503, loadMsg: ans.Msg})
+	_, st := runLoadOnly(t, api, OutcomeRefused)
+	checkPhaseReason(t, st, OutcomeRefused, "paused by an operator")
+	if n := strings.Count(strings.Join(api.callList(), " "), "load:"); n > 1 {
+		t.Fatalf("the load was sent %d times", n)
 	}
 }
