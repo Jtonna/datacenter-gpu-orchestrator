@@ -1,6 +1,6 @@
 # Hardware checks (design 3.2 H1-H3, design 11 "On hardware")
 
-Run on the host machine with the scheduler container up (`container_name: llama-swap`).
+Run on the host machine with the scheduler container up (`container_name: potluck`).
 Rules: the PS5 or Nvidia laptop under test must be idle (a busy `rpc-server` makes
 `--list-devices` block forever, so every command is wrapped in `timeout`).
 Nothing here is destructive except check 8 (you power a worker off on purpose).
@@ -9,7 +9,7 @@ Record each result in the table at the bottom.
 ## H1. `nvidia-smi` works inside the container
 
 ```sh
-docker exec llama-swap nvidia-smi --query-gpu=memory.total,memory.used --format=csv,noheader,nounits
+docker exec potluck nvidia-smi --query-gpu=memory.total,memory.used --format=csv,noheader,nounits
 ```
 
 Expect: one line, two integers, e.g. `8151, 412`. If it errors: the scheduler
@@ -17,7 +17,7 @@ logs a warning and falls back to the fleet's figure for `host-1` (design 5.1).
 Check the log for no such warning:
 
 ```sh
-docker logs llama-swap 2>&1 | grep -i nvidia-smi
+docker logs potluck 2>&1 | grep -i nvidia-smi
 ```
 
 Expect: no output.
@@ -27,7 +27,7 @@ Expect: no output.
 Run once per worker (PS5 `192.0.2.2:50052`, Nvidia laptop `192.0.2.3:50052`, any other PS5):
 
 ```sh
-docker exec llama-swap timeout 10 llama-server-rpc --rpc 192.0.2.2:50052 --list-devices | grep -c '^ *RPC'
+docker exec potluck timeout 10 llama-server-rpc --rpc 192.0.2.2:50052 --list-devices | grep -c '^ *RPC'
 ```
 
 Expect: `1`. Any other number fails H2: the pre-flight will quarantine that
@@ -38,7 +38,7 @@ find out why before going on.
 ## H3. `--list-devices` is clean with no local GPU
 
 ```sh
-docker exec llama-swap sh -c 'CUDA_VISIBLE_DEVICES="" timeout 10 llama-server-rpc --rpc 192.0.2.2:50052 --list-devices; echo "exit=$?"'
+docker exec potluck sh -c 'CUDA_VISIBLE_DEVICES="" timeout 10 llama-server-rpc --rpc 192.0.2.2:50052 --list-devices; echo "exit=$?"'
 ```
 
 Expect: exactly one line of the form `  RPC0: <description> (<total> MiB, <free> MiB free)`,
@@ -50,7 +50,7 @@ Compare with the same command without the variable to see the difference.
 ## 4. PS5 usable memory (design 13 item 2)
 
 ```sh
-docker exec llama-swap timeout 10 llama-server-rpc --rpc 192.0.2.2:50052 --list-devices
+docker exec potluck timeout 10 llama-server-rpc --rpc 192.0.2.2:50052 --list-devices
 ```
 
 Note the `<free> MiB free` figure. Sources disagree (12 GB, 14.1 GB, 14948 MiB).
@@ -64,7 +64,7 @@ Needs two PS5s (or one PS5 and the Nvidia laptop) online. Use a forced profile
 ```sh
 curl -s -H 'Content-Type: application/json' -d '{"model":"gemma-measure"}' http://127.0.0.1:3122/api/load
 curl -s http://127.0.0.1:3122/running
-docker logs llama-swap 2>&1 | grep -E 'RPC[0-9]+\[|CUDA0' | tail -20
+docker logs potluck 2>&1 | grep -E 'RPC[0-9]+\[|CUDA0' | tail -20
 ```
 
 Expect: `/running` shows `--rpc a,b ... --device RPC0,RPC1 --tensor-split 60,40`
@@ -107,7 +107,7 @@ offline in the fleet view for 30 s, in-flight requests fail, no hang.
 # 1. start a long generation on a model placed on the PS5 (note which node)
 curl -N -H 'Content-Type: application/json' -d '{"model":"gemma-4-12b","stream":true,"max_tokens":2000,"messages":[{"role":"user","content":"Write a long story."}]}' http://127.0.0.1:3122/v1/chat/completions
 # 2. in another shell, power the worker off (PS5 or Nvidia laptop), then watch:
-watch -n 5 "curl -s http://127.0.0.1:3122/running; echo; docker logs --tail 5 llama-swap"
+watch -n 5 "curl -s http://127.0.0.1:3122/running; echo; docker logs --tail 5 potluck"
 ```
 
 Expect: stream ends with an error within about 15 s (fleet offline) + 30 s

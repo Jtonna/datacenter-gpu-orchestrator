@@ -8,7 +8,10 @@ Membership: the scheduler gets its machines either from the fleet feed
 for) or from `potluck-agent` on each machine (`membership: agents`, in use as
 release 0.1.0 since 2026-11-21). For agents mode see section I, "Agent
 membership", and `docs/agent-contract.md`; the steps below that read the fleet
-console (`:8090/api/fleet`) do not apply to it.
+console (`:8090/api/fleet`) do not apply to it. In agents mode Potluck
+stands alone: it needs no fleet console, connects to none and logs nothing
+about one. Section K moves a deployment to the standing layout; section L says
+what comes back after a restart of the host.
 
 Where things live on the box (same convention as llama-swap):
 
@@ -19,6 +22,9 @@ Where things live on the box (same convention as llama-swap):
 | Old llama-swap (kept for rollback) | `/opt/llama-swap/` |
 | Models | `/srv/llama-swap/models` |
 | Container name (both) | `llama-swap` |
+| Standing layout (section K): compose project | `/opt/potluck/` (project `potluck`) |
+| Standing layout: containers | `potluck`, `potluck-share`, `potluck-logs` (optional `potluck-agent`) |
+| Standing layout: data | `POTLUCK_ROOT` (default `/srv/potluck`): `programs`, `data`, `history`, `child-logs`, `logs-store` |
 
 Total first-time cost: about 45 minutes, plus model loads.
 
@@ -75,23 +81,26 @@ Expected: a version line (the stamp replaces the default `0.1.0` with your git v
 5. Install the deployment files.
 
 ```sh
-sudo mkdir -p /opt/llm-scheduler && sudo chown admin:admin /opt/llm-scheduler
-cp deploy/docker-compose.yml deploy/seed-config.yaml /opt/llm-scheduler/
-mkdir -p /opt/llm-scheduler/data /opt/llm-scheduler/history /opt/llm-scheduler/logs
+sudo mkdir -p /opt/potluck && sudo chown admin:admin /opt/potluck
+cp deploy/docker-compose.yml deploy/seed-config.yaml /opt/potluck/
+sudo mkdir -p /srv/potluck/programs /srv/potluck/data /srv/potluck/history /srv/potluck/child-logs /srv/potluck/logs-store
+sudo chown -R admin:admin /srv/potluck
 ```
+
+Everything the deployment keeps lives under `/srv/potluck` (set `POTLUCK_ROOT` in `/opt/potluck/.env` for another root). Put the program release in `/srv/potluck/programs` (section I, "Agent membership"). A deployment that still runs from `/opt/llm-scheduler/` moves with section K.
 
 6. Validate the seed configuration with the real binary (no hardware touched, nothing written).
 
 ```sh
-cd /opt/llm-scheduler && docker compose run --rm --no-deps llm-scheduler import-config --check /seed/seed-config.yaml; echo "exit=$?"
+cd /opt/potluck && docker compose run --rm --no-deps potluck import-config --check /seed/seed-config.yaml; echo "exit=$?"
 ```
 
-Expected: `valid: ...` and `exit=0`. On `exit=1` read the messages (unknown field, missing model file, ...), fix `/opt/llm-scheduler/seed-config.yaml` (and `deploy/seed-config.yaml` in the repo), rerun. The PLACEHOLDER `needs_mib` values are valid; they are replaced in section G.
+Expected: `valid: ...` and `exit=0`. On `exit=1` read the messages (unknown field, missing model file, ...), fix `/opt/potluck/seed-config.yaml` (and `deploy/seed-config.yaml` in the repo), rerun. The PLACEHOLDER `needs_mib` values are valid; they are replaced in section G.
 
 7. Import it once into the database (revision 1). This is the only time the seed file is read; after it the database is the configuration ("Configuration lives in the database" in section I).
 
 ```sh
-docker compose run --rm --no-deps llm-scheduler import-config --actor "$USER" /seed/seed-config.yaml
+docker compose run --rm --no-deps potluck import-config --actor "$USER" /seed/seed-config.yaml
 ```
 
 Expected: `imported ... as revision 1`.
@@ -306,17 +315,17 @@ All commands and expected results: `deploy/scripts/hardware-checks.md`. Do H1, H
 
 ### Configuration lives in the database (design 6.0)
 
-There is no config file any more. All configuration (profiles, tiers, `exclude_nodes`, `node_overrides`, the `defaults` settings, `recovery`, fleet settings, retention, `ws_max_clients`, bench settings) is stored in `scheduler.db` in the data directory (`./data` on the box). Every change is a numbered revision and is written to the audit log. Changes take effect at once, without a restart (design 6.0.6), except the few settings the schema marks `restart_required`. Only five deployment paths stay outside: `--listen`, `--data-dir`, `--models-dir`, `--history-dir`, `--child-log-dir` (environment `LLM_SCHEDULER_LISTEN`, `_DATA_DIR`, `_MODELS_DIR`, `_HISTORY_DIR`, `_CHILD_LOG_DIR`; compose and the Dockerfile set them).
+There is no config file any more. All configuration (profiles, tiers, `exclude_nodes`, `node_overrides`, the `defaults` settings, `recovery`, fleet settings, retention, `ws_max_clients`, bench settings) is stored in `scheduler.db` in the data directory (`POTLUCK_ROOT/data` on the box, by default `/srv/potluck/data`; `./data` before section K). Every change is a numbered revision and is written to the audit log. Changes take effect at once, without a restart (design 6.0.6), except the few settings the schema marks `restart_required`. Only five deployment paths stay outside: `--listen`, `--data-dir`, `--models-dir`, `--history-dir`, `--child-log-dir` (environment `LLM_SCHEDULER_LISTEN`, `_DATA_DIR`, `_MODELS_DIR`, `_HISTORY_DIR`, `_CHILD_LOG_DIR`; compose and the Dockerfile set them).
 
 All examples use `H=http://127.0.0.1:3122`. There is no authentication (LAN tool). Add `-H 'X-Actor: your-name'` and `-H 'X-Comment: why'` to a write so the audit log says who and why; the web page sends `X-Source: ui`, everything else is recorded as `rest`.
 
 #### First install and import
 
-1. Put `deploy/docker-compose.yml` and `deploy/seed-config.yaml` in `/opt/llm-scheduler/` (section B step 5). `./data` must be on a volume.
+1. Put `deploy/docker-compose.yml` and `deploy/seed-config.yaml` in `/opt/potluck/` and create the root folder `/srv/potluck` (or set `POTLUCK_ROOT` in `/opt/potluck/.env`); compose creates the folders inside it. An older deployment in `/opt/llm-scheduler/` moves with section K.
 2. Validate the seed with the real binary; nothing is written:
 
 ```sh
-cd /opt/llm-scheduler && docker compose run --rm --no-deps llm-scheduler import-config --check /seed/seed-config.yaml
+cd /opt/potluck && docker compose run --rm --no-deps potluck import-config --check /seed/seed-config.yaml
 ```
 
 Expected: `valid: N profiles, N tiers, ...`. An error lists every violation (missing model file, bad field, ...). Add `--no-model-check` only to validate on a machine that does not have the model files.
@@ -324,7 +333,7 @@ Expected: `valid: N profiles, N tiers, ...`. An error lists every violation (mis
 3. Import it once, as revision 1:
 
 ```sh
-docker compose run --rm --no-deps llm-scheduler import-config --actor "$USER" /seed/seed-config.yaml
+docker compose run --rm --no-deps potluck import-config --actor "$USER" /seed/seed-config.yaml
 ```
 
 Expected: `imported ... as revision 1 into /var/lib/llm-scheduler/data/scheduler.db`. It refuses if the database already has a configuration; `--replace` makes a new revision instead (the old one stays in the history). Starting the scheduler on an empty database also works: it logs `no configuration yet`, has no profiles and uses no node until you import or create them.
@@ -936,7 +945,9 @@ read-only.
    (agent contract 5.4).
 2. Start the scheduler with `--programs-dir /path/to/programs` (or
    `LLM_SCHEDULER_PROGRAMS_DIR`) and set `membership: agents` in the settings
-   (restart required). The fleet feed is then not read.
+   (restart required). The fleet feed is then not read, and the fleet and
+   recovery settings are not used. Set `local_node` (Settings, Runtime) to the
+   host's node name; while it is empty, `fleet.local_node` is used.
 3. Check `GET /api/system`: `programs.served` must be `true` and there must be
    no `host_build_error`. If `served` is false, `programs.error` names the
    missing or mismatched file. If `host_build_error` is set, `server_bin` is not
@@ -1019,7 +1030,7 @@ answers: agent contract 11.3.
 | A node, Docker install | The agent's log and each launch's output; the journal only with `--journal-dir` | `agent`, `launch`, `journal` |
 | Clients (benchmark runner and the like) | What they push to `POST /api/logs` | `client` |
 
-The files stay: `./logs` (child output), the launch logs on the nodes,
+The files stay: `POTLUCK_ROOT/child-logs` (child output), the launch logs on the nodes,
 `docker logs`. Central logging is a copy, and the copy may drop lines when the
 store is slow (a line says how many); the files never do.
 
@@ -1055,8 +1066,9 @@ store is slow (a line says how many); the files never do.
 
 **Where the data is, retention, disk**
 
-- The store's data is in `./logs-store` next to the compose file
-  (`/opt/llm-scheduler/logs-store`). Its port is not published; only Potluck
+- The store's data is in `POTLUCK_ROOT/logs-store` (by default
+  `/srv/potluck/logs-store`; `./logs-store` next to the compose file before
+  section K). Its port is not published; only Potluck
   reaches it.
 - Retention and the disk cap are **start flags of the store**, in the
   compose file: `-retentionPeriod=14d`, `-retention.maxDiskSpaceUsageBytes=20GiB`.
@@ -1077,7 +1089,7 @@ sudo rm -rf ./logs-store
 docker compose up -d potluck-logs
 ```
 
-The store starts empty. Nothing else is touched: the files under `./logs`,
+The store starts empty. Nothing else is touched: the child logs,
 the history and the database stay.
 
 **When the store is down or slow** scheduling does not change: agents and
@@ -1125,7 +1137,7 @@ All are settings of the same names (design 6, 8.3, 13 item 6). Change one value 
 
 ## J. Troubleshooting
 
-First look, always: `curl -s http://127.0.0.1:3122/api/status` and `docker logs --tail 100 llama-swap`. For one profile, `curl -s -H 'Content-Type: application/json' -d '{"model":"NAME"}' http://127.0.0.1:3122/api/plan` says what would happen now, and changes nothing.
+First look, always: `curl -s http://127.0.0.1:3122/api/status` and `docker logs --tail 100 potluck` (`llama-swap` before section K). For one profile, `curl -s -H 'Content-Type: application/json' -d '{"model":"NAME"}' http://127.0.0.1:3122/api/plan` says what would happen now, and changes nothing.
 
 | Symptom | Cause | Fix |
 |---|---|---|
@@ -1146,3 +1158,160 @@ First look, always: `curl -s http://127.0.0.1:3122/api/status` and `docker logs 
 | Load timeout on a cold PS5 | Timeout is `120 s + 2 x (share of model file / link_mb_s)`; `link_mb_s` for the PS5 tier is 80, measured 2026-11-18 as the total out of the host machine (design 3.2, 7.6): 5 GB takes about 1 min, and loads that run at the same time share that rate (three Gemma 12B loads at once took 246 s each). Waiters get `502` with the child's last log lines; the profile is backed off 60 s, doubling to 10 min | Set `load_timeout` on the profile above the load time you measured (H check 6), or correct `link_mb_s`. Backoff clears when the profile next reaches ready; during it requests fail with `503`, so wait it out. |
 
 ---
+
+---
+
+## K. Move an existing deployment to the standing layout
+
+The standing layout is `deploy/docker-compose.yml` as it is now: compose
+project `potluck`, containers `potluck` (the scheduler), `potluck-share` (the
+model share) and `potluck-logs` (the log store), every host folder under one
+root (`POTLUCK_ROOT`, default `/srv/potluck`), and no fleet console. These
+steps move an older deployment (project `llm-scheduler`, container
+`llama-swap`, folders next to the compose file in `/opt/llm-scheduler/`) with
+one short outage: from step 6 to step 8, a few minutes. The image stays
+`llm-scheduler:local`; build it first if it is not current (section B).
+
+Why the old project must be down first: both projects use the subnet
+`172.30.0.0/24` (a host firewall rule names it), and two Docker networks cannot
+hold the same subnet at once. The new project cannot start while the old one
+is up.
+
+1. Write down what the old deployment uses (nothing changes yet):
+
+   ```sh
+   docker inspect llama-swap --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}'
+   docker inspect llama-swap --format '{{range .Config.Env}}{{println .}}{{end}}' | grep LLM_SCHEDULER_PROGRAMS_DIR
+   curl -s http://127.0.0.1:3122/api/config | jq '.revision, .settings.membership, .fleet.local_node'
+   ```
+
+   Expected: the data, history, child log and log store folders (by default
+   `/opt/llm-scheduler/data`, `history`, `logs`, `logs-store`), the folder the
+   programs come from (the host side of the mount behind
+   `LLM_SCHEDULER_PROGRAMS_DIR`), the revision, `"agents"`, and the host's node
+   name.
+
+2. Put the new compose file and seed next to each other in a new folder, and
+   copy the share settings over:
+
+   ```sh
+   sudo mkdir -p /opt/potluck && sudo chown admin: /opt/potluck
+   cp ~/datacenter-gpu-orchestrator/deploy/docker-compose.yml ~/datacenter-gpu-orchestrator/deploy/seed-config.yaml /opt/potluck/
+   cp /opt/llm-scheduler/.env /opt/potluck/.env   # POTLUCK_SHARE_BIND and POTLUCK_SHARE_NET; skip if there is none
+   ```
+
+   To use another root than `/srv/potluck`, add `POTLUCK_ROOT=/path` to
+   `/opt/potluck/.env`. The `seed-config.yaml` is not imported again: the
+   database already holds the configuration.
+
+3. Check the new file: `cd /opt/potluck && docker compose config -q`.
+   Expected: no output.
+
+4. Create the root folder, owned like the old folders:
+
+   ```sh
+   sudo mkdir -p /srv/potluck
+   sudo chown "$(stat -c '%u:%g' /opt/llm-scheduler/data)" /srv/potluck
+   ```
+
+   Do not create the five folders inside it: step 7 moves them in whole.
+
+5. Optional, while everything still runs: give the host's node name its own
+   setting, so the fleet section can be left empty later. Without it nothing
+   breaks: while `local_node` is empty, `fleet.local_node` is used.
+
+   ```sh
+   curl -s -X PATCH http://127.0.0.1:3122/api/config/settings -H 'Content-Type: application/json' \
+     -H 'X-Comment: local_node moves out of the fleet section' -d '{"local_node":"host-1"}'
+   ```
+
+6. Outage starts. Stop the old project (this also removes its network):
+
+   ```sh
+   cd /opt/llm-scheduler && docker compose down
+   docker network ls | grep -c sched   # expected: 0
+   ```
+
+   The workers keep running. Their model share mounts are "hard": a read waits
+   until the share is back, it does not fail.
+
+7. Move the data into the root (same file system: instant; otherwise a copy):
+
+   ```sh
+   sudo mv /opt/llm-scheduler/data       /srv/potluck/data         # scheduler.db with its -wal and -shm files
+   sudo mv /opt/llm-scheduler/history    /srv/potluck/history
+   sudo mv /opt/llm-scheduler/logs       /srv/potluck/child-logs
+   sudo mv /opt/llm-scheduler/logs-store /srv/potluck/logs-store
+   sudo mv <programs folder from step 1> /srv/potluck/programs
+   ```
+
+   Move a folder whole: never only `scheduler.db` without its `-wal` file.
+
+8. Start the new project. Outage ends.
+
+   ```sh
+   cd /opt/potluck && docker compose up -d
+   ```
+
+9. Check:
+
+   ```sh
+   docker compose ps                                          # potluck, potluck-share, potluck-logs: running (potluck healthy)
+   curl -fsS http://127.0.0.1:3122/health
+   curl -s http://127.0.0.1:3122/api/config | jq '.revision'  # the revision from step 1 (one more if you did step 5)
+   curl -s http://127.0.0.1:3122/api/system | jq '.programs.served'   # true
+   curl -s http://127.0.0.1:3122/api/status | jq '[.agents[] | {name, state}]'
+   docker logs potluck 2>&1 | grep -ci fleet                  # 0: agents mode names no fleet console
+   ```
+
+   The consoles and laptops register again by themselves, within a minute
+   (each agent keeps retrying); nothing has to be done on them. Their share
+   mounts resume. The event history (`GET /api/history`) still has the events
+   from before the move. Models are not loaded again by themselves: the first
+   request loads one.
+
+10. Keep `/opt/llm-scheduler/` (its compose file) until you are sure; it is the
+    way back.
+
+**The way back** (one more short outage):
+
+1. If you set `local_node` in step 5 and go back to an image built before that
+   setting existed, remove it first, or that image rejects the stored
+   configuration and starts with built-in defaults: `curl -X PATCH .../api/config/settings -d '{"local_node":null}'`
+   with an `X-Comment`. Same image: nothing to do.
+2. `cd /opt/potluck && docker compose down`
+3. Move the five folders back (the `mv` lines of step 7 with source and target
+   swapped).
+4. `cd /opt/llm-scheduler && docker compose up -d`, then the checks of step 9
+   against container `llama-swap`.
+
+---
+
+## L. What comes back after a restart of the host
+
+Nothing has to be started by hand, as long as these hold:
+
+1. Docker starts at boot: `systemctl is-enabled docker` says `enabled`
+   (else `sudo systemctl enable docker`).
+2. The three services come back: they are `restart: unless-stopped`. A service
+   that was stopped by hand (`docker compose stop`, `docker stop`) stays
+   stopped after the restart; start it with `docker compose up -d`. The
+   optional host agent (`potluck-agent`, profile `local-agent`) comes back too
+   once it was started with `--profile local-agent`.
+3. The share needs the kernel modules `nfs` and `nfsd` at boot: a file in
+   `/etc/modules-load.d/` that lists them. Check: `lsmod | grep -w nfsd`.
+4. The agents register again unaided: each one keeps retrying until Potluck
+   answers, then shows `state: active` in `GET /api/status`. Their share
+   mounts are "hard" and resume once `potluck-share` is up.
+5. Models are not reloaded at start: the first request for a model loads it
+   (or `POST /api/load`). Launches that were running on the workers before the
+   restart are stopped by their agents, because the restarted Potluck does not
+   know them.
+
+Check after a restart:
+
+```sh
+docker compose -f /opt/potluck/docker-compose.yml ps
+curl -fsS http://127.0.0.1:3122/health
+curl -s http://127.0.0.1:3122/api/status | jq '[.agents[] | {name, state}]'
+```
