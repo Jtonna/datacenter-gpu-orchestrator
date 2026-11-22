@@ -24,12 +24,14 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/agent"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/busyfile"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/filecache"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/hw"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/identity"
@@ -135,6 +137,7 @@ func parseFlags(args []string, stderr io.Writer) (agent.Options, error) {
 	fs.StringVar(&o.ModelsDir, "models-dir", "", "model folder (default <state-dir>/models for a bare share, /models in Docker, the path for dir:)")
 	fs.StringVar(&logs, "logs", "on", "on or off: ship this machine's log lines to Potluck when Potluck hands out a logs object")
 	fs.IntVar(&bufMiB, "log-buffer-mib", 8, "RAM for log lines not yet shipped; the oldest go first when it is full")
+	fs.StringVar(&o.BusyFile, "busy-file", "auto", "file that exists while a launch runs, for other software on the node (auto: "+busyfile.DefaultPath+" on a bare Linux install, else none; off: none)")
 	fs.StringVar(&o.JournalDir, "journal-dir", "", "a journal folder to ship (Docker install: the host's journal, mounted read-only); a bare install ships its own journal")
 	if err := fs.Parse(args); err != nil {
 		return o, err
@@ -289,6 +292,15 @@ func serve(opt agent.Options, stderr io.Writer) int {
 	// Start-up reporting: a bare install asks the machine's systemd and reads
 	// the marks file; a Docker install does neither (inside its container it
 	// would see the container's own systemd, or none, and no /run/potluck).
+	switch opt.BusyFile {
+	case "auto":
+		opt.BusyFile = ""
+		if opt.Install == agentproto.InstallBare && runtime.GOOS == "linux" {
+			opt.BusyFile = busyfile.DefaultPath
+		}
+	case "off":
+		opt.BusyFile = ""
+	}
 	var sysd startup.Systemd
 	if opt.Install == agentproto.InstallBare {
 		sysd = startup.ExecSystemd{}
