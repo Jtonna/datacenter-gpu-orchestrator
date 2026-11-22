@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sort"
 
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 )
 
@@ -44,10 +46,16 @@ func (s *Server) handleProfiles(w http.ResponseWriter, r *http.Request) {
 }
 
 // profileEntries builds the entries of GET /api/profiles (the model catalog
-// reads them too).
+// reads them too) from one configuration snapshot.
 func (s *Server) profileEntries(ctx context.Context) []map[string]any {
-	names := make([]string, 0, len(s.conf().Profiles))
-	for n := range s.conf().Profiles {
+	return s.profileEntriesOf(ctx, s.conf())
+}
+
+// profileEntriesOf lists the profiles of cfg. A profile the planner no
+// longer knows (deleted since cfg was taken) is left out.
+func (s *Server) profileEntriesOf(ctx context.Context, cfg *config.Config) []map[string]any {
+	names := make([]string, 0, len(cfg.Profiles))
+	for n := range cfg.Profiles {
 		names = append(names, n)
 	}
 	sort.Strings(names)
@@ -61,7 +69,12 @@ func (s *Server) profileEntries(ctx context.Context) []map[string]any {
 	}
 	out := make([]map[string]any, 0, len(names))
 	for _, n := range names {
-		p := s.conf().Profiles[n]
+		p := cfg.Profiles[n]
+		rep, err := s.sched.Plan(ctx, n)
+		var se *scheduler.Error
+		if errors.As(err, &se) && se.Reason == scheduler.ReasonUnknownModel {
+			continue // deleted since the snapshot
+		}
 		e := map[string]any{"id": n, "kind": string(p.Kind), "model": p.Model, "ctx": p.Ctx, "parallel": p.Parallel,
 			"aliases": nonNil(p.Aliases), "force_nodes": nonNil(p.ForceNodes), "tensor_split": p.TensorSplit,
 			"generated": IsGeneratedProfile(n, p.Generated)}
@@ -71,7 +84,6 @@ func (s *Server) profileEntries(ctx context.Context) []map[string]any {
 		if p.NeedsMiB > 0 {
 			e["needs_mib_configured"] = p.NeedsMiB
 		}
-		rep, err := s.sched.Plan(ctx, n)
 		if err != nil {
 			e["plan"] = map[string]any{"action": "unknown", "reason": err.Error()}
 		} else {
