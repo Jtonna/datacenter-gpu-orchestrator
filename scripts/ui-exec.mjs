@@ -5,6 +5,17 @@
 // or a field read on undefined is found without a browser.
 //
 // usage: node scripts/ui-exec.mjs cases.json
+//        node scripts/ui-exec.mjs --base http://HOST:PORT [--tiles N] [--reserved]
+//
+// --base: the live check. It loads app.js, the page's start module, with
+// every view it imports, the way the browser does; reads GET /api/status of
+// that server; then mounts every screen in turn, with the server's real
+// answers (GET only; the dry-run POST /api/plan passes, every other write is
+// refused, so nothing changes on the server). The Nodes page line lists each
+// machine tile and whether its reserved-against-measured block is drawn.
+// --tiles N fails unless the Nodes page draws exactly N tiles; --reserved
+// fails unless every tile of a machine that is not excluded has the block.
+// Exit status 0 when every screen drew without a runtime error, else 1.
 //
 // cases.json:
 //   {"ui": "<path of internal/api/ui>",
@@ -21,7 +32,7 @@
 // is missing. Output: one line per case; exit status 1 when any case fails.
 
 import { readFileSync } from 'node:fs';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 // ---------- fake DOM ----------
@@ -267,7 +278,15 @@ def('fetch', async (u, opts = {}) => {
 
 // ---------- run ----------
 
-const spec = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+const argv = process.argv.slice(2);
+const flag = k => { const i = argv.indexOf(k); return i < 0 ? null : (argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : true); };
+const live = flag('--base');
+const here = path.dirname(fileURLToPath(import.meta.url));
+const LIVE_SCREENS = ['models', 'nodes', 'queue', 'activity', 'placement', 'benchmarks', 'benchmarks/runs', 'benchmarks/trends', 'profiles', 'tiers', 'settings', 'audit', 'mcp', 'about'];
+const spec = live
+  ? { ui: path.join(here, '..', 'internal', 'api', 'ui'), base: String(live), app: true,
+      cases: LIVE_SCREENS.map(r => ({ name: r, route: '#/' + r, status: 'fetch' })) }
+  : JSON.parse(readFileSync(argv[0], 'utf8'));
 base = spec.base ? spec.base.replace(/\/$/, '') : null;
 const ui = path.resolve(spec.ui);
 const mod = rel => import(pathToFileURL(path.join(ui, rel)).href);
@@ -275,16 +294,38 @@ const settle = async () => { for (let i = 0; i < 20; i++) await new Promise(r =>
 
 const router = await mod('core/router.js');
 const store = await mod('core/store.js');
-for (const m of spec.modules || []) await mod(m);
+let outlet;
+if (spec.app) {
+  // The page as index.html builds it: its body's elements (up to the
+  // module script), then app.js starts the shell in #app and the router in #main.
+  const html = readFileSync(path.join(ui, 'index.html'), 'utf8');
+  const bodyHTML = html.slice(html.indexOf('<body>') + 6, html.indexOf('<noscript>'));
+  const stack = [document.body];
+  document.body.replaceChildren();
+  for (const m of bodyHTML.matchAll(/<(\/?)([a-z]+)([^>]*)>/g)) {
+    if (m[1]) { stack.pop(); continue; }
+    const el = new Element(m[2]);
+    for (const a of m[3].matchAll(/([a-z-]+)="([^"]*)"/g)) el.setAttribute(a[1], a[2]);
+    stack[stack.length - 1].appendChild(el);
+    stack.push(el);
+  }
+  outlet = document.getElementById('main');
+  location.hash = '#/__ui_exec_blank';
+  try { await mod('app.js'); } catch (e) { errors.push('app.js did not load: ' + (e.stack || e)); }
+  await settle();
+  console.log((errors.length ? 'FAIL' : 'ok  ') + ' start module app.js' + (errors.length ? '\n  ' + errors.join('\n  ') : ''));
+} else for (const m of spec.modules || []) { try { await mod(m); } catch (e) { errors.push(m + ' did not load: ' + (e.stack || e)); } }
 await settle();
 if (errors.length) { origError('module import errors:\n' + errors.join('\n')); process.exit(1); }
 
 // The screens are mounted the way the page does it: through the router, on
 // a hash change, so a view that navigates (placement picks a profile) works.
-const outlet = new Element('main');
-document.body.replaceChildren(outlet);
-location.hash = '#/__ui_exec_blank';
-router.start(outlet);
+if (!spec.app) {
+  outlet = new Element('main');
+  document.body.replaceChildren(outlet);
+  location.hash = '#/__ui_exec_blank';
+  router.start(outlet);
+}
 const go = async hash => { location.hash = hash; globalThis.dispatchEvent(new FakeEvent('hashchange')); await settle(); };
 
 let failed = 0;
@@ -304,10 +345,27 @@ for (const c of spec.cases) {
   const text = outlet.textContent;
   for (const bad of ['could not be drawn', 'failed to start']) if (text.includes(bad)) errors.push('banner: ' + text.slice(Math.max(0, text.indexOf(bad) - 40), text.indexOf(bad) + 200));
   for (const want of c.expect || []) if (!text.includes(want)) errors.push('missing text: ' + JSON.stringify(want));
+  let extra = '';
+  if (live && route.id === 'nodes' && route.rest.length === 0) {
+    const grid = outlet.querySelector('div.ngrid');
+    const tiles = grid ? grid.children : [];
+    const vn = ((store.state.status || {}).view || {}).nodes || [];
+    const rows = tiles.map((t, i) => {
+      const txt = t.textContent;
+      const n = vn.find(x => txt.includes(x.hostname || x.id)) || {};
+      return { name: n.hostname || n.id || '#' + i, local: !!n.local, excluded: !!n.excluded,
+        reserved: txt.includes('Free for a new load') || txt.includes('Reserved for '), measured: txt.includes(' · measured ') };
+    });
+    extra = '\n     tiles ' + tiles.length + ': ' + rows.map(r => `${r.name}${r.local ? ' (local)' : ''}${r.excluded ? ' (excluded)' : ''} reserved-block=${r.reserved ? 'yes' : 'no'}${r.measured ? ' measured=yes' : ''}`).join('; ');
+    const want = flag('--tiles');
+    if (want && want !== true && tiles.length !== Number(want)) errors.push(`the Nodes page drew ${tiles.length} tiles, want ${want}`);
+    if (flag('--reserved')) for (const r of rows) if (!r.excluded && !r.reserved) errors.push(`no reserved-against-measured block on ${r.name}`);
+  }
   await go('#/__ui_exec_blank'); // unmounts the screen
   if (errors.length) {
     failed++;
-    console.log(`FAIL ${c.name}\n  ` + errors.join('\n  ').split('\n').slice(0, 30).join('\n  '));
-  } else console.log(`ok   ${c.name} (${text.length} characters drawn${fetched.length ? '; fetched ' + [...new Set(fetched)].join(', ') : ''})`);
+    console.log(`FAIL ${c.name}${extra}\n  ` + errors.join('\n  ').split('\n').slice(0, 30).join('\n  '));
+  } else console.log(`ok   ${c.name} (${text.length} characters drawn${fetched.length ? '; fetched ' + [...new Set(fetched)].join(', ') : ''})${extra}`);
 }
+console.log(failed ? `FAILED: ${failed} of ${spec.cases.length} screens` : `PASS: ${spec.cases.length} screens drew without a runtime error`);
 process.exit(failed ? 1 : 0);
