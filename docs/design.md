@@ -806,6 +806,20 @@ ahead and the check runs again on the real figures after it, because the "nothin
 loaded" figure is an estimate. With `warn` or `off` (fleet membership) nothing
 changes. `POST /api/plan` shows the same refusal in place of `evict`.
 
+**Checked when the request arrives.** The same check runs when a request for
+the forced profile arrives (8.2, before it is queued) and each time its queue
+entry is looked at again while it waits (8.3), on the forced nodes as they are:
+whatever holds them, whatever is in flight there, whoever has claimed them.
+Before, the check ran only when a plan with victims was made, so a holder
+younger than `min_hold` (30 s) kept the request waiting until `queue_timeout`
+and it failed as "cluster busy" (seen on hardware). Same `503`, same message.
+It is skipped, and the request waits, when a forced node is not in the view,
+not eligible (offline, lost, stale view, quarantined), listed with an unplaced
+reason other than a pause (re-registering, programs not ready, silent), or has
+an unknown memory figure; and when every forced node is free, because the start
+path then checks the real figures in the same pass. `POST /api/plan` and
+`/api/profiles` give the same answer.
+
 ### 7.2a Memory safety on shared-memory nodes
 
 The PS5 workers have no container memory limit, and on the current llama.cpp a
@@ -1249,7 +1263,11 @@ kill of the process tree.
    - `ready` → proxy; `in_flight++` until the response ends or the client goes.
    - `starting` → wait for it, then proxy.
    - `draining`, `stopping`, or no instance → join that profile's queue entry,
-     creating it (with the current time) if there is none.
+     creating it (with the current time) if there is none. With no instance, a
+     forced profile that cannot fit its forced nodes even with nothing loaded
+     on them is refused first (`503` "forced nodes do not fit", 7.2 "Checked
+     when the request arrives"), like the capacity check of 7.2 for an
+     automatic profile.
 4. All waiting requests for one profile share one entry.
 5. A client that disconnects while waiting is removed, whether it was waiting
    in an entry or on a `starting` instance. A `starting` instance carries on
@@ -1293,7 +1311,10 @@ For each remaining entry:
    then the shortest `load_duration`, then the longest idle.
    A forced profile's plan is first checked on the nodes' memory with nothing
    of ours loaded (7.2, "Checked before any eviction"): one that cannot fit
-   even then is refused before any victim is stopped. A node that takes no new
+   even then is refused before any victim is stopped; the same check also runs
+   on every pass over a waiting, unclaimed entry (and at arrival, 8.2), so the
+   refusal does not wait for a holder's `min_hold` or a request in flight.
+   A node that takes no new
    load (paused, or listed with an unplaced reason) is not offered as an
    evictable node, so its instance is never stopped for a load the node may
    not take.

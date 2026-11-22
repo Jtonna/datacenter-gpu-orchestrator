@@ -292,6 +292,12 @@ func (c *schedCore) dryPlan(profile string) (r PlanReport) {
 	}
 	r.NeedMiB, r.Measured = info.Need.MiB, info.Need.Measured
 	r.FitNeedMiB, r.NeedBasis = info.Need.WithMargin(), c.needBasis(info)
+	if c.insts[profile] == nil {
+		if fe := c.forcedNeverFits(p); fe != nil {
+			r.Action, r.Reason = PlanReject, fe.Message
+			return r
+		}
+	}
 	if in := c.insts[profile]; in != nil {
 		r.Instance = in.state.String()
 		r.Placement, placed = c.placedStatus(in.placement), &in.placement

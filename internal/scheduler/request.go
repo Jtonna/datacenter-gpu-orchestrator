@@ -53,6 +53,12 @@ func (c *schedCore) arrive(w *waiter) {
 	} else if err := c.failFastForced(p, 1); err != nil {
 		c.fail(w, err)
 		return
+	} else if err := c.forcedNeverFits(p); err != nil {
+		// Can never fit its forced nodes, not even with them empty: refused
+		// now, not after min_hold, a request in flight or a claim (forcedfit.go).
+		c.refuseNeverFits(p, err, "arrival")
+		c.fail(w, err)
+		return
 	}
 	// draining, stopping or no instance: the queue (7.2 capacity check first).
 	if err := c.capacity(w.profile); err != nil {
