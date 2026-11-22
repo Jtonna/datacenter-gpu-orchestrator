@@ -2023,8 +2023,12 @@ added (a step stored before has none of these; the UI says "Not recorded"):
   (names)".
 - `reload_from_cache`: the plan's reload figure per node (below).
 
-*Reload from cache.* Whether a reload of a model can come from a node's file
-cache instead of the disk or the network. One pure function
+*Reload from cache.* How much of a model's file CAN stay in a node's file
+cache next to the loaded model, so that a later load can read it from memory
+instead of the disk or the network. It is about capacity, not a promise that
+the next load is warm: the cache is shared with the files of models loaded
+earlier, and after other large models the first reloads still read part of
+the file again (measured below). One pure function
 (`scheduler.ReloadFromCache`) decides it per node of a placement:
 
 - `unknown` when the node does not read the model file (`pushed` weights), or
@@ -2044,7 +2048,28 @@ measured cases on a 14 GB console: 7.0 GB file and 7.5 GB model gives `partial`,
 about 63%, and reloads slowly; 2.7 GB and 2.9 GB gives `full` and reloads fast.
 The verdict is in the plan (`POST /api/plan`, `GET /api/profiles` plan
 `load_mode` and `reload_from_cache`) and stored with the benchmark step. The UI
-shows it as "Reload from cache: partial, about 63% of the file".
+shows it as "Can stay in the file cache: all of it / about 63% / none", with
+the tooltip "After other large models the first reloads still read part of
+the file again."
+
+*What the cache holds now.* Measured on consoles (memory 14435 MiB, margin 2024
+MiB, model share 5576 MiB, file share 4512 MiB: verdict `full`): on two
+consoles whose cache already held 7 to 8 GB of other files, three load/unload
+rounds took 44.2 s, 24.6 s and 13.6 s (the cache grew 6959, 8708, 8959, 9046
+MiB: the new file share only got the room that was left and won a little more
+at each reload); a third console with 1184 MiB cached took the whole share at
+the first read and was warm from the second load on; after a cache drop the
+model reloaded in 3.5 s. So, when the node's agent reports its cache
+(`cached_bytes` in the stats, stats contract 4.3), each node's entry also has
+`cached_now_mib`, `cache_room_mib` = (memory - margin - model share, as the
+rule computes `room`) - `cached_now_mib`, and `cache_occupied` when
+`cache_room_mib` is below the file share (`scheduler.CacheRoom`). The UI shows
+it as a second line, "The cache on <node> is occupied by other files now;
+expect the first reloads to be slower". It is not folded into the verdict:
+the cache figure cannot tell whether the cached data is this model's own
+file, so right after this model was loaded (its own file cached) the line
+can show although the next load is warm. Nodes that report no cache figure
+(older agents, the scheduler host) have none of the three fields.
 
 *Safety.* `only_when_idle` (default true): the run does not start, and pauses
 between benchmarks, while the scheduler has an instance this run did not load,

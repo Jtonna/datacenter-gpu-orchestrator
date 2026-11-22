@@ -197,6 +197,14 @@ type NodeReload struct {
 	ModelMiB  int      `json:"model_mib,omitempty"`
 	MemoryMiB int      `json:"memory_mib,omitempty"`
 	MarginMiB int      `json:"margin_mib,omitempty"`
+	// CachedNowMiB is what the node's file cache held when the plan was made,
+	// CacheRoomMiB the room for the file once that is counted, CacheOccupied
+	// set when that room is below the file share (the first reloads are likely
+	// to read part of the file again). Absent when the node reports no cache
+	// figure, and on steps stored before they were recorded.
+	CachedNowMiB  *int `json:"cached_now_mib,omitempty"`
+	CacheRoomMiB  *int `json:"cache_room_mib,omitempty"`
+	CacheOccupied bool `json:"cache_occupied,omitempty"`
 }
 
 // Check is one expectation and whether it held.

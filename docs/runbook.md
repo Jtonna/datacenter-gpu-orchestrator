@@ -722,10 +722,17 @@ curl -s $B/api/bench/state | jq .run
    cache"). `GET /api/bench/benchmarks/<id>/results` carries
    `lowest_available_mib` (system memory), `lowest_available_gpu_mib` (GPU
    memory), `load_mode`, `host` and `workers` per run. The plan
-   of a profile (`GET /api/profiles`, the Models page) shows the same reload
-   figure before you load: "Reload from cache: partial, about 63% of the
-   file" means the next load of that model reads about a third of the file
-   from the disk or the network again.
+   of a profile (`GET /api/profiles`, the Models page) shows the same figure
+   before you load: "Can stay in the file cache: about 63%" means at most
+   about two thirds of the file can stay cached next to the loaded model, so
+   every load reads at least a third of it from the disk or the network. "All
+   of it" is not a promise either: after other large models the first reloads
+   still read part of the file again. The line "The cache on <node> is
+   occupied by other files now; expect the first reloads to be slower"
+   (`cache_occupied`, with `cached_now_mib` and `cache_room_mib`) says the
+   node's file cache holds so much now that the file does not fit next to it;
+   it can also show right after the same model was loaded, because the cache
+   figure does not say whose files it holds.
 6. **Compare.** Each run is compared with the previous completed run of the
    same suite (or the `baseline` you named when you ran it). `regression: true`
    means the load was more than 15% slower (`bench.regress_load_pct`), decode

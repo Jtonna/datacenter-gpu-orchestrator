@@ -161,7 +161,11 @@ type agent struct {
 	hb           *heartbeat
 	stats        json.RawMessage
 	statsNote    string
-	lost, left   bool
+	// cachedMiB is the file cache figure of the last stats object
+	// (memory.cached_bytes); cachedKnown is false when it had none.
+	cachedMiB   int
+	cachedKnown bool
+	lost, left  bool
 	// silent: no heartbeat for LostAfter, not lost yet because the node runs
 	// a launch of ours whose lease has not run out (CR-6). It takes no new load.
 	silent bool
@@ -470,6 +474,7 @@ func (p *Pool) Heartbeat(id string, body []byte) HeartbeatResult {
 	a.lastSeen, a.lost, a.silent = now, false, false
 	a.hb = &hb
 	a.stats, a.statsNote = parseStats(hb.Stats)
+	a.cachedMiB, a.cachedKnown = statsCachedMiB(a.stats)
 	p.checkFloorLocked(a)
 	if d, extra, ok := pickDevice(a); ok && extra > 0 && !a.extraWarned {
 		a.extraWarned = true
@@ -716,6 +721,23 @@ func parseStats(raw json.RawMessage) (json.RawMessage, string) {
 		return nil, "stats version not supported"
 	}
 	return append(json.RawMessage(nil), raw...), ""
+}
+
+// statsCachedMiB is memory.cached_bytes of a stats object in MiB; ok is false
+// when the object has none (an older agent, or the node source is absent).
+func statsCachedMiB(raw json.RawMessage) (int, bool) {
+	if len(raw) == 0 {
+		return 0, false
+	}
+	var v struct {
+		Memory *struct {
+			CachedBytes *int64 `json:"cached_bytes"`
+		} `json:"memory"`
+	}
+	if json.Unmarshal(raw, &v) != nil || v.Memory == nil || v.Memory.CachedBytes == nil || *v.Memory.CachedBytes < 0 {
+		return 0, false
+	}
+	return int(*v.Memory.CachedBytes >> 20), true
 }
 
 // Deregister is POST /api/pool/nodes/{id}/deregister (10): the node's instance is

@@ -22,10 +22,14 @@ const (
 	LoadModeLocal = "local"
 )
 
-// Reload from cache verdicts (design, "Reload from cache").
+// Reload from cache verdicts (design, "Reload from cache"). They say how much
+// of the node's file share CAN stay in the file cache next to the loaded
+// model, not that the next load will be warm: the cache is shared with the
+// files of models loaded earlier, and after other large models the first
+// reloads still read part of the file again (measured on consoles).
 const (
-	ReloadFull    = "full"    // the node's file share stays cached next to the loaded model
-	ReloadPartial = "partial" // part of the file share is pushed out of the cache by the load
+	ReloadFull    = "full"    // all of the node's file share can stay cached next to the loaded model
+	ReloadPartial = "partial" // only part of the file share can stay cached
 	ReloadNone    = "none"    // the loaded model leaves no room for the file in the cache
 	ReloadUnknown = "unknown" // a figure is missing, or the node does not read the file
 )
@@ -70,6 +74,26 @@ func ReloadFromCache(in ReloadInput) (verdict string, cached float64) {
 	return ReloadPartial, float64(room) / float64(in.FileMiB)
 }
 
+// CacheRoom compares the room the reload rule leaves for the file share
+// (memory - margin, minus the model share on a shared-memory node) with what
+// the node's file cache holds now (cachedMiB, the agent's cached_bytes):
+// room is what is left once the current cache is counted, and occupied is
+// true when that is less than the file share. It is not folded into the
+// verdict: the current cache figure cannot tell whether the cached data is
+// this model's own file. ok is false when an input is unknown or the node does
+// not read the file.
+func CacheRoom(in ReloadInput, cachedMiB int) (room int, occupied, ok bool) {
+	if !in.FileRead || in.FileMiB <= 0 || in.ModelMiB <= 0 || in.MemoryMiB <= 0 || cachedMiB < 0 {
+		return 0, false, false
+	}
+	room = in.MemoryMiB - in.MarginMiB
+	if in.Shared {
+		room -= in.ModelMiB
+	}
+	room -= cachedMiB
+	return room, room < in.FileMiB, true
+}
+
 // NodeReload is the reload rule's answer for one node of a placement, as the
 // plan and the status show it.
 type NodeReload struct {
@@ -84,6 +108,14 @@ type NodeReload struct {
 	// CachedPct is the estimated share of the node's file share that stays
 	// cached, 0 to 100, for a partial verdict.
 	CachedPct *float64
+	// CachedNowMiB is what the node's file cache holds now (its agent's
+	// cached_bytes), CacheRoomMiB the rule's room for the file minus that, and
+	// CacheOccupied is set when CacheRoomMiB is below FileMiB: the first
+	// reloads are likely to read part of the file again (CacheRoom). Nil and
+	// false when the node reports no cache figure.
+	CachedNowMiB  *int
+	CacheRoomMiB  *int
+	CacheOccupied bool
 }
 
 // loadModeFor is how the nodes of a placement would get the weights.
@@ -165,12 +197,19 @@ func (c *schedCore) reloadPlan(p *core.Profile, pl core.Placement, mode string) 
 			}
 		}
 		r.MemoryMiB = sys
-		v, cached := ReloadFromCache(ReloadInput{FileRead: read, Shared: n.SharedMemory, FileMiB: r.FileMiB, ModelMiB: r.ModelMiB,
-			MemoryMiB: r.MemoryMiB, MarginMiB: r.MarginMiB})
+		ri := ReloadInput{FileRead: read, Shared: n.SharedMemory, FileMiB: r.FileMiB, ModelMiB: r.ModelMiB,
+			MemoryMiB: r.MemoryMiB, MarginMiB: r.MarginMiB}
+		v, cached := ReloadFromCache(ri)
 		r.Verdict = v
 		if v == ReloadPartial {
 			pct := math.Round(cached * 100)
 			r.CachedPct = &pct
+		}
+		if n.CachedKnown {
+			if room, occ, ok := CacheRoom(ri, n.CachedMiB); ok {
+				now := n.CachedMiB
+				r.CachedNowMiB, r.CacheRoomMiB, r.CacheOccupied = &now, &room, occ
+			}
 		}
 		out = append(out, r)
 	}

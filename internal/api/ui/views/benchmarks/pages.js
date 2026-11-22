@@ -20,7 +20,7 @@ import { catalog } from '../../core/catalog.js';
 import { avatar } from '../../core/avatar.js';
 import { cache, suiteById, benchmarkById, suiteTitle, suiteStatusBadge, suiteNotRunnable, runBadge, phaseChips, scheduleText, describe, modelOf, outcomeBadge, signedPct } from './common.js';
 import { runSuite, suiteBenchmarks } from './runconfirm.js';
-import { loadModeNode, rolesText, reloadText, RELOAD_TIP } from '../../core/stepfacts.js';
+import { loadModeNode, rolesText, reloadAmount, cacheOccupied, RELOAD_TIP } from '../../core/stepfacts.js';
 
 // The page's own data, kept while the screen is open.
 export const pageData = { suiteRuns: {}, results: {}, errors: {} };
@@ -69,7 +69,8 @@ function reloadCell(r) {
   if (!rs.length) return h('span.mut', DASH);
   const rank = { none: 0, partial: 1, unknown: 2, full: 3 };
   const w = rs.slice().sort((a, b) => (rank[a.verdict] ?? 2) - (rank[b.verdict] ?? 2))[0];
-  return h('span', { title: RELOAD_TIP + (rs.length > 1 ? ' The node that keeps the least is shown.' : '') }, reloadText(w).replace('Reload from cache: ', ''), rs.length > 1 ? h('span.sub', 'on ' + w.node) : null);
+  return h('span', { title: RELOAD_TIP + (rs.length > 1 ? ' The node that keeps the least is shown.' : '') }, reloadAmount(w), rs.length > 1 ? h('span.sub', 'on ' + w.node) : null,
+    rs.some(cacheOccupied) ? h('span.sub.warn-t', 'Cache occupied by other files') : null);
 }
 
 const notFound = (what, id) => [backLink('Benchmarks', href('benchmarks')), h('section.card', empty(`There is no ${what} ${id}`, `It may have been deleted. Go back to Benchmarks to see the ones that exist.`))];
@@ -269,7 +270,7 @@ export function benchmarkPage(id) {
           ? h('span', gb(r.lowest_available_mib), lowestNode(r, 'system') ? h('span.sub', lowestNode(r, 'system')) : null) : h('span.mut', 'Not recorded')) },
         { label: 'Lowest available (GPU)', cls: 'r', title: 'The lowest free memory of the nodes whose GPU has memory of its own, during the benchmark', render: r => (r.lowest_available_gpu_mib != null
           ? h('span', gb(r.lowest_available_gpu_mib), lowestNode(r, 'gpu') ? h('span.sub', lowestNode(r, 'gpu')) : null) : h('span.mut', DASH)) },
-        { label: 'Reload from cache', title: RELOAD_TIP, render: r => reloadCell(r) },
+        { label: 'Can stay in the file cache', title: RELOAD_TIP, render: r => reloadCell(r) },
         { label: '', cls: 'tight', render: r => h('a', { href: href('benchmarks', ['runs', r.run_id]), onclick: e => e.stopPropagation() }, 'Open run') },
       ],
     });

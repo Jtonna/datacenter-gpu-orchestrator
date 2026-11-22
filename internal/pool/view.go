@@ -205,7 +205,7 @@ func (p *Pool) nodeFromAgentLocked(cfg *config.Config, a *agent) (core.Node, boo
 		Priority: t.Priority, HeadroomMiB: t.HeadroomMiB, SharedMemory: t.SharedMemory, LinkMBs: t.LinkMBs, Settle: t.Settle,
 		Paused: p.pausedLocked(a.reg.ID, a), FreeUnknown: true, SystemMiB: int(a.reg.MemTotalMiB),
 		// The floor is the node's own when its agent reports it (CR-9).
-		WatchdogFloorMiB: int(nodeFloor(cfg, a))}
+		WatchdogFloorMiB: int(nodeFloor(cfg, a)), CachedMiB: a.cachedMiB, CachedKnown: a.cachedKnown}
 	if a.hb == nil {
 		return n, tiered
 	}

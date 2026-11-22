@@ -209,7 +209,7 @@ For display and cross-checking only (section 1.1).
 |---|---|---|---|---|---|
 | `total_bytes` | integer | bytes | required | `node_memory_MemTotal_bytes` | Value as is. |
 | `available_bytes` | integer | bytes | required | `node_memory_MemAvailable_bytes` | Value as is. |
-| `cached_bytes` | integer | bytes | optional | `node_memory_Cached_bytes` (`Cached` in `/proc/meminfo`) | Value as is. The page cache. Added later; an older agent does not send it, and Potluck shows nothing then. Used to judge whether a model's file can stay cached next to the loaded model (design, "Reload from cache"). |
+| `cached_bytes` | integer | bytes | optional | `node_memory_Cached_bytes` (`Cached` in `/proc/meminfo`) | Value as is. The page cache. Added later; an older agent does not send it, and Potluck shows nothing then. Used to judge whether a model's file can stay cached next to the loaded model, and whether the cache is occupied by other files now (design, "Reload from cache"). |
 
 ### 4.4 `load`
 

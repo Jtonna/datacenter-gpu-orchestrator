@@ -120,6 +120,12 @@ func reloadEntries(rs []scheduler.NodeReload, host map[string]string) []map[stri
 		if r.CachedPct != nil {
 			e["cached_pct"] = *r.CachedPct
 		}
+		if r.CacheRoomMiB != nil {
+			e["cache_room_mib"], e["cache_occupied"] = *r.CacheRoomMiB, r.CacheOccupied
+		}
+		if r.CachedNowMiB != nil {
+			e["cached_now_mib"] = *r.CachedNowMiB
+		}
 		out = append(out, e)
 	}
 	return out
