@@ -36,6 +36,8 @@ import (
 //	POST   /api/nodes/{id}/force-unload
 //	DELETE /api/nodes/{id}
 //	POST   /api/nodes/{id}/readmit
+//
+// Read only: GET /api/nodes, the node feed (feed.go).
 
 // SectionNodes is the audit section of the node actions.
 const SectionNodes = "nodes"
@@ -52,6 +54,9 @@ func (s *Server) nodeRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/nodes/{id}/force-unload", s.nodeForceUnload)
 	m.HandleFunc("DELETE /api/nodes/{id}", s.nodeRemove)
 	m.HandleFunc("POST /api/nodes/{id}/readmit", s.nodeReadmit)
+
+	m.HandleFunc("GET /api/nodes", s.handleNodeFeed) // the node feed (feed.go)
+	s.startupRoutes(m)                               // start-up figures (startups.go)
 }
 
 // agentsOn answers 503 when membership is not agents.
@@ -67,10 +72,28 @@ func (s *Server) agentRegister(w http.ResponseWriter, r *http.Request) {
 	if !s.agentsOn(w) {
 		return
 	}
-	var req agentproto.RegisterRequest
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+	b, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
 		apiErr(w, http.StatusBadRequest, "registration: %v", err)
 		return
+	}
+	var req agentproto.RegisterRequest
+	if err := json.Unmarshal(b, &req); err != nil {
+		// A start-up report that cannot be read never fails the
+		// registration: it is dropped and the rest is taken.
+		var m map[string]json.RawMessage
+		if json.Unmarshal(b, &m) != nil || m["startup"] == nil {
+			apiErr(w, http.StatusBadRequest, "registration: %v", err)
+			return
+		}
+		delete(m, "startup")
+		b, _ = json.Marshal(m)
+		req = agentproto.RegisterRequest{}
+		if err := json.Unmarshal(b, &req); err != nil {
+			apiErr(w, http.StatusBadRequest, "registration: %v", err)
+			return
+		}
+		s.log.Warn("registration: start-up report unreadable, left out", "id", req.ID, "name", req.Name)
 	}
 	writeJSON(w, http.StatusOK, s.opts.Pool.Register(req))
 }
@@ -272,8 +295,7 @@ func (s *Server) agentStatus(v map[string]any) {
 	if s.opts.Pool == nil {
 		return
 	}
-	facts := s.opts.Pool.Facts()
-	s.logFacts(facts) // CR-10: what the log route counted per node
+	facts := s.agentFacts()
 	byID := map[string]pool.NodeFacts{}
 	for _, f := range facts {
 		byID[f.ID] = f

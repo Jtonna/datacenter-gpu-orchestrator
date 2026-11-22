@@ -273,6 +273,9 @@ type RegisterRequest struct {
 	// WatchdogFloorMiB is the agent's memory watchdog floor (CR-9). Optional:
 	// an agent of release 0.1.0 does not send it.
 	WatchdogFloorMiB int64 `json:"watchdog_floor_mib,omitempty"`
+	// Startup is the agent's start-up report (optional; sent in every
+	// registration by an agent that has it).
+	Startup *Startup `json:"startup,omitempty"`
 }
 
 // FillEmpty replaces nil slices by empty ones so they encode as [].
@@ -328,6 +331,11 @@ type RegisterAnswer struct {
 	// Potluck's time, never the node's. Optional: 0 and absent mean none;
 	// release 0.1.0 ignores it.
 	ServerTimeUnixMs int64 `json:"server_time_unix_ms,omitempty"`
+	// StartupAck is the number of start-up marks of the request's startup
+	// object that Potluck has taken (Startup.Count). Absent: Potluck does
+	// not take start-up reports, and the agent stops sending them in
+	// heartbeats until its next registration.
+	StartupAck int `json:"startup_ack,omitempty"`
 
 	Reason          string `json:"reason,omitempty"`
 	Message         string `json:"message,omitempty"`
@@ -421,6 +429,89 @@ type Heartbeat struct {
 	StopMessage string `json:"stop_message,omitempty"`
 	// Logs are the agent's log shipping figures (CR-10, optional).
 	Logs *LogShipping `json:"logs,omitempty"`
+	// HostUptimeS is the machine's own uptime: the seconds since the kernel
+	// booted, on the monotonic clock (CLOCK_BOOTTIME), as the agent read it
+	// when it built this heartbeat. BootID is the kernel's boot id
+	// (/proc/sys/kernel/random/boot_id, 32 hex digits, no dashes). Both
+	// optional: an agent built before them (release 0.1.3 as first shipped)
+	// sends neither; a Docker install sends the host kernel's, which the
+	// container shares.
+	HostUptimeS *float64 `json:"host_uptime_s,omitempty"`
+	BootID      string   `json:"boot_id,omitempty"`
+	// Startup is the agent's start-up report (optional), sent until Potluck
+	// has acknowledged every mark (HeartbeatAnswer.StartupAck).
+	Startup *Startup `json:"startup,omitempty"`
+}
+
+// ---------------------------------------------------------------------------
+// Start-up reporting
+
+// Startup is the agent's start-up report, in the registration request and
+// in heartbeats until every mark has been sent and acknowledged. Every
+// figure is seconds since the kernel booted, on the monotonic clock
+// (CLOCK_BOOTTIME), with decimals: never a wall-clock time (rule 2.1).
+type Startup struct {
+	// BootID is the kernel's boot id; "" when it could not be read.
+	BootID string `json:"boot_id"`
+	// AgentStartS is when this agent process started.
+	AgentStartS float64 `json:"agent_start_s"`
+	// UserspaceStartS is systemd's UserspaceTimestampMonotonic: when
+	// userspace last started (at boot, or at the last soft restart).
+	// SoftReboots is systemd's SoftRebootsCount (systemd 254 or later). Both
+	// are absent when systemd could not be asked (a Docker install never
+	// asks: it would see the container, not the host).
+	UserspaceStartS *float64 `json:"userspace_start_s,omitempty"`
+	SoftReboots     *int64   `json:"soft_reboots,omitempty"`
+	// Marks are the agent's own marks (StartupMark*), each once, the first
+	// time it happened. A mark that has not happened is absent.
+	Marks map[string]float64 `json:"marks"`
+	// ExternalMarks are the marks of the start-up marks file
+	// (StartupMarksFile), passed through unchanged, unknown names included.
+	ExternalMarks map[string]float64 `json:"external_marks"`
+}
+
+// Count is the number of marks of both kinds: what Potluck acknowledges.
+func (s *Startup) Count() int {
+	if s == nil {
+		return 0
+	}
+	return len(s.Marks) + len(s.ExternalMarks)
+}
+
+// The agent's own start-up marks.
+const (
+	StartupMarkAgentStart    = "agent_start"
+	StartupMarkShareMounted  = "share_mounted"  // the model source was first reachable
+	StartupMarkRegistered    = "registered"     // the first accepted registration
+	StartupMarkProgramsReady = "programs_ready" // programs verified, exporters started, devices read
+	StartupMarkExporterUp    = "exporter_up"    // the exporters were started
+	StartupMarkFirstStats    = "first_stats"    // the first successful exporter scrape
+)
+
+// StartupMarksFile is written by another component on a console (atomically
+// replaced each time a mark is added): one line per mark, "<name> <seconds
+// since boot, monotonic, with decimals>". The agent only reads it; it never
+// creates or deletes the file or its folder.
+const StartupMarksFile = "/run/potluck/startup-marks"
+
+// Bounds of the start-up report, kept by both sides.
+const (
+	StartupMarksFileMaxBytes = 64 << 10 // a larger file is ignored
+	StartupMaxExternalMarks  = 32       // further names are dropped
+	StartupMaxNameLen        = 64       // letters, digits, '_', '-', '.'
+)
+
+// ValidStartupMarkName: 1 to StartupMaxNameLen letters, digits, '_', '-' or '.'.
+func ValidStartupMarkName(s string) bool {
+	if s == "" || len(s) > StartupMaxNameLen {
+		return false
+	}
+	for _, c := range s {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-' || c == '.') {
+			return false
+		}
+	}
+	return true
 }
 
 // HeartbeatAnswer is the 200 answer to a heartbeat. 410 means "register again".
@@ -433,6 +524,9 @@ type HeartbeatAnswer struct {
 	// ServerTimeUnixMs is Potluck's clock when it answered (CR-10, as in
 	// RegisterAnswer). Optional.
 	ServerTimeUnixMs int64 `json:"server_time_unix_ms,omitempty"`
+	// StartupAck acknowledges the heartbeat's startup object, as in
+	// RegisterAnswer. Absent when the heartbeat had none.
+	StartupAck int `json:"startup_ack,omitempty"`
 }
 
 // ---------------------------------------------------------------------------

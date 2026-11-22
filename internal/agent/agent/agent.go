@@ -34,6 +34,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/osx"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/programs"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/runner"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/startup"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/stats"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
 )
@@ -71,6 +72,10 @@ type Options struct {
 	LogsOff        bool
 	LogBufferBytes int
 	JournalDir     string
+	// MarksFile is the start-up marks file another component writes
+	// (agentproto.StartupMarksFile on a bare install); "" reads none. The
+	// agent only reads it, for a while after its start.
+	MarksFile string
 }
 
 // LeaveMarkerPath is the marker the uninstall writes and the starter checks
@@ -118,14 +123,23 @@ type Deps struct {
 
 	// Central logging (CR-10). LogsHTTP is the log sender's own client (nil:
 	// its own default). Journal starts the journal follower (nil:
-	// journalctl). Monotonic reads CLOCK_MONOTONIC and BootID the boot id,
-	// for journal entries (nil: the real ones). LaunchLogEvery is how often
+	// journalctl). Monotonic reads CLOCK_MONOTONIC, for journal entries, and
+	// BootID the kernel's boot id, read once at start for journal entries,
+	// the heartbeat and start-up reporting (nil: the real ones). LaunchLogEvery is how often
 	// the launch log is read (default 250 ms).
 	LogsHTTP       *http.Client
 	Journal        logship.JournalStart
 	Monotonic      func() (time.Duration, error)
 	BootID         func() string
 	LaunchLogEvery time.Duration
+
+	// Start-up reporting. Systemd is asked once, at start, for the userspace
+	// start and the soft-restart count (nil: not asked, the fields are
+	// absent; a Docker install never asks, it would see its container).
+	// MarksEvery is how often the marks file is read while it is watched
+	// (default 2 s).
+	Systemd    startup.Systemd
+	MarksEvery time.Duration
 
 	// Timing; zero values get the contract values.
 	RegisterRetry   time.Duration // after a refusal; default 60s
@@ -152,6 +166,9 @@ type Agent struct {
 
 	startID   string
 	startedAt time.Duration
+	// bootID is the kernel's boot id, read once at start ("" when it cannot
+	// be read; it is then left out of the heartbeat).
+	bootID    string
 	potluckIP net.IP
 	base      string
 
@@ -162,6 +179,9 @@ type Agent struct {
 	Export   *exporters.Supervisor
 	// Ship is the log shipper (CR-10); nil with --logs off.
 	Ship *logship.Shipper
+	// Start is this process's start-up report: its marks on the machine's
+	// own time axis, sent to Potluck until acknowledged.
+	Start *startup.Recorder
 	// launchTail follows launch output; its starting point is taken when the
 	// re-adoption is done, before anything waiting for it goes on.
 	launchTail *logship.LaunchTail
@@ -257,9 +277,14 @@ func New(opt Options, deps Deps) (*Agent, error) {
 		deps.Logger = slog.New(logship.NewHandler(deps.Logger.Handler(), ship))
 		ship.SetLogger(deps.Logger)
 	}
+	bootID := deps.BootID
+	if bootID == nil {
+		bootID = osx.BootID
+	}
 	a := &Agent{Ship: ship, opt: opt, deps: deps, log: deps.Logger, startID: startID,
-		startedAt: deps.Clock.Now(), potluckIP: ip, base: "http://" + opt.Potluck, hbEvery: 2 * time.Second,
+		startedAt: deps.Clock.Now(), bootID: bootID(), potluckIP: ip, base: "http://" + opt.Potluck, hbEvery: 2 * time.Second,
 		recovered: make(chan struct{})}
+	a.Start = startup.NewRecorder(a.bootID, a.startedAt)
 
 	progRoot := filepath.Join(opt.DataDir, "programs")
 	a.Programs = programs.New(programs.Config{Root: progRoot, Release: opt.Release, BaseURL: a.base,
@@ -271,6 +296,7 @@ func New(opt Options, deps Deps) (*Agent, error) {
 		NodeIP: func() string { a.mu.Lock(); defer a.mu.Unlock(); return a.ident.Addr },
 		Every:  deps.ProbeEvery, Timeout: deps.ProbeTimeout, Clock: deps.Clock, Mounter: deps.Mounter,
 		Prober: deps.Prober, Logger: deps.Logger, OnError: a.setError,
+		OnReachable:  func() { a.mark(agentproto.StartupMarkShareMounted) },
 		LaunchExists: func() bool { return a.Launch.CurrentID() != nil }})
 
 	a.Launch = launch.New(launch.Config{
@@ -288,9 +314,17 @@ func New(opt Options, deps Deps) (*Agent, error) {
 	}
 	a.Export = &exporters.Supervisor{Runner: deps.Runner, Path: a.Programs.Path, Logger: deps.Logger}
 	a.Stats = stats.New(stats.Config{Now: deps.Clock.Now, MinInterval: deps.StatsMin, Logger: deps.Logger,
-		Primary: func() string { a.mu.Lock(); defer a.mu.Unlock(); return a.ident.RouteIface }})
+		OnScrape: func(string) { a.mark(agentproto.StartupMarkFirstStats) },
+		Primary:  func() string { a.mu.Lock(); defer a.mu.Unlock(); return a.ident.RouteIface }})
 	a.Export.OnStart = func(program string) { a.Stats.Restarted(exporters.SourceName(program)) }
 	return a, nil
+}
+
+// mark records a start-up mark at the agent's clock now, the first time.
+func (a *Agent) mark(name string) {
+	if now := a.deps.Clock.Now(); a.Start.Mark(name, now) {
+		a.log.Debug("start-up mark", "mark", name, "s", secs(now))
+	}
 }
 
 func (a *Agent) setError(msg string) {
@@ -548,6 +582,11 @@ func (a *Agent) Run(ctx context.Context) error {
 	a.mu.Lock()
 	a.runCtx = ctx
 	a.mu.Unlock()
+	a.askSystemd(ctx)
+	if a.opt.MarksFile != "" {
+		wg.Add(1)
+		go func() { defer wg.Done(); a.watchMarks(ctx) }()
+	}
 	// An existing launch first: its lease and its watchdog need no identity,
 	// no free port, no registration and no Potluck.
 	wg.Add(1)
@@ -668,14 +707,11 @@ func (a *Agent) startLogShipping(ctx context.Context, wg *sync.WaitGroup) {
 	// The system log: the machine's own journal on a bare install; on a
 	// Docker install only a journal folder given with --journal-dir.
 	if a.opt.Install == agentproto.InstallBare || a.opt.JournalDir != "" {
-		mono, boot := a.deps.Monotonic, a.deps.BootID
+		mono := a.deps.Monotonic
 		if mono == nil {
 			mono = osx.MonotonicNow
 		}
-		if boot == nil {
-			boot = osx.BootID
-		}
-		j := &logship.Journal{Ship: a.Ship, Start: a.deps.Journal, Dir: a.opt.JournalDir, Monotonic: mono, BootID: boot()}
+		j := &logship.Journal{Ship: a.Ship, Start: a.deps.Journal, Dir: a.opt.JournalDir, Monotonic: mono, BootID: a.bootID}
 		wg.Add(1)
 		go func() { defer wg.Done(); j.Run(ctx) }()
 	}
@@ -714,7 +750,7 @@ func (a *Agent) RegisterRequest() agentproto.RegisterRequest {
 		AgentStartID: a.startID, OS: runtime.GOOS, Arch: runtime.GOARCH, Install: a.opt.Install,
 		Addr: id.Addr, Backends: a.deps.Hardware.Backends(gpus), RAMOnly: a.opt.RAMOnly,
 		ModelSource: a.opt.ModelSource.Wire(), Programs: a.Programs.Held(), LaunchID: a.Launch.CurrentID(),
-		ForeignProcesses: a.foreignProcesses(), WatchdogFloorMiB: a.Launch.WatchdogFloorMiB()}
+		ForeignProcesses: a.foreignProcesses(), WatchdogFloorMiB: a.Launch.WatchdogFloorMiB(), Startup: a.Start.Report()}
 	for _, g := range gpus {
 		req.GPUs = append(req.GPUs, g.GPU)
 	}
@@ -829,6 +865,10 @@ func (a *Agent) accepted(ctx context.Context, ans agentproto.RegisterAnswer) {
 	}
 	a.mu.Unlock()
 	a.Launch.SetCUDA(strings.HasSuffix(ans.Platform, "-"+agentproto.BackendCUDA))
+	if a.Start.Mark(agentproto.StartupMarkRegistered, a.regRecv) {
+		a.log.Debug("start-up mark", "mark", agentproto.StartupMarkRegistered)
+	}
+	a.Start.Answered(ans.StartupAck, true)
 	if a.Ship != nil {
 		a.Ship.Registered(a.ID(), ans.Logs, ans.ServerTimeUnixMs, a.regSent, a.regRecv)
 	}
@@ -905,6 +945,9 @@ func (a *Agent) pipeline(ctx context.Context, gen int, ans agentproto.RegisterAn
 			a.setError(r)
 		}
 		a.Stats.SetSources(srcs)
+		if len(srcs) > 0 {
+			a.mark(agentproto.StartupMarkExporterUp)
+		}
 		// 6. devices. An empty list (no access to the GPU device node) keeps
 		// programs_ready false, reports why in programs_error and is read
 		// again after ProgramsRetry; any other device error is only logged.
@@ -918,10 +961,14 @@ func (a *Agent) pipeline(ctx context.Context, gen int, ans agentproto.RegisterAn
 		}
 		// 7. ready
 		a.mu.Lock()
-		if a.pipeGen == gen {
+		ready := a.pipeGen == gen
+		if ready {
 			a.pipelineOK = true
 		}
 		a.mu.Unlock()
+		if ready && a.Programs.Ready() {
+			a.mark(agentproto.StartupMarkProgramsReady)
+		}
 		a.Programs.DeleteOldReleases(a.Launch.CurrentID() != nil)
 		return
 	}
@@ -1013,7 +1060,11 @@ func (a *Agent) Heartbeat() agentproto.Heartbeat {
 	now := a.deps.Clock.Now()
 	a.mu.Lock()
 	a.seq++
-	hb := agentproto.Heartbeat{AgentStartID: a.startID, Seq: a.seq, UptimeS: float64((now - a.startedAt).Milliseconds()) / 1000}
+	// The agent's clock counts from kernel boot (CLOCK_BOOTTIME), so it is
+	// also the machine's own uptime; on a Docker install, the host's.
+	hostUp := float64(now.Milliseconds()) / 1000
+	hb := agentproto.Heartbeat{AgentStartID: a.startID, Seq: a.seq, UptimeS: float64((now - a.startedAt).Milliseconds()) / 1000,
+		HostUptimeS: &hostUp, BootID: a.bootID}
 	devs := append([]agentproto.Device{}, a.devs...)
 	devsAt := a.devsAt
 	a.mu.Unlock()
@@ -1035,6 +1086,7 @@ func (a *Agent) Heartbeat() agentproto.Heartbeat {
 	if a.Ship != nil {
 		hb.Logs = a.Ship.Figures() // nil while nothing is shipped
 	}
+	hb.Startup = a.Start.ForHeartbeat() // nil once Potluck has every mark
 	return hb
 }
 
@@ -1106,6 +1158,9 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 		a.mu.Lock()
 		a.paused = ans.Paused
 		a.mu.Unlock()
+		if body.Startup != nil {
+			a.Start.Answered(ans.StartupAck, false)
+		}
 		if a.Ship != nil {
 			// Returns at once: a new revision is read by the shipper's own
 			// goroutine, never by the heartbeat.
@@ -1120,6 +1175,48 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 }
 
 func secs(d time.Duration) float64 { return float64(d.Milliseconds()) / 1000 }
+
+// askSystemd asks systemd once for the userspace start and the soft-restart
+// count, before the first registration so that it carries them. A failure
+// leaves both absent; it is never guessed.
+func (a *Agent) askSystemd(ctx context.Context) {
+	if a.deps.Systemd == nil {
+		return
+	}
+	c, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	f, err := a.deps.Systemd.Show(c)
+	if err != nil {
+		a.log.Info("systemd gave no userspace start; the start-up report leaves it out", "err", err)
+	}
+	a.Start.SetSystemd(f)
+}
+
+// watchMarks reads the start-up marks file for a while after the start
+// (startup.Watcher says how long). It never creates or deletes the file.
+func (a *Agent) watchMarks(ctx context.Context) {
+	every := a.deps.MarksEvery
+	if every <= 0 {
+		every = 2 * time.Second
+	}
+	w := &startup.Watcher{Path: a.opt.MarksFile}
+	for {
+		marks, changed, done, warn := w.Poll(a.deps.Clock.Now())
+		if warn != "" {
+			a.log.Warn(warn, "file", a.opt.MarksFile)
+		}
+		if changed {
+			a.Start.SetExternal(marks)
+		}
+		if done {
+			a.log.Debug("start-up marks file no longer watched", "file", a.opt.MarksFile)
+			return
+		}
+		if !sleep(ctx, every) {
+			return
+		}
+	}
+}
 
 // Status builds GET /status (6.9).
 func (a *Agent) Status() agentproto.Status {

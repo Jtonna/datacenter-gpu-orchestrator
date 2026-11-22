@@ -2,8 +2,10 @@
 // memory, what is on it, and anything wrong with it (health, quarantine,
 // recovery).
 //
-// Reads: WebSocket "status" only (view.nodes, instances, quarantines, and in
-// agents mode `membership`, `agents` and each node's `unplaced` and `agent`).
+// Reads: WebSocket "status" (view.nodes, instances, quarantines, and in
+// agents mode `membership`, `agents` and each node's `unplaced` and `agent`,
+// with its `last_startup`). GET /api/startups only when someone opens the
+// marks of a start (core/startup.js).
 //
 // Writes, in agents mode only, and only these two per machine (no load and
 // no ordinary unload): Pause / Unpause and Force unload, each with a required
@@ -15,11 +17,12 @@ import { h } from '../core/dom.js';
 import { registerView, href } from '../core/router.js';
 import { state, on } from '../core/store.js';
 import * as api from '../core/api.js';
-import { liveView, pageHead, badge, button, dialog, toast, stat, empty, skeleton, memBar, facts, copyButton } from '../core/ui.js';
+import { liveView, pageHead, badge, button, dialog, toast, stat, empty, skeleton, memBar, facts, copyButton, more } from '../core/ui.js';
 import { num, mib, gb, gbNum, dur, ago, until, at, plural, toMs, now, shortId, DASH } from '../core/format.js';
 import { viewNodes, nodeMemory, staleBanner } from '../core/status.js';
 import { logsLink, nodeQuery } from '../core/logs.js';
 import { agentsMode, agentOf, notPlaceable, holdsSomething, pauseAction, sendNodeAction, NODE_ACTIONS } from '../core/nodeactions.js';
+import { startupText, markLabel, secs, requestedText, NOT_INCLUDED, startups, loadStartups, onStartups, lastRecord } from '../core/startup.js';
 
 const CHANNEL = { ok: ['ok', 'ok-t'], silent: ['silent', 'err-t'], unknown: ['not known', 'mut'] };
 const ACTION = { restart_rpc_server: 'restart the worker', restart_docker: 'restart Docker', reboot: 'reboot the machine' };
@@ -123,6 +126,41 @@ function controls(n, agent, refresh) {
       title: holds ? 'Stops the model on this machine at once; requests waiting on it fail' : 'Nothing runs on this machine, so there is nothing to unload' }));
 }
 
+// The nodes whose start-up marks are open.
+const marksOpen = new Set();
+
+// startupPart(n, last, refresh) -> the line of a machine's last start, and
+// its marks in time order once opened.
+function startupPart(n, last, refresh) {
+  const t = startupText(last);
+  const open = marksOpen.has(n.id);
+  const rec = open ? lastRecord(n.id, last.kind) : null;
+  const dot = last.headline_s != null || last.kind === 'agent_restart' ? 'm' : last.open ? '' : 'a';
+  const toggle = () => {
+    if (open) marksOpen.delete(n.id); else { marksOpen.add(n.id); loadStartups(api); }
+    refresh();
+  };
+  let marks = null;
+  if (open) {
+    if (startups.error && !rec) marks = h('span.err-t', 'The marks could not be read: ' + (startups.error.message || 'the request failed') + '.');
+    else if (!rec) marks = h('span.mut', 'Reading the marks…');
+    else {
+      const r = rec.record || {};
+      marks = h('div', { style: 'display:flex;flex-direction:column;gap:3px' },
+        h('span.mut', 'Seconds since its kernel started' + (r.userspace_start_s != null ? `; userspace started at ${secs(r.userspace_start_s)}` : '') + '.'),
+        (rec.marks_in_order || []).map(m => h('div.memline', { key: m.name },
+          h('span', { title: m.name }, markLabel(m.name), m.external ? h('span.mut', ' · from the console side') : null),
+          h('span.mono', secs(m.s)))),
+        requestedText(r) ? h('span', requestedText(r)) : null);
+    }
+  }
+  return h('div', { style: 'display:flex;flex-direction:column;gap:6px', key: 'startup' },
+    h('div.hit', h('i', { class: dot }), h('span', h('b', t.head), t.kind ? ` (${t.kind})` : '', ', ', ago(last.at), '.', t.extra ? ' ' + t.extra : '',
+      ' ', more(open, toggle, 'Marks', 'Hide marks'))),
+    marks,
+    open ? h('span.mut', NOT_INCLUDED) : null);
+}
+
 function tile(st, n, refresh) {
   const name = n.hostname || n.id;
   const agent = agentOf(st, n);
@@ -220,7 +258,8 @@ function tile(st, n, refresh) {
           stat('Usable now', usableNode ? gbNum(usable) : DASH, usableNode ? 'GB' : null, { small: true, title: usableNode ? `${mib(usable)}: the free memory minus the headroom of its tier; what a new model may take right now` : 'Nothing can be placed here now' }),
           stat('Free', gbNum(free), 'GB', { small: true, title: `${mib(free)}, as the fleet reports it` + (headroom ? `; ${mib(headroom)} of it is kept as headroom` : '') }),
           stat('When empty', n.plan_budget_mib ? gbNum(n.plan_budget_mib) : DASH, n.plan_budget_mib ? 'GB' : null, { small: true, title: n.plan_budget_mib ? `${mib(n.plan_budget_mib)}: what the scheduler plans with once nothing is loaded here` : null })),
-      notes.length ? h('div', { style: 'display:flex;flex-direction:column;gap:8px' }, h('div.note-s', { style: 'display:flex;flex-direction:column;gap:8px' }, notes)) : null),
+      notes.length ? h('div', { style: 'display:flex;flex-direction:column;gap:8px' }, h('div.note-s', { style: 'display:flex;flex-direction:column;gap:8px' }, notes)) : null,
+      agent && agent.last_startup ? startupPart(n, agent.last_startup, refresh) : null),
     agent ? controls(n, agent, refresh) : null,
     h('div.foot',
       facts([
@@ -242,6 +281,7 @@ registerView({
   mount(el) {
     // a request the server accepted stops being "on the way" with the next status
     const off = on('status', () => { for (const [id, p] of pending) if (p.sent) pending.delete(id); });
+    const offStartups = onStartups(() => view.refresh());
     const refresh = () => view.refresh();
     const view = liveView(el, () => {
       const st = state.status;
@@ -267,6 +307,6 @@ registerView({
             : empty('No nodes are known yet', 'Nodes come from the fleet feed. None has been reported so far; check that the fleet manager is reachable (About shows the connection).')),
       ];
     }, ['status', 'tick', 'conn']);
-    return { refresh, unmount() { off(); view.unmount(); } };
+    return { refresh, unmount() { off(); offStartups(); view.unmount(); } };
   },
 });

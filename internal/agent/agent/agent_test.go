@@ -63,6 +63,9 @@ type fakePotluck struct {
 	// heartbeat arrived.
 	logs   atomic.Pointer[http.HandlerFunc]
 	beatAt []time.Time
+	// ackStartup: answer a heartbeat's startup object with startup_ack, as a
+	// Potluck that takes start-up reports does.
+	ackStartup bool
 }
 
 func newFakePotluck(t *testing.T) *fakePotluck {
@@ -101,7 +104,11 @@ func (p *fakePotluck) serve(w http.ResponseWriter, r *http.Request) {
 		p.beatAt = append(p.beatAt, time.Now())
 		w.WriteHeader(p.hbStatus)
 		if p.hbStatus == 200 {
-			json.NewEncoder(w).Encode(p.hbAnswer)
+			ans := p.hbAnswer
+			if p.ackStartup && hb.Startup != nil {
+				ans.StartupAck = hb.Startup.Count()
+			}
+			json.NewEncoder(w).Encode(ans)
 		}
 	case strings.HasSuffix(r.URL.Path, "/deregister"):
 		// As internal/api agentDeregister: 200 {"left":true}, then 404.

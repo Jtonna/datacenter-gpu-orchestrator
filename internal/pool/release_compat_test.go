@@ -19,6 +19,8 @@ import (
 // of contract 5.4: refused with agent_too_old and required_release 0.1.3,
 // never a load. A 0.1.3 agent that sends a 0.1.0-shaped body (none of the
 // CR-9, CR-10 or later fields) is accepted: every new field is optional.
+// The start-up report (startup, startup_ack) is one more: additive, no new
+// release.
 func TestRelease013AndOlderAgents(t *testing.T) {
 	if agentproto.Release != "0.1.3" {
 		t.Fatalf("agentproto.Release = %q, want 0.1.3", agentproto.Release)
@@ -53,7 +55,20 @@ func TestRelease013AndOlderAgents(t *testing.T) {
 	}
 	cur := regReq("02:00:00:00:00:7f") // no watchdog_floor_mib: the 0.1.0 shape
 	cur.AgentRelease = agentproto.Release
-	if ans := p.Register(cur); !ans.Accepted || ans.Release != agentproto.Release {
+	if ans := p.Register(cur); !ans.Accepted || ans.Release != agentproto.Release || ans.StartupAck != 0 {
 		t.Fatalf("0.1.3 agent with a 0.1.0-shaped body: %+v", ans)
+	}
+	// A 0.1.3 agent as it is today sends no start-up report: it gets no
+	// record and no startup_ack, and its heartbeats are taken as before.
+	if res := p.Heartbeat(cur.ID, hbBody("s1", "", true, "true")); res.Status != 200 || res.Answer.StartupAck != 0 {
+		t.Fatalf("0.1.3 heartbeat: %+v", res)
+	}
+	for _, f := range p.Facts() {
+		if f.LastStartup != nil {
+			t.Fatalf("a start-up record for an agent that sent no report: %+v", f)
+		}
+	}
+	if all, err := p.Startups().All(); err != nil || len(all) != 0 {
+		t.Fatalf("%v %v", all, err)
 	}
 }

@@ -1,4 +1,5 @@
-// Overview: the suites (with a Run button) and the benchmarks.
+// Overview: the suites (with a Run button), the benchmarks and the start-up
+// figures of the machines.
 
 import { h } from '../../core/dom.js';
 import { href, navigate } from '../../core/router.js';
@@ -10,6 +11,7 @@ import { runSuite } from './runconfirm.js';
 import { passDots } from '../../core/rate.js';
 import { catalog } from '../../core/catalog.js';
 import { avatar } from '../../core/avatar.js';
+import { startupsCard } from './startups.js';
 
 const play = 'M6 4l10 6-10 6z';
 
@@ -85,5 +87,6 @@ export function overview() {
     cache.off ? errorBanner('Benchmarks are off on this scheduler. ' + cache.off) : null,
     suitesCard(running),
     benchmarksCard(),
+    startupsCard(),
   ];
 }

@@ -267,7 +267,7 @@ func serve(boot config.Bootstrap, log *slog.Logger) int {
 	fleetDone := make(chan struct{})
 	if cfg.AgentsMode() {
 		close(fleetDone)
-		pl, err = newPool(bg, svc, cs, launcher.LogDir, logRelay, log)
+		pl, err = newPool(bg, svc, cs, dbStore, launcher.LogDir, logRelay, log)
 		if err != nil {
 			log.Error("agent membership", "err", err)
 			ln.Close()

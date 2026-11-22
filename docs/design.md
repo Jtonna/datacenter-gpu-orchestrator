@@ -1691,12 +1691,42 @@ gets its own process group, so nothing is left behind.
 | `GET /api/models`, `GET /api/models/{key}` | The model catalog: one entry per model file, with its profiles, instances, history and benchmark figures (9.4). Read-only. |
 | `GET /health` | `200` whenever the scheduler is running. |
 | `GET /api/status` | Instances, placements, per-device memory from the last pre-flight, claims, queue, quarantines, backoffs, node view and its age. A starting instance also shows its load progress and its `load` report (7.6a). The top-level `recent_loads` lists the outcomes of load attempts finished in the last 120 s. Each node in `view.nodes` that an instance uses also has `health` (8.4a), and a node that was sent a recovery request or reported an outcome also has `recovery` (8.4b). |
+| `GET /api/nodes` | The node feed (below): the agent entries of `/api/status` and the local machine, with a change counter. Read-only; agents membership only (`503` otherwise). |
+| `GET /api/startups`, `GET /api/nodes/{id}/startups?limit=N` | Start-up figures (9.6): per node and kind of start the count, last, median and worst figure; a node's records, newest first. Read-only; agents membership only. |
+| `POST /api/nodes/{id}/expect-restart` `{kind, comment}` | The operator is about to restart a paused node that holds no launch (9.6, agent contract 7.2). Audited. |
 | `POST /api/plan` `{model}` | Dry run: what would happen if this model were requested now (placement, plan with victims, or the reason for neither). Changes nothing. |
 | `POST /api/load` `{model}` | Start loading ahead of time. Returns `202` at once. Audited (section `runtime`). |
 | `POST /api/unload` `{model, force}` | Stop one instance if idle; `force: true` stops it even if busy. Audited. |
 
 `force: true` is the one way a running generation can be cut off, and only by
 an explicit admin call.
+
+**Node feed (`GET /api/nodes`).** For a reader outside Potluck that polls the
+nodes every few seconds (a dashboard backend) and should not read the whole
+`/api/status` for it. The answer is `{"time", "seq", "nodes"}`:
+
+- `time` is Potluck's clock when it answered (RFC 3339, UTC).
+- `nodes` are exactly the entries of `agents` of `/api/status`: same field
+  names, same shapes, built by one function (`agentFacts`) so they cannot
+  drift. After them comes the scheduler's own machine, when the node view has
+  it (a working `local_probe_cmd`): `{"id", "name", "state": "active",
+  "release", "local": true, "placeable", "host_uptime_s", "boot_id"}`. It
+  leaves out what it does not have (programs, heartbeat, launch, pause,
+  devices, stats).
+- Every agent entry has, when its agent reports them, `host_uptime_s` (the
+  machine's uptime in seconds since its kernel booted, as of the last
+  heartbeat, which was `last_seen_ago_s` ago) and `boot_id` (agent contract
+  4.3). Potluck reads its own from `/proc/uptime` and the kernel's boot id.
+- `seq` rises whenever anything in the answer changed other than the ages
+  (`*_age_s`, `*_ago_s`, `age_ms`), the uptimes (`uptime_s`,
+  `host_uptime_s`) and `time`, so a reader can skip an answer whose `seq` it
+  has seen. It is computed when the feed is read, from a hash of the answer
+  without those keys: a change that comes and goes between two reads is not
+  seen. It starts at Potluck's start time in Unix milliseconds, so a restart
+  of Potluck does not repeat a number. Compare it for equality only. An
+  agent's `stats` change with nearly every heartbeat, so with live nodes
+  `seq` rises about as often as they report.
+- No CORS headers: the reader is a backend.
 
 Streaming: `httputil.ReverseProxy` with immediate flush; no response-header
 timeout; client cancellation propagates upstream.
@@ -2433,6 +2463,97 @@ marker into the audit package's own context value; `cmd/llm-scheduler`
 sets it to `audit.WithSource(ctx, "mcp", actor)`. Through MCP, benchmark and
 suite changes and run start and cancel (section `bench`) and `load_model` and
 `unload_model` (section `runtime`) are audited with source `mcp` as well.
+
+### 9.6 Start-up figures
+
+**The figure.** For every start of a node, one number: the seconds from boot
+start to ready for model loads.
+
+- **Ready for model loads** is the first moment at which all of these hold:
+  the agent is registered (mark `registered`), its programs are ready
+  (`programs_ready`), its model source is reachable (`share_mounted`; only for
+  a node whose model source is a share), and the node has no unplaced reason
+  other than `paused`. A pause someone set does not hold the figure back.
+- **Boot start** is the start of the Linux kernel (0 on the node's axis) for
+  a full start, and the start of userspace (`userspace_start_s`) for a soft
+  restart (`systemctl soft-reboot`, the kernel keeps running).
+- An **agent restart** (same boot, same userspace; only the agent process
+  started again) is a third kind of start. It is recorded, with no figure.
+- The three kinds are never mixed: not in one average, median, worst figure
+  or chart.
+- Never a partial figure: until all conditions hold the record says which
+  one is missing (`missing`) or which reason holds it back (`blocked_by`).
+- Wherever a figure is shown, one sentence goes with it: "On a console the
+  time before the Linux kernel starts cannot be seen from inside Linux and is
+  not included; none of these is a time from power-on."
+
+**Clocks.** Every mark is on the node's own axis: seconds since its kernel
+booted, monotonic (agent contract 11.4). A node's wall clock is never read
+(agent contract 2.1). Potluck's own clock gives the time of the registration
+(`registered_at`) and is used for one more thing: when the marks are in but a
+reason holds the node back, the moment the reason clears is taken on
+Potluck's clock and mapped onto the node's axis as `registered` mark plus
+(now minus `registered_at`). Both ends are the same moment, the first
+accepted registration, seen from either side; the mapping is off by that
+registration's network time, well under a second on the pool links. `ready_at`
+(the ready moment on Potluck's clock) is mapped the other way.
+
+**The kinds.** A record is made for every agent process (`agent_start_id`)
+that sends a report; a registration of the same process again (after a
+Potluck restart) adds to its record. Its kind, against the node's previous
+record:
+
+1. Both boot ids known and different: full start.
+2. Same boot id, and a higher `soft_reboots` or a `userspace_start_s` later
+   by more than 1 s: soft restart.
+3. Same boot id and the same userspace (the systemd figures both sides have
+   are unchanged): agent restart.
+4. Same boot id, but no systemd figure on one side to compare (a Docker
+   install, systemd that gave none): agent restart, marked `inferred`.
+5. No previous record, or a boot id missing on either side: the rule for a
+   first record, marked `inferred` with its reason in `kind_note`. Soft
+   restart when `soft_reboots` is above 0 and the agent started within 5
+   minutes of the userspace start. Full start when the userspace start is
+   within 5 minutes of kernel boot and the agent within 5 minutes of the
+   userspace start (without a userspace start: the agent within 5 minutes of
+   kernel boot). Otherwise agent restart.
+
+A Docker install sends no systemd figures (agent contract 11.4), so its
+starts are full (another boot id) or agent restarts (inferred).
+
+**The record** (`internal/startups`): node id and name, release, install,
+`agent_start_id`, kind, `inferred`, `kind_note`, `registered_at`, the report
+(boot id, `agent_start_s`, `userspace_start_s`, `soft_reboots`, `marks`,
+`external_marks`), `headline_s` or `missing` / `blocked_by`,
+`was_blocked_by` (the reason that cleared and set the moment), `ready_s`,
+`ready_at`, `open`, and for a start announced with expect-restart
+`requested`, `requested_kind`, `request_comment`, `requested_at`, `away_s`
+(call to registration) and `away_to_ready_s` (call to ready). A record stays
+open for 30 minutes after its registration; then it is closed with what is
+still missing. The next start of the node closes the previous open record. An
+agent restart is closed at once.
+
+**Storage.** Table `startups` in the scheduler database (`scheduler.db` in
+the data folder), with its own migration table `startup_migrations`, one row
+per record (node id, `agent_start_id` unique per node, `registered_at`, kind,
+the record as JSON). The newest 500 records per node are kept. Without the
+database the records are kept in memory and lost at a restart.
+
+**Where it shows.** `last_startup` in each agent entry of `/api/status` and
+`/api/nodes` (`kind`, `inferred`, `headline_s` or `missing` / `blocked_by`,
+`open`, `requested`, `at`); `GET /api/nodes/{id}/startups` (a node's records,
+newest first, each with its marks in time order); `GET /api/startups` (per
+node and kind: `count`, `with_figure`, `requested`, `last_s`, `median_s`,
+`worst_s`, and the newest record). Both answers carry the sentence above as
+`not_included`. The web UI shows the line "Ready for model loads N s after
+boot start (full start | soft restart), <when>" on each machine of Nodes,
+with its marks in time order when opened, and a "Start-up" section on the
+Benchmarks overview with the figures per node and kind.
+
+**Expect-restart.** `POST /api/nodes/{id}/expect-restart` (agent contract
+7.2) turns a planned restart into a measured one: the absence is expected for
+10 minutes (INFO, not the ERROR "agent lost"), and the next start is marked
+`requested` with its away times.
 
 ## 10. Packaging and rollout
 

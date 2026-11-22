@@ -30,6 +30,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/release"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/startups"
 )
 
 // Contract figures.
@@ -127,6 +128,11 @@ type Options struct {
 	// logging is off. It must not block. Nil: no logs object is handed out
 	// and the heartbeat answer has no logs_revision.
 	Logs func(nodeID string) *agentproto.Logs
+	// HostInfo reads the scheduler machine's own uptime and boot id for the
+	// node feed; nil reads /proc (ProcHostInfo).
+	HostInfo HostInfo
+	// Startups keeps the start-up records; nil keeps them in memory only.
+	Startups StartupStore
 }
 
 // heartbeat is a decoded heartbeat. Stats stays raw: a missing or bad stats
@@ -151,6 +157,41 @@ type heartbeat struct {
 	// CR-10, optional: the agent's log shipping figures. Raw, like stats: a
 	// bad object must never reject the heartbeat.
 	Logs json.RawMessage `json:"logs,omitempty"`
+	// The machine's own uptime and boot id (optional; an older agent sends
+	// neither). A bad value is dropped, never the heartbeat.
+	HostUptimeS *float64 `json:"host_uptime_s,omitempty"`
+	BootID      string   `json:"boot_id,omitempty"`
+	// Startup is the agent's start-up report while Potluck has not
+	// acknowledged all of it (optional; an older agent never sends it).
+	Startup *agentproto.Startup `json:"startup,omitempty"`
+}
+
+// optionalHeartbeatFields are dropped one by one when they do not decode;
+// the rest of the heartbeat is kept.
+var optionalHeartbeatFields = []string{"stats", "logs", "host_uptime_s", "boot_id", "startup", "watchdog_floor_mib", "stop_reason", "stop_message"}
+
+// sanitize drops optional values that cannot be right.
+func (hb *heartbeat) sanitize() {
+	if hb.HostUptimeS != nil && *hb.HostUptimeS < 0 {
+		hb.HostUptimeS = nil
+	}
+	if !validBootID(hb.BootID) {
+		hb.BootID = ""
+	}
+}
+
+// validBootID: up to 64 hex digits or dashes (the kernel writes 32 hex digits
+// with dashes; the agent sends them without).
+func validBootID(s string) bool {
+	if len(s) > 64 {
+		return false
+	}
+	for _, c := range s {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F' || c == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 type agent struct {
@@ -194,6 +235,9 @@ type agent struct {
 	// paused for placement until an answer has told it otherwise (unpause
 	// delivery, agent contract 7.2).
 	toldPaused bool
+	// rec is the start-up record of this agent process (nil for an agent
+	// that sends no start-up report).
+	rec *startups.Record
 }
 
 // Pool is the agent registry, node view and worker launcher.
@@ -230,6 +274,9 @@ type Pool struct {
 	// the launches that ended lately, whose last lines may still arrive.
 	logSnap atomic.Pointer[LogSnapshot]
 	ended   []endedLaunch
+
+	// expect holds the pending expect-restart calls by node id (startup.go).
+	expect map[string]*expectation
 }
 
 // New builds a pool. It loads the operator state from the store.
@@ -274,6 +321,9 @@ func New(o Options) (*Pool, error) {
 	}
 	if o.ProbeEvery <= 0 {
 		o.ProbeEvery = 2 * time.Second
+	}
+	if o.Startups == nil {
+		o.Startups = &startups.MemStore{}
 	}
 	if o.ExitReadWait <= 0 {
 		o.ExitReadWait = ExitReadWait
@@ -415,6 +465,7 @@ func (p *Pool) register(req agentproto.RegisterRequest) (agentproto.RegisterAnsw
 			l.gone(agentproto.InstanceReasonAgentRestarted, "the agent restarted and no longer runs this launch")
 		}
 	}
+	p.startupRegisterLocked(a, old, req, now, &ans)
 	what := "registered"
 	if old != nil {
 		what = "registered again"
@@ -443,19 +494,35 @@ type HeartbeatResult struct {
 func (p *Pool) Heartbeat(id string, body []byte) HeartbeatResult {
 	var hb heartbeat
 	if err := json.Unmarshal(body, &hb); err != nil {
-		// A bad stats object alone must not fail the heartbeat: retry
-		// without it.
+		// A bad optional field alone (stats, or a later addition) must not
+		// fail the heartbeat: retry without the optional fields that do not
+		// decode.
 		var m map[string]json.RawMessage
 		if json.Unmarshal(body, &m) != nil {
 			return HeartbeatResult{Status: http.StatusBadRequest, Err: "the heartbeat is not a JSON object"}
 		}
-		delete(m, "stats")
+		statsBad := false
+		for _, k := range optionalHeartbeatFields {
+			v, ok := m[k]
+			if !ok {
+				continue
+			}
+			one, _ := json.Marshal(map[string]json.RawMessage{k: v})
+			if json.Unmarshal(one, &heartbeat{}) != nil {
+				delete(m, k)
+				statsBad = statsBad || k == "stats"
+			}
+		}
 		b, _ := json.Marshal(m)
+		hb = heartbeat{} // the failed decode may have filled some fields
 		if err := json.Unmarshal(b, &hb); err != nil {
 			return HeartbeatResult{Status: http.StatusBadRequest, Err: "heartbeat: " + err.Error()}
 		}
-		hb.Stats = json.RawMessage(`"unreadable"`)
+		if statsBad {
+			hb.Stats = json.RawMessage(`"unreadable"`)
+		}
 	}
+	hb.sanitize()
 	now := p.o.Clock()
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -492,6 +559,9 @@ func (p *Pool) Heartbeat(id string, body []byte) HeartbeatResult {
 		p.log.Info("unpause delivered to the agent; the node takes load again", "id", id, "name", a.reg.Name)
 	}
 	a.toldPaused = ans.Paused
+	if hb.Startup != nil {
+		ans.StartupAck = p.startupHeartbeatLocked(a, hb.Startup)
+	}
 	p.rebuildLocked()
 	if p.o.Logs != nil {
 		if l := p.o.Logs(id); l != nil {
@@ -874,6 +944,7 @@ func (p *Pool) CheckLost() {
 	now := p.o.Clock()
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.checkStartupsLocked(now) // first: an expired expect-restart no longer excuses a silence
 	changed := false
 	for _, id := range p.sortedIDsLocked() {
 		a := p.agents[id]
@@ -896,6 +967,15 @@ func (p *Pool) CheckLost() {
 			continue
 		}
 		a.lost, a.silent, changed = true, false, true
+		if e := p.expect[id]; e != nil {
+			// Announced with expect-restart: not an error.
+			p.log.Info("agent away for an expected restart", "id", id, "name", a.reg.Name, "kind", e.kind,
+				"silent_for", now.Sub(a.lastSeen).Round(time.Second))
+			p.recordLocked(history.TNodeMembership, history.Info, a,
+				fmt.Sprintf("Node %s is away for an expected restart (%s).", a.reg.Name, e.kind),
+				map[string]any{"state": StateLost, "expected": true, "kind": e.kind})
+			continue
+		}
 		p.log.Error("agent lost: no heartbeat", "id", id, "name", a.reg.Name, "silent_for", now.Sub(a.lastSeen).Round(time.Second), "launches", held)
 		p.recordLocked(history.TNodeMembership, history.Error, a,
 			fmt.Sprintf("Node %s was lost: no heartbeat for %s.", a.reg.Name, now.Sub(a.lastSeen).Round(time.Second)),

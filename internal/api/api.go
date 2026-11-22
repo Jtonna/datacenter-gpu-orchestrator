@@ -123,6 +123,7 @@ type Server struct {
 	auditOnce sync.Once
 	aliasMu   sync.Mutex
 	aliasSeen map[string]time.Time
+	feed      feedSeq // the node feed's change counter (feed.go)
 }
 
 // New builds the API for a scheduler (whose Run is started by the caller)
