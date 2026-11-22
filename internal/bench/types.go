@@ -205,6 +205,11 @@ type NodeReload struct {
 	CachedNowMiB  *int `json:"cached_now_mib,omitempty"`
 	CacheRoomMiB  *int `json:"cache_room_mib,omitempty"`
 	CacheOccupied bool `json:"cache_occupied,omitempty"`
+	// CacheLastFile is the model file of the last load that became ready on
+	// the node, and CacheNote why a short room is or is not flagged (the
+	// scheduler's CacheFlag).
+	CacheLastFile string `json:"cache_last_file,omitempty"`
+	CacheNote     string `json:"cache_note,omitempty"`
 }
 
 // Check is one expectation and whether it held.

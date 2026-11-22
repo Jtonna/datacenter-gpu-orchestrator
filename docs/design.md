@@ -2062,14 +2062,26 @@ the first read and was warm from the second load on; after a cache drop the
 model reloaded in 3.5 s. So, when the node's agent reports its cache
 (`cached_bytes` in the stats, stats contract 4.3), each node's entry also has
 `cached_now_mib`, `cache_room_mib` = (memory - margin - model share, as the
-rule computes `room`) - `cached_now_mib`, and `cache_occupied` when
-`cache_room_mib` is below the file share (`scheduler.CacheRoom`). The UI shows
-it as a second line, "The cache on <node> is occupied by other files now;
-expect the first reloads to be slower". It is not folded into the verdict:
-the cache figure cannot tell whether the cached data is this model's own
-file, so right after this model was loaded (its own file cached) the line
-can show although the next load is warm. Nodes that report no cache figure
-(older agents, the scheduler host) have none of the three fields.
+rule computes `room`) - `cached_now_mib`. The cache figure cannot tell whose
+files it holds, so a short room (`cache_room_mib` below the file share,
+`scheduler.CacheRoom`) is judged by the model file of the last load that
+became ready on the node, which the scheduler keeps per node in memory
+(`cache_last_file`; unknown after a scheduler restart until something loads
+there), and `cache_note` says which case applied (`scheduler.CacheFlag`):
+
+- last load was this model: not flagged (`cache_occupied` false, note "last
+  load on this node was this model"); the cache most likely holds this file,
+  as on the third console above, which reloaded warm;
+- last load was another file: `cache_occupied`, the UI line "The file cache
+  on <node> holds other files now (last loaded there: <file>); expect the
+  first reloads to be slower.";
+- nothing loaded since the scheduler started: `cache_occupied`, with the
+  conditional line "The file cache on <node> is nearly full now (<N> MiB); if
+  that is other models' files, the first reloads will be slower."
+
+None of it is folded into the verdict. Nodes that report no cache figure
+(older agents, the scheduler host) have none of these fields. The benchmark
+step stores them with its verdict entry.
 
 *Safety.* `only_when_idle` (default true): the run does not start, and pauses
 between benchmarks, while the scheduler has an instance this run did not load,

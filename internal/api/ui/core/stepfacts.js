@@ -39,16 +39,21 @@ export function reloadAmount(r) {
 // reloadText(r) -> "Can stay in the file cache: about 85%".
 export const reloadText = r => (r && r.verdict ? RELOAD_PREFIX + reloadAmount(r) : '');
 
-// cacheOccupied(r) -> true when the node's cache holds so much of other files
-// now that the file share does not fit next to it (cache_occupied). Shown on
-// its own line, never folded into the verdict: the cache figure cannot tell
-// whether the cached data is this model's own file.
+// cacheOccupied(r) -> true when the node's cache holds so much now that the
+// file share does not fit next to it and the scheduler has no reason to think
+// that is this model's own file (cache_occupied: the last load on the node was
+// another model, or nothing was loaded there since the scheduler started).
+// Shown on its own line, never folded into the verdict.
 export const cacheOccupied = r => !!(r && r.cache_occupied && (r.verdict === 'full' || r.verdict === 'partial'));
-export const occupiedText = name => `The cache on ${name} is occupied by other files now; expect the first reloads to be slower`;
+// occupiedText(name, r): true in every case. With a known other file it is
+// named; without one the wording stays conditional.
+export const occupiedText = (name, r) => (r && r.cache_last_file
+  ? `The file cache on ${name} holds other files now (last loaded there: ${r.cache_last_file}); expect the first reloads to be slower.`
+  : `The file cache on ${name} is nearly full now (${num(r && r.cached_now_mib, 0)} MiB); if that is other models' files, the first reloads will be slower.`);
 
 // reloadLine(list, nameOf) -> one label per node of a plan, or null. When all
 // nodes say the same, one label is shown for them all. A node whose cache is
-// occupied by other files now gets a second line.
+// flagged (cacheOccupied) gets a second line.
 export function reloadLine(list, nameOf) {
   const rs = (list || []).filter(r => r && r.verdict);
   if (!rs.length) return null;
@@ -56,7 +61,7 @@ export function reloadLine(list, nameOf) {
   const name = r => (nameOf ? nameOf(r) : r.node || r.id);
   const text = same ? reloadText(rs[0]) + (rs.length > 1 ? ' on every node' : '')
     : RELOAD_PREFIX + rs.map(r => `${name(r)}: ${reloadAmount(r)}`).join(' · ');
-  const occ = rs.filter(cacheOccupied).map(r => h('span.sub.warn-t', { title: 'The node reports ' + num(r.cached_now_mib, 0) + ' MiB in its file cache now' }, occupiedText(name(r))));
+  const occ = rs.filter(cacheOccupied).map(r => h('span.sub.warn-t', { title: 'The node reports ' + num(r.cached_now_mib, 0) + ' MiB in its file cache now' }, occupiedText(name(r), r)));
   return [h('span.sub', { title: RELOAD_TIP }, text), ...occ];
 }
 

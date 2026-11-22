@@ -334,6 +334,8 @@ func (h *HTTPAPI) Plan(ctx context.Context, model string) (*PlanInfo, error) {
 			CachedNow *int     `json:"cached_now_mib"`
 			CacheRoom *int     `json:"cache_room_mib"`
 			Occupied  bool     `json:"cache_occupied"`
+			LastFile  string   `json:"cache_last_file"`
+			Note      string   `json:"cache_note"`
 		} `json:"reload_from_cache"`
 	}
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -343,7 +345,8 @@ func (h *HTTPAPI) Plan(ctx context.Context, model string) (*PlanInfo, error) {
 	for _, r := range p.Reload {
 		info.Reload = append(info.Reload, NodeReload{ID: r.ID, Node: r.ID, Verdict: r.Verdict, CachedPct: r.CachedPct, Shared: r.Shared,
 			FileMiB: r.FileMiB, ModelMiB: r.ModelMiB, MemoryMiB: r.MemoryMiB, MarginMiB: r.MarginMiB,
-			CachedNowMiB: r.CachedNow, CacheRoomMiB: r.CacheRoom, CacheOccupied: r.Occupied})
+			CachedNowMiB: r.CachedNow, CacheRoomMiB: r.CacheRoom, CacheOccupied: r.Occupied,
+			CacheLastFile: r.LastFile, CacheNote: r.Note})
 	}
 	for _, n := range p.Nodes {
 		switch v := n.(type) {

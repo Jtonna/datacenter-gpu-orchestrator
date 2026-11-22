@@ -94,6 +94,42 @@ func CacheRoom(in ReloadInput, cachedMiB int) (room int, occupied, ok bool) {
 	return room, room < in.FileMiB, true
 }
 
+// Cache notes (NodeReload.CacheNote): why a short room is or is not flagged.
+const (
+	CacheNoteSameFile = "last load on this node was this model"
+	CacheNoteUnknown  = "nothing loaded on this node since the scheduler started; the cache may hold this model's file or others"
+)
+
+// lastFileOf is what a ready load leaves as the node's last file: the model
+// file, or for a command profile (no model file) its name in plain words, so
+// it never matches a model file.
+func lastFileOf(p *core.Profile) string {
+	if p.Model != "" {
+		return p.Model
+	}
+	return "command profile " + p.Name
+}
+
+// CacheFlag decides whether a short room (CacheRoom's occupied) is shown as
+// "the first reloads will be slower". The cache figure cannot tell whose files
+// it holds, so the last model file that became ready on the node decides:
+// the profile's own file (lastFile == ownFile) is not flagged, because the
+// cache most likely holds that very file; another file is flagged and named;
+// an unknown one (nothing loaded since the scheduler started) is flagged with
+// a note so the wording stays conditional.
+func CacheFlag(short bool, lastFile, ownFile string) (flag bool, note string) {
+	if !short {
+		return false, ""
+	}
+	switch {
+	case lastFile == "":
+		return true, CacheNoteUnknown
+	case lastFile == ownFile:
+		return false, CacheNoteSameFile
+	}
+	return true, "last load on this node was " + lastFile
+}
+
 // NodeReload is the reload rule's answer for one node of a placement, as the
 // plan and the status show it.
 type NodeReload struct {
@@ -110,12 +146,18 @@ type NodeReload struct {
 	CachedPct *float64
 	// CachedNowMiB is what the node's file cache holds now (its agent's
 	// cached_bytes), CacheRoomMiB the rule's room for the file minus that, and
-	// CacheOccupied is set when CacheRoomMiB is below FileMiB: the first
-	// reloads are likely to read part of the file again (CacheRoom). Nil and
-	// false when the node reports no cache figure.
+	// CacheOccupied is set when CacheRoomMiB is below FileMiB and the cache
+	// is not believed to hold this model's own file (CacheFlag): the first
+	// reloads are likely to read part of the file again. Nil and false when
+	// the node reports no cache figure. CacheLastFile is the model file of the
+	// last load that became ready on the node ("" when none since the
+	// scheduler started) and CacheNote says why the room is or is not flagged,
+	// when it is short.
 	CachedNowMiB  *int
 	CacheRoomMiB  *int
 	CacheOccupied bool
+	CacheLastFile string
+	CacheNote     string
 }
 
 // loadModeFor is how the nodes of a placement would get the weights.
@@ -208,7 +250,11 @@ func (c *schedCore) reloadPlan(p *core.Profile, pl core.Placement, mode string) 
 		if n.CachedKnown {
 			if room, occ, ok := CacheRoom(ri, n.CachedMiB); ok {
 				now := n.CachedMiB
-				r.CachedNowMiB, r.CacheRoomMiB, r.CacheOccupied = &now, &room, occ
+				r.CachedNowMiB, r.CacheRoomMiB = &now, &room
+				if ns := c.nodes[pn.ID]; ns != nil {
+					r.CacheLastFile = ns.lastFile
+				}
+				r.CacheOccupied, r.CacheNote = CacheFlag(occ, r.CacheLastFile, p.Model)
 			}
 		}
 		out = append(out, r)

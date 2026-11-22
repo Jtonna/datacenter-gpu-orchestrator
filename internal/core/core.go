@@ -26,7 +26,7 @@ type Node struct {
 	SystemMiB int
 	// CachedMiB is what the machine's file cache holds now (the agent's
 	// stats cached_bytes), valid when CachedKnown. Used only for the
-	// reload-from-cache line ("the cache is occupied by other files now").
+	// reload-from-cache line ("the file cache ... holds other files now").
 	CachedMiB   int
 	CachedKnown bool
 	FreeMiB     int // free memory, already reduced per the shared-memory rule (design 7.1)
