@@ -52,3 +52,31 @@ func TestFreeMemoryAverageWindow(t *testing.T) {
 	hb(10000)
 	check(9000, 9000, 10000)
 }
+
+// N7: on a shared-memory node the average is the average of each sample's
+// usable figure, min(device free, available - floor), not the smaller of
+// the two averages: when the binding figure alternates, the latter is too
+// high. Floor 1000: samples (dev 14000, avail 6000) and (dev 5000, avail
+// 14000) are each 5000 usable; the averages would give min(9500, 9000).
+func TestFreeMemoryAverageOfSampleMinimums(t *testing.T) {
+	r := newRig(t)
+	r.cfg.Defaults.FreeAverageWindow = 30 * time.Second
+	const id = "02:00:00:00:00:73"
+	r.p.Register(regReq(id))
+	hb := func(avail, dev int) {
+		t.Helper()
+		b := `{"agent_start_id":"s1","seq":1,"programs_ready":true,"model_source":{"kind":"share","reachable":true},` +
+			`"mem_available_mib":` + strconv.Itoa(avail) + `,"devices":[{"name":"Vulkan0","backend":"vulkan","total_mib":14336,"free_mib":` +
+			strconv.Itoa(dev) + `,"shares_system_memory":true}]}`
+		if res := r.p.Heartbeat(id, []byte(b)); res.Status != 200 {
+			t.Fatalf("heartbeat %+v", res)
+		}
+	}
+	hb(6000, 14000)
+	r.clk.advance(5 * time.Second)
+	hb(14000, 5000)
+	n, _ := r.node(id)
+	if !n.FreeAvgKnown || n.FreeAvgMiB != 5000 {
+		t.Fatalf("average %d (known %v), want 5000", n.FreeAvgMiB, n.FreeAvgKnown)
+	}
+}

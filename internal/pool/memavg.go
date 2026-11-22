@@ -60,3 +60,22 @@ func (a *agent) memAverage() (avail, devFree int64, ok bool) {
 	}
 	return avail, devFree, true
 }
+
+// sharedAverage is, for a node whose device shares system memory, the
+// average over the samples kept of each sample's usable figure: min(device
+// free, available - floor), rounded down (review N7: the smaller of the two
+// averages can be above it when the binding figure alternates).
+func (a *agent) sharedAverage(floor int64) (int64, bool) {
+	if len(a.mem) == 0 {
+		return 0, false
+	}
+	var sum int64
+	for _, s := range a.mem {
+		u := s.avail - floor
+		if s.devOK {
+			u = min(u, s.devFree)
+		}
+		sum += u
+	}
+	return sum / int64(len(a.mem)), true
+}
