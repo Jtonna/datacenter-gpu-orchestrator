@@ -1,0 +1,318 @@
+package startups
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
+)
+
+func f64(v float64) *float64 { return &v }
+func i64(v int64) *int64     { return &v }
+
+func TestClassify(t *testing.T) {
+	boot := func(id string, agent float64, us *float64, soft *int64) Facts {
+		return Facts{BootID: id, AgentStartS: agent, UserspaceStartS: us, SoftReboots: soft}
+	}
+	for _, c := range []struct {
+		name     string
+		prev     *Facts
+		cur      Facts
+		kind     string
+		inferred bool
+	}{
+		{"full: another boot id", &Facts{BootID: "a", AgentStartS: 20, UserspaceStartS: f64(3), SoftReboots: i64(0)},
+			boot("b", 25, f64(3.5), i64(0)), KindFull, false},
+		{"full: another boot id, no systemd figures (Docker)", &Facts{BootID: "a", AgentStartS: 40}, boot("b", 60, nil, nil), KindFull, false},
+		{"soft: higher soft-restart count", &Facts{BootID: "a", AgentStartS: 20, UserspaceStartS: f64(3), SoftReboots: i64(0)},
+			boot("a", 5000, f64(4980), i64(1)), KindSoft, false},
+		{"soft: later userspace start, systemd older than 254", &Facts{BootID: "a", AgentStartS: 20, UserspaceStartS: f64(3)},
+			boot("a", 5000, f64(4980), nil), KindSoft, false},
+		{"agent restart: same boot, same userspace", &Facts{BootID: "a", AgentStartS: 20, UserspaceStartS: f64(3), SoftReboots: i64(0)},
+			boot("a", 900, f64(3), i64(0)), KindAgentRestart, false},
+		{"agent restart: same boot, systemd figures missing", &Facts{BootID: "a", AgentStartS: 20}, boot("a", 900, nil, nil), KindAgentRestart, true},
+		{"agent restart: same boot, Docker container restarted", &Facts{BootID: "a", AgentStartS: 30}, boot("a", 7200, nil, nil), KindAgentRestart, true},
+		{"first record: full", nil, boot("a", 25, f64(3), i64(0)), KindFull, true},
+		{"first record: soft", nil, boot("a", 5000, f64(4980), i64(1)), KindSoft, true},
+		{"first record: agent long after userspace", nil, boot("a", 9000, f64(3), i64(0)), KindAgentRestart, true},
+		{"first record: userspace long after boot without a soft count", nil, boot("a", 5000, f64(4980), nil), KindAgentRestart, true},
+		{"first record, no systemd figures: early agent is a full start", nil, boot("a", 40, nil, nil), KindFull, true},
+		{"first record, no systemd figures: late agent", nil, boot("a", 4000, nil, nil), KindAgentRestart, true},
+		{"previous record without a boot id", &Facts{AgentStartS: 20}, boot("a", 30, f64(3), i64(0)), KindFull, true},
+	} {
+		kind, inferred, note := Classify(c.prev, c.cur)
+		if kind != c.kind || inferred != c.inferred || note == "" {
+			t.Errorf("%s: got %s inferred=%v (%s), want %s inferred=%v", c.name, kind, inferred, note, c.kind, c.inferred)
+		}
+	}
+}
+
+var t0 = time.Date(2026, 11, 21, 8, 0, 0, 0, time.UTC)
+
+func report(marks map[string]float64) *agentproto.Startup {
+	return &agentproto.Startup{BootID: "b", AgentStartS: 20, UserspaceStartS: f64(3), SoftReboots: i64(0), Marks: marks, ExternalMarks: map[string]float64{}}
+}
+
+// The figure is the latest of registered, programs_ready and share_mounted,
+// whatever order they arrive in; with one missing there is none.
+func TestHeadlineInEveryOrder(t *testing.T) {
+	marks := map[string]float64{"registered": 23.5, "programs_ready": 41.25, "share_mounted": 30}
+	orders := [][]string{
+		{"registered", "programs_ready", "share_mounted"}, {"registered", "share_mounted", "programs_ready"},
+		{"programs_ready", "registered", "share_mounted"}, {"programs_ready", "share_mounted", "registered"},
+		{"share_mounted", "registered", "programs_ready"}, {"share_mounted", "programs_ready", "registered"},
+	}
+	for _, order := range orders {
+		r := New("n1", "console-1", "0.1.3", "bare", "s1", true, t0, report(map[string]float64{"agent_start": 20}), nil)
+		if r.Kind != KindFull {
+			t.Fatalf("kind %s", r.Kind)
+		}
+		for i, m := range order {
+			r.Merge(report(map[string]float64{m: marks[m]}))
+			r.Evaluate(t0.Add(time.Duration(i+1)*2*time.Second), "")
+			if i < 2 && (r.HeadlineS != nil || r.Missing == "" || !r.Open) {
+				t.Fatalf("%v after %d marks: %+v", order, i+1, r)
+			}
+		}
+		if r.HeadlineS == nil || *r.HeadlineS != 41.25 || r.Open || r.Missing != "" {
+			t.Fatalf("%v: %+v", order, r)
+		}
+		if !r.ReadyAt.Equal(t0.Add(17750 * time.Millisecond)) { // registered 23.5 at t0, ready 41.25
+			t.Fatalf("%v: ready at %v", order, r.ReadyAt)
+		}
+	}
+	// One missing: no figure, and the record says which.
+	r := New("n1", "console-1", "0.1.3", "bare", "s1", true, t0, report(map[string]float64{"registered": 23, "programs_ready": 41}), nil)
+	r.Evaluate(t0.Add(time.Minute), "")
+	if r.HeadlineS != nil || r.Missing != "share_mounted" || r.Condition() != "missing share_mounted" {
+		t.Fatalf("%+v", r)
+	}
+	// It never comes: the record closes without a figure, still saying so.
+	if r.Expire(t0.Add(Lifetime - time.Second)) {
+		t.Fatal("expired early")
+	}
+	if !r.Expire(t0.Add(Lifetime)) || r.Open || r.HeadlineS != nil || r.Missing != "share_mounted" {
+		t.Fatalf("%+v", r)
+	}
+	if r.Evaluate(t0.Add(Lifetime+time.Minute), "") {
+		t.Fatal("a closed record changed")
+	}
+	// A push node does not need the share.
+	r = New("n1", "x", "0.1.3", "bare", "s2", false, t0, report(map[string]float64{"registered": 23, "programs_ready": 41}), nil)
+	r.Evaluate(t0, "")
+	if r.HeadlineS == nil || *r.HeadlineS != 41 {
+		t.Fatalf("%+v", r)
+	}
+}
+
+// A soft restart counts from the userspace start.
+func TestHeadlineOfASoftRestart(t *testing.T) {
+	prev := New("n1", "x", "0.1.3", "bare", "s0", true, t0, report(map[string]float64{}), nil)
+	rep := &agentproto.Startup{BootID: "b", AgentStartS: 5003, UserspaceStartS: f64(4990.5), SoftReboots: i64(1),
+		Marks: map[string]float64{"registered": 5004, "programs_ready": 5010, "share_mounted": 5006}, ExternalMarks: map[string]float64{}}
+	r := New("n1", "x", "0.1.3", "bare", "s1", true, t0, rep, prev)
+	r.Evaluate(t0, "")
+	if r.Kind != KindSoft || r.Inferred || r.HeadlineS == nil || *r.HeadlineS != 19.5 {
+		t.Fatalf("%+v", r)
+	}
+	// An agent restart gets no figure and is closed at once.
+	rep2 := &agentproto.Startup{BootID: "b", AgentStartS: 6000, UserspaceStartS: f64(4990.5), SoftReboots: i64(1),
+		Marks: map[string]float64{"registered": 6001, "programs_ready": 6002, "share_mounted": 6001}, ExternalMarks: map[string]float64{}}
+	a := New("n1", "x", "0.1.3", "bare", "s2", true, t0, rep2, r)
+	if a.Kind != KindAgentRestart || a.Open || a.Evaluate(t0, "") || a.HeadlineS != nil || a.Condition() != "" {
+		t.Fatalf("%+v", a)
+	}
+}
+
+// A reason other than a pause holds the figure back; when it clears, the
+// figure is the moment it cleared, mapped onto the node's axis.
+func TestBlockedByAndItsClearing(t *testing.T) {
+	r := New("n1", "x", "0.1.3", "bare", "s1", true, t0,
+		report(map[string]float64{"registered": 23.5, "programs_ready": 41.25, "share_mounted": 30}), nil)
+	if !r.Evaluate(t0.Add(18*time.Second), "no_tier_match") || r.BlockedBy != "no_tier_match" || r.HeadlineS != nil ||
+		r.Condition() != "blocked_by no_tier_match" {
+		t.Fatalf("%+v", r)
+	}
+	// Still blocked: nothing changes.
+	if r.Evaluate(t0.Add(30*time.Second), "no_tier_match") {
+		t.Fatal("changed while still blocked")
+	}
+	// A pause someone set does not hold it back; the reason cleared 100 s
+	// after the registration: 23.5 + 100.
+	if !r.Evaluate(t0.Add(100*time.Second), "paused") {
+		t.Fatal("no change when the reason cleared")
+	}
+	if r.HeadlineS == nil || *r.HeadlineS != 123.5 || r.WasBlockedBy != "no_tier_match" || r.BlockedBy != "" || r.Open ||
+		!r.ReadyAt.Equal(t0.Add(100*time.Second)) {
+		t.Fatalf("%+v", r)
+	}
+	// Paused from the start: a figure all the same.
+	p := New("n1", "x", "0.1.3", "bare", "s2", true, t0,
+		report(map[string]float64{"registered": 23.5, "programs_ready": 41.25, "share_mounted": 30}), nil)
+	p.Evaluate(t0, "paused")
+	if p.HeadlineS == nil || *p.HeadlineS != 41.25 {
+		t.Fatalf("%+v", p)
+	}
+	// Blocked until the lifetime ends: no figure, the reason stays.
+	b := New("n1", "x", "0.1.3", "bare", "s3", true, t0,
+		report(map[string]float64{"registered": 23.5, "programs_ready": 41.25, "share_mounted": 30}), nil)
+	b.Evaluate(t0, "bad_floor")
+	b.Expire(t0.Add(Lifetime))
+	if b.Open || b.HeadlineS != nil || b.BlockedBy != "bad_floor" {
+		t.Fatalf("%+v", b)
+	}
+}
+
+// A requested start gets its away times on Potluck's clock.
+func TestRequestedStart(t *testing.T) {
+	call := t0.Add(-90 * time.Second)
+	r := New("n1", "x", "0.1.3", "bare", "s1", true, t0, &agentproto.Startup{BootID: "c", AgentStartS: 20,
+		Marks: map[string]float64{"registered": 23}, ExternalMarks: map[string]float64{}}, &Record{BootID: "b"})
+	r.MarkRequested("full", "kernel update", call, t0)
+	r.Merge(report(map[string]float64{"programs_ready": 40, "share_mounted": 25}))
+	r.Evaluate(t0.Add(20*time.Second), "")
+	if !r.Requested || *r.AwayS != 90 || r.AwayToReadyS == nil || *r.AwayToReadyS != 107 || r.RequestedKind != "full" {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestMergeKeepsFirstValuesAndBounds(t *testing.T) {
+	r := New("n1", "x", "0.1.3", "bare", "s1", true, t0, report(map[string]float64{"registered": 23}), nil)
+	ext := map[string]float64{"bad name": 1, "ok": 2}
+	for i := 0; i < 40; i++ {
+		ext[fmt.Sprintf("m%02d", i)] = float64(i)
+	}
+	if !r.Merge(&agentproto.Startup{Marks: map[string]float64{"registered": 99, "programs_ready": -1}, ExternalMarks: ext}) {
+		t.Fatal("no change")
+	}
+	if r.Marks["registered"] != 23 || len(r.ExternalMarks) != agentproto.StartupMaxExternalMarks {
+		t.Fatalf("%v %d", r.Marks, len(r.ExternalMarks))
+	}
+	if _, ok := r.Marks["programs_ready"]; ok {
+		t.Fatal("a negative mark was taken")
+	}
+	if _, ok := r.ExternalMarks["bad name"]; ok {
+		t.Fatal("a bad name was taken")
+	}
+	if r.Merge(&agentproto.Startup{Marks: map[string]float64{"registered": 23}}) {
+		t.Fatal("the same marks again are a change")
+	}
+	order := r.MarksInOrder()
+	for i := 1; i < len(order); i++ {
+		if order[i].S < order[i-1].S {
+			t.Fatalf("marks out of order: %v", order)
+		}
+	}
+}
+
+// The aggregates never put two kinds into one figure.
+func TestAggregatesNeverMixKinds(t *testing.T) {
+	var recs []Record
+	add := func(node, kind string, h float64, minute int, requested bool) {
+		r := Record{ID: int64(len(recs) + 1), NodeID: node, NodeName: "name-" + node, Kind: kind,
+			RegisteredAt: t0.Add(time.Duration(minute) * time.Minute), Requested: requested}
+		if h >= 0 {
+			r.HeadlineS = f64(h)
+		}
+		recs = append(recs, r)
+	}
+	add("n1", KindFull, 40, 1, false)
+	add("n1", KindFull, 60, 2, false)
+	add("n1", KindFull, 50, 3, true)
+	add("n1", KindFull, -1, 4, false) // no figure
+	add("n1", KindSoft, 10, 5, true)
+	add("n1", KindSoft, 12, 6, false)
+	add("n1", KindAgentRestart, -1, 7, false)
+	add("n2", KindFull, 90, 1, false)
+	ag := Aggregates(recs)
+	if len(ag) != 4 {
+		t.Fatalf("%d groups", len(ag))
+	}
+	full, soft, ar, n2 := ag[0], ag[1], ag[2], ag[3]
+	if full.Kind != KindFull || full.Count != 4 || full.WithFigure != 3 || *full.LastS != 50 || *full.MedianS != 50 || *full.WorstS != 60 ||
+		full.Requested != 1 || full.Last.HeadlineS != nil {
+		t.Fatalf("full %+v", full)
+	}
+	if soft.Kind != KindSoft || soft.Count != 2 || *soft.LastS != 12 || *soft.MedianS != 11 || *soft.WorstS != 12 {
+		t.Fatalf("soft %+v", soft)
+	}
+	if ar.Kind != KindAgentRestart || ar.Count != 1 || ar.LastS != nil || ar.MedianS != nil {
+		t.Fatalf("agent restart %+v", ar)
+	}
+	if n2.NodeID != "n2" || *n2.WorstS != 90 {
+		t.Fatalf("n2 %+v", n2)
+	}
+}
+
+// The store: a record survives the round trip, it is found by its agent
+// start, and a node keeps its newest 500.
+func TestStoreRoundTripAndCap(t *testing.T) {
+	db, err := bench.OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	st, err := Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(db); err != nil { // again: nothing to migrate
+		t.Fatal(err)
+	}
+	for name, s := range map[string]interface {
+		Insert(*Record) error
+		Update(*Record) error
+		List(string, int) ([]Record, error)
+		All() ([]Record, error)
+		Latest(string) (*Record, error)
+		ByStart(string, string) (*Record, error)
+	}{"sqlite": st, "memory": &MemStore{}} {
+		r := New("n1", "console-1", "0.1.3", "bare", "s1", true, t0, &agentproto.Startup{BootID: "b", AgentStartS: 20.5,
+			UserspaceStartS: f64(3.25), SoftReboots: i64(0), Marks: map[string]float64{"registered": 23.5},
+			ExternalMarks: map[string]float64{"network_ok": 9.5}}, nil)
+		if err := s.Insert(r); err != nil || r.ID == 0 {
+			t.Fatalf("%s: insert %v", name, err)
+		}
+		r.Merge(report(map[string]float64{"programs_ready": 41, "share_mounted": 30}))
+		r.Evaluate(t0.Add(time.Minute), "")
+		if err := s.Update(r); err != nil {
+			t.Fatalf("%s: update %v", name, err)
+		}
+		got, err := s.ByStart("n1", "s1")
+		if err != nil || got == nil || got.ID != r.ID || *got.HeadlineS != 41 || got.ExternalMarks["network_ok"] != 9.5 ||
+			*got.UserspaceStartS != 3.25 || !got.RegisteredAt.Equal(t0) || got.Kind != KindFull || !got.Inferred {
+			t.Fatalf("%s: round trip %+v %v", name, got, err)
+		}
+		if x, _ := s.ByStart("n1", "other"); x != nil {
+			t.Fatalf("%s: found an unknown start", name)
+		}
+		for i := 0; i < KeepPerNode+5; i++ {
+			x := New("n2", "c2", "0.1.3", "bare", fmt.Sprintf("a%d", i), true, t0.Add(time.Duration(i)*time.Second), report(map[string]float64{}), nil)
+			if err := s.Insert(x); err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+		}
+		l, _ := s.List("n2", 0)
+		if len(l) != KeepPerNode || l[0].AgentStartID != fmt.Sprintf("a%d", KeepPerNode+4) || l[len(l)-1].AgentStartID != "a5" {
+			t.Fatalf("%s: kept %d, newest %s, oldest %s", name, len(l), l[0].AgentStartID, l[len(l)-1].AgentStartID)
+		}
+		if l, _ := s.List("n1", 0); len(l) != 1 {
+			t.Fatalf("%s: the cap of n2 touched n1", name)
+		}
+		if last, _ := s.Latest("n2"); last == nil || last.AgentStartID != fmt.Sprintf("a%d", KeepPerNode+4) {
+			t.Fatalf("%s: latest %+v", name, last)
+		}
+		if all, _ := s.All(); len(all) != KeepPerNode+1 {
+			t.Fatalf("%s: all %d", name, len(all))
+		}
+		if err := s.Insert(New("n1", "c", "0.1.3", "bare", "s1", true, t0, report(nil), nil)); err == nil {
+			t.Fatalf("%s: a second record of the same agent start", name)
+		}
+	}
+	if !strings.Contains(migrations[0], "CREATE TABLE startups") {
+		t.Fatal("migration")
+	}
+}

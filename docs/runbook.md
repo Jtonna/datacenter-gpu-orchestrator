@@ -495,6 +495,57 @@ and `boot_id` are the machine's uptime since its kernel booted and its boot id
 same `seq` has nothing new but ages and uptimes. Agents membership only; with
 the fleet feed it answers `503`.
 
+### Read the start-up figures (design 9.6)
+
+```sh
+curl -s http://127.0.0.1:3122/api/startups
+curl -s 'http://127.0.0.1:3122/api/nodes/<node id>/startups?limit=5'
+```
+
+The figure is the seconds from boot start to ready for model loads: from the
+kernel start for a full start, from the userspace start for a soft restart.
+An agent restart (the machine kept running) has no figure. `/api/startups`
+has one group per node and kind (`full`, `soft`, `agent_restart`) with
+`count`, `last_s`, `median_s` and `worst_s`; never compare across kinds. A
+record without a figure says why: `missing` names the condition that never
+came (`registered`, `programs_ready`, `share_mounted`, or `userspace_start`
+when systemd gave none for a soft restart), `blocked_by` the unplaced reason
+that held the node back. `inferred: true` means there was no earlier start to
+compare with; `kind_note` says how the kind was chosen. The marks of a record
+(`marks_in_order`) are seconds since that machine's kernel started; the
+console's own marks (`external_marks`) come from `/run/potluck/startup-marks`
+on the node. On a console the time before the Linux kernel starts cannot be
+seen from inside Linux and is not included; none of these is a time from
+power-on. The Nodes page shows each machine's last start (open "Marks" for
+the marks); the Benchmarks overview has the "Start-up" section.
+
+A Docker agent reports no userspace start and no soft-restart count, so its
+starts are full starts or agent restarts only.
+
+### Measure a soft restart
+
+1. Pause the node (web UI, or `POST /api/nodes/<id>/pause` with a comment)
+   and wait until nothing runs on it (its card shows "Nothing loaded").
+2. Announce the restart (agents membership only):
+
+   ```sh
+   curl -s -X POST http://127.0.0.1:3122/api/nodes/<id>/expect-restart \
+     -H 'Content-Type: application/json' -d '{"kind":"soft","comment":"measure a soft restart"}'
+   ```
+
+   `409` says why it was not taken (not paused, or a launch still on it). It
+   holds for 10 minutes; while it does, the node's absence is logged as INFO
+   "agent away for an expected restart", not as the ERROR "agent lost".
+3. Restart the node: `sudo systemctl soft-reboot` on it (for a full restart,
+   `"kind":"full"` and a reboot).
+4. When it is back, read its record: `GET /api/nodes/<id>/startups?limit=1`
+   shows `requested: true`, `away_s` (from the call to its registration) and,
+   once ready, `headline_s` and `away_to_ready_s`.
+5. Unpause the node. The pause did not hold the figure back.
+
+If the node does not come back within 10 minutes the log says "expected
+restart did not happen" once, and a later absence is an error again.
+
 ### Watch a load (progress and ETA)
 
 A load onto the PS5s prints nothing in the child log while the model uploads, so look at the scheduler instead. While the instance is `starting`:

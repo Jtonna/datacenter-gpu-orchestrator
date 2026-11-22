@@ -125,6 +125,7 @@ Answer `200`:
 - `stop_launch`: when the registration carried a `launch_id` Potluck does not know (Potluck restarted and lost it), Potluck names it here and the agent stops it. Registering never touches a launch Potluck does know.
 - `logs` (CR-10, accepted, batch 1 built, not deployed; optional, ignored by release 0.1.0): where and how the agent pushes its log lines. Absent or `null`: the agent ships nothing. Section 11.3, item 2.
 - `server_time_unix_ms` (CR-10, agent batch, built, not deployed; optional, ignored by release 0.1.0): Potluck's own clock when it answered, in Unix milliseconds, sent only with `logs`. The agent stamps its log lines from it. Section 11.3, item 11.
+- `startup_ack` (optional, added within release 0.1.3): how many start-up marks of the registration's `startup` object Potluck took. Absent: Potluck takes no start-up reports. Section 11.4. The registration itself may carry `startup` (same section); a Potluck built before it ignores it, and one that cannot read it drops it and takes the rest.
 
 Refusals, all `200` with `"accepted": false`, a `reason` word and a `message`:
 
@@ -181,7 +182,9 @@ Every `heartbeat_every_s`. It carries everything Potluck needs to know about an 
 - CR-10, accepted, batch 1 built, not deployed; optional, not sent by release 0.1.0: `logs`, the agent's log shipping figures (section 11.3, item 4).
 - Optional, added within release 0.1.3 (an agent built before them sends neither, and a Potluck built before them ignores them): `host_uptime_s`, the machine's own uptime in seconds since its kernel booted, read from the agent's monotonic clock (`CLOCK_BOOTTIME`) when it builds the heartbeat, with decimals; and `boot_id`, the kernel's boot id (`/proc/sys/kernel/random/boot_id`, 32 hex digits without dashes), read once at agent start and left out when it cannot be read. For example `"host_uptime_s": 4123.25, "boot_id": "0123456789abcdef0123456789abcdef"`. A Docker install sends the host kernel's: a container shares both with its host. Neither is a wall-clock time (rule 2.1). A value of the wrong type, a negative uptime or a boot id that is not hex is dropped by Potluck; the heartbeat is still taken.
 
-Answer `200`: `{"release": "0.1.0", "paused": false}`. With central logging on (CR-10, accepted, batch 1 built, not deployed) the answer also has `logs_revision` (section 11.3, item 3) and `server_time_unix_ms` (item 11); release 0.1.0 ignores both.
+- Optional, added within release 0.1.3: `startup`, the agent's start-up report, sent until Potluck has acknowledged all of it (section 11.4). A report that cannot be read is dropped; the heartbeat is still taken.
+
+Answer `200`: `{"release": "0.1.0", "paused": false}`. When the heartbeat carried `startup`, the answer has `startup_ack` (section 11.4; absent from a Potluck built before it). With central logging on (CR-10, accepted, batch 1 built, not deployed) the answer also has `logs_revision` (section 11.3, item 3) and `server_time_unix_ms` (item 11); release 0.1.0 ignores both.
 
 **The agent's three failure cases, kept apart:**
 
@@ -550,6 +553,8 @@ Both are state and actions of Potluck, reachable from its web UI, its REST API a
 
 REST shape on Potluck (proposal): `POST /api/nodes/{id}/pause`, `POST /api/nodes/{id}/unpause`, `POST /api/nodes/{id}/force-unload`, each with a required `comment`.
 
+- **Expect a restart** (added within release 0.1.3, Potluck only): `POST /api/nodes/{id}/expect-restart` with `{"kind": "soft"|"full", "comment": "…"}` says the operator is about to restart the node (a soft restart with `systemctl soft-reboot`, or a full one). It is taken only while the node is paused and holds no launch (Potluck holds none on it and its agent reports none); otherwise `409` with the reason; `404` for an unknown node; `400` without a comment or with another kind. It is valid for 10 minutes. While it is pending, the node's absence is logged at INFO ("agent away for an expected restart") and written to history as info, not as the ERROR "agent lost". The next registration of another agent process closes it: that start's record (section 11.4) is marked `requested`, with `away_s` (from the call to the registration) and, once it has its figure, `away_to_ready_s` (from the call to ready for model loads), both on Potluck's clock. A restart that does not come within the 10 minutes is logged once as a warning and dropped. The call is written to the audit log and to history like a pause. The web UI does not offer it: it is an operator route for measuring a restart (runbook "Measure a soft restart").
+
 ## 8. Where model files come from
 
 A node has exactly one model source, set at install and reported at registration.
@@ -850,6 +855,42 @@ Every field it adds is optional and every route is new, so a CR-10 side works wi
 Tests of the agent batch: the wire type and the pool (`server_time_unix_ms` only with logging on, release 0.1.0 decoders), the shipper against a fake Potluck (time from the anchor with a node clock two months off, lines before the anchor, a pause, every answer of item 14, the byte rate, a new revision, logging off, a hung Potluck), the ring (oldest first, the count line, the bound under a flood), the journal reader (times, other boot, `deny_units`, a flood dropped by rate, no `journalctl`), launch output (a real child writing 64 MB while Potluck hangs), and the agent (its lines, launch output and journal shipped; a heartbeat and a launch start on time while the sender hangs, the ring is full and the journal floods; no `logs` object ships nothing; `--logs off`).
 
 Tests of batch 1: the wire types (the object as shown above, release 0.1.0 bodies in both directions), the pool (the object and the revision in the answers, the figures from the heartbeat, the snapshot and that reading it does not wait for the pool's lock, the profile of a running and of an ended launch), the relay against a fake store (trusted fields, values with commas, equals signs, colons and percent signs read back with the store's own parsing rules, every limit and answer, a stalled sender, a silent store), the API (everything off without a store address, the whole path, live settings) and the flood test.
+
+### 11.4 Start-up reporting (added within release 0.1.3)
+
+Each start of an agent reports, on the machine's own time axis, how its start went, so that Potluck can say how many seconds after boot start the node was ready for model loads (design "Start-up figures"). Everything here is optional on the wire: a 0.1.3 agent built before it sends no `startup` object and gets no record, and a new agent against a Potluck built before it gets no `startup_ack` and stops sending the report in heartbeats until it registers again. The release stays 0.1.3.
+
+**The report.** The registration always carries it; heartbeats carry it while Potluck has not acknowledged all of it.
+
+```json
+"startup": {
+  "boot_id": "0123456789abcdef0123456789abcdef",
+  "agent_start_s": 21.403,
+  "userspace_start_s": 3.118,
+  "soft_reboots": 0,
+  "marks": {"agent_start": 21.403, "registered": 23.512, "share_mounted": 24.007,
+            "programs_ready": 41.25, "exporter_up": 41.31, "first_stats": 43.32},
+  "external_marks": {"boot_progress_start": 1.95, "network_ok": 9.5, "payload_ok": 18.2}
+}
+```
+
+- Every figure is seconds since the machine's kernel booted, from the agent's monotonic clock (`CLOCK_BOOTTIME`), rounded to milliseconds. None is a wall-clock time (rule 2.1).
+- `boot_id`: as in the heartbeat (section 4.3). `agent_start_s`: when the agent process started.
+- `userspace_start_s` and `soft_reboots`: systemd's `UserspaceTimestampMonotonic` (in seconds) and `SoftRebootsCount`, read once at agent start with `systemctl show --property=UserspaceTimestampMonotonic --property=SoftRebootsCount`. Each is left out when systemd does not give it (no systemd; systemd older than 254 has no `SoftRebootsCount`; an unset timestamp is 0). Never guessed. systemd's figure is `CLOCK_MONOTONIC`, the agent's `CLOCK_BOOTTIME`; they are equal unless the machine was suspended, which a pool machine is not.
+- `marks`, the agent's own, each recorded once per agent process, the first time it happens: `agent_start`; `registered` (the answer of the first accepted registration arrived); `share_mounted` (the first probe that found the model source reachable; a push node never has it); `programs_ready` (the programs are verified and ready for a launch); `exporter_up` (the exporters were started with at least one source); `first_stats` (the first successful scrape).
+- `external_marks`: the marks of the start-up marks file (below), passed through as they are, names Potluck does not know included.
+- **Acknowledgement.** Potluck answers `startup_ack`: the number of marks (`marks` plus `external_marks`) of the report it took. When that is the number the agent sent and nothing changed since, the agent stops sending the report; a new mark, or a changed value in the marks file, sends it again. `startup_ack` absent: Potluck takes no reports; the agent stops sending them in heartbeats until its next registration.
+
+**The start-up marks file** is a contract with the console side (the component that boots the machine and starts the payload). Path `/run/potluck/startup-marks`. One mark per line, `<name> <seconds>`, the seconds since the kernel booted (`CLOCK_BOOTTIME`, the first field of `/proc/uptime`), for example `network_ok 9.50`. Names are 1 to 64 letters, digits, `_`, `-` or `.`; the known names are `boot_progress_start`, `network_ok`, `payload_ok`, `boot_ready` and `dashboard_up`, and any other name is passed through. The writer replaces the file whole (writes a temporary file in the same folder, then renames it over), so a reader never sees half of it. The agent:
+
+- reads it at start, then every 2 s, and stops after 5 minutes or after 60 s without a change, whichever comes first;
+- skips a line that is not exactly a valid name and a finite number of 0 or more (a half-written last line included); a name given twice takes the last value; at most 32 names;
+- ignores a file larger than 64 KiB, with one warning, and keeps the marks it had;
+- takes a missing file as normal (no marks), and never creates or deletes the file or its folder.
+
+**Docker install.** It reports `boot_id`, `agent_start_s` and its own marks: the container shares the host's kernel, so its boot id and `CLOCK_BOOTTIME` are the host's. It reports no `userspace_start_s`, no `soft_reboots` and no external marks: inside the container `systemctl` would show the container's own systemd or none, and the host's `/run/potluck` is not mounted. So Potluck can tell a full start (another boot id) from the rest, but not a soft restart from an agent restart (design "Start-up figures", the kinds).
+
+**What Potluck does with it** (design "Start-up figures"): one record per agent process, of one kind (full start, soft restart or agent restart), with its figure once the node is ready for model loads; `last_startup` in the node's entry of `agents` in `GET /api/status` and of `GET /api/nodes`; `GET /api/nodes/{id}/startups` and `GET /api/startups`.
 
 ## 12. Open questions
 

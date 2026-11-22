@@ -36,6 +36,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/modelsrc"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/osx"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/runner"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/startup"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
 )
 
@@ -279,12 +280,23 @@ func serve(opt agent.Options, stderr io.Writer) int {
 	if opt.Install == agentproto.InstallDocker {
 		upd = agent.DockerUpdater{Exit: os.Exit}
 	}
+	// Start-up reporting: a bare install asks the machine's systemd and reads
+	// the marks file; a Docker install does neither (inside its container it
+	// would see the container's own systemd, or none, and no /run/potluck).
+	var sysd startup.Systemd
+	if opt.Install == agentproto.InstallBare {
+		sysd = startup.ExecSystemd{}
+		if opt.MarksFile == "" {
+			opt.MarksFile = agentproto.StartupMarksFile
+		}
+	}
 	a, err = agent.New(opt, agent.Deps{
 		Clock: clock, Runner: rn, Mem: osx.MemInfoFile{}, Sockets: osx.ProcNetSockets{}, Procs: osx.ProcFS{},
 		KLog: osx.Kmsg{}, Net: realNet(machine), Hardware: machineHW{machine},
 		Mounter: modelsrc.ExecMounter{Cmd: osx.ExecCommander{}}, Prober: modelsrc.ExecProber{Exe: exe},
 		DiskFree: osx.StatfsFree, HostHealthy: hostHealthy, Updater: upd, HTTP: httpc, Logger: log,
-		Listen: func(addr string) (net.Listener, error) { return net.Listen("tcp", addr) },
+		Listen:  func(addr string) (net.Listener, error) { return net.Listen("tcp", addr) },
+		Systemd: sysd,
 	})
 	if err != nil {
 		log.Error("start", "err", err)

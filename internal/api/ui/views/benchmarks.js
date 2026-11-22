@@ -11,7 +11,8 @@
 // Reads: WebSocket "bench" (state, run, progress, step_started, step_finished,
 // request, aggregate_updated) through the store; REST GET /api/bench/state
 // (once on entry), /benchmarks, /suites, /runs, /runs/{id}, /aggregates,
-// /trends, /schema, /profiles, and GET /api/profiles for model file names.
+// /trends, /schema, /profiles, GET /api/profiles for model file names, and
+// GET /api/startups for the start-up figures of the overview.
 // Writes: POST/PUT/DELETE /api/bench/benchmarks and /suites, POST
 // /api/bench/suites/{id}/run and /api/bench/runs/{id}/cancel (core/api.js).
 // The compact run indicator is registered with setShellSlot('run', node) as
@@ -32,6 +33,7 @@ import { aggregatesView, aggState } from './benchmarks/aggregates.js';
 import { benchmarkEditor, suiteEditor } from './benchmarks/editor.js';
 import { suitePage, benchmarkPage, loadSuiteRuns, loadResults } from './benchmarks/pages.js';
 import { needCatalog, onCatalog } from '../core/catalog.js';
+import { loadStartups, onStartups } from '../core/startup.js';
 import { h as el_ } from '../core/dom.js';
 
 trackLive();
@@ -59,6 +61,7 @@ registerView({
       const tab = tabOf(r.rest);
       if (force || !asked.lists) { asked.lists = true; refreshLists(); }
       if ((tab === 'overview' || tab === 'page') && (force || !asked.aggAll)) { asked.aggAll = true; loadAggregates(false); }
+      if (tab === 'overview' && (force || !asked.startups)) { asked.startups = true; loadStartups(api); }
       if (tab === 'page') {
         const k = r.rest[0] + ':' + r.rest[1];
         if (force || asked.page !== k) {
@@ -110,6 +113,7 @@ registerView({
     };
 
     const offData = onData(() => view.refresh());
+    const offStartups = onStartups(() => view.refresh());
     const offCatalog = onCatalog(() => view.refresh());
     needCatalog();
     const offBench = listen('bench', d => {
@@ -143,7 +147,7 @@ registerView({
     syncEditor();
     seedState();
     return {
-      unmount() { alive = false; Object.values(timers).forEach(clearTimeout); offData(); offCatalog(); offBench(); dropDrawer(); if (editor) editor.destroy(); view.unmount(); },
+      unmount() { alive = false; Object.values(timers).forEach(clearTimeout); offData(); offStartups(); offCatalog(); offBench(); dropDrawer(); if (editor) editor.destroy(); view.unmount(); },
       update(nr) { r = nr; syncEditor(); view.refresh(); },
     };
   },

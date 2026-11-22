@@ -42,6 +42,9 @@ type Config struct {
 	// started (Restarted), a failed scrape is not warned about; default 5 s.
 	StartGrace time.Duration
 	Logger     *slog.Logger // optional
+	// OnScrape is called after each successful scrape, outside the
+	// collector's lock, with the source's name. Optional.
+	OnScrape func(source string)
 }
 
 // Errors returned by ScrapeOnce besides scrape failures.
@@ -266,6 +269,12 @@ func (c *Collector) scrape(ctx context.Context, st *sourceState) error {
 		dur = 0
 	}
 
+	scraped := false
+	defer func() { // after the unlock below: defers run last first
+		if scraped && c.cfg.OnScrape != nil {
+			c.cfg.OnScrape(cfg.Name)
+		}
+	}()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	st.busy = false
@@ -298,6 +307,7 @@ func (c *Collector) scrape(ctx context.Context, st *sourceState) error {
 	if cfg.Name == agentproto.SourceNode {
 		st.counters.update(m, start)
 	}
+	scraped = true
 	return nil
 }
 

@@ -129,6 +129,9 @@ type Config struct {
 	LaunchExists func() bool
 	Logger       *slog.Logger
 	OnError      func(msg string)
+	// OnReachable is called after every probe that found the model source
+	// reachable, outside the source's lock. Optional.
+	OnReachable func()
 }
 
 // Source watches the model source.
@@ -273,6 +276,9 @@ func (s *Source) record(ok bool, why string) {
 		s.fails++
 	}
 	s.mu.Unlock()
+	if ok && s.cfg.OnReachable != nil {
+		s.cfg.OnReachable()
+	}
 	switch {
 	case !changed:
 		if !ok {

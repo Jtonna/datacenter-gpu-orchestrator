@@ -17,6 +17,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/fleet"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/startups"
 )
 
 // The node view (fleet.View) built from the agents. Remote nodes are the
@@ -191,6 +192,7 @@ func (p *Pool) rebuildLocked() {
 		default:
 		}
 	}
+	p.evaluateStartupsLocked()
 }
 
 // nodeFromAgentLocked is the core node of an agent (agent contract 11,
@@ -464,6 +466,11 @@ type NodeFacts struct {
 	// an agent that reports neither.
 	HostUptimeS *float64 `json:"host_uptime_s,omitempty"`
 	BootID      string   `json:"boot_id,omitempty"`
+	// LastStartup is the node's last start as Potluck recorded it: its kind
+	// and the seconds from boot start to ready for model loads, or the
+	// condition still missing. Absent for an agent that sends no start-up
+	// report.
+	LastStartup *startups.Last `json:"last_startup,omitempty"`
 }
 
 // UnpausePendingMessage is the unplaced message of a node whose unpause has
@@ -505,6 +512,7 @@ func (p *Pool) Facts() []NodeFacts {
 				f.Logs = &NodeLogs{Refused: map[string]int64{}, Agent: sh}
 			}
 		}
+		f.LastStartup = startups.LastOf(a.rec)
 		if fl := reportedFloor(a); fl > 0 {
 			f.WatchdogFloorMiB, f.FloorMismatch = &fl, floorMismatch(cfg, a)
 		}

@@ -1,0 +1,367 @@
+// Package startup is the agent's start-up report (agent contract, "Start-up
+// reporting"): the marks of this agent process on the machine's own time
+// axis (seconds since the kernel booted, monotonic), systemd's userspace
+// start and soft-restart count, and the marks another component writes into
+// the start-up marks file. Potluck turns them into one figure per start.
+//
+// Nothing here reads a wall clock (contract rule 2.1): every figure comes
+// from the agent's monotonic clock or from the kernel's and systemd's
+// monotonic figures.
+package startup
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"errors"
+	"io"
+	"math"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
+)
+
+// secs turns a duration on the agent's clock into seconds with millisecond
+// decimals.
+func secs(d time.Duration) float64 { return math.Round(float64(d)/float64(time.Millisecond)) / 1000 }
+
+// ---- systemd ----
+
+// Facts are what systemd says about userspace. A field is nil when systemd
+// did not give it: never guessed.
+type Facts struct {
+	// UserspaceStartS is UserspaceTimestampMonotonic in seconds: when
+	// userspace last started, at boot or at the last soft restart.
+	UserspaceStartS *float64
+	// SoftReboots is SoftRebootsCount (systemd 254 or later).
+	SoftReboots *int64
+}
+
+// Systemd asks systemd, once, about userspace.
+type Systemd interface {
+	Show(ctx context.Context) (Facts, error)
+}
+
+// ShowArgs are the arguments of the one systemctl call.
+var ShowArgs = []string{"show", "--property=UserspaceTimestampMonotonic", "--property=SoftRebootsCount"}
+
+// ExecSystemd runs `systemctl show` for the manager's two properties.
+type ExecSystemd struct {
+	// Run runs a command and returns its standard output; nil runs it.
+	Run func(ctx context.Context, name string, args ...string) ([]byte, error)
+}
+
+// Show implements Systemd.
+func (e ExecSystemd) Show(ctx context.Context) (Facts, error) {
+	run := e.Run
+	if run == nil {
+		run = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			return exec.CommandContext(ctx, name, args...).Output()
+		}
+	}
+	out, err := run(ctx, "systemctl", ShowArgs...)
+	if err != nil {
+		return Facts{}, err
+	}
+	f := ParseShow(out)
+	if f.UserspaceStartS == nil && f.SoftReboots == nil {
+		return f, errors.New("systemctl show gave neither UserspaceTimestampMonotonic nor SoftRebootsCount")
+	}
+	return f, nil
+}
+
+// ParseShow reads `systemctl show` output (KEY=VALUE lines). A property
+// that is missing, empty or not a number is left nil; a userspace start of 0
+// means systemd does not know it and is left nil too.
+func ParseShow(out []byte) Facts {
+	var f Facts
+	sc := bufio.NewScanner(bytes.NewReader(out))
+	for sc.Scan() {
+		k, v, ok := strings.Cut(strings.TrimSpace(sc.Text()), "=")
+		if !ok {
+			continue
+		}
+		switch k {
+		case "UserspaceTimestampMonotonic":
+			if us, err := strconv.ParseUint(v, 10, 64); err == nil && us > 0 {
+				s := math.Round(float64(us)/1000) / 1000 // microseconds to seconds, millisecond decimals
+				f.UserspaceStartS = &s
+			}
+		case "SoftRebootsCount":
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+				f.SoftReboots = &n
+			}
+		}
+	}
+	return f
+}
+
+// ---- the marks file ----
+
+// ParseMarks reads the marks file: one "<name> <seconds>" per line. A line
+// that is not exactly a valid name and a finite, non-negative number is
+// skipped (a half-written last line included). A name given twice keeps its
+// last value. At most agentproto.StartupMaxExternalMarks names are taken, in
+// the order they first appear.
+func ParseMarks(b []byte) map[string]float64 {
+	out := map[string]float64{}
+	for _, line := range strings.Split(string(b), "\n") {
+		f := strings.Fields(line)
+		if len(f) != 2 || !agentproto.ValidStartupMarkName(f[0]) {
+			continue
+		}
+		v, err := strconv.ParseFloat(f[1], 64)
+		if err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+			continue
+		}
+		if _, seen := out[f[0]]; !seen && len(out) >= agentproto.StartupMaxExternalMarks {
+			continue
+		}
+		out[f[0]] = v
+	}
+	return out
+}
+
+// errTooLarge: the marks file is larger than the cap and is ignored.
+var errTooLarge = errors.New("the start-up marks file is larger than 64 KiB; it is ignored")
+
+// readCapped reads a file of at most max bytes; a missing file is (nil, nil).
+func readCapped(path string, max int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > max {
+		return nil, errTooLarge
+	}
+	return b, nil
+}
+
+// Watcher re-reads the marks file for a while after the agent starts: marks
+// keep arriving (the dashboard after the agent, for example). It stops after
+// WatchFor, or when the file has not changed for QuietFor. It only reads:
+// it never creates or deletes the file or its folder.
+type Watcher struct {
+	Path string
+	// Read reads the file (nil: a capped read of Path); tests replace it.
+	Read func(path string) ([]byte, error)
+
+	started    bool
+	start      time.Duration
+	lastChange time.Duration
+	last       []byte
+	missing    bool
+	done       bool
+	tooLarge   bool
+}
+
+// The bounds of the re-reading.
+const (
+	WatchFor = 5 * time.Minute
+	QuietFor = 60 * time.Second
+)
+
+// Poll reads the file once at agent clock now. It returns the marks when the
+// file changed since the last poll (a file that went missing gives an empty
+// map), changed false otherwise, and done once the watcher has stopped; a
+// stopped watcher reads nothing. warn is a line worth logging once.
+func (w *Watcher) Poll(now time.Duration) (marks map[string]float64, changed, done bool, warn string) {
+	if w.done {
+		return nil, false, true, ""
+	}
+	if !w.started {
+		w.started, w.start, w.lastChange, w.missing = true, now, now, true
+	}
+	read := w.Read
+	if read == nil {
+		read = func(p string) ([]byte, error) { return readCapped(p, agentproto.StartupMarksFileMaxBytes) }
+	}
+	b, err := read(w.Path)
+	switch {
+	case errors.Is(err, errTooLarge) || (err == nil && len(b) > agentproto.StartupMarksFileMaxBytes):
+		if !w.tooLarge {
+			w.tooLarge = true
+			warn = errTooLarge.Error()
+		}
+	case err != nil:
+		// Unreadable now; tried again at the next poll.
+	case b == nil:
+		if !w.missing {
+			w.missing, w.last, changed = true, nil, true
+			marks = map[string]float64{}
+			w.lastChange = now
+		}
+	default:
+		w.tooLarge = false
+		if w.missing || !bytes.Equal(b, w.last) {
+			w.missing, w.last, changed = false, append([]byte(nil), b...), true
+			marks = ParseMarks(b)
+			w.lastChange = now
+		}
+	}
+	if now-w.start >= WatchFor || now-w.lastChange >= QuietFor {
+		w.done = true
+	}
+	return marks, changed, w.done, warn
+}
+
+// ---- the report ----
+
+// Recorder holds this agent process's start-up report. Safe for concurrent
+// use. Every change of the report gives it a new revision; the report is
+// sent in heartbeats until Potluck has acknowledged a revision that is the
+// current one.
+type Recorder struct {
+	mu        sync.Mutex
+	rep       agentproto.Startup
+	rev       int  // revision of rep: bumped by every change
+	sentRev   int  // revision of the report last sent
+	sentCount int  // its number of marks
+	ackedRev  int  // the last revision Potluck acknowledged
+	noAck     bool // Potluck answered without startup_ack: it takes no reports
+}
+
+// NewRecorder starts a report: the boot id ("" when unknown) and the
+// agent's own start, which is also the mark agent_start.
+func NewRecorder(bootID string, agentStart time.Duration) *Recorder {
+	r := &Recorder{rev: 1, rep: agentproto.Startup{BootID: bootID, AgentStartS: secs(agentStart),
+		Marks: map[string]float64{}, ExternalMarks: map[string]float64{}}}
+	r.rep.Marks[agentproto.StartupMarkAgentStart] = r.rep.AgentStartS
+	return r
+}
+
+// SetSystemd keeps what systemd said.
+func (r *Recorder) SetSystemd(f Facts) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if f.UserspaceStartS != nil {
+		v := *f.UserspaceStartS
+		r.rep.UserspaceStartS = &v
+	}
+	if f.SoftReboots != nil {
+		v := *f.SoftReboots
+		r.rep.SoftReboots = &v
+	}
+	r.rev++
+}
+
+// Mark records a mark the first time it happens; later calls are ignored.
+// It reports whether this call recorded it.
+func (r *Recorder) Mark(name string, at time.Duration) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.rep.Marks[name]; ok {
+		return false
+	}
+	r.rep.Marks[name] = secs(at)
+	r.rev++
+	return true
+}
+
+// Has reports whether a mark of the agent's own has happened.
+func (r *Recorder) Has(name string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, ok := r.rep.Marks[name]
+	return ok
+}
+
+// SetExternal replaces the marks of the marks file.
+func (r *Recorder) SetExternal(m map[string]float64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	same := len(m) == len(r.rep.ExternalMarks)
+	for k, v := range m {
+		if old, ok := r.rep.ExternalMarks[k]; !ok || old != v {
+			same = false
+		}
+	}
+	if same {
+		return
+	}
+	r.rep.ExternalMarks = map[string]float64{}
+	for k, v := range m {
+		r.rep.ExternalMarks[k] = v
+	}
+	r.rev++
+}
+
+// Report returns a copy of the report as it is now, for a registration, and
+// notes it as sent.
+func (r *Recorder) Report() *agentproto.Startup {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.sendLocked()
+}
+
+// ForHeartbeat returns the report when it holds something Potluck has not
+// acknowledged, and notes it as sent; nil when everything is acknowledged
+// or Potluck takes no reports.
+func (r *Recorder) ForHeartbeat() *agentproto.Startup {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.noAck || r.ackedRev == r.rev {
+		return nil
+	}
+	return r.sendLocked()
+}
+
+// Pending reports whether a heartbeat would carry the report.
+func (r *Recorder) Pending() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return !r.noAck && r.ackedRev != r.rev
+}
+
+func (r *Recorder) sendLocked() *agentproto.Startup {
+	c := r.rep
+	c.Marks, c.ExternalMarks = map[string]float64{}, map[string]float64{}
+	for k, v := range r.rep.Marks {
+		c.Marks[k] = v
+	}
+	for k, v := range r.rep.ExternalMarks {
+		c.ExternalMarks[k] = v
+	}
+	if r.rep.UserspaceStartS != nil {
+		v := *r.rep.UserspaceStartS
+		c.UserspaceStartS = &v
+	}
+	if r.rep.SoftReboots != nil {
+		v := *r.rep.SoftReboots
+		c.SoftReboots = &v
+	}
+	r.sentRev, r.sentCount = r.rev, c.Count()
+	return &c
+}
+
+// Answered takes Potluck's startup_ack for the report last sent: the number
+// of its marks Potluck has taken. 0 means Potluck takes no start-up reports
+// (an older Potluck): none in heartbeats until the next registration, whose
+// answer (fromRegistration) decides again.
+func (r *Recorder) Answered(ack int, fromRegistration bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if fromRegistration {
+		r.noAck = false
+	}
+	if ack <= 0 {
+		r.noAck = true
+		return
+	}
+	if ack == r.sentCount && r.sentRev > r.ackedRev {
+		r.ackedRev = r.sentRev
+	}
+}
