@@ -79,6 +79,8 @@ func (c *schedCore) forcedWhy(p *core.Profile, np *placer.NoPlacement) (Reason, 
 			parts = append(parts, fmt.Sprintf("forced node %s is quarantined until %s", name, c.nodes[id].quarUntil.Format("15:04:05")))
 		case c.pausedNode(n):
 			parts = append(parts, fmt.Sprintf("forced node %s is paused", name))
+		case n.Paused && n.UnpausePending:
+			parts = append(parts, fmt.Sprintf("forced node %s was unpaused; its agent has not been told yet (next heartbeat)", name))
 		case c.eligible(id):
 			busy = append(busy, name) // held, claimed or settling: a wait, not an absence
 		default:

@@ -136,7 +136,10 @@ func (c *schedCore) pausedNode(n core.Node) bool { return n.Paused && !n.Unpause
 // forcedPausedErr refuses forced profile p when an operator paused one of
 // its forced nodes (fifth review N2): a pause may last days, and the text
 // said "forced nodes in use". It is refused at once with the true reason and
-// Retry-After; a node that is absent or offline still waits (it may come
+// Retry-After, at arrival and in the plan only: a request already waiting
+// when the node is paused keeps waiting and is served after the unpause, as
+// in 0.1.6 (sixth review SS3; the roll-out canary pauses a console for
+// minutes). A node that is absent or offline still waits (it may come
 // back, and forcedGoneErr fails it after the grace period). Nil when none.
 func (c *schedCore) forcedPausedErr(p *core.Profile) *Error {
 	for _, name := range p.ForceNodes {
@@ -153,7 +156,7 @@ func (c *schedCore) forcedPausedErr(p *core.Profile) *Error {
 	return nil
 }
 
-// refusePaused logs a forcedPausedErr refusal; at is "arrival" or "queue".
+// refusePaused logs a forcedPausedErr refusal; at is where it was made.
 func (c *schedCore) refusePaused(p *core.Profile, e *Error, at string) {
 	c.log.Warn("forced node paused; refused", "profile", p.Name, "nodes", slices.Clone(p.ForceNodes), "at", at, "reason", e.Message)
 }

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/placer"
 )
@@ -24,7 +25,9 @@ import (
 // of the same free nodes passes (the fifth review's FS1). For an automatic
 // profile the placer is then asked again: first without the nodes the gate
 // found short, at the same size; when no such set is left, for one node
-// more, with every node back. At most one retry per free node. pl is the
+// more, with every node back. At most one retry per free node, and none
+// once a refused set holds a just-released node (it may pass on the next
+// view; the request waits for it, sixth review SS2). pl is the
 // first placement that passes, else the placer's first choice with gate its
 // reason; tried lists every placement the gate refused, in order.
 func (c *schedCore) gatedPlace(p *core.Profile, req placer.Request) (pl core.Placement, gate string, tried []core.Placement, err error) {
@@ -37,7 +40,9 @@ func (c *schedCore) gatedPlace(p *core.Profile, req placer.Request) (pl core.Pla
 		return pl, "", nil, nil
 	}
 	tried = []core.Placement{pl}
-	if len(p.ForceNodes) > 0 {
+	if len(p.ForceNodes) > 0 || c.anyJustReleased(pl) {
+		// a just-released node may pass on the next view: wait for the
+		// preferred set rather than widen (sixth review SS2)
 		return pl, gate, tried, nil
 	}
 	out := map[core.NodeID]bool{}
@@ -71,6 +76,9 @@ func (c *schedCore) gatedPlace(p *core.Profile, req placer.Request) (pl core.Pla
 			return next, "", tried, nil
 		}
 		tried, cur = append(tried, next), next
+		if c.anyJustReleased(next) {
+			break // as above: this set may pass on the next view
+		}
 	}
 	c.reserveGate(p, pl, nil) // the mark (TN1) is the first choice's again
 	return pl, gate, tried, nil
@@ -174,7 +182,7 @@ func shortRowText(r PlanMemoryNode, has string) string {
 // change there: a claim, a settle, an agent's hold, a pause, a holder whose
 // figure cannot be told. Nil with the gate off (the defaults).
 func (c *schedCore) shortEvenFreed(p *core.Profile, pl core.Placement) *Error {
-	if !c.gateOn() || len(pl.Nodes) == 0 {
+	if !c.gateOn() || len(pl.Nodes) == 0 || c.anyJustReleased(pl) {
 		return nil
 	}
 	freed := map[string]bool{p.Name: true}
@@ -286,11 +294,53 @@ const releaseGrace = 30 * time.Second
 // buffers yet), so it may still change: the fifth review's FB1, the
 // benchmark pattern of unloading and at once loading the next model.
 func (c *schedCore) justReleased(id core.NodeID) bool {
-	if c.cfg.Defaults.FreeAverageWindow > 0 {
-		return c.avgStale(id)
-	}
 	ns := c.nodes[id]
-	return ns != nil && !ns.heldChanged.IsZero() && c.now.Before(ns.heldChanged.Add(releaseGrace))
+	if ns == nil || ns.holder != "" || ns.releasedAt.IsZero() {
+		return false // held, or nothing that ran has left it
+	}
+	w := c.cfg.Defaults.FreeAverageWindow
+	if w <= 0 {
+		w = releaseGrace
+	}
+	return c.now.Before(ns.releasedAt.Add(w))
+}
+
+// forcedFitWaits: in agents membership, forced profile p's check on its
+// nodes' figures (agentForcedFit, forced_fit_check reject) would refuse
+// placement pl, but a node of pl was just released and its figure may still
+// show what left it. The request waits for the next view instead of being
+// refused (sixth review SS1, the all-free case of the same check; it acts
+// with the defaults too).
+func (c *schedCore) forcedFitWaits(p *core.Profile, pl core.Placement) bool {
+	if !c.agents || len(p.ForceNodes) == 0 || !c.anyJustReleased(pl) {
+		return false
+	}
+	if c.agentForcedFit(p, pl) != nil {
+		return true
+	}
+	ff := c.forcedFitCheck(p, pl)
+	return ff != nil && ff.mode == config.ForcedFitReject
+}
+
+// forcedFitWaitText is the plan's reason while forcedFitWaits holds.
+func forcedFitWaitText(pl core.Placement, c *schedCore) string {
+	var ids []string
+	for _, pn := range pl.Nodes {
+		if c.justReleased(pn.ID) {
+			ids = append(ids, string(pn.ID))
+		}
+	}
+	return "waits for the next figures of " + strings.Join(ids, ", ") + ": something of ours just left there and the figure may still show it"
+}
+
+// anyJustReleased: a node of pl was just released (justReleased).
+func (c *schedCore) anyJustReleased(pl core.Placement) bool {
+	for _, pn := range pl.Nodes {
+		if c.justReleased(pn.ID) {
+			return true
+		}
+	}
+	return false
 }
 
 // overridden: node id's free figure is a pre-flight's until it expires.

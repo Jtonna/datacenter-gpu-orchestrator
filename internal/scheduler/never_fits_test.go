@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -423,24 +424,156 @@ func TestNeverFits_PausedExcludedAbsentForcedNodes(t *testing.T) {
 	}
 }
 
-// A request already waiting when its forced node is paused is refused on
-// the next queue pass, with the same text.
-func TestNeverFits_APauseRefusesTheWaitingRequest(t *testing.T) {
+// SS3 (sixth review): a request already waiting when its forced node is
+// paused keeps waiting, as in 0.1.6, and is served after the unpause; a new
+// request during the pause is refused at once, as the plan says.
+func TestNeverFits_APauseKeepsTheWaitingRequest(t *testing.T) {
+	h := newHarness(t).nodes(psNode("a", 2, 12643))
+	h.llama("other", 6000, func(p *core.Profile) { p.ForceNodes = []string{"a"} })
+	h.viewChanged()
+	loadSmallAs(h, "fleet", "other")
+	h.llama("m", 9000, func(p *core.Profile) { p.ForceNodes, p.LoadTimeout = []string{"a"}, time.Hour })
+	w := h.request("m")
+	if _, ok := h.peek(w); ok {
+		t.Fatalf("answered before the pause")
+	}
+	h.view.modify("a", func(n *core.Node) { n.Paused = true })
+	h.viewChanged()
+	h.advance(time.Minute)
+	if a, ok := h.peek(w); ok {
+		t.Fatalf("the waiting request was answered during the pause: %+v", a.err)
+	}
+	if r := h.c.dryPlan("m"); r.Action != PlanReject || !strings.Contains(r.Reason, "paused by an operator") {
+		t.Fatalf("plan during the pause: %s %s", r.Action, r.Reason)
+	}
+	w2 := h.request("m")
+	if a, ok := h.peek(w2); !ok || a.err == nil || !strings.Contains(a.err.Message, "paused by an operator") || a.err.RetryAfter != queueRetryAfter {
+		t.Fatalf("a new request during the pause: answered %v %+v", ok, a.err)
+	}
+	h.view.modify("a", func(n *core.Node) { n.Paused = false })
+	h.viewChanged()
+	h.advance(time.Minute)
+	if a, ok := h.peek(w); ok && a.err != nil {
+		t.Fatalf("refused after the unpause: %v", a.err)
+	}
+	if h.c.insts["m"] == nil {
+		t.Fatalf("m was not started after the unpause (wait: %s)", h.waitReasonOf("m"))
+	}
+}
+
+// SS1 (sixth review): a just-released forced node whose figure still shows
+// what left it is not counted short by the owner's-case refusal (gate on)
+// nor by the older refusal before eviction (agents, also with the
+// defaults), when another forced node has a holder. "small" (6000) leaves
+// a with the view still showing 7000 used; "x" (4000) is idle on b; "two"
+// (16000, forced onto a and b, 1:1) fits once a's memory is back and x is
+// stopped.
+func TestNeverFits_JustReleasedNodeWithAHolderOnAnother(t *testing.T) {
 	for _, mode := range []string{"fleet", "agents"} {
-		h := inMode(newHarness(t).nodes(psNode("a", 2, 12643)), mode)
-		h.llama("other", 6000, func(p *core.Profile) { p.ForceNodes = []string{"a"} })
+		for _, tight := range []bool{true, false} {
+			name := fmt.Sprintf("%s tight %v", mode, tight)
+			h := inMode(newHarness(t).nodes(psNode("a", 2, 12643), psNode("b", 4, 12643)), mode)
+			if tight {
+				liveTight(h)
+			}
+			h.llama("x", 4000, func(p *core.Profile) { p.ForceNodes = []string{"b"} })
+			h.viewChanged()
+			if mode == "fleet" {
+				h.release(h.ready("x"))
+			} else {
+				h.release(h.agentReady("x"))
+			}
+			h.view.modify("b", func(n *core.Node) { n.FreeMiB = n.TotalMiB - 4500 })
+			h.advance(time.Minute) // x idle past min_hold
+			unloadLagging(h, mode)
+			h.llama("two", 0, func(p *core.Profile) {
+				p.ForceNodes, p.TensorSplit, p.LoadTimeout = []string{"a", "b"}, []int{1, 1}, time.Hour
+			})
+			h.needs["two"] = NeedInfo{Need: placer.Measured(16000), FileBytes: 8 << 30}
+			if r := h.c.dryPlan("two"); r.Action == PlanReject {
+				t.Fatalf("%s: plan reject right after the unload: %s", name, r.Reason)
+			}
+			w := h.request("two")
+			if a, ok := h.peek(w); ok && a.err != nil {
+				t.Fatalf("%s: refused right after the unload: %v", name, a.err)
+			}
+			h.view.modify("a", func(n *core.Node) { n.FreeMiB = n.TotalMiB })
+			h.viewChanged()
+			if a, ok := h.peek(w); ok && a.err != nil {
+				t.Fatalf("%s: refused once the view caught up: %v", name, a.err)
+			}
+		}
+	}
+}
+
+// SS2 (sixth review): when the set the gate refused holds a just-released
+// node, the placer is not asked for another set: the request waits for the
+// next view. Once nothing there can change any more, the retry runs.
+func TestNeverFits_NoRetryWhileTheRefusedSetWasJustReleased(t *testing.T) {
+	for _, mode := range []string{"fleet", "agents"} {
+		h := skewedPeaks(t, mode, "a", "b", "c")
+		// something of ours just left b (its figure is already back)
+		h.llama("small", 3000, func(p *core.Profile) { p.ForceNodes = []string{"b"} })
 		h.viewChanged()
-		loadSmallAs(h, mode, "other")
-		h.llama("m", 9000, func(p *core.Profile) { p.ForceNodes, p.LoadTimeout = []string{"a"}, time.Hour })
+		if mode == "fleet" {
+			h.release(h.ready("small"))
+		} else {
+			h.release(h.agentReady("small"))
+		}
+		h.step(evUnload{profile: "small", force: true})
+		h.advance(10 * time.Second)
+		if !h.c.justReleased("b") {
+			t.Fatalf("%s: b is not counted as just released", mode)
+		}
 		w := h.request("m")
-		if _, ok := h.peek(w); ok {
-			t.Fatalf("%s: answered before the pause", mode)
+		if a, ok := h.peek(w); ok {
+			t.Fatalf("%s: answered right after the unload: %+v", mode, a.err)
 		}
-		h.view.modify("a", func(n *core.Node) { n.Paused = true })
+		if h.c.insts["m"] != nil {
+			t.Fatalf("%s: started on %v instead of waiting for the next view", mode, h.nodesOfAny("m"))
+		}
+		h.advance(30 * time.Second)
 		h.viewChanged()
-		a, ok := h.peek(w)
-		if !ok || a.err == nil || a.err.Reason != ReasonForcedUnavailable || !strings.Contains(a.err.Message, "paused") {
-			t.Fatalf("%s: after the pause answered %v %+v", mode, ok, a.err)
+		if a, ok := h.peek(w); ok && a.err != nil {
+			t.Fatalf("%s: refused after the window: %v", mode, a.err)
 		}
+		if got := h.nodesOfAny("m"); slices.Contains(got, "a") || len(got) != 2 {
+			t.Fatalf("%s: after the window placed on %v, want a set without a", mode, got)
+		}
+	}
+}
+
+// SS1, the all-free case of the same check, with the defaults: in agents
+// membership a forced load right after an unload on its one node is held
+// to the node's figure (agentForcedFit), which may still show the unloaded
+// model. 0.1.6 refused it at once; now it waits and starts once the view
+// catches up. The plan says queue meanwhile.
+func TestNeverFits_AgentsForcedFitWaitsOnAJustReleasedNode(t *testing.T) {
+	h := inMode(newHarness(t).nodes(psNode("a", 2, 12643)), "agents")
+	unloadLagging(h, "agents")
+	h.llama("mid", 0, func(p *core.Profile) { p.ForceNodes, p.LoadTimeout = []string{"a"}, time.Hour })
+	h.needs["mid"] = NeedInfo{Need: placer.Measured(9000), FileBytes: 5 << 30}
+	if r := h.c.dryPlan("mid"); r.Action != PlanQueue || !strings.Contains(r.Reason, "just left") {
+		t.Fatalf("plan %s (%s), want queue", r.Action, r.Reason)
+	}
+	w := h.request("mid")
+	if a, ok := h.peek(w); ok {
+		t.Fatalf("answered right after the unload: %+v", a.err)
+	}
+	h.view.modify("a", func(n *core.Node) { n.FreeMiB = n.TotalMiB })
+	h.viewChanged()
+	if h.c.insts["mid"] == nil {
+		t.Fatalf("mid did not start once the view caught up (wait: %s)", h.waitReasonOf("mid"))
+	}
+	// a real misfit is still refused once the window is over
+	h2 := inMode(newHarness(t).nodes(psNode("a", 2, 12643)), "agents")
+	unloadLagging(h2, "agents")
+	h2.llama("big", 0, func(p *core.Profile) { p.ForceNodes, p.LoadTimeout = []string{"a"}, time.Hour })
+	h2.needs["big"] = NeedInfo{Need: placer.Measured(19266), FileBytes: 10 << 30}
+	w = h2.request("big")
+	h2.advance(31 * time.Second)
+	h2.viewChanged()
+	if a, ok := h2.peek(w); !ok || a.err == nil || a.err.Reason != ReasonForcedDoesNotFit {
+		t.Fatalf("a real misfit after the window: answered %v %+v", ok, a.err)
 	}
 }

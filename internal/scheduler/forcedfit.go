@@ -360,12 +360,14 @@ func (c *schedCore) agentForcedFitOn(p *core.Profile, pl core.Placement, empty b
 // forcedRefusalBeforeEvict is the fit check of a forced placement made before
 // any victim is stopped for it, on the memory the forced nodes would have with
 // nothing of ours loaded on them: a request that can never fit there is
-// refused at once and costs no loaded model. It applies agentForcedFit in
+// refused at once and costs no loaded model. Not while a node of the
+// placement was just released: its figure may still show what left it
+// (sixth review SS1, as waitCanHelp). It applies agentForcedFit in
 // agents membership, and defaults.forced_fit_check when that is reject (with
 // warn or off nothing changes here). The checks made after the eviction stay:
 // the "nothing loaded" figure is an estimate.
 func (c *schedCore) forcedRefusalBeforeEvict(p *core.Profile, pl core.Placement) *Error {
-	if len(p.ForceNodes) == 0 {
+	if len(p.ForceNodes) == 0 || c.anyJustReleased(pl) {
 		return nil
 	}
 	if e := c.agentForcedFitOn(p, pl, true); e != nil {

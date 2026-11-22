@@ -268,6 +268,11 @@ type nodeState struct {
 	// released): the average free figure is not used for a window after it
 	// (reserve.go, avgStale).
 	heldChanged time.Time
+	// releasedAt is when an instance that ran (the settling kind of
+	// release) last left the node: its figure may still show it for a while
+	// (neverfits.go, justReleased). A refused or returned placement that
+	// never ran does not set it.
+	releasedAt time.Time
 
 	emptyPF, emptyClaim int
 	hasPF, hasClaim     bool

@@ -411,6 +411,7 @@ func (c *schedCore) releaseNode(id core.NodeID, holder string, settle bool) {
 		return
 	}
 	n, _ := c.node(id)
+	ns.releasedAt = c.now
 	ns.settle, ns.settleAt = setWaiting, c.now.Add(n.Settle)
 	ns.ovUntil = timeZero // an instance released from the node ends the override
 	ns.failLog = false

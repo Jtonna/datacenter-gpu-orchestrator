@@ -74,11 +74,6 @@ func (c *schedCore) evalEntry(e *entry) {
 			c.answerEntry(e, err)
 			return
 		}
-		if err := c.forcedPausedErr(p); err != nil && len(e.waiters) > 0 {
-			c.refusePaused(p, err, "queue")
-			c.answerEntry(e, err)
-			return
-		}
 		if !e.claimed() && len(e.waiters) > 0 {
 			if err := c.forcedNeverFits(p); err != nil {
 				c.refuseNeverFits(p, err, "queue")
@@ -144,6 +139,9 @@ func (c *schedCore) place(e *entry) bool {
 			c.answerEntry(e, ne)
 			return true
 		}
+		return false
+	}
+	if c.forcedFitWaits(e.prof, pl) { // neverfits.go
 		return false
 	}
 	c.deleteEntry(e)

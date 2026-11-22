@@ -337,6 +337,10 @@ func (c *schedCore) dryPlan(profile string) (r PlanReport) {
 	// memory rows, as place, plan and startOnClaim do.
 	pl, gate, tried, perr := c.gatedPlace(p, req) // neverfits.go, as place
 	if perr == nil {
+		if gate == "" && c.forcedFitWaits(p, pl) {
+			r.Action, r.Reason = PlanQueue, forcedFitWaitText(pl, c)
+			return r
+		}
 		if gate == "" {
 			r.Action, r.Placement, placed = PlanStart, c.placedStatus(pl), &pl
 			c.applyForcedFit(&r, p, pl)
