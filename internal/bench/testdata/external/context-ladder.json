@@ -1,0 +1,4 @@
+[{"model": "Model A", "short": "a", "ctx": 2048, "profile": "ctx-a-2048", "need_mib": 4000, "measured_need_mib": 3900, "result": "usable"},
+ {"model": "Model A", "short": "a", "ctx": 8192, "profile": "ctx-a-8192", "need_mib": 5000, "measured_need_mib": 4700, "result": "usable"},
+ {"model": "Model B", "short": "b", "ctx": 2048, "profile": "ctx-b-2048", "need_mib": 9000, "result": "usable"},
+ {"model": "Model B", "short": "b", "ctx": 8192, "profile": "ctx-b-8192", "need_mib": 30000, "result": "not sent: the estimate leaves too little memory per node"}]

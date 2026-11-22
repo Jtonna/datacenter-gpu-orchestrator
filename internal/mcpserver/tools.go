@@ -284,6 +284,8 @@ func allTools() []*tool {
 		rd("get_bench_trends", "A metric of one benchmark over successive runs, oldest first.", P{"benchmark": s("Benchmark id."), "metric": en("Metric.", "load_s", "load_mb_s", "memory_mib", "decode_tps", "prefill_tps", "ttft_ms", "unload_s", "concurrent_wall_s"),
 			"limit": i("Newest N points.")}, []string{"benchmark", "metric"}, "GET", "/api/bench/trends", "benchmark", "metric", "limit"),
 		rd("get_bench_schema", "The schema of benchmark and suite definitions: every field, type, default and limit. Read it before create_benchmark or create_suite.", nil, nil, "GET", "/api/bench/schema"),
+		rd("list_external_results", "List the external benchmark result sets (results produced outside the bench runner and stored for the Benchmarks page): id, title, note, the tables with their columns and row counts, and the attachment names. No rows.", nil, nil, "GET", "/api/bench/external"),
+		rd("get_external_results", "Get one external benchmark result set with its tables, rows and attachment texts.", idArg("external result set"), []string{"id"}, "GET", "/api/bench/external/{id}"),
 
 		// ---- write ----
 		{Name: "load_model", Desc: "Start loading a model ahead of time. Returns at once (HTTP 202); a load takes minutes, so poll get_status. Run plan_load first to see whether it fits and what it would evict.",

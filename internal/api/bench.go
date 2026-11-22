@@ -121,6 +121,7 @@ func (s *Server) benchRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/bench/schema", g(s.benchSchema))
 	m.HandleFunc("GET /api/bench/state", g(s.benchState))
 	m.HandleFunc("GET /api/bench/profiles", g(s.benchProfiles))
+	s.externalRoutes(m)
 	m.HandleFunc("GET /api/system", s.handleSystem)
 }
 
