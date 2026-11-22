@@ -140,7 +140,18 @@ var (
 	tasks = map[string]*task{}
 	total atomic.Int64
 	hook  atomic.Pointer[func(string)]
+	// pending counts the Record hand-offs still running (WaitRecords).
+	pending atomic.Int64
 )
+
+// WaitRecords waits up to d for the failures reported so far to reach
+// Record (the fatal path, before it closes the history).
+func WaitRecords(d time.Duration) {
+	deadline := time.Now().Add(d)
+	for pending.Load() > 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+}
 
 // Configure sets the logger, the history hand-off and the fatal path. main
 // calls it once, before any task starts. It returns a function that puts the
@@ -402,7 +413,9 @@ func report(o Options, f Failure) {
 		fmt.Fprintln(os.Stderr, f.Stack)
 	}
 	if rec := o.Record; rec != nil {
+		pending.Add(1)
 		go func() { // never on the caller: it may hold the history store's lock
+			defer pending.Add(-1)
 			if p, _, bad := call(func() { rec(f) }); bad {
 				fmt.Fprintln(os.Stderr, "recording a background task failure failed:", p)
 			}

@@ -14,6 +14,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/proxy"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // The model catalog is kept in memory (design 9.4). It is built once, in the
@@ -59,6 +60,7 @@ type catalogCache struct {
 	kick     chan struct{}
 	quit     chan struct{}
 	done     chan struct{}
+	stop     context.CancelFunc // ends the rebuild loop's supervision (and its backoff)
 	stopOnce sync.Once
 	cancels  []func()
 
@@ -90,14 +92,9 @@ func (s *Server) startCatalog() {
 			if !catalogTypes[e.Type] {
 				return
 			}
-			c.mu.Lock()
-			if c.seeded {
-				c.addEvent(e)
-			} else {
-				c.pending = append(c.pending, e)
-			}
-			c.dirty = true
-			c.mu.Unlock()
+			// This runs on the recording goroutine, often the scheduler's
+			// event loop: a bad event costs one catalog rebuild, never the loop.
+			supervise.Guard("api.catalog.event", func() { c.takeEvent(e) }, func(any) { s.catalogInvalidate() })
 			c.poke()
 		}))
 	}
@@ -108,27 +105,92 @@ func (s *Server) startCatalog() {
 			}
 		}))
 	}
-	go func() { // rebuilds for the live channel, off the request path
-		defer close(c.done)
+	// Rebuilds for the live channel, off the request path. A failure
+	// drops the catalog's derived state (catalogInvalidate) and the loop
+	// runs again; the last published catalog is served meanwhile.
+	var ctx context.Context
+	ctx, c.stop = context.WithCancel(context.Background())
+	supervise.Go(ctx, supervise.Spec{Name: "api.catalog", Policy: supervise.Restart,
+		Rebuild: func(any) { s.catalogInvalidate() }, Done: func() { close(c.done) }}, func(ctx context.Context) {
 		for {
 			select {
 			case <-c.quit:
+				return
+			case <-ctx.Done():
 				return
 			case <-c.kick:
 			}
 			select { // let a burst of events settle
 			case <-c.quit:
 				return
+			case <-ctx.Done():
+				return
 			case <-time.After(120 * time.Millisecond):
 			}
 			if s.ws == nil || s.ws.clientCount() == 0 {
 				continue // nobody is watching: the next request builds it
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			s.catalogBuild(ctx, nil)
+			bctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			s.catalogBuild(bctx, nil)
 			cancel()
 		}
+	})
+}
+
+// takeEvent adds a history event the catalog reads (or keeps it until the
+// seed) and marks the catalog out of date.
+func (c *catalogCache) takeEvent(e history.Event) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	supervise.Point("api.catalog.event")
+	if c.seeded {
+		c.addEvent(e)
+	} else {
+		c.pending = append(c.pending, e)
+	}
+	c.dirty = true
+}
+
+// catalogInvalidate is the catalog's rebuild after a failure: everything it
+// derived may be corrupt, so its own copy of the events is dropped and asked
+// of the history store again, the aggregates are computed again, and the
+// next build starts at once. The last published snapshot is immutable and is
+// served until that build replaces it.
+func (s *Server) catalogInvalidate() {
+	c := &s.catalog
+	func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.dirty, c.aggOld = true, true
+		c.seeded, c.events, c.pending = false, nil, nil
 	}()
+	if c.kick != nil {
+		c.poke()
+	}
+}
+
+// markDirty says the catalog must be built again (aggregates too when asked).
+func (c *catalogCache) markDirty(aggregates bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.dirty = true
+	if aggregates {
+		c.aggOld = true
+	}
+}
+
+// current is the published snapshot and whether it is out of date.
+func (c *catalogCache) current() (*catalogSnap, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.snap, c.dirty
+}
+
+// publish makes snap the catalog.
+func (c *catalogCache) publish(snap *catalogSnap) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.snap = snap
 }
 
 func (s *Server) stopCatalog() {
@@ -141,6 +203,7 @@ func (s *Server) stopCatalog() {
 			f()
 		}
 		close(c.quit)
+		c.stop()
 		<-c.done
 	})
 }
@@ -165,12 +228,7 @@ func (c *catalogCache) addEvent(e history.Event) {
 // catalogDirty says that something the catalog is joined from changed.
 func (s *Server) catalogDirty(aggregates bool) {
 	c := &s.catalog
-	c.mu.Lock()
-	c.dirty = true
-	if aggregates {
-		c.aggOld = true
-	}
-	c.mu.Unlock()
+	c.markDirty(aggregates)
 	if c.kick != nil {
 		c.poke()
 	}
@@ -179,9 +237,7 @@ func (s *Server) catalogDirty(aggregates bool) {
 // catalogStatus is called with every status the live channel looked at.
 func (s *Server) catalogStatus(v any) {
 	c := &s.catalog
-	c.mu.Lock()
-	snap, dirty := c.snap, c.dirty
-	c.mu.Unlock()
+	snap, dirty := c.current()
 	if dirty {
 		c.poke()
 		return
@@ -240,10 +296,7 @@ func catalogSig(v any) string {
 // seedEvents asks the history store once for the events the catalog reads.
 func (s *Server) seedEvents() {
 	c := &s.catalog
-	c.mu.Lock()
-	seeded := c.seeded
-	c.mu.Unlock()
-	if seeded {
+	if func() bool { c.mu.Lock(); defer c.mu.Unlock(); return c.seeded }() {
 		return
 	}
 	c.histQueries.Add(1)
@@ -276,9 +329,7 @@ func (s *Server) seedEvents() {
 func (s *Server) catalogGet(ctx context.Context) (*catalogSnap, error) {
 	c := &s.catalog
 	if s.opts.catalogSource != nil {
-		c.mu.Lock()
-		snap, dirty := c.snap, c.dirty
-		c.mu.Unlock()
+		snap, dirty := c.current()
 		have := ""
 		if snap != nil && !dirty {
 			have = snap.sig
@@ -294,9 +345,7 @@ func (s *Server) catalogGet(ctx context.Context) (*catalogSnap, error) {
 	if err != nil {
 		return nil, err
 	}
-	c.mu.Lock()
-	snap, dirty := c.snap, c.dirty
-	c.mu.Unlock()
+	snap, dirty := c.current()
 	if snap != nil && !dirty && catalogSig(st) == snap.sig {
 		return snap, nil
 	}
@@ -312,10 +361,9 @@ func (s *Server) catalogBuildFrom(ctx context.Context, in CatalogInput, sig stri
 	c := &s.catalog
 	c.buildMu.Lock()
 	defer c.buildMu.Unlock()
-	c.mu.Lock()
-	prev := c.snap
-	c.dirty, c.aggOld = false, false
-	c.mu.Unlock()
+	prev, _, _ := c.take()
+	built := false
+	defer c.unlessBuilt(&built)
 	c.builds.Add(1)
 	if s.store != nil {
 		in.Icons, _ = s.store.IconTags(ctx)
@@ -323,9 +371,8 @@ func (s *Server) catalogBuildFrom(ctx context.Context, in CatalogInput, sig stri
 	in.Now = time.Now()
 	snap := newCatalogSnap(in, prev, "/models")
 	snap.sig, snap.builtAt = sig, time.Now()
-	c.mu.Lock()
-	c.snap = snap
-	c.mu.Unlock()
+	c.publish(snap)
+	built = true
 	if s.ws != nil && prev != nil && snap.version != prev.version {
 		s.ws.publishModels(snap, prev)
 	}
@@ -350,13 +397,14 @@ func (s *Server) catalogBuild(ctx context.Context, st any) (*catalogSnap, error)
 		}
 	}
 	sig := catalogSig(st)
-	c.mu.Lock()
-	prev, dirty, aggOld := c.snap, c.dirty, c.aggOld
-	c.dirty, c.aggOld = false, false
-	c.mu.Unlock()
+	prev, dirty, aggOld := c.take()
+	built := false
+	defer c.unlessBuilt(&built)
 	if prev != nil && !dirty && prev.sig == sig { // another caller built it while this one waited
+		built = true
 		return prev, nil
 	}
+	supervise.Point("api.catalog.build")
 	c.builds.Add(1)
 	s.seedEvents()
 
@@ -385,19 +433,42 @@ func (s *Server) catalogBuild(ctx context.Context, st any) (*catalogSnap, error)
 	if s.store != nil {
 		in.Icons, _ = s.store.IconTags(ctx)
 	}
-	c.mu.Lock()
-	in.Events = append([]history.Event(nil), c.events...)
-	c.mu.Unlock()
+	in.Events = c.eventsCopy()
 
 	snap := newCatalogSnap(in, prev, s.conf().ModelsDir)
 	snap.sig, snap.builtAt = sig, time.Now()
-	c.mu.Lock()
-	c.snap = snap
-	c.mu.Unlock()
+	c.publish(snap)
+	built = true
 	if s.ws != nil && (prev == nil || snap.version != prev.version) {
 		s.ws.publishModels(snap, prev)
 	}
 	return snap, nil
+}
+
+// take is the published snapshot and the dirty flags, which it clears: the
+// caller builds now.
+func (c *catalogCache) take() (prev *catalogSnap, dirty, aggOld bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	prev, dirty, aggOld = c.snap, c.dirty, c.aggOld
+	c.dirty, c.aggOld = false, false
+	return prev, dirty, aggOld
+}
+
+// unlessBuilt marks the catalog out of date again when a build that took the
+// flags did not publish (it panicked: a request's build is recovered by
+// net/http, the loop's by its supervision), so the next caller builds.
+func (c *catalogCache) unlessBuilt(built *bool) {
+	if !*built {
+		c.markDirty(true)
+	}
+}
+
+// eventsCopy is the catalog's events, newest first.
+func (c *catalogCache) eventsCopy() []history.Event {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]history.Event(nil), c.events...)
 }
 
 // newCatalogSnap builds the catalog of in. The version rises when an entry
@@ -451,14 +522,14 @@ func (snap *catalogSnap) delta(prev *catalogSnap) map[string]any {
 // the first live-channel client find it ready. Call it once after New.
 func (s *Server) Warm() {
 	s.bgWG.Add(1)
-	go func() {
+	go supervise.Once("api.catalog.warm", func() { // a failure is reported; the first request builds it
 		defer s.bgWG.Done()
 		ctx, cancel := context.WithTimeout(s.bg, 30*time.Second)
 		defer cancel()
 		if _, err := s.catalogBuild(ctx, nil); err != nil {
 			s.log.Debug("the model catalog could not be built at start; the first request builds it", "err", err)
 		}
-	}()
+	}, nil)
 }
 
 // handleModelCatalog is GET /api/models: one entry per model file, from memory.
