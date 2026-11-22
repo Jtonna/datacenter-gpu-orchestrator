@@ -198,14 +198,14 @@ func TestStoredNeed_AChangedSettingDoesNotMatch(t *testing.T) {
 			nc := cloneCfg(h.c.cfg)
 			mod(nc.Profiles["f"])
 			h.step(evConfig{cfg: nc})
-			if h.c.learnedFor(h.c.cfg.Profiles["f"]) != nil {
+			if h.c.displayLearned(h.c.cfg.Profiles["f"]) != nil {
 				t.Fatal("the changed profile still matches")
 			}
 			// changed back, it matches its shape again
 			back := cloneCfg(h.c.cfg)
 			back.Profiles["f"] = tooBigEstimate(t, config.ForcedFitOff).cfg.Profiles["f"]
 			h.step(evConfig{cfg: back})
-			if l := h.c.learnedFor(h.c.cfg.Profiles["f"]); l == nil || l.TotalMiB != 11000 {
+			if l := h.c.displayLearned(h.c.cfg.Profiles["f"]); l == nil || l.TotalMiB != 11000 {
 				t.Fatalf("changed back: %+v", l)
 			}
 			flushNeeds(h, st)
@@ -221,7 +221,7 @@ func TestStoredNeed_AChangedSettingDoesNotMatch(t *testing.T) {
 	nc.Profiles["f"].TTL = ptrDur(time.Minute)
 	h.step(evConfig{cfg: nc})
 	flushNeeds(h, st)
-	if h.c.learnedFor(h.c.cfg.Profiles["f"]) == nil {
+	if h.c.displayLearned(h.c.cfg.Profiles["f"]) == nil {
 		t.Fatal("a ttl change dropped the learned need")
 	}
 	h = restart(t, st, func(h *harness) { h.cfg.Profiles["f"].TTL = ptrDur(time.Minute) })
@@ -302,7 +302,7 @@ func TestStoredNeed_DeletingTheProfileKeepsTheRow(t *testing.T) {
 	delete(nc.Profiles, "f")
 	h.step(evConfig{cfg: nc})
 	flushNeeds(h, st)
-	if l := h.c.learnedFor(h.c.cfg.Profiles["g"]); l == nil || l.TotalMiB != 11000 {
+	if l := h.c.displayLearned(h.c.cfg.Profiles["g"]); l == nil || l.TotalMiB != 11000 {
 		t.Fatalf("g lost the measurement: %+v", l)
 	}
 	if _, ok := storedNeeds(t, st)["f"]; !ok {
@@ -401,7 +401,7 @@ func TestStoredNeed_ForgetDropsTheNeedAndTheRow(t *testing.T) {
 	if had, err := h.c.forgetNeed("g"); err != nil || !had {
 		t.Fatalf("forget by g: %v %v", had, err)
 	}
-	if h.c.learnedFor(h.c.cfg.Profiles["f"]) != nil {
+	if h.c.displayLearned(h.c.cfg.Profiles["f"]) != nil {
 		t.Fatal("f still has the figure g forgot")
 	}
 	measureF(t, st)
@@ -465,11 +465,11 @@ func TestStoredNeed_SchedulerRestoresAtNewAndWritesBeforeRunReturns(t *testing.T
 	}
 }
 
-// A restart on a database that holds a measurement in both tables (the shape
-// table and, left by an older build, under the profile) reads it once, and
-// the newer row wins.
-func TestStoredNeed_BothTablesAreReadOnceNewerWins(t *testing.T) {
-	for _, legacyNewer := range []bool{true, false} {
+// A rollback and back (review SB1, SS1): an older build rewrites the
+// profile's row in its own table; at the next start that row is read once,
+// and the higher total wins against the shape's row, whichever is newer.
+func TestStoredNeed_RowsAnOlderBuildWroteKeepTheHigher(t *testing.T) {
+	for _, legacyMiB := range []int{11500, 10500} {
 		db, err := bench.OpenStore(t.TempDir())
 		if err != nil {
 			t.Fatal(err)
@@ -479,25 +479,24 @@ func TestStoredNeed_BothTablesAreReadOnceNewerWins(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		measureF(t, st) // 11000 under the shape, written now
+		measureF(t, st) // 11000 under the shape, written now (and through to f's row)
 		recs, _, _ := st.All()
 		legacy := recs[0]
-		legacy.TotalMiB = 11500
+		legacy.TotalMiB, legacy.WriteThrough = legacyMiB, false
 		b, _ := json.Marshal(legacy)
-		at := time.Now().Add(-time.Hour).UnixMilli()
-		if legacyNewer {
-			at = time.Now().Add(time.Hour).UnixMilli()
-		}
 		if err := db.Write(func(tx *sql.Tx) error {
-			_, err := tx.Exec(`INSERT INTO learned_needs (profile, updated_at, record) VALUES (?,?,?)`, "f", at, string(b))
+			_, err := tx.Exec(`REPLACE INTO learned_needs (profile, updated_at, record) VALUES (?,?,?)`, "f", time.Now().Add(time.Hour).UnixMilli(), string(b))
 			return err
 		}); err != nil {
 			t.Fatal(err)
 		}
+		if st, err = needstore.Open(db); err != nil { // the next start
+			t.Fatal(err)
+		}
 		h := restart(t, st)
-		want := map[bool]int{true: 11500, false: 11000}[legacyNewer]
+		want := max(legacyMiB, 11000)
 		if r := h.c.dryPlan("f"); r.Action != PlanStart || r.FitNeedMiB != want {
-			t.Fatalf("legacy newer %v: plan %+v, want %d", legacyNewer, r, want)
+			t.Fatalf("older build wrote %d: plan %+v, want %d", legacyMiB, r, want)
 		}
 		h.mustLog("learned memory needs restored", "restored", 1)
 	}

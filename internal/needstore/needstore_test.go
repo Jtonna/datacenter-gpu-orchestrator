@@ -201,9 +201,10 @@ func TestShapeKey(t *testing.T) {
 	}
 }
 
-// Opening a database whose rows are keyed by profile moves every usable row
-// to its shape; two profiles of one shape keep the newer row; a row that
-// cannot be read stays under its profile and is reported, not lost.
+// Opening a database whose rows are keyed by profile copies every usable row
+// to its shape; two profiles of one shape keep the higher total (here also
+// the newer row); a row that cannot be read is reported, not lost. Every
+// row stays under its profile (an older build still reads them).
 func TestStoreMigratesProfileRowsToShapes(t *testing.T) {
 	db := openDB(t)
 	doc := func(r Record) string {
@@ -238,7 +239,7 @@ func TestStoreMigratesProfileRowsToShapes(t *testing.T) {
 		t.Fatalf("skipped %+v", skipped)
 	}
 	var left int
-	if err := db.DB().QueryRow(`SELECT COUNT(*) FROM learned_needs`).Scan(&left); err != nil || left != 1 {
+	if err := db.DB().QueryRow(`SELECT COUNT(*) FROM learned_needs`).Scan(&left); err != nil || left != 4 {
 		t.Fatalf("rows left under a profile: %d %v", left, err)
 	}
 	// opening again changes nothing
@@ -250,45 +251,222 @@ func TestStoreMigratesProfileRowsToShapes(t *testing.T) {
 	}
 }
 
-// A database that holds a usable row in both tables (an older build wrote
-// under the profile after the migration) gives each measurement once: the
-// newer row wins, whichever table it is in. Delete removes both.
-func TestStoreBothTablesNewerWins(t *testing.T) {
-	for _, legacyNewer := range []bool{true, false} {
+func docOf(r Record) string {
+	b, _ := json.Marshal(r)
+	return string(b)
+}
+
+func maxVersion(t *testing.T, db *bench.Store) int {
+	t.Helper()
+	var v int
+	if err := db.DB().QueryRow(`SELECT COALESCE(MAX(version),0) FROM needs_migrations`).Scan(&v); err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+// SB1: one shape keeps one row per device count; a 1-node measurement does
+// not replace a 3-node one.
+func TestStore_OneRowPerDeviceCount(t *testing.T) {
+	st, err := Open(openDB(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	three := sample("three")
+	three.Placement, three.Split, three.Nodes, three.TotalMiB = []string{"a", "b", "c"}, []float64{0.34, 0.33, 0.33}, nil, 13281
+	one := sample("one")
+	one.Model, one.Placement, one.Split, one.Nodes, one.TotalMiB = three.Model, []string{"a"}, []float64{1}, nil, 7600
+	for _, r := range []Record{three, one} {
+		if err := st.Put(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, _, err := st.All()
+	if err != nil || len(got) != 2 {
+		t.Fatalf("all %+v err %v", got, err)
+	}
+	by := map[int]Record{}
+	for _, r := range got {
+		by[r.DeviceCount()] = r
+	}
+	if by[1].TotalMiB != 7600 || by[3].TotalMiB != 13281 {
+		t.Fatalf("per device count %+v", by)
+	}
+}
+
+// SB1 and SS1: the migration keeps the higher total when two profiles of one
+// shape and device count have rows (not the newer), and leaves the profile
+// table and its version as they were: an older build still opens the
+// database and reads its own rows.
+func TestStore_MigrationKeepsTheHigherAndLeavesTheOldTable(t *testing.T) {
+	db := openDB(t)
+	high, low := sample("high"), sample("low")
+	low.Model, high.TotalMiB, low.TotalMiB = high.Model, 12800, 11000
+	openV1(t, db, map[string]string{"high": docOf(high), "low": docOf(low)}, map[string]int64{"high": 1, "low": 2})
+	st, err := Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _, _ := st.All()
+	if len(got) != 1 || got[0].TotalMiB != 12800 || got[0].Profile != "high" {
+		t.Fatalf("all %+v, want the higher total 12800", got)
+	}
+	var left int
+	if err := db.DB().QueryRow(`SELECT COUNT(*) FROM learned_needs`).Scan(&left); err != nil || left != 2 {
+		t.Fatalf("rows left under their profiles: %d %v, want both", left, err)
+	}
+	if v := maxVersion(t, db); v != 1 {
+		t.Fatalf("learned_needs at version %d: an older build (which knows 1) cannot open it", v)
+	}
+}
+
+// SS1: every write also goes to the profile table under the measuring
+// profile, so an older build reads that profile's latest measurement; such
+// rows are not read back as rows an older build wrote.
+func TestStore_WritesThroughForAnOlderBuild(t *testing.T) {
+	db := openDB(t)
+	st, err := Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := sample("m")
+	r.TotalMiB = 12000
+	if err := st.Put(r); err != nil {
+		t.Fatal(err)
+	}
+	r.TotalMiB = 11500 // a later, lower figure replaces it (the scheduler decides)
+	if err := st.Put(r); err != nil {
+		t.Fatal(err)
+	}
+	var doc string
+	if err := db.DB().QueryRow(`SELECT record FROM learned_needs WHERE profile = 'm'`).Scan(&doc); err != nil {
+		t.Fatal(err)
+	}
+	var old Record
+	if why := usable("m", doc, &old); why != "" || old.TotalMiB != 11500 {
+		t.Fatalf("the older build reads %+v (%s), want 11500", old, why)
+	}
+	st, err = Open(db) // a restart: the write-through row is not imported over the shape row
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := st.All(); len(got) != 1 || got[0].TotalMiB != 11500 {
+		t.Fatalf("after a restart %+v", got)
+	}
+}
+
+// SB1 and SS1: a row an older build wrote after a rollback is read at the
+// next start, and the higher total wins against the shape's row.
+func TestStore_RowsAnOlderBuildWroteKeepTheHigher(t *testing.T) {
+	for _, total := range []int{12500, 11000} {
 		db := openDB(t)
 		st, err := Open(db)
 		if err != nil {
 			t.Fatal(err)
 		}
 		r := sample("m")
-		if err := st.Put(r); err != nil { // updated_at is now
+		if err := st.Put(r); err != nil { // 11800
 			t.Fatal(err)
 		}
-		legacy := sample("legacy") // same shape as "m", other profile name
-		legacy.Model, legacy.TotalMiB = r.Model, 12500
-		b, _ := json.Marshal(legacy)
-		at := time.Now().Add(-time.Hour).UnixMilli()
-		if legacyNewer {
-			at = time.Now().Add(time.Hour).UnixMilli()
-		}
+		legacy := sample("legacy")
+		legacy.Model, legacy.TotalMiB = r.Model, total
 		if err := db.Write(func(tx *sql.Tx) error {
-			_, err := tx.Exec(`INSERT INTO learned_needs (profile, updated_at, record) VALUES (?,?,?)`, "legacy", at, string(b))
+			_, err := tx.Exec(`INSERT INTO learned_needs (profile, updated_at, record) VALUES (?,?,?)`,
+				"legacy", time.Now().Add(time.Hour).UnixMilli(), docOf(legacy))
 			return err
 		}); err != nil {
 			t.Fatal(err)
 		}
-		got, skipped, err := st.All()
-		if err != nil || len(skipped) != 0 || len(got) != 1 {
-			t.Fatalf("legacy newer %v: all %+v skipped %+v err %v", legacyNewer, got, skipped, err)
+		st, err = Open(db)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if want := map[bool]string{true: "legacy", false: "m"}[legacyNewer]; got[0].Profile != want {
-			t.Fatalf("legacy newer %v: kept %s, want %s", legacyNewer, got[0].Profile, want)
+		got, _, _ := st.All()
+		want := max(total, 11800)
+		if len(got) != 1 || got[0].TotalMiB != want {
+			t.Fatalf("older build wrote %d: all %+v, want %d", total, got, want)
 		}
 		if err := st.Delete(r.Shape()); err != nil {
 			t.Fatal(err)
 		}
+		st, _ = Open(db)
 		if got, _, _ := st.All(); len(got) != 0 {
-			t.Fatalf("after delete %+v", got)
+			t.Fatalf("after delete and a restart %+v", got)
 		}
+	}
+}
+
+// SS2: a shape keeps at most MaxRowsPerShape rows; the oldest go first.
+func TestStore_RowsPerShapeAreCapped(t *testing.T) {
+	st, err := Open(openDB(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k := 1; k <= MaxRowsPerShape+2; k++ {
+		r := sample("m")
+		r.Placement, r.Nodes, r.Split, r.TotalMiB = nil, nil, nil, 10000+k
+		r.Devices = k
+		if err := st.Put(r); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(2 * time.Millisecond) // distinct updated_at
+	}
+	got, _, _ := st.All()
+	if len(got) != MaxRowsPerShape {
+		t.Fatalf("%d rows, want %d", len(got), MaxRowsPerShape)
+	}
+	for _, r := range got {
+		if r.DeviceCount() <= 2 {
+			t.Fatalf("an oldest row was kept: %+v", r)
+		}
+	}
+}
+
+// SS2: the llama build a measurement was made with survives the round trip.
+func TestStore_KeepsTheLlamaBuild(t *testing.T) {
+	st, err := Open(openDB(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := sample("m")
+	r.LlamaBuild = "a01665d3"
+	if err := st.Put(r); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := st.All(); len(got) != 1 || got[0].LlamaBuild != "a01665d3" {
+		t.Fatalf("all %+v", got)
+	}
+}
+
+// A database a development build of this branch left at learned-need
+// version 2 (rows in needs_by_shape) is brought back to version 1, its rows
+// kept.
+func TestStore_ADevelopmentVersion2DatabaseOpens(t *testing.T) {
+	db := openDB(t)
+	openV1(t, db, nil, nil)
+	r := sample("m")
+	if err := db.Write(func(tx *sql.Tx) error {
+		for _, q := range []string{
+			`CREATE TABLE needs_by_shape (shape TEXT PRIMARY KEY, profile TEXT NOT NULL, updated_at INTEGER NOT NULL, record TEXT NOT NULL)`,
+			`INSERT INTO needs_migrations (version, applied_at) VALUES (2, 0)`,
+		} {
+			if _, err := tx.Exec(q); err != nil {
+				return err
+			}
+		}
+		_, err := tx.Exec(`INSERT INTO needs_by_shape (shape, profile, updated_at, record) VALUES (?,?,?,?)`, r.Shape(), "m", 1, docOf(r))
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	st, err := Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := st.All(); len(got) != 1 || got[0].TotalMiB != 11800 {
+		t.Fatalf("all %+v", got)
+	}
+	if v := maxVersion(t, db); v != 1 {
+		t.Fatalf("version %d, want 1", v)
 	}
 }
