@@ -412,3 +412,115 @@ func TestAggregatesOrigin(t *testing.T) {
 		t.Fatalf("%+v", ag)
 	}
 }
+
+// With boot_origin and boot_ready (the console's boot screen finished), the
+// figure ends at the later of boot_ready and Potluck's own readiness point,
+// so it equals the console's own figure whenever the boot screen finishes
+// last. Potluck's own point stays as placeable_s; headline_end says which
+// ended the figure.
+func TestHeadlineEndsAtBootReady(t *testing.T) {
+	prev := New("n1", "x", "0.1.6", "bare", "s0", false, t0, report(map[string]float64{}), nil)
+	soft := func(ext map[string]float64) *Record {
+		rep := &agentproto.Startup{BootID: "b", AgentStartS: 222000, UserspaceStartS: f64(222001.5), SoftReboots: i64(1),
+			Marks: map[string]float64{"registered": 222003, "programs_ready": 222007.002}, ExternalMarks: ext}
+		r := New("n1", "x", "0.1.6", "bare", "s1", false, t0, rep, prev)
+		r.Evaluate(t0, "")
+		return r
+	}
+	// The console's canary: exactly these three marks.
+	r := soft(map[string]float64{"boot_origin": 221998.764, "boot_ready": 222008.15})
+	if r.HeadlineS == nil || *r.HeadlineS != 9.386 || r.PlaceableS == nil || *r.PlaceableS != 8.238 ||
+		r.HeadlineEnd != HeadlineEndBootReady || r.Origin != OriginBootOrigin || *r.ReadyS != 222007.002 {
+		t.Fatalf("canary %+v", r)
+	}
+	if l := LastOf(r); *l.HeadlineS != 9.386 || *l.PlaceableS != 8.238 || l.HeadlineEnd != HeadlineEndBootReady {
+		t.Fatalf("last %+v", l)
+	}
+	// boot_ready before Potluck's own point: the own point.
+	r = soft(map[string]float64{"boot_origin": 221998.764, "boot_ready": 222005})
+	if *r.HeadlineS != 8.238 || *r.PlaceableS != 8.238 || r.HeadlineEnd != HeadlineEndPlaceable {
+		t.Fatalf("earlier boot_ready %+v", r)
+	}
+	// No boot_ready, or no boot_origin: as before, no new fields.
+	for _, ext := range []map[string]float64{{"boot_origin": 221998.764}, {"boot_ready": 222008.15}} {
+		r = soft(ext)
+		if r.PlaceableS != nil || r.HeadlineEnd != "" {
+			t.Fatalf("%v: %+v", ext, r)
+		}
+		want := 8.238
+		if _, ok := ext["boot_origin"]; !ok {
+			want = 5.502 // from the userspace start
+		}
+		if *r.HeadlineS != want {
+			t.Fatalf("%v: headline %v", ext, *r.HeadlineS)
+		}
+	}
+	// A boot_ready earlier than boot_origin is not taken.
+	r = soft(map[string]float64{"boot_origin": 221998.764, "boot_ready": 221990})
+	if *r.HeadlineS != 8.238 || r.HeadlineEnd != "" {
+		t.Fatalf("boot_ready before boot_origin %+v", r)
+	}
+}
+
+// boot_ready is written late: a figure taken from Potluck's own marks is
+// updated when boot_ready arrives in a later report, the stored record
+// follows, and so do the group figures.
+func TestLateBootReadyUpdatesTheFigure(t *testing.T) {
+	st := &MemStore{}
+	prev := New("n1", "x", "0.1.6", "bare", "s0", false, t0, report(map[string]float64{}), nil)
+	rep := &agentproto.Startup{BootID: "b", AgentStartS: 222000, UserspaceStartS: f64(222001.5), SoftReboots: i64(1),
+		Marks: map[string]float64{"registered": 222003, "programs_ready": 222007.002}, ExternalMarks: map[string]float64{"boot_origin": 221998.764}}
+	r := New("n1", "x", "0.1.6", "bare", "s1", false, t0, rep, prev)
+	if err := st.Insert(r); err != nil {
+		t.Fatal(err)
+	}
+	r.Evaluate(t0, "")
+	if *r.HeadlineS != 8.238 || r.Open || r.HeadlineEnd != "" {
+		t.Fatalf("first figure %+v", r)
+	}
+	st.Update(r)
+	later := &agentproto.Startup{BootID: "b", AgentStartS: 222000, Marks: map[string]float64{},
+		ExternalMarks: map[string]float64{"boot_origin": 221998.764, "boot_ready": 222008.15}}
+	if !r.Merge(later) {
+		t.Fatal("the late boot_ready changed nothing")
+	}
+	st.Update(r)
+	got, _ := st.ByStart("n1", "s1")
+	if *got.HeadlineS != 9.386 || *got.PlaceableS != 8.238 || got.HeadlineEnd != HeadlineEndBootReady {
+		t.Fatalf("stored %+v", got)
+	}
+	all, _ := st.All()
+	for _, g := range Aggregates(all) {
+		if g.Kind == KindSoft && (*g.LastS != 9.386 || *g.MedianS != 9.386 || *g.WorstS != 9.386) {
+			t.Fatalf("group %+v", g)
+		}
+	}
+	// The same report again changes nothing.
+	if r.Merge(later) {
+		t.Fatal("changed again")
+	}
+}
+
+// A record stored before placeable_s and headline_end reads unchanged, also
+// one that has boot_ready among its marks: a merge without a new mark does
+// not refigure it.
+func TestOldRecordWithBootReadyReadsUnchanged(t *testing.T) {
+	old := `{"id":7,"node_id":"n1","node_name":"x","release":"0.1.5","agent_start_id":"s1","kind":"soft","inferred":false,` +
+		`"registered_at":"2026-11-01T10:00:00Z","boot_id":"b","agent_start_s":5003,"userspace_start_s":4990.5,"soft_reboots":1,` +
+		`"marks":{"registered":5004,"programs_ready":5010},"external_marks":{"boot_origin":4980,"boot_ready":5020},"need_share":false,` +
+		`"headline_s":30,"origin":"boot_origin","ready_s":5010,"open":false,"requested":false}`
+	var r Record
+	if err := json.Unmarshal([]byte(old), &r); err != nil {
+		t.Fatal(err)
+	}
+	if *r.HeadlineS != 30 || r.PlaceableS != nil || r.HeadlineEnd != "" || r.Evaluate(t0, "") {
+		t.Fatalf("%+v", r)
+	}
+	if r.Merge(&agentproto.Startup{BootID: "b", Marks: map[string]float64{}, ExternalMarks: map[string]float64{"boot_ready": 5020}}) {
+		t.Fatal("an unchanged mark changed an old record")
+	}
+	b, _ := json.Marshal(r)
+	if strings.Contains(string(b), "placeable_s") || strings.Contains(string(b), "headline_end") {
+		t.Fatalf("%s", b)
+	}
+}

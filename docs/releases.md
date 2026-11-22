@@ -12,7 +12,7 @@ What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent
 - **Stored measurements you can see and clear.** `GET /api/needs` lists every stored memory measurement with its shape, device count, llama build and whether it is trusted. `POST /api/needs/forget` forgets one.
 - **File cache eviction on the agent and through Potluck.** Agents that can do it say so with the capability word `file_cache_evict` and accept a request to drop one model file from their file cache. `POST /api/cache/evict` asks the named machines, and Potluck's own, to do so; the cold-load benchmark uses it.
 - **The busy file.** On a bare Linux install the agent keeps `/run/potluck/busy` in place while a model is starting, loaded or stopping, so other software on the machine (maintenance scripts, updaters) can tell not to disturb it. The agent's local status page shows the same as `busy`, `launches` and `busy_since`.
-- **Start-up time from the real start.** When the start-up marks file carries `boot_origin`, the start-up figure counts from it, so a soft restart now includes its shutdown. Each record says where its figure counts from.
+- **Start-up time from the real start.** When the start-up marks file carries `boot_origin`, the start-up figure counts from it, so a soft restart now includes its shutdown. Each record says where its figure counts from. With the console's `boot_ready` mark as well, the figure ends at the later of `boot_ready` and the moment Potluck found the machine placeable, so it is the same figure the console shows (`placeable_s` and `headline_end` keep Potluck's own point and say which ended it).
 
 ### What changes without any setting
 

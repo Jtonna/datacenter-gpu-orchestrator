@@ -47,6 +47,21 @@ const (
 	OriginUserspace = "userspace"
 )
 
+// What a figure ends at (Record.HeadlineEnd), when the console's boot_ready
+// takes part (with boot_origin).
+const (
+	// HeadlineEndBootReady: the console's boot screen finished after Potluck
+	// found the node placeable; the figure is the console's own.
+	HeadlineEndBootReady = "boot_ready"
+	// HeadlineEndPlaceable: Potluck found the node placeable after (or when)
+	// the boot screen finished.
+	HeadlineEndPlaceable = "placeable"
+)
+
+// MarkBootReady is the external mark the console's boot screen writes when
+// all its steps have passed; with boot_origin, the figure ends no earlier.
+const MarkBootReady = "boot_ready"
+
 // InferWindow is the "short time" of the rule for a node's first record:
 // userspace within this of kernel boot, and the agent within this of
 // userspace, make a full start.
@@ -94,8 +109,15 @@ type Record struct {
 	HeadlineS *float64 `json:"headline_s,omitempty"`
 	// Origin says where HeadlineS counts from (Origin*); set with the figure.
 	Origin string `json:"origin,omitempty"`
-	// ReadyS is the ready moment on the node's axis; ReadyAt the same moment
-	// on Potluck's clock.
+	// PlaceableS is Potluck's own readiness point (ReadyS) minus the base,
+	// and HeadlineEnd says what the figure ended at (HeadlineEnd*). Both are
+	// set only when the figure counts from boot_origin and the console's
+	// boot_ready is in: the figure then ends at the later of boot_ready and
+	// ReadyS. Absent otherwise, and on records stored before.
+	PlaceableS  *float64 `json:"placeable_s,omitempty"`
+	HeadlineEnd string   `json:"headline_end,omitempty"`
+	// ReadyS is Potluck's own ready moment on the node's axis (the node
+	// placeable); ReadyAt the same moment on Potluck's clock.
 	ReadyS  *float64   `json:"ready_s,omitempty"`
 	ReadyAt *time.Time `json:"ready_at,omitempty"`
 	// Missing names the marks of ready that have not happened
@@ -226,7 +248,7 @@ func New(nodeID, name, release, install, startID string, needShare bool, at time
 // anything changed. Names that are not valid are dropped; external marks are
 // capped as on the agent.
 func (r *Record) Merge(rep *agentproto.Startup) bool {
-	changed := false
+	changed, late := false, false
 	if r.UserspaceStartS == nil && rep.UserspaceStartS != nil && finite(*rep.UserspaceStartS) {
 		v := *rep.UserspaceStartS
 		r.UserspaceStartS, changed = &v, true
@@ -251,6 +273,14 @@ func (r *Record) Merge(rep *agentproto.Startup) bool {
 			continue
 		}
 		r.ExternalMarks[k], changed = v, true
+		if k == MarkBootReady || k == agentproto.StartupMarkBootOrigin {
+			late = true
+		}
+	}
+	// boot_ready is written late, often after the figure was taken from
+	// Potluck's own marks: the figure follows it.
+	if late && !r.Open && r.HeadlineS != nil {
+		r.endAtBootReady()
 	}
 	return changed
 }
@@ -329,6 +359,7 @@ func (r *Record) Evaluate(now time.Time, unplaced string) bool {
 			a := round3(at.Sub(*r.RequestedAt).Seconds())
 			r.AwayToReadyS = &a
 		}
+		r.endAtBootReady()
 	}
 	return r.snapshot() != before
 }
@@ -365,6 +396,36 @@ func (r *Record) MarkRequested(kind, comment string, at, registered time.Time) {
 	r.RequestedAt = &t
 	a := round3(registered.Sub(at).Seconds())
 	r.AwayS = &a
+}
+
+// endAtBootReady ends a figure that counts from boot_origin at the later of
+// the console's boot_ready and Potluck's own point (ReadyS), so that it is
+// the console's own figure whenever the boot screen finishes last and never
+// claims ready before the node was placeable. Without boot_ready (or with
+// one before boot_origin) the figure is ReadyS minus the base, as it always
+// was. away_to_ready_s follows the end. It reports whether anything changed.
+func (r *Record) endAtBootReady() bool {
+	if r.HeadlineS == nil || r.ReadyS == nil || r.Origin != OriginBootOrigin {
+		return false
+	}
+	o, okO := r.ExternalMarks[agentproto.StartupMarkBootOrigin]
+	b, okB := r.ExternalMarks[MarkBootReady]
+	if !okO || !okB || b < o {
+		return false
+	}
+	before := r.snapshot() + fmt.Sprint(r.PlaceableS != nil, r.HeadlineEnd)
+	own := *r.ReadyS
+	end, why := own, HeadlineEndPlaceable
+	if b > own {
+		end, why = b, HeadlineEndBootReady
+	}
+	h, pl := round3(end-o), round3(own-o)
+	r.HeadlineS, r.PlaceableS, r.HeadlineEnd = &h, &pl, why
+	if r.RequestedAt != nil && r.ReadyAt != nil {
+		a := round3(r.ReadyAt.Sub(*r.RequestedAt).Seconds() + end - own)
+		r.AwayToReadyS = &a
+	}
+	return r.snapshot()+fmt.Sprint(r.PlaceableS != nil, r.HeadlineEnd) != before
 }
 
 // hasBootOrigin: the record has a boot_origin usable as the base of a
@@ -418,15 +479,18 @@ type NamedMark struct {
 
 // Last is what a node's entry in status says about its last start.
 type Last struct {
-	Kind      string    `json:"kind"`
-	Inferred  bool      `json:"inferred,omitempty"`
-	HeadlineS *float64  `json:"headline_s,omitempty"`
-	Origin    string    `json:"origin,omitempty"`
-	Missing   string    `json:"missing,omitempty"`
-	BlockedBy string    `json:"blocked_by,omitempty"`
-	Open      bool      `json:"open,omitempty"`
-	Requested bool      `json:"requested,omitempty"`
-	At        time.Time `json:"at"`
+	Kind      string   `json:"kind"`
+	Inferred  bool     `json:"inferred,omitempty"`
+	HeadlineS *float64 `json:"headline_s,omitempty"`
+	Origin    string   `json:"origin,omitempty"`
+	// PlaceableS and HeadlineEnd: as in Record.
+	PlaceableS  *float64  `json:"placeable_s,omitempty"`
+	HeadlineEnd string    `json:"headline_end,omitempty"`
+	Missing     string    `json:"missing,omitempty"`
+	BlockedBy   string    `json:"blocked_by,omitempty"`
+	Open        bool      `json:"open,omitempty"`
+	Requested   bool      `json:"requested,omitempty"`
+	At          time.Time `json:"at"`
 }
 
 // LastOf summarises a record for status.
@@ -439,6 +503,10 @@ func LastOf(r *Record) *Last {
 	if r.HeadlineS != nil {
 		h := *r.HeadlineS
 		l.HeadlineS = &h
+	}
+	if r.PlaceableS != nil {
+		v := *r.PlaceableS
+		l.PlaceableS, l.HeadlineEnd = &v, r.HeadlineEnd
 	}
 	return l
 }
