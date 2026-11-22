@@ -247,6 +247,8 @@ func (s *Server) routes() *http.ServeMux {
 	m.HandleFunc("POST /api/load", s.handleLoad)
 	m.HandleFunc("POST /api/unload", s.handleUnload)
 	m.HandleFunc("POST /api/forget-need", s.handleForgetNeed)
+	m.HandleFunc("GET /api/needs", s.handleNeeds) // needs.go
+	m.HandleFunc("POST /api/needs/forget", s.handleForgetShape)
 	return m
 }
 

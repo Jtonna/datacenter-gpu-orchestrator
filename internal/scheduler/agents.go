@@ -447,7 +447,7 @@ func (c *schedCore) raiseNeedOnKill(in *inst, node core.NodeID, ex *agentproto.E
 		return
 	}
 	raised := info.Need.MiB + max(info.Need.MiB/10, needRaiseMinMiB)
-	l := &learnedNeed{TotalMiB: raised, key: needKeyOf(in.prof), profile: in.prof.Name, at: c.now, release: c.buildRelease, cause: string(ex.Reason),
+	l := &learnedNeed{TotalMiB: raised, key: needKeyOf(in.prof), profile: in.prof.Name, at: c.now, release: c.buildRelease, build: c.llamaBuild, cause: string(ex.Reason),
 		placement: in.nodeIDs(), devices: len(in.placement.Nodes), runHigh: raised}
 	if base, ok := c.needs_[in.prof.Name]; ok {
 		l.modelBytes = base.FileBytes

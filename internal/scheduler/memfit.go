@@ -63,6 +63,7 @@ type learnedNeed struct {
 	at         time.Time     // when it was measured (or raised)
 	restored   bool          // read from the store at start, not measured this run
 	release    string        // the release that measured it
+	build      string        // the llama build that measured it; "" when not known
 	cause      string        // needstore.CauseLoad or the exit reason that raised it
 	placement  []core.NodeID // the node set it was measured on, in device order
 	split      []float64     // each node's share of the split
@@ -237,7 +238,7 @@ func (c *schedCore) learnNeed(in *inst) {
 	}
 	l.runHigh = max(l.runHigh, total) // the highest seen this run: the safe side
 	l.TotalMiB = max(l.runHigh, l.floor)
-	l.restored, l.at, l.release, l.cause = false, c.now, c.buildRelease, needstore.CauseLoad
+	l.restored, l.at, l.release, l.build, l.cause = false, c.now, c.buildRelease, c.llamaBuild, needstore.CauseLoad
 	oldNodes, oldPlacement, oldPeakAt := l.Nodes, l.placement, l.peakAt
 	l.placement = in.nodeIDs()
 	l.Nodes, l.peakAt = nil, time.Time{}

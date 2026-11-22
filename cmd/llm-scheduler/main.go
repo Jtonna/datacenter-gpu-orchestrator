@@ -46,6 +46,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/mcpserver"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/needstore"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/pool"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/release"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 )
 
@@ -307,6 +308,13 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 		Launcher: launcher,
 		Logger:   log,
 		Release:  potluckRelease,
+	}
+	// The llama build loads run on (the host program's): stored with each
+	// learned need; a stored need of another build is not trusted.
+	if b, err := release.HostBuild(bg, cfg.Defaults.ServerBin); err == nil {
+		so.LlamaBuild = b
+	} else {
+		log.Warn("the llama build of the host program is not known; stored memory needs are trusted by release", "err", err)
 	}
 	if hist.On() {
 		so.History = hist

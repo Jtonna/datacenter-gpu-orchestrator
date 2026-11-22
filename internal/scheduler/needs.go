@@ -132,7 +132,7 @@ func (c *schedCore) storeLearned(l *learnedNeed) {
 	r := needstore.Record{Schema: needstore.RecordSchema, Profile: l.profile, Kind: string(l.key.kind), Model: l.key.model,
 		ModelBytes: l.modelBytes, Ctx: l.key.ctx, Parallel: l.key.parallel, KVQuant: l.key.kvQuant, FlashAttn: l.key.flashAttn,
 		ExtraArgs: extra, TotalMiB: l.TotalMiB, Devices: l.count(), Split: slices.Clone(l.split), Cause: l.cause,
-		MeasuredAt: l.at, Release: l.release, PeakAt: l.peakAt}
+		MeasuredAt: l.at, Release: l.release, LlamaBuild: l.build, PeakAt: l.peakAt}
 	for _, id := range l.placement {
 		r.Placement = append(r.Placement, string(id))
 	}
@@ -195,7 +195,7 @@ func (c *schedCore) restoreNeeds(st NeedStore) {
 
 func learnedFromRecord(r needstore.Record) *learnedNeed {
 	l := &learnedNeed{TotalMiB: r.TotalMiB, key: needKeyOfRecord(r), profile: r.Profile, at: r.MeasuredAt, restored: true, release: r.Release,
-		cause: r.Cause, split: slices.Clone(r.Split), modelBytes: r.ModelBytes, peakAt: r.PeakAt, devices: r.DeviceCount()}
+		cause: r.Cause, split: slices.Clone(r.Split), modelBytes: r.ModelBytes, peakAt: r.PeakAt, devices: r.DeviceCount(), build: r.LlamaBuild}
 	for _, id := range r.Placement {
 		l.placement = append(l.placement, core.NodeID(id))
 	}

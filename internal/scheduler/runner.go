@@ -43,6 +43,10 @@ type Options struct {
 	// measurement.
 	NeedStore NeedStore
 	Release   string
+	// LlamaBuild is the llama.cpp commit the loads run on (the host
+	// program's); stored with each measurement, and a restored measurement
+	// of another build is not trusted (needcount.go). "" when not known.
+	LlamaBuild string
 }
 
 // Scheduler is the scheduler core plus the one goroutine (Run) that owns
@@ -119,6 +123,7 @@ func New(cfg *config.Config, o Options) (*Scheduler, error) {
 	s.core.agents = cfg.AgentsMode()
 	s.core.loadGate = o.LoadGate
 	s.core.buildRelease = o.Release
+	s.core.llamaBuild = o.LlamaBuild
 	if o.NeedStore != nil {
 		// Read before Run, so the first request is planned with them.
 		s.core.restoreNeeds(o.NeedStore)
@@ -548,6 +553,26 @@ func (s *Scheduler) ForgetNeed(ctx context.Context, model string) (bool, error) 
 		return false, errUnknown(model)
 	}
 	return had, err
+}
+
+// LearnedRows lists every learned memory need, by shape and device count
+// (GET /api/needs).
+func (s *Scheduler) LearnedRows(ctx context.Context) ([]LearnedRow, error) {
+	var out []LearnedRow
+	if err := s.query(ctx, func(c *schedCore) { out = c.learnedRows() }); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ForgetShape drops every learned memory need of a shape (a LearnedRow's
+// Shape), in memory and in the database; it reports whether there was one.
+func (s *Scheduler) ForgetShape(ctx context.Context, shape string) (bool, error) {
+	var had bool
+	if err := s.query(ctx, func(c *schedCore) { had = c.forgetShape(shape) }); err != nil {
+		return false, err
+	}
+	return had, nil
 }
 
 // Upstream is the address for /upstream/{model}: set only while the

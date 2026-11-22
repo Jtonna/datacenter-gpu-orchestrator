@@ -65,3 +65,42 @@ func TestForgetNeedIsAudited(t *testing.T) {
 		t.Fatalf("no model: %d", resp.StatusCode)
 	}
 }
+
+// GET /api/needs lists every learned need by shape and device count (none
+// here); POST /api/needs/forget drops a shape's and is audited; a request
+// without a shape is a 400 (review SS2).
+func TestNeedsListAndForgetByShape(t *testing.T) {
+	e, _, _ := cfgEnv(t)
+	code, got := e.cdo("GET", "/api/needs", "", nil)
+	if code != 200 {
+		t.Fatalf("list: %d %v", code, got)
+	}
+	if rows, ok := got["needs"].([]any); !ok || len(rows) != 0 {
+		t.Fatalf("needs %v", got["needs"])
+	}
+	code, got = e.cdo("POST", "/api/needs/forget", `{"shape":"[\"llama\",\"m.gguf\",8192,1,\"f16\",false,[]]"}`, nil)
+	if code != 200 || got["forgotten"] != false || got["msg"] != "nothing learned" {
+		t.Fatalf("forget: %d %v", code, got)
+	}
+	eventually(t, "forget by shape audited", func() bool {
+		_, m := e.cdo("GET", "/api/audit?section=runtime&action=forget_need", "", nil)
+		return m["total_matching"] == float64(1)
+	})
+	if code, _ := e.cdo("POST", "/api/needs/forget", `{}`, nil); code != 400 {
+		t.Fatalf("no shape: %d", code)
+	}
+}
+
+// The listing's field names.
+func TestNeedRowJSON(t *testing.T) {
+	b, _ := json.Marshal(needRowJSON(scheduler.LearnedRow{Shape: "s", Model: "m.gguf", Devices: 3, TotalMiB: 13000, MeasuredBy: "three",
+		LlamaBuild: "a01665d3", Trusted: true, Profiles: []string{"three"}}))
+	var m map[string]any
+	json.Unmarshal(b, &m)
+	for _, k := range []string{"shape", "kind", "model", "ctx", "parallel", "kv_quant", "flash_attn", "extra_args", "devices", "total_mib",
+		"placement", "measured_by", "measured_at", "release", "llama_build", "restored", "trusted", "profiles"} {
+		if _, ok := m[k]; !ok {
+			t.Errorf("no %q in %s", k, b)
+		}
+	}
+}
