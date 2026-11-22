@@ -3,12 +3,15 @@ package scheduler
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/needstore"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/placer"
 )
 
@@ -45,10 +48,20 @@ type learnedNode struct {
 	MiB      int
 }
 
-// learnedNeed is a profile's measurement from a load this run.
+// learnedNeed is a profile's measurement from a load, of this run or restored
+// from the store at start (needs.go).
 type learnedNeed struct {
 	TotalMiB int
 	Nodes    []learnedNode // empty when the log did not account for every node
+
+	key        needKey       // the need-relevant settings it was measured with
+	at         time.Time     // when it was measured (or raised)
+	restored   bool          // read from the store at start, not measured this run
+	release    string        // the release that measured it
+	cause      string        // needstore.CauseLoad or the exit reason that raised it
+	placement  []core.NodeID // the node set it was measured on, in device order
+	split      []float64     // each node's share of the split
+	modelBytes int64         // the model file's size when measured; 0 when not known
 }
 
 // fractionTolerance is how far a node's split fraction may differ from the
@@ -85,9 +98,9 @@ func (l *learnedNeed) shareFor(pl core.Placement, fracs []float64, id core.NodeI
 //
 //   - needs_mib (measured by the operator) is used as is;
 //   - an estimate is raised by defaults.estimate_margin;
-//   - a measurement learned this run replaces an estimate, and replaces a
-//     configured needs_mib only when it is higher (a learned figure never
-//     lowers a configured one).
+//   - a measurement learned this run, or restored at start, replaces an
+//     estimate, and replaces a configured needs_mib only when it is higher (a
+//     learned figure never lowers a configured one).
 func (c *schedCore) effectiveNeed(p *core.Profile, base NeedInfo) NeedInfo {
 	info := base
 	info.BaseMiB = base.Need.MiB
@@ -97,9 +110,12 @@ func (c *schedCore) effectiveNeed(p *core.Profile, base NeedInfo) NeedInfo {
 		info.Need = placer.EstimatedMargin(base.Need.MiB, permille(c.cfg.Defaults.EstimateMargin))
 		info.Source = NeedEstimated
 	}
-	if l := c.learned[p.Name]; l != nil && l.TotalMiB > 0 && (!base.Need.Measured || l.TotalMiB > base.Need.MiB) {
+	if l := c.learnedFor(p); l != nil && l.TotalMiB > 0 && (!base.Need.Measured || l.TotalMiB > base.Need.MiB) {
 		info.Need = placer.Measured(l.TotalMiB)
 		info.Source = NeedLearned
+		if l.restored {
+			info.Source, info.MeasuredAt = NeedRestored, l.at
+		}
 	}
 	return info
 }
@@ -114,13 +130,30 @@ func (c *schedCore) needBasis(info NeedInfo) string {
 		if info.BaseMiB > 0 {
 			return fmt.Sprintf("%s; %d MiB before", NeedLearned, info.BaseMiB)
 		}
+	case NeedRestored:
+		s := fmt.Sprintf("measured on %s, restored at start", dateOf(info.MeasuredAt))
+		if info.BaseMiB > 0 {
+			s += fmt.Sprintf("; %d MiB before", info.BaseMiB)
+		}
+		return s
 	}
 	return string(info.Source)
+}
+
+// dateOf is the day of t in UTC, or "an unknown date".
+func dateOf(t time.Time) string {
+	if t.IsZero() {
+		return "an unknown date"
+	}
+	return t.UTC().Format("2006-01-02")
 }
 
 // learnNeed records what a load that just became ready measured: the device
 // total (the figure the log's memory_mib reports) and each node's own figure.
 // A measurement above a configured needs_mib is warned about, once per profile.
+// The highest figure of this run is kept; a figure restored at start is
+// replaced by the first measurement of this run. The result is queued for
+// the store (needs.go).
 func (c *schedCore) learnNeed(in *inst) {
 	if in.prof.Kind != core.KindLlama || in.child == nil {
 		return
@@ -130,12 +163,19 @@ func (c *schedCore) learnNeed(in *inst) {
 	if total <= 0 {
 		return
 	}
+	key := needKeyOf(in.prof)
 	l := c.learned[in.prof.Name]
-	if l == nil {
-		l = &learnedNeed{}
+	if l == nil || l.key != key {
+		l = &learnedNeed{key: key}
 		c.learned[in.prof.Name] = l
 	}
-	l.TotalMiB = max(l.TotalMiB, total) // the highest seen: the safe side
+	if l.restored {
+		l.TotalMiB = total
+	} else {
+		l.TotalMiB = max(l.TotalMiB, total) // the highest seen this run: the safe side
+	}
+	l.restored, l.at, l.release, l.cause = false, c.now, c.buildRelease, needstore.CauseLoad
+	l.placement = in.nodeIDs()
 	l.Nodes = nil
 	byKey := map[string]int{}
 	for i, pn := range in.placement.Nodes {
@@ -146,6 +186,7 @@ func (c *schedCore) learnNeed(in *inst) {
 		}
 	}
 	fracs := instance.SplitFractions(*in.prof, in.placement)
+	l.split = slices.Clone(fracs)
 	mib := make([]float64, len(in.placement.Nodes))
 	seen := make([]bool, len(mib))
 	for _, d := range load.Devices {
@@ -171,6 +212,9 @@ func (c *schedCore) learnNeed(in *inst) {
 		}
 	}
 	base, ok := c.needs_[in.prof.Name]
+	if ok {
+		l.modelBytes = base.FileBytes
+	}
 	if ok && base.Need.Measured && total > base.Need.MiB && !c.warnedLow[in.prof.Name] {
 		c.warnedLow[in.prof.Name] = true
 		c.log.Warn("configured needs_mib is too low: the load measured more memory; using the measured value",
@@ -188,18 +232,25 @@ func (c *schedCore) learnNeed(in *inst) {
 	c.recordInst(in, history.TLearnedNeed, history.Info,
 		fmt.Sprintf("Measured the memory need of %s at %d MiB; fit decisions use it for the rest of this run.", in.prof.Name, total),
 		map[string]any{"measured_mib": total, "highest_mib": l.TotalMiB, "per_node": perNode})
+	c.storeLearned(in.prof.Name)
 	c.changed = true
 }
 
 // LearnedNeed is one profile's entry of status' learned_needs: the
-// measurement of a load this run and the need in use now.
+// measurement of a load (this run, or restored from the store at start) and
+// the need in use now.
 type LearnedNeed struct {
-	MeasuredMiB   int // highest device total a load of this profile reported this run
+	MeasuredMiB   int // highest device total a load of this profile reported this run, or the restored figure
 	NeedMiB       int // the need fit decisions use now (with the estimate margin, if still an estimate)
 	Source        string
 	ConfiguredMiB int // needs_mib, or 0 for a profile that relies on the estimate
-	EstimatedMiB  int // the estimate before the margin; 0 for a profile with needs_mib
+	EstimatedMiB  int // the estimate before the margin; 0 for a profile with needs_mib or not computed yet
 	Nodes         []LearnedNodeNeed
+
+	Restored        bool          // read from the store at start, not measured this run
+	MeasuredAt      time.Time     // when it was measured (or raised after a memory kill)
+	Age             time.Duration // how long ago that was
+	MeasuredRelease string        // the release that measured it
 }
 
 // LearnedNodeNeed is what one node held in the measured load, with its share
@@ -214,12 +265,21 @@ func (c *schedCore) learnedNeeds() map[string]LearnedNeed {
 	out := map[string]LearnedNeed{}
 	for name, l := range c.learned {
 		p := c.cfg.Profiles[name]
-		base, ok := c.needs_[name]
-		if p == nil || !ok {
+		if p == nil || c.learnedFor(p) == nil {
 			continue
 		}
+		base, ok := c.needs_[name]
+		if !ok {
+			// Not computed yet (a restored figure before any plan): no file
+			// is read here, so the estimate is not known.
+			base = NeedInfo{Need: placer.Estimated(0)}
+			if p.NeedsMiB > 0 {
+				base = NeedInfo{Need: placer.Measured(p.NeedsMiB)}
+			}
+		}
 		info := c.effectiveNeed(p, base)
-		e := LearnedNeed{MeasuredMiB: l.TotalMiB, NeedMiB: info.Need.WithMargin(), Source: string(info.Source)}
+		e := LearnedNeed{MeasuredMiB: l.TotalMiB, NeedMiB: info.Need.WithMargin(), Source: string(info.Source),
+			Restored: l.restored, MeasuredAt: l.at, Age: l.age(c.now), MeasuredRelease: l.release}
 		if base.Need.Measured {
 			e.ConfiguredMiB = base.Need.MiB
 		} else {
@@ -307,9 +367,15 @@ func (c *schedCore) sharedShortfalls(p *core.Profile, info NeedInfo, pl core.Pla
 		}
 		var share int
 		var fit string
-		if m, ok := c.learned[p.Name].shareFor(pl, fracs, pn.ID); ok {
-			share, fit = m, "measured this run for this node set and split"
-		} else {
+		if l := c.learnedFor(p); l != nil {
+			if m, ok := l.shareFor(pl, fracs, pn.ID); ok {
+				share, fit = m, "measured this run for this node set and split"
+				if l.restored {
+					fit = fmt.Sprintf("measured on %s for this node set and split", dateOf(l.at))
+				}
+			}
+		}
+		if fit == "" {
 			share = int(math.Ceil(float64(need)*fracs[i]*(1+skew) - 1e-6))
 			fit = fmt.Sprintf("need %d MiB x %s%% of the split x %s skew margin",
 				need, strconv.FormatFloat(math.Round(fracs[i]*1000)/10, 'f', -1, 64), strconv.FormatFloat(1+skew, 'f', -1, 64))

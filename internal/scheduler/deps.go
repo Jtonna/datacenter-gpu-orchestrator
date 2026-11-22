@@ -45,6 +45,8 @@ type NeedInfo struct {
 	// the estimate margin or a measurement learned this run.
 	Source  NeedSource
 	BaseMiB int
+	// MeasuredAt is when a restored measurement was taken (NeedRestored).
+	MeasuredAt time.Time
 }
 
 // NeedSource says where a need comes from, in the words the messages and the
@@ -55,6 +57,9 @@ const (
 	NeedConfigured NeedSource = "measured, needs_mib"
 	NeedEstimated  NeedSource = "estimated"
 	NeedLearned    NeedSource = "measured this run"
+	// NeedRestored is a measurement of an earlier run read from the store at
+	// start; the plan's basis says "measured on <date>, restored at start".
+	NeedRestored NeedSource = "restored at start"
 )
 
 // NeedProvider gives a profile's memory need (design 7.2). An error is a

@@ -1199,7 +1199,7 @@ func (a *Agent) watchMarks(ctx context.Context) {
 	if every <= 0 {
 		every = 2 * time.Second
 	}
-	w := &startup.Watcher{Path: a.opt.MarksFile}
+	w := &startup.Watcher{Path: a.opt.MarksFile, UserspaceStart: a.Start.MarksCutoff, Logger: a.log}
 	for {
 		marks, changed, done, warn := w.Poll(a.deps.Clock.Now())
 		if warn != "" {

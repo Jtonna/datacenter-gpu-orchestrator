@@ -136,6 +136,7 @@ export function plainBasis(raw) {
   if (/^measured, needs_mib$/i.test(s)) return 'Set by hand in the profile';
   if ((m = s.match(/^measured this run; (\d+) MiB before$/i))) return `Measured on its last load (it was ${gb(m[1])} before)`;
   if (/^measured this run/i.test(s)) return 'Measured on its last load';
+  if ((m = s.match(/^measured on (\d{4}-\d{2}-\d{2}), restored at start/i))) return `Measured on ${m[1]}, kept across a restart`;
   return s ? cap(s) : '';
 }
 

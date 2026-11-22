@@ -363,8 +363,9 @@ once. Rules as implemented:
   not moved.
 - Timing, safety, hold, worker-health and recovery settings are read from
   the snapshot at each evaluation: they apply from the next one.
-- Cached memory needs and learned needs of a changed or deleted profile are
-  dropped.
+- Cached memory needs of a changed or deleted profile are dropped. A learned
+  need is dropped (and its stored row removed, 7.2a) when the profile is
+  deleted or a setting that changes the need changes; other changes keep it.
 - `restart_required` settings are stored and audited at once, listed in the
   response (`restart_required`) and take effect at the next start, because a
   long-lived component reads them once: `server_bin` (the pre-flight prober),
@@ -862,13 +863,54 @@ nodes are not checked this way.
   `POST /api/plan` `warning`); `off` is unchanged.
 
 **Measured sizes are learned.** After a load succeeds, the memory the child's
-log reported (the `memory_mib` total and each node's figure) is kept for the
-life of the process, keyed by profile. A later fit decision for the same profile
-uses it as `measured this run` instead of the estimate (no estimate margin); the
-per-node figures replace the skew margin when the node set and the split are the
-same. A learned figure never lowers a configured `needs_mib`; if it is higher,
-one WARN per profile (`configured needs_mib is too low`, both numbers) is logged
-and the higher figure is used. `GET /api/status` shows them in `learned_needs`.
+log reported (the `memory_mib` total and each node's figure) is kept, keyed by
+profile. A later fit decision for the same profile uses it as `measured this
+run` instead of the estimate (no estimate margin); the per-node figures replace
+the skew margin when the node set and the split are the same. Within a run the
+highest figure is kept. A learned figure never lowers a configured `needs_mib`;
+if it is higher, one WARN per profile (`configured needs_mib is too low`, both
+numbers) is logged and the higher figure is used. A watchdog or OOM kill of a
+worker raises the learned need by a tenth, at least 256 MiB (7.7).
+`GET /api/status` shows them in `learned_needs`.
+
+**Learned needs survive a restart.** Each learned need (a measurement, or a
+raise after a memory kill) is written to the scheduler database (table
+`learned_needs`, its own migration table `needs_migrations`), one row per
+profile: the total, the per-node figures, the node ids and split it was
+measured on, the model file name and size, the settings below, when, the cause
+(`load`, `watchdog` or `oom_kill`) and the release. The scheduler reads the rows
+when it starts, before any request is planned. A restored figure is used as a
+figure of this run is, with the basis `measured on <date>, restored at start`
+(`; N MiB before` when there is an estimate or `needs_mib` under it); the first
+load of the new run replaces it.
+
+A row is used only while it describes the profile. It is ignored and removed
+when the profile was deleted, or when one of these changed since it was
+measured: `kind`, `model`, `ctx`, `parallel`, `kv_quant`, `flash_attn`,
+`extra_args`, or the model file's size (the file was replaced under the same
+name; checked when the need is first computed). `force_nodes`, `tensor_split`,
+`needs_mib`, timing and tier settings do not change what a load takes, so they
+keep it; per-node figures still apply only to the same node set and split. With
+no configuration at all (the configuration tables could not be read) no row is
+removed.
+
+`needs_mib` works as before: a stored figure replaces it only when it is
+higher. `needs_basis` in `/api/profiles` and `need_basis` in `POST /api/plan`
+say `measured, needs_mib`, `estimated, +5% margin; the estimate is N MiB`,
+`measured this run; N MiB before`, or `measured on 2026-11-20, restored at
+start; N MiB before`. Each `learned_needs` entry has `restored`, `measured_at`,
+`age` (seconds) and `measured_release`.
+
+Writes never hold the scheduler loop: the loop only queues them (the last write
+per profile wins) and one writer goroutine does the database work; what is
+queued at shutdown is written before the scheduler stops. A row that cannot be
+read or has another record version is skipped with one WARN at start (`some
+stored learned needs were ignored`) and replaced by the next measurement; a
+database that cannot be read gives one WARN and a start from the estimates.
+Without the database (no data directory) learned needs last for the process
+only, as before. `POST /api/forget-need` `{model}` drops one profile's learned
+need and its row (when the hardware changed); it is audited (section
+`runtime`, action `forget_need`).
 
 `GET /api/status` also carries `last_refusals`: per profile, the newest answer that refused it without serving it (`profile`, `at`, `status`, `reason`, `message`, `bench_run`). `POST /api/load` answers 202 before the fit and pre-flight checks have run, so a client that started a load compares `at` with the time of its call to learn why no child started. The benchmark runner's `load` phase does this and records outcome `refused` with that message.
 Nothing is written to the config.
@@ -1719,6 +1761,7 @@ gets its own process group, so nothing is left behind.
 | `POST /api/plan` `{model}` | Dry run: what would happen if this model were requested now (placement, plan with victims, or the reason for neither). Changes nothing. |
 | `POST /api/load` `{model}` | Start loading ahead of time. Returns `202` at once. Audited (section `runtime`). |
 | `POST /api/unload` `{model, force}` | Stop one instance if idle; `force: true` stops it even if busy. Audited. |
+| `POST /api/forget-need` `{model}` | Drop the profile's learned memory need, in memory and in the database (7.2a); fit decisions use the estimate or `needs_mib` again. Answers `{msg, model, forgotten}`. Audited (section `runtime`, action `forget_need`). |
 
 `force: true` is the one way a running generation can be cut off, and only by
 an explicit admin call.
@@ -2518,7 +2561,10 @@ Potluck's clock and mapped onto the node's axis as `registered` mark plus
 (now minus `registered_at`). Both ends are the same moment, the first
 accepted registration, seen from either side; the mapping is off by that
 registration's network time, well under a second on the pool links. `ready_at`
-(the ready moment on Potluck's clock) is mapped the other way.
+(the ready moment on Potluck's clock) is mapped the other way. `/run` survives
+a soft restart, so the agent drops external marks earlier than the current
+userspace start, and ignores the whole marks file while its
+`boot_progress_start` is earlier (its writer has not run again yet).
 
 **The kinds.** A record is made for every agent process (`agent_start_id`)
 that sends a report; a registration of the same process again (after a

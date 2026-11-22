@@ -28,6 +28,8 @@ const (
 	ActionImport   = "import"
 	ActionLoad     = "load"
 	ActionUnload   = "unload"
+	// ActionForgetNeed drops a profile's learned memory need (runtime).
+	ActionForgetNeed = "forget_need"
 )
 
 // Sections of an entry. Configuration sections are the keys of the configuration document.

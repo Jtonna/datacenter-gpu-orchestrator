@@ -44,9 +44,12 @@ func TestMountArgsExact(t *testing.T) {
 	}
 }
 
+// fakeMounter is the mount table of one path. source is what is mounted
+// there; "" means the configured target.
 type fakeMounter struct {
 	mu      sync.Mutex
 	mounted bool
+	source  string
 	calls   []string
 	failMnt bool
 }
@@ -56,6 +59,17 @@ func (m *fakeMounter) IsMounted(string) (bool, error) {
 	defer m.mu.Unlock()
 	return m.mounted, nil
 }
+func (m *fakeMounter) MountSource(string) (string, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.mounted {
+		return "", false, nil
+	}
+	if m.source == "" {
+		return "192.0.2.1:/", true, nil
+	}
+	return m.source, true, nil
+}
 func (m *fakeMounter) Mount(ctx context.Context, args []string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -63,7 +77,7 @@ func (m *fakeMounter) Mount(ctx context.Context, args []string) error {
 	if m.failMnt {
 		return errors.New("mount failed")
 	}
-	m.mounted = true
+	m.mounted, m.source = true, ""
 	return nil
 }
 func (m *fakeMounter) Unmount(ctx context.Context, p string) error {
@@ -182,17 +196,90 @@ func TestProbeAgainstHungMount(t *testing.T) {
 	}
 }
 
-func TestRemountAfterFiveFailures(t *testing.T) {
+// logSrc is newSrc with its log in a buffer and its fake clock.
+func logSrc(mnt *fakeMounter, pr *fakeProber) (*Source, *strings.Builder, *osx.FakeClock) {
+	var logs strings.Builder
+	clk := osx.NewFakeClock(time.Hour)
+	s := New(Config{Spec: Spec{KindShare, "192.0.2.1:/"}, Dir: "/run/potluck/models", Mount: true,
+		NodeIP: func() string { return "192.0.2.101" }, Timeout: 20 * time.Millisecond,
+		Clock: clk, Mounter: mnt, Prober: pr, LaunchExists: func() bool { return false },
+		Logger: slog.New(slog.NewTextHandler(&logs, nil))})
+	return s, &logs, clk
+}
+
+const waitLine = `msg="share is mounted but not answering yet; waiting for the server"`
+
+// The share's server restarted: the path is still a mount of the configured
+// share, so the agent neither unmounts nor mounts, says once that it waits,
+// and says how long it took when the share answers again.
+func TestMountedButNotAnsweringIsNotRemounted(t *testing.T) {
 	mnt := &fakeMounter{mounted: true}
-	pr := &fakeProber{mode: "fail"}
-	launch := false
-	s := newSrc(mnt, pr, &launch)
+	pr := &fakeProber{mode: "ok"}
+	s, logs, clk := logSrc(mnt, pr)
+	ctx := context.Background()
+	s.ProbeOnce(ctx)
+	pr.set("fail")
+	for i := 0; i < 20; i++ { // four times the remount threshold
+		clk.Advance(5 * time.Second)
+		s.ProbeOnce(ctx)
+	}
+	if c := mnt.callList(); len(c) != 0 {
+		t.Fatalf("mount calls %v", c)
+	}
+	if m, u := s.Counts(); m != 0 || u != 0 {
+		t.Fatalf("mounts %d unmounts %d", m, u)
+	}
+	if n := strings.Count(logs.String(), waitLine); n != 1 {
+		t.Fatalf("%d wait lines\n%s", n, logs.String())
+	}
+	if strings.Contains(logs.String(), `msg="share mounted"`) {
+		t.Fatalf("reported a mount\n%s", logs.String())
+	}
+	pr.set("ok")
+	clk.Advance(5 * time.Second)
+	s.ProbeOnce(ctx)
+	if !strings.Contains(logs.String(), `msg="share probe ok: the model source is reachable"`) ||
+		!strings.Contains(logs.String(), "unreachable_s=100") {
+		t.Fatalf("recovery line\n%s", logs.String())
+	}
+	// A second episode says it once more.
+	pr.set("fail")
+	for i := 0; i < 5; i++ {
+		s.ProbeOnce(ctx)
+	}
+	if n := strings.Count(logs.String(), waitLine); n != 2 {
+		t.Fatalf("second episode: %d wait lines", n)
+	}
+}
+
+// Not a mount: mounted as before, and reported.
+func TestNotMountedIsMounted(t *testing.T) {
+	mnt := &fakeMounter{}
+	s, logs, _ := logSrc(mnt, &fakeProber{mode: "fail"})
+	ctx := context.Background()
+	for i := 0; i < 5; i++ {
+		s.ProbeOnce(ctx)
+	}
+	c := mnt.callList()
+	if len(c) != 1 || !strings.HasPrefix(c[0], "mount -t nfs4 ") {
+		t.Fatalf("calls %v", c)
+	}
+	if !strings.Contains(logs.String(), `msg="share mounted"`) || strings.Contains(logs.String(), waitLine) {
+		t.Fatalf("log\n%s", logs.String())
+	}
+}
+
+// A mount of another share at the path: said plainly, then the configured
+// share is mounted in its place as before (plain unmount, never lazy).
+func TestMountedFromAnotherTargetIsReportedAndRemounted(t *testing.T) {
+	mnt := &fakeMounter{mounted: true, source: "192.0.2.9:/old"}
+	s, logs, _ := logSrc(mnt, &fakeProber{mode: "fail"})
 	ctx := context.Background()
 	for i := 0; i < 4; i++ {
 		s.ProbeOnce(ctx)
 	}
-	if m, u := s.Counts(); m != 0 || u != 0 {
-		t.Fatal("remounted before five failures")
+	if c := mnt.callList(); len(c) != 0 {
+		t.Fatalf("remounted before five failures: %v", c)
 	}
 	s.ProbeOnce(ctx)
 	c := mnt.callList()
@@ -203,6 +290,23 @@ func TestRemountAfterFiveFailures(t *testing.T) {
 		if strings.Contains(x, "-l") {
 			t.Fatal("lazy unmount")
 		}
+	}
+	l := logs.String()
+	if !strings.Contains(l, `msg="the share mount point holds another share; mounting the configured one"`) ||
+		!strings.Contains(l, "found=192.0.2.9:/old") || !strings.Contains(l, "target=192.0.2.1:/") || strings.Contains(l, waitLine) {
+		t.Fatalf("log\n%s", l)
+	}
+}
+
+// At start a mount of another share is used as it is, as before, but said.
+func TestStartWarnsAboutAnotherTarget(t *testing.T) {
+	mnt := &fakeMounter{mounted: true, source: "192.0.2.9:/old"}
+	s, logs, _ := logSrc(mnt, &fakeProber{mode: "ok"})
+	if err := s.Start(context.Background()); err != nil || len(mnt.callList()) != 0 {
+		t.Fatalf("start: %v %v", err, mnt.callList())
+	}
+	if !strings.Contains(logs.String(), "found=192.0.2.9:/old") {
+		t.Fatalf("log\n%s", logs.String())
 	}
 }
 

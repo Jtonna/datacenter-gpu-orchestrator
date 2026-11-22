@@ -37,3 +37,28 @@ func TestStatusLearnedNeedsShape(t *testing.T) {
 		}
 	}
 }
+
+// POST /api/forget-need drops a profile's learned need and is audited; an
+// unknown profile is a 404.
+func TestForgetNeedIsAudited(t *testing.T) {
+	e, _, _ := cfgEnv(t)
+	resp := e.post("/api/forget-need", `{"model":"alpha"}`)
+	if resp.StatusCode != 200 {
+		t.Fatalf("%d %s", resp.StatusCode, body(t, resp))
+	}
+	var got map[string]any
+	json.Unmarshal([]byte(body(t, resp)), &got)
+	if got["model"] != "alpha" || got["msg"] != "nothing learned" || got["forgotten"] != false {
+		t.Fatalf("answer %v", got)
+	}
+	eventually(t, "forget audited", func() bool {
+		_, m := e.cdo("GET", "/api/audit?section=runtime&action=forget_need", "", nil)
+		return m["total_matching"] == float64(1)
+	})
+	if resp := e.post("/api/forget-need", `{"model":"nope"}`); resp.StatusCode != 404 {
+		t.Fatalf("unknown profile: %d", resp.StatusCode)
+	}
+	if resp := e.post("/api/forget-need", `{}`); resp.StatusCode != 400 {
+		t.Fatalf("no model: %d", resp.StatusCode)
+	}
+}
