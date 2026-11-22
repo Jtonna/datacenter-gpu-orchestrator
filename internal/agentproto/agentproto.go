@@ -758,6 +758,11 @@ type Status struct {
 	LastLaunch    *LastLaunch `json:"last_launch"`
 	LastError     *string     `json:"last_error"`
 	LastErrorAgeS *float64    `json:"last_error_age_s"`
+	// The busy file's fact (6.14): Busy while a launch exists, Launches how
+	// many, BusySince when the node became busy (Unix seconds; null idle).
+	Busy      bool   `json:"busy"`
+	Launches  int    `json:"launches"`
+	BusySince *int64 `json:"busy_since"`
 }
 
 // LastLaunch is the exited launch in GET /status (6.9).

@@ -137,7 +137,9 @@ func (a *Agent) postLaunch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, refusalBody(agentproto.ReasonInvalidRequest, "body: "+err.Error()))
 		return
 	}
+	done := a.launchAccepted() // the busy file is written before the unit starts (6.14)
 	st, ref := a.Launch.Start(r.Context(), req)
+	done()
 	if ref != nil {
 		writeJSON(w, ref.Status, ref.Body)
 		return

@@ -492,7 +492,10 @@ Answered on `127.0.0.1:50060` only, read-only, for the machine's own screen. No 
   "load": {"fraction": null, "bytes_total": 4470000000, "bytes_loaded": 4470000000, "state": "done"},
   "last_launch": null,
   "last_error": null,
-  "last_error_age_s": null
+  "last_error_age_s": null,
+  "busy": true,
+  "launches": 1,
+  "busy_since": 1795400000
 }
 ```
 
@@ -573,6 +576,36 @@ Refusals use the launch refusal body `{"reason", "message"}`:
 - One eviction runs at a time. Every eviction and every refusal is logged at info level with the file and the counts.
 - The same source-address rule as every Potluck-to-agent request holds (section 2).
 - Potluck's own machine is not asked through its agent: the scheduler drops the file from its own page cache with the same code, because that machine serves the file to the nodes.
+
+### 6.14 The busy file (for other software on the node)
+
+Added in release 0.1.6. Additive. Software on the node that must not disturb it while a model is loading or loaded (maintenance scripts, updaters) may rely on this file. It needs no network call and no permission beyond reading a file.
+
+- **Path:** `/run/potluck/busy` on a bare Linux install (agent option `--busy-file`; `auto` is the default and means this path on a bare Linux install and no file otherwise; `off` means no file). A Docker install writes none by default: its `/run/potluck` is not the machine's. If the folder is missing or cannot be written, the agent logs this once and carries on.
+- **When it exists:** while a launch exists on the node: starting, ready, or stopping (until the program has gone). A file cache eviction (6.13) is not a launch and does not create it.
+- **Order:** the file and the launch never disagree in the unsafe direction.
+  - The file is written when the agent accepts a launch request, before the launch's unit (or, on Docker, its child process) is started.
+  - It is removed only after the launch has fully stopped: the unit is inactive or the child process has been reaped. This holds for a normal stop, a stop that takes a while, a reset (6.8), a lease expiry, the watchdog, and a start that fails. A failed start is answered only after the agent has stopped whatever the start left.
+  - A request that is refused can make the file appear for the moment the refusal takes; that error is in the safe direction.
+- **Format:** plain text, mode `0644`, four `key value` lines, each ending with a newline:
+
+  ```
+  launches 1
+  since 1795400000
+  updated 1795400123
+  agent_pid 812
+  ```
+
+  `launches` is the number of launches (0 never appears: the file is gone instead; today at most 1, rule 2.3). `since` is when the node became busy and `updated` the last write, both in Unix seconds of the node's clock. `agent_pid` is the agent process that wrote it. The file is replaced atomically (a temporary file in the same folder, then a rename), so a reader never sees part of it. `updated` is refreshed at least every 15 s while busy.
+- **Removal:** the file is removed when the last launch has gone, and when the agent stops cleanly with no launch.
+- **Agent start:** a left-over file is removed before launches are re-adopted (6.11). It is written again the moment a launch is adopted. In between there is a gap with no file: one re-adoption attempt, normally well under a second and at most 15 s. When the attempt fails (for example, systemd does not answer), it is retried every second and the gap lasts until one succeeds. On a bare install a reader covers that gap with the unit rule below.
+- **Staleness:** a reader treats the file as stale, and the node as not known to be busy, when no process with `agent_pid` exists (the agent died without cleaning up). A reader that wants a second check can also treat an `updated` older than 60 s as stale.
+- **Edge case:** a bare launch can outlive its agent (6.11). On a clean agent stop with a launch still running, the file is kept, because the node is still busy. Its `agent_pid` is then gone until the next agent adopts the launch and rewrites the file, a few seconds at most under systemd.
+
+- **Units (bare install).** On a bare (systemd) install, every launch runs as a systemd transient unit named `potluck-launch-<launch_id>.service`, whatever its role (`worker` or `host`). The unit is active while the launch runs, and it survives an agent restart. This is the rule of section 6.1, and other software may rely on it as well: an active unit with the prefix `potluck-launch-` means the node is busy, whatever the busy file says.
+- **Docker install.** There are no systemd units for launches. A launch is a child process of the agent inside the agent's container (6.1), and it ends with the container. On that install the busy file (if a path is given) and `GET /status` are the signals.
+
+The same fact is in `GET /status` (6.9): `busy` (true or false), `launches` and `busy_since` (Unix seconds, `null` when idle).
 
 ## 7. Stats and controls
 
@@ -971,6 +1004,7 @@ History only: this section adds nothing to the contract. Code comments cite thes
 | CR-9 review | Release 0.1.1 as the release that carries CR-9; the Docker data volume `potluck-agent-data`, the share mount unit bound in with `ro,rslave` and the Docker drop-in; the setup script opens 50060 and 50052 only; a leave with a launch running; `no_auto_nodes`; the bounds of `bad_floor`. | 9, 10, 11.1, 11.2 |
 | CR-10 | Central logging through Potluck. Batch 1, the Potluck side (settings, the `logs` object, `logs_revision`, the pass-through with its limits and counters, items 1 to 10). The agent batch: the shipper, `server_time_unix_ms`, the `--logs`, `--log-buffer-mib` and `--journal-dir` options (items 11 to 15). The last batch: the read side under `/logs/`, `GET /api/logs/query`, Potluck's own lines and the store's container (items 16 to 19). | 4.2, 4.3, 9, 11.3 |
 | Cold load | The `capabilities` list in registration and `file_cache_evict`; `POST /cache/evict` (drop one model file from the node's page cache, with counts before and after). Additive: an agent without it is never asked. | 4.2, 6.13 |
+| Busy file | `/run/potluck/busy` while a launch exists, for other software on the node, and `busy`, `launches`, `busy_since` in `GET /status`. Additive. | 6.9, 6.14 |
 
 | Release | What it carries |
 |---|---|

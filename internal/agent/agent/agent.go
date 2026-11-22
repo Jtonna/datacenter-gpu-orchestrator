@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/busyfile"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/devices"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/exporters"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/filecache"
@@ -77,6 +78,10 @@ type Options struct {
 	// (agentproto.StartupMarksFile on a bare install); "" reads none. The
 	// agent only reads it, for a while after its start.
 	MarksFile string
+	// BusyFile is the busy file other software on the node reads (6.14;
+	// busyfile.DefaultPath on a bare Linux install); "" writes none. The
+	// state is tracked and shown in GET /status either way.
+	BusyFile string
 }
 
 // LeaveMarkerPath is the marker the uninstall writes and the starter checks
@@ -189,6 +194,12 @@ type Agent struct {
 	// Cache drops model files from the page cache (POST /cache/evict, 6.13);
 	// nil on a system without the calls or a node without model files (push).
 	Cache *filecache.Evictor
+	// Busy is the node's busy state and file (6.14). busyMu orders every
+	// update; busyPending counts launch requests accepted and not yet
+	// answered, so the file exists before the launch's unit is started.
+	Busy        *busyfile.File
+	busyMu      sync.Mutex
+	busyPending int
 	// launchTail follows launch output; its starting point is taken when the
 	// re-adoption is done, before anything waiting for it goes on.
 	launchTail *logship.LaunchTail
@@ -323,6 +334,7 @@ func New(opt Options, deps Deps) (*Agent, error) {
 	if sys := deps.FileCache; sys != nil && opt.ModelSource.Kind != modelsrc.KindPush {
 		a.Cache = &filecache.Evictor{Root: opt.ModelsDir, Sys: sys, Now: func() time.Time { return time.Unix(0, 0).Add(deps.Clock.Now()) }, Logger: deps.Logger, Busy: a.launchBusy}
 	}
+	a.Busy = &busyfile.File{Path: opt.BusyFile, Logger: deps.Logger}
 	a.Export = &exporters.Supervisor{Runner: deps.Runner, Path: a.Programs.Path, Logger: deps.Logger}
 	a.Stats = stats.New(stats.Config{Now: deps.Clock.Now, MinInterval: deps.StatsMin, Logger: deps.Logger,
 		OnScrape: func(string) { a.mark(agentproto.StartupMarkFirstStats) },
@@ -612,6 +624,11 @@ func (a *Agent) Run(ctx context.Context) error {
 	a.runCtx = ctx
 	a.mu.Unlock()
 	a.askSystemd(ctx)
+	// A busy file left by an earlier agent process goes before the launch
+	// re-adoption; watchBusy writes it again if a launch is adopted.
+	a.Busy.RemoveLeftover()
+	wg.Add(1)
+	go func() { defer wg.Done(); a.watchBusy(ctx) }()
 	if a.opt.MarksFile != "" {
 		wg.Add(1)
 		go func() { defer wg.Done(); a.watchMarks(ctx) }()
@@ -1226,6 +1243,60 @@ func (a *Agent) askSystemd(ctx context.Context) {
 
 // watchMarks reads the start-up marks file for a while after the start
 // (startup.Watcher says how long). It never creates or deletes the file.
+// busyEvery is how often the busy state follows the launch.
+const busyEvery = 200 * time.Millisecond
+
+// watchBusy keeps the busy file (6.14) in step with the launch, from the
+// end of the re-adoption: it exists while a launch is starting, running or
+// stopping. On a clean stop it is removed unless a launch outlives the
+// agent (a bare launch does), which keeps the node busy.
+func (a *Agent) watchBusy(ctx context.Context) {
+	select {
+	case <-ctx.Done():
+		return
+	case <-a.recovered:
+	}
+	t := time.NewTicker(busyEvery)
+	defer t.Stop()
+	for {
+		a.syncBusy()
+		select {
+		case <-ctx.Done():
+			a.syncBusy() // removed when no launch is left; kept for one that outlives the agent
+			return
+		case <-t.C:
+		}
+	}
+}
+
+// syncBusy brings the busy state up to the launch: a launch that exists
+// (starting, ready, or stopping until its process is reaped) or a launch
+// request being started counts.
+func (a *Agent) syncBusy() {
+	a.busyMu.Lock()
+	defer a.busyMu.Unlock()
+	n := 0
+	if a.Launch.CurrentID() != nil || a.busyPending > 0 {
+		n = 1 // one launch per node (contract 2.3)
+	}
+	a.Busy.Set(n)
+}
+
+// launchAccepted marks the node busy before the launch's unit is started;
+// the returned func ends the mark once the start has an answer.
+func (a *Agent) launchAccepted() (done func()) {
+	a.busyMu.Lock()
+	a.busyPending++
+	a.Busy.Set(1)
+	a.busyMu.Unlock()
+	return func() {
+		a.busyMu.Lock()
+		a.busyPending--
+		a.busyMu.Unlock()
+		a.syncBusy()
+	}
+}
+
 func (a *Agent) watchMarks(ctx context.Context) {
 	every := a.deps.MarksEvery
 	if every <= 0 {
@@ -1257,10 +1328,23 @@ func (a *Agent) Status() agentproto.Status {
 	ls := a.Launch.State()
 	model := a.Launch.Model()
 	now := a.deps.Clock.Now()
+	// The busy state is brought up to date from the launch state read here,
+	// so the route and the file never disagree (once the re-adoption is done:
+	// before it the launch state is not known).
+	select {
+	case <-a.recovered:
+		a.syncBusy()
+	default:
+	}
+	n, since := a.Busy.State()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	st := agentproto.Status{Registered: a.registered, Potluck: a.opt.Potluck, Release: a.opt.Release,
-		Paused: a.paused, Role: agentproto.RoleIdle, State: ls.State, Load: ls.Load}
+		Paused: a.paused, Role: agentproto.RoleIdle, State: ls.State, Load: ls.Load, Busy: n > 0, Launches: n}
+	if n > 0 {
+		s := since.Unix()
+		st.BusySince = &s
+	}
 	switch ls.State {
 	case agentproto.StateStarting, agentproto.StateReady, agentproto.StateStopping:
 		st.Role, st.Model = ls.Role, model
