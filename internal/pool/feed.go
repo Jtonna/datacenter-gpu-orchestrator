@@ -61,7 +61,7 @@ func (p *Pool) Local() (LocalFacts, bool) {
 			ok = true
 		}
 	}
-	p.mu.Unlock()
+	p.unlock()
 	if !ok {
 		return f, false
 	}

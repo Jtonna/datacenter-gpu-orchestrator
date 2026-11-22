@@ -262,6 +262,10 @@ type Pool struct {
 	probeUsed  int
 	probeWarn  bool
 
+	// after is the work queued under mu that runs once it is released:
+	// start-up store writes and history events (after.go).
+	after afterQueue
+
 	launches map[string]*launch   // by launch id
 	byIID    map[uint64][]*launch // the launches of one load
 	stopped  map[uint64]bool      // loads whose stop was asked for
@@ -348,7 +352,7 @@ func New(o Options) (*Pool, error) {
 func (p *Pool) SetForceUnload(f func(ctx context.Context, id core.NodeID) (string, error)) {
 	p.mu.Lock()
 	p.forceUnload = f
-	p.mu.Unlock()
+	p.unlock()
 }
 
 // Release is Potluck's release.
@@ -400,7 +404,7 @@ func (p *Pool) register(req agentproto.RegisterRequest) (agentproto.RegisterAnsw
 		return refuse(ReasonReleaseUnavailable, "Potluck serves no verified program release: %s", p.o.Programs.Err)
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	defer p.unlock()
 	// Settled as built by CR-5 (agent contract 11.1). The question was: 4.2 lists the refusals without an order. They are
 	// checked: release served, removed, release (both directions), foreign
 	// process, duplicate id, platform.
@@ -525,7 +529,7 @@ func (p *Pool) Heartbeat(id string, body []byte) HeartbeatResult {
 	hb.sanitize()
 	now := p.o.Clock()
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	defer p.unlock()
 	a := p.agents[id]
 	if a == nil || a.left || p.admin[id].Removed {
 		return HeartbeatResult{Status: http.StatusGone, Err: "unknown agent; register again"}
@@ -659,7 +663,7 @@ func (p *Pool) checkOrphanLocked(a *agent, hb *heartbeat) {
 			if a.orphanAsked == lid {
 				a.orphanAsked = "" // not delivered: "once" is once delivered
 			}
-			p.mu.Unlock()
+			p.unlock()
 		}
 	}()
 }
@@ -697,11 +701,11 @@ func (p *Pool) readLaunchState(ctx context.Context, base string) error {
 func (p *Pool) startCallBack(a *agent) {
 	p.mu.Lock()
 	if a.reachable || a.checking || p.agents[a.reg.ID] != a {
-		p.mu.Unlock()
+		p.unlock()
 		return
 	}
 	a.checking = true
-	p.mu.Unlock()
+	p.unlock()
 	go func() {
 		for !p.callBackOnce(a) {
 			time.Sleep(p.o.CallBackEvery)
@@ -715,15 +719,15 @@ func (p *Pool) callBackOnce(a *agent) bool {
 	p.mu.Lock()
 	if p.agents[a.reg.ID] != a || a.left || a.reachable {
 		a.checking = false
-		p.mu.Unlock()
+		p.unlock()
 		return true
 	}
-	p.mu.Unlock()
+	p.unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), CallBackTimeout)
 	err := p.callBack(ctx, p.agentBase(a))
 	cancel()
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	defer p.unlock()
 	if p.agents[a.reg.ID] != a || a.left {
 		a.checking = false
 		return true
@@ -765,13 +769,13 @@ func (p *Pool) agentUnreachable(node core.NodeID, err error) {
 	p.mu.Lock()
 	a := p.agents[string(node)]
 	if a == nil || a.left {
-		p.mu.Unlock()
+		p.unlock()
 		return
 	}
 	if a.reachable {
 		p.unreachableLocked(a, err)
 	}
-	p.mu.Unlock()
+	p.unlock()
 	p.startCallBack(a)
 }
 
@@ -817,11 +821,11 @@ func (p *Pool) Deregister(ctx context.Context, id string) bool {
 	p.mu.Lock()
 	a := p.agents[id]
 	if a == nil || a.left {
-		p.mu.Unlock()
+		p.unlock()
 		return false
 	}
 	fu := p.forceUnload
-	p.mu.Unlock()
+	p.unlock()
 	if fu != nil {
 		if prof, err := fu(ctx, core.NodeID(id)); err != nil {
 			p.log.Warn("force unload on deregister failed", "id", id, "err", err)
@@ -830,7 +834,7 @@ func (p *Pool) Deregister(ctx context.Context, id string) bool {
 		}
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	defer p.unlock()
 	a.left = true
 	p.setAdminLocked(id, cfgstore.NodeAdmin{}) // pause state is forgotten (10)
 	p.log.Info("agent deregistered; node left the pool", "id", id, "name", a.reg.Name)
@@ -853,7 +857,7 @@ func (p *Pool) knownLocked(id string) bool {
 // SetPaused pauses or unpauses a node (7.2). It returns the previous value.
 func (p *Pool) SetPaused(id string, paused bool) (bool, error) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	defer p.unlock()
 	if !p.knownLocked(id) {
 		return false, ErrUnknownNode
 	}
@@ -890,18 +894,18 @@ func (p *Pool) unpausePendingLocked(id string, a *agent) bool {
 func (p *Pool) Remove(ctx context.Context, id string) error {
 	p.mu.Lock()
 	if !p.knownLocked(id) {
-		p.mu.Unlock()
+		p.unlock()
 		return ErrUnknownNode
 	}
 	fu := p.forceUnload
-	p.mu.Unlock()
+	p.unlock()
 	if fu != nil {
 		if _, err := fu(ctx, core.NodeID(id)); err != nil {
 			p.log.Warn("force unload on removal failed", "id", id, "err", err)
 		}
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	defer p.unlock()
 	if err := p.setAdminLocked(id, cfgstore.NodeAdmin{Removed: true}); err != nil {
 		return err
 	}
@@ -914,7 +918,7 @@ func (p *Pool) Remove(ctx context.Context, id string) error {
 // Readmit is POST /api/nodes/{id}/readmit: a removed node may register again.
 func (p *Pool) Readmit(id string) error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	defer p.unlock()
 	if !p.admin[id].Removed {
 		return ErrUnknownNode
 	}
@@ -943,7 +947,7 @@ func (p *Pool) setAdminLocked(id string, a cfgstore.NodeAdmin) error {
 func (p *Pool) CheckLost() {
 	now := p.o.Clock()
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	defer p.unlock()
 	p.checkStartupsLocked(now) // first: an expired expect-restart no longer excuses a silence
 	changed := false
 	for _, id := range p.sortedIDsLocked() {
@@ -1003,14 +1007,22 @@ func (p *Pool) recordLocked(typ, sev string, a *agent, summary string, data map[
 		data = map[string]any{}
 	}
 	data["id"] = a.reg.ID
-	p.o.History.Record(history.Event{Ts: p.o.Clock().UnixMilli(), Type: typ, Severity: sev,
+	p.historyLocked(history.Event{Ts: p.o.Clock().UnixMilli(), Type: typ, Severity: sev,
 		Nodes: []string{a.reg.Name}, Summary: summary, Data: data})
+}
+
+// historyLocked queues a history event; it is recorded after p.mu is
+// released, in order (after.go).
+func (p *Pool) historyLocked(e history.Event) {
+	if h := p.o.History; h != nil {
+		p.afterLocked(func() { h.Record(e) })
+	}
 }
 
 // Record writes an operator action to history (pause, force unload, removal).
 func (p *Pool) Record(id, summary string, data map[string]any) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	defer p.unlock()
 	name := id
 	if a := p.agents[id]; a != nil {
 		name = a.reg.Name
@@ -1022,7 +1034,7 @@ func (p *Pool) Record(id, summary string, data map[string]any) {
 		data = map[string]any{}
 	}
 	data["id"] = id
-	p.o.History.Record(history.Event{Ts: p.o.Clock().UnixMilli(), Type: history.TNodeAdmin, Severity: history.Info,
+	p.historyLocked(history.Event{Ts: p.o.Clock().UnixMilli(), Type: history.TNodeAdmin, Severity: history.Info,
 		Nodes: []string{name}, Summary: summary, Data: data})
 }
 
@@ -1086,7 +1098,7 @@ func compareRelease(a, b string) int {
 // Refresh rebuilds the node view after a configuration change (tiers).
 func (p *Pool) Refresh() {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	defer p.unlock()
 	p.rebuildLocked()
 }
 
@@ -1094,7 +1106,7 @@ func (p *Pool) Refresh() {
 func (p *Pool) SetHistory(h HistorySink) {
 	p.mu.Lock()
 	p.o.History = h
-	p.mu.Unlock()
+	p.unlock()
 }
 
 // WaitStops waits up to d for the worker launch stops under way.

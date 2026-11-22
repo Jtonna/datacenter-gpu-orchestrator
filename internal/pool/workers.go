@@ -122,7 +122,7 @@ func (l *launch) loading() bool {
 func (p *Pool) LoadDone(iid uint64) {
 	p.mu.Lock()
 	ls := append([]*launch(nil), p.byIID[iid]...)
-	p.mu.Unlock()
+	p.unlock()
 	for _, l := range ls {
 		l.mu.Lock()
 		l.loaded = true
@@ -151,14 +151,14 @@ func (p *Pool) Launch(ctx context.Context, spec scheduler.WorkerLaunchSpec, repo
 	cfg := p.o.Config()
 	p.mu.Lock()
 	if p.stopped[spec.IID] {
-		p.mu.Unlock()
+		p.unlock()
 		return scheduler.WorkerResult{Reason: ReasonAgentUnreachable, Message: "stopped before the launches were sent"}
 	}
 	var ls []*launch
 	for _, w := range spec.Workers {
 		a := p.agents[string(w.Node)]
 		if a == nil || a.left || a.lost {
-			p.mu.Unlock()
+			p.unlock()
 			p.dropLaunches(spec.IID, ls)
 			return scheduler.WorkerResult{Node: w.Node, Reason: ReasonAgentUnreachable, Message: "the node's agent is not registered or is lost"}
 		}
@@ -172,7 +172,7 @@ func (p *Pool) Launch(ctx context.Context, spec scheduler.WorkerLaunchSpec, repo
 	}
 	p.byIID[spec.IID] = ls
 	p.publishLogSnapLocked()
-	p.mu.Unlock()
+	p.unlock()
 
 	// Send every launch at once.
 	type sent struct {
@@ -196,7 +196,7 @@ func (p *Pool) Launch(ctx context.Context, spec scheduler.WorkerLaunchSpec, repo
 				l.mu.Unlock()
 				p.mu.Lock()
 				stopped := p.stopped[spec.IID]
-				p.mu.Unlock()
+				p.unlock()
 				if stopped {
 					// The load was stopped while this launch was on its way.
 					go p.stopLaunch(l, false, false)
@@ -275,7 +275,7 @@ func (p *Pool) Launch(ctx context.Context, spec scheduler.WorkerLaunchSpec, repo
 
 func (p *Pool) dropLaunches(iid uint64, ls []*launch) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	defer p.unlock()
 	for _, l := range ls {
 		p.endLaunchLocked(l)
 	}
@@ -286,7 +286,7 @@ func (p *Pool) dropLaunches(iid uint64, ls []*launch) {
 // forget drops a launch that the agent refused (nothing runs to stop).
 func (p *Pool) forget(l *launch) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	defer p.unlock()
 	p.endLaunchLocked(l)
 	p.publishLogSnapLocked()
 	ls := p.byIID[l.iid]
@@ -472,7 +472,7 @@ var _ scheduler.WorkerExitReader = (*Pool)(nil)
 func (p *Pool) Exits(ctx context.Context, iid uint64) []scheduler.WorkerReport {
 	p.mu.Lock()
 	ls := append([]*launch(nil), p.byIID[iid]...)
-	p.mu.Unlock()
+	p.unlock()
 	if len(ls) == 0 {
 		return nil
 	}
@@ -562,7 +562,7 @@ func (p *Pool) Stop(iid uint64, force []core.NodeID) {
 		a := p.agents[string(l.node)]
 		jobs = append(jobs, job{l, f, a == nil || a.lost || a.left})
 	}
-	p.mu.Unlock()
+	p.unlock()
 	p.stops.Add(1)
 	go func() {
 		defer p.stops.Done()
@@ -592,7 +592,7 @@ func (p *Pool) stopLaunch(l *launch, force, lost bool) {
 		p.mu.Lock()
 		p.endLaunchLocked(l)
 		p.publishLogSnapLocked()
-		p.mu.Unlock()
+		p.unlock()
 	}()
 	if lost {
 		p.log.Info("worker launch not stopped: its node is lost", "launch", l.id, "node", l.node)
@@ -644,7 +644,7 @@ func (p *Pool) forceTail(ctx context.Context, base, id, node string) {
 		p.recordLocked(history.TNodeAdmin, history.Warn, a, fmt.Sprintf("Node %s was reset after a forced stop did not end launch %s within 5 s.", a.reg.Name, id),
 			map[string]any{"launch_id": id, "killed": len(ra.Killed)})
 	}
-	p.mu.Unlock()
+	p.unlock()
 }
 
 // waitExited polls GET /launch until the launch is exited (or another launch
@@ -682,12 +682,12 @@ func (p *Pool) ForceNode(node core.NodeID) {
 	p.mu.Lock()
 	a := p.agents[string(node)]
 	if a == nil || a.lost || a.left || a.hb == nil || a.hb.LaunchID == nil {
-		p.mu.Unlock()
+		p.unlock()
 		return // a lost node is treated as holding nothing (7.2)
 	}
 	id := *a.hb.LaunchID
 	base := "http://" + net.JoinHostPort(a.reg.Addr, strconv.Itoa(p.o.AgentPort))
-	p.mu.Unlock()
+	p.unlock()
 	p.stops.Add(1)
 	go func() {
 		defer p.stops.Done()
@@ -769,7 +769,7 @@ const ReasonAgentUnreachable = scheduler.ReasonAgentUnreachable
 // HeldLaunches lists the launches this run holds, for tests and status.
 func (p *Pool) HeldLaunches() []string {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	defer p.unlock()
 	var out []string
 	for id := range p.launches {
 		out = append(out, id)

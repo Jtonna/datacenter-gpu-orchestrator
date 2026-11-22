@@ -265,6 +265,9 @@ func (m *MemStore) ByStart(node, agentStartID string) (*Record, error) {
 }
 
 // clone copies a record deeply enough that the copy shares no map or pointer.
+// Snapshot returns a deep copy of r, for writing it while r keeps changing.
+func (r *Record) Snapshot() Record { return clone(*r) }
+
 func clone(r Record) Record {
 	b, _ := json.Marshal(r)
 	var c Record

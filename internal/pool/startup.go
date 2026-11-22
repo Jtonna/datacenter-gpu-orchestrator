@@ -57,7 +57,7 @@ func (p *Pool) Startups() StartupStore { return p.o.Startups }
 // with the seconds it was away.
 func (p *Pool) ExpectRestart(id, kind, comment string) error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	defer p.unlock()
 	a := p.agents[id]
 	if a == nil || p.admin[id].Removed {
 		if p.knownLocked(id) {
@@ -91,7 +91,7 @@ func (p *Pool) ExpectRestart(id, kind, comment string) error {
 // ExpectedRestart reports whether a node has a pending expect-restart call.
 func (p *Pool) ExpectedRestart(id string) (kind string, at time.Time, ok bool) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	defer p.unlock()
 	if e := p.expect[id]; e != nil {
 		return e.kind, e.at, true
 	}
@@ -130,24 +130,26 @@ func (p *Pool) startupRegisterLocked(a, old *agent, req agentproto.RegisterReque
 		}
 		return
 	}
-	prev, err := p.o.Startups.Latest(req.ID)
-	if err != nil {
-		p.log.Warn("start-up records unreadable", "id", req.ID, "err", err)
+	// The node's previous record: the one this run holds for the previous
+	// agent process (its write may still be queued), else the store's.
+	var prev *startups.Record
+	if old != nil && old.rec != nil {
+		prev = old.rec
+	} else {
+		var err error
+		if prev, err = p.o.Startups.Latest(req.ID); err != nil {
+			p.log.Warn("start-up records unreadable", "id", req.ID, "err", err)
+		}
 	}
 	if prev != nil && prev.Close() {
 		p.saveStartupLocked(prev)
-	}
-	if old != nil && old.rec != nil && (prev == nil || old.rec.ID != prev.ID) && old.rec.Close() {
-		p.saveStartupLocked(old.rec)
 	}
 	r := startups.New(req.ID, req.Name, req.AgentRelease, req.Install, req.AgentStartID,
 		req.ModelSource.Kind == agentproto.ModelSourceShare, now, req.Startup, prev)
 	if exp != nil {
 		r.MarkRequested(exp.kind, exp.comment, exp.at, now)
 	}
-	if err := p.o.Startups.Insert(r); err != nil {
-		p.log.Warn("start-up record not stored", "id", req.ID, "err", err)
-	}
+	p.saveStartupLocked(r)
 	a.rec = r
 	p.log.Info("node start", "id", req.ID, "name", req.Name, "kind", r.Kind, "inferred", r.Inferred, "why", r.KindNote)
 }
@@ -213,24 +215,36 @@ func (p *Pool) checkStartupsLocked(now time.Time) {
 			name = a.reg.Name
 		}
 		p.log.Warn("expected restart did not happen: no new agent registered within 10 minutes", "id", id, "name", name, "kind", e.kind)
-		if p.o.History != nil {
-			p.o.History.Record(history.Event{Ts: now.UnixMilli(), Type: history.TNodeAdmin, Severity: history.Warn, Nodes: []string{name},
-				Summary: fmt.Sprintf("Expected restart of node %s did not happen within 10 minutes.", name),
-				Data:    map[string]any{"id": id, "action": "expect_restart_expired", "kind": e.kind}})
-		}
+		p.historyLocked(history.Event{Ts: now.UnixMilli(), Type: history.TNodeAdmin, Severity: history.Warn, Nodes: []string{name},
+			Summary: fmt.Sprintf("Expected restart of node %s did not happen within 10 minutes.", name),
+			Data:    map[string]any{"id": id, "action": "expect_restart_expired", "kind": e.kind}})
 	}
 }
 
+// saveStartupLocked queues the write of a snapshot of r; it runs after p.mu
+// is released (after.go). The first write that succeeds inserts the record
+// and gives r its id; later ones update it.
 func (p *Pool) saveStartupLocked(r *startups.Record) {
-	var err error
-	if r.ID == 0 {
-		err = p.o.Startups.Insert(r)
-	} else {
-		err = p.o.Startups.Update(r)
-	}
-	if err != nil {
-		p.log.Warn("start-up record not stored", "id", r.NodeID, "err", err)
-	}
+	snap, st := r.Snapshot(), p.o.Startups
+	p.afterLocked(func() {
+		p.mu.Lock()
+		id := r.ID
+		p.mu.Unlock()
+		var err error
+		if id == 0 {
+			if err = st.Insert(&snap); err == nil {
+				p.mu.Lock()
+				r.ID = snap.ID
+				p.mu.Unlock()
+			}
+		} else {
+			snap.ID = id
+			err = st.Update(&snap)
+		}
+		if err != nil {
+			p.log.Warn("start-up record not stored", "id", snap.NodeID, "err", err)
+		}
+	})
 }
 
 func round3(v float64) float64 { return float64(int64(v*1000+0.5)) / 1000 }
