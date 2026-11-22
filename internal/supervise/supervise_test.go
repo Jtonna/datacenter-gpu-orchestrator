@@ -22,12 +22,16 @@ type fake struct {
 	logMu   sync.Mutex
 }
 
-func (f *fake) Write(p []byte) (int, error) { f.logMu.Lock(); defer f.logMu.Unlock(); return f.log.Write(p) }
-func (f *fake) logs() string                { f.logMu.Lock(); defer f.logMu.Unlock(); return f.log.String() }
-func (f *fake) now() time.Time              { f.mu.Lock(); defer f.mu.Unlock(); return f.at }
-func (f *fake) advance(d time.Duration)     { f.mu.Lock(); f.at = f.at.Add(d); f.mu.Unlock() }
-func (f *fake) fatalCount() int             { f.mu.Lock(); defer f.mu.Unlock(); return len(f.fatals) }
-func (f *fake) recordCount() int            { f.mu.Lock(); defer f.mu.Unlock(); return len(f.records) }
+func (f *fake) Write(p []byte) (int, error) {
+	f.logMu.Lock()
+	defer f.logMu.Unlock()
+	return f.log.Write(p)
+}
+func (f *fake) logs() string            { f.logMu.Lock(); defer f.logMu.Unlock(); return f.log.String() }
+func (f *fake) now() time.Time          { f.mu.Lock(); defer f.mu.Unlock(); return f.at }
+func (f *fake) advance(d time.Duration) { f.mu.Lock(); f.at = f.at.Add(d); f.mu.Unlock() }
+func (f *fake) fatalCount() int         { f.mu.Lock(); defer f.mu.Unlock(); return len(f.fatals) }
+func (f *fake) recordCount() int        { f.mu.Lock(); defer f.mu.Unlock(); return len(f.records) }
 
 func setup(t *testing.T) *fake {
 	t.Helper()
