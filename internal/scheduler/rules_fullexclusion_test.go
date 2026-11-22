@@ -89,24 +89,49 @@ func TestFullExclusion_LoadedInstanceKeepsRunning(t *testing.T) {
 	}
 }
 
-// (d) A learned need is kept per profile, whatever exclude_nodes says: the
-// exclusion of the node it was measured on drops neither the learned need
-// nor its stored row, while running nor at a restart.
+// (d) A learned need is kept whatever exclude_nodes says: the exclusion of
+// the node it was measured on drops neither the measurement (kept by shape
+// and device count) nor its stored row, while running nor at a restart; it
+// is still listed (GET /api/needs), and used again once the exclusion is
+// lifted.
 func TestFullExclusion_LearnedNeedKept(t *testing.T) {
 	st := openNeedStore(t)
-	h := measureF(t, st) // measured on node a
+	h := measureF(t, st) // 11000 MiB, measured on node a (1 device)
+	p := h.c.cfg.Profiles["f"]
 	nc := cloneCfg(h.c.cfg)
 	nc.ExcludeNodes = []string{"a", "host-1"}
 	h.step(evConfig{cfg: nc})
 	flushNeeds(h, st)
-	if _, ok := h.c.learned["f"]; !ok {
-		t.Fatal("the learned need was dropped")
+	if l := h.c.learnedAt(p, 1); l == nil || l.TotalMiB != 11000 {
+		t.Fatalf("the learned need was dropped: %+v", l)
 	}
-	if _, ok := storedNeeds(t, st)["f"]; !ok {
-		t.Fatal("the stored row was removed")
+	if r, ok := storedNeeds(t, st)["f"]; !ok || r.Shape() != shapeOf(p) || r.DeviceCount() != 1 || r.TotalMiB != 11000 {
+		t.Fatalf("the stored row was removed or changed: %+v", r)
+	}
+	listed := func(h *harness) bool {
+		for _, r := range h.c.learnedRows() { // what GET /api/needs lists
+			if r.Shape == shapeOf(p) && r.Devices == 1 && r.TotalMiB == 11000 {
+				return true
+			}
+		}
+		return false
+	}
+	if !listed(h) {
+		t.Fatalf("not listed: %+v", h.c.learnedRows())
 	}
 	h2 := restart(t, st, func(h *harness) { h.cfg.ExcludeNodes = []string{"a", "host-1"} })
 	if _, ok := h2.c.statusDoc().LearnedNeeds["f"]; !ok {
 		t.Fatal("not restored at a restart")
+	}
+	if !listed(h2) {
+		t.Fatalf("not listed after the restart: %+v", h2.c.learnedRows())
+	}
+	// the exclusion lifted: the measurement is used again
+	nc = cloneCfg(h2.c.cfg)
+	nc.ExcludeNodes = nil
+	nc.Revision++
+	h2.step(evConfig{cfg: nc})
+	if r := h2.c.dryPlan("f"); r.FitNeedMiB != 11000 {
+		t.Fatalf("after the exclusion is lifted: need %d, want the measured 11000 (%+v)", r.FitNeedMiB, r)
 	}
 }
