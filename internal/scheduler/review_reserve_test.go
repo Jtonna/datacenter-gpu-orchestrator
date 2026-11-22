@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -358,5 +359,128 @@ func TestReview_N1_DefaultsWriteNoPeaks(t *testing.T) {
 	}
 	if got := h.c.learnedNeeds()["m"]; got.PeakMiB != 0 {
 		t.Fatalf("defaults kept a peak: %+v", got)
+	}
+}
+
+// The general rule of the review, as a property over a table of situations:
+// with tight settings,
+//   - every node's reserved figure (will_take) is at least the default
+//     rules' figure for the same placement plus the fill reserve (an upper
+//     bound on use; a stored peak never lowers it), and
+//     every node's available figure at most the default one (a lower bound
+//     on free); a node's budget is never above the default one;
+//   - nothing is admitted that the default check of the measured need would
+//     refuse once only the margin difference is taken off: for every
+//     shared node, default share + tight margin <= default available.
+func TestReview_GeneralRule(t *testing.T) {
+	type tight struct {
+		fill, margin int
+		uses         bool
+	}
+	n := 0
+	for _, need := range []int{8000, 16000, 20000, 23000, 26000, 30000} {
+		for _, cBudget := range []int{12400, 9000} {
+			for _, avgDrop := range []int{0, 2500} {
+				for _, tg := range []tight{{8, 300, true}, {64, 100, true}, {8, 1000, false}, {0, 300, true}, {8, 0, true}} {
+					for _, ctx := range []int{4096, 65536} {
+						for _, shape := range []string{"auto", "forced", "skewed", "skewed-peak"} {
+							for _, ov := range []int{0, 15500} { // a pre-flight override above the fleet's figure on a
+								n++
+								checkGeneralRule(t, need, cBudget, avgDrop, tg.fill, tg.margin, tg.uses, ctx, shape, ov)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	if n < 100 {
+		t.Fatalf("only %d situations", n)
+	}
+}
+
+func checkGeneralRule(t *testing.T, need, cBudget, avgDrop, fill, margin int, uses bool, ctx int, shape string, ov int) {
+	t.Helper()
+	name := func() string {
+		return fmt.Sprintf("need %d, c %d, average -%d, fill %d, margin %d, uses %v, ctx %d, %s, override %d", need, cBudget, avgDrop, fill, margin, uses, ctx, shape, ov)
+	}
+	h := newHarness(t).nodes(psNode("a", 2, 12400), psNode("b", 4, 12400), psNode("c", 6, cBudget))
+	if avgDrop > 0 {
+		for _, id := range []core.NodeID{"a", "b", "c"} {
+			h.view.modify(id, func(n *core.Node) { n.FreeAvgMiB, n.FreeAvgKnown = n.FreeMiB-avgDrop, true })
+		}
+	}
+	p := h.llama("m", need, func(p *core.Profile) {
+		p.Ctx = ctx
+		if shape != "auto" {
+			p.ForceNodes, p.TensorSplit, p.LoadTimeout = []string{"a", "b"}, []int{1, 1}, time.Hour
+		}
+	})
+	if shape != "auto" && shape != "forced" { // a stored measurement 60/40 over a and b
+		a := need * 6 / 10
+		l := &learnedNeed{TotalMiB: need, key: needKeyOf(p), profile: "m", placement: []core.NodeID{"a", "b"},
+			split: []float64{0.5, 0.5}, Nodes: []learnedNode{{ID: "a", Fraction: 0.5, MiB: a}, {ID: "b", Fraction: 0.5, MiB: need - a}}}
+		if shape == "skewed-peak" { // peaks at the load's own figures (B1)
+			l.Nodes[0].PeakMiB, l.Nodes[1].PeakMiB = l.Nodes[0].MiB, l.Nodes[1].MiB
+		}
+		h.c.learned[shapeOf(p)] = l
+	}
+	h.viewChanged()
+	if ov > 0 {
+		ns := h.c.ns("a")
+		ns.ovFree, ns.ovUntil = ov, h.clk.Now().Add(time.Minute)
+	}
+	set := func(on bool) {
+		d := &h.c.cfg.Defaults
+		if on {
+			d.FillReserveKiBPerToken, d.MarginMeasuredMiB, d.PlacementUsesReserved = fill, margin, uses
+		} else {
+			d.FillReserveKiBPerToken, d.MarginMeasuredMiB, d.PlacementUsesReserved = 0, 0, false
+		}
+	}
+	// budgets
+	for _, id := range []core.NodeID{"a", "b", "c"} {
+		nd, _ := h.c.node(id)
+		set(false)
+		def := h.c.liveBudget(id, nd)
+		set(true)
+		if tb := h.c.liveBudget(id, nd); tb > def {
+			t.Errorf("%s: node %s budget %d with tight settings, %d by default", name(), id, tb, def)
+		}
+	}
+	// the placement the tight settings make (or the one the placer finds)
+	set(true)
+	r := h.c.dryPlan("m")
+	req, _, err := h.c.request(p)
+	if err != nil {
+		t.Fatalf("%s: %v", name(), err)
+	}
+	pl, perr := placer.Place(req, h.c.freeCandidates(p))
+	if perr != nil {
+		if r.Action == PlanStart {
+			t.Errorf("%s: the plan starts but the placer finds nothing", name())
+		}
+		return
+	}
+	freed := map[string]bool{"m": true}
+	tightRows, _ := h.c.memoryRows(p, pl, freed)
+	set(false)
+	defRows, _ := h.c.memoryRows(p, pl, freed)
+	set(true)
+	if len(tightRows) != len(defRows) {
+		t.Fatalf("%s: rows %d and %d", name(), len(tightRows), len(defRows))
+	}
+	for i := range tightRows {
+		tr, dr := tightRows[i], defRows[i]
+		if f := h.c.fillReserveMiB(p); tr.WillTakeMiB < dr.WillTakeMiB+f {
+			t.Errorf("%s: node %s will take %d with tight settings, below the default %d + fill reserve %d", name(), tr.Node, tr.WillTakeMiB, dr.WillTakeMiB, f)
+		}
+		if tr.AvailableMiB > dr.AvailableMiB {
+			t.Errorf("%s: node %s available %d with tight settings, %d by default", name(), tr.Node, tr.AvailableMiB, dr.AvailableMiB)
+		}
+		if r.Action == PlanStart && tr.Shared && dr.WillTakeMiB+tr.MarginMiB > dr.AvailableMiB {
+			t.Errorf("%s: admitted, but node %s's default check fails beyond the margin difference: %d + %d > %d",
+				name(), tr.Node, dr.WillTakeMiB, tr.MarginMiB, dr.AvailableMiB)
+		}
 	}
 }
