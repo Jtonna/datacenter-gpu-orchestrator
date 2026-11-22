@@ -199,9 +199,11 @@ func TestReserve_AcceptancePlanOnThreeNodes(t *testing.T) {
 }
 
 // A node that gives up more for its instance than is reserved there is
-// flagged (never an error), and the most it gave up is kept as the peak.
+// flagged (never an error), and the most it gave up is kept as the peak
+// when the load ends.
 func TestReserve_NodeAboveItsReservation(t *testing.T) {
 	h := newHarness(t).nodes(psNode("a", 2, 12400))
+	h.cfg.Defaults.FillReserveKiBPerToken = 8 // peaks are kept only with the reserve on
 	h.llama("m", 8000)
 	h.request("m")
 	setLoad(h, "m", rpcDev(addrA, 7000, 700, 300)) // measured 8000
@@ -214,12 +216,9 @@ func TestReserve_NodeAboveItsReservation(t *testing.T) {
 			s = n
 		}
 	}
-	if len(s.Reserved) != 1 || s.Reserved[0].Profile != "m" || s.ReservedMiB != 8000 || s.MeasuredUsedMiB == nil || *s.MeasuredUsedMiB != 9000 ||
-		s.DriftMiB == nil || *s.DriftMiB != 1000 || s.DriftWarning == "" {
+	if len(s.Reserved) != 1 || s.Reserved[0].Profile != "m" || s.ReservedMiB != 8032 || s.MeasuredUsedMiB == nil || *s.MeasuredUsedMiB != 9000 ||
+		s.DriftMiB == nil || *s.DriftMiB != 968 || s.DriftWarning == "" {
 		t.Fatalf("node %+v", s)
-	}
-	if got := h.c.learnedNeeds()["m"]; got.PeakMiB != 9000 || got.MeasuredMiB != 8000 || got.PeakBasis == "" {
-		t.Fatalf("peak %+v", got)
 	}
 	// Under the warn figure: no warning.
 	h.cfg.Defaults.ReservedDriftWarnMiB = 1000
@@ -228,12 +227,14 @@ func TestReserve_NodeAboveItsReservation(t *testing.T) {
 			t.Fatalf("warned at the limit: %q", n.DriftWarning)
 		}
 	}
-	// With the reserve on, the stored peak replaces need + reserve.
-	h.cfg.Defaults.FillReserveKiBPerToken = 8
+	// The stored peak is above need + reserve, so it replaces them.
 	h.step(evUnload{profile: "m", force: true})
 	h.advance(10 * time.Second)
 	h.view.modify("a", func(n *core.Node) { n.FreeMiB += 9000 })
 	h.viewChanged()
+	if got := h.c.learnedNeeds()["m"]; got.PeakMiB != 9000 || got.MeasuredMiB != 8000 || got.PeakBasis == "" {
+		t.Fatalf("peak after the cycle %+v", got)
+	}
 	r := h.c.dryPlan("m")
 	if r.Memory == nil || len(r.Memory.Nodes) != 1 || r.Memory.Nodes[0].Basis != BasisPeak || r.Memory.Nodes[0].WillTakeMiB != 9000 ||
 		r.Memory.Nodes[0].FillReserveMiB != 0 {
@@ -246,6 +247,7 @@ func TestReserve_PeakIsStored(t *testing.T) {
 	st := openNeedStore(t)
 	h := newHarness(t).nodes(psNode("a", 2, 12400))
 	h.cfg.Configured = true
+	h.cfg.Defaults.FillReserveKiBPerToken = 8
 	h.c.restoreNeeds(st)
 	h.llama("m", 8000)
 	h.request("m")
@@ -253,6 +255,7 @@ func TestReserve_PeakIsStored(t *testing.T) {
 	h.healthy("m")
 	h.view.modify("a", func(n *core.Node) { n.FreeMiB -= 8400 })
 	h.viewChanged()
+	h.step(evUnload{profile: "m", force: true}) // the cycle's peak is stored when it ends
 	flushNeeds(h, st)
 	rec := storedNeeds(t, st)["m"]
 	if len(rec.Nodes) != 1 || rec.Nodes[0].MiB != 8000 || rec.Nodes[0].PeakMiB != 8400 || rec.PeakAt.IsZero() {

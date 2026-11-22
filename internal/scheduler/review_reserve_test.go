@@ -338,3 +338,25 @@ func TestReview_S6_APeakFollowsTheLatestNormalCycle(t *testing.T) {
 		t.Fatalf("after a low cycle: %+v, want 8512", n)
 	}
 }
+
+// N1: with the defaults nothing of the rule writes to the store: a node
+// giving up more while loaded raises no peak and queues no write.
+func TestReview_N1_DefaultsWriteNoPeaks(t *testing.T) {
+	st := openNeedStore(t)
+	h := newHarness(t).nodes(psNode("a", 2, 12400))
+	h.cfg.Configured = true
+	h.c.restoreNeeds(st)
+	h.llama("m", 8000)
+	h.request("m")
+	setLoad(h, "m", rpcDev(addrA, 7000, 700, 300))
+	h.healthy("m")
+	h.c.takeNeedOps() // the learned need itself is stored, as before
+	h.view.modify("a", func(n *core.Node) { n.FreeMiB -= 9000 })
+	h.viewChanged()
+	if ops := h.c.takeNeedOps(); len(ops) != 0 {
+		t.Fatalf("defaults queued %d store writes for a peak", len(ops))
+	}
+	if got := h.c.learnedNeeds()["m"]; got.PeakMiB != 0 {
+		t.Fatalf("defaults kept a peak: %+v", got)
+	}
+}

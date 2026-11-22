@@ -72,8 +72,8 @@ type Record struct {
 	Cause      string    `json:"cause"`
 	MeasuredAt time.Time `json:"measured_at"`
 	Release    string    `json:"release"`
-	// PeakAt is when the highest per-node peak was last raised; zero when
-	// no peak is stored. The peaks live in Nodes, with the same placement
+	// PeakAt is when the per-node peaks were last set (at the end of a
+	// load-to-unload cycle); zero when no peak is stored. The peaks live in Nodes, with the same placement
 	// and split, and are dropped with the row.
 	PeakAt time.Time `json:"peak_at,omitzero"`
 }

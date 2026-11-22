@@ -32,10 +32,6 @@ const (
 	BasisEstimated = "estimated"
 )
 
-// peakStoreStepMiB is how far a node's peak must rise above the stored one
-// before it is written again (the writer merges writes per profile anyway).
-const peakStoreStepMiB = 32
-
 // avgStale: what is placed on node id changed less than a window ago, so its
 // average free figure still holds samples from before (an unloaded or
 // evicted model's): it is not used then (review S5). With a window of 0 the
@@ -280,63 +276,54 @@ func (c *schedCore) measuredUse(in *inst, id core.NodeID) (int, bool) {
 	return max(base-n.FreeMiB, 0), true
 }
 
-// trackPeaks raises the stored per-node peaks of every loaded instance to
-// the highest memory its nodes were seen to give up for it, never below the
-// figure its load measured. The peak lives beside the learned need (same
-// node set and split) and is stored with it.
+// trackPeaks records, for every loaded instance, the most each node gave up
+// for it in this load-to-unload cycle (in.cyclePeak). Nothing is stored
+// while the cycle runs: endPeakCycle commits the cycle's peaks when it ends,
+// so the reservation of a loaded instance stays the one it was placed with
+// and its drift shows. Only with the reserve on (review N1).
 func (c *schedCore) trackPeaks() {
+	if !c.reserveOn() {
+		return
+	}
 	for _, in := range c.insts {
 		if in.state != stReady && in.state != stDraining {
 			continue
 		}
-		l := c.learnedFor(in.prof)
-		if l == nil || len(l.Nodes) == 0 || !slices.Equal(l.placement, in.nodeIDs()) {
-			continue
-		}
-		raised := false
-		for i := range l.Nodes {
-			n := &l.Nodes[i]
-			peak := n.PeakMiB // a peak starts from what the node gave up, not from the load's figure
-			if used, ok := c.measuredUse(in, n.ID); ok {
-				peak = max(peak, used)
+		for _, pn := range in.placement.Nodes {
+			if used, ok := c.measuredUse(in, pn.ID); ok {
 				if in.cyclePeak == nil {
 					in.cyclePeak = map[core.NodeID]int{}
 				}
-				in.cyclePeak[n.ID] = max(in.cyclePeak[n.ID], used)
+				in.cyclePeak[pn.ID] = max(in.cyclePeak[pn.ID], used)
 			}
-			if peak > n.PeakMiB {
-				if peak >= n.PeakMiB+peakStoreStepMiB || n.PeakMiB == 0 {
-					raised = true
-				}
-				n.PeakMiB = peak
-			}
-		}
-		if raised {
-			l.peakAt = c.now
-			c.storeLearned(in.prof.Name)
-			c.changed = true
 		}
 	}
 }
 
-// endPeakCycle ends instance in's load-to-unload cycle (removeInst). When it
-// ended normally (an unload, a ttl, an eviction, a shutdown: not a failed
-// worker or a lost node), the stored per-node peaks become this cycle's
-// peaks, so one spike holds only until a normal cycle without it ends
-// (review S6). A node whose use was never measured in the cycle keeps no
-// peak. A cycle that ended abnormally keeps the peaks it raised.
+// endPeakCycle ends instance in's load-to-unload cycle (removeInst) and
+// commits its peaks beside the learned need (same node set and split). When
+// the cycle ended normally (an unload, a ttl, an eviction, a shutdown) the
+// stored per-node peaks become this cycle's, so one spike holds only until
+// a normal cycle without it ends (review S6); a node not measured in the
+// cycle keeps no peak. When it ended abnormally (a failed worker, a lost
+// node) the peaks can only rise. A peak never lowers a reserved figure
+// below need + fill reserve (reservedShares).
 func (c *schedCore) endPeakCycle(in *inst) {
-	if in.readyAt.IsZero() || len(in.cyclePeak) == 0 || !normalStop(in) {
+	if !c.reserveOn() || in.readyAt.IsZero() || len(in.cyclePeak) == 0 {
 		return
 	}
 	l := c.learnedFor(in.prof)
 	if l == nil || len(l.Nodes) == 0 || !slices.Equal(l.placement, in.nodeIDs()) {
 		return
 	}
-	changed := false
+	normal, changed := normalStop(in), false
 	for i := range l.Nodes {
 		n := &l.Nodes[i]
-		if p := in.cyclePeak[n.ID]; p != n.PeakMiB {
+		p := in.cyclePeak[n.ID]
+		if !normal {
+			p = max(p, n.PeakMiB)
+		}
+		if p != n.PeakMiB {
 			n.PeakMiB, changed = p, true
 		}
 	}
