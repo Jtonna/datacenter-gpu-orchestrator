@@ -208,7 +208,7 @@ func New(cfg Config, deps Deps) *Manager {
 	}
 	l := deps.Logger
 	if l == nil {
-		l = slog.New(slog.NewTextHandler(discard{}, nil))
+		l = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	if deps.PortFree == nil {
 		deps.PortFree = BindFree
@@ -218,10 +218,6 @@ func New(cfg Config, deps Deps) *Manager {
 	}
 	return &Manager{cfg: cfg, deps: deps, log: l}
 }
-
-type discard struct{}
-
-func (discard) Write(p []byte) (int, error) { return len(p), nil }
 
 func (m *Manager) stateDir() string { return filepath.Join(m.cfg.StateDir, "launch") }
 
@@ -1056,14 +1052,14 @@ func (m *Manager) Reset(ctx context.Context) agentproto.ResetAnswer {
 }
 
 // Log reads the launch log from since (6.6).
-func (m *Manager) Log(since int64, max int) (data []byte, next, dropped int64, ok bool) {
+func (m *Manager) Log(since int64, limit int) (data []byte, next, dropped int64, ok bool) {
 	m.mu.Lock()
 	r := m.cur
 	m.mu.Unlock()
 	if r == nil {
 		return nil, 0, 0, false
 	}
-	d, n, dr, err := r.log.Read(since, max)
+	d, n, dr, err := r.log.Read(since, limit)
 	if err != nil {
 		m.log.Warn("log read", "err", err)
 	}

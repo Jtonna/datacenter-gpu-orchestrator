@@ -25,7 +25,7 @@ func llamaBinary(cmd string) string {
 // noteEnv merges what a status shows into the run's environment: the workers
 // and their rpc-server versions, the configuration revision and, once an
 // instance exists, the llama binary.
-func (x *exec) noteEnv(s *StatusInfo, in *InstanceInfo) {
+func (x *suiteExec) noteEnv(s *StatusInfo, in *InstanceInfo) {
 	if s == nil {
 		return
 	}
@@ -63,7 +63,7 @@ func (x *exec) noteEnv(s *StatusInfo, in *InstanceInfo) {
 }
 
 // captureEnv reads the scheduler's status once at the start of the run.
-func (x *exec) captureEnv() {
+func (x *suiteExec) captureEnv() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	s, err := x.m.o.API.Status(ctx)
@@ -80,7 +80,7 @@ func (x *exec) captureEnv() {
 	x.m.o.Store.SetRunEnv(x.a.run.ID, env)
 }
 
-func (x *exec) envSnapshot() *Environment {
+func (x *suiteExec) envSnapshot() *Environment {
 	x.a.mu.Lock()
 	defer x.a.mu.Unlock()
 	e := x.a.env

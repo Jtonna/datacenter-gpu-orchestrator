@@ -14,7 +14,7 @@ import (
 // PhaseOK is the outcome of a phase that did what it should.
 const PhaseOK = "ok"
 
-func (x *exec) emitRequest(st *Step, extra map[string]any) {
+func (x *suiteExec) emitRequest(st *Step, extra map[string]any) {
 	ev := map[string]any{"kind": "request", "run_id": st.RunID, "idx": st.Idx, "benchmark_id": st.BenchmarkID}
 	for k, v := range extra {
 		ev[k] = v
@@ -64,7 +64,7 @@ type wireTimings struct {
 
 // benchRun is one benchmark executing its phases.
 type benchRun struct {
-	x      *exec
+	x      *suiteExec
 	st     *Step
 	b      *benchspec.Benchmark
 	ctx    context.Context
@@ -108,7 +108,7 @@ func (br *benchRun) syncGate() {
 	br.g.wait()
 }
 
-func (x *exec) runBenchmark(b *benchspec.Benchmark, idx int, group string, g *gate, member int) (st *Step) {
+func (x *suiteExec) runBenchmark(b *benchspec.Benchmark, idx int, group string, g *gate, member int) (st *Step) {
 	m := x.m
 	st = &Step{RunID: x.a.run.ID, Idx: idx, Group: group, BenchmarkID: b.ID, Name: b.Title(), Profile: b.Profile, State: StepRunning,
 		StartedAt: m.o.Now().UnixMilli(), Spec: b}
@@ -164,7 +164,7 @@ func (x *exec) runBenchmark(b *benchspec.Benchmark, idx int, group string, g *ga
 }
 
 // hostnames maps node ids to host names when the last status knew them.
-func (x *exec) hostnames(ids []string) []string {
+func (x *suiteExec) hostnames(ids []string) []string {
 	out := []string{}
 	x.a.mu.Lock()
 	known := x.a.hosts
@@ -321,7 +321,7 @@ func mergeHosts(a, b map[string]string) map[string]string {
 	return a
 }
 
-func (x *exec) unloadFirst(ctx context.Context, profile string) (string, bool) {
+func (x *suiteExec) unloadFirst(ctx context.Context, profile string) (string, bool) {
 	res, err := x.m.o.API.Unload(ctx, profile, false)
 	switch {
 	case err != nil:
@@ -996,7 +996,7 @@ func (br *benchRun) phaseUnload(p *benchspec.Phase, pr *PhaseResult) {
 }
 
 // waitGoneNoCancel is waitGone for cleanup: a cancelled run still waits.
-func (x *exec) waitGoneNoCancel(ctx context.Context, profile string) bool {
+func (x *suiteExec) waitGoneNoCancel(ctx context.Context, profile string) bool {
 	deadline := time.Now().Add(x.m.o.GoneTimeout)
 	for {
 		s, err := x.m.o.API.Status(ctx)
@@ -1011,7 +1011,7 @@ func (x *exec) waitGoneNoCancel(ctx context.Context, profile string) bool {
 }
 
 // waitGone waits until the profile has no instance (or the run is cancelled).
-func (x *exec) waitGone(ctx context.Context, profile string) bool {
+func (x *suiteExec) waitGone(ctx context.Context, profile string) bool {
 	deadline := time.Now().Add(x.m.o.GoneTimeout)
 	for {
 		s, err := x.m.o.API.Status(ctx)
@@ -1032,7 +1032,7 @@ func round1(v float64) float64 { return float64(int64(v*10+0.5)) / 10 }
 // ---- finish ----
 
 // finish completes a step: statistics, expectations, comparison, storage and events.
-func (x *exec) finish(br *benchRun) {
+func (x *suiteExec) finish(br *benchRun) {
 	m, st, b := x.m, br.st, br.b
 	br.watch.stop()
 	br.stepFacts()

@@ -107,15 +107,15 @@ func (a *activeRun) loadedSet() map[string]bool {
 	return out
 }
 
-// exec carries one run through its suite.
-type exec struct {
+// suiteExec carries one run through its suite.
+type suiteExec struct {
 	m    *Manager
 	a    *activeRun
 	base map[string]*Step // the baseline run's steps by benchmark id
 }
 
 // sleep waits for d or until the run is cancelled; false means cancelled.
-func (x *exec) sleep(d time.Duration) bool {
+func (x *suiteExec) sleep(d time.Duration) bool {
 	if d <= 0 {
 		return !x.a.cancelled()
 	}
@@ -162,7 +162,7 @@ func (m *Manager) execute(ctx context.Context, q *queued) {
 	})
 	defer maxTimer.Stop()
 
-	x := &exec{m: m, a: ar, base: map[string]*Step{}}
+	x := &suiteExec{m: m, a: ar, base: map[string]*Step{}}
 	now := m.o.Now().UnixMilli()
 	ar.setRun(func(r *Run) { r.State, r.StartedAt = RunRunning, now })
 	if err := m.o.Store.SetRunState(r.ID, RunRunning, now, 0, ""); err != nil {
@@ -373,7 +373,7 @@ func busyReason(st *StatusInfo, ours map[string]bool) string {
 // waitIdle waits until the scheduler has no instance this run did not load,
 // no request in flight that is not this run's and nothing queued, for at most
 // max. While it waits the run is paused.
-func (x *exec) waitIdle(max time.Duration) idleResult {
+func (x *suiteExec) waitIdle(max time.Duration) idleResult {
 	deadline := time.Now().Add(max)
 	paused := false
 	defer func() {
@@ -416,14 +416,14 @@ func (x *exec) waitIdle(max time.Duration) idleResult {
 	}
 }
 
-func (x *exec) setPaused(why string) {
+func (x *suiteExec) setPaused(why string) {
 	x.a.mu.Lock()
 	x.a.paused = why
 	x.a.mu.Unlock()
 }
 
 // cleanup unloads every profile this run loaded and still has loaded.
-func (x *exec) cleanup() {
+func (x *suiteExec) cleanup() {
 	loaded := x.a.loadedSet()
 	var names []string
 	for p := range loaded {
@@ -464,7 +464,7 @@ func newGate(n int) *gate {
 func (g *gate) arrive(i int) { g.once[i].Do(g.arrived.Done) }
 func (g *gate) wait()        { <-g.open }
 
-func (x *exec) runItem(idx int, it benchspec.SuiteItem) []*Step {
+func (x *suiteExec) runItem(idx int, it benchspec.SuiteItem) []*Step {
 	b := it.Inline
 	if b == nil {
 		b = x.a.plan.Benchmarks[it.Ref]
