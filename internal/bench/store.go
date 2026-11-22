@@ -171,6 +171,16 @@ ALTER TABLE run_steps ADD COLUMN mem_low TEXT CHECK (mem_low IS NULL OR json_val
 ALTER TABLE run_steps ADD COLUMN roles TEXT CHECK (roles IS NULL OR json_valid(roles));
 ALTER TABLE run_steps ADD COLUMN reload TEXT CHECK (reload IS NULL OR json_valid(reload));
 `},
+	{"external result sets", `
+CREATE TABLE external_sets (
+  id         TEXT PRIMARY KEY,
+  title      TEXT NOT NULL,
+  doc        TEXT NOT NULL CHECK (json_valid(doc)),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX external_sets_created ON external_sets (created_at);
+`},
 }
 
 type job struct {
