@@ -118,6 +118,9 @@ func DefaultRecovery() Recovery {
 }
 
 // Fleet is the fleet console connection.
+//
+// LEGACY: used by the fleet membership mode only, kept until phase 7. The
+// fleet.* keys stay in the configuration document until then.
 type Fleet struct {
 	URL        string
 	LocalNode  string
@@ -199,7 +202,8 @@ type Defaults struct {
 	WorkerStartTimeout time.Duration
 }
 
-// Values of defaults.membership.
+// Values of defaults.membership. MembershipFleet is the legacy mode, kept
+// until phase 7.
 const (
 	MembershipFleet  = "fleet"
 	MembershipAgents = "agents"
