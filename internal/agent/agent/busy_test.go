@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http/httptest"
 	"os"
@@ -10,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/runner"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/agenttest"
 )
@@ -119,5 +122,95 @@ func TestCacheEvictionIsNotBusy(t *testing.T) {
 	time.Sleep(3 * busyEvery)
 	if exists(p) || localStatus(t, e).Busy {
 		t.Fatal("an eviction made the node busy")
+	}
+}
+
+// failStartRunner holds a launch unit's start until release, then fails it.
+type failStartRunner struct {
+	*survRunner
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (r *failStartRunner) Start(ctx context.Context, s runner.Spec) (runner.Proc, error) {
+	if strings.HasPrefix(s.Unit, agentproto.LaunchUnitPrefix) {
+		r.entered <- struct{}{}
+		<-r.release
+		return nil, errors.New("systemd-run: Failed to start transient service unit")
+	}
+	return r.survRunner.Start(ctx, s)
+}
+
+// Order: the file is there before the unit is started, and a start that
+// fails removes it only once the start has its answer.
+func TestBusyFileBeforeTheUnitStartsAndAfterAFailedStart(t *testing.T) {
+	p := busyPath(t)
+	fr := &failStartRunner{survRunner: newSurvRunner(), entered: make(chan struct{}, 1), release: make(chan struct{})}
+	e := newTenvWith(t, func(o *Options, d *Deps) { d.Runner, o.BusyFile = fr, p })
+	e.start()
+	e.waitReady()
+	answered := make(chan int, 1)
+	go func() { answered <- e.do("POST", "/launch", workerReq("ln-1"), fromPotluck).Code }()
+	select {
+	case <-fr.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the unit start was not reached")
+	}
+	// The unit is being started: the file must exist, and stay while the start runs.
+	for i := 0; i < 5; i++ {
+		if !exists(p) {
+			t.Fatal("no busy file while the unit is being started")
+		}
+		time.Sleep(busyEvery)
+	}
+	close(fr.release)
+	<-answered
+	agenttest.Eventually(t, 5*time.Second, "removed after the failed start", func() bool { return !exists(p) })
+	if st := localStatus(t, e); st.Busy {
+		t.Fatalf("%+v", st)
+	}
+}
+
+// A stop that is asked for does not remove the file: it goes only when the
+// process has exited.
+func TestBusyFileStaysUntilTheProcessHasExited(t *testing.T) {
+	p := busyPath(t)
+	sr := newSurvRunner()
+	e := newTenvWith(t, func(o *Options, d *Deps) { d.Runner, o.BusyFile = sr, p })
+	e.start()
+	e.waitReady()
+	if w := e.do("POST", "/launch", workerReq("ln-1"), fromPotluck); w.Code != 202 {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	agenttest.Eventually(t, 5*time.Second, "busy file", func() bool { return exists(p) })
+	sr.setStubborn(launchUnit) // ignores SIGTERM; kill and stop fail
+	if w := e.do("DELETE", "/launch/ln-1", nil, fromPotluck); w.Code >= 300 {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	time.Sleep(5 * busyEvery)
+	if !exists(p) || !localStatus(t, e).Busy {
+		t.Fatal("the busy file went before the process exited")
+	}
+	sr.proc(launchUnit).finish() // the process exits at last
+	agenttest.Eventually(t, 10*time.Second, "removed after the exit", func() bool { return !exists(p) })
+}
+
+// An agent restart while a launch runs: the file is there again as soon as
+// the launch is adopted.
+func TestBusyFileBackRightAfterAdoption(t *testing.T) {
+	p := busyPath(t)
+	os.WriteFile(p, []byte("launches 1\nsince 1\nupdated 1\nagent_pid 1\n"), 0o644)
+	sr := newSurvRunner(launchUnit)
+	e := newTenvWith(t, func(o *Options, d *Deps) { d.Runner, o.BusyFile = sr, p })
+	e.leftLaunch(time.Hour)
+	e.start()
+	<-e.a.recovered
+	adopted := time.Now()
+	agenttest.Eventually(t, 5*time.Second, "file of the adopted launch", func() bool {
+		b, _ := os.ReadFile(p)
+		return strings.HasSuffix(string(b), fmt.Sprintf("agent_pid %d\n", os.Getpid()))
+	})
+	if d := time.Since(adopted); d > 2*busyEvery+100*time.Millisecond {
+		t.Fatalf("the file came %v after the adoption", d)
 	}
 }

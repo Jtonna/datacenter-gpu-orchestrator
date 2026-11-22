@@ -194,8 +194,12 @@ type Agent struct {
 	// Cache drops model files from the page cache (POST /cache/evict, 6.13);
 	// nil on a system without the calls or a node without model files (push).
 	Cache *filecache.Evictor
-	// Busy is the node's busy state and file (6.14).
-	Busy *busyfile.File
+	// Busy is the node's busy state and file (6.14). busyMu orders every
+	// update; busyPending counts launch requests accepted and not yet
+	// answered, so the file exists before the launch's unit is started.
+	Busy        *busyfile.File
+	busyMu      sync.Mutex
+	busyPending int
 	// launchTail follows launch output; its starting point is taken when the
 	// re-adoption is done, before anything waiting for it goes on.
 	launchTail *logship.LaunchTail
@@ -1252,24 +1256,44 @@ func (a *Agent) watchBusy(ctx context.Context) {
 		return
 	case <-a.recovered:
 	}
-	launches := func() int {
-		if a.Launch.CurrentID() != nil {
-			return 1 // one launch per node (contract 2.3)
-		}
-		return 0
-	}
 	t := time.NewTicker(busyEvery)
 	defer t.Stop()
 	for {
-		a.Busy.Set(launches())
+		a.syncBusy()
 		select {
 		case <-ctx.Done():
-			if launches() == 0 {
-				a.Busy.Set(0)
-			}
+			a.syncBusy() // removed when no launch is left; kept for one that outlives the agent
 			return
 		case <-t.C:
 		}
+	}
+}
+
+// syncBusy brings the busy state up to the launch: a launch that exists
+// (starting, ready, or stopping until its process is reaped) or a launch
+// request being started counts.
+func (a *Agent) syncBusy() {
+	a.busyMu.Lock()
+	defer a.busyMu.Unlock()
+	n := 0
+	if a.Launch.CurrentID() != nil || a.busyPending > 0 {
+		n = 1 // one launch per node (contract 2.3)
+	}
+	a.Busy.Set(n)
+}
+
+// launchAccepted marks the node busy before the launch's unit is started;
+// the returned func ends the mark once the start has an answer.
+func (a *Agent) launchAccepted() (done func()) {
+	a.busyMu.Lock()
+	a.busyPending++
+	a.Busy.Set(1)
+	a.busyMu.Unlock()
+	return func() {
+		a.busyMu.Lock()
+		a.busyPending--
+		a.busyMu.Unlock()
+		a.syncBusy()
 	}
 }
 
@@ -1309,12 +1333,7 @@ func (a *Agent) Status() agentproto.Status {
 	// before it the launch state is not known).
 	select {
 	case <-a.recovered:
-		switch ls.State {
-		case agentproto.StateStarting, agentproto.StateReady, agentproto.StateStopping:
-			a.Busy.Set(1)
-		default:
-			a.Busy.Set(0)
-		}
+		a.syncBusy()
 	default:
 	}
 	n, since := a.Busy.State()

@@ -582,7 +582,11 @@ Refusals use the launch refusal body `{"reason", "message"}`:
 Added in release 0.1.6. Additive. Software on the node that must not disturb it while a model is loading or loaded (maintenance scripts, updaters) may rely on this file. It needs no network call and no permission beyond reading a file.
 
 - **Path:** `/run/potluck/busy` on a bare Linux install (agent option `--busy-file`; `auto` is the default and means this path on a bare Linux install and no file otherwise; `off` means no file). A Docker install writes none by default: its `/run/potluck` is not the machine's. If the folder is missing or cannot be written, the agent logs this once and carries on.
-- **When it exists:** exactly while a launch exists on the node: starting, ready, or stopping (until the program has gone). It follows the launch within 0.2 s. A file cache eviction (6.13) is not a launch and does not create it.
+- **When it exists:** while a launch exists on the node: starting, ready, or stopping (until the program has gone). A file cache eviction (6.13) is not a launch and does not create it.
+- **Order:** the file and the launch never disagree in the unsafe direction.
+  - The file is written when the agent accepts a launch request, before the launch's unit (or, on Docker, its child process) is started.
+  - It is removed only after the launch has fully stopped: the unit is inactive or the child process has been reaped. This holds for a normal stop, a stop that takes a while, a reset (6.8), a lease expiry, the watchdog, and a start that fails. A failed start is answered only after the agent has stopped whatever the start left.
+  - A request that is refused can make the file appear for the moment the refusal takes; that error is in the safe direction.
 - **Format:** plain text, mode `0644`, four `key value` lines, each ending with a newline:
 
   ```
@@ -593,9 +597,13 @@ Added in release 0.1.6. Additive. Software on the node that must not disturb it 
   ```
 
   `launches` is the number of launches (0 never appears: the file is gone instead; today at most 1, rule 2.3). `since` is when the node became busy and `updated` the last write, both in Unix seconds of the node's clock. `agent_pid` is the agent process that wrote it. The file is replaced atomically (a temporary file in the same folder, then a rename), so a reader never sees part of it. `updated` is refreshed at least every 15 s while busy.
-- **Removal:** the file is removed when the last launch has gone, and when the agent stops cleanly with no launch. At agent start a left-over file is removed before launches are re-adopted, and written again if one is.
+- **Removal:** the file is removed when the last launch has gone, and when the agent stops cleanly with no launch.
+- **Agent start:** a left-over file is removed before launches are re-adopted (6.11). It is written again the moment a launch is adopted. In between there is a gap with no file: one re-adoption attempt, normally well under a second and at most 15 s. When the attempt fails (for example, systemd does not answer), it is retried every second and the gap lasts until one succeeds. On a bare install a reader covers that gap with the unit rule below.
 - **Staleness:** a reader treats the file as stale, and the node as not known to be busy, when no process with `agent_pid` exists (the agent died without cleaning up). A reader that wants a second check can also treat an `updated` older than 60 s as stale.
 - **Edge case:** a bare launch can outlive its agent (6.11). On a clean agent stop with a launch still running, the file is kept, because the node is still busy. Its `agent_pid` is then gone until the next agent adopts the launch and rewrites the file, a few seconds at most under systemd.
+
+- **Units (bare install).** On a bare (systemd) install, every launch runs as a systemd transient unit named `potluck-launch-<launch_id>.service`, whatever its role (`worker` or `host`). The unit is active while the launch runs, and it survives an agent restart. This is the rule of section 6.1, and other software may rely on it as well: an active unit with the prefix `potluck-launch-` means the node is busy, whatever the busy file says.
+- **Docker install.** There are no systemd units for launches. A launch is a child process of the agent inside the agent's container (6.1), and it ends with the container. On that install the busy file (if a path is given) and `GET /status` are the signals.
 
 The same fact is in `GET /status` (6.9): `busy` (true or false), `launches` and `busy_since` (Unix seconds, `null` when idle).
 
