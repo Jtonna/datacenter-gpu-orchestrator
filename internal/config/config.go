@@ -29,6 +29,9 @@ type Config struct {
 	HistoryKeepFiles    int
 	HistoryMemoryEvents int
 	LocalProbeCmd       string
+	// LocalNode is the name of the scheduler's own machine as a node (the
+	// local_node setting). See LocalNodeName for when it is used.
+	LocalNode string
 	// DataDir holds the scheduler database (benchmarks, runs, results) as
 	// scheduler.db; empty turns the benchmark feature off. WSMaxClients is the
 	// most concurrent /ws clients.
@@ -204,6 +207,18 @@ const (
 
 // AgentsMode reports whether the pool comes from agents.
 func (c *Config) AgentsMode() bool { return c.Defaults.Membership == MembershipAgents }
+
+// LocalNodeName is the node name of the machine the scheduler runs on. With
+// membership agents it is the local_node setting, or fleet.local_node while
+// local_node is empty, so a database written before local_node existed keeps
+// its node name (no_auto_nodes and similar settings match on it). With
+// membership fleet it is fleet.local_node, as before.
+func (c *Config) LocalNodeName() string {
+	if c.AgentsMode() && c.LocalNode != "" {
+		return c.LocalNode
+	}
+	return c.Fleet.LocalNode
+}
 
 // Values of defaults.forced_fit_check.
 const (

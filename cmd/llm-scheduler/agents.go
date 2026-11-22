@@ -43,7 +43,7 @@ func newPool(ctx context.Context, svc *cfgsvc.Service, cs *cfgstore.Store, db *b
 	}
 	o.AgentPort = envPort(envTestAgentPort, log)
 	o.WorkerPort = envPort(envTestWorkerPort, log)
-	log.Info("membership is agents: nodes come from potluck-agent registrations; the fleet feed is not read",
+	log.Info("membership is agents: nodes come from potluck-agent registrations",
 		"release", potluckRelease, "programs_dir", cfg.ProgramsDir)
 	return pool.New(o)
 }

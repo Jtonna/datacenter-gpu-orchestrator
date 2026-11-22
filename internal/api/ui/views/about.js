@@ -12,6 +12,7 @@ import * as api from '../core/api.js';
 import { liveView, pageHead, badge, stat, empty, skeleton, button, toast, humanize } from '../core/ui.js';
 import { num, bytes, dur, ago, at, plural, now, DASH } from '../core/format.js';
 import { connectionFacts } from '../core/shell.js';
+import { agentsMode } from '../core/nodeactions.js';
 
 const origin = () => location.origin + api.url('');
 const wsOrigin = () => origin().replace(/^http/, 'ws');
@@ -90,8 +91,9 @@ registerView({
               h('div.ch', h('h2', 'Connection')),
               h('div.cs', { style: 'border-top:0;padding-top:0' }, h('dl.kv',
                 h('dt', 'This page'), h('dd', h('span.row', { style: 'gap:8px' }, h('span', { class: 'dot ' + conn.dot }), h('b', conn.title), h('span.mut', conn.note))),
-                h('dt', 'Fleet feed'), h('dd', !st || !st.view ? DASH : st.view.stale ? h('span.warn-t', `Stale: the last update is ${dur(Math.round(st.view.age))} old. Remote nodes are not used for new loads.`)
-                  : !st.view.connected ? h('span.warn-t', 'Disconnected. The scheduler keeps retrying.') : 'Fresh: the fleet manager reports the nodes as they change.'),
+                agentsMode(st) ? [h('dt', 'Nodes'), h('dd', 'From agent registrations: each worker runs potluck-agent and registers itself.')] :
+                [h('dt', 'Fleet feed'), h('dd', !st || !st.view ? DASH : st.view.stale ? h('span.warn-t', `Stale: the last update is ${dur(Math.round(st.view.age))} old. Remote nodes are not used for new loads.`)
+                  : !st.view.connected ? h('span.warn-t', 'Disconnected. The scheduler keeps retrying.') : 'Fresh: the fleet manager reports the nodes as they change.')],
                 h('dt', 'Event history'), h('dd', hello.history === 'off' ? 'Off (started without --history-dir)' : hello.history === 'on' ? ['On', about && about.oldest_ts ? [' · oldest event ', ago(about.oldest_ts)] : null] : DASH),
                 h('dt', 'Benchmarks'), h('dd', hello.bench === 'off' ? 'Off (no data directory, or the database could not be opened)' : hello.bench === 'on' ? 'On' : DASH),
                 h('dt', 'Who may connect'), h('dd.mut', (sys && sys.origin_policy) || DASH),

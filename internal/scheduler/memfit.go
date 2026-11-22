@@ -252,7 +252,7 @@ func (c *schedCore) sharedBudgetFrom(id core.NodeID, n core.Node, fleetFree int)
 	if pfKnown && (fleetFree <= 0 || pfFree < fleetFree) {
 		return pfFree - n.HeadroomMiB, preflight
 	}
-	return fleetFree - n.HeadroomMiB, fleet
+	return fleetFree - n.HeadroomMiB, c.say(fleet)
 }
 
 // nodeShort is a shared-memory node whose expected share of a placement is

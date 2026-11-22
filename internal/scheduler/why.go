@@ -7,9 +7,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/placer"
 )
+
+// say words a message for the membership: messages are written once, in the
+// fleet wording, and with agents the fleet phrases become pool phrases
+// (config.PoolText). Reason codes never go through it.
+func (c *schedCore) say(text string) string { return config.PoolText(c.agents, text) }
 
 // nodeLabel is the name shown for a node in reasons: its hostname, else its id.
 func nodeLabel(id core.NodeID, n core.Node) string {
@@ -63,7 +69,7 @@ func (c *schedCore) forcedWhy(p *core.Profile, np *placer.NoPlacement) (Reason, 
 		n, ok := c.node(id)
 		switch {
 		case err != nil || !ok:
-			parts = append(parts, fmt.Sprintf("forced node %s is not in the fleet view", name))
+			parts = append(parts, c.say(fmt.Sprintf("forced node %s is not in the fleet view", name)))
 		case c.excluded(n):
 			parts = append(parts, fmt.Sprintf("forced node %s: node %s is excluded by config", name, nodeLabel(id, n)))
 			reason = ReasonNodeExcluded

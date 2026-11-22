@@ -126,14 +126,14 @@ func (p *Pool) Resolve(name string) (core.NodeID, error) {
 }
 
 func (p *Pool) localIDLocked() core.NodeID {
-	if ln := p.o.Config().Fleet.LocalNode; ln != "" {
+	if ln := p.o.Config().LocalNodeName(); ln != "" {
 		return core.NodeID(ln)
 	}
 	return "local"
 }
 
 func (p *Pool) isLocalNameLocked(name string) bool {
-	ln := p.o.Config().Fleet.LocalNode
+	ln := p.o.Config().LocalNodeName()
 	return ln != "" && strings.EqualFold(name, ln)
 }
 
@@ -142,7 +142,7 @@ func (p *Pool) isLocalNameLocked(name string) bool {
 // Settled as built by CR-5 (agent contract 11.1). The question was: in phase 4 the scheduler's own child is the host and the
 // local node comes from local_probe_cmd; the host machine's agent (4.1: its id
 // becomes its MAC) is not told apart by anything in the contract. An agent
-// whose id or name equals fleet.local_node is taken as the host machine's and
+// whose id or name equals the local node name (Config.LocalNodeName) is taken as the host machine's and
 // is not published as a remote node (it stays registered and in status).
 func (p *Pool) isHostAgentLocked(a *agent) bool {
 	return p.isLocalNameLocked(a.reg.ID) || p.isLocalNameLocked(a.reg.Name)
@@ -176,7 +176,7 @@ func (p *Pool) rebuildLocked() {
 		nodes = append(nodes, n)
 	}
 	if p.probeOK {
-		ln := core.Node{ID: p.localIDLocked(), Hostname: cfg.Fleet.LocalNode, Local: true, Online: true,
+		ln := core.Node{ID: p.localIDLocked(), Hostname: cfg.LocalNodeName(), Local: true, Online: true,
 			TotalMiB: p.probeTotal, FreeMiB: max(p.probeTotal-p.probeUsed, 0)}
 		if t, ok := cfg.MatchTier(ln.Hostname, "", "", true); ok {
 			ln.Priority, ln.HeadroomMiB, ln.SharedMemory, ln.LinkMBs, ln.Settle = t.Priority, t.HeadroomMiB, t.SharedMemory, t.LinkMBs, t.Settle

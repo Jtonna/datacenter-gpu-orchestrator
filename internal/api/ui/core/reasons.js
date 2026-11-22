@@ -12,6 +12,8 @@
 // status wait_reason and last_refusals) or from the format string in
 // internal/scheduler (why.go, forcedfit.go, memfit.go) and internal/placer.
 
+import { poolText } from './words.js';
+
 const nf1 = new Intl.NumberFormat('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 // Memory at a glance is GB with one decimal (1 GB = 1,024 MiB); see README.
 const gb = mib => nf1.format(Number(mib) / 1024) + ' GB';
@@ -71,7 +73,7 @@ function clause(s) {
     const l = splitNames(m[1]);
     return { short: l.length === 1 ? `${l[0]} is offline` : 'Its nodes are offline', text: `It is tied to ${names(l)}, which ${isAre(l)} offline or cannot be used right now.` };
   }
-  if ((m = s.match(/^forced node (\S+) is not in the fleet view$/i))) return { short: `${m[1]} is not known`, text: `It is tied to ${m[1]}, which the fleet does not report.` };
+  if ((m = s.match(/^forced node (\S+) is not in the (fleet view|pool)$/i))) return { short: `${m[1]} is not known`, text: poolText(m[2].toLowerCase() === 'pool', `It is tied to ${m[1]}, which the fleet does not report.`) };
   if ((m = s.match(/^forced node (\S+): node (\S+) is excluded by config$/i))) return { short: `${m[2]} is excluded`, text: `It is tied to ${m[2]}, which is excluded from use.` };
   if ((m = s.match(/^forced node (\S+) is quarantined until (\S+)$/i))) return { short: `${m[1]} is set aside`, text: `It is tied to ${m[1]}, which is set aside until ${m[2]} after a failure.` };
   if ((m = s.match(/^nodes that would fit are quarantined until (\S+)$/i))) return { short: 'Nodes are set aside', text: `The nodes that could take it are set aside until ${m[1]} after a failure.` };

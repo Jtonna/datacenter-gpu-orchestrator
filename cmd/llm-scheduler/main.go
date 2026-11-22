@@ -156,6 +156,14 @@ func exitCodeAfterShutdown(code int, shutdownErr error, log *slog.Logger) int {
 }
 
 func serve(boot config.Bootstrap, log *slog.Logger) int {
+	sigs := make(chan os.Signal, 2)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	return serveUntil(boot, log, sigs)
+}
+
+// serveUntil runs the scheduler until the first value on sigs (a second one
+// stops everything at once).
+func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) int {
 	// CR-10: Potluck's own lines also go to the log store (source scheduler),
 	// through a RAM ring and one background sender; the printed log stays as
 	// it is. The lines from here on are kept until the sender starts and
@@ -261,8 +269,9 @@ func serve(boot config.Bootstrap, log *slog.Logger) int {
 		log.Info("keeping each child's full output", "dir", launcher.LogDir, "keep", cfg.ChildLogKeep)
 	}
 
-	// The node view: the fleet feed, or (membership agents) the agents'
-	// registrations, in which case the fleet feed is not read at all.
+	// The node view: the agents' registrations (membership agents), or the
+	// fleet feed. With agents nothing connects to a fleet console and no log
+	// line names one.
 	var view fleet.View
 	fleetDone := make(chan struct{})
 	if cfg.AgentsMode() {
@@ -353,8 +362,6 @@ func serve(boot config.Bootstrap, log *slog.Logger) int {
 	}
 	log.Info("llm-scheduler started", "version", version, "listen", ln.Addr().String(), "profiles", len(cfg.Profiles))
 
-	sigs := make(chan os.Signal, 2)
-	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
 	code := 0
 	select {
 	case s := <-sigs:
