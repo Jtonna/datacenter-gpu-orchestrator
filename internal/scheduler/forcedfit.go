@@ -152,7 +152,8 @@ func (c *schedCore) emptyFree(id core.NodeID, n core.Node) (free int, note strin
 	if held > 0 {
 		note = fmt.Sprintf(", counting the %d MiB %s holds there as freed", held, who)
 	}
-	return n.FreeMiB + held, note, true
+	// never above the node's total: what is freed cannot exceed what is there
+	return min(n.FreeMiB+held, n.TotalMiB), note, true
 }
 
 // heldOn is what the instance holding node id is expected to hold there: its
@@ -167,6 +168,17 @@ func (c *schedCore) heldOn(id core.NodeID) (mib int, profile string, ok bool) {
 	in := c.insts[ns.holder]
 	if in == nil {
 		return 0, "", true
+	}
+	if c.newRules() {
+		// reserve.go: what the node gave up for the holder when that is
+		// known, else its reserved figure; never the margin.
+		if used, known := c.measuredUse(in, id); known {
+			return used, in.prof.Name, true
+		}
+		if _, r, ok := c.reservedOn(id); ok {
+			return r.Total, in.prof.Name, true
+		}
+		return 0, "", false
 	}
 	shares := c.expectShares(in.prof, in.placement)
 	for i, pn := range in.placement.Nodes {

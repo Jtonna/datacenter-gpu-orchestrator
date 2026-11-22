@@ -158,3 +158,28 @@ func TestReview_B3_TheSettingNeverRaisesABudget(t *testing.T) {
 		}
 	}
 }
+
+// S1: the figure "with nothing of ours loaded" counts what the holder really
+// gave up (or its reserved figure while that is unknown), never its margin
+// or unused fill reserve, and is never above the node's total. The
+// reviewer's case: 13400 empty, the holder uses 8000, fill 512, margin 300:
+// 13400, not 14212.
+func TestReview_S1_EmptyFreeNeverAboveTheTotal(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		h := newHarness(t).nodes(psNode("a", 2, 12400))
+		if on {
+			reserveOnSettings(h)
+		}
+		h.llama("m", 8000, func(p *core.Profile) { p.Ctx = 65536 })
+		h.request("m")
+		setLoad(h, "m", rpcDev(addrA, 7000, 700, 300))
+		h.healthy("m")
+		h.view.modify("a", func(n *core.Node) { n.FreeMiB -= 8000 })
+		h.viewChanged()
+		n, _ := h.c.node("a")
+		free, _, ok := h.c.emptyFree("a", n)
+		if !ok || free > n.TotalMiB || free != 13400 {
+			t.Fatalf("rule on %v: empty free %d (ok %v), want 13400, at most the total %d", on, free, ok, n.TotalMiB)
+		}
+	}
+}
