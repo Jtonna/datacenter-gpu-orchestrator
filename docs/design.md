@@ -2561,7 +2561,10 @@ Potluck's clock and mapped onto the node's axis as `registered` mark plus
 (now minus `registered_at`). Both ends are the same moment, the first
 accepted registration, seen from either side; the mapping is off by that
 registration's network time, well under a second on the pool links. `ready_at`
-(the ready moment on Potluck's clock) is mapped the other way.
+(the ready moment on Potluck's clock) is mapped the other way. `/run` survives
+a soft restart, so the agent drops external marks earlier than the current
+userspace start, and ignores the whole marks file while its
+`boot_progress_start` is earlier (its writer has not run again yet).
 
 **The kinds.** A record is made for every agent process (`agent_start_id`)
 that sends a report; a registration of the same process again (after a

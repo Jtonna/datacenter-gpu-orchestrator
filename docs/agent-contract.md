@@ -886,7 +886,8 @@ Each start of an agent reports, on the machine's own time axis, how its start we
 - reads it at start, then every 2 s, and stops after 5 minutes or after 60 s without a change, whichever comes first;
 - skips a line that is not exactly a valid name and a finite number of 0 or more (a half-written last line included); a name given twice takes the last value; at most 32 names;
 - ignores a file larger than 64 KiB, with one warning, and keeps the marks it had;
-- takes a missing file as normal (no marks), and never creates or deletes the file or its folder.
+- takes a missing file as normal (no marks), and never creates or deletes the file or its folder;
+- after a soft restart (systemd gave the userspace start and a soft-restart count that is not 0) drops every mark earlier than the userspace start, and ignores the whole file while its `boot_progress_start` is earlier (`/run` survives a soft restart, so the file is the previous start's until the writer starts a fresh one), with one INFO line.
 
 **Docker install.** It reports `boot_id`, `agent_start_s` and its own marks: the container shares the host's kernel, so its boot id and `CLOCK_BOOTTIME` are the host's. It reports no `userspace_start_s`, no `soft_reboots` and no external marks: inside the container `systemctl` would show the container's own systemd or none, and the host's `/run/potluck` is not mounted. So Potluck can tell a full start (another boot id) from the rest, but not a soft restart from an agent restart (design "Start-up figures", the kinds).
 

@@ -3,6 +3,7 @@ package startup
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -226,5 +227,96 @@ func TestRecorderMarksAndAcks(t *testing.T) {
 	r.SetSystemd(Facts{UserspaceStartS: &up, SoftReboots: &soft})
 	if c := r.Report(); *c.UserspaceStartS != 3.5 || *c.SoftReboots != 0 {
 		t.Fatalf("%+v", c)
+	}
+}
+
+// Stale marks after a soft restart (/run survives it): marks earlier than
+// the current userspace start are dropped, and a file whose
+// boot_progress_start is earlier is ignored whole until a fresh one appears.
+func TestWatcherDropsMarksOfAnEarlierUserspace(t *testing.T) {
+	at := func(s float64) time.Duration { return time.Duration(s * float64(time.Second)) }
+	type tc struct {
+		file string
+		us   float64
+		ok   bool
+		want map[string]float64
+	}
+	for name, c := range map[string]tc{
+		"stale whole file": {"boot_progress_start 1.95\nnetwork_ok 9.5\npayload_ok 18.2\n", 500, true, map[string]float64{}},
+		"some marks older": {"boot_progress_start 501\nnetwork_ok 9.5\npayload_ok 520\n", 500, true,
+			map[string]float64{"boot_progress_start": 501, "payload_ok": 520}},
+		"userspace start unknown": {"boot_progress_start 1.95\nnetwork_ok 9.5\n", 0, false,
+			map[string]float64{"boot_progress_start": 1.95, "network_ok": 9.5}},
+		"full start": {"boot_progress_start 1.95\nnetwork_ok 9.5\n", 1.5, true,
+			map[string]float64{"boot_progress_start": 1.95, "network_ok": 9.5}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var logs strings.Builder
+			w := &Watcher{Path: "x", Read: func(string) ([]byte, error) { return []byte(c.file), nil },
+				UserspaceStart: func() (float64, bool) { return c.us, c.ok },
+				Logger:         slog.New(slog.NewTextHandler(&logs, nil))}
+			m, ch, _, _ := w.Poll(at(530))
+			if !ch || !reflect.DeepEqual(m, c.want) {
+				t.Fatalf("marks %v changed %v, want %v", m, ch, c.want)
+			}
+			stale := strings.Count(logs.String(), `level=INFO msg="start-up marks file is from an earlier start; ignored"`)
+			if name == "stale whole file" {
+				if stale != 1 || !strings.Contains(logs.String(), "boot_progress_start_s=1.95") || !strings.Contains(logs.String(), "userspace_start_s=500") {
+					t.Fatalf("log\n%s", logs.String())
+				}
+			} else if stale != 0 {
+				t.Fatalf("log\n%s", logs.String())
+			}
+		})
+	}
+}
+
+func TestWatcherReadsAFreshFileAfterAStaleOne(t *testing.T) {
+	at := func(s float64) time.Duration { return time.Duration(s * float64(time.Second)) }
+	file := "boot_progress_start 1.95\nnetwork_ok 9.5\n"
+	var logs strings.Builder
+	w := &Watcher{Path: "x", Read: func(string) ([]byte, error) { return []byte(file), nil },
+		UserspaceStart: func() (float64, bool) { return 500, true },
+		Logger:         slog.New(slog.NewTextHandler(&logs, nil))}
+	if m, ch, _, _ := w.Poll(at(510)); !ch || len(m) != 0 {
+		t.Fatalf("stale: %v %v", m, ch)
+	}
+	if _, ch, _, _ := w.Poll(at(512)); ch {
+		t.Fatal("unchanged stale file reported again")
+	}
+	file = "boot_progress_start 540\n" // the writer started late
+	if m, ch, _, _ := w.Poll(at(541)); !ch || m["boot_progress_start"] != 540 || len(m) != 1 {
+		t.Fatalf("fresh: %v %v", m, ch)
+	}
+	file = "boot_progress_start 540\nnetwork_ok 548\n"
+	if m, ch, _, _ := w.Poll(at(549)); !ch || len(m) != 2 {
+		t.Fatalf("fresh, more: %v %v", m, ch)
+	}
+	if n := strings.Count(logs.String(), "earlier start"); n != 1 {
+		t.Fatalf("logged %d times", n)
+	}
+}
+
+// The cut-off is the userspace start, and only when this boot had a soft
+// restart (or the count is unknown): /run is new on a full boot.
+func TestRecorderMarksCutoff(t *testing.T) {
+	f := func(v float64) *float64 { return &v }
+	i := func(v int64) *int64 { return &v }
+	for _, c := range []struct {
+		facts Facts
+		us    float64
+		ok    bool
+	}{
+		{Facts{UserspaceStartS: f(500), SoftReboots: i(1)}, 500, true},
+		{Facts{UserspaceStartS: f(500)}, 500, true},
+		{Facts{UserspaceStartS: f(1.5), SoftReboots: i(0)}, 0, false},
+		{Facts{SoftReboots: i(2)}, 0, false},
+		{Facts{}, 0, false},
+	} {
+		r := NewRecorder("b", time.Second)
+		r.SetSystemd(c.facts)
+		if us, ok := r.MarksCutoff(); us != c.us || ok != c.ok {
+			t.Errorf("%+v: %v %v", c.facts, us, ok)
+		}
 	}
 }

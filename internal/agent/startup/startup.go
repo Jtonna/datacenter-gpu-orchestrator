@@ -15,6 +15,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"math"
 	"os"
 	"os/exec"
@@ -154,10 +155,26 @@ func readCapped(path string, max int64) ([]byte, error) {
 // keep arriving (the dashboard after the agent, for example). It stops after
 // WatchFor, or when the file has not changed for QuietFor. It only reads:
 // it never creates or deletes the file or its folder.
+//
+// /run survives a soft restart, so the file can still hold the marks of the
+// previous userspace when its writer has not run again. With a cut-off (the
+// current userspace start, Recorder.MarksCutoff) a mark earlier than it is
+// dropped, and a file whose boot_progress_start is earlier is ignored whole
+// (the writer starts a fresh file with that mark at each of its starts), until
+// a fresh file appears.
 type Watcher struct {
 	Path string
 	// Read reads the file (nil: a capped read of Path); tests replace it.
 	Read func(path string) ([]byte, error)
+	// UserspaceStart gives the cut-off in seconds since boot; ok false (or a
+	// nil func) keeps every mark.
+	UserspaceStart func() (float64, bool)
+	// Logger gets one INFO line when a stale file is ignored; nil: none.
+	Logger *slog.Logger
+
+	cut       float64
+	cutKnown  bool
+	staleSaid bool
 
 	started    bool
 	start      time.Duration
@@ -206,9 +223,15 @@ func (w *Watcher) Poll(now time.Duration) (marks map[string]float64, changed, do
 		}
 	default:
 		w.tooLarge = false
-		if w.missing || !bytes.Equal(b, w.last) {
+		cut, known := 0.0, false
+		if w.UserspaceStart != nil {
+			cut, known = w.UserspaceStart()
+		}
+		cutChanged := known != w.cutKnown || cut != w.cut
+		if w.missing || !bytes.Equal(b, w.last) || cutChanged {
+			w.cut, w.cutKnown = cut, known
 			w.missing, w.last, changed = false, append([]byte(nil), b...), true
-			marks = ParseMarks(b)
+			marks = w.current(ParseMarks(b))
 			w.lastChange = now
 		}
 	}
@@ -216,6 +239,31 @@ func (w *Watcher) Poll(now time.Duration) (marks map[string]float64, changed, do
 		w.done = true
 	}
 	return marks, changed, w.done, warn
+}
+
+// markBootProgressStart is the first mark the console side writes at each of
+// its starts, in a fresh file.
+const markBootProgressStart = "boot_progress_start"
+
+// current drops the marks of an earlier userspace (see Watcher).
+func (w *Watcher) current(m map[string]float64) map[string]float64 {
+	if !w.cutKnown {
+		return m
+	}
+	if b, ok := m[markBootProgressStart]; ok && b < w.cut {
+		if !w.staleSaid && w.Logger != nil {
+			w.Logger.Info("start-up marks file is from an earlier start; ignored", "file", w.Path,
+				"boot_progress_start_s", b, "userspace_start_s", w.cut)
+		}
+		w.staleSaid = true
+		return map[string]float64{}
+	}
+	for k, v := range m {
+		if v < w.cut {
+			delete(m, k)
+		}
+	}
+	return m
 }
 
 // ---- the report ----
@@ -256,6 +304,20 @@ func (r *Recorder) SetSystemd(f Facts) {
 		r.rep.SoftReboots = &v
 	}
 	r.rev++
+}
+
+// MarksCutoff is the time (seconds since boot) before which a mark of the
+// marks file belongs to an earlier userspace: the userspace start, when
+// systemd gave it and this boot may have had a soft restart (the count is
+// above 0 or unknown). On a boot without a soft restart /run is new, so
+// nothing is cut.
+func (r *Recorder) MarksCutoff() (float64, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.rep.UserspaceStartS == nil || (r.rep.SoftReboots != nil && *r.rep.SoftReboots == 0) {
+		return 0, false
+	}
+	return *r.rep.UserspaceStartS, true
 }
 
 // Mark records a mark the first time it happens; later calls are ignored.
