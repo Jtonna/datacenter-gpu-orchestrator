@@ -271,3 +271,48 @@ func FuzzRead(f *testing.F) {
 		m.KVElemsPerToken()
 	})
 }
+
+// A hybrid model (attention every n-th layer, recurrent layers between)
+// keeps a KV cache only on its attention layers: layer il has one when
+// (il + 1) % full_attention_interval == 0, as llama.cpp marks them.
+func TestHybridKVOnlyOnAttentionLayers(t *testing.T) {
+	hybrid := func(arch string, interval uint32) *fx {
+		f := newFx().str("general.architecture", arch).
+			u32(arch+".block_count", 33).
+			u32(arch+".embedding_length", 2560).
+			u32(arch+".attention.head_count", 16).
+			u32(arch+".attention.head_count_kv", 4).
+			u32(arch+".attention.key_length", 256).
+			u32(arch+".attention.value_length", 256)
+		if interval > 0 {
+			f.u32(arch+".full_attention_interval", interval)
+		}
+		return f
+	}
+	for _, c := range []struct {
+		name     string
+		f        *fx
+		interval uint32
+		layers   int
+	}{
+		{"interval 4", hybrid("qwen35", 4), 4, 8}, // layers 3, 7, ..., 31
+		{"interval 3", hybrid("qwen35", 3), 3, 11},
+		// qwen3next, qwen35 and qwen35moe default to 4 without the key.
+		{"qwen35 default", hybrid("qwen35", 0), 4, 8},
+		{"qwen35moe default", hybrid("qwen35moe", 0), 4, 8},
+		{"qwen3next default", hybrid("qwen3next", 0), 4, 8},
+		// Another architecture without the key: every layer has a cache.
+		{"plain", hybrid("qwen3", 0), 0, 33},
+	} {
+		m, err := Read(bytes.NewReader(c.f.bytes()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m.FullAttentionInterval != c.interval {
+			t.Errorf("%s: interval %d, want %d", c.name, m.FullAttentionInterval, c.interval)
+		}
+		if n, err := m.KVElemsPerToken(); err != nil || n != c.layers*2*4*256 {
+			t.Errorf("%s: %d KV elements per token (err %v), want %d layers x 2048", c.name, n, err, c.layers)
+		}
+	}
+}
