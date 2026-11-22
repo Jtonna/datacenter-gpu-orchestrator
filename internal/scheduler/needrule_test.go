@@ -17,8 +17,9 @@ func ruleEstimate(base, perDevice int, configured bool) func(int) int {
 }
 
 // randomRows draws n rows on 1 to 6 devices, around and far from the
-// estimate, trusted and untrusted mixed.
-func randomRows(r *rand.Rand, n, base int) []needRow {
+// estimate, trusted and untrusted mixed. Coarse rows are on a 500 MiB grid,
+// so that ties between rows and with the estimate are frequent.
+func randomRows(r *rand.Rand, n, base int, coarse bool) []needRow {
 	rows := make([]needRow, n)
 	for i := range rows {
 		var total int
@@ -30,16 +31,28 @@ func randomRows(r *rand.Rand, n, base int) []needRow {
 		default: // around
 			total = base*7/10 + r.Intn(base*6/10+1)
 		}
+		if coarse {
+			total = max(total/500, 1) * 500
+		}
 		rows[i] = needRow{Devices: 1 + r.Intn(6), Total: total, Trusted: r.Intn(2) == 0}
 	}
 	return rows
 }
 
-func randomRule(r *rand.Rand) needRule {
+// randomRule: a quarter of the sets have no per-device cost, half are on
+// the 500 MiB grid (ties), a fifth have a configured floor.
+func randomRule(r *rand.Rand) (needRule, bool) {
+	coarse := r.Intn(2) == 0
 	base := 2000 + r.Intn(30000)
 	pd := r.Intn(2500)
+	if coarse {
+		base, pd = base/500*500, pd/500*500
+	}
+	if r.Intn(4) == 0 {
+		pd = 0
+	}
 	configured := r.Intn(5) == 0
-	return needRule{Estimate: ruleEstimate(base, pd, configured), Floor: configured, PerDevice: pd, Rows: randomRows(r, r.Intn(6), base)}
+	return needRule{Estimate: ruleEstimate(base, pd, configured), Floor: configured, PerDevice: pd, Rows: randomRows(r, r.Intn(6), base, coarse)}, coarse
 }
 
 func fig(rule needRule, k int) int { f, _ := needFor(rule, k); return f }
@@ -48,6 +61,17 @@ func withRow(rule needRule, x needRow) needRule {
 	out := rule
 	out.Rows = append(append([]needRow(nil), rule.Rows...), x)
 	return out
+}
+
+// closestTrustedAbove is the smallest trusted count above k, 0 if none.
+func closestTrustedAbove(rows []needRow, k int) int {
+	c := 0
+	for _, r := range rows {
+		if r.Trusted && r.Devices > k && (c == 0 || r.Devices < c) {
+			c = r.Devices
+		}
+	}
+	return c
 }
 
 // trustedIn reports whether rows hold a trusted row on lo to hi devices.
@@ -66,7 +90,13 @@ func TestNeedRule_Invariants(t *testing.T) {
 	for seed := int64(1); seed <= 4; seed++ {
 		r := rand.New(rand.NewSource(seed))
 		for n := 0; n < sets/4; n++ {
-			rule := randomRule(r)
+			rule, coarse := randomRule(r)
+			if rule.PerDevice == 0 {
+				checked["sets with no per-device cost"]++
+			}
+			if coarse {
+				checked["sets on the 500 MiB grid"]++
+			}
 			pd := rule.PerDevice
 			trustedRows, untrustedRows := 0, 0
 			for _, row := range rule.Rows {
@@ -77,8 +107,37 @@ func TestNeedRule_Invariants(t *testing.T) {
 				}
 			}
 			for k := 1; k <= 6; k++ {
-				got := fig(rule, k)
+				got, from := needFor(rule, k)
 				est := rule.Estimate(k)
+				// the source: the estimate, or a row giving exactly the figure
+				switch {
+				case from < 0 && got != est:
+					t.Fatalf("source: seed %d set %d k=%d: %d from the estimate %d (%+v)", seed, n, k, got, est, rule.Rows)
+				case from >= 0:
+					row := rule.Rows[from]
+					if got != row.Total+(k-row.Devices)*pd && got != row.Total {
+						t.Fatalf("source: seed %d set %d k=%d: %d from %+v (%+v)", seed, n, k, got, row, rule.Rows)
+					}
+				}
+				if from >= 0 && got == est && (len(rule.Rows) > 0) {
+					checked["(set, k) ties with the estimate"]++
+				}
+				// M3: nothing trusted on k or fewer devices: never below the
+				// total of the closest trusted count above, as it was taken
+				if !trustedIn(rule.Rows, 1, k) {
+					if c := closestTrustedAbove(rule.Rows, k); c > 0 {
+						for _, row := range rule.Rows {
+							if row.Trusted && row.Devices == c && got < row.Total {
+								t.Fatalf("M3: seed %d set %d k=%d: %d below the closest trusted count above, %+v (%+v)", seed, n, k, got, row, rule.Rows)
+							}
+						}
+					}
+				}
+				// M4: nothing trusted on k or more devices, or a floor: never
+				// below the estimate
+				if (!trustedIn(rule.Rows, k, 6) || rule.Floor) && got < est {
+					t.Fatalf("M4: seed %d set %d k=%d: %d below the estimate %d (%+v)", seed, n, k, got, est, rule.Rows)
+				}
 				// I3, I4 and the larger count (TS1)
 				for _, row := range rule.Rows {
 					if !row.Trusted {
@@ -121,7 +180,7 @@ func TestNeedRule_Invariants(t *testing.T) {
 					t.Fatalf("I5: seed %d set %d: %d devices %d, %d devices %d (%+v)", seed, n, k, got, k+1, fig(rule, k+1), rule.Rows)
 				}
 				// I1 and I2: one more row
-				x := randomRows(r, 1, est)[0]
+				x := randomRows(r, 1, est, coarse)[0]
 				after := fig(withRow(rule, x), k)
 				mayLower := x.Trusted && (x.Devices >= k && !trustedIn(rule.Rows, k, x.Devices) ||
 					x.Devices < k && !trustedIn(rule.Rows, 1, k))
@@ -138,7 +197,8 @@ func TestNeedRule_Invariants(t *testing.T) {
 			checked["sets"]++
 		}
 	}
-	if checked["sets"] < 20000 || checked["two or more rows, trusted and untrusted"] < 20000 {
+	if checked["sets"] < 20000 || checked["two or more rows, trusted and untrusted"] < 20000 ||
+		checked["sets with no per-device cost"] < 5000 || checked["sets on the 500 MiB grid"] < 10000 {
 		t.Fatalf("too few cases: %v", checked)
 	}
 	t.Logf("cases: %v", checked)
