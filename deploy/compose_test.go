@@ -194,7 +194,7 @@ func TestComposeStandingLayout(t *testing.T) {
 		for _, v := range s.Volumes {
 			switch p := hostPath(v); {
 			case p == "":
-			case p == "./seed-config.yaml" || p == "/lib/modules": // ships with this file; the host's kernel modules
+			case p == "./seed-config.yaml" || p == "./share-nfs.conf" || p == "/lib/modules": // ship with this file; the host's kernel modules
 			case !strings.HasPrefix(p, rootVar):
 				t.Errorf("%s: host path %q is not under %s", name, p, rootVar)
 			}
@@ -309,5 +309,47 @@ func TestComposeFixedAddressesOutsideDynamicRange(t *testing.T) {
 	}
 	if fixed < 2 {
 		t.Errorf("%d fixed addresses, want the scheduler's and the agent's", fixed)
+	}
+}
+
+// The share's NFSv4 grace and lease times: a file next to the compose file,
+// mounted read only at /etc/nfs.conf, with both at 10 s (the kernel minimum),
+// so a client's read stands still about 16 s after the share restarts instead
+// of about 93 s with the kernel defaults (90 s each).
+func TestComposeShareGraceTime(t *testing.T) {
+	c := loadCompose(t)
+	s, ok := c.Services["potluck-share"]
+	if !ok {
+		t.Fatal("no potluck-share service")
+	}
+	mounted := false
+	for _, v := range s.Volumes {
+		mounted = mounted || v == "./share-nfs.conf:/etc/nfs.conf:ro"
+	}
+	if !mounted {
+		t.Errorf("share-nfs.conf is not mounted read only at /etc/nfs.conf: %v", s.Volumes)
+	}
+	b, err := os.ReadFile("share-nfs.conf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	section := ""
+	got := map[string]string{}
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case line == "" || strings.HasPrefix(line, "#"):
+		case strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]"):
+			section = strings.TrimSpace(line[1 : len(line)-1])
+		case section == "nfsd":
+			if k, v, ok := strings.Cut(line, "="); ok {
+				got[strings.TrimSpace(k)] = strings.TrimSpace(v)
+			}
+		}
+	}
+	for _, k := range []string{"grace-time", "lease-time"} {
+		if got[k] != "10" {
+			t.Errorf("[nfsd] %s = %q, want 10", k, got[k])
+		}
 	}
 }
