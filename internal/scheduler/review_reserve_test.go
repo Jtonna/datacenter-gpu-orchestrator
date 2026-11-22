@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -381,7 +382,14 @@ func TestReview_N1_DefaultsWriteNoPeaks(t *testing.T) {
 // The table covers 1, 2 and 3 nodes (forced over the first nodes, or
 // max_pool for an automatic profile) against a measurement stored on 2
 // (review SB1, SS4), in fleet membership, fleet membership with a lower
-// pre-flight, and agents membership.
+// pre-flight, and agents membership. A third of the situations (8640 of
+// 25920) store measurements on two or three device counts with an
+// untrusted row among them (third review, TN5): "counts-untrusted" has a
+// trusted 1-device row and an untrusted 3-device row below it (TB1),
+// "counts-between" trusted rows on 1 and 3 devices and an untrusted one on
+// 2 (TS1). For those, the placer's need on the placement's device count is
+// checked against bounds computed here from the rows (the need rule's I2
+// to I4), not from needAt.
 func TestReview_GeneralRule(t *testing.T) {
 	type tight struct {
 		fill, margin int
@@ -393,7 +401,7 @@ func TestReview_GeneralRule(t *testing.T) {
 			for _, avgDrop := range []int{0, 2500} {
 				for _, tg := range []tight{{8, 300, true}, {64, 100, true}, {8, 1000, false}, {0, 300, true}, {8, 0, true}} {
 					for _, ctx := range []int{4096, 65536} {
-						for _, shape := range []string{"auto", "forced", "skewed", "skewed-peak"} {
+						for _, shape := range []string{"auto", "forced", "skewed", "skewed-peak", "counts-untrusted", "counts-between"} {
 							for _, ov := range []int{0, 15500} { // a pre-flight override above the fleet's figure on a
 								for _, nodes := range []int{1, 2, 3} {
 									for _, mode := range []string{"fleet", "fleet, lower pre-flight", "agents"} {
@@ -408,8 +416,8 @@ func TestReview_GeneralRule(t *testing.T) {
 			}
 		}
 	}
-	if n != 17280 {
-		t.Fatalf("%d situations, the table says 17280", n)
+	if n != 25920 {
+		t.Fatalf("%d situations, the table says 25920", n)
 	}
 }
 
@@ -446,7 +454,26 @@ func checkGeneralRule(t *testing.T, need, cBudget, avgDrop, fill, margin int, us
 	if shape == "auto" {
 		h.cfg.Defaults.MaxPool = nodes
 	}
-	if shape != "auto" && shape != "forced" { // a stored measurement 60/40 over a and b
+	type row struct {
+		devices, total int
+		trusted        bool
+	}
+	var rows []row
+	switch shape {
+	case "counts-untrusted":
+		rows = []row{{1, need + 500, true}, {3, need - 1000, false}}
+	case "counts-between":
+		rows = []row{{1, need + 200, true}, {3, need + 3000, true}, {2, need + 2500, false}}
+	}
+	h.c.llamaBuild, h.c.servedBuild = "aaaaaaa1", "aaaaaaa1"
+	for _, r := range rows {
+		l := &learnedNeed{TotalMiB: r.total, key: needKeyOf(p), profile: "m", devices: r.devices, at: h.clk.Now()}
+		if !r.trusted { // restored, of another llama build
+			l.restored, l.build, l.release = true, "ccccccc3", "0.1.4"
+		}
+		h.c.putLearned(l)
+	}
+	if strings.HasPrefix(shape, "skewed") { // a stored measurement 60/40 over a and b
 		a := need * 6 / 10
 		l := &learnedNeed{TotalMiB: need, key: needKeyOf(p), profile: "m", placement: []core.NodeID{"a", "b"},
 			split: []float64{0.5, 0.5}, Nodes: []learnedNode{{ID: "a", Fraction: 0.5, MiB: a}, {ID: "b", Fraction: 0.5, MiB: need - a}}}
@@ -484,6 +511,25 @@ func checkGeneralRule(t *testing.T, need, cBudget, avgDrop, fill, margin int, us
 	req, _, err := h.c.request(p)
 	if err != nil {
 		t.Fatalf("%s: %v", name(), err)
+	}
+	// the need on each device count, against bounds from the rows
+	if len(rows) > 0 {
+		info, _ := h.c.need(p)
+		pd := h.c.cfg.Defaults.DeviceOverheadMiB + info.DeviceMiB
+		for k := 1; k < len(req.ByCount); k++ {
+			bound := need // a configured needs_mib is a floor
+			for _, r := range rows {
+				switch {
+				case r.devices <= k:
+					bound = max(bound, r.total+(k-r.devices)*pd)
+				case r.trusted:
+					bound = max(bound, r.total-(r.devices-k)*pd)
+				}
+			}
+			if got := req.ByCount[k].Need.WithMargin(); got < bound {
+				t.Errorf("%s: the need on %d devices is %d, below %d from the rows %v", name(), k, got, bound, rows)
+			}
+		}
 	}
 	pl, perr := placer.Place(req, h.c.freeCandidates(p))
 	if perr != nil {
