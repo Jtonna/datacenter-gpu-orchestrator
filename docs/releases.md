@@ -2,6 +2,18 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## 0.1.7
+
+### What is new
+
+- **Excluding a machine that profiles force.** Setting `exclude_nodes` while saved profiles force an excluded machine is accepted. The profiles stay as they are; the answer lists each one in `warnings` (`profile "<id>": force_nodes: node "<node>" is excluded by exclude_nodes entry "<entry>"; the profile is kept and is refused until the exclusion is lifted`) and in `blocked_by_exclusion` (`profile`, `node`, `entry`). The same holds the other way round, for a profile written to force an excluded machine, for `import-config` (one note per profile) and for the seed. `GET /api/profiles` marks such a profile with `blocked_by_exclusion: <entry>`. At run time it is refused as before, now naming the entry, and the plan says the same. Lifting the exclusion makes it work again without touching it.
+- **Benchmark steps refused by an exclusion.** Such a step ends `refused_by_exclusion` with the scheduler's reason. It is not judged: it does not stop a `stop_on_failure` suite and stays out of the pass rate. The run summary has `ran` and `refused` next to `passed` and `failed`.
+- **Capability words per machine.** `GET /api/nodes`, the agents of `GET /api/status` and the MCP status view show `capabilities` for every machine (an empty list when there are none); the Nodes page says it in words.
+
+### Fixed
+
+- The Nodes page used an undefined name when it read the entry that excludes a machine (release 0.1.6).
+
 ## 0.1.6
 
 ### What is new

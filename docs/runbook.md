@@ -163,7 +163,7 @@ curl -s -X PUT $H/api/config/exclude-nodes -d '["console-test*", "02:00:00:00:00
 curl -s -X PUT $H/api/config/no-auto-nodes -d '["laptop-*"]'
 ```
 
-- `exclude_nodes`: never used, not counted in capacity. Status and `GET /api/nodes` show `excluded: true`, `excluded_by` (the entry), `placeable: false` and `unplaced: excluded`; the agent keeps reporting. A profile that forces an excluded node is refused.
+- `exclude_nodes`: never used, not counted in capacity. Status and `GET /api/nodes` show `excluded: true`, `excluded_by` (the entry), `placeable: false` and `unplaced: excluded`; the agent keeps reporting. A profile that forces an excluded node is kept and refused at run time (503, reason `node excluded`, naming the entry) until the exclusion is lifted; the configuration write that creates the combination is accepted and lists each such profile in `warnings` and `blocked_by_exclusion`, and `GET /api/profiles` marks the profile with `blocked_by_exclusion: <entry>`. A benchmark step of such a profile ends `refused_by_exclusion`, which is not a failure.
 - `no_auto_nodes`: used only by profiles that name the node in `force_nodes`; automatic placement never picks it or evicts from it. Status shows `auto: false`. A `command` profile runs on the local node alone by definition, so `no_auto_nodes` does not apply to it; an excluded local node refuses it (reason `node_excluded`).
 - Excluding wins over both forcing and `no_auto_nodes`. Models already running keep running.
 
