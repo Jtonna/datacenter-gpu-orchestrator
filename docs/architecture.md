@@ -150,7 +150,7 @@ flowchart TD
   ready --> serve
 ```
 
-**Need.** A profile's memory need is its `needs_mib` when set, else an estimate from the model file (weights plus the KV cache, with a margin). After a load with the same settings succeeds, the measured figure is learned: it replaces the estimate, and replaces `needs_mib` when it is larger. Models with sliding-window attention need a measured `needs_mib`: the estimate is several times too high for them.
+**Need.** A profile's memory need is its `needs_mib` when set, else an estimate from the model file (weights plus the KV cache of the layers that keep one, with a margin), plus, on every device of the placement, `device_overhead_mib` and a compute buffer that grows with the context (4 KiB per context token, measured). After a load with the same settings succeeds, the measured figure is learned: it replaces the estimate, and replaces `needs_mib` when it is larger. Models with sliding-window attention need a measured `needs_mib`: the estimate is several times too high for them.
 
 **Placement.** Tiers are tried in priority order. The placer takes one node if one fits, else the fewest nodes up to `max_pool`. A profile with `force_nodes` uses exactly those nodes. On shared-memory nodes a split model must fit each node's share with a skew margin, because the split never lands evenly. `exclude_nodes` keeps nodes out completely; `no_auto_nodes` keeps them for forced profiles only.
 

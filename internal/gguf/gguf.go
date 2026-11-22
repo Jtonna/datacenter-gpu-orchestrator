@@ -58,7 +58,12 @@ type Meta struct {
 	ValueLength     uint32   // <arch>.attention.value_length, 0 if absent
 	ContextLength   uint32   // <arch>.context_length
 	SlidingWindow   bool     // <arch>.attention.sliding_window present and > 0
-	FileSize        int64    // set by ReadMeta only
+	// FullAttentionInterval is, for a hybrid model, n where every n-th layer
+	// has attention and the others are recurrent (no KV cache):
+	// <arch>.full_attention_interval, or llama.cpp's default 4 for the
+	// architectures in hybridDefaultInterval. 0: every layer has attention.
+	FullAttentionInterval uint32
+	FileSize              int64 // set by ReadMeta only
 
 	scalars map[string]any
 }
@@ -386,6 +391,14 @@ func build(ver uint32, tensors uint64, scalars map[string]any, arrays map[string
 		return nil, err
 	}
 	m.SlidingWindow = sw > 0
+	fai, ok, err := u32(pre + "full_attention_interval")
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		fai = hybridDefaultInterval[arch]
+	}
+	m.FullAttentionInterval = fai
 
 	heads := func(key string) ([]uint32, error) {
 		if a, ok := arrays[key]; ok {
@@ -471,14 +484,29 @@ func (m *Meta) NEmbdVGqa(il int) (int, error) {
 	return m.headDim(m.ValueLength) * int(m.HeadCountKV[il]), nil
 }
 
-// KVElemsPerToken is the sum over all layers of n_embd_k_gqa + n_embd_v_gqa,
-// the KV elements stored per cached token for full-context layers.
+// hybridDefaultInterval is the full-attention interval llama.cpp uses for a
+// hybrid architecture whose file does not carry full_attention_interval.
+var hybridDefaultInterval = map[string]uint32{"qwen3next": 4, "qwen35": 4, "qwen35moe": 4}
+
+// HasKV reports whether layer il keeps a KV cache: every layer, except the
+// recurrent layers of a hybrid model (llama.cpp: a layer is recurrent unless
+// (il + 1) % full_attention_interval == 0).
+func (m *Meta) HasKV(il int) bool {
+	return m.FullAttentionInterval == 0 || (il+1)%int(m.FullAttentionInterval) == 0
+}
+
+// KVElemsPerToken is the sum over the layers that keep a KV cache (HasKV) of
+// n_embd_k_gqa + n_embd_v_gqa, the KV elements stored per cached token for
+// full-context layers.
 func (m *Meta) KVElemsPerToken() (int, error) {
 	if m.BlockCount == 0 {
 		return 0, errors.New("gguf: block_count missing")
 	}
 	total := 0
 	for il := 0; il < int(m.BlockCount); il++ {
+		if !m.HasKV(il) {
+			continue
+		}
 		k, err := m.NEmbdKGqa(il)
 		if err != nil {
 			return 0, err

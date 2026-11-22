@@ -39,6 +39,12 @@ func (RealClock) AfterFunc(d time.Duration, f func()) func() bool {
 type NeedInfo struct {
 	Need      placer.Need
 	FileBytes int64
+	// DeviceMiB is, for an estimate, the compute buffer every device of the
+	// placement holds on top of its share of Need, which grows with the
+	// context (estimate.ComputeMiB); defaults.device_overhead_mib is the
+	// fixed part. 0 for a configured need. It is counted once per device
+	// (deviceCost), never spread over the split.
+	DeviceMiB int
 
 	// Set by the core (schedCore.need), not by a NeedProvider: where Need
 	// comes from, and the figure the provider gave before the core applied
@@ -120,9 +126,21 @@ func (c *ConfigNeeds) compute(p *core.Profile) (NeedInfo, error) {
 	if err != nil {
 		return NeedInfo{}, fmt.Errorf("model file: %w", err)
 	}
-	elems, err := meta.KVElemsPerToken()
+	info, err := estimateFromMeta(meta, p)
 	if err != nil {
 		return NeedInfo{}, fmt.Errorf("model file %s: %w", path, err)
+	}
+	return info, nil
+}
+
+// estimateFromMeta is the estimated need of a kind: llama profile from its
+// model's GGUF metadata and file size (meta.FileSize): the weights plus the
+// KV cache for the profile's context and slots, and the per-device compute
+// buffer that grows with the context (DeviceMiB).
+func estimateFromMeta(meta *gguf.Meta, p *core.Profile) (NeedInfo, error) {
+	elems, err := meta.KVElemsPerToken()
+	if err != nil {
+		return NeedInfo{}, err
 	}
 	parallel := max(p.Parallel, 1)
 	quant := p.KVQuant
@@ -133,5 +151,6 @@ func (c *ConfigNeeds) compute(p *core.Profile) (NeedInfo, error) {
 	if err != nil {
 		return NeedInfo{}, err
 	}
-	return NeedInfo{Need: placer.Estimated(estimate.NeedMiB(meta.FileSize, kv)), FileBytes: meta.FileSize}, nil
+	return NeedInfo{Need: placer.Estimated(estimate.NeedMiB(meta.FileSize, kv)), FileBytes: meta.FileSize,
+		DeviceMiB: estimate.ComputeMiB(p.Ctx * parallel)}, nil
 }

@@ -595,7 +595,7 @@ func (c *schedCore) request(p *core.Profile) (placer.Request, NeedInfo, error) {
 	d := c.cfg.Defaults
 	req := placer.Request{
 		Need: info.Need, AllowTiers: p.AllowTiers, TensorSplit: p.TensorSplit,
-		MaxPool: max(d.MaxPool, 1), MinShareMiB: d.MinShareMiB, DeviceOverheadMiB: d.DeviceOverheadMiB,
+		MaxPool: max(d.MaxPool, 1), MinShareMiB: d.MinShareMiB, DeviceOverheadMiB: d.DeviceOverheadMiB + info.DeviceMiB,
 		SkewPermille: permille(d.SplitSkewMargin),
 	}
 	if localOnly(p) {
