@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/placer"
@@ -371,7 +372,16 @@ func TestReview_N1_DefaultsWriteNoPeaks(t *testing.T) {
 //     on free); a node's budget is never above the default one;
 //   - nothing is admitted that the default check of the measured need would
 //     refuse once only the margin difference is taken off: for every
-//     shared node, default share + tight margin <= default available.
+//     shared node, default share + tight margin <= default available;
+//   - what a request then does agrees with the gate: with agents it starts
+//     exactly when the plan does; in fleet membership a launched instance's
+//     rows fit on the figures its pre-flight left (review SB2), including
+//     when the pre-flight reports less than the view.
+//
+// The table covers 1, 2 and 3 nodes (forced over the first nodes, or
+// max_pool for an automatic profile) against a measurement stored on 2
+// (review SB1, SS4), in fleet membership, fleet membership with a lower
+// pre-flight, and agents membership.
 func TestReview_GeneralRule(t *testing.T) {
 	type tight struct {
 		fill, margin int
@@ -385,8 +395,12 @@ func TestReview_GeneralRule(t *testing.T) {
 					for _, ctx := range []int{4096, 65536} {
 						for _, shape := range []string{"auto", "forced", "skewed", "skewed-peak"} {
 							for _, ov := range []int{0, 15500} { // a pre-flight override above the fleet's figure on a
-								n++
-								checkGeneralRule(t, need, cBudget, avgDrop, tg.fill, tg.margin, tg.uses, ctx, shape, ov)
+								for _, nodes := range []int{1, 2, 3} {
+									for _, mode := range []string{"fleet", "fleet, lower pre-flight", "agents"} {
+										n++
+										checkGeneralRule(t, need, cBudget, avgDrop, tg.fill, tg.margin, tg.uses, ctx, shape, ov, nodes, mode)
+									}
+								}
 							}
 						}
 					}
@@ -394,17 +408,27 @@ func TestReview_GeneralRule(t *testing.T) {
 			}
 		}
 	}
-	if n < 100 {
-		t.Fatalf("only %d situations", n)
+	if n != 17280 {
+		t.Fatalf("%d situations, the table says 17280", n)
 	}
 }
 
-func checkGeneralRule(t *testing.T, need, cBudget, avgDrop, fill, margin int, uses bool, ctx int, shape string, ov int) {
+func checkGeneralRule(t *testing.T, need, cBudget, avgDrop, fill, margin int, uses bool, ctx int, shape string, ov, nodes int, mode string) {
 	t.Helper()
 	name := func() string {
-		return fmt.Sprintf("need %d, c %d, average -%d, fill %d, margin %d, uses %v, ctx %d, %s, override %d", need, cBudget, avgDrop, fill, margin, uses, ctx, shape, ov)
+		return fmt.Sprintf("need %d, c %d, average -%d, fill %d, margin %d, uses %v, ctx %d, %s, override %d, %d nodes, %s",
+			need, cBudget, avgDrop, fill, margin, uses, ctx, shape, ov, nodes, mode)
 	}
 	h := newHarness(t).nodes(psNode("a", 2, 12400), psNode("b", 4, 12400), psNode("c", 6, cBudget))
+	if mode == "agents" {
+		h.cfg.Defaults.Membership, h.cfg.Defaults.WorkerProbeInterval = config.MembershipAgents, 0
+		h.c.agents = true
+	}
+	if mode == "fleet, lower pre-flight" { // every pre-flight reports 1500 MiB less than the view
+		for _, nd := range h.view.Nodes() {
+			h.prober.free[nd.Addr] = nd.FreeMiB - 1500
+		}
+	}
 	if avgDrop > 0 {
 		for _, id := range []core.NodeID{"a", "b", "c"} {
 			h.view.modify(id, func(n *core.Node) { n.FreeAvgMiB, n.FreeAvgKnown = n.FreeMiB-avgDrop, true })
@@ -413,9 +437,15 @@ func checkGeneralRule(t *testing.T, need, cBudget, avgDrop, fill, margin int, us
 	p := h.llama("m", need, func(p *core.Profile) {
 		p.Ctx = ctx
 		if shape != "auto" {
-			p.ForceNodes, p.TensorSplit, p.LoadTimeout = []string{"a", "b"}, []int{1, 1}, time.Hour
+			p.ForceNodes, p.LoadTimeout = []string{"a", "b", "c"}[:nodes], time.Hour
+			if nodes > 1 {
+				p.TensorSplit = []int{1, 1, 1}[:nodes]
+			}
 		}
 	})
+	if shape == "auto" {
+		h.cfg.Defaults.MaxPool = nodes
+	}
 	if shape != "auto" && shape != "forced" { // a stored measurement 60/40 over a and b
 		a := need * 6 / 10
 		l := &learnedNeed{TotalMiB: need, key: needKeyOf(p), profile: "m", placement: []core.NodeID{"a", "b"},
@@ -481,6 +511,22 @@ func checkGeneralRule(t *testing.T, need, cBudget, avgDrop, fill, margin int, us
 		if r.Action == PlanStart && tr.Shared && dr.WillTakeMiB+tr.MarginMiB > dr.AvailableMiB {
 			t.Errorf("%s: admitted, but node %s's default check fails beyond the margin difference: %d + %d > %d",
 				name(), tr.Node, dr.WillTakeMiB, tr.MarginMiB, dr.AvailableMiB)
+		}
+	}
+	// what a request does (every launch also checks the gate: checkGated)
+	h.request("m")
+	in := h.c.insts["m"]
+	switch {
+	case mode == "agents":
+		if started := in != nil; started != (r.Action == PlanStart) {
+			t.Errorf("%s: plan %s (%q) but the request started %v", name(), r.Action, r.Reason, started)
+		}
+	case in != nil && in.phase != phPreflight && h.c.gateOn():
+		h.c.fitting = in
+		rows, ok := h.c.memoryRows(p, in.placement, freed)
+		h.c.fitting = nil
+		if node, by := rowsShort(rows); ok && by > 0 {
+			t.Errorf("%s: launched, but node %s is short by %d MiB on the figures its pre-flight left", name(), node, by)
 		}
 	}
 }
