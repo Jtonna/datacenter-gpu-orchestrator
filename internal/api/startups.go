@@ -98,6 +98,12 @@ func (s *Server) allStartups(w http.ResponseWriter, r *http.Request) {
 	for _, g := range groups {
 		m := map[string]any{"node_id": g.NodeID, "node_name": g.NodeName, "kind": g.Kind, "count": g.Count,
 			"with_figure": g.WithFigure, "requested": g.Requested, "last_s": g.LastS, "median_s": g.MedianS, "worst_s": g.WorstS}
+		if g.Origin != "" {
+			m["origin"] = g.Origin
+		}
+		if g.MixedOrigins {
+			m["mixed_origins"] = true
+		}
 		if g.Last != nil {
 			m["last"] = recordOut(*g.Last)
 		}

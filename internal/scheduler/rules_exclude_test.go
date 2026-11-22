@@ -112,8 +112,9 @@ func TestExclude_LocalNodeNeverUsed(t *testing.T) {
 	h.wantNodes("m", "a")
 	h.command("whisper", 1000)
 	w := h.request("whisper") // command profiles run on the local node only
-	e := h.failed(w, http.StatusServiceUnavailable, ReasonDoesNotFit)
-	if e.RetryAfter != 0 || !strings.Contains(e.Message, "excluded by config") || !strings.Contains(e.Message, "host-1") {
+	e := h.failed(w, http.StatusServiceUnavailable, ReasonNodeExcluded)
+	if e.RetryAfter != 0 || !strings.Contains(e.Message, "excluded by config") || !strings.Contains(e.Message, "host-1") ||
+		!strings.Contains(e.Message, "exclude_nodes") {
 		t.Fatalf("error = %+v", e)
 	}
 }
@@ -176,10 +177,10 @@ func TestExclude_StatusShowsExcludedNode(t *testing.T) {
 	h.cfg.ExcludeNodes = []string{"a"}
 	h.step(evTick{})
 	a, b := h.nodeStatus("a"), h.nodeStatus("b")
-	if !a.Excluded || a.Eligible {
+	if !a.Excluded || a.Eligible || a.ExcludedBy != "a" {
 		t.Fatalf("a: excluded=%v eligible=%v", a.Excluded, a.Eligible)
 	}
-	if b.Excluded || !b.Eligible {
+	if b.Excluded || !b.Eligible || b.ExcludedBy != "" {
 		t.Fatalf("b: excluded=%v eligible=%v", b.Excluded, b.Eligible)
 	}
 }

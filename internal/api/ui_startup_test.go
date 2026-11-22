@@ -31,6 +31,10 @@ func TestUIStartupWording(t *testing.T) {
 		`Requested with expect-restart`,
 		// a partial figure is never shown: the figure only when the server has one
 		`if (last.headline_s != null) {`,
+		// where the figure counts from (the record's origin)
+		`const from = originText(last.origin);`,
+		`userspace: 'counted from the userspace start; the shutdown before it is not included',`,
+		`boot_origin: 'Start began',`,
 	} {
 		if !strings.Contains(core, want) {
 			t.Errorf("core/startup.js lacks %s", want)
@@ -53,7 +57,7 @@ func TestUIStartupWording(t *testing.T) {
 	for _, want := range []string{
 		`h('h2', 'Start-up')`, `NOT_INCLUDED`, `key: g => g.node_id + ':' + g.kind`,
 		`{ label: 'Median'`, `{ label: 'Worst'`, `{ label: 'Last'`, `{ label: 'Starts'`,
-		`expect-restart`,
+		`expect-restart`, `g.mixed_origins ? h('span.sub', 'counted from different origins')`,
 	} {
 		if !strings.Contains(bench, want) {
 			t.Errorf("views/benchmarks/startups.js lacks %s", want)

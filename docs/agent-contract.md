@@ -681,7 +681,7 @@ They are part of the contract. Each line says what Potluck does.
 
 **Known limits.**
 
-- **Nodes for forced profiles only** (CR-9 review, from release 0.1.1). Potluck's `no_auto_nodes` list keeps a node out of automatic placement; only a profile that names it in `force_nodes` uses it, and the forced-fit refusal of section 11.2 item 1 applies as for any forced node. It is Potluck configuration only: nothing on the wire changes and the agent does not know about it.
+- **Nodes for forced profiles only** (CR-9 review, from release 0.1.1). Potluck's `no_auto_nodes` list keeps a node out of automatic placement; only a profile that names it in `force_nodes` uses it (a `command` profile, which runs on the local node alone, is not automatic placement: the local node in the list still runs it), and the forced-fit refusal of section 11.2 item 1 applies as for any forced node. It is Potluck configuration only: nothing on the wire changes and the agent does not know about it.
 - **The lease is enforced by the agent.** While the agent process is dead, nothing ends its launch: the worker runs on until the agent is back and finds the lease run out (section 6.4).
 - **`worker_model_dir` is one setting for the whole pool.** While it is on, a node whose model source is `push` is not placeable (`model_source_unreachable`). A choice per worker is planned (CR-7).
 - **Potluck in a container on a pool machine.** The machine's own firewall must let the container network reach the agent and worker ports (section 9, `--allow-from`).
@@ -717,6 +717,7 @@ Every field it adds is optional, so either side reads a body without them: an ag
    Stopping the launch inside the agent before it deregisters was not chosen: once the agent's run has ended, its kill ladder (section 6.11) no longer runs, so the stop could not be confirmed within the 3 s.
 4. **The cause while stopping.** The launch state (section 6.3) has `stop_reason`, and `stop_message` when there is more to say, from the moment the agent has decided to stop a launch, while `state` is still `stopping`: `watchdog`, `lease_expired`, `forced`, `stopped` or `reset`. The heartbeat carries the same two fields while its launch is stopping (section 4.3); Potluck shows them in the node's entry in `agents`. They are absent in every other state; once the launch is `exited`, `exit.reason` is the word that counts (it can differ: a launch that was being stopped can still end as `oom_kill`). When Potluck reads the launches of a load whose host program ended (section 11.1), a `stopping` launch with `stop_reason` `watchdog`, `oom_kill` or `lease_expired` is taken as the cause at once, with its message, without waiting for `exited` within the 2 s.
 5. **A paused node says why.** In an entry of `agents` in `GET /api/status`, a paused node that has no other reason has `unplaced: "paused"` (and `placeable: false`). Another reason of the node itself (`programs_not_ready` and the like) comes first; `paused: true` is unchanged.
+6. **An excluded node says so** (after release 0.1.4). When `exclude_nodes` names a node, its entry in `agents` of `GET /api/status` and in `GET /api/nodes` (the local node's entry too) has `excluded: true`, `excluded_by` (the matching entry), `placeable: false`, `unplaced: "excluded"` and `unplaced_message: "excluded by exclude_nodes: <entry>"`. The exclusion comes before every other reason and before a pause. Nothing else in the entry changes: the agent keeps registering and heartbeating, and its release, devices and stats are shown as for any node. The node of `view.nodes` in `GET /api/status` has `excluded` and `excluded_by` as before. Neither field is present for a node that is not excluded.
 
 ### 11.3 CR-10: central logging through Potluck
 
@@ -878,6 +879,20 @@ Each start of an agent reports, on the machine's own time axis, how its start we
 - ignores a file larger than 64 KiB, with one warning, and keeps the marks it had;
 - takes a missing file as normal (no marks), and never creates or deletes the file or its folder;
 - after a soft restart (systemd gave the userspace start and a soft-restart count that is not 0) drops every mark earlier than the userspace start, and ignores the whole file while its `boot_progress_start` is earlier (`/run` survives a soft restart, so the file is the previous start's until the writer starts a fresh one), with one INFO line.
+
+**The start origin lines** (after release 0.1.4; an older agent passes them through unchanged as unknown names, but drops a `boot_origin` earlier than the cut-off). The file may carry, anywhere in it, one of two lines on the same clock as the marks:
+
+- `boot_origin <seconds>`: where this start began. `0.000` on a full start; after a soft restart the moment the restart began (systemd's `ShutdownStartTimestampMonotonic`), which is before the new userspace start.
+- `boot_origin_partial <seconds>`: the node could not tell that moment; the value is the userspace start, and the figure counts from there. A file with neither line is read as before.
+
+The agent passes either through in `external_marks`. After a soft restart (when the cut-off above applies):
+
+- both lines are exempt from the cut-off;
+- the file is this start's when its `boot_progress_start` is at or after the userspace start, or, without `boot_progress_start`, when at least one mark other than an origin line is at or after it. The origin's own value cannot tell: this start's `boot_origin` and a left-over file's are both before the userspace start. A file that is not this start's is ignored whole, origin included (one INFO line; a file with only an origin line so far waits silently for the writer's next mark);
+- a `boot_origin` later than the userspace start is dropped;
+- an origin line counts only when it ends with a newline (a cut value would still parse, and an origin is exempt from the cut-off).
+
+Potluck: when a record has `boot_origin` (at or before ready, and for a soft restart at or before the userspace start when known), the figure is ready minus `boot_origin` for every kind of start: unchanged on a full start (`0`), and on a soft restart it now includes the shutdown (ready 25.8 with `boot_origin` 10.0 gives 15.8, where the userspace start 15.8 gave 10.0). With `boot_origin_partial` or neither line it is as before. The record (and `last_startup`) says where its figure counts from in `origin`: `boot_origin`, `kernel` (a full start without `boot_origin`) or `userspace` (a soft restart without it). Records stored before have no `origin` and read unchanged. A group of `GET /api/startups` carries the newest figure's `origin` and `mixed_origins: true` when its figures do not all count from one origin.
 
 **Docker install.** It reports `boot_id`, `agent_start_s` and its own marks: the container shares the host's kernel, so its boot id and `CLOCK_BOOTTIME` are the host's. It reports no `userspace_start_s`, no `soft_reboots` and no external marks: inside the container `systemctl` would show the container's own systemd or none, and the host's `/run/potluck` is not mounted. So Potluck can tell a full start (another boot id) from the rest, but not a soft restart from an agent restart.
 

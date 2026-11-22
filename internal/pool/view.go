@@ -446,6 +446,12 @@ type NodeFacts struct {
 	Placeable       bool   `json:"placeable"`
 	Unplaced        string `json:"unplaced,omitempty"`
 	UnplacedMessage string `json:"unplaced_message,omitempty"`
+	// Excluded: exclude_nodes names the node (ExcludedBy, the matching
+	// entry), as /api/status's view says. Such a node is not placeable and
+	// its unplaced reason is excluded, whatever else holds; the rest of its
+	// entry is as for any node. Absent when not excluded.
+	Excluded   bool   `json:"excluded,omitempty"`
+	ExcludedBy string `json:"excluded_by,omitempty"`
 	// WatchdogFloorMiB is the watchdog floor the agent reports (CR-9); absent
 	// for an agent that reports none (release 0.1.0). FloorMismatch says so
 	// when it differs from defaults.watchdog_floor_mib; the agent's is used
@@ -472,6 +478,14 @@ type NodeFacts struct {
 	// report.
 	LastStartup *startups.Last `json:"last_startup,omitempty"`
 }
+
+// UnplacedExcluded is the unplaced reason of a node that exclude_nodes names,
+// in the node facts (/api/nodes, the agents of /api/status). The scheduler
+// applies exclude_nodes itself, so its unplaced map never carries it.
+const UnplacedExcluded = "excluded"
+
+// ExcludedMessage is the unplaced message of an excluded node.
+func ExcludedMessage(entry string) string { return "excluded by exclude_nodes: " + entry }
 
 // UnpausePendingMessage is the unplaced message of a node whose unpause has
 // not reached its agent yet.
@@ -545,6 +559,12 @@ func (p *Pool) Facts() []NodeFacts {
 				if f.UnpausePending {
 					f.UnplacedMessage = UnpausePendingMessage
 				}
+			}
+		}
+		if e, ok := cfg.ExcludedBy(core.NodeID(id), a.reg.Name); ok {
+			f.Excluded, f.ExcludedBy = true, e
+			if f.State == StateActive || f.State == StateLost {
+				f.Unplaced, f.UnplacedMessage = UnplacedExcluded, ExcludedMessage(e)
 			}
 		}
 		f.Placeable = f.State == StateActive && !f.Paused && !f.UnpausePending && !f.HostAgent && f.Unplaced == ""

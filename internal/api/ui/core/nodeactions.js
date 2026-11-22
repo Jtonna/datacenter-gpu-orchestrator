@@ -37,6 +37,8 @@ export const UNPLACED = {
     text: 'Potluck cannot reach its agent, so it cannot start a worker here.' },
   host_machine: { short: 'The machine Potluck runs on',
     text: 'This agent runs on the machine Potluck itself runs on. That machine is used directly, so nothing is placed through this agent.' },
+  excluded: { short: 'Excluded',
+    text: 'Excluded in the configuration (exclude_nodes): it gets no model and is not counted in the capacity. Its agent keeps reporting.' },
   paused: { short: 'Paused',
     text: 'Paused by an operator: it keeps what it holds and takes no new model until it is unpaused.' },
 };

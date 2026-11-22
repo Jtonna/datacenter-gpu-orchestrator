@@ -1,6 +1,7 @@
 package startups
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -314,5 +315,100 @@ func TestStoreRoundTripAndCap(t *testing.T) {
 	}
 	if !strings.Contains(migrations[0], "CREATE TABLE startups") {
 		t.Fatal("migration")
+	}
+}
+
+// boot_origin (an external mark) is the base of the figure for every kind of
+// start; without it a full start counts from the kernel start and a soft
+// restart from the userspace start, and the record says which (Origin).
+func TestHeadlineOrigin(t *testing.T) {
+	prev := New("n1", "x", "0.1.3", "bare", "s0", false, t0, report(map[string]float64{}), nil)
+	soft := func(us *float64, ext map[string]float64) *Record {
+		rep := &agentproto.Startup{BootID: "b", AgentStartS: 20, UserspaceStartS: us, SoftReboots: i64(1),
+			Marks: map[string]float64{"registered": 22, "programs_ready": 25.8}, ExternalMarks: ext}
+		r := New("n1", "x", "0.1.3", "bare", "s1", false, t0, rep, prev)
+		r.Evaluate(t0, "")
+		return r
+	}
+	full := func(ext map[string]float64) *Record {
+		rep := &agentproto.Startup{BootID: "c", AgentStartS: 20, UserspaceStartS: f64(3), SoftReboots: i64(0),
+			Marks: map[string]float64{"registered": 22, "programs_ready": 25.8}, ExternalMarks: ext}
+		r := New("n1", "x", "0.1.3", "bare", "s1", false, t0, rep, prev)
+		r.Evaluate(t0, "")
+		return r
+	}
+	for _, c := range []struct {
+		name     string
+		r        *Record
+		kind     string
+		headline float64
+		origin   string
+	}{
+		{"soft restart with boot_origin: the shutdown is included", soft(f64(15.8), map[string]float64{"boot_origin": 10}), KindSoft, 15.8, OriginBootOrigin},
+		{"soft restart with boot_origin_partial", soft(f64(15.8), map[string]float64{"boot_origin_partial": 15.8}), KindSoft, 10, OriginUserspace},
+		{"soft restart with neither", soft(f64(15.8), map[string]float64{}), KindSoft, 10, OriginUserspace},
+		{"soft restart with boot_origin, userspace start unknown", soft(nil, map[string]float64{"boot_origin": 10}), KindSoft, 15.8, OriginBootOrigin},
+		{"soft restart, boot_origin after the userspace start is not taken", soft(f64(15.8), map[string]float64{"boot_origin": 16}), KindSoft, 10, OriginUserspace},
+		{"full start with boot_origin 0", full(map[string]float64{"boot_origin": 0}), KindFull, 25.8, OriginBootOrigin},
+		{"full start without", full(map[string]float64{}), KindFull, 25.8, OriginKernel},
+		{"full start with boot_origin_partial", full(map[string]float64{"boot_origin_partial": 3}), KindFull, 25.8, OriginKernel},
+		{"boot_origin after ready is not taken", full(map[string]float64{"boot_origin": 30}), KindFull, 25.8, OriginKernel},
+	} {
+		if c.r.Kind != c.kind || c.r.HeadlineS == nil || *c.r.HeadlineS != c.headline || c.r.Origin != c.origin {
+			t.Errorf("%s: kind %s headline %v origin %q; want %s %v %q (%s)", c.name, c.r.Kind, c.r.HeadlineS, c.r.Origin,
+				c.kind, c.headline, c.origin, c.r.Condition())
+		}
+		if l := LastOf(c.r); l.Origin != c.origin {
+			t.Errorf("%s: last %+v", c.name, l)
+		}
+	}
+	// A soft restart without boot_origin still waits for the userspace start.
+	if r := soft(nil, map[string]float64{"boot_origin_partial": 15.8}); r.HeadlineS != nil || r.Missing != "userspace_start" || r.Origin != "" {
+		t.Errorf("no userspace start: %+v", r)
+	}
+	// An agent restart has no figure and no origin.
+	a := New("n1", "x", "0.1.3", "bare", "s9", false, t0, report(map[string]float64{"registered": 22, "programs_ready": 25}), prev)
+	a.ExternalMarks["boot_origin"] = 0
+	if a.Evaluate(t0, ""); a.Kind != KindAgentRestart || a.Origin != "" {
+		t.Errorf("agent restart %+v", a)
+	}
+}
+
+// A record stored before the origin existed reads unchanged: no origin, the
+// same figure.
+func TestOldRecordReadsUnchanged(t *testing.T) {
+	old := `{"id":7,"node_id":"n1","node_name":"x","release":"0.1.4","agent_start_id":"s1","kind":"soft","inferred":false,` +
+		`"registered_at":"2026-11-01T10:00:00Z","boot_id":"b","agent_start_s":5003,"userspace_start_s":4990.5,"soft_reboots":1,` +
+		`"marks":{"registered":5004,"programs_ready":5010},"external_marks":{"boot_origin":4980},"need_share":false,` +
+		`"headline_s":19.5,"ready_s":5010,"open":false,"requested":false}`
+	var r Record
+	if err := json.Unmarshal([]byte(old), &r); err != nil {
+		t.Fatal(err)
+	}
+	if r.Origin != "" || *r.HeadlineS != 19.5 || r.Evaluate(t0, "") {
+		t.Fatalf("%+v", r)
+	}
+	b, _ := json.Marshal(r)
+	if strings.Contains(string(b), `"origin"`) {
+		t.Fatalf("an old record gained an origin: %s", b)
+	}
+}
+
+// A group whose figures count from different origins says so.
+func TestAggregatesOrigin(t *testing.T) {
+	recs := []Record{
+		{ID: 1, NodeID: "n1", Kind: KindSoft, RegisteredAt: t0, HeadlineS: f64(10), Origin: OriginUserspace},
+		{ID: 2, NodeID: "n1", Kind: KindSoft, RegisteredAt: t0.Add(time.Minute), HeadlineS: f64(16), Origin: OriginBootOrigin},
+		{ID: 3, NodeID: "n2", Kind: KindFull, RegisteredAt: t0, HeadlineS: f64(30)}, // stored before the origin
+		{ID: 4, NodeID: "n2", Kind: KindFull, RegisteredAt: t0.Add(time.Minute), HeadlineS: f64(31), Origin: OriginBootOrigin},
+		{ID: 5, NodeID: "n2", Kind: KindFull, RegisteredAt: t0.Add(2 * time.Minute), HeadlineS: f64(32), Origin: OriginKernel},
+		{ID: 6, NodeID: "n3", Kind: KindSoft, RegisteredAt: t0, HeadlineS: f64(10)}, // stored before the origin
+		{ID: 7, NodeID: "n3", Kind: KindSoft, RegisteredAt: t0.Add(time.Minute), HeadlineS: f64(11), Origin: OriginUserspace},
+	}
+	ag := Aggregates(recs)
+	// Every full start counts from kernel start; an old soft record counted from userspace.
+	if len(ag) != 3 || ag[0].Origin != OriginBootOrigin || !ag[0].MixedOrigins || ag[1].Origin != OriginKernel || ag[1].MixedOrigins ||
+		ag[2].Origin != OriginUserspace || ag[2].MixedOrigins {
+		t.Fatalf("%+v", ag)
 	}
 }

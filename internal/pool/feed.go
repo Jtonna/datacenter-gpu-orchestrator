@@ -11,14 +11,20 @@ import (
 // The local node has no agent, so it has no programs, no heartbeat, no
 // launch of its own and no pause.
 type LocalFacts struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	State       string   `json:"state"` // active
-	Release     string   `json:"release"`
-	Local       bool     `json:"local"` // always true
-	Placeable   bool     `json:"placeable"`
-	HostUptimeS *float64 `json:"host_uptime_s,omitempty"`
-	BootID      string   `json:"boot_id,omitempty"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	State     string `json:"state"` // active
+	Release   string `json:"release"`
+	Local     bool   `json:"local"` // always true
+	Placeable bool   `json:"placeable"`
+	// Excluded, ExcludedBy, Unplaced and UnplacedMessage: as for an agent
+	// node (NodeFacts), when exclude_nodes names the local node.
+	Excluded        bool     `json:"excluded,omitempty"`
+	ExcludedBy      string   `json:"excluded_by,omitempty"`
+	Unplaced        string   `json:"unplaced,omitempty"`
+	UnplacedMessage string   `json:"unplaced_message,omitempty"`
+	HostUptimeS     *float64 `json:"host_uptime_s,omitempty"`
+	BootID          string   `json:"boot_id,omitempty"`
 }
 
 // HostInfo reads the uptime (seconds since kernel boot) and boot id of the
@@ -48,6 +54,7 @@ func ProcHostInfo() (float64, string, bool) {
 // Local returns the scheduler's own node as the feed shows it; ok is false
 // while the node view has no local node (no local probe, or it fails).
 func (p *Pool) Local() (LocalFacts, bool) {
+	cfg := p.o.Config()
 	p.mu.Lock()
 	var f LocalFacts
 	ok := false
@@ -57,6 +64,10 @@ func (p *Pool) Local() (LocalFacts, bool) {
 				Placeable: !n.Paused}
 			if f.Name == "" {
 				f.Name = f.ID
+			}
+			if e, ex := cfg.ExcludedBy(n.ID, n.Hostname); ex {
+				f.Excluded, f.ExcludedBy, f.Placeable = true, e, false
+				f.Unplaced, f.UnplacedMessage = UnplacedExcluded, ExcludedMessage(e)
 			}
 			ok = true
 		}

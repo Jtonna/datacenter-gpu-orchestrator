@@ -98,7 +98,18 @@ func (c *schedCore) arrive(w *waiter) {
 // cases it can; this catches an id against a hostname glob and the like. A
 // forced node that is merely absent from the fleet is not reported here: it
 // may come online, so the request queues.
+//
+// A command profile is tied to the local node in the same way: when
+// exclude_nodes names the local node, it fails the same way.
 func (c *schedCore) forcedExcluded(p *core.Profile) (string, bool) {
+	if localOnly(p) {
+		for _, id := range c.sortedNodeIDs() {
+			if n, ok := c.node(id); ok && n.Local && c.excluded(n) {
+				return fmt.Sprintf("profile %s is a command profile and runs only on the local node %s, which is excluded by config (excluding wins: change exclude_nodes)",
+					p.Name, nodeLabel(id, n)), true
+			}
+		}
+	}
 	for _, name := range p.ForceNodes {
 		id, err := c.view.Resolve(name)
 		if err != nil {

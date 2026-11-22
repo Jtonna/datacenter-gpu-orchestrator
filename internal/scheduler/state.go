@@ -516,8 +516,10 @@ func (c *schedCore) noAuto(n core.Node) bool { return c.cfg.NoAuto(n.ID, n.Hostn
 
 // autoOff: profile p is placed automatically (no force_nodes) and n is in
 // no_auto_nodes, so p may neither be placed on n nor evict what runs there.
+// A command profile is never automatic: it runs on the local node alone by
+// definition, so no_auto_nodes does not apply to it (exclude_nodes does).
 func (c *schedCore) autoOff(p *core.Profile, n core.Node) bool {
-	return len(p.ForceNodes) == 0 && c.noAuto(n)
+	return len(p.ForceNodes) == 0 && !localOnly(p) && c.noAuto(n)
 }
 
 // reachable: the local node, or online in a fresh view with an address.

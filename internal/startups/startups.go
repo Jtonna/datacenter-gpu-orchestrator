@@ -33,6 +33,20 @@ const (
 	KindAgentRestart = "agent_restart" // only the agent restarted
 )
 
+// Where a figure counts from (Record.Origin). Records stored before the
+// origin existed have none.
+const (
+	// OriginBootOrigin: the marks file's boot_origin, 0 on a full start and
+	// the moment the restart began on a soft restart (the shutdown included).
+	OriginBootOrigin = "boot_origin"
+	// OriginKernel: kernel start, a full start without boot_origin.
+	OriginKernel = "kernel"
+	// OriginUserspace: the userspace start, a soft restart without
+	// boot_origin (boot_origin_partial, or neither line): the shutdown
+	// before it is not included.
+	OriginUserspace = "userspace"
+)
+
 // InferWindow is the "short time" of the rule for a node's first record:
 // userspace within this of kernel boot, and the agent within this of
 // userspace, make a full start.
@@ -78,6 +92,8 @@ type Record struct {
 	// loads. Absent until it is known, and for good when a condition never
 	// became true (Missing or BlockedBy then says which).
 	HeadlineS *float64 `json:"headline_s,omitempty"`
+	// Origin says where HeadlineS counts from (Origin*); set with the figure.
+	Origin string `json:"origin,omitempty"`
 	// ReadyS is the ready moment on the node's axis; ReadyAt the same moment
 	// on Potluck's clock.
 	ReadyS  *float64   `json:"ready_s,omitempty"`
@@ -261,8 +277,10 @@ func (r *Record) readyMarks() []string {
 // registered mark plus Potluck's time since the registration (both are the
 // moment of the first accepted registration, seen from either side; the
 // mapping is off by the registration's network time, well under a second).
-// The figure is ready minus boot start: 0 for a full start, the userspace
-// start for a soft restart.
+// The figure is ready minus boot start: the marks file's boot_origin when
+// it has one (at or before ready, and for a soft restart at or before the
+// userspace start when that is known); else 0 for a full start and the
+// userspace start for a soft restart. Origin says which.
 func (r *Record) Evaluate(now time.Time, unplaced string) bool {
 	if !r.Open {
 		return false
@@ -284,7 +302,7 @@ func (r *Record) Evaluate(now time.Time, unplaced string) bool {
 	switch {
 	case len(missing) > 0:
 		r.Missing, r.BlockedBy = strings.Join(missing, ", "), ""
-	case r.Kind == KindSoft && r.UserspaceStartS == nil:
+	case r.Kind == KindSoft && r.UserspaceStartS == nil && !r.hasBootOrigin(ready):
 		r.Missing, r.BlockedBy = "userspace_start", ""
 	case unplaced != "":
 		r.Missing, r.BlockedBy = "", unplaced
@@ -294,10 +312,14 @@ func (r *Record) Evaluate(now time.Time, unplaced string) bool {
 			ready = math.Max(ready, mapped)
 			r.WasBlockedBy = r.BlockedBy
 		}
-		base := 0.0
-		if r.Kind == KindSoft {
-			base = *r.UserspaceStartS
+		base, origin := 0.0, OriginKernel
+		switch {
+		case r.hasBootOrigin(ready):
+			base, origin = r.ExternalMarks[agentproto.StartupMarkBootOrigin], OriginBootOrigin
+		case r.Kind == KindSoft:
+			base, origin = *r.UserspaceStartS, OriginUserspace
 		}
+		r.Origin = origin
 		h := round3(ready - base)
 		rd := round3(ready)
 		at := r.RegisteredAt.Add(time.Duration((ready - r.Marks[agentproto.StartupMarkRegistered]) * float64(time.Second)))
@@ -345,6 +367,17 @@ func (r *Record) MarkRequested(kind, comment string, at, registered time.Time) {
 	r.AwayS = &a
 }
 
+// hasBootOrigin: the record has a boot_origin usable as the base of a
+// figure whose ready moment is ready: not after ready, and for a soft
+// restart not after its userspace start (when known).
+func (r *Record) hasBootOrigin(ready float64) bool {
+	o, ok := r.ExternalMarks[agentproto.StartupMarkBootOrigin]
+	if !ok || o > ready {
+		return false
+	}
+	return r.Kind != KindSoft || r.UserspaceStartS == nil || o <= *r.UserspaceStartS
+}
+
 func (r *Record) snapshot() string {
 	f := func(p *float64) string {
 		if p == nil {
@@ -388,6 +421,7 @@ type Last struct {
 	Kind      string    `json:"kind"`
 	Inferred  bool      `json:"inferred,omitempty"`
 	HeadlineS *float64  `json:"headline_s,omitempty"`
+	Origin    string    `json:"origin,omitempty"`
 	Missing   string    `json:"missing,omitempty"`
 	BlockedBy string    `json:"blocked_by,omitempty"`
 	Open      bool      `json:"open,omitempty"`
@@ -400,7 +434,7 @@ func LastOf(r *Record) *Last {
 	if r == nil {
 		return nil
 	}
-	l := &Last{Kind: r.Kind, Inferred: r.Inferred, Missing: r.Missing, BlockedBy: r.BlockedBy, Open: r.Open,
+	l := &Last{Kind: r.Kind, Inferred: r.Inferred, Origin: r.Origin, Missing: r.Missing, BlockedBy: r.BlockedBy, Open: r.Open,
 		Requested: r.Requested, At: r.RegisteredAt}
 	if r.HeadlineS != nil {
 		h := *r.HeadlineS
@@ -422,6 +456,12 @@ type Aggregate struct {
 	LastS     *float64 `json:"last_s,omitempty"`
 	MedianS   *float64 `json:"median_s,omitempty"`
 	WorstS    *float64 `json:"worst_s,omitempty"`
+	// Origin is where the newest figure counts from (Record.Origin);
+	// MixedOrigins: the group's figures do not all count from one origin
+	// (a soft restart counted from boot_origin includes the shutdown, one
+	// counted from the userspace start does not).
+	Origin       string `json:"origin,omitempty"`
+	MixedOrigins bool   `json:"mixed_origins,omitempty"`
 	// Last is the newest record of this node and kind, with its marks.
 	Last *Record `json:"last,omitempty"`
 }
@@ -450,7 +490,9 @@ func Aggregates(recs []Record) []Aggregate {
 			}
 			if a.LastS == nil {
 				v := *r.HeadlineS
-				a.LastS = &v
+				a.LastS, a.Origin = &v, r.Origin
+			} else if base(r.Kind, r.Origin) != base(a.Kind, a.Origin) {
+				a.MixedOrigins = true
 			}
 			figs = append(figs, *r.HeadlineS)
 			if r.Requested {
@@ -480,6 +522,19 @@ func Aggregates(recs []Record) []Aggregate {
 		return rank[out[i].Kind] < rank[out[j].Kind]
 	})
 	return out
+}
+
+// base is what an origin means for a kind, to compare figures: every full
+// start counts from kernel start (boot_origin is 0 there), and a soft
+// restart stored before the origin existed counted from userspace.
+func base(kind, origin string) string {
+	switch {
+	case kind == KindFull:
+		return OriginKernel
+	case origin == "":
+		return OriginUserspace
+	}
+	return origin
 }
 
 // newer orders records newest first: by registration, then id.

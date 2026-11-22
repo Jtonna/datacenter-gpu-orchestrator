@@ -496,6 +496,18 @@ const (
 	StartupMarkFirstStats    = "first_stats"    // the first successful exporter scrape
 )
 
+// The start origin lines of the marks file (agent contract 11.4), seconds
+// since kernel start like every mark. boot_origin is where this start began:
+// 0 on a full start; after a soft restart the moment the restart began
+// (systemd's ShutdownStartTimestampMonotonic), earlier than the new
+// userspace start. boot_origin_partial is written instead when the node
+// cannot tell that moment: its value is the userspace start, and the figure
+// counts from there.
+const (
+	StartupMarkBootOrigin        = "boot_origin"
+	StartupMarkBootOriginPartial = "boot_origin_partial"
+)
+
 // StartupMarksFile is written by another component on a console (atomically
 // replaced each time a mark is added): one line per mark, "<name> <seconds
 // since boot, monotonic, with decimals>". The agent only reads it; it never
