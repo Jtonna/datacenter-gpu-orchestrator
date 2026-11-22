@@ -14,8 +14,10 @@ import (
 // worker takes its device memory in one step, so the check before a launch
 // is the only real protection. A profile's reserved figure on a node is its
 // need share (measured or estimated, as the fit rules have it) plus a fill
-// reserve for the growth while the conversation fills the context; once a
-// peak has been stored for the profile, that peak replaces both. Placement
+// reserve for the growth while the conversation fills the context. A stored
+// peak can only raise that figure, never lower it: reserved = max(need share
+// + fill reserve, peak), because a peak is not known to have been seen with
+// the context filled. Placement
 // can count a node's memory at the larger of what is reserved there and what
 // the node measures as used, on the smaller of its latest and its average
 // free figure. Every setting defaults to the rules of the release before it
@@ -109,15 +111,19 @@ func (c *schedCore) peakTotal(p *core.Profile) int {
 }
 
 // applyReserve adds the reservation rule to a placer request for p with
-// need info: the fill reserve on every node (or the stored peak total in
-// place of need + reserve), and the configured per-node margins.
+// need info: the fill reserve on every node, the stored peak total when it
+// is above need + fill reserve (it only raises the need, never lowers it),
+// and the configured per-node margins.
 func (c *schedCore) applyReserve(req *placer.Request, p *core.Profile, info NeedInfo) {
 	d := c.cfg.Defaults
 	measured := info.Need.Measured
+	fill := c.fillReserveMiB(p)
+	req.PerNodeReserveMiB = fill
 	if pt := c.peakTotal(p); pt > 0 {
-		req.Need, measured = placer.Measured(pt), true
-	} else {
-		req.PerNodeReserveMiB = c.fillReserveMiB(p)
+		k := len(c.learnedFor(p).Nodes)
+		if over := pt - k*fill; over > info.Need.WithMargin() {
+			req.Need, measured = placer.Measured(over), true
+		}
 	}
 	switch {
 	case measured && d.MarginMeasuredMiB > 0:
@@ -164,6 +170,26 @@ func (c *schedCore) reservedShares(p *core.Profile, pl core.Placement) ([]reserv
 	fill := c.fillReserveMiB(p)
 	skew := c.cfg.Defaults.SplitSkewMargin
 	d := c.cfg.Defaults
+	// The per-node figures measured on this node set and split, scaled up
+	// when they add up to less than the need (they follow a later, smaller
+	// load than the need's): never below the need, the measured skew kept.
+	var learnedMiB []int
+	if len(pl.Nodes) > 1 {
+		sum := 0
+		for _, pn := range pl.Nodes {
+			m, ok := c.learnedFor(p).shareFor(pl, fracs, pn.ID)
+			if !ok {
+				learnedMiB, sum = nil, 0
+				break
+			}
+			learnedMiB, sum = append(learnedMiB, m), sum+m
+		}
+		if sum > 0 && sum < need {
+			for i, m := range learnedMiB {
+				learnedMiB[i] = int(math.Ceil(float64(m)*float64(need)/float64(sum) - 1e-6))
+			}
+		}
+	}
 	out := make([]reservedShare, len(pl.Nodes))
 	for i, pn := range pl.Nodes {
 		r := reservedShare{ID: pn.ID, Basis: BasisEstimated}
@@ -172,22 +198,22 @@ func (c *schedCore) reservedShares(p *core.Profile, pl core.Placement) ([]reserv
 		}
 		share, learned := 0, false
 		switch {
-		case havePeak:
-			share, r.Basis = peaks[i], BasisPeak
 		case len(pl.Nodes) == 1:
 			share = need + dev
 		default:
-			if m, ok := c.learnedFor(p).shareFor(pl, fracs, pn.ID); ok {
-				share, learned, r.Basis = m, true, BasisMeasured
+			if learnedMiB != nil {
+				share, learned, r.Basis = learnedMiB[i], true, BasisMeasured
 			} else {
 				share = int(math.Ceil(float64(need)*fracs[i]-1e-6)) + dev
 			}
 		}
+		r.Fill = fill
+		if havePeak && peaks[i] > share+fill {
+			// the peak is above need share + fill reserve: it counts whole
+			share, r.Fill, r.Basis = peaks[i], 0, BasisPeak
+		}
 		r.Weights = min(int(math.Ceil(float64(fileMiB)*fracs[i]-1e-6)), share)
 		r.Context = share - r.Weights
-		if !havePeak {
-			r.Fill = fill
-		}
 		r.Total = share + r.Fill
 		n, ok := c.node(pn.ID)
 		shared := ok && n.SharedMemory
@@ -259,7 +285,7 @@ func (c *schedCore) trackPeaks() {
 		raised := false
 		for i := range l.Nodes {
 			n := &l.Nodes[i]
-			peak := max(n.PeakMiB, n.MiB)
+			peak := n.PeakMiB // a peak starts from what the node gave up, not from the load's figure
 			if used, ok := c.measuredUse(in, n.ID); ok {
 				peak = max(peak, used)
 			}
@@ -382,7 +408,7 @@ func (c *schedCore) nodeReservation(id core.NodeID, n core.Node, s *NodeStatus) 
 }
 
 // planNote explains the weights and context split of the memory section.
-const planNote = "weights are the model file's share by the split fraction; context is the rest of the share (KV cache, compute buffers, device overhead); will_take adds the fill reserve, or is the stored peak"
+const planNote = "weights are the model file's share by the split fraction; context is the rest of the share (KV cache, compute buffers, device overhead); will_take adds the fill reserve, or is the stored peak when that is higher"
 
 // planMemory is the memory section of a plan: on the placement made (or,
 // with none, on the nodes the profile would be spread over), what each node

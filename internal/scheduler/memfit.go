@@ -233,7 +233,7 @@ func (c *schedCore) learnNeed(in *inst) {
 		if slices.Equal(oldPlacement, l.placement) && len(oldNodes) == len(l.Nodes) {
 			for i := range l.Nodes {
 				if o := oldNodes[i]; o.ID == l.Nodes[i].ID && math.Abs(o.Fraction-l.Nodes[i].Fraction) <= fractionTolerance && o.PeakMiB > 0 {
-					l.Nodes[i].PeakMiB = max(o.PeakMiB, l.Nodes[i].MiB)
+					l.Nodes[i].PeakMiB = o.PeakMiB
 					l.peakAt = oldPeakAt
 				}
 			}
