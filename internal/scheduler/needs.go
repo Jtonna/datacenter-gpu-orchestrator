@@ -15,10 +15,12 @@ import (
 
 // Learned needs across a restart (design 7.2a). What a load measured, or what
 // a memory kill raised the need to, is written to the scheduler database and
-// read back by New, before Run plans any request. A stored figure is used
-// only while it still describes its profile: the settings that change the
-// need (needKey) must be the ones it was measured with, the profile must
-// exist, and the model file must have the size it had.
+// read back by New, before Run plans any request. A figure is kept by the
+// shape of the load (needKey, as needstore.ShapeKey), not by profile: every
+// profile of that shape uses it, and deleting, renaming or changing a profile
+// removes nothing (a changed profile simply has another shape). A figure is
+// dropped when the model file no longer has the size it had, or by
+// forget-need.
 //
 // Writes never wait on the database inside a step: the core only appends to
 // an outbox (needOps); the runner hands it to needWriter after the step, and
@@ -29,7 +31,7 @@ import (
 type NeedStore interface {
 	All() ([]needstore.Record, []needstore.Skipped, error)
 	Put(needstore.Record) error
-	Delete(profile string) error
+	Delete(shape string) error
 }
 
 // needKey is what a profile's memory need depends on, besides the model
@@ -56,6 +58,18 @@ func needKeyOfRecord(r needstore.Record) needKey {
 	return makeNeedKey(core.Kind(r.Kind), r.Model, r.Ctx, r.Parallel, r.KVQuant, r.FlashAttn, r.ExtraArgs)
 }
 
+// shape is the store key of k (needstore.ShapeKey).
+func (k needKey) shape() string {
+	var extra []string
+	if k.extraArgs != "" {
+		extra = strings.Split(k.extraArgs, "\x00")
+	}
+	return needstore.ShapeKey(string(k.kind), k.model, k.ctx, k.parallel, k.kvQuant, k.flashAttn, extra)
+}
+
+// shapeOf is the key of p's learned need in c.learned and the store.
+func shapeOf(p *core.Profile) string { return needKeyOf(p).shape() }
+
 func makeNeedKey(kind core.Kind, model string, ctx, parallel int, kv string, fa bool, extra []string) needKey {
 	if kv == "" {
 		kv = "f16"
@@ -64,10 +78,10 @@ func makeNeedKey(kind core.Kind, model string, ctx, parallel int, kv string, fa 
 		extraArgs: strings.Join(extra, "\x00")}
 }
 
-// needOp is one queued store write: rec nil deletes the profile's row.
+// needOp is one queued store write: rec nil deletes the shape's row.
 type needOp struct {
-	profile string
-	rec     *needstore.Record
+	shape string
+	rec   *needstore.Record
 }
 
 // takeNeedOps returns and clears the store outbox.
@@ -77,22 +91,25 @@ func (c *schedCore) takeNeedOps() []needOp {
 	return out
 }
 
-// learnedFor is p's learned need when it was measured with p's current
-// need-relevant settings, else nil.
+// learnedFor is the learned need of p's shape (measured with p's current
+// need-relevant settings, by p or by another profile of that shape), else nil.
 func (c *schedCore) learnedFor(p *core.Profile) *learnedNeed {
-	l := c.learned[p.Name]
+	l := c.learned[shapeOf(p)]
 	if l == nil || l.key != needKeyOf(p) {
 		return nil
 	}
 	return l
 }
 
-// storeLearned queues the write of name's learned need, when there is a
-// store and the measurement describes the profile as configured now.
+// storeLearned queues the write of the learned need of profile name's shape,
+// when there is a store and the profile is configured.
 func (c *schedCore) storeLearned(name string) {
-	l := c.learned[name]
 	p := c.cfg.Profiles[name]
-	if !c.persist || l == nil || p == nil || l.key != needKeyOf(p) {
+	if p == nil {
+		return
+	}
+	l := c.learnedFor(p)
+	if !c.persist || l == nil {
 		return
 	}
 	r := needstore.Record{Schema: needstore.RecordSchema, Profile: name, Kind: string(p.Kind), Model: p.Model,
@@ -105,28 +122,27 @@ func (c *schedCore) storeLearned(name string) {
 	for _, n := range l.Nodes {
 		r.Nodes = append(r.Nodes, needstore.Node{ID: string(n.ID), Fraction: n.Fraction, MiB: n.MiB, PeakMiB: n.PeakMiB})
 	}
-	c.needOps = append(c.needOps, needOp{profile: name, rec: &r})
+	c.needOps = append(c.needOps, needOp{shape: l.key.shape(), rec: &r})
 }
 
-// dropLearned forgets name's learned need and queues the removal of its row.
-func (c *schedCore) dropLearned(name, why string) {
-	l := c.learned[name]
-	delete(c.learned, name)
+// dropLearned forgets the learned need of a shape and queues the removal of
+// its row; name is the profile it is dropped for (for the log).
+func (c *schedCore) dropLearned(shape, name, why string) {
+	l := c.learned[shape]
+	delete(c.learned, shape)
 	if c.persist {
-		c.needOps = append(c.needOps, needOp{profile: name})
+		c.needOps = append(c.needOps, needOp{shape: shape})
 	}
 	if l != nil {
-		c.log.Info("learned memory need dropped", "profile", name, "measured_mib", l.TotalMiB, "reason", why)
+		c.log.Info("learned memory need dropped", "profile", name, "measured_by", l.profile, "measured_mib", l.TotalMiB, "reason", why)
 		c.changed = true
 	}
 }
 
 // restoreNeeds reads the stored learned needs (New calls it before Run). A
 // store that cannot be read, or rows that cannot be used, only warn: the
-// scheduler then starts from the estimates, as without a store. Rows of a
-// deleted profile, or measured with other need-relevant settings, are
-// removed; with no configuration at all (the built-in defaults) nothing is
-// removed.
+// scheduler then starts from the estimates, as without a store. Every row is
+// kept by its shape, whether a profile of that shape exists now or not.
 func (c *schedCore) restoreNeeds(st NeedStore) {
 	if st == nil {
 		return
@@ -144,33 +160,24 @@ func (c *schedCore) restoreNeeds(st NeedStore) {
 		}
 		c.log.Warn("some stored learned needs were ignored", "count", len(skipped), "rows", strings.Join(parts, "; "))
 	}
-	restored, removed := 0, 0
+	restored, used := 0, 0
 	for _, r := range recs {
-		p := c.cfg.Profiles[r.Profile]
-		switch {
-		case p == nil && !c.cfg.Configured:
-			continue
-		case p == nil:
-			c.needOps = append(c.needOps, needOp{profile: r.Profile})
-			c.log.Info("stored learned need removed", "profile", r.Profile, "reason", "the profile no longer exists")
-			removed++
-		case needKeyOf(p) != needKeyOfRecord(r):
-			c.needOps = append(c.needOps, needOp{profile: r.Profile})
-			c.log.Info("stored learned need removed", "profile", r.Profile,
-				"reason", "a setting that changes the memory need is not the one it was measured with")
-			removed++
-		default:
-			c.learned[r.Profile] = learnedFromRecord(r)
-			restored++
+		l := learnedFromRecord(r)
+		c.learned[l.key.shape()] = l
+		restored++
+	}
+	for _, p := range c.cfg.Profiles {
+		if c.learnedFor(p) != nil {
+			used++
 		}
 	}
-	if restored+removed > 0 {
-		c.log.Info("learned memory needs restored", "restored", restored, "removed", removed)
+	if restored > 0 {
+		c.log.Info("learned memory needs restored", "restored", restored, "profiles_using_them", used)
 	}
 }
 
 func learnedFromRecord(r needstore.Record) *learnedNeed {
-	l := &learnedNeed{TotalMiB: r.TotalMiB, key: needKeyOfRecord(r), at: r.MeasuredAt, restored: true, release: r.Release,
+	l := &learnedNeed{TotalMiB: r.TotalMiB, key: needKeyOfRecord(r), profile: r.Profile, at: r.MeasuredAt, restored: true, release: r.Release,
 		cause: r.Cause, split: slices.Clone(r.Split), modelBytes: r.ModelBytes, peakAt: r.PeakAt}
 	for _, id := range r.Placement {
 		l.placement = append(l.placement, core.NodeID(id))
@@ -185,27 +192,37 @@ func learnedFromRecord(r needstore.Record) *learnedNeed {
 // size (the file was replaced under the same name). Called when the
 // provider's figure is (re)computed.
 func (c *schedCore) checkModelBytes(p *core.Profile, base NeedInfo) {
-	if l := c.learned[p.Name]; l != nil && l.modelBytes > 0 && base.FileBytes > 0 && l.modelBytes != base.FileBytes {
-		c.dropLearned(p.Name, fmt.Sprintf("the model file is %d bytes, it was %d when measured", base.FileBytes, l.modelBytes))
+	if l := c.learnedFor(p); l != nil && l.modelBytes > 0 && base.FileBytes > 0 && l.modelBytes != base.FileBytes {
+		c.dropLearned(shapeOf(p), p.Name, fmt.Sprintf("the model file is %d bytes, it was %d when measured", base.FileBytes, l.modelBytes))
 	}
 }
 
 // ErrNoProfile is returned by ForgetNeed for a name no profile has.
 var ErrNoProfile = errors.New("scheduler: no such profile")
 
-// forgetNeed drops profile name's learned need, in memory and in the store
-// (for when the hardware changed). It reports whether there was one.
+// forgetNeed drops the learned need of profile name's shape, in memory and
+// in the store (for when the hardware changed); every profile of that shape
+// loses it. A name no profile has may still name the profile that measured a
+// kept figure. It reports whether there was one.
 func (c *schedCore) forgetNeed(name string) (bool, error) {
-	if c.cfg.Profiles[name] == nil {
-		if _, ok := c.learned[name]; !ok {
+	shape := ""
+	if p := c.cfg.Profiles[name]; p != nil {
+		shape = shapeOf(p)
+	} else {
+		for s, l := range c.learned {
+			if l.profile == name && (shape == "" || s < shape) {
+				shape = s
+			}
+		}
+		if shape == "" {
 			return false, fmt.Errorf("%w: %s", ErrNoProfile, name)
 		}
 	}
-	l := c.learned[name]
-	delete(c.learned, name)
+	l := c.learned[shape]
+	delete(c.learned, shape)
 	delete(c.warnedLow, name)
 	if c.persist {
-		c.needOps = append(c.needOps, needOp{profile: name})
+		c.needOps = append(c.needOps, needOp{shape: shape})
 	}
 	if l == nil {
 		return false, nil
@@ -221,19 +238,19 @@ func applyNeedOps(st NeedStore, ops []needOp, log *slog.Logger) {
 	for _, op := range ops {
 		var err error
 		if op.rec == nil {
-			err = st.Delete(op.profile)
+			err = st.Delete(op.shape)
 		} else {
 			err = st.Put(*op.rec)
 		}
 		if err != nil && log != nil {
-			log.Warn("a learned memory need was not saved; it is kept for this run only", "profile", op.profile, "err", err)
+			log.Warn("a learned memory need was not saved; it is kept for this run only", "shape", op.shape, "err", err)
 		}
 	}
 }
 
 // needWriter writes the queued ops on its own goroutine. Ops for the same
-// profile are merged (the last one wins), so the queue never grows past one
-// entry per profile.
+// shape are merged (the last one wins), so the queue never grows past one
+// entry per shape.
 type needWriter struct {
 	st  NeedStore
 	log *slog.Logger
@@ -256,10 +273,10 @@ func newNeedWriter(st NeedStore, log *slog.Logger) *needWriter {
 func (w *needWriter) queue(ops []needOp) {
 	w.mu.Lock()
 	for _, op := range ops {
-		if _, ok := w.pending[op.profile]; !ok {
-			w.order = append(w.order, op.profile)
+		if _, ok := w.pending[op.shape]; !ok {
+			w.order = append(w.order, op.shape)
 		}
-		w.pending[op.profile] = op
+		w.pending[op.shape] = op
 	}
 	w.mu.Unlock()
 	select {

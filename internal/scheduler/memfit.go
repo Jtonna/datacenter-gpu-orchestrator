@@ -58,7 +58,8 @@ type learnedNeed struct {
 	TotalMiB int
 	Nodes    []learnedNode // empty when the log did not account for every node
 
-	key        needKey       // the need-relevant settings it was measured with
+	key        needKey       // the need-relevant settings it was measured with (its shape)
+	profile    string        // the profile that measured it last (for display)
 	at         time.Time     // when it was measured (or raised)
 	restored   bool          // read from the store at start, not measured this run
 	release    string        // the release that measured it
@@ -180,11 +181,12 @@ func (c *schedCore) learnNeed(in *inst) {
 		return
 	}
 	key := needKeyOf(in.prof)
-	l := c.learned[in.prof.Name]
+	l := c.learned[key.shape()]
 	if l == nil || l.key != key {
 		l = &learnedNeed{key: key}
-		c.learned[in.prof.Name] = l
+		c.learned[key.shape()] = l
 	}
+	l.profile = in.prof.Name
 	if l.restored {
 		l.TotalMiB = total
 	} else {
@@ -296,9 +298,9 @@ type LearnedNodeNeed struct {
 
 func (c *schedCore) learnedNeeds() map[string]LearnedNeed {
 	out := map[string]LearnedNeed{}
-	for name, l := range c.learned {
-		p := c.cfg.Profiles[name]
-		if p == nil || c.learnedFor(p) == nil {
+	for name, p := range c.cfg.Profiles {
+		l := c.learnedFor(p)
+		if l == nil {
 			continue
 		}
 		base, ok := c.needs_[name]

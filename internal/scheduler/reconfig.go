@@ -48,15 +48,9 @@ func (c *schedCore) applyConfig(nc *config.Config) {
 			delete(c.warnedLow, name)
 		}
 	}
-	// A learned need stays while it still describes its profile (needs.go).
-	for name, l := range c.learned {
-		switch np := nc.Profiles[name]; {
-		case np == nil:
-			c.dropLearned(name, "the profile was deleted")
-		case needKeyOf(np) != l.key:
-			c.dropLearned(name, "a setting that changes the memory need changed")
-		}
-	}
+	// Learned needs are kept by shape (needs.go): a deleted or changed
+	// profile removes none; a changed profile uses the figure of its new
+	// shape, if there is one.
 	for name, e := range c.entries {
 		np := nc.Profiles[name]
 		if np == nil {

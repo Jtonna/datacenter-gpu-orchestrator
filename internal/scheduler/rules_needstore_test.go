@@ -19,8 +19,8 @@ import (
 )
 
 // Learned needs survive a restart (needs.go): a measurement is written to
-// the scheduler database and restored before any request is planned, as long
-// as it still describes its profile.
+// the scheduler database by the shape of its load and restored before any
+// request is planned; every profile of that shape uses it.
 
 func openNeedStore(t *testing.T) *needstore.Store {
 	t.Helper()
@@ -166,7 +166,7 @@ func TestStoredNeed_RaiseAfterAMemoryKillIsStored(t *testing.T) {
 	}
 }
 
-func TestStoredNeed_AChangedSettingDropsIt(t *testing.T) {
+func TestStoredNeed_AChangedSettingDoesNotMatch(t *testing.T) {
 	for name, mod := range map[string]func(p *core.Profile){
 		"ctx":        func(p *core.Profile) { p.Ctx = 8192 },
 		"model":      func(p *core.Profile) { p.Model = "other.gguf" },
@@ -186,8 +186,8 @@ func TestStoredNeed_AChangedSettingDropsIt(t *testing.T) {
 				t.Fatal("still in status")
 			}
 			flushNeeds(h, st)
-			if _, ok := storedNeeds(t, st)["f"]; ok {
-				t.Fatal("the row was not removed")
+			if _, ok := storedNeeds(t, st)["f"]; !ok {
+				t.Fatal("the row of the old shape was removed")
 			}
 		})
 		t.Run(name+" while running", func(t *testing.T) {
@@ -196,12 +196,19 @@ func TestStoredNeed_AChangedSettingDropsIt(t *testing.T) {
 			nc := cloneCfg(h.c.cfg)
 			mod(nc.Profiles["f"])
 			h.step(evConfig{cfg: nc})
-			if _, ok := h.c.learned["f"]; ok {
-				t.Fatal("still learned")
+			if h.c.learnedFor(h.c.cfg.Profiles["f"]) != nil {
+				t.Fatal("the changed profile still matches")
+			}
+			// changed back, it matches its shape again
+			back := cloneCfg(h.c.cfg)
+			back.Profiles["f"] = tooBigEstimate(t, config.ForcedFitOff).cfg.Profiles["f"]
+			h.step(evConfig{cfg: back})
+			if l := h.c.learnedFor(h.c.cfg.Profiles["f"]); l == nil || l.TotalMiB != 11000 {
+				t.Fatalf("changed back: %+v", l)
 			}
 			flushNeeds(h, st)
-			if _, ok := storedNeeds(t, st)["f"]; ok {
-				t.Fatal("the row was not removed")
+			if _, ok := storedNeeds(t, st)["f"]; !ok {
+				t.Fatal("the row was removed")
 			}
 		})
 	}
@@ -212,7 +219,7 @@ func TestStoredNeed_AChangedSettingDropsIt(t *testing.T) {
 	nc.Profiles["f"].TTL = ptrDur(time.Minute)
 	h.step(evConfig{cfg: nc})
 	flushNeeds(h, st)
-	if _, ok := h.c.learned["f"]; !ok {
+	if h.c.learnedFor(h.c.cfg.Profiles["f"]) == nil {
 		t.Fatal("a ttl change dropped the learned need")
 	}
 	h = restart(t, st, func(h *harness) { h.cfg.Profiles["f"].TTL = ptrDur(time.Minute) })
@@ -234,33 +241,79 @@ func TestStoredNeed_AReplacedModelFileDropsIt(t *testing.T) {
 	}
 }
 
-func TestStoredNeed_DeletingTheProfileRemovesTheRow(t *testing.T) {
+// sameShapeAsF adds profile "g": another name, the same shape as "f" (a
+// different ttl and description do not change the need).
+func sameShapeAsF(h *harness) {
+	g := *h.cfg.Profiles["f"]
+	g.Name, g.TTL = "g", ptrDur(time.Minute)
+	h.cfg.Profiles["g"] = &g
+	h.needs["g"] = h.needs["f"]
+}
+
+// Two profiles of one shape share one measurement: what "f" measured is
+// used by "g", after a restart and in the same run.
+func TestStoredNeed_TwoProfilesOfOneShapeShareIt(t *testing.T) {
+	st := openNeedStore(t)
+	measureF(t, st)
+	h := restart(t, st, sameShapeAsF)
+	for _, name := range []string{"f", "g"} {
+		if r := h.c.dryPlan(name); r.Action != PlanStart || r.FitNeedMiB != 11000 || !r.Measured {
+			t.Fatalf("%s: plan %+v", name, r)
+		}
+		if ln := h.c.statusDoc().LearnedNeeds[name]; ln.MeasuredMiB != 11000 {
+			t.Fatalf("%s: status %+v", name, ln)
+		}
+	}
+	if recs, _, _ := st.All(); len(recs) != 1 || recs[0].Profile != "f" {
+		t.Fatalf("rows %+v, want one, measured by f", recs)
+	}
+	h.mustLog("learned memory needs restored", "restored", 1, "profiles_using_them", 2)
+
+	// a profile with another ctx does not share it
+	h2 := restart(t, st, func(h *harness) {
+		sameShapeAsF(h)
+		h.cfg.Profiles["g"].Ctx = 8192
+	})
+	if r := h2.c.dryPlan("g"); r.Action != PlanReject {
+		t.Fatalf("other ctx: plan %+v", r)
+	}
+}
+
+// Deleting a profile keeps its measurement: another profile of the shape
+// keeps using it, at once and after a restart, and a profile created later
+// with that shape finds it.
+func TestStoredNeed_DeletingTheProfileKeepsTheRow(t *testing.T) {
 	st := openNeedStore(t)
 	h := measureF(t, st)
 	nc := cloneCfg(h.c.cfg)
+	g := *nc.Profiles["f"]
+	g.Name = "g"
+	nc.Profiles["g"] = &g
+	h.needs["g"] = h.needs["f"]
+	h.step(evConfig{cfg: nc})
 	h.step(evUnload{profile: "f", force: true})
 	h.advance(10 * time.Second)
+	nc = cloneCfg(h.c.cfg)
 	delete(nc.Profiles, "f")
 	h.step(evConfig{cfg: nc})
 	flushNeeds(h, st)
-	if _, ok := storedNeeds(t, st)["f"]; ok {
-		t.Fatal("the row was not removed")
+	if l := h.c.learnedFor(h.c.cfg.Profiles["g"]); l == nil || l.TotalMiB != 11000 {
+		t.Fatalf("g lost the measurement: %+v", l)
+	}
+	if _, ok := storedNeeds(t, st)["f"]; !ok {
+		t.Fatal("the row was removed with its profile")
 	}
 
-	// A row whose profile is gone at start is removed too.
-	measureF(t, st)
-	h2 := restart(t, st, func(h *harness) { delete(h.cfg.Profiles, "f") })
-	flushNeeds(h2, st)
-	if _, ok := storedNeeds(t, st)["f"]; ok {
-		t.Fatal("the row of a deleted profile was not removed at start")
+	// At start, with f gone and g there, g uses it.
+	h2 := restart(t, st, func(h *harness) { sameShapeAsF(h); delete(h.cfg.Profiles, "f") })
+	if r := h2.c.dryPlan("g"); r.Action != PlanStart || r.FitNeedMiB != 11000 {
+		t.Fatalf("g after a restart: plan %+v", r)
 	}
-	// Except when there is no configuration at all (the configuration tables
-	// could not be read): nothing is removed then.
-	measureF(t, st)
-	h3 := restart(t, st, func(h *harness) { delete(h.cfg.Profiles, "f"); h.cfg.Configured = false })
+	// With no profile of that shape at all, the row is kept for a later one.
+	h3 := restart(t, st, func(h *harness) { delete(h.cfg.Profiles, "f") })
 	flushNeeds(h3, st)
 	if _, ok := storedNeeds(t, st)["f"]; !ok {
-		t.Fatal("a row was removed while the configuration was missing")
+		t.Fatal("a row without a profile was removed at start")
 	}
 }
 
@@ -334,6 +387,26 @@ func TestStoredNeed_ForgetDropsTheNeedAndTheRow(t *testing.T) {
 	}
 	if _, err := h.c.forgetNeed("nope"); err == nil {
 		t.Fatal("an unknown profile was accepted")
+	}
+
+	// forget-need by a profile that shares the shape, and by the name of a
+	// deleted profile that measured a kept figure
+	measureF(t, st)
+	h = restart(t, st, sameShapeAsF)
+	if had, err := h.c.forgetNeed("g"); err != nil || !had {
+		t.Fatalf("forget by g: %v %v", had, err)
+	}
+	if h.c.learnedFor(h.c.cfg.Profiles["f"]) != nil {
+		t.Fatal("f still has the figure g forgot")
+	}
+	measureF(t, st)
+	h = restart(t, st, func(h *harness) { delete(h.cfg.Profiles, "f") })
+	if had, err := h.c.forgetNeed("f"); err != nil || !had {
+		t.Fatalf("forget by a deleted profile: %v %v", had, err)
+	}
+	flushNeeds(h, st)
+	if recs, _, _ := st.All(); len(recs) != 0 {
+		t.Fatalf("rows left %+v", recs)
 	}
 }
 

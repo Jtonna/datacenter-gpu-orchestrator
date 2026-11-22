@@ -446,12 +446,12 @@ func (c *schedCore) raiseNeedOnKill(in *inst, node core.NodeID, ex *agentproto.E
 		return
 	}
 	raised := info.Need.MiB + max(info.Need.MiB/10, needRaiseMinMiB)
-	l := &learnedNeed{TotalMiB: raised, key: needKeyOf(in.prof), at: c.now, release: c.buildRelease, cause: string(ex.Reason),
+	l := &learnedNeed{TotalMiB: raised, key: needKeyOf(in.prof), profile: in.prof.Name, at: c.now, release: c.buildRelease, cause: string(ex.Reason),
 		placement: in.nodeIDs()}
 	if base, ok := c.needs_[in.prof.Name]; ok {
 		l.modelBytes = base.FileBytes
 	}
-	c.learned[in.prof.Name] = l
+	c.learned[shapeOf(in.prof)] = l
 	c.storeLearned(in.prof.Name)
 	c.log.Warn("learned need raised after a worker was killed for memory", "profile", in.prof.Name, "node", node,
 		"exit", ex.Reason, "from_mib", info.Need.MiB, "to_mib", raised)
