@@ -122,6 +122,8 @@ type ColdResult struct {
 const (
 	DefaultColdRetry  = 20 * time.Second
 	DefaultColdSettle = 2500 * time.Millisecond
+	// DefaultUnloadGrace is ManagerOptions.UnloadGrace's default.
+	DefaultUnloadGrace = 3 * time.Second
 )
 
 func (r *ColdResult) notGuaranteed(why string) {

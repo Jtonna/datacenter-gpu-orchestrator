@@ -328,7 +328,7 @@ func mergeHosts(a, b map[string]string) map[string]string {
 }
 
 func (x *suiteExec) unloadFirst(ctx context.Context, profile string) (string, bool) {
-	res, err := x.m.o.API.Unload(ctx, profile, false)
+	res, err := x.unloadGraceful(ctx, profile)
 	switch {
 	case err != nil:
 		return "unload: " + err.Error(), false
@@ -994,7 +994,12 @@ func (br *benchRun) phaseUnload(p *benchspec.Phase, pr *PhaseResult) {
 		return
 	}
 	start := time.Now()
-	ans, err := x.m.o.API.Unload(ctx, b.Profile, force)
+	var ans *UnloadInfo
+	if force {
+		ans, err = x.m.o.API.Unload(ctx, b.Profile, true)
+	} else {
+		ans, err = x.unloadGraceful(ctx, b.Profile)
+	}
 	switch {
 	case err != nil:
 		br.fail(OutcomeError, "unload: "+err.Error())
@@ -1028,7 +1033,18 @@ func (br *benchRun) cleanUp() {
 	}
 	ctx, cancel := context.WithTimeout(WithRun(context.Background(), st.RunID), x.m.o.GoneTimeout+30*time.Second)
 	defer cancel()
-	ans, err := x.m.o.API.Unload(ctx, b.Profile, true)
+	// Give the step's own last request the grace to be counted as ended,
+	// then unload with force, which the scheduler does not refuse for
+	// requests in flight. A failed call is tried twice more.
+	x.waitNoneInFlight(ctx, b.Profile)
+	var ans *UnloadInfo
+	var err error
+	for try := 0; try < 3 && (try == 0 || err != nil || ans.Status != 200); try++ {
+		if try > 0 {
+			time.Sleep(200 * time.Millisecond)
+		}
+		ans, err = x.m.o.API.Unload(ctx, b.Profile, true)
+	}
 	switch {
 	case err != nil:
 		x.m.log.Warn("benchmark step could not unload its profile", "run", st.RunID, "step", st.Idx, "profile", b.Profile, "err", err)
@@ -1043,6 +1059,41 @@ func (br *benchRun) cleanUp() {
 	}
 	br.loaded = false
 	x.m.log.Info("benchmark step unloaded its profile after it ended "+st.Outcome, "run", st.RunID, "step", st.Idx, "profile", b.Profile, "gone", gone)
+}
+
+// unloadGraceful unloads without force and, while the scheduler answers 409
+// (requests in flight), tries again for ManagerOptions.UnloadGrace: the
+// scheduler counts a request's end a moment after the client has the whole
+// answer, so an unload right after the run's last request can meet it. A
+// request that really stays in flight still gets the 409 after the grace.
+func (x *suiteExec) unloadGraceful(ctx context.Context, profile string) (*UnloadInfo, error) {
+	deadline := time.Now().Add(x.m.o.UnloadGrace)
+	for {
+		ans, err := x.m.o.API.Unload(ctx, profile, false)
+		if err != nil || ans.Status != 409 || !time.Now().Before(deadline) {
+			return ans, err
+		}
+		select {
+		case <-ctx.Done():
+			return ans, nil
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
+// waitNoneInFlight waits up to ManagerOptions.UnloadGrace until the
+// profile's instance counts no request in flight (or is gone).
+func (x *suiteExec) waitNoneInFlight(ctx context.Context, profile string) {
+	deadline := time.Now().Add(x.m.o.UnloadGrace)
+	for time.Now().Before(deadline) && ctx.Err() == nil {
+		s, err := x.m.o.API.Status(ctx)
+		if err == nil {
+			if in := s.Instance(profile); in == nil || in.InFlight == 0 {
+				return
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // waitGoneNoCancel is waitGone for cleanup: a cancelled run still waits.

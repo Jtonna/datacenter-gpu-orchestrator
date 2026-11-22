@@ -60,6 +60,12 @@ type ManagerOptions struct {
 	// negative: none).
 	ColdRetry  time.Duration
 	ColdSettle time.Duration
+	// UnloadGrace is how long an unload without force is tried again while
+	// the profile still counts requests in flight: the scheduler counts a
+	// request's end a moment after the client has the answer, so an unload
+	// right after the last request can meet it (default 3 s, negative: no
+	// retry). The end-of-step clean-up unloads with force after it.
+	UnloadGrace time.Duration
 }
 
 // runPlan is the suite and every benchmark it names, as they were when the run
@@ -123,6 +129,9 @@ func NewManager(o ManagerOptions) (*Manager, error) {
 	}
 	if o.ColdSettle == 0 {
 		o.ColdSettle = DefaultColdSettle
+	}
+	if o.UnloadGrace == 0 {
+		o.UnloadGrace = DefaultUnloadGrace
 	}
 	if o.GoneTimeout <= 0 {
 		o.GoneTimeout = 2 * time.Minute

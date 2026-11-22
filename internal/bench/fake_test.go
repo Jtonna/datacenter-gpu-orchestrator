@@ -86,6 +86,14 @@ type fakeAPI struct {
 	evictNode  map[string][]NodeEvict
 	evictLocal *LocalEvict
 	evictErr   error
+	// strictUnload makes an unload without force refuse (409) while the
+	// instance counts requests in flight, as the scheduler does; linger keeps
+	// a finished request counted that long after its answer was returned
+	// (the scheduler counts the end a moment after the client has the
+	// body); stuck adds requests in flight that never end.
+	strictUnload bool
+	linger       time.Duration
+	stuck        map[string]int
 }
 
 func newFake() *fakeAPI {
@@ -287,8 +295,12 @@ func (f *fakeAPI) Unload(ctx context.Context, model string, force bool) (*Unload
 	if f.busyUnl[model] {
 		return &UnloadInfo{Status: 409, Msg: "busy"}, nil
 	}
-	if _, ok := f.insts[model]; !ok {
+	in, ok := f.insts[model]
+	if !ok {
 		return &UnloadInfo{Status: 200, Msg: "not loaded"}, nil
+	}
+	if n := in.inflight + f.stuck[model]; f.strictUnload && !force && n > 0 {
+		return &UnloadInfo{Status: 409, Msg: fmt.Sprintf("model busy: %s has %d requests in flight (use force to stop it anyway)", model, n)}, nil
 	}
 	delete(f.insts, model)
 	if f.unloadMS > 0 {
@@ -305,7 +317,7 @@ func (f *fakeAPI) Status(ctx context.Context) (*StatusInfo, error) {
 		{ID: "n2", Hostname: "ps5-b", RPCServerVersion: f.version}, {ID: "n3", Hostname: "ps5-c", RPCServerVersion: f.version}}
 	for name, in := range f.insts {
 		p := f.profs[name]
-		ii := InstanceInfo{Profile: name, State: in.state, InFlight: in.inflight, LogFile: "/var/log/llm-children/" + name + ".log",
+		ii := InstanceInfo{Profile: name, State: in.state, InFlight: in.inflight + f.stuck[name], LogFile: "/var/log/llm-children/" + name + ".log",
 			Cmd: "/opt/llama/llama-server-rpc --model x --rpc 192.0.2.2:50052", DeviceTotalMiB: 7900, LoadMode: f.loadMode}
 		if p != nil {
 			ii.ModelFile = p.modelFile
@@ -447,7 +459,15 @@ func (f *fakeAPI) Chat(ctx context.Context, runID string, req ChatRequest, onPro
 	}
 	f.lastP[body.Model] = pt
 	f.mu.Unlock()
-	defer func() { f.mu.Lock(); in.inflight--; f.mu.Unlock() }()
+	defer func() {
+		if f.linger > 0 {
+			go func() { time.Sleep(f.linger); f.mu.Lock(); in.inflight--; f.mu.Unlock() }()
+			return
+		}
+		f.mu.Lock()
+		in.inflight--
+		f.mu.Unlock()
+	}()
 	if delay > 0 {
 		if body.Stream && onProgress != nil && body.MaxTokens > 0 {
 			steps := 4

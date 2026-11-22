@@ -171,3 +171,52 @@ func TestEvictOthersAsARunOption(t *testing.T) {
 		t.Fatalf("%s %q", r.State, r.Error)
 	}
 }
+
+// The scheduler counts a request's end a moment after the client has the
+// whole answer, so an unload sent right after the last request may meet it
+// still "in flight". The unload phase waits for that instead of failing.
+func TestUnloadRightAfterTheLastRequestWaitsForItsEnd(t *testing.T) {
+	api := newFake().prof("gemma", fakeProf{})
+	api.strictUnload, api.linger = true, 200*time.Millisecond
+	tm := newTestMgr(t, api)
+	r := tm.runOne(`{"id":"b","profile":"gemma","phases":[{"type":"load"},{"type":"requests","requests":[{"prompt":"hi","max_tokens":8}]},{"type":"unload"}]}`)
+	st := r.Steps[0]
+	if st.Outcome != OutcomeReady || phaseTypesOf(st) != "load:done,requests:done,unload:done" || api.has("gemma") {
+		t.Fatalf("%s %q %s %v", st.Outcome, st.Error, phaseTypesOf(st), api.callList())
+	}
+	if strings.Contains(strings.Join(api.callList(), " "), "force=true") {
+		t.Fatalf("a graceful unload was enough: %v", api.callList())
+	}
+}
+
+// The same before a cold load that follows requests on the loaded model.
+func TestLoadAfterRequestsWaitsForTheirEnd(t *testing.T) {
+	api := newFake().prof("gemma", fakeProf{})
+	api.strictUnload, api.linger = true, 200*time.Millisecond
+	tm := newTestMgr(t, api)
+	r := tm.runOne(`{"id":"b","profile":"gemma","phases":[{"type":"requests","requests":[{"prompt":"hi","max_tokens":8}]},{"type":"load"},{"type":"unload"}]}`)
+	if st := r.Steps[0]; st.Outcome != OutcomeReady {
+		t.Fatalf("%s %q %v", st.Outcome, st.Error, api.callList())
+	}
+}
+
+// A request that really stays in flight still makes a graceful unload fail
+// after the grace (that refusal is correct), and the step's clean-up then
+// unloads with force, so nothing is left loaded.
+func TestTrulyBusyUnloadFailsAndTheCleanUpForces(t *testing.T) {
+	api := newFake().prof("gemma", fakeProf{})
+	api.strictUnload, api.stuck = true, map[string]int{"gemma": 1}
+	tm := newTestMgr(t, api, func(o *ManagerOptions) { o.UnloadGrace = 150 * time.Millisecond })
+	start := time.Now()
+	r := tm.runOne(`{"id":"b","profile":"gemma","phases":[{"type":"load"},{"type":"unload"}]}`)
+	st := r.Steps[0]
+	if st.Outcome != OutcomeError || !strings.Contains(st.Error, "busy") {
+		t.Fatalf("%s %q", st.Outcome, st.Error)
+	}
+	if api.has("gemma") || !unloadedBefore(api.callList(), "gemma", "") {
+		t.Fatalf("the clean-up did not force the unload: %v", api.callList())
+	}
+	if time.Since(start) > 3*time.Second {
+		t.Fatalf("took %v", time.Since(start))
+	}
+}
