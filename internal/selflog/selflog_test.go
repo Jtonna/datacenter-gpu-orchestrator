@@ -422,12 +422,45 @@ func TestHungStoreSlowsNeitherChildNorLogging(t *testing.T) {
 	}
 }
 
+// limitWhileHung gives a push a short time limit when it starts while the
+// store is silent, and none otherwise: a push to a store that answers is
+// never given up because the machine running the test is slow.
+type limitWhileHung struct {
+	store *fakeStore
+	limit time.Duration
+}
+
+func (l limitWhileHung) RoundTrip(r *http.Request) (*http.Response, error) {
+	if !l.store.hang.Load() {
+		return http.DefaultTransport.RoundTrip(r)
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), l.limit)
+	resp, err := http.DefaultTransport.RoundTrip(r.WithContext(ctx))
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	resp.Body = cancelOnClose{resp.Body, cancel}
+	return resp, nil
+}
+
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (c cancelOnClose) Close() error { err := c.ReadCloser.Close(); c.cancel(); return err }
+
 // A store that takes the request and never answers: the sender gives the
 // push up at its client's time limit, says so in its figures, tries again
 // later, and once the store answers again the lines kept arrive. It never
-// sits in one request for ever.
+// sits in one request for ever. No check depends on how fast the machine is:
+// the short limit applies only to pushes that start while the store is
+// silent, and every figure is waited for, not read once.
 func TestSenderGivesUpOnASilentStore(t *testing.T) {
-	s := newSetup(t, func(o *Options) { o.HTTP = &http.Client{Timeout: 300 * time.Millisecond} })
+	var st *fakeStore
+	s := newSetup(t, func(o *Options) { o.HTTP = &http.Client{Transport: limitWhileHungFor(&st)} })
+	st = s.store
 	s.store.hang.Store(true)
 	s.run(t)
 	waitFor(t, "shipping on", s.ship.ship.On)
@@ -449,10 +482,20 @@ func TestSenderGivesUpOnASilentStore(t *testing.T) {
 		}
 		return a && b
 	})
-	if f := s.ship.Figures(); f.LinesSent < 2 {
-		t.Errorf("figures after the store came back: %+v", f)
-	}
+	waitFor(t, "both lines counted as sent", func() bool { f := s.ship.Figures(); return f != nil && f.LinesSent >= 2 })
 }
+
+// limitWhileHungFor builds the transport before the store exists (newSetup
+// makes both); *st is set before the sender runs.
+func limitWhileHungFor(st **fakeStore) http.RoundTripper {
+	return roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return limitWhileHung{store: *st, limit: 300 * time.Millisecond}.RoundTrip(r)
+	})
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 // Stopping the sender (Potluck shuts down) gives up a push in flight at once,
 // even with a client that has no time limit.
