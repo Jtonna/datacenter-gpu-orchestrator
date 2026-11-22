@@ -55,8 +55,9 @@ All ports are fixed. Ports 50060, 50070 and 50071 must be free when the agent st
 
 ### 4.1 Identity
 
-- `id`: the lowercase MAC address of one physical network interface, for example `02:00:00:00:00:01`. It is computed at every agent start and never stored, so a cloned drive or a swapped network card cannot carry a wrong id.
+- `id`: the lowercase MAC address of one physical network interface (for a Docker install in a container, see below), for example `02:00:00:00:00:01`. It is computed at every agent start and never stored, so a cloned drive or a swapped network card cannot carry a wrong id.
 - Which interface: the one the route to the configured Potluck address leaves by. When that address belongs to the machine itself (the host machine), the interface that owns the address. When the result is not a physical interface (loopback, bridge, VLAN, `docker0`, `veth`), the interface of the default route. If no physical interface is found, the agent does not register and reports why on `GET /status`.
+- Docker install (`--install docker`) in a container on a bridge network: there is no physical interface, only the container's `eth0` (a `veth`). When neither the route interface nor the default route's interface is physical, the id is the MAC of the interface that carries the route to Potluck, and the agent logs one INFO line saying the id comes from a virtual interface. That id is only stable when the container's MAC address is fixed (compose `mac_address`); without it every new container is a new node. A Docker install on the host network still takes the physical interface's MAC, and a bare install keeps the rule above. An empty or all-zero MAC is never an id. `potluck-agent id` takes the same `--install` flag (default `bare`).
 - On a PS5 this is the Ethernet interface, which is the id the five consoles have in Potluck today.
 - `name`: a display label. The agent sends the machine's hostname as the default. Potluck may hold a different label. Nothing is keyed by `name`.
 - Consequence to accept: the host machine's id today is the string `host-1`. It becomes its MAC. No profile forces it, so nothing breaks.

@@ -68,10 +68,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fs := flag.NewFlagSet("id", flag.ContinueOnError)
 			fs.SetOutput(stderr)
 			potluck := fs.String("potluck", "", "Potluck address <ip>:<port>")
+			install := fs.String("install", agentproto.InstallBare, "bare or docker (docker may take the id from a virtual interface)")
 			if err := fs.Parse(args[1:]); err != nil {
 				return 2
 			}
-			id, err := resolveID(*potluck)
+			if *install != agentproto.InstallBare && *install != agentproto.InstallDocker {
+				fmt.Fprintf(stderr, "--install %q: want bare or docker\n", *install)
+				return 2
+			}
+			id, err := resolveID(*potluck, *install)
 			if err != nil {
 				fmt.Fprintln(stderr, err)
 				return 1
@@ -209,13 +214,13 @@ func realNet(m hw.Machine) identity.RealNet {
 	return identity.RealNet{DefaultRoute: m.DefaultRouteInterface, Physical: m.IsPhysical}
 }
 
-func resolveID(potluck string) (string, error) {
+func resolveID(potluck, install string) (string, error) {
 	h, _, err := net.SplitHostPort(potluck)
 	ip := net.ParseIP(h)
 	if err != nil || ip == nil {
 		return "", fmt.Errorf("--potluck %q: want <ip>:<port>", potluck)
 	}
-	id, err := identity.Resolve(realNet(hw.Machine{Root: "/"}), ip)
+	id, err := identity.Resolve(realNet(hw.Machine{Root: "/"}), ip, install == agentproto.InstallDocker)
 	if err != nil {
 		return "", err
 	}
