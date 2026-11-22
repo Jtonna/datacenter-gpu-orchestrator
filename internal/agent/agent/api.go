@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/filecache"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/launch"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
 )
@@ -81,6 +82,7 @@ func (a *Agent) Handler() http.Handler {
 		}
 		writeJSON(w, 200, st)
 	})
+	mux.HandleFunc("POST "+agentproto.PathCacheEvict, a.postCacheEvict)
 	mux.HandleFunc("POST /reset", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, a.Launch.Reset(r.Context()))
 	})
@@ -159,4 +161,34 @@ func (a *Agent) getLog(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(200)
 	w.Write(data)
+}
+
+// postCacheEvict is POST /cache/evict (6.13): drop one model file from the
+// page cache, counting its cached bytes before and after.
+func (a *Agent) postCacheEvict(w http.ResponseWriter, r *http.Request) {
+	if a.Cache == nil {
+		writeJSON(w, http.StatusNotImplemented, refusalBody(agentproto.ReasonUnsupported, "this agent cannot drop files from the page cache (not Linux, or no model files on this node)"))
+		return
+	}
+	var req agentproto.CacheEvictRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&req); err != nil {
+		writeJSON(w, 400, refusalBody(agentproto.ReasonInvalidRequest, "body: "+err.Error()))
+		return
+	}
+	res, err := a.Cache.Evict(req.File)
+	var fe *filecache.Error
+	if errors.As(err, &fe) {
+		a.log.Info("file cache eviction refused", "file", req.File, "reason", fe.Reason, "msg", fe.Message)
+		if fe.Status == http.StatusTooManyRequests {
+			w.Header().Set("Retry-After", "10")
+		}
+		writeJSON(w, fe.Status, refusalBody(fe.Reason, fe.Message))
+		return
+	}
+	if err != nil {
+		writeJSON(w, 500, refusalBody(agentproto.ReasonEvictFailed, err.Error()))
+		return
+	}
+	writeJSON(w, 200, agentproto.CacheEvictAnswer{File: res.File, FileBytes: res.FileBytes, CachedBefore: res.CachedBefore,
+		CachedAfter: res.CachedAfter, DurationS: res.DurationS})
 }

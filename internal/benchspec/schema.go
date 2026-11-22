@@ -50,6 +50,7 @@ type SchemaDoc struct {
 	Request    []Option       `json:"request_options"`
 	Turn       []Option       `json:"turn_options"`
 	Benchmark  []Option       `json:"benchmark_options"`
+	Suite      []Option       `json:"suite_options"`
 	Expect     []ExpectKey    `json:"expect_keys"`
 	Templates  []Template     `json:"templates"`
 	Limits     map[string]int `json:"limits"`
@@ -85,9 +86,18 @@ func Schema() *SchemaDoc {
 		{Name: "timeout_s", Type: "integer", Default: DefaultTimeoutS, Min: 1, Max: MaxTimeoutS, Unit: "s", Description: "Limit for the whole benchmark, load and holds included."},
 		{Name: "tags", Type: "list", ItemType: "string", Description: "Free tags for filtering."},
 	}
+	d.Suite = []Option{
+		{Name: "stop_on_failure", Type: "boolean", Default: false, Description: "Skip the rest after a benchmark fails."},
+		{Name: "cooldown_s", Type: "integer", Default: DefaultCooldownS, Min: 0, Max: 3600, Unit: "s", Description: "Pause between benchmarks."},
+		{Name: "only_when_idle", Type: "boolean", Default: true, Description: "Wait while models are loaded, requests are running or the queue is not empty; skip the run when it stays busy longer than idle_wait_s."},
+		{Name: "idle_wait_s", Type: "integer", Default: DefaultIdleWaitS, Min: 0, Max: 86400, Unit: "s", Description: "How long to wait for the scheduler to be idle."},
+		{Name: "evict_others", Type: "boolean", Default: false, Description: "Do not wait for other users' idle loaded models: the run's loads may make the scheduler unload them to make room, as any load does. Requests in flight and queued requests are still waited for."},
+	}
 	d.PhaseTypes = []PhaseSchema{
 		{Type: PhaseLoad, Title: "Load", Description: "Cold load only: unload the profile if it is loaded, then load it without sending any chat request and wait until it is ready.",
-			Records: []string{"load_s", "load_bytes", "load_mb_s", "node_bytes", "memory_mib", "plan"}, Options: []Option{}},
+			Records: []string{"load_s", "load_bytes", "load_mb_s", "node_bytes", "memory_mib", "plan", "cold"}, Options: []Option{
+				{Name: "cold", Type: "boolean", Default: false, Description: "Drop the model file from the file cache of every node the load will use and of the scheduler's machine first, so the load reads the file from disk or the share. The result says whether that was verified (under 1 % of the file left cached everywhere)."},
+			}},
 		{Type: PhaseWarmup, Title: "Warm-up", Description: "Send requests that are recorded but left out of the statistics, so a cold cache does not skew the measured ones.",
 			Records: []string{"decode_tps", "prefill_tps"}, Options: []Option{
 				{Name: "count", Type: "integer", Default: DefaultWarmups, Min: 0, Max: MaxWarmups, Description: "How many warm-up requests to send."},
@@ -146,8 +156,23 @@ func Schema() *SchemaDoc {
 			`{"id":"requests-on-loaded-example","name":"Requests on a loaded model","description":"Measured requests only; leaves the model loaded.","profile":"your-profile","phases":[{"type":"requests","repeats":5,"max_tokens":128,"requests":[{"name":"explain","prompt":"Explain in two sentences what a GPU does."}]}]}`),
 		tpl("simultaneous-requests", "Simultaneous requests", "Loads the model, then fires several identical requests at once to see how the scheduler and the model share the time.",
 			`{"id":"simultaneous-requests-example","name":"Simultaneous requests","description":"Cold load, then 4 requests at the same moment.","profile":"your-profile","phases":[{"type":"load"},{"type":"concurrent_requests","n":4,"request":{"name":"hello","prompt":"Say hello in ten words.","max_tokens":32}},{"type":"unload"}]}`),
+		tpl(TemplateColdReload, "Cold, reload, loaded", "A load from an empty file cache, the first answer, the loaded speed, then an unload and a reload from the file cache with its first answer: cold load and reload times, time to first token after each, and the steady speed.",
+			`{"id":"cold-reload-loaded-example","name":"Cold, reload, loaded","description":"Cold load (file caches dropped first), first answer, loaded speed; then unload, reload from the file cache and its first answer.","profile":"your-profile","timeout_s":1800,"phases":[{"type":"load","label":"cold load","cold":true},{"type":"warmup","label":"first generation","count":1,"request":{"name":"first","prompt":"Say hello in five words.","max_tokens":16,"stream":true}},{"type":"requests","label":"loaded","repeats":3,"max_tokens":128,"stream":true,"requests":[{"name":"explain","prompt":"Explain in two sentences what a GPU does."}]},{"type":"unload"},{"type":"load","label":"reload"},{"type":"requests","label":"after the reload","repeats":3,"max_tokens":128,"stream":true,"requests":[{"name":"explain","prompt":"Explain in two sentences what a GPU does."}]},{"type":"unload"}]}`),
 	}
 	return d
+}
+
+// TemplateColdReload is the id of the "cold, reload, loaded" template.
+const TemplateColdReload = "cold-reload-loaded"
+
+// TemplateByID is the template with that id.
+func TemplateByID(id string) (Template, bool) {
+	for _, t := range Schema().Templates {
+		if t.ID == id {
+			return t, true
+		}
+	}
+	return Template{}, false
 }
 
 func tpl(id, name, desc, js string) Template {

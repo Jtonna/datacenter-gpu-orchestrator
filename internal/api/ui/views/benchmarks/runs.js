@@ -207,6 +207,63 @@ function setupBlock(step) {
     }));
 }
 
+// ---- cold loads ----
+
+// coldBadge: whether a cold load really started from empty file caches; the
+// reason is on hover.
+function coldBadge(c) {
+  const why = c.verified ? 'Every machine ended with under 1 % of the model file in its file cache.' : c.reason || 'not guaranteed';
+  return h('span', { title: why }, badge(c.verified ? 'cold: verified' : 'cold: not guaranteed', c.verified ? 'use' : 'aside'));
+}
+
+// coldMachines lists each machine's file cache before and after the drop.
+function coldMachines(c) {
+  const rows = [];
+  if (c.local) rows.push({ node: 'Scheduler machine', ...c.local });
+  for (const n of c.nodes || []) rows.push({ ...n, node: n.node || n.id });
+  if (!rows.length) return null;
+  const cached = (r, v) => (r.file_bytes ? `${bytes(v)} (${num((100 * v) / r.file_bytes, 1)} %)` : bytes(v));
+  return table({
+    minWidth: 520, rows, key: r => r.node,
+    columns: [
+      { label: 'File cache of', render: r => h('span.mono', r.node) },
+      { label: 'File', cls: 'r', render: r => (r.error ? DASH : bytes(r.file_bytes)) },
+      { label: 'Cached before', cls: 'r', render: r => (r.error ? DASH : cached(r, r.cached_before)) },
+      { label: 'Cached after', cls: 'r', render: r => (r.error ? h('span.err-t', r.error) : cached(r, r.cached_after)) },
+    ],
+  });
+}
+
+// coldSummary is the result row of a step with a cold load phase. It follows
+// the phases, whatever their order: each load phase under its own label
+// (load time, the first token after it) and each requests phase's decode
+// speed, so "cold load" and "reload" are whatever the benchmark called them.
+function coldSummary(step) {
+  const ph = step.phases || [];
+  if (!ph.some(p => p.type === 'load' && p.cold)) return null;
+  const loads = ph.filter(p => p.type === 'load');
+  const nameOf = p => p.label || (p.cold ? 'cold load' : `load (phase ${p.idx + 1})`);
+  const ttftAfter = l => {
+    const n = loads.find(q => q.idx > l.idx);
+    const end = n ? n.idx : Infinity;
+    const r = (step.requests || []).find(q => q.phase_idx > l.idx && q.phase_idx < end && q.ttft_ms != null);
+    return r ? r.ttft_ms : null;
+  };
+  const items = [];
+  for (const l of loads) {
+    const t = ttftAfter(l);
+    items.push(stat(nameOf(l), l.load && l.load.load_s != null ? num(l.load.load_s, 1) : DASH, l.load && l.load.load_s != null ? 's' : null));
+    items.push(stat('First token after ' + nameOf(l), t != null ? num(t) : DASH, t != null ? 'ms' : null));
+  }
+  for (const p of ph.filter(q => q.type === 'requests' && q.stats && q.stats.decode_tps)) {
+    items.push(stat('Decode, ' + (p.label || `phase ${p.idx + 1}`), num(p.stats.decode_tps.mean, 1), 'tok/s'));
+  }
+  return h('div', { key: 'cold-sum' },
+    h('div.day', { style: 'display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center' }, h('b', { style: 'color:var(--text)' }, 'Loads'),
+      loads.filter(l => l.cold).map(l => coldBadge(l.cold))),
+    h('div.stats', { style: 'padding-top:4px' }, items));
+}
+
 const PH_STATE = { done: ['Done', 'use'], failed: ['Failed', 'fail'], cancelled: ['Cancelled', 'n'], skipped: ['Skipped', 'settle'], running: ['Running', 'load'] };
 
 function phaseBlock(step, p) {
@@ -214,7 +271,10 @@ function phaseBlock(step, p) {
   const reqs = (step.requests || []).filter(r => r.phase_idx === p.idx);
   const body = [];
   switch (p.type) {
-    case 'load': body.push(loadBlock(p.load)); break;
+    case 'load':
+      body.push(loadBlock(p.load));
+      if (p.cold) body.push(p.cold.reason ? h('div.cb', banner('warn', p.cold.reason)) : null, coldMachines(p.cold));
+      break;
     case 'warmup': case 'requests':
       if (p.stats) body.push(statsTable(p.stats));
       if (p.stats && p.stats.failed) body.push(h('div.cb', h('span.err-t', `${plural(p.stats.failed, 'request')} did not return 200.`)));
@@ -252,7 +312,7 @@ function phaseBlock(step, p) {
   }
   return h('div', { key: 'ph-' + p.idx },
     h('div.day', { style: 'display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center' },
-      h('b', { style: 'color:var(--text)' }, `Phase ${p.idx + 1}: ${p.label || phaseTitle(p.type)}`), badge(sl, sk),
+      h('b', { style: 'color:var(--text)' }, `Phase ${p.idx + 1}: ${p.label || phaseTitle(p.type)}`), badge(sl, sk), p.cold ? coldBadge(p.cold) : null,
       p.duration_s ? h('span.mono', dur(p.duration_s)) : null),
     p.error ? h('div.cb', { style: 'padding-top:10px' }, banner('err', reasonNode(p.error))) : null,
     body.filter(Boolean));
@@ -273,7 +333,7 @@ function stepCard(step) {
       stat('Started', step.started_at ? at(step.started_at) : DASH),
       stat('Took', step.started_at && step.finished_at ? dur((step.finished_at - step.started_at) / 1000) : DASH),
       step.stats && step.stats.requests ? stat('Measured requests', num(step.stats.requests - (step.stats.failed || 0)), `of ${num(step.stats.requests)}`) : null),
-    checks(step), comparison(step), setupBlock(step),
+    checks(step), comparison(step), setupBlock(step), coldSummary(step),
     hasPhases ? ph.map(p => phaseBlock(step, p)) : [
       step.load ? h('div', h('div.day', h('b', { style: 'color:var(--text)' }, 'Load')), loadBlock(step.load)) : null,
       step.stats ? statsTable(step.stats) : null],

@@ -353,10 +353,15 @@ const (
 )
 
 // busy says why the scheduler is in use by something other than this run, or "".
-func busyReason(st *StatusInfo, ours map[string]bool) string {
+// With evictOthers a model of someone else that is loaded and idle does not
+// count: the run's load may make the scheduler unload it.
+func busyReason(st *StatusInfo, ours map[string]bool, evictOthers bool) string {
 	var why []string
 	for _, in := range st.Instances {
 		switch {
+		case !ours[in.Profile] && evictOthers && in.State == "ready" && in.InFlight == 0 && in.Waiters == 0:
+		case !ours[in.Profile] && evictOthers && in.State == "ready":
+			why = append(why, fmt.Sprintf("%s has %d requests in flight or waiting (not this run's)", in.Profile, in.InFlight+in.Waiters))
 		case !ours[in.Profile]:
 			why = append(why, fmt.Sprintf("%s is %s (not loaded by this run)", in.Profile, in.State))
 		case in.InFlight > 0 || in.Waiters > 0:
@@ -393,7 +398,7 @@ func (x *suiteExec) waitIdle(max time.Duration) idleResult {
 		if err != nil {
 			why = "the scheduler's status could not be read: " + err.Error()
 		} else {
-			why = busyReason(st, x.a.loadedSet())
+			why = busyReason(st, x.a.loadedSet(), x.a.plan.Suite.EvictsOthers())
 		}
 		if why == "" {
 			return idleOK

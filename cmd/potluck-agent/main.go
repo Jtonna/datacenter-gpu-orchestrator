@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/agent"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/filecache"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/hw"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/identity"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/launch"
@@ -301,7 +302,7 @@ func serve(opt agent.Options, stderr io.Writer) int {
 		Mounter: modelsrc.ExecMounter{Cmd: osx.ExecCommander{}}, Prober: modelsrc.ExecProber{Exe: exe},
 		DiskFree: osx.StatfsFree, HostHealthy: hostHealthy, Updater: upd, HTTP: httpc, Logger: log,
 		Listen:  func(addr string) (net.Listener, error) { return net.Listen("tcp", addr) },
-		Systemd: sysd,
+		Systemd: sysd, FileCache: filecache.Default(),
 	})
 	if err != nil {
 		log.Error("start", "err", err)

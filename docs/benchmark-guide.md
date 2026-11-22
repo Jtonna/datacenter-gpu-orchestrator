@@ -15,13 +15,13 @@ Benchmarks need the database and the `bench_enabled` setting (on by default). Wi
 
 ## 2. Design a benchmark
 
-Ask `GET $B/api/bench/schema` (MCP `get_bench_schema`) first. It lists every phase type, every option with its default, limit and unit, the `expect` keys, and five templates: "Load only", "Load and requests", "Load and conversation", "Requests on a loaded model", "Simultaneous requests".
+Ask `GET $B/api/bench/schema` (MCP `get_bench_schema`) first. It lists every phase type, every option with its default, limit and unit, the `expect` keys, the suite options, and six templates: "Load only", "Load and requests", "Load and conversation", "Requests on a loaded model", "Simultaneous requests", "Cold, reload, loaded".
 
 ### Phases
 
 | Phase | What it does | Measures |
 |---|---|---|
-| `load` | Unloads the profile first, then loads it with `POST /api/load`. No chat request is sent. | Load time, bytes and MB/s per node, memory, lowest available memory, load mode |
+| `load` | Unloads the profile first, then loads it with `POST /api/load`. No chat request is sent. With `cold: true` it drops the model file from the file caches first (see Cold loads). | Load time, bytes and MB/s per node, memory, lowest available memory, load mode, the `cold` block |
 | `warmup` | Requests left out of the statistics. | Recorded, not counted |
 | `requests` | The measured requests, each repeated `repeats` times. | Prefill and decode tokens/s, time to first token, output hash |
 | `conversation` | A multi-turn exchange; each turn carries the earlier turns and replies. | Per turn: prefill, decode, time to first token, reused prompt tokens |
@@ -34,6 +34,24 @@ A phase that sends requests with no `load` before it loads the model if needed a
 The simple form (`cold`, `warmup_requests`, `repeats`, `requests`, `unload_after`) still works: it is expanded to `load`, `warmup`, `requests`, `unload`. Write `phases` for anything else.
 
 A benchmark with `parallel: [id, id]` starts the listed benchmarks at the same moment, to measure loads that compete.
+
+### Cold loads
+
+A `load` phase normally finds the model file partly in the nodes' file caches, left there by an earlier load, so a reload from the cache and a load from disk or the share look alike. With `"cold": true` the phase first drops the model file from the file cache of every node the plan names and of the scheduler's machine (which serves the file to the nodes), then loads. The phase result keeps a `cold` block:
+
+- `verified: true` only when every one of those machines ended with under 1 % of the file cached, and the load then used only the nodes whose cache was dropped.
+- Otherwise `verified: false` and `reason` starts with "not guaranteed:" and names each cause: a node whose agent cannot drop files from the cache (an older release, or the push model source), a node that refused or was still busy, a machine that kept more than 1 %, or a load placed on a node the plan did not name. The load still runs; only the label changes.
+- `local` and `nodes[]` give each machine's `file_bytes`, `cached_before`, `cached_after`, or its `error`.
+
+The Benchmarks page shows a "cold: verified" or "cold: not guaranteed" badge on the phase, with the reason on hover, and a table of each machine's cache before and after.
+
+`cold` is an option of a load phase like any other, so any benchmark can use it. A step with a cold load phase also shows a row with each load phase under its own label (its seconds and the time to first token after it) and each requests phase's decode speed.
+
+The template "Cold, reload, loaded" is a starting point, an ordinary benchmark you can edit: a cold load, the first answer, three measured requests on the loaded model, an unload, a reload from the file cache, and three requests after it. Copy it from the schema, put your profile in, and save it:
+
+```sh
+curl -s $B/api/bench/schema | jq '.templates[] | select(.id=="cold-reload-loaded") | .benchmark | .id="gemma12b-cold" | .profile="gemma-3-12b"' | curl -s -X POST $B/api/bench/benchmarks -d @-
+```
 
 ### Expectations
 
@@ -59,7 +77,7 @@ A suite of benchmarks, 10 s apart:
 curl -s -X POST $B/api/bench/suites -d '{"id":"gemma-scaling","benchmarks":["gemma12b-load-1"],"cooldown_s":10}'
 ```
 
-Suite options: `cooldown_s` (pause between benchmarks), `stop_on_failure`, `only_when_idle` (default true), `idle_wait_s` (default 600), `schedule` (`{"at":"03:00"}` in the container's local time, normally UTC, or `{"every":"24h"}`).
+Suite options: `cooldown_s` (pause between benchmarks), `stop_on_failure`, `only_when_idle` (default true), `idle_wait_s` (default 600), `evict_others` (default false: see Run), `schedule` (`{"at":"03:00"}` in the container's local time, normally UTC, or `{"every":"24h"}`).
 
 A scenario that cannot run yet is a suite with `status` `planned` or `blocked` and a `reason`. It may list no benchmark, its Run button is off, and running it answers `409` with the reason. Remove `status` and `reason` when it can run.
 
@@ -71,9 +89,10 @@ Unknown profiles, bad ids and unknown fields are refused with `400` or `422` and
 curl -s -X POST $B/api/bench/suites/gemma-scaling/run -d '{"note":"after the firmware update"}'
 ```
 
-MCP: `run_suite` with `id`, optional `baseline` and `note`. The answer is the queued run. Runs go one at a time; others queue.
+MCP: `run_suite` with `id`, optional `baseline`, `note` and `evict_others`. The answer is the queued run. Runs go one at a time; others queue.
 
-- **Idle first.** Benchmarks load and unload real models. With `only_when_idle` a run does not start, and pauses between benchmarks, while another model is loaded, a request that is not the run's is in flight, or anything is queued. A model someone used stays loaded for its `ttl` (300 s by default), so a run may wait that long. After `idle_wait_s` the run ends `skipped` and keeps what it measured. Set `only_when_idle: false` only when nobody else uses the pool.
+- **Idle first.** Benchmarks load and unload real models. With `only_when_idle` a run does not start, and pauses between benchmarks, while another model is loaded, a request that is not the run's is in flight, or anything is queued. A model someone used stays loaded for its `ttl` (300 s by default), so a run may wait that long. After `idle_wait_s` the run ends `skipped` and keeps what it measured. Set `only_when_idle: false` only when nobody else uses the pool. With `evict_others: true` (a suite option, or `{"evict_others": true}` in the body of `POST /api/bench/suites/<id>/run` for that run only) the run does not wait for other people's models that are loaded but idle; its loads may make the scheduler unload them to make room, as any load does. Requests in flight and the queue are still waited for.
+- **Clean-up.** A benchmark that does not end ready (a failed phase, its `timeout_s`, a cancel) ends with a forced unload of its profile before the next benchmark starts, after up to 3 s for its last request to be counted as ended. An `unload` phase (or the unload before a load) that the scheduler refuses because a request is still in flight is tried again for those 3 s: the scheduler counts a request's end a moment after the answer has arrived. A request that really stays in flight still makes it fail. A benchmark that ends ready keeps what it left loaded on purpose until the end of the run.
 - **Cancel.** `POST $B/api/bench/runs/<id>/cancel` (MCP `cancel_run`) stops after the current request; a load or a hold is abandoned at once. It unloads what the run loaded.
 - **Progress.** `GET $B/api/bench/state` (MCP `get_bench_state`): the run's percent, elapsed and estimated seconds left (`null` until the benchmarks have run once), the benchmark and phase in flight with its own percent, the next benchmark and the queue. The same object arrives on `/ws` as `bench` messages with `kind: "progress"`.
 - **Scheduler restart.** A run that was running is marked `failed (interrupted)` at the next start; a queued one is `cancelled`.

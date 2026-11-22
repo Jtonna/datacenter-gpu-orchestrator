@@ -423,9 +423,10 @@ export function suiteEditor(o) {
     const optForm = bindForm(su, [
       { key: 'only_when_idle', type: 'bool', default: true, label: 'Only when idle', description: 'Wait while models are loaded, requests are running or the queue is not empty. If it stays busy too long the run is skipped.' },
       { key: 'idle_wait_s', type: 'int', unit: 's', min: 0, max: 86400, default: 600, label: 'Wait for idle at most', description: 'How long to wait before the run is skipped.' },
+      { key: 'evict_others', type: 'bool', default: false, label: 'Run beside idle models of others', description: 'Do not wait for other users' idle loaded models: the run's loads may make the scheduler unload them. Requests in flight and the queue are still waited for.' },
       { key: 'stop_on_failure', type: 'bool', label: 'Stop on failure', description: 'Skip the rest after a benchmark fails.' },
       { key: 'cooldown_s', type: 'int', unit: 's', min: 0, max: 3600, default: 5, label: 'Pause between benchmarks', description: 'Lets the nodes settle.' },
-    ], () => { if (su.stop_on_failure === false) delete su.stop_on_failure; updateSummary(); }, null);
+    ], () => { if (su.stop_on_failure === false) delete su.stop_on_failure; if (su.evict_others === false) delete su.evict_others; updateSummary(); }, null);
     void vals;
     // the form seeds its own values from su: make the bool default show as on
     const schedKind = su.schedule ? (su.schedule.at ? 'at' : 'every') : 'none';

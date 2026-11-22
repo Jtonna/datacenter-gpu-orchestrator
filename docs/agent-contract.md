@@ -94,6 +94,7 @@ Sent at agent start, and again whenever Potluck answers a heartbeat with `410`.
 - `launch_id`: a launch that exists on the node at registration (the agent restarted, or Potluck did).
 - `foreign_processes`: any `rpc-server` or `llama-server` process on the node that the agent did not start, as `[{"pid", "exe"}]`. Not empty means the agent sends the registration, is refused (`foreign_process`), and starts nothing.
 - `watchdog_floor_mib` (CR-9; optional, sent from release 0.1.1): the agent's memory watchdog floor in MiB (section 6.7), for example `"watchdog_floor_mib": 1000`. Section 11.2, item 2.
+- `capabilities` (optional, additive): optional requests this agent answers, as a list of words. Missing or empty means none. Known words: `file_cache_evict` (section 6.13), sent by a Linux agent whose model source has a model folder. Potluck ignores words it does not know, and never sends an optional request to an agent that does not list it.
 
 Answer `200`:
 
@@ -541,6 +542,38 @@ They are part of the contract.
 - **Stats warning.** A failed scrape is not warned about during the first 5 s after its exporter was started.
 - **Kill ladder (addition to 6.11).** Before every kill attempt after the first, the agent looks for the unit again; when it is gone, no attempt is made. `systemctl` answering that the unit is not loaded or not found counts as done, not as a failed attempt. A stop request that arrives while a kill is under way (Potluck's ordinary stop after the watchdog's kill) does not start the next attempt early: it comes 1 s after a delivered one, as section 6.11 says.
 
+### 6.13 `POST /cache/evict` (Potluck to agent): drop a model file from the page cache
+
+Added for the benchmark's cold load (benchmark guide, section 2). Additive: an agent that does not advertise the capability `file_cache_evict` (section 4.2) is never sent this request, and Potluck works as before without it.
+
+```json
+{"file": "gemma-3-12b/gemma-3-12b-Q4_K_M.gguf"}
+```
+
+`file` is the profile's model file, relative to the node's model folder (section 8), exactly as Potluck names it in a launch. The agent resolves it inside the model folder, opens it, counts the pages of the file that are in the page cache (`mmap` + `mincore`), asks the kernel to drop them (`posix_fadvise(POSIX_FADV_DONTNEED)`), and counts again. It never writes to the file and never drops anything but this one file. Answer `200`:
+
+```json
+{"file": "gemma-3-12b/gemma-3-12b-Q4_K_M.gguf", "file_bytes": 7300000000, "cached_before": 7290000000, "cached_after": 0, "duration_s": 0.41}
+```
+
+`cached_before` and `cached_after` are bytes of the file in the page cache, counted in whole pages and never more than `file_bytes`. The kernel may keep pages that another process holds mapped or dirty, so `cached_after` can be above 0; the caller decides what is cold enough (Potluck's benchmark: under 1 % of `file_bytes`).
+
+Refusals use the launch refusal body `{"reason", "message"}`:
+
+| Status | `reason` | When |
+|---|---|---|
+| 400 | `invalid_request` | The body is not JSON, `file` is empty or absolute, contains `..`, resolves (symlinks followed) outside the model folder, or is not a regular file. |
+| 404 | `model_not_found` | The file does not exist in the model folder. |
+| 409 | `busy` | A launch exists on the node (running or stopping). Dropping the cache under a running worker would change its load, so the caller waits until the launch is gone. |
+| 429 | `too_soon` | The last eviction that reached a file was less than 10 s ago. The answer carries `Retry-After: 10`. Refused requests do not count. |
+| 500 | `evict_failed` | `mincore` or `posix_fadvise` failed; `message` holds the error. |
+| 501 | `unsupported` | This agent cannot do it (not Linux, or a node with the `push` model source, which has no model folder). |
+| 503 | `model_source_unreachable` | The model folder could not be reached (a share that does not answer). |
+
+- One eviction runs at a time. Every eviction and every refusal is logged at info level with the file and the counts.
+- The same source-address rule as every Potluck-to-agent request holds (section 2).
+- Potluck's own machine is not asked through its agent: the scheduler drops the file from its own page cache with the same code, because that machine serves the file to the nodes.
+
 ## 7. Stats and controls
 
 ### 7.1 Stats
@@ -937,6 +970,7 @@ History only: this section adds nothing to the contract. Code comments cite thes
 | CR-9 | `worker.expect_mib` and the `would_not_fit` refusal; `watchdog_floor_mib` in registration and heartbeat, `floor_mismatch`, `bad_floor`; `--shared-memory` and the `shares_system_memory` rule; tier `shared_memory`; deregister on stop when the marker exists; `stop_reason` and `stop_message`; `unplaced: "paused"`. | 4.2, 4.3, 6.2, 6.3, 9, 10, 11, 11.1, 11.2 |
 | CR-9 review | Release 0.1.1 as the release that carries CR-9; the Docker data volume `potluck-agent-data`, the share mount unit bound in with `ro,rslave` and the Docker drop-in; the setup script opens 50060 and 50052 only; a leave with a launch running; `no_auto_nodes`; the bounds of `bad_floor`. | 9, 10, 11.1, 11.2 |
 | CR-10 | Central logging through Potluck. Batch 1, the Potluck side (settings, the `logs` object, `logs_revision`, the pass-through with its limits and counters, items 1 to 10). The agent batch: the shipper, `server_time_unix_ms`, the `--logs`, `--log-buffer-mib` and `--journal-dir` options (items 11 to 15). The last batch: the read side under `/logs/`, `GET /api/logs/query`, Potluck's own lines and the store's container (items 16 to 19). | 4.2, 4.3, 9, 11.3 |
+| Cold load | The `capabilities` list in registration and `file_cache_evict`; `POST /cache/evict` (drop one model file from the node's page cache, with counts before and after). Additive: an agent without it is never asked. | 4.2, 6.13 |
 
 | Release | What it carries |
 |---|---|

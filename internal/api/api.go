@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/filecache"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/audit"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgsvc"
 	"io"
@@ -85,6 +86,7 @@ type Options struct {
 
 	statusSource func(ctx context.Context) (any, error) // tests replace the status the hub sends
 	modelFiles   func() []ModelFile                     // the dev harness replaces the models directory scan
+	fileCache    filecache.Sys                          // tests replace the page cache calls of POST /api/cache/evict
 	// catalogSource, when set and answering true, is what the model catalog is
 	// joined from instead of this server's own status, profiles, events,
 	// aggregates and files (the dev harness shows a scripted or recorded cluster).
@@ -247,6 +249,7 @@ func (s *Server) routes() *http.ServeMux {
 	m.HandleFunc("POST /api/load", s.handleLoad)
 	m.HandleFunc("POST /api/unload", s.handleUnload)
 	m.HandleFunc("POST /api/forget-need", s.handleForgetNeed)
+	m.HandleFunc("POST /api/cache/evict", s.handleCacheEvict) // cacheevict.go
 	return m
 }
 

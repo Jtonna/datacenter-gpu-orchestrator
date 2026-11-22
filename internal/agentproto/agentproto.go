@@ -225,6 +225,9 @@ const (
 	PathLaunchLog = "/launch/log" // GET ?since=
 	PathReset     = "/reset"
 	PathStatus    = "/status" // 127.0.0.1 only
+	// PathCacheEvict drops one model file from the node's page cache (6.13);
+	// only an agent that advertises CapFileCacheEvict serves it.
+	PathCacheEvict = "/cache/evict"
 	// POST /launch/{launch_id}/lease and DELETE /launch/{launch_id}[?force=1]
 	HeaderNextOffset   = "X-Next-Offset"
 	HeaderDroppedBytes = "X-Dropped-Bytes"
@@ -284,7 +287,49 @@ type RegisterRequest struct {
 	// Startup is the agent's start-up report (optional; sent in every
 	// registration by an agent that has it).
 	Startup *Startup `json:"startup,omitempty"`
+	// Capabilities names the optional requests this agent serves (6.13), for
+	// example CapFileCacheEvict. Optional: absent means none.
+	Capabilities []string `json:"capabilities,omitempty"`
 }
+
+// Capabilities an agent may advertise in its registration (6.13).
+const (
+	// CapFileCacheEvict: the agent serves POST /cache/evict.
+	CapFileCacheEvict = "file_cache_evict"
+)
+
+// HasCapability reports whether the registration advertises c.
+func (r *RegisterRequest) HasCapability(c string) bool {
+	for _, x := range r.Capabilities {
+		if x == c {
+			return true
+		}
+	}
+	return false
+}
+
+// CacheEvictRequest is the body of POST /cache/evict (6.13).
+type CacheEvictRequest struct {
+	// File is the model file name relative to the node's model source.
+	File string `json:"file"`
+}
+
+// CacheEvictAnswer is the 200 answer of POST /cache/evict: the file's size and
+// how many of its bytes were in the page cache before and after the drop.
+type CacheEvictAnswer struct {
+	File         string  `json:"file"`
+	FileBytes    int64   `json:"file_bytes"`
+	CachedBefore int64   `json:"cached_before"`
+	CachedAfter  int64   `json:"cached_after"`
+	DurationS    float64 `json:"duration_s"`
+}
+
+// Refusal words of POST /cache/evict besides the launch ones (6.13).
+const (
+	ReasonTooSoon     = "too_soon"     // 429
+	ReasonUnsupported = "unsupported"  // 501
+	ReasonEvictFailed = "evict_failed" // 500
+)
 
 // FillEmpty replaces nil slices by empty ones so they encode as [].
 func (r *RegisterRequest) FillEmpty() {

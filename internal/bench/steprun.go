@@ -88,6 +88,11 @@ type benchRun struct {
 	nodes    []InstanceNodeInfo
 	localID  string
 	loadMode string
+
+	// wantCold asks loadModel to drop the model file from the file caches
+	// before the load (the load phase's cold option); cold is the result.
+	wantCold bool
+	cold     *ColdResult
 }
 
 func (br *benchRun) fail(outcome, why string) {
@@ -137,6 +142,7 @@ func (x *suiteExec) runBenchmark(b *benchspec.Benchmark, idx int, group string, 
 		if g != nil {
 			g.arrive(member)
 		}
+		br.cleanUp()
 		x.finish(br)
 	}()
 
@@ -201,7 +207,7 @@ func (br *benchRun) runPhase(i int, p *benchspec.Phase) {
 	x.setPhase(br.track, i, firstText(p.Type, br.b.Profile))
 	switch p.Type {
 	case benchspec.PhaseLoad:
-		br.phaseLoad(pr)
+		br.phaseLoad(p, pr)
 	case benchspec.PhaseWarmup:
 		br.phaseWarmup(i, p, pr)
 	case benchspec.PhaseRequests:
@@ -322,7 +328,7 @@ func mergeHosts(a, b map[string]string) map[string]string {
 }
 
 func (x *suiteExec) unloadFirst(ctx context.Context, profile string) (string, bool) {
-	res, err := x.m.o.API.Unload(ctx, profile, false)
+	res, err := x.unloadGraceful(ctx, profile)
 	switch {
 	case err != nil:
 		return "unload: " + err.Error(), false
@@ -364,6 +370,9 @@ func (br *benchRun) loadModel(cold bool) bool {
 		}
 		in = nil
 	}
+	if br.wantCold {
+		br.cold = br.makeCold()
+	}
 	if in != nil && in.State == "ready" { // nothing to load: someone has it loaded already
 		br.syncGate()
 		br.loaded = true
@@ -377,6 +386,10 @@ func (br *benchRun) loadModel(cold bool) bool {
 	obs := &loadObs{}
 	start := time.Now()
 	startMS := m.o.Now().UnixMilli()
+	// Marked before the call: an answer lost on the way back (a timeout, a
+	// reset connection) may follow a load the scheduler accepted, and the
+	// step's clean-up must unload it. A refusal clears the mark.
+	x.a.markLoaded(b.Profile, true)
 	ans, err := m.o.API.Load(ctx, b.Profile)
 	switch {
 	case err != nil && ctx.Err() != nil:
@@ -386,6 +399,7 @@ func (br *benchRun) loadModel(cold bool) bool {
 		br.fail(OutcomeError, "load: "+err.Error())
 		return false
 	case ans.Status >= 300:
+		x.a.markLoaded(b.Profile, false)
 		st.HTTPStatus, st.Reason = ans.Status, ans.Msg
 		if ans.Status == 503 || (ans.Status >= 400 && ans.Status < 500) {
 			br.fail(OutcomeRefused, ans.Msg)
@@ -394,7 +408,6 @@ func (br *benchRun) loadModel(cold bool) bool {
 		}
 		return false
 	}
-	x.a.markLoaded(b.Profile, true) // the load may be running: it is unloaded with force at the end
 	br.watch.loading.Store(true)
 	defer br.watch.loading.Store(false)
 	ready, failure := false, ""
@@ -476,6 +489,7 @@ func (br *benchRun) loadModel(cold bool) bool {
 	}
 	br.loaded = true
 	br.captureLoad(startMS, start, obs, true)
+	br.checkColdPlacement(br.cold)
 	return true
 }
 
@@ -656,9 +670,14 @@ func (br *benchRun) captureLoad(startMS int64, start time.Time, obs *loadObs, re
 	br.mu.Unlock()
 }
 
-// phaseLoad is the load phase: cold load, no chat request.
-func (br *benchRun) phaseLoad(pr *PhaseResult) {
-	if !br.loadModel(true) {
+// phaseLoad is the load phase: cold load, no chat request. With the cold
+// option the model file is dropped from the file caches first (cold.go).
+func (br *benchRun) phaseLoad(p *benchspec.Phase, pr *PhaseResult) {
+	br.wantCold, br.cold = p.EvictsCache(), nil
+	ok := br.loadModel(true)
+	br.wantCold = false
+	pr.Cold, br.cold = br.cold, nil
+	if !ok {
 		br.mu.Lock()
 		pr.Load = br.lastLoad
 		br.mu.Unlock()
@@ -975,7 +994,12 @@ func (br *benchRun) phaseUnload(p *benchspec.Phase, pr *PhaseResult) {
 		return
 	}
 	start := time.Now()
-	ans, err := x.m.o.API.Unload(ctx, b.Profile, force)
+	var ans *UnloadInfo
+	if force {
+		ans, err = x.m.o.API.Unload(ctx, b.Profile, true)
+	} else {
+		ans, err = x.unloadGraceful(ctx, b.Profile)
+	}
 	switch {
 	case err != nil:
 		br.fail(OutcomeError, "unload: "+err.Error())
@@ -989,9 +1013,86 @@ func (br *benchRun) phaseUnload(p *benchspec.Phase, pr *PhaseResult) {
 	}
 	res.Gone = x.waitGoneNoCancel(ctx, b.Profile)
 	res.UnloadS = round3(time.Since(start).Seconds())
-	x.a.markLoaded(b.Profile, false)
+	if res.Gone { // still there: the step's clean-up unloads it again with force
+		x.a.markLoaded(b.Profile, false)
+	}
 	if !res.Gone {
 		br.fail(OutcomeError, "the profile did not leave the scheduler in time")
+	}
+}
+
+// cleanUp ends a step that did not end ready with a forced unload of its
+// profile when the run still counts it as loaded (a failed phase, a timeout,
+// a cancel, a lost load answer, an unload that did not finish), so the next
+// step starts from what it expects. A ready step keeps what it left loaded
+// on purpose; the run's own clean-up unloads that at the end.
+func (br *benchRun) cleanUp() {
+	x, st, b := br.x, br.st, br.b
+	if st.Outcome == OutcomeReady || !x.a.loadedSet()[b.Profile] {
+		return
+	}
+	ctx, cancel := context.WithTimeout(WithRun(context.Background(), st.RunID), x.m.o.GoneTimeout+30*time.Second)
+	defer cancel()
+	// Give the step's own last request the grace to be counted as ended,
+	// then unload with force, which the scheduler does not refuse for
+	// requests in flight. A failed call is tried twice more.
+	x.waitNoneInFlight(ctx, b.Profile)
+	var ans *UnloadInfo
+	var err error
+	for try := 0; try < 3 && (try == 0 || err != nil || ans.Status != 200); try++ {
+		if try > 0 {
+			time.Sleep(200 * time.Millisecond)
+		}
+		ans, err = x.m.o.API.Unload(ctx, b.Profile, true)
+	}
+	switch {
+	case err != nil:
+		x.m.log.Warn("benchmark step could not unload its profile", "run", st.RunID, "step", st.Idx, "profile", b.Profile, "err", err)
+		return
+	case ans.Status != 200:
+		x.m.log.Warn("benchmark step could not unload its profile", "run", st.RunID, "step", st.Idx, "profile", b.Profile, "status", ans.Status, "msg", ans.Msg)
+		return
+	}
+	gone := x.waitGoneNoCancel(ctx, b.Profile)
+	if gone {
+		x.a.markLoaded(b.Profile, false)
+	}
+	br.loaded = false
+	x.m.log.Info("benchmark step unloaded its profile after it ended "+st.Outcome, "run", st.RunID, "step", st.Idx, "profile", b.Profile, "gone", gone)
+}
+
+// unloadGraceful unloads without force and, while the scheduler answers 409
+// (requests in flight), tries again for ManagerOptions.UnloadGrace: the
+// scheduler counts a request's end a moment after the client has the whole
+// answer, so an unload right after the run's last request can meet it. A
+// request that really stays in flight still gets the 409 after the grace.
+func (x *suiteExec) unloadGraceful(ctx context.Context, profile string) (*UnloadInfo, error) {
+	deadline := time.Now().Add(x.m.o.UnloadGrace)
+	for {
+		ans, err := x.m.o.API.Unload(ctx, profile, false)
+		if err != nil || ans.Status != 409 || !time.Now().Before(deadline) {
+			return ans, err
+		}
+		select {
+		case <-ctx.Done():
+			return ans, nil
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
+// waitNoneInFlight waits up to ManagerOptions.UnloadGrace until the
+// profile's instance counts no request in flight (or is gone).
+func (x *suiteExec) waitNoneInFlight(ctx context.Context, profile string) {
+	deadline := time.Now().Add(x.m.o.UnloadGrace)
+	for time.Now().Before(deadline) && ctx.Err() == nil {
+		s, err := x.m.o.API.Status(ctx)
+		if err == nil {
+			if in := s.Instance(profile); in == nil || in.InFlight == 0 {
+				return
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 

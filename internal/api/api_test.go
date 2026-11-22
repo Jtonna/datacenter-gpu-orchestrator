@@ -305,9 +305,25 @@ func TestUpstreamStripsPrefixAndKeepsMethodAndQuery(t *testing.T) {
 
 // ---- unload, load, plan, status ----
 
+// requestsEnded waits until no instance counts a request in flight: the
+// scheduler counts a request's end a moment after the client has read the
+// whole answer, so an unload sent at once may still find it busy (409).
+func requestsEnded(t *testing.T, e *env) {
+	t.Helper()
+	eventually(t, "no request in flight", func() bool {
+		for _, in := range jsonOf(t, body(t, e.get("/api/status")))["instances"].([]any) {
+			if n, _ := in.(map[string]any)["in_flight"].(float64); n != 0 {
+				return false
+			}
+		}
+		return true
+	})
+}
+
 func TestUnloadEndpoints(t *testing.T) {
 	e := newEnv(t, chatOK)
 	e.post("/v1/chat/completions", chat("alpha")).Body.Close()
+	requestsEnded(t, e)
 	resp := e.post("/api/models/unload/alpha", "")
 	if resp.StatusCode != 200 {
 		t.Fatalf("unload by name: %d %s", resp.StatusCode, body(t, resp))
@@ -317,6 +333,7 @@ func TestUnloadEndpoints(t *testing.T) {
 
 	e.post("/v1/chat/completions", chat("alpha")).Body.Close()
 	e.post("/v1/chat/completions", chat("beta:64k")).Body.Close() // evicts or loads next to it
+	requestsEnded(t, e)
 	resp = e.get("/unload")
 	if resp.StatusCode != 200 {
 		t.Fatalf("GET /unload: %d", resp.StatusCode)
@@ -328,6 +345,7 @@ func TestUnloadEndpoints(t *testing.T) {
 		t.Fatalf("unknown model: %d", resp.StatusCode)
 	}
 	e.post("/v1/chat/completions", chat("alpha")).Body.Close()
+	requestsEnded(t, e)
 	resp = e.post("/api/models/unload", "")
 	if resp.StatusCode != 200 {
 		t.Fatalf("POST /api/models/unload: %d", resp.StatusCode)

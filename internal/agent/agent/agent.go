@@ -26,6 +26,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/devices"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/exporters"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/filecache"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/hw"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/identity"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/launch"
@@ -120,6 +121,9 @@ type Deps struct {
 	Updater     Updater
 	HTTP        *http.Client
 	Logger      *slog.Logger
+	// FileCache does the page cache calls of POST /cache/evict (6.13); nil:
+	// the agent does not serve it and does not advertise file_cache_evict.
+	FileCache filecache.Sys
 
 	// Central logging (CR-10). LogsHTTP is the log sender's own client (nil:
 	// its own default). Journal starts the journal follower (nil:
@@ -182,6 +186,9 @@ type Agent struct {
 	// Start is this process's start-up report: its marks on the machine's
 	// own time axis, sent to Potluck until acknowledged.
 	Start *startup.Recorder
+	// Cache drops model files from the page cache (POST /cache/evict, 6.13);
+	// nil on a system without the calls or a node without model files (push).
+	Cache *filecache.Evictor
 	// launchTail follows launch output; its starting point is taken when the
 	// re-adoption is done, before anything waiting for it goes on.
 	launchTail *logship.LaunchTail
@@ -313,6 +320,9 @@ func New(opt Options, deps Deps) (*Agent, error) {
 	if ship != nil {
 		a.launchTail = &logship.LaunchTail{Ship: ship, Current: a.Launch.CurrentLog, Every: deps.LaunchLogEvery}
 	}
+	if sys := deps.FileCache; sys != nil && opt.ModelSource.Kind != modelsrc.KindPush {
+		a.Cache = &filecache.Evictor{Root: opt.ModelsDir, Sys: sys, Now: func() time.Time { return time.Unix(0, 0).Add(deps.Clock.Now()) }, Logger: deps.Logger, Busy: a.launchBusy}
+	}
 	a.Export = &exporters.Supervisor{Runner: deps.Runner, Path: a.Programs.Path, Logger: deps.Logger}
 	a.Stats = stats.New(stats.Config{Now: deps.Clock.Now, MinInterval: deps.StatsMin, Logger: deps.Logger,
 		OnScrape: func(string) { a.mark(agentproto.StartupMarkFirstStats) },
@@ -338,6 +348,15 @@ func (a *Agent) setError(msg string) {
 // --- launch.Gate ---
 
 // Paused implements launch.Gate.
+// launchBusy says whether a launch is starting, running or stopping, for the
+// file cache eviction, which leaves a node with a launch alone.
+func (a *Agent) launchBusy() (bool, string) {
+	if id := a.Launch.CurrentID(); id != nil {
+		return true, "launch " + *id + " exists on this node"
+	}
+	return false, ""
+}
+
 func (a *Agent) Paused() bool { a.mu.Lock(); defer a.mu.Unlock(); return a.paused }
 
 // Release implements launch.Gate.
@@ -761,6 +780,9 @@ func (a *Agent) RegisterRequest() agentproto.RegisterRequest {
 		Addr: id.Addr, Backends: a.deps.Hardware.Backends(gpus), RAMOnly: a.opt.RAMOnly,
 		ModelSource: a.opt.ModelSource.Wire(), Programs: a.Programs.Held(), LaunchID: a.Launch.CurrentID(),
 		ForeignProcesses: a.foreignProcesses(), WatchdogFloorMiB: a.Launch.WatchdogFloorMiB(), Startup: a.Start.Report()}
+	if a.Cache != nil {
+		req.Capabilities = []string{agentproto.CapFileCacheEvict}
+	}
 	for _, g := range gpus {
 		req.GPUs = append(req.GPUs, g.GPU)
 	}

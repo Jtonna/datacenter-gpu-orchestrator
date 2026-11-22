@@ -422,6 +422,11 @@ type Suite struct {
 	// listed with its reason and cannot be run. Empty for a normal suite.
 	Status string `json:"status,omitempty" yaml:"status,omitempty"`
 	Reason string `json:"reason,omitempty" yaml:"reason,omitempty"`
+
+	// EvictOthers lets the run go on while other users' models are loaded
+	// but idle: its loads may make the scheduler unload them, as any load
+	// does (default false: only_when_idle waits for them).
+	EvictOthers *bool `json:"evict_others,omitempty" yaml:"evict_others,omitempty"`
 }
 
 // Suite statuses.
@@ -446,6 +451,9 @@ func (s *Suite) Cooldown() time.Duration {
 
 // WaitsForIdle is only_when_idle (default true).
 func (s *Suite) WaitsForIdle() bool { return s.OnlyWhenIdle == nil || *s.OnlyWhenIdle }
+
+// EvictsOthers is evict_others (default false).
+func (s *Suite) EvictsOthers() bool { return s.EvictOthers != nil && *s.EvictOthers }
 
 // IdleWait is how long to wait for the scheduler to be idle (default 600 s).
 func (s *Suite) IdleWait() time.Duration {

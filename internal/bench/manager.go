@@ -53,6 +53,19 @@ type ManagerOptions struct {
 	// the background (default 500 ms); a negative value turns the background
 	// sampling off (the step still samples at its load polls and phase ends).
 	MemSample time.Duration
+	// ColdRetry is how long a cold load keeps asking a node that is still
+	// stopping its launch or evicted a moment ago (default 20 s, negative:
+	// once); ColdSettle is the wait before the plan is read again after the
+	// eviction, so the nodes' file cache figures are fresh (default 2.5 s,
+	// negative: none).
+	ColdRetry  time.Duration
+	ColdSettle time.Duration
+	// UnloadGrace is how long an unload without force is tried again while
+	// the profile still counts requests in flight: the scheduler counts a
+	// request's end a moment after the client has the answer, so an unload
+	// right after the last request can meet it (default 3 s, negative: no
+	// retry). The end-of-step clean-up unloads with force after it.
+	UnloadGrace time.Duration
 }
 
 // runPlan is the suite and every benchmark it names, as they were when the run
@@ -110,6 +123,15 @@ func NewManager(o ManagerOptions) (*Manager, error) {
 	}
 	if o.MemSample == 0 {
 		o.MemSample = DefaultMemSample
+	}
+	if o.ColdRetry == 0 {
+		o.ColdRetry = DefaultColdRetry
+	}
+	if o.ColdSettle == 0 {
+		o.ColdSettle = DefaultColdSettle
+	}
+	if o.UnloadGrace == 0 {
+		o.UnloadGrace = DefaultUnloadGrace
 	}
 	if o.GoneTimeout <= 0 {
 		o.GoneTimeout = 2 * time.Minute
@@ -289,6 +311,9 @@ type EnqueueOptions struct {
 	Baseline string
 	Note     string
 	Trigger  string // manual (default) or schedule
+	// EvictOthers sets evict_others for this run only (nil: the suite's
+	// setting). The run's stored suite snapshot carries the value used.
+	EvictOthers *bool
 }
 
 func newRunID(now time.Time) string {
@@ -362,7 +387,14 @@ func (m *Manager) Enqueue(suiteID string, o EnqueueOptions) (*Run, error) {
 	if len(o.Note) > 500 {
 		return nil, fmt.Errorf("%w: note is longer than 500 characters", ErrInvalid)
 	}
-	plan, err := m.resolve(ss.Spec)
+	spec := ss.Spec
+	if o.EvictOthers != nil {
+		c := *spec
+		v := *o.EvictOthers
+		c.EvictOthers = &v
+		spec = &c
+	}
+	plan, err := m.resolve(spec)
 	if err != nil {
 		return nil, err
 	}

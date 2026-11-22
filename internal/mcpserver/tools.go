@@ -332,8 +332,9 @@ func allTools() []*tool {
 		{Name: "delete_suite", Desc: "Delete a benchmark suite (its past runs are kept).",
 			Props: idArg("suite"), Required: []string{"id"}, Destructive: true, Idempotent: true, Method: "DELETE", Path: "/api/bench/suites/{id}"},
 		{Name: "run_suite", Desc: "Queue a run of a suite. Benchmarks load and unload real models, so by default the run waits until the scheduler is idle. Returns the queued run; follow it with get_bench_state or get_run. A planned or blocked suite is refused (409) with its reason.",
-			Props:    P{"id": s("The suite id."), "baseline": s("Optional run id to compare against (default: the previous completed run)."), "note": s("Optional note stored with the run.")},
-			Required: []string{"id"}, Method: "POST", Path: "/api/bench/suites/{id}/run", Body: []string{"baseline", "note"}},
+			Props: P{"id": s("The suite id."), "baseline": s("Optional run id to compare against (default: the previous completed run)."), "note": s("Optional note stored with the run."),
+				"evict_others": b("Optional, for this run only (default: the suite's setting): do not wait for other users' idle loaded models.")},
+			Required: []string{"id"}, Method: "POST", Path: "/api/bench/suites/{id}/run", Body: []string{"baseline", "note", "evict_others"}},
 		{Name: "cancel_run", Desc: "Cancel a queued or running benchmark run; what it loaded is unloaded.",
 			Props: idArg("run"), Required: []string{"id"}, Destructive: true, Idempotent: true, Method: "POST", Path: "/api/bench/runs/{id}/cancel"},
 

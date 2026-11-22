@@ -205,7 +205,7 @@ func TestSchemaDescribesEveryPhaseAndTemplatesAreValid(t *testing.T) {
 			t.Errorf("%+v", k)
 		}
 	}
-	if len(d.Templates) != 5 {
+	if len(d.Templates) != 6 {
 		t.Fatalf("%d templates", len(d.Templates))
 	}
 	for _, tp := range d.Templates {
