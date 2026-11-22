@@ -14,6 +14,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // MaxQueuedRuns bounds the run queue.
@@ -273,7 +274,9 @@ func (m *Manager) emit(ev map[string]any) {
 	}
 	m.mu.Unlock()
 	for _, f := range fns {
-		f(ev)
+		// Subscribers are the catalog and the live channel: a panic in one
+		// must not end the run that emitted (background-task isolation).
+		supervise.Guard("bench.subscriber", func() { f(ev) }, nil)
 	}
 }
 

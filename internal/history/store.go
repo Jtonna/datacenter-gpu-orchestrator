@@ -15,6 +15,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // Defaults of the history settings.
@@ -302,7 +304,10 @@ func (s *Store) Record(ev Event) {
 	ev.Seq = s.seq
 	s.ring = append(s.ring, ev)
 	for _, fn := range s.subs {
-		fn(ev)
+		// A subscriber runs on the recording goroutine, which may be the
+		// scheduler's event loop: its panic must not end that loop. The
+		// subscriber stays subscribed (background-task isolation).
+		supervise.Guard("history.subscriber", func() { fn(ev) }, nil)
 	}
 	if len(s.ring) > s.opt.MemoryEvents {
 		s.ring = s.ring[len(s.ring)-s.opt.MemoryEvents:]

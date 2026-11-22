@@ -3,7 +3,11 @@ package history
 import (
 	"io"
 	"log/slog"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 func TestSubscribeSeesEveryRecordedEventInOrder(t *testing.T) {
@@ -28,4 +32,55 @@ func TestSubscribeOnAnOffStoreIsHarmless(t *testing.T) {
 	cancel := s.Subscribe(func(Event) { t.Fatal("an off store delivered an event") })
 	s.Record(Event{Type: "x"})
 	cancel()
+}
+
+// A panicking subscriber does not stop Record (it may run on the scheduler
+// loop): the other subscribers and the store still get the event, the
+// subscriber stays subscribed, and the failure is reported, also into this
+// store, without a deadlock on its lock.
+func TestSubscriberPanicIsContained(t *testing.T) {
+	s := Open(Options{Dir: t.TempDir(), Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	defer s.Close()
+	supervise.ResetForTest()
+	fatals := make(chan string, 4)
+	restore := supervise.Configure(supervise.Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Fatal: func(r string) { fatals <- r },
+		Record: func(f supervise.Failure) {
+			s.Record(Event{Type: "internalFailure", Severity: Error, Summary: f.Task})
+		}})
+	defer restore()
+	var mu sync.Mutex
+	var bad, good []string
+	s.Subscribe(func(e Event) {
+		mu.Lock()
+		bad = append(bad, e.Type)
+		mu.Unlock()
+		if e.Type == "boom" {
+			panic("subscriber bug")
+		}
+	})
+	s.Subscribe(func(e Event) { mu.Lock(); good = append(good, e.Type); mu.Unlock() })
+	s.Record(Event{Type: "boom"})
+	s.Record(Event{Type: "after"})
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if r := s.Query(Query{Types: []string{"internalFailure"}, Limit: 10}); len(r.Events) == 1 {
+			if r.Events[0].Summary != "history.subscriber" {
+				t.Fatalf("reported %+v", r.Events[0])
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the failure was not recorded into the store")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(good) < 2 || good[0] != "boom" || good[1] != "after" || len(bad) < 2 || bad[1] != "after" {
+		t.Fatalf("subscribers got bad=%v good=%v", bad, good)
+	}
+	if len(fatals) != 0 {
+		t.Fatal("one failure escalated")
+	}
 }
