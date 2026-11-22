@@ -1,6 +1,6 @@
 # Agent contract: Potluck and `potluck-agent`
 
-This is the contract between Potluck (the scheduler, `llm-scheduler`) and `potluck-agent` (the node agent), as of release 0.1.4. A field added after release 0.1.0 is optional and says from which release it is sent. Code comments cite change requests by label (CR-5, CR-9, ...); the Changelog at the end says what each one changed and where.
+This is the contract between Potluck (the scheduler, `llm-scheduler`) and `potluck-agent` (the node agent), as of release 0.1.6. A field added after release 0.1.0 is optional and says from which release it is sent. Code comments cite change requests by label (CR-5, CR-9, ...); the Changelog at the end says what each one changed and where.
 
 A change to this document becomes binding when both sides accept it: the scheduler side and the console side (the PS5 boot chain, RAM-only setup and payload delivery). Until then nothing may rely on it.
 
@@ -94,7 +94,7 @@ Sent at agent start, and again whenever Potluck answers a heartbeat with `410`.
 - `launch_id`: a launch that exists on the node at registration (the agent restarted, or Potluck did).
 - `foreign_processes`: any `rpc-server` or `llama-server` process on the node that the agent did not start, as `[{"pid", "exe"}]`. Not empty means the agent sends the registration, is refused (`foreign_process`), and starts nothing.
 - `watchdog_floor_mib` (CR-9; optional, sent from release 0.1.1): the agent's memory watchdog floor in MiB (section 6.7), for example `"watchdog_floor_mib": 1000`. Section 11.2, item 2.
-- `capabilities` (optional, additive): optional requests this agent answers, as a list of words. Missing or empty means none. Known words: `file_cache_evict` (section 6.13), sent by a Linux agent whose model source has a model folder. Potluck ignores words it does not know, and never sends an optional request to an agent that does not list it.
+- `capabilities` (optional, sent from release 0.1.6): optional requests this agent answers, as a list of words. Missing or empty means none. Known words: `file_cache_evict` (section 6.13), sent by a Linux agent whose model source has a model folder. Potluck ignores words it does not know, and never sends an optional request to an agent that does not list it.
 
 Answer `200`:
 
@@ -305,7 +305,7 @@ With a launch, an agent waits for the launch to end before it updates.
 
 ### 5.5 Planned for phase 7, not part of any release yet: llama releases that update by themselves (CR-1)
 
-No release up to 0.1.4 implements this section, and nothing is held to it.
+No release up to 0.1.6 implements this section, and nothing is held to it.
 
 - **Two version numbers.** The Potluck release covers the scheduler, the agent, the starter and the exporters, and stays an equality check at registration. The llama release is a separate set of `llama-server` and `rpc-server` builds that moves on its own schedule.
 - **Rule for a load.** Every member of a load, the host included, runs the same llama release. The launch request names it and the agent refuses one it does not hold.
@@ -547,7 +547,7 @@ They are part of the contract.
 
 ### 6.13 `POST /cache/evict` (Potluck to agent): drop a model file from the page cache
 
-Added for the benchmark's cold load (benchmark guide, section 2). Additive: an agent that does not advertise the capability `file_cache_evict` (section 4.2) is never sent this request, and Potluck works as before without it.
+Added in release 0.1.6 for the benchmark's cold load (benchmark guide, section 2). Additive: an agent that does not advertise the capability `file_cache_evict` (section 4.2) is never sent this request, and Potluck works as before without it.
 
 ```json
 {"file": "gemma-3-12b/gemma-3-12b-Q4_K_M.gguf"}
@@ -565,15 +565,15 @@ Refusals use the launch refusal body `{"reason", "message"}`:
 
 | Status | `reason` | When |
 |---|---|---|
-| 400 | `invalid_request` | The body is not JSON, `file` is empty or absolute, contains `..`, resolves (symlinks followed) outside the model folder, or is not a regular file. |
+| 400 | `invalid_request` | The body is not JSON, `file` is empty, absolute or holds a NUL byte, leaves the model folder (after `..` parts are resolved, so `a/../b.gguf` names `b.gguf`), resolves (symlinks followed) outside the model folder, or is not a regular file. |
 | 404 | `model_not_found` | The file does not exist in the model folder. |
 | 409 | `busy` | A launch exists on the node (running or stopping). Dropping the cache under a running worker would change its load, so the caller waits until the launch is gone. |
-| 429 | `too_soon` | The last eviction that reached a file was less than 10 s ago. The answer carries `Retry-After: 10`. Refused requests do not count. |
+| 429 | `too_soon` | The last eviction that reached a file was less than 10 s ago, or another eviction is under way. The answer carries `Retry-After: 10`. Refused requests do not count. |
 | 500 | `evict_failed` | `mincore` or `posix_fadvise` failed; `message` holds the error. |
 | 501 | `unsupported` | This agent cannot do it (not Linux, or a node with the `push` model source, which has no model folder). |
 | 503 | `model_source_unreachable` | The model folder could not be reached (a share that does not answer). |
 
-- One eviction runs at a time. Every eviction and every refusal is logged at info level with the file and the counts.
+- One eviction runs at a time; a request that arrives meanwhile is refused with `too_soon`. Every eviction and every refusal is logged at info level with the file and the counts.
 - The same source-address rule as every Potluck-to-agent request holds (section 2).
 - Potluck's own machine is not asked through its agent: the scheduler drops the file from its own page cache with the same code, because that machine serves the file to the nodes.
 
@@ -665,6 +665,8 @@ One setup script, `potluck-agent-setup`, with two paths. Common options: `--potl
 The agent itself also takes `--shared-memory true|false|auto` (CR-9, from release 0.1.1; default `auto`): whether a launch on the node's device must also fit `MemAvailable` (section 11.2, item 1). Leave it at `auto` unless the rule picks wrong for a machine: `false` for a GPU with memory of its own that is not CUDA, `true` for one that uses system memory but is reported otherwise. Neither the setup script nor the starter sets it.
 
 Log shipping options (CR-10, from release 0.1.2; section 11.3, item 15): `--logs on|off` (default `on`), `--log-buffer-mib N` (default 8), `--journal-dir PATH` (Docker install: a journal folder of the host, mounted read-only). Neither the setup script nor the starter sets them.
+
+Busy file option (from release 0.1.6; section 6.14): `--busy-file auto|off|PATH` (default `auto`: `/run/potluck/busy` on a bare Linux install, no file otherwise). Neither the setup script nor the starter sets it.
 
 - **Bare metal** (`--bare`): places the agent binary, writes one systemd unit `potluck-agent.service` that starts at boot, starts it. A RAM-only node does not use the setup script; it uses the starter (section 5.4), which passes `--ram-only`.
 - **Docker** (`--docker`): starts one container `potluck-agent` from the image tagged with the release, with restart policy `unless-stopped`, `--init`, its own PID namespace, host networking, the GPU passed in when one exists, and the model folder mounted read-only.
@@ -783,7 +785,7 @@ Every field it adds is optional, so either side reads a body without them: an ag
    Stopping the launch inside the agent before it deregisters was not chosen: once the agent's run has ended, its kill ladder (section 6.11) no longer runs, so the stop could not be confirmed within the 3 s.
 4. **The cause while stopping.** The launch state (section 6.3) has `stop_reason`, and `stop_message` when there is more to say, from the moment the agent has decided to stop a launch, while `state` is still `stopping`: `watchdog`, `lease_expired`, `forced`, `stopped` or `reset`. The heartbeat carries the same two fields while its launch is stopping (section 4.3); Potluck shows them in the node's entry in `agents`. They are absent in every other state; once the launch is `exited`, `exit.reason` is the word that counts (it can differ: a launch that was being stopped can still end as `oom_kill`). When Potluck reads the launches of a load whose host program ended (section 11.1), a `stopping` launch with `stop_reason` `watchdog`, `oom_kill` or `lease_expired` is taken as the cause at once, with its message, without waiting for `exited` within the 2 s.
 5. **A paused node says why.** In an entry of `agents` in `GET /api/status`, a paused node that has no other reason has `unplaced: "paused"` (and `placeable: false`). Another reason of the node itself (`programs_not_ready` and the like) comes first; `paused: true` is unchanged.
-6. **An excluded node says so** (after release 0.1.4). When `exclude_nodes` names a node, its entry in `agents` of `GET /api/status` and in `GET /api/nodes` (the local node's entry too) has `excluded: true`, `excluded_by` (the matching entry), `placeable: false`, `unplaced: "excluded"` and `unplaced_message: "excluded by exclude_nodes: <entry>"`. The exclusion comes before every other reason and before a pause. Nothing else in the entry changes: the agent keeps registering and heartbeating, and its release, devices and stats are shown as for any node. The node of `view.nodes` in `GET /api/status` has `excluded` and `excluded_by` as before. Neither field is present for a node that is not excluded.
+6. **An excluded node says so** (from release 0.1.6). When `exclude_nodes` names a node, its entry in `agents` of `GET /api/status` and in `GET /api/nodes` (the local node's entry too) has `excluded: true`, `excluded_by` (the matching entry), `placeable: false`, `unplaced: "excluded"` and `unplaced_message: "excluded by exclude_nodes: <entry>"`. The exclusion comes before every other reason and before a pause. Nothing else in the entry changes: the agent keeps registering and heartbeating, and its release, devices and stats are shown as for any node. The node of `view.nodes` in `GET /api/status` has `excluded` and `excluded_by` as before. Neither field is present for a node that is not excluded.
 
 ### 11.3 CR-10: central logging through Potluck
 
@@ -946,7 +948,7 @@ Each start of an agent reports, on the machine's own time axis, how its start we
 - takes a missing file as normal (no marks), and never creates or deletes the file or its folder;
 - after a soft restart (systemd gave the userspace start and a soft-restart count that is not 0) drops every mark earlier than the userspace start, and ignores the whole file while its `boot_progress_start` is earlier (`/run` survives a soft restart, so the file is the previous start's until the writer starts a fresh one), with one INFO line.
 
-**The start origin lines** (after release 0.1.4; an older agent passes them through unchanged as unknown names, but drops a `boot_origin` earlier than the cut-off). The file may carry, anywhere in it, one of two lines on the same clock as the marks:
+**The start origin lines** (from release 0.1.6; an older agent passes them through unchanged as unknown names, but drops a `boot_origin` earlier than the cut-off). The file may carry, anywhere in it, one of two lines on the same clock as the marks:
 
 - `boot_origin <seconds>`: where this start began. `0.000` on a full start; after a soft restart the moment the restart began (systemd's `ShutdownStartTimestampMonotonic`), which is before the new userspace start.
 - `boot_origin_partial <seconds>`: the node could not tell that moment; the value is the userspace start, and the figure counts from there. A file with neither line is read as before.
@@ -1013,3 +1015,5 @@ History only: this section adds nothing to the contract. Code comments cite thes
 | 0.1.2 | The rest of CR-10: the agent's log shipper, Potluck's own lines, the read side. |
 | 0.1.3 | The forced-fit check before any eviction; paused and unplaced nodes never evicted and a pause winning after a claim; the benchmark step facts (lowest available memory, load mode, roles, the reload-from-cache verdict); planned and blocked suites; the agent's optional `cached_bytes` figure (stats contract 4.3). Start-up reporting, `host_uptime_s`, `boot_id` and expect-restart were first built in late 0.1.3 builds and ship as part of 0.1.4. |
 | 0.1.4 | The refusal at arrival of a forced profile that can never fit; the unpause delivered to the agent before the node takes load (`unpause_pending`, 7.2); lowest available memory by kind (GPU or system) and the file cache figures; the node feed and start-up records (11.4, `GET /api/nodes`, `GET /api/startups`, expect-restart, `host_uptime_s`, `boot_id`, `startup_ack`); the node feed keeps the model source's `target` (6.10); the `local_node` setting and the "pool" wording in agents mode (compose project `potluck`); learned memory needs kept across a Potluck restart, with `POST /api/forget-need`; an agent that does not remount a share that is mounted but not answering (8); stale start-up marks ignored after a soft restart (11.4). |
+| 0.1.5 | Not a program release: a scheduler image only (its version said 0.1.5) that still served and required 0.1.4. Nothing on the wire changed. |
+| 0.1.6 | For the agent: the `boot_origin` and `boot_origin_partial` lines of the start-up marks file, passed through in `external_marks`, with Potluck's figure counted from `boot_origin` and the record's `origin` (11.4); the `capabilities` list with `file_cache_evict` and `POST /cache/evict` (4.2, 6.13); the busy file `/run/potluck/busy`, the `--busy-file` option and `busy`, `launches`, `busy_since` in `GET /status` (6.9, 6.14). For Potluck only: an excluded node says so (11.2, item 6); a `command` profile is not shut out by `no_auto_nodes` (11.1, known limits); a raised need is kept by the shape of the load and its device count (11.1), listed by `GET /api/needs` and forgotten by `POST /api/needs/forget` as well as `POST /api/forget-need`; `POST /api/cache/evict` for the benchmark's cold load. |

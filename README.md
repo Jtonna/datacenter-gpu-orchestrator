@@ -91,7 +91,7 @@ Everything Potluck stores goes under `/srv/potluck` (set `POTLUCK_ROOT` in `.env
 
 ### 4. Put a program release in place
 
-Agents fetch their programs from the scheduler. The scheduler serves exactly one release, the one it was built as (`0.1.4` today), from `/srv/potluck/programs/0.1.4/`:
+Agents fetch their programs from the scheduler. The scheduler serves exactly one release, the one it was built as (`0.1.6` today), from `/srv/potluck/programs/0.1.6/`:
 
 - `release.json`: the release, the llama build commit and the platforms.
 - `agent/`: `potluck-agent-linux-amd64` and `potluck-starter.sh`.
@@ -168,6 +168,7 @@ The web UI is at `http://192.0.2.1:3122/ui/`. The log search page is at `http://
 - [docs/benchmark-guide.md](docs/benchmark-guide.md): designing, running and reading benchmarks.
 - [docs/agent-contract.md](docs/agent-contract.md): the wire contract between Potluck and `potluck-agent`.
 - [docs/stats-contract.md](docs/stats-contract.md): the stats an agent reports.
+- [docs/releases.md](docs/releases.md): what each release brings and what to do at a roll-out.
 - [deploy/agent/README.md](deploy/agent/README.md): the node install, start and removal scripts.
 - [configs/example.yaml](configs/example.yaml): every configuration field, in the import format.
 

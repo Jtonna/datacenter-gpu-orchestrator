@@ -32,9 +32,18 @@ package agentproto
 // expect-restart), the local_node setting with "pool" wording in agents mode,
 // learned memory needs kept across a restart (POST /api/forget-need), an agent
 // that does not remount a share that is mounted but not answering, and stale
-// start-up marks ignored after a soft restart. An agent of an older release
-// is refused with agent_too_old and updates as section 5.4 says.
-const Release = "0.1.4"
+// start-up marks ignored after a soft restart. 0.1.5 was a scheduler image
+// only: it served and required 0.1.4. 0.1.6 adds, for the agent, the
+// boot_origin and boot_origin_partial lines of the start-up marks file
+// (section 11.4), the file_cache_evict capability with POST /cache/evict
+// (6.13), and the busy file with the busy fields of GET /status (6.14); for
+// Potluck, the memory reservation rule, learned needs kept by the shape of a
+// load and its device count and trusted only for their llama build (GET
+// /api/needs, POST /api/needs/forget), cold-load benchmarks (POST
+// /api/cache/evict), excluded nodes shown as excluded, and command profiles
+// not shut out by no_auto_nodes. An agent of an older release is refused with
+// agent_too_old and updates as section 5.4 says.
+const Release = "0.1.6"
 
 // Ports, all fixed (agent contract section 3).
 const (

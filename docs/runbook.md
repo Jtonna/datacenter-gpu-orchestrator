@@ -192,14 +192,14 @@ The scheduler serves one release, the one it was built as (`programs.release` in
 Make the `SHA256SUMS` of a folder inside that folder:
 
 ```sh
-cd /srv/potluck/programs/0.1.4/linux-amd64-cuda && sha256sum llama-server rpc-server node_exporter nvidia_gpu_exporter > SHA256SUMS
+cd /srv/potluck/programs/0.1.6/linux-amd64-cuda && sha256sum llama-server rpc-server node_exporter nvidia_gpu_exporter > SHA256SUMS
 ```
 
 Check after a start: `curl -s $H/api/system | jq .programs`. `served: false` comes with `programs.error`, naming the missing or wrong file. `host_build_error` means the scheduler's own `llama-server-rpc` is not the release's llama build: every load is refused until it is.
 
 ### Move to a new release
 
-1. Make `programs/<new>/`. Platform folders whose programs did not change can be copied. `agent/` holds the new agent; `release.json` names the new release; write new `SHA256SUMS`.
+1. Make `programs/<new>/`. Platform folders whose programs did not change can be copied. `agent/` holds the new agent; `release.json` names the new release; write new `SHA256SUMS`. Leave the previous release's `release.json` in place (section G): stored memory needs measured under it stay trusted only through it.
 2. Build and start the scheduler of the new release (section F). This ends every loaded model.
 3. Agents of the old release are refused with `agent_too_old` and update themselves. A Docker node exits and waits: run `potluck-agent-setup --docker ...` on it again, which builds the image for the new release.
 4. Check that every node is back: `curl -s $H/api/nodes | jq '.nodes[] | {name, state, release}'`.

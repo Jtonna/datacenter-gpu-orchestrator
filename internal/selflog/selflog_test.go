@@ -148,7 +148,7 @@ func newSetup(t *testing.T, mod ...func(*Options)) *setup {
 	s := &setup{store: st, relay: r, print: &strings.Builder{}}
 	s.on.Store(true)
 	o := Options{On: func() bool { return s.on.Load() && r.StoreOn() }, InsertURL: r.InsertURL,
-		Node: func() (string, string) { return "host-a", "host-a" }, Release: "0.1.4", Platform: "linux-amd64",
+		Node: func() (string, string) { return "host-a", "host-a" }, Release: "0.1.6", Platform: "linux-amd64",
 		CheckEvery: 20 * time.Millisecond, FirstPause: 50 * time.Millisecond, MaxPause: 200 * time.Millisecond,
 		HTTP: &http.Client{Timeout: 2 * time.Second}}
 	for _, m := range mod {
@@ -209,7 +209,7 @@ func TestOwnLinesReachTheStore(t *testing.T) {
 	if p.path != "/logs/insert/jsonline" {
 		t.Errorf("path %q", p.path)
 	}
-	want := map[string]string{"node_id": "host-a", "node_name": "host-a", "platform": "linux-amd64", "release": "0.1.4", "source": "scheduler"}
+	want := map[string]string{"node_id": "host-a", "node_name": "host-a", "platform": "linux-amd64", "release": "0.1.6", "source": "scheduler"}
 	for k, v := range want {
 		if p.extra[k] != v {
 			t.Errorf("extra_fields %s = %q, want %q (%v)", k, p.extra[k], v, p.extra)
