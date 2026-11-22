@@ -96,7 +96,14 @@ type Service struct {
 	o   Options
 	log *slog.Logger
 
-	mu      sync.Mutex // serializes writes
+	mu sync.Mutex // serializes writes
+	// The Apply and OnChange callbacks run after mu is released, one change
+	// at a time in revision order: a change takes ticket cbNext under mu and
+	// runs its callbacks once cbDone reaches it (under cbMu).
+	cbNext  uint64
+	cbMu    sync.Mutex
+	cbCond  *sync.Cond
+	cbDone  uint64
 	rev     int64
 	updated int64
 	doc     *config.Document
@@ -267,7 +274,12 @@ type mutation struct {
 
 func (s *Service) mutate(ctx context.Context, o WriteOpts, m mutation) (*Result, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	locked := true
+	defer func() {
+		if locked {
+			s.mu.Unlock()
+		}
+	}()
 	if s.o.Store == nil {
 		return nil, ErrNoStore
 	}
@@ -324,19 +336,44 @@ func (s *Service) mutate(ctx context.Context, o WriteOpts, m mutation) (*Result,
 	s.updated = time.Now().UnixMilli()
 	s.setConfig(cfg)
 	res.Revision, res.AuditEntryIDs = rev, ids
+	ev := ChangeEvent{Revision: rev, EntryIDs: ids, Source: o.Origin.Source, Actor: o.Origin.Actor}
+	if len(es) == 1 {
+		ev.Section, ev.Target = es[0].Section, es[0].Target
+	} else {
+		ev.Section = "multiple"
+	}
+	ticket := s.cbNext
+	s.cbNext++
+	locked = false
+	s.mu.Unlock()
+	s.callbacksInOrder(ticket, cfg, ev)
+	return res, nil
+}
+
+// callbacksInOrder runs Apply and OnChange for one committed change, after
+// those of every earlier change. The caller does not hold mu, so a callback
+// may read the service (a callback that writes to it would wait for itself).
+func (s *Service) callbacksInOrder(ticket uint64, cfg *config.Config, ev ChangeEvent) {
+	s.cbMu.Lock()
+	if s.cbCond == nil {
+		s.cbCond = sync.NewCond(&s.cbMu)
+	}
+	for s.cbDone != ticket {
+		s.cbCond.Wait()
+	}
+	s.cbMu.Unlock()
+	defer func() {
+		s.cbMu.Lock()
+		s.cbDone++
+		s.cbCond.Broadcast()
+		s.cbMu.Unlock()
+	}()
 	if s.o.Apply != nil {
 		s.o.Apply(cfg)
 	}
 	if s.o.OnChange != nil {
-		ev := ChangeEvent{Revision: rev, EntryIDs: ids, Source: o.Origin.Source, Actor: o.Origin.Actor}
-		if len(es) == 1 {
-			ev.Section, ev.Target = es[0].Section, es[0].Target
-		} else {
-			ev.Section = "multiple"
-		}
 		s.o.OnChange(ev)
 	}
-	return res, nil
 }
 
 func restartKeys(diff []audit.DiffItem) []string {
