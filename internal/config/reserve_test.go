@@ -41,6 +41,8 @@ func TestReserveSettingsValidation(t *testing.T) {
 		{"margin_estimated_percent", 51.0, "between 0 and 50"},
 		{"margin_estimated_percent", -1.0, "between 0 and 50"},
 		{"free_average_window", "-5s", "negative"},
+		{"fill_reserve_kib_per_token", 1025.0, "at most 1024"},
+		{"free_average_window", "11m", "at most 10m"},
 	}
 	for _, b := range bad {
 		doc := NewDocument()

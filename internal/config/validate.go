@@ -308,6 +308,14 @@ func (c *Config) validateDefaults(add func(string, ...any)) {
 	if d.FreeAverageWindow < 0 {
 		add("defaults: free_average_window: must not be negative, got %v", d.FreeAverageWindow)
 	}
+	// Upper bounds (review N5): the reserve arithmetic stays far from
+	// overflow, and the pool keeps a bounded number of samples per node.
+	if d.FillReserveKiBPerToken > 1024 {
+		add("defaults: fill_reserve_kib_per_token: must be at most 1024, got %d", d.FillReserveKiBPerToken)
+	}
+	if d.FreeAverageWindow > 10*time.Minute {
+		add("defaults: free_average_window: must be at most 10m, got %v", d.FreeAverageWindow)
+	}
 	switch d.ForcedFitCheck {
 	case ForcedFitOff, ForcedFitWarn, ForcedFitReject:
 	default:
