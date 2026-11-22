@@ -1,0 +1,10 @@
+{"tasks": ["t1", "t2"],
+ "models": [
+  {"label": "Model A", "profile": "prof-a", "load_s": 12.5, "strict": 5, "lenient": 6, "total": 10, "limit_no_code": 0,
+   "tasks": {"t1": {"strict": 2, "lenient": 3, "total": 5, "strict_reason": null, "lenient_reason": null, "lenient_block": 0, "tok_s": 20.25, "seconds": 4.5, "completion_tokens": 90, "end": "stop", "error": null},
+             "t2": {"strict": 3, "lenient": 3, "total": 5, "strict_reason": null, "lenient_reason": null, "lenient_block": 0, "tok_s": 19.5, "seconds": 6.0, "completion_tokens": 120, "end": "stop", "error": null}},
+   "rubric_t2": {"explanation_correct": 1, "refactor_quality": 2, "note": "fine"}},
+  {"label": "Model B", "profile": "prof-b", "load_s": 30, "strict": 0, "lenient": 0, "total": 10, "limit_no_code": 1,
+   "tasks": {"t1": {"strict": 0, "lenient": 0, "total": 5, "strict_reason": "no code block", "lenient_reason": "no code block", "lenient_block": null, "tok_s": 8.0, "seconds": 60.0, "completion_tokens": 480, "end": "length", "error": null}},
+   "rubric_t2": {"explanation_correct": 0, "refactor_quality": 0, "note": "no answer"}}
+ ]}

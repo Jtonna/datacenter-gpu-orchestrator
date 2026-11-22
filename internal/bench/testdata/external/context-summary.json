@@ -1,0 +1,7 @@
+{"Model A": {"profile": "ctx-a-2048", "nodes": ["node-a", "node-b"],
+  "rows": [
+   {"ctx": 2048, "fill_tokens": 1500, "fill_pct": 73.2, "load_s": 20.1, "cold_prompt_tps": 120.5, "cold_ttft_s": 12.4, "warm_ttft_s": 0.3, "gen_tps": 16.4, "recall": "5/5", "mem_low": {"node-a": 9000, "node-b": 8500}, "verdict": "usable", "status": "usable", "attempts": 1},
+   {"ctx": 8192, "fill_tokens": 6000, "fill_pct": 73.2, "load_s": 7.0, "cold_prompt_tps": 110.0, "cold_ttft_s": 54.5, "warm_ttft_s": 0.4, "gen_tps": 15.1, "recall": "4/5", "mem_low": {"node-a": 8800, "node-b": 8100}, "verdict": "usable", "status": "usable", "attempts": 1}]},
+ "Model B": {"profile": "ctx-b-2048", "nodes": ["node-a"],
+  "rows": [
+   {"ctx": 2048, "fill_tokens": 1450, "fill_pct": 70.8, "load_s": 40.0, "cold_prompt_tps": 90.0, "cold_ttft_s": 16.1, "warm_ttft_s": 0.6, "gen_tps": 9.9, "recall": "5/5", "mem_low": {"node-a": 7000}, "verdict": "usable", "status": "usable", "attempts": 2}]}}
