@@ -142,6 +142,7 @@ func (x *suiteExec) runBenchmark(b *benchspec.Benchmark, idx int, group string, 
 		if g != nil {
 			g.arrive(member)
 		}
+		br.cleanUp()
 		x.finish(br)
 	}()
 
@@ -385,6 +386,10 @@ func (br *benchRun) loadModel(cold bool) bool {
 	obs := &loadObs{}
 	start := time.Now()
 	startMS := m.o.Now().UnixMilli()
+	// Marked before the call: an answer lost on the way back (a timeout, a
+	// reset connection) may follow a load the scheduler accepted, and the
+	// step's clean-up must unload it. A refusal clears the mark.
+	x.a.markLoaded(b.Profile, true)
 	ans, err := m.o.API.Load(ctx, b.Profile)
 	switch {
 	case err != nil && ctx.Err() != nil:
@@ -394,6 +399,7 @@ func (br *benchRun) loadModel(cold bool) bool {
 		br.fail(OutcomeError, "load: "+err.Error())
 		return false
 	case ans.Status >= 300:
+		x.a.markLoaded(b.Profile, false)
 		st.HTTPStatus, st.Reason = ans.Status, ans.Msg
 		if ans.Status == 503 || (ans.Status >= 400 && ans.Status < 500) {
 			br.fail(OutcomeRefused, ans.Msg)
@@ -402,7 +408,6 @@ func (br *benchRun) loadModel(cold bool) bool {
 		}
 		return false
 	}
-	x.a.markLoaded(b.Profile, true) // the load may be running: it is unloaded with force at the end
 	br.watch.loading.Store(true)
 	defer br.watch.loading.Store(false)
 	ready, failure := false, ""
@@ -1003,10 +1008,41 @@ func (br *benchRun) phaseUnload(p *benchspec.Phase, pr *PhaseResult) {
 	}
 	res.Gone = x.waitGoneNoCancel(ctx, b.Profile)
 	res.UnloadS = round3(time.Since(start).Seconds())
-	x.a.markLoaded(b.Profile, false)
+	if res.Gone { // still there: the step's clean-up unloads it again with force
+		x.a.markLoaded(b.Profile, false)
+	}
 	if !res.Gone {
 		br.fail(OutcomeError, "the profile did not leave the scheduler in time")
 	}
+}
+
+// cleanUp ends a step that did not end ready with a forced unload of its
+// profile when the run still counts it as loaded (a failed phase, a timeout,
+// a cancel, a lost load answer, an unload that did not finish), so the next
+// step starts from what it expects. A ready step keeps what it left loaded
+// on purpose; the run's own clean-up unloads that at the end.
+func (br *benchRun) cleanUp() {
+	x, st, b := br.x, br.st, br.b
+	if st.Outcome == OutcomeReady || !x.a.loadedSet()[b.Profile] {
+		return
+	}
+	ctx, cancel := context.WithTimeout(WithRun(context.Background(), st.RunID), x.m.o.GoneTimeout+30*time.Second)
+	defer cancel()
+	ans, err := x.m.o.API.Unload(ctx, b.Profile, true)
+	switch {
+	case err != nil:
+		x.m.log.Warn("benchmark step could not unload its profile", "run", st.RunID, "step", st.Idx, "profile", b.Profile, "err", err)
+		return
+	case ans.Status != 200:
+		x.m.log.Warn("benchmark step could not unload its profile", "run", st.RunID, "step", st.Idx, "profile", b.Profile, "status", ans.Status, "msg", ans.Msg)
+		return
+	}
+	gone := x.waitGoneNoCancel(ctx, b.Profile)
+	if gone {
+		x.a.markLoaded(b.Profile, false)
+	}
+	br.loaded = false
+	x.m.log.Info("benchmark step unloaded its profile after it ended "+st.Outcome, "run", st.RunID, "step", st.Idx, "profile", b.Profile, "gone", gone)
 }
 
 // waitGoneNoCancel is waitGone for cleanup: a cancelled run still waits.
