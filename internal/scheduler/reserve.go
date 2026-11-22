@@ -572,8 +572,9 @@ func rowsShort(rows []PlanMemoryNode) (node string, by int) {
 // must keep remains_mib >= 0 in memoryRows. It returns why not, or "" when
 // it fits, the gate is off (the defaults) or the need is unknown (the other
 // checks decide then).
-func (c *schedCore) reserveGate(p *core.Profile, pl core.Placement, victims []string) string {
+func (c *schedCore) reserveGate(p *core.Profile, pl core.Placement, victims []string) (why string) {
 	c.gated = gateMark{profile: p.Name, nodes: placementIDs(pl), step: c.steps}
+	defer func() { c.gated.passed = why == "" }()
 	if !c.gateOn() {
 		return ""
 	}
@@ -690,17 +691,19 @@ func (c *schedCore) hypotheticalPlacement(p *core.Profile) core.Placement {
 	return pl
 }
 
-// gateMark is the latest gate call: the profile, the node set and the step
-// it was made in (checkGated).
+// gateMark is the latest gate call: the profile, the node set, the step it
+// was made in, and whether it passed (checkGated).
 type gateMark struct {
 	profile string
 	nodes   []string
 	step    uint64
+	passed  bool
 }
 
-// checkGateBeforeLaunch makes every launch check that the gate was asked
-// about this profile and node set in the same step (the tests turn it on):
-// a launch path that skips the gate panics (review SB2).
+// checkGateBeforeLaunch makes every launch check that the gate passed for
+// this profile and node set in the same step (the tests turn it on): a
+// launch path that skips the gate, or launches after a refusal, panics
+// (review SB2, third review TN1).
 var checkGateBeforeLaunch = false
 
 // checkGated is called where an instance starts to take memory: the child
@@ -710,9 +713,9 @@ func (c *schedCore) checkGated(in *inst) {
 		return
 	}
 	g := c.gated
-	if g.profile != in.prof.Name || g.step != c.steps || !slices.Equal(g.nodes, placementIDs(in.placement)) {
-		panic(fmt.Sprintf("scheduler: %s launched on %v without the gate in this step (last gate: %s on %v, step %d of %d)",
-			in.prof.Name, placementIDs(in.placement), g.profile, g.nodes, g.step, c.steps))
+	if g.profile != in.prof.Name || g.step != c.steps || !slices.Equal(g.nodes, placementIDs(in.placement)) || !g.passed {
+		panic(fmt.Sprintf("scheduler: %s launched on %v without a passed gate in this step (last gate: %s on %v, step %d of %d, passed %v)",
+			in.prof.Name, placementIDs(in.placement), g.profile, g.nodes, g.step, c.steps, g.passed))
 	}
 }
 

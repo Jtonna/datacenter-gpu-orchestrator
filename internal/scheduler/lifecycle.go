@@ -69,6 +69,9 @@ func (c *schedCore) startInstance(p *core.Profile, pl core.Placement, waiters []
 		}
 	}
 	if len(targets) == 0 {
+		if c.agents {
+			c.checkGated(in) // launch checks only in fleet membership (it also runs after the workers loaded)
+		}
 		c.launch(in) // the local node is not probed (7.5)
 		return
 	}
