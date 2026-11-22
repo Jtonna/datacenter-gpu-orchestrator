@@ -24,9 +24,17 @@ package agentproto
 // forced-fit check before any eviction, paused and unplaced nodes never
 // evicted and a pause winning after a claim, the benchmark step facts (lowest
 // available memory, load mode, roles, the reload-from-cache verdict), planned
-// and blocked suites, and the agent's cached_bytes figure. An agent of an
-// older release is refused with agent_too_old and updates as section 5.4 says.
-const Release = "0.1.3"
+// and blocked suites, and the agent's cached_bytes figure. 0.1.4 adds the
+// refusal at arrival of a forced profile that can never fit, a node taking
+// load only after its agent was told it is unpaused, lowest available memory
+// by kind (GPU or system) and the file cache figures, the node feed and
+// start-up records (section 11.4, GET /api/nodes, /api/startups,
+// expect-restart), the local_node setting with "pool" wording in agents mode,
+// learned memory needs kept across a restart (POST /api/forget-need), an agent
+// that does not remount a share that is mounted but not answering, and stale
+// start-up marks ignored after a soft restart. An agent of an older release
+// is refused with agent_too_old and updates as section 5.4 says.
+const Release = "0.1.4"
 
 // Ports, all fixed (agent contract section 3).
 const (
