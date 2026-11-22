@@ -108,12 +108,18 @@ func ParseShow(out []byte) Facts {
 // that is not exactly a valid name and a finite, non-negative number is
 // skipped (a half-written last line included). A name given twice keeps its
 // last value. At most agentproto.StartupMaxExternalMarks names are taken, in
-// the order they first appear.
+// the order they first appear. An origin line (isOrigin) counts only when it
+// ends with a newline: its value is exempt from the cut-off, and a cut value
+// ("49" of "490.25") would still parse.
 func ParseMarks(b []byte) map[string]float64 {
 	out := map[string]float64{}
-	for _, line := range strings.Split(string(b), "\n") {
+	lines := strings.Split(string(b), "\n")
+	for i, line := range lines {
 		f := strings.Fields(line)
 		if len(f) != 2 || !agentproto.ValidStartupMarkName(f[0]) {
+			continue
+		}
+		if i == len(lines)-1 && isOrigin(f[0]) {
 			continue
 		}
 		v, err := strconv.ParseFloat(f[1], 64)
@@ -245,21 +251,76 @@ func (w *Watcher) Poll(now time.Duration) (marks map[string]float64, changed, do
 // its starts, in a fresh file.
 const markBootProgressStart = "boot_progress_start"
 
+// isOrigin: boot_origin or boot_origin_partial, the file's start origin.
+func isOrigin(name string) bool {
+	return name == agentproto.StartupMarkBootOrigin || name == agentproto.StartupMarkBootOriginPartial
+}
+
 // current drops the marks of an earlier userspace (see Watcher).
+//
+// The cut-off (cut) is the current userspace start; it is known only after a
+// soft restart (or with an unknown count), when /run may still hold the
+// previous start's file. Which file is this start's:
+//
+//   - The origin lines are exempt from the cut-off: after a soft restart
+//     boot_origin is the moment the restart began, always before the
+//     current userspace start, and boot_origin_partial is the userspace
+//     start itself (the writer's figure, possibly a little off ours). So an
+//     origin's value cannot tell a left-over file from a fresh one: the
+//     previous start's boot_origin (0, or an earlier restart's moment) is
+//     also before the cut-off, and the agent does not know when this
+//     start's shutdown began.
+//   - The other marks can: the writer starts a fresh file at each of its
+//     starts, so a mark at or after the cut-off was written in this
+//     userspace. The file is this start's when its boot_progress_start is at
+//     or after the cut-off; without boot_progress_start, when at least one
+//     mark other than an origin is at or after the cut-off. Otherwise the
+//     whole file, origin included, is ignored (one INFO line when it has
+//     marks other than an origin; a file with only an origin so far waits,
+//     silently, for the writer's next mark).
+//   - In a file of this start, marks other than an origin earlier than the
+//     cut-off are dropped as before, and a boot_origin after the cut-off is
+//     dropped (a restart cannot begin after the userspace it started).
 func (w *Watcher) current(m map[string]float64) map[string]float64 {
 	if !w.cutKnown {
 		return m
 	}
-	if b, ok := m[markBootProgressStart]; ok && b < w.cut {
-		if !w.staleSaid && w.Logger != nil {
-			w.Logger.Info("start-up marks file is from an earlier start; ignored", "file", w.Path,
-				"boot_progress_start_s", b, "userspace_start_s", w.cut)
+	stale, other, ref, refName := true, false, 0.0, "boot_progress_start_s"
+	if b, ok := m[markBootProgressStart]; ok {
+		stale, other, ref = b < w.cut, true, b
+	} else {
+		refName = "latest_mark_s"
+		for k, v := range m {
+			if isOrigin(k) {
+				continue
+			}
+			if !other || v > ref {
+				ref = v
+			}
+			other = true
+			if v >= w.cut {
+				stale = false
+			}
 		}
-		w.staleSaid = true
+	}
+	if stale {
+		if other && !w.staleSaid && w.Logger != nil {
+			w.Logger.Info("start-up marks file is from an earlier start; ignored", "file", w.Path,
+				refName, ref, "userspace_start_s", w.cut)
+		}
+		if other {
+			w.staleSaid = true
+		}
 		return map[string]float64{}
 	}
 	for k, v := range m {
-		if v < w.cut {
+		switch {
+		case k == agentproto.StartupMarkBootOrigin:
+			if v > w.cut {
+				delete(m, k)
+			}
+		case k == agentproto.StartupMarkBootOriginPartial:
+		case v < w.cut:
 			delete(m, k)
 		}
 	}

@@ -320,3 +320,81 @@ func TestRecorderMarksCutoff(t *testing.T) {
 		}
 	}
 }
+
+// boot_origin and boot_origin_partial (the marks file's start origin) are
+// exempt from the cut-off; whether the file is this start's is decided by its
+// other marks (see Watcher.current).
+func TestWatcherBootOrigin(t *testing.T) {
+	at := func(s float64) time.Duration { return time.Duration(s * float64(time.Second)) }
+	type tc struct {
+		file  string
+		us    float64
+		ok    bool
+		want  map[string]float64
+		stale bool // one INFO line "from an earlier start"
+	}
+	for name, c := range map[string]tc{
+		"full start": {"boot_origin 0.000\nboot_progress_start 1.95\nnetwork_ok 9.5\n", 1.5, false,
+			map[string]float64{"boot_origin": 0, "boot_progress_start": 1.95, "network_ok": 9.5}, false},
+		"soft restart with boot_origin": {"boot_progress_start 501\nnetwork_ok 509\nboot_origin 490.25\n", 500, true,
+			map[string]float64{"boot_origin": 490.25, "boot_progress_start": 501, "network_ok": 509}, false},
+		"soft restart, left-over file with boot_origin": {"boot_origin 0.000\nboot_progress_start 1.95\nnetwork_ok 9.5\n", 500, true,
+			map[string]float64{}, true},
+		"soft restart, left-over file of an earlier soft restart": {"boot_origin 300\nboot_progress_start 311\nnetwork_ok 320\n", 500, true,
+			map[string]float64{}, true},
+		"soft restart, left-over file without boot_progress_start": {"boot_origin 300\nnetwork_ok 320\n", 500, true,
+			map[string]float64{}, true},
+		"soft restart, only the origin so far": {"boot_origin 490\n", 500, true, map[string]float64{}, false},
+		"soft restart, fresh file without boot_progress_start": {"boot_origin 490\nnetwork_ok 509\n", 500, true,
+			map[string]float64{"boot_origin": 490, "network_ok": 509}, false},
+		"boot_origin after the userspace start is dropped": {"boot_origin 505\nboot_progress_start 501\nnetwork_ok 509\n", 500, true,
+			map[string]float64{"boot_progress_start": 501, "network_ok": 509}, false},
+		"boot_origin_partial": {"boot_origin_partial 500\nboot_progress_start 501\nnetwork_ok 509\n", 500, true,
+			map[string]float64{"boot_origin_partial": 500, "boot_progress_start": 501, "network_ok": 509}, false},
+		"boot_origin_partial a little before the cut-off": {"boot_origin_partial 499.9\nboot_progress_start 501\n", 500, true,
+			map[string]float64{"boot_origin_partial": 499.9, "boot_progress_start": 501}, false},
+		"neither line": {"boot_progress_start 501\nnetwork_ok 9.5\nnetwork_ok 509\n", 500, true,
+			map[string]float64{"boot_progress_start": 501, "network_ok": 509}, false},
+		// An origin line must end with a newline: "49" may be the start of
+		// "490.25", and an origin is exempt from the cut-off.
+		"half-written boot_origin line": {"boot_progress_start 501\nnetwork_ok 509\nboot_origin 49", 500, true,
+			map[string]float64{"boot_progress_start": 501, "network_ok": 509}, false},
+		"half-written boot_origin line on a full start": {"boot_progress_start 1.95\nboot_origin 0.0", 0, false,
+			map[string]float64{"boot_progress_start": 1.95}, false},
+		"half-written name": {"boot_progress_start 501\nnetwork_ok 509\nboot_ori", 500, true,
+			map[string]float64{"boot_progress_start": 501, "network_ok": 509}, false},
+		"half-written value": {"boot_progress_start 501\nnetwork_ok 509\nboot_origin 4.9.", 500, true,
+			map[string]float64{"boot_progress_start": 501, "network_ok": 509}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var logs strings.Builder
+			w := &Watcher{Path: "x", Read: func(string) ([]byte, error) { return []byte(c.file), nil },
+				UserspaceStart: func() (float64, bool) { return c.us, c.ok },
+				Logger:         slog.New(slog.NewTextHandler(&logs, nil))}
+			m, ch, _, _ := w.Poll(at(530))
+			if !ch || !reflect.DeepEqual(m, c.want) {
+				t.Fatalf("marks %v changed %v, want %v", m, ch, c.want)
+			}
+			stale := strings.Count(logs.String(), "start-up marks file is from an earlier start; ignored")
+			if (stale == 1) != c.stale || stale > 1 {
+				t.Fatalf("stale lines %d, want %v\n%s", stale, c.stale, logs.String())
+			}
+		})
+	}
+}
+
+// A left-over file is ignored, then the writer's fresh file (with this
+// start's boot_origin, earlier than the userspace start) is taken whole.
+func TestWatcherBootOriginLeftOverThenFresh(t *testing.T) {
+	at := func(s float64) time.Duration { return time.Duration(s * float64(time.Second)) }
+	file := "boot_origin 0.000\nboot_progress_start 1.95\nnetwork_ok 9.5\n"
+	w := &Watcher{Path: "x", Read: func(string) ([]byte, error) { return []byte(file), nil },
+		UserspaceStart: func() (float64, bool) { return 500, true }}
+	if m, ch, _, _ := w.Poll(at(510)); !ch || len(m) != 0 {
+		t.Fatalf("left-over: %v %v", m, ch)
+	}
+	file = "boot_origin 488.5\nboot_progress_start 501\n"
+	if m, ch, _, _ := w.Poll(at(512)); !ch || !reflect.DeepEqual(m, map[string]float64{"boot_origin": 488.5, "boot_progress_start": 501}) {
+		t.Fatalf("fresh: %v %v", m, ch)
+	}
+}
