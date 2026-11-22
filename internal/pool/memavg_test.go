@@ -80,3 +80,33 @@ func TestFreeMemoryAverageOfSampleMinimums(t *testing.T) {
 		t.Fatalf("average %d (known %v), want 5000", n.FreeAvgMiB, n.FreeAvgKnown)
 	}
 }
+
+// N2: with placement_uses_reserved off (the defaults), a change of the
+// average alone does not notify the scheduler (no decision reads it); with
+// it on, it does.
+func TestAverageAloneNotifiesOnlyWhenUsed(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		r := newRig(t)
+		r.cfg.Defaults.FreeAverageWindow = 30 * time.Second
+		r.cfg.Defaults.PlacementUsesReserved = on
+		const id = "02:00:00:00:00:74"
+		r.p.Register(regReq(id))
+		hb := func(dev int) {
+			t.Helper()
+			b := `{"agent_start_id":"s1","seq":1,"programs_ready":true,"model_source":{"kind":"share","reachable":true},` +
+				`"mem_available_mib":30000,"devices":[{"name":"CUDA0","backend":"cuda","total_mib":16000,"free_mib":` + strconv.Itoa(dev) + `}]}`
+			if res := r.p.Heartbeat(id, []byte(b)); res.Status != 200 {
+				t.Fatalf("heartbeat %+v", res)
+			}
+		}
+		hb(14000)
+		r.clk.advance(time.Second)
+		hb(12000) // the latest changes: notified either way
+		drain(r.p.Changed())
+		r.clk.advance(time.Second)
+		hb(12000) // only the average moves (13000 to 12666)
+		if got := drain(r.p.Changed()); got != on {
+			t.Fatalf("setting %v: notified %v", on, got)
+		}
+	}
+}

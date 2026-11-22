@@ -184,13 +184,18 @@ func (p *Pool) rebuildLocked() {
 		}
 	}
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
-	if (!reflect.DeepEqual(nodes, p.nodes) && !(len(nodes) == 0 && len(p.nodes) == 0)) || !reflect.DeepEqual(unplaced, p.unplaced) ||
+	// With placement_uses_reserved off no decision reads the average, so a
+	// change of the average alone is kept without notifying (review N2).
+	useAvg := cfg.Defaults.PlacementUsesReserved
+	if (!sameNodes(nodes, p.nodes, useAvg) && !(len(nodes) == 0 && len(p.nodes) == 0)) || !reflect.DeepEqual(unplaced, p.unplaced) ||
 		!reflect.DeepEqual(msgs, p.unplacedMsg) {
 		p.nodes, p.unplaced, p.unplacedMsg = nodes, unplaced, msgs
 		select {
 		case p.notify <- struct{}{}:
 		default:
 		}
+	} else {
+		p.nodes = nodes
 	}
 	p.evaluateStartupsLocked()
 }
@@ -606,4 +611,20 @@ func (p *Pool) ReleaseStatus() map[string]any {
 		m["host_build_error"] = pr.HostErr
 	}
 	return m
+}
+
+// sameNodes compares two node lists; without useAvg the average free
+// figures are left out of the comparison.
+func sameNodes(a, b []core.Node, useAvg bool) bool {
+	if useAvg || len(a) != len(b) {
+		return reflect.DeepEqual(a, b)
+	}
+	for i := range a {
+		x, y := a[i], b[i]
+		x.FreeAvgMiB, x.FreeAvgKnown, y.FreeAvgMiB, y.FreeAvgKnown = 0, false, 0, false
+		if !reflect.DeepEqual(x, y) {
+			return false
+		}
+	}
+	return true
 }
