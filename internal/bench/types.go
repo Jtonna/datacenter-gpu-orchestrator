@@ -50,12 +50,19 @@ const (
 
 // Step outcomes: what the scheduler did with the benchmark's first request.
 const (
-	OutcomeReady     = "ready"     // loaded and served
-	OutcomeRefused   = "refused"   // 4xx or 503 before any load started (does not fit, backoff, ...)
-	OutcomeFailed    = "failed"    // the load or a request failed (502, child exited, timeout)
-	OutcomeError     = "error"     // the runner could not do its job (network, bad answer)
-	OutcomeCancelled = "cancelled" // the run was cancelled during this step
-	OutcomeSkipped   = "skipped"   // never started (stop_on_failure, cancel)
+	OutcomeReady   = "ready"   // loaded and served
+	OutcomeRefused = "refused" // 4xx or 503 before any load started (does not fit, backoff, ...)
+	// OutcomeRefusedByExclusion: refused because the profile forces a node
+	// that exclude_nodes names (the scheduler's reason "node excluded"). Not
+	// judged and not a failure: the configuration keeps the machine out on
+	// purpose, and only lifting the exclusion makes the step run again.
+	OutcomeRefusedByExclusion = "refused_by_exclusion"
+	// ReasonNodeExcluded is the scheduler's reason code for that refusal.
+	ReasonNodeExcluded = "node excluded"
+	OutcomeFailed      = "failed"    // the load or a request failed (502, child exited, timeout)
+	OutcomeError       = "error"     // the runner could not do its job (network, bad answer)
+	OutcomeCancelled   = "cancelled" // the run was cancelled during this step
+	OutcomeSkipped     = "skipped"   // never started (stop_on_failure, cancel)
 )
 
 // Request phases: what a stored request row was for.
@@ -396,9 +403,14 @@ type Step struct {
 
 // RunSummary counts a run's steps.
 type RunSummary struct {
-	Steps       int `json:"steps"`
+	Steps int `json:"steps"`
+	// Ran counts the steps that were judged (passed or failed). Refused counts
+	// those refused by an exclusion (refused_by_exclusion): neither passed
+	// nor failed. Skipped steps are in none of the three.
+	Ran         int `json:"ran"`
 	Passed      int `json:"passed"`
 	Failed      int `json:"failed"`
+	Refused     int `json:"refused"`
 	Regressions int `json:"regressions"`
 }
 

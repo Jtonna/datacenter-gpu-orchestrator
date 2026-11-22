@@ -395,6 +395,7 @@ func (s *Store) Aggregate(f AggFilter, th Thresholds, now time.Time) (*Aggregate
 		agg      BenchmarkAgg
 		runs     map[string]bool
 		passed   int
+		refused  int
 		metrics  metricSet
 		turns    map[[2]int]metricSet
 		hasTurns bool
@@ -461,7 +462,9 @@ func (s *Store) Aggregate(f AggFilter, th Thresholds, now time.Time) (*Aggregate
 			ba.runs[r.ID] = true
 			ba.agg.Steps++
 			ba.agg.Outcomes[st.Outcome]++
-			if st.Expect != nil && st.Expect.Pass {
+			if st.Outcome == OutcomeRefusedByExclusion {
+				ba.refused++ // not judged: out of the pass rate
+			} else if st.Expect != nil && st.Expect.Pass {
 				ba.passed++
 			}
 			vals := stepValues(st)
@@ -532,8 +535,8 @@ func (s *Store) Aggregate(f AggFilter, th Thresholds, now time.Time) (*Aggregate
 		a := ba.agg
 		a.Recent = clipRecent(benchMarks[id])
 		a.Runs = len(ba.runs)
-		if a.Steps > 0 {
-			a.PassRate = round4(float64(ba.passed) / float64(a.Steps))
+		if judged := a.Steps - ba.refused; judged > 0 {
+			a.PassRate = round4(float64(ba.passed) / float64(judged))
 		}
 		a.Metrics = ba.metrics.summarize(th)
 		if ba.hasTurns {

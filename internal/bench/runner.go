@@ -233,6 +233,9 @@ run:
 		steps = append(steps, got...)
 		if suite.StopOnFailure {
 			for _, st := range got {
+				if st.Outcome == OutcomeRefusedByExclusion {
+					continue // not a failure: the configuration keeps the machine out
+				}
 				if st.Outcome == OutcomeError || (st.Expect != nil && !st.Expect.Pass) {
 					state, errText = RunFailed, fmt.Sprintf("stopped after %q did not pass (stop_on_failure)", st.BenchmarkID)
 					break run
@@ -273,6 +276,11 @@ run:
 		if st.Outcome == OutcomeSkipped {
 			continue
 		}
+		if st.Outcome == OutcomeRefusedByExclusion {
+			sum.Refused++
+			continue
+		}
+		sum.Ran++
 		if st.Expect != nil && st.Expect.Pass {
 			sum.Passed++
 		} else {

@@ -116,6 +116,12 @@ func Evaluate(spec *benchspec.Benchmark, st *Step) *ExpectResult {
 	}
 	want := spec.Expect.Want()
 	got := st.Outcome
+	if got == OutcomeRefusedByExclusion {
+		// Not judged: the step did not run, on purpose (see RunSummary.Refused).
+		res.Pass = false
+		res.Checks = append(res.Checks, Check{Name: "outcome", Pass: false, Detail: "not judged: refused by an exclusion (" + st.Reason + ")"})
+		return res
+	}
 	switch {
 	case got == OutcomeError || got == OutcomeCancelled || got == OutcomeSkipped:
 		add("outcome", false, fmt.Sprintf("wanted %s, the step ended %s", want, got))

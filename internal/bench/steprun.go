@@ -401,7 +401,9 @@ func (br *benchRun) loadModel(cold bool) bool {
 	case ans.Status >= 300:
 		x.a.markLoaded(b.Profile, false)
 		st.HTTPStatus, st.Reason = ans.Status, ans.Msg
-		if ans.Status == 503 || (ans.Status >= 400 && ans.Status < 500) {
+		if ans.Status == 503 && ans.Reason == ReasonNodeExcluded {
+			br.fail(OutcomeRefusedByExclusion, ans.Msg)
+		} else if ans.Status == 503 || (ans.Status >= 400 && ans.Status < 500) {
 			br.fail(OutcomeRefused, ans.Msg)
 		} else {
 			br.fail(OutcomeFailed, ans.Msg)
@@ -478,7 +480,11 @@ func (br *benchRun) loadModel(cold bool) bool {
 		if st.HTTPStatus == 0 {
 			st.HTTPStatus = 503
 		}
-		br.fail(OutcomeRefused, st.Reason)
+		if refused.Reason == ReasonNodeExcluded {
+			br.fail(OutcomeRefusedByExclusion, st.Reason)
+		} else {
+			br.fail(OutcomeRefused, st.Reason)
+		}
 		return false
 	}
 	if failure != "" {
@@ -1148,7 +1154,7 @@ func (x *suiteExec) finish(br *benchRun) {
 	br.mu.Unlock()
 	st.Stats = ComputeStats(reqs)
 	switch st.Outcome {
-	case OutcomeReady, OutcomeRefused, OutcomeFailed:
+	case OutcomeReady, OutcomeRefused, OutcomeRefusedByExclusion, OutcomeFailed:
 		st.State = StepDone
 	case OutcomeCancelled:
 		st.State = StepCancelled
