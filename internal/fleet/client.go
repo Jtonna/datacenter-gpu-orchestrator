@@ -20,6 +20,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // Member is the subset of a fleet member (contract/fleet.schema.json) used
@@ -174,8 +175,11 @@ var _ View = (*Client)(nil)
 func (c *Client) Run(ctx context.Context) error {
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); c.feedLoop(ctx) }()
-	go func() { defer wg.Done(); c.probeLoop(ctx) }()
+	// Each loop restarts alone. A failed feed reconnects, and its view
+	// counts as stale until the new connection's snapshot arrives.
+	supervise.Go(ctx, supervise.Spec{Name: "fleet.feed", Policy: supervise.Restart, Done: wg.Done,
+		Rebuild: func(any) { c.feedReset() }}, c.feedLoop)
+	supervise.Go(ctx, supervise.Spec{Name: "fleet.probe", Policy: supervise.Restart, Done: wg.Done}, c.probeLoop)
 	wg.Wait()
 	c.opts.HTTPClient.CloseIdleConnections()
 	return nil
@@ -454,9 +458,19 @@ func (c *Client) wakeLocked() {
 
 func (c *Client) touch() {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.haveByte, c.lastByte = true, c.opts.Clock()
 	c.checkStaleLocked()
-	c.mu.Unlock()
+}
+
+// feedReset is the feed's rebuild after a failure: disconnected, and no byte
+// counts as received, so the view is stale until the next snapshot.
+func (c *Client) feedReset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.haveByte = false
+	c.connected = false
+	c.wakeLocked()
 }
 
 // checkStaleLocked logs the view becoming stale (age > stale_after) and
@@ -734,9 +748,11 @@ func (c *Client) runProbe(ctx context.Context) (total, used int, err error) {
 
 func (c *Client) probeLoop(ctx context.Context) {
 	for {
-		c.mu.Lock()
-		c.checkStaleLocked() // a quiet feed produces no events to notice it on
-		c.mu.Unlock()
+		func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			c.checkStaleLocked() // a quiet feed produces no events to notice it on
+		}()
 		c.probeOnce(ctx)
 		t := time.NewTimer(c.opts.ProbeInterval)
 		select {
