@@ -109,7 +109,25 @@ Each run is compared with its baseline. `regression: true` means the load was mo
 
 Before you compare numbers, check `env` with `env=same`: a different llama build, configuration or program version changes results. Label every number you report with the profile, the nodes and the link it was measured on.
 
-## 7. Good practice
+## 7. Results measured elsewhere
+
+A driver script that measures outside the runner (coding tasks scored by tests, a context-size ladder) can store its results on the scheduler so that they show on the Benchmarks page under "External results", beside the suites. An external result set is a document: an `id` (the benchmark id rule), a `title`, an optional `description` and `note`, `tables` (each with a `title`, ordered `columns` of `key`, `label`, `unit` and optional `higher_is_better`, and `rows` that map column keys to a number, a string or null; a row may also name a `model` and a `profile`, and the page links the profile when it exists), and optional `attachments` (`name` and `text`, such as a task statement). Nothing is run and no profile has to exist.
+
+| Ask | REST | MCP |
+|---|---|---|
+| Store a set (409 when the id exists) | `POST /api/bench/external` | |
+| Replace a set (keeps `created_at`) | `PUT /api/bench/external/<id>` | |
+| List the sets, without rows or attachment texts | `GET /api/bench/external` | `list_external_results` |
+| One set with everything | `GET /api/bench/external/<id>` | `get_external_results` |
+| Remove a set | `DELETE /api/bench/external/<id>` | |
+
+Limits: a body of at most 2 MiB (413 above it), 50 tables, 2,000 rows and 60 columns per table, 20 attachments of at most 512 KiB each (422 above them). Changes are in the audit log with section `bench` and target `external:<id>`, with the caller's `X-Source` and `X-Actor`.
+
+Two converters in `scripts/` (Python 3, standard library) turn the summaries of the coding and context drivers into a set; without `--post` they print the body, `--replace` sends a PUT, `--attach` adds a text file:
+
+    scripts/bench-external-context.py summary.json --ladder ladder.json --post $B
+
+## 8. Good practice
 
 - Measure the load on its own (a `load` phase), then requests on the loaded model. Mixing them hides where time goes.
 - Use `warmup` before measured requests: the first request after a load is slow.
