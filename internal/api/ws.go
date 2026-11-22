@@ -16,6 +16,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/proxy"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // The live channel (design 9.2): GET /ws, a WebSocket that carries JSON text
@@ -88,13 +89,14 @@ type wsHub struct {
 	onStatus func(v any)                      // every status the loop looked at
 	log      func(msg string, args ...any)
 
-	mu       sync.Mutex
-	clients  map[*wsClient]struct{}
-	reserved int
-	closed   bool
-	quit     chan struct{}
-	wg       sync.WaitGroup
-	cancels  []func()
+	mu        sync.Mutex
+	clients   map[*wsClient]struct{}
+	reserved  int
+	closed    bool
+	quit      chan struct{}
+	wg        sync.WaitGroup
+	cancels   []func()
+	stopLoops context.CancelFunc // ends the status and ping loops' supervision
 
 	// the last status sent, to send only changes
 	lastSig  string
@@ -137,15 +139,15 @@ func (h *wsHub) drop(c *wsClient, code websocket.StatusCode, reason string) {
 		delete(h.clients, c)
 		h.mu.Unlock()
 		close(c.done)
-		go func() {
+		go supervise.Once("api.ws.close", func() {
 			done := make(chan struct{})
-			go func() { c.conn.Close(code, reason); close(done) }()
+			go supervise.Once("api.ws.close", func() { c.conn.Close(code, reason); close(done) }, func(any) { c.conn.CloseNow() })
 			select {
 			case <-done:
 			case <-time.After(2 * time.Second):
 				c.conn.CloseNow()
 			}
-		}()
+		}, nil)
 	})
 }
 
@@ -223,7 +225,7 @@ func (h *wsHub) serve(ctx context.Context, conn wsConn) {
 	c.send <- wsFrame(TopicHello, h.now(), h.hello())
 	h.sendSnapshot(c, true, true)
 
-	go func() { // writer
+	go supervise.Once("api.ws.writer", func() { // writer
 		defer h.wg.Done()
 		for {
 			select {
@@ -241,7 +243,7 @@ func (h *wsHub) serve(ctx context.Context, conn wsConn) {
 				return
 			}
 		}
-	}()
+	}, func(any) { h.drop(c, websocket.StatusInternalError, "internal error") }) // the browser reconnects
 	// reader: subscribe, pong; anything else is ignored
 	for {
 		_, data, err := conn.Read(ctx)
@@ -311,13 +313,13 @@ func (h *wsHub) sendModels(c *wsClient) {
 	if h.models == nil {
 		return
 	}
-	go func() {
+	go supervise.Once("api.ws.models", func() { // a failure sends nothing; the client gets the next change
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		if b := h.models(ctx); b != nil && c.wants(TopicModels) {
 			h.enqueue(c, rawFrame(TopicModels, h.now(), b))
 		}
-	}()
+	}, nil)
 }
 
 // publishModels sends the entries that changed between two catalogs.
@@ -390,7 +392,6 @@ func anyLoading(v any) bool {
 // statusLoop sends the status when it changed, at most once per tick; while a
 // load is in progress at least every loadEvery, and at least every idleEvery.
 func (h *wsHub) statusLoop() {
-	defer h.wg.Done()
 	t := time.NewTicker(h.statusEvery)
 	defer t.Stop()
 	for {
@@ -408,9 +409,10 @@ func (h *wsHub) statusLoop() {
 		if err != nil {
 			continue
 		}
-		if h.onStatus != nil {
-			h.onStatus(v)
+		if h.onStatus != nil { // catalog code: its failure must not stop the status
+			supervise.Guard("api.catalog.status", func() { h.onStatus(v) }, nil)
 		}
+		supervise.Point("api.ws.status")
 		sig := statusSignature(v)
 		now := h.now()
 		due := sig != h.lastSig || now.Sub(h.lastSent) >= h.idleEvery || (anyLoading(v) && now.Sub(h.lastSent) >= h.loadEvery)
@@ -423,7 +425,6 @@ func (h *wsHub) statusLoop() {
 }
 
 func (h *wsHub) pingLoop() {
-	defer h.wg.Done()
 	t := time.NewTicker(h.pingEvery)
 	defer t.Stop()
 	for {
@@ -437,9 +438,14 @@ func (h *wsHub) pingLoop() {
 }
 
 func (h *wsHub) start() {
+	ctx, cancel := context.WithCancel(context.Background())
+	h.stopLoops = cancel
 	h.wg.Add(2)
-	go h.statusLoop()
-	go h.pingLoop()
+	// A failed status loop starts over with nothing sent, so its next tick
+	// sends every client a full status.
+	supervise.Go(ctx, supervise.Spec{Name: "api.ws.status", Policy: supervise.Restart, Done: h.wg.Done,
+		Rebuild: func(any) { h.lastSig, h.lastSent = "", time.Time{} }}, func(context.Context) { h.statusLoop() })
+	supervise.Go(ctx, supervise.Spec{Name: "api.ws.ping", Policy: supervise.Restart, Done: h.wg.Done}, func(context.Context) { h.pingLoop() })
 }
 
 // close drops every client and stops the loops. Safe to call twice.
@@ -457,6 +463,9 @@ func (h *wsHub) close() {
 	cancels := h.cancels
 	h.cancels = nil
 	close(h.quit)
+	if h.stopLoops != nil {
+		h.stopLoops() // a loop waiting to restart does not hold the close up
+	}
 	h.mu.Unlock()
 	for _, f := range cancels {
 		f()

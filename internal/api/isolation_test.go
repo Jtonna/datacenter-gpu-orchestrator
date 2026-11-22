@@ -141,3 +141,32 @@ func TestSystemListsBackgroundTasks(t *testing.T) {
 		t.Fatalf("the failed task: %v", g)
 	}
 }
+
+// The status loop fails once: it restarts alone, and since its rebuild
+// forgets what it sent, the next tick sends every client a full status even
+// though nothing changed.
+func TestWSStatusLoopRestartsWithAFullStatus(t *testing.T) {
+	isolate(t)
+	e := newEnv(t, chatOK, func(o *Options) {
+		o.WSStatusInterval = 50 * time.Millisecond
+		o.WSIdleInterval = time.Hour
+		o.statusSource = func(ctx context.Context) (any, error) {
+			return map[string]any{"n": 1, "instances": []any{}}, nil
+		}
+	})
+	c := dialWS(t, e, nil)
+	c.until(t, "status", 3*time.Second) // the snapshot on connect
+	c.collect(300 * time.Millisecond)   // the loop's first send of this content, if any
+	if n := countType(c.collect(300*time.Millisecond), "status"); n != 0 {
+		t.Fatalf("%d status messages for an unchanged status before the failure", n)
+	}
+	h, fired := supervise.PanicAtForTest("api.ws.status", 1)
+	defer supervise.SetHookForTest(h)()
+	c.until(t, "status", 3*time.Second)
+	if fired() != 1 {
+		t.Fatalf("fired %d", fired())
+	}
+	if s := taskStats("api.ws.status"); s.Restarts != 1 || s.State != "running" {
+		t.Fatalf("task stats %+v", s)
+	}
+}

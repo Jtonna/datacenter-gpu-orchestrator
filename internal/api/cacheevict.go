@@ -9,6 +9,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/filecache"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/proxy"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // localCacheMu makes the scheduler machine's evictions one at a time.
@@ -44,12 +45,19 @@ func (s *Server) handleCacheEvict(w http.ResponseWriter, r *http.Request) {
 	var wg sync.WaitGroup
 	for i, id := range req.Nodes {
 		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		go supervise.Once("api.cache_evict", func() {
 			n := bench.NodeEvict{ID: id}
+			answered := false
+			defer func() { // a failure is this node's error, not the request's
+				if !answered {
+					n.Reason, n.Error = filecache.ReasonFailed, "internal error"
+					ans.Nodes[i] = n
+				}
+				wg.Done()
+			}()
 			if s.opts.Pool == nil {
 				n.Reason, n.Error = "no_agents", "the scheduler has no agent membership"
-				ans.Nodes[i] = n
+				ans.Nodes[i], answered = n, true
 				return
 			}
 			res := s.opts.Pool.EvictFileCache(r.Context(), id, p.Model)
@@ -57,8 +65,8 @@ func (s *Server) handleCacheEvict(w http.ResponseWriter, r *http.Request) {
 			if a := res.Answer; a != nil {
 				n.EvictFigures = &bench.EvictFigures{FileBytes: a.FileBytes, CachedBefore: a.CachedBefore, CachedAfter: a.CachedAfter, DurationS: a.DurationS}
 			}
-			ans.Nodes[i] = n
-		}()
+			ans.Nodes[i], answered = n, true
+		}, nil)
 	}
 	if req.Local {
 		ans.Local = s.evictLocal(cfg.ModelsDir, p.Model)
