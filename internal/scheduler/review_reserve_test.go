@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/placer"
 )
 
@@ -289,5 +290,51 @@ func TestReview_S5_AverageIsResetWhenThePlacementChanges(t *testing.T) {
 	h.viewChanged()
 	if r := h.c.dryPlan("m"); r.Action == PlanStart {
 		t.Fatalf("a window later the average counts again: plan %s", r.Action)
+	}
+}
+
+// cycle loads m again on node a, lets the node give up gave MiB, and ends
+// the load normally (an unload) or abnormally (the worker exits).
+func cycle(h *harness, gave int, normal bool) {
+	h.t.Helper()
+	h.request("m")
+	setLoad(h, "m", rpcDev(addrA, 7000, 700, 300)) // measured 8000
+	h.healthy("m")
+	h.view.modify("a", func(n *core.Node) { n.FreeMiB -= gave })
+	h.viewChanged()
+	if normal {
+		h.step(evUnload{profile: "m", force: true})
+	} else {
+		in := h.inst("m")
+		h.exitChild(in.iid, instance.ExitStatus{Code: 1})
+		h.step(evViewChanged{})
+	}
+	h.advance(time.Minute)
+	h.view.modify("a", func(n *core.Node) { n.FreeMiB += gave })
+	h.viewChanged()
+}
+
+// S6: a peak is the peak of the latest complete load-to-unload cycle that
+// ended normally: one spike holds only until a normal cycle without it
+// ends. A cycle that ends abnormally keeps the peak before it.
+func TestReview_S6_APeakFollowsTheLatestNormalCycle(t *testing.T) {
+	h := newHarness(t).nodes(psNode("a", 2, 12400))
+	h.cfg.Defaults.FillReserveKiBPerToken = 8
+	h.llama("m", 8000, func(p *core.Profile) { p.Ctx = 65536 }) // need 8000 + fill 512
+	cycle(h, 9500, true)                                        // a spike
+	if n := planNode(t, h, "m"); n.WillTakeMiB != 9500 || n.Basis != BasisPeak {
+		t.Fatalf("after the spike: %+v, want the peak 9500", n)
+	}
+	cycle(h, 8900, false) // ends abnormally: the spike stays
+	if n := planNode(t, h, "m"); n.WillTakeMiB != 9500 {
+		t.Fatalf("after an abnormal cycle: %+v, want the peak 9500 kept", n)
+	}
+	cycle(h, 8700, true) // a normal cycle without the spike replaces it
+	if n := planNode(t, h, "m"); n.WillTakeMiB != 8700 || n.Basis != BasisPeak {
+		t.Fatalf("after a normal cycle: %+v, want its peak 8700", n)
+	}
+	cycle(h, 8100, true) // below need + fill: need + fill counts
+	if n := planNode(t, h, "m"); n.WillTakeMiB != 8512 || n.Basis != BasisMeasured {
+		t.Fatalf("after a low cycle: %+v, want 8512", n)
 	}
 }

@@ -356,6 +356,7 @@ func (c *schedCore) removeInst(in *inst, settle bool) {
 			e.victims = slices.DeleteFunc(e.victims, func(v string) bool { return v == in.prof.Name })
 		}
 	}
+	c.endPeakCycle(in) // reserve.go
 	for _, n := range in.placement.Nodes {
 		c.releaseNode(n.ID, in.prof.Name, settle)
 	}

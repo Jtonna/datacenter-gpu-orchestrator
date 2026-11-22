@@ -354,8 +354,8 @@ The agent's own watchdog (`--watchdog-floor-mib`, default 1000) kills a launch w
 
 The memory reservation rule is off by default. It is changed at run time like any setting, and `GET /api/system` shows what is in force under `reserve`:
 
-- `fill_reserve_kib_per_token` (0, recommended 8): every node of a placement keeps this x the profile's context for the growth while the conversation fills the context (180 to 460 MiB per node was measured). Once a profile has a stored peak, the peak is used instead.
-- `placement_uses_reserved` (off): place on the smaller of the latest and the 30 s average free memory (`free_average_window`), and count what is placed on a node at the larger of its reserved figure and what the node measures.
+- `fill_reserve_kib_per_token` (0, recommended 8): every node of a placement keeps this x the profile's context for the growth while the conversation fills the context (180 to 460 MiB per node was measured). A stored peak (the most a node gave up for the profile in its latest load-to-unload cycle that ended normally) can raise that figure, never lower it. One spike holds until the next normal cycle ends; to clear it at once, forget the learned need (`POST /api/forget-need`).
+- `placement_uses_reserved` (off): place on the smaller of the latest and the 30 s average free memory (`free_average_window`), and count what is placed on a node at the larger of its reserved figure and what the node measures (this lowers the figure shown for a held node; held nodes are not placed on). The average is not used for one window after a node's model changes. A budget is never above the one the default rules give. With any reservation setting on, every placement is held to the plan's `memory` rows, so the plan's `fits` is the decision (`decides: true`).
 - `margin_measured_mib` (unset): per-node margin for a measured need, in place of `split_skew_margin`. `margin_estimated_percent` with `margin_estimated_min_mib` (unset): the same for an estimate.
 - `reserved_drift_warn_mib` (500): a node that uses this much more than is reserved on it is flagged in the node view.
 

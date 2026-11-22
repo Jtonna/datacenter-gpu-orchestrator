@@ -159,6 +159,9 @@ type inst struct {
 	// baseFree is each node's free figure when the instance was created
 	// (reserve.go): what the node gives up for it is measured against it.
 	baseFree map[core.NodeID]int
+	// cyclePeak is the most each node gave up for this instance in this
+	// load-to-unload cycle (reserve.go, endPeakCycle).
+	cyclePeak map[core.NodeID]int
 
 	benchRun   string // the bench run whose request started this instance (history records only)
 	served     int    // requests admitted (logged when the instance stops)

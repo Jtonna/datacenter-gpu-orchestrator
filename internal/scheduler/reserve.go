@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"strings"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
@@ -298,6 +299,10 @@ func (c *schedCore) trackPeaks() {
 			peak := n.PeakMiB // a peak starts from what the node gave up, not from the load's figure
 			if used, ok := c.measuredUse(in, n.ID); ok {
 				peak = max(peak, used)
+				if in.cyclePeak == nil {
+					in.cyclePeak = map[core.NodeID]int{}
+				}
+				in.cyclePeak[n.ID] = max(in.cyclePeak[n.ID], used)
 			}
 			if peak > n.PeakMiB {
 				if peak >= n.PeakMiB+peakStoreStepMiB || n.PeakMiB == 0 {
@@ -312,6 +317,44 @@ func (c *schedCore) trackPeaks() {
 			c.changed = true
 		}
 	}
+}
+
+// endPeakCycle ends instance in's load-to-unload cycle (removeInst). When it
+// ended normally (an unload, a ttl, an eviction, a shutdown: not a failed
+// worker or a lost node), the stored per-node peaks become this cycle's
+// peaks, so one spike holds only until a normal cycle without it ends
+// (review S6). A node whose use was never measured in the cycle keeps no
+// peak. A cycle that ended abnormally keeps the peaks it raised.
+func (c *schedCore) endPeakCycle(in *inst) {
+	if in.readyAt.IsZero() || len(in.cyclePeak) == 0 || !normalStop(in) {
+		return
+	}
+	l := c.learnedFor(in.prof)
+	if l == nil || len(l.Nodes) == 0 || !slices.Equal(l.placement, in.nodeIDs()) {
+		return
+	}
+	changed := false
+	for i := range l.Nodes {
+		n := &l.Nodes[i]
+		if p := in.cyclePeak[n.ID]; p != n.PeakMiB {
+			n.PeakMiB, changed = p, true
+		}
+	}
+	if changed {
+		l.peakAt = c.now
+		c.storeLearned(in.prof.Name)
+		c.changed = true
+	}
+}
+
+// normalStop: the instance was stopped by the scheduler or an operator, not
+// by a failure.
+func normalStop(in *inst) bool {
+	r := in.stopReason
+	if r == "" && in.victimOf != "" {
+		return true
+	}
+	return r == "admin" || r == "ttl" || r == "shutdown" || strings.HasPrefix(r, "evicted for ")
 }
 
 // ---- the node side ----
