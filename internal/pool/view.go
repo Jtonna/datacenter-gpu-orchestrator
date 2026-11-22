@@ -216,12 +216,19 @@ func (p *Pool) nodeFromAgentLocked(cfg *config.Config, a *agent) (core.Node, boo
 		return n, tiered
 	}
 	n.TotalMiB, n.FreeMiB, n.FreeUnknown = int(d.TotalMiB), int(max(d.FreeMiB, 0)), false
+	avgAvail, avgDev, avgOK := a.memAverage()
+	if avgOK {
+		n.FreeAvgMiB, n.FreeAvgKnown = int(max(avgDev, 0)), true
+	}
 	// Shared by the device or by the tier (CR-9 review): the agent holds such
 	// a device to MemAvailable too, so Potluck places on the same figure.
 	if d.SharesSystemMemory || n.SharedMemory {
 		n.SharedMemory = true
 		usable := a.hb.MemAvailableMiB - int64(n.WatchdogFloorMiB)
 		n.FreeMiB = int(max(min(d.FreeMiB, usable), 0))
+		if avgOK {
+			n.FreeAvgMiB = int(max(min(avgDev, avgAvail-int64(n.WatchdogFloorMiB)), 0))
+		}
 	}
 	return n, tiered
 }
@@ -430,6 +437,9 @@ type NodeFacts struct {
 	LaunchState     string          `json:"launch_state,omitempty"`
 	Devices         any             `json:"devices,omitempty"`
 	MemAvailMiB     *int64          `json:"mem_available_mib,omitempty"`
+	// MemAvailAvgMiB is mem_available_mib averaged over the heartbeats of
+	// defaults.free_average_window (memavg.go). Additive.
+	MemAvailAvgMiB *int64 `json:"mem_available_avg_mib,omitempty"`
 	Stats           json.RawMessage `json:"stats,omitempty"`
 	StatsNote       string          `json:"stats_note,omitempty"`
 	// ExtraDevicesIgnored counts the node's devices of its platform backend
@@ -515,6 +525,9 @@ func (p *Pool) Facts() []NodeFacts {
 			f.ModelSource, f.Devices = FeedModelSource{hb.ModelSource, a.reg.ModelSource.Target}, hb.Devices
 			m := hb.MemAvailableMiB
 			f.MemAvailMiB = &m
+			if avg, _, ok := a.memAverage(); ok {
+				f.MemAvailAvgMiB = &avg
+			}
 			_, f.ExtraDevicesIgnored, _ = pickDevice(a)
 			f.StopReason, f.StopMessage = hb.StopReason, hb.StopMessage
 			f.HostUptimeS, f.BootID = hb.HostUptimeS, hb.BootID
