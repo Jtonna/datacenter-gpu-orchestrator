@@ -350,6 +350,21 @@ A node whose GPU uses system memory freezes when a load takes all of it, so the 
 
 The agent's own watchdog (`--watchdog-floor-mib`, default 1000) kills a launch whose node falls below its floor.
 
+#### Tightening or loosening the reservation
+
+The memory reservation rule is off by default. It is changed at run time like any setting, and `GET /api/system` shows what is in force under `reserve`:
+
+- `fill_reserve_kib_per_token` (0, recommended 8): every node of a placement keeps this x the profile's context for the growth while the conversation fills the context (180 to 460 MiB per node was measured). Once a profile has a stored peak, the peak is used instead.
+- `placement_uses_reserved` (off): place on the smaller of the latest and the 30 s average free memory (`free_average_window`), and count what is placed on a node at the larger of its reserved figure and what the node measures.
+- `margin_measured_mib` (unset): per-node margin for a measured need, in place of `split_skew_margin`. `margin_estimated_percent` with `margin_estimated_min_mib` (unset): the same for an estimate.
+- `reserved_drift_warn_mib` (500): a node that uses this much more than is reserved on it is flagged in the node view.
+
+To tighten, raise the fill reserve or the margins; to loosen, lower them or set them back to 0. Check a profile before and after with `POST /api/plan`: its `memory` section shows per node what it will take, what the node has and what remains.
+
+```sh
+curl -s -X PATCH $H/api/config/settings -H 'X-Comment: reserve on' -d '{"fill_reserve_kib_per_token": 8, "placement_uses_reserved": true, "margin_measured_mib": 300}'
+```
+
 ### Event history
 
 Loads and how they ended, stalls, low-memory cancels, lost nodes, evictions and unloads are kept in `POTLUCK_ROOT/history` as JSON Lines (rotated at 16 MiB, 20 files kept). The web UI shows them.
