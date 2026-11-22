@@ -356,6 +356,19 @@ func Report(name string, p any, stack []byte) {
 	failNoFatal(name, "report", p, stack, false)
 }
 
+// ReportRepanic is for a deferred call in code whose panics something else
+// already isolates (net/http's per-request recover): it reports the panic
+// like Report and panics again with the same value, so that code behaves as
+// before. A value pass says yes to (http.ErrAbortHandler) is not reported.
+func ReportRepanic(name string, pass func(p any) bool) {
+	if p := recover(); p != nil {
+		if pass == nil || !pass(p) {
+			Report(name, p, debug.Stack())
+		}
+		panic(p)
+	}
+}
+
 // fail reports a failure and calls Fatal when it escalates; it says whether
 // it did.
 func fail(name, kind string, p any, stack []byte, exit bool) bool {

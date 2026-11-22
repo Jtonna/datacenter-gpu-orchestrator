@@ -274,3 +274,26 @@ func TestDelay(t *testing.T) {
 		}
 	}
 }
+
+// ReportRepanic reports and panics again with the same value; the pass
+// function's values are not reported.
+func TestReportRepanic(t *testing.T) {
+	setup(t)
+	run := func(v any) (got any) {
+		defer func() { got = recover() }()
+		func() {
+			defer ReportRepanic("http", func(p any) bool { return p == "abort" })
+			panic(v)
+		}()
+		return nil
+	}
+	if got := run("handler bug"); got != "handler bug" {
+		t.Fatalf("re-panicked with %v", got)
+	}
+	if got := run("abort"); got != "abort" {
+		t.Fatalf("re-panicked with %v", got)
+	}
+	if s, _ := stat("http"); s.Failures != 1 || s.Policy != "report" {
+		t.Fatalf("stats %+v", s)
+	}
+}

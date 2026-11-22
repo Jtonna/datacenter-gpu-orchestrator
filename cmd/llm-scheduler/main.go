@@ -283,9 +283,9 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 	poolDone := make(chan struct{}) // closed when the pool's loop has returned (agents membership)
 	defer bgCancel()
 	self.SetLogger(log)
-	go self.Run(bg)
-	if logRelay != nil {
-		go logRelay.WatchStore(bg) // warns when the store's retention or disk cap differ from the settings
+	go supervise.Once("selflog", func() { self.Run(bg) }, nil) // its loops are supervised inside
+	if logRelay != nil {                                       // warns when the store's retention or disk cap differ from the settings
+		supervise.Go(bg, supervise.Spec{Name: "logrelay.watch_store", Policy: supervise.Restart}, logRelay.WatchStore)
 	}
 	launcher := &instance.ProcessLauncher{Ports: ports, LogDir: cfg.ChildLogDir, LogKeep: cfg.ChildLogKeep, Logger: log,
 		Tap: func(profile string, id uint64) instance.ChildTap { return self.ChildTap(profile, id) }}
@@ -320,8 +320,8 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 		supervise.Go(bg, supervise.Spec{Name: "pool.check_lost", Policy: supervise.Exit, Done: func() { close(poolDone) }}, pl.Run)
 	} else {
 		fc = fleet.New(cfg, fleet.Options{Logger: log})
-		go func() { fc.Run(bg); close(fleetDone) }()
-		go checkFleet(bg, cfg, log)
+		go supervise.Once("fleet.run", func() { defer close(fleetDone); fc.Run(bg) }, nil) // its loops are supervised inside
+		go supervise.Once("fleet.check", func() { checkFleet(bg, cfg, log) }, nil)
 		view = fc
 	}
 
@@ -421,6 +421,9 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 	apiSrv.SetMCPTools(mcpSrv.ToolInfo)
 	apiSrv.Warm()                                                           // the model catalog is built in the background, before anyone asks
 	root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { // not a ServeMux: it would clean paths the API serves verbatim
+		// A handler panic is logged with its stack and counted as task http
+		// (never escalated); net/http then recovers it as before.
+		defer supervise.ReportRepanic("http", func(p any) bool { return p == http.ErrAbortHandler })
 		if r.URL.Path == "/mcp" {
 			mcpSrv.ServeHTTP(w, r)
 			return
@@ -429,7 +432,8 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 	})
 	httpSrv := &http.Server{Handler: root, ReadHeaderTimeout: 10 * time.Second}
 	serveErr := make(chan error, 1)
-	go func() { serveErr <- httpSrv.Serve(ln) }()
+	go supervise.Once("http.serve", func() { serveErr <- httpSrv.Serve(ln) }, // a failure here stops Potluck as a Serve error does
+		func(p any) { serveErr <- fmt.Errorf("internal error: %v", p) })
 	if benchMgr != nil {
 		benchMgr.Start(bg)
 	}
@@ -455,14 +459,14 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 	grace := svc.Config().Defaults.ShutdownGrace + shutdownSlack
 	sctx, scancel := context.WithTimeout(context.Background(), grace)
 	defer scancel()
-	go func() {
+	go supervise.Once("main.second_signal", func() {
 		select {
 		case <-sigs:
 			log.Warn("second signal: stopping everything at once")
 			scancel()
 		case <-sctx.Done():
 		}
-	}()
+	}, nil)
 	if benchMgr != nil { // a running benchmark is cancelled and unloads what it loaded while the API still answers
 		bmctx, bmcancel := context.WithTimeout(sctx, 60*time.Second)
 		benchMgr.Stop(bmctx)
