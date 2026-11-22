@@ -295,10 +295,18 @@ func (c *Config) validateDefaults(add func(string, ...any)) {
 		name string
 		v    int
 	}{{"device_overhead_mib", d.DeviceOverheadMiB}, {"min_share_mib", d.MinShareMiB}, {"cache_ram_mib", d.CacheRAMMiB},
-		{"load_memory_floor_mib", d.LoadMemoryFloorMiB}} {
+		{"load_memory_floor_mib", d.LoadMemoryFloorMiB}, {"fill_reserve_kib_per_token", d.FillReserveKiBPerToken},
+		{"reserved_drift_warn_mib", d.ReservedDriftWarnMiB}, {"margin_measured_mib", d.MarginMeasuredMiB},
+		{"margin_estimated_min_mib", d.MarginEstimatedMinMiB}} {
 		if x.v < 0 {
 			add("defaults: %s: must not be negative", x.name)
 		}
+	}
+	if d.MarginEstimatedPercent < 0 || d.MarginEstimatedPercent > 50 {
+		add("defaults: margin_estimated_percent: must be between 0 and 50, got %d", d.MarginEstimatedPercent)
+	}
+	if d.FreeAverageWindow < 0 {
+		add("defaults: free_average_window: must not be negative, got %v", d.FreeAverageWindow)
 	}
 	switch d.ForcedFitCheck {
 	case ForcedFitOff, ForcedFitWarn, ForcedFitReject:
