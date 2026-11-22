@@ -302,6 +302,9 @@ type EnqueueOptions struct {
 	Baseline string
 	Note     string
 	Trigger  string // manual (default) or schedule
+	// EvictOthers sets evict_others for this run only (nil: the suite's
+	// setting). The run's stored suite snapshot carries the value used.
+	EvictOthers *bool
 }
 
 func newRunID(now time.Time) string {
@@ -375,7 +378,14 @@ func (m *Manager) Enqueue(suiteID string, o EnqueueOptions) (*Run, error) {
 	if len(o.Note) > 500 {
 		return nil, fmt.Errorf("%w: note is longer than 500 characters", ErrInvalid)
 	}
-	plan, err := m.resolve(ss.Spec)
+	spec := ss.Spec
+	if o.EvictOthers != nil {
+		c := *spec
+		v := *o.EvictOthers
+		c.EvictOthers = &v
+		spec = &c
+	}
+	plan, err := m.resolve(spec)
 	if err != nil {
 		return nil, err
 	}

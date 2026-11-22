@@ -440,8 +440,9 @@ func (s *Server) runSuite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Baseline string `json:"baseline"`
-		Note     string `json:"note"`
+		Baseline    string `json:"baseline"`
+		Note        string `json:"note"`
+		EvictOthers *bool  `json:"evict_others"`
 	}
 	body, ok := readBody(w, r)
 	if !ok {
@@ -449,11 +450,11 @@ func (s *Server) runSuite(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(strings.TrimSpace(string(body))) > 0 {
 		if err := benchspec.DecodeStrict(body, &req); err != nil {
-			apiErr(w, http.StatusBadRequest, "the body must be empty or {\"baseline\": \"<run id>\", \"note\": \"...\"}: %v", err)
+			apiErr(w, http.StatusBadRequest, "the body must be empty or {\"baseline\": \"<run id>\", \"note\": \"...\", \"evict_others\": true}: %v", err)
 			return
 		}
 	}
-	run, err := s.opts.Bench.Enqueue(r.PathValue("id"), bench.EnqueueOptions{Baseline: req.Baseline, Note: req.Note})
+	run, err := s.opts.Bench.Enqueue(r.PathValue("id"), bench.EnqueueOptions{Baseline: req.Baseline, Note: req.Note, EvictOthers: req.EvictOthers})
 	if err != nil {
 		s.storeErr(w, err)
 		return

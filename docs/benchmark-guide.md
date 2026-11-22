@@ -45,7 +45,9 @@ A `load` phase normally finds the model file partly in the nodes' file caches, l
 
 The Benchmarks page shows a "cold: verified" or "cold: not guaranteed" badge on the phase, with the reason on hover, and a table of each machine's cache before and after.
 
-The template "Cold, reload, loaded" measures all three in one benchmark: a cold load, the first answer, three measured requests on the loaded model, an unload, a reload from the file cache, and three requests after it. Its result row shows the cold load and reload seconds, the time to first token after each, and the steady decode speed. Copy it from the schema, put your profile in, and save it:
+`cold` is an option of a load phase like any other, so any benchmark can use it. A step with a cold load phase also shows a row with each load phase under its own label (its seconds and the time to first token after it) and each requests phase's decode speed.
+
+The template "Cold, reload, loaded" is a starting point, an ordinary benchmark you can edit: a cold load, the first answer, three measured requests on the loaded model, an unload, a reload from the file cache, and three requests after it. Copy it from the schema, put your profile in, and save it:
 
 ```sh
 curl -s $B/api/bench/schema | jq '.templates[] | select(.id=="cold-reload-loaded") | .benchmark | .id="gemma12b-cold" | .profile="gemma-3-12b"' | curl -s -X POST $B/api/bench/benchmarks -d @-
@@ -87,9 +89,9 @@ Unknown profiles, bad ids and unknown fields are refused with `400` or `422` and
 curl -s -X POST $B/api/bench/suites/gemma-scaling/run -d '{"note":"after the firmware update"}'
 ```
 
-MCP: `run_suite` with `id`, optional `baseline` and `note`. The answer is the queued run. Runs go one at a time; others queue.
+MCP: `run_suite` with `id`, optional `baseline`, `note` and `evict_others`. The answer is the queued run. Runs go one at a time; others queue.
 
-- **Idle first.** Benchmarks load and unload real models. With `only_when_idle` a run does not start, and pauses between benchmarks, while another model is loaded, a request that is not the run's is in flight, or anything is queued. A model someone used stays loaded for its `ttl` (300 s by default), so a run may wait that long. After `idle_wait_s` the run ends `skipped` and keeps what it measured. Set `only_when_idle: false` only when nobody else uses the pool. With `evict_others: true` the run does not wait for other people's models that are loaded but idle; its loads may make the scheduler unload them to make room, as any load does. Requests in flight and the queue are still waited for.
+- **Idle first.** Benchmarks load and unload real models. With `only_when_idle` a run does not start, and pauses between benchmarks, while another model is loaded, a request that is not the run's is in flight, or anything is queued. A model someone used stays loaded for its `ttl` (300 s by default), so a run may wait that long. After `idle_wait_s` the run ends `skipped` and keeps what it measured. Set `only_when_idle: false` only when nobody else uses the pool. With `evict_others: true` (a suite option, or `{"evict_others": true}` in the body of `POST /api/bench/suites/<id>/run` for that run only) the run does not wait for other people's models that are loaded but idle; its loads may make the scheduler unload them to make room, as any load does. Requests in flight and the queue are still waited for.
 - **Clean-up.** A benchmark that does not end ready (a failed phase, its `timeout_s`, a cancel) ends with a forced unload of its profile before the next benchmark starts. A benchmark that ends ready keeps what it left loaded on purpose until the end of the run.
 - **Cancel.** `POST $B/api/bench/runs/<id>/cancel` (MCP `cancel_run`) stops after the current request; a load or a hold is abandoned at once. It unloads what the run loaded.
 - **Progress.** `GET $B/api/bench/state` (MCP `get_bench_state`): the run's percent, elapsed and estimated seconds left (`null` until the benchmarks have run once), the benchmark and phase in flight with its own percent, the next benchmark and the queue. The same object arrives on `/ws` as `bench` messages with `kind: "progress"`.

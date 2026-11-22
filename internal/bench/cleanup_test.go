@@ -149,3 +149,25 @@ func TestBusyReasonWithEvictOthers(t *testing.T) {
 		t.Fatal("on: a queue entry still waits")
 	}
 }
+
+// evict_others is also an option of one run: the suite stays as it is, and
+// the run's stored suite snapshot says what the run used.
+func TestEvictOthersAsARunOption(t *testing.T) {
+	api := newFake().prof("gemma", fakeProf{})
+	api.external["other"] = true
+	tm := newTestMgr(t, api)
+	tm.bench(gemmaBench)
+	tm.suite(`{"id":"s","benchmarks":["gemma"],"idle_wait_s":0}`)
+	yes := true
+	run, err := tm.m.Enqueue("s", EnqueueOptions{EvictOthers: &yes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := tm.finished(run.ID)
+	if r.State != RunCompleted || !strings.Contains(string(r.Suite), `"evict_others":true`) {
+		t.Fatalf("%s %q %s", r.State, r.Error, r.Suite)
+	}
+	if r := tm.finished(tm.run("s").ID); r.State != RunSkipped { // the suite itself is unchanged
+		t.Fatalf("%s %q", r.State, r.Error)
+	}
+}

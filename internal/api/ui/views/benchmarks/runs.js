@@ -234,32 +234,34 @@ function coldMachines(c) {
   });
 }
 
-// coldSummary is the result row of a cold load benchmark: cold load and
-// reload times, the time to first token after each, and the steady speed.
+// coldSummary is the result row of a step with a cold load phase. It follows
+// the phases, whatever their order: each load phase under its own label
+// (load time, the first token after it) and each requests phase's decode
+// speed, so "cold load" and "reload" are whatever the benchmark called them.
 function coldSummary(step) {
   const ph = step.phases || [];
-  const cold = ph.find(p => p.type === 'load' && p.cold);
-  if (!cold) return null;
-  const reload = ph.find(p => p.type === 'load' && p.idx > cold.idx);
-  const nextLoad = i => { const n = ph.find(p => p.type === 'load' && p.idx > i); return n ? n.idx : Infinity; };
+  if (!ph.some(p => p.type === 'load' && p.cold)) return null;
+  const loads = ph.filter(p => p.type === 'load');
+  const nameOf = p => p.label || (p.cold ? 'cold load' : `load (phase ${p.idx + 1})`);
   const ttftAfter = l => {
-    if (!l) return null;
-    const end = nextLoad(l.idx);
+    const n = loads.find(q => q.idx > l.idx);
+    const end = n ? n.idx : Infinity;
     const r = (step.requests || []).find(q => q.phase_idx > l.idx && q.phase_idx < end && q.ttft_ms != null);
     return r ? r.ttft_ms : null;
   };
-  const steadyPh = ph.find(p => p.type === 'requests' && p.idx > cold.idx && p.stats && p.stats.decode_tps);
-  const loadS = l => (l && l.load && l.load.load_s != null ? num(l.load.load_s, 1) : DASH);
-  const ms = v => (v != null ? num(v) : DASH);
-  const t1 = ttftAfter(cold), t2 = ttftAfter(reload);
+  const items = [];
+  for (const l of loads) {
+    const t = ttftAfter(l);
+    items.push(stat(nameOf(l), l.load && l.load.load_s != null ? num(l.load.load_s, 1) : DASH, l.load && l.load.load_s != null ? 's' : null));
+    items.push(stat('First token after ' + nameOf(l), t != null ? num(t) : DASH, t != null ? 'ms' : null));
+  }
+  for (const p of ph.filter(q => q.type === 'requests' && q.stats && q.stats.decode_tps)) {
+    items.push(stat('Decode, ' + (p.label || `phase ${p.idx + 1}`), num(p.stats.decode_tps.mean, 1), 'tok/s'));
+  }
   return h('div', { key: 'cold-sum' },
-    h('div.day', { style: 'display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center' }, h('b', { style: 'color:var(--text)' }, 'Cold load and reload'), coldBadge(cold.cold)),
-    h('div.stats', { style: 'padding-top:4px' },
-      stat('Cold load', loadS(cold), 's'),
-      stat('Reload', reload ? loadS(reload) : DASH, reload ? 's' : null),
-      stat('First token after the cold load', ms(t1), t1 != null ? 'ms' : null),
-      stat('First token after the reload', ms(t2), t2 != null ? 'ms' : null),
-      stat('Steady decode', steadyPh ? num(steadyPh.stats.decode_tps.mean, 1) : DASH, steadyPh ? 'tok/s' : null)));
+    h('div.day', { style: 'display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center' }, h('b', { style: 'color:var(--text)' }, 'Loads'),
+      loads.filter(l => l.cold).map(l => coldBadge(l.cold))),
+    h('div.stats', { style: 'padding-top:4px' }, items));
 }
 
 const PH_STATE = { done: ['Done', 'use'], failed: ['Failed', 'fail'], cancelled: ['Cancelled', 'n'], skipped: ['Skipped', 'settle'], running: ['Running', 'load'] };

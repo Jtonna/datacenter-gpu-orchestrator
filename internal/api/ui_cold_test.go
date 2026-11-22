@@ -14,7 +14,7 @@ import (
 func TestUIColdLoadKeysMatchTheServer(t *testing.T) {
 	ttft := 812.0
 	step := jsonKeys(t, bench.Step{
-		Phases: []bench.PhaseResult{{Idx: 0, Type: "load", Load: &bench.LoadResult{LoadS: 1},
+		Phases: []bench.PhaseResult{{Idx: 0, Type: "load", Label: "cold load", Load: &bench.LoadResult{LoadS: 1},
 			Cold: &bench.ColdResult{Requested: true, Reason: "not guaranteed: x", Local: &bench.ColdFigures{FileBytes: 1, Error: "e"},
 				Nodes: []bench.ColdNode{{Node: "n", ID: "i"}}}},
 			{Idx: 2, Type: "requests", Stats: &bench.Stats{Decode: &bench.Summary{Mean: 1}}}},
@@ -24,7 +24,7 @@ func TestUIColdLoadKeysMatchTheServer(t *testing.T) {
 	suite := jsonKeys(t, benchspec.Suite{ID: "s", EvictOthers: &yes})
 	runs := uiText(t, "views/benchmarks/runs.js")
 	for _, k := range []string{"cold", "verified", "reason", "local", "nodes", "node", "id", "file_bytes", "cached_before", "cached_after", "error",
-		"phases", "idx", "type", "load", "load_s", "requests", "phase_idx", "ttft_ms", "stats", "decode_tps", "mean"} {
+		"phases", "idx", "type", "label", "load", "load_s", "requests", "phase_idx", "ttft_ms", "stats", "decode_tps", "mean"} {
 		if !strings.Contains(step, `"`+k+`"`) {
 			t.Errorf("the server does not write %q", k)
 		}
