@@ -261,6 +261,11 @@ type nodeState struct {
 	ovFree  int
 	ovUntil time.Time // pre-flight override; zero when none
 
+	// heldChanged is when what is placed on the node last changed (placed or
+	// released): the average free figure is not used for a window after it
+	// (reserve.go, avgStale).
+	heldChanged time.Time
+
 	emptyPF, emptyClaim int
 	hasPF, hasClaim     bool
 

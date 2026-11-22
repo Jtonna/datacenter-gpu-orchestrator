@@ -266,3 +266,28 @@ func TestReview_S4_PlanFitsAgreesWithTheDecision(t *testing.T) {
 		}
 	}
 }
+
+// S5: right after what is placed on a node changes (an unload, an
+// eviction), the average still holds samples from before; it is not used
+// until a whole window has passed, so the re-fit is not refused on the old
+// figures. After the window it counts again.
+func TestReview_S5_AverageIsResetWhenThePlacementChanges(t *testing.T) {
+	h := newHarness(t).nodes(psNode("a", 2, 12400))
+	h.cfg.Defaults.PlacementUsesReserved = true
+	h.llama("v", 8000)
+	h.llama("m", 10000)
+	h.request("v")
+	h.healthy("v")
+	h.step(evUnload{profile: "v", force: true})
+	h.advance(10 * time.Second)                                                          // settled; well inside the 30 s window
+	h.view.modify("a", func(n *core.Node) { n.FreeAvgMiB, n.FreeAvgKnown = 9400, true }) // the samples with v loaded
+	h.viewChanged()
+	if r := h.c.dryPlan("m"); r.Action != PlanStart {
+		t.Fatalf("right after the unload: plan %s %q, want start", r.Action, r.Reason)
+	}
+	h.advance(h.cfg.Defaults.FreeAverageWindow)
+	h.viewChanged()
+	if r := h.c.dryPlan("m"); r.Action == PlanStart {
+		t.Fatalf("a window later the average counts again: plan %s", r.Action)
+	}
+}

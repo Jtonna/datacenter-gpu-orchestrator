@@ -35,6 +35,16 @@ const (
 // before it is written again (the writer merges writes per profile anyway).
 const peakStoreStepMiB = 32
 
+// avgStale: what is placed on node id changed less than a window ago, so its
+// average free figure still holds samples from before (an unloaded or
+// evicted model's): it is not used then (review S5). With a window of 0 the
+// average is the latest sample and never stale.
+func (c *schedCore) avgStale(id core.NodeID) bool {
+	w := c.cfg.Defaults.FreeAverageWindow
+	ns := c.nodes[id]
+	return w > 0 && ns != nil && !ns.heldChanged.IsZero() && c.now.Before(ns.heldChanged.Add(w))
+}
+
 // reserveOn: the fill reserve is on, and with it stored peaks are used.
 func (c *schedCore) reserveOn() bool { return c.cfg.Defaults.FillReserveKiBPerToken > 0 }
 
@@ -353,7 +363,7 @@ func (c *schedCore) reservedBudget(id core.NodeID, n core.Node) int {
 	if n.SharedMemory {
 		free = n.FreeMiB
 	}
-	if n.FreeAvgKnown && n.FreeAvgMiB < free {
+	if n.FreeAvgKnown && !c.avgStale(id) && n.FreeAvgMiB < free {
 		free = n.FreeAvgMiB
 	}
 	free -= c.unmeasuredReserve(id)

@@ -47,6 +47,7 @@ func (c *schedCore) startInstance(p *core.Profile, pl core.Placement, waiters []
 		}
 		ns.holder = p.Name
 		ns.claim = ""
+		ns.heldChanged = c.now
 	}
 	c.insts[p.Name] = in
 	c.recordBaseFree(in) // reserve.go
@@ -382,6 +383,7 @@ func (c *schedCore) releaseNode(id core.NodeID, holder string, settle bool) {
 		return
 	}
 	ns.holder = ""
+	ns.heldChanged = c.now
 	if !settle {
 		// DESIGN: 7.1 ends the pre-flight override "when an instance is
 		// next released from the node", but 7.5 says a returned instance
