@@ -203,7 +203,7 @@ func (p *Pool) nodeFromAgentLocked(cfg *config.Config, a *agent) (core.Node, boo
 	n := core.Node{ID: core.NodeID(a.reg.ID), Hostname: a.reg.Name, Online: !a.lost,
 		Addr:     net.JoinHostPort(a.reg.Addr, strconv.Itoa(p.o.WorkerPort)),
 		Priority: t.Priority, HeadroomMiB: t.HeadroomMiB, SharedMemory: t.SharedMemory, LinkMBs: t.LinkMBs, Settle: t.Settle,
-		Paused: p.admin[a.reg.ID].Paused, FreeUnknown: true, SystemMiB: int(a.reg.MemTotalMiB),
+		Paused: p.pausedLocked(a.reg.ID, a), FreeUnknown: true, SystemMiB: int(a.reg.MemTotalMiB),
 		// The floor is the node's own when its agent reports it (CR-9).
 		WatchdogFloorMiB: int(nodeFloor(cfg, a))}
 	if a.hb == nil {
@@ -401,19 +401,23 @@ func (p *Pool) probeOnce(ctx context.Context) {
 
 // NodeFacts is what status shows about an agent node.
 type NodeFacts struct {
-	ID            string   `json:"id"`
-	Name          string   `json:"name"`
-	Addr          string   `json:"addr"`
-	State         string   `json:"state"` // active, lost, left, removed
-	Install       string   `json:"install,omitempty"`
-	Release       string   `json:"release,omitempty"`
-	Platform      string   `json:"platform,omitempty"`
-	ProgramsReady bool     `json:"programs_ready"`
-	ProgramsError *string  `json:"programs_error"`
-	ModelSource   any      `json:"model_source,omitempty"`
-	Paused        bool     `json:"paused"`
-	HostAgent     bool     `json:"host_agent,omitempty"`
-	LastSeenAgoS  *float64 `json:"last_seen_ago_s,omitempty"`
+	ID            string  `json:"id"`
+	Name          string  `json:"name"`
+	Addr          string  `json:"addr"`
+	State         string  `json:"state"` // active, lost, left, removed
+	Install       string  `json:"install,omitempty"`
+	Release       string  `json:"release,omitempty"`
+	Platform      string  `json:"platform,omitempty"`
+	ProgramsReady bool    `json:"programs_ready"`
+	ProgramsError *string `json:"programs_error"`
+	ModelSource   any     `json:"model_source,omitempty"`
+	Paused        bool    `json:"paused"`
+	// UnpausePending: the operator unpaused the node, but no heartbeat or
+	// registration answer has told its agent yet, so the node still takes no
+	// new load (unplaced paused, with a message). Additive; absent when false.
+	UnpausePending bool     `json:"unpause_pending,omitempty"`
+	HostAgent      bool     `json:"host_agent,omitempty"`
+	LastSeenAgoS   *float64 `json:"last_seen_ago_s,omitempty"`
 	// Role and LaunchID are what the agent last reported in its heartbeat.
 	Role     string  `json:"role,omitempty"`
 	LaunchID *string `json:"launch_id"`
@@ -456,6 +460,10 @@ type NodeFacts struct {
 	Logs *NodeLogs `json:"logs,omitempty"`
 }
 
+// UnpausePendingMessage is the unplaced message of a node whose unpause has
+// not reached its agent yet.
+const UnpausePendingMessage = "unpaused; the node takes load once its agent has been told (with its next heartbeat answer, within a few seconds, or when it registers again)"
+
 // Facts lists every agent node Potluck knows, removed ones included.
 func (p *Pool) Facts() []NodeFacts {
 	now := p.o.Clock()
@@ -466,7 +474,8 @@ func (p *Pool) Facts() []NodeFacts {
 	for _, id := range p.sortedIDsLocked() {
 		a := p.agents[id]
 		f := NodeFacts{ID: id, Name: a.reg.Name, Addr: a.reg.Addr, State: StateActive, Install: a.reg.Install,
-			Release: a.reg.AgentRelease, Platform: a.platform, Paused: p.admin[id].Paused, HostAgent: p.isHostAgentLocked(a),
+			Release: a.reg.AgentRelease, Platform: a.platform, Paused: p.admin[id].Paused, UnpausePending: p.unpausePendingLocked(id, a),
+			HostAgent:   p.isHostAgentLocked(a),
 			ModelSource: a.reg.ModelSource, Stats: a.stats, StatsNote: a.statsNote}
 		switch {
 		case p.admin[id].Removed:
@@ -506,11 +515,14 @@ func (p *Pool) Facts() []NodeFacts {
 				f.Unplaced = scheduler.UnplacedHostMachine
 			}
 			f.UnplacedMessage = p.unplacedMsgLocked(a, f.Unplaced)
-			if f.Unplaced == "" && f.Paused && f.State == StateActive {
+			if f.Unplaced == "" && (f.Paused || f.UnpausePending) && f.State == StateActive {
 				f.Unplaced = scheduler.UnplacedPaused // CR-9: never placeable false with no reason
+				if f.UnpausePending {
+					f.UnplacedMessage = UnpausePendingMessage
+				}
 			}
 		}
-		f.Placeable = f.State == StateActive && !f.Paused && !f.HostAgent && f.Unplaced == ""
+		f.Placeable = f.State == StateActive && !f.Paused && !f.UnpausePending && !f.HostAgent && f.Unplaced == ""
 		out = append(out, f)
 	}
 	for id, adm := range p.admin {

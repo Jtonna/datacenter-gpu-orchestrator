@@ -891,6 +891,11 @@ A node that is `active` and still gets no load says why in `unplaced` (in
   that agent needs `--allow-from <container network>`. Potluck tries again
   every 15 s and logs `agent reachable` when it works; nothing has to be
   restarted. The log has one `agent unreachable` warning per failure.
+- `paused` with `unpause_pending: true` and the message "unpaused; the node
+  takes load once its agent has been told ...": the node was just unpaused
+  and its agent has not had a heartbeat answer since. It clears within a few
+  seconds; if it stays, the node is not sending heartbeats (it is `lost`, or
+  its agent is stopped).
 - `programs_not_ready`, `model_source_unreachable`, `orphan_launch`, `silent`,
   `no_tier_match`: agent contract 11.1. `host_machine`: the agent of the
   machine Potluck runs on; it is never a remote node.

@@ -164,3 +164,14 @@ func TestUINodesShowTheFileCache(t *testing.T) {
 		}
 	}
 }
+
+// A machine whose unpause has not reached its agent yet (unpause_pending) is
+// shown as unpausing, not as paused and not with a raw word.
+func TestUIUnpausePendingIsShown(t *testing.T) {
+	text := uiText(t, "core/nodeactions.js")
+	for _, want := range []string{"a.unpause_pending", "short: 'Unpausing'", "once its agent has been told"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("core/nodeactions.js lacks %s", want)
+		}
+	}
+}

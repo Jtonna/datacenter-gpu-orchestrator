@@ -57,12 +57,19 @@ const STATE = {
   removed: { short: 'Removed', text: 'It was removed from the pool by an operator and stays out until it is re-admitted.' },
 };
 
+// UNPAUSING is a machine that was unpaused and whose agent has not heard so yet.
+export const UNPAUSING = { short: 'Unpausing', known: true, code: 'unpausing', paused: false,
+  text: 'Unpaused. It takes new models once its agent has been told, with its next heartbeat, within a few seconds.' };
+
 // notPlaceable(node, agent) -> null when the machine may take a new model,
 // else {short, text, known, code, paused}. `agent` is the node's agent facts;
 // the reason word may be on either. A paused machine has paused: true and no
 // other reason unless the server gave one.
 export function notPlaceable(n, a) {
   if (!a) return null;
+  // Unpaused, but its agent has not been told yet (it would still refuse a
+  // model): the server keeps the reason "paused" with unpause_pending.
+  if (a.unpause_pending && !a.paused && (a.unplaced || 'paused') === 'paused') return UNPAUSING;
   const code = a.unplaced || (n && n.unplaced) || '';
   if (code) return Object.assign(unplacedReason(code), { paused: !!a.paused });
   if (a.placeable !== false) return null;

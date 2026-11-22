@@ -1194,7 +1194,12 @@ view the core reads, and runs the worker launches.
   `POST /api/nodes/{id}/readmit`. Pause and removal are stored in the
   database (`node_admin`). A paused node takes no new load; a load on it
   continues. A pause also breaks a claim on the node for a waiting request
-  (step 5 of the queue), so the request is planned again.
+  (step 5 of the queue), so the request is planned again. An unpause takes
+  effect once a heartbeat or registration answer has told the agent (agent
+  contract 7.2, "Unpause delivery"): until then the node stays paused for
+  placement, because the agent refuses a launch while it believes it is
+  paused. A launch the agent still refuses as `paused` is planned again after
+  3 s, without a failed load or a backoff.
 - **Loads.** The worker launches replace the pre-flight: no `--list-devices`
   probe runs, so nothing holds a worker's single client slot before the child
   connects. Each remote node gets `POST /launch` (role worker, the release,
