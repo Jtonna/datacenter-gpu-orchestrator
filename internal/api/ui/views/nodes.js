@@ -174,7 +174,7 @@ function tile(st, n, refresh) {
   const np = notPlaceable(n, agent);
   // Excluded (exclude_nodes): the view says so, and so do the agent facts, with the entry.
   const excl = excludedOf(n, agent);
-  const exBy = excl_by || (agent && agent.excluded_by) || '';
+  const exBy = n.excluded_by || (agent && agent.excluded_by) || '';
   const npOther = np && np.code !== 'paused' && np.code !== 'excluded'; // a reason other than a pause or the exclusion
   const inst = n.holder ? (st.instances || []).find(i => i.profile === n.holder) : null;
   const placed = inst ? (inst.nodes || []).find(p => p.id === n.id) : null;
