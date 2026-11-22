@@ -3,6 +3,7 @@ package scheduler
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 )
@@ -67,7 +68,8 @@ func (c *schedCore) gateNeverFits(p *core.Profile, pl core.Placement) *Error {
 // reachable node it may be placed on, as the capacity check counts them. A
 // node that is not free holds, loads, drains, is claimed, settles or is
 // paused. A node whose free figure is a pre-flight's for a while (an
-// instance was just returned on it) waits for the view's figure again.
+// instance was just returned on it) waits for the view's figure again, and
+// so does a node something of ours left recently (justReleased).
 // Without a fresh view nothing is decided.
 func (c *schedCore) waitCanHelp(p *core.Profile) bool {
 	if len(p.ForceNodes) > 0 {
@@ -77,7 +79,7 @@ func (c *schedCore) waitCanHelp(p *core.Profile) bool {
 				return true
 			}
 			n, ok := c.node(id)
-			if !ok || !c.eligible(id) || n.FreeUnknown || c.unplaced[id] != "" || !c.isFree(id) || c.overridden(id) {
+			if !ok || !c.eligible(id) || n.FreeUnknown || c.unplaced[id] != "" || !c.isFree(id) || c.overridden(id) || c.justReleased(id) {
 				return true
 			}
 		}
@@ -92,11 +94,28 @@ func (c *schedCore) waitCanHelp(p *core.Profile) bool {
 		if !ok || c.excluded(n) || !c.reachable(n) || (localOnly(p) && !n.Local) || c.autoOff(p, n) {
 			continue
 		}
-		if !c.eligible(id) || n.FreeUnknown || c.unplaced[id] != "" || !c.isFree(id) || c.overridden(id) {
+		if !c.eligible(id) || n.FreeUnknown || c.unplaced[id] != "" || !c.isFree(id) || c.overridden(id) || c.justReleased(id) {
 			return true
 		}
 	}
 	return false
+}
+
+// releaseGrace is how long a node's figure may still show what an instance
+// of ours released there held, when free_average_window is 0.
+const releaseGrace = 30 * time.Second
+
+// justReleased: something of ours left node id recently, within
+// free_average_window (or releaseGrace when that is 0). Its figure may still
+// show the old load (heartbeat lag, or a worker that has not returned its
+// buffers yet), so it may still change: the fifth review's FB1, the
+// benchmark pattern of unloading and at once loading the next model.
+func (c *schedCore) justReleased(id core.NodeID) bool {
+	if c.cfg.Defaults.FreeAverageWindow > 0 {
+		return c.avgStale(id)
+	}
+	ns := c.nodes[id]
+	return ns != nil && !ns.heldChanged.IsZero() && c.now.Before(ns.heldChanged.Add(releaseGrace))
 }
 
 // overridden: node id's free figure is a pre-flight's until it expires.

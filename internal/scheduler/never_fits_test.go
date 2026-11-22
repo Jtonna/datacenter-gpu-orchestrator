@@ -194,3 +194,57 @@ func TestNeverFits_DefaultsUnchanged(t *testing.T) {
 		}
 	}
 }
+
+// unloadLagging loads "small" (6000) on a, shows it in the view as 7000 MiB
+// used, unloads it and lets the settle complete while the view still shows
+// the old figure (heartbeat lag, or a worker that has not returned its
+// buffers yet): the fifth review's FB1.
+func unloadLagging(h *harness, mode string) {
+	h.t.Helper()
+	h.llama("small", 6000, func(p *core.Profile) { p.ForceNodes = []string{"a"} })
+	h.viewChanged()
+	if mode == "fleet" {
+		h.release(h.ready("small"))
+	} else {
+		h.release(h.agentReady("small"))
+	}
+	h.view.modify("a", func(n *core.Node) { n.FreeMiB = n.TotalMiB - 7000 })
+	h.viewChanged()
+	h.step(evUnload{profile: "small", force: true})
+	h.advance(10 * time.Second)
+	if h.c.insts["small"] != nil {
+		h.t.Fatalf("small is still there after its unload")
+	}
+}
+
+// FB1, the reviewer's probe and the benchmark sequence: load A on a,
+// unload A, at once request a forced B on a that fits only when A's memory
+// is back. B waits (never refused) and starts once the view catches up.
+func TestNeverFits_ForcedLoadRightAfterAnUnloadWaits(t *testing.T) {
+	for _, window := range []time.Duration{30 * time.Second, 0} {
+		for _, mode := range []string{"fleet", "agents"} {
+			h := inMode(newHarness(t).nodes(psNode("a", 2, 12643)), mode)
+			liveTight(h)
+			h.cfg.Defaults.FreeAverageWindow = window
+			unloadLagging(h, mode)
+			h.llama("mid", 0, func(p *core.Profile) { p.ForceNodes, p.LoadTimeout = []string{"a"}, time.Hour })
+			h.needs["mid"] = NeedInfo{Need: placer.Measured(9000), FileBytes: 5 << 30}
+			if r := h.c.dryPlan("mid"); r.Action == PlanReject {
+				t.Fatalf("%s: plan reject right after the unload: %s", mode+" window "+window.String(), r.Reason)
+			}
+			w := h.request("mid")
+			if a, ok := h.peek(w); ok && a.err != nil {
+				t.Fatalf("%s: refused right after the unload: %v", mode+" window "+window.String(), a.err)
+			}
+			// the view catches up: mid starts
+			h.view.modify("a", func(n *core.Node) { n.FreeMiB = n.TotalMiB })
+			h.viewChanged()
+			if a, ok := h.peek(w); ok && a.err != nil {
+				t.Fatalf("%s: refused once the view caught up: %v", mode+" window "+window.String(), a.err)
+			}
+			if h.c.insts["mid"] == nil {
+				t.Fatalf("%s: mid did not start once the view caught up (wait: %s)", mode+" window "+window.String(), h.waitReasonOf("mid"))
+			}
+		}
+	}
+}
