@@ -4,6 +4,7 @@
 // Routes: #/benchmarks (overview), #/benchmarks/suite/<id>[?edit=1],
 // #/benchmarks/benchmark/<id>[?edit=1] (a suite's or a benchmark's own page;
 // ?edit=1 opens its configuration as a panel over the page),
+// #/benchmarks/external/<id> (an external result set),
 // #/benchmarks/runs, #/benchmarks/runs/<id>,
 // #/benchmarks/trends, #/benchmarks/edit/benchmark/<id|new>[?template=<id>],
 // #/benchmarks/edit/suite/<id|new>.
@@ -11,8 +12,9 @@
 // Reads: WebSocket "bench" (state, run, progress, step_started, step_finished,
 // request, aggregate_updated) through the store; REST GET /api/bench/state
 // (once on entry), /benchmarks, /suites, /runs, /runs/{id}, /aggregates,
-// /trends, /schema, /profiles, GET /api/profiles for model file names, and
-// GET /api/startups for the start-up figures of the overview.
+// /trends, /schema, /profiles, /external, /external/{id}, GET /api/profiles
+// for model file names, and GET /api/startups for the start-up figures of the
+// overview.
 // Writes: POST/PUT/DELETE /api/bench/benchmarks and /suites, POST
 // /api/bench/suites/{id}/run and /api/bench/runs/{id}/cancel (core/api.js).
 // The compact run indicator is registered with setShellSlot('run', node) as
@@ -32,6 +34,7 @@ import { runsList, runDetail } from './benchmarks/runs.js';
 import { aggregatesView, aggState } from './benchmarks/aggregates.js';
 import { benchmarkEditor, suiteEditor } from './benchmarks/editor.js';
 import { suitePage, benchmarkPage, loadSuiteRuns, loadResults } from './benchmarks/pages.js';
+import { externalPage, loadExternalList, loadExternalSet } from './benchmarks/external.js';
 import { needCatalog, onCatalog } from '../core/catalog.js';
 import { loadStartups, onStartups } from '../core/startup.js';
 import { h as el_ } from '../core/dom.js';
@@ -45,10 +48,11 @@ registerView({
     let run = null, runErr = '', runId = '';
     const asked = {};
     const timers = {};
+    const redraw = () => { if (alive) view.refresh(); };
     const later = (k, fn, ms = 400) => { clearTimeout(timers[k]); timers[k] = setTimeout(() => { if (alive) fn(); }, ms); };
 
     const tabOf = rest => (rest[0] === 'runs' ? 'runs' : rest[0] === 'trends' ? 'trends' : rest[0] === 'edit' ? 'edit'
-      : (rest[0] === 'suite' || rest[0] === 'benchmark') && rest[1] ? 'page' : 'overview');
+      : (rest[0] === 'suite' || rest[0] === 'benchmark' || rest[0] === 'external') && rest[1] ? 'page' : 'overview');
     const suiteFilter = () => r.query.suite || '';
 
     const loadRun = async id => {
@@ -62,11 +66,12 @@ registerView({
       if (force || !asked.lists) { asked.lists = true; refreshLists(); }
       if ((tab === 'overview' || tab === 'page') && (force || !asked.aggAll)) { asked.aggAll = true; loadAggregates(false); }
       if (tab === 'overview' && (force || !asked.startups)) { asked.startups = true; loadStartups(api); }
+      if (tab === 'overview' && (force || !asked.external)) { asked.external = true; loadExternalList(redraw); }
       if (tab === 'page') {
         const k = r.rest[0] + ':' + r.rest[1];
         if (force || asked.page !== k) {
           asked.page = k;
-          if (r.rest[0] === 'suite') loadSuiteRuns(r.rest[1], () => { if (alive) view.refresh(); }); else loadResults(r.rest[1], () => { if (alive) view.refresh(); });
+          if (r.rest[0] === 'suite') loadSuiteRuns(r.rest[1], redraw); else if (r.rest[0] === 'external') loadExternalSet(r.rest[1], redraw); else loadResults(r.rest[1], redraw);
           loadModelProfiles();
         }
       }
@@ -87,7 +92,7 @@ registerView({
     const dropDrawer = () => { if (drawer) { drawer.remove(); drawer = null; document.removeEventListener('keydown', onDrawerKey, true); document.body.style.overflow = ''; } };
     const syncEditor = () => {
       const tab = tabOf(r.rest);
-      const inPanel = tab === 'page' && !!r.query.edit;
+      const inPanel = tab === 'page' && r.rest[0] !== 'external' && !!r.query.edit;
       if (tab !== 'edit' && !inPanel) { dropDrawer(); if (editor) { editor.destroy(); editor = null; editorKey = ''; } return; }
       const kind = (inPanel ? r.rest[0] : r.rest[1]) === 'suite' ? 'suite' : 'benchmark';
       const id = inPanel ? r.rest[1] : r.rest[2] && r.rest[2] !== 'new' ? r.rest[2] : '';
@@ -133,7 +138,7 @@ registerView({
         id => navigate('benchmarks', id === 'overview' ? [] : [id], null, true));
       let body;
       if (tab === 'page') {
-        const page = r.rest[0] === 'suite' ? suitePage(r.rest[1]) : benchmarkPage(r.rest[1]);
+        const page = r.rest[0] === 'suite' ? suitePage(r.rest[1]) : r.rest[0] === 'external' ? externalPage(r.rest[1], redraw) : benchmarkPage(r.rest[1]);
         return [page[0], staleBanner(), live, page.slice(1)];
       }
       if (tab === 'edit') body = editor ? editor.el : null;

@@ -160,3 +160,27 @@ func TestExternalThroughMCPAndAudit(t *testing.T) {
 		t.Fatalf("%v", e0)
 	}
 }
+
+// The UI reads only keys the server writes (the UI has no JavaScript test
+// runner), and the overview and the router know the external page.
+func TestUIExternalKeysMatchTheServer(t *testing.T) {
+	yes := true
+	x := &bench.ExternalSet{ID: "x", Title: "T", Description: "d", Note: "n", Source: bench.SourceExternal, CreatedAt: 1, UpdatedAt: 2,
+		Tables:      []bench.ExternalTable{{Title: "t", Description: "d", Columns: []bench.ExternalColumn{{Key: "k", Label: "l", Unit: "u", HigherIsBetter: &yes}}, Rows: []map[string]any{{"model": "m", "profile": "p", "k": 1.0}}}},
+		Attachments: []bench.ExternalAttachment{{Name: "a", Text: "b"}}}
+	doc := jsonKeys(t, x) + jsonKeys(t, x.Summary())
+	text := uiText(t, "views/benchmarks/external.js")
+	for _, k := range []string{"external", "title", "description", "note", "created_at", "updated_at", "tables", "columns", "rows", "row_count", "key", "label", "unit", "higher_is_better", "model", "profile", "models", "attachments", "name", "text"} {
+		if !strings.Contains(doc, `"`+k+`"`) {
+			t.Errorf("the server does not write %q", k)
+		}
+		if !strings.Contains(text, k) {
+			t.Errorf("external.js does not read %q", k)
+		}
+	}
+	for file, want := range map[string]string{"views/benchmarks/overview.js": "externalCard()", "views/benchmarks.js": "externalPage(", "views/benchmarks/external.js": "/api/bench/external"} {
+		if !strings.Contains(uiText(t, file), want) {
+			t.Errorf("%s lacks %s", file, want)
+		}
+	}
+}

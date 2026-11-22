@@ -541,6 +541,14 @@ before drawing a field.
   the aggregates has `recent[]` (`{run_id, at, result: pass | partial | fail |
   cancelled | none, passed, failed, outcome}`, oldest first, at most 30): draw
   a pass rate with `passDots(recent, pass_rate)`, never as a bare percentage.
+- External results (`views/benchmarks/external.js`): result sets measured
+  outside the runner. The overview lists `GET /api/bench/external` ->
+  `{external: [{id, title, description, note, created_at, updated_at, tables:
+  [{title, columns, row_count}], attachments: [{name, bytes}], models}]}`;
+  `#/benchmarks/external/<id>` shows `GET /api/bench/external/<id>` (`tables[]`
+  with `columns[] {key, label, unit, higher_is_better}` and `rows[]` keyed by
+  column, plus optional `model` and `profile`; `attachments[] {name, text}`).
+  Read-only; headers sort, long text cells fold.
 - Aggregates: `GET /api/bench/aggregates?suite=&benchmark=&profile=&since=&until=&env=`
   -> `{runs_considered, environment, benchmarks: [{benchmark_id, runs, steps,
   pass_rate (a fraction, 0 to 1), outcomes, metrics: {<metric>: {count, min, median, mean, max, stdev,
