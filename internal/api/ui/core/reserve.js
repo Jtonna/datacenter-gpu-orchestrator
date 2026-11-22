@@ -41,11 +41,12 @@ export function reservedPart(nd) {
 
 // memoryTable(mem, name) -> the plan's memory section as a table: per node
 // what the load will take with its context filled, what the node has, what
-// is reserved there and what remains. name(id) gives a node's display name.
+// is reserved there and what remains. name(id) gives a node's display name
+// (short_node is already a label: shown as it is).
 export function memoryTable(mem, name) {
   if (!mem || !Array.isArray(mem.nodes)) return null;
   const head = mem.fits ? badge('Fits', 'ready') : badge('Does not fit', 'fail');
-  const short = !mem.fits && mem.short_node ? `${name(mem.short_node)} is short by ${mib(mem.shortfall_mib)}.` : '';
+  const short = !mem.fits && mem.short_node ? `${mem.short_node} is short by ${mib(mem.shortfall_mib)}.` : '';
   return h('div', { style: 'display:flex;flex-direction:column;gap:8px', key: 'memory' },
     h('div.day', 'Memory, with the context filled'),
     h('div.cb', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap' }, head,
