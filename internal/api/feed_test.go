@@ -247,6 +247,8 @@ func TestUIExcludedNode(t *testing.T) {
 	nodes := uiText(t, "views/nodes.js")
 	for _, want := range []string{
 		"const excludedOf = (n, a) => !!(n.excluded || (a && a.excluded));",
+		"const exBy = n.excluded_by || (agent && agent.excluded_by) || '';",
+		"agent.capabilities.length ? ['Its agent can also: ', h('span.mono', agent.capabilities.join(', ')), '.']",
 		"if (excludedOf(n, agent)) return ['Excluded', 'dash', 9];",
 		"const npOther = np && np.code !== 'paused' && np.code !== 'excluded';",
 		"label === 'Excluded' && exBy ? 'excluded by exclude_nodes: ' + exBy",

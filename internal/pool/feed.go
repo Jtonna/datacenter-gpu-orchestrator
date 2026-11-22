@@ -11,12 +11,14 @@ import (
 // The local node has no agent, so it has no programs, no heartbeat, no
 // launch of its own and no pause.
 type LocalFacts struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	State     string `json:"state"` // active
-	Release   string `json:"release"`
-	Local     bool   `json:"local"` // always true
-	Placeable bool   `json:"placeable"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	State   string `json:"state"` // active
+	Release string `json:"release"`
+	Local   bool   `json:"local"` // always true
+	// Capabilities: always an empty list (the local node has no agent).
+	Capabilities []string `json:"capabilities"`
+	Placeable    bool     `json:"placeable"`
 	// Excluded, ExcludedBy, Unplaced and UnplacedMessage: as for an agent
 	// node (NodeFacts), when exclude_nodes names the local node.
 	Excluded        bool     `json:"excluded,omitempty"`
@@ -61,7 +63,7 @@ func (p *Pool) Local() (LocalFacts, bool) {
 	for _, n := range p.nodes {
 		if n.Local {
 			f = LocalFacts{ID: string(n.ID), Name: n.Hostname, State: StateActive, Release: p.o.PotluckRelease, Local: true,
-				Placeable: !n.Paused}
+				Placeable: !n.Paused, Capabilities: []string{}}
 			if f.Name == "" {
 				f.Name = f.ID
 			}

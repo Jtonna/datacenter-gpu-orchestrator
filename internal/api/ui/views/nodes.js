@@ -174,7 +174,7 @@ function tile(st, n, refresh) {
   const np = notPlaceable(n, agent);
   // Excluded (exclude_nodes): the view says so, and so do the agent facts, with the entry.
   const excl = excludedOf(n, agent);
-  const exBy = excl_by || (agent && agent.excluded_by) || '';
+  const exBy = n.excluded_by || (agent && agent.excluded_by) || '';
   const npOther = np && np.code !== 'paused' && np.code !== 'excluded'; // a reason other than a pause or the exclusion
   const inst = n.holder ? (st.instances || []).find(i => i.profile === n.holder) : null;
   const placed = inst ? (inst.nodes || []).find(p => p.id === n.id) : null;
@@ -204,6 +204,10 @@ function tile(st, n, refresh) {
   const note = (cls, node) => notes.push(h('div.hit', h('i', { class: cls }), h('span', node)));
 
   if (excl) note('', ['Excluded in the configuration', exBy ? [' (exclude_nodes: ', h('span.mono', exBy), ')'] : '', ': it gets no model and is not counted in the capacity.']);
+  // What the agent can do beyond the basics (agent contract 6.13), in plain words.
+  if (agent && Array.isArray(agent.capabilities)) {
+    note('', agent.capabilities.length ? ['Its agent can also: ', h('span.mono', agent.capabilities.join(', ')), '.'] : 'Its agent advertises no extra capabilities.');
+  }
   if (np && np.paused) note('', 'Paused by an operator: it keeps what it holds and takes no new model until it is unpaused.');
   if (npOther) {
     note('a', h('span', { title: np.code ? 'The scheduler says: ' + np.code : null }, h('b', 'Not placeable. '),
