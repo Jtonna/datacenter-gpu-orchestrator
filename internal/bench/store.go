@@ -1021,7 +1021,7 @@ func (s *Store) phases(stepID int64) ([]PhaseResult, error) {
 // ---- trends ----
 
 // TrendMetrics are the metrics /api/bench/trends accepts.
-var TrendMetrics = []string{"load_s", "load_mb_s", "memory_mib", "decode_tps", "prefill_tps", "ttft_ms", "unload_s", "concurrent_wall_s", "lowest_available_mib"}
+var TrendMetrics = []string{"load_s", "load_mb_s", "memory_mib", "decode_tps", "prefill_tps", "ttft_ms", "unload_s", "concurrent_wall_s", "lowest_available_mib", "lowest_available_gpu_mib"}
 
 // Trend returns up to limit points of a metric for a benchmark over past
 // runs, oldest first (the newest limit points).
@@ -1044,8 +1044,10 @@ func (s *Store) Trend(benchmark, metric string, limit int) ([]TrendPoint, error)
 		expr = `(SELECT json_extract(p.result,'$.unload.unload_s') FROM run_phases p WHERE p.step_id=s.id AND p.type='unload' AND p.state='done' ORDER BY p.idx LIMIT 1)`
 	case "concurrent_wall_s":
 		expr = `(SELECT json_extract(p.result,'$.concurrent.wall_ms')/1000.0 FROM run_phases p WHERE p.step_id=s.id AND p.type='concurrent_requests' AND p.state='done' ORDER BY p.idx LIMIT 1)`
-	case "lowest_available_mib": // the lowest node of the step; NULL for a step stored before
-		expr = `(SELECT MIN(json_extract(m.value,'$.step_mib')) FROM json_each(s.mem_low) m)`
+	case "lowest_available_mib": // the lowest system-memory node of the step (no kind: system); NULL for a step stored before
+		expr = `(SELECT MIN(json_extract(m.value,'$.step_mib')) FROM json_each(s.mem_low) m WHERE COALESCE(json_extract(m.value,'$.kind'),'system')='system')`
+	case "lowest_available_gpu_mib": // the lowest free GPU memory of a dedicated-GPU node of the step
+		expr = `(SELECT MIN(json_extract(m.value,'$.step_mib')) FROM json_each(s.mem_low) m WHERE json_extract(m.value,'$.kind')='gpu')`
 	default:
 		return nil, fmt.Errorf("metric must be one of %s", strings.Join(TrendMetrics, ", "))
 	}

@@ -163,6 +163,12 @@ type NodeMemLow struct {
 	LoadMiB *int64 `json:"load_mib,omitempty"` // lowest while the model was loading
 	StepMiB *int64 `json:"step_mib,omitempty"` // lowest during the whole step
 	Samples int    `json:"samples"`
+	// Kind is which memory the figures are: "system" (available system
+	// memory) or "gpu" (the GPU's free memory, on a node whose GPU has memory
+	// of its own). Absent on rows stored before it was recorded: system.
+	// Note says why a node with a dedicated GPU has a system figure.
+	Kind string `json:"kind,omitempty"`
+	Note string `json:"note,omitempty"`
 }
 
 // Node roles in a step.

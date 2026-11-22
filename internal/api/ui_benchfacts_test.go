@@ -27,12 +27,12 @@ func TestUIBenchStepFactsKeysMatchTheServer(t *testing.T) {
 	lo, pct, mem := int64(1), 63.0, 1.0
 	step := jsonKeys(t, bench.Step{
 		Load:   &bench.LoadResult{LoadMode: bench.LoadModeFileRead},
-		MemLow: []bench.NodeMemLow{{ID: "i", Node: "n", LoadMiB: &lo, StepMiB: &lo}},
+		MemLow: []bench.NodeMemLow{{ID: "i", Node: "n", LoadMiB: &lo, StepMiB: &lo, Kind: bench.MemKindGPU, Note: "n"}},
 		Roles:  []bench.NodeRole{{ID: "i", Node: "n", Role: bench.RoleHost, MemoryMiB: &mem}},
 		Reload: []bench.NodeReload{{ID: "i", Node: "n", Verdict: "partial", CachedPct: &pct}},
 	})
-	res := jsonKeys(t, bench.BenchmarkResult{LowestMiB: &lo, LoadMode: "pushed", Host: "h", Workers: []string{"w"},
-		MemLow: []bench.NodeMemLow{{StepMiB: &lo}}, Reload: []bench.NodeReload{{Verdict: "full"}}})
+	res := jsonKeys(t, bench.BenchmarkResult{LowestMiB: &lo, LowestGPUMiB: &lo, LoadMode: "pushed", Host: "h", Workers: []string{"w"},
+		MemLow: []bench.NodeMemLow{{StepMiB: &lo, Kind: bench.MemKindGPU}}, Reload: []bench.NodeReload{{Verdict: "full"}}})
 	mode := "pushed"
 	agg := jsonKeys(t, bench.AggregatesDoc{ByModelLoadMode: []bench.ModelAgg{{ModelFile: "m", LoadMode: &mode}}})
 	suite := jsonKeys(t, benchspec.Suite{ID: "s", Status: benchspec.SuitePlanned, Reason: "r"})
@@ -42,8 +42,8 @@ func TestUIBenchStepFactsKeysMatchTheServer(t *testing.T) {
 		file string
 		keys []string
 	}{
-		{step, "views/benchmarks/runs.js", []string{"load_mode", "mem_low", "load_mib", "step_mib", "roles", "role", "memory_mib", "reload_from_cache"}},
-		{res, "views/benchmarks/pages.js", []string{"lowest_available_mib", "load_mode", "host", "workers", "mem_low", "step_mib", "reload_from_cache"}},
+		{step, "views/benchmarks/runs.js", []string{"load_mode", "mem_low", "load_mib", "step_mib", "kind", "note", "roles", "role", "memory_mib", "reload_from_cache"}},
+		{res, "views/benchmarks/pages.js", []string{"lowest_available_mib", "lowest_available_gpu_mib", "load_mode", "host", "workers", "mem_low", "step_mib", "kind", "reload_from_cache"}},
 		{agg, "views/benchmarks/aggregates.js", []string{"by_model_load_mode", "load_mode", "model_file"}},
 		{suite, "views/benchmarks/common.js", []string{"status", "reason"}},
 		{step, "core/stepfacts.js", []string{"verdict", "cached_pct"}},
@@ -74,10 +74,11 @@ func TestUIBenchStepFactsWords(t *testing.T) {
 	}
 	for file, wants := range map[string][]string{
 		"views/benchmarks/runs.js": {"setupBlock(step)", "'Lowest available, load'", "'Lowest available, step'", "'Not recorded'",
-			"'Load mode'", "loadModeNode(l.load_mode)", "title: RELOAD_TIP", "stepRoles(step)"},
-		"views/benchmarks/pages.js":      {"label: 'Lowest available'", "label: 'Load mode'", "rolesText(r.host, r.workers)", "label: 'Reload from cache'"},
+			"'Load mode'", "loadModeNode(l.load_mode)", "title: RELOAD_TIP", "stepRoles(step)",
+			"'(GPU)'", "'(system)'"},
+		"views/benchmarks/pages.js":      {"label: 'Lowest available (system)'", "label: 'Lowest available (GPU)'", "label: 'Load mode'", "rolesText(r.host, r.workers)", "label: 'Reload from cache'"},
 		"views/benchmarks/aggregates.js": {"h('h2', 'By load mode')", "loadModeCard(agg)"},
-		"views/benchmarks/common.js":     {"key: 'lowest_available_mib'"},
+		"views/benchmarks/common.js":     {"key: 'lowest_available_mib'", "key: 'lowest_available_gpu_mib'"},
 		"views/models/common.js":         {"reloadLine(plan.reload_from_cache"},
 	} {
 		text := uiText(t, file)

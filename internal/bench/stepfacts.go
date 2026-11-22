@@ -12,12 +12,18 @@ import (
 // travelled (load mode), which node was the host and which were workers, and
 // whether a reload could come from the page cache.
 
-// LowestMiB is the lowest available memory of any node during the step, nil
-// when nothing was recorded.
-func LowestMiB(st *Step) *int64 {
+// LowestMiB is the lowest available system memory of any node during the
+// step (nodes whose figure is system memory), nil when none was recorded.
+func LowestMiB(st *Step) *int64 { return lowestOfKind(st, MemKindSystem) }
+
+// LowestGPUMiB is the lowest free GPU memory of any node with a dedicated GPU
+// during the step, nil when none was recorded.
+func LowestGPUMiB(st *Step) *int64 { return lowestOfKind(st, MemKindGPU) }
+
+func lowestOfKind(st *Step, kind string) *int64 {
 	var low *int64
 	for _, n := range st.MemLow {
-		if n.StepMiB != nil && (low == nil || *n.StepMiB < *low) {
+		if n.KindOf() == kind && n.StepMiB != nil && (low == nil || *n.StepMiB < *low) {
 			v := *n.StepMiB
 			low = &v
 		}

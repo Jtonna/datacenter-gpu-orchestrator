@@ -1989,9 +1989,28 @@ added (a step stored before has none of these; the UI says "Not recorded"):
   (`load_mib`) and during the whole step (`step_mib`), with the number of
   `samples`. The runner samples `/api/status` about twice a second
   (`ManagerOptions.MemSample`, 500 ms) and also uses every status it reads for
-  the load and at the end of each phase. The figure is the agent's
-  `mem_available_mib`, or the node's free figure when it has no agent. A
-  benchmark result carries the lowest of them as `lowest_available_mib`.
+  the load and at the end of each phase. Each node's entry has a `kind` that
+  says which memory the figure is, because a model uses system memory on a
+  console but the GPU's own memory on a machine with a dedicated GPU:
+  - `system`: the agent's `mem_available_mib`, on a node whose device shares
+    system memory (a console);
+  - `gpu`: the GPU's free memory (`mem_total_bytes - mem_used_bytes -
+    mem_reserved_bytes` of the matching discrete entry of the agent's stats
+    `gpus`, stats contract 5.6), on a node whose device has memory of its own,
+    when the GPU exporter's source is `ok`; and the scheduler's own free figure
+    on the local node (its GPU);
+  - a node with a dedicated GPU but no live GPU figure (no exporter, stale or
+    absent source, no matching entry) is recorded as `system` with a `note`
+    saying so. The device list's `free_mib` is never used: the agent reads it
+    only at registration and after a launch exits, so it is stale during a load.
+
+  A node keeps one kind per step (a GPU figure replaces earlier system
+  samples). Rows stored before the kind was recorded have none and count as
+  `system`. The two kinds are never mixed: a benchmark result carries the
+  lowest system figure as `lowest_available_mib` and the lowest GPU figure as
+  `lowest_available_gpu_mib`; the aggregates and trends have both metrics;
+  the CSV has `lowest_available_gpu_mib` and `mem_low` (`node:kind:MiB` per
+  node). The UI shows "Lowest available (system)" and "(GPU)".
 - `load.load_mode` (and each `load` phase's): `file_read` (the workers read
   the model file from the shared folder), `pushed` (the host sent the weights)
   or `local` (no remote worker). The scheduler reports it on the instance and

@@ -712,12 +712,16 @@ curl -s $B/api/bench/state | jq .run
    Each step also records what tells one hardware setup from another (steps
    stored before this was added have none of it; the UI says "Not recorded"):
    `mem_low` (per node, the lowest available memory while loading and during
-   the whole step, sampled about twice a second), `load.load_mode`
+   the whole step, sampled about twice a second; `kind` says whether it is
+   system memory or, on a node with a dedicated GPU, the GPU's free memory;
+   a `note` says when such a node had no live GPU figure, so its system memory
+   was recorded), `load.load_mode`
    (`file_read`, `pushed` or `local`), `roles` (the host and the workers, with
    each one's share of the model) and `reload_from_cache` (per node: `full`,
    `partial` with `cached_pct`, `none` or `unknown`; design 9.3, "Reload from
    cache"). `GET /api/bench/benchmarks/<id>/results` carries
-   `lowest_available_mib`, `load_mode`, `host` and `workers` per run. The plan
+   `lowest_available_mib` (system memory), `lowest_available_gpu_mib` (GPU
+   memory), `load_mode`, `host` and `workers` per run. The plan
    of a profile (`GET /api/profiles`, the Models page) shows the same reload
    figure before you load: "Reload from cache: partial, about 63% of the
    file" means the next load of that model reads about a third of the file
@@ -734,7 +738,7 @@ curl -s $B/api/bench/state | jq .run
    `GET /api/bench/trends?benchmark=gemma12b-1ps5-cold&metric=load_s` gives the
    points over past runs for a chart (`metric` is `load_s`, `load_mb_s`,
    `memory_mib`, `decode_tps`, `prefill_tps`, `ttft_ms`, `unload_s`,
-   `concurrent_wall_s` or `lowest_available_mib`).
+   `concurrent_wall_s`, `lowest_available_mib` or `lowest_available_gpu_mib`).
    **Aggregates (the history added up):**
 ```sh
 curl -s "$B/api/bench/aggregates?suite=gemma-scaling&since=30d" | jq '.benchmarks[] | {benchmark_id, runs, pass_rate, load_s: .metrics.load_s | {median, last, best, change_pct, regression}}'

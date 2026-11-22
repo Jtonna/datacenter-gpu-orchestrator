@@ -75,7 +75,8 @@ var metricDefs = []metricDef{
 	{"wall_ms", true, true, false},
 	{"reused_tokens", false, false, false},
 	{"prompt_tokens", false, false, true},
-	{"lowest_available_mib", false, false, true}, // the lowest available memory of any node (stepfacts.go)
+	{"lowest_available_mib", false, false, true},     // the lowest available system memory of any node (stepfacts.go)
+	{"lowest_available_gpu_mib", false, false, true}, // the lowest free GPU memory of any node with a dedicated GPU
 }
 
 func defOf(name string) metricDef {
@@ -317,6 +318,9 @@ func stepValues(st *Step) map[string]float64 {
 	}
 	if low := LowestMiB(st); low != nil {
 		v["lowest_available_mib"] = float64(*low)
+	}
+	if low := LowestGPUMiB(st); low != nil {
+		v["lowest_available_gpu_mib"] = float64(*low)
 	}
 	for _, p := range st.Phases {
 		switch {

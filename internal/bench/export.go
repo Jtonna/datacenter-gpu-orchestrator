@@ -163,7 +163,7 @@ func ExportCSV(r *Run) (string, error) {
 		"load_s", "avg_mb_s", "memory_mib", "requests", "failed_requests",
 		"prefill_tps_mean", "prefill_tps_stdev", "decode_tps_mean", "decode_tps_median", "decode_tps_min", "decode_tps_max", "decode_tps_stdev",
 		"ttft_ms_mean", "baseline_run_id", "load_vs_baseline_pct", "decode_vs_baseline_pct", "regression", "model_file", "worker_nodes", "phases",
-		"load_mode", "host", "workers", "lowest_available_mib", "reload_from_cache"}
+		"load_mode", "host", "workers", "lowest_available_mib", "reload_from_cache", "lowest_available_gpu_mib", "mem_low"}
 	if err := w.Write(head); err != nil {
 		return "", err
 	}
@@ -225,7 +225,17 @@ func ExportCSV(r *Run) (string, error) {
 			}
 			rl = append(rl, t)
 		}
-		row = append(row, StepLoadMode(st), StepHost(st), strings.Join(StepWorkers(st), ";"), low, strings.Join(rl, ";"))
+		gpuLow := ""
+		if v := LowestGPUMiB(st); v != nil {
+			gpuLow = strconv.FormatInt(*v, 10)
+		}
+		var ml []string // node:kind:MiB, the step's lowest per node
+		for _, n := range st.MemLow {
+			if n.StepMiB != nil {
+				ml = append(ml, fmt.Sprintf("%s:%s:%d", n.Node, n.KindOf(), *n.StepMiB))
+			}
+		}
+		row = append(row, StepLoadMode(st), StepHost(st), strings.Join(StepWorkers(st), ";"), low, strings.Join(rl, ";"), gpuLow, strings.Join(ml, ";"))
 		if err := w.Write(row); err != nil {
 			return "", err
 		}

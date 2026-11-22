@@ -26,6 +26,7 @@ type memLowAcc struct {
 	name       string
 	load, step *int64
 	samples    int
+	kind, note string
 }
 
 func newMemWatch() *memWatch { return &memWatch{low: map[string]*memLowAcc{}} }
@@ -43,10 +44,27 @@ func (w *memWatch) observe(s *StatusInfo) {
 			continue
 		}
 		v := *n.AvailMiB
+		kind := n.AvailKind
+		if kind == "" {
+			kind = MemKindSystem
+		}
 		a := w.low[n.ID]
 		if a == nil {
-			a = &memLowAcc{}
+			a = &memLowAcc{kind: kind}
 			w.low[n.ID] = a
+		}
+		// One kind per node and step: a GPU figure wins (it is the memory the
+		// model uses); system samples taken before it are dropped, and system
+		// samples after it are ignored, so the two are never mixed.
+		switch {
+		case kind == a.kind:
+		case kind == MemKindGPU:
+			*a = memLowAcc{name: a.name, kind: kind}
+		default:
+			continue
+		}
+		if n.AvailNote != "" {
+			a.note = n.AvailNote
 		}
 		if n.Hostname != "" {
 			a.name = n.Hostname
@@ -116,7 +134,7 @@ func (w *memWatch) result(ids []string, names map[string]string) []NodeMemLow {
 		if name == "" {
 			name = id
 		}
-		out = append(out, NodeMemLow{ID: id, Node: name, LoadMiB: a.load, StepMiB: a.step, Samples: a.samples})
+		out = append(out, NodeMemLow{ID: id, Node: name, LoadMiB: a.load, StepMiB: a.step, Samples: a.samples, Kind: a.kind, Note: a.note})
 	}
 	return out
 }

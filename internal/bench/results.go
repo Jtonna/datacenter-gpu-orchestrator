@@ -131,13 +131,16 @@ type BenchmarkResult struct {
 	// MemLow the figure per node; LoadMode, Host, Workers, Roles and Reload say
 	// what the step ran on. All are absent for a step stored before they were
 	// recorded.
-	LowestMiB *int64       `json:"lowest_available_mib,omitempty"`
-	MemLow    []NodeMemLow `json:"mem_low,omitempty"`
-	LoadMode  string       `json:"load_mode,omitempty"`
-	Host      string       `json:"host,omitempty"`
-	Workers   []string     `json:"workers,omitempty"`
-	Roles     []NodeRole   `json:"roles,omitempty"`
-	Reload    []NodeReload `json:"reload_from_cache,omitempty"`
+	LowestMiB *int64 `json:"lowest_available_mib,omitempty"`
+	// LowestGPUMiB is the lowest free GPU memory of the nodes with a dedicated
+	// GPU; LowestMiB covers only the nodes whose figure is system memory.
+	LowestGPUMiB *int64       `json:"lowest_available_gpu_mib,omitempty"`
+	MemLow       []NodeMemLow `json:"mem_low,omitempty"`
+	LoadMode     string       `json:"load_mode,omitempty"`
+	Host         string       `json:"host,omitempty"`
+	Workers      []string     `json:"workers,omitempty"`
+	Roles        []NodeRole   `json:"roles,omitempty"`
+	Reload       []NodeReload `json:"reload_from_cache,omitempty"`
 }
 
 // ResultsOf lists what one benchmark did in each of runs (any order in, oldest first out).
@@ -153,7 +156,7 @@ func ResultsOf(runs []Run, benchmarkID string) []BenchmarkResult {
 			br := BenchmarkResult{RunID: r.ID, SuiteID: r.SuiteID, SuiteName: r.SuiteName, RunState: r.State, At: runTime(r), Result: StepResult(st),
 				Outcome: st.Outcome, Reason: st.Reason, Profile: st.Profile, ModelFile: st.ModelFile, Nodes: st.NodeCount, Expect: st.Expect,
 				Regression: st.Comparison != nil && st.Comparison.Regression,
-				LowestMiB:  LowestMiB(st), MemLow: st.MemLow, LoadMode: StepLoadMode(st), Host: StepHost(st), Workers: StepWorkers(st),
+				LowestMiB:  LowestMiB(st), LowestGPUMiB: LowestGPUMiB(st), MemLow: st.MemLow, LoadMode: StepLoadMode(st), Host: StepHost(st), Workers: StepWorkers(st),
 				Roles: st.Roles, Reload: st.Reload}
 			if st.StartedAt > 0 && st.FinishedAt > st.StartedAt {
 				br.DurationS = round3(float64(st.FinishedAt-st.StartedAt) / 1000)
