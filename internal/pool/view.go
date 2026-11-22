@@ -411,6 +411,17 @@ func (p *Pool) probeOnce(ctx context.Context) {
 	p.rebuildLocked()
 }
 
+// probeFailed treats a probe that panicked as a failed probe.
+func (p *Pool) probeFailed() {
+	p.mu.Lock()
+	defer p.unlock()
+	p.probeWarn = true
+	if p.probeOK {
+		p.probeOK = false
+		p.rebuildLocked()
+	}
+}
+
 // ---- status ----
 
 // NodeFacts is what status shows about an agent node.

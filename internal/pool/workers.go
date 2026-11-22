@@ -21,6 +21,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // Worker launches (agent contract 6, 11 "Phase 4 loads"). Every launch has a
@@ -183,8 +184,14 @@ func (p *Pool) Launch(ctx context.Context, spec scheduler.WorkerLaunchSpec, repo
 	var wg sync.WaitGroup
 	for i, l := range ls {
 		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		go supervise.Once("pool.launch_send", func() {
+			sentOK := false
+			defer func() { // a panic is this launch's failure; the load's stop ends it if it started
+				if !sentOK {
+					res[i] = sent{err: errors.New("internal error while sending the launch")}
+				}
+				wg.Done()
+			}()
 			req := agentproto.LaunchRequest{LaunchID: l.id, Role: agentproto.RoleWorker, Release: p.o.PotluckRelease,
 				Label: spec.Label, LeaseTTLS: LeaseTTL.Seconds(), MinMemAvailableMiB: spec.Workers[i].MinMemAvailableMiB,
 				Worker: &agentproto.WorkerSpec{ModelDir: cfg.Defaults.WorkerModelDir, ExtraArgs: []string{},
@@ -199,13 +206,14 @@ func (p *Pool) Launch(ctx context.Context, spec scheduler.WorkerLaunchSpec, repo
 				p.unlock()
 				if stopped {
 					// The load was stopped while this launch was on its way.
-					go p.stopLaunch(l, false, false)
+					go supervise.Once("pool.stop", func() { p.stopLaunch(l, false, false) }, nil)
 				} else {
 					p.supervise(l)
 				}
 			}
 			res[i] = sent{ref, err}
-		}()
+			sentOK = true
+		}, nil)
 	}
 	wg.Wait()
 	ids := map[core.NodeID]string{}
@@ -482,12 +490,12 @@ func (p *Pool) Exits(ctx context.Context, iid uint64) []scheduler.WorkerReport {
 	var wg sync.WaitGroup
 	for i, l := range ls {
 		wg.Add(1)
-		go func() {
+		go supervise.Once("pool.exit_read", func() { // a failure reads as no explanation from that node
 			defer wg.Done()
 			if out[i] = p.ownExit(ctx, l); out[i] != nil {
 				cancel() // one explains the exit; the others are not waited for
 			}
-		}()
+		}, nil)
 	}
 	wg.Wait()
 	var rs []scheduler.WorkerReport
@@ -563,19 +571,20 @@ func (p *Pool) Stop(iid uint64, force []core.NodeID) {
 		jobs = append(jobs, job{l, f, a == nil || a.lost || a.left})
 	}
 	p.unlock()
+	// A stop that fails is reported; its lease (LeaseTTL) ends the launch.
 	p.stops.Add(1)
-	go func() {
+	go supervise.Once("pool.stop", func() {
 		defer p.stops.Done()
 		var wg sync.WaitGroup
 		for _, j := range jobs {
 			wg.Add(1)
-			go func() {
+			go supervise.Once("pool.stop", func() {
 				defer wg.Done()
 				p.stopLaunch(j.l, j.force, j.lost)
-			}()
+			}, nil)
 		}
 		wg.Wait()
-	}()
+	}, nil)
 }
 
 // stopLaunch stops one launch: DELETE, or forced DELETE then /reset after 5 s
@@ -689,7 +698,7 @@ func (p *Pool) ForceNode(node core.NodeID) {
 	base := "http://" + net.JoinHostPort(a.reg.Addr, strconv.Itoa(p.o.AgentPort))
 	p.unlock()
 	p.stops.Add(1)
-	go func() {
+	go supervise.Once("pool.force_stop", func() { // a failure is reported; the lease ends the launch
 		defer p.stops.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -697,7 +706,7 @@ func (p *Pool) ForceNode(node core.NodeID) {
 			p.log.Warn("forced stop failed", "node", node, "launch", id, "err", err)
 		}
 		p.forceTail(ctx, base, id, string(node))
-	}()
+	}, nil)
 }
 
 // ---- agent HTTP ----

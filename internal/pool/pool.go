@@ -31,6 +31,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/release"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/startups"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // Contract figures.
@@ -656,7 +657,7 @@ func (p *Pool) checkOrphanLocked(a *agent, hb *heartbeat) {
 		fmt.Sprintf("Node %s reported launch %s, which Potluck does not hold; it was told to stop it.", a.reg.Name, lid),
 		map[string]any{"state": StateActive, "launch_id": lid, "unplaced": scheduler.UnplacedOrphanLaunch})
 	p.stops.Add(1)
-	go func() {
+	go supervise.Once("pool.orphan_stop", func() {
 		defer p.stops.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -669,7 +670,13 @@ func (p *Pool) checkOrphanLocked(a *agent, hb *heartbeat) {
 			}
 			p.unlock()
 		}
-	}()
+	}, func(any) { // as not delivered: the next heartbeat that names it asks again
+		p.mu.Lock()
+		if a.orphanAsked == lid {
+			a.orphanAsked = ""
+		}
+		p.unlock()
+	})
 }
 
 // ---- call-back check (CR-8) ----
@@ -710,11 +717,15 @@ func (p *Pool) startCallBack(a *agent) {
 	}
 	a.checking = true
 	p.unlock()
-	go func() {
+	go supervise.Once("pool.call_back", func() {
 		for !p.callBackOnce(a) {
 			time.Sleep(p.o.CallBackEvery)
 		}
-	}()
+	}, func(any) { // the next heartbeat starts the check again
+		p.mu.Lock()
+		a.checking = false
+		p.unlock()
+	})
 }
 
 // callBackOnce runs one call-back check. It returns true when the loop is
@@ -1055,7 +1066,9 @@ func (p *Pool) Run(ctx context.Context) {
 		case <-lost.C:
 			p.CheckLost()
 		case <-probe.C:
-			p.probeOnce(ctx)
+			// The probe is guarded (a failure counts as a failed probe: the
+			// local node is left out); CheckLost is not, see main.
+			supervise.Guard("pool.probe", func() { p.probeOnce(ctx) }, func(any) { p.probeFailed() })
 			probe.Reset(p.o.ProbeEvery)
 		}
 	}

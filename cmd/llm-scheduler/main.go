@@ -311,7 +311,13 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 		}
 		curPl.Store(pl)
 		view = pl
-		go func() { pl.Run(bg); close(poolDone) }()
+		// The pool's loop runs CheckLost, which is NOT restarted after a
+		// failure: it changes the agents and launches tables that the
+		// scheduler core's node claims mirror, and a half-applied pass
+		// leaves the two disagreeing about which node holds what, with
+		// nothing in the process to bring them back into agreement. Policy
+		// Exit (the fatal path). The local GPU probe it also runs is guarded.
+		supervise.Go(bg, supervise.Spec{Name: "pool.check_lost", Policy: supervise.Exit, Done: func() { close(poolDone) }}, pl.Run)
 	} else {
 		fc = fleet.New(cfg, fleet.Options{Logger: log})
 		go func() { fc.Run(bg); close(fleetDone) }()
