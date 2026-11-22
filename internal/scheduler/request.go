@@ -93,31 +93,45 @@ func (c *schedCore) arrive(w *waiter) {
 	c.changed = true
 }
 
-// forcedExcluded finds a force_nodes entry of p that resolves to a node
-// excluded by config (excluding wins, design 6). Config load catches the
-// cases it can; this catches an id against a hostname glob and the like. A
-// forced node that is merely absent from the fleet is not reported here: it
-// may come online, so the request queues.
+// forcedExcluded finds a force_nodes entry of p that names a node excluded
+// by config (excluding wins, design 6): by the name alone (as a node id or a
+// hostname, also while the node is not in the view), or by the node it
+// resolves to (an id against a hostname glob and the like). Such a profile is
+// valid configuration (0.1.7): it is kept and refused here until the
+// exclusion is lifted. The reason names the exclude_nodes entry. A forced
+// node that is merely absent from the fleet is not reported here: it may
+// come online, so the request queues.
 //
 // A command profile is tied to the local node in the same way: when
 // exclude_nodes names the local node, it fails the same way.
 func (c *schedCore) forcedExcluded(p *core.Profile) (string, bool) {
 	if localOnly(p) {
 		for _, id := range c.sortedNodeIDs() {
-			if n, ok := c.node(id); ok && n.Local && c.excluded(n) {
-				return fmt.Sprintf("profile %s is a command profile and runs only on the local node %s, which is excluded by config (excluding wins: change exclude_nodes)",
-					p.Name, nodeLabel(id, n)), true
+			if n, ok := c.node(id); ok && n.Local {
+				if e, ex := c.cfg.ExcludedBy(n.ID, n.Hostname); ex {
+					return fmt.Sprintf("profile %s is a command profile and runs only on the local node %s, which is excluded by config (exclude_nodes entry %q; excluding wins: change exclude_nodes)",
+						p.Name, nodeLabel(id, n), e), true
+				}
 			}
 		}
 	}
 	for _, name := range p.ForceNodes {
+		label := name
 		id, err := c.view.Resolve(name)
-		if err != nil {
-			continue
+		n, inView := core.Node{}, false
+		if err == nil {
+			n, inView = c.node(id)
+			if inView {
+				label = nodeLabel(id, n)
+			}
 		}
-		if n, ok := c.node(id); ok && c.excluded(n) {
-			return fmt.Sprintf("profile %s forces node %s, but node %s is excluded by config (excluding wins: change exclude_nodes or force_nodes)",
-				p.Name, name, nodeLabel(id, n)), true
+		e, ex := c.cfg.ExcludedBy(core.NodeID(name), name)
+		if !ex && inView {
+			e, ex = c.cfg.ExcludedBy(n.ID, n.Hostname)
+		}
+		if ex {
+			return fmt.Sprintf("profile %s forces node %s, but node %s is excluded by config (exclude_nodes entry %q; excluding wins: change exclude_nodes or force_nodes)",
+				p.Name, name, label, e), true
 		}
 	}
 	return "", false

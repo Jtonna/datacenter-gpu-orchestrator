@@ -247,5 +247,8 @@ func ParseYAMLImport(data []byte, b Bootstrap, o Options) (*Import, error) {
 		return nil, err
 	}
 	imp.Doc, imp.Config = doc, cfg
+	for _, x := range cfg.ExclusionBlocks() {
+		imp.Notes = append(imp.Notes, x.Warning())
+	}
 	return imp, nil
 }

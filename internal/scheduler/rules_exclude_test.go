@@ -145,13 +145,17 @@ func TestExclude_ForcedProfileNamingExcludedNodeFailsPermanently(t *testing.T) {
 }
 
 func TestExclude_ForcedNodeExcludedAfterQueueingFailsPermanently(t *testing.T) {
-	// The forced node is absent at first (queues, by design), then appears and is excluded.
+	// The forced node (named by id) is absent at first (queues, by design: only
+	// its hostname can tie it to the glob), then appears and is excluded. A
+	// forced name that exclude_nodes names itself is refused at once (0.1.7,
+	// TestExclude_RefusalNamesTheEntryAndCoversAnAbsentNode).
 	h := newHarness(t).nodes(ps5("b", 4, 15000))
-	h.cfg.ExcludeNodes = []string{"ps5-new"}
-	h.llama("f", 8000, func(p *core.Profile) { p.ForceNodes = []string{"ps5-new"} })
+	h.cfg.ExcludeNodes = []string{"ps5-new*"}
+	h.llama("f", 8000, func(p *core.Profile) { p.ForceNodes = []string{"02:00:00:00:00:09"} })
 	w := h.request("f")
 	h.pending(w)
-	n := ps5("ps5-new", 2, 15000)
+	n := ps5("02:00:00:00:00:09", 2, 15000)
+	n.Hostname = "ps5-new"
 	h.view.set(ps5("b", 4, 15000), n)
 	h.viewChanged()
 	e := h.failed(w, http.StatusServiceUnavailable, ReasonNodeExcluded)
@@ -208,4 +212,36 @@ func TestExclude_NoExclusionsNoLog(t *testing.T) {
 	if n := len(h.logs.find("excluded node in fleet view")); n != 0 {
 		t.Fatalf("logged %d times", n)
 	}
+}
+
+// 0.1.7: the refusal names the exclude_nodes entry, and a forced node that
+// exclude_nodes names is refused even while it is not in the view (an
+// excluded agent that is away): only a configuration change fixes it.
+func TestExclude_RefusalNamesTheEntryAndCoversAnAbsentNode(t *testing.T) {
+	a := ps5("02:00:00:00:00:01", 2, 15000)
+	a.Hostname = "ps5-test7"
+	h := newHarness(t).nodes(a, ps5("b", 4, 15000))
+	h.cfg.ExcludeNodes = []string{"ps5-test*", "02:00:00:00:00:31"}
+	h.llama("f", 8000, func(p *core.Profile) { p.ForceNodes = []string{"02:00:00:00:00:01"} })
+	h.llama("g", 8000, func(p *core.Profile) { p.ForceNodes = []string{"02:00:00:00:00:31"} }) // not in the view
+	h.step(evTick{})
+	for name, entry := range map[string]string{"f": "ps5-test*", "g": "02:00:00:00:00:31"} {
+		r := h.c.dryPlan(name)
+		if r.Action != PlanReject || !strings.Contains(r.Reason, `exclude_nodes entry "`+entry+`"`) || !strings.Contains(r.Reason, "is excluded by config") {
+			t.Fatalf("%s: plan = %+v", name, r)
+		}
+		e := h.failed(h.request(name), http.StatusServiceUnavailable, ReasonNodeExcluded)
+		if e.RetryAfter != 0 || e.Message != r.Reason {
+			t.Fatalf("%s: error = %+v", name, e)
+		}
+	}
+	// Lifting the exclusion makes f work again, untouched.
+	nc := cloneCfg(h.cfg)
+	nc.ExcludeNodes = nil
+	h.step(evConfig{cfg: nc})
+	if r := h.c.dryPlan("f"); r.Action != PlanStart {
+		t.Fatalf("after lifting: %+v", r)
+	}
+	h.ready("f")
+	h.wantNodes("f", "02:00:00:00:00:01")
 }

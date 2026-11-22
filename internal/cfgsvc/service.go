@@ -68,6 +68,11 @@ type Result struct {
 	Diff            []audit.DiffItem `json:"diff"`
 	Warnings        []string         `json:"warnings"`
 	RestartRequired []string         `json:"restart_required"`
+	// BlockedByExclusion lists the profiles that force a node exclude_nodes
+	// names (0.1.7): valid configuration, kept, refused at run time until
+	// the exclusion is lifted. Each is also one entry of Warnings. It
+	// describes the configuration after the write, whatever the write was.
+	BlockedByExclusion []config.ExclusionBlock `json:"blocked_by_exclusion"`
 }
 
 // ChangeEvent is announced after every committed change.
@@ -311,6 +316,10 @@ func (s *Service) mutate(ctx context.Context, o WriteOpts, m mutation) (*Result,
 		res.Diff = []audit.DiffItem{}
 	}
 	res.RestartRequired = restartKeys(res.Diff)
+	res.BlockedByExclusion = append([]config.ExclusionBlock{}, cfg.ExclusionBlocks()...)
+	for _, b := range res.BlockedByExclusion {
+		res.Warnings = append(res.Warnings, b.Warning())
+	}
 	if o.IfMatch != nil && *o.IfMatch != s.rev {
 		return nil, &cfgstore.ErrStale{Current: s.rev}
 	}

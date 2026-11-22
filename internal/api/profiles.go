@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
@@ -86,6 +88,12 @@ func (s *Server) profileEntriesOf(ctx context.Context, cfg *config.Config) []map
 		if p.NeedsMiB > 0 {
 			e["needs_mib_configured"] = p.NeedsMiB
 		}
+		// It forces a node exclude_nodes names: kept, refused until lifted.
+		if b, ok := cfg.BlockedByExclusion(n); ok {
+			e["blocked_by_exclusion"] = b.Entry
+		} else if err == nil && rep.Action == scheduler.PlanReject && strings.Contains(rep.Reason, "excluded by config (exclude_nodes entry ") {
+			e["blocked_by_exclusion"] = exclusionEntry(rep.Reason)
+		}
 		if err != nil {
 			e["plan"] = map[string]any{"action": "unknown", "reason": err.Error()}
 		} else {
@@ -162,4 +170,21 @@ func nonNil(s []string) []string {
 		return []string{}
 	}
 	return s
+}
+
+// exclusionEntry takes the exclude_nodes entry out of the scheduler's reason
+// "... excluded by config (exclude_nodes entry "<entry>"; ..."; "" when the
+// reason has none.
+func exclusionEntry(reason string) string {
+	const key = "(exclude_nodes entry "
+	i := strings.Index(reason, key)
+	if i < 0 {
+		return ""
+	}
+	q, err := strconv.QuotedPrefix(reason[i+len(key):])
+	if err != nil {
+		return ""
+	}
+	e, _ := strconv.Unquote(q)
+	return e
 }
