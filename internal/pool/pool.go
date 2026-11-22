@@ -127,6 +127,9 @@ type Options struct {
 	// logging is off. It must not block. Nil: no logs object is handed out
 	// and the heartbeat answer has no logs_revision.
 	Logs func(nodeID string) *agentproto.Logs
+	// HostInfo reads the scheduler machine's own uptime and boot id for the
+	// node feed; nil reads /proc (ProcHostInfo).
+	HostInfo HostInfo
 }
 
 // heartbeat is a decoded heartbeat. Stats stays raw: a missing or bad stats
@@ -151,6 +154,38 @@ type heartbeat struct {
 	// CR-10, optional: the agent's log shipping figures. Raw, like stats: a
 	// bad object must never reject the heartbeat.
 	Logs json.RawMessage `json:"logs,omitempty"`
+	// The machine's own uptime and boot id (optional; an older agent sends
+	// neither). A bad value is dropped, never the heartbeat.
+	HostUptimeS *float64 `json:"host_uptime_s,omitempty"`
+	BootID      string   `json:"boot_id,omitempty"`
+}
+
+// optionalHeartbeatFields are dropped one by one when they do not decode;
+// the rest of the heartbeat is kept.
+var optionalHeartbeatFields = []string{"stats", "logs", "host_uptime_s", "boot_id", "watchdog_floor_mib", "stop_reason", "stop_message"}
+
+// sanitize drops optional values that cannot be right.
+func (hb *heartbeat) sanitize() {
+	if hb.HostUptimeS != nil && *hb.HostUptimeS < 0 {
+		hb.HostUptimeS = nil
+	}
+	if !validBootID(hb.BootID) {
+		hb.BootID = ""
+	}
+}
+
+// validBootID: up to 64 hex digits or dashes (the kernel writes 32 hex digits
+// with dashes; the agent sends them without).
+func validBootID(s string) bool {
+	if len(s) > 64 {
+		return false
+	}
+	for _, c := range s {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F' || c == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 type agent struct {
@@ -443,19 +478,35 @@ type HeartbeatResult struct {
 func (p *Pool) Heartbeat(id string, body []byte) HeartbeatResult {
 	var hb heartbeat
 	if err := json.Unmarshal(body, &hb); err != nil {
-		// A bad stats object alone must not fail the heartbeat: retry
-		// without it.
+		// A bad optional field alone (stats, or a later addition) must not
+		// fail the heartbeat: retry without the optional fields that do not
+		// decode.
 		var m map[string]json.RawMessage
 		if json.Unmarshal(body, &m) != nil {
 			return HeartbeatResult{Status: http.StatusBadRequest, Err: "the heartbeat is not a JSON object"}
 		}
-		delete(m, "stats")
+		statsBad := false
+		for _, k := range optionalHeartbeatFields {
+			v, ok := m[k]
+			if !ok {
+				continue
+			}
+			one, _ := json.Marshal(map[string]json.RawMessage{k: v})
+			if json.Unmarshal(one, &heartbeat{}) != nil {
+				delete(m, k)
+				statsBad = statsBad || k == "stats"
+			}
+		}
 		b, _ := json.Marshal(m)
+		hb = heartbeat{} // the failed decode may have filled some fields
 		if err := json.Unmarshal(b, &hb); err != nil {
 			return HeartbeatResult{Status: http.StatusBadRequest, Err: "heartbeat: " + err.Error()}
 		}
-		hb.Stats = json.RawMessage(`"unreadable"`)
+		if statsBad {
+			hb.Stats = json.RawMessage(`"unreadable"`)
+		}
 	}
+	hb.sanitize()
 	now := p.o.Clock()
 	p.mu.Lock()
 	defer p.mu.Unlock()

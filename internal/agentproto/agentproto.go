@@ -421,6 +421,15 @@ type Heartbeat struct {
 	StopMessage string `json:"stop_message,omitempty"`
 	// Logs are the agent's log shipping figures (CR-10, optional).
 	Logs *LogShipping `json:"logs,omitempty"`
+	// HostUptimeS is the machine's own uptime: the seconds since the kernel
+	// booted, on the monotonic clock (CLOCK_BOOTTIME), as the agent read it
+	// when it built this heartbeat. BootID is the kernel's boot id
+	// (/proc/sys/kernel/random/boot_id, 32 hex digits, no dashes). Both
+	// optional: an agent built before them (release 0.1.3 as first shipped)
+	// sends neither; a Docker install sends the host kernel's, which the
+	// container shares.
+	HostUptimeS *float64 `json:"host_uptime_s,omitempty"`
+	BootID      string   `json:"boot_id,omitempty"`
 }
 
 // HeartbeatAnswer is the 200 answer to a heartbeat. 410 means "register again".

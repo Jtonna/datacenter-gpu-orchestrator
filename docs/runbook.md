@@ -481,6 +481,20 @@ It returns one JSON object with the keys `time`, `shutting_down`, `instances`, `
 
 A starting instance whose child is loading also has a `load` object (below). `recent_loads` (also on `GET /running`, next to `running`) is the outcome of every load attempt that started a child and finished in the last 120 s, newest first, always present and `[]` when there is none: `{"session_id", "model", "workers", "outcome": "ready"|"failed"|"cancelled", "reason", "finished_at" (unix ms), "load_s"}`. `reason` is empty for `ready`; a failed load says why (child exit, load timeout, load stalled), a cancelled one says it was unloaded or the scheduler shut down. The `/api/events` stream sends `loadStarted` (`session_id`, `model`, `started_at`, `workers`) and `loadFinished` (the same object as the `recent_loads` entry).
 
+### Read the node feed (`/api/nodes`)
+
+```sh
+curl -s http://127.0.0.1:3122/api/nodes
+```
+
+For a dashboard backend that polls the nodes: `{"time", "seq", "nodes"}`.
+Each entry of `nodes` is an entry of `agents` of `/api/status`, unchanged;
+the last one is Potluck's own machine, with `"local": true`. `host_uptime_s`
+and `boot_id` are the machine's uptime since its kernel booted and its boot id
+(absent for an older agent). Keep the last `seq` you read: an answer with the
+same `seq` has nothing new but ages and uptimes. Agents membership only; with
+the fleet feed it answers `503`.
+
 ### Watch a load (progress and ETA)
 
 A load onto the PS5s prints nothing in the child log while the model uploads, so look at the scheduler instead. While the instance is `starting`:

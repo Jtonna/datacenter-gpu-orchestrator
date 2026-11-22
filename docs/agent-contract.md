@@ -179,6 +179,7 @@ Every `heartbeat_every_s`. It carries everything Potluck needs to know about an 
   | `stop_message` | Only with `stop_reason`, when there is more to say (the watchdog's figures). |
 
 - CR-10, accepted, batch 1 built, not deployed; optional, not sent by release 0.1.0: `logs`, the agent's log shipping figures (section 11.3, item 4).
+- Optional, added within release 0.1.3 (an agent built before them sends neither, and a Potluck built before them ignores them): `host_uptime_s`, the machine's own uptime in seconds since its kernel booted, read from the agent's monotonic clock (`CLOCK_BOOTTIME`) when it builds the heartbeat, with decimals; and `boot_id`, the kernel's boot id (`/proc/sys/kernel/random/boot_id`, 32 hex digits without dashes), read once at agent start and left out when it cannot be read. For example `"host_uptime_s": 4123.25, "boot_id": "0123456789abcdef0123456789abcdef"`. A Docker install sends the host kernel's: a container shares both with its host. Neither is a wall-clock time (rule 2.1). A value of the wrong type, a negative uptime or a boot id that is not hex is dropped by Potluck; the heartbeat is still taken.
 
 Answer `200`: `{"release": "0.1.0", "paused": false}`. With central logging on (CR-10, accepted, batch 1 built, not deployed) the answer also has `logs_revision` (section 11.3, item 3) and `server_time_unix_ms` (item 11); release 0.1.0 ignores both.
 
@@ -642,7 +643,7 @@ CR-6, accepted 2026-11-21. They are part of the contract.
 - **Lost node with a launch.** A node that loses power cannot report or expire anything. When a node with a launch is marked lost (after 20 s without a heartbeat, section 4.3: CR-6, accepted 2026-11-21), Potluck fails the instance at once and stops the other members. It never tries to restart or recover the node. When the node's agent returns and reports a launch Potluck no longer holds, Potluck tells it to stop it (section 4.2).
 - **Agent restart with a launch (CR-6, accepted 2026-11-21).** The launch keeps running (section 6.1). While the agent is away the node is silent, not lost, for up to 20 s. When the agent registers again within that time with the same `launch_id`, Potluck keeps the instance and sends no `stop_launch`.
 - **Potluck restart.** Potluck holds no launches after a restart. Each agent's next heartbeat gets `410`, the agent registers with its `launch_id`, and Potluck answers `stop_launch`. Launches whose agent cannot reach Potluck end by their lease.
-- **One feed** (plan task D4) for other systems is built from the heartbeats and Potluck's own instance state. It is a separate page of this repository, not part of this contract.
+- **One feed** (plan task D4) for other systems is built from the heartbeats and Potluck's own instance state: `GET /api/nodes` (design 9, "Node feed"). Its entries are exactly the entries of `agents` in `GET /api/status`, plus Potluck's own machine marked `"local": true`. It is not part of this contract.
 
 ### 11.1 Details fixed while building the scheduler side (CR-5)
 

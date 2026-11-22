@@ -1691,12 +1691,40 @@ gets its own process group, so nothing is left behind.
 | `GET /api/models`, `GET /api/models/{key}` | The model catalog: one entry per model file, with its profiles, instances, history and benchmark figures (9.4). Read-only. |
 | `GET /health` | `200` whenever the scheduler is running. |
 | `GET /api/status` | Instances, placements, per-device memory from the last pre-flight, claims, queue, quarantines, backoffs, node view and its age. A starting instance also shows its load progress and its `load` report (7.6a). The top-level `recent_loads` lists the outcomes of load attempts finished in the last 120 s. Each node in `view.nodes` that an instance uses also has `health` (8.4a), and a node that was sent a recovery request or reported an outcome also has `recovery` (8.4b). |
+| `GET /api/nodes` | The node feed (below): the agent entries of `/api/status` and the local machine, with a change counter. Read-only; agents membership only (`503` otherwise). |
 | `POST /api/plan` `{model}` | Dry run: what would happen if this model were requested now (placement, plan with victims, or the reason for neither). Changes nothing. |
 | `POST /api/load` `{model}` | Start loading ahead of time. Returns `202` at once. Audited (section `runtime`). |
 | `POST /api/unload` `{model, force}` | Stop one instance if idle; `force: true` stops it even if busy. Audited. |
 
 `force: true` is the one way a running generation can be cut off, and only by
 an explicit admin call.
+
+**Node feed (`GET /api/nodes`).** For a reader outside Potluck that polls the
+nodes every few seconds (a dashboard backend) and should not read the whole
+`/api/status` for it. The answer is `{"time", "seq", "nodes"}`:
+
+- `time` is Potluck's clock when it answered (RFC 3339, UTC).
+- `nodes` are exactly the entries of `agents` of `/api/status`: same field
+  names, same shapes, built by one function (`agentFacts`) so they cannot
+  drift. After them comes the scheduler's own machine, when the node view has
+  it (a working `local_probe_cmd`): `{"id", "name", "state": "active",
+  "release", "local": true, "placeable", "host_uptime_s", "boot_id"}`. It
+  leaves out what it does not have (programs, heartbeat, launch, pause,
+  devices, stats).
+- Every agent entry has, when its agent reports them, `host_uptime_s` (the
+  machine's uptime in seconds since its kernel booted, as of the last
+  heartbeat, which was `last_seen_ago_s` ago) and `boot_id` (agent contract
+  4.3). Potluck reads its own from `/proc/uptime` and the kernel's boot id.
+- `seq` rises whenever anything in the answer changed other than the ages
+  (`*_age_s`, `*_ago_s`, `age_ms`), the uptimes (`uptime_s`,
+  `host_uptime_s`) and `time`, so a reader can skip an answer whose `seq` it
+  has seen. It is computed when the feed is read, from a hash of the answer
+  without those keys: a change that comes and goes between two reads is not
+  seen. It starts at Potluck's start time in Unix milliseconds, so a restart
+  of Potluck does not repeat a number. Compare it for equality only. An
+  agent's `stats` change with nearly every heartbeat, so with live nodes
+  `seq` rises about as often as they report.
+- No CORS headers: the reader is a backend.
 
 Streaming: `httputil.ReverseProxy` with immediate flush; no response-header
 timeout; client cancellation propagates upstream.

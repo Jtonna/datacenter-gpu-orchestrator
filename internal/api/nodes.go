@@ -36,6 +36,8 @@ import (
 //	POST   /api/nodes/{id}/force-unload
 //	DELETE /api/nodes/{id}
 //	POST   /api/nodes/{id}/readmit
+//
+// Read only: GET /api/nodes, the node feed (feed.go).
 
 // SectionNodes is the audit section of the node actions.
 const SectionNodes = "nodes"
@@ -52,6 +54,8 @@ func (s *Server) nodeRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/nodes/{id}/force-unload", s.nodeForceUnload)
 	m.HandleFunc("DELETE /api/nodes/{id}", s.nodeRemove)
 	m.HandleFunc("POST /api/nodes/{id}/readmit", s.nodeReadmit)
+
+	m.HandleFunc("GET /api/nodes", s.handleNodeFeed) // the node feed (feed.go)
 }
 
 // agentsOn answers 503 when membership is not agents.
@@ -272,8 +276,7 @@ func (s *Server) agentStatus(v map[string]any) {
 	if s.opts.Pool == nil {
 		return
 	}
-	facts := s.opts.Pool.Facts()
-	s.logFacts(facts) // CR-10: what the log route counted per node
+	facts := s.agentFacts()
 	byID := map[string]pool.NodeFacts{}
 	for _, f := range facts {
 		byID[f.ID] = f

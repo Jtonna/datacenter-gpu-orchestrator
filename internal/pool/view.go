@@ -458,6 +458,12 @@ type NodeFacts struct {
 	// the agent reports; the API adds what its log route counted. Absent when
 	// there is neither.
 	Logs *NodeLogs `json:"logs,omitempty"`
+	// HostUptimeS is the machine's own uptime in seconds since its kernel
+	// booted, as its agent reported it in its last heartbeat (that was
+	// last_seen_ago_s ago); BootID is its kernel's boot id. Both absent for
+	// an agent that reports neither.
+	HostUptimeS *float64 `json:"host_uptime_s,omitempty"`
+	BootID      string   `json:"boot_id,omitempty"`
 }
 
 // UnpausePendingMessage is the unplaced message of a node whose unpause has
@@ -494,6 +500,7 @@ func (p *Pool) Facts() []NodeFacts {
 			f.MemAvailMiB = &m
 			_, f.ExtraDevicesIgnored, _ = pickDevice(a)
 			f.StopReason, f.StopMessage = hb.StopReason, hb.StopMessage
+			f.HostUptimeS, f.BootID = hb.HostUptimeS, hb.BootID
 			if sh := parseShipping(hb.Logs); sh != nil {
 				f.Logs = &NodeLogs{Refused: map[string]int64{}, Agent: sh}
 			}

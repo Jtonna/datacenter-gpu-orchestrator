@@ -118,8 +118,9 @@ type Deps struct {
 
 	// Central logging (CR-10). LogsHTTP is the log sender's own client (nil:
 	// its own default). Journal starts the journal follower (nil:
-	// journalctl). Monotonic reads CLOCK_MONOTONIC and BootID the boot id,
-	// for journal entries (nil: the real ones). LaunchLogEvery is how often
+	// journalctl). Monotonic reads CLOCK_MONOTONIC, for journal entries, and
+	// BootID the kernel's boot id, read once at start for journal entries,
+	// the heartbeat and start-up reporting (nil: the real ones). LaunchLogEvery is how often
 	// the launch log is read (default 250 ms).
 	LogsHTTP       *http.Client
 	Journal        logship.JournalStart
@@ -152,6 +153,9 @@ type Agent struct {
 
 	startID   string
 	startedAt time.Duration
+	// bootID is the kernel's boot id, read once at start ("" when it cannot
+	// be read; it is then left out of the heartbeat).
+	bootID    string
 	potluckIP net.IP
 	base      string
 
@@ -257,8 +261,12 @@ func New(opt Options, deps Deps) (*Agent, error) {
 		deps.Logger = slog.New(logship.NewHandler(deps.Logger.Handler(), ship))
 		ship.SetLogger(deps.Logger)
 	}
+	bootID := deps.BootID
+	if bootID == nil {
+		bootID = osx.BootID
+	}
 	a := &Agent{Ship: ship, opt: opt, deps: deps, log: deps.Logger, startID: startID,
-		startedAt: deps.Clock.Now(), potluckIP: ip, base: "http://" + opt.Potluck, hbEvery: 2 * time.Second,
+		startedAt: deps.Clock.Now(), bootID: bootID(), potluckIP: ip, base: "http://" + opt.Potluck, hbEvery: 2 * time.Second,
 		recovered: make(chan struct{})}
 
 	progRoot := filepath.Join(opt.DataDir, "programs")
@@ -668,14 +676,11 @@ func (a *Agent) startLogShipping(ctx context.Context, wg *sync.WaitGroup) {
 	// The system log: the machine's own journal on a bare install; on a
 	// Docker install only a journal folder given with --journal-dir.
 	if a.opt.Install == agentproto.InstallBare || a.opt.JournalDir != "" {
-		mono, boot := a.deps.Monotonic, a.deps.BootID
+		mono := a.deps.Monotonic
 		if mono == nil {
 			mono = osx.MonotonicNow
 		}
-		if boot == nil {
-			boot = osx.BootID
-		}
-		j := &logship.Journal{Ship: a.Ship, Start: a.deps.Journal, Dir: a.opt.JournalDir, Monotonic: mono, BootID: boot()}
+		j := &logship.Journal{Ship: a.Ship, Start: a.deps.Journal, Dir: a.opt.JournalDir, Monotonic: mono, BootID: a.bootID}
 		wg.Add(1)
 		go func() { defer wg.Done(); j.Run(ctx) }()
 	}
@@ -1013,7 +1018,11 @@ func (a *Agent) Heartbeat() agentproto.Heartbeat {
 	now := a.deps.Clock.Now()
 	a.mu.Lock()
 	a.seq++
-	hb := agentproto.Heartbeat{AgentStartID: a.startID, Seq: a.seq, UptimeS: float64((now - a.startedAt).Milliseconds()) / 1000}
+	// The agent's clock counts from kernel boot (CLOCK_BOOTTIME), so it is
+	// also the machine's own uptime; on a Docker install, the host's.
+	hostUp := float64(now.Milliseconds()) / 1000
+	hb := agentproto.Heartbeat{AgentStartID: a.startID, Seq: a.seq, UptimeS: float64((now - a.startedAt).Milliseconds()) / 1000,
+		HostUptimeS: &hostUp, BootID: a.bootID}
 	devs := append([]agentproto.Device{}, a.devs...)
 	devsAt := a.devsAt
 	a.mu.Unlock()
