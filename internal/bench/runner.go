@@ -164,6 +164,10 @@ func (m *Manager) execute(ctx context.Context, q *queued) {
 	defer maxTimer.Stop()
 
 	x := &suiteExec{m: m, a: ar, base: map[string]*Step{}}
+	// Whatever this run loaded is unloaded at the end, however it ended (a
+	// failure included: deferred, so it runs while the panic unwinds).
+	cleanup := sync.OnceFunc(x.cleanup)
+	defer cleanup()
 	now := m.o.Now().UnixMilli()
 	ar.setRun(func(r *Run) { r.State, r.StartedAt = RunRunning, now })
 	if err := m.o.Store.SetRunState(r.ID, RunRunning, now, 0, ""); err != nil {
@@ -232,6 +236,7 @@ run:
 		ar.mu.Lock()
 		ar.cur = i
 		ar.mu.Unlock()
+		supervise.Point("bench.item")
 		got := x.runItem(i, it)
 		steps = append(steps, got...)
 		if suite.StopOnFailure {
@@ -259,8 +264,7 @@ run:
 			}
 		}
 	}
-	// Whatever this run loaded is unloaded at the end, however it ended.
-	x.cleanup()
+	cleanup()
 
 	ar.mu.Lock()
 	timedOut := ar.timedOut

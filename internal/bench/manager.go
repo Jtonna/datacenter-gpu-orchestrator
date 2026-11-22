@@ -101,6 +101,7 @@ type Manager struct {
 	sched    map[string]*schedState
 	wake     chan struct{}
 	done     chan struct{}
+	running  *queued // the run the loop executes (the loop's goroutine only; recoverRun reads it)
 	started  bool
 }
 
@@ -184,11 +185,13 @@ func (m *Manager) Start(ctx context.Context) {
 	}
 	m.started = true
 	m.mu.Unlock()
-	go m.loop(ctx)
+	// A failure fails the run it was executing (its models are unloaded on
+	// the way out), keeps the queue, and the loop starts again (isolation.go).
+	supervise.Go(ctx, supervise.Spec{Name: "bench.manager", Policy: supervise.Restart, Rebuild: m.recoverRun,
+		Done: func() { close(m.done) }}, m.loop)
 }
 
 func (m *Manager) loop(ctx context.Context) {
-	defer close(m.done)
 	tick := time.NewTicker(30 * time.Second)
 	defer tick.Stop()
 	m.checkSchedules(true)
@@ -201,7 +204,9 @@ func (m *Manager) loop(ctx context.Context) {
 		}
 		m.mu.Unlock()
 		if next != nil {
+			m.running = next
 			m.execute(ctx, next)
+			m.running = nil
 			continue
 		}
 		select {
