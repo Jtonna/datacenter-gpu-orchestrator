@@ -13,6 +13,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/audit"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/pool"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 )
 
 // Agent membership (agent contract). Two groups of endpoints:
@@ -291,11 +292,11 @@ func (s *Server) nodeReadmit(w http.ResponseWriter, r *http.Request) {
 // agentStatus adds the agent facts to a status view (agents membership only):
 // each node of view.nodes gets "agent", and "agents" lists every agent node
 // Potluck knows (lost, left and removed ones too).
-func (s *Server) agentStatus(v map[string]any) {
+func (s *Server) agentStatus(v map[string]any, st *scheduler.Status) {
 	if s.opts.Pool == nil {
 		return
 	}
-	facts := s.agentFacts()
+	facts := s.agentFacts(st)
 	byID := map[string]pool.NodeFacts{}
 	for _, f := range facts {
 		byID[f.ID] = f

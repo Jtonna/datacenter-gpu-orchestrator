@@ -476,6 +476,17 @@ type NodeFacts struct {
 	// an agent that reports neither.
 	HostUptimeS *float64 `json:"host_uptime_s,omitempty"`
 	BootID      string   `json:"boot_id,omitempty"`
+	// The memory reservation rule (scheduler/reserve.go), filled in by the
+	// API from the scheduler's node status; absent for a node the scheduler
+	// does not list. Reserved lists what is placed, loading or loaded there
+	// with its reserved figure; DriftMiB is MeasuredUsedMiB - ReservedMiB;
+	// FreeForNewLoadMiB is the node's budget for a new load now.
+	Reserved          any    `json:"reserved,omitempty"`
+	ReservedMiB       *int   `json:"reserved_mib,omitempty"`
+	MeasuredUsedMiB   *int   `json:"measured_used_mib,omitempty"`
+	DriftMiB          *int   `json:"drift_mib,omitempty"`
+	DriftWarning      string `json:"drift_warning,omitempty"`
+	FreeForNewLoadMiB *int   `json:"free_for_new_load_mib,omitempty"`
 	// LastStartup is the node's last start as Potluck recorded it: its kind
 	// and the seconds from boot start to ready for model loads, or the
 	// condition still missing. Absent for an agent that sends no start-up

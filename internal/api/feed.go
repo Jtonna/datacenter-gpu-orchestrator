@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/pool"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 )
 
 // The node feed: GET /api/nodes, for a reader outside Potluck (a dashboard
@@ -53,9 +54,10 @@ func (f *feedSeq) next(h [32]byte, start int64) int64 {
 // agentFacts is the agents list of /api/status and of the node feed: the
 // pool's facts with what the log route counted per node. One function, so
 // the two cannot drift apart.
-func (s *Server) agentFacts() []pool.NodeFacts {
+func (s *Server) agentFacts(st *scheduler.Status) []pool.NodeFacts {
 	facts := s.opts.Pool.Facts()
-	s.logFacts(facts) // CR-10: what the log route counted per node
+	s.logFacts(facts)           // CR-10: what the log route counted per node
+	reservationFacts(facts, st) // reserve.go: what is reserved on each node
 	return facts
 }
 
@@ -65,7 +67,11 @@ func (s *Server) handleNodeFeed(w http.ResponseWriter, r *http.Request) {
 	}
 	now := s.opts.Now()
 	nodes := []any{}
-	for _, f := range s.agentFacts() {
+	var stp *scheduler.Status
+	if st, err := s.sched.Status(r.Context()); err == nil {
+		stp = &st
+	}
+	for _, f := range s.agentFacts(stp) {
 		nodes = append(nodes, f)
 	}
 	if l, ok := s.opts.Pool.Local(); ok {

@@ -710,6 +710,7 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 		"version": s.opts.Version, "started_at": s.start.UnixMilli(), "now": now.UnixMilli(), "uptime_s": int64(now.Sub(s.start) / time.Second),
 		"listen": sys.Listen, "models_dir": sys.ModelsDir, "safety": sys.Safety, "bench": sys.Bench, "storage": storage,
 		"live_clients": s.ws.clientCount(), "live_clients_max": s.ws.max, "profiles": len(s.conf().Profiles),
+		"reserve":       reserveSettings(s.conf()),
 		"origin_policy": "same origin, or an origin on a loopback or private-network address (the live channel has no authentication)",
 	}
 	if sys.Programs != nil {
