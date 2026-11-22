@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -245,6 +246,70 @@ func TestNeverFits_ForcedLoadRightAfterAnUnloadWaits(t *testing.T) {
 			if h.c.insts["mid"] == nil {
 				t.Fatalf("%s: mid did not start once the view caught up (wait: %s)", mode+" window "+window.String(), h.waitReasonOf("mid"))
 			}
+		}
+	}
+}
+
+// skewedPeaks stores a 2-device measurement of "m" on a and b, 10000 MiB on
+// each, whose peak on a (12500) the placer does not see: the gate refuses
+// the placer's pick a, b; any other node set has no per-node peaks.
+func skewedPeaks(t *testing.T, mode string, ids ...string) *harness {
+	t.Helper()
+	var ns []core.Node
+	for i, id := range ids {
+		ns = append(ns, psNode(id, 2+2*i, 12643))
+	}
+	h := inMode(newHarness(t).nodes(ns...), mode)
+	liveTight(h)
+	h.cfg.Defaults.MaxPool = 3
+	p := h.llama("m", 0, func(p *core.Profile) { p.LoadTimeout = time.Hour })
+	h.needs["m"] = NeedInfo{Need: placer.Measured(20000), FileBytes: 10 << 30}
+	h.c.llamaBuild, h.c.servedBuild = "aaaaaaa1", "aaaaaaa1"
+	h.c.putLearned(&learnedNeed{TotalMiB: 20000, key: needKeyOf(p), profile: "m", devices: 2, at: h.clk.Now(),
+		placement: []core.NodeID{"a", "b"}, split: []float64{0.5, 0.5},
+		Nodes: []learnedNode{{ID: "a", Fraction: 0.5, MiB: 10000, PeakMiB: 12500}, {ID: "b", Fraction: 0.5, MiB: 10000, PeakMiB: 10000}}})
+	h.viewChanged()
+	return h
+}
+
+// FS1: the gate refuses the placer's first choice a, b, but b, c passes:
+// the profile starts there instead of being refused (or waiting).
+func TestNeverFits_AnotherPlacementIsTriedBeforeRefusing(t *testing.T) {
+	for _, mode := range []string{"fleet", "agents"} {
+		h := skewedPeaks(t, mode, "a", "b", "c")
+		p := h.c.cfg.Profiles["m"]
+		req, _, _ := h.c.request(p)
+		first, err := placer.Place(req, h.c.freeCandidates(p))
+		if err != nil || h.c.reserveGate(p, first, nil) == "" || first.Nodes[0].ID != "a" {
+			t.Fatalf("%s: the setup does not make the gate refuse a, b: %v %v", mode, placementIDs(first), err)
+		}
+		r := h.c.dryPlan("m")
+		if r.Action != PlanStart {
+			t.Fatalf("%s: plan %s (%s), want start on another set", mode, r.Action, r.Reason)
+		}
+		w := h.request("m")
+		if a, ok := h.peek(w); ok && a.err != nil {
+			t.Fatalf("%s: refused %v", mode, a.err)
+		}
+		if got := h.nodesOfAny("m"); slices.Contains(got, "a") || len(got) != 2 {
+			t.Fatalf("%s: placed on %v, want a set without a", mode, got)
+		}
+	}
+}
+
+// FS1 and FS2: when no placement passes, the refusal names what was tried
+// and carries Retry-After as the forced one does.
+func TestNeverFits_AutomaticRefusalNamesTheTriedAndRetryAfter(t *testing.T) {
+	for _, mode := range []string{"fleet", "agents"} {
+		h := skewedPeaks(t, mode, "a", "b")
+		e := refusedAtOnce(t, h, "m", ReasonDoesNotFit)
+		for _, s := range []string{"tried 1: a, b", "node a", "short by", "waiting cannot help"} {
+			if !strings.Contains(e.Message, s) {
+				t.Errorf("%s: the message lacks %q: %s", mode, s, e.Message)
+			}
+		}
+		if e.RetryAfter != queueRetryAfter {
+			t.Errorf("%s: Retry-After %v, want %v", mode, e.RetryAfter, queueRetryAfter)
 		}
 	}
 }

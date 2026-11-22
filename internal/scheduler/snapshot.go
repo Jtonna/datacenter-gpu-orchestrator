@@ -331,10 +331,9 @@ func (c *schedCore) dryPlan(profile string) (r PlanReport) {
 	}
 	// The reservation gate (reserve.go) holds what the placer finds to the
 	// memory rows, as place, plan and startOnClaim do.
-	gate := ""
-	pl, perr := placer.Place(req, c.freeCandidates(p))
+	pl, gate, tried, perr := c.gatedPlace(p, req) // neverfits.go, as place
 	if perr == nil {
-		if gate = c.reserveGate(p, pl, nil); gate == "" {
+		if gate == "" {
 			r.Action, r.Placement, placed = PlanStart, c.placedStatus(pl), &pl
 			c.applyForcedFit(&r, p, pl)
 			return r
@@ -358,7 +357,7 @@ func (c *schedCore) dryPlan(profile string) (r PlanReport) {
 		}
 	}
 	if gate != "" && perr == nil {
-		if ne := c.gateNeverFits(p, pl); ne != nil { // neverfits.go: as place refuses it
+		if ne := c.gateNeverFits(p, tried); ne != nil { // neverfits.go: as place refuses it
 			r.Action, r.Reason, r.Placement = PlanReject, ne.Message, c.placedStatus(pl)
 			r.RequiredMiB, r.CapacityMiB = ne.NeedMiB, ne.CapacityMiB
 			return r

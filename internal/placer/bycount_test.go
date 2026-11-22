@@ -24,3 +24,23 @@ func TestByCount_ASetIsHeldToItsCountsNeed(t *testing.T) {
 		t.Fatalf("For(5) past the table %+v", r)
 	}
 }
+
+// MinNodes leaves out smaller sets: the scheduler asks again for a larger
+// set when its reservation gate refused a smaller one.
+func TestMinNodes_LeavesOutSmallerSets(t *testing.T) {
+	free := []Candidate{ps("a", 9000), ps("b", 9000), ps("c", 9000)}
+	req := Request{Need: Measured(7000), MaxPool: 3}
+	for min, want := range map[int]int{0: 1, 1: 1, 2: 2, 3: 3} {
+		r := req
+		r.MinNodes = min
+		pl, err := Place(r, free)
+		if err != nil || len(pl.Nodes) != want {
+			t.Fatalf("MinNodes %d: %d nodes, %v; want %d", min, len(pl.Nodes), err, want)
+		}
+	}
+	r := req
+	r.MinNodes = 4
+	if _, err := Place(r, free); err == nil {
+		t.Fatal("MinNodes 4 on 3 nodes placed")
+	}
+}
