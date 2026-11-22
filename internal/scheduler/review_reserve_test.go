@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -383,10 +384,10 @@ func TestReview_N1_DefaultsWriteNoPeaks(t *testing.T) {
 // max_pool for an automatic profile) against a measurement stored on 2
 // (review SB1, SS4), in fleet membership, fleet membership with a lower
 // pre-flight, and agents membership, each with nothing before, right after
-// an unload on a whose figure the view still shows (FB1), and with another
+// an unload on a whose figure the view still shows (FB1), the same with
+// another profile idle on b (sixth review SS1, SS2), and with another
 // profile loaded and idle on a (the owner's case): see loadBefore and
-// beforeRule (fifth review). A third of the situations (25920 of
-// 90720) store measurements on two or three device counts with an
+// beforeRule. A third of the situations (34560 of 120960) store measurements on two or three device counts with an
 // untrusted row among them (third review, TN5): "counts-untrusted" has a
 // trusted 1-device row and an untrusted 3-device row below it (TB1),
 // "counts-between" trusted rows on 1 and 3 devices and an untrusted one on
@@ -398,6 +399,14 @@ func TestReview_GeneralRule(t *testing.T) {
 		fill, margin int
 		uses         bool
 	}
+	// Under the race detector the table runs one situation in 7 (about 70 s
+	// instead of 8 minutes). 7 is prime to every dimension's size, so every
+	// value of every dimension is still run; the plain pass runs them all.
+	every := 1
+	if raceOn {
+		every = 7
+	}
+	seen := map[string]bool{}
 	n := 0
 	for _, need := range []int{8000, 16000, 20000, 23000, 26000, 30000, 40000} { // 40000: never fits three nodes
 		for _, cBudget := range []int{12400, 9000} {
@@ -408,8 +417,16 @@ func TestReview_GeneralRule(t *testing.T) {
 							for _, ov := range []int{0, 15500} { // a pre-flight override above the fleet's figure on a
 								for _, nodes := range []int{1, 2, 3} {
 									for _, mode := range []string{"fleet", "fleet, lower pre-flight", "agents"} {
-										for _, before := range []string{"", "unload", "owner"} {
+										for _, before := range []string{"", "unload", "unload-holder", "owner"} {
 											n++
+											if n%every != 0 {
+												continue
+											}
+											for _, v := range []string{fmt.Sprint("need ", need), fmt.Sprint("c ", cBudget), fmt.Sprint("avg ", avgDrop),
+												fmt.Sprint("tight ", tg), "ctx " + fmt.Sprint(ctx), "shape " + shape, fmt.Sprint("ov ", ov),
+												fmt.Sprint("nodes ", nodes), "mode " + mode, "before " + before} {
+												seen[v] = true
+											}
 											checkGeneralRule(t, need, cBudget, avgDrop, tg.fill, tg.margin, tg.uses, ctx, shape, ov, nodes, mode, before)
 										}
 									}
@@ -421,8 +438,12 @@ func TestReview_GeneralRule(t *testing.T) {
 			}
 		}
 	}
-	if n != 90720 {
-		t.Fatalf("%d situations, the table says 90720", n)
+	if n != 120960 {
+		t.Fatalf("%d situations, the table says 120960", n)
+	}
+	// 7 needs + 2 + 2 + 5 + 2 + 6 shapes + 2 + 3 + 3 modes + 4 befores
+	if len(seen) != 36 {
+		t.Fatalf("%d dimension values run, want all 36", len(seen))
 	}
 }
 
@@ -635,8 +656,19 @@ func loadBefore(t *testing.T, h *harness, mode, before string, fill, margin int,
 	}
 	h.view.modify("a", func(n *core.Node) { n.FreeMiB -= 3500 })
 	h.viewChanged()
+	if before == "unload-holder" { // y idle on b, past min_hold (SS1)
+		h.llama("y", 2000, func(p *core.Profile) { p.ForceNodes = []string{"b"} })
+		h.viewChanged()
+		if mode == "agents" {
+			h.release(h.agentReady("y"))
+		} else {
+			h.release(h.ready("y"))
+		}
+		h.view.modify("b", func(n *core.Node) { n.FreeMiB -= 2500 })
+		h.advance(time.Minute)
+	}
 	switch before {
-	case "unload":
+	case "unload", "unload-holder":
 		h.step(evUnload{profile: "x", force: true})
 		h.advance(10 * time.Second)
 		if h.c.insts["x"] != nil {
@@ -658,9 +690,26 @@ func loadBefore(t *testing.T, h *harness, mode, before string, fill, margin int,
 func beforeRule(t *testing.T, h *harness, p *core.Profile, r PlanReport, before string, name func() string) {
 	t.Helper()
 	switch before {
-	case "unload":
-		if r.Action == PlanReject && strings.Contains(r.Reason, "waiting cannot help") {
-			t.Errorf("%s: refused right after the unload while the view still shows it: %s", name(), r.Reason)
+	case "unload", "unload-holder":
+		// no refusal on the lagging figure: not by the gate, not by the
+		// owner's case, not before an eviction (SS1)
+		for _, s := range []string{"waiting cannot help", "even with", "nothing loaded is stopped", "would refuse the launch"} {
+			if r.Action == PlanReject && strings.Contains(r.Reason, s) {
+				t.Errorf("%s: refused right after the unload while the view still shows it: %s", name(), r.Reason)
+			}
+		}
+		// an automatic profile is not moved or widened while a node of the
+		// placer's first choice was just released (SS2)
+		if len(p.ForceNodes) == 0 && r.Action == PlanStart {
+			req, _, _ := h.c.request(p)
+			first, err := placer.Place(req, h.c.freeCandidates(p))
+			var got []core.NodeID
+			for _, n := range r.Placement {
+				got = append(got, n.ID)
+			}
+			if err == nil && h.c.anyJustReleased(first) && !slices.Equal(got, placementNodeIDs(first)) {
+				t.Errorf("%s: started on %v right after the unload, not on the placer's first choice %v", name(), got, placementNodeIDs(first))
+			}
 		}
 	case "owner":
 		if len(p.ForceNodes) == 0 || r.Action == PlanReject || !h.c.gateOn() {
