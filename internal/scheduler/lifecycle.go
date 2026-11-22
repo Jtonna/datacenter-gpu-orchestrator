@@ -281,6 +281,7 @@ func (c *schedCore) healthy(iid uint64, err error) {
 	for _, n := range in.placement.Nodes {
 		ns := c.ns(n.ID)
 		ns.hasPF, ns.hasClaim = false, false // forgotten when a load on the node succeeds
+		ns.lastFile = lastFileOf(in.prof)    // its file is now likely in the node's cache
 	}
 	c.emitState(in, RunningReady)
 	load := in.child.Load()

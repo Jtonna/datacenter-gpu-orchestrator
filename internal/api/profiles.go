@@ -122,6 +122,12 @@ func reloadEntries(rs []scheduler.NodeReload, host map[string]string) []map[stri
 		}
 		if r.CacheRoomMiB != nil {
 			e["cache_room_mib"], e["cache_occupied"] = *r.CacheRoomMiB, r.CacheOccupied
+			if r.CacheLastFile != "" {
+				e["cache_last_file"] = r.CacheLastFile
+			}
+			if r.CacheNote != "" {
+				e["cache_note"] = r.CacheNote
+			}
 		}
 		if r.CachedNowMiB != nil {
 			e["cached_now_mib"] = *r.CachedNowMiB

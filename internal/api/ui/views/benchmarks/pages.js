@@ -70,7 +70,7 @@ function reloadCell(r) {
   const rank = { none: 0, partial: 1, unknown: 2, full: 3 };
   const w = rs.slice().sort((a, b) => (rank[a.verdict] ?? 2) - (rank[b.verdict] ?? 2))[0];
   return h('span', { title: RELOAD_TIP + (rs.length > 1 ? ' The node that keeps the least is shown.' : '') }, reloadAmount(w), rs.length > 1 ? h('span.sub', 'on ' + w.node) : null,
-    rs.some(cacheOccupied) ? h('span.sub.warn-t', 'Cache occupied by other files') : null);
+    rs.some(cacheOccupied) ? h('span.sub.warn-t', 'File cache nearly full: first reloads may be slower') : null);
 }
 
 const notFound = (what, id) => [backLink('Benchmarks', href('benchmarks')), h('section.card', empty(`There is no ${what} ${id}`, `It may have been deleted. Go back to Benchmarks to see the ones that exist.`))];

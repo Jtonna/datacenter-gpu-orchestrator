@@ -202,7 +202,7 @@ function setupBlock(step) {
         { label: 'Lowest available, load', cls: 'r', title: 'The lowest available memory while the model was loading, sampled about twice a second. (GPU): the free memory of a GPU with memory of its own; (system): available system memory', render: r => (r.low ? memCell(r.low.load_mib, r.low) : notRecorded()) },
         { label: 'Lowest available, step', cls: 'r', title: 'The lowest available memory during the whole benchmark. (GPU): the free memory of a GPU with memory of its own; (system): available system memory', render: r => (r.low ? memCell(r.low.step_mib, r.low) : notRecorded()) },
         { label: 'Can stay in the file cache', title: RELOAD_TIP, render: r => (r.reload ? h('span', { title: RELOAD_TIP }, reloadAmount(r.reload),
-          cacheOccupied(r.reload) ? h('span.sub.warn-t', occupiedText(r.node)) : null) : h('span.mut', DASH)) },
+          cacheOccupied(r.reload) ? h('span.sub.warn-t', occupiedText(r.node, r.reload)) : null) : h('span.mut', DASH)) },
       ],
     }));
 }

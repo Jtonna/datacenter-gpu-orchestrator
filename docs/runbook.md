@@ -727,12 +727,14 @@ curl -s $B/api/bench/state | jq .run
    about two thirds of the file can stay cached next to the loaded model, so
    every load reads at least a third of it from the disk or the network. "All
    of it" is not a promise either: after other large models the first reloads
-   still read part of the file again. The line "The cache on <node> is
-   occupied by other files now; expect the first reloads to be slower"
-   (`cache_occupied`, with `cached_now_mib` and `cache_room_mib`) says the
-   node's file cache holds so much now that the file does not fit next to it;
-   it can also show right after the same model was loaded, because the cache
-   figure does not say whose files it holds.
+   still read part of the file again. A second line shows when the node's
+   file cache holds so much now that the file does not fit next to it
+   (`cache_occupied`, with `cached_now_mib`, `cache_room_mib`,
+   `cache_last_file` and `cache_note`), unless the last model loaded on that
+   node was this one: "The file cache on <node> holds other files now (last
+   loaded there: <file>) ..." when another model was, or "The file cache on
+   <node> is nearly full now (<N> MiB); if that is other models' files ..."
+   when nothing was loaded there since the scheduler started.
 6. **Compare.** Each run is compared with the previous completed run of the
    same suite (or the `baseline` you named when you ran it). `regression: true`
    means the load was more than 15% slower (`bench.regress_load_pct`), decode

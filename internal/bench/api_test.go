@@ -177,3 +177,21 @@ func TestParseStatusAndPlanStepFacts(t *testing.T) {
 		t.Fatalf("%+v", p)
 	}
 }
+
+// The plan's cache figures and the reason for the flag are kept with the step.
+func TestPlanCacheFields(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"model":"m","action":"start","load_mode":"file_read","reload_from_cache":[{"id":"a","verdict":"full","file_mib":4512,
+		  "cached_now_mib":6959,"cache_room_mib":-124,"cache_occupied":true,"cache_last_file":"other.gguf","cache_note":"last load on this node was other.gguf"}]}`))
+	}))
+	defer srv.Close()
+	p, err := (&HTTPAPI{Base: srv.URL}).Plan(t.Context(), "m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := p.Reload[0]
+	if r.CachedNowMiB == nil || *r.CachedNowMiB != 6959 || r.CacheRoomMiB == nil || *r.CacheRoomMiB != -124 || !r.CacheOccupied ||
+		r.CacheLastFile != "other.gguf" || r.CacheNote != "last load on this node was other.gguf" {
+		t.Fatalf("%+v", r)
+	}
+}

@@ -270,6 +270,11 @@ type nodeState struct {
 	// agentHold: a worker launch on the node was refused with
 	// model_source_unreachable; the node is not used until then (agents.go).
 	agentHold time.Time
+
+	// lastFile is the model file of the last load that became ready on the
+	// node; "" when none since the scheduler started. Used only to word the
+	// reload-from-cache line (reloadcache.go, CacheFlag).
+	lastFile string
 }
 
 type backoff struct {

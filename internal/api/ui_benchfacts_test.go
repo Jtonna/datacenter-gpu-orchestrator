@@ -29,7 +29,7 @@ func TestUIBenchStepFactsKeysMatchTheServer(t *testing.T) {
 		Load:   &bench.LoadResult{LoadMode: bench.LoadModeFileRead},
 		MemLow: []bench.NodeMemLow{{ID: "i", Node: "n", LoadMiB: &lo, StepMiB: &lo, Kind: bench.MemKindGPU, Note: "n"}},
 		Roles:  []bench.NodeRole{{ID: "i", Node: "n", Role: bench.RoleHost, MemoryMiB: &mem}},
-		Reload: []bench.NodeReload{{ID: "i", Node: "n", Verdict: "partial", CachedPct: &pct, CachedNowMiB: &room, CacheRoomMiB: &room, CacheOccupied: true}},
+		Reload: []bench.NodeReload{{ID: "i", Node: "n", Verdict: "partial", CachedPct: &pct, CachedNowMiB: &room, CacheRoomMiB: &room, CacheOccupied: true, CacheLastFile: "f.gguf", CacheNote: "n"}},
 	})
 	res := jsonKeys(t, bench.BenchmarkResult{LowestMiB: &lo, LowestGPUMiB: &lo, LoadMode: "pushed", Host: "h", Workers: []string{"w"},
 		MemLow: []bench.NodeMemLow{{StepMiB: &lo, Kind: bench.MemKindGPU}}, Reload: []bench.NodeReload{{Verdict: "full"}}})
@@ -46,7 +46,7 @@ func TestUIBenchStepFactsKeysMatchTheServer(t *testing.T) {
 		{res, "views/benchmarks/pages.js", []string{"lowest_available_mib", "lowest_available_gpu_mib", "load_mode", "host", "workers", "mem_low", "step_mib", "kind", "reload_from_cache"}},
 		{agg, "views/benchmarks/aggregates.js", []string{"by_model_load_mode", "load_mode", "model_file"}},
 		{suite, "views/benchmarks/common.js", []string{"status", "reason"}},
-		{step, "core/stepfacts.js", []string{"verdict", "cached_pct", "cache_occupied", "cached_now_mib"}},
+		{step, "core/stepfacts.js", []string{"verdict", "cached_pct", "cache_occupied", "cached_now_mib", "cache_last_file"}},
 	} {
 		text := uiText(t, c.file)
 		for _, k := range c.keys {
@@ -67,7 +67,8 @@ func TestUIBenchStepFactsWords(t *testing.T) {
 		"`about ${num(r.cached_pct, 0)}%`", // "Can stay in the file cache: about 85%"
 		`RELOAD_TIP = 'How much of the model file can stay in the node\'s file cache next to the loaded model`,
 		"After other large models the first reloads still read part of the file again.",
-		"`The cache on ${name} is occupied by other files now; expect the first reloads to be slower`",
+		"`The file cache on ${name} holds other files now (last loaded there: ${r.cache_last_file}); expect the first reloads to be slower.`",
+		"`The file cache on ${name} is nearly full now (${num(r && r.cached_now_mib, 0)} MiB); if that is other models' files, the first reloads will be slower.`",
 		"file_read: ['File read'", "pushed: ['Pushed'", "local: ['Local'", "not_recorded: ['Not recorded'",
 		"`Host: ${host}`", "`Workers: ${ws.length} (${ws.join(', ')})`",
 	} {
@@ -78,7 +79,7 @@ func TestUIBenchStepFactsWords(t *testing.T) {
 	for file, wants := range map[string][]string{
 		"views/benchmarks/runs.js": {"setupBlock(step)", "'Lowest available, load'", "'Lowest available, step'", "'Not recorded'",
 			"'Load mode'", "loadModeNode(l.load_mode)", "title: RELOAD_TIP", "stepRoles(step)",
-			"'(GPU)'", "'(system)'", "label: 'Can stay in the file cache'", "occupiedText(r.node)"},
+			"'(GPU)'", "'(system)'", "label: 'Can stay in the file cache'", "occupiedText(r.node, r.reload)"},
 		"views/benchmarks/pages.js":      {"label: 'Lowest available (system)'", "label: 'Lowest available (GPU)'", "label: 'Load mode'", "rolesText(r.host, r.workers)", "label: 'Can stay in the file cache'"},
 		"views/benchmarks/aggregates.js": {"h('h2', 'By load mode')", "loadModeCard(agg)"},
 		"views/benchmarks/common.js":     {"key: 'lowest_available_mib'", "key: 'lowest_available_gpu_mib'"},
