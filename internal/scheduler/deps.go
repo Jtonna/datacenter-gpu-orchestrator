@@ -63,6 +63,7 @@ type NeedInfo struct {
 	baseNeed   placer.Need
 	baseSource NeedSource
 	perDevice  int
+	fromTotal  int // the total of the measurement Need was taken from (countWords)
 }
 
 // NeedSource says where a need comes from, in the words the messages and the

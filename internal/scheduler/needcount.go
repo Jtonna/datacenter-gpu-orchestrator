@@ -16,21 +16,12 @@ import (
 // compute buffer and one device overhead per device, so a load on one node
 // does not say what the same shape takes on three. Within a shape the
 // learned needs are kept per device count (c.learned[shape][devices]), and
-// the need of a placement of k devices is:
-//
-//   - a measurement on k devices: its total, never below a total measured
-//     on fewer devices;
-//   - else, with measurements on fewer devices: max(estimate, each such
-//     total raised by the estimator's per-device cost for every extra
-//     device);
-//   - else (only more devices measured): max(estimate, the total of the
-//     closest count above).
-//
-// A learned figure replaces a configured needs_mib only when it is higher,
-// as before. A restored measurement of another llama build (trusted) is
-// used only where it is above the estimate, until a load of this run
-// measures that count again (review SS2). Per-node figures (and peaks) are used only for the same node
-// set and split (shareFor), inside the entry of their device count.
+// the need of a placement of k devices is needFor (needrule.go) over them:
+// its contract is written there as invariants and tested on random row
+// sets. A restored measurement of another llama build is untrusted
+// (trusted): it only ever raises the need (review SS2, TB1). Per-node
+// figures (and peaks) are used only for the same node set and split
+// (shareFor), inside the entry of their device count.
 
 // count is the number of devices the measurement was taken on.
 func (l *learnedNeed) count() int {
@@ -124,50 +115,31 @@ func (c *schedCore) perDeviceCost(base NeedInfo) int {
 	return max(c.cfg.Defaults.DeviceOverheadMiB, 0) + max(base.DeviceMiB, 0)
 }
 
-// at is the need for a placement of k devices (see the top of this file).
-// Without a measurement of the shape, or with k < 1, it is info itself.
+// at is the need for a placement of k devices: needFor (needrule.go) over
+// the shape's measurements. Without a measurement of the shape, or with
+// k < 1, it is info itself.
 func (info NeedInfo) at(k int) NeedInfo {
 	if len(info.figs) == 0 || k < 1 {
 		return info
 	}
 	out := info
-	out.Devices, out.FromDevices = k, 0
+	out.Devices, out.FromDevices, out.fromTotal = k, 0, 0
 	out.Need, out.Source, out.MeasuredAt = info.baseNeed, info.baseSource, time.Time{}
-	est := info.baseNeed.MiB
-	if !info.baseNeed.Measured {
-		est = info.baseNeed.WithMargin() + k*info.perDevice
+	rule := needRule{PerDevice: info.perDevice, Floor: info.baseNeed.Measured, Rows: make([]needRow, len(info.figs))}
+	if info.baseNeed.Measured { // a configured needs_mib
+		rule.Estimate = func(int) int { return info.baseNeed.MiB }
+	} else {
+		rule.Estimate = func(k int) int { return info.baseNeed.WithMargin() + k*info.perDevice }
 	}
-	var src *learnedFig
-	fig, exact := 0, false
-	for i := range info.figs {
-		if f := &info.figs[i]; f.devices == k {
-			src, exact = f, true
-		}
+	for i, f := range info.figs {
+		rule.Rows[i] = needRow{Devices: f.devices, Total: f.total, Trusted: f.trusted}
 	}
-	switch {
-	case exact:
-		for _, f := range info.figs {
-			if f.devices <= k {
-				fig = max(fig, f.total)
-			}
-		}
-	default:
-		for i := range info.figs {
-			f := &info.figs[i]
-			if f.devices < k {
-				fig = max(fig, f.total+(k-f.devices)*info.perDevice)
-				src = f // the closest below, as the figs are sorted
-			}
-		}
-		if src == nil {
-			src = &info.figs[0] // the closest above
-			fig = src.total
-		}
-	}
-	if fig <= 0 || (fig <= est && (info.baseNeed.Measured || !exact || !src.trusted)) {
+	fig, from := needFor(rule, k)
+	if from < 0 {
 		return out
 	}
-	out.Need, out.Source, out.MeasuredAt, out.FromDevices = placer.Measured(fig), NeedLearned, src.at, src.devices
+	src := info.figs[from]
+	out.Need, out.Source, out.MeasuredAt, out.FromDevices, out.fromTotal = placer.Measured(fig), NeedLearned, src.at, src.devices, src.total
 	if src.restored {
 		out.Source = NeedRestored
 	}
@@ -211,6 +183,9 @@ func (info NeedInfo) countWords() string {
 	}
 	if info.FromDevices < info.Devices {
 		return fmt.Sprintf("; measured on %d devices, raised by %d MiB for each of %d more", info.FromDevices, info.perDevice, info.Devices-info.FromDevices)
+	}
+	if info.Need.MiB < info.fromTotal {
+		return fmt.Sprintf("; measured on %d devices, less %d MiB for each of %d fewer", info.FromDevices, info.perDevice, info.FromDevices-info.Devices)
 	}
 	return fmt.Sprintf("; measured on %d devices, kept for %d", info.FromDevices, info.Devices)
 }

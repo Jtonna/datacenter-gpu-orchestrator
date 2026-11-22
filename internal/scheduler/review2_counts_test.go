@@ -86,11 +86,12 @@ func TestReview2_SB1_FewerDevicesAreScaledUp(t *testing.T) {
 	if info, _ := h.c.needAt(p, 3); info.Need.Measured || info.Source != NeedEstimated {
 		t.Fatalf("3 devices from a 1-device 5000: %+v, want the estimate", info)
 	}
-	// an exact 3-device measurement is used, but never below a 1-device total
+	// an exact 3-device measurement is used, but never below a 1-device
+	// total raised for the two more devices (third review, I4)
 	h.c.putLearned(&learnedNeed{TotalMiB: 11000, key: needKeyOf(p), profile: "three", devices: 3, at: h.clk.Now()})
 	h.c.putLearned(&learnedNeed{TotalMiB: 11500, key: needKeyOf(p), profile: "one", devices: 1, at: h.clk.Now()})
-	if info, _ := h.c.needAt(p, 3); info.Need != placer.Measured(11500) {
-		t.Fatalf("exact 3-device 11000 with a 1-device 11500: %+v, want 11500", info.Need)
+	if info, _ := h.c.needAt(p, 3); info.Need != placer.Measured(11500+2*dev) {
+		t.Fatalf("exact 3-device 11000 with a 1-device 11500: %+v, want %d", info.Need, 11500+2*dev)
 	}
 	// 2 devices: the 1-device total raised for one more device
 	if info, _ := h.c.needAt(p, 2); info.Need != placer.Measured(11500+dev) {
