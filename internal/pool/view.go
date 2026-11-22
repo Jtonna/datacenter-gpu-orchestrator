@@ -477,6 +477,16 @@ type NodeFacts struct {
 // not reached its agent yet.
 const UnpausePendingMessage = "unpaused; the node takes load once its agent has been told (with its next heartbeat answer, within a few seconds, or when it registers again)"
 
+// FeedModelSource is a node's model_source once it has sent a heartbeat: the
+// heartbeat's state and the registration's target (the heartbeat has none).
+// A dir:<path> node registers as kind share with the path as target (agent
+// contract 6.10), so the target tells a model folder (an absolute path) from
+// a share (host:export). Additive; absent for push.
+type FeedModelSource struct {
+	agentproto.ModelSourceState
+	Target string `json:"target,omitempty"`
+}
+
 // Facts lists every agent node Potluck knows, removed ones included.
 func (p *Pool) Facts() []NodeFacts {
 	now := p.o.Clock()
@@ -502,7 +512,7 @@ func (p *Pool) Facts() []NodeFacts {
 		f.LastSeenAgoS = &ago
 		if hb := a.hb; hb != nil {
 			f.ProgramsReady, f.ProgramsError, f.Role, f.LaunchID = hb.ProgramsReady, hb.ProgramsError, hb.Role, hb.LaunchID
-			f.ModelSource, f.Devices = hb.ModelSource, hb.Devices
+			f.ModelSource, f.Devices = FeedModelSource{hb.ModelSource, a.reg.ModelSource.Target}, hb.Devices
 			m := hb.MemAvailableMiB
 			f.MemAvailMiB = &m
 			_, f.ExtraDevicesIgnored, _ = pickDevice(a)

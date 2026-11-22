@@ -17,6 +17,7 @@ import (
 type composeService struct {
 	Image         string            `yaml:"image"`
 	ContainerName string            `yaml:"container_name"`
+	Hostname      string            `yaml:"hostname"`
 	Restart       string            `yaml:"restart"`
 	Command       []string          `yaml:"command"`
 	Environment   map[string]string `yaml:"environment"`
@@ -194,7 +195,7 @@ func TestComposeStandingLayout(t *testing.T) {
 		for _, v := range s.Volumes {
 			switch p := hostPath(v); {
 			case p == "":
-			case p == "./seed-config.yaml" || p == "/lib/modules": // ships with this file; the host's kernel modules
+			case p == "./seed-config.yaml" || p == "./share-nfs.conf" || p == "/lib/modules": // ship with this file; the host's kernel modules
 			case !strings.HasPrefix(p, rootVar):
 				t.Errorf("%s: host path %q is not under %s", name, p, rootVar)
 			}
@@ -229,8 +230,9 @@ func TestComposeStandingLayout(t *testing.T) {
 
 // The optional agent on the scheduler's host: off by default (a profile), on
 // the compose network with a fixed address and MAC (its node id comes from
-// the MAC), the GPUs, the models read only, its own data volume, and
-// Potluck's address and in-container port on that network.
+// the MAC), a fixed hostname (its display name), the GPUs, the models read
+// only, its own data volume, and Potluck's address and in-container port on
+// that network.
 func TestComposeLocalAgent(t *testing.T) {
 	c := loadCompose(t)
 	a, ok := c.Services["potluck-agent"]
@@ -265,6 +267,11 @@ func TestComposeLocalAgent(t *testing.T) {
 	}
 	if a.Restart != "unless-stopped" {
 		t.Errorf("restart %q", a.Restart)
+	}
+	// The display name defaults to the hostname; without a fixed one it is the
+	// container's random id and changes when the container is re-created.
+	if a.Hostname != "potluck-agent" {
+		t.Errorf("hostname %q, want potluck-agent (a stable display name)", a.Hostname)
 	}
 }
 
@@ -309,5 +316,47 @@ func TestComposeFixedAddressesOutsideDynamicRange(t *testing.T) {
 	}
 	if fixed < 2 {
 		t.Errorf("%d fixed addresses, want the scheduler's and the agent's", fixed)
+	}
+}
+
+// The share's NFSv4 grace and lease times: a file next to the compose file,
+// mounted read only at /etc/nfs.conf, with both at 10 s (the kernel minimum),
+// so a client's read stands still about 16 s after the share restarts instead
+// of about 93 s with the kernel defaults (90 s each).
+func TestComposeShareGraceTime(t *testing.T) {
+	c := loadCompose(t)
+	s, ok := c.Services["potluck-share"]
+	if !ok {
+		t.Fatal("no potluck-share service")
+	}
+	mounted := false
+	for _, v := range s.Volumes {
+		mounted = mounted || v == "./share-nfs.conf:/etc/nfs.conf:ro"
+	}
+	if !mounted {
+		t.Errorf("share-nfs.conf is not mounted read only at /etc/nfs.conf: %v", s.Volumes)
+	}
+	b, err := os.ReadFile("share-nfs.conf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	section := ""
+	got := map[string]string{}
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case line == "" || strings.HasPrefix(line, "#"):
+		case strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]"):
+			section = strings.TrimSpace(line[1 : len(line)-1])
+		case section == "nfsd":
+			if k, v, ok := strings.Cut(line, "="); ok {
+				got[strings.TrimSpace(k)] = strings.TrimSpace(v)
+			}
+		}
+	}
+	for _, k := range []string{"grace-time", "lease-time"} {
+		if got[k] != "10" {
+			t.Errorf("[nfsd] %s = %q, want 10", k, got[k])
+		}
 	}
 }

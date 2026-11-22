@@ -82,7 +82,7 @@ Expected: a version line (the stamp replaces the default `0.1.0` with your git v
 
 ```sh
 sudo mkdir -p /opt/potluck && sudo chown admin:admin /opt/potluck
-cp deploy/docker-compose.yml deploy/seed-config.yaml /opt/potluck/
+cp deploy/docker-compose.yml deploy/seed-config.yaml deploy/share-nfs.conf /opt/potluck/
 sudo mkdir -p /srv/potluck/programs /srv/potluck/data /srv/potluck/history /srv/potluck/child-logs /srv/potluck/logs-store
 sudo chown -R admin:admin /srv/potluck
 ```
@@ -321,7 +321,7 @@ All examples use `H=http://127.0.0.1:3122`. There is no authentication (LAN tool
 
 #### First install and import
 
-1. Put `deploy/docker-compose.yml` and `deploy/seed-config.yaml` in `/opt/potluck/` and create the root folder `/srv/potluck` (or set `POTLUCK_ROOT` in `/opt/potluck/.env`); compose creates the folders inside it. An older deployment in `/opt/llm-scheduler/` moves with section K.
+1. Put `deploy/docker-compose.yml`, `deploy/seed-config.yaml` and `deploy/share-nfs.conf` (the share's grace and lease times, mounted by the compose file) in `/opt/potluck/` and create the root folder `/srv/potluck` (or set `POTLUCK_ROOT` in `/opt/potluck/.env`); compose creates the folders inside it. An older deployment in `/opt/llm-scheduler/` moves with section K.
 2. Validate the seed with the real binary; nothing is written:
 
 ```sh
@@ -500,7 +500,11 @@ For a dashboard backend that polls the nodes: `{"time", "seq", "nodes"}`.
 Each entry of `nodes` is an entry of `agents` of `/api/status`, unchanged;
 the last one is Potluck's own machine, with `"local": true`. `host_uptime_s`
 and `boot_id` are the machine's uptime since its kernel booted and its boot id
-(absent for an older agent). Keep the last `seq` you read: an answer with the
+(absent for an older agent). `model_source` is `{"kind", "target",
+"reachable", "checked_age_s"}`; `kind` is `share` both for a share and for a
+model folder on the node's own disk (`--model-source dir:<path>`, agent
+contract 6.10): the `target` tells them apart, an absolute path for a folder,
+`host:export` for a share. Keep the last `seq` you read: an answer with the
 same `seq` has nothing new but ages and uptimes. Agents membership only; with
 the fleet feed it answers `503`.
 
@@ -1204,12 +1208,12 @@ prints `172.30.0.128/25`.
    `LLM_SCHEDULER_PROGRAMS_DIR`), the revision, `"agents"`, and the host's node
    name.
 
-2. Put the new compose file and seed next to each other in a new folder, and
-   copy the share settings over:
+2. Put the new compose file, the seed and the share's `share-nfs.conf` next to
+   each other in a new folder, and copy the share settings over:
 
    ```sh
    sudo mkdir -p /opt/potluck && sudo chown admin: /opt/potluck
-   cp ~/datacenter-gpu-orchestrator/deploy/docker-compose.yml ~/datacenter-gpu-orchestrator/deploy/seed-config.yaml /opt/potluck/
+   cp ~/datacenter-gpu-orchestrator/deploy/docker-compose.yml ~/datacenter-gpu-orchestrator/deploy/seed-config.yaml ~/datacenter-gpu-orchestrator/deploy/share-nfs.conf /opt/potluck/
    cp /opt/llm-scheduler/.env /opt/potluck/.env   # POTLUCK_SHARE_BIND and POTLUCK_SHARE_NET; skip if there is none
    ```
 
@@ -1317,7 +1321,13 @@ Nothing has to be started by hand, as long as these hold:
    `/etc/modules-load.d/` that lists them. Check: `lsmod | grep -w nfsd`.
 4. The agents register again unaided: each one keeps retrying until Potluck
    answers, then shows `state: active` in `GET /api/status`. Their share
-   mounts are "hard" and resume once `potluck-share` is up.
+   mounts are "hard" and resume once `potluck-share` is up. A restart of the
+   share costs its clients about 16 s: reads are refused for the NFSv4 grace
+   time, which `share-nfs.conf` sets to 10 s instead of the kernel's 90 s, and
+   a client resumes at its next retry after that (measured 16.3 s; 93 s with
+   the kernel's default). Check inside the container:
+   `docker exec potluck-share cat /proc/fs/nfsd/nfsv4gracetime /proc/fs/nfsd/nfsv4leasetime`
+   says `10` twice.
 5. Models are not reloaded at start: the first request for a model loads it
    (or `POST /api/load`). Launches that were running on the workers before the
    restart are stopped by their agents, because the restarted Potluck does not
