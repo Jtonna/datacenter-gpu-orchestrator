@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // Config sets up a Shipper.
@@ -376,11 +377,17 @@ func (s *Shipper) setErr(kind, text string) {
 }
 
 // Run runs the sender and the fetcher until ctx ends.
+//
+// Each loop restarts alone after a failure (background-task isolation): the
+// ring is kept, so a failed sender loses only the batch it held. The agent
+// runs this code too; there supervise is not configured and reports to the
+// default logger.
 func (s *Shipper) Run(ctx context.Context) {
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() { defer wg.Done(); s.fetchLoop(ctx) }()
-	s.sendLoop(ctx)
+	wg.Add(2)
+	supervise.Go(ctx, supervise.Spec{Name: "logship.fetch", Policy: supervise.Restart, Done: wg.Done}, s.fetchLoop)
+	supervise.Go(ctx, supervise.Spec{Name: "logship.send", Policy: supervise.Restart, Done: wg.Done,
+		Rebuild: func(any) { s.pending = nil }}, s.sendLoop)
 	wg.Wait()
 }
 

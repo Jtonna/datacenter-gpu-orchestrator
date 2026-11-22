@@ -30,6 +30,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/logship"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/logrelay"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // Defaults.
@@ -153,22 +154,27 @@ func (s *Shipper) target(k logship.Key) string {
 }
 
 // Run runs the sender and follows the on/off state until ctx ends.
+//
+// The on/off check restarts alone after a failure; the sender's loops are
+// supervised inside logship.
 func (s *Shipper) Run(ctx context.Context) {
-	s.check()
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() { defer wg.Done(); s.ship.Run(ctx) }()
-	t := time.NewTicker(s.o.CheckEvery)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			wg.Wait()
-			return
-		case <-t.C:
-			s.check()
+	wg.Add(2)
+	go supervise.Once("selflog.ship", func() { defer wg.Done(); s.ship.Run(ctx) }, nil)
+	supervise.Go(ctx, supervise.Spec{Name: "selflog.check", Policy: supervise.Restart, Done: wg.Done}, func(ctx context.Context) {
+		s.check()
+		t := time.NewTicker(s.o.CheckEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				s.check()
+			}
 		}
-	}
+	})
+	wg.Wait()
 }
 
 // SetLogger sets where the sender's own warnings go (rate-limited; they may
