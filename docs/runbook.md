@@ -164,7 +164,7 @@ curl -s -X PUT $H/api/config/no-auto-nodes -d '["laptop-*"]'
 ```
 
 - `exclude_nodes`: never used, not counted in capacity. Status shows `excluded: true`. A profile that forces an excluded node is refused.
-- `no_auto_nodes`: used only by profiles that name the node in `force_nodes`; automatic placement never picks it or evicts from it. Status shows `auto: false`.
+- `no_auto_nodes`: used only by profiles that name the node in `force_nodes`; automatic placement never picks it or evicts from it. Status shows `auto: false`. A `command` profile runs on the local node alone by definition, so `no_auto_nodes` does not apply to it; an excluded local node refuses it (reason `node_excluded`).
 - Excluding wins over both forcing and `no_auto_nodes`. Models already running keep running.
 
 ### Measure a soft restart
