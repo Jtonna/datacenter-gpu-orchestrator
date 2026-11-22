@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 )
@@ -126,3 +127,78 @@ func copyStatus(st map[string]any, id string) map[string]any {
 }
 
 func coreID(s string) core.NodeID { return core.NodeID(s) }
+
+// Every view module that app.js imports loads as an ES module, with all it
+// imports: one that does not parse stops the whole page, every screen
+// included (release 0.1.6 shipped a quote inside a single-quoted string in
+// views/benchmarks/editor.js). `node --check` on a .js file passes it. Each
+// screen's first page is drawn on an empty status as well.
+func TestUIAllModulesLoad(t *testing.T) {
+	app := uiText(t, "app.js")
+	var mods []string
+	for _, line := range strings.Split(app, "\n") {
+		if s, ok := strings.CutPrefix(strings.TrimSpace(line), "import './"); ok {
+			if i := strings.Index(s, "'"); i > 0 {
+				mods = append(mods, s[:i])
+			}
+		}
+	}
+	if len(mods) < 10 {
+		t.Fatalf("app.js imports only %v", mods)
+	}
+	cases := []any{}
+	for _, id := range []string{"models", "nodes", "queue", "activity", "placement", "benchmarks", "profiles", "tiers", "settings", "audit", "mcp", "about"} {
+		cases = append(cases, map[string]any{"name": id + " with no status yet", "route": "#/" + id})
+	}
+	uiExec(t, map[string]any{"modules": mods, "cases": cases, "fetch": map[string]any{}})
+}
+
+// The screens release 0.1.6 changed, on answers shaped by the server's own
+// types: a run with a verified and a not-guaranteed cold load and a reload
+// (the cold badge, the machine table and the result row), and the placement
+// page's memory table from a real POST /api/plan.
+func TestUI016ScreensExecute(t *testing.T) {
+	e := newEnv(t, chatOK)
+	var plan, profiles map[string]any
+	if err := json.Unmarshal([]byte(body(t, e.post("/api/plan", `{"model":"alpha"}`))), &plan); err != nil || plan["memory"] == nil {
+		t.Fatalf("plan without a memory section: %v %v", plan, err)
+	}
+	json.Unmarshal([]byte(body(t, e.get("/api/profiles"))), &profiles)
+	var status map[string]any
+	json.Unmarshal([]byte(body(t, e.get("/api/status"))), &status)
+	const gib = int64(1) << 30
+	cold := func(verified bool, reason string) *bench.ColdResult {
+		c := &bench.ColdResult{Requested: true, Verified: verified, Reason: reason,
+			Local: &bench.ColdFigures{FileBytes: 8 * gib, CachedBefore: 8 * gib, CachedAfter: 0},
+			Nodes: []bench.ColdNode{{Node: "console-1", ID: "02:00:00:00:00:01", ColdFigures: bench.ColdFigures{FileBytes: 8 * gib, CachedBefore: 2 * gib}}}}
+		if !verified {
+			c.Nodes = append(c.Nodes, bench.ColdNode{Node: "console-2", ID: "02:00:00:00:00:02", ColdFigures: bench.ColdFigures{FileBytes: 8 * gib, Error: "busy"}})
+		}
+		return c
+	}
+	load := func(s float64) *bench.LoadResult {
+		return &bench.LoadResult{Outcome: "ready", LoadS: s, Bytes: 8 * gib, AvgMBs: 320, MemoryMiB: 8200, Workers: []string{"02:00:00:00:00:01"}, LoadMode: bench.LoadModeFileRead}
+	}
+	step := func(idx int, verified bool, reason string) bench.Step {
+		return bench.Step{Idx: idx, BenchmarkID: "cold-reload", Name: "Cold, reload, loaded", Profile: "alpha", State: bench.StepDone, Outcome: bench.OutcomeReady,
+			StartedAt: 1795400000000, FinishedAt: 1795400090000, Load: load(26.6), NodeCount: 1,
+			Expect: &bench.ExpectResult{Pass: true},
+			Phases: []bench.PhaseResult{
+				{Idx: 0, Type: "load", Label: "cold load", State: "done", Outcome: "ready", DurationS: 26.6, Load: load(26.6), Cold: cold(verified, reason)},
+				{Idx: 1, Type: "unload", State: "done", Outcome: "ready", DurationS: 1.2, Unload: &bench.UnloadResult{Loaded: true, Gone: true, UnloadS: 1.2}},
+				{Idx: 2, Type: "load", Label: "reload", State: "done", Outcome: "ready", DurationS: 1.8, Load: load(1.8)},
+			}}
+	}
+	run := bench.Run{ID: "run-1", SuiteID: "s", SuiteName: "Cold suite", State: bench.RunCompleted, Trigger: "manual", QueuedAt: 1795400000000,
+		StartedAt: 1795400000000, FinishedAt: 1795400200000, Summary: &bench.RunSummary{Steps: 2, Passed: 2},
+		Steps: []bench.Step{step(0, true, ""), step(1, false, "not guaranteed: console-2 is busy")}}
+	fetch := map[string]any{"/api/bench/runs/run-1": run, "/api/bench/runs": map[string]any{"runs": []any{run}}, "/api/profiles": profiles}
+	cases := []any{
+		map[string]any{"name": "run with cold loads", "route": "#/benchmarks/runs/run-1", "expect": []string{"cold: verified", "cold: not guaranteed"}},
+		map[string]any{"name": "run with cold loads, steps tab", "route": "#/benchmarks/runs/run-1?tab=steps"},
+		map[string]any{"name": "runs list", "route": "#/benchmarks/runs"},
+		map[string]any{"name": "placement with the memory table", "route": "#/placement/alpha", "status": status, "fetch": map[string]any{"/api/plan": plan},
+			"expect": []string{"Memory, with the context filled"}},
+	}
+	uiExec(t, map[string]any{"modules": []string{"views/benchmarks.js", "views/placement.js"}, "fetch": fetch, "cases": cases})
+}

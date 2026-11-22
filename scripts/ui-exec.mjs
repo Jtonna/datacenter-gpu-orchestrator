@@ -10,7 +10,10 @@
 //   {"ui": "<path of internal/api/ui>",
 //    "modules": ["views/nodes.js", ...],          // imported before the cases (they register their views)
 //    "fetch": {"/api/profiles": {...}, ...},       // answers of GET/POST by path (query ignored); others are 404
-//    "cases": [{"name": "...", "route": "#/nodes", "status": {...}, "fetch": {...}, "expect": ["text", ...]}]}
+//    "base": "http://127.0.0.1:8790",              // or: GET requests go to this server (cmd/devcluster), writes are refused
+//    "cases": [{"name": "...", "route": "#/nodes", "status": {...} or "fetch", "fetch": {...}, "expect": ["text", ...]}]}
+//
+// With "base", "status": "fetch" takes GET <base>/api/status.
 //
 // Each case sets the live status, mounts the route's view, lets fetches and
 // re-draws settle, and fails on any console.error, unhandled rejection, a
@@ -243,8 +246,17 @@ def('alert', () => {}); def('confirm', () => false); def('prompt', () => null);
 
 let fetchAnswers = {};
 const fetched = [];
+const realFetch = globalThis.fetch;
+let base = null;
 def('fetch', async (u, opts = {}) => {
-  const p = new URL(String(u), location.href).pathname;
+  const full = new URL(String(u), location.href);
+  const p = full.pathname;
+  if (base && !Object.prototype.hasOwnProperty.call(fetchAnswers, p)) {
+    fetched.push((opts.method || 'GET') + ' ' + p);
+    // Writes are refused; POST /api/plan only reads (a dry run), so it goes through.
+    if ((opts.method || 'GET') !== 'GET' && p !== '/api/plan') return { ok: false, status: 405, statusText: 'refused by ui-exec', text: async () => '{"error":{"message":"writes are refused"}}' };
+    return realFetch(base + p + full.search, { method: opts.method || 'GET', headers: opts.headers, body: opts.body });
+  }
   fetched.push((opts.method || 'GET') + ' ' + p);
   const ans = Object.prototype.hasOwnProperty.call(fetchAnswers, p) ? fetchAnswers[p] : undefined;
   const ok = ans !== undefined;
@@ -256,6 +268,7 @@ def('fetch', async (u, opts = {}) => {
 // ---------- run ----------
 
 const spec = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+base = spec.base ? spec.base.replace(/\/$/, '') : null;
 const ui = path.resolve(spec.ui);
 const mod = rel => import(pathToFileURL(path.join(ui, rel)).href);
 const settle = async () => { for (let i = 0; i < 20; i++) await new Promise(r => setTimeout(r, 0)); };
@@ -266,30 +279,32 @@ for (const m of spec.modules || []) await mod(m);
 await settle();
 if (errors.length) { origError('module import errors:\n' + errors.join('\n')); process.exit(1); }
 
+// The screens are mounted the way the page does it: through the router, on
+// a hash change, so a view that navigates (placement picks a profile) works.
+const outlet = new Element('main');
+document.body.replaceChildren(outlet);
+location.hash = '#/__ui_exec_blank';
+router.start(outlet);
+const go = async hash => { location.hash = hash; globalThis.dispatchEvent(new FakeEvent('hashchange')); await settle(); };
+
 let failed = 0;
 for (const c of spec.cases) {
   errors.length = 0; fetched.length = 0;
   fetchAnswers = Object.assign({}, spec.fetch || {}, c.fetch || {});
   const route = router.parse(c.route);
-  location.hash = route.hash;
-  const view = router.getView(route.id);
-  const el = new Element('main');
-  document.body.replaceChildren(el);
-  let handle = null;
-  if (!view) errors.push('no view registered for ' + route.id);
+  if (!router.getView(route.id)) errors.push('no view registered for ' + route.id);
   else {
-    if (c.status !== undefined) store.set('status', c.status);
-    try { handle = view.mount(el, route); } catch (e) { errors.push('mount threw: ' + (e.stack || e)); }
-    await settle();
+    if (c.status === 'fetch') c.status = await (await realFetch(base + '/api/status')).json();
+    store.set('status', c.status === undefined ? null : c.status);
+    await go(route.hash);
     if (c.status !== undefined) store.set('status', c.status); // a second draw over a mounted tree (morph)
     store.set('tick', (store.state.tick || 0) + 1);
     await settle();
   }
-  const text = el.textContent;
-  for (const bad of ['could not be drawn', 'failed to start']) if (text.includes(bad)) errors.push('banner: ' + text.slice(text.indexOf(bad) - 40, text.indexOf(bad) + 200));
+  const text = outlet.textContent;
+  for (const bad of ['could not be drawn', 'failed to start']) if (text.includes(bad)) errors.push('banner: ' + text.slice(Math.max(0, text.indexOf(bad) - 40), text.indexOf(bad) + 200));
   for (const want of c.expect || []) if (!text.includes(want)) errors.push('missing text: ' + JSON.stringify(want));
-  try { handle && handle.unmount && handle.unmount(); } catch (e) { errors.push('unmount threw: ' + (e.stack || e)); }
-  await settle();
+  await go('#/__ui_exec_blank'); // unmounts the screen
   if (errors.length) {
     failed++;
     console.log(`FAIL ${c.name}\n  ` + errors.join('\n  ').split('\n').slice(0, 30).join('\n  '));
