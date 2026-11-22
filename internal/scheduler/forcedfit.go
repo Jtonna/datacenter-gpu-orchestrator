@@ -207,16 +207,18 @@ func (f *forcedFit) err(profile string) *Error {
 // this run with the same node set and split when there is one, else
 // need x fraction, with the split skew margin on a shared-memory node (the
 // figure the fit rules hold such a node to; a node with memory of its own is
-// held to the total only, so its share takes no margin). Nil when the need is
-// unknown.
+// held to the total only, so its share takes no margin), plus, for an
+// estimate, what every device holds beyond its share (deviceCost). Nil when
+// the need is unknown.
 func (c *schedCore) expectShares(p *core.Profile, pl core.Placement) []int {
 	info, err := c.need(p)
 	if err != nil || info.Need.MiB <= 0 || len(pl.Nodes) == 0 {
 		return nil
 	}
 	need := info.Need.WithMargin()
+	dev := c.deviceCost(info)
 	if len(pl.Nodes) == 1 {
-		return []int{need}
+		return []int{need + dev}
 	}
 	fracs := instance.SplitFractions(*p, pl)
 	if len(fracs) != len(pl.Nodes) {
@@ -232,7 +234,7 @@ func (c *schedCore) expectShares(p *core.Profile, pl core.Placement) []int {
 		if n, ok := c.node(pn.ID); ok && n.SharedMemory {
 			share *= 1 + c.cfg.Defaults.SplitSkewMargin
 		}
-		out[i] = int(math.Ceil(share - 1e-6))
+		out[i] = int(math.Ceil(share-1e-6)) + dev
 	}
 	return out
 }

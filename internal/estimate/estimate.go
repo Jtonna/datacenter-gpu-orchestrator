@@ -59,6 +59,25 @@ func KVMiB(nLayer, ctxTotal, nEmbdKGqa, nEmbdVGqa int, quant string) (int, error
 
 const maxInt = int(^uint(0) >> 1)
 
+// ComputeBytesPerCtxToken is the compute buffer each device of a load holds
+// per token of context (n_ctx = ctx x parallel), on top of its share of the
+// weights and the KV cache. Measured, not derived: on llama.cpp RPC workers
+// with flash attention, the default batch sizes and an f16 KV cache, six
+// model families (dense, MoE and hybrid; 2 to 8 KV heads; 2k to 128k context)
+// all grew by exactly 4 KiB per context token per device beyond their KV
+// cache. It does not depend on the model; it matches a buffer of n_ctx x
+// n_ubatch (512) x 8 bytes, which each device holds for its own layers.
+const ComputeBytesPerCtxToken = 4096
+
+// ComputeMiB is the context-dependent compute buffer of one device, rounded
+// up to whole MiB.
+func ComputeMiB(ctxTotal int) int {
+	if ctxTotal <= 0 {
+		return 0
+	}
+	return int((int64(ctxTotal)*ComputeBytesPerCtxToken + mib - 1) / mib)
+}
+
 // NeedMiB is the estimated need: the model file size rounded up to MiB plus kvMiB.
 func NeedMiB(fileSizeBytes int64, kvMiB int) int {
 	w := int64(0)
