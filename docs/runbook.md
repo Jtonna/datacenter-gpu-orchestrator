@@ -1180,6 +1180,16 @@ Why the old project must be down first: both projects use the subnet
 hold the same subnet at once. The new project cannot start while the old one
 is up.
 
+Fixed and dynamic addresses on that network: the scheduler has `172.30.0.2`
+and the optional agent `172.30.0.10`; the share and the log store take theirs
+from the range `172.30.0.128/25` (`ip_range` in the compose file), so a
+container that starts first cannot take a fixed address ("Address already in
+use"). Docker sets the range only when it creates the network: a `potluck`
+project whose network was created before the range was in the file needs one
+`docker compose down` and `docker compose up -d` (a short outage). Check:
+`docker network inspect potluck_sched --format '{{(index .IPAM.Config 0).IPRange}}'`
+prints `172.30.0.128/25`.
+
 1. Write down what the old deployment uses (nothing changes yet):
 
    ```sh
@@ -1300,7 +1310,9 @@ Nothing has to be started by hand, as long as these hold:
    that was stopped by hand (`docker compose stop`, `docker stop`) stays
    stopped after the restart; start it with `docker compose up -d`. The
    optional host agent (`potluck-agent`, profile `local-agent`) comes back too
-   once it was started with `--profile local-agent`.
+   once it was started with `--profile local-agent`. The order they start in
+   does not matter: the share and the log store take addresses from the
+   network's dynamic range, never the fixed ones (section K).
 3. The share needs the kernel modules `nfs` and `nfsd` at boot: a file in
    `/etc/modules-load.d/` that lists them. Check: `lsmod | grep -w nfsd`.
 4. The agents register again unaided: each one keeps retrying until Potluck

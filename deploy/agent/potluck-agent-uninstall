@@ -167,7 +167,7 @@ node_id() {
 		ni_out=$(/dev/shm/potluck/potluck-agent id --potluck "$POTLUCK" 2>/dev/null) || ni_out=""
 	fi
 	if [ -z "$ni_out" ] && have docker; then
-		ni_out=$(docker exec potluck-agent potluck-agent id --potluck "$POTLUCK" 2>/dev/null) || ni_out=""
+		ni_out=$(docker exec potluck-agent potluck-agent id --install docker --potluck "$POTLUCK" 2>/dev/null) || ni_out=""
 	fi
 	ni_out=${ni_out%%"$NL"*}
 	ni_out=${ni_out%"$CR"}

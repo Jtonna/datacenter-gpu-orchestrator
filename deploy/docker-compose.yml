@@ -131,9 +131,12 @@ services:
     restart: unless-stopped
     init: true
     command: ["--potluck", "172.30.0.2:8080", "--model-source", "dir:/models", "--install", "docker"]
-    # The agent derives its node id from the MAC of the interface on its route to Potluck, so
-    # the MAC must stay the same when the container is re-created. A locally administered
-    # example value: it MUST be unique per deployment (and on this network).
+    # The container has no physical interface, only eth0 (a veth). With --install docker the
+    # agent then takes its node id from the MAC of the interface on its route to Potluck (eth0)
+    # and logs once that the id comes from a virtual interface (agent contract 4.1). The id is
+    # only stable when this MAC is fixed: without mac_address every re-created container is a
+    # new node. A locally administered example value: it MUST be unique per deployment (and on
+    # this network).
     mac_address: "02:00:00:00:00:10"
     gpus: all
     volumes:
@@ -164,3 +167,7 @@ networks:
         # Keep this subnet exactly: a host firewall rule names it. Two compose networks cannot
         # hold the same subnet at once, so an older project on it must be down first (runbook).
         - subnet: 172.30.0.0/24
+          # Containers without a fixed address (the share, the log store) take one from this
+          # range, so one that starts first cannot take a fixed address (the scheduler's .2, the
+          # agent's .10). Fixed addresses stay below .128.
+          ip_range: 172.30.0.128/25

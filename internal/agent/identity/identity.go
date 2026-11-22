@@ -1,6 +1,8 @@
 // Package identity computes the node id (agent contract 4.1): the lowercase
 // MAC of one physical network interface, chosen from the route to Potluck.
-// It is computed at every start and never stored.
+// A Docker install with no physical interface (a container on a bridge
+// network) takes the MAC of the interface on the route instead. It is
+// computed at every start and never stored.
 package identity
 
 import (
@@ -24,13 +26,18 @@ type NetOS interface {
 // Identity is the result.
 type Identity struct {
 	ID         string // lowercase MAC
-	Iface      string // the physical interface the id comes from
+	Iface      string // the interface the id comes from
 	RouteIface string // the interface that carries the route to Potluck (stats primary)
 	Addr       string // the node's address that reaches Potluck
+	// Virtual is true when the id comes from a virtual interface (only with
+	// virtualOK): it is only stable while that interface's MAC is fixed.
+	Virtual bool
 }
 
-// Resolve applies the rules of 4.1.
-func Resolve(n NetOS, potluckIP net.IP) (Identity, error) {
+// Resolve applies the rules of 4.1. virtualOK (a Docker install) allows the
+// last step: when neither the route interface nor the default route's is
+// physical, the id is the MAC of the route interface.
+func Resolve(n NetOS, potluckIP net.IP, virtualOK bool) (Identity, error) {
 	var id Identity
 	src, err := n.SourceFor(potluckIP)
 	if err != nil {
@@ -51,20 +58,38 @@ func Resolve(n NetOS, potluckIP net.IP) (Identity, error) {
 	id.RouteIface = iface
 	if iface == "" || !n.IsPhysical(iface) {
 		def := n.DefaultRouteInterface()
-		if def == "" || !n.IsPhysical(def) {
+		switch {
+		case def != "" && n.IsPhysical(def):
+			iface = def
+		case virtualOK && iface != "":
+			id.Virtual = true
+		default:
 			return id, fmt.Errorf("no physical network interface: route to Potluck leaves by %q, default route by %q", iface, def)
 		}
-		iface = def
 	}
 	mac, err := n.MAC(iface)
 	if err != nil {
 		return id, err
 	}
-	if mac == "" {
+	if mac == "" || zeroMAC(mac) {
 		return id, fmt.Errorf("interface %s has no MAC address", iface)
 	}
 	id.ID, id.Iface = strings.ToLower(mac), iface
 	return id, nil
+}
+
+// zeroMAC reports whether mac is all zeros (loopback, some tunnels).
+func zeroMAC(mac string) bool {
+	hw, err := net.ParseMAC(mac)
+	if err != nil {
+		return false
+	}
+	for _, b := range hw {
+		if b != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // RealNet implements NetOS with the standard library plus two file reads

@@ -91,6 +91,19 @@ func TestSubcommands(t *testing.T) {
 	}
 }
 
+// The id subcommand takes --install like the agent (bare by default): a
+// Docker install may take its id from a virtual interface (contract 4.1).
+func TestIDSubcommandInstall(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := run([]string{"id", "--install", "vm", "--potluck", "192.0.2.1:3122"}, &out, &errb); code != 2 || !strings.Contains(errb.String(), "--install") {
+		t.Fatalf("bad --install: code %d, %s", code, errb.String())
+	}
+	errb.Reset()
+	if code := run([]string{"id", "--install", "docker", "--potluck", "nope"}, &out, &errb); code != 1 || !strings.Contains(errb.String(), "--potluck") {
+		t.Fatalf("bad --potluck: code %d, %s", code, errb.String())
+	}
+}
+
 // CR-10: --logs on|off (default on), --log-buffer-mib (default 8),
 // --journal-dir (default none).
 func TestParseFlagsLogs(t *testing.T) {

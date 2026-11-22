@@ -188,6 +188,7 @@ type Agent struct {
 
 	mu          sync.Mutex
 	ident       identity.Identity
+	virtualID   string // the id last logged as coming from a virtual interface
 	identOK     bool
 	registered  bool
 	paused      bool
@@ -421,14 +422,23 @@ func (a *Agent) Addr() string { a.mu.Lock(); defer a.mu.Unlock(); return a.ident
 
 // ResolveIdentity computes the id (4.1).
 func (a *Agent) ResolveIdentity() error {
-	id, err := identity.Resolve(a.deps.Net, a.potluckIP)
+	id, err := identity.Resolve(a.deps.Net, a.potluckIP, a.opt.Install == agentproto.InstallDocker)
 	if err != nil {
 		a.setError("no identity: " + err.Error())
 		return err
 	}
 	a.mu.Lock()
+	logVirtual := id.Virtual && a.virtualID != id.ID
+	if logVirtual {
+		a.virtualID = id.ID
+	}
 	a.ident, a.identOK = id, true
 	a.mu.Unlock()
+	if logVirtual {
+		// Said once: the start loop resolves the id on every round.
+		a.log.Info("node id from a virtual interface: it is only stable when the container's MAC address is fixed (compose mac_address)",
+			"id", id.ID, "iface", id.Iface)
+	}
 	a.Launch.SetBindAddr(id.Addr)
 	return nil
 }

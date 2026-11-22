@@ -4,6 +4,7 @@ package deploy
 
 import (
 	"net"
+	"net/netip"
 	"os"
 	"strings"
 	"testing"
@@ -39,7 +40,8 @@ type composeFile struct {
 	Networks map[string]struct {
 		IPAM struct {
 			Config []struct {
-				Subnet string `yaml:"subnet"`
+				Subnet  string `yaml:"subnet"`
+				IPRange string `yaml:"ip_range"`
 			} `yaml:"config"`
 		} `yaml:"ipam"`
 	} `yaml:"networks"`
@@ -263,5 +265,49 @@ func TestComposeLocalAgent(t *testing.T) {
 	}
 	if a.Restart != "unless-stopped" {
 		t.Errorf("restart %q", a.Restart)
+	}
+}
+
+// Containers without a fixed address take theirs from a dynamic range that
+// holds no fixed address, inside the subnet: a container that starts first
+// cannot take the scheduler's or the agent's address.
+func TestComposeFixedAddressesOutsideDynamicRange(t *testing.T) {
+	c := loadCompose(t)
+	cfg := c.Networks["sched"].IPAM.Config
+	if len(cfg) != 1 {
+		t.Fatalf("sched ipam config %+v", cfg)
+	}
+	subnet, err := netip.ParsePrefix(cfg[0].Subnet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dyn, err := netip.ParsePrefix(cfg[0].IPRange)
+	if err != nil {
+		t.Fatalf("sched has no ip_range for dynamic addresses (%q): %v", cfg[0].IPRange, err)
+	}
+	if !subnet.Contains(dyn.Addr()) || dyn.Bits() < subnet.Bits() {
+		t.Errorf("ip_range %s is not inside the subnet %s", dyn, subnet)
+	}
+	fixed := 0
+	for name, s := range c.Services {
+		a := s.networks(t)["sched"]
+		if a == "" {
+			continue
+		}
+		fixed++
+		ip, err := netip.ParseAddr(a)
+		if err != nil {
+			t.Errorf("%s: address %q: %v", name, a, err)
+			continue
+		}
+		if !subnet.Contains(ip) {
+			t.Errorf("%s: address %s is outside the subnet %s", name, ip, subnet)
+		}
+		if dyn.Contains(ip) {
+			t.Errorf("%s: fixed address %s is inside the dynamic range %s", name, ip, dyn)
+		}
+	}
+	if fixed < 2 {
+		t.Errorf("%d fixed addresses, want the scheduler's and the agent's", fixed)
 	}
 }
