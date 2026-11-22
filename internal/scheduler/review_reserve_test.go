@@ -99,8 +99,8 @@ func TestReview_B2_LearnedTotalAboveThePeakSum(t *testing.T) {
 	h.cfg.Defaults.FillReserveKiBPerToken = 8
 	p := h.llama("m", 0, func(p *core.Profile) { p.Ctx = 4096 }) // fill 32 a node
 	h.needs["m"] = NeedInfo{Need: placer.Estimated(9000), FileBytes: 1 << 30}
-	h.c.learned[shapeOf(p)] = &learnedNeed{TotalMiB: 10000, key: needKeyOf(p), profile: "m", placement: []core.NodeID{"a", "b"},
-		split: []float64{0.5, 0.5}, Nodes: []learnedNode{{ID: "a", Fraction: 0.5, MiB: 4500, PeakMiB: 4600}, {ID: "b", Fraction: 0.5, MiB: 4500, PeakMiB: 4600}}}
+	h.c.putLearned(&learnedNeed{TotalMiB: 10000, key: needKeyOf(p), profile: "m", placement: []core.NodeID{"a", "b"},
+		split: []float64{0.5, 0.5}, Nodes: []learnedNode{{ID: "a", Fraction: 0.5, MiB: 4500, PeakMiB: 4600}, {ID: "b", Fraction: 0.5, MiB: 4500, PeakMiB: 4600}}})
 	h.viewChanged()
 	req, _, _ := h.c.request(p)
 	if req.Need != placer.Measured(10000) || req.PerNodeReserveMiB != 32 {
@@ -215,8 +215,8 @@ func TestReview_S4_PlanFitsAgreesWithTheDecision(t *testing.T) {
 		return func(h *harness) {
 			p := h.llama("m", 0, func(p *core.Profile) { p.ForceNodes, p.TensorSplit = []string{"a", "b"}, []int{1, 1} })
 			h.needs["m"] = NeedInfo{Need: placer.Estimated(need), FileBytes: 1 << 30}
-			h.c.learned[shapeOf(p)] = &learnedNeed{TotalMiB: a + b, key: needKeyOf(p), profile: "m", placement: []core.NodeID{"a", "b"},
-				split: []float64{0.5, 0.5}, Nodes: []learnedNode{{ID: "a", Fraction: 0.5, MiB: a}, {ID: "b", Fraction: 0.5, MiB: b}}}
+			h.c.putLearned(&learnedNeed{TotalMiB: a + b, key: needKeyOf(p), profile: "m", placement: []core.NodeID{"a", "b"},
+				split: []float64{0.5, 0.5}, Nodes: []learnedNode{{ID: "a", Fraction: 0.5, MiB: a}, {ID: "b", Fraction: 0.5, MiB: b}}})
 		}
 	}
 	auto := func(need int) func(h *harness) {
@@ -423,7 +423,7 @@ func checkGeneralRule(t *testing.T, need, cBudget, avgDrop, fill, margin int, us
 		if shape == "skewed-peak" { // peaks at the load's own figures (B1)
 			l.Nodes[0].PeakMiB, l.Nodes[1].PeakMiB = l.Nodes[0].MiB, l.Nodes[1].MiB
 		}
-		h.c.learned[shapeOf(p)] = l
+		h.c.putLearned(l)
 	}
 	h.viewChanged()
 	if ov > 0 {

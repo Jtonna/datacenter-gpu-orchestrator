@@ -98,10 +98,19 @@ func makeNeedKey(kind core.Kind, model string, ctx, parallel int, kv string, fa 
 		extraArgs: strings.Join(extra, "\x00")}
 }
 
-// needOp is one queued store write: rec nil deletes the shape's row.
+// needOp is one queued store write: rec nil deletes every row of the shape.
 type needOp struct {
 	shape string
 	rec   *needstore.Record
+}
+
+// key is what the writer merges ops by: the shape, and the device count of
+// a write.
+func (op needOp) key() string {
+	if op.rec == nil {
+		return op.shape
+	}
+	return fmt.Sprintf("%s\x00%d", op.shape, op.rec.DeviceCount())
 }
 
 // takeNeedOps returns and clears the store outbox.
@@ -111,30 +120,18 @@ func (c *schedCore) takeNeedOps() []needOp {
 	return out
 }
 
-// learnedFor is the learned need of p's shape (measured with p's current
-// need-relevant settings, by p or by another profile of that shape), else nil.
-func (c *schedCore) learnedFor(p *core.Profile) *learnedNeed {
-	l := c.learned[shapeOf(p)]
-	if l == nil || l.key != needKeyOf(p) {
-		return nil
-	}
-	return l
-}
-
-// storeLearned queues the write of the learned need of profile name's shape,
-// when there is a store and the profile is configured.
-func (c *schedCore) storeLearned(name string) {
-	p := c.cfg.Profiles[name]
-	if p == nil {
-		return
-	}
-	l := c.learnedFor(p)
+// storeLearned queues the write of measurement l, when there is a store.
+func (c *schedCore) storeLearned(l *learnedNeed) {
 	if !c.persist || l == nil {
 		return
 	}
-	r := needstore.Record{Schema: needstore.RecordSchema, Profile: name, Kind: string(p.Kind), Model: p.Model,
-		ModelBytes: l.modelBytes, Ctx: p.Ctx, Parallel: max(p.Parallel, 1), KVQuant: l.key.kvQuant, FlashAttn: p.FlashAttn,
-		ExtraArgs: slices.Clone(p.ExtraArgs), TotalMiB: l.TotalMiB, Split: slices.Clone(l.split), Cause: l.cause,
+	var extra []string
+	if l.key.extraArgs != "" {
+		extra = strings.Split(l.key.extraArgs, "\x00")
+	}
+	r := needstore.Record{Schema: needstore.RecordSchema, Profile: l.profile, Kind: string(l.key.kind), Model: l.key.model,
+		ModelBytes: l.modelBytes, Ctx: l.key.ctx, Parallel: l.key.parallel, KVQuant: l.key.kvQuant, FlashAttn: l.key.flashAttn,
+		ExtraArgs: extra, TotalMiB: l.TotalMiB, Devices: l.count(), Split: slices.Clone(l.split), Cause: l.cause,
 		MeasuredAt: l.at, Release: l.release, PeakAt: l.peakAt}
 	for _, id := range l.placement {
 		r.Placement = append(r.Placement, string(id))
@@ -145,16 +142,17 @@ func (c *schedCore) storeLearned(name string) {
 	c.needOps = append(c.needOps, needOp{shape: l.key.shape(), rec: &r})
 }
 
-// dropLearned forgets the learned need of a shape and queues the removal of
-// its row; name is the profile it is dropped for (for the log).
+// dropLearned forgets every learned need of a shape (all device counts) and
+// queues the removal of its rows; name is the profile it is dropped for
+// (for the log).
 func (c *schedCore) dropLearned(shape, name, why string) {
-	l := c.learned[shape]
+	ls := c.learned[shape]
 	delete(c.learned, shape)
 	if c.persist {
 		c.needOps = append(c.needOps, needOp{shape: shape})
 	}
-	if l != nil {
-		c.log.Info("learned memory need dropped", "profile", name, "measured_by", l.profile, "measured_mib", l.TotalMiB, "reason", why)
+	for _, l := range ls {
+		c.log.Info("learned memory need dropped", "profile", name, "measured_by", l.profile, "measured_mib", l.TotalMiB, "devices", l.count(), "reason", why)
 		c.changed = true
 	}
 }
@@ -182,12 +180,11 @@ func (c *schedCore) restoreNeeds(st NeedStore) {
 	}
 	restored, used := 0, 0
 	for _, r := range recs {
-		l := learnedFromRecord(r)
-		c.learned[l.key.shape()] = l
+		c.putLearned(learnedFromRecord(r))
 		restored++
 	}
 	for _, p := range c.cfg.Profiles {
-		if c.learnedFor(p) != nil {
+		if len(c.learnedOf(p)) > 0 {
 			used++
 		}
 	}
@@ -198,7 +195,7 @@ func (c *schedCore) restoreNeeds(st NeedStore) {
 
 func learnedFromRecord(r needstore.Record) *learnedNeed {
 	l := &learnedNeed{TotalMiB: r.TotalMiB, key: needKeyOfRecord(r), profile: r.Profile, at: r.MeasuredAt, restored: true, release: r.Release,
-		cause: r.Cause, split: slices.Clone(r.Split), modelBytes: r.ModelBytes, peakAt: r.PeakAt}
+		cause: r.Cause, split: slices.Clone(r.Split), modelBytes: r.ModelBytes, peakAt: r.PeakAt, devices: r.DeviceCount()}
 	for _, id := range r.Placement {
 		l.placement = append(l.placement, core.NodeID(id))
 	}
@@ -212,8 +209,11 @@ func learnedFromRecord(r needstore.Record) *learnedNeed {
 // size (the file was replaced under the same name). Called when the
 // provider's figure is (re)computed.
 func (c *schedCore) checkModelBytes(p *core.Profile, base NeedInfo) {
-	if l := c.learnedFor(p); l != nil && l.modelBytes > 0 && base.FileBytes > 0 && l.modelBytes != base.FileBytes {
-		c.dropLearned(shapeOf(p), p.Name, fmt.Sprintf("the model file is %d bytes, it was %d when measured", base.FileBytes, l.modelBytes))
+	for _, l := range c.learnedOf(p) {
+		if l.modelBytes > 0 && base.FileBytes > 0 && l.modelBytes != base.FileBytes {
+			c.dropLearned(shapeOf(p), p.Name, fmt.Sprintf("the model file is %d bytes, it was %d when measured", base.FileBytes, l.modelBytes))
+			return
+		}
 	}
 }
 
@@ -229,25 +229,29 @@ func (c *schedCore) forgetNeed(name string) (bool, error) {
 	if p := c.cfg.Profiles[name]; p != nil {
 		shape = shapeOf(p)
 	} else {
-		for s, l := range c.learned {
-			if l.profile == name && (shape == "" || s < shape) {
-				shape = s
+		for s, ls := range c.learned {
+			for _, l := range ls {
+				if l.profile == name && (shape == "" || s < shape) {
+					shape = s
+				}
 			}
 		}
 		if shape == "" {
 			return false, fmt.Errorf("%w: %s", ErrNoProfile, name)
 		}
 	}
-	l := c.learned[shape]
+	ls := c.learned[shape]
 	delete(c.learned, shape)
 	delete(c.warnedLow, name)
 	if c.persist {
 		c.needOps = append(c.needOps, needOp{shape: shape})
 	}
-	if l == nil {
+	if len(ls) == 0 {
 		return false, nil
 	}
-	c.log.Info("learned memory need forgotten", "profile", name, "measured_mib", l.TotalMiB)
+	for _, l := range ls {
+		c.log.Info("learned memory need forgotten", "profile", name, "measured_mib", l.TotalMiB, "devices", l.count())
+	}
 	c.changed = true
 	return true, nil
 }
@@ -293,10 +297,19 @@ func newNeedWriter(st NeedStore, log *slog.Logger) *needWriter {
 func (w *needWriter) queue(ops []needOp) {
 	w.mu.Lock()
 	for _, op := range ops {
-		if _, ok := w.pending[op.shape]; !ok {
-			w.order = append(w.order, op.shape)
+		if op.rec == nil { // a delete of the shape makes its queued writes moot
+			for k, q := range w.pending {
+				if q.shape == op.shape && q.rec != nil {
+					delete(w.pending, k)
+					w.order = slices.DeleteFunc(w.order, func(o string) bool { return o == k })
+				}
+			}
 		}
-		w.pending[op.shape] = op
+		k := op.key()
+		if _, ok := w.pending[k]; !ok {
+			w.order = append(w.order, k)
+		}
+		w.pending[k] = op
 	}
 	w.mu.Unlock()
 	select {

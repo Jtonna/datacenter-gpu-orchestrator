@@ -90,7 +90,7 @@ func secs(d time.Duration) float64 { return round(d.Seconds(), 1) }
 
 func (c *schedCore) historyLoadStarted(in *inst) {
 	data := map[string]any{"workers": append([]string{}, in.peers...), "bytes_total": in.remoteBytes}
-	if info, err := c.need(in.prof); err == nil {
+	if info, err := c.needAt(in.prof, len(in.placement.Nodes)); err == nil {
 		data["need_mib"] = info.Need.MiB
 		data["need_basis"] = c.needBasis(info)
 	}

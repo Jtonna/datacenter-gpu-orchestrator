@@ -77,7 +77,7 @@ func (c *schedCore) forcedFitCheckOn(p *core.Profile, pl core.Placement, empty b
 	if (mode != config.ForcedFitWarn && mode != config.ForcedFitReject) || len(p.ForceNodes) == 0 || len(pl.Nodes) == 0 {
 		return nil
 	}
-	info, err := c.need(p)
+	info, err := c.needAt(p, len(pl.Nodes))
 	if err != nil {
 		return nil
 	}
@@ -245,7 +245,7 @@ func (c *schedCore) expectShares(p *core.Profile, pl core.Placement) []int {
 		}
 		return out
 	}
-	info, err := c.need(p)
+	info, err := c.needAt(p, len(pl.Nodes))
 	if err != nil || info.Need.MiB <= 0 || len(pl.Nodes) == 0 {
 		return nil
 	}
@@ -260,7 +260,7 @@ func (c *schedCore) expectShares(p *core.Profile, pl core.Placement) []int {
 	}
 	out := make([]int, len(pl.Nodes))
 	for i, pn := range pl.Nodes {
-		if m, ok := c.learnedFor(p).shareFor(pl, fracs, pn.ID); ok {
+		if m, ok := c.learnedAt(p, len(pl.Nodes)).shareFor(pl, fracs, pn.ID); ok {
 			out[i] = m
 			continue
 		}

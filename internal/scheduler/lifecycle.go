@@ -483,7 +483,7 @@ func (c *schedCore) failLoadMode(in *inst, msg string, tail []string, gone bool,
 // logPlacement logs the placement chosen for a new instance.
 func (c *schedCore) logPlacement(in *inst) {
 	need, measured := 0, false
-	if info, err := c.need(in.prof); err == nil {
+	if info, err := c.needAt(in.prof, len(in.placement.Nodes)); err == nil {
 		need, measured = info.Need.MiB, info.Need.Measured
 	}
 	budgets := make([]int, len(in.placement.Nodes))

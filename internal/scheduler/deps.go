@@ -53,6 +53,16 @@ type NeedInfo struct {
 	BaseMiB int
 	// MeasuredAt is when a restored measurement was taken (NeedRestored).
 	MeasuredAt time.Time
+	// Devices is the device count Need is for, when a measurement of the
+	// profile's shape is known (needcount.go); 0 otherwise. FromDevices is
+	// the count the figure was measured on (0: not a measurement).
+	Devices, FromDevices int
+
+	// what at needs to give the need of another device count
+	figs       []learnedFig
+	baseNeed   placer.Need
+	baseSource NeedSource
+	perDevice  int
 }
 
 // NeedSource says where a need comes from, in the words the messages and the

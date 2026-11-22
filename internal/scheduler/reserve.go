@@ -74,7 +74,7 @@ func (c *schedCore) peakFor(p *core.Profile, pl core.Placement) (peaks []int, ok
 	if !c.reserveOn() {
 		return nil, false
 	}
-	l := c.learnedFor(p)
+	l := c.learnedAt(p, len(pl.Nodes))
 	if l == nil || len(pl.Nodes) == 0 {
 		return nil, false
 	}
@@ -96,48 +96,71 @@ func (c *schedCore) peakFor(p *core.Profile, pl core.Placement) (peaks []int, ok
 	return peaks, true
 }
 
-// peakTotal is the sum of p's stored per-node peaks, whatever placement they
-// were measured on: the need a placement elsewhere is held to while the
-// reserve is on (as a learned total is). 0 when there is none.
-func (c *schedCore) peakTotal(p *core.Profile) int {
-	if !c.reserveOn() {
+// peakNeed is the need a placement of k devices is held to by p's stored
+// peaks while the reserve is on: for each measurement with a peak on every
+// node, the peak total less the fill reserve of the placement's nodes, as
+// the placer adds that back on every node. A placement on fewer devices
+// than the peak was measured on keeps the whole peak (the missing nodes'
+// fill reserve is not taken off: review SS4); one on more devices adds the
+// estimator's per-device cost for each extra device. 0 when there is none.
+func (c *schedCore) peakNeed(p *core.Profile, info NeedInfo, k int) int {
+	if !c.reserveOn() || k < 1 {
 		return 0
 	}
-	l := c.learnedFor(p)
-	if l == nil || len(l.Nodes) == 0 {
-		return 0
-	}
-	sum := 0
-	for _, n := range l.Nodes {
-		if n.PeakMiB <= 0 {
-			return 0
+	fill, out := c.fillReserveMiB(p), 0
+	for _, l := range c.learnedOf(p) {
+		sum := 0
+		for _, n := range l.Nodes {
+			if n.PeakMiB <= 0 {
+				sum = 0
+				break
+			}
+			sum += n.PeakMiB
 		}
-		sum += n.PeakMiB
+		if sum <= 0 || len(l.Nodes) == 0 {
+			continue
+		}
+		j := l.count()
+		out = max(out, sum-min(j, k)*fill+max(k-j, 0)*c.perDeviceCost(info))
 	}
-	return sum
+	return out
 }
 
 // applyReserve adds the reservation rule to a placer request for p with
-// need info: the fill reserve on every node, the stored peak total when it
-// is above need + fill reserve (it only raises the need, never lowers it),
-// and the configured per-node margins.
+// need info: the fill reserve on every node, the stored peaks when they
+// are above need + fill reserve (they only raise the need, never lower it),
+// and the configured per-node margins; for every device count when the
+// request carries a need per count (needcount.go).
 func (c *schedCore) applyReserve(req *placer.Request, p *core.Profile, info NeedInfo) {
-	d := c.cfg.Defaults
-	measured := info.Need.Measured
-	fill := c.fillReserveMiB(p)
-	req.PerNodeReserveMiB = fill
-	if pt := c.peakTotal(p); pt > 0 {
-		k := len(c.learnedFor(p).Nodes)
-		if over := pt - k*fill; over > info.Need.WithMargin() {
-			req.Need, measured = placer.Measured(over), true
+	req.PerNodeReserveMiB = c.fillReserveMiB(p)
+	k := info.Devices
+	if k == 0 {
+		k = max(len(p.ForceNodes), 1)
+	}
+	cn := c.countReserve(p, info, k)
+	req.Need, req.MarginMiB, req.MarginPermille, req.MarginMinMiB = cn.Need, cn.MarginMiB, cn.MarginPermille, cn.MarginMinMiB
+	for i := range req.ByCount {
+		if i > 0 {
+			req.ByCount[i] = c.countReserve(p, info.at(i), i)
 		}
 	}
-	switch {
-	case measured && d.MarginMeasuredMiB > 0:
-		req.MarginMiB = d.MarginMeasuredMiB
-	case !measured && d.MarginEstimatedPercent > 0:
-		req.MarginPermille, req.MarginMinMiB = d.MarginEstimatedPercent*10, d.MarginEstimatedMinMiB
+}
+
+// countReserve is the need and margins of a placement of k devices whose
+// need is info.
+func (c *schedCore) countReserve(p *core.Profile, info NeedInfo, k int) placer.CountNeed {
+	d := c.cfg.Defaults
+	cn := placer.CountNeed{Need: info.Need}
+	if pn := c.peakNeed(p, info, k); pn > info.Need.WithMargin() {
+		cn.Need = placer.Measured(pn)
 	}
+	switch {
+	case cn.Need.Measured && d.MarginMeasuredMiB > 0:
+		cn.MarginMiB = d.MarginMeasuredMiB
+	case !cn.Need.Measured && d.MarginEstimatedPercent > 0:
+		cn.MarginPermille, cn.MarginMinMiB = d.MarginEstimatedPercent*10, d.MarginEstimatedMinMiB
+	}
+	return cn
 }
 
 // reservedShare is what one node of a placement is expected to take for a
@@ -159,7 +182,7 @@ type reservedShare struct {
 // share into weights and context uses the model file size (weights x the
 // node's fraction); the rest is context. Nil when the need is unknown.
 func (c *schedCore) reservedShares(p *core.Profile, pl core.Placement) ([]reservedShare, NeedInfo) {
-	info, err := c.need(p)
+	info, err := c.needAt(p, len(pl.Nodes))
 	if err != nil || info.Need.MiB <= 0 || len(pl.Nodes) == 0 {
 		return nil, info
 	}
@@ -174,6 +197,12 @@ func (c *schedCore) reservedShares(p *core.Profile, pl core.Placement) ([]reserv
 	dev := c.deviceCost(info)
 	fileMiB := int((info.FileBytes + (1 << 20) - 1) >> 20)
 	peaks, havePeak := c.peakFor(p, pl)
+	// Without per-node peaks for this node set and split, the peaks of the
+	// shape still raise the need of a placement of this many devices.
+	raised := false
+	if pn := c.peakNeed(p, info, len(pl.Nodes)); !havePeak && pn > need {
+		need, dev, raised = pn, 0, true
+	}
 	fill := c.fillReserveMiB(p)
 	skew := c.cfg.Defaults.SplitSkewMargin
 	d := c.cfg.Defaults
@@ -184,7 +213,7 @@ func (c *schedCore) reservedShares(p *core.Profile, pl core.Placement) ([]reserv
 	if len(pl.Nodes) > 1 {
 		sum := 0
 		for _, pn := range pl.Nodes {
-			m, ok := c.learnedFor(p).shareFor(pl, fracs, pn.ID)
+			m, ok := c.learnedAt(p, len(pl.Nodes)).shareFor(pl, fracs, pn.ID)
 			if !ok {
 				learnedMiB, sum = nil, 0
 				break
@@ -202,6 +231,9 @@ func (c *schedCore) reservedShares(p *core.Profile, pl core.Placement) ([]reserv
 		r := reservedShare{ID: pn.ID, Basis: BasisEstimated}
 		if info.Need.Measured {
 			r.Basis = BasisMeasured
+		}
+		if raised {
+			r.Basis = BasisPeak
 		}
 		share, learned := 0, false
 		switch {
@@ -309,10 +341,11 @@ func (c *schedCore) trackPeaks() {
 // node) the peaks can only rise. A peak never lowers a reserved figure
 // below need + fill reserve (reservedShares).
 func (c *schedCore) endPeakCycle(in *inst) {
+	c.releaseFloor(in)
 	if !c.reserveOn() || in.readyAt.IsZero() || len(in.cyclePeak) == 0 {
 		return
 	}
-	l := c.learnedFor(in.prof)
+	l := c.learnedAt(in.prof, len(in.placement.Nodes))
 	if l == nil || len(l.Nodes) == 0 || !slices.Equal(l.placement, in.nodeIDs()) {
 		return
 	}
@@ -329,7 +362,27 @@ func (c *schedCore) endPeakCycle(in *inst) {
 	}
 	if changed {
 		l.peakAt = c.now
-		c.storeLearned(in.prof.Name)
+		c.storeLearned(l)
+		c.changed = true
+	}
+}
+
+// releaseFloor: when a load that measured its shape on this device count
+// ends normally, a restored total held above this run's figure no longer
+// holds; the figure becomes the highest this run measured (review SB1).
+func (c *schedCore) releaseFloor(in *inst) {
+	if in.readyAt.IsZero() || !normalStop(in) {
+		return
+	}
+	l := c.learnedAt(in.prof, len(in.placement.Nodes))
+	if l == nil || l.floor == 0 || l.runHigh == 0 {
+		return
+	}
+	l.floor = 0
+	if l.TotalMiB != l.runHigh {
+		c.log.Info("learned memory need lowered after a normal cycle", "profile", in.prof.Name, "from_mib", l.TotalMiB, "to_mib", l.runHigh)
+		l.TotalMiB = l.runHigh
+		c.storeLearned(l)
 		c.changed = true
 	}
 }

@@ -68,6 +68,11 @@ type learnedNeed struct {
 	split      []float64     // each node's share of the split
 	modelBytes int64         // the model file's size when measured; 0 when not known
 	peakAt     time.Time     // when a node's peak was last raised; zero when none
+	devices    int           // the device count it was measured on (count)
+	// runHigh is the highest total a load of this run measured on this
+	// count; floor is a restored total that still holds: the first load of
+	// a run does not lower it until that load ends normally (releaseFloor).
+	runHigh, floor int
 }
 
 // fractionTolerance is how far a node's split fraction may differ from the
@@ -116,14 +121,7 @@ func (c *schedCore) effectiveNeed(p *core.Profile, base NeedInfo) NeedInfo {
 		info.Need = placer.EstimatedMargin(base.Need.MiB, permille(c.cfg.Defaults.EstimateMargin))
 		info.Source = NeedEstimated
 	}
-	if l := c.learnedFor(p); l != nil && l.TotalMiB > 0 && (!base.Need.Measured || l.TotalMiB > base.Need.MiB) {
-		info.Need = placer.Measured(l.TotalMiB)
-		info.Source = NeedLearned
-		if l.restored {
-			info.Source, info.MeasuredAt = NeedRestored, l.at
-		}
-	}
-	return info
+	return c.withLearned(p, info, base) // needcount.go: by device count
 }
 
 // deviceCost is what every device of a placement holds beyond its share of
@@ -145,14 +143,15 @@ func (c *schedCore) needBasis(info NeedInfo) string {
 			strconv.FormatFloat(c.cfg.Defaults.EstimateMargin*100, 'f', -1, 64), info.BaseMiB)
 	case NeedLearned:
 		if info.BaseMiB > 0 {
-			return fmt.Sprintf("%s; %d MiB before", NeedLearned, info.BaseMiB)
+			return fmt.Sprintf("%s; %d MiB before", NeedLearned, info.BaseMiB) + info.countWords()
 		}
+		return string(info.Source) + info.countWords()
 	case NeedRestored:
 		s := fmt.Sprintf("measured on %s, restored at start", dateOf(info.MeasuredAt))
 		if info.BaseMiB > 0 {
 			s += fmt.Sprintf("; %d MiB before", info.BaseMiB)
 		}
-		return s
+		return s + info.countWords()
 	}
 	return string(info.Source)
 }
@@ -212,8 +211,10 @@ func (c *schedCore) reportedOn(in *inst, id core.NodeID) (int, bool) {
 // learnNeed records what a load that just became ready measured: the device
 // total (the figure the log's memory_mib reports) and each node's own figure.
 // A measurement above a configured needs_mib is warned about, once per profile.
-// The highest figure of this run is kept; a figure restored at start is
-// replaced by the first measurement of this run. The result is queued for
+// The figure is kept by shape and device count (needcount.go). The highest
+// figure of this run is kept; a figure restored at start holds until the
+// first load of this run on that count ends normally, so a lower first
+// load does not lower it at once (releaseFloor). The result is queued for
 // the store (needs.go).
 func (c *schedCore) learnNeed(in *inst) {
 	if in.prof.Kind != core.KindLlama || in.child == nil {
@@ -224,18 +225,18 @@ func (c *schedCore) learnNeed(in *inst) {
 	if total <= 0 {
 		return
 	}
-	key := needKeyOf(in.prof)
-	l := c.learned[key.shape()]
-	if l == nil || l.key != key {
-		l = &learnedNeed{key: key}
-		c.learned[key.shape()] = l
+	key, k := needKeyOf(in.prof), len(in.placement.Nodes)
+	l := c.learnedAt(in.prof, k)
+	if l == nil {
+		l = &learnedNeed{key: key, devices: k}
+		c.putLearned(l)
 	}
 	l.profile = in.prof.Name
 	if l.restored {
-		l.TotalMiB = total
-	} else {
-		l.TotalMiB = max(l.TotalMiB, total) // the highest seen this run: the safe side
+		l.floor = l.TotalMiB
 	}
+	l.runHigh = max(l.runHigh, total) // the highest seen this run: the safe side
+	l.TotalMiB = max(l.runHigh, l.floor)
 	l.restored, l.at, l.release, l.cause = false, c.now, c.buildRelease, needstore.CauseLoad
 	oldNodes, oldPlacement, oldPeakAt := l.Nodes, l.placement, l.peakAt
 	l.placement = in.nodeIDs()
@@ -282,7 +283,7 @@ func (c *schedCore) learnNeed(in *inst) {
 	c.recordInst(in, history.TLearnedNeed, history.Info,
 		fmt.Sprintf("Measured the memory need of %s at %d MiB; fit decisions use it for the rest of this run.", in.prof.Name, total),
 		map[string]any{"measured_mib": total, "highest_mib": l.TotalMiB, "per_node": perNode})
-	c.storeLearned(in.prof.Name)
+	c.storeLearned(l)
 	c.changed = true
 }
 
@@ -321,7 +322,7 @@ type LearnedNodeNeed struct {
 func (c *schedCore) learnedNeeds() map[string]LearnedNeed {
 	out := map[string]LearnedNeed{}
 	for name, p := range c.cfg.Profiles {
-		l := c.learnedFor(p)
+		l := c.displayLearned(p)
 		if l == nil {
 			continue
 		}
@@ -441,7 +442,7 @@ func (c *schedCore) sharedShortfalls(p *core.Profile, info NeedInfo, pl core.Pla
 		}
 		var share int
 		var fit string
-		if l := c.learnedFor(p); l != nil {
+		if l := c.learnedAt(p, len(pl.Nodes)); l != nil {
 			if m, ok := l.shareFor(pl, fracs, pn.ID); ok {
 				share, fit = m, "measured this run for this node set and split"
 				if l.restored {

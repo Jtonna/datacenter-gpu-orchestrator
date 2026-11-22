@@ -330,14 +330,14 @@ type schedCore struct {
 	backoffs     map[string]*backoff
 	waiters      map[uint64]*waiter
 	leases       map[uint64]*lease
-	needs_       map[string]NeedInfo // provider results, before the estimate margin and learned figures
-	learned      map[string]*learnedNeed
-	needOps      []needOp        // learned-need store writes, taken by the runner after each step (needs.go)
-	persist      bool            // a need store is attached: learned needs are queued for it
-	buildRelease string          // this build's release, stored with each measurement
-	steps        uint64          // events handled (checkGated)
-	gated        gateMark        // the latest gate call (checkGated)
-	warnedLow    map[string]bool // profiles whose too-low needs_mib was already warned about
+	needs_       map[string]NeedInfo             // provider results, before the estimate margin and learned figures
+	learned      map[string]map[int]*learnedNeed // by shape and device count (needcount.go)
+	needOps      []needOp                        // learned-need store writes, taken by the runner after each step (needs.go)
+	persist      bool                            // a need store is attached: learned needs are queued for it
+	buildRelease string                          // this build's release, stored with each measurement
+	steps        uint64                          // events handled (checkGated)
+	gated        gateMark                        // the latest gate call (checkGated)
+	warnedLow    map[string]bool                 // profiles whose too-low needs_mib was already warned about
 
 	raw           map[core.NodeID]core.Node // view this step
 	fresh         bool
@@ -390,7 +390,7 @@ func newCore(cfg *config.Config, clock Clock, view fleet.View, needs NeedProvide
 		cfg: cfg, clock: clock, view: view, needs: needs, build: build, log: log,
 		insts: map[string]*inst{}, entries: map[string]*entry{}, nodes: map[core.NodeID]*nodeState{},
 		backoffs: map[string]*backoff{}, waiters: map[uint64]*waiter{}, leases: map[uint64]*lease{},
-		needs_: map[string]NeedInfo{}, learned: map[string]*learnedNeed{}, warnedLow: map[string]bool{}, raw: map[core.NodeID]core.Node{}, excludedSeen: map[core.NodeID]bool{},
+		needs_: map[string]NeedInfo{}, learned: map[string]map[int]*learnedNeed{}, warnedLow: map[string]bool{}, raw: map[core.NodeID]core.Node{}, excludedSeen: map[core.NodeID]bool{},
 		forcedGone: map[string]time.Time{}, health: map[core.NodeID]*workerHealth{},
 		recov: map[core.NodeID]*recoveryNode{}, memNext: map[core.NodeID]time.Time{}, refused: map[string]*refusal{}, lastRefusal: map[string]RefusalStatus{},
 		localSysMiB: localSystemMiB(), envFileLoad: os.Getenv(EnvRPCFileLoad),
@@ -620,6 +620,12 @@ func (c *schedCore) request(p *core.Profile) (placer.Request, NeedInfo, error) {
 		Need: info.Need, AllowTiers: p.AllowTiers, TensorSplit: p.TensorSplit,
 		MaxPool: max(d.MaxPool, 1), MinShareMiB: d.MinShareMiB, DeviceOverheadMiB: d.DeviceOverheadMiB + info.DeviceMiB,
 		SkewPermille: permille(d.SplitSkewMargin),
+	}
+	if len(info.figs) > 0 { // needcount.go: the need of every device count the placer may try
+		req.ByCount = make([]placer.CountNeed, max(req.MaxPool, len(p.ForceNodes), 1)+1)
+		for k := 1; k < len(req.ByCount); k++ {
+			req.ByCount[k] = placer.CountNeed{Need: info.at(k).Need}
+		}
 	}
 	c.applyReserve(&req, p, info) // reserve.go: no change with the defaults
 	if localOnly(p) {

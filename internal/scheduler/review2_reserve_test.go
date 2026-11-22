@@ -23,8 +23,8 @@ func skewedFleet(t *testing.T, a, b, preflightFree int) *harness {
 		p.ForceNodes, p.TensorSplit, p.LoadTimeout = []string{"a", "b"}, []int{1, 1}, time.Hour
 	})
 	h.needs["m"] = NeedInfo{Need: placer.Estimated(a + b), FileBytes: 1 << 30}
-	h.c.learned[shapeOf(p)] = &learnedNeed{TotalMiB: a + b, key: needKeyOf(p), profile: "m", placement: []core.NodeID{"a", "b"},
-		split: []float64{0.5, 0.5}, Nodes: []learnedNode{{ID: "a", Fraction: 0.5, MiB: a}, {ID: "b", Fraction: 0.5, MiB: b}}}
+	h.c.putLearned(&learnedNeed{TotalMiB: a + b, key: needKeyOf(p), profile: "m", placement: []core.NodeID{"a", "b"},
+		split: []float64{0.5, 0.5}, Nodes: []learnedNode{{ID: "a", Fraction: 0.5, MiB: a}, {ID: "b", Fraction: 0.5, MiB: b}}})
 	if preflightFree > 0 {
 		h.prober.free["192.0.2.2:50052"] = preflightFree
 		h.prober.free["192.0.2.4:50052"] = preflightFree

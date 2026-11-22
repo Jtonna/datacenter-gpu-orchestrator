@@ -87,6 +87,30 @@ type Request struct {
 	MarginMiB      int
 	MarginPermille int
 	MarginMinMiB   int
+
+	// ByCount, when set, is the need of a placement of n nodes at index n
+	// (a measured need depends on the device count: each device holds its
+	// own compute buffer). An entry whose Need.MiB is above 0 replaces Need
+	// and the margins above for a set of that many nodes (For).
+	ByCount []CountNeed
+}
+
+// CountNeed is the need and margins of a placement of one node count.
+type CountNeed struct {
+	Need           Need
+	MarginMiB      int
+	MarginPermille int
+	MarginMinMiB   int
+}
+
+// For is req for a set of n nodes: its ByCount entry in place of the need and
+// margins, when there is one.
+func (req Request) For(n int) Request {
+	if n > 0 && n < len(req.ByCount) && req.ByCount[n].Need.MiB > 0 {
+		c := req.ByCount[n]
+		req.Need, req.MarginMiB, req.MarginPermille, req.MarginMinMiB = c.Need, c.MarginMiB, c.MarginPermille, c.MarginMinMiB
+	}
+	return req
 }
 
 // nodeMargins: the request replaces the skew margin with a configured one.
@@ -277,6 +301,7 @@ func CheckCapacity(req Request, eligible []Candidate) error {
 			return nil
 		}
 	}
+	req = req.For(len(top))
 	capacity := 0
 	for _, c := range top {
 		b := c.BudgetMiB
@@ -335,6 +360,7 @@ type cand struct {
 }
 
 func fits(req Request, budgets []int) bool {
+	req = req.For(len(budgets))
 	if req.PerNodeReserveMiB > 0 {
 		less := make([]int, len(budgets))
 		for i, b := range budgets {
@@ -373,6 +399,7 @@ func skewApplies(req Request, set []Candidate) bool {
 // weight over the sum; its share is need x fraction x (1 + skew), plus the
 // device overhead for an estimated need. A single node takes no margin.
 func fitsSet(req Request, set []Candidate) bool {
+	req = req.For(len(set))
 	budgets := make([]int, len(set))
 	for i, c := range set {
 		budgets[i] = c.BudgetMiB
