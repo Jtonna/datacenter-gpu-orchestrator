@@ -1,459 +1,118 @@
-# Benchmark guide: running model benchmarks through the scheduler
+# Benchmark guide
 
-Written 2026-11-18 from the repo code, the repo docs and a read-only look at the host machine. Updated the same day after the new build went live (version string below), and again after the load progress and load report build.
-Anything not confirmed is marked "unverified". "Scheduler" and "load balancer" mean the same thing here.
+How to design, run and read benchmarks in Potluck. The scheduler runs them itself, through its own HTTP API, so a benchmark loads and serves exactly like a client request and never skips a fit check. Every result is kept in the scheduler database.
 
-## 1. What this is and where it runs
+The same operations are available three ways: the Benchmarks page of the web UI, the REST API under `/api/bench/`, and MCP tools. Examples use `B=http://<host>:3122`.
 
-- `llm-scheduler` decides which machines run a model, loads it, queues requests and unloads it later.
-- It runs on the host machine as container `llm-scheduler-test` (image `llm-scheduler:test`), host port 3122. llama-swap is stopped and must stay stopped.
-- Scheduler version string: `test-da67241+failfast+childlog+progress+loadreport2`.
-- Config: in the scheduler database (`~/llm-scheduler-test/data/scheduler.db`), read and changed over REST: `GET http://localhost:3122/api/config`. A change takes effect at once, with no restart, and is audited (runbook "Configuration lives in the database"). A test deployment is first set up with `llm-scheduler import-config` from a YAML file (the old `config.yaml` is the input format).
-- Models are GGUF files in `/srv/llama-swap/models` (mounted at `/models`). Machines come from the fleet manager at `localhost:8090`, not from the config.
-- Machines: three PS5s (each serves one client at a time), the Nvidia laptop laptop, and the host machine's own GPU. For these benchmarks only the three PS5s receive models. The host machine and the Nvidia laptop are excluded (section 4). Do not remove that exclusion.
-- PS5 fleet, all rpc port 50052:
+## 1. Words
 
-| Hostname | Address |
-|---|---|
-| console-1 | 192.0.2.101 |
-| console-2 | 192.0.2.122 |
-| console-3 | 192.0.2.114 |
+- **Benchmark**: one test case on one profile: a list of phases, for example load, a few requests, unload.
+- **Suite**: an ordered list of benchmarks, run together. Only suites are run.
+- **Run**: one execution of a suite. Each benchmark in it becomes a **step** with its results.
+- **Baseline**: the run a new run is compared with. By default, the previous completed run of the same suite.
 
-  There is no PS5 at 192.0.2.100 or 192.0.2.102. Addresses can change after a PS5 restart, so always read the current list from `curl -s localhost:8090/api/fleet` (a JSON object with a `members` array). Profiles force machines by hostname, not by IP.
-- As of 2026-11-18 the PS5 tensor cache is off, so every PS5 load is a full upload and there are no fast cached reloads. PS5 GPU clock is pinned at 2230 MHz. Upload speed is 75 to 84 MB/s in total out of the host machine, the same for 1, 2 or 3 PS5s, and simultaneous loads share it. A split model uploads to one PS5 at a time, in an order llama.cpp chooses.
+Benchmarks need the database and the `bench_enabled` setting (on by default). Without them `/api/bench/...` answers `503`.
 
-Run all commands below on the host machine (`ssh host-1`). Examples use `B=http://localhost:3122`.
+## 2. Design a benchmark
 
-## 2. Quick start
+Ask `GET $B/api/bench/schema` (MCP `get_bench_schema`) first. It lists every phase type, every option with its default, limit and unit, the `expect` keys, and five templates: "Load only", "Load and requests", "Load and conversation", "Requests on a loaded model", "Simultaneous requests".
 
-1. Check it is healthy and idle. Expect `healthy`, `instances` and `queue` empty, the three PS5s `online: true`. The host machine and the Nvidia laptop show `excluded: true`, `eligible: false`.
-```sh
-B=http://localhost:3122
-docker inspect -f '{{.State.Health.Status}}' llm-scheduler-test
-curl -s $B/health                      # prints OK
-curl -s $B/running                     # "running":[] when idle (and a "recent_loads" key next to it)
-curl -s $B/api/status | jq '{instances, queue, backoffs, quarantines, nodes: [.view.nodes[] | {hostname, online, excluded, free_mib}]}'
-```
-2. List the models (profiles). There are 254 in total, plus whatever you add. 225 of them are generated benchmark profiles named `bench-<model>-<place>-<ctx>` (section 5a). Names starting `b-` are older benchmark profiles pinned to named machines.
-```sh
-curl -s $B/v1/models | jq -r '.data[].id'
-```
-3. Ask what a request would do. This changes nothing.
-```sh
-curl -s -H 'Content-Type: application/json' -d '{"model":"b-qwen4b-1ps5"}' $B/api/plan | jq .
-```
-4. Send one request. It loads the model first, so it can take minutes. Use a long client timeout.
-```sh
-curl -s --max-time 3600 -H 'Content-Type: application/json' \
-  -d '{"model":"b-qwen4b-1ps5","max_tokens":64,"messages":[{"role":"user","content":"Say hello in five words."}]}' \
-  $B/v1/chat/completions | jq '{text: .choices[0].message.content, usage, timings}'
-```
-5. While it loads, watch: `curl -s $B/api/status | jq '.instances[] | {profile,state,phase,load_deadline,load}'`. The `load` object shows bytes sent and progress (section 9).
-6. Unload when done. Without this the model stays until the idle timer (`ttl`, 900 s in the live config) ends it.
-```sh
-curl -s -X POST -H 'Content-Type: application/json' -d '{"model":"b-qwen4b-1ps5"}' $B/api/unload
-```
+### Phases
 
-## 3. Every HTTP endpoint
+| Phase | What it does | Measures |
+|---|---|---|
+| `load` | Unloads the profile first, then loads it with `POST /api/load`. No chat request is sent. | Load time, bytes and MB/s per node, memory, lowest available memory, load mode |
+| `warmup` | Requests left out of the statistics. | Recorded, not counted |
+| `requests` | The measured requests, each repeated `repeats` times. | Prefill and decode tokens/s, time to first token, output hash |
+| `conversation` | A multi-turn exchange; each turn carries the earlier turns and replies. | Per turn: prefill, decode, time to first token, reused prompt tokens |
+| `hold` | Stays loaded and idle for `seconds`, then sends one request. | Whether the model answers as fast after idling |
+| `concurrent_requests` | `n` requests at the same moment. | Each request's wait and decode speed, total time, errors |
+| `unload` | Unloads the profile. | Time until the instance is gone |
 
-Errors use this shape: `{"error":{"message":"...","type":"...","param":null,"code":<status>,"reason":"..."}}`. Every 503 except "does not fit" and "node excluded" carries a `Retry-After` header.
+A phase that sends requests with no `load` before it loads the model if needed and leaves it loaded for the next benchmark; the end of the run unloads it. So a benchmark with only a `requests` phase means "requests on a model that is already loaded". Hold seconds must fit in `timeout_s`.
 
-| Method | Path | What it does | Example |
-|---|---|---|---|
-| POST | `/v1/*` (chat/completions, completions, embeddings, ...) | Routes by the `model` field in the JSON body. Loads the model if needed, waits in the queue, streams the answer back. | see section 2 step 4 |
-| GET | `/v1/models` | Lists profile names (aliases are not listed). | `curl -s $B/v1/models` |
-| GET | `/health` | Returns `OK`. | `curl -s $B/health` |
-| GET | `/running` | Loaded or loading models: `{"running":[{"model","state","name","cmd"}], "recent_loads":[...]}`. States: starting, ready, stopping. A loading entry also has `load_progress` and a `load` object. `recent_loads` is a sibling key, always present (section 9). To test for idle, check that `running` is an empty array; do not compare the whole body. | `curl -s $B/running` |
-| GET | `/api/status` | Full state: `instances`, `queue`, `quarantines`, `backoffs`, `view.nodes`, `time`, `shutting_down`. Each instance has `log_file` (section 7) and `load_duration`; a starting instance has `load_*` fields and the `load` object. The top level also has `recent_loads`. | `curl -s $B/api/status` |
-| POST | `/api/plan` | Dry run. Body `{"model":"NAME"}`. Reply keys: `model`, `alias`, `action` (serve, wait, start, evict, queue, backoff, reject), `instance`, `placement`, `victims`, `reason`, `need_mib`, `measured`, `required_mib`, `capacity_mib`. A profile forced onto an absent or offline machine is rejected with the fail-fast text (section 9). | `curl -s -H 'Content-Type: application/json' -d '{"model":"b-gemma-2ps5"}' $B/api/plan` |
-| POST | `/api/load` | Starts a load without sending a request. Body `{"model":"NAME"}`. Answers at once: `202 {"msg":"loading","model":"NAME"}`. It does not wait for ready; poll `/running` or `/api/status`. | `curl -s -H 'Content-Type: application/json' -d '{"model":"b-gemma-2ps5"}' $B/api/load` |
-| POST | `/api/unload` | Body `{"model":"NAME","force":false}`. `200 {"msg":"ok","model":..}`, or `200 {"msg":"not loaded",..}`. A busy model gives `409`. `force:true` stops it anyway (also a model that is still loading). | `curl -s -H 'Content-Type: application/json' -d '{"model":"b-gemma-2ps5","force":true}' $B/api/unload` |
-| POST | `/api/models/unload` | Stops every model with no request in flight. `{"msg":"ok","unloaded":[...]}`. | `curl -s -X POST $B/api/models/unload` |
-| GET | `/unload` | Same as above, replies plain `OK`. | `curl -s $B/unload` |
-| POST | `/api/models/unload/{model}` | Stops that model if idle (409 if busy). | `curl -s -X POST $B/api/models/unload/b-gemma-2ps5` |
-| ANY | `/upstream/{model}/...` | Passes straight to a model that is already ready. Never loads. `503 not ready` otherwise. | `curl -s $B/upstream/b-gemma-2ps5/props` |
-| GET | `/api/events` | Server-sent events stream for the hub panel. | `curl -sN $B/api/events` |
-| GET | `/api/metrics/activity` | Last 200 finished requests: model, path, status, duration, token counts, tokens per second. | `curl -s $B/api/metrics/activity` |
-| GET | `/ws` | Live channel (WebSocket), see section 12 and design 9.2. | `websocat ws://localhost:3122/ws` |
-| ANY | `/api/bench/...` | Benchmarks, suites and runs run by the scheduler itself (section 12). | `curl -s $B/api/bench/state` |
-| GET | `/ui/` | The read-only dashboard: nodes, queue, incidents, finished loads (time, MB/s, memory), timeline, summary. Open `http://<host>:3122/ui/`. | |
-| GET | `/api/history`, `/api/history/summary`, `/api/history/export` | The event history behind the dashboard (`history_dir`). The summary has load seconds (min, median, max) and average MB/s per profile; the export is JSON Lines, so a benchmark run can be saved with `curl -s "$B/api/history/export?since=<ms>"`. | `curl -s "$B/api/history?type=loadFinished&limit=20"` |
+The simple form (`cold`, `warmup_requests`, `repeats`, `requests`, `unload_after`) still works: it is expanded to `load`, `warmup`, `requests`, `unload`. Write `phases` for anything else.
 
-Other paths give 404. `/v1/*` with a method other than POST gives 405. A body without `model` on the admin paths gives 400 (`body must be JSON with a "model" field`).
+A benchmark with `parallel: [id, id]` starts the listed benchmarks at the same moment, to measure loads that compete.
 
-## 4. How placement works
+### Expectations
 
-- Machines sit in tiers: PS5s (tier 1), Nvidia laptop (tier 2), host machine GPU (tier 3). Lower number is preferred. A machine in no tier is never used.
-- Auto profile: the scheduler picks the best tier that can hold the model, one machine first, then a pool of up to `max_pool` (4). It uses `needs_mib` if set, else an estimate from the GGUF file.
-- Forced profile (`force_nodes`): exactly those machines, in that order, with no fit check. `tensor_split` sets each machine's share. All `b-*`, `m-*` and `bench-*` profiles are forced except the `auto` ones.
-- `defaults.forced_fit_check` is off in the benchmark config, so a forced profile is never fit-checked. A model that does not fit fails during the upload (the PS5 `rpc-server` can crash and restart by itself). Do not turn it on for the benchmark. Outside the benchmark, `reject` is the recommended setting: on llama.cpp upstream HEAD (2026-11-19) a forced load that does not fit took a PS5 down until it was power cycled. On PS5 (shared memory) nodes the check uses free minus tier headroom, not raw free.
-- PS5 memory safety (design 7.2a): a load that exhausts a PS5 makes it unreachable for about 18 minutes, so a placement of two or more nodes with a PS5 must fit each PS5's share, `need x split fraction x 1.15` (`defaults.split_skew_margin`), in its usable memory (about 12.4 GB). With `forced_fit_check: reject` a forced profile that fails this gets `503` "forced nodes do not fit" naming the node, its expected share and its usable figure; with the check off it starts anyway, so keep the benchmark `tensor_split` shares within each PS5's usable memory. A need without `needs_mib` is raised 5% (`estimate_margin`). While a load runs, a PS5 whose available memory falls below `load_memory_floor_mib` (768) cancels it: `502` `load cancelled: <node> ran low on memory during the load (available N MiB, floor M MiB)`, `recent_loads` outcome `failed`, node not quarantined.
-- Each machine serves one model at a time. A request for a model that cannot start now waits in a queue (one entry per profile). Waiting longer than `queue_timeout` (1800 s live) without a claim gives `503 cluster busy`. A forced machine that is present but busy is not an error: the request queues.
-- Eviction: to make room, the scheduler stops idle models, or drains busy ones after `drain_after` (60 s). A model is protected for its hold time: its load time, clamped between `min_hold` (30 s) and `max_hold` (900 s).
-- After a model leaves a machine, the machine is unusable for a short settle time (PS5 3 s) while the scheduler re-reads its memory.
-- `excluded` (in `view.nodes`) means the config's `exclude_nodes` keeps that machine out of the pool. The live config has `exclude_nodes: [host-1, "laptop-*"]` (owner request, for the benchmarks). `/api/status` shows both with `excluded: true, eligible: false`. Only the three PS5s receive models. Do not remove the exclusion.
-- Because of that, the profile `devstral-24b:14k-laptops` is commented out in the live config (lines start with `# BENCH-OFF`). The config check rejects a profile forced onto an excluded machine. Do not add a profile that forces `host-1` or an Nvidia laptop node.
-- A model that never gets a request unloads after `ttl` (900 s live). Benchmark profiles set `load_timeout: 10800s` so slow uploads do not time out.
+`expect` turns a benchmark into a pass or fail check: `outcome` (`ready`, or `refused` for a model that is supposed not to fit), `max_load_s`, `max_unload_s`, `min_decode_tps`, `min_prefill_tps`, `max_ttft_ms`, `min_reused_tokens`, `max_errors`, `max_concurrent_wall_s`. A step that was refused or failed is a result with the scheduler's reason, not an error.
 
-## 5. Adding a benchmark profile for a new model
+### Choosing profiles
 
-### 5a. The generated profiles
+A benchmark names a profile. A profile with `force_nodes` pins the benchmark to chosen nodes, which makes runs comparable. A forced profile is still checked against the nodes' memory, so a test of a model that must not fit uses `expect: {"outcome": "refused"}`. For good results on automatic profiles, give the profile a measured `needs_mib` (runbook section G).
 
-The config already has 225 generated profiles named `bench-<model>-<place>-<ctx>` (254 profiles in total).
+## 3. Create benchmarks and suites
 
-- Models: `tinyllama`, `qwen4b`, `gemma12b`, `devstral24b`, `qwen27b`, `deepseek-v2-lite`, `qwen30b-a3b`, `mixtral-8x7b`, `llama33-70b-q2`, `qwen25-72b-q2`, `glm4-32b`, `qwen3-coder-30b`, `kimi-dev-72b-iq2s`.
-- Place: `1a`, `1b`, `1c` (one PS5 each), `2` (two PS5s), `3` (three PS5s), `auto` (the scheduler picks). `kimi-dev-72b-iq2s` has only `2`, `3` and `auto`.
-- Context: `2048`, `8192`, `32768`.
-- Example: `bench-gemma12b-3-8192`. Which PS5 is `1a`, `1b` or `1c` is set in the profile (`curl -s localhost:3122/api/config/profiles/bench-gemma12b-1a | jq .`; not checked for this guide).
+REST: `POST $B/api/bench/benchmarks` and `POST $B/api/bench/suites` with the JSON object; `PUT` and `DELETE` on `/api/bench/benchmarks/{id}` and `/api/bench/suites/{id}`. MCP: `create_benchmark`, `update_benchmark`, `delete_benchmark`, `create_suite`, `update_suite`, `delete_suite`. A first install can also seed them from the `bench:` block of the import file (see `deploy/seed-config.yaml`).
 
-Count: 13 models x 6 places x 3 contexts is 234, less 9 for the three places kimi does not have, gives 225.
-
-### 5b. Adding a profile for a model that has none
-
-1. Check the file size and what fits. One PS5 has about 14438 MiB total and a plan budget of about 13414 MiB. Weights plus KV cache plus compute buffers must fit across the machines you force. A forced profile skips the fit check, so a too-big model fails during load instead.
-```sh
-ls -l /srv/llama-swap/models/
-```
-2. Create the profiles through the API. Every change is a numbered revision in the audit log, so no file backup is needed (roll back with `POST /api/config/revisions/N/rollback`). Names must be unique (a second create of the same id answers `409`). `model` must be the exact file name. Copy the shape of the existing `b-*` profiles (`curl -s localhost:3122/api/config/profiles/b-qwen3-30b-2ps5 | jq .profile`). Add `?dry_run=1` to a request to validate it without writing.
-```sh
-H=localhost:3122
-A='-H X-Actor:benchmark-agent'
-
-# auto-placed: the scheduler picks machines. Needs a measured needs_mib for good results (step 6).
-curl -s -X POST $H/api/config/profiles $A -d '{"id":"qwen3-30b-auto-8k","model":"Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf","ctx":8192}'
-
-# forced onto two PS5s, split 50/50, ctx 2048
-curl -s -X POST $H/api/config/profiles $A -d '{"id":"b-qwen3-30b-2ps5","model":"Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf","ctx":2048,"load_timeout":"10800s","force_nodes":["console-1","console-2"],"tensor_split":[50,50]}'
-
-# forced onto three PS5s, split 33/33/34, bigger context (quantised KV needs flash_attn)
-curl -s -X POST $H/api/config/profiles $A -d '{"id":"b-qwen3-30b-3ps5-8k","model":"Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf","ctx":8192,"load_timeout":"10800s","force_nodes":["console-1","console-2","console-3"],"tensor_split":[33,33,34],"kv_quant":"q8_0","flash_attn":true}'
-```
-3. Rules the loader enforces (from `docs/design.md`): `tensor_split` needs `force_nodes` and the same length; `kv_quant` other than f16 needs `flash_attn: true`; `force_nodes` and `allow_tiers` cannot both be set; the model file must exist; unknown fields are errors; a forced node must not be excluded. `ctx` is per slot. `force_nodes` accepts a hostname or a node id. A request that breaks a rule answers `400` with every message and writes nothing.
-4. Check the result. No restart is needed and nothing loaded is stopped; the profile is usable at once.
-```sh
-curl -s localhost:3122/api/config | jq '{revision, configured}'
-curl -s localhost:3122/v1/models | jq -r '.data[].id' | grep qwen3-30b
-curl -s -X POST localhost:3122/api/plan -d '{"model":"b-qwen3-30b-2ps5"}' | jq .
-```
-5. To undo a change: `curl -s localhost:3122/api/config/revisions | jq .` lists the revisions, `curl -s -X POST localhost:3122/api/config/revisions/N/rollback` restores revision N as a new revision. A setting the schema marks `restart_required` (for example `ws_max_clients`) needs a container restart; only restart when nothing is loaded (`/running | jq .running` is `[]`) and tell the orchestrator first.
-6. After the first successful load, read `device_total_mib` from `/api/status` for that instance. That sum is the figure for `needs_mib` on an auto profile (design 7.2). Write it in only if the orchestrator asks.
-
-## 6. What to measure and where each number comes from
-
-| Number | Where it comes from |
-|---|---|
-| Load time | `load_duration` (seconds) on the instance in `/api/status` `instances[]`, and the scheduler log line that contains `load_duration=` and `memory_mib=`. It runs from child start to ready. Live example: tinyllama loaded onto one PS5 in 9.15 s. |
-| Upload MB/s | `load.bytes_sent / load.elapsed_s` from `/running` or `/api/status` while loading (bytes the workers acknowledged, measured from TCP counters; about 80 MB/s in total live on the old 1 GbE link, about 100 to 108 MB/s per PS5 since the 2.5 GbE link of 2026-11-18). For a finished load, model file size in MB divided by load time is an average only. Per worker: `load.workers[].bytes_sent`. |
-| Prefill tokens/s | `timings.prompt_per_second` in the completion response (confirmed live). |
-| Decode tokens/s | `timings.predicted_per_second` in the completion response (confirmed live). |
-| Token counts | `usage.prompt_tokens`, `usage.completion_tokens`; `timings.prompt_n`, `timings.predicted_n`. Streaming: the numbers are in the last chunks (unverified for `timings` in streamed replies). |
-| Memory per machine | `/api/status` `instances[].nodes[].memory[]` (`model_mib`, `kv_mib`, `compute_mib`, `total_mib`), `device_total_mib` for the sum, `host_memory` for CPU buffers (not in the sum). Machine free memory: `view.nodes[]` (`free_mib`, `total_mib`). |
-| KV cache size | `kv_mib` above. The full text (for example the KV size and any "does not fit" or out-of-memory message) is in the child log file (section 7). |
-| Requests as the scheduler saw them | `/api/metrics/activity` (duration, in/out tokens, tokens per second). |
-| Cross-check on the PS5s | The fleet manager's `GET localhost:8090/api/models` shows the loaded model (name from the model file, quant, state, slots, context used, tokens per second, PS5 worker addresses). While a model is still loading it shows the profile id as the name. Useful as a second opinion; no action needed. |
-
-The `timings` object in a completion reply has these keys (confirmed live): `cache_n`, `prompt_n`, `prompt_ms`, `prompt_per_token_ms`, `prompt_per_second`, `predicted_n`, `predicted_ms`, `predicted_per_token_ms`, `predicted_per_second`.
-
-Prompt cache: llama-server reuses the previous prompt, which makes a second identical request look faster. For clean prefill numbers add `"cache_prompt": false` to the request body, and check that `timings.cache_n` is 0.
-
-Loop rule: a benchmark loop checks for a stop file between profiles (for example `~/llm-scheduler-test/STOP`), so a `PAUSE` stops cleanly after the current profile and nothing is cut mid-load.
-
-Method: for each profile, `plan`, then one request (this includes the load), then a second identical request (no load) for clean prefill and decode numbers. Record the UTC time, profile, ctx, split and the `/api/status` snapshot after ready. Unload before the next profile.
-
-## 7. Logs
-
-- Scheduler log: `docker logs llm-scheduler-test` (stdout, key=value lines). Key events: `queue entry created`, `placement chosen` (nodes, budgets, `need_mib`), `pre-flight ok`, `child started` (the full llama-server command line), `instance ready`, `instance stopping/stopped`, `fleet console unreachable` / `fleet feed recovered`.
-- The container's own log now rotates at 50 MB x 5 files. It survives `docker restart` but is lost if the container is recreated (`docker compose up` after a compose change). A saved copy from before the redeploy is at `~/llm-scheduler-test/scheduler-log-before-redeploy-*.log`.
-- llama-server child logs (confirmed live): config keys `child_log_dir: /var/log/llm-children` and `child_log_keep: 500` (top level). On the host machine the files are in `~/llm-scheduler-test/child-logs/`, one file per model start, named like `20261118T094330Z-tinyllama-5.log` (UTC start time, profile with unsafe characters replaced by `_`, instance id). Each file has the complete llama-server output (188 lines for tinyllama). Each instance in `GET /api/status` has `log_file` with the in-container path, for example `/var/log/llm-children/20261118T094330Z-tinyllama-5.log`. Map `/var/log/llm-children/` to `~/llm-scheduler-test/child-logs/` on the host. Files are owned by root but world-readable. The oldest files beyond 500 are deleted automatically. These files survive container restarts and recreation.
-- A failed load also shows the last 40 child lines inside the `502 load failed` reply.
-- Fleet manager: `localhost:8090/api/fleet` (read only). Do not restart it.
-- `~/llm-scheduler-test/logs`, `logs-run1` to `logs-run3` exist from earlier tests. Their contents are unverified. Do not delete them; use new names.
-- Save a copy of the scheduler log before any restart:
-```sh
-mkdir -p ~/llm-scheduler-test/logs-bench
-docker logs llm-scheduler-test > ~/llm-scheduler-test/logs-bench/sched-$(date -u +%Y%m%dT%H%M%SZ).log 2>&1
-curl -s localhost:3122/api/status > ~/llm-scheduler-test/logs-bench/status-$(date -u +%Y%m%dT%H%M%SZ).json
-```
-
-## 8. Errors you may see
-
-All from the code. Statuses are HTTP codes; `reason` is in the JSON error.
-
-| Status / reason | Meaning and what to do |
-|---|---|
-| 404 `unknown model` (`code: model_not_found`) | Profile name not in config. Check `/v1/models`. New profiles need a restart. |
-| 400 `bad request` | Admin body has no `model`, or the `/v1` body cannot be read. |
-| 405 | Wrong method on `/v1/*` (only POST). |
-| 409 `busy` | Unload refused: a request is in flight (or the model is still loading). Wait, or use `force:true`. |
-| 502 `load failed` | Child exited, the load timed out, or the load stalled (message `load stalled: no bytes acknowledged by the workers for 3m0s (sent N of M)`: a measured upload got no new acknowledged bytes for `defaults.load_stall_timeout`, 180 s, `0` = off, also a profile key; the hung child is stopped, nodes are not quarantined, `recent_loads` shows `failed` with that reason). The message ends with the last 40 child output lines. The full output is in the child log file. The profile is then backed off. |
-| 503 `backoff` | Profile failed a load recently. Waits 60 s, doubling to 10 min; clears when the profile next reaches ready. See `backoffs` in `/api/status`. |
-| 503 `cluster busy` | Waited `queue_timeout` (1800 s) with no machine free. Message "too many request bodies are waiting in the queue" is the same reason (queue memory cap, 256 MiB). Retry after 30 s. |
-| 503 `forced nodes unavailable` | Fail fast (section 9). A machine named in `force_nodes` is absent from the fleet or offline for longer than `defaults.forced_node_grace` (30 s). The message names the node and says "absent from the fleet" or "offline in the fleet". `Retry-After: 30`. `/api/plan` gives the same text. A machine that is present but busy is not this error: the request queues. |
-| 503 `fleet view stale` | No data from the fleet manager for 60 s. Remote machines are not used until it recovers. The fail-fast clock does not run while the view is stale. |
-| 503 `nodes quarantined` | A pre-flight check failed on a machine; it is blocked 30 s, doubling to 10 min. Usually another client holds the PS5 worker. |
-| 503 `node has no address` | The fleet reports no IP for a machine the model needs. |
-| 503 `does not fit` | Need is larger than all usable machines together, even empty. No `Retry-After`. Message has need and capacity. Does not apply to forced profiles. |
-| 503 `node excluded` | Config excludes a machine this profile needs. No `Retry-After`. |
-| 503 `unloaded` | A model that was loading was force-unloaded. |
-| 503 `shutting down` | Container is stopping. |
-| 503 `not ready` | `/upstream/...` was used and the model is not loaded. |
-| 499 | Your client left while waiting. Nothing is sent back. |
-| Stream cut mid-answer | No chunk for `stall_timeout` (300 s) after the first chunk. The model stays loaded. |
-
-`/api/plan` actions `reject` and `backoff` give the same reasons without trying.
-
-## 9. New in this build (live since 2026-11-18)
-
-Items 1 and 2 were checked live on the host machine on 2026-11-18 at 09:43 UTC (version `test-da67241+failfast+childlog`). Items 3 and 4 came with `+progress+loadreport2`; load progress was checked live (measured from TCP acknowledged bytes, matching about 80 MB/s on the old 1 GbE link).
-
-Network note (2026-11-18, about 14:00 to 14:31 UTC): the host machine's link to the PS5 switch moved from its built-in 1 GbE port to a USB-C adapter, interface `enx020000000010`, at 2500 Mb/s. The PS5s still have 1 GbE ports. To read tx bytes on the host, use `enx020000000010` (older logs used `eno1`). Load times at ctx 2048, 1 GbE then 2.5 GbE: Gemma 12B on one PS5 89 s then 66 s; Qwen 27B on three PS5s 216 s then 170 s; Kimi-Dev 72B IQ2_S on three PS5s 363 s then 286 s; two Gemma 12B at once 167 s each then 66 s each; three at once 246 s each then 77 s each (about 280 MB/s in total). A single stream is now limited by the PS5's own 1 GbE port (about 100 to 125 MB/s). A split model still uploads to one PS5 at a time. Label any new number with the link it was measured on.
-
-1. Fail fast. A request for a profile forced onto a machine that is absent from the fleet or offline gets HTTP 503 after the grace period, instead of waiting the whole queue timeout (1800 s). Live reply for an absent machine:
-```json
-{"error":{"code":503,"message":"forced nodes unavailable: forced node ps5-doesnotexist is absent from the fleet (for 30s); profile x-failfast cannot start until it is back, so this fails now instead of waiting for queue_timeout","param":null,"reason":"forced nodes unavailable","type":"server_error"}}
-```
-   - Header: `Retry-After: 30`. For an offline node the text says "offline in the fleet".
-   - Config key: `defaults.forced_node_grace`, default 30 s.
-   - The 30 s counts from when the scheduler first sees the node missing. A request that arrives later can fail sooner than 30 s (16 s in the live check), or at once.
-   - `POST /api/plan` rejects with the same text.
-   - A machine that is present but busy is not a fail-fast case. The request queues.
-   - While the fleet view is stale the clock does not run.
-2. Full child logs. Each llama-server child writes its complete output to one file per start. Keys, paths, file names and retention are in section 7.
-3. Load progress. While an instance is `starting`, `/running` entries and `/api/status` instances have a `load` object (shapes: `docs/design.md` section 7.6a):
-```json
-"load": {"session_id":"ld-1794995021087-3","started_at":1794995021087,"elapsed_s":42.1,
-  "bytes_total":11628266644,"bytes_sent":5580799366,"progress":0.4799,"eta_s":605,"source":"measured",
-  "workers":[{"addr":"192.0.2.101:50052","bytes_total":5814133322,"bytes_sent":5580799366,"state":"receiving"}]}
-```
-   - `source` is `measured` (TCP acknowledged bytes) or `estimated`. Worker `state` is `waiting`, `receiving` or `done`, taken from each worker's own bytes. Workers receive one at a time, in an order llama.cpp chooses, which may differ from the `--rpc` order.
-   - Load MB/s: `load.bytes_sent / load.elapsed_s`.
-   - If `bytes_sent` stops rising for more than 15 s, `eta_s` is left out and `stalled_s` (seconds since the last rise) appears. At `defaults.load_stall_timeout` (180 s) the load fails (see the errors table). Only a measured upload under 99% sent is judged.
-   - The flat fields `load_elapsed_s`, `load_bytes_total`, `load_bytes_sent`, `load_progress`, `load_eta_s`, `load_progress_source` are still on the `/api/status` instance.
-   - The scheduler also logs a `load progress` line every 30 s.
-4. `recent_loads`. A top-level key of `/running` and `/api/status`, next to `running`. It lists load attempts that finished in the last 120 s, newest first, and is an empty array when there are none:
-```json
-{"session_id":"ld-1794995021087-3","model":"big","workers":["192.0.2.101:50052","192.0.2.122:50052"],
- "outcome":"ready","reason":"","finished_at":1794995221087,"load_s":215.1}
-```
-   `outcome` is `ready`, `failed` or `cancelled` (see design 7.6a). The same object arrives in the `loadFinished` event on `/api/events`; `loadStarted` is sent when the child starts. Poll often enough (under 120 s) not to miss a load.
-
-Worker health (design 8.4a). Every PS5 that backs a loaded or loading model is watched on its upload progress and the fleet heartbeat (a third channel, a TCP connect to port 50052, exists but is off by default), and `/api/status` shows `view.nodes[].health` with `state` `ok`, `suspect` or `hung`. `hung` logs an ERROR `worker hung`, quarantines the node and sends a `workerHealth` event on `/api/events`; it does not stop anything, so for a benchmark watch the state and power cycle a hung PS5 yourself. Leave `defaults.worker_probe_interval` at its default `0`: an rpc-server accepts one client and does not accept() again until it leaves, so connect probes fill its listen backlog and then all time out (healthy PS5s read `probe: silent`). The same applies to any TCP check of port 50052 you run by hand during a benchmark.
-
-Recovery requests (design 8.4b) are off by default (`recovery.enabled: false`), so a hung PS5 is not touched; leave it off for a benchmark, because a restart ends the run on that PS5 and `restart_docker` and `reboot` would interrupt everything on it.
-If you turn it on, `/api/status` shows `view.nodes[].recovery` (last request, last outcome, step) for each PS5 that was sent one.
-
-## 10. Known gaps
-
-- Load progress is no longer a gap (section 9).
-- Config is read once. No hot reload (the runbook states the design has none).
-- `timings` in streamed replies: unverified.
-- Whether every key in `timings` is present for every model: unverified. The keys were seen in one live reply.
-- Out-of-memory or "does not fit" text from llama.cpp: exact wording unverified. Look in the 502 tail or the child log.
-
-## 11. Rules, protocol and how to report an issue
-
-Rules:
-- Do not SSH into the PS5s or the Nvidia laptop.
-- Do not touch the fleet console, the hub or any other container.
-- Do not change PS5 or host machine system settings.
-- Do not start llama-swap.
-- Do not remove `exclude_nodes` from the config.
-- Do not run a `llama-server-rpc` directly against a PS5 while the scheduler has a model loaded on it. The workers take one client at a time. If a direct run is needed, unload first, and say so in that benchmark row.
-- Change configuration only through `llm-scheduler-test`'s own `/api/config` endpoints (every change is audited; send `X-Actor`) and restart only `llm-scheduler-test`. Tell the orchestrator before each restart.
-
-Results file: a results file kept outside this repository. You own its layout (phase tables are fine). Two requirements:
-- Every row says whether it was measured direct or via the load balancer.
-- Rows measured before the two PS5 fixes (tensor cache off, GPU clock pinned) are kept apart from rows measured after.
-
-Protocol with the orchestrator (session `ps5-ai-datacenter-load-balancer-32`). It watches the scheduler during each pass.
-- `START <pass>` before each pass. Say which models, which PS5s and which context sizes. Wait for "go" on the first pass only. After that, start without waiting.
-- `STOP <pass>` after each pass.
-- `ISSUE` on any scheduler problem. Stop sending requests first, then send the report below.
-- On `PAUSE`: finish the request that is in flight, start nothing new, reply `PAUSED`. Resume only when `RESUME` arrives.
-
-An ISSUE report includes:
-1. UTC time (`date -u`).
-2. Profile name.
-3. The request you sent (the exact `curl` command, body included).
-4. HTTP status and response body.
-5. A snapshot of `curl -s localhost:3122/api/status`.
-6. The last 100 lines: `docker logs --tail 100 llm-scheduler-test`.
-7. The child log file path (from `/api/status` `log_file`, mapped to the host path in section 7).
-
-## 12. Running benchmarks from the scheduler itself
-
-Sections 2 to 7 describe running a benchmark by hand with `curl`. The same
-method is built into the scheduler (design 9.3, runbook "Benchmarks run by the
-scheduler"): it does the plan, the cold load, the warmup, the repeated requests
-or a conversation, the unload, keeps every number in a database, compares with
-the last run and adds the history up (aggregates). A benchmark is a list of
-**phases**, so it can measure just the load, or the load and follow-up messages,
-or what happens after the model sat idle. It needs the database (the `./data`
-volume) and the `bench_enabled` setting (on by default); without them
-`/api/bench/...` answers `503`.
-
-The runner sends every request, the `load` and `unload` calls included, with
-`X-Bench-Run: <run id>`. The history then tags the load with `data.bench_run`,
-and the audit log lists the run's own loads and unloads as source `system`,
-actor `bench run <run id>` (section `runtime`), so they are not confused with a
-person loading a model. Defining and running benchmarks through REST, the web
-page or MCP (`create_benchmark`, `create_suite`, `run_suite`, `get_run`,
-`get_bench_aggregates`) is audited in section `bench`.
-
-What the by-hand method of section 6 maps to:
-
-| By hand | In the scheduler |
-|---|---|
-| `plan`, then one request that includes the load, then a second identical request | `plan`, a `load` phase (`POST /api/load`, no chat request: the load is measured on its own), a `warmup` phase (default 1 request) and a `requests` phase with `repeats` measured requests per request |
-| Unload before the next profile | the `load` phase unloads the profile first (it is cold), an `unload` phase unloads it after and times how long until the instance is gone |
-| `cache_prompt: false`, check `timings.cache_n` is 0 | `cache_prompt` defaults to false; `cache_n` is stored per request |
-| Load time, upload MB/s, memory per machine | `load.load_s`, `load.avg_mb_s`, `load.nodes[]` (bytes, `memory_mib`), `load.memory_mib`, from `recent_loads` and the history record of the load session |
-| Prefill and decode tokens/s | `timings.prompt_per_second`, `timings.predicted_per_second` per request; mean, median, min, max and standard deviation per benchmark |
-| "Stop file between profiles" | `POST /api/bench/runs/<id>/cancel` (stops after the current request, unloads what the run loaded) |
-
-Worked example: how one Gemma 12B model scales over 1, 2 and 3 PS5s, a model
-that must be refused, and two loads at once. The profile names are the
-generated ones of section 5a.
+A load-only benchmark, the cleanest way to compare nodes or links:
 
 ```sh
-B=http://localhost:3122
-post() { curl -s -X POST "$B$1" -H 'Content-Type: application/json' -d "$2"; echo; }
-
-# one benchmark per placement; the same request, so the numbers compare
-for place in 1a 2 3; do
-  post /api/bench/benchmarks '{
-    "id": "gemma12b-'$place'", "name": "Gemma 12B on '$place' PS5, ctx 2048",
-    "profile": "bench-gemma12b-'$place'-2048", "cold": true,
-    "warmup_requests": 1, "repeats": 3, "timeout_s": 1800,
-    "tags": ["scaling"],
-    "requests": [
-      {"name": "short",  "prompt": "Say hello in five words.", "max_tokens": 32},
-      {"name": "stream", "prompt": "Write a short paragraph about the sea.", "max_tokens": 128, "stream": true}
-    ]}'
-done
-
-# a concurrent step: two loads fired at the same moment (a known behaviour to measure)
-post /api/bench/benchmarks '{"id": "tiny-1a", "profile": "bench-tinyllama-1a-2048",
-  "requests": [{"prompt": "Say hello.", "max_tokens": 16}]}'
-post /api/bench/benchmarks '{"id": "tiny-1b", "profile": "bench-tinyllama-1b-2048",
-  "requests": [{"prompt": "Say hello.", "max_tokens": 16}]}'
-post /api/bench/benchmarks '{"id": "two-loads-at-once", "parallel": ["tiny-1a", "tiny-1b"]}'
-
-# the suite: ordered, 30 s between benchmarks, waits for the cluster to be idle
-post /api/bench/suites '{
-  "id": "gemma-scaling", "name": "Gemma 12B scaling over PS5s",
-  "benchmarks": ["gemma12b-1a", "gemma12b-2", "gemma12b-3", "two-loads-at-once"],
-  "cooldown_s": 30, "only_when_idle": true, "idle_wait_s": 900}'
-
-post /api/bench/suites/gemma-scaling/run '{"note": "baseline on the 2.5 GbE link"}'
+curl -s -X POST $B/api/bench/benchmarks -d '{"id":"gemma12b-load-1","profile":"gemma-3-12b","phases":[{"type":"load"},{"type":"unload"}],"expect":{"max_load_s":120}}'
 ```
 
-Then read it: `curl -s $B/api/bench/state` while it runs, and when it has
-finished (`state: completed`):
+A suite of benchmarks, 10 s apart:
 
 ```sh
-RUN=$(curl -s "$B/api/bench/runs?suite=gemma-scaling&limit=1" | jq -r '.runs[0].id')
-curl -s "$B/api/bench/runs/$RUN/export?format=md"       # a table for a document
-curl -s "$B/api/bench/runs/$RUN" | jq '.steps[] | {benchmark_id, outcome, load, stats: .stats.decode_tps}'
+curl -s -X POST $B/api/bench/suites -d '{"id":"gemma-scaling","benchmarks":["gemma12b-load-1"],"cooldown_s":10}'
 ```
 
-To test a model that is supposed not to fit, give the benchmark
-`"expect": {"outcome": "refused"}` (a profile that the placer refuses with
-`503 does not fit`; note that a *forced* profile skips the fit check unless
-`forced_fit_check` is `warn` or `reject`, section 4, so it would try to load).
-The step then records the refusal and its reason and passes.
+Suite options: `cooldown_s` (pause between benchmarks), `stop_on_failure`, `only_when_idle` (default true), `idle_wait_s` (default 600), `schedule` (`{"at":"03:00"}` in the container's local time, normally UTC, or `{"every":"24h"}`).
 
-### 12a. Phases: load only, load and follow-up messages, idle, simultaneous
+A scenario that cannot run yet is a suite with `status` `planned` or `blocked` and a `reason`. It may list no benchmark, its Run button is off, and running it answers `409` with the reason. Remove `status` and `reason` when it can run.
 
-The examples above use the simple form (`cold`, `warmup_requests`, `repeats`,
-`requests`), which the scheduler turns into the phases `load`, `warmup`,
-`requests`, `unload`. Write `phases` yourself to measure something else. Each
-phase is `{"type": ..., "label": ..., options}`; `GET $B/api/bench/schema` lists
-the types, their options with defaults and limits, the `expect` keys and five
-ready-made templates. Profile names below are the generated ones of section 5a.
+Unknown profiles, bad ids and unknown fields are refused with `400` or `422` and the reason. Deleting a profile that a benchmark names answers `409` unless forced.
 
-Load only: how long a model takes to load, how many bytes go to which PS5, how
-fast, and how much memory it takes. No chat request is sent. This is the cleanest
-way to compare links or PS5 counts (the numbers of section 9).
+## 4. Run
 
 ```sh
-post /api/bench/benchmarks '{
-  "id": "gemma12b-load-3", "name": "Gemma 12B load on 3 PS5, ctx 2048",
-  "description": "Cold load only, then unload. Measures load time, bytes per PS5 and memory.",
-  "profile": "bench-gemma12b-3-2048", "timeout_s": 1800,
-  "phases": [{"type": "load"}, {"type": "unload"}],
-  "expect": {"max_load_s": 200}}'
+curl -s -X POST $B/api/bench/suites/gemma-scaling/run -d '{"note":"after the firmware update"}'
 ```
 
-Load and follow-up messages: a conversation, where each turn is sent with the
-earlier turns and the model's replies. `cache_n` per turn shows how much of the
-prompt the server reused (the prompt cache only helps when `cache_prompt` is on,
-which is the default for a conversation).
+MCP: `run_suite` with `id`, optional `baseline` and `note`. The answer is the queued run. Runs go one at a time; others queue.
 
-```sh
-post /api/bench/benchmarks '{
-  "id": "qwen27b-conversation-3", "name": "Qwen 27B conversation on 3 PS5, ctx 8192",
-  "description": "Cold load, then a 4-turn conversation with a long first turn; shows prefill, decode and prompt reuse per turn.",
-  "profile": "bench-qwen27b-3-8192", "timeout_s": 2400,
-  "phases": [
-    {"type": "load"},
-    {"type": "conversation", "system": "You are a concise assistant.", "max_tokens": 128, "stream": true,
-     "turns": [
-       {"name": "long-first", "content": "Summarise the history of the Roman Republic in about 300 words."},
-       {"content": "Which three events mattered most, and why?"},
-       {"content": "Now say that in one sentence."},
-       {"content": "Translate that sentence into French."}]},
-    {"type": "unload"}],
-  "expect": {"min_reused_tokens": 50, "max_ttft_ms": 20000}}'
-```
+- **Idle first.** Benchmarks load and unload real models. With `only_when_idle` a run does not start, and pauses between benchmarks, while another model is loaded, a request that is not the run's is in flight, or anything is queued. A model someone used stays loaded for its `ttl` (300 s by default), so a run may wait that long. After `idle_wait_s` the run ends `skipped` and keeps what it measured. Set `only_when_idle: false` only when nobody else uses the pool.
+- **Cancel.** `POST $B/api/bench/runs/<id>/cancel` (MCP `cancel_run`) stops after the current request; a load or a hold is abandoned at once. It unloads what the run loaded.
+- **Progress.** `GET $B/api/bench/state` (MCP `get_bench_state`): the run's percent, elapsed and estimated seconds left (`null` until the benchmarks have run once), the benchmark and phase in flight with its own percent, the next benchmark and the queue. The same object arrives on `/ws` as `bench` messages with `kind: "progress"`.
+- **Scheduler restart.** A run that was running is marked `failed (interrupted)` at the next start; a queued one is `cancelled`.
 
-Idle behaviour: keep a loaded model idle and then send one request.
+The runner tags its requests with `X-Bench-Run: <run id>`. Its loads and unloads appear in the audit log with source `system` and actor `bench run <run id>`, and in the history with `data.bench_run`, so they are not confused with a person's.
 
-```sh
-post /api/bench/benchmarks '{
-  "id": "gemma12b-after-idle", "profile": "bench-gemma12b-1a-2048", "timeout_s": 900,
-  "description": "Load, wait 5 minutes idle, then one request: does the model answer as fast as before?",
-  "phases": [
-    {"type": "load"},
-    {"type": "warmup", "request": {"prompt": "Say hello in five words.", "max_tokens": 32}},
-    {"type": "requests", "requests": [{"name": "before", "prompt": "Explain what a GPU does in two sentences.", "max_tokens": 96}]},
-    {"type": "hold", "seconds": 300, "request": {"name": "after", "prompt": "Explain what a GPU does in two sentences.", "max_tokens": 96}},
-    {"type": "unload"}]}'
-```
+## 5. Read the results
 
-Simultaneous requests to one loaded model: `n` requests at the same moment; the
-result has each request's wait and decode speed, the total time and the errors.
+| Ask | REST | MCP |
+|---|---|---|
+| Runs of a suite | `GET /api/bench/runs?suite=<id>` | `list_runs` |
+| One run, every step, phase and request | `GET /api/bench/runs/<id>` | `get_run` |
+| A table for a document | `GET /api/bench/runs/<id>/export?format=md` (also `csv`, `json`; `&detail=phases` or `&detail=turns` for CSV) | `export_run` |
+| Points over past runs for a chart | `GET /api/bench/trends?benchmark=<id>&metric=load_s` | `get_bench_trends` |
+| The history added up | `GET /api/bench/aggregates?suite=<id>&since=30d` | `get_bench_aggregates` |
+| A benchmark's results per run | `GET /api/bench/benchmarks/<id>/results` | |
 
-```sh
-post /api/bench/benchmarks '{
-  "id": "gemma12b-4-at-once", "profile": "bench-gemma12b-1a-2048",
-  "phases": [
-    {"type": "load"},
-    {"type": "concurrent_requests", "n": 4, "request": {"prompt": "Say hello in ten words.", "max_tokens": 32}},
-    {"type": "unload"}],
-  "expect": {"max_errors": 0, "max_concurrent_wall_s": 120}}'
-```
+What a step records:
 
-A phase that sends requests, with no `load` before it, loads the model first if
-it is not loaded (and leaves it loaded for the next benchmark of the run; the end
-of the run unloads it). So `phases: [{"type": "requests", ...}]` is "requests on
-a model that is already loaded".
+- **Load**: load seconds, bytes, MB/s, bytes and memory per node, the child's log file, `load_mode` (`file_read`, `pushed` or `local`), and the load session id. A load phase sends no chat request, so its history records are found with `GET /api/history?session_id=<steps[].load.session_id>`.
+- **Requests**: phase (`warmup`, `measured`, `conversation`, `hold`, `concurrent`), timings, output hash, reused prompt tokens.
+- **Statistics**: mean, median, minimum, maximum and standard deviation of the measured requests. Warmup requests are never counted.
+- **Hardware facts**: `mem_low` (per node, the lowest available memory while loading and over the whole step; `kind` says system memory or GPU memory), `roles` (the host and the workers with each one's share of the model), and `reload_from_cache` (per node: `full`, `partial` with `cached_pct`, `none` or `unknown`).
+- **Environment** (`env`): scheduler version, configuration revision, llama build, the nodes' program versions.
 
-Reading it while it runs: `curl -s $B/api/bench/state | jq .run` gives the
-whole-run percent, the benchmark and phase in flight with its own percent (for a
-load-only benchmark that is the model's load percent), the next benchmark, the
-queue and the estimated seconds left (`null` until the benchmark has run once).
-After the run, `curl -s "$B/api/bench/aggregates?benchmark=gemma12b-load-3"`
-adds the history up (min, median, mean, max, standard deviation, last, best,
-percent change of the last run against the earlier median, regression flags and
-the last 30 points for a chart); with `by_model_nodes` the same model on 1, 2 and
-3 PS5s side by side. Add `&env=same` to compare only runs made with the same
-scheduler version, configuration revision, llama binary and rpc-server versions.
+Trend metrics: `load_s`, `load_mb_s`, `memory_mib`, `decode_tps`, `prefill_tps`, `ttft_ms`, `unload_s`, `concurrent_wall_s`, `lowest_available_mib`, `lowest_available_gpu_mib`.
 
-Notes. A run does not start while anything else is loaded or in flight
-(`only_when_idle`), so run it when the cluster is otherwise idle. The runner
-uses the scheduler's own API, so everything section 4 says about forced
-profiles, fit checks and quarantines applies unchanged. The first request after
-a load is slow on this hardware, which is why it and the warmup request are
-recorded but left out of the statistics.
+Aggregate filters: `suite`, `benchmark`, `profile`, `since` and `until` (Unix ms, RFC 3339, or `24h`, `7d`), `limit_runs` (default 200), `env=same` (only runs made in the same environment as the newest). Per benchmark the answer has the run count, pass rate, outcome counts, and for each metric the count, minimum, median, mean, maximum, standard deviation, last, best, the change of the last run against the median of the earlier ones, a regression flag and the last 30 points. `by_model_nodes` puts the same model on 1, 2 or 3 nodes side by side; `by_model_load_mode` splits by file read or pushed.
 
+## 6. Compare and regressions
+
+Each run is compared with its baseline. `regression: true` means the load was more than 15% slower (`regress_load_pct`), decode more than 7% slower (`regress_decode_pct`), or the output of a temperature-0 request changed. Both thresholds are settings that need a restart.
+
+Before you compare numbers, check `env` with `env=same`: a different llama build, configuration or program version changes results. Label every number you report with the profile, the nodes and the link it was measured on.
+
+## 7. Good practice
+
+- Measure the load on its own (a `load` phase), then requests on the loaded model. Mixing them hides where time goes.
+- Use `warmup` before measured requests: the first request after a load is slow.
+- Keep the request text the same across benchmarks you want to compare.
+- Run when the pool is otherwise idle, and say so in the run's `note`.
+- Read a failed step's reason and the child log before retrying. A failed load backs the profile off for a while.
