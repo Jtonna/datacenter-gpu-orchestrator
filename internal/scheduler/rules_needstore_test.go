@@ -2,6 +2,8 @@ package scheduler
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -268,6 +270,9 @@ func TestStoredNeed_TwoProfilesOfOneShapeShareIt(t *testing.T) {
 		t.Fatalf("rows %+v, want one, measured by f", recs)
 	}
 	h.mustLog("learned memory needs restored", "restored", 1, "profiles_using_them", 2)
+	if got := ProfilesOfShape(h.c.cfg, "g"); len(got) != 2 || got[0] != "f" || got[1] != "g" {
+		t.Fatalf("profiles of the shape %v", got)
+	}
 
 	// a profile with another ctx does not share it
 	h2 := restart(t, st, func(h *harness) {
@@ -457,5 +462,43 @@ func TestStoredNeed_SchedulerRestoresAtNewAndWritesBeforeRunReturns(t *testing.T
 	<-done
 	if _, ok := storedNeeds(t, st)["f"]; ok {
 		t.Fatal("the forget was not written before Run returned")
+	}
+}
+
+// A restart on a database that holds a measurement in both tables (the shape
+// table and, left by an older build, under the profile) reads it once, and
+// the newer row wins.
+func TestStoredNeed_BothTablesAreReadOnceNewerWins(t *testing.T) {
+	for _, legacyNewer := range []bool{true, false} {
+		db, err := bench.OpenStore(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { db.Close() })
+		st, err := needstore.Open(db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		measureF(t, st) // 11000 under the shape, written now
+		recs, _, _ := st.All()
+		legacy := recs[0]
+		legacy.TotalMiB = 11500
+		b, _ := json.Marshal(legacy)
+		at := time.Now().Add(-time.Hour).UnixMilli()
+		if legacyNewer {
+			at = time.Now().Add(time.Hour).UnixMilli()
+		}
+		if err := db.Write(func(tx *sql.Tx) error {
+			_, err := tx.Exec(`INSERT INTO learned_needs (profile, updated_at, record) VALUES (?,?,?)`, "f", at, string(b))
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		h := restart(t, st)
+		want := map[bool]int{true: 11500, false: 11000}[legacyNewer]
+		if r := h.c.dryPlan("f"); r.Action != PlanStart || r.FitNeedMiB != want {
+			t.Fatalf("legacy newer %v: plan %+v, want %d", legacyNewer, r, want)
+		}
+		h.mustLog("learned memory needs restored", "restored", 1)
 	}
 }

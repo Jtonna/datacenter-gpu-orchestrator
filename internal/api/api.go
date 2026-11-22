@@ -662,11 +662,17 @@ func (s *Server) handleForgetNeed(w http.ResponseWriter, r *http.Request) {
 		name = p.Name
 	}
 	s.auditRuntime(r, audit.ActionForgetNeed, name, map[string]any{"forgotten": had})
-	msg := "forgotten"
+	// A learned need belongs to the shape of the load, so forgetting it
+	// applies to every profile of that shape.
+	shared := scheduler.ProfilesOfShape(s.conf(), name)
+	if shared == nil {
+		shared = []string{}
+	}
+	msg := "forgotten for every profile of this shape"
 	if !had {
 		msg = "nothing learned"
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"msg": msg, "model": name, "forgotten": had})
+	writeJSON(w, http.StatusOK, map[string]any{"msg": msg, "model": name, "forgotten": had, "profiles_of_shape": shared})
 }
 
 // benchRunHeader validates the X-Bench-Run header (the id of the benchmark run

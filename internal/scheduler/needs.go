@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/needstore"
 )
@@ -69,6 +70,25 @@ func (k needKey) shape() string {
 
 // shapeOf is the key of p's learned need in c.learned and the store.
 func shapeOf(p *core.Profile) string { return needKeyOf(p).shape() }
+
+// ProfilesOfShape lists, sorted, the profiles of cfg whose load has the
+// shape of profile name's (they share one learned need); nil when there is
+// no such profile.
+func ProfilesOfShape(cfg *config.Config, name string) []string {
+	p := cfg.Profiles[name]
+	if p == nil {
+		return nil
+	}
+	shape := shapeOf(p)
+	var out []string
+	for n, q := range cfg.Profiles {
+		if shapeOf(q) == shape {
+			out = append(out, n)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
 
 func makeNeedKey(kind core.Kind, model string, ctx, parallel int, kv string, fa bool, extra []string) needKey {
 	if kv == "" {

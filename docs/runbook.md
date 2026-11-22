@@ -242,7 +242,7 @@ sh deploy/scripts/measure-needs.sh $H gemma-measure
 
 3. Put the number in the real profile (`PUT /api/config/profiles/{id}`), unload, and delete the measuring profile.
 
-A successful load also teaches the scheduler the measured size (`learned_needs` in `/api/status`). It is kept across restarts by the shape of the load (kind, model file, context, slots, KV cache type, flash attention, extra arguments), not by profile name: profiles of the same shape share it, and deleting, renaming or changing a profile removes nothing. It is dropped when the model file's size changes. Forget it by hand (for every profile of that shape) with `curl -s -X POST $H/api/forget-need -d '{"model":"<profile>"}'`.
+A successful load also teaches the scheduler the measured size (`learned_needs` in `/api/status`). It is kept across restarts by the shape of the load (kind, model file, context, slots, KV cache type, flash attention, extra arguments), not by profile name: profiles of the same shape share it, and deleting, renaming or changing a profile removes nothing. It is dropped when the model file's size changes. Forget it by hand (for every profile of that shape) with `curl -s -X POST $H/api/forget-need -d '{"model":"<profile>"}'`; the reply lists those profiles in `profiles_of_shape`.
 
 ---
 

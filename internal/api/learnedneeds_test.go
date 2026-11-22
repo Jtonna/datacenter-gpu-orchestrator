@@ -48,6 +48,9 @@ func TestForgetNeedIsAudited(t *testing.T) {
 	}
 	var got map[string]any
 	json.Unmarshal([]byte(body(t, resp)), &got)
+	if sh, _ := got["profiles_of_shape"].([]any); len(sh) == 0 || sh[0] != "alpha" {
+		t.Fatalf("profiles_of_shape %v", got["profiles_of_shape"])
+	}
 	if got["model"] != "alpha" || got["msg"] != "nothing learned" || got["forgotten"] != false {
 		t.Fatalf("answer %v", got)
 	}
