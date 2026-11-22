@@ -8,3 +8,7 @@ go.mod text eol=lf
 go.sum text eol=lf
 deploy/agent/* text eol=lf
 *.prom text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.json text eol=lf
