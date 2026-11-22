@@ -113,3 +113,39 @@ func TestStoreSkipsBadRows(t *testing.T) {
 		}
 	}
 }
+
+// A database written before peaks were kept opens unchanged: its rows read
+// with no peak. A record with peaks keeps them through the round trip.
+func TestStorePeaksAndOldRows(t *testing.T) {
+	db := openDB(t)
+	st, err := Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := `{"schema":1,"profile":"old","kind":"llama","model":"old.gguf","ctx":8192,"parallel":1,"kv_quant":"f16","flash_attn":false,` +
+		`"total_mib":11800,"placement":["a","b"],"split":[0.5,0.5],"nodes":[{"node":"a","fraction":0.5,"mib":5900},{"node":"b","fraction":0.5,"mib":5900}],` +
+		`"cause":"load","measured_at":"2026-11-20T09:30:00Z","release":"0.1.3"}`
+	if err := db.Write(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`INSERT INTO learned_needs (profile, updated_at, record) VALUES (?,?,?)`, "old", 0, old)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	r := sample("new")
+	r.Nodes[0].PeakMiB, r.Nodes[1].PeakMiB = 6151, 6100
+	r.PeakAt = t0.Add(time.Hour)
+	if err := st.Put(r); err != nil {
+		t.Fatal(err)
+	}
+	got, skipped, err := st.All()
+	if err != nil || len(skipped) != 0 || len(got) != 2 {
+		t.Fatalf("all %+v skipped %+v err %v", got, skipped, err)
+	}
+	n, o := got[0], got[1]
+	if n.Profile != "new" || n.Nodes[0].PeakMiB != 6151 || n.Nodes[1].PeakMiB != 6100 || !n.PeakAt.Equal(t0.Add(time.Hour)) {
+		t.Fatalf("peaks lost: %+v", n)
+	}
+	if o.Profile != "old" || o.TotalMiB != 11800 || o.Nodes[0].MiB != 5900 || o.Nodes[0].PeakMiB != 0 || !o.PeakAt.IsZero() {
+		t.Fatalf("old row read as %+v", o)
+	}
+}

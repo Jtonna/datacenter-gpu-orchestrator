@@ -34,10 +34,15 @@ const (
 )
 
 // Node is one node's figure in the measured load, with its share of the split.
+// PeakMiB is the highest memory the node was seen to hold for the profile
+// while it stayed loaded (the context fills after the load ends, so it can
+// be above MiB); 0 when none was recorded. A row written before peaks were
+// kept has none: it reads as it was.
 type Node struct {
 	ID       string  `json:"node"`
 	Fraction float64 `json:"fraction"`
 	MiB      int     `json:"mib"`
+	PeakMiB  int     `json:"peak_mib,omitempty"`
 }
 
 // Record is one profile's stored measurement.
@@ -64,6 +69,10 @@ type Record struct {
 	Cause      string    `json:"cause"`
 	MeasuredAt time.Time `json:"measured_at"`
 	Release    string    `json:"release"`
+	// PeakAt is when the highest per-node peak was last raised; zero when
+	// no peak is stored. The peaks live in Nodes, with the same placement
+	// and split, and are dropped with the row.
+	PeakAt time.Time `json:"peak_at,omitzero"`
 }
 
 // Skipped is a row All could not use, and why.
