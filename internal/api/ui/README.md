@@ -302,8 +302,7 @@ membership: "Paused" or "Not placeable" with the reason on hover, else null),
 
 ## The configuration and audit contract (as built on the server)
 
-For the Configure group. The exact shapes are in `internal/api/config.go` and
-`docs/design.md` chapter 6.0 of the backend branch; the dev harness mocks them.
+For the Configure group. The exact shapes are in `internal/api/config.go`; the dev harness mocks them.
 
 - `GET /api/config` -> `{revision, updated_at, configured, settings, settings_set,
   tiers[], profiles{}, exclude_nodes[], node_overrides{}, recovery{}, fleet{}}`.
@@ -358,7 +357,7 @@ For the Configure group. The exact shapes are in `internal/api/config.go` and
 ## The model catalog (as built on the server)
 
 `GET /api/models` -> `{models: [...], models_dir, history}`: one entry per
-model file (`internal/api/models.go`, `docs/design.md` 9.4). An entry: `key`
+model file (`internal/api/models.go`). An entry: `key`
 (the file name, or `command:<profile id>`), `kind`, `file`, `exists`,
 `size_bytes`, `name`, `publisher`, `family`, `parameters`, `quant`,
 `context_length`, `meta_source`, `state` (`ready`, `loading`, `not_loaded`),
@@ -479,9 +478,8 @@ still has no load or unload control; the MCP screen only says that agents do.
 
 ## The benchmark contract (as built on the server)
 
-For the Benchmarks group. The exact shapes are in `docs/design.md` 9.3 and
-`internal/api/bench.go` of the backend branch (`feat/bench-phases`, merged into
-`feat/bench-and-live-ui`); the dev harness mocks them. Read the real code
+For the Benchmarks group. The exact shapes are in `internal/api/bench.go` and
+`internal/benchspec`; the dev harness mocks them. Read the real code
 before drawing a field.
 
 - A benchmark is `{id, name, description, profile, phases: [{type, ...options}],
@@ -567,5 +565,5 @@ recording of the real cluster instead (254 profiles, real reason strings,
 real history, benchmark runs and audit trail; read-only; `real-loading` is the
 same at the moment of a load): look at every change with it too, because the
 scripted states are small and tidy and the real one is not. Scenario data for a screen group
-goes into its own file in `cmd/devcluster`. Screenshots go to `docs/ui-screens/`
-(`<screen>-<scenario>-<desktop|phone>.png`).
+goes into its own file in `cmd/devcluster`. Name screenshots
+`<screen>-<scenario>-<desktop|phone>.png`; they are not kept in the repository.

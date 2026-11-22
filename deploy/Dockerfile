@@ -1,10 +1,10 @@
-# llm-scheduler image (design section 10). Build from the REPO ROOT on the host machine:
+# llm-scheduler image. Build from the REPO ROOT on the host machine:
 #   docker build -f deploy/Dockerfile -t llm-scheduler:local \
 #     --build-arg VERSION=$(git describe --always --dirty) .
 #
 # Stage 1 builds the static Go binary. Stage 2 is the image llama-swap runs in
 # today. That base already contains llama-server, llama-server-rpc, sd-server
-# and the Whisper server (design 3.2), plus its CUDA 13 libraries, so nothing
+# and the Whisper server, plus its CUDA 13 libraries, so nothing
 # is reinstalled here. Only the binary is added and the entrypoint replaced.
 
 # Keep in step with `go` in go.mod.
@@ -34,7 +34,7 @@ COPY --from=build /out/llm-scheduler /usr/local/bin/llm-scheduler
 RUN command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1 \
     || { echo "base image has neither curl nor wget: see docs/runbook.md, section B" >&2; exit 1; }
 
-# /health is 200 whenever the scheduler is running (design A.5).
+# /health is 200 whenever the scheduler is running.
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -fsS -o /dev/null http://127.0.0.1:8080/health \
      || wget -q -O /dev/null http://127.0.0.1:8080/health \

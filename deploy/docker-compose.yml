@@ -1,5 +1,5 @@
 # Potluck: the scheduler, the model share and the log store, as a standing deployment
-# (design section 10, docs/runbook.md "Move an existing deployment to the standing layout").
+# (docs/runbook.md; an older layout moves with "Move an existing deployment to the standing layout").
 # Nodes come from potluck-agent registrations (membership agents): no fleet console is needed.
 #
 # Everything the deployment keeps on the host lives under ONE folder, POTLUCK_ROOT
@@ -23,7 +23,7 @@ services:
         max-size: 50m
         max-file: "5"
     init: true                        # reaps children; each child has its own process group
-    stop_grace_period: 330s           # shutdown_grace (300s) + 30s, design 8.6
+    stop_grace_period: 330s           # shutdown_grace (300s) + 30s
     ports:
       - "0.0.0.0:3122:8080"           # the API, the web UI and the agents' address (agents use <host ip>:3122)
     volumes:
@@ -47,7 +47,7 @@ services:
       - ./seed-config.yaml:/seed/seed-config.yaml:ro
     environment:
       LLM_SCHEDULER_PROGRAMS_DIR: /var/lib/llm-scheduler/programs
-      # Central logging (CR-10): the log store below, on the compose network, behind its
+      # Central logging: the log store below, on the compose network, behind its
       # path prefix. Remove this line to turn central logging off (runbook "Central logging").
       LLM_SCHEDULER_LOGS_STORE_URL: http://potluck-logs:9428/logs
     networks:
@@ -62,7 +62,7 @@ services:
               capabilities: [gpu]
 
   # The share: a read-only NFSv4 export of the models volume, for workers that read model
-  # files themselves (docs/server-mode-interface.md section 7.6). No code of ours: a pinned
+  # files themselves (docs/architecture.md). No code of ours: a pinned
   # third-party image around the kernel NFS server. A separate container so that a scheduler
   # redeploy does not cut the share, and so that the scheduler runs without SYS_ADMIN.
   # Host requirement: kernel modules nfs and nfsd loaded (a file in /etc/modules-load.d/).
@@ -94,7 +94,7 @@ services:
     networks:
       - sched
 
-  # The log store of central logging (CR-10, docs/cr-10-central-logging.md): VictoriaLogs.
+  # The log store of central logging (docs/architecture.md, section 6): VictoriaLogs.
   # Its port is NOT published: only the scheduler reaches it, over the sched network, and
   # serves its search page read only under /logs/. Pinned by digest (the multi-platform
   # index of victoriametrics/victoria-logs:v1.54.0, read from Docker Hub on 2026-11-21).

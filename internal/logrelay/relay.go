@@ -1,5 +1,5 @@
 // Package logrelay is Potluck's pass-through in front of the log store
-// (CR-10, docs/cr-10-central-logging.md sections 3, 4 and 6): it hands out
+// (CR-10, agent contract 11.3): it hands out
 // the logs object, checks who sends, keeps the limits, adds the trusted
 // fields and streams the body to the store.
 //

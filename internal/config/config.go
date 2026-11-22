@@ -65,7 +65,7 @@ type Config struct {
 	Configured bool
 }
 
-// Logs are the central logging settings (docs/cr-10-central-logging.md). The
+// Logs are the central logging settings (docs/architecture.md section 6). The
 // address of the log store is not here: it is a deployment fact
 // (LLM_SCHEDULER_LOGS_STORE_URL).
 type Logs struct {

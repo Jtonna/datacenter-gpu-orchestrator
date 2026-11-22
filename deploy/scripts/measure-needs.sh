@@ -1,6 +1,6 @@
 #!/bin/sh
 # Usage: measure-needs.sh <base-url> <profile>     e.g. measure-needs.sh http://127.0.0.1:3122 gemma-bench-64k
-# Design 7.2 "Measuring". <profile> should be a force_nodes profile (it skips the fit check)
+# docs/runbook.md section G. <profile> should be a force_nodes profile (it skips the fit check)
 # with the SAME model, ctx, kv_quant, flash_attn and parallel as the profile you are sizing.
 # Loads it (POST /api/load), waits for ready, prints per-device MiB and the sum, then the
 # needs_mib line to paste into the config. Leaves the model loaded: unload it afterwards.
@@ -23,7 +23,7 @@ have() { command -v "$1" >/dev/null 2>&1; }
 echo "Requesting load of $P ..."
 curl -fsS --max-time 10 -H 'Content-Type: application/json' -d "{\"model\":\"$P\"}" "$BASE/api/load"; echo
 
-# Readiness from /running (shape fixed by design A.1), not from /api/status.
+# Readiness from /running (llama-swap compatible shape), not from /api/status.
 state() {
   curl -fsS --max-time 5 "$BASE/running" 2>/dev/null \
     | sed 's/},[ ]*{/}\n{/g' | grep "\"model\" *: *\"$P\"" | grep -o '"state" *: *"[a-z]*"' | head -1 \

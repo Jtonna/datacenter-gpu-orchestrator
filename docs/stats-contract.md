@@ -1,40 +1,7 @@
-# Potluck Stats Contract (DRAFT 3)
+# Potluck stats contract
 
-Status: DRAFT 3. Draft 1 was reviewed by the Potluck team; draft 2 applied their changes; draft 3 adds four implementation points agreed with them.
-Contract version: `stats_version` = 1 (draft).
-Measurements were taken on 2026-11-20. Anything not marked as measured is marked Proposed or Estimate.
-
-## Changes since draft 2
-
-1. Counter resets are detected per interface and per direction (receive and transmit separately), not per scrape. A reset on one counter discards only that one rate for that interval (3.1).
-2. An interface for which `node_network_up` is not reported is not sent at all, even if it would be the primary interface. Then no entry is marked `primary`; this is not an error (4.5).
-3. The headline temperature is taken over the temperatures actually sent (after the cap of 16) plus every `gpus[].temp_c`. A sensor dropped by the cap cannot be the headline. The cap's selection order is now defined (Proposed): GPU-chip and CPU-chip sensors first, then the rest in the exporter's order (4.6).
-4. An AMD drm device with no `node_drm_memory_gtt_size_bytes` series is `kind: "discrete"` with `mem_source: "drm_vram"` (5.3).
-5. Example values made generic: GPU UUID, interface name and host labels in the appendix and the JSON examples. Metric names and values are unchanged.
-
-## Changes since draft 1
-
-1. Scrape interval is now self-adjusting per exporter: next interval = max(2 s, 3 x last scrape duration), capped at 10 s. The 4 s timeout and the no-overlap rule stay. The agent reports `scrape_ms` per source.
-2. The four top-level status fields are replaced by one `sources` map (`node`, `nvidia`), each with `status`, `age_ms`, `scrape_ms`. A source that is not configured is absent from the map.
-3. Report rate fixed at every 2 s, latest value plus age; no max-since-last is sent.
-4. A missing or unparsable `stats` never rejects a report and never blocks loads. Stated as a rule.
-5. Nvidia `gpus` entries get optional `index` and `mem_reserved_bytes`. CUDA order and Vulkan matching rules added.
-6. The 5% disagreement threshold and the "Potluck flags a disagreement" wording are removed. Comparison is Potluck's own behaviour and outside this contract.
-7. A missing or crashing exporter makes that source `absent`; it is a warning on the node and never a reason to refuse loads.
-8. Headline temperature: `temps[].chip_name` added; storage, wireless and memory-module chips are excluded; every `gpus[].temp_c` is included.
-9. `net[]` gets `primary: true` for the interface that carries the agent's route to Potluck; it is always sent and sent first.
-10. `load5` and `load15` are optional; `load1` stays required.
-11. The flag check is enough for the loopback rule; the agent builds the arguments itself.
-12. Integrated GPUs on mixed machines are listed by default. `kind` is required on every entry. Pool totals are Potluck's business.
-13. `mem_source` is required on every entry, with values `drm_vram_gtt`, `drm_vram`, `nvidia_smi`.
-14. Version rule: `stats_version` must equal Potluck's, otherwise "stats version not supported" and no parsing. The "previous version" allowance is removed.
-15. New section 1.1 states what is not taken from the exporters (launch memory check, watchdog and placement).
-16. New section 8 "Docker installs".
-17. Caps added: `gpus` at most 8, `fans` at most 8.
-18. Section numbering fixed (5.5 and 5.6 swapped, cross-references updated).
-19. Missing-data section states that a missing `link_mbps` on a PS5 is expected and not a fault.
-20. One sentence on units: bytes here, MiB in the agent contract's `devices` list.
-21. Open questions reduced to the items still open.
+Contract version: `stats_version` = 1.
+Measurements were taken on 2026-11-20 on the machines of Appendix A. Values marked measured come from those samples; values marked Estimate are not backed by a measurement; everything else is a rule of this contract. The Changelog at the end lists how the document got here.
 
 ## 1. Purpose, scope, decisions
 
@@ -114,7 +81,7 @@ nvidia_gpu_exporter --web.listen-address=<NV_ADDR>
 1. No collector that walks the process list (`processes`, `systemd`, `supervisord`, `textfile` with user data, `perf`, and similar). The seven above are the whole allowed set.
 2. Nothing may listen on a non-loopback address. The agent builds the exporter arguments itself, and refuses (does not start the exporter) if the listen address does not start with `127.0.0.1:`. Checking the flag is enough; no outside connection test is needed.
 3. Measured on the laptop with `ss -ltn`: each exporter listened on `127.0.0.1:<port>` only.
-4. Proposed: the agent should not enable `--web.config`, TLS, or auth. Loopback is the boundary.
+4. The agent should not enable `--web.config`, TLS, or auth. Loopback is the boundary.
 
 ### 2.6 Cost evidence
 
@@ -130,19 +97,19 @@ Laptop node_exporter scrape (same flags) took 0.90-0.96 s and returned 2620 line
 
 ## 3. Scrape rules for the agent
 
-| Rule | Value | Status |
-|---|---|---|
-| Scrape interval | Self-adjusting, per exporter: next interval = max(2 s, 3 x duration of the last scrape), capped at 10 s. Examples: 34 ms gives 2 s; 0.95 s gives 2.85 s; a scrape that timed out (4 s) gives 10 s. | Proposed. Evidence: 0.33% of one core at 2 s on a PS5 (measured). |
-| Report rate to Potluck | The agent's report goes every 2 s and carries the latest value of each reading plus its age. The agent sends no maximum or other summary since the previous report. When the scrape interval is longer than 2 s, successive reports repeat the same reading with a growing `age_ms`. | Proposed |
-| Overlap | Never run two scrapes of the same exporter at once. If a scrape is still running at the next tick, skip that tick. | Proposed |
-| Timeout per scrape | 4 s (HTTP request, connect plus body) | Proposed. Laptop hwmon was 1.3 s (measured); 4 s leaves about 3x headroom. |
-| Scrape each exporter independently | A failure of one must not drop the other's data | Proposed |
-| `scrape_ms` | The duration in milliseconds of the most recent successful scrape of that exporter, as seen by the agent. Reported in `sources.<name>.scrape_ms`. | Proposed |
-| Scrape failed or timed out | Keep the last good values, do not invent zeros. A failed scrape counts with its elapsed time for the interval rule, so a timeout leads to the 10 s interval. The first success restores the normal rule. | Proposed |
-| Exporter missing, not startable or crashing | The agent still runs. The source is reported as `absent` (never scraped) or `stale` (scraped before, now failing). This is a warning on the node. It is never a reason to refuse loads. | Proposed |
-| Staleness | Each source carries `age_ms`: monotonic milliseconds between the start of the scrape that produced its latest good data and the moment the report is built. A source is `stale` when `age_ms` > max(10000, 3 x current interval in ms). Stale data is still sent, with its real `age_ms`. If an exporter has never succeeded, its source is `absent`. | Proposed |
-| Parsing | Prometheus text format. Ignore every metric, label and HELP/TYPE line not named in this document. A new unknown metric or label must never cause an error. | Proposed |
-| Value parsing | Values appear in scientific notation (`1.5137001472e+10`). Parse as float64. `NaN`, `+Inf`, `-Inf` mean "unknown" for that reading. | Proposed |
+| Rule | Value |
+|---|---|
+| Scrape interval | Self-adjusting, per exporter: next interval = max(2 s, 3 x duration of the last scrape), capped at 10 s. Examples: 34 ms gives 2 s; 0.95 s gives 2.85 s; a scrape that timed out (4 s) gives 10 s. Evidence: 0.33% of one core at 2 s on a PS5 (measured). |
+| Report rate to Potluck | The agent's report goes every 2 s and carries the latest value of each reading plus its age. The agent sends no maximum or other summary since the previous report. When the scrape interval is longer than 2 s, successive reports repeat the same reading with a growing `age_ms`. |
+| Overlap | Never run two scrapes of the same exporter at once. If a scrape is still running at the next tick, skip that tick. |
+| Timeout per scrape | 4 s (HTTP request, connect plus body). Laptop hwmon was 1.3 s (measured); 4 s leaves about 3x headroom. |
+| Scrape each exporter independently | A failure of one must not drop the other's data |
+| `scrape_ms` | The duration in milliseconds of the most recent successful scrape of that exporter, as seen by the agent. Reported in `sources.<name>.scrape_ms`. |
+| Scrape failed or timed out | Keep the last good values, do not invent zeros. A failed scrape counts with its elapsed time for the interval rule, so a timeout leads to the 10 s interval. The first success restores the normal rule. |
+| Exporter missing, not startable or crashing | The agent still runs. The source is reported as `absent` (never scraped) or `stale` (scraped before, now failing). This is a warning on the node. It is never a reason to refuse loads. |
+| Staleness | Each source carries `age_ms`: monotonic milliseconds between the start of the scrape that produced its latest good data and the moment the report is built. A source is `stale` when `age_ms` > max(10000, 3 x current interval in ms). Stale data is still sent, with its real `age_ms`. If an exporter has never succeeded, its source is `absent`. |
+| Parsing | Prometheus text format. Ignore every metric, label and HELP/TYPE line not named in this document. A new unknown metric or label must never cause an error. |
+| Value parsing | Values appear in scientific notation (`1.5137001472e+10`). Parse as float64. `NaN`, `+Inf`, `-Inf` mean "unknown" for that reading. |
 
 ### 3.1 Counters to rates
 
@@ -152,28 +119,28 @@ Let `dt` be the monotonic seconds between two successive successful scrapes of t
 
 | Derived value | Formula | Notes |
 |---|---|---|
-| CPU utilisation, percent | `100 * (1 - (d_idle + d_iowait) / d_total)` where `d_*` are deltas of `node_cpu_seconds_total` summed over all `cpu` labels, and `d_total` is the sum of deltas over all modes | Needs no clock at all. Modes: user, nice, system, idle, iowait, irq, softirq, steal. Clamp to 0-100. If `d_total` is 0, keep the previous value. Proposed. |
-| Network rx rate, Mb/s | `(cur - prev) * 8 / dt / 1e6` from `node_network_receive_bytes_total` | Decimal megabits per second (1 Mb = 1,000,000 bits). Proposed. |
-| Network tx rate, Mb/s | same, from `node_network_transmit_bytes_total` | Proposed |
+| CPU utilisation, percent | `100 * (1 - (d_idle + d_iowait) / d_total)` where `d_*` are deltas of `node_cpu_seconds_total` summed over all `cpu` labels, and `d_total` is the sum of deltas over all modes | Needs no clock at all. Modes: user, nice, system, idle, iowait, irq, softirq, steal. Clamp to 0-100. If `d_total` is 0, keep the previous value. |
+| Network rx rate, Mb/s | `(cur - prev) * 8 / dt / 1e6` from `node_network_receive_bytes_total` | Decimal megabits per second (1 Mb = 1,000,000 bits). |
+| Network tx rate, Mb/s | same, from `node_network_transmit_bytes_total` | |
 
 Rules:
 
 1. The first scrape after agent start (or after an exporter restart) produces no rate. The rate field is omitted until a second successful scrape.
 2. Counter resets are detected per interface and per direction, not per scrape. If `cur < prev` for the receive counter of one interface, only that interface's `rx_mbps` is omitted for that interval; its `tx_mbps` and every other interface are unaffected (and the same the other way round). That counter then restarts from `cur`. This covers exporter restarts and re-created interfaces. Do not report a negative or huge rate.
 3. If `dt` is below 0.5 s or above 30 s, discard the sample (the interval is not trustworthy). Estimate, not measured.
-4. The rate is for the interval between the last two successful scrapes. No smoothing is applied by the agent. Proposed. Dashboards may smooth.
+4. The rate is for the interval between the last two successful scrapes. No smoothing is applied by the agent. Dashboards may smooth.
 
 ## 4. The normalised report
 
 The agent adds one object, `stats`, to its regular report to Potluck. The shape is below. Units are in the field names where practical.
 
-Rule (Proposed): Potluck accepts a report whose `stats` is missing or cannot be parsed, and shows "no stats" for that node. A stats problem never rejects a report and never makes a node unusable for loads.
+Rule: Potluck accepts a report whose `stats` is missing or cannot be parsed, and shows "no stats" for that node. A stats problem never rejects a report and never makes a node unusable for loads.
 
 ### 4.1 Top-level fields
 
 | Field | Type | Unit | Required | Source metric(s) | Derivation |
 |---|---|---|---|---|---|
-| `stats_version` | integer | none | required | none | Constant. 1 for this draft. Must equal the version Potluck expects (section 7). |
+| `stats_version` | integer | none | required | none | Constant. 1 for this version. Must equal the version Potluck expects (section 7). |
 | `sources` | object | | required | scrape state | Map from source name (`node`, `nvidia`) to a source object (4.1.1). A source not configured on the machine is not in the map. A PS5 has no `nvidia` key. |
 | `cpu` | object | | required when `sources.node.status` is `ok` or `stale`; otherwise omitted | | See 4.2 |
 | `memory` | object | | same as `cpu` | | See 4.3 |
@@ -209,7 +176,7 @@ For display and cross-checking only (section 1.1).
 |---|---|---|---|---|---|
 | `total_bytes` | integer | bytes | required | `node_memory_MemTotal_bytes` | Value as is. |
 | `available_bytes` | integer | bytes | required | `node_memory_MemAvailable_bytes` | Value as is. |
-| `cached_bytes` | integer | bytes | optional | `node_memory_Cached_bytes` (`Cached` in `/proc/meminfo`) | Value as is. The page cache. Added later; an older agent does not send it, and Potluck shows nothing then. Used to judge whether a model's file can stay cached next to the loaded model, and whether the cache is occupied by other files now (design, "Reload from cache"). |
+| `cached_bytes` | integer | bytes | optional | `node_memory_Cached_bytes` (`Cached` in `/proc/meminfo`) | Value as is. The page cache. Sent from agent release 0.1.3; an older agent does not send it, and Potluck shows nothing then. Used to judge whether a model's file can stay cached next to the loaded model, and whether the cache is occupied by other files now (Potluck's reload-from-cache check). |
 
 ### 4.4 `load`
 
@@ -230,7 +197,7 @@ For display and cross-checking only (section 1.1).
 | `tx_mbps` | number | megabits per second | optional | `node_network_transmit_bytes_total` | Section 3.1. |
 | `link_mbps` | number | megabits per second | optional | `node_network_speed_bytes{device}` | `value * 8 / 1e6`. Omit if absent or value <= 0. See section 6. |
 
-Interface selection. Proposed: report every interface except `lo` and names starting with `veth`, `docker`, `br-`, `virbr`, `cilium`, `lxc`, `flannel`, `cni`, `tailscale`, `tun`, `tap`. Weakness: a denylist by name needs upkeep, and a VPN or bridge with an unlisted name would show up. Measured on the laptop: 15 or more interfaces including `cilium_*`, `lxc*`, `lo`, `tailscale0`, one wired USB adapter and a Wi-Fi interface.
+Interface selection: report every interface except `lo` and names starting with `veth`, `docker`, `br-`, `virbr`, `cilium`, `lxc`, `flannel`, `cni`, `tailscale`, `tun`, `tap`. Weakness: a denylist by name needs upkeep, and a VPN or bridge with an unlisted name would show up. Measured on the laptop: 15 or more interfaces including `cilium_*`, `lxc*`, `lo`, `tailscale0`, one wired USB adapter and a Wi-Fi interface.
 Cap: at most 8 interfaces sent. The primary interface is always sent, even if its name matches the denylist, and is always the first element, with one exception below.
 
 An interface for which `node_network_up` is not reported is not sent at all, because `up` is required. This applies even if it would be the primary interface. In that case no entry in `net` has `primary: true`. That is not an error; consumers treat "no primary entry" as "primary unknown".
@@ -248,9 +215,9 @@ The remaining slots in the cap go to the remaining interfaces with the highest `
 | `chip_name` | string | none | optional | `node_hwmon_chip_names{chip,chip_name}` | The `chip_name` label of the series whose `chip` label equals this sensor's `chip`. It is the Linux driver name (for example `nvme`, `k10temp`, `amdgpu`), not a machine name. Omit if there is no such series. |
 | `celsius` | number | degrees Celsius | required | `node_hwmon_temp_celsius{chip,sensor}` | As is. |
 
-Validity: drop a sensor if the value is <= 0 or >= 125. Measured: two memory-module sensors on the laptop reported exactly 0, which is not a temperature. Send at most 16 temperatures. Selection order for the cap (Proposed): first the sensors on GPU chips and on CPU chips, then all other sensors in the exporter's own output order; within each group the exporter's order is kept. A GPU chip is a chip whose `chip` label equals the `chip` label of a drm card in `gpus`. A CPU chip is one whose `chip_name` is `k10temp`, `coretemp` or `zenpower`, or whose sensor `label` starts with `Tctl`, `Tdie` or `Package`. Of these names only `k10temp` and the labels `Tctl` appeared in real output; the others come from general knowledge of Linux drivers. When more than 16 valid sensors exist, the first 16 in this order are sent and the rest are dropped.
+Validity: drop a sensor if the value is <= 0 or >= 125. Measured: two memory-module sensors on the laptop reported exactly 0, which is not a temperature. Send at most 16 temperatures. Selection order for the cap: first the sensors on GPU chips and on CPU chips, then all other sensors in the exporter's own output order; within each group the exporter's order is kept. A GPU chip is a chip whose `chip` label equals the `chip` label of a drm card in `gpus`. A CPU chip is one whose `chip_name` is `k10temp`, `coretemp` or `zenpower`, or whose sensor `label` starts with `Tctl`, `Tdie` or `Package`. Of these names only `k10temp` and the labels `Tctl` appeared in real output; the others come from general knowledge of Linux drivers. When more than 16 valid sensors exist, the first 16 in this order are sent and the rest are dropped.
 
-Headline rule (Proposed): `headline_temp_c` is the maximum of:
+Headline rule: `headline_temp_c` is the maximum of:
 
 1. `celsius` over every `temps` entry actually sent (that is, after the cap of 16 is applied) whose `chip_name` is not in the excluded list below (an entry with no `chip_name` is included), and
 2. `temp_c` of every entry in `gpus`.
@@ -287,14 +254,14 @@ Weaknesses:
 | `duty_percent` | number | percent, 0-100 | optional | `node_hwmon_pwm{chip,sensor="pwmN"}` | `value / 255 * 100`. Scale 0-255 is the Linux hwmon standard and was confirmed on the PS5 (observed 26 to 111). Clamp to 0-100. |
 | `rpm` | number | revolutions per minute | optional | `node_hwmon_fan_rpm{chip,sensor="fanN"}` | Pair `pwmN` with `fanN` on the same chip. Omit if no such series. |
 
-A fan with only RPM and no PWM series is also sent, with `duty_percent` omitted. If more than 8 fans exist, send the first 8 ordered by `id` ascending (Proposed).
+A fan with only RPM and no PWM series is also sent, with `duty_percent` omitted. If more than 8 fans exist, send the first 8 ordered by `id` ascending.
 Measured on the laptop: `platform_hp_wmi` has `pwm1` = 0 and two `fan_rpm` series that read 0. A value of 0 may mean "stopped" or "not supported". Reported as is. Weakness noted, not resolved.
 
 ## 5. GPUs and the memory rule
 
 ### 5.1 `gpus` element (at most 8 entries)
 
-If more than 8 devices exist, send the first 8 ordered by `id` ascending (Proposed).
+If more than 8 devices exist, send the first 8 ordered by `id` ascending.
 
 | Field | Type | Unit | Required | Source | Derivation |
 |---|---|---|---|---|---|
@@ -303,7 +270,7 @@ If more than 8 devices exist, send the first 8 ordered by `id` ascending (Propos
 | `name` | string | none | optional | `nvidia_smi_gpu_info{name}` | Not available for drm devices; omit. |
 | `index` | integer | none | optional; Nvidia only | `nvidia_smi_gpu_info{index}` | The `index` label as an integer. Omit for drm devices. See 5.6. |
 | `pci_address` | string | none | optional | see 5.5 | Lower-case `dddd:bb:dd.f`. Used to detect duplicates and, if llama reports it, to match llama devices. |
-| `kind` | string enum `integrated` / `discrete` | none | required | rule in 5.3 | Derived from metric shape only. Nvidia is always `discrete` here (Proposed; Nvidia integrated parts such as Jetson are not covered). |
+| `kind` | string enum `integrated` / `discrete` | none | required | rule in 5.3 | Derived from metric shape only. Nvidia is always `discrete` here (Nvidia integrated parts such as Jetson are not covered). |
 | `util_percent` | number | percent, 0-100 | optional | AMD: `node_drm_gpu_busy_percent{card}`; Nvidia: `nvidia_smi_utilization_gpu_ratio{uuid}` | AMD: as is. Nvidia: `ratio * 100`. Clamp to 0-100. The Nvidia ratio was only observed at 0 (idle); that 1.0 means 100% is not yet confirmed under load (open item 2). |
 | `mem_total_bytes` | integer | bytes | required | see 5.2 | See rule. |
 | `mem_used_bytes` | integer | bytes | required | see 5.2 | See rule. |
@@ -324,7 +291,7 @@ mem_used_bytes  = node_drm_memory_vram_used_bytes + node_drm_memory_gtt_used_byt
 mem_source      = drm_vram_gtt
 ```
 
-For a drm device classified `discrete` (untested; Proposed):
+For a drm device classified `discrete` (untested):
 
 ```
 mem_total_bytes = node_drm_memory_vram_size_bytes
@@ -345,7 +312,7 @@ mem_reserved_bytes = nvidia_smi_memory_reserved_bytes{uuid}
 mem_source         = nvidia_smi
 ```
 
-Measured on the RTX 5060 laptop (idle): total 8,546,942,976; free 8,081,375,232; used 2,097,152; reserved 465,567,744. `used` excludes the driver-reserved part. The figure that should agree with llama's free memory is `free = total - used - reserved`. In this sample the exporter's own `memory_free_bytes` equals `total - reserved` exactly (8,081,375,232) and does not subtract `used`, so it is 2,097,152 bytes (2 MiB) higher than `total - used - reserved` (8,079,278,080). The agent must not send `total - free` as `used`, since that would count reserved memory as used. Proposed.
+Measured on the RTX 5060 laptop (idle): total 8,546,942,976; free 8,081,375,232; used 2,097,152; reserved 465,567,744. `used` excludes the driver-reserved part. The figure that should agree with llama's free memory is `free = total - used - reserved`. In this sample the exporter's own `memory_free_bytes` equals `total - reserved` exactly (8,081,375,232) and does not subtract `used`, so it is 2,097,152 bytes (2 MiB) higher than `total - used - reserved` (8,079,278,080). The agent must not send `total - free` as `used`, since that would count reserved memory as used.
 
 Integer conversion: values are floats in scientific notation; round to the nearest integer.
 
@@ -353,12 +320,12 @@ Integer conversion: values are floats in scientific notation; round to the neare
 
 A card in `node_drm_card_info` is processed only if `vendor="amd"`. Other vendors are ignored in this version. For each such card (the `card` label), the agent reads the four memory series with the same `card` label.
 
-Rule (Proposed): the card is `integrated` when both hold:
+Rule: the card is `integrated` when both hold:
 
 1. `node_drm_memory_vram_size_bytes` <= 2 GiB (2,147,483,648 bytes), and
 2. `node_drm_memory_gtt_size_bytes` >= 8 x `node_drm_memory_vram_size_bytes`.
 
-Otherwise it is `discrete`. A card that reports no `node_drm_memory_gtt_size_bytes` series at all is also `discrete` (rule 2 cannot be evaluated), with `mem_source: "drm_vram"`; the VRAM-only formula in 5.2 is used. Adding GTT to a discrete card's figure would over-count (GTT there is host RAM the card can borrow, not on-card memory), so a discrete card uses the VRAM-only formula in 5.2. This is a Proposed rule for the future AMD discrete case and is not tested.
+Otherwise it is `discrete`. A card that reports no `node_drm_memory_gtt_size_bytes` series at all is also `discrete` (rule 2 cannot be evaluated), with `mem_source: "drm_vram"`; the VRAM-only formula in 5.2 is used. Adding GTT to a discrete card's figure would over-count (GTT there is host RAM the card can borrow, not on-card memory), so a discrete card uses the VRAM-only formula in 5.2. This rule is for the future AMD discrete case and is not tested.
 
 Test against measured data: PS5 gives 512 MB VRAM and 14.1 GB GTT (ratio about 28), laptop iGPU gives 512 MB and 16.05 GB (ratio about 30). Both pass.
 
@@ -376,7 +343,7 @@ Measured on the laptop (RTX 5060 plus AMD Raphael iGPU): the drm collector liste
 Rules:
 
 1. Report every device either exporter lists. An integrated GPU on a mixed machine is listed by default, with `kind: "integrated"`. On this laptop that is two entries in `gpus`: one `vendor=nvidia`, `kind=discrete`; one `vendor=amd`, `kind=integrated`.
-2. Duplicate avoidance (Proposed): compute `pci_address` for every device. If a drm card and an Nvidia entry have the same `pci_address`, keep the Nvidia entry and drop the drm one. Today this cannot happen, because drm only lists `vendor="amd"` here, but the rule is stated so that a future node_exporter that lists Nvidia cards will not double count.
+2. Duplicate avoidance: compute `pci_address` for every device. If a drm card and an Nvidia entry have the same `pci_address`, keep the Nvidia entry and drop the drm one. Today this cannot happen, because drm only lists `vendor="amd"` here, but the rule is stated so that a future node_exporter that lists Nvidia cards will not double count.
 3. Potluck does not decide which GPU a model uses from these entries. Placement uses llama's own per-device list (5.6). The stats entries describe the hardware.
 4. How pool totals are computed from the `gpus` entries (for example whether an integrated GPU on a mixed machine counts) is Potluck's business and not part of this contract.
 
@@ -396,13 +363,13 @@ Weakness: the `card` label (`card0`, `card2`) can change between boots, so it is
 3. Potluck may compare the two sources. The comparison, any threshold and what it shows are Potluck's own behaviour and are not part of this contract. The contract only guarantees that the stats figures are defined as in 5.2. For Nvidia, `total - used - reserved` (free) is the figure that should agree with llama's free figure.
 4. Matching a llama device to a stats entry:
    - CUDA devices: the agent starts Nvidia launches with `CUDA_DEVICE_ORDER=PCI_BUS_ID`. Then llama's `CUDA<n>` equals the `index` field of the Nvidia entry with `index == n`. (The environment variable is a CUDA setting; its effect was not tested for this document.)
-   - Vulkan devices: matched by vendor and position. Proposed: the n-th Vulkan device of a vendor corresponds to the n-th `gpus` entry of that vendor, ordered by `pci_address` ascending. The ordering assumption was not tested.
+   - Vulkan devices: matched by vendor and position: the n-th Vulkan device of a vendor corresponds to the n-th `gpus` entry of that vendor, ordered by `pci_address` ascending. The ordering assumption was not tested.
    - Open item 1: confirm in testing whether llama reports a PCI address per device; if it does, matching by `pci_address` replaces the position rule.
 5. Measured nuance: the Nvidia total includes the 465 MB the driver reserves on the laptop tested; llama may report a different total. That is why `mem_reserved_bytes` is sent.
 
 ## 6. Missing data
 
-Representation rule (Proposed): an unknown optional field is omitted from the JSON. It is never `null`, never `0`, never `-1`, never an empty string. A field that is present always has a real reading. Required fields are always present; if the source is missing for a required field, the whole containing object (for example a `gpus` element) is not sent, and `sources.<name>.status` carries the reason.
+Representation rule: an unknown optional field is omitted from the JSON. It is never `null`, never `0`, never `-1`, never an empty string. A field that is present always has a real reading. Required fields are always present; if the source is missing for a required field, the whole containing object (for example a `gpus` element) is not sent, and `sources.<name>.status` carries the reason.
 
 Consumers must treat "omitted" as "unknown". Unknown is different from zero: a fan at 0% duty is sent as `duty_percent: 0`.
 
@@ -425,8 +392,6 @@ Worked examples:
 
 ## 7. Compatibility and change rules
 
-All of this section is Proposed.
-
 1. `stats_version` is an integer. It changes only on a breaking change.
 2. `stats_version` must equal the version Potluck expects. If it does not, Potluck records "stats version not supported" for that node and does not parse the `stats` object. The report itself is still accepted (section 4). There is no allowance for a previous version.
 3. Adding a new optional field, a new optional array element field, or a new enum value for `kind` or `mem_source` is not breaking. The version stays the same. Readers must ignore unknown fields and must treat an unknown enum value as "unknown".
@@ -436,7 +401,7 @@ All of this section is Proposed.
 
 ### Pinning exporters
 
-1. The agent's release names the exact exporter versions it was tested with: node_exporter 1.13.1 and nvidia_gpu_exporter 2.0.0 for this draft.
+1. The agent's release names the exact exporter versions it was tested with: node_exporter 1.13.1 and nvidia_gpu_exporter 2.0.0.
 2. Binaries are pinned by version and checksum. They are never fetched as "latest".
 3. When bumping a version, run the same command line on one PS5 and one Nvidia Linux machine and check:
    - every metric name and label in the appendix still exists with the same unit (watch for `_ratio` versus `_percent`, and for `_hz` versus `_mhz`);
@@ -468,8 +433,6 @@ This section is not part of the contract. Nothing here may be implemented agains
 | AMD or Intel graphics on ordinary Linux PCs | Mostly follows the PS5 path: node_exporter `drm` and `hwmon`. | Discrete AMD cards (see 5.3), Intel (the drm collector is AMD-oriented; whether Intel series exist was not checked), and cards with a large VRAM carve-out are not verified. |
 
 ## 10. Open items
-
-Questions still open. Answered questions from draft 1 are removed.
 
 1. (Testing) Does llama.cpp report a PCI address per device? If yes, matching in 5.6 uses `pci_address` instead of vendor and position. To be confirmed in testing.
 2. (Owner: the PS5-side team, during phase 4 testing) Confirm under load that `nvidia_smi_utilization_gpu_ratio` reaches 1.0, and confirm the scale of `nvidia_smi_fan_speed_ratio` on a desktop card. The agent clamps utilisation and fan percentages to 0-100 meanwhile.
@@ -531,7 +494,7 @@ nvidia_smi_failed_scrapes_total 0
 
 `nvidia_smi_fan_speed_ratio` was absent. The exporter also emits `nvidia_smi_pstate`, `nvidia_smi_temperature_gpu_tlimit`, `nvidia_smi_utilization_memory_ratio` and many others that this contract does not use.
 
-### A.3 laptop-1: node_exporter next to the Nvidia card (author's samples)
+### A.3 laptop-1: node_exporter next to the Nvidia card
 
 AMD iGPU through drm (the Nvidia card is not listed by drm):
 
@@ -605,9 +568,9 @@ node_network_speed_bytes{device="eno1"} -125000
 node_network_speed_bytes{device="enx020000000010"} 6.25e+08
 ```
 
-The laptop has 256 `node_cpu_seconds_total` series (32 logical CPUs times 8 modes). The sample counter values above are from the first author run; the speed and counters were not re-checked in the second run.
+The laptop has 256 `node_cpu_seconds_total` series (32 logical CPUs times 8 modes). The sample counter values above are from the first run; the speed and counters were not re-checked in the second run.
 
-### A.4 Scrape timing (laptop-1, author's samples, three runs each)
+### A.4 Scrape timing (laptop-1, three runs each)
 
 ```
 node_exporter     0.956 s, 0.945 s, 0.898 s   154 KB   (RSS 21244 kB)
@@ -616,7 +579,7 @@ per collector: hwmon 1.268 s, netclass 0.029 s, drm 0.005 s, cpu 0.004 s, netdev
 listeners: 127.0.0.1:61221 (node_exporter), 127.0.0.1:61222 (nvidia_gpu_exporter)
 ```
 
-## Appendix B. JSON examples (Proposed shape; values are illustrative, derived from the measured lines)
+## Appendix B. JSON examples (values are illustrative, derived from the measured lines)
 
 ### B.1 PS5
 
@@ -726,3 +689,15 @@ Memory: Nvidia total 8,546,942,976, used 2,097,152, reserved 465,567,744. AMD: t
 ```
 
 Note: the fan entry shows that rpm 0 and duty 0 are sent as real readings; `fan_percent` is omitted on the Nvidia GPU because the exporter had no fan series. The `i2c_*` memory-module sensors read 0 and were dropped (section 4.6). The `primary` flag on `enx020000000010` is illustrative: which interface carries the route to Potluck on that laptop is not known.
+
+## Changelog
+
+History only: this section adds nothing to the contract. `stats_version` has been 1 throughout. No change request (CR-n) of the agent contract changed this document.
+
+| Version | What changed |
+|---|---|
+| Draft 1 | First text, reviewed by the Potluck team. |
+| Draft 2 | Self-adjusting scrape interval and `scrape_ms`; one `sources` map in place of four status fields; report every 2 s with the latest value and its age; a stats problem never rejects a report or blocks loads (1.1, 4); Nvidia `index` and `mem_reserved_bytes`; CUDA order and Vulkan matching rules (5.6); `chip_name` and the excluded drivers for the headline temperature; `net[].primary`; `load5` and `load15` optional; `kind` and `mem_source` required; strict version equality (7); section 8, Docker installs; caps on `gpus` and `fans`. |
+| Draft 3 | Counter resets per interface and direction (3.1); an interface without `node_network_up` is not sent, even the primary (4.5); the headline taken over the temperatures actually sent, with the cap's selection order (4.6); an AMD card without a GTT series is `discrete` with `drm_vram` (5.3); generic example values. |
+| Release 0.1.3 | `memory.cached_bytes`, optional (4.3). |
+| This revision | The status labels "Proposed" were dropped: the rules are implemented. No rule, field or figure changed. |

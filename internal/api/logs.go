@@ -9,7 +9,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/proxy"
 )
 
-// Central logging (CR-10, docs/cr-10-central-logging.md). Potluck is the
+// Central logging (CR-10, docs/architecture.md section 6, agent contract 11.3). Potluck is the
 // pass-through in front of the log store:
 //
 //	GET  /api/pool/nodes/{id}/logs     the node's logs object

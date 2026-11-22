@@ -5,7 +5,7 @@
 # UI (docs/runbook.md); editing this file changes nothing. The server never reads YAML.
 # The keys listen, models_dir, data_dir, history_dir and child_log_dir are NOT imported:
 # they are deployment paths set by flags or LLM_SCHEDULER_* variables (compose sets them).
-# Same content as configs/example.yaml (design 6, 6.1, where every field is explained) apart
+# Same content as configs/example.yaml (where every field is explained) apart
 # from this header, the three deployment paths below and the measuring template at the end
 # of the profiles. It describes an agents-mode deployment: the workers run potluck-agent and
 # register themselves; no fleet console is needed. Before importing, change at least:
@@ -24,10 +24,10 @@ history_dir: /var/lib/llm-scheduler/history   # safety and lifecycle event histo
 # history_max_file_mib: 16         # a history file is rotated at this size
 # history_keep_files: 20           # most history files kept; the oldest are deleted
 # history_memory_events: 5000      # newest events held in memory for queries (reloaded from the files at start)
-data_dir: /var/lib/llm-scheduler/data   # scheduler database (scheduler.db) for benchmarks and their results (design 9.3; compose mounts POTLUCK_ROOT/data here). Empty = benchmark feature off
+data_dir: /var/lib/llm-scheduler/data   # scheduler database (scheduler.db) for benchmarks and their results (compose mounts POTLUCK_ROOT/data here). Empty = benchmark feature off
 # ws_max_clients: 32               # most concurrent /ws (WebSocket) clients; the next one is refused with 503. /ws allows same-origin and private-LAN origins only
 
-# Central logging (CR-10, docs/cr-10-central-logging.md). The log store's address is a deployment
+# Central logging (docs/architecture.md, section 6). The log store's address is a deployment
 # fact (LLM_SCHEDULER_LOGS_STORE_URL, set by compose), not a setting.
 logs:
   enabled: true            # false: no logs object is handed out and the log routes answer 404
@@ -62,7 +62,7 @@ defaults:
   # split_skew_margin: 0.15      # 0 to 1. A split model does not land evenly: every multi-node placement that includes a shared-memory node must fit that node's expected share, need x split fraction x (1 + this), into its usable memory
   # estimate_margin: 0.05        # 0 to 1. Added to every need that is an estimate (a profile without needs_mib): need x (1 + this). A successful load teaches the scheduler the measured size for the rest of the run
   # load_memory_floor_mib: 768   # 0 = off. While a load runs on shared-memory nodes, a node whose available memory falls below this is cancelled at once (the child is killed, waiting requests get 502)
-  # Worker health (design 8.4a) is always on for every remote worker that backs an instance: upload progress and the node's heartbeat are watched, a worker with both silent is hung and its node is quarantined. Only the TCP connect probe is optional.
+  # Worker health is always on for every remote worker that backs an instance: upload progress and the node's heartbeat are watched, a worker with both silent is hung and its node is quarantined. Only the TCP connect probe is optional.
   # worker_silence: 30s         # a worker's upload progress or heartbeat counts as silent after this long without news
   # worker_probe_interval: 0    # DEFAULT 0 = the TCP connect probe never runs. Leave it off for rpc-server workers: an rpc-server accepts one client at a time, so repeated connect probes fill its listen backlog. Set e.g. 10s only for workers that accept parallel connections
   # worker_probe_during_inference: false  # only with the probe on: also probe while the instance has a request in flight
@@ -127,7 +127,7 @@ profiles:                  # what clients can ask for; the key is the model name
   # MEASURING TEMPLATE (commented out; runbook section G). To measure a profile's
   # memory need, uncomment it, set force_nodes to nodes that are online and free,
   # import or POST it, then
-  #   scripts/measure-needs.sh http://127.0.0.1:3122 gemma-measure
+  #   deploy/scripts/measure-needs.sh http://127.0.0.1:3122 gemma-measure
   # Same model, ctx, kv_quant and flash_attn as the profile you are sizing.
   # Remove it afterwards. (Not in configs/example.yaml.)
   # gemma-measure:
@@ -138,7 +138,7 @@ profiles:                  # what clients can ask for; the key is the model name
   #   force_nodes: [console-1, laptop-1]   # device order = this order
   #   tensor_split: [60, 40]
 
-# Benchmarks (design 9.3, runbook "Benchmarks"): test cases and groups of them ("suites") that the
+# Benchmarks (docs/benchmark-guide.md): test cases and groups of them ("suites") that the
 # scheduler runs through its own HTTP API, storing every result in data_dir/scheduler.db. Seeds below are
 # written to the database at every start with source "config"; items created through the REST API have
 # source "api" and are never overwritten by this block. Uncomment and set data_dir above to use it.
