@@ -19,6 +19,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/agenttest"
 )
 
 const (
@@ -181,12 +182,7 @@ const lines = `{"_msg":"registered","level":"info","unit":"potluck-agent.service
 
 func eventually(t *testing.T, d time.Duration, ok func() bool, what string) {
 	t.Helper()
-	for end := time.Now().Add(d); time.Now().Before(end); time.Sleep(5 * time.Millisecond) {
-		if ok() {
-			return
-		}
-	}
-	t.Fatalf("timed out waiting for %s", what)
+	agenttest.Eventually(t, d, what, ok)
 }
 
 // ---- the logs object ----

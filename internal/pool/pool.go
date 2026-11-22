@@ -334,7 +334,7 @@ func New(o Options) (*Pool, error) {
 	if o.Store != nil {
 		a, err := o.Store.NodeAdmins()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("pool: reading the node admin state: %w", err)
 		}
 		p.admin = a
 	}
@@ -642,7 +642,7 @@ func (p *Pool) checkOrphanLocked(a *agent, hb *heartbeat) {
 		return
 	}
 	a.orphanAsked = lid
-	base := "http://" + net.JoinHostPort(a.reg.Addr, strconv.Itoa(p.o.AgentPort))
+	base := p.agentBase(a)
 	p.log.Warn("agent reports a launch Potluck does not hold; telling it to stop the launch", "id", a.reg.ID, "name", a.reg.Name, "launch", lid)
 	p.recordLocked(history.TNodeMembership, history.Warn, a,
 		fmt.Sprintf("Node %s reported launch %s, which Potluck does not hold; it was told to stop it.", a.reg.Name, lid),

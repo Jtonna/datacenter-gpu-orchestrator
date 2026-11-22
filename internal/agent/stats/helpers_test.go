@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/agenttest"
 )
 
 func parseFile(t *testing.T, name string, keep func(string) bool) (Metrics, int) {
@@ -193,11 +194,5 @@ func (f *fakeExporter) serve(w http.ResponseWriter, r *http.Request) {
 // waitFor polls cond until it holds or the deadline passes.
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for %s", what)
-		}
-		time.Sleep(2 * time.Millisecond)
-	}
+	agenttest.Eventually(t, 5*time.Second, what, cond)
 }

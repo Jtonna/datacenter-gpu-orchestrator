@@ -18,6 +18,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/placer"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/agenttest"
 )
 
 // ---- fakes for the scheduler's collaborators ----
@@ -119,7 +120,6 @@ type env struct {
 	front    *httptest.Server
 	upstream *httptest.Server
 	logs     *syncBuf
-	now      func() time.Time
 	nowMu    sync.Mutex
 	clock    time.Time
 }
@@ -223,13 +223,7 @@ func body(t *testing.T, r *http.Response) string {
 // eventually polls until f is true.
 func eventually(t *testing.T, what string, f func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for !f() {
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for %s", what)
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	agenttest.Eventually(t, 5*time.Second, what, f)
 }
 
 var chatOK = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

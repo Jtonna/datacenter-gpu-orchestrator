@@ -119,7 +119,8 @@ func warnSlidingWindow(cfg *config.Config, log *slog.Logger) {
 
 // checkFleet logs a clear error when the fleet console cannot be reached at
 // startup. The scheduler keeps running: the local node still works and the
-// fleet client keeps retrying.
+// fleet client keeps retrying. LEGACY: fleet membership mode only, kept
+// until phase 7.
 func checkFleet(ctx context.Context, cfg *config.Config, log *slog.Logger) {
 	if cfg.Fleet.URL == "" {
 		log.Error("no fleet.url configured: only the local node can be used")

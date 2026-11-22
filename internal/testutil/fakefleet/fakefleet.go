@@ -1,6 +1,9 @@
 // Package fakefleet is an in-process fake of the fleet console backend
 // (branch fleet-scheduler-fields of ps5-launcher-thin-image), for tests.
 //
+// LEGACY: it serves the tests of the fleet membership mode (internal/fleet),
+// which is kept until phase 7; it goes with that mode.
+//
 // It serves, in the real wire format (contract/fleet.schema.json):
 //
 //	GET /api/fleet          the fleet document: {v, updated, count, online_count,

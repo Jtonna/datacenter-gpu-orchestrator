@@ -2,7 +2,6 @@ package logship
 
 import (
 	"bufio"
-	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/osx"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/agenttest"
 )
 
 const testNode = "02:00:00:00:00:01"
@@ -183,14 +183,7 @@ func (r *rig) agentLine(msg string) {
 
 func eventually(t *testing.T, d time.Duration, what string, f func() bool) {
 	t.Helper()
-	end := time.Now().Add(d)
-	for time.Now().Before(end) {
-		if f() {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatalf("timed out: %s", what)
+	agenttest.Eventually(t, d, what, f)
 }
 
 func lineTime(t *testing.T, m map[string]any) time.Time {
@@ -213,5 +206,3 @@ func hasMsg(lines []map[string]any, sub string) bool {
 	}
 	return false
 }
-
-var _ = bytes.NewReader

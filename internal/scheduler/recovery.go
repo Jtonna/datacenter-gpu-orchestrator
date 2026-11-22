@@ -26,6 +26,10 @@ import (
 // back to the scheduler as last_recovery_action on the fleet member. The
 // scheduler never contacts the node itself.
 //
+// LEGACY: recovery requests go through the fleet manager at fleet.url, part
+// of the fleet membership mode that is kept until phase 7. recoveryOn does
+// not check the membership mode.
+//
 // The HTTP POST runs off the event loop (effRecoveryPost) and its answer comes
 // back as evRecoveryPosted, like every other slow job. Nothing here waits.
 

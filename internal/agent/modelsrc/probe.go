@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"unsafe"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/osx"
@@ -97,7 +96,6 @@ type execProbe struct {
 	cmd  *exec.Cmd
 	done chan struct{}
 	err  error
-	once sync.Once
 }
 
 func (p *execProbe) Done() <-chan struct{} { return p.done }

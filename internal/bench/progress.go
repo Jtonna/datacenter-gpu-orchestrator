@@ -56,7 +56,6 @@ type benchTrack struct {
 	planned   int // work units of the current phase (requests, turns, ...)
 	done      int
 	inflight  float64 // 0..1 of the unit in flight (tokens out of max_tokens)
-	holdFrac  float64 // set by hold phases
 	direct    float64 // fraction set directly (load progress, unload)
 	useDirect bool
 	detail    map[string]any
@@ -250,7 +249,7 @@ func itemWeights(items []*itemPlan) (w []float64, anyKnown bool) {
 }
 
 // startTrack registers the progress of a benchmark that is about to run.
-func (x *exec) startTrack(b *benchspec.Benchmark, item int) *benchTrack {
+func (x *suiteExec) startTrack(b *benchspec.Benchmark, item int) *benchTrack {
 	hist := x.m.o.Store.MedianPhaseSeconds(b.ID)
 	t := newTrack(b, item, hist)
 	t.modelFile = x.m.modelFileOf(b.Profile)
@@ -261,14 +260,14 @@ func (x *exec) startTrack(b *benchspec.Benchmark, item int) *benchTrack {
 }
 
 // with runs f on the track under the run's lock and publishes the change when force is set.
-func (x *exec) track(t *benchTrack, force bool, f func(t *benchTrack)) {
+func (x *suiteExec) track(t *benchTrack, force bool, f func(t *benchTrack)) {
 	x.a.mu.Lock()
 	f(t)
 	x.a.mu.Unlock()
 	x.m.emitProgress(x.a, force)
 }
 
-func (x *exec) setPhase(t *benchTrack, i int, text string) {
+func (x *suiteExec) setPhase(t *benchTrack, i int, text string) {
 	x.track(t, true, func(t *benchTrack) {
 		t.cur, t.planned, t.done, t.inflight, t.direct, t.useDirect = i, 0, 0, 0, 0, false
 		t.load = nil
@@ -277,14 +276,14 @@ func (x *exec) setPhase(t *benchTrack, i int, text string) {
 }
 
 // setUnits says how many units of work (requests, turns) the current phase has.
-func (x *exec) setUnits(t *benchTrack, planned int, text string) {
+func (x *suiteExec) setUnits(t *benchTrack, planned int, text string) {
 	x.track(t, false, func(t *benchTrack) {
 		t.planned = planned
 		t.detail["text"] = text
 	})
 }
 
-func (x *exec) unitDone(t *benchTrack, text string) {
+func (x *suiteExec) unitDone(t *benchTrack, text string) {
 	x.track(t, false, func(t *benchTrack) {
 		t.done++
 		t.inflight = 0
@@ -294,7 +293,7 @@ func (x *exec) unitDone(t *benchTrack, text string) {
 	})
 }
 
-func (x *exec) setInflight(t *benchTrack, tokens, maxTokens int) {
+func (x *suiteExec) setInflight(t *benchTrack, tokens, maxTokens int) {
 	x.track(t, false, func(t *benchTrack) {
 		if maxTokens > 0 {
 			t.inflight = float64(tokens) / float64(maxTokens)
@@ -306,7 +305,7 @@ func (x *exec) setInflight(t *benchTrack, tokens, maxTokens int) {
 	})
 }
 
-func (x *exec) setDetail(t *benchTrack, kv map[string]any) {
+func (x *suiteExec) setDetail(t *benchTrack, kv map[string]any) {
 	x.track(t, false, func(t *benchTrack) {
 		for k, v := range kv {
 			t.detail[k] = v
@@ -314,15 +313,11 @@ func (x *exec) setDetail(t *benchTrack, kv map[string]any) {
 	})
 }
 
-func (x *exec) finishTrack(t *benchTrack) {
+func (x *suiteExec) finishTrack(t *benchTrack) {
 	x.track(t, true, func(t *benchTrack) { t.finished = true })
 }
 
 // ---- the document ----
-
-func briefOf(b *benchspec.Benchmark) map[string]any {
-	return map[string]any{"benchmark_id": b.ID, "name": b.Title(), "description": b.Description, "profile": b.Profile}
-}
 
 // progressDoc builds the progress object (GET /api/bench/state "run", and the
 // "progress" message on the live channel). The caller holds ar.mu.

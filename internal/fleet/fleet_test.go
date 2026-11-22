@@ -15,6 +15,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/agenttest"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/fakefleet"
 )
 
@@ -22,14 +23,7 @@ import (
 
 func eventually(t *testing.T, cond func() bool, msg string) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
-		}
-		time.Sleep(time.Millisecond)
-	}
-	t.Fatalf("timed out waiting for: %s", msg)
+	agenttest.Eventually(t, 3*time.Second, msg, cond)
 }
 
 type fakeClock struct {

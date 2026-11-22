@@ -51,11 +51,6 @@ func (s *scenarioState) set(name string) {
 	s.mu.Unlock()
 }
 
-func (s *scenarioState) live() bool {
-	sc, _ := s.get()
-	return sc.Status == nil
-}
-
 // scripted builds the scripted status now; nil in scenario live.
 func (s *scenarioState) scripted() *statusBuilder {
 	sc, t := s.get()
