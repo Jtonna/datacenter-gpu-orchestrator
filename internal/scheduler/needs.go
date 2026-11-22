@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/release"
@@ -13,6 +14,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/needstore"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // Learned needs across a restart (design 7.2a). What a load measured, or what
@@ -299,9 +301,20 @@ type needWriter struct {
 	pending map[string]needOp
 	order   []string
 
-	wake chan struct{}
-	stop chan struct{}
-	done chan struct{}
+	wake   chan struct{}
+	stop   chan struct{}
+	done   chan struct{}
+	cancel context.CancelFunc
+}
+
+// start runs the writer. A failure loses only the batch flush had taken (the
+// store keeps the last good figures and the core's are untouched); the
+// writer runs again.
+func (w *needWriter) start() {
+	var ctx context.Context
+	ctx, w.cancel = context.WithCancel(context.Background())
+	supervise.Go(ctx, supervise.Spec{Name: "scheduler.needs", Policy: supervise.Restart, Done: func() { close(w.done) }},
+		func(context.Context) { w.run() })
 }
 
 func newNeedWriter(st NeedStore, log *slog.Logger) *needWriter {
@@ -348,7 +361,6 @@ func (w *needWriter) flush() {
 // run writes until close; what is queued when close is called is written
 // before run returns.
 func (w *needWriter) run() {
-	defer close(w.done)
 	for {
 		select {
 		case <-w.wake:
@@ -363,6 +375,9 @@ func (w *needWriter) run() {
 // close stops the writer after a last flush and waits for it.
 func (w *needWriter) close() {
 	close(w.stop)
+	if w.cancel != nil {
+		w.cancel() // a writer waiting to restart does not hold the stop up
+	}
 	<-w.done
 }
 

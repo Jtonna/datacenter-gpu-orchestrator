@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -157,7 +158,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	}
 	defer close(s.runDone)
 	if s.needs != nil {
-		go s.needs.run()
+		s.needs.start()
 		defer s.needs.close() // what is queued is written before Run returns
 	}
 	s.startBuildReads() // builds.go
@@ -251,13 +252,20 @@ func (s *Scheduler) post(ctx context.Context, ev event) bool {
 	}
 }
 
-func (s *Scheduler) goBg(f func(ctx context.Context)) {
+// goBg runs a one-shot effect worker off the loop. The core waits for the
+// result event each one posts, so onPanic must post that event as a failure
+// (background-task isolation): a recovered worker that posts nothing would
+// leave its instance stuck.
+func (s *Scheduler) goBg(name string, f func(ctx context.Context), onPanic func(p any)) {
 	s.wg.Add(1)
-	go func() {
+	go supervise.Once(name, func() {
 		defer s.wg.Done()
 		f(s.bgCtx)
-	}()
+	}, onPanic)
 }
+
+// internalErr is the failure result of an effect worker that panicked.
+func internalErr(p any) error { return fmt.Errorf("internal error: %v", p) }
 
 // exec performs one effect. Only effReply, effStop and effCancelHealth run
 // inline; they never block.
@@ -275,63 +283,99 @@ func (s *Scheduler) exec(ef effect) {
 		}
 		s.healthMu.Unlock()
 	case effProbe:
-		s.goBg(func(ctx context.Context) {
+		failed := func(err error) []probeOutcome {
+			out := make([]probeOutcome, len(ef.targets))
+			for i, tg := range ef.targets {
+				out[i] = probeOutcome{id: tg.id, addr: tg.addr, err: err}
+			}
+			return out
+		}
+		s.goBg("scheduler.probe", func(ctx context.Context) {
 			out := make([]probeOutcome, len(ef.targets))
 			var wg sync.WaitGroup
 			for i, tg := range ef.targets {
 				wg.Add(1)
-				go func() {
-					defer wg.Done()
+				go supervise.Once("scheduler.probe", func() {
+					done := false
+					defer func() { // a panic makes this target's result an error
+						if !done {
+							out[i] = probeOutcome{id: tg.id, addr: tg.addr, err: errors.New("internal error in the probe")}
+						}
+						wg.Done()
+					}()
 					began := s.opts.Clock.Now()
 					r, err := s.opts.Prober.Probe(ctx, tg.addr)
 					out[i] = probeOutcome{id: tg.id, addr: tg.addr, result: r, err: err, took: s.opts.Clock.Now().Sub(began)}
-				}()
+					done = true
+				}, nil)
 			}
 			wg.Wait()
 			s.post(context.Background(), evPreflight{iid: ef.iid, results: out})
-		})
+		}, func(p any) { s.post(context.Background(), evPreflight{iid: ef.iid, results: failed(internalErr(p))}) })
 	case effStart:
-		s.goBg(func(ctx context.Context) { s.startChild(ctx, ef) })
+		st := &startState{}
+		s.goBg("scheduler.start", func(ctx context.Context) { s.startChild(ctx, ef, st) }, func(p any) {
+			if st.posted.Load() {
+				return // the core has the child; its exit watcher reports the rest
+			}
+			if ch := st.child.Load(); ch != nil {
+				(*ch).Stop(instance.StopKill)
+			}
+			s.post(context.Background(), evChildStarted{iid: ef.iid, err: internalErr(p)})
+		})
 	case effSample:
 		// Reading the kernel's socket table is off the event loop; the
 		// result comes back as an event.
-		s.goBg(func(context.Context) {
+		s.goBg("scheduler.sample", func(context.Context) {
 			sc, err := ef.counter.SentBytes(ef.peers)
 			s.post(context.Background(), evLoadSample{iid: ef.iid, bytes: sc.Bytes, sockets: sc.Sockets, peers: sc.Peers, err: err})
-		})
+		}, func(p any) { s.post(context.Background(), evLoadSample{iid: ef.iid, err: internalErr(p)}) })
 	case effWorkerProbe:
 		// A plain connect with a timeout, off the event loop.
-		s.goBg(func(ctx context.Context) {
+		s.goBg("scheduler.worker_probe", func(ctx context.Context) {
 			err := s.opts.WorkerProber.Connect(ctx, ef.addr, workerProbeTimeout)
 			s.post(context.Background(), evWorkerProbe{id: ef.id, gen: ef.gen, err: err})
-		})
+		}, func(p any) { s.post(context.Background(), evWorkerProbe{id: ef.id, gen: ef.gen, err: internalErr(p)}) })
 	case effRecoveryPost:
 		// The POST to the fleet manager, off the event loop.
-		s.goBg(func(ctx context.Context) {
+		s.goBg("scheduler.recovery_post", func(ctx context.Context) {
 			r, err := s.opts.RecoveryPoster.Post(ctx, ef.url, ef.body, ef.timeout)
 			s.post(context.Background(), evRecoveryPosted{id: ef.id, epoch: ef.epoch, action: ef.action, nonce: ef.nonce,
 				status: r.Status, tail: r.BodyTail, err: err})
+		}, func(p any) {
+			s.post(context.Background(), evRecoveryPosted{id: ef.id, epoch: ef.epoch, action: ef.action, nonce: ef.nonce, err: internalErr(p)})
 		})
 	case effFetch:
-		s.goBg(func(ctx context.Context) {
+		s.goBg("scheduler.fetch", func(ctx context.Context) {
 			n, err := s.opts.View.FetchNode(ctx, ef.id)
 			s.post(context.Background(), evFetched{id: ef.id, gen: ef.gen, node: n, err: err})
-		})
+		}, func(p any) { s.post(context.Background(), evFetched{id: ef.id, gen: ef.gen, err: internalErr(p)}) })
 	default:
 		s.execAgents(ef)
 	}
 }
 
-func (s *Scheduler) startChild(ctx context.Context, ef effStart) {
+// startState is what a start worker did before it failed: whether it
+// started the child and whether it told the core.
+type startState struct {
+	child  atomic.Pointer[instance.Child]
+	posted atomic.Bool
+}
+
+func (s *Scheduler) startChild(ctx context.Context, ef effStart, st *startState) {
 	ch, err := s.opts.Launcher.Start(ef.spec)
 	if err != nil {
+		st.posted.Store(true)
 		s.post(context.Background(), evChildStarted{iid: ef.iid, err: err})
 		return
 	}
+	st.child.Store(&ch)
+	supervise.Point("scheduler.start") // test hook: a failure after the child started
 	hctx, cancel := context.WithCancel(ctx)
 	s.healthMu.Lock()
 	s.healthCancel[ef.iid] = cancel
 	s.healthMu.Unlock()
+	st.posted.Store(true)
 	if !s.post(context.Background(), evChildStarted{iid: ef.iid, child: ch}) {
 		// The loop is gone (shutdown raced the start): end the child here.
 		cancel()
@@ -339,19 +383,25 @@ func (s *Scheduler) startChild(ctx context.Context, ef effStart) {
 		<-ch.Exited()
 		return
 	}
-	s.goBg(func(context.Context) {
+	s.goBg("scheduler.exit_watch", func(context.Context) {
 		st, ok := <-ch.Exited()
 		if ok {
 			s.post(context.Background(), evExited{iid: ef.iid, status: st, workers: s.workerExits(ef.iid, st)})
 		}
+	}, func(p any) { // the child is ended so that the exit the core waits for is true
+		ch.Stop(instance.StopKill)
+		s.post(context.Background(), evExited{iid: ef.iid, status: instance.ExitStatus{Code: -1, Requested: true, Err: internalErr(p)}})
 	})
-	s.goBg(func(context.Context) {
+	s.goBg("scheduler.health_wait", func(context.Context) {
 		err := ch.WaitHealthy(hctx)
 		s.healthMu.Lock()
 		delete(s.healthCancel, ef.iid)
 		s.healthMu.Unlock()
 		cancel()
 		s.post(context.Background(), evHealthy{iid: ef.iid, err: err})
+	}, func(p any) {
+		cancel()
+		s.post(context.Background(), evHealthy{iid: ef.iid, err: internalErr(p)})
 	})
 }
 
