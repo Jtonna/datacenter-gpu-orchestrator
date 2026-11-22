@@ -2,9 +2,11 @@
 // GET /api/startups pulled on demand (no DOM).
 //
 // The figure: seconds from boot start to ready for model loads. Boot start
-// is the start of the Linux kernel for a full start and the start of
-// userspace for a soft restart; an agent restart (the machine kept running)
-// has no figure. Kinds are never put into one figure.
+// is the console side's boot_origin when it gives one (0 on a full start,
+// the moment the restart began on a soft restart); otherwise the start of
+// the Linux kernel for a full start and the start of userspace for a soft
+// restart. The record's origin says which. An agent restart (the machine
+// kept running) has no figure. Kinds are never put into one figure.
 
 import { unplacedReason } from './nodeactions.js';
 
@@ -18,6 +20,15 @@ export const KIND = {
   agent_restart: 'agent restart',
 };
 export const kindLabel = k => KIND[k] || k;
+
+// Where a figure counts from (a record's origin; none on a record stored
+// before origins existed).
+const ORIGIN = {
+  boot_origin: 'counted from the moment the start began',
+  kernel: 'counted from the kernel start',
+  userspace: 'counted from the userspace start; the shutdown before it is not included',
+};
+export const originText = o => ORIGIN[o] || '';
 
 // The conditions of "ready for model loads", in plain words.
 const MISSING = {
@@ -41,6 +52,8 @@ const MARK = {
   programs_ready: 'Programs ready',
   exporter_up: 'Exporters running',
   first_stats: 'First stats read',
+  boot_origin: 'Start began',
+  boot_origin_partial: 'Userspace started (console side)',
   boot_progress_start: 'Boot progress started',
   network_ok: 'Network up',
   payload_ok: 'Payload loaded',
@@ -67,7 +80,8 @@ export function startupText(last) {
   }
   const kind = kindLabel(last.kind);
   if (last.headline_s != null) {
-    return { head: `Ready for model loads ${secs(last.headline_s)} after boot start`, kind, extra: guessed };
+    const from = originText(last.origin);
+    return { head: `Ready for model loads ${secs(last.headline_s)} after boot start`, kind, extra: join(from ? from[0].toUpperCase() + from.slice(1) + '.' : '', guessed) };
   }
   const head = last.open ? 'Not ready for model loads yet' : 'No start-up figure';
   if (last.blocked_by) {

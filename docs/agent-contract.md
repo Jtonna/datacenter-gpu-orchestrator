@@ -879,6 +879,20 @@ Each start of an agent reports, on the machine's own time axis, how its start we
 - takes a missing file as normal (no marks), and never creates or deletes the file or its folder;
 - after a soft restart (systemd gave the userspace start and a soft-restart count that is not 0) drops every mark earlier than the userspace start, and ignores the whole file while its `boot_progress_start` is earlier (`/run` survives a soft restart, so the file is the previous start's until the writer starts a fresh one), with one INFO line.
 
+**The start origin lines** (after release 0.1.4; an older agent passes them through unchanged as unknown names, but drops a `boot_origin` earlier than the cut-off). The file may carry, anywhere in it, one of two lines on the same clock as the marks:
+
+- `boot_origin <seconds>`: where this start began. `0.000` on a full start; after a soft restart the moment the restart began (systemd's `ShutdownStartTimestampMonotonic`), which is before the new userspace start.
+- `boot_origin_partial <seconds>`: the node could not tell that moment; the value is the userspace start, and the figure counts from there. A file with neither line is read as before.
+
+The agent passes either through in `external_marks`. After a soft restart (when the cut-off above applies):
+
+- both lines are exempt from the cut-off;
+- the file is this start's when its `boot_progress_start` is at or after the userspace start, or, without `boot_progress_start`, when at least one mark other than an origin line is at or after it. The origin's own value cannot tell: this start's `boot_origin` and a left-over file's are both before the userspace start. A file that is not this start's is ignored whole, origin included (one INFO line; a file with only an origin line so far waits silently for the writer's next mark);
+- a `boot_origin` later than the userspace start is dropped;
+- an origin line counts only when it ends with a newline (a cut value would still parse, and an origin is exempt from the cut-off).
+
+Potluck: when a record has `boot_origin` (at or before ready, and for a soft restart at or before the userspace start when known), the figure is ready minus `boot_origin` for every kind of start: unchanged on a full start (`0`), and on a soft restart it now includes the shutdown (ready 25.8 with `boot_origin` 10.0 gives 15.8, where the userspace start 15.8 gave 10.0). With `boot_origin_partial` or neither line it is as before. The record (and `last_startup`) says where its figure counts from in `origin`: `boot_origin`, `kernel` (a full start without `boot_origin`) or `userspace` (a soft restart without it). Records stored before have no `origin` and read unchanged. A group of `GET /api/startups` carries the newest figure's `origin` and `mixed_origins: true` when its figures do not all count from one origin.
+
 **Docker install.** It reports `boot_id`, `agent_start_s` and its own marks: the container shares the host's kernel, so its boot id and `CLOCK_BOOTTIME` are the host's. It reports no `userspace_start_s`, no `soft_reboots` and no external marks: inside the container `systemctl` would show the container's own systemd or none, and the host's `/run/potluck` is not mounted. So Potluck can tell a full start (another boot id) from the rest, but not a soft restart from an agent restart.
 
 **What Potluck does with it**: one record per agent process, of one kind (full start, soft restart or agent restart), with its figure once the node is ready for model loads; `last_startup` in the node's entry of `agents` in `GET /api/status` and of `GET /api/nodes`; `GET /api/nodes/{id}/startups` and `GET /api/startups`.
