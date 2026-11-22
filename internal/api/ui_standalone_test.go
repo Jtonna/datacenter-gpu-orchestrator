@@ -11,8 +11,7 @@ import (
 // The UI words the two memberships with the same table as the scheduler, so
 // the two cannot drift apart: core/words.js lists config.PoolPhrases, in order.
 func TestUIPoolPhrasesMatchTheScheduler(t *testing.T) {
-	text := uiText(t, "core/words.js")
-	got := regexp.MustCompile(`(?m)^\s*\['([^']+)', '([^']+)'\],$`).FindAllStringSubmatch(text, -1)
+	got := poolPhrasesOf(uiText(t, "core/words.js"))
 	if len(got) != len(config.PoolPhrases) {
 		t.Fatalf("core/words.js has %d phrases, internal/config has %d", len(got), len(config.PoolPhrases))
 	}
@@ -24,6 +23,35 @@ func TestUIPoolPhrasesMatchTheScheduler(t *testing.T) {
 	// the reason text of a forced node outside the pool is read in both wordings
 	if r := uiText(t, "core/reasons.js"); !strings.Contains(r, `is not in the (fleet view|pool)$/i`) || !strings.Contains(r, "poolText(") {
 		t.Error("core/reasons.js does not read the pool wording of a forced node that is not in the view")
+	}
+}
+
+// poolPhraseLine is one row of POOL_PHRASES in core/words.js. Lines are taken
+// one by one and trimmed, so CRLF or LF (a checkout or git archive with
+// core.autocrlf gives CRLF) and trailing blanks make no difference.
+var poolPhraseLine = regexp.MustCompile(`^\['([^']+)', '([^']+)'\],$`)
+
+func poolPhrasesOf(text string) [][]string {
+	var out [][]string
+	for _, line := range strings.Split(text, "\n") {
+		if m := poolPhraseLine.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// The extraction reads the same rows whatever the line endings.
+func TestUIPoolPhrasesExtractionIgnoresLineEndings(t *testing.T) {
+	lf := strings.ReplaceAll(uiText(t, "core/words.js"), "\r\n", "\n")
+	for name, text := range map[string]string{
+		"lf":       lf,
+		"crlf":     strings.ReplaceAll(lf, "\n", "\r\n"),
+		"trailing": strings.ReplaceAll(lf, "\n", " \t\n"),
+	} {
+		if got := poolPhrasesOf(text); len(got) != len(config.PoolPhrases) {
+			t.Errorf("%s: %d phrases, want %d", name, len(got), len(config.PoolPhrases))
+		}
 	}
 }
 
