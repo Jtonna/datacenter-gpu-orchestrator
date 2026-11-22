@@ -288,9 +288,20 @@ func CheckCapacity(req Request, eligible []Candidate) error {
 		}
 	}
 	required := required(req.Need)
-	if skewApplies(req, top) {
+	switch {
+	case req.nodeMargins():
+		// the configured margin on every shared node counted, as fitsSet
+		// applies it (review N4)
+		share := (required + len(top) - 1) / len(top)
+		for _, c := range top {
+			if c.Shared {
+				required += req.NodeMarginMiB(share)
+			}
+		}
+	case skewApplies(req, top):
 		required = estimate.MarginMiB(required, req.SkewPermille)
 	}
+	required += len(top) * req.PerNodeReserveMiB // the fill reserve on every node
 	return &NoPlacement{Reason: ExceedsCapacity, NeedMiB: req.Need.MiB, RequiredMiB: required, CapacityMiB: capacity}
 }
 

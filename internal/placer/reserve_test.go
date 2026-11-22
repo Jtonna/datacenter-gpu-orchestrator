@@ -68,3 +68,18 @@ func TestReserve_NodeMarginMiB(t *testing.T) {
 		}
 	}
 }
+
+// N4: the capacity refusal's required figure includes the fill reserve and
+// the fixed margin of every node it counts, as the fit rule applies them.
+func TestReserve_RequiredIncludesTheReserve(t *testing.T) {
+	req := with(skewReq(Measured(40000)), func(r *Request) { r.MarginMiB, r.PerNodeReserveMiB = 300, 512 })
+	req.MaxPool = 3
+	err := CheckCapacity(req, []Candidate{ps("a", 10000), ps("b", 10000), ps("c", 10000)})
+	np, ok := err.(*NoPlacement)
+	if !ok || np.Reason != ExceedsCapacity {
+		t.Fatalf("err %v", err)
+	}
+	if want := 40000 + 3*(512+300); np.RequiredMiB != want {
+		t.Fatalf("required %d, want %d", np.RequiredMiB, want)
+	}
+}
