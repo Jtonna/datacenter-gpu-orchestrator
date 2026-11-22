@@ -120,9 +120,20 @@ func (c *ConfigNeeds) compute(p *core.Profile) (NeedInfo, error) {
 	if err != nil {
 		return NeedInfo{}, fmt.Errorf("model file: %w", err)
 	}
-	elems, err := meta.KVElemsPerToken()
+	info, err := estimateFromMeta(meta, p)
 	if err != nil {
 		return NeedInfo{}, fmt.Errorf("model file %s: %w", path, err)
+	}
+	return info, nil
+}
+
+// estimateFromMeta is the estimated need of a kind: llama profile from its
+// model's GGUF metadata and file size (meta.FileSize): the weights plus the
+// KV cache for the profile's context and slots.
+func estimateFromMeta(meta *gguf.Meta, p *core.Profile) (NeedInfo, error) {
+	elems, err := meta.KVElemsPerToken()
+	if err != nil {
+		return NeedInfo{}, err
 	}
 	parallel := max(p.Parallel, 1)
 	quant := p.KVQuant

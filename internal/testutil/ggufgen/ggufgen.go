@@ -17,6 +17,12 @@ type Spec struct {
 	HeadsKV       uint32 // <arch>.attention.head_count_kv, default 2
 	Context       uint32 // <arch>.context_length, default 4096
 	SlidingWindow uint32 // <arch>.attention.sliding_window; 0 leaves the key out
+	KeyLength     uint32 // <arch>.attention.key_length; 0 leaves the key out
+	ValueLength   uint32 // <arch>.attention.value_length; 0 leaves the key out
+	// FullAttentionInterval is <arch>.full_attention_interval (hybrid
+	// models: every n-th layer has attention, the others are recurrent); 0
+	// leaves the key out.
+	FullAttentionInterval uint32
 }
 
 const (
@@ -53,8 +59,14 @@ func Bytes(s Spec) []byte {
 	add(s.Arch+".attention.head_count", typU32, u32(s.Heads))
 	add(s.Arch+".attention.head_count_kv", typU32, u32(s.HeadsKV))
 	add(s.Arch+".context_length", typU32, u32(s.Context))
-	if s.SlidingWindow > 0 {
-		add(s.Arch+".attention.sliding_window", typU32, u32(s.SlidingWindow))
+	for _, o := range []struct {
+		key string
+		v   uint32
+	}{{".attention.sliding_window", s.SlidingWindow}, {".attention.key_length", s.KeyLength},
+		{".attention.value_length", s.ValueLength}, {".full_attention_interval", s.FullAttentionInterval}} {
+		if o.v > 0 {
+			add(s.Arch+o.key, typU32, u32(o.v))
+		}
 	}
 	var b bytes.Buffer
 	b.WriteString("GGUF")
