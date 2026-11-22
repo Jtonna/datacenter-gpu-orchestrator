@@ -17,16 +17,30 @@ import (
 // allowlist below with the reason it needs nothing. It also lists
 // time.AfterFunc / Clock.AfterFunc with a function literal, recover() outside
 // this package, and any reference to a *ForTest function from production
-// code.
+// code. A new goroutine started with a bare go statement fails here, naming
+// its file and function: supervise it, or allowlist it with a reason.
 //
-// enforce is false while the adoption is incremental (step 1 of the
-// background-task isolation): the test prints what it finds and fails only
-// on a *ForTest reference.
-const enforce = false
+// enforce makes an unsupervised site that is not allowlisted, or an
+// allowlist entry that matches nothing, fail the test.
+const enforce = true
 
-// allowlist is keyed by "file (receiver) function" (stable across line
-// moves); the value is why that site needs no supervision.
-var allowlist = map[string]string{}
+// allowlist is keyed by "kind file function" (stable across line moves; the
+// function is "(*T).M" or "F"; kinds: go, afterfunc, recover); the value is
+// why that site needs no supervision.
+var allowlist = map[string]string{
+	"afterfunc cmd/llm-scheduler/fatal.go (*fatalPath).trigger": "the fatal path's watchdog: it prints and exits, and must not depend on the supervisor",
+	"afterfunc internal/bench/runner.go (*Manager).execute":     "max_run timer: sets a flag under a lock and cancels the run",
+	"afterfunc internal/proxy/forward.go (*watchBody).Read":     "stall timer: sets a flag and closes the body",
+	"afterfunc internal/scheduler/builds.go sleepOn":            "closes a channel",
+	"afterfunc internal/scheduler/runner.go (*Scheduler).Run":   "the loop's timer: a non-blocking send on the tick channel",
+	"go internal/agent/logship/journal.go (*Journal).Run":       "the node agent's journal reader; the scheduler never runs it",
+	"go internal/bench/runner.go (*Manager).execute":            "watches ctx: a select that cancels the run",
+	"go internal/bench/runner.go newGate":                       "a WaitGroup wait, then close",
+	"go internal/bench/store.go openStore":                      "the SQLite writer: runJob recovers each job (rollback, error) and reports it",
+	"go internal/pool/pool.go (*Pool).WaitStops":                "a WaitGroup wait, then close",
+	"recover internal/bench/store.go (*Store).runJob":           "per-job isolation of the SQLite writer, reported through supervise.Report",
+	"recover internal/proxy/forward.go Forward":                 "re-panics everything but http.ErrAbortHandler (the client went away)",
+}
 
 // scanRoots are the trees the scheduler binary is built from (relative to
 // the module root). internal/agent is the node agent, except the two
@@ -167,11 +181,11 @@ func TestSourceScan(t *testing.T) {
 			t.Errorf("%s: a *ForTest function of supervise is referenced from production code (%s)", f.pos, f.key)
 			continue
 		}
-		if _, ok := allowlist[f.key]; ok {
-			used[f.key] = true
+		if k := f.kind + " " + f.key; allowlist[k] != "" {
+			used[k] = true
 			continue
 		}
-		bad = append(bad, f.kind+"\t"+f.key+"\t"+f.pos)
+		bad = append(bad, f.kind+" "+f.key+"\t"+f.pos)
 	}
 	var stale []string
 	for k := range allowlist {
