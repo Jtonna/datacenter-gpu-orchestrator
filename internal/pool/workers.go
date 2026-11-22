@@ -312,8 +312,17 @@ func (p *Pool) supervise(l *launch) {
 	l.mu.Lock()
 	l.cancel = cancel
 	l.mu.Unlock()
-	go func() {
-		defer close(l.done)
+	// A failure restarts this launch's supervisor alone. Its state is the
+	// agent's: after the restart it renews the lease and reads the launch
+	// state at once, so a missed renewal or report is caught up.
+	restarted := false
+	supervise.Go(ctx, supervise.Spec{Name: "pool.launch", Policy: supervise.Restart, Rebuild: func(any) { restarted = true },
+		Done: func() { close(l.done) }}, func(ctx context.Context) {
+		if restarted {
+			p.renew(ctx, l)
+			p.poll(ctx, l)
+			p.reportIfNeeded(l)
+		}
 		lease := time.NewTicker(p.o.LeaseEvery)
 		defer lease.Stop()
 		logs := time.NewTicker(2 * time.Second)
@@ -328,6 +337,7 @@ func (p *Pool) supervise(l *launch) {
 			case <-ctx.Done():
 				return
 			case <-lease.C:
+				supervise.Point("pool.launch")
 				p.renew(ctx, l)
 			case <-logs.C:
 				p.copyLog(ctx, l)
@@ -342,7 +352,7 @@ func (p *Pool) supervise(l *launch) {
 				p.reportIfNeeded(l)
 			}
 		}
-	}()
+	})
 }
 
 func (p *Pool) renew(ctx context.Context, l *launch) {
