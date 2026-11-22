@@ -161,6 +161,9 @@ func TestPlan_DryRunChangesNothing(t *testing.T) {
 	if r := h.c.dryPlan("huge"); r.Action != PlanQueue || r.Reason == "" {
 		t.Fatalf("huge (big busy, within hold): %+v", r)
 	}
+	if after := h.c.statusDoc(); !reflect.DeepEqual(before, after) {
+		t.Fatalf("dry run while big is busy changed state:\nbefore %+v\nafter  %+v", before, after)
+	}
 	h.release(g)
 	h.advance(30 * time.Second)
 	before = h.c.statusDoc()

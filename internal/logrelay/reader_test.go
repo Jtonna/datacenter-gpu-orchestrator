@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/agenttest"
 )
 
 // readStore is a fake log store behind -http.pathPrefix=/logs: it records
@@ -544,11 +545,5 @@ func TestReadProxySilentStore(t *testing.T) {
 
 func waitUntil(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for %s", what)
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	agenttest.Eventually(t, 10*time.Second, what, cond)
 }

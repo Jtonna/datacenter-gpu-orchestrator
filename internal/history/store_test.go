@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/agenttest"
 )
 
 type capHandler struct {
@@ -321,13 +323,7 @@ func fileSize(t *testing.T, dir string) int64 {
 
 func waitFor(t *testing.T, cond func() bool) {
 	t.Helper()
-	for i := 0; i < 500; i++ {
-		if cond() {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("condition not reached")
+	agenttest.Eventually(t, 5*time.Second, "condition", cond)
 }
 
 func TestQueryFilters(t *testing.T) {

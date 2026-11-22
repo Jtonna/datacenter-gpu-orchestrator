@@ -3,7 +3,6 @@ package scheduler
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -17,6 +16,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/placer"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/agenttest"
 )
 
 // Runner tests: real goroutines over the fakes. Meaningful under -race
@@ -346,17 +346,8 @@ func TestScheduler_LoadPlanUnload(t *testing.T) {
 
 func waitFor(t *testing.T, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("condition not reached")
-		}
-		runtime.Gosched()
-		time.Sleep(time.Millisecond)
-	}
+	agenttest.Eventually(t, 5*time.Second, "condition", cond)
 }
-
-var _ = fmt.Sprint
 
 // The real loop reads the byte count off the event loop and folds the
 // result back in: a loading remote instance becomes "measured".

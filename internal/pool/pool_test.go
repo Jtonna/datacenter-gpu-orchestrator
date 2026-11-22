@@ -23,6 +23,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/release"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/agenttest"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/fakeagent"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/progtree"
 )
@@ -683,13 +684,7 @@ func TestForceNodeWithoutAnInstance(t *testing.T) {
 
 func eventually(t testing.TB, d time.Duration, cond func() bool, what string) {
 	t.Helper()
-	end := time.Now().Add(d)
-	for !cond() {
-		if time.Now().After(end) {
-			t.Fatalf("timed out waiting for %s", what)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	agenttest.Eventually(t, d, what, cond)
 }
 
 // A worker serves one device. A node listing more than one device of its

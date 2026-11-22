@@ -20,6 +20,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/logrelay"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/agenttest"
 )
 
 // helperEnv makes the test binary a child that writes output and exits.
@@ -125,13 +126,7 @@ func (s *fakeStore) posts() []post {
 // waitFor polls cond until it holds or 15 s pass.
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(15 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for %s", what)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	agenttest.Eventually(t, 15*time.Second, what, cond)
 }
 
 type setup struct {

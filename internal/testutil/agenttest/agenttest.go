@@ -1,5 +1,6 @@
-// Package agenttest holds helpers for potluck-agent tests: building the fake
-// programs under the names the agent runs, and waiting for conditions.
+// Package agenttest holds test helpers: building the fake programs under the
+// names potluck-agent runs, and Eventually, the one polling wait every
+// package's tests use.
 package agenttest
 
 import (

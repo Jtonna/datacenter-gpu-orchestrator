@@ -222,7 +222,7 @@ func TestConfigSchemaRevisionsRollbackExportImport(t *testing.T) {
 		t.Fatalf("%d %v", st, m)
 	}
 	st, m = e.cdo("GET", "/api/config", "", nil)
-	if len(m["tiers"].([]any)) != 1 || m["fleet"].(map[string]any)["url"] != "http://f:8090" {
+	if st != 200 || len(m["tiers"].([]any)) != 1 || m["fleet"].(map[string]any)["url"] != "http://f:8090" {
 		t.Fatalf("import did not restore: %v", m)
 	}
 }

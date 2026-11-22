@@ -7,15 +7,13 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/agenttest"
 )
 
 func waitFor(t *testing.T, what string, f func() bool) {
 	t.Helper()
-	for deadline := time.Now().Add(20 * time.Second); !f(); time.Sleep(50 * time.Millisecond) {
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for %s", what)
-		}
-	}
+	agenttest.Eventually(t, 20*time.Second, what, f)
 }
 
 // mcpPost sends one JSON-RPC message to the real binary's /mcp endpoint.
