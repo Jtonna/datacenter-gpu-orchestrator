@@ -342,15 +342,26 @@ func (c *schedCore) unmeasuredReserve(id core.NodeID) int {
 	return max(r.Total-used, 0)
 }
 
-// reservedFree is the free figure placement_uses_reserved places on: the
-// smaller of the latest figure (or the pre-flight override) and the average
-// one, less what is reserved on the node but not measured yet.
-func (c *schedCore) reservedFree(id core.NodeID, n core.Node) int {
+// reservedBudget is the budget placement_uses_reserved places on: the
+// node's free figure, at most its average, less what is reserved there but
+// not measured yet, less headroom. On a shared-memory node the free figure
+// is the fleet's (available memory less the watchdog floor), never the
+// pre-flight's device figure alone: sharedBudgetFrom takes the smaller of
+// the two. liveBudget never lets it above the old path's figure.
+func (c *schedCore) reservedBudget(id core.NodeID, n core.Node) int {
 	free := c.freeMiB(id, n)
-	if _, on := c.preflightFree(id); !on && n.FreeAvgKnown && n.FreeAvgMiB < free {
+	if n.SharedMemory {
+		free = n.FreeMiB
+	}
+	if n.FreeAvgKnown && n.FreeAvgMiB < free {
 		free = n.FreeAvgMiB
 	}
-	return free - c.unmeasuredReserve(id)
+	free -= c.unmeasuredReserve(id)
+	if n.SharedMemory {
+		b, _ := c.sharedBudgetFrom(id, n, free)
+		return min(b, free-n.HeadroomMiB)
+	}
+	return free - n.HeadroomMiB
 }
 
 // reservedShortfalls is sharedShortfalls under the reservation rule: every

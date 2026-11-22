@@ -487,21 +487,16 @@ func (c *schedCore) freeMiB(id core.NodeID, n core.Node) int {
 // figure (sharedBudget), because the worker's Vulkan device reports about
 // 2.5 GB more free than the machine can give.
 func (c *schedCore) liveBudget(id core.NodeID, n core.Node) int {
-	if c.cfg.Defaults.PlacementUsesReserved {
-		// reserve.go: min(latest, average), less what is reserved there but
-		// not measured yet.
-		free := c.reservedFree(id, n)
-		if n.SharedMemory {
-			b, _ := c.sharedBudgetFrom(id, n, free)
-			return min(b, free-n.HeadroomMiB)
-		}
-		return free - n.HeadroomMiB
-	}
+	old := c.freeMiB(id, n) - n.HeadroomMiB
 	if n.SharedMemory {
-		b, _ := c.sharedBudget(id, n)
-		return b
+		old, _ = c.sharedBudget(id, n)
 	}
-	return c.freeMiB(id, n) - n.HeadroomMiB
+	if !c.cfg.Defaults.PlacementUsesReserved {
+		return old
+	}
+	// reserve.go: the reserved figure (the lower of latest and average, less
+	// what is reserved there but not measured yet), never above the old one.
+	return min(old, c.reservedBudget(id, n))
 }
 
 // emptyMiB is the best known figure for the node with nothing of ours on

@@ -112,3 +112,49 @@ func TestReview_B2_LearnedTotalAboveThePeakSum(t *testing.T) {
 		}
 	}
 }
+
+// B3: with placement_uses_reserved, a node's budget is never above what the
+// old path gives, in either membership mode: not during a pre-flight
+// override above the fleet's figure (the Vulkan figure), and not with an
+// average above the latest figure. The reviewer's case: fleet figure 9000,
+// headroom 1000, pre-flight 11000: 8000 either way.
+func TestReview_B3_TheSettingNeverRaisesABudget(t *testing.T) {
+	for _, mode := range []string{"fleet", "agents"} {
+		for _, ov := range []int{0, 7000, 11000} { // no override, below, above the fleet figure
+			for _, avg := range []int{0, 6000, 12000} { // no average, below, above
+				for _, shared := range []bool{true, false} {
+					var h *harness
+					n := ps5("a", 2, 9000)
+					if !shared {
+						n = laptop("a", 9000)
+					}
+					if avg > 0 {
+						n.FreeAvgMiB, n.FreeAvgKnown = avg, true
+					}
+					if mode == "agents" {
+						h = agentsHarness(t)
+						h.view.set(n, laptop("b", 7000))
+					} else {
+						h = newHarness(t).nodes(n)
+					}
+					h.viewChanged()
+					if ov > 0 {
+						ns := h.c.ns("a")
+						ns.ovFree, ns.ovUntil = ov, h.clk.Now().Add(time.Minute)
+					}
+					nn, _ := h.c.node("a")
+					h.c.cfg.Defaults.PlacementUsesReserved = false
+					off := h.c.liveBudget("a", nn)
+					h.c.cfg.Defaults.PlacementUsesReserved = true
+					on := h.c.liveBudget("a", nn)
+					if on > off {
+						t.Errorf("%s shared %v override %d average %d: budget %d with the setting, %d without", mode, shared, ov, avg, on, off)
+					}
+					if mode == "fleet" && shared && ov == 11000 && avg == 0 && on != 8000 {
+						t.Errorf("the reviewer's case: %d, want 8000", on)
+					}
+				}
+			}
+		}
+	}
+}
