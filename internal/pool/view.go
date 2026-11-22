@@ -433,15 +433,15 @@ type NodeFacts struct {
 	// PotluckLaunchID is the launch Potluck holds for the node (sent or about
 	// to be sent, whatever the agent reports) and LaunchState its state as
 	// Potluck last read it.
-	PotluckLaunchID *string         `json:"potluck_launch_id,omitempty"`
-	LaunchState     string          `json:"launch_state,omitempty"`
-	Devices         any             `json:"devices,omitempty"`
-	MemAvailMiB     *int64          `json:"mem_available_mib,omitempty"`
+	PotluckLaunchID *string `json:"potluck_launch_id,omitempty"`
+	LaunchState     string  `json:"launch_state,omitempty"`
+	Devices         any     `json:"devices,omitempty"`
+	MemAvailMiB     *int64  `json:"mem_available_mib,omitempty"`
 	// MemAvailAvgMiB is mem_available_mib averaged over the heartbeats of
 	// defaults.free_average_window (memavg.go). Additive.
-	MemAvailAvgMiB *int64 `json:"mem_available_avg_mib,omitempty"`
-	Stats           json.RawMessage `json:"stats,omitempty"`
-	StatsNote       string          `json:"stats_note,omitempty"`
+	MemAvailAvgMiB *int64          `json:"mem_available_avg_mib,omitempty"`
+	Stats          json.RawMessage `json:"stats,omitempty"`
+	StatsNote      string          `json:"stats_note,omitempty"`
 	// ExtraDevicesIgnored counts the node's devices of its platform backend
 	// beyond the first, which no worker uses (one device per node).
 	ExtraDevicesIgnored int `json:"extra_devices_ignored"`

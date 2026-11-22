@@ -271,7 +271,7 @@ func TestReserve_PeakIsStored(t *testing.T) {
 // cannot admit a load.
 func TestReserve_AverageWindow(t *testing.T) {
 	for _, on := range []bool{false, true} {
-		n := psNode("a", 2, 12400) // latest: 12400 usable
+		n := psNode("a", 2, 12400)                // latest: 12400 usable
 		n.FreeAvgMiB, n.FreeAvgKnown = 9400, true // average: 8400 usable
 		h := newHarness(t).nodes(n)
 		h.cfg.Defaults.PlacementUsesReserved = on
