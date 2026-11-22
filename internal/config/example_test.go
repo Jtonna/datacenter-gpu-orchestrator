@@ -40,19 +40,24 @@ func TestExampleConfigParses(t *testing.T) {
 			t.Errorf("%s needs_mib = %d, want %d", name, p.NeedsMiB, want)
 		}
 	}
-	for host, want := range map[string]int{"console-1": 100, "laptop-1": 60} {
-		if tier, ok := c.MatchTier(host, "", "", false); !ok || tier.LinkMBs != float64(want) {
-			t.Errorf("%s link_mb_s = %+v, want %d", host, tier, want)
-		}
+	// The example describes membership agents: consoles by the platform their
+	// agent registers with, a CUDA laptop by hostname, the host by local_node.
+	if !c.AgentsMode() || c.LocalNodeName() != "host-1" || c.Fleet.URL != "" {
+		t.Errorf("membership %q, local node %q, fleet.url %q", c.Defaults.Membership, c.LocalNodeName(), c.Fleet.URL)
+	}
+	console, ok := c.MatchTierNode(TierQuery{Hostname: "anything", Source: "agent", Platform: "linux-amd64-vulkan"})
+	if !ok || console.Priority != 1 || !console.SharedMemory || console.LinkMBs != 100 {
+		t.Errorf("console tier: %+v %v", console, ok)
+	}
+	laptop, ok := c.MatchTierNode(TierQuery{Hostname: "laptop-1", Source: "agent", Platform: "linux-amd64-cuda"})
+	if !ok || laptop.Priority != 2 || laptop.LinkMBs != 60 {
+		t.Errorf("laptop tier: %+v %v", laptop, ok)
 	}
 	if tier, ok := c.MatchTier("host-1", "", "", true); !ok || tier.HeadroomMiB != 450 {
 		t.Errorf("local tier headroom = %+v, want 450", tier)
 	}
-	if tier, ok := c.MatchTier("console-1", "", "", false); !ok || tier.Priority != 1 || !tier.SharedMemory {
-		t.Errorf("console tier: %+v %v", tier, ok)
-	}
-	if c.Fleet.LocalNode != "host-1" {
-		t.Errorf("local_node = %q", c.Fleet.LocalNode)
+	if c.Logs != DefaultLogs() {
+		t.Errorf("logs %+v, want the defaults written out", c.Logs)
 	}
 }
 

@@ -80,6 +80,7 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 		Bench:         rawBench{RegressLoadPct: DefaultRegressLoadPct, RegressDecodePct: DefaultRegressDecodePct, MaxRunMinutes: DefaultMaxRunMinutes},
 		Defaults:      rawDefaultsFrom(DefaultDefaults()),
 		Recovery:      rawRecoveryFrom(DefaultRecovery()),
+		Logs:          rawLogsFrom(DefaultLogs()),
 	}
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
@@ -95,6 +96,7 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 		HistoryDir:   strings.TrimSpace(raw.HistoryDir), HistoryMaxFileMiB: raw.HistoryMaxFileMiB, HistoryKeepFiles: raw.HistoryKeepFiles,
 		HistoryMemoryEvents: raw.HistoryMemoryEvents,
 		LocalProbeCmd:       raw.LocalProbeCmd,
+		LocalNode:           strings.TrimSpace(raw.LocalNode),
 		DataDir:             strings.TrimSpace(raw.DataDir),
 		WSMaxClients:        raw.WSMaxClients,
 		Bench: Bench{RegressLoadPct: raw.Bench.RegressLoadPct, RegressDecodePct: raw.Bench.RegressDecodePct,
@@ -104,7 +106,7 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 		ExcludeNodes:  trimAll(raw.ExcludeNodes),
 		NoAutoNodes:   trimAll(raw.NoAutoNodes),
 		Recovery:      raw.Recovery.value(),
-		Logs:          DefaultLogs(), // set in the stored configuration only, not in the old YAML format
+		Logs:          raw.Logs.value(),
 		Profiles:      map[string]*core.Profile{},
 	}
 	for _, t := range raw.Tiers {
@@ -164,6 +166,7 @@ type rawConfig struct {
 	HistoryKeepFiles    int                         `yaml:"history_keep_files" json:"history_keep_files,omitempty"`
 	HistoryMemoryEvents int                         `yaml:"history_memory_events" json:"history_memory_events,omitempty"`
 	LocalProbeCmd       string                      `yaml:"local_probe_cmd" json:"local_probe_cmd,omitempty"`
+	LocalNode           string                      `yaml:"local_node" json:"local_node,omitempty"`
 	DataDir             string                      `yaml:"data_dir" json:"data_dir,omitempty"`
 	WSMaxClients        int                         `yaml:"ws_max_clients" json:"ws_max_clients,omitempty"`
 	Bench               rawBench                    `yaml:"bench" json:"bench,omitempty"`
@@ -173,6 +176,7 @@ type rawConfig struct {
 	ExcludeNodes        []string                    `yaml:"exclude_nodes" json:"exclude_nodes,omitempty"`
 	NoAutoNodes         []string                    `yaml:"no_auto_nodes" json:"no_auto_nodes,omitempty"`
 	Recovery            rawRecovery                 `yaml:"recovery" json:"recovery,omitempty"`
+	Logs                rawLogs                     `yaml:"logs" json:"logs,omitempty"`
 	Profiles            map[string]*ProfileSpec     `yaml:"profiles" json:"profiles,omitempty"`
 }
 
@@ -358,6 +362,23 @@ func rawRecoveryFrom(r Recovery) rawRecovery {
 func (r rawRecovery) value() Recovery {
 	return Recovery{r.Enabled, trimAll(r.Actions), time.Duration(r.MinInterval),
 		time.Duration(r.StepWait), time.Duration(r.RequestTTL), time.Duration(r.HTTPTimeout)}
+}
+
+// rawLogs is the logs block of the YAML file: the logs_* settings.
+type rawLogs struct {
+	Enabled       bool   `yaml:"enabled" json:"enabled,omitempty"`
+	RetentionDays int    `yaml:"retention_days" json:"retention_days,omitempty"`
+	MaxDiskGiB    int    `yaml:"max_disk_gib" json:"max_disk_gib,omitempty"`
+	PushURL       string `yaml:"push_url" json:"push_url,omitempty"`
+	ClientIntake  bool   `yaml:"client_intake" json:"client_intake,omitempty"`
+}
+
+func rawLogsFrom(l Logs) rawLogs {
+	return rawLogs{l.Enabled, l.RetentionDays, l.MaxDiskGiB, l.PushURL, l.ClientIntake}
+}
+
+func (r rawLogs) value() Logs {
+	return Logs{r.Enabled, r.RetentionDays, r.MaxDiskGiB, strings.TrimSpace(r.PushURL), r.ClientIntake}
 }
 
 type rawBench struct {

@@ -11,7 +11,9 @@ default). Since 2026-11-21 the cluster runs in agents mode
 `potluck-agent`, registers with the scheduler and starts its worker per load.
 Section 7.7 says what changes in the scheduler; the wire between the two is
 `docs/agent-contract.md`. Where a section below says the nodes come from the
-fleet feed (3.3, 5, 7.1, 7.5), read it as the fleet mode.
+fleet feed (3.3, 5, 7.1, 7.5), read it as the fleet mode. In agents mode the
+scheduler stands alone: no fleet console is needed, contacted or named in its
+logs, and the fleet and recovery settings are not used (7.7).
 
 A drop-in replacement for llama-swap on the host machine that decides at load time which
 machines a model runs on. Working name of the binary: `llm-scheduler`.
@@ -1160,6 +1162,25 @@ comes from `potluck-agent` (docs/agent-contract.md) and the fleet feed is not
 read at all. `internal/pool` holds the agent registry, implements the node
 view the core reads, and runs the worker launches.
 
+- **Standing alone.** Nothing in this mode needs the fleet console. The
+  scheduler starts no fleet client and makes no start-up check of a console,
+  whatever `fleet.url` says; the start log has one INFO line, "membership is
+  agents: nodes come from potluck-agent registrations". `fleet.url`,
+  `fleet.stale_after` and the whole `recovery` section are ignored, and a
+  configuration without a `fleet` section is valid. The node view never goes
+  stale (age 0, always connected), so the fleet staleness rules and their
+  events do not occur. Messages people see say "pool" where the fleet mode
+  says "fleet" ("forced node X is absent from the pool (for 1m21s)", "forced
+  node X is not in the pool"); each message is written once and
+  `config.PoolText` derives the agents wording from one phrase table, which the
+  web UI shares (`ui/core/words.js`). Reason codes and JSON field names are
+  the same in both modes.
+- **The scheduler's own node name** is the setting `local_node` (section
+  runtime of the settings). While it is empty, `fleet.local_node` is used, so a
+  database written before the setting existed keeps its node name with no
+  migration (no_auto_nodes, exclude_nodes and force_nodes match on it). In
+  fleet mode `fleet.local_node` stays the name.
+
 - **Programs.** `--programs-dir` (`LLM_SCHEDULER_PROGRAMS_DIR`) holds
   `<release>/release.json` and its folders. At start every file named in each
   folder's `SHA256SUMS` is hashed; one missing or wrong file means the release
@@ -1186,8 +1207,9 @@ view the core reads, and runs the worker launches.
   lists more than one device of its backend uses the first; its status shows
   `extra_devices_ignored` and the log warns once per registration. The local
   node still comes from
-  `local_probe_cmd`; an agent whose id or name is `fleet.local_node` is the
-  host machine's and is not published as a remote node.
+  `local_probe_cmd`; an agent whose id or name is the local node name
+  (`local_node`, else `fleet.local_node`) is the host machine's and is not
+  published as a remote node.
 - **States.** A node is lost after 10 s without a heartbeat (shown offline;
   the load on it is killed at once, no recovery request is ever sent),
   `left` after its deregister, `removed` after `DELETE /api/nodes/{id}` until

@@ -261,6 +261,33 @@ func TestHostMachineAgentHasAReason(t *testing.T) {
 	}
 }
 
+// The local_node setting names the host machine with no fleet section at all;
+// while it is empty, fleet.local_node still does (an older database).
+func TestHostMachineAgentByLocalNodeSetting(t *testing.T) {
+	for _, c := range []struct {
+		name, setting, fleet string
+		host                 bool
+	}{
+		{"local_node only", "host-2", "", true},
+		{"fleet.local_node fallback", "", "host-2", true},
+		{"local_node wins", "host-2", "host-9", true},
+		{"no name", "", "", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := newRig(t)
+			r.cfg.Fleet = config.Fleet{LocalNode: c.fleet} // set before any agent registers
+			r.cfg.LocalNode = c.setting
+			q := regReq("02:00:00:00:00:a4")
+			q.Name = "host-2"
+			r.p.Register(q)
+			r.p.Heartbeat(q.ID, hbBody("s1", "", true, "true"))
+			if f := r.fact(q.ID); f.HostAgent != c.host || (c.host && f.Unplaced != scheduler.UnplacedHostMachine) {
+				t.Fatalf("facts %+v", f)
+			}
+		})
+	}
+}
+
 // launch_id and role in a node's status are what its agent reported in its
 // heartbeat. The launch Potluck holds for the node has its own field: it
 // exists before the agent has received anything.

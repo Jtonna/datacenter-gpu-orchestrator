@@ -22,6 +22,7 @@ import { num, mib, gb, gbNum, dur, ago, until, at, plural, toMs, now, shortId, D
 import { viewNodes, nodeMemory, staleBanner } from '../core/status.js';
 import { logsLink, nodeQuery } from '../core/logs.js';
 import { agentsMode, agentOf, notPlaceable, holdsSomething, pauseAction, sendNodeAction, NODE_ACTIONS } from '../core/nodeactions.js';
+import { poolText } from '../core/words.js';
 import { startupText, markLabel, secs, requestedText, NOT_INCLUDED, startups, loadStartups, onStartups, lastRecord } from '../core/startup.js';
 
 const CHANNEL = { ok: ['ok', 'ok-t'], silent: ['silent', 'err-t'], unknown: ['not known', 'mut'] };
@@ -184,6 +185,11 @@ function tile(st, n, refresh) {
   const other = Math.max(0, used - model);
   const usable = Math.min(Math.max(0, n.live_budget_mib || 0), free);
   const headroom = Math.max(0, free - usable);
+  // Where the figures come from, in the words of the membership; the scheduler's
+  // own machine measures itself (local_probe_cmd) in both.
+  const pool = agentsMode(st);
+  const reports = n.local && pool ? 'This machine reports ' : poolText(pool, 'The fleet reports ');
+  const asReported = n.local && pool ? ', as this machine reports it' : poolText(pool, ', as the fleet reports it');
   const notes = [];
   const note = (cls, node) => notes.push(h('div.hit', h('i', { class: cls }), h('span', node)));
 
@@ -194,9 +200,9 @@ function tile(st, n, refresh) {
       np.known ? np.text : ['The scheduler gives this reason: ', h('span.mono', np.code)],
       agent.programs_error ? [' The agent says: ', agent.programs_error] : null));
   }
-  const gone = agent ? 'its agent has not reported since ' : 'missing from the fleet feed since ';
+  const gone = agent ? 'its agent has not reported since ' : poolText(pool, 'missing from the fleet feed since ');
   if (!n.online && !n.excluded) note('x', ['Offline', n.missing_since ? [': ', gone, at(n.missing_since), ' (', ago(n.missing_since), ')'] : '.']);
-  else if (n.missing_since) note('a', [agent ? 'Its agent has not reported since ' : 'Missing from the fleet feed since ', at(n.missing_since), '.']);
+  else if (n.missing_since) note('a', [agent ? 'Its agent has not reported since ' : poolText(pool, 'Missing from the fleet feed since '), at(n.missing_since), '.']);
   if (q || n.quarantined) {
     note('x', ['Set aside ', q ? ['until ', at(q.until), ' (', until(q.until), ')'] : ['since ', at(n.quarantined)],
       q && q.level > 1 ? ` after ${plural(q.level, 'failed check')} in a row` : ' after a failed pre-load check or a worker that stopped answering', '. It gets no new model until then.']);
@@ -225,7 +231,7 @@ function tile(st, n, refresh) {
   }
   const overridden = toMs(n.override_until) && toMs(n.override_until) > now();
   if (disagree) {
-    note('', [overridden ? 'The last pre-load check measured ' : 'The fleet reports ', h('b', gb(freeRaw)), ' free, more than the ', gb(total),
+    note('', [overridden ? 'The last pre-load check measured ' : reports, h('b', gb(freeRaw)), ' free, more than the ', gb(total),
       ' it reports in total, so free is shown as the total', overridden ? ['; the measured figure is used ', until(n.override_until)] : '', '.']);
   } else if (overridden) {
     note('', ['The last pre-load check measured ', h('b', gb(n.override_free_mib)), ' free; that figure is used ', until(n.override_until), '.']);
@@ -252,11 +258,11 @@ function tile(st, n, refresh) {
           `${name}: ${gb(used)} in use of ${gb(total)}` + (usableNode ? `, ${gb(usable)} usable for a new model` : '')),
         h('div.memline', h('span', h('b', gbNum(used)), ' GB in use', model > 0 && other > 0 ? ` · ${gbNum(model)} by the model` : ''), h('span', gbNum(total), ' GB total'))) : null,
       n.excluded
-        ? h('div.trio', stat('Free', gbNum(free), 'GB', { small: true, title: mib(free) + ', as the fleet reports it' }),
+        ? h('div.trio', stat('Free', gbNum(free), 'GB', { small: true, title: mib(free) + asReported }),
           stat('Total', gbNum(total), 'GB', { small: true, title: mib(total) }))
         : h('div.trio',
           stat('Usable now', usableNode ? gbNum(usable) : DASH, usableNode ? 'GB' : null, { small: true, title: usableNode ? `${mib(usable)}: the free memory minus the headroom of its tier; what a new model may take right now` : 'Nothing can be placed here now' }),
-          stat('Free', gbNum(free), 'GB', { small: true, title: `${mib(free)}, as the fleet reports it` + (headroom ? `; ${mib(headroom)} of it is kept as headroom` : '') }),
+          stat('Free', gbNum(free), 'GB', { small: true, title: mib(free) + asReported + (headroom ? `; ${mib(headroom)} of it is kept as headroom` : '') }),
           stat('When empty', n.plan_budget_mib ? gbNum(n.plan_budget_mib) : DASH, n.plan_budget_mib ? 'GB' : null, { small: true, title: n.plan_budget_mib ? `${mib(n.plan_budget_mib)}: what the scheduler plans with once nothing is loaded here` : null })),
       notes.length ? h('div', { style: 'display:flex;flex-direction:column;gap:8px' }, h('div.note-s', { style: 'display:flex;flex-direction:column;gap:8px' }, notes)) : null,
       agent && agent.last_startup ? startupPart(n, agent.last_startup, refresh) : null),

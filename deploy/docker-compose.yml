@@ -1,15 +1,23 @@
-# llm-scheduler: replaces llama-swap on the host machine (design section 10).
-# Deploy to /opt/llm-scheduler (owner admin), next to the old /opt/llama-swap.
-# NEVER run this and llama-swap at the same time: a worker serves one client.
-name: llm-scheduler
+# Potluck: the scheduler, the model share and the log store, as a standing deployment
+# (design section 10, docs/runbook.md "Move an existing deployment to the standing layout").
+# Nodes come from potluck-agent registrations (membership agents): no fleet console is needed.
+#
+# Everything the deployment keeps on the host lives under ONE folder, POTLUCK_ROOT
+# (default /srv/potluck; set it in an .env file next to this file to move it):
+#   programs/    the program sets handed out to agents (read only here)
+#   data/        the scheduler database, scheduler.db: all configuration, audit, benchmarks
+#   history/     the event history (JSON Lines)
+#   child-logs/  the full output of every child llama-server, one file per start
+#   logs-store/  the log store's data (central logging)
+# The model files are the models volume at the bottom; it is not under POTLUCK_ROOT.
+name: potluck
 
 services:
-  llm-scheduler:
+  potluck:
     image: llm-scheduler:local        # built by deploy/Dockerfile, see docs/runbook.md
-    # Must stay "llama-swap": the hub finds the container by that name prefix.
-    container_name: llama-swap
+    container_name: potluck
     restart: unless-stopped
-    logging:                          # the container's own log (docker logs); child output goes to ./logs
+    logging:                          # the container's own log (docker logs); child output goes to child-logs
       driver: json-file
       options:
         max-size: 50m
@@ -17,31 +25,34 @@ services:
     init: true                        # reaps children; each child has its own process group
     stop_grace_period: 330s           # shutdown_grace (300s) + 30s, design 8.6
     ports:
-      - "0.0.0.0:3122:8080"           # same binding as llama-swap today
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - "0.0.0.0:3122:8080"           # the API, the web UI and the agents' address (agents use <host ip>:3122)
     volumes:
       - models:/models:ro             # the models volume, defined at the bottom
-      # Full output of every child llama-server, one file per start (the child log
-      # directory, LLM_SCHEDULER_CHILD_LOG_DIR). Created on first start; old files are pruned.
-      - ./logs:/var/log/llm-children
-      # The event history (LLM_SCHEDULER_HISTORY_DIR): JSON Lines, rotated by size,
-      # read by GET /api/history and the dashboard at /ui/. Survives image swaps.
-      - ./history:/var/lib/llm-scheduler/history
+      # Full output of every child llama-server, one file per start (LLM_SCHEDULER_CHILD_LOG_DIR).
+      # Old files are pruned.
+      - ${POTLUCK_ROOT:-/srv/potluck}/child-logs:/var/log/llm-children
+      # The event history (LLM_SCHEDULER_HISTORY_DIR): JSON Lines, rotated by size, read by
+      # GET /api/history and the web UI. Survives image swaps.
+      - ${POTLUCK_ROOT:-/srv/potluck}/history:/var/lib/llm-scheduler/history
       # The scheduler database (LLM_SCHEDULER_DATA_DIR): ALL configuration (profiles, tiers,
       # settings), its revisions and the audit log, plus benchmarks and runs, in scheduler.db
       # (SQLite, WAL). Back it up with the container stopped, or with sqlite3 .backup
-      # (runbook "Backup and restore"). Survives image swaps. There is no config file to mount.
-      - ./data:/var/lib/llm-scheduler/data
+      # (runbook "Backup and restore"). There is no config file to mount.
+      - ${POTLUCK_ROOT:-/srv/potluck}/data:/var/lib/llm-scheduler/data
+      # The program sets handed out to agents (LLM_SCHEDULER_PROGRAMS_DIR):
+      # programs/<release>/release.json and its folders. Read only.
+      - ${POTLUCK_ROOT:-/srv/potluck}/programs:/var/lib/llm-scheduler/programs:ro
       # Used once, by `import-config`, on first install (runbook "First install and import").
+      # It ships with this file; it is not deployment data.
       - ./seed-config.yaml:/seed/seed-config.yaml:ro
-      # No /run/avahi-daemon mount: the scheduler uses IP addresses only.
     environment:
+      LLM_SCHEDULER_PROGRAMS_DIR: /var/lib/llm-scheduler/programs
       # Central logging (CR-10): the log store below, on the compose network, behind its
       # path prefix. Remove this line to turn central logging off (runbook "Central logging").
       LLM_SCHEDULER_LOGS_STORE_URL: http://potluck-logs:9428/logs
     networks:
-      - sched
+      sched:
+        ipv4_address: 172.30.0.2      # fixed, so other services can name Potluck by address
     deploy:
       resources:
         reservations:
@@ -50,14 +61,14 @@ services:
               count: all
               capabilities: [gpu]
 
-  # The share: a read-only NFSv4 export of the models volume, for PS5s that read model
+  # The share: a read-only NFSv4 export of the models volume, for workers that read model
   # files themselves (docs/server-mode-interface.md section 7.6). No code of ours: a pinned
   # third-party image around the kernel NFS server. A separate container so that a scheduler
   # redeploy does not cut the share, and so that the scheduler runs without SYS_ADMIN.
   # Host requirement: kernel modules nfs and nfsd loaded (a file in /etc/modules-load.d/).
-  llm-share:
+  potluck-share:
     image: erichough/nfs-server@sha256:784ef30907aa318b8324c4c49bd258b11a740ab0eea9f09b5ccf9df378fa77ca
-    container_name: llm-scheduler-share
+    container_name: potluck-share
     restart: unless-stopped
     cap_add:
       - SYS_ADMIN                     # the minimum the kernel NFS server needs; not privileged
@@ -74,7 +85,7 @@ services:
       NFS_DISABLE_VERSION_3: "1"
     volumes:
       - models:/models:ro
-      - /lib/modules:/lib/modules:ro
+      - /lib/modules:/lib/modules:ro  # the host's kernel modules (system path, not deployment data)
     networks:
       - sched
 
@@ -97,13 +108,44 @@ services:
     mem_limit: 512m
     volumes:
       # The stored log lines. Delete this folder (with the service stopped) to wipe them.
-      - ./logs-store:/storage
+      - ${POTLUCK_ROOT:-/srv/potluck}/logs-store:/storage
     networks:
       - sched
 
+  # OPTIONAL, for a later phase: an agent on the scheduler's own host, so its GPU joins the
+  # pool like any worker. UNTESTED ON REAL HARDWARE until the lead confirms it. It does not
+  # start by default; start it with
+  #   docker compose --profile local-agent up -d
+  # The image: build deploy/agent/Dockerfile with the agent binary Potluck serves
+  # (GET /api/pool/release, check its sha256), tagged with the release:
+  #   docker build -f deploy/agent/Dockerfile --build-arg AGENT_BIN=potluck-agent-linux-amd64 \
+  #     -t potluck-agent:0.1.3 <folder holding the binary>
+  # It sits on the compose network, NOT on the host network: container-to-container traffic on
+  # this network does not pass the host firewall, and it reaches Potluck at its fixed address.
+  # The agent takes an IPv4 address and port (not a host name): the scheduler's address on this
+  # network and its port inside the container (8080, not the published 3122).
+  potluck-agent:
+    profiles: [local-agent]
+    image: potluck-agent:0.1.3
+    container_name: potluck-agent
+    restart: unless-stopped
+    init: true
+    command: ["--potluck", "172.30.0.2:8080", "--model-source", "dir:/models", "--install", "docker"]
+    # The agent derives its node id from the MAC of the interface on its route to Potluck, so
+    # the MAC must stay the same when the container is re-created. A locally administered
+    # example value: it MUST be unique per deployment (and on this network).
+    mac_address: "02:00:00:00:00:10"
+    gpus: all
+    volumes:
+      - models:/models:ro             # the same model files, read only, read from disk (dir:/models)
+      - potluck-agent-data:/var/lib/potluck-agent   # the agent's programs and launch logs
+    networks:
+      sched:
+        ipv4_address: 172.30.0.10
+
 volumes:
-  # One volume for the model files, mounted read-only by the scheduler and by the share.
-  # A bind to the existing directory: nothing is copied and llama-swap keeps reading it.
+  # One volume for the model files, mounted read-only by the scheduler, the share and the agent.
+  # A bind to the existing directory: nothing is copied.
   models:
     name: llm-models
     driver: local
@@ -111,10 +153,14 @@ volumes:
       type: none
       o: bind
       device: /srv/llama-swap/models
+  # The data directory of the optional host agent (potluck-agent service).
+  potluck-agent-data:
 
 networks:
   sched:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.30.0.0/24       # the host firewall rule for :8090 names this subnet
+        # Keep this subnet exactly: a host firewall rule names it. Two compose networks cannot
+        # hold the same subnet at once, so an older project on it must be down first (runbook).
+        - subnet: 172.30.0.0/24

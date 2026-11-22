@@ -1,5 +1,7 @@
 // Settings (Configure): every key of the settings, recovery and fleet scopes,
-// grouped by schema section, generated from GET /api/config/schema. Each shows
+// grouped by schema section, generated from GET /api/config/schema. With
+// membership agents the recovery and fleet sections are folded and marked
+// "Not used in this mode". Each shows
 // its value, unit, default, whether it was changed from the default, and
 // whether it only takes effect after a restart. Edits collect in the pending
 // bar; Review changes does a dry run and saves with If-Match and a comment.
@@ -24,15 +26,24 @@ const pending = new Map();
 const SECTIONS = [
   ['timing', 'Timing', 'How long models are held, how long requests wait, and when a stuck load or stream is given up on.'],
   ['capacity', 'Capacity', 'How far a model may be spread across nodes and how much memory is set aside.'],
-  ['runtime', 'Runtime', 'The llama.cpp binary and the local GPU.'],
+  ['runtime', 'Runtime', 'The llama.cpp binary, the local GPU and the node name of the machine the scheduler runs on.'],
   ['safety', 'Safety', 'Checks that keep the scheduler from starting a model that will not fit. Loosening them trades safety for room.'],
   ['workers', 'Workers', 'How quickly a silent or hung worker is noticed.'],
   ['retention', 'Retention', 'How much history and how many log files are kept.'],
   ['api', 'API', 'Limits of the web socket and the API.'],
   ['bench', 'Benchmarks', 'The benchmark feature and when it flags a regression.'],
+  ['agents', 'Agents', 'Where the nodes come from, and how the machines that run potluck-agent are used.'],
+  ['logs', 'Central logging', 'Whether log lines are collected, how long the log store keeps them and who may send them.'],
   ['recovery', 'Recovery', 'What the scheduler asks the fleet manager to do for a worker that stopped answering.'],
   ['fleet', 'Fleet', 'The connection to the fleet console that lists the nodes.'],
 ];
+
+// The sections that membership agents does not read: shown folded and marked
+// "Not used in this mode", with the reason, instead of as live settings.
+const UNUSED_WITH_AGENTS = {
+  recovery: 'Not used in this mode: with agents, the scheduler never sends recovery requests.',
+  fleet: 'Not used in this mode: the nodes come from agent registrations, not from a fleet console. Only local_node is still read here, while the local_node setting under Runtime is empty.',
+};
 
 // What loosening a safety setting risks, one plain line each (the schema text says what it does).
 const RISK = {
@@ -161,15 +172,20 @@ registerView({
       if (!fields) return;
       rows.clear(); sectionEls.clear();
       const cards = [];
+      const agents = !!cfg && !!cfg.settings && cfg.settings.membership === 'agents';
       for (const [sec, title, blurb] of SECTIONS) {
         const fs = fields.filter(f => f.section === sec);
         if (!fs.length) continue;
         const list = h('div.form-grid');
         const count = h('span.note');
         for (const f of fs) list.appendChild(buildRow(f).el);
-        const card = h('section.card', { 'aria-label': title, 'data-sec': sec },
-          h('div.ch', h('h2', title), count), h('div.cb', { style: 'padding-top:0;display:flex;flex-direction:column;gap:14px' }, h('p.mut', blurb), list));
-        sectionEls.set(sec, { card, count, fs });
+        const unused = agents && UNUSED_WITH_AGENTS[sec];
+        // folded: the settings stay reachable (search opens the fold) but do not read as live
+        const fold = unused ? h('details', h('summary.mut', { style: 'cursor:pointer;font-weight:600' }, 'Show these settings'), list) : null;
+        const card = h('section.card', { 'aria-label': title, 'data-sec': sec, class: unused ? 'card quiet' : 'card' },
+          h('div.ch', h('h2', title), unused ? badge('Not used in this mode', 'dash', 'membership is agents') : null, count),
+          h('div.cb', { style: 'padding-top:0;display:flex;flex-direction:column;gap:14px' }, h('p.mut', unused || blurb), fold || list));
+        sectionEls.set(sec, { card, count, fs, fold });
         cards.push(card);
       }
       const none = h('div', { key: 'none', hidden: true }, empty('No setting matches', 'Try another word. The search looks at the key, the name and the description.'));
@@ -191,6 +207,7 @@ registerView({
           if (hit) n++;
         }
         s.card.hidden = n === 0;
+        if (s.fold && q && n > 0) s.fold.open = true; // a search hit inside a fold is shown; otherwise the fold stays as the reader left it
         const changed = s.fs.filter(f => pending.has(pkey(f.scope, f.key))).length;
         s.count.textContent = (q ? `${n} of ${s.fs.length} shown` : plural(s.fs.length, 'setting')) + (changed ? ` · ${changed} unsaved` : '');
         if (n) shownAny = true;

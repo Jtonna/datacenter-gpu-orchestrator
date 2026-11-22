@@ -11,6 +11,7 @@ import { getActor, setActor } from './api.js';
 import { dur, durShort, plural } from './format.js';
 import { promptText } from './ui.js';
 import { LOGS_PAGE, logsOn, logsURL } from './logs.js';
+import { agentsMode } from './nodeactions.js';
 
 // The navigation. A view module registers under the same id (views/<id>.js).
 export const NAV = [
@@ -66,6 +67,8 @@ export function connectionFacts() {
   const age = view.age >= 0 ? view.age + (Date.now() - state.statusAt) / 1000 : null;
   if (view.stale) return { dot: 'warn', title: 'Live', note: 'Fleet feed stale' + (age != null ? ' · ' + dur(Math.round(age)) + ' old' : ''), warn: true };
   if (!view.connected) return { dot: 'warn', title: 'Live', note: 'Fleet feed disconnected', warn: true };
+  // Membership agents has no feed (never stale, never disconnected): say where the nodes come from.
+  if (agentsMode(st)) return { dot: '', title: 'Live', note: 'Nodes come from agent registrations' };
   return { dot: '', title: 'Live', note: 'Fleet feed fresh' + (age != null ? ' · updated ' + durShort(age) + ' ago' : '') };
 }
 

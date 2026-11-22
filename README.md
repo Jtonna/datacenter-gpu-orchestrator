@@ -39,6 +39,21 @@ There is no authentication. Run it on a network you trust.
 - **Ports a machine must accept from Potluck** (TCP, inbound): `50060` (the agent API) and `50052` (the worker during a load); `50061` (a server on the machine) comes later. A machine whose firewall drops them registers fine but gets no load: its status says `agent_unreachable`. `potluck-agent-setup` opens them in ufw when ufw is active.
 - **No authentication**, on Potluck's port or on the agents' ports. Anyone who can reach them can use and change the pool.
 
+## Potluck stands alone
+
+With `membership: agents` (the default of the deployment files) Potluck needs
+three things: a Linux host with Docker (and an Nvidia GPU if the host's own
+card should serve models), the model files in one folder on that host, and
+`potluck-agent` on every worker machine. The compose file in `deploy/` runs the
+scheduler, a read-only share of the model files and the log store, keeps
+everything it stores under one folder (`POTLUCK_ROOT`, default
+`/srv/potluck`), and brings it all back after a restart of the host. It needs
+no fleet console, fleet manager or hub, and no service on the workers besides
+the agent: the workers register themselves, and Potluck neither connects to
+nor logs about anything else. The runbook says how to move an older
+deployment to this layout (section K) and what comes back after a restart
+(section L).
+
 ## Related projects
 
 - Built on our llama.cpp fork: https://github.com/Jtonna/llama.cpp-for-datacenter-gpu-orchestrator. The fork carries the changes Potluck needs for loading a model across machines: parallel upload to workers, loader fixes, and workers that read model files themselves from a shared folder.

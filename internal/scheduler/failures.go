@@ -73,7 +73,7 @@ func (c *schedCore) refreshView() {
 		if n, ok := raw[id]; ok && !c.excludedSeen[id] {
 			if entry, hit := c.cfg.ExcludedBy(n.ID, n.Hostname); hit {
 				c.excludedSeen[id] = true
-				c.log.Info("excluded node in fleet view", "node", id, "hostname", n.Hostname, "entry", entry)
+				c.log.Info(c.say("excluded node in fleet view"), "node", id, "hostname", n.Hostname, "entry", entry)
 			}
 		}
 	}
@@ -151,6 +151,8 @@ func (c *schedCore) forcedState(name string) string {
 	return ""
 }
 
+// The states of forcedState in their fleet wording; c.say gives the
+// wording of membership agents ("absent from the pool").
 const (
 	forcedAbsent  = "absent from the fleet"
 	forcedOffline = "offline in the fleet"
@@ -218,7 +220,7 @@ func (c *schedCore) forcedGoneErr(p *core.Profile) *Error {
 	}
 	return err503(ReasonForcedUnavailable,
 		fmt.Sprintf("forced node %s is %s (for %v); profile %s cannot start until it is back, so this fails now instead of waiting for queue_timeout",
-			name, state, missing, p.Name), queueRetryAfter)
+			name, c.say(state), missing, p.Name), queueRetryAfter)
 }
 
 // failFastForced returns the fail-fast error for p, logging the reason, or
@@ -230,7 +232,7 @@ func (c *schedCore) failFastForced(p *core.Profile, waiters int) *Error {
 	}
 	name, state, missing := c.forcedGoneName(p)
 	c.log.Warn("forced node unavailable; failing the request", "profile", p.Name, "node", name,
-		"state", state, "for", missing, "waiters", waiters)
+		"state", c.say(state), "for", missing, "waiters", waiters)
 	return err
 }
 

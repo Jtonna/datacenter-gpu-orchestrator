@@ -75,18 +75,20 @@ func TestRecoveryConfigRejects(t *testing.T) {
 	}
 }
 
-// Both config files carry the recovery block as comments, with the defaults
-// the parser applies (the block stays commented out: the feature is off).
-func TestExampleConfigsDocumentRecovery(t *testing.T) {
+// Both config files describe membership agents, which uses neither the
+// recovery nor the fleet section: neither appears, not even as a comment, and
+// the parsed values are the defaults.
+func TestExampleConfigsLeaveRecoveryAndFleetOut(t *testing.T) {
 	for _, rel := range []string{"configs/example.yaml", "deploy/seed-config.yaml"} {
 		b, err := os.ReadFile(filepath.Join("..", "..", rel))
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, want := range []string{"# recovery:", "#   enabled: false", "#   actions: [restart_rpc_server]",
-			"#   min_interval: 120s", "#   step_wait: 90s", "#   request_ttl: 45s", "#   http_timeout: 3s"} {
-			if !strings.Contains(string(b), want) {
-				t.Errorf("%s lacks %q", rel, want)
+		for _, line := range strings.Split(string(b), "\n") {
+			l := strings.TrimLeft(strings.TrimSpace(line), "# ")
+			if strings.HasPrefix(l, "recovery:") || strings.HasPrefix(l, "fleet:") || strings.HasPrefix(l, "node_overrides:") ||
+				strings.Contains(l, "host.docker.internal") || strings.Contains(l, ":8090") {
+				t.Errorf("%s: %q belongs to the fleet console", rel, line)
 			}
 		}
 		c, err := LoadWithOptions(filepath.Join("..", "..", rel), Options{FileExists: existsAll})

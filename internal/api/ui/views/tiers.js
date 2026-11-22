@@ -16,6 +16,8 @@ import { liveView, pageHead, badge, nodeChips, nodeChip, table, empty, banner, s
 import { num, mib, plural, DASH } from '../core/format.js';
 import { viewNodes } from '../core/status.js';
 import { loadSchema, loadConfig, fieldsOf, clone, same } from '../core/configdata.js';
+import { agentsMode } from '../core/nodeactions.js';
+import { poolText } from '../core/words.js';
 import { pendingBar, reviewChanges, savedBanner, watchConfig, noticeBanner } from '../core/changes.js';
 
 // Unsaved edits survive a visit to another screen: {tiers, exclude, noauto, overrides} or null.
@@ -255,9 +257,10 @@ registerView({
         { label: 'Online', cls: 'tight', render: n => (n.online ? h('span.ok-t', 'Online') : h('span.err-t', 'Offline')) },
       ].filter(Boolean);
       return h('section.card', { key: 'nodes' },
-        h('div.ch', h('h2', 'Which tier each node matches'), h('span.note', 'From the live fleet view. Role and source rules cannot be checked here.')),
+        h('div.ch', h('h2', 'Which tier each node matches'), h('span.note', poolText(agentsMode(state.status), 'From the live fleet view. Role and source rules cannot be checked here.'))),
         nodes.length ? table({ columns, rows: nodes, key: n => n.id, minWidth: 720 })
-          : empty('No nodes known yet', 'The scheduler has not heard of any node. When the fleet feed connects, they appear here.'));
+          : empty('No nodes known yet', agentsMode(state.status) ? 'The scheduler has not heard of any node. Machines appear here when their agent registers.'
+            : 'The scheduler has not heard of any node. When the fleet feed connects, they appear here.'));
     }
 
     // The two node lists: exclude_nodes and no_auto_nodes. Same entries
@@ -298,7 +301,8 @@ registerView({
       const o = work().overrides, names = Object.keys(o).sort();
       const o0 = cfg.node_overrides || {};
       return h('section.card', { key: 'overrides' },
-        h('div.ch', h('h2', 'Node overrides'), h('span.note', 'Use a fixed rpc-server address for a node instead of the one the fleet console reports.'),
+        h('div.ch', h('h2', 'Node overrides'), agentsMode(state.status) ? badge('Not used in this mode', 'dash', 'Agents report their own addresses; node overrides apply only with membership fleet.') : null,
+          h('span.note', 'Use a fixed rpc-server address for a node instead of the one the fleet console reports.'),
           h('span.right', button('Add an override', () => editOverride(null), 'sm'))),
         names.length ? table({
           minWidth: 560, rows: names, key: n => n,

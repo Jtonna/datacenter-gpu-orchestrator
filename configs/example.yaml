@@ -5,30 +5,42 @@
 # afterwards the database is the source of truth (REST /api/config, MCP, web UI).
 # listen, models_dir, data_dir, history_dir and child_log_dir below are deployment
 # paths: they are not imported, they are set by flags or LLM_SCHEDULER_* variables.
-# Nodes are not listed here: the fleet console reports them. This file only says
-# how to rank them (tiers) and what to run on them (profiles).
+# Nodes are not listed here: each worker runs potluck-agent and registers itself
+# (membership agents). This file only says how to rank them (tiers) and what to
+# run on them (profiles). No fleet console is needed: the fleet and recovery
+# sections of older files are not used with membership agents.
 #
 # Example pool used below: one host machine with an Nvidia GPU (host-1, where the
-# scheduler runs), one Nvidia laptop (laptop-1) and a few consoles (console-1,
-# console-2, ...) whose GPU memory is system RAM. Each remote node runs a llama.cpp
-# rpc-server on port 50052.
+# scheduler runs), Nvidia laptops (laptop-1, ...) and consoles whose GPU memory is
+# system RAM. The consoles are matched by the platform their agent registers with,
+# so a console that gets a new hostname still lands in its tier.
 
 listen: ":8080"                    # address the scheduler's HTTP API listens on (compose maps it to 3122)
-fleet:
-  url: http://host.docker.internal:8090   # base URL of the fleet console; empty = only the local node is used
-  local_node: host-1               # the fleet name of the host the scheduler runs on
-  stale_after: 60s                 # age of the fleet view beyond which remote nodes are not used
+local_node: host-1                 # the node name of the machine the scheduler runs on (no_auto_nodes, exclude_nodes and force_nodes can name it)
 models_dir: /models                # directory that holds the model files (GGUF) named by the profiles
 # child_log_dir: /var/log/llm-children   # optional: keep each child llama-server's full output, one file per start
 # child_log_keep: 200              # most files kept in child_log_dir; the oldest are deleted
-# history_dir: /var/lib/llm-scheduler/history   # optional: keep the scheduler's safety and lifecycle events (loads, stalls, hung workers, quarantines, recovery requests, ...) as JSON Lines, for GET /api/history and the dashboard at /ui/. Empty = off
+# history_dir: /var/lib/llm-scheduler/history   # optional: keep the scheduler's safety and lifecycle events (loads, stalls, hung workers, quarantines, ...) as JSON Lines, for GET /api/history and the dashboard at /ui/. Empty = off
 # history_max_file_mib: 16         # a history file is rotated at this size
 # history_keep_files: 20           # most history files kept; the oldest are deleted
 # history_memory_events: 5000      # newest events held in memory for queries (reloaded from the files at start)
 # data_dir: /var/lib/llm-scheduler/data   # optional: the scheduler database (scheduler.db, SQLite) that holds benchmarks, suites and every run's results (design 9.3). Put it on a volume. Empty = the benchmark feature is off (its endpoints answer 503); everything else works
 # ws_max_clients: 32               # most concurrent /ws (WebSocket) clients; the next one is refused with 503. /ws allows same-origin and private-LAN origins only
 
+# Central logging (CR-10, docs/cr-10-central-logging.md). The log store's address is a deployment
+# fact (LLM_SCHEDULER_LOGS_STORE_URL, set by compose), not a setting.
+logs:
+  enabled: true            # false: no logs object is handed out and the log routes answer 404
+  retention_days: 14       # how long the log store keeps lines; keep it equal to the store's -retentionPeriod
+  max_disk_gib: 20         # most disk the log store uses; keep it equal to the store's -retention.maxDiskSpaceUsageBytes
+  client_intake: true      # let clients push log lines to POST /api/logs
+  # push_url: ""           # set (http:// or https://) to tell senders another address than Potluck's own route
+
 defaults:
+  membership: agents       # nodes come from potluck-agent registrations (agent contract); read once at start
+  # worker_model_dir: false   # true: agent workers read model files themselves instead of receiving the weights over the worker connection
+  # watchdog_floor_mib: 1000  # the agents' memory watchdog floor
+  # worker_start_timeout: 15s # how long the worker launches of a load may stay starting
   ttl: 300s                # unload a model after this long idle; 0 = never
   min_hold: 30s            # least time an instance is protected from being displaced (8.3)
   max_hold: 900s           # longest time an instance is protected from being displaced
@@ -44,73 +56,51 @@ defaults:
   cache_ram_mib: 2048      # per-instance prompt cache limit on the host
   server_bin: llama-server-rpc   # the llama.cpp server binary started for each model
   local_device: CUDA0      # the llama.cpp device name of the local GPU
-  # forced_node_grace: 30s  # a force_nodes node absent or offline this long in a live fleet view fails the request now (not after queue_timeout)
-  # forced_fit_check: off   # off | warn | reject. A force_nodes profile skips the placer's fit check; with warn or reject its need is compared with the forced nodes' usable memory at pre-flight: warn logs and starts anyway, reject answers 503 "forced nodes do not fit"
+  # forced_node_grace: 30s  # a force_nodes node absent from or offline in the pool this long fails the request now (not after queue_timeout)
+  # forced_fit_check: off   # off | warn | reject. A force_nodes profile skips the placer's fit check; with warn or reject its need is compared with the forced nodes' usable memory at pre-flight: warn logs and starts anyway, reject answers 503 "forced nodes do not fit". Agent machines are always checked
   # Memory safety on shared-memory nodes (GPU memory is system RAM; a load that exhausts it can make the whole machine unreachable). The scheduler plans so a load fits and watches while it runs:
   # split_skew_margin: 0.15      # 0 to 1. A split model does not land evenly: every multi-node placement that includes a shared-memory node must fit that node's expected share, need x split fraction x (1 + this), into its usable memory
   # estimate_margin: 0.05        # 0 to 1. Added to every need that is an estimate (a profile without needs_mib): need x (1 + this). A successful load teaches the scheduler the measured size for the rest of the run
   # load_memory_floor_mib: 768   # 0 = off. While a load runs on shared-memory nodes, a node whose available memory falls below this is cancelled at once (the child is killed, waiting requests get 502)
-  # Worker health (design 8.4a) is always on for every remote worker that backs an instance: upload progress and the fleet heartbeat are watched, a worker with both silent is hung and its node is quarantined. Only the TCP connect probe is optional.
-  # worker_silence: 30s         # a worker's upload progress or fleet heartbeat counts as silent after this long without news
+  # Worker health (design 8.4a) is always on for every remote worker that backs an instance: upload progress and the node's heartbeat are watched, a worker with both silent is hung and its node is quarantined. Only the TCP connect probe is optional.
+  # worker_silence: 30s         # a worker's upload progress or heartbeat counts as silent after this long without news
   # worker_probe_interval: 0    # DEFAULT 0 = the TCP connect probe never runs. Leave it off for rpc-server workers: an rpc-server accepts one client at a time, so repeated connect probes fill its listen backlog. Set e.g. 10s only for workers that accept parallel connections
   # worker_probe_during_inference: false  # only with the probe on: also probe while the instance has a request in flight
 
 tiers:                     # how nodes are ranked. First match wins; a node matching no tier is never used
-  - match: { hostname: "console-*" }   # case-insensitive hostname glob a node must match
+  - match: { platform: "linux-amd64-vulkan" }   # the platform an agent registered with (exact): the consoles
     priority: 1            # lower is preferred: models go to these nodes first
     headroom_mib: 1024     # memory kept free on each node of this tier
     shared_memory: true    # the node's GPU memory is system RAM
     link_mb_s: 100         # link speed in MB/s, used to size load timeouts
     settle: 3s             # how long a node is unusable after an instance releases it
-  - match: { hostname: "laptop-*" }
+    # A tier can also match a device an agent reports (a case-insensitive glob), for example
+    # match: { platform: "linux-amd64-vulkan", device: "AMD Custom GPU*" }
+  - match: { hostname: "laptop-*" }   # a CUDA laptop, by its hostname (a case-insensitive glob)
     priority: 2
     headroom_mib: 256      # dedicated VRAM; pre-flight gives exact figures
     link_mb_s: 60
     settle: 8s
-  # With membership: agents a node can also be matched on what its agent reports,
-  # so the tier does not depend on a hostname (a console gets a new one at each flash):
-  # - match: { platform: "linux-amd64-vulkan", device: "AMD Custom GPU*" }   # platform is exact; device is a case-insensitive glob on a reported GPU model or device name
-  #   priority: 1
-  #   headroom_mib: 1024
-  #   shared_memory: true
-  - match: { local: true } # true matches only the host the scheduler runs on
+  - match: { local: true } # true matches only the host the scheduler runs on (local_node)
     priority: 3
     headroom_mib: 450      # what the driver reports minus what llama.cpp can really use
     settle: 2s
 
-# Optional: an address that wins over the one the fleet reports (ip and rpc_port).
-# Use it only to pin a node whose fleet address is missing or wrong.
-# node_overrides:
-#   laptop-1: { rpc: "192.0.2.3:50052" }   # hostname or node id -> rpc-server address
-
 # Optional: nodes that are never used. Each entry is a node id (a MAC such as
 # 02:00:00:00:00:01) or a hostname glob; matching ignores case. An excluded node
 # gets no model, is not counted in capacity checks and is never pre-flighted, but
-# it still shows in /api/status (excluded: true). The console-* tier keeps finding
-# every other console. Excluding wins over force_nodes. Excluding the local node
-# (host-1) means the host machine's GPU is never used.
+# it still shows in /api/status (excluded: true). Excluding wins over force_nodes.
+# Excluding the local node (host-1) means the host machine's GPU is never used.
 # exclude_nodes:
 #   - console-test*
 
 # Optional: nodes for forced profiles only. Same entries and matching as
 # exclude_nodes. Automatic placement never picks such a node and never evicts
 # what runs on it; a profile that names it in force_nodes still uses it.
-# /api/status shows auto: false for it. exclude_nodes wins.
+# /api/status shows auto: false for it. exclude_nodes wins. Here: the host's
+# own GPU only serves profiles that name host-1.
 # no_auto_nodes:
-#   - laptop-*
-
-# Optional: recovery requests (design 8.4b). OFF by default; nothing is ever sent unless enabled is true.
-# When worker health marks a remote worker "hung", the scheduler can ask the fleet manager to relay a
-# recovery request to that node; a small service on the node polls the fleet manager, acts, and reports
-# the outcome (shown as nodes[].recovery in GET /api/status). The scheduler never contacts the node itself.
-# WARNING: restart_docker and reboot interrupt EVERYTHING on that machine. Leave them out unless you want that.
-# recovery:
-#   enabled: false                 # true = send requests
-#   actions: [restart_rpc_server]  # escalation order; allowed: restart_rpc_server, restart_docker, reboot (in this order, each once)
-#   min_interval: 120s             # least time between two requests for one node; at least 60s
-#   step_wait: 90s                 # how long a step gets to take effect before the next step is sent
-#   request_ttl: 45s               # how long a request stays valid at the node; at most 60s
-#   http_timeout: 3s               # timeout of the POST to the fleet manager; one retry after 10s on a 5xx or timeout
+#   - host-1
 
 profiles:                  # what clients can ask for; the key is the model name in API requests
   qwen3-4b:

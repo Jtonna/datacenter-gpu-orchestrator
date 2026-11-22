@@ -42,6 +42,10 @@ func mk(scope, section, key, typ, unit, desc string, ptr func(c *Config) any, mi
 	return Field{Key: key, Scope: scope, Section: section, Type: typ, Unit: unit, Description: desc, ptr: ptr, Min: min, Max: max}
 }
 
+// notWithAgents ends the description of a recovery or fleet key that
+// membership agents ignores.
+const notWithAgents = " Not used with membership agents."
+
 // settingFields is every key of the settings, recovery and fleet scopes.
 var settingFields = buildSettingFields()
 
@@ -80,6 +84,7 @@ func buildSettingFields() []Field {
 		s("server_bin", "runtime", "The llama.cpp server binary started for each model; read once at start because pre-flight probing uses it.", func(c *Config) *string { return &c.Defaults.ServerBin }),
 		s("local_device", "runtime", "The llama.cpp device name of the local GPU (for example CUDA0).", func(c *Config) *string { return &c.Defaults.LocalDevice }),
 		s("local_probe_cmd", "runtime", "Command that reports the local GPU's total and used memory.", func(c *Config) *string { return &c.LocalProbeCmd }),
+		s("local_node", "runtime", "The node name of the machine the scheduler runs on (no_auto_nodes, exclude_nodes and force_nodes can name it). Used with membership agents; while it is empty, fleet.local_node is used instead. With membership fleet, fleet.local_node is used.", func(c *Config) *string { return &c.LocalNode }),
 		{Key: "forced_fit_check", Scope: S, Section: "safety", Type: "enum", Enum: []string{ForcedFitOff, ForcedFitWarn, ForcedFitReject},
 			Description: "What a profile with force_nodes does when its memory need exceeds the forced nodes' free memory: off, warn (log and start) or reject. With agents, a forced placement that a node's agent would refuse (would_not_fit, or a node whose memory figure is unknown) is refused whatever this says; that refusal cannot be switched off, because such a machine cannot be recovered remotely when it runs out of memory.",
 			ptr:         func(c *Config) any { return &c.Defaults.ForcedFitCheck }},
@@ -111,16 +116,16 @@ func buildSettingFields() []Field {
 		f("bench_regress_decode_pct", "bench", "Decode tokens per second this much lower than the baseline's is flagged as a regression.", func(c *Config) *float64 { return &c.Bench.RegressDecodePct }, num(0.001), num(100)),
 		i("bench_max_run_minutes", "bench", "A benchmark run that takes longer than this is stopped and marked failed.", "minutes", func(c *Config) *int { return &c.Bench.MaxRunMinutes }, num(1), num(10080)),
 
-		{Key: "enabled", Scope: R, Section: "recovery", Type: "bool", Description: "Send recovery requests for hung workers; off means nothing is ever sent.", ptr: func(c *Config) any { return &c.Recovery.Enabled }},
-		{Key: "actions", Scope: R, Section: "recovery", Type: "list", Enum: RecoveryActions, Description: "Recovery actions in escalation order; each may appear once, in the order restart_rpc_server, restart_docker, reboot.", ptr: func(c *Config) any { return &c.Recovery.Actions }},
-		{Key: "min_interval", Scope: R, Section: "recovery", Type: "duration", Unit: "seconds", Min: num(60), Description: "Least time between two recovery requests for one node.", ptr: func(c *Config) any { return &c.Recovery.MinInterval }},
-		{Key: "step_wait", Scope: R, Section: "recovery", Type: "duration", Unit: "seconds", Min: num(1), Description: "How long a recovery step gets to take effect before the next one is sent.", ptr: func(c *Config) any { return &c.Recovery.StepWait }},
-		{Key: "request_ttl", Scope: R, Section: "recovery", Type: "duration", Unit: "seconds", Min: num(1), Max: num(60), Description: "How long a recovery request stays valid at the node.", ptr: func(c *Config) any { return &c.Recovery.RequestTTL }},
-		{Key: "http_timeout", Scope: R, Section: "recovery", Type: "duration", Unit: "seconds", Min: num(1), Description: "Timeout of the request that hands a recovery request to the fleet manager.", ptr: func(c *Config) any { return &c.Recovery.HTTPTimeout }},
+		{Key: "enabled", Scope: R, Section: "recovery", Type: "bool", Description: "Send recovery requests for hung workers; off means nothing is ever sent." + notWithAgents, ptr: func(c *Config) any { return &c.Recovery.Enabled }},
+		{Key: "actions", Scope: R, Section: "recovery", Type: "list", Enum: RecoveryActions, Description: "Recovery actions in escalation order; each may appear once, in the order restart_rpc_server, restart_docker, reboot." + notWithAgents, ptr: func(c *Config) any { return &c.Recovery.Actions }},
+		{Key: "min_interval", Scope: R, Section: "recovery", Type: "duration", Unit: "seconds", Min: num(60), Description: "Least time between two recovery requests for one node." + notWithAgents, ptr: func(c *Config) any { return &c.Recovery.MinInterval }},
+		{Key: "step_wait", Scope: R, Section: "recovery", Type: "duration", Unit: "seconds", Min: num(1), Description: "How long a recovery step gets to take effect before the next one is sent." + notWithAgents, ptr: func(c *Config) any { return &c.Recovery.StepWait }},
+		{Key: "request_ttl", Scope: R, Section: "recovery", Type: "duration", Unit: "seconds", Min: num(1), Max: num(60), Description: "How long a recovery request stays valid at the node." + notWithAgents, ptr: func(c *Config) any { return &c.Recovery.RequestTTL }},
+		{Key: "http_timeout", Scope: R, Section: "recovery", Type: "duration", Unit: "seconds", Min: num(1), Description: "Timeout of the request that hands a recovery request to the fleet manager." + notWithAgents, ptr: func(c *Config) any { return &c.Recovery.HTTPTimeout }},
 
-		{Key: "url", Scope: F, Section: "fleet", Type: "string", Description: "Base URL of the fleet console; empty means only the local node is used. Read once when the fleet client starts.", ptr: func(c *Config) any { return &c.Fleet.URL }},
-		{Key: "local_node", Scope: F, Section: "fleet", Type: "string", Description: "The fleet name of the host the scheduler runs on. Read once when the fleet client starts.", ptr: func(c *Config) any { return &c.Fleet.LocalNode }},
-		{Key: "stale_after", Scope: F, Section: "fleet", Type: "duration", Unit: "seconds", Min: num(1), Description: "Age of the fleet view beyond which remote nodes are not used.", ptr: func(c *Config) any { return &c.Fleet.StaleAfter }},
+		{Key: "url", Scope: F, Section: "fleet", Type: "string", Description: "Base URL of the fleet console; empty means only the local node is used. Read once when the fleet client starts." + notWithAgents, ptr: func(c *Config) any { return &c.Fleet.URL }},
+		{Key: "local_node", Scope: F, Section: "fleet", Type: "string", Description: "The fleet name of the host the scheduler runs on. Read once when the fleet client starts. With membership agents it is used only while the local_node setting is empty.", ptr: func(c *Config) any { return &c.Fleet.LocalNode }},
+		{Key: "stale_after", Scope: F, Section: "fleet", Type: "duration", Unit: "seconds", Min: num(1), Description: "Age of the fleet view beyond which remote nodes are not used." + notWithAgents, ptr: func(c *Config) any { return &c.Fleet.StaleAfter }},
 	}
 	// Restart-required: read once at startup by long-lived components.
 	restart := map[string]string{"server_bin": S, "child_log_keep": S, "history_max_file_mib": S, "history_keep_files": S,

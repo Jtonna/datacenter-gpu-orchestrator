@@ -62,8 +62,8 @@ func newSelfLog(relay func() *logrelay.Relay, conf func() *config.Config) *selfl
 		},
 		Node: func() (string, string) {
 			// The local node, as the pool and the fleet client name it.
-			if c := conf(); c != nil && c.Fleet.LocalNode != "" {
-				return c.Fleet.LocalNode, c.Fleet.LocalNode
+			if c := conf(); c != nil && c.LocalNodeName() != "" {
+				return c.LocalNodeName(), c.LocalNodeName()
 			}
 			return "local", "local"
 		},

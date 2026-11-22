@@ -2,17 +2,16 @@
 #   docker compose up -d
 # Remove the override file afterwards and `docker compose up -d` again for production.
 #
-# SINGLE-CLIENT RULE: this is only safe while llama-swap is STOPPED. An rpc-server
-# serves one client at a time; a second client blocks until the first leaves.
+# SINGLE-CLIENT RULE: this is only safe while no other scheduler uses the workers. An
+# rpc-server serves one client at a time; a second client blocks until the first leaves.
 # Even a "dry" scheduler pre-flights nodes when a model is requested.
-# Safe without stopping llama-swap: /health, /v1/models, /running and
+# Safe without stopping the other scheduler: /health, /v1/models, /running and
 # POST /api/plan (they never start a load). Do NOT call /api/load or send chat
-# requests while llama-swap is up.
+# requests while the other scheduler is up.
 #
-# container_name is changed so it does not clash with a running llama-swap
-# (this also hides it from the hub, which is what you want for a dry check).
+# container_name is changed so it does not clash with a running potluck container.
 services:
-  llm-scheduler:
-    container_name: llm-scheduler-dryrun
+  potluck:
+    container_name: potluck-dryrun
     ports: !override
       - "127.0.0.1:3199:8080"

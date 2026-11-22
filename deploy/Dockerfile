@@ -44,7 +44,7 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
 # --listen, --data-dir, --models-dir, --history-dir, --child-log-dir (flags win).
 # Everything else is configuration in the database under data-dir, changed through
 # the REST API, the web UI or MCP. A first install imports deploy/seed-config.yaml once:
-#   docker compose run --rm --no-deps llm-scheduler import-config /seed/seed-config.yaml
+#   docker compose run --rm --no-deps potluck import-config /seed/seed-config.yaml
 ENV LLM_SCHEDULER_LISTEN=:8080     LLM_SCHEDULER_DATA_DIR=/var/lib/llm-scheduler/data     LLM_SCHEDULER_MODELS_DIR=/models     LLM_SCHEDULER_HISTORY_DIR=/var/lib/llm-scheduler/history     LLM_SCHEDULER_CHILD_LOG_DIR=/var/log/llm-children
 
 # The base image sets its own CMD for llama-swap; clear it.

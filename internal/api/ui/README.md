@@ -424,6 +424,17 @@ Everything about them is in `core/nodeactions.js` (no DOM, no import):
   (`{comment}`, kept exactly) and in `X-Comment`. Each call writes an audit
   entry (section `nodes`, target `node:<id>`).
 
+Wording: a text that both memberships show is written once, in its fleet
+wording, and passed through `poolText(agents, text)` (`core/words.js`): with
+agents, "absent from the fleet" reads "absent from the pool" and so on. Its
+table is `PoolPhrases` in `internal/config/wording.go`, which the scheduler's
+own messages use; `internal/api/ui_standalone_test.go` keeps the two equal.
+A fact that exists in one mode only (the fleet feed's age, recovery requests)
+is not reworded: in agents mode the connection facts and About say that the
+nodes come from agent registrations, and Settings folds the recovery and
+fleet sections under "Not used in this mode" (node overrides on Tiers get the
+same badge).
+
 Where it shows:
 
 - **Nodes.** A card gets a "Paused" badge (`settle`) and, for any other
