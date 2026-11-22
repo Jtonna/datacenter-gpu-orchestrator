@@ -1,11 +1,13 @@
 package scheduler
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/placer"
 )
 
@@ -106,6 +108,41 @@ func TestReloadPlan_InstanceAndQueue(t *testing.T) {
 	st := h.c.statusDoc()
 	if len(st.Instances) != 1 || st.Instances[0].LoadMode != LoadModeFileRead {
 		t.Fatalf("status %+v", st.Instances)
+	}
+}
+
+// loadStarted carries the plan's verdict per node as it was when the load
+// was sent (cache_verdict); a later change of the node's cache figure does
+// not change the recorded event.
+func TestLoadStartedCarriesTheCacheVerdict(t *testing.T) {
+	h := reloadConsole(t, true, 7.0, 7.5)
+	h.view.modify("a", func(n *core.Node) { n.CachedMiB, n.CachedKnown = 1184, true })
+	h.viewChanged()
+	plan := h.c.dryPlan("m").ReloadFromCache
+	if len(plan) != 1 || plan[0].Verdict != ReloadPartial || plan[0].CachedPct == nil || plan[0].CacheRoomMiB == nil {
+		t.Fatalf("plan %+v", plan)
+	}
+	want := []map[string]any{{"id": "a", "node": h.c.nodeName("a"), "verdict": ReloadPartial, "file_mib": plan[0].FileMiB,
+		"cached_pct": *plan[0].CachedPct, "cache_room_mib": *plan[0].CacheRoomMiB}}
+
+	w := h.request("m")
+	h.launched(WorkerResult{LaunchIDs: map[core.NodeID]string{"a": "l-a"}})
+	h.view.modify("a", func(n *core.Node) { n.CachedMiB = 9000 })
+	h.viewChanged()
+	h.healthy("m")
+	h.release(h.granted(w))
+	got := h.one(history.TLoadStarted).Data["cache_verdict"]
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("cache_verdict %#v, want %#v", got, want)
+	}
+
+	// A node that reports no cache figure: no cache_room_mib.
+	h2 := reloadConsole(t, true, 2.7, 2.9)
+	h2.request("m")
+	h2.launched(WorkerResult{LaunchIDs: map[core.NodeID]string{"a": "l-a"}})
+	v := h2.one(history.TLoadStarted).Data["cache_verdict"].([]map[string]any)
+	if len(v) != 1 || v[0]["verdict"] != ReloadFull || v[0]["cache_room_mib"] != nil || v[0]["cached_pct"] != nil {
+		t.Fatalf("cache_verdict %#v", v)
 	}
 }
 

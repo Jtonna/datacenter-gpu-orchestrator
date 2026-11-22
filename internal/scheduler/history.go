@@ -94,9 +94,32 @@ func (c *schedCore) historyLoadStarted(in *inst) {
 		data["need_mib"] = info.Need.MiB
 		data["need_basis"] = c.needBasis(info)
 	}
+	if v := c.cacheVerdict(in); len(v) > 0 {
+		data["cache_verdict"] = v
+	}
 	c.recordInst(in, history.TLoadStarted, history.Info,
 		fmt.Sprintf("Loading %s onto %s.", in.prof.Name, joinNames(c.placementNames(in))), data)
 	c.sampleLoadMemory(in, "load_start")
+}
+
+// cacheVerdict is the plan's reload-from-cache verdict per node of a load as
+// it is sent (the same rule as reload_from_cache of POST /api/plan): id,
+// node, verdict, file_mib, and cached_pct (partial verdict) and
+// cache_room_mib (node reports a cache figure) when known.
+func (c *schedCore) cacheVerdict(in *inst) []map[string]any {
+	rs := c.reloadPlan(in.prof, in.placement, c.loadModeFor(in.prof, in.placement))
+	out := make([]map[string]any, 0, len(rs))
+	for _, r := range rs {
+		e := map[string]any{"id": string(r.ID), "node": c.nodeName(r.ID), "verdict": r.Verdict, "file_mib": r.FileMiB}
+		if r.CachedPct != nil {
+			e["cached_pct"] = *r.CachedPct
+		}
+		if r.CacheRoomMiB != nil {
+			e["cache_room_mib"] = *r.CacheRoomMiB
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 // loadFigures are the per-node bytes and measured memory of a load.
