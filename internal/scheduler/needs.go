@@ -98,12 +98,12 @@ func (c *schedCore) storeLearned(name string) {
 	r := needstore.Record{Schema: needstore.RecordSchema, Profile: name, Kind: string(p.Kind), Model: p.Model,
 		ModelBytes: l.modelBytes, Ctx: p.Ctx, Parallel: max(p.Parallel, 1), KVQuant: l.key.kvQuant, FlashAttn: p.FlashAttn,
 		ExtraArgs: slices.Clone(p.ExtraArgs), TotalMiB: l.TotalMiB, Split: slices.Clone(l.split), Cause: l.cause,
-		MeasuredAt: l.at, Release: l.release}
+		MeasuredAt: l.at, Release: l.release, PeakAt: l.peakAt}
 	for _, id := range l.placement {
 		r.Placement = append(r.Placement, string(id))
 	}
 	for _, n := range l.Nodes {
-		r.Nodes = append(r.Nodes, needstore.Node{ID: string(n.ID), Fraction: n.Fraction, MiB: n.MiB})
+		r.Nodes = append(r.Nodes, needstore.Node{ID: string(n.ID), Fraction: n.Fraction, MiB: n.MiB, PeakMiB: n.PeakMiB})
 	}
 	c.needOps = append(c.needOps, needOp{profile: name, rec: &r})
 }
@@ -171,12 +171,12 @@ func (c *schedCore) restoreNeeds(st NeedStore) {
 
 func learnedFromRecord(r needstore.Record) *learnedNeed {
 	l := &learnedNeed{TotalMiB: r.TotalMiB, key: needKeyOfRecord(r), at: r.MeasuredAt, restored: true, release: r.Release,
-		cause: r.Cause, split: slices.Clone(r.Split), modelBytes: r.ModelBytes}
+		cause: r.Cause, split: slices.Clone(r.Split), modelBytes: r.ModelBytes, peakAt: r.PeakAt}
 	for _, id := range r.Placement {
 		l.placement = append(l.placement, core.NodeID(id))
 	}
 	for _, n := range r.Nodes {
-		l.Nodes = append(l.Nodes, learnedNode{ID: core.NodeID(n.ID), Fraction: n.Fraction, MiB: n.MiB})
+		l.Nodes = append(l.Nodes, learnedNode{ID: core.NodeID(n.ID), Fraction: n.Fraction, MiB: n.MiB, PeakMiB: n.PeakMiB})
 	}
 	return l
 }

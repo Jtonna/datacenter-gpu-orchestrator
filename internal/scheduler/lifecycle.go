@@ -49,6 +49,7 @@ func (c *schedCore) startInstance(p *core.Profile, pl core.Placement, waiters []
 		ns.claim = ""
 	}
 	c.insts[p.Name] = in
+	c.recordBaseFree(in) // reserve.go
 	c.initLoadProgress(in)
 	c.changed = true
 	c.emitState(in, RunningStarting)
@@ -153,6 +154,8 @@ func (c *schedCore) fitAndLaunch(in *inst) {
 	}
 	pl := in.placement
 	pl.Nodes = slices.Clone(pl.Nodes)
+	c.fitting = in // reserve.go: its own reservation is not counted against it
+	defer func() { c.fitting = nil }()
 	budgets := make([]int, len(pl.Nodes))
 	cands := make([]placer.Candidate, len(pl.Nodes))
 	for i, pn := range pl.Nodes {

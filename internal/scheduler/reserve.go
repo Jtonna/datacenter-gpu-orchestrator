@@ -1,0 +1,505 @@
+package scheduler
+
+import (
+	"fmt"
+	"math"
+	"slices"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/placer"
+)
+
+// The memory reservation rule. Most nodes are shared-memory consoles whose
+// worker takes its device memory in one step, so the check before a launch
+// is the only real protection. A profile's reserved figure on a node is its
+// need share (measured or estimated, as the fit rules have it) plus a fill
+// reserve for the growth while the conversation fills the context; once a
+// peak has been stored for the profile, that peak replaces both. Placement
+// can count a node's memory at the larger of what is reserved there and what
+// the node measures as used, on the smaller of its latest and its average
+// free figure. Every setting defaults to the rules of the release before it
+// (config.Defaults: fill_reserve_kib_per_token, placement_uses_reserved,
+// margin_measured_mib, margin_estimated_percent, margin_estimated_min_mib).
+
+// Bases of a reserved figure (the plan's memory section, the node view).
+const (
+	BasisMeasured  = "measured"
+	BasisPeak      = "peak"
+	BasisEstimated = "estimated"
+)
+
+// peakStoreStepMiB is how far a node's peak must rise above the stored one
+// before it is written again (the writer merges writes per profile anyway).
+const peakStoreStepMiB = 32
+
+// reserveOn: the fill reserve is on, and with it stored peaks are used.
+func (c *schedCore) reserveOn() bool { return c.cfg.Defaults.FillReserveKiBPerToken > 0 }
+
+// newMargins: a configured per-node margin replaces the split skew margin.
+func (c *schedCore) newMargins() bool {
+	d := c.cfg.Defaults
+	return d.MarginMeasuredMiB > 0 || d.MarginEstimatedPercent > 0
+}
+
+// newRules: any part of the reservation rule that changes a fit decision is on.
+func (c *schedCore) newRules() bool { return c.reserveOn() || c.newMargins() }
+
+// ctxTokens is the context the profile's server holds: ctx x parallel.
+func ctxTokens(p *core.Profile) int { return max(p.Ctx, 0) * max(p.Parallel, 1) }
+
+// fillReserveMiB is the fill reserve of p on one node, rounded up; 0 when
+// the reserve is off.
+func (c *schedCore) fillReserveMiB(p *core.Profile) int {
+	kib := c.cfg.Defaults.FillReserveKiBPerToken
+	if kib <= 0 || p.Kind == core.KindCommand {
+		return 0
+	}
+	return int((int64(kib)*int64(ctxTokens(p)) + 1023) / 1024)
+}
+
+// peakFor is the stored per-node peak of p for placement pl (the node set and
+// split it was measured with), and its sum; ok is false when there is none
+// for that placement or the reserve is off.
+func (c *schedCore) peakFor(p *core.Profile, pl core.Placement) (peaks []int, ok bool) {
+	if !c.reserveOn() {
+		return nil, false
+	}
+	l := c.learnedFor(p)
+	if l == nil || len(pl.Nodes) == 0 {
+		return nil, false
+	}
+	fracs := instance.SplitFractions(*p, pl)
+	peaks = make([]int, len(pl.Nodes))
+	for i, pn := range pl.Nodes {
+		if _, ok := l.shareFor(pl, fracs, pn.ID); !ok {
+			return nil, false
+		}
+		for _, n := range l.Nodes {
+			if n.ID == pn.ID {
+				peaks[i] = n.PeakMiB
+			}
+		}
+		if peaks[i] <= 0 {
+			return nil, false
+		}
+	}
+	return peaks, true
+}
+
+// peakTotal is the sum of p's stored per-node peaks, whatever placement they
+// were measured on: the need a placement elsewhere is held to while the
+// reserve is on (as a learned total is). 0 when there is none.
+func (c *schedCore) peakTotal(p *core.Profile) int {
+	if !c.reserveOn() {
+		return 0
+	}
+	l := c.learnedFor(p)
+	if l == nil || len(l.Nodes) == 0 {
+		return 0
+	}
+	sum := 0
+	for _, n := range l.Nodes {
+		if n.PeakMiB <= 0 {
+			return 0
+		}
+		sum += n.PeakMiB
+	}
+	return sum
+}
+
+// applyReserve adds the reservation rule to a placer request for p with
+// need info: the fill reserve on every node (or the stored peak total in
+// place of need + reserve), and the configured per-node margins.
+func (c *schedCore) applyReserve(req *placer.Request, p *core.Profile, info NeedInfo) {
+	d := c.cfg.Defaults
+	measured := info.Need.Measured
+	if pt := c.peakTotal(p); pt > 0 {
+		req.Need, measured = placer.Measured(pt), true
+	} else {
+		req.PerNodeReserveMiB = c.fillReserveMiB(p)
+	}
+	switch {
+	case measured && d.MarginMeasuredMiB > 0:
+		req.MarginMiB = d.MarginMeasuredMiB
+	case !measured && d.MarginEstimatedPercent > 0:
+		req.MarginPermille, req.MarginMinMiB = d.MarginEstimatedPercent*10, d.MarginEstimatedMinMiB
+	}
+}
+
+// reservedShare is what one node of a placement is expected to take for a
+// profile, assuming the context is filled completely, and the margin it is
+// held to.
+type reservedShare struct {
+	ID         core.NodeID
+	Weights    int // the node's share of the model file
+	Context    int // the rest of its share: KV cache, compute buffers, overhead
+	Fill       int // the fill reserve (0 when a peak is used, or the reserve is off)
+	Total      int // Weights + Context + Fill
+	Basis      string
+	Margin     int
+	MarginRule string
+}
+
+// reservedShares is the reserved figure of p on every node of pl, in
+// placement order, with the margin each node is held to. The split of a
+// share into weights and context uses the model file size (weights x the
+// node's fraction); the rest is context. Nil when the need is unknown.
+func (c *schedCore) reservedShares(p *core.Profile, pl core.Placement) ([]reservedShare, NeedInfo) {
+	info, err := c.need(p)
+	if err != nil || info.Need.MiB <= 0 || len(pl.Nodes) == 0 {
+		return nil, info
+	}
+	fracs := []float64{1}
+	if len(pl.Nodes) > 1 {
+		fracs = instance.SplitFractions(*p, pl)
+		if len(fracs) != len(pl.Nodes) {
+			return nil, info
+		}
+	}
+	need := info.Need.WithMargin()
+	dev := c.deviceCost(info)
+	fileMiB := int((info.FileBytes + (1 << 20) - 1) >> 20)
+	peaks, havePeak := c.peakFor(p, pl)
+	fill := c.fillReserveMiB(p)
+	skew := c.cfg.Defaults.SplitSkewMargin
+	d := c.cfg.Defaults
+	out := make([]reservedShare, len(pl.Nodes))
+	for i, pn := range pl.Nodes {
+		r := reservedShare{ID: pn.ID, Basis: BasisEstimated}
+		if info.Need.Measured {
+			r.Basis = BasisMeasured
+		}
+		share, learned := 0, false
+		switch {
+		case havePeak:
+			share, r.Basis = peaks[i], BasisPeak
+		case len(pl.Nodes) == 1:
+			share = need + dev
+		default:
+			if m, ok := c.learnedFor(p).shareFor(pl, fracs, pn.ID); ok {
+				share, learned, r.Basis = m, true, BasisMeasured
+			} else {
+				share = int(math.Ceil(float64(need)*fracs[i]-1e-6)) + dev
+			}
+		}
+		r.Weights = min(int(math.Ceil(float64(fileMiB)*fracs[i]-1e-6)), share)
+		r.Context = share - r.Weights
+		if !havePeak {
+			r.Fill = fill
+		}
+		r.Total = share + r.Fill
+		n, ok := c.node(pn.ID)
+		shared := ok && n.SharedMemory
+		switch {
+		case !shared:
+			r.MarginRule = "dedicated memory: no per-node margin"
+		case (r.Basis == BasisMeasured || r.Basis == BasisPeak) && d.MarginMeasuredMiB > 0:
+			r.Margin, r.MarginRule = d.MarginMeasuredMiB, "margin_measured_mib"
+		case r.Basis == BasisEstimated && d.MarginEstimatedPercent > 0:
+			r.Margin = max(int((int64(share)*int64(d.MarginEstimatedPercent)+99)/100), d.MarginEstimatedMinMiB)
+			r.MarginRule = fmt.Sprintf("margin_estimated_percent %d%%, at least %d MiB", d.MarginEstimatedPercent, d.MarginEstimatedMinMiB)
+		case len(pl.Nodes) == 1:
+			r.MarginRule = "single node: no split margin"
+		case learned || havePeak:
+			r.MarginRule = "measured for this node set and split: no margin"
+		default:
+			// The split skew margin as the fit rules apply it: one rounding
+			// over need x fraction x (1 + skew).
+			r.Margin = int(math.Ceil(float64(need)*fracs[i]*(1+skew)-1e-6)) + dev - share
+			r.MarginRule = fmt.Sprintf("split_skew_margin %g", skew)
+		}
+		out[i] = r
+	}
+	return out, info
+}
+
+// ---- peaks ----
+
+// recordBaseFree remembers, when an instance is created, each node's free
+// figure as the view reported it: what the node gives up for the instance
+// is measured against it (measured use, peaks).
+func (c *schedCore) recordBaseFree(in *inst) {
+	in.baseFree = map[core.NodeID]int{}
+	for _, pn := range in.placement.Nodes {
+		if n, ok := c.raw[pn.ID]; ok && !n.FreeUnknown {
+			in.baseFree[pn.ID] = n.FreeMiB
+		}
+	}
+}
+
+// measuredUse is what node id gives up for instance in now: its free figure
+// when the instance was created less its free figure now. ok is false when
+// either is unknown.
+func (c *schedCore) measuredUse(in *inst, id core.NodeID) (int, bool) {
+	base, ok := in.baseFree[id]
+	if !ok {
+		return 0, false
+	}
+	n, ok := c.raw[id]
+	if !ok || n.FreeUnknown {
+		return 0, false
+	}
+	return max(base-n.FreeMiB, 0), true
+}
+
+// trackPeaks raises the stored per-node peaks of every loaded instance to
+// the highest memory its nodes were seen to give up for it, never below the
+// figure its load measured. The peak lives beside the learned need (same
+// node set and split) and is stored with it.
+func (c *schedCore) trackPeaks() {
+	for _, in := range c.insts {
+		if in.state != stReady && in.state != stDraining {
+			continue
+		}
+		l := c.learnedFor(in.prof)
+		if l == nil || len(l.Nodes) == 0 || !slices.Equal(l.placement, in.nodeIDs()) {
+			continue
+		}
+		raised := false
+		for i := range l.Nodes {
+			n := &l.Nodes[i]
+			peak := max(n.PeakMiB, n.MiB)
+			if used, ok := c.measuredUse(in, n.ID); ok {
+				peak = max(peak, used)
+			}
+			if peak > n.PeakMiB {
+				if peak >= n.PeakMiB+peakStoreStepMiB || n.PeakMiB == 0 {
+					raised = true
+				}
+				n.PeakMiB = peak
+			}
+		}
+		if raised {
+			l.peakAt = c.now
+			c.storeLearned(in.prof.Name)
+			c.changed = true
+		}
+	}
+}
+
+// ---- the node side ----
+
+// reservedOn is what is reserved on node id: the instance holding it (placed,
+// loading, loaded or stopping), with its reserved share there. ok is false
+// when nothing holds the node or the share cannot be told.
+func (c *schedCore) reservedOn(id core.NodeID) (in *inst, r reservedShare, ok bool) {
+	ns := c.nodes[id]
+	if ns == nil || ns.holder == "" {
+		return nil, r, false
+	}
+	in = c.insts[ns.holder]
+	if in == nil {
+		return nil, r, false
+	}
+	shares, _ := c.reservedShares(in.prof, in.placement)
+	for i, pn := range in.placement.Nodes {
+		if pn.ID == id && i < len(shares) {
+			return in, shares[i], true
+		}
+	}
+	return in, r, false
+}
+
+// unmeasuredReserve is the part of what is reserved on node id that its free
+// figure does not show yet: reserved - measured use, at least 0. A node
+// whose use cannot be measured counts its whole reservation.
+func (c *schedCore) unmeasuredReserve(id core.NodeID) int {
+	in, r, ok := c.reservedOn(id)
+	if !ok || in == c.fitting {
+		return 0
+	}
+	used, known := c.measuredUse(in, id)
+	if !known {
+		return r.Total
+	}
+	return max(r.Total-used, 0)
+}
+
+// reservedFree is the free figure placement_uses_reserved places on: the
+// smaller of the latest figure (or the pre-flight override) and the average
+// one, less what is reserved on the node but not measured yet.
+func (c *schedCore) reservedFree(id core.NodeID, n core.Node) int {
+	free := c.freeMiB(id, n)
+	if _, on := c.preflightFree(id); !on && n.FreeAvgKnown && n.FreeAvgMiB < free {
+		free = n.FreeAvgMiB
+	}
+	return free - c.unmeasuredReserve(id)
+}
+
+// reservedShortfalls is sharedShortfalls under the reservation rule: every
+// shared-memory node of the placement, of any size, must hold its reserved
+// figure plus its margin.
+func (c *schedCore) reservedShortfalls(p *core.Profile, pl core.Placement, empty bool) (out []nodeShort, ok bool) {
+	shares, _ := c.reservedShares(p, pl)
+	for i, pn := range pl.Nodes {
+		if i >= len(shares) {
+			break
+		}
+		n, ok := c.node(pn.ID)
+		if !ok || !n.SharedMemory {
+			continue
+		}
+		usable, how, ok := c.fitUsable(pn.ID, n, empty)
+		if !ok {
+			return nil, false
+		}
+		r := shares[i]
+		if need := r.Total + r.Margin; need > usable {
+			fit := fmt.Sprintf("%s: weights %d + context %d + fill reserve %d MiB, margin %d MiB (%s)",
+				r.Basis, r.Weights, r.Context, r.Fill, r.Margin, r.MarginRule)
+			out = append(out, nodeShort{label: nodeLabel(pn.ID, n), share: need, usable: usable, fitText: fit, how: how, empty: empty})
+		}
+	}
+	return out, true
+}
+
+// ---- views ----
+
+// nodeReservation fills the reservation part of a node's status.
+func (c *schedCore) nodeReservation(id core.NodeID, n core.Node, s *NodeStatus) {
+	s.FreeForNewLoadMiB = c.liveBudget(id, n)
+	if n.FreeAvgKnown {
+		v := n.FreeAvgMiB
+		s.FreeAvgMiB = &v
+	}
+	s.Reserved = []NodeReservation{}
+	in, r, ok := c.reservedOn(id)
+	if !ok {
+		return
+	}
+	s.Reserved = append(s.Reserved, NodeReservation{Profile: in.prof.Name, State: in.state.String(), Basis: r.Basis, Ctx: ctxTokens(in.prof),
+		WeightsMiB: r.Weights, ContextMiB: r.Context, FillReserveMiB: r.Fill, TotalMiB: r.Total})
+	s.ReservedMiB = r.Total
+	if used, known := c.measuredUse(in, id); known {
+		drift := used - r.Total
+		s.MeasuredUsedMiB, s.DriftMiB = &used, &drift
+		if warn := c.cfg.Defaults.ReservedDriftWarnMiB; drift > warn {
+			s.DriftWarning = fmt.Sprintf("the node gave up %d MiB since %s was placed, %d MiB more than is reserved for it (warn above %d MiB): something else uses memory there, or the need is too low",
+				used, in.prof.Name, drift, warn)
+		}
+	}
+}
+
+// planNote explains the weights and context split of the memory section.
+const planNote = "weights are the model file's share by the split fraction; context is the rest of the share (KV cache, compute buffers, device overhead); will_take adds the fill reserve, or is the stored peak"
+
+// planMemory is the memory section of a plan: on the placement made (or,
+// with none, on the nodes the profile would be spread over), what each node
+// will take assuming the context is filled, what it has, what is reserved
+// there and what remains. The nodes of the profile's own instance and of the
+// plan's victims count as freed.
+func (c *schedCore) planMemory(p *core.Profile, placed *core.Placement, victims []PlanVictim) *PlanMemory {
+	if _, err := c.need(p); err != nil {
+		return nil
+	}
+	m := &PlanMemory{PlacementUsesReserved: c.cfg.Defaults.PlacementUsesReserved, Note: planNote, Nodes: []PlanMemoryNode{}}
+	var pl core.Placement
+	if placed != nil && len(placed.Nodes) > 0 {
+		pl = *placed
+	} else {
+		m.Hypothetical = true
+		pl = c.hypotheticalPlacement(p)
+		if len(pl.Nodes) == 0 {
+			m.Note = "no node can take a share of this profile now; " + planNote
+			return m
+		}
+	}
+	freed := map[string]bool{p.Name: true}
+	for _, v := range victims {
+		freed[v.Profile] = true
+	}
+	shares, _ := c.reservedShares(p, pl)
+	if shares == nil {
+		return nil
+	}
+	m.Fits = !m.Hypothetical
+	for i, pn := range pl.Nodes {
+		n, _ := c.node(pn.ID)
+		r := shares[i]
+		e := PlanMemoryNode{ID: pn.ID, Node: nodeLabel(pn.ID, n), Shared: n.SharedMemory, TotalMiB: n.TotalMiB,
+			WeightsMiB: r.Weights, ContextMiB: r.Context, FillReserveMiB: r.Fill, WillTakeMiB: r.Total, Basis: r.Basis,
+			FreeNowMiB: c.freeMiB(pn.ID, n), HeadroomMiB: n.HeadroomMiB, MarginMiB: r.Margin, MarginRule: r.MarginRule,
+			ReservedBy: []PlanReservedBy{}, AvailableMiB: c.liveBudget(pn.ID, n)}
+		e.FreeAvgMiB, e.FreeAvgKnown = e.FreeNowMiB, n.FreeAvgKnown
+		if n.FreeAvgKnown {
+			e.FreeAvgMiB = n.FreeAvgMiB
+		}
+		if in, held, ok := c.reservedOn(pn.ID); ok {
+			e.ReservedBy = append(e.ReservedBy, PlanReservedBy{Profile: in.prof.Name, MiB: held.Total, State: in.state.String()})
+			if free, _, ok := c.emptyFree(pn.ID, n); ok && freed[in.prof.Name] {
+				if n.SharedMemory {
+					e.AvailableMiB, _ = c.sharedBudgetFrom(pn.ID, n, free)
+				} else {
+					e.AvailableMiB = free - n.HeadroomMiB
+				}
+			}
+		}
+		e.RemainsMiB = e.AvailableMiB - e.WillTakeMiB - e.MarginMiB
+		if e.RemainsMiB < 0 {
+			m.Fits = false
+			if -e.RemainsMiB > m.ShortfallMiB {
+				m.ShortNode, m.ShortfallMiB = e.Node, -e.RemainsMiB
+			}
+		}
+		m.Nodes = append(m.Nodes, e)
+	}
+	if m.Hypothetical && m.ShortfallMiB == 0 {
+		m.Note = "no placement now although these nodes have the memory: they are held, claimed, settling or not allowed for the profile; " + planNote
+	}
+	return m
+}
+
+// hypotheticalPlacement is where a profile with no placement would go: its
+// forced nodes, or the max_pool nodes it may use with the largest budgets,
+// split by budget as an automatic placement is. Free nodes are taken; only
+// when none is free are held ones shown.
+func (c *schedCore) hypotheticalPlacement(p *core.Profile) core.Placement {
+	var pl core.Placement
+	if len(p.ForceNodes) > 0 {
+		for _, name := range p.ForceNodes {
+			id, err := c.view.Resolve(name)
+			if err != nil {
+				continue
+			}
+			n, ok := c.node(id)
+			if !ok {
+				continue
+			}
+			pl.Nodes = append(pl.Nodes, core.PlacedNode{ID: id, Addr: n.Addr, Local: n.Local, BudgetMiB: c.liveBudget(id, n)})
+		}
+		if len(pl.Nodes) == len(p.ForceNodes) && len(p.TensorSplit) > 0 {
+			pl.TensorSplit = slices.Clone(p.TensorSplit)
+		}
+		return pl
+	}
+	var cands, held []core.PlacedNode
+	for _, id := range c.sortedNodeIDs() {
+		n, ok := c.node(id)
+		if !ok || !c.eligible(id) || (localOnly(p) && !n.Local) || c.autoOff(p, n) {
+			continue
+		}
+		if len(p.AllowTiers) > 0 && !slices.Contains(p.AllowTiers, n.Priority) {
+			continue
+		}
+		pn := core.PlacedNode{ID: id, Addr: n.Addr, Local: n.Local, BudgetMiB: c.liveBudget(id, n)}
+		if c.isFree(id) {
+			cands = append(cands, pn)
+		} else {
+			held = append(held, pn)
+		}
+	}
+	if len(cands) == 0 {
+		cands = held
+	}
+	slices.SortStableFunc(cands, func(a, b core.PlacedNode) int { return b.BudgetMiB - a.BudgetMiB })
+	k := max(c.cfg.Defaults.MaxPool, 1)
+	if localOnly(p) {
+		k = 1
+	}
+	if len(cands) > k {
+		cands = cands[:k]
+	}
+	pl.Nodes = cands
+	return pl
+}

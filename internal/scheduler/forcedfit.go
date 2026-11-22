@@ -211,6 +211,19 @@ func (f *forcedFit) err(profile string) *Error {
 // estimate, what every device holds beyond its share (deviceCost). Nil when
 // the need is unknown.
 func (c *schedCore) expectShares(p *core.Profile, pl core.Placement) []int {
+	if c.newRules() {
+		// reserve.go: the reserved figure (need share + fill reserve, or the
+		// stored peak) plus the node's margin.
+		shares, _ := c.reservedShares(p, pl)
+		if shares == nil {
+			return nil
+		}
+		out := make([]int, len(shares))
+		for i, r := range shares {
+			out[i] = r.Total + r.Margin
+		}
+		return out
+	}
 	info, err := c.need(p)
 	if err != nil || info.Need.MiB <= 0 || len(pl.Nodes) == 0 {
 		return nil

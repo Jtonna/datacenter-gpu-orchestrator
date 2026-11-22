@@ -240,6 +240,7 @@ func (c *schedCore) statusDoc() Status {
 			v := n.RPCServerVersion
 			s.RPCServerVersion = &v
 		}
+		c.nodeReservation(id, n, &s) // reserve.go
 		st.View.Nodes = append(st.View.Nodes, s)
 	}
 	return st
@@ -263,6 +264,9 @@ func (c *schedCore) dryPlan(profile string) (r PlanReport) {
 		if placed != nil && len(r.Placement) > 0 {
 			r.LoadMode = c.loadModeFor(p, *placed)
 			r.ReloadFromCache = c.reloadPlan(p, *placed, r.LoadMode)
+		}
+		if p != nil {
+			r.Memory = c.planMemory(p, placed, r.Victims) // reserve.go
 		}
 	}()
 	if p == nil {

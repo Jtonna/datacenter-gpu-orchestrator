@@ -156,6 +156,10 @@ type inst struct {
 	launchIDs  map[core.NodeID]string              // the launch on each worker node
 	agentLoad  map[string]*agentproto.LoadProgress // per worker rpc address: the agent's own load figures
 
+	// baseFree is each node's free figure when the instance was created
+	// (reserve.go): what the node gives up for it is measured against it.
+	baseFree map[core.NodeID]int
+
 	benchRun   string // the bench run whose request started this instance (history records only)
 	served     int    // requests admitted (logged when the instance stops)
 	stopReason string // why it is being stopped (first reason wins), for the log
@@ -362,6 +366,10 @@ type schedCore struct {
 	staleAt     time.Time
 	downAt      time.Time
 	changed     bool
+
+	// fitting is the instance whose own placement is being checked at exact
+	// figures (fitAndLaunch); its reservation does not count against it.
+	fitting *inst
 }
 
 func newCore(cfg *config.Config, clock Clock, view fleet.View, needs NeedProvider, build instance.BuildOptions, log *slog.Logger) *schedCore {
@@ -479,6 +487,16 @@ func (c *schedCore) freeMiB(id core.NodeID, n core.Node) int {
 // figure (sharedBudget), because the worker's Vulkan device reports about
 // 2.5 GB more free than the machine can give.
 func (c *schedCore) liveBudget(id core.NodeID, n core.Node) int {
+	if c.cfg.Defaults.PlacementUsesReserved {
+		// reserve.go: min(latest, average), less what is reserved there but
+		// not measured yet.
+		free := c.reservedFree(id, n)
+		if n.SharedMemory {
+			b, _ := c.sharedBudgetFrom(id, n, free)
+			return min(b, free-n.HeadroomMiB)
+		}
+		return free - n.HeadroomMiB
+	}
 	if n.SharedMemory {
 		b, _ := c.sharedBudget(id, n)
 		return b
@@ -598,6 +616,7 @@ func (c *schedCore) request(p *core.Profile) (placer.Request, NeedInfo, error) {
 		MaxPool: max(d.MaxPool, 1), MinShareMiB: d.MinShareMiB, DeviceOverheadMiB: d.DeviceOverheadMiB + info.DeviceMiB,
 		SkewPermille: permille(d.SplitSkewMargin),
 	}
+	c.applyReserve(&req, p, info) // reserve.go: no change with the defaults
 	if localOnly(p) {
 		req.MaxPool = 1
 		req.AllowTiers = nil
