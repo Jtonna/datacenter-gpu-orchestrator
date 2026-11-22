@@ -3,6 +3,7 @@ package history
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -110,7 +111,10 @@ func Open(o Options) *Store {
 	s.on = true
 	s.loadRecent()
 	s.ch = make(chan item, o.QueueSize)
-	go s.writer()
+	// A failure loses the event being written; the writer continues in a
+	// fresh file (a torn line stays in the old one), with the queue kept.
+	supervise.Go(context.Background(), supervise.Spec{Name: "history.writer", Policy: supervise.Restart,
+		Rebuild: func(any) { s.reopen() }, Done: s.writerDone}, func(context.Context) { s.writer() })
 	s.log.Info("event history on", "dir", o.Dir, "max_file_mib", o.MaxFileBytes>>20, "keep_files", o.KeepFiles,
 		"in_memory", len(s.ring))
 	return s
@@ -354,13 +358,29 @@ func (s *Store) Close() {
 	<-s.done
 }
 
+// writerDone is the writer's final return: the file is closed.
+func (s *Store) writerDone() {
+	if s.f != nil {
+		s.f.Close()
+	}
+	close(s.done)
+}
+
+// reopen is the writer's rebuild after a failure: a fresh file.
+func (s *Store) reopen() {
+	if s.f != nil {
+		s.f.Close()
+		s.f = nil
+	}
+	s.size = 0
+	if err := s.openNew(); err != nil {
+		s.fail(err)
+		return
+	}
+	s.failed = false
+}
+
 func (s *Store) writer() {
-	defer close(s.done)
-	defer func() {
-		if s.f != nil {
-			s.f.Close()
-		}
-	}()
 	for it := range s.ch {
 		if it.flush != nil {
 			close(it.flush)
@@ -369,6 +389,7 @@ func (s *Store) writer() {
 		if s.failed {
 			continue
 		}
+		supervise.Point("history.writer")
 		line, err := json.Marshal(it.ev)
 		if err != nil {
 			continue

@@ -3,6 +3,9 @@ package history
 import (
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -82,5 +85,43 @@ func TestSubscriberPanicIsContained(t *testing.T) {
 	}
 	if len(fatals) != 0 {
 		t.Fatal("one failure escalated")
+	}
+}
+
+// The writer fails on one event: that event is lost, and the writer goes on
+// in a fresh file with the queue kept.
+func TestWriterRestartsInAFreshFile(t *testing.T) {
+	supervise.ResetForTest()
+	defer supervise.ResetForTest()
+	restore := supervise.Configure(supervise.Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Backoff: func(int) time.Duration { return time.Millisecond },
+		Fatal:   func(r string) { t.Errorf("escalated: %s", r) }})
+	defer restore()
+	dir := t.TempDir()
+	clock := time.Unix(1_800_000_000, 0)
+	s := Open(Options{Dir: dir, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Now: func() time.Time { return clock }})
+	s.Record(Event{Type: "first"})
+	s.Flush()
+	h, fired := supervise.PanicAtForTest("history.writer", 1)
+	restoreHook := supervise.SetHookForTest(h)
+	s.Record(Event{Type: "lost"})
+	s.Record(Event{Type: "after"})
+	s.Flush()
+	restoreHook()
+	s.Close()
+	if fired() != 1 {
+		t.Fatalf("fired %d", fired())
+	}
+	files, _ := filepath.Glob(filepath.Join(dir, "events-*.jsonl"))
+	if len(files) != 2 {
+		t.Fatalf("files %v, want the old one and a fresh one", files)
+	}
+	var all strings.Builder
+	for _, f := range files {
+		b, _ := os.ReadFile(f)
+		all.Write(b)
+	}
+	if got := all.String(); !strings.Contains(got, `"type":"first"`) || !strings.Contains(got, `"type":"after"`) || strings.Contains(got, `"type":"lost"`) {
+		t.Fatalf("written:\n%s", got)
 	}
 }
