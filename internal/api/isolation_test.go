@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -167,6 +169,54 @@ func TestWSStatusLoopRestartsWithAFullStatus(t *testing.T) {
 		t.Fatalf("fired %d", fired())
 	}
 	if s := taskStats("api.ws.status"); s.Restarts != 1 || s.State != "running" {
+		t.Fatalf("task stats %+v", s)
+	}
+}
+
+// The SSE hub fails on a feed event: its streams end (the browsers
+// reconnect), a new stream gets a fresh snapshot, and the hub reads on.
+func TestEventsHubRestartsAndReconnects(t *testing.T) {
+	isolate(t)
+	e := newEnv(t, chatOK)
+	c := openEvents(t, e)
+	c.parsed(3 * time.Second) // modelStatus
+	c.parsed(3 * time.Second) // inflight snapshot
+	h, fired := supervise.PanicAtForTest("api.events", 1)
+	defer supervise.SetHookForTest(h)()
+	post := func() {
+		resp, err := http.Post(e.front.URL+"/v1/chat/completions", "application/json", strings.NewReader(chat("alpha")))
+		if err == nil {
+			resp.Body.Close()
+		}
+	}
+	post()
+	closed := time.After(5 * time.Second)
+	for open := true; open; {
+		select {
+		case _, ok := <-c.lines:
+			open = ok
+		case <-closed:
+			t.Fatal("the stream was not ended by the hub's restart")
+		}
+	}
+	if fired() != 1 {
+		t.Fatalf("fired %d", fired())
+	}
+	c2 := openEvents(t, e)
+	if typ, _ := c2.parsed(3 * time.Second); typ != "modelStatus" {
+		t.Fatalf("first event after reconnecting: %q", typ)
+	}
+	if typ, d := c2.parsed(3 * time.Second); typ != "inflight" || d.(map[string]any)["operation"] != "snapshot" {
+		t.Fatalf("second event after reconnecting: %q %v", typ, d)
+	}
+	go post()
+	for {
+		typ, _ := c2.parsed(5 * time.Second) // the hub reads on: the new request's events arrive
+		if typ == "inflight" {
+			break
+		}
+	}
+	if s := taskStats("api.events"); s.Restarts != 1 || s.State != "running" {
 		t.Fatalf("task stats %+v", s)
 	}
 }
