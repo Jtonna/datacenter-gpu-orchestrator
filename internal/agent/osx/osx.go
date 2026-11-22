@@ -333,6 +333,38 @@ func IsMountPoint(mountinfo, path string) (bool, error) {
 	return false, nil
 }
 
+// MountSource returns what is mounted at path according to the mountinfo
+// file (default /proc/self/mountinfo): the mount source, the field after the
+// " - " separator and the file system type (for NFS "<host>:<export>"). With
+// several mounts on the path the last one listed, the one on top, counts.
+// mounted is false when path is not a mount point.
+func MountSource(mountinfo, path string) (source string, mounted bool, err error) {
+	if mountinfo == "" {
+		mountinfo = "/proc/self/mountinfo"
+	}
+	f, err := os.Open(mountinfo)
+	if err != nil {
+		return "", false, err
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		fs := strings.Fields(sc.Text())
+		if len(fs) < 5 || unescapeOctal(fs[4]) != path {
+			continue
+		}
+		src := ""
+		for i := 5; i+2 < len(fs); i++ {
+			if fs[i] == "-" {
+				src = unescapeOctal(fs[i+2])
+				break
+			}
+		}
+		source, mounted = src, true
+	}
+	return source, mounted, sc.Err()
+}
+
 // Commander runs a command and returns its combined output.
 type Commander interface {
 	Run(ctx context.Context, name string, args ...string) ([]byte, error)

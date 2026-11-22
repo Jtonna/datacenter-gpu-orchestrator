@@ -91,6 +91,9 @@ func MountArgs(target, nodeIP, mountPoint string) []string {
 // Mounter mounts and unmounts.
 type Mounter interface {
 	IsMounted(path string) (bool, error)
+	// MountSource reads the mount table: what is mounted at path (for NFS
+	// "<host>:<export>"), and whether anything is.
+	MountSource(path string) (source string, mounted bool, err error)
 	Mount(ctx context.Context, args []string) error
 	// Unmount is a plain unmount; the agent never uses a lazy unmount.
 	Unmount(ctx context.Context, path string) error
@@ -147,6 +150,11 @@ type Source struct {
 	outstanding ProbeHandle
 	mounts      int
 	unmounts    int
+	// failingSince is when the current failing episode began (the first
+	// failed probe after a good one, or the first probe); waitSaid is set
+	// once the episode's "mounted but not answering" line was logged.
+	failingSince time.Duration
+	waitSaid     bool
 }
 
 // New returns a Source.
@@ -208,7 +216,8 @@ func (s *Source) Counts() (mounts, unmounts int) {
 }
 
 // Start mounts the share when the agent manages it: an existing mount at the
-// mount point is used as it is; it never mounts twice.
+// mount point is used as it is (a mount of another share is said in the log);
+// it never mounts twice.
 func (s *Source) Start(ctx context.Context) error {
 	if !s.cfg.Mount || s.Push() {
 		return nil
@@ -216,12 +225,22 @@ func (s *Source) Start(ctx context.Context) error {
 	return s.ensureMounted(ctx)
 }
 
+// sameShare reports whether a mount source names the configured target. A
+// trailing slash of the export does not count.
+func sameShare(source, target string) bool {
+	return strings.TrimRight(source, "/") == strings.TrimRight(target, "/")
+}
+
 func (s *Source) ensureMounted(ctx context.Context) error {
-	ok, err := s.cfg.Mounter.IsMounted(s.cfg.Dir)
+	src, ok, err := s.cfg.Mounter.MountSource(s.cfg.Dir)
 	if err != nil {
 		return err
 	}
 	if ok {
+		if !sameShare(src, s.cfg.Spec.Target) {
+			s.log.Warn("the share mount point holds another share; it is used as it is", "found", src,
+				"target", s.cfg.Spec.Target, "at", s.cfg.Dir)
+		}
 		return nil
 	}
 	if err := s.cfg.Mounter.MkdirAll(s.cfg.Dir); err != nil {
@@ -267,11 +286,17 @@ func (s *Source) Run(ctx context.Context) {
 // record keeps a probe result. One log line at the first result and at each
 // change of result; a result that repeats is not logged again.
 func (s *Source) record(ok bool, why string) {
+	now := s.cfg.Clock.Now()
 	s.mu.Lock()
 	changed := !s.have || s.reachable != ok
-	s.have, s.reachable, s.checkedAt = true, ok, s.cfg.Clock.Now()
+	recovered := s.have && !s.reachable && ok
+	since := now - s.failingSince
+	if changed && !ok {
+		s.failingSince = now
+	}
+	s.have, s.reachable, s.checkedAt = true, ok, now
 	if ok {
-		s.fails = 0
+		s.fails, s.waitSaid = 0, false
 	} else {
 		s.fails++
 	}
@@ -284,6 +309,9 @@ func (s *Source) record(ok bool, why string) {
 		if !ok {
 			s.log.Debug("share probe failed", "why", why)
 		}
+	case recovered:
+		s.log.Info("share probe ok: the model source is reachable", "target", s.cfg.Spec.Target, "dir", s.cfg.Dir,
+			"unreachable_s", int64(since.Seconds()))
 	case ok:
 		s.log.Info("share probe ok: the model source is reachable", "target", s.cfg.Spec.Target, "dir", s.cfg.Dir)
 	default:
@@ -345,7 +373,15 @@ func (s *Source) ProbeOnce(ctx context.Context) {
 
 // maybeRemount applies the remount rule of section 8: only for a mount the
 // agent manages, only after RemountAfter failed probes in a row, and never
-// while a launch exists. A remount is a plain unmount followed by a mount.
+// while a launch exists.
+//
+// When the mount point is already a mount of the configured share, nothing
+// is unmounted or mounted: the server is not answering yet (for example in
+// its grace period after a restart) and a hard mount resumes by itself, so
+// a mount would change nothing. That is logged once per failing episode.
+// When the mount point is not a mount, the share is mounted. When it is a
+// mount of another share, that is logged and the configured share replaces
+// it: a plain unmount followed by a mount.
 func (s *Source) maybeRemount(ctx context.Context) {
 	if !s.cfg.Mount {
 		return
@@ -359,10 +395,26 @@ func (s *Source) maybeRemount(ctx context.Context) {
 	if s.cfg.LaunchExists != nil && s.cfg.LaunchExists() {
 		return
 	}
+	src, mounted, merr := s.cfg.Mounter.MountSource(s.cfg.Dir)
 	s.mu.Lock()
 	s.fails = 0
+	since := s.cfg.Clock.Now() - s.failingSince
+	sameMounted := merr == nil && mounted && sameShare(src, s.cfg.Spec.Target)
+	say := sameMounted && !s.waitSaid
+	if sameMounted {
+		s.waitSaid = true
+	}
 	s.mu.Unlock()
-	if ok, _ := s.cfg.Mounter.IsMounted(s.cfg.Dir); ok {
+	if sameMounted {
+		if say {
+			s.log.Warn("share is mounted but not answering yet; waiting for the server", "target", s.cfg.Spec.Target,
+				"at", s.cfg.Dir, "failing_s", int64(since.Seconds()))
+		}
+		return
+	}
+	if merr == nil && mounted {
+		s.log.Warn("the share mount point holds another share; mounting the configured one", "found", src,
+			"target", s.cfg.Spec.Target, "at", s.cfg.Dir)
 		c, cancel := context.WithTimeout(ctx, s.cfg.MountTimeout)
 		s.mu.Lock()
 		s.unmounts++

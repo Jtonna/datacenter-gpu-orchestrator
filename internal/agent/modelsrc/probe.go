@@ -142,6 +142,11 @@ type ExecMounter struct {
 // IsMounted implements Mounter.
 func (m ExecMounter) IsMounted(path string) (bool, error) { return osx.IsMountPoint(m.MountInfo, path) }
 
+// MountSource implements Mounter.
+func (m ExecMounter) MountSource(path string) (string, bool, error) {
+	return osx.MountSource(m.MountInfo, path)
+}
+
 // Mount implements Mounter.
 func (m ExecMounter) Mount(ctx context.Context, args []string) error {
 	_, err := m.Cmd.Run(ctx, "mount", args...)

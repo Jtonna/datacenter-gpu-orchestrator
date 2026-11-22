@@ -60,6 +60,24 @@ func TestMountPoints(t *testing.T) {
 	}
 }
 
+// MountSource names what is mounted at a path: the source field after the
+// " - " separator of mountinfo. With two mounts on one path the last one
+// (the one on top) counts.
+func TestMountSource(t *testing.T) {
+	mi := "36 35 98:0 /mnt1 /mnt1 rw,noatime master:1 - ext3 /dev/root rw\n" +
+		"40 30 0:50 / /run/potluck/models ro,relatime shared:7 - nfs4 192.0.2.9:/old ro,vers=4.2\n" +
+		"41 30 0:51 / /with\\040space rw - tmpfs tmpfs rw\n" +
+		"42 30 0:52 / /run/potluck/models ro,relatime - nfs4 192.0.2.1:/ ro,vers=4.2\n"
+	p := filepath.Join(t.TempDir(), "mountinfo")
+	os.WriteFile(p, []byte(mi), 0o644)
+	for path, want := range map[string]string{"/run/potluck/models": "192.0.2.1:/", "/with space": "tmpfs", "/mnt1": "/dev/root", "/run/potluck": ""} {
+		got, mounted, err := MountSource(p, path)
+		if err != nil || got != want || mounted != (want != "") {
+			t.Errorf("%s: got %q %v %v want %q", path, got, mounted, err, want)
+		}
+	}
+}
+
 func TestOOMLine(t *testing.T) {
 	cases := []struct {
 		line string
