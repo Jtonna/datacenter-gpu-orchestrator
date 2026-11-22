@@ -44,6 +44,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/logrelay"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/mcpserver"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/needstore"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/pool"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 )
@@ -304,9 +305,20 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 		Prober:   &instance.ExecProber{ServerBin: cfg.Defaults.ServerBin},
 		Launcher: launcher,
 		Logger:   log,
+		Release:  potluckRelease,
 	}
 	if hist.On() {
 		so.History = hist
+	}
+	// Learned memory needs live in the scheduler database, beside the bench
+	// and configuration tables (design 7.2a); without it they last for this
+	// process only.
+	if dbStore != nil {
+		if ns, err := needstore.Open(dbStore); err != nil {
+			log.Warn("learned memory needs are kept in memory only", "err", err)
+		} else {
+			so.NeedStore = ns
+		}
 	}
 	if pl != nil {
 		so.Workers, so.LoadGate = pl, pl.LoadGate

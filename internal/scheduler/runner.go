@@ -38,6 +38,11 @@ type Options struct {
 	// the load with its text (no verified release, or the host program is
 	// not the release's build, agent contract 5.1).
 	LoadGate func() error
+	// NeedStore keeps learned needs across restarts (needs.go); nil keeps
+	// them for the life of the process only. Release is stored with each
+	// measurement.
+	NeedStore NeedStore
+	Release   string
 }
 
 // Scheduler is the scheduler core plus the one goroutine (Run) that owns
@@ -66,6 +71,8 @@ type Scheduler struct {
 
 	subsMu sync.Mutex
 	subs   map[*subscriber]struct{}
+
+	needs *needWriter // nil without a NeedStore
 }
 
 type snapshot struct {
@@ -111,6 +118,13 @@ func New(cfg *config.Config, o Options) (*Scheduler, error) {
 	}
 	s.core.agents = cfg.AgentsMode()
 	s.core.loadGate = o.LoadGate
+	s.core.buildRelease = o.Release
+	if o.NeedStore != nil {
+		// Read before Run, so the first request is planned with them.
+		s.core.restoreNeeds(o.NeedStore)
+		s.needs = newNeedWriter(o.NeedStore, o.Logger)
+		s.needs.queue(s.core.takeNeedOps())
+	}
 	s.cfg.Store(cfg)
 	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
 	s.snap.Store(&snapshot{profiles: s.core.profileStates(), upstream: map[string]string{}})
@@ -125,6 +139,10 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		return errors.New("scheduler: Run called twice")
 	}
 	defer close(s.runDone)
+	if s.needs != nil {
+		go s.needs.run()
+		defer s.needs.close() // what is queued is written before Run returns
+	}
 	var stopTimer func() bool
 	var timerAt time.Time
 	ctxDone := ctx.Done()
@@ -194,6 +212,11 @@ func (s *Scheduler) step(ev event) {
 	}
 	if feed := s.core.takeFeed(); len(feed) > 0 {
 		s.publish(feed)
+	}
+	// Learned-need writes go to the writer's goroutine; the loop never waits
+	// on the database.
+	if ops := s.core.takeNeedOps(); len(ops) > 0 && s.needs != nil {
+		s.needs.queue(ops)
 	}
 }
 
@@ -501,6 +524,26 @@ func (s *Scheduler) Plan(ctx context.Context, model string) (PlanReport, error) 
 	err := s.query(ctx, func(c *schedCore) { r = c.dryPlan(p.Name) })
 	r.Alias = alias
 	return r, err
+}
+
+// ForgetNeed drops the learned memory need of model (a profile name or
+// alias), in memory and in the store, so fit decisions use the estimate or
+// needs_mib again (for when the hardware changed). It reports whether there
+// was one.
+func (s *Scheduler) ForgetNeed(ctx context.Context, model string) (bool, error) {
+	name := model
+	if p, _, ok := s.Config().Resolve(model); ok {
+		name = p.Name
+	}
+	var had bool
+	var err error
+	if qerr := s.query(ctx, func(c *schedCore) { had, err = c.forgetNeed(name) }); qerr != nil {
+		return false, qerr
+	}
+	if errors.Is(err, ErrNoProfile) {
+		return false, errUnknown(model)
+	}
+	return had, err
 }
 
 // Upstream is the address for /upstream/{model}: set only while the

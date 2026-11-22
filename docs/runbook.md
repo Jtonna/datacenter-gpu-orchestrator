@@ -595,7 +595,9 @@ defaults:
 
 - What is refused and why. A split model does not land evenly (one node 11% over an even share was measured), so every placement of two or more nodes that includes a PS5 needs each PS5's share, `need x split fraction x 1.15`, to fit in that PS5's usable memory (fleet free minus 1024 MiB headroom, or the smaller pre-flight figure). Single-node placements take no margin. Real figures at about 12400 MiB usable per PS5: a 27793 MiB model on three PS5s split 33/33/34 puts 10548, 10548 and 10868 MiB on them and is allowed; 16442 or 14248 MiB on two PS5s split 50/50 is allowed (9455 and 8193 MiB per PS5). The largest need that fits is about 31700 MiB on three (33/33/34), about 21500 MiB on two (50/50), and 12400 MiB on one. A profile without `needs_mib` is raised 5% (`estimated, +5% margin` in `/api/plan`).
 - Refusal texts. Forced profile with `forced_fit_check: reject`: `503` "forced nodes do not fit" with `node <name>: expected share N MiB (need ... x P% of the split x 1.15 skew margin) but usable M MiB (...)`. Automatic profile: the placer takes another set or adds a node, and only when none fits answers `503` "does not fit" (the `required` figure includes the margin) or queues.
-- Learned sizes. After a load succeeds the measured memory is used for later fit decisions of that profile in this run (`GET /api/status`, `learned_needs`). If it is above a configured `needs_mib`, the log has one WARN `configured needs_mib is too low: the load measured more memory; using the measured value` with both numbers: correct `needs_mib`.
+- Learned sizes. After a load succeeds the measured memory is used for later fit decisions of that profile (`GET /api/status`, `learned_needs`). If it is above a configured `needs_mib`, the log has one WARN `configured needs_mib is too low: the load measured more memory; using the measured value` with both numbers: correct `needs_mib`.
+- Learned sizes survive a restart. They are kept in the database and read at start (log `learned memory needs restored`; `learned_needs` entries show `restored: true`, `measured_at` and `age`; the plan's basis says `measured on <date>, restored at start`). A changed `model`, `ctx`, `parallel`, `kv_quant`, `flash_attn` or `extra_args`, a replaced model file, or a deleted profile drops it (log `learned memory need dropped` or `stored learned need removed`).
+- Forget a learned size (the hardware changed, or the figure is wrong): `curl -s -X POST http://127.0.0.1:3122/api/forget-need -d '{"model":"<profile>"}'`. The answer says `forgotten` or `nothing learned`; the action is in the audit log (`runtime`, `forget_need`). The next load measures again.
 - Load cancelled for low memory. While a load runs, a PS5 whose available memory falls below 768 MiB cancels it: waiting requests get `502` `load cancelled: ps5-xxxx ran low on memory during the load (available 700 MiB, floor 768 MiB)`, the child is killed, the profile is backed off, the PS5 is not quarantined. The log line is ERROR `load cancelled: a node ran low on memory` with every watched node's figure (`node_memory_mib`). Something else is using the PS5's memory: free it and retry after the backoff. `load_memory_floor_mib: 0` turns the watch off.
 
 ### Recovery requests for a hung PS5 (off by default)
@@ -1307,6 +1309,10 @@ Nothing has to be started by hand, as long as these hold:
    (or `POST /api/load`). Launches that were running on the workers before the
    restart are stopped by their agents, because the restarted Potluck does not
    know them.
+6. Learned memory needs come back from the database (design 7.2a), so a
+   forced profile that only fits with its measured need still loads. Check:
+   `curl -s http://127.0.0.1:3122/api/status | jq '.learned_needs | map_values({measured_mib, restored, age})'`.
+   The queue, backoffs and quarantines start empty.
 
 Check after a restart:
 

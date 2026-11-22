@@ -224,7 +224,7 @@ func (c *schedCore) expectShares(p *core.Profile, pl core.Placement) []int {
 	}
 	out := make([]int, len(pl.Nodes))
 	for i, pn := range pl.Nodes {
-		if m, ok := c.learned[p.Name].shareFor(pl, fracs, pn.ID); ok {
+		if m, ok := c.learnedFor(p).shareFor(pl, fracs, pn.ID); ok {
 			out[i] = m
 			continue
 		}

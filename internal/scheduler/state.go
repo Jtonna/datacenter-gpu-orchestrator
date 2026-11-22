@@ -313,15 +313,18 @@ type schedCore struct {
 	now, last time.Time
 	seq       uint64
 
-	insts     map[string]*inst
-	entries   map[string]*entry
-	nodes     map[core.NodeID]*nodeState
-	backoffs  map[string]*backoff
-	waiters   map[uint64]*waiter
-	leases    map[uint64]*lease
-	needs_    map[string]NeedInfo // provider results, before the estimate margin and learned figures
-	learned   map[string]*learnedNeed
-	warnedLow map[string]bool // profiles whose too-low needs_mib was already warned about
+	insts        map[string]*inst
+	entries      map[string]*entry
+	nodes        map[core.NodeID]*nodeState
+	backoffs     map[string]*backoff
+	waiters      map[uint64]*waiter
+	leases       map[uint64]*lease
+	needs_       map[string]NeedInfo // provider results, before the estimate margin and learned figures
+	learned      map[string]*learnedNeed
+	needOps      []needOp        // learned-need store writes, taken by the runner after each step (needs.go)
+	persist      bool            // a need store is attached: learned needs are queued for it
+	buildRelease string          // this build's release, stored with each measurement
+	warnedLow    map[string]bool // profiles whose too-low needs_mib was already warned about
 
 	raw           map[core.NodeID]core.Node // view this step
 	fresh         bool
@@ -612,7 +615,8 @@ func (c *schedCore) request(p *core.Profile) (placer.Request, NeedInfo, error) {
 
 // need is the profile's memory need as every fit decision sees it: the
 // provider's figure (cached), with the estimate margin on an estimate, and the
-// measurement learned this run where there is one (effectiveNeed).
+// measurement learned this run or restored at start where there is one
+// (effectiveNeed).
 func (c *schedCore) need(p *core.Profile) (NeedInfo, error) {
 	base, ok := c.needs_[p.Name]
 	if !ok {
@@ -621,6 +625,7 @@ func (c *schedCore) need(p *core.Profile) (NeedInfo, error) {
 			return NeedInfo{}, err
 		}
 		c.needs_[p.Name] = base
+		c.checkModelBytes(p, base)
 	}
 	return c.effectiveNeed(p, base), nil
 }

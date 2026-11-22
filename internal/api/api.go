@@ -246,6 +246,7 @@ func (s *Server) routes() *http.ServeMux {
 	m.HandleFunc("POST /api/plan", s.handlePlan)
 	m.HandleFunc("POST /api/load", s.handleLoad)
 	m.HandleFunc("POST /api/unload", s.handleUnload)
+	m.HandleFunc("POST /api/forget-need", s.handleForgetNeed)
 	return m
 }
 
@@ -641,6 +642,31 @@ func (s *Server) handleUnload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.unload(w, r, req.Model, req.Force)
+}
+
+// handleForgetNeed drops a profile's learned memory need, in memory and in
+// the database, so fit decisions use the estimate or needs_mib again (for
+// when the hardware changed). Audited as a runtime action.
+func (s *Server) handleForgetNeed(w http.ResponseWriter, r *http.Request) {
+	req, ok := readModelRequest(w, r)
+	if !ok {
+		return
+	}
+	had, err := s.sched.ForgetNeed(r.Context(), req.Model)
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	name := req.Model
+	if p, _, ok := s.conf().Resolve(req.Model); ok {
+		name = p.Name
+	}
+	s.auditRuntime(r, audit.ActionForgetNeed, name, map[string]any{"forgotten": had})
+	msg := "forgotten"
+	if !had {
+		msg = "nothing learned"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"msg": msg, "model": name, "forgotten": had})
 }
 
 // benchRunHeader validates the X-Bench-Run header (the id of the benchmark run

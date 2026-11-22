@@ -45,8 +45,16 @@ func (c *schedCore) applyConfig(nc *config.Config) {
 	for name := range c.needs_ {
 		if np, op := nc.Profiles[name], old.Profiles[name]; np == nil || op == nil || !reflect.DeepEqual(*np, *op) {
 			delete(c.needs_, name)
-			delete(c.learned, name)
 			delete(c.warnedLow, name)
+		}
+	}
+	// A learned need stays while it still describes its profile (needs.go).
+	for name, l := range c.learned {
+		switch np := nc.Profiles[name]; {
+		case np == nil:
+			c.dropLearned(name, "the profile was deleted")
+		case needKeyOf(np) != l.key:
+			c.dropLearned(name, "a setting that changes the memory need changed")
 		}
 	}
 	for name, e := range c.entries {

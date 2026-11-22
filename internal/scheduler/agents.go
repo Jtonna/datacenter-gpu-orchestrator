@@ -436,7 +436,7 @@ func (s *Scheduler) workerExits(iid uint64, st instance.ExitStatus) []WorkerRepo
 //
 // Settled as built by CR-5 (agent contract 11.1). The question was: the contract says such an exit "raises the learned memory
 // need" without an amount; the need is raised by a tenth (at least 256 MiB)
-// and kept for this run, as any learned need.
+// and kept, as any learned need (stored across a restart, needs.go).
 func (c *schedCore) raiseNeedOnKill(in *inst, node core.NodeID, ex *agentproto.ExitInfo) {
 	if ex == nil || (ex.Reason != agentproto.ExitWatchdog && ex.Reason != agentproto.ExitOOMKill) {
 		return
@@ -446,7 +446,13 @@ func (c *schedCore) raiseNeedOnKill(in *inst, node core.NodeID, ex *agentproto.E
 		return
 	}
 	raised := info.Need.MiB + max(info.Need.MiB/10, needRaiseMinMiB)
-	c.learned[in.prof.Name] = &learnedNeed{TotalMiB: raised}
+	l := &learnedNeed{TotalMiB: raised, key: needKeyOf(in.prof), at: c.now, release: c.buildRelease, cause: string(ex.Reason),
+		placement: in.nodeIDs()}
+	if base, ok := c.needs_[in.prof.Name]; ok {
+		l.modelBytes = base.FileBytes
+	}
+	c.learned[in.prof.Name] = l
+	c.storeLearned(in.prof.Name)
 	c.log.Warn("learned need raised after a worker was killed for memory", "profile", in.prof.Name, "node", node,
 		"exit", ex.Reason, "from_mib", info.Need.MiB, "to_mib", raised)
 	c.record(history.TLearnedNeed, history.Warn, in.prof.Name,
