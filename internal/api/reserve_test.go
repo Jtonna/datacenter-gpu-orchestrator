@@ -11,7 +11,7 @@ import (
 // planMemoryKeys and planMemoryNodeKeys are the memory section of a plan
 // exactly as the server writes it (the UI reads only these; ui_reserve_test).
 var (
-	planMemoryKeys     = []string{"fits", "hypothetical", "nodes", "note", "placement_uses_reserved", "short_node", "shortfall_mib"}
+	planMemoryKeys     = []string{"decides", "fits", "hypothetical", "nodes", "note", "placement_uses_reserved", "short_node", "shortfall_mib"}
 	planMemoryNodeKeys = []string{"available_mib", "basis", "context_mib", "fill_reserve_mib", "free_avg_known", "free_avg_mib", "free_now_mib",
 		"headroom_mib", "id", "margin_mib", "margin_rule", "node", "remains_mib", "reserved_by", "shared", "total_mib", "weights_mib", "will_take_mib"}
 	nodeReserveKeys     = []string{"reserved", "reserved_mib", "measured_used_mib", "drift_mib", "drift_warning", "free_for_new_load_mib"}

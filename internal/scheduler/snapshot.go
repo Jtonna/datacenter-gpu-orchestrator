@@ -328,11 +328,16 @@ func (c *schedCore) dryPlan(profile string) (r PlanReport) {
 		r.Reason = fmt.Sprintf("joins the queued entry (%d waiting, claimed %v)", len(e.waiters), e.claimed())
 		return r
 	}
+	// The reservation gate (reserve.go) holds what the placer finds to the
+	// memory rows, as place, plan and startOnClaim do.
+	gate := ""
 	pl, perr := placer.Place(req, c.freeCandidates(p))
 	if perr == nil {
-		r.Action, r.Placement, placed = PlanStart, c.placedStatus(pl), &pl
-		c.applyForcedFit(&r, p, pl)
-		return r
+		if gate = c.reserveGate(p, pl, nil); gate == "" {
+			r.Action, r.Placement, placed = PlanStart, c.placedStatus(pl), &pl
+			c.applyForcedFit(&r, p, pl)
+			return r
+		}
 	}
 	if ev := c.evictables(p, 0); len(ev) > 0 {
 		if res, err := placer.Plan(req, c.freeCandidates(p), ev); err == nil {
@@ -340,15 +345,22 @@ func (c *schedCore) dryPlan(profile string) (r PlanReport) {
 				r.Action, r.Reason, r.Placement = PlanReject, fe.Message, c.placedStatus(res.Placement)
 				return r
 			}
-			r.Action, r.Placement, placed = PlanEvict, c.placedStatus(res.Placement), &res.Placement
-			for _, v := range res.Victims {
-				r.Victims = append(r.Victims, PlanVictim{Profile: v, Busy: c.insts[v].inFlight > 0})
+			if g := c.reserveGate(p, res.Placement, res.Victims); g == "" {
+				r.Action, r.Placement, placed = PlanEvict, c.placedStatus(res.Placement), &res.Placement
+				for _, v := range res.Victims {
+					r.Victims = append(r.Victims, PlanVictim{Profile: v, Busy: c.insts[v].inFlight > 0})
+				}
+				return r
+			} else if gate == "" {
+				gate = g
 			}
-			return r
 		}
 	}
 	r.Action = PlanQueue
 	_, r.Reason = c.waitWhy(p)
+	if gate != "" {
+		r.Reason = gate
+	}
 	return r
 }
 

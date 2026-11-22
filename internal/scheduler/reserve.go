@@ -421,36 +421,21 @@ func (c *schedCore) nodeReservation(id core.NodeID, n core.Node, s *NodeStatus) 
 // planNote explains the weights and context split of the memory section.
 const planNote = "weights are the model file's share by the split fraction; context is the rest of the share (KV cache, compute buffers, device overhead); will_take adds the fill reserve, or is the stored peak when that is higher"
 
-// planMemory is the memory section of a plan: on the placement made (or,
-// with none, on the nodes the profile would be spread over), what each node
-// will take assuming the context is filled, what it has, what is reserved
-// there and what remains. The nodes of the profile's own instance and of the
-// plan's victims count as freed.
-func (c *schedCore) planMemory(p *core.Profile, placed *core.Placement, victims []PlanVictim) *PlanMemory {
-	if _, err := c.need(p); err != nil {
-		return nil
-	}
-	m := &PlanMemory{PlacementUsesReserved: c.cfg.Defaults.PlacementUsesReserved, Note: planNote, Nodes: []PlanMemoryNode{}}
-	var pl core.Placement
-	if placed != nil && len(placed.Nodes) > 0 {
-		pl = *placed
-	} else {
-		m.Hypothetical = true
-		pl = c.hypotheticalPlacement(p)
-		if len(pl.Nodes) == 0 {
-			m.Note = "no node can take a share of this profile now; " + planNote
-			return m
-		}
-	}
-	freed := map[string]bool{p.Name: true}
-	for _, v := range victims {
-		freed[v.Profile] = true
-	}
+// gateOn: a reservation setting is on, so every placement is held to the
+// memory rows (reserveGate); with the defaults the old rules decide alone.
+func (c *schedCore) gateOn() bool { return c.newRules() || c.cfg.Defaults.PlacementUsesReserved }
+
+// memoryRows is, for each node of placement pl, what p will take there with
+// its context filled, what the node has and what remains. The nodes held by
+// a profile in freed (p itself, the victims of an eviction) count at their
+// figure with nothing of ours loaded. ok is false when the need is unknown.
+// The plan's memory section and the reservation gate both use it, so the
+// plan's fits is the decision.
+func (c *schedCore) memoryRows(p *core.Profile, pl core.Placement, freed map[string]bool) (rows []PlanMemoryNode, ok bool) {
 	shares, _ := c.reservedShares(p, pl)
 	if shares == nil {
-		return nil
+		return nil, false
 	}
-	m.Fits = !m.Hypothetical
 	for i, pn := range pl.Nodes {
 		n, _ := c.node(pn.ID)
 		r := shares[i]
@@ -473,16 +458,86 @@ func (c *schedCore) planMemory(p *core.Profile, placed *core.Placement, victims 
 			}
 		}
 		e.RemainsMiB = e.AvailableMiB - e.WillTakeMiB - e.MarginMiB
-		if e.RemainsMiB < 0 {
-			m.Fits = false
-			if -e.RemainsMiB > m.ShortfallMiB {
-				m.ShortNode, m.ShortfallMiB = e.Node, -e.RemainsMiB
-			}
-		}
-		m.Nodes = append(m.Nodes, e)
+		rows = append(rows, e)
 	}
+	return rows, true
+}
+
+// rowsShort is the node that falls shortest and by how much; "" when every
+// row keeps remains_mib >= 0.
+func rowsShort(rows []PlanMemoryNode) (node string, by int) {
+	for _, e := range rows {
+		if -e.RemainsMiB > by {
+			node, by = e.Node, -e.RemainsMiB
+		}
+	}
+	return node, by
+}
+
+// reserveGate is the reservation rule's check of a placement the placer
+// found for p (victims are the profiles an eviction would stop): every node
+// must keep remains_mib >= 0 in memoryRows. It returns why not, or "" when
+// it fits, the gate is off (the defaults) or the need is unknown (the other
+// checks decide then).
+func (c *schedCore) reserveGate(p *core.Profile, pl core.Placement, victims []string) string {
+	if !c.gateOn() {
+		return ""
+	}
+	freed := map[string]bool{p.Name: true}
+	for _, v := range victims {
+		freed[v] = true
+	}
+	rows, ok := c.memoryRows(p, pl, freed)
+	if !ok {
+		return ""
+	}
+	if node, by := rowsShort(rows); by > 0 {
+		return fmt.Sprintf("memory reservation: node %s would be short by %d MiB (weights + context + fill reserve + margin above what it has)", node, by)
+	}
+	return ""
+}
+
+// planMemory is the memory section of a plan: on the placement made (or,
+// with none, on the nodes the profile would be spread over), what each node
+// will take assuming the context is filled, what it has, what is reserved
+// there and what remains. The nodes of the profile's own instance and of the
+// plan's victims count as freed (for a loaded profile: as if reloaded).
+func (c *schedCore) planMemory(p *core.Profile, placed *core.Placement, victims []PlanVictim) *PlanMemory {
+	info, err := c.need(p)
+	if err != nil {
+		return nil
+	}
+	m := &PlanMemory{PlacementUsesReserved: c.cfg.Defaults.PlacementUsesReserved, Decides: c.gateOn(), Note: planNote, Nodes: []PlanMemoryNode{}}
+	if info.FileBytes <= 0 {
+		m.Note = "the model file's size is not known, so all of the share is shown as context; " + planNote
+	}
+	var pl core.Placement
+	if placed != nil && len(placed.Nodes) > 0 {
+		pl = *placed
+		if c.insts[p.Name] != nil {
+			m.Note = "the profile is loaded: fits says whether it would fit again if reloaded on its nodes; " + m.Note
+		}
+	} else {
+		m.Hypothetical = true
+		pl = c.hypotheticalPlacement(p)
+		if len(pl.Nodes) == 0 {
+			m.Note = "no node can take a share of this profile now; " + m.Note
+			return m
+		}
+	}
+	freed := map[string]bool{p.Name: true}
+	for _, v := range victims {
+		freed[v.Profile] = true
+	}
+	rows, ok := c.memoryRows(p, pl, freed)
+	if !ok {
+		return nil
+	}
+	m.Nodes = rows
+	m.ShortNode, m.ShortfallMiB = rowsShort(rows)
+	m.Fits = !m.Hypothetical && m.ShortfallMiB == 0
 	if m.Hypothetical && m.ShortfallMiB == 0 {
-		m.Note = "no placement now although these nodes have the memory: they are held, claimed, settling or not allowed for the profile; " + planNote
+		m.Note = "no placement now although these nodes have the memory: they are held, claimed, settling or not allowed for the profile; " + m.Note
 	}
 	return m
 }

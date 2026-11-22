@@ -477,7 +477,11 @@ type PlanMemory struct {
 	Hypothetical bool
 	// PlacementUsesReserved is the setting the available figures follow.
 	PlacementUsesReserved bool
-	Note                  string
+	// Decides: the decision holds every placement to Fits (any reservation
+	// setting is on). With the defaults Fits is shown only; the old rules
+	// decide.
+	Decides bool
+	Note    string
 }
 
 // PlanMemoryNode is one node of PlanMemory. AvailableMiB is the figure the

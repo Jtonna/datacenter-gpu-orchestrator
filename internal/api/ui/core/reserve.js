@@ -50,6 +50,7 @@ export function memoryTable(mem, name) {
     h('div.day', 'Memory, with the context filled'),
     h('div.cb', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap' }, head,
       mem.hypothetical ? badge('No placement now: the nodes it would be spread over', 'n') : null,
+      mem.decides ? null : badge('Shown only: the default rules decide', 'n'),
       h('span.note', short, mem.placement_uses_reserved ? ' Available follows the reservation rule (the lower of free now and its average, less what is reserved and not measured yet).' : ' Available is free now less headroom.')),
     table({
       minWidth: 900,

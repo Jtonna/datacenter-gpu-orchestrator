@@ -183,3 +183,86 @@ func TestReview_S1_EmptyFreeNeverAboveTheTotal(t *testing.T) {
 		}
 	}
 }
+
+// agreementCase is one situation of the plan/decision agreement table: the
+// nodes, the profile asked for, and what else is loaded.
+type agreementCase struct {
+	name  string
+	setup func(t *testing.T, h *harness) // loads neighbours, sets averages
+	prof  func(h *harness)               // adds profile "m"
+}
+
+// S2, S3, S4: the plan's memory fits and the decision are one: whenever the
+// plan says start or evict, its memory section fits, and whenever the memory
+// section does not fit, the plan does not start; a real request then does
+// what the plan said. Forced, automatic, a loading neighbour, a tight
+// margin, a low average and a skewed measured split.
+func TestReview_S4_PlanFitsAgreesWithTheDecision(t *testing.T) {
+	low := func(t *testing.T, h *harness) { // average 8400 usable on every node
+		for _, id := range []string{"a", "b", "c"} {
+			h.view.modify(core.NodeID(id), func(n *core.Node) { n.FreeAvgMiB, n.FreeAvgKnown = 9400, true })
+		}
+	}
+	none := func(t *testing.T, h *harness) {}
+	loading := func(t *testing.T, h *harness) { // another profile loading on a
+		h.llama("other", 9000, func(p *core.Profile) { p.ForceNodes, p.LoadTimeout = []string{"a"}, time.Hour })
+		h.request("other")
+		h.wantState("other", "starting")
+	}
+	skewed := func(need, a, b int) func(h *harness) { // a stored split of a/b over a and b
+		return func(h *harness) {
+			p := h.llama("m", 0, func(p *core.Profile) { p.ForceNodes, p.TensorSplit = []string{"a", "b"}, []int{1, 1} })
+			h.needs["m"] = NeedInfo{Need: placer.Estimated(need), FileBytes: 1 << 30}
+			h.c.learned[shapeOf(p)] = &learnedNeed{TotalMiB: a + b, key: needKeyOf(p), profile: "m", placement: []core.NodeID{"a", "b"},
+				split: []float64{0.5, 0.5}, Nodes: []learnedNode{{ID: "a", Fraction: 0.5, MiB: a}, {ID: "b", Fraction: 0.5, MiB: b}}}
+		}
+	}
+	auto := func(need int) func(h *harness) {
+		return func(h *harness) { h.llama("m", need, func(p *core.Profile) { p.Ctx = 65536 }) }
+	}
+	forced := func(need int, nodes ...string) func(h *harness) {
+		return func(h *harness) {
+			h.llama("m", need, func(p *core.Profile) { p.Ctx, p.ForceNodes, p.LoadTimeout = 65536, nodes, time.Hour })
+		}
+	}
+	cases := []agreementCase{
+		{"automatic fits", none, auto(20000)},
+		{"automatic, tight margin fits", none, auto(23000)},
+		{"automatic, tight margin does not fit", none, auto(23400)},
+		{"automatic, low average", low, auto(20000)},
+		{"forced fits", none, forced(10000, "a")},
+		{"forced, low average (S2)", low, forced(10000, "a")},
+		{"forced, too big", none, forced(12500, "a")},
+		{"automatic, loading neighbour", loading, auto(20000)},
+		{"forced, skewed measured split fits", none, skewed(16000, 8500, 7500)},
+		{"forced, skewed measured split over a node (S3)", none, skewed(16000, 12300, 3700)},
+	}
+	for _, tc := range cases {
+		for _, on := range []bool{false, true} {
+			t.Run(tc.name+map[bool]string{true: ", rule on", false: ", defaults"}[on], func(t *testing.T) {
+				h := newHarness(t).nodes(psNode("a", 2, 12400), psNode("b", 4, 12400), psNode("c", 6, 12400))
+				if on {
+					reserveOnSettings(h)
+				}
+				tc.setup(t, h)
+				tc.prof(h)
+				h.viewChanged()
+				r := h.c.dryPlan("m")
+				if r.Memory == nil {
+					t.Fatalf("no memory section: %+v", r)
+				}
+				starts := r.Action == PlanStart || r.Action == PlanEvict
+				if on && starts != r.Memory.Fits {
+					t.Fatalf("plan %s (%q) but memory fits %v: %+v", r.Action, r.Reason, r.Memory.Fits, r.Memory)
+				}
+				if r.Memory.Decides != on {
+					t.Fatalf("decides %v with the rule %v", r.Memory.Decides, on)
+				}
+				h.request("m")
+				if started := h.c.insts["m"] != nil; started != (r.Action == PlanStart) {
+					t.Fatalf("plan %s (%q) but the request started %v", r.Action, r.Reason, started)
+				}
+			})
+		}
+	}
+}
