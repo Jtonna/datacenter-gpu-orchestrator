@@ -69,7 +69,7 @@ func (u SelfUpdater) Update(ctx context.Context, required string) error {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.Base+"/api/pool/release", nil)
 	resp, err := u.HTTP.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("release answer: %w", err)
 	}
 	var info struct {
 		Release string `json:"release"`
@@ -97,7 +97,7 @@ func (u SelfUpdater) Update(ctx context.Context, required string) error {
 	req, _ = http.NewRequestWithContext(ctx, http.MethodGet, u.Base+bin.Path, nil)
 	resp, err = u.HTTP.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("download: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
@@ -115,7 +115,7 @@ func (u SelfUpdater) Update(ctx context.Context, required string) error {
 	}
 	if err != nil {
 		os.Remove(part)
-		return err
+		return fmt.Errorf("download: %w", err)
 	}
 	if sum := hex.EncodeToString(h.Sum(nil)); !strings.EqualFold(sum, bin.SHA256) {
 		os.Remove(part)
@@ -142,7 +142,7 @@ func (u SelfUpdater) Update(ctx context.Context, required string) error {
 	if err := os.Rename(part, u.Exe); err != nil {
 		os.Remove(part)
 		os.Remove(u.attemptPath())
-		return err
+		return fmt.Errorf("install: %w", err)
 	}
 	if u.Logger != nil {
 		u.Logger.Info("agent binary replaced; restarting", "release", info.Release, "sha256", bin.SHA256)

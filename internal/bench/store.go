@@ -207,12 +207,12 @@ func openStore(dir string, upTo int) (*Store, error) {
 	dsn := "file:" + filepath.ToSlash(path) + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("opening %s: %w", path, err)
 	}
 	db.SetMaxOpenConns(8)
 	if err := db.Ping(); err != nil {
 		db.Close()
-		return nil, err
+		return nil, fmt.Errorf("opening %s: %w", path, err)
 	}
 	s := &Store{db: db, path: path, jobs: make(chan job, 64)}
 	if err := s.migrate(upTo); err != nil {

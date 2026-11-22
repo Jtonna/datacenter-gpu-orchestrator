@@ -334,7 +334,7 @@ func New(o Options) (*Pool, error) {
 	if o.Store != nil {
 		a, err := o.Store.NodeAdmins()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("pool: reading the node admin state: %w", err)
 		}
 		p.admin = a
 	}
