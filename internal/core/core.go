@@ -18,7 +18,10 @@ type Node struct {
 	// Paused: the node takes no new load (agents membership, agent contract
 	// 7.2). A load already on it continues; it stays counted in capacity.
 	Paused bool
-	Addr   string // rpc ip:port; empty for the local node
+	// UnpausePending: Paused only because the operator's unpause has not
+	// reached the node's agent yet (it takes load again within a heartbeat).
+	UnpausePending bool
+	Addr           string // rpc ip:port; empty for the local node
 
 	TotalMiB int // total device memory
 	// SystemMiB is the machine's system memory (RAM) when known, 0 otherwise:

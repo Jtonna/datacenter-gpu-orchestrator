@@ -425,7 +425,10 @@ func (c *schedCore) forcedNeverFits(p *core.Profile) *Error {
 	if len(p.TensorSplit) > 0 {
 		pl.TensorSplit = slices.Clone(p.TensorSplit)
 	}
-	return c.forcedRefusalBeforeEvict(p, pl)
+	if e := c.forcedRefusalBeforeEvict(p, pl); e != nil {
+		return e
+	}
+	return c.shortEvenFreed(p, pl) // neverfits.go: the owner's case
 }
 
 // refuseNeverFits logs a forcedNeverFits refusal; at says where it was made

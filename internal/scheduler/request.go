@@ -48,6 +48,11 @@ func (c *schedCore) arrive(w *waiter) {
 		c.fail(w, c.excludedForcedErr(p, why))
 		return
 	}
+	if e := c.forcedPausedErr(p); e != nil && c.insts[p.Name] == nil {
+		c.refusePaused(p, e, "arrival")
+		c.fail(w, e)
+		return
+	}
 	if c.insts[p.Name] != nil {
 		// draining or stopping: it waits for that instance to go
 	} else if err := c.failFastForced(p, 1); err != nil {
@@ -121,6 +126,36 @@ func (c *schedCore) forcedExcluded(p *core.Profile) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// pausedNode: an operator paused node n and has not unpaused it (a node whose
+// unpause has not reached its agent yet takes load within a heartbeat: it
+// is a wait, not a pause).
+func (c *schedCore) pausedNode(n core.Node) bool { return n.Paused && !n.UnpausePending }
+
+// forcedPausedErr refuses forced profile p when an operator paused one of
+// its forced nodes (fifth review N2): a pause may last days, and the text
+// said "forced nodes in use". It is refused at once with the true reason and
+// Retry-After; a node that is absent or offline still waits (it may come
+// back, and forcedGoneErr fails it after the grace period). Nil when none.
+func (c *schedCore) forcedPausedErr(p *core.Profile) *Error {
+	for _, name := range p.ForceNodes {
+		id, err := c.view.Resolve(name)
+		if err != nil {
+			continue
+		}
+		if n, ok := c.node(id); ok && c.pausedNode(n) {
+			return err503(ReasonForcedUnavailable,
+				fmt.Sprintf("profile %s forces node %s, but node %s is paused by an operator; it cannot start until the node is unpaused, so this fails now instead of waiting for queue_timeout",
+					p.Name, name, nodeLabel(id, n)), queueRetryAfter)
+		}
+	}
+	return nil
+}
+
+// refusePaused logs a forcedPausedErr refusal; at is "arrival" or "queue".
+func (c *schedCore) refusePaused(p *core.Profile, e *Error, at string) {
+	c.log.Warn("forced node paused; refused", "profile", p.Name, "nodes", slices.Clone(p.ForceNodes), "at", at, "reason", e.Message)
 }
 
 // excludedForcedErr is the permanent failure for a forced profile that names

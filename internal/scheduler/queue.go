@@ -74,6 +74,11 @@ func (c *schedCore) evalEntry(e *entry) {
 			c.answerEntry(e, err)
 			return
 		}
+		if err := c.forcedPausedErr(p); err != nil && len(e.waiters) > 0 {
+			c.refusePaused(p, err, "queue")
+			c.answerEntry(e, err)
+			return
+		}
 		if !e.claimed() && len(e.waiters) > 0 {
 			if err := c.forcedNeverFits(p); err != nil {
 				c.refuseNeverFits(p, err, "queue")

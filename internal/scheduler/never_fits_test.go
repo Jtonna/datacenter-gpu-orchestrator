@@ -87,15 +87,17 @@ func TestNeverFits_ForcedIsRefusedAtOnce(t *testing.T) {
 // loadSmall loads "small": ready and idle (evictable) in fleet membership;
 // in agents membership its load is under way (the worker launch answer is
 // not given), which also holds its node.
-func loadSmall(h *harness, mode string) {
+func loadSmall(h *harness, mode string) { h.t.Helper(); loadSmallAs(h, mode, "small") }
+
+func loadSmallAs(h *harness, mode, name string) {
 	h.t.Helper()
 	if mode == "fleet" {
-		h.release(h.ready("small"))
+		h.release(h.ready(name))
 		return
 	}
-	h.request("small")
-	if h.c.insts["small"] == nil {
-		h.t.Fatalf("small did not start")
+	h.request(name)
+	if h.c.insts[name] == nil {
+		h.t.Fatalf("%s did not start", name)
 	}
 }
 
@@ -310,6 +312,135 @@ func TestNeverFits_AutomaticRefusalNamesTheTriedAndRetryAfter(t *testing.T) {
 		}
 		if e.RetryAfter != queueRetryAfter {
 			t.Errorf("%s: Retry-After %v, want %v", mode, e.RetryAfter, queueRetryAfter)
+		}
+	}
+}
+
+// The owner's case (fifth review): forced onto a, "small" (6000) loaded and
+// idle there, "big" needs 19266. Even with small stopped a is short, so big
+// is refused at once in both membership modes, small is not stopped, and
+// the plan says the same. With small stopped it would fit: big evicts or
+// waits as before.
+func TestNeverFits_OwnersCaseShortEvenWithOursStopped(t *testing.T) {
+	for _, mode := range []string{"fleet", "agents"} {
+		for _, need := range []int{19266, 9000} {
+			h := inMode(newHarness(t).nodes(psNode("a", 2, 12643)), mode)
+			liveTight(h)
+			h.llama("small", 6000, func(p *core.Profile) { p.ForceNodes = []string{"a"} })
+			h.viewChanged()
+			if mode == "fleet" {
+				h.release(h.ready("small"))
+			} else {
+				h.release(h.agentReady("small"))
+			}
+			h.view.modify("a", func(n *core.Node) { n.FreeMiB = n.TotalMiB - 7000 })
+			h.advance(time.Minute) // past min_hold and the release window
+			h.llama("big", 0, func(p *core.Profile) { p.ForceNodes, p.LoadTimeout = []string{"a"}, time.Hour })
+			h.needs["big"] = NeedInfo{Need: placer.Measured(need), FileBytes: 10 << 30}
+			h.viewChanged()
+			if need == 9000 {
+				if r := h.c.dryPlan("big"); r.Action == PlanReject {
+					t.Fatalf("%s 9000: fits once small is stopped, plan reject: %s", mode, r.Reason)
+				}
+				w := h.request("big")
+				if a, ok := h.peek(w); ok && a.err != nil {
+					t.Fatalf("%s 9000: refused %v", mode, a.err)
+				}
+				continue
+			}
+			e := refusedAtOnce(t, h, "big", ReasonForcedDoesNotFit)
+			if e.RetryAfter != queueRetryAfter {
+				t.Errorf("%s: Retry-After %v", mode, e.RetryAfter)
+			}
+			if mode == "fleet" {
+				for _, s := range []string{"small stopped", "smaller of what it reported and what is reserved", "short by", "after freeing"} {
+					if !strings.Contains(e.Message, s) {
+						t.Errorf("%s: the message lacks %q: %s", mode, s, e.Message)
+					}
+				}
+			}
+			if in := h.c.insts["small"]; in == nil || in.state != stReady {
+				t.Fatalf("%s: small was stopped for a profile that cannot fit", mode)
+			}
+		}
+	}
+}
+
+// A forced node an operator paused or excluded refuses the request at once
+// with the true reason (Retry-After for a pause: it can end); the plan says
+// the same. An absent (offline) forced node keeps the request waiting: it
+// may come back; so does one whose unpause has not reached its agent yet. Both membership modes, defaults and the tight values.
+func TestNeverFits_PausedExcludedAbsentForcedNodes(t *testing.T) {
+	for _, mode := range []string{"fleet", "agents"} {
+		for _, tight := range []bool{false, true} {
+			for _, kind := range []string{"paused", "unpause-pending", "excluded", "absent"} {
+				name := mode + " " + kind
+				if tight {
+					name += " tight"
+				}
+				h := inMode(newHarness(t).nodes(psNode("a", 2, 12643), psNode("b", 4, 12643)), mode)
+				if tight {
+					liveTight(h)
+				}
+				h.llama("m", 6000, func(p *core.Profile) { p.ForceNodes, p.LoadTimeout = []string{"a"}, time.Hour })
+				switch kind {
+				case "paused":
+					h.view.modify("a", func(n *core.Node) { n.Paused = true })
+				case "unpause-pending":
+					h.view.modify("a", func(n *core.Node) { n.Paused, n.UnpausePending = true, true })
+					h.view.setUnplaced("a", UnplacedPaused) // as the agents pool lists it
+				case "excluded":
+					h.cfg.ExcludeNodes = []string{"a"}
+				case "absent":
+					h.view.modify("a", func(n *core.Node) { n.Online = false })
+				}
+				h.viewChanged()
+				switch kind {
+				case "absent", "unpause-pending":
+					if r := h.c.dryPlan("m"); r.Action == PlanReject {
+						t.Fatalf("%s: plan reject (%s), want a wait", name, r.Reason)
+					}
+					w := h.request("m")
+					if a, ok := h.peek(w); ok && a.err != nil {
+						t.Fatalf("%s: refused at once %v, want a wait", name, a.err)
+					}
+				case "excluded":
+					e := refusedAtOnce(t, h, "m", ReasonNodeExcluded)
+					if !strings.Contains(e.Message, "excluded by config") || strings.Contains(e.Message, "in use") {
+						t.Fatalf("%s: %s", name, e.Message)
+					}
+				default:
+					e := refusedAtOnce(t, h, "m", ReasonForcedUnavailable)
+					if !strings.Contains(e.Message, "node a is paused") || strings.Contains(e.Message, "in use") {
+						t.Fatalf("%s: %s", name, e.Message)
+					}
+					if e.RetryAfter != queueRetryAfter {
+						t.Fatalf("%s: Retry-After %v", name, e.RetryAfter)
+					}
+				}
+			}
+		}
+	}
+}
+
+// A request already waiting when its forced node is paused is refused on
+// the next queue pass, with the same text.
+func TestNeverFits_APauseRefusesTheWaitingRequest(t *testing.T) {
+	for _, mode := range []string{"fleet", "agents"} {
+		h := inMode(newHarness(t).nodes(psNode("a", 2, 12643)), mode)
+		h.llama("other", 6000, func(p *core.Profile) { p.ForceNodes = []string{"a"} })
+		h.viewChanged()
+		loadSmallAs(h, mode, "other")
+		h.llama("m", 9000, func(p *core.Profile) { p.ForceNodes, p.LoadTimeout = []string{"a"}, time.Hour })
+		w := h.request("m")
+		if _, ok := h.peek(w); ok {
+			t.Fatalf("%s: answered before the pause", mode)
+		}
+		h.view.modify("a", func(n *core.Node) { n.Paused = true })
+		h.viewChanged()
+		a, ok := h.peek(w)
+		if !ok || a.err == nil || a.err.Reason != ReasonForcedUnavailable || !strings.Contains(a.err.Message, "paused") {
+			t.Fatalf("%s: after the pause answered %v %+v", mode, ok, a.err)
 		}
 	}
 }

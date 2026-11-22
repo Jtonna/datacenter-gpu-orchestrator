@@ -123,12 +123,7 @@ func (c *schedCore) gateNeverFits(p *core.Profile, tried []core.Placement) *Erro
 			if r.RemainsMiB >= 0 {
 				continue
 			}
-			margin := fmt.Sprintf("margin %d MiB", r.MarginMiB)
-			if r.MarginRule != "" {
-				margin += " (" + r.MarginRule + ")"
-			}
-			short = append(short, fmt.Sprintf("node %s would take %d MiB (weights %d + context %d + fill reserve %d) + %s but has %d MiB available; short by %d MiB",
-				r.Node, r.WillTakeMiB, r.WeightsMiB, r.ContextMiB, r.FillReserveMiB, margin, r.AvailableMiB, -r.RemainsMiB))
+			short = append(short, shortRowText(r, "has"))
 		}
 		if len(short) == 0 {
 			return nil
@@ -158,6 +153,79 @@ func (c *schedCore) gateNeverFits(p *core.Profile, tried []core.Placement) *Erro
 	e.RetryAfter = queueRetryAfter
 	e.NeedMiB, e.CapacityMiB = take, has
 	return e
+}
+
+// shortRowText says how row r falls short; has is "has" or "would have".
+func shortRowText(r PlanMemoryNode, has string) string {
+	margin := fmt.Sprintf("margin %d MiB", r.MarginMiB)
+	if r.MarginRule != "" {
+		margin += " (" + r.MarginRule + ")"
+	}
+	return fmt.Sprintf("node %s would take %d MiB (weights %d + context %d + fill reserve %d) + %s but %s %d MiB available; short by %d MiB",
+		r.Node, r.WillTakeMiB, r.WeightsMiB, r.ContextMiB, r.FillReserveMiB, margin, has, r.AvailableMiB, -r.RemainsMiB)
+}
+
+// shortEvenFreed is the owner's case (fifth review): forced profile p is
+// refused at once when its forced placement pl is short by the reservation
+// rule even with every instance of ours on those nodes stopped. What a
+// holder frees counts conservatively, at the smaller of what it reported
+// and what is reserved for it (emptyFree), so a refusal is never made on
+// memory a stop might not return. It waits (nil) while anything else can
+// change there: a claim, a settle, an agent's hold, a pause, a holder whose
+// figure cannot be told. Nil with the gate off (the defaults).
+func (c *schedCore) shortEvenFreed(p *core.Profile, pl core.Placement) *Error {
+	if !c.gateOn() || len(pl.Nodes) == 0 {
+		return nil
+	}
+	freed := map[string]bool{p.Name: true}
+	var holders []string
+	for _, pn := range pl.Nodes {
+		if c.isFree(pn.ID) {
+			continue
+		}
+		ns := c.nodes[pn.ID]
+		n, _ := c.node(pn.ID)
+		if ns == nil || ns.holder == "" || ns.claim != "" || ns.settle != setNone || c.noNewLoad(pn.ID) {
+			return nil
+		}
+		if _, _, ok := c.emptyFree(pn.ID, n); !ok {
+			return nil
+		}
+		if !freed[ns.holder] {
+			freed[ns.holder] = true
+			holders = append(holders, ns.holder)
+		}
+	}
+	if len(holders) == 0 {
+		return nil
+	}
+	rows, ok := c.memoryRows(p, pl, freed)
+	if !ok {
+		return nil
+	}
+	var parts []string
+	take, has := 0, 0
+	for _, r := range rows {
+		take, has = take+r.WillTakeMiB+r.MarginMiB, has+r.AvailableMiB
+		if r.RemainsMiB < 0 {
+			parts = append(parts, shortRowText(r, "would have only"))
+		}
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	msg := fmt.Sprintf("profile %s does not fit the nodes it is forced onto by the memory reservation rule even with %s stopped (counted at the smaller of what %s reported and what is reserved): %s after freeing; nothing loaded is stopped for it",
+		p.Name, strings.Join(holders, ", "), pronounFor(len(holders)), strings.Join(parts, "; "))
+	e := err503(ReasonForcedDoesNotFit, msg, queueRetryAfter)
+	e.NeedMiB, e.CapacityMiB = take, has
+	return e
+}
+
+func pronounFor(n int) string {
+	if n == 1 {
+		return "it"
+	}
+	return "each"
 }
 
 // placementsText is "a, b and c, d" for the node sets of pls.

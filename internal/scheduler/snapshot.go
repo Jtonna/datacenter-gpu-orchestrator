@@ -286,6 +286,10 @@ func (c *schedCore) dryPlan(profile string) (r PlanReport) {
 		r.Action, r.Reason = PlanReject, why
 		return r
 	}
+	if fe := c.forcedPausedErr(p); fe != nil && c.insts[profile] == nil {
+		r.Action, r.Reason = PlanReject, fe.Message
+		return r
+	}
 	if fe := c.forcedGoneErr(p); fe != nil && c.insts[profile] == nil {
 		r.Action, r.Reason = PlanReject, fe.Message
 		return r
