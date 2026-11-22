@@ -9,6 +9,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // PhaseOK is the outcome of a phase that did what it should.
@@ -929,8 +930,16 @@ func (br *benchRun) phaseConcurrent(i int, p *benchspec.Phase, pr *PhaseResult) 
 	fire := make(chan struct{})
 	for k := 0; k < n; k++ {
 		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		go supervise.Once("bench.concurrent", func() {
+			ok := false
+			defer func() { // a failure is this request's error
+				if !ok {
+					dmu.Lock()
+					items[k] = ConcurrentItem{Index: k + 1, Error: "internal error"}
+					dmu.Unlock()
+				}
+				wg.Done()
+			}()
 			<-fire
 			rr, resp, err := br.send(br.ctx, req, PhaseConcurrent, i, k+1)
 			it := ConcurrentItem{Index: k + 1, WallMS: rr.WallMS, DecodeTPS: rr.DecodeTPS, PrefillTPS: rr.PromptTPS}
@@ -947,8 +956,9 @@ func (br *benchRun) phaseConcurrent(i int, p *benchspec.Phase, pr *PhaseResult) 
 			finished++
 			f := finished
 			dmu.Unlock()
+			ok = true
 			br.x.unitDone(br.track, fmt.Sprintf("Simultaneous requests: %d of %d done", f, n))
-		}()
+		}, nil)
 	}
 	start := time.Now()
 	close(fire)

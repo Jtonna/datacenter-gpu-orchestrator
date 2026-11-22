@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,6 +16,7 @@ import (
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (no cgo)
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // DBFile is the database file name inside data_dir.
@@ -311,6 +313,7 @@ func (s *Store) runJob(fn func(*sql.Tx) error) (err error) {
 		if r := recover(); r != nil {
 			tx.Rollback()
 			err = fmt.Errorf("store: %v", r)
+			supervise.Report("bench.store", r, debug.Stack()) // logged and counted; the job fails alone as before
 		}
 	}()
 	if err := fn(tx); err != nil {

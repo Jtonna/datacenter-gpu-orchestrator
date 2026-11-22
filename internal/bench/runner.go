@@ -10,6 +10,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // activeRun is the run being executed.
@@ -188,20 +189,22 @@ func (m *Manager) execute(ctx context.Context, q *queued) {
 	x.captureEnv()
 	m.publishRun(ar.snapshot())
 	m.emitProgress(ar, true)
-	tickDone := make(chan struct{})
-	defer close(tickDone)
-	go func() { // keeps the progress message coming (twice a second) while nothing else changes
+	tickCtx, tickDone := context.WithCancel(context.Background())
+	defer tickDone()
+	// Keeps the progress message coming (twice a second) while nothing else
+	// changes; a failure restarts it alone.
+	supervise.Go(tickCtx, supervise.Spec{Name: "bench.progress", Policy: supervise.Restart}, func(ctx context.Context) {
 		t := time.NewTicker(progressEvery)
 		defer t.Stop()
 		for {
 			select {
 			case <-t.C:
 				m.emitProgress(ar, false)
-			case <-tickDone:
+			case <-ctx.Done():
 				return
 			}
 		}
-	}()
+	})
 	m.record(history.TBenchRunStarted, history.Info, "", fmt.Sprintf("Benchmark run %s of suite %s started (%d steps).", r.ID, r.SuiteName, ar.total),
 		map[string]any{"bench_run": r.ID, "suite": r.SuiteID, "steps": ar.total, "trigger": r.Trigger, "baseline": ar.snapshot().BaselineRunID})
 
@@ -483,10 +486,19 @@ func (x *suiteExec) runItem(idx int, it benchspec.SuiteItem) []*Step {
 	var wg sync.WaitGroup
 	for i, mb := range members {
 		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		go supervise.Once("bench.member", func() {
+			ok := false
+			defer func() { // a failure ends this member with an error; the others are not held at the gate
+				if !ok {
+					out[i] = &Step{RunID: x.a.run.ID, Idx: idx, Group: b.ID, BenchmarkID: mb.ID, Name: mb.Title(), Profile: mb.Profile,
+						State: StepFailed, Outcome: OutcomeError, Error: "internal error"}
+					g.arrive(i)
+				}
+				wg.Done()
+			}()
 			out[i] = x.runBenchmark(mb, idx, b.ID, g, i)
-		}()
+			ok = true
+		}, nil)
 	}
 	wg.Wait()
 	return out
