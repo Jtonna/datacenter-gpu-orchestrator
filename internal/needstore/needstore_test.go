@@ -470,3 +470,37 @@ func TestStore_ADevelopmentVersion2DatabaseOpens(t *testing.T) {
 		t.Fatalf("version %d, want 1", v)
 	}
 }
+
+// TS2 (third review): the row written through for an older build is the
+// highest total over the shape's device counts, not the latest count's:
+// the old binary has one figure for every count, and must never place on
+// less than either binary would.
+func TestStore_WriteThroughIsTheShapesHighest(t *testing.T) {
+	db := openDB(t)
+	st, err := Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	three := sample("x")
+	three.Placement, three.Split, three.Devices, three.TotalMiB = []string{"a", "b", "c"}, []float64{1, 1, 1}, 3, 9000
+	three.Nodes = []Node{{ID: "a", Fraction: 1.0 / 3, MiB: 3000}, {ID: "b", Fraction: 1.0 / 3, MiB: 3000}, {ID: "c", Fraction: 1.0 / 3, MiB: 3000}}
+	one := sample("x")
+	one.Placement, one.Split, one.Devices, one.TotalMiB = []string{"a"}, []float64{1}, 1, 7600
+	one.Nodes = []Node{{ID: "a", Fraction: 1, MiB: 7600}}
+	for _, r := range []Record{three, one} {
+		if err := st.Put(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var doc string
+	if err := db.DB().QueryRow(`SELECT record FROM learned_needs WHERE profile = 'x'`).Scan(&doc); err != nil {
+		t.Fatal(err)
+	}
+	var old Record
+	if why := usable("x", doc, &old); why != "" || old.TotalMiB != 9000 || old.Profile != "x" {
+		t.Fatalf("the older build reads %+v (%s), want the 3-device 9000", old, why)
+	}
+	if got, _, _ := st.All(); len(got) != 2 {
+		t.Fatalf("shape rows %+v, want both counts", got)
+	}
+}

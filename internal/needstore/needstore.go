@@ -372,8 +372,20 @@ func (s *Store) Put(r Record) error {
 			r.Shape(), r.Shape(), MaxRowsPerShape); err != nil {
 			return err
 		}
-		r.WriteThrough = true
-		b, err := json.Marshal(r)
+		// The row an older build reads (it has one figure for every device
+		// count): the shape's highest total, so that it never places on less
+		// than either build would (third review, TS2).
+		w := r
+		var doc string
+		err := tx.QueryRow(`SELECT record FROM needs_by_placement WHERE shape = ? ORDER BY json_extract(record, '$.total_mib') DESC, devices LIMIT 1`,
+			r.Shape()).Scan(&doc)
+		var top Record
+		if err == nil && json.Unmarshal([]byte(doc), &top) == nil && top.TotalMiB > w.TotalMiB {
+			w = top
+			w.Profile = r.Profile
+		}
+		w.WriteThrough = true
+		b, err := json.Marshal(w)
 		if err != nil {
 			return err
 		}
