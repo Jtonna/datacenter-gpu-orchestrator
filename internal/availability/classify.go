@@ -45,6 +45,9 @@ type Sample struct {
 	// Reachable: the machine answers (agents: membership state active;
 	// fleet: online), whatever its state.
 	Reachable bool
+	// Removed: its membership state is removed (it is sampled off). The
+	// reader leaves such a machine out of a period it was only off in.
+	Removed bool
 }
 
 // Classify turns the scheduler's status and the pool's facts (nil without
@@ -105,6 +108,7 @@ func Classify(st *scheduler.Status, facts []pool.NodeFacts) []Sample {
 		n := nodes[id]
 		s := Sample{Node: id, Name: n.name, State: Free}
 		f, v := n.fact, n.view
+		s.Removed = f != nil && f.State == pool.StateRemoved
 		if n.name == "" {
 			s.Name = id
 		}

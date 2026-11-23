@@ -3,6 +3,7 @@ package usage
 import (
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"time"
 )
 
@@ -14,7 +15,7 @@ type Migration struct {
 	SQL  string
 	// Apply, when set, runs after SQL in the same transaction (a data
 	// migration that needs Go).
-	Apply func(tx *sql.Tx) error
+	Apply func(tx *sql.Tx, log *slog.Logger) error
 }
 
 // migrations of usage.db, applied in order, once each, in their own
@@ -43,7 +44,7 @@ func (e *NewerSchemaError) Error() string {
 // SchemaVersion is the number of migrations this build knows.
 func SchemaVersion() int { return len(migrations) }
 
-func migrate(db *sql.DB, now time.Time) error {
+func migrate(db *sql.DB, now time.Time, log *slog.Logger) error {
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS usage_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at INTEGER NOT NULL)`); err != nil {
 		return err
 	}
@@ -66,7 +67,7 @@ func migrate(db *sql.DB, now time.Time) error {
 			}
 		}
 		if m := migrations[i]; m.Apply != nil {
-			if err := m.Apply(tx); err != nil {
+			if err := m.Apply(tx, log); err != nil {
 				tx.Rollback()
 				return fmt.Errorf("usage migration %d (%s): %w", i+1, m.Name, err)
 			}

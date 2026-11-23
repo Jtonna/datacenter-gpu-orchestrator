@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -212,8 +213,10 @@ func Read(ctx context.Context, store *usage.Store, smp *Sampler, q Query, now ti
 		}
 		c.Add(r)
 	}
+	removed := map[string]bool{}
 	for _, k := range smp.Known() {
 		node(k.Node, k.Name) // the newest name wins
+		removed[k.Node] = k.Removed
 	}
 	if q.Node != "" {
 		want := ""
@@ -228,6 +231,11 @@ func Read(ctx context.Context, store *usage.Store, smp *Sampler, q Query, now ti
 		byNode = map[string]*acc{want: byNode[want]}
 	}
 	for id, a := range byNode {
+		// A removed machine with nothing but off time in the period (it is
+		// sampled off once removed) is left out, unless asked for by name.
+		if q.Node == "" && removed[id] && onlyOff(a.cells) {
+			continue
+		}
 		ns := NodeSeries{ID: id, Name: a.name, Cells: []Cell{}}
 		if ns.Name == "" {
 			ns.Name = id
@@ -249,8 +257,12 @@ func Read(ctx context.Context, store *usage.Store, smp *Sampler, q Query, now ti
 			ns.Cells = append(ns.Cells, c)
 		}
 		if ns.KnownS > 0 {
-			u := min(1, ns.ReachableS/ns.KnownS)
+			u := round3(min(1, ns.ReachableS/ns.KnownS))
 			ns.Uptime = &u
+		}
+		ns.KnownS, ns.ReachableS = round3(ns.KnownS), round3(ns.ReachableS)
+		for i := range ns.Cells {
+			ns.Cells[i].round()
 		}
 		out.Nodes = append(out.Nodes, ns)
 	}
@@ -261,6 +273,32 @@ func Read(ctx context.Context, store *usage.Store, smp *Sampler, q Query, now ti
 		return out.Nodes[i].ID < out.Nodes[j].ID
 	})
 	return out, nil
+}
+
+// onlyOff reports whether cells hold no time in any state but off.
+func onlyOff(cells map[int64]*usage.NodeHour) bool {
+	for _, h := range cells {
+		if h.KnownMs() != h.OffMs {
+			return false
+		}
+	}
+	return true
+}
+
+// round3 rounds to 3 decimals (milliseconds for seconds), as the JSON
+// sends every figure of the series.
+func round3(v float64) float64 { return math.Round(v*1000) / 1000 }
+
+// round rounds the cell's seconds and uptime to 3 decimals; the state and
+// the busy level are taken from the exact figures before.
+func (c *Cell) round() {
+	c.SpanS, c.DownLostS, c.DownSetAsideS, c.ReachableS = round3(c.SpanS), round3(c.DownLostS), round3(c.DownSetAsideS), round3(c.ReachableS)
+	s := &c.Seconds
+	s.Free, s.InUse, s.Loading, s.Down, s.Off, s.Unknown = round3(s.Free), round3(s.InUse), round3(s.Loading), round3(s.Down), round3(s.Off), round3(s.Unknown)
+	if c.Uptime != nil {
+		u := round3(*c.Uptime)
+		c.Uptime = &u
+	}
 }
 
 // fill sets the cell's figures from its stored milliseconds.

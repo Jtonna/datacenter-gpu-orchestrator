@@ -133,23 +133,25 @@ func rollupOf(r *Request) rollupAdd {
 
 // addRollups adds a finished request to its hour and its day.
 func addRollups(tx *sql.Tx, r *Request) error {
+	if err := addRollup(tx, "request_hours", hourOf(r.QueuedAt), r); err != nil {
+		return err
+	}
+	return addRollup(tx, "request_days", dayOf(r.QueuedAt), r)
+}
+
+// addRollup adds one finished request to one bucket of one totals table.
+func addRollup(tx *sql.Tx, table string, bucket int64, r *Request) error {
 	a := rollupOf(r)
-	for _, b := range []struct {
-		table  string
-		bucket int64
-	}{{"request_hours", hourOf(r.QueuedAt)}, {"request_days", dayOf(r.QueuedAt)}} {
-		_, err := tx.Exec(`INSERT INTO `+b.table+` (bucket, profile, requests, done, failed, refused, cancelled, tokens_in, tokens_reused, tokens_out,
+	{
+		_, err := tx.Exec(`INSERT INTO `+table+` (bucket, profile, requests, done, failed, refused, cancelled, tokens_in, tokens_reused, tokens_out,
   wait_ms, duration_ms, prefill_tokens, prefill_ms, decode_tokens, decode_ms) VALUES (?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(bucket, profile) DO UPDATE SET requests=requests+1, done=done+excluded.done, failed=failed+excluded.failed,
   refused=refused+excluded.refused, cancelled=cancelled+excluded.cancelled, tokens_in=tokens_in+excluded.tokens_in,
   tokens_reused=tokens_reused+excluded.tokens_reused, tokens_out=tokens_out+excluded.tokens_out, wait_ms=wait_ms+excluded.wait_ms,
   duration_ms=duration_ms+excluded.duration_ms, prefill_tokens=prefill_tokens+excluded.prefill_tokens, prefill_ms=prefill_ms+excluded.prefill_ms,
   decode_tokens=decode_tokens+excluded.decode_tokens, decode_ms=decode_ms+excluded.decode_ms`,
-			b.bucket, r.Profile, a.done, a.failed, a.refused, a.cancelled, a.in, a.reused, a.out, a.wait, a.dur,
+			bucket, r.Profile, a.done, a.failed, a.refused, a.cancelled, a.in, a.reused, a.out, a.wait, a.dur,
 			a.prefillTok, a.prefillMS, a.decodeTok, a.decodeMS)
-		if err != nil {
-			return err
-		}
+		return err
 	}
-	return nil
 }
