@@ -228,6 +228,8 @@ b.mono,a.mono,.mono b,h1 .mono,h2 .mono,h3 .mono,b .mono{font-weight:500}
 /* run status: an icon and the length */
 .rs{display:inline-flex;align-items:center;gap:8px;font-weight:600;white-space:nowrap}
 .rs svg{width:16px;height:16px;flex:none}
+/* the length and the queued time keep the row's weight, as drawn (.mono alone is 400) */
+.rs .mono,.runs td.qd .mono{font-weight:600}
 tr.fail td{background:var(--failed-row)}
 tr.canc td{color:var(--quiet)}
 /* availability: 24 squares, oldest left */
