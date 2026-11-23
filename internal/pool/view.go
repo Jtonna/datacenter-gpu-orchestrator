@@ -470,6 +470,11 @@ type NodeFacts struct {
 	// entry is as for any node. Absent when not excluded.
 	Excluded   bool   `json:"excluded,omitempty"`
 	ExcludedBy string `json:"excluded_by,omitempty"`
+	// RunningWhileExcluded: the node is excluded, yet an instance placed
+	// before the exclusion still runs there. Exclusion only stops new
+	// placements; the instance keeps running and serving until it is
+	// unloaded. Absent otherwise.
+	RunningWhileExcluded *RunningInstance `json:"running_while_excluded,omitempty"`
 	// WatchdogFloorMiB is the watchdog floor the agent reports (CR-9); absent
 	// for an agent that reports none (release 0.1.0). FloorMismatch says so
 	// when it differs from defaults.watchdog_floor_mib; the agent's is used
@@ -657,4 +662,12 @@ func sortedWords(words []string) []string {
 	out := append([]string{}, words...)
 	sort.Strings(out)
 	return out
+}
+
+// RunningInstance is an instance that holds a node: the profile, its state
+// (starting, ready, draining, stopping) and since when it is there (unix ms).
+type RunningInstance struct {
+	Profile string `json:"profile"`
+	State   string `json:"state"`
+	Since   int64  `json:"since"`
 }

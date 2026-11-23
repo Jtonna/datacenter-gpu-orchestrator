@@ -21,12 +21,14 @@ type LocalFacts struct {
 	Placeable    bool     `json:"placeable"`
 	// Excluded, ExcludedBy, Unplaced and UnplacedMessage: as for an agent
 	// node (NodeFacts), when exclude_nodes names the local node.
-	Excluded        bool     `json:"excluded,omitempty"`
-	ExcludedBy      string   `json:"excluded_by,omitempty"`
-	Unplaced        string   `json:"unplaced,omitempty"`
-	UnplacedMessage string   `json:"unplaced_message,omitempty"`
-	HostUptimeS     *float64 `json:"host_uptime_s,omitempty"`
-	BootID          string   `json:"boot_id,omitempty"`
+	Excluded   bool   `json:"excluded,omitempty"`
+	ExcludedBy string `json:"excluded_by,omitempty"`
+	// RunningWhileExcluded: as for an agent node (NodeFacts).
+	RunningWhileExcluded *RunningInstance `json:"running_while_excluded,omitempty"`
+	Unplaced             string           `json:"unplaced,omitempty"`
+	UnplacedMessage      string           `json:"unplaced_message,omitempty"`
+	HostUptimeS          *float64         `json:"host_uptime_s,omitempty"`
+	BootID               string           `json:"boot_id,omitempty"`
 }
 
 // HostInfo reads the uptime (seconds since kernel boot) and boot id of the

@@ -249,9 +249,9 @@ func TestUIExcludedNode(t *testing.T) {
 		"const excludedOf = (n, a) => !!(n.excluded || (a && a.excluded));",
 		"const exBy = n.excluded_by || (agent && agent.excluded_by) || '';",
 		"agent.capabilities.length ? ['Its agent can also: ', h('span.mono', agent.capabilities.join(', ')), '.']",
-		"if (excludedOf(n, agent)) return ['Excluded', 'dash', 9];",
+		"if (excludedOf(n, agent)) return [n.holder || (agent && agent.running_while_excluded) ? 'Excluded, busy' : 'Excluded', 'dash', 9];",
 		"const npOther = np && np.code !== 'paused' && np.code !== 'excluded';",
-		"label === 'Excluded' && exBy ? 'excluded by exclude_nodes: ' + exBy",
+		"label.startsWith('Excluded') && exBy ? 'excluded by exclude_nodes: ' + exBy",
 		"[' (exclude_nodes: ', h('span.mono', exBy), ')']",
 		"npOther ? badge('Not placeable'",
 	} {
@@ -261,5 +261,35 @@ func TestUIExcludedNode(t *testing.T) {
 	}
 	if !strings.Contains(uiText(t, "core/status.js"), "if (np.code === 'excluded') {") {
 		t.Error("core/status.js: the machine badge does not say Excluded")
+	}
+}
+
+// 0.1.7 review, ES1: a node excluded while a model runs on it is shown
+// excluded AND busy: running_while_excluded names the instance.
+func TestNodeFeedExcludedNodeStillBusy(t *testing.T) {
+	var pc *config.Config
+	e, _, _ := feedEnv(t, func(c *config.Config) { pc = c })
+	if resp := e.post("/v1/chat/completions", chat("alpha")); resp.StatusCode != 200 {
+		t.Fatalf("chat: %d %s", resp.StatusCode, body(t, resp))
+	}
+	pc.ExcludeNodes = []string{"host-1"}
+	nc := *e.cfg
+	nc.ExcludeNodes = []string{"host-1"}
+	e.sched.ApplyConfig(&nc)
+	var local map[string]any
+	for _, n := range readFeed(t, e).Nodes {
+		var m map[string]any
+		json.Unmarshal(n, &m)
+		if m["local"] == true {
+			local = m
+		}
+	}
+	r, _ := local["running_while_excluded"].(map[string]any)
+	if local["excluded"] != true || r == nil || r["profile"] != "alpha" || r["state"] != "ready" {
+		t.Fatalf("local entry %v", local)
+	}
+	nodes := uiText(t, "views/nodes.js")
+	if !strings.Contains(nodes, "keeps running and serving until it is unloaded") {
+		t.Error("the Nodes page does not say that the excluded machine still runs a model")
 	}
 }

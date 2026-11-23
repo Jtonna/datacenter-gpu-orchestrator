@@ -73,6 +73,11 @@ type Result struct {
 	// the exclusion is lifted. Each is also one entry of Warnings. It
 	// describes the configuration after the write, whatever the write was.
 	BlockedByExclusion []config.ExclusionBlock `json:"blocked_by_exclusion"`
+	// LoadedOnExcludedNodes lists the instances that run now on a node the
+	// configuration after the write excludes (0.1.7 review): they were
+	// placed before the exclusion, are not drained, and keep running and
+	// serving until they are unloaded. Each is also one entry of Warnings.
+	LoadedOnExcludedNodes []config.LoadedOnExcluded `json:"loaded_on_excluded_nodes"`
 }
 
 // ChangeEvent is announced after every committed change.
@@ -93,7 +98,10 @@ type Options struct {
 	Apply       func(*config.Config) // delivers a new snapshot to the scheduler; must not block
 	OnChange    func(ChangeEvent)
 	ProfileRefs func(profile string) []string // benchmarks that use the profile
-	Logger      *slog.Logger
+	// LoadedOnExcluded lists the instances running now on nodes the given
+	// configuration excludes (the scheduler's answer); nil: none known.
+	LoadedOnExcluded func(*config.Config) []config.LoadedOnExcluded
+	Logger           *slog.Logger
 }
 
 // Service holds the current configuration.
@@ -319,6 +327,13 @@ func (s *Service) mutate(ctx context.Context, o WriteOpts, m mutation) (*Result,
 	res.BlockedByExclusion = append([]config.ExclusionBlock{}, cfg.ExclusionBlocks()...)
 	for _, b := range res.BlockedByExclusion {
 		res.Warnings = append(res.Warnings, b.Warning())
+	}
+	res.LoadedOnExcludedNodes = []config.LoadedOnExcluded{}
+	if s.o.LoadedOnExcluded != nil {
+		res.LoadedOnExcludedNodes = append(res.LoadedOnExcludedNodes, s.o.LoadedOnExcluded(cfg)...)
+	}
+	for _, l := range res.LoadedOnExcludedNodes {
+		res.Warnings = append(res.Warnings, l.Warning())
 	}
 	if o.IfMatch != nil && *o.IfMatch != s.rev {
 		return nil, &cfgstore.ErrStale{Current: s.rev}

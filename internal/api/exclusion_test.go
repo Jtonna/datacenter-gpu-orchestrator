@@ -77,3 +77,46 @@ func TestExclusionWithForcedProfiles(t *testing.T) {
 		t.Fatalf("plan after lifting: %d %v", st, m)
 	}
 }
+
+// 0.1.7 review, ES1: a forced instance that is loaded when its node is
+// excluded keeps running and serving (it is not drained). The write that
+// excludes the node says so, under loaded_on_excluded_nodes and as a
+// warning, with the profile, the nodes, the entries and since when.
+func TestExclusionListsInstancesStillLoaded(t *testing.T) {
+	e, _, _ := cfgEnv(t)
+	if st, m := e.cdo("POST", "/api/config/profiles", `{"id":"f1","model":"f1.gguf","ctx":2048,"needs_mib":100,"force_nodes":["host-1"]}`, nil); st != 200 && st != 201 {
+		t.Fatalf("create: %d %v", st, m)
+	}
+	if resp := e.post("/v1/chat/completions", chat("f1")); resp.StatusCode != 200 {
+		t.Fatalf("chat: %d %s", resp.StatusCode, body(t, resp))
+	}
+	st, m := e.cdo("PUT", "/api/config/exclude-nodes", `{"exclude_nodes":["host-*"]}`, nil)
+	l, _ := m["loaded_on_excluded_nodes"].([]any)
+	if st != 200 || len(l) != 1 {
+		t.Fatalf("exclude: %d %v", st, m)
+	}
+	x := l[0].(map[string]any)
+	if x["profile"] != "f1" || toJSON(x["nodes"]) != `["host-1"]` || toJSON(x["entries"]) != `["host-*"]` || x["state"] != "ready" {
+		t.Fatalf("entry %v", x)
+	}
+	if since, _ := x["loaded_since"].(float64); since <= 0 {
+		t.Fatalf("loaded_since %v", x["loaded_since"])
+	}
+	found := false
+	for _, w := range m["warnings"].([]any) {
+		if s, _ := w.(string); strings.Contains(s, `profile "f1" is loaded on excluded node host-1`) && strings.Contains(s, "until it is unloaded") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no warning for the loaded instance: %v", m["warnings"])
+	}
+	// Not drained: it still serves.
+	if resp := e.post("/v1/chat/completions", chat("f1")); resp.StatusCode != 200 {
+		t.Fatalf("chat after the exclusion: %d %s", resp.StatusCode, body(t, resp))
+	}
+	// Lifting the exclusion: nothing listed any more.
+	if _, m := e.cdo("PUT", "/api/config/exclude-nodes", `{"exclude_nodes":[]}`, nil); len(m["loaded_on_excluded_nodes"].([]any)) != 0 {
+		t.Fatalf("after lifting: %v", m)
+	}
+}
