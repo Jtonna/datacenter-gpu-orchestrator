@@ -366,6 +366,14 @@ func (t *Tracker) end(e End) (Request, bool) {
 	row.TokensIn, row.TokensReused, row.TokensOut = intOrNil(e.TokensIn), intOrNil(e.Reused), intOrNil(e.TokensOut)
 	row.PrefillTPS, row.DecodeTPS = floatOrNil(e.PrefillTPS), floatOrNil(e.DecodeTPS)
 	row.prefillMS, row.decodeMS = e.PrefillMS, e.DecodeMS
+	if e.Status == StatusCancelled || e.Status == StatusFailed {
+		// Cut short: the server's closing figures never came. Keep what
+		// the stream said so far, as the live row showed it; the message
+		// says tokens_out was counted.
+		if streamFigures(t.src, row, now, false) {
+			row.Message = joinMessage(row.Message, MessageTokensCounted)
+		}
+	}
 	row.WaitMS, row.DurationMS = spans(row, now)
 	final := *row
 	final.Nodes = nonNil(append([]Node(nil), row.Nodes...))
@@ -401,32 +409,60 @@ func (t *Tracker) snapshot(now int64) Request {
 	row := t.row
 	row.Nodes = nonNil(append([]Node(nil), t.row.Nodes...))
 	row.WaitMS, row.DurationMS = spans(&row, now)
-	if ps, ok := t.src.(PrefillSource); ok {
-		if total, reused, done, tps, ok := ps.Prefill(); ok {
-			row.TokensIn, row.TokensReused, row.Live = &total, &reused, true
-			if done < total {
-				row.PrefillProcessed = &done
-			}
-			if tps > 0 {
-				row.PrefillTPS = &tps
-			}
-		}
-	}
-	if t.src != nil {
-		if fb := t.src.FirstByte(); !fb.IsZero() {
-			row.FirstTokenAt = fb.UnixMilli()
-		}
-		if n := t.src.Chunks(); n > 0 {
-			v := int(n)
-			row.TokensOut = &v
-			row.Live = true
-			if row.FirstTokenAt > 0 && now > row.FirstTokenAt {
-				rate := float64(n) / (float64(now-row.FirstTokenAt) / 1000)
-				row.DecodeTPS = &rate
-			}
-		}
+	if streamFigures(t.src, &row, now, true) {
+		row.Live = true
 	}
 	return row
+}
+
+// MessageTokensCounted is added to the message of a row cut short whose
+// tokens_out was counted from the stream (one event, about one token), the
+// server's own count having never come.
+const MessageTokensCounted = "tokens_out counted from the stream"
+
+func joinMessage(m, more string) string {
+	if m == "" {
+		return more
+	}
+	return m + "; " + more
+}
+
+// streamFigures fills row from what the stream said so far (src): the
+// prompt (every token, the reused ones, the prefill rate) when the request
+// asked llama-server for it, the events streamed as tokens_out and their
+// rate since the first one. live (a running row) sets every figure known
+// and the prompt progress; at the end (live false) only figures still
+// unknown are set. It reports whether tokens_out was counted.
+func streamFigures(src LiveSource, row *Request, now int64, live bool) (counted bool) {
+	if src == nil {
+		return false
+	}
+	if ps, ok := src.(PrefillSource); ok {
+		if total, reused, done, tps, ok := ps.Prefill(); ok {
+			if live || row.TokensIn == nil {
+				row.TokensIn, row.TokensReused = &total, &reused
+				if live && done < total {
+					row.PrefillProcessed = &done
+				}
+			}
+			if tps > 0 && (live || row.PrefillTPS == nil) {
+				row.PrefillTPS = &tps
+			}
+			counted = live
+		}
+	}
+	if fb := src.FirstByte(); !fb.IsZero() {
+		row.FirstTokenAt = fb.UnixMilli()
+	}
+	if n := src.Chunks(); n > 0 && (live || row.TokensOut == nil) {
+		v := int(n)
+		row.TokensOut, counted = &v, true
+		if row.FirstTokenAt > 0 && now > row.FirstTokenAt && (live || row.DecodeTPS == nil) {
+			rate := float64(n) / (float64(now-row.FirstTokenAt) / 1000)
+			row.DecodeTPS = &rate
+		}
+	}
+	return counted
 }
 
 // Live lists the queued and running requests, oldest first.
@@ -545,7 +581,7 @@ func upsertRow(tx *sql.Tx, r *Request, final bool) error {
 	}
 	q := `INSERT INTO client_requests (` + rowColumns + `) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET status=excluded.status, reason=excluded.reason, message=excluded.message, http_status=excluded.http_status,
-  started_at=excluded.started_at, first_token_at=excluded.first_token_at, ended_at=excluded.ended_at,
+  stream=excluded.stream, started_at=excluded.started_at, first_token_at=excluded.first_token_at, ended_at=excluded.ended_at,
   tokens_in=excluded.tokens_in, tokens_reused=excluded.tokens_reused, tokens_out=excluded.tokens_out,
   prefill_tps=excluded.prefill_tps, decode_tps=excluded.decode_tps, prefill_ms=excluded.prefill_ms, decode_ms=excluded.decode_ms,
   sched_id=excluded.sched_id, instance_id=excluded.instance_id, session_id=excluded.session_id, host_node=excluded.host_node, nodes=excluded.nodes`

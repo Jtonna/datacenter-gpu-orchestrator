@@ -334,3 +334,69 @@ func TestExtractUsageUnit(t *testing.T) {
 		}
 	}
 }
+
+// A client that closes its connection in the middle of a stream is a
+// client that left, not an aborted answer; Live keeps the events counted
+// so far. A model server that dies in the middle of a stream is not.
+func TestForward_ClientLeavingMidStreamIsClientLeft(t *testing.T) {
+	sent := make(chan struct{})
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for i := 0; i < 5; i++ {
+			fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":\"t%d\"}}]}\n\n", i)
+		}
+		w.(http.Flusher).Flush()
+		close(sent)
+		for i := 0; ; i++ { // keeps streaming until the proxy hangs up
+			if _, err := fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":\"u%d\"}}]}\n\n", i); err != nil {
+				return
+			}
+			w.(http.Flusher).Flush()
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(5 * time.Millisecond):
+			}
+		}
+	}))
+	defer up.Close()
+	live := &Live{}
+	res := make(chan Result, 1)
+	f := front(t, Options{Addr: upstreamAddr(up), Live: live}, res)
+	ctx, cancel := context.WithCancel(context.Background())
+	req, _ := http.NewRequestWithContext(ctx, "POST", f.URL+"/v1/chat/completions", strings.NewReader(`{}`))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-sent
+	bufio.NewReader(resp.Body).ReadString('\n')
+	cancel()
+	resp.Body.Close()
+	r := <-res
+	if !r.ClientLeft || r.Reason() != "client_left" || r.Status != 200 || !r.Stream || live.Chunks() < 5 {
+		t.Fatalf("%+v reason %q chunks %d", r, r.Reason(), live.Chunks())
+	}
+
+	// The model server drops the connection mid-stream: aborted, the client
+	// is still there.
+	dies := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n\n")
+		w.(http.Flusher).Flush()
+		conn, _, _ := http.NewResponseController(w).Hijack()
+		conn.Close()
+	}))
+	defer dies.Close()
+	live = &Live{}
+	f = front(t, Options{Addr: upstreamAddr(dies), Live: live}, res)
+	resp, err = http.Post(f.URL+"/v1/chat/completions", "application/json", strings.NewReader(`{}`))
+	if err == nil {
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}
+	r = <-res
+	if r.ClientLeft || r.Reason() != "aborted" {
+		t.Fatalf("%+v reason %q", r, r.Reason())
+	}
+}
