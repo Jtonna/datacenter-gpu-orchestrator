@@ -409,17 +409,19 @@ func (a *Agent) WaitDevicesRead() { a.devRead.Lock(); a.devRead.Unlock() }
 // device for the would_not_fit check (CR-9).
 func (a *Agent) workerDevice() (agentproto.Device, bool) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	if len(a.devs) == 0 {
+	devs, platform := append([]agentproto.Device(nil), a.devs...), a.platform
+	a.mu.Unlock()
+	if len(devs) == 0 {
 		return agentproto.Device{}, false
 	}
-	backend := a.platform[strings.LastIndex(a.platform, "-")+1:]
-	for _, d := range a.devs {
+	devs = liveDevices(devs, a.Stats.Snapshot()) // livedev.go: a discrete GPU's current free figure
+	backend := platform[strings.LastIndex(platform, "-")+1:]
+	for _, d := range devs {
 		if strings.EqualFold(d.Backend, backend) {
 			return d, true
 		}
 	}
-	return a.devs[0], true
+	return devs[0], true
 }
 
 // leaveOnPurpose deregisters when the leave marker exists (CR-9): a node
@@ -1154,11 +1156,11 @@ func (a *Agent) Heartbeat() agentproto.Heartbeat {
 		hb.StopReason, hb.StopMessage = ls.StopReason, ls.StopMessage
 	}
 	hb.ProgramsReady, hb.ProgramsError = a.ProgramsReady(), a.programsError()
-	hb.ModelSource, hb.Devices = a.Source.State(), devs
+	st := a.Stats.Snapshot()
+	hb.ModelSource, hb.Devices = a.Source.State(), liveDevices(devs, st) // livedev.go
 	if mi, err := a.deps.Mem.MemInfo(); err == nil {
 		hb.MemAvailableMiB = mi.AvailableMiB
 	}
-	st := a.Stats.Snapshot()
 	hb.Stats = &st
 	if a.Ship != nil {
 		hb.Logs = a.Ship.Figures() // nil while nothing is shipped
