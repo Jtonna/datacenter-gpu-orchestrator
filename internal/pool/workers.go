@@ -21,6 +21,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // Worker launches (agent contract 6, 11 "Phase 4 loads"). Every launch has a
@@ -65,7 +66,7 @@ type launch struct {
 
 func (l *launch) stateName() string {
 	l.mu.Lock()
-	defer l.mu.Unlock()
+	defer supervise.Unlocked("pool", l.mu.Unlock)
 	if l.goneWhy != "" {
 		return agentproto.StateExited
 	}
@@ -78,11 +79,13 @@ func (l *launch) stateName() string {
 // gone marks the launch as ended without the agent saying so (called with
 // p.mu held).
 func (l *launch) gone(reason, msg string) {
-	l.mu.Lock()
-	if l.goneWhy == "" {
-		l.goneWhy, l.goneMsg = reason, msg
-	}
-	l.mu.Unlock()
+	func() {
+		l.mu.Lock()
+		defer supervise.Unlocked("pool", l.mu.Unlock)
+		if l.goneWhy == "" {
+			l.goneWhy, l.goneMsg = reason, msg
+		}
+	}()
 	l.wake()
 }
 
@@ -105,7 +108,7 @@ const (
 // when the agent reports the node's part of the load done, or with the launch.
 func (l *launch) loading() bool {
 	l.mu.Lock()
-	defer l.mu.Unlock()
+	defer supervise.Unlocked("pool", l.mu.Unlock)
 	if l.loaded || l.goneWhy != "" {
 		return false
 	}
@@ -120,20 +123,25 @@ func (l *launch) loading() bool {
 
 // LoadDone is scheduler.WorkerLauncher.LoadDone.
 func (p *Pool) LoadDone(iid uint64) {
-	p.mu.Lock()
-	ls := append([]*launch(nil), p.byIID[iid]...)
-	p.unlock()
+	var ls []*launch
+	func() {
+		p.mu.Lock()
+		defer supervise.Unlocked("pool", p.unlock)
+		ls = append([]*launch(nil), p.byIID[iid]...)
+	}()
 	for _, l := range ls {
-		l.mu.Lock()
-		l.loaded = true
-		l.mu.Unlock()
+		func() {
+			l.mu.Lock()
+			defer supervise.Unlocked("pool", l.mu.Unlock)
+			l.loaded = true
+		}()
 	}
 }
 
 // exitInfo is the launch's exit, or nil while it runs.
 func (l *launch) exitInfo() *agentproto.ExitInfo {
 	l.mu.Lock()
-	defer l.mu.Unlock()
+	defer supervise.Unlocked("pool", l.mu.Unlock)
 	if l.goneWhy != "" {
 		return &agentproto.ExitInfo{Reason: l.goneWhy, Message: l.goneMsg, LogTail: []string{}}
 	}
@@ -146,21 +154,21 @@ func (l *launch) exitInfo() *agentproto.ExitInfo {
 	return nil
 }
 
-// Launch is scheduler.WorkerLauncher.Launch.
-func (p *Pool) Launch(ctx context.Context, spec scheduler.WorkerLaunchSpec, report func(scheduler.WorkerReport)) scheduler.WorkerResult {
-	cfg := p.o.Config()
+// newLaunches registers the launches of spec under the lock. refused, when
+// set, is the answer: nothing is sent, and drop (non-nil when the refusal
+// came after the check of stopped) lists the launches made before it, which
+// the caller drops after the lock.
+func (p *Pool) newLaunches(spec scheduler.WorkerLaunchSpec) (ls []*launch, refused *scheduler.WorkerResult, drop []*launch) {
 	p.mu.Lock()
+	defer supervise.Unlocked("pool", p.unlock)
 	if p.stopped[spec.IID] {
-		p.unlock()
-		return scheduler.WorkerResult{Reason: ReasonAgentUnreachable, Message: "stopped before the launches were sent"}
+		return nil, &scheduler.WorkerResult{Reason: ReasonAgentUnreachable, Message: "stopped before the launches were sent"}, nil
 	}
-	var ls []*launch
 	for _, w := range spec.Workers {
 		a := p.agents[string(w.Node)]
 		if a == nil || a.left || a.lost {
-			p.unlock()
-			p.dropLaunches(spec.IID, ls)
-			return scheduler.WorkerResult{Node: w.Node, Reason: ReasonAgentUnreachable, Message: "the node's agent is not registered or is lost"}
+			// the launches made so far are dropped after the lock (dropLaunches)
+			return nil, &scheduler.WorkerResult{Node: w.Node, Reason: ReasonAgentUnreachable, Message: "the node's agent is not registered or is lost"}, append([]*launch{}, ls...)
 		}
 		p.seq++
 		l := &launch{p: p, iid: spec.IID, node: w.Node, name: a.reg.Name, rpcAddr: w.Addr, profile: spec.Profile,
@@ -172,7 +180,19 @@ func (p *Pool) Launch(ctx context.Context, spec scheduler.WorkerLaunchSpec, repo
 	}
 	p.byIID[spec.IID] = ls
 	p.publishLogSnapLocked()
-	p.unlock()
+	return ls, nil, nil
+}
+
+// Launch is scheduler.WorkerLauncher.Launch.
+func (p *Pool) Launch(ctx context.Context, spec scheduler.WorkerLaunchSpec, report func(scheduler.WorkerReport)) scheduler.WorkerResult {
+	cfg := p.o.Config()
+	ls, refused, drop := p.newLaunches(spec)
+	if refused != nil {
+		if drop != nil {
+			p.dropLaunches(spec.IID, drop)
+		}
+		return *refused
+	}
 
 	// Send every launch at once.
 	type sent struct {
@@ -181,31 +201,38 @@ func (p *Pool) Launch(ctx context.Context, spec scheduler.WorkerLaunchSpec, repo
 	}
 	res := make([]sent, len(ls))
 	var wg sync.WaitGroup
+	fan := supervise.NewFanout("pool.launch_send") // one load's launches count once toward escalation
 	for i, l := range ls {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		fan.Go(&wg, func() {
+			supervise.Point("pool.launch_send", spec.IID) // test hook, per load
 			req := agentproto.LaunchRequest{LaunchID: l.id, Role: agentproto.RoleWorker, Release: p.o.PotluckRelease,
 				Label: spec.Label, LeaseTTLS: LeaseTTL.Seconds(), MinMemAvailableMiB: spec.Workers[i].MinMemAvailableMiB,
 				Worker: &agentproto.WorkerSpec{ModelDir: cfg.Defaults.WorkerModelDir, ExtraArgs: []string{},
 					ExpectMiB: spec.Workers[i].ExpectMiB}}
 			st, ref, err := p.postLaunch(ctx, l.base, req)
 			if err == nil && ref == nil {
-				l.mu.Lock()
-				l.st, l.have = st, true
-				l.mu.Unlock()
-				p.mu.Lock()
-				stopped := p.stopped[spec.IID]
-				p.unlock()
+				func() {
+					l.mu.Lock()
+					defer supervise.Unlocked("pool", l.mu.Unlock)
+					l.st, l.have = st, true
+				}()
+				var stopped bool
+				func() {
+					p.mu.Lock()
+					defer supervise.Unlocked("pool", p.unlock)
+					stopped = p.stopped[spec.IID]
+				}()
 				if stopped {
 					// The load was stopped while this launch was on its way.
-					go p.stopLaunch(l, false, false)
+					go supervise.Once("pool.stop", func() { p.stopLaunch(l, false, false) }, nil)
 				} else {
 					p.supervise(l)
 				}
 			}
 			res[i] = sent{ref, err}
-		}()
+		}, func(any) { // a panic is this launch's failure; the load's stop ends it if it started
+			res[i] = sent{err: errors.New("internal error while sending the launch")}
+		})
 	}
 	wg.Wait()
 	ids := map[core.NodeID]string{}
@@ -265,9 +292,11 @@ func (p *Pool) Launch(ctx context.Context, spec scheduler.WorkerLaunchSpec, repo
 		}
 	}
 	for _, l := range ls {
-		l.mu.Lock()
-		l.report = report
-		l.mu.Unlock()
+		func() {
+			l.mu.Lock()
+			defer supervise.Unlocked("pool", l.mu.Unlock)
+			l.report = report
+		}()
 		l.wake() // the supervisor reports what is already known
 	}
 	return scheduler.WorkerResult{LaunchIDs: ids}
@@ -275,7 +304,7 @@ func (p *Pool) Launch(ctx context.Context, spec scheduler.WorkerLaunchSpec, repo
 
 func (p *Pool) dropLaunches(iid uint64, ls []*launch) {
 	p.mu.Lock()
-	defer p.unlock()
+	defer supervise.Unlocked("pool", p.unlock)
 	for _, l := range ls {
 		p.endLaunchLocked(l, true) // never sent
 	}
@@ -287,7 +316,7 @@ func (p *Pool) dropLaunches(iid uint64, ls []*launch) {
 // whose launch call got no answer (refused false: it may have started).
 func (p *Pool) forget(l *launch, refused bool) {
 	p.mu.Lock()
-	defer p.unlock()
+	defer supervise.Unlocked("pool", p.unlock)
 	p.endLaunchLocked(l, refused)
 	p.publishLogSnapLocked()
 	ls := p.byIID[l.iid]
@@ -302,11 +331,22 @@ func (p *Pool) forget(l *launch, refused bool) {
 // supervise starts the launch's supervisor.
 func (p *Pool) supervise(l *launch) {
 	ctx, cancel := context.WithCancel(context.Background())
-	l.mu.Lock()
-	l.cancel = cancel
-	l.mu.Unlock()
-	go func() {
-		defer close(l.done)
+	func() {
+		l.mu.Lock()
+		defer supervise.Unlocked("pool", l.mu.Unlock)
+		l.cancel = cancel
+	}()
+	// A failure restarts this launch's supervisor alone. Its state is the
+	// agent's: after the restart it renews the lease and reads the launch
+	// state at once, so a missed renewal or report is caught up.
+	restarted := false
+	supervise.Go(ctx, supervise.Spec{Name: "pool.launch", Policy: supervise.Restart, Rebuild: func(any) { restarted = true },
+		Done: func() { close(l.done) }}, func(ctx context.Context) {
+		if restarted {
+			p.renew(ctx, l)
+			p.poll(ctx, l)
+			p.reportIfNeeded(l)
+		}
 		lease := time.NewTicker(p.o.LeaseEvery)
 		defer lease.Stop()
 		logs := time.NewTicker(2 * time.Second)
@@ -321,6 +361,7 @@ func (p *Pool) supervise(l *launch) {
 			case <-ctx.Done():
 				return
 			case <-lease.C:
+				supervise.Point("pool.launch", l.id) // test hook, per launch
 				p.renew(ctx, l)
 			case <-logs.C:
 				p.copyLog(ctx, l)
@@ -335,7 +376,7 @@ func (p *Pool) supervise(l *launch) {
 				p.reportIfNeeded(l)
 			}
 		}
-	}()
+	})
 }
 
 func (p *Pool) renew(ctx context.Context, l *launch) {
@@ -370,26 +411,30 @@ func (p *Pool) poll(ctx context.Context, l *launch) {
 	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&st) != nil {
 		return
 	}
-	l.mu.Lock()
-	switch {
-	case st.State == agentproto.StateNone || (st.LaunchID != "" && st.LaunchID != l.id):
-		// The agent no longer has this launch (it restarted, 6.1).
-		if l.goneWhy == "" {
-			l.goneWhy = agentproto.InstanceReasonAgentRestarted
-			l.goneMsg = fmt.Sprintf("the agent reports launch %q (%s), not %s", st.LaunchID, st.State, l.id)
+	func() {
+		l.mu.Lock()
+		defer supervise.Unlocked("pool", l.mu.Unlock)
+		supervise.Point("pool.poll", l.id) // test hook, under l.mu
+		switch {
+		case st.State == agentproto.StateNone || (st.LaunchID != "" && st.LaunchID != l.id):
+			// The agent no longer has this launch (it restarted, 6.1).
+			if l.goneWhy == "" {
+				l.goneWhy = agentproto.InstanceReasonAgentRestarted
+				l.goneMsg = fmt.Sprintf("the agent reports launch %q (%s), not %s", st.LaunchID, st.State, l.id)
+			}
+		default:
+			l.st, l.have = st, true
 		}
-	default:
-		l.st, l.have = st, true
-	}
-	l.mu.Unlock()
+	}()
 }
 
-// reportIfNeeded sends the launch's load progress and exit once Launch has
-// handed over (report set).
-func (p *Pool) reportIfNeeded(l *launch) {
+// toReport is what reportIfNeeded sends: the report function, the load
+// progress when it changed since the last report, and whether the exit was
+// reported.
+func (l *launch) toReport() (rep func(scheduler.WorkerReport), load *agentproto.LoadProgress, reported bool) {
 	l.mu.Lock()
-	rep := l.report
-	var load *agentproto.LoadProgress
+	defer supervise.Unlocked("pool", l.mu.Unlock)
+	supervise.Point("pool.report", l.id) // test hook, under l.mu
 	if l.have && l.st.Load != nil {
 		b, _ := json.Marshal(l.st.Load)
 		if string(b) != l.lastLoad {
@@ -397,8 +442,13 @@ func (p *Pool) reportIfNeeded(l *launch) {
 			load = l.st.Load
 		}
 	}
-	reported := l.reported
-	l.mu.Unlock()
+	return l.report, load, l.reported
+}
+
+// reportIfNeeded sends the launch's load progress and exit once Launch has
+// handed over (report set).
+func (p *Pool) reportIfNeeded(l *launch) {
+	rep, load, reported := l.toReport()
 	if rep == nil {
 		return
 	}
@@ -406,9 +456,11 @@ func (p *Pool) reportIfNeeded(l *launch) {
 		rep(scheduler.WorkerReport{Node: l.node, Addr: l.rpcAddr, Load: load})
 	}
 	if ex := l.exitInfo(); ex != nil && !reported {
-		l.mu.Lock()
-		l.reported = true
-		l.mu.Unlock()
+		func() {
+			l.mu.Lock()
+			defer supervise.Unlocked("pool", l.mu.Unlock)
+			l.reported = true
+		}()
 		p.copyLog(context.Background(), l)
 		p.log.Warn("worker launch exited", "launch", l.id, "node", l.node, "reason", ex.Reason, "message", ex.Message)
 		rep(scheduler.WorkerReport{Node: l.node, Addr: l.rpcAddr, Exit: ex})
@@ -420,9 +472,12 @@ func (p *Pool) copyLog(ctx context.Context, l *launch) {
 	if p.o.LogDir == "" {
 		return
 	}
-	l.mu.Lock()
-	off := l.logOff
-	l.mu.Unlock()
+	var off int64
+	func() {
+		l.mu.Lock()
+		defer supervise.Unlocked("pool", l.mu.Unlock)
+		off = l.logOff
+	}()
 	rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(rctx, http.MethodGet, l.base+agentproto.PathLaunchLog+"?since="+strconv.FormatInt(off, 10), nil)
@@ -453,11 +508,13 @@ func (p *Pool) copyLog(ctx context.Context, l *launch) {
 		f.Write(data)
 		f.Close()
 	}
-	l.mu.Lock()
-	if next > l.logOff {
-		l.logOff = next
-	}
-	l.mu.Unlock()
+	func() {
+		l.mu.Lock()
+		defer supervise.Unlocked("pool", l.mu.Unlock)
+		if next > l.logOff {
+			l.logOff = next
+		}
+	}()
 }
 
 var _ scheduler.WorkerExitReader = (*Pool)(nil)
@@ -471,9 +528,12 @@ var _ scheduler.WorkerExitReader = (*Pool)(nil)
 // oom_kill or lease_expired is taken as that cause at once (CR-9). Every member is read in parallel, again every
 // 100 ms, until one has exited by itself or ExitReadWait has passed.
 func (p *Pool) Exits(ctx context.Context, iid uint64) []scheduler.WorkerReport {
-	p.mu.Lock()
-	ls := append([]*launch(nil), p.byIID[iid]...)
-	p.unlock()
+	var ls []*launch
+	func() {
+		p.mu.Lock()
+		defer supervise.Unlocked("pool", p.unlock)
+		ls = append([]*launch(nil), p.byIID[iid]...)
+	}()
 	if len(ls) == 0 {
 		return nil
 	}
@@ -483,12 +543,12 @@ func (p *Pool) Exits(ctx context.Context, iid uint64) []scheduler.WorkerReport {
 	var wg sync.WaitGroup
 	for i, l := range ls {
 		wg.Add(1)
-		go func() {
+		go supervise.Once("pool.exit_read", func() { // a failure reads as no explanation from that node
 			defer wg.Done()
 			if out[i] = p.ownExit(ctx, l); out[i] != nil {
 				cancel() // one explains the exit; the others are not waited for
 			}
-		}()
+		}, nil)
 	}
 	wg.Wait()
 	var rs []scheduler.WorkerReport
@@ -545,38 +605,48 @@ func (p *Pool) ownExit(ctx context.Context, l *launch) *agentproto.ExitInfo {
 // Stop is scheduler.WorkerLauncher.Stop: every launch of load iid is
 // stopped (force for the nodes in force), off the caller's goroutine.
 func (p *Pool) Stop(iid uint64, force []core.NodeID) {
+	jobs := p.stopJobs(iid, force)
+	// A stop that fails is reported; its lease (LeaseTTL) ends the launch.
+	// The stops of one load count once toward escalation.
+	p.stops.Add(1)
+	fan := supervise.NewFanout("pool.stop")
+	go supervise.Once("pool.stop", func() {
+		defer p.stops.Done()
+		var wg sync.WaitGroup
+		for _, j := range jobs {
+			fan.Go(&wg, func() {
+				supervise.Point("pool.stop", iid) // test hook, per load
+				p.stopLaunch(j.l, j.force, j.lost)
+			}, nil) // stopLaunch's own deferred end drops the launch
+		}
+		wg.Wait()
+	}, nil)
+}
+
+// stopJob is one launch Stop ends.
+type stopJob struct {
+	l     *launch
+	force bool
+	lost  bool
+}
+
+// stopJobs marks load iid stopped and takes its launches.
+func (p *Pool) stopJobs(iid uint64, force []core.NodeID) []stopJob {
 	p.mu.Lock()
+	defer supervise.Unlocked("pool", p.unlock)
 	p.stopped[iid] = true
 	ls := p.byIID[iid]
 	delete(p.byIID, iid)
-	type job struct {
-		l     *launch
-		force bool
-		lost  bool
-	}
-	var jobs []job
+	var jobs []stopJob
 	for _, l := range ls {
 		f := false
 		for _, n := range force {
 			f = f || n == l.node
 		}
 		a := p.agents[string(l.node)]
-		jobs = append(jobs, job{l, f, a == nil || a.lost || a.left})
+		jobs = append(jobs, stopJob{l, f, a == nil || a.lost || a.left})
 	}
-	p.unlock()
-	p.stops.Add(1)
-	go func() {
-		defer p.stops.Done()
-		var wg sync.WaitGroup
-		for _, j := range jobs {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				p.stopLaunch(j.l, j.force, j.lost)
-			}()
-		}
-		wg.Wait()
-	}()
+	return jobs
 }
 
 // stopExitWait is how long a plain stop waits for the launch to report
@@ -586,9 +656,12 @@ var stopExitWait = 15 * time.Second
 // stopLaunch stops one launch: DELETE, or forced DELETE then /reset after 5 s
 // (7.2). A lost node is not waited for (11).
 func (p *Pool) stopLaunch(l *launch, force, lost bool) {
-	l.mu.Lock()
-	cancel := l.cancel
-	l.mu.Unlock()
+	var cancel context.CancelFunc
+	func() {
+		l.mu.Lock()
+		defer supervise.Unlocked("pool", l.mu.Unlock)
+		cancel = l.cancel
+	}()
 	if cancel != nil {
 		cancel() // no more lease renewals
 		<-l.done
@@ -596,17 +669,20 @@ func (p *Pool) stopLaunch(l *launch, force, lost bool) {
 	confirmed := false // the agent confirmed the launch no longer runs (TS1)
 	defer func() {
 		p.mu.Lock()
+		defer supervise.Unlocked("pool", p.unlock)
 		p.endLaunchLocked(l, confirmed)
 		p.publishLogSnapLocked()
-		p.unlock()
 	}()
 	if lost {
 		p.log.Info("worker launch not stopped: its node is lost", "launch", l.id, "node", l.node)
 		return
 	}
-	l.mu.Lock()
-	gone := l.goneWhy
-	l.mu.Unlock()
+	var gone string
+	func() {
+		l.mu.Lock()
+		defer supervise.Unlocked("pool", l.mu.Unlock)
+		gone = l.goneWhy
+	}()
 	if gone != "" {
 		// The agent restarted and no longer has this launch: a stop would be
 		// answered 409 (its current launch is another one) or find none.
@@ -652,12 +728,15 @@ func (p *Pool) forceTail(ctx context.Context, base, id, node string) bool {
 		return false
 	}
 	p.log.Info("agent reset", "node", node, "killed", len(ra.Killed))
-	p.mu.Lock()
-	if a := p.agents[node]; a != nil {
-		p.recordLocked(history.TNodeAdmin, history.Warn, a, fmt.Sprintf("Node %s was reset after a forced stop did not end launch %s within 5 s.", a.reg.Name, id),
-			map[string]any{"launch_id": id, "killed": len(ra.Killed)})
-	}
-	p.unlock()
+	func() {
+		p.mu.Lock()
+		defer supervise.Unlocked("pool", p.unlock)
+		supervise.Point("pool.force_tail", node) // test hook, under p.mu
+		if a := p.agents[node]; a != nil {
+			p.recordLocked(history.TNodeAdmin, history.Warn, a, fmt.Sprintf("Node %s was reset after a forced stop did not end launch %s within 5 s.", a.reg.Name, id),
+				map[string]any{"launch_id": id, "killed": len(ra.Killed)})
+		}
+	}()
 	return true
 }
 
@@ -690,20 +769,27 @@ func (p *Pool) waitExited(ctx context.Context, base, id string, d time.Duration)
 	}
 }
 
+// heldLaunch is the launch the node's agent reports and the agent's base
+// address; "" when there is none or the node is lost or gone.
+func (p *Pool) heldLaunch(node core.NodeID) (id, base string) {
+	p.mu.Lock()
+	defer supervise.Unlocked("pool", p.unlock)
+	a := p.agents[string(node)]
+	if a == nil || a.lost || a.left || a.hb == nil || a.hb.LaunchID == nil {
+		return "", ""
+	}
+	return *a.hb.LaunchID, "http://" + net.JoinHostPort(a.reg.Addr, strconv.Itoa(p.o.AgentPort))
+}
+
 // ForceNode is scheduler.WorkerLauncher.ForceNode: the launch the node last
 // reported is stopped with force, then the agent is reset if needed.
 func (p *Pool) ForceNode(node core.NodeID) {
-	p.mu.Lock()
-	a := p.agents[string(node)]
-	if a == nil || a.lost || a.left || a.hb == nil || a.hb.LaunchID == nil {
-		p.unlock()
+	id, base := p.heldLaunch(node)
+	if id == "" {
 		return // a lost node is treated as holding nothing (7.2)
 	}
-	id := *a.hb.LaunchID
-	base := "http://" + net.JoinHostPort(a.reg.Addr, strconv.Itoa(p.o.AgentPort))
-	p.unlock()
 	p.stops.Add(1)
-	go func() {
+	go supervise.Once("pool.force_stop", func() { // a failure is reported; the lease ends the launch
 		defer p.stops.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -711,7 +797,7 @@ func (p *Pool) ForceNode(node core.NodeID) {
 			p.log.Warn("forced stop failed", "node", node, "launch", id, "err", err)
 		}
 		p.forceTail(ctx, base, id, string(node))
-	}()
+	}, nil)
 }
 
 // ---- agent HTTP ----
@@ -783,7 +869,7 @@ const ReasonAgentUnreachable = scheduler.ReasonAgentUnreachable
 // HeldLaunches lists the launches this run holds, for tests and status.
 func (p *Pool) HeldLaunches() []string {
 	p.mu.Lock()
-	defer p.unlock()
+	defer supervise.Unlocked("pool", p.unlock)
 	var out []string
 	for id := range p.launches {
 		out = append(out, id)

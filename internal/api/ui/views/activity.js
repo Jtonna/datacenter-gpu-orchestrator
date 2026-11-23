@@ -25,7 +25,7 @@ const GROUPS = {
   nodes: ['Nodes', ['nodeLost', 'nodeQuarantined', 'quarantineEnded', 'workerHealth', 'recoveryRequest', 'recoveryResponse', 'recoveryOutcome', 'recoverySequenceStopped',
     'fleetViewStale', 'fleetViewRecovered', 'fleetFeedDisconnected', 'fleetFeedRecovered']],
   benchmarks: ['Benchmarks', ['benchRunStarted', 'benchStepFinished', 'benchRunFinished']],
-  system: ['Scheduler', ['schedulerStarted', 'schedulerStopping']],
+  system: ['Scheduler', ['schedulerStarted', 'schedulerStopping', 'internalFailure']],
   memory: ['Memory samples', ['nodeMemory']],
 };
 // "All" leaves out the periodic memory samples (one a minute per node); they have their own chip.
@@ -57,6 +57,7 @@ function tagOf(e) {
     case 'needsMibTooLow': return ['Needs too low', 'load'];
     case 'nodeMemory': return ['Memory', 'n'];
     case 'schedulerStarted': case 'schedulerStopping': return ['Scheduler', 'n'];
+    case 'internalFailure': return d.escalating ? ['Internal failure, stopping', 'fail'] : ['Internal failure', 'fail'];
     case 'benchRunStarted': case 'benchStepFinished': case 'benchRunFinished': return ['Benchmark', 'line'];
   }
   return [e.type, 'n'];

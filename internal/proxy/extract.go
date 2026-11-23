@@ -12,6 +12,8 @@ import (
 	"os"
 	"strings"
 	"sync"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // Error is a request-level failure with the HTTP status to answer.
@@ -241,36 +243,24 @@ func (b *replayBody) startPrefetch(onErr func(error), interrupt func()) {
 		return
 	}
 	b.pumping, b.interrupt = true, interrupt
-	go b.pump(onErr)
+	// A failure fails this request's upload (500) and wakes its reader.
+	go supervise.Once("proxy.prefetch", func() { b.pump(onErr) }, func(p any) {
+		err := &Error{Status: http.StatusInternalServerError, Message: fmt.Sprint("buffering upload: internal error: ", p)}
+		func() {
+			b.mu.Lock()
+			defer b.mu.Unlock()
+			b.err, b.pumping = err, false
+			b.cond.Broadcast()
+		}()
+		onErr(err)
+	})
 }
 
 func (b *replayBody) pump(onErr func(error)) {
 	buf := make([]byte, 32<<10)
 	for {
 		n, err := b.rest.Read(buf)
-		b.mu.Lock()
-		if n > 0 && !b.closed {
-			if _, werr := b.sp.Write(buf[:n]); werr != nil {
-				switch {
-				case b.sp.tooBig:
-					err = tooLarge("multipart upload", b.sp.max)
-				case b.sp.failure != nil:
-					err = &Error{Status: http.StatusInternalServerError, Message: "buffering upload: " + b.sp.failure.Error()}
-				default:
-					err = werr
-				}
-			}
-		}
-		stop := b.handed
-		if err != nil {
-			b.err = err
-		}
-		report := err != nil && !errors.Is(err, io.EOF) && !stop
-		if err != nil || stop {
-			b.pumping = false
-		}
-		b.cond.Broadcast()
-		b.mu.Unlock()
+		report, stop, err := b.took(buf, n, err)
 		if report {
 			onErr(err)
 		}
@@ -280,46 +270,83 @@ func (b *replayBody) pump(onErr func(error)) {
 	}
 }
 
-func (b *replayBody) Read(p []byte) (int, error) {
+// took stores what one read of the upload gave, under b.mu (unlocked by
+// defer, so a failure never leaves it held).
+func (b *replayBody) took(buf []byte, n int, err error) (report, stop bool, _ error) {
 	b.mu.Lock()
+	defer b.mu.Unlock()
+	if n > 0 && !b.closed {
+		if _, werr := b.sp.Write(buf[:n]); werr != nil {
+			switch {
+			case b.sp.tooBig:
+				err = tooLarge("multipart upload", b.sp.max)
+			case b.sp.failure != nil:
+				err = &Error{Status: http.StatusInternalServerError, Message: "buffering upload: " + b.sp.failure.Error()}
+			default:
+				err = werr
+			}
+		}
+	}
+	supervise.Point("proxy.prefetch", b)
+	stop = b.handed
+	if err != nil {
+		b.err = err
+	}
+	report = err != nil && !errors.Is(err, io.EOF) && !stop
+	if err != nil || stop {
+		b.pumping = false
+	}
+	b.cond.Broadcast()
+	return report, stop, err
+}
+
+func (b *replayBody) Read(p []byte) (int, error) {
+	if n, done, err := b.readBuffered(p); done {
+		return n, err
+	}
+	return b.rest.Read(p)
+}
+
+// readBuffered reads from what the prefetch buffered; done is false when
+// that is used up and the rest of the body is to be read directly.
+func (b *replayBody) readBuffered(p []byte) (n int, done bool, err error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.handed = true
 	for {
 		if b.off < b.sp.n {
 			n, err := b.sp.readAt(p[:min(int64(len(p)), b.sp.n-b.off)], b.off)
 			b.off += int64(n)
-			b.mu.Unlock()
 			if n > 0 {
-				return n, nil
+				return n, true, nil
 			}
-			return 0, err
+			return 0, true, err
 		}
 		if b.pumping {
 			b.cond.Wait() // the in-flight read of the prefetch finishes first
 			continue
 		}
 		if b.err != nil {
-			err := b.err
-			b.mu.Unlock()
-			return 0, err
+			return 0, true, b.err
 		}
-		break
+		return 0, false, nil
 	}
-	b.mu.Unlock()
-	return b.rest.Read(p)
 }
 
 func (b *replayBody) Close() error {
-	b.mu.Lock()
-	b.handed = true
-	if b.pumping && b.interrupt != nil {
-		b.interrupt()
-		for b.pumping { // without an interrupt a stuck read cannot be waited for
-			b.cond.Wait()
+	func() {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		b.handed = true
+		if b.pumping && b.interrupt != nil {
+			b.interrupt()
+			for b.pumping { // without an interrupt a stuck read cannot be waited for
+				b.cond.Wait()
+			}
 		}
-	}
-	b.closed = true
-	b.sp.discard()
-	b.mu.Unlock()
+		b.closed = true
+		b.sp.discard()
+	}()
 	if b.closer != nil {
 		return b.closer.Close()
 	}

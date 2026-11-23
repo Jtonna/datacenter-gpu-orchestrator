@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/filecache"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // A cold load (the load phase's cold option): right before the load the
@@ -157,17 +158,18 @@ func (br *benchRun) makeCold() *ColdResult {
 		return res
 	}
 	x.setDetail(br.track, map[string]any{"text": "Dropping the model file from the file caches"})
-	br.mu.Lock()
-	localID := br.localID
 	var nodes []string
-	if br.plan != nil {
-		for _, id := range br.plan.Nodes {
-			if id != localID && !slices.Contains(nodes, id) {
-				nodes = append(nodes, id)
+	func() {
+		br.mu.Lock()
+		defer supervise.Unlocked("bench", br.mu.Unlock)
+		if br.plan != nil {
+			for _, id := range br.plan.Nodes {
+				if id != br.localID && !slices.Contains(nodes, id) {
+					nodes = append(nodes, id)
+				}
 			}
 		}
-	}
-	br.mu.Unlock()
+	}()
 	// the step's own context: a step that has run out of time does not evict
 	ctx, cancel := context.WithTimeout(WithRun(br.ctx, br.st.RunID), 2*time.Minute)
 	defer cancel()
@@ -201,9 +203,12 @@ func (br *benchRun) makeCold() *ColdResult {
 		}
 	}
 
-	x.a.mu.Lock()
-	names := mergeHosts(nil, x.a.hosts)
-	x.a.mu.Unlock()
+	var names map[string]string
+	func() {
+		x.a.mu.Lock()
+		defer supervise.Unlocked("bench", x.a.mu.Unlock)
+		names = mergeHosts(nil, x.a.hosts)
+	}()
 	name := func(id, given string) string {
 		if n := names[id]; n != "" {
 			return n
@@ -254,9 +259,11 @@ func (br *benchRun) makeCold() *ColdResult {
 	}
 	if plan, err := x.m.o.API.Plan(br.ctx, b.Profile); err == nil {
 		br.st.Plan = plan.Raw
-		br.mu.Lock()
-		br.plan = plan
-		br.mu.Unlock()
+		func() {
+			br.mu.Lock()
+			defer supervise.Unlocked("bench", br.mu.Unlock)
+			br.plan = plan
+		}()
 	}
 	return res
 }
@@ -271,9 +278,13 @@ func (br *benchRun) checkColdPlacement(res *ColdResult) {
 	for _, n := range res.Nodes {
 		done[n.ID] = true
 	}
-	br.mu.Lock()
-	used, localID := append([]InstanceNodeInfo(nil), br.nodes...), br.localID
-	br.mu.Unlock()
+	var used []InstanceNodeInfo
+	var localID string
+	func() {
+		br.mu.Lock()
+		defer supervise.Unlocked("bench", br.mu.Unlock)
+		used, localID = append([]InstanceNodeInfo(nil), br.nodes...), br.localID
+	}()
 	var missed []string
 	for _, n := range used {
 		if n.Local || n.ID == localID || done[n.ID] {

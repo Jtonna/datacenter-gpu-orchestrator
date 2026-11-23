@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // Config sets up a Shipper.
@@ -299,11 +300,13 @@ func (s *Shipper) apply(nodeID string, obj *agentproto.Logs) {
 	old := s.conf.Swap(c)
 	if c.mode == modeOff {
 		s.ring.Clear()
-		s.mu.Lock()
-		if s.cancelReq != nil {
-			s.cancelReq() // a request in flight is given up
-		}
-		s.mu.Unlock()
+		func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			if s.cancelReq != nil {
+				s.cancelReq() // a request in flight is given up
+			}
+		}()
 	}
 	if old.mode != c.mode {
 		if c.mode == modeOn {
@@ -350,37 +353,48 @@ func (s *Shipper) Figures() *agentproto.LogShipping {
 		return nil
 	}
 	f := &agentproto.LogShipping{LinesSent: s.sent.Load(), LinesDropped: s.ring.DroppedTotal()}
-	s.mu.Lock()
-	if s.lastErr != "" {
-		f.LastError = s.lastErr
-		age := max(float64((s.cfg.Now()-s.lastErrAt).Milliseconds())/1000, 0)
-		f.LastErrorAgeS = &age
-	}
-	s.mu.Unlock()
+	func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.lastErr != "" {
+			f.LastError = s.lastErr
+			age := max(float64((s.cfg.Now()-s.lastErrAt).Milliseconds())/1000, 0)
+			f.LastErrorAgeS = &age
+		}
+	}()
 	return f
 }
 
 func (s *Shipper) setErr(kind, text string) {
-	s.mu.Lock()
-	s.lastErr, s.lastErrAt = text, s.cfg.Now()
-	last, said := s.warned[kind]
-	now := time.Now()
-	loud := !said || now.Sub(last) >= s.cfg.Quiet
-	if loud {
-		s.warned[kind] = now
-	}
-	s.mu.Unlock()
+	var loud bool
+	func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.lastErr, s.lastErrAt = text, s.cfg.Now()
+		last, said := s.warned[kind]
+		now := time.Now()
+		loud = !said || now.Sub(last) >= s.cfg.Quiet
+		if loud {
+			s.warned[kind] = now
+		}
+	}()
 	if loud {
 		s.log.Load().Warn("log shipping: "+text, "next_warning_in_s", s.cfg.Quiet.Seconds())
 	}
 }
 
 // Run runs the sender and the fetcher until ctx ends.
+//
+// Each loop restarts alone after a failure (background-task isolation): the
+// ring is kept, so a failed sender loses only the batch it held. The agent
+// runs this code too; there supervise is not configured and reports to the
+// default logger.
 func (s *Shipper) Run(ctx context.Context) {
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() { defer wg.Done(); s.fetchLoop(ctx) }()
-	s.sendLoop(ctx)
+	wg.Add(2)
+	supervise.Go(ctx, supervise.Spec{Name: "logship.fetch", Policy: supervise.Restart, Done: wg.Done}, s.fetchLoop)
+	supervise.Go(ctx, supervise.Spec{Name: "logship.send", Policy: supervise.Restart, Done: wg.Done,
+		Rebuild: func(any) { s.pending = nil }}, s.sendLoop)
 	wg.Wait()
 }
 
@@ -694,10 +708,16 @@ func (s *Shipper) post(ctx context.Context, c *conf, k Key, body []byte, gz bool
 	}
 	rctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	s.mu.Lock()
-	s.cancelReq = cancel
-	s.mu.Unlock()
-	defer func() { s.mu.Lock(); s.cancelReq = nil; s.mu.Unlock() }()
+	func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.cancelReq = cancel
+	}()
+	defer func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.cancelReq = nil
+	}()
 	if s.conf.Load().gen != c.gen {
 		return resRetry, time.Millisecond
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/placer"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // A panic inside a read-only query (the plan, the status, the needs) is
@@ -16,6 +17,8 @@ import (
 // counted, the core answers the next query and nothing changed. (0.1.7
 // readiness: a divide by zero in a plan took the whole scheduler down.)
 func TestReadQueryPanicIsRecovered(t *testing.T) {
+	supervise.ResetForTest()
+	defer supervise.ResetForTest()
 	f := startScheduler(t, []core.Node{ps5("a", 2, 15000)}, llamaP("m", 8000), llamaP("boom", 4000))
 	var boom atomic.Bool
 	panicky := NeedFunc(func(p *core.Profile) (NeedInfo, error) {
@@ -48,6 +51,17 @@ func TestReadQueryPanicIsRecovered(t *testing.T) {
 	}
 	if n := f.s.ReadPanics(); n != 1 {
 		t.Fatalf("read panics %d, want 1", n)
+	}
+	// supervise owns the recover: task scheduler.read, reported and counted
+	// as every internal failure, never toward escalation.
+	var st supervise.TaskStats
+	for _, x := range supervise.Stats() {
+		if x.Name == "scheduler.read" {
+			st = x
+		}
+	}
+	if st.Policy != "read" || st.Failures != 1 || st.FailuresLastMin != 0 {
+		t.Fatalf("supervise stats %+v", st)
 	}
 
 	// the core goes on, and nothing changed

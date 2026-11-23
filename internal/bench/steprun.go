@@ -11,6 +11,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // PhaseOK is the outcome of a phase that did what it should.
@@ -50,7 +51,7 @@ type loadObs struct {
 
 func (o *loadObs) get() (string, *LoadInfo) {
 	o.mu.Lock()
-	defer o.mu.Unlock()
+	defer supervise.Unlocked("bench", o.mu.Unlock)
 	return o.logFile, o.last
 }
 
@@ -134,11 +135,13 @@ func (x *suiteExec) runBenchmark(b *benchspec.Benchmark, idx int, group string, 
 		}
 		return st
 	}
-	x.a.mu.Lock()
-	if x.a.step == nil {
-		x.a.step = map[string]any{"idx": idx, "benchmark_id": b.ID, "name": st.Name, "profile": b.Profile}
-	}
-	x.a.mu.Unlock()
+	func() {
+		x.a.mu.Lock()
+		defer supervise.Unlocked("bench", x.a.mu.Unlock)
+		if x.a.step == nil {
+			x.a.step = map[string]any{"idx": idx, "benchmark_id": b.ID, "name": st.Name, "profile": b.Profile}
+		}
+	}()
 	m.emit(map[string]any{"kind": "step_started", "run_id": st.RunID, "step": stepBrief(st)})
 
 	ctx, cancelCtx := context.WithTimeout(WithRun(context.Background(), st.RunID), b.Timeout())
@@ -179,9 +182,11 @@ func (x *suiteExec) runBenchmark(b *benchspec.Benchmark, idx int, group string, 
 		return st
 	}
 	st.Plan = plan.Raw
-	br.mu.Lock()
-	br.plan = plan
-	br.mu.Unlock()
+	func() {
+		br.mu.Lock()
+		defer supervise.Unlocked("bench", br.mu.Unlock)
+		br.plan = plan
+	}()
 	planned := x.hostnames(plan.Nodes)
 	x.track(br.track, false, func(t *benchTrack) { t.nodes = planned })
 
@@ -198,9 +203,12 @@ func (x *suiteExec) runBenchmark(b *benchspec.Benchmark, idx int, group string, 
 // hostnames maps node ids to host names when the last status knew them.
 func (x *suiteExec) hostnames(ids []string) []string {
 	out := []string{}
-	x.a.mu.Lock()
-	known := x.a.hosts
-	x.a.mu.Unlock()
+	var known map[string]string
+	func() {
+		x.a.mu.Lock()
+		defer supervise.Unlocked("bench", x.a.mu.Unlock)
+		known = x.a.hosts
+	}()
 	for _, id := range ids {
 		if h := known[id]; h != "" {
 			id = h
@@ -277,7 +285,7 @@ func round3(v float64) float64 { return float64(int64(v*1000+0.5)) / 1000 }
 
 func (br *benchRun) rowsOf(phaseIdx int) []RequestResult {
 	br.mu.Lock()
-	defer br.mu.Unlock()
+	defer supervise.Unlocked("bench", br.mu.Unlock)
 	var out []RequestResult
 	for _, r := range br.reqs {
 		if r.PhaseIdx == phaseIdx {
@@ -302,21 +310,25 @@ func recentFailure(s *StatusInfo, profile string, since int64) *RecentLoad {
 // noteInstance records what the scheduler knows of the profile's instance.
 func (br *benchRun) noteInstance(s *StatusInfo, in *InstanceInfo) {
 	x, st := br.x, br.st
-	x.a.mu.Lock()
-	x.a.hosts = mergeHosts(x.a.hosts, s.Hostnames)
-	x.a.mu.Unlock()
+	func() {
+		x.a.mu.Lock()
+		defer supervise.Unlocked("bench", x.a.mu.Unlock)
+		x.a.hosts = mergeHosts(x.a.hosts, s.Hostnames)
+	}()
 	br.observe(s)
 	if in == nil {
 		return
 	}
-	br.mu.Lock()
-	if len(in.Nodes) > 0 {
-		br.nodes = append([]InstanceNodeInfo(nil), in.Nodes...)
-	}
-	if in.LoadMode != "" {
-		br.loadMode = in.LoadMode
-	}
-	br.mu.Unlock()
+	func() {
+		br.mu.Lock()
+		defer supervise.Unlocked("bench", br.mu.Unlock)
+		if len(in.Nodes) > 0 {
+			br.nodes = append([]InstanceNodeInfo(nil), in.Nodes...)
+		}
+		if in.LoadMode != "" {
+			br.loadMode = in.LoadMode
+		}
+	}()
 	if in.ModelFile != "" {
 		st.ModelFile = in.ModelFile
 	}
@@ -462,14 +474,16 @@ func (br *benchRun) loadModel(cold bool) bool {
 			case cur != nil:
 				seen = true
 				br.noteInstance(s, cur)
-				obs.mu.Lock()
-				if cur.LogFile != "" {
-					obs.logFile = cur.LogFile
-				}
-				if cur.Load != nil {
-					obs.last = cur.Load
-				}
-				obs.mu.Unlock()
+				func() {
+					obs.mu.Lock()
+					defer supervise.Unlocked("bench", obs.mu.Unlock)
+					if cur.LogFile != "" {
+						obs.logFile = cur.LogFile
+					}
+					if cur.Load != nil {
+						obs.last = cur.Load
+					}
+				}()
 				if cur.Load != nil {
 					br.loadProgress(cur.Load, time.Since(start))
 					m.emit(map[string]any{"kind": "load", "run_id": st.RunID, "idx": st.Idx, "benchmark_id": st.BenchmarkID, "load": json.RawMessage(cur.Load.Raw)})
@@ -637,14 +651,16 @@ func (br *benchRun) captureLoad(startMS int64, start time.Time, obs *loadObs, re
 	if in := s.Instance(b.Profile); in != nil && in.LoadMode != "" {
 		lr.LoadMode = in.LoadMode
 	}
-	br.mu.Lock()
-	if lr.LoadMode == "" {
-		lr.LoadMode = br.loadMode
-	}
-	if lr.LoadMode == "" && br.plan != nil {
-		lr.LoadMode = br.plan.LoadMode
-	}
-	br.mu.Unlock()
+	func() {
+		br.mu.Lock()
+		defer supervise.Unlocked("bench", br.mu.Unlock)
+		if lr.LoadMode == "" {
+			lr.LoadMode = br.loadMode
+		}
+		if lr.LoadMode == "" && br.plan != nil {
+			lr.LoadMode = br.plan.LoadMode
+		}
+	}()
 	if lr.SessionID != "" {
 		if h, err := x.m.o.API.LoadHistory(cctx, lr.SessionID); err == nil && h != nil {
 			lr.Source = "history"
@@ -700,9 +716,11 @@ func (br *benchRun) captureLoad(startMS int64, start time.Time, obs *loadObs, re
 	if st.Load == nil {
 		st.Load = lr
 	}
-	br.mu.Lock()
-	br.lastLoad = lr
-	br.mu.Unlock()
+	func() {
+		br.mu.Lock()
+		defer supervise.Unlocked("bench", br.mu.Unlock)
+		br.lastLoad = lr
+	}()
 }
 
 // phaseLoad is the load phase: cold load, no chat request. With the cold
@@ -713,14 +731,18 @@ func (br *benchRun) phaseLoad(p *benchspec.Phase, pr *PhaseResult) {
 	br.wantCold = false
 	pr.Cold, br.cold = br.cold, nil
 	if !ok {
-		br.mu.Lock()
-		pr.Load = br.lastLoad
-		br.mu.Unlock()
+		func() {
+			br.mu.Lock()
+			defer supervise.Unlocked("bench", br.mu.Unlock)
+			pr.Load = br.lastLoad
+		}()
 		return
 	}
-	br.mu.Lock()
-	pr.Load = br.lastLoad
-	br.mu.Unlock()
+	func() {
+		br.mu.Lock()
+		defer supervise.Unlocked("bench", br.mu.Unlock)
+		pr.Load = br.lastLoad
+	}()
 	if pr.Load != nil {
 		br.x.setDetail(br.track, map[string]any{"text": fmt.Sprintf("%s is loaded in %.1f s", br.b.Profile, pr.Load.LoadS)})
 	}
@@ -748,10 +770,13 @@ func (br *benchRun) ensureLoaded() bool {
 // send performs one request and records it.
 func (br *benchRun) send(ctx context.Context, r benchspec.Request, phase string, pidx, turn int) (*RequestResult, *ChatResponse, error) {
 	x, st := br.x, br.st
-	br.mu.Lock()
-	br.seq++
-	seq := br.seq
-	br.mu.Unlock()
+	var seq int
+	func() {
+		br.mu.Lock()
+		defer supervise.Unlocked("bench", br.mu.Unlock)
+		br.seq++
+		seq = br.seq
+	}()
 	rr := &RequestResult{StepID: st.ID, RunID: st.RunID, Seq: seq, Name: r.Name, Phase: phase, PhaseIdx: pidx, Turn: turn,
 		Deterministic: r.Deterministic(), StartedAt: x.m.o.Now().UnixMilli()}
 	x.emitRequest(st, map[string]any{"phase": phase, "request": r.Name, "seq": seq, "state": "started"})
@@ -802,9 +827,11 @@ func (br *benchRun) send(ctx context.Context, r benchspec.Request, phase string,
 }
 
 func (br *benchRun) record(rr *RequestResult) {
-	br.mu.Lock()
-	br.reqs = append(br.reqs, *rr)
-	br.mu.Unlock()
+	func() {
+		br.mu.Lock()
+		defer supervise.Unlocked("bench", br.mu.Unlock)
+		br.reqs = append(br.reqs, *rr)
+	}()
 	if err := br.x.m.o.Store.AddRequest(rr); err != nil {
 		br.x.m.log.Warn("cannot store a request", "err", err)
 	}
@@ -967,11 +994,11 @@ func (br *benchRun) phaseConcurrent(i int, p *benchspec.Phase, pr *PhaseResult) 
 	var dmu sync.Mutex
 	finished := 0
 	fire := make(chan struct{})
+	fan := supervise.NewFanout("bench.concurrent") // one step's requests count once toward escalation
 	for k := 0; k < n; k++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		fan.Go(&wg, func() {
 			<-fire
+			supervise.Point("bench.concurrent", br.x.a.run.ID) // test hook, per run
 			rr, resp, err := br.send(br.ctx, req, PhaseConcurrent, i, k+1)
 			it := ConcurrentItem{Index: k + 1, WallMS: rr.WallMS, DecodeTPS: rr.DecodeTPS, PrefillTPS: rr.PromptTPS}
 			switch {
@@ -982,13 +1009,20 @@ func (br *benchRun) phaseConcurrent(i int, p *benchspec.Phase, pr *PhaseResult) 
 			default:
 				it.Status, it.WaitMS = 200, rr.WaitMS
 			}
-			dmu.Lock()
-			items[k] = it
-			finished++
-			f := finished
-			dmu.Unlock()
+			var f int
+			func() {
+				dmu.Lock()
+				defer supervise.Unlocked("bench", dmu.Unlock)
+				items[k] = it
+				finished++
+				f = finished
+			}()
 			br.x.unitDone(br.track, fmt.Sprintf("Simultaneous requests: %d of %d done", f, n))
-		}()
+		}, func(any) { // a failure is this request's error
+			dmu.Lock()
+			defer supervise.Unlocked("bench", dmu.Unlock)
+			items[k] = ConcurrentItem{Index: k + 1, Error: "internal error"}
+		})
 	}
 	start := time.Now()
 	close(fire)
@@ -1183,9 +1217,12 @@ func (x *suiteExec) finish(br *benchRun) {
 			st.Error = "the step ended without an outcome"
 		}
 	}
-	br.mu.Lock()
-	reqs := append([]RequestResult(nil), br.reqs...)
-	br.mu.Unlock()
+	var reqs []RequestResult
+	func() {
+		br.mu.Lock()
+		defer supervise.Unlocked("bench", br.mu.Unlock)
+		reqs = append([]RequestResult(nil), br.reqs...)
+	}()
 	st.Stats = ComputeStats(reqs)
 	switch st.Outcome {
 	case OutcomeReady, OutcomeRefused, OutcomeRefusedByExclusion, OutcomeFailed:
@@ -1213,10 +1250,12 @@ func (x *suiteExec) finish(br *benchRun) {
 		m.log.Warn("cannot store a step's measurements", "run", st.RunID, "benchmark", b.ID, "err", err)
 	}
 	x.finishTrack(br.track)
-	x.a.mu.Lock()
-	x.a.done++
-	x.a.step = nil
-	x.a.mu.Unlock()
+	func() {
+		x.a.mu.Lock()
+		defer supervise.Unlocked("bench", x.a.mu.Unlock)
+		x.a.done++
+		x.a.step = nil
+	}()
 	m.emit(map[string]any{"kind": "step_finished", "run_id": st.RunID, "step": stepBrief(st)})
 	sev := history.Info
 	pass := st.Expect != nil && st.Expect.Pass

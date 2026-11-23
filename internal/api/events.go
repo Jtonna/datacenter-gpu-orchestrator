@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // The /api/events feed (design A.3). Every message is a data-only SSE event
@@ -45,49 +47,71 @@ type hub struct {
 
 	cancel func()
 	done   chan struct{}
+	stop   context.CancelFunc // ends the run loop's supervision (and its backoff)
 }
 
 func newHub(s *scheduler.Scheduler, now func() time.Time) *hub {
 	h := &hub{sched: s, now: now, clients: map[*client]struct{}{}, inflight: map[uint64]inflightReq{}, done: make(chan struct{})}
 	feed, cancel := s.Subscribe(4096)
 	h.cancel = cancel
-	go h.run(feed)
+	// A failure drops the in-flight table and every SSE stream (the browsers
+	// reconnect and get a fresh snapshot); the loop then reads on.
+	ctx, stop := context.WithCancel(context.Background())
+	h.stop = stop
+	supervise.Go(ctx, supervise.Spec{Name: "api.events", Policy: supervise.Restart, Rebuild: func(any) { h.reset() },
+		Done: func() { close(h.done) }}, func(context.Context) { h.run(feed) })
 	return h
 }
 
 func (h *hub) run(feed <-chan scheduler.FeedEvent) {
-	defer close(h.done)
 	var last uint64
 	for ev := range feed {
 		gap := last != 0 && ev.Seq != last+1
 		last = ev.Seq
-		h.mu.Lock()
-		switch ev.Kind {
-		case scheduler.FeedInstance:
-			h.broadcastLocked(h.modelStatusLocked())
-		case scheduler.FeedAdmitted:
-			r := inflightReq{ID: strconv.FormatUint(ev.RequestID, 10), Model: ev.Profile, Timestamp: isoTime(ev.Time)}
-			h.inflight[ev.RequestID] = r
-			h.broadcastLocked(frame("inflight", map[string]any{"operation": "upsert", "request": r}))
-		case scheduler.FeedLoadStarted:
-			h.broadcastLocked(frame("loadStarted", jsonView(ev.LoadStarted)))
-		case scheduler.FeedWorkerHealth:
-			h.broadcastLocked(frame("workerHealth", jsonView(ev.Worker)))
-		case scheduler.FeedRecovery:
-			h.broadcastLocked(frame("recoveryRequest", jsonView(ev.Recovery)))
-		case scheduler.FeedLoadFinished:
-			h.broadcastLocked(frame("loadFinished", jsonView(ev.Outcome)))
-		case scheduler.FeedFinished:
-			delete(h.inflight, ev.RequestID)
-			h.broadcastLocked(frame("inflight", map[string]any{"operation": "remove", "id": strconv.FormatUint(ev.RequestID, 10)}))
-		}
-		if gap { // events were dropped for us: resend the whole picture
-			h.broadcastLocked(h.modelStatusLocked())
-			h.broadcastLocked(h.snapshotLocked())
-		}
-		h.mu.Unlock()
+		h.apply(ev, gap)
 	}
 	h.close()
+}
+
+// reset is the hub's rebuild after a failure.
+func (h *hub) reset() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.inflight = map[uint64]inflightReq{}
+	for c := range h.clients {
+		delete(h.clients, c)
+		close(c.ch)
+	}
+}
+
+// apply sends one feed event to the streams.
+func (h *hub) apply(ev scheduler.FeedEvent, gap bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	supervise.Point("api.events", h)
+	switch ev.Kind {
+	case scheduler.FeedInstance:
+		h.broadcastLocked(h.modelStatusLocked())
+	case scheduler.FeedAdmitted:
+		r := inflightReq{ID: strconv.FormatUint(ev.RequestID, 10), Model: ev.Profile, Timestamp: isoTime(ev.Time)}
+		h.inflight[ev.RequestID] = r
+		h.broadcastLocked(frame("inflight", map[string]any{"operation": "upsert", "request": r}))
+	case scheduler.FeedLoadStarted:
+		h.broadcastLocked(frame("loadStarted", jsonView(ev.LoadStarted)))
+	case scheduler.FeedWorkerHealth:
+		h.broadcastLocked(frame("workerHealth", jsonView(ev.Worker)))
+	case scheduler.FeedRecovery:
+		h.broadcastLocked(frame("recoveryRequest", jsonView(ev.Recovery)))
+	case scheduler.FeedLoadFinished:
+		h.broadcastLocked(frame("loadFinished", jsonView(ev.Outcome)))
+	case scheduler.FeedFinished:
+		delete(h.inflight, ev.RequestID)
+		h.broadcastLocked(frame("inflight", map[string]any{"operation": "remove", "id": strconv.FormatUint(ev.RequestID, 10)}))
+	}
+	if gap { // events were dropped for us: resend the whole picture
+		h.broadcastLocked(h.modelStatusLocked())
+		h.broadcastLocked(h.snapshotLocked())
+	}
 }
 
 func (h *hub) modelStatusLocked() []byte {
@@ -135,9 +159,11 @@ func (h *hub) broadcastLocked(b []byte) {
 }
 
 func (h *hub) activityDone() {
-	h.mu.Lock()
-	h.broadcastLocked(frame("activity", struct{}{}))
-	h.mu.Unlock()
+	func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		h.broadcastLocked(frame("activity", struct{}{}))
+	}()
 }
 
 // add registers a client whose channel already holds the initial
@@ -173,15 +199,20 @@ func (h *hub) clientCount() int {
 // close ends every stream and the subscription. Safe to call repeatedly.
 func (h *hub) close() {
 	h.cancel()
-	h.mu.Lock()
-	if !h.closed {
-		h.closed = true
-		for c := range h.clients {
-			delete(h.clients, c)
-			close(c.ch)
-		}
+	if h.stop != nil {
+		defer h.stop()
 	}
-	h.mu.Unlock()
+	func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if !h.closed {
+			h.closed = true
+			for c := range h.clients {
+				delete(h.clients, c)
+				close(c.ch)
+			}
+		}
+	}()
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {

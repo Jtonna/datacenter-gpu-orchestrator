@@ -345,16 +345,13 @@ func callerOf(r *http.Request) string {
 	return host
 }
 
-// logAlias logs one use of a deprecated alias with the caller's address
-// (design 8.2 step 1), at most once per alias+caller per AliasLogEvery.
-func (s *Server) logAlias(r *http.Request, alias, profile string) {
-	caller := callerOf(r)
-	key := alias + "\x00" + caller
-	now := s.opts.Now()
+// aliasDue notes a use of key; false when it was logged within
+// AliasLogEvery.
+func (s *Server) aliasDue(key string, now time.Time) bool {
 	s.aliasMu.Lock()
+	defer s.aliasMu.Unlock()
 	if last, ok := s.aliasSeen[key]; ok && now.Sub(last) < s.opts.AliasLogEvery {
-		s.aliasMu.Unlock()
-		return
+		return false
 	}
 	if len(s.aliasSeen) > 1024 {
 		for k, t := range s.aliasSeen {
@@ -364,7 +361,18 @@ func (s *Server) logAlias(r *http.Request, alias, profile string) {
 		}
 	}
 	s.aliasSeen[key] = now
-	s.aliasMu.Unlock()
+	return true
+}
+
+// logAlias logs one use of a deprecated alias with the caller's address
+// (design 8.2 step 1), at most once per alias+caller per AliasLogEvery.
+func (s *Server) logAlias(r *http.Request, alias, profile string) {
+	caller := callerOf(r)
+	key := alias + "\x00" + caller
+	now := s.opts.Now()
+	if !s.aliasDue(key, now) {
+		return
+	}
 	attrs := []any{"alias", alias, "profile", profile, "caller", caller}
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		attrs = append(attrs, "forwarded_for", xff)
@@ -470,9 +478,11 @@ func (s *Server) reserveBody(n int64) bool {
 }
 
 func (s *Server) releaseBody(n int64) {
-	s.bodyMu.Lock()
-	s.bodyHeld -= n
-	s.bodyMu.Unlock()
+	func() {
+		s.bodyMu.Lock()
+		defer s.bodyMu.Unlock()
+		s.bodyHeld -= n
+	}()
 }
 
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {

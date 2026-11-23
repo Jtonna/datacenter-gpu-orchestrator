@@ -264,6 +264,34 @@ An agent never updates while a launch runs.
 
 A planned node restart can be announced (`POST /api/nodes/{id}/expect-restart`) so that it is measured and not reported as a lost node.
 
+### Inside the scheduler: a background task fails
+
+Every goroutine the scheduler starts runs under `internal/supervise` (a source scan in its tests fails on a bare `go` statement that is not allowlisted with a reason). A failure (a Go panic) in one of them is logged at error level with its stack, recorded as an `internalFailure` history event, counted, and listed in `GET /api/system` under `tasks`. HTTP handler panics are logged and counted the same way and are still answered by `net/http`. What happens next depends on the task:
+
+| Kind | Tasks | After a failure |
+|---|---|---|
+| Restarts alone | WebSocket status and ping loops, fleet feed and probe, needs writer, background build reads, log relay watch, self-log check, log shipper | Restarts after a backoff (100 ms, 1 s, 5 s, doubling to 30 s; back to the start after a minute without a failure). |
+| Rebuilds, then restarts | catalog (built again from scratch), SSE hub (drops its streams; browsers reconnect to a fresh snapshot), benchmark manager (fails the run in hand; its models are unloaded on the way out), history writer (continues in a fresh file), a launch's supervisor (renews the lease and reads the launch state at once) | As above, after the rebuild. |
+| One-shot work | probes, starts, health waits, worker launches and stops, reaping a model process, the audit writer, a cache eviction, a proxy prefetch, a benchmark step | The failure becomes the work's result (an error the waiting side sees), so nothing waits forever. |
+| Read-only queries | the scheduler's plan, status and needs queries (task `scheduler.read`, run inside the event loop) | The query answers 500 and the loop goes on; counted in `GET /api/system` as `read_panics` too. Never toward the stop below: it changed nothing. |
+| Stops Potluck | the scheduler event loop, the pool's lost-node check, applying a configuration change | Their state cannot be rebuilt in place: see below. |
+
+**A failure inside a lock stops Potluck, whatever the task.** The table's policies hold for a failure outside any lock section: the shared state is only written under its lock, so it cannot be half-written there. Every lock in the scheduler is released by a deferred call (a second source scan fails on one that is not), so a failure never leaves a lock held and Potluck never hangs where it used to crash. In the packages whose state a restarted task cannot rebuild (pool, scheduler, learned needs, history, model processes, configuration service, benchmarks) the release is `supervise.Unlocked`: a failure inside the section releases the lock and stops Potluck the bounded way below, since the state may be half-written. Per task, therefore:
+
+| Task | Touches under a lock | Outside a section | Inside a section |
+|---|---|---|---|
+| scheduler event loop, pool lost-node check, configuration apply | scheduler, pool, configuration | stops Potluck | stops Potluck |
+| needs writer | scheduler (its queue) | restarts | stops Potluck |
+| history writer | history store | rebuilds (fresh file), restarts | stops Potluck |
+| benchmark manager | benchmark run and store | fails the run, restarts | stops Potluck |
+| a launch's supervisor, worker launches and stops, forced-stop reset | pool (`p.mu`, the launch's `l.mu`) | restarts, or the failure is the work's result | stops Potluck |
+| reaping a model process, starts, health waits, probes | model processes, scheduler | the failure is the work's result | stops Potluck |
+| catalog, SSE hub, WebSocket loops, fleet feed, log relay, self-log, log shipper, audit writer, cache eviction, prefetch | their own state only (plain deferred release) | as in the table above | as outside: the state is the task's own and is rebuilt |
+
+The members of one fan-out (the probes of one pre-flight, the launches or stops of one load, the members of a benchmark group, the nodes of one cache eviction) count as one failure toward the limit below. A failure while Potluck is already stopping on a signal is recorded (exit code 3) but does not shorten the shutdown's grace.
+
+The same task failing a third time within 60 s also stops Potluck. The stop is bounded: Potluck logs the reason, records a `schedulerStopping` event, lets requests in flight answer for up to a second, kills every model process it started, and exits with code 3 within 5 s. The container's restart policy starts it again, as after any scheduler restart (table above). A configuration change whose apply failed is already saved: the request answers 500 and the restart applies it from the database.
+
 ## 9. Legacy: fleet membership
 
 The setting `membership` can also be `fleet`, which is still the built-in default when a configuration does not set it (the shipped seed sets `agents`). In fleet mode the scheduler reads its nodes from an external fleet console (`fleet.url`) instead of agent registrations, probes each worker with `llama-server --list-devices` before a load, and can send recovery requests for a hung worker through that console. Nodes then run a long-lived `rpc-server` of their own. This mode is kept until a later release removes it; new deployments use agents.

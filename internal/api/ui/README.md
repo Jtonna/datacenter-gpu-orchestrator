@@ -52,8 +52,18 @@ next/app.js            entry of the new shell; imports the classic views and vie
 next/core/shell.js     rail of sections, section menu (collapsible), fleet card, phone drawer
 next/core/ui.js        the classic components plus panel, segmented, filterSelect, searchField,
                        zoneStatus, colourKey, availStrip, runStatus, sidePanel
-next/views/zones.js    Zones: one row per machine (zone), its card in a side panel
+next/views/zones.js    Zones: one row per machine (zone); selection with Stop accepting models /
+                       Accept models again; the zone panel (state, facts, recent events, machine card)
+next/views/models.js   Models: loaded instances, every model file with size and disk total, the
+                       model panel (?model=<key>); #/models/<key> is still views/models/detail.js
 ```
+
+Each UI links to the other: "Classic UI" at the foot of the new rail, "New UI"
+in the classic header and pane. `GET /` on the scheduler redirects to `/ui/`.
+
+Harness case fields for the new shell: `click` (selectors clicked after the
+draw), `page` and `notOnPage` (texts anywhere on the page, side panels and
+dialogs included), `links` (`{text, path}`).
 
 Words of the new shell: a zone is one node; Off = excluded, "Not accepting"
 = paused, Set aside = quarantined. Nothing is drawn without data behind it,

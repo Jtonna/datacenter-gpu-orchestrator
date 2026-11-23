@@ -4,6 +4,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // LocalFacts is what the node feed (GET /api/nodes) shows about the
@@ -59,24 +61,26 @@ func ProcHostInfo() (float64, string, bool) {
 // while the node view has no local node (no local probe, or it fails).
 func (p *Pool) Local() (LocalFacts, bool) {
 	cfg := p.o.Config()
-	p.mu.Lock()
 	var f LocalFacts
 	ok := false
-	for _, n := range p.nodes {
-		if n.Local {
-			f = LocalFacts{ID: string(n.ID), Name: n.Hostname, State: StateActive, Release: p.o.PotluckRelease, Local: true,
-				Placeable: !n.Paused, Capabilities: []string{}}
-			if f.Name == "" {
-				f.Name = f.ID
+	func() {
+		p.mu.Lock()
+		defer supervise.Unlocked("pool", p.unlock)
+		for _, n := range p.nodes {
+			if n.Local {
+				f = LocalFacts{ID: string(n.ID), Name: n.Hostname, State: StateActive, Release: p.o.PotluckRelease, Local: true,
+					Placeable: !n.Paused, Capabilities: []string{}}
+				if f.Name == "" {
+					f.Name = f.ID
+				}
+				if e, ex := cfg.ExcludedBy(n.ID, n.Hostname); ex {
+					f.Excluded, f.ExcludedBy, f.Placeable = true, e, false
+					f.Unplaced, f.UnplacedMessage = UnplacedExcluded, ExcludedMessage(e)
+				}
+				ok = true
 			}
-			if e, ex := cfg.ExcludedBy(n.ID, n.Hostname); ex {
-				f.Excluded, f.ExcludedBy, f.Placeable = true, e, false
-				f.Unplaced, f.UnplacedMessage = UnplacedExcluded, ExcludedMessage(e)
-			}
-			ok = true
 		}
-	}
-	p.unlock()
+	}()
 	if !ok {
 		return f, false
 	}

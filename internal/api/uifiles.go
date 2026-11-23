@@ -86,6 +86,10 @@ func uiResolve(p string) string {
 }
 
 func (s *Server) uiRoutes(m *http.ServeMux) {
+	// The bare address of the scheduler opens the UI. Only the exact root
+	// path and only GET (and HEAD): any other path or method on / still gets
+	// the API's 404. 302, not 301, so browsers do not cache it for good.
+	m.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/ui/", http.StatusFound) })
 	m.HandleFunc("GET /ui/{$}", func(w http.ResponseWriter, r *http.Request) { serveUIFile(w, r, uiNextDir+"index.html") })
 	m.HandleFunc("GET /ui/classic/{$}", func(w http.ResponseWriter, r *http.Request) { serveUIFile(w, r, "index.html") })
 	m.HandleFunc("GET /ui/", s.handleUIFile)

@@ -90,6 +90,9 @@ b.mono,a.mono,.mono b,h1 .mono,h2 .mono,h3 .mono,b .mono{font-weight:500}
 .actor{font-size:var(--fs-sm);font-weight:600;color:var(--mut);padding:0 4px;display:flex;gap:6px;align-items:baseline;flex-wrap:wrap}
 .actor button{border:0;background:none;padding:0;color:var(--mint-text);font-weight:700;font-size:var(--fs-sm);cursor:pointer}
 .topbar{display:none}
+.uiswitch{align-self:flex-start;margin:-4px 0 6px 4px;font-size:var(--fs-sm);font-weight:700;color:var(--mint-text);text-decoration:none}
+.uiswitch:hover,.uiswitch:focus-visible{text-decoration:underline}
+.topbar .uiswitch{margin:0}
 .slotbox{display:flex;flex-direction:column;gap:10px}
 .slotbox:empty{display:none}
 .topslots{display:none}

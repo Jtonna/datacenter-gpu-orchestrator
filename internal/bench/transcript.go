@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // Transcripts (data model step 4): every step that sends prompts saves the
@@ -97,8 +98,8 @@ func transcriptEntry(rr *RequestResult, r benchspec.Request, resp *ChatResponse,
 // addTranscript keeps an entry for the step's transcript.
 func (br *benchRun) addTranscript(e TranscriptEntry) {
 	br.mu.Lock()
+	defer supervise.Unlocked("bench", br.mu.Unlock)
 	br.transcript = append(br.transcript, e)
-	br.mu.Unlock()
 }
 
 // convSeen is how many messages of conversation phase pidx the transcript
@@ -108,7 +109,7 @@ func (br *benchRun) convSeen(phase string, pidx, turn int) int {
 		return -1
 	}
 	br.mu.Lock()
-	defer br.mu.Unlock()
+	defer supervise.Unlocked("bench", br.mu.Unlock)
 	return br.conv[pidx]
 }
 
@@ -118,18 +119,16 @@ func (br *benchRun) convAdd(phase string, pidx int, sent int) {
 		return
 	}
 	br.mu.Lock()
+	defer supervise.Unlocked("bench", br.mu.Unlock)
 	if br.conv == nil {
 		br.conv = map[int]int{}
 	}
 	br.conv[pidx] = sent + 1 // the messages sent and the answer
-	br.mu.Unlock()
 }
 
 // saveTranscript writes the step's transcript when it sent anything.
 func (x *suiteExec) saveTranscript(br *benchRun) {
-	br.mu.Lock()
-	entries := append([]TranscriptEntry(nil), br.transcript...)
-	br.mu.Unlock()
+	entries := br.transcriptCopy()
 	if len(entries) == 0 {
 		return
 	}
@@ -140,6 +139,13 @@ func (x *suiteExec) saveTranscript(br *benchRun) {
 	if err := x.m.o.Store.WriteTranscript(t); err != nil {
 		x.m.log.Warn("cannot save a step's transcript", "run", st.RunID, "step", st.Idx, "err", err)
 	}
+}
+
+// transcriptCopy returns a copy of the entries held so far.
+func (br *benchRun) transcriptCopy() []TranscriptEntry {
+	br.mu.Lock()
+	defer supervise.Unlocked("bench", br.mu.Unlock)
+	return append([]TranscriptEntry(nil), br.transcript...)
 }
 
 // ---- files ----

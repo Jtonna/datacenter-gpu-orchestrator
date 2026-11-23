@@ -17,6 +17,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/audit"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgstore"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // ValidationError is a rejected change; Messages are the validation messages.
@@ -39,6 +40,9 @@ var (
 	ErrExists   = errors.New("already exists")
 	ErrNotFound = errors.New("not found")
 	ErrNoStore  = errors.New("the configuration database is not available")
+	// ErrApplyFailed: the change is committed, but applying it to the
+	// running pieces failed, so Potluck restarts to apply it from the store.
+	ErrApplyFailed = errors.New("the change is saved, but applying it to the running scheduler failed; Potluck restarts now to apply it")
 )
 
 // RefError means a delete is refused because benchmarks refer to the profile.
@@ -178,15 +182,17 @@ func mustBuild(d *config.Document, b config.Bootstrap, o config.Options) *config
 }
 
 func (s *Service) setConfig(c *config.Config) {
-	s.cfgMu.Lock()
-	s.cfg = c
-	s.cfgMu.Unlock()
+	func() {
+		s.cfgMu.Lock()
+		defer supervise.Unlocked("cfgsvc", s.cfgMu.Unlock)
+		s.cfg = c
+	}()
 }
 
 // Config is the current snapshot.
 func (s *Service) Config() *config.Config {
 	s.cfgMu.RLock()
-	defer s.cfgMu.RUnlock()
+	defer supervise.Unlocked("cfgsvc", s.cfgMu.RUnlock)
 	return s.cfg
 }
 
@@ -196,7 +202,7 @@ func (s *Service) LoadError() string { return s.loadErr }
 // Revision is the current revision (0 when nothing is configured).
 func (s *Service) Revision() int64 {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer supervise.Unlocked("cfgsvc", s.mu.Unlock)
 	return s.rev
 }
 
@@ -222,9 +228,14 @@ type View struct {
 
 // View returns the effective configuration (defaults filled in).
 func (s *Service) View() View {
-	s.mu.Lock()
-	rev, upd, doc := s.rev, s.updated, s.doc.Clone()
-	s.mu.Unlock()
+	var rev int64
+	var upd int64
+	var doc *config.Document
+	func() {
+		s.mu.Lock()
+		defer supervise.Unlocked("cfgsvc", s.mu.Unlock)
+		rev, upd, doc = s.rev, s.updated, s.doc.Clone()
+	}()
 	return s.viewOf(rev, upd, doc, s.Config(), s.loadErr)
 }
 
@@ -274,7 +285,7 @@ func (s *Service) RevisionView(ctx context.Context, n int64) (*View, *cfgstore.R
 // Document returns a copy of the current stored document.
 func (s *Service) Document() *config.Document {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer supervise.Unlocked("cfgsvc", s.mu.Unlock)
 	return s.doc.Clone()
 }
 
@@ -286,33 +297,49 @@ type mutation struct {
 }
 
 func (s *Service) mutate(ctx context.Context, o WriteOpts, m mutation) (*Result, error) {
+	res, c, err := s.commit(ctx, o, m)
+	if err != nil || c == nil {
+		return res, err
+	}
+	// The callbacks run after the lock is released (callbacksInOrder).
+	if err := s.callbacksInOrder(c.ticket, c.cfg, c.ev); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+// committed is a change commit made, for its callbacks.
+type committed struct {
+	ticket uint64
+	cfg    *config.Config
+	ev     ChangeEvent
+}
+
+// commit validates and commits one change under the lock; c is nil when
+// nothing was committed (a dry run, or no change).
+func (s *Service) commit(ctx context.Context, o WriteOpts, m mutation) (*Result, *committed, error) {
 	s.mu.Lock()
-	locked := true
-	defer func() {
-		if locked {
-			s.mu.Unlock()
-		}
-	}()
+	defer supervise.Unlocked("cfgsvc", s.mu.Unlock)
 	if s.o.Store == nil {
-		return nil, ErrNoStore
+		return nil, nil, ErrNoStore
 	}
 	before := s.doc.Clone()
 	after := s.doc.Clone()
 	if err := m.fn(after); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	after.Normalize()
 	var warnings []string
 	if m.refuse != nil {
 		w, err := m.refuse(before, after, o.Force)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		warnings = w
 	}
 	cfg, err := config.Build(after, s.o.Boot, s.o.Parse)
 	if err != nil {
-		return nil, validationFrom(err)
+		return nil, nil, validationFrom(err)
 	}
 	chs := sectionChanges(before, after)
 	res := &Result{Revision: s.rev, Changed: len(chs) > 0, DryRun: o.DryRun, AuditEntryIDs: []int64{}, Warnings: append([]string{}, warnings...), RestartRequired: []string{}}
@@ -336,10 +363,10 @@ func (s *Service) mutate(ctx context.Context, o WriteOpts, m mutation) (*Result,
 		res.Warnings = append(res.Warnings, l.Warning())
 	}
 	if o.IfMatch != nil && *o.IfMatch != s.rev {
-		return nil, &cfgstore.ErrStale{Current: s.rev}
+		return nil, nil, &cfgstore.ErrStale{Current: s.rev}
 	}
 	if o.DryRun || (!res.Changed && !m.requireEmpty) {
-		return res, nil
+		return res, nil, nil
 	}
 	if o.Origin.Source == "" {
 		o.Origin.Source = audit.SourceREST
@@ -351,12 +378,13 @@ func (s *Service) mutate(ctx context.Context, o WriteOpts, m mutation) (*Result,
 	if err != nil {
 		var st *cfgstore.ErrStale
 		if errors.As(err, &st) {
-			return nil, st
+			return nil, nil, st
 		}
-		return nil, err
+		return nil, nil, err
 	}
 	cfg.Revision = rev
 	s.rev, s.doc = rev, after
+	supervise.Point("config.commit", s) // test hook, under s.mu: the revision is taken, the config not set
 	s.updated = time.Now().UnixMilli()
 	s.setConfig(cfg)
 	res.Revision, res.AuditEntryIDs = rev, ids
@@ -368,36 +396,47 @@ func (s *Service) mutate(ctx context.Context, o WriteOpts, m mutation) (*Result,
 	}
 	ticket := s.cbNext
 	s.cbNext++
-	locked = false
-	s.mu.Unlock()
-	s.callbacksInOrder(ticket, cfg, ev)
-	return res, nil
+	return res, &committed{ticket: ticket, cfg: cfg, ev: ev}, nil
 }
 
 // callbacksInOrder runs Apply and OnChange for one committed change, after
 // those of every earlier change. The caller does not hold mu, so a callback
 // may read the service (a callback that writes to it would wait for itself).
-func (s *Service) callbacksInOrder(ticket uint64, cfg *config.Config, ev ChangeEvent) {
-	s.cbMu.Lock()
-	if s.cbCond == nil {
-		s.cbCond = sync.NewCond(&s.cbMu)
-	}
-	for s.cbDone != ticket {
-		s.cbCond.Wait()
-	}
-	s.cbMu.Unlock()
+//
+// A failure there is NOT recovered and continued: the change is already the
+// store's truth and only partly applied to the running pieces (fleet client,
+// pool, scheduler, API), and the only rebuild that reaches all of them
+// together is a start from the store. It ends the process through the fatal
+// path (supervise.GuardExit) and the caller answers ErrApplyFailed first.
+func (s *Service) callbacksInOrder(ticket uint64, cfg *config.Config, ev ChangeEvent) error {
+	func() {
+		s.cbMu.Lock()
+		defer supervise.Unlocked("cfgsvc", s.cbMu.Unlock)
+		if s.cbCond == nil {
+			s.cbCond = sync.NewCond(&s.cbMu)
+		}
+		for s.cbDone != ticket {
+			s.cbCond.Wait()
+		}
+	}()
 	defer func() {
 		s.cbMu.Lock()
+		defer supervise.Unlocked("cfgsvc", s.cbMu.Unlock)
 		s.cbDone++
 		s.cbCond.Broadcast()
-		s.cbMu.Unlock()
 	}()
-	if s.o.Apply != nil {
-		s.o.Apply(cfg)
+	if supervise.GuardExit("config.apply", func() {
+		supervise.Point("config.apply", s)
+		if s.o.Apply != nil {
+			s.o.Apply(cfg)
+		}
+		if s.o.OnChange != nil {
+			s.o.OnChange(ev)
+		}
+	}) {
+		return ErrApplyFailed
 	}
-	if s.o.OnChange != nil {
-		s.o.OnChange(ev)
-	}
+	return nil
 }
 
 func restartKeys(diff []audit.DiffItem) []string {

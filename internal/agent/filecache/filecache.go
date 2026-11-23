@@ -179,6 +179,23 @@ func (e *Evictor) gap() time.Duration {
 	return e.MinGap
 }
 
+// begin marks an eviction running; it refuses while one runs or within the
+// gap after the last.
+func (e *Evictor) begin() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.running {
+		return refuse(429, ReasonTooSoon, "an eviction is under way")
+	}
+	if g := e.gap(); g > 0 && !e.last.IsZero() {
+		if since := e.now().Sub(e.last); since < g {
+			return refuse(429, ReasonTooSoon, "the last eviction was %.1f s ago; wait %.1f s more", since.Seconds(), (g - since).Seconds())
+		}
+	}
+	e.running = true
+	return nil
+}
+
 // Evict drops name (relative to Root) from the page cache and reports the
 // cached bytes before and after. A refusal is an *Error.
 func (e *Evictor) Evict(name string) (Result, error) {
@@ -197,27 +214,17 @@ func (e *Evictor) Evict(name string) (Result, error) {
 			return Result{}, refuse(409, ReasonBusy, "%s; the file cache is left alone while a model uses it", why)
 		}
 	}
-	e.mu.Lock()
-	if e.running {
-		e.mu.Unlock()
-		return Result{}, refuse(429, ReasonTooSoon, "an eviction is under way")
+	if err := e.begin(); err != nil {
+		return Result{}, err
 	}
-	if g := e.gap(); g > 0 && !e.last.IsZero() {
-		if since := e.now().Sub(e.last); since < g {
-			e.mu.Unlock()
-			return Result{}, refuse(429, ReasonTooSoon, "the last eviction was %.1f s ago; wait %.1f s more", since.Seconds(), (g - since).Seconds())
-		}
-	}
-	e.running = true
-	e.mu.Unlock()
 	reached := false
 	defer func() {
 		e.mu.Lock()
+		defer e.mu.Unlock()
 		e.running = false
 		if reached {
 			e.last = e.now()
 		}
-		e.mu.Unlock()
 	}()
 
 	start := e.now()

@@ -1,6 +1,10 @@
 package pool
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
+)
 
 // Work that must not run under p.mu: writes to the start-up store and
 // history events. Code holding p.mu queues it with afterLocked; unlock
@@ -34,21 +38,26 @@ func (p *Pool) unlock() {
 	p.mu.Unlock()
 
 	q := &p.after
-	q.mu.Lock()
-	if q.cond == nil {
-		q.cond = sync.NewCond(&q.mu)
-	}
-	for q.done != ticket {
-		q.cond.Wait()
-	}
-	q.mu.Unlock()
+	func() {
+		q.mu.Lock()
+		defer supervise.Unlocked("pool", q.mu.Unlock)
+		if q.cond == nil {
+			q.cond = sync.NewCond(&q.mu)
+		}
+		for q.done != ticket {
+			q.cond.Wait()
+		}
+	}()
 	defer func() {
 		q.mu.Lock()
+		defer supervise.Unlocked("pool", q.mu.Unlock)
 		q.done++
 		q.cond.Broadcast()
-		q.mu.Unlock()
 	}()
 	for _, f := range work {
-		f()
+		// The work is store writes and history events, run by whoever
+		// unlocks (the scheduler loop among them): one that panics is
+		// reported and lost, the rest of the batch still runs.
+		supervise.Guard("pool.after", f, nil)
 	}
 }

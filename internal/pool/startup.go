@@ -9,6 +9,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/startups"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // StartupStore keeps the start-up records (startups.Store in the scheduler
@@ -57,7 +58,7 @@ func (p *Pool) Startups() StartupStore { return p.o.Startups }
 // with the seconds it was away.
 func (p *Pool) ExpectRestart(id, kind, comment string) error {
 	p.mu.Lock()
-	defer p.unlock()
+	defer supervise.Unlocked("pool", p.unlock)
 	a := p.agents[id]
 	if a == nil || p.admin[id].Removed {
 		if p.knownLocked(id) {
@@ -91,7 +92,7 @@ func (p *Pool) ExpectRestart(id, kind, comment string) error {
 // ExpectedRestart reports whether a node has a pending expect-restart call.
 func (p *Pool) ExpectedRestart(id string) (kind string, at time.Time, ok bool) {
 	p.mu.Lock()
-	defer p.unlock()
+	defer supervise.Unlocked("pool", p.unlock)
 	if e := p.expect[id]; e != nil {
 		return e.kind, e.at, true
 	}
@@ -227,15 +228,20 @@ func (p *Pool) checkStartupsLocked(now time.Time) {
 func (p *Pool) saveStartupLocked(r *startups.Record) {
 	snap, st := r.Snapshot(), p.o.Startups
 	p.afterLocked(func() {
-		p.mu.Lock()
-		id := r.ID
-		p.mu.Unlock()
+		var id int64
+		func() {
+			p.mu.Lock()
+			defer supervise.Unlocked("pool", p.mu.Unlock)
+			id = r.ID
+		}()
 		var err error
 		if id == 0 {
 			if err = st.Insert(&snap); err == nil {
-				p.mu.Lock()
-				r.ID = snap.ID
-				p.mu.Unlock()
+				func() {
+					p.mu.Lock()
+					defer supervise.Unlocked("pool", p.mu.Unlock)
+					r.ID = snap.ID
+				}()
 			}
 		} else {
 			snap.ID = id

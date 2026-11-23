@@ -6,6 +6,8 @@ import (
 	"net"
 	"strconv"
 	"sync"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // ErrNoPorts means every port in the range is held by a live child or is in
@@ -35,7 +37,7 @@ func NewPortAllocator(lo, hi int) (*PortAllocator, error) {
 // Acquire returns a port that is free now and reserves it until Release.
 func (a *PortAllocator) Acquire() (int, error) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	defer supervise.Unlocked("instance", a.mu.Unlock)
 	size := a.hi - a.lo + 1
 	for i := 0; i < size; i++ {
 		p := a.lo + (a.next-a.lo+i)%size
@@ -54,15 +56,17 @@ func (a *PortAllocator) Acquire() (int, error) {
 
 // Release gives a port back. Releasing a port that is not held is a no-op.
 func (a *PortAllocator) Release(port int) {
-	a.mu.Lock()
-	delete(a.used, port)
-	a.mu.Unlock()
+	func() {
+		a.mu.Lock()
+		defer supervise.Unlocked("instance", a.mu.Unlock)
+		delete(a.used, port)
+	}()
 }
 
 // InUse reports how many ports are currently reserved.
 func (a *PortAllocator) InUse() int {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	defer supervise.Unlocked("instance", a.mu.Unlock)
 	return len(a.used)
 }
 

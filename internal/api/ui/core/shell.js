@@ -151,6 +151,10 @@ function brandSub() {
   return `${plural(usable.length, 'node')} · ${usable.filter(n => n.online).length} online`;
 }
 
+// The new UI, served at /ui/ (this page is /ui/classic/): in the header at
+// phone width and under the brand of the navigation pane.
+const newUILink = () => h('a.uiswitch', { href: '../', title: 'Open the new UI (/ui/)' }, 'New UI');
+
 function closeMenu() { root.classList.remove('menu-open'); }
 
 function draw() {
@@ -163,11 +167,13 @@ function draw() {
   }
   morph(topbar, [
     h('a.brand', { href: href('models') }, mark(28), h('div', h('b', 'Potluck'))),
+    newUILink(),
     h('button.btn.icon.menu', { type: 'button', 'aria-label': 'Menu', 'aria-expanded': root.classList.contains('menu-open') ? 'true' : 'false',
       onclick: () => root.classList.toggle('menu-open') }, icon('M3 5h14M3 10h14M3 15h14')),
   ]);
   morph(pane, [
     h('a.brand', { href: href('models') }, mark(34), h('div', h('b', 'Potluck'), h('span', brandSub()))),
+    newUILink(),
     navNode(),
     h('div.pane-foot',
       h('div.slotbox', { key: 'slots', 'data-keep': '' }),

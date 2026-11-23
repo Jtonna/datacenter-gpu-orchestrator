@@ -157,14 +157,16 @@ func (r *Ring) Dropped(k Key, n uint64) {
 	if n == 0 {
 		return
 	}
-	r.mu.Lock()
-	q := r.queues[k]
-	if q == nil {
-		q = &queue{}
-		r.queues[k] = q
-	}
-	q.dropped += n
-	r.mu.Unlock()
+	func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		q := r.queues[k]
+		if q == nil {
+			q = &queue{}
+			r.queues[k] = q
+		}
+		q.dropped += n
+	}()
 	r.dropped.Add(n)
 }
 
@@ -200,10 +202,12 @@ func (r *Ring) Empty() bool {
 
 // Clear drops everything without counting it (shipping was switched off).
 func (r *Ring) Clear() {
-	r.mu.Lock()
-	r.queues = map[Key]*queue{}
-	r.bytes = 0
-	r.mu.Unlock()
+	func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.queues = map[Key]*queue{}
+		r.bytes = 0
+	}()
 }
 
 // Take takes the next batch out of the ring: lines of one key, the key whose
