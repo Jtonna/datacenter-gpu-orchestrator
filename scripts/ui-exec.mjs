@@ -5,7 +5,12 @@
 // or a field read on undefined is found without a browser.
 //
 // usage: node scripts/ui-exec.mjs cases.json
-//        node scripts/ui-exec.mjs --base http://HOST:PORT [--tiles N] [--reserved] [--local-ui]
+//        node scripts/ui-exec.mjs --base http://HOST:PORT [--ui next|classic] [--tiles N] [--reserved] [--local-ui]
+//
+// A server serves two UIs: the new shell at /ui/ and the classic UI at
+// /ui/classic/. --base checks both, each in its own node process, and fails
+// when either fails; --ui checks one. Cases run the classic UI unless the
+// cases file says "shell": "next".
 //
 // --base: the live check. It downloads the page FROM THAT SERVER: <base>/ui/
 // index.html, its module script and every module it imports, statically or
@@ -25,6 +30,7 @@
 //
 // cases.json:
 //   {"ui": "<path of internal/api/ui>",
+//    "shell": "next",                              // the new shell (ui/next laid over the classic files); default classic
 //    "modules": ["views/nodes.js", ...],          // imported before the cases (they register their views)
 //    "fetch": {"/api/profiles": {...}, ...},       // answers of GET/POST by path (query ignored); others are 404
 //    "base": "http://127.0.0.1:8790",              // or: GET requests go to this server (cmd/devcluster), writes are refused
@@ -254,6 +260,8 @@ def('matchMedia', () => ({ matches: false, media: '', addEventListener() {}, rem
 def('scrollTo', () => {}); def('scrollX', 0); def('scrollY', 0); def('innerWidth', 1280); def('innerHeight', 900); def('devicePixelRatio', 1);
 def('getComputedStyle', () => new Proxy({}, { get: (t, k) => (k === 'getPropertyValue' ? () => '' : '') }));
 def('requestAnimationFrame', fn => setTimeout(() => fn(Date.now()), 0)); def('cancelAnimationFrame', id => clearTimeout(id));
+// The page's address: /ui/ for the new shell, /ui/classic/ for the classic UI
+// (set before any UI module is imported; core/api.js reads it once).
 const location = { href: 'http://potluck.test/ui/', origin: 'http://potluck.test', protocol: 'http:', host: 'potluck.test', pathname: '/ui/', search: '', hash: '#/' };
 def('location', location);
 def('history', { replaceState(_, __, to) { location.hash = to; }, pushState(_, __, to) { location.hash = to; }, back() {} });
@@ -292,18 +300,39 @@ const argv = process.argv.slice(2);
 const flag = k => { const i = argv.indexOf(k); return i < 0 ? null : (argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : true); };
 const live = flag('--base');
 const here = path.dirname(fileURLToPath(import.meta.url));
-const LIVE_SCREENS = ['models', 'nodes', 'queue', 'activity', 'placement', 'benchmarks', 'benchmarks/runs', 'benchmarks/trends', 'profiles', 'tiers', 'settings', 'audit', 'mcp', 'about'];
+// The two UIs a server serves: the new shell at /ui/ and the classic UI at
+// /ui/classic/ (internal/api/uifiles.go). --base checks both, one after the
+// other, each in its own node process (each loads its own modules); --ui
+// next|classic checks one.
+const UIS = { next: '/ui/', classic: '/ui/classic/' };
+const LIVE_SCREENS = {
+  classic: ['models', 'nodes', 'queue', 'activity', 'placement', 'benchmarks', 'benchmarks/runs', 'benchmarks/trends', 'profiles', 'tiers', 'settings', 'audit', 'mcp', 'about'],
+  next: ['models', 'nodes', 'queue', 'activity', 'placement', 'benchmarks', 'benchmarks/runs', 'benchmarks/trends', 'profiles', 'tiers', 'settings', 'audit', 'mcp', 'about'],
+};
+if (live && !flag('--ui')) {
+  let bad = 0;
+  for (const which of Object.keys(UIS)) {
+    const r = spawnSync(process.execPath, [fileURLToPath(import.meta.url), ...argv, '--ui', which], { encoding: 'utf8' });
+    process.stdout.write(`== ${which === 'next' ? 'the new shell' : 'the classic UI'} (${UIS[which]})\n` + (r.stdout || '') + (r.stderr || ''));
+    if (r.status !== 0) bad++;
+  }
+  console.log(bad ? `FAILED: ${bad} of 2 UIs` : 'PASS: both UIs');
+  process.exit(bad ? 1 : 0);
+}
+// Which UI this run executes: the cases' "shell" ("next" or "classic", the
+// default), or --ui with --base.
+const which = live ? String(flag('--ui')) : null;
 // mirrorUI downloads the page from the server, as a browser would load it,
 // into a temporary folder: index.html, its module scripts and modulepreload
 // links, and every relative import of every module (static, re-export and
 // dynamic), recursively. Each module must be served (200) and parse as an
 // ES module (node --check on an .mjs copy; a .js file is not checked as a
 // module).
-async function mirrorUI(root) {
+async function mirrorUI(root, prefix) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'ui-exec-'));
   process.on('exit', () => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* left in the temp folder */ } });
   writeFileSync(path.join(dir, 'package.json'), '{"type":"module"}\n'); // the .js files are ES modules, as the browser loads them
-  const uiURL = root + '/ui/';
+  const uiURL = root + prefix;
   const problems = [];
   const get = async rel => {
     let r;
@@ -342,31 +371,40 @@ async function mirrorUI(root) {
 }
 
 let uiDir = path.join(here, '..', 'internal', 'api', 'ui');
+if (live && !UIS[which]) { console.log(`FAIL --ui ${which}: give next or classic`); process.exit(1); }
 if (live && !flag('--local-ui')) {
-  const mirror = await mirrorUI(String(live).replace(/\/$/, ''));
-  console.log(`${mirror.problems.length ? 'FAIL' : 'ok  '} fetched ${mirror.count} modules from ${String(live).replace(/\/$/, '')}/ui/` +
+  const mirror = await mirrorUI(String(live).replace(/\/$/, ''), UIS[which]);
+  console.log(`${mirror.problems.length ? 'FAIL' : 'ok  '} fetched ${mirror.count} modules from ${String(live).replace(/\/$/, '')}${UIS[which]}` +
     (mirror.problems.length ? '\n  ' + mirror.problems.join('\n  ') : ''));
   if (mirror.problems.length) { console.log('FAILED: the page the server serves cannot load'); process.exit(1); }
   uiDir = mirror.dir;
 } else if (live) console.log('note: --local-ui: the page comes from this checkout, not from the server');
 const spec = live
-  ? { ui: uiDir, base: String(live), app: true,
-      cases: LIVE_SCREENS.map(r => ({ name: r, route: '#/' + r, status: 'fetch' })) }
+  ? { ui: uiDir, base: String(live), app: true, shell: which,
+      cases: LIVE_SCREENS[which].map(r => ({ name: r, route: '#/' + r, status: 'fetch' })) }
   : JSON.parse(readFileSync(argv[0], 'utf8'));
 base = spec.base ? spec.base.replace(/\/$/, '') : null;
+const shell = spec.shell === 'next' ? 'next' : 'classic';
+location.pathname = UIS[shell];
+location.href = location.origin + UIS[shell];
 // The checkout's UI runs from a copy in a temporary folder with its own
 // package.json ({"type":"module"}): node takes a module's type from the
 // nearest package.json above it, and one without "type" above the checkout
 // (a user Temp folder, say) makes it warn on every module, which counts as
 // an error here. The mirror of --base has its own package.json already.
-function isolatedCopy(src) {
+// The new shell's copy is what the server serves below /ui/: the classic
+// files with the files of ui/next/ laid over them (internal/api/uifiles.go).
+function isolatedCopy(src, which) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'ui-exec-local-'));
   process.on('exit', () => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* left in the temp folder */ } });
-  cpSync(src, path.join(dir, 'ui'), { recursive: true });
+  const ui = path.join(dir, 'ui');
+  cpSync(src, ui, { recursive: true });
+  rmSync(path.join(ui, 'next'), { recursive: true, force: true });
+  if (which === 'next') cpSync(path.join(src, 'next'), ui, { recursive: true });
   writeFileSync(path.join(dir, 'package.json'), '{"type":"module"}\n');
-  return path.join(dir, 'ui');
+  return ui;
 }
-const ui = uiDir === spec.ui && live && !flag('--local-ui') ? path.resolve(spec.ui) : isolatedCopy(path.resolve(spec.ui));
+const ui = uiDir === spec.ui && live && !flag('--local-ui') ? path.resolve(spec.ui) : isolatedCopy(path.resolve(spec.ui), shell);
 const mod = rel => import(pathToFileURL(path.join(ui, rel)).href);
 const settle = async () => { for (let i = 0; i < 20; i++) await new Promise(r => setTimeout(r, 0)); };
 

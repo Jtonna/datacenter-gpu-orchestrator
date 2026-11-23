@@ -239,20 +239,28 @@ func uiExecBase(t *testing.T, url string) (string, int) {
 	return string(out), code
 }
 
-// --base takes the page from the server, not from the checkout: the page
-// this API serves loads and every screen draws (exit 0); the same server
-// with one module that does not parse, or one module it does not serve,
-// fails (exit 1) and the output names that module.
+// --base takes the page from the server, not from the checkout, and checks
+// both UIs it serves (the new shell at /ui/, the classic UI at /ui/classic/):
+// the pages this API serves load and every screen draws (exit 0); the same
+// server with one module that does not parse, or one module it does not
+// serve, in either UI fails (exit 1) and the output names that module.
 func TestUIExecBaseUsesTheServersPage(t *testing.T) {
 	e := newEnv(t, chatOK)
 	out, code := uiExecBase(t, e.front.URL)
-	if code != 0 || !strings.Contains(out, "modules from "+e.front.URL+"/ui/") || !strings.Contains(out, "ok   start module app.js") ||
-		!strings.Contains(out, "PASS: 14 screens") {
-		t.Fatalf("good page: exit %d\n%s", code, out)
+	for _, want := range []string{"modules from " + e.front.URL + "/ui/\n", "modules from " + e.front.URL + "/ui/classic/\n",
+		"ok   start module app.js", "PASS: both UIs"} {
+		if code != 0 || !strings.Contains(out, want) {
+			t.Fatalf("good page: exit %d, want %q\n%s", code, want, out)
+		}
+	}
+	if n := strings.Count(out, "PASS: 14 screens"); n != 2 {
+		t.Fatalf("good page: %d UIs drew their 14 screens, want 2\n%s", n, out)
 	}
 	for _, c := range []struct{ name, path, body, want string }{
 		{"does not parse", "/ui/views/benchmarks/editor.js", "export const x = 'users' idle';\n", "views/benchmarks/editor.js:1: does not parse as an ES module"},
 		{"not served", "/ui/core/reserve.js", "", "core/reserve.js: the server answered 404"},
+		{"classic does not parse", "/ui/classic/views/benchmarks/editor.js", "export const x = 'users' idle';\n", "views/benchmarks/editor.js:1: does not parse as an ES module"},
+		{"classic not served", "/ui/classic/core/reserve.js", "", "core/reserve.js: the server answered 404"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
