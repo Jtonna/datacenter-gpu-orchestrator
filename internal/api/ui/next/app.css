@@ -656,3 +656,17 @@ input.file::file-selector-button{font:inherit;font-weight:700;font-size:12.5px;c
 .zname{font-family:var(--mono);font-weight:500;font-size:var(--fs-value)}
 .zchip{color:var(--mut);font-weight:600}
 .zempty{padding:18px var(--pad-panel);color:var(--mut);border-top:1px solid var(--line)}
+/* Zones: the selection (board 2) and the zone panel (board 4) */
+.tbl.zones .tick{width:36px;padding-right:0}
+.tbl.zones .tick input{width:16px;height:16px;accent-color:var(--accent);cursor:pointer;margin:0}
+.tbl.zones tr.ticked td{background:var(--accent-tint)}
+.selbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px var(--pad-panel);background:var(--accent-tint);border-top:1px solid var(--line)}
+.selbar b{margin-right:6px}
+.zpart{display:flex;flex-direction:column;gap:8px}
+.zpart h3{margin:0;font-size:14px;font-weight:700}
+.zevents{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.zev{display:grid;grid-template-columns:84px 1fr;gap:10px;padding:7px 12px;border-top:1px solid var(--hairline);font-size:12.5px}
+.zev:first-child{border-top:0}
+.zev time{color:var(--muted);white-space:nowrap}
+.zev.sev-warn{background:var(--amber-bg)}
+.zev.sev-error{background:#fbefec}

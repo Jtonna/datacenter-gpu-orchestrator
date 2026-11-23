@@ -36,7 +36,10 @@
 //    "base": "http://127.0.0.1:8790",              // or: GET requests go to this server (cmd/devcluster), writes are refused
 //    "cases": [{"name": "...", "route": "#/nodes", "status": {...} or "fetch", "fetch": {...}, "expect": ["text", ...],
 //               "absent": ["text that must not be drawn", ...], "none": ["css selector that must match nothing", ...],
-//               "links": [{"text": "Classic UI", "path": "/ui/classic/"}, ...]}]}
+//               "links": [{"text": "Classic UI", "path": "/ui/classic/"}, ...],
+//               "click": ["css selector clicked after the draw", ...],
+//               "page": ["text anywhere on the page: shell, side panel, dialog", ...],
+//               "notOnPage": ["text nowhere on the page", ...]}]}
 //
 // With "base", "status": "fetch" takes GET <base>/api/status.
 //
@@ -462,12 +465,23 @@ for (const c of spec.cases) {
     if (c.status !== undefined) store.set('status', c.status); // a second draw over a mounted tree (morph)
     store.set('tick', (store.state.tick || 0) + 1);
     await settle();
+    // click: css selectors, clicked in order (the first match on the page each)
+    for (const sel of c.click || []) {
+      const el = document.body.querySelector(sel);
+      if (!el) { errors.push('nothing to click: ' + sel); break; }
+      el.click();
+      await settle();
+    }
   }
   const text = outlet.textContent;
   for (const bad of ['could not be drawn', 'failed to start']) if (text.includes(bad)) errors.push('banner: ' + text.slice(Math.max(0, text.indexOf(bad) - 40), text.indexOf(bad) + 200));
   for (const want of c.expect || []) if (!text.includes(want)) errors.push('missing text: ' + JSON.stringify(want));
   for (const bad of c.absent || []) if (text.includes(bad)) errors.push('text that must not be there: ' + JSON.stringify(bad) + ' in ' + JSON.stringify(text.slice(Math.max(0, text.indexOf(bad) - 80), text.indexOf(bad) + 80)));
   for (const sel of c.none || []) if (outlet.querySelector(sel)) errors.push('an element that must not be there: ' + sel);
+  // page: texts that must be anywhere on the page, the shell, side panels and dialogs included
+  const pageText = document.body.textContent;
+  for (const want of c.page || []) if (!pageText.includes(want)) errors.push('missing on the page: ' + JSON.stringify(want));
+  for (const bad of c.notOnPage || []) if (pageText.includes(bad)) errors.push('on the page, but must not be: ' + JSON.stringify(bad));
   // links: [{text, path}]: somewhere on the page (shell included) a link with
   // that text whose href, resolved against the page's address, has that path.
   for (const l of c.links || []) {

@@ -8,8 +8,10 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 )
 
 // The new shell (UI rewrite, phase U1) lives in ui/next/ and is served at
@@ -136,6 +138,100 @@ func TestUINextScreensExecute(t *testing.T) {
 	empty, _, _ := feedEnv(t)
 	uiExec(t, map[string]any{"shell": "next", "app": true, "base": empty.front.URL,
 		"cases": every("empty", "fetch", map[string][]string{"zones": {"Zones"}})})
+}
+
+// The Zones page's selection and its zone panel, on a real agent cluster:
+// the panel of one zone shows its facts, its recent events (GET /api/history
+// for that node) and the machine card with its two controls; ticking zones
+// shows the selection bar; its "Stop accepting models" asks for a comment
+// first and counts only the zones it would change (one is paused already;
+// the scheduler's own machine has no agent and cannot be selected).
+func TestUINextZonesSelectionAndPanel(t *testing.T) {
+	const active, paused, excluded, named = "02:00:00:00:00:01", "02:00:00:00:00:02", "02:00:00:00:00:03", "02:00:00:00:00:04"
+	var conf *config.Config
+	fe, p, _ := feedEnv(t, func(c *config.Config) { c.ExcludeNodes = []string{excluded}; c.NoAutoNodes = []string{named}; conf = c })
+	for _, id := range []string{active, paused, excluded, named} {
+		register(t, fe, id)
+		feedHeartbeat(t, p, id, "")
+	}
+	if _, err := p.SetPaused(paused, true); err != nil {
+		t.Fatal(err)
+	}
+	st := statusWithAgentNodes(t, fe, func() *config.Config { return conf })
+	uiExec(t, map[string]any{"shell": "next", "app": true, "base": fe.front.URL, "cases": []any{
+		// this scheduler keeps no history: the panel says so
+		map[string]any{"name": "one zone's panel", "route": "#/zones?zone=" + active, "status": st, "absent": designSamples,
+			"page": []string{"Platform", "linux-amd64-vulkan", "Agent release", "0.1.0", "Recent events", "The event history is off", "Pause", "Force unload"}},
+		map[string]any{"name": "the paused zone's panel", "route": "#/zones?zone=" + paused, "status": st,
+			"page": []string{"Not accepting", "Unpause"}},
+		map[string]any{"name": "the excluded zone's panel", "route": "#/zones?zone=" + excluded, "status": st,
+			"page": []string{"Off by exclude_nodes: " + excluded}},
+		map[string]any{"name": "a selection", "route": "#/zones", "status": st, "click": []string{"input[data-sel=all]"},
+			"expect": []string{"4 selected", "Stop accepting models", "Accept models again", "Clear selection"}},
+		map[string]any{"name": "the bulk pause asks first", "route": "#/zones", "status": st, "click": []string{"input[data-sel=all]", "button[data-bulk=pause]"},
+			"page": []string{"Stop accepting models on 3 zones?", "Comment (required)"}},
+	}})
+
+	// A scheduler that keeps its history: the panel lists the events that name
+	// the zone (and only those), newest first.
+	hs := openStore(t)
+	now := time.Now().UnixMilli()
+	hs.Record(history.Event{Ts: now - 9000, Type: "loadFinished", Severity: "info", Profile: "alpha", Nodes: []string{"host-1"}, Summary: "alpha finished loading in 12.0 s.", Data: map[string]any{"outcome": "ready", "load_s": 12.0}})
+	hs.Record(history.Event{Ts: now - 5000, Type: "nodeQuarantined", Severity: "warn", Nodes: []string{"host-1"}, Summary: "host-1 set aside for 60 s after a failed pre-load check.", Data: map[string]any{"for_s": 60.0}})
+	hs.Record(history.Event{Ts: now - 4000, Type: "loadStarted", Severity: "info", Profile: "beta", Nodes: []string{"other-node"}, Summary: "Loading beta onto other-node."})
+	he := histEnv(t, hs)
+	uiExec(t, map[string]any{"shell": "next", "app": true, "base": he.front.URL, "cases": []any{
+		map[string]any{"name": "a zone's events", "route": "#/zones?zone=host-1", "status": "fetch",
+			"page":      []string{"alpha finished loading in 12.0 s.", "host-1 set aside for 60 s after a failed pre-load check.", "All events on Activity"},
+			"notOnPage": []string{"Loading beta onto other-node."}},
+	}})
+}
+
+// The Models list and its side panel, on a real scheduler's catalog: every
+// model file is a row with its name; ?model=<key> opens its panel with the
+// file, its hand-written configurations and the link to its full page; a key
+// that is not in the catalog says so; and #/models/<key> is still the full
+// model page. No Pin, Delete or Add control is drawn (no backend yet).
+func TestUINextModelsListAndPanel(t *testing.T) {
+	e := benchEnv(t)
+	var cat struct {
+		Models []struct {
+			Key, Name, File, Kind string
+			Profiles             []struct {
+				ID        string `json:"id"`
+				Generated bool   `json:"generated"`
+			} `json:"profiles"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal([]byte(body(t, e.get("/api/models"))), &cat); err != nil {
+		t.Fatal(err)
+	}
+	var key, name, file, profile string
+	var names []string
+	for _, m := range cat.Models {
+		names = append(names, m.Name)
+		if key == "" && m.Kind == "llama" {
+			for _, p := range m.Profiles {
+				if !p.Generated {
+					key, name, file, profile = m.Key, m.Name, m.File, p.ID
+					break
+				}
+			}
+		}
+	}
+	if key == "" {
+		t.Fatalf("no model file with a hand-written profile in the test catalog: %+v", cat.Models)
+	}
+	noControls := []string{"Pin", "Delete", "Add a model", "Remove now", "Unload"}
+	uiExec(t, map[string]any{"shell": "next", "app": true, "base": e.front.URL, "cases": []any{
+		map[string]any{"name": "the list", "route": "#/models", "status": "fetch", "expect": append([]string{"All models", "Configurations", "Last used"}, names...),
+			"absent": append(append([]string{}, designSamples...), noControls...)},
+		map[string]any{"name": "one model's panel", "route": "#/models?model=" + key, "status": "fetch",
+			"page": []string{name, file, "Configurations", profile, "Edit under Profiles", "Open the model page"}, "notOnPage": noControls},
+		map[string]any{"name": "a model that is not there", "route": "#/models?model=no-such-model.gguf", "status": "fetch",
+			"page": []string{"This model is not in the catalog"}},
+		map[string]any{"name": "the full model page", "route": "#/models/" + key, "status": "fetch", "expect": []string{name}},
+	}})
 }
 
 // Each UI has a visible link to the other, so the owner switches without
