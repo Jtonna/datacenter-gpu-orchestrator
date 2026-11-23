@@ -1,7 +1,9 @@
 package scheduler
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
@@ -174,19 +176,29 @@ func (c *ConfigNeeds) compute(p *core.Profile) (NeedInfo, error) {
 	if p.NeedsMiB > 0 {
 		st, err := os.Stat(path)
 		if err != nil {
-			return NeedInfo{}, fmt.Errorf("model file: %w", err)
+			return NeedInfo{}, c.modelFileErr(p, err)
 		}
 		return NeedInfo{Need: placer.Measured(p.NeedsMiB), FileBytes: st.Size()}, nil
 	}
 	meta, err := c.metaOf(path)
 	if err != nil {
-		return NeedInfo{}, fmt.Errorf("model file: %w", err)
+		return NeedInfo{}, c.modelFileErr(p, err)
 	}
 	info, err := estimateFromMeta(meta, p)
 	if err != nil {
 		return NeedInfo{}, fmt.Errorf("model file %s: %w", path, err)
 	}
 	return info, nil
+}
+
+// modelFileErr says why the model file of p cannot be read; a missing file
+// is named plainly (a configuration may keep a profile whose file went
+// missing: its load is refused here, at plan time).
+func (c *ConfigNeeds) modelFileErr(p *core.Profile, err error) error {
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("model file %q is missing from models_dir %q: %w", p.Model, c.Cfg.ModelsDir, err)
+	}
+	return fmt.Errorf("model file: %w", err)
 }
 
 // estimateFromMeta is the estimated need of a kind: llama profile from its

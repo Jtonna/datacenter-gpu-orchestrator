@@ -5,6 +5,7 @@ What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent
 ## Next scheduler image (after v26; no agent change)
 
 - **History `node` filter takes an id or a name.** `GET /api/history?node=` (and MCP `query_history`) matches events that name the node by its id or its hostname, so the zone panel's "Recent events" (which asks by id) lists the zone's events.
+- **A missing model file no longer blocks every configuration write.** A write is refused for a missing file only when it adds a profile or points one at a new file; profiles that already pointed at the missing file stay, other writes (settings, other profiles, deleting those profiles) go through. Loading such a profile is refused at plan time: "memory need unknown: model file "x.gguf" is missing from models_dir …".
 
 ## Next scheduler image (after v25; agent stays 0.1.9)
 

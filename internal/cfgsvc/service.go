@@ -371,7 +371,9 @@ func (s *Service) commit(ctx context.Context, o WriteOpts, m mutation) (*Result,
 		}
 		warnings = w
 	}
-	cfg, err := config.Build(after, s.o.Boot, s.o.Parse)
+	parse := s.o.Parse
+	parse.KeepModels = keptModels(before)
+	cfg, err := config.Build(after, s.o.Boot, parse)
 	if err != nil {
 		return nil, nil, validationFrom(err)
 	}
@@ -516,4 +518,17 @@ func unknownDropEntry(fields []string) audit.Entry {
 		e.Diff = append(e.Diff, audit.DiffItem{Path: "unknown_fields." + f, Old: "written by a newer version", New: nil})
 	}
 	return e
+}
+
+// keptModels is the model file each profile of before points at: a write that
+// leaves a profile on its file is not refused when that file is missing; one
+// that adds a profile or points one at another file is (B4).
+func keptModels(before *config.Document) map[string]string {
+	m := make(map[string]string, len(before.Profiles))
+	for id, p := range before.Profiles {
+		if p != nil && p.Model != "" {
+			m[id] = p.Model
+		}
+	}
+	return m
 }
