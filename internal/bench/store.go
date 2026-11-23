@@ -297,6 +297,14 @@ func openStore(dir string, upTo int) (*Store, error) {
 	return s, nil
 }
 
+// NewerSchemaError: the database was migrated by a newer version than this
+// one; it is not opened (and not changed).
+type NewerSchemaError struct{ Have, Know int }
+
+func (e *NewerSchemaError) Error() string {
+	return fmt.Sprintf("database is newer than this version: %d > %d (schema version; a newer scheduler migrated it)", e.Have, e.Know)
+}
+
 func (s *Store) migrate(upTo int) error {
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at INTEGER NOT NULL)`); err != nil {
 		return err
@@ -306,7 +314,7 @@ func (s *Store) migrate(upTo int) error {
 		return err
 	}
 	if have > len(migrations) {
-		return fmt.Errorf("the database is at schema version %d but this build knows %d: it was written by a newer scheduler", have, len(migrations))
+		return &NewerSchemaError{Have: have, Know: len(migrations)}
 	}
 	for i := have; i < upTo && i < len(migrations); i++ {
 		tx, err := s.db.Begin()
