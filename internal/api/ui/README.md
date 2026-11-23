@@ -54,8 +54,10 @@ next/core/shell.js     rail of sections, section menu (collapsible; closed on th
                        fleet card, phone drawer
 next/core/dom.js       the classic dom.js; morph() keeps attributes it did not set
 next/core/period.js    Day / Week / Month / All time: bounds, step, stepper label, axis labels
-next/core/requests.js  requestFeed(): GET /api/requests polled every 2 s while visible (no push
-                       topic yet; a topic replaces the poll here, not in the views); every()
+next/core/live.js      the classic live.js; adds the opt-in "requests" topic when hello lists it
+next/core/requests.js  requestFeed(): the "requests" topic (snapshot, queued/started/ended, tick)
+                       for a first page without filters, else GET /api/requests every 2 s while
+                       visible (also the fallback while the channel is down); every()
 next/core/ui.js        the classic components plus panel, segmented, filterSelect, searchField,
                        zoneStatus, colourKey, availStrip, runStatus, sidePanel; for the Overview:
                        dateStepper, dropButton, tokensChart, tokensLegend, runsTable, runLegend,
@@ -75,7 +77,8 @@ Each UI links to the other: "Classic UI" at the foot of the new rail, "New UI"
 in the classic header and pane. `GET /` on the scheduler redirects to `/ui/`.
 
 Harness case fields for the new shell: `click` (selectors clicked after the
-draw), `has` (selectors that must match; `[a^=v]` and `[a*=v]` work), `page` and `notOnPage` (texts anywhere on the page, side panels and
+draw), `has` (selectors that must match; `[a^=v]` and `[a*=v]` work), `ws` (live-channel
+messages delivered after the draw), `page` and `notOnPage` (texts anywhere on the page, side panels and
 dialogs included), `links` (`{text, path}`).
 
 Words of the new shell: a zone is one node; Off = excluded, "Not accepting"

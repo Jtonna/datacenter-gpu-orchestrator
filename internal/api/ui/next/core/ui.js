@@ -788,7 +788,11 @@ export function runsTable(o) {
       else if (notStarted) text = runLength(r.wait_ms);
       else text = runLength(r.duration_ms);
       const status = runStatus(st, text, runWhy(r));
-      if (st === 'running' && status.lastChild) status.lastChild.setAttribute('data-run-start', String(r.started_at || r.queued_at));
+      if (st === 'running' && status.lastChild) {
+        status.lastChild.setAttribute('data-run-start', String(r.started_at || r.queued_at));
+        // drawn by us: morph() removes it when the row has ended (core/dom.js keeps only foreign attributes)
+        if (status.lastChild.__own) status.lastChild.__own.add('data-run-start');
+      }
       const waiting = st === 'queued';
       const id = String(r.id);
       return h('tr', { key: 'r' + id, 'data-req': id, class: [st === 'failed' || st === 'refused' ? 'fail' : st === 'cancelled' ? 'canc' : '', o.pin === id ? 'pinned' : ''].filter(Boolean).join(' ') || null },

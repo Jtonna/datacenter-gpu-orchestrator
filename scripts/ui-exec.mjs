@@ -37,6 +37,9 @@
 //    "cases": [{"name": "...", "route": "#/nodes", "status": {...} or "fetch", "fetch": {...}, "expect": ["text", ...],
 //               "absent": ["text that must not be drawn", ...], "none": ["css selector that must match nothing", ...],
 //               "has": ["css selector that must match something on the screen", ...],
+//               "ws": [{"type": "hello"|"requests"|..., "data": {...}}, ...]: live-channel
+//               messages delivered after the screen is drawn (hello also sets the
+//               connection live), before the clicks
 //               "links": [{"text": "Classic UI", "path": "/ui/classic/"}, ...],
 //               "click": ["css selector clicked after the draw", ...],
 //               "page": ["text anywhere on the page: shell, side panel, dialog", ...],
@@ -468,6 +471,11 @@ for (const c of spec.cases) {
     if (c.status !== undefined) store.set('status', c.status); // a second draw over a mounted tree (morph)
     store.set('tick', (store.state.tick || 0) + 1);
     await settle();
+    for (const m of c.ws || []) {
+      if (m.type === 'hello') { store.set('conn', 'live'); store.set('hello', m.data); }
+      store.publish(m.type, m.data, Date.now());
+      await settle();
+    }
     // click: css selectors, clicked in order (the first match on the page each)
     for (const sel of c.click || []) {
       const el = document.body.querySelector(sel);

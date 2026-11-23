@@ -179,3 +179,46 @@ func TestUINextOverviewIsHome(t *testing.T) {
 			"links": []map[string]string{{"text": "Overview", "path": "/ui/"}, {"text": "Requests", "path": "/ui/"}, {"text": "Queue", "path": "/ui/"}}},
 	}})
 }
+
+// The request feed takes the live channel's "requests" topic when the
+// server offers it: the snapshot replaces the poll's rows, queued / started
+// / ended frames and ticks change them, and without the topic in hello the
+// frames are ignored and the poll stays.
+func TestUINextOverviewRequestsTopic(t *testing.T) {
+	now := time.Now()
+	st := ovStatus(now)
+	ms := func(d time.Duration) int64 { return now.Add(d).UnixMilli() }
+	pushed := func(id int, status string, extra map[string]any) map[string]any {
+		r := map[string]any{"id": id, "status": status, "profile": "pushed-model", "queued_at": ms(-5 * time.Second), "nodes": []any{},
+			"tokens_in": nil, "tokens_out": nil, "prefill_tps": nil, "decode_tps": nil}
+		for k, v := range extra {
+			r[k] = v
+		}
+		return r
+	}
+	snapshot := map[string]any{"type": "requests", "data": map[string]any{"kind": "snapshot", "on": true, "next": 0, "history_begins_at": nil,
+		"requests": []any{pushed(40, "queued", map[string]any{"live": true})}}}
+	polled := ovFetch(now, ovRequests(now)[2:3], true) // one done row, profile alpha
+
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": polled, "cases": []any{
+		map[string]any{"name": "topic: not offered, the poll stays", "route": "#/overview", "status": st,
+			"ws": []any{map[string]any{"type": "hello", "data": map[string]any{"topics": []any{"status", "event"}}}, snapshot},
+			"expect": []string{"42.5 s", "All 1"}, "absent": []string{"pushed-model"}},
+	}})
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": polled, "cases": []any{
+		map[string]any{"name": "topic: the snapshot replaces the poll", "route": "#/overview", "status": st,
+			"ws": []any{map[string]any{"type": "hello", "data": map[string]any{"topics": []any{"status", "requests"}}}, snapshot},
+			"expect": []string{"pushed-model", "Not started"}, "absent": []string{"42.5 s"}},
+		map[string]any{"name": "topic: started, then a tick", "route": "#/overview", "status": st,
+			"ws": []any{
+				map[string]any{"type": "requests", "data": map[string]any{"kind": "started", "request": pushed(40, "running", map[string]any{"live": true, "started_at": ms(-4 * time.Second)})}},
+				map[string]any{"type": "requests", "data": map[string]any{"kind": "tick", "requests": []any{pushed(40, "running", map[string]any{"live": true, "started_at": ms(-4 * time.Second), "tokens_out": 777, "decode_tps": 12.5})}}},
+				map[string]any{"type": "requests", "data": map[string]any{"kind": "queued", "request": pushed(41, "queued", map[string]any{"live": true})}},
+			},
+			"expect": []string{"777", "12.5", "Not started"}, "has": []string{"[data-run-start]", "button[data-zones='41']"}},
+		map[string]any{"name": "topic: ended replaces the live row", "route": "#/overview", "status": st,
+			"ws": []any{map[string]any{"type": "requests", "data": map[string]any{"kind": "ended", "request": pushed(40, "failed", map[string]any{
+				"reason": "cut", "message": "pushed failure", "started_at": ms(-4 * time.Second), "ended_at": ms(-time.Second), "duration_ms": 3000, "tokens_out": 800})}}},
+			"expect": []string{"3.0 s", "800"}, "has": []string{"tr.fail", "span[title^='Failed:']"}, "none": []string{"[data-run-start]"}},
+	}})
+}
