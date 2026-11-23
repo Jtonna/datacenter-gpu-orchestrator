@@ -252,7 +252,7 @@ func (p *proc) wait() {
 	p.reaped = true
 	requested := p.stopReq
 	p.mu.Unlock()
-	supervise.Point("instance.reap")
+	supervise.Point("instance.reap", p)
 	p.stdout.Close()
 	p.stderr.Close()
 	if p.logSink != nil {

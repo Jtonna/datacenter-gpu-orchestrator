@@ -142,7 +142,7 @@ func (s *Server) startCatalog() {
 func (c *catalogCache) takeEvent(e history.Event) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	supervise.Point("api.catalog.event")
+	supervise.Point("api.catalog.event", c)
 	if c.seeded {
 		c.addEvent(e)
 	} else {
@@ -404,7 +404,7 @@ func (s *Server) catalogBuild(ctx context.Context, st any) (*catalogSnap, error)
 		built = true
 		return prev, nil
 	}
-	supervise.Point("api.catalog.build")
+	supervise.Point("api.catalog.build", c)
 	c.builds.Add(1)
 	s.seedEvents()
 

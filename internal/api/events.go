@@ -88,7 +88,7 @@ func (h *hub) reset() {
 func (h *hub) apply(ev scheduler.FeedEvent, gap bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	supervise.Point("api.events")
+	supervise.Point("api.events", h)
 	switch ev.Kind {
 	case scheduler.FeedInstance:
 		h.broadcastLocked(h.modelStatusLocked())

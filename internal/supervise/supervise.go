@@ -15,6 +15,9 @@
 //   - Guard: an inline call (a subscriber callback, a probe); the caller
 //     continues.
 //
+// A panic that unwound through a critical section (Unlocked, critical.go)
+// ends the process whatever the policy: the shared state may be half-written.
+//
 // The third failure of the same task name within a minute calls Fatal too:
 // a fault that repeats is not isolated any more, and a clean restart of the
 // process is the honest answer.
@@ -30,6 +33,7 @@ import (
 	"os"
 	"runtime/debug"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -162,11 +166,23 @@ func WaitRecords(d time.Duration) {
 // calls it once, before any task starts. It returns a function that puts the
 // previous options back (tests).
 func Configure(o Options) (restore func()) {
+	prev := swapOptions(o)
+	return func() { swapOptions(prev) }
+}
+
+func swapOptions(o Options) Options {
 	mu.Lock()
+	defer mu.Unlock()
 	prev := opts
 	opts = o
-	mu.Unlock()
-	return func() { mu.Lock(); opts = prev; mu.Unlock() }
+	return prev
+}
+
+// locked runs f under the package's lock.
+func locked(f func()) {
+	mu.Lock()
+	defer mu.Unlock()
+	f()
 }
 
 func current() Options {
@@ -191,11 +207,15 @@ func get(name, policy string) *task {
 	return t
 }
 
-// call runs f and turns a panic into its value and stack.
+// call runs f and turns a panic into its value and stack (for a
+// *CriticalPanic, the stack where it happened).
 func call(f func()) (p any, stack []byte, panicked bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			p, stack, panicked = r, debug.Stack(), true
+			if cp, ok := r.(*CriticalPanic); ok {
+				stack = cp.Stack
+			}
 		}
 	}()
 	f()
@@ -205,14 +225,14 @@ func call(f func()) (p any, stack []byte, panicked bool) {
 // Go starts a long-lived task on its own goroutine and returns at once. A
 // normal return of run ends the task; restarts stop when ctx ends.
 func Go(ctx context.Context, s Spec, run func(ctx context.Context)) {
-	mu.Lock()
-	t := get(s.Name, s.Policy.String())
-	t.policy, t.everLong = s.Policy.String(), true
-	t.running++
-	if t.startedAt.IsZero() {
-		t.startedAt = nowLocked()
-	}
-	mu.Unlock()
+	locked(func() {
+		t := get(s.Name, s.Policy.String())
+		t.policy, t.everLong = s.Policy.String(), true
+		t.running++
+		if t.startedAt.IsZero() {
+			t.startedAt = nowLocked()
+		}
+	})
 	go loop(ctx, s, run)
 }
 
@@ -225,9 +245,7 @@ func nowLocked() time.Time {
 
 func loop(ctx context.Context, s Spec, run func(ctx context.Context)) {
 	defer func() {
-		mu.Lock()
-		get(s.Name, s.Policy.String()).running--
-		mu.Unlock()
+		locked(func() { get(s.Name, s.Policy.String()).running-- })
 		if s.Done != nil {
 			s.Done()
 		}
@@ -243,7 +261,7 @@ func loop(ctx context.Context, s Spec, run func(ctx context.Context)) {
 		if s.Policy == Exit {
 			kind = "exit"
 		}
-		if fail(s.Name, kind, p, stack, s.Policy == Exit) {
+		if fail(s.Name, kind, p, stack, s.Policy == Exit || IsCritical(p)) {
 			return
 		}
 		if s.Rebuild != nil {
@@ -261,9 +279,7 @@ func loop(ctx context.Context, s Spec, run func(ctx context.Context)) {
 			return
 		}
 		attempt++
-		mu.Lock()
-		get(s.Name, s.Policy.String()).restarts++
-		mu.Unlock()
+		locked(func() { get(s.Name, s.Policy.String()).restarts++ })
 	}
 }
 
@@ -286,10 +302,8 @@ func delay(attempt int) time.Duration {
 
 // wait sleeps d unless ctx ends first (false then).
 func wait(ctx context.Context, name string, d time.Duration) bool {
-	mu.Lock()
-	get(name, "restart").backoff++
-	mu.Unlock()
-	defer func() { mu.Lock(); get(name, "restart").backoff--; mu.Unlock() }()
+	locked(func() { get(name, "restart").backoff++ })
+	defer locked(func() { get(name, "restart").backoff-- })
 	if ctx.Err() != nil {
 		return false
 	}
@@ -331,14 +345,18 @@ func GuardExit(name string, fn func()) (panicked bool) {
 }
 
 func guard(name, kind string, fn func(), onPanic func(p any)) bool {
+	return guardCount(name, kind, fn, onPanic, nil)
+}
+
+// guardCount is guard; counts, when set, says whether this failure counts
+// toward escalation (a fan-out counts one per operation).
+func guardCount(name, kind string, fn func(), onPanic func(p any), counts func() bool) bool {
 	p, stack, bad := call(fn)
 	if !bad {
 		return false
 	}
-	mu.Lock()
-	get(name, kind)
-	mu.Unlock()
-	escalate := failNoFatal(name, kind, p, stack, false)
+	locked(func() { get(name, kind) })
+	escalate := failCount(name, kind, p, stack, IsCritical(p), counts == nil || counts())
 	if onPanic != nil {
 		if op, ostack, worse := call(func() { onPanic(p) }); worse {
 			fail(name+".on_panic", "exit", op, ostack, true)
@@ -352,13 +370,15 @@ func guard(name, kind string, fn func(), onPanic func(p any)) bool {
 }
 
 // Report records a panic that code already recovered on its own (the bench
-// store's writer, net/http's handlers). It is logged and counted but never
-// escalates: that code has its own isolation.
+// store's writer, net/http's handlers). It is logged and counted but does not
+// escalate (that code has its own isolation), except a *CriticalPanic, which
+// ends the process: the shared state it left may be half-written.
 func Report(name string, p any, stack []byte) {
-	mu.Lock()
-	get(name, "report")
-	mu.Unlock()
-	failNoFatal(name, "report", p, stack, false)
+	locked(func() { get(name, "report") })
+	if cp, ok := p.(*CriticalPanic); ok {
+		stack = cp.Stack
+	}
+	fail(name, "report", p, stack, IsCritical(p))
 }
 
 // ReportRepanic is for a deferred call in code whose panics something else
@@ -385,24 +405,35 @@ func fail(name, kind string, p any, stack []byte, exit bool) bool {
 }
 
 func failNoFatal(name, kind string, p any, stack []byte, exit bool) (escalate bool) {
+	return failCount(name, kind, p, stack, exit, true)
+}
+
+// failCount reports a failure; counts says whether it counts toward the
+// escalation window.
+func failCount(name, kind string, p any, stack []byte, exit, counts bool) (escalate bool) {
 	total.Add(1)
-	mu.Lock()
-	t := get(name, kind)
-	at := nowLocked()
-	keep := t.times[:0]
-	for _, x := range t.times {
-		if at.Sub(x) < window {
-			keep = append(keep, x)
+	var f Failure
+	var o Options
+	locked(func() {
+		t := get(name, kind)
+		at := nowLocked()
+		keep := t.times[:0]
+		for _, x := range t.times {
+			if at.Sub(x) < window {
+				keep = append(keep, x)
+			}
 		}
-	}
-	t.times = append(keep, at)
-	t.failures++
-	t.lastAt, t.last = at, fmt.Sprint(p)
-	escalate = exit || (kind != "report" && len(t.times) >= escalateAfter)
-	f := Failure{Task: name, Kind: kind, Panic: t.last, Stack: trim(stack), At: at, Failures: t.failures,
-		FailuresLastMin: len(t.times), Restarts: t.restarts, Escalating: escalate}
-	o := opts
-	mu.Unlock()
+		t.times = keep
+		if counts {
+			t.times = append(t.times, at)
+		}
+		t.failures++
+		t.lastAt, t.last = at, fmt.Sprint(p)
+		escalate = exit || (counts && kind != "report" && len(t.times) >= escalateAfter)
+		f = Failure{Task: name, Kind: kind, Panic: t.last, Stack: trim(stack), At: at, Failures: t.failures,
+			FailuresLastMin: len(t.times), Restarts: t.restarts, Escalating: escalate}
+		o = opts
+	})
 	report(o, f)
 	return escalate
 }
@@ -499,11 +530,13 @@ func Stats() []TaskStats {
 	return out
 }
 
-// Point is a test hook site: a no-op in production (one atomic load), it
-// calls the hook a test installed (SetHookForTest), which may panic there.
-func Point(name string) {
+// Point is a test hook site in instance inst (the object the code runs for:
+// a pool launch, a scheduler, a child). A no-op in production (one atomic
+// load), it calls the hook a test installed (SetHookForTest) with
+// PointName(name, inst), which may panic there.
+func Point(name string, inst any) {
 	if h := hook.Load(); h != nil {
-		(*h)(name)
+		(*h)(PointName(name, inst))
 	}
 }
 
@@ -516,10 +549,12 @@ func SetHookForTest(h func(point string)) (restore func()) {
 
 // PanicAtForTest returns a hook that panics at point the first n times it
 // is reached (n < 0: every time), and a function that says how often it did.
+// point is PointName(name, inst), aimed at the test's own instance; a bare
+// name (no "/") matches every instance, for a test process that has only one.
 func PanicAtForTest(point string, n int) (h func(string), fired func() int) {
 	var count atomic.Int64
 	return func(p string) {
-			if p != point {
+			if p != point && (strings.Contains(point, "/") || !strings.HasPrefix(p, point+"/")) {
 				return
 			}
 			c := count.Add(1)
@@ -537,8 +572,6 @@ func PanicAtForTest(point string, n int) (h func(string), fired func() int) {
 
 // ResetForTest forgets every task and failure.
 func ResetForTest() {
-	mu.Lock()
-	tasks = map[string]*task{}
-	mu.Unlock()
+	locked(func() { tasks = map[string]*task{} })
 	total.Store(0)
 }

@@ -243,22 +243,33 @@ func TestGuardExit(t *testing.T) {
 	}
 }
 
-// The hook fires only at its point and only n times.
+// The hook fires only at its point and instance, and only n times; a bare
+// name matches every instance.
 func TestHook(t *testing.T) {
 	setup(t)
-	Point("nothing installed")
-	h, fired := PanicAtForTest("p", 1)
+	Point("nothing installed", "a")
+	h, fired := PanicAtForTest(PointName("p", "a"), 1)
 	restore := SetHookForTest(h)
-	defer restore()
-	Point("other")
-	if !Guard("t.hook", func() { Point("p") }, nil) {
+	Point("other", "a")
+	Point("p", "b")
+	if !Guard("t.hook", func() { Point("p", "a") }, nil) {
 		t.Fatal("the hook did not panic")
 	}
-	if Guard("t.hook", func() { Point("p") }, nil) {
+	if Guard("t.hook", func() { Point("p", "a") }, nil) {
 		t.Fatal("the hook panicked twice")
 	}
 	if fired() != 1 {
 		t.Fatalf("fired %d", fired())
+	}
+	restore()
+	x := &struct{ n int }{}
+	h, fired = PanicAtForTest("q", -1)
+	defer SetHookForTest(h)()
+	if !Guard("t.hook", func() { Point("q", x) }, nil) || !Guard("t.hook", func() { Point("q", "y") }, nil) || fired() != 2 {
+		t.Fatalf("a bare name fired %d times", fired())
+	}
+	if PointName("q", x) == PointName("q", &struct{ n int }{}) {
+		t.Fatal("two instances share a point name")
 	}
 }
 

@@ -405,7 +405,7 @@ func (s *Service) callbacksInOrder(ticket uint64, cfg *config.Config, ev ChangeE
 		s.cbMu.Unlock()
 	}()
 	if supervise.GuardExit("config.apply", func() {
-		supervise.Point("config.apply")
+		supervise.Point("config.apply", s)
 		if s.o.Apply != nil {
 			s.o.Apply(cfg)
 		}

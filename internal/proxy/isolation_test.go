@@ -19,10 +19,10 @@ func TestPrefetchPanicFailsTheUploadOnly(t *testing.T) {
 	defer supervise.ResetForTest()
 	defer supervise.Configure(supervise.Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Fatal: func(r string) { t.Errorf("escalated: %s", r) }})()
-	h, _ := supervise.PanicAtForTest("proxy.prefetch", 1)
-	defer supervise.SetHookForTest(h)()
 	sp := &spill{memMax: 1 << 20, max: 1 << 20}
 	b := sp.replay(strings.NewReader("an upload body"), io.NopCloser(nil))
+	h, _ := supervise.PanicAtForTest(supervise.PointName("proxy.prefetch", b), 1)
+	defer supervise.SetHookForTest(h)()
 	errs := make(chan error, 1)
 	b.startPrefetch(func(err error) { errs <- err }, func() {})
 	var e *Error

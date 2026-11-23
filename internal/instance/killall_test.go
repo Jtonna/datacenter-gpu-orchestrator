@@ -35,11 +35,11 @@ func TestReapFailureStillPublishesTheExit(t *testing.T) {
 	defer supervise.ResetForTest()
 	defer supervise.Configure(supervise.Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Fatal: func(r string) { t.Errorf("escalated: %s", r) }})()
-	h, fired := supervise.PanicAtForTest("instance.reap", 1)
-	defer supervise.SetHookForTest(h)()
 	l := newLauncher(t)
 	c := start(t, l, fakeSpec(t))
 	waitHealthy(t, c)
+	h, fired := supervise.PanicAtForTest(supervise.PointName("instance.reap", c), 1)
+	defer supervise.SetHookForTest(h)()
 	c.Stop(StopKill)
 	st := recvExit(t, c)
 	if st.Err == nil || fired() != 1 {

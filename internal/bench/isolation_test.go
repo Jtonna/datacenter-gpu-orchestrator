@@ -48,7 +48,7 @@ func TestManagerPanicFailsTheRunAndGoesOn(t *testing.T) {
 	tm.suite(`{"id":"s2","benchmarks":["next"],"cooldown_s":0,"only_when_idle":false}`)
 	var items atomic.Int64
 	defer supervise.SetHookForTest(func(point string) {
-		if point == "bench.item" && items.Add(1) == 2 { // the second item of the first run
+		if strings.HasPrefix(point, "bench.item/") && items.Add(1) == 2 { // the second item of the first run
 			panic("injected")
 		}
 	})()

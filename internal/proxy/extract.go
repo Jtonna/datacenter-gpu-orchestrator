@@ -285,7 +285,7 @@ func (b *replayBody) took(buf []byte, n int, err error) (report, stop bool, _ er
 			}
 		}
 	}
-	supervise.Point("proxy.prefetch")
+	supervise.Point("proxy.prefetch", b)
 	stop = b.handed
 	if err != nil {
 		b.err = err

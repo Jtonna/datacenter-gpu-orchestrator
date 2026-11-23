@@ -61,7 +61,7 @@ func TestCatalogLoopPanicRebuildsAndPublishes(t *testing.T) {
 	st := openStore(t)
 	e := histEnv(t, st)
 	w, v0 := modelsClient(t, e)
-	h, fired := supervise.PanicAtForTest("api.catalog.build", 1)
+	h, fired := supervise.PanicAtForTest(supervise.PointName("api.catalog.build", &e.api.catalog), 1)
 	defer supervise.SetHookForTest(h)()
 	st.Record(history.Event{Ts: time.Now().UnixMilli(), Type: history.TLoadFinished, Severity: "info", Profile: "beta", ModelFile: "b.gguf", Nodes: []string{"host-1"},
 		Data: map[string]any{"outcome": "failed", "load_s": 3.0, "reason": "x"}})
@@ -92,7 +92,7 @@ func TestCatalogSubscriberPanicInvalidates(t *testing.T) {
 	st := openStore(t)
 	e := histEnv(t, st)
 	w, v0 := modelsClient(t, e)
-	h, fired := supervise.PanicAtForTest("api.catalog.event", 1)
+	h, fired := supervise.PanicAtForTest(supervise.PointName("api.catalog.event", &e.api.catalog), 1)
 	defer supervise.SetHookForTest(h)()
 	before := e.api.catalog.histQueries.Load()
 	st.Record(history.Event{Ts: time.Now().UnixMilli(), Type: history.TLoadFinished, Severity: "info", Profile: "beta", ModelFile: "b.gguf", Nodes: []string{"host-1"},
@@ -162,7 +162,7 @@ func TestWSStatusLoopRestartsWithAFullStatus(t *testing.T) {
 	if n := countType(c.collect(300*time.Millisecond), "status"); n != 0 {
 		t.Fatalf("%d status messages for an unchanged status before the failure", n)
 	}
-	h, fired := supervise.PanicAtForTest("api.ws.status", 1)
+	h, fired := supervise.PanicAtForTest(supervise.PointName("api.ws.status", e.api.ws), 1)
 	defer supervise.SetHookForTest(h)()
 	c.until(t, "status", 3*time.Second)
 	if fired() != 1 {
@@ -181,7 +181,7 @@ func TestEventsHubRestartsAndReconnects(t *testing.T) {
 	c := openEvents(t, e)
 	c.parsed(3 * time.Second) // modelStatus
 	c.parsed(3 * time.Second) // inflight snapshot
-	h, fired := supervise.PanicAtForTest("api.events", 1)
+	h, fired := supervise.PanicAtForTest(supervise.PointName("api.events", e.api.hub), 1)
 	defer supervise.SetHookForTest(h)()
 	post := func() {
 		resp, err := http.Post(e.front.URL+"/v1/chat/completions", "application/json", strings.NewReader(chat("alpha")))

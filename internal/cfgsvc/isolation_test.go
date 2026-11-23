@@ -24,7 +24,7 @@ func TestApplyFailureTakesTheFatalPath(t *testing.T) {
 	e := newEnv(t)
 	applied := 0
 	e.svc.o.Apply = func(c *config.Config) { applied++ }
-	h, _ := supervise.PanicAtForTest("config.apply", 1)
+	h, _ := supervise.PanicAtForTest(supervise.PointName("config.apply", e.svc), 1)
 	defer supervise.SetHookForTest(h)()
 	_, err := e.svc.CreateProfile(context.Background(), ui("x"), "a", llama("a.gguf", 1024))
 	if !errors.Is(err, ErrApplyFailed) {

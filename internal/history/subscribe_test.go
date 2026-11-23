@@ -102,7 +102,7 @@ func TestWriterRestartsInAFreshFile(t *testing.T) {
 	s := Open(Options{Dir: dir, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Now: func() time.Time { return clock }})
 	s.Record(Event{Type: "first"})
 	s.Flush()
-	h, fired := supervise.PanicAtForTest("history.writer", 1)
+	h, fired := supervise.PanicAtForTest(supervise.PointName("history.writer", s), 1)
 	restoreHook := supervise.SetHookForTest(h)
 	s.Record(Event{Type: "lost"})
 	s.Record(Event{Type: "after"})

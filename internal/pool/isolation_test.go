@@ -55,7 +55,7 @@ func TestLaunchSupervisorRestartsAndRenews(t *testing.T) {
 	// The point names this launch: the rigs of earlier tests leave their
 	// pools (and launch supervisors) running, and a bare "pool.launch" hook
 	// could fire in one of theirs (seen under -race).
-	h, fired := supervise.PanicAtForTest("pool.launch/"+id, 1)
+	h, fired := supervise.PanicAtForTest(supervise.PointName("pool.launch", id), 1)
 	defer supervise.SetHookForTest(h)()
 	eventually(t, 5*time.Second, func() bool { return fired() == 1 }, "the injected failure")
 	// Wait for the state asserted: restarted once, out of its backoff.

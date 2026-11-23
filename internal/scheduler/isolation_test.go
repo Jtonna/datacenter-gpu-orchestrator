@@ -23,10 +23,9 @@ func TestStartWorkerPanicFailsTheLoad(t *testing.T) {
 	defer supervise.ResetForTest()
 	defer supervise.Configure(supervise.Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Fatal: func(r string) { t.Errorf("escalated: %s", r) }})()
-	h, fired := supervise.PanicAtForTest("scheduler.start", 1)
-	defer supervise.SetHookForTest(h)()
-
 	f := startScheduler(t, []core.Node{ps5("a", 2, 15000)}, llamaP("m", 8000))
+	h, fired := supervise.PanicAtForTest(supervise.PointName("scheduler.start", f.s), 1)
+	defer supervise.SetHookForTest(h)()
 	done := make(chan error, 1)
 	go func() {
 		l, err := f.s.Acquire(ctxT(t), "m")

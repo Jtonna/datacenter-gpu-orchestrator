@@ -236,7 +236,7 @@ run:
 		ar.mu.Lock()
 		ar.cur = i
 		ar.mu.Unlock()
-		supervise.Point("bench.item")
+		supervise.Point("bench.item", ar.run.ID)
 		got := x.runItem(i, it)
 		steps = append(steps, got...)
 		if suite.StopOnFailure {

@@ -412,7 +412,7 @@ func (h *wsHub) statusLoop() {
 		if h.onStatus != nil { // catalog code: its failure must not stop the status
 			supervise.Guard("api.catalog.status", func() { h.onStatus(v) }, nil)
 		}
-		supervise.Point("api.ws.status")
+		supervise.Point("api.ws.status", h)
 		sig := statusSignature(v)
 		now := h.now()
 		due := sig != h.lastSig || now.Sub(h.lastSent) >= h.idleEvery || (anyLoading(v) && now.Sub(h.lastSent) >= h.loadEvery)

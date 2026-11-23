@@ -389,7 +389,7 @@ func (s *Store) writer() {
 		if s.failed {
 			continue
 		}
-		supervise.Point("history.writer")
+		supervise.Point("history.writer", s)
 		line, err := json.Marshal(it.ev)
 		if err != nil {
 			continue

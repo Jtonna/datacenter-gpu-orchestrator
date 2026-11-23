@@ -211,7 +211,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 // effects and publishes the feed. The snapshot comes first so that a caller
 // woken by a reply (say, a new lease) already sees the state it implies.
 func (s *Scheduler) step(ev event) {
-	supervise.Point("scheduler.loop") // test hook: a panic here must end the process (cmd/llm-scheduler)
+	supervise.Point("scheduler.loop", s) // test hook: a panic here must end the process (cmd/llm-scheduler)
 	s.core.handle(ev)
 	up := map[string]string{}
 	for name := range s.core.insts {
@@ -370,7 +370,7 @@ func (s *Scheduler) startChild(ctx context.Context, ef effStart, st *startState)
 		return
 	}
 	st.child.Store(&ch)
-	supervise.Point("scheduler.start") // test hook: a failure after the child started
+	supervise.Point("scheduler.start", s) // test hook: a failure after the child started
 	hctx, cancel := context.WithCancel(ctx)
 	s.healthMu.Lock()
 	s.healthCancel[ef.iid] = cancel
