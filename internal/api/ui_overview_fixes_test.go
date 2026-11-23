@@ -31,3 +31,21 @@ func TestUINextOverviewLeavesRemovedOut(t *testing.T) {
 			"expect": []string{"Showing 1 of 1", "node-e"}, "absent": []string{gone}},
 	}})
 }
+
+// (b) The Temp column draws stats.headline_temp_c in whole degrees, as the
+// design does ("52 °C"); a machine without it shows a dash.
+func TestUINextOverviewTemperature(t *testing.T) {
+	now := time.Now()
+	const warm, bare = "02:00:00:00:00:28", "02:00:00:00:00:29"
+	node := func(id, name string) map[string]any {
+		return map[string]any{"id": id, "hostname": name, "online": true, "total_mib": 8192, "free_mib": 4096, "holder": "", "excluded": false}
+	}
+	st := ovWith(now, []any{node(warm, "node-g"), node(bare, "node-h")}, []any{
+		map[string]any{"id": warm, "name": "node-g", "state": "active", "placeable": true, "stats": map[string]any{"headline_temp_c": 51.6}},
+		map[string]any{"id": bare, "name": "node-h", "state": "active", "placeable": true},
+	})
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": ovFetch(now, ovRequests(now), true), "cases": []any{
+		map[string]any{"name": "temp: whole degrees", "route": "#/overview?sort=name", "status": st,
+			"expect": []string{"52 °C", "58 °C", "Showing 6 of 8 · scroll for more"}, "absent": []string{"51.6", "51,6"}},
+	}})
+}
