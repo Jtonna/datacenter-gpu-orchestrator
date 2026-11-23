@@ -407,6 +407,29 @@ curl -s $H/api/system | jq .storage.usage
 
 `storage.usage.moved_aside` names a damaged file that was moved aside at the start; `dropped` counts updates lost to a full queue. The file can be deleted while Potluck is stopped: it starts a new history.
 
+### Availability, hour by hour
+
+Every 10 s Potluck notes what each machine is doing, from what it already holds in memory (its status and the agents' membership; no machine is asked), and keeps seconds per state per UTC hour in `POTLUCK_ROOT/data/usage.db`. The Overview strip, the Zones uptime and the 7-day grid read it.
+
+```sh
+curl -s "$H/api/nodes/availability" | jq '.nodes[] | {name, uptime, now: .cells[-1].state}'
+curl -s "$H/api/nodes/availability?node=zone-a&step=day&from=7d"
+```
+
+- `node=` an id or name (default every machine); `from`/`to` unix ms, RFC 3339 or a span back such as `24h` or `7d` (default: 24 hour cells, or 7 day cells, the last one the current); `step=hour|day` (UTC days, summed when read); `group=` answers 501 until zone groups exist. MCP: `get_availability`.
+- Each cell: `seconds` per state (`free`, `in_use`, `loading`, `down`, `off`, `unknown`; they add up to `span_s`), `down_lost_s` and `down_set_aside_s`, `busy` (in flight over the instance's parallel slots, averaged over the in-use time) and `busy_level` 1 to 4, `reachable_s`, `uptime` (reachable over known time) and `state`, the strip colour: unknown when nothing is known, off when switched off half the known time or more, down from 5 minutes down (or half), loading from half, in use from a quarter, else free. Each machine also has its `uptime` over the whole range; the answer has `history_begins_at` and `recording`.
+- How a machine is classed at each sample, first match wins: **off** paused, excluded or removed; **down (lost)** membership state lost or left, or offline in the view; **down (set aside)** quarantined; **loading** placed for an instance that is starting; **in use** placed for a ready, draining or stopping one; **free** otherwise. Time with no sample (Potluck not running, a node not known yet, the rest of a gap after a failed read) is **unknown**, never free.
+- A missing or damaged `usage.db` never stops Potluck: a damaged one is moved aside, the history begins again and the route answers empty cells.
+
+### What a zone is doing
+
+`/api/nodes` entries (and `agents` of `/api/status`) carry, when they apply:
+
+- `member`: the instance on the node, its `role` (`host` runs `llama-server`, `helper` is an RPC worker), its `share` of the model (its tensor split weight over the sum: the split the launch was given, from the placement, the profile's `tensor_split` or the node budgets; the shares of an instance add up to 1), `host` (`server` or `node`) and `host_node`. `instances[].nodes[]` of `/api/status` have `role` and `share` too, and each instance `host`, `host_node` and `parallel`.
+- `set_aside`: why the node is quarantined: `reason` (`preflight_failed`, `agent_unreachable`, `worker_hung`, `node_lost`), `message`, the load it happened in (`profile`), `since`, `until` and `level`. The same reason is in `quarantines[]` and in `view.nodes[].quarantine_reason` of `/api/status`.
+- `paused_at`/`paused_actor` and `excluded_at`/`excluded_actor`: who switched the node off and when, read from the audit log (the newest pause; the newest configuration change that added the matching `exclude_nodes` entry). Absent when the audit log does not have it.
+- `free_at`, `free_in_s`, `free_basis` and `next` for a node that is claimed or settling: `settling` (the settle end), `fetching` (now), `stopping` (the victim stops: now plus the node's settle), `draining` (no time: the victim's requests are still running) or `claimed` (now). `view.nodes[]` has `free_at` and `free_basis`.
+
 ### Child output logs
 
 Each `llama-server` writes its full output to `POTLUCK_ROOT/child-logs/<UTC time>-<profile>-<instance id>.log`. Worker launch logs are copied next to them as `worker-<node name>-<launch id>.log`. These hold the KV cache size, the memory breakdown and the exact out-of-memory error. The oldest files go past `child_log_keep` (200). `log_file` in `/api/status` names the current file.

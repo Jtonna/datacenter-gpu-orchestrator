@@ -50,11 +50,12 @@ type TrimRule struct {
 	Keep          func(Retention) time.Duration
 }
 
-// trimRules: request rows by arrival, hourly roll-ups by bucket start. The
-// daily roll-ups are kept for ever.
+// trimRules: request rows by arrival, hourly roll-ups and availability hours
+// by bucket start (nodehours.go). The daily roll-ups are kept for ever.
 var trimRules = []TrimRule{
 	{Table: "client_requests", Column: "queued_at", Keep: func(r Retention) time.Duration { return r.KeepRequests }},
 	{Table: "request_hours", Column: "bucket", Keep: func(r Retention) time.Duration { return r.KeepHourly }},
+	{Table: "node_hours", Column: "hour", Keep: func(r Retention) time.Duration { return r.KeepHourly }},
 }
 
 // startTasks starts the supervised retention task.

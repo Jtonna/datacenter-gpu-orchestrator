@@ -31,6 +31,8 @@ type LocalFacts struct {
 	UnplacedMessage      string           `json:"unplaced_message,omitempty"`
 	HostUptimeS          *float64         `json:"host_uptime_s,omitempty"`
 	BootID               string           `json:"boot_id,omitempty"`
+	// ZoneFacts: as for an agent node (zonefacts.go).
+	ZoneFacts
 }
 
 // HostInfo reads the uptime (seconds since kernel boot) and boot id of the

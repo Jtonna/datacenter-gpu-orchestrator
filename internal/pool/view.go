@@ -534,6 +534,8 @@ type NodeFacts struct {
 	// condition still missing. Absent for an agent that sends no start-up
 	// report.
 	LastStartup *startups.Last `json:"last_startup,omitempty"`
+	// ZoneFacts: role, share, set-aside, who switched it off, free at (zonefacts.go).
+	ZoneFacts
 }
 
 // UnplacedExcluded is the unplaced reason of a node that exclude_nodes names,

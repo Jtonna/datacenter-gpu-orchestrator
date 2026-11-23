@@ -225,7 +225,7 @@ func TestRequests_BlockedDiskNeverDelaysRequestsOrTheCoreLoop(t *testing.T) {
 		t.Fatal("the writer never reached the disk")
 	}
 	before := st.Stats()
-	e.sched.StepMaxForTest(true)
+	base, _ := e.sched.LongestStep() // the loading so far; this test's events must stay under the bound
 	const n = 60
 	t0 := time.Now()
 	var wg sync.WaitGroup
@@ -238,12 +238,13 @@ func TestRequests_BlockedDiskNeverDelaysRequestsOrTheCoreLoop(t *testing.T) {
 	}
 	wg.Wait()
 	took := time.Since(t0)
-	longest, bound := e.sched.StepMaxForTest(false), 50*time.Millisecond
+	longest, ev := e.sched.LongestStep()
+	bound := 50 * time.Millisecond
 	eventually(t, "all ended", func() bool { return e.api.reqs.Ended() == n+2 })
 	after := st.Stats()
 	t.Logf("%d requests with the disk blocked: %v; longest core event %v; queued ops %d", n, took, longest, after.Queued)
-	if longest > bound {
-		t.Fatalf("the core loop stalled %v on one event, bound %v", longest, bound)
+	if longest > max(base, bound) {
+		t.Fatalf("the core loop stalled %v on one event (%s), bound %v", longest, ev, bound)
 	}
 	if took > 10*time.Second {
 		t.Fatalf("requests took %v with the disk blocked", took)

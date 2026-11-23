@@ -223,6 +223,13 @@ type InstanceStatus struct {
 	// Load is the structured version of the above plus per-worker progress;
 	// set while the child loads.
 	Load *LoadReport
+	// Host is where llama-server runs: "server" (the scheduler's machine)
+	// or "node" (HostNode, phase 6); empty for a command profile. Parallel
+	// is the profile's parallel slots (at least 1): busy = InFlight/Parallel.
+	// Additive (zonefacts.go).
+	Host     string
+	HostNode core.NodeID
+	Parallel int
 }
 
 // PlacedNodeStatus is one node of an instance's placement with the memory
@@ -233,6 +240,12 @@ type PlacedNodeStatus struct {
 	Local     bool
 	BudgetMiB int
 	Memory    []DeviceMemory
+	// Role is host (the member that runs llama-server) or helper (an RPC
+	// worker); Share is its fraction of the model (0 to 1): its tensor split
+	// weight over the sum, exactly the split the launch was given. Shares
+	// of an instance's members add up to 1. Additive (zonefacts.go).
+	Role  string
+	Share float64
 }
 
 // DeviceMemory is one buffer name's sizes from the load log, in MiB.
@@ -266,6 +279,14 @@ type QuarantineStatus struct {
 	Node  core.NodeID
 	Until time.Time
 	Level int // number of consecutive failed pre-flights
+	// Reason is why the node was set aside (preflight_failed,
+	// agent_unreachable, worker_hung, node_lost), Message the cause in
+	// words, Profile the load it happened in (when one), Since when.
+	// Additive (zonefacts.go).
+	Reason  string
+	Message string
+	Profile string
+	Since   time.Time
 }
 
 // BackoffStatus is one backed-off profile (design 8.4).
@@ -355,6 +376,17 @@ type NodeStatus struct {
 	DriftWarning      string
 	FreeForNewLoadMiB int
 	FreeAvgMiB        *int
+
+	// QuarantineReason is why the node is set aside while Quarantined is
+	// set (the reason word of its QuarantineStatus). FreeAt is when a node
+	// that is claimed or settling is expected to be free, FreeBasis how
+	// that was worked out: settling (the settle end), fetching (now: its
+	// free figure is being read), stopping (the victim stops; now plus the
+	// node's settle), draining (the victim still serves; no FreeAt) or
+	// claimed (nothing left on it: now). Additive (zonefacts.go).
+	QuarantineReason string
+	FreeAt           time.Time
+	FreeBasis        string
 }
 
 // RecoveryStatus is status.recovery of a node (design 8.4b).

@@ -347,6 +347,14 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 	defer hist.Close()
 	histAt.Store(hist)
 	hist.Record(startedEvent(cfg, version, time.Now()))
+	// The usage history (usage.db beside scheduler.db): the request log, its
+	// totals and the availability hours. Optional in every sense: it never
+	// fails the start or blocks a request; a damaged file is moved aside and
+	// the history begins again. The one Store of the process (a second Open
+	// of the file is refused); closed on return, after the API.
+	usageStore := usage.Open(usage.Options{Dir: cfg.DataDir, Logger: log, Retention: usage.Retention{
+		KeepRequests: time.Duration(cfg.UsageRequestDays) * 24 * time.Hour, KeepHourly: time.Duration(cfg.UsageHourlyDays) * 24 * time.Hour}})
+	defer usageStore.Close()
 
 	so := scheduler.Options{
 		View:     view,
@@ -414,13 +422,6 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 		pl.SetForceUnload(sched.ForceUnloadNode)
 	}
 
-	// The usage history (usage.db beside scheduler.db): the request log and its
-	// totals. Like the event history it never fails and never blocks a request:
-	// a damaged file is moved aside and the history begins again.
-	usageStore := usage.Open(usage.Options{Dir: cfg.DataDir, Logger: log, Retention: usage.Retention{
-		KeepRequests: time.Duration(cfg.UsageRequestDays) * 24 * time.Hour, KeepHourly: time.Duration(cfg.UsageHourlyDays) * 24 * time.Hour}})
-	defer usageStore.Close()
-
 	benchStore, benchMgr := openBench(svc, dbStore, ln, hist, log)
 	ao := api.Options{Logger: log, History: hist, Requests: usage.NewRecorder(usageStore), Version: version, WSMaxClients: cfg.WSMaxClients, Bench: benchMgr, BenchStore: benchStore, Config: svc,
 		System: api.SystemInfo{Listen: cfg.Listen, Safety: safetySummary(cfg), HistoryDir: cfg.HistoryDir, DataDir: cfg.DataDir,
@@ -434,6 +435,7 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 		ao.System.Programs = pl.ReleaseStatus
 	}
 	ao.Logs = logRelay
+	ao.Usage = usageStore // the availability sampler records into it
 	apiSrv = api.New(cfg, sched, ao)
 	started.Store(true)
 	// MCP at /mcp on the same port; its tools run in-process through apiSrv (design 9.5).

@@ -305,7 +305,8 @@ type nodeState struct {
 
 	quarUntil time.Time
 	quarLevel int
-	quarOpen  bool // quarantined and the release not yet logged
+	quarOpen  bool          // quarantined and the release not yet logged
+	quarWhy   setAsideCause // why and since when (zonefacts.go)
 
 	missingSince time.Time
 

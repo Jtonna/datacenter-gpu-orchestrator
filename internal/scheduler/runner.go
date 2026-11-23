@@ -889,13 +889,3 @@ func eventName(ev event) string {
 	}
 	return fmt.Sprintf("%T", ev)
 }
-
-// StepMaxForTest is the longest time one event took in the core loop since
-// the start or the last reset (tests outside the package: a side store must
-// never make the loop wait).
-func (s *Scheduler) StepMaxForTest(reset bool) time.Duration {
-	if reset {
-		s.stepMax.Store(0)
-	}
-	return time.Duration(s.stepMax.Load())
-}
