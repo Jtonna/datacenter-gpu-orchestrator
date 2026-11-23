@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -74,8 +75,10 @@ type Scheduler struct {
 	tick     chan struct{}
 	started  atomic.Bool
 	loopDone chan struct{} // closed when the loop stops taking events
-	runDone  chan struct{} // closed when Run has returned
-	snap     atomic.Pointer[snapshot]
+	// readPanics counts read-only queries that panicked (askRead).
+	readPanics atomic.Int64
+	runDone    chan struct{} // closed when Run has returned
+	snap       atomic.Pointer[snapshot]
 
 	bgCtx    context.Context
 	bgCancel context.CancelFunc
@@ -511,6 +514,48 @@ func ask[T any](s *Scheduler, ctx context.Context, fn func(c *schedCore) T) (T, 
 	return <-out, nil // query returned nil: fn has run and sent
 }
 
+// askRead is ask for a query that changes no core state: a panic in fn is
+// recovered on the core goroutine (readGuard), counted (ReadPanics), and
+// returned as a 500 error naming the query.
+func askRead[T any](s *Scheduler, ctx context.Context, name string, fn func(c *schedCore) T) (T, error) {
+	var zero T
+	out := make(chan T, 1)
+	failed := make(chan struct{})
+	done := make(chan struct{})
+	ev := evQuery{read: name,
+		fn: func(c *schedCore) { out <- fn(c); close(done) },
+		panicked: func(any) {
+			s.readPanics.Add(1)
+			close(failed)
+		}}
+	if !s.post(ctx, ev) {
+		if ctx.Err() != nil {
+			return zero, ctx.Err()
+		}
+		return zero, errShutting()
+	}
+	select {
+	case <-done:
+		return <-out, nil
+	case <-failed:
+		return zero, &Error{Status: http.StatusInternalServerError, Reason: ReasonInternal,
+			Message: "the scheduler failed answering " + name + "; it goes on (see its log)"}
+	case <-s.loopDone:
+		select {
+		case <-done:
+			return <-out, nil
+		default:
+			return zero, errShutting()
+		}
+	case <-ctx.Done():
+		return zero, ctx.Err()
+	}
+}
+
+// ReadPanics is how many read-only queries panicked and were recovered since
+// the start (GET /api/system read_panics; 0 when all is well).
+func (s *Scheduler) ReadPanics() int64 { return s.readPanics.Load() }
+
 // query runs fn on the core goroutine and waits for it, or for ctx. fn may
 // still run after query returned (ctx ended first), so it must not write
 // memory of the caller's: use ask for a result.
@@ -560,7 +605,7 @@ func (s *Scheduler) UnloadAllIdle(ctx context.Context) ([]string, error) {
 
 // Status is the /api/status document.
 func (s *Scheduler) Status(ctx context.Context) (Status, error) {
-	return ask(s, ctx, func(c *schedCore) Status { return c.statusDoc() })
+	return askRead(s, ctx, "status", func(c *schedCore) Status { return c.statusDoc() })
 }
 
 // Plan is POST /api/plan: what a request for model would meet now. It
@@ -570,7 +615,7 @@ func (s *Scheduler) Plan(ctx context.Context, model string) (PlanReport, error) 
 	if !ok {
 		return PlanReport{}, errUnknown(model)
 	}
-	r, err := ask(s, ctx, func(c *schedCore) PlanReport { return c.dryPlan(p.Name) })
+	r, err := askRead(s, ctx, "plan of "+p.Name, func(c *schedCore) PlanReport { return c.dryPlan(p.Name) })
 	if err != nil {
 		return PlanReport{}, err
 	}
@@ -605,13 +650,13 @@ func (s *Scheduler) ForgetNeed(ctx context.Context, model string) (bool, error) 
 // LearnedRows lists every learned memory need, by shape and device count
 // (GET /api/needs).
 func (s *Scheduler) LearnedRows(ctx context.Context) ([]LearnedRow, error) {
-	return ask(s, ctx, func(c *schedCore) []LearnedRow { return c.learnedRows() })
+	return askRead(s, ctx, "learned needs", func(c *schedCore) []LearnedRow { return c.learnedRows() })
 }
 
 // Needs is GET /api/needs: the stored measurements and the two llama builds
 // their trust depends on.
 func (s *Scheduler) Needs(ctx context.Context) (NeedsDoc, error) {
-	return ask(s, ctx, func(c *schedCore) NeedsDoc {
+	return askRead(s, ctx, "needs", func(c *schedCore) NeedsDoc {
 		return NeedsDoc{HostBuild: c.llamaBuild, Release: c.buildRelease, ServedBuild: c.servedBuild, Rows: c.learnedRows()}
 	})
 }

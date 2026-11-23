@@ -28,6 +28,7 @@ const (
 	ReasonNodeExcluded      Reason = "node excluded"            // 503, exclude_nodes keeps out the nodes this needs (permanent for a forced profile)
 	ReasonUnloaded          Reason = "unloaded"                 // 503, a loading instance was force-unloaded
 	ReasonClientGone        Reason = "client gone"              // 499, the caller's context ended
+	ReasonInternal          Reason = "internal error"           // 500, a read-only query panicked (recovered, counted in /api/system)
 )
 
 // Error is the error type of every failed Acquire or Load. Status is the

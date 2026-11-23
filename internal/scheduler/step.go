@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"fmt"
+	"runtime/debug"
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
@@ -90,7 +91,14 @@ type (
 	evUnloadIdle struct{ reply chan []string }
 	evShutdown   struct{ force bool }
 	// evQuery runs fn inside the core goroutine (snapshots, dry runs).
-	evQuery struct{ fn func(c *schedCore) }
+	// read names a read-only query: a panic in fn is recovered, logged and
+	// reported with panicked (readGuard). A query without it, like every
+	// state-changing event, still stops the scheduler on a panic.
+	evQuery struct {
+		fn       func(c *schedCore)
+		read     string
+		panicked func(v any)
+	}
 	// evBuilds: both llama builds are known after a background read (FS2).
 	evBuilds struct{ host, served string }
 )
@@ -253,7 +261,11 @@ func (c *schedCore) handle(ev event) {
 	case evShutdown:
 		c.beginShutdown(e.force)
 	case evQuery:
-		e.fn(c)
+		if e.read != "" {
+			c.readGuard(e)
+		} else {
+			e.fn(c)
+		}
 	case evBuilds:
 		c.buildsKnown(e.host, e.served)
 	default:
@@ -315,4 +327,19 @@ func (c *schedCore) failAll(ws []*waiter, err *Error) {
 	if len(ws) > 0 {
 		c.noteRefusal(ws[0].profile, err, len(ws), ws[0].benchRun)
 	}
+}
+
+// readGuard runs a read-only query and recovers a panic in it: logged at
+// ERROR with the stack and the query's name, reported to the caller (a 500),
+// and the core loop goes on. Only queries that change no core state are
+// posted this way (runner.go askRead: the plan, the status, the needs).
+func (c *schedCore) readGuard(e evQuery) {
+	defer func() {
+		if v := recover(); v != nil {
+			c.log.Error("read-only query panicked; answered with an error, the scheduler goes on",
+				"query", e.read, "panic", fmt.Sprint(v), "stack", string(debug.Stack()))
+			e.panicked(v)
+		}
+	}()
+	e.fn(c)
 }
