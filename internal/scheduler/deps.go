@@ -58,9 +58,14 @@ type NeedInfo struct {
 	// profile's shape is known (needcount.go); 0 otherwise. FromDevices is
 	// the count the figure was measured on (0: not a measurement).
 	Devices, FromDevices int
+	// FromServer: Need is a measurement of the same shape hosted on the
+	// scheduler's machine, used for a host: node profile that has none of
+	// its own yet (the host overhead is added on the host node's share).
+	FromServer bool
 
 	// what at needs to give the need of another device count
 	figs       []learnedFig
+	serverFigs bool // figs are the server-hosted shape's (planLearnedOf)
 	baseNeed   placer.Need
 	baseSource NeedSource
 	perDevice  int

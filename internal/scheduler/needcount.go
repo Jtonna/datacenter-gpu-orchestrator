@@ -52,6 +52,35 @@ func (c *schedCore) learnedAt(p *core.Profile, k int) *learnedNeed {
 	return l
 }
 
+// serverTwin is p hosted on the scheduler's machine: the shape a host: node
+// profile borrows measurements from until it has its own.
+func serverTwin(p *core.Profile) *core.Profile {
+	q := *p
+	q.Host = ""
+	return &q
+}
+
+// planLearnedOf is what planning uses: p's own measurements; for a host:
+// node profile with none of its own, those of the same shape hosted on the
+// scheduler's machine (server true). Recording always uses p's own shape.
+func (c *schedCore) planLearnedOf(p *core.Profile) (ls []*learnedNeed, server bool) {
+	if ls = c.learnedOf(p); len(ls) > 0 || p.Host != core.HostNode {
+		return ls, false
+	}
+	if ls = c.learnedOf(serverTwin(p)); len(ls) > 0 {
+		return ls, true
+	}
+	return nil, false
+}
+
+// planLearnedAt is learnedAt under the same rule as planLearnedOf.
+func (c *schedCore) planLearnedAt(p *core.Profile, k int) *learnedNeed {
+	if _, server := c.planLearnedOf(p); server {
+		return c.learnedAt(serverTwin(p), k)
+	}
+	return c.learnedAt(p, k)
+}
+
 // learnedOf is every measurement of p's shape, by device count.
 func (c *schedCore) learnedOf(p *core.Profile) []*learnedNeed {
 	key := needKeyOf(p)
@@ -130,7 +159,7 @@ func (info NeedInfo) at(k int) NeedInfo {
 		return info
 	}
 	out := info
-	out.Devices, out.FromDevices, out.fromTotal = k, 0, 0
+	out.Devices, out.FromDevices, out.fromTotal, out.FromServer = k, 0, 0, false
 	out.Need, out.Source, out.MeasuredAt = info.baseNeed, info.baseSource, time.Time{}
 	rule := needRule{PerDevice: info.perDevice, Floor: info.baseNeed.Measured, Rows: make([]needRow, len(info.figs))}
 	if info.baseNeed.Measured { // a configured needs_mib
@@ -147,6 +176,7 @@ func (info NeedInfo) at(k int) NeedInfo {
 	}
 	src := info.figs[from]
 	out.Need, out.Source, out.MeasuredAt, out.FromDevices, out.fromTotal = placer.Measured(fig), NeedLearned, src.at, src.devices, src.total
+	out.FromServer = info.serverFigs
 	if src.restored {
 		out.Source = NeedRestored
 	}
@@ -165,10 +195,11 @@ func (c *schedCore) needAt(p *core.Profile, k int) (NeedInfo, error) {
 // withLearned adds p's measurements to info (the provider's figure with the
 // estimate margin applied) and returns the need for its display count.
 func (c *schedCore) withLearned(p *core.Profile, info, base NeedInfo) NeedInfo {
-	ls := c.learnedOf(p)
+	ls, server := c.planLearnedOf(p)
 	if len(ls) == 0 {
 		return info
 	}
+	info.serverFigs = server
 	info.baseNeed, info.baseSource, info.perDevice = info.Need, info.Source, c.perDeviceCost(base)
 	info.figs = make([]learnedFig, 0, len(ls))
 	for _, l := range ls {

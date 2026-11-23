@@ -116,7 +116,7 @@ func (l *learnedNeed) shareFor(pl core.Placement, fracs []float64, id core.NodeI
 // (sharedShortfalls) and the reserved figures (reservedShares); fourth
 // review, FS1.
 func (c *schedCore) learnedShares(p *core.Profile, pl core.Placement, fracs []float64, need int) []int {
-	l := c.learnedAt(p, len(pl.Nodes))
+	l := c.planLearnedAt(p, len(pl.Nodes))
 	if l == nil || !c.trusted(l) || len(pl.Nodes) == 0 {
 		return nil
 	}
@@ -170,6 +170,11 @@ func (c *schedCore) deviceCost(info NeedInfo) int {
 
 // needBasis is the plain-words basis of a need for messages and plans.
 func (c *schedCore) needBasis(info NeedInfo) string {
+	if info.FromServer && (info.Source == NeedLearned || info.Source == NeedRestored) {
+		info.FromServer = false
+		return c.needBasis(info) + fmt.Sprintf("; hosted on the scheduler's machine (no measurement hosted on a node yet), plus %d MiB host overhead on the host node",
+			max(c.cfg.Defaults.HostOverheadMiB, 0))
+	}
 	switch info.Source {
 	case NeedEstimated:
 		return fmt.Sprintf("estimated, +%s%% margin; the estimate is %d MiB",
@@ -485,7 +490,7 @@ func (c *schedCore) sharedShortfalls(p *core.Profile, info NeedInfo, pl core.Pla
 		var share int
 		var fit string
 		if learned != nil {
-			l := c.learnedAt(p, len(pl.Nodes))
+			l := c.planLearnedAt(p, len(pl.Nodes))
 			share, fit = learned[i], "measured this run for this node set and split"
 			if l.restored {
 				fit = fmt.Sprintf("measured on %s for this node set and split", dateOf(l.at))
