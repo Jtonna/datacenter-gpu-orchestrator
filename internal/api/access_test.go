@@ -13,6 +13,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgstore"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/mcpserver"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/usage"
 )
 
 func accessEnv(t *testing.T) (*env, *mcpserver.Server, *cfgstore.Store) {
@@ -529,5 +530,76 @@ func TestAccessKeys_TwoAuthorizationHeaders(t *testing.T) {
 		if st != c.want || !strings.Contains(body, c.has) {
 			t.Errorf("%q: %d %s", c.vals, st, body)
 		}
+	}
+}
+
+// The default user's name is one setting, default_user_name ("anonymous"
+// unless set, stored only when set, no restart). It signs what is done
+// without an access key and without a name of the client's own, in the
+// audit log and the request log; an X-Actor a client sends keeps working.
+func TestDefaultUserName_Setting(t *testing.T) {
+	st := usage.Open(usage.Options{Dir: t.TempDir()})
+	t.Cleanup(func() { st.Close() })
+	e, _, _ := cfgEnvWith(t, func(o *Options) { o.keyExpiryEvery, o.Requests = -1, usage.NewRecorder(st) })
+	plain := map[string]string{"Content-Type": "application/json"}
+	prof := func(n string) string { return `{"id":"` + n + `","model":"` + n + `.gguf","ctx":2048,"needs_mib":100}` }
+	actorOf := func(target string) any {
+		es := auditOf(t, e, "target="+target)
+		if len(es) != 1 {
+			t.Fatalf("audit of %s: %v", target, es)
+		}
+		return es[0]["actor"]
+	}
+
+	_, sm := e.cdo("GET", "/api/config/settings", "", nil)
+	if raw := string(rawJSON(sm)); !strings.Contains(raw, `"default_user_name"`) {
+		t.Fatalf("settings: %s", raw)
+	}
+	_, sc := e.cdo("GET", "/api/config/schema", "", nil)
+	found := false
+	for _, f := range sc["fields"].([]any) {
+		if f := f.(map[string]any); f["key"] == "default_user_name" && f["scope"] == "settings" {
+			found = true
+			if f["default"] != "anonymous" || f["restart_required"] != false {
+				t.Fatalf("schema: %v", f)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("default_user_name is not in the schema")
+	}
+	e.cdo("POST", "/api/config/profiles", prof("d1"), plain)
+	if a := actorOf("d1"); a != "anonymous" {
+		t.Fatalf("default: %v", a)
+	}
+	if _, b, _ := e.hdo("GET", "/api/config/export", nil, nil); strings.Contains(string(b), "default_user_name") {
+		t.Fatalf("stored although not set: %s", b)
+	}
+
+	for _, bad := range []string{`""`, `"` + strings.Repeat("x", 41) + `"`, `"a\nb"`, `"   "`, `"tab\there"`} {
+		if st, m := e.cdo("PATCH", "/api/config/settings", `{"default_user_name":`+bad+`}`, plain); st != 400 && st != 422 {
+			t.Errorf("default_user_name %s: %d %v", bad, st, m)
+		}
+	}
+	if st, m := e.cdo("PATCH", "/api/config/settings", `{"default_user_name":"front desk"}`, plain); st != 200 {
+		t.Fatalf("set: %d %v", st, m)
+	}
+	if _, b, _ := e.hdo("GET", "/api/config/export", nil, nil); !strings.Contains(string(b), `"default_user_name"`) {
+		t.Fatalf("not stored once set: %s", b)
+	}
+	e.cdo("POST", "/api/config/profiles", prof("d2"), plain)
+	e.cdo("POST", "/api/config/profiles", prof("d3"), map[string]string{"Content-Type": "application/json", "X-Source": "ui"})
+	e.cdo("POST", "/api/config/profiles", prof("d4"), map[string]string{"Content-Type": "application/json", "X-Actor": "alex"})
+	if a, b, c := actorOf("d2"), actorOf("d3"), actorOf("d4"); a != "front desk" || b != "front desk" || c != "alex" {
+		t.Fatalf("after the change: %v %v %v", a, b, c)
+	}
+	// the request log names the default user too
+	if st, m := e.cdo("POST", "/v1/chat/completions", `{"model":"d2","messages":[{"role":"user","content":"hi"}]}`, plain); st != 200 {
+		t.Fatalf("chat: %d %v", st, m)
+	}
+	eventually(t, "the request ended", func() bool { return e.api.reqs.Ended() == 1 })
+	_, rl := e.cdo("GET", "/api/requests?limit=5", "", nil)
+	if raw := string(rawJSON(rl)); !strings.Contains(raw, `"caller":"front desk"`) {
+		t.Fatalf("request log: %s", raw)
 	}
 }

@@ -511,7 +511,7 @@ Useful tools: `get_status`, `plan_load`, `load_model`, `update_settings` (with `
 
 ### Access keys
 
-Access is open: the web UI and the REST API need no key, and a request without one is the default user (audit actor `anonymous`, or the name the web UI sends) with full access. An access key is the one restriction there is, so that what an agent does is limited and attributed:
+Access is open: the web UI and the REST API need no key, and a request without one is the default user with full access. The default user's name is the setting `default_user_name` (`anonymous` unless set; 1 to 40 characters, no control characters; no restart): it signs, in the audit log and the request log, what is done without a key and without an `X-Actor` header. A client that sends `X-Actor` is recorded under that name, as before. An access key is the one restriction there is, so that what an agent does is limited and attributed:
 
 - A request with a key (`Authorization: Bearer ptl_...` or `X-Agent-Key: ptl_...`) gets exactly its key's permissions, on REST and over MCP, and every change it makes is recorded under `agent:<name>` with the key's id. Beyond its permissions it is refused with 403 and a sentence that names the permission (`permission_denied`; `approval_required` for a permission set to Ask me, which is refused until approvals exist; `owner_only` for managing keys). Over MCP the tools a key has Off are not listed, and calling one answers a tool error with the same sentence.
 - An unknown, expired or revoked key is refused with 401, never treated as no key.

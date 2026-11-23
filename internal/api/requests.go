@@ -30,7 +30,7 @@ func (s *Server) trackRequest(r *http.Request, sent, kind, requested string, p *
 		return nil
 	}
 	b := usage.Begin{Kind: kind, Path: r.URL.Path, Requested: requested, BenchRun: benchRun, SourceAddr: callerOf(r),
-		Caller: audit.DefaultActor, CallerKind: "default"}
+		Caller: s.defaultUser(), CallerKind: "default"}
 	if p != nil {
 		b.Profile, b.ModelFile = p.Name, p.Model
 	}

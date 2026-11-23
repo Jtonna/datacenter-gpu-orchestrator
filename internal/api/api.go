@@ -212,9 +212,18 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 // (agents.go) and may do only what its key allows (scopes.go); a request
 // without one is the default user.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r = r.WithContext(audit.WithDefaultUser(r.Context(), s.defaultUser()))
 	if r, ok := s.identify(w, r); ok && s.authorize(w, r) {
 		s.mux.ServeHTTP(w, r)
 	}
+}
+
+// defaultUser is the name of the default user (setting default_user_name).
+func (s *Server) defaultUser() string {
+	if c := s.conf(); c != nil && c.DefaultUserName != "" {
+		return c.DefaultUserName
+	}
+	return audit.DefaultActor
 }
 
 // BeginShutdown makes every new request that would start work answer 503

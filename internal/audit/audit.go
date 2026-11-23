@@ -108,6 +108,16 @@ func WithSource(ctx context.Context, source, actor string) context.Context {
 	return context.WithValue(ctx, ctxKey{}, ctxVal{source, actor})
 }
 
+type defaultUserKey struct{}
+
+// WithDefaultUser names the default user for a request: the actor of an
+// entry whose request names no actor (no X-Actor, no access key). The
+// server sets it from the default_user_name setting; without it the actor
+// is DefaultActor.
+func WithDefaultUser(ctx context.Context, name string) context.Context {
+	return context.WithValue(ctx, defaultUserKey{}, name)
+}
+
 type agentKey struct{}
 
 type agentVal struct{ id, name string }
@@ -133,7 +143,11 @@ func AgentFrom(ctx context.Context) (id, name string, ok bool) {
 // WithSource; from outside, only the header X-Source: ui is honoured, anything
 // else is "rest". The actor is the X-Actor header (or the one WithSource carried), default "anonymous".
 func FromRequest(r *http.Request) Origin {
-	o := Origin{Source: SourceREST, Actor: DefaultActor, UserAgent: clip(r.UserAgent(), 300), Comment: clip(strings.TrimSpace(r.Header.Get("X-Comment")), 2000)}
+	actor := DefaultActor
+	if n, ok := r.Context().Value(defaultUserKey{}).(string); ok && n != "" {
+		actor = n
+	}
+	o := Origin{Source: SourceREST, Actor: actor, UserAgent: clip(r.UserAgent(), 300), Comment: clip(strings.TrimSpace(r.Header.Get("X-Comment")), 2000)}
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		o.RemoteAddr = host
 	} else {
