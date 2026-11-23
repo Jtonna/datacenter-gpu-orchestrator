@@ -14,7 +14,7 @@ import (
 // (4000 MiB of weights, 1 MiB of KV per 8 tokens, the real compute buffer of
 // 4 KiB per token per device), for every profile and for the estimates the
 // derivation asks for at other contexts.
-func deriveHarness(t *testing.T) *harness {
+func deriveHarness(t fatalT) *harness {
 	h := newHarness(t)
 	h.c.needs = NeedFunc(func(p *core.Profile) (NeedInfo, error) {
 		if p.NeedsMiB > 0 {

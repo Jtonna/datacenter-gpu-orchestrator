@@ -79,6 +79,11 @@ type Scheduler struct {
 	loopDone chan struct{} // closed when the loop stops taking events
 	// readPanics counts read-only queries that panicked (askRead).
 	readPanics atomic.Int64
+	// stepMax is the longest time one event took in the core loop, in
+	// nanoseconds, with stepMaxEv its event type (tests: the loop must
+	// never stall).
+	stepMax   atomic.Int64
+	stepMaxEv atomic.Value
 	runDone    chan struct{} // closed when Run has returned
 	snap       atomic.Pointer[snapshot]
 
@@ -218,6 +223,13 @@ func (s *Scheduler) Run(ctx context.Context) error {
 // woken by a reply (say, a new lease) already sees the state it implies.
 func (s *Scheduler) step(ev event) {
 	supervise.Point("scheduler.loop", s) // test hook: a panic here must end the process (cmd/llm-scheduler)
+	t0 := time.Now()
+	defer func() {
+		if d := time.Since(t0).Nanoseconds(); d > s.stepMax.Load() {
+			s.stepMax.Store(d)
+			s.stepMaxEv.Store(eventName(ev))
+		}
+	}()
 	s.core.handle(ev)
 	up, keys := map[string]string{}, map[string]string{}
 	for name, in := range s.core.insts {
@@ -860,4 +872,12 @@ func (s *Scheduler) ApplyConfig(cfg *config.Config) bool {
 	case <-s.loopDone:
 		return false
 	}
+}
+
+// eventName names an event for stepMax: a query by what it reads.
+func eventName(ev event) string {
+	if q, ok := ev.(evQuery); ok {
+		return "read " + q.read
+	}
+	return fmt.Sprintf("%T", ev)
 }
