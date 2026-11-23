@@ -409,12 +409,26 @@ code.cmd{font-family:var(--mono);font-size:12px;color:var(--text-2);overflow-wra
 .toast.ok{background:var(--accent);border-color:var(--accent)}
 .toast.err{background:var(--failed);border-color:var(--failed);color:#fff}
 /* side panel, 620 wide, from the right (full screen on a phone) */
+/* the side panel (design: .side on every panel artboard; core/panel.js):
+   beside the page at 1400 px and wider, over it behind a scrim below that (Q72) */
+.side{width:var(--side-w);max-width:100%;flex:none;box-sizing:border-box;display:flex;flex-direction:column;background:#fff;border-left:1px solid #dfe5e1;box-shadow:-10px 0 28px rgba(19,26,23,.07);overflow:hidden;font-size:13px}
+.side.docked{position:sticky;top:0;align-self:flex-start;height:100vh;z-index:5}
 .side-back{position:fixed;inset:0;z-index:40;background:var(--overlay);display:flex;justify-content:flex-end}
-.sidepanel{width:min(var(--side-w),100%);height:100%;overflow-y:auto;background:var(--ground);border-left:1px solid var(--line-panel);display:flex;flex-direction:column;box-shadow:-18px 0 40px rgba(19,26,23,.18)}
-.sidepanel-head{display:flex;align-items:center;gap:12px;position:sticky;top:0;padding:14px 18px 12px;background:var(--surface);border-bottom:1px solid var(--line-panel);z-index:2}
-.sidepanel-head h2{font-size:18px;font-weight:800;margin-right:auto;min-width:0}
-.sidepanel-body{padding:14px 18px 32px;display:flex;flex-direction:column;gap:var(--gap-panel)}
-@media(max-width:700px){.sidepanel-head{padding:12px 14px 10px}.sidepanel-body{padding:12px 14px 28px}}
+.side-back .side{height:100%;box-shadow:-18px 0 40px rgba(19,26,23,.18)}
+.side-head{display:flex;align-items:flex-start;gap:12px;padding:16px 14px 14px 20px;flex:none}
+.side-names{flex:1;min-width:0}
+.side-label{padding-bottom:3px}
+.side-title{margin:0;font-size:17px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.side-title .mono{font-size:17px;font-weight:500}
+.side-sub{color:var(--mut);font-weight:600;padding-top:3px}
+.side-ctl{display:flex;align-items:center;gap:10px;font-weight:700;white-space:nowrap}
+.side-ctl[hidden],.side-sub[hidden],.side-label[hidden],.side .sf[hidden]{display:none}
+.side .x{width:30px;height:30px;flex:none;border:0;border-radius:8px;background:transparent;color:#3f4a44;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.side .x:hover{background:var(--hover-bg)}
+.side .x .ic{width:17px;height:17px}
+.side-body{flex:1 1 auto;min-height:0;overflow-y:auto;border-top:1px solid #e9eeeb;padding:16px 16px 20px 20px;display:flex;flex-direction:column;gap:var(--gap-panel)}
+.side .sf{margin-top:auto;flex:none;display:flex;align-items:center;gap:8px;padding:14px 16px 16px 20px;border-top:1px solid #e9eeeb}
+@media(max-width:700px){.side-head{padding:12px 12px 10px 14px}.side-body{padding:12px 14px 24px}}
 
 /* ---------- charts ---------- */
 svg.spark{display:block;overflow:visible}

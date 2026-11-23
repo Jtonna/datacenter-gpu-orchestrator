@@ -9,6 +9,7 @@
 
 import { h, morph, icon } from './dom.js';
 import { on } from './store.js';
+import { openPanel } from './panel.js';
 import { num, mib, gb, gbNum, parseGoDuration, clock, dur, DASH } from './format.js';
 
 // ---------- live rendering ----------
@@ -617,52 +618,14 @@ export function runStatus(stateName, text, title) {
     text != null ? h('span', { class: stateName === 'queued' ? 'mut' : 'mono' }, text) : h('span', r[0]));
 }
 
-// sidePanel({title, body, onClose}) opens a panel from the right, 620 wide
-// (full screen on a phone), over the page. body is a node, or a function
-// (close => node) called again by redraw(). Escape, the close button or a
-// click beside it closes it; onClose is called once when it closes.
+// sidePanel({title, body, onClose, label, sub, controls, foot}) opens the
+// side panel (core/panel.js): beside the page at 1400 px and wider, over it
+// below that; one at a time; Escape or the close button closes it and the
+// focus goes back to what opened it. body is a node, or a function (close =>
+// node) called again by redraw(). onClose is called once when it closes.
 // Returns {close(), redraw(), el}.
 export function sidePanel(o) {
-  const prev = document.activeElement;
-  let closed = false;
-  const close = () => {
-    if (closed) return;
-    closed = true;
-    document.removeEventListener('keydown', onKey, true);
-    back.remove();
-    if (prev && prev.focus) prev.focus();
-    if (o.onClose) o.onClose();
-  };
-  const onKey = e => {
-    if (openDialogs > 0) return; // a dialog above the panel handles its own keys
-    if (e.key === 'Escape') { e.stopPropagation(); close(); }
-    if (e.key === 'Tab') {
-      const f = pane.querySelectorAll('button,input,select,textarea,a[href]');
-      if (!f.length) return;
-      const first = f[0], last = f[f.length - 1];
-      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-    }
-  };
-  const id = 'side-' + Date.now();
-  const closeBtn = h('button.btn.icon', { type: 'button', 'aria-label': 'Close', onclick: close },
-    h('svg', { class: 'ic', viewBox: '0 0 20 20', 'aria-hidden': 'true' }, h('path', { d: 'M5 5l10 10M15 5L5 15' })));
-  const title = h('h2', { id });
-  const body = h('div.sidepanel-body');
-  const pane = h('div.sidepanel', { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': id },
-    h('div.sidepanel-head', title, closeBtn), body);
-  const back = h('div.side-back', { onmousedown: e => { if (e.target === back) close(); } }, pane);
-  const fill = () => {
-    if (closed) return;
-    morph(title, typeof o.title === 'function' ? o.title() : o.title);
-    const b = typeof o.body === 'function' ? o.body(close) : o.body;
-    morph(body, b == null ? [] : b);
-  };
-  fill();
-  document.body.appendChild(back);
-  document.addEventListener('keydown', onKey, true);
-  closeBtn.focus();
-  return { close, redraw: fill, el: pane };
+  return openPanel(o);
 }
 
 // ---------- the Overview's components (Main board; Components board 3) ----------

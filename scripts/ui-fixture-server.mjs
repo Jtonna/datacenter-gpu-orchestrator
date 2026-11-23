@@ -10,6 +10,7 @@
 //                                           [--state normal|empty|off|loading] [--sequence] [--live-timings]
 //                                           [--health two|good|unknown]
 //
+//   /ui/components.html  the shell's shared components (scripts/ui-fixture/components.js)
 //   /ui/...      the new shell (ui/next laid over the classic files, as the
 //                scheduler serves it), /ui/classic/... the classic UI
 //   /api/status, /api/requests, /api/requests/summary, /api/requests/{id},
@@ -220,6 +221,21 @@ const server = http.createServer((req, res) => {
   const now = Date.now();
   if (p === '/') { res.writeHead(302, { Location: '/ui/' }); return res.end(); }
   if (p === '/ui') { res.writeHead(301, { Location: '/ui/' }); return res.end(); }
+  // the components page (scripts/ui-fixture/components.js): the app with the
+  // fixture's demonstration view registered before it starts
+  if (p === '/ui/components.html') {
+    const html = readFileSync(uiFile('index.html'), 'utf8').replace('<script type="module" src="app.js"></script>',
+      '<script type="module" src="_fixture/components.js"></script>
+<script type="module" src="app.js"></script>');
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
+    return res.end(html);
+  }
+  if (p.startsWith('/ui/_fixture/')) {
+    const f = path.join(here, 'ui-fixture', path.basename(p));
+    if (!existsSync(f)) return notFound(res, p);
+    res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache' });
+    return res.end(readFileSync(f));
+  }
   if (p.startsWith('/ui/')) {
     const f = uiFile(decodeURIComponent(p.slice(4)));
     const type = f && TYPES[path.extname(f)];
