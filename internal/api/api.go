@@ -205,9 +205,11 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 }
 
 // ServeHTTP implements http.Handler.
-// A request that carries an agent key is attributed to that agent first (agents.go).
+// A request that carries an access key is attributed to that agent first
+// (agents.go) and may do only what its key allows (scopes.go); a request
+// without one is the default user.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r, ok := s.identify(w, r); ok {
+	if r, ok := s.identify(w, r); ok && s.authorize(w, r) {
 		s.mux.ServeHTTP(w, r)
 	}
 }
