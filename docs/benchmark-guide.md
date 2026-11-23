@@ -27,6 +27,7 @@ Ask `GET $B/api/bench/schema` (MCP `get_bench_schema`) first. It lists every pha
 | `conversation` | A multi-turn exchange; each turn carries the earlier turns and replies. | Per turn: prefill, decode, time to first token, reused prompt tokens |
 | `hold` | Stays loaded and idle for `seconds`, then sends one request. | Whether the model answers as fast after idling |
 | `concurrent_requests` | `n` requests at the same moment. | Each request's wait and decode speed, total time, errors |
+| `tasks` | Sends each task of a fixed task set once, in order, and keeps every answer (see Tasks). Never runs or scores an answer. | Per task: answer, finish reason, tokens, time to first token, tok/s, wall time, error; scores posted later |
 | `unload` | Unloads the profile. | Time until the instance is gone |
 
 A phase that sends requests with no `load` before it loads the model if needed and leaves it loaded for the next benchmark; the end of the run unloads it. So a benchmark with only a `requests` phase means "requests on a model that is already loaded". Hold seconds must fit in `timeout_s`.
@@ -52,6 +53,56 @@ The template "Cold, reload, loaded" is a starting point, an ordinary benchmark y
 ```sh
 curl -s $B/api/bench/schema | jq '.templates[] | select(.id=="cold-reload-loaded") | .benchmark | .id="gemma12b-cold" | .profile="gemma-3-12b"' | curl -s -X POST $B/api/bench/benchmarks -d @-
 ```
+
+### Tasks (from release 0.1.8)
+
+A `tasks` phase measures what a model answers, not only how fast: it sends a fixed set of tasks (first use: coding tasks) to the loaded profile and stores every answer so that a scorer can judge them later. **Potluck never runs what a model wrote and never scores it.** Scoring is done outside (tests in a sandbox, a rubric, a person) and posted back.
+
+**Task sets are data.** A task set is a small versioned document:
+
+```json
+{"format": "potluck-tasks/1", "id": "coding", "version": 1, "title": "Coding tasks",
+ "system": "You are an expert Python programmer.", "max_tokens": 4096, "seed": 1, "temperature": 0,
+ "tasks": [{"id": "t1", "title": "parse_duration", "prompt": "...", "max_tokens": 8192, "timeout_s": 1200},
+           {"id": "t2", "prompt": "...", "system": "a system prompt for this task only"}]}
+```
+
+`id` follows the benchmark id rule, `version` starts at 1, at most 64 tasks with unique ids, a prompt of at most 1 MiB. Sampling is fixed: temperature 0 (the only value accepted), the set's `seed` (default 1), streamed, no prompt cache. Thinking is not set: it follows the profile, and the phase result says whether a reasoning text was seen. A task's `timeout_s` ends that task only.
+
+Store a set with `POST $B/api/bench/task-sets` (MCP `create_task_set`). A stored version never changes: the same content again answers 200 (`created: false`), other prompts under the same version answer 409, so a changed set gets a new version. The answer carries `sha256`, a hash of what the model is asked (format, seed, and per task the id, effective system prompt, prompt and max_tokens; titles and timeouts are left out). Results with the same hash were asked the same thing and can be compared.
+
+**The phase** names a stored set, `{"type": "tasks", "task_set": "coding"}` (the newest version) or with `"task_set_version": 2`, or carries the set inline as `"tasks": {...}` (exactly one of the two). `timeout_s` is the phase's own limit; it must leave 30 s of the benchmark's `timeout_s`. A benchmark that names a set that is not stored is refused (422). Example:
+
+```sh
+curl -s -X POST $B/api/bench/task-sets -d @coding-tasks.json
+curl -s -X POST $B/api/bench/benchmarks -d '{"id":"gemma12b-coding","profile":"gemma-3-12b","timeout_s":10800,
+  "phases":[{"type":"load"},{"type":"tasks","task_set":"coding","timeout_s":9000},{"type":"unload"}]}'
+```
+
+Each task is sent once, in order. A task that fails (not 200) or runs out of time is recorded (`failed`, `timed_out` with whatever had arrived) and the next one is sent; when the phase's time or the step's runs out, or the run is cancelled, the rest are recorded as `not_sent`. A failed task does not fail the step. The phase result (`phases[].tasks`) has the set's id, version and hash, `total`, `sent`, `answered`, `failed` (timed-out tasks included), `timed_out`, `not_sent`, `phase_timed_out`, `thinking` (`seen` or `not_seen`), `decode_tps` and `ttft_ms` summaries over the answered tasks, and `items[]` per task: `result_id`, `task_id`, `state`, `status`, `finish_reason` (`length` means it hit max_tokens), `prompt_tokens`, `completion_tokens`, `ttft_ms`, `decode_tps`, `wall_ms`, `answer_chars`, `reasoning_chars`, `answer_sha256`, `error`. The answer texts are not in the run: they are stored apart (up to 4 MiB each) and kept as long as the run.
+
+| Ask | REST | MCP |
+|---|---|---|
+| The stored sets (no prompts) | `GET /api/bench/task-sets` | `list_task_sets` |
+| One set with its prompts | `GET /api/bench/task-sets/<id>?version=N` | `get_task_set` |
+| Remove a version (409 while answers use it) | `DELETE /api/bench/task-sets/<id>?version=N` | |
+| A run's task results, with scores | `GET /api/bench/runs/<id>/tasks` (`?step=N`, `?answers=1` for the texts) | `get_run_tasks` |
+| One answer | `GET /api/bench/runs/<id>/tasks/<result_id>` (`?format=text` or `reasoning` for the bare text) | `get_task_answer` |
+| Each scorer's total | `GET /api/bench/runs/<id>/scores` | |
+| Post a scorer's scores | `PUT /api/bench/runs/<id>/scores/<scorer>` | `put_task_scores` |
+| Remove a scorer's scores | `DELETE /api/bench/runs/<id>/scores/<scorer>` | |
+
+**Scores.** A scorer posts every score it has for a run at once; the post replaces whatever that scorer posted on the run before, so posting again is safe. Several scorers live side by side (for example `kit-tests` and `t5-rubric`). The body:
+
+```json
+{"scorer_version": "score.py strict", "scores": [
+  {"step": 0, "task": "t1", "points": 17, "max_points": 17},
+  {"result": 42, "points": 9, "max_points": 17, "failed_tests": ["test_edge"], "notes": "missed the empty input"}]}
+```
+
+A score names its task by `result` (the `result_id`), or by `step` and `task` (and `phase` when the step has two tasks phases). Points are 0 to `max_points`, and `max_points` must be more than 0. A score that names nothing in the run, or a task scored twice, refuses the whole post (422). The run then shows, per tasks phase, each scorer's `points`, `max_points`, `tasks_scored` of `tasks`, and each item's `scores` by scorer. Changes are in the audit log (target `scores:<run>/<scorer>`, and `task_set:<id>@<version>`).
+
+**With the coding kit.** `scripts/bench-tasks.py` (Python 3, standard library) links a run to a scoring kit: `taskset KIT --post $B` builds and stores a set from the kit's `system_prompt.txt` and `tasks/<id>/{meta.json,prompt.md}`; `pull $B <run> --out DIR` writes the answers in the kit's layout (`DIR/<profile>-step<N>/<task>.json` and `<task>.answer.md`, with the result ids); after the kit's `score.py --out DIR`, `scores DIR --scorer kit-tests [--rule lenient] [--max-points 17] --post $B` posts the tests passed; `post $B <run> <scorer> scores.json` sends a ready body, such as a rubric's.
 
 ### Expectations
 
@@ -145,6 +196,8 @@ Limits: a body of at most 2 MiB (413 above it), 50 tables, 2,000 rows and 60 col
 Two converters in `scripts/` (Python 3, standard library) turn the summaries of the coding and context drivers into a set; without `--post` they print the body, `--replace` sends a PUT, `--attach` adds a text file:
 
     scripts/bench-external-context.py summary.json --ladder ladder.json --post $B
+
+External results and task scores do not overlap. An external set holds results measured outside Potluck, such as the hand-run coding kit before release 0.1.8 or the context ladder; Potluck only shows it. Task scores belong to answers a Potluck run stored in a `tasks` phase, and are posted against that run (see Tasks). Do not also post a scored Potluck run as an external set: its scores already show on the run, next to the speed figures and the set's hash.
 
 ## 8. Good practice
 

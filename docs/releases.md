@@ -2,6 +2,21 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## 0.1.8
+
+### What is new
+
+- **Tasks phase.** A benchmark phase `tasks` sends each task of a fixed task set once, in order, to the loaded profile (temperature 0, the set's seed, streamed; thinking follows the profile) and keeps every answer and reasoning text with its finish reason, prompt and completion tokens, time to first token, tok/s, wall time and error. A failed or timed-out task is recorded and the phase goes on; the phase has its own `timeout_s`, and what it did not send is recorded as `not_sent`. Potluck never runs an answer and never scores one. See the benchmark guide, section "Tasks".
+- **Task sets** (format `potluck-tasks/1`) are stored through `POST /api/bench/task-sets` (MCP `create_task_set`), fixed per id and version, and identified by a content hash; a phase can also carry a set inline. A benchmark that names a set that is not stored is refused (422).
+- **Scores.** `PUT /api/bench/runs/<id>/scores/<scorer>` (MCP `put_task_scores`) attaches a scorer's points to a run's tasks, replacing that scorer's earlier post; the run shows the total per scorer. `GET /api/bench/runs/<id>/tasks` (MCP `get_run_tasks`) and `.../tasks/<result_id>` (MCP `get_task_answer`) read the answers. External result sets stay for results measured outside Potluck.
+- **Run page.** A tasks phase shows the set, tasks sent, answered, failed and not sent, the median decode speed, each scorer's total, and a row per task with a link to its answer.
+- **Kit script.** `scripts/bench-tasks.py` builds a task set from a kit folder, pulls a run's answers in the kit's layout, and posts the kit's test scores or a ready scores file.
+
+### What changes without any setting
+
+- The database gains the tables `task_sets`, `task_results` and `task_scores` at the first start (migration 5); older runs read as before. The run JSON gains `phases[].tasks` only on tasks phases.
+- The benchmark client keeps `finish_reason`, `usage` and the reasoning text of an answer, and the partial answer of a stream that was cut off.
+
 ## 0.1.7
 
 ### What is new

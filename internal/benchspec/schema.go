@@ -125,6 +125,13 @@ func Schema() *SchemaDoc {
 				{Name: "n", Type: "integer", Default: DefaultConcurrent, Min: 2, Max: MaxConcurrent, Description: "How many requests to send together."},
 				{Name: "request", Type: "request", Description: "The request every one of them sends (default: the first request of the requests phase)."},
 			}},
+		{Type: PhaseTasks, Title: "Tasks", Description: "Send each task of a task set once, in order, with the profile loaded (temperature 0, the set's seed, streamed), and keep every answer with its tokens and speed so it can be scored later. Potluck never runs the answers and does not score them: a scorer posts its points to the run afterwards. A task that fails or runs out of time is recorded and the next one is sent.",
+			Records: []string{"answer", "finish_reason", "prompt_tokens", "completion_tokens", "ttft_ms", "decode_tps", "wall_ms", "error"}, Options: []Option{
+				{Name: "task_set", Type: "string", Description: "The id of a task set stored with POST /api/bench/task-sets. Give this or tasks."},
+				{Name: "task_set_version", Type: "integer", Min: 1, Description: "The version of the stored task set (default: its newest version when the phase starts)."},
+				{Name: "tasks", Type: "object", Description: "A task set given inline, in the same format as a stored one. Give this or task_set."},
+				{Name: "timeout_s", Type: "integer", Min: 1, Max: MaxTimeoutS, Unit: "s", Description: "Limit for the whole phase; tasks not sent by then are recorded as not sent. Default: what the benchmark's timeout_s leaves, minus 30 s for the unload."},
+			}},
 		{Type: PhaseUnload, Title: "Unload", Description: "Unload the profile and record how long it takes until the instance is gone.",
 			Records: []string{"unload_s"}, Options: []Option{}},
 	}
@@ -144,7 +151,7 @@ func Schema() *SchemaDoc {
 		{Name: "max_unload_s", Type: "number", Unit: "s", Needs: "unload", Description: "The instance must be gone within this time of the unload."},
 	}
 	d.Limits = map[string]int{"phases": MaxPhases, "requests": MaxRequests, "repeats": MaxRepeats, "warmups": MaxWarmups, "turns": MaxTurns,
-		"concurrent": MaxConcurrent, "hold_seconds": MaxHoldSeconds, "max_tokens": MaxTokensLimit, "timeout_s": MaxTimeoutS, "suite_items": MaxSuiteItems}
+		"concurrent": MaxConcurrent, "hold_seconds": MaxHoldSeconds, "max_tokens": MaxTokensLimit, "timeout_s": MaxTimeoutS, "suite_items": MaxSuiteItems, "tasks": MaxTasks}
 	d.Templates = []Template{
 		tpl("load-only", "Load only", "Measures just the cold load of a profile: how long it takes, how many bytes go to which worker and how much memory it uses. No chat request is sent.",
 			`{"id":"load-only-example","name":"Load only","description":"Cold load, then unload. Measures load time and upload rate only.","profile":"your-profile","phases":[{"type":"load"},{"type":"unload"}]}`),

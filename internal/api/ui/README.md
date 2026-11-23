@@ -31,7 +31,41 @@ views/benchmarks/   the parts of Benchmarks; pages.js is a suite's and a benchma
 fonts/              Manrope (variable) and JetBrains Mono, with their licences (OFL)
 ```
 
-Run it: `scripts/ui-dev.sh` (the dev harness), then `http://127.0.0.1:8790/ui/`.
+## Two UIs: the new shell at /ui/, the classic UI at /ui/classic/
+
+The UI rewrite (plan phase U1) adds a new shell without moving the current UI:
+
+- `/ui/classic/<p>` serves the classic file `<p>` above, unchanged. It stays
+  until the owner says it can go; every classic test reads these files.
+- `/ui/<p>` serves `next/<p>` when that file exists, else the classic `<p>`
+  (`uiResolve` in `internal/api/uifiles.go`). `next/` itself is never served.
+  So the new shell reuses every classic view and data module, and a classic
+  view loaded below `/ui/` imports the new `core/ui.js` and `core/shell.js`.
+- A `next/` module that replaces a classic one keeps every export of it
+  (`TestUINextKeepsTheClassicExports`); the benchmark views are mounted as
+  they are.
+
+```
+next/index.html        rail, section menu and <main>; light only (the design defines no dark)
+next/app.css           the design's tokens (light), the shell, every classic class restyled
+next/app.js            entry of the new shell; imports the classic views and views/zones.js
+next/core/shell.js     rail of sections, section menu (collapsible), fleet card, phone drawer
+next/core/ui.js        the classic components plus panel, segmented, filterSelect, searchField,
+                       zoneStatus, colourKey, availStrip, runStatus, sidePanel
+next/views/zones.js    Zones: one row per machine (zone), its card in a side panel
+```
+
+Words of the new shell: a zone is one node; Off = excluded, "Not accepting"
+= paused, Set aside = quarantined. Nothing is drawn without data behind it,
+no control may reboot or restart a machine (`TestUINoRebootOrRestartControl`),
+and there is no load or unload control.
+
+The harness checks both: `scripts/ui-exec.mjs --base URL` runs the live
+screens of `/ui/` and of `/ui/classic/`; a case file with `"shell":"next"`
+runs the new shell over a merged copy of the files.
+
+Run it: `scripts/ui-dev.sh` (the dev harness), then `http://127.0.0.1:8790/ui/`
+(the new shell) or `http://127.0.0.1:8790/ui/classic/`.
 One screenshot: `scripts/ui-screens.sh http://127.0.0.1:8790 models loading desktop out.png`.
 
 ## Rules

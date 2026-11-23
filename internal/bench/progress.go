@@ -22,6 +22,7 @@ const (
 	defLoadS         = 60
 	defWarmupEachS   = 5
 	defRequestEachS  = 5
+	defTaskEachS     = 60
 	defTurnEachS     = 8
 	defConcurrentS   = 15
 	defUnloadS       = 3
@@ -163,6 +164,11 @@ func defaultWeight(p *benchspec.Phase) float64 {
 		return float64(p.HoldS() + holdRequestExtra)
 	case benchspec.PhaseConcurrent:
 		return defConcurrentS
+	case benchspec.PhaseTasks:
+		if p.Tasks != nil {
+			return float64(len(p.Tasks.Tasks)*defTaskEachS) + 0.5
+		}
+		return float64(8 * defTaskEachS) // a stored set: its size is read when the phase starts
 	case benchspec.PhaseUnload:
 		return defUnloadS
 	}

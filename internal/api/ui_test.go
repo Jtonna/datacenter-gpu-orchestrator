@@ -47,32 +47,52 @@ func isUICode(name string) bool {
 	return false
 }
 
-// Every embedded file is served below /ui/ with the content type of its kind.
+// Every embedded file is served with the content type of its kind: a file of
+// ui/next/ below /ui/ under its path inside next/, every other file below
+// /ui/classic/, and below /ui/ too unless ui/next/ has a file of that path
+// (uifiles.go). ui/next/ is never served under its own name.
 func TestUIFilesServedWithContentType(t *testing.T) {
 	e := newEnv(t, chatOK)
-	for _, name := range uiFiles(t) {
+	check := func(url, name string) {
 		want, ok := uiContentTypes[path.Ext(name)]
 		if !ok {
 			t.Errorf("%s: its extension has no content type in uiContentTypes, so it would not be served", name)
-			continue
+			return
 		}
-		resp := e.get("/ui/" + name)
+		resp := e.get(url)
 		b := body(t, resp)
 		if resp.StatusCode != 200 {
-			t.Errorf("GET /ui/%s: status %d", name, resp.StatusCode)
-			continue
+			t.Errorf("GET %s: status %d", url, resp.StatusCode)
+			return
 		}
 		if got := resp.Header.Get("Content-Type"); got != want {
-			t.Errorf("GET /ui/%s: content type %q, want %q", name, got, want)
+			t.Errorf("GET %s: content type %q, want %q", url, got, want)
 		}
 		if resp.Header.Get("X-Content-Type-Options") != "nosniff" {
-			t.Errorf("GET /ui/%s: no nosniff header", name)
+			t.Errorf("GET %s: no nosniff header", url)
 		}
 		if b != uiText(t, name) {
-			t.Errorf("GET /ui/%s: the body is not the embedded file", name)
+			t.Errorf("GET %s: the body is not the embedded file %s", url, name)
 		}
 	}
-	for _, p := range []string{"/ui/nope.js", "/ui/../api.go", "/ui/views/", "/ui/fonts", "/ui/core/dom"} {
+	have := map[string]bool{}
+	for _, name := range uiFiles(t) {
+		have[name] = true
+	}
+	for _, name := range uiFiles(t) {
+		if rel, ok := strings.CutPrefix(name, uiNextDir); ok {
+			check("/ui/"+rel, name)
+			continue
+		}
+		check("/ui/classic/"+name, name)
+		if !have[uiNextDir+name] {
+			check("/ui/"+name, name)
+		}
+	}
+	check("/ui/", uiNextDir+"index.html")
+	check("/ui/classic/", "index.html")
+	for _, p := range []string{"/ui/nope.js", "/ui/../api.go", "/ui/views/", "/ui/fonts", "/ui/core/dom",
+		"/ui/next/index.html", "/ui/next/app.css", "/ui/classic/next/index.html", "/ui/classic/nope.js", "/ui/classic/views/"} {
 		if resp := e.get(p); resp.StatusCode == 200 && !strings.Contains(body(t, resp), "<!doctype html>") {
 			t.Errorf("GET %s: status 200 for something that is not a UI file", p)
 		}
@@ -130,6 +150,18 @@ func TestUIImportsResolve(t *testing.T) {
 		have[name] = true
 	}
 	imp := regexp.MustCompile(`(?m)^\s*(?:import|export)\s+(?:[\w*{}\s,$]+\s+from\s+)?['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)`)
+	// served(name, ref) says whether the file that name refers to with ref
+	// is served: a classic file below /ui/classic/ sees the classic files;
+	// a file of ui/next/ is served below /ui/, where a path is the next/
+	// file or else the classic one (uiResolve).
+	served := func(name, ref string) (string, bool) {
+		if rel, ok := strings.CutPrefix(name, uiNextDir); ok {
+			target := path.Join(path.Dir(rel), ref)
+			return target, !strings.HasPrefix(target, "..") && uiResolve(target) != ""
+		}
+		target := path.Join(path.Dir(name), ref)
+		return target, have[target] && !strings.HasPrefix(target, uiNextDir)
+	}
 	for name := range have {
 		if path.Ext(name) != ".js" {
 			continue
@@ -143,24 +175,32 @@ func TestUIImportsResolve(t *testing.T) {
 				t.Errorf("%s imports %q: only relative imports of bundled files are allowed", name, spec)
 				continue
 			}
-			if target := path.Join(path.Dir(name), spec); !have[target] {
+			if target, ok := served(name, spec); !ok {
 				t.Errorf("%s imports %q, which is not an embedded file (%s)", name, spec, target)
 			}
 		}
 	}
-	page := uiText(t, "index.html")
-	for _, m := range regexp.MustCompile(`(?:src|href)="([^"#]+)"`).FindAllStringSubmatch(page, -1) {
-		ref := m[1]
-		if strings.HasPrefix(ref, "data:") || strings.HasPrefix(ref, "../api/") {
-			continue
-		}
-		if !have[path.Clean(ref)] {
-			t.Errorf("index.html refers to %q, which is not an embedded file", ref)
+	for _, pg := range []struct{ page, api string }{{"index.html", "../../api/"}, {uiNextDir + "index.html", "../api/"}} {
+		for _, m := range regexp.MustCompile(`(?:src|href)="([^"#]+)"`).FindAllStringSubmatch(uiText(t, pg.page), -1) {
+			ref := m[1]
+			if strings.HasPrefix(ref, "data:") || strings.HasPrefix(ref, pg.api) {
+				continue
+			}
+			if _, ok := served(pg.page, ref); !ok {
+				t.Errorf("%s refers to %q, which is not an embedded file", pg.page, ref)
+			}
 		}
 	}
-	for _, m := range regexp.MustCompile(`url\(([^)]+)\)`).FindAllStringSubmatch(uiText(t, "app.css"), -1) {
-		if ref := strings.Trim(m[1], `"'`); !strings.HasPrefix(ref, "data:") && !have[path.Clean(ref)] {
-			t.Errorf("app.css refers to %q, which is not an embedded file", ref)
+	for _, css := range []string{"app.css", uiNextDir + "app.css"} {
+		if !have[css] {
+			continue
+		}
+		for _, m := range regexp.MustCompile(`url\(([^)]+)\)`).FindAllStringSubmatch(uiText(t, css), -1) {
+			if ref := strings.Trim(m[1], `"'`); !strings.HasPrefix(ref, "data:") {
+				if _, ok := served(css, ref); !ok {
+					t.Errorf("%s refers to %q, which is not an embedded file", css, ref)
+				}
+			}
 		}
 	}
 }
@@ -175,7 +215,7 @@ func TestUIWritesCarrySourceAndActor(t *testing.T) {
 	}
 	// fetch is only used through the REST helper, so no view can skip the headers.
 	for _, name := range uiFiles(t) {
-		if path.Ext(name) == ".js" && name != "core/api.js" && regexp.MustCompile(`\bfetch\(|XMLHttpRequest`).MatchString(uiText(t, name)) {
+		if path.Ext(name) == ".js" && name != "core/api.js" && name != uiNextDir+"core/api.js" && regexp.MustCompile(`\bfetch\(|XMLHttpRequest`).MatchString(uiText(t, name)) {
 			t.Errorf("%s calls fetch directly: use core/api.js", name)
 		}
 	}
@@ -185,7 +225,7 @@ func TestUIWritesCarrySourceAndActor(t *testing.T) {
 // intervals that exist are the one-second clock tick of the store (it redraws
 // "38 min ago", it fetches nothing) and the watchdog of the live channel.
 func TestUIHasNoPollingTimer(t *testing.T) {
-	allowed := map[string]bool{"core/store.js": true, "core/live.js": true}
+	allowed := map[string]bool{"core/store.js": true, "core/live.js": true, uiNextDir + "core/store.js": true, uiNextDir + "core/live.js": true}
 	for _, name := range uiFiles(t) {
 		if path.Ext(name) != ".js" {
 			continue

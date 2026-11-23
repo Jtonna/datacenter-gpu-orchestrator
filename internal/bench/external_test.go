@@ -81,7 +81,7 @@ func TestExternalSetRoundTrip(t *testing.T) {
 // A database written before external sets existed opens unchanged and gains the table.
 func TestExternalMigrationFromOlderDatabase(t *testing.T) {
 	dir := t.TempDir()
-	old, err := openStore(dir, len(migrations)-1)
+	old, err := openStore(dir, 3) // the schema before "external result sets" (migration 4)
 	if err != nil {
 		t.Fatal(err)
 	}
