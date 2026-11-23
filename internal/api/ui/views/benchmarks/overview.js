@@ -22,7 +22,7 @@ function lastRunCell(s, agg) {
   const sum = r.summary;
   return h('a', { href: href('benchmarks', ['runs', r.id]), style: 'display:block;font-weight:600;color:inherit' },
     h('span.row', { style: 'gap:8px' }, runBadge(r.state), r.finished_at || r.started_at ? ago(r.finished_at || r.started_at) : null),
-    sum ? h('span.sub', `${sum.passed} passed · ${sum.failed} failed` + (sum.refused ? ` · ${sum.refused} refused` : '') + (sum.regressions ? ` · ${plural(sum.regressions, 'regression')}` : '')) : null);
+    sum ? h('span.sub', `${sum.passed} passed · ${sum.failed} failed` + (sum.refused_by_exclusion ? ` · ${sum.refused_by_exclusion} not judged (excluded node)` : '') + (sum.regressions ? ` · ${plural(sum.regressions, 'regression')}` : '')) : null);
 }
 
 function suitesCard(running) {

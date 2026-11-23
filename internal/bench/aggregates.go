@@ -419,6 +419,7 @@ func (s *Store) Aggregate(f AggFilter, th Thresholds, now time.Time) (*Aggregate
 	suites := map[string]*SuiteAgg{}
 	suiteDur := map[string][]float64{}
 	suitePass := map[string]int{}
+	suiteUnjudged := map[string]int{} // runs in which every step was refused by an exclusion: out of the pass rate
 
 	for ri := range runs {
 		r := &runs[ri]
@@ -432,7 +433,10 @@ func (s *Store) Aggregate(f AggFilter, th Thresholds, now time.Time) (*Aggregate
 		sa.Name = r.SuiteName
 		sa.Runs++
 		sa.States[r.State]++
-		if r.State == RunCompleted && r.Summary != nil && r.Summary.Failed == 0 {
+		switch {
+		case RunResult(r) == ResultNotJudged:
+			suiteUnjudged[r.SuiteID]++
+		case r.State == RunCompleted && r.Summary != nil && r.Summary.Failed == 0:
 			suitePass[r.SuiteID]++
 		}
 		dur := 0.0
@@ -559,8 +563,8 @@ func (s *Store) Aggregate(f AggFilter, th Thresholds, now time.Time) (*Aggregate
 	for _, id := range sortedKeys(suites) {
 		sa := suites[id]
 		sa.Recent = clipRecent(suiteMarks[id])
-		if sa.Runs > 0 {
-			sa.PassRate = round4(float64(suitePass[id]) / float64(sa.Runs))
+		if judged := sa.Runs - suiteUnjudged[id]; judged > 0 {
+			sa.PassRate = round4(float64(suitePass[id]) / float64(judged))
 		}
 		if d := suiteDur[id]; len(d) > 0 {
 			var sum float64

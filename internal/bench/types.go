@@ -228,8 +228,12 @@ type Check struct {
 
 // ExpectResult is the verdict on a benchmark's expect block.
 type ExpectResult struct {
-	Pass   bool    `json:"pass"`
-	Checks []Check `json:"checks"`
+	Pass bool `json:"pass"`
+	// NotJudged: the step was not judged at all (outcome
+	// refused_by_exclusion): Pass is false, and it is neither a pass nor a
+	// failure. Every reader that counts or words passes looks at this first.
+	NotJudged bool    `json:"not_judged,omitempty"`
+	Checks    []Check `json:"checks"`
 }
 
 // Comparison is a step against the same benchmark in the baseline run.
@@ -404,14 +408,16 @@ type Step struct {
 // RunSummary counts a run's steps.
 type RunSummary struct {
 	Steps int `json:"steps"`
-	// Ran counts the steps that were judged (passed or failed). Refused counts
-	// those refused by an exclusion (refused_by_exclusion): neither passed
-	// nor failed. Skipped steps are in none of the three.
-	Ran         int `json:"ran"`
-	Passed      int `json:"passed"`
-	Failed      int `json:"failed"`
-	Refused     int `json:"refused"`
-	Regressions int `json:"regressions"`
+	// Ran counts the steps that were judged (passed or failed).
+	// RefusedByExclusion counts the steps with the outcome
+	// refused_by_exclusion: not judged, neither passed nor failed. (An
+	// ordinary refusal, outcome "refused", is judged against the expectation
+	// and counts as passed or failed.) Skipped steps are in none of these.
+	Ran                int `json:"ran"`
+	Passed             int `json:"passed"`
+	Failed             int `json:"failed"`
+	RefusedByExclusion int `json:"refused_by_exclusion"`
+	Regressions        int `json:"regressions"`
 }
 
 // Run is one execution of a suite.

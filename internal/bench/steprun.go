@@ -1180,10 +1180,14 @@ func (x *suiteExec) finish(br *benchRun) {
 	m.emit(map[string]any{"kind": "step_finished", "run_id": st.RunID, "step": stepBrief(st)})
 	sev := history.Info
 	pass := st.Expect != nil && st.Expect.Pass
-	if !pass || (st.Comparison != nil && st.Comparison.Regression) {
+	notJudged := st.Outcome == OutcomeRefusedByExclusion
+	if !notJudged && (!pass || (st.Comparison != nil && st.Comparison.Regression)) {
 		sev = history.Warn
 	}
-	data := map[string]any{"bench_run": st.RunID, "benchmark": b.ID, "idx": st.Idx, "outcome": st.Outcome, "pass": pass}
+	data := map[string]any{"bench_run": st.RunID, "benchmark": b.ID, "idx": st.Idx, "outcome": st.Outcome, "result": StepResult(st)}
+	if !notJudged {
+		data["pass"] = pass // a step refused by an exclusion has no pass value: it was not judged
+	}
 	if st.Load != nil {
 		data["load_s"] = st.Load.LoadS
 	}
@@ -1200,7 +1204,10 @@ func (x *suiteExec) finish(br *benchRun) {
 	if st.Stats != nil && st.Stats.Decode != nil {
 		text += fmt.Sprintf(", decode %.1f tok/s", st.Stats.Decode.Mean)
 	}
-	if !pass {
+	switch {
+	case notJudged:
+		text += ", not judged: the profile forces a node that exclude_nodes names"
+	case !pass:
 		text += ", expectations not met"
 	}
 	if st.Comparison != nil && st.Comparison.Regression {

@@ -34,15 +34,15 @@ export async function loadResults(id, redraw) {
   redraw();
 }
 
-const RESULT_BADGE = { pass: ['Passed', 'ready'], partial: ['Partly passed', 'load'], fail: ['Failed', 'fail'], cancelled: ['Cancelled', 'n'], none: ['No result', 'n'], refused: ['Refused (excluded)', 'n'] };
-const RESULT_COLOR = { pass: 'mint', partial: 'amber', fail: 'coral', cancelled: 'mut', none: 'mut', refused: 'mut' };
+const RESULT_BADGE = { pass: ['Passed', 'ready'], partial: ['Partly passed', 'load'], fail: ['Failed', 'fail'], cancelled: ['Cancelled', 'n'], none: ['No result', 'n'], not_judged: ['Not judged (excluded node)', 'n'] };
+const RESULT_COLOR = { pass: 'mint', partial: 'amber', fail: 'coral', cancelled: 'mut', none: 'mut', not_judged: 'mut' };
 const resultBadge = r => { const [t, k] = RESULT_BADGE[r] || [r, 'n']; return badge(t, k); };
 
 // The result of a run of a suite, as the server judges it for the dots.
 function runResult(r) {
   if (r.state === 'cancelled') return 'cancelled';
   if (!r.summary || ['queued', 'running', 'paused', 'skipped'].includes(r.state)) return r.state === 'failed' ? 'fail' : 'none';
-  if (!r.summary.ran && r.summary.refused > 0 && r.state === 'completed') return 'refused';
+  if (!r.summary.ran && r.summary.refused_by_exclusion > 0 && r.state === 'completed') return 'not_judged';
   if (r.summary.failed === 0 && r.state === 'completed') return 'pass';
   return r.summary.passed > 0 && r.summary.failed > 0 ? 'partial' : 'fail';
 }

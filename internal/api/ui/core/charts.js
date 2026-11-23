@@ -236,7 +236,7 @@ export function loadSpark(marks, o = {}) {
 // monitor draws it: one pill per run, oldest left, newest right. marks:
 // [{result: 'pass' | 'partial' | 'fail' | 'cancelled' | 'none', tip, href}].
 // A pill with an href is a link to its run.
-const DOT_WORD = { pass: 'passed', partial: 'partly passed', fail: 'failed', cancelled: 'cancelled', none: 'no result' };
+const DOT_WORD = { pass: 'passed', partial: 'partly passed', fail: 'failed', cancelled: 'cancelled', none: 'no result', not_judged: 'not judged' };
 export function dots(marks, o = {}) {
   const list = (marks || []).slice(-(o.max || 30));
   if (!list.length) return h('span.mut', o.empty || 'Not run yet');

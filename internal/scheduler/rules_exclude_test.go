@@ -65,8 +65,12 @@ func TestExclude_OnlyFittingNodeExcluded_RequestWaitsWithReason(t *testing.T) {
 		t.Fatalf("status wait reason = %q", got)
 	}
 	h.advance(5 * time.Minute)
-	e := h.failed(w, http.StatusServiceUnavailable, ReasonNodeExcluded)
-	if e.RetryAfter == 0 || !strings.Contains(e.Message, "node a is excluded by config") {
+	// 0.1.7 review, ES3: an automatic profile is not refused for the
+	// exclusion (only a profile that forces an excluded node is): it keeps
+	// the ordinary refusal of a request that found no room, and the message
+	// says how many nodes are excluded.
+	e := h.failed(w, http.StatusServiceUnavailable, ReasonClusterBusy)
+	if e.RetryAfter == 0 || !strings.Contains(e.Message, "node a is excluded by config") || !strings.Contains(e.Message, "1 node excluded by config") {
 		t.Fatalf("error = %+v", e)
 	}
 	if len(h.prober.calls) != 0 {

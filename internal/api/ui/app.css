@@ -481,7 +481,7 @@ svg.lspark .refused{fill:none;stroke:var(--amber);stroke-width:1.5}
 .pd{display:block;width:7px;height:20px;border-radius:3.5px;background:#3a4440;flex:none}
 a.pd{transition:transform .1s}
 a.pd:hover,a.pd:focus-visible{transform:scaleY(1.2);outline:none;filter:brightness(1.2)}
-.pd-pass{background:var(--mint)}.pd-fail{background:var(--coral)}.pd-partial{background:var(--amber)}.pd-cancelled,.pd-none{background:#3a4440}
+.pd-pass{background:var(--mint)}.pd-fail{background:var(--coral)}.pd-partial{background:var(--amber)}.pd-cancelled,.pd-none,.pd-not_judged{background:#3a4440}
 .dots.lg .pd{width:10px;height:30px;border-radius:5px}
 .rate{display:inline-flex;align-items:center;gap:10px;white-space:nowrap}
 .rate-n{font-family:var(--mono);font-size:var(--fs-md);font-variant-numeric:tabular-nums;color:var(--text-2)}

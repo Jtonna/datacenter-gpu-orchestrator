@@ -359,7 +359,7 @@ export function runDetail(run, error) {
         stat('Suite', run.suite_name || run.suite_id), stat('Started', run.started_at ? ago(run.started_at) : DASH),
         stat('Took', run.started_at && run.finished_at ? dur((run.finished_at - run.started_at) / 1000) : run.finished_at ? DASH : 'Not finished'),
         stat('Benchmarks', num(sum.steps)), stat('Passed', num(sum.passed)), stat('Failed', num(sum.failed), null, { cls: sum.failed ? 'err-t' : '' }),
-        sum.refused ? stat('Refused', num(sum.refused)) : null,
+        sum.refused_by_exclusion ? stat('Not judged (excluded node)', num(sum.refused_by_exclusion)) : null,
         stat('Regressions', num(sum.regressions), null, { cls: sum.regressions ? 'err-t' : '' })),
       run.note || run.baseline_run_id ? h('div.cb', h('dl.kv',
         run.note ? [h('dt', 'Note'), h('dd', run.note)] : null,

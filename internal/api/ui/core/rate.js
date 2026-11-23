@@ -5,7 +5,7 @@
 //
 // The marks are the `recent` list the server sends with every aggregate
 // (GET /api/bench/aggregates, and bench.detail of GET /api/models/<key>):
-// [{run_id, at, result: pass | partial | fail | cancelled | none, passed,
+// [{run_id, at, result: pass | partial | fail | cancelled | none | not_judged, passed,
 // failed, outcome}], oldest first. Each pill links to its run.
 
 import { h } from './dom.js';
@@ -13,7 +13,8 @@ import { href } from './router.js';
 import { num, agoText, dateTime } from './format.js';
 import { dots, tipText } from './charts.js';
 
-export const RESULT_WORD = { pass: 'Passed', partial: 'Partly passed', fail: 'Failed', cancelled: 'Cancelled', none: 'No result' };
+export const RESULT_WORD = { pass: 'Passed', partial: 'Partly passed', fail: 'Failed', cancelled: 'Cancelled', none: 'No result',
+  not_judged: 'Not judged: refused because the profile forces an excluded node' };
 
 // runMarks(recent) -> the marks of dots(): a tooltip and a link per run.
 export function runMarks(recent) {

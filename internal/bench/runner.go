@@ -277,7 +277,7 @@ run:
 			continue
 		}
 		if st.Outcome == OutcomeRefusedByExclusion {
-			sum.Refused++
+			sum.RefusedByExclusion++
 			continue
 		}
 		sum.Ran++

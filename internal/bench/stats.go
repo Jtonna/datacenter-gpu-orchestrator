@@ -118,7 +118,7 @@ func Evaluate(spec *benchspec.Benchmark, st *Step) *ExpectResult {
 	got := st.Outcome
 	if got == OutcomeRefusedByExclusion {
 		// Not judged: the step did not run, on purpose (see RunSummary.Refused).
-		res.Pass = false
+		res.Pass, res.NotJudged = false, true
 		res.Checks = append(res.Checks, Check{Name: "outcome", Pass: false, Detail: "not judged: refused by an exclusion (" + st.Reason + ")"})
 		return res
 	}
@@ -211,6 +211,12 @@ func Compare(cur, base *Step, baselineRunID string, th Thresholds) *Comparison {
 		return c
 	}
 	c.Found = true
+	if cur.Outcome == OutcomeRefusedByExclusion {
+		// Not judged, so not a regression either: the configuration keeps
+		// the profile's forced node out on purpose.
+		c.Reasons = append(c.Reasons, "not compared: refused by an exclusion")
+		return c
+	}
 	if cur.Outcome != OutcomeReady {
 		c.Regression = true
 		why := "the baseline loaded and served; this run's outcome is " + cur.Outcome
