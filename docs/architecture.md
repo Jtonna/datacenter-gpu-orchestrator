@@ -274,8 +274,8 @@ Every goroutine the scheduler starts runs under `internal/supervise` (a source s
 | Kind | Tasks | After a failure |
 |---|---|---|
 | Restarts alone | WebSocket status and ping loops, fleet feed and probe, needs writer, background build reads, log relay watch, self-log check, log shipper | Restarts after a backoff (100 ms, 1 s, 5 s, doubling to 30 s; back to the start after a minute without a failure). |
-| Rebuilds, then restarts | catalog (built again from scratch), SSE hub (drops its streams; browsers reconnect to a fresh snapshot), benchmark manager (fails the run in hand; its models are unloaded on the way out), history writer (continues in a fresh file), a launch's supervisor (renews the lease and reads the launch state at once) | As above, after the rebuild. |
-| One-shot work | probes, starts, health waits, worker launches and stops, reaping a model process, the audit writer, a cache eviction, a proxy prefetch, a benchmark step | The failure becomes the work's result (an error the waiting side sees), so nothing waits forever. |
+| Rebuilds, then restarts | catalog (built again from scratch), SSE hub (drops its streams; browsers reconnect to a fresh snapshot), benchmark manager (fails the run in hand; its models are unloaded on the way out), history writer (continues in a fresh file), a launch's supervisor (`pool.launch`) and a host launch's supervisor (`pool.host_launch`, a model hosted on a node): each renews the lease and reads the launch state at once | As above, after the rebuild. |
+| One-shot work | probes, starts, health waits, worker launches and stops, the stops of a model hosted on a node (`instance.remote_stop`: a stop that fails is reported and the kill after it still runs), reaping a model process, the audit writer, a cache eviction, a proxy prefetch, the watch that cuts a forwarded request when its model hosted on a node goes (`proxy.gone_watch`), a benchmark step | The failure becomes the work's result (an error the waiting side sees), so nothing waits forever. |
 | Read-only queries | the scheduler's plan, status and needs queries (task `scheduler.read`, run inside the event loop) | The query answers 500 and the loop goes on; counted in `GET /api/system` as `read_panics` too. Never toward the stop below: it changed nothing. |
 | Stops Potluck | the scheduler event loop, the pool's lost-node check, applying a configuration change | Their state cannot be rebuilt in place: see below. |
 
@@ -287,8 +287,8 @@ Every goroutine the scheduler starts runs under `internal/supervise` (a source s
 | needs writer | scheduler (its queue) | restarts | stops Potluck |
 | history writer | history store | rebuilds (fresh file), restarts | stops Potluck |
 | benchmark manager | benchmark run and store | fails the run, restarts | stops Potluck |
-| a launch's supervisor, worker launches and stops, forced-stop reset | pool (`p.mu`, the launch's `l.mu`) | restarts, or the failure is the work's result | stops Potluck |
-| reaping a model process, starts, health waits, probes | model processes, scheduler | the failure is the work's result | stops Potluck |
+| a launch's supervisor, a host launch's supervisor, worker launches and stops, forced-stop reset | pool (`p.mu`, the launch's `l.mu`) | restarts, or the failure is the work's result | stops Potluck |
+| reaping a model process, starts, health waits, probes, the stops of a model hosted on a node | model processes (a node-hosted model's child: its `mu` and output lock), scheduler | the failure is the work's result | stops Potluck |
 | catalog, SSE hub, WebSocket loops, fleet feed, log relay, self-log, log shipper, audit writer, cache eviction, prefetch | their own state only (plain deferred release) | as in the table above | as outside: the state is the task's own and is rebuilt |
 
 The members of one fan-out (the probes of one pre-flight, the launches or stops of one load, the members of a benchmark group, the nodes of one cache eviction) count as one failure toward the limit below. A failure while Potluck is already stopping on a signal is recorded (exit code 3) but does not shorten the shutdown's grace.

@@ -78,7 +78,10 @@ function profilesPart(m) {
     hand.length ? h('div.scroll', h('table.tbl', { style: 'min-width:420px' },
       h('thead', h('tr', h('th', { scope: 'col' }, 'Profile'), h('th.r', { scope: 'col' }, 'Context'), h('th.r', { scope: 'col' }, 'Needs'), h('th.r', { scope: 'col' }, 'Parallel'))),
       h('tbody', hand.map(p => h('tr', { key: p.id },
-        h('td', h('span.mono', p.id)),
+        h('td', h('span.mono', p.id), p.host === 'node'
+          ? h('span.sub', { title: 'llama-server runs on this node, started by its agent' }, 'hosted on ' + (p.host_node || 'its first forced node'),
+            p.host_overhead_mib ? ` · +${gb(p.host_overhead_mib)} for the host` : null, p.host_problem ? h('span.err-t', ' · ' + p.host_problem) : null)
+          : null),
         h('td.r', p.ctx ? num(p.ctx) : DASH),
         h('td.r', need(p)),
         h('td.r', p.parallel ? num(p.parallel) : DASH))))))

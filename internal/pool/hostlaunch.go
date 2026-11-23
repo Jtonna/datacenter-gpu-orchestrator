@@ -15,6 +15,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // Host launches (phase 6, a console as host; release 0.1.9). A profile with
@@ -37,7 +38,7 @@ var (
 // host_launch is ever sent a host launch (an agent of release 0.1.6 does not).
 func (p *Pool) CanHost(id core.NodeID) (bool, string) {
 	p.mu.Lock()
-	defer p.unlock()
+	defer supervise.Unlocked("pool", p.unlock)
 	return p.canHostLocked(id)
 }
 
@@ -96,9 +97,11 @@ func (p *Pool) StartHost(ctx context.Context, spec scheduler.HostLaunchSpec) (in
 	if port <= 0 {
 		port = agentproto.PortHost
 	}
-	l.mu.Lock()
-	l.st, l.have = st, true
-	l.mu.Unlock()
+	func() {
+		l.mu.Lock()
+		defer supervise.Unlocked("pool", l.mu.Unlock)
+		l.st, l.have = st, true
+	}()
 	h := &hostRun{p: p, l: l}
 	ch := instance.NewRemoteChild(net.JoinHostPort(addrIP, strconv.Itoa(port)), st.Command, spec.APIKey, h.stop, nil)
 	h.ch = ch
@@ -118,7 +121,7 @@ func nonNil(s []string) []string {
 // holdHost checks that the node can host and holds a new launch for it.
 func (p *Pool) holdHost(spec scheduler.HostLaunchSpec) (*launch, string, error) {
 	p.mu.Lock()
-	defer p.unlock()
+	defer supervise.Unlocked("pool", p.unlock)
 	if ok, why := p.canHostLocked(spec.Node); !ok {
 		return nil, "", fmt.Errorf("%s: node %s cannot host: %s", scheduler.ReasonHostNotCapable, spec.Node, why)
 	}
@@ -144,22 +147,36 @@ type hostRun struct {
 // launch has exited (or its agent no longer has it); it then reports the
 // exit to the child. Only this goroutine copies the log, so the child sees
 // every byte once.
+//
+// Task pool.host_launch, policy restart (as pool.launch): its state is the
+// agent's, so after a failure it renews the lease and reads the launch state
+// at once; ready is kept across the restart so the child is told once. A
+// failure inside l.mu or p.mu stops Potluck (supervise.Unlocked).
 func (h *hostRun) supervise() {
 	p, l := h.p, h.l
 	ctx, cancel := context.WithCancel(context.Background())
-	l.mu.Lock()
-	l.cancel = cancel
-	l.mu.Unlock()
-	go func() {
-		defer close(l.done)
-		defer cancel()
+	func() {
+		l.mu.Lock()
+		defer supervise.Unlocked("pool", l.mu.Unlock)
+		l.cancel = cancel
+	}()
+	restarted, ready := false, false
+	supervise.Go(ctx, supervise.Spec{Name: "pool.host_launch", Policy: supervise.Restart, Rebuild: func(any) { restarted = true },
+		Done: func() { cancel(); close(l.done) }}, func(ctx context.Context) {
+		if restarted {
+			p.renew(ctx, l)
+			p.poll(ctx, l)
+		}
 		lease := time.NewTicker(p.o.LeaseEvery)
 		defer lease.Stop()
 		logs := time.NewTicker(2 * time.Second)
 		defer logs.Stop()
-		poll := time.NewTicker(hostPollEvery[0])
+		every := hostPollEvery[0]
+		if ready {
+			every = hostPollEvery[1]
+		}
+		poll := time.NewTicker(every)
 		defer poll.Stop()
-		ready := false
 		for {
 			select {
 			case <-ctx.Done():
@@ -172,6 +189,7 @@ func (h *hostRun) supervise() {
 				p.copyLog(ctx, l)
 			case <-l.changed:
 			case <-poll.C:
+				supervise.Point("pool.host_launch", l.id) // test hook, per host launch
 				p.poll(ctx, l)
 			}
 			if ex := l.exitInfo(); ex != nil {
@@ -186,7 +204,7 @@ func (h *hostRun) supervise() {
 				poll.Reset(hostPollEvery[1])
 			}
 		}
-	}()
+	})
 }
 
 // finish reports the launch's end to the child and lets the launch go.
@@ -211,7 +229,7 @@ func (h *hostRun) finish(ex *agentproto.ExitInfo, confirmed bool) {
 
 func (p *Pool) endHost(l *launch, confirmed bool) {
 	p.mu.Lock()
-	defer p.unlock()
+	defer supervise.Unlocked("pool", p.unlock)
 	p.endLaunchLocked(l, confirmed)
 	p.publishLogSnapLocked()
 }
@@ -225,9 +243,12 @@ func (h *hostRun) stop(mode instance.StopMode) {
 	p, l := h.p, h.l
 	if lost, why := p.hostNodeGone(l.node); lost {
 		p.log.Info("host launch not stopped: its node is lost", "launch", l.id, "node", l.node)
-		l.mu.Lock()
-		cancel := l.cancel
-		l.mu.Unlock()
+		var cancel context.CancelFunc
+		func() {
+			l.mu.Lock()
+			defer supervise.Unlocked("pool", l.mu.Unlock)
+			cancel = l.cancel
+		}()
 		if cancel != nil {
 			cancel()
 			<-l.done
@@ -253,7 +274,7 @@ func (h *hostRun) stop(mode instance.StopMode) {
 // hostNodeGone reports whether the node of a host launch is lost or gone.
 func (p *Pool) hostNodeGone(id core.NodeID) (bool, string) {
 	p.mu.Lock()
-	defer p.unlock()
+	defer supervise.Unlocked("pool", p.unlock)
 	a := p.agents[string(id)]
 	switch {
 	case a == nil || a.left:

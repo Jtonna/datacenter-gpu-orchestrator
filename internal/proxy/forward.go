@@ -1,6 +1,8 @@
 package proxy
 
 import (
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
+
 	"bytes"
 	"context"
 	"encoding/json"
@@ -86,14 +88,15 @@ func Forward(w http.ResponseWriter, r *http.Request, o Options) (res Result) {
 	if o.Gone != nil {
 		ctx, cancel := context.WithCancel(client)
 		defer cancel()
-		go func() {
+		// Ends with the request: a select, nothing that can fail.
+		go supervise.Once("proxy.gone_watch", func() {
 			select {
 			case <-o.Gone:
 				cut.Store(true)
 				cancel()
 			case <-ctx.Done():
 			}
-		}()
+		}, nil)
 		r = r.WithContext(ctx)
 	}
 

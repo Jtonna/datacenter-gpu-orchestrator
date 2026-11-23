@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // A child whose host program runs on another machine (phase 6, a console as
@@ -159,7 +161,7 @@ func (c *RemoteChild) Exited() <-chan ExitStatus { return c.exitCh }
 // Feed takes the next bytes of the launch's output (the copied launch log).
 func (c *RemoteChild) Feed(b []byte) {
 	c.linesMu.Lock()
-	defer c.linesMu.Unlock()
+	defer supervise.Unlocked("instance", c.linesMu.Unlock)
 	c.lines.Write(b)
 }
 
@@ -179,14 +181,14 @@ func (c *RemoteChild) Finish(st ExitStatus) {
 
 func (c *RemoteChild) closeLines() {
 	c.linesMu.Lock()
-	defer c.linesMu.Unlock()
+	defer supervise.Unlocked("instance", c.linesMu.Unlock)
 	c.lines.Close()
 }
 
 // settle makes st the final status and ends the stops.
 func (c *RemoteChild) settle(st ExitStatus) ExitStatus {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	defer supervise.Unlocked("instance", c.mu.Unlock)
 	st.Requested = st.Requested || c.stopReq
 	if st.Tail == nil {
 		st.Tail = c.ring.Lines()
@@ -206,7 +208,7 @@ func (c *RemoteChild) Done() <-chan struct{} { return c.done }
 // passed on; anything else after the first call is not.
 func (c *RemoteChild) Stop(mode StopMode) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	defer supervise.Unlocked("instance", c.mu.Unlock)
 	select {
 	case <-c.done:
 		return
@@ -219,13 +221,16 @@ func (c *RemoteChild) Stop(mode StopMode) {
 	if c.stopCh == nil {
 		// One goroutine runs the stops in order: a graceful stop, then the
 		// kill that follows it. At most two are ever sent, so the send
-		// below never blocks.
+		// below never blocks. A stop that panics is reported and the next
+		// one (the kill) still runs; the launch's own supervisor and its
+		// lease decide the end.
 		c.stopCh = make(chan StopMode, 2)
-		go func(ch <-chan StopMode) {
+		ch := c.stopCh
+		go supervise.Once("instance.remote_stop", func() {
 			for m := range ch {
-				c.stop(m)
+				supervise.Guard("instance.remote_stop", func() { c.stop(m) }, nil)
 			}
-		}(c.stopCh)
+		}, nil)
 	}
 	c.stopCh <- mode
 }
@@ -278,6 +283,6 @@ func (c *RemoteChild) WaitHealthy(ctx context.Context) error {
 
 func (c *RemoteChild) exitedErr() error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	defer supervise.Unlocked("instance", c.mu.Unlock)
 	return fmt.Errorf("%w: %s", ErrChildExited, c.status)
 }
