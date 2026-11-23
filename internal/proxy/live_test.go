@@ -97,6 +97,9 @@ func TestResultReason(t *testing.T) {
 		{Result{Status: 502, Err: errors.New("x")}, "upstream_error"},
 		{Result{Status: 499}, "client_left"},
 		{Result{Status: 200, Aborted: true}, "aborted"},
+		{Result{Status: 200, Aborted: true, ClientLeft: true}, "client_left"},
+		{Result{Status: 502, Err: errors.New("context canceled"), ClientLeft: true}, "client_left"},
+		{Result{Status: 200, Stalled: true, ClientLeft: true}, "stall"},
 		{Result{Status: 500}, ""},
 	} {
 		if got := c.r.Reason(); got != c.want {
