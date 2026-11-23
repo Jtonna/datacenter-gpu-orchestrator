@@ -95,10 +95,10 @@ func TestUINextAllModulesLoad(t *testing.T) {
 // and the scheduler's own machine), a scheduler with profiles and the
 // benchmark store, and an empty scheduler (no agents, no profiles, no runs).
 func TestUINextScreensExecute(t *testing.T) {
-	const active, paused, excluded = "02:00:00:00:00:01", "02:00:00:00:00:02", "02:00:00:00:00:03"
+	const active, paused, excluded, named = "02:00:00:00:00:01", "02:00:00:00:00:02", "02:00:00:00:00:03", "02:00:00:00:00:04"
 	var conf *config.Config
-	fe, p, _ := feedEnv(t, func(c *config.Config) { c.ExcludeNodes = []string{excluded}; conf = c })
-	for _, id := range []string{active, paused, excluded} {
+	fe, p, _ := feedEnv(t, func(c *config.Config) { c.ExcludeNodes = []string{excluded}; c.NoAutoNodes = []string{named}; conf = c })
+	for _, id := range []string{active, paused, excluded, named} {
 		register(t, fe, id)
 		feedHeartbeat(t, p, id, "")
 	}
@@ -106,8 +106,8 @@ func TestUINextScreensExecute(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := statusWithAgentNodes(t, fe, func() *config.Config { return conf })
-	if s, _ := json.Marshal(st); !strings.Contains(string(s), `"paused":true`) || !strings.Contains(string(s), `"excluded_by":"`+excluded+`"`) {
-		t.Fatalf("the status lacks the paused or the excluded machine: %s", s)
+	if s, _ := json.Marshal(st); !strings.Contains(string(s), `"paused":true`) || !strings.Contains(string(s), `"excluded_by":"`+excluded+`"`) || !strings.Contains(string(s), `"auto":false`) {
+		t.Fatalf("the status lacks the paused, the excluded or the named-only machine: %s", s)
 	}
 	every := func(label string, status any, extra map[string][]string) []any {
 		out := []any{}
@@ -122,10 +122,12 @@ func TestUINextScreensExecute(t *testing.T) {
 	}
 	// the zones of the agent cluster, and the side panel of one of them
 	cluster := every("agents", st, map[string][]string{
-		"zones": {"Zones", "All zones", "1 off", "Off", "Not accepting", "console-1", "Colour key", "Showing 4 of 4"},
+		"zones": {"Zones", "All zones", "1 off", "Off", "Not accepting", "console-1", "Colour key", "Showing 5 of 5", "Named only"},
 	})
 	cluster = append(cluster, map[string]any{"name": "agents: zones, one zone opened", "route": "#/zones?zone=" + active, "status": st, "absent": designSamples},
-		map[string]any{"name": "agents: zones, only the off ones", "route": "#/zones?show=off", "status": st, "expect": []string{"Showing 1 of 4", "Switched off in the configuration"}})
+		// the reason a zone is off: the exclude_nodes entry that matches it
+		map[string]any{"name": "agents: zones, only the off ones", "route": "#/zones?show=off", "status": st,
+			"expect": []string{"Showing 1 of 5", "Off by exclude_nodes: " + excluded}, "absent": []string{"Named only"}})
 	uiExec(t, map[string]any{"shell": "next", "app": true, "base": fe.front.URL, "cases": cluster})
 
 	be := benchEnv(t)
@@ -134,6 +136,24 @@ func TestUINextScreensExecute(t *testing.T) {
 	empty, _, _ := feedEnv(t)
 	uiExec(t, map[string]any{"shell": "next", "app": true, "base": empty.front.URL,
 		"cases": every("empty", "fetch", map[string][]string{"zones": {"Zones"}})})
+}
+
+// Each UI has a visible link to the other, so the owner switches without
+// typing an address: "Classic UI" at the foot of the new shell's rail,
+// "New UI" in the classic UI's header and navigation pane. Both are drawn
+// before any status arrives.
+func TestUISwitchLinks(t *testing.T) {
+	for _, c := range []struct{ shell, text, path string }{{"next", "Classic UI", "/ui/classic/"}, {"classic", "New UI", "/ui/"}} {
+		cases := []any{}
+		for _, r := range []string{"models", "zones", "about"} {
+			if r == "zones" && c.shell == "classic" {
+				r = "nodes"
+			}
+			cases = append(cases, map[string]any{"name": c.shell + ": " + r, "route": "#/" + r,
+				"links": []map[string]string{{"text": c.text, "path": c.path}}})
+		}
+		uiExec(t, map[string]any{"shell": c.shell, "app": true, "cases": cases, "fetch": map[string]any{}})
+	}
 }
 
 // No UI file can send a machine a reboot or a restart: no route of that kind
