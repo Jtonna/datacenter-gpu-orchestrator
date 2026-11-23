@@ -111,7 +111,8 @@ export function benchmarkEditor(o) {
   function startFrom(id) {
     const t = id === 'blank' ? null : (cache.schema.templates || []).find(x => x.id === id);
     bm = t ? clone(t.benchmark) : { id: '', name: '', description: '', profile: '', phases: [{ type: 'load' }, { type: 'unload' }] };
-    bm.id = ''; bm.name = ''; bm.profile = '';
+    bm.id = ''; bm.name = '';
+    if (bm.inputs) delete bm.profile; else bm.profile = ''; // a recipe takes inputs, not a profile
     if (t) bm.description = (t.benchmark.description || '');
     stage = 'edit'; idTouched = false;
   }
@@ -144,6 +145,14 @@ export function benchmarkEditor(o) {
       profiles.map(p => h('option', { value: p.id, selected: bm.profile === p.id }, p.id + (p.kind && p.kind !== 'llama' ? ` (${p.kind})` : ''))),
       bm.profile && !profiles.some(p => p.id === bm.profile) ? h('option', { value: bm.profile, selected: true }, bm.profile + ' (not a profile now)') : null);
     profSel.addEventListener('change', () => { bm.profile = profSel.value; updateSummary(); });
+    // A recipe (data model step 2) names no profile: it takes its model,
+    // context and placement as inputs, filled in by a group entry or a run.
+    const recipe = !parallel && !!bm.inputs;
+    const recipeSw = toggle(recipe, v => {
+      if (v) { bm.inputs = bm.inputs || {}; delete bm.profile; } else { delete bm.inputs; bm.profile = ''; }
+      draw();
+    }, 'A recipe: takes its model as an input');
+    const inputsForm = recipe ? bindForm(bm.inputs, (schema.input_options || []).map(toField), updateSummary, null) : null;
     const tOpt = (schema.benchmark_options || []).find(x => x.name === 'timeout_s') || {};
     const timeoutForm = bindForm(bm, [Object.assign(toField(tOpt), { label: 'Time limit', description: 'The whole benchmark, load and holds included.' })], () => {}, null);
     const tagsCtl = tagInput(bm.tags || [], v => { if (v.length) bm.tags = v; else delete bm.tags; }, 'Add a tag');
@@ -152,7 +161,10 @@ export function benchmarkEditor(o) {
       h('div.cb', h('div.form-grid',
         mk('name', 'Name', nameIn), mk('id', 'Id', idIn, { help: 'Used in suites and in the API.' }),
         mk('description', 'Description', descIn, { wide: true }),
-        parallel ? null : mk('profile', 'Profile', profSel, { help: 'The model to benchmark.' }),
+        parallel ? null : h('label.check.wide', recipeSw, h('span', { style: 'font-weight:700' }, 'A recipe'),
+          h('span.mut', { style: 'font-weight:500' }, recipe ? 'It takes the model, context and placement as inputs; the defaults below can be left empty and filled in by a group or a run.' : 'Off: it runs one fixed profile.')),
+        parallel || recipe ? null : mk('profile', 'Profile', profSel, { help: 'The model to benchmark.' }),
+        recipe ? h('div.wide', h('div.lab', 'Inputs (defaults)'), inputsForm.el) : null,
         parallel ? null : timeoutForm.el,
         mk('tags', 'Tags', tagsCtl, { plain: true, help: 'Optional, for filtering.' }))));
 
@@ -248,6 +260,7 @@ export function benchmarkEditor(o) {
       if (opt.type === 'list' && opt.item_type === 'request') body.push(requestList(p, opt, limits));
       else if (opt.type === 'list' && opt.item_type === 'turn') body.push(turnList(p, opt, limits));
       else if (opt.type === 'request') body.push(singleRequest(p, opt));
+      else if (opt.type === 'object') body.push(objectOption(p, opt));
     }
     return h('div', { style: 'border:1px solid var(--line-2);border-radius:12px;overflow:hidden' },
       h('div.ch', { style: 'background:var(--inset);padding:10px 14px' },
@@ -288,6 +301,13 @@ export function benchmarkEditor(o) {
       h('div.row', smallBtn('+ Add a turn', () => { list.push({ content: '' }); draw(); }, '', { disabled: list.length >= max })));
   }
 
+  // An option whose value is an object (the tasks phase's inline task set),
+  // edited as JSON.
+  function objectOption(p, opt) {
+    const label = opt.name === 'tasks' ? 'Inline task set' : opt.name;
+    return bindForm(p, [{ key: opt.name, type: 'json', label, description: opt.description }], updateSummary, null).el;
+  }
+
   function singleRequest(p, opt) {
     const on = !!p[opt.name];
     const sw = toggle(on, v => { if (v) p[opt.name] = { name: 'request-1', prompt: '', max_tokens: 32 }; else delete p[opt.name]; draw(); }, 'Use its own request');
@@ -315,7 +335,7 @@ export function benchmarkEditor(o) {
     errs = parseErrors('');
     const local = {};
     if (!bm.id) local.id = 'Give it an id. It is filled in from the name; you can change it.';
-    if (!bm.parallel && !bm.profile) local.profile = 'Choose the profile to benchmark.';
+    if (!bm.parallel && !bm.profile && !bm.inputs) local.profile = 'Choose the profile to benchmark, or make it a recipe.';
     if (Object.keys(local).length) { errs.top = local; draw(); toast('Fix the marked fields first.', 'err'); return; }
     saving = true;
     try {
@@ -373,7 +393,17 @@ export function suiteEditor(o) {
     draw();
   })();
 
-  const nameOf = it => { const b = typeof it === 'string' ? benchmarkById(it) : it; return b ? (b.name || b.id) : String(it); };
+  // An entry is a benchmark id, an inline benchmark, a recipe use {benchmark, inputs, matrix} or {group}.
+  const isRef = it => it && typeof it === 'object' && !it.id && (it.group || it.benchmark);
+  const nameOf = it => {
+    if (isRef(it)) {
+      if (it.group) return 'Group ' + it.group;
+      const r = benchmarkById(it.benchmark);
+      return (r ? (r.name || r.id) : it.benchmark) + (it.matrix ? ' (matrix)' : '');
+    }
+    const b = typeof it === 'string' ? benchmarkById(it) : it; return b ? (b.name || b.id) : String(it);
+  };
+  const refNote = it => it.group ? "  runs that group's benchmarks here" : '  recipe' + (it.inputs ? ' · ' + Object.entries(it.inputs).map(([k, v]) => k + ' ' + v).join(', ') : '');
   const updateSummary = () => {
     if (!summaryEl) return;
     const n = su.benchmarks.length;
@@ -403,10 +433,10 @@ export function suiteEditor(o) {
     const addSel = h('select.select', { 'aria-label': 'Add a benchmark' }, all.map(b => h('option', { value: b.id }, `${b.name || b.id}${b.profile ? ' · ' + b.profile : ''}`)));
     const mv = (i, d) => { const j = i + d; if (j < 0 || j >= su.benchmarks.length) return; [su.benchmarks[i], su.benchmarks[j]] = [su.benchmarks[j], su.benchmarks[i]]; draw(); };
     const rows = su.benchmarks.map((it, i) => {
-      const b = typeof it === 'string' ? benchmarkById(it) : it;
+      const b = isRef(it) ? null : typeof it === 'string' ? benchmarkById(it) : it;
       return h('div', { key: 'sb-' + i, style: 'display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;border:1px solid var(--line);border-radius:10px;padding:8px 12px' },
         h('span.mono.mut', { style: 'width:22px' }, i + 1),
-        h('span.grow', h('b', nameOf(it)), b && b.profile ? h('span.mono.mut', '  ' + b.profile) : null, !b ? h('span.err-t', '  not a saved benchmark') : typeof it !== 'string' ? h('span.mut', '  inline') : null),
+        h('span.grow', h('b', nameOf(it)), b && b.profile ? h('span.mono.mut', '  ' + b.profile) : null, isRef(it) ? h('span.mut', refNote(it)) : !b ? h('span.err-t', '  not a saved benchmark') : typeof it !== 'string' ? h('span.mut', '  inline') : null),
         h('span.row', { style: 'gap:6px;flex-wrap:nowrap' }, smallBtn('↑', () => mv(i, -1), '', { 'aria-label': 'Move up', disabled: i === 0 }),
           smallBtn('↓', () => mv(i, 1), '', { 'aria-label': 'Move down', disabled: i === su.benchmarks.length - 1 }),
           smallBtn('Remove', () => { su.benchmarks.splice(i, 1); draw(); }, 'dng', { 'aria-label': 'Remove ' + nameOf(it) })));

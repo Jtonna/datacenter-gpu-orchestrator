@@ -94,6 +94,9 @@ func (c *schedCore) historyLoadStarted(in *inst) {
 		data["need_mib"] = info.Need.MiB
 		data["need_basis"] = c.needBasis(info)
 	}
+	if len(in.tight) > 0 {
+		data["tight_fit"] = tightHistory(in.tight) // tight.go
+	}
 	if v := c.cacheVerdict(in); len(v) > 0 {
 		data["cache_verdict"] = v
 	}

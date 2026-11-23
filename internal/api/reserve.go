@@ -50,6 +50,7 @@ func reserveSettings(c *config.Config) map[string]any {
 		"fill_reserve_kib_per_token": d.FillReserveKiBPerToken, "placement_uses_reserved": d.PlacementUsesReserved,
 		"reserved_drift_warn_mib": d.ReservedDriftWarnMiB, "margin_measured_mib": d.MarginMeasuredMiB,
 		"margin_estimated_percent": d.MarginEstimatedPercent, "margin_estimated_min_mib": d.MarginEstimatedMinMiB,
+		"margin_refuses": d.MarginRefuses,
 		"free_average_window_s": d.FreeAverageWindow.Seconds(),
 	}
 }

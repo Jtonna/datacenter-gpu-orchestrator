@@ -193,9 +193,9 @@ function planLine(plan) {
   const nodes = plan.nodes && plan.nodes.length ? nodeChips(plan.nodes) : null;
   const raw = plan.reason ? 'The scheduler says: ' + plan.reason : null;
   switch (plan.action) {
-    case 'start': return h('span', h('b', 'It would start now'), nodes ? [' on ', nodes] : null, '.');
+    case 'start': return h('span', h('b', 'It would start now'), nodes ? [' on ', nodes] : null, '.', plan.tight_fit ? [' ', badge('Tight fit', 'n'), ' ', h('span.sub', plan.reason)] : null);
     case 'serve': case 'wait': return h('span', h('b', 'It is loaded or loading already'), nodes ? [' on ', nodes] : null, '.');
-    case 'evict': return h('span', h('b', 'It would start after making room'), nodes ? [' on ', nodes] : null, ': another model is unloaded first.');
+    case 'evict': return h('span', h('b', 'It would start after making room'), nodes ? [' on ', nodes] : null, ': another model is unloaded first.', plan.tight_fit ? [' ', badge('Tight fit', 'n'), ' ', h('span.sub', plan.reason)] : null);
     case 'queue': return h('span', { title: raw }, h('b', 'It would wait in the queue. '), plainReason(plan.reason));
     case 'backoff': return h('span', { title: raw }, h('b', 'It is held back for now. '), 'Its last load failed.');
     case 'reject': return h('span', { title: raw }, h('b', 'It cannot be placed. '), plainReason(plan.reason));

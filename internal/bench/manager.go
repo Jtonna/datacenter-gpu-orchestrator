@@ -67,6 +67,11 @@ type ManagerOptions struct {
 	// right after the last request can meet it (default 3 s, negative: no
 	// retry). The end-of-step clean-up unloads with force after it.
 	UnloadGrace time.Duration
+	// Retention is how long a finished run is kept (bench_retention_days,
+	// read at every check); 0 or nil keeps runs for ever. RetentionEvery is
+	// how often expired runs are looked for (default 1 h).
+	Retention      func() time.Duration
+	RetentionEvery time.Duration
 }
 
 // runPlan is the suite and every benchmark it names, as they were when the run
@@ -141,6 +146,9 @@ func NewManager(o ManagerOptions) (*Manager, error) {
 	if o.MaxRun <= 0 {
 		o.MaxRun = 240 * time.Minute
 	}
+	if o.RetentionEvery <= 0 {
+		o.RetentionEvery = DefaultRetentionEvery
+	}
 	if o.Thresholds.LoadPct <= 0 {
 		o.Thresholds.LoadPct = 15
 	}
@@ -214,6 +222,8 @@ func (m *Manager) loop(ctx context.Context) {
 	tick := time.NewTicker(30 * time.Second)
 	defer tick.Stop()
 	m.checkSchedules(true)
+	m.sweepRetention()
+	lastSweep := time.Now()
 	for {
 		if next := m.next(); next != nil {
 			m.running = next
@@ -228,6 +238,10 @@ func (m *Manager) loop(ctx context.Context) {
 		case <-m.wake:
 		case <-tick.C:
 			m.checkSchedules(true)
+			if time.Since(lastSweep) >= m.o.RetentionEvery {
+				m.sweepRetention()
+				lastSweep = time.Now()
+			}
 		}
 		var stop bool
 		func() {
@@ -323,7 +337,10 @@ func (m *Manager) record(typ, sev, profile, summary string, data map[string]any)
 func (m *Manager) brief(r *Run) map[string]any {
 	b := map[string]any{"id": r.ID, "suite_id": r.SuiteID, "suite_name": r.SuiteName, "state": r.State, "trigger": r.Trigger,
 		"queued_at": r.QueuedAt, "started_at": r.StartedAt, "finished_at": r.FinishedAt, "note": r.Note,
-		"baseline_run_id": r.BaselineRunID, "error": r.Error}
+		"baseline_run_id": r.BaselineRunID, "error": r.Error, "kind": runKind(r)}
+	if r.BenchmarkID != "" {
+		b["benchmark_id"] = r.BenchmarkID
+	}
 	if r.Summary != nil {
 		b["summary"] = r.Summary
 	}
@@ -335,6 +352,22 @@ func (m *Manager) brief(r *Run) map[string]any {
 		}
 	}()
 	return b
+}
+
+// runKind is a run's kind, suite for a run read without one.
+func runKind(r *Run) string {
+	if r.Kind == RunKindBenchmark {
+		return RunKindBenchmark
+	}
+	return RunKindSuite
+}
+
+// runTarget is what a run executed: the suite id, or the benchmark id of a direct run.
+func runTarget(r *Run) string {
+	if runKind(r) == RunKindBenchmark {
+		return r.BenchmarkID
+	}
+	return r.SuiteID
 }
 
 func (m *Manager) publishRun(r *Run) {
@@ -359,7 +392,32 @@ func newRunID(now time.Time) string {
 	return "run-" + now.UTC().Format("20060102T150405") + "-" + hex.EncodeToString(b[:])
 }
 
+// lookBenchmark and lookGroup read the stored benchmarks and groups (suites).
+func (m *Manager) lookBenchmark(id string) (*benchspec.Benchmark, bool) {
+	sb, err := m.o.Store.GetBenchmark(id)
+	if err != nil {
+		return nil, false
+	}
+	return sb.Spec, true
+}
+
+func (m *Manager) lookGroup(id string) (*benchspec.Suite, bool) {
+	ss, err := m.o.Store.GetSuite(id)
+	if err != nil {
+		return nil, false
+	}
+	return ss.Spec, true
+}
+
+// resolve expands the group (nested groups, recipes with their inputs,
+// matrix entries: benchspec.ExpandGroup) and reads every benchmark it names.
+// The plan keeps the expanded list: what the run executes.
 func (m *Manager) resolve(s *benchspec.Suite) (*runPlan, error) {
+	flat, err := benchspec.ExpandGroup(s, m.lookBenchmark, m.lookGroup)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
+	}
+	s = flat
 	plan := &runPlan{Suite: s, Benchmarks: map[string]*benchspec.Benchmark{}}
 	var errs []error
 	need := func(id string) *benchspec.Benchmark {
@@ -402,7 +460,7 @@ func (m *Manager) resolve(s *benchspec.Suite) (*runPlan, error) {
 				}
 			}
 		}
-		if !b.IsParallel() && m.o.ProfileOK != nil && !m.o.ProfileOK(b.Profile) {
+		if !b.IsParallel() && b.Applied == nil && m.o.ProfileOK != nil && !m.o.ProfileOK(b.Profile) {
 			errs = append(errs, fmt.Errorf("benchmark %q: profile %q does not exist (any more)", b.ID, b.Profile))
 		}
 	}
@@ -421,9 +479,6 @@ func (m *Manager) Enqueue(suiteID string, o EnqueueOptions) (*Run, error) {
 	if !ss.Spec.Runnable() {
 		return nil, fmt.Errorf("%w: suite %q is %s and cannot be run: %s", ErrNotRunnable, suiteID, ss.Spec.Status, ss.Spec.Reason)
 	}
-	if len(o.Note) > 500 {
-		return nil, fmt.Errorf("%w: note is longer than 500 characters", ErrInvalid)
-	}
 	spec := ss.Spec
 	if o.EvictOthers != nil {
 		c := *spec
@@ -431,13 +486,52 @@ func (m *Manager) Enqueue(suiteID string, o EnqueueOptions) (*Run, error) {
 		c.EvictOthers = &v
 		spec = &c
 	}
-	plan, err := m.resolve(spec)
-	if err != nil {
-		return nil, err
-	}
 	baseline := o.Baseline
 	if baseline == "" {
 		baseline = ss.Spec.Baseline
+	}
+	return m.queueRun(spec, &Run{Kind: RunKindSuite, SuiteID: suiteID, SuiteName: ss.Spec.Title()}, baseline, o.Note, o.Trigger)
+}
+
+// BenchRunOptions are the optional fields of a direct run of one benchmark.
+// The waiting options are those of a suite (nil: the suite defaults: wait
+// until idle, up to 600 s, never unload other users' models).
+type BenchRunOptions struct {
+	Baseline     string
+	Note         string
+	EvictOthers  *bool
+	OnlyWhenIdle *bool
+	IdleWaitS    *int
+	// Inputs fill in or override a recipe's default inputs (refused for a
+	// benchmark with a fixed profile).
+	Inputs *benchspec.Inputs
+}
+
+// EnqueueBenchmark queues a run of one benchmark on its own (data model step
+// 1): a run of kind "benchmark" with one step and no suite. Its default
+// baseline is the benchmark's previous completed direct run.
+func (m *Manager) EnqueueBenchmark(id string, o BenchRunOptions) (*Run, error) {
+	sb, err := m.o.Store.GetBenchmark(id)
+	if err != nil {
+		return nil, err
+	}
+	if o.IdleWaitS != nil && (*o.IdleWaitS < 0 || *o.IdleWaitS > 86400) {
+		return nil, fmt.Errorf("%w: idle_wait_s must be 0 to 86400", ErrInvalid)
+	}
+	zero := 0
+	spec := &benchspec.Suite{Name: sb.Spec.Title(), Benchmarks: []benchspec.SuiteItem{{Ref: id, Inputs: o.Inputs}}, CooldownS: &zero,
+		OnlyWhenIdle: o.OnlyWhenIdle, IdleWaitS: o.IdleWaitS, EvictOthers: o.EvictOthers}
+	return m.queueRun(spec, &Run{Kind: RunKindBenchmark, BenchmarkID: id, SuiteName: sb.Spec.Title()}, o.Baseline, o.Note, "")
+}
+
+// queueRun resolves spec, checks the note and the baseline, and queues r.
+func (m *Manager) queueRun(spec *benchspec.Suite, r *Run, baseline, note, trig string) (*Run, error) {
+	if len(note) > 500 {
+		return nil, fmt.Errorf("%w: note is longer than 500 characters", ErrInvalid)
+	}
+	plan, err := m.resolve(spec)
+	if err != nil {
+		return nil, err
 	}
 	if baseline != "" {
 		if _, err := m.o.Store.GetRun(baseline); err != nil {
@@ -445,13 +539,11 @@ func (m *Manager) Enqueue(suiteID string, o EnqueueOptions) (*Run, error) {
 		}
 	}
 	snap, _ := json.Marshal(plan)
-	trig := o.Trigger
 	if trig == "" {
 		trig = "manual"
 	}
 	now := m.o.Now()
-	r := &Run{ID: newRunID(now), SuiteID: suiteID, SuiteName: ss.Spec.Title(), State: RunQueued, Note: o.Note, Trigger: trig,
-		BaselineRunID: baseline, QueuedAt: now.UnixMilli(), Version: m.o.Version, Suite: snap}
+	r.ID, r.State, r.Note, r.Trigger, r.BaselineRunID, r.QueuedAt, r.Version, r.Suite = newRunID(now), RunQueued, note, trig, baseline, now.UnixMilli(), m.o.Version, snap
 	copyOut, err := m.enqueue(r, plan)
 	if err != nil {
 		return nil, err

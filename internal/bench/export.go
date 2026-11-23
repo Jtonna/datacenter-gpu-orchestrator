@@ -279,6 +279,8 @@ func phaseNumbers(p *PhaseResult) string {
 		if c := p.Concurrent; c != nil {
 			parts = append(parts, strconv.Itoa(c.N)+" together, "+f1(c.WallMS/1000)+" s, "+strconv.Itoa(c.Errors)+" errors")
 		}
+	case "tasks":
+		parts = append(parts, tasksNumbers(p.Tasks)...)
 	}
 	if s := p.Stats; s != nil && p.Type != "load" && p.Type != "unload" {
 		if s.Decode != nil {
@@ -338,6 +340,11 @@ func ExportMarkdownPhases(r *Run) string {
 				fmt.Fprintf(&b, "| %d | %d | %d | %s | %s | %s | %s |\n", t.Turn, t.PromptTokens, t.CacheN, f1(t.PrefillTPS), f2(t.DecodeTPS), ttft, f1(t.WallMS))
 			}
 		}
+		for _, p := range st.Phases {
+			if p.Tasks != nil && len(p.Tasks.Items) > 0 {
+				b.WriteString(tasksMarkdown(&p))
+			}
+		}
 	}
 	return b.String()
 }
@@ -347,7 +354,8 @@ func ExportCSVPhases(r *Run) (string, error) {
 	var buf bytes.Buffer
 	w := csv.NewWriter(&buf)
 	if err := w.Write([]string{"run_id", "suite", "step_idx", "benchmark", "phase_idx", "type", "label", "state", "outcome", "duration_s", "load_s", "avg_mb_s", "bytes", "memory_mib",
-		"requests", "decode_tps_mean", "prefill_tps_mean", "ttft_ms_mean", "held_s", "unload_s", "concurrent_n", "concurrent_wall_ms", "concurrent_errors", "error"}); err != nil {
+		"requests", "decode_tps_mean", "prefill_tps_mean", "ttft_ms_mean", "held_s", "unload_s", "concurrent_n", "concurrent_wall_ms", "concurrent_errors", "error",
+		"tasks_total", "tasks_answered", "tasks_failed", "tasks_timed_out", "tasks_not_sent", "task_decode_tps_median", "task_scores"}); err != nil {
 		return "", err
 	}
 	num := func(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
@@ -385,6 +393,7 @@ func ExportCSVPhases(r *Run) (string, error) {
 				cn, cw, ce = strconv.Itoa(c.N), num(c.WallMS), strconv.Itoa(c.Errors)
 			}
 			row = append(row, reqs, dec, pre, ttft, held, unl, cn, cw, ce, p.Error)
+			row = append(row, tasksCSV(p.Tasks)...)
 			if err := w.Write(row); err != nil {
 				return "", err
 			}

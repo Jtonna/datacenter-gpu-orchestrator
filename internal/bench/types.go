@@ -423,9 +423,18 @@ type RunSummary struct {
 	Regressions        int `json:"regressions"`
 }
 
-// Run is one execution of a suite.
+// Run kinds: what a run executed.
+const (
+	RunKindSuite     = "suite"     // a suite (every run before release 0.1.8's data model)
+	RunKindBenchmark = "benchmark" // one benchmark, run directly: SuiteID is empty, SuiteName its title
+)
+
+// Run is one execution of a suite or of one benchmark.
 type Run struct {
-	ID            string          `json:"id"`
+	ID string `json:"id"`
+	// Kind is suite or benchmark; BenchmarkID names the benchmark of a direct run.
+	Kind          string          `json:"kind"`
+	BenchmarkID   string          `json:"benchmark_id,omitempty"`
 	SuiteID       string          `json:"suite_id"`
 	SuiteName     string          `json:"suite_name"`
 	State         string          `json:"state"`
@@ -441,6 +450,11 @@ type Run struct {
 	Env           *Environment    `json:"env,omitempty"`   // what the run ran on
 	Summary       *RunSummary     `json:"summary,omitempty"`
 	Steps         []Step          `json:"steps,omitempty"`
+	// Pinned: never trimmed by retention (bench_retention_days).
+	Pinned bool `json:"pinned"`
+	// TrimmedAt (unix ms) is when retention removed the run's requests and
+	// transcripts; the run, its steps and its measurements stay.
+	TrimmedAt int64 `json:"trimmed_at,omitempty"`
 }
 
 // RunFilter selects runs for a listing.
@@ -448,6 +462,10 @@ type RunFilter struct {
 	Suite string
 	State string
 	Limit int
+	// Kind: only suite runs or only direct benchmark runs. Benchmark: the
+	// direct runs of a benchmark and every run with a step of it.
+	Kind      string
+	Benchmark string
 }
 
 // TrendPoint is one value of a metric over past runs.

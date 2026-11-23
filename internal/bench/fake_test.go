@@ -106,6 +106,41 @@ type fakeAPI struct {
 	strictUnload bool
 	linger       time.Duration
 	stuck        map[string]int
+	// ProfileMaker: the consoles the node feed lists, and the profiles the
+	// runner made from a recipe's inputs (id to its last settings).
+	consoles []Console
+	made     map[string]map[string]any
+	madeN    int // EnsureProfile calls
+	makeErr  error
+}
+
+func (f *fakeAPI) Consoles(ctx context.Context) ([]Console, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.log("consoles")
+	return append([]Console(nil), f.consoles...), nil
+}
+
+func (f *fakeAPI) EnsureProfile(ctx context.Context, id string, spec map[string]any) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.log("profile " + id)
+	f.madeN++
+	if f.makeErr != nil {
+		return f.makeErr
+	}
+	if f.made == nil {
+		f.made = map[string]map[string]any{}
+	}
+	f.made[id] = spec
+	if f.profs[id] == nil {
+		p := fakeProf{modelFile: spec["model"].(string)}
+		if n, ok := spec["force_nodes"].([]string); ok {
+			p.nodes = n
+		}
+		f.prof(id, p)
+	}
+	return nil
 }
 
 func newFake() *fakeAPI {

@@ -149,6 +149,14 @@ type Benchmark struct {
 	// Parallel makes this a concurrent step: the benchmarks named here start at
 	// the same moment. It excludes every other field except id, name, description and tags.
 	Parallel []string `json:"parallel,omitempty" yaml:"parallel,omitempty"`
+	// Inputs make the benchmark a recipe (inputs.go): it names no profile;
+	// the profile is made from the inputs (these are the defaults) when the
+	// benchmark is used in a group or run directly.
+	Inputs *Inputs `json:"inputs,omitempty" yaml:"inputs,omitempty"`
+	// Recipe and Applied are set by the runner on a use of a recipe: the
+	// recipe's id and the inputs it ran with. A saved benchmark has neither.
+	Recipe  string  `json:"recipe,omitempty" yaml:"recipe,omitempty"`
+	Applied *Inputs `json:"applied_inputs,omitempty" yaml:"applied_inputs,omitempty"`
 }
 
 // IsParallel says whether this is a concurrent step.
@@ -239,10 +247,13 @@ func (b *Benchmark) Validate(profileOK func(string) bool) error {
 			add("tag %q must be a slug (lower-case letters, digits, '.', '-', '_')", t)
 		}
 	}
+	if b.Recipe != "" || b.Applied != nil {
+		add("recipe and applied_inputs are set by the runner on a use of a recipe; leave them out")
+	}
 	if b.IsParallel() {
 		if b.Profile != "" || len(b.Requests) > 0 || b.Cold != nil || b.Repeats != 0 || b.WarmupRequests != nil ||
-			b.Expect != nil || b.UnloadAfter != nil || b.TimeoutS != 0 || len(b.Phases) > 0 {
-			add("a parallel step names the benchmarks to start together and nothing else (no profile, phases, requests, cold, repeats, warmup_requests, timeout_s, expect or unload_after)")
+			b.Expect != nil || b.UnloadAfter != nil || b.TimeoutS != 0 || len(b.Phases) > 0 || b.Inputs != nil {
+			add("a parallel step names the benchmarks to start together and nothing else (no profile, inputs, phases, requests, cold, repeats, warmup_requests, timeout_s, expect or unload_after)")
 		}
 		if len(b.Parallel) < 2 || len(b.Parallel) > MaxParallelMembers {
 			add("parallel needs 2 to %d benchmark ids", MaxParallelMembers)
@@ -262,8 +273,12 @@ func (b *Benchmark) Validate(profileOK func(string) bool) error {
 		return errors.Join(errs...)
 	}
 	switch {
+	case b.Profile != "" && b.Inputs != nil:
+		add("give profile (a fixed profile) or inputs (a recipe: the profile is made from its inputs), not both")
+	case b.Inputs != nil:
+		b.Inputs.validate("inputs", add)
 	case b.Profile == "":
-		add("profile is required")
+		add("profile or inputs is required: a fixed profile, or inputs (model, ctx, placement) for a recipe")
 	case profileOK != nil && !profileOK(b.Profile):
 		add("profile %q is not a profile of this scheduler", b.Profile)
 	}
@@ -356,14 +371,23 @@ func (s *Schedule) Next(from, last time.Time) (time.Time, bool) {
 	return t, true
 }
 
-// SuiteItem is one entry of a suite: the id of a stored benchmark, or an inline benchmark.
+// SuiteItem is one entry of a suite (a group): the id of a stored benchmark,
+// an inline benchmark, a benchmark with inputs or a matrix ({"benchmark":
+// id, "inputs": {...}, "matrix": {...}}), or another group ({"group": id}).
 type SuiteItem struct {
 	Ref    string
 	Inline *Benchmark
+	Group  string
+	Inputs *Inputs
+	Matrix *Matrix
 }
 
-// MarshalJSON writes a reference as a string and an inline benchmark as an object.
+// MarshalJSON writes a reference as a string, an inline benchmark as an
+// object, and an entry with inputs, a matrix or a group as its object form.
 func (i SuiteItem) MarshalJSON() ([]byte, error) {
+	if i.isEntry() {
+		return json.Marshal(entryJSON{Benchmark: i.Ref, Group: i.Group, Inputs: i.Inputs, Matrix: i.Matrix})
+	}
 	if i.Inline != nil {
 		return json.Marshal(i.Inline)
 	}
@@ -374,8 +398,16 @@ func (i SuiteItem) MarshalJSON() ([]byte, error) {
 func (i *SuiteItem) UnmarshalJSON(b []byte) error {
 	b = bytes.TrimSpace(b)
 	if len(b) > 0 && b[0] == '"' {
-		i.Inline = nil
+		*i = SuiteItem{}
 		return json.Unmarshal(b, &i.Ref)
+	}
+	if hasEntryKey(b) {
+		var e entryJSON
+		if err := DecodeStrict(b, &e); err != nil {
+			return err
+		}
+		i.fromEntry(e)
+		return nil
 	}
 	var bm Benchmark
 	if err := DecodeStrict(b, &bm); err != nil {
@@ -388,7 +420,7 @@ func (i *SuiteItem) UnmarshalJSON(b []byte) error {
 // UnmarshalYAML reads a scalar or a mapping.
 func (i *SuiteItem) UnmarshalYAML(n *yaml.Node) error {
 	if n.Kind == yaml.ScalarNode {
-		i.Inline = nil
+		*i = SuiteItem{}
 		return n.Decode(&i.Ref)
 	}
 	raw, err := yaml.Marshal(n)
@@ -397,6 +429,20 @@ func (i *SuiteItem) UnmarshalYAML(n *yaml.Node) error {
 	}
 	dec := yaml.NewDecoder(bytes.NewReader(raw))
 	dec.KnownFields(true)
+	entry := false
+	for k := 0; n.Kind == yaml.MappingNode && k+1 < len(n.Content); k += 2 {
+		if v := n.Content[k].Value; v == "benchmark" || v == "group" {
+			entry = true
+		}
+	}
+	if entry {
+		var e entryJSON
+		if err := dec.Decode(&e); err != nil {
+			return fmt.Errorf("line %d: %w", n.Line, err)
+		}
+		i.fromEntry(e)
+		return nil
+	}
 	var bm Benchmark
 	if err := dec.Decode(&bm); err != nil {
 		return fmt.Errorf("line %d: %w", n.Line, err)
@@ -488,8 +534,13 @@ type Lookup func(id string) (*Benchmark, bool)
 
 // Validate checks a suite. References must resolve through look; inline
 // benchmarks are validated and given the id "<suite>-<position>" when they
-// have none. Parallel members must be non-parallel benchmarks.
+// have none. Parallel members must be non-parallel benchmarks. A group entry
+// is refused: ValidateGroup checks a suite that contains groups.
 func (s *Suite) Validate(profileOK func(string) bool, look Lookup) error {
+	return s.ValidateGroup(profileOK, look, nil)
+}
+
+func (s *Suite) validate(profileOK func(string) bool, look Lookup) error {
 	var errs []error
 	add := func(f string, a ...any) { errs = append(errs, fmt.Errorf(f, a...)) }
 	if !slugRe.MatchString(s.ID) {
@@ -570,6 +621,9 @@ func (s *Suite) Validate(profileOK func(string) bool, look Lookup) error {
 		known[it.Inline.ID] = it.Inline
 	}
 	for i, it := range s.Benchmarks {
+		if it.Group != "" {
+			continue // validateEntry
+		}
 		if it.Inline != nil {
 			if it.Inline.IsParallel() {
 				s.checkMembers(i, it.Inline, resolve, add)
@@ -596,6 +650,8 @@ func (s *Suite) checkMembers(i int, b *Benchmark, resolve Lookup, add func(strin
 			add("benchmarks[%d]: parallel member %q is not a benchmark", i, id)
 		case m.IsParallel():
 			add("benchmarks[%d]: parallel member %q is itself a parallel step", i, id)
+		case m.IsRecipe():
+			add("benchmarks[%d]: parallel member %q is a recipe; the members of a parallel step need a fixed profile", i, id)
 		}
 	}
 }

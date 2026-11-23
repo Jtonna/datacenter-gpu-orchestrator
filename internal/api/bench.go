@@ -124,6 +124,7 @@ func (s *Server) benchRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/bench/profiles", g(s.benchProfiles))
 	s.externalRoutes(m)
 	s.taskRoutes(m)
+	s.modelRoutes(m)
 	m.HandleFunc("GET /api/system", s.handleSystem)
 }
 
@@ -353,7 +354,11 @@ func (s *Server) listSuites(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, m)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"suites": out})
+	key := "suites"
+	if strings.HasPrefix(r.URL.Path, "/api/bench/groups") {
+		key = "groups"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{key: out})
 }
 
 func (s *Server) getSuite(w http.ResponseWriter, r *http.Request) {
@@ -383,7 +388,7 @@ func (s *Server) parseSuite(w http.ResponseWriter, r *http.Request, wantID strin
 			return nil, false
 		}
 	}
-	if err := su.Validate(s.profileOK, s.lookup); err != nil {
+	if err := su.ValidateGroup(s.profileOK, s.lookup, s.groupLookup); err != nil {
 		apiErr(w, http.StatusUnprocessableEntity, "%v", err)
 		return nil, false
 	}
@@ -437,6 +442,10 @@ func (s *Server) putSuite(w http.ResponseWriter, r *http.Request) {
 func (s *Server) deleteSuite(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	old, _ := s.opts.BenchStore.GetSuite(id)
+	if in, _ := s.opts.BenchStore.GroupsUsing(id); len(in) > 0 {
+		apiErr(w, http.StatusConflict, "group %q is used by the groups %v: remove it from them first", id, in)
+		return
+	}
 	if err := s.opts.BenchStore.DeleteSuite(id); err != nil {
 		s.storeErr(w, err)
 		return
@@ -480,7 +489,13 @@ func (s *Server) runSuite(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	f := bench.RunFilter{Suite: q.Get("suite"), State: q.Get("state")}
+	f := bench.RunFilter{Suite: q.Get("suite"), State: q.Get("state"), Kind: q.Get("kind"), Benchmark: q.Get("benchmark")}
+	switch f.Kind {
+	case "", bench.RunKindSuite, bench.RunKindBenchmark:
+	default:
+		badParam(w, "kind must be suite or benchmark, got %q", f.Kind)
+		return
+	}
 	switch f.State {
 	case "", bench.RunQueued, bench.RunRunning, bench.RunPaused, bench.RunCompleted, bench.RunFailed, bench.RunCancelled, bench.RunSkipped:
 	default:
@@ -554,8 +569,10 @@ func (s *Server) exportRun(w http.ResponseWriter, r *http.Request) {
 			out, err = bench.ExportCSVPhases(run)
 		case "turns":
 			out, err = bench.ExportCSVTurns(run)
+		case "tasks":
+			out, err = bench.ExportCSVTasks(run)
 		default:
-			badParam(w, "detail must be phases or turns (or empty for one row per benchmark), got %q", d)
+			badParam(w, "detail must be phases, turns or tasks (or empty for one row per benchmark), got %q", d)
 			return
 		}
 		if err != nil {
@@ -593,7 +610,7 @@ func (s *Server) trends(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = n
 	}
-	pts, err := s.opts.BenchStore.Trend(id, metric, limit)
+	pts, err := s.opts.BenchStore.TrendOf(id, metric, q.Get("scorer"), limit)
 	if err != nil {
 		badParam(w, "%v", err)
 		return

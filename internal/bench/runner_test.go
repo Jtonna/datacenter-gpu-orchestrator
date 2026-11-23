@@ -79,7 +79,14 @@ func (tm *testMgr) suite(js string) *benchspec.Suite {
 		}
 		return b.Spec, true
 	}
-	if err := s.Validate(nil, look); err != nil {
+	groups := func(id string) (*benchspec.Suite, bool) {
+		g, err := tm.store.GetSuite(id)
+		if err != nil {
+			return nil, false
+		}
+		return g.Spec, true
+	}
+	if err := s.ValidateGroup(nil, look, groups); err != nil {
 		tm.t.Fatal(err)
 	}
 	if err := tm.store.SaveSuite(s, SourceAPI, 1); err != nil {

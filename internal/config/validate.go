@@ -430,6 +430,9 @@ func (c *Config) validateBench(add func(string, ...any)) {
 	if b.MaxRunMinutes < 1 || b.MaxRunMinutes > 10080 {
 		add("bench.max_run_minutes must be 1 to 10080, got %d", b.MaxRunMinutes)
 	}
+	if b.RetentionDays < 0 || b.RetentionDays > MaxBenchRetentionDays {
+		add("bench.retention_days must be 0 (off) to %d, got %d", MaxBenchRetentionDays, b.RetentionDays)
+	}
 	profileOK := func(id string) bool { _, _, ok := c.Resolve(id); return ok }
 	byID := map[string]*benchspec.Benchmark{}
 	for i, bm := range b.Benchmarks {
@@ -456,13 +459,21 @@ func (c *Config) validateBench(add func(string, ...any)) {
 		}
 	}
 	look := func(id string) (*benchspec.Benchmark, bool) { bm, ok := byID[id]; return bm, ok }
+	groups := func(id string) (*benchspec.Suite, bool) {
+		for _, s := range b.Suites {
+			if s != nil && s.ID == id {
+				return s, true
+			}
+		}
+		return nil, false
+	}
 	seen := map[string]bool{}
 	for i, s := range b.Suites {
 		if s == nil {
 			add("bench.suites[%d]: empty entry", i)
 			continue
 		}
-		if err := s.Validate(profileOK, look); err != nil {
+		if err := s.ValidateGroup(profileOK, look, groups); err != nil {
 			add("bench.suites[%d] (%s): %v", i, s.ID, err)
 		}
 		if seen[s.ID] {

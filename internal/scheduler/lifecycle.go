@@ -57,6 +57,7 @@ func (c *schedCore) startInstance(p *core.Profile, pl core.Placement, waiters []
 	c.changed = true
 	c.emitState(in, RunningStarting)
 	c.logPlacement(in)
+	c.noteTight(in) // tight.go: a WARN line for a tight fit
 
 	if c.agents && c.loadGate != nil {
 		if err := c.loadGate(); err != nil {

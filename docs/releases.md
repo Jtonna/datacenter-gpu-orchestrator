@@ -6,7 +6,34 @@ What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent
 
 - **Derived needs.** A profile with no measurement of its own shape takes its need from the same model measured at another context (same slots, cache type, flash attention, extra arguments and host kind; the nearest context): the measured total with the part that grows with the window (KV cache, and the compute buffer on each device) recomputed by the estimate's formula. Not from a measurement more than 512 MiB below its own window's estimate (a sliding-window model). When the model has pairs of measurements at two contexts, each is predicted from the other and all must be within 512 MiB, else the estimate stays; without such pairs the derived figure gets the estimate margin (+5%). The basis reads "derived from the measurement at ctx N (date); …", `/api/profiles` and `/api/models` add `derived_from_ctx`, and `GET /api/needs` adds `derivation_check` (the tolerance and every pair with its error). The first load records the shape's own measurement, which replaces it. Order of sources: own measurement, then (host: node) the server-hosted one, then derived, then the estimate.
 
-## Scheduler v20 to v22 (agent stays 0.1.9)
+## Next release: benchmark data model
+
+The heading takes the release number when it ships.
+
+### What is new
+
+- **One benchmark on its own.** `POST /api/bench/benchmarks/<id>/run` (MCP `run_benchmark`) runs a benchmark without a suite. The run has `kind: "benchmark"` and `benchmark_id`; every other run has `kind: "suite"`. `GET /api/bench/runs` filters by `kind` and `benchmark`. See the benchmark guide, section 4.
+- **The measurement record.** Every number a step measures is also a row of one shape: metric, value (of), unit, where it came from, what it describes, and its conditions (cold verified, first or steady generation, thinking, memory kind, scorer). `GET /api/bench/runs/<id>/measurements` (MCP `get_run_measurements`), the history across runs at `GET /api/bench/measurements` (MCP `query_measurements`), the metric list at `GET /api/bench/metrics`. See the benchmark guide, section 5.
+
+- **Recipes and groups.** A benchmark with `inputs` (model, ctx, placement, thinking) instead of a profile is a recipe; the profile is made from the inputs before each step (`generated: true`, never over a profile a person wrote). Placements offer consoles only: `auto`, `all`, `any:N`, `nodes:a,b`; one that cannot be met is a refused step. Suites are also groups (`/api/bench/groups`): entries can use a recipe with inputs, a matrix of models, placements, contexts and thinking, or another group. `GET /api/bench/groups/<id>/expand` (MCP `expand_group`) previews the steps; `run_benchmark` takes `inputs`. A recipe's measurements are under the recipe with `variant`, `ctx`, `placement` and the condition `thinking_input`, and `query_measurements` filters by them. See the benchmark guide, sections "Recipes" and "Groups".
+- **Editor and schema.** `GET /api/bench/schema` gains `input_options`, `entry_options`, `placement_forms`, the new limits and two templates: "Tasks" (an inline task set) and "Cold load recipe". The benchmark editor can make a benchmark a recipe and edits a tasks phase's inline set.
+
+- **Transcripts.** Every step that sends prompts saves its full exchange (messages sent, answers, reasoning, timings) as `<data_dir>/bench-runs/<run id>/step-NNN.json`. `GET /api/bench/runs/<id>/transcripts`, `.../steps/<n>/transcript` (`?format=md`); MCP `list_run_transcripts`, `get_step_transcript`.
+- **Reports, generated when opened.** `GET /api/bench/runs/<id>/report` (MCP `get_run_report`): the summary of a group run (headline counts, issues first, a table per metric, an index), the benchmark report of a step (`?step=`), one section (`&phase=`). Formats json, md and html (a print layout with Markdown and PDF downloads). Issues are facts only; nothing is judged.
+- **Retention, off by default.** Setting `bench_retention_days` (default 0: off, nothing is removed). Set to N, it trims finished runs older than N days: requests and transcripts go, the run, its steps and its measurements stay. `GET /api/bench/removals/preview?days=N` lists what N would trim without changing anything; pinned runs (`PUT`/`DELETE /api/bench/runs/<id>/pin`, MCP `pin_run`, `unpin_run`) stay; every trim is logged (`GET /api/bench/removals`, MCP `list_run_removals`).
+- **Task figures in exports and trends.** The markdown and phases CSV exports carry task counts and scorer totals, `detail=tasks` gives one CSV row per task with each scorer's points, and the trends gain `tasks_answered`, `task_decode_tps`, `task_points` and `task_points_pct` (`&scorer=`).
+
+### What changes without any setting
+
+- Nothing is removed: retention is off until `bench_retention_days` is set.
+- Migration 8 adds `runs.pinned`, `runs.trimmed_at` and the table `run_removals`. Steps that send prompts write files under `<data_dir>/bench-runs/`.
+- Migration 7 adds `measurements.variant`, `ctx` and `placement`; the measurements are mapped again once at the first start. Old suites run exactly as before.
+- The database gains the columns `runs.kind` and `runs.target_id` and the tables `measurements` and `bench_meta` (migration 6). At the first start every stored run is mapped into measurements once; old runs read as before, as kind `suite`.
+- The suite aggregates leave direct benchmark runs out; the benchmark aggregates and the history count them.
+- Profiles made by recipes never set `host`: they run on the scheduler's machine (`host: server`, the default).
+- Going back after this release has migrated the database (schema 8): an image with the unhealthy mode (the next scheduler image below and later) answers 503 on `/health` and every route with "database is newer than this version: 8 > 5" and changes nothing; 0.1.9 and older start with no profiles and no runs. Either way the data is untouched: start this release again, or restore the copy of `scheduler.db` taken before the upgrade.
+
+## Next scheduler image (agent stays 0.1.9)
 
 - **A `host: node` profile is planned from the server-hosted measurement** of the same shape (model, context, slots, cache, arguments) until a load hosted on a node measured its own; the host overhead is still added on the host node, and the basis says "hosted on the scheduler's machine (no measurement hosted on a node yet), plus N MiB host overhead". Stored peaks stay per shape.
 - **The host node's own device share** (its `Vulkan0`, ... rows) shows under that node in an instance's `nodes`, like a worker's row; it used to be listed as unmatched. Host-side buffers stay in `host_memory`.

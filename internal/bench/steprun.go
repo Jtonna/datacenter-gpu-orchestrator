@@ -3,7 +3,9 @@ package bench
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -94,6 +96,13 @@ type benchRun struct {
 	// before the load (the load phase's cold option); cold is the result.
 	wantCold bool
 	cold     *ColdResult
+
+	// The step's transcript (transcript.go): every request and answer; conv
+	// counts the messages of each conversation phase it already holds;
+	// curPhase is the phase running now.
+	transcript []TranscriptEntry
+	conv       map[int]int
+	curPhase   int
 }
 
 func (br *benchRun) fail(outcome, why string) {
@@ -141,6 +150,9 @@ func (x *suiteExec) runBenchmark(b *benchspec.Benchmark, idx int, group string, 
 	br.watch.start(m.o.MemSample, m.o.API.Status)
 	br.track = x.startTrack(b, idx)
 	st.ModelFile = br.track.modelFile
+	if st.ModelFile == "" && b.Applied != nil {
+		st.ModelFile = b.Applied.Model
+	}
 	defer func() {
 		if g != nil {
 			g.arrive(member)
@@ -148,6 +160,20 @@ func (x *suiteExec) runBenchmark(b *benchspec.Benchmark, idx int, group string, 
 		br.cleanUp()
 		x.finish(br)
 	}()
+
+	// The use of a recipe: make its profile from the inputs first. A
+	// placement that cannot be met now is a refusal, a result of its own.
+	if b.Applied != nil {
+		if err := x.makeProfile(ctx, b); err != nil {
+			if errors.Is(err, ErrPlacement) {
+				st.Reason = strings.TrimPrefix(err.Error(), ErrPlacement.Error()+": ")
+				br.fail(OutcomeRefused, st.Reason)
+			} else {
+				br.fail(OutcomeError, err.Error())
+			}
+			return st
+		}
+	}
 
 	// What the scheduler says it would do.
 	plan, err := m.o.API.Plan(ctx, b.Profile)
@@ -212,6 +238,7 @@ func (br *benchRun) runPhase(i int, p *benchspec.Phase) {
 		x.m.log.Warn("cannot store a phase", "err", err)
 	}
 	before := st.Outcome
+	br.curPhase = i
 	x.setPhase(br.track, i, firstText(p.Type, br.b.Profile))
 	switch p.Type {
 	case benchspec.PhaseLoad:
@@ -753,6 +780,7 @@ func (br *benchRun) send(ctx context.Context, r benchspec.Request, phase string,
 	rr := &RequestResult{StepID: st.ID, RunID: st.RunID, Seq: seq, Name: r.Name, Phase: phase, PhaseIdx: pidx, Turn: turn,
 		Deterministic: r.Deterministic(), StartedAt: x.m.o.Now().UnixMilli()}
 	x.emitRequest(st, map[string]any{"phase": phase, "request": r.Name, "seq": seq, "state": "started"})
+	conv := br.convSeen(phase, pidx, turn)
 	resp, err := x.m.o.API.Chat(ctx, st.RunID, BuildChatRequest(br.b.Profile, r), func(p ChatProgress) {
 		x.emitRequest(st, map[string]any{"phase": phase, "request": r.Name, "seq": seq, "state": "streaming", "tokens": p.Tokens, "elapsed_ms": p.ElapsedMS})
 		if phase != PhaseConcurrent {
@@ -762,12 +790,14 @@ func (br *benchRun) send(ctx context.Context, r benchspec.Request, phase string,
 	if err != nil {
 		rr.Error = err.Error()
 		br.record(rr)
+		br.addTranscript(transcriptEntry(rr, r, nil, conv))
 		return rr, nil, err
 	}
 	rr.Status, rr.WallMS, rr.TTFTMS = resp.Status, resp.WallMS, resp.TTFTMS
 	if resp.Status != 200 {
 		rr.Error = resp.ErrMessage
 		br.record(rr)
+		br.addTranscript(transcriptEntry(rr, r, resp, conv))
 		return rr, resp, nil
 	}
 	rr.Timings = resp.Timings
@@ -791,6 +821,8 @@ func (br *benchRun) send(ctx context.Context, r benchspec.Request, phase string,
 		rr.WaitMS = &wait
 	}
 	br.record(rr)
+	br.addTranscript(transcriptEntry(rr, r, resp, conv))
+	br.convAdd(phase, pidx, len(r.ChatMessages()))
 	return rr, resp, nil
 }
 
@@ -1210,6 +1242,12 @@ func (x *suiteExec) finish(br *benchRun) {
 	if err := m.o.Store.UpdateStep(st); err != nil {
 		m.log.Error("cannot store a benchmark step", "run", st.RunID, "benchmark", b.ID, "err", err)
 		x.a.cancel("the database failed: " + err.Error())
+	}
+	x.saveTranscript(br)
+	withReqs := *st
+	withReqs.Requests = reqs
+	if err := m.o.Store.ReplaceStepMeasurements(&withReqs); err != nil {
+		m.log.Warn("cannot store a step's measurements", "run", st.RunID, "benchmark", b.ID, "err", err)
 	}
 	x.finishTrack(br.track)
 	func() {

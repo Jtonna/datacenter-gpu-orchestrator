@@ -1,6 +1,9 @@
 package benchspec
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strconv"
+)
 
 // Option describes one option of a phase, a benchmark or an expect block, so
 // that a UI can render an editor without knowing the phase types.
@@ -46,11 +49,16 @@ type Template struct {
 
 // SchemaDoc is GET /api/bench/schema.
 type SchemaDoc struct {
-	PhaseTypes []PhaseSchema  `json:"phase_types"`
-	Request    []Option       `json:"request_options"`
-	Turn       []Option       `json:"turn_options"`
-	Benchmark  []Option       `json:"benchmark_options"`
-	Suite      []Option       `json:"suite_options"`
+	PhaseTypes []PhaseSchema `json:"phase_types"`
+	Request    []Option      `json:"request_options"`
+	Turn       []Option      `json:"turn_options"`
+	Benchmark  []Option      `json:"benchmark_options"`
+	Suite      []Option      `json:"suite_options"`
+	// Inputs are a recipe's inputs; Entry the object form of a group entry;
+	// Placements the written forms of a placement (data model step 2).
+	Inputs     []Option       `json:"input_options"`
+	Entry      []Option       `json:"entry_options"`
+	Placements []string       `json:"placement_forms"`
 	Expect     []ExpectKey    `json:"expect_keys"`
 	Templates  []Template     `json:"templates"`
 	Limits     map[string]int `json:"limits"`
@@ -81,7 +89,8 @@ func Schema() *SchemaDoc {
 		{Name: "id", Type: "string", Required: true, Description: "Lower-case letters, digits, '.', '-' and '_'; up to 64 characters."},
 		{Name: "name", Type: "string", Description: "A readable name (default the id)."},
 		{Name: "description", Type: "text", Description: "What this benchmark does and measures, shown while it runs."},
-		{Name: "profile", Type: "string", Required: true, Description: "The profile (or alias) of this scheduler to benchmark."},
+		{Name: "profile", Type: "string", Description: "The profile (or alias) of this scheduler to benchmark. Give this (a fixed profile) or inputs (a recipe)."},
+		{Name: "inputs", Type: "object", Description: "Makes the benchmark a recipe: the defaults of its inputs (see input_options). The profile is made from the inputs when the recipe is used in a group or run directly; a group entry or the run fills in what is missing (model and ctx are needed)."},
 		{Name: "phases", Type: "list", ItemType: "phase", Description: "What to do, in order. Without phases the simple form (cold, warmup_requests, requests, repeats, unload_after) is used."},
 		{Name: "timeout_s", Type: "integer", Default: DefaultTimeoutS, Min: 1, Max: MaxTimeoutS, Unit: "s", Description: "Limit for the whole benchmark, load and holds included."},
 		{Name: "tags", Type: "list", ItemType: "string", Description: "Free tags for filtering."},
@@ -93,6 +102,21 @@ func Schema() *SchemaDoc {
 		{Name: "idle_wait_s", Type: "integer", Default: DefaultIdleWaitS, Min: 0, Max: 86400, Unit: "s", Description: "How long to wait for the scheduler to be idle."},
 		{Name: "evict_others", Type: "boolean", Default: false, Description: "Do not wait for other users' idle loaded models: the run's loads may make the scheduler unload them to make room, as any load does. Requests in flight and queued requests are still waited for."},
 	}
+	d.Inputs = []Option{
+		{Name: "model", Type: "string", Description: "The model file under the models directory."},
+		{Name: "ctx", Type: "integer", Min: MinInputCtx, Max: MaxInputCtx, Unit: "tokens", Description: "Context size per slot."},
+		{Name: "placement", Type: "string", Default: PlaceAuto, Description: "Where the model goes, consoles only: auto (Potluck chooses), all (every console that can take a load), any:N (N consoles, those with the most available memory), nodes:a,b (these consoles). A placement that cannot be met when the step starts is a refused step."},
+		{Name: "thinking", Type: "boolean", Description: "false turns the model's reasoning off (--reasoning-budget 0); leave it out to keep the model's default."},
+		{Name: "kv_quant", Type: "enum", Values: []any{"f16", "q8_0", "q4_0"}, Default: "f16", Description: "Key-value cache precision; q8_0 and q4_0 need flash_attn."},
+		{Name: "flash_attn", Type: "boolean", Default: false, Description: "Turn flash attention on."},
+	}
+	d.Entry = []Option{
+		{Name: "benchmark", Type: "string", Description: "A stored benchmark. With inputs or matrix it must be a recipe."},
+		{Name: "inputs", Type: "object", Description: "Inputs for this use of the recipe; they override its defaults."},
+		{Name: "matrix", Type: "object", Description: "Lists of model, placement, ctx and thinking: the entry stands for every combination (model outermost), at most " + itoa(MaxMatrixCombos) + "."},
+		{Name: "group", Type: "string", Description: "Another group (suite), run where it stands with its own entries; its run options are not used. Give this or benchmark."},
+	}
+	d.Placements = []string{"auto", "all", "any:N", "nodes:a,b"}
 	d.PhaseTypes = []PhaseSchema{
 		{Type: PhaseLoad, Title: "Load", Description: "Cold load only: unload the profile if it is loaded, then load it without sending any chat request and wait until it is ready.",
 			Records: []string{"load_s", "load_bytes", "load_mb_s", "node_bytes", "memory_mib", "plan", "cold"}, Options: []Option{
@@ -151,7 +175,8 @@ func Schema() *SchemaDoc {
 		{Name: "max_unload_s", Type: "number", Unit: "s", Needs: "unload", Description: "The instance must be gone within this time of the unload."},
 	}
 	d.Limits = map[string]int{"phases": MaxPhases, "requests": MaxRequests, "repeats": MaxRepeats, "warmups": MaxWarmups, "turns": MaxTurns,
-		"concurrent": MaxConcurrent, "hold_seconds": MaxHoldSeconds, "max_tokens": MaxTokensLimit, "timeout_s": MaxTimeoutS, "suite_items": MaxSuiteItems, "tasks": MaxTasks}
+		"concurrent": MaxConcurrent, "hold_seconds": MaxHoldSeconds, "max_tokens": MaxTokensLimit, "timeout_s": MaxTimeoutS, "suite_items": MaxSuiteItems, "tasks": MaxTasks,
+		"matrix_values": MaxMatrixValues, "matrix_combos": MaxMatrixCombos, "expanded_items": MaxExpandedItems, "group_depth": MaxGroupDepth, "placement_nodes": MaxPlacementNodes}
 	d.Templates = []Template{
 		tpl("load-only", "Load only", "Measures just the cold load of a profile: how long it takes, how many bytes go to which worker and how much memory it uses. No chat request is sent.",
 			`{"id":"load-only-example","name":"Load only","description":"Cold load, then unload. Measures load time and upload rate only.","profile":"your-profile","phases":[{"type":"load"},{"type":"unload"}]}`),
@@ -165,9 +190,21 @@ func Schema() *SchemaDoc {
 			`{"id":"simultaneous-requests-example","name":"Simultaneous requests","description":"Cold load, then 4 requests at the same moment.","profile":"your-profile","phases":[{"type":"load"},{"type":"concurrent_requests","n":4,"request":{"name":"hello","prompt":"Say hello in ten words.","max_tokens":32}},{"type":"unload"}]}`),
 		tpl(TemplateColdReload, "Cold, reload, loaded", "A load from an empty file cache, the first answer, the loaded speed, then an unload and a reload from the file cache with its first answer: cold load and reload times, time to first token after each, and the steady speed.",
 			`{"id":"cold-reload-loaded-example","name":"Cold, reload, loaded","description":"Cold load (file caches dropped first), first answer, loaded speed; then unload, reload from the file cache and its first answer.","profile":"your-profile","timeout_s":1800,"phases":[{"type":"load","label":"cold load","cold":true},{"type":"warmup","label":"first generation","count":1,"request":{"name":"first","prompt":"Say hello in five words.","max_tokens":16,"stream":true}},{"type":"requests","label":"loaded","repeats":3,"max_tokens":128,"stream":true,"requests":[{"name":"explain","prompt":"Explain in two sentences what a GPU does."}]},{"type":"unload"},{"type":"load","label":"reload"},{"type":"requests","label":"after the reload","repeats":3,"max_tokens":128,"stream":true,"requests":[{"name":"explain","prompt":"Explain in two sentences what a GPU does."}]},{"type":"unload"}]}`),
+		tpl(TemplateTasks, "Tasks", "A cold load, then every task of a task set sent once (temperature 0, streamed), then unload. The answers are kept for a scorer to post points; replace the inline set with task_set: \"<id>\" to use a stored one.",
+			`{"id":"tasks-example","name":"Tasks","description":"Cold load, the tasks of a task set, unload.","profile":"your-profile","timeout_s":3600,"phases":[{"type":"load","cold":true},{"type":"tasks","label":"tasks","tasks":{"id":"example-tasks","version":1,"title":"Example tasks","max_tokens":1024,"tasks":[{"id":"fib","prompt":"Write a Python function fib(n) that returns the n-th Fibonacci number."},{"id":"sql-top3","prompt":"Write a SQL query that returns the three highest salaries per department from employees(name, department, salary)."}]}},{"type":"unload"}]}`),
+		tpl(TemplateRecipe, "Cold load recipe", "A recipe: no fixed profile, it takes its model, context and placement as inputs, so one definition serves every model. Use it in a group with inputs or a matrix, or run it with inputs.",
+			`{"id":"cold-load-recipe-example","name":"Cold load","description":"Cold load, first answer, unload; for any model.","inputs":{"ctx":8192,"placement":"any:2"},"phases":[{"type":"load","cold":true},{"type":"warmup","label":"first generation","count":1,"request":{"name":"first","prompt":"Say hello in five words.","max_tokens":16,"stream":true}},{"type":"unload"}]}`),
 	}
 	return d
 }
+
+// TemplateTasks and TemplateRecipe are the ids of the tasks and recipe templates.
+const (
+	TemplateTasks  = "tasks"
+	TemplateRecipe = "cold-load-recipe"
+)
+
+func itoa(n int) string { return strconv.Itoa(n) }
 
 // TemplateColdReload is the id of the "cold, reload, loaded" template.
 const TemplateColdReload = "cold-reload-loaded"

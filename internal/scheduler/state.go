@@ -98,6 +98,9 @@ func (p phase) String() string {
 
 // inst is one instance (design 8.1). At most one per profile.
 type inst struct {
+	// tight are the nodes of a tight fit (tight.go): the load fits them
+	// without its margin only. Empty for any other load.
+	tight []PlanMemoryNode
 	iid       uint64
 	prof      *core.Profile
 	state     instState
@@ -406,6 +409,10 @@ type schedCore struct {
 	// fitting is the instance whose own placement is being checked at exact
 	// figures (fitAndLaunch); its reservation does not count against it.
 	fitting *inst
+
+	// preferMargin: the per-node margin counts as part of what a placement
+	// must hold, for the try that prefers placements meeting it (tight.go).
+	preferMargin bool
 }
 
 func newCore(cfg *config.Config, clock Clock, view fleet.View, needs NeedProvider, build instance.BuildOptions, log *slog.Logger) *schedCore {

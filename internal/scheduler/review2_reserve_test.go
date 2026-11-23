@@ -98,7 +98,7 @@ func TestReview2_SB2_FleetLaunchAgreesWithTheGate(t *testing.T) {
 			h.c.fitting = in
 			rows, ok := h.c.memoryRows(in.prof, in.placement, map[string]bool{"m": true})
 			h.c.fitting = nil
-			if node, by := rowsShort(rows); !ok || by > 0 {
+			if node, by := h.c.rowsShort(rows); !ok || by > 0 {
 				t.Errorf("split %v pre-flight %d: launched, but node %s is short by %d on its figures", split, free, node, by)
 			}
 		}

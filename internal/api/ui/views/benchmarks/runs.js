@@ -390,6 +390,23 @@ function stepCard(step, runId) {
     step.log_file ? h('div.cs', h('span.mut', 'Child log '), h('code.cmd', step.log_file)) : null);
 }
 
+// Pin keeps a run from being trimmed by retention (bench_retention_days, off by default).
+function pinButton(run) {
+  const path = `/api/bench/runs/${encodeURIComponent(run.id)}/pin`;
+  const tip = on => on ? 'Pinned: retention never trims this run. Click to unpin.' : 'When bench_retention_days is set (off by default), retention trims the requests and transcripts of older finished runs; measurements stay. Pin to keep this one whole.';
+  const b = h('button.btn.sm', { type: 'button', title: tip(run.pinned), 'aria-pressed': run.pinned ? 'true' : 'false' }, run.pinned ? 'Pinned' : 'Pin');
+  b.addEventListener('click', async () => {
+    b.disabled = true;
+    try {
+      const r = run.pinned ? await api.del(path) : await api.put(path);
+      run.pinned = !!r.pinned;
+      b.textContent = run.pinned ? 'Pinned' : 'Pin'; b.title = tip(run.pinned); b.setAttribute('aria-pressed', run.pinned ? 'true' : 'false');
+    } catch (e) { b.title = e.message; }
+    b.disabled = false;
+  });
+  return b;
+}
+
 export function runDetail(run, error) {
   if (error) return [h('div.card', empty('The run could not be read', error)), ];
   if (!run) return [h('section.card', skeleton(4))];
@@ -401,10 +418,12 @@ export function runDetail(run, error) {
     run.error ? errorBanner(reasonNode(run.error)) : null,
     h('section.card', { key: 'head' },
       h('div.ch', h('h2.mono', id), runBadge(run.state), run.trigger === 'schedule' ? badge('Scheduled', 'n') : null,
-        h('span.right.row', { style: 'gap:8px' }, runLogs(run), exportLink(id, 'Markdown', { format: 'md' }), exportLink(id, 'CSV', { format: 'csv' }), exportLink(id, 'JSON', { format: 'json' }),
+        h('span.right.row', { style: 'gap:8px' }, runLogs(run), pinButton(run),
+          h('a.btn.sm.pri', { href: api.url(`/api/bench/runs/${encodeURIComponent(id)}/report`, { format: 'html' }), target: '_blank', rel: 'noopener', title: 'The report of this run, with Markdown and PDF downloads' }, 'Report'),
+          exportLink(id, 'Markdown', { format: 'md' }), exportLink(id, 'CSV', { format: 'csv' }), exportLink(id, 'JSON', { format: 'json' }),
           h('details', { style: 'position:relative' }, h('summary.btn.sm', { style: 'list-style:none' }, 'More exports'),
             h('div', { style: 'position:absolute;right:0;top:36px;z-index:5;background:var(--card);border:1px solid var(--line-2);border-radius:10px;padding:8px;display:flex;flex-direction:column;gap:6px;min-width:200px' },
-              exportLink(id, 'CSV, one row per phase', { format: 'csv', detail: 'phases' }), exportLink(id, 'CSV, one row per turn', { format: 'csv', detail: 'turns' }))))),
+              exportLink(id, 'CSV, one row per phase', { format: 'csv', detail: 'phases' }), exportLink(id, 'CSV, one row per turn', { format: 'csv', detail: 'turns' }), exportLink(id, 'CSV, one row per task', { format: 'csv', detail: 'tasks' }))))),
       h('div.stats',
         stat('Suite', run.suite_name || run.suite_id), stat('Started', run.started_at ? ago(run.started_at) : DASH),
         stat('Took', run.started_at && run.finished_at ? dur((run.finished_at - run.started_at) / 1000) : run.finished_at ? DASH : 'Not finished'),

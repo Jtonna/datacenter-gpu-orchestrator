@@ -47,16 +47,24 @@ export function memoryTable(mem, name) {
   if (!mem || !Array.isArray(mem.nodes)) return null;
   const head = mem.fits ? badge('Fits', 'ready') : badge('Does not fit', 'fail');
   const short = !mem.fits && mem.short_node ? `${mem.short_node} is short by ${mib(mem.shortfall_mib)}.` : '';
+  // A tight fit: the load fits a node without its margin only, so it starts
+  // with less than the margin spare there (neutral: it is allowed).
+  const tightRows = mem.nodes.filter(row => row.tight);
+  const tight = mem.tight_fit && tightRows.length
+    ? tightRows.map(row => `${row.node || name(row.id)}: ${mib(row.spare_mib)} spare, ${mib(row.margin_short_mib)} short of its margin of ${mib(row.margin_mib)}.`).join(' ')
+    : '';
   return h('div', { style: 'display:flex;flex-direction:column;gap:8px', key: 'memory' },
     h('div.day', 'Memory, with the context filled'),
     h('div.cb', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap' }, head,
+      tight ? badge('Tight fit', 'n', 'It fits without the margin only; it starts anyway (defaults.margin_refuses is off).') : null,
+      tight ? h('span.note', tight) : null,
       mem.hypothetical ? badge('No placement now: the nodes it would be spread over', 'n') : null,
       mem.decides ? null : badge('Shown only: the default rules decide', 'n'),
       h('span.note', short, mem.placement_uses_reserved ? ' Available follows the reservation rule (the lower of free now and its average, less what is reserved and not measured yet).' : ' Available is free now less headroom.')),
     table({
       minWidth: 900,
       key: row => row.id,
-      rowClass: row => (row.remains_mib < 0 ? 'flag-err' : ''),
+      rowClass: row => (row.remains_mib < 0 && !row.tight ? 'flag-err' : ''),
       empty: h('div.cb.mut', 'No node can take a share of this profile now.'),
       rows: mem.nodes,
       columns: [
@@ -72,7 +80,8 @@ export function memoryTable(mem, name) {
         { label: 'Headroom', cls: 'r', render: row => mib(row.headroom_mib) },
         { label: 'Available', cls: 'r', render: row => mib(row.available_mib) },
         { label: 'Margin', cls: 'r', render: row => h('span', { title: row.margin_rule || null }, mib(row.margin_mib), row.margin_rule ? h('span.sub', row.margin_rule) : null) },
-        { label: 'Remains', cls: 'r', render: row => h('span', { class: row.remains_mib < 0 ? 'err-t' : null }, mib(row.remains_mib)) },
+        { label: 'Remains', cls: 'r', render: row => h('span', { class: row.remains_mib < 0 && !row.tight ? 'err-t' : null }, mib(row.remains_mib),
+          row.tight ? h('span.sub', `tight: ${mib(row.spare_mib)} spare`) : null) },
       ],
     }),
     mem.note ? h('div.note-s', mem.note.replace(/^./, c => c.toUpperCase()) + '.') : null,

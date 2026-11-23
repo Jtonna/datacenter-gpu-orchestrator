@@ -261,7 +261,14 @@ func (c *schedCore) capacity(profile string) error {
 		}
 		cands = append(cands, placer.FromNode(n, c.planBudget(id, n)))
 	}
-	return placer.CheckCapacity(req, cands)
+	err = placer.CheckCapacity(req, cands)
+	var np *placer.NoPlacement
+	if err != nil && !c.marginCounts() && errors.As(err, &np) && np.Reason == placer.ExceedsCapacity && np.RequiredMiB > np.CapacityMiB {
+		// tight.go: the margin was not counted, so the shortfall is against
+		// what the nodes have alone
+		return fmt.Errorf("%w; short by %d MiB even without the margin", err, np.RequiredMiB-np.CapacityMiB)
+	}
+	return err
 }
 
 // admit gives a waiter to a ready instance: in_flight++ and a lease. A

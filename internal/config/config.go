@@ -228,6 +228,12 @@ type Defaults struct {
 	// MarginEstimatedMinMiB. 0 (unset) keeps the split skew margin.
 	MarginEstimatedPercent int
 	MarginEstimatedMinMiB  int
+	// MarginRefuses turns the per-node margin back into a reason to refuse
+	// a placement. Off (the default), a placement that holds weights +
+	// context + fill reserve with the headroom kept but not the margin
+	// starts as a tight fit; the margin then only orders automatic
+	// placements (one that meets it everywhere is preferred).
+	MarginRefuses bool
 	// FreeAverageWindow is the window of the average free memory of a node
 	// (from its heartbeats). Default 30 s.
 	FreeAverageWindow time.Duration
@@ -317,6 +323,10 @@ type Bench struct {
 	RegressDecodePct float64
 	// MaxRunMinutes stops a run that takes longer (default 240).
 	MaxRunMinutes int
+	// RetentionDays: a finished, unpinned run older than this many days is
+	// trimmed (its requests and transcripts removed; the run, its steps and its
+	// measurements kept). 0, the default, is off: nothing is ever trimmed.
+	RetentionDays int
 	// Benchmarks and Suites are seeded into the database at start (source "config").
 	Benchmarks []*benchspec.Benchmark
 	Suites     []*benchspec.Suite
@@ -329,4 +339,7 @@ const (
 	DefaultRegressLoadPct   = 15
 	DefaultRegressDecodePct = 7
 	DefaultMaxRunMinutes    = 240
+	// DefaultBenchRetentionDays and MaxBenchRetentionDays bound bench_retention_days.
+	DefaultBenchRetentionDays = 0 // off: nothing is trimmed until the owner sets it
+	MaxBenchRetentionDays     = 36500
 )

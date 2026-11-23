@@ -412,6 +412,7 @@ func TestReview_GeneralRule(t *testing.T) {
 	}
 	evictRefused = map[string]int{}
 	evictChecked, evictSeen = map[string]int{}, map[string]int{}
+	tightSeen = map[string]int{}
 	seen := map[string]bool{}
 	n := 0
 	for _, need := range []int{8000, 16000, 20000, 23000, 26000, 30000, 40000} { // 40000: never fits three nodes
@@ -460,6 +461,80 @@ func TestReview_GeneralRule(t *testing.T) {
 	}
 	if total == 0 {
 		t.Logf("situations followed on: %v; of them with an eviction for m: %v", evictChecked, evictSeen)
+	}
+	// the tight-fit dimension: every kind of situation was met
+	t.Logf("situations by fit: %v", tightSeen)
+	for _, k := range []string{"fits-with-margin", "fits-only-without", "does-not-fit"} {
+		if tightSeen[k] == 0 && !raceOn {
+			t.Errorf("no situation %s: the table does not reach the tight-fit dimension", k)
+		}
+	}
+}
+
+// tightSeen counts the situations of TestReview_GeneralRule by fit: a plan
+// that starts (or evicts) meeting the margin, one that starts tight, one
+// refused, and the rest (waits).
+var tightSeen map[string]int
+
+// tightRule checks the owner's tight-fit rule on plan r of m: a tight plan
+// fits every node without the margin and says so; an automatic tight start
+// is taken only when no free placement meets the margin; and the margin is
+// never a reason to refuse: with it removed (and the gate still on) the
+// same situation is refused exactly when it is refused with it.
+func tightRule(t *testing.T, h *harness, p *core.Profile, r PlanReport, name func() string) {
+	t.Helper()
+	kind := "waits"
+	switch {
+	case (r.Action == PlanStart || r.Action == PlanEvict) && r.TightFit:
+		kind = "fits-only-without"
+	case r.Action == PlanStart || r.Action == PlanEvict:
+		kind = "fits-with-margin"
+	case r.Action == PlanReject:
+		kind = "does-not-fit"
+	}
+	tightSeen[kind]++
+	if r.TightFit {
+		if !h.c.tightOn() || r.Memory == nil || !r.Memory.Fits || !strings.Contains(r.Reason, "tight fit: ") {
+			t.Errorf("%s: a tight plan that does not fit or say so: %q %+v", name(), r.Reason, r.Memory)
+		}
+		tight := 0
+		for _, row := range r.Memory.Nodes {
+			if row.SpareMiB < 0 {
+				t.Errorf("%s: tight plan, but node %s is short by %d MiB without the margin", name(), row.Node, -row.SpareMiB)
+			}
+			if row.Tight {
+				tight++
+			}
+		}
+		if tight == 0 {
+			t.Errorf("%s: tight plan with no tight node", name())
+		}
+	}
+	if r.Action == PlanStart && r.TightFit && len(p.ForceNodes) == 0 {
+		req, _, _ := h.c.request(p)
+		first, ferr := placer.Place(req, h.c.freeCandidates(p))
+		if ferr != nil || !h.c.anyJustReleased(first) {
+			h.c.withMargin(func() {
+				sreq, _, err := h.c.request(p)
+				if err != nil {
+					return
+				}
+				if pl, gate, _, err := h.c.gatedPlaceAs(p, sreq); err == nil && gate == "" {
+					t.Errorf("%s: started tight although %v meets the margin", name(), placementIDs(pl))
+				}
+			})
+		}
+	}
+	if !h.c.tightOn() || !h.c.reserveOn() && !h.c.cfg.Defaults.PlacementUsesReserved {
+		return // without the margin the gate would be off: another rule
+	}
+	d := &h.c.cfg.Defaults
+	mm, mp, sk := d.MarginMeasuredMiB, d.MarginEstimatedPercent, d.SplitSkewMargin
+	d.MarginMeasuredMiB, d.MarginEstimatedPercent, d.SplitSkewMargin = 0, 0, 0
+	nr := h.c.dryPlan("m")
+	d.MarginMeasuredMiB, d.MarginEstimatedPercent, d.SplitSkewMargin = mm, mp, sk
+	if (r.Action == PlanReject) != (nr.Action == PlanReject) || (r.Action == PlanStart) != (nr.Action == PlanStart) {
+		t.Errorf("%s: plan %s (%s) with the margin, %s (%s) without it: the margin decided", name(), r.Action, r.Reason, nr.Action, nr.Reason)
 	}
 }
 
@@ -558,6 +633,7 @@ func checkGeneralRule(t *testing.T, need, cBudget, avgDrop, fill, margin int, us
 	// the placement the tight settings make (or the one the placer finds)
 	set(true)
 	r := h.c.dryPlan("m")
+	tightRule(t, h, p, r, name)
 	req, _, err := h.c.request(p)
 	if err != nil {
 		t.Fatalf("%s: %v", name(), err)
@@ -606,7 +682,7 @@ func checkGeneralRule(t *testing.T, need, cBudget, avgDrop, fill, margin int, us
 		if tr.AvailableMiB > dr.AvailableMiB {
 			t.Errorf("%s: node %s available %d with tight settings, %d by default", name(), tr.Node, tr.AvailableMiB, dr.AvailableMiB)
 		}
-		if r.Action == PlanStart && h.c.gateOn() && tr.Shared && dr.WillTakeMiB+tr.MarginMiB > dr.AvailableMiB {
+		if r.Action == PlanStart && h.c.gateOn() && tr.Shared && dr.WillTakeMiB+h.c.counted(tr.MarginMiB) > dr.AvailableMiB {
 			t.Errorf("%s: admitted, but node %s's default check fails beyond the margin difference: %d + %d > %d",
 				name(), tr.Node, dr.WillTakeMiB, tr.MarginMiB, dr.AvailableMiB)
 		}
@@ -625,7 +701,7 @@ func checkGeneralRule(t *testing.T, need, cBudget, avgDrop, fill, margin int, us
 		h.c.fitting = in
 		rows, ok := h.c.memoryRows(p, in.placement, freed)
 		h.c.fitting = nil
-		if node, by := rowsShort(rows); ok && by > 0 {
+		if node, by := h.c.rowsShort(rows); ok && by > 0 {
 			t.Errorf("%s: launched, but node %s is short by %d MiB on the figures its pre-flight left", name(), node, by)
 		}
 	}
@@ -784,8 +860,9 @@ func beforeRule(t *testing.T, h *harness, p *core.Profile, r PlanReport, before 
 	switch before {
 	case "unload", "unload-holder":
 		// no refusal on the lagging figure: not by the gate, not by the
-		// owner's case, not before an eviction (SS1)
-		for _, s := range []string{"waiting cannot help", "even with", "nothing loaded is stopped", "would refuse the launch"} {
+		// owner's case ("even with " x stopped; not "even without the
+		// margin"), not before an eviction (SS1)
+		for _, s := range []string{"waiting cannot help", "even with ", "nothing loaded is stopped", "would refuse the launch"} {
 			if r.Action == PlanReject && strings.Contains(r.Reason, s) {
 				t.Errorf("%s: refused right after the unload while the view still shows it: %s", name(), r.Reason)
 			}
@@ -814,7 +891,7 @@ func beforeRule(t *testing.T, h *harness, p *core.Profile, r PlanReport, before 
 		}
 		pl.TensorSplit = p.TensorSplit
 		rows, ok := h.c.memoryRows(p, pl, map[string]bool{"m": true, "x": true})
-		if node, by := rowsShort(rows); ok && by > 0 && freeOrHeldBy(h, pl, "x") {
+		if node, by := h.c.rowsShort(rows); ok && by > 0 && freeOrHeldBy(h, pl, "x") {
 			t.Errorf("%s: plan %s (%s) but node %s is short by %d MiB even with x stopped: it must be refused", name(), r.Action, r.Reason, node, by)
 		}
 	}

@@ -102,7 +102,7 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 		DataDir:             strings.TrimSpace(raw.DataDir),
 		WSMaxClients:        raw.WSMaxClients,
 		Bench: Bench{RegressLoadPct: raw.Bench.RegressLoadPct, RegressDecodePct: raw.Bench.RegressDecodePct,
-			MaxRunMinutes: raw.Bench.MaxRunMinutes, Benchmarks: raw.Bench.Benchmarks, Suites: raw.Bench.Suites},
+			MaxRunMinutes: raw.Bench.MaxRunMinutes, RetentionDays: DefaultBenchRetentionDays, Benchmarks: raw.Bench.Benchmarks, Suites: raw.Bench.Suites},
 		Defaults:      raw.Defaults.value(),
 		NodeOverrides: map[string]NodeOverride{},
 		ExcludeNodes:  trimAll(raw.ExcludeNodes),
@@ -110,6 +110,9 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 		Recovery:      raw.Recovery.value(),
 		Logs:          raw.Logs.value(),
 		Profiles:      map[string]*core.Profile{},
+	}
+	if raw.Bench.RetentionDays != nil {
+		c.Bench.RetentionDays = *raw.Bench.RetentionDays
 	}
 	for _, t := range raw.Tiers {
 		c.Tiers = append(c.Tiers, TierRule{
@@ -336,6 +339,7 @@ type rawDefaults struct {
 	MarginMeasuredMiB      int      `yaml:"margin_measured_mib" json:"margin_measured_mib,omitempty"`
 	MarginEstimatedPercent int      `yaml:"margin_estimated_percent" json:"margin_estimated_percent,omitempty"`
 	MarginEstimatedMinMiB  int      `yaml:"margin_estimated_min_mib" json:"margin_estimated_min_mib,omitempty"`
+	MarginRefuses          bool     `yaml:"margin_refuses" json:"margin_refuses,omitempty"`
 	FreeAverageWindow      duration `yaml:"free_average_window" json:"free_average_window,omitempty"`
 	HostOverheadMiB        int      `yaml:"host_overhead_mib" json:"host_overhead_mib,omitempty"`
 	HostNoMmap             bool     `yaml:"host_no_mmap" json:"host_no_mmap,omitempty"`
@@ -350,7 +354,7 @@ func rawDefaultsFrom(d Defaults) rawDefaults {
 		d.SplitSkewMargin, d.EstimateMargin, d.LoadMemoryFloorMiB,
 		d.Membership, d.WorkerModelDir, d.WatchdogFloorMiB, duration(d.WorkerStartTimeout),
 		d.FillReserveKiBPerToken, d.PlacementUsesReserved, d.ReservedDriftWarnMiB, d.MarginMeasuredMiB,
-		d.MarginEstimatedPercent, d.MarginEstimatedMinMiB, duration(d.FreeAverageWindow),
+		d.MarginEstimatedPercent, d.MarginEstimatedMinMiB, d.MarginRefuses, duration(d.FreeAverageWindow),
 		d.HostOverheadMiB, d.HostNoMmap}
 }
 
@@ -364,7 +368,7 @@ func (r rawDefaults) value() Defaults {
 		r.SplitSkewMargin, r.EstimateMargin, r.LoadMemoryFloorMiB,
 		r.Membership, r.WorkerModelDir, r.WatchdogFloorMiB, time.Duration(r.WorkerStartTimeout),
 		r.FillReserveKiBPerToken, r.PlacementUsesReserved, r.ReservedDriftWarnMiB, r.MarginMeasuredMiB,
-		r.MarginEstimatedPercent, r.MarginEstimatedMinMiB, time.Duration(r.FreeAverageWindow),
+		r.MarginEstimatedPercent, r.MarginEstimatedMinMiB, r.MarginRefuses, time.Duration(r.FreeAverageWindow),
 		r.HostOverheadMiB, r.HostNoMmap}
 }
 
@@ -409,6 +413,7 @@ type rawBench struct {
 	RegressLoadPct   float64                `yaml:"regress_load_pct" json:"regress_load_pct,omitempty"`
 	RegressDecodePct float64                `yaml:"regress_decode_pct" json:"regress_decode_pct,omitempty"`
 	MaxRunMinutes    int                    `yaml:"max_run_minutes" json:"max_run_minutes,omitempty"`
+	RetentionDays    *int                   `yaml:"retention_days" json:"retention_days,omitempty"`
 	Benchmarks       []*benchspec.Benchmark `yaml:"benchmarks" json:"benchmarks,omitempty"`
 	Suites           []*benchspec.Suite     `yaml:"suites" json:"suites,omitempty"`
 }

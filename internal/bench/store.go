@@ -238,6 +238,66 @@ CREATE TABLE task_scores (
 );
 CREATE INDEX task_scores_run ON task_scores (run_id, scorer);
 `},
+	{"runs of one benchmark, measurements", `
+ALTER TABLE runs ADD COLUMN kind TEXT NOT NULL DEFAULT 'suite';
+ALTER TABLE runs ADD COLUMN target_id TEXT NOT NULL DEFAULT '';
+UPDATE runs SET target_id = suite_id;
+CREATE INDEX runs_target ON runs (kind, target_id, queued_at);
+CREATE TABLE measurements (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id       TEXT NOT NULL REFERENCES runs (id) ON DELETE CASCADE,
+  step_id      INTEGER NOT NULL REFERENCES run_steps (id) ON DELETE CASCADE,
+  step_idx     INTEGER NOT NULL,
+  phase_idx    INTEGER,
+  phase_type   TEXT NOT NULL DEFAULT '',
+  phase_label  TEXT NOT NULL DEFAULT '',
+  benchmark_id TEXT NOT NULL,
+  profile      TEXT NOT NULL DEFAULT '',
+  model        TEXT NOT NULL DEFAULT '',
+  node_count   INTEGER NOT NULL DEFAULT 0,
+  node         TEXT NOT NULL DEFAULT '',
+  subject      TEXT NOT NULL DEFAULT '',
+  seq          INTEGER NOT NULL DEFAULT 0,
+  metric       TEXT NOT NULL,
+  value        REAL NOT NULL,
+  of_value     REAL,
+  unit         TEXT NOT NULL,
+  conditions   TEXT CHECK (conditions IS NULL OR json_valid(conditions)),
+  at           INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX measurements_run ON measurements (run_id, step_idx, phase_idx);
+CREATE INDEX measurements_metric ON measurements (metric, benchmark_id, at);
+CREATE INDEX measurements_profile ON measurements (profile, metric, at);
+CREATE TABLE bench_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+`},
+	{"measurements of recipes: variant, context, placement", `
+ALTER TABLE measurements ADD COLUMN variant TEXT NOT NULL DEFAULT '';
+ALTER TABLE measurements ADD COLUMN ctx INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE measurements ADD COLUMN placement TEXT NOT NULL DEFAULT '';
+CREATE INDEX measurements_variant ON measurements (variant, metric, at);
+`},
+	{"retention: pinned runs and the removal log", `
+ALTER TABLE runs ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE runs ADD COLUMN trimmed_at INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE run_removals (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id       TEXT NOT NULL,
+  kind         TEXT NOT NULL DEFAULT 'suite',
+  target_id    TEXT NOT NULL DEFAULT '',
+  name         TEXT NOT NULL DEFAULT '',
+  state        TEXT NOT NULL DEFAULT '',
+  queued_at    INTEGER NOT NULL DEFAULT 0,
+  finished_at  INTEGER NOT NULL DEFAULT 0,
+  removed_at   INTEGER NOT NULL,
+  reason       TEXT NOT NULL DEFAULT '',
+  actor        TEXT NOT NULL DEFAULT '',
+  steps        INTEGER NOT NULL DEFAULT 0,
+  measurements INTEGER NOT NULL DEFAULT 0,
+  file_bytes   INTEGER NOT NULL DEFAULT 0,
+  files_error  TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX run_removals_at ON run_removals (removed_at);
+`},
 }
 
 type job struct {
@@ -294,6 +354,12 @@ func openStore(dir string, upTo int) (*Store, error) {
 	}
 	s.wg.Add(1)
 	go s.writer()
+	if upTo >= len(migrations) {
+		if err := s.backfillMeasurements(); err != nil {
+			s.Close()
+			return nil, fmt.Errorf("mapping old runs into measurements in %s: %w", path, err)
+		}
+	}
 	return s, nil
 }
 
@@ -604,6 +670,24 @@ func (s *Store) SuitesUsing(id string) ([]string, error) {
 	return out, nil
 }
 
+// GroupsUsing lists the stored groups (suites) that contain group id.
+func (s *Store) GroupsUsing(id string) ([]string, error) {
+	all, err := s.ListSuites()
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, su := range all {
+		for _, it := range su.Spec.Benchmarks {
+			if it.Group == id {
+				out = append(out, su.Spec.ID)
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
 // BenchmarksUsing lists the stored parallel steps that name benchmark id.
 func (s *Store) BenchmarksUsing(id string) ([]string, error) {
 	all, err := s.ListBenchmarks()
@@ -663,10 +747,14 @@ func (s *Store) CreateRun(r *Run) error {
 			return err
 		}
 	}
+	kind, target := RunKindSuite, r.SuiteID
+	if r.Kind == RunKindBenchmark {
+		kind, target = RunKindBenchmark, r.BenchmarkID
+	}
 	return s.write(func(tx *sql.Tx) error {
-		_, err := tx.Exec(`INSERT INTO runs (id, suite_id, suite_name, state, note, triggered_by, baseline_run_id, queued_at, started_at, finished_at, error, version, suite, summary, env)
-		  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, r.ID, r.SuiteID, r.SuiteName, r.State, r.Note, trig, r.BaselineRunID, r.QueuedAt,
-			r.StartedAt, r.FinishedAt, r.Error, r.Version, suite, sum, env)
+		_, err := tx.Exec(`INSERT INTO runs (id, suite_id, suite_name, state, note, triggered_by, baseline_run_id, queued_at, started_at, finished_at, error, version, suite, summary, env, kind, target_id)
+		  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, r.ID, r.SuiteID, r.SuiteName, r.State, r.Note, trig, r.BaselineRunID, r.QueuedAt,
+			r.StartedAt, r.FinishedAt, r.Error, r.Version, suite, sum, env, kind, target)
 		return err
 	})
 }
@@ -715,15 +803,18 @@ func (s *Store) SetRunSummary(id string, sum *RunSummary, baseline string) error
 	})
 }
 
-const runCols = `id, suite_id, suite_name, state, note, triggered_by, baseline_run_id, queued_at, started_at, finished_at, error, version, suite, summary, env`
+const runCols = `id, suite_id, suite_name, state, note, triggered_by, baseline_run_id, queued_at, started_at, finished_at, error, version, suite, summary, env, kind, target_id, pinned, trimmed_at`
 
 func scanRun(sc interface{ Scan(...any) error }) (*Run, error) {
 	var r Run
-	var suite string
+	var suite, target string
 	var sum, env sql.NullString
 	if err := sc.Scan(&r.ID, &r.SuiteID, &r.SuiteName, &r.State, &r.Note, &r.Trigger, &r.BaselineRunID, &r.QueuedAt,
-		&r.StartedAt, &r.FinishedAt, &r.Error, &r.Version, &suite, &sum, &env); err != nil {
+		&r.StartedAt, &r.FinishedAt, &r.Error, &r.Version, &suite, &sum, &env, &r.Kind, &target, &r.Pinned, &r.TrimmedAt); err != nil {
 		return nil, err
+	}
+	if r.Kind == RunKindBenchmark {
+		r.BenchmarkID = target
 	}
 	r.Suite = json.RawMessage(suite)
 	unmarshalNull(env, &r.Env)
@@ -743,6 +834,14 @@ func (s *Store) ListRuns(f RunFilter) ([]Run, error) {
 	if f.Suite != "" {
 		q += ` AND suite_id=?`
 		args = append(args, f.Suite)
+	}
+	if f.Kind != "" {
+		q += ` AND kind=?`
+		args = append(args, f.Kind)
+	}
+	if f.Benchmark != "" {
+		q += ` AND ((kind='benchmark' AND target_id=?) OR id IN (SELECT run_id FROM run_steps WHERE benchmark_id=? OR json_extract(spec, '$.recipe')=?))`
+		args = append(args, f.Benchmark, f.Benchmark, f.Benchmark)
 	}
 	if f.State != "" {
 		q += ` AND state=?`
@@ -794,9 +893,15 @@ func (s *Store) GetRun(id string) (*Run, error) {
 // PreviousCompleted is the newest completed run of a suite other than
 // exclude, started before it: the default baseline. nil when there is none.
 func (s *Store) PreviousCompleted(suiteID, exclude string) (*Run, error) {
-	r, err := scanRun(s.db.QueryRow(`SELECT `+runCols+` FROM runs WHERE suite_id=? AND state='completed' AND id<>?
+	return s.PreviousCompletedOf(RunKindSuite, suiteID, exclude)
+}
+
+// PreviousCompletedOf is PreviousCompleted for a kind of run: the runs of a
+// suite, or the direct runs of one benchmark.
+func (s *Store) PreviousCompletedOf(kind, target, exclude string) (*Run, error) {
+	r, err := scanRun(s.db.QueryRow(`SELECT `+runCols+` FROM runs WHERE kind=? AND target_id=? AND state='completed' AND id<>?
 	  AND queued_at < COALESCE((SELECT queued_at FROM runs WHERE id=?), 9223372036854775807)
-	  ORDER BY queued_at DESC, id DESC LIMIT 1`, suiteID, exclude, exclude))
+	  ORDER BY queued_at DESC, id DESC LIMIT 1`, kind, target, exclude, exclude))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -1122,13 +1227,32 @@ func (s *Store) phases(stepID int64) ([]PhaseResult, error) {
 // ---- trends ----
 
 // TrendMetrics are the metrics /api/bench/trends accepts.
-var TrendMetrics = []string{"load_s", "load_mb_s", "memory_mib", "decode_tps", "prefill_tps", "ttft_ms", "unload_s", "concurrent_wall_s", "lowest_available_mib", "lowest_available_gpu_mib"}
+var TrendMetrics = []string{"load_s", "load_mb_s", "memory_mib", "decode_tps", "prefill_tps", "ttft_ms", "unload_s", "concurrent_wall_s", "lowest_available_mib", "lowest_available_gpu_mib",
+	"tasks_answered", "task_decode_tps", "task_points", "task_points_pct"}
 
 // Trend returns up to limit points of a metric for a benchmark over past
 // runs, oldest first (the newest limit points).
 func (s *Store) Trend(benchmark, metric string, limit int) ([]TrendPoint, error) {
+	return s.TrendOf(benchmark, metric, "", limit)
+}
+
+// TrendOf is Trend with the scorer of task_points and task_points_pct (empty:
+// the step's first scorer by name).
+func (s *Store) TrendOf(benchmark, metric, scorer string, limit int) ([]TrendPoint, error) {
 	var expr string
+	var exprArgs []any
+	const scorerOf = `COALESCE(NULLIF(?,''), (SELECT MIN(json_extract(m2.conditions,'$.scorer')) FROM measurements m2 WHERE m2.step_id=s.id AND m2.metric='task_points'))`
 	switch metric {
+	case "tasks_answered": // over every tasks phase of the step
+		expr = `(SELECT SUM(json_extract(p.result,'$.tasks.answered')) FROM run_phases p WHERE p.step_id=s.id AND p.type='tasks' AND p.state='done')`
+	case "task_decode_tps": // the median over the answered tasks of the first tasks phase
+		expr = `(SELECT json_extract(p.result,'$.tasks.decode_tps.median') FROM run_phases p WHERE p.step_id=s.id AND p.type='tasks' AND p.state='done' ORDER BY p.idx LIMIT 1)`
+	case "task_points": // a scorer's points over the step's tasks
+		expr = `(SELECT SUM(m.value) FROM measurements m WHERE m.step_id=s.id AND m.metric='task_points' AND json_extract(m.conditions,'$.scorer')=` + scorerOf + `)`
+		exprArgs = []any{scorer}
+	case "task_points_pct": // the same as a percentage of the most points
+		expr = `(SELECT 100.0*SUM(m.value)/NULLIF(SUM(m.of_value),0) FROM measurements m WHERE m.step_id=s.id AND m.metric='task_points' AND json_extract(m.conditions,'$.scorer')=` + scorerOf + `)`
+		exprArgs = []any{scorer}
 	case "load_s":
 		expr = `json_extract(s.load,'$.load_s')`
 	case "decode_tps":
@@ -1155,10 +1279,11 @@ func (s *Store) Trend(benchmark, metric string, limit int) ([]TrendPoint, error)
 	if limit <= 0 || limit > 1000 {
 		limit = 50
 	}
+	args := append(append(append(append([]any{}, exprArgs...), benchmark), exprArgs...), limit)
 	rows, err := s.db.Query(`SELECT s.run_id, CASE WHEN r.started_at>0 THEN r.started_at ELSE r.queued_at END, `+expr+`
 	  FROM run_steps s JOIN runs r ON r.id=s.run_id
 	  WHERE s.benchmark_id=? AND s.outcome='ready' AND r.state IN ('completed','failed') AND `+expr+` IS NOT NULL
-	  ORDER BY r.queued_at DESC, s.id DESC LIMIT ?`, benchmark, limit)
+	  ORDER BY r.queued_at DESC, s.id DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}

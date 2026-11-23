@@ -112,6 +112,39 @@ A score names its task by `result` (the `result_id`), or by `step` and `task` (a
 
 A benchmark names a profile. A profile with `force_nodes` pins the benchmark to chosen nodes, which makes runs comparable. A forced profile is still checked against the nodes' memory, so a test of a model that must not fit uses `expect: {"outcome": "refused"}`. For good results on automatic profiles, give the profile a measured `needs_mib` (runbook section G).
 
+### Recipes: one benchmark for every model
+
+A benchmark with `inputs` instead of `profile` is a recipe. It says what to do (its phases) and leaves open which model, how much context and where. The profile is made from the inputs just before each step, so one recipe serves every model and every placement.
+
+| Input | Meaning |
+|---|---|
+| `model` | The model file under the models directory |
+| `ctx` | Context size per slot (256 to 1048576) |
+| `placement` | Consoles only: `auto` (Potluck chooses, the default), `all` (every console that can take a load), `any:N` (N consoles, those with the most available memory, ties by name), `nodes:a,b` (these consoles, by name or id) |
+| `thinking` | `false` turns reasoning off (`--reasoning-budget 0`); leave it out for the model's default |
+| `kv_quant`, `flash_attn` | As in a profile |
+
+The recipe's own `inputs` are defaults; a group entry or a direct run fills in or overrides them. `model` and `ctx` must be known by then. A console is an agent node that is active, not excluded and not the scheduler's own machine. A placement that cannot be met when the step starts (a named console paused, fewer than N consoles free) is a refused step with the reason, not an error, and no profile is made for it.
+
+The profile is named after the inputs, for example `bench-gemma-3-12b-q4-any2-8k-nothink`, and is marked `generated: true`. It is created when missing, rewritten when the placement now picks other consoles, and left alone when it is already right. A profile of that id that a person wrote (`generated: false`) is never replaced; the step fails and says so. Each use of a recipe is a step with its own id, `<recipe>.<6 hex digits of the inputs>`, the same in every run, and a name such as `Cold load (gemma.gguf, 8k, any:2, thinking off)`. The step's `spec` keeps `recipe` and `applied_inputs`.
+
+Members of a parallel benchmark still name fixed profiles.
+
+### Groups
+
+A suite is also called a group; `/api/bench/groups` takes the same requests as `/api/bench/suites` and old suites read unchanged. An entry of a group is one of:
+
+- a benchmark id, or an inline benchmark, as before;
+- `{"benchmark": "<recipe>", "inputs": {...}}`: one use of a recipe;
+- `{"benchmark": "<recipe>", "inputs": {...}, "matrix": {"model": [...], "placement": [...], "ctx": [...], "thinking": [...]}}`: one use per combination, model outermost (up to 64 values per list and 500 combinations);
+- `{"group": "<id>"}`: another group's entries, run in its place. Its own run options (cooldown, idle wait) are not used; the outer group's are. A group that contains itself, directly or through others, is refused, and so is nesting deeper than 8.
+
+A run expands the group when it is queued (at most 1000 steps) and keeps the expanded list. `GET /api/bench/groups/<id>/expand` (MCP `expand_group`) shows that list without running anything: each entry's id, name, profile, recipe and inputs. A group that another group names cannot be deleted (`409`, naming the groups).
+
+```sh
+curl -s -X POST $B/api/bench/groups -d '{"id":"cold-loads","benchmarks":[{"benchmark":"cold-load","matrix":{"model":["gemma-3-12b-q4.gguf","qwen3-8b-q4.gguf"],"placement":["any:1","any:2","all"]}}]}'
+```
+
 ## 3. Create benchmarks and suites
 
 REST: `POST $B/api/bench/benchmarks` and `POST $B/api/bench/suites` with the JSON object; `PUT` and `DELETE` on `/api/bench/benchmarks/{id}` and `/api/bench/suites/{id}`. MCP: `create_benchmark`, `update_benchmark`, `delete_benchmark`, `create_suite`, `update_suite`, `delete_suite`. A first install can also seed them from the `bench:` block of the import file (see `deploy/seed-config.yaml`).
@@ -142,6 +175,14 @@ curl -s -X POST $B/api/bench/suites/gemma-scaling/run -d '{"note":"after the fir
 
 MCP: `run_suite` with `id`, optional `baseline`, `note` and `evict_others`. The answer is the queued run. Runs go one at a time; others queue.
 
+**One benchmark on its own.** A benchmark can also be run without a suite:
+
+```sh
+curl -s -X POST $B/api/bench/benchmarks/gemma12b-load-1/run -d '{"note":"after the firmware update"}'
+```
+
+MCP: `run_benchmark` with `id`, optional `baseline`, `note`, `only_when_idle` (default true), `idle_wait_s` (default 600), `evict_others` (default false) and, for a recipe, `inputs` (for example `{"inputs":{"model":"gemma-3-12b-q4.gguf","placement":"any:2"}}`). A recipe without a model, or inputs on a benchmark with a fixed profile, is refused with `422`. It is an ordinary run with one step and `kind: "benchmark"`, `benchmark_id` naming the benchmark, an empty `suite_id` and the benchmark's title as `suite_name`. Its default baseline is the benchmark's previous completed direct run. Every other run has `kind: "suite"` (older runs read the same way). `GET /api/bench/runs?kind=benchmark&benchmark=<id>` lists the direct runs; `?benchmark=<id>` alone lists every run with a step of it. The suite aggregates leave direct runs out; the benchmark aggregates count them.
+
 - **Idle first.** Benchmarks load and unload real models. With `only_when_idle` a run does not start, and pauses between benchmarks, while another model is loaded, a request that is not the run's is in flight, or anything is queued. A model someone used stays loaded for its `ttl` (300 s by default), so a run may wait that long. After `idle_wait_s` the run ends `skipped` and keeps what it measured. Set `only_when_idle: false` only when nobody else uses the pool. With `evict_others: true` (a suite option, or `{"evict_others": true}` in the body of `POST /api/bench/suites/<id>/run` for that run only) the run does not wait for other people's models that are loaded but idle; its loads may make the scheduler unload them to make room, as any load does. Requests in flight and the queue are still waited for.
 - **Clean-up.** A benchmark that does not end ready (a failed phase, its `timeout_s`, a cancel) ends with a forced unload of its profile before the next benchmark starts, after up to 3 s for its last request to be counted as ended. An `unload` phase (or the unload before a load) that the scheduler refuses because a request is still in flight is tried again for those 3 s: the scheduler counts a request's end a moment after the answer has arrived. A request that really stays in flight still makes it fail. A benchmark that ends ready keeps what it left loaded on purpose until the end of the run.
 - **Cancel.** `POST $B/api/bench/runs/<id>/cancel` (MCP `cancel_run`) stops after the current request; a load or a hold is abandoned at once. It unloads what the run loaded.
@@ -156,7 +197,7 @@ The runner tags its requests with `X-Bench-Run: <run id>`. Its loads and unloads
 |---|---|---|
 | Runs of a suite | `GET /api/bench/runs?suite=<id>` | `list_runs` |
 | One run, every step, phase and request | `GET /api/bench/runs/<id>` | `get_run` |
-| A table for a document | `GET /api/bench/runs/<id>/export?format=md` (also `csv`, `json`; `&detail=phases` or `&detail=turns` for CSV) | `export_run` |
+| A table for a document | `GET /api/bench/runs/<id>/export?format=md` (also `csv`, `json`; `&detail=phases`, `&detail=turns` or `&detail=tasks` for CSV) | `export_run` |
 | Points over past runs for a chart | `GET /api/bench/trends?benchmark=<id>&metric=load_s` | `get_bench_trends` |
 | The history added up | `GET /api/bench/aggregates?suite=<id>&since=30d` | `get_bench_aggregates` |
 | A benchmark's results per run | `GET /api/bench/benchmarks/<id>/results` | |
@@ -169,9 +210,55 @@ What a step records:
 - **Hardware facts**: `mem_low` (per node, the lowest available memory while loading and over the whole step; `kind` says system memory or GPU memory), `roles` (the host and the workers with each one's share of the model), and `reload_from_cache` (per node: `full`, `partial` with `cached_pct`, `none` or `unknown`).
 - **Environment** (`env`): scheduler version, configuration revision, llama build, the nodes' program versions.
 
-Trend metrics: `load_s`, `load_mb_s`, `memory_mib`, `decode_tps`, `prefill_tps`, `ttft_ms`, `unload_s`, `concurrent_wall_s`, `lowest_available_mib`, `lowest_available_gpu_mib`.
+Trend metrics: `load_s`, `load_mb_s`, `memory_mib`, `decode_tps`, `prefill_tps`, `ttft_ms`, `unload_s`, `concurrent_wall_s`, `lowest_available_mib`, `lowest_available_gpu_mib`, and for tasks phases `tasks_answered`, `task_decode_tps` (median), `task_points` and `task_points_pct` (with `&scorer=<name>`; default the step's first scorer by name). The markdown export and the phases CSV give a tasks phase's counts and each scorer's total; the markdown has a table per tasks phase; `detail=tasks` is one CSV row per task with `points_<scorer>` and `max_points_<scorer>` columns.
+
+### The measurement record
+
+Every number a step measures is also stored as one row of one shape, so that comparisons, trends and reports work for any benchmark:
+
+| Field | Meaning |
+|---|---|
+| `metric`, `value`, `of`, `unit` | What and how much, for example `load_s` 35.4 `s`, or `task_points` 12 of 17 `points` |
+| `run_id`, `step`, `phase`, `phase_type`, `phase_label` | Where it came from (`phase` is absent for a figure of the whole step) |
+| `benchmark_id`, `profile`, `model`, `node_count`, `node` | What it describes; `node` for per-machine figures. For a recipe, `benchmark_id` is the recipe |
+| `variant`, `ctx`, `placement` | For a recipe only: the use (the step's id) and its context and placement inputs |
+| `subject`, `seq` | The request (by name), turn (`turn 2`), simultaneous request or task, and which repeat |
+| `conditions` | `thinking_input` (`on`, `off`, for a recipe that sets it), `cold` and `cold_verified` (of the load, and of the last load before a request), `load_mode`, `generation` (`first` for warm-up, `steady`, `after_hold`), `thinking` (`seen`, `not_seen`), `memory` (`system`, `gpu`) and `window` (`load`, `step`), `scorer` |
+| `at` | When the request started, else when the phase or step started (unix ms) |
+
+`GET /api/bench/metrics` (MCP `list_bench_metrics`) lists the metrics with unit, description, the phase types that record them, whether they are per machine and whether higher is better. A failed request has no figures (its error stays in the step); a simultaneous-requests phase records `errors` of `n`. Task points are rows of `task_points`, written when a scorer posts and removed with its scores.
+
+| Ask | REST | MCP |
+|---|---|---|
+| A run's numbers | `GET /api/bench/runs/<id>/measurements` (`?step=N`, `?metric=load_s,ttft_ms`) | `get_run_measurements` |
+| The history of a metric | `GET /api/bench/measurements?benchmark=<id>&metric=ttft_ms&since=30d` (also `profile`, `model`, `node`, `variant`, `ctx`, `placement`, `kind`, `until`, `limit` up to 10000) | `query_measurements` |
+
+History rows, oldest first, carry their run's `run_state`, `run_kind`, `release` and `config_revision`. The rows are derived from the step results when a step ends; runs stored before this release are mapped once when the scheduler starts, so their history is there too.
 
 Aggregate filters: `suite`, `benchmark`, `profile`, `since` and `until` (Unix ms, RFC 3339, or `24h`, `7d`), `limit_runs` (default 200), `env=same` (only runs made in the same environment as the newest). Per benchmark the answer has the run count, pass rate, outcome counts, and for each metric the count, minimum, median, mean, maximum, standard deviation, last, best, the change of the last run against the median of the earlier ones, a regression flag and the last 30 points. `by_model_nodes` puts the same model on 1, 2 or 3 nodes side by side; `by_model_load_mode` splits by file read or pushed.
+
+### Transcripts
+
+Every step that sends prompts saves the whole exchange as a file of its own: `<data_dir>/bench-runs/<run id>/step-NNN.json` (format `potluck-transcript/1`). Each entry is one request, conversation turn or task, in order: the messages sent (a later conversation turn holds only its new message; the earlier ones are the previous entries), the sampling, the answer and the reasoning, the status or error, tokens and timings. A step that only loads and unloads has none.
+
+| Ask | REST | MCP |
+|---|---|---|
+| Which steps have one | `GET /api/bench/runs/<id>/transcripts` | `list_run_transcripts` |
+| One step's exchange | `GET /api/bench/runs/<id>/steps/<n>/transcript` (`?format=md` for a readable chat) | `get_step_transcript` |
+
+### Reports
+
+Reports are made from the recorded data every time one is opened, by fixed templates: the same run always gives the same report, nothing is stored and nothing is judged (no baselines, no pass marks).
+
+- **Summary** (the run of a group): headline counts (steps, ran, completed, failed, refused, cancelled, skipped), the issues first, one table per metric with the average, the lowest and the highest for each benchmark use and phase, and an index linking every benchmark report.
+- **Benchmark report** (one benchmark in a run, and the report of a direct run): the inputs (recipe, profile, model, context, placement, thinking), the outcome, then one section per phase with its figures, conditions, issues and a link to the transcript.
+- **Issues** are facts only: a step failed or timed out, a placement or the scheduler refused it, a machine was excluded, the scheduler stopped during the run, requests or tasks failed.
+
+`GET /api/bench/runs/<id>/report` (MCP `get_run_report`), `?step=<n>` for a benchmark report, `&phase=<p>` for one section; `format=json` (default), `md`, or `html`: a page with a print layout, "Download as Markdown", and "Download as PDF", which uses the browser's own save as PDF. The classic run page has a Report button.
+
+### Keeping runs
+
+Nothing is removed unless you turn retention on. The setting `bench_retention_days` (YAML `bench: {retention_days: ...}`) is `0` by default, which is off. Set to N days, a finished run older than that is trimmed: its request rows and its transcript folder are removed; the run itself, its steps and phases, its task answers and scores and its measurements (the compact record that history, trends and reports read) stay, and the run carries `trimmed_at`. The check runs every hour and reads the setting each time. A run that has not finished is never trimmed. Before turning it on, `GET /api/bench/removals/preview?days=N` lists the runs that N days would trim, and changes nothing. Pin a run to keep it: `PUT /api/bench/runs/<id>/pin` (MCP `pin_run`), `DELETE` the same path to unpin (`unpin_run`); runs carry `pinned`, and the classic run page has a Pin button. Every trim is logged: `GET /api/bench/removals` (MCP `list_run_removals`) lists the run, its kind, name, state, when it finished and was trimmed, why, how many steps and measurements it keeps and how many file bytes went; the history also gets a `benchRunRemoved` event.
 
 ## 6. Compare and regressions
 

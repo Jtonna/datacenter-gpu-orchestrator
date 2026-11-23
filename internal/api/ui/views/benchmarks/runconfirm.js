@@ -12,6 +12,10 @@ import { benchmarkById, suiteTitle, suiteNotRunnable, cache } from './common.js'
 export function suiteBenchmarks(suite) {
   const out = [];
   for (const it of suite.benchmarks || []) {
+    if (it && typeof it === 'object' && !it.id && (it.group || it.benchmark)) { // a recipe use or a nested group: the run expands it
+      out.push({ id: it.group || it.benchmark, name: it.group ? 'Group ' + it.group : ((benchmarkById(it.benchmark) || {}).name || it.benchmark), profile: '' });
+      continue;
+    }
     const bm = typeof it === 'string' ? benchmarkById(it) : it;
     if (!bm) { out.push({ id: it, name: String(it), profile: '' }); continue; }
     out.push(bm);

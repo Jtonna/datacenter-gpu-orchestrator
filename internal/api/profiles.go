@@ -123,6 +123,9 @@ func (s *Server) profileEntriesOf(ctx context.Context, cfg *config.Config) []map
 			if rep.Warning != "" {
 				plan["warning"] = rep.Warning
 			}
+			if rep.TightFit {
+				plan["tight_fit"] = true // the reason says where and by how much
+			}
 			if rep.LoadMode != "" {
 				plan["load_mode"] = rep.LoadMode
 			}

@@ -419,8 +419,8 @@ func TestOldDatabaseGainsTheTaskTables(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run := &Run{ID: "old-1", SuiteID: "s", SuiteName: "S", State: RunCompleted, Trigger: "manual", QueuedAt: 1, Suite: json.RawMessage(`{"id":"s"}`)}
-	if err := old.CreateRun(run); err != nil {
+	// The columns of that schema only (CreateRun writes the newer ones).
+	if _, err := old.db.Exec(`INSERT INTO runs (id, suite_id, suite_name, state, triggered_by, queued_at, suite) VALUES ('old-1','s','S','completed','manual',1,'{"id":"s"}')`); err != nil {
 		t.Fatal(err)
 	}
 	st := &Step{RunID: "old-1", BenchmarkID: "b", State: StepDone, Outcome: OutcomeReady}
