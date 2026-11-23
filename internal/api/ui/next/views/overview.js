@@ -342,7 +342,8 @@ registerView({
     function requestsPanel(p, st, solo) {
       const rows = feed.data.rows || [];
       const t = sum && sum.totals;
-      const total = t ? t.requests + (p.current ? (sum.live.queued + sum.live.running) : 0) : null;
+      const lv = (sum && sum.live) || {};
+      const total = t ? (t.requests || 0) + (p.current ? (lv.queued || 0) + (lv.running || 0) : 0) : null;
       const allLink = h('a', { href: href('requests', [], p.current && p.period === 'day' ? {} : { from: p.from, to: p.to }), 'data-all': '' }, total == null ? 'All' : 'All ' + num(total));
       // the pin starts on the first running request, as drawn
       if (pin === undefined) { const run = rows.find(x => x.status === 'running'); if (run) pin = String(run.id); }

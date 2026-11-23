@@ -50,14 +50,21 @@ next/index.html        rail, section menu and <main>; light only (the design def
 next/app.css           the design's tokens (light), the shell, every classic class restyled
 next/app.js            entry of the new shell; imports the classic views and the new ones; an empty
                        hash opens #/overview (Q76)
-next/core/shell.js     rail of sections, section menu (collapsible; closed on the Overview, Q9),
-                       fleet card, phone drawer
+next/core/shell.js     the design's rail: buttons with titles; Monitor, Zones, Models, Benchmarks;
+                       Ask Potluck (a drawer that says it is not built yet), MCP, the System
+                       health heart (dot = worst row), the gear Settings (Q69: Profiles, Tiers
+                       and zones, Settings, Audit, About, Placement preview, Logs, Classic UI,
+                       Q73); section menu (collapsible; closed on the Overview, Q9), fleet card,
+                       phone drawer; ?health=open on any page opens the health popup
+next/core/health.js    the health popup (Health board): Zones, Runs, Scheduler, MCP server,
+                       Storage, Queue, Alerts, Last 2 hours; rows without data are drawn and
+                       marked "waiting for data" (grey ring)
 next/core/dom.js       the classic dom.js; morph() keeps attributes it did not set
 next/core/period.js    Day / Week / Month / All time: bounds, step, stepper label, axis labels
 next/core/live.js      the classic live.js; adds the opt-in "requests" topic when hello lists it
-next/core/requests.js  requestFeed(): the "requests" topic (snapshot, queued/started/ended, tick)
-                       for a first page without filters, else GET /api/requests every 2 s while
-                       visible (also the fallback while the channel is down); every()
+next/core/requests.js  requestFeed(): the "requests" topic (snapshot, queued/started/ended, tick);
+                       a filtered or older page is read once and the frames laid over it; the 2 s
+                       poll runs only while the channel is down; every() (the 100 ms run clock)
 next/core/ui.js        the classic components plus panel, segmented, filterSelect, searchField,
                        zoneStatus, colourKey, availStrip, runStatus, sidePanel; for the Overview:
                        dateStepper, dropButton, tokensChart, tokensLegend, runsTable, runLegend,

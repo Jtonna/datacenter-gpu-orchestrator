@@ -1,4 +1,4 @@
-﻿package api
+package api
 
 import (
 	"encoding/json"
@@ -212,7 +212,7 @@ func TestUINextModelsListAndPanel(t *testing.T) {
 	var cat struct {
 		Models []struct {
 			Key, Name, File, Kind string
-			Profiles             []struct {
+			Profiles              []struct {
 				ID        string `json:"id"`
 				Generated bool   `json:"generated"`
 			} `json:"profiles"`
@@ -250,15 +250,18 @@ func TestUINextModelsListAndPanel(t *testing.T) {
 }
 
 // Each UI has a visible link to the other, so the owner switches without
-// typing an address: "Classic UI" at the foot of the new shell's rail,
-// "New UI" in the classic UI's header and navigation pane. Both are drawn
-// before any status arrives.
+// typing an address: "Classic UI" in the new shell's Settings menu (the
+// gear, Q73), "New UI" in the classic UI's header and navigation pane. Both
+// are drawn before any status arrives.
 func TestUISwitchLinks(t *testing.T) {
 	for _, c := range []struct{ shell, text, path string }{{"next", "Classic UI", "/ui/classic/"}, {"classic", "New UI", "/ui/"}} {
 		cases := []any{}
 		for _, r := range []string{"models", "zones", "about"} {
 			if r == "zones" && c.shell == "classic" {
 				r = "nodes"
+			}
+			if c.shell == "next" && r != "about" {
+				r = map[string]string{"models": "profiles", "zones": "audit"}[r]
 			}
 			cases = append(cases, map[string]any{"name": c.shell + ": " + r, "route": "#/" + r,
 				"links": []map[string]string{{"text": c.text, "path": c.path}}})

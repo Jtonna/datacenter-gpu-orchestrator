@@ -90,6 +90,14 @@ listen('hello', () => { push.have = false; });
 const topicOffered = () => !!(state.hello && Array.isArray(state.hello.topics) && state.hello.topics.includes('requests'));
 // pushReady() -> true while the topic serves (live channel, topic offered, snapshot in).
 export const pushReady = () => push.have && state.conn === 'live' && topicOffered();
+// failedSince(ms) -> how many requests failed or were refused since ms, by
+// the topic's copy (null while it does not serve). The health popup's Runs row.
+export function failedSince(ms) {
+  if (!pushReady()) return null;
+  let n = 0;
+  for (const r of push.rows.values()) if ((r.status === 'failed' || r.status === 'refused') && (r.ended_at || r.queued_at || 0) >= ms) n++;
+  return n;
+}
 // the first page with no filter: the topic's copy alone answers it
 const whole = p => !p.before && !p.to && !p.status && !p.profile;
 

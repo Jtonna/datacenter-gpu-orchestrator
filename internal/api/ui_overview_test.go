@@ -118,7 +118,7 @@ func TestUINextOverview(t *testing.T) {
 				"Tokens", "tokens in", "tokens out", "per hour", "Requests", "Queued", "Running", "Done", "Failed", "Cancelled", "All 6",
 				"Status and length", "Started at", "In tok/s", "Out tok/s", "Not started", "queued ", "42.5 s", "8.2 s", "4.0 s", "10 min", "2,460", "412", "14.1"},
 			"absent": []string{"Runs"},
-			"has": []string{"tr.fail", "tr.canc", "[data-run-start]", "span[title^='Failed:']", "span[title^='Refused:']", "span[title^='Cancelled']", "button.zb.on[data-zones='15']"}},
+			"has":    []string{"tr.fail", "tr.canc", "[data-run-start]", "span[title^='Failed:']", "span[title^='Refused:']", "span[title^='Cancelled']", "button.zb.on[data-zones='15']"}},
 		map[string]any{"name": "overview: zones in the design's words", "route": "#/overview", "status": st,
 			"expect": []string{"ALL ZONES", "3 in use", "1 free", "1 down", "1 off", "Sort: needs attention first", "Chip: any", "Memory: any", "Temperature: any",
 				"Status", "Zone", "Doing", "Memory", "Temp", "24 h ago", "Availability, hour by hour", "now",
@@ -176,7 +176,7 @@ func TestUINextOverviewIsHome(t *testing.T) {
 	}
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": map[string]any{}, "cases": []any{
 		map[string]any{"name": "home", "route": "#/overview",
-			"links": []map[string]string{{"text": "Overview", "path": "/ui/"}, {"text": "Requests", "path": "/ui/"}, {"text": "Queue", "path": "/ui/"}}},
+			"links": []map[string]string{{"text": "Overview", "path": "/ui/"}, {"text": "Models", "path": "/ui/"}, {"text": "Queue", "path": "/ui/"}, {"text": "Activity", "path": "/ui/"}}},
 	}})
 }
 
@@ -202,12 +202,12 @@ func TestUINextOverviewRequestsTopic(t *testing.T) {
 
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": polled, "cases": []any{
 		map[string]any{"name": "topic: not offered, the poll stays", "route": "#/overview", "status": st,
-			"ws": []any{map[string]any{"type": "hello", "data": map[string]any{"topics": []any{"status", "event"}}}, snapshot},
+			"ws":     []any{map[string]any{"type": "hello", "data": map[string]any{"topics": []any{"status", "event"}}}, snapshot},
 			"expect": []string{"42.5 s", "All 1"}, "absent": []string{"pushed-model"}},
 	}})
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": polled, "cases": []any{
 		map[string]any{"name": "topic: the snapshot replaces the poll", "route": "#/overview", "status": st,
-			"ws": []any{map[string]any{"type": "hello", "data": map[string]any{"topics": []any{"status", "requests"}}}, snapshot},
+			"ws":     []any{map[string]any{"type": "hello", "data": map[string]any{"topics": []any{"status", "requests"}}}, snapshot},
 			"expect": []string{"pushed-model", "Not started"}, "absent": []string{"42.5 s"}},
 		map[string]any{"name": "topic: started, then a tick", "route": "#/overview", "status": st,
 			"ws": []any{

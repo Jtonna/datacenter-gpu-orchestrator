@@ -37,6 +37,8 @@
 //    "cases": [{"name": "...", "route": "#/nodes", "status": {...} or "fetch", "fetch": {...}, "expect": ["text", ...],
 //               "absent": ["text that must not be drawn", ...], "none": ["css selector that must match nothing", ...],
 //               "has": ["css selector that must match something on the screen", ...],
+//               "pageHas" / "pageNone": the same over the whole page (shell, popups)
+//               "hash": "#/zones": the address after the clicks
 //               "ws": [{"type": "hello"|"requests"|..., "data": {...}}, ...]: live-channel
 //               messages delivered after the screen is drawn (hello also sets the
 //               connection live), before the clicks
@@ -490,6 +492,9 @@ for (const c of spec.cases) {
   for (const bad of c.absent || []) if (text.includes(bad)) errors.push('text that must not be there: ' + JSON.stringify(bad) + ' in ' + JSON.stringify(text.slice(Math.max(0, text.indexOf(bad) - 80), text.indexOf(bad) + 80)));
   for (const sel of c.none || []) if (outlet.querySelector(sel)) errors.push('an element that must not be there: ' + sel);
   for (const sel of c.has || []) if (!outlet.querySelector(sel)) errors.push('no element matches: ' + sel);
+  if (c.hash && location.hash !== c.hash) errors.push('the address is ' + location.hash + ', want ' + c.hash);
+  for (const sel of c.pageHas || []) if (!document.body.querySelector(sel)) errors.push('no element on the page matches: ' + sel);
+  for (const sel of c.pageNone || []) if (document.body.querySelector(sel)) errors.push('an element on the page that must not be there: ' + sel);
   // page: texts that must be anywhere on the page, the shell, side panels and dialogs included
   const pageText = document.body.textContent;
   for (const want of c.page || []) if (!pageText.includes(want)) errors.push('missing on the page: ' + JSON.stringify(want));
