@@ -43,7 +43,23 @@ func TestForwardLiveCountsChunksAndReadsTimings(t *testing.T) {
 	resp.Body.Close()
 	r := <-res
 	if r.InputTokens != 2460 || r.OutputTokens != 318 || r.CachedTokens != 2000 || r.PromptMS != 1116.5 ||
-		r.PredictedMS != 22553.2 || r.PromptPerSecond != 412 || r.TokensPerSecond != 14.1 || r.Reason() != "" {
+		r.PredictedMS != 22553.2 || r.PromptPerSecond != 412 || r.TokensPerSecond != 14.1 || r.Reason() != "" || !r.Stream {
+		t.Fatalf("%+v", r)
+	}
+}
+
+// Without a usage object, tokens in are prompt_n plus the reused cache_n.
+func TestForwardTimingsOnlyCountReusedPromptTokens(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"timings":{"cache_n":100,"prompt_n":20,"predicted_n":5}}`)
+	}))
+	defer up.Close()
+	res := make(chan Result, 1)
+	f := front(t, Options{Addr: upstreamAddr(up)}, res)
+	resp, _ := http.Get(f.URL + "/x")
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if r := <-res; r.InputTokens != 120 || r.CachedTokens != 100 || r.Stream {
 		t.Fatalf("%+v", r)
 	}
 }

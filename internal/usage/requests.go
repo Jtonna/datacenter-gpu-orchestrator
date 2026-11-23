@@ -127,6 +127,9 @@ type End struct {
 	DecodeTPS  float64
 	PrefillMS  float64
 	DecodeMS   float64
+	// Stream, when set, marks the answer as an event stream (known only once
+	// it began).
+	Stream bool
 }
 
 // LiveSource is what a running request's live figures come from (the
@@ -268,6 +271,7 @@ func (t *Tracker) Ended(e End) {
 	row := &t.row
 	row.Status, row.Reason, row.Message, row.HTTPStatus = e.Status, e.Reason, e.Message, e.HTTPStatus
 	row.EndedAt = now
+	row.Stream = row.Stream || e.Stream
 	if t.src != nil {
 		if fb := t.src.FirstByte(); !fb.IsZero() {
 			row.FirstTokenAt = fb.UnixMilli()

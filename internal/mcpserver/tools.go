@@ -247,6 +247,17 @@ func allTools() []*tool {
 			"node": s("Node hostname or id."), "profile": s("Profile id."), "session_id": s("A load session id such as ld-1795055840000-3."),
 			"q": s("Case-insensitive substring of the event summary."), "limit": i("Maximum events (default 200, at most 2000)."), "order": en("Sort order.", "desc", "asc")},
 			nil, "GET", "/api/history", "since", "until", "type", "severity", "node", "profile", "session_id", "q", "limit", "order"),
+		rd("list_requests", "The request log: one row per client request (/v1 and /upstream), newest first, the queued and running ones first with live token counts. Each row has its status (queued, running, done, failed, refused, cancelled) and reason, times, profile, tokens in (reused ones counted, and also shown apart), tokens out, prefill and decode rates, the machines with their role (host or helper), the caller and the benchmark run. Page with before=next.", P{
+			"status": s("Comma-separated statuses: queued, running, done, failed, refused, cancelled."), "profile": s("Profile id."),
+			"node": s("A machine id or hostname the request ran on."), "from": i("Arrived at or after this unix time in milliseconds."),
+			"to": i("Arrived before this unix time in milliseconds."), "bench": en("Only benchmark requests (yes) or none (no).", "yes", "no"),
+			"caller": s("Agent key name, or anonymous for requests without a key."), "limit": i("Rows per page (default 50, at most 500)."),
+			"before": i("Paging cursor: the next value of the previous page.")},
+			nil, "GET", "/api/requests", "status", "profile", "node", "from", "to", "bench", "caller", "limit", "before"),
+		rd("get_request", "One request of the request log by id, live or finished, with every recorded field.", P{"id": i("The request id.")}, []string{"id"}, "GET", "/api/requests/{id}"),
+		rd("get_request_summary", "Token and request totals for a period with an hourly or daily series (tokens in, reused and out, requests by status, prefill and decode rates), the live queued and running counts, oldest_ts and history_begins_at. Defaults to the last 24 hours by hour.", P{
+			"from": i("Period start, unix milliseconds (default to minus 24 hours)."), "to": i("Period end, unix milliseconds (default now)."),
+			"step": en("Bucket size.", "hour", "day"), "profile": s("Only this profile.")}, nil, "GET", "/api/requests/summary", "from", "to", "step", "profile"),
 		rd("get_history_summary", "Aggregate the event history over a time range: counts by type and severity, load statistics per profile, per-node incidents and every error event.", P{
 			"since": i("Range start, unix milliseconds."), "until": i("Range end, unix milliseconds.")}, nil, "GET", "/api/history/summary", "since", "until"),
 		rd("query_logs", "Search the central log store (CR-10) with a LogsQL query: Potluck's own log (source:=scheduler), the output of the programs it starts (source:=host), each agent's log, launch output and machine journal (source:=agent, launch, journal). Fields: node_id, node_name, source, profile, launch_id, level, unit, _msg, _time. Examples: node_id:=\"02:00:00:00:00:01\" level:=error; profile:=\"gemma-4-12b\" _time:1h. Answers JSON lines, newest last; answers 404 when central logging is off.", P{

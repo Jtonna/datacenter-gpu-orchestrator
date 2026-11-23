@@ -32,6 +32,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/pool"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/proxy"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/usage"
 )
 
 // DefaultMaxQueuedBodyBytes is the default Options.MaxQueuedBodyBytes.
@@ -83,6 +84,9 @@ type Options struct {
 	// Logs is the pass-through in front of the log store (CR-10, logs.go);
 	// nil means central logging is not there and its routes answer 404.
 	Logs *logrelay.Relay
+	// Requests is the request log (usage.db, requests.go); nil keeps only
+	// the live requests, in memory.
+	Requests *usage.Recorder
 
 	statusSource func(ctx context.Context) (any, error) // tests replace the status the hub sends
 	modelFiles   func() []ModelFile                     // the dev harness replaces the models directory scan
@@ -117,6 +121,7 @@ type Server struct {
 	hub      *hub
 	ws       *wsHub
 	activity *activityLog
+	reqs     *usage.Recorder // the request log (requests.go)
 	hist     *history.Store
 	files    modelFileCache // metadata of the files in models_dir (models.go)
 	catalog  catalogCache   // the model catalog, kept in memory (catalog.go)
@@ -157,7 +162,10 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 		o.History = history.Open(history.Options{}) // off
 	}
 	s := &Server{cfg: cfg, sched: sched, opts: o, log: o.Logger, start: o.Now(), hist: o.History,
-		activity: newActivityLog(200), aliasSeen: map[string]time.Time{}}
+		activity: newActivityLog(200), aliasSeen: map[string]time.Time{}, reqs: o.Requests}
+	if s.reqs == nil {
+		s.reqs = usage.NewRecorder(nil) // live rows only
+	}
 	s.bg, s.bgCancel = context.WithCancel(context.Background())
 	s.occ = startOccupied(o.History)
 	s.store, _ = o.Audit.(*cfgstore.Store)
@@ -252,7 +260,8 @@ func (s *Server) routes() *http.ServeMux {
 	s.nodeRoutes(m)  // potluck-agent's /api/pool/..., /api/nodes/{id}/... (nodes.go)
 	s.logRoutes(m)   // central logging: /api/pool/nodes/{id}/logs, /api/logs (logs.go)
 	m.HandleFunc("GET /api/metrics/activity", s.handleActivity)
-	s.uiRoutes(m) // the web UI at /ui/ and the classic one at /ui/classic/ (uifiles.go)
+	s.requestRoutes(m) // the request log: /api/requests... (requests.go)
+	s.uiRoutes(m)      // the web UI at /ui/ and the classic one at /ui/classic/ (uifiles.go)
 	m.HandleFunc("GET /api/status", s.handleStatus)
 	m.HandleFunc("GET /api/history", s.handleHistory)
 	m.HandleFunc("GET /api/history/summary", s.handleHistorySummary)
@@ -407,19 +416,25 @@ func (s *Server) handleV1(w http.ResponseWriter, r *http.Request) {
 	}
 	defer ex.Body.Close()
 
+	benchRun := benchRunHeader(r.Header.Get("X-Bench-Run"))
 	p, alias, ok := s.conf().Resolve(ex.Model)
 	if !ok {
-		writeSchedError(w, &scheduler.Error{Status: http.StatusNotFound, Reason: scheduler.ReasonUnknownModel,
-			Message: fmt.Sprintf("model %q not found", ex.Model)})
+		e := &scheduler.Error{Status: http.StatusNotFound, Reason: scheduler.ReasonUnknownModel,
+			Message: fmt.Sprintf("model %q not found", ex.Model)}
+		s.trackRequest(r, usage.KindV1, ex.Model, nil, benchRun).Ended(refusedEnd(e))
+		writeSchedError(w, e)
 		return
 	}
 	if alias {
 		s.logAlias(r, ex.Model, p.Name)
 	}
+	track := s.trackRequest(r, usage.KindV1, ex.Model, p, benchRun)
 	if n := ex.BufferedBytes(); n > 0 {
 		if !s.reserveBody(n) {
-			writeSchedError(w, &scheduler.Error{Status: http.StatusServiceUnavailable, Reason: scheduler.ReasonClusterBusy,
-				Message: "too many request bodies are waiting in the queue", RetryAfter: 30 * time.Second})
+			e := &scheduler.Error{Status: http.StatusServiceUnavailable, Reason: scheduler.ReasonClusterBusy,
+				Message: "too many request bodies are waiting in the queue", RetryAfter: 30 * time.Second}
+			track.Ended(refusedEnd(e))
+			writeSchedError(w, e)
 			return
 		}
 		var once sync.Once
@@ -436,9 +451,10 @@ func (s *Server) handleV1(w http.ResponseWriter, r *http.Request) {
 	ex.Prefetch(func(err error) { cancelWait(err) }, func() {
 		http.NewResponseController(w).SetReadDeadline(time.Now())
 	})
-	lease, err := s.sched.AcquireFor(actx, ex.Model, benchRunHeader(r.Header.Get("X-Bench-Run")))
+	lease, err := s.sched.AcquireFor(actx, ex.Model, benchRun)
 	releaseWait() // admitted or answered: the body no longer waits in the queue
 	if err != nil {
+		track.Ended(refusedEnd(err))
 		var se *scheduler.Error
 		if cause := context.Cause(actx); r.Context().Err() == nil && cause != nil && errors.As(err, &se) && se.Status == scheduler.StatusClientClosed {
 			var pe *proxy.Error
@@ -453,9 +469,12 @@ func (s *Server) handleV1(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	start := s.opts.Now()
+	live := &proxy.Live{}
+	track.Started(leasePlacement(lease), live)
 	var res proxy.Result
 	defer func() {
 		lease.Release()
+		track.Ended(resultEnd(res))
 		s.activity.add(activityRecord{
 			Timestamp: s.opts.Now(), Model: lease.Profile, ReqPath: r.URL.Path, Status: res.Status,
 			DurationMS: s.opts.Now().Sub(start).Milliseconds(),
@@ -464,7 +483,7 @@ func (s *Server) handleV1(w http.ResponseWriter, r *http.Request) {
 		s.hub.activityDone()
 	}()
 	res = proxy.Forward(w, r, proxy.Options{Addr: lease.Addr, Body: ex.Body, StallTimeout: lease.StallTimeout,
-		APIKey: lease.APIKey, Gone: lease.Gone})
+		APIKey: lease.APIKey, Gone: lease.Gone, Live: live})
 	if res.Aborted {
 		panic(http.ErrAbortHandler)
 	}
@@ -576,12 +595,17 @@ func (s *Server) handleUpstream(w http.ResponseWriter, r *http.Request) {
 	if alias {
 		s.logAlias(r, model, p.Name)
 	}
+	track := s.trackRequest(r, usage.KindUpstream, model, p, benchRunHeader(r.Header.Get("X-Bench-Run")))
 	addr, ready := s.sched.Upstream(model)
 	if !ready {
-		writeSchedError(w, &scheduler.Error{Status: http.StatusServiceUnavailable, Reason: "not ready",
-			Message: fmt.Sprintf("%s is not loaded or is not ready; /upstream never starts a model", p.Name), RetryAfter: time.Second})
+		e := &scheduler.Error{Status: http.StatusServiceUnavailable, Reason: "not ready",
+			Message: fmt.Sprintf("%s is not loaded or is not ready; /upstream never starts a model", p.Name), RetryAfter: time.Second}
+		track.Ended(refusedEnd(e))
+		writeSchedError(w, e)
 		return
 	}
+	live := &proxy.Live{}
+	track.Started(usage.Placement{}, live) // a passthrough has no lease: its machines are not known here
 	// Strip "/upstream/{model}" from the escaped path, keeping the rest as written.
 	esc := strings.TrimPrefix(r.URL.EscapedPath(), "/upstream/")
 	tail := "/"
@@ -592,8 +616,10 @@ func (s *Server) handleUpstream(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		plain = tail
 	}
-	res := proxy.Forward(w, r, proxy.Options{Addr: addr, Path: plain, RawPath: tail, StallTimeout: s.conf().EffectiveStallTimeout(p),
-		APIKey: s.sched.UpstreamKey(model)})
+	var res proxy.Result
+	defer func() { track.Ended(resultEnd(res)) }() // also when Forward panics
+	res = proxy.Forward(w, r, proxy.Options{Addr: addr, Path: plain, RawPath: tail, StallTimeout: s.conf().EffectiveStallTimeout(p),
+		APIKey: s.sched.UpstreamKey(model), Live: live})
 	if res.Aborted {
 		panic(http.ErrAbortHandler)
 	}

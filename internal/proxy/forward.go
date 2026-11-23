@@ -96,6 +96,8 @@ type Result struct {
 	CachedTokens          int
 	PromptMS, PredictedMS float64
 	PromptPerSecond       float64
+	// Stream is true when the response was an event stream.
+	Stream bool
 }
 
 // Reason names how the forwarded request failed, in the request log's words;
@@ -210,6 +212,10 @@ func Forward(w http.ResponseWriter, r *http.Request, o Options) (res Result) {
 		}
 		res.InputTokens, res.OutputTokens, res.TokensPerSecond = extractUsage(tail.bytes())
 		res.CachedTokens, res.PromptMS, res.PredictedMS, res.PromptPerSecond = extractTimings(tail.bytes())
+		if res.CachedTokens > 0 && res.InputTokens >= 0 && lastObject(tail.bytes(), `"usage"`) == nil {
+			res.InputTokens += res.CachedTokens // timings' prompt_n leaves out the reused tokens; usage counts them
+		}
+		res.Stream = body != nil && body.sse
 		res.Stalled = body != nil && body.stalled.Load()
 	}()
 	rp.ServeHTTP(sw, r)
