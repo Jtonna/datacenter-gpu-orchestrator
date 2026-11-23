@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -101,6 +102,21 @@ func TestIDSubcommandInstall(t *testing.T) {
 	errb.Reset()
 	if code := run([]string{"id", "--install", "docker", "--potluck", "nope"}, &out, &errb); code != 1 || !strings.Contains(errb.String(), "--potluck") {
 		t.Fatalf("bad --potluck: code %d, %s", code, errb.String())
+	}
+}
+
+// 0.1.10: --log-level info|debug (default info); debug shows, among
+// others, the source address of allowed API calls.
+func TestParseFlagsLogLevel(t *testing.T) {
+	base := []string{"--potluck", "192.0.2.1:3122", "--model-source", "push"}
+	if o, err := parseFlags(base, &bytes.Buffer{}); err != nil || o.LogLevel != "info" || logLevel(o) != slog.LevelInfo {
+		t.Fatalf("default %q %v", o.LogLevel, err)
+	}
+	if o, err := parseFlags(append(base, "--log-level", "debug"), &bytes.Buffer{}); err != nil || logLevel(o) != slog.LevelDebug {
+		t.Fatalf("debug %q %v", o.LogLevel, err)
+	}
+	if _, err := parseFlags(append(base, "--log-level", "trace"), &bytes.Buffer{}); err == nil {
+		t.Fatal("--log-level trace accepted")
 	}
 }
 

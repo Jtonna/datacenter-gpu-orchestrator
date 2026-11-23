@@ -719,6 +719,8 @@ The agent itself also takes `--shared-memory true|false|auto` (CR-9, from releas
 
 Log shipping options (CR-10, from release 0.1.2; section 11.3, item 15): `--logs on|off` (default `on`), `--log-buffer-mib N` (default 8), `--journal-dir PATH` (Docker install: a journal folder of the host, mounted read-only). Neither the setup script nor the starter sets them.
 
+Log level option (release 0.1.10): `--log-level info|debug` (default `info`). At `debug` the agent also names, once per distinct source address per minute, the source of each call its API allowed (`agent API call allowed source=… method=… path=…`); a refused call is answered 403 and not named by this line. Behind Docker Desktop every caller appears as the gateway, so the line shows which network calls come from, not which machine.
+
 Busy file option (from release 0.1.6; section 6.14): `--busy-file auto|off|PATH` (default `auto`: `/run/potluck/busy` on a bare Linux install, no file otherwise). Neither the setup script nor the starter sets it.
 
 - **Bare metal** (`--bare`): places the agent binary, writes one systemd unit `potluck-agent.service` that starts at boot, starts it. A RAM-only node does not use the setup script; it uses the starter (section 5.4), which passes `--ram-only`.

@@ -80,6 +80,8 @@ type Options struct {
 	LogsOff        bool
 	LogBufferBytes int
 	JournalDir     string
+	// LogLevel is --log-level: info (default) or debug (0.1.10).
+	LogLevel string
 	// MarksFile is the start-up marks file another component writes
 	// (agentproto.StartupMarksFile on a bare install); "" reads none. The
 	// agent only reads it, for a while after its start.
@@ -187,6 +189,10 @@ type Agent struct {
 	opt  Options
 	deps Deps
 	log  *slog.Logger
+	// srcMu guards srcSeen: when each source address of an allowed API
+	// call was last named in the log (noteSource).
+	srcMu   sync.Mutex
+	srcSeen map[string]time.Duration
 
 	startID   string
 	startedAt time.Duration

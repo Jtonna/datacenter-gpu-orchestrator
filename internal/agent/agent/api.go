@@ -91,6 +91,7 @@ func (a *Agent) Handler() http.Handler {
 			writeJSON(w, 403, refusalBody(ReasonForbidden, "source address not allowed"))
 			return
 		}
+		a.noteSource(r)
 		// POST /reset needs no launch state and stays open.
 		if r.URL.Path != "/reset" && !a.launchRecovered() {
 			w.Header().Set("Retry-After", "1")
@@ -193,4 +194,45 @@ func (a *Agent) postCacheEvict(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, agentproto.CacheEvictAnswer{File: res.File, FileBytes: res.FileBytes, CachedBefore: res.CachedBefore,
 		CachedAfter: res.CachedAfter, DurationS: res.DurationS})
+}
+
+// sourceLogEvery is how often the DEBUG line of one source address repeats.
+const sourceLogEvery = time.Minute
+
+// noteSource names the source address of an allowed call at DEBUG, once per
+// distinct source per minute (0.1.10): behind Docker Desktop every caller
+// arrives from the gateway, and this shows which network the calls come
+// from.
+func (a *Agent) noteSource(r *http.Request) {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	now := a.deps.Clock.Now()
+	if !a.sourceDue(host, now) {
+		return
+	}
+	a.log.Debug("agent API call allowed", "source", host, "method", r.Method, "path", r.URL.Path)
+}
+
+// sourceDue records host and reports whether its line is due. The table
+// keeps only sources seen within the last minute once it grows.
+func (a *Agent) sourceDue(host string, now time.Duration) bool {
+	a.srcMu.Lock()
+	defer a.srcMu.Unlock()
+	if a.srcSeen == nil {
+		a.srcSeen = map[string]time.Duration{}
+	}
+	if last, ok := a.srcSeen[host]; ok && now-last < sourceLogEvery {
+		return false
+	}
+	if len(a.srcSeen) >= 256 {
+		for k, t := range a.srcSeen {
+			if now-t >= sourceLogEvery {
+				delete(a.srcSeen, k)
+			}
+		}
+	}
+	a.srcSeen[host] = now
+	return true
 }
