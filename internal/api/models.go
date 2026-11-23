@@ -838,7 +838,7 @@ func BuildModelCatalog(in CatalogInput, detailKey string) []map[string]any {
 			if pe["tensor_split"] == nil {
 				pe["tensor_split"] = []any{}
 			}
-			for _, k := range []string{"host", "host_node", "host_overhead_mib", "host_problem", "description"} { // a profile hosted on a node
+			for _, k := range []string{"host", "host_node", "host_overhead_mib", "host_problem", "description", "derived_from_ctx"} { // a profile hosted on a node; a derived need
 				if v, ok := p[k]; ok {
 					pe[k] = v
 				}

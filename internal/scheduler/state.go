@@ -359,6 +359,7 @@ type schedCore struct {
 	leases       map[uint64]*lease
 	needs_       map[string]NeedInfo             // provider results, before the estimate margin and learned figures
 	learned      map[string]map[int]*learnedNeed // by shape and device count (needcount.go)
+	derive       deriveState                     // what the derivation keeps between calls (derive.go)
 	needOps      []needOp                        // learned-need store writes, taken by the runner after each step (needs.go)
 	persist      bool                            // a need store is attached: learned needs are queued for it
 	buildRelease string                          // this build's release, stored with each measurement

@@ -176,6 +176,10 @@ func (c *schedCore) needBasis(info NeedInfo) string {
 			max(c.cfg.Defaults.HostOverheadMiB, 0))
 	}
 	switch info.Source {
+	case NeedDerived:
+		if info.derive != nil {
+			return c.derivedWords(info)
+		}
 	case NeedEstimated:
 		return fmt.Sprintf("estimated, +%s%% margin; the estimate is %d MiB",
 			strconv.FormatFloat(c.cfg.Defaults.EstimateMargin*100, 'f', -1, 64), info.BaseMiB)

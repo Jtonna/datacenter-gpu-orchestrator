@@ -159,7 +159,7 @@ func (info NeedInfo) at(k int) NeedInfo {
 		return info
 	}
 	out := info
-	out.Devices, out.FromDevices, out.fromTotal, out.FromServer = k, 0, 0, false
+	out.Devices, out.FromDevices, out.fromTotal, out.FromServer, out.DerivedFromCtx = k, 0, 0, false, 0
 	out.Need, out.Source, out.MeasuredAt = info.baseNeed, info.baseSource, time.Time{}
 	rule := needRule{PerDevice: info.perDevice, Floor: info.baseNeed.Measured, Rows: make([]needRow, len(info.figs))}
 	if info.baseNeed.Measured { // a configured needs_mib
@@ -180,6 +180,9 @@ func (info NeedInfo) at(k int) NeedInfo {
 	if src.restored {
 		out.Source = NeedRestored
 	}
+	if info.derive != nil {
+		out.Source, out.DerivedFromCtx = NeedDerived, info.derive.ctx
+	}
 	return out
 }
 
@@ -197,7 +200,7 @@ func (c *schedCore) needAt(p *core.Profile, k int) (NeedInfo, error) {
 func (c *schedCore) withLearned(p *core.Profile, info, base NeedInfo) NeedInfo {
 	ls, server := c.planLearnedOf(p)
 	if len(ls) == 0 {
-		return info
+		return c.withDerived(p, info, base) // derive.go: from the same model at another context
 	}
 	info.serverFigs = server
 	info.baseNeed, info.baseSource, info.perDevice = info.Need, info.Source, c.perDeviceCost(base)
@@ -263,6 +266,11 @@ type NeedsDoc struct {
 	Release     string
 	ServedBuild string
 	Rows        []LearnedRow
+	// DerivePairs is the check of derived needs (derive.go): every pair of
+	// one model's trusted measurements at two contexts, each predicted from
+	// the other; within DeriveToleranceMiB either way counts as validated.
+	DerivePairs        []DerivePair
+	DeriveToleranceMiB int
 }
 
 // learnedRows lists every measurement, by shape and device count.
