@@ -777,31 +777,61 @@ func TestNeverFits_TheWindowEndIsADeadline(t *testing.T) {
 	}
 }
 
-// ES2 (eighth review): a reading of the just-released node taken after the
-// release and its settle ends the wait at once, in both outcomes; without
-// one the whole window is waited.
+// heartbeat models a heartbeat of node id arriving now: a reading, after
+// the worker stop when stopped (the first of those also sees the stop),
+// with the old figure unless caughtUp.
+func (h *harness) heartbeat(id core.NodeID, stopped, caughtUp bool) {
+	h.t.Helper()
+	now := h.clk.Now()
+	h.view.modify(id, func(n *core.Node) {
+		n.FigureAt = now
+		if stopped {
+			if n.StopSeenAt.IsZero() {
+				n.StopSeenAt, n.FiguresSinceStop = now, 1 // the stop, then this reading
+			} else {
+				n.FiguresSinceStop++
+			}
+		}
+		if caughtUp {
+			n.FreeMiB = n.TotalMiB
+		}
+	})
+	h.viewChanged()
+}
+
+// ES2 and NB1 (eighth and ninth review): the wait on a just-released node
+// with worker launches ends only with a reading certainly measured after
+// the workers stopped: the second one after the view saw their launch end.
+// Agents membership, both settings, both outcomes.
 func TestNeverFits_AFreshFigureEndsTheWait(t *testing.T) {
 	for _, tight := range []bool{false, true} {
-		// refused without eviction, about one heartbeat after the request
+		// (a) and the refusal: readings before the stop, and the first one
+		// after it, do not end the wait; the second ends it, no eviction
 		h, w := neverFitAfterUnload(t, "agents", tight)
 		h.view.mu.Lock()
-		asked := h.view.wantFig["a"]
+		asked, ok := h.view.wantFig["a"]
 		h.view.mu.Unlock()
-		if want := h.c.freshAfter("a"); !asked.Equal(want) {
-			t.Fatalf("tight %v: the view was asked for a reading of a after %v, want %v", tight, asked, want)
+		if !ok || !asked.Equal(h.c.nodes["a"].releasedAt) {
+			t.Fatalf("tight %v: the view was asked for readings of a after %v (%v)", tight, asked, ok)
 		}
-		h.runTo(5 * time.Second)
-		h.view.modify("a", func(n *core.Node) { n.FreeMiB, n.FigureAt = n.TotalMiB, h.clk.Now() })
-		h.viewChanged()
+		h.runTo(time.Second)
+		h.heartbeat("a", false, false) // received after the release, measured before the stop
+		h.runTo(time.Second)
+		h.heartbeat("a", true, false) // the stop is seen; this reading may predate it
+		if _, ok := h.peek(w); ok {
+			t.Fatalf("tight %v: a reading before or at the worker stop ended the wait", tight)
+		}
+		h.runTo(2 * time.Second)
+		h.heartbeat("a", true, true)
 		if a, ok := h.peek(w); !ok || a.err == nil {
-			t.Fatalf("tight %v: a fresh reading did not end the wait (refusal)", tight)
+			t.Fatalf("tight %v: the second reading after the stop did not end the wait (refusal)", tight)
 		}
 		if len(h.of(history.TEviction)) != 0 {
 			t.Fatalf("tight %v: evicted for it", tight)
 		}
 
-		// evict and start: the claim's node is released by the victim; the
-		// reading after it lets the load start at once
+		// (c) the eviction probe: no 503 after the eviction, start once the
+		// reading after the stop shows the memory back
 		h = inMode(newHarness(t).nodes(psNode("a", 2, 12643)), "agents")
 		if tight {
 			liveTight(h)
@@ -819,24 +849,82 @@ func TestNeverFits_AFreshFigureEndsTheWait(t *testing.T) {
 		if h.c.insts["x"] != nil || h.c.insts["mid"] != nil {
 			t.Fatalf("tight %v: x %v mid %v after 5 s", tight, h.c.insts["x"] != nil, h.c.insts["mid"] != nil)
 		}
-		h.view.modify("a", func(n *core.Node) { n.FreeMiB, n.FigureAt = n.TotalMiB, h.clk.Now() })
-		h.viewChanged()
+		h.heartbeat("a", false, false)
+		h.runTo(time.Second)
+		h.heartbeat("a", true, false)
+		if a, ok := h.peek(w); ok && a.err != nil {
+			t.Fatalf("tight %v: refused after the eviction on a reading from before the stop: %v", tight, a.err)
+		}
+		h.runTo(2 * time.Second)
+		h.heartbeat("a", true, true)
 		if h.c.insts["mid"] == nil {
-			t.Fatalf("tight %v: a fresh reading did not end the wait (start)", tight)
+			t.Fatalf("tight %v: the reading after the stop did not let mid start", tight)
 		}
 		if a, ok := h.peek(w); ok && a.err != nil {
 			t.Fatalf("tight %v: refused %v", tight, a.err)
 		}
 
-		// no reading: the full window
+		// (d) the stop is never seen: readings alone do not end the wait;
+		// the window does
 		h, w = neverFitAfterUnload(t, "agents", tight)
-		h.view.modify("a", func(n *core.Node) { n.FigureAt = h.clk.Now().Add(-time.Hour) }) // an old reading only
-		h.viewChanged()
 		end, _ := h.c.releaseWindowEnd("a")
-		h.runTo(end.Sub(h.clk.Now()) - time.Second)
-		h.viewChanged()
-		if _, ok := h.peek(w); ok {
-			t.Fatalf("tight %v: decided without a fresh reading before the window ended", tight)
+		for h.clk.Now().Add(2 * time.Second).Before(end) {
+			h.runTo(2 * time.Second)
+			h.heartbeat("a", false, true)
 		}
+		if _, ok := h.peek(w); ok {
+			t.Fatalf("tight %v: decided before the window ended without a stop seen", tight)
+		}
+		h.runTo(end.Sub(h.clk.Now()) + time.Second)
+		if a, ok := h.peek(w); !ok || a.err == nil {
+			t.Fatalf("tight %v: not decided at the window's end", tight)
+		}
+	}
+}
+
+// NB1 (b): unload, then at once a forced load with the tight values: the
+// stale readings around the worker stop do not refuse it; it is served once
+// the reading after the stop shows the memory back.
+func TestNeverFits_UnloadThenForcedLoadIsServed(t *testing.T) {
+	h := inMode(newHarness(t).nodes(psNode("a", 2, 12643)), "agents")
+	liveTight(h)
+	unloadLagging(h, "agents")
+	h.llama("mid", 0, func(p *core.Profile) { p.ForceNodes, p.LoadTimeout = []string{"a"}, time.Hour })
+	h.needs["mid"] = NeedInfo{Need: placer.Measured(9000), FileBytes: 5 << 30}
+	w := h.request("mid")
+	h.heartbeat("a", false, false)
+	h.runTo(time.Second)
+	h.heartbeat("a", true, false)
+	if a, ok := h.peek(w); ok && a.err != nil {
+		t.Fatalf("refused on a reading from before the stop: %v", a.err)
+	}
+	h.runTo(2 * time.Second)
+	h.heartbeat("a", true, true)
+	if h.c.insts["mid"] == nil {
+		t.Fatalf("mid was not served (wait: %s)", h.waitReasonOf("mid"))
+	}
+}
+
+// fleet membership reports no reading times: a fleet wait lasts the window
+// (documented); a local node's reading after settle + 2 heartbeats counts.
+func TestNeverFits_NoStopToSeeUsesTheFallback(t *testing.T) {
+	h := newHarness(t).nodes(psNode("a", 2, 12643))
+	liveTight(h)
+	unloadLagging(h, "fleet")
+	if h.c.nodes["a"].expectStop {
+		t.Fatal("fleet: a stop is expected where no workers ran")
+	}
+	if !h.c.justReleased("a") {
+		t.Fatal("a is not just released")
+	}
+	h.view.modify("a", func(n *core.Node) { n.FigureAt = h.c.freshAfter("a") }) // not after it
+	h.viewChanged()
+	if !h.c.justReleased("a") {
+		t.Fatal("a reading at freshAfter counted as fresh")
+	}
+	h.view.modify("a", func(n *core.Node) { n.FigureAt = h.c.freshAfter("a").Add(time.Millisecond) })
+	h.viewChanged()
+	if h.c.justReleased("a") {
+		t.Fatal("a reading after freshAfter did not count")
 	}
 }

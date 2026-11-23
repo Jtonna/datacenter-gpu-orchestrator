@@ -224,6 +224,7 @@ func (p *Pool) nodeFromAgentLocked(cfg *config.Config, a *agent) (core.Node, boo
 	if len(a.mem) > 0 {
 		n.FigureAt = a.mem[len(a.mem)-1].at
 	}
+	n.StopSeenAt, n.FiguresSinceStop = a.stopSeen, a.figsSinceStop
 	_, avgDev, avgOK := a.memAverage()
 	if avgOK {
 		n.FreeAvgMiB, n.FreeAvgKnown = int(max(avgDev, 0)), true
@@ -647,6 +648,7 @@ func sameNodes(a, b []core.Node, useAvg bool) bool {
 		// the reading's time alone does not notify (FigureWatch does, for a
 		// node the scheduler waits on)
 		x.FigureAt, y.FigureAt = time.Time{}, time.Time{}
+		x.StopSeenAt, y.StopSeenAt, x.FiguresSinceStop, y.FiguresSinceStop = time.Time{}, time.Time{}, 0, 0
 		if !useAvg {
 			x.FreeAvgMiB, x.FreeAvgKnown, y.FreeAvgMiB, y.FreeAvgKnown = 0, false, 0, false
 		}
@@ -664,17 +666,35 @@ func (p *Pool) WantFigures(after map[core.NodeID]time.Time) {
 	p.mu.Lock()
 	defer p.unlock()
 	p.wantFig = after
+	if p.figNotified == nil {
+		p.figNotified = map[core.NodeID]notifiedFig{}
+	}
+	for id := range p.figNotified {
+		if _, ok := after[id]; !ok {
+			delete(p.figNotified, id)
+		}
+	}
 }
 
-// wantedFigureLocked reports whether nodes carry a reading the scheduler
-// waits for, and forgets those nodes.
+// wantedFigureLocked reports whether a node the scheduler waits on carries
+// a new reading taken after the time given, or a new launch end: each is
+// notified once. The scheduler decides whether the reading is fresh enough
+// (justReleased) and drops the node from its request when it is.
 func (p *Pool) wantedFigureLocked(nodes []core.Node) bool {
 	hit := false
 	for _, n := range nodes {
-		if t, ok := p.wantFig[n.ID]; ok && n.FigureAt.After(t) {
-			delete(p.wantFig, n.ID)
+		t, ok := p.wantFig[n.ID]
+		if !ok {
+			continue
+		}
+		last := p.figNotified[n.ID]
+		if (n.FigureAt.After(t) && n.FigureAt.After(last.fig)) || n.StopSeenAt.After(last.stop) {
+			p.figNotified[n.ID] = notifiedFig{n.FigureAt, n.StopSeenAt}
 			hit = true
 		}
 	}
 	return hit
 }
+
+// notifiedFig is the reading and launch end last notified for a node.
+type notifiedFig struct{ fig, stop time.Time }

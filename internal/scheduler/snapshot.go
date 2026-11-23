@@ -357,7 +357,10 @@ func (c *schedCore) dryPlan(profile string) (r PlanReport) {
 				r.Action, r.Reason, r.Placement = PlanReject, fe.Message, c.placedStatus(res.Placement)
 				return r
 			}
-			if g := c.reserveGate(p, res.Placement, res.Victims); g == "" {
+			if g := c.reserveGate(p, res.Placement, res.Victims); g == "" && c.evictWaits(p, res.Placement, res.Victims) { // as plan()
+				r.Action, r.Reason = PlanQueue, "waits until the average free figure of its nodes counts again after a release: the eviction would pass only without it"
+				return r
+			} else if g == "" {
 				r.Action, r.Placement, placed = PlanEvict, c.placedStatus(res.Placement), &res.Placement
 				for _, v := range res.Victims {
 					r.Victims = append(r.Victims, PlanVictim{Profile: v, Busy: c.insts[v].inFlight > 0})

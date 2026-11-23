@@ -37,6 +37,9 @@ const (
 // evicted model's): it is not used then (review S5). With a window of 0 the
 // average is the latest sample and never stale.
 func (c *schedCore) avgStale(id core.NodeID) bool {
+	if c.avgAlways {
+		return false
+	}
 	w := c.cfg.Defaults.FreeAverageWindow
 	ns := c.nodes[id]
 	return w > 0 && ns != nil && !ns.heldChanged.IsZero() && c.now.Before(ns.heldChanged.Add(w))

@@ -67,6 +67,10 @@ func (p *Pool) endLaunchLocked(l *launch) {
 		return
 	}
 	delete(p.launches, l.id)
+	if a := p.agents[string(l.node)]; a != nil {
+		a.stopSeen, a.figsSinceStop = p.o.Clock(), 0
+		p.rebuildLocked()
+	}
 	p.ended = append(p.ended, endedLaunch{l.id, logLaunch{string(l.node), l.profile}})
 	if n := len(p.ended) - keepEndedLaunches; n > 0 {
 		p.ended = append(p.ended[:0:0], p.ended[n:]...)

@@ -145,9 +145,48 @@ func TestFigureAtAndWantFigures(t *testing.T) {
 	if !drain(r.p.Changed()) {
 		t.Fatal("the reading the scheduler waits for did not notify")
 	}
+	// each further reading notifies while the scheduler still waits (it
+	// decides whether one is fresh enough), but the same reading only once
+	r.clk.advance(time.Second)
+	hb()
+	if !drain(r.p.Changed()) {
+		t.Fatal("a further reading of a waited-on node did not notify")
+	}
+	r.p.rebuildLocked2()
+	if drain(r.p.Changed()) {
+		t.Fatal("the same reading notified twice")
+	}
+	// NB1: a worker launch end on the node is seen, and the readings after
+	// it are counted
+	r.p.mu.Lock()
+	r.p.launches["l-1"] = &launch{id: "l-1", node: id}
+	r.p.endLaunchLocked(r.p.launches["l-1"])
+	r.p.unlock()
+	if !drain(r.p.Changed()) {
+		t.Fatal("the launch end of a waited-on node did not notify")
+	}
+	if n, _ := r.node(id); n.StopSeenAt.IsZero() || n.FiguresSinceStop != 0 {
+		t.Fatalf("after the stop: seen %v, readings %d", n.StopSeenAt, n.FiguresSinceStop)
+	}
+	r.clk.advance(time.Second)
+	hb()
+	r.clk.advance(time.Second)
+	hb()
+	if n, _ := r.node(id); n.FiguresSinceStop != 2 {
+		t.Fatalf("readings since the stop %d, want 2", n.FiguresSinceStop)
+	}
+	r.p.WantFigures(nil)
+	drain(r.p.Changed())
 	r.clk.advance(time.Second)
 	hb()
 	if drain(r.p.Changed()) {
-		t.Fatal("notified again for a node already reported")
+		t.Fatal("a reading notified after the scheduler stopped waiting")
 	}
+}
+
+// rebuildLocked2 rebuilds the view under the lock (a test helper).
+func (p *Pool) rebuildLocked2() {
+	p.mu.Lock()
+	defer p.unlock()
+	p.rebuildLocked()
 }

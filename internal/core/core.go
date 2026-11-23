@@ -42,6 +42,13 @@ type Node struct {
 	// node something of ours just left is decided on a reading taken after
 	// the release (scheduler, justReleased).
 	FigureAt time.Time
+	// StopSeenAt is when the scheduler's host last saw a worker launch on
+	// the node end (its stop confirmed, or its exit); FiguresSinceStop
+	// counts the memory readings received after that. A reading measured
+	// after the workers freed their memory is certain from the second one
+	// (agents membership; zero otherwise).
+	StopSeenAt       time.Time
+	FiguresSinceStop int
 	// FreeAvgMiB is FreeMiB averaged over defaults.free_average_window, valid
 	// when FreeAvgKnown (agents membership: from the heartbeats the pool
 	// receives). placement_uses_reserved places on min(FreeMiB, FreeAvgMiB).

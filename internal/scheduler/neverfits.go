@@ -295,17 +295,33 @@ const releaseGrace = 30 * time.Second
 // buffers yet), so it may still change: the fifth review's FB1, the
 // benchmark pattern of unloading and at once loading the next model.
 //
-// The window is the upper bound: a memory reading of the node taken after
-// the release and its settle time (freshAfter) ends it at once (eighth
-// review ES2), so a load after an unload costs about one heartbeat.
+// The window is the upper bound. A reading certainly measured after the
+// memory came back ends it early (eighth review ES2, ninth review NB1):
+//   - when the release left worker launches on the node, only once the
+//     view has seen a launch end there after the release and has received
+//     two readings since (the first may have been measured before the
+//     stop; the agent's busy state follows the stop within 1 s, contract
+//     6.14);
+//   - otherwise (nothing to stop there, or a local node), a reading
+//     received after the release, the node's settle time and two
+//     heartbeat intervals (freshAfter).
+//
+// A view that reports no reading times (fleet membership) waits for the
+// window.
 func (c *schedCore) justReleased(id core.NodeID) bool {
 	end, ok := c.releaseWindowEnd(id)
 	if !ok || !c.now.Before(end) {
 		return false
 	}
 	n, _ := c.node(id)
+	if c.nodes[id].expectStop {
+		return n.StopSeenAt.Before(c.nodes[id].releasedAt) || n.StopSeenAt.IsZero() || n.FiguresSinceStop < 2
+	}
 	return !n.FigureAt.After(c.freshAfter(id))
 }
+
+// agentHeartbeat is the agents' heartbeat interval (pool.HeartbeatEvery).
+const agentHeartbeat = 2 * time.Second
 
 // releaseWindowEnd is when node id's just-released window ends; ok is false
 // when the node is held or nothing that ran has left it.
@@ -321,12 +337,12 @@ func (c *schedCore) releaseWindowEnd(id core.NodeID) (time.Time, bool) {
 	return ns.releasedAt.Add(w), true
 }
 
-// freshAfter is the time after which a reading of node id counts as fresh:
-// the release plus the node's settle time (what the settle waits for the
-// memory to come back).
+// freshAfter is the time after which a reading of node id counts as fresh
+// when no worker stop is to be seen there: the release plus the node's
+// settle time plus two heartbeat intervals (settle may be 0).
 func (c *schedCore) freshAfter(id core.NodeID) time.Time {
 	n, _ := c.node(id)
-	return c.nodes[id].releasedAt.Add(n.Settle)
+	return c.nodes[id].releasedAt.Add(n.Settle + 2*agentHeartbeat)
 }
 
 // watchFigures tells a FigureWatch view which nodes the queue waits on for
@@ -340,7 +356,7 @@ func (c *schedCore) watchFigures() {
 	if len(c.entries) > 0 {
 		for _, id := range c.sortedNodeIDs() {
 			if c.justReleased(id) {
-				want[id] = c.freshAfter(id)
+				want[id] = c.nodes[id].releasedAt // notify on each reading or launch end after it
 			}
 		}
 	}
@@ -384,6 +400,29 @@ func forcedFitWaitText(pl core.Placement, c *schedCore) string {
 // forced_fit_check reject, or the reservation gate on.
 func (c *schedCore) refusesBeforeEvict() bool {
 	return c.agents || c.cfg.Defaults.ForcedFitCheck == config.ForcedFitReject || c.gateOn()
+}
+
+// evictWaits: an eviction for p on placement pl with victims passes the
+// reservation gate only because a node's average free figure is left out
+// for a while after a release (avgStale). Once the average counts again the
+// same check may refuse, after the victims are gone. The eviction waits
+// until the decision no longer depends on that (ninth review: no eviction
+// for a request then refused).
+func (c *schedCore) evictWaits(p *core.Profile, pl core.Placement, victims []string) bool {
+	if !c.cfg.Defaults.PlacementUsesReserved {
+		return false
+	}
+	stale := false
+	for _, pn := range pl.Nodes {
+		stale = stale || c.avgStale(pn.ID)
+	}
+	if !stale {
+		return false
+	}
+	c.avgAlways = true
+	g := c.reserveGate(p, pl, victims)
+	c.avgAlways = false
+	return g != ""
 }
 
 // anyJustReleased: a node of pl was just released (justReleased).

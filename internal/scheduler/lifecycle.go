@@ -375,7 +375,7 @@ func (c *schedCore) removeInst(in *inst, settle bool) {
 	mayHeld := in.workers || in.childRan
 	for _, n := range in.placement.Nodes {
 		if ns := c.nodes[n.ID]; mayHeld && ns != nil && ns.holder == in.prof.Name {
-			ns.releasedAt = c.now
+			ns.releasedAt, ns.expectStop = c.now, in.workers && !n.Local
 		}
 		c.releaseNode(n.ID, in.prof.Name, settle)
 	}

@@ -31,7 +31,11 @@ func (c *schedCore) nextDeadline() (time.Time, bool) {
 	// A just-released node's window ends (neverfits.go): what waits on it
 	// is decided then, not at the next event (eighth review ES1).
 	if waiting {
-		for id := range c.nodes {
+		for id, ns := range c.nodes {
+			// and when a node's average counts again (evictWaits)
+			if w := d.FreeAverageWindow; w > 0 && c.avgStale(id) {
+				add(ns.heldChanged.Add(w))
+			}
 			if c.justReleased(id) {
 				if end, ok := c.releaseWindowEnd(id); ok {
 					add(end)

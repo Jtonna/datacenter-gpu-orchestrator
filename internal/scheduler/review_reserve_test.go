@@ -667,16 +667,42 @@ var evictRefused, evictChecked, evictSeen map[string]int
 
 // afterwards follows m's request on: the stops and settles run, then the
 // view catches up (every node nothing holds shows its figure from before
-// the situation) and the windows end. No eviction may have been started for
-// a request that is then refused (seventh review AB1, AS1).
+// the situation, one stale reading after the stop first) and the windows
+// end. No eviction may have been started for a request that is refused at
+// any time within the follow-up (seventh review AB1, AS1; ninth NB1): the
+// waiter's answer is kept, so a refusal at any point is seen at the end.
 func afterwards(t *testing.T, h *harness, w *waiter, orig map[core.NodeID]int, key string, name func() string) {
+	agents := h.c.agents
 	t.Helper()
-	for range 4 { // each round: stops and settles run, then the view catches up
+	// Each round: stops and settles run; then, for every node nothing holds,
+	// the workers' stop is seen with a stale reading (still the old figure,
+	// as a heartbeat measured before the stop would show), and only the next
+	// reading has caught up (ninth review NB1: the table catches a wait that
+	// ends on the stale one).
+	for range 4 {
 		h.advance(10 * time.Second)
-		for id, free := range orig {
+		var free []core.NodeID
+		for id := range orig {
 			if ns := h.c.nodes[id]; ns == nil || ns.holder == "" {
-				h.view.modify(id, func(n *core.Node) { n.FreeMiB = free })
+				free = append(free, id)
 			}
+		}
+		now := h.clk.Now()
+		for _, id := range free { // fleet membership reports no reading times
+			if agents {
+				h.view.modify(id, func(n *core.Node) { n.FigureAt, n.StopSeenAt, n.FiguresSinceStop = now, now, 1 })
+			}
+		}
+		h.viewChanged()
+		h.advance(2 * time.Second)
+		now = h.clk.Now()
+		for _, id := range free {
+			h.view.modify(id, func(n *core.Node) {
+				n.FreeMiB = orig[id]
+				if agents {
+					n.FigureAt, n.FiguresSinceStop = now, 2
+				}
+			})
 		}
 		h.viewChanged()
 	}

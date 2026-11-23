@@ -273,6 +273,10 @@ type nodeState struct {
 	// (neverfits.go, justReleased). A refused or returned placement that
 	// never ran does not set it.
 	releasedAt time.Time
+	// expectStop: the release left worker launches of ours on the node to
+	// be stopped, so its memory is back only once the view has seen them
+	// end (neverfits.go, justReleased).
+	expectStop bool
 
 	emptyPF, emptyClaim int
 	hasPF, hasClaim     bool
@@ -309,6 +313,8 @@ type lease struct {
 // on one goroutine, and depends on its collaborators only through
 // interfaces. Slow work is emitted as effects for the runner.
 type schedCore struct {
+	// avgAlways: avgStale is false for the check under way (evictWaits).
+	avgAlways bool
 	// wantFig: the nodes last given to a FigureWatch view (neverfits.go).
 	wantFig map[core.NodeID]time.Time
 	// localSysMiB is this machine's system memory (0 when unknown) and

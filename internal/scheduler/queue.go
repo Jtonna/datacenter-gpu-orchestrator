@@ -173,6 +173,9 @@ func (c *schedCore) plan(e *entry) bool {
 	if len(e.prof.ForceNodes) > 0 && c.refusesBeforeEvict() && c.anyJustReleased(res.Placement) {
 		return false
 	}
+	if c.evictWaits(e.prof, res.Placement, res.Victims) {
+		return false
+	}
 	// A forced profile that could not fit its nodes even with nothing loaded
 	// on them is refused now, before any victim is stopped (forcedfit.go).
 	if ferr := c.forcedRefusalBeforeEvict(e.prof, res.Placement); ferr != nil {
