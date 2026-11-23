@@ -3,6 +3,7 @@ package scheduler
 import (
 	"cmp"
 	"fmt"
+	"hash/maphash"
 	"slices"
 	"strconv"
 	"strings"
@@ -123,6 +124,7 @@ func profileOfKey(k needKey) *core.Profile {
 type ctxStep struct {
 	total, perDevice int
 	fromEst, fromDev int
+	fileBytes        int64
 }
 
 // ctxDelta is the ctxStep from the window of from to that of to. ok is
@@ -132,15 +134,48 @@ func (c *schedCore) ctxDelta(from, to needKey) (ctxStep, bool) {
 	if from.kind == core.KindCommand || to.kind == core.KindCommand {
 		return ctxStep{}, false
 	}
-	a, err := c.needs.Need(profileOfKey(from))
-	if err != nil || a.Need.Measured || a.Need.MiB <= 0 {
+	a, ok := c.deriveEstimate(from)
+	if !ok {
 		return ctxStep{}, false
 	}
-	b, err := c.needs.Need(profileOfKey(to))
-	if err != nil || b.Need.Measured || b.Need.MiB <= 0 || b.FileBytes != a.FileBytes {
+	b, ok := c.deriveEstimate(to)
+	if !ok || b.FileBytes != a.FileBytes {
 		return ctxStep{}, false
 	}
-	return ctxStep{total: b.Need.MiB - a.Need.MiB, perDevice: b.DeviceMiB - a.DeviceMiB, fromEst: a.Need.MiB, fromDev: a.DeviceMiB}, true
+	return ctxStep{total: b.Need.MiB - a.Need.MiB, perDevice: b.DeviceMiB - a.DeviceMiB, fromEst: a.Need.MiB, fromDev: a.DeviceMiB,
+		fileBytes: a.FileBytes}, true
+}
+
+// deriveEstimate is the provider's estimate for the settings of k, asked
+// once: it depends on the model file and k only, so it is kept across
+// configuration writes (the provider's own cache is not). A change of the
+// models folder forgets them all (applyConfig); withDerived forgets a
+// model's when its file size no longer matches.
+func (c *schedCore) deriveEstimate(k needKey) (NeedInfo, bool) {
+	if e, ok := c.derive.est[k]; ok {
+		return e, true
+	}
+	c.derive.estCalls++
+	e, err := c.needs.Need(profileOfKey(k))
+	if err != nil || e.Need.Measured || e.Need.MiB <= 0 {
+		return NeedInfo{}, false // not kept: a missing file may appear
+	}
+	if c.derive.est == nil {
+		c.derive.est = map[needKey]NeedInfo{}
+	}
+	c.derive.est[k] = e
+	return e, true
+}
+
+// forgetEstimates drops the kept estimates of one model file name, and the
+// pair checks built on them.
+func (c *schedCore) forgetEstimates(model string) {
+	for k := range c.derive.est {
+		if k.model == model {
+			delete(c.derive.est, k)
+		}
+	}
+	c.derive.groups = nil
 }
 
 // derive is the figure of l moved to the other window of s.
@@ -151,50 +186,169 @@ func (s ctxStep) holds(l *learnedNeed) bool {
 	return l.TotalMiB+deriveToleranceMiB >= s.fromEst+l.count()*s.fromDev
 }
 
+// deriveState is what the derivation keeps between calls, all of it in the
+// core goroutine: the estimates of other contexts, and, for one state of
+// the store (sum), the measurements by group and each group's pairs and
+// check, rebuilt for a group only when its own rows change. A configuration
+// write changes none of it: the work is done once per state of the store,
+// not per profile, listing or configuration revision.
+type deriveState struct {
+	est    map[needKey]NeedInfo
+	seed   maphash.Seed
+	seeded bool
+	sum    uint64
+	groups map[needKey]*deriveGroup
+	all    []DerivePair // every group's pairs, sorted; nil until asked
+	// work done (tests)
+	estCalls, pairBuilds int
+}
+
+type deriveGroup struct {
+	rows     []*learnedNeed // every row with a total, any trust, by context then devices
+	sum      uint64
+	built    bool
+	builtSum uint64
+	pairs    []DerivePair
+	check    deriveCheck
+}
+
+// deriveRowSig is what of a row the derivation depends on; the row itself
+// by its address (its shape never changes), the rest by value (a row may be
+// updated in place).
+type deriveRowSig struct {
+	row          *learnedNeed
+	devices, mib int
+	modelBytes   int64
+	restored     bool
+	build        string
+	at           int64
+}
+
+// deriveIndex brings the kept state up to the store: one pass hashing the
+// rows (no estimate, no pair) when nothing changed.
+func (c *schedCore) deriveIndex() *deriveState {
+	d := &c.derive
+	if !d.seeded {
+		d.seed, d.seeded = maphash.MakeSeed(), true
+	}
+	builds := maphash.Comparable(d.seed, [2]string{c.llamaBuild, c.servedBuild})
+	rowSum := func(k int, l *learnedNeed) uint64 {
+		return mix(maphash.Comparable(d.seed, deriveRowSig{l, k, l.TotalMiB, l.modelBytes, l.restored, l.build, l.at.UnixNano()}))
+	}
+	sum, n := builds, uint64(0)
+	for _, ls := range c.learned {
+		for k, l := range ls {
+			sum += rowSum(k, l)
+			n++
+		}
+	}
+	sum += mix(n)
+	if d.groups != nil && sum == d.sum {
+		return d
+	}
+	old := d.groups
+	d.sum, d.all, d.groups = sum, nil, map[needKey]*deriveGroup{}
+	for _, ls := range c.learned {
+		for k, l := range ls {
+			if l.TotalMiB <= 0 || l.key.kind == core.KindCommand {
+				continue
+			}
+			g := l.key.noCtx()
+			e := d.groups[g]
+			if e == nil {
+				e = &deriveGroup{sum: builds}
+				d.groups[g] = e
+			}
+			e.rows = append(e.rows, l)
+			e.sum += rowSum(k, l)
+		}
+	}
+	for g, e := range d.groups {
+		slices.SortFunc(e.rows, func(a, b *learnedNeed) int { return cmp.Or(a.key.ctx-b.key.ctx, a.count()-b.count()) })
+		if o := old[g]; o != nil && o.built && o.builtSum == e.sum {
+			e.built, e.builtSum, e.pairs, e.check = true, e.sum, o.pairs, o.check
+		}
+	}
+	return d
+}
+
+// mix spreads a hash so that sums of them do not cancel.
+func mix(x uint64) uint64 {
+	x ^= x >> 33
+	x *= 0xff51afd7ed558ccd
+	x ^= x >> 33
+	return x
+}
+
+// group is the kept group g with its pairs and check built.
+func (c *schedCore) group(g needKey) *deriveGroup { return c.groupIn(c.deriveIndex(), g) }
+
+func (c *schedCore) groupIn(d *deriveState, g needKey) *deriveGroup {
+	e := d.groups[g]
+	if e == nil {
+		return &deriveGroup{check: deriveCheck{upSafe: true}}
+	}
+	if !e.built {
+		d.pairBuilds++
+		e.pairs = c.pairsOf(e.rows)
+		e.check = checkOf(e.pairs)
+		e.built, e.builtSum = true, e.sum
+	}
+	return e
+}
+
 // derivePairs checks the derivation on every pair of trusted measurements
 // of one model at two contexts on the same device count, everything else
 // that keys a shape equal; only those of group when group is not nil.
 func (c *schedCore) derivePairs(group *needKey) []DerivePair {
-	byGroup := map[needKey][]*learnedNeed{}
-	for _, ls := range c.learned {
-		for _, l := range ls {
-			if l.TotalMiB <= 0 || !c.trusted(l) || l.key.kind == core.KindCommand {
-				continue
-			}
-			g := l.key.noCtx()
-			if group != nil && g != *group {
-				continue
-			}
-			byGroup[g] = append(byGroup[g], l)
-		}
+	if group != nil {
+		return slices.Clone(c.group(*group).pairs)
 	}
+	d := c.deriveIndex()
+	if d.all == nil {
+		all := []DerivePair{}
+		for g := range d.groups {
+			all = append(all, c.groupIn(d, g).pairs...)
+		}
+		sortPairs(all)
+		d.all = all
+	}
+	return slices.Clone(d.all)
+}
+
+func (c *schedCore) pairsOf(rows []*learnedNeed) []DerivePair {
 	var out []DerivePair
-	for _, ls := range byGroup {
-		for _, a := range ls {
-			for _, b := range ls {
-				if a.key.ctx == b.key.ctx || a.count() != b.count() {
-					continue
-				}
-				if a.modelBytes > 0 && b.modelBytes > 0 && a.modelBytes != b.modelBytes {
-					continue // another file under the same name
-				}
-				st, ok := c.ctxDelta(a.key, b.key)
-				if !ok {
-					continue
-				}
-				pred := st.derive(a)
-				e := pred - b.TotalMiB
-				out = append(out, DerivePair{Model: a.key.model, Shape: b.key.shape(), Devices: a.count(), FromCtx: a.key.ctx, ToCtx: b.key.ctx,
-					FromMiB: a.TotalMiB, PredictedMiB: pred, MeasuredMiB: b.TotalMiB, ErrMiB: e, FromAt: a.at, ToAt: b.at,
-					WithinTolerance: abs(e) <= deriveToleranceMiB, BelowEstimate: !st.holds(a)})
+	for _, a := range rows {
+		if !c.trusted(a) {
+			continue
+		}
+		for _, b := range rows {
+			if a.key.ctx == b.key.ctx || a.count() != b.count() || !c.trusted(b) {
+				continue
 			}
+			if a.modelBytes > 0 && b.modelBytes > 0 && a.modelBytes != b.modelBytes {
+				continue // another file under the same name
+			}
+			st, ok := c.ctxDelta(a.key, b.key)
+			if !ok {
+				continue
+			}
+			pred := st.derive(a)
+			e := pred - b.TotalMiB
+			out = append(out, DerivePair{Model: a.key.model, Shape: b.key.shape(), Devices: a.count(), FromCtx: a.key.ctx, ToCtx: b.key.ctx,
+				FromMiB: a.TotalMiB, PredictedMiB: pred, MeasuredMiB: b.TotalMiB, ErrMiB: e, FromAt: a.at, ToAt: b.at,
+				WithinTolerance: abs(e) <= deriveToleranceMiB, BelowEstimate: !st.holds(a)})
 		}
 	}
+	sortPairs(out)
+	return out
+}
+
+func sortPairs(out []DerivePair) {
 	slices.SortFunc(out, func(x, y DerivePair) int {
 		return cmp.Or(strings.Compare(x.Model, y.Model), cmp.Compare(x.Devices, y.Devices), cmp.Compare(x.FromCtx, y.FromCtx),
 			cmp.Compare(x.ToCtx, y.ToCtx), strings.Compare(x.Shape, y.Shape))
 	})
-	return out
 }
 
 // deriveCheck is what a model's own pairs say. checked: there are pairs
@@ -207,11 +361,12 @@ type deriveCheck struct {
 	anyPairs        bool
 }
 
-func (c *schedCore) checkDerivation(k needKey) deriveCheck {
-	g := k.noCtx()
+func (c *schedCore) checkDerivation(k needKey) deriveCheck { return c.group(k.noCtx()).check }
+
+func checkOf(ps []DerivePair) deriveCheck {
 	ch := deriveCheck{upSafe: true}
 	allWithin := true
-	for _, p := range c.derivePairs(&g) {
+	for _, p := range ps {
 		ch.anyPairs = true
 		allWithin = allWithin && p.WithinTolerance
 		if p.ToCtx > p.FromCtx && p.ErrMiB < -deriveToleranceMiB {
@@ -230,24 +385,20 @@ func (c *schedCore) checkDerivation(k needKey) deriveCheck {
 }
 
 // derivedSources lists, by context, the measurements of the same model and
-// settings at other windows than p's (same file when both sizes are known).
-func (c *schedCore) derivedSources(p *core.Profile, fileBytes int64) map[int][]*learnedNeed {
+// settings at other windows than p's (same file when both sizes are known),
+// fewest devices first.
+func (c *schedCore) derivedSources(d *deriveState, p *core.Profile, fileBytes int64) map[int][]*learnedNeed {
 	key := needKeyOf(p)
-	g := key.noCtx()
-	out := map[int][]*learnedNeed{}
-	for _, ls := range c.learned {
-		for _, l := range ls {
-			if l.TotalMiB <= 0 || l.key.noCtx() != g || l.key.ctx == key.ctx {
-				continue
-			}
-			if l.modelBytes > 0 && fileBytes > 0 && l.modelBytes != fileBytes {
-				continue
-			}
-			out[l.key.ctx] = append(out[l.key.ctx], l)
-		}
+	e := d.groups[key.noCtx()]
+	if e == nil {
+		return nil
 	}
-	for _, ls := range out {
-		slices.SortFunc(ls, func(a, b *learnedNeed) int { return a.count() - b.count() })
+	out := map[int][]*learnedNeed{}
+	for _, l := range e.rows {
+		if l.key.ctx == key.ctx || (l.modelBytes > 0 && fileBytes > 0 && l.modelBytes != fileBytes) {
+			continue
+		}
+		out[l.key.ctx] = append(out[l.key.ctx], l)
 	}
 	return out
 }
@@ -274,12 +425,13 @@ func (c *schedCore) withDerived(p *core.Profile, info, base NeedInfo) NeedInfo {
 	if p.Kind == core.KindCommand || base.Need.Measured {
 		return info // a configured need is never replaced
 	}
-	srcs := c.derivedSources(p, base.FileBytes)
+	d := c.deriveIndex()
+	srcs := c.derivedSources(d, p, base.FileBytes)
 	if len(srcs) == 0 {
 		return info
 	}
 	key := needKeyOf(p)
-	ch := c.checkDerivation(key)
+	ch := c.groupIn(d, key.noCtx()).check
 	if !ch.upSafe {
 		return info // the model costs more than the formula: no derivation
 	}
@@ -289,6 +441,11 @@ func (c *schedCore) withDerived(p *core.Profile, info, base NeedInfo) NeedInfo {
 			return s, true
 		}
 		s, ok := c.ctxDelta(srcs[ctx][0].key, key)
+		if ok && base.FileBytes > 0 && s.fileBytes != base.FileBytes { // the file changed since its estimates were kept
+			c.forgetEstimates(key.model)
+			s, ok = c.ctxDelta(srcs[ctx][0].key, key)
+			ok = ok && s.fileBytes == base.FileBytes
+		}
 		if ok {
 			steps[ctx] = s
 		}

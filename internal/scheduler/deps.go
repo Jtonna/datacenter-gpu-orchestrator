@@ -114,6 +114,38 @@ type ConfigNeeds struct {
 
 	mu    sync.Mutex
 	cache map[string]NeedInfo
+	metas map[string]metaEntry // GGUF headers by path, kept across configuration writes
+	reads int                  // headers read (tests)
+}
+
+// metaEntry is a GGUF header read, valid while the file keeps its size and
+// modification time.
+type metaEntry struct {
+	size int64
+	mod  time.Time
+	meta *gguf.Meta
+}
+
+// metaOf is the header of the file at path, read once per version of the
+// file: every profile and every derivation estimate of one model shares it.
+func (c *ConfigNeeds) metaOf(path string) (*gguf.Meta, error) {
+	st, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if e, ok := c.metas[path]; ok && e.size == st.Size() && e.mod.Equal(st.ModTime()) {
+		return e.meta, nil
+	}
+	c.reads++
+	meta, err := gguf.ReadMeta(path)
+	if err != nil {
+		return nil, err
+	}
+	if c.metas == nil {
+		c.metas = map[string]metaEntry{}
+	}
+	c.metas[path] = metaEntry{size: st.Size(), mod: st.ModTime(), meta: meta}
+	return meta, nil
 }
 
 // Need implements NeedProvider.
@@ -146,7 +178,7 @@ func (c *ConfigNeeds) compute(p *core.Profile) (NeedInfo, error) {
 		}
 		return NeedInfo{Need: placer.Measured(p.NeedsMiB), FileBytes: st.Size()}, nil
 	}
-	meta, err := gguf.ReadMeta(path)
+	meta, err := c.metaOf(path)
 	if err != nil {
 		return NeedInfo{}, fmt.Errorf("model file: %w", err)
 	}
