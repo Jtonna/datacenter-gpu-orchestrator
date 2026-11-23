@@ -153,6 +153,10 @@ type Profile struct {
 	// scheduler's machine (profile host: server, the default), HostNode on
 	// the first forced node, started there by its agent (phase 6).
 	Host string
+	// Description is free text for people (one line, at most 500
+	// characters). It changes nothing in scheduling: a loaded instance is
+	// not stale when only its description changed.
+	Description string
 }
 
 // HostNode is Profile.Host for a host on a node; HostServer is the profile

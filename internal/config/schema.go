@@ -306,6 +306,7 @@ var profileFields = []Field{
 	{Key: "cmd", Section: "command", Type: "string", AppliesTo: "command", Required: true, Description: "Command line containing ${PORT}."},
 	{Key: "check_endpoint", Section: "command", Type: "string", AppliesTo: "command", Description: "Readiness path polled on the command's port."},
 	{Key: "aliases", Section: "identity", Type: "list", Description: "Other names that resolve to this profile."},
+	{Key: "description", Section: "identity", Type: "string", Description: "Free text for people: what this profile is for. One line, at most 500 characters; it changes nothing in scheduling."},
 	{Key: "generated", Section: "identity", Type: "bool", Nullable: true, Description: "Marks a profile that a tool generated (a benchmark matrix, a sweep) rather than a person wrote. Lists of models keep such profiles out of the way. Empty means not said: the id decides (bench-*, b-* and m-* count as generated)."},
 	{Key: "ttl", Section: "timing", Type: "duration", Unit: "seconds", Nullable: true, Min: num(0), Description: "Idle unload time for this profile; empty uses the default, 0 never unloads."},
 	{Key: "load_timeout", Section: "timing", Type: "duration", Unit: "seconds", Default: "0s", Min: num(0), Description: "Load timeout for this profile; 0 uses the computed default."},

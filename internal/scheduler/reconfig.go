@@ -28,7 +28,12 @@ func (c *ConfigNeeds) Reconfigure(cfg *config.Config) {
 // staleProfile reports that an instance runs with a profile definition that has since changed or been deleted.
 func (c *schedCore) staleProfile(in *inst) bool {
 	p := c.cfg.Profiles[in.prof.Name]
-	return p == nil || !reflect.DeepEqual(*p, *in.prof)
+	if p == nil {
+		return true
+	}
+	a, b := *p, *in.prof
+	a.Description, b.Description = "", "" // words for people, not the load
+	return !reflect.DeepEqual(a, b)
 }
 
 // applyConfig swaps in a new snapshot (live apply: a change takes effect without a restart).

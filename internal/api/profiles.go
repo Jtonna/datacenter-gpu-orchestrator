@@ -87,6 +87,9 @@ func (s *Server) profileEntriesOf(ctx context.Context, cfg *config.Config) []map
 		if p.NeedsMiB > 0 {
 			e["needs_mib_configured"] = p.NeedsMiB
 		}
+		if p.Description != "" {
+			e["description"] = p.Description
+		}
 		// It forces a node exclude_nodes names: kept, refused until lifted.
 		if b, ok := cfg.BlockedByExclusion(n); ok {
 			e["blocked_by_exclusion"] = b.Entry

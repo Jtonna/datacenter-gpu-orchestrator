@@ -2,6 +2,12 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Next scheduler image (agent stays 0.1.9)
+
+- **A `host: node` profile is planned from the server-hosted measurement** of the same shape (model, context, slots, cache, arguments) until a load hosted on a node measured its own; the host overhead is still added on the host node, and the basis says "hosted on the scheduler's machine (no measurement hosted on a node yet), plus N MiB host overhead". Stored peaks stay per shape.
+- **The host node's own device share** (its `Vulkan0`, ... rows) shows under that node in an instance's `nodes`, like a worker's row; it used to be listed as unmatched. Host-side buffers stay in `host_memory`.
+- **Profile `description`**: optional free text, one line, at most 500 characters. Shown in `/api/config`, `/api/profiles`, `/api/models` and both UIs' profile lists. Changing only the description does not make a loaded model stale.
+
 ## 0.1.9
 
 ### What is new
