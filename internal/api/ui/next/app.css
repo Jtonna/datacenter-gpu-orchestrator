@@ -139,6 +139,7 @@ b.mono,a.mono,.mono b,h1 .mono,h2 .mono,h3 .mono,b .mono{font-weight:500}
 .cols>.side{flex:1 1 320px;max-width:420px;min-width:0;display:flex;flex-direction:column;gap:var(--gap-panel)}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(320px,100%),1fr));gap:var(--gap-panel)}
 
+.rail .menu-open-btn{display:none}
 /* phone (D37): the rail becomes a top bar, the section menu a drawer under it */
 @media(max-width:860px){
   .app{flex-direction:column}
@@ -156,7 +157,6 @@ b.mono,a.mono,.mono b,h1 .mono,h2 .mono,h3 .mono,b .mono{font-weight:500}
   .connbar{margin:12px 14px 0}
   .cols>.side{max-width:none}
 }
-.rail .menu-open-btn{display:none}
 
 /* ---------- buttons and controls (Components: controls) ---------- */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:32px;padding:0 13px;border-radius:var(--r-btn);border:1px solid var(--ctl-border);background:var(--surface);color:var(--ink);font-size:var(--fs-body);font-weight:700;cursor:pointer;white-space:nowrap;text-decoration:none}
