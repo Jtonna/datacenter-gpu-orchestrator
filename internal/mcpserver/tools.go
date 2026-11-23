@@ -286,6 +286,13 @@ func allTools() []*tool {
 		rd("get_bench_schema", "The schema of benchmark and suite definitions: every field, type, default and limit. Read it before create_benchmark or create_suite.", nil, nil, "GET", "/api/bench/schema"),
 		rd("list_external_results", "List the external benchmark result sets (results produced outside the bench runner and stored for the Benchmarks page): id, title, note, the tables with their columns and row counts, and the attachment names. No rows.", nil, nil, "GET", "/api/bench/external"),
 		rd("get_external_results", "Get one external benchmark result set with its tables, rows and attachment texts.", idArg("external result set"), []string{"id"}, "GET", "/api/bench/external/{id}"),
+		rd("list_task_sets", "List the stored task sets (the fixed prompts a tasks phase sends, such as coding tasks): id, version, content hash, title, number of tasks and how many stored answers each version has. No prompts.", nil, nil, "GET", "/api/bench/task-sets"),
+		rd("get_task_set", "Get one stored task set with its prompts: the newest version, or the version given.", P{"id": s("The task set id."), "version": i("The version (default the newest).")}, []string{"id"}, "GET", "/api/bench/task-sets/{id}", "version"),
+		rd("get_run_tasks", "The task results of a benchmark run (its tasks phases): per task the state (answered, failed, timed_out, not_sent), finish reason, tokens, time to first token, tok/s, the task set's content hash, and every scorer's points, with each scorer's total. Answer texts only with answers=true; they can be large.", P{
+			"id": s("The run id."), "step": i("Only this step (0-based index)."), "answers": b("Include the answer and reasoning texts.")},
+			[]string{"id"}, "GET", "/api/bench/runs/{id}/tasks", "step", "answers"),
+		rd("get_task_answer", "One task answer of a run in full: the answer and reasoning texts, its figures and scores. The result id is in get_run_tasks (id) or in the run's tasks phase (items[].result_id).", P{
+			"id": s("The run id."), "result": i("The task result id.")}, []string{"id", "result"}, "GET", "/api/bench/runs/{id}/tasks/{result}"),
 
 		// ---- write ----
 		{Name: "load_model", Desc: "Start loading a model ahead of time. Returns at once (HTTP 202); a load takes minutes, so poll get_status. Run plan_load first to see whether it fits and what it would evict.",
@@ -335,6 +342,12 @@ func allTools() []*tool {
 			Props: P{"id": s("The suite id."), "baseline": s("Optional run id to compare against (default: the previous completed run)."), "note": s("Optional note stored with the run."),
 				"evict_others": b("Optional, for this run only (default: the suite's setting): do not wait for other users' idle loaded models.")},
 			Required: []string{"id"}, Method: "POST", Path: "/api/bench/suites/{id}/run", Body: []string{"baseline", "note", "evict_others"}},
+		{Name: "create_task_set", Desc: "Store a task set version for tasks phases: {id, version, title, system, max_tokens, seed, tasks: [{id, prompt, system?, max_tokens?, timeout_s?}]}. Sampling is fixed (temperature 0). A stored version cannot change: the same content again is accepted, other prompts under the same version are refused (409), so give a changed set a new version.",
+			Props: P{"task_set": obj("The task set, including its id and version.")}, Required: []string{"task_set"}, Idempotent: true, Method: "POST", Path: "/api/bench/task-sets", BodyArg: "task_set"},
+		{Name: "put_task_scores", Desc: "Attach a scorer's points to a run's tasks. Replaces everything this scorer posted on the run before, so posting the same scores again changes nothing. Potluck never scores answers itself; this is how a scorer (tests in a sandbox, a rubric) reports. Each score names its task by result id, or by step and task id (and phase when the step has two tasks phases).",
+			Props: P{"id": s("The run id."), "scorer": s("The scorer's name: lower-case letters, digits, '.', '-', '_' (for example kit-tests-strict)."), "scorer_version": s("Optional: the scorer's version, stored with the scores."),
+				"scores": anyv("A list of {result} or {step, task, phase?}, each with points, max_points and optional failed_tests (names) and notes.")},
+			Required: []string{"id", "scorer", "scores"}, Destructive: true, Idempotent: true, Method: "PUT", Path: "/api/bench/runs/{id}/scores/{scorer}", Body: []string{"scorer_version", "scores"}},
 		{Name: "cancel_run", Desc: "Cancel a queued or running benchmark run; what it loaded is unloaded.",
 			Props: idArg("run"), Required: []string{"id"}, Destructive: true, Idempotent: true, Method: "POST", Path: "/api/bench/runs/{id}/cancel"},
 

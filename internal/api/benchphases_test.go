@@ -49,7 +49,7 @@ func TestSchemaEndpointDescribesPhasesAndTemplates(t *testing.T) {
 			t.Errorf("%v", pm)
 		}
 	}
-	if strings.Join(names, ",") != "load,warmup,requests,conversation,hold,concurrent_requests,unload" {
+	if strings.Join(names, ",") != "load,warmup,requests,conversation,hold,concurrent_requests,tasks,unload" {
 		t.Fatalf("%v", names)
 	}
 	hold := types[4].(map[string]any)
