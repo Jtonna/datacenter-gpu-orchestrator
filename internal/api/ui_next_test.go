@@ -187,6 +187,53 @@ func TestUINextZonesSelectionAndPanel(t *testing.T) {
 	}})
 }
 
+// The Models list and its side panel, on a real scheduler's catalog: every
+// model file is a row with its name; ?model=<key> opens its panel with the
+// file, its hand-written configurations and the link to its full page; a key
+// that is not in the catalog says so; and #/models/<key> is still the full
+// model page. No Pin, Delete or Add control is drawn (no backend yet).
+func TestUINextModelsListAndPanel(t *testing.T) {
+	e := benchEnv(t)
+	var cat struct {
+		Models []struct {
+			Key, Name, File, Kind string
+			Profiles             []struct {
+				ID        string `json:"id"`
+				Generated bool   `json:"generated"`
+			} `json:"profiles"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal([]byte(body(t, e.get("/api/models"))), &cat); err != nil {
+		t.Fatal(err)
+	}
+	var key, name, file, profile string
+	var names []string
+	for _, m := range cat.Models {
+		names = append(names, m.Name)
+		if key == "" && m.Kind == "llama" {
+			for _, p := range m.Profiles {
+				if !p.Generated {
+					key, name, file, profile = m.Key, m.Name, m.File, p.ID
+					break
+				}
+			}
+		}
+	}
+	if key == "" {
+		t.Fatalf("no model file with a hand-written profile in the test catalog: %+v", cat.Models)
+	}
+	noControls := []string{"Pin", "Delete", "Add a model", "Remove now", "Unload"}
+	uiExec(t, map[string]any{"shell": "next", "app": true, "base": e.front.URL, "cases": []any{
+		map[string]any{"name": "the list", "route": "#/models", "status": "fetch", "expect": append([]string{"All models", "Configurations", "Last used"}, names...),
+			"absent": append(append([]string{}, designSamples...), noControls...)},
+		map[string]any{"name": "one model's panel", "route": "#/models?model=" + key, "status": "fetch",
+			"page": []string{name, file, "Configurations", profile, "Edit under Profiles", "Open the model page"}, "notOnPage": noControls},
+		map[string]any{"name": "a model that is not there", "route": "#/models?model=no-such-model.gguf", "status": "fetch",
+			"page": []string{"This model is not in the catalog"}},
+		map[string]any{"name": "the full model page", "route": "#/models/" + key, "status": "fetch", "expect": []string{name}},
+	}})
+}
+
 // Each UI has a visible link to the other, so the owner switches without
 // typing an address: "Classic UI" at the foot of the new shell's rail,
 // "New UI" in the classic UI's header and navigation pane. Both are drawn
