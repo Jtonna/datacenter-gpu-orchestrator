@@ -11,12 +11,13 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/access"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/audit"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgstore"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/mcpserver"
 )
 
 func accessEnv(t *testing.T) (*env, *mcpserver.Server, *cfgstore.Store) {
 	t.Helper()
-	e, _, cs := cfgEnv(t)
+	e, _, cs := cfgEnvWith(t, func(o *Options) { o.keyExpiryEvery = -1 }) // the tests run the expiry check themselves
 	mcp := mcpserver.New(e.api, mcpserver.Options{Version: "test", Identify: e.api.IdentifyAgent, Scope: e.api.ScopeOf,
 		Bridge: func(ctx context.Context, actor string) context.Context { return audit.WithSource(ctx, "mcp", actor) }})
 	e.api.SetMCPTools(mcp.ToolInfo)
@@ -327,5 +328,68 @@ func TestAccessKeys_AuditNamesTheKeyOrTheDefaultUser(t *testing.T) {
 	}
 	if by["d1"]["actor"] != audit.DefaultActor || by["d1"]["agent_id"] != nil && by["d1"]["agent_id"] != "" {
 		t.Errorf("default user: %v", by["d1"])
+	}
+}
+
+// Expiry warnings: agentKeyExpiring once at 7 days, once at 1 day, then
+// agentKeyExpired once; never again after a restart (kept with the key);
+// a new expiry starts over. The events name the agent and hint, never the
+// key. The health row needs attention while a key expires soon.
+func TestAccessKeys_ExpiryWarnings(t *testing.T) {
+	hist := history.Open(history.Options{Dir: t.TempDir()})
+	t.Cleanup(hist.Close)
+	e, _, cs := cfgEnvWith(t, func(o *Options) { o.History = hist; o.keyExpiryEvery = -1 })
+	now := e.api.opts.Now()
+	key, ag := newKey(t, e, `{"name":"short-lived","expires_at":`+msStr(now.Add(10*24*time.Hour).UnixMilli())+`}`)
+	id := ag["id"].(string)
+	newKey(t, e, `{"name":"forever","expires_at":0}`)
+	events := func() []history.Event {
+		return hist.Query(history.Query{Types: []string{history.TAgentKeyExpiring, history.TAgentKeyExpired}, Limit: 100}).Events
+	}
+	check := func() { e.api.checkKeyExpiry(context.Background(), e.api.opts.Now()) }
+
+	check()
+	if n := len(events()); n != 0 {
+		t.Fatalf("10 days left: %d events", n)
+	}
+	e.advance(4 * 24 * time.Hour) // 6 days left
+	check()
+	check()
+	ev := events()
+	if len(ev) != 1 || ev[0].Type != history.TAgentKeyExpiring || ev[0].Severity != history.Warn || ev[0].Data["days_left"] != float64(6) && ev[0].Data["days_left"] != 6 ||
+		!strings.Contains(ev[0].Summary, "short-lived expires in 6 days") || ev[0].Data["agent_id"] != id {
+		t.Fatalf("at 6 days: %+v", ev)
+	}
+	if _, h := e.cdo("GET", "/api/health", "", nil); !strings.Contains(string(rawJSON(h)), "1 expires soon") {
+		t.Errorf("health: %v", h)
+	}
+	// a restart: the mark is kept with the key
+	stored, _ := cs.Agent(context.Background(), id)
+	if stored.Access.Warned != "7d" {
+		t.Fatalf("warned %q", stored.Access.Warned)
+	}
+	e.advance(5*24*time.Hour + time.Hour) // under 1 day left
+	check()
+	e.advance(time.Hour)
+	check()
+	if ev = events(); len(ev) != 2 || !strings.Contains(ev[0].Summary, "expires in 1 day") {
+		t.Fatalf("at 1 day: %+v", ev)
+	}
+	e.advance(24 * time.Hour)
+	check()
+	check()
+	if ev = events(); len(ev) != 3 || ev[0].Type != history.TAgentKeyExpired || !strings.Contains(ev[0].Summary, "expired on") {
+		t.Fatalf("expired: %+v", ev)
+	}
+	for _, x := range ev {
+		if strings.Contains(string(rawJSON(x)), key) {
+			t.Fatal("an event holds the key")
+		}
+	}
+	// extended: the warnings start over for the new expiry
+	e.cdo("PATCH", "/api/agents/"+id, `{"expires_at":`+msStr(e.api.opts.Now().Add(12*time.Hour).UnixMilli())+`}`, webUI)
+	check()
+	if ev = events(); len(ev) != 4 || ev[0].Type != history.TAgentKeyExpiring || !strings.Contains(ev[0].Summary, "expires in 1 day") {
+		t.Fatalf("after extending: %+v", ev)
 	}
 }

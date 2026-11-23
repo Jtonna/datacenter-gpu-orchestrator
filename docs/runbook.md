@@ -468,7 +468,7 @@ curl -s "$H/api/health" | jq '{state, issues, sentence, rows: [.rows[] | {id, st
   - **Zones**: "221 of 232 reachable · 11 down". Down is lost or set aside; paused and excluded zones are off (reachable, not down); removed ones are left out. Any zone down is a problem; no machines is unknown.
   - **Runs**: failed and refused requests of the last hour from the request log, plus benchmark runs that failed (history). Any is attention; five or more making more than half of the hour's requests is a problem. Unknown while the request log (`usage.db`) is off.
   - **Scheduler**: "Running · release <image tag> · up 12 d". Problem when a task whose failure ends the process has failed, or the core loop is on one step for 5 s or does not answer. Attention for a background task failure in the last hour, a read panic, stored settings from a newer release, or a step over `loop_step_warn_ms` in the last 10 minutes.
-  - **MCP server**: "Running · 3 keys active" (keys not revoked). The MCP server runs inside the scheduler.
+  - **MCP server**: "Running · 3 keys active" (keys not revoked and not expired); attention with "· 1 expires soon" while a key expires within 7 days. The MCP server runs inside the scheduler.
   - **Storage**: the fullest disk among the data, history, child log and models folders, "50.3 of 240 GB used". Attention at 90 % used, under 10 GB free, or a folder whose disk does not answer or cannot be read; problem at 97 % or under 2 GB free. With `models_disk_budget_gb` set, the model files are also judged against it (attention at 90 %, problem over it).
   - **Queue**: "2 waiting · longest 5 min 48 s". Attention when the oldest wait reaches three quarters of `queue_timeout`, problem at nine tenths.
   - **Alerts**: unknown, "Not set up yet" (webhooks are not built).
@@ -518,6 +518,7 @@ Access is open: the web UI and the REST API need no key, and a request without o
 - A new key may observe only and expires in 30 days unless set otherwise. Expiring means within 7 days. An expired key can be extended (Manage, new expiry) or rotated; a revoked key is final.
 - Keys made before permissions existed (`lls_...`) keep working as before: every permission allowed, no expiry. Setting a permission or an expiry on one in Manage makes it a key like any other; its value does not change.
 - Only the SHA-256 of a key is stored. The key appears once, in the answer that made or rotated it; never in the list, the audit log, an event or a log line.
+- Expiry warnings: history events `agentKeyExpiring` once at 7 days and once at 1 day left, `agentKeyExpired` once when it has expired (checked hourly; a restart does not repeat them; a new expiry starts them over).
 - The MCP URL in the settings to copy is built from the address the browser used (the `Host` header); no forwarding header is read.
 
 What each permission covers (the table in `internal/api/scopes.go`; a route missing there needs observe for GET and settings otherwise):

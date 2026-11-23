@@ -297,12 +297,12 @@ func (s *Server) healthSummary(ctx context.Context) HealthSummary {
 	if sv := s.opts.Config; sv != nil {
 		sch.writesNeedForce = len(sv.UnknownFields()) > 0
 	}
-	keys, keysKnown := s.agents.activeKeys(ctx)
+	keys, expiring, keysKnown := s.agents.keyCounts(ctx, now)
 	rows := []HealthRow{
 		judgeZones(st, facts, fresh, stAt),
 		judgeRuns(s.runsLastHour(now)),
 		judgeScheduler(sch),
-		judgeMCP(keys, keysKnown),
+		judgeMCP(keys, expiring, keysKnown),
 		judgeStorage(s.disks.Folders(), budget),
 		judgeQueue(st, queueTimeout),
 		judgeAlerts(),
@@ -567,14 +567,20 @@ func judgeScheduler(in schedIn) HealthRow {
 }
 
 // judgeMCP: the MCP server runs in the scheduler, so it runs while this
-// answers; the row says how many agent keys are active (not revoked).
-func judgeMCP(keys int, known bool) HealthRow {
-	row := HealthRow{ID: "mcp", Label: "MCP server", Link: "#/mcp", State: HealthOK, Facts: map[string]any{"keys_active": keys, "keys_known": known}}
+// answers; the row says how many access keys work now (not revoked, not
+// expired), and needs attention while any of them expires within 7 days.
+func judgeMCP(keys, expiring int, known bool) HealthRow {
+	row := HealthRow{ID: "mcp", Label: "MCP server", Link: "#/mcp", State: HealthOK,
+		Facts: map[string]any{"keys_active": keys, "keys_expiring": expiring, "keys_known": known}}
 	if !known {
 		row.Text = "Running"
 		return row
 	}
 	row.Text = "Running · " + plural(keys, "key active", "keys active")
+	if expiring > 0 {
+		row.State, row.Count = HealthAttention, int64(expiring)
+		row.Text += " · " + plural(expiring, "expires soon", "expire soon")
+	}
 	return row
 }
 

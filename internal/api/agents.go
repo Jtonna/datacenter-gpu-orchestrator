@@ -737,10 +737,3 @@ func (g *agentRegistry) keyCounts(ctx context.Context, now time.Time) (active, e
 	}
 	return active, expiring, true
 }
-
-// activeKeys counts the keys that work now; false without a store or when
-// the list cannot be read.
-func (g *agentRegistry) activeKeys(ctx context.Context) (int, bool) {
-	n, _, ok := g.keyCounts(ctx, time.Now())
-	return n, ok
-}

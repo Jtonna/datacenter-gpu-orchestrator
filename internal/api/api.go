@@ -112,6 +112,8 @@ type Options struct {
 	diskEvery   time.Duration
 	healthEvery time.Duration
 	taskStats   func() []supervise.TaskStats
+	// keyExpiryEvery: how often access key expiry is checked; < 0 off (tests).
+	keyExpiryEvery time.Duration
 }
 
 // Server is the http.Handler for the whole API.
@@ -198,6 +200,7 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 	s.startAudit()
 	s.startAvailability() // availability.go
 	s.startHealth()       // health.go
+	s.startKeyExpiry()    // keyexpiry.go
 	if o.Audit != nil {
 		s.SetAuditHook(s.recorderHook(o.Audit)) // benchmark changes and runs are audited too (section bench)
 	}

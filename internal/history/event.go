@@ -85,6 +85,12 @@ const (
 	// TLoopSlowStep: one step of the scheduler's core loop took longer than
 	// loop_step_warn_ms (at most one a minute; scheduler/loophealth.go).
 	TLoopSlowStep = "loopSlowStep"
+
+	// An MCP access key expires within 7 days (sent once), within 1 day
+	// (once), or has expired (once). Data: agent_id, name, key_hint,
+	// expires_at, days_left; never the key (api/keyexpiry.go).
+	TAgentKeyExpiring = "agentKeyExpiring"
+	TAgentKeyExpired  = "agentKeyExpired"
 )
 
 // Event is one history record. Ts is unix milliseconds; Seq is monotonic per
