@@ -75,6 +75,7 @@ flowchart TB
 | `internal/startups` | Turns the agents' start-up reports into start-up figures per node. |
 | `internal/config`, `internal/cfgstore`, `internal/cfgsvc`, `internal/audit` | The configuration document and its schema, revisions and the audit log in SQLite, and the one service every change goes through. |
 | `internal/history` | The event history: JSON Lines files on disk, the newest events in memory. |
+| `internal/diskstat` | The one reader of disk capacity and free space: `statfs` on the data, history, child log and models folders every 30 s with a timeout per read, cached for `/api/system`, `/api/health` and the model catalog. |
 | `internal/availability` | The availability sampler: each machine's state every 10 s, seconds per state per hour into `usage.db`, read back as hour or day cells. |
 | `internal/bench`, `internal/benchspec` | Benchmarks: definitions, the runner, the store, statistics, exports. |
 | `internal/logrelay`, `internal/selflog` | Central logging: the pass-through to the log store, and the shipper for the scheduler's own lines. |

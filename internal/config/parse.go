@@ -55,6 +55,13 @@ const (
 	MaxUsageDays = 3660
 )
 
+// DefaultLoopStepWarnMs is loop_step_warn_ms unless set; MaxLoopStepWarnMs
+// is its upper bound.
+const (
+	DefaultLoopStepWarnMs = 1000
+	MaxLoopStepWarnMs     = 600000
+)
+
 // DefaultLocalProbeCmd is the nvidia-smi query of design 5.1.
 const DefaultLocalProbeCmd = "nvidia-smi --query-gpu=memory.total,memory.used --format=csv,noheader,nounits"
 
@@ -86,7 +93,7 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 		ModelsDir:         "/models",
 		ChildLogKeep:      DefaultChildLogKeep,
 		HistoryMaxFileMiB: DefaultHistoryMaxFileMiB, HistoryKeepFiles: DefaultHistoryKeepFiles, HistoryMemoryEvents: DefaultHistoryMemoryEvents,
-		UsageRequestDays: DefaultUsageRequestDays, UsageHourlyDays: DefaultUsageHourlyDays,
+		UsageRequestDays: DefaultUsageRequestDays, UsageHourlyDays: DefaultUsageHourlyDays, LoopStepWarnMs: DefaultLoopStepWarnMs,
 		LocalProbeCmd: DefaultLocalProbeCmd,
 		WSMaxClients:  DefaultWSMaxClients,
 		Bench:         rawBench{RegressLoadPct: DefaultRegressLoadPct, RegressDecodePct: DefaultRegressDecodePct, MaxRunMinutes: DefaultMaxRunMinutes},
@@ -107,7 +114,7 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 		ChildLogKeep: raw.ChildLogKeep,
 		HistoryDir:   strings.TrimSpace(raw.HistoryDir), HistoryMaxFileMiB: raw.HistoryMaxFileMiB, HistoryKeepFiles: raw.HistoryKeepFiles,
 		HistoryMemoryEvents: raw.HistoryMemoryEvents,
-		UsageRequestDays:    raw.UsageRequestDays, UsageHourlyDays: raw.UsageHourlyDays,
+		UsageRequestDays:    raw.UsageRequestDays, UsageHourlyDays: raw.UsageHourlyDays, LoopStepWarnMs: raw.LoopStepWarnMs, ModelsDiskBudgetGB: raw.ModelsDiskBudgetGB,
 		RequestsLiveTimings: raw.RequestsLiveTimings,
 		LocalProbeCmd:       raw.LocalProbeCmd,
 		LocalNode:           strings.TrimSpace(raw.LocalNode),
@@ -196,6 +203,8 @@ type rawConfig struct {
 	UsageRequestDays    int                         `yaml:"usage_request_days" json:"usage_request_days,omitempty"`
 	UsageHourlyDays     int                         `yaml:"usage_hourly_days" json:"usage_hourly_days,omitempty"`
 	RequestsLiveTimings bool                        `yaml:"requests_live_timings" json:"requests_live_timings,omitempty"`
+	LoopStepWarnMs      int                         `yaml:"loop_step_warn_ms" json:"loop_step_warn_ms,omitempty"`
+	ModelsDiskBudgetGB  int                         `yaml:"models_disk_budget_gb" json:"models_disk_budget_gb,omitempty"`
 	LocalProbeCmd       string                      `yaml:"local_probe_cmd" json:"local_probe_cmd,omitempty"`
 	LocalNode           string                      `yaml:"local_node" json:"local_node,omitempty"`
 	DataDir             string                      `yaml:"data_dir" json:"data_dir,omitempty"`

@@ -294,6 +294,7 @@ var expected = map[string]struct {
 	"get_availability":      {`{"node":"zone-a","from":"7d","step":"day"}`, "GET", "/api/nodes/availability", "from=7d&node=zone-a&step=day", "", nil},
 	"query_logs":            {`{"query":"node_id:=\"02:00:00:00:00:01\" _time:5m","start":"1h"}`, "GET", "/api/logs/query", "limit=100&query=node_id%3A%3D%2202%3A00%3A00%3A00%3A00%3A01%22+_time%3A5m&start=1h", "", nil},
 	"get_system_info":       {`{}`, "GET", "/api/system", "", "", nil},
+	"get_system_health":     {`{}`, "GET", "/api/health", "", "", nil},
 	"get_config":            {`{}`, "GET", "/api/config", "", "", nil},
 	"get_config_schema":     {`{}`, "GET", "/api/config/schema", "", "", nil},
 	"list_config_revisions": {`{"limit":5}`, "GET", "/api/config/revisions", "limit=5", "", nil},

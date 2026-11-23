@@ -81,6 +81,10 @@ const (
 	// (restarted, or its one-shot result turned into a failure), or the
 	// failure ended the process (internal/supervise).
 	TInternalFailure = "internalFailure"
+
+	// TLoopSlowStep: one step of the scheduler's core loop took longer than
+	// loop_step_warn_ms (at most one a minute; scheduler/loophealth.go).
+	TLoopSlowStep = "loopSlowStep"
 )
 
 // Event is one history record. Ts is unix milliseconds; Seq is monotonic per

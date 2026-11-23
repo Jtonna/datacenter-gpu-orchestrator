@@ -482,3 +482,24 @@ func (s *Server) mcpTools(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, (*f)())
 }
+
+// activeKeys counts the agent keys that are not revoked; false without a
+// store or when the list cannot be read.
+func (g *agentRegistry) activeKeys(ctx context.Context) (int, bool) {
+	if g.store == nil {
+		return 0, false
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	list, err := g.load(ctx)
+	if err != nil {
+		return 0, false
+	}
+	n := 0
+	for _, a := range list {
+		if a.RevokedAt == 0 {
+			n++
+		}
+	}
+	return n, true
+}

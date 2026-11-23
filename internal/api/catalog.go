@@ -542,7 +542,7 @@ func (s *Server) handleModelCatalog(w http.ResponseWriter, r *http.Request) {
 	h := w.Header()
 	h.Set("Content-Type", "application/json")
 	h.Set("X-Catalog-Version", strconv.FormatInt(snap.version, 10))
-	w.Write(snap.list)
+	w.Write(s.withModelsDisk(snap.list))
 }
 
 // handleModelDetail is GET /api/models/{key}: one model with its recent

@@ -11,6 +11,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/filecache"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/audit"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgsvc"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/diskstat"
 	"io"
 	"log/slog"
 	"math"
@@ -33,6 +34,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/pool"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/proxy"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/usage"
 )
 
@@ -102,6 +104,14 @@ type Options struct {
 	// It is called with the signature of the catalog the server has; when its
 	// own signature is the same it need not gather the input again.
 	catalogSource func(ctx context.Context, have string) (in CatalogInput, sig string, ok bool)
+
+	// The health summary (health.go): tests replace the disk read, its
+	// timeout and period, the push period and the task counters.
+	diskStat    func(path string) (diskstat.FS, error)
+	diskTimeout time.Duration
+	diskEvery   time.Duration
+	healthEvery time.Duration
+	taskStats   func() []supervise.TaskStats
 }
 
 // Server is the http.Handler for the whole API.
@@ -145,6 +155,10 @@ type Server struct {
 	feed      feedSeq // the node feed's change counter (feed.go)
 	// avail is the availability sampler (availability.go); nil without a usage store.
 	avail *availability.Sampler
+	// disks is the one reader of disk capacity and free space; health the
+	// summary's state (health.go).
+	disks  *diskstat.Reader
+	health healthState
 }
 
 // New builds the API for a scheduler (whose Run is started by the caller)
@@ -183,6 +197,7 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 	s.mux = s.routes()
 	s.startAudit()
 	s.startAvailability() // availability.go
+	s.startHealth()       // health.go
 	if o.Audit != nil {
 		s.SetAuditHook(s.recorderHook(o.Audit)) // benchmark changes and runs are audited too (section bench)
 	}
@@ -267,6 +282,7 @@ func (s *Server) routes() *http.ServeMux {
 	m.HandleFunc("DELETE /api/models/{key...}", s.handleIconDelete)
 	// GET /api/nodes/availability (availability.go)
 	s.availabilityRoutes(m)
+	m.HandleFunc("GET /api/health", s.handleHealthSummary)
 	s.agentRoutes(m) // /api/agents, /api/mcp/tools (agents.go)
 	s.nodeRoutes(m)  // potluck-agent's /api/pool/..., /api/nodes/{id}/... (nodes.go)
 	s.logRoutes(m)   // central logging: /api/pool/nodes/{id}/logs, /api/logs (logs.go)

@@ -367,6 +367,12 @@ func (c *Config) validateDefaults(add func(string, ...any)) {
 			add("%s: must be from 1 to %d, got %d", u.key, MaxUsageDays, u.v)
 		}
 	}
+	if c.LoopStepWarnMs < 10 || c.LoopStepWarnMs > MaxLoopStepWarnMs {
+		add("loop_step_warn_ms: must be from 10 to %d, got %d", MaxLoopStepWarnMs, c.LoopStepWarnMs)
+	}
+	if c.ModelsDiskBudgetGB < 0 {
+		add("models_disk_budget_gb: must not be negative, got %d", c.ModelsDiskBudgetGB)
+	}
 	if c.HistoryMemoryEvents < 1 {
 		add("history_memory_events: must be at least 1, got %d", c.HistoryMemoryEvents)
 	} else if c.HistoryMemoryEvents > MaxHistoryMemoryEvents {
