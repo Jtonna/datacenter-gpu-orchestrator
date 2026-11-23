@@ -326,3 +326,24 @@ func TestHost_ReservationCarriesTheHostProcess(t *testing.T) {
 		t.Fatalf("%+v", rs)
 	}
 }
+
+// The host's own buffers (Vulkan0) count on the host node, the workers' by
+// their endpoint, the host's CPU-side buffers on none.
+func TestHost_LoadByNodeNamesTheHostNode(t *testing.T) {
+	h := hostHarness(t)
+	in := &inst{prof: h.cfg.Profiles["m"], placement: core.Placement{Host: "a",
+		Nodes: []core.PlacedNode{{ID: "a", Addr: "192.0.2.2:50052"}, {ID: "b", Addr: "192.0.2.4:50052"}}}}
+	ll := instance.NewLoadLog()
+	for _, line := range []string{
+		"load_tensors:      Vulkan0 model buffer size =  2000.00 MiB",
+		"load_tensors: RPC0[192.0.2.4:50052] model buffer size =  1000.00 MiB",
+		"llama_kv_cache:    Vulkan0 KV buffer size =   256.00 MiB",
+		"llama_context:  Vulkan_Host compute buffer size =  40.00 MiB",
+	} {
+		ll.Feed(line)
+	}
+	mib, seen := h.c.loadByNode(in, ll.Snapshot())
+	if !seen[0] || !seen[1] || mib[0] != 2256 || mib[1] != 1000 {
+		t.Fatal(mib, seen)
+	}
+}
