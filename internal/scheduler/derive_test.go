@@ -124,25 +124,32 @@ func TestDerivedNeed_UncheckedModelGetsTheEstimateMargin(t *testing.T) {
 	check("another model's pairs are bad")
 }
 
-// Nothing is derived from a measurement far below the estimate of its own
-// window: the model's cache is smaller than the formula's (a sliding-window
-// model), so the formula's delta does not hold, least of all going down.
-func TestDerivedNeed_NotFromAMeasurementBelowItsEstimate(t *testing.T) {
+// A measurement far below the estimate of its own window shows a model whose
+// cache is smaller than the formula's (a sliding-window model): going down
+// from it the formula's delta under-counts, so nothing is derived downward;
+// going up it over-counts, so the derivation is used, with the estimate
+// margin and only where it is below the estimate path.
+func TestDerivedNeed_NotDownwardFromAMeasurementBelowItsEstimate(t *testing.T) {
 	h := deriveHarness(t)
 	q := h.llama("q", 0, func(p *core.Profile) { p.Model, p.Ctx = "swa.gguf", 2048 })
-	est32k := 4000 + 32768/8
-	h.measure("swa.gguf", 32768, 1, est32k-deriveToleranceMiB-1)
+	up := h.llama("up", 0, func(p *core.Profile) { p.Model, p.Ctx = "swa.gguf", 65536 })
+	est32k := 4000 + 32768/8 + estimate.ComputeMiB(32768)
+	low := est32k - deriveToleranceMiB - 1
+	h.measure("swa.gguf", 32768, 1, low)
 	if info, _ := h.c.need(q); info.Source != NeedEstimated || info.DerivedFromCtx != 0 {
-		t.Fatalf("derived from a row below its estimate: %+v %q", info.Need, info.Source)
+		t.Fatalf("derived downward from a row below its estimate: %+v %q", info.Need, info.Source)
 	}
-	h.c.learned = map[string]map[int]*learnedNeed{}
-	h.measure("swa.gguf", 32768, 1, est32k-deriveToleranceMiB) // within the tolerance: used
-	if info, _ := h.c.need(q); info.Source != NeedDerived {
-		t.Fatalf("%+v %q", info.Need, info.Source)
+	info, _ := h.c.need(up)
+	want := estimate.MarginMiB(derivedFrom(low, 32768, 65536, 1), 50)
+	if info.Source != NeedDerived || info.Need.MiB != want || info.DerivedFromCtx != 32768 {
+		t.Fatalf("upward: %+v %q from %d, want %d", info.Need, info.Source, info.DerivedFromCtx, want)
+	}
+	if b := h.c.needBasis(info); !strings.HasPrefix(b, "derived upward from ctx 32768 (conservative: this model uses less than the formula)") ||
+		!strings.Contains(b, "+5% margin") {
+		t.Fatal(b)
 	}
 	// Such a row is listed in the check but not used in it.
-	h.measure("swa.gguf", 32768, 1, est32k-deriveToleranceMiB-1)
-	h.measure("swa.gguf", 8192, 1, 4000+8192/8+300)
+	h.measure("swa.gguf", 8192, 1, 4000+8192/8+estimate.ComputeMiB(8192)+300)
 	ps := h.c.derivePairs(nil)
 	if len(ps) != 2 {
 		t.Fatalf("%+v", ps)

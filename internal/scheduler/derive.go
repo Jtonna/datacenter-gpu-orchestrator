@@ -19,35 +19,54 @@ import (
 // attention, extra arguments, host kind), takes its need from that
 // measurement instead of the generic estimate: the measured total, which
 // holds the weights and every fixed overhead as they really are, with the
-// part that grows with the window recomputed by the estimate's own formula
-// for the requested window:
+// part that grows with the window recomputed by the estimate's own formula:
 //
-//	derived(k devices) = measured(ctx m, k) + (estimate(r) - estimate(m)) + k x (compute(r) - compute(m))
+//	derived(r, d devices) = measured(m, d) + (estimate(r) - estimate(m)) + d x (compute(r) - compute(m))
 //
-// estimate is the weights plus the KV cache (estimate.NeedMiB) and compute
-// the per-device compute buffer (estimate.ComputeMiB); the weights cancel.
+// estimate is the weights plus the KV cache (estimate.NeedMiB), compute the
+// per-device compute buffer (estimate.ComputeMiB); the weights cancel.
 //
-// Two checks keep it to the models the formula describes:
+// Write E(x) = estimate(x) + d x compute(x): the generic figure without its
+// margin and device overhead. A measurement holds its estimate when
+// measured(m) >= E(m) - deriveToleranceMiB.
 //
-//   - The measurement must hold the estimate's cache: measured(m) at least
-//     estimate(m) - deriveToleranceMiB. A model whose real cache is smaller
-//     than the formula's (a sliding-window model such as Gemma measures a
-//     fraction of it) fails, and nothing is derived from that row: the
-//     formula's delta would be far off, below the real figure going down.
-//   - The model's own pairs: every pair of its trusted measurements at two
-//     contexts on the same device count, each predicted from the other
-//     (derivePairs). When it has pairs, all must be within the tolerance,
-//     else nothing is derived; the derived figure then counts as measured
-//     (measured margin). When it has none, the derived figure is raised by
-//     the estimate margin: nothing checked the formula on this model.
+// The direction matters. A model whose real window cost is k times the
+// formula's has truth(r) - derived(r) = (k - 1) x (formula(r) - formula(m)):
+// with k <= 1 (the formula over-counts, as for sliding-window or MLA
+// caches) an upward derivation (r > m) over-predicts, safe, and a downward
+// one under-predicts. Three modes:
 //
-// Nothing derived: the need falls through to the estimate. The first load of
-// the shape records its own measurement, which replaces the derived figure.
+//   - checked: the model has pairs of its own measurements at two contexts
+//     (each predicted from the other, from sources that hold their
+//     estimate), all within deriveToleranceMiB. Both directions, from a
+//     source that holds its estimate; the figure counts as measured
+//     (measured margin).
+//   - conservative: the model's pairs disagree, but no upward pair
+//     under-predicts by more than the tolerance (the model uses less than
+//     the formula), or the source sits below its estimate (which proves
+//     k < 1: the weights are the file, compute and overhead are not
+//     negative). Upward only, with the estimate margin, and only where the
+//     figure is below the generic estimate path's; else the estimate.
+//   - unchecked: no pair of its own and a source that holds its estimate.
+//     k is not known, so upward only, with the estimate margin.
+//
+// An upward pair that under-predicts by more than the tolerance (a model
+// that costs more than the formula) stops every derivation for the model.
+//
+// What is guaranteed (TestDerivedNeed_Invariant): a derived figure is never
+// below both the truth and E(r) - deriveToleranceMiB. From a source that
+// holds its estimate, derived(r) - E(r) = measured(m) - E(m) >= -tolerance,
+// in either direction, whatever k; from a source below its estimate k < 1,
+// and the derivation is upward, so it is at least the truth. With k > 1 and
+// no pair to show it, nothing does better than the generic estimate itself,
+// which under-counts such a model too.
+//
+// The first load of the shape records its own measurement, which replaces
+// the derived figure.
 
 // deriveToleranceMiB is how far a prediction of one stored measurement from
-// another (derivePairs) may be off, either way, for the derivation to count
-// as checked; and how far a measurement may be below the estimate of its own
-// window and still hold the estimate's cache.
+// another may be off for the derivation to count as checked, and how far a
+// measurement may be below the estimate of its own window and still hold it.
 const deriveToleranceMiB = 512
 
 // deriveName prefixes the name of the profiles the estimate of another
@@ -55,10 +74,19 @@ const deriveToleranceMiB = 512
 // so a provider's cache never mixes them up with a real one.
 const deriveName = "\x00derive "
 
+// How a derived need was derived (derive.go, top).
+type deriveMode int
+
+const (
+	deriveChecked deriveMode = iota + 1
+	deriveConservative
+	deriveUnchecked
+)
+
 // DerivePair is one check of the derivation: the measurement at ToCtx
 // predicted from the one at FromCtx, both on Devices devices. A pair whose
 // FromMiB is below the estimate of its window (BelowEstimate) is listed but
-// not used: no derivation starts from such a row.
+// does not count towards checked.
 type DerivePair struct {
 	Model           string
 	Shape           string // the measured shape at ToCtx
@@ -89,28 +117,39 @@ func profileOfKey(k needKey) *core.Profile {
 	return p
 }
 
-// ctxDelta is what the estimate adds going from the window of from to that
-// of to: the total (weights cancel: KV only) and the per-device compute
-// buffer, and the estimate of from itself. ok is false when either is not an
-// estimate (a command profile, or a provider that does not estimate).
-func (c *schedCore) ctxDelta(from, to needKey) (total, perDevice, fromEst int, ok bool) {
+// ctxStep is what the estimate says about two windows of one model: the
+// change of the total (KV only: the weights cancel) and of the per-device
+// compute buffer, and the source window's estimate and compute buffer.
+type ctxStep struct {
+	total, perDevice int
+	fromEst, fromDev int
+}
+
+// ctxDelta is the ctxStep from the window of from to that of to. ok is
+// false when either is not an estimate (a command profile, or a provider
+// that does not estimate).
+func (c *schedCore) ctxDelta(from, to needKey) (ctxStep, bool) {
 	if from.kind == core.KindCommand || to.kind == core.KindCommand {
-		return 0, 0, 0, false
+		return ctxStep{}, false
 	}
 	a, err := c.needs.Need(profileOfKey(from))
 	if err != nil || a.Need.Measured || a.Need.MiB <= 0 {
-		return 0, 0, 0, false
+		return ctxStep{}, false
 	}
 	b, err := c.needs.Need(profileOfKey(to))
 	if err != nil || b.Need.Measured || b.Need.MiB <= 0 || b.FileBytes != a.FileBytes {
-		return 0, 0, 0, false
+		return ctxStep{}, false
 	}
-	return b.Need.MiB - a.Need.MiB, b.DeviceMiB - a.DeviceMiB, a.Need.MiB, true
+	return ctxStep{total: b.Need.MiB - a.Need.MiB, perDevice: b.DeviceMiB - a.DeviceMiB, fromEst: a.Need.MiB, fromDev: a.DeviceMiB}, true
 }
 
-// holdsEstimate: a measurement of total at a window whose estimate is est
-// holds the estimate's cache (see the top of the file).
-func holdsEstimate(total, est int) bool { return total+deriveToleranceMiB >= est }
+// derive is the figure of l moved to the other window of s.
+func (s ctxStep) derive(l *learnedNeed) int { return l.TotalMiB + s.total + l.count()*s.perDevice }
+
+// holds: measurement l holds its window's estimate, E(m) - tolerance.
+func (s ctxStep) holds(l *learnedNeed) bool {
+	return l.TotalMiB+deriveToleranceMiB >= s.fromEst+l.count()*s.fromDev
+}
 
 // derivePairs checks the derivation on every pair of trusted measurements
 // of one model at two contexts on the same device count, everything else
@@ -139,15 +178,15 @@ func (c *schedCore) derivePairs(group *needKey) []DerivePair {
 				if a.modelBytes > 0 && b.modelBytes > 0 && a.modelBytes != b.modelBytes {
 					continue // another file under the same name
 				}
-				dt, dd, est, ok := c.ctxDelta(a.key, b.key)
+				st, ok := c.ctxDelta(a.key, b.key)
 				if !ok {
 					continue
 				}
-				pred := a.TotalMiB + dt + a.count()*dd
+				pred := st.derive(a)
 				e := pred - b.TotalMiB
 				out = append(out, DerivePair{Model: a.key.model, Shape: b.key.shape(), Devices: a.count(), FromCtx: a.key.ctx, ToCtx: b.key.ctx,
 					FromMiB: a.TotalMiB, PredictedMiB: pred, MeasuredMiB: b.TotalMiB, ErrMiB: e, FromAt: a.at, ToAt: b.at,
-					WithinTolerance: abs(e) <= deriveToleranceMiB, BelowEstimate: !holdsEstimate(a.TotalMiB, est)})
+					WithinTolerance: abs(e) <= deriveToleranceMiB, BelowEstimate: !st.holds(a)})
 			}
 		}
 	}
@@ -158,19 +197,26 @@ func (c *schedCore) derivePairs(group *needKey) []DerivePair {
 	return out
 }
 
-// deriveCheck is the check a derivation for shape k rests on: its model's
-// own pairs (those starting from a row that holds the estimate). ok: every
-// one is within tolerance, or there is none (unchecked then). worst is the
-// largest error by size, the underestimate on a tie.
+// deriveCheck is what a model's own pairs say. checked: there are pairs
+// from sources that hold their estimate and every pair is within the
+// tolerance. upSafe: no upward pair under-predicts by more than it. worst is
+// the largest error by size of the counted pairs, the underestimate on a tie.
 type deriveCheck struct {
-	ok, unchecked bool
-	pairs, worst  int
+	pairs, worst    int
+	checked, upSafe bool
+	anyPairs        bool
 }
 
 func (c *schedCore) checkDerivation(k needKey) deriveCheck {
 	g := k.noCtx()
-	ch := deriveCheck{ok: true}
+	ch := deriveCheck{upSafe: true}
+	allWithin := true
 	for _, p := range c.derivePairs(&g) {
+		ch.anyPairs = true
+		allWithin = allWithin && p.WithinTolerance
+		if p.ToCtx > p.FromCtx && p.ErrMiB < -deriveToleranceMiB {
+			ch.upSafe = false
+		}
 		if p.BelowEstimate {
 			continue
 		}
@@ -178,20 +224,17 @@ func (c *schedCore) checkDerivation(k needKey) deriveCheck {
 		if abs(p.ErrMiB) > abs(ch.worst) || (abs(p.ErrMiB) == abs(ch.worst) && p.ErrMiB < ch.worst) {
 			ch.worst = p.ErrMiB
 		}
-		ch.ok = ch.ok && p.WithinTolerance
 	}
-	ch.unchecked = ch.pairs == 0
+	ch.checked = ch.pairs > 0 && allWithin
 	return ch
 }
 
-// derivedSource picks the measurements a derivation for p would start from:
-// those of the nearest other context (the larger one on a tie) of the same
-// model and settings. nil when there is none.
-func (c *schedCore) derivedSource(p *core.Profile, fileBytes int64) []*learnedNeed {
+// derivedSources lists, by context, the measurements of the same model and
+// settings at other windows than p's (same file when both sizes are known).
+func (c *schedCore) derivedSources(p *core.Profile, fileBytes int64) map[int][]*learnedNeed {
 	key := needKeyOf(p)
 	g := key.noCtx()
-	best := -1
-	var out []*learnedNeed
+	out := map[int][]*learnedNeed{}
 	for _, ls := range c.learned {
 		for _, l := range ls {
 			if l.TotalMiB <= 0 || l.key.noCtx() != g || l.key.ctx == key.ctx {
@@ -200,17 +243,28 @@ func (c *schedCore) derivedSource(p *core.Profile, fileBytes int64) []*learnedNe
 			if l.modelBytes > 0 && fileBytes > 0 && l.modelBytes != fileBytes {
 				continue
 			}
-			ctx := l.key.ctx
-			switch {
-			case best < 0 || abs(ctx-key.ctx) < abs(best-key.ctx) || (abs(ctx-key.ctx) == abs(best-key.ctx) && ctx > best):
-				best, out = ctx, []*learnedNeed{l}
-			case ctx == best:
-				out = append(out, l)
-			}
+			out[l.key.ctx] = append(out[l.key.ctx], l)
 		}
 	}
-	slices.SortFunc(out, func(a, b *learnedNeed) int { return a.count() - b.count() })
+	for _, ls := range out {
+		slices.SortFunc(ls, func(a, b *learnedNeed) int { return a.count() - b.count() })
+	}
 	return out
+}
+
+// nearestCtx is the context of srcs nearest r (the larger on a tie), among
+// those ok allows; -1 when none.
+func nearestCtx(srcs map[int][]*learnedNeed, r int, ok func(int) bool) int {
+	best := -1
+	for ctx := range srcs {
+		if !ok(ctx) {
+			continue
+		}
+		if best < 0 || abs(ctx-r) < abs(best-r) || (abs(ctx-r) == abs(best-r) && ctx > best) {
+			best = ctx
+		}
+	}
+	return best
 }
 
 // withDerived is withLearned for a profile without measurements of its own
@@ -220,27 +274,60 @@ func (c *schedCore) withDerived(p *core.Profile, info, base NeedInfo) NeedInfo {
 	if p.Kind == core.KindCommand || base.Need.Measured {
 		return info // a configured need is never replaced
 	}
-	src := c.derivedSource(p, base.FileBytes)
-	if len(src) == 0 {
+	srcs := c.derivedSources(p, base.FileBytes)
+	if len(srcs) == 0 {
 		return info
 	}
-	dt, dd, est, ok := c.ctxDelta(src[0].key, needKeyOf(p))
-	if !ok {
-		return info
+	key := needKeyOf(p)
+	ch := c.checkDerivation(key)
+	if !ch.upSafe {
+		return info // the model costs more than the formula: no derivation
 	}
-	ch := c.checkDerivation(needKeyOf(p))
-	if !ch.ok {
-		return info
-	}
-	figs := make([]learnedFig, 0, len(src))
-	k, latest := 0, time.Time{}
-	for _, l := range src {
-		if !holdsEstimate(l.TotalMiB, est) {
-			continue
+	steps := map[int]ctxStep{}
+	step := func(ctx int) (ctxStep, bool) {
+		if s, ok := steps[ctx]; ok {
+			return s, true
 		}
-		t := l.TotalMiB + dt + l.count()*dd
-		if ch.unchecked {
+		s, ok := c.ctxDelta(srcs[ctx][0].key, key)
+		if ok {
+			steps[ctx] = s
+		}
+		return s, ok
+	}
+	holding := func(ctx int) bool { // some row at ctx holds its estimate
+		s, ok := step(ctx)
+		return ok && slices.ContainsFunc(srcs[ctx], s.holds)
+	}
+	upward := func(ctx int) bool { _, ok := step(ctx); return ok && ctx < key.ctx }
+
+	mode, from := deriveChecked, -1
+	if ch.checked {
+		from = nearestCtx(srcs, key.ctx, holding)
+	}
+	if from < 0 {
+		from = nearestCtx(srcs, key.ctx, upward)
+		mode = deriveUnchecked
+		if from >= 0 && (ch.anyPairs || !holding(from)) {
+			mode = deriveConservative
+		}
+	}
+	if from < 0 {
+		return info
+	}
+	st := steps[from]
+	perDevice := c.perDeviceCost(base)
+	figs := make([]learnedFig, 0, len(srcs[from]))
+	k, latest := 0, time.Time{}
+	for _, l := range srcs[from] {
+		t := st.derive(l)
+		switch {
+		case mode == deriveChecked && !st.holds(l):
+			continue
+		case mode != deriveChecked:
 			t = estimate.MarginMiB(t, permille(c.cfg.Defaults.EstimateMargin))
+		}
+		if mode == deriveConservative && t >= info.Need.WithMargin()+l.count()*perDevice {
+			continue // no better than the estimate path: keep the estimate
 		}
 		if t <= 0 {
 			continue
@@ -253,8 +340,8 @@ func (c *schedCore) withDerived(p *core.Profile, info, base NeedInfo) NeedInfo {
 	if len(figs) == 0 {
 		return info
 	}
-	info.figs, info.derive = figs, &deriveFrom{ctx: src[0].key.ctx, check: ch}
-	info.baseNeed, info.baseSource, info.perDevice = info.Need, info.Source, c.perDeviceCost(base)
+	info.figs, info.derive = figs, &deriveFrom{ctx: from, check: ch, mode: mode}
+	info.baseNeed, info.baseSource, info.perDevice = info.Need, info.Source, perDevice
 	if len(p.ForceNodes) > 0 {
 		k = len(p.ForceNodes)
 	}
@@ -265,20 +352,33 @@ func (c *schedCore) withDerived(p *core.Profile, info, base NeedInfo) NeedInfo {
 type deriveFrom struct {
 	ctx   int
 	check deriveCheck
+	mode  deriveMode
 }
 
 // derivedWords is the basis of a derived need.
 func (c *schedCore) derivedWords(info NeedInfo) string {
-	s := fmt.Sprintf("derived from the measurement at ctx %d (%s)", info.DerivedFromCtx, dateOf(info.MeasuredAt))
+	d := info.derive
+	margin := strconv.FormatFloat(c.cfg.Defaults.EstimateMargin*100, 'f', -1, 64)
+	var s string
+	switch d.mode {
+	case deriveConservative:
+		s = fmt.Sprintf("derived upward from ctx %d (conservative: this model uses less than the formula), measured %s", info.DerivedFromCtx, dateOf(info.MeasuredAt))
+	case deriveUnchecked:
+		s = fmt.Sprintf("derived upward from the measurement at ctx %d (%s)", info.DerivedFromCtx, dateOf(info.MeasuredAt))
+	default:
+		s = fmt.Sprintf("derived from the measurement at ctx %d (%s)", info.DerivedFromCtx, dateOf(info.MeasuredAt))
+	}
 	if info.BaseMiB > 0 {
 		s += fmt.Sprintf("; the estimate is %d MiB", info.BaseMiB)
 	}
 	s += info.countWords()
-	if ch := info.derive.check; ch.unchecked {
-		s += fmt.Sprintf("; no pair of this model's measurements checks the derivation yet: +%s%% margin",
-			strconv.FormatFloat(c.cfg.Defaults.EstimateMargin*100, 'f', -1, 64))
-	} else {
-		s += fmt.Sprintf("; checked on %d pairs of this model's measurements, worst error %+d MiB", ch.pairs, ch.worst)
+	switch d.mode {
+	case deriveConservative:
+		s += fmt.Sprintf("; +%s%% margin", margin)
+	case deriveUnchecked:
+		s += fmt.Sprintf("; no pair of this model's measurements checks the derivation yet: +%s%% margin", margin)
+	default:
+		s += fmt.Sprintf("; checked on %d pairs of this model's measurements, worst error %+d MiB", d.check.pairs, d.check.worst)
 	}
 	return s
 }

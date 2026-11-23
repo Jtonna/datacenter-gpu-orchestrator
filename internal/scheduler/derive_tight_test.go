@@ -92,7 +92,7 @@ func TestDerivedNeed_HostNodeOrderOfSources(t *testing.T) {
 	h.measure("qwen.gguf", 8192, 2, 9000, host)
 	r = h.c.dryPlan("q")
 	want := estimateMarginOf(h, derivedFrom(9000, 8192, 32768, 2)) // no pair of its own: +5%
-	if r.NeedMiB != want || r.DerivedFromCtx != 8192 || !strings.HasPrefix(r.NeedBasis, "derived from the measurement at ctx 8192") ||
+	if r.NeedMiB != want || r.DerivedFromCtx != 8192 || !strings.HasPrefix(r.NeedBasis, "derived upward from the measurement at ctx 8192") ||
 		strings.Contains(r.NeedBasis, "scheduler's machine") {
 		t.Fatalf("derived: need %d (want %d) from %d basis %q", r.NeedMiB, want, r.DerivedFromCtx, r.NeedBasis)
 	}
