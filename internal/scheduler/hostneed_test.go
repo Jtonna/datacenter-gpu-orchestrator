@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/placer"
 )
 
@@ -51,5 +52,31 @@ func TestHost_PlannedFromTheServerHostedMeasurement(t *testing.T) {
 	h.needs["s"] = NeedInfo{Need: placer.Estimated(12000), FileBytes: 1 << 30}
 	if info, _ := h.c.need(sp); info.Need.MiB != 8000 {
 		t.Fatalf("server profile need %d, want its own 8000", info.Need.MiB)
+	}
+}
+
+// The instance's node list shows the host node's own device share as a
+// memory row, like a worker's (its devices are named Vulkan0, ..., not by
+// an endpoint); host-side buffers stay in host_memory.
+func TestHost_StatusShowsTheHostNodesOwnDevice(t *testing.T) {
+	h := hostHarness(t)
+	h.hostReady()
+	ll := instance.NewLoadLog()
+	for _, line := range []string{
+		"load_tensors:      Vulkan0 model buffer size =  2000.00 MiB",
+		"load_tensors: RPC0[192.0.2.4:50052] model buffer size =  1000.00 MiB",
+		"llama_kv_cache:    Vulkan0 KV buffer size =   256.00 MiB",
+		"llama_context:  Vulkan_Host compute buffer size =  40.00 MiB",
+	} {
+		ll.Feed(line)
+	}
+	ch := h.child("m")
+	ch.mu.Lock()
+	ch.load = ll.Snapshot()
+	ch.mu.Unlock()
+	s := h.c.instStatus(h.inst("m"))
+	if len(s.Nodes) != 2 || s.Nodes[0].ID != "a" || len(s.Nodes[0].Memory) != 1 || s.Nodes[0].Memory[0].Name != "Vulkan0" ||
+		s.Nodes[0].Memory[0].TotalMiB != 2256 || len(s.Nodes[1].Memory) != 1 || len(s.Unmatched) != 0 || len(s.HostMemory) != 1 {
+		t.Fatalf("nodes %+v unmatched %+v host %+v", s.Nodes, s.Unmatched, s.HostMemory)
 	}
 }
