@@ -111,7 +111,7 @@ type Store struct {
 	lastErr string
 
 	written, batches, dropped, droppedTerminal, failed atomic.Uint64
-	tx                                                   *sql.Tx // the batch in progress (writer only)
+	tx                                                 *sql.Tx // the batch in progress (writer only)
 }
 
 // Open opens dir/usage.db, checks it and applies the migrations, then
