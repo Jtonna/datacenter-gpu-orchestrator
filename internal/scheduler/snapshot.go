@@ -282,8 +282,8 @@ func (c *schedCore) dryPlan(profile string) (r PlanReport) {
 		r.Action, r.Reason = PlanBackoff, fmt.Sprintf("backed off until %s", b.until.Format("15:04:05"))
 		return r
 	}
-	if why, bad := c.forcedExcluded(p); bad && c.insts[profile] == nil {
-		r.Action, r.Reason = PlanReject, why
+	if why, entry, bad := c.forcedExclusion(p); bad && c.insts[profile] == nil {
+		r.Action, r.Reason, r.ExcludedBy = PlanReject, why, entry
 		return r
 	}
 	if fe := c.forcedGoneErr(p); fe != nil && c.insts[profile] == nil {

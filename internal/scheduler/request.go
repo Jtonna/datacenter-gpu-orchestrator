@@ -105,12 +105,19 @@ func (c *schedCore) arrive(w *waiter) {
 // A command profile is tied to the local node in the same way: when
 // exclude_nodes names the local node, it fails the same way.
 func (c *schedCore) forcedExcluded(p *core.Profile) (string, bool) {
+	why, _, bad := c.forcedExclusion(p)
+	return why, bad
+}
+
+// forcedExclusion is forcedExcluded with the exclude_nodes entry that
+// matched, for the plan (PlanReport.ExcludedBy).
+func (c *schedCore) forcedExclusion(p *core.Profile) (string, string, bool) {
 	if localOnly(p) {
 		for _, id := range c.sortedNodeIDs() {
 			if n, ok := c.node(id); ok && n.Local {
 				if e, ex := c.cfg.ExcludedBy(n.ID, n.Hostname); ex {
 					return fmt.Sprintf("profile %s is a command profile and runs only on the local node %s, which is excluded by config (exclude_nodes entry %q; excluding wins: change exclude_nodes)",
-						p.Name, nodeLabel(id, n), e), true
+						p.Name, nodeLabel(id, n), e), e, true
 				}
 			}
 		}
@@ -131,10 +138,10 @@ func (c *schedCore) forcedExcluded(p *core.Profile) (string, bool) {
 		}
 		if ex {
 			return fmt.Sprintf("profile %s forces node %s, but node %s is excluded by config (exclude_nodes entry %q; excluding wins: change exclude_nodes or force_nodes)",
-				p.Name, name, label, e), true
+				p.Name, name, label, e), e, true
 		}
 	}
-	return "", false
+	return "", "", false
 }
 
 // excludedForcedErr is the permanent failure for a forced profile that names

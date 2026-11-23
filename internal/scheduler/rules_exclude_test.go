@@ -231,7 +231,8 @@ func TestExclude_RefusalNamesTheEntryAndCoversAnAbsentNode(t *testing.T) {
 	h.step(evTick{})
 	for name, entry := range map[string]string{"f": "ps5-test*", "g": "02:00:00:00:00:31"} {
 		r := h.c.dryPlan(name)
-		if r.Action != PlanReject || !strings.Contains(r.Reason, `exclude_nodes entry "`+entry+`"`) || !strings.Contains(r.Reason, "is excluded by config") {
+		if r.Action != PlanReject || !strings.Contains(r.Reason, `exclude_nodes entry "`+entry+`"`) || !strings.Contains(r.Reason, "is excluded by config") ||
+			r.ExcludedBy != entry {
 			t.Fatalf("%s: plan = %+v", name, r)
 		}
 		e := h.failed(h.request(name), http.StatusServiceUnavailable, ReasonNodeExcluded)
