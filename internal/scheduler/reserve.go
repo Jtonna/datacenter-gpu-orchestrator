@@ -147,6 +147,14 @@ func (c *schedCore) applyReserve(req *placer.Request, p *core.Profile, info Need
 			req.ByCount[i] = c.countReserve(p, info.at(i), i)
 		}
 	}
+	if !c.marginCounts() {
+		// tight.go: no margin is part of the fit (neither a configured
+		// one nor the split skew margin it replaces)
+		req.MarginMiB, req.MarginPermille, req.MarginMinMiB, req.SkewPermille = 0, 0, 0, 0
+		for i := range req.ByCount {
+			req.ByCount[i].MarginMiB, req.ByCount[i].MarginPermille, req.ByCount[i].MarginMinMiB = 0, 0, 0
+		}
+	}
 }
 
 // countReserve is the need and margins of a placement of k devices whose
@@ -470,7 +478,7 @@ func (c *schedCore) reservedShortfalls(p *core.Profile, pl core.Placement, empty
 			return nil, false
 		}
 		r := shares[i]
-		if need := r.Total + r.Margin; need > usable {
+		if need := r.Total + c.counted(r.Margin); need > usable {
 			fit := fmt.Sprintf("%s: weights %d + context %d + fill reserve %d MiB, margin %d MiB (%s)",
 				r.Basis, r.Weights, r.Context, r.Fill, r.Margin, r.MarginRule)
 			out = append(out, nodeShort{label: nodeLabel(pn.ID, n), share: need, usable: usable, fitText: fit, how: how, empty: empty})
@@ -545,21 +553,11 @@ func (c *schedCore) memoryRows(p *core.Profile, pl core.Placement, freed map[str
 				}
 			}
 		}
-		e.RemainsMiB = e.AvailableMiB - e.WillTakeMiB - e.MarginMiB
+		e.SpareMiB = e.AvailableMiB - e.WillTakeMiB
+		e.RemainsMiB = e.SpareMiB - e.MarginMiB
 		rows = append(rows, e)
 	}
 	return rows, true
-}
-
-// rowsShort is the node that falls shortest and by how much; "" when every
-// row keeps remains_mib >= 0.
-func rowsShort(rows []PlanMemoryNode) (node string, by int) {
-	for _, e := range rows {
-		if -e.RemainsMiB > by {
-			node, by = e.Node, -e.RemainsMiB
-		}
-	}
-	return node, by
 }
 
 // reserveGate is the reservation rule's check of a placement the placer
@@ -581,7 +579,10 @@ func (c *schedCore) reserveGate(p *core.Profile, pl core.Placement, victims []st
 	if !ok {
 		return ""
 	}
-	if node, by := rowsShort(rows); by > 0 {
+	if node, by := c.rowsShort(rows); by > 0 {
+		if !c.marginCounts() {
+			return fmt.Sprintf("memory reservation: short by %d MiB on %s even without the margin (weights + context + fill reserve above what it has, the headroom kept)", by, node)
+		}
 		return fmt.Sprintf("memory reservation: node %s would be short by %d MiB (weights + context + fill reserve + margin above what it has)", node, by)
 	}
 	return ""
@@ -624,8 +625,9 @@ func (c *schedCore) planMemory(p *core.Profile, placed *core.Placement, victims 
 		return nil
 	}
 	m.Nodes = rows
-	m.ShortNode, m.ShortfallMiB = rowsShort(rows)
+	m.ShortNode, m.ShortfallMiB = c.rowsShort(rows)
 	m.Fits = !m.Hypothetical && m.ShortfallMiB == 0
+	m.TightFit = len(c.markTight(m.Nodes)) > 0 && m.Fits
 	if m.Hypothetical && m.ShortfallMiB == 0 {
 		m.Note = "no placement now although these nodes have the memory: they are held, claimed, settling or not allowed for the profile; " + m.Note
 	}

@@ -222,7 +222,7 @@ func (c *schedCore) launchWorkers(in *inst) {
 	in.phase = phWorkers
 	in.workers = true
 	spec := WorkerLaunchSpec{IID: in.iid, Profile: in.prof.Name, Label: path.Base(in.prof.Model)}
-	expect := c.expectShares(in.prof, in.placement)
+	expect := c.launchExpect(in) // tight.go
 	for i, pn := range in.placement.Nodes {
 		if pn.Local {
 			continue

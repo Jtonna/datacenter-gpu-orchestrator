@@ -241,7 +241,7 @@ func (c *schedCore) expectShares(p *core.Profile, pl core.Placement) []int {
 		}
 		out := make([]int, len(shares))
 		for i, r := range shares {
-			out[i] = r.Total + r.Margin
+			out[i] = r.Total + c.counted(r.Margin) // tight.go
 		}
 		return out
 	}
@@ -266,7 +266,7 @@ func (c *schedCore) expectShares(p *core.Profile, pl core.Placement) []int {
 			continue
 		}
 		share := float64(need) * fracs[i]
-		if n, ok := c.node(pn.ID); ok && n.SharedMemory {
+		if n, ok := c.node(pn.ID); ok && n.SharedMemory && c.marginCounts() {
 			share *= 1 + c.cfg.Defaults.SplitSkewMargin
 		}
 		out[i] = int(math.Ceil(share-1e-6)) + dev + c.hostOverhead(p, pl, pn.ID)

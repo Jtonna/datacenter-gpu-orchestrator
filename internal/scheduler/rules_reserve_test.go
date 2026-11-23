@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -128,7 +129,8 @@ func TestReserve_AcceptancePlanOnThreeNodes(t *testing.T) {
 		{"defaults, 23000: 11500 x 1.15 = 13225 does not fit 12400", false, 23000, false, PlanQueue, 0, 0, 825},
 		{"rule on, 20000 + fill 512 + margin 300", true, 20000, true, PlanStart, 10512, 300, 0},
 		{"rule on, 23000: 11500 + 512 + 300 = 12312 fits", true, 23000, true, PlanStart, 12012, 300, 0},
-		{"rule on, 23400: 11700 + 512 + 300 = 12512 does not", true, 23400, false, PlanQueue, 0, 0, 112},
+		{"rule on, 23400: 11700 + 512 = 12212 fits, + 300 does not: a tight fit", true, 23400, true, PlanStart, 12212, 300, 0},
+		{"rule on, 24000: 12000 + 512 = 12512 does not, even without the margin", true, 24000, false, PlanQueue, 0, 0, 112},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t).nodes(psNode("a", 2, 12400), psNode("b", 4, 12400), psNode("c", 6, 12400))
@@ -152,6 +154,9 @@ func TestReserve_AcceptancePlanOnThreeNodes(t *testing.T) {
 			}
 			if r.Action != tc.action || m.Fits != tc.fits || m.Fits != (perr == nil) {
 				t.Fatalf("action %s fits %v placer err %v; want %s %v (reason %q)", r.Action, m.Fits, perr, tc.action, tc.fits, r.Reason)
+			}
+			if r.TightFit != strings.Contains(tc.name, "tight fit") {
+				t.Fatalf("tight fit %v (reason %q)", r.TightFit, r.Reason)
 			}
 			if m.PlacementUsesReserved != tc.on {
 				t.Fatalf("setting %v", m.PlacementUsesReserved)
@@ -326,9 +331,19 @@ func TestReserve_MeasuredMarginAdmitsWhatTheSkewRefused(t *testing.T) {
 	if got := len(h.nodesOf("m")); got != 3 {
 		t.Fatalf("placed on %d nodes", got)
 	}
-	// The estimate: 9000 + 15% = 10350 > 10000, although 9000 + 300 would fit.
+	// The estimate: 9000 + 15% = 10350 > 10000, although 9000 + 300 would
+	// fit: refused with margin_refuses, else a tight fit (9000 <= 10000).
 	h = setup(t, true)
+	h.cfg.Defaults.MarginRefuses = true
 	h.failed(h.request("e"), http.StatusServiceUnavailable, ReasonDoesNotFit)
+	h = setup(t, true)
+	h.viewChanged()
+	if r := h.c.dryPlan("e"); r.Action != PlanStart || !r.TightFit {
+		t.Fatalf("e: plan %s tight %v (%s), want a tight start", r.Action, r.TightFit, r.Reason)
+	}
+	w = h.request("e")
+	h.wantState("e", "starting")
+	h.pending(w)
 	h = setup(t, true)
 	h.cfg.Defaults.MarginEstimatedPercent = 10 // 9000 + 900 fits
 	w = h.request("e")
