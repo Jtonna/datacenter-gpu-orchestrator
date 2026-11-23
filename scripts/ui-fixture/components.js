@@ -5,6 +5,8 @@
 //
 // #/components                    the page
 // #/components?page=<n>           the pagers on page n (1 to 15)
+// #/components?open=popover|dialog|comment   the popover or a dialog open
+//                                 (for screenshots: the comparison tool never clicks)
 // #/components/run/<id>           the side panel of one run (GET /api/requests/{id}).
 //                                 No mockup draws a run's panel; it shows the
 //                                 component with real data, nothing more.
@@ -100,6 +102,9 @@ registerView({
       syncSide();
     };
     draw();
+    if (r.query.open === 'popover') { const b = el.querySelector('button[data-pop=open]'); if (b) openPop({ currentTarget: b }); }
+    if (r.query.open === 'dialog') openDialog(false)();
+    if (r.query.open === 'comment') openDialog(true)();
     return {
       update(next) { const p0 = r.query.page; r = next; if (next.query.page !== p0) draw(); else syncSide(); },
       unmount() { alive = false; if (side) { const s = side; side = null; s.close(); } },

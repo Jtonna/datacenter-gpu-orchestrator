@@ -225,8 +225,7 @@ const server = http.createServer((req, res) => {
   // fixture's demonstration view registered before it starts
   if (p === '/ui/components.html') {
     const html = readFileSync(uiFile('index.html'), 'utf8').replace('<script type="module" src="app.js"></script>',
-      '<script type="module" src="_fixture/components.js"></script>
-<script type="module" src="app.js"></script>');
+      '<script type="module" src="_fixture/components.js"></script>' + String.fromCharCode(10) + '<script type="module" src="app.js"></script>');
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
     return res.end(html);
   }
