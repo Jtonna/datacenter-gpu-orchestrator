@@ -48,10 +48,23 @@ The UI rewrite (plan phase U1) adds a new shell without moving the current UI:
 ```
 next/index.html        rail, section menu and <main>; light only (the design defines no dark)
 next/app.css           the design's tokens (light), the shell, every classic class restyled
-next/app.js            entry of the new shell; imports the classic views and views/zones.js
-next/core/shell.js     rail of sections, section menu (collapsible), fleet card, phone drawer
+next/app.js            entry of the new shell; imports the classic views and the new ones; an empty
+                       hash opens #/overview (Q76)
+next/core/shell.js     rail of sections, section menu (collapsible; closed on the Overview, Q9),
+                       fleet card, phone drawer
+next/core/dom.js       the classic dom.js; morph() keeps attributes it did not set
+next/core/period.js    Day / Week / Month / All time: bounds, step, stepper label, axis labels
+next/core/requests.js  requestFeed(): GET /api/requests polled every 2 s while visible (no push
+                       topic yet; a topic replaces the poll here, not in the views); every()
 next/core/ui.js        the classic components plus panel, segmented, filterSelect, searchField,
-                       zoneStatus, colourKey, availStrip, runStatus, sidePanel
+                       zoneStatus, colourKey, availStrip, runStatus, sidePanel; for the Overview:
+                       dateStepper, dropButton, tokensChart, tokensLegend, runsTable, runLegend,
+                       runIcon, runWhy, tickRuns (100 ms run clock), availClass, groupClass
+next/views/overview.js Overview, the home page (Main board): Tokens, Requests (the design's "Runs",
+                       Q2), Zones with the hour-by-hour strip; Zones toggles outline a request's
+                       zones; Customize (Q1, kept in localStorage potluck.overview.layout)
+next/views/requests.js Requests: the paged request list behind "All N" (Q3; no mockup yet)
+next/views/report.js   24-hour report behind "View 24-hour report" (no mockup yet)
 next/views/zones.js    Zones: one row per machine (zone); selection with Stop accepting models /
                        Accept models again; the zone panel (state, facts, recent events, machine card)
 next/views/models.js   Models: loaded instances, every model file with size and disk total, the
@@ -62,7 +75,7 @@ Each UI links to the other: "Classic UI" at the foot of the new rail, "New UI"
 in the classic header and pane. `GET /` on the scheduler redirects to `/ui/`.
 
 Harness case fields for the new shell: `click` (selectors clicked after the
-draw), `page` and `notOnPage` (texts anywhere on the page, side panels and
+draw), `has` (selectors that must match; `[a^=v]` and `[a*=v]` work), `page` and `notOnPage` (texts anywhere on the page, side panels and
 dialogs included), `links` (`{text, path}`).
 
 Words of the new shell: a zone is one node; Off = excluded, "Not accepting"
@@ -620,3 +633,11 @@ same at the moment of a load): look at every change with it too, because the
 scripted states are small and tidy and the real one is not. Scenario data for a screen group
 goes into its own file in `cmd/devcluster`. Name screenshots
 `<screen>-<scenario>-<desktop|phone>.png`; they are not kept in the repository.
+
+A fixture without a scheduler: `node scripts/ui-fixture-server.mjs [--port 3122]
+[--state normal|empty|off|loading]` serves `/ui/` (the next overlay, as
+`uiResolve` does) and fixed answers for `/api/status`, `/api/requests`,
+`/api/requests/summary`, `/api/nodes/availability`, `/api/nodes` and
+`/api/models`, plus a `/ws` that sends hello and the status. Its data mirrors
+the Overview mockup's sample (generic names, 192.0.2.x, 02:00:00 MACs), so the
+page can be compared with the artboard. It writes nothing (every write is 405).

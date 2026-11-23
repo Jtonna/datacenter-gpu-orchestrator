@@ -1,0 +1,244 @@
+#!/usr/bin/env node
+// ui-fixture-server.mjs: serves the web UI with fixed answers, no scheduler
+// needed. For looking at a screen in a browser, and for the mockup
+// comparison (the ui-compare tool): the answers mirror the sample data of
+// the Overview mockup (design-canvas Main.dc.html), with generic names and
+// documentation addresses, so a screenshot of the page and one of the
+// artboard can be compared like for like. Node only, no dependencies.
+//
+// usage: node scripts/ui-fixture-server.mjs [--port 3122] [--ui internal/api/ui] [--host 0.0.0.0]
+//                                           [--state normal|empty|off|loading]
+//
+//   /ui/...      the new shell (ui/next laid over the classic files, as the
+//                scheduler serves it), /ui/classic/... the classic UI
+//   /api/status, /api/requests, /api/requests/summary, /api/requests/{id},
+//   /api/nodes/availability, /api/nodes: fixed answers (times relative to now)
+//   /ws          a WebSocket that sends hello and the status every 5 s
+//   any other /api/... answers 404 in the API's error shape; writes 405.
+//
+// --state empty: no request in the period; off: the request log is off
+// (usage.db not open); loading: the request routes never answer.
+//
+// The fixture's machines carry a "chip" field ("Oberon", "RTX 3070 Ti"), which
+// no agent reports yet (it needs an agent release): it is here so the Zone
+// column can be seen as designed.
+
+import http from 'node:http';
+import { createHash } from 'node:crypto';
+import { readFileSync, existsSync, statSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const argv = process.argv.slice(2);
+const opt = (k, d) => { const i = argv.indexOf(k); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
+const here = path.dirname(fileURLToPath(import.meta.url));
+const UI = path.resolve(opt('--ui', path.join(here, '..', 'internal', 'api', 'ui')));
+const PORT = Number(opt('--port', '3122'));
+const HOST = opt('--host', '0.0.0.0');
+const STATE = opt('--state', 'normal');
+
+// ---------- the fixture (the Overview mockup's sample data) ----------
+
+const MIB = 1024;
+const H = 3600000;
+const mac = n => '02:00:00:00:00:' + String(n).padStart(2, '0');
+// name, chip, total GB, used GB, temp, what it does
+const MACHINES = [
+  { n: 1, name: 'ps5-01', chip: 'Oberon', total: 13.5, used: 10.7, temp: 61 },
+  { n: 2, name: 'ps5-02', chip: 'Oberon', total: 13.5, used: 10.4, temp: 63 },
+  { n: 3, name: 'ps5-03', chip: 'Oberon', total: 13.5, used: 4.2, temp: 58 },
+  { n: 4, name: 'ps5-04', chip: 'Oberon', total: 13.5, used: 3.8, temp: 55 },
+  { n: 5, name: 'laptop-01', chip: 'RTX 3070 Ti', total: 8.0, used: 6.9, temp: 67 },
+  { n: 6, name: 'ps5-05', chip: 'Oberon', total: 13.5, used: 0.3, temp: 49 },
+  { n: 7, name: 'ps5-06', chip: 'Oberon', total: 13.5, used: 0, temp: null, offline: true },
+  { n: 8, name: 'laptop-02', chip: 'RTX 5060', total: 8.0, used: 1.2, temp: 44, excluded: true },
+];
+const BIG = 'gemma-4-27b:32k', SMALL = 'gemma-4-12b:64k', QWEN = 'qwen3-14b';
+const iso = ms => new Date(ms).toISOString();
+
+function status(now) {
+  const t = Math.round(now / 1000) * 1000;
+  const nodes = MACHINES.map(m => ({
+    id: mac(m.n), hostname: m.name, local: false, online: !m.offline, addr: '', priority: 1, eligible: !m.excluded, auto: true,
+    excluded: !!m.excluded, excluded_by: m.excluded ? mac(m.n) : '', unplaced: '', unplaced_message: '',
+    total_mib: Math.round(m.total * MIB), free_mib: Math.round((m.total - m.used) * MIB),
+    holder: [1, 2, 5].includes(m.n) ? BIG : m.n === 3 ? SMALL : '',
+    claimed_by: m.n === 4 ? QWEN : '', settling: m.n === 4 ? 'settling' : '', settle_until: m.n === 4 ? iso(t + 12000) : null,
+    free_at: m.n === 4 ? iso(t + 12000) : null, free_basis: m.n === 4 ? 'settle' : '',
+    quarantined: m.n === 6 ? iso(t - 600000) : null, missing_since: m.offline ? iso(t - 70 * 60000) : null,
+    reserved: [], reserved_mib: 0,
+  }));
+  const agents = MACHINES.map(m => ({
+    id: mac(m.n), name: m.name, addr: '192.0.2.' + (100 + m.n), state: m.offline ? 'lost' : 'active', paused: false, placeable: !m.excluded && !m.offline,
+    excluded: !!m.excluded, excluded_by: m.excluded ? mac(m.n) : undefined, unplaced: m.excluded ? 'excluded' : '',
+    excluded_at: m.excluded ? iso(t - 26 * H) : undefined, excluded_actor: m.excluded ? 'anonymous' : undefined,
+    last_seen_ago_s: m.offline ? 4440 : 1, platform: m.chip === 'Oberon' ? 'linux-amd64-vulkan' : 'linux-amd64-cuda', release: '0.1.9',
+    chip: m.chip, devices: [{ name: 'GPU0', backend: m.chip === 'Oberon' ? 'vulkan' : 'cuda', total_mib: Math.round(m.total * MIB) }],
+    stats: m.temp == null ? {} : { headline_temp_c: m.temp },
+    set_aside: m.n === 6 ? { reason: 'preflight_failed', message: 'The pre-load check failed: the model did not fit the free memory.', until: iso(t + 6 * 60000), level: 1 } : undefined,
+  }));
+  return {
+    time: iso(t), shutting_down: false, membership: 'agents', configured: true, config_revision: 12,
+    instances: [
+      { profile: BIG, state: 'ready', in_flight: 2, waiters: 0, parallel: 4, host: 'node', host_node: mac(1), requests_served: 190,
+        nodes: [{ id: mac(1), role: 'host', share: 0.4 }, { id: mac(2), role: 'helper', share: 0.35 }, { id: mac(5), role: 'helper', share: 0.25 }] },
+      { profile: SMALL, state: 'starting', in_flight: 0, waiters: 1, load_progress: 0.56, load: { progress: 0.56 }, parallel: 1, host: 'node', host_node: mac(3),
+        nodes: [{ id: mac(3), role: 'host', share: 1 }] },
+    ],
+    queue: [{ profile: SMALL, waiters: 1, claimed: true, claim: [mac(3)] }, { profile: QWEN, waiters: 1, claimed: true, claim: [mac(4)] }],
+    quarantines: [{ node: mac(6), until: iso(t + 6 * 60000), level: 1, reason: 'preflight_failed', message: 'The pre-load check failed: the model did not fit the free memory.', since: iso(t - 600000) }],
+    backoffs: [], last_refusals: [], recent_loads: [], learned_needs: {},
+    view: { age: 1, connected: true, stale: false, nodes },
+    agents,
+  };
+}
+
+// the request rows of the mockup's table, the times relative to now
+function requests(now) {
+  const nodes = ids => ids.map(n => ({ id: mac(n), name: MACHINES.find(m => m.n === n).name, role: n === 1 ? 'host' : 'helper' }));
+  const big = nodes([1, 2, 5]);
+  const row = (id, o) => Object.assign({ id, kind: 'v1', stream: true, nodes: [], caller: 'anonymous', caller_kind: 'default',
+    tokens_in: null, tokens_reused: null, tokens_out: null, prefill_tps: null, decode_tps: null, wait_ms: 0, duration_ms: 0 }, o);
+  return [
+    row(203, { status: 'queued', queued_at: now - 344000, profile: SMALL, live: true, wait_ms: 344000 }),
+    row(202, { status: 'queued', queued_at: now - 37000, profile: QWEN, live: true, wait_ms: 37000 }),
+    row(201, { status: 'running', queued_at: now - 22900, started_at: now - 22600, profile: BIG, live: true, tokens_in: 2460, prefill_tps: 412, tokens_out: 318, decode_tps: 14.1, nodes: big, duration_ms: 22600 }),
+    row(200, { status: 'running', queued_at: now - 3900, started_at: now - 3800, profile: BIG, live: true, tokens_in: 705, prefill_tps: 405, tokens_out: 54, decode_tps: 14.3, nodes: big, duration_ms: 3800 }),
+    row(199, { status: 'done', queued_at: now - 51500, started_at: now - 51000, ended_at: now - 8500, profile: BIG, tokens_in: 1840, prefill_tps: 418, tokens_out: 612, decode_tps: 14.4, nodes: big, duration_ms: 42500, wait_ms: 500 }),
+    row(198, { status: 'failed', reason: 'cut', message: 'the zone dropped the connection', queued_at: now - 83500, started_at: now - 83000, ended_at: now - 74800, profile: QWEN, tokens_in: 1120, prefill_tps: 598, tokens_out: 37, decode_tps: 20.8, nodes: nodes([4]), duration_ms: 8200, wait_ms: 500 }),
+    row(197, { status: 'done', queued_at: now - 77300, started_at: now - 77000, ended_at: now - 59900, profile: BIG, tokens_in: 920, prefill_tps: 409, tokens_out: 238, decode_tps: 13.9, nodes: big, duration_ms: 17100, wait_ms: 300 }),
+    row(196, { status: 'cancelled', reason: 'client_left', message: 'cancelled by the app that sent it', queued_at: now - 124200, started_at: now - 124000, ended_at: now - 120000, profile: BIG, tokens_in: 640, prefill_tps: 415, tokens_out: 21, decode_tps: 14.0, nodes: big, duration_ms: 4000, wait_ms: 200 }),
+    row(195, { status: 'refused', reason: 'queue_timeout', message: 'it waited longer than the queue time limit', queued_at: now - 700000, ended_at: now - 100000, profile: QWEN, wait_ms: 600000 }),
+  ];
+}
+
+// tokens in and out per hour of the mockup's day (00:00 to 23:00)
+const IN = [6000, 3000, 0, 0, 0, 1800, 4000, 9000, 31000, 30000, 48000, 21000, 12000, 40000, 46000, 28000, 11500, 0, 0, 0, 0, 0, 0, 0];
+const OUT = [1700, 870, 0, 0, 0, 650, 1300, 2600, 8900, 8700, 13900, 6100, 3500, 11500, 13300, 8000, 3300, 0, 0, 0, 0, 0, 0, 0];
+function summary(q, now) {
+  const from = Number(q.get('from')) || now - 24 * H, to = Number(q.get('to')) || now;
+  const step = q.get('step') || 'hour';
+  const width = step === 'day' ? 24 * H : H;
+  const series = [];
+  const tot = { requests: 0, done: 0, failed: 0, refused: 0, cancelled: 0, tokens_in: 0, tokens_reused: 0, tokens_out: 0, wait_ms: 0, duration_ms: 0, prefill_tps: 412.3, decode_tps: 14.2 };
+  for (let b = from; b < to; b += width) {
+    const hr = new Date(b).getHours();
+    const past = b <= now;
+    const k = STATE === 'normal' && past ? (step === 'day' ? 1 : 0) : -1;
+    const tin = k < 0 ? 0 : step === 'day' ? IN.reduce((a, x) => a + x, 0) : IN[hr];
+    const tout = k < 0 ? 0 : step === 'day' ? OUT.reduce((a, x) => a + x, 0) : OUT[hr];
+    const reqs = tin ? Math.max(1, Math.round(tin / 1450)) : 0;
+    series.push({ t: b, requests: reqs, done: reqs, failed: 0, refused: 0, cancelled: 0, tokens_in: tin, tokens_reused: 0, tokens_out: tout, wait_ms: 0, duration_ms: 0, prefill_tps: null, decode_tps: null });
+    tot.requests += reqs; tot.done += reqs; tot.tokens_in += tin; tot.tokens_out += tout;
+  }
+  if (STATE === 'normal' && step === 'hour') { tot.requests = 199; tot.done = 196; tot.failed = 1; tot.refused = 1; tot.cancelled = 1; }
+  return { from, to, step, source: 'hourly', totals: tot, series, live: { queued: STATE === 'normal' ? 2 : 0, running: STATE === 'normal' ? 2 : 0 },
+    oldest_ts: STATE === 'normal' ? now - 9 * 24 * H : 0, history_begins_at: STATE === 'off' ? 0 : now - 9 * 24 * H, on: STATE !== 'off' };
+}
+
+// each machine's last 24 hours, as the mockup draws them (oldest first)
+const STRIPS = {
+  1: 'c2 c3 c3 c2 c1 a a a a a a a a c1 c2 c3 c3 c4 c2 c1 c3 c3 c2 c4',
+  2: 'c1 c2 c2 c1 a a a a a a a a a a c1 c2 c2 c3 c1 a c1 c2 c2 c4',
+  3: 'c3 c3 c2 a a a a a a a a a a a a c1 a a a c3 c2 a a ld',
+  4: 'a c1 c2 c2 a a a a a a a a a a a c2 c1 a a a c3 c4 c4 c3',
+  5: 'c2 c2 c1 a a a a a a a a a a a a c1 c1 c2 c3 c1 c1 c2 a c4',
+  6: 'a a c1 c1 a a a a a a a a a a a a c1 a a c2 c2 a a dn',
+  7: 'dn dn a a a a a a a a a a a a a a a c2 c2 a a a dn dn',
+  8: 'x x x x x x x x x x x x x x x x x x x x x x x x',
+};
+const CELL = { a: ['free', 0], c1: ['in_use', 1], c2: ['in_use', 2], c3: ['in_use', 3], c4: ['in_use', 4], ld: ['loading', 0], dn: ['down', 0], x: ['off', 0] };
+function availability(q, now) {
+  const hourNow = Math.floor(now / H) * H;
+  const to = Number(q.get('to')) || now;
+  const last = Math.floor((to - 1) / H) * H;
+  const first = Number(q.get('from')) ? Math.floor(Number(q.get('from')) / H) * H : last - 23 * H;
+  const nodes = MACHINES.map(m => {
+    const codes = STRIPS[m.n].split(' ');
+    const cells = [];
+    for (let s = first, i = 0; s <= last; s += H, i++) {
+      const [state, busy] = STATE === 'off' ? ['unknown', 0] : CELL[codes[i % codes.length]] || ['unknown', 0];
+      cells.push({ start: iso(s), span_s: s === hourNow ? (now - s) / 1000 : 3600, partial: s === hourNow, busy_level: busy, state,
+        seconds: { free: 0, in_use: 0, loading: 0, down: 0, off: 0, unknown: 0 }, down_lost_s: 0, down_set_aside_s: 0, busy: null, reachable_s: 0, uptime: null });
+    }
+    return { id: mac(m.n), name: m.name, known_s: 86400, reachable_s: 86400, uptime: m.offline ? 0.83 : 1, cells };
+  });
+  return { from: iso(first), to: iso(to), step: 'hour', history_begins_at: STATE === 'off' ? null : iso(now - 9 * 24 * H), recording: STATE !== 'off', nodes };
+}
+
+// ---------- serving ----------
+
+const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json',
+  '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8', '.md': 'text/markdown; charset=utf-8' };
+const isFile = p => existsSync(p) && statSync(p).isFile();
+// as internal/api/uifiles.go: /ui/<p> is next/<p> when it exists, else <p>; /ui/classic/<p> is <p>
+function uiFile(rel) {
+  rel = path.posix.normalize('/' + rel).slice(1);
+  if (rel === '' ) return path.join(UI, 'next', 'index.html');
+  if (rel === 'classic' || rel === 'classic/') return path.join(UI, 'index.html');
+  if (rel.startsWith('next/')) return null;
+  if (rel.startsWith('classic/')) { const r = rel.slice(8); return r.startsWith('next/') || !isFile(path.join(UI, r)) ? null : path.join(UI, r); }
+  if (isFile(path.join(UI, 'next', rel))) return path.join(UI, 'next', rel);
+  return isFile(path.join(UI, rel)) ? path.join(UI, rel) : null;
+}
+
+const json = (res, code, body) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' }); res.end(JSON.stringify(body)); };
+const notFound = (res, what) => json(res, 404, { error: { message: 'not in the fixture: ' + what, type: 'invalid_request_error' } });
+
+const server = http.createServer((req, res) => {
+  const u = new URL(req.url, 'http://fixture');
+  const p = u.pathname;
+  const now = Date.now();
+  if (p === '/') { res.writeHead(302, { Location: '/ui/' }); return res.end(); }
+  if (p === '/ui') { res.writeHead(301, { Location: '/ui/' }); return res.end(); }
+  if (p.startsWith('/ui/')) {
+    const f = uiFile(decodeURIComponent(p.slice(4)));
+    const type = f && TYPES[path.extname(f)];
+    if (!type) { res.writeHead(404); return res.end('not found'); }
+    res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-cache' });
+    return res.end(readFileSync(f));
+  }
+  if (!p.startsWith('/api/')) return notFound(res, p);
+  if (req.method !== 'GET') return json(res, 405, { error: { message: 'the fixture is read-only' } });
+  if (STATE === 'loading' && p.startsWith('/api/requests')) return; // never answers
+  if (p === '/api/status') return json(res, 200, status(now));
+  if (p === '/api/models') return json(res, 200, { version: 1, models: [] });
+  if (p === '/api/nodes') return json(res, 200, { nodes: status(now).agents });
+  if (p === '/api/nodes/availability') return json(res, 200, availability(u.searchParams, now));
+  if (p === '/api/requests/summary') return json(res, 200, summary(u.searchParams, now));
+  if (p === '/api/requests') {
+    let rows = STATE === 'normal' ? requests(now) : [];
+    const st = (u.searchParams.get('status') || '').split(',').filter(Boolean);
+    if (st.length) rows = rows.filter(r => st.includes(r.status));
+    const prof = u.searchParams.get('profile');
+    if (prof) rows = rows.filter(r => r.profile === prof);
+    const limit = Number(u.searchParams.get('limit')) || 50;
+    return json(res, 200, { requests: rows.slice(0, limit), on: STATE !== 'off', history_begins_at: STATE === 'off' ? 0 : now - 9 * 24 * H });
+  }
+  const m = /^\/api\/requests\/(\d+)$/.exec(p);
+  if (m) { const r = requests(now).find(x => String(x.id) === m[1]); return r ? json(res, 200, r) : notFound(res, p); }
+  return notFound(res, p);
+});
+
+// /ws: a minimal WebSocket (RFC 6455) that only sends: hello, then the status every 5 s
+function frame(text) {
+  const b = Buffer.from(text);
+  const head = b.length < 126 ? Buffer.from([0x81, b.length]) : b.length < 65536 ? Buffer.from([0x81, 126, b.length >> 8, b.length & 255]) : null;
+  if (head) return Buffer.concat([head, b]);
+  const h8 = Buffer.alloc(10); h8[0] = 0x81; h8[1] = 127; h8.writeBigUInt64BE(BigInt(b.length), 2);
+  return Buffer.concat([h8, b]);
+}
+server.on('upgrade', (req, sock) => {
+  if (new URL(req.url, 'http://fixture').pathname !== '/ws') { sock.destroy(); return; }
+  const accept = createHash('sha1').update(req.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+  sock.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ' + accept + '\r\n\r\n');
+  const send = (type, data) => { try { sock.write(frame(JSON.stringify({ type, ts: Date.now(), data }))); } catch { /* closed */ } };
+  send('hello', { server_time: Date.now(), config_revision: 12 });
+  send('status', status(Date.now()));
+  const t = setInterval(() => send('status', status(Date.now())), 5000);
+  sock.on('data', () => { /* subscribe and pong frames: nothing to do */ });
+  sock.on('close', () => clearInterval(t));
+  sock.on('error', () => clearInterval(t));
+});
+
+server.listen(PORT, HOST, () => console.log(`ui fixture (${STATE}) at http://${HOST}:${PORT}/ui/ serving ${UI}`));
