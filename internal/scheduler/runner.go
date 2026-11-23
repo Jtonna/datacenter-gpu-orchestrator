@@ -198,12 +198,14 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	close(s.loopDone)
 	s.bgCancel()
 	s.wg.Wait()
-	s.subsMu.Lock()
-	for sub := range s.subs {
-		delete(s.subs, sub)
-		close(sub.ch)
-	}
-	s.subsMu.Unlock()
+	func() {
+		s.subsMu.Lock()
+		defer supervise.Unlocked("scheduler", s.subsMu.Unlock)
+		for sub := range s.subs {
+			delete(s.subs, sub)
+			close(sub.ch)
+		}
+	}()
 	return nil
 }
 
@@ -276,12 +278,14 @@ func (s *Scheduler) exec(ef effect) {
 	case effStop:
 		ef.child.Stop(ef.mode)
 	case effCancelHealth:
-		s.healthMu.Lock()
-		if cancel := s.healthCancel[ef.iid]; cancel != nil {
-			cancel()
-			delete(s.healthCancel, ef.iid)
-		}
-		s.healthMu.Unlock()
+		func() {
+			s.healthMu.Lock()
+			defer supervise.Unlocked("scheduler", s.healthMu.Unlock)
+			if cancel := s.healthCancel[ef.iid]; cancel != nil {
+				cancel()
+				delete(s.healthCancel, ef.iid)
+			}
+		}()
 	case effProbe:
 		failed := func(err error) []probeOutcome {
 			out := make([]probeOutcome, len(ef.targets))
@@ -293,9 +297,10 @@ func (s *Scheduler) exec(ef effect) {
 		s.goBg("scheduler.probe", func(ctx context.Context) {
 			out := make([]probeOutcome, len(ef.targets))
 			var wg sync.WaitGroup
+			fan := supervise.NewFanout("scheduler.probe") // one pre-flight's targets count once toward escalation
 			for i, tg := range ef.targets {
 				wg.Add(1)
-				go supervise.Once("scheduler.probe", func() {
+				go fan.Once(func() {
 					done := false
 					defer func() { // a panic makes this target's result an error
 						if !done {
@@ -372,9 +377,11 @@ func (s *Scheduler) startChild(ctx context.Context, ef effStart, st *startState)
 	st.child.Store(&ch)
 	supervise.Point("scheduler.start", s) // test hook: a failure after the child started
 	hctx, cancel := context.WithCancel(ctx)
-	s.healthMu.Lock()
-	s.healthCancel[ef.iid] = cancel
-	s.healthMu.Unlock()
+	func() {
+		s.healthMu.Lock()
+		defer supervise.Unlocked("scheduler", s.healthMu.Unlock)
+		s.healthCancel[ef.iid] = cancel
+	}()
 	st.posted.Store(true)
 	if !s.post(context.Background(), evChildStarted{iid: ef.iid, child: ch}) {
 		// The loop is gone (shutdown raced the start): end the child here.
@@ -394,9 +401,11 @@ func (s *Scheduler) startChild(ctx context.Context, ef effStart, st *startState)
 	})
 	s.goBg("scheduler.health_wait", func(context.Context) {
 		err := ch.WaitHealthy(hctx)
-		s.healthMu.Lock()
-		delete(s.healthCancel, ef.iid)
-		s.healthMu.Unlock()
+		func() {
+			s.healthMu.Lock()
+			defer supervise.Unlocked("scheduler", s.healthMu.Unlock)
+			delete(s.healthCancel, ef.iid)
+		}()
 		cancel()
 		s.post(context.Background(), evHealthy{iid: ef.iid, err: err})
 	}, func(p any) {
@@ -727,17 +736,19 @@ type subscriber struct{ ch chan FeedEvent }
 // returns.
 func (s *Scheduler) Subscribe(buffer int) (<-chan FeedEvent, func()) {
 	sub := &subscriber{ch: make(chan FeedEvent, max(buffer, 1))}
-	s.subsMu.Lock()
-	select {
-	case <-s.runDone:
-		close(sub.ch)
-	default:
-		s.subs[sub] = struct{}{}
-	}
-	s.subsMu.Unlock()
+	func() {
+		s.subsMu.Lock()
+		defer supervise.Unlocked("scheduler", s.subsMu.Unlock)
+		select {
+		case <-s.runDone:
+			close(sub.ch)
+		default:
+			s.subs[sub] = struct{}{}
+		}
+	}()
 	return sub.ch, func() {
 		s.subsMu.Lock()
-		defer s.subsMu.Unlock()
+		defer supervise.Unlocked("scheduler", s.subsMu.Unlock)
 		if _, ok := s.subs[sub]; ok {
 			delete(s.subs, sub)
 			close(sub.ch)
@@ -747,7 +758,7 @@ func (s *Scheduler) Subscribe(buffer int) (<-chan FeedEvent, func()) {
 
 func (s *Scheduler) publish(evs []FeedEvent) {
 	s.subsMu.Lock()
-	defer s.subsMu.Unlock()
+	defer supervise.Unlocked("scheduler", s.subsMu.Unlock)
 	for sub := range s.subs {
 		for _, ev := range evs {
 			for {

@@ -120,9 +120,11 @@ func (h *wsHub) reserve() bool {
 }
 
 func (h *wsHub) release() {
-	h.mu.Lock()
-	h.reserved--
-	h.mu.Unlock()
+	func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		h.reserved--
+	}()
 }
 
 func (h *wsHub) clientCount() int {
@@ -135,9 +137,11 @@ func (h *wsHub) clientCount() int {
 // never blocks the caller.
 func (h *wsHub) drop(c *wsClient, code websocket.StatusCode, reason string) {
 	c.once.Do(func() {
-		h.mu.Lock()
-		delete(h.clients, c)
-		h.mu.Unlock()
+		func() {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			delete(h.clients, c)
+		}()
 		close(c.done)
 		go supervise.Once("api.ws.close", func() {
 			done := make(chan struct{})
@@ -168,14 +172,17 @@ func (h *wsHub) enqueue(c *wsClient, b []byte) {
 }
 
 func (h *wsHub) broadcast(topic string, b []byte) {
-	h.mu.Lock()
-	cs := make([]*wsClient, 0, len(h.clients))
-	for c := range h.clients {
-		if c.wants(topic) {
-			cs = append(cs, c)
+	var cs []*wsClient
+	func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		cs = make([]*wsClient, 0, len(h.clients))
+		for c := range h.clients {
+			if c.wants(topic) {
+				cs = append(cs, c)
+			}
 		}
-	}
-	h.mu.Unlock()
+	}()
 	for _, c := range cs {
 		h.enqueue(c, b)
 	}
@@ -205,21 +212,28 @@ func (h *wsHub) publishConfig(ev map[string]any) {
 	h.broadcast(TopicConfig, wsFrame(TopicConfig, h.now(), ev))
 }
 
+// add takes c in place of its reservation; false once the hub is closed.
+func (h *wsHub) add(c *wsClient) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.reserved--
+	if h.closed {
+		return false
+	}
+	h.clients[c] = struct{}{}
+	h.wg.Add(1)
+	return true
+}
+
 // serve runs one accepted connection until it ends.
 func (h *wsHub) serve(ctx context.Context, conn wsConn) {
 	conn.SetReadLimit(4096)
 	c := &wsClient{conn: conn, send: make(chan []byte, h.queue), done: make(chan struct{}),
 		topics: map[string]bool{TopicStatus: true, TopicEvent: true, TopicBench: true, TopicConfig: true}}
-	h.mu.Lock()
-	h.reserved--
-	if h.closed {
-		h.mu.Unlock()
+	if !h.add(c) {
 		conn.Close(websocket.StatusGoingAway, "the scheduler is shutting down")
 		return
 	}
-	h.clients[c] = struct{}{}
-	h.wg.Add(1)
-	h.mu.Unlock()
 
 	// hello, then a full snapshot of what the client subscribed to
 	c.send <- wsFrame(TopicHello, h.now(), h.hello())
@@ -266,10 +280,13 @@ func (h *wsHub) serve(ctx context.Context, conn wsConn) {
 					next[t] = true
 				}
 			}
-			c.mu.Lock()
-			prev := c.topics
-			c.topics = next
-			c.mu.Unlock()
+			var prev map[string]bool
+			func() {
+				c.mu.Lock()
+				defer c.mu.Unlock()
+				prev = c.topics
+				c.topics = next
+			}()
 			h.sendSnapshot(c, next[TopicStatus] && !prev[TopicStatus], next[TopicBench] && !prev[TopicBench])
 			if next[TopicModels] && !prev[TopicModels] {
 				h.sendModels(c)
@@ -448,25 +465,34 @@ func (h *wsHub) start() {
 	supervise.Go(ctx, supervise.Spec{Name: "api.ws.ping", Policy: supervise.Restart, Done: h.wg.Done}, func(context.Context) { h.pingLoop() })
 }
 
-// close drops every client and stops the loops. Safe to call twice.
-func (h *wsHub) close() {
+// markClosed closes the hub and takes its clients and cancels; false when
+// it was closed already.
+func (h *wsHub) markClosed() (cs []*wsClient, cancels []func(), ok bool) {
 	h.mu.Lock()
+	defer h.mu.Unlock()
 	if h.closed {
-		h.mu.Unlock()
-		return
+		return nil, nil, false
 	}
 	h.closed = true
-	cs := make([]*wsClient, 0, len(h.clients))
+	cs = make([]*wsClient, 0, len(h.clients))
 	for c := range h.clients {
 		cs = append(cs, c)
 	}
-	cancels := h.cancels
+	cancels = h.cancels
 	h.cancels = nil
 	close(h.quit)
 	if h.stopLoops != nil {
 		h.stopLoops() // a loop waiting to restart does not hold the close up
 	}
-	h.mu.Unlock()
+	return cs, cancels, true
+}
+
+// close drops every client and stops the loops. Safe to call twice.
+func (h *wsHub) close() {
+	cs, cancels, ok := h.markClosed()
+	if !ok {
+		return
+	}
 	for _, f := range cancels {
 		f()
 	}

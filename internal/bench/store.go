@@ -325,28 +325,43 @@ func (s *Store) runJob(fn func(*sql.Tx) error) (err error) {
 
 // write runs fn in a transaction on the writer goroutine and waits for it.
 func (s *Store) write(fn func(*sql.Tx) error) error {
-	s.mu.RLock()
-	if s.closed {
-		s.mu.RUnlock()
+	j := job{fn: fn, done: make(chan error, 1)}
+	if !s.queue(j) {
 		s.late.Add(1)
 		return errors.New("store is closed")
 	}
-	j := job{fn: fn, done: make(chan error, 1)}
-	s.jobs <- j
-	s.mu.RUnlock()
 	return <-j.done
+}
+
+// queue hands j to the writer; false once the store is closed. The send is
+// under the read lock, so Close cannot close the channel under it.
+func (s *Store) queue(j job) bool {
+	s.mu.RLock()
+	defer supervise.Unlocked("bench", s.mu.RUnlock)
+	if s.closed {
+		return false
+	}
+	s.jobs <- j
+	return true
+}
+
+// markClosed closes the job queue; false when it was closed already.
+func (s *Store) markClosed() bool {
+	s.mu.Lock()
+	defer supervise.Unlocked("bench", s.mu.Unlock)
+	if s.closed {
+		return false
+	}
+	s.closed = true
+	close(s.jobs)
+	return true
 }
 
 // Close finishes queued writes and closes the database. Safe to call twice.
 func (s *Store) Close() error {
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
+	if !s.markClosed() {
 		return nil
 	}
-	s.closed = true
-	close(s.jobs)
-	s.mu.Unlock()
 	s.wg.Wait()
 	return s.db.Close()
 }

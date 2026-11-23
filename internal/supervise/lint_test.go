@@ -155,14 +155,22 @@ func funcName(fd *ast.FuncDecl) string {
 	return b.String()
 }
 
-// supervisedCall is `supervise.Once(...)` (or Go).
+// supervisedCall is `supervise.Once(...)` (or Go), or `fan.Once(...)` on a
+// variable (a supervise.Fanout member; no other type in the module has a
+// method Once).
 func supervisedCall(c *ast.CallExpr) bool {
 	sel, ok := c.Fun.(*ast.SelectorExpr)
 	if !ok {
 		return false
 	}
 	x, ok := sel.X.(*ast.Ident)
-	return ok && x.Name == "supervise" && (sel.Sel.Name == "Once" || sel.Sel.Name == "Go")
+	if !ok {
+		return false
+	}
+	if x.Name == "supervise" {
+		return sel.Sel.Name == "Once" || sel.Sel.Name == "Go"
+	}
+	return sel.Sel.Name == "Once"
 }
 
 func TestSourceScan(t *testing.T) {

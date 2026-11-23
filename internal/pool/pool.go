@@ -363,9 +363,11 @@ func New(o Options) (*Pool, error) {
 // SetForceUnload connects the scheduler's force unload, used by deregister
 // and removal (agent contract 10).
 func (p *Pool) SetForceUnload(f func(ctx context.Context, id core.NodeID) (string, error)) {
-	p.mu.Lock()
-	p.forceUnload = f
-	p.unlock()
+	func() {
+		p.mu.Lock()
+		defer supervise.Unlocked("pool", p.unlock)
+		p.forceUnload = f
+	}()
 }
 
 // Release is Potluck's release.
@@ -417,7 +419,7 @@ func (p *Pool) register(req agentproto.RegisterRequest) (agentproto.RegisterAnsw
 		return refuse(ReasonReleaseUnavailable, "Potluck serves no verified program release: %s", p.o.Programs.Err)
 	}
 	p.mu.Lock()
-	defer p.unlock()
+	defer supervise.Unlocked("pool", p.unlock)
 	// Settled as built by CR-5 (agent contract 11.1). The question was: 4.2 lists the refusals without an order. They are
 	// checked: release served, removed, release (both directions), foreign
 	// process, duplicate id, platform.
@@ -542,7 +544,7 @@ func (p *Pool) Heartbeat(id string, body []byte) HeartbeatResult {
 	hb.sanitize()
 	now := p.o.Clock()
 	p.mu.Lock()
-	defer p.unlock()
+	defer supervise.Unlocked("pool", p.unlock)
 	a := p.agents[id]
 	if a == nil || a.left || p.admin[id].Removed {
 		return HeartbeatResult{Status: http.StatusGone, Err: "unknown agent; register again"}
@@ -673,18 +675,22 @@ func (p *Pool) checkOrphanLocked(a *agent, hb *heartbeat) {
 		if err := p.deleteLaunch(ctx, base, lid, false); err != nil {
 			p.log.Warn("stopping a launch Potluck does not hold failed; a later heartbeat that still names it sends the stop again",
 				"id", a.reg.ID, "launch", lid, "err", err)
-			p.mu.Lock()
-			if a.orphanAsked == lid {
-				a.orphanAsked = "" // not delivered: "once" is once delivered
-			}
-			p.unlock()
+			func() {
+				p.mu.Lock()
+				defer supervise.Unlocked("pool", p.unlock)
+				if a.orphanAsked == lid {
+					a.orphanAsked = "" // not delivered: "once" is once delivered
+				}
+			}()
 		}
 	}, func(any) { // as not delivered: the next heartbeat that names it asks again
-		p.mu.Lock()
-		if a.orphanAsked == lid {
-			a.orphanAsked = ""
-		}
-		p.unlock()
+		func() {
+			p.mu.Lock()
+			defer supervise.Unlocked("pool", p.unlock)
+			if a.orphanAsked == lid {
+				a.orphanAsked = ""
+			}
+		}()
 	})
 }
 
@@ -719,39 +725,45 @@ func (p *Pool) readLaunchState(ctx context.Context, base string) error {
 // startCallBack starts the call-back loop of an agent that is not known to
 // be reachable, unless one runs already.
 func (p *Pool) startCallBack(a *agent) {
-	p.mu.Lock()
-	if a.reachable || a.checking || p.agents[a.reg.ID] != a {
-		p.unlock()
+	if !p.markChecking(a) {
 		return
 	}
-	a.checking = true
-	p.unlock()
 	go supervise.Once("pool.call_back", func() {
 		for !p.callBackOnce(a) {
 			time.Sleep(p.o.CallBackEvery)
 		}
 	}, func(any) { // the next heartbeat starts the check again
-		p.mu.Lock()
-		a.checking = false
-		p.unlock()
+		func() {
+			p.mu.Lock()
+			defer supervise.Unlocked("pool", p.unlock)
+			a.checking = false
+		}()
 	})
+}
+
+// markChecking marks a's call-back check running; false when it needs none
+// or one runs already.
+func (p *Pool) markChecking(a *agent) bool {
+	p.mu.Lock()
+	defer supervise.Unlocked("pool", p.unlock)
+	if a.reachable || a.checking || p.agents[a.reg.ID] != a {
+		return false
+	}
+	a.checking = true
+	return true
 }
 
 // callBackOnce runs one call-back check. It returns true when the loop is
 // over: the agent answered, or it is no longer the node's registration.
 func (p *Pool) callBackOnce(a *agent) bool {
-	p.mu.Lock()
-	if p.agents[a.reg.ID] != a || a.left || a.reachable {
-		a.checking = false
-		p.unlock()
+	if p.callBackOver(a) {
 		return true
 	}
-	p.unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), CallBackTimeout)
 	err := p.callBack(ctx, p.agentBase(a))
 	cancel()
 	p.mu.Lock()
-	defer p.unlock()
+	defer supervise.Unlocked("pool", p.unlock)
 	if p.agents[a.reg.ID] != a || a.left {
 		a.checking = false
 		return true
@@ -772,6 +784,17 @@ func (p *Pool) callBackOnce(a *agent) bool {
 	return true
 }
 
+// callBackOver ends a's call-back check when it is no longer needed.
+func (p *Pool) callBackOver(a *agent) bool {
+	p.mu.Lock()
+	defer supervise.Unlocked("pool", p.unlock)
+	if p.agents[a.reg.ID] != a || a.left || a.reachable {
+		a.checking = false
+		return true
+	}
+	return false
+}
+
 // unreachableLocked puts the node into the agent_unreachable state: it takes
 // no new load until a call-back check answers. One warning per failure.
 func (p *Pool) unreachableLocked(a *agent, err error) {
@@ -790,17 +813,25 @@ func (p *Pool) unreachableLocked(a *agent, err error) {
 // failed without an answer: the node goes back to agent_unreachable and the
 // call-back check runs again.
 func (p *Pool) agentUnreachable(node core.NodeID, err error) {
+	if a := p.markUnreachable(node, err); a != nil {
+		p.startCallBack(a)
+	}
+}
+
+// markUnreachable is agentUnreachable's state change; it returns the agent
+// whose call-back check must run, or nil.
+func (p *Pool) markUnreachable(node core.NodeID, err error) *agent {
 	p.mu.Lock()
+	defer supervise.Unlocked("pool", p.unlock)
+	supervise.Point("pool.unreachable", string(node)) // test hook, under p.mu
 	a := p.agents[string(node)]
 	if a == nil || a.left {
-		p.unlock()
-		return
+		return nil
 	}
 	if a.reachable {
 		p.unreachableLocked(a, err)
 	}
-	p.unlock()
-	p.startCallBack(a)
+	return a
 }
 
 // parseStats keeps a stats object of the supported stats_version (stats
@@ -842,14 +873,19 @@ func statsCachedMiB(raw json.RawMessage) (int, bool) {
 // stopped as in a force unload and the node is marked left. It returns false
 // for an unknown id.
 func (p *Pool) Deregister(ctx context.Context, id string) bool {
-	p.mu.Lock()
-	a := p.agents[id]
-	if a == nil || a.left {
-		p.unlock()
+	var a *agent
+	var fu func(context.Context, core.NodeID) (string, error)
+	present := false
+	func() {
+		p.mu.Lock()
+		defer supervise.Unlocked("pool", p.unlock)
+		if a = p.agents[id]; a != nil && !a.left {
+			present, fu = true, p.forceUnload
+		}
+	}()
+	if !present {
 		return false
 	}
-	fu := p.forceUnload
-	p.unlock()
 	if fu != nil {
 		if prof, err := fu(ctx, core.NodeID(id)); err != nil {
 			p.log.Warn("force unload on deregister failed", "id", id, "err", err)
@@ -858,7 +894,7 @@ func (p *Pool) Deregister(ctx context.Context, id string) bool {
 		}
 	}
 	p.mu.Lock()
-	defer p.unlock()
+	defer supervise.Unlocked("pool", p.unlock)
 	a.left = true
 	p.setAdminLocked(id, cfgstore.NodeAdmin{}) // pause state is forgotten (10)
 	p.log.Info("agent deregistered; node left the pool", "id", id, "name", a.reg.Name)
@@ -881,7 +917,7 @@ func (p *Pool) knownLocked(id string) bool {
 // SetPaused pauses or unpauses a node (7.2). It returns the previous value.
 func (p *Pool) SetPaused(id string, paused bool) (bool, error) {
 	p.mu.Lock()
-	defer p.unlock()
+	defer supervise.Unlocked("pool", p.unlock)
 	if !p.knownLocked(id) {
 		return false, ErrUnknownNode
 	}
@@ -916,20 +952,25 @@ func (p *Pool) unpausePendingLocked(id string, a *agent) bool {
 // Remove is DELETE /api/nodes/{id} (10): the instance on the node is stopped
 // and the node is refused until re-admitted.
 func (p *Pool) Remove(ctx context.Context, id string) error {
-	p.mu.Lock()
-	if !p.knownLocked(id) {
-		p.unlock()
+	var known bool
+	var fu func(context.Context, core.NodeID) (string, error)
+	func() {
+		p.mu.Lock()
+		defer supervise.Unlocked("pool", p.unlock)
+		if known = p.knownLocked(id); known {
+			fu = p.forceUnload
+		}
+	}()
+	if !known {
 		return ErrUnknownNode
 	}
-	fu := p.forceUnload
-	p.unlock()
 	if fu != nil {
 		if _, err := fu(ctx, core.NodeID(id)); err != nil {
 			p.log.Warn("force unload on removal failed", "id", id, "err", err)
 		}
 	}
 	p.mu.Lock()
-	defer p.unlock()
+	defer supervise.Unlocked("pool", p.unlock)
 	if err := p.setAdminLocked(id, cfgstore.NodeAdmin{Removed: true}); err != nil {
 		return err
 	}
@@ -942,7 +983,7 @@ func (p *Pool) Remove(ctx context.Context, id string) error {
 // Readmit is POST /api/nodes/{id}/readmit: a removed node may register again.
 func (p *Pool) Readmit(id string) error {
 	p.mu.Lock()
-	defer p.unlock()
+	defer supervise.Unlocked("pool", p.unlock)
 	if !p.admin[id].Removed {
 		return ErrUnknownNode
 	}
@@ -971,7 +1012,7 @@ func (p *Pool) setAdminLocked(id string, a cfgstore.NodeAdmin) error {
 func (p *Pool) CheckLost() {
 	now := p.o.Clock()
 	p.mu.Lock()
-	defer p.unlock()
+	defer supervise.Unlocked("pool", p.unlock)
 	p.checkStartupsLocked(now) // first: an expired expect-restart no longer excuses a silence
 	changed := false
 	for _, id := range p.sortedIDsLocked() {
@@ -1046,7 +1087,7 @@ func (p *Pool) historyLocked(e history.Event) {
 // Record writes an operator action to history (pause, force unload, removal).
 func (p *Pool) Record(id, summary string, data map[string]any) {
 	p.mu.Lock()
-	defer p.unlock()
+	defer supervise.Unlocked("pool", p.unlock)
 	name := id
 	if a := p.agents[id]; a != nil {
 		name = a.reg.Name
@@ -1124,15 +1165,17 @@ func compareRelease(a, b string) int {
 // Refresh rebuilds the node view after a configuration change (tiers).
 func (p *Pool) Refresh() {
 	p.mu.Lock()
-	defer p.unlock()
+	defer supervise.Unlocked("pool", p.unlock)
 	p.rebuildLocked()
 }
 
 // SetHistory sets the history sink (before Run).
 func (p *Pool) SetHistory(h HistorySink) {
-	p.mu.Lock()
-	p.o.History = h
-	p.unlock()
+	func() {
+		p.mu.Lock()
+		defer supervise.Unlocked("pool", p.unlock)
+		p.o.History = h
+	}()
 }
 
 // WaitStops waits up to d for the worker launch stops under way.

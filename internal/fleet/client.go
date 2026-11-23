@@ -154,9 +154,11 @@ func (c *Client) conf() *config.Config { return c.cfg.Load() }
 // to the next placement decision. fleet.url and fleet.local_node are read at start only.
 func (c *Client) SetConfig(cfg *config.Config) {
 	c.cfg.Store(cfg)
-	c.mu.Lock()
-	c.rebuildLocked()
-	c.mu.Unlock()
+	func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.rebuildLocked()
+	}()
 }
 
 // execProbe runs cmd without a shell (split on whitespace).
@@ -249,13 +251,16 @@ func (c *Client) Resolve(name string) (core.NodeID, error) {
 // FetchNode implements View. For the local node it runs the probe once; if
 // the probe cannot run it asks the console like for any other node.
 func (c *Client) FetchNode(ctx context.Context, id core.NodeID) (core.Node, error) {
-	c.mu.Lock()
-	isLocal := id == c.localIDLocked()
+	var isLocal bool
 	var memberID string
-	if lm := c.localMemberLocked(); lm != nil {
-		memberID = lm.ID
-	}
-	c.mu.Unlock()
+	func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		isLocal = id == c.localIDLocked()
+		if lm := c.localMemberLocked(); lm != nil {
+			memberID = lm.ID
+		}
+	}()
 	if isLocal {
 		pctx, cancel := context.WithTimeout(ctx, c.opts.RequestTimeout)
 		total, used, err := c.runProbe(pctx)
@@ -548,18 +553,25 @@ func (c *Client) warnProblems(m Member) {
 }
 
 func (c *Client) warnOnce(key, msg string, args ...any) {
+	if c.warnDue(key) {
+		c.opts.Logger.Warn(msg, args...)
+	}
+}
+
+// warnDue notes a warning of key; false when it was given within
+// warnInterval.
+func (c *Client) warnDue(key string) bool {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	now := c.opts.Clock()
 	if c.warned == nil {
 		c.warned = map[string]time.Time{}
 	}
 	if at, ok := c.warned[key]; ok && now.Sub(at) < warnInterval {
-		c.mu.Unlock()
-		return
+		return false
 	}
 	c.warned[key] = now
-	c.mu.Unlock()
-	c.opts.Logger.Warn(msg, args...)
+	return true
 }
 
 func (c *Client) applyDoc(data []byte) bool {

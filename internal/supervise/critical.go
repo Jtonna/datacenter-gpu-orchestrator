@@ -2,6 +2,7 @@ package supervise
 
 import (
 	"fmt"
+	"reflect"
 	"runtime/debug"
 	"sync/atomic"
 )
@@ -88,12 +89,13 @@ func (f *Fanout) Once(run func(), onPanic func(p any)) {
 }
 
 // PointName is the name a test hook sees at Point(name, inst): the point and
-// the instance it fires in (a string as is, anything else by address), so
-// that a test aims at its own instance and never at one another test left
-// running.
+// the instance it fires in (a pointer by address, a value such as an id as
+// it prints), so that a test aims at its own instance and never at one
+// another test left running.
 func PointName(name string, inst any) string {
-	if s, ok := inst.(string); ok {
-		return name + "/" + s
+	switch reflect.ValueOf(inst).Kind() {
+	case reflect.Pointer, reflect.Map, reflect.Chan, reflect.Func, reflect.UnsafePointer:
+		return fmt.Sprintf("%s/%p", name, inst)
 	}
-	return fmt.Sprintf("%s/%p", name, inst)
+	return fmt.Sprintf("%s/%v", name, inst)
 }

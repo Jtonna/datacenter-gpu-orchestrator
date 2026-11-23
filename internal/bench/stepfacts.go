@@ -5,6 +5,8 @@ import (
 	"slices"
 	"sort"
 	"time"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // The facts of a step that tell one hardware scenario from another without
@@ -78,14 +80,18 @@ func (br *benchRun) observe(s *StatusInfo) {
 			names[w.ID] = w.Hostname
 		}
 		if w.Local {
-			br.mu.Lock()
-			br.localID = w.ID
-			br.mu.Unlock()
+			func() {
+				br.mu.Lock()
+				defer supervise.Unlocked("bench", br.mu.Unlock)
+				br.localID = w.ID
+			}()
 		}
 	}
-	br.x.a.mu.Lock()
-	br.x.a.hosts = mergeHosts(br.x.a.hosts, names)
-	br.x.a.mu.Unlock()
+	func() {
+		br.x.a.mu.Lock()
+		defer supervise.Unlocked("bench", br.x.a.mu.Unlock)
+		br.x.a.hosts = mergeHosts(br.x.a.hosts, names)
+	}()
 }
 
 // sampleNow reads the status once for the memory watch.
@@ -93,9 +99,11 @@ func (br *benchRun) sampleNow() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if s, err := br.x.m.o.API.Status(ctx); err == nil {
-		br.x.a.mu.Lock()
-		br.x.a.hosts = mergeHosts(br.x.a.hosts, s.Hostnames)
-		br.x.a.mu.Unlock()
+		func() {
+			br.x.a.mu.Lock()
+			defer supervise.Unlocked("bench", br.x.a.mu.Unlock)
+			br.x.a.hosts = mergeHosts(br.x.a.hosts, s.Hostnames)
+		}()
 		br.observe(s)
 	}
 }
@@ -105,18 +113,26 @@ func (br *benchRun) sampleNow() {
 // the plan's nodes and the nodes the instance was placed on.
 func (br *benchRun) stepFacts() {
 	x, st := br.x, br.st
-	x.a.mu.Lock()
-	names := mergeHosts(nil, x.a.hosts)
-	x.a.mu.Unlock()
+	var names map[string]string
+	func() {
+		x.a.mu.Lock()
+		defer supervise.Unlocked("bench", x.a.mu.Unlock)
+		names = mergeHosts(nil, x.a.hosts)
+	}()
 	name := func(id string) string {
 		if n := names[id]; n != "" {
 			return n
 		}
 		return id
 	}
-	br.mu.Lock()
-	plan, nodes, localID := br.plan, br.nodes, br.localID
-	br.mu.Unlock()
+	var plan *PlanInfo
+	var nodes []InstanceNodeInfo
+	var localID string
+	func() {
+		br.mu.Lock()
+		defer supervise.Unlocked("bench", br.mu.Unlock)
+		plan, nodes, localID = br.plan, br.nodes, br.localID
+	}()
 
 	var ids []string
 	add := func(id string) {

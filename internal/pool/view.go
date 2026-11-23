@@ -18,6 +18,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/fleet"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/startups"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // The node view (fleet.View) built from the agents. Remote nodes are the
@@ -44,7 +45,7 @@ var _ scheduler.NodeGate = (*Pool)(nil)
 // Unplaced is scheduler.NodeGate: why a listed node takes no new load.
 func (p *Pool) Unplaced() map[core.NodeID]string {
 	p.mu.Lock()
-	defer p.unlock()
+	defer supervise.Unlocked("pool", p.unlock)
 	out := make(map[core.NodeID]string, len(p.unplaced))
 	for id, why := range p.unplaced {
 		out[id] = why
@@ -58,7 +59,7 @@ var _ scheduler.NodeGateDetail = (*Pool)(nil)
 // has one (agent_unreachable).
 func (p *Pool) UnplacedDetail() map[core.NodeID]string {
 	p.mu.Lock()
-	defer p.unlock()
+	defer supervise.Unlocked("pool", p.unlock)
 	out := make(map[core.NodeID]string, len(p.unplacedMsg))
 	for id, msg := range p.unplacedMsg {
 		out[id] = msg
@@ -69,7 +70,7 @@ func (p *Pool) UnplacedDetail() map[core.NodeID]string {
 // Nodes is the node list, sorted by id.
 func (p *Pool) Nodes() []core.Node {
 	p.mu.Lock()
-	defer p.unlock()
+	defer supervise.Unlocked("pool", p.unlock)
 	return append([]core.Node(nil), p.nodes...)
 }
 
@@ -89,7 +90,7 @@ func (p *Pool) Changed() <-chan struct{} { return p.notify }
 // every heartbeat; there is nothing fresher to ask).
 func (p *Pool) FetchNode(_ context.Context, id core.NodeID) (core.Node, error) {
 	p.mu.Lock()
-	defer p.unlock()
+	defer supervise.Unlocked("pool", p.unlock)
 	for _, n := range p.nodes {
 		if n.ID == id {
 			return n, nil
@@ -102,7 +103,7 @@ func (p *Pool) FetchNode(_ context.Context, id core.NodeID) (core.Node, error) {
 // is ambiguous.
 func (p *Pool) Resolve(name string) (core.NodeID, error) {
 	p.mu.Lock()
-	defer p.unlock()
+	defer supervise.Unlocked("pool", p.unlock)
 	if p.isLocalNameLocked(name) {
 		return p.localIDLocked(), nil
 	}
@@ -395,7 +396,7 @@ func (p *Pool) probeOnce(ctx context.Context) {
 		total, used, err = fleet.ParseSMI(out)
 	}
 	p.mu.Lock()
-	defer p.unlock()
+	defer supervise.Unlocked("pool", p.unlock)
 	if err != nil {
 		if !p.probeWarn {
 			p.probeWarn = true
@@ -418,7 +419,7 @@ func (p *Pool) probeOnce(ctx context.Context) {
 // probeFailed treats a probe that panicked as a failed probe.
 func (p *Pool) probeFailed() {
 	p.mu.Lock()
-	defer p.unlock()
+	defer supervise.Unlocked("pool", p.unlock)
 	p.probeWarn = true
 	if p.probeOK {
 		p.probeOK = false
@@ -555,7 +556,7 @@ func (p *Pool) Facts() []NodeFacts {
 	now := p.o.Clock()
 	cfg := p.o.Config()
 	p.mu.Lock()
-	defer p.unlock()
+	defer supervise.Unlocked("pool", p.unlock)
 	var out []NodeFacts
 	for _, id := range p.sortedIDsLocked() {
 		a := p.agents[id]
@@ -683,7 +684,7 @@ func sameNodes(a, b []core.Node, useAvg bool) bool {
 // ours just left it). The next such reading notifies, as a change does.
 func (p *Pool) WantFigures(after map[core.NodeID]time.Time) {
 	p.mu.Lock()
-	defer p.unlock()
+	defer supervise.Unlocked("pool", p.unlock)
 	p.wantFig = after
 	if p.figNotified == nil {
 		p.figNotified = map[core.NodeID]notifiedFig{}

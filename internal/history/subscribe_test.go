@@ -125,3 +125,29 @@ func TestWriterRestartsInAFreshFile(t *testing.T) {
 		t.Fatalf("written:\n%s", got)
 	}
 }
+
+// Review IB1: a panic inside the store's lock while recording (here from a
+// one-shot task) releases the lock and takes the fatal path; the store
+// still answers.
+func TestRecordPanicInsideTheLockIsFatal(t *testing.T) {
+	supervise.ResetForTest()
+	defer supervise.ResetForTest()
+	fatals := 0
+	defer supervise.Configure(supervise.Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Fatal: func(string) { fatals++ }})()
+	s := Open(Options{Dir: t.TempDir(), Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	defer s.Close()
+	h, fired := supervise.PanicAtForTest(supervise.PointName("history.record", s), 1)
+	restore := supervise.SetHookForTest(h)
+	supervise.Once("test.record", func() { s.Record(Event{Type: "x"}) }, nil)
+	restore()
+	if fired() != 1 || fatals != 1 {
+		t.Fatalf("fired %d, fatal %d", fired(), fatals)
+	}
+	if !s.mu.TryLock() {
+		t.Fatal("s.mu is still held")
+	}
+	s.mu.Unlock()
+	s.Record(Event{Type: "after"})
+	s.Flush()
+}

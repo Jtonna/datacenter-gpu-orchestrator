@@ -40,7 +40,7 @@ func (w *memWatch) observe(s *StatusInfo) {
 	}
 	loading := w.loading.Load()
 	w.mu.Lock()
-	defer w.mu.Unlock()
+	defer supervise.Unlocked("bench", w.mu.Unlock)
 	for _, n := range s.Workers {
 		if n.AvailMiB == nil {
 			continue
@@ -122,7 +122,7 @@ func (w *memWatch) result(ids []string, names map[string]string) []NodeMemLow {
 		return nil
 	}
 	w.mu.Lock()
-	defer w.mu.Unlock()
+	defer supervise.Unlocked("bench", w.mu.Unlock)
 	var out []NodeMemLow
 	seen := map[string]bool{}
 	for _, id := range ids {

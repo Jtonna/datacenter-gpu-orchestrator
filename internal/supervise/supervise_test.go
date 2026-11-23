@@ -3,6 +3,7 @@ package supervise
 import (
 	"bytes"
 	"context"
+	"io"
 	"log/slog"
 	"strings"
 	"sync"
@@ -315,7 +316,7 @@ func TestReportRepanic(t *testing.T) {
 // drops only when it ends for good.
 func TestStatsThroughARestart(t *testing.T) {
 	setup(t)
-	restore := Configure(Options{Backoff: func(int) time.Duration { return 200 * time.Millisecond }, Fatal: func(string) {}})
+	restore := Configure(Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Backoff: func(int) time.Duration { return 200 * time.Millisecond }, Fatal: func(string) {}})
 	defer restore()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

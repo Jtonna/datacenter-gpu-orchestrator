@@ -30,7 +30,7 @@ import (
 // with the reason.
 
 // lockEnforce: see enforce in lint_test.go.
-const lockEnforce = false // true once every site is converted
+const lockEnforce = true
 
 // criticalPkgs own shared state that a restarted task cannot rebuild.
 var criticalPkgs = map[string]bool{

@@ -6,6 +6,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // Reconfigurer is implemented by a NeedProvider that caches per-profile
@@ -16,10 +17,12 @@ type Reconfigurer interface {
 
 // Reconfigure replaces the configuration and forgets the cached needs.
 func (c *ConfigNeeds) Reconfigure(cfg *config.Config) {
-	c.mu.Lock()
-	c.Cfg = cfg
-	c.cache = nil
-	c.mu.Unlock()
+	func() {
+		c.mu.Lock()
+		defer supervise.Unlocked("scheduler", c.mu.Unlock)
+		c.Cfg = cfg
+		c.cache = nil
+	}()
 }
 
 // staleProfile reports that an instance runs with a profile definition that has since changed or been deleted.

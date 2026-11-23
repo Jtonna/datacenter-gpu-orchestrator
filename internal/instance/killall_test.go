@@ -3,7 +3,9 @@ package instance
 import (
 	"io"
 	"log/slog"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
@@ -48,4 +50,37 @@ func TestReapFailureStillPublishesTheExit(t *testing.T) {
 	if l.Ports.InUse() != 0 || l.KillAll() != 0 {
 		t.Fatal("the port or the live entry was kept")
 	}
+}
+
+// Review IB1: a panic inside the child's lock while reaping releases the
+// lock and takes the fatal path (the exit is still published on the way:
+// the deferred finisher runs).
+func TestReapPanicInsideTheLockIsFatal(t *testing.T) {
+	supervise.ResetForTest()
+	defer supervise.ResetForTest()
+	var mu sync.Mutex
+	fatals := 0
+	defer supervise.Configure(supervise.Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Fatal: func(string) { mu.Lock(); fatals++; mu.Unlock() }})()
+	l := newLauncher(t)
+	c := start(t, l, fakeSpec(t))
+	waitHealthy(t, c)
+	h, fired := supervise.PanicAtForTest(supervise.PointName("instance.reaped", c), 1)
+	defer supervise.SetHookForTest(h)()
+	c.Stop(StopKill)
+	recvExit(t, c)
+	n := 0
+	for deadline := time.Now().Add(5 * time.Second); n == 0 && time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		mu.Lock()
+		n = fatals
+		mu.Unlock()
+	}
+	if fired() != 1 || n != 1 {
+		t.Fatalf("fired %d, fatal %d", fired(), n)
+	}
+	p := c.(*proc)
+	if !p.mu.TryLock() {
+		t.Fatal("the child's lock is still held")
+	}
+	p.mu.Unlock()
 }

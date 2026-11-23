@@ -58,12 +58,15 @@ type ProcessLauncher struct {
 // may be dead, and the children run in their own process groups, so they
 // would outlive the process otherwise. It does not wait.
 func (l *ProcessLauncher) KillAll() int {
-	l.liveMu.Lock()
-	ps := make([]*proc, 0, len(l.live))
-	for p := range l.live {
-		ps = append(ps, p)
-	}
-	l.liveMu.Unlock()
+	var ps []*proc
+	func() {
+		l.liveMu.Lock()
+		defer supervise.Unlocked("instance", l.liveMu.Unlock)
+		ps = make([]*proc, 0, len(l.live))
+		for p := range l.live {
+			ps = append(ps, p)
+		}
+	}()
 	for _, p := range ps {
 		p.Stop(StopKill)
 	}
@@ -72,7 +75,7 @@ func (l *ProcessLauncher) KillAll() int {
 
 func (l *ProcessLauncher) track(p *proc, on bool) {
 	l.liveMu.Lock()
-	defer l.liveMu.Unlock()
+	defer supervise.Unlocked("instance", l.liveMu.Unlock)
 	if !on {
 		delete(l.live, p)
 		return
@@ -231,9 +234,11 @@ func (p *proc) wait() {
 		if published {
 			return
 		}
-		p.mu.Lock()
-		p.reaped = true
-		p.mu.Unlock()
+		func() {
+			p.mu.Lock()
+			defer supervise.Unlocked("instance", p.mu.Unlock)
+			p.reaped = true
+		}()
 		p.status.Err = errors.New("internal error while reaping the child")
 		if p.untrack != nil {
 			p.untrack()
@@ -248,10 +253,14 @@ func (p *proc) wait() {
 		close(p.exitCh)
 	}()
 	err := p.cmd.Wait()
-	p.mu.Lock()
-	p.reaped = true
-	requested := p.stopReq
-	p.mu.Unlock()
+	var requested bool
+	func() {
+		p.mu.Lock()
+		defer supervise.Unlocked("instance", p.mu.Unlock)
+		p.reaped = true
+		supervise.Point("instance.reaped", p) // test hook, under p.mu
+		requested = p.stopReq
+	}()
 	supervise.Point("instance.reap", p)
 	p.stdout.Close()
 	p.stderr.Close()
@@ -287,7 +296,7 @@ func (p *proc) wait() {
 // Stop implements Child.
 func (p *proc) Stop(mode StopMode) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	defer supervise.Unlocked("instance", p.mu.Unlock)
 	if p.reaped {
 		return
 	}

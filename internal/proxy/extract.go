@@ -246,10 +246,12 @@ func (b *replayBody) startPrefetch(onErr func(error), interrupt func()) {
 	// A failure fails this request's upload (500) and wakes its reader.
 	go supervise.Once("proxy.prefetch", func() { b.pump(onErr) }, func(p any) {
 		err := &Error{Status: http.StatusInternalServerError, Message: fmt.Sprint("buffering upload: internal error: ", p)}
-		b.mu.Lock()
-		b.err, b.pumping = err, false
-		b.cond.Broadcast()
-		b.mu.Unlock()
+		func() {
+			b.mu.Lock()
+			defer b.mu.Unlock()
+			b.err, b.pumping = err, false
+			b.cond.Broadcast()
+		}()
 		onErr(err)
 	})
 }
@@ -299,45 +301,52 @@ func (b *replayBody) took(buf []byte, n int, err error) (report, stop bool, _ er
 }
 
 func (b *replayBody) Read(p []byte) (int, error) {
+	if n, done, err := b.readBuffered(p); done {
+		return n, err
+	}
+	return b.rest.Read(p)
+}
+
+// readBuffered reads from what the prefetch buffered; done is false when
+// that is used up and the rest of the body is to be read directly.
+func (b *replayBody) readBuffered(p []byte) (n int, done bool, err error) {
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.handed = true
 	for {
 		if b.off < b.sp.n {
 			n, err := b.sp.readAt(p[:min(int64(len(p)), b.sp.n-b.off)], b.off)
 			b.off += int64(n)
-			b.mu.Unlock()
 			if n > 0 {
-				return n, nil
+				return n, true, nil
 			}
-			return 0, err
+			return 0, true, err
 		}
 		if b.pumping {
 			b.cond.Wait() // the in-flight read of the prefetch finishes first
 			continue
 		}
 		if b.err != nil {
-			err := b.err
-			b.mu.Unlock()
-			return 0, err
+			return 0, true, b.err
 		}
-		break
+		return 0, false, nil
 	}
-	b.mu.Unlock()
-	return b.rest.Read(p)
 }
 
 func (b *replayBody) Close() error {
-	b.mu.Lock()
-	b.handed = true
-	if b.pumping && b.interrupt != nil {
-		b.interrupt()
-		for b.pumping { // without an interrupt a stuck read cannot be waited for
-			b.cond.Wait()
+	func() {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		b.handed = true
+		if b.pumping && b.interrupt != nil {
+			b.interrupt()
+			for b.pumping { // without an interrupt a stuck read cannot be waited for
+				b.cond.Wait()
+			}
 		}
-	}
-	b.closed = true
-	b.sp.discard()
-	b.mu.Unlock()
+		b.closed = true
+		b.sp.discard()
+	}()
 	if b.closer != nil {
 		return b.closer.Close()
 	}

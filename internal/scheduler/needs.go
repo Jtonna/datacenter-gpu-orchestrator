@@ -324,23 +324,25 @@ func newNeedWriter(st NeedStore, log *slog.Logger) *needWriter {
 
 // queue adds ops and wakes the writer. It never blocks on the database.
 func (w *needWriter) queue(ops []needOp) {
-	w.mu.Lock()
-	for _, op := range ops {
-		if op.rec == nil { // a delete of the shape makes its queued writes moot
-			for k, q := range w.pending {
-				if q.shape == op.shape && q.rec != nil {
-					delete(w.pending, k)
-					w.order = slices.DeleteFunc(w.order, func(o string) bool { return o == k })
+	func() {
+		w.mu.Lock()
+		defer supervise.Unlocked("scheduler", w.mu.Unlock)
+		for _, op := range ops {
+			if op.rec == nil { // a delete of the shape makes its queued writes moot
+				for k, q := range w.pending {
+					if q.shape == op.shape && q.rec != nil {
+						delete(w.pending, k)
+						w.order = slices.DeleteFunc(w.order, func(o string) bool { return o == k })
+					}
 				}
 			}
+			k := op.key()
+			if _, ok := w.pending[k]; !ok {
+				w.order = append(w.order, k)
+			}
+			w.pending[k] = op
 		}
-		k := op.key()
-		if _, ok := w.pending[k]; !ok {
-			w.order = append(w.order, k)
-		}
-		w.pending[k] = op
-	}
-	w.mu.Unlock()
+	}()
 	select {
 	case w.wake <- struct{}{}:
 	default:
@@ -348,13 +350,17 @@ func (w *needWriter) queue(ops []needOp) {
 }
 
 func (w *needWriter) flush() {
-	w.mu.Lock()
-	ops := make([]needOp, 0, len(w.order))
-	for _, name := range w.order {
-		ops = append(ops, w.pending[name])
-	}
-	w.pending, w.order = map[string]needOp{}, nil
-	w.mu.Unlock()
+	var ops []needOp
+	func() {
+		w.mu.Lock()
+		defer supervise.Unlocked("scheduler", w.mu.Unlock)
+		ops = make([]needOp, 0, len(w.order))
+		for _, name := range w.order {
+			ops = append(ops, w.pending[name])
+		}
+		supervise.Point("scheduler.needs_flush", w) // test hook, under w.mu
+		w.pending, w.order = map[string]needOp{}, nil
+	}()
 	applyNeedOps(w.st, ops, w.log)
 }
 

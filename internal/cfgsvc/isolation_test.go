@@ -37,3 +37,29 @@ func TestApplyFailureTakesTheFatalPath(t *testing.T) {
 		t.Fatalf("the next change: %v, applied %d", err, applied)
 	}
 }
+
+// Review IB1: a panic inside the service's lock while committing (a request
+// handler's goroutine, or any caller that recovers) releases the lock and
+// takes the fatal path; the service still answers.
+func TestCommitPanicInsideTheLockIsFatal(t *testing.T) {
+	supervise.ResetForTest()
+	defer supervise.ResetForTest()
+	fatals := 0
+	defer supervise.Configure(supervise.Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Fatal: func(string) { fatals++ }})()
+	e := newEnv(t)
+	h, fired := supervise.PanicAtForTest(supervise.PointName("config.commit", e.svc), 1)
+	restore := supervise.SetHookForTest(h)
+	supervise.Guard("test.request", func() {
+		e.svc.CreateProfile(context.Background(), ui("x"), "a", llama("a.gguf", 1024))
+	}, nil)
+	restore()
+	if fired() != 1 || fatals != 1 {
+		t.Fatalf("fired %d, fatal %d", fired(), fatals)
+	}
+	if !e.svc.mu.TryLock() {
+		t.Fatal("the service's lock is still held")
+	}
+	e.svc.mu.Unlock()
+	_ = e.svc.Revision()
+}

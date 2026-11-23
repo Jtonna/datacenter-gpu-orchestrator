@@ -38,19 +38,21 @@ func (p *Pool) unlock() {
 	p.mu.Unlock()
 
 	q := &p.after
-	q.mu.Lock()
-	if q.cond == nil {
-		q.cond = sync.NewCond(&q.mu)
-	}
-	for q.done != ticket {
-		q.cond.Wait()
-	}
-	q.mu.Unlock()
+	func() {
+		q.mu.Lock()
+		defer supervise.Unlocked("pool", q.mu.Unlock)
+		if q.cond == nil {
+			q.cond = sync.NewCond(&q.mu)
+		}
+		for q.done != ticket {
+			q.cond.Wait()
+		}
+	}()
 	defer func() {
 		q.mu.Lock()
+		defer supervise.Unlocked("pool", q.mu.Unlock)
 		q.done++
 		q.cond.Broadcast()
-		q.mu.Unlock()
 	}()
 	for _, f := range work {
 		// The work is store writes and history events, run by whoever

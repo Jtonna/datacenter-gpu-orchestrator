@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
@@ -63,5 +64,38 @@ func TestManagerPanicFailsTheRunAndGoesOn(t *testing.T) {
 	}
 	if r2 := tm.finished(second.ID); r2.State != RunCompleted {
 		t.Fatalf("the next run: %s %q", r2.State, r2.Error)
+	}
+}
+
+// Review IB1: a panic inside the run's lock (task bench.manager, policy
+// restart) releases the lock and takes the fatal path instead of a restart.
+func TestManagerPanicInsideTheRunLockIsFatal(t *testing.T) {
+	supervise.ResetForTest()
+	defer supervise.ResetForTest()
+	fatals := make(chan string, 4)
+	defer supervise.Configure(supervise.Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Fatal: func(r string) { fatals <- r }})()
+	api := newFake().prof("gemma", fakeProf{})
+	tm := newTestMgr(t, api)
+	tm.bench(`{"id":"b","profile":"gemma","phases":[{"type":"load"}]}`)
+	tm.suite(`{"id":"s","benchmarks":["b"],"cooldown_s":0,"only_when_idle":false}`)
+	defer supervise.SetHookForTest(func(point string) {
+		if strings.HasPrefix(point, "bench.cur/") {
+			panic("injected")
+		}
+	})()
+	tm.run("s")
+	select {
+	case r := <-fatals:
+		if !strings.Contains(r, "inside a bench lock") {
+			t.Fatalf("reason %q", r)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("no fatal path")
+	}
+	for deadline := time.Now().Add(5 * time.Second); api.has("gemma"); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the run's model was not unloaded on the way out")
+		}
 	}
 }

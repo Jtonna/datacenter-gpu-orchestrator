@@ -159,9 +159,11 @@ func (h *hub) broadcastLocked(b []byte) {
 }
 
 func (h *hub) activityDone() {
-	h.mu.Lock()
-	h.broadcastLocked(frame("activity", struct{}{}))
-	h.mu.Unlock()
+	func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		h.broadcastLocked(frame("activity", struct{}{}))
+	}()
 }
 
 // add registers a client whose channel already holds the initial
@@ -200,15 +202,17 @@ func (h *hub) close() {
 	if h.stop != nil {
 		defer h.stop()
 	}
-	h.mu.Lock()
-	if !h.closed {
-		h.closed = true
-		for c := range h.clients {
-			delete(h.clients, c)
-			close(c.ch)
+	func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if !h.closed {
+			h.closed = true
+			for c := range h.clients {
+				delete(h.clients, c)
+				close(c.ch)
+			}
 		}
-	}
-	h.mu.Unlock()
+	}()
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {

@@ -300,11 +300,12 @@ func (s *Store) Record(ev Event) {
 		ev.Data = map[string]any{}
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer supervise.Unlocked("history", s.mu.Unlock)
 	if s.closed {
 		return
 	}
 	s.seq++
+	supervise.Point("history.record", s) // test hook, under s.mu: the sequence is taken, the event not kept
 	ev.Seq = s.seq
 	s.ring = append(s.ring, ev)
 	for _, fn := range s.subs {
@@ -337,24 +338,32 @@ func (s *Store) Flush() {
 		return
 	}
 	done := make(chan struct{})
+	if s.queueFlush(done) {
+		<-done
+	}
+}
+
+// queueFlush queues a flush marker; false once the store is closed.
+func (s *Store) queueFlush(done chan struct{}) bool {
 	s.mu.Lock()
+	defer supervise.Unlocked("history", s.mu.Unlock)
 	if s.closed {
-		s.mu.Unlock()
-		return
+		return false
 	}
 	s.ch <- item{flush: done} // may wait for room; only Flush callers wait
-	s.mu.Unlock()
-	<-done
+	return true
 }
 
 // Close stops accepting events, writes what is queued and closes the file.
 func (s *Store) Close() {
-	s.mu.Lock()
-	if !s.closed {
-		s.closed = true
-		close(s.ch)
-	}
-	s.mu.Unlock()
+	func() {
+		s.mu.Lock()
+		defer supervise.Unlocked("history", s.mu.Unlock)
+		if !s.closed {
+			s.closed = true
+			close(s.ch)
+		}
+	}()
 	<-s.done
 }
 
@@ -421,7 +430,7 @@ func (s *Store) fail(err error) {
 // snapshot copies the ring.
 func (s *Store) snapshot() ([]Event, bool) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer supervise.Unlocked("history", s.mu.Unlock)
 	return slices.Clone(s.ring), s.coversAll
 }
 
@@ -822,7 +831,7 @@ func median(sorted []float64) float64 {
 // removes the subscription. An off store never calls fn.
 func (s *Store) Subscribe(fn func(Event)) (cancel func()) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer supervise.Unlocked("history", s.mu.Unlock)
 	s.subSeq++
 	id := s.subSeq
 	if s.subs == nil {
@@ -831,7 +840,7 @@ func (s *Store) Subscribe(fn func(Event)) (cancel func()) {
 	s.subs[id] = fn
 	return func() {
 		s.mu.Lock()
+		defer supervise.Unlocked("history", s.mu.Unlock)
 		delete(s.subs, id)
-		s.mu.Unlock()
 	}
 }

@@ -61,3 +61,32 @@ func TestStartWorkerPanicFailsTheLoad(t *testing.T) {
 		t.Fatalf("the scheduler no longer answers: %v", err)
 	}
 }
+
+// Review IB1: a panic inside the needs writer's lock (task scheduler.needs,
+// policy restart) releases the lock and takes the fatal path instead of a
+// restart: the queue may be half-taken.
+func TestNeedsWriterPanicInsideItsLockIsFatal(t *testing.T) {
+	supervise.ResetForTest()
+	defer supervise.ResetForTest()
+	fatals := make(chan string, 4)
+	defer supervise.Configure(supervise.Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Fatal: func(r string) { fatals <- r }})()
+	w := newNeedWriter(nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h, fired := supervise.PanicAtForTest(supervise.PointName("scheduler.needs_flush", w), 1)
+	defer supervise.SetHookForTest(h)()
+	w.start()
+	w.queue([]needOp{{shape: "s"}})
+	select {
+	case r := <-fatals:
+		if !strings.Contains(r, "inside a scheduler lock") {
+			t.Fatalf("reason %q", r)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("no fatal path (fired %d)", fired())
+	}
+	if !w.mu.TryLock() {
+		t.Fatal("w.mu is still held")
+	}
+	w.mu.Unlock()
+	w.close() // the writer ended for good; close does not wait for a restart
+}

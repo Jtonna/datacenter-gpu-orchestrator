@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // maxLineBytes bounds one buffered output line; longer lines are cut.
@@ -114,7 +116,7 @@ func (l *LoadLog) Feed(line string) {
 		return
 	}
 	l.mu.Lock()
-	defer l.mu.Unlock()
+	defer supervise.Unlocked("instance", l.mu.Unlock)
 	i, ok := l.index[m[1]]
 	if !ok {
 		i = len(l.devs)
@@ -134,7 +136,7 @@ func (l *LoadLog) Feed(line string) {
 // Snapshot returns a copy of the current totals.
 func (l *LoadLog) Snapshot() LoadStats {
 	l.mu.Lock()
-	defer l.mu.Unlock()
+	defer supervise.Unlocked("instance", l.mu.Unlock)
 	return LoadStats{Devices: append([]DeviceMem(nil), l.devs...)}
 }
 

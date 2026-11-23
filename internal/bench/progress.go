@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // The progress model (design 9.3): how far a run is, which benchmark and phase
@@ -253,17 +254,21 @@ func (x *suiteExec) startTrack(b *benchspec.Benchmark, item int) *benchTrack {
 	hist := x.m.o.Store.MedianPhaseSeconds(b.ID)
 	t := newTrack(b, item, hist)
 	t.modelFile = x.m.modelFileOf(b.Profile)
-	x.a.mu.Lock()
-	x.a.tracks[b.ID] = t
-	x.a.mu.Unlock()
+	func() {
+		x.a.mu.Lock()
+		defer supervise.Unlocked("bench", x.a.mu.Unlock)
+		x.a.tracks[b.ID] = t
+	}()
 	return t
 }
 
 // with runs f on the track under the run's lock and publishes the change when force is set.
 func (x *suiteExec) track(t *benchTrack, force bool, f func(t *benchTrack)) {
-	x.a.mu.Lock()
-	f(t)
-	x.a.mu.Unlock()
+	func() {
+		x.a.mu.Lock()
+		defer supervise.Unlocked("bench", x.a.mu.Unlock)
+		f(t)
+	}()
 	x.m.emitProgress(x.a, force)
 }
 
@@ -488,27 +493,35 @@ func nonNilStrings(s []string) []string {
 // emitProgress publishes the progress message: at most twice a second unless
 // force is set (a phase or step changed).
 func (m *Manager) emitProgress(ar *activeRun, force bool) {
+	if doc := m.progressDue(ar, force); doc != nil {
+		m.emit(map[string]any{"kind": "progress", "run": doc})
+	}
+}
+
+// progressDue is the progress document to publish now, or nil.
+func (m *Manager) progressDue(ar *activeRun, force bool) map[string]any {
 	ar.mu.Lock()
+	defer supervise.Unlocked("bench", ar.mu.Unlock)
 	now := time.Now()
 	if !force && now.Sub(ar.lastEmit) < progressEvery {
-		ar.mu.Unlock()
-		return
+		return nil
 	}
 	ar.lastEmit = now
-	doc := m.progressDoc(ar)
-	ar.mu.Unlock()
-	m.emit(map[string]any{"kind": "progress", "run": doc})
+	return m.progressDoc(ar)
 }
 
 // Progress is the progress object of the running run, or nil when none runs.
 func (m *Manager) Progress() map[string]any {
-	m.mu.Lock()
-	ar := m.cur
-	m.mu.Unlock()
+	var ar *activeRun
+	func() {
+		m.mu.Lock()
+		defer supervise.Unlocked("bench", m.mu.Unlock)
+		ar = m.cur
+	}()
 	if ar == nil {
 		return nil
 	}
 	ar.mu.Lock()
-	defer ar.mu.Unlock()
+	defer supervise.Unlocked("bench", ar.mu.Unlock)
 	return m.progressDoc(ar)
 }

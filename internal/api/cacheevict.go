@@ -43,9 +43,10 @@ func (s *Server) handleCacheEvict(w http.ResponseWriter, r *http.Request) {
 	}
 	ans := bench.CacheEvictAnswer{Model: p.Name, File: p.Model, Nodes: make([]bench.NodeEvict, len(req.Nodes))}
 	var wg sync.WaitGroup
+	fan := supervise.NewFanout("api.cache_evict") // one request's nodes count once toward escalation
 	for i, id := range req.Nodes {
 		wg.Add(1)
-		go supervise.Once("api.cache_evict", func() {
+		go fan.Once(func() {
 			n := bench.NodeEvict{ID: id}
 			answered := false
 			defer func() { // a failure is this node's error, not the request's
