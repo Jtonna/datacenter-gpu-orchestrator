@@ -25,8 +25,11 @@ import (
 //
 //   - Confirmed: a third row (or more) on the same count lies on the line
 //     within slopeBoundMiB. The figure counts as a measurement.
-//   - Two points only: nothing checks the line; the figure gets the
-//     estimate margin.
+//   - Two points only: the formula's step is the other witness. Where it
+//     predicts one row from the other within the bound (the same pair check
+//     as derive.go's, at the line's tighter bound), the line counts as
+//     confirmed (by the formula); otherwise nothing checks it and the
+//     figure gets the estimate margin.
 //   - A row on the count off the line by more than the bound: no line on
 //     that count (the model is not straight there).
 //   - A sliding-window model is concave in the context (steeper below its
@@ -60,7 +63,10 @@ type DerivedSlope struct {
 	MiBPer1kCtx float64
 	FromCtx     []int // the two measurements the line goes through
 	ConfirmedBy []int // further measurements on the line within the bound
-	Confirmed   bool
+	// ByFormula: two rows only, and the formula's step predicts one from
+	// the other within the bound.
+	ByFormula bool
+	Confirmed bool
 }
 
 // slopeFig is the line's figure at r on one device count.
@@ -139,6 +145,12 @@ func (c *schedCore) slopeFigs(p *core.Profile, base NeedInfo, twoPoint bool) []l
 	if e == nil {
 		return nil
 	}
+	if _, ok := c.derive.est[key]; !ok && base.Need.MiB > 0 { // the profile's own estimate is the one at its window
+		if c.derive.est == nil {
+			c.derive.est = map[needKey]NeedInfo{}
+		}
+		c.derive.est[key] = base
+	}
 	counts := map[int]bool{}
 	for _, l := range e.rows {
 		counts[l.count()] = true
@@ -146,6 +158,12 @@ func (c *schedCore) slopeFigs(p *core.Profile, base NeedInfo, twoPoint bool) []l
 	var out []learnedFig
 	for _, dv := range slices.Sorted(mapKeys(counts)) {
 		f, ok := c.ownSlope(e.rows, key, dv, base.FileBytes, base.swa)
+		if ok && !f.line.Confirmed {
+			a, b := f.from[0], f.from[1]
+			if st, sok := c.ctxDelta(a.key, b.key); sok && abs(st.derive(a)-b.TotalMiB) <= slopeBoundMiB {
+				f.line.Confirmed, f.line.ByFormula = true, true
+			}
+		}
 		if !ok || (!f.line.Confirmed && !twoPoint) {
 			continue
 		}
@@ -183,7 +201,9 @@ func (c *schedCore) slopeWords(info NeedInfo) string {
 	if !info.MeasuredAt.IsZero() {
 		s += fmt.Sprintf(" (latest %s)", dateOf(info.MeasuredAt))
 	}
-	if sl.Confirmed {
+	if sl.ByFormula {
+		s += fmt.Sprintf("; confirmed by the formula's step within %d MiB", slopeBoundMiB)
+	} else if sl.Confirmed {
 		cs := make([]string, len(sl.ConfirmedBy))
 		for i, x := range sl.ConfirmedBy {
 			cs[i] = strconv.Itoa(x)

@@ -123,7 +123,11 @@ func TestDerivedNeed_Invariant(t *testing.T) {
 							if info.Slope.Confirmed {
 								confirmed++
 							}
-							if info.Need.MiB < truth(r)-2 || info.Devices != d {
+							// the rows are whole MiB: a line extended k spans beyond its rows
+							// carries their rounding k times
+							fa, fb := info.Slope.FromCtx[0], info.Slope.FromCtx[1]
+							tol := 2 + (abs(r-fa)+abs(r-fb))/(fb-fa)
+							if info.Need.MiB < truth(r)-tol || info.Devices != d {
 								t.Fatalf("own slope below the truth: kf %v o %d d %d at %v r %d: need %d on %d truth %d (%+v)", kf, o, d, at, r, info.Need.MiB, info.Devices, truth(r), info.Slope)
 							}
 							continue

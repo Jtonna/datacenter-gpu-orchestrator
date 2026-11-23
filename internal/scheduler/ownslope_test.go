@@ -165,3 +165,20 @@ func TestOwnSlope_OrderOfSources(t *testing.T) {
 		t.Fatalf("a two-point line over a measurement on another count: %+v %q", info.Need, info.Source)
 	}
 }
+
+// Two rows whose line the formula's step agrees with: the formula is the
+// other witness, so the line counts as confirmed (no margin), and ranks
+// as a confirmed line.
+func TestOwnSlope_TwoPointsConfirmedByTheFormula(t *testing.T) {
+	h := deriveHarness(t)
+	h.measure("m.gguf", 2048, 1, 5000)
+	h.measure("m.gguf", 8192, 1, derivedFrom(5000, 2048, 8192, 1))
+	p := h.llama("p", 0, func(p *core.Profile) { p.Model, p.Ctx = "m.gguf", 32768 })
+	info, _ := h.c.need(p)
+	if want := derivedFrom(5000, 2048, 32768, 1); info.Source != NeedOwnSlope || info.Need.MiB != want || !info.Slope.ByFormula {
+		t.Fatalf("%+v %q %+v, want %d", info.Need, info.Source, info.Slope, want)
+	}
+	if b := h.c.needBasis(info); !strings.Contains(b, "confirmed by the formula's step within 128 MiB") || strings.Contains(b, "margin") {
+		t.Fatal(b)
+	}
+}
