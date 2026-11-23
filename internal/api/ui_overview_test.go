@@ -230,6 +230,42 @@ func TestUINextRunShares(t *testing.T) {
 	}})
 }
 
+// A request whose client left ends cancelled (reason client_left) with the
+// tokens out counted so far, or null ones for a non-streamed request; one
+// that left while queued is cancelled with client_left_queued. Each row is
+// drawn as cancelled (greyed, the slashed circle, its words on hover), never
+// as failed, and a null figure is the dash.
+func TestUINextCancelledRows(t *testing.T) {
+	now := time.Now()
+	st := ovStatus(now)
+	ms := func(d time.Duration) int64 { return now.Add(d).UnixMilli() }
+	served := []any{map[string]any{"id": ovA, "name": "node-a", "role": "host", "share": 1}}
+	cancelled := func(id int, extra map[string]any) map[string]any {
+		r := map[string]any{"id": id, "kind": "v1", "status": "cancelled", "reason": "client_left", "message": "cancelled by the app that sent it", "profile": "alpha",
+			"queued_at": ms(-3 * time.Minute), "started_at": ms(-3 * time.Minute), "ended_at": ms(-3*time.Minute + 4*time.Second), "duration_ms": 4000,
+			"tokens_in": nil, "tokens_reused": nil, "prefill_tps": nil, "tokens_out": nil, "decode_tps": nil, "nodes": served}
+		for k, v := range extra {
+			r[k] = v
+		}
+		return r
+	}
+	rows := []any{
+		cancelled(71, map[string]any{"stream": true, "tokens_in": 640, "prefill_tps": 415.0, "tokens_out": 21, "decode_tps": 14.0}),
+		cancelled(72, map[string]any{"stream": false}),
+		cancelled(73, map[string]any{"reason": "client_left_queued", "message": "the app that sent it left while it was queued", "started_at": nil, "duration_ms": 0, "wait_ms": 7000, "nodes": []any{}}),
+	}
+	for _, route := range []string{"#/overview", "#/requests"} {
+		uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": ovFetch(now, rows, true), "cases": []any{
+			map[string]any{"name": "cancelled rows " + route, "route": route, "status": st,
+				"expect": []string{"21", "4.0 s", "7.0 s", "Cancelled"},
+				"absent": []string{"null", "NaN", "undefined", "Failed:"},
+				"has": []string{"tr.canc[data-req='71']", "tr.canc[data-req='72']", "tr.canc[data-req='73']",
+					"tr[data-req='72'] td.num.mut", "tr[data-req='71'] span[title^=Cancelled]", "tr[data-req='73'] span[title^=The]"},
+				"none": []string{"tr.fail"}},
+		}})
+	}
+}
+
 // The home page is the Overview: an empty hash opens it, the mark links to
 // it, Monitor's first page is it, and it opens with the section menu closed.
 func TestUINextOverviewIsHome(t *testing.T) {

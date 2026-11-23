@@ -129,6 +129,8 @@ function requests(now) {
     row(197, { status: 'done', queued_at: now - 77300, started_at: now - 77000, ended_at: now - 59900, profile: BIG, tokens_in: 920, prefill_tps: 409, tokens_out: 238, decode_tps: 13.9, nodes: nodes([1, 0.5], [2, 0.5]), duration_ms: 17100, wait_ms: 300 }),
     row(196, { status: 'cancelled', reason: 'client_left', message: 'cancelled by the app that sent it', queued_at: now - 124200, started_at: now - 124000, ended_at: now - 120000, profile: BIG, tokens_in: 640, prefill_tps: 415, tokens_out: 21, decode_tps: 14.0, nodes: big, duration_ms: 4000, wait_ms: 200 }),
     row(195, { status: 'refused', reason: 'queue_timeout', message: 'it waited longer than the queue time limit', queued_at: now - 700000, ended_at: now - 100000, profile: QWEN, wait_ms: 600000 }),
+    // a non-streamed request whose app left: cancelled, no token counted
+    row(194, { status: 'cancelled', reason: 'client_left', message: 'cancelled by the app that sent it', stream: false, queued_at: now - 760000, started_at: now - 759800, ended_at: now - 751800, profile: QWEN, nodes: onSched([4, 1]), duration_ms: 8000, wait_ms: 200 }),
   ];
 }
 
