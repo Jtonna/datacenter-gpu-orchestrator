@@ -2,6 +2,26 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## 0.1.8
+
+### What is new
+
+- **Background tasks are isolated.** A failure (an internal error) in one of the scheduler's background tasks no longer takes the scheduler down. The task restarts alone, rebuilding its state where it needs to (the event stream reconnects browsers to a fresh snapshot, the history writer continues in a fresh file, the benchmark manager fails the run in hand and unloads its models), or the work it was doing fails with an error. Architecture, "What restarts when", lists every task.
+- **Failures are visible.** Each one is logged at error level with its stack, recorded as an `internalFailure` event, and counted. `GET /api/system` lists the tasks (`tasks`: restarts, failures in the last minute, last failure time and message) and `internal_failures_total`. The About page has a "Background tasks" card and warns after a failure in the last hour.
+- **Bounded stop with exit code 3.** Three places still stop Potluck, because their state cannot be rebuilt in place: the scheduler loop, the pool's lost-node check and applying a configuration change. The same task failing three times within 60 s stops it too. The stop logs the reason, records it, kills every model process Potluck started, and exits with code 3 within 5 s; Docker starts it again.
+- **No lock is left held.** A failure inside a section that holds the lock of shared state (the pool, the scheduler, the learned needs, the history, the model processes, the configuration, the benchmarks) releases the lock and stops Potluck the bounded way, whatever the task: the state may be half-written, and a restart rebuilds it from the database. A failure outside such a section follows the task's own policy.
+- **One bad input counts once.** The members of one fan-out (the probes of one pre-flight, the launches or stops of one load, the members of a benchmark group, the nodes of one cache eviction) count as one failure toward the three-in-a-minute stop.
+
+### What changes without any setting
+
+- A configuration change whose apply fails answers 500 ("the change is saved ... Potluck restarts now to apply it"), then Potluck restarts and applies it from the database.
+- An HTTP handler panic is answered by net/http as before, and is now also logged with its stack and counted. Goroutines a request starts (a cache eviction, a prefetch) are isolated too: their failure becomes the request's error.
+- A failure while Potluck is already stopping (a signal) does not cut the shutdown's grace short: the shutdown goes on and exits with code 3.
+
+### What to do at the roll-out
+
+- Nothing beyond the usual update (runbook, F). Check that the container's restart policy is `unless-stopped` (the standing layout has it), so an exit with code 3 starts Potluck again.
+
 ## 0.1.7
 
 ### What is new
@@ -12,18 +32,6 @@ What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent
 - **Naming.** The outcome `refused` stays what it was: an ordinary refusal, judged against the expectation. `refused_by_exclusion` is the outcome described above. `not_judged` is a step or run result (next to `pass`, `fail`, `partial`), never an outcome.
 - **The plan names the entry.** `POST /api/plan` has `excluded_by` (the exclude_nodes entry) when it refuses a profile that forces an excluded machine; `GET /api/profiles` takes `blocked_by_exclusion` from it.
 - **Capability words per machine.** `GET /api/nodes`, the agents of `GET /api/status` and the MCP status view show `capabilities` for every machine (an empty list when there are none); the Nodes page says it in words.
-- **Background tasks are isolated.** A failure (an internal error) in one of the scheduler's background tasks no longer takes the scheduler down. The task restarts alone, rebuilding its state where it needs to (the event stream reconnects browsers to a fresh snapshot, the history writer continues in a fresh file, the benchmark manager fails the run in hand and unloads its models), or the work it was doing fails with an error. Architecture, "What restarts when", lists every task.
-- **Failures are visible.** Each one is logged at error level with its stack, recorded as an `internalFailure` event, and counted. `GET /api/system` lists the tasks (`tasks`: restarts, failures in the last minute, last failure time and message) and `internal_failures_total`. The About page has a "Background tasks" card and warns after a failure in the last hour.
-- **Bounded stop with exit code 3.** Three places still stop Potluck, because their state cannot be rebuilt in place: the scheduler loop, the pool's lost-node check and applying a configuration change. The same task failing three times within 60 s stops it too. The stop logs the reason, records it, kills every model process Potluck started, and exits with code 3 within 5 s; Docker starts it again.
-
-### What changes without any setting
-
-- A configuration change whose apply fails answers 500 ("the change is saved ... Potluck restarts now to apply it"), then Potluck restarts and applies it from the database.
-- An HTTP handler panic is answered by net/http as before, and is now also logged with its stack and counted. Goroutines a request starts (a cache eviction, a prefetch) are isolated too: their failure becomes the request's error.
-
-### What to do at the roll-out
-
-- Nothing beyond the usual update (runbook, F). Check that the container's restart policy is `unless-stopped` (the standing layout has it), so an exit with code 3 starts Potluck again.
 
 ### Fixed
 
