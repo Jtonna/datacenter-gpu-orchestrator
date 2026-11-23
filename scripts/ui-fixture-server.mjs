@@ -7,7 +7,7 @@
 // artboard can be compared like for like. Node only, no dependencies.
 //
 // usage: node scripts/ui-fixture-server.mjs [--port 3122] [--ui internal/api/ui] [--host 0.0.0.0]
-//                                           [--state normal|empty|off|loading]
+//                                           [--state normal|empty|off|loading] [--sequence]
 //
 //   /ui/...      the new shell (ui/next laid over the classic files, as the
 //                scheduler serves it), /ui/classic/... the classic UI
@@ -21,9 +21,13 @@
 // --state empty: no request in the period; off: the request log is off
 // (usage.db not open); loading: the request routes never answer.
 //
-// The fixture's machines carry a "chip" field ("Oberon", "RTX 3070 Ti"), which
-// no agent reports yet (it needs an agent release): it is here so the Zone
-// column can be seen as designed.
+// The fixture's machines name their first device after its chip ("Oberon",
+// "RTX 3070 Ti"); the Zone column shows that name until agents report a
+// chip field.
+//
+// --sequence: a scripted change for screenshots: 4 s after a client
+// subscribes to the requests topic, the queued run 202 starts (a "started"
+// frame), so a queued row can be seen turning into a running one.
 
 import http from 'node:http';
 import { createHash } from 'node:crypto';
@@ -38,6 +42,7 @@ const UI = path.resolve(opt('--ui', path.join(here, '..', 'internal', 'api', 'ui
 const PORT = Number(opt('--port', '3122'));
 const HOST = opt('--host', '0.0.0.0');
 const STATE = opt('--state', 'normal');
+const SEQUENCE = argv.includes('--sequence');
 
 // ---------- the fixture (the Overview mockup's sample data) ----------
 
@@ -75,7 +80,7 @@ function status(now) {
     excluded: !!m.excluded, excluded_by: m.excluded ? mac(m.n) : undefined, unplaced: m.excluded ? 'excluded' : '',
     excluded_at: m.excluded ? iso(t - 26 * H) : undefined, excluded_actor: m.excluded ? 'anonymous' : undefined,
     last_seen_ago_s: m.offline ? 4440 : 1, platform: m.chip === 'Oberon' ? 'linux-amd64-vulkan' : 'linux-amd64-cuda', release: '0.1.9',
-    chip: m.chip, devices: [{ name: 'GPU0', backend: m.chip === 'Oberon' ? 'vulkan' : 'cuda', total_mib: Math.round(m.total * MIB) }],
+    devices: [{ name: m.chip, backend: m.chip === 'Oberon' ? 'vulkan' : 'cuda', total_mib: Math.round(m.total * MIB) }],
     stats: m.temp == null ? {} : { headline_temp_c: m.temp },
     set_aside: m.n === 6 ? { reason: 'preflight_failed', message: 'The pre-load check failed: the model did not fit the free memory.', until: iso(t + 6 * 60000), level: 1 } : undefined,
   }));
@@ -212,7 +217,7 @@ const server = http.createServer((req, res) => {
     stored_config: { unknown_fields: [], writes_need_force: false },
     storage: { database: { dir: '/data', on: true, bytes: 37600000 }, history: { dir: '/data/history', on: true, bytes: 3000000, files: 4 }, usage: { size_bytes: 9400000 }, child_logs: { dir: '/data/logs', bytes: 23700000, files: 12 } } });
   if (p === '/api/agents') return json(res, 200, { agents: ['ops-bot', 'coding agent', 'report writer'].map((name, i) => ({ id: 'agent-' + i, name, key_prefix: 'ptk_' + i, created_at: now - (i + 2) * 24 * H, request_count: 10 * i })) });
-  if (p === '/api/config/settings') return json(res, 200, { settings: { queue_timeout: '30m0s' } });
+  if (p === '/api/config/settings') return json(res, 200, { settings: { queue_timeout: '30m0s', requests_live_timings: false } });
   if (p === '/api/history') return json(res, 200, { events: [
     { ts: now - 12 * 60000, seq: 41, type: 'nodeQuarantined', severity: 'warn', nodes: ['ps5-05'], summary: 'Node ps5-05 was quarantined for 18m0s (level 1): preflight failed.', data: { for_s: 1080, level: 1 } },
     { ts: now - 54 * 60000, seq: 40, type: 'nodeLost', severity: 'error', nodes: ['ps5-07'], summary: 'Node ps5-07 was lost.', data: {} },
@@ -269,7 +274,7 @@ server.on('upgrade', (req, sock) => {
   const send = (type, data) => { try { sock.write(frame(JSON.stringify({ type, ts: Date.now(), data }))); } catch { /* closed */ } };
   send('hello', { server_time: Date.now(), config_revision: 12, topics: ['status', 'event', 'bench', 'config', 'ping', 'models', 'requests'] });
   send('status', status(Date.now()));
-  let reqs = false;
+  let reqs = false, seq = 0;
   const t = setInterval(() => {
     send('status', status(Date.now()));
   }, 5000);
@@ -287,11 +292,19 @@ server.on('upgrade', (req, sock) => {
           const now = Date.now();
           send('requests', { kind: 'snapshot', requests: STATE === 'normal' ? requests(now) : [], next: 0, on: STATE !== 'off', history_begins_at: STATE === 'off' ? null : now - 9 * 24 * H });
         }
+        if (want && !reqs && SEQUENCE && STATE === 'normal') {
+          seq = setTimeout(() => {
+            const now = Date.now();
+            const r = requests(now).find(x => x.id === 202);
+            const node = { id: mac(4), name: 'ps5-04', role: 'host' };
+            send('requests', { kind: 'started', request: Object.assign({}, r, { status: 'running', started_at: now, wait_ms: now - r.queued_at, duration_ms: 0, nodes: [node] }) });
+          }, 4000);
+        }
         reqs = want;
       }
     }
   });
-  const stop = () => { clearInterval(t); clearInterval(tick); };
+  const stop = () => { clearInterval(t); clearInterval(tick); clearTimeout(seq); };
   sock.on('close', stop);
   sock.on('error', stop);
 });

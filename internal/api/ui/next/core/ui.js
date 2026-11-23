@@ -774,7 +774,9 @@ export function runsTable(o) {
     const t = v == null || v < 0 ? DASH : isRate ? rateText(v) : num(v);
     return h('td', { class: 'num mono' + (t === DASH ? ' mut' : ''), title: t === DASH ? dashTitle || null : title || null }, t);
   };
-  const PROMPT_LATER = 'The prompt figures arrive when the request ends, or from its first token on when the server reports them live (setting requests_live_timings, or a client that asks for timings)';
+  // o.liveTimings: the setting requests_live_timings (false: off, true: on, null: not known)
+  const PROMPT_LATER = o.liveTimings === false ? 'Live prompt figures are off: they arrive when the run ends (setting requests_live_timings)'
+    : 'The prompt figures arrive from the first token on, or when the run ends';
   return h('table.runs',
     h('thead', h('tr',
       h('th', { scope: 'col' }, 'Status and length'), h('th', { scope: 'col' }, 'Started at'), h('th', { scope: 'col' }, 'Model'),

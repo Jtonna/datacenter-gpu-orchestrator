@@ -49,7 +49,7 @@ func ovStatus(now time.Time) map[string]any {
 			node(ovF, "node-f", map[string]any{"excluded": true, "excluded_by": ovF}),
 		}},
 		"agents": []any{
-			agent(ovA, "node-a", nil), agent(ovB, "node-b", map[string]any{"chip": "Chip X"}), agent(ovC, "node-c", nil), agent(ovD, "node-d", nil),
+			agent(ovA, "node-a", nil), agent(ovB, "node-b", map[string]any{"chip": "Chip X"}), agent(ovC, "node-c", map[string]any{"devices": []any{map[string]any{"name": "Device Y"}}}), agent(ovD, "node-d", nil),
 			agent(ovE, "node-e", map[string]any{"stats": map[string]any{"headline_temp_c": 80.0}}),
 			agent(ovF, "node-f", map[string]any{"excluded": true, "excluded_by": ovF, "excluded_actor": "anonymous", "excluded_at": iso(-time.Hour)}),
 		},
@@ -103,6 +103,7 @@ func ovFetch(now time.Time, rows []any, on bool) map[string]any {
 			"series": []any{}, "live": map[string]any{"queued": 0, "running": 0}, "on": on, "history_begins_at": begins, "oldest_ts": begins},
 		"/api/nodes/availability": map[string]any{"recording": on, "nodes": series},
 		"/api/models":             map[string]any{"models": []any{}},
+		"/api/config/settings":    map[string]any{"settings": map[string]any{"requests_live_timings": false}},
 	}
 }
 
@@ -115,15 +116,15 @@ func TestUINextOverview(t *testing.T) {
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
 		map[string]any{"name": "overview: every row state", "route": "#/overview", "status": st,
 			"expect": []string{"Day", "Week", "Month", "All time", "· today", "Customize", "View 24-hour report",
-				"Tokens", "tokens in", "tokens out", "per hour", "Requests", "Queued", "Running", "Done", "Failed", "Cancelled", "All 6",
+				"Tokens", "tokens in", "tokens out", "per hour", "Runs", "Queued", "Running", "Done", "Failed", "Cancelled", "All 6",
 				"Status and length", "Started at", "In tok/s", "Out tok/s", "Not started", "queued ", "42.5 s", "8.2 s", "4.0 s", "10 min", "2,460", "412", "14.1"},
-			"absent": []string{"Runs"},
+			"absent": []string{"Requests"},
 			"has":    []string{"tr.fail", "tr.canc", "[data-run-start]", "span[title^='Failed:']", "span[title^='Refused:']", "span[title^='Cancelled']", "button.zb.on[data-zones='15']"}},
 		map[string]any{"name": "overview: zones in the design's words", "route": "#/overview", "status": st,
 			"expect": []string{"ALL ZONES", "3 in use", "1 free", "1 down", "1 off", "Sort: needs attention first", "Chip: any", "Memory: any", "Temperature: any",
 				"Status", "Zone", "Doing", "Memory", "Temp", "24 h ago", "Availability, hour by hour", "now",
 				"In use", "Host 60%", "Helper 40%", "Loading", "30% loaded", "Free in 1", "Next: ", "gamma", "Set aside", "Load failed, back at",
-				"Off", "Switched off by you", " | Chip X", "6.0 / 8.0 GB", "58 °C", "Colour key", "Showing 6 of 6"},
+				"Off", "Switched off by you", " | Chip X", " | Device Y", "6.0 / 8.0 GB", "58 °C", "Colour key", "Showing 6 of 6"},
 			// the pinned running request outlines node-a and node-b as one box; the rest are dimmed
 			"has": []string{".zsc.dim", "div.zr.hi.g-top[data-zone='" + ovA + "']", "div.zr.hi.g-bot[data-zone='" + ovB + "']", ".avail i.use3", ".avail i.load", ".avail i.down", ".avail i.off"}},
 		// clicking the pinned toggle drops the pin; another one pins its own zones
@@ -149,13 +150,13 @@ func TestUINextOverview(t *testing.T) {
 		map[string]any{"name": "overview: all time", "route": "#/overview?period=all", "status": st, "expect": []string{"per day"}, "none": []string{"div.stepper"}},
 		map[string]any{"name": "overview: history begins", "route": "#/overview?date=2020-01-06", "status": st, "expect": []string{"History begins at"}},
 		// the requests list and the report it links to
-		map[string]any{"name": "requests list", "route": "#/requests", "status": st, "expect": []string{"Requests", "Refused", "Sent by", "node-a, node-b", "Older", "Newer"}},
-		map[string]any{"name": "24-hour report", "route": "#/report", "status": st, "expect": []string{"24-hour report", "Failed and refused requests", "Zones, hour by hour", "Print"}},
+		map[string]any{"name": "requests list", "route": "#/requests", "status": st, "expect": []string{"Runs", "Refused", "Sent by", "node-a, node-b", "Older", "Newer"}},
+		map[string]any{"name": "24-hour report", "route": "#/report", "status": st, "expect": []string{"24-hour report", "Failed and refused runs", "Zones, hour by hour", "Print"}},
 	}})
 
 	// no request in the period, and the request log off
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": ovFetch(now, []any{}, true), "cases": []any{
-		map[string]any{"name": "overview: no requests", "route": "#/overview", "status": st, "expect": []string{"No requests on this day", "No requests in this period.", "All 0"}},
+		map[string]any{"name": "overview: no requests", "route": "#/overview", "status": st, "expect": []string{"No runs on this day", "No runs in this period.", "All 0"}},
 	}})
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": ovFetch(now, ovRequests(now)[:2], false), "cases": []any{
 		map[string]any{"name": "overview: the request log is off", "route": "#/overview", "status": st,
@@ -163,7 +164,7 @@ func TestUINextOverview(t *testing.T) {
 	}})
 	// nothing answers yet: the panels say they are reading
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": map[string]any{}, "cases": []any{
-		map[string]any{"name": "overview: no answers", "route": "#/overview", "expect": []string{"The totals could not be read", "The requests could not be read"}},
+		map[string]any{"name": "overview: no answers", "route": "#/overview", "expect": []string{"The totals could not be read", "The runs could not be read"}},
 	}})
 }
 
@@ -215,7 +216,7 @@ func TestUINextOverviewRequestsTopic(t *testing.T) {
 				map[string]any{"type": "requests", "data": map[string]any{"kind": "tick", "requests": []any{pushed(40, "running", map[string]any{"live": true, "started_at": ms(-4 * time.Second), "tokens_out": 777, "decode_tps": 12.5})}}},
 				map[string]any{"type": "requests", "data": map[string]any{"kind": "queued", "request": pushed(41, "queued", map[string]any{"live": true})}},
 			},
-			"expect": []string{"777", "12.5", "Not started"}, "has": []string{"[data-run-start]", "button[data-zones='41']", "td[title^=The]"}},
+			"expect": []string{"777", "12.5", "Not started"}, "has": []string{"[data-run-start]", "button[data-zones='41']", "td[title^=Live]"}},
 		map[string]any{"name": "topic: ended replaces the live row", "route": "#/overview", "status": st,
 			"ws": []any{map[string]any{"type": "requests", "data": map[string]any{"kind": "ended", "request": pushed(40, "failed", map[string]any{
 				"reason": "cut", "message": "pushed failure", "started_at": ms(-4 * time.Second), "ended_at": ms(-time.Second), "duration_ms": 3000, "tokens_out": 800})}}},

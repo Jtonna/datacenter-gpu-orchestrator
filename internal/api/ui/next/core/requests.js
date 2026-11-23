@@ -113,6 +113,34 @@ function matches(p, r) {
   return true;
 }
 
+// ---------- the live prompt figures setting ----------
+
+// liveTimings() -> true, false, or null (not known): the setting
+// requests_live_timings (GET /api/config/settings; absent means off). With
+// it on, running rows carry their prompt figures from the first token on.
+// Read once, and again when the configuration changes (its revision).
+let timings = null, timingsRev = -1, timingsReading = false;
+const timingsWatchers = new Set();
+function readTimings() {
+  if (timingsReading) return;
+  timingsReading = true;
+  api.get('/api/config/settings').then(c => {
+    const s = (c && c.settings) || c || {};
+    timings = s.requests_live_timings === true;
+  }, () => { /* not readable: stays unknown */ }).finally(() => {
+    timingsReading = false;
+    for (const fn of Array.from(timingsWatchers)) fn();
+  });
+}
+// onLiveTimings(fn) -> unsubscribe: fn() when the setting is known or changes.
+export function onLiveTimings(fn) {
+  timingsWatchers.add(fn);
+  if (timingsRev !== state.configRevision || timings == null) { timingsRev = state.configRevision; readTimings(); }
+  return () => timingsWatchers.delete(fn);
+}
+export const liveTimings = () => timings;
+on(['configRevision'], () => { if (timingsWatchers.size && timingsRev !== state.configRevision) { timingsRev = state.configRevision; readTimings(); } });
+
 // ---------- the feed ----------
 
 export function requestFeed(params, onData) {
