@@ -180,6 +180,10 @@ func (c *schedCore) needBasis(info NeedInfo) string {
 		if info.derive != nil {
 			return c.derivedWords(info)
 		}
+	case NeedOwnSlope:
+		if info.Slope != nil {
+			return c.slopeWords(info)
+		}
 	case NeedEstimated:
 		return fmt.Sprintf("estimated, +%s%% margin; the estimate is %d MiB",
 			strconv.FormatFloat(c.cfg.Defaults.EstimateMargin*100, 'f', -1, 64), info.BaseMiB)

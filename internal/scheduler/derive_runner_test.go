@@ -93,7 +93,7 @@ func TestDerivedNeed_ConfigWritesAgainstListings(t *testing.T) {
 	}
 	derived := 0
 	for name := range cfg.Profiles {
-		if r, err := s.Plan(ctxT(t), name); err == nil && r.DerivedFromCtx > 0 {
+		if r, err := s.Plan(ctxT(t), name); err == nil && (r.DerivedFromCtx > 0 || r.DerivedSlope != nil) {
 			derived++
 		}
 	}

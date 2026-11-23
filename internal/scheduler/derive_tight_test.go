@@ -10,8 +10,9 @@ import (
 
 // deriveOnConsole: one console "a" (live rules: fill reserve, measured
 // margin 300), a profile "q" forced on it at ctx 32768 with no measurement
-// of its own, and the same model measured at 2048 and 8192 (its own pairs
-// check the derivation, so the figure carries the measured margin). The
+// of its own, and the same model measured at 2048, 8192 and 16384 on one
+// device (its own line, confirmed by the third row: the figure carries the
+// measured margin). The
 // node's free figure is set so it keeps spare MiB beyond what q will take.
 func deriveOnConsole(t *testing.T, spare int) (*harness, PlanReport) {
 	t.Helper()
@@ -23,6 +24,7 @@ func deriveOnConsole(t *testing.T, spare int) (*harness, PlanReport) {
 	})
 	h.measure("qwen.gguf", 2048, 1, 5000)
 	h.measure("qwen.gguf", 8192, 1, derivedFrom(5000, 2048, 8192, 1))
+	h.measure("qwen.gguf", 16384, 1, derivedFrom(5000, 2048, 16384, 1)) // a third row on the line: confirmed
 	h.viewChanged()
 	row := h.c.dryPlan("q").Memory.Nodes[0]
 	h.view.modify("a", func(n *core.Node) {
@@ -33,7 +35,7 @@ func deriveOnConsole(t *testing.T, spare int) (*harness, PlanReport) {
 	return h, h.c.dryPlan("q")
 }
 
-// A derived figure counts as measured: the measured margin (300) applies,
+// A figure from a confirmed own line counts as measured: the measured margin (300) applies,
 // a node that holds the load but not the margin is a tight fit and starts,
 // one that holds the margin too is a plain fit, and one short even without
 // the margin is refused; the basis says "derived" in every case.
@@ -51,7 +53,7 @@ func TestDerivedNeed_WithTheTightFitRule(t *testing.T) {
 	} {
 		h, r := deriveOnConsole(t, c.spare)
 		_ = h
-		if r.NeedMiB != want || r.DerivedFromCtx != 8192 || !strings.HasPrefix(r.NeedBasis, "derived from the measurement at ctx 8192") {
+		if r.NeedMiB != want || r.DerivedSlope == nil || !strings.HasPrefix(r.NeedBasis, "own slope of this model on 1 device:") {
 			t.Fatalf("%s: need %d from %d basis %q", c.name, r.NeedMiB, r.DerivedFromCtx, r.NeedBasis)
 		}
 		row := r.Memory.Nodes[0]

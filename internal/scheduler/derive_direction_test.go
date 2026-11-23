@@ -2,20 +2,21 @@ package scheduler
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/estimate"
 )
 
-// A model whose own pairs agree derives in both directions, as measured.
+// A model whose own pairs agree derives in both directions, as measured,
+// where its own line is not used (here: an unconfirmed chord of a sliding-
+// window model; elsewhere the line comes first, ownslope.go).
 func TestDerivedNeed_CheckedDerivesDownward(t *testing.T) {
 	h := deriveHarness(t)
-	q := h.llama("q", 0, func(p *core.Profile) { p.Model, p.Ctx = "qwen.gguf", 6144 })
-	h.measure("qwen.gguf", 2048, 1, 5000)
+	q := h.llama("q", 0, func(p *core.Profile) { p.Model, p.Ctx = "swa.gguf", 6144 })
+	h.measure("swa.gguf", 2048, 1, 5000)
 	at8k := derivedFrom(5000, 2048, 8192, 1) + 100
-	h.measure("qwen.gguf", 8192, 1, at8k)
+	h.measure("swa.gguf", 8192, 1, at8k)
 	info, _ := h.c.need(q)
 	if want := derivedFrom(at8k, 8192, 6144, 1); info.Source != NeedDerived || info.Need.MiB != want || !info.Need.Measured || info.DerivedFromCtx != 8192 {
 		t.Fatalf("%+v %q from %d, want %d", info.Need, info.Source, info.DerivedFromCtx, want)
@@ -39,9 +40,12 @@ func TestDerivedNeed_UncheckedIsUpwardOnly(t *testing.T) {
 
 // Pairs out of tolerance because the model uses less than the formula (the
 // sliding-window pattern: upward pairs over-predict, downward ones
-// under-predict): upward only, estimate margin, and only where the figure is
-// below the estimate path's; a model whose upward pairs under-predict (it
-// uses more than the formula) gets nothing derived.
+// under-predict). Outside its two rows the model's own line is used (it
+// over-predicts a concave model there); between them the line is an
+// unconfirmed chord, so the formula step decides: upward only, estimate
+// margin, and only where the figure is below the estimate path's. A model
+// whose upward pairs under-predict (it uses more than the formula) gets
+// nothing derived from the formula step.
 func TestDerivedNeed_ConservativeWhenTheModelUsesLess(t *testing.T) {
 	h := deriveHarness(t)
 	mid := h.llama("mid", 0, func(p *core.Profile) { p.Model, p.Ctx = "swa.gguf", 8192 })
@@ -55,11 +59,8 @@ func TestDerivedNeed_ConservativeWhenTheModelUsesLess(t *testing.T) {
 		t.Fatalf("%+v", ch)
 	}
 	info, _ := h.c.need(far)
-	if want := estimate.MarginMiB(derivedFrom(at32k, 32768, 65536, 1), 50); info.Source != NeedDerived || info.Need.MiB != want || info.DerivedFromCtx != 32768 {
-		t.Fatalf("far: %+v %q from %d, want %d", info.Need, info.Source, info.DerivedFromCtx, want)
-	}
-	if b := h.c.needBasis(info); !strings.HasPrefix(b, "derived upward from ctx 32768 (conservative: this model uses less than the formula)") {
-		t.Fatal(b)
+	if want := estimate.MarginMiB(lineAt(2048, 5000, 32768, at32k, 65536), 50); info.Source != NeedOwnSlope || info.Need.MiB != want {
+		t.Fatalf("far: %+v %q, want %d by the own line", info.Need, info.Source, want)
 	}
 	// From 2048, whose row sits above its estimate, the figure is not below
 	// the estimate path: the estimate stays.
@@ -70,17 +71,17 @@ func TestDerivedNeed_ConservativeWhenTheModelUsesLess(t *testing.T) {
 	if info, _ := h.c.need(mid); info.Source != NeedEstimated {
 		t.Fatalf("mid: %+v %q", info.Need, info.Source)
 	}
-	if info, _ := h.c.need(low); info.Source != NeedEstimated {
-		t.Fatalf("downward: %+v %q", info.Need, info.Source)
+	if info, _ := h.c.need(low); info.Source != NeedOwnSlope || info.Need.MiB != estimate.MarginMiB(lineAt(2048, 5000, 32768, at32k, 1024), 50) {
+		t.Fatalf("below both rows: %+v %q", info.Need, info.Source)
 	}
 
 	// A model above the formula, its 2048 row right at its estimate (so a
 	// figure derived from it would be below the estimate path).
 	h = deriveHarness(t)
-	between := h.llama("between", 0, func(p *core.Profile) { p.Model, p.Ctx = "more.gguf", 16384 })
+	between := h.llama("between", 0, func(p *core.Profile) { p.Model, p.Ctx = "swamore.gguf", 16384 })
 	at2k := 4000 + 2048/8 + estimate.ComputeMiB(2048)
-	h.measure("more.gguf", 2048, 1, at2k)
-	h.measure("more.gguf", 32768, 1, derivedFrom(at2k, 2048, 32768, 1)+2000)
+	h.measure("swamore.gguf", 2048, 1, at2k)
+	h.measure("swamore.gguf", 32768, 1, derivedFrom(at2k, 2048, 32768, 1)+2000)
 	if info, _ := h.c.need(between); info.Source != NeedEstimated {
 		t.Fatalf("a model above the formula: %+v %q from %d", info.Need, info.Source, info.DerivedFromCtx)
 	}
@@ -95,7 +96,7 @@ func TestDerivedNeed_ConservativeWhenTheModelUsesLess(t *testing.T) {
 func TestDerivedNeed_Invariant(t *testing.T) {
 	ctxs := []int{1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072}
 	formula := func(ctx, d int) int { return ctx/8 + d*estimate.ComputeMiB(ctx) }
-	derived, checked := 0, 0
+	derived, checked, slopes, confirmed := 0, 0, 0, 0
 	for _, kf := range []float64{0.05, 0.25, 0.5, 0.9, 1, 1.02, 1.1, 1.5, 3} {
 		for _, o := range []int{0, 300, 1500} {
 			for _, d := range []int{1, 2} {
@@ -116,6 +117,16 @@ func TestDerivedNeed_Invariant(t *testing.T) {
 						info, err := h.c.need(p)
 						if err != nil {
 							t.Fatal(err)
+						}
+						if info.Source == NeedOwnSlope { // the model's own line: exact for a straight model, either way
+							slopes++
+							if info.Slope.Confirmed {
+								confirmed++
+							}
+							if info.Need.MiB < truth(r)-2 || info.Devices != d {
+								t.Fatalf("own slope below the truth: kf %v o %d d %d at %v r %d: need %d on %d truth %d (%+v)", kf, o, d, at, r, info.Need.MiB, info.Devices, truth(r), info.Slope)
+							}
+							continue
 						}
 						if info.Source != NeedDerived {
 							continue
@@ -139,7 +150,7 @@ func TestDerivedNeed_Invariant(t *testing.T) {
 			}
 		}
 	}
-	if derived < 100 || checked < 10 {
-		t.Fatalf("too few derivations exercised: %d (%d checked)", derived, checked)
+	if derived < 100 || slopes < 100 || confirmed < 10 {
+		t.Fatalf("too few derivations exercised: %d by the formula step (%d checked), %d by the own slope (%d confirmed)", derived, checked, slopes, confirmed)
 	}
 }

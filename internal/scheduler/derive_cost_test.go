@@ -55,7 +55,7 @@ func listNeeds(t *testing.T, h *harness) (derived int) {
 		if err != nil {
 			t.Fatal(name, err)
 		}
-		if info.Source == NeedDerived {
+		if info.Source == NeedDerived || info.Source == NeedOwnSlope {
 			derived++
 		}
 	}
@@ -139,16 +139,16 @@ func TestDerivedNeed_WaitsForTheHeaderReads(t *testing.T) {
 	h := deriveHarness(t)
 	w := &waitingHeaders{NeedProvider: h.c.needs, ready: map[string]bool{}}
 	h.c.needs = w
-	q := h.llama("q", 0, func(p *core.Profile) { p.Model, p.Ctx = "qwen.gguf", 32768 })
-	h.measure("qwen.gguf", 2048, 1, 5000)
-	h.measure("qwen.gguf", 8192, 1, derivedFrom(5000, 2048, 8192, 1))
+	q := h.llama("q", 0, func(p *core.Profile) { p.Model, p.Ctx = "swa.gguf", 6144 }) // between its rows: the formula step, checked by the pair
+	h.measure("swa.gguf", 2048, 1, 5000)
+	h.measure("swa.gguf", 8192, 1, derivedFrom(5000, 2048, 8192, 1))
 	if info, _ := h.c.need(q); info.Source != NeedEstimated {
 		t.Fatalf("derived before the header read: %+v %q", info.Need, info.Source)
 	}
 	if ps := h.c.derivePairs(nil); len(ps) != 0 {
 		t.Fatalf("pairs before the header read: %+v", ps)
 	}
-	w.Warm(context.Background(), []string{"qwen.gguf"})
+	w.Warm(context.Background(), []string{"swa.gguf"})
 	h.step(evHeadersRead{})
 	info, _ := h.c.need(q)
 	if info.Source != NeedDerived || info.derive.mode != deriveChecked || len(h.c.derivePairs(nil)) != 2 {

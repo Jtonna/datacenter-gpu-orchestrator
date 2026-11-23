@@ -489,6 +489,20 @@ func (c *schedCore) withDerived(p *core.Profile, info, base NeedInfo) NeedInfo {
 	if p.Kind == core.KindCommand || base.Need.Measured {
 		return info // a configured need is never replaced
 	}
+	if figs := c.slopeFigs(p, base, true); len(figs) > 0 { // the model's own line comes first (ownslope.go)
+		info.figs = figs
+		info.baseNeed, info.baseSource, info.perDevice = info.Need, info.Source, c.perDeviceCost(base)
+		k, latest := 0, figs[0].at
+		for _, f := range figs {
+			if k == 0 || f.at.After(latest) {
+				k, latest = f.devices, f.at
+			}
+		}
+		if len(p.ForceNodes) > 0 {
+			k = len(p.ForceNodes)
+		}
+		return info.at(max(k, 1))
+	}
 	d := c.deriveIndex()
 	srcs := c.derivedSources(d, p, base.FileBytes)
 	if len(srcs) == 0 {

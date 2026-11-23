@@ -124,6 +124,7 @@ type learnedFig struct {
 	restored bool
 	trusted  bool
 	at       time.Time
+	slope    *DerivedSlope // a figure read from the model's own line (ownslope.go)
 }
 
 // trusted: l was measured this run, or it was measured on the llama build
@@ -159,7 +160,7 @@ func (info NeedInfo) at(k int) NeedInfo {
 		return info
 	}
 	out := info
-	out.Devices, out.FromDevices, out.fromTotal, out.FromServer, out.DerivedFromCtx = k, 0, 0, false, 0
+	out.Devices, out.FromDevices, out.fromTotal, out.FromServer, out.DerivedFromCtx, out.Slope = k, 0, 0, false, 0, nil
 	out.Need, out.Source, out.MeasuredAt = info.baseNeed, info.baseSource, time.Time{}
 	rule := needRule{PerDevice: info.perDevice, Floor: info.baseNeed.Measured, Rows: make([]needRow, len(info.figs))}
 	if info.baseNeed.Measured { // a configured needs_mib
@@ -183,6 +184,9 @@ func (info NeedInfo) at(k int) NeedInfo {
 	if info.derive != nil {
 		out.Source, out.DerivedFromCtx = NeedDerived, info.derive.ctx
 	}
+	if src.slope != nil {
+		out.Source, out.Slope = NeedOwnSlope, src.slope
+	}
 	return out
 }
 
@@ -205,9 +209,18 @@ func (c *schedCore) withLearned(p *core.Profile, info, base NeedInfo) NeedInfo {
 	info.serverFigs = server
 	info.baseNeed, info.baseSource, info.perDevice = info.Need, info.Source, c.perDeviceCost(base)
 	info.figs = make([]learnedFig, 0, len(ls))
+	have := map[int]bool{}
 	for _, l := range ls {
 		if l.TotalMiB > 0 {
 			info.figs = append(info.figs, learnedFig{devices: l.count(), total: l.TotalMiB, restored: l.restored, trusted: c.trusted(l), at: l.at})
+			have[l.count()] = true
+		}
+	}
+	if !server { // a confirmed line on a count the shape has no row on joins its rows (ownslope.go)
+		for _, f := range c.slopeFigs(p, base, false) {
+			if !have[f.devices] {
+				info.figs = append(info.figs, f)
+			}
 		}
 	}
 	if len(info.figs) == 0 {

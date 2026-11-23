@@ -66,6 +66,11 @@ type NeedInfo struct {
 	// DerivedFromCtx: Need is derived (derive.go) from the measurement of the
 	// same model at this other context; 0 otherwise.
 	DerivedFromCtx int
+	// Slope: Need is read from the model's own line on this device count
+	// (ownslope.go); nil otherwise.
+	Slope *DerivedSlope
+
+	swa bool // the model has a sliding window (concave in the context: ownslope.go)
 
 	// what at needs to give the need of another device count
 	figs       []learnedFig
@@ -259,5 +264,5 @@ func estimateFromMeta(meta *gguf.Meta, p *core.Profile) (NeedInfo, error) {
 		return NeedInfo{}, err
 	}
 	return NeedInfo{Need: placer.Estimated(estimate.NeedMiB(meta.FileSize, kv)), FileBytes: meta.FileSize,
-		DeviceMiB: estimate.ComputeMiB(p.Ctx * parallel)}, nil
+		DeviceMiB: estimate.ComputeMiB(p.Ctx * parallel), swa: meta.SlidingWindow}, nil
 }
