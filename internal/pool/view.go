@@ -463,6 +463,9 @@ type NodeFacts struct {
 	MemAvailAvgMiB *int64          `json:"mem_available_avg_mib,omitempty"`
 	Stats          json.RawMessage `json:"stats,omitempty"`
 	StatsNote      string          `json:"stats_note,omitempty"`
+	// GPUUtilPercent is the busiest GPU's utilisation from stats.gpus (the
+	// agent's last heartbeat); absent when no GPU reports one. Additive.
+	GPUUtilPercent *float64 `json:"gpu_util_percent,omitempty"`
 	// ExtraDevicesIgnored counts the node's devices of its platform backend
 	// beyond the first, which no worker uses (one device per node).
 	ExtraDevicesIgnored int `json:"extra_devices_ignored"`
@@ -563,7 +566,8 @@ func (p *Pool) Facts() []NodeFacts {
 		f := NodeFacts{ID: id, Name: a.reg.Name, Addr: a.reg.Addr, State: StateActive, Install: a.reg.Install,
 			Release: a.reg.AgentRelease, Platform: a.platform, Paused: p.admin[id].Paused, UnpausePending: p.unpausePendingLocked(id, a),
 			HostAgent:   p.isHostAgentLocked(a),
-			ModelSource: a.reg.ModelSource, Stats: a.stats, StatsNote: a.statsNote, Capabilities: sortedWords(a.reg.Capabilities)}
+			ModelSource: a.reg.ModelSource, Stats: a.stats, StatsNote: a.statsNote, Capabilities: sortedWords(a.reg.Capabilities),
+			GPUUtilPercent: gpuUtil(a.stats)}
 		switch {
 		case p.admin[id].Removed:
 			f.State = StateRemoved
@@ -732,4 +736,28 @@ type RunningInstance struct {
 	Profile string `json:"profile"`
 	State   string `json:"state"`
 	Since   int64  `json:"since"`
+}
+
+// gpuUtil is the highest util_percent of stats.gpus, nil when no GPU (or no
+// stats object) has one. A stats object that does not decode gives nil.
+func gpuUtil(stats json.RawMessage) *float64 {
+	if len(stats) == 0 {
+		return nil
+	}
+	var st struct {
+		GPUs []struct {
+			UtilPercent *float64 `json:"util_percent"`
+		} `json:"gpus"`
+	}
+	if json.Unmarshal(stats, &st) != nil {
+		return nil
+	}
+	var out *float64
+	for _, g := range st.GPUs {
+		if u := g.UtilPercent; u != nil && (out == nil || *u > *out) {
+			v := *u
+			out = &v
+		}
+	}
+	return out
 }
