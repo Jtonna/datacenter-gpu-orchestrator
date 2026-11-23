@@ -12,8 +12,10 @@
 //   /ui/...      the new shell (ui/next laid over the classic files, as the
 //                scheduler serves it), /ui/classic/... the classic UI
 //   /api/status, /api/requests, /api/requests/summary, /api/requests/{id},
-//   /api/nodes/availability, /api/nodes: fixed answers (times relative to now)
-//   /ws          a WebSocket that sends hello and the status every 5 s
+//   /api/nodes/availability, /api/nodes, /api/models, and for the health popup
+//   /api/system, /api/about, /api/agents, /api/config/settings, /api/history:
+//   fixed answers (times relative to now)
+//   /ws          a WebSocket: hello, the status every 5 s, the requests topic
 //   any other /api/... answers 404 in the API's error shape; writes 405.
 //
 // --state empty: no request in the period; off: the request log is off
@@ -85,7 +87,7 @@ function status(now) {
       { profile: SMALL, state: 'starting', in_flight: 0, waiters: 1, load_progress: 0.56, load: { progress: 0.56 }, parallel: 1, host: 'node', host_node: mac(3),
         nodes: [{ id: mac(3), role: 'host', share: 1 }] },
     ],
-    queue: [{ profile: SMALL, waiters: 1, claimed: true, claim: [mac(3)] }, { profile: QWEN, waiters: 1, claimed: true, claim: [mac(4)] }],
+    queue: [{ profile: SMALL, waiters: 1, age: 348, claimed: true, claim: [mac(3)] }, { profile: QWEN, waiters: 1, age: 37, claimed: true, claim: [mac(4)] }],
     quarantines: [{ node: mac(6), until: iso(t + 6 * 60000), level: 1, reason: 'preflight_failed', message: 'The pre-load check failed: the model did not fit the free memory.', since: iso(t - 600000) }],
     backoffs: [], last_refusals: [], recent_loads: [], learned_needs: {},
     view: { age: 1, connected: true, stale: false, nodes },
@@ -203,6 +205,19 @@ const server = http.createServer((req, res) => {
   if (STATE === 'loading' && p.startsWith('/api/requests')) return; // never answers
   if (p === '/api/status') return json(res, 200, status(now));
   if (p === '/api/models') return json(res, 200, { version: 1, models: [] });
+  // what the health popup reads (the Health board's sample, generic names)
+  if (p === '/api/about') return json(res, 200, { version: '0.1.5', started_at: now - 12 * 24 * H, now, uptime_s: 12 * 24 * 3600, history: 'on' });
+  if (p === '/api/system') return json(res, 200, { version: '0.1.5', started_at: now - 12 * 24 * H, now, uptime_s: 12 * 24 * 3600, read_panics: 0, internal_failures_total: 0,
+    tasks: [{ name: 'core loop', policy: 'exit', state: 'running', running: 1, restarts: 0, failures: 0, failures_last_min: 0 }],
+    stored_config: { unknown_fields: [], writes_need_force: false },
+    storage: { database: { dir: '/data', on: true, bytes: 37600000 }, history: { dir: '/data/history', on: true, bytes: 3000000, files: 4 }, usage: { size_bytes: 9400000 }, child_logs: { dir: '/data/logs', bytes: 23700000, files: 12 } } });
+  if (p === '/api/agents') return json(res, 200, { agents: ['ops-bot', 'coding agent', 'report writer'].map((name, i) => ({ id: 'agent-' + i, name, key_prefix: 'ptk_' + i, created_at: now - (i + 2) * 24 * H, request_count: 10 * i })) });
+  if (p === '/api/config/settings') return json(res, 200, { settings: { queue_timeout: '30m0s' } });
+  if (p === '/api/history') return json(res, 200, { events: [
+    { ts: now - 12 * 60000, seq: 41, type: 'nodeQuarantined', severity: 'warn', nodes: ['ps5-05'], summary: 'Node ps5-05 was quarantined for 18m0s (level 1): preflight failed.', data: { for_s: 1080, level: 1 } },
+    { ts: now - 54 * 60000, seq: 40, type: 'nodeLost', severity: 'error', nodes: ['ps5-07'], summary: 'Node ps5-07 was lost.', data: {} },
+    { ts: now - 70 * 60000, seq: 39, type: 'nodeLost', severity: 'error', nodes: ['ps5-06'], summary: 'Node ps5-06 was lost.', data: {} },
+  ], total_matching: 3 });
   if (p === '/api/nodes') return json(res, 200, { nodes: status(now).agents });
   if (p === '/api/nodes/availability') return json(res, 200, availability(u.searchParams, now));
   if (p === '/api/requests/summary') return json(res, 200, summary(u.searchParams, now));
@@ -220,7 +235,8 @@ const server = http.createServer((req, res) => {
   return notFound(res, p);
 });
 
-// /ws: a minimal WebSocket (RFC 6455) that only sends: hello, then the status every 5 s
+// /ws: a minimal WebSocket (RFC 6455): hello (with the topics, requests among
+// them), the status every 5 s, and the requests topic once subscribed
 function frame(text) {
   const b = Buffer.from(text);
   const head = b.length < 126 ? Buffer.from([0x81, b.length]) : b.length < 65536 ? Buffer.from([0x81, 126, b.length >> 8, b.length & 255]) : null;
@@ -228,17 +244,56 @@ function frame(text) {
   const h8 = Buffer.alloc(10); h8[0] = 0x81; h8[1] = 127; h8.writeBigUInt64BE(BigInt(b.length), 2);
   return Buffer.concat([h8, b]);
 }
+// the text frames a client sent (masked, as clients must); one chunk may hold several
+function readFrames(buf) {
+  const out = [];
+  let i = 0;
+  while (i + 2 <= buf.length) {
+    const op = buf[i] & 15, masked = buf[i + 1] & 128;
+    let len = buf[i + 1] & 127, at = i + 2;
+    if (len === 126) { len = buf.readUInt16BE(at); at += 2; } else if (len === 127) { len = Number(buf.readBigUInt64BE(at)); at += 8; }
+    const key = masked ? buf.subarray(at, at + 4) : null;
+    if (masked) at += 4;
+    if (at + len > buf.length) break;
+    const body = Buffer.from(buf.subarray(at, at + len));
+    if (key) for (let k = 0; k < body.length; k++) body[k] ^= key[k & 3];
+    if (op === 1) out.push(body.toString('utf8'));
+    i = at + len;
+  }
+  return out;
+}
 server.on('upgrade', (req, sock) => {
   if (new URL(req.url, 'http://fixture').pathname !== '/ws') { sock.destroy(); return; }
   const accept = createHash('sha1').update(req.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
   sock.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ' + accept + '\r\n\r\n');
   const send = (type, data) => { try { sock.write(frame(JSON.stringify({ type, ts: Date.now(), data }))); } catch { /* closed */ } };
-  send('hello', { server_time: Date.now(), config_revision: 12 });
+  send('hello', { server_time: Date.now(), config_revision: 12, topics: ['status', 'event', 'bench', 'config', 'ping', 'models', 'requests'] });
   send('status', status(Date.now()));
-  const t = setInterval(() => send('status', status(Date.now())), 5000);
-  sock.on('data', () => { /* subscribe and pong frames: nothing to do */ });
-  sock.on('close', () => clearInterval(t));
-  sock.on('error', () => clearInterval(t));
+  let reqs = false;
+  const t = setInterval(() => {
+    send('status', status(Date.now()));
+  }, 5000);
+  // the requests topic: a snapshot on subscribe, then a tick a second with the running rows
+  const tick = setInterval(() => {
+    if (!reqs || STATE !== 'normal') return;
+    send('requests', { kind: 'tick', requests: requests(Date.now()).filter(r => r.status === 'running') });
+  }, 1000);
+  sock.on('data', buf => {
+    for (const msg of readFrames(buf)) {
+      let m; try { m = JSON.parse(msg); } catch { continue; }
+      if (m && m.type === 'subscribe') {
+        const want = Array.isArray(m.topics) && m.topics.includes('requests');
+        if (want && !reqs) {
+          const now = Date.now();
+          send('requests', { kind: 'snapshot', requests: STATE === 'normal' ? requests(now) : [], next: 0, on: STATE !== 'off', history_begins_at: STATE === 'off' ? null : now - 9 * 24 * H });
+        }
+        reqs = want;
+      }
+    }
+  });
+  const stop = () => { clearInterval(t); clearInterval(tick); };
+  sock.on('close', stop);
+  sock.on('error', stop);
 });
 
 server.listen(PORT, HOST, () => console.log(`ui fixture (${STATE}) at http://${HOST}:${PORT}/ui/ serving ${UI}`));
