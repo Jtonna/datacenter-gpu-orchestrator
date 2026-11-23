@@ -205,9 +205,20 @@ export function diffView(diff) {
 // ---------- dialog, confirm, toast ----------
 
 let openDialogs = 0;
-// dialog({title, body, actions:[{label, kind, value, autofocus}], wide}) resolves
-// with the picked action's value (undefined on Escape or a backdrop click).
-// body may be a node or a function (close => node) for a body with its own controls.
+// dialog({title, body, actions:[{label, kind, value, autofocus}], wide, comment})
+// resolves with the picked action's value (undefined on Escape, the close
+// button or a backdrop click). body may be a node or a function (close =>
+// node) for a body with its own controls.
+//
+// The design's dialog (Zones "Confirm": "Unload … from …?", "Reboot 3
+// zones?"): 500 wide, a 14 px radius, 20 by 22 px of padding, the title
+// (18 px, 800) and a close button in one row, the actions on the right of
+// the last row, 34 px high. wide makes it 820 (a diff to review).
+//
+// comment (optional, the comment field the audit needs, 00-combined S27):
+// {label, required, placeholder, value}. A text box above the actions; the
+// dialog then resolves with {value, comment} for an action, and a required
+// comment keeps the main action (kind pri or dng) disabled while it is empty.
 export function dialog(o) {
   return new Promise(resolve => {
     const prev = document.activeElement;
@@ -217,6 +228,12 @@ export function dialog(o) {
       openDialogs--;
       if (prev && prev.focus) prev.focus();
       resolve(v);
+    };
+    const note = o.comment ? h('textarea.input.dlg-comment', { rows: 3, maxlength: 500, placeholder: o.comment.placeholder || '', 'aria-label': o.comment.label || 'Comment' }) : null;
+    if (note && o.comment.value) note.value = o.comment.value;
+    const pick = a => () => {
+      const v = typeof a.value === 'function' ? a.value() : a.value;
+      close(note ? (v === undefined ? undefined : { value: v, comment: note.value.trim() }) : v);
     };
     const onKey = e => {
       if (e.key === 'Escape') { e.stopPropagation(); close(undefined); }
@@ -229,14 +246,24 @@ export function dialog(o) {
       }
     };
     const id = 'dlg-' + Date.now();
+    const main = [];
     const dlg = h('div', { class: 'dlg' + (o.wide ? ' wide' : ''), role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': id },
-      h('h2', { id }, o.title),
+      h('div.dlg-head', h('h2', { id }, o.title),
+        h('button.x', { type: 'button', 'aria-label': 'Close', title: 'Close', onclick: () => close(undefined) },
+          h('svg', { class: 'ic', viewBox: '0 0 20 20', 'aria-hidden': 'true' }, h('path', { d: 'M5 5l10 10M15 5L5 15' })))),
       typeof o.body === 'function' ? o.body(close) : o.body,
+      note ? h('div.field.dlg-note', h('label', o.comment.label || 'Comment', o.comment.required ? ' (required)' : ''), note) : null,
       o.actions ? h('div.dlg-foot', o.actions.map(a => {
-        const b = h('button', { class: 'btn lg ' + (a.kind || ''), type: 'button', onclick: () => close(typeof a.value === 'function' ? a.value() : a.value) }, a.label);
+        const b = h('button', { class: 'btn lg ' + (a.kind || ''), type: 'button', onclick: pick(a) }, a.label);
         if (a.autofocus) b.dataset.autofocus = '1';
+        if (/\b(pri|dng)\b/.test(a.kind || '')) main.push(b);
         return b;
       })) : null);
+    if (note && o.comment.required) {
+      const gate = () => { for (const b of main) { if (note.value.trim()) b.removeAttribute('disabled'); else b.setAttribute('disabled', ''); } };
+      note.addEventListener('input', gate);
+      gate();
+    }
     const back = h('div.backdrop', { onmousedown: e => { if (e.target === back) close(undefined); } }, dlg);
     document.body.appendChild(back);
     openDialogs++;
@@ -530,10 +557,17 @@ export function filterSelect(label, options, current, onPick, opts = {}) {
 // node is kept by morph (data-keep with a key: give each box on a screen its
 // own), so typing is never interrupted by a redraw. onInput is the one given
 // at the first draw: pass a function that reads the view's current state.
-export function searchField(value, onInput, placeholder, key = 'search') {
-  const i = h('input.search', { type: 'search', value: value || '', placeholder: placeholder || 'Search', 'aria-label': placeholder || 'Search', 'data-keep': '', key });
+//
+// Drawn as the design's search field (Models, Zones, Benchmarks): a
+// magnifier inside the box, then the text. opts.size 'lg' is the Zones
+// page's (28 px high, 290 wide, 12.5 px text); the default is the small one
+// of the panels and tables (24 px, 150 wide, 12 px). opts.width sets the
+// width. The box is kept by morph, the input inside it with it.
+export function searchField(value, onInput, placeholder, key = 'search', opts = {}) {
+  const i = h('input', { type: 'search', value: value || '', placeholder: placeholder || 'Search', 'aria-label': placeholder || 'Search' });
   i.addEventListener('input', () => onInput(i.value));
-  return i;
+  return h('label', { class: 'sx' + (opts.size === 'lg' ? ' lg' : ''), 'data-keep': '', key, style: opts.width ? 'width:' + opts.width + 'px' : null },
+    h('svg', { class: 'ic', viewBox: '0 0 20 20', 'aria-hidden': 'true' }, h('circle', { cx: 9, cy: 9, r: 5.5 }), h('path', { d: 'M13.5 13.5L17 17' })), i);
 }
 
 // The zone state colours: free, in use 1 to 4 (darker is busier), loading,

@@ -103,3 +103,49 @@ func TestUINextDeepLinks(t *testing.T) {
 			"pageNone": []string{"aside.side"}, "hash": "#/components"},
 	}})
 }
+
+// The shared components of SH-6 (S16) on the fixture's components page: the
+// numbered pager on its first, a middle and its last page, both of its
+// counts ("Page 1 of 15", "1–12 of 49"), its page in the address; the
+// anchored popover (opens beside its anchor, Escape closes it and gives the
+// focus back); the 500 px dialog with its close button and the optional
+// comment field that holds the main action until it is filled; the search
+// field with its magnifier, small and large.
+func TestUINextSharedComponents(t *testing.T) {
+	now := time.Now()
+	comp := map[string]any{"shell": "next", "app": true, "modules": []string{"_fixture/components.js"}, "fetch": fixtureRuns(now)}
+	comp["cases"] = []any{
+		map[string]any{"name": "pager: the first page", "route": "#/components?page=1",
+			"pageHas":  []string{"nav.pager[aria-label=Zones] button.pg[aria-current=page][data-page=1]", "nav.pager[aria-label=Zones] button.pg[data-page=prev][disabled]", "nav.pager[aria-label=Zones] button.pg[data-page=3]", "nav.pager[aria-label=Zones] button.pg[data-page=15]", "nav.pager[aria-label=Zones] span.pager-gap"},
+			"pageNone": []string{"nav.pager[aria-label=Zones] button.pg[data-page=4]", "nav.pager[aria-label=Zones] button.pg[data-page=next][disabled]"},
+			"page": []string{"Page 1 of 15", "1–12 of 49"}},
+		map[string]any{"name": "pager: the count of a range", "route": "#/components?page=3",
+			"pageHas": []string{"nav.pager[aria-label=Runs] button.pg[aria-current=page][data-page=3]", "nav.pager[aria-label=Runs] button.pg[data-page=5]"},
+			"pageNone": []string{"nav.pager[aria-label=Runs] span.pager-gap"}, "page": []string{"25–36 of 49"}},
+		map[string]any{"name": "pager: a middle page", "route": "#/components?page=8",
+			"pageHas":  []string{"nav.pager[aria-label=Zones] button.pg[aria-current=page][data-page=8]", "nav.pager[aria-label=Zones] button.pg[data-page=7]", "nav.pager[aria-label=Zones] button.pg[data-page=9]", "nav.pager[aria-label=Zones] button.pg[data-page=1]", "nav.pager[aria-label=Zones] button.pg[data-page=15]"},
+			"pageNone": []string{"nav.pager[aria-label=Zones] button.pg[data-page=2]", "nav.pager[aria-label=Zones] button.pg[data-page=14]", "nav.pager[aria-label=Zones] button.pg[disabled]"},
+			"page":     []string{"Page 8 of 15"}},
+		map[string]any{"name": "pager: the last page", "route": "#/components?page=15",
+			"pageHas":  []string{"nav.pager[aria-label=Zones] button.pg[aria-current=page][data-page=15]", "nav.pager[aria-label=Zones] button.pg[data-page=next][disabled]", "nav.pager[aria-label=Zones] button.pg[data-page=13]"},
+			"pageNone": []string{"nav.pager[aria-label=Zones] button.pg[data-page=prev][disabled]"},
+			"page":     []string{"Page 15 of 15"}},
+		// the page is in the address: it replaces it (no history entry)
+		map[string]any{"name": "pager: next writes the address", "route": "#/components", "click": []string{"nav.pager[aria-label=Zones] button.pg[data-page=next]"},
+			"pageHas": []string{"nav.pager[aria-label=Zones] button.pg[aria-current=page][data-page=2]"}, "hash": "#/components?page=2"},
+		map[string]any{"name": "popover: opens beside its anchor", "route": "#/components", "click": []string{"button[data-pop=open]"},
+			"pageHas": []string{"div.pop[role=dialog]", "button[data-pop=open][aria-expanded=true]"}, "page": []string{"Anchored popover"}},
+		map[string]any{"name": "popover: Escape closes it, the focus returns", "route": "#/components", "click": []string{"button[data-pop=open]"}, "keys": []any{"Escape"},
+			"pageNone": []string{"div.pop"}, "pageHas": []string{"button[data-pop=open][aria-expanded=false]"}, "focused": "button[data-pop=open]"},
+		map[string]any{"name": "dialog: 500 wide, its close button, the comment", "route": "#/components", "click": []string{"button[data-dlg=comment]"},
+			"pageHas": []string{"div.backdrop div.dlg[role=dialog] div.dlg-head h2", "div.dlg div.dlg-head button.x[aria-label=Close]", "div.dlg textarea.dlg-comment", "div.dlg-foot button.dng[disabled]"},
+			"page":    []string{"Comment (required)"}},
+		map[string]any{"name": "dialog: the close button", "route": "#/components", "click": []string{"button[data-dlg=comment]", "div.dlg button.x"},
+			"pageNone": []string{"div.dlg"}, "focused": "button[data-dlg=comment]"},
+		map[string]any{"name": "dialog: without the comment", "route": "#/components", "click": []string{"button[data-dlg=plain]"},
+			"pageHas": []string{"div.dlg div.dlg-foot button.dng"}, "pageNone": []string{"textarea.dlg-comment", "div.dlg-foot button[disabled]"}},
+		map[string]any{"name": "search: the magnifier inside the box", "route": "#/components",
+			"pageHas": []string{"label.sx .ic", "label.sx input[type=search]", "label.sx.lg input[type=search]"}},
+	}
+	uiExec(t, comp)
+}

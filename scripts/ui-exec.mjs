@@ -601,6 +601,13 @@ for (const c of spec.cases) {
     if (flag('--reserved')) for (const r of rows) if (!r.excluded && !r.reserved) errors.push(`no reserved-against-measured block on ${r.name}`);
   }
   await go('#/__ui_exec_blank'); // unmounts the screen
+  // a dialog or a popover left open by a case is closed the way a person would
+  for (let i = 0; i < 3 && document.body.querySelector('div.backdrop, div.pop'); i++) {
+    const ev = new FakeEvent('keydown', { key: 'Escape' });
+    ev.target = document.body;
+    document.dispatchEvent(ev);
+    await settle();
+  }
   if (errors.length) {
     failed++;
     console.log(`FAIL ${c.name}${extra}\n  ` + errors.join('\n  ').split('\n').slice(0, 30).join('\n  '));

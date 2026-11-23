@@ -201,6 +201,13 @@ b.mono,a.mono,.mono b,h1 .mono,h2 .mono,h3 .mono,b .mono{font-weight:500}
 .fc.all{letter-spacing:.06em;font-weight:800;text-transform:uppercase}
 .fs{height:24px;padding:0 24px 0 9px;border-radius:7px;border:1px solid var(--ctl-border);background-color:var(--surface);color:var(--ink-2);font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;appearance:none;
   background-image:linear-gradient(45deg,transparent 50%,var(--mut) 50%),linear-gradient(135deg,var(--mut) 50%,transparent 50%);background-position:calc(100% - 13px) 10px,calc(100% - 9px) 10px;background-size:4px 4px;background-repeat:no-repeat}
+/* the design's search field (Models, Zones): a magnifier inside the box */
+.sx{display:inline-flex;align-items:center;gap:7px;height:24px;width:150px;max-width:100%;box-sizing:border-box;padding:0 9px;border:1px solid #c5cec9;border-radius:7px;background:#fff;cursor:text}
+.sx .ic{width:14px;height:14px;flex:none;color:#55615b}
+.sx input{flex:1;min-width:0;border:0;outline:0;background:transparent;font-family:inherit;font-size:12px;color:#131a17;padding:0;height:100%}
+.sx.lg{height:28px;width:290px;gap:9px;padding:0 10px;border-radius:8px}
+.sx.lg input{font-size:12.5px}
+.sx:focus-within{outline:2px solid var(--accent);outline-offset:-1px;border-color:var(--accent)}
 .search{height:24px;width:200px;max-width:100%;padding:0 9px;border-radius:7px;border:1px solid var(--ctl-border);background:var(--surface);font-size:12px;font-weight:600;color:var(--ink)}
 .search:focus{outline:2px solid var(--accent);outline-offset:0;border-color:var(--accent)}
 
@@ -398,12 +405,20 @@ code.cmd{font-family:var(--mono);font-size:12px;color:var(--text-2);overflow-wra
 
 /* ---------- dialog, side panel and toast ---------- */
 .backdrop{position:fixed;inset:0;z-index:50;background:var(--overlay);display:flex;align-items:center;justify-content:center;padding:16px}
-.dlg{width:min(560px,100%);max-height:calc(100vh - 32px);overflow:auto;background:var(--surface);border:1px solid var(--line-panel);border-radius:14px;padding:22px;display:flex;flex-direction:column;gap:14px;line-height:1.45;box-shadow:0 18px 50px rgba(19,26,23,.18)}
+.dlg{width:min(500px,100%);box-sizing:border-box;max-height:calc(100vh - 32px);overflow:auto;background:var(--surface);border-radius:14px;padding:20px 22px;display:flex;flex-direction:column;gap:14px;line-height:1.4;box-shadow:0 18px 50px rgba(19,26,23,.3)}
+.dlg-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.dlg-head h2{margin:0}
+.dlg .x{width:30px;height:30px;flex:none;border:0;border-radius:8px;background:transparent;color:#3f4a44;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.dlg .x:hover{background:var(--hover-bg)}
+.dlg .x .ic{width:17px;height:17px}
+.dlg-note textarea{width:100%;box-sizing:border-box;resize:vertical}
 .dlg.wide{width:min(820px,100%)}
-.dlg h2{font-size:var(--fs-xl);font-weight:800}
+.dlg h2{font-size:18px;font-weight:800}
 .dlg h2 .mono{font-size:16px}
 .dlg p{color:var(--text-2)}
-.dlg-foot{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;margin-top:4px}
+.dlg-foot{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
+.dlg-foot .btn{height:34px;padding:0 14px;border-radius:8px}
+.dlg-foot .btn.dng.solid{background:#b3311f;border-color:#b3311f}
 .toasts{position:fixed;right:16px;bottom:16px;z-index:60;display:flex;flex-direction:column;gap:8px;max-width:min(420px,calc(100vw - 32px))}
 .toast{display:flex;gap:10px;align-items:baseline;padding:10px 14px;border-radius:10px;background:var(--ink);color:#fff;border:1px solid var(--ink);font-weight:600;box-shadow:0 8px 30px rgba(19,26,23,.25)}
 .toast.ok{background:var(--accent);border-color:var(--accent)}
@@ -824,3 +839,16 @@ table.runs{width:100%;border-collapse:collapse}
 .ib .ic{width:17px;height:17px}
 .drw2-note{margin:18px;color:var(--muted);font-weight:600}
 @media(max-width:860px){.hp{left:10px;right:10px;width:auto;top:62px;bottom:auto;max-height:calc(100vh - 72px);overflow:auto}}
+
+/* the numbered pager (design: Zones "Fleet", Benchmarks "Runs"; core/pager.js) */
+.pager{display:flex;align-items:center;gap:6px}
+.pager-count{color:var(--mut);font-weight:600;margin-right:4px}
+.pg{width:26px;height:26px;box-sizing:border-box;border:1px solid #c5cec9;border-radius:7px;background:#fff;color:#28322d;display:flex;align-items:center;justify-content:center;cursor:pointer;font-family:inherit;font-size:12px;font-weight:700;padding:0}
+.pg:hover{background:var(--hover-bg)}
+.pg .ic{width:14px;height:14px}
+.pg[aria-current=page]{background:#131a17;border-color:#131a17;color:#fff;cursor:default}
+.pg:disabled{color:#aab4ae;cursor:not-allowed;background:#fff}
+.pager-gap{color:var(--mut);font-weight:700}
+/* the anchored popover (design: .hp on the Health board, .pop on Ask Potluck; core/popover.js) */
+.pop{position:fixed;box-sizing:border-box;padding:12px 14px;background:#fff;border:1px solid #c5cec9;border-radius:12px;box-shadow:0 12px 32px rgba(19,26,23,.18);z-index:45;display:flex;flex-direction:column;gap:10px;font-size:13px;--arrow-y:26px}
+.pop::before{content:"";position:absolute;left:-6px;top:var(--arrow-y);width:10px;height:10px;background:#fff;border-left:1px solid #c5cec9;border-bottom:1px solid #c5cec9;transform:rotate(45deg)}
