@@ -27,7 +27,7 @@
 
 import { h } from '../core/dom.js';
 import { registerView, navigate, href } from '../core/router.js';
-import { state } from '../core/store.js';
+import { state, on } from '../core/store.js';
 import * as api from '../core/api.js';
 import { liveView, segmented, dateStepper, button, chips, dropButton, onDropChange, zoneStatus, colourKey, availStrip, availClass, tokensChart, tokensLegend,
   runsTable, runLegend, tickRuns, groupClass, dialog, toggle, skeleton } from '../core/ui.js';
@@ -231,7 +231,14 @@ registerView({
 
     // the request rows of the panel: live first, then the newest finished
     const feedParams = p => (p.current && p.period !== 'all' && p.from <= Date.now() ? { from: p.from, limit: 8 } : p.current ? { limit: 8 } : { from: p.from, to: p.to, limit: 8 });
-    const feed = requestFeed(feedParams(periodOf(r.query.period || readLayout().period, r.query.date, Date.now(), 0)), () => view.refresh());
+    // the totals follow the requests that end (the feed's ended mark changes), at most every 2 s
+    let lastEnded = null;
+    const sumSoon = throttle(() => { const p = per(); if (p.current) readSummary(p); }, 2000);
+    const feed = requestFeed(feedParams(periodOf(r.query.period || readLayout().period, r.query.date, Date.now(), 0)), d => {
+      if (lastEnded !== null && d.ended !== lastEnded) sumSoon();
+      lastEnded = d.ended;
+      view.refresh();
+    });
 
     async function readSummary(p) {
       try {
@@ -262,9 +269,17 @@ registerView({
       readSummary(p);
       readAvail(p);
     };
-    // the totals follow the current period every 10 s, the strips every minute, while the page is visible
-    const slow = every(10000, () => { if (document.hidden) return; const p = per(); if (p.current) readSummary(p); });
-    const slower = every(60000, () => { if (document.hidden) return; readAvail(per()); });
+    // the strips follow the live status: read again when a zone changes state
+    // or a new hour begins (at most every 10 s); no timer of their own
+    let zoneSig = '', hourAt = Math.floor(Date.now() / 3600000);
+    const availSoon = throttle(() => { if (!document.hidden) readAvail(per()); }, 10000);
+    const offStatus = on('status', () => {
+      const st = state.status;
+      const sig = viewNodes(st).map(n => [n.id, n.online, n.holder, !!n.quarantined, n.excluded].join(':')).join('|');
+      const hour = Math.floor(Date.now() / 3600000);
+      if ((zoneSig && sig !== zoneSig) || hour !== hourAt) { availSoon(); if (hour !== hourAt) sumSoon(); }
+      zoneSig = sig; hourAt = hour;
+    });
     const ticker = every(100, () => tickRuns(el));
     const offDrop = onDropChange(() => view.refresh());
 
@@ -433,9 +448,22 @@ registerView({
     sync();
     return {
       update(nr) { r = nr; sync(); view.refresh(); },
-      unmount() { dead = true; feed.stop(); slow(); slower(); ticker(); offDrop(); view.unmount(); },
+      unmount() { dead = true; feed.stop(); offStatus(); sumSoon.cancel(); availSoon.cancel(); ticker(); offDrop(); view.unmount(); },
     };
   },
 });
+
+// throttle(fn, ms) -> run(): fn at once, then at most once every ms (a call
+// in between runs once at the end of the wait); run.cancel() drops it.
+function throttle(fn, ms) {
+  let last = 0, t = 0;
+  const run = () => {
+    const wait = last + ms - Date.now();
+    if (wait <= 0) { last = Date.now(); fn(); return; }
+    if (!t) t = setTimeout(() => { t = 0; last = Date.now(); fn(); }, wait);
+  };
+  run.cancel = () => { clearTimeout(t); t = 0; };
+  return run;
+}
 
 function nameOf(st, id) { const n = viewNodes(st).find(x => x.id === id); return n ? n.hostname || n.id : id; }

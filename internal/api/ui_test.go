@@ -224,10 +224,10 @@ func TestUIWritesCarrySourceAndActor(t *testing.T) {
 // Live data comes over the WebSocket only: no view polls on a timer. The two
 // intervals that exist are the one-second clock tick of the store (it redraws
 // "38 min ago", it fetches nothing) and the watchdog of the live channel;
-// and in the new shell the request feed of next/core/requests.js: the server
-// has no push topic for the request log yet, so the Overview polls it there
-// (and its summary and availability reads and its 100 ms run clock use that
-// module's every()). It goes when the topic exists.
+// and in the new shell next/core/requests.js: its fallback poll of the
+// request log, which runs only while the live channel (topic "requests") is
+// down, and every(), the 100 ms clock of the running rows' length, which
+// reads nothing. The Overview's totals and strips follow live messages.
 func TestUIHasNoPollingTimer(t *testing.T) {
 	allowed := map[string]bool{"core/store.js": true, "core/live.js": true, uiNextDir + "core/store.js": true, uiNextDir + "core/live.js": true,
 		uiNextDir + "core/requests.js": true}

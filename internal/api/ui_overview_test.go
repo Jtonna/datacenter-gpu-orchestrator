@@ -221,4 +221,18 @@ func TestUINextOverviewRequestsTopic(t *testing.T) {
 				"reason": "cut", "message": "pushed failure", "started_at": ms(-4 * time.Second), "ended_at": ms(-time.Second), "duration_ms": 3000, "tokens_out": 800})}}},
 			"expect": []string{"3.0 s", "800"}, "has": []string{"tr.fail", "span[title^='Failed:']"}, "none": []string{"[data-run-start]"}},
 	}})
+
+	// a filtered page is read once and the topic is laid over it: under
+	// ?status=running a row that ends leaves, one that starts arrives
+	running := ovRequests(now)[1] // id 15, running
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": ovFetch(now, []any{running}, true), "cases": []any{
+		map[string]any{"name": "topic: a filtered page follows the frames", "route": "#/requests?status=running", "status": st,
+			"ws": []any{
+				map[string]any{"type": "hello", "data": map[string]any{"topics": []any{"status", "requests"}}},
+				map[string]any{"type": "requests", "data": map[string]any{"kind": "snapshot", "on": true, "requests": []any{running}}},
+				map[string]any{"type": "requests", "data": map[string]any{"kind": "ended", "request": pushed(15, "done", map[string]any{"profile": "alpha", "started_at": ms(-9 * time.Second), "ended_at": ms(-time.Second), "duration_ms": 8000})}},
+				map[string]any{"type": "requests", "data": map[string]any{"kind": "started", "request": pushed(42, "running", map[string]any{"live": true, "started_at": ms(-time.Second)})}},
+			},
+			"expect": []string{"pushed-model"}, "none": []string{"tr[data-req='15']"}, "has": []string{"tr[data-req='42']"}},
+	}})
 }
