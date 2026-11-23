@@ -58,6 +58,7 @@ func (s *Server) agentFacts(st *scheduler.Status) []pool.NodeFacts {
 	facts := s.opts.Pool.Facts()
 	s.logFacts(facts)           // CR-10: what the log route counted per node
 	reservationFacts(facts, st) // reserve.go: what is reserved on each node
+	s.zoneFacts(facts, st)      // zonefacts.go: role, share, set-aside, who switched it off, free at
 	return facts
 }
 
@@ -80,6 +81,7 @@ func (s *Server) handleNodeFeed(w http.ResponseWriter, r *http.Request) {
 				l.RunningWhileExcluded = &on[0]
 			}
 		}
+		l.ZoneFacts = s.zoneFactsOf(l.ID, stp, false, l.ExcludedBy) // zonefacts.go
 		nodes = append(nodes, l)
 	}
 	b, err := json.Marshal(nodes)
@@ -98,7 +100,7 @@ func (s *Server) handleNodeFeed(w http.ResponseWriter, r *http.Request) {
 // ageKey: a figure that changes with the passing of time alone.
 func ageKey(k string) bool {
 	return strings.HasSuffix(k, "_age_s") || strings.HasSuffix(k, "_ago_s") || k == "age_ms" || strings.HasSuffix(k, "_age_ms") ||
-		k == "uptime_s" || k == "host_uptime_s"
+		k == "uptime_s" || k == "host_uptime_s" || k == "free_in_s"
 }
 
 // stripAges removes the age figures from a decoded JSON value, in place.

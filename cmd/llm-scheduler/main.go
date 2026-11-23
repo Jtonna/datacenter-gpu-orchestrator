@@ -49,6 +49,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/release"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/usage"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -346,6 +347,10 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 	defer hist.Close()
 	histAt.Store(hist)
 	hist.Record(startedEvent(cfg, version, time.Now()))
+	// The usage history (usage.db beside scheduler.db): optional in every
+	// sense, it never fails the start. Closed on return, after the API.
+	usageStore := usage.Open(usage.Options{Dir: cfg.DataDir, Logger: log})
+	defer usageStore.Close()
 
 	so := scheduler.Options{
 		View:     view,
@@ -426,6 +431,7 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 		ao.System.Programs = pl.ReleaseStatus
 	}
 	ao.Logs = logRelay
+	ao.Usage = usageStore // the availability sampler records into it
 	apiSrv = api.New(cfg, sched, ao)
 	started.Store(true)
 	// MCP at /mcp on the same port; its tools run in-process through apiSrv (design 9.5).

@@ -249,6 +249,11 @@ func allTools() []*tool {
 			nil, "GET", "/api/history", "since", "until", "type", "severity", "node", "profile", "session_id", "q", "limit", "order"),
 		rd("get_history_summary", "Aggregate the event history over a time range: counts by type and severity, load statistics per profile, per-node incidents and every error event.", P{
 			"since": i("Range start, unix milliseconds."), "until": i("Range end, unix milliseconds.")}, nil, "GET", "/api/history/summary", "since", "until"),
+		rd("get_availability", "Per machine, hour by hour (or per UTC day), how long it was free, in use (with how busy: in flight over parallel slots, busy_level 1 to 4), loading, down (lost or set aside), switched off (paused, excluded or removed) or unknown (Potluck was not running or not yet sampling), with its uptime (reachable over known time) and history_begins_at. Default: every machine, the last 24 hours, by hour.", P{
+			"node": s("A machine id or name (default every machine)."), "group": s("A zone group (not available yet: answered 501)."),
+			"from": s("Start: unix ms, RFC 3339, or a span back from now such as 24h or 7d (default 24 hours before to)."), "to": s("End, the same forms (default now)."),
+			"step": en("Cell size.", "hour", "day")},
+			nil, "GET", "/api/nodes/availability", "node", "group", "from", "to", "step"),
 		rd("query_logs", "Search the central log store (CR-10) with a LogsQL query: Potluck's own log (source:=scheduler), the output of the programs it starts (source:=host), each agent's log, launch output and machine journal (source:=agent, launch, journal). Fields: node_id, node_name, source, profile, launch_id, level, unit, _msg, _time. Examples: node_id:=\"02:00:00:00:00:01\" level:=error; profile:=\"gemma-4-12b\" _time:1h. Answers JSON lines, newest last; answers 404 when central logging is off.", P{
 			"query": s("A LogsQL query. Add a _time filter (for example _time:15m) to keep it fast."), "limit": i("Maximum lines (100 when left out here; the REST route allows at most 10000)."),
 			"start": s("Start: RFC 3339, Unix seconds, or a span back from now such as 1h."), "end": s("End, same forms as start.")},

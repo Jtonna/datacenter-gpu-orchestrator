@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/availability"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgstore"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
@@ -32,6 +33,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/pool"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/proxy"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/usage"
 )
 
 // DefaultMaxQueuedBodyBytes is the default Options.MaxQueuedBodyBytes.
@@ -83,6 +85,9 @@ type Options struct {
 	// Logs is the pass-through in front of the log store (CR-10, logs.go);
 	// nil means central logging is not there and its routes answer 404.
 	Logs *logrelay.Relay
+	// Usage is the usage history (usage.db); nil means it is not kept. The
+	// availability sampler runs when it is set (availability.go).
+	Usage *usage.Store
 
 	statusSource func(ctx context.Context) (any, error) // tests replace the status the hub sends
 	modelFiles   func() []ModelFile                     // the dev harness replaces the models directory scan
@@ -133,6 +138,8 @@ type Server struct {
 	aliasMu   sync.Mutex
 	aliasSeen map[string]time.Time
 	feed      feedSeq // the node feed's change counter (feed.go)
+	// avail is the availability sampler (availability.go); nil without a usage store.
+	avail *availability.Sampler
 }
 
 // New builds the API for a scheduler (whose Run is started by the caller)
@@ -167,6 +174,7 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 	s.startCatalog()
 	s.mux = s.routes()
 	s.startAudit()
+	s.startAvailability() // availability.go
 	if o.Audit != nil {
 		s.SetAuditHook(s.recorderHook(o.Audit)) // benchmark changes and runs are audited too (section bench)
 	}
@@ -248,6 +256,8 @@ func (s *Server) routes() *http.ServeMux {
 	m.HandleFunc("GET /api/models/{key...}", s.handleModelDetail) // and GET /api/models/{key}/icon
 	m.HandleFunc("PUT /api/models/{key...}", s.handleIconPut)     // only /api/models/{key}/icon
 	m.HandleFunc("DELETE /api/models/{key...}", s.handleIconDelete)
+	// GET /api/nodes/availability (availability.go)
+	s.availabilityRoutes(m)
 	s.agentRoutes(m) // /api/agents, /api/mcp/tools (agents.go)
 	s.nodeRoutes(m)  // potluck-agent's /api/pool/..., /api/nodes/{id}/... (nodes.go)
 	s.logRoutes(m)   // central logging: /api/pool/nodes/{id}/logs, /api/logs (logs.go)

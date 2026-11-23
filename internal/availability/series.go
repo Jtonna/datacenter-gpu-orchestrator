@@ -42,6 +42,21 @@ func (s Stamp) MarshalJSON() ([]byte, error) {
 	return json.Marshal(t.UTC().Format("2006-01-02T15:04:05.000Z07:00"))
 }
 
+// UnmarshalJSON reads what MarshalJSON writes (clients in Go, tests).
+func (s *Stamp) UnmarshalJSON(b []byte) error {
+	var v *string
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	if v == nil {
+		*s = Stamp{}
+		return nil
+	}
+	t, err := time.Parse(time.RFC3339Nano, *v)
+	*s = Stamp(t)
+	return err
+}
+
 // Seconds is a cell's time in each state, in seconds. They add up to the
 // cell's span (up to now for the current cell).
 type Seconds struct {
@@ -167,7 +182,7 @@ func Read(ctx context.Context, store *usage.Store, smp *Sampler, q Query, now ti
 		return out, err
 	}
 	for _, p := range smp.Pending() {
-		if !p.Hour.Before(from) && p.Hour.Before(to) {
+		if store.On() && !p.Hour.Before(from) && p.Hour.Before(to) { // an off store records nothing: all unknown
 			rows = append(rows, p)
 		}
 	}

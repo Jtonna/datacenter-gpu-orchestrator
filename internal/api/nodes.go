@@ -228,6 +228,7 @@ func (s *Server) nodePause(w http.ResponseWriter, r *http.Request, pause bool) {
 	s.log.Info("node "+action+"d", "node", id, "comment", c)
 	s.opts.Pool.Record(id, "Node "+id+" was "+action+"d: "+c, map[string]any{"action": action, "comment": c})
 	aid := s.auditNode(r, action, id, c, map[string]any{"paused": prev}, map[string]any{"paused": pause})
+	s.forgetPauseActor(id) // zonefacts.go
 	writeJSON(w, http.StatusOK, map[string]any{"node": id, "paused": pause, "audit_id": aid})
 }
 
