@@ -132,13 +132,15 @@ func (x *suiteExec) makeProfile(ctx context.Context, b *benchspec.Benchmark) err
 	if !ok {
 		return errors.New("this scheduler API cannot make profiles from inputs")
 	}
-	cons, err := pm.Consoles(ctx)
-	if err != nil {
-		return fmt.Errorf("list the consoles: %w", err)
-	}
-	nodes, err := placeOn(b.Applied.Place(), cons)
-	if err != nil {
-		return err
+	var nodes []string
+	if p := b.Applied.Place(); p.Mode != benchspec.PlaceAuto {
+		cons, err := pm.Consoles(ctx)
+		if err != nil {
+			return fmt.Errorf("list the consoles: %w", err)
+		}
+		if nodes, err = placeOn(p, cons); err != nil {
+			return err
+		}
 	}
 	if err := pm.EnsureProfile(ctx, b.Profile, ProfileSpecOf(*b.Applied, nodes)); err != nil {
 		return fmt.Errorf("make the profile %s: %w", b.Profile, err)

@@ -353,7 +353,11 @@ func (s *Server) listSuites(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, m)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"suites": out})
+	key := "suites"
+	if strings.HasPrefix(r.URL.Path, "/api/bench/groups") {
+		key = "groups"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{key: out})
 }
 
 func (s *Server) getSuite(w http.ResponseWriter, r *http.Request) {
@@ -383,7 +387,7 @@ func (s *Server) parseSuite(w http.ResponseWriter, r *http.Request, wantID strin
 			return nil, false
 		}
 	}
-	if err := su.Validate(s.profileOK, s.lookup); err != nil {
+	if err := su.ValidateGroup(s.profileOK, s.lookup, s.groupLookup); err != nil {
 		apiErr(w, http.StatusUnprocessableEntity, "%v", err)
 		return nil, false
 	}
@@ -437,6 +441,10 @@ func (s *Server) putSuite(w http.ResponseWriter, r *http.Request) {
 func (s *Server) deleteSuite(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	old, _ := s.opts.BenchStore.GetSuite(id)
+	if in, _ := s.opts.BenchStore.GroupsUsing(id); len(in) > 0 {
+		apiErr(w, http.StatusConflict, "group %q is used by the groups %v: remove it from them first", id, in)
+		return
+	}
 	if err := s.opts.BenchStore.DeleteSuite(id); err != nil {
 		s.storeErr(w, err)
 		return

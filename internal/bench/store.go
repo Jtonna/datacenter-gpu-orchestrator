@@ -622,6 +622,24 @@ func (s *Store) SuitesUsing(id string) ([]string, error) {
 	return out, nil
 }
 
+// GroupsUsing lists the stored groups (suites) that contain group id.
+func (s *Store) GroupsUsing(id string) ([]string, error) {
+	all, err := s.ListSuites()
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, su := range all {
+		for _, it := range su.Spec.Benchmarks {
+			if it.Group == id {
+				out = append(out, su.Spec.ID)
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
 // BenchmarksUsing lists the stored parallel steps that name benchmark id.
 func (s *Store) BenchmarksUsing(id string) ([]string, error) {
 	all, err := s.ListBenchmarks()

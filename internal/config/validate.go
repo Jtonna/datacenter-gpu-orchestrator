@@ -428,13 +428,21 @@ func (c *Config) validateBench(add func(string, ...any)) {
 		}
 	}
 	look := func(id string) (*benchspec.Benchmark, bool) { bm, ok := byID[id]; return bm, ok }
+	groups := func(id string) (*benchspec.Suite, bool) {
+		for _, s := range b.Suites {
+			if s != nil && s.ID == id {
+				return s, true
+			}
+		}
+		return nil, false
+	}
 	seen := map[string]bool{}
 	for i, s := range b.Suites {
 		if s == nil {
 			add("bench.suites[%d]: empty entry", i)
 			continue
 		}
-		if err := s.Validate(profileOK, look); err != nil {
+		if err := s.ValidateGroup(profileOK, look, groups); err != nil {
 			add("bench.suites[%d] (%s): %v", i, s.ID, err)
 		}
 		if seen[s.ID] {
