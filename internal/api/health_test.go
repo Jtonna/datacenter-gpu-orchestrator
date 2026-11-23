@@ -488,47 +488,111 @@ func pushEnv(t *testing.T) (*env, *atomic.Int64, *history.Store) {
 	return e, used, hist
 }
 
-// Five still minutes (a tick every 2 s, the clock moving with it, the disk
-// read every 30 s with its checked_at and free bytes moving by less than the
-// sentence shows): the subscribe frame, then one frame per minute at most
-// for the Scheduler row's "up N min" (the mockup's sentence keeps the
-// uptime): at most 6 frames.
-func TestHealth_PushOnlyWhatAPersonReads(t *testing.T) {
-	e, used, _ := pushEnv(t)
+// subscribeHealth dials, subscribes to the health topic and takes the
+// subscribe frame.
+func subscribeHealth(t *testing.T, e *env) *wsc {
+	t.Helper()
 	c := dialWS(t, e, nil)
 	c.until(t, TopicHello, 3*time.Second)
 	c.send(t, map[string]any{"type": "subscribe", "topics": []string{TopicHealth}})
 	if f := healthFrames(c, 300*time.Millisecond); len(f) != 1 {
 		t.Fatalf("on subscribe: %d frames", len(f))
 	}
-	for i := 1; i <= 150; i++ {
+	return c
+}
+
+// stillMinute evaluates the push every 2 s of clock for 60 s, the disk read
+// every 30 s with its free bytes moving by less than the sentence shows.
+func stillMinute(e *env, used *atomic.Int64) {
+	for i := 1; i <= 30; i++ {
 		e.advance(2 * time.Second)
 		if i%15 == 0 {
-			used.Add(1_000_000) // 1 MB: the sentence shows 0.1 GB steps
+			used.Add(1_000_000)
 			e.api.disks.Pass(context.Background())
 		}
 		e.api.healthTick(context.Background())
 	}
-	f := healthFrames(c, 300*time.Millisecond)
-	t.Logf("%d frames after the subscribe frame in five still minutes", len(f))
-	if len(f) > 5 {
-		t.Fatalf("%d frames in five still minutes, want at most 5 after the first", len(f))
-	}
-	for _, s := range f {
-		for _, r := range s.Rows {
-			if r.ID == "scheduler" && !strings.Contains(r.Text, " min") {
-				t.Errorf("a frame that is not the uptime minute: %q", r.Text)
-			}
-		}
-	}
+}
 
-	// a row changing state: exactly one frame
+// Bar 1: 0 frames in 60 s idle, the minute in which the uptime goes from
+// "under 1 min" to "1 min" included (the sentence carries it, the frame
+// comparison does not), and none in the next four minutes either.
+func TestHealth_Frames_ZeroIn60sIdle(t *testing.T) {
+	e, used, _ := pushEnv(t)
+	c := subscribeHealth(t, e)
+	e.advance(30 * time.Second)
+	stillMinute(e, used)
+	if f := healthFrames(c, 300*time.Millisecond); len(f) != 0 {
+		t.Fatalf("%d frames in 60 s idle", len(f))
+	}
+	var sum HealthSummary
+	json.Unmarshal([]byte(body(t, e.get("/api/health"))), &sum)
+	if txt := rowOf(sum, "scheduler").Text; !strings.HasSuffix(txt, " · up 1 min") {
+		t.Fatalf("the route's sentence keeps the uptime: %q", txt)
+	}
+	for range 4 {
+		stillMinute(e, used)
+	}
+	if f := healthFrames(c, 300*time.Millisecond); len(f) != 0 {
+		t.Fatalf("%d frames in four more idle minutes", len(f))
+	}
+}
+
+// Bar 2: 0 frames in 60 s with a model loaded and no request.
+func TestHealth_Frames_ZeroIn60sWithModelLoaded(t *testing.T) {
+	e, used, _ := pushEnv(t)
+	if r := e.post("/v1/chat/completions", `{"model":"alpha","messages":[{"role":"user","content":"hi"}]}`); r.StatusCode != 200 {
+		t.Fatalf("load: %d %s", r.StatusCode, body(t, r))
+	} else {
+		r.Body.Close()
+	}
+	eventually(t, "the model loaded", func() bool {
+		st, err := e.sched.Status(context.Background())
+		return err == nil && len(st.Instances) == 1 && st.Instances[0].State == "ready"
+	})
+	c := subscribeHealth(t, e)
+	stillMinute(e, used)
+	if f := healthFrames(c, 300*time.Millisecond); len(f) != 0 {
+		t.Fatalf("%d frames in 60 s with a model loaded", len(f))
+	}
+}
+
+// Bar 3: exactly 1 frame per real change: a row changing state, then two
+// changes seen in one evaluation (a failed benchmark run: the Runs facts
+// and a recent line), each followed by more evaluations. A second client's
+// subscribe sends its frame to that client only.
+func TestHealth_Frames_OnePerRealChange(t *testing.T) {
+	e, used, hist := pushEnv(t)
+	c := subscribeHealth(t, e)
+
 	used.Store(230 * gb)
 	e.api.disks.Pass(context.Background())
-	e.api.healthTick(context.Background())
-	e.api.healthTick(context.Background())
+	for range 3 {
+		e.api.healthTick(context.Background())
+	}
 	if f := healthFrames(c, 300*time.Millisecond); len(f) != 1 || rowOf(f[0], "storage").State != HealthAttention {
 		t.Fatalf("a storage change: %d frames", len(f))
+	}
+
+	hist.Record(history.Event{Ts: e.api.opts.Now().UnixMilli(), Type: history.TBenchRunFinished, Severity: history.Error,
+		Nodes: []string{}, Data: map[string]any{"state": "failed", "bench_run": "r-9"}, Summary: "x."})
+	e.advance(11 * time.Second) // past the Runs cache
+	for range 3 {
+		e.api.healthTick(context.Background())
+	}
+	f := healthFrames(c, 300*time.Millisecond)
+	if len(f) != 1 || len(f[0].Recent) != 1 || rowOf(f[0], "runs").Facts["failed_bench_runs"] != 1.0 {
+		t.Fatalf("two changes in one evaluation: %d frames %+v", len(f), f)
+	}
+
+	c2 := dialWS(t, e, nil)
+	c2.until(t, TopicHello, 3*time.Second)
+	c2.send(t, map[string]any{"type": "subscribe", "topics": []string{TopicHealth}})
+	if f := healthFrames(c2, 300*time.Millisecond); len(f) != 1 {
+		t.Fatalf("second subscriber: %d frames", len(f))
+	}
+	if f := healthFrames(c, 100*time.Millisecond); len(f) != 0 {
+		t.Fatalf("the first client got %d frames from the second's subscribe", len(f))
 	}
 }
 
@@ -539,37 +603,6 @@ func rowOf(s HealthSummary, id string) HealthRow {
 		}
 	}
 	return HealthRow{}
-}
-
-// Two changes seen in one evaluation (a failed benchmark run: the Runs row
-// and the recent list) make one frame; a second client's subscribe sends
-// the summary to that client only.
-func TestHealth_PushTwoChangesOneFrame(t *testing.T) {
-	e, _, hist := pushEnv(t)
-	c := dialWS(t, e, nil)
-	c.until(t, TopicHello, 3*time.Second)
-	c.send(t, map[string]any{"type": "subscribe", "topics": []string{TopicHealth}})
-	if f := healthFrames(c, 300*time.Millisecond); len(f) != 1 {
-		t.Fatalf("on subscribe: %d frames", len(f))
-	}
-	hist.Record(history.Event{Ts: e.api.opts.Now().UnixMilli(), Type: history.TBenchRunFinished, Severity: history.Error,
-		Nodes: []string{}, Data: map[string]any{"state": "failed", "bench_run": "r-9"}, Summary: "x."})
-	e.advance(11 * time.Second) // past the Runs cache
-	e.api.healthTick(context.Background())
-	e.api.healthTick(context.Background())
-	f := healthFrames(c, 300*time.Millisecond)
-	if len(f) != 1 || rowOf(f[0], "runs").Text != "Request log is off" || len(f[0].Recent) != 1 {
-		t.Fatalf("two changes: %d frames %+v", len(f), f)
-	}
-	c2 := dialWS(t, e, nil)
-	c2.until(t, TopicHello, 3*time.Second)
-	c2.send(t, map[string]any{"type": "subscribe", "topics": []string{TopicHealth}})
-	if f := healthFrames(c2, 300*time.Millisecond); len(f) != 1 {
-		t.Fatalf("second subscriber: %d frames", len(f))
-	}
-	if f := healthFrames(c, 100*time.Millisecond); len(f) != 0 {
-		t.Fatalf("the first client got %d frames from the second's subscribe", len(f))
-	}
 }
 
 // With no subscriber the summary is never evaluated.
@@ -592,5 +625,28 @@ func TestHealth_NoSubscriberNoWork(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if m := e.api.health.evals.Load(); m != n {
 		t.Fatalf("%d evaluations after the client left the topic", m-n)
+	}
+}
+
+// A wait that only grows ("longest 1 min 40 s" to "1 min 42 s") and the
+// uptime alone are not changes for the push; the count waiting is.
+func TestHealth_TickingSentencePartsAreNotChanges(t *testing.T) {
+	q := func(age time.Duration, n int) *scheduler.Status {
+		return &scheduler.Status{Queue: []scheduler.EntryStatus{{Profile: "p", Waiters: n, Age: age}}}
+	}
+	sig := func(r HealthRow) string { return healthSig(HealthSummary{Rows: []HealthRow{r}}) }
+	a, b := judgeQueue(q(100*time.Second, 1), 600*time.Second), judgeQueue(q(102*time.Second, 1), 600*time.Second)
+	if a.Text == b.Text || sig(a) != sig(b) {
+		t.Fatalf("a longer wait: %q / %q", a.Text, b.Text)
+	}
+	if sig(a) == sig(judgeQueue(q(100*time.Second, 2), 600*time.Second)) {
+		t.Fatal("a second waiter is not a change")
+	}
+	in := schedIn{version: "v1", uptime: 59 * time.Second, statusFresh: true, now: time.Unix(1_800_000_000, 0)}
+	x := judgeScheduler(in)
+	in.uptime = 61 * time.Second
+	y := judgeScheduler(in)
+	if x.Text != "Running · release v1 · up under 1 min" || y.Text != "Running · release v1 · up 1 min" || sig(x) != sig(y) {
+		t.Fatalf("uptime: %q / %q", x.Text, y.Text)
 	}
 }

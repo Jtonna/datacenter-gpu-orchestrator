@@ -75,6 +75,10 @@ type HealthRow struct {
 	Count int64          `json:"count"`
 	Link  string         `json:"link"`
 	Facts map[string]any `json:"facts"`
+
+	// sigText is Text without the parts that move by themselves (the
+	// Scheduler row's uptime), for the push's comparison; empty: Text.
+	sigText string
 }
 
 // HealthEvent is one line of "Last 2 hours".
@@ -220,8 +224,9 @@ func (s *Server) healthTick(ctx context.Context) {
 
 // healthSig is what a person reads in the summary: the heart, each row's
 // state, sentence, count and link, and the recent lines. Facts that move by
-// themselves (uptime_s, loop steps, checked_at, free bytes, updated_at) are
-// left out; they reach a client with the next frame that is sent.
+// themselves (uptime_s, loop steps, checked_at, free bytes, updated_at) and
+// the uptime at the end of the Scheduler sentence are left out; they reach a
+// client with the next frame that is sent.
 func healthSig(sum HealthSummary) string {
 	type row struct {
 		ID, State, Text, Link string
@@ -234,7 +239,11 @@ func healthSig(sum HealthSummary) string {
 		Recent                 []HealthEvent
 	}{State: sum.State, Color: sum.Color, Sentence: sum.Sentence, Issues: sum.Issues, Recent: sum.Recent}
 	for _, r := range sum.Rows {
-		v.Rows = append(v.Rows, row{r.ID, r.State, r.Text, r.Link, r.Count})
+		text := r.Text
+		if r.sigText != "" {
+			text = r.sigText
+		}
+		v.Rows = append(v.Rows, row{r.ID, r.State, text, r.Link, r.Count})
 	}
 	b, _ := json.Marshal(v)
 	return string(b)
@@ -541,16 +550,19 @@ func judgeScheduler(in schedIn) HealthRow {
 	if in.writesNeedForce {
 		warnings = append(warnings, "Stored settings from a newer release")
 	}
-	up := "up " + upText(in.uptime)
 	row.Count = int64(len(problems) + len(warnings))
 	switch {
 	case len(problems) > 0:
-		row.State, row.Text = HealthProblem, strings.Join(append(problems, warnings...), " · ")+" · "+up
+		row.State, row.sigText = HealthProblem, strings.Join(append(problems, warnings...), " · ")
 	case len(warnings) > 0:
-		row.State, row.Text = HealthAttention, strings.Join(warnings, " · ")+" · "+up
+		row.State, row.sigText = HealthAttention, strings.Join(warnings, " · ")
 	default:
-		row.State, row.Text = HealthOK, "Running · release "+orText(in.version, "unknown")+" · "+up
+		row.State, row.sigText = HealthOK, "Running · release "+orText(in.version, "unknown")
 	}
+	// The sentence ends with the uptime, as the mockup shows it; the push
+	// compares the sentence without it (sigText), so the uptime alone never
+	// sends a frame (it is also facts.uptime_s).
+	row.Text = row.sigText + " · up " + upText(in.uptime)
 	return row
 }
 
@@ -686,7 +698,9 @@ func judgeQueue(st *scheduler.Status, timeout time.Duration) HealthRow {
 		row.State, row.Text = HealthOK, "Nothing waiting"
 		return row
 	}
-	row.Text = fmt.Sprintf("%d waiting · longest %s", waiting, spanText(longest))
+	// "longest" grows by itself: the push compares the count and the state
+	row.sigText = fmt.Sprintf("%d waiting", waiting)
+	row.Text = row.sigText + " · longest " + spanText(longest)
 	switch {
 	case timeout > 0 && longest*10 >= timeout*9:
 		row.State = HealthProblem
