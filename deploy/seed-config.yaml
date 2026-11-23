@@ -26,6 +26,7 @@ history_dir: /var/lib/llm-scheduler/history   # safety and lifecycle event histo
 # history_memory_events: 5000      # newest events held in memory for queries (reloaded from the files at start)
 # usage_request_days: 90           # the request log (usage.db beside scheduler.db in data_dir) keeps each request this many days
 # usage_hourly_days: 396           # and its hourly totals this many days (13 months); daily totals are kept for ever
+# requests_live_timings: false    # ask llama-server for timings on every streamed event, so running requests show tokens in and the prefill rate live
 data_dir: /var/lib/llm-scheduler/data   # scheduler database (scheduler.db) for benchmarks and their results (compose mounts POTLUCK_ROOT/data here). Empty = benchmark feature off
 # ws_max_clients: 32               # most concurrent /ws (WebSocket) clients; the next one is refused with 503. /ws allows same-origin and private-LAN origins only
 

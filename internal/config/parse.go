@@ -108,10 +108,11 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 		HistoryDir:   strings.TrimSpace(raw.HistoryDir), HistoryMaxFileMiB: raw.HistoryMaxFileMiB, HistoryKeepFiles: raw.HistoryKeepFiles,
 		HistoryMemoryEvents: raw.HistoryMemoryEvents,
 		UsageRequestDays:    raw.UsageRequestDays, UsageHourlyDays: raw.UsageHourlyDays,
-		LocalProbeCmd: raw.LocalProbeCmd,
-		LocalNode:     strings.TrimSpace(raw.LocalNode),
-		DataDir:       strings.TrimSpace(raw.DataDir),
-		WSMaxClients:  raw.WSMaxClients,
+		RequestsLiveTimings: raw.RequestsLiveTimings,
+		LocalProbeCmd:       raw.LocalProbeCmd,
+		LocalNode:           strings.TrimSpace(raw.LocalNode),
+		DataDir:             strings.TrimSpace(raw.DataDir),
+		WSMaxClients:        raw.WSMaxClients,
 		Bench: Bench{RegressLoadPct: raw.Bench.RegressLoadPct, RegressDecodePct: raw.Bench.RegressDecodePct,
 			MaxRunMinutes: raw.Bench.MaxRunMinutes, RetentionDays: DefaultBenchRetentionDays, Benchmarks: raw.Bench.Benchmarks, Suites: raw.Bench.Suites},
 		Defaults:      raw.Defaults.value(),
@@ -194,6 +195,7 @@ type rawConfig struct {
 	HistoryMemoryEvents int                         `yaml:"history_memory_events" json:"history_memory_events,omitempty"`
 	UsageRequestDays    int                         `yaml:"usage_request_days" json:"usage_request_days,omitempty"`
 	UsageHourlyDays     int                         `yaml:"usage_hourly_days" json:"usage_hourly_days,omitempty"`
+	RequestsLiveTimings bool                        `yaml:"requests_live_timings" json:"requests_live_timings,omitempty"`
 	LocalProbeCmd       string                      `yaml:"local_probe_cmd" json:"local_probe_cmd,omitempty"`
 	LocalNode           string                      `yaml:"local_node" json:"local_node,omitempty"`
 	DataDir             string                      `yaml:"data_dir" json:"data_dir,omitempty"`

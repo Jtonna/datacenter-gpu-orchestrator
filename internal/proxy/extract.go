@@ -71,6 +71,54 @@ type Extracted struct {
 
 	rb       *replayBody // Body, when the replay can still be pre-filled
 	buffered int64
+	data     []byte // a JSON body, whole (nil for multipart)
+	rewrote  bool
+}
+
+// AddTimingsPerToken asks llama-server for timings on every streamed event:
+// a JSON object body with "stream": true and no "timings_per_token" key of
+// its own gets "timings_per_token": true inserted after its opening brace;
+// the rest of the body is left byte for byte. Anything else (no stream, the
+// key already set, not a JSON object, multipart) is left untouched. It
+// reports whether the body was rewritten; call it before Body is read.
+func (e *Extracted) AddTimingsPerToken() bool {
+	if e.data == nil || e.rewrote {
+		return false
+	}
+	out, ok := addTimingsPerToken(e.data)
+	if !ok {
+		return false
+	}
+	e.data, e.rewrote = out, true
+	e.Body = io.NopCloser(bytes.NewReader(out))
+	e.buffered = int64(len(out))
+	return true
+}
+
+// Rewritten reports whether the body differs from the client's (its
+// length then is BufferedBytes).
+func (e *Extracted) Rewritten() bool { return e.rewrote }
+
+func addTimingsPerToken(body []byte) ([]byte, bool) {
+	trimmed := bytes.TrimLeft(body, " \t\r\n")
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return nil, false
+	}
+	var top map[string]json.RawMessage
+	if json.Unmarshal(body, &top) != nil {
+		return nil, false
+	}
+	if _, set := top["timings_per_token"]; set {
+		return nil, false
+	}
+	if stream, ok := top["stream"]; !ok || string(bytes.TrimSpace(stream)) != "true" {
+		return nil, false
+	}
+	at := len(body) - len(trimmed) + 1
+	out := make([]byte, 0, len(body)+26)
+	out = append(out, body[:at]...)
+	out = append(out, `"timings_per_token":true,`...)
+	return append(out, body[at:]...), true
 }
 
 // Prefetch keeps reading the unread remainder of a multipart body into the
@@ -152,7 +200,7 @@ func extractJSON(r *http.Request, lim Limits) (*Extracted, error) {
 	if !ok || name == "" {
 		return nil, missingModel()
 	}
-	return &Extracted{Model: name, Body: io.NopCloser(bytes.NewReader(data)), buffered: int64(len(data))}, nil
+	return &Extracted{Model: name, Body: io.NopCloser(bytes.NewReader(data)), buffered: int64(len(data)), data: data}, nil
 }
 
 // spill is a write-only buffer that keeps a prefix in memory and puts the

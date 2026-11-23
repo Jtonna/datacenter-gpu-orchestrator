@@ -123,6 +123,7 @@ func buildSettingFields() []Field {
 		s("logs_push_url", "logs", "Empty: senders push logs to Potluck's own route. Set (http:// or https://): senders are told this address instead.", func(c *Config) *string { return &c.Logs.PushURL }),
 		b("logs_client_intake", "logs", "Let clients push log lines to POST /api/logs. Off: that route and GET /api/logs/config answer 404.", func(c *Config) *bool { return &c.Logs.ClientIntake }),
 		i("ws_max_clients", "api", "Most concurrent live (WebSocket) clients.", "clients", func(c *Config) *int { return &c.WSMaxClients }, num(1), num(MaxWSMaxClients)),
+		b("requests_live_timings", "api", "Ask llama-server for timings on every streamed event (\"timings_per_token\": true) for /v1 chat and completion streams that do not set it themselves, so a running request shows tokens in and the prefill rate live. Benchmark requests are left as sent. Adds a \"timings\" key to each event the client receives.", func(c *Config) *bool { return &c.RequestsLiveTimings }),
 		b("bench_enabled", "bench", "Turn the benchmark feature on or off.", func(c *Config) *bool { return &c.Bench.EnabledSetting }),
 		f("bench_regress_load_pct", "bench", "A load this much slower than the baseline run's is flagged as a regression.", func(c *Config) *float64 { return &c.Bench.RegressLoadPct }, num(0.001), num(1000)),
 		f("bench_regress_decode_pct", "bench", "Decode tokens per second this much lower than the baseline's is flagged as a regression.", func(c *Config) *float64 { return &c.Bench.RegressDecodePct }, num(0.001), num(100)),
