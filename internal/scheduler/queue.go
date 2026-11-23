@@ -164,6 +164,12 @@ func (c *schedCore) plan(e *entry) bool {
 	if err != nil || c.reserveGate(e.prof, res.Placement, res.Victims) != "" {
 		return false
 	}
+	// A forced profile whose node was just released waits: the refusal
+	// below must run on figures that do not lag, and nothing is evicted for
+	// a request it would then refuse (seventh review AB1).
+	if len(e.prof.ForceNodes) > 0 && c.anyJustReleased(res.Placement) {
+		return false
+	}
 	// A forced profile that could not fit its nodes even with nothing loaded
 	// on them is refused now, before any victim is stopped (forcedfit.go).
 	if ferr := c.forcedRefusalBeforeEvict(e.prof, res.Placement); ferr != nil {
@@ -301,6 +307,15 @@ func (c *schedCore) claimSettled(e *entry) bool {
 	return true
 }
 
+// claimNodes is a placement's node list for the claimed ids.
+func claimNodes(ids []core.NodeID) []core.PlacedNode {
+	out := make([]core.PlacedNode, len(ids))
+	for i, id := range ids {
+		out[i] = core.PlacedNode{ID: id}
+	}
+	return out
+}
+
 // startOnClaim is step 4: place over exactly the claimed nodes at live
 // budgets. On failure the observed free figures become the nodes' empty
 // figures and the claim is dropped.
@@ -316,7 +331,18 @@ func (c *schedCore) startOnClaim(e *entry) bool {
 		cands = append(cands, placer.FromNode(n, c.liveBudget(id, n)))
 	}
 	pl, err := placer.Place(req, cands)
-	if err == nil && c.reserveGate(e.prof, pl, nil) == "" {
+	gate := ""
+	if err == nil {
+		gate = c.reserveGate(e.prof, pl, nil)
+	}
+	// The victims' release makes the claimed nodes just released: their
+	// figures may still show the victims. Keep the claim and decide on the
+	// next figures; never refuse, drop the claim or learn an empty figure
+	// from a lagging one (seventh review AS1).
+	if c.anyJustReleased(core.Placement{Nodes: claimNodes(e.claim)}) && (err != nil || gate != "" || c.forcedFitWaits(e.prof, pl)) {
+		return true
+	}
+	if err == nil && gate == "" {
 		c.dropClaim(e) // nodes it does not use are released
 		c.deleteEntry(e)
 		c.startInstance(e.prof, pl, e.waiters, e)

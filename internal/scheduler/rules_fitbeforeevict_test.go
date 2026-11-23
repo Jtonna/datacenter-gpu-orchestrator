@@ -121,6 +121,11 @@ func TestFitFirst_AgentsCheckAfterEvictionStays(t *testing.T) {
 	h.exitChild(h.inst("qwen").iid, instanceExit(0))
 	h.step(evTick{})
 	h.advance(3 * time.Second)
+	// the node was just released: the figure may still show qwen, so the
+	// claim waits for the next figures after the window (seventh review AS1)
+	h.pending(w)
+	h.advance(30 * time.Second)
+	h.viewChanged()
 	e := h.failed(w, http.StatusServiceUnavailable, ReasonForcedDoesNotFit)
 	if strings.Contains(e.Message, "even with nothing loaded") || !strings.Contains(e.Message, "12000") {
 		t.Fatalf("message %q", e.Message)

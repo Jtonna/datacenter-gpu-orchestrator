@@ -10,6 +10,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/placer"
 )
 
@@ -575,5 +576,133 @@ func TestNeverFits_AgentsForcedFitWaitsOnAJustReleasedNode(t *testing.T) {
 	h2.viewChanged()
 	if a, ok := h2.peek(w); !ok || a.err == nil || a.err.Reason != ReasonForcedDoesNotFit {
 		t.Fatalf("a real misfit after the window: answered %v %+v", ok, a.err)
+	}
+}
+
+// AB1 (seventh review): a forced request that can never fit, made within the
+// window after an unload on one of its nodes, evicts nothing: it waits
+// while the figure may lag, then is refused before any eviction. x (4000)
+// is idle on b; "small" left a with the view still showing it; "two" is
+// forced onto a and b with a need of 2 x 19266. Both modes, both settings.
+func TestNeverFits_NoEvictionForANeverFitAfterAnUnload(t *testing.T) {
+	for _, mode := range []string{"fleet", "agents"} {
+		for _, tight := range []bool{false, true} {
+			name := fmt.Sprintf("%s tight %v", mode, tight)
+			h := inMode(newHarness(t).nodes(psNode("a", 2, 12643), psNode("b", 4, 12643)), mode)
+			if tight {
+				liveTight(h)
+			}
+			h.llama("x", 4000, func(p *core.Profile) { p.ForceNodes = []string{"b"} })
+			h.viewChanged()
+			if mode == "fleet" {
+				h.release(h.ready("x"))
+			} else {
+				h.release(h.agentReady("x"))
+			}
+			h.view.modify("b", func(n *core.Node) { n.FreeMiB = n.TotalMiB - 4500 })
+			h.advance(time.Minute)
+			unloadLagging(h, mode)
+			h.llama("two", 0, func(p *core.Profile) {
+				p.ForceNodes, p.TensorSplit, p.LoadTimeout = []string{"a", "b"}, []int{1, 1}, time.Hour
+			})
+			h.needs["two"] = NeedInfo{Need: placer.Measured(2 * 19266), FileBytes: 20 << 30}
+			if r := h.c.dryPlan("two"); r.Action == PlanEvict {
+				t.Fatalf("%s: plan evict within the window: %s", name, r.Reason)
+			}
+			w := h.request("two")
+			h.advance(5 * time.Second)
+			if len(h.of(history.TEviction)) != 0 || h.c.insts["x"] == nil || h.c.insts["x"].state != stReady {
+				t.Fatalf("%s: x was evicted for a request that cannot fit", name)
+			}
+			// the view catches up and the window ends: refused, x kept. In
+			// fleet membership with the defaults a forced placement has no
+			// fit check before its launch (design 7.3, forced_fit_check
+			// warn): x is evicted and two launched, as in 0.1.6; never an
+			// eviction followed by a refusal.
+			h.view.modify("a", func(n *core.Node) { n.FreeMiB = n.TotalMiB })
+			h.advance(30 * time.Second)
+			h.viewChanged()
+			a, ok := h.peek(w)
+			refused, evicted := ok && a.err != nil, len(h.of(history.TEviction))
+			if refused && evicted > 0 {
+				t.Fatalf("%s: x was evicted and the request refused anyway", name)
+			}
+			if mode == "fleet" && !tight {
+				if refused || h.c.insts["two"] == nil {
+					t.Fatalf("%s: want the 0.1.6 fleet path (evict, launch): answered %v %+v", name, ok, a.err)
+				}
+				continue
+			}
+			if !refused || evicted != 0 || h.c.insts["x"] == nil {
+				t.Fatalf("%s: once the figures are fresh: answered %v %+v, x %v, evictions %d", name, ok, a.err, h.c.insts["x"] != nil, evicted)
+			}
+		}
+	}
+}
+
+// AS1 (seventh review): after an eviction the claimed node is just released
+// and its figure may still show the victim. The request waits on its claim
+// (no refusal, no claim dropped, no empty figure learned from the lagging
+// view) and starts once the view catches up. Both modes, both settings.
+func TestNeverFits_StartOnClaimWaitsForAFreshFigure(t *testing.T) {
+	for _, mode := range []string{"fleet", "agents"} {
+		for _, tight := range []bool{false, true} {
+			name := fmt.Sprintf("%s tight %v", mode, tight)
+			h := inMode(newHarness(t).nodes(psNode("a", 2, 12643)), mode)
+			if tight {
+				liveTight(h)
+			}
+			h.llama("x", 6000, func(p *core.Profile) { p.ForceNodes = []string{"a"} })
+			h.viewChanged()
+			if mode == "fleet" {
+				h.release(h.ready("x"))
+			} else {
+				h.release(h.agentReady("x"))
+			}
+			h.view.modify("a", func(n *core.Node) { n.FreeMiB = n.TotalMiB - 7000 })
+			h.advance(time.Minute)
+			h.llama("mid", 0, func(p *core.Profile) { p.ForceNodes, p.LoadTimeout = []string{"a"}, time.Hour })
+			h.needs["mid"] = NeedInfo{Need: placer.Measured(9000), FileBytes: 5 << 30}
+			h.viewChanged()
+			w := h.request("mid")
+			h.advance(10 * time.Second) // x stops, the node settles; the view still shows x
+			if h.c.insts["x"] != nil {
+				t.Fatalf("%s: x was not evicted (plan %+v)", name, h.c.dryPlan("mid"))
+			}
+			if a, ok := h.peek(w); ok && a.err != nil {
+				t.Fatalf("%s: refused after the eviction on the lagging figure: %v", name, a.err)
+			}
+			if ns := h.c.nodes["a"]; ns != nil && ns.hasClaim {
+				t.Fatalf("%s: an empty figure %d was learned from the lagging view", name, ns.emptyClaim)
+			}
+			h.view.modify("a", func(n *core.Node) { n.FreeMiB = n.TotalMiB })
+			h.viewChanged()
+			h.advance(time.Second)
+			if a, ok := h.peek(w); ok && a.err != nil {
+				t.Fatalf("%s: refused once the view caught up: %v", name, a.err)
+			}
+			if h.c.insts["mid"] == nil {
+				t.Fatalf("%s: mid did not start once the view caught up (wait: %s)", name, h.waitReasonOf("mid"))
+			}
+		}
+	}
+}
+
+// AS2 (seventh review): a load cancelled in the worker phase leaves its
+// nodes just released (the workers may have held memory there).
+func TestNeverFits_ACancelledWorkerLoadLeavesTheNodeJustReleased(t *testing.T) {
+	h := inMode(newHarness(t).nodes(psNode("a", 2, 12643)), "agents")
+	h.llama("small", 6000, func(p *core.Profile) { p.ForceNodes = []string{"a"} })
+	h.viewChanged()
+	h.request("small")
+	if in := h.c.insts["small"]; in == nil || in.phase != phWorkers || !in.workers {
+		t.Fatalf("small is not in its worker phase")
+	}
+	h.step(evUnload{profile: "small", force: true})
+	if h.c.insts["small"] != nil {
+		t.Fatalf("small is still there")
+	}
+	if !h.c.justReleased("a") {
+		t.Fatalf("a is not just released after a cancelled worker load")
 	}
 }

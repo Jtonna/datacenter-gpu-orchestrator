@@ -349,6 +349,10 @@ func (c *schedCore) dryPlan(profile string) (r PlanReport) {
 	}
 	if ev := c.evictables(p, 0); len(ev) > 0 {
 		if res, err := placer.Plan(req, c.freeCandidates(p), ev); err == nil {
+			if len(p.ForceNodes) > 0 && c.anyJustReleased(res.Placement) { // as plan() (AB1)
+				r.Action, r.Reason = PlanQueue, forcedFitWaitText(res.Placement, c)
+				return r
+			}
 			if fe := c.forcedRefusalBeforeEvict(p, res.Placement); fe != nil {
 				r.Action, r.Reason, r.Placement = PlanReject, fe.Message, c.placedStatus(res.Placement)
 				return r
