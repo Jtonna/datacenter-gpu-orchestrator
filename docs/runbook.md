@@ -410,7 +410,7 @@ curl -s "$H/api/history/export?since=$SINCE" > history-last6h.jsonl
 
 ### Request log
 
-Every `/v1` and `/upstream` request, with its status, times, tokens, rates, machines and caller, is kept in `POTLUCK_ROOT/data/usage.db` (rows 90 days, hourly totals 13 months, daily totals for ever: settings `usage_request_days`, `usage_hourly_days`).
+Every inference request through `/v1` and `/upstream` (a POST to one of llama-server's routes that runs the model: chat and text completions, responses, messages, infill, embeddings, rerank, audio), with its status, times, tokens, rates, machines and caller, is kept in `POTLUCK_ROOT/data/usage.db` (rows 90 days, hourly totals 13 months, daily totals for ever: settings `usage_request_days`, `usage_hourly_days`).
 
 ```sh
 curl -s "$H/api/requests?status=failed,refused&limit=20" | jq '.requests[] | {id, status, reason, profile, queued_at}'
@@ -419,6 +419,10 @@ curl -s $H/api/system | jq .storage.usage
 ```
 
 `storage.usage.moved_aside` names a damaged file that was moved aside at the start; `dropped` counts updates lost to a full queue; `size_bytes` is the file and its WAL. A request row takes about 0.5 KB on disk (indexes and hourly and daily totals included), a machine-hour of availability about 0.13 KB; the WAL stays near 4 MiB and is cut back to 8 MiB at most after a checkpoint. On a full disk the writes fail and are counted in `failed`, with `last_error` "database or disk is full" and one WARN a minute at most; requests and the scheduler go on as before, the store stays on and writes again once space is free (the retention trim frees some itself). The file can be deleted while Potluck is stopped: it starts a new history.
+
+Monitoring calls (`/upstream/<model>/slots`, `/props`, `/health`, `/metrics`, `/models`, `/tokenize`, `/detokenize`, `/apply-template`, `/lora-adapters`, `GET /v1/models`) pass through unrecorded. A row's `nodes` list the host first, then the helpers, each with its `share` of the model's layers; for a model hosted on the scheduler's machine with no layers there, that machine is the host with no `share`.
+
+`source_addr` is the address the TCP connection came from. Behind a published container port that is the Docker bridge gateway (for example `172.17.0.1`) for every caller, not the client's address: the scheduler does not read `X-Forwarded-For` or any other forwarding header. Use the caller name (agent key) to tell callers apart.
 
 ### Availability, hour by hour
 

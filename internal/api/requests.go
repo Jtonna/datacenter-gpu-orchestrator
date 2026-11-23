@@ -44,7 +44,7 @@ func (s *Server) trackRequest(r *http.Request, sent, kind, requested string, p *
 func leasePlacement(l *scheduler.Lease) usage.Placement {
 	pl := usage.Placement{SchedID: l.ID, Instance: l.Instance, Session: l.Session, Nodes: make([]usage.Node, len(l.Nodes))}
 	for i, n := range l.Nodes {
-		pl.Nodes[i] = usage.Node{ID: n.ID, Name: n.Name, Role: n.Role}
+		pl.Nodes[i] = usage.Node{ID: n.ID, Name: n.Name, Role: n.Role, Share: n.Share}
 		if n.Role == scheduler.RoleHost {
 			pl.HostNode = n.ID
 		}
