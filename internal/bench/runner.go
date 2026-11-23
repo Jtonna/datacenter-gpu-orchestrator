@@ -321,12 +321,16 @@ run:
 	if state == RunFailed || sum.Failed > 0 || sum.Regressions > 0 {
 		sev = history.Warn
 	}
-	summary := fmt.Sprintf("Benchmark run %s %s: %d steps, %d passed, %d failed, %d regressions.", r.ID, state, sum.Steps, sum.Passed, sum.Failed, sum.Regressions)
+	summary := fmt.Sprintf("Benchmark run %s %s: %d steps, %d passed, %d failed", r.ID, state, sum.Steps, sum.Passed, sum.Failed)
+	if sum.RefusedByExclusion > 0 {
+		summary += fmt.Sprintf(", %d not judged (refused by an exclusion)", sum.RefusedByExclusion)
+	}
+	summary += fmt.Sprintf(", %d regressions.", sum.Regressions)
 	if errText != "" {
 		summary += " " + strings.TrimRight(errText, ".") + "."
 	}
 	m.record(history.TBenchRunFinished, sev, "", summary, map[string]any{"bench_run": r.ID, "suite": r.SuiteID, "state": state, "error": errText,
-		"steps": sum.Steps, "passed": sum.Passed, "failed": sum.Failed, "regressions": sum.Regressions, "duration_s": float64(end-r.QueuedAt) / 1000})
+		"steps": sum.Steps, "passed": sum.Passed, "failed": sum.Failed, "refused_by_exclusion": sum.RefusedByExclusion, "regressions": sum.Regressions, "duration_s": float64(end-r.QueuedAt) / 1000})
 }
 
 // leafBenchmarks are the plain benchmarks an item runs (a parallel step expands to its members).

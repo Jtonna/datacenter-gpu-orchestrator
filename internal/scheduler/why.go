@@ -148,15 +148,12 @@ func (c *schedCore) filteredWhy(p *core.Profile, req placer.Request) (Reason, st
 	// reason "node excluded" is kept for a profile that forces an excluded
 	// node, which can run nowhere else.
 	slices.Sort(excluded)
-	for _, name := range excluded {
-		parts = append(parts, fmt.Sprintf("node %s is excluded by config", name))
-	}
 	if len(excluded) > 0 {
 		word := "nodes"
 		if len(excluded) == 1 {
 			word = "node"
 		}
-		parts = append(parts, fmt.Sprintf("%d %s excluded by config", len(excluded), word))
+		parts = append(parts, fmt.Sprintf("%d %s excluded by config: %s", len(excluded), word, strings.Join(excluded, ", ")))
 	}
 	slices.Sort(noAuto)
 	for _, name := range noAuto {

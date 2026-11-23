@@ -1,6 +1,7 @@
 package bench
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -76,6 +77,14 @@ func TestStepRefusedByExclusionIsNotAFailure(t *testing.T) {
 	if !seen {
 		t.Fatal("no step event")
 	}
+	// N2-1: the run-finished event counts the not-judged step.
+	for _, e := range tm.hist {
+		if e.Type == "benchRunFinished" {
+			if e.Data["refused_by_exclusion"] != 1 || !strings.Contains(e.Summary, "1 not judged") {
+				t.Fatalf("run event %+v", e)
+			}
+		}
+	}
 }
 
 // 0.1.7 review, ES3: an automatic profile that finds no room because nodes
@@ -83,7 +92,7 @@ func TestStepRefusedByExclusionIsNotAFailure(t *testing.T) {
 // "node excluded" for a profile that forces an excluded node). Such a step
 // is an ordinary refusal: judged, a failure, in the pass rate.
 func TestAutomaticStepShortOfRoomIsAnOrdinaryRefusal(t *testing.T) {
-	why := "node ps5-a is excluded by config; 1 node excluded by config"
+	why := "1 node excluded by config: ps5-a"
 	api := newFake().prof("auto", fakeProf{loadCode: 503, loadReason: "cluster busy", loadMsg: why}).prof("gemma", fakeProf{})
 	tm := newTestMgr(t, api)
 	tm.bench(`{"id":"auto","profile":"auto","requests":[{"prompt":"hi","max_tokens":4}]}`)
@@ -124,14 +133,51 @@ func TestRefusedByExclusionLeavesThePassRates(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := doc.Benchmarks[0]
-	if b.Outcomes[OutcomeRefusedByExclusion] != 2 || !close2(b.PassRate, 0.5) {
+	if b.Outcomes[OutcomeRefusedByExclusion] != 2 || !close2(rateOf(b.PassRate), 0.5) || b.Judged != 2 {
 		t.Fatalf("benchmark %+v", b)
 	}
-	if len(doc.Suites) != 1 || !close2(doc.Suites[0].PassRate, 0.5) {
+	if len(doc.Suites) != 1 || !close2(rateOf(doc.Suites[0].PassRate), 0.5) || doc.Suites[0].Judged != 2 {
 		t.Fatalf("suite %+v", doc.Suites)
 	}
 	pts, err := s.Trend("f", "load_s", 10)
 	if err != nil || len(pts) != 1 {
 		t.Fatalf("trend %+v %v", pts, err)
+	}
+}
+
+// 0.1.7 review, S2-2: a benchmark and a suite whose every step was refused
+// by an exclusion have no pass rate (null, not 0) and judged 0.
+func TestNothingJudgedHasNoPassRate(t *testing.T) {
+	s, _ := openTemp(t)
+	for _, id := range []string{"run-c", "run-d"} {
+		r := newRun(id, "nightly", 3000)
+		r.State = RunCompleted
+		if err := s.CreateRun(r); err != nil {
+			t.Fatal(err)
+		}
+		st := &Step{RunID: id, BenchmarkID: "f", Name: "f", Profile: "f", State: StepDone, Outcome: OutcomeRefusedByExclusion,
+			Expect: &ExpectResult{NotJudged: true}}
+		if err := s.AddStep(st); err != nil {
+			t.Fatal(err)
+		}
+		s.SetRunSummary(id, &RunSummary{Steps: 1, RefusedByExclusion: 1}, "")
+		s.SetRunState(id, RunCompleted, 3000, 4000, "")
+	}
+	doc, err := s.Aggregate(AggFilter{}, th, time.UnixMilli(10_000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, su := doc.Benchmarks[0], doc.Suites[0]
+	if b.PassRate != nil || b.Judged != 0 || su.PassRate != nil || su.Judged != 0 {
+		t.Fatalf("benchmark %+v suite %+v", b, su)
+	}
+	j, _ := json.Marshal(doc)
+	if !strings.Contains(string(j), `"pass_rate":null,"judged":0`) {
+		t.Fatalf("json %s", j)
+	}
+	for _, m := range b.Recent {
+		if m.Result != ResultNotJudged {
+			t.Fatalf("mark %+v", m)
+		}
 	}
 }

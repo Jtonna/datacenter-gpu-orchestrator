@@ -68,7 +68,7 @@ func (c *schedCore) arrive(w *waiter) {
 			// Retry-After: RetryAfter stays zero and the API omits the header.
 			e := &Error{Status: http.StatusServiceUnavailable, Reason: ReasonDoesNotFit,
 				Message: fmt.Sprintf("profile %s needs %d MiB (fit rule requires %d MiB) but the cluster can hold at most %d MiB",
-					p.Name, np.NeedMiB, np.RequiredMiB, np.CapacityMiB) + c.excludedNote(p)}
+					p.Name, np.NeedMiB, np.RequiredMiB, np.CapacityMiB) + c.capacityNote(p, np.CapacityMiB)}
 			e.NeedMiB, e.RequiredMiB, e.CapacityMiB = np.NeedMiB, np.RequiredMiB, np.CapacityMiB
 			c.log.Warn("request can never fit the cluster", "profile", p.Name, "need_mib", np.NeedMiB,
 				"required_mib", np.RequiredMiB, "capacity_mib", np.CapacityMiB)
@@ -154,6 +154,27 @@ func (c *schedCore) excludedForcedErr(p *core.Profile, why string) *Error {
 // excludedNote lists the nodes exclude_nodes kept out of a capacity check
 // that the profile could otherwise have used, so a "does not fit" is not a
 // mystery. Empty when none.
+// capacityNote is excludedNote, except when allow_tiers leaves the profile
+// only excluded nodes (capacity 0): then it says that, once (0.1.7 review,
+// N2-2). Still the ordinary "does not fit" refusal, judged by a benchmark.
+func (c *schedCore) capacityNote(p *core.Profile, capacity int) string {
+	if len(p.AllowTiers) == 0 || capacity > 0 {
+		return c.excludedNote(p)
+	}
+	var names []string
+	for _, id := range c.sortedNodeIDs() {
+		n, ok := c.node(id)
+		if !ok || !c.excluded(n) || !(n.Local || n.Online) || (localOnly(p) && !n.Local) || !slices.Contains(p.AllowTiers, n.Priority) {
+			continue
+		}
+		names = append(names, nodeLabel(id, n))
+	}
+	if len(names) == 0 {
+		return c.excludedNote(p)
+	}
+	return fmt.Sprintf("; allow_tiers %v admits only nodes excluded by config: %s", p.AllowTiers, strings.Join(names, ", "))
+}
+
 func (c *schedCore) excludedNote(p *core.Profile) string {
 	var names []string
 	for _, id := range c.sortedNodeIDs() {
