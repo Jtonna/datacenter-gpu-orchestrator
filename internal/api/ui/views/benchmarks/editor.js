@@ -393,7 +393,17 @@ export function suiteEditor(o) {
     draw();
   })();
 
-  const nameOf = it => { const b = typeof it === 'string' ? benchmarkById(it) : it; return b ? (b.name || b.id) : String(it); };
+  // An entry is a benchmark id, an inline benchmark, a recipe use {benchmark, inputs, matrix} or {group}.
+  const isRef = it => it && typeof it === 'object' && !it.id && (it.group || it.benchmark);
+  const nameOf = it => {
+    if (isRef(it)) {
+      if (it.group) return 'Group ' + it.group;
+      const r = benchmarkById(it.benchmark);
+      return (r ? (r.name || r.id) : it.benchmark) + (it.matrix ? ' (matrix)' : '');
+    }
+    const b = typeof it === 'string' ? benchmarkById(it) : it; return b ? (b.name || b.id) : String(it);
+  };
+  const refNote = it => it.group ? "  runs that group's benchmarks here" : '  recipe' + (it.inputs ? ' · ' + Object.entries(it.inputs).map(([k, v]) => k + ' ' + v).join(', ') : '');
   const updateSummary = () => {
     if (!summaryEl) return;
     const n = su.benchmarks.length;
@@ -423,10 +433,10 @@ export function suiteEditor(o) {
     const addSel = h('select.select', { 'aria-label': 'Add a benchmark' }, all.map(b => h('option', { value: b.id }, `${b.name || b.id}${b.profile ? ' · ' + b.profile : ''}`)));
     const mv = (i, d) => { const j = i + d; if (j < 0 || j >= su.benchmarks.length) return; [su.benchmarks[i], su.benchmarks[j]] = [su.benchmarks[j], su.benchmarks[i]]; draw(); };
     const rows = su.benchmarks.map((it, i) => {
-      const b = typeof it === 'string' ? benchmarkById(it) : it;
+      const b = isRef(it) ? null : typeof it === 'string' ? benchmarkById(it) : it;
       return h('div', { key: 'sb-' + i, style: 'display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;border:1px solid var(--line);border-radius:10px;padding:8px 12px' },
         h('span.mono.mut', { style: 'width:22px' }, i + 1),
-        h('span.grow', h('b', nameOf(it)), b && b.profile ? h('span.mono.mut', '  ' + b.profile) : null, !b ? h('span.err-t', '  not a saved benchmark') : typeof it !== 'string' ? h('span.mut', '  inline') : null),
+        h('span.grow', h('b', nameOf(it)), b && b.profile ? h('span.mono.mut', '  ' + b.profile) : null, isRef(it) ? h('span.mut', refNote(it)) : !b ? h('span.err-t', '  not a saved benchmark') : typeof it !== 'string' ? h('span.mut', '  inline') : null),
         h('span.row', { style: 'gap:6px;flex-wrap:nowrap' }, smallBtn('↑', () => mv(i, -1), '', { 'aria-label': 'Move up', disabled: i === 0 }),
           smallBtn('↓', () => mv(i, 1), '', { 'aria-label': 'Move down', disabled: i === su.benchmarks.length - 1 }),
           smallBtn('Remove', () => { su.benchmarks.splice(i, 1); draw(); }, 'dng', { 'aria-label': 'Remove ' + nameOf(it) })));
