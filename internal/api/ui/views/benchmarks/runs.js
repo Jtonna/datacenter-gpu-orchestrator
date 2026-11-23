@@ -423,7 +423,7 @@ export function runDetail(run, error) {
           exportLink(id, 'Markdown', { format: 'md' }), exportLink(id, 'CSV', { format: 'csv' }), exportLink(id, 'JSON', { format: 'json' }),
           h('details', { style: 'position:relative' }, h('summary.btn.sm', { style: 'list-style:none' }, 'More exports'),
             h('div', { style: 'position:absolute;right:0;top:36px;z-index:5;background:var(--card);border:1px solid var(--line-2);border-radius:10px;padding:8px;display:flex;flex-direction:column;gap:6px;min-width:200px' },
-              exportLink(id, 'CSV, one row per phase', { format: 'csv', detail: 'phases' }), exportLink(id, 'CSV, one row per turn', { format: 'csv', detail: 'turns' }))))),
+              exportLink(id, 'CSV, one row per phase', { format: 'csv', detail: 'phases' }), exportLink(id, 'CSV, one row per turn', { format: 'csv', detail: 'turns' }), exportLink(id, 'CSV, one row per task', { format: 'csv', detail: 'tasks' }))))),
       h('div.stats',
         stat('Suite', run.suite_name || run.suite_id), stat('Started', run.started_at ? ago(run.started_at) : DASH),
         stat('Took', run.started_at && run.finished_at ? dur((run.finished_at - run.started_at) / 1000) : run.finished_at ? DASH : 'Not finished'),

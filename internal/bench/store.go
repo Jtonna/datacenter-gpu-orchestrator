@@ -1200,13 +1200,32 @@ func (s *Store) phases(stepID int64) ([]PhaseResult, error) {
 // ---- trends ----
 
 // TrendMetrics are the metrics /api/bench/trends accepts.
-var TrendMetrics = []string{"load_s", "load_mb_s", "memory_mib", "decode_tps", "prefill_tps", "ttft_ms", "unload_s", "concurrent_wall_s", "lowest_available_mib", "lowest_available_gpu_mib"}
+var TrendMetrics = []string{"load_s", "load_mb_s", "memory_mib", "decode_tps", "prefill_tps", "ttft_ms", "unload_s", "concurrent_wall_s", "lowest_available_mib", "lowest_available_gpu_mib",
+	"tasks_answered", "task_decode_tps", "task_points", "task_points_pct"}
 
 // Trend returns up to limit points of a metric for a benchmark over past
 // runs, oldest first (the newest limit points).
 func (s *Store) Trend(benchmark, metric string, limit int) ([]TrendPoint, error) {
+	return s.TrendOf(benchmark, metric, "", limit)
+}
+
+// TrendOf is Trend with the scorer of task_points and task_points_pct (empty:
+// the step's first scorer by name).
+func (s *Store) TrendOf(benchmark, metric, scorer string, limit int) ([]TrendPoint, error) {
 	var expr string
+	var exprArgs []any
+	const scorerOf = `COALESCE(NULLIF(?,''), (SELECT MIN(json_extract(m2.conditions,'$.scorer')) FROM measurements m2 WHERE m2.step_id=s.id AND m2.metric='task_points'))`
 	switch metric {
+	case "tasks_answered": // over every tasks phase of the step
+		expr = `(SELECT SUM(json_extract(p.result,'$.tasks.answered')) FROM run_phases p WHERE p.step_id=s.id AND p.type='tasks' AND p.state='done')`
+	case "task_decode_tps": // the median over the answered tasks of the first tasks phase
+		expr = `(SELECT json_extract(p.result,'$.tasks.decode_tps.median') FROM run_phases p WHERE p.step_id=s.id AND p.type='tasks' AND p.state='done' ORDER BY p.idx LIMIT 1)`
+	case "task_points": // a scorer's points over the step's tasks
+		expr = `(SELECT SUM(m.value) FROM measurements m WHERE m.step_id=s.id AND m.metric='task_points' AND json_extract(m.conditions,'$.scorer')=` + scorerOf + `)`
+		exprArgs = []any{scorer}
+	case "task_points_pct": // the same as a percentage of the most points
+		expr = `(SELECT 100.0*SUM(m.value)/NULLIF(SUM(m.of_value),0) FROM measurements m WHERE m.step_id=s.id AND m.metric='task_points' AND json_extract(m.conditions,'$.scorer')=` + scorerOf + `)`
+		exprArgs = []any{scorer}
 	case "load_s":
 		expr = `json_extract(s.load,'$.load_s')`
 	case "decode_tps":
@@ -1233,10 +1252,11 @@ func (s *Store) Trend(benchmark, metric string, limit int) ([]TrendPoint, error)
 	if limit <= 0 || limit > 1000 {
 		limit = 50
 	}
+	args := append(append(append(append([]any{}, exprArgs...), benchmark), exprArgs...), limit)
 	rows, err := s.db.Query(`SELECT s.run_id, CASE WHEN r.started_at>0 THEN r.started_at ELSE r.queued_at END, `+expr+`
 	  FROM run_steps s JOIN runs r ON r.id=s.run_id
 	  WHERE s.benchmark_id=? AND s.outcome='ready' AND r.state IN ('completed','failed') AND `+expr+` IS NOT NULL
-	  ORDER BY r.queued_at DESC, s.id DESC LIMIT ?`, benchmark, limit)
+	  ORDER BY r.queued_at DESC, s.id DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}

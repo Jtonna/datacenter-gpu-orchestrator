@@ -318,7 +318,7 @@ var expected = map[string]struct {
 	"get_run":               {`{"id":"br-1"}`, "GET", "/api/bench/runs/br-1", "", "", nil},
 	"export_run":            {`{"id":"br-1","format":"csv","detail":"phases"}`, "GET", "/api/bench/runs/br-1/export", "detail=phases&format=csv", "", nil},
 	"get_bench_aggregates":  {`{"suite":"s","benchmark":"b","profile":"p","since":"7d","until":"2","limit_runs":4,"env":"same"}`, "GET", "/api/bench/aggregates", "benchmark=b&env=same&limit_runs=4&profile=p&since=7d&suite=s&until=2", "", nil},
-	"get_bench_trends":      {`{"benchmark":"b","metric":"load_s","limit":9}`, "GET", "/api/bench/trends", "benchmark=b&limit=9&metric=load_s", "", nil},
+	"get_bench_trends":      {`{"benchmark":"b","metric":"task_points","scorer":"kit","limit":9}`, "GET", "/api/bench/trends", "benchmark=b&limit=9&metric=task_points&scorer=kit", "", nil},
 	"get_bench_schema":      {`{}`, "GET", "/api/bench/schema", "", "", nil},
 	"list_external_results": {`{}`, "GET", "/api/bench/external", "", "", nil},
 	"get_external_results":  {`{"id":"ctx-1"}`, "GET", "/api/bench/external/ctx-1", "", "", nil},

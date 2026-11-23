@@ -568,8 +568,10 @@ func (s *Server) exportRun(w http.ResponseWriter, r *http.Request) {
 			out, err = bench.ExportCSVPhases(run)
 		case "turns":
 			out, err = bench.ExportCSVTurns(run)
+		case "tasks":
+			out, err = bench.ExportCSVTasks(run)
 		default:
-			badParam(w, "detail must be phases or turns (or empty for one row per benchmark), got %q", d)
+			badParam(w, "detail must be phases, turns or tasks (or empty for one row per benchmark), got %q", d)
 			return
 		}
 		if err != nil {
@@ -607,7 +609,7 @@ func (s *Server) trends(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = n
 	}
-	pts, err := s.opts.BenchStore.Trend(id, metric, limit)
+	pts, err := s.opts.BenchStore.TrendOf(id, metric, q.Get("scorer"), limit)
 	if err != nil {
 		badParam(w, "%v", err)
 		return
