@@ -96,3 +96,35 @@ func TestNetFacts(t *testing.T) {
 		t.Fatal("physical")
 	}
 }
+
+// WSL2 / Docker Desktop (GPU-PV): no drm card, only /dev/dxg and the
+// driver's libcuda.so.1 under /usr/lib/wsl/lib. One Nvidia GPU is reported
+// and the cuda backend follows.
+func TestGPUsUnderGPUPV(t *testing.T) {
+	root := t.TempDir()
+	m := Machine{Root: root}
+	write(t, root, "dev/dxg", "")
+	if g := m.GPUs(); len(g) != 0 {
+		t.Fatalf("/dev/dxg without libcuda.so.1 is no Nvidia GPU: %+v", g)
+	}
+	write(t, root, "usr/lib/wsl/lib/libcuda.so.1", "")
+	g := m.GPUs()
+	if len(g) != 1 || g[0].Vendor != "nvidia" || g[0].Integrated || g[0].Model == "" {
+		t.Fatalf("%+v", g)
+	}
+	if b := m.Backends(g); len(b) != 1 || b[0] != "cuda" {
+		t.Fatalf("%v", b)
+	}
+	// A machine with drm cards is read as before, /dev/dxg or not.
+	write(t, root, "sys/class/drm/card0/device/vendor", "0x1002")
+	write(t, root, "sys/class/drm/card0/device/pci_address", "0000:20:00.0")
+	if g := m.GPUs(); len(g) != 1 || g[0].Vendor != "amd" {
+		t.Fatalf("%+v", g)
+	}
+	// No /dev/dxg: nothing, even with the library.
+	root2 := t.TempDir()
+	write(t, root2, "usr/lib/wsl/lib/libcuda.so.1", "")
+	if g := (Machine{Root: root2}).GPUs(); len(g) != 0 {
+		t.Fatalf("%+v", g)
+	}
+}

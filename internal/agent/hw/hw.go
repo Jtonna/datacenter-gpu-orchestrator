@@ -47,7 +47,9 @@ type GPUInfo struct {
 	PCI string
 }
 
-// GPUs lists the GPUs under /sys/class/drm (card<N> entries only).
+// GPUs lists the GPUs under /sys/class/drm (card<N> entries only). With no
+// card at all, a WSL2 or Docker Desktop GPU (/dev/dxg and libcuda.so.1) is
+// reported as one Nvidia GPU; a machine with cards is never read that way.
 //
 // CONTRACT-QUESTION: 4.2 lists gpus with vendor, model and integrated but
 // does not say how the agent finds them. The agent reads sysfs: vendor from
@@ -110,7 +112,24 @@ func (m Machine) GPUs() []GPUInfo {
 		out = append(out, g)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].PCI < out[j].PCI })
+	if len(out) == 0 && m.gpuPV() {
+		out = append(out, GPUInfo{GPU: agentproto.GPU{Vendor: agentproto.VendorNvidia, Model: GPUPVModel}})
+	}
 	return out
+}
+
+// GPUPVModel is the model reported for the GPU of a WSL2 or Docker Desktop
+// machine (GPU paravirtualization), where no PCI facts can be read.
+const GPUPVModel = "NVIDIA GPU (WSL2 GPU-PV)"
+
+// gpuPV reports a WSL2 or Docker Desktop GPU (GPU paravirtualization): no
+// drm card, but /dev/dxg and the Windows driver's libcuda.so.1 (under
+// /usr/lib/wsl/lib). Only asked when no drm card was found.
+func (m Machine) gpuPV() bool {
+	if _, err := os.Stat(m.p("dev", "dxg")); err != nil {
+		return false
+	}
+	return m.Libs().Has("libcuda.so.1")
 }
 
 func (m Machine) nvidiaModel(pci string) string {
@@ -234,7 +253,8 @@ func (m Machine) LibDirs() []string {
 	dirs = append(dirs, m.ldSoConf("etc/ld.so.conf", 0)...)
 	dirs = append(dirs, "/lib", "/usr/lib", "/lib64", "/usr/lib64",
 		"/lib/x86_64-linux-gnu", "/usr/lib/x86_64-linux-gnu", "/lib/aarch64-linux-gnu", "/usr/lib/aarch64-linux-gnu",
-		"/usr/local/lib", "/usr/local/cuda/lib64", "/usr/local/nvidia/lib64", "/usr/local/nvidia/lib")
+		"/usr/local/lib", "/usr/local/cuda/lib64", "/usr/local/nvidia/lib64", "/usr/local/nvidia/lib",
+		"/usr/lib/wsl/lib") // WSL2 / Docker Desktop: the Windows driver's libcuda.so.1
 	return dirs
 }
 
