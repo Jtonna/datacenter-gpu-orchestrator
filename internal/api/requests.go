@@ -143,7 +143,16 @@ func (s *Server) handleRequests(w http.ResponseWriter, r *http.Request) {
 	}
 	st := s.reqs.Store()
 	writeJSON(w, http.StatusOK, map[string]any{"requests": page.Requests, "next": page.Next, "on": st.On(),
-		"history_begins_at": st.HistoryBeginsAt().UnixMilli()})
+		"history_begins_at": beginsAt(st)})
+}
+
+// beginsAt is the store's history_begins_at in unix ms; nil (JSON null)
+// when the store is off, never the zero time's -62135596800000.
+func beginsAt(st *usage.Store) any {
+	if !st.On() {
+		return nil
+	}
+	return st.HistoryBeginsAt().UnixMilli()
 }
 
 // GET /api/requests/{id}: one request, live or stored.

@@ -272,6 +272,12 @@ func TestRequests_NoStoreStillServes(t *testing.T) {
 	if p.On || len(p.Requests) != 0 {
 		t.Fatalf("%+v", p)
 	}
+	// An off store has no history start: null, not the zero time.
+	for _, path := range []string{"/api/requests", "/api/requests/summary"} {
+		if raw := body(t, e.get(path)); !strings.Contains(raw, `"history_begins_at":null`) {
+			t.Fatalf("%s: %s", path, raw)
+		}
+	}
 	if r := e.get("/api/requests/summary"); r.StatusCode != 200 {
 		t.Fatal(r.StatusCode)
 	}
