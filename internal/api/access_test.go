@@ -393,3 +393,102 @@ func TestAccessKeys_ExpiryWarnings(t *testing.T) {
 		t.Fatalf("after extending: %+v", ev)
 	}
 }
+
+// Only a credential that looks like a Potluck key (ptl_ or lls_) in
+// Authorization: Bearer is a key. Whatever else OpenAI-compatible clients
+// send by habit (sk-..., none, an empty Bearer, Basic auth) is ignored: the
+// request is keyless, the default user, on every route, exactly as before.
+// A ptl_ or lls_ value that is unknown is refused with 401 everywhere,
+// the model API included. X-Agent-Key is Potluck's own header: any value
+// there is a key, as it always was (a wrong one: 401).
+func TestAccessKeys_ForeignBearerTokensAreIgnored(t *testing.T) {
+	e, mcp, _ := accessEnv(t)
+	chat := []byte(`{"model":"no-such-model","messages":[{"role":"user","content":"hi"}]}`)
+	routes := []struct {
+		method, path string
+		body         []byte
+	}{
+		{"POST", "/v1/chat/completions", chat},
+		{"GET", "/v1/models", nil},
+		{"POST", "/upstream/no-such-model/v1/chat/completions", chat},
+		{"GET", "/api/status", nil},
+	}
+	keyless := map[string]int{}
+	for _, r := range routes {
+		st, _, _ := e.hdo(r.method, r.path, r.body, map[string]string{"Content-Type": "application/json"})
+		keyless[r.path] = st
+	}
+	t.Logf("keyless answers: %v", keyless)
+	foreign := map[string]map[string]string{
+		"Bearer sk-anything":  {"Authorization": "Bearer sk-anything"},
+		"Bearer sk-local":     {"Authorization": "Bearer sk-local"},
+		"Bearer none":         {"Authorization": "Bearer none"},
+		"Bearer dummy":        {"Authorization": "Bearer dummy"},
+		"empty Bearer":        {"Authorization": "Bearer "},
+		"bare Bearer":         {"Authorization": "Bearer"},
+		"empty Authorization": {"Authorization": ""},
+		"Basic auth":          {"Authorization": "Basic dXNlcjpwYXNz"},
+		"an OpenAI-style key": {"Authorization": "Bearer sk-proj-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
+		"a prefix mid-token":  {"Authorization": "Bearer x-ptl_abc"},
+		"Token scheme ptl_":   {"Authorization": "Token ptl_abcdefabcdefabcdefabcdefabcdefab"},
+	}
+	for name, hdr := range foreign {
+		for _, r := range routes {
+			h := map[string]string{"Content-Type": "application/json"}
+			for k, v := range hdr {
+				h[k] = v
+			}
+			st, body, _ := e.hdo(r.method, r.path, r.body, h)
+			if st != keyless[r.path] || st == 401 || st == 403 {
+				t.Errorf("%s on %s %s: %d, keyless %d: %s", name, r.method, r.path, st, keyless[r.path], body)
+			}
+		}
+		if code, out := mcpCall(mcp, "get_status", `{}`, hdr); code != 200 || strings.Contains(out, `"isError":true`) {
+			t.Errorf("%s over MCP: %d %s", name, code, out)
+		}
+	}
+	// the same on a scheduler that serves a model: the chat is answered (200),
+	// not refused, with each foreign token
+	served := newEnv(t, chatOK, func(o *Options) { o.keyExpiryEvery = -1 })
+	alpha := []byte(`{"model":"alpha","messages":[{"role":"user","content":"hi"}]}`)
+	for name, hdr := range foreign {
+		for _, path := range []string{"/v1/chat/completions", "/upstream/alpha/v1/chat/completions"} {
+			h := map[string]string{"Content-Type": "application/json"}
+			for k, v := range hdr {
+				h[k] = v
+			}
+			if st, body, _ := served.hdo("POST", path, alpha, h); st != 200 {
+				t.Errorf("%s on %s with a served model: %d %s", name, path, st, body)
+			}
+		}
+	}
+
+	// a keyless change with a foreign token is the default user's
+	if st, m := e.cdo("POST", "/api/config/profiles", `{"id":"f1","model":"f1.gguf","ctx":2048,"needs_mib":100}`, map[string]string{"Authorization": "Bearer sk-local"}); st != 201 {
+		t.Fatalf("change with a foreign token: %d %v", st, m)
+	}
+	if es := auditOf(t, e, "target=f1"); len(es) != 1 || es[0]["actor"] != audit.DefaultActor || strings.Contains(string(rawJSON(es[0])), "sk-local") {
+		t.Errorf("audit of a change with a foreign token: %v", es)
+	}
+
+	// unmistakably a Potluck key, but unknown: 401 everywhere, one sentence
+	for _, hdr := range []map[string]string{
+		{"Authorization": "Bearer ptl_unknownunknownunknownunknownunkn"},
+		{"Authorization": "bearer lls_unknownunknownunknownunknownunkn"},
+		{"X-Agent-Key": "sk-local"}, // Potluck's own header: any value is a key, as before
+	} {
+		for _, r := range routes {
+			h := map[string]string{"Content-Type": "application/json"}
+			for k, v := range hdr {
+				h[k] = v
+			}
+			st, body, _ := e.hdo(r.method, r.path, r.body, h)
+			if st != 401 || !strings.Contains(string(body), "unknown agent key") || !strings.Contains(string(body), "invalid_agent_key") {
+				t.Errorf("%v on %s %s: %d %s", hdr, r.method, r.path, st, body)
+			}
+		}
+		if code, out := mcpCall(mcp, "get_status", `{}`, hdr); code != 401 || !strings.Contains(out, "unknown agent key") {
+			t.Errorf("%v over MCP: %d %s", hdr, code, out)
+		}
+	}
+}
