@@ -49,6 +49,9 @@ func (c *schedCore) applyConfig(nc *config.Config) {
 	if r, ok := c.needs.(Reconfigurer); ok {
 		r.Reconfigure(nc)
 	}
+	if old.ModelsDir != nc.ModelsDir {
+		c.derive.est, c.derive.groups = nil, nil // estimates of files in another folder
+	}
 	// Cached needs belong to the old definitions.
 	for name := range c.needs_ {
 		if np, op := nc.Profiles[name], old.Profiles[name]; np == nil || op == nil || !reflect.DeepEqual(*np, *op) {

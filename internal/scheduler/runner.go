@@ -710,7 +710,8 @@ func (s *Scheduler) LearnedRows(ctx context.Context) ([]LearnedRow, error) {
 // their trust depends on.
 func (s *Scheduler) Needs(ctx context.Context) (NeedsDoc, error) {
 	return askRead(s, ctx, "needs", func(c *schedCore) NeedsDoc {
-		return NeedsDoc{HostBuild: c.llamaBuild, Release: c.buildRelease, ServedBuild: c.servedBuild, Rows: c.learnedRows()}
+		return NeedsDoc{HostBuild: c.llamaBuild, Release: c.buildRelease, ServedBuild: c.servedBuild, Rows: c.learnedRows(),
+			DerivePairs: c.derivePairs(nil), DeriveToleranceMiB: deriveToleranceMiB}
 	})
 }
 

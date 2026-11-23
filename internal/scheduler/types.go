@@ -452,6 +452,9 @@ type PlanReport struct {
 	// "measured this run".
 	FitNeedMiB int
 	NeedBasis  string
+	// DerivedFromCtx: the need is derived from a measurement of the same
+	// model at this other context (NeedBasis says so); 0 otherwise.
+	DerivedFromCtx int
 	// Warning is set when defaults.forced_fit_check is warn and the forced
 	// nodes' free memory is below the need: the load would start anyway.
 	Warning string

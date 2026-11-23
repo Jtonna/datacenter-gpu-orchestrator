@@ -103,6 +103,9 @@ func (s *Server) profileEntriesOf(ctx context.Context, cfg *config.Config) []map
 				e["needs_mib"] = rep.NeedMiB
 				e["needs_basis"] = rep.NeedBasis
 				e["needs_measured"] = rep.Measured
+				if rep.DerivedFromCtx > 0 {
+					e["derived_from_ctx"] = rep.DerivedFromCtx // the basis says "derived from the measurement at ctx N"
+				}
 			}
 			if l, ok := learned[n]; ok && l.PeakMiB > 0 {
 				e["peak_mib"], e["peak_basis"] = l.PeakMiB, l.PeakBasis // the memory reservation rule's stored peak

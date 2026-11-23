@@ -83,6 +83,10 @@ func TestNeedsListAndForgetByShape(t *testing.T) {
 			t.Fatalf("no %q in %v", k, got)
 		}
 	}
+	// the check of derived needs: the tolerance and every pair (none here)
+	if dc, ok := got["derivation_check"].(map[string]any); !ok || dc["tolerance_mib"] != float64(512) || dc["pairs"] == nil {
+		t.Fatalf("derivation_check %v", got["derivation_check"])
+	}
 	code, got = e.cdo("POST", "/api/needs/forget", `{"shape":"[\"llama\",\"m.gguf\",8192,1,\"f16\",false,[]]"}`, nil)
 	if code != 200 || got["forgotten"] != false || got["msg"] != "nothing learned" {
 		t.Fatalf("forget: %d %v", code, got)

@@ -66,8 +66,16 @@ func (s *Server) handleNeeds(w http.ResponseWriter, r *http.Request) {
 		out = append(out, needRowJSON(row))
 	}
 	// the two llama builds trust depends on ("" while not known)
+	// the check of derived needs (scheduler derive.go): additive
+	pairs := make([]map[string]any, 0, len(doc.DerivePairs))
+	for _, p := range doc.DerivePairs {
+		pairs = append(pairs, map[string]any{"model": p.Model, "shape": p.Shape, "devices": p.Devices, "from_ctx": p.FromCtx,
+			"to_ctx": p.ToCtx, "from_mib": p.FromMiB, "predicted_mib": p.PredictedMiB, "measured_mib": p.MeasuredMiB,
+			"error_mib": p.ErrMiB, "within_tolerance": p.WithinTolerance, "below_estimate": p.BelowEstimate})
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"needs": out, "host_build": doc.HostBuild, "release": doc.Release,
-		"served_build": doc.ServedBuild})
+		"served_build": doc.ServedBuild,
+		"derivation_check": map[string]any{"tolerance_mib": doc.DeriveToleranceMiB, "pairs": pairs}})
 }
 
 // handleForgetShape drops every learned need of a shape (in memory and in
