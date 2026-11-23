@@ -68,7 +68,7 @@ func TestUINextKeepsTheClassicExports(t *testing.T) {
 }
 
 // nextRoutes are the screens of the new shell: every page of its navigation.
-var nextRoutes = []string{"zones", "nodes", "models", "queue", "activity", "placement", "benchmarks", "benchmarks/runs", "benchmarks/trends",
+var nextRoutes = []string{"overview", "requests", "report", "zones", "nodes", "models", "queue", "activity", "placement", "benchmarks", "benchmarks/runs", "benchmarks/trends",
 	"profiles", "tiers", "settings", "audit", "mcp", "about"}
 
 // Sample strings of the design's artboards: none of them may ever be drawn

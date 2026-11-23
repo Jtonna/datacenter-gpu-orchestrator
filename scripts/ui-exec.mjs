@@ -36,6 +36,7 @@
 //    "base": "http://127.0.0.1:8790",              // or: GET requests go to this server (cmd/devcluster), writes are refused
 //    "cases": [{"name": "...", "route": "#/nodes", "status": {...} or "fetch", "fetch": {...}, "expect": ["text", ...],
 //               "absent": ["text that must not be drawn", ...], "none": ["css selector that must match nothing", ...],
+//               "has": ["css selector that must match something on the screen", ...],
 //               "links": [{"text": "Classic UI", "path": "/ui/classic/"}, ...],
 //               "click": ["css selector clicked after the draw", ...],
 //               "page": ["text anywhere on the page: shell, side panel, dialog", ...],
@@ -160,6 +161,8 @@ function one(el, m) {
   for (const [k, op, v] of m.attrs) {
     if (!el.hasAttribute(k)) return false;
     if (op === '=' && el.getAttribute(k) !== v) return false;
+    if (op === '^=' && !el.getAttribute(k).startsWith(v)) return false;
+    if (op === '*=' && !el.getAttribute(k).includes(v)) return false;
   }
   return true;
 }
@@ -312,7 +315,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const UIS = { next: '/ui/', classic: '/ui/classic/' };
 const LIVE_SCREENS = {
   classic: ['models', 'nodes', 'queue', 'activity', 'placement', 'benchmarks', 'benchmarks/runs', 'benchmarks/trends', 'profiles', 'tiers', 'settings', 'audit', 'mcp', 'about'],
-  next: ['zones', 'models', 'nodes', 'queue', 'activity', 'placement', 'benchmarks', 'benchmarks/runs', 'benchmarks/trends', 'profiles', 'tiers', 'settings', 'audit', 'mcp', 'about'],
+  next: ['overview', 'requests', 'report', 'zones', 'models', 'nodes', 'queue', 'activity', 'placement', 'benchmarks', 'benchmarks/runs', 'benchmarks/trends', 'profiles', 'tiers', 'settings', 'audit', 'mcp', 'about'],
 };
 if (live && !flag('--ui')) {
   let bad = 0;
@@ -478,6 +481,7 @@ for (const c of spec.cases) {
   for (const want of c.expect || []) if (!text.includes(want)) errors.push('missing text: ' + JSON.stringify(want));
   for (const bad of c.absent || []) if (text.includes(bad)) errors.push('text that must not be there: ' + JSON.stringify(bad) + ' in ' + JSON.stringify(text.slice(Math.max(0, text.indexOf(bad) - 80), text.indexOf(bad) + 80)));
   for (const sel of c.none || []) if (outlet.querySelector(sel)) errors.push('an element that must not be there: ' + sel);
+  for (const sel of c.has || []) if (!outlet.querySelector(sel)) errors.push('no element matches: ' + sel);
   // page: texts that must be anywhere on the page, the shell, side panels and dialogs included
   const pageText = document.body.textContent;
   for (const want of c.page || []) if (!pageText.includes(want)) errors.push('missing on the page: ' + JSON.stringify(want));
