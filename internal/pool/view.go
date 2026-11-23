@@ -188,7 +188,7 @@ func (p *Pool) rebuildLocked() {
 	// change of the average alone is kept without notifying (review N2).
 	useAvg := cfg.Defaults.PlacementUsesReserved
 	if (!sameNodes(nodes, p.nodes, useAvg) && !(len(nodes) == 0 && len(p.nodes) == 0)) || !reflect.DeepEqual(unplaced, p.unplaced) ||
-		!reflect.DeepEqual(msgs, p.unplacedMsg) {
+		!reflect.DeepEqual(msgs, p.unplacedMsg) || p.wantedFigureLocked(nodes) {
 		p.nodes, p.unplaced, p.unplacedMsg = nodes, unplaced, msgs
 		select {
 		case p.notify <- struct{}{}:
@@ -221,6 +221,9 @@ func (p *Pool) nodeFromAgentLocked(cfg *config.Config, a *agent) (core.Node, boo
 		return n, tiered
 	}
 	n.TotalMiB, n.FreeMiB, n.FreeUnknown = int(d.TotalMiB), int(max(d.FreeMiB, 0)), false
+	if len(a.mem) > 0 {
+		n.FigureAt = a.mem[len(a.mem)-1].at
+	}
 	_, avgDev, avgOK := a.memAverage()
 	if avgOK {
 		n.FreeAvgMiB, n.FreeAvgKnown = int(max(avgDev, 0)), true
@@ -636,15 +639,42 @@ func (p *Pool) ReleaseStatus() map[string]any {
 // sameNodes compares two node lists; without useAvg the average free
 // figures are left out of the comparison.
 func sameNodes(a, b []core.Node, useAvg bool) bool {
-	if useAvg || len(a) != len(b) {
-		return reflect.DeepEqual(a, b)
+	if len(a) != len(b) {
+		return false
 	}
 	for i := range a {
 		x, y := a[i], b[i]
-		x.FreeAvgMiB, x.FreeAvgKnown, y.FreeAvgMiB, y.FreeAvgKnown = 0, false, 0, false
+		// the reading's time alone does not notify (FigureWatch does, for a
+		// node the scheduler waits on)
+		x.FigureAt, y.FigureAt = time.Time{}, time.Time{}
+		if !useAvg {
+			x.FreeAvgMiB, x.FreeAvgKnown, y.FreeAvgMiB, y.FreeAvgKnown = 0, false, 0, false
+		}
 		if !reflect.DeepEqual(x, y) {
 			return false
 		}
 	}
 	return true
+}
+
+// WantFigures implements scheduler.FigureWatch: the scheduler waits for a
+// memory reading of each node taken after the time given (something of
+// ours just left it). The next such reading notifies, as a change does.
+func (p *Pool) WantFigures(after map[core.NodeID]time.Time) {
+	p.mu.Lock()
+	defer p.unlock()
+	p.wantFig = after
+}
+
+// wantedFigureLocked reports whether nodes carry a reading the scheduler
+// waits for, and forgets those nodes.
+func (p *Pool) wantedFigureLocked(nodes []core.Node) bool {
+	hit := false
+	for _, n := range nodes {
+		if t, ok := p.wantFig[n.ID]; ok && n.FigureAt.After(t) {
+			delete(p.wantFig, n.ID)
+			hit = true
+		}
+	}
+	return hit
 }

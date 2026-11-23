@@ -248,11 +248,14 @@ type Pool struct {
 	o   Options
 	log *slog.Logger
 
-	mu          sync.Mutex
-	agents      map[string]*agent
-	admin       map[string]cfgstore.NodeAdmin
-	nodes       []core.Node
-	notify      chan struct{}
+	mu     sync.Mutex
+	agents map[string]*agent
+	admin  map[string]cfgstore.NodeAdmin
+	nodes  []core.Node
+	notify chan struct{}
+	// wantFig: nodes whose next memory reading after the time the scheduler
+	// waits for (WantFigures).
+	wantFig     map[core.NodeID]time.Time
 	unplaced    map[core.NodeID]string // why a listed node takes no new load (view.go)
 	unplacedMsg map[core.NodeID]string // more about that reason, when there is more to say
 	// inlineCallBack makes Register run the first call-back check itself

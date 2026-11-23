@@ -166,8 +166,11 @@ func (c *schedCore) plan(e *entry) bool {
 	}
 	// A forced profile whose node was just released waits: the refusal
 	// below must run on figures that do not lag, and nothing is evicted for
-	// a request it would then refuse (seventh review AB1).
-	if len(e.prof.ForceNodes) > 0 && c.anyJustReleased(res.Placement) {
+	// a request it would then refuse (seventh review AB1). Only where such
+	// a refusal exists (eighth review): in fleet membership with the
+	// defaults nothing refuses a forced placement before its launch, and
+	// it evicts as in 0.1.6.
+	if len(e.prof.ForceNodes) > 0 && c.refusesBeforeEvict() && c.anyJustReleased(res.Placement) {
 		return false
 	}
 	// A forced profile that could not fit its nodes even with nothing loaded

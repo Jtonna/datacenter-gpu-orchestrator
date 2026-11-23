@@ -265,6 +265,7 @@ func (c *schedCore) handle(ev event) {
 	c.trackPeaks() // reserve.go
 	c.pruneRecent()
 	c.runPasses()
+	c.watchFigures() // neverfits.go
 	c.shutdownProgress()
 	c.last = c.now
 	if checkInvariantsEachStep {

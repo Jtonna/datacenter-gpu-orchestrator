@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -293,16 +294,61 @@ const releaseGrace = 30 * time.Second
 // show the old load (heartbeat lag, or a worker that has not returned its
 // buffers yet), so it may still change: the fifth review's FB1, the
 // benchmark pattern of unloading and at once loading the next model.
+//
+// The window is the upper bound: a memory reading of the node taken after
+// the release and its settle time (freshAfter) ends it at once (eighth
+// review ES2), so a load after an unload costs about one heartbeat.
 func (c *schedCore) justReleased(id core.NodeID) bool {
+	end, ok := c.releaseWindowEnd(id)
+	if !ok || !c.now.Before(end) {
+		return false
+	}
+	n, _ := c.node(id)
+	return !n.FigureAt.After(c.freshAfter(id))
+}
+
+// releaseWindowEnd is when node id's just-released window ends; ok is false
+// when the node is held or nothing that ran has left it.
+func (c *schedCore) releaseWindowEnd(id core.NodeID) (time.Time, bool) {
 	ns := c.nodes[id]
 	if ns == nil || ns.holder != "" || ns.releasedAt.IsZero() {
-		return false // held, or nothing that ran has left it
+		return time.Time{}, false
 	}
 	w := c.cfg.Defaults.FreeAverageWindow
 	if w <= 0 {
 		w = releaseGrace
 	}
-	return c.now.Before(ns.releasedAt.Add(w))
+	return ns.releasedAt.Add(w), true
+}
+
+// freshAfter is the time after which a reading of node id counts as fresh:
+// the release plus the node's settle time (what the settle waits for the
+// memory to come back).
+func (c *schedCore) freshAfter(id core.NodeID) time.Time {
+	n, _ := c.node(id)
+	return c.nodes[id].releasedAt.Add(n.Settle)
+}
+
+// watchFigures tells a FigureWatch view which nodes the queue waits on for
+// a fresh reading, when that changes.
+func (c *schedCore) watchFigures() {
+	fw, ok := c.view.(FigureWatch)
+	if !ok {
+		return
+	}
+	want := map[core.NodeID]time.Time{}
+	if len(c.entries) > 0 {
+		for _, id := range c.sortedNodeIDs() {
+			if c.justReleased(id) {
+				want[id] = c.freshAfter(id)
+			}
+		}
+	}
+	if maps.Equal(want, c.wantFig) {
+		return
+	}
+	c.wantFig = want
+	fw.WantFigures(maps.Clone(want))
 }
 
 // forcedFitWaits: in agents membership, forced profile p's check on its
@@ -331,6 +377,13 @@ func forcedFitWaitText(pl core.Placement, c *schedCore) string {
 		}
 	}
 	return "waits for the next figures of " + strings.Join(ids, ", ") + ": something of ours just left there and the figure may still show it"
+}
+
+// refusesBeforeEvict: a check refuses a forced placement before an eviction
+// (forcedRefusalBeforeEvict, shortEvenFreed): agents membership,
+// forced_fit_check reject, or the reservation gate on.
+func (c *schedCore) refusesBeforeEvict() bool {
+	return c.agents || c.cfg.Defaults.ForcedFitCheck == config.ForcedFitReject || c.gateOn()
 }
 
 // anyJustReleased: a node of pl was just released (justReleased).

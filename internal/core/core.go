@@ -37,6 +37,11 @@ type Node struct {
 	// it is 0 only because "unknown is not free". The load memory watch must
 	// not read such a zero as a real reading.
 	FreeUnknown bool
+	// FigureAt is when the memory reading behind FreeMiB was taken (agents
+	// membership: the heartbeat that carried it); zero when not known. A
+	// node something of ours just left is decided on a reading taken after
+	// the release (scheduler, justReleased).
+	FigureAt time.Time
 	// FreeAvgMiB is FreeMiB averaged over defaults.free_average_window, valid
 	// when FreeAvgKnown (agents membership: from the heartbeats the pool
 	// receives). placement_uses_reserved places on min(FreeMiB, FreeAvgMiB).

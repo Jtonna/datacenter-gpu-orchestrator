@@ -309,6 +309,8 @@ type lease struct {
 // on one goroutine, and depends on its collaborators only through
 // interfaces. Slow work is emitted as effects for the runner.
 type schedCore struct {
+	// wantFig: the nodes last given to a FigureWatch view (neverfits.go).
+	wantFig map[core.NodeID]time.Time
 	// localSysMiB is this machine's system memory (0 when unknown) and
 	// envFileLoad the LLAMA_RPC_FILE_LOAD the host child inherits; both are
 	// read once, for the reload-from-cache figure and the load mode.

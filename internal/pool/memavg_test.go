@@ -1,6 +1,7 @@
 package pool
 
 import (
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"strconv"
 	"testing"
 	"time"
@@ -108,5 +109,45 @@ func TestAverageAloneNotifiesOnlyWhenUsed(t *testing.T) {
 		if got := drain(r.p.Changed()); got != on {
 			t.Fatalf("setting %v: notified %v", on, got)
 		}
+	}
+}
+
+// ES2 (eighth review): a node carries the time of its memory reading. A
+// heartbeat that changes nothing but that time does not notify, unless the
+// scheduler waits for a reading of that node after a given time
+// (WantFigures); then the first such reading notifies, once.
+func TestFigureAtAndWantFigures(t *testing.T) {
+	r := newRig(t)
+	const id = "02:00:00:00:00:75"
+	r.p.Register(regReq(id))
+	hb := func() {
+		t.Helper()
+		b := `{"agent_start_id":"s1","seq":1,"programs_ready":true,"model_source":{"kind":"share","reachable":true},` +
+			`"mem_available_mib":30000,"devices":[{"name":"CUDA0","backend":"cuda","total_mib":16000,"free_mib":12000}]}`
+		if res := r.p.Heartbeat(id, []byte(b)); res.Status != 200 {
+			t.Fatalf("heartbeat %+v", res)
+		}
+	}
+	hb()
+	drain(r.p.Changed())
+	n, _ := r.node(id)
+	if n.FigureAt.IsZero() || r.clk.now().Sub(n.FigureAt) > time.Second {
+		t.Fatalf("FigureAt %v, want the heartbeat's time", n.FigureAt)
+	}
+	r.clk.advance(time.Second)
+	hb()
+	if drain(r.p.Changed()) {
+		t.Fatal("a reading that changes nothing but its time notified")
+	}
+	r.p.WantFigures(map[core.NodeID]time.Time{id: r.clk.now()})
+	r.clk.advance(time.Second)
+	hb()
+	if !drain(r.p.Changed()) {
+		t.Fatal("the reading the scheduler waits for did not notify")
+	}
+	r.clk.advance(time.Second)
+	hb()
+	if drain(r.p.Changed()) {
+		t.Fatal("notified again for a node already reported")
 	}
 }

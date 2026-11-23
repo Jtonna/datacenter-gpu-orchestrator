@@ -606,12 +606,13 @@ func TestNeverFits_NoEvictionForANeverFitAfterAnUnload(t *testing.T) {
 				p.ForceNodes, p.TensorSplit, p.LoadTimeout = []string{"a", "b"}, []int{1, 1}, time.Hour
 			})
 			h.needs["two"] = NeedInfo{Need: placer.Measured(2 * 19266), FileBytes: 20 << 30}
-			if r := h.c.dryPlan("two"); r.Action == PlanEvict {
+			legacy := mode == "fleet" && !tight // nothing refuses before eviction there
+			if r := h.c.dryPlan("two"); r.Action == PlanEvict && !legacy {
 				t.Fatalf("%s: plan evict within the window: %s", name, r.Reason)
 			}
 			w := h.request("two")
 			h.advance(5 * time.Second)
-			if len(h.of(history.TEviction)) != 0 || h.c.insts["x"] == nil || h.c.insts["x"].state != stReady {
+			if !legacy && (len(h.of(history.TEviction)) != 0 || h.c.insts["x"] == nil || h.c.insts["x"].state != stReady) {
 				t.Fatalf("%s: x was evicted for a request that cannot fit", name)
 			}
 			// the view catches up and the window ends: refused, x kept. In
@@ -704,5 +705,138 @@ func TestNeverFits_ACancelledWorkerLoadLeavesTheNodeJustReleased(t *testing.T) {
 	}
 	if !h.c.justReleased("a") {
 		t.Fatalf("a is not just released after a cancelled worker load")
+	}
+}
+
+// runTo moves the clock by d the way production drives the core: a step
+// only at each core deadline on the way, none at the end (advance also
+// ticks at its target, which hides a missing deadline).
+func (h *harness) runTo(d time.Duration) {
+	h.t.Helper()
+	target := h.clk.Now().Add(d)
+	for i := 0; i < 100000; i++ {
+		dl, ok := h.c.nextDeadline()
+		if !ok || dl.After(target) {
+			break
+		}
+		h.clk.Set(dl)
+		h.step(evTick{})
+	}
+	h.clk.Set(target)
+}
+
+// neverFitAfterUnload is the AB1 situation: x idle on b, small just left a
+// with the view still showing it, "two" (2 x 19266, forced onto a and b)
+// requested. It returns the waiter.
+func neverFitAfterUnload(t *testing.T, mode string, tight bool) (*harness, *waiter) {
+	t.Helper()
+	h := inMode(newHarness(t).nodes(psNode("a", 2, 12643), psNode("b", 4, 12643)), mode)
+	if tight {
+		liveTight(h)
+	}
+	h.llama("x", 4000, func(p *core.Profile) { p.ForceNodes = []string{"b"} })
+	h.viewChanged()
+	if mode == "fleet" {
+		h.release(h.ready("x"))
+	} else {
+		h.release(h.agentReady("x"))
+	}
+	h.view.modify("b", func(n *core.Node) { n.FreeMiB = n.TotalMiB - 4500 })
+	h.advance(time.Minute)
+	unloadLagging(h, mode)
+	h.llama("two", 0, func(p *core.Profile) {
+		p.ForceNodes, p.TensorSplit, p.LoadTimeout = []string{"a", "b"}, []int{1, 1}, time.Hour
+	})
+	h.needs["two"] = NeedInfo{Need: placer.Measured(2 * 19266), FileBytes: 20 << 30}
+	w := h.request("two")
+	if _, ok := h.peek(w); ok {
+		t.Fatalf("answered right after the unload")
+	}
+	return h, w
+}
+
+// ES1 (eighth review): the end of the window is a deadline. With no event
+// at all (a quiet view), the waiting request is decided when the window
+// ends, not at the next view change.
+func TestNeverFits_TheWindowEndIsADeadline(t *testing.T) {
+	for _, tight := range []bool{false, true} {
+		h, w := neverFitAfterUnload(t, "agents", tight)
+		end, _ := h.c.releaseWindowEnd("a")
+		h.runTo(end.Sub(h.clk.Now()) - time.Second)
+		if _, ok := h.peek(w); ok {
+			t.Fatalf("tight %v: decided before the window ended", tight)
+		}
+		h.runTo(2 * time.Second)
+		a, ok := h.peek(w)
+		if !ok || a.err == nil {
+			t.Fatalf("tight %v: not decided when the window ended (no event came)", tight)
+		}
+		if len(h.of(history.TEviction)) != 0 {
+			t.Fatalf("tight %v: evicted for it", tight)
+		}
+	}
+}
+
+// ES2 (eighth review): a reading of the just-released node taken after the
+// release and its settle ends the wait at once, in both outcomes; without
+// one the whole window is waited.
+func TestNeverFits_AFreshFigureEndsTheWait(t *testing.T) {
+	for _, tight := range []bool{false, true} {
+		// refused without eviction, about one heartbeat after the request
+		h, w := neverFitAfterUnload(t, "agents", tight)
+		h.view.mu.Lock()
+		asked := h.view.wantFig["a"]
+		h.view.mu.Unlock()
+		if want := h.c.freshAfter("a"); !asked.Equal(want) {
+			t.Fatalf("tight %v: the view was asked for a reading of a after %v, want %v", tight, asked, want)
+		}
+		h.runTo(5 * time.Second)
+		h.view.modify("a", func(n *core.Node) { n.FreeMiB, n.FigureAt = n.TotalMiB, h.clk.Now() })
+		h.viewChanged()
+		if a, ok := h.peek(w); !ok || a.err == nil {
+			t.Fatalf("tight %v: a fresh reading did not end the wait (refusal)", tight)
+		}
+		if len(h.of(history.TEviction)) != 0 {
+			t.Fatalf("tight %v: evicted for it", tight)
+		}
+
+		// evict and start: the claim's node is released by the victim; the
+		// reading after it lets the load start at once
+		h = inMode(newHarness(t).nodes(psNode("a", 2, 12643)), "agents")
+		if tight {
+			liveTight(h)
+		}
+		h.llama("x", 6000, func(p *core.Profile) { p.ForceNodes = []string{"a"} })
+		h.viewChanged()
+		h.release(h.agentReady("x"))
+		h.view.modify("a", func(n *core.Node) { n.FreeMiB = n.TotalMiB - 7000 })
+		h.advance(time.Minute)
+		h.llama("mid", 0, func(p *core.Profile) { p.ForceNodes, p.LoadTimeout = []string{"a"}, time.Hour })
+		h.needs["mid"] = NeedInfo{Need: placer.Measured(9000), FileBytes: 5 << 30}
+		h.viewChanged()
+		w = h.request("mid")
+		h.runTo(5 * time.Second) // x stops, the node settles; the view lags
+		if h.c.insts["x"] != nil || h.c.insts["mid"] != nil {
+			t.Fatalf("tight %v: x %v mid %v after 5 s", tight, h.c.insts["x"] != nil, h.c.insts["mid"] != nil)
+		}
+		h.view.modify("a", func(n *core.Node) { n.FreeMiB, n.FigureAt = n.TotalMiB, h.clk.Now() })
+		h.viewChanged()
+		if h.c.insts["mid"] == nil {
+			t.Fatalf("tight %v: a fresh reading did not end the wait (start)", tight)
+		}
+		if a, ok := h.peek(w); ok && a.err != nil {
+			t.Fatalf("tight %v: refused %v", tight, a.err)
+		}
+
+		// no reading: the full window
+		h, w = neverFitAfterUnload(t, "agents", tight)
+		h.view.modify("a", func(n *core.Node) { n.FigureAt = h.clk.Now().Add(-time.Hour) }) // an old reading only
+		h.viewChanged()
+		end, _ := h.c.releaseWindowEnd("a")
+		h.runTo(end.Sub(h.clk.Now()) - time.Second)
+		h.viewChanged()
+		if _, ok := h.peek(w); ok {
+			t.Fatalf("tight %v: decided without a fresh reading before the window ended", tight)
+		}
 	}
 }
