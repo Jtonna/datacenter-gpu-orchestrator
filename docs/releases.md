@@ -27,7 +27,13 @@ The heading takes the release number when it ships.
 - The database gains the columns `runs.kind` and `runs.target_id` and the tables `measurements` and `bench_meta` (migration 6). At the first start every stored run is mapped into measurements once; old runs read as before, as kind `suite`.
 - The suite aggregates leave direct benchmark runs out; the benchmark aggregates and the history count them.
 - Profiles made by recipes never set `host`: they run on the scheduler's machine (`host: server`, the default).
-- Going back to 0.1.9 or older after this release has migrated the database: the older scheduler refuses the newer schema and starts with no profiles and no runs. Keep a copy of `scheduler.db` from before the upgrade to go back.
+- Going back after this release has migrated the database (schema 8): an image with the unhealthy mode (the next scheduler image below and later) answers 503 on `/health` and every route with "database is newer than this version: 8 > 5" and changes nothing; 0.1.9 and older start with no profiles and no runs. Either way the data is untouched: start this release again, or restore the copy of `scheduler.db` taken before the upgrade.
+
+## Next scheduler image (agent stays 0.1.9)
+
+- **A `host: node` profile is planned from the server-hosted measurement** of the same shape (model, context, slots, cache, arguments) until a load hosted on a node measured its own; the host overhead is still added on the host node, and the basis says "hosted on the scheduler's machine (no measurement hosted on a node yet), plus N MiB host overhead". Stored peaks stay per shape.
+- **The host node's own device share** (its `Vulkan0`, ... rows) shows under that node in an instance's `nodes`, like a worker's row; it used to be listed as unmatched. Host-side buffers stay in `host_memory`.
+- **Profile `description`**: optional free text, one line, at most 500 characters. Shown in `/api/config`, `/api/profiles`, `/api/models` and both UIs' profile lists. Changing only the description does not make a loaded model stale.
 
 ## 0.1.9
 

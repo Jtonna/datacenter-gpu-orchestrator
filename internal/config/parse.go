@@ -235,6 +235,7 @@ type ProfileSpec struct {
 	StallTimeout     *duration `yaml:"stall_timeout" json:"stall_timeout,omitempty"`
 	LoadStallTimeout *duration `yaml:"load_stall_timeout" json:"load_stall_timeout,omitempty"`
 	Host             string    `yaml:"host" json:"host,omitempty"`
+	Description      string    `yaml:"description" json:"description,omitempty"`
 }
 
 func (r *ProfileSpec) toCore(name string) *core.Profile {
@@ -244,7 +245,7 @@ func (r *ProfileSpec) toCore(name string) *core.Profile {
 		TensorSplit: r.TensorSplit, ExtraArgs: r.ExtraArgs, Cmd: r.Cmd,
 		CheckEndpoint: r.CheckEndpoint, Aliases: r.Aliases, Generated: r.Generated,
 		TTL: r.TTL.ptr(), LoadTimeout: time.Duration(r.LoadTimeout), StallTimeout: r.StallTimeout.ptr(),
-		LoadStallTimeout: r.LoadStallTimeout.ptr(),
+		LoadStallTimeout: r.LoadStallTimeout.ptr(), Description: r.Description,
 	}
 	if r.Host == core.HostNode {
 		p.Host = core.HostNode // "" and "server": the scheduler's machine, as before

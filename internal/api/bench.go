@@ -750,6 +750,12 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 	// and failures (the About page's "Background tasks" card).
 	out["tasks"] = supervise.Stats()
 	out["internal_failures_total"] = supervise.Total()
+	if sv := s.opts.Config; sv != nil {
+		// fields of the stored configuration this version does not know (a
+		// newer version wrote them): writes are refused unless forced
+		unknown := sv.UnknownFields()
+		out["stored_config"] = map[string]any{"unknown_fields": nonNil(unknown), "writes_need_force": len(unknown) > 0}
+	}
 	if s.sched != nil {
 		out["read_panics"] = s.sched.ReadPanics() // read-only queries that panicked and were recovered; 0 when all is well
 	}

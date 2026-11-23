@@ -221,7 +221,15 @@ The agents register again by themselves. Models load again on the next request.
 
 **Canary with a paused console.** When a roll-out pauses a console on the live scheduler (to point it at a throwaway scheduler for the canary), every new request for a profile forced onto that console is refused at once with Retry-After for as long as the pause lasts: for example, all the `*-6ps5` profiles. Requests that were already waiting keep waiting. So pause benchmark traffic for those profiles during the canary. The bench runner does not retry: it records such a step as `refused`, with the reason "paused by an operator", so a report shows why.
 
-To roll back: `docker tag llm-scheduler:previous llm-scheduler:local && docker compose up -d potluck`. An older image may refuse a configuration that uses settings it does not know; remove those settings first (`PATCH /api/config/settings` with the key set to `null`).
+To roll back: `docker tag llm-scheduler:previous llm-scheduler:local && docker compose up -d potluck`.
+
+What an older image does with what a newer one wrote (images after 0.1.9):
+
+- **Configuration fields it does not know** (a new profile field, a new setting): it ignores them and serves everything else. It logs one WARN per field. `GET /api/system` lists them under `stored_config.unknown_fields`. While they are there, every configuration write answers `409 unknown_stored_fields`, because the write would drop them. Write with the newer image, or repeat with `?force=1` (`import-config --force`) to write anyway and drop them.
+- **A database a newer image migrated** (a higher schema version), or a database or stored configuration it cannot use for any other reason: it does not start empty. It stays up, loads nothing and writes nothing. `/health` and every route answer `503` with the reason, for example `database is newer than this version: 6 > 5`. Start the image that wrote the database, or restore a backup this image can read (section H).
+- **No database file yet** (a first start): it creates one and starts unconfigured, healthy.
+
+Images up to 0.1.9 instead start healthy with built-in defaults and no profiles in both cases. Check `/api/system` and the profile count after any rollback to one of them.
 
 ---
 

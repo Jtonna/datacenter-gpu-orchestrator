@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
@@ -103,6 +105,11 @@ func (c *Config) validate(raw map[string]*ProfileSpec, exists func(string) bool)
 		if p.NeedsMiB < 0 {
 			pf("needs_mib", "must not be negative")
 		}
+		if d := p.Description; utf8.RuneCountInString(d) > MaxDescription {
+			pf("description", "is %d characters; at most %d", utf8.RuneCountInString(d), MaxDescription)
+		} else if strings.ContainsFunc(d, unicode.IsControl) {
+			pf("description", "must be one line of text (no line breaks or control characters)")
+		}
 		switch p.Kind {
 		case core.KindLlama:
 			c.validateLlama(p, raw[n], pf, exists)
@@ -114,6 +121,9 @@ func (c *Config) validate(raw map[string]*ProfileSpec, exists func(string) bool)
 	}
 	return errors.Join(errs...)
 }
+
+// MaxDescription is the longest profile description, in characters.
+const MaxDescription = 500
 
 func (c *Config) validateLlama(p *core.Profile, r *ProfileSpec, pf func(field, format string, a ...any), exists func(string) bool) {
 	if r.Cmd != "" {

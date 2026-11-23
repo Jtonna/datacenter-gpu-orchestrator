@@ -36,6 +36,11 @@ func (l *lockedLog) String() string { l.mu.Lock(); defer l.mu.Unlock(); return l
 // stamped, and one line logged. GET /api/needs shows both builds and, per
 // row, why it is not trusted.
 func TestReview4_FS2_BuildsAreReadAgainUntilKnown(t *testing.T) {
+	// the reads at start (buildstart_test.go) are left out: this is the
+	// background path, for builds that stay unreadable longer
+	old := buildStartWait
+	buildStartWait = 0
+	t.Cleanup(func() { buildStartWait = old })
 	st := openNeedStore(t)
 	measureF(t, st) // 11000 on build aaaaaaa1, release 0.1.3
 	var hostCalls, manifestCalls atomic.Int32
@@ -85,6 +90,12 @@ func TestReview4_FS2_BuildsAreReadAgainUntilKnown(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "stored memory needs only raise the estimates") {
 		t.Fatalf("no start warning: %s", logs.String())
+	}
+	// while untrusted the stored 11000 only raises the estimate: the plan
+	// meets the estimate (14700 with its margin), and this forced profile
+	// is refused; the reads at start keep this out of the first moment
+	if r, _ := s.Plan(ctx, "f"); r.FitNeedMiB != 14700 || r.Action != PlanReject {
+		t.Fatalf("plan while untrusted: %+v", r)
 	}
 	// the background reads, with a growing wait: no busy loop
 	deadline := time.Now().Add(5 * time.Second)
