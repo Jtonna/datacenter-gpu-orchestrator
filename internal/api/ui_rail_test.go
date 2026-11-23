@@ -157,3 +157,21 @@ func TestUINextHealthHeart(t *testing.T) {
 			"pageHas": []string{"button.rb[data-surface=health][data-issues=1] span.dotmark.warn", "button.rb[aria-label$=issue]"}},
 	}})
 }
+
+// The Health board draws the popup over the page with no section menu
+// beside the rail (its script is empty: the heart's click does nothing more
+// than open the popup). Opening the popup closes the open section menu for
+// as long as the popup is open; closing the popup brings the menu back as
+// the person had it (their stored choice is not changed).
+func TestUINextHealthPopupClosesTheMenu(t *testing.T) {
+	now := time.Now()
+	st := ovStatus(now)
+	doc := healthDoc(now, nil, nil)
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": map[string]any{"/api/health": doc}, "cases": []any{
+		map[string]any{"name": "menu: open on Zones", "route": "#/zones", "status": st, "pageNone": []string{"div.app.menu-closed"}},
+		map[string]any{"name": "menu: the popup closes it", "route": "#/zones", "status": st, "click": []string{"button.rb[data-surface=health]"},
+			"pageHas": []string{"div.app.menu-closed", "div.hp"}},
+		map[string]any{"name": "menu: back when the popup closes", "route": "#/zones", "status": st, "click": []string{"button.rb[data-surface=health]", "div.hp button.hp-x"},
+			"pageNone": []string{"div.app.menu-closed", "div.hp"}},
+	}})
+}

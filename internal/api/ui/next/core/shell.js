@@ -220,10 +220,14 @@ function menuClosed() { try { return localStorage.getItem(CLOSED_KEY) === '1'; }
 let overviewMenuOpen = false;
 const OPENS_CLOSED = ['overview'];
 const menuShut = () => (OPENS_CLOSED.includes(route.id) ? !overviewMenuOpen : menuClosed());
+// While the health popup is open no section menu stands beside the rail, as
+// the Health board draws it (its script is empty: the heart only opens the
+// popup); closing the popup brings the menu back as it was.
+function applyMenu() { root.classList.toggle('menu-closed', menuShut() || surface === 'health'); }
 function setMenuClosed(v) {
   if (OPENS_CLOSED.includes(route.id)) overviewMenuOpen = !v;
   else try { localStorage.setItem(CLOSED_KEY, v ? '1' : '0'); } catch { /* private mode */ }
-  root.classList.toggle('menu-closed', menuShut());
+  applyMenu();
   draw();
 }
 
@@ -250,9 +254,10 @@ let surface = ''; // '' | 'health' | 'ask'
 function openSurface(which) {
   surface = surface === which ? '' : which;
   if (surface === 'health') readHealth(draw);
+  applyMenu();
   draw();
 }
-function closeSurfaces() { if (surface) { surface = ''; draw(); } }
+function closeSurfaces() { if (surface) { surface = ''; applyMenu(); draw(); } }
 
 function railNode() {
   const cur = sectionOf(route);
@@ -288,7 +293,7 @@ function askNode() {
 }
 
 function surfaceNode() {
-  if (surface === 'health') return healthPopup(closeSurfaces, to => { surface = ''; location.hash = to; draw(); });
+  if (surface === 'health') return healthPopup(closeSurfaces, to => { surface = ''; applyMenu(); location.hash = to; draw(); });
   if (surface === 'ask') return askNode();
   return [];
 }
@@ -377,14 +382,14 @@ export function startShell(app) {
   route = parse(location.hash);
   // ?health=open on any page opens the popup with it (a link to the popup)
   if (route.query.health === 'open') openSurface('health');
-  root.classList.toggle('menu-closed', menuShut());
+  applyMenu();
   narrow.addEventListener('change', placeSlots);
   onRoute(r => {
     if (r.id !== route.id) overviewMenuOpen = false;
     if (r.id !== route.id && surface === 'health') surface = '';
     if (r.query.health === 'open' && surface !== 'health') { surface = 'health'; readHealth(draw); }
     route = r;
-    root.classList.toggle('menu-closed', menuShut());
+    applyMenu();
     closeDrawer(); draw();
   });
   on(['status', 'conn', 'hello', 'tick', 'events', 'health'], draw);
