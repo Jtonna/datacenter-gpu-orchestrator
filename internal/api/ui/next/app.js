@@ -1,0 +1,39 @@
+// Entry point of the new shell (served at /ui/). Importing a view module
+// registers it; the order here does not matter (the navigation is NAV in
+// core/shell.js). A view this folder does not have is the classic module of
+// the same path, which then draws with this folder's core/ui.js and the rest
+// of the shared core (internal/api/uifiles.go).
+
+import { start as startRouter } from './core/router.js';
+import { start as startLive } from './core/live.js';
+import { startShell } from './core/shell.js';
+
+import './views/zones.js';
+import './views/models.js';
+import './views/nodes.js';
+import './views/queue.js';
+import './views/activity.js';
+import './views/placement.js';
+import './views/benchmarks.js';
+import './views/profiles.js';
+import './views/tiers.js';
+import './views/settings.js';
+import './views/audit.js';
+import './views/mcp.js';
+import './views/about.js';
+
+startShell(document.getElementById('app'));
+startRouter(document.getElementById('main'));
+startLive();
+
+// A script error is shown, not swallowed: the page is a monitoring tool and a
+// silently frozen screen would be worse than a visible fault.
+import { toast } from './core/ui.js';
+let lastFault = '';
+function fault(msg) {
+  if (!msg || msg === lastFault) return;
+  lastFault = msg;
+  toast('The page hit an error: ' + msg, 'err');
+}
+window.addEventListener('error', e => fault(e.message));
+window.addEventListener('unhandledrejection', e => fault(e.reason && e.reason.message ? e.reason.message : String(e.reason)));

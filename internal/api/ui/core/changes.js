@@ -27,7 +27,7 @@ export const isSaving = () => saving > 0;
 // pendingBar({count, what, onReview, onDiscard}): sticks to the bottom of the screen.
 export function pendingBar(o) {
   if (!o.count) return null;
-  return h('div.banner.warn', { key: 'pending-bar', role: 'status', style: 'position:sticky;bottom:12px;z-index:8;box-shadow:0 8px 30px rgba(0,0,0,.5);background:#2c230d' },
+  return h('div.banner.warn', { key: 'pending-bar', role: 'status', style: 'position:sticky;bottom:12px;z-index:8;box-shadow:0 8px 30px rgba(0,0,0,.5);background:var(--amber-bg)' },
     h('span.grow', h('b', plural(o.count, 'unsaved change')), o.what ? ' · ' + o.what : '', h('span.mut', { style: 'margin-left:8px;font-weight:600' }, 'Nothing is applied until you save.')),
     h('span.row', { style: 'gap:8px;margin-left:auto' },
       button('Discard', o.onDiscard, 'sm'),

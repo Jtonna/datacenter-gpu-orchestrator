@@ -4,6 +4,7 @@
 
 import { state, set, emit, publish } from './store.js';
 import { setServerTime } from './format.js';
+import { url } from './api.js';
 
 const TOPICS = ['status', 'event', 'bench', 'config', 'models'];
 const SILENCE_MS = 40000;
@@ -15,8 +16,8 @@ let retryTimer = 0;
 let watchdog = 0;
 
 function wsURL() {
-  // The page lives at <base>/ui/; the channel at <base>/ws.
-  const u = new URL('../ws', location.href);
+  // The page lives at <base>/ui/ (or <base>/ui/classic/); the channel at <base>/ws.
+  const u = new URL(url('/ws'), location.href);
   u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
   u.hash = '';
   u.search = '';
