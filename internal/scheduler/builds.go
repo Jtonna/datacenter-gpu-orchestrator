@@ -19,6 +19,19 @@ const (
 	buildReadMax   = 5 * time.Minute
 )
 
+// The first reads again, before the event loop takes its first event: a
+// build unreadable at start is usually there a moment later (a slow share
+// right after a boot), and until it is every stored need counts as
+// untrusted and only raises the estimate, which changes plans (a forced
+// profile that fits by its measurement is refused on the raised
+// estimate). Requests and listings wait for this, at most buildStartWait;
+// after it the background reads take over. Real time: it waits on the
+// share, not on the scheduler's clock. Variables for the tests.
+var (
+	buildStartWait  = 5 * time.Second
+	buildStartEvery = 250 * time.Millisecond
+)
+
 // startBuildReads starts the background reads when a build is missing and
 // can be read again. It runs before the event loop; the reading goroutine
 // gets copies and touches no core state.
@@ -32,6 +45,31 @@ func (s *Scheduler) startBuildReads() {
 	canHost := host != "" || hostRead != nil
 	canServed := served != "" || (manifest != nil && rel != "")
 	if (host != "" && served != "") || !canHost || !canServed {
+		return
+	}
+	wait := buildStartWait
+	if !c.anyRestored() {
+		wait = 0 // no stored need depends on it: nothing to wait for
+	}
+	for end := time.Now().Add(wait); (host == "" || served == "") && time.Now().Before(end); {
+		select {
+		case <-s.bgCtx.Done():
+			return
+		case <-time.After(buildStartEvery):
+		}
+		if host == "" {
+			rctx, cancel := context.WithTimeout(s.bgCtx, buildStartEvery*4)
+			if b, err := hostRead(rctx); err == nil {
+				host = b
+			}
+			cancel()
+		}
+		if served == "" {
+			served = manifest(rel)
+		}
+	}
+	if host != "" && served != "" {
+		c.buildsKnown(host, served) // Run's goroutine owns the core: the loop has not started
 		return
 	}
 	// A failure restarts the reads alone: they hold only the copies taken
@@ -129,4 +167,17 @@ func releaseWords(rel string) string {
 		return "its release (not recorded)"
 	}
 	return "release " + rel
+}
+
+// anyRestored: a stored need was restored at start (its trust depends on
+// the builds).
+func (c *schedCore) anyRestored() bool {
+	for _, ls := range c.learned {
+		for _, l := range ls {
+			if l.restored {
+				return true
+			}
+		}
+	}
+	return false
 }
