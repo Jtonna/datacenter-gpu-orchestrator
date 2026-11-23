@@ -44,6 +44,13 @@ func (c *schedCore) nextDeadline() (time.Time, bool) {
 		}
 	}
 
+	// An evictWaits hold ends one window after it began (tenth review).
+	for _, e := range c.entries {
+		if end, ok := c.evictHoldEnd(e.evictHeld); ok && end.After(c.now) {
+			add(end)
+		}
+	}
+
 	// Forced nodes gone: the fail-fast of design 8.4 is due when the grace ends.
 	for _, e := range c.entries {
 		for _, name := range e.prof.ForceNodes {

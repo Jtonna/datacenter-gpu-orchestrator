@@ -173,7 +173,10 @@ func (c *schedCore) plan(e *entry) bool {
 	if len(e.prof.ForceNodes) > 0 && c.refusesBeforeEvict() && c.anyJustReleased(res.Placement) {
 		return false
 	}
-	if c.evictWaits(e.prof, res.Placement, res.Victims) {
+	if c.evictWaits(e.prof, res.Placement, res.Victims, e.evictHeld) {
+		if e.evictHeld.IsZero() {
+			e.evictHeld = c.now
+		}
 		return false
 	}
 	// A forced profile that could not fit its nodes even with nothing loaded

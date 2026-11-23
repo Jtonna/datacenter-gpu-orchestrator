@@ -160,7 +160,7 @@ func TestFigureAtAndWantFigures(t *testing.T) {
 	// it are counted
 	r.p.mu.Lock()
 	r.p.launches["l-1"] = &launch{id: "l-1", node: id}
-	r.p.endLaunchLocked(r.p.launches["l-1"])
+	r.p.endLaunchLocked(r.p.launches["l-1"], true)
 	r.p.unlock()
 	if !drain(r.p.Changed()) {
 		t.Fatal("the launch end of a waited-on node did not notify")

@@ -408,8 +408,17 @@ func (c *schedCore) refusesBeforeEvict() bool {
 // same check may refuse, after the victims are gone. The eviction waits
 // until the decision no longer depends on that (ninth review: no eviction
 // for a request then refused).
-func (c *schedCore) evictWaits(p *core.Profile, pl core.Placement, victims []string) bool {
+//
+// The hold is bounded (tenth review): since is when it began for the queued
+// entry (zero: not yet). Load and unload churn on a node keeps moving its
+// heldChanged, so its average may stay left out for longer than the
+// request's load timeout; one window after the hold began the eviction goes
+// ahead as without this check (evictHoldEnd is a deadline).
+func (c *schedCore) evictWaits(p *core.Profile, pl core.Placement, victims []string, since time.Time) bool {
 	if !c.cfg.Defaults.PlacementUsesReserved {
+		return false
+	}
+	if end, ok := c.evictHoldEnd(since); ok && !c.now.Before(end) {
 		return false
 	}
 	stale := false
@@ -420,9 +429,17 @@ func (c *schedCore) evictWaits(p *core.Profile, pl core.Placement, victims []str
 		return false
 	}
 	c.avgAlways = true
-	g := c.reserveGate(p, pl, victims)
-	c.avgAlways = false
-	return g != ""
+	defer func() { c.avgAlways = false }()
+	return c.reserveGate(p, pl, victims) != ""
+}
+
+// evictHoldEnd is when an evictWaits hold that began at since ends: one
+// average window later. ok is false when no hold began.
+func (c *schedCore) evictHoldEnd(since time.Time) (time.Time, bool) {
+	if since.IsZero() {
+		return time.Time{}, false
+	}
+	return since.Add(c.cfg.Defaults.FreeAverageWindow), true
 }
 
 // anyJustReleased: a node of pl was just released (justReleased).

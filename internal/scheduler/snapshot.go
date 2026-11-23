@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
@@ -357,7 +358,7 @@ func (c *schedCore) dryPlan(profile string) (r PlanReport) {
 				r.Action, r.Reason, r.Placement = PlanReject, fe.Message, c.placedStatus(res.Placement)
 				return r
 			}
-			if g := c.reserveGate(p, res.Placement, res.Victims); g == "" && c.evictWaits(p, res.Placement, res.Victims) { // as plan()
+			if g := c.reserveGate(p, res.Placement, res.Victims); g == "" && c.evictWaits(p, res.Placement, res.Victims, time.Time{}) { // as plan(); a queued entry returned above
 				r.Action, r.Reason = PlanQueue, "waits until the average free figure of its nodes counts again after a release: the eviction would pass only without it"
 				return r
 			} else if g == "" {

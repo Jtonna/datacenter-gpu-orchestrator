@@ -56,6 +56,8 @@ type Agent struct {
 	Refuse func(agentproto.LaunchRequest) *agentproto.LaunchRefusal
 	// IgnoreForce: a forced stop leaves the launch stopping (only /reset ends it).
 	IgnoreForce bool
+	// IgnoreStop: a plain stop leaves the launch stopping (a worker slow to exit).
+	IgnoreStop bool
 	// WatchdogFloorMiB, when set, is sent as watchdog_floor_mib in the
 	// registration and the heartbeat (CR-9); 0 sends none, as release 0.1.0.
 	// The would_not_fit check uses it, or 1000.
@@ -456,7 +458,7 @@ func (a *Agent) handler() http.Handler {
 		}
 		if a.cur.state != agentproto.StateExited {
 			force := r.URL.Query().Get("force") == "1"
-			if force && a.IgnoreForce {
+			if (force && a.IgnoreForce) || (!force && a.IgnoreStop) {
 				a.cur.state = agentproto.StateStopping
 			} else if force {
 				a.endLocked(agentproto.ExitForced)
