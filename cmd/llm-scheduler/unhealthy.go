@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // storeFailure is the reason a database that exists cannot be used, for
@@ -53,8 +55,17 @@ func serveUnhealthy(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Sign
 		enc.Encode(map[string]any{"error": map[string]any{"message": reason, "type": "unhealthy", "version": version}})
 	})
 	srv := &http.Server{Handler: m, ReadHeaderTimeout: 10 * time.Second}
-	go srv.Serve(ln)
-	<-sigs
+	// If the server fails there is nothing left to serve: the process
+	// ends (exit 1), as main's own server failure does.
+	serveErr := make(chan error, 1)
+	go supervise.Once("http.serve_unhealthy", func() { serveErr <- srv.Serve(ln) },
+		func(p any) { serveErr <- fmt.Errorf("internal error: %v", p) })
+	select {
+	case <-sigs:
+	case err := <-serveErr:
+		log.Error("HTTP server failed; stopping (unhealthy: it never served)", "err", err, "reason", reason)
+		return 1
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	srv.Shutdown(ctx)
