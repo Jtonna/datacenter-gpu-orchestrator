@@ -681,3 +681,22 @@ func TestHealth_SchedulerReleaseFact(t *testing.T) {
 	}
 	t.Fatal("no scheduler row")
 }
+
+// An excluded machine that is absent after a restart (listed lost) reads
+// as down in the Zones row, not as switched off.
+func TestHealth_ZonesExcludedAbsentIsDown(t *testing.T) {
+	facts := []pool.NodeFacts{{ID: "zone-x", Name: "zone-x", State: pool.StateLost, Excluded: true, AbsentSinceStart: true}}
+	var view []scheduler.NodeStatus
+	for i := 1; i <= 7; i++ {
+		id := "zone-" + string(rune('0'+i))
+		facts = append(facts, pool.NodeFacts{ID: id, Name: id, State: pool.StateActive})
+		view = append(view, viewNode(id, true, false, false))
+	}
+	row := judgeZones(statusOf(view...), facts, true, time.Time{})
+	if row.State != HealthProblem || row.Text != "7 of 8 reachable · 1 down" || row.Count != 1 || row.Facts["off"] != int64(0) ||
+		row.Facts["lost"] != int64(1) || toJSONText(row.Facts["down_names"]) != `["zone-x"]` {
+		t.Fatalf("%+v", row)
+	}
+}
+
+func toJSONText(v any) string { b, _ := json.Marshal(v); return string(b) }

@@ -7,6 +7,7 @@ What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent
 No agent change, no `scheduler.db` or `usage.db` schema change, no new port.
 
 - **A machine that is off across a restart is listed.** It was not listed at all when its agent did not register again. The machines that were members when the previous run ended are read back from the event history (a machine lost, left or removed before that is not); one that has not registered 65 s after the start is `lost` in `/api/nodes` and `/api/status` `agents`, with the new fields `absent_since_start` and `last_seen_at`, counts as down in `/api/health`, and its hours are lost in the availability series. Placement and plans do not see it. A removed machine stays removed, now under its name. `last_seen_at` is also set on any node that is lost or left, and lost `nodeMembership` events carry `last_seen`. See the runbook, "A machine that is off across a restart".
+- **A lost machine is down, even when paused or excluded.** The Zones row of `/api/health` and the availability hours counted a lost machine that was also paused or excluded as switched off (and reachable in the row), while `/api/nodes` called it lost. Membership lost or left now wins: it is down; removed stays off.
 
 ## Scheduler image: system health (phase 2)
 
