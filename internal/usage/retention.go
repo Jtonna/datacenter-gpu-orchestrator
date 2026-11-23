@@ -50,7 +50,10 @@ type TrimRule struct {
 	Keep          func(Retention) time.Duration
 }
 
-var trimRules []TrimRule
+// trimRules: the hourly availability rows by hour start (nodehours.go).
+var trimRules = []TrimRule{
+	{Table: "node_hours", Column: "hour", Keep: func(r Retention) time.Duration { return r.KeepHourly }},
+}
 
 // startTasks starts the supervised retention task.
 func (s *Store) startTasks(ctx context.Context) {

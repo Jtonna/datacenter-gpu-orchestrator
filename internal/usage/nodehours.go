@@ -33,12 +33,6 @@ CREATE TABLE node_hours (
 );
 CREATE INDEX node_hours_hour ON node_hours (hour);`
 
-func init() {
-	// Hourly availability rows go with the hourly retention. (An append:
-	// the order of trim rules does not matter, unlike the migrations.)
-	trimRules = append(trimRules, TrimRule{Table: "node_hours", Column: "hour", Keep: func(r Retention) time.Duration { return r.KeepHourly }})
-}
-
 // NodeHour is one machine's hour, or what to add to it.
 type NodeHour struct {
 	Node        string
