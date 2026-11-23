@@ -1,7 +1,10 @@
 package scheduler
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
@@ -65,6 +68,11 @@ type NeedInfo struct {
 	// DerivedFromCtx: Need is derived (derive.go) from the measurement of the
 	// same model at this other context; 0 otherwise.
 	DerivedFromCtx int
+	// Slope: Need is read from the model's own line on this device count
+	// (ownslope.go); nil otherwise.
+	Slope *DerivedSlope
+
+	window int // the model's sliding window in tokens, 0 for none (concave in the context: ownslope.go)
 
 	// what at needs to give the need of another device count
 	figs       []learnedFig
@@ -126,6 +134,56 @@ type metaEntry struct {
 	meta *gguf.Meta
 }
 
+// HeaderReady reports whether the GGUF header of model has been read (by a
+// profile's need or by Warm). The derivation asks for the estimates of other
+// contexts only then, so the core loop never waits on a header read for it.
+func (c *ConfigNeeds) HeaderReady(model string) bool {
+	c.mu.Lock()
+	defer supervise.Unlocked("scheduler", c.mu.Unlock)
+	_, ok := c.metas[filepath.Join(c.Cfg.ModelsDir, model)]
+	return ok
+}
+
+// Warm reads the headers of models not read yet, off the core loop: the
+// lock is not held during a read, so the core's own calls never wait on it.
+func (c *ConfigNeeds) Warm(ctx context.Context, models []string) {
+	for _, m := range models {
+		if ctx.Err() != nil {
+			return
+		}
+		var path string
+		var ok bool
+		func() {
+			c.mu.Lock()
+			defer supervise.Unlocked("scheduler", c.mu.Unlock)
+			path = filepath.Join(c.Cfg.ModelsDir, m)
+			_, ok = c.metas[path]
+		}()
+		if ok {
+			continue
+		}
+		st, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		meta, err := gguf.ReadMeta(path)
+		if err != nil {
+			continue
+		}
+		func() {
+			c.mu.Lock()
+			defer supervise.Unlocked("scheduler", c.mu.Unlock)
+			c.reads++
+			if c.metas == nil {
+				c.metas = map[string]metaEntry{}
+			}
+			if _, ok := c.metas[path]; !ok {
+				c.metas[path] = metaEntry{size: st.Size(), mod: st.ModTime(), meta: meta}
+			}
+		}()
+	}
+}
+
 // metaOf is the header of the file at path, read once per version of the
 // file: every profile and every derivation estimate of one model shares it.
 func (c *ConfigNeeds) metaOf(path string) (*gguf.Meta, error) {
@@ -174,19 +232,29 @@ func (c *ConfigNeeds) compute(p *core.Profile) (NeedInfo, error) {
 	if p.NeedsMiB > 0 {
 		st, err := os.Stat(path)
 		if err != nil {
-			return NeedInfo{}, fmt.Errorf("model file: %w", err)
+			return NeedInfo{}, c.modelFileErr(p, err)
 		}
 		return NeedInfo{Need: placer.Measured(p.NeedsMiB), FileBytes: st.Size()}, nil
 	}
 	meta, err := c.metaOf(path)
 	if err != nil {
-		return NeedInfo{}, fmt.Errorf("model file: %w", err)
+		return NeedInfo{}, c.modelFileErr(p, err)
 	}
 	info, err := estimateFromMeta(meta, p)
 	if err != nil {
 		return NeedInfo{}, fmt.Errorf("model file %s: %w", path, err)
 	}
 	return info, nil
+}
+
+// modelFileErr says why the model file of p cannot be read; a missing file
+// is named plainly (a configuration may keep a profile whose file went
+// missing: its load is refused here, at plan time).
+func (c *ConfigNeeds) modelFileErr(p *core.Profile, err error) error {
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("model file %q is missing from models_dir %q: %w", p.Model, c.Cfg.ModelsDir, err)
+	}
+	return fmt.Errorf("model file: %w", err)
 }
 
 // estimateFromMeta is the estimated need of a kind: llama profile from its
@@ -208,5 +276,5 @@ func estimateFromMeta(meta *gguf.Meta, p *core.Profile) (NeedInfo, error) {
 		return NeedInfo{}, err
 	}
 	return NeedInfo{Need: placer.Estimated(estimate.NeedMiB(meta.FileSize, kv)), FileBytes: meta.FileSize,
-		DeviceMiB: estimate.ComputeMiB(p.Ctx * parallel)}, nil
+		DeviceMiB: estimate.ComputeMiB(p.Ctx * parallel), window: int(meta.WindowSize)}, nil
 }

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -146,5 +147,20 @@ bench:
 	y := "data_dir: /d\nbench:\n  suites:\n    - {id: s, status: blocked}\n" + benchProfiles
 	if _, err := ParseWithOptions([]byte(y), Options{FileExists: existsAll}); err == nil {
 		t.Fatal("a blocked suite without a reason was accepted")
+	}
+}
+
+// bench_max_run_minutes takes 720 (a 6 to 7 hour Full pass needs it) and
+// applies without a restart: the benchmark manager reads it at each run (B5).
+func TestBenchMaxRunMinutesRangeAndLive(t *testing.T) {
+	f, ok := SettingFieldByKey(ScopeSettings, "bench_max_run_minutes")
+	if !ok || f.RestartRequired {
+		t.Fatalf("in schema %v, restart required %v (it must change at run time)", ok, f.RestartRequired)
+	}
+	if c := mustParse(t, "data_dir: /d\nbench: {max_run_minutes: 720}\nprofiles: {}\n"); c.Bench.MaxRunMinutes != 720 {
+		t.Fatalf("720 read as %d", c.Bench.MaxRunMinutes)
+	}
+	if v, err := CoerceSetting(ScopeSettings, "bench_max_run_minutes", 720.0); err != nil || fmt.Sprint(v) != "720" {
+		t.Fatalf("720 as a setting: %v %v", v, err)
 	}
 }

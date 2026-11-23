@@ -151,7 +151,7 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 	c.Bench.Enabled = c.DataDir != "" && (raw.Bench.Enabled == nil || *raw.Bench.Enabled)
 	c.benchEnabledSet = raw.Bench.Enabled
 	c.Bench.EnabledSetting = raw.Bench.Enabled == nil || *raw.Bench.Enabled
-	if err := c.validate(rawProfiles, exists); err != nil {
+	if err := c.validate(rawProfiles, c.modelCheck(o, exists)); err != nil {
 		return nil, nil, nil, err
 	}
 	return c, &raw, rawProfiles, nil
@@ -170,6 +170,17 @@ func trimAll(in []string) []string {
 
 // modelPath is where a profile's model file is expected.
 func (c *Config) modelPath(p *core.Profile) string { return filepath.Join(c.ModelsDir, p.Model) }
+
+// modelCheck reports whether a profile's model file may be accepted: it
+// exists, or the profile keeps the file it pointed at before (o.KeepModels).
+func (c *Config) modelCheck(o Options, exists func(string) bool) func(*core.Profile) bool {
+	return func(p *core.Profile) bool {
+		if m, ok := o.KeepModels[p.Name]; ok && m == p.Model {
+			return true
+		}
+		return exists(c.modelPath(p))
+	}
+}
 
 type rawConfig struct {
 	Listen              string                      `yaml:"listen" json:"listen,omitempty"`

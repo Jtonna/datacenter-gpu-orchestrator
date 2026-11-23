@@ -33,7 +33,7 @@ var managedFlags = map[string]bool{
 
 // validate checks every startup rule and returns all violations joined, in
 // a deterministic order.
-func (c *Config) validate(raw map[string]*ProfileSpec, exists func(string) bool) error {
+func (c *Config) validate(raw map[string]*ProfileSpec, modelOK func(*core.Profile) bool) error {
 	var errs []error
 	add := func(format string, a ...any) { errs = append(errs, fmt.Errorf(format, a...)) }
 
@@ -112,7 +112,7 @@ func (c *Config) validate(raw map[string]*ProfileSpec, exists func(string) bool)
 		}
 		switch p.Kind {
 		case core.KindLlama:
-			c.validateLlama(p, raw[n], pf, exists)
+			c.validateLlama(p, raw[n], pf, modelOK)
 		case core.KindCommand:
 			validateCommand(p, raw[n], pf)
 		default:
@@ -125,7 +125,7 @@ func (c *Config) validate(raw map[string]*ProfileSpec, exists func(string) bool)
 // MaxDescription is the longest profile description, in characters.
 const MaxDescription = 500
 
-func (c *Config) validateLlama(p *core.Profile, r *ProfileSpec, pf func(field, format string, a ...any), exists func(string) bool) {
+func (c *Config) validateLlama(p *core.Profile, r *ProfileSpec, pf func(field, format string, a ...any), modelOK func(*core.Profile) bool) {
 	if r.Cmd != "" {
 		pf("cmd", "only valid with kind: command")
 	}
@@ -134,7 +134,7 @@ func (c *Config) validateLlama(p *core.Profile, r *ProfileSpec, pf func(field, f
 	}
 	if p.Model == "" {
 		pf("model", "is required")
-	} else if !exists(c.modelPath(p)) {
+	} else if !modelOK(p) {
 		pf("model", "file %q not found under models_dir %q", p.Model, c.ModelsDir)
 	}
 	switch {

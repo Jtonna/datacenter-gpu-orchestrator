@@ -16,6 +16,16 @@ import (
 // derivation asks for at other contexts.
 func deriveHarness(t fatalT) *harness {
 	h := newHarness(t)
+	h.window = map[string]int{}
+	windowOf := func(model string) int { // a "swa*" model has a sliding window of 1024 unless the test sets one
+		if w, ok := h.window[model]; ok {
+			return w
+		}
+		if strings.HasPrefix(model, "swa") {
+			return 1024
+		}
+		return 0
+	}
 	h.c.needs = NeedFunc(func(p *core.Profile) (NeedInfo, error) {
 		if p.NeedsMiB > 0 {
 			return NeedInfo{Need: placer.Measured(p.NeedsMiB), FileBytes: 4000 << 20}, nil
@@ -25,7 +35,7 @@ func deriveHarness(t fatalT) *harness {
 			weights = 20000
 		}
 		return NeedInfo{Need: placer.Estimated(weights + p.Ctx*max(p.Parallel, 1)/8), FileBytes: int64(weights) << 20,
-			DeviceMiB: estimate.ComputeMiB(p.Ctx * max(p.Parallel, 1))}, nil
+			DeviceMiB: estimate.ComputeMiB(p.Ctx * max(p.Parallel, 1)), window: windowOf(p.Model)}, nil
 	})
 	h.c.llamaBuild, h.c.servedBuild = "aaaaaaa1", "aaaaaaa1"
 	return h
@@ -53,16 +63,16 @@ func derivedFrom(total, fromCtx, toCtx, devices int) int {
 // and a measurement of its own shape replaces it.
 func TestDerivedNeed_FromTheNearestContext(t *testing.T) {
 	h := deriveHarness(t)
-	q := h.llama("q", 0, func(p *core.Profile) { p.Model, p.Ctx = "qwen.gguf", 32768 })
-	h.measure("qwen.gguf", 2048, 1, 5000)
+	q := h.llama("q", 0, func(p *core.Profile) { p.Model, p.Ctx = "swa.gguf", 6144 }) // between its rows, no third: the line is not used
+	h.measure("swa.gguf", 2048, 1, 5000)
 	at8k := derivedFrom(5000, 2048, 8192, 1) + 100 // the formula is off by 100 MiB on this pair
-	h.measure("qwen.gguf", 8192, 1, at8k)
+	h.measure("swa.gguf", 8192, 1, at8k)
 
 	info, err := h.c.need(q)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := derivedFrom(at8k, 8192, 32768, 1) // from the nearest context
+	want := derivedFrom(at8k, 8192, 6144, 1) // from the nearest context
 	if info.Need.MiB != want || !info.Need.Measured || info.Source != NeedDerived || info.DerivedFromCtx != 8192 {
 		t.Fatalf("need %+v source %q from ctx %d, want %d derived from 8192", info.Need, info.Source, info.DerivedFromCtx, want)
 	}
@@ -74,7 +84,7 @@ func TestDerivedNeed_FromTheNearestContext(t *testing.T) {
 	}
 
 	// Its first load measures its own shape: that replaces the derivation.
-	h.measure("qwen.gguf", 32768, 1, want+40)
+	h.measure("swa.gguf", 6144, 1, want+40)
 	info, _ = h.c.need(q)
 	if info.Need.MiB != want+40 || info.Source != NeedLearned || info.DerivedFromCtx != 0 {
 		t.Fatalf("after its own measurement: %+v %q %d", info.Need, info.Source, info.DerivedFromCtx)
@@ -82,12 +92,14 @@ func TestDerivedNeed_FromTheNearestContext(t *testing.T) {
 }
 
 // When the model's pairs of measurements disagree with the formula by more
-// than the tolerance, nothing is derived: the estimate stays.
+// than the tolerance (the upward one under-predicting), nothing is derived
+// by the formula step: the estimate stays (here between its two rows, where
+// a sliding-window model's own line is not used either).
 func TestDerivedNeed_NotUsedWhenItsPairsAreOutOfTolerance(t *testing.T) {
 	h := deriveHarness(t)
-	q := h.llama("q", 0, func(p *core.Profile) { p.Model, p.Ctx = "qwen.gguf", 32768 })
-	h.measure("qwen.gguf", 2048, 1, 5000)
-	h.measure("qwen.gguf", 8192, 1, derivedFrom(5000, 2048, 8192, 1)+deriveToleranceMiB+1)
+	q := h.llama("q", 0, func(p *core.Profile) { p.Model, p.Ctx = "swa.gguf", 4096 })
+	h.measure("swa.gguf", 2048, 1, 5000)
+	h.measure("swa.gguf", 8192, 1, derivedFrom(5000, 2048, 8192, 1)+deriveToleranceMiB+1)
 	if info, _ := h.c.need(q); info.Source != NeedEstimated || info.DerivedFromCtx != 0 {
 		t.Fatalf("%+v %q", info.Need, info.Source)
 	}

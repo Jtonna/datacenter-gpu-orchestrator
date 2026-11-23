@@ -10,7 +10,10 @@
 // the file part.
 package history
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // Severities, in increasing order.
 const (
@@ -101,6 +104,7 @@ type Query struct {
 	Types        []string // any of
 	MinSeverity  string
 	Node         string
+	NodeAliases  []string // other names of Node (its id or hostname); an event naming any of them matches
 	Profile      string
 	SessionID    string
 	Text         string // substring of the summary, case-insensitive
@@ -156,7 +160,7 @@ func (q Query) Match(e *Event) bool {
 	if q.Node != "" {
 		ok := false
 		for _, n := range e.Nodes {
-			if n == q.Node {
+			if n == q.Node || slices.Contains(q.NodeAliases, n) {
 				ok = true
 				break
 			}

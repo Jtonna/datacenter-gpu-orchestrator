@@ -487,6 +487,9 @@ type PlanReport struct {
 	// DerivedFromCtx: the need is derived from a measurement of the same
 	// model at this other context (NeedBasis says so); 0 otherwise.
 	DerivedFromCtx int
+	// DerivedSlope: the need is read from the model's own line on one device
+	// count (NeedBasis says so); nil otherwise.
+	DerivedSlope *DerivedSlope
 	// Warning is set when defaults.forced_fit_check is warn and the forced
 	// nodes' free memory is below the need: the load would start anyway.
 	Warning string

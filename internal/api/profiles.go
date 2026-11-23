@@ -106,6 +106,10 @@ func (s *Server) profileEntriesOf(ctx context.Context, cfg *config.Config) []map
 				if rep.DerivedFromCtx > 0 {
 					e["derived_from_ctx"] = rep.DerivedFromCtx // the basis says "derived from the measurement at ctx N"
 				}
+				if sl := rep.DerivedSlope; sl != nil { // the basis says "own slope of this model on N devices"
+					e["derived_slope_mib_per_1k_ctx"] = sl.MiBPer1kCtx
+					e["derived_slope_from_ctx"] = append(append([]int{}, sl.FromCtx...), sl.ConfirmedBy...)
+				}
 			}
 			if l, ok := learned[n]; ok && l.PeakMiB > 0 {
 				e["peak_mib"], e["peak_basis"] = l.PeakMiB, l.PeakBasis // the memory reservation rule's stored peak

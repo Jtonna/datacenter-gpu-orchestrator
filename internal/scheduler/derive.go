@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"cmp"
+	"context"
 	"fmt"
 	"hash/maphash"
 	"slices"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/estimate"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // Derived needs. A llama profile with no measurement of its own shape (nor,
@@ -155,6 +157,10 @@ func (c *schedCore) deriveEstimate(k needKey) (NeedInfo, bool) {
 	if e, ok := c.derive.est[k]; ok {
 		return e, true
 	}
+	if hr, ok := c.needs.(headerReader); ok && !hr.HeaderReady(k.model) {
+		c.derive.waiting = true // derived once the background read posts evHeadersRead
+		return NeedInfo{}, false
+	}
 	c.derive.estCalls++
 	e, err := c.needs.Need(profileOfKey(k))
 	if err != nil || e.Need.Measured || e.Need.MiB <= 0 {
@@ -165,6 +171,63 @@ func (c *schedCore) deriveEstimate(k needKey) (NeedInfo, bool) {
 	}
 	c.derive.est[k] = e
 	return e, true
+}
+
+// headerReader is a provider that reads model headers: the derivation uses
+// only those already read (deriveEstimate), the rest are read in the
+// background (Scheduler.warmHeaders).
+type headerReader interface {
+	HeaderReady(model string) bool
+	Warm(ctx context.Context, models []string)
+}
+
+// evHeadersRead: the background read of the model headers is done; checks
+// built while some were missing are built again.
+type evHeadersRead struct{}
+
+func (evHeadersRead) isEvent() {}
+
+func (c *schedCore) headersRead() {
+	if c.derive.waiting {
+		c.derive.waiting, c.derive.groups = false, nil
+		c.changed = true
+	}
+}
+
+// warmHeaders reads, off the core loop, the headers of every model the
+// profiles and the stored measurements name, then posts evHeadersRead. Run
+// calls it before the loop starts (it owns the core then).
+func (s *Scheduler) warmHeaders() {
+	hr, ok := s.core.needs.(headerReader)
+	if !ok {
+		return
+	}
+	seen := map[string]bool{}
+	var models []string
+	add := func(m string) {
+		if m != "" && !seen[m] {
+			seen[m] = true
+			models = append(models, m)
+		}
+	}
+	for _, ls := range s.core.learned {
+		for _, l := range ls {
+			if l.key.kind != core.KindCommand {
+				add(l.key.model)
+			}
+		}
+	}
+	for _, p := range s.core.cfg.Profiles {
+		if p.Kind != core.KindCommand {
+			add(p.Model)
+		}
+	}
+	slices.Sort(models)
+	s.wg.Add(1)
+	supervise.Go(s.bgCtx, supervise.Spec{Name: "scheduler.header_reads", Policy: supervise.Restart, Done: s.wg.Done}, func(ctx context.Context) {
+		hr.Warm(ctx, models)
+		s.post(ctx, evHeadersRead{})
+	})
 }
 
 // forgetEstimates drops the kept estimates of one model file name, and the
@@ -193,7 +256,8 @@ func (s ctxStep) holds(l *learnedNeed) bool {
 // write changes none of it: the work is done once per state of the store,
 // not per profile, listing or configuration revision.
 type deriveState struct {
-	est    map[needKey]NeedInfo
+	waiting bool // an estimate was skipped: its model's header is not read yet
+	est     map[needKey]NeedInfo
 	seed   maphash.Seed
 	seeded bool
 	sum    uint64
@@ -420,20 +484,47 @@ func nearestCtx(srcs map[int][]*learnedNeed, r int, ok func(int) bool) int {
 
 // withDerived is withLearned for a profile without measurements of its own
 // shape: the derived figures when a derivation applies (see the top of the
-// file), else info unchanged.
+// file), else info unchanged. The model's own lines (ownslope.go) join the
+// formula step's figures; at decides with a line only on its own count, and
+// there it outranks the formula step.
 func (c *schedCore) withDerived(p *core.Profile, info, base NeedInfo) NeedInfo {
 	if p.Kind == core.KindCommand || base.Need.Measured {
 		return info // a configured need is never replaced
 	}
+	lines := c.slopeFigs(p, base, true) // the model's own lines (ownslope.go): each decides on its own count only
+	figs, from, k := c.formulaFigs(p, info, base)
+	if len(figs) == 0 && len(lines) == 0 {
+		return info
+	}
+	if len(figs) == 0 { // shown on the count of the latest line
+		latest := lines[0].at
+		for _, f := range lines {
+			if k == 0 || f.at.After(latest) {
+				k, latest = f.devices, f.at
+			}
+		}
+	}
+	info.figs, info.derive = append(figs, lines...), from
+	info.baseNeed, info.baseSource, info.perDevice = info.Need, info.Source, c.perDeviceCost(base)
+	if len(p.ForceNodes) > 0 {
+		k = len(p.ForceNodes)
+	}
+	return info.at(max(k, 1))
+}
+
+// formulaFigs is p's figures by the formula step, one per device count of
+// the context it derives from, the derivation, and the count of its latest
+// measurement; nil when no derivation applies. info is the estimate.
+func (c *schedCore) formulaFigs(p *core.Profile, info, base NeedInfo) ([]learnedFig, *deriveFrom, int) {
 	d := c.deriveIndex()
 	srcs := c.derivedSources(d, p, base.FileBytes)
 	if len(srcs) == 0 {
-		return info
+		return nil, nil, 0
 	}
 	key := needKeyOf(p)
 	ch := c.groupIn(d, key.noCtx()).check
 	if !ch.upSafe {
-		return info // the model costs more than the formula: no derivation
+		return nil, nil, 0 // the model costs more than the formula: no derivation
 	}
 	if _, ok := c.derive.est[key]; !ok && base.Need.MiB > 0 { // the profile's own estimate is the one at its window
 		if c.derive.est == nil {
@@ -475,7 +566,7 @@ func (c *schedCore) withDerived(p *core.Profile, info, base NeedInfo) NeedInfo {
 		}
 	}
 	if from < 0 {
-		return info
+		return nil, nil, 0
 	}
 	st := steps[from]
 	perDevice := c.perDeviceCost(base)
@@ -495,20 +586,15 @@ func (c *schedCore) withDerived(p *core.Profile, info, base NeedInfo) NeedInfo {
 		if t <= 0 {
 			continue
 		}
-		figs = append(figs, learnedFig{devices: l.count(), total: t, restored: l.restored, trusted: c.trusted(l), at: l.at})
+		figs = append(figs, learnedFig{devices: l.count(), total: t, restored: l.restored, trusted: c.trusted(l), at: l.at, formula: true})
 		if k == 0 || l.at.After(latest) {
 			k, latest = l.count(), l.at
 		}
 	}
 	if len(figs) == 0 {
-		return info
+		return nil, nil, 0
 	}
-	info.figs, info.derive = figs, &deriveFrom{ctx: from, check: ch, mode: mode}
-	info.baseNeed, info.baseSource, info.perDevice = info.Need, info.Source, perDevice
-	if len(p.ForceNodes) > 0 {
-		k = len(p.ForceNodes)
-	}
-	return info.at(max(k, 1))
+	return figs, &deriveFrom{ctx: from, check: ch, mode: mode}, k
 }
 
 // deriveFrom is what a NeedInfo keeps of the derivation its figs come from.

@@ -317,7 +317,7 @@ func (c *schedCore) dryPlan(profile string) (r PlanReport) {
 		return r
 	}
 	r.NeedMiB, r.Measured = info.Need.MiB, info.Need.Measured
-	r.FitNeedMiB, r.NeedBasis, r.DerivedFromCtx = info.Need.WithMargin(), c.needBasis(info), info.DerivedFromCtx
+	r.FitNeedMiB, r.NeedBasis, r.DerivedFromCtx, r.DerivedSlope = info.Need.WithMargin(), c.needBasis(info), info.DerivedFromCtx, info.Slope
 	if c.insts[profile] == nil {
 		if fe := c.forcedNeverFits(p); fe != nil {
 			r.Action, r.Reason = PlanReject, fe.Message
