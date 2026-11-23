@@ -93,7 +93,10 @@ type Deps struct {
 	Probe func(ctx context.Context, addr string) error
 	// HostHealthy asks llama-server's /health.
 	HostHealthy func(ctx context.Context, addr string) bool
-	Gate        Gate
+	// ReadChars is the bytes a process has read with read() so far (Linux:
+	// rchar of /proc/<pid>/io). Nil reports no read progress for a host.
+	ReadChars func(pid int) (int64, error)
+	Gate      Gate
 	// Device is the device a worker of this node serves, as the heartbeat
 	// reports it; false when none is known. Nil makes no would_not_fit check.
 	Device   func() (agentproto.Device, bool)
@@ -131,6 +134,38 @@ type record struct {
 	Exit        *agentproto.ExitInfo     `json:"exit,omitempty"`
 	ExitedAt    int64                    `json:"exited_at_boottime_ns,omitempty"`
 	LoadFinal   *agentproto.LoadProgress `json:"load,omitempty"`
+	// ModelBytes is a host's model file size (the cap of its read progress).
+	ModelBytes int64 `json:"model_bytes,omitempty"`
+	// KeyPath is a host's api key file (never the key); removed at exit.
+	KeyPath string `json:"key_path,omitempty"`
+}
+
+// writeKey writes a host launch's api key to path, readable by root only.
+// The folder is the launch state folder: RAM (/run), never a drive.
+func writeKey(path, key string) error {
+	tmp := path + ".tmp"
+	os.Remove(tmp)
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(key + "\n"); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// removeKey removes the launch's key file, if it has one.
+func removeKey(rec record) {
+	if rec.KeyPath != "" {
+		os.Remove(rec.KeyPath)
+	}
 }
 
 type launchRun struct {
@@ -153,6 +188,7 @@ type launchRun struct {
 	memAvail   int64
 	lowWater   int64
 	goneAt     time.Duration // when the process was seen gone (0: not yet)
+	readBytes  int64         // host: bytes of the model file read so far (capped)
 	exitAt     time.Duration
 	exit       *agentproto.ExitInfo
 	load       *agentproto.LoadProgress
@@ -239,15 +275,19 @@ var launchIDRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 var (
 	workerOwnFlags = []string{"--host", "-H", "--port", "-p", "--model-dir"}
 	hostOwnFlags   = []string{"--host", "--port", "-m", "--model", "-c", "--ctx-size", "-np", "--parallel",
-		"--rpc", "-ts", "--tensor-split"}
+		"--rpc", "-ts", "--tensor-split", "-dev", "--device", "--api-key", "--api-key-file"}
 )
+
+// apiKeyRE is what a host launch's api_key may be (6.2).
+var apiKeyRE = regexp.MustCompile(`^[A-Za-z0-9._-]{16,256}$`)
 
 // EnvRPCFileLoad is read by the fork's llama-server (host process only):
 // "0" never asks workers to read files (weights are pushed), "1" uses a
 // worker's files where it offers them and falls back per worker, "required"
 // fails the load unless every worker reads from its files. A host launch
-// sets "required" when strict_file_load is true, else "1". There is no
-// llama-server flag for it.
+// sets its rpc_file_load ("required" or "0") when the request has one (from
+// release 0.1.9); otherwise "required" when strict_file_load is true, else
+// "1". There is no llama-server flag for it.
 const (
 	// LaunchOOMScoreAdjust makes the kernel's OOM killer pick the launch
 	// before the agent or sshd.
@@ -410,6 +450,18 @@ func (m *Manager) Start(ctx context.Context, req agentproto.LaunchRequest) (agen
 		if h.Ctx <= 0 || h.Parallel <= 0 {
 			return agentproto.LaunchState{}, refuse(agentproto.ReasonInvalidRequest, "ctx and parallel must be positive")
 		}
+		switch h.RPCFileLoad {
+		case "", agentproto.RPCFileLoadRequired, agentproto.RPCFileLoadOff:
+		default:
+			return agentproto.LaunchState{}, refuse(agentproto.ReasonInvalidRequest, "rpc_file_load must be %q or %q", agentproto.RPCFileLoadRequired, agentproto.RPCFileLoadOff)
+		}
+		if h.APIKey != "" && !apiKeyRE.MatchString(h.APIKey) {
+			// The key itself is never put in a message.
+			return agentproto.LaunchState{}, refuse(agentproto.ReasonInvalidRequest, "api_key must be 16 to 256 letters, digits, '.', '_' or '-'")
+		}
+		if h.ExpectMiB < 0 {
+			return agentproto.LaunchState{}, refuse(agentproto.ReasonInvalidRequest, "expect_mib must not be negative")
+		}
 	default:
 		return agentproto.LaunchState{}, refuse(agentproto.ReasonInvalidRequest, "role must be worker or host")
 	}
@@ -451,11 +503,19 @@ func (m *Manager) Start(ctx context.Context, req agentproto.LaunchRequest) (agen
 	var expect int64
 	if req.Role == agentproto.RoleWorker {
 		expect = req.Worker.ExpectMiB
+	} else {
+		expect = req.Host.ExpectMiB // the device share, the host process and its context
 	}
 	var dev agentproto.Device
 	haveDev := false
-	if expect > 0 && m.deps.Device != nil {
+	if m.deps.Device != nil && (expect > 0 || req.Role == agentproto.RoleHost) {
 		dev, haveDev = m.deps.Device()
+	}
+	// A host with workers names its own device first (6.2): tensor_split is
+	// host first, and llama.cpp would otherwise order the RPC devices before
+	// the local one.
+	if req.Role == agentproto.RoleHost && len(req.Host.Workers) > 0 && (!haveDev || dev.Name == "") {
+		return agentproto.LaunchState{}, refuse(agentproto.ReasonInvalidRequest, "no device of this node is known, so the host cannot name its own device first")
 	}
 	// No device figure, or a device not known to have memory of its own:
 	// MemAvailable is tested too.
@@ -485,7 +545,7 @@ func (m *Manager) Start(ctx context.Context, req agentproto.LaunchRequest) (agen
 			"%s %d MiB minus the expected %d MiB leaves less than the watchdog floor of %d MiB",
 			what, avail, expect, m.cfg.WatchdogFloorMiB)
 	}
-	if haveDev && dev.FreeMiB-expect < 0 {
+	if expect > 0 && haveDev && dev.FreeMiB-expect < 0 {
 		return agentproto.LaunchState{}, refuse(agentproto.ReasonWouldNotFit,
 			"device %s has %d MiB free, less than the expected %d MiB", dev.Name, dev.FreeMiB, expect)
 	}
@@ -529,7 +589,17 @@ func (m *Manager) Start(ctx context.Context, req agentproto.LaunchRequest) (agen
 			for i, v := range h.TensorSplit {
 				ts[i] = strconv.FormatFloat(v, 'f', -1, 64)
 			}
-			args = append(args, "--rpc", strings.Join(h.Workers, ","), "--tensor-split", strings.Join(ts, ","))
+			devs := []string{dev.Name}
+			for i := range h.Workers {
+				devs = append(devs, "RPC"+strconv.Itoa(i))
+			}
+			args = append(args, "--rpc", strings.Join(h.Workers, ","), "--device", strings.Join(devs, ","),
+				"--tensor-split", strings.Join(ts, ","))
+		}
+		if h.APIKey != "" {
+			// The key goes in a file in the launch state folder (RAM), never on
+			// the command line, which is reported and logged.
+			args = append(args, "--api-key-file", filepath.Join(m.stateDir(), req.LaunchID+".key"))
 		}
 		args = append(args, h.ExtraArgs...)
 	}
@@ -542,7 +612,10 @@ func (m *Manager) Start(ctx context.Context, req agentproto.LaunchRequest) (agen
 	}
 	if req.Host != nil {
 		mode := RPCFileLoadWhereOffered
-		if req.Host.StrictFileLoad {
+		switch {
+		case req.Host.RPCFileLoad != "":
+			mode = req.Host.RPCFileLoad
+		case req.Host.StrictFileLoad:
 			mode = RPCFileLoadRequired
 		}
 		env = append(env, EnvRPCFileLoad+"="+mode)
@@ -576,6 +649,15 @@ func (m *Manager) Start(ctx context.Context, req agentproto.LaunchRequest) (agen
 	}
 	if req.Role == agentproto.RoleHost {
 		rec.Model = req.Host.Model
+		if fi, err := os.Stat(modelPath); err == nil {
+			rec.ModelBytes = fi.Size()
+		}
+		if req.Host.APIKey != "" {
+			rec.KeyPath = filepath.Join(m.stateDir(), req.LaunchID+".key")
+			if err := writeKey(rec.KeyPath, req.Host.APIKey); err != nil {
+				return agentproto.LaunchState{}, refuse(agentproto.ReasonInvalidRequest, "key file: %v", err)
+			}
+		}
 	}
 	os.Remove(rec.LogPath)
 	os.Remove(rec.ExitPath)
@@ -586,6 +668,7 @@ func (m *Manager) Start(ctx context.Context, req agentproto.LaunchRequest) (agen
 		run.load = &agentproto.LoadProgress{State: agentproto.LoadWaiting}
 	}
 	if err := writeLease(rec.LeasePath, run.deadline); err != nil {
+		removeKey(rec)
 		return agentproto.LaunchState{}, refuse(agentproto.ReasonInvalidRequest, "lease file: %v", err)
 	}
 	m.persist(run)
@@ -1145,7 +1228,20 @@ func (m *Manager) tick(ctx context.Context) {
 	}
 	state, role, port, proc := r.state, r.rec.Role, r.rec.Port, r.proc
 	started := r.scan.started
+	modelBytes := r.rec.ModelBytes
 	m.mu.Unlock()
+
+	// A host's own read of the model file (6.3 load.bytes_loaded): the
+	// process's read count, capped at the file size. Only read() calls are
+	// counted, so a host that maps the file (mmap) shows none.
+	if role == agentproto.RoleHost && state == agentproto.StateStarting && proc != nil && modelBytes > 0 && m.deps.ReadChars != nil && !procGone(proc) {
+		if n, err := m.deps.ReadChars(proc.PID()); err == nil && n > 0 {
+			m.mu.Lock()
+			r.readBytes = min(max(n, r.readBytes), modelBytes)
+			m.applyProgressLocked(r)
+			m.mu.Unlock()
+		}
+	}
 
 	// Process gone?
 	gone := false
@@ -1273,6 +1369,16 @@ func (m *Manager) applyProgressLocked(r *launchRun) {
 			r.load = &agentproto.LoadProgress{BytesLoaded: &b, BytesTotal: &t, State: st}
 		}
 	case agentproto.RoleHost:
+		if r.readBytes > 0 {
+			if r.load == nil {
+				r.load = &agentproto.LoadProgress{}
+			}
+			b, t := r.readBytes, r.rec.ModelBytes
+			r.load.BytesLoaded, r.load.BytesTotal = &b, &t
+			if r.load.State == agentproto.LoadWaiting || r.load.State == "" {
+				r.load.State = agentproto.LoadReceiving
+			}
+		}
 		if s.haveFrac {
 			f := s.fraction
 			if r.load == nil {
@@ -1305,6 +1411,7 @@ func (m *Manager) finishLocked(r *launchRun, exit runner.Exit, reason, msg strin
 	r.rec.Exit, r.rec.ExitedAt = ei, int64(now)
 	r.rec.LoadFinal = r.load
 	os.Remove(r.rec.LeasePath)
+	removeKey(r.rec) // the launch has gone: its key is of no use to anyone
 	m.persist(r)
 	m.log.Info("launch exited", "launch_id", r.rec.LaunchID, "reason", reason, "message", msg)
 	if text, abnormal := exitError(r.rec.LaunchID, ei); abnormal && m.deps.OnError != nil {
@@ -1355,6 +1462,7 @@ func (m *Manager) persist(r *launchRun) {
 }
 
 func (m *Manager) removeFiles(rec record) {
+	removeKey(rec)
 	for _, p := range []string{filepath.Join(m.stateDir(), rec.LaunchID+".json"), rec.ExitPath, rec.LeasePath} {
 		os.Remove(p)
 	}

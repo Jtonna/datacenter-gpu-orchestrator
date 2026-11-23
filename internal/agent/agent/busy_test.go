@@ -214,3 +214,39 @@ func TestBusyFileBackRightAfterAdoption(t *testing.T) {
 		t.Fatalf("the file came %v after the adoption", d)
 	}
 }
+
+// A host launch (phase 6) makes the node busy exactly as a worker launch
+// does: the busy file and GET /status follow it, role host, until it has
+// stopped.
+func TestBusyFileFollowsAHostLaunch(t *testing.T) {
+	p := busyPath(t)
+	sr := newSurvRunner()
+	e := newTenvWith(t, func(o *Options, d *Deps) { d.Runner, o.BusyFile = sr, p })
+	e.start()
+	e.waitReady()
+	req := agentproto.LaunchRequest{LaunchID: "ln-h1", Role: agentproto.RoleHost, Release: "0.1.0", LeaseTTLS: 20,
+		MinMemAvailableMiB: 1000, Host: &agentproto.HostSpec{Model: "m.gguf", Ctx: 4096, Parallel: 1,
+			RPCFileLoad: agentproto.RPCFileLoadRequired, APIKey: "k0123456789abcdef", ExtraArgs: []string{}}}
+	if w := e.do("POST", "/launch", req, fromPotluck); w.Code != 202 {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	agenttest.Eventually(t, 5*time.Second, "busy file", func() bool { return exists(p) })
+	if st := localStatus(t, e); !st.Busy || st.Launches != 1 || st.Role != agentproto.RoleHost {
+		t.Fatalf("%+v", st)
+	}
+	if w := e.do("DELETE", "/launch/ln-h1?force=1", nil, fromPotluck); w.Code >= 300 {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	agenttest.Eventually(t, 15*time.Second, "busy file removed", func() bool { return !exists(p) })
+	if st := localStatus(t, e); st.Busy {
+		t.Fatalf("%+v", st)
+	}
+}
+
+// The registration says host_launch on a node with a model folder.
+func TestHostLaunchAdvertised(t *testing.T) {
+	e := newTenv(t)
+	if req := e.a.RegisterRequest(); !req.HasCapability(agentproto.CapHostLaunch) {
+		t.Fatalf("%v", req.Capabilities)
+	}
+}

@@ -305,6 +305,11 @@ type RegisterRequest struct {
 const (
 	// CapFileCacheEvict: the agent serves POST /cache/evict.
 	CapFileCacheEvict = "file_cache_evict"
+	// CapHostLaunch: the agent takes a host launch (role host) with the
+	// fields of release 0.1.9 (expect_mib, rpc_file_load, api_key) and names
+	// its own device first (6.2). Potluck never sends a host launch to an
+	// agent without it.
+	CapHostLaunch = "host_launch"
 )
 
 // HasCapability reports whether the registration advertises c.
@@ -653,16 +658,39 @@ type WorkerSpec struct {
 	ExpectMiB int64 `json:"expect_mib,omitempty"`
 }
 
-// HostSpec is the host part of a launch request (phase 6).
+// HostSpec is the host part of a launch request (phase 6). Potluck sends a
+// host launch only to an agent that advertises CapHostLaunch.
 type HostSpec struct {
-	Model          string    `json:"model"`
-	Ctx            int       `json:"ctx"`
-	Parallel       int       `json:"parallel"`
-	Workers        []string  `json:"workers"`
-	TensorSplit    []float64 `json:"tensor_split"`
-	StrictFileLoad bool      `json:"strict_file_load"`
-	ExtraArgs      []string  `json:"extra_args"`
+	Model       string    `json:"model"`
+	Ctx         int       `json:"ctx"`
+	Parallel    int       `json:"parallel"`
+	Workers     []string  `json:"workers"`
+	TensorSplit []float64 `json:"tensor_split"`
+	// StrictFileLoad is the request of a Potluck that does not send
+	// RPCFileLoad: true is "required", false "1". RPCFileLoad wins when set.
+	StrictFileLoad bool     `json:"strict_file_load"`
+	ExtraArgs      []string `json:"extra_args"`
+	// ExpectMiB is the memory Potluck expects the host to take on the node:
+	// its device share, the host process and its context (release 0.1.9).
+	// The agent makes the same would_not_fit test as for a worker. Optional:
+	// 0 makes none.
+	ExpectMiB int64 `json:"expect_mib,omitempty"`
+	// RPCFileLoad is the host's LLAMA_RPC_FILE_LOAD: RPCFileLoadRequired or
+	// RPCFileLoadOff (release 0.1.9). Empty: StrictFileLoad decides.
+	RPCFileLoad string `json:"rpc_file_load,omitempty"`
+	// APIKey is a per-launch key (release 0.1.9): llama-server then answers
+	// only requests that carry "Authorization: Bearer <key>", except /health.
+	// The agent hands it to llama-server in a file readable by the launch
+	// only, never on the command line, and never reports or logs it. Empty:
+	// no key. 16 to 256 letters, digits, '.', '_' or '-'.
+	APIKey string `json:"api_key,omitempty"`
 }
+
+// Values of HostSpec.RPCFileLoad.
+const (
+	RPCFileLoadRequired = "required"
+	RPCFileLoadOff      = "0"
+)
 
 // LaunchRequest is the body of POST /launch.
 type LaunchRequest struct {

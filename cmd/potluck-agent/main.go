@@ -312,7 +312,7 @@ func serve(opt agent.Options, stderr io.Writer) int {
 		Clock: clock, Runner: rn, Mem: osx.MemInfoFile{}, Sockets: osx.ProcNetSockets{}, Procs: osx.ProcFS{},
 		KLog: osx.Kmsg{}, Net: realNet(machine), Hardware: machineHW{machine},
 		Mounter: modelsrc.ExecMounter{Cmd: osx.ExecCommander{}}, Prober: modelsrc.ExecProber{Exe: exe},
-		DiskFree: osx.StatfsFree, HostHealthy: hostHealthy, Updater: upd, HTTP: httpc, Logger: log,
+		DiskFree: osx.StatfsFree, HostHealthy: hostHealthy, ReadChars: osx.ProcFS{}.ReadChars, Updater: upd, HTTP: httpc, Logger: log,
 		Listen:  func(addr string) (net.Listener, error) { return net.Listen("tcp", addr) },
 		Systemd: sysd, FileCache: filecache.Default(),
 	})
