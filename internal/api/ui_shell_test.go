@@ -1,6 +1,15 @@
 package api
 
 import (
+	"encoding/json"
+	"io"
+	"net"
+	"net/http"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -148,4 +157,67 @@ func TestUINextSharedComponents(t *testing.T) {
 			"pageHas": []string{"label.sx .ic", "label.sx input[type=search]", "label.sx.lg input[type=search]"}},
 	}
 	uiExec(t, comp)
+}
+
+// The fixture server (scripts/ui-fixture-server.mjs, used for the mockup
+// comparison) starts and answers what the shell's components need: the
+// components page with its module before app.js, the module itself, and
+// GET /api/health in the state --health names.
+func TestUIFixtureServerAnswers(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	_, here, _, _ := runtime.Caller(0)
+	script := filepath.Join(filepath.Dir(here), "..", "..", "scripts", "ui-fixture-server.mjs")
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+	cmd := exec.Command(node, script, "--port", strconv.Itoa(port), "--host", "127.0.0.1", "--health", "good")
+	out := &strings.Builder{}
+	cmd.Stdout, cmd.Stderr = out, out
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	base := "http://127.0.0.1:" + strconv.Itoa(port)
+	get := func(p string) string {
+		var last error
+		for i := 0; i < 50; i++ {
+			resp, err := http.Get(base + p)
+			if err == nil {
+				b, _ := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				if resp.StatusCode != 200 {
+					t.Fatalf("GET %s: %d %s", p, resp.StatusCode, b)
+				}
+				return string(b)
+			}
+			last = err
+			time.Sleep(100 * time.Millisecond)
+		}
+		t.Fatalf("the fixture server did not answer GET %s: %v\n%s", p, last, out)
+		return ""
+	}
+	page := get("/ui/components.html")
+	if i, j := strings.Index(page, `src="_fixture/components.js"`), strings.Index(page, `src="app.js"`); i < 0 || j < 0 || i > j {
+		t.Errorf("the components page does not load its module before app.js:\n%s", page)
+	}
+	if !strings.Contains(get("/ui/_fixture/components.js"), "registerView") {
+		t.Error("the components module is not served")
+	}
+	var h struct {
+		Issues int    `json:"issues"`
+		Color  string `json:"color"`
+		Rows   []struct{ ID, State string }
+	}
+	if err := json.Unmarshal([]byte(get("/api/health")), &h); err != nil {
+		t.Fatal(err)
+	}
+	if h.Issues != 0 || h.Color != "green" || len(h.Rows) != 7 || h.Rows[6].ID != "alerts" || h.Rows[6].State != "unknown" {
+		t.Errorf("GET /api/health with --health good: %+v", h)
+	}
 }
