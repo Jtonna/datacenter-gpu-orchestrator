@@ -435,6 +435,12 @@ func (c *schedCore) withDerived(p *core.Profile, info, base NeedInfo) NeedInfo {
 	if !ch.upSafe {
 		return info // the model costs more than the formula: no derivation
 	}
+	if _, ok := c.derive.est[key]; !ok && base.Need.MiB > 0 { // the profile's own estimate is the one at its window
+		if c.derive.est == nil {
+			c.derive.est = map[needKey]NeedInfo{}
+		}
+		c.derive.est[key] = base
+	}
 	steps := map[int]ctxStep{}
 	step := func(ctx int) (ctxStep, bool) {
 		if s, ok := steps[ctx]; ok {
