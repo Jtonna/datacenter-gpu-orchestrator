@@ -51,6 +51,9 @@ const (
 	TRecoveryResponse   = "recoveryResponse"
 	TRecoveryOutcome    = "recoveryOutcome"
 	TRecoveryStopped    = "recoverySequenceStopped"
+	// TOccupiedOnly: a request's only option was a console another
+	// instance held; recorded once when the case ends (scheduler/occupied.go).
+	TOccupiedOnly = "occupiedOnly"
 	TFleetViewStale     = "fleetViewStale"
 	TFleetViewRecovered = "fleetViewRecovered"
 	TFleetFeedDown      = "fleetFeedDisconnected"

@@ -255,10 +255,14 @@ func TestStatusIsModelCentric(t *testing.T) {
 		t.Fatal(r.StatusCode)
 	}
 	var in map[string]any
-	eventually(t, "last_request", func() bool {
+	// The request's lease is released and its record written after the
+	// answer has gone out: wait until the instance shows the request
+	// finished (in_flight back to 0, counted, last_request set).
+	eventually(t, "the request finished", func() bool {
 		m := getJSONBody(t, e, "/api/status")
 		for _, i := range m["instances"].([]any) {
-			if i.(map[string]any)["last_request"] != nil {
+			im := i.(map[string]any)
+			if im["last_request"] != nil && im["in_flight"] == float64(0) && im["requests_served"] == float64(1) {
 				in = i.(map[string]any)
 				return true
 			}

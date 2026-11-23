@@ -343,6 +343,7 @@ func (c *schedCore) release(id uint64) {
 }
 
 func (c *schedCore) deleteEntry(e *entry) {
+	c.occEnd(e) // occupied.go: started, refused or cancelled
 	if c.entries[e.prof.Name] == e {
 		delete(c.entries, e.prof.Name)
 	}
