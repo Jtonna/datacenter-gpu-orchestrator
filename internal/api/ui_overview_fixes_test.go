@@ -74,3 +74,40 @@ func TestUINextOverviewStripAnyUse(t *testing.T) {
 			"has": []string{".avail i.use1", ".avail i.use4", ".avail i.use2", ".avail i.free"}},
 	}})
 }
+
+// (d) "In tok/s": when fewer than 16 prompt tokens were read (tokens_in
+// minus tokens_reused), the measured rate says nothing about the machine;
+// the cell is a dash whose hover gives the reuse and the measured rate. The
+// same rule in the Overview's runs and the full run list.
+func TestUINextRunsInRateAfterReuse(t *testing.T) {
+	now := time.Now()
+	rows := ovRequests(now)
+	reused := rows[2].(map[string]any) // request 14, done
+	reused["tokens_in"], reused["tokens_reused"], reused["prefill_tps"] = 2460, 2450, 9123.0
+	read := rows[5].(map[string]any) // request 11: 640 in, 600 reused, 40 read: the rate stands
+	read["tokens_reused"], read["prefill_tps"] = 600, 377.0
+	fetch := ovFetch(now, rows, true)
+	cell := "tr[data-req='14'] td.mut[title^='Almost']"
+	for _, route := range []string{"#/overview", "#/requests"} {
+		uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
+			map[string]any{"name": "in rate: " + route, "route": route, "status": ovStatus(now),
+				"has": []string{cell}, "expect": []string{"377"}, "absent": []string{"9,123"}},
+		}})
+	}
+}
+
+// (d) The same rule in a run's detail (the side panel of one run).
+func TestUINextRunDetailInRateAfterReuse(t *testing.T) {
+	now := time.Now()
+	fetch := fixtureRuns(now)
+	fetch["/api/requests/101"].(map[string]any)["tokens_reused"] = 1190
+	fetch["/api/requests/101"].(map[string]any)["prefill_tps"] = 8800.0
+	fetch["/api/requests/102"].(map[string]any)["tokens_in"] = 300
+	fetch["/api/requests/102"].(map[string]any)["prefill_tps"] = 377.0
+	uiExec(t, map[string]any{"shell": "next", "app": true, "modules": []string{"_fixture/components.js"}, "fetch": fetch, "cases": []any{
+		map[string]any{"name": "detail: reused prompt", "route": "#/components", "width": 1440, "click": []string{"button[data-run=101]"},
+			"pageHas": []string{"aside.side span[title^='Almost']"}, "page": []string{"In tok/s"}, "notOnPage": []string{"8,800"}},
+		map[string]any{"name": "detail: a read prompt", "route": "#/components", "width": 1440, "click": []string{"button[data-run=102]"},
+			"page": []string{"In tok/s", "377"}},
+	}})
+}

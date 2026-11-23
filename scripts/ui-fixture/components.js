@@ -17,7 +17,7 @@
 import { registerView, navigate, href } from '../core/router.js';
 import { h } from '../core/dom.js';
 import * as api from '../core/api.js';
-import { pageHead, panel, button, facts, runStatus, runLength, runMachines, dialog, searchField } from '../core/ui.js';
+import { pageHead, panel, button, facts, runStatus, runLength, runMachines, dialog, searchField, promptRate } from '../core/ui.js';
 import { openPanel } from '../core/panel.js';
 import { pager } from '../core/pager.js';
 import { popover } from '../core/popover.js';
@@ -47,6 +47,7 @@ registerView({
           ['Model', h('span.mono', run.profile || '')],
           ['Waited', runLength(run.wait_ms)],
           ['Tokens in', run.tokens_in == null ? '–' : num(run.tokens_in)],
+          ['In tok/s', (pr => h('span', { title: pr.title }, pr.rate == null ? '–' : num(pr.rate, pr.rate >= 100 ? 0 : 1)))(promptRate(run))],
           ['Tokens out', run.tokens_out == null ? '–' : num(run.tokens_out)],
           ['Zones', run.nodes && run.nodes.length ? runMachines(run.nodes) : '–'],
         ]) : h('p.mut', error || 'Reading the run…')),

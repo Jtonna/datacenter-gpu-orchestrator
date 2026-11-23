@@ -754,6 +754,20 @@ export function runLength(ms) {
 // A rate of tokens per second: one decimal below 100, whole above (as drawn:
 // "412" in, "14.1" out).
 const rateText = v => (v == null || !(v > 0) ? DASH : v >= 100 ? num(v) : num(v, 1));
+
+// promptRate(r) -> {rate, title} for a run's "In tok/s": its prefill_tps,
+// or null with a hover when fewer than READ_MIN prompt tokens were read
+// (tokens_in minus tokens_reused): a prompt almost all reused from the cache
+// is read too fast to say anything about the machine. Used by the run list
+// and the run detail.
+export const READ_MIN = 16;
+export function promptRate(r) {
+  const tin = r && r.tokens_in, reused = r && r.tokens_reused, tps = r && r.prefill_tps;
+  if (tps != null && tin != null && reused > 0 && tin - reused < READ_MIN) {
+    return { rate: null, title: `Almost all of the prompt was reused from the cache (${num(reused)} of ${num(tin)} tokens); measured ${rateText(tps)} tok/s` };
+  }
+  return { rate: tps == null ? null : tps, title: null };
+}
 const firstUp = t => (t ? t.charAt(0).toUpperCase() + t.slice(1) : t);
 
 // roleShare(role, share) -> "Host 50%", "Helper 100%", or "Host" alone when
@@ -837,7 +851,7 @@ export function runsTable(o) {
         notStarted ? h('td.mut.qd', 'queued ', h('span.mono', clock(r.queued_at))) : h('td.mono', clock(r.started_at)),
         h('td.mono', { title: r.requested && r.requested !== r.profile ? 'Sent as ' + r.requested : null }, r.profile || r.requested || DASH),
         fig(waiting ? null : r.tokens_in, r.tokens_reused > 0 ? `${num(r.tokens_reused)} of them reused from the cache` : null, false, st === 'running' ? PROMPT_LATER : null),
-        fig(waiting ? null : r.prefill_tps, null, true, st === 'running' ? PROMPT_LATER : null),
+        (pr => fig(waiting ? null : pr.rate, null, true, pr.title || (st === 'running' ? PROMPT_LATER : null)))(promptRate(r)),
         fig(waiting ? null : r.tokens_out, r.live ? 'Counted from the stream so far' : null),
         fig(waiting ? null : r.decode_tps, null, true),
         extra.map(c => h('td', { class: c.cls || null }, c.render(r))),
