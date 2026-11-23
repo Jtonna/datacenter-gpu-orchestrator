@@ -27,7 +27,9 @@ func uiExec(t *testing.T, spec map[string]any) {
 	}
 	_, here, _, _ := runtime.Caller(0)
 	dir := filepath.Dir(here)
-	spec["ui"] = filepath.Join(dir, "ui")
+	if spec["ui"] == nil {
+		spec["ui"] = filepath.Join(dir, "ui")
+	}
 	b, _ := json.Marshal(spec)
 	file := filepath.Join(t.TempDir(), "cases.json")
 	if err := os.WriteFile(file, b, 0o644); err != nil {
@@ -270,4 +272,21 @@ func TestUIExecBaseUsesTheServersPage(t *testing.T) {
 			}
 		})
 	}
+}
+
+// 0.1.7 review, N2-4: a package.json without "type" in a folder above the
+// checkout (a user Temp folder, say) must not break the harness: node would
+// warn MODULE_TYPELESS_PACKAGE_JSON on every module, and the harness counts
+// warnings as errors. The UI is run from a copy with its own package.json.
+func TestUIExecIgnoresAParentPackageJSON(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"name":"stray"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ui := filepath.Join(root, "checkout", "ui")
+	if err := os.CopyFS(ui, uiFS); err != nil {
+		t.Fatal(err)
+	}
+	uiExec(t, map[string]any{"ui": ui, "modules": []string{"views/about.js"},
+		"cases": []any{map[string]any{"name": "about under a stray package.json", "route": "#/about", "status": map[string]any{}}}})
 }

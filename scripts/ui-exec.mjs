@@ -37,7 +37,7 @@
 // "could not be drawn" / "failed to start" banner, or an expected text that
 // is missing. Output: one line per case; exit status 1 when any case fails.
 
-import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, cpSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -352,7 +352,19 @@ const spec = live
       cases: LIVE_SCREENS.map(r => ({ name: r, route: '#/' + r, status: 'fetch' })) }
   : JSON.parse(readFileSync(argv[0], 'utf8'));
 base = spec.base ? spec.base.replace(/\/$/, '') : null;
-const ui = path.resolve(spec.ui);
+// The checkout's UI runs from a copy in a temporary folder with its own
+// package.json ({"type":"module"}): node takes a module's type from the
+// nearest package.json above it, and one without "type" above the checkout
+// (a user Temp folder, say) makes it warn on every module, which counts as
+// an error here. The mirror of --base has its own package.json already.
+function isolatedCopy(src) {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'ui-exec-local-'));
+  process.on('exit', () => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* left in the temp folder */ } });
+  cpSync(src, path.join(dir, 'ui'), { recursive: true });
+  writeFileSync(path.join(dir, 'package.json'), '{"type":"module"}\n');
+  return path.join(dir, 'ui');
+}
+const ui = uiDir === spec.ui && live && !flag('--local-ui') ? path.resolve(spec.ui) : isolatedCopy(path.resolve(spec.ui));
 const mod = rel => import(pathToFileURL(path.join(ui, rel)).href);
 const settle = async () => { for (let i = 0; i < 20; i++) await new Promise(r => setTimeout(r, 0)); };
 
