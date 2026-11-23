@@ -160,6 +160,15 @@ func (s *Server) handleRequests(w http.ResponseWriter, r *http.Request) {
 		"history_begins_at": beginsAt(st)})
 }
 
+// beginsAt is the store's history_begins_at in unix ms; nil (JSON null)
+// when the store is off, never the zero time's -62135596800000.
+func beginsAt(st *usage.Store) any {
+	if !st.On() {
+		return nil
+	}
+	return st.HistoryBeginsAt().UnixMilli()
+}
+
 // GET /api/requests/{id}: one request, live or stored.
 func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
