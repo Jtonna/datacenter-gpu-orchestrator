@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -114,5 +115,43 @@ func TestDerivedNeed_WorkIsDoneOncePerStore(t *testing.T) {
 	}
 	if got := *calls - first; got > 2 {
 		t.Fatalf("a new measurement cost %d provider calls", got)
+	}
+}
+
+// waitingHeaders is the harness provider with headers read on demand only
+// by Warm: until then the derivation asks it for nothing.
+type waitingHeaders struct {
+	NeedProvider
+	ready map[string]bool
+}
+
+func (w *waitingHeaders) HeaderReady(model string) bool { return w.ready[model] }
+func (w *waitingHeaders) Warm(_ context.Context, models []string) {
+	for _, m := range models {
+		w.ready[m] = true
+	}
+}
+
+// Until the background read of the model headers is posted, the derivation
+// uses only estimates it already has: a profile keeps the estimate (never a
+// header read in the core loop), and is derived once the read is posted.
+func TestDerivedNeed_WaitsForTheHeaderReads(t *testing.T) {
+	h := deriveHarness(t)
+	w := &waitingHeaders{NeedProvider: h.c.needs, ready: map[string]bool{}}
+	h.c.needs = w
+	q := h.llama("q", 0, func(p *core.Profile) { p.Model, p.Ctx = "qwen.gguf", 32768 })
+	h.measure("qwen.gguf", 2048, 1, 5000)
+	h.measure("qwen.gguf", 8192, 1, derivedFrom(5000, 2048, 8192, 1))
+	if info, _ := h.c.need(q); info.Source != NeedEstimated {
+		t.Fatalf("derived before the header read: %+v %q", info.Need, info.Source)
+	}
+	if ps := h.c.derivePairs(nil); len(ps) != 0 {
+		t.Fatalf("pairs before the header read: %+v", ps)
+	}
+	w.Warm(context.Background(), []string{"qwen.gguf"})
+	h.step(evHeadersRead{})
+	info, _ := h.c.need(q)
+	if info.Source != NeedDerived || info.derive.mode != deriveChecked || len(h.c.derivePairs(nil)) != 2 {
+		t.Fatalf("after the header read: %+v %q %+v", info.Need, info.Source, info.derive)
 	}
 }

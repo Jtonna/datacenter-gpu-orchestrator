@@ -82,6 +82,10 @@ func TestDerivedNeed_ConfigWritesAgainstListings(t *testing.T) {
 	})
 	t0 := time.Now()
 	doc, err := s.Needs(ctxT(t))
+	for end := time.Now().Add(10 * time.Second); err == nil && len(doc.DerivePairs) == 0 && time.Now().Before(end); {
+		time.Sleep(10 * time.Millisecond) // the headers are read in the background after the start
+		doc, err = s.Needs(ctxT(t))
+	}
 	t.Logf("first GET /api/needs after the start: %v; longest core event so far %v (%v)", time.Since(t0),
 		time.Duration(s.stepMax.Load()), s.stepMaxEv.Load())
 	if err != nil || len(doc.Rows) < rows || len(doc.DerivePairs) == 0 {

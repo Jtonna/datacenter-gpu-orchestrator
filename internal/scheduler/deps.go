@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -124,6 +125,56 @@ type metaEntry struct {
 	size int64
 	mod  time.Time
 	meta *gguf.Meta
+}
+
+// HeaderReady reports whether the GGUF header of model has been read (by a
+// profile's need or by Warm). The derivation asks for the estimates of other
+// contexts only then, so the core loop never waits on a header read for it.
+func (c *ConfigNeeds) HeaderReady(model string) bool {
+	c.mu.Lock()
+	defer supervise.Unlocked("scheduler", c.mu.Unlock)
+	_, ok := c.metas[filepath.Join(c.Cfg.ModelsDir, model)]
+	return ok
+}
+
+// Warm reads the headers of models not read yet, off the core loop: the
+// lock is not held during a read, so the core's own calls never wait on it.
+func (c *ConfigNeeds) Warm(ctx context.Context, models []string) {
+	for _, m := range models {
+		if ctx.Err() != nil {
+			return
+		}
+		var path string
+		var ok bool
+		func() {
+			c.mu.Lock()
+			defer supervise.Unlocked("scheduler", c.mu.Unlock)
+			path = filepath.Join(c.Cfg.ModelsDir, m)
+			_, ok = c.metas[path]
+		}()
+		if ok {
+			continue
+		}
+		st, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		meta, err := gguf.ReadMeta(path)
+		if err != nil {
+			continue
+		}
+		func() {
+			c.mu.Lock()
+			defer supervise.Unlocked("scheduler", c.mu.Unlock)
+			c.reads++
+			if c.metas == nil {
+				c.metas = map[string]metaEntry{}
+			}
+			if _, ok := c.metas[path]; !ok {
+				c.metas[path] = metaEntry{size: st.Size(), mod: st.ModTime(), meta: meta}
+			}
+		}()
+	}
 }
 
 // metaOf is the header of the file at path, read once per version of the

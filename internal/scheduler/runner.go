@@ -171,6 +171,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		defer s.needs.close() // what is queued is written before Run returns
 	}
 	s.startBuildReads() // builds.go
+	s.warmHeaders()     // derive.go
 	var stopTimer func() bool
 	var timerAt time.Time
 	ctxDone := ctx.Done()

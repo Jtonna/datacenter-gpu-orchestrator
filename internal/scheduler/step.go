@@ -268,6 +268,8 @@ func (c *schedCore) handle(ev event) {
 		}
 	case evBuilds:
 		c.buildsKnown(e.host, e.served)
+	case evHeadersRead:
+		c.headersRead()
 	default:
 		if !c.handleAgents(ev) {
 			panic(fmt.Sprintf("scheduler: unknown event %T", ev))
