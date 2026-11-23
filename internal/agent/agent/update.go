@@ -66,6 +66,32 @@ func (u SelfUpdater) attemptPath() string {
 
 // Update implements Updater.
 func (u SelfUpdater) Update(ctx context.Context, required string) error {
+	return u.update(ctx, required, "")
+}
+
+// Refetch implements Refetcher: when the running binary's sha256 is not
+// want (the agent binary Potluck serves for this release, from the
+// registration answer), it installs the served one as Update does, under
+// the same once-per-(release, sha256) attempt file. The served sha256 must
+// be want; nothing is fetched otherwise.
+func (u SelfUpdater) Refetch(ctx context.Context, release, want string) error {
+	f, err := os.Open(u.Exe)
+	if err != nil {
+		return fmt.Errorf("read own binary: %w", err)
+	}
+	h := sha256.New()
+	_, err = io.Copy(h, f)
+	f.Close()
+	if err != nil {
+		return fmt.Errorf("read own binary: %w", err)
+	}
+	if strings.EqualFold(hex.EncodeToString(h.Sum(nil)), want) {
+		return nil
+	}
+	return u.update(ctx, release, want)
+}
+
+func (u SelfUpdater) update(ctx context.Context, required, wantSHA string) error {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.Base+"/api/pool/release", nil)
 	resp, err := u.HTTP.Do(req)
 	if err != nil {
@@ -89,6 +115,9 @@ func (u SelfUpdater) Update(ctx context.Context, required string) error {
 	bin, ok := info.Agents[runtime.GOOS+"-"+runtime.GOARCH]
 	if !ok || !strings.HasPrefix(bin.Path, "/") {
 		return fmt.Errorf("no agent for %s-%s in release %s", runtime.GOOS, runtime.GOARCH, info.Release)
+	}
+	if wantSHA != "" && !strings.EqualFold(bin.SHA256, wantSHA) {
+		return fmt.Errorf("Potluck serves agent sha256 %s, the registration named %s; not fetched", bin.SHA256, wantSHA)
 	}
 	attempt := info.Release + " " + strings.ToLower(bin.SHA256)
 	if b, err := os.ReadFile(u.attemptPath()); err == nil && strings.TrimSpace(string(b)) == attempt {

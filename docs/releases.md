@@ -35,6 +35,12 @@ The heading takes the release number when it ships.
 - **The host node's own device share** (its `Vulkan0`, ... rows) shows under that node in an instance's `nodes`, like a worker's row; it used to be listed as unmatched. Host-side buffers stay in `host_memory`.
 - **Profile `description`**: optional free text, one line, at most 500 characters. Shown in `/api/config`, `/api/profiles`, `/api/models` and both UIs' profile lists. Changing only the description does not make a loaded model stale.
 
+## Next agent release (after 0.1.9)
+
+- **A discrete Nvidia GPU's `free_mib` follows the GPU**: taken from the Nvidia exporter at every heartbeat while that source is ok, instead of the `--list-devices` read from before the last launch (the Docker laptop showed 7,679 MiB free throughout).
+- **The setup script opens 50061** (host launches) from Potluck's address with 50060 and 50052; a setup run again keeps an existing 50061 rule.
+- **Same-release re-fetch**: the registration answer names the served agent's `agent_sha256`; a bare or RAM-only agent of the right release with another build fetches it once while idle (the scheduler side of this ships with the next scheduler image and is harmless to 0.1.9 agents, which ignore the field).
+
 ## 0.1.9
 
 ### What is new

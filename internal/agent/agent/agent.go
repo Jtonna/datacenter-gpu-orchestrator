@@ -104,6 +104,13 @@ type Hardware interface {
 	MissingLibs(path string) ([]string, error)
 }
 
+// Refetcher is an Updater that can also install another build of the
+// release it runs (the registration answer's agent_sha256, 5.4). A Docker
+// install's updater is not one: its binary is the image's.
+type Refetcher interface {
+	Refetch(ctx context.Context, release, sha256 string) error
+}
+
 // Updater replaces the agent on agent_too_old (5.4).
 type Updater interface {
 	Update(ctx context.Context, required string) error
@@ -962,7 +969,33 @@ func (a *Agent) accepted(ctx context.Context, ans agentproto.RegisterAnswer) {
 			a.log.Warn("stop_launch", "launch_id", *ans.StopLaunch, "err", err)
 		}
 	}
+	a.refetch(ctx, ans)
 	a.startPipeline(ctx, ans)
+}
+
+// refetch installs the agent binary Potluck serves for this release when it
+// is another build than the running one (5.4): only while no launch exists,
+// once per (release, sha256) (the updater's attempt file), and a failure
+// leaves the agent running as it is.
+func (a *Agent) refetch(ctx context.Context, ans agentproto.RegisterAnswer) {
+	r, ok := a.deps.Updater.(Refetcher)
+	if !ok || ans.AgentSHA256 == "" {
+		return
+	}
+	if a.Launch.CurrentID() != nil {
+		a.log.Info("agent re-fetch waits for the launch to end", "sha256", ans.AgentSHA256)
+		return
+	}
+	err := r.Refetch(ctx, ans.Release, ans.AgentSHA256)
+	if errors.Is(err, ErrUpdateNotRepeated) {
+		if a.updateSkipped {
+			return
+		}
+		a.updateSkipped = true
+	}
+	if err != nil {
+		a.log.Warn("agent re-fetch of this release failed; running on", "sha256", ans.AgentSHA256, "err", err)
+	}
 }
 
 func isRefusal(s string) bool {

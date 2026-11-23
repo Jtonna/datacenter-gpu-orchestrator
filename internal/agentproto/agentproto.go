@@ -410,6 +410,12 @@ type RegisterAnswer struct {
 	// not take start-up reports, and the agent stops sending them in
 	// heartbeats until its next registration.
 	StartupAck int `json:"startup_ack,omitempty"`
+	// AgentSHA256 is the sha256 of the agent binary Potluck serves for the
+	// agent's os and architecture in this release (5.4). An accepted, idle
+	// agent whose own binary differs fetches it once per sha256 (another
+	// build of the same release). Absent: no binary served, nothing to do;
+	// older agents ignore it.
+	AgentSHA256 string `json:"agent_sha256,omitempty"`
 
 	Reason          string `json:"reason,omitempty"`
 	Message         string `json:"message,omitempty"`

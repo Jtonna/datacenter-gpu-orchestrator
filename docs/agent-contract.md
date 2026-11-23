@@ -295,6 +295,8 @@ A failed check is retried three times, then reported in `programs_error`. The ag
 
 With a launch, an agent waits for the launch to end before it updates.
 
+**Another build of the same release** (from the next agent release). The registration answer carries `agent_sha256`: the sha256 of the agent binary Potluck serves for the agent's `os` and `arch` (absent when it serves none). A bare or RAM-only agent that is accepted, has no launch and whose own binary has another sha256 fetches the served one as on `agent_too_old` (download, sha256 and release check, replace, restart). It tries each (release, sha256) once, recorded in the same attempt file, so a binary that keeps differing is not fetched again; a failure leaves the agent running as it is. A Docker agent ignores the field: its binary is the image's. Older agents ignore it too.
+
 **The starter.** A shell script written by the scheduler side and shipped unchanged in the datacenter's payload, together with the Potluck address. So the boot chain stays: bare image, pull from the datacenter (starter and address), register with Potluck. A release of Potluck needs no payload change. The starter:
 
 1. needs only a POSIX shell, `curl` and `sha256sum`;
