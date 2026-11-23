@@ -410,7 +410,7 @@ curl -s "$H/api/history/export?since=$SINCE" > history-last6h.jsonl
 
 ### Request log
 
-Every `/v1` and `/upstream` request, with its status, times, tokens, rates, machines and caller, is kept in `POTLUCK_ROOT/data/usage.db` (rows 90 days, hourly totals 13 months, daily totals for ever: settings `usage_request_days`, `usage_hourly_days`).
+Every inference request through `/v1` and `/upstream` (a POST to one of llama-server's routes that runs the model: chat and text completions, responses, messages, infill, embeddings, rerank, audio), with its status, times, tokens, rates, machines and caller, is kept in `POTLUCK_ROOT/data/usage.db` (rows 90 days, hourly totals 13 months, daily totals for ever: settings `usage_request_days`, `usage_hourly_days`).
 
 ```sh
 curl -s "$H/api/requests?status=failed,refused&limit=20" | jq '.requests[] | {id, status, reason, profile, queued_at}'
@@ -426,6 +426,12 @@ The list shows the queued and running requests first, from memory, then the fini
 
 A running row counts `tokens_out` from the stream (an estimate, marked `live`). Tokens in, reused tokens, the prefill rate and `prefill_processed` (how many prompt tokens are read so far) are known while the request runs only when the request itself asked llama-server for them, with `"return_progress": true` (progress while the prompt is read) or `"timings_per_token": true` (from the first token on); otherwise they come with the end. The setting `requests_live_timings` (off by default) adds `"timings_per_token": true` to streamed chat and completion requests that do not set it, benchmark requests excepted, so every running row has them from its first token. `tokens_in` counts every prompt token, reused ones included, as llama-server's `usage.prompt_tokens` does; `tokens_reused` is its `prompt_tokens_details.cached_tokens` (`timings.cache_n`). `/upstream` rows name the instance and machines that served the model then (no lease is taken).
 
+A client that closes its connection before the answer is complete is `cancelled`, reason `client_left` (`client_left_queued` while it waited); `failed` means the model server or the scheduler failed. A streamed request cut short (by its client, or by the model server dropping the stream) keeps what the stream said so far: `tokens_out` counted from the events (its message says "tokens_out counted from the stream"), `decode_tps` over the time since the first token, and the prompt figures when the request asked for them. A non-streamed request whose client leaves has nothing to count: its tokens are null. Rows written before this fix keep `failed` / `aborted`.
+
+Monitoring calls (`/upstream/<model>/slots`, `/props`, `/health`, `/metrics`, `/models`, `/tokenize`, `/detokenize`, `/apply-template`, `/lora-adapters`, `GET /v1/models`) pass through unrecorded. A row's `nodes` list the host first, then the helpers, each with its `share` of the model's layers; for a model hosted on the scheduler's machine with no layers there, that machine is the host with no `share`.
+
+`source_addr` is the address the TCP connection came from. Behind a published container port that is the Docker bridge gateway (for example `172.17.0.1`) for every caller, not the client's address: the scheduler does not read `X-Forwarded-For` or any other forwarding header. Use the caller name (agent key) to tell callers apart.
+
 ### Availability, hour by hour
 
 Every 10 s Potluck notes what each machine is doing, from what it already holds in memory (its status and the agents' membership; no machine is asked), and keeps seconds per state per UTC hour in `POTLUCK_ROOT/data/usage.db`. The Overview strip, the Zones uptime and the 7-day grid read it.
@@ -438,6 +444,7 @@ curl -s "$H/api/nodes/availability?node=zone-a&step=day&from=7d"
 - `node=` an id or name (default every machine); `from`/`to` unix ms, RFC 3339 or a span back such as `24h` or `7d` (default: 24 hour cells, or 7 day cells, the last one the current); `step=hour|day` (UTC days, summed when read); `group=` answers 501 until zone groups exist. MCP: `get_availability`.
 - Each cell: `seconds` per state (`free`, `in_use`, `loading`, `down`, `off`, `unknown`; they add up to `span_s`), `down_lost_s` and `down_set_aside_s`, `busy` (in flight over the instance's parallel slots, averaged over the in-use time) and `busy_level` 1 to 4, `reachable_s`, `uptime` (reachable over known time) and `state`, the strip colour: unknown when nothing is known, off when switched off half the known time or more, down from 5 minutes down (or half), loading from half, in use from a quarter, else free. Each machine also has its `uptime` over the whole range; the answer has `history_begins_at` and `recording`. With `usage.db` off (see "Request log") nothing is sampled and the answer is an empty list with `recording` false.
 - How a machine is classed at each sample, first match wins: **off** paused, excluded or removed; **down (lost)** membership state lost or left, or offline in the view; **down (set aside)** quarantined; **loading** placed for an instance that is starting; **in use** placed for a ready, draining or stopping one; **free** otherwise. Time with no sample (Potluck not running, a node not known yet, the rest of a gap after a failed read) is **unknown**, never free.
+- A removed machine (membership state removed) is left out of the list for a range it was only off in, which is every range after its removal; `node=` still answers it. Seconds and `uptime` are sent with 3 decimals at most.
 - A missing or damaged `usage.db` never stops Potluck: a damaged one is moved aside, the history begins again and the route answers empty cells.
 
 ### What a zone is doing

@@ -156,6 +156,10 @@ type Result struct {
 	Err error
 	// Cut is true when Options.Gone ended the request.
 	Cut bool
+	// ClientLeft is true when the client went away: its request context
+	// ended or a write to it failed (before or in the middle of the
+	// answer). The model server and the scheduler did not fail.
+	ClientLeft bool
 	// Timings from the tail (llama-server's "timings"); -1 when absent.
 	// CachedTokens are prompt tokens reused from the prompt cache (cache_n);
 	// PromptMS and PredictedMS are the prefill and decode times, and
@@ -176,6 +180,8 @@ func (r Result) Reason() string {
 		return "stall"
 	case r.Cut:
 		return "cut"
+	case r.ClientLeft:
+		return "client_left"
 	case r.Err != nil:
 		return "upstream_error"
 	case r.Status == 499:
@@ -275,6 +281,11 @@ func Forward(w http.ResponseWriter, r *http.Request, o Options) (res Result) {
 		}
 		res.Status = sw.status
 		res.Cut = cut.Load()
+		// The client went away before the whole answer reached it: its
+		// context ended or a write to it failed, and the copy was cut
+		// short (or never began). A client that hangs up just after the
+		// last byte got the whole answer: that is done.
+		res.ClientLeft = (client.Err() != nil || sw.writeFailed) && (res.Aborted || res.Err != nil || sw.status == 0)
 		if res.Status == 0 {
 			if client.Err() != nil {
 				res.Status = 499
@@ -298,7 +309,8 @@ func Forward(w http.ResponseWriter, r *http.Request, o Options) (res Result) {
 // (the reverse proxy flushes through http.ResponseController).
 type statusWriter struct {
 	http.ResponseWriter
-	status int
+	status      int
+	writeFailed bool // a write to the client failed: it is gone
 }
 
 func (s *statusWriter) WriteHeader(code int) {
@@ -312,7 +324,11 @@ func (s *statusWriter) Write(p []byte) (int, error) {
 	if s.status == 0 {
 		s.status = http.StatusOK
 	}
-	return s.ResponseWriter.Write(p)
+	n, err := s.ResponseWriter.Write(p)
+	if err != nil {
+		s.writeFailed = true
+	}
+	return n, err
 }
 
 func (s *statusWriter) Flush() {

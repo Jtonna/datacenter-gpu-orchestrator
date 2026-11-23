@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/usage"
 )
 
@@ -104,7 +105,7 @@ func TestRequests_RecordedListedAndSummarized(t *testing.T) {
 	e.post("/v1/chat/completions", chat("alpha")).Body.Close()
 	e.post("/v1/chat/completions", chat("alpha-old")).Body.Close()
 	e.post("/v1/chat/completions", chat("nope")).Body.Close()
-	resp, err := http.Get(e.front.URL + "/upstream/alpha/props")
+	resp, err := http.Post(e.front.URL+"/upstream/alpha/v1/chat/completions", "application/json", strings.NewReader(chat("alpha")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +168,7 @@ func TestRequests_RecordedListedAndSummarized(t *testing.T) {
 	var sum usage.Summary
 	now := time.Now().UnixMilli()
 	json.Unmarshal([]byte(body(t, e.get(fmt.Sprintf("/api/requests/summary?from=%d&to=%d&step=hour", now-2*3600000, now+3600000)))), &sum)
-	if sum.Totals.Requests != 4 || sum.Totals.Done != 3 || sum.Totals.Refused != 1 || sum.Totals.TokensIn != 10 || sum.Totals.TokensOut != 14 ||
+	if sum.Totals.Requests != 4 || sum.Totals.Done != 3 || sum.Totals.Refused != 1 || sum.Totals.TokensIn != 15 || sum.Totals.TokensOut != 21 ||
 		len(sum.Series) != 3 || sum.OldestTS == 0 || !sum.On {
 		t.Fatalf("summary %+v", sum)
 	}
@@ -406,5 +407,154 @@ func TestRequests_LiveTimingsRewritesOnlyWhenOnAndUnset(t *testing.T) {
 	// A body that is not JSON never reaches the model server (400, as before).
 	if r := e.post("/v1/chat/completions", `not json`); r.StatusCode != 400 {
 		t.Fatalf("not JSON: %d", r.StatusCode)
+	}
+}
+
+// Only inference is a row: a table of methods and paths through /v1 and
+// /upstream, each answered as before, recorded or not.
+func TestRequests_OnlyInferenceIsRecorded(t *testing.T) {
+	e, st := usageEnv(t, chatOK, nil)
+	e.post("/v1/chat/completions", chat("alpha")).Body.Close() // loads alpha, so /upstream is ready
+	eventually(t, "ended", func() bool { return e.api.reqs.Ended() == 1 })
+	for _, c := range []struct {
+		method, path string
+		recorded     bool
+	}{
+		{"POST", "/v1/chat/completions", true},
+		{"POST", "/v1/completions", true},
+		{"POST", "/v1/embeddings", true},
+		{"POST", "/v1/rerank", true},
+		{"GET", "/v1/models", false},
+		{"POST", "/v1/tokenize", false},
+		{"POST", "/v1/chat/completions/input_tokens", false},
+		{"POST", "/upstream/alpha/completion", true},
+		{"POST", "/upstream/alpha/v1/chat/completions", true},
+		{"POST", "/upstream/alpha/embedding", true},
+		{"POST", "/upstream/alpha/infill", true},
+		{"POST", "/upstream/alpha/v1/messages", true},
+		{"GET", "/upstream/alpha/slots", false},
+		{"GET", "/upstream/alpha/props", false},
+		{"POST", "/upstream/alpha/props", false},
+		{"GET", "/upstream/alpha/health", false},
+		{"GET", "/upstream/alpha/metrics", false},
+		{"GET", "/upstream/alpha/v1/models", false},
+		{"POST", "/upstream/alpha/tokenize", false},
+		{"POST", "/upstream/alpha/detokenize", false},
+		{"POST", "/upstream/alpha/apply-template", false},
+		{"GET", "/upstream/alpha/lora-adapters", false},
+		{"GET", "/upstream/alpha", false},
+		{"GET", "/upstream/alpha/v1/chat/completions", false},
+	} {
+		before := e.api.reqs.Ended()
+		req, _ := http.NewRequest(c.method, e.front.URL+c.path, strings.NewReader(chat("alpha")))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("%s %s: %d", c.method, c.path, resp.StatusCode)
+		}
+		if c.recorded {
+			eventually(t, c.method+" "+c.path+" recorded", func() bool { return e.api.reqs.Ended() == before+1 })
+		} else if e.api.reqs.Ended() != before {
+			t.Fatalf("%s %s recorded", c.method, c.path)
+		}
+	}
+	flushT(t, st)
+	for _, r := range listRequests(t, e, "?limit=500").Requests {
+		if strings.Contains(r.Path, "slots") || strings.Contains(r.Path, "props") || strings.Contains(r.Path, "tokenize") || strings.Contains(r.Path, "models") {
+			t.Fatalf("a monitoring call is a row: %+v", r)
+		}
+	}
+}
+
+// 1,000 polls of /upstream/<model>/slots cost the request log nothing: no
+// live tracker at any time, no write, no row.
+func TestRequests_MonitoringPollsCostNoRecorderWork(t *testing.T) {
+	e, st := usageEnv(t, chatOK, nil)
+	e.post("/v1/chat/completions", chat("alpha")).Body.Close()
+	eventually(t, "ended", func() bool { return e.api.reqs.Ended() == 1 })
+	flushT(t, st)
+	s0 := st.Stats()
+	for i := 0; i < 1000; i++ {
+		resp := e.get("/upstream/alpha/slots")
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("poll %d: %d", i, resp.StatusCode)
+		}
+		if i%100 == 0 && len(e.api.reqs.Live()) != 0 {
+			t.Fatal("a poll made a live tracker")
+		}
+	}
+	flushT(t, st)
+	s1 := st.Stats()
+	if s1.Written != s0.Written || s1.Batches != s0.Batches || s1.Dropped != 0 || s1.Failed != 0 || e.api.reqs.Ended() != 1 {
+		t.Fatalf("before %+v after %+v, ended %d", s0, s1, e.api.reqs.Ended())
+	}
+	if n := len(listRequests(t, e, "?limit=500").Requests); n != 1 {
+		t.Fatalf("%d rows", n)
+	}
+}
+
+// The stored row keeps the machines as the lease gives them, host first,
+// each with its share, in the three shapes: hosted on the scheduler's
+// machine with helpers (that machine first, no share); a console alone
+// (share 1); a console host with helpers (shares add up to 1).
+func TestRequests_StoredRowNodesHostFirstWithShares(t *testing.T) {
+	e, st := usageEnv(t, chatOK, nil)
+	shapes := []struct {
+		name  string
+		nodes []scheduler.LeaseNode
+		json  string
+	}{
+		{"server host and helpers", []scheduler.LeaseNode{{ID: "host-1", Name: "scheduler-host", Role: "host"},
+			{ID: "a", Name: "zone-a", Role: "helper", Share: .6}, {ID: "b", Name: "zone-b", Role: "helper", Share: .4}},
+			`[{"id":"host-1","name":"scheduler-host","role":"host"},{"id":"a","name":"zone-a","role":"helper","share":0.6},{"id":"b","name":"zone-b","role":"helper","share":0.4}]`},
+		{"console alone", []scheduler.LeaseNode{{ID: "a", Name: "zone-a", Role: "host", Share: 1}},
+			`[{"id":"a","name":"zone-a","role":"host","share":1}]`},
+		{"console host and helpers", []scheduler.LeaseNode{{ID: "a", Name: "zone-a", Role: "host", Share: .5},
+			{ID: "b", Name: "zone-b", Role: "helper", Share: .3}, {ID: "c", Name: "zone-c", Role: "helper", Share: .2}},
+			`[{"id":"a","name":"zone-a","role":"host","share":0.5},{"id":"b","name":"zone-b","role":"helper","share":0.3},{"id":"c","name":"zone-c","role":"helper","share":0.2}]`},
+	}
+	for _, s := range shapes {
+		tr := e.api.reqs.Queued(usage.Begin{Kind: usage.KindV1, Path: "/v1/chat/completions", Profile: s.name, Requested: s.name})
+		tr.Started(leasePlacement(&scheduler.Lease{Nodes: s.nodes}), nil)
+		tr.Ended(usage.End{Status: usage.StatusDone, TokensIn: -1, Reused: -1, TokensOut: -1, PrefillTPS: -1, DecodeTPS: -1})
+	}
+	flushT(t, st)
+	var page struct {
+		Requests []struct {
+			Profile  string          `json:"profile"`
+			HostNode string          `json:"host_node"`
+			Nodes    json.RawMessage `json:"nodes"`
+		} `json:"requests"`
+	}
+	resp := e.get("/api/requests?limit=10")
+	if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	got := map[string]string{}
+	host := map[string]string{}
+	for _, r := range page.Requests {
+		got[r.Profile], host[r.Profile] = string(r.Nodes), r.HostNode
+	}
+	for _, s := range shapes {
+		if got[s.name] != s.json {
+			t.Errorf("%s: nodes %s, want %s", s.name, got[s.name], s.json)
+		}
+		if host[s.name] != s.nodes[0].ID {
+			t.Errorf("%s: host_node %q", s.name, host[s.name])
+		}
+	}
+	// And straight from the file, not the in-memory ring.
+	var stored string
+	st.DB().QueryRow(`SELECT nodes FROM client_requests WHERE profile = ?`, "console host and helpers").Scan(&stored)
+	if !strings.Contains(stored, `"share":0.5`) || strings.Index(stored, `"a"`) > strings.Index(stored, `"b"`) {
+		t.Fatalf("stored %s", stored)
 	}
 }

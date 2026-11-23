@@ -190,3 +190,36 @@ func TestLlamaShapes_TimingsPerTokenGiveThePromptFromTheFirstToken(t *testing.T)
 		fmt.Fprint(w, llamaStreamEnd)
 	}, plain)
 }
+
+// A live capture from the pinned build (non-streamed chat, the same prompt
+// sent twice): the first answer reads all 32 prompt tokens, the repeat
+// reuses 28 and reads 4. usage.prompt_tokens stays 32 both times, so
+// tokens_in is every prompt token with the reused ones counted, and
+// tokens_reused is cached_tokens = cache_n. Without usage, prompt_n +
+// cache_n gives the same 32. (Only the fields the capture kept: the
+// choice text and the rates are left out.)
+func TestLlamaShapes_LiveCaptureFirstAndRepeat(t *testing.T) {
+	answer := func(cached, promptN, cacheN int, withUsage bool) string {
+		b := `{"choices":[{"finish_reason":"length","index":0,"message":{"content":"x","role":"assistant"}}],"object":"chat.completion",` +
+			fmt.Sprintf(`"timings":{"cache_n":%d,"predicted_n":160,"prompt_n":%d}`, cacheN, promptN)
+		if withUsage {
+			b += fmt.Sprintf(`,"usage":{"completion_tokens":160,"prompt_tokens":32,"prompt_tokens_details":{"cached_tokens":%d},"total_tokens":192}`, cached)
+		}
+		return b + "}"
+	}
+	for _, c := range []struct {
+		name                    string
+		cached, promptN, cacheN int
+	}{
+		{"first", 0, 32, 0},
+		{"repeat", 28, 4, 28},
+	} {
+		for _, withUsage := range []bool{true, false} {
+			body := answer(c.cached, c.promptN, c.cacheN, withUsage)
+			r := forwardBody(t, "application/json", func(w http.ResponseWriter) { fmt.Fprint(w, body) }, nil)
+			if r.InputTokens != 32 || r.CachedTokens != c.cached || r.OutputTokens != 160 {
+				t.Errorf("%s (usage %v): in %d reused %d out %d", c.name, withUsage, r.InputTokens, r.CachedTokens, r.OutputTokens)
+			}
+		}
+	}
+}
