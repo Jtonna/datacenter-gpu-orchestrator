@@ -74,11 +74,17 @@ func TestCacheEvictNotAdvertisedWithoutTheCalls(t *testing.T) {
 	} {
 		e := newTenvWith(t, mod)
 		e.a.RecoverLaunch(context.Background())
-		if req := e.a.RegisterRequest(); req.HasCapability(agentproto.CapFileCacheEvict) || len(req.Capabilities) != 0 {
+		// A node with a model folder still takes host launches (0.1.9); a
+		// push node advertises nothing at all.
+		want := 1
+		if name == "push nodes" {
+			want = 0
+		}
+		if req := e.a.RegisterRequest(); req.HasCapability(agentproto.CapFileCacheEvict) || len(req.Capabilities) != want {
 			t.Fatalf("%s: capabilities %v", name, req.Capabilities)
 		}
 		b, _ := json.Marshal(e.a.RegisterRequest())
-		if strings.Contains(string(b), "capabilities") {
+		if strings.Contains(string(b), "capabilities") != (want > 0) {
 			t.Fatalf("%s: %s", name, b)
 		}
 		if w := e.do("POST", agentproto.PathCacheEvict, agentproto.CacheEvictRequest{File: "m.gguf"}, fromPotluck); w.Code != 501 || !strings.Contains(w.Body.String(), "unsupported") {

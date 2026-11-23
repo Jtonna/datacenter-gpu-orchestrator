@@ -252,7 +252,7 @@ func (c *schedCore) expectShares(p *core.Profile, pl core.Placement) []int {
 	need := info.Need.WithMargin()
 	dev := c.deviceCost(info)
 	if len(pl.Nodes) == 1 {
-		return []int{need + dev}
+		return []int{need + dev + c.hostOverhead(p, pl, pl.Nodes[0].ID)}
 	}
 	fracs := instance.SplitFractions(*p, pl)
 	if len(fracs) != len(pl.Nodes) {
@@ -262,14 +262,14 @@ func (c *schedCore) expectShares(p *core.Profile, pl core.Placement) []int {
 	learned := c.learnedShares(p, pl, fracs, need)
 	for i, pn := range pl.Nodes {
 		if learned != nil {
-			out[i] = learned[i]
+			out[i] = learned[i] + c.hostOverhead(p, pl, pn.ID)
 			continue
 		}
 		share := float64(need) * fracs[i]
 		if n, ok := c.node(pn.ID); ok && n.SharedMemory {
 			share *= 1 + c.cfg.Defaults.SplitSkewMargin
 		}
-		out[i] = int(math.Ceil(share-1e-6)) + dev
+		out[i] = int(math.Ceil(share-1e-6)) + dev + c.hostOverhead(p, pl, pn.ID)
 	}
 	return out
 }

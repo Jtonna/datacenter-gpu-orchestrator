@@ -202,9 +202,12 @@ func dateOf(t time.Time) string {
 func (c *schedCore) loadByNode(in *inst, load instance.LoadStats) ([]float64, []bool) {
 	byKey := map[string]int{}
 	for i, pn := range in.placement.Nodes {
-		if pn.Local {
+		switch {
+		case pn.Local:
 			byKey[c.build.LocalDevice] = i
-		} else {
+		case pn.ID == in.placement.Host:
+			byKey[string(pn.ID)] = i
+		default:
 			byKey[pn.Addr] = i
 		}
 	}
@@ -217,6 +220,11 @@ func (c *schedCore) loadByNode(in *inst, load instance.LoadStats) ([]float64, []
 		key := endpointOf(d.Name)
 		if key == "" {
 			key = d.Name
+			if h := in.placement.Host; h != "" {
+				// A host on a node (phase 6): its own devices (Vulkan0, ...)
+				// are the host node's; workers are named by their endpoint.
+				key = string(h)
+			}
 		}
 		if i, ok := byKey[key]; ok {
 			mib[i] += d.TotalMiB()

@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/placer"
 )
 
@@ -279,8 +279,8 @@ func (c *schedCore) admit(in *inst, w *waiter) {
 	in.inFlight++
 	in.served++
 	in.lastUsed = c.now
-	addr := "127.0.0.1:" + strconv.Itoa(in.child.Port())
-	c.answer(w, answer{grant: &grant{ID: id, Addr: addr, Profile: in.prof.Name, Alias: w.alias}})
+	c.answer(w, answer{grant: &grant{ID: id, Addr: instance.AddrOf(in.child), APIKey: instance.APIKeyOf(in.child),
+		Profile: in.prof.Name, Alias: w.alias, Gone: in.gone}})
 	c.emit(FeedAdmitted, in.prof.Name, func(e *FeedEvent) { e.RequestID = id })
 }
 

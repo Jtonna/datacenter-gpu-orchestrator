@@ -231,6 +231,18 @@ type Defaults struct {
 	// FreeAverageWindow is the window of the average free memory of a node
 	// (from its heartbeats). Default 30 s.
 	FreeAverageWindow time.Duration
+
+	// A console as host (phase 6, profile host: node).
+	//
+	// HostOverheadMiB is what a host on a node takes there besides its
+	// device share: the host process with its host buffers, HTTP server,
+	// tokenizer and slots. It is added to the host node's reservation and
+	// taken off its split weight until it is measured. Default 1024.
+	HostOverheadMiB int
+	// HostNoMmap starts a host on a node with --no-mmap: its weights are
+	// anonymous memory (counted in MemAvailable, watched by the watchdog)
+	// instead of pages mapped from the share. Off by default until measured.
+	HostNoMmap bool
 }
 
 // Values of defaults.membership. MembershipFleet is the legacy mode, kept

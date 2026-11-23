@@ -173,6 +173,7 @@ type reservedShare struct {
 	ID         core.NodeID
 	Weights    int // the node's share of the model file
 	Context    int // the rest of its share: KV cache, compute buffers, overhead
+	Host       int // host_overhead_mib when the node hosts the load (in Context too); 0 otherwise
 	Fill       int // the fill reserve (0 when a peak is used, or the reserve is off)
 	Total      int // Weights + Context + Fill
 	Basis      string
@@ -236,6 +237,10 @@ func (c *schedCore) reservedShares(p *core.Profile, pl core.Placement) ([]reserv
 				share = int(math.Ceil(float64(need)*fracs[i]-1e-6)) + dev
 			}
 		}
+		// A host on the node takes its process besides its device share
+		// (hostnode.go); a stored peak counts it already.
+		r.Host = c.hostOverhead(p, pl, pn.ID)
+		share += r.Host
 		r.Fill = fill
 		if havePeak && peaks[i] > share+fill {
 			// the peak is above need share + fill reserve: it counts whole
@@ -525,7 +530,7 @@ func (c *schedCore) memoryRows(p *core.Profile, pl core.Placement, freed map[str
 		e := PlanMemoryNode{ID: pn.ID, Node: nodeLabel(pn.ID, n), Shared: n.SharedMemory, TotalMiB: n.TotalMiB,
 			WeightsMiB: r.Weights, ContextMiB: r.Context, FillReserveMiB: r.Fill, WillTakeMiB: r.Total, Basis: r.Basis,
 			FreeNowMiB: c.freeMiB(pn.ID, n), HeadroomMiB: n.HeadroomMiB, MarginMiB: r.Margin, MarginRule: r.MarginRule,
-			ReservedBy: []PlanReservedBy{}, AvailableMiB: c.liveBudget(pn.ID, n)}
+			ReservedBy: []PlanReservedBy{}, AvailableMiB: c.liveBudget(pn.ID, n), HostOverheadMiB: r.Host}
 		e.FreeAvgMiB, e.FreeAvgKnown = e.FreeNowMiB, n.FreeAvgKnown
 		if n.FreeAvgKnown {
 			e.FreeAvgMiB = n.FreeAvgMiB

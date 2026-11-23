@@ -125,3 +125,20 @@ func TestParseFlagsLogs(t *testing.T) {
 		}
 	}
 }
+
+func TestParseFlagsAdvertiseAddr(t *testing.T) {
+	var errb bytes.Buffer
+	base := []string{"--potluck", "192.0.2.1:3122", "--model-source", "push"}
+	o, err := parseFlags(append(base, "--advertise-addr", "192.0.2.40"), &errb)
+	if err != nil || o.AdvertiseAddr != "192.0.2.40" {
+		t.Fatal(o.AdvertiseAddr, err)
+	}
+	if o, _ := parseFlags(base, &errb); o.AdvertiseAddr != "" {
+		t.Fatal(o.AdvertiseAddr)
+	}
+	for _, bad := range []string{"laptop.lan", "0.0.0.0", "127.0.0.1", "::", "192.0.2.40:50060", "224.0.0.1"} {
+		if _, err := parseFlags(append(base, "--advertise-addr", bad), &errb); err == nil {
+			t.Fatalf("%q accepted", bad)
+		}
+	}
+}

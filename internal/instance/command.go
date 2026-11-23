@@ -93,12 +93,8 @@ func BuildArgs(p core.Profile, pl core.Placement, port int, o BuildOptions) ([]s
 		"--fit", "off",
 		"--ctx-size", strconv.Itoa(p.Ctx * parallel),
 		"--parallel", strconv.Itoa(parallel),
-		"--jinja",
-		"--cache-ram", strconv.Itoa(o.CacheRAMMiB),
-		// Always raise the log verbosity, in this fixed position (right after
-		// --cache-ram, before the placement flags): see LlamaLogVerbosity.
-		"-lv", strconv.Itoa(LlamaLogVerbosity),
 	}
+	args = append(args, profileHead(o.CacheRAMMiB)...)
 	if len(rpc) > 0 {
 		args = append(args, "--rpc", strings.Join(rpc, ","))
 	}
@@ -110,13 +106,52 @@ func BuildArgs(p core.Profile, pl core.Placement, port int, o BuildOptions) ([]s
 		}
 		args = append(args, "--tensor-split", strings.Join(parts, ","))
 	}
+	return append(args, profileTail(p)...), nil
+}
+
+// profileHead is the part of a llama command line that follows --parallel
+// and comes before the placement flags.
+func profileHead(cacheRAMMiB int) []string {
+	return []string{
+		"--jinja",
+		"--cache-ram", strconv.Itoa(cacheRAMMiB),
+		// Always raise the log verbosity, in this fixed position (right after
+		// --cache-ram, before the placement flags): see LlamaLogVerbosity.
+		"-lv", strconv.Itoa(LlamaLogVerbosity),
+	}
+}
+
+// profileTail is the profile's own part, last on the command line.
+func profileTail(p core.Profile) []string {
+	var args []string
 	if p.KVQuant != "" && p.KVQuant != "f16" {
 		args = append(args, "-ctk", p.KVQuant, "-ctv", p.KVQuant)
 	}
 	if p.FlashAttn {
 		args = append(args, "--flash-attn", "on")
 	}
-	return append(args, p.ExtraArgs...), nil
+	return append(args, p.ExtraArgs...)
+}
+
+// HostCacheRAMMiB is --cache-ram for a host on a node: no prompt cache in
+// the node's RAM, which nothing accounts for (phase 6).
+const HostCacheRAMMiB = 0
+
+// HostLaunchArgs is the extra_args of a host launch on a node (phase 6): the
+// part of BuildArgs that does not depend on where the program runs. The
+// agent adds --host, --port, the model, -c, --parallel, --rpc, --device and
+// --tensor-split itself. It differs from BuildArgs only in --cache-ram
+// (HostCacheRAMMiB) and in --no-mmap, which noMmap adds (the setting
+// host_no_mmap): weights then sit in anonymous memory, counted in
+// MemAvailable and watched by the watchdog, instead of pages mapped from
+// the share.
+func HostLaunchArgs(p core.Profile, noMmap bool) []string {
+	args := []string{"--n-gpu-layers", "999", "--fit", "off"}
+	args = append(args, profileHead(HostCacheRAMMiB)...)
+	if noMmap {
+		args = append(args, "--no-mmap")
+	}
+	return append(args, profileTail(p)...)
 }
 
 // splitWeights returns the per-node tensor split weights in placement order:

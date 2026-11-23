@@ -92,6 +92,10 @@ type ExitStatus struct {
 	Requested bool     // true if Stop had been called before the child ended
 	Tail      []string // last output lines
 	Err       error    // unusual wait error (for example output pipes held open), else nil
+	// Reason is why a remote child ended, in the agent's words (exit reason
+	// of the host launch, such as crashed or oom_kill, with its message);
+	// "" for a local child.
+	Reason string
 }
 
 func (s ExitStatus) String() string {
@@ -101,6 +105,9 @@ func (s ExitStatus) String() string {
 		fmt.Fprintf(&b, "killed by signal (%s)", s.Signal)
 	default:
 		fmt.Fprintf(&b, "exit code %d", s.Code)
+	}
+	if s.Reason != "" {
+		fmt.Fprintf(&b, ", %s", s.Reason)
 	}
 	if s.Requested {
 		b.WriteString(", stop requested")

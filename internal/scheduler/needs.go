@@ -52,14 +52,22 @@ type needKey struct {
 	kvQuant   string
 	flashAttn bool
 	extraArgs string
+	// host is core.HostNode for a host on a node (phase 6): its
+	// measurements are kept apart from those of a host on the scheduler's
+	// machine, whose host node figures differ.
+	host string
 }
 
 func needKeyOf(p *core.Profile) needKey {
-	return makeNeedKey(p.Kind, p.Model, p.Ctx, p.Parallel, p.KVQuant, p.FlashAttn, p.ExtraArgs)
+	k := makeNeedKey(p.Kind, p.Model, p.Ctx, p.Parallel, p.KVQuant, p.FlashAttn, p.ExtraArgs)
+	k.host = p.Host
+	return k
 }
 
 func needKeyOfRecord(r needstore.Record) needKey {
-	return makeNeedKey(core.Kind(r.Kind), r.Model, r.Ctx, r.Parallel, r.KVQuant, r.FlashAttn, r.ExtraArgs)
+	k := makeNeedKey(core.Kind(r.Kind), r.Model, r.Ctx, r.Parallel, r.KVQuant, r.FlashAttn, r.ExtraArgs)
+	k.host = r.Host
+	return k
 }
 
 // shape is the store key of k (needstore.ShapeKey).
@@ -68,7 +76,7 @@ func (k needKey) shape() string {
 	if k.extraArgs != "" {
 		extra = strings.Split(k.extraArgs, "\x00")
 	}
-	return needstore.ShapeKey(string(k.kind), k.model, k.ctx, k.parallel, k.kvQuant, k.flashAttn, extra)
+	return needstore.ShapeKeyHost(string(k.kind), k.model, k.ctx, k.parallel, k.kvQuant, k.flashAttn, extra, k.host)
 }
 
 // shapeOf is the key of p's learned need in c.learned and the store.
@@ -134,7 +142,7 @@ func (c *schedCore) storeLearned(l *learnedNeed) {
 	}
 	r := needstore.Record{Schema: needstore.RecordSchema, Profile: l.profile, Kind: string(l.key.kind), Model: l.key.model,
 		ModelBytes: l.modelBytes, Ctx: l.key.ctx, Parallel: l.key.parallel, KVQuant: l.key.kvQuant, FlashAttn: l.key.flashAttn,
-		ExtraArgs: extra, TotalMiB: l.TotalMiB, Devices: l.count(), Split: slices.Clone(l.split), Cause: l.cause,
+		ExtraArgs: extra, Host: l.key.host, TotalMiB: l.TotalMiB, Devices: l.count(), Split: slices.Clone(l.split), Cause: l.cause,
 		MeasuredAt: l.at, Release: l.release, LlamaBuild: l.build, PeakAt: l.peakAt}
 	for _, id := range l.placement {
 		r.Placement = append(r.Placement, string(id))

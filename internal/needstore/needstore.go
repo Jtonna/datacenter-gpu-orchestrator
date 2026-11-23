@@ -76,6 +76,9 @@ type Record struct {
 	KVQuant    string   `json:"kv_quant"`
 	FlashAttn  bool     `json:"flash_attn"`
 	ExtraArgs  []string `json:"extra_args,omitempty"`
+	// Host is "node" for a load whose host process ran on a node (phase 6,
+	// release 0.1.9); empty for the scheduler's machine. Part of the shape.
+	Host string `json:"host,omitempty"`
 
 	TotalMiB int `json:"total_mib"`
 	// Devices is the number of devices (nodes) the load was spread over; 0
@@ -118,9 +121,26 @@ func ShapeKey(kind, model string, ctx, parallel int, kvQuant string, flashAttn b
 	return string(b)
 }
 
+// ShapeKeyHost is ShapeKey for a load whose host process runs on host:
+// "" (the scheduler's machine) gives ShapeKey itself, so stored shapes stay
+// what they were; any other value is a shape of its own.
+func ShapeKeyHost(kind, model string, ctx, parallel int, kvQuant string, flashAttn bool, extraArgs []string, host string) string {
+	if host == "" {
+		return ShapeKey(kind, model, ctx, parallel, kvQuant, flashAttn, extraArgs)
+	}
+	if kvQuant == "" {
+		kvQuant = "f16"
+	}
+	if extraArgs == nil {
+		extraArgs = []string{}
+	}
+	b, _ := json.Marshal([]any{kind, model, ctx, max(parallel, 1), kvQuant, flashAttn, extraArgs, "host=" + host})
+	return string(b)
+}
+
 // Shape is the record's ShapeKey.
 func (r Record) Shape() string {
-	return ShapeKey(r.Kind, r.Model, r.Ctx, r.Parallel, r.KVQuant, r.FlashAttn, r.ExtraArgs)
+	return ShapeKeyHost(r.Kind, r.Model, r.Ctx, r.Parallel, r.KVQuant, r.FlashAttn, r.ExtraArgs, r.Host)
 }
 
 // DeviceCount is the number of devices the load was spread over: Devices,

@@ -192,7 +192,7 @@ The scheduler serves one release, the one it was built as (`programs.release` in
 Make the `SHA256SUMS` of a folder inside that folder:
 
 ```sh
-cd /srv/potluck/programs/0.1.6/linux-amd64-cuda && sha256sum llama-server rpc-server node_exporter nvidia_gpu_exporter > SHA256SUMS
+cd /srv/potluck/programs/0.1.9/linux-amd64-cuda && sha256sum llama-server rpc-server node_exporter nvidia_gpu_exporter > SHA256SUMS
 ```
 
 Check after a start: `curl -s $H/api/system | jq .programs`. `served: false` comes with `programs.error`, naming the missing or wrong file. `host_build_error` means the scheduler's own `llama-server-rpc` is not the release's llama build: every load is refused until it is.

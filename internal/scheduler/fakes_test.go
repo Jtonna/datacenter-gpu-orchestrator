@@ -429,6 +429,7 @@ func (l *fakeLauncher) all() []*fakeChild {
 
 type fakeChild struct {
 	mu        sync.Mutex
+	addr, key string // a host on a node (hostnode_test.go); "" otherwise
 	port      int
 	argv      []string
 	health    string
@@ -673,3 +674,14 @@ func (v *fakeView) WantFigures(after map[core.NodeID]time.Time) {
 	v.wantFig = after
 	v.mu.Unlock()
 }
+
+// Addr implements instance.Addresser: a host on a node has its own address.
+func (c *fakeChild) Addr() string {
+	if c.addr != "" {
+		return c.addr
+	}
+	return fmt.Sprintf("127.0.0.1:%d", c.port)
+}
+
+// APIKey implements instance.Keyed.
+func (c *fakeChild) APIKey() string { return c.key }

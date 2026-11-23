@@ -1,6 +1,6 @@
 # Agent contract: Potluck and `potluck-agent`
 
-This is the contract between Potluck (the scheduler, `llm-scheduler`) and `potluck-agent` (the node agent), as of release 0.1.6. A field added after release 0.1.0 is optional and says from which release it is sent. Code comments cite change requests by label (CR-5, CR-9, ...); the Changelog at the end says what each one changed and where.
+This is the contract between Potluck (the scheduler, `llm-scheduler`) and `potluck-agent` (the node agent), as of release 0.1.9. A field added after release 0.1.0 is optional and says from which release it is sent. Code comments cite change requests by label (CR-5, CR-9, ...); the Changelog at the end says what each one changed and where.
 
 A change to this document becomes binding when both sides accept it: the scheduler side and the console side (the PS5 boot chain, RAM-only setup and payload delivery). Until then nothing may rely on it.
 
@@ -41,7 +41,7 @@ Each term has one meaning in this document.
 | 2049 | share (NFSv4) | `192.0.2.1` | nodes that mount the share |
 | 50060 | agent API | the node's address that reaches Potluck, and `127.0.0.1` | Potluck; local programs for `GET /status` only |
 | 50052 | `rpc-server` during a worker launch | the node's address that reaches Potluck | the host of that load (Potluck's own host in phase 4, a host node from phase 6) |
-| 50061 | `llama-server` during a host launch (phase 6) | same address | Potluck only |
+| 50061 | `llama-server` during a host launch (phase 6, release 0.1.9) | the node's address that reaches Potluck | Potluck only: every route but `/health` wants the launch's per-launch key (6.15); open only while the host launch exists |
 | 50070 | `node_exporter` | `127.0.0.1` | the local agent only |
 | 50071 | `nvidia_gpu_exporter` (Nvidia nodes) | `127.0.0.1` | the local agent only |
 
@@ -87,14 +87,16 @@ Sent at agent start, and again whenever Potluck answers a heartbeat with `410`.
 
 - `agent_start_id` is random per agent process. A change tells Potluck the agent restarted.
 - `install` is `bare` or `docker`.
+- `addr` is the address Potluck reaches the agent and its launches at: the agent's own address that reaches Potluck, or, from release 0.1.9, the agent's `--advertise-addr` when set (a Docker container behind NAT, section 9). The agent itself always binds its own address.
 - `gpus[].vendor` is `amd`, `nvidia`, `intel` or `other`. `backends` lists what the machine can run (`vulkan`, `cuda`), found by the agent from the drivers present.
+- GPUs are read from `/sys/class/drm/card*`. From release 0.1.9, a machine with no drm card at all that has `/dev/dxg` and finds `libcuda.so.1` (WSL2 or Docker Desktop on Windows, GPU paravirtualization; `/usr/lib/wsl/lib` is searched) reports one GPU `{"vendor": "nvidia", "model": "NVIDIA GPU (WSL2 GPU-PV)"}`; with `cuda` in `backends` its platform is `linux-amd64-cuda`. A machine with drm cards is read as before.
 - `ram_only` is true when the agent was started with the RAM-only option. It is an install option, not a hardware test.
 - `model_source`: section 8.
 - `programs`: what the agent already holds and has just re-hashed, as `[{"name", "sha256"}]`, so an agent restart does not fetch again.
 - `launch_id`: a launch that exists on the node at registration (the agent restarted, or Potluck did).
 - `foreign_processes`: any `rpc-server` or `llama-server` process on the node that the agent did not start, as `[{"pid", "exe"}]`. Not empty means the agent sends the registration, is refused (`foreign_process`), and starts nothing.
 - `watchdog_floor_mib` (CR-9; optional, sent from release 0.1.1): the agent's memory watchdog floor in MiB (section 6.7), for example `"watchdog_floor_mib": 1000`. Section 11.2, item 2.
-- `capabilities` (optional, sent from release 0.1.6): optional requests this agent answers, as a list of words. Missing or empty means none. Known words: `file_cache_evict` (section 6.13), sent by a Linux agent whose model source has a model folder. Potluck ignores words it does not know, and never sends an optional request to an agent that does not list it.
+- `capabilities` (optional, sent from release 0.1.6): optional requests this agent answers, as a list of words. Missing or empty means none. Known words: `file_cache_evict` (section 6.13), sent by a Linux agent whose model source has a model folder; `host_launch` (section 6.15, from release 0.1.9), sent by an agent whose model source is not `push`. Potluck ignores words it does not know, and never sends an optional request to an agent that does not list it.
 
 Answer `200`:
 
@@ -376,6 +378,7 @@ Stopping a launch is always: SIGTERM, wait up to 10 s, SIGKILL. A forced stop sk
 - `tensor_split` is required when `workers` is not empty, one entry per member, host first.
 - `extra_args` are appended last. The agent refuses arguments it sets itself.
 - The agent never starts `llama-server` with fewer workers than the request names.
+- From release 0.1.9 a host launch also takes `expect_mib`, `rpc_file_load` and `api_key`, and is sent only to an agent that advertises `host_launch`. Section 6.15.
 
 Checks before anything starts. Each failure is a refusal with a `reason` word and a `message`:
 
@@ -387,7 +390,7 @@ Checks before anything starts. Each failure is a refusal with a `reason` word an
 | `503` | `model_source_unreachable` | For a host, or a worker with `model_dir`: the last share probe succeeded (section 8). |
 | `404` | `model_not_found` | Host only: the model file exists and is readable. |
 | `507` | `low_memory` | `MemAvailable` is at least `min_mem_available_mib`. |
-| `409` | `would_not_fit` | CR-9, from release 0.1.1. Worker with `expect_mib` only. Two tests; every one that applies must pass. The device test: the device's `free_mib` is at least `expect_mib`. The `MemAvailable` test: `MemAvailable - expect_mib` is at least the watchdog floor; it applies unless the device is known to have memory of its own, and always when no device figure is known. When `MemAvailable` cannot be read and that test applies, the launch is refused with a message that says no memory figure could be read. The message names the numbers. Section 11.2, item 1. |
+| `409` | `would_not_fit` | CR-9, from release 0.1.1. Worker with `expect_mib` only (from release 0.1.9 also a host with `expect_mib`, 6.15). Two tests; every one that applies must pass. The device test: the device's `free_mib` is at least `expect_mib`. The `MemAvailable` test: `MemAvailable - expect_mib` is at least the watchdog floor; it applies unless the device is known to have memory of its own, and always when no device figure is known. When `MemAvailable` cannot be read and that test applies, the launch is refused with a message that says no memory figure could be read. The message names the numbers. Section 11.2, item 1. |
 | `502` | `worker_unreachable` | Host only: every worker accepts a TCP connection within 5 s. The agent closes each connection at once and sends no bytes (see below). The body lists the ones that failed. |
 | `409` | `port_in_use` | The launch port is free. A bind failure is retried for 3 s before it is reported, because the previous launch's port can take a moment to free. |
 
@@ -607,6 +610,54 @@ Added in release 0.1.6. Additive. Software on the node that must not disturb it 
 
 The same fact is in `GET /status` (6.9): `busy` (true or false), `launches` and `busy_since` (Unix seconds, `null` when idle).
 
+### 6.15 Host launches: a console as host (release 0.1.9)
+
+Added in release 0.1.9 (phase 6). Additive and versioned:
+
+- An agent that can run a host launch says so with the capability word `host_launch` (4.2). Potluck sends `role: "host"` only to such an agent. An agent that does not send the word is never asked: the load fails on Potluck's side with `host_not_capable` before anything is launched. (A 0.1.9 Potluck refuses older agents with `agent_too_old` anyway, and they update, 5.4; the rule covers a `push` node and an agent built without the word.) A `push` node never advertises it (the host reads the model from the node's model folder).
+- Every new field is optional. A 0.1.9 agent takes a host request in the 0.1.6 form (no `expect_mib`, no `rpc_file_load`, no `api_key`) as before: `strict_file_load` decides `LLAMA_RPC_FILE_LOAD`, no memory test, no key.
+- Potluck chooses a node to host only when a profile asks for it (`host: node`, which needs `force_nodes`): the first forced node hosts. It never picks a host by itself.
+
+New fields of the `host` object:
+
+```json
+"host": {
+  "model": "gemma-4-12b-it-Q4_K_M.gguf",
+  "ctx": 8192,
+  "parallel": 1,
+  "workers": ["192.0.2.122:50052"],
+  "tensor_split": [0.5, 0.5],
+  "strict_file_load": false,
+  "rpc_file_load": "0",
+  "expect_mib": 7400,
+  "api_key": "<32 random characters>",
+  "extra_args": ["--n-gpu-layers", "999", "--fit", "off", "--jinja", "--cache-ram", "0", "-lv", "4"]
+}
+```
+
+- `expect_mib`: the memory Potluck expects the host to take on the node: its device share of the weights, its context (KV cache and compute buffers) and the host process itself (`host_overhead_mib`, default 1024). The agent makes the same `would_not_fit` test as for a worker (6.2). `min_mem_available_mib` of a host is the watchdog floor plus that `expect_mib`, so it carries the host process too; it is never the node's whole budget.
+- `rpc_file_load`: the host's `LLAMA_RPC_FILE_LOAD`, `"required"` (the workers read the file themselves; set when Potluck's `worker_model_dir` is on) or `"0"` (the weights go over the worker connection). Any other value is refused with `invalid_request`. When it is missing, `strict_file_load` decides as before: true is `required`, false is `1`.
+- `api_key`: a per-launch key, 16 to 256 characters of letters, digits, `.`, `_` and `-`; anything else is refused with `invalid_request`. With it the agent writes the key to a file readable by the launch only (mode `0600`, in the agent's state folder under `/run`, which is RAM), starts `llama-server --api-key-file <that file>`, and removes the file when the launch ends and when the start fails. The key is never on the command line, in the unit's environment, in the state object, in the launch log or in the agent's own log. `llama-server` then answers every route but `/health` only with `Authorization: Bearer <key>`. Potluck makes a new key for every launch and sends it on every request it forwards; the client's own `Authorization` header is not passed on.
+- `extra_args` may not name `--api-key`, `--api-key-file`, `--device` or `-dev` (the agent sets them).
+
+What the agent does differently for a host from 0.1.9:
+
+- **Its own device first.** With workers, the agent passes `--device <its own device>,RPC0,RPC1,...` so that the first weight of `tensor_split` is the host's own device. When the agent knows no device of its own and the request names workers, it refuses with `invalid_request`.
+- **Read progress.** While a host starts, `load.bytes_loaded` is the bytes the host process has read (`rchar` of `/proc/<pid>/io`), capped at the model file's size, with `bytes_total` the file's size. This counts `read()` calls only: with memory-mapped loading (the default) it stays near 0 and the agent reports no progress; it counts with `--no-mmap` (Potluck's `host_no_mmap`, default off until measured). Potluck shows these figures as the host node's load progress but does not feed them to its stall rule in 0.1.9: the stall rule needs Potluck's own byte count of the upload, and a host on a node is not Potluck's process. A stuck node-hosted load is ended by its load timeout alone: the profile's `load_timeout` when set, else the formula of design 7.6, 120 s + 2 x (file size x share / link speed) summed over every node of the placement, the host node included (it reads its own share from the model share over its link). For a 2.6 GB model on one console at 11 MB/s that is about 593 s; set `load_timeout` on the profile to make it shorter.
+- **Ports.** The host listens on 50061 on the node's address that reaches Potluck (3). The port is opened by the launch and closed when it ends. The host connects out from the node to the workers' 50052.
+- **Nothing on the USB drives.** The model is read from the read-only model folder; the key file and the launch log live in RAM (`/run`). The rules of 2 hold as for a worker. Nothing in a host launch reboots or power-cycles the node.
+- **Busy file.** A host launch makes the node busy exactly as a worker launch does (6.14); the unit is `potluck-launch-<launch_id>.service` whatever the role.
+
+What Potluck does with a host launch:
+
+- The worker launches of the load are started first; the host launch is sent once they are ready. The host node is not also a worker.
+- The host's state is read, its lease renewed and its log copied as for a worker (6.3, 6.4, 6.6). When the agent reports `ready`, Potluck checks `http://<node>:50061/health` itself (5 tries, 1 s apart) before the instance takes requests; when that fails the launch is stopped with force and the load fails with `host_unreachable`.
+- A plain unload is `DELETE /launch/<id>`, a forced one `DELETE ...?force=1`, then `/reset` after 5 s (7.2). A lost node is not called; its launch ends by its lease on the node.
+- A host that ends by itself (watchdog, OOM kill, crash) ends the instance, its worker launches are stopped, and a watchdog or OOM kill raises the learned need as a worker's does (11.1).
+- **Potluck restart.** A console-hosted model is not kept across a Potluck restart: the new run does not hold the launch, and it is stopped as any orphan launch is (4.2 `stop_launch`, 11).
+- **Memory accounting.** Learned needs of a load hosted on a node are stored under a shape of their own (the shape key gains `host=node`), so they never mix with loads hosted on Potluck's machine. The host node's reservation carries `host_overhead_mib` on top of its device share.
+- Requests in flight to a host whose instance is removed (its node lost, the host ended) are ended by Potluck: a console that loses power sends no reset.
+
 ## 7. Stats and controls
 
 ### 7.1 Stats
@@ -672,7 +723,15 @@ Busy file option (from release 0.1.6; section 6.14): `--busy-file auto|off|PATH`
 - **Docker** (`--docker`): starts one container `potluck-agent` from the image tagged with the release, with restart policy `unless-stopped`, `--init`, its own PID namespace, host networking, the GPU passed in when one exists, and the model folder mounted read-only.
   - From release 0.1.1 (CR-9 review): the agent's data folder (programs, launch logs) is the named volume `potluck-agent-data`, mounted at `/var/lib/potluck-agent` in the container, so a new container does not fetch the programs again. The models stay at `/models`; nothing else is mounted there.
   - From release 0.1.1 (CR-9 review): with `share:` the share is a systemd mount unit at `/var/lib/potluck-agent/models` on the machine, bound into the container as `/models` with `ro,rslave`, so a later mount of the share also reaches a running container. The drop-in `/etc/systemd/system/docker.service.d/potluck-models.conf` (`Wants=` and `After=` the mount unit) makes Docker start after the share is mounted at boot; `Wants=`, not `Requires=`, so Docker still starts when the share cannot be mounted. A setup without a share removes that drop-in.
-- `--allow-from` adds source addresses the agent accepts requests from. It is needed on the machine that runs Potluck itself: Potluck runs in a container there, so its requests to the local agent arrive from Potluck's container network (`172.30.0.0/24` in the compose file) and not from the configured address. No other node uses it. That requests to the PS5s arrive from `192.0.2.1` is checked in the first phase 4 test.
+- `--allow-from` adds source addresses the agent accepts requests from. It is needed on the machine that runs Potluck itself: Potluck runs in a container there, so its requests to the local agent arrive from Potluck's container network (`172.30.0.0/24` in the compose file) and not from the configured address. A Docker container behind NAT needs it too (below). It must name a network as small as the need: never `0.0.0.0/0` or `::/0`, which would let anyone who reaches the machine start and stop launches; the agent logs a WARN line at start when an `--allow-from` covers every address. That requests to the PS5s arrive from `192.0.2.1` is checked in the first phase 4 test.
+
+**Docker behind NAT (Docker Desktop on Windows, WSL2; from release 0.1.9).** When the container cannot use host networking, its agent port `50060` and worker port `50052` are published on the machine (`-p 50060:50060 -p 50052:50052`, plus `-p 50061:50061` for a node that hosts), and Potluck must be told the machine's address, not the container's. Three options together:
+
+- `--advertise-addr <ip>`: the machine's address on Potluck's network, where the ports are published. It is sent as the registration's `addr` (4.2) and nothing else: the agent API and the worker still bind the container's own address and `127.0.0.1`. It must be an IP address (not a name, not loopback, not `0.0.0.0`); `GET /status` shows it as `advertise_addr`.
+- `--mac-address` pinning (`docker run --mac-address`, compose `mac_address`): the node's id is the MAC of the container's interface (4.1), so without a fixed MAC every new container is a new node.
+- `--allow-from <the Docker gateway network>`: requests published through NAT arrive from the gateway of the container's network (for example the bridge network `172.17.0.0/16`), not from Potluck's address, so the agent must accept that network. Name that network only. Never `0.0.0.0/0`.
+
+On such a machine the Nvidia GPU is found by `/dev/dxg` (4.2), and the setup script's firewall handling does not apply (the machine's firewall is the Windows one).
 
 **Inbound ports and the firewall.** The machine must accept TCP connections from Potluck on `50060` (agent API) and `50052` (worker), and on `50061` from phase 6 (section 3). The setup script opens `50060` and `50052` only (CR-9 review): no Potluck release sends a host launch yet, so `50061` is not needed; the setup of the phase 6 release will open it. The setup script handles the machine's firewall as follows:
 
@@ -742,7 +801,7 @@ They are part of the contract. Each line says what Potluck does.
 - **Lost node with a launch.** The instance goes through Potluck's node-loss path at once (the time without a heartbeat is the wait: 20 s for a node with a launch, the lease TTL, instead of 10 s; CR-6): it is killed and its other members are stopped. Requests that were waiting for an instance that was still loading are queued again and get no error; requests in flight on a ready instance are cut off. The profile is not backed off. **Force unload** differs: requests waiting for that instance fail at once with an error that names the force unload and the node.
 - **Reading the launches when the host program ends (CR-6).** Potluck's host program aborts within milliseconds of losing a worker, so Potluck often sees its exit before the worker's. When the host program of a load with agent workers ends without having been stopped, Potluck reads `GET /launch` on every member in parallel, again every 100 ms, for at most 2 s, before it handles the exit. A launch that ended by itself (`watchdog`, `oom_kill`, `lease_expired`, `start_failed`, `crashed` and the like; not `stopped`, `forced`, `reset`) is the failure reason, with its message, in the 502, the log and history (`workerExited`), and the memory-kill rule below applies. When no launch ended by itself, the host program's exit is the reason.
 - **`LLAMA_RPC_FILE_LOAD` on Potluck's host program (CR-6).** For a load with agent workers Potluck sets it in the environment of the host `llama-server` it starts: `required` when `worker_model_dir` is on (the workers were launched with `model_dir` and must read the file themselves), `0` when it is off (the host sends the weights). It does not pass on whatever its own environment holds. Profiles carry no environment of their own.
-- **`min_mem_available_mib`** of a worker launch is Potluck's watchdog floor setting (`watchdog_floor_mib`, default 1000). For a node whose memory is shared (its device has `shares_system_memory`, or its tier says so) the node's budget for the load is added. From release 0.1.1 (CR-9) the node's own reported floor is used in place of the setting when its agent reports one (section 11.2, item 2).
+- **`min_mem_available_mib`** of a worker launch is Potluck's watchdog floor setting (`watchdog_floor_mib`, default 1000). For a node whose memory is shared (its device has `shares_system_memory`, or its tier says so) the node's share of this load is added: its `expect_mib` (from release 0.1.9; before, the node's whole budget, which asks a forced node for more than it has once the floor exceeds its headroom). Only when the share is unknown is the budget added. From release 0.1.1 (CR-9) the node's own reported floor is used in place of the setting when its agent reports one (section 11.2, item 2).
 - **No forced-fit pre-flight with agents.** Potluck's check of a forced placement against freshly probed worker memory is not run: a probe would take the worker's single client slot. From release 0.1.1 (CR-9) Potluck checks each forced member's `expect_mib` against its placement memory instead, before any launch is sent (section 11.2, item 1). The watchdog alone was measured to be too slow for a load that does not fit.
 - **Learned need after a memory kill.** When a worker launch exits with `watchdog` or `oom_kill`, the model's learned memory need is raised by a tenth, at least 256 MiB. Like every learned need it is kept across a Potluck restart, by the shape of the load (the need-relevant settings, not the profile name) and the number of devices it ran on, until it is forgotten (`POST /api/forget-need` or `POST /api/needs/forget`).
 - **Reading the launch state.** "While a load is in progress on that node" (section 6.3) is from the start request until Potluck's instance is ready or the agent reports `load.state: "done"`, whichever comes first. A worker is `ready` before its load starts, so `ready` does not slow the reads.
@@ -1010,6 +1069,7 @@ History only: this section adds nothing to the contract. Code comments cite thes
 | CR-10 | Central logging through Potluck. Batch 1, the Potluck side (settings, the `logs` object, `logs_revision`, the pass-through with its limits and counters, items 1 to 10). The agent batch: the shipper, `server_time_unix_ms`, the `--logs`, `--log-buffer-mib` and `--journal-dir` options (items 11 to 15). The last batch: the read side under `/logs/`, `GET /api/logs/query`, Potluck's own lines and the store's container (items 16 to 19). | 4.2, 4.3, 9, 11.3 |
 | Cold load | The `capabilities` list in registration and `file_cache_evict`; `POST /cache/evict` (drop one model file from the node's page cache, with counts before and after). Additive: an agent without it is never asked. | 4.2, 6.13 |
 | Busy file | `/run/potluck/busy` while a launch exists, for other software on the node, and `busy`, `launches`, `busy_since` in `GET /status`. Additive. | 6.9, 6.14 |
+| Host on node | Phase 6: the capability `host_launch`; `host.expect_mib`, `host.rpc_file_load`, `host.api_key` (key file, `--api-key-file`); the host names its own device first; read progress from `rchar`; Potluck sends a host launch only to an agent that advertises it, never picks a host by itself, and stops a console-hosted model at a restart. Additive. | 3, 4.2, 6.2, 6.15 |
 
 | Release | What it carries |
 |---|---|
@@ -1020,3 +1080,5 @@ History only: this section adds nothing to the contract. Code comments cite thes
 | 0.1.4 | The refusal at arrival of a forced profile that can never fit; the unpause delivered to the agent before the node takes load (`unpause_pending`, 7.2); lowest available memory by kind (GPU or system) and the file cache figures; the node feed and start-up records (11.4, `GET /api/nodes`, `GET /api/startups`, expect-restart, `host_uptime_s`, `boot_id`, `startup_ack`); the node feed keeps the model source's `target` (6.10); the `local_node` setting and the "pool" wording in agents mode (compose project `potluck`); learned memory needs kept across a Potluck restart, with `POST /api/forget-need`; an agent that does not remount a share that is mounted but not answering (8); stale start-up marks ignored after a soft restart (11.4). |
 | 0.1.5 | Not a program release: a scheduler image only (its version said 0.1.5) that still served and required 0.1.4. Nothing on the wire changed. |
 | 0.1.6 | For the agent: the `boot_origin` and `boot_origin_partial` lines of the start-up marks file, passed through in `external_marks`, with Potluck's figure counted from `boot_origin` and the record's `origin` (11.4); the `capabilities` list with `file_cache_evict` and `POST /cache/evict` (4.2, 6.13); the busy file `/run/potluck/busy`, the `--busy-file` option and `busy`, `launches`, `busy_since` in `GET /status` (6.9, 6.14). For Potluck only: an excluded node says so (11.2, item 6); a `command` profile is not shut out by `no_auto_nodes` (11.1, known limits); a raised need is kept by the shape of the load and its device count (11.1), listed by `GET /api/needs` and forgotten by `POST /api/needs/forget` as well as `POST /api/forget-need`; `POST /api/cache/evict` for the benchmark's cold load. |
+| 0.1.7, 0.1.8 | Not program releases: scheduler images only, which served and required 0.1.6. |
+| 0.1.9 | Agent: `--advertise-addr` and the WARN for an `--allow-from` that covers everything (9); the Nvidia GPU under WSL2 / Docker Desktop (`/dev/dxg`, `/usr/lib/wsl/lib`, 4.2). A console as host (6.15): `host_launch`, the new `host` fields, the key file, the host's own device first, read progress. Potluck: `host: node` profiles, `host_overhead_mib`, `host_no_mmap`, separate need shapes for a host on a node; the plan and `GET /api/profiles` show `host`, `host_node`, `host_overhead_mib` and `host_problem`. A 0.1.9 Potluck refuses agents of 0.1.0 to 0.1.8 with `agent_too_old` and they update (5.4); a 0.1.9 agent takes a 0.1.6-style host request. |

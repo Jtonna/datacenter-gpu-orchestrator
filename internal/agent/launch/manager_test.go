@@ -481,6 +481,7 @@ func TestRefusals(t *testing.T) {
 	})
 	t.Run("worker unreachable", func(t *testing.T) {
 		e := newEnv(t, true)
+		e.device = &agentproto.Device{Name: "Vulkan0", Backend: "vulkan", TotalMiB: 14000, FreeMiB: 13000, SharesSystemMemory: true}
 		os.WriteFile(filepath.Join(e.cfg.ModelDir, "m.gguf"), []byte("GGUF"), 0o644)
 		e.setProbe("192.0.2.122:50052", true)
 		_, ref := e.m.Start(ctx, host("a"))
@@ -540,6 +541,7 @@ func TestRefusals(t *testing.T) {
 func TestHostLaunch(t *testing.T) {
 	e := newEnv(t, true)
 	e.cfg.CUDA = true
+	e.device = &agentproto.Device{Name: "CUDA0", Backend: "cuda", TotalMiB: 8000, FreeMiB: 7000}
 	e.m = e.newManager()
 	e.run()
 	os.WriteFile(filepath.Join(e.cfg.ModelDir, "m.gguf"), []byte("GGUF"), 0o644)
@@ -556,7 +558,7 @@ func TestHostLaunch(t *testing.T) {
 	}
 	sp := e.runner.lastSpec()
 	got := strings.Join(sp.Args, " ")
-	want := "--host 192.0.2.101 --port 50061 -m " + filepath.Join(e.cfg.ModelDir, "m.gguf") + " -c 16384 --parallel 2 --rpc 192.0.2.122:50052 --tensor-split 50,50 --flash-attn"
+	want := "--host 192.0.2.101 --port 50061 -m " + filepath.Join(e.cfg.ModelDir, "m.gguf") + " -c 16384 --parallel 2 --rpc 192.0.2.122:50052 --device CUDA0,RPC0 --tensor-split 50,50 --flash-attn"
 	if got != want {
 		t.Fatalf("args\n got %s\nwant %s", got, want)
 	}

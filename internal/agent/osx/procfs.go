@@ -98,3 +98,25 @@ func ExeBase(exe string) string {
 	exe = strings.TrimSuffix(exe, " (deleted)")
 	return filepath.Base(exe)
 }
+
+// ReadChars returns rchar of /proc/<pid>/io: the bytes the process has read
+// with read() and similar calls (not through a memory map). Reading another
+// process's io file needs the rights to trace it (the agent runs as root).
+func (p ProcFS) ReadChars(pid int) (int64, error) {
+	b, err := os.ReadFile(filepath.Join(p.root(), strconv.Itoa(pid), "io"))
+	if err != nil {
+		return 0, err
+	}
+	return ParseRChar(string(b))
+}
+
+// ParseRChar reads the rchar line of a /proc/<pid>/io text.
+func ParseRChar(io string) (int64, error) {
+	for _, line := range strings.Split(io, "\n") {
+		k, v, ok := strings.Cut(line, ":")
+		if ok && strings.TrimSpace(k) == "rchar" {
+			return strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		}
+	}
+	return 0, os.ErrNotExist
+}

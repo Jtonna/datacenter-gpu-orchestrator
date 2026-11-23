@@ -229,6 +229,9 @@ func TestProfilesEndpoint(t *testing.T) {
 		alpha["needs_mib_configured"].(float64) != 1000 || alpha["needs_basis"] == "" || alpha["aliases"].([]any)[0] != "alpha-old" {
 		t.Fatalf("%v", alpha)
 	}
+	if alpha["host"] != "server" || alpha["host_node"] != nil {
+		t.Fatalf("host %v", alpha)
+	}
 	plan := alpha["plan"].(map[string]any)
 	if plan["action"] != "start" || plan["would_start"] != true || len(plan["nodes"].([]any)) != 1 {
 		t.Fatalf("%v", plan)

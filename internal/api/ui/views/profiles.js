@@ -156,7 +156,7 @@ function makeEditor(o) {
 
 // ---- cells ----
 
-function placementCell(p) {
+function placementCell(p, e) {
   const bits = [];
   if ((p.force_nodes || []).length) {
     bits.push(nodeChips(p.force_nodes));
@@ -165,7 +165,17 @@ function placementCell(p) {
     bits.push(h('span.quiet', 'Automatic'));
     if ((p.allow_tiers || []).length) bits.push(h('span.sub', 'tiers ' + p.allow_tiers.join(', ') + ' only'));
   }
+  bits.push(hostLine(e));
   return h('span', bits);
+}
+
+// hostLine(e) -> where llama-server runs for a profile hosted on a node
+// (GET /api/profiles: host, host_node, host_overhead_mib, host_problem).
+export function hostLine(e) {
+  if (!e || e.host !== 'node') return null;
+  return h('span.sub', { title: 'llama-server runs on this node, started by its agent; the node also holds the host process' },
+    'hosted on ' + (e.host_node || 'the first forced node'), e.host_overhead_mib ? ` · +${mib(e.host_overhead_mib)} for the host` : null,
+    e.host_problem ? h('span.err-t', ' · ' + e.host_problem) : null);
 }
 
 function memoryCell(p, plan) {
@@ -349,7 +359,7 @@ registerView({
             p.kind === 'command' ? h('span.sub.mono.wrap-any', p.cmd || '') : null,
             pending.has(id) && pending.get(id).errors && pending.get(id).errors.length ? h('span.sub.err-t', pending.get(id).errors[0]) : null),
           h('td.r', p.kind === 'command' ? h('span.mut', DASH) : [ctx(p.ctx), (p.parallel || 1) > 1 ? h('span.sub', `${p.parallel} slots`) : null]),
-          h('td', placementCell(p)),
+          h('td', placementCell(p, plans[id])),
           h('td.r', memoryCell(p, plans[id])),
           h('td.tight', status(id)),
           h('td.tight', h('span.row', { style: 'gap:6px 14px;justify-content:flex-end;flex-wrap:nowrap' },

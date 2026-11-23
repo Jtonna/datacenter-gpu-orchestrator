@@ -151,6 +151,7 @@ type (
 	effStart struct {
 		iid  uint64
 		spec instance.StartSpec
+		host *HostLaunchSpec // set: a host launch on a node (HostLauncher), not spec
 	}
 	effCancelHealth struct{ iid uint64 }
 	effStop         struct {

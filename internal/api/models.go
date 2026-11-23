@@ -838,6 +838,11 @@ func BuildModelCatalog(in CatalogInput, detailKey string) []map[string]any {
 			if pe["tensor_split"] == nil {
 				pe["tensor_split"] = []any{}
 			}
+			for _, k := range []string{"host", "host_node", "host_overhead_mib", "host_problem"} { // a profile hosted on a node
+				if v, ok := p[k]; ok {
+					pe[k] = v
+				}
+			}
 			if n := jnum(p["needs_mib"]); n > 0 {
 				pe["needs_mib"], pe["needs_basis"], pe["needs_measured"] = p["needs_mib"], p["needs_basis"], jbool(p["needs_measured"])
 				// the model's own need is that of its lightest configuration

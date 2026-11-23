@@ -43,8 +43,8 @@ flowchart TB
 | 3122 | Scheduler (8080 inside the container) | Clients, the web UI, agents |
 | 2049 | Share | Nodes that read model files from the share |
 | 50060 | Agent API on each node | The scheduler |
-| 50052 | `rpc-server` during a load | The scheduler's `llama-server` |
-| 50061 | Reserved for an agent-hosted `llama-server` | Not used yet |
+| 50052 | `rpc-server` during a load | The load's `llama-server`: the scheduler's, or a host node's |
+| 50061 | `llama-server` of a host launch on a node (release 0.1.9), only while it runs | The scheduler only; every route but `/health` wants the launch's per-launch key |
 
 ### Words
 
@@ -52,7 +52,8 @@ flowchart TB
 - **Node**: a machine in the pool. The host's own GPU is the **local node**.
 - **Tier**: a rule that matches nodes and gives them a priority, the memory to keep free (headroom), the link speed and a settle time.
 - **Instance**: one loaded profile: one `llama-server` and the nodes it holds. A node holds at most one instance, because a worker serves one client.
-- **Launch**: one run of `rpc-server` on one node, from the start request to its exit.
+- **Launch**: one run of `rpc-server` (a worker launch) or `llama-server` (a host launch, release 0.1.9) on one node, from the start request to its exit.
+- **Host**: the machine that runs a load's `llama-server`. The scheduler's own machine, unless the profile says `host: node`.
 - **Release**: one version string that names the scheduler, the agent and the program set together.
 
 ## 2. Package map
@@ -67,8 +68,8 @@ flowchart TB
 | `internal/scheduler` | The state machine: instances, the queue, claims, eviction, timers, failure rules. |
 | `internal/placer` | Pure functions: place a model, plan an eviction, or say why neither works. |
 | `internal/estimate`, `internal/gguf` | Read the model file header and estimate the memory need. |
-| `internal/instance` | Builds the `llama-server` command line, starts, health-checks and stops one child, follows its load. |
-| `internal/pool` | Agent membership: the registry of agents, the node view the scheduler reads, worker launches. |
+| `internal/instance` | Builds the `llama-server` command line, starts, health-checks and stops one child, follows its load; `RemoteChild` stands for a host running on a node. |
+| `internal/pool` | Agent membership: the registry of agents, the node view the scheduler reads, worker launches and host launches. |
 | `internal/release` | Loads and verifies the program release handed out to agents. |
 | `internal/needstore` | Keeps learned memory needs in the database across restarts. |
 | `internal/startups` | Turns the agents' start-up reports into start-up figures per node. |
@@ -182,6 +183,8 @@ sequenceDiagram
 
 The agent refuses a launch that would not fit its memory (`would_not_fit`), so a bad estimate cannot freeze a machine. While the launch runs, the agent's watchdog kills it when available memory falls below its floor. A launch whose lease is not renewed for 20 s is stopped by the agent itself, so a node never keeps a worker for a scheduler that is gone.
 
+**A console as host (release 0.1.9).** A profile with `host: node` and `force_nodes` runs its `llama-server` on the first forced node instead of the scheduler's machine. The scheduler never picks a host by itself. The worker launches start first, on the other forced nodes; then the scheduler sends that node's agent a host launch (`role: host`, agent contract 6.15) with the workers' addresses, the split (host first), `expect_mib` (its device share plus `host_overhead_mib`), the file-load mode and a new random key. The agent starts `llama-server` on port 50061 with the key in a RAM file (`--api-key-file`). The scheduler checks `/health` from its own side, then forwards requests to the node with `Authorization: Bearer <key>`. The host is the instance's child as on the scheduler's machine (`instance.RemoteChild`, driven by the pool from the agent's reports), so the queue, eviction, leases, failures and history are the same. Only an agent that advertises `host_launch` is asked; the scheduler's own machine cannot be a device of a node host. Learned needs of such loads are kept under a shape of their own. `host_no_mmap` (default off) makes the host load without mmap, which also gives read progress.
+
 **Failures.** A worker that exits, a load timeout, or a load that stops making progress (`load_stall_timeout`) fails the load. Waiting clients get `502` with the reason, and the profile is backed off for a while. A node that sends no heartbeat is lost after 10 s (20 s while it runs a launch); its instance is ended and the other members are stopped. A worker that ends for lack of memory raises the profile's learned need.
 
 **Ready.** When `llama-server` answers its health check, the instance is ready and the waiting requests are forwarded. When the instance is gone, the scheduler stops the worker launches.
@@ -254,7 +257,7 @@ An agent never updates while a launch runs.
 
 | What restarts | What happens |
 |---|---|
-| Scheduler (container restart or new image) | Every loaded model ends. Each agent's next heartbeat gets `410`; it registers again with its launch, and the scheduler tells it to stop that launch. Configuration, pauses and learned memory needs come back from the database; the newest history events are reloaded. The queue, backoffs and quarantines start empty. Models load again on the next request. A benchmark run that was running is marked failed. |
+| Scheduler (container restart or new image) | Every loaded model ends, a model hosted on a node too: its host launch is stopped like any other launch the new run does not hold. Each agent's next heartbeat gets `410`; it registers again with its launch, and the scheduler tells it to stop that launch. Configuration, pauses and learned memory needs come back from the database; the newest history events are reloaded. The queue, backoffs and quarantines start empty. Models load again on the next request. A benchmark run that was running is marked failed. |
 | Share | Nodes' reads stand still for about 16 s (the NFS grace time is set to 10 s) and then resume. Their mounts are `hard`, so reads wait instead of failing. The scheduler and loaded models keep running. |
 | Log store | Nothing changes for scheduling. Senders get `503` and keep their lines in their rings until the store is back; the oldest lines go first when a ring is full. |
 | Agent, bare-metal install | The launch is its own systemd unit and keeps running. The restarted agent finds it again and continues its lease from a file. The node counts as silent, not lost, for up to 20 s. |
@@ -271,8 +274,8 @@ Every goroutine the scheduler starts runs under `internal/supervise` (a source s
 | Kind | Tasks | After a failure |
 |---|---|---|
 | Restarts alone | WebSocket status and ping loops, fleet feed and probe, needs writer, background build reads, log relay watch, self-log check, log shipper | Restarts after a backoff (100 ms, 1 s, 5 s, doubling to 30 s; back to the start after a minute without a failure). |
-| Rebuilds, then restarts | catalog (built again from scratch), SSE hub (drops its streams; browsers reconnect to a fresh snapshot), benchmark manager (fails the run in hand; its models are unloaded on the way out), history writer (continues in a fresh file), a launch's supervisor (renews the lease and reads the launch state at once) | As above, after the rebuild. |
-| One-shot work | probes, starts, health waits, worker launches and stops, reaping a model process, the audit writer, a cache eviction, a proxy prefetch, a benchmark step | The failure becomes the work's result (an error the waiting side sees), so nothing waits forever. |
+| Rebuilds, then restarts | catalog (built again from scratch), SSE hub (drops its streams; browsers reconnect to a fresh snapshot), benchmark manager (fails the run in hand; its models are unloaded on the way out), history writer (continues in a fresh file), a launch's supervisor (`pool.launch`) and a host launch's supervisor (`pool.host_launch`, a model hosted on a node): each renews the lease and reads the launch state at once | As above, after the rebuild. |
+| One-shot work | probes, starts, health waits, worker launches and stops, the stops of a model hosted on a node (`instance.remote_stop`: a stop that fails is reported and the kill after it still runs), reaping a model process, the audit writer, a cache eviction, a proxy prefetch, the watch that cuts a forwarded request when its model hosted on a node goes (`proxy.gone_watch`), a benchmark step | The failure becomes the work's result (an error the waiting side sees), so nothing waits forever. |
 | Read-only queries | the scheduler's plan, status and needs queries (task `scheduler.read`, run inside the event loop) | The query answers 500 and the loop goes on; counted in `GET /api/system` as `read_panics` too. Never toward the stop below: it changed nothing. |
 | Stops Potluck | the scheduler event loop, the pool's lost-node check, applying a configuration change | Their state cannot be rebuilt in place: see below. |
 
@@ -284,8 +287,8 @@ Every goroutine the scheduler starts runs under `internal/supervise` (a source s
 | needs writer | scheduler (its queue) | restarts | stops Potluck |
 | history writer | history store | rebuilds (fresh file), restarts | stops Potluck |
 | benchmark manager | benchmark run and store | fails the run, restarts | stops Potluck |
-| a launch's supervisor, worker launches and stops, forced-stop reset | pool (`p.mu`, the launch's `l.mu`) | restarts, or the failure is the work's result | stops Potluck |
-| reaping a model process, starts, health waits, probes | model processes, scheduler | the failure is the work's result | stops Potluck |
+| a launch's supervisor, a host launch's supervisor, worker launches and stops, forced-stop reset | pool (`p.mu`, the launch's `l.mu`) | restarts, or the failure is the work's result | stops Potluck |
+| reaping a model process, starts, health waits, probes, the stops of a model hosted on a node | model processes (a node-hosted model's child: its `mu` and output lock), scheduler | the failure is the work's result | stops Potluck |
 | catalog, SSE hub, WebSocket loops, fleet feed, log relay, self-log, log shipper, audit writer, cache eviction, prefetch | their own state only (plain deferred release) | as in the table above | as outside: the state is the task's own and is rebuilt |
 
 The members of one fan-out (the probes of one pre-flight, the launches or stops of one load, the members of a benchmark group, the nodes of one cache eviction) count as one failure toward the limit below. A failure while Potluck is already stopping on a signal is recorded (exit code 3) but does not shorten the shutdown's grace.

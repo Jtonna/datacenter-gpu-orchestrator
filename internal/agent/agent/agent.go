@@ -56,9 +56,15 @@ type Options struct {
 	// result, so Potluck places on the same figure the agent tests.
 	SharedMemory string
 	AllowFrom    []netip.Prefix
-	DataDir      string // programs and launch logs
-	StateDir     string // state files and the share mount point
-	ModelsDir    string // the node's model folder ("" for push)
+	// AdvertiseAddr is --advertise-addr: the address sent as the
+	// registration's addr, where Potluck reaches the agent and its launches
+	// (an agent in a Docker container behind NAT whose ports are published
+	// on the machine). The agent still binds its own address. "" sends its
+	// own address.
+	AdvertiseAddr string
+	DataDir       string // programs and launch logs
+	StateDir      string // state files and the share mount point
+	ModelsDir     string // the node's model folder ("" for push)
 	// LDLibraryPath is the agent's LD_LIBRARY_PATH, the one the library
 	// check used; launches get the same value.
 	LDLibraryPath string
@@ -123,9 +129,11 @@ type Deps struct {
 	// DevicesRun runs the llama program for --list-devices.
 	DevicesRun  devices.Runner
 	HostHealthy func(ctx context.Context, addr string) bool
-	Updater     Updater
-	HTTP        *http.Client
-	Logger      *slog.Logger
+	// ReadChars is a process's read count (launch.Deps.ReadChars); nil: none.
+	ReadChars func(pid int) (int64, error)
+	Updater   Updater
+	HTTP      *http.Client
+	Logger    *slog.Logger
 	// FileCache does the page cache calls of POST /cache/evict (6.13); nil:
 	// the agent does not serve it and does not advertise file_cache_evict.
 	FileCache filecache.Sys
@@ -257,6 +265,12 @@ func New(opt Options, deps Deps) (*Agent, error) {
 	if deps.Logger == nil {
 		deps.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
+	for _, p := range opt.AllowFrom {
+		if p.Bits() == 0 {
+			deps.Logger.Warn("--allow-from covers every address: anyone who can reach this machine may start and stop launches; "+
+				"name the Docker gateway network or Potluck's address instead", "allow_from", p.String())
+		}
+	}
 	if deps.HTTP == nil {
 		deps.HTTP = &http.Client{Timeout: 5 * time.Second}
 	}
@@ -324,7 +338,7 @@ func New(opt Options, deps Deps) (*Agent, error) {
 		WatchdogFloorMiB: opt.WatchdogFloorMiB, SharedMemory: opt.SharedMemory, Tick: deps.LaunchTick,
 		WorkerPort: deps.WorkerPort, HostPort: deps.HostPort,
 	}, launch.Deps{Clock: deps.Clock, Runner: deps.Runner, Mem: deps.Mem, Sockets: deps.Sockets,
-		Procs: deps.Procs, KLog: deps.KLog, PortFree: deps.PortFree, HostHealthy: deps.HostHealthy,
+		Procs: deps.Procs, KLog: deps.KLog, PortFree: deps.PortFree, HostHealthy: deps.HostHealthy, ReadChars: deps.ReadChars,
 		Gate: a, Device: a.workerDevice, Programs: a.Programs, Logger: deps.Logger, OnError: a.setError,
 		OnExit: func(agentproto.LaunchState) { a.afterLaunchExit() }})
 
@@ -443,6 +457,15 @@ func (a *Agent) leaveOnPurpose() {
 	default:
 		a.log.Warn("leave marker found, but Potluck refused the deregister call; it will show the node as lost", "marker", a.opt.LeaveMarker, "status", resp.StatusCode)
 	}
+}
+
+// advertised is the registration's addr: --advertise-addr when set, else
+// the agent's own address.
+func (a *Agent) advertised(own string) string {
+	if a.opt.AdvertiseAddr != "" {
+		return a.opt.AdvertiseAddr
+	}
+	return own
 }
 
 // ID returns the node id, "" until resolved.
@@ -794,11 +817,16 @@ func (a *Agent) RegisterRequest() agentproto.RegisterRequest {
 	a.mu.Unlock()
 	req := agentproto.RegisterRequest{ID: id.ID, Name: a.opt.Name, AgentRelease: a.opt.Release,
 		AgentStartID: a.startID, OS: runtime.GOOS, Arch: runtime.GOARCH, Install: a.opt.Install,
-		Addr: id.Addr, Backends: a.deps.Hardware.Backends(gpus), RAMOnly: a.opt.RAMOnly,
+		Addr: a.advertised(id.Addr), Backends: a.deps.Hardware.Backends(gpus), RAMOnly: a.opt.RAMOnly,
 		ModelSource: a.opt.ModelSource.Wire(), Programs: a.Programs.Held(), LaunchID: a.Launch.CurrentID(),
 		ForeignProcesses: a.foreignProcesses(), WatchdogFloorMiB: a.Launch.WatchdogFloorMiB(), Startup: a.Start.Report()}
 	if a.Cache != nil {
-		req.Capabilities = []string{agentproto.CapFileCacheEvict}
+		req.Capabilities = append(req.Capabilities, agentproto.CapFileCacheEvict)
+	}
+	// A host reads its model from the node's own model folder (share or
+	// dir); a push node has none and cannot host (6.2).
+	if a.opt.ModelSource.Kind != modelsrc.KindPush {
+		req.Capabilities = append(req.Capabilities, agentproto.CapHostLaunch)
 	}
 	for _, g := range gpus {
 		req.GPUs = append(req.GPUs, g.GPU)
@@ -1340,7 +1368,8 @@ func (a *Agent) Status() agentproto.Status {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	st := agentproto.Status{Registered: a.registered, Potluck: a.opt.Potluck, Release: a.opt.Release,
-		Paused: a.paused, Role: agentproto.RoleIdle, State: ls.State, Load: ls.Load, Busy: n > 0, Launches: n}
+		Paused: a.paused, Role: agentproto.RoleIdle, State: ls.State, Load: ls.Load, Busy: n > 0, Launches: n,
+		AdvertiseAddr: a.opt.AdvertiseAddr}
 	if n > 0 {
 		s := since.Unix()
 		st.BusySince = &s
