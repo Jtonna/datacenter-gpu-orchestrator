@@ -48,6 +48,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/pool"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/release"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -177,6 +178,8 @@ func stepDone(step string, st *bench.Store) {
 }
 
 func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) int {
+	fatal := newFatalPath()
+	defer fatal.disarm() // the first defer, so the last to run: main exits right after
 	// CR-10: Potluck's own lines also go to the log store (source scheduler),
 	// through a RAM ring and one background sender; the printed log stays as
 	// it is. The lines from here on are kept until the sender starts and
@@ -185,6 +188,16 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 	var cfgAt atomic.Pointer[config.Config]
 	self := newSelfLog(relayAt.Load, cfgAt.Load)
 	log = slog.New(self.Handler(log.Handler()))
+	// Background-task isolation: a recovered failure is logged (and so
+	// shipped with Potluck's own lines), recorded in the history and counted;
+	// one that must not continue ends the process through the fatal path.
+	var histAt atomic.Pointer[history.Store]
+	supervise.Configure(supervise.Options{Logger: log, Fatal: fatal.trigger,
+		Record: func(f supervise.Failure) {
+			if h := histAt.Load(); h != nil {
+				h.Record(failureEvent(f))
+			}
+		}})
 	// The database holds the configuration. If it cannot be opened the scheduler
 	// still starts (built-in defaults, no profiles); configuration changes then answer 503.
 	var dbStore *bench.Store
@@ -279,9 +292,9 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 	poolDone := make(chan struct{}) // closed when the pool's loop has returned (agents membership)
 	defer bgCancel()
 	self.SetLogger(log)
-	go self.Run(bg)
-	if logRelay != nil {
-		go logRelay.WatchStore(bg) // warns when the store's retention or disk cap differ from the settings
+	go supervise.Once("selflog", func() { self.Run(bg) }, nil) // its loops are supervised inside
+	if logRelay != nil {                                       // warns when the store's retention or disk cap differ from the settings
+		supervise.Go(bg, supervise.Spec{Name: "logrelay.watch_store", Policy: supervise.Restart}, logRelay.WatchStore)
 	}
 	launcher := &instance.ProcessLauncher{Ports: ports, LogDir: cfg.ChildLogDir, LogKeep: cfg.ChildLogKeep, Logger: log,
 		Tap: func(profile string, id uint64) instance.ChildTap { return self.ChildTap(profile, id) }}
@@ -307,11 +320,17 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 		}
 		curPl.Store(pl)
 		view = pl
-		go func() { pl.Run(bg); close(poolDone) }()
+		// The pool's loop runs CheckLost, which is NOT restarted after a
+		// failure: it changes the agents and launches tables that the
+		// scheduler core's node claims mirror, and a half-applied pass
+		// leaves the two disagreeing about which node holds what, with
+		// nothing in the process to bring them back into agreement. Policy
+		// Exit (the fatal path). The local GPU probe it also runs is guarded.
+		supervise.Go(bg, supervise.Spec{Name: "pool.check_lost", Policy: supervise.Exit, Done: func() { close(poolDone) }}, pl.Run)
 	} else {
 		fc = fleet.New(cfg, fleet.Options{Logger: log})
-		go func() { fc.Run(bg); close(fleetDone) }()
-		go checkFleet(bg, cfg, log)
+		go supervise.Once("fleet.run", func() { defer close(fleetDone); fc.Run(bg) }, nil) // its loops are supervised inside
+		go supervise.Once("fleet.check", func() { checkFleet(bg, cfg, log) }, nil)
 		view = fc
 	}
 
@@ -320,6 +339,7 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 	hist := history.Open(history.Options{Dir: cfg.HistoryDir, MaxFileBytes: int64(cfg.HistoryMaxFileMiB) << 20,
 		KeepFiles: cfg.HistoryKeepFiles, MemoryEvents: cfg.HistoryMemoryEvents, Logger: log})
 	defer hist.Close()
+	histAt.Store(hist)
 	hist.Record(startedEvent(cfg, version, time.Now()))
 
 	so := scheduler.Options{
@@ -375,7 +395,15 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 		return 1
 	}
 	schedDone := make(chan struct{})
-	go func() { sched.Run(bg); close(schedDone) }()
+	// The scheduler's single event loop is NOT restarted after a failure: it
+	// owns the instances, waiters, leases, node claims and memory
+	// reservations, mutated in place with no store to rebuild them from, so a
+	// panic half way leaves them inconsistent (over-committed node memory, a
+	// waiter never answered). Policy Exit: the fatal path ends the process and
+	// the container starts it again from the database. Only the foreign code
+	// the loop calls (history and bench subscribers) is guarded.
+	supervise.Go(bg, supervise.Spec{Name: "scheduler.loop", Policy: supervise.Exit, Done: func() { close(schedDone) }},
+		func(ctx context.Context) { sched.Run(ctx) })
 	if pl != nil {
 		pl.SetForceUnload(sched.ForceUnloadNode)
 	}
@@ -402,6 +430,9 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 	apiSrv.SetMCPTools(mcpSrv.ToolInfo)
 	apiSrv.Warm()                                                           // the model catalog is built in the background, before anyone asks
 	root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { // not a ServeMux: it would clean paths the API serves verbatim
+		// A handler panic is logged with its stack and counted as task http
+		// (never escalated); net/http then recovers it as before.
+		defer supervise.ReportRepanic("http", func(p any) bool { return p == http.ErrAbortHandler })
 		if r.URL.Path == "/mcp" {
 			mcpSrv.ServeHTTP(w, r)
 			return
@@ -410,7 +441,8 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 	})
 	httpSrv := &http.Server{Handler: root, ReadHeaderTimeout: 10 * time.Second}
 	serveErr := make(chan error, 1)
-	go func() { serveErr <- httpSrv.Serve(ln) }()
+	go supervise.Once("http.serve", func() { serveErr <- httpSrv.Serve(ln) }, // a failure here stops Potluck as a Serve error does
+		func(p any) { serveErr <- fmt.Errorf("internal error: %v", p) })
 	if benchMgr != nil {
 		benchMgr.Start(bg)
 	}
@@ -425,6 +457,8 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 		log.Error("HTTP server failed", "err", err)
 		hist.Record(stoppingEvent("HTTP server failed: "+err.Error(), time.Now()))
 		code = 1
+	case reason := <-fatal.ch:
+		return fatalStop(reason, log, hist, httpSrv, launcher, bgCancel)
 	}
 
 	// Design 8.6: stop accepting, then let the scheduler answer waiters,
@@ -432,16 +466,19 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 	// A second signal kills everything at once.
 	ln.Close()
 	grace := svc.Config().Defaults.ShutdownGrace + shutdownSlack
+	// A task failure from here on does not shorten the grace (review IS2);
+	// the bound covers the benchmark stop, the servers and the waits below.
+	fatal.beginShutdown(grace + apiGrace + 10*time.Second + fatalWatchdog)
 	sctx, scancel := context.WithTimeout(context.Background(), grace)
 	defer scancel()
-	go func() {
+	go supervise.Once("main.second_signal", func() {
 		select {
 		case <-sigs:
 			log.Warn("second signal: stopping everything at once")
 			scancel()
 		case <-sctx.Done():
 		}
-	}()
+	}, nil)
 	if benchMgr != nil { // a running benchmark is cancelled and unloads what it loaded while the API still answers
 		bmctx, bmcancel := context.WithTimeout(sctx, 60*time.Second)
 		benchMgr.Stop(bmctx)
@@ -470,6 +507,9 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 	// on return: nothing writes to it once "stopped" is logged.
 	apiSrv.Close()
 	stepDone("api closed", nil)
+	if fatal.fired.Load() { // a task failed for good during the shutdown
+		code = supervise.ExitCode
+	}
 	log.Info("stopped")
 	return code
 }

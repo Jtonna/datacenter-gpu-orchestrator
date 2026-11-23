@@ -5,6 +5,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // DefaultMemSample is how often a step samples the nodes' available memory.
@@ -38,7 +40,7 @@ func (w *memWatch) observe(s *StatusInfo) {
 	}
 	loading := w.loading.Load()
 	w.mu.Lock()
-	defer w.mu.Unlock()
+	defer supervise.Unlocked("bench", w.mu.Unlock)
 	for _, n := range s.Workers {
 		if n.AvailMiB == nil {
 			continue
@@ -89,7 +91,7 @@ func (w *memWatch) start(d time.Duration, status func(context.Context) (*StatusI
 	done := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go func() {
+	go supervise.Once("bench.memwatch", func() {
 		defer wg.Done()
 		t := time.NewTicker(d)
 		defer t.Stop()
@@ -99,14 +101,16 @@ func (w *memWatch) start(d time.Duration, status func(context.Context) (*StatusI
 				return
 			case <-t.C:
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			s, err := status(ctx)
-			cancel()
-			if err == nil {
-				w.observe(s)
-			}
+			// A failed sample is skipped; the samples so far are kept.
+			supervise.Guard("bench.memwatch", func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				if s, err := status(ctx); err == nil {
+					w.observe(s)
+				}
+			}, nil)
 		}
-	}()
+	}, nil)
 	var once sync.Once
 	w.stop = func() { once.Do(func() { close(done); wg.Wait() }) }
 }
@@ -118,7 +122,7 @@ func (w *memWatch) result(ids []string, names map[string]string) []NodeMemLow {
 		return nil
 	}
 	w.mu.Lock()
-	defer w.mu.Unlock()
+	defer supervise.Unlocked("bench", w.mu.Unlock)
 	var out []NodeMemLow
 	seen := map[string]bool{}
 	for _, id := range ids {

@@ -464,6 +464,22 @@ First look: `curl -s $H/api/status` and `docker logs --tail 100 potluck`. For on
 | Every load refused, `/api/system` shows `host_build_error` | The scheduler's `llama-server-rpc` is not the release's llama build. | Build the base image from the release's commit (B). |
 | A model lands on the host GPU unexpectedly | The host tier is used only when better tiers cannot hold the model, or their nodes are not placeable. | `POST /api/plan` says why. Restrict the profile with `allow_tiers`. |
 | `potluck-share` does not start | The `nfs` and `nfsd` kernel modules are not loaded, or `POTLUCK_SHARE_BIND` is not an address of the host. | `lsmod | grep -w nfsd`; check `.env`. |
+| About shows "A background task failed in the last hour" | An internal error (a bug) in one of the scheduler's background tasks. It was handled: the task restarted alone, or the work it was doing failed with an error. | See "An internal failure" below. |
+| The container restarted with exit code 3 | A failure Potluck must not continue from: the scheduler loop, the lost-node check or a configuration apply failed, or one task failed three times in a minute. | See "An internal failure" below. |
+
+### An internal failure
+
+Potluck isolates its background tasks (architecture, "What restarts when"). What you see:
+
+- The log line `background task failed` at error level, with `task`, `panic`, `failures_last_min`, `restarts` and the Go `stack`.
+- An `internalFailure` event on the Activity page (filter "Scheduler"), with the task and the message.
+- The About page's "Background tasks" card: each task with what it does after a failure, its restarts, failures in the last minute and last failure. The same is in `curl -s $H/api/system | jq '.tasks, .internal_failures_total'`.
+
+What to do:
+
+1. Nothing is needed for the service: a task that restarts alone is running again (state `running` in the card). A benchmark run that was executing shows failed with "internal error"; start it again. A configuration change that answered 500 "the change is saved, but applying it ... failed" is saved, and the restart that follows applies it.
+2. Keep the evidence: `docker logs potluck 2>&1 | grep -A40 'background task failed'` and the `internalFailure` events on the Activity page. Report it with the release (`version` in `/api/system`); it is a bug.
+3. If Potluck stopped (the `schedulerStopping` event says "internal failure in ...", and `docker inspect -f '{{.State.ExitCode}}' potluck` shows 3 until the restart), Docker starts it again. Loaded models ended, as with any scheduler restart (L). If it stops again and again, roll back to the previous release (F).
 
 ---
 

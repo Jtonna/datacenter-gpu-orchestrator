@@ -30,6 +30,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/logship"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/logrelay"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // Defaults.
@@ -126,10 +127,13 @@ func object() *agentproto.Logs {
 // check follows the on/off state of logging: off drops what is kept.
 func (s *Shipper) check() {
 	on := s.o.On()
-	s.mu.Lock()
-	changed := !s.checked || on != s.on
-	s.on, s.checked = on, true
-	s.mu.Unlock()
+	var changed bool
+	func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		changed = !s.checked || on != s.on
+		s.on, s.checked = on, true
+	}()
 	if !changed {
 		return
 	}
@@ -153,22 +157,27 @@ func (s *Shipper) target(k logship.Key) string {
 }
 
 // Run runs the sender and follows the on/off state until ctx ends.
+//
+// The on/off check restarts alone after a failure; the sender's loops are
+// supervised inside logship.
 func (s *Shipper) Run(ctx context.Context) {
-	s.check()
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() { defer wg.Done(); s.ship.Run(ctx) }()
-	t := time.NewTicker(s.o.CheckEvery)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			wg.Wait()
-			return
-		case <-t.C:
-			s.check()
+	wg.Add(2)
+	go supervise.Once("selflog.ship", func() { defer wg.Done(); s.ship.Run(ctx) }, nil)
+	supervise.Go(ctx, supervise.Spec{Name: "selflog.check", Policy: supervise.Restart, Done: wg.Done}, func(ctx context.Context) {
+		s.check()
+		t := time.NewTicker(s.o.CheckEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				s.check()
+			}
 		}
-	}
+	})
+	wg.Wait()
 }
 
 // SetLogger sets where the sender's own warnings go (rate-limited; they may
@@ -210,14 +219,11 @@ type ChildTap struct {
 	skipped int64
 }
 
-// Line takes one line of the child's output (stream is stdout or stderr).
-func (c *ChildTap) Line(stream, text string) {
-	if !c.s.ship.On() {
-		return
-	}
-	n := float64(len(text) + 1)
-	now := time.Now()
+// take spends n bytes of the rate budget; ok is false when the line is
+// skipped. sk is how many bytes were skipped before it.
+func (c *ChildTap) take(n float64, now time.Time) (sk int64, ok bool) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.last.IsZero() {
 		c.tokens = c.rate
 	} else if now.After(c.last) {
@@ -226,13 +232,25 @@ func (c *ChildTap) Line(stream, text string) {
 	c.last = now
 	if c.tokens < n {
 		c.skipped += int64(n)
-		c.mu.Unlock()
-		return
+		return 0, false
 	}
 	c.tokens -= n
-	sk := c.skipped
+	sk = c.skipped
 	c.skipped = 0
-	c.mu.Unlock()
+	return sk, true
+}
+
+// Line takes one line of the child's output (stream is stdout or stderr).
+func (c *ChildTap) Line(stream, text string) {
+	if !c.s.ship.On() {
+		return
+	}
+	n := float64(len(text) + 1)
+	now := time.Now()
+	sk, ok := c.take(n, now)
+	if !ok {
+		return
+	}
 	if sk > 0 {
 		c.notice(sk)
 	}
@@ -241,10 +259,13 @@ func (c *ChildTap) Line(stream, text string) {
 
 // Close says how many bytes were skipped at the end, if any.
 func (c *ChildTap) Close() {
-	c.mu.Lock()
-	sk := c.skipped
-	c.skipped = 0
-	c.mu.Unlock()
+	var sk int64
+	func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		sk = c.skipped
+		c.skipped = 0
+	}()
 	if sk > 0 && c.s.ship.On() {
 		c.notice(sk)
 	}

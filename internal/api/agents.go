@@ -87,9 +87,11 @@ func (g *agentRegistry) load(ctx context.Context) ([]cfgstore.Agent, error) {
 }
 
 func (g *agentRegistry) reset() {
-	g.mu.Lock()
-	g.list = nil
-	g.mu.Unlock()
+	func() {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		g.list = nil
+	}()
 }
 
 var (

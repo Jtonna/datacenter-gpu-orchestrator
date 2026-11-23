@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/fleet"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // Options are the scheduler's collaborators. View, Prober and Launcher are
@@ -160,7 +162,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	}
 	defer close(s.runDone)
 	if s.needs != nil {
-		go s.needs.run()
+		s.needs.start()
 		defer s.needs.close() // what is queued is written before Run returns
 	}
 	s.startBuildReads() // builds.go
@@ -200,12 +202,14 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	close(s.loopDone)
 	s.bgCancel()
 	s.wg.Wait()
-	s.subsMu.Lock()
-	for sub := range s.subs {
-		delete(s.subs, sub)
-		close(sub.ch)
-	}
-	s.subsMu.Unlock()
+	func() {
+		s.subsMu.Lock()
+		defer supervise.Unlocked("scheduler", s.subsMu.Unlock)
+		for sub := range s.subs {
+			delete(s.subs, sub)
+			close(sub.ch)
+		}
+	}()
 	return nil
 }
 
@@ -213,6 +217,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 // effects and publishes the feed. The snapshot comes first so that a caller
 // woken by a reply (say, a new lease) already sees the state it implies.
 func (s *Scheduler) step(ev event) {
+	supervise.Point("scheduler.loop", s) // test hook: a panic here must end the process (cmd/llm-scheduler)
 	s.core.handle(ev)
 	up, keys := map[string]string{}, map[string]string{}
 	for name, in := range s.core.insts {
@@ -256,13 +261,19 @@ func (s *Scheduler) post(ctx context.Context, ev event) bool {
 	}
 }
 
-func (s *Scheduler) goBg(f func(ctx context.Context)) {
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		f(s.bgCtx)
-	}()
+// goBg runs a one-shot effect worker off the loop. The core waits for the
+// result event each one posts, so onPanic must post that event as a failure
+// (background-task isolation): a recovered worker that posts nothing would
+// leave its instance stuck.
+//
+// The worker is counted in s.wg until onPanic has returned too, so that Run
+// does not return while a failed start still kills its child.
+func (s *Scheduler) goBg(name string, f func(ctx context.Context), onPanic func(p any)) {
+	supervise.OnceIn(&s.wg, name, func() { f(s.bgCtx) }, onPanic)
 }
+
+// internalErr is the failure result of an effect worker that panicked.
+func internalErr(p any) error { return fmt.Errorf("internal error: %v", p) }
 
 // exec performs one effect. Only effReply, effStop and effCancelHealth run
 // inline; they never block.
@@ -273,61 +284,89 @@ func (s *Scheduler) exec(ef effect) {
 	case effStop:
 		ef.child.Stop(ef.mode)
 	case effCancelHealth:
-		s.healthMu.Lock()
-		if cancel := s.healthCancel[ef.iid]; cancel != nil {
-			cancel()
-			delete(s.healthCancel, ef.iid)
-		}
-		s.healthMu.Unlock()
+		func() {
+			s.healthMu.Lock()
+			defer supervise.Unlocked("scheduler", s.healthMu.Unlock)
+			if cancel := s.healthCancel[ef.iid]; cancel != nil {
+				cancel()
+				delete(s.healthCancel, ef.iid)
+			}
+		}()
 	case effProbe:
-		s.goBg(func(ctx context.Context) {
+		failed := func(err error) []probeOutcome {
+			out := make([]probeOutcome, len(ef.targets))
+			for i, tg := range ef.targets {
+				out[i] = probeOutcome{id: tg.id, addr: tg.addr, err: err}
+			}
+			return out
+		}
+		s.goBg("scheduler.probe", func(ctx context.Context) {
 			out := make([]probeOutcome, len(ef.targets))
 			var wg sync.WaitGroup
+			fan := supervise.NewFanout("scheduler.probe") // one pre-flight's targets count once toward escalation
 			for i, tg := range ef.targets {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
+				fan.Go(&wg, func() {
 					began := s.opts.Clock.Now()
 					r, err := s.opts.Prober.Probe(ctx, tg.addr)
 					out[i] = probeOutcome{id: tg.id, addr: tg.addr, result: r, err: err, took: s.opts.Clock.Now().Sub(began)}
-				}()
+				}, func(any) { // a panic makes this target's result an error
+					out[i] = probeOutcome{id: tg.id, addr: tg.addr, err: errors.New("internal error in the probe")}
+				})
 			}
 			wg.Wait()
 			s.post(context.Background(), evPreflight{iid: ef.iid, results: out})
-		})
+		}, func(p any) { s.post(context.Background(), evPreflight{iid: ef.iid, results: failed(internalErr(p))}) })
 	case effStart:
-		s.goBg(func(ctx context.Context) { s.startChild(ctx, ef) })
+		st := &startState{}
+		s.goBg("scheduler.start", func(ctx context.Context) { s.startChild(ctx, ef, st) }, func(p any) {
+			if st.posted.Load() {
+				return // the core has the child; its exit watcher reports the rest
+			}
+			if ch := st.child.Load(); ch != nil {
+				(*ch).Stop(instance.StopKill)
+			}
+			s.post(context.Background(), evChildStarted{iid: ef.iid, err: internalErr(p)})
+		})
 	case effSample:
 		// Reading the kernel's socket table is off the event loop; the
 		// result comes back as an event.
-		s.goBg(func(context.Context) {
+		s.goBg("scheduler.sample", func(context.Context) {
 			sc, err := ef.counter.SentBytes(ef.peers)
 			s.post(context.Background(), evLoadSample{iid: ef.iid, bytes: sc.Bytes, sockets: sc.Sockets, peers: sc.Peers, err: err})
-		})
+		}, func(p any) { s.post(context.Background(), evLoadSample{iid: ef.iid, err: internalErr(p)}) })
 	case effWorkerProbe:
 		// A plain connect with a timeout, off the event loop.
-		s.goBg(func(ctx context.Context) {
+		s.goBg("scheduler.worker_probe", func(ctx context.Context) {
 			err := s.opts.WorkerProber.Connect(ctx, ef.addr, workerProbeTimeout)
 			s.post(context.Background(), evWorkerProbe{id: ef.id, gen: ef.gen, err: err})
-		})
+		}, func(p any) { s.post(context.Background(), evWorkerProbe{id: ef.id, gen: ef.gen, err: internalErr(p)}) })
 	case effRecoveryPost:
 		// The POST to the fleet manager, off the event loop.
-		s.goBg(func(ctx context.Context) {
+		s.goBg("scheduler.recovery_post", func(ctx context.Context) {
 			r, err := s.opts.RecoveryPoster.Post(ctx, ef.url, ef.body, ef.timeout)
 			s.post(context.Background(), evRecoveryPosted{id: ef.id, epoch: ef.epoch, action: ef.action, nonce: ef.nonce,
 				status: r.Status, tail: r.BodyTail, err: err})
+		}, func(p any) {
+			s.post(context.Background(), evRecoveryPosted{id: ef.id, epoch: ef.epoch, action: ef.action, nonce: ef.nonce, err: internalErr(p)})
 		})
 	case effFetch:
-		s.goBg(func(ctx context.Context) {
+		s.goBg("scheduler.fetch", func(ctx context.Context) {
 			n, err := s.opts.View.FetchNode(ctx, ef.id)
 			s.post(context.Background(), evFetched{id: ef.id, gen: ef.gen, node: n, err: err})
-		})
+		}, func(p any) { s.post(context.Background(), evFetched{id: ef.id, gen: ef.gen, err: internalErr(p)}) })
 	default:
 		s.execAgents(ef)
 	}
 }
 
-func (s *Scheduler) startChild(ctx context.Context, ef effStart) {
+// startState is what a start worker did before it failed: whether it
+// started the child and whether it told the core.
+type startState struct {
+	child  atomic.Pointer[instance.Child]
+	posted atomic.Bool
+}
+
+func (s *Scheduler) startChild(ctx context.Context, ef effStart, st *startState) {
 	var ch instance.Child
 	var err error
 	if ef.host != nil {
@@ -336,13 +375,19 @@ func (s *Scheduler) startChild(ctx context.Context, ef effStart) {
 		ch, err = s.opts.Launcher.Start(ef.spec)
 	}
 	if err != nil {
+		st.posted.Store(true)
 		s.post(context.Background(), evChildStarted{iid: ef.iid, err: err})
 		return
 	}
+	st.child.Store(&ch)
+	supervise.Point("scheduler.start", s) // test hook: a failure after the child started
 	hctx, cancel := context.WithCancel(ctx)
-	s.healthMu.Lock()
-	s.healthCancel[ef.iid] = cancel
-	s.healthMu.Unlock()
+	func() {
+		s.healthMu.Lock()
+		defer supervise.Unlocked("scheduler", s.healthMu.Unlock)
+		s.healthCancel[ef.iid] = cancel
+	}()
+	st.posted.Store(true)
 	if !s.post(context.Background(), evChildStarted{iid: ef.iid, child: ch}) {
 		// The loop is gone (shutdown raced the start): end the child here.
 		cancel()
@@ -350,19 +395,27 @@ func (s *Scheduler) startChild(ctx context.Context, ef effStart) {
 		<-ch.Exited()
 		return
 	}
-	s.goBg(func(context.Context) {
+	s.goBg("scheduler.exit_watch", func(context.Context) {
 		st, ok := <-ch.Exited()
 		if ok {
 			s.post(context.Background(), evExited{iid: ef.iid, status: st, workers: s.workerExits(ef.iid, st)})
 		}
+	}, func(p any) { // the child is ended so that the exit the core waits for is true
+		ch.Stop(instance.StopKill)
+		s.post(context.Background(), evExited{iid: ef.iid, status: instance.ExitStatus{Code: -1, Requested: true, Err: internalErr(p)}})
 	})
-	s.goBg(func(context.Context) {
+	s.goBg("scheduler.health_wait", func(context.Context) {
 		err := ch.WaitHealthy(hctx)
-		s.healthMu.Lock()
-		delete(s.healthCancel, ef.iid)
-		s.healthMu.Unlock()
+		func() {
+			s.healthMu.Lock()
+			defer supervise.Unlocked("scheduler", s.healthMu.Unlock)
+			delete(s.healthCancel, ef.iid)
+		}()
 		cancel()
 		s.post(context.Background(), evHealthy{iid: ef.iid, err: err})
+	}, func(p any) {
+		cancel()
+		s.post(context.Background(), evHealthy{iid: ef.iid, err: internalErr(p)})
 	})
 }
 
@@ -747,17 +800,19 @@ type subscriber struct{ ch chan FeedEvent }
 // returns.
 func (s *Scheduler) Subscribe(buffer int) (<-chan FeedEvent, func()) {
 	sub := &subscriber{ch: make(chan FeedEvent, max(buffer, 1))}
-	s.subsMu.Lock()
-	select {
-	case <-s.runDone:
-		close(sub.ch)
-	default:
-		s.subs[sub] = struct{}{}
-	}
-	s.subsMu.Unlock()
+	func() {
+		s.subsMu.Lock()
+		defer supervise.Unlocked("scheduler", s.subsMu.Unlock)
+		select {
+		case <-s.runDone:
+			close(sub.ch)
+		default:
+			s.subs[sub] = struct{}{}
+		}
+	}()
 	return sub.ch, func() {
 		s.subsMu.Lock()
-		defer s.subsMu.Unlock()
+		defer supervise.Unlocked("scheduler", s.subsMu.Unlock)
 		if _, ok := s.subs[sub]; ok {
 			delete(s.subs, sub)
 			close(sub.ch)
@@ -767,7 +822,7 @@ func (s *Scheduler) Subscribe(buffer int) (<-chan FeedEvent, func()) {
 
 func (s *Scheduler) publish(evs []FeedEvent) {
 	s.subsMu.Lock()
-	defer s.subsMu.Unlock()
+	defer supervise.Unlocked("scheduler", s.subsMu.Unlock)
 	for sub := range s.subs {
 		for _, ev := range evs {
 			for {

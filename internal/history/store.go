@@ -3,6 +3,7 @@ package history
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -15,6 +16,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // Defaults of the history settings.
@@ -108,7 +111,10 @@ func Open(o Options) *Store {
 	s.on = true
 	s.loadRecent()
 	s.ch = make(chan item, o.QueueSize)
-	go s.writer()
+	// A failure loses the event being written; the writer continues in a
+	// fresh file (a torn line stays in the old one), with the queue kept.
+	supervise.Go(context.Background(), supervise.Spec{Name: "history.writer", Policy: supervise.Restart,
+		Rebuild: func(any) { s.reopen() }, Done: s.writerDone}, func(context.Context) { s.writer() })
 	s.log.Info("event history on", "dir", o.Dir, "max_file_mib", o.MaxFileBytes>>20, "keep_files", o.KeepFiles,
 		"in_memory", len(s.ring))
 	return s
@@ -294,15 +300,19 @@ func (s *Store) Record(ev Event) {
 		ev.Data = map[string]any{}
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer supervise.Unlocked("history", s.mu.Unlock)
 	if s.closed {
 		return
 	}
 	s.seq++
+	supervise.Point("history.record", s) // test hook, under s.mu: the sequence is taken, the event not kept
 	ev.Seq = s.seq
 	s.ring = append(s.ring, ev)
 	for _, fn := range s.subs {
-		fn(ev)
+		// A subscriber runs on the recording goroutine, which may be the
+		// scheduler's event loop: its panic must not end that loop. The
+		// subscriber stays subscribed (background-task isolation).
+		supervise.Guard("history.subscriber", func() { fn(ev) }, nil)
 	}
 	if len(s.ring) > s.opt.MemoryEvents {
 		s.ring = s.ring[len(s.ring)-s.opt.MemoryEvents:]
@@ -328,34 +338,58 @@ func (s *Store) Flush() {
 		return
 	}
 	done := make(chan struct{})
+	if s.queueFlush(done) {
+		<-done
+	}
+}
+
+// queueFlush queues a flush marker; false once the store is closed.
+func (s *Store) queueFlush(done chan struct{}) bool {
 	s.mu.Lock()
+	defer supervise.Unlocked("history", s.mu.Unlock)
 	if s.closed {
-		s.mu.Unlock()
-		return
+		return false
 	}
 	s.ch <- item{flush: done} // may wait for room; only Flush callers wait
-	s.mu.Unlock()
-	<-done
+	return true
 }
 
 // Close stops accepting events, writes what is queued and closes the file.
 func (s *Store) Close() {
-	s.mu.Lock()
-	if !s.closed {
-		s.closed = true
-		close(s.ch)
-	}
-	s.mu.Unlock()
+	func() {
+		s.mu.Lock()
+		defer supervise.Unlocked("history", s.mu.Unlock)
+		if !s.closed {
+			s.closed = true
+			close(s.ch)
+		}
+	}()
 	<-s.done
 }
 
+// writerDone is the writer's final return: the file is closed.
+func (s *Store) writerDone() {
+	if s.f != nil {
+		s.f.Close()
+	}
+	close(s.done)
+}
+
+// reopen is the writer's rebuild after a failure: a fresh file.
+func (s *Store) reopen() {
+	if s.f != nil {
+		s.f.Close()
+		s.f = nil
+	}
+	s.size = 0
+	if err := s.openNew(); err != nil {
+		s.fail(err)
+		return
+	}
+	s.failed = false
+}
+
 func (s *Store) writer() {
-	defer close(s.done)
-	defer func() {
-		if s.f != nil {
-			s.f.Close()
-		}
-	}()
 	for it := range s.ch {
 		if it.flush != nil {
 			close(it.flush)
@@ -364,6 +398,7 @@ func (s *Store) writer() {
 		if s.failed {
 			continue
 		}
+		supervise.Point("history.writer", s)
 		line, err := json.Marshal(it.ev)
 		if err != nil {
 			continue
@@ -395,7 +430,7 @@ func (s *Store) fail(err error) {
 // snapshot copies the ring.
 func (s *Store) snapshot() ([]Event, bool) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer supervise.Unlocked("history", s.mu.Unlock)
 	return slices.Clone(s.ring), s.coversAll
 }
 
@@ -796,7 +831,7 @@ func median(sorted []float64) float64 {
 // removes the subscription. An off store never calls fn.
 func (s *Store) Subscribe(fn func(Event)) (cancel func()) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer supervise.Unlocked("history", s.mu.Unlock)
 	s.subSeq++
 	id := s.subSeq
 	if s.subs == nil {
@@ -805,7 +840,7 @@ func (s *Store) Subscribe(fn func(Event)) (cancel func()) {
 	s.subs[id] = fn
 	return func() {
 		s.mu.Lock()
+		defer supervise.Unlocked("history", s.mu.Unlock)
 		delete(s.subs, id)
-		s.mu.Unlock()
 	}
 }

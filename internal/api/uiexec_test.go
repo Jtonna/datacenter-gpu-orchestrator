@@ -74,6 +74,7 @@ func statusWithAgentNodes(t *testing.T, e *env, cfg func() *config.Config) map[s
 		if entry, ok := cfg().ExcludedBy(coreID(id), name); ok {
 			n["excluded"], n["excluded_by"] = true, entry
 		}
+		n["auto"] = !cfg().NoAuto(coreID(id), name) // no_auto_nodes, as the scheduler's view sets it
 		nodes = append(nodes, n)
 	}
 	view["nodes"] = nodes

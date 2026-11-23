@@ -1,6 +1,10 @@
 package instance
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
+)
 
 // ring keeps the last n lines added. Safe for concurrent use.
 type ring struct {
@@ -20,7 +24,7 @@ func newRing(n int) *ring {
 // Add appends a line, dropping the oldest when full.
 func (r *ring) Add(s string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	defer supervise.Unlocked("instance", r.mu.Unlock)
 	if len(r.lines) < r.n {
 		r.lines = append(r.lines, s)
 		return
@@ -32,7 +36,7 @@ func (r *ring) Add(s string) {
 // Lines returns all kept lines, oldest first.
 func (r *ring) Lines() []string {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	defer supervise.Unlocked("instance", r.mu.Unlock)
 	out := make([]string, 0, len(r.lines))
 	out = append(out, r.lines[r.start:]...)
 	return append(out, r.lines[:r.start]...)

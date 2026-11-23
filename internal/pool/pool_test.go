@@ -85,6 +85,7 @@ type rig struct {
 	// goroutines and reads cur, which start swaps (a Potluck restart).
 	p          *Pool
 	cur        atomic.Pointer[Pool]
+	pools      []*Pool // every pool start made, closed at the end (closePools)
 	clk        *clock
 	store      *memStore
 	hist       *hist
@@ -156,7 +157,36 @@ func newRig(t *testing.T) *rig {
 		Tiers: []config.TierRule{{Match: config.Match{Hostname: "*"}, Tier: core.Tier{Priority: 1, HeadroomMiB: 500, LinkMBs: 11}}}}
 	r.start()
 	t.Cleanup(func() { r.srv.Close() })
+	t.Cleanup(r.closePools) // before the server closes
 	return r
+}
+
+// closePools stops every launch of every pool the rig started, so that no
+// launch supervisor of this test keeps running into the next one (a test
+// hook is process-wide).
+func (r *rig) closePools() {
+	for _, p := range r.pools {
+		p.mu.Lock()
+		var iids []uint64
+		for iid := range p.byIID {
+			iids = append(iids, iid)
+		}
+		var orphans []*launch
+		for _, l := range p.launches {
+			if len(p.byIID[l.iid]) == 0 {
+				orphans = append(orphans, l)
+			}
+		}
+		p.mu.Unlock()
+		for _, iid := range iids {
+			p.Stop(iid, nil)
+		}
+		for _, l := range orphans {
+			p.stops.Add(1)
+			go func() { defer p.stops.Done(); p.stopLaunch(l, true, true) }()
+		}
+		p.WaitStops(10 * time.Second)
+	}
 }
 
 // start (re)creates the pool on the same store, as a Potluck restart does.
@@ -188,6 +218,7 @@ func (r *rig) start() {
 		return "", nil
 	})
 	r.p = p
+	r.pools = append(r.pools, p)
 	r.cur.Store(p)
 	if r.srv == nil {
 		r.srv = httptest.NewServer(http.HandlerFunc(r.serve))
@@ -228,7 +259,10 @@ func (r *rig) agent(n int, mod ...func(*fakeagent.Agent)) *fakeagent.Agent {
 	if err := a.Start(); err != nil {
 		r.t.Fatal(err)
 	}
-	r.t.Cleanup(a.Close)
+	r.t.Cleanup(func() {
+		r.closePools() // while the agent still answers the stops
+		a.Close()
+	})
 	return a
 }
 

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/release"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // Trust in stored needs depends on two llama builds: the host program's and
@@ -33,7 +34,10 @@ func (s *Scheduler) startBuildReads() {
 	if (host != "" && served != "") || !canHost || !canServed {
 		return
 	}
-	s.goBg(func(ctx context.Context) {
+	// A failure restarts the reads alone: they hold only the copies taken
+	// here and what they found so far.
+	s.wg.Add(1)
+	supervise.Go(s.bgCtx, supervise.Spec{Name: "scheduler.build_reads", Policy: supervise.Restart, Done: s.wg.Done}, func(ctx context.Context) {
 		wait := buildReadFirst
 		for host == "" || served == "" {
 			if !sleepOn(ctx, s.opts.Clock, wait) {

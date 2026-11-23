@@ -219,6 +219,8 @@ function railNode() {
     NAV.filter(s => !s.foot).map(s => railItem(s, cur)),
     h('span.gap', { 'aria-hidden': 'true', key: 'gap' }),
     NAV.filter(s => s.foot).map(s => railItem(s, cur)),
+    // the classic UI, which stays at /ui/classic/ until the owner retires it
+    h('a.uiswitch', { href: 'classic/', key: 'classic', title: 'Open the classic UI (/ui/classic/)' }, 'Classic UI'),
     h('button', { class: 'rb menu-open-btn', type: 'button', key: 'menu-btn', 'aria-label': 'Menu', 'aria-expanded': root.classList.contains('menu-open') ? 'true' : 'false',
       onclick: () => { root.classList.toggle('menu-open'); draw(); } }, icon(I.menu)),
   ];

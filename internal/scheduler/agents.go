@@ -535,11 +535,17 @@ func (s *Scheduler) execAgents(ef effect) bool {
 	}
 	switch ef := ef.(type) {
 	case effLaunchWorkers:
-		s.goBg(func(ctx context.Context) {
+		s.goBg("scheduler.launch_workers", func(ctx context.Context) {
 			res := w.Launch(ctx, ef.spec, func(r WorkerReport) {
 				r.IID = ef.spec.IID
 				s.post(context.Background(), evWorkerReport{r: r})
 			})
+			s.post(context.Background(), evWorkersLaunched{iid: ef.spec.IID, res: res})
+		}, func(p any) { // a failed load; its stop ends any launch already sent
+			res := WorkerResult{Reason: "internal_error", Message: internalErr(p).Error()}
+			if len(ef.spec.Workers) > 0 {
+				res.Node = ef.spec.Workers[0].Node
+			}
 			s.post(context.Background(), evWorkersLaunched{iid: ef.spec.IID, res: res})
 		})
 	case effStopWorkers:

@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // llamaBinary is the program of a child's command line (the first word, without
@@ -30,7 +32,7 @@ func (x *suiteExec) noteEnv(s *StatusInfo, in *InstanceInfo) {
 		return
 	}
 	x.a.mu.Lock()
-	defer x.a.mu.Unlock()
+	defer supervise.Unlocked("bench", x.a.mu.Unlock)
 	e := &x.a.env
 	if s.ConfigRevision != "" {
 		e.ConfigRevision = s.ConfigRevision
@@ -82,7 +84,7 @@ func (x *suiteExec) captureEnv() {
 
 func (x *suiteExec) envSnapshot() *Environment {
 	x.a.mu.Lock()
-	defer x.a.mu.Unlock()
+	defer supervise.Unlocked("bench", x.a.mu.Unlock)
 	e := x.a.env
 	e.Workers = append([]WorkerEnv(nil), x.a.env.Workers...)
 	return &e

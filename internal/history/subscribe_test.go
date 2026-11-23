@@ -3,7 +3,14 @@ package history
 import (
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 func TestSubscribeSeesEveryRecordedEventInOrder(t *testing.T) {
@@ -28,4 +35,119 @@ func TestSubscribeOnAnOffStoreIsHarmless(t *testing.T) {
 	cancel := s.Subscribe(func(Event) { t.Fatal("an off store delivered an event") })
 	s.Record(Event{Type: "x"})
 	cancel()
+}
+
+// A panicking subscriber does not stop Record (it may run on the scheduler
+// loop): the other subscribers and the store still get the event, the
+// subscriber stays subscribed, and the failure is reported, also into this
+// store, without a deadlock on its lock.
+func TestSubscriberPanicIsContained(t *testing.T) {
+	s := Open(Options{Dir: t.TempDir(), Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	defer s.Close()
+	supervise.ResetForTest()
+	fatals := make(chan string, 4)
+	restore := supervise.Configure(supervise.Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Fatal: func(r string) { fatals <- r },
+		Record: func(f supervise.Failure) {
+			s.Record(Event{Type: "internalFailure", Severity: Error, Summary: f.Task})
+		}})
+	defer restore()
+	var mu sync.Mutex
+	var bad, good []string
+	s.Subscribe(func(e Event) {
+		mu.Lock()
+		bad = append(bad, e.Type)
+		mu.Unlock()
+		if e.Type == "boom" {
+			panic("subscriber bug")
+		}
+	})
+	s.Subscribe(func(e Event) { mu.Lock(); good = append(good, e.Type); mu.Unlock() })
+	s.Record(Event{Type: "boom"})
+	s.Record(Event{Type: "after"})
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if r := s.Query(Query{Types: []string{"internalFailure"}, Limit: 10}); len(r.Events) == 1 {
+			if r.Events[0].Summary != "history.subscriber" {
+				t.Fatalf("reported %+v", r.Events[0])
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the failure was not recorded into the store")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(good) < 2 || good[0] != "boom" || good[1] != "after" || len(bad) < 2 || bad[1] != "after" {
+		t.Fatalf("subscribers got bad=%v good=%v", bad, good)
+	}
+	if len(fatals) != 0 {
+		t.Fatal("one failure escalated")
+	}
+}
+
+// The writer fails on one event: that event is lost, and the writer goes on
+// in a fresh file with the queue kept.
+func TestWriterRestartsInAFreshFile(t *testing.T) {
+	supervise.ResetForTest()
+	defer supervise.ResetForTest()
+	restore := supervise.Configure(supervise.Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Backoff: func(int) time.Duration { return time.Millisecond },
+		Fatal:   func(r string) { t.Errorf("escalated: %s", r) }})
+	defer restore()
+	dir := t.TempDir()
+	clock := time.Unix(1_800_000_000, 0)
+	s := Open(Options{Dir: dir, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Now: func() time.Time { return clock }})
+	s.Record(Event{Type: "first"})
+	s.Flush()
+	h, fired := supervise.PanicAtForTest(supervise.PointName("history.writer", s), 1)
+	restoreHook := supervise.SetHookForTest(h)
+	s.Record(Event{Type: "lost"})
+	s.Record(Event{Type: "after"})
+	s.Flush()
+	restoreHook()
+	s.Close()
+	if fired() != 1 {
+		t.Fatalf("fired %d", fired())
+	}
+	files, _ := filepath.Glob(filepath.Join(dir, "events-*.jsonl"))
+	if len(files) != 2 {
+		t.Fatalf("files %v, want the old one and a fresh one", files)
+	}
+	var all strings.Builder
+	for _, f := range files {
+		b, _ := os.ReadFile(f)
+		all.Write(b)
+	}
+	if got := all.String(); !strings.Contains(got, `"type":"first"`) || !strings.Contains(got, `"type":"after"`) || strings.Contains(got, `"type":"lost"`) {
+		t.Fatalf("written:\n%s", got)
+	}
+}
+
+// Review IB1: a panic inside the store's lock while recording (here from a
+// one-shot task) releases the lock and takes the fatal path; the store
+// still answers.
+func TestRecordPanicInsideTheLockIsFatal(t *testing.T) {
+	supervise.ResetForTest()
+	defer supervise.ResetForTest()
+	fatals := 0
+	defer supervise.Configure(supervise.Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Fatal: func(string) { fatals++ }})()
+	s := Open(Options{Dir: t.TempDir(), Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	defer s.Close()
+	h, fired := supervise.PanicAtForTest(supervise.PointName("history.record", s), 1)
+	restore := supervise.SetHookForTest(h)
+	supervise.Once("test.record", func() { s.Record(Event{Type: "x"}) }, nil)
+	restore()
+	if fired() != 1 || fatals != 1 {
+		t.Fatalf("fired %d, fatal %d", fired(), fatals)
+	}
+	if !s.mu.TryLock() {
+		t.Fatal("s.mu is still held")
+	}
+	s.mu.Unlock()
+	s.Record(Event{Type: "after"})
+	s.Flush()
 }

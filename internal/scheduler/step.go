@@ -2,12 +2,12 @@ package scheduler
 
 import (
 	"fmt"
-	"runtime/debug"
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // ---- events (inputs to the step function) ----
@@ -329,17 +329,15 @@ func (c *schedCore) failAll(ws []*waiter, err *Error) {
 	}
 }
 
-// readGuard runs a read-only query and recovers a panic in it: logged at
-// ERROR with the stack and the query's name, reported to the caller (a 500),
-// and the core loop goes on. Only queries that change no core state are
-// posted this way (runner.go askRead: the plan, the status, the needs).
+// readGuard runs a read-only query under supervise.GuardRead (task
+// scheduler.read): a panic in it is logged at ERROR with the stack, recorded
+// as an internalFailure and counted, reported to the caller (a 500), and the
+// core loop goes on; it never escalates. Only queries that change no core
+// state are posted this way (runner.go askRead: the plan, the status, the
+// needs).
 func (c *schedCore) readGuard(e evQuery) {
-	defer func() {
-		if v := recover(); v != nil {
-			c.log.Error("read-only query panicked; answered with an error, the scheduler goes on",
-				"query", e.read, "panic", fmt.Sprint(v), "stack", string(debug.Stack()))
-			e.panicked(v)
-		}
-	}()
-	e.fn(c)
+	supervise.GuardRead("scheduler.read", func() { e.fn(c) }, func(v any) {
+		c.log.Warn("read-only query answered with an error; the scheduler goes on", "query", e.read, "panic", fmt.Sprint(v))
+		e.panicked(v)
+	})
 }

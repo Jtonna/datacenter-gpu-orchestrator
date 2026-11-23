@@ -14,6 +14,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgstore"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgsvc"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // AuditStore is the audit log: it records and answers queries.
@@ -708,24 +709,30 @@ func (s *Server) startAudit() {
 			s.log.Warn("audit entry not recorded (model serving is not affected)", "err", err)
 		}
 	}
-	go func() {
+	// One entry whose write panics is lost (and named); the queue goes on.
+	guarded := func(e audit.Entry) {
+		supervise.Guard("api.audit", func() { rec(e) }, func(any) {
+			s.log.Error("an audit entry was lost", "action", e.Action, "section", e.Section, "target", e.Target, "revision", e.Revision)
+		})
+	}
+	go supervise.Once("api.audit", func() {
 		defer close(s.auditDone)
 		for {
 			select {
 			case e := <-s.auditQ:
-				rec(e)
+				guarded(e)
 			case <-s.auditQuit:
 				for {
 					select {
 					case e := <-s.auditQ:
-						rec(e)
+						guarded(e)
 					default:
 						return
 					}
 				}
 			}
 		}
-	}()
+	}, nil)
 }
 
 func (s *Server) stopAudit() {
