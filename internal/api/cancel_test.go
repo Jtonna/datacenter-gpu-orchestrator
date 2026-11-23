@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/usage"
 )
 
@@ -148,34 +149,84 @@ func TestCancel_ClientLeavingMidStreamIsCancelledWithTheTokensSoFar(t *testing.T
 	}
 }
 
-// A non-streamed request whose client leaves is cancelled; its tokens are
-// unknown (null): nothing was counted.
-func TestCancel_ClientLeavingANonStreamedRequestIsCancelledWithoutTokens(t *testing.T) {
+// leaveNonStreamed sends a non-streamed request on path that the model
+// server holds, leaves after 300 ms, and checks the row: cancelled,
+// client_left, every token null (nothing was counted).
+func leaveNonStreamed(t *testing.T, path, body string) {
+	t.Helper()
 	up := &endless{hold: 5 * time.Second, sent: make(chan int, 4)}
 	e, st := usageEnv(t, up, nil)
-	e.post("/v1/chat/completions", chat("alpha")).Body.Close()
+	e.post("/v1/chat/completions", chat("alpha")).Body.Close() // loads alpha, so /upstream is ready
 	eventually(t, "ended", func() bool { return e.api.reqs.Ended() == 1 })
-	for i, path := range []string{"/v1/chat/completions", "/upstream/alpha/v1/chat/completions"} {
-		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-		req, _ := http.NewRequestWithContext(ctx, "POST", e.front.URL+path, strings.NewReader(`{"model":"alpha","messages":[{"role":"user","content":"hold"}]}`))
-		req.Header.Set("Content-Type", "application/json")
-		if resp, err := http.DefaultClient.Do(req); err == nil {
-			resp.Body.Close()
-		}
-		cancel()
-		eventually(t, "ended", func() bool { return e.api.reqs.Ended() == uint64(i+2) })
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "POST", e.front.URL+path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	if resp, err := http.DefaultClient.Do(req); err == nil {
+		resp.Body.Close()
 	}
-	flushT(t, st)
-	n := 0
-	for _, r := range listRequests(t, e, "?status=cancelled").Requests {
-		if r.Reason != usage.ReasonClientLeft || r.TokensOut != nil || r.TokensIn != nil || r.DecodeTPS != nil {
-			b, _ := json.Marshal(r)
-			t.Fatalf("%s", b)
-		}
-		n++
+	eventually(t, "ended", func() bool { return e.api.reqs.Ended() == 2 })
+	rows := listRequests(t, e, "?status=cancelled").Requests
+	if len(rows) != 1 {
+		t.Fatalf("%d cancelled rows", len(rows))
 	}
-	if n != 2 {
-		t.Fatalf("%d cancelled", n)
+	r := storedRow(t, st, rows[0].ID)
+	if r.Status != usage.StatusCancelled || r.Reason != usage.ReasonClientLeft || r.Path != path || r.TokensIn != nil || r.TokensReused != nil ||
+		r.TokensOut != nil || r.PrefillTPS != nil || r.DecodeTPS != nil || strings.Contains(r.Message, usage.MessageTokensCounted) {
+		b, _ := json.Marshal(r)
+		t.Fatalf("%s", b)
+	}
+	if sum := summary(t, e); sum.Totals.Cancelled != 1 || sum.Totals.Failed != 0 {
+		t.Fatalf("totals %+v", sum.Totals)
+	}
+}
+
+// A client that leaves during a non-streamed request is cancelled with its
+// tokens null, on each entry point.
+func TestCancel_NonStreamedChatClientLeaves(t *testing.T) {
+	leaveNonStreamed(t, "/v1/chat/completions", `{"model":"alpha","messages":[{"role":"user","content":"hold"}]}`)
+}
+
+func TestCancel_NonStreamedCompletionClientLeaves(t *testing.T) {
+	leaveNonStreamed(t, "/v1/completions", `{"model":"alpha","prompt":"hold"}`)
+}
+
+func TestCancel_NonStreamedUpstreamClientLeaves(t *testing.T) {
+	leaveNonStreamed(t, "/upstream/alpha/v1/chat/completions", `{"messages":[{"role":"user","content":"hold"}]}`)
+}
+
+// The benchmark runner cancelling its own run while a streamed request is
+// in flight: its HTTP client (bench.HTTPAPI, X-Bench-Run) drops the
+// request with the run's context. The row is cancelled, tagged with the
+// run, with the tokens counted so far.
+func TestCancel_BenchRunCancelledMidRequestIsCancelledWithTheTokensSoFar(t *testing.T) {
+	up := &endless{sent: make(chan int, 4)}
+	e, st := usageEnv(t, up, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h := &bench.HTTPAPI{Base: e.front.URL}
+	done := make(chan error, 1)
+	go func() {
+		_, err := h.Chat(bench.WithRun(ctx, "run-7"), "run-7", bench.ChatRequest{Model: "alpha", Stream: true,
+			Body: []byte(`{"model":"alpha","stream":true,"return_progress":true,"messages":[{"role":"user","content":"hi"}]}`)}, nil)
+		done <- err
+	}()
+	<-up.sent // ten tokens out
+	cancel()  // the run is cancelled
+	<-done
+	eventually(t, "ended", func() bool { return e.api.reqs.Ended() == 1 })
+	rows := listRequests(t, e, "?bench=yes").Requests
+	if len(rows) != 1 {
+		t.Fatalf("%d rows of the run", len(rows))
+	}
+	r := storedRow(t, st, rows[0].ID)
+	if r.Status != usage.StatusCancelled || r.Reason != usage.ReasonClientLeft || r.BenchRun != "run-7" || r.TokensOut == nil || *r.TokensOut < 10 ||
+		r.DecodeTPS == nil || r.TokensIn == nil || *r.TokensIn != 1000 || !strings.Contains(r.Message, usage.MessageTokensCounted) {
+		b, _ := json.Marshal(r)
+		t.Fatalf("%s", b)
+	}
+	if sum := summary(t, e); sum.Totals.Cancelled != 1 || sum.Totals.Failed != 0 || sum.Totals.TokensOut < 10 {
+		t.Fatalf("totals %+v", sum.Totals)
 	}
 }
 
