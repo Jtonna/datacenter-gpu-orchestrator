@@ -31,6 +31,7 @@ const SECTIONS = [
   ['workers', 'Workers', 'How quickly a silent or hung worker is noticed.'],
   ['retention', 'Retention', 'How much history and how many log files are kept.'],
   ['api', 'API', 'Limits of the web socket and the API.'],
+  ['health', 'Health', 'When the scheduler counts its own core loop as slow, and the disk budget of the models folder.'],
   ['bench', 'Benchmarks', 'The benchmark feature and when it flags a regression.'],
   ['agents', 'Agents', 'Where the nodes come from, and how the machines that run potluck-agent are used.'],
   ['logs', 'Central logging', 'Whether log lines are collected, how long the log store keeps them and who may send them.'],

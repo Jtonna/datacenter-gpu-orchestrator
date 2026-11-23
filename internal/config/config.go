@@ -72,6 +72,14 @@ type Config struct {
 	// Configured is false for the built-in defaults of an empty database.
 	Revision   int64
 	Configured bool
+
+	// LoopStepWarnMs: a core-loop step longer than this is a loopSlowStep
+	// history event and turns the health summary's Scheduler row amber.
+	LoopStepWarnMs int
+	// ModelsDiskBudgetGB, when set, is what the models folder may hold: the
+	// health summary's Storage row then also judges the model files against
+	// it. 0 (the default) judges the real free space only.
+	ModelsDiskBudgetGB int
 }
 
 // Logs are the central logging settings (docs/architecture.md section 6). The

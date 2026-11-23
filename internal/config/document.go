@@ -106,7 +106,7 @@ func newBase(b Bootstrap) *Config {
 		Listen: listen, ModelsDir: models, DataDir: b.DataDir, HistoryDir: b.HistoryDir, ChildLogDir: b.ChildLogDir, ProgramsDir: b.ProgramsDir,
 		Fleet:        Fleet{StaleAfter: 60 * time.Second},
 		ChildLogKeep: DefaultChildLogKeep, HistoryMaxFileMiB: DefaultHistoryMaxFileMiB, HistoryKeepFiles: DefaultHistoryKeepFiles,
-		HistoryMemoryEvents: DefaultHistoryMemoryEvents, UsageRequestDays: DefaultUsageRequestDays, UsageHourlyDays: DefaultUsageHourlyDays, LocalProbeCmd: DefaultLocalProbeCmd, WSMaxClients: DefaultWSMaxClients,
+		HistoryMemoryEvents: DefaultHistoryMemoryEvents, UsageRequestDays: DefaultUsageRequestDays, UsageHourlyDays: DefaultUsageHourlyDays, LocalProbeCmd: DefaultLocalProbeCmd, WSMaxClients: DefaultWSMaxClients, LoopStepWarnMs: DefaultLoopStepWarnMs,
 		Bench:         Bench{EnabledSetting: true, RegressLoadPct: DefaultRegressLoadPct, RegressDecodePct: DefaultRegressDecodePct, MaxRunMinutes: DefaultMaxRunMinutes, RetentionDays: DefaultBenchRetentionDays},
 		Defaults:      DefaultDefaults(),
 		Recovery:      DefaultRecovery(),
