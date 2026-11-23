@@ -333,7 +333,7 @@ func (c *schedCore) workersLaunched(iid uint64, res WorkerResult) {
 		c.ns(res.Node).agentHold = c.now.Add(modelSourceHold)
 		c.returnInst(in, "worker model source unreachable", nil)
 	case ReasonAgentUnreachable:
-		c.quarantine(res.Node, errors.New(res.Message))
+		c.quarantine(res.Node, setAsideErr(SetAsideAgentUnreachable, in.prof.Name, errors.New(res.Message)))
 		c.returnInst(in, "agent unreachable", nil)
 	case agentproto.ReasonPaused:
 		// Not a failed load: the node takes no new load for a moment and the

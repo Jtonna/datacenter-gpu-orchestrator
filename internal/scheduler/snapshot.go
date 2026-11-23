@@ -159,6 +159,7 @@ func (c *schedCore) instStatus(in *inst) InstanceStatus {
 			}
 		}
 	}
+	c.memberRoles(in, &s) // zonefacts.go
 	return s
 }
 
@@ -182,7 +183,7 @@ func (c *schedCore) statusDoc() Status {
 	for _, id := range c.sortedNodeIDs() {
 		ns := c.nodes[id]
 		if ns != nil && c.now.Before(ns.quarUntil) {
-			st.Quarantines = append(st.Quarantines, QuarantineStatus{Node: id, Until: ns.quarUntil, Level: ns.quarLevel})
+			st.Quarantines = append(st.Quarantines, c.quarantineStatus(id, ns)) // zonefacts.go
 		}
 	}
 	names := make([]string, 0, len(c.backoffs))
@@ -235,6 +236,7 @@ func (c *schedCore) statusDoc() Status {
 			}
 			s.MissingSince = ns.missingSince
 		}
+		c.zoneNodeFacts(id, n, c.nodes[id], &s) // zonefacts.go
 		if h := c.health[id]; h != nil {
 			s.Health = c.healthStatus(h)
 		}

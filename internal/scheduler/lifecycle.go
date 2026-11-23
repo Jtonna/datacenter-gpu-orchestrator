@@ -121,7 +121,7 @@ func (c *schedCore) preflightDone(iid uint64, results []probeOutcome) {
 			if errors.As(r.err, &pe) && pe.Kind == instance.ProbeMultipleRPCLines {
 				c.log.Error("worker exposes more than one RPC device; pin one with -d on the worker", "node", r.id, "addr", r.addr)
 			}
-			c.quarantine(r.id, r.err)
+			c.quarantine(r.id, setAsideErr(SetAsidePreflight, in.prof.Name, r.err))
 			failed = true
 			continue
 		}

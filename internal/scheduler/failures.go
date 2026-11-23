@@ -21,6 +21,7 @@ func (c *schedCore) quarantine(id core.NodeID, cause error) {
 	ns.quarLevel++
 	ns.quarUntil = c.now.Add(d)
 	ns.quarOpen = true
+	ns.quarWhy = causeOf(cause, c.now)
 	c.log.Warn("node quarantined", "node", id, "for", d, "until", ns.quarUntil, "level", ns.quarLevel, "err", cause)
 	c.record(history.TNodeQuarantined, history.Warn, "",
 		fmt.Sprintf("Node %s was quarantined for %s (level %d): %v.", c.nodeName(id), d, ns.quarLevel, cause),
