@@ -413,6 +413,7 @@ func TestReview_GeneralRule(t *testing.T) {
 	evictRefused = map[string]int{}
 	evictChecked, evictSeen = map[string]int{}, map[string]int{}
 	tightSeen = map[string]int{}
+	fingerprints = map[string]string{}
 	seen := map[string]bool{}
 	n := 0
 	for _, need := range []int{8000, 16000, 20000, 23000, 26000, 30000, 40000} { // 40000: never fits three nodes
@@ -461,6 +462,57 @@ func TestReview_GeneralRule(t *testing.T) {
 	}
 	if total == 0 {
 		t.Logf("situations followed on: %v; of them with an eviction for m: %v", evictChecked, evictSeen)
+	}
+	// the occupied-only counter changes no decision: a sample of the
+	// situations, run again with it off, ends exactly as with it on (the
+	// answer, the instances and every history event but its own)
+	on, seenOn := fingerprints, tightSeen
+	fingerprints = map[string]string{}
+	occupiedCounterOn = false
+	evictRefused, evictChecked, evictSeen, tightSeen = map[string]int{}, map[string]int{}, map[string]int{}, map[string]int{}
+	n = 0
+	for _, need := range []int{8000, 16000, 20000, 23000, 26000, 30000, 40000} {
+		for _, cBudget := range []int{12400, 9000} {
+			for _, avgDrop := range []int{0, 2500} {
+				for _, tg := range []tight{{8, 300, true}, {64, 100, true}, {8, 1000, false}, {0, 300, true}, {8, 0, true}, {0, 0, false}} {
+					for _, ctx := range []int{4096, 65536} {
+						for _, shape := range []string{"auto", "forced", "skewed", "skewed-peak", "counts-untrusted", "counts-between"} {
+							for _, ov := range []int{0, 15500} {
+								for _, nodes := range []int{1, 2, 3} {
+									for _, mode := range []string{"fleet", "fleet, lower pre-flight", "agents"} {
+										for _, before := range []string{"", "unload", "unload-holder", "owner"} {
+											n++
+											if n%(7*every) != 0 {
+												continue
+											}
+											checkGeneralRule(t, need, cBudget, avgDrop, tg.fill, tg.margin, tg.uses, ctx, shape, ov, nodes, mode, before)
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	occupiedCounterOn = true
+	compared, counted := 0, 0
+	for k, off := range fingerprints {
+		compared++
+		if withoutOcc(on[k]) != off {
+			t.Errorf("%s: ends differently with the occupied-only counter on: on %s | off %s", k, on[k], off)
+		}
+	}
+	for _, fp := range on {
+		if strings.Contains(fp, "occupiedOnly:") {
+			counted++
+		}
+	}
+	fingerprints, tightSeen = nil, seenOn
+	t.Logf("occupied-only counter: %d situations compared with it off; %d of all situations recorded a case", compared, counted)
+	if compared == 0 || (counted == 0 && !raceOn) {
+		t.Errorf("the counter comparison ran %d situations, %d with a case", compared, counted)
 	}
 	// the tight-fit dimension: every kind of situation was met
 	t.Logf("situations by fit: %v", tightSeen)
@@ -797,6 +849,9 @@ func afterwards(t *testing.T, h *harness, w *waiter, orig map[core.NodeID]int, k
 			evictSeen[key]++
 		}
 	}
+	if fingerprints != nil {
+		fingerprints[name()] = fingerprint(h, a, ok)
+	}
 	if evicted > 0 && ok && a.err != nil {
 		if evictRefused != nil {
 			evictRefused[key]++
@@ -910,4 +965,43 @@ func freeOrHeldBy(h *harness, pl core.Placement, holder string) bool {
 		}
 	}
 	return true
+}
+
+// fingerprints holds, per situation of TestReview_GeneralRule, how it
+// ended (fingerprint), to compare the runs with and without the
+// occupied-only counter.
+var fingerprints map[string]string
+
+// fingerprint is how a situation ended: m's answer, the instances with
+// their state and nodes, and every history event in order, the counter's
+// own events only counted.
+func fingerprint(h *harness, a answer, answered bool) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "answered %v", answered)
+	if answered && a.err != nil {
+		fmt.Fprintf(&b, " err %s %q", a.err.Reason, a.err.Message)
+	}
+	for _, in := range h.c.sortedInsts() {
+		fmt.Fprintf(&b, " | %s %s %v", in.prof.Name, in.state, in.nodeIDs())
+	}
+	occ := 0
+	for _, e := range h.histLog {
+		if e.Type == history.TOccupiedOnly {
+			occ++
+			continue
+		}
+		fmt.Fprintf(&b, " | %d %s %s %s", e.Ts, e.Type, e.Profile, e.Summary)
+	}
+	if occ > 0 {
+		fmt.Fprintf(&b, " (occupiedOnly: %d)", occ)
+	}
+	return b.String()
+}
+
+// withoutOcc is a fingerprint without the count of the counter's own events.
+func withoutOcc(fp string) string {
+	if i := strings.Index(fp, " (occupiedOnly: "); i >= 0 {
+		return fp[:i]
+	}
+	return fp
 }

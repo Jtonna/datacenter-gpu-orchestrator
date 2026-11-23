@@ -63,6 +63,7 @@ func (c *schedCore) applyConfig(nc *config.Config) {
 		np := nc.Profiles[name]
 		if np == nil {
 			ws := append([]*waiter(nil), e.waiters...)
+			c.occRefused(e, "refused: profile removed") // occupied.go
 			c.deleteEntry(e)
 			for _, w := range ws {
 				if in := c.insts[name]; in != nil {
