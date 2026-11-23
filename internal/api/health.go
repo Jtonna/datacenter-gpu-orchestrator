@@ -67,9 +67,10 @@ type HealthRow struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
 	State string `json:"state"`
-	// Text is the sentence the row shows; Count the figure the row is about
-	// (zones down, runs failed, issues, keys active, percent used of the
-	// fullest disk, requests waiting).
+	// Text is the sentence the row shows. Count is the number of issues the
+	// row reports, 0 when it is ok or unknown (zones down, runs failed,
+	// scheduler issues, storage folders or disks in trouble, requests waiting
+	// past the threshold); the row's other figures are in Facts.
 	Text  string         `json:"text"`
 	Count int64          `json:"count"`
 	Link  string         `json:"link"`
@@ -363,7 +364,7 @@ func judgeZones(st *scheduler.Status, facts []pool.NodeFacts, fresh bool, at tim
 	var total, lost, setAside, off int64
 	downNames := []string{}
 	for _, smp := range availability.Classify(st, facts) {
-		if removed[smp.Node] {
+		if smp.Removed || removed[smp.Node] {
 			continue
 		}
 		total++
@@ -407,7 +408,6 @@ func judgeRuns(in runsIn) HealthRow {
 			"failed_bench_runs": in.benchFailed, "bench_runs": nonNil(in.benchFailedIDs), "more": in.capped}}
 	if !in.logOn {
 		row.State, row.Text = HealthUnknown, "Request log is off"
-		row.Count = in.benchFailed
 		return row
 	}
 	n := in.failed + in.benchFailed
@@ -499,7 +499,6 @@ func judgeScheduler(in schedIn) HealthRow {
 // answers; the row says how many agent keys are active (not revoked).
 func judgeMCP(keys int, known bool) HealthRow {
 	row := HealthRow{ID: "mcp", Label: "MCP server", Link: "#/mcp", State: HealthOK, Facts: map[string]any{"keys_active": keys, "keys_known": known}}
-	row.Count = int64(keys)
 	if !known {
 		row.Text = "Running"
 		return row
@@ -535,9 +534,11 @@ func judgeStorage(folders []diskstat.Entry, budget int64) HealthRow {
 		case diskstat.StateTimeout:
 			worse(HealthAttention)
 			notes = append(notes, titleCase(f.Name)+" folder not answering")
+			row.Count++
 		case diskstat.StateError:
 			worse(HealthAttention)
 			notes = append(notes, titleCase(f.Name)+" folder unreadable")
+			row.Count++
 		case diskstat.StateUnknown:
 			unsupported++
 		}
@@ -547,8 +548,10 @@ func judgeStorage(folders []diskstat.Entry, budget int64) HealthRow {
 		switch {
 		case f.UsedPercent >= diskProblemPct || f.FreeBytes < diskProblemFree:
 			worse(HealthProblem)
+			row.Count++
 		case f.UsedPercent >= diskAttentionPct || f.FreeBytes < diskAttentionFree:
 			worse(HealthAttention)
+			row.Count++
 		}
 		if fullest == nil || f.UsedPercent > fullest.UsedPercent {
 			fullest = f
@@ -572,8 +575,7 @@ func judgeStorage(folders []diskstat.Entry, budget int64) HealthRow {
 		}
 		return row
 	}
-	row.Count = int64(math.Round(fullest.UsedPercent))
-	row.Facts["fullest"] = fullest.Name
+	row.Facts["fullest"], row.Facts["used_percent"] = fullest.Name, fullest.UsedPercent
 	text := fmt.Sprintf("%s of %s GB used", gbText(fullest.UsedBytes), gbText(fullest.TotalBytes))
 	if fullest.FreeBytes < diskAttentionFree {
 		text += " · " + gbText(fullest.FreeBytes) + " GB free"
@@ -588,9 +590,11 @@ func judgeStorage(folders []diskstat.Entry, budget int64) HealthRow {
 			case pct > 100:
 				worse(HealthProblem)
 				text = bt + " · " + text
+				row.Count++
 			case pct >= budgetAttentionPct:
 				worse(HealthAttention)
 				text = bt + " · " + text
+				row.Count++
 			}
 		}
 	}
@@ -618,7 +622,6 @@ func judgeQueue(st *scheduler.Status, timeout time.Duration) HealthRow {
 			longest = e.Age
 		}
 	}
-	row.Count = waiting
 	row.Facts["waiting"], row.Facts["entries"], row.Facts["longest_s"] = waiting, len(st.Queue), int64(longest/time.Second)
 	if waiting == 0 {
 		row.State, row.Text = HealthOK, "Nothing waiting"
@@ -632,6 +635,9 @@ func judgeQueue(st *scheduler.Status, timeout time.Duration) HealthRow {
 		row.State = HealthAttention
 	default:
 		row.State = HealthOK
+	}
+	if row.State != HealthOK {
+		row.Count = waiting
 	}
 	return row
 }
