@@ -50,21 +50,28 @@ type TrimRule struct {
 	Keep          func(Retention) time.Duration
 }
 
-var trimRules []TrimRule
+// trimRules: request rows by arrival, hourly roll-ups by bucket start. The
+// daily roll-ups are kept for ever.
+var trimRules = []TrimRule{
+	{Table: "client_requests", Column: "queued_at", Keep: func(r Retention) time.Duration { return r.KeepRequests }},
+	{Table: "request_hours", Column: "bucket", Keep: func(r Retention) time.Duration { return r.KeepHourly }},
+}
 
 // startTasks starts the supervised retention task.
 func (s *Store) startTasks(ctx context.Context) {
 	s.tasks.Add(1)
 	supervise.Go(ctx, supervise.Spec{Name: "usage.retention", Policy: supervise.Restart, Done: s.tasks.Done}, func(ctx context.Context) {
-		t := time.NewTicker(s.opt.Retention.TrimEvery)
+		// The first pass a minute after the start (not during it), then every TrimEvery.
+		t := time.NewTimer(min(time.Minute, s.opt.Retention.TrimEvery))
 		defer t.Stop()
 		for {
-			s.Trim(ctx)
 			select {
 			case <-ctx.Done():
 				return
 			case <-t.C:
 			}
+			s.Trim(ctx)
+			t.Reset(s.opt.Retention.TrimEvery)
 		}
 	})
 }

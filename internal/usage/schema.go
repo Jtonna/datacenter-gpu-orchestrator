@@ -15,13 +15,15 @@ type Migration struct {
 }
 
 // migrations of usage.db, applied in order, once each, in their own
-// transaction. Version n is migrations[n-1].
+// transaction. Version n is migrations[n-1]. Keep this the one list (no
+// init-time appends: their order would follow file names).
 var migrations = []Migration{
 	{Name: "meta", SQL: `
 CREATE TABLE usage_meta (
   key   TEXT PRIMARY KEY,
   value INTEGER NOT NULL
 );`},
+	{Name: "requests", SQL: requestsSQL},
 }
 
 // NewerSchemaError: a newer scheduler migrated the file. It is kept as it
