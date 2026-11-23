@@ -77,7 +77,9 @@ func TestDerivedNeed_ConfigWritesAgainstListings(t *testing.T) {
 		defer cancel()
 		s.Shutdown(ctx)
 	})
+	t0 := time.Now()
 	doc, err := s.Needs(ctxT(t))
+	t.Logf("first GET /api/needs after the start: %v", time.Since(t0))
 	if err != nil || len(doc.Rows) < rows || len(doc.DerivePairs) == 0 {
 		t.Fatalf("needs %d rows (%d stored) %d pairs, %v", len(doc.Rows), rows, len(doc.DerivePairs), err)
 	}
@@ -125,6 +127,17 @@ func TestDerivedNeed_ConfigWritesAgainstListings(t *testing.T) {
 	go read("needs", func(ctx context.Context) error { _, err := s.Needs(ctx); return err })
 	go read("models", func(ctx context.Context) error { _, err := s.LearnedRows(ctx); return err })
 	readsBefore := needReads(needs)
+	{
+		nc := cloneCfg(cfg)
+		nc.Revision = cfg.Revision + 1
+		s.ApplyConfig(nc)
+		t0 := time.Now()
+		if _, err := s.Needs(ctxT(t)); err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("first GET /api/needs after a configuration write: %v", time.Since(t0))
+		cfg = nc
+	}
 	cur := cfg
 	for i := range 200 {
 		nc := cloneCfg(cur)

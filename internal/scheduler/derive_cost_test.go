@@ -92,6 +92,20 @@ func TestDerivedNeed_WorkIsDoneOncePerStore(t *testing.T) {
 		t.Fatalf("after a configuration write: provider calls %d -> %d, pair checks %d -> %d", first, *calls, builds, h.c.derive.pairBuilds)
 	}
 
+	// A burst of 50 configuration writes, each followed by a listing: no
+	// estimate asked and no pair checked again.
+	for i := range 50 {
+		nc := cloneCfg(h.cfg)
+		nc.Revision = h.cfg.Revision + 1
+		nc.Profiles[fmt.Sprintf("burst%d", i)] = &core.Profile{Name: fmt.Sprintf("burst%d", i), Kind: core.KindLlama, Model: "model07.gguf", Ctx: 49152, Parallel: 1}
+		h.step(evConfig{cfg: nc})
+		h.cfg = nc
+		listNeeds(t, h)
+	}
+	if *calls != first || h.c.derive.pairBuilds != builds {
+		t.Fatalf("50 configuration writes: provider calls %d -> %d, pair checks %d -> %d", first, *calls, builds, h.c.derive.pairBuilds)
+	}
+
 	// A new measurement re-checks its model's pairs only.
 	h.measure("model05.gguf", 4096, 1, derivedFrom(5500, 2048, 4096, 1)+600)
 	listNeeds(t, h)
