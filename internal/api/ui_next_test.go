@@ -8,8 +8,10 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 )
 
 // The new shell (UI rewrite, phase U1) lives in ui/next/ and is served at
@@ -136,6 +138,53 @@ func TestUINextScreensExecute(t *testing.T) {
 	empty, _, _ := feedEnv(t)
 	uiExec(t, map[string]any{"shell": "next", "app": true, "base": empty.front.URL,
 		"cases": every("empty", "fetch", map[string][]string{"zones": {"Zones"}})})
+}
+
+// The Zones page's selection and its zone panel, on a real agent cluster:
+// the panel of one zone shows its facts, its recent events (GET /api/history
+// for that node) and the machine card with its two controls; ticking zones
+// shows the selection bar; its "Stop accepting models" asks for a comment
+// first and counts only the zones it would change (one is paused already;
+// the scheduler's own machine has no agent and cannot be selected).
+func TestUINextZonesSelectionAndPanel(t *testing.T) {
+	const active, paused, excluded, named = "02:00:00:00:00:01", "02:00:00:00:00:02", "02:00:00:00:00:03", "02:00:00:00:00:04"
+	var conf *config.Config
+	fe, p, _ := feedEnv(t, func(c *config.Config) { c.ExcludeNodes = []string{excluded}; c.NoAutoNodes = []string{named}; conf = c })
+	for _, id := range []string{active, paused, excluded, named} {
+		register(t, fe, id)
+		feedHeartbeat(t, p, id, "")
+	}
+	if _, err := p.SetPaused(paused, true); err != nil {
+		t.Fatal(err)
+	}
+	st := statusWithAgentNodes(t, fe, func() *config.Config { return conf })
+	uiExec(t, map[string]any{"shell": "next", "app": true, "base": fe.front.URL, "cases": []any{
+		// this scheduler keeps no history: the panel says so
+		map[string]any{"name": "one zone's panel", "route": "#/zones?zone=" + active, "status": st, "absent": designSamples,
+			"page": []string{"Platform", "linux-amd64-vulkan", "Agent release", "0.1.0", "Recent events", "The event history is off", "Pause", "Force unload"}},
+		map[string]any{"name": "the paused zone's panel", "route": "#/zones?zone=" + paused, "status": st,
+			"page": []string{"Not accepting", "Unpause"}},
+		map[string]any{"name": "the excluded zone's panel", "route": "#/zones?zone=" + excluded, "status": st,
+			"page": []string{"Off by exclude_nodes: " + excluded}},
+		map[string]any{"name": "a selection", "route": "#/zones", "status": st, "click": []string{"input[data-sel=all]"},
+			"expect": []string{"4 selected", "Stop accepting models", "Accept models again", "Clear selection"}},
+		map[string]any{"name": "the bulk pause asks first", "route": "#/zones", "status": st, "click": []string{"input[data-sel=all]", "button[data-bulk=pause]"},
+			"page": []string{"Stop accepting models on 3 zones?", "Comment (required)"}},
+	}})
+
+	// A scheduler that keeps its history: the panel lists the events that name
+	// the zone (and only those), newest first.
+	hs := openStore(t)
+	now := time.Now().UnixMilli()
+	hs.Record(history.Event{Ts: now - 9000, Type: "loadFinished", Severity: "info", Profile: "alpha", Nodes: []string{"host-1"}, Summary: "alpha finished loading in 12.0 s.", Data: map[string]any{"outcome": "ready", "load_s": 12.0}})
+	hs.Record(history.Event{Ts: now - 5000, Type: "nodeQuarantined", Severity: "warn", Nodes: []string{"host-1"}, Summary: "host-1 set aside for 60 s after a failed pre-load check.", Data: map[string]any{"for_s": 60.0}})
+	hs.Record(history.Event{Ts: now - 4000, Type: "loadStarted", Severity: "info", Profile: "beta", Nodes: []string{"other-node"}, Summary: "Loading beta onto other-node."})
+	he := histEnv(t, hs)
+	uiExec(t, map[string]any{"shell": "next", "app": true, "base": he.front.URL, "cases": []any{
+		map[string]any{"name": "a zone's events", "route": "#/zones?zone=host-1", "status": "fetch",
+			"page":      []string{"alpha finished loading in 12.0 s.", "host-1 set aside for 60 s after a failed pre-load check.", "All events on Activity"},
+			"notOnPage": []string{"Loading beta onto other-node."}},
+	}})
 }
 
 // Each UI has a visible link to the other, so the owner switches without
