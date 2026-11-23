@@ -172,7 +172,7 @@ func TestStoredFieldFromANewerVersionKeepsTheConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := db.Exec(`UPDATE config_revisions SET doc = replace(doc, '"model":"qwen.gguf"', '"model":"qwen.gguf","description":"from a newer version"')`)
+	res, err := db.Exec(`UPDATE config_revisions SET doc = replace(replace(doc, '"model":"qwen.gguf"', '"model":"qwen.gguf","x_field_from_the_future":"from a newer version"'), '"settings":{', '"x_top_from_the_future":{"a":1},"settings":{"x_setting_from_the_future":true,')`)
 	if n, _ := res.RowsAffected(); err != nil || n != 1 {
 		t.Fatalf("edit: %v %d", err, n)
 	}
@@ -182,13 +182,13 @@ func TestStoredFieldFromANewerVersionKeepsTheConfiguration(t *testing.T) {
 	for !strings.Contains(logs.String(), "llm-scheduler started") {
 		time.Sleep(20 * time.Millisecond)
 	}
-	if !strings.Contains(logs.String(), "profiles=2") || strings.Count(logs.String(), "field=profiles.*.description") != 1 {
+	if !strings.Contains(logs.String(), "profiles=2") || strings.Count(logs.String(), "field=profiles.*.x_field_from_the_future") != 1 || strings.Count(logs.String(), "field=settings.x_setting_from_the_future") != 1 || strings.Count(logs.String(), "field=x_top_from_the_future") != 1 {
 		t.Fatalf("not started with both profiles and one warning:\n%s", logs.String())
 	}
 	if code, _ := get(t, "http://"+addr+"/health"); code != 200 {
 		t.Fatalf("/health %d", code)
 	}
-	if code, body := get(t, "http://"+addr+"/api/system"); code != 200 || !strings.Contains(body, `"unknown_fields":["profiles.*.description"]`) {
+	if code, body := get(t, "http://"+addr+"/api/system"); code != 200 || !strings.Contains(body, `"unknown_fields":["profiles.*.x_field_from_the_future","settings.x_setting_from_the_future","x_top_from_the_future"]`) {
 		t.Fatalf("/api/system %d %s", code, body)
 	}
 	stop()

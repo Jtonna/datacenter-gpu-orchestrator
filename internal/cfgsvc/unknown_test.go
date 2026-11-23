@@ -42,10 +42,10 @@ func TestStoredUnknownFieldsAreToleratedAndBlockWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 	// "the newer version" rewrites the latest revision with two fields more
-	if _, err := st.DB().Exec(`UPDATE config_revisions SET doc = replace(replace(doc, '"model":"qwen.gguf"', '"model":"qwen.gguf","description":"small and quick"'), '"settings":{}', '"settings":{"brand_new_setting":true}') WHERE revision = 2`); err != nil {
+	if _, err := st.DB().Exec(`UPDATE config_revisions SET doc = replace(replace(doc, '"model":"qwen.gguf"', '"model":"qwen.gguf","x_field_from_the_future":"small and quick"'), '"settings":{}', '"settings":{"x_setting_from_the_future":true},"x_top_from_the_future":{"a":1}') WHERE revision = 2`); err != nil {
 		t.Fatal(err)
 	}
-	if r, err := cs.Latest(ctx); err != nil || !reflect.DeepEqual(r.Unknown, []string{"profiles.*.description", "settings.brand_new_setting"}) {
+	if r, err := cs.Latest(ctx); err != nil || !reflect.DeepEqual(r.Unknown, []string{"profiles.*.x_field_from_the_future", "settings.x_setting_from_the_future", "x_top_from_the_future"}) {
 		t.Fatalf("the edit did not take: %v %+v", err, r)
 	}
 
@@ -55,7 +55,7 @@ func TestStoredUnknownFieldsAreToleratedAndBlockWrites(t *testing.T) {
 	if s.LoadError() != "" || s.Revision() != 2 || len(s.Config().Profiles) != 2 || s.Config().Profiles["qwen"].Ctx != 4096 || !s.Config().Configured {
 		t.Fatalf("not serving what it understands: err %q rev %d profiles %d", s.LoadError(), s.Revision(), len(s.Config().Profiles))
 	}
-	want := []string{"profiles.*.description", "settings.brand_new_setting"}
+	want := []string{"profiles.*.x_field_from_the_future", "settings.x_setting_from_the_future", "x_top_from_the_future"}
 	if got := s.UnknownFields(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("unknown fields %q", got)
 	}
@@ -105,5 +105,63 @@ func TestStoredUnknownFieldsAreToleratedAndBlockWrites(t *testing.T) {
 	}
 	if _, err := s.CreateProfile(ctx, ui("b"), "new", llama("n.gguf", 1024)); err != nil {
 		t.Fatalf("writes are still refused: %v", err)
+	}
+}
+
+// A forced write that changes nothing the user can see (the value already
+// stored) still writes a new revision while unknown fields are present:
+// dropping them is the point of forcing. The revision says so in its audit
+// entry and the report clears. Without unknown fields such a write stays a
+// no-op.
+func TestForcedNoChangeWriteDropsUnknownFields(t *testing.T) {
+	st, err := bench.OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	cs, err := cfgstore.Open(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{Store: cs, Parse: config.Options{FileExists: func(string) bool { return true }}}
+	ctx := context.Background()
+	first := New(ctx, opts)
+	if _, err := first.CreateProfile(ctx, ui("a"), "qwen", llama("qwen.gguf", 4096)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.PatchSettings(ctx, ui("a"), map[string]any{"queue_timeout": "90s"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().Exec(`UPDATE config_revisions SET doc = replace(doc, '"model":"qwen.gguf"', '"model":"qwen.gguf","x_field_from_the_future":1') WHERE revision = 2`); err != nil {
+		t.Fatal(err)
+	}
+	s := New(ctx, opts)
+	if len(s.UnknownFields()) != 1 {
+		t.Fatalf("unknown %q", s.UnknownFields())
+	}
+	o := ui("b")
+	o.Force = true
+	res, err := s.PatchSettings(ctx, o, map[string]any{"queue_timeout": "90s"}) // already stored
+	if err != nil || res.Revision != 3 || !res.Changed {
+		t.Fatalf("forced no-change write: %+v %v", res, err)
+	}
+	if len(s.UnknownFields()) != 0 || s.Revision() != 3 {
+		t.Fatalf("after: unknown %q revision %d", s.UnknownFields(), s.Revision())
+	}
+	r, err := cs.Latest(ctx)
+	if err != nil || r.Revision != 3 || len(r.Unknown) != 0 {
+		t.Fatalf("stored: %v %+v", err, r)
+	}
+	found := false
+	for _, d := range res.Diff {
+		found = found || d.Path == "unknown_fields.profiles.*.x_field_from_the_future"
+	}
+	if !found || len(res.AuditEntryIDs) != 1 {
+		t.Fatalf("the revision does not say what it dropped: %+v", res)
+	}
+	// now nothing is unknown: the same write is a no-op again
+	res, err = s.PatchSettings(ctx, o, map[string]any{"queue_timeout": "90s"})
+	if err != nil || res.Changed || s.Revision() != 3 {
+		t.Fatalf("second forced no-change write: %+v %v", res, err)
 	}
 }

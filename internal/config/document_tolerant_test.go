@@ -14,17 +14,17 @@ import (
 // (what clients send) still refuses them.
 func TestParseStoredDocumentToleratesUnknownFields(t *testing.T) {
 	doc := `{
-	  "settings": {"queue_timeout": "90s", "brand_new_setting": 7},
+	  "settings": {"queue_timeout": "90s", "x_setting_from_the_future": 7},
 	  "tiers": [{"match": {"hostname": "ps5-*", "rack": "r1"}, "priority": 1, "glow": true}],
 	  "profiles": {
-	    "qwen": {"kind": "llama", "model": "qwen.gguf", "ctx": 4096, "description": "a small model", "ttl": "5m"},
-	    "gemma": {"kind": "llama", "model": "gemma.gguf", "ctx": 2048, "description": "another"}
+	    "qwen": {"kind": "llama", "model": "qwen.gguf", "ctx": 4096, "x_field_from_the_future": "a small model", "ttl": "5m"},
+	    "gemma": {"kind": "llama", "model": "gemma.gguf", "ctx": 2048, "x_field_from_the_future": "another"}
 	  },
 	  "exclude_nodes": ["a"],
 	  "node_overrides": {"a": {"rpc": "192.0.2.1:50052", "weight": 2}},
 	  "recovery": {},
 	  "fleet": {},
-	  "labels": {"x": 1}
+	  "x_top_from_the_future": {"x": 1}
 	}`
 	if _, err := ParseDocument([]byte(doc)); err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("a client document with unknown fields is accepted: %v", err)
@@ -33,14 +33,14 @@ func TestParseStoredDocumentToleratesUnknownFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"labels", "node_overrides.*.weight", "profiles.*.description", "settings.brand_new_setting", "tiers[].glow", "tiers[].match.rack"}
+	want := []string{"node_overrides.*.weight", "profiles.*.x_field_from_the_future", "settings.x_setting_from_the_future", "tiers[].glow", "tiers[].match.rack", "x_top_from_the_future"}
 	if !reflect.DeepEqual(unknown, want) {
 		t.Fatalf("unknown fields %q, want %q", unknown, want)
 	}
 	if len(d.Profiles) != 2 || d.Profiles["qwen"].Model != "qwen.gguf" || *d.Profiles["qwen"].Ctx != 4096 || d.Profiles["qwen"].TTL == nil {
 		t.Fatalf("known profile fields lost: %+v", d.Profiles["qwen"])
 	}
-	if d.Settings["queue_timeout"] != "90s" || d.Settings["brand_new_setting"] != nil {
+	if d.Settings["queue_timeout"] != "90s" || d.Settings["x_setting_from_the_future"] != nil {
 		t.Fatalf("settings %v", d.Settings)
 	}
 	if d.Tiers[0].Match.Hostname != "ps5-*" || d.Tiers[0].Priority != 1 || d.NodeOverrides["a"].RPC != "192.0.2.1:50052" {

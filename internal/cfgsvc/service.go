@@ -6,6 +6,7 @@ package cfgsvc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -375,8 +376,16 @@ func (s *Service) commit(ctx context.Context, o WriteOpts, m mutation) (*Result,
 		return nil, nil, validationFrom(err)
 	}
 	chs := sectionChanges(before, after)
-	res := &Result{Revision: s.rev, Changed: len(chs) > 0, DryRun: o.DryRun, AuditEntryIDs: []int64{}, Warnings: append([]string{}, warnings...), RestartRequired: []string{}}
+	// A forced write while the stored configuration has fields this
+	// version does not know writes a new revision even when nothing else
+	// changes: dropping them is what forcing is for. Its audit entry names
+	// them (section unknown_fields).
+	dropUnknown := o.Force && len(s.unknown) > 0
+	res := &Result{Revision: s.rev, Changed: len(chs) > 0 || dropUnknown, DryRun: o.DryRun, AuditEntryIDs: []int64{}, Warnings: append([]string{}, warnings...), RestartRequired: []string{}}
 	es := entries(chs, m.action)
+	if dropUnknown {
+		es = append(es, unknownDropEntry(s.unknown))
+	}
 	for _, e := range es {
 		res.Diff = append(res.Diff, e.Diff...)
 	}
@@ -398,7 +407,7 @@ func (s *Service) commit(ctx context.Context, o WriteOpts, m mutation) (*Result,
 	if o.IfMatch != nil && *o.IfMatch != s.rev {
 		return nil, nil, &cfgstore.ErrStale{Current: s.rev}
 	}
-	if o.DryRun || (!res.Changed && !m.requireEmpty) {
+	if o.DryRun || (!res.Changed && !m.requireEmpty) { // res.Changed holds dropUnknown
 		return res, nil, nil
 	}
 	if o.Origin.Source == "" {
@@ -496,4 +505,15 @@ func restartKeys(diff []audit.DiffItem) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// unknownDropEntry is the audit entry of a forced write that drops the
+// fields of the stored configuration this version does not know.
+func unknownDropEntry(fields []string) audit.Entry {
+	before, _ := json.Marshal(fields)
+	e := audit.Entry{Action: audit.ActionUpdate, Section: "unknown_fields", Before: before, After: json.RawMessage("[]")}
+	for _, f := range fields {
+		e.Diff = append(e.Diff, audit.DiffItem{Path: "unknown_fields." + f, Old: "written by a newer version", New: nil})
+	}
+	return e
 }

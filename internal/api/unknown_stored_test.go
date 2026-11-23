@@ -33,7 +33,7 @@ func TestAPIStoredUnknownFields(t *testing.T) {
 	if _, err := first.CreateProfile(context.Background(), cfgsvc.WriteOpts{Origin: audit.Origin{Source: audit.SourceUI, Actor: "t"}}, "q", p); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.DB().Exec(`UPDATE config_revisions SET doc = replace(doc, '"model":"q.gguf"', '"model":"q.gguf","description":"newer"')`); err != nil {
+	if _, err := st.DB().Exec(`UPDATE config_revisions SET doc = replace(replace(doc, '"model":"q.gguf"', '"model":"q.gguf","x_field_from_the_future":"newer"'), '"settings":{}', '"settings":{"x_setting_from_the_future":true},"x_top_from_the_future":{"a":1}')`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -45,7 +45,7 @@ func TestAPIStoredUnknownFields(t *testing.T) {
 
 	_, sys := e.cdo("GET", "/api/system", "", nil)
 	sc, _ := sys["stored_config"].(map[string]any)
-	if f, _ := sc["unknown_fields"].([]any); len(f) != 1 || f[0] != "profiles.*.description" || sc["writes_need_force"] != true {
+	if f, _ := sc["unknown_fields"].([]any); len(f) != 3 || f[0] != "profiles.*.x_field_from_the_future" || f[1] != "settings.x_setting_from_the_future" || f[2] != "x_top_from_the_future" || sc["writes_need_force"] != true {
 		t.Fatalf("system stored_config %v", sys["stored_config"])
 	}
 	if code, m := e.cdo("GET", "/api/config", "", nil); code != 200 || m["revision"] != 1.0 {
@@ -57,7 +57,7 @@ func TestAPIStoredUnknownFields(t *testing.T) {
 		t.Fatalf("write without force: %d %v", code, m)
 	}
 	// what a client sends is still strict
-	if code, _ := e.cdo("POST", "/api/config/profiles?force=1", `{"id":"n","model":"n.gguf","ctx":2048,"needs_mib":100,"description":"x"}`, nil); code != 400 {
+	if code, _ := e.cdo("POST", "/api/config/profiles?force=1", `{"id":"n","model":"n.gguf","ctx":2048,"needs_mib":100,"x_field_from_the_future":"x"}`, nil); code != 400 {
 		t.Fatalf("a client field this version does not know: %d, want 400", code)
 	}
 	if code, m := e.cdo("PUT", "/api/config/exclude-nodes?force=1", `{"exclude_nodes":["x"]}`, nil); code != 200 {
