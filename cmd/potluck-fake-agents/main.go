@@ -20,8 +20,13 @@
 //
 // --from-status reads a scheduler's GET /api/status (its agents) or GET
 // /api/nodes (its nodes, the local node left out) and mirrors ids, names,
-// devices, free memory, capabilities and watchdog floors. Addresses are never
-// copied. --print writes the node list it would use as JSON and exits.
+// devices, free memory, capabilities, watchdog floors and the headline
+// temperature of each node's stats. Addresses are never copied. --print
+// writes the node list it would use as JSON and exits.
+//
+// Each agent sends a stats object in the shape real agents send (stats
+// contract, stats_version 1) with headline_temp_c: the mirrored one, the
+// node's "headline_temp_c" in --nodes, or 50.
 package main
 
 import (
@@ -54,6 +59,38 @@ type Node struct {
 	GPUs             []agentproto.GPU    `json:"gpus,omitempty"`    // default: one integrated AMD GPU
 	Capabilities     *[]string           `json:"capabilities,omitempty"`
 	WatchdogFloorMiB int64               `json:"watchdog_floor_mib,omitempty"` // default 1000
+
+	// HeadlineTempC is the temperature its stats report (stats contract
+	// 4.6); default 50, mirrored by --from-status.
+	HeadlineTempC *float64 `json:"headline_temp_c,omitempty"`
+}
+
+// DefaultTempC is the headline temperature of a node that gives none.
+const DefaultTempC = 50.0
+
+// statsOf is the stats object a real agent sends (stats contract,
+// stats_version 1): the node exporter ok, CPU, memory from the node's
+// figures, load, one temperature sensor at the headline temperature, and
+// no GPU entries (a console's GPU is not drawn from them).
+func statsOf(n Node) json.RawMessage {
+	temp := DefaultTempC
+	if n.HeadlineTempC != nil {
+		temp = *n.HeadlineTempC
+	}
+	s := map[string]any{
+		"stats_version":   1,
+		"sources":         map[string]any{"node": map[string]any{"status": "ok", "age_ms": 500, "scrape_ms": 20}},
+		"cpu":             map[string]any{"util_percent": 2.0, "logical_cpus": 8},
+		"memory":          map[string]any{"total_bytes": n.MemTotalMiB << 20, "available_bytes": n.MemAvailableMiB << 20},
+		"load":            map[string]any{"load1": 0.1},
+		"net":             []any{},
+		"temps":           []any{map[string]any{"id": "fake/temp1", "label": "fake", "celsius": temp}},
+		"headline_temp_c": temp,
+		"fans":            []any{},
+		"gpus":            []any{},
+	}
+	b, _ := json.Marshal(s)
+	return b
 }
 
 // Options are the command line.
@@ -154,7 +191,7 @@ func Start(ctx context.Context, o Options, nodes []Node, out io.Writer) (*Fleet,
 		a := &fakeagent.Agent{ID: n.ID, Name: n.Name, Addr: n.Addr, AgentPort: o.AgentPort, WorkerPort: o.WorkerPort, Potluck: base,
 			Release: rel, Install: agentproto.InstallBare, MemAvail: n.MemAvailableMiB, MemTotalMiB: n.MemTotalMiB,
 			GPUs: n.GPUs, Devices: n.Devices, WatchdogFloorMiB: n.WatchdogFloorMiB, HeartbeatEvery: o.Heartbeat,
-			Stats: json.RawMessage(`{"stats_version":1,"sources":{"node":{"status":"absent"}},"gpus":[]}`)}
+			Stats: statsOf(n)}
 		if n.Capabilities != nil {
 			a.Capabilities = *n.Capabilities
 		}
@@ -331,6 +368,9 @@ func nodesFromStatus(src string) ([]Node, error) {
 			MemAvailMiB      *int64              `json:"mem_available_mib"`
 			Capabilities     *[]string           `json:"capabilities"`
 			WatchdogFloorMiB *int64              `json:"watchdog_floor_mib"`
+			Stats            struct {
+				HeadlineTempC *float64 `json:"headline_temp_c"`
+			} `json:"stats"`
 		}
 		if err := json.Unmarshal(r, &a); err != nil {
 			return nil, fmt.Errorf("%s: %w", src, err)
@@ -338,7 +378,7 @@ func nodesFromStatus(src string) ([]Node, error) {
 		if a.Local || a.ID == "" || a.State == "left" || a.State == "removed" {
 			continue
 		}
-		n := Node{ID: a.ID, Name: a.Name, Devices: a.Devices, Capabilities: a.Capabilities}
+		n := Node{ID: a.ID, Name: a.Name, Devices: a.Devices, Capabilities: a.Capabilities, HeadlineTempC: a.Stats.HeadlineTempC}
 		if a.MemAvailMiB != nil {
 			n.MemAvailableMiB = *a.MemAvailMiB
 		}

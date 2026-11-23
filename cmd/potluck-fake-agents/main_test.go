@@ -175,6 +175,14 @@ func TestFakeAgentsAreActiveAndPlaceable(t *testing.T) {
 		if a["platform"] != "linux-amd64-vulkan" || a["programs_ready"] != true || toJSON(a["capabilities"]) != `["file_cache_evict"]` {
 			t.Fatalf("agent %v", a)
 		}
+		// The stats block of a real agent, with its headline temperature
+		// (50 when nodes.json gives none), as /api/nodes passes it on.
+		s, _ := a["stats"].(map[string]any)
+		mem, _ := s["memory"].(map[string]any)
+		if s["stats_version"] != float64(1) || s["headline_temp_c"] != float64(50) || mem["total_bytes"] == nil ||
+			toJSON(s["sources"]) != `{"node":{"age_ms":500,"scrape_ms":20,"status":"ok"}}` || len(s["temps"].([]any)) != 1 {
+			t.Fatalf("stats %v (note %v)", toJSON(s), a["stats_note"])
+		}
 	}
 	plan := postPlan(t, base, "forced")
 	if pl, _ := plan["placement"].([]any); plan["action"] != "start" || len(pl) != 1 || pl[0].(map[string]any)["id"] != "02:00:00:00:00:02" {
@@ -235,6 +243,46 @@ func TestAcceptLaunches(t *testing.T) {
 		t.Fatalf("launch: %d", resp.StatusCode)
 	}
 	eventually(t, "the fake worker ready", func() bool { return f.Agents[0].LaunchState().State == agentproto.StateReady })
+}
+
+// --from-status mirrors the headline temperature of each node's stats; a
+// node without one gets the fixed 50 degrees.
+func TestFromStatusMirrorsHeadlineTemp(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "nodes.json")
+	os.WriteFile(file, []byte(`{"nodes":[
+	  {"id":"02:00:00:00:00:01","name":"ps5-a","state":"active","stats":{"stats_version":1,"headline_temp_c":61.5}},
+	  {"id":"02:00:00:00:00:02","name":"ps5-b","state":"lost"},
+	  {"id":"02:00:00:00:00:03","name":"ps5-c","state":"active","stats":{"stats_version":1}}]}`), 0o644)
+	nodes, err := nodesFromStatus(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []float64{61.5, 50, 50}
+	for i, n := range nodes {
+		var s struct {
+			Version  int      `json:"stats_version"`
+			Headline *float64 `json:"headline_temp_c"`
+			Temps    []struct {
+				Celsius float64 `json:"celsius"`
+			} `json:"temps"`
+			Memory struct {
+				Total int64 `json:"total_bytes"`
+				Avail int64 `json:"available_bytes"`
+			} `json:"memory"`
+			GPUs []any `json:"gpus"`
+		}
+		if err := json.Unmarshal(statsOf(n), &s); err != nil {
+			t.Fatal(err)
+		}
+		if s.Version != 1 || s.Headline == nil || *s.Headline != want[i] || len(s.Temps) != 1 || s.Temps[0].Celsius != want[i] ||
+			s.Memory.Total != n.MemTotalMiB<<20 || s.Memory.Avail != n.MemAvailableMiB<<20 || s.GPUs == nil {
+			t.Fatalf("%s: %s", n.Name, statsOf(n))
+		}
+	}
+	var out, errb bytes.Buffer
+	if code := run([]string{"--from-status", file, "--print"}, &out, &errb); code != 0 || !strings.Contains(out.String(), `"headline_temp_c": 61.5`) {
+		t.Fatalf("--print keeps the mirrored temperature: %d %s %s", code, out.String(), errb.String())
+	}
 }
 
 func TestPrintMirrorsWithoutAddresses(t *testing.T) {
