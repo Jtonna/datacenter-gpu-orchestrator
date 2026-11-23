@@ -235,7 +235,8 @@ func (s *Server) routes() *http.ServeMux {
 	})
 	m.HandleFunc("GET /running", s.handleRunning)
 	m.HandleFunc("POST /api/models/unload", s.handleUnloadAll)
-	m.HandleFunc("GET /unload", s.handleUnloadAllText)
+	m.HandleFunc("GET /unload", s.handleUnloadAllTextGet) // deprecated: a GET that changes state
+	m.HandleFunc("POST /unload", s.handleUnloadAllText)
 	m.HandleFunc("POST /api/models/unload/{model...}", s.handleUnloadByName)
 	m.HandleFunc("/upstream/{model}/{rest...}", s.handleUpstream)
 	m.HandleFunc("/upstream/{model}", s.handleUpstream)
@@ -533,6 +534,21 @@ func (s *Server) handleUnloadAll(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"msg": "ok", "unloaded": got})
 }
 
+// unloadGetWarning is the Warning header of GET /unload.
+const unloadGetWarning = `299 - "GET /unload is deprecated: it changes state; use POST /unload or POST /api/models/unload"`
+
+// handleUnloadAllTextGet is GET /unload, kept for llama-swap clients: it
+// unloads everything idle like POST /unload, marks its answer deprecated and
+// logs one WARN per call naming the caller.
+func (s *Server) handleUnloadAllTextGet(w http.ResponseWriter, r *http.Request) {
+	s.log.Warn("GET /unload is deprecated: it changes state; use POST /unload or POST /api/models/unload", "caller", callerOf(r))
+	w.Header().Set("Deprecation", "true")
+	w.Header().Set("Warning", unloadGetWarning)
+	s.handleUnloadAllText(w, r)
+}
+
+// handleUnloadAllText is POST /unload: everything idle is unloaded; the
+// answer is "OK" in plain text (llama-swap's shape).
 func (s *Server) handleUnloadAllText(w http.ResponseWriter, r *http.Request) {
 	got, err := s.sched.UnloadAllIdle(r.Context())
 	if err != nil {

@@ -569,6 +569,30 @@ func TestMaxRunTimeFailsTheRun(t *testing.T) {
 	}
 }
 
+// The run time limit is read from the setting when each run starts, so a
+// change of bench_max_run_minutes applies to the next run without a restart
+// and a run is never cut at an older, shorter limit (B5).
+func TestMaxRunIsReadFromTheSettingAtEachRun(t *testing.T) {
+	var mu sync.Mutex
+	limit := 150 * time.Millisecond
+	setting := func() time.Duration { mu.Lock(); defer mu.Unlock(); return limit }
+	api := newFake().prof("gemma", fakeProf{chatDelay: 30 * time.Millisecond})
+	tm := newTestMgr(t, api, func(o *ManagerOptions) { o.MaxRun = time.Hour; o.MaxRunSetting = setting })
+	tm.bench(`{"id":"gemma","profile":"gemma","repeats":100,"requests":[{"prompt":"hi","max_tokens":8}]}`)
+	tm.bench(`{"id":"short","profile":"gemma","repeats":12,"requests":[{"prompt":"hi","max_tokens":8}]}`)
+	tm.suite(`{"id":"s","benchmarks":["gemma"],"only_when_idle":false}`)
+	tm.suite(`{"id":"s2","benchmarks":["short"],"only_when_idle":false}`)
+	if r := tm.finished(tm.run("s").ID); r.State != RunFailed || !strings.Contains(r.Error, "max_run_minutes (150ms)") {
+		t.Fatalf("the setting's limit was not used: %s %q", r.State, r.Error)
+	}
+	mu.Lock()
+	limit = time.Minute
+	mu.Unlock()
+	if r := tm.finished(tm.run("s2").ID); r.State != RunCompleted { // about 360 ms: over the old limit
+		t.Fatalf("a run was cut below the setting: %s %q", r.State, r.Error)
+	}
+}
+
 func TestEnqueueRejectsAStaleProfileAndUnknownSuite(t *testing.T) {
 	api := newFake().prof("gemma", fakeProf{})
 	tm := newTestMgr(t, api, func(o *ManagerOptions) { o.ProfileOK = func(p string) bool { return p == "gemma" } })

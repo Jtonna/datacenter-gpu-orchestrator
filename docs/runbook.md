@@ -192,14 +192,14 @@ The scheduler serves one release, the one it was built as (`programs.release` in
 Make the `SHA256SUMS` of a folder inside that folder:
 
 ```sh
-cd /srv/potluck/programs/0.1.9/linux-amd64-cuda && sha256sum llama-server rpc-server node_exporter nvidia_gpu_exporter > SHA256SUMS
+cd /srv/potluck/programs/0.1.10/linux-amd64-cuda && sha256sum llama-server rpc-server node_exporter nvidia_gpu_exporter > SHA256SUMS
 ```
 
 Check after a start: `curl -s $H/api/system | jq .programs`. `served: false` comes with `programs.error`, naming the missing or wrong file. `host_build_error` means the scheduler's own `llama-server-rpc` is not the release's llama build: every load is refused until it is.
 
 ### Move to a new release
 
-1. Make `programs/<new>/`. Platform folders whose programs did not change can be copied. `agent/` holds the new agent; `release.json` names the new release; write new `SHA256SUMS`. Leave the previous release's `release.json` in place (section G): stored memory needs measured under it stay trusted only through it.
+1. Make `programs/<new>/`. Platform folders whose programs did not change can be copied. `agent/` holds the new agent; `release.json` names the new release; write new `SHA256SUMS`. Leave the previous release's `release.json` in place (section G): stored memory needs measured under it stay trusted only through it. A release that keeps the llama build (0.1.9 to 0.1.10) copies `builds.llama` unchanged: a need is trusted when its recorded llama build is the host program's and the served release's, so the stored needs stay trusted.
 2. Build and start the scheduler of the new release (section F). This ends every loaded model.
 3. Agents of the old release are refused with `agent_too_old` and update themselves. A Docker node exits and waits: run `potluck-agent-setup --docker ...` on it again, which builds the image for the new release.
 4. Check that every node is back: `curl -s $H/api/nodes | jq '.nodes[] | {name, state, release}'`.
@@ -334,6 +334,19 @@ curl -s $H/running
 - `/api/status`: `instances` (each with `profile`, `state`, `nodes` with memory per device, `log_file`), `queue`, `backoffs`, `recent_loads` (loads that finished in the last 120 s), `learned_needs`, `agents`, `view.nodes`, `logs`.
 - `/api/nodes`: the node feed for dashboards: `{time, seq, nodes}`. Each entry is an entry of `agents` of `/api/status`, plus Potluck's own machine with `"local": true`. A new `seq` means something changed besides ages and uptimes.
 - `/running`: the loaded models, llama-swap compatible, with `recent_loads`.
+
+### Unload everything idle
+
+```sh
+curl -s -X POST $H/api/models/unload   # JSON: {"msg":"ok","unloaded":[…]}
+curl -s -X POST $H/unload              # plain "OK", llama-swap's shape
+```
+
+`GET /unload` does the same and still works for llama-swap clients, but it is deprecated because a GET should not change state: its answer carries `Deprecation: true` and a `Warning` header naming the POST routes, and every call logs one WARN line with the caller's address. Find the callers before it is removed:
+
+```sh
+docker logs potluck 2>&1 | grep 'GET /unload is deprecated' | tail -50
+```
 
 ### Watch a load
 

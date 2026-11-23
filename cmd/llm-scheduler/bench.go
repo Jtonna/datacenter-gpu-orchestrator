@@ -55,7 +55,9 @@ func openBench(svc *cfgsvc.Service, st *bench.Store, ln net.Listener, hist *hist
 	o := bench.ManagerOptions{Store: st, API: &bench.HTTPAPI{Base: loopbackURL(ln.Addr())}, Version: version, Logger: log,
 		Thresholds: bench.Thresholds{LoadPct: cfg.Bench.RegressLoadPct, DecodePct: cfg.Bench.RegressDecodePct},
 		MaxRun:     time.Duration(cfg.Bench.MaxRunMinutes) * time.Minute,
-		ProfileOK:  func(id string) bool { _, _, ok := svc.Config().Resolve(id); return ok },
+		// Read when each run starts, so a change of bench_max_run_minutes applies to the next run without a restart.
+		MaxRunSetting: func() time.Duration { return time.Duration(svc.Config().Bench.MaxRunMinutes) * time.Minute },
+		ProfileOK:     func(id string) bool { _, _, ok := svc.Config().Resolve(id); return ok },
 		// Read at every check, so a change of bench_retention_days applies without a restart.
 		Retention: func() time.Duration { return time.Duration(svc.Config().Bench.RetentionDays) * 24 * time.Hour }}
 	if hist.On() {

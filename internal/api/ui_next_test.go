@@ -185,6 +185,21 @@ func TestUINextZonesSelectionAndPanel(t *testing.T) {
 			"page":      []string{"alpha finished loading in 12.0 s.", "host-1 set aside for 60 s after a failed pre-load check.", "All events on Activity"},
 			"notOnPage": []string{"Loading beta onto other-node."}},
 	}})
+
+	// On an agent cluster a zone's id is its MAC and its events name its
+	// hostname: the panel still lists them (B1).
+	ah := openStore(t)
+	var aconf *config.Config
+	ae, ap, _ := feedEnvOpts(t, func(o *Options) { o.History = ah }, func(c *config.Config) { aconf = c })
+	register(t, ae, active) // named console-1
+	feedHeartbeat(t, ap, active, "")
+	ah.Record(history.Event{Ts: now - 3000, Type: "loadFinished", Severity: "info", Profile: "alpha", Nodes: []string{"console-1"}, Summary: "alpha finished loading on console-1.", Data: map[string]any{"outcome": "ready", "load_s": 9.0}})
+	ah.Record(history.Event{Ts: now - 2000, Type: "loadStarted", Severity: "info", Profile: "beta", Nodes: []string{"console-7"}, Summary: "Loading beta onto console-7."})
+	ast := statusWithAgentNodes(t, ae, func() *config.Config { return aconf })
+	uiExec(t, map[string]any{"shell": "next", "app": true, "base": ae.front.URL, "cases": []any{
+		map[string]any{"name": "an agent zone's events, asked by id", "route": "#/zones?zone=" + active, "status": ast,
+			"page": []string{"alpha finished loading on console-1."}, "notOnPage": []string{"Loading beta onto console-7.", "No events"}},
+	}})
 }
 
 // The Models list and its side panel, on a real scheduler's catalog: every

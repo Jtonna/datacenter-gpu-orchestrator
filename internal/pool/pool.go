@@ -460,7 +460,7 @@ func (p *Pool) register(req agentproto.RegisterRequest) (agentproto.RegisterAnsw
 	p.checkFloorLocked(a)
 	ans := agentproto.RegisterAnswer{Accepted: true, Release: rel.Release, Platform: platform,
 		HeartbeatEveryS: HeartbeatEvery.Seconds(), Programs: rel.Programs(platform), Exporters: rel.Exporters(platform),
-		Paused: p.admin[req.ID].Paused}
+		Paused: p.admin[req.ID].Paused, AgentSHA256: rel.Agents()[req.OS+"-"+req.Arch].SHA256}
 	if p.o.Logs != nil {
 		ans.Logs = p.o.Logs(req.ID) // CR-10: where to push log lines; nil while logging is off
 		if ans.Logs != nil {

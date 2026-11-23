@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -82,7 +84,38 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	q.NodeAliases = s.nodeAliases(r.Context(), q.Node)
 	writeJSON(w, http.StatusOK, s.hist.Query(q))
+}
+
+// nodeAliases gives the other names of the node called name (by id or by
+// name): events name a node by its hostname, callers such as the UI's zone
+// panel often hold its id. A name no node has gives none.
+func (s *Server) nodeAliases(ctx context.Context, name string) []string {
+	if name == "" {
+		return nil
+	}
+	var out []string
+	add := func(id, host string) {
+		if id == name || strings.EqualFold(host, name) {
+			for _, a := range []string{id, host} {
+				if a != "" && a != name && !slices.Contains(out, a) {
+					out = append(out, a)
+				}
+			}
+		}
+	}
+	if st, err := s.sched.Status(ctx); err == nil {
+		for _, n := range st.View.Nodes {
+			add(string(n.ID), n.Hostname)
+		}
+	}
+	if s.opts.Pool != nil {
+		for _, f := range s.opts.Pool.Facts() { // also the lost and removed agents
+			add(f.ID, f.Name)
+		}
+	}
+	return out
 }
 
 func (s *Server) handleHistorySummary(w http.ResponseWriter, r *http.Request) {

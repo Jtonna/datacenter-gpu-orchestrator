@@ -309,6 +309,12 @@ type NodeOverride struct {
 type Options struct {
 	// FileExists reports whether a model file exists. Nil uses os.Stat.
 	FileExists func(path string) bool
+	// KeepModels maps a profile to the model file it pointed at before the
+	// write being checked. A profile that still points at that file is not
+	// refused when the file is missing: only a write that adds a profile or
+	// points one at a new file is (a load of the profile is refused at plan
+	// time instead).
+	KeepModels map[string]string
 }
 
 // Bench is the benchmark feature's settings (design 9.3).

@@ -2,10 +2,17 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
-## Next scheduler image (after v26; agent stays 0.1.9)
+## Scheduler image after Phase 0: own slope
 
 - **The model's own slope.** Where a model has measurements of one placement shape (same model file, slots, cache type, flash attention, extra arguments, host kind and device count) at two or more contexts, a profile of that shape at another context takes the straight line through the two rows nearest its context, in both directions, instead of the formula's step. A third row on the line within 128 MiB confirms it, and so does the formula's step when it predicts one of two rows from the other within 128 MiB: the figure then counts as a measurement; otherwise, with two rows only, it gets the estimate margin (+5%). A row off the line by more than 128 MiB, or a falling line, means no line on that count. A sliding-window model (the header's sliding window) is concave in the context: its rows below the window are not used, nothing is derived below the window, and between two rows its line is used only when confirmed. Lines never join rows of two device counts, and a line decides only for a placement on its own device count: it is never raised, lowered or kept for another count (a profile placed on a count without a line takes what it took before: its shape's measurements under the count rule, else the formula step). Order of sources for a placement on k devices: a measurement of the shape on k; the server-hosted twin (host: node); a confirmed line on k, which joins the shape's measurements on other counts (one on more devices, moved down by the per-device cost, still counts where it is higher); a measurement of the shape on another count, under the count rule; a two-point line on k; the formula-step derivation; the estimate. The basis reads "own slope of this model on N devices: S MiB per 1k context, from ctx A and B (latest DATE); confirmed by ctx C within 128 MiB"; `/api/profiles` adds `derived_slope_mib_per_1k_ctx` and `derived_slope_from_ctx`, a plan adds `derived_slope` (devices, `mib_per1k_ctx`, `from_ctx`, `confirmed_by`, `confirmed`). The formula step's pair check, as before, only pairs rows on the same device count. Validated on the live store: 294 leave-one-out predictions over seven models, worst error 0 MiB.
 - **Model headers read in the background at start** (not in v26): the headers of every model the profiles and the stored measurements name are read by a background task (scheduler.header_reads), never in the scheduler's loop, so the first `GET /api/needs` after a start no longer waits on them (about 220 ms on live with v26); until the read is done a profile keeps its estimate and `derivation_check` lists no pair.
+
+## Next scheduler image (after v26; no agent change)
+
+- **History `node` filter takes an id or a name.** `GET /api/history?node=` (and MCP `query_history`) matches events that name the node by its id or its hostname, so the zone panel's "Recent events" (which asks by id) lists the zone's events.
+- **A missing model file no longer blocks every configuration write.** A write is refused for a missing file only when it adds a profile or points one at a new file; profiles that already pointed at the missing file stay, other writes (settings, other profiles, deleting those profiles) go through. Loading such a profile is refused at plan time: "memory need unknown: model file "x.gguf" is missing from models_dir …".
+- **`bench_max_run_minutes` applies without a restart.** The benchmark manager reads it when each run starts (it was read once at start, so a raised limit kept cutting runs at the old one until a restart). Its range is still 1 to 10080 minutes (720 allowed); the default stays 240: set 720 for a 6 to 7 hour Full pass.
+- **`GET /unload` is deprecated; `POST /unload` added.** `POST /unload` unloads everything idle and answers `OK` like the GET. `GET /unload` still works but answers with `Deprecation: true` and a `Warning` header naming `POST /unload` and `POST /api/models/unload`, and logs one WARN per call with the caller's address (runbook, "Unload everything idle"). Nothing in this repository calls the GET.
 
 ## Next scheduler image (after v25; agent stays 0.1.9)
 
@@ -48,6 +55,34 @@ The heading takes the release number when it ships.
 - **A `host: node` profile is planned from the server-hosted measurement** of the same shape (model, context, slots, cache, arguments) until a load hosted on a node measured its own; the host overhead is still added on the host node, and the basis says "hosted on the scheduler's machine (no measurement hosted on a node yet), plus N MiB host overhead". Stored peaks stay per shape.
 - **The host node's own device share** (its `Vulkan0`, ... rows) shows under that node in an instance's `nodes`, like a worker's row; it used to be listed as unmatched. Host-side buffers stay in `host_memory`.
 - **Profile `description`**: optional free text, one line, at most 500 characters. Shown in `/api/config`, `/api/profiles`, `/api/models` and both UIs' profile lists. Changing only the description does not make a loaded model stale.
+
+## 0.1.10
+
+An agent release on the same llama build as 0.1.9 (`03c9c28`): the scheduler code changes only to serve it, name its sha256 and refuse older agents.
+
+### What is new
+
+- **A discrete Nvidia GPU's `free_mib` follows the GPU**: taken from the Nvidia exporter at every heartbeat while that source is ok, instead of the `--list-devices` read from before the last launch (the Docker laptop showed 7,679 MiB free throughout).
+- **The setup script opens 50061** (host launches) from Potluck's address with 50060 and 50052; a setup run again keeps an existing 50061 rule.
+- **Same-release re-fetch**: the registration answer names the served agent's `agent_sha256`; a bare or RAM-only agent of the right release with another build fetches it once per (release, sha256) while it has no launch. A Docker agent ignores it (its binary is the image's). So a rebuilt agent of the same release reaches the consoles without a release bump.
+- **Who calls the agent**: `--log-level debug` (default `info`) names the source address of each allowed API call, once per source per minute. Behind Docker Desktop every caller appears as the gateway.
+
+### What changes without any setting
+
+- Every agent must be 0.1.10: 0.1.9 agents are refused with `agent_too_old` and update themselves; a Docker agent exits (75) and needs the image `potluck-agent:0.1.10`.
+- A 0.1.10 agent that meets a 0.1.9 scheduler is refused with `potluck_too_old` and waits, asking again, until the scheduler serves 0.1.10. Agents never downgrade.
+- Stored memory needs stay trusted: a need is trusted when the llama build it was measured on is the host program's and the served release's build, and 0.1.10 names the same build as 0.1.9.
+
+### What to do at the roll-out
+
+- Make `programs/0.1.10/` on the scheduler's host:
+  - `release.json`: `"release": "0.1.10"`, `builds` and `platforms` exactly as in `programs/0.1.9/release.json` (`builds.llama` stays `03c9c28...`, the full commit as written there).
+  - `agent/`: the 0.1.10 `potluck-agent-linux-amd64`, `potluck-starter.sh` (unchanged, copy it), and `SHA256SUMS` over both.
+  - The platform folders (`linux-amd64-vulkan`, `linux-amd64-cuda`, ...) copied unchanged from `programs/0.1.9/`, each with its `SHA256SUMS` (copied too: the files did not change).
+- Keep `programs/0.1.9/release.json` (and the older ones) in place: only stored needs without a recorded build are matched through their release's `release.json`.
+- Build `potluck-agent:0.1.10` for the Docker laptop (deploy/agent/Dockerfile with the served binary) before the switch.
+- Start the 0.1.10 scheduler. The consoles are refused with `agent_too_old`, download 0.1.10 from the scheduler and come back; on the Docker node run `potluck-agent-setup --docker ...` again (or start the new image).
+- Check: `curl -s $H/api/nodes | jq '.nodes[] | {name, state, release}'` shows 0.1.10 everywhere, and `GET /api/needs` shows the same trusted count as before.
 
 ## 0.1.9
 

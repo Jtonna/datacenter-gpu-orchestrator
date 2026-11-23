@@ -91,7 +91,7 @@ Everything Potluck stores goes under `/srv/potluck` (set `POTLUCK_ROOT` in `.env
 
 ### 4. Put a program release in place
 
-Agents fetch their programs from the scheduler. The scheduler serves exactly one release, the one it was built as (`0.1.9` today), from `/srv/potluck/programs/0.1.9/`:
+Agents fetch their programs from the scheduler. The scheduler serves exactly one release, the one it was built as (`0.1.10` today), from `/srv/potluck/programs/0.1.10/`:
 
 - `release.json`: the release, the llama build commit and the platforms.
 - `agent/`: `potluck-agent-linux-amd64` and `potluck-starter.sh`.

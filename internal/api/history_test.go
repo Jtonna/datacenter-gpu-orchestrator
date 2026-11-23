@@ -286,3 +286,22 @@ func TestUIReadsTheseKeys(t *testing.T) {
 	}
 	_ = http.StatusOK
 }
+
+// The node filter of GET /api/history takes a node's id or its name: events
+// carry the hostname, the UI's zone panel asks by id (B1).
+func TestHistoryNodeFilterTakesIDOrName(t *testing.T) {
+	st := openStore(t)
+	e, p, _ := feedEnvOpts(t, func(o *Options) { o.History = st })
+	const id = "02:00:00:00:00:01"
+	register(t, e, id) // named console-1
+	feedHeartbeat(t, p, id, "")
+	now := time.Now().UnixMilli()
+	st.Record(history.Event{Ts: now - 3000, Type: "loadStarted", Severity: "info", Profile: "gemma", Nodes: []string{"console-1"}, Summary: "Loading gemma onto console-1."})
+	st.Record(history.Event{Ts: now - 2000, Type: "nodeAdmin", Severity: "info", Nodes: []string{id}, Summary: "An event that names the id."})
+	st.Record(history.Event{Ts: now - 1000, Type: "loadStarted", Severity: "info", Profile: "gemma", Nodes: []string{"console-9"}, Summary: "Loading gemma onto console-9."})
+	for q, want := range map[string]int{"node=" + id: 2, "node=console-1": 2, "node=console-9": 1, "node=nobody": 0} {
+		if got := len(getJSONBody(t, e, "/api/history?"+q)["events"].([]any)); got != want {
+			t.Errorf("%s: %d events, want %d", q, got, want)
+		}
+	}
+}

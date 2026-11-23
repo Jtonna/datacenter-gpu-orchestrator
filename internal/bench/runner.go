@@ -163,13 +163,14 @@ func (m *Manager) execute(ctx context.Context, q *queued) {
 		case <-fin:
 		}
 	}()
-	maxTimer := time.AfterFunc(m.o.MaxRun, func() {
+	maxRun := m.maxRun()
+	maxTimer := time.AfterFunc(maxRun, func() {
 		func() {
 			ar.mu.Lock()
 			defer supervise.Unlocked("bench", ar.mu.Unlock)
 			ar.timedOut = true
 		}()
-		ar.cancel(fmt.Sprintf("the run took longer than max_run_minutes (%s)", m.o.MaxRun))
+		ar.cancel(fmt.Sprintf("the run took longer than max_run_minutes (%s)", maxRun))
 	})
 	defer maxTimer.Stop()
 
@@ -539,4 +540,15 @@ func (x *suiteExec) runItem(idx int, it benchspec.SuiteItem) []*Step {
 	}
 	wg.Wait()
 	return out
+}
+
+// maxRun is the run time limit for a run starting now: the setting as it is
+// now (MaxRunSetting), else the limit given at start.
+func (m *Manager) maxRun() time.Duration {
+	if m.o.MaxRunSetting != nil {
+		if d := m.o.MaxRunSetting(); d > 0 {
+			return d
+		}
+	}
+	return m.o.MaxRun
 }

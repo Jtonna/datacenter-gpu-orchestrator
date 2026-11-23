@@ -80,6 +80,8 @@ type Options struct {
 	LogsOff        bool
 	LogBufferBytes int
 	JournalDir     string
+	// LogLevel is --log-level: info (default) or debug (0.1.10).
+	LogLevel string
 	// MarksFile is the start-up marks file another component writes
 	// (agentproto.StartupMarksFile on a bare install); "" reads none. The
 	// agent only reads it, for a while after its start.
@@ -102,6 +104,13 @@ type Hardware interface {
 	GPUs() []hw.GPUInfo
 	Backends(gpus []hw.GPUInfo) []string
 	MissingLibs(path string) ([]string, error)
+}
+
+// Refetcher is an Updater that can also install another build of the
+// release it runs (the registration answer's agent_sha256, 5.4). A Docker
+// install's updater is not one: its binary is the image's.
+type Refetcher interface {
+	Refetch(ctx context.Context, release, sha256 string) error
 }
 
 // Updater replaces the agent on agent_too_old (5.4).
@@ -180,6 +189,10 @@ type Agent struct {
 	opt  Options
 	deps Deps
 	log  *slog.Logger
+	// srcMu guards srcSeen: when each source address of an allowed API
+	// call was last named in the log (noteSource).
+	srcMu   sync.Mutex
+	srcSeen map[string]time.Duration
 
 	startID   string
 	startedAt time.Duration
@@ -409,17 +422,19 @@ func (a *Agent) WaitDevicesRead() { a.devRead.Lock(); a.devRead.Unlock() }
 // device for the would_not_fit check (CR-9).
 func (a *Agent) workerDevice() (agentproto.Device, bool) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	if len(a.devs) == 0 {
+	devs, platform := append([]agentproto.Device(nil), a.devs...), a.platform
+	a.mu.Unlock()
+	if len(devs) == 0 {
 		return agentproto.Device{}, false
 	}
-	backend := a.platform[strings.LastIndex(a.platform, "-")+1:]
-	for _, d := range a.devs {
+	devs = liveDevices(devs, a.Stats.Snapshot()) // livedev.go: a discrete GPU's current free figure
+	backend := platform[strings.LastIndex(platform, "-")+1:]
+	for _, d := range devs {
 		if strings.EqualFold(d.Backend, backend) {
 			return d, true
 		}
 	}
-	return a.devs[0], true
+	return devs[0], true
 }
 
 // leaveOnPurpose deregisters when the leave marker exists (CR-9): a node
@@ -960,7 +975,33 @@ func (a *Agent) accepted(ctx context.Context, ans agentproto.RegisterAnswer) {
 			a.log.Warn("stop_launch", "launch_id", *ans.StopLaunch, "err", err)
 		}
 	}
+	a.refetch(ctx, ans)
 	a.startPipeline(ctx, ans)
+}
+
+// refetch installs the agent binary Potluck serves for this release when it
+// is another build than the running one (5.4): only while no launch exists,
+// once per (release, sha256) (the updater's attempt file), and a failure
+// leaves the agent running as it is.
+func (a *Agent) refetch(ctx context.Context, ans agentproto.RegisterAnswer) {
+	r, ok := a.deps.Updater.(Refetcher)
+	if !ok || ans.AgentSHA256 == "" {
+		return
+	}
+	if a.Launch.CurrentID() != nil {
+		a.log.Info("agent re-fetch waits for the launch to end", "sha256", ans.AgentSHA256)
+		return
+	}
+	err := r.Refetch(ctx, ans.Release, ans.AgentSHA256)
+	if errors.Is(err, ErrUpdateNotRepeated) {
+		if a.updateSkipped {
+			return
+		}
+		a.updateSkipped = true
+	}
+	if err != nil {
+		a.log.Warn("agent re-fetch of this release failed; running on", "sha256", ans.AgentSHA256, "err", err)
+	}
 }
 
 func isRefusal(s string) bool {
@@ -1154,11 +1195,11 @@ func (a *Agent) Heartbeat() agentproto.Heartbeat {
 		hb.StopReason, hb.StopMessage = ls.StopReason, ls.StopMessage
 	}
 	hb.ProgramsReady, hb.ProgramsError = a.ProgramsReady(), a.programsError()
-	hb.ModelSource, hb.Devices = a.Source.State(), devs
+	st := a.Stats.Snapshot()
+	hb.ModelSource, hb.Devices = a.Source.State(), liveDevices(devs, st) // livedev.go
 	if mi, err := a.deps.Mem.MemInfo(); err == nil {
 		hb.MemAvailableMiB = mi.AvailableMiB
 	}
-	st := a.Stats.Snapshot()
 	hb.Stats = &st
 	if a.Ship != nil {
 		hb.Logs = a.Ship.Figures() // nil while nothing is shipped

@@ -44,7 +44,7 @@ import (
 )
 
 // Release is the agent's release (agentproto.Release); it can be set at
-// build time with -ldflags "-X main.Release=0.1.9".
+// build time with -ldflags "-X main.Release=0.1.10".
 var Release = agentproto.Release
 
 func main() {
@@ -136,6 +136,7 @@ func parseFlags(args []string, stderr io.Writer) (agent.Options, error) {
 	fs.StringVar(&o.DataDir, "data-dir", "", "programs and launch logs (default /dev/shm/potluck with --ram-only, else /var/lib/potluck-agent)")
 	fs.StringVar(&o.StateDir, "state-dir", "/run/potluck", "state files and the share mount point")
 	fs.StringVar(&o.ModelsDir, "models-dir", "", "model folder (default <state-dir>/models for a bare share, /models in Docker, the path for dir:)")
+	fs.StringVar(&o.LogLevel, "log-level", "info", "info or debug: debug also names, among others, the source address of each allowed API call (once per source per minute)")
 	fs.StringVar(&logs, "logs", "on", "on or off: ship this machine's log lines to Potluck when Potluck hands out a logs object")
 	fs.IntVar(&bufMiB, "log-buffer-mib", 8, "RAM for log lines not yet shipped; the oldest go first when it is full")
 	fs.StringVar(&o.BusyFile, "busy-file", "auto", "file that exists while a launch runs, for other software on the node (auto: "+busyfile.DefaultPath+" on a bare Linux install, else none; off: none)")
@@ -149,6 +150,9 @@ func parseFlags(args []string, stderr io.Writer) (agent.Options, error) {
 		o.LogsOff = true
 	default:
 		return o, fmt.Errorf("--logs %q: want on or off", logs)
+	}
+	if o.LogLevel != "info" && o.LogLevel != "debug" {
+		return o, fmt.Errorf("--log-level %q: want info or debug", o.LogLevel)
 	}
 	if bufMiB < 1 || bufMiB > 4096 {
 		return o, fmt.Errorf("--log-buffer-mib %d: want 1 to 4096", bufMiB)
@@ -260,7 +264,7 @@ func hostHealthy(ctx context.Context, addr string) bool {
 }
 
 func serve(opt agent.Options, stderr io.Writer) int {
-	log := slog.New(slog.NewTextHandler(stderr, nil))
+	log := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: logLevel(opt)}))
 	clock, err := osx.NewBootClock()
 	if err != nil {
 		log.Error("cannot run here", "err", err)
@@ -349,4 +353,12 @@ func stoppedMessage(survives bool) string {
 		return "potluck-agent stopped; a running launch unit keeps running"
 	}
 	return "potluck-agent stopped; a running launch ends with the agent (it is a child process of it)"
+}
+
+// logLevel is the level of --log-level.
+func logLevel(o agent.Options) slog.Level {
+	if o.LogLevel == "debug" {
+		return slog.LevelDebug
+	}
+	return slog.LevelInfo
 }

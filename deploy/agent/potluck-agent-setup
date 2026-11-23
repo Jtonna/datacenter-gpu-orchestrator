@@ -10,9 +10,9 @@
 #
 # A RAM-only node does not use this script; it uses potluck-starter.sh.
 #
-# Firewall: Potluck connects to this machine on TCP 50060 (agent API) and
-# 50052 (worker). Port 50061 (an agent-hosted server, phase 6) is not opened:
-# no Potluck release uses it yet; a later setup will add it. When ufw is
+# Firewall: Potluck connects to this machine on TCP 50060 (agent API), 50052
+# (worker) and 50061 (a model hosted on this machine, release 0.1.9: Potluck
+# checks its /health and sends requests there). When ufw is
 # active the script allows these ports from Potluck's address and from every --allow-from entry (rules
 # with the comment "potluck-agent", listed in /etc/potluck/firewall-rules so
 # the uninstall removes exactly those). When firewalld is active it only says
@@ -40,8 +40,8 @@ SELF=potluck-agent-setup
 ETC_DIR=${POTLUCK_AGENT_TEST_ETC:-/etc/potluck}
 MARKER=$ETC_DIR/disabled
 FW_STATE=$ETC_DIR/firewall-rules
-# 50061 (phase 6, an agent-hosted server) is opened by a later release.
-FW_PORTS="50060 50052"
+# 50061: a host launch (release 0.1.9, agent contract 6.15).
+FW_PORTS="50060 50052 50061"
 FW_COMMENT=potluck-agent
 BIN=/usr/local/bin/potluck-agent
 TEST_ROOT=${POTLUCK_AGENT_TEST_ROOT:-}
@@ -296,7 +296,7 @@ ufw_rule_ok() {
 	return 0
 }
 
-# Potluck connects to this machine: the agent API and the worker port. ufw: allow them from Potluck and every --allow-from entry.
+# Potluck connects to this machine: the agent API, the worker port and the host port. ufw: allow them from Potluck and every --allow-from entry.
 # firewalld: say what to allow. Nothing else is touched.
 setup_firewall() {
 	if [ "$FIREWALL" != 1 ]; then
