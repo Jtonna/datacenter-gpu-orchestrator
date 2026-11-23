@@ -14,6 +14,22 @@ import { h } from './dom.js';
 import { badge, table } from './ui.js';
 import { mib, gb, ctx, DASH } from './format.js';
 
+// figuresLine(row) -> "available A − floor F − headroom H = placeable P;
+// after this load about L left" for a shared-memory row (the server's own
+// figures, nothing recomputed but the sign of the adjustment), else null.
+function figuresLine(row) {
+  if (typeof row.mem_available_mib !== 'number') return null;
+  const avg = row.mem_available_reading === 'average';
+  const a = avg ? row.mem_available_avg_mib : row.mem_available_mib;
+  const adj = row.placeable_adjust_mib;
+  return h('div.note-s', { key: 'fig-' + row.id },
+    h('span.mono', row.node || row.id), ': available ', mib(a), avg ? ' (average)' : '', ' − floor ', mib(row.watchdog_floor_mib),
+    ' − headroom ', mib(row.headroom_mib),
+    typeof adj === 'number' ? [adj < 0 ? ' − ' : ' + ', mib(Math.abs(adj)), ' (', row.placeable_adjust_why, ')'] : null,
+    ' = placeable ', mib(row.placeable_mib),
+    typeof row.predicted_lowest_available_mib === 'number' ? ['; after this load about ', mib(row.predicted_lowest_available_mib), ' left (available now ', mib(row.mem_available_mib), ' less what it will take)'] : null);
+}
+
 const BASIS = { measured: 'measured on a load', peak: 'stored peak', estimated: 'estimate' };
 const basisText = b => BASIS[b] || b || DASH;
 
@@ -84,6 +100,7 @@ export function memoryTable(mem, name) {
           row.tight ? h('span.sub', `tight: ${mib(row.spare_mib)} spare`) : null) },
       ],
     }),
+    mem.nodes.map(figuresLine),
     mem.note ? h('div.note-s', mem.note.replace(/^./, c => c.toUpperCase()) + '.') : null,
     h('div.note-s', { title: 'GB = 1,024 MiB' }, mem.nodes.length ? `In total it would take ${gb(mem.nodes.reduce((s, row) => s + (row.will_take_mib || 0), 0))}.` : ''));
 }

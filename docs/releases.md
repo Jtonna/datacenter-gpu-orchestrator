@@ -6,6 +6,9 @@ What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent
 
 - **Derived needs.** A profile with no measurement of its own shape takes its need from the same model measured at another context (same slots, cache type, flash attention, extra arguments and host kind; the nearest context): the measured total with the part that grows with the window (KV cache, and the compute buffer on each device) recomputed by the estimate's formula. Not from a measurement more than 512 MiB below its own window's estimate (a sliding-window model). When the model has pairs of measurements at two contexts, each is predicted from the other and all must be within 512 MiB, else the estimate stays; without such pairs the derived figure gets the estimate margin (+5%). The basis reads "derived from the measurement at ctx N (date); …", `/api/profiles` and `/api/models` add `derived_from_ctx`, and `GET /api/needs` adds `derivation_check` (the tolerance and every pair with its error). The first load records the shape's own measurement, which replaces it. Order of sources: own measurement, then (host: node) the server-hosted one, then derived, then the estimate.
 
+- **Plan rows say what they are built from.** Per node of a plan's `memory`, additive: `mem_available_mib`, `mem_available_avg_mib`, `mem_available_reading`, `watchdog_floor_mib`, `placeable_mib`, `placeable_adjust_mib`/`placeable_adjust_why` and `predicted_lowest_available_mib` (shared-memory nodes; `placeable_mib` on every node). `free_now_mib` (after the floor) and `available_mib` (after floor and headroom) are unchanged. The Placement preview prints "available A − floor F − headroom H = placeable P; after this load about L left". See the runbook's memory section.
+- **`gpu_util_percent`** in `/api/nodes`: the busiest GPU's utilisation from the agent's stats.
+
 ## Next release: benchmark data model
 
 The heading takes the release number when it ships.

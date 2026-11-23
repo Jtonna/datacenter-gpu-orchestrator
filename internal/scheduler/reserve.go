@@ -555,6 +555,7 @@ func (c *schedCore) memoryRows(p *core.Profile, pl core.Placement, freed map[str
 		}
 		e.SpareMiB = e.AvailableMiB - e.WillTakeMiB
 		e.RemainsMiB = e.SpareMiB - e.MarginMiB
+		c.planFigures(&e, pn.ID, n, freedHere(c, pn.ID, freed)) // planfigures.go
 		rows = append(rows, e)
 	}
 	return rows, true

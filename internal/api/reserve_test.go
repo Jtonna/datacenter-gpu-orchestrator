@@ -14,7 +14,11 @@ var (
 	planMemoryKeys     = []string{"decides", "fits", "hypothetical", "nodes", "note", "placement_uses_reserved", "short_node", "shortfall_mib", "tight_fit"}
 	planMemoryNodeKeys = []string{"available_mib", "basis", "context_mib", "fill_reserve_mib", "free_avg_known", "free_avg_mib", "free_now_mib",
 		"headroom_mib", "host_overhead_mib", "id", "margin_mib", "margin_rule", "node", "remains_mib", "reserved_by", "shared", "total_mib", "weights_mib", "will_take_mib",
-		"spare_mib", "tight", "margin_short_mib"}
+		"spare_mib", "tight", "margin_short_mib", "placeable_mib"}
+	// planMemoryNodeOptionalKeys are written on a shared-memory node only
+	// (the console's reading, the floor, any adjustment, the predicted lowest).
+	planMemoryNodeOptionalKeys = []string{"mem_available_mib", "mem_available_avg_mib", "mem_available_reading", "watchdog_floor_mib",
+		"placeable_adjust_mib", "placeable_adjust_why", "predicted_lowest_available_mib"}
 	nodeReserveKeys     = []string{"reserved", "reserved_mib", "measured_used_mib", "drift_mib", "drift_warning", "free_for_new_load_mib"}
 	nodeReservationKeys = []string{"basis", "context_mib", "ctx", "fill_reserve_mib", "profile", "state", "total_mib", "weights_mib"}
 )

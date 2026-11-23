@@ -59,6 +59,14 @@ type Node struct {
 	// It is already taken off FreeMiB when the node shares system memory. 0
 	// for a node that is not an agent's.
 	WatchdogFloorMiB int
+	// MemAvailableMiB is the machine's MemAvailable as its agent last
+	// reported it, before the floor is taken off (shared-memory agent nodes;
+	// 0 otherwise); MemAvailableAvgMiB its average over
+	// defaults.free_average_window, valid when MemAvailableAvgKnown. Shown
+	// in plans only: FreeMiB and FreeAvgMiB are what placement uses.
+	MemAvailableMiB      int
+	MemAvailableAvgMiB   int
+	MemAvailableAvgKnown bool
 
 	// Settings of the matched tier.
 	Priority     int           // lower is preferred
