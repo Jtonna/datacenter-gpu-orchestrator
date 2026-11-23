@@ -87,6 +87,9 @@ type Scheduler struct {
 	runDone   chan struct{} // closed when Run has returned
 	snap      atomic.Pointer[snapshot]
 
+	// loop is the production loop health (loophealth.go).
+	loop loopHealth
+
 	bgCtx    context.Context
 	bgCancel context.CancelFunc
 	wg       sync.WaitGroup
@@ -234,10 +237,17 @@ func (s *Scheduler) Run(ctx context.Context) error {
 func (s *Scheduler) step(ev event) {
 	supervise.Point("scheduler.loop", s) // test hook: a panic here must end the process (cmd/llm-scheduler)
 	t0 := time.Now()
+	s.loop.begin(t0, ev)
 	defer func() {
-		if d := time.Since(t0).Nanoseconds(); d > s.stepMax.Load() {
+		t1 := time.Now()
+		d := t1.Sub(t0).Nanoseconds()
+		if d > s.stepMax.Load() {
 			s.stepMax.Store(d)
 			s.stepMaxEv.Store(eventName(ev))
+		}
+		warn := s.loopWarn()
+		if s.loop.end(t1, time.Duration(d), func() string { return eventName(ev) }, warn) && s.opts.History != nil {
+			s.opts.History.Record(slowStepEvent(t1, time.Duration(d), warn, eventName(ev)))
 		}
 	}()
 	s.core.handle(ev)

@@ -25,7 +25,7 @@ func (c *schedCore) quarantine(id core.NodeID, cause error) {
 	c.log.Warn("node quarantined", "node", id, "for", d, "until", ns.quarUntil, "level", ns.quarLevel, "err", cause)
 	c.record(history.TNodeQuarantined, history.Warn, "",
 		fmt.Sprintf("Node %s was quarantined for %s (level %d): %v.", c.nodeName(id), d, ns.quarLevel, cause),
-		[]string{c.nodeName(id)}, "", map[string]any{"for_s": secs(d), "level": ns.quarLevel, "cause": fmt.Sprint(cause)})
+		[]string{c.nodeName(id)}, "", map[string]any{"for_s": secs(d), "level": ns.quarLevel, "cause": fmt.Sprint(cause), "reason": ns.quarWhy.reason, "until": ns.quarUntil.UnixMilli()})
 	c.changed = true
 }
 
