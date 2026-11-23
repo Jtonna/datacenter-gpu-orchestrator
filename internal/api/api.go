@@ -67,6 +67,7 @@ type Options struct {
 	WSLoadInterval   time.Duration // least status rate while a load runs (default 1 s)
 	WSIdleInterval   time.Duration // least status rate at all (default 5 s)
 	WSPingInterval   time.Duration // ping message period (default 15 s)
+	WSRequestsTick   time.Duration // running rows on the requests topic (default 1 s)
 	WSQueue          int           // per-client send queue (default 64 frames)
 	WSWriteTimeout   time.Duration // one frame write (default 10 s)
 
@@ -630,7 +631,8 @@ func (s *Server) handleUpstream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	live := &proxy.Live{}
-	track.Started(usage.Placement{}, live) // a passthrough has no lease: its machines are not known here
+	up, _ := s.sched.UpstreamPlacement(model) // a passthrough holds no lease: the machines of the instance serving it now
+	track.Started(upstreamPlacement(up), live)
 	// Strip "/upstream/{model}" from the escaped path, keeping the rest as written.
 	esc := strings.TrimPrefix(r.URL.EscapedPath(), "/upstream/")
 	tail := "/"

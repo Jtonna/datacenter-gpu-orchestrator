@@ -420,6 +420,12 @@ curl -s $H/api/system | jq .storage.usage
 
 `storage.usage.moved_aside` names a damaged file that was moved aside at the start; `dropped` counts updates lost to a full queue. The file can be deleted while Potluck is stopped: it starts a new history.
 
+The list shows the queued and running requests first, from memory, then the finished ones; the last 64 finished are also kept in memory, so they show at once (before the writer stores them) and when `usage.db` is off.
+
+**Live rows on `/ws`.** Subscribe to the `requests` topic (`{"type":"subscribe","topics":[..., "requests"]}`; not on by default). Frames are `{"type":"requests","data":{"kind": ...}}`: `snapshot` (the first page of `/api/requests`, sent when the client subscribes), `queued`, `started` and `ended` (`request`: the row, as `/api/requests/<id>` answers it) as they happen, and `tick` (`requests`: the running rows) once a second while any request runs. With no subscriber the topic does no work at all.
+
+A running row counts `tokens_out` from the stream (an estimate, marked `live`). Tokens in, reused tokens, the prefill rate and `prefill_processed` (how many prompt tokens are read so far) are known while the request runs only when the request itself asked llama-server for them, with `"return_progress": true` (progress while the prompt is read) or `"timings_per_token": true` (from the first token on); otherwise they come with the end. `tokens_in` counts every prompt token, reused ones included, as llama-server's `usage.prompt_tokens` does; `tokens_reused` is its `prompt_tokens_details.cached_tokens` (`timings.cache_n`). `/upstream` rows name the instance and machines that served the model then (no lease is taken).
+
 ### Availability, hour by hour
 
 Every 10 s Potluck notes what each machine is doing, from what it already holds in memory (its status and the agents' membership; no machine is asked), and keeps seconds per state per UTC hour in `POTLUCK_ROOT/data/usage.db`. The Overview strip, the Zones uptime and the 7-day grid read it.

@@ -2,6 +2,16 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: live requests (slice 1b)
+
+Ships with or after slice 1a. No agent change, no `scheduler.db` or `usage.db` schema change, no new port.
+
+- **Live rows on `/ws`.** A `requests` topic, asked for by name: a snapshot when a client subscribes, then each request as it is queued, starts and ends, and once a second the running rows with live figures. The snapshot always comes before the changes made after the subscription. With no subscriber nothing is built and the tick loop sleeps; nothing runs in the core loop.
+- **Prompt figures while a request runs**, when the request asked llama-server for them (`return_progress` or `timings_per_token`): tokens in, reused tokens, prefill rate and `prefill_processed`. Progress events are not counted as output tokens, nor as the first token. A plain stream still reports the prompt only at its end.
+- **Machines for `/upstream` rows.** A passthrough row names the instance, load session and machines (with roles) that served the model, taken from the scheduler's snapshot without a lease.
+- **Just-finished rows from memory.** The last 64 finished requests are kept in memory: `/api/requests` and `/api/requests/<id>` show a request the moment it ends (before the writer stores it), and with `usage.db` off. `history_begins_at` is `null` (not a negative number) when `usage.db` is off.
+- **Token counting checked against the pinned llama-server** (`a01665d30de2`): `usage.prompt_tokens` counts every prompt token, reused ones included, and `prompt_tokens_details.cached_tokens` the reused ones; `timings.prompt_n` counts only the tokens read. Tests on the response shapes of that build.
+
 ## Scheduler image: usage store (slice 1a)
 
 Ships after the own-slope image. No agent change, no `scheduler.db` migration: everything new is kept in `usage.db`, a second file in the data folder that an older image ignores.

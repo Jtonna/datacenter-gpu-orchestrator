@@ -46,6 +46,20 @@ func leasePlacement(l *scheduler.Lease) usage.Placement {
 	return pl
 }
 
+// upstreamPlacement is the request log's placement of a passthrough request:
+// the instance that serves the model now, from the scheduler's snapshot (no
+// lease is taken).
+func upstreamPlacement(u scheduler.UpstreamPlacement) usage.Placement {
+	pl := usage.Placement{Instance: u.Instance, Session: u.Session, Nodes: make([]usage.Node, len(u.Nodes))}
+	for i, n := range u.Nodes {
+		pl.Nodes[i] = usage.Node{ID: n.ID, Name: n.Name, Role: n.Role}
+		if n.Role == scheduler.RoleHost {
+			pl.HostNode = n.ID
+		}
+	}
+	return pl
+}
+
 // resultEnd is how a forwarded request ended.
 func resultEnd(res proxy.Result) usage.End {
 	e := usage.End{Status: usage.StatusDone, HTTPStatus: res.Status, TokensIn: res.InputTokens, Reused: res.CachedTokens,
@@ -143,7 +157,7 @@ func (s *Server) handleRequests(w http.ResponseWriter, r *http.Request) {
 	}
 	st := s.reqs.Store()
 	writeJSON(w, http.StatusOK, map[string]any{"requests": page.Requests, "next": page.Next, "on": st.On(),
-		"history_begins_at": st.HistoryBeginsAt().UnixMilli()})
+		"history_begins_at": beginsAt(st)})
 }
 
 // GET /api/requests/{id}: one request, live or stored.

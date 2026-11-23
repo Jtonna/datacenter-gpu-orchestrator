@@ -130,11 +130,23 @@ func TestRequests_RecordedListedAndSummarized(t *testing.T) {
 	if len(done) != 3 { // two /v1 and the /upstream one
 		t.Fatalf("%d done rows", len(done))
 	}
+	var v1, up usage.Request
 	for _, r := range done {
 		if r.Kind == usage.KindV1 && (r.TokensIn == nil || *r.TokensIn != 5 || *r.TokensOut != 7 || *r.DecodeTPS != 12.5 ||
 			r.Instance == 0 || r.SchedID == 0 || r.StartedAt == 0 || r.Profile != "alpha") {
 			t.Fatalf("done row %+v", r)
 		}
+		if r.Kind == usage.KindV1 {
+			v1 = r
+		} else {
+			up = r
+		}
+	}
+	// The passthrough holds no lease, yet says the instance and machines
+	// that served it, as the /v1 rows do.
+	if up.Instance != v1.Instance || up.Session != v1.Session || up.SchedID != 0 || len(up.Nodes) != len(v1.Nodes) || len(up.Nodes) == 0 ||
+		up.Nodes[0] != v1.Nodes[0] || up.HostNode != v1.HostNode {
+		t.Fatalf("upstream %+v, v1 %+v", up, v1)
 	}
 	ref := listRequests(t, e, "?status=refused").Requests[0]
 	if ref.Reason != "unknown model" || ref.HTTPStatus != 404 || ref.Requested != "nope" {
@@ -264,13 +276,17 @@ func TestRequests_BlockedDiskNeverDelaysRequestsOrTheCoreLoop(t *testing.T) {
 }
 
 // With no usage store (or an unusable one) requests run as before and the
-// routes answer from memory.
+// routes answer from memory: the live rows and the last finished ones.
 func TestRequests_NoStoreStillServes(t *testing.T) {
 	e := newEnv(t, chatOK)
 	e.post("/v1/chat/completions", chat("alpha")).Body.Close()
+	eventually(t, "ended", func() bool { return e.api.reqs.Ended() == 1 })
 	p := listRequests(t, e, "")
-	if p.On || len(p.Requests) != 0 {
+	if p.On || len(p.Requests) != 1 || p.Requests[0].Status != usage.StatusDone {
 		t.Fatalf("%+v", p)
+	}
+	if raw := body(t, e.get("/api/requests")); !strings.Contains(raw, `"history_begins_at":null`) {
+		t.Fatalf("an off store has no history start: %s", raw)
 	}
 	if r := e.get("/api/requests/summary"); r.StatusCode != 200 {
 		t.Fatal(r.StatusCode)
