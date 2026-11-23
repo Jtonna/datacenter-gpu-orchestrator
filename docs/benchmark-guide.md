@@ -197,7 +197,7 @@ The runner tags its requests with `X-Bench-Run: <run id>`. Its loads and unloads
 |---|---|---|
 | Runs of a suite | `GET /api/bench/runs?suite=<id>` | `list_runs` |
 | One run, every step, phase and request | `GET /api/bench/runs/<id>` | `get_run` |
-| A table for a document | `GET /api/bench/runs/<id>/export?format=md` (also `csv`, `json`; `&detail=phases` or `&detail=turns` for CSV) | `export_run` |
+| A table for a document | `GET /api/bench/runs/<id>/export?format=md` (also `csv`, `json`; `&detail=phases`, `&detail=turns` or `&detail=tasks` for CSV) | `export_run` |
 | Points over past runs for a chart | `GET /api/bench/trends?benchmark=<id>&metric=load_s` | `get_bench_trends` |
 | The history added up | `GET /api/bench/aggregates?suite=<id>&since=30d` | `get_bench_aggregates` |
 | A benchmark's results per run | `GET /api/bench/benchmarks/<id>/results` | |
@@ -210,7 +210,7 @@ What a step records:
 - **Hardware facts**: `mem_low` (per node, the lowest available memory while loading and over the whole step; `kind` says system memory or GPU memory), `roles` (the host and the workers with each one's share of the model), and `reload_from_cache` (per node: `full`, `partial` with `cached_pct`, `none` or `unknown`).
 - **Environment** (`env`): scheduler version, configuration revision, llama build, the nodes' program versions.
 
-Trend metrics: `load_s`, `load_mb_s`, `memory_mib`, `decode_tps`, `prefill_tps`, `ttft_ms`, `unload_s`, `concurrent_wall_s`, `lowest_available_mib`, `lowest_available_gpu_mib`.
+Trend metrics: `load_s`, `load_mb_s`, `memory_mib`, `decode_tps`, `prefill_tps`, `ttft_ms`, `unload_s`, `concurrent_wall_s`, `lowest_available_mib`, `lowest_available_gpu_mib`, and for tasks phases `tasks_answered`, `task_decode_tps` (median), `task_points` and `task_points_pct` (with `&scorer=<name>`; default the step's first scorer by name). The markdown export and the phases CSV give a tasks phase's counts and each scorer's total; the markdown has a table per tasks phase; `detail=tasks` is one CSV row per task with `points_<scorer>` and `max_points_<scorer>` columns.
 
 ### The measurement record
 
@@ -236,6 +236,29 @@ Every number a step measures is also stored as one row of one shape, so that com
 History rows, oldest first, carry their run's `run_state`, `run_kind`, `release` and `config_revision`. The rows are derived from the step results when a step ends; runs stored before this release are mapped once when the scheduler starts, so their history is there too.
 
 Aggregate filters: `suite`, `benchmark`, `profile`, `since` and `until` (Unix ms, RFC 3339, or `24h`, `7d`), `limit_runs` (default 200), `env=same` (only runs made in the same environment as the newest). Per benchmark the answer has the run count, pass rate, outcome counts, and for each metric the count, minimum, median, mean, maximum, standard deviation, last, best, the change of the last run against the median of the earlier ones, a regression flag and the last 30 points. `by_model_nodes` puts the same model on 1, 2 or 3 nodes side by side; `by_model_load_mode` splits by file read or pushed.
+
+### Transcripts
+
+Every step that sends prompts saves the whole exchange as a file of its own: `<data_dir>/bench-runs/<run id>/step-NNN.json` (format `potluck-transcript/1`). Each entry is one request, conversation turn or task, in order: the messages sent (a later conversation turn holds only its new message; the earlier ones are the previous entries), the sampling, the answer and the reasoning, the status or error, tokens and timings. A step that only loads and unloads has none.
+
+| Ask | REST | MCP |
+|---|---|---|
+| Which steps have one | `GET /api/bench/runs/<id>/transcripts` | `list_run_transcripts` |
+| One step's exchange | `GET /api/bench/runs/<id>/steps/<n>/transcript` (`?format=md` for a readable chat) | `get_step_transcript` |
+
+### Reports
+
+Reports are made from the recorded data every time one is opened, by fixed templates: the same run always gives the same report, nothing is stored and nothing is judged (no baselines, no pass marks).
+
+- **Summary** (the run of a group): headline counts (steps, ran, completed, failed, refused, cancelled, skipped), the issues first, one table per metric with the average, the lowest and the highest for each benchmark use and phase, and an index linking every benchmark report.
+- **Benchmark report** (one benchmark in a run, and the report of a direct run): the inputs (recipe, profile, model, context, placement, thinking), the outcome, then one section per phase with its figures, conditions, issues and a link to the transcript.
+- **Issues** are facts only: a step failed or timed out, a placement or the scheduler refused it, a machine was excluded, the scheduler stopped during the run, requests or tasks failed.
+
+`GET /api/bench/runs/<id>/report` (MCP `get_run_report`), `?step=<n>` for a benchmark report, `&phase=<p>` for one section; `format=json` (default), `md`, or `html`: a page with a print layout, "Download as Markdown", and "Download as PDF", which uses the browser's own save as PDF. The classic run page has a Report button.
+
+### Keeping runs
+
+A finished run is kept for `bench_retention_days` (setting, default 183; `0` keeps runs for ever; YAML `bench: {retention_days: ...}`), then removed with everything of it: steps, requests, phases, measurements, task answers and scores, and its transcript folder. The check runs every hour and reads the setting each time. A run that has not finished is never removed. Pin a run to keep it: `PUT /api/bench/runs/<id>/pin` (MCP `pin_run`), `DELETE` the same path to unpin (`unpin_run`); runs carry `pinned`, and the classic run page has a Pin button. Every removal is logged: `GET /api/bench/removals` (MCP `list_run_removals`) lists the run, its kind, name, state, when it finished and was removed, why, and how many steps, measurements and file bytes went with it; the history also gets a `benchRunRemoved` event.
 
 ## 6. Compare and regressions
 
