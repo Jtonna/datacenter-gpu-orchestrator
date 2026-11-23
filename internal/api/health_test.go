@@ -650,3 +650,34 @@ func TestHealth_TickingSentencePartsAreNotChanges(t *testing.T) {
 		t.Fatalf("uptime: %q / %q", x.Text, y.Text)
 	}
 }
+
+// The Scheduler row's facts.release is the bare release string, and in the
+// ok sentence it is the exact text between "Running · release " and
+// " · up ", so the page can set it in mono without rewording the sentence.
+func TestHealth_SchedulerReleaseFact(t *testing.T) {
+	e := newEnv(t, chatOK, func(o *Options) {
+		o.Version = "v36-311213b"
+		o.taskStats = func() []supervise.TaskStats { return nil }
+	})
+	var h struct {
+		Rows []struct {
+			ID    string         `json:"id"`
+			State string         `json:"state"`
+			Text  string         `json:"text"`
+			Facts map[string]any `json:"facts"`
+		} `json:"rows"`
+	}
+	json.Unmarshal([]byte(body(t, e.get("/api/health"))), &h)
+	for _, r := range h.Rows {
+		if r.ID != "scheduler" {
+			continue
+		}
+		rel, _ := r.Facts["release"].(string)
+		if rel != "v36-311213b" || r.State != HealthOK || !strings.HasPrefix(r.Text, "Running · release "+rel+" · up ") ||
+			strings.Count(r.Text, rel) != 1 {
+			t.Fatalf("scheduler row: %+v", r)
+		}
+		return
+	}
+	t.Fatal("no scheduler row")
+}
