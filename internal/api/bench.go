@@ -123,6 +123,7 @@ func (s *Server) benchRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/bench/profiles", g(s.benchProfiles))
 	s.externalRoutes(m)
 	s.taskRoutes(m)
+	s.modelRoutes(m)
 	m.HandleFunc("GET /api/system", s.handleSystem)
 }
 
@@ -479,7 +480,13 @@ func (s *Server) runSuite(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	f := bench.RunFilter{Suite: q.Get("suite"), State: q.Get("state")}
+	f := bench.RunFilter{Suite: q.Get("suite"), State: q.Get("state"), Kind: q.Get("kind"), Benchmark: q.Get("benchmark")}
+	switch f.Kind {
+	case "", bench.RunKindSuite, bench.RunKindBenchmark:
+	default:
+		badParam(w, "kind must be suite or benchmark, got %q", f.Kind)
+		return
+	}
 	switch f.State {
 	case "", bench.RunQueued, bench.RunRunning, bench.RunPaused, bench.RunCompleted, bench.RunFailed, bench.RunCancelled, bench.RunSkipped:
 	default:

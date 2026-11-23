@@ -142,6 +142,14 @@ curl -s -X POST $B/api/bench/suites/gemma-scaling/run -d '{"note":"after the fir
 
 MCP: `run_suite` with `id`, optional `baseline`, `note` and `evict_others`. The answer is the queued run. Runs go one at a time; others queue.
 
+**One benchmark on its own.** A benchmark can also be run without a suite:
+
+```sh
+curl -s -X POST $B/api/bench/benchmarks/gemma12b-load-1/run -d '{"note":"after the firmware update"}'
+```
+
+MCP: `run_benchmark` with `id`, optional `baseline`, `note`, `only_when_idle` (default true), `idle_wait_s` (default 600) and `evict_others` (default false). It is an ordinary run with one step and `kind: "benchmark"`, `benchmark_id` naming the benchmark, an empty `suite_id` and the benchmark's title as `suite_name`. Its default baseline is the benchmark's previous completed direct run. Every other run has `kind: "suite"` (older runs read the same way). `GET /api/bench/runs?kind=benchmark&benchmark=<id>` lists the direct runs; `?benchmark=<id>` alone lists every run with a step of it. The suite aggregates leave direct runs out; the benchmark aggregates count them.
+
 - **Idle first.** Benchmarks load and unload real models. With `only_when_idle` a run does not start, and pauses between benchmarks, while another model is loaded, a request that is not the run's is in flight, or anything is queued. A model someone used stays loaded for its `ttl` (300 s by default), so a run may wait that long. After `idle_wait_s` the run ends `skipped` and keeps what it measured. Set `only_when_idle: false` only when nobody else uses the pool. With `evict_others: true` (a suite option, or `{"evict_others": true}` in the body of `POST /api/bench/suites/<id>/run` for that run only) the run does not wait for other people's models that are loaded but idle; its loads may make the scheduler unload them to make room, as any load does. Requests in flight and the queue are still waited for.
 - **Clean-up.** A benchmark that does not end ready (a failed phase, its `timeout_s`, a cancel) ends with a forced unload of its profile before the next benchmark starts, after up to 3 s for its last request to be counted as ended. An `unload` phase (or the unload before a load) that the scheduler refuses because a request is still in flight is tried again for those 3 s: the scheduler counts a request's end a moment after the answer has arrived. A request that really stays in flight still makes it fail. A benchmark that ends ready keeps what it left loaded on purpose until the end of the run.
 - **Cancel.** `POST $B/api/bench/runs/<id>/cancel` (MCP `cancel_run`) stops after the current request; a load or a hold is abandoned at once. It unloads what the run loaded.
@@ -170,6 +178,28 @@ What a step records:
 - **Environment** (`env`): scheduler version, configuration revision, llama build, the nodes' program versions.
 
 Trend metrics: `load_s`, `load_mb_s`, `memory_mib`, `decode_tps`, `prefill_tps`, `ttft_ms`, `unload_s`, `concurrent_wall_s`, `lowest_available_mib`, `lowest_available_gpu_mib`.
+
+### The measurement record
+
+Every number a step measures is also stored as one row of one shape, so that comparisons, trends and reports work for any benchmark:
+
+| Field | Meaning |
+|---|---|
+| `metric`, `value`, `of`, `unit` | What and how much, for example `load_s` 35.4 `s`, or `task_points` 12 of 17 `points` |
+| `run_id`, `step`, `phase`, `phase_type`, `phase_label` | Where it came from (`phase` is absent for a figure of the whole step) |
+| `benchmark_id`, `profile`, `model`, `node_count`, `node` | What it describes; `node` for per-machine figures |
+| `subject`, `seq` | The request (by name), turn (`turn 2`), simultaneous request or task, and which repeat |
+| `conditions` | `cold` and `cold_verified` (of the load, and of the last load before a request), `load_mode`, `generation` (`first` for warm-up, `steady`, `after_hold`), `thinking` (`seen`, `not_seen`), `memory` (`system`, `gpu`) and `window` (`load`, `step`), `scorer` |
+| `at` | When the request started, else when the phase or step started (unix ms) |
+
+`GET /api/bench/metrics` (MCP `list_bench_metrics`) lists the metrics with unit, description, the phase types that record them, whether they are per machine and whether higher is better. A failed request has no figures (its error stays in the step); a simultaneous-requests phase records `errors` of `n`. Task points are rows of `task_points`, written when a scorer posts and removed with its scores.
+
+| Ask | REST | MCP |
+|---|---|---|
+| A run's numbers | `GET /api/bench/runs/<id>/measurements` (`?step=N`, `?metric=load_s,ttft_ms`) | `get_run_measurements` |
+| The history of a metric | `GET /api/bench/measurements?benchmark=<id>&metric=ttft_ms&since=30d` (also `profile`, `model`, `node`, `kind`, `until`, `limit` up to 10000) | `query_measurements` |
+
+History rows, oldest first, carry their run's `run_state`, `run_kind`, `release` and `config_revision`. The rows are derived from the step results when a step ends; runs stored before this release are mapped once when the scheduler starts, so their history is there too.
 
 Aggregate filters: `suite`, `benchmark`, `profile`, `since` and `until` (Unix ms, RFC 3339, or `24h`, `7d`), `limit_runs` (default 200), `env=same` (only runs made in the same environment as the newest). Per benchmark the answer has the run count, pass rate, outcome counts, and for each metric the count, minimum, median, mean, maximum, standard deviation, last, best, the change of the last run against the median of the earlier ones, a regression flag and the last 30 points. `by_model_nodes` puts the same model on 1, 2 or 3 nodes side by side; `by_model_load_mode` splits by file read or pushed.
 
