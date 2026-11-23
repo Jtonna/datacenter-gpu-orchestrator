@@ -94,6 +94,13 @@ function member(st, id) {
   return null;
 }
 
+// zoneNodes(st) -> the machines drawn as zones: every view node but those an
+// operator removed from the pool (the answers keep them, by their MAC and with
+// no stats, until they are re-admitted; they are no zone).
+export function zoneNodes(st) {
+  return viewNodes(st).filter(n => n.state !== 'removed' && (agentOf(st, n) || {}).state !== 'removed');
+}
+
 // zoneOf(st, n, i) -> one zones row: its group (use, free, down, off: the
 // pills), its square and status word, what it is doing, memory, temperature,
 // chip, and its rank for "needs attention first".
@@ -278,7 +285,7 @@ registerView({
     const availSoon = throttle(() => { if (!document.hidden) readAvail(per()); }, 10000);
     const offStatus = on('status', () => {
       const st = state.status;
-      const sig = viewNodes(st).map(n => [n.id, n.online, n.holder, !!n.quarantined, n.excluded].join(':')).join('|');
+      const sig = zoneNodes(st).map(n => [n.id, n.online, n.holder, !!n.quarantined, n.excluded].join(':')).join('|');
       const hour = Math.floor(Date.now() / 3600000);
       if ((zoneSig && sig !== zoneSig) || hour !== hourAt) { availSoon(); if (hour !== hourAt) sumSoon(); }
       zoneSig = sig; hourAt = hour;
@@ -364,7 +371,7 @@ registerView({
 
     function zonesPanel(p, st) {
       if (!st) return h('section.panel.ov-zones', { key: 'zones', 'aria-label': 'Zones' }, h('div.zp-head', h('h2.sr', 'Zones')), skeleton(4));
-      const all = viewNodes(st).map((n, i) => zoneOf(st, n, i));
+      const all = zoneNodes(st).map((n, i) => zoneOf(st, n, i));
       const count = g => all.filter(z => z.group === g).length;
       const show = PILLS.some(([g]) => g === r.query.show) ? r.query.show : '';
       const sort = SORTS.some(s => s.id === r.query.sort) ? r.query.sort : 'attention';
