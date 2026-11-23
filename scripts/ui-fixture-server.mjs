@@ -68,6 +68,8 @@ const MACHINES = [
 ];
 const BIG = 'gemma-4-27b:32k', SMALL = 'gemma-4-12b:64k', QWEN = 'qwen3-14b';
 const iso = ms => new Date(ms).toISOString();
+// the scheduler's own machine, when it hosts llama-server for consoles that hold the whole model
+const SCHED = { id: 'scheduler', name: 'scheduler', role: 'host' };
 
 function status(now) {
   const t = Math.round(now / 1000) * 1000;
@@ -108,8 +110,11 @@ function status(now) {
 
 // the request rows of the mockup's table, the times relative to now
 function requests(now) {
-  const nodes = ids => ids.map(n => ({ id: mac(n), name: MACHINES.find(m => m.n === n).name, role: n === 1 ? 'host' : 'helper' }));
-  const big = nodes([1, 2, 5]);
+  // the machines that served a row, host first, each with its share of the
+  // model (a fraction); the scheduler's own machine hosting holds no share
+  const nodes = (...ns) => ns.map(([n, share], i) => Object.assign({ id: mac(n), name: MACHINES.find(m => m.n === n).name, role: i === 0 ? 'host' : 'helper' }, share ? { share } : {}));
+  const big = nodes([1, 0.4], [2, 0.35], [5, 0.25]);
+  const onSched = (...ns) => [SCHED].concat(nodes(...ns).map(n => Object.assign(n, { role: 'helper' })));
   const row = (id, o) => Object.assign({ id, kind: 'v1', stream: true, nodes: [], caller: 'anonymous', caller_kind: 'default',
     tokens_in: null, tokens_reused: null, tokens_out: null, prefill_tps: null, decode_tps: null, wait_ms: 0, duration_ms: 0 }, o,
     // a running row's prompt figures come when it ends unless requests_live_timings is on
@@ -120,8 +125,8 @@ function requests(now) {
     row(201, { status: 'running', queued_at: now - 22900, started_at: now - 22600, profile: BIG, live: true, tokens_in: 2460, prefill_tps: 412, tokens_out: 318, decode_tps: 14.1, nodes: big, duration_ms: 22600 }),
     row(200, { status: 'running', queued_at: now - 3900, started_at: now - 3800, profile: BIG, live: true, tokens_in: 705, prefill_tps: 405, tokens_out: 54, decode_tps: 14.3, nodes: big, duration_ms: 3800 }),
     row(199, { status: 'done', queued_at: now - 51500, started_at: now - 51000, ended_at: now - 8500, profile: BIG, tokens_in: 1840, prefill_tps: 418, tokens_out: 612, decode_tps: 14.4, nodes: big, duration_ms: 42500, wait_ms: 500 }),
-    row(198, { status: 'failed', reason: 'cut', message: 'the zone dropped the connection', queued_at: now - 83500, started_at: now - 83000, ended_at: now - 74800, profile: QWEN, tokens_in: 1120, prefill_tps: 598, tokens_out: 37, decode_tps: 20.8, nodes: nodes([4]), duration_ms: 8200, wait_ms: 500 }),
-    row(197, { status: 'done', queued_at: now - 77300, started_at: now - 77000, ended_at: now - 59900, profile: BIG, tokens_in: 920, prefill_tps: 409, tokens_out: 238, decode_tps: 13.9, nodes: big, duration_ms: 17100, wait_ms: 300 }),
+    row(198, { status: 'failed', reason: 'cut', message: 'the zone dropped the connection', queued_at: now - 83500, started_at: now - 83000, ended_at: now - 74800, profile: QWEN, tokens_in: 1120, prefill_tps: 598, tokens_out: 37, decode_tps: 20.8, nodes: onSched([4, 1]), duration_ms: 8200, wait_ms: 500 }),
+    row(197, { status: 'done', queued_at: now - 77300, started_at: now - 77000, ended_at: now - 59900, profile: BIG, tokens_in: 920, prefill_tps: 409, tokens_out: 238, decode_tps: 13.9, nodes: nodes([1, 0.5], [2, 0.5]), duration_ms: 17100, wait_ms: 300 }),
     row(196, { status: 'cancelled', reason: 'client_left', message: 'cancelled by the app that sent it', queued_at: now - 124200, started_at: now - 124000, ended_at: now - 120000, profile: BIG, tokens_in: 640, prefill_tps: 415, tokens_out: 21, decode_tps: 14.0, nodes: big, duration_ms: 4000, wait_ms: 200 }),
     row(195, { status: 'refused', reason: 'queue_timeout', message: 'it waited longer than the queue time limit', queued_at: now - 700000, ended_at: now - 100000, profile: QWEN, wait_ms: 600000 }),
   ];
@@ -304,8 +309,8 @@ server.on('upgrade', (req, sock) => {
           seq = setTimeout(() => {
             const now = Date.now();
             const r = requests(now).find(x => x.id === 202);
-            const node = { id: mac(4), name: 'ps5-04', role: 'host' };
-            send('requests', { kind: 'started', request: Object.assign({}, r, { status: 'running', started_at: now, wait_ms: now - r.queued_at, duration_ms: 0, nodes: [node] }) });
+            const served = [SCHED, { id: mac(4), name: 'ps5-04', role: 'helper', share: 1 }];
+            send('requests', { kind: 'started', request: Object.assign({}, r, { status: 'running', started_at: now, wait_ms: now - r.queued_at, duration_ms: 0, nodes: served }) });
           }, 4000);
         }
         reqs = want;

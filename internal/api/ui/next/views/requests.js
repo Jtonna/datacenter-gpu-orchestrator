@@ -10,7 +10,7 @@
 
 import { h } from '../core/dom.js';
 import { registerView, navigate, href } from '../core/router.js';
-import { liveView, pageHead, chips, button, runsTable, runLegend, tickRuns, skeleton, filterSelect } from '../core/ui.js';
+import { liveView, pageHead, chips, button, runsTable, runLegend, tickRuns, skeleton, filterSelect, runMachines } from '../core/ui.js';
 import { num, dateTime, clock } from '../core/format.js';
 import { requestFeed, every, onLiveTimings, liveTimings } from '../core/requests.js';
 
@@ -50,7 +50,7 @@ registerView({
             h('div', filterSelect('Model', [{ id: '', label: 'any' }].concat(models.map(m => ({ id: m, label: m }))), r.query.profile || '', v => setQuery({ profile: v }), { bare: true }),
               runLegend())),
           d.loading && !rows.length ? skeleton(6) : runsTable({ rows, now: Date.now(), zones: false, liveTimings: liveTimings(),
-            extra: [{ label: 'Zones', render: x => (x.nodes || []).length ? h('span.mono', x.nodes.map(n => n.name || n.id).join(', ')) : h('span.mut', '–') },
+            extra: [{ label: 'Zones', render: x => (x.nodes || []).length ? h('span.mono', runMachines(x.nodes)) : h('span.mut', '–') },
               { label: 'Sent by', render: x => h('span', { title: x.source_addr || null }, x.caller || '–') }],
             empty: [h('b', 'No runs here'), d.on === false ? 'The request log is off on this scheduler: only live runs show.' : 'Nothing matches these filters.'] }),
           h('div.rq-foot',

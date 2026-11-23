@@ -742,6 +742,25 @@ export function runLength(ms) {
 const rateText = v => (v == null || !(v > 0) ? DASH : v >= 100 ? num(v) : num(v, 1));
 const firstUp = t => (t ? t.charAt(0).toUpperCase() + t.slice(1) : t);
 
+// roleShare(role, share) -> "Host 50%", "Helper 100%", or "Host" alone when
+// the machine holds no share of the model (share absent or 0: the
+// scheduler's own machine hosting while the others hold the whole model).
+// share is a fraction of the model (0.5 is 50 %), as /api/status and the
+// request log carry it. An unknown role gives ''.
+const ROLES = { host: 'Host', helper: 'Helper' };
+export function roleShare(role, share) {
+  const r = ROLES[role];
+  if (!r) return '';
+  return typeof share === 'number' && share > 0 ? `${r} ${Math.round(share * 100)}%` : r;
+}
+
+// runMachines(nodes) -> "node-a Host 50%, node-b Helper 50%": the machines
+// that served a request (its nodes, host first), each with its role and
+// share; '' when there are none.
+export function runMachines(nodes) {
+  return (nodes || []).map(n => [n.name || n.id, roleShare(n.role, n.share)].filter(Boolean).join(' ')).join(', ');
+}
+
 // runWhy(row) -> the tooltip of a row's status: what happened, in words.
 export function runWhy(r) {
   const msg = r.message || '';

@@ -150,7 +150,7 @@ func TestUINextOverview(t *testing.T) {
 		map[string]any{"name": "overview: all time", "route": "#/overview?period=all", "status": st, "expect": []string{"per day"}, "none": []string{"div.stepper"}},
 		map[string]any{"name": "overview: history begins", "route": "#/overview?date=2020-01-06", "status": st, "expect": []string{"History begins at"}},
 		// the requests list and the report it links to
-		map[string]any{"name": "requests list", "route": "#/requests", "status": st, "expect": []string{"Runs", "Refused", "Sent by", "node-a, node-b", "Older", "Newer"}},
+		map[string]any{"name": "requests list", "route": "#/requests", "status": st, "expect": []string{"Runs", "Refused", "Sent by", "node-a Host, node-b Helper", "Older", "Newer"}},
 		map[string]any{"name": "24-hour report", "route": "#/report", "status": st, "expect": []string{"24-hour report", "Failed and refused runs", "Zones, hour by hour", "Print"}},
 	}})
 
@@ -201,6 +201,32 @@ func TestUINextOverviewRunningRowBlanks(t *testing.T) {
 				map[string]any{"type": "requests", "data": map[string]any{"kind": "tick", "requests": []any{running(50, 777, 12.5)}}},
 			},
 			"expect": []string{"777", "12.5"}, "absent": []string{"null", "NaN", "undefined"}, "has": dashes("50")},
+	}})
+}
+
+// A request row's machines with their role and share: share is a fraction
+// of the model (0.5 is 50 %), the host first. A host with no share (the
+// scheduler's own machine hosting while consoles hold the whole model) is
+// "Host" with no percent, never "Host 0%".
+func TestUINextRunShares(t *testing.T) {
+	now := time.Now()
+	st := ovStatus(now)
+	ms := func(d time.Duration) int64 { return now.Add(d).UnixMilli() }
+	done := func(id int, nodes []any) map[string]any {
+		return map[string]any{"id": id, "kind": "v1", "status": "done", "profile": "alpha", "queued_at": ms(-time.Minute), "started_at": ms(-time.Minute),
+			"duration_ms": 5000, "tokens_in": 100, "prefill_tps": 400.0, "tokens_out": 50, "decode_tps": 14.0, "nodes": nodes}
+	}
+	rows := []any{
+		done(61, []any{map[string]any{"id": "sched", "name": "sched-host", "role": "host"}, map[string]any{"id": ovC, "name": "node-c", "role": "helper", "share": 1}}),
+		done(62, []any{map[string]any{"name": "node-a", "role": "host", "share": 0.5}, map[string]any{"name": "node-b", "role": "helper", "share": 0.5}}),
+		done(63, []any{map[string]any{"id": "sched", "name": "sched-host", "role": "host"}, map[string]any{"id": ovA, "name": "node-a", "role": "helper", "share": 0.5}, map[string]any{"id": ovB, "name": "node-b", "role": "helper", "share": 0.5}}),
+	}
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": ovFetch(now, rows, true), "cases": []any{
+		map[string]any{"name": "shares: the requests list", "route": "#/requests", "status": st,
+			"expect": []string{"sched-host Host, node-c Helper 100%", "node-a Host 50%, node-b Helper 50%", "sched-host Host, node-a Helper 50%, node-b Helper 50%"},
+			"absent": []string{"Host 0%", "Helper 0%", "NaN"}},
+		map[string]any{"name": "shares: the zones toggle says them", "route": "#/overview", "status": st,
+			"has": []string{"button[data-zones='61'][title*=100%]", "button[data-zones='62'][title*=50%]"}},
 	}})
 }
 

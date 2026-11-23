@@ -30,7 +30,7 @@ import { h } from '../core/dom.js';
 import { registerView, navigate, href } from '../core/router.js';
 import { state, on } from '../core/store.js';
 import * as api from '../core/api.js';
-import { liveView, segmented, dateStepper, button, chips, dropButton, onDropChange, zoneStatus, colourKey, availStrip, availClass, tokensChart, tokensLegend,
+import { roleShare, runMachines, liveView, segmented, dateStepper, button, chips, dropButton, onDropChange, zoneStatus, colourKey, availStrip, availClass, tokensChart, tokensLegend,
   runsTable, runLegend, tickRuns, groupClass, dialog, toggle, skeleton } from '../core/ui.js';
 import { num, gb, gbNum, dur, clock, dateTime, DASH } from '../core/format.js';
 import { viewNodes } from '../core/status.js';
@@ -79,7 +79,6 @@ function customize(onSave) {
 
 // ---------- zones: the state of each machine in the design's words ----------
 
-const ROLE = { host: 'Host', helper: 'Helper' };
 const ASIDE = { preflight_failed: 'Load failed', agent_unreachable: 'Agent not reachable', worker_hung: 'Worker stopped answering', node_lost: 'Lost for a while' };
 const DEFAULT_ACTOR = 'anonymous'; // the default user of the site (no login): everyone using it is "you"
 const byWhom = actor => (!actor ? '' : actor === DEFAULT_ACTOR || actor === api.getActor() ? ' by you' : ' by ' + actor);
@@ -142,9 +141,9 @@ export function zoneOf(st, n, i) {
   }
   if (inst || n.holder) {
     const prof = (inst && inst.profile) || n.holder;
-    const role = m && ROLE[m.role] ? ROLE[m.role] + (m.share != null ? ` ${num(m.share * 100)}%` : '') : null;
+    const role = m ? roleShare(m.role, m.share) || null : null;
     return Object.assign(base, { group: 'use', square: 'use4', label: 'In use', rank: 2,
-      title: m && m.share != null ? 'Its share of the model: the split the load was given' : null,
+      title: m && m.share > 0 ? 'Its share of the model: the split the load was given' : null,
       doing: [role ? [role, sep] : null, mono(prof), paused ? h('span.mut', ' · not accepting models') : null] });
   }
   if (paused) {
@@ -356,7 +355,7 @@ registerView({
       const word = { day: 'on this day', week: 'in this week', month: 'in this month', all: 'yet' }[p.period];
       const body = feed.data.loading && !rows.length ? skeleton(5)
         : runsTable({ rows, now: Date.now(), liveTimings: liveTimings(), pin: pin || null, onPick: pick, onOver: over, onOut: out,
-          zonesTitle: x => { const ids = st ? zonesOf(st, x) : []; return ids.length ? 'Show its zones: ' + ids.map(id => nameOf(st, id)).join(', ') : 'No zone is known for it'; },
+          zonesTitle: x => { if ((x.nodes || []).length) return 'Show its zones: ' + runMachines(x.nodes); const ids = st ? zonesOf(st, x) : []; return ids.length ? 'Show its zones: ' + ids.map(id => nameOf(st, id)).join(', ') : 'No zone is known for it'; },
           empty: [h('b', 'No runs ' + word), feed.data.on === false ? 'The request log is off on this scheduler.' : 'Requests sent to the scheduler appear here as they arrive.'] });
       return h('section', { key: 'requests', class: 'panel ov-req' + (solo ? ' solo' : ''), 'aria-label': 'Runs' },
         h('div.wh', h('h2', 'Runs'), runLegend(allLink)),

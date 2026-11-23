@@ -68,7 +68,8 @@ next/core/requests.js  requestFeed(): the "requests" topic (snapshot, queued/sta
 next/core/ui.js        the classic components plus panel, segmented, filterSelect, searchField,
                        zoneStatus, colourKey, availStrip, runStatus, sidePanel; for the Overview:
                        dateStepper, dropButton, tokensChart, tokensLegend, runsTable, runLegend,
-                       runIcon, runWhy, tickRuns (100 ms run clock), availClass, groupClass
+                       runIcon, runWhy, tickRuns (100 ms run clock), availClass, groupClass,
+                       roleShare and runMachines ("Host 50%": a role and a share of the model)
 next/views/overview.js Overview, the home page (Main board): Tokens, Requests (the design's "Runs",
                        Q2), Zones with the hour-by-hour strip; Zones toggles outline a request's
                        zones; Customize (Q1, kept in localStorage potluck.overview.layout)
