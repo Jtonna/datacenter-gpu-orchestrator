@@ -663,7 +663,9 @@ func ExpandGroup(s *Suite, look Lookup, groups GroupLookup) (*Suite, error) {
 					b, ok = look(it.Ref)
 				}
 				if !ok {
-					return fmt.Errorf("%s: %q is not a benchmark", where, it.Ref)
+					// Left for the caller to report, as before groups existed.
+					out.Benchmarks = append(out.Benchmarks, SuiteItem{Ref: it.Ref})
+					continue
 				}
 			}
 			if !b.IsRecipe() {

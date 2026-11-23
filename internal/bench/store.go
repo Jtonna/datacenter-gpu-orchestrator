@@ -268,6 +268,12 @@ CREATE INDEX measurements_metric ON measurements (metric, benchmark_id, at);
 CREATE INDEX measurements_profile ON measurements (profile, metric, at);
 CREATE TABLE bench_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `},
+	{"measurements of recipes: variant, context, placement", `
+ALTER TABLE measurements ADD COLUMN variant TEXT NOT NULL DEFAULT '';
+ALTER TABLE measurements ADD COLUMN ctx INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE measurements ADD COLUMN placement TEXT NOT NULL DEFAULT '';
+CREATE INDEX measurements_variant ON measurements (variant, metric, at);
+`},
 }
 
 type job struct {
@@ -768,8 +774,8 @@ func (s *Store) ListRuns(f RunFilter) ([]Run, error) {
 		args = append(args, f.Kind)
 	}
 	if f.Benchmark != "" {
-		q += ` AND ((kind='benchmark' AND target_id=?) OR id IN (SELECT run_id FROM run_steps WHERE benchmark_id=?))`
-		args = append(args, f.Benchmark, f.Benchmark)
+		q += ` AND ((kind='benchmark' AND target_id=?) OR id IN (SELECT run_id FROM run_steps WHERE benchmark_id=? OR json_extract(spec, '$.recipe')=?))`
+		args = append(args, f.Benchmark, f.Benchmark, f.Benchmark)
 	}
 	if f.State != "" {
 		q += ` AND state=?`

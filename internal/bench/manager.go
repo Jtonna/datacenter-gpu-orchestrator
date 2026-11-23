@@ -341,7 +341,32 @@ func newRunID(now time.Time) string {
 	return "run-" + now.UTC().Format("20060102T150405") + "-" + hex.EncodeToString(b[:])
 }
 
+// lookBenchmark and lookGroup read the stored benchmarks and groups (suites).
+func (m *Manager) lookBenchmark(id string) (*benchspec.Benchmark, bool) {
+	sb, err := m.o.Store.GetBenchmark(id)
+	if err != nil {
+		return nil, false
+	}
+	return sb.Spec, true
+}
+
+func (m *Manager) lookGroup(id string) (*benchspec.Suite, bool) {
+	ss, err := m.o.Store.GetSuite(id)
+	if err != nil {
+		return nil, false
+	}
+	return ss.Spec, true
+}
+
+// resolve expands the group (nested groups, recipes with their inputs,
+// matrix entries: benchspec.ExpandGroup) and reads every benchmark it names.
+// The plan keeps the expanded list: what the run executes.
 func (m *Manager) resolve(s *benchspec.Suite) (*runPlan, error) {
+	flat, err := benchspec.ExpandGroup(s, m.lookBenchmark, m.lookGroup)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
+	}
+	s = flat
 	plan := &runPlan{Suite: s, Benchmarks: map[string]*benchspec.Benchmark{}}
 	var errs []error
 	need := func(id string) *benchspec.Benchmark {
@@ -384,7 +409,7 @@ func (m *Manager) resolve(s *benchspec.Suite) (*runPlan, error) {
 				}
 			}
 		}
-		if !b.IsParallel() && m.o.ProfileOK != nil && !m.o.ProfileOK(b.Profile) {
+		if !b.IsParallel() && b.Applied == nil && m.o.ProfileOK != nil && !m.o.ProfileOK(b.Profile) {
 			errs = append(errs, fmt.Errorf("benchmark %q: profile %q does not exist (any more)", b.ID, b.Profile))
 		}
 	}
@@ -426,6 +451,9 @@ type BenchRunOptions struct {
 	EvictOthers  *bool
 	OnlyWhenIdle *bool
 	IdleWaitS    *int
+	// Inputs fill in or override a recipe's default inputs (refused for a
+	// benchmark with a fixed profile).
+	Inputs *benchspec.Inputs
 }
 
 // EnqueueBenchmark queues a run of one benchmark on its own (data model step
@@ -440,7 +468,7 @@ func (m *Manager) EnqueueBenchmark(id string, o BenchRunOptions) (*Run, error) {
 		return nil, fmt.Errorf("%w: idle_wait_s must be 0 to 86400", ErrInvalid)
 	}
 	zero := 0
-	spec := &benchspec.Suite{Name: sb.Spec.Title(), Benchmarks: []benchspec.SuiteItem{{Ref: id}}, CooldownS: &zero,
+	spec := &benchspec.Suite{Name: sb.Spec.Title(), Benchmarks: []benchspec.SuiteItem{{Ref: id, Inputs: o.Inputs}}, CooldownS: &zero,
 		OnlyWhenIdle: o.OnlyWhenIdle, IdleWaitS: o.IdleWaitS, EvictOthers: o.EvictOthers}
 	return m.enqueue(spec, &Run{Kind: RunKindBenchmark, BenchmarkID: id, SuiteName: sb.Spec.Title()}, o.Baseline, o.Note, "")
 }

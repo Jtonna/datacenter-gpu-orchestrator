@@ -18,7 +18,7 @@ import (
 
 // MeasureVersion is the version of the mapping. When it is above the one a
 // database was mapped with, every stored run is mapped again at open.
-const MeasureVersion = 1
+const MeasureVersion = 2
 
 // Measurement is one number of a run.
 type Measurement struct {
@@ -26,12 +26,18 @@ type Measurement struct {
 	RunID string `json:"run_id"`
 	// Where it came from: the step (its index in the run) and the phase
 	// (nil: the step as a whole, or a step written before phases existed).
-	Step        int    `json:"step"`
-	StepID      int64  `json:"-"`
-	Phase       *int   `json:"phase,omitempty"`
-	PhaseType   string `json:"phase_type,omitempty"`
-	PhaseLabel  string `json:"phase_label,omitempty"`
+	Step       int    `json:"step"`
+	StepID     int64  `json:"-"`
+	Phase      *int   `json:"phase,omitempty"`
+	PhaseType  string `json:"phase_type,omitempty"`
+	PhaseLabel string `json:"phase_label,omitempty"`
+	// BenchmarkID is the benchmark, the recipe for the use of a recipe;
+	// Variant is then the use (the step's expanded benchmark id), and Ctx and
+	// Placement are its inputs.
 	BenchmarkID string `json:"benchmark_id"`
+	Variant     string `json:"variant,omitempty"`
+	Ctx         int    `json:"ctx,omitempty"`
+	Placement   string `json:"placement,omitempty"`
 	// What it describes: the profile, its model file, the machines it was
 	// spread over, the machine when the number is per machine, and the
 	// request, turn or task it belongs to (Seq: which repeat, 1-based).
@@ -101,8 +107,32 @@ func MetricNames() map[string]bool {
 }
 
 // MeasurementsOf maps a step's results into measurement rows (task points
-// excluded: they arrive with the scores). A skipped step has none.
+// excluded: they arrive with the scores). A skipped step has none. The use
+// of a recipe is recorded under the recipe, with its variant and inputs.
 func MeasurementsOf(st *Step) []Measurement {
+	out := measurementsOf(st)
+	if st == nil || st.Spec == nil || st.Spec.Recipe == "" {
+		return out
+	}
+	for i := range out {
+		m := &out[i]
+		m.BenchmarkID, m.Variant = st.Spec.Recipe, st.BenchmarkID
+		if in := st.Spec.Applied; in != nil {
+			m.Ctx, m.Placement = in.Ctx, in.Place().String()
+			if in.Thinking != nil {
+				c := map[string]any{}
+				for k, v := range m.Conditions {
+					c[k] = v
+				}
+				c["thinking_input"] = map[bool]string{true: "on", false: "off"}[*in.Thinking]
+				m.Conditions = c
+			}
+		}
+	}
+	return out
+}
+
+func measurementsOf(st *Step) []Measurement {
 	if st == nil || st.Outcome == OutcomeSkipped || st.State == StepSkipped {
 		return nil
 	}
@@ -372,14 +402,14 @@ func MeasurementsOf(st *Step) []Measurement {
 
 // ---- storage ----
 
-const measureCols = `id, run_id, step_id, step_idx, phase_idx, phase_type, phase_label, benchmark_id, profile, model, node_count, node, subject, seq, metric, value, of_value, unit, conditions, at`
+const measureCols = `id, run_id, step_id, step_idx, phase_idx, phase_type, phase_label, benchmark_id, profile, model, node_count, node, subject, seq, metric, value, of_value, unit, conditions, at, variant, ctx, placement`
 
 func insertMeasurements(tx *sql.Tx, ms []Measurement) error {
 	if len(ms) == 0 {
 		return nil
 	}
-	stmt, err := tx.Prepare(`INSERT INTO measurements (run_id, step_id, step_idx, phase_idx, phase_type, phase_label, benchmark_id, profile, model, node_count, node, subject, seq, metric, value, of_value, unit, conditions, at)
-	  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+	stmt, err := tx.Prepare(`INSERT INTO measurements (run_id, step_id, step_idx, phase_idx, phase_type, phase_label, benchmark_id, profile, model, node_count, node, subject, seq, metric, value, of_value, unit, conditions, at, variant, ctx, placement)
+	  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		return err
 	}
@@ -400,7 +430,7 @@ func insertMeasurements(tx *sql.Tx, ms []Measurement) error {
 			cond = string(b)
 		}
 		if _, err := stmt.Exec(m.RunID, m.StepID, m.Step, phase, m.PhaseType, m.PhaseLabel, m.BenchmarkID, m.Profile, m.Model, m.NodeCount, m.Node,
-			m.Subject, m.Seq, m.Metric, m.Value, of, m.Unit, cond, m.At); err != nil {
+			m.Subject, m.Seq, m.Metric, m.Value, of, m.Unit, cond, m.At, m.Variant, m.Ctx, m.Placement); err != nil {
 			return err
 		}
 	}
@@ -425,7 +455,8 @@ func refreshTaskPoints(tx *sql.Tx, runID string) error {
 		return err
 	}
 	rows, err := tx.Query(`SELECT t.step_id, s.idx, t.phase_idx, s.benchmark_id, s.profile, s.model_file, s.node_count, t.task_id, t.started_at,
-	  t.set_id, t.set_version, c.scorer, c.scorer_version, c.points, c.max_points, c.updated_at
+	  t.set_id, t.set_version, c.scorer, c.scorer_version, c.points, c.max_points, c.updated_at,
+	  COALESCE(json_extract(s.spec, '$.recipe'), ''), COALESCE(json_extract(s.spec, '$.applied_inputs.ctx'), 0), COALESCE(json_extract(s.spec, '$.applied_inputs.placement'), '')
 	  FROM task_scores c JOIN task_results t ON t.id=c.result_id JOIN run_steps s ON s.id=t.step_id WHERE c.run_id=? ORDER BY s.idx, t.phase_idx, t.seq, c.scorer`, runID)
 	if err != nil {
 		return err
@@ -437,10 +468,16 @@ func refreshTaskPoints(tx *sql.Tx, runID string) error {
 		var setID, scorer, version string
 		var max float64
 		var updated int64
+		var recipe string
 		if err := rows.Scan(&m.StepID, &m.Step, &phase, &m.BenchmarkID, &m.Profile, &m.Model, &m.NodeCount, &m.Subject, &m.At,
-			&setID, &setVersion, &scorer, &version, &m.Value, &max, &updated); err != nil {
+			&setID, &setVersion, &scorer, &version, &m.Value, &max, &updated, &recipe, &m.Ctx, &m.Placement); err != nil {
 			rows.Close()
 			return err
+		}
+		if recipe != "" {
+			m.BenchmarkID, m.Variant = recipe, m.BenchmarkID
+		} else {
+			m.Ctx, m.Placement = 0, ""
 		}
 		m.RunID, m.Phase, m.PhaseType, m.Metric, m.Unit, m.Of = runID, &phase, "tasks", "task_points", "points", &max
 		m.Conditions = map[string]any{"scorer": scorer, "task_set": setID + "@" + strconv.Itoa(setVersion)}
@@ -465,7 +502,7 @@ func scanMeasurement(sc interface{ Scan(...any) error }, extra ...any) (Measurem
 	var of sql.NullFloat64
 	var cond sql.NullString
 	dst := append([]any{&m.ID, &m.RunID, &m.StepID, &m.Step, &phase, &m.PhaseType, &m.PhaseLabel, &m.BenchmarkID, &m.Profile, &m.Model, &m.NodeCount,
-		&m.Node, &m.Subject, &m.Seq, &m.Metric, &m.Value, &of, &m.Unit, &cond, &m.At}, extra...)
+		&m.Node, &m.Subject, &m.Seq, &m.Metric, &m.Value, &of, &m.Unit, &cond, &m.At, &m.Variant, &m.Ctx, &m.Placement}, extra...)
 	if err := sc.Scan(dst...); err != nil {
 		return m, err
 	}
@@ -532,6 +569,9 @@ type MeasureFilter struct {
 	Model     string
 	Node      string
 	Kind      string // suite or benchmark runs only
+	Variant   string // one use of a recipe (an expanded benchmark id)
+	Placement string // a recipe's placement input, as written ("any:2")
+	Ctx       int    // a recipe's context input
 	Metrics   []string
 	Since     int64 // unix ms, 0: no bound
 	Until     int64
@@ -553,7 +593,12 @@ type MeasurementRow struct {
 // QueryMeasurements lists measurements across runs, oldest first.
 func (s *Store) QueryMeasurements(f MeasureFilter) ([]MeasurementRow, error) {
 	where, args := `1=1`, []any{}
-	for _, c := range []struct{ col, v string }{{"m.run_id", f.Run}, {"m.benchmark_id", f.Benchmark}, {"m.profile", f.Profile}, {"m.model", f.Model}, {"m.node", f.Node}, {"r.kind", f.Kind}} {
+	if f.Ctx > 0 {
+		where += ` AND m.ctx=?`
+		args = append(args, f.Ctx)
+	}
+	for _, c := range []struct{ col, v string }{{"m.run_id", f.Run}, {"m.benchmark_id", f.Benchmark}, {"m.profile", f.Profile}, {"m.model", f.Model}, {"m.node", f.Node}, {"r.kind", f.Kind},
+		{"m.variant", f.Variant}, {"m.placement", f.Placement}} {
 		if c.v != "" {
 			where += ` AND ` + c.col + `=?`
 			args = append(args, c.v)

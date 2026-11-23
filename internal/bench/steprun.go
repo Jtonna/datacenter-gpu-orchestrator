@@ -3,7 +3,9 @@ package bench
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -138,6 +140,9 @@ func (x *suiteExec) runBenchmark(b *benchspec.Benchmark, idx int, group string, 
 	br.watch.start(m.o.MemSample, m.o.API.Status)
 	br.track = x.startTrack(b, idx)
 	st.ModelFile = br.track.modelFile
+	if st.ModelFile == "" && b.Applied != nil {
+		st.ModelFile = b.Applied.Model
+	}
 	defer func() {
 		if g != nil {
 			g.arrive(member)
@@ -145,6 +150,20 @@ func (x *suiteExec) runBenchmark(b *benchspec.Benchmark, idx int, group string, 
 		br.cleanUp()
 		x.finish(br)
 	}()
+
+	// The use of a recipe: make its profile from the inputs first. A
+	// placement that cannot be met now is a refusal, a result of its own.
+	if b.Applied != nil {
+		if err := x.makeProfile(ctx, b); err != nil {
+			if errors.Is(err, ErrPlacement) {
+				st.Reason = strings.TrimPrefix(err.Error(), ErrPlacement.Error()+": ")
+				br.fail(OutcomeRefused, st.Reason)
+			} else {
+				br.fail(OutcomeError, err.Error())
+			}
+			return st
+		}
+	}
 
 	// What the scheduler says it would do.
 	plan, err := m.o.API.Plan(ctx, b.Profile)
