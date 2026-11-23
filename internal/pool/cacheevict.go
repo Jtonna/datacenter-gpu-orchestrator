@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // CacheEvictTimeout bounds one POST /cache/evict: counting the pages of a
@@ -34,21 +35,23 @@ type CacheEvictResult struct {
 // agent that does not advertise file_cache_evict, is not asked.
 func (p *Pool) EvictFileCache(ctx context.Context, id, file string) CacheEvictResult {
 	res := CacheEvictResult{ID: id}
-	p.mu.Lock()
-	a := p.agents[id]
-	var base string
-	gone := ""
-	if a != nil {
-		res.Name, res.Capable = a.reg.Name, a.reg.HasCapability(agentproto.CapFileCacheEvict)
-		base = p.agentBase(a)
-		switch {
-		case a.left:
-			gone = "has left the pool"
-		case a.lost:
-			gone = "is lost (no heartbeat)"
+	var a *agent
+	var base, gone string
+	func() {
+		p.mu.Lock()
+		defer supervise.Unlocked("pool", p.mu.Unlock)
+		a = p.agents[id]
+		if a != nil {
+			res.Name, res.Capable = a.reg.Name, a.reg.HasCapability(agentproto.CapFileCacheEvict)
+			base = p.agentBase(a)
+			switch {
+			case a.left:
+				gone = "has left the pool"
+			case a.lost:
+				gone = "is lost (no heartbeat)"
+			}
 		}
-	}
-	p.mu.Unlock()
+	}()
 	switch {
 	case a == nil:
 		res.Reason, res.Message = "unknown_node", "no agent is registered with this id"

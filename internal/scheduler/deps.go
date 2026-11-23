@@ -12,6 +12,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/estimate"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/gguf"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/placer"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // Clock is the time source of the scheduler. The core only calls Now; the
@@ -106,7 +107,7 @@ type ConfigNeeds struct {
 // Need implements NeedProvider.
 func (c *ConfigNeeds) Need(p *core.Profile) (NeedInfo, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	defer supervise.Unlocked("scheduler", c.mu.Unlock)
 	if info, ok := c.cache[p.Name]; ok {
 		return info, nil
 	}

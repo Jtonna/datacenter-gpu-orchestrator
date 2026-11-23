@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/release"
@@ -13,6 +14,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/needstore"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // Learned needs across a restart (design 7.2a). What a load measured, or what
@@ -299,9 +301,20 @@ type needWriter struct {
 	pending map[string]needOp
 	order   []string
 
-	wake chan struct{}
-	stop chan struct{}
-	done chan struct{}
+	wake   chan struct{}
+	stop   chan struct{}
+	done   chan struct{}
+	cancel context.CancelFunc
+}
+
+// start runs the writer. A failure loses only the batch flush had taken (the
+// store keeps the last good figures and the core's are untouched); the
+// writer runs again.
+func (w *needWriter) start() {
+	var ctx context.Context
+	ctx, w.cancel = context.WithCancel(context.Background())
+	supervise.Go(ctx, supervise.Spec{Name: "scheduler.needs", Policy: supervise.Restart, Done: func() { close(w.done) }},
+		func(context.Context) { w.run() })
 }
 
 func newNeedWriter(st NeedStore, log *slog.Logger) *needWriter {
@@ -311,23 +324,25 @@ func newNeedWriter(st NeedStore, log *slog.Logger) *needWriter {
 
 // queue adds ops and wakes the writer. It never blocks on the database.
 func (w *needWriter) queue(ops []needOp) {
-	w.mu.Lock()
-	for _, op := range ops {
-		if op.rec == nil { // a delete of the shape makes its queued writes moot
-			for k, q := range w.pending {
-				if q.shape == op.shape && q.rec != nil {
-					delete(w.pending, k)
-					w.order = slices.DeleteFunc(w.order, func(o string) bool { return o == k })
+	func() {
+		w.mu.Lock()
+		defer supervise.Unlocked("scheduler", w.mu.Unlock)
+		for _, op := range ops {
+			if op.rec == nil { // a delete of the shape makes its queued writes moot
+				for k, q := range w.pending {
+					if q.shape == op.shape && q.rec != nil {
+						delete(w.pending, k)
+						w.order = slices.DeleteFunc(w.order, func(o string) bool { return o == k })
+					}
 				}
 			}
+			k := op.key()
+			if _, ok := w.pending[k]; !ok {
+				w.order = append(w.order, k)
+			}
+			w.pending[k] = op
 		}
-		k := op.key()
-		if _, ok := w.pending[k]; !ok {
-			w.order = append(w.order, k)
-		}
-		w.pending[k] = op
-	}
-	w.mu.Unlock()
+	}()
 	select {
 	case w.wake <- struct{}{}:
 	default:
@@ -335,20 +350,23 @@ func (w *needWriter) queue(ops []needOp) {
 }
 
 func (w *needWriter) flush() {
-	w.mu.Lock()
-	ops := make([]needOp, 0, len(w.order))
-	for _, name := range w.order {
-		ops = append(ops, w.pending[name])
-	}
-	w.pending, w.order = map[string]needOp{}, nil
-	w.mu.Unlock()
+	var ops []needOp
+	func() {
+		w.mu.Lock()
+		defer supervise.Unlocked("scheduler", w.mu.Unlock)
+		ops = make([]needOp, 0, len(w.order))
+		for _, name := range w.order {
+			ops = append(ops, w.pending[name])
+		}
+		supervise.Point("scheduler.needs_flush", w) // test hook, under w.mu
+		w.pending, w.order = map[string]needOp{}, nil
+	}()
 	applyNeedOps(w.st, ops, w.log)
 }
 
 // run writes until close; what is queued when close is called is written
 // before run returns.
 func (w *needWriter) run() {
-	defer close(w.done)
 	for {
 		select {
 		case <-w.wake:
@@ -363,6 +381,9 @@ func (w *needWriter) run() {
 // close stops the writer after a last flush and waits for it.
 func (w *needWriter) close() {
 	close(w.stop)
+	if w.cancel != nil {
+		w.cancel() // a writer waiting to restart does not hold the stop up
+	}
 	<-w.done
 }
 

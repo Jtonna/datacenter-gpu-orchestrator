@@ -14,6 +14,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // MaxQueuedRuns bounds the run queue.
@@ -100,6 +101,7 @@ type Manager struct {
 	sched    map[string]*schedState
 	wake     chan struct{}
 	done     chan struct{}
+	running  *queued // the run the loop executes (the loop's goroutine only; recoverRun reads it)
 	started  bool
 }
 
@@ -176,31 +178,47 @@ func (m *Manager) Seed(bms []*benchspec.Benchmark, suites []*benchspec.Suite) {
 
 // Start runs the queue and the schedule until ctx ends or Stop is called.
 func (m *Manager) Start(ctx context.Context) {
-	m.mu.Lock()
-	if m.started {
-		m.mu.Unlock()
+	if !m.markStarted() {
 		return
 	}
+	// A failure fails the run it was executing (its models are unloaded on
+	// the way out), keeps the queue, and the loop starts again (isolation.go).
+	supervise.Go(ctx, supervise.Spec{Name: "bench.manager", Policy: supervise.Restart, Rebuild: m.recoverRun,
+		Done: func() { close(m.done) }}, m.loop)
+}
+
+// markStarted: false when the manager runs already.
+func (m *Manager) markStarted() bool {
+	m.mu.Lock()
+	defer supervise.Unlocked("bench", m.mu.Unlock)
+	if m.started {
+		return false
+	}
 	m.started = true
-	m.mu.Unlock()
-	go m.loop(ctx)
+	return true
+}
+
+// next takes the first queued run, unless the manager is stopping.
+func (m *Manager) next() *queued {
+	m.mu.Lock()
+	defer supervise.Unlocked("bench", m.mu.Unlock)
+	if m.stopping || len(m.queue) == 0 {
+		return nil
+	}
+	next := m.queue[0]
+	m.queue = m.queue[1:]
+	return next
 }
 
 func (m *Manager) loop(ctx context.Context) {
-	defer close(m.done)
 	tick := time.NewTicker(30 * time.Second)
 	defer tick.Stop()
 	m.checkSchedules(true)
 	for {
-		m.mu.Lock()
-		var next *queued
-		if !m.stopping && len(m.queue) > 0 {
-			next = m.queue[0]
-			m.queue = m.queue[1:]
-		}
-		m.mu.Unlock()
-		if next != nil {
+		if next := m.next(); next != nil {
+			m.running = next
 			m.execute(ctx, next)
+			m.running = nil
 			continue
 		}
 		select {
@@ -211,9 +229,12 @@ func (m *Manager) loop(ctx context.Context) {
 		case <-tick.C:
 			m.checkSchedules(true)
 		}
-		m.mu.Lock()
-		stop := m.stopping
-		m.mu.Unlock()
+		var stop bool
+		func() {
+			m.mu.Lock()
+			defer supervise.Unlocked("bench", m.mu.Unlock)
+			stop = m.stopping
+		}()
 		if stop {
 			return
 		}
@@ -223,17 +244,22 @@ func (m *Manager) loop(ctx context.Context) {
 // Stop cancels the running run (marked cancelled, "scheduler shutting down"),
 // cancels the queued ones and waits for the loop to end or ctx to expire.
 func (m *Manager) Stop(ctx context.Context) {
-	m.mu.Lock()
-	if m.stopping {
-		m.mu.Unlock()
+	var cur *activeRun
+	var q []*queued
+	var started, already bool
+	func() {
+		m.mu.Lock()
+		defer supervise.Unlocked("bench", m.mu.Unlock)
+		if already = m.stopping; already {
+			return
+		}
+		m.stopping = true
+		cur, q, started = m.cur, m.queue, m.started
+		m.queue = nil
+	}()
+	if already {
 		return
 	}
-	m.stopping = true
-	cur := m.cur
-	q := m.queue
-	m.queue = nil
-	started := m.started
-	m.mu.Unlock()
 	if cur != nil {
 		cur.cancel("scheduler shutting down")
 	}
@@ -258,22 +284,31 @@ func (m *Manager) Stop(ctx context.Context) {
 // step_started, step_finished, progress, load). fn must not block.
 func (m *Manager) Subscribe(fn func(map[string]any)) (cancel func()) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	defer supervise.Unlocked("bench", m.mu.Unlock)
 	m.subSeq++
 	id := m.subSeq
 	m.subs[id] = fn
-	return func() { m.mu.Lock(); delete(m.subs, id); m.mu.Unlock() }
+	return func() {
+		m.mu.Lock()
+		defer supervise.Unlocked("bench", m.mu.Unlock)
+		delete(m.subs, id)
+	}
 }
 
 func (m *Manager) emit(ev map[string]any) {
-	m.mu.Lock()
-	fns := make([]func(map[string]any), 0, len(m.subs))
-	for _, f := range m.subs {
-		fns = append(fns, f)
-	}
-	m.mu.Unlock()
+	var fns []func(map[string]any)
+	func() {
+		m.mu.Lock()
+		defer supervise.Unlocked("bench", m.mu.Unlock)
+		fns = make([]func(map[string]any), 0, len(m.subs))
+		for _, f := range m.subs {
+			fns = append(fns, f)
+		}
+	}()
 	for _, f := range fns {
-		f(ev)
+		// Subscribers are the catalog and the live channel: a panic in one
+		// must not end the run that emitted (background-task isolation).
+		supervise.Guard("bench.subscriber", func() { f(ev) }, nil)
 	}
 }
 
@@ -292,11 +327,13 @@ func (m *Manager) brief(r *Run) map[string]any {
 	if r.Summary != nil {
 		b["summary"] = r.Summary
 	}
-	m.mu.Lock()
-	if m.cur != nil && m.cur.run.ID == r.ID {
-		b["progress"] = m.cur.progress()
-	}
-	m.mu.Unlock()
+	func() {
+		m.mu.Lock()
+		defer supervise.Unlocked("bench", m.mu.Unlock)
+		if m.cur != nil && m.cur.run.ID == r.ID {
+			b["progress"] = m.cur.progress()
+		}
+	}()
 	return b
 }
 
@@ -415,22 +452,10 @@ func (m *Manager) Enqueue(suiteID string, o EnqueueOptions) (*Run, error) {
 	now := m.o.Now()
 	r := &Run{ID: newRunID(now), SuiteID: suiteID, SuiteName: ss.Spec.Title(), State: RunQueued, Note: o.Note, Trigger: trig,
 		BaselineRunID: baseline, QueuedAt: now.UnixMilli(), Version: m.o.Version, Suite: snap}
-	m.mu.Lock()
-	if m.stopping {
-		m.mu.Unlock()
-		return nil, errors.New("the scheduler is shutting down")
-	}
-	if len(m.queue) >= MaxQueuedRuns {
-		m.mu.Unlock()
-		return nil, ErrQueueFull
-	}
-	if err := m.o.Store.CreateRun(r); err != nil {
-		m.mu.Unlock()
+	copyOut, err := m.enqueue(r, plan)
+	if err != nil {
 		return nil, err
 	}
-	copyOut := *r // the queue owns r from here on; callers get a snapshot
-	m.queue = append(m.queue, &queued{run: r, plan: plan})
-	m.mu.Unlock()
 	m.publishRun(&copyOut)
 	select {
 	case m.wake <- struct{}{}:
@@ -439,20 +464,46 @@ func (m *Manager) Enqueue(suiteID string, o EnqueueOptions) (*Run, error) {
 	return &copyOut, nil
 }
 
-// Cancel cancels a queued run at once, or asks the running run to stop after
-// its current request (it then unloads what it loaded).
-func (m *Manager) Cancel(id string) error {
+// enqueue stores r and queues it; it returns the snapshot callers get (the
+// queue owns r).
+func (m *Manager) enqueue(r *Run, plan *runPlan) (Run, error) {
 	m.mu.Lock()
+	defer supervise.Unlocked("bench", m.mu.Unlock)
+	if m.stopping {
+		return Run{}, errors.New("the scheduler is shutting down")
+	}
+	if len(m.queue) >= MaxQueuedRuns {
+		return Run{}, ErrQueueFull
+	}
+	if err := m.o.Store.CreateRun(r); err != nil {
+		return Run{}, err
+	}
+	m.queue = append(m.queue, &queued{run: r, plan: plan})
+	return *r, nil
+}
+
+// unqueue removes the queued run id and returns it; otherwise it returns the
+// running run.
+func (m *Manager) unqueue(id string) (removed *Run, cur *activeRun) {
+	m.mu.Lock()
+	defer supervise.Unlocked("bench", m.mu.Unlock)
 	for i, it := range m.queue {
 		if it.run.ID == id {
 			m.queue = append(m.queue[:i], m.queue[i+1:]...)
-			m.mu.Unlock()
-			m.finishUnstarted(it.run, RunCancelled, "cancelled before it started")
-			return nil
+			return it.run, nil
 		}
 	}
-	cur := m.cur
-	m.mu.Unlock()
+	return nil, m.cur
+}
+
+// Cancel cancels a queued run at once, or asks the running run to stop after
+// its current request (it then unloads what it loaded).
+func (m *Manager) Cancel(id string) error {
+	removed, cur := m.unqueue(id)
+	if removed != nil {
+		m.finishUnstarted(removed, RunCancelled, "cancelled before it started")
+		return nil
+	}
 	if cur != nil && cur.run.ID == id {
 		cur.cancel("cancelled by request")
 		return nil
@@ -479,15 +530,20 @@ func (m *Manager) finishUnstarted(r *Run, state, why string) {
 // its instance exists (the progress and the step show it from the start). The
 // API layer sets it from the configuration.
 func (m *Manager) SetModelFile(f func(profile string) string) {
-	m.mu.Lock()
-	m.modelOf = f
-	m.mu.Unlock()
+	func() {
+		m.mu.Lock()
+		defer supervise.Unlocked("bench", m.mu.Unlock)
+		m.modelOf = f
+	}()
 }
 
 func (m *Manager) modelFileOf(profile string) string {
-	m.mu.Lock()
-	f := m.modelOf
-	m.mu.Unlock()
+	var f func(profile string) string
+	func() {
+		m.mu.Lock()
+		defer supervise.Unlocked("bench", m.mu.Unlock)
+		f = m.modelOf
+	}()
 	if f == nil {
 		return ""
 	}
@@ -523,16 +579,18 @@ type ScheduledRun struct {
 func (m *Manager) State() StateDoc {
 	m.checkSchedules(false)
 	d := StateDoc{Enabled: true, Queue: []map[string]any{}, NextScheduled: []ScheduledRun{}, Run: m.Progress()}
-	m.mu.Lock()
 	var cur *Run
-	if m.cur != nil {
-		cur = m.cur.snapshot()
-	}
 	var q []*Run
-	for _, it := range m.queue {
-		q = append(q, it.run)
-	}
-	m.mu.Unlock()
+	func() {
+		m.mu.Lock()
+		defer supervise.Unlocked("bench", m.mu.Unlock)
+		if m.cur != nil {
+			cur = m.cur.snapshot()
+		}
+		for _, it := range m.queue {
+			q = append(q, it.run)
+		}
+	}()
 	if cur != nil {
 		d.Current = m.brief(cur)
 	}
@@ -540,16 +598,18 @@ func (m *Manager) State() StateDoc {
 		d.Queue = append(d.Queue, m.brief(r))
 	}
 	suites, _ := m.o.Store.ListSuites()
-	m.mu.Lock()
-	for _, su := range suites {
-		if su.Spec.Schedule == nil {
-			continue
+	func() {
+		m.mu.Lock()
+		defer supervise.Unlocked("bench", m.mu.Unlock)
+		for _, su := range suites {
+			if su.Spec.Schedule == nil {
+				continue
+			}
+			if st := m.sched[su.Spec.ID]; st != nil {
+				d.NextScheduled = append(d.NextScheduled, ScheduledRun{SuiteID: su.Spec.ID, Name: su.Spec.Title(), Every: su.Spec.Schedule.Every, At: su.Spec.Schedule.At, Next: st.due.UnixMilli()})
+			}
 		}
-		if st := m.sched[su.Spec.ID]; st != nil {
-			d.NextScheduled = append(d.NextScheduled, ScheduledRun{SuiteID: su.Spec.ID, Name: su.Spec.Title(), Every: su.Spec.Schedule.Every, At: su.Spec.Schedule.At, Next: st.due.UnixMilli()})
-		}
-	}
-	m.mu.Unlock()
+	}()
 	sort.Slice(d.NextScheduled, func(i, j int) bool { return d.NextScheduled[i].Next < d.NextScheduled[j].Next })
 	return d
 }
@@ -568,48 +628,52 @@ func (m *Manager) checkSchedules(fire bool) {
 	}
 	now := m.o.Now()
 	var due []string
-	m.mu.Lock()
-	live := map[string]bool{}
-	for _, su := range suites {
-		sc := su.Spec.Schedule
-		if sc == nil || !su.Spec.Runnable() { // a planned or blocked suite never runs
-			continue
-		}
-		live[su.Spec.ID] = true
-		st := m.sched[su.Spec.ID]
-		if st == nil || st.sig != schedSig(sc) {
-			var last time.Time
-			if ms, err := m.o.Store.LastScheduledStart(su.Spec.ID); err == nil && ms > 0 {
-				last = time.UnixMilli(ms)
-			}
-			next, ok := sc.Next(now, last)
-			if !ok {
+	var busy map[string]bool
+	var stopping bool
+	func() {
+		m.mu.Lock()
+		defer supervise.Unlocked("bench", m.mu.Unlock)
+		live := map[string]bool{}
+		for _, su := range suites {
+			sc := su.Spec.Schedule
+			if sc == nil || !su.Spec.Runnable() { // a planned or blocked suite never runs
 				continue
 			}
-			st = &schedState{sig: schedSig(sc), due: next}
-			m.sched[su.Spec.ID] = st
-		}
-		if fire && !now.Before(st.due) {
-			due = append(due, su.Spec.ID)
-			if next, ok := sc.Next(now, now); ok {
-				st.due = next
+			live[su.Spec.ID] = true
+			st := m.sched[su.Spec.ID]
+			if st == nil || st.sig != schedSig(sc) {
+				var last time.Time
+				if ms, err := m.o.Store.LastScheduledStart(su.Spec.ID); err == nil && ms > 0 {
+					last = time.UnixMilli(ms)
+				}
+				next, ok := sc.Next(now, last)
+				if !ok {
+					continue
+				}
+				st = &schedState{sig: schedSig(sc), due: next}
+				m.sched[su.Spec.ID] = st
+			}
+			if fire && !now.Before(st.due) {
+				due = append(due, su.Spec.ID)
+				if next, ok := sc.Next(now, now); ok {
+					st.due = next
+				}
 			}
 		}
-	}
-	for id := range m.sched {
-		if !live[id] {
-			delete(m.sched, id)
+		for id := range m.sched {
+			if !live[id] {
+				delete(m.sched, id)
+			}
 		}
-	}
-	busy := map[string]bool{}
-	for _, it := range m.queue {
-		busy[it.run.SuiteID] = true
-	}
-	if m.cur != nil {
-		busy[m.cur.run.SuiteID] = true
-	}
-	stopping := m.stopping
-	m.mu.Unlock()
+		busy = map[string]bool{}
+		for _, it := range m.queue {
+			busy[it.run.SuiteID] = true
+		}
+		if m.cur != nil {
+			busy[m.cur.run.SuiteID] = true
+		}
+		stopping = m.stopping
+	}()
 	if stopping {
 		return
 	}

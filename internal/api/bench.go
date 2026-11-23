@@ -16,6 +16,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/proxy"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // The benchmark REST endpoints (design 9.3). They are pull and push only: the
@@ -728,6 +729,10 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 	if sys.Programs != nil {
 		out["programs"] = sys.Programs()
 	}
+	// Background-task isolation: the supervised tasks with their restarts
+	// and failures (the About page's "Background tasks" card).
+	out["tasks"] = supervise.Stats()
+	out["internal_failures_total"] = supervise.Total()
 	if s.sched != nil {
 		out["read_panics"] = s.sched.ReadPanics() // read-only queries that panicked and were recovered; 0 when all is well
 	}

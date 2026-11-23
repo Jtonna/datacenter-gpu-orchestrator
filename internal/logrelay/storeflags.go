@@ -224,10 +224,13 @@ func trimFloat(f float64) string { return strconv.FormatFloat(math.Round(f*100)/
 func (r *Relay) warnSettings() {
 	_, ws := r.settingsWarnings()
 	key := strings.Join(ws, "\n")
-	r.flags.mu.Lock()
-	same := key == r.flags.logged
-	r.flags.logged = key
-	r.flags.mu.Unlock()
+	var same bool
+	func() {
+		r.flags.mu.Lock()
+		defer r.flags.mu.Unlock()
+		same = key == r.flags.logged
+		r.flags.logged = key
+	}()
 	if same {
 		return
 	}

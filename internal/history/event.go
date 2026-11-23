@@ -70,6 +70,11 @@ const (
 	TWorkerExited       = "workerExited"
 	TNodeMembership     = "nodeMembership"
 	TNodeAdmin          = "nodeAdmin"
+
+	// A background task of the scheduler failed and was recovered
+	// (restarted, or its one-shot result turned into a failure), or the
+	// failure ended the process (internal/supervise).
+	TInternalFailure = "internalFailure"
 )
 
 // Event is one history record. Ts is unix milliseconds; Seq is monotonic per

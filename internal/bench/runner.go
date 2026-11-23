@@ -10,6 +10,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // activeRun is the run being executed.
@@ -39,9 +40,11 @@ type activeRun struct {
 
 func (a *activeRun) cancel(reason string) {
 	a.cancelOnce.Do(func() {
-		a.mu.Lock()
-		a.reason = reason
-		a.mu.Unlock()
+		func() {
+			a.mu.Lock()
+			defer supervise.Unlocked("bench", a.mu.Unlock)
+			a.reason = reason
+		}()
 		close(a.cancelCh)
 	})
 }
@@ -57,20 +60,20 @@ func (a *activeRun) cancelled() bool {
 
 func (a *activeRun) cancelReason() string {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	defer supervise.Unlocked("bench", a.mu.Unlock)
 	return a.reason
 }
 
 func (a *activeRun) snapshot() *Run {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	defer supervise.Unlocked("bench", a.mu.Unlock)
 	cp := *a.run
 	return &cp
 }
 
 func (a *activeRun) progress() map[string]any {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	defer supervise.Unlocked("bench", a.mu.Unlock)
 	p := map[string]any{"steps_total": a.total, "steps_done": a.done}
 	if a.step != nil {
 		p["step"] = a.step
@@ -82,24 +85,28 @@ func (a *activeRun) progress() map[string]any {
 }
 
 func (a *activeRun) setRun(f func(r *Run)) {
-	a.mu.Lock()
-	f(a.run)
-	a.mu.Unlock()
+	func() {
+		a.mu.Lock()
+		defer supervise.Unlocked("bench", a.mu.Unlock)
+		f(a.run)
+	}()
 }
 
 func (a *activeRun) markLoaded(profile string, v bool) {
-	a.mu.Lock()
-	if v {
-		a.loaded[profile] = true
-	} else {
-		delete(a.loaded, profile)
-	}
-	a.mu.Unlock()
+	func() {
+		a.mu.Lock()
+		defer supervise.Unlocked("bench", a.mu.Unlock)
+		if v {
+			a.loaded[profile] = true
+		} else {
+			delete(a.loaded, profile)
+		}
+	}()
 }
 
 func (a *activeRun) loadedSet() map[string]bool {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	defer supervise.Unlocked("bench", a.mu.Unlock)
 	out := make(map[string]bool, len(a.loaded))
 	for k := range a.loaded {
 		out[k] = true
@@ -137,13 +144,15 @@ func (m *Manager) execute(ctx context.Context, q *queued) {
 	}
 	ar.items = m.planItems(q.plan)
 	ar.env = Environment{SchedulerVersion: m.o.Version}
-	m.mu.Lock()
-	m.cur = ar
-	m.mu.Unlock()
+	func() {
+		m.mu.Lock()
+		defer supervise.Unlocked("bench", m.mu.Unlock)
+		m.cur = ar
+	}()
 	defer func() {
 		m.mu.Lock()
+		defer supervise.Unlocked("bench", m.mu.Unlock)
 		m.cur = nil
-		m.mu.Unlock()
 	}()
 	fin := make(chan struct{})
 	defer close(fin)
@@ -155,14 +164,20 @@ func (m *Manager) execute(ctx context.Context, q *queued) {
 		}
 	}()
 	maxTimer := time.AfterFunc(m.o.MaxRun, func() {
-		ar.mu.Lock()
-		ar.timedOut = true
-		ar.mu.Unlock()
+		func() {
+			ar.mu.Lock()
+			defer supervise.Unlocked("bench", ar.mu.Unlock)
+			ar.timedOut = true
+		}()
 		ar.cancel(fmt.Sprintf("the run took longer than max_run_minutes (%s)", m.o.MaxRun))
 	})
 	defer maxTimer.Stop()
 
 	x := &suiteExec{m: m, a: ar, base: map[string]*Step{}}
+	// Whatever this run loaded is unloaded at the end, however it ended (a
+	// failure included: deferred, so it runs while the panic unwinds).
+	cleanup := sync.OnceFunc(x.cleanup)
+	defer cleanup()
 	now := m.o.Now().UnixMilli()
 	ar.setRun(func(r *Run) { r.State, r.StartedAt = RunRunning, now })
 	if err := m.o.Store.SetRunState(r.ID, RunRunning, now, 0, ""); err != nil {
@@ -188,20 +203,22 @@ func (m *Manager) execute(ctx context.Context, q *queued) {
 	x.captureEnv()
 	m.publishRun(ar.snapshot())
 	m.emitProgress(ar, true)
-	tickDone := make(chan struct{})
-	defer close(tickDone)
-	go func() { // keeps the progress message coming (twice a second) while nothing else changes
+	tickCtx, tickDone := context.WithCancel(context.Background())
+	defer tickDone()
+	// Keeps the progress message coming (twice a second) while nothing else
+	// changes; a failure restarts it alone.
+	supervise.Go(tickCtx, supervise.Spec{Name: "bench.progress", Policy: supervise.Restart}, func(ctx context.Context) {
 		t := time.NewTicker(progressEvery)
 		defer t.Stop()
 		for {
 			select {
 			case <-t.C:
 				m.emitProgress(ar, false)
-			case <-tickDone:
+			case <-ctx.Done():
 				return
 			}
 		}
-	}()
+	})
 	m.record(history.TBenchRunStarted, history.Info, "", fmt.Sprintf("Benchmark run %s of suite %s started (%d steps).", r.ID, r.SuiteName, ar.total),
 		map[string]any{"bench_run": r.ID, "suite": r.SuiteID, "steps": ar.total, "trigger": r.Trigger, "baseline": ar.snapshot().BaselineRunID})
 
@@ -226,9 +243,13 @@ run:
 				break run
 			}
 		}
-		ar.mu.Lock()
-		ar.cur = i
-		ar.mu.Unlock()
+		func() {
+			ar.mu.Lock()
+			defer supervise.Unlocked("bench", ar.mu.Unlock)
+			ar.cur = i
+			supervise.Point("bench.cur", ar.run.ID) // test hook, under ar.mu
+		}()
+		supervise.Point("bench.item", ar.run.ID)
 		got := x.runItem(i, it)
 		steps = append(steps, got...)
 		if suite.StopOnFailure {
@@ -259,12 +280,14 @@ run:
 			}
 		}
 	}
-	// Whatever this run loaded is unloaded at the end, however it ended.
-	x.cleanup()
+	cleanup()
 
-	ar.mu.Lock()
-	timedOut := ar.timedOut
-	ar.mu.Unlock()
+	var timedOut bool
+	func() {
+		ar.mu.Lock()
+		defer supervise.Unlocked("bench", ar.mu.Unlock)
+		timedOut = ar.timedOut
+	}()
 	switch {
 	case timedOut:
 		state, errText = RunFailed, ar.cancelReason()
@@ -434,9 +457,11 @@ func (x *suiteExec) waitIdle(max time.Duration) idleResult {
 }
 
 func (x *suiteExec) setPaused(why string) {
-	x.a.mu.Lock()
-	x.a.paused = why
-	x.a.mu.Unlock()
+	func() {
+		x.a.mu.Lock()
+		defer supervise.Unlocked("bench", x.a.mu.Unlock)
+		x.a.paused = why
+	}()
 }
 
 // cleanup unloads every profile this run loaded and still has loaded.
@@ -493,12 +518,16 @@ func (x *suiteExec) runItem(idx int, it benchspec.SuiteItem) []*Step {
 	g := newGate(len(members))
 	out := make([]*Step, len(members))
 	var wg sync.WaitGroup
+	fan := supervise.NewFanout("bench.member") // one group's members count once toward escalation
 	for i, mb := range members {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		fan.Go(&wg, func() {
+			supervise.Point("bench.member", x.a.run.ID) // test hook, per run
 			out[i] = x.runBenchmark(mb, idx, b.ID, g, i)
-		}()
+		}, func(any) { // a failure ends this member with an error; the others are not held at the gate
+			out[i] = &Step{RunID: x.a.run.ID, Idx: idx, Group: b.ID, BenchmarkID: mb.ID, Name: mb.Title(), Profile: mb.Profile,
+				State: StepFailed, Outcome: OutcomeError, Error: "internal error"}
+			g.arrive(i)
+		})
 	}
 	wg.Wait()
 	return out

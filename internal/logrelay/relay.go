@@ -315,9 +315,11 @@ func (r *Relay) node(w http.ResponseWriter, req *http.Request, id string) (Node,
 	if ok && req.Header.Get(agentproto.HeaderAgentStartID) == n.StartID {
 		return n, true
 	}
-	r.mu.Lock()
-	r.unknown++
-	r.mu.Unlock()
+	func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.unknown++
+	}()
 	msg := "unknown agent; register again"
 	if ok {
 		msg = "agent_start_id changed; register again"
@@ -697,12 +699,15 @@ func (r *Relay) forward(w http.ResponseWriter, req *http.Request, body *limitBod
 // storeDown logs that the store did not take a batch, at most once a minute.
 func (r *Relay) storeDown(attrs ...any) {
 	now := r.o.Now()
-	r.mu.Lock()
-	quiet := !r.lastWarn.IsZero() && now.Sub(r.lastWarn) < time.Minute
-	if !quiet {
-		r.lastWarn = now
-	}
-	r.mu.Unlock()
+	var quiet bool
+	func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		quiet = !r.lastWarn.IsZero() && now.Sub(r.lastWarn) < time.Minute
+		if !quiet {
+			r.lastWarn = now
+		}
+	}()
 	if !quiet {
 		r.log.Warn("the log store did not take a batch; senders keep their lines and try again (logged at most once a minute)", attrs...)
 	}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // Central logging (CR-10, design section 4.4): the log routes must never wait
@@ -71,6 +72,7 @@ func (p *Pool) endLaunchLocked(l *launch, confirmed bool) {
 		return
 	}
 	delete(p.launches, l.id)
+	supervise.Point("pool.end_launch", l.id) // test hook: a panic half-way, under p.mu
 	if a := p.agents[string(l.node)]; a != nil {
 		if confirmed {
 			a.stopSeen, a.figsSinceStop = p.o.Clock(), 0

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // Defaults for ProcessLauncher fields left at zero.
@@ -46,6 +48,42 @@ type ProcessLauncher struct {
 	Tap func(profile string, instanceID uint64) ChildTap
 
 	warnOnce sync.Once
+
+	liveMu sync.Mutex
+	live   map[*proc]struct{} // started and not yet reaped (KillAll)
+}
+
+// KillAll kills every child this launcher started that has not been reaped
+// yet. It is the scheduler's fatal path: the loop that knows the children
+// may be dead, and the children run in their own process groups, so they
+// would outlive the process otherwise. It does not wait.
+func (l *ProcessLauncher) KillAll() int {
+	var ps []*proc
+	func() {
+		l.liveMu.Lock()
+		defer supervise.Unlocked("instance", l.liveMu.Unlock)
+		ps = make([]*proc, 0, len(l.live))
+		for p := range l.live {
+			ps = append(ps, p)
+		}
+	}()
+	for _, p := range ps {
+		p.Stop(StopKill)
+	}
+	return len(ps)
+}
+
+func (l *ProcessLauncher) track(p *proc, on bool) {
+	l.liveMu.Lock()
+	defer supervise.Unlocked("instance", l.liveMu.Unlock)
+	if !on {
+		delete(l.live, p)
+		return
+	}
+	if l.live == nil {
+		l.live = map[*proc]struct{}{}
+	}
+	l.live[p] = struct{}{}
 }
 
 var _ Launcher = (*ProcessLauncher)(nil)
@@ -136,7 +174,9 @@ func (l *ProcessLauncher) Start(spec StartSpec) (Child, error) {
 		return nil, fmt.Errorf("instance: starting %s: %w", argv[0], err)
 	}
 	p.cmd = cmd
-	go p.wait()
+	p.untrack = func() { l.track(p, false) }
+	l.track(p, true)
+	go supervise.Once("instance.reap", p.wait, nil) // wait's own finisher publishes the exit on a failure
 	return p, nil
 }
 
@@ -155,6 +195,7 @@ type proc struct {
 	stderr   *LineWriter
 	logSink  *fileSink // nil when the child has no log file
 	tap      ChildTap  // nil without ProcessLauncher.Tap
+	untrack  func()    // leaves the launcher's live set (KillAll)
 
 	mu      sync.Mutex
 	stopReq bool // Stop was called
@@ -183,12 +224,44 @@ func (p *proc) Exited() <-chan ExitStatus { return p.exitCh }
 
 // wait reaps the child, finalises its status, releases the port, and then
 // publishes the exit. It is the only place the child is waited on.
+//
+// A failure part way (in a line writer's or a tap's Close) still finishes:
+// the deferred finisher marks the child reaped, releases the port, closes
+// done and delivers an exit with Err set, so the core gets its exit event.
 func (p *proc) wait() {
+	var released, doneClosed, published bool
+	defer func() {
+		if published {
+			return
+		}
+		func() {
+			p.mu.Lock()
+			defer supervise.Unlocked("instance", p.mu.Unlock)
+			p.reaped = true
+		}()
+		p.status.Err = errors.New("internal error while reaping the child")
+		if p.untrack != nil {
+			p.untrack()
+		}
+		if !released {
+			p.ports.Release(p.port)
+		}
+		if !doneClosed {
+			close(p.done)
+		}
+		p.exitCh <- p.status
+		close(p.exitCh)
+	}()
 	err := p.cmd.Wait()
-	p.mu.Lock()
-	p.reaped = true
-	requested := p.stopReq
-	p.mu.Unlock()
+	var requested bool
+	func() {
+		p.mu.Lock()
+		defer supervise.Unlocked("instance", p.mu.Unlock)
+		p.reaped = true
+		supervise.Point("instance.reaped", p) // test hook, under p.mu
+		requested = p.stopReq
+	}()
+	supervise.Point("instance.reap", p)
 	p.stdout.Close()
 	p.stderr.Close()
 	if p.logSink != nil {
@@ -208,8 +281,14 @@ func (p *proc) wait() {
 		st.Err = err
 	}
 	p.status = st
+	if p.untrack != nil {
+		p.untrack()
+	}
 	p.ports.Release(p.port)
+	released = true
 	close(p.done)
+	doneClosed = true
+	published = true
 	p.exitCh <- st
 	close(p.exitCh)
 }
@@ -217,7 +296,7 @@ func (p *proc) wait() {
 // Stop implements Child.
 func (p *proc) Stop(mode StopMode) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	defer supervise.Unlocked("instance", p.mu.Unlock)
 	if p.reaped {
 		return
 	}
@@ -234,7 +313,7 @@ func (p *proc) Stop(mode StopMode) {
 	}
 	p.termed = true
 	terminate(p.cmd.Process, true)
-	go func() {
+	go supervise.Once("instance.grace_kill", func() {
 		t := time.NewTimer(p.grace)
 		defer t.Stop()
 		select {
@@ -242,7 +321,7 @@ func (p *proc) Stop(mode StopMode) {
 		case <-t.C:
 			p.Stop(StopKill)
 		}
-	}()
+	}, nil)
 }
 
 // WaitHealthy implements Child.

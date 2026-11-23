@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // DefaultLogKeep is how many child log files are kept when LogKeep is unset.
@@ -148,7 +150,7 @@ type fileSink struct {
 
 func (s *fileSink) Write(p []byte) (int, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer supervise.Unlocked("instance", s.mu.Unlock)
 	if s.f == nil {
 		return len(p), nil
 	}
@@ -163,7 +165,7 @@ func (s *fileSink) Write(p []byte) (int, error) {
 
 func (s *fileSink) Close() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer supervise.Unlocked("instance", s.mu.Unlock)
 	if s.f != nil {
 		s.f.Close()
 		s.f = nil
