@@ -274,7 +274,46 @@ function coldSummary(step) {
 
 const PH_STATE = { done: ['Done', 'use'], failed: ['Failed', 'fail'], cancelled: ['Cancelled', 'n'], skipped: ['Skipped', 'settle'], running: ['Running', 'load'] };
 
-function phaseBlock(step, p) {
+const TASK_STATE = { answered: ['Answered', 'use'], failed: ['Failed', 'fail'], timed_out: ['Timed out', 'fail'], not_sent: ['Not sent', 'n'] };
+
+// A tasks phase: counts, speed, every scorer's total, and one row per task
+// with a link to its stored answer. Potluck never scores answers itself.
+function tasksBlock(t, runId) {
+  const items = t.items || [];
+  const scorers = (t.scores || []).map(s => s.scorer);
+  const answerURL = i => api.url(`/api/bench/runs/${encodeURIComponent(runId || '')}/tasks/${i.result_id}`, { format: 'text' });
+  const setName = `${t.set_title || t.set_id} v${t.set_version}`;
+  return [
+    h('div.stats', { style: 'padding-top:4px' },
+      stat('Task set', setName, t.inline ? 'inline' : null),
+      stat('Sent', num(t.sent), `of ${num(t.total)}`),
+      stat('Answered', num(t.answered)),
+      stat('Failed', num(t.failed), t.timed_out ? `${num(t.timed_out)} timed out` : null),
+      t.not_sent ? stat('Not sent', num(t.not_sent)) : null,
+      stat('Decode, median', t.decode_tps ? num(t.decode_tps.median, 1) : DASH, t.decode_tps ? 'tok/s' : null),
+      stat('Thinking', t.thinking === 'seen' ? 'Seen' : 'Not seen'),
+      (t.scores || []).map(s => stat('Score, ' + s.scorer, `${num(s.points, 1)} / ${num(s.max_points, 1)}`, s.tasks_scored < s.tasks ? `${num(s.tasks_scored)} of ${num(s.tasks)} tasks scored` : null))),
+    t.phase_timed_out ? h('div.cb', banner('warn', 'The phase reached its own time limit; the tasks after that were not sent.')) : null,
+    h('div.cs', h('span.mut', { title: t.set_sha256 }, 'Set hash ' + String(t.set_sha256 || '').slice(0, 12))),
+    table({
+      minWidth: 640, rows: items, key: i => i.result_id || i.task_id,
+      columns: [
+        { label: 'Task', render: i => h('span.mono', { title: i.title || '' }, i.task_id) },
+        { label: 'State', render: i => { const [l, k] = TASK_STATE[i.state] || [i.state, 'n']; return badge(l, k); } },
+        { label: 'Finish', render: i => i.finish_reason || DASH },
+        { label: 'Tokens', cls: 'r', title: 'Prompt and completion tokens', render: i => (i.state === 'not_sent' ? DASH : `${num(i.prompt_tokens)} / ${num(i.completion_tokens)}`) },
+        { label: 'First token', cls: 'r', render: i => (i.ttft_ms != null ? `${num(i.ttft_ms)} ms` : DASH) },
+        { label: 'Decode', cls: 'r', render: i => (i.decode_tps ? `${num(i.decode_tps, 1)} tok/s` : DASH) },
+        { label: 'Wall', cls: 'r', render: i => (i.wall_ms ? dur(i.wall_ms / 1000) : DASH) },
+        ...scorers.map(sc => ({ label: sc, cls: 'r', render: i => { const s = i.scores && i.scores[sc]; return s ? h('span', { title: s.notes || (s.failed_tests || []).join(', ') }, `${num(s.points, 1)} / ${num(s.max_points, 1)}`) : DASH; } })),
+        { label: 'Answer', render: i => (i.answer_chars ? h('a', { href: answerURL(i), target: '_blank', rel: 'noopener' }, `${num(i.answer_chars)} chars`) : i.error ? h('span.err-t', { title: i.error }, 'none') : DASH) },
+      ],
+    }),
+    items.some(i => i.error) ? h('div.cs', items.filter(i => i.error).map(i => h('div', { key: 'te-' + i.task_id }, h('span.mono', i.task_id + ': '), h('span.err-t', i.error)))) : null,
+  ];
+}
+
+function phaseBlock(step, p, runId) {
   const [sl, sk] = PH_STATE[p.state] || [p.state, 'n'];
   const reqs = (step.requests || []).filter(r => r.phase_idx === p.idx);
   const body = [];
@@ -314,6 +353,9 @@ function phaseBlock(step, p) {
       }
       break;
     }
+    case 'tasks':
+      if (p.tasks) body.push(...tasksBlock(p.tasks, runId));
+      break;
     case 'unload':
       if (p.unload) body.push(h('div.stats', { style: 'padding-top:4px' }, stat('Until the instance was gone', num(p.unload.unload_s, 1), 's'), stat('Was loaded', p.unload.was_loaded ? 'Yes' : 'No')));
       break;
@@ -326,7 +368,7 @@ function phaseBlock(step, p) {
     body.filter(Boolean));
 }
 
-function stepCard(step) {
+function stepCard(step, runId) {
   const ph = step.phases || [];
   const hasPhases = ph.length > 0;
   const bad = step.outcome && step.outcome !== 'ready';
@@ -342,7 +384,7 @@ function stepCard(step) {
       stat('Took', step.started_at && step.finished_at ? dur((step.finished_at - step.started_at) / 1000) : DASH),
       step.stats && step.stats.requests ? stat('Measured requests', num(step.stats.requests - (step.stats.failed || 0)), `of ${num(step.stats.requests)}`) : null),
     checks(step), comparison(step), setupBlock(step), coldSummary(step),
-    hasPhases ? ph.map(p => phaseBlock(step, p)) : [
+    hasPhases ? ph.map(p => phaseBlock(step, p, runId)) : [
       step.load ? h('div', h('div.day', h('b', { style: 'color:var(--text)' }, 'Load')), loadBlock(step.load)) : null,
       step.stats ? statsTable(step.stats) : null],
     step.log_file ? h('div.cs', h('span.mut', 'Child log '), h('code.cmd', step.log_file)) : null);
@@ -373,6 +415,6 @@ export function runDetail(run, error) {
         run.note ? [h('dt', 'Note'), h('dd', run.note)] : null,
         run.baseline_run_id ? [h('dt', 'Compared with'), h('dd', h('a.mono', { href: href('benchmarks', ['runs', run.baseline_run_id]) }, run.baseline_run_id))] : null)) : null),
     envCard(run),
-    steps.length ? steps.map(stepCard) : h('section.card', empty('No benchmark has finished yet', run.state === 'queued' ? 'The run is waiting to start.' : 'The results appear here as each benchmark finishes.')),
+    steps.length ? steps.map(s => stepCard(s, run.id)) : h('section.card', empty('No benchmark has finished yet', run.state === 'queued' ? 'The run is waiting to start.' : 'The results appear here as each benchmark finishes.')),
   ];
 }

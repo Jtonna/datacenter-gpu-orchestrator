@@ -55,13 +55,19 @@ func TestUIAboutBackgroundTasksExecutes(t *testing.T) {
 		map[string]any{"ts": time.Now().UnixMilli(), "type": "internalFailure", "severity": "error", "summary": "Background task test.task failed and was restarted.",
 			"data": map[string]any{"task": "test.task", "kind": "restart", "panic": "injected", "escalating": false}},
 	}}
-	uiExec(t, map[string]any{"modules": []string{"views/about.js", "views/activity.js"},
-		"fetch": map[string]any{"/api/system": sys, "/api/about": map[string]any{},
-			"/api/history": history, "/api/history/summary": map[string]any{"counts": map[string]any{}}, "/api/metrics/activity": map[string]any{"data": []any{}}},
-		"cases": []any{
-			map[string]any{"name": "about: a recovered failure", "route": "#/about", "status": nil,
-				"expect": []string{"Background tasks", "test.task", "Restarts alone", "injected", "A background task failed in the last hour", "1 failure recovered since start."}},
-			map[string]any{"name": "activity: an internal failure", "route": "#/activity", "status": nil,
-				"expect": []string{"Internal failure", "Background task test.task failed and was restarted."}},
-		}})
+	// Both UIs the server serves: the classic one, and the new shell, which
+	// mounts the same about.js and activity.js over its own core modules.
+	for _, shell := range []string{"classic", "next"} {
+		t.Run(shell, func(t *testing.T) {
+			uiExec(t, map[string]any{"shell": shell, "modules": []string{"views/about.js", "views/activity.js"},
+				"fetch": map[string]any{"/api/system": sys, "/api/about": map[string]any{},
+					"/api/history": history, "/api/history/summary": map[string]any{"counts": map[string]any{}}, "/api/metrics/activity": map[string]any{"data": []any{}}},
+				"cases": []any{
+					map[string]any{"name": "about: a recovered failure", "route": "#/about", "status": nil,
+						"expect": []string{"Background tasks", "test.task", "Restarts alone", "injected", "A background task failed in the last hour", "1 failure recovered since start."}},
+					map[string]any{"name": "activity: an internal failure", "route": "#/activity", "status": nil,
+						"expect": []string{"Internal failure", "Background task test.task failed and was restarted."}},
+				}})
+		})
+	}
 }

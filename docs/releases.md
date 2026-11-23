@@ -6,6 +6,11 @@ What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent
 
 ### What is new
 
+- **Tasks phase.** A benchmark phase `tasks` sends each task of a fixed task set once, in order, to the loaded profile (temperature 0, the set's seed, streamed; thinking follows the profile) and keeps every answer and reasoning text with its finish reason, prompt and completion tokens, time to first token, tok/s, wall time and error. A failed or timed-out task is recorded and the phase goes on; the phase has its own `timeout_s`, and what it did not send is recorded as `not_sent`. Potluck never runs an answer and never scores one. See the benchmark guide, section "Tasks".
+- **Task sets** (format `potluck-tasks/1`) are stored through `POST /api/bench/task-sets` (MCP `create_task_set`), fixed per id and version, and identified by a content hash; a phase can also carry a set inline. A benchmark that names a set that is not stored is refused (422).
+- **Scores.** `PUT /api/bench/runs/<id>/scores/<scorer>` (MCP `put_task_scores`) attaches a scorer's points to a run's tasks, replacing that scorer's earlier post; the run shows the total per scorer. `GET /api/bench/runs/<id>/tasks` (MCP `get_run_tasks`) and `.../tasks/<result_id>` (MCP `get_task_answer`) read the answers. External result sets stay for results measured outside Potluck.
+- **Run page.** A tasks phase shows the set, tasks sent, answered, failed and not sent, the median decode speed, each scorer's total, and a row per task with a link to its answer.
+- **Kit script.** `scripts/bench-tasks.py` builds a task set from a kit folder, pulls a run's answers in the kit's layout, and posts the kit's test scores or a ready scores file.
 - **Background tasks are isolated.** A failure (an internal error) in one of the scheduler's background tasks no longer takes the scheduler down. The task restarts alone, rebuilding its state where it needs to (the event stream reconnects browsers to a fresh snapshot, the history writer continues in a fresh file, the benchmark manager fails the run in hand and unloads its models), or the work it was doing fails with an error. Architecture, "What restarts when", lists every task.
 - **Failures are visible.** Each one is logged at error level with its stack, recorded as an `internalFailure` event, and counted. `GET /api/system` lists the tasks (`tasks`: restarts, failures in the last minute, last failure time and message) and `internal_failures_total`. The About page has a "Background tasks" card and warns after a failure in the last hour.
 - **Bounded stop with exit code 3.** Three places still stop Potluck, because their state cannot be rebuilt in place: the scheduler loop, the pool's lost-node check and applying a configuration change. The same task failing three times within 60 s stops it too. The stop logs the reason, records it, kills every model process Potluck started, and exits with code 3 within 5 s; Docker starts it again.
@@ -14,6 +19,8 @@ What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent
 
 ### What changes without any setting
 
+- The database gains the tables `task_sets`, `task_results` and `task_scores` at the first start (migration 5); older runs read as before. The run JSON gains `phases[].tasks` only on tasks phases.
+- The benchmark client keeps `finish_reason`, `usage` and the reasoning text of an answer, and the partial answer of a stream that was cut off.
 - A configuration change whose apply fails answers 500 ("the change is saved ... Potluck restarts now to apply it"), then Potluck restarts and applies it from the database.
 - An HTTP handler panic is answered by net/http as before, and is now also logged with its stack and counted. Goroutines a request starts (a cache eviction, a prefetch) are isolated too: their failure becomes the request's error.
 - A failure while Potluck is already stopping (a signal) does not cut the shutdown's grace short: the shutdown goes on and exits with code 3.

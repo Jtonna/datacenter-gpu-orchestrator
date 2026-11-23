@@ -61,6 +61,11 @@ function stateOf(st, n, inst, agent) {
 // "Pausing…" until the page really knows the new state.
 const pending = new Map();
 
+// settlePending() forgets the requests the server accepted, once a new status
+// is there to show their outcome. A page that draws tile() calls it on every
+// status (the Nodes page below does the same inline).
+export function settlePending() { for (const [id, p] of pending) if (p.sent) pending.delete(id); }
+
 // askAction(id, action, refresh) opens the dialog of one action on one machine:
 // what will happen, the required comment, then the request. A refusal of the
 // server is shown in the dialog, in the server's words.
@@ -168,7 +173,9 @@ function startupPart(n, last, refresh) {
     open ? h('span.mut', NOT_INCLUDED) : null);
 }
 
-function tile(st, n, refresh) {
+// tile(st, n, refresh) -> one machine's card. Exported for the new shell's
+// Zones page, which shows it in the side panel of a selected zone.
+export function tile(st, n, refresh) {
   const name = n.hostname || n.id;
   const agent = agentOf(st, n);
   const np = notPlaceable(n, agent);

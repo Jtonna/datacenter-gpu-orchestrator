@@ -184,6 +184,60 @@ CREATE TABLE external_sets (
 );
 CREATE INDEX external_sets_created ON external_sets (created_at);
 `},
+	{"task sets, task answers and their scores", `
+CREATE TABLE task_sets (
+  id         TEXT NOT NULL,
+  version    INTEGER NOT NULL,
+  sha256     TEXT NOT NULL,
+  title      TEXT NOT NULL DEFAULT '',
+  tasks      INTEGER NOT NULL DEFAULT 0,
+  doc        TEXT NOT NULL CHECK (json_valid(doc)),
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (id, version)
+);
+CREATE TABLE task_results (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  step_id           INTEGER NOT NULL REFERENCES run_steps (id) ON DELETE CASCADE,
+  run_id            TEXT NOT NULL,
+  phase_idx         INTEGER NOT NULL,
+  seq               INTEGER NOT NULL,
+  task_id           TEXT NOT NULL,
+  title             TEXT NOT NULL DEFAULT '',
+  set_id            TEXT NOT NULL DEFAULT '',
+  set_version       INTEGER NOT NULL DEFAULT 0,
+  set_sha256        TEXT NOT NULL DEFAULT '',
+  state             TEXT NOT NULL,
+  status            INTEGER NOT NULL DEFAULT 0,
+  finish_reason     TEXT NOT NULL DEFAULT '',
+  prompt_tokens     INTEGER NOT NULL DEFAULT 0,
+  completion_tokens INTEGER NOT NULL DEFAULT 0,
+  ttft_ms           REAL,
+  decode_tps        REAL NOT NULL DEFAULT 0,
+  wall_ms           REAL NOT NULL DEFAULT 0,
+  error             TEXT NOT NULL DEFAULT '',
+  started_at        INTEGER NOT NULL DEFAULT 0,
+  answer_chars      INTEGER NOT NULL DEFAULT 0,
+  reasoning_chars   INTEGER NOT NULL DEFAULT 0,
+  answer_sha256     TEXT NOT NULL DEFAULT '',
+  answer            TEXT NOT NULL DEFAULT '',
+  reasoning         TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX task_results_run ON task_results (run_id, step_id, phase_idx, seq);
+CREATE INDEX task_results_set ON task_results (set_id, set_version);
+CREATE TABLE task_scores (
+  result_id      INTEGER NOT NULL REFERENCES task_results (id) ON DELETE CASCADE,
+  run_id         TEXT NOT NULL,
+  scorer         TEXT NOT NULL,
+  scorer_version TEXT NOT NULL DEFAULT '',
+  points         REAL NOT NULL,
+  max_points     REAL NOT NULL,
+  failed_tests   TEXT CHECK (failed_tests IS NULL OR json_valid(failed_tests)),
+  notes          TEXT NOT NULL DEFAULT '',
+  updated_at     INTEGER NOT NULL,
+  PRIMARY KEY (result_id, scorer)
+);
+CREATE INDEX task_scores_run ON task_scores (run_id, scorer);
+`},
 }
 
 type job struct {
@@ -723,6 +777,9 @@ func (s *Store) GetRun(id string) (*Run, error) {
 		return nil, err
 	}
 	r.Steps = steps
+	if err := s.attachTaskScores(r); err != nil {
+		return nil, err
+	}
 	return r, nil
 }
 

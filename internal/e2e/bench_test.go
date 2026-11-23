@@ -313,7 +313,7 @@ func TestBenchPhasesEndToEnd(t *testing.T) {
 	}
 	sc := mustStatus(t, c, "GET", "/api/bench/schema", "", 200)
 	// six templates since the cold, reload, loaded one; the suite options are listed too
-	if len(sc["phase_types"].([]any)) != 7 || len(sc["templates"].([]any)) != 6 || len(sc["suite_options"].([]any)) != 5 {
+	if len(sc["phase_types"].([]any)) != 8 || len(sc["templates"].([]any)) != 6 || len(sc["suite_options"].([]any)) != 5 {
 		t.Fatalf("%v", sc)
 	}
 }

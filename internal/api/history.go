@@ -1,7 +1,6 @@
 package api
 
 import (
-	_ "embed"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -14,17 +13,6 @@ import (
 
 // The event history endpoints and the dashboard page (design 9.1). All of
 // them are read-only.
-
-//go:embed ui/index.html
-var uiPage []byte
-
-func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
-	h := w.Header()
-	h.Set("Content-Type", "text/html; charset=utf-8")
-	h.Set("Cache-Control", "no-cache")
-	h.Set("X-Content-Type-Options", "nosniff")
-	w.Write(uiPage)
-}
 
 func badParam(w http.ResponseWriter, format string, args ...any) {
 	proxy.WriteError(w, http.StatusBadRequest, fmt.Sprintf(format, args...), "invalid_request_error", "bad request", nil)

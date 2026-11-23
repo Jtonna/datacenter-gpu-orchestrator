@@ -123,6 +123,7 @@ func (s *Server) benchRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/bench/state", g(s.benchState))
 	m.HandleFunc("GET /api/bench/profiles", g(s.benchProfiles))
 	s.externalRoutes(m)
+	s.taskRoutes(m)
 	m.HandleFunc("GET /api/system", s.handleSystem)
 }
 
@@ -177,6 +178,8 @@ func (s *Server) storeErr(w http.ResponseWriter, err error) {
 		apiErr(w, http.StatusUnprocessableEntity, "%v", strings.TrimPrefix(err.Error(), "invalid: "))
 	case errors.Is(err, bench.ErrNotRunnable):
 		apiErr(w, http.StatusConflict, "%v", strings.TrimPrefix(err.Error(), "not runnable: "))
+	case errors.Is(err, bench.ErrConflict):
+		apiErr(w, http.StatusConflict, "%v", strings.TrimPrefix(err.Error(), "conflict: "))
 	case errors.Is(err, bench.ErrQueueFull):
 		w.Header().Set("Retry-After", "60")
 		apiErr(w, http.StatusTooManyRequests, "%v: wait for a run to finish or cancel one", err)
@@ -265,6 +268,9 @@ func (s *Server) parseBenchmark(w http.ResponseWriter, r *http.Request, wantID s
 			apiErr(w, http.StatusUnprocessableEntity, "parallel member %q is itself a parallel step", id)
 			return nil, false
 		}
+	}
+	if !s.checkTaskSets(w, b, "") {
+		return nil, false
 	}
 	return b, true
 }
@@ -380,6 +386,11 @@ func (s *Server) parseSuite(w http.ResponseWriter, r *http.Request, wantID strin
 	if err := su.Validate(s.profileOK, s.lookup); err != nil {
 		apiErr(w, http.StatusUnprocessableEntity, "%v", err)
 		return nil, false
+	}
+	for i, it := range su.Benchmarks {
+		if it.Inline != nil && !s.checkTaskSets(w, it.Inline, fmt.Sprintf("benchmarks[%d] (inline): ", i)) {
+			return nil, false
+		}
 	}
 	return su, true
 }

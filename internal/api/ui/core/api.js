@@ -13,8 +13,9 @@ export function setActor(name) {
   return v;
 }
 
-// The API root is the parent of /ui/, so the page also works behind a path prefix.
-const ROOT = new URL('..', new URL('.', location.href)).pathname.replace(/\/$/, '');
+// The API root is what comes before /ui/ in the page's path, so the page also
+// works behind a path prefix, and at /ui/classic/ as well as at /ui/.
+const ROOT = (p => { const i = p.lastIndexOf('/ui/'); return i >= 0 ? p.slice(0, i) : new URL('..', new URL('.', location.href)).pathname.replace(/\/$/, ''); })(location.pathname);
 export const url = (path, params) => {
   let u = ROOT + path;
   if (params) {
