@@ -105,6 +105,16 @@ func TestUINodesPageExecutes(t *testing.T) {
 	}
 	cases = append(cases, map[string]any{"name": "nodes: all three and the local node", "route": "#/nodes", "status": st,
 		"expect": []string{"Excluded in the configuration", "(exclude_nodes: " + excluded + ")", "Paused by an operator"}})
+	// 0.1.7 review, ES1: excluded while a model still runs there.
+	busy := copyStatus(st, excluded)
+	for _, n := range busy["view"].(map[string]any)["nodes"].([]any) {
+		n.(map[string]any)["holder"] = "f1"
+	}
+	for _, a := range busy["agents"].([]any) {
+		a.(map[string]any)["running_while_excluded"] = map[string]any{"profile": "f1", "state": "ready", "since": 1763800000000}
+	}
+	cases = append(cases, map[string]any{"name": "nodes: excluded and still busy", "route": "#/nodes", "status": busy,
+		"expect": []string{"Excluded, busy", "Excluded, but still busy.", "keeps running and serving until it is unloaded"}})
 	uiExec(t, map[string]any{"modules": []string{"views/nodes.js"}, "cases": cases})
 }
 
