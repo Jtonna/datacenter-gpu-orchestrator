@@ -32,9 +32,12 @@ import (
 //     figure gets the estimate margin.
 //   - A row on the count off the line by more than the bound: no line on
 //     that count (the model is not straight there).
-//   - A sliding-window model is concave in the context (steeper below its
-//     window): a chord under-predicts between its ends, a line extended
-//     beyond them over-predicts. Between two rows it is used only when
+//   - A sliding-window model (the header's <arch>.attention.sliding_window)
+//     is concave in the context: steeper below its window, where the window
+//     layers still grow. A chord across the window under-predicts between
+//     its ends. So rows below the window are not used and nothing is derived
+//     below it; and, as a second guard (the window llama.cpp uses may differ
+//     from the header's), between two rows its line is used only when
 //     confirmed (three collinear points of a concave function make it
 //     straight between them).
 //   - A falling line (less memory for a longer window) is not used.
@@ -78,10 +81,14 @@ type slopeFig struct {
 
 // ownSlope is the line of rows (one placement group, any count) on devices
 // devices at the context of key, or ok false.
-func (c *schedCore) ownSlope(rows []*learnedNeed, key needKey, devices int, fileBytes int64, swa bool) (slopeFig, bool) {
+func (c *schedCore) ownSlope(rows []*learnedNeed, key needKey, devices int, fileBytes int64, window int) (slopeFig, bool) {
+	swa := window > 0
+	if key.ctx < window {
+		return slopeFig{}, false // below a sliding window: not straight there
+	}
 	var pts []*learnedNeed
 	for _, l := range rows {
-		if l.count() != devices || l.TotalMiB <= 0 || l.key.ctx == key.ctx || l.key.ctx <= 0 || !c.trusted(l) {
+		if l.count() != devices || l.TotalMiB <= 0 || l.key.ctx == key.ctx || l.key.ctx < max(window, 1) || !c.trusted(l) {
 			continue
 		}
 		if l.modelBytes > 0 && fileBytes > 0 && l.modelBytes != fileBytes {
@@ -157,7 +164,7 @@ func (c *schedCore) slopeFigs(p *core.Profile, base NeedInfo, twoPoint bool) []l
 	}
 	var out []learnedFig
 	for _, dv := range slices.Sorted(mapKeys(counts)) {
-		f, ok := c.ownSlope(e.rows, key, dv, base.FileBytes, base.swa)
+		f, ok := c.ownSlope(e.rows, key, dv, base.FileBytes, base.window)
 		if ok && !f.line.Confirmed {
 			a, b := f.from[0], f.from[1]
 			if st, sok := c.ctxDelta(a.key, b.key); sok && abs(st.derive(a)-b.TotalMiB) <= slopeBoundMiB {

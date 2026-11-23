@@ -28,6 +28,7 @@ type fatalT interface {
 }
 
 type harness struct {
+	window   map[string]int // deriveHarness: a model's sliding window (derive_test.go)
 	t        fatalT
 	clk      *fakeClock
 	view     *fakeView

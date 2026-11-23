@@ -58,6 +58,7 @@ type Meta struct {
 	ValueLength     uint32   // <arch>.attention.value_length, 0 if absent
 	ContextLength   uint32   // <arch>.context_length
 	SlidingWindow   bool     // <arch>.attention.sliding_window present and > 0
+	WindowSize      uint32   // <arch>.attention.sliding_window, 0 if absent
 	// FullAttentionInterval is, for a hybrid model, n where every n-th layer
 	// has attention and the others are recurrent (no KV cache):
 	// <arch>.full_attention_interval, or llama.cpp's default 4 for the
@@ -390,7 +391,7 @@ func build(ver uint32, tensors uint64, scalars map[string]any, arrays map[string
 	if err != nil {
 		return nil, err
 	}
-	m.SlidingWindow = sw > 0
+	m.SlidingWindow, m.WindowSize = sw > 0, sw
 	fai, ok, err := u32(pre + "full_attention_interval")
 	if err != nil {
 		return nil, err

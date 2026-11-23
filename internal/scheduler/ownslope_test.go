@@ -182,3 +182,56 @@ func TestOwnSlope_TwoPointsConfirmedByTheFormula(t *testing.T) {
 		t.Fatal(b)
 	}
 }
+
+// The property for sliding-window models: a synthetic model whose window
+// layers grow only up to its window W (concave in the context: steeper
+// below W, flatter above) is measured at assorted contexts, some below W.
+// A line through a row below W and one above (a chord across the window)
+// would under-predict between them; with the rule (rows below the window
+// are not used, nothing is derived below it, and a chord is used only
+// when confirmed) no own-slope figure is below the truth beyond the
+// rounding a line carries.
+func TestOwnSlope_SlidingWindowNeverUnderPredicts(t *testing.T) {
+	const w = 4096
+	truth := func(ctx int) int { return 6000 + ctx/64 + min(ctx, w)/4 } // full layers + window layers
+	ctxs := []int{1024, 2048, 3072, 4096, 6144, 8192, 16384, 32768, 65536}
+	lines := 0
+	for i, a := range ctxs {
+		for _, b := range ctxs[i+1:] {
+			for _, extra := range []int{0, 32768} {
+				for _, r := range ctxs {
+					if r == a || r == b || r == extra {
+						continue
+					}
+					h := deriveHarness(t)
+					h.window["swa.gguf"] = w
+					h.measure("swa.gguf", a, 1, truth(a))
+					h.measure("swa.gguf", b, 1, truth(b))
+					if extra != 0 && extra != a && extra != b {
+						h.measure("swa.gguf", extra, 1, truth(extra))
+					}
+					p := h.llama("p", 0, func(p *core.Profile) { p.Model, p.Ctx = "swa.gguf", r })
+					info, _ := h.c.need(p)
+					if info.Source != NeedOwnSlope {
+						continue
+					}
+					lines++
+					if info.Need.MiB < truth(r)-2 {
+						t.Fatalf("under the truth: rows %d %d %d, r %d: need %d truth %d (%+v)", a, b, extra, r, info.Need.MiB, truth(r), info.Slope)
+					}
+					if r < w {
+						t.Fatalf("a line below the window: rows %d %d %d, r %d: %+v", a, b, extra, r, info.Slope)
+					}
+					for _, c := range info.Slope.FromCtx {
+						if c < w {
+							t.Fatalf("a line through a row below the window: %+v", info.Slope)
+						}
+					}
+				}
+			}
+		}
+	}
+	if lines < 50 {
+		t.Fatalf("only %d lines exercised", lines)
+	}
+}

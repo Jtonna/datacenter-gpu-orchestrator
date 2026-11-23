@@ -70,7 +70,7 @@ type NeedInfo struct {
 	// (ownslope.go); nil otherwise.
 	Slope *DerivedSlope
 
-	swa bool // the model has a sliding window (concave in the context: ownslope.go)
+	window int // the model's sliding window in tokens, 0 for none (concave in the context: ownslope.go)
 
 	// what at needs to give the need of another device count
 	figs       []learnedFig
@@ -264,5 +264,5 @@ func estimateFromMeta(meta *gguf.Meta, p *core.Profile) (NeedInfo, error) {
 		return NeedInfo{}, err
 	}
 	return NeedInfo{Need: placer.Estimated(estimate.NeedMiB(meta.FileSize, kv)), FileBytes: meta.FileSize,
-		DeviceMiB: estimate.ComputeMiB(p.Ctx * parallel), swa: meta.SlidingWindow}, nil
+		DeviceMiB: estimate.ComputeMiB(p.Ctx * parallel), window: int(meta.WindowSize)}, nil
 }

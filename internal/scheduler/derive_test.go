@@ -16,6 +16,16 @@ import (
 // derivation asks for at other contexts.
 func deriveHarness(t fatalT) *harness {
 	h := newHarness(t)
+	h.window = map[string]int{}
+	windowOf := func(model string) int { // a "swa*" model has a sliding window of 1024 unless the test sets one
+		if w, ok := h.window[model]; ok {
+			return w
+		}
+		if strings.HasPrefix(model, "swa") {
+			return 1024
+		}
+		return 0
+	}
 	h.c.needs = NeedFunc(func(p *core.Profile) (NeedInfo, error) {
 		if p.NeedsMiB > 0 {
 			return NeedInfo{Need: placer.Measured(p.NeedsMiB), FileBytes: 4000 << 20}, nil
@@ -25,7 +35,7 @@ func deriveHarness(t fatalT) *harness {
 			weights = 20000
 		}
 		return NeedInfo{Need: placer.Estimated(weights + p.Ctx*max(p.Parallel, 1)/8), FileBytes: int64(weights) << 20,
-			DeviceMiB: estimate.ComputeMiB(p.Ctx * max(p.Parallel, 1)), swa: strings.HasPrefix(p.Model, "swa")}, nil
+			DeviceMiB: estimate.ComputeMiB(p.Ctx * max(p.Parallel, 1)), window: windowOf(p.Model)}, nil
 	})
 	h.c.llamaBuild, h.c.servedBuild = "aaaaaaa1", "aaaaaaa1"
 	return h
