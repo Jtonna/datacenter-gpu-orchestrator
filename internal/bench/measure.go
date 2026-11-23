@@ -644,7 +644,9 @@ func (s *Store) QueryMeasurements(f MeasureFilter) ([]MeasurementRow, error) {
 }
 
 // backfillMeasurements maps every stored run into measurements when the
-// database was mapped with an older MeasureVersion (or never).
+// database was mapped with an older MeasureVersion (or never). A run trimmed
+// by retention keeps the measurements it has: its requests are gone, so it is
+// never mapped again.
 func (s *Store) backfillMeasurements() error {
 	var have string
 	err := s.db.QueryRow(`SELECT value FROM bench_meta WHERE key='measurements'`).Scan(&have)
@@ -654,7 +656,7 @@ func (s *Store) backfillMeasurements() error {
 	if n, _ := strconv.Atoi(have); n >= MeasureVersion {
 		return nil
 	}
-	rows, err := s.db.Query(`SELECT id FROM runs ORDER BY queued_at`)
+	rows, err := s.db.Query(`SELECT id FROM runs WHERE trimmed_at=0 ORDER BY queued_at`)
 	if err != nil {
 		return err
 	}

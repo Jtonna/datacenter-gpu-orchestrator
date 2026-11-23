@@ -310,6 +310,7 @@ var expected = map[string]struct {
 	"expand_group":          {`{"id":"g"}`, "GET", "/api/bench/groups/g/expand", "", "", nil},
 	"get_run_report":        {`{"id":"r1","step":0,"format":"md"}`, "GET", "/api/bench/runs/r1/report", "format=md&step=0", "", nil},
 	"list_run_removals":     {`{"limit":5}`, "GET", "/api/bench/removals", "limit=5", "", nil},
+	"preview_run_removals":  {`{"days":183}`, "GET", "/api/bench/removals/preview", "days=183", "", nil},
 	"pin_run":               {`{"id":"r1"}`, "PUT", "/api/bench/runs/r1/pin", "", "", nil},
 	"unpin_run":             {`{"id":"r1"}`, "DELETE", "/api/bench/runs/r1/pin", "", "", nil},
 	"list_run_transcripts":  {`{"id":"r1"}`, "GET", "/api/bench/runs/r1/transcripts", "", "", nil},

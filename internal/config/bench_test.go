@@ -17,7 +17,7 @@ const benchProfiles = `profiles:
 func TestBenchConfigDefaults(t *testing.T) {
 	c := mustParse(t, "profiles: {}\n")
 	if c.DataDir != "" || c.WSMaxClients != 32 || c.Bench.Enabled || c.Bench.RegressLoadPct != 15 ||
-		c.Bench.RegressDecodePct != 7 || c.Bench.MaxRunMinutes != 240 || c.Bench.RetentionDays != 183 {
+		c.Bench.RegressDecodePct != 7 || c.Bench.MaxRunMinutes != 240 || c.Bench.RetentionDays != 0 { // retention is off by default
 		t.Fatalf("defaults: %+v", c)
 	}
 	c = mustParse(t, "data_dir: /var/lib/llm-scheduler/data\nprofiles: {}\n")
@@ -28,8 +28,8 @@ func TestBenchConfigDefaults(t *testing.T) {
 	if c.Bench.Enabled {
 		t.Fatal("bench.enabled false ignored")
 	}
-	if c = mustParse(t, "data_dir: /d\nbench: {retention_days: 0}\nprofiles: {}\n"); c.Bench.RetentionDays != 0 {
-		t.Fatalf("retention_days 0 (keep for ever) read as %d", c.Bench.RetentionDays)
+	if c = mustParse(t, "data_dir: /d\nbench: {retention_days: 183}\nprofiles: {}\n"); c.Bench.RetentionDays != 183 {
+		t.Fatalf("retention_days 183 read as %d", c.Bench.RetentionDays)
 	}
 }
 

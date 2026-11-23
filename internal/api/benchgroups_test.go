@@ -199,11 +199,22 @@ func TestTranscriptsOverREST(t *testing.T) {
 	if st, b, _ := e.do("GET", "/api/bench/removals", ""); st != 200 || !strings.Contains(b, `"removals":[]`) {
 		t.Fatalf("removals: %d %s", st, b)
 	}
-	if st, b, _ := e.do("PATCH", "/api/config/settings", `{"bench_retention_days":0}`); st != 200 {
-		t.Fatalf("keep for ever: %d %s", st, b)
+	// The preview: the run finished just now, so 1 day trims nothing; it changes nothing either way.
+	if st, b, _ := e.do("GET", "/api/bench/removals/preview?days=1", ""); st != 200 || !strings.Contains(b, `"count":0`) || !strings.Contains(b, `"would_trim":[]`) {
+		t.Fatalf("preview: %d %s", st, b)
 	}
+	if st, _, _ := e.do("GET", "/api/bench/removals/preview?days=0", ""); st != 400 {
+		t.Fatalf("preview days=0: %d", st)
+	}
+	// Off by default.
 	if _, b, _ := e.do("GET", "/api/config/settings", ""); !strings.Contains(b, `"bench_retention_days":0`) {
 		t.Fatalf("settings: %s", b)
+	}
+	if st, b, _ := e.do("PATCH", "/api/config/settings", `{"bench_retention_days":183}`); st != 200 {
+		t.Fatalf("turn on: %d %s", st, b)
+	}
+	if st, b, _ := e.do("PATCH", "/api/config/settings", `{"bench_retention_days":0}`); st != 200 {
+		t.Fatalf("turn off: %d %s", st, b)
 	}
 	if st, b, _ := e.do("PATCH", "/api/config/settings", `{"bench_retention_days":-3}`); st == 200 {
 		t.Fatalf("negative retention accepted: %s", b)

@@ -450,8 +450,11 @@ type Run struct {
 	Env           *Environment    `json:"env,omitempty"`   // what the run ran on
 	Summary       *RunSummary     `json:"summary,omitempty"`
 	Steps         []Step          `json:"steps,omitempty"`
-	// Pinned: never removed by retention (bench_retention_days).
+	// Pinned: never trimmed by retention (bench_retention_days).
 	Pinned bool `json:"pinned"`
+	// TrimmedAt (unix ms) is when retention removed the run's requests and
+	// transcripts; the run, its steps and its measurements stay.
+	TrimmedAt int64 `json:"trimmed_at,omitempty"`
 }
 
 // RunFilter selects runs for a listing.

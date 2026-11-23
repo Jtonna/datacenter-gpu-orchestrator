@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
@@ -41,6 +42,27 @@ func (s *Server) modelRoutes(m *http.ServeMux) {
 	m.HandleFunc("PUT /api/bench/runs/{id}/pin", g(s.pinRun(true)))
 	m.HandleFunc("DELETE /api/bench/runs/{id}/pin", g(s.pinRun(false)))
 	m.HandleFunc("GET /api/bench/removals", g(s.listRemovals))
+	m.HandleFunc("GET /api/bench/removals/preview", g(s.previewRemovals))
+}
+
+// previewRemovals is GET /api/bench/removals/preview?days=N: the runs that a
+// bench_retention_days of N would trim now (oldest first, up to 500). It
+// changes nothing.
+func (s *Server) previewRemovals(w http.ResponseWriter, r *http.Request) {
+	v := r.URL.Query().Get("days")
+	days, err := strconv.Atoi(v)
+	if err != nil || days < 1 || days > 36500 {
+		badParam(w, "days must be 1 to 36500, got %q", v)
+		return
+	}
+	cutoff := s.opts.Now().Add(-time.Duration(days) * 24 * time.Hour).UnixMilli()
+	list, err := s.opts.BenchStore.ExpiredRuns(cutoff, 500)
+	if err != nil {
+		s.storeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"days": days, "would_trim": list, "count": len(list),
+		"note": "nothing was changed; a trim removes request rows and transcripts and keeps the run, its steps and its measurements"})
 }
 
 // pinRun is PUT and DELETE /api/bench/runs/{id}/pin.

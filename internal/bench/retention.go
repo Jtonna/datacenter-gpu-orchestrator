@@ -12,17 +12,20 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 )
 
-// Retention (data model step 4): one setting, bench_retention_days (default
-// 183, about 6 months; 0 keeps runs for ever), applied to everything of a run
-// together: its rows (steps, requests, phases, measurements, task answers and
-// scores) and its files (transcripts). A pinned run is never removed, nor is
-// a run that has not finished. Every removal is logged in run_removals. A
-// removed run disappears from the lists as a whole.
+// Retention (data model step 4) is off unless the owner sets
+// bench_retention_days (default 0: off, nothing is ever removed). When set, a
+// finished, unpinned run older than that is trimmed: its request rows and its
+// transcript files are removed; the run, its steps and phases, its task
+// answers and scores and its measurements (the compact record) stay, so its
+// history and trends are unchanged. A pinned run is never trimmed, nor is a
+// run that has not finished. Every trim is logged in run_removals.
+// GET /api/bench/removals/preview?days=N lists what a setting would trim
+// without trimming anything.
 
 // DefaultRetentionEvery is how often the manager looks for expired runs.
 const DefaultRetentionEvery = time.Hour
 
-// Removal is the log entry of a removed run.
+// Removal is the log entry of a trimmed run.
 type Removal struct {
 	ID           int64  `json:"id"`
 	RunID        string `json:"run_id"`
@@ -36,12 +39,13 @@ type Removal struct {
 	Reason       string `json:"reason"`
 	Actor        string `json:"actor"`
 	Steps        int    `json:"steps"`
-	Measurements int    `json:"measurements"`
+	Requests     int    `json:"requests"`     // request rows removed
+	Measurements int    `json:"measurements"` // measurements kept
 	FileBytes    int64  `json:"file_bytes"`
 	FilesError   string `json:"files_error,omitempty"`
 }
 
-// SetPinned pins or unpins a run. A pinned run is never removed by retention.
+// SetPinned pins or unpins a run. A pinned run is never trimmed by retention.
 func (s *Store) SetPinned(id string, pinned bool) (*Run, error) {
 	err := s.write(func(tx *sql.Tx) error {
 		res, err := tx.Exec(`UPDATE runs SET pinned=? WHERE id=?`, pinned, id)
@@ -59,25 +63,35 @@ func (s *Store) SetPinned(id string, pinned bool) (*Run, error) {
 	return s.GetRun(id)
 }
 
-// ExpiredRuns are the finished, unpinned runs that ended before cutoff (unix
-// ms), oldest first.
-func (s *Store) ExpiredRuns(cutoff int64, limit int) ([]string, error) {
+// ExpiredRun is a run a retention setting would trim.
+type ExpiredRun struct {
+	ID         string `json:"id"`
+	Kind       string `json:"kind"`
+	Name       string `json:"name,omitempty"`
+	State      string `json:"state"`
+	FinishedAt int64  `json:"finished_at"`
+}
+
+// ExpiredRuns are the finished, unpinned, untrimmed runs that ended before
+// cutoff (unix ms), oldest first.
+func (s *Store) ExpiredRuns(cutoff int64, limit int) ([]ExpiredRun, error) {
 	if limit <= 0 {
 		limit = 500
 	}
-	rows, err := s.db.Query(`SELECT id FROM runs WHERE pinned=0 AND state IN ('completed','failed','cancelled','skipped')
-	  AND COALESCE(NULLIF(finished_at,0), queued_at) < ? ORDER BY COALESCE(NULLIF(finished_at,0), queued_at), id LIMIT ?`, cutoff, limit)
+	rows, err := s.db.Query(`SELECT id, kind, suite_name, state, COALESCE(NULLIF(finished_at,0), queued_at) AS t FROM runs
+	  WHERE pinned=0 AND trimmed_at=0 AND state IN ('completed','failed','cancelled','skipped') AND COALESCE(NULLIF(finished_at,0), queued_at) < ?
+	  ORDER BY t, id LIMIT ?`, cutoff, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []string
+	out := []ExpiredRun{}
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var e ExpiredRun
+		if err := rows.Scan(&e.ID, &e.Kind, &e.Name, &e.State, &e.FinishedAt); err != nil {
 			return nil, err
 		}
-		out = append(out, id)
+		out = append(out, e)
 	}
 	return out, rows.Err()
 }
@@ -95,8 +109,10 @@ func dirSize(dir string) int64 {
 	return n
 }
 
-// RemoveRun removes a finished, unpinned run with its rows and files, and
-// logs the removal. A pinned or unfinished run is ErrConflict.
+// RemoveRun trims a finished, unpinned run: it removes the run's request rows
+// and transcript files, keeps the run, its steps, phases, task rows and
+// measurements, marks the run trimmed and logs it. A pinned, unfinished or
+// already trimmed run is ErrConflict.
 func (s *Store) RemoveRun(id, reason, actor string, now int64) (*Removal, error) {
 	dir, err := s.RunDir(id)
 	if err != nil {
@@ -105,8 +121,9 @@ func (s *Store) RemoveRun(id, reason, actor string, now int64) (*Removal, error)
 	rm := &Removal{RunID: id, RemovedAt: now, Reason: reason, Actor: actor, FileBytes: dirSize(dir)}
 	err = s.write(func(tx *sql.Tx) error {
 		var pinned bool
-		err := tx.QueryRow(`SELECT kind, target_id, suite_name, state, queued_at, finished_at, pinned FROM runs WHERE id=?`, id).
-			Scan(&rm.Kind, &rm.TargetID, &rm.Name, &rm.State, &rm.QueuedAt, &rm.FinishedAt, &pinned)
+		var trimmed int64
+		err := tx.QueryRow(`SELECT kind, target_id, suite_name, state, queued_at, finished_at, pinned, trimmed_at FROM runs WHERE id=?`, id).
+			Scan(&rm.Kind, &rm.TargetID, &rm.Name, &rm.State, &rm.QueuedAt, &rm.FinishedAt, &pinned, &trimmed)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -116,16 +133,24 @@ func (s *Store) RemoveRun(id, reason, actor string, now int64) (*Removal, error)
 		switch {
 		case pinned:
 			return fmt.Errorf("%w: run %s is pinned", ErrConflict, id)
+		case trimmed != 0:
+			return fmt.Errorf("%w: run %s was already trimmed", ErrConflict, id)
 		case rm.State == RunQueued || rm.State == RunRunning || rm.State == RunPaused:
 			return fmt.Errorf("%w: run %s is %s", ErrConflict, id, rm.State)
 		}
 		tx.QueryRow(`SELECT COUNT(*) FROM run_steps WHERE run_id=?`, id).Scan(&rm.Steps)
 		tx.QueryRow(`SELECT COUNT(*) FROM measurements WHERE run_id=?`, id).Scan(&rm.Measurements)
-		// The rows of the steps go with them (ON DELETE CASCADE).
-		if _, err := tx.Exec(`DELETE FROM runs WHERE id=?`, id); err != nil {
+		// Only the request rows go; the measurements mapped from them stay.
+		res, err := tx.Exec(`DELETE FROM requests WHERE step_id IN (SELECT id FROM run_steps WHERE run_id=?)`, id)
+		if err != nil {
 			return err
 		}
-		res, err := tx.Exec(`INSERT INTO run_removals (run_id, kind, target_id, name, state, queued_at, finished_at, removed_at, reason, actor, steps, measurements, file_bytes)
+		n, _ := res.RowsAffected()
+		rm.Requests = int(n)
+		if _, err := tx.Exec(`UPDATE runs SET trimmed_at=? WHERE id=?`, now, id); err != nil {
+			return err
+		}
+		res, err = tx.Exec(`INSERT INTO run_removals (run_id, kind, target_id, name, state, queued_at, finished_at, removed_at, reason, actor, steps, measurements, file_bytes)
 		  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, rm.RunID, rm.Kind, rm.TargetID, rm.Name, rm.State, rm.QueuedAt, rm.FinishedAt, rm.RemovedAt, rm.Reason, rm.Actor,
 			rm.Steps, rm.Measurements, rm.FileBytes)
 		if err != nil {
@@ -147,7 +172,7 @@ func (s *Store) RemoveRun(id, reason, actor string, now int64) (*Removal, error)
 	return rm, nil
 }
 
-// Removals is the removal log, newest first.
+// Removals is the trim log, newest first.
 func (s *Store) Removals(limit int) ([]Removal, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
@@ -170,9 +195,9 @@ func (s *Store) Removals(limit int) ([]Removal, error) {
 	return out, rows.Err()
 }
 
-// orphanRunDirs are run folders whose run is gone (a removal whose files
-// could not be deleted at the time).
-func (s *Store) orphanRunDirs() []string {
+// leftoverRunDirs are the folders of trimmed runs (a trim whose files could
+// not be deleted at the time). A folder without a run row is left alone.
+func (s *Store) leftoverRunDirs() []string {
 	des, err := os.ReadDir(filepath.Join(s.DataDir(), RunsDirName))
 	if err != nil {
 		return nil
@@ -183,45 +208,47 @@ func (s *Store) orphanRunDirs() []string {
 			continue
 		}
 		var n int
-		if s.db.QueryRow(`SELECT COUNT(*) FROM runs WHERE id=?`, de.Name()).Scan(&n) == nil && n == 0 {
+		if s.db.QueryRow(`SELECT COUNT(*) FROM runs WHERE id=? AND trimmed_at>0`, de.Name()).Scan(&n) == nil && n == 1 {
 			out = append(out, de.Name())
 		}
 	}
 	return out
 }
 
-// sweepRetention removes the runs older than the retention setting.
+// sweepRetention trims the runs older than the retention setting; it does
+// nothing while the setting is 0 (off, the default).
 func (m *Manager) sweepRetention() {
 	if m.o.Retention == nil {
 		return
 	}
 	keep := m.o.Retention()
 	if keep <= 0 {
-		return // keep for ever
+		return // off
 	}
 	now := m.o.Now()
-	ids, err := m.o.Store.ExpiredRuns(now.Add(-keep).UnixMilli(), 500)
+	runs, err := m.o.Store.ExpiredRuns(now.Add(-keep).UnixMilli(), 500)
 	if err != nil {
 		m.log.Warn("cannot list the benchmark runs past their retention", "err", err)
 		return
 	}
 	days := int(keep / (24 * time.Hour))
-	reason := fmt.Sprintf("retention: finished more than %d days ago (bench_retention_days)", days)
-	for _, id := range ids {
+	reason := fmt.Sprintf("retention: finished more than %d days ago (bench_retention_days); requests and transcripts removed, measurements kept", days)
+	for _, e := range runs {
+		id := e.ID
 		rm, err := m.o.Store.RemoveRun(id, reason, "system", now.UnixMilli())
 		if err != nil {
-			m.log.Warn("cannot remove a benchmark run past its retention", "run", id, "err", err)
+			m.log.Warn("cannot trim a benchmark run past its retention", "run", id, "err", err)
 			continue
 		}
-		m.log.Info("benchmark run removed (retention)", "run", id, "steps", rm.Steps, "bytes", rm.FileBytes)
+		m.log.Info("benchmark run trimmed (retention)", "run", id, "steps", rm.Steps, "requests", rm.Requests, "measurements_kept", rm.Measurements, "bytes", rm.FileBytes)
 		m.emit(map[string]any{"kind": "run_removed", "run_id": id, "reason": reason})
-		m.record("benchRunRemoved", history.Info, "", fmt.Sprintf("Benchmark run %s removed: %s", id, reason),
-			map[string]any{"bench_run": id, "reason": reason, "steps": rm.Steps, "measurements": rm.Measurements, "file_bytes": rm.FileBytes})
+		m.record("benchRunRemoved", history.Info, "", fmt.Sprintf("Benchmark run %s trimmed: %s", id, reason),
+			map[string]any{"bench_run": id, "reason": reason, "steps": rm.Steps, "requests": rm.Requests, "measurements_kept": rm.Measurements, "file_bytes": rm.FileBytes})
 	}
-	for _, id := range m.o.Store.orphanRunDirs() {
+	for _, id := range m.o.Store.leftoverRunDirs() {
 		if dir, err := m.o.Store.RunDir(id); err == nil {
 			if err := os.RemoveAll(dir); err != nil {
-				m.log.Warn("cannot remove the files of a removed benchmark run", "run", id, "err", err)
+				m.log.Warn("cannot remove the files of a trimmed benchmark run", "run", id, "err", err)
 			}
 		}
 	}

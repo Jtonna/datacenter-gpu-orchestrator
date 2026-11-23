@@ -390,10 +390,10 @@ function stepCard(step, runId) {
     step.log_file ? h('div.cs', h('span.mut', 'Child log '), h('code.cmd', step.log_file)) : null);
 }
 
-// Pin keeps a run from being removed by retention (bench_retention_days).
+// Pin keeps a run from being trimmed by retention (bench_retention_days, off by default).
 function pinButton(run) {
   const path = `/api/bench/runs/${encodeURIComponent(run.id)}/pin`;
-  const tip = on => on ? 'Pinned: retention never removes this run. Click to unpin.' : 'Retention removes finished runs after bench_retention_days. Pin to keep this one.';
+  const tip = on => on ? 'Pinned: retention never trims this run. Click to unpin.' : 'When bench_retention_days is set (off by default), retention trims the requests and transcripts of older finished runs; measurements stay. Pin to keep this one whole.';
   const b = h('button.btn.sm', { type: 'button', title: tip(run.pinned), 'aria-pressed': run.pinned ? 'true' : 'false' }, run.pinned ? 'Pinned' : 'Pin');
   b.addEventListener('click', async () => {
     b.disabled = true;
