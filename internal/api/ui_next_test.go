@@ -136,6 +136,24 @@ func TestUINextScreensExecute(t *testing.T) {
 		"cases": every("empty", "fetch", map[string][]string{"zones": {"Zones"}})})
 }
 
+// Each UI has a visible link to the other, so the owner switches without
+// typing an address: "Classic UI" at the foot of the new shell's rail,
+// "New UI" in the classic UI's header and navigation pane. Both are drawn
+// before any status arrives.
+func TestUISwitchLinks(t *testing.T) {
+	for _, c := range []struct{ shell, text, path string }{{"next", "Classic UI", "/ui/classic/"}, {"classic", "New UI", "/ui/"}} {
+		cases := []any{}
+		for _, r := range []string{"models", "zones", "about"} {
+			if r == "zones" && c.shell == "classic" {
+				r = "nodes"
+			}
+			cases = append(cases, map[string]any{"name": c.shell + ": " + r, "route": "#/" + r,
+				"links": []map[string]string{{"text": c.text, "path": c.path}}})
+		}
+		uiExec(t, map[string]any{"shell": c.shell, "app": true, "cases": cases, "fetch": map[string]any{}})
+	}
+}
+
 // No UI file can send a machine a reboot or a restart: no route of that kind
 // is named anywhere (plan D9, D10; a PS5 must never get a normal reboot).
 func TestUINoRebootOrRestartControl(t *testing.T) {

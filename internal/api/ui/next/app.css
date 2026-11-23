@@ -74,6 +74,8 @@ b.mono,a.mono,.mono b,h1 .mono,h2 .mono,h3 .mono,b .mono{font-weight:500}
 .rail{flex:none;width:var(--rail-w);position:sticky;top:0;height:100vh;background:var(--surface);border-right:1px solid var(--line-panel);padding:14px 0;display:flex;flex-direction:column;align-items:center;gap:6px;z-index:21}
 .rail .mark{margin-bottom:12px;display:flex}
 .rail .gap{margin-top:auto}
+.rail .uiswitch{width:52px;margin-top:6px;padding:4px 2px;border-radius:8px;text-align:center;font-size:10.5px;line-height:1.2;font-weight:700;color:var(--muted);text-decoration:none}
+.rail .uiswitch:hover,.rail .uiswitch:focus-visible{color:var(--accent);background:var(--accent-tint)}
 .rb{width:40px;height:40px;border:0;border-radius:10px;background:transparent;color:#3f4a44;display:flex;align-items:center;justify-content:center;cursor:pointer;position:relative;font-weight:700}
 .rb .ic{width:20px;height:20px}
 .rb:hover{background:var(--hover-bg);color:var(--ink);text-decoration:none}
@@ -146,6 +148,7 @@ b.mono,a.mono,.mono b,h1 .mono,h2 .mono,h3 .mono,b .mono{font-weight:500}
   .rail{position:sticky;top:0;width:auto;height:52px;flex-direction:row;padding:0 10px;border-right:0;border-bottom:1px solid var(--line-panel);overflow-x:auto;gap:2px}
   .rail .mark{margin:0 8px 0 0}
   .rail .gap{margin:0 0 0 auto}
+  .rail .uiswitch{width:auto;margin:0 4px;white-space:nowrap}
   .rb[data-label]:hover::after,.rb[data-label]:focus-visible::after{display:none}
   .rail .menu-open-btn{display:flex}
   .menu{display:none;position:fixed;inset:52px 0 0 0;width:auto;height:auto;border-right:0}
