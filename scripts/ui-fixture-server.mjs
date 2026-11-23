@@ -8,6 +8,7 @@
 //
 // usage: node scripts/ui-fixture-server.mjs [--port 3122] [--ui internal/api/ui] [--host 0.0.0.0]
 //                                           [--state normal|empty|off|loading] [--sequence] [--live-timings]
+//                                           [--health two|good|unknown]
 //
 //   /ui/...      the new shell (ui/next laid over the classic files, as the
 //                scheduler serves it), /ui/classic/... the classic UI
@@ -30,6 +31,11 @@
 // Without it, as on a scheduler with the setting off (its default), those
 // three are null until the run ends and the table shows a dash.
 //
+// --health: what GET /api/health and the health topic answer (the Health
+// board's states): two (the default: Zones a problem, Runs needing
+// attention, as the mockup draws it), good (no issue), unknown (no status
+// read yet: Zones and Queue unknown, as is Alerts in every state).
+//
 // --sequence: a scripted change for screenshots: 4 s after a client
 // subscribes to the requests topic, the queued run 202 starts (a "started"
 // frame), so a queued row can be seen turning into a running one.
@@ -49,6 +55,7 @@ const HOST = opt('--host', '0.0.0.0');
 const STATE = opt('--state', 'normal');
 const SEQUENCE = argv.includes('--sequence');
 const LIVE_TIMINGS = argv.includes('--live-timings');
+const HEALTH = opt('--health', 'two');
 
 // ---------- the fixture (the Overview mockup's sample data) ----------
 
@@ -238,6 +245,7 @@ const server = http.createServer((req, res) => {
     { ts: now - 54 * 60000, seq: 40, type: 'nodeLost', severity: 'error', nodes: ['ps5-07'], summary: 'Node ps5-07 was lost.', data: {} },
     { ts: now - 70 * 60000, seq: 39, type: 'nodeLost', severity: 'error', nodes: ['ps5-06'], summary: 'Node ps5-06 was lost.', data: {} },
   ], total_matching: 3 });
+  if (p === '/api/health') return json(res, 200, health(now));
   if (p === '/api/nodes') return json(res, 200, { nodes: status(now).agents });
   if (p === '/api/nodes/availability') return json(res, 200, availability(u.searchParams, now));
   if (p === '/api/requests/summary') return json(res, 200, summary(u.searchParams, now));
@@ -254,6 +262,37 @@ const server = http.createServer((req, res) => {
   if (m) { const r = requests(now).find(x => String(x.id) === m[1]); return r ? json(res, 200, r) : notFound(res, p); }
   return notFound(res, p);
 });
+
+// GET /api/health (internal/api/health.go): the server's judged rows and
+// sentences, as the Health board draws them, in the state --health names
+function health(now) {
+  const iso = t => new Date(t).toISOString();
+  const row = (id, label, state, text, link, count = 0) => ({ id, label, state, text, count, link, facts: {} });
+  const two = HEALTH === 'two', unknown = HEALTH === 'unknown';
+  const rows = [
+    unknown ? row('zones', 'Zones', 'unknown', 'Status not read yet', '#/zones?filter=down')
+      : two ? row('zones', 'Zones', 'problem', '7 of 8 reachable · 1 down', '#/zones?filter=down', 1) : row('zones', 'Zones', 'ok', '8 of 8 reachable', '#/zones'),
+    two ? row('runs', 'Runs', 'attention', '1 failed in the last hour', '#/overview?runs=failed', 1) : row('runs', 'Runs', 'ok', 'None failed in the last hour', '#/overview'),
+    row('scheduler', 'Scheduler', 'ok', 'Running · release 0.1.5 · up 12 d', '#/about'),
+    row('mcp', 'MCP server', 'ok', 'Running · 3 keys active', '#/mcp', 3),
+    row('storage', 'Storage', 'ok', '50.3 of 240 GB used', '#/about', 21),
+    unknown ? row('queue', 'Queue', 'unknown', 'Status not read yet', '#/monitor/queue') : row('queue', 'Queue', 'ok', '2 waiting · longest 5 min 48 s', '#/monitor/queue', 2),
+    row('alerts', 'Alerts', 'unknown', 'Not set up yet', '#/health/alerts'),
+  ];
+  const issues = rows.filter(r => r.state === 'attention' || r.state === 'problem').length;
+  const worst = rows.some(r => r.state === 'problem') ? 'problem' : issues ? 'attention' : 'ok';
+  return {
+    state: worst, color: { ok: 'green', attention: 'amber', problem: 'red' }[worst], issues,
+    sentence: issues === 0 ? 'All good' : issues === 1 ? '1 thing needs attention' : issues + ' things need attention',
+    updated_at: iso(now), rows,
+    recent: two ? [
+      { at: iso(now - 12 * 60000), seq: 41, type: 'nodeQuarantined', severity: 'warn', text: 'ps5-05 failed a load and was set aside', node: 'ps5-05', until: iso(now + 6 * 60000) },
+      { at: iso(now - 54 * 60000), seq: 40, type: 'nodeLost', severity: 'error', text: 'ps5-07 went offline', node: 'ps5-07' },
+      { at: iso(now - 70 * 60000), seq: 39, type: 'nodeLost', severity: 'error', text: 'ps5-06 went offline', node: 'ps5-06' },
+    ] : [],
+    recent_link: '#/activity?range=2h&sev=warn', alerts_link: '#/health/alerts',
+  };
+}
 
 // /ws: a minimal WebSocket (RFC 6455): hello (with the topics, requests among
 // them), the status every 5 s, and the requests topic once subscribed
@@ -287,9 +326,9 @@ server.on('upgrade', (req, sock) => {
   const accept = createHash('sha1').update(req.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
   sock.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ' + accept + '\r\n\r\n');
   const send = (type, data) => { try { sock.write(frame(JSON.stringify({ type, ts: Date.now(), data }))); } catch { /* closed */ } };
-  send('hello', { server_time: Date.now(), config_revision: 12, topics: ['status', 'event', 'bench', 'config', 'ping', 'models', 'requests'] });
+  send('hello', { server_time: Date.now(), config_revision: 12, topics: ['status', 'event', 'bench', 'config', 'ping', 'models', 'requests', 'health'] });
   send('status', status(Date.now()));
-  let reqs = false, seq = 0;
+  let reqs = false, seq = 0, hl = false;
   const t = setInterval(() => {
     send('status', status(Date.now()));
   }, 5000);
@@ -316,6 +355,10 @@ server.on('upgrade', (req, sock) => {
           }, 4000);
         }
         reqs = want;
+        // the health topic: the whole document on subscribe (it does not change here)
+        const wantH = Array.isArray(m.topics) && m.topics.includes('health');
+        if (wantH && !hl) send('health', health(Date.now()));
+        hl = wantH;
       }
     }
   });

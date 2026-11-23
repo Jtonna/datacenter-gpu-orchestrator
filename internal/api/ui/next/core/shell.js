@@ -27,7 +27,7 @@
 import { h, morph, icon } from './dom.js';
 import { state, on } from './store.js';
 import { href, onRoute, parse, navigate } from './router.js';
-import { healthPopup, heart, readHealth } from './health.js';
+import { healthPopup, heart, heartLabel, readHealth } from './health.js';
 import { getActor, setActor } from './api.js';
 import { dur, durShort, plural, num } from './format.js';
 import { promptText } from './ui.js';
@@ -262,13 +262,14 @@ function railNode() {
     h('span.mark', { key: 'mark' }, mark(32)),
     NAV.filter(s => !s.foot).map(s => railItem(s, cur)),
     h('span.gap', { 'aria-hidden': 'true', key: 'gap' }),
-    h('button', { class: 'rb' + (surface === 'ask' ? ' open' : ''), type: 'button', key: 'rb-ask', 'aria-label': 'Ask Potluck', title: 'Ask Potluck', 'data-label': 'Ask Potluck',
+    h('button', { class: 'rb' + (surface === 'ask' ? ' open' : ''), type: 'button', key: 'rb-ask', 'data-surface': 'ask', 'aria-label': 'Ask Potluck', title: 'Ask Potluck', 'data-label': 'Ask Potluck',
       'aria-expanded': surface === 'ask' ? 'true' : 'false', onclick: () => openSurface('ask') }, icon(I.ask)),
     foot.filter(s => !s.gear).map(s => railItem(s, cur)),
-    h('button', { class: 'rb' + (surface === 'health' ? ' open' : ''), type: 'button', key: 'rb-health',
-      'aria-label': hb.issues ? `System health, ${plural(hb.issues, 'issue')}` : 'System health', title: 'System health', 'data-label': 'System health',
+    // the heart: its dot and its count are the server's (GET /api/health, the health topic)
+    h('button', { class: 'rb' + (surface === 'health' ? ' open' : ''), type: 'button', key: 'rb-health', 'data-surface': 'health', 'data-issues': String(hb.issues),
+      'aria-label': heartLabel(), title: 'System health', 'data-label': 'System health',
       'aria-expanded': surface === 'health' ? 'true' : 'false', onclick: () => openSurface('health') },
-      icon(I.heart), hb.issues ? h('span', { class: 'dotmark ' + hb.level, 'aria-hidden': 'true' }) : null),
+      icon(I.heart), hb.level ? h('span', { class: 'dotmark ' + hb.level, 'aria-hidden': 'true' }) : null),
     foot.filter(s => s.gear).map(s => railItem(s, cur)),
     h('button', { class: 'rb menu-open-btn', type: 'button', key: 'menu-btn', 'aria-label': 'Menu', 'aria-expanded': root.classList.contains('menu-open') ? 'true' : 'false',
       onclick: () => { root.classList.toggle('menu-open'); draw(); } }, icon(I.menu)),
@@ -369,9 +370,10 @@ export function startShell(app) {
     if (e.target.closest('.surfaces') || e.target.closest('.rail')) return;
     closeSurfaces();
   }, true);
-  // the heart's rows that need reads: at the start and after each reconnect
+  // the health document: read at the start; after a reconnect the topic sends
+  // it again (a server without the topic is read once more instead)
   readHealth(draw);
-  on(['hello'], () => readHealth(draw));
+  on(['hello'], d => { if (!(d && Array.isArray(d.topics) && d.topics.includes('health'))) readHealth(draw); });
   route = parse(location.hash);
   // ?health=open on any page opens the popup with it (a link to the popup)
   if (route.query.health === 'open') openSurface('health');
@@ -385,6 +387,6 @@ export function startShell(app) {
     root.classList.toggle('menu-closed', menuShut());
     closeDrawer(); draw();
   });
-  on(['status', 'conn', 'hello', 'tick', 'events'], draw);
+  on(['status', 'conn', 'hello', 'tick', 'events', 'health'], draw);
   draw();
 }

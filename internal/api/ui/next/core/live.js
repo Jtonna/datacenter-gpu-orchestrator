@@ -3,8 +3,9 @@
 // as dead (the server pings every 15 s).
 //
 // The new shell's copy of core/live.js (same exports). One change: when the
-// server's hello lists the "requests" topic (the request log, live), it
-// subscribes again with that topic added. A subscribe replaces the whole set,
+// server's hello lists the "requests" topic (the request log, live) or the
+// "health" topic (the judged health summary), it subscribes again with those
+// topics added. A subscribe replaces the whole set,
 // so every topic is named again; on a server without the topic nothing
 // changes. core/requests.js reads the frames.
 
@@ -13,7 +14,7 @@ import { setServerTime } from './format.js';
 import { url } from './api.js';
 
 const TOPICS = ['status', 'event', 'bench', 'config', 'models'];
-const OPT_IN = ['requests'];
+const OPT_IN = ['requests', 'health'];
 const SILENCE_MS = 40000;
 const MAX_EVENTS = 300;
 

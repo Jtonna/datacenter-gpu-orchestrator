@@ -777,6 +777,7 @@ table.runs{width:100%;border-collapse:collapse}
 .surfaces > *{pointer-events:auto}
 /* the health popup (design: Health board, .hp), anchored to the heart */
 .hp{position:fixed;left:calc(var(--rail-w) + 10px);bottom:10px;width:420px;box-sizing:border-box;background:#fff;border:1px solid #c5cec9;border-radius:14px;box-shadow:0 16px 40px rgba(19,26,23,.2);display:flex;flex-direction:column;overflow:hidden;font-size:13px}
+.hp::before{content:"";position:absolute;left:-6px;bottom:24px;width:10px;height:10px;background:#fff;border-left:1px solid #c5cec9;border-bottom:1px solid #c5cec9;transform:rotate(45deg)}
 .hp-head{display:flex;align-items:center;gap:10px;padding:14px 12px 12px 16px}
 .hp-title{font-size:15px;font-weight:800}
 .hp-sum{display:flex;align-items:center;gap:8px;font-weight:700;padding-top:3px}
@@ -788,9 +789,8 @@ table.runs{width:100%;border-collapse:collapse}
 .hd.ok{background:#0f6b4a}.hd.bad{background:#c8402b}.hd.warn{background:#e0a030}
 .hd.wait{background:transparent;border:1.5px solid #9aa49e}
 .hp-row{display:grid;grid-template-columns:9px 120px minmax(0,1fr) 16px;gap:12px;align-items:center;min-height:40px;padding:0 14px 0 16px;border-top:1px solid #e9eeeb;cursor:pointer}
+.hp-row{color:inherit;text-decoration:none}
 .hp-row:hover,.hp-row:focus-visible{background:#f6f8f6;outline:0}
-.hp-row.nolink{cursor:default}
-.hp-row.nolink:hover{background:transparent}
 .hr-name{font-weight:700}
 .hr-text{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hr-chev{color:#9aa49e;display:flex}
@@ -799,7 +799,7 @@ table.runs{width:100%;border-collapse:collapse}
 .hp-last b{font-weight:800}
 .hp-last a{font-weight:700}
 .hp-ev{display:grid;grid-template-columns:76px minmax(0,1fr);gap:12px;padding:7px 16px;border-top:1px solid #e9eeeb;background:#f8faf8}
-.hp-foot{display:flex;align-items:center;gap:3px;padding:11px 16px 12px;border-top:1px solid #dfe5e1;font-weight:700;color:var(--muted);cursor:not-allowed}
+.hp-foot{display:flex;align-items:center;gap:3px;padding:11px 16px 12px;border-top:1px solid #dfe5e1;font-weight:700}
 .hp-foot .ic{width:15px;height:15px}
 /* the Ask Potluck drawer (design: Chat boards, .drw2), not built yet */
 .drw2{position:fixed;top:0;right:0;bottom:0;width:440px;max-width:100vw;box-sizing:border-box;display:flex;flex-direction:column;background:#fff;border-left:1px solid #dfe5e1;box-shadow:-14px 0 36px rgba(19,26,23,.12)}

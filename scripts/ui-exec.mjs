@@ -42,6 +42,7 @@
 //               "ws": [{"type": "hello"|"requests"|..., "data": {...}}, ...]: live-channel
 //               messages delivered after the screen is drawn (hello also sets the
 //               connection live), before the clicks
+//               "wsAfter": [...]: the same, delivered after the clicks
 //               "links": [{"text": "Classic UI", "path": "/ui/classic/"}, ...],
 //               "click": ["css selector clicked after the draw", ...],
 //               "page": ["text anywhere on the page: shell, side panel, dialog", ...],
@@ -483,6 +484,11 @@ for (const c of spec.cases) {
       const el = document.body.querySelector(sel);
       if (!el) { errors.push('nothing to click: ' + sel); break; }
       el.click();
+      await settle();
+    }
+    // wsAfter: live-channel messages delivered after the clicks
+    for (const m of c.wsAfter || []) {
+      store.publish(m.type, m.data, Date.now());
       await settle();
     }
   }
