@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -30,6 +31,12 @@ type Options struct {
 	// StallTimeout is the longest gap between bytes of a streaming response
 	// after its first chunk; 0 disables the check (design 8.4).
 	StallTimeout time.Duration
+	// APIKey, when set, is sent upstream as "Authorization: Bearer <key>"
+	// in place of whatever the client sent (a host on a node, phase 6).
+	APIKey string
+	// Gone, when it closes, ends the forwarded request: the instance behind
+	// Addr was removed (its node was lost, it exited). Nil never closes.
+	Gone <-chan struct{}
 }
 
 // Result describes how one forwarded request ended.
@@ -50,6 +57,8 @@ type Result struct {
 	Aborted bool
 	// Err is the transport error when the upstream could not be reached.
 	Err error
+	// Cut is true when Options.Gone ended the request.
+	Cut bool
 }
 
 // transport is shared by every proxied request. No ResponseHeaderTimeout:
@@ -72,6 +81,21 @@ func Forward(w http.ResponseWriter, r *http.Request, o Options) (res Result) {
 	sw := &statusWriter{ResponseWriter: w}
 	tail := &tailBuf{}
 	var body *watchBody
+	client := r.Context() // the client's own context: did the client leave?
+	var cut atomic.Bool
+	if o.Gone != nil {
+		ctx, cancel := context.WithCancel(client)
+		defer cancel()
+		go func() {
+			select {
+			case <-o.Gone:
+				cut.Store(true)
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+		r = r.WithContext(ctx)
+	}
 
 	rp := &httputil.ReverseProxy{
 		FlushInterval: -1,
@@ -81,6 +105,9 @@ func Forward(w http.ResponseWriter, r *http.Request, o Options) (res Result) {
 			pr.Out.URL.Scheme = "http"
 			pr.Out.URL.Host = o.Addr
 			pr.Out.Host = o.Addr
+			if o.APIKey != "" {
+				pr.Out.Header.Set("Authorization", "Bearer "+o.APIKey)
+			}
 			if o.Path != "" {
 				pr.Out.URL.Path, pr.Out.URL.RawPath = o.Path, o.RawPath
 			}
@@ -100,7 +127,7 @@ func Forward(w http.ResponseWriter, r *http.Request, o Options) (res Result) {
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			res.Err = err
-			if r.Context().Err() != nil {
+			if client.Err() != nil {
 				return // the client left; nobody to answer
 			}
 			WriteError(w, http.StatusBadGateway, "upstream request failed: "+err.Error(), "server_error", "upstream unavailable", nil)
@@ -115,8 +142,9 @@ func Forward(w http.ResponseWriter, r *http.Request, o Options) (res Result) {
 			res.Aborted = true
 		}
 		res.Status = sw.status
+		res.Cut = cut.Load()
 		if res.Status == 0 {
-			if r.Context().Err() != nil {
+			if client.Err() != nil {
 				res.Status = 499
 			} else {
 				res.Status = http.StatusOK

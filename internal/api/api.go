@@ -454,7 +454,8 @@ func (s *Server) handleV1(w http.ResponseWriter, r *http.Request) {
 		})
 		s.hub.activityDone()
 	}()
-	res = proxy.Forward(w, r, proxy.Options{Addr: lease.Addr, Body: ex.Body, StallTimeout: lease.StallTimeout})
+	res = proxy.Forward(w, r, proxy.Options{Addr: lease.Addr, Body: ex.Body, StallTimeout: lease.StallTimeout,
+		APIKey: lease.APIKey, Gone: lease.Gone})
 	if res.Aborted {
 		panic(http.ErrAbortHandler)
 	}
@@ -580,7 +581,8 @@ func (s *Server) handleUpstream(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		plain = tail
 	}
-	res := proxy.Forward(w, r, proxy.Options{Addr: addr, Path: plain, RawPath: tail, StallTimeout: s.conf().EffectiveStallTimeout(p)})
+	res := proxy.Forward(w, r, proxy.Options{Addr: addr, Path: plain, RawPath: tail, StallTimeout: s.conf().EffectiveStallTimeout(p),
+		APIKey: s.sched.UpstreamKey(model)})
 	if res.Aborted {
 		panic(http.ErrAbortHandler)
 	}
