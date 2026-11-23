@@ -215,7 +215,7 @@ func TestUINextOverviewRequestsTopic(t *testing.T) {
 				map[string]any{"type": "requests", "data": map[string]any{"kind": "tick", "requests": []any{pushed(40, "running", map[string]any{"live": true, "started_at": ms(-4 * time.Second), "tokens_out": 777, "decode_tps": 12.5})}}},
 				map[string]any{"type": "requests", "data": map[string]any{"kind": "queued", "request": pushed(41, "queued", map[string]any{"live": true})}},
 			},
-			"expect": []string{"777", "12.5", "Not started"}, "has": []string{"[data-run-start]", "button[data-zones='41']"}},
+			"expect": []string{"777", "12.5", "Not started"}, "has": []string{"[data-run-start]", "button[data-zones='41']", "td[title^=The]"}},
 		map[string]any{"name": "topic: ended replaces the live row", "route": "#/overview", "status": st,
 			"ws": []any{map[string]any{"type": "requests", "data": map[string]any{"kind": "ended", "request": pushed(40, "failed", map[string]any{
 				"reason": "cut", "message": "pushed failure", "started_at": ms(-4 * time.Second), "ended_at": ms(-time.Second), "duration_ms": 3000, "tokens_out": 800})}}},

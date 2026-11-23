@@ -769,10 +769,12 @@ export function runsTable(o) {
   const extra = o.extra || [];
   const withZones = o.zones !== false;
   const now = o.now || Date.now();
-  const fig = (v, title, isRate) => {
+  // dashTitle: why a running row has no figure yet (it shows one as soon as its row carries it)
+  const fig = (v, title, isRate, dashTitle) => {
     const t = v == null || v < 0 ? DASH : isRate ? rateText(v) : num(v);
-    return h('td', { class: 'num mono' + (t === DASH ? ' mut' : ''), title: t === DASH ? null : title || null }, t);
+    return h('td', { class: 'num mono' + (t === DASH ? ' mut' : ''), title: t === DASH ? dashTitle || null : title || null }, t);
   };
+  const PROMPT_LATER = 'The prompt figures arrive when the request ends, or from its first token on when the server reports them live (setting requests_live_timings, or a client that asks for timings)';
   return h('table.runs',
     h('thead', h('tr',
       h('th', { scope: 'col' }, 'Status and length'), h('th', { scope: 'col' }, 'Started at'), h('th', { scope: 'col' }, 'Model'),
@@ -799,8 +801,8 @@ export function runsTable(o) {
         h('td', status),
         notStarted ? h('td.mut.qd', 'queued ', h('span.mono', clock(r.queued_at))) : h('td.mono', clock(r.started_at)),
         h('td.mono', { title: r.requested && r.requested !== r.profile ? 'Sent as ' + r.requested : null }, r.profile || r.requested || DASH),
-        fig(waiting ? null : r.tokens_in, r.tokens_reused > 0 ? `${num(r.tokens_reused)} of them reused from the cache` : null),
-        fig(waiting ? null : r.prefill_tps, null, true),
+        fig(waiting ? null : r.tokens_in, r.tokens_reused > 0 ? `${num(r.tokens_reused)} of them reused from the cache` : null, false, st === 'running' ? PROMPT_LATER : null),
+        fig(waiting ? null : r.prefill_tps, null, true, st === 'running' ? PROMPT_LATER : null),
         fig(waiting ? null : r.tokens_out, r.live ? 'Counted from the stream so far' : null),
         fig(waiting ? null : r.decode_tps, null, true),
         extra.map(c => h('td', { class: c.cls || null }, c.render(r))),
