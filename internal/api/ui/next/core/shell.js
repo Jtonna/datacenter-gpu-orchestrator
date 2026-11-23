@@ -9,8 +9,12 @@
 // the screen, and goes away by itself.
 //
 // Left out until their backend ships (the plan, section 3): the Ask Potluck
-// rail item (U9), the System health heart and its popup (U7), Overview (U4)
-// and Alerts and webhooks (U7). No item is drawn that leads nowhere.
+// rail item (U9), the System health heart and its popup (U7) and Alerts and
+// webhooks (U7). No item is drawn that leads nowhere.
+//
+// Overview is the home page (Q76): the mark and the Monitor item open it,
+// and it opens with the section menu closed (Q9), as the design draws it;
+// the Monitor item opens the menu again while on it, for that visit only.
 //
 // Every export of the classic core/shell.js is here with the same name:
 // NAV, connectionFacts, connection, setShellSlot, startShell.
@@ -42,7 +46,10 @@ const I = {
 // Nodes page is reachable under Zones). `foot` sections sit at the foot of
 // the rail.
 export const NAV = [
-  { id: 'monitor', label: 'Monitor', icon: I.monitor, pages: [
+  { id: 'monitor', label: 'Monitor', icon: I.monitor, also: ['report'], pages: [
+    { id: 'overview', label: 'Overview' },
+    // the full request list behind the Overview's "All 203" (no mockup yet)
+    { id: 'requests', label: 'Requests' },
     { id: 'queue', label: 'Queue' },
     { id: 'activity', label: 'Activity' },
     { id: 'placement', label: 'Placement preview' },
@@ -84,7 +91,7 @@ export function sectionOf(route) {
 const pageOn = (p, route) => p.id === route.id && (!p.match || p.match(route));
 
 // The mark: a pot, from the design's rail.
-const mark = size => h('svg', { width: size, height: size, viewBox: '0 0 32 32', role: 'img', 'aria-label': 'Potluck' },
+const mark = size => h('svg', { width: size, height: size, viewBox: '0 0 32 32', role: 'img', 'aria-label': 'Potluck, Datacenter GPU Orchestrator' },
   h('rect', { width: 32, height: 32, rx: 9, fill: '#0f6b4a' }),
   h('path', { d: 'M8 15h16a8 8 0 01-16 0z', fill: '#fff' }),
   h('path', { d: 'M11 10.5h10', stroke: '#fff', 'stroke-width': 2.6, 'stroke-linecap': 'round' }));
@@ -194,13 +201,19 @@ function placeSlots() {
 
 const CLOSED_KEY = 'llm-scheduler.menu-closed';
 function menuClosed() { try { return localStorage.getItem(CLOSED_KEY) === '1'; } catch { return false; } }
+// The Overview opens with the menu closed (Q9); opening it there lasts until
+// the page is left, and is not kept.
+let overviewMenuOpen = false;
+const OPENS_CLOSED = ['overview'];
+const menuShut = () => (OPENS_CLOSED.includes(route.id) ? !overviewMenuOpen : menuClosed());
 function setMenuClosed(v) {
-  try { localStorage.setItem(CLOSED_KEY, v ? '1' : '0'); } catch { /* private mode */ }
-  root.classList.toggle('menu-closed', v);
+  if (OPENS_CLOSED.includes(route.id)) overviewMenuOpen = !v;
+  else try { localStorage.setItem(CLOSED_KEY, v ? '1' : '0'); } catch { /* private mode */ }
+  root.classList.toggle('menu-closed', menuShut());
   draw();
 }
 
-let root = null, route = { id: 'models', rest: [], query: {} }, connBar = null;
+let root = null, route = { id: 'overview', rest: [], query: {} }, connBar = null;
 
 function railItem(s, current) {
   const on_ = current && current.id === s.id;
@@ -215,7 +228,7 @@ function railItem(s, current) {
 function railNode() {
   const cur = sectionOf(route);
   return [
-    h('a.mark', { href: href('models'), 'aria-label': 'Potluck, home', key: 'mark' }, mark(32)),
+    h('a.mark', { href: href('overview'), 'aria-label': 'Potluck, home', key: 'mark' }, mark(32)),
     NAV.filter(s => !s.foot).map(s => railItem(s, cur)),
     h('span.gap', { 'aria-hidden': 'true', key: 'gap' }),
     NAV.filter(s => s.foot).map(s => railItem(s, cur)),
@@ -292,10 +305,15 @@ export function startShell(app) {
   const stage = h('div.stage');
   main.replaceWith(stage);
   stage.append(connBar, strip, main);
-  root.classList.toggle('menu-closed', menuClosed());
-  narrow.addEventListener('change', placeSlots);
   route = parse(location.hash);
-  onRoute(r => { route = r; closeDrawer(); draw(); });
+  root.classList.toggle('menu-closed', menuShut());
+  narrow.addEventListener('change', placeSlots);
+  onRoute(r => {
+    if (r.id !== route.id) overviewMenuOpen = false;
+    route = r;
+    root.classList.toggle('menu-closed', menuShut());
+    closeDrawer(); draw();
+  });
   on(['status', 'conn', 'hello', 'tick'], draw);
   draw();
 }
