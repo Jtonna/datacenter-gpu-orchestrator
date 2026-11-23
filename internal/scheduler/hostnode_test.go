@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
@@ -459,5 +460,97 @@ func TestHost_MemoryFiguresAreTheLoadsNotTheBudget(t *testing.T) {
 				t.Fatalf("worker %+v, expect shares %v", w, exp)
 			}
 		})
+	}
+}
+
+// hostNodes builds the two-console host harness with the given free memory
+// on the host console a and the worker console b, and profile m of need.
+func hostNodes(t *testing.T, freeA, freeB, need int) *harness {
+	h := newHarness(t).nodes(ps5("a", 2, freeA), ps5("b", 4, freeB))
+	h.cfg.Defaults.Membership = config.MembershipAgents
+	h.cfg.Defaults.WorkerProbeInterval = 0
+	h.c.agents = true
+	h.llama("m", need, func(p *core.Profile) {
+		p.ForceNodes, p.TensorSplit, p.TTL, p.Host = []string{"a", "b"}, []int{1, 1}, ptrDur(0), core.HostNode
+	})
+	return h
+}
+
+// wantShareFigures: every launch of the load asks for the floor plus its own
+// share (expect_mib), and no more than the node has free.
+func wantShareFigures(t *testing.T, h *harness, freeA, freeB int) (HostLaunchSpec, WorkerTarget) {
+	t.Helper()
+	floor := int64(h.cfg.Defaults.WatchdogFloorMiB)
+	w := h.lastLaunch().spec.Workers[0]
+	h.workersUp()
+	hs := h.lastHost()
+	if hs.ExpectMiB <= int64(h.cfg.Defaults.HostOverheadMiB) || hs.MinMemAvailableMiB != floor+hs.ExpectMiB || hs.MinMemAvailableMiB > int64(freeA) {
+		t.Fatalf("host: expect %d, min %d, node free %d", hs.ExpectMiB, hs.MinMemAvailableMiB, freeA)
+	}
+	if w.ExpectMiB <= 0 || w.MinMemAvailableMiB != floor+w.ExpectMiB || w.MinMemAvailableMiB > int64(freeB) {
+		t.Fatalf("worker: expect %d, min %d, node free %d", w.ExpectMiB, w.MinMemAvailableMiB, freeB)
+	}
+	return hs, w
+}
+
+// A worker launch on a node whose free memory is already cut by another
+// model (or by memory not yet given back) asks for its own share plus the
+// floor: the node's budget there is free - headroom, and floor + budget
+// would be refused by the agent with the room it has.
+func TestHost_WorkerOnABusyNodeAsksForItsShare(t *testing.T) {
+	h := hostNodes(t, 15000, 7000, 8000)
+	h.request("m")
+	wantShareFigures(t, h, 15000, 7000)
+}
+
+// The hardware rerun's sequence: a forced stop of the host launch, then at
+// once a new request for the same profile. The new launch asks for the same
+// figures as the first, not for the node's budget.
+func TestHost_LoadRightAfterAForcedStop(t *testing.T) {
+	h := hostNodes(t, 15000, 15000, 8000)
+	h.autoExit = false
+	h.hostReady()
+	first := h.lastHost()
+	iid := h.inst("m").iid
+	if err := h.c.unload("m", true); err != nil {
+		t.Fatal(err)
+	}
+	h.step(evTick{})
+	h.exitChild(iid, instance.ExitStatus{Code: -1, Signal: "KILL", Requested: true})
+	h.step(evTick{})
+	h.wantState("m", "absent")
+	before := len(h.hosts)
+	h.request("m")
+	h.advance(10 * time.Second) // the nodes' settle time
+	if h.inst("m") == nil {
+		t.Fatal("no new instance after the forced stop")
+	}
+	second, _ := wantShareFigures(t, h, 15000, 15000)
+	if len(h.hosts) != before+1 || second.ExpectMiB != first.ExpectMiB || second.MinMemAvailableMiB != first.MinMemAvailableMiB || second.APIKey == first.APIKey {
+		t.Fatalf("first %+v second %+v", first, second)
+	}
+}
+
+// A host load at a large context: a need large against the budget is
+// started when its shares fit, with figures that fit the node; when they do
+// not fit it is refused before any launch, and the refusal names the real
+// figures (MiB), not the node's budget.
+func TestHost_LargeNeedAcceptedWhenItFitsRefusedWithFiguresWhenNot(t *testing.T) {
+	h := hostNodes(t, 15000, 15000, 20000) // shares of about 10,000 + overhead on 14,000 budgets
+	h.request("m")
+	if h.inst("m") == nil {
+		t.Fatal("a large need that fits was not started")
+	}
+	wantShareFigures(t, h, 15000, 15000)
+
+	h = hostNodes(t, 15000, 15000, 28000) // shares of about 14,000 + 1,024 overhead: does not fit
+	w := h.request("m")
+	h.advance(time.Minute)
+	if len(h.hosts) != 0 || len(h.wlaunches) != 0 {
+		t.Fatalf("a launch was sent for a need that does not fit: hosts %d workers %d", len(h.hosts), len(h.wlaunches))
+	}
+	a, ok := h.peek(w)
+	if !ok || a.err == nil || !strings.Contains(a.err.Message, "MiB") {
+		t.Fatalf("want a refusal with figures, got %+v %v", a.err, ok)
 	}
 }
