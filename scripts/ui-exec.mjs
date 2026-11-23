@@ -307,7 +307,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const UIS = { next: '/ui/', classic: '/ui/classic/' };
 const LIVE_SCREENS = {
   classic: ['models', 'nodes', 'queue', 'activity', 'placement', 'benchmarks', 'benchmarks/runs', 'benchmarks/trends', 'profiles', 'tiers', 'settings', 'audit', 'mcp', 'about'],
-  next: ['models', 'nodes', 'queue', 'activity', 'placement', 'benchmarks', 'benchmarks/runs', 'benchmarks/trends', 'profiles', 'tiers', 'settings', 'audit', 'mcp', 'about'],
+  next: ['zones', 'models', 'nodes', 'queue', 'activity', 'placement', 'benchmarks', 'benchmarks/runs', 'benchmarks/trends', 'profiles', 'tiers', 'settings', 'audit', 'mcp', 'about'],
 };
 if (live && !flag('--ui')) {
   let bad = 0;
