@@ -160,8 +160,8 @@ func (c *schedCore) plan(e *entry) bool {
 	if len(ev) == 0 {
 		return false
 	}
-	res, err := placer.Plan(req, c.freeCandidates(e.prof), ev)
-	if err != nil || c.reserveGate(e.prof, res.Placement, res.Victims) != "" {
+	res, gate, err := c.evictPlan(e.prof, req, ev) // tight.go
+	if err != nil || gate != "" {
 		return false
 	}
 	// A forced profile whose node was just released waits: the refusal

@@ -228,6 +228,12 @@ type Defaults struct {
 	// MarginEstimatedMinMiB. 0 (unset) keeps the split skew margin.
 	MarginEstimatedPercent int
 	MarginEstimatedMinMiB  int
+	// MarginRefuses turns the per-node margin back into a reason to refuse
+	// a placement. Off (the default), a placement that holds weights +
+	// context + fill reserve with the headroom kept but not the margin
+	// starts as a tight fit; the margin then only orders automatic
+	// placements (one that meets it everywhere is preferred).
+	MarginRefuses bool
 	// FreeAverageWindow is the window of the average free memory of a node
 	// (from its heartbeats). Default 30 s.
 	FreeAverageWindow time.Duration

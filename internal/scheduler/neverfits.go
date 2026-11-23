@@ -31,7 +31,29 @@ import (
 // view; the request waits for it, sixth review SS2). pl is the
 // first placement that passes, else the placer's first choice with gate its
 // reason; tried lists every placement the gate refused, in order.
+//
+// With tight fits on (tight.go) a placement that meets the margin
+// everywhere is tried first; only when there is none is the request's own
+// (the margin not counted) placed, which may then be a tight fit.
 func (c *schedCore) gatedPlace(p *core.Profile, req placer.Request) (pl core.Placement, gate string, tried []core.Placement, err error) {
+	// Not while the placer's own first choice holds a just-released node:
+	// the request is not moved off it (sixth review SS2), and it may pass
+	// there, with its margin, on the next view.
+	// A forced profile has its one placement: nothing to prefer.
+	if !c.tightOn() || c.preferMargin || len(p.ForceNodes) > 0 {
+		return c.gatedPlaceAs(p, req)
+	}
+	if first, err := placer.Place(req, c.freeCandidates(p)); err != nil || !c.anyJustReleased(first) {
+		if met, ok := c.preferMet(p); ok {
+			c.reserveGate(p, met, nil) // the mark (TN1) is the placement taken
+			return met, "", nil, nil
+		}
+	}
+	return c.gatedPlaceAs(p, req)
+}
+
+// gatedPlaceAs is gatedPlace for one request.
+func (c *schedCore) gatedPlaceAs(p *core.Profile, req placer.Request) (pl core.Placement, gate string, tried []core.Placement, err error) {
 	cands := c.freeCandidates(p)
 	pl, err = placer.Place(req, cands)
 	if err != nil {
@@ -93,7 +115,7 @@ func (c *schedCore) shortNodes(p *core.Profile, pl core.Placement) []core.NodeID
 	}
 	var out []core.NodeID
 	for i, r := range rows {
-		if r.RemainsMiB < 0 && i < len(pl.Nodes) {
+		if c.rowShort(r) > 0 && i < len(pl.Nodes) {
 			out = append(out, pl.Nodes[i].ID)
 		}
 	}
@@ -128,11 +150,11 @@ func (c *schedCore) gateNeverFits(p *core.Profile, tried []core.Placement) *Erro
 		var short []string
 		t, h := 0, 0
 		for _, r := range rows {
-			t, h = t+r.WillTakeMiB+r.MarginMiB, h+r.AvailableMiB
-			if r.RemainsMiB >= 0 {
+			t, h = t+r.WillTakeMiB+c.counted(r.MarginMiB), h+r.AvailableMiB
+			if c.rowShort(r) == 0 {
 				continue
 			}
-			short = append(short, shortRowText(r, "has"))
+			short = append(short, c.shortRowText(r, "has"))
 		}
 		if len(short) == 0 {
 			return nil
@@ -165,7 +187,13 @@ func (c *schedCore) gateNeverFits(p *core.Profile, tried []core.Placement) *Erro
 }
 
 // shortRowText says how row r falls short; has is "has" or "would have".
-func shortRowText(r PlanMemoryNode, has string) string {
+// With the margin not counted (tight.go) it says so, and the shortfall is
+// against available alone.
+func (c *schedCore) shortRowText(r PlanMemoryNode, has string) string {
+	if !c.marginCounts() {
+		return fmt.Sprintf("node %s would take %d MiB (weights %d + context %d + fill reserve %d) but %s %d MiB available (headroom kept); short by %d MiB on %s even without the margin",
+			r.Node, r.WillTakeMiB, r.WeightsMiB, r.ContextMiB, r.FillReserveMiB, has, r.AvailableMiB, c.rowShort(r), r.Node)
+	}
 	margin := fmt.Sprintf("margin %d MiB", r.MarginMiB)
 	if r.MarginRule != "" {
 		margin += " (" + r.MarginRule + ")"
@@ -215,9 +243,9 @@ func (c *schedCore) shortEvenFreed(p *core.Profile, pl core.Placement) *Error {
 	var parts []string
 	take, has := 0, 0
 	for _, r := range rows {
-		take, has = take+r.WillTakeMiB+r.MarginMiB, has+r.AvailableMiB
-		if r.RemainsMiB < 0 {
-			parts = append(parts, shortRowText(r, "would have only"))
+		take, has = take+r.WillTakeMiB+c.counted(r.MarginMiB), has+r.AvailableMiB
+		if c.rowShort(r) > 0 {
+			parts = append(parts, c.shortRowText(r, "would have only"))
 		}
 	}
 	if len(parts) == 0 {

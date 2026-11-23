@@ -274,6 +274,14 @@ func (c *schedCore) dryPlan(profile string) (r PlanReport) {
 		}
 		if p != nil {
 			r.Memory = c.planMemory(p, placed, r.Victims) // reserve.go
+			if r.Memory != nil && r.Memory.TightFit && (r.Action == PlanStart || r.Action == PlanEvict) {
+				r.TightFit = true // tight.go
+				if text := tightText(c.markTight(r.Memory.Nodes)); r.Reason == "" {
+					r.Reason = text
+				} else {
+					r.Reason += "; " + text
+				}
+			}
 			c.planHost(&r, p, placed)                     // hostnode.go
 		}
 	}()
@@ -355,7 +363,7 @@ func (c *schedCore) dryPlan(profile string) (r PlanReport) {
 		}
 	}
 	if ev := c.evictables(p, 0); len(ev) > 0 {
-		if res, err := placer.Plan(req, c.freeCandidates(p), ev); err == nil {
+		if res, g, err := c.evictPlan(p, req, ev); err == nil { // tight.go, as plan()
 			if len(p.ForceNodes) > 0 && c.refusesBeforeEvict() && c.anyJustReleased(res.Placement) { // as plan() (AB1)
 				r.Action, r.Reason = PlanQueue, forcedFitWaitText(res.Placement, c)
 				return r
@@ -364,7 +372,7 @@ func (c *schedCore) dryPlan(profile string) (r PlanReport) {
 				r.Action, r.Reason, r.Placement = PlanReject, fe.Message, c.placedStatus(res.Placement)
 				return r
 			}
-			if g := c.reserveGate(p, res.Placement, res.Victims); g == "" && c.evictWaits(p, res.Placement, res.Victims, time.Time{}) { // as plan(); a queued entry returned above
+			if g == "" && c.evictWaits(p, res.Placement, res.Victims, time.Time{}) { // as plan(); a queued entry returned above
 				r.Action, r.Reason = PlanQueue, "waits until the average free figure of its nodes counts again after a release: the eviction would pass only without it"
 				return r
 			} else if g == "" {

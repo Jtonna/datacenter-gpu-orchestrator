@@ -134,7 +134,7 @@ func TestNeverFits_Automatic(t *testing.T) {
 		liveTight(h)
 		h.cfg.Defaults.MaxPool = 2
 		h.llama("huge", 0, func(p *core.Profile) { p.LoadTimeout = time.Hour })
-		h.needs["huge"] = NeedInfo{Need: placer.Measured(25000), FileBytes: 12 << 30}
+		h.needs["huge"] = NeedInfo{Need: placer.Measured(25400), FileBytes: 12 << 30} // short even without the margin
 		h.viewChanged()
 		r := h.c.dryPlan("huge")
 		if r.Action != PlanReject {
@@ -255,8 +255,9 @@ func TestNeverFits_ForcedLoadRightAfterAnUnloadWaits(t *testing.T) {
 }
 
 // skewedPeaks stores a 2-device measurement of "m" on a and b, 10000 MiB on
-// each, whose peak on a (12500) the placer does not see: the gate refuses
-// the placer's pick a, b; any other node set has no per-node peaks.
+// each, whose peak on a (12700, above a's 12643 available: short even
+// without the margin, so not a tight fit) the placer does not see: the gate
+// refuses the placer's pick a, b; any other node set has no per-node peaks.
 func skewedPeaks(t *testing.T, mode string, ids ...string) *harness {
 	t.Helper()
 	var ns []core.Node
@@ -271,7 +272,7 @@ func skewedPeaks(t *testing.T, mode string, ids ...string) *harness {
 	h.c.llamaBuild, h.c.servedBuild = "aaaaaaa1", "aaaaaaa1"
 	h.c.putLearned(&learnedNeed{TotalMiB: 20000, key: needKeyOf(p), profile: "m", devices: 2, at: h.clk.Now(),
 		placement: []core.NodeID{"a", "b"}, split: []float64{0.5, 0.5},
-		Nodes: []learnedNode{{ID: "a", Fraction: 0.5, MiB: 10000, PeakMiB: 12500}, {ID: "b", Fraction: 0.5, MiB: 10000, PeakMiB: 10000}}})
+		Nodes: []learnedNode{{ID: "a", Fraction: 0.5, MiB: 10000, PeakMiB: 12700}, {ID: "b", Fraction: 0.5, MiB: 10000, PeakMiB: 10000}}})
 	h.viewChanged()
 	return h
 }

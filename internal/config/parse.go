@@ -336,6 +336,7 @@ type rawDefaults struct {
 	MarginMeasuredMiB      int      `yaml:"margin_measured_mib" json:"margin_measured_mib,omitempty"`
 	MarginEstimatedPercent int      `yaml:"margin_estimated_percent" json:"margin_estimated_percent,omitempty"`
 	MarginEstimatedMinMiB  int      `yaml:"margin_estimated_min_mib" json:"margin_estimated_min_mib,omitempty"`
+	MarginRefuses          bool     `yaml:"margin_refuses" json:"margin_refuses,omitempty"`
 	FreeAverageWindow      duration `yaml:"free_average_window" json:"free_average_window,omitempty"`
 	HostOverheadMiB        int      `yaml:"host_overhead_mib" json:"host_overhead_mib,omitempty"`
 	HostNoMmap             bool     `yaml:"host_no_mmap" json:"host_no_mmap,omitempty"`
@@ -350,7 +351,7 @@ func rawDefaultsFrom(d Defaults) rawDefaults {
 		d.SplitSkewMargin, d.EstimateMargin, d.LoadMemoryFloorMiB,
 		d.Membership, d.WorkerModelDir, d.WatchdogFloorMiB, duration(d.WorkerStartTimeout),
 		d.FillReserveKiBPerToken, d.PlacementUsesReserved, d.ReservedDriftWarnMiB, d.MarginMeasuredMiB,
-		d.MarginEstimatedPercent, d.MarginEstimatedMinMiB, duration(d.FreeAverageWindow),
+		d.MarginEstimatedPercent, d.MarginEstimatedMinMiB, d.MarginRefuses, duration(d.FreeAverageWindow),
 		d.HostOverheadMiB, d.HostNoMmap}
 }
 
@@ -364,7 +365,7 @@ func (r rawDefaults) value() Defaults {
 		r.SplitSkewMargin, r.EstimateMargin, r.LoadMemoryFloorMiB,
 		r.Membership, r.WorkerModelDir, r.WatchdogFloorMiB, time.Duration(r.WorkerStartTimeout),
 		r.FillReserveKiBPerToken, r.PlacementUsesReserved, r.ReservedDriftWarnMiB, r.MarginMeasuredMiB,
-		r.MarginEstimatedPercent, r.MarginEstimatedMinMiB, time.Duration(r.FreeAverageWindow),
+		r.MarginEstimatedPercent, r.MarginEstimatedMinMiB, r.MarginRefuses, time.Duration(r.FreeAverageWindow),
 		r.HostOverheadMiB, r.HostNoMmap}
 }
 

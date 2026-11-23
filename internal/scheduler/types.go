@@ -468,6 +468,10 @@ type PlanReport struct {
 	// completely, what the node has free, what is reserved there and what
 	// remains; and whether it fits. Nil when the need is unknown.
 	Memory *PlanMemory
+	// TightFit: the plan starts (or evicts for) a tight fit: on at least
+	// one node the load fits only without its margin (Memory says where;
+	// Reason says "tight fit: N MiB spare on <node>, margin M MiB not met").
+	TightFit bool
 	// Host is where the profile's llama-server runs: core.HostServer (the
 	// scheduler's machine) or core.HostNode (phase 6). HostNode is the node
 	// that hosts (the first forced node), HostOverheadMiB what hosting adds
@@ -494,6 +498,9 @@ type PlanMemory struct {
 	Hypothetical bool
 	// PlacementUsesReserved is the setting the available figures follow.
 	PlacementUsesReserved bool
+	// TightFit: it fits, and on at least one node only without the margin
+	// (tight.go): the load starts with less than the margin spare there.
+	TightFit bool
 	// Decides: the decision holds every placement to Fits (any reservation
 	// setting is on). With the defaults Fits is shown only; the old rules
 	// decide.
@@ -528,6 +535,13 @@ type PlanMemoryNode struct {
 	// HostOverheadMiB is host_overhead_mib on the node that hosts the load
 	// (in ContextMiB and WillTakeMiB already); 0 on any other node.
 	HostOverheadMiB int
+	// SpareMiB is AvailableMiB - WillTakeMiB: what the node keeps beyond
+	// the load before the margin. Tight: the node holds the load without
+	// its margin only (0 <= spare < margin; tight.go), short of the margin
+	// by MarginShortMiB.
+	SpareMiB       int
+	Tight          bool
+	MarginShortMiB int
 }
 
 // PlanReservedBy is what another (or the same) profile holds on a node.
