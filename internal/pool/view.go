@@ -236,8 +236,12 @@ func (p *Pool) nodeFromAgentLocked(cfg *config.Config, a *agent) (core.Node, boo
 		n.SharedMemory = true
 		usable := a.hb.MemAvailableMiB - int64(n.WatchdogFloorMiB)
 		n.FreeMiB = int(max(min(d.FreeMiB, usable), 0))
+		n.MemAvailableMiB = int(max(a.hb.MemAvailableMiB, 0))
 		if avg, ok := a.sharedAverage(int64(n.WatchdogFloorMiB)); ok {
 			n.FreeAvgMiB, n.FreeAvgKnown = int(max(avg, 0)), true
+		}
+		if avg, ok := a.availAverage(); ok {
+			n.MemAvailableAvgMiB, n.MemAvailableAvgKnown = int(max(avg, 0)), true
 		}
 	}
 	return n, tiered

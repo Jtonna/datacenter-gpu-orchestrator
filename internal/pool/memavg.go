@@ -68,6 +68,19 @@ func (a *agent) memAverage() (avail, devFree int64, ok bool) {
 // average over the samples kept of each sample's usable figure: min(device
 // free, available - floor), rounded down (review N7: the smaller of the two
 // averages can be above it when the binding figure alternates).
+// availAverage is the average MemAvailable of the window, as reported (no
+// floor taken off, no device figure): what a plan shows a person.
+func (a *agent) availAverage() (int64, bool) {
+	if len(a.mem) == 0 {
+		return 0, false
+	}
+	var sum int64
+	for _, s := range a.mem {
+		sum += s.avail
+	}
+	return sum / int64(len(a.mem)), true
+}
+
 func (a *agent) sharedAverage(floor int64) (int64, bool) {
 	if len(a.mem) == 0 {
 		return 0, false

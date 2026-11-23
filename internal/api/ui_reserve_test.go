@@ -55,7 +55,7 @@ func TestUIReserveReadsOnlyServerKeys(t *testing.T) {
 		"nd":  statusNodeReserveKeys,
 		"res": nodeReservationKeys,
 		"mem": planMemoryKeys,
-		"row": planMemoryNodeKeys,
+		"row": append(slices.Clone(planMemoryNodeKeys), planMemoryNodeOptionalKeys...),
 		"by":  planReservedByKeys,
 	}
 	// leave out the header comment, which names the keys in prose

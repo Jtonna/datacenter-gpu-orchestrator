@@ -542,6 +542,31 @@ type PlanMemoryNode struct {
 	SpareMiB       int
 	Tight          bool
 	MarginShortMiB int
+
+	// What the row's figures are built from, so none is taken off twice
+	// (planfigures.go). FreeNowMiB is after the watchdog floor and
+	// AvailableMiB after the floor and the headroom; PlaceableMiB is
+	// AvailableMiB under its plain name. On a shared-memory node:
+	// MemAvailableMiB is the console's reported MemAvailable (the current
+	// reading), MemAvailableAvgMiB its average when known, and
+	// MemAvailableReading which one the row is built from ("current" or
+	// "average"); WatchdogFloorMiB the floor. Then
+	//
+	//	reading - floor - headroom (+ PlaceableAdjustMiB) = PlaceableMiB
+	//
+	// where PlaceableAdjustMiB (absent when 0) is whatever else the rules
+	// changed, said in PlaceableAdjustWhy. PredictedLowestAvailableMiB is
+	// MemAvailableMiB - WillTakeMiB: the figure to compare with the
+	// console's own available memory during the load. All absent on a node
+	// with memory of its own.
+	PlaceableMiB                int
+	MemAvailableMiB             *int
+	MemAvailableAvgMiB          *int
+	MemAvailableReading         *string
+	WatchdogFloorMiB            *int
+	PlaceableAdjustMiB          *int
+	PlaceableAdjustWhy          *string
+	PredictedLowestAvailableMiB *int
 }
 
 // PlanReservedBy is what another (or the same) profile holds on a node.
