@@ -165,6 +165,20 @@ func (c *Config) validateLlama(p *core.Profile, r *ProfileSpec, pf func(field, f
 			}
 		}
 	}
+	switch r.Host {
+	case "", core.HostServer:
+	case core.HostNode:
+		// DESIGN (phase 6): Potluck does not choose a console host by itself
+		// yet; the profile names the nodes and the first one hosts.
+		if len(p.ForceNodes) == 0 {
+			pf("host", "node requires force_nodes; the first forced node is the host")
+		}
+		if !c.AgentsMode() {
+			pf("host", "node requires membership: agents")
+		}
+	default:
+		pf("host", "unknown value %q (want server or node)", r.Host)
+	}
 	// DESIGN: excluding wins over forcing, at run time. A profile that forces
 	// an excluded node is valid configuration (0.1.7): it is kept, refused at
 	// run time, and named by ExclusionBlocks (a warning, not an error).
@@ -196,6 +210,7 @@ func validateCommand(p *core.Profile, r *ProfileSpec, pf func(field, format stri
 		{"kv_quant", r.KVQuant != ""}, {"flash_attn", r.FlashAttn != nil},
 		{"allow_tiers", r.AllowTiers != nil}, {"force_nodes", r.ForceNodes != nil},
 		{"tensor_split", r.TensorSplit != nil}, {"extra_args", r.ExtraArgs != nil},
+		{"host", r.Host != ""},
 	}
 	for _, f := range llamaOnly {
 		if f.set {
@@ -307,6 +322,9 @@ func (c *Config) validateDefaults(add func(string, ...any)) {
 	// overflow, and the pool keeps a bounded number of samples per node.
 	if d.FillReserveKiBPerToken > 1024 {
 		add("defaults: fill_reserve_kib_per_token: must be at most 1024, got %d", d.FillReserveKiBPerToken)
+	}
+	if d.HostOverheadMiB < 0 || d.HostOverheadMiB > 16384 {
+		add("defaults: host_overhead_mib: must be between 0 and 16384, got %d", d.HostOverheadMiB)
 	}
 	if d.FreeAverageWindow > 10*time.Minute {
 		add("defaults: free_average_window: must be at most 10m, got %v", d.FreeAverageWindow)

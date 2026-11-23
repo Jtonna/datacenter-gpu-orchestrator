@@ -149,7 +149,18 @@ type Profile struct {
 	// LoadStallTimeout is nil for "use the default"; an explicit 0 disables
 	// the load stall rule for this profile.
 	LoadStallTimeout *time.Duration
+	// Host is where the llama-server host process runs: "" on the
+	// scheduler's machine (profile host: server, the default), HostNode on
+	// the first forced node, started there by its agent (phase 6).
+	Host string
 }
+
+// HostNode is Profile.Host for a host on a node; HostServer is the profile
+// word for the default.
+const (
+	HostNode   = "node"
+	HostServer = "server"
+)
 
 // PlacedNode is one node chosen for an instance.
 type PlacedNode struct {
@@ -163,4 +174,7 @@ type PlacedNode struct {
 type Placement struct {
 	Nodes       []PlacedNode // in device order
 	TensorSplit []int        // explicit split (from the profile); nil means derive from BudgetMiB
+	// Host is the node that runs the host process (phase 6); it is Nodes[0].
+	// Empty: the scheduler's machine, as before.
+	Host NodeID
 }

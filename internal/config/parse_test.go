@@ -32,6 +32,7 @@ func TestParseDefaultsApplied(t *testing.T) {
 		SplitSkewMargin: 0.15, EstimateMargin: 0.05, LoadMemoryFloorMiB: 768,
 		Membership: MembershipFleet, WatchdogFloorMiB: 1000, WorkerStartTimeout: 15 * time.Second,
 		ReservedDriftWarnMiB: 500, FreeAverageWindow: 30 * time.Second,
+		HostOverheadMiB: 1024,
 	}
 	if d != want {
 		t.Fatalf("defaults = %+v\nwant      %+v", d, want)

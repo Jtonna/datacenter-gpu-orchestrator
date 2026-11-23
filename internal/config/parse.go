@@ -30,6 +30,7 @@ func DefaultDefaults() Defaults {
 		SplitSkewMargin: 0.15, EstimateMargin: 0.05, LoadMemoryFloorMiB: 768,
 		Membership: MembershipFleet, WatchdogFloorMiB: 1000, WorkerStartTimeout: 15 * time.Second,
 		ReservedDriftWarnMiB: 500, FreeAverageWindow: 30 * time.Second,
+		HostOverheadMiB: 1024,
 	}
 }
 
@@ -230,6 +231,7 @@ type ProfileSpec struct {
 	LoadTimeout      duration  `yaml:"load_timeout" json:"load_timeout,omitempty"`
 	StallTimeout     *duration `yaml:"stall_timeout" json:"stall_timeout,omitempty"`
 	LoadStallTimeout *duration `yaml:"load_stall_timeout" json:"load_stall_timeout,omitempty"`
+	Host             string    `yaml:"host" json:"host,omitempty"`
 }
 
 func (r *ProfileSpec) toCore(name string) *core.Profile {
@@ -240,6 +242,9 @@ func (r *ProfileSpec) toCore(name string) *core.Profile {
 		CheckEndpoint: r.CheckEndpoint, Aliases: r.Aliases, Generated: r.Generated,
 		TTL: r.TTL.ptr(), LoadTimeout: time.Duration(r.LoadTimeout), StallTimeout: r.StallTimeout.ptr(),
 		LoadStallTimeout: r.LoadStallTimeout.ptr(),
+	}
+	if r.Host == core.HostNode {
+		p.Host = core.HostNode // "" and "server": the scheduler's machine, as before
 	}
 	if p.Kind == "" {
 		p.Kind = core.KindLlama
@@ -331,6 +336,8 @@ type rawDefaults struct {
 	MarginEstimatedPercent int      `yaml:"margin_estimated_percent" json:"margin_estimated_percent,omitempty"`
 	MarginEstimatedMinMiB  int      `yaml:"margin_estimated_min_mib" json:"margin_estimated_min_mib,omitempty"`
 	FreeAverageWindow      duration `yaml:"free_average_window" json:"free_average_window,omitempty"`
+	HostOverheadMiB        int      `yaml:"host_overhead_mib" json:"host_overhead_mib,omitempty"`
+	HostNoMmap             bool     `yaml:"host_no_mmap" json:"host_no_mmap,omitempty"`
 }
 
 func rawDefaultsFrom(d Defaults) rawDefaults {
@@ -342,7 +349,8 @@ func rawDefaultsFrom(d Defaults) rawDefaults {
 		d.SplitSkewMargin, d.EstimateMargin, d.LoadMemoryFloorMiB,
 		d.Membership, d.WorkerModelDir, d.WatchdogFloorMiB, duration(d.WorkerStartTimeout),
 		d.FillReserveKiBPerToken, d.PlacementUsesReserved, d.ReservedDriftWarnMiB, d.MarginMeasuredMiB,
-		d.MarginEstimatedPercent, d.MarginEstimatedMinMiB, duration(d.FreeAverageWindow)}
+		d.MarginEstimatedPercent, d.MarginEstimatedMinMiB, duration(d.FreeAverageWindow),
+		d.HostOverheadMiB, d.HostNoMmap}
 }
 
 func (r rawDefaults) value() Defaults {
@@ -355,7 +363,8 @@ func (r rawDefaults) value() Defaults {
 		r.SplitSkewMargin, r.EstimateMargin, r.LoadMemoryFloorMiB,
 		r.Membership, r.WorkerModelDir, r.WatchdogFloorMiB, time.Duration(r.WorkerStartTimeout),
 		r.FillReserveKiBPerToken, r.PlacementUsesReserved, r.ReservedDriftWarnMiB, r.MarginMeasuredMiB,
-		r.MarginEstimatedPercent, r.MarginEstimatedMinMiB, time.Duration(r.FreeAverageWindow)}
+		r.MarginEstimatedPercent, r.MarginEstimatedMinMiB, time.Duration(r.FreeAverageWindow),
+		r.HostOverheadMiB, r.HostNoMmap}
 }
 
 type rawRecovery struct {
