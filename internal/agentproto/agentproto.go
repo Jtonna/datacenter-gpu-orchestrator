@@ -800,6 +800,9 @@ type Status struct {
 	Busy      bool   `json:"busy"`
 	Launches  int    `json:"launches"`
 	BusySince *int64 `json:"busy_since"`
+	// AdvertiseAddr is --advertise-addr when set (release 0.1.9): the
+	// address the registration names instead of the agent's own.
+	AdvertiseAddr string `json:"advertise_addr,omitempty"`
 }
 
 // LastLaunch is the exited launch in GET /status (6.9).

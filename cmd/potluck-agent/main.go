@@ -128,7 +128,8 @@ func parseFlags(args []string, stderr io.Writer) (agent.Options, error) {
 	fs.Int64Var(&o.WatchdogFloorMiB, "watchdog-floor-mib", 1000, "kill a launch when MemAvailable falls below this")
 	fs.StringVar(&o.SharedMemory, "shared-memory", launch.SharedMemoryAuto,
 		"auto, true or false: whether the GPU uses system memory, so a launch must also fit MemAvailable (auto: every device except a CUDA one)")
-	fs.Var(&allow, "allow-from", "extra source address or network accepted on the agent API (repeatable)")
+	fs.Var(&allow, "allow-from", "extra source address or network accepted on the agent API (repeatable; never 0.0.0.0/0)")
+	fs.StringVar(&o.AdvertiseAddr, "advertise-addr", "", "address sent to Potluck as this node's address (Docker behind NAT: the machine's address where 50060 and 50052 are published); the agent still binds its own")
 	fs.BoolVar(&o.RAMOnly, "ram-only", false, "RAM-only node: programs and logs under /dev/shm/potluck")
 	fs.StringVar(&o.Install, "install", agentproto.InstallBare, "bare or docker")
 	fs.StringVar(&o.Name, "name", host, "display label")
@@ -194,6 +195,13 @@ func parseFlags(args []string, stderr io.Writer) (agent.Options, error) {
 			pfx = netip.PrefixFrom(ip, ip.BitLen())
 		}
 		o.AllowFrom = append(o.AllowFrom, pfx.Masked())
+	}
+	if o.AdvertiseAddr != "" {
+		ip, err := netip.ParseAddr(o.AdvertiseAddr)
+		if err != nil || ip.Zone() != "" || ip.IsUnspecified() || ip.IsLoopback() || ip.IsMulticast() {
+			return o, fmt.Errorf("--advertise-addr %q: want the IP address Potluck reaches this node at", o.AdvertiseAddr)
+		}
+		o.AdvertiseAddr = ip.Unmap().String()
 	}
 	if o.DataDir == "" {
 		o.DataDir = "/var/lib/potluck-agent"

@@ -56,9 +56,15 @@ type Options struct {
 	// result, so Potluck places on the same figure the agent tests.
 	SharedMemory string
 	AllowFrom    []netip.Prefix
-	DataDir      string // programs and launch logs
-	StateDir     string // state files and the share mount point
-	ModelsDir    string // the node's model folder ("" for push)
+	// AdvertiseAddr is --advertise-addr: the address sent as the
+	// registration's addr, where Potluck reaches the agent and its launches
+	// (an agent in a Docker container behind NAT whose ports are published
+	// on the machine). The agent still binds its own address. "" sends its
+	// own address.
+	AdvertiseAddr string
+	DataDir       string // programs and launch logs
+	StateDir      string // state files and the share mount point
+	ModelsDir     string // the node's model folder ("" for push)
 	// LDLibraryPath is the agent's LD_LIBRARY_PATH, the one the library
 	// check used; launches get the same value.
 	LDLibraryPath string
@@ -259,6 +265,12 @@ func New(opt Options, deps Deps) (*Agent, error) {
 	if deps.Logger == nil {
 		deps.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
+	for _, p := range opt.AllowFrom {
+		if p.Bits() == 0 {
+			deps.Logger.Warn("--allow-from covers every address: anyone who can reach this machine may start and stop launches; "+
+				"name the Docker gateway network or Potluck's address instead", "allow_from", p.String())
+		}
+	}
 	if deps.HTTP == nil {
 		deps.HTTP = &http.Client{Timeout: 5 * time.Second}
 	}
@@ -445,6 +457,15 @@ func (a *Agent) leaveOnPurpose() {
 	default:
 		a.log.Warn("leave marker found, but Potluck refused the deregister call; it will show the node as lost", "marker", a.opt.LeaveMarker, "status", resp.StatusCode)
 	}
+}
+
+// advertised is the registration's addr: --advertise-addr when set, else
+// the agent's own address.
+func (a *Agent) advertised(own string) string {
+	if a.opt.AdvertiseAddr != "" {
+		return a.opt.AdvertiseAddr
+	}
+	return own
 }
 
 // ID returns the node id, "" until resolved.
@@ -796,7 +817,7 @@ func (a *Agent) RegisterRequest() agentproto.RegisterRequest {
 	a.mu.Unlock()
 	req := agentproto.RegisterRequest{ID: id.ID, Name: a.opt.Name, AgentRelease: a.opt.Release,
 		AgentStartID: a.startID, OS: runtime.GOOS, Arch: runtime.GOARCH, Install: a.opt.Install,
-		Addr: id.Addr, Backends: a.deps.Hardware.Backends(gpus), RAMOnly: a.opt.RAMOnly,
+		Addr: a.advertised(id.Addr), Backends: a.deps.Hardware.Backends(gpus), RAMOnly: a.opt.RAMOnly,
 		ModelSource: a.opt.ModelSource.Wire(), Programs: a.Programs.Held(), LaunchID: a.Launch.CurrentID(),
 		ForeignProcesses: a.foreignProcesses(), WatchdogFloorMiB: a.Launch.WatchdogFloorMiB(), Startup: a.Start.Report()}
 	if a.Cache != nil {
@@ -1347,7 +1368,8 @@ func (a *Agent) Status() agentproto.Status {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	st := agentproto.Status{Registered: a.registered, Potluck: a.opt.Potluck, Release: a.opt.Release,
-		Paused: a.paused, Role: agentproto.RoleIdle, State: ls.State, Load: ls.Load, Busy: n > 0, Launches: n}
+		Paused: a.paused, Role: agentproto.RoleIdle, State: ls.State, Load: ls.Load, Busy: n > 0, Launches: n,
+		AdvertiseAddr: a.opt.AdvertiseAddr}
 	if n > 0 {
 		s := since.Unix()
 		st.BusySince = &s
