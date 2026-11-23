@@ -343,6 +343,9 @@ type PhaseResult struct {
 	Unload          *UnloadResult `json:"unload,omitempty"`
 	// Cold is what a load phase with the cold option did to the file caches.
 	Cold *ColdResult `json:"cold,omitempty"`
+	// Tasks is what a tasks phase sent and got back (tasks.go), without the
+	// answer texts, which are stored apart.
+	Tasks *TasksResult `json:"tasks,omitempty"`
 }
 
 // WorkerEnv is a worker's identity at the time of a run.

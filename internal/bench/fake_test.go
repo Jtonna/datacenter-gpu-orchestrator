@@ -38,6 +38,16 @@ type fakeProf struct {
 	// loadErr makes /api/load start the load and then fail on the way back
 	// (a connection reset after the scheduler accepted it).
 	loadErr bool
+	// chatFn scripts the answer to a chat body (the tasks phase): its text,
+	// reasoning, finish reason (default stop), a status other than 200, and
+	// how long it takes.
+	chatFn func(body string) fakeReply
+}
+
+type fakeReply struct {
+	text, reasoning, finish string
+	code                    int
+	delay                   time.Duration
 }
 
 type fakeInst struct {
@@ -454,6 +464,11 @@ func (f *fakeAPI) Chat(ctx context.Context, runID string, req ChatRequest, onPro
 		delete(f.slowOnce, body.Model)
 	}
 	delay := p.chatDelay
+	var scripted *fakeReply
+	if p.chatFn != nil {
+		r := p.chatFn(string(req.Body))
+		scripted, delay = &r, r.delay
+	}
 	pt := promptTokens(struct {
 		Messages []struct {
 			Content string `json:"content"`
@@ -497,9 +512,23 @@ func (f *fakeAPI) Chat(ctx context.Context, runID string, req ChatRequest, onPro
 	if strings.Contains(string(req.Body), "second") {
 		reply = p.output + " (turn two)"
 	}
-	msg, _ := json.Marshal(map[string]any{"role": "assistant", "content": reply})
+	finish, reasoning := "stop", ""
+	if scripted != nil {
+		if scripted.code != 0 {
+			return &ChatResponse{Status: scripted.code, ErrMessage: scripted.text, WallMS: 3}, nil
+		}
+		reply, reasoning = scripted.text, scripted.reasoning
+		if scripted.finish != "" {
+			finish = scripted.finish
+		}
+	}
+	m := map[string]any{"role": "assistant", "content": reply}
+	if reasoning != "" {
+		m["reasoning_content"] = reasoning
+	}
+	msg, _ := json.Marshal(m)
 	tm, _ := json.Marshal(map[string]any{"prompt_n": pt - cache, "prompt_ms": 5, "prompt_per_second": p.prefill, "predicted_n": 8, "predicted_ms": 80, "predicted_per_second": decode, "cache_n": cache})
-	resp := &ChatResponse{Status: 200, WallMS: 12, Timings: tm, Message: msg, Text: reply}
+	resp := &ChatResponse{Status: 200, WallMS: 12, Timings: tm, Message: msg, Text: reply, Reasoning: reasoning, FinishReason: finish}
 	if body.Stream {
 		v := 7.0
 		resp.TTFTMS = &v
