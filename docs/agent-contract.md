@@ -443,7 +443,7 @@ Exit reasons, in the order the agent decides them. An earlier line wins over a l
 | Order | `reason` | Decided from |
 |---|---|---|
 | 1 | `stopped`, `forced`, `lease_expired`, `watchdog`, `reset` | The agent sent the signal itself, for that cause. |
-| 2 | `file_load_timeout` | The log holds `rpc_file_load_timeout: endpoint=… command=… timeout_s=N` (the fork aborts with exit 139). Host log only. |
+| 2 | `file_load_timeout` | The log holds `rpc_file_load_timeout: endpoint=… command=… timeout_s=N` anywhere in a line: the fork reports it through `GGML_ABORT`, which puts a `<file>:<line>: ` prefix before the token and ends the process with SIGABRT (exit 134). The exit code and signal do not matter: the token decides. Host log only. |
 | 3 | `file_load_required` | The log holds `rpc_file_load_required: endpoint=… reason=no_capability\|refused\|identity_mismatch` (exit 1). Host log only. The `reason=` word is passed on in `message`. |
 | 4 | `start_failed` | The process exited before it was ready and before any load began, for example an invalid argument. |
 | 5 | `oom_kill` | Killed by a signal the agent did not send, and the kernel log names the process. |
@@ -732,6 +732,8 @@ Busy file option (from release 0.1.6; section 6.14): `--busy-file auto|off|PATH`
 - `--allow-from <the Docker gateway network>`: requests published through NAT arrive from the gateway of the container's network (for example the bridge network `172.17.0.0/16`), not from Potluck's address, so the agent must accept that network. Name that network only. Never `0.0.0.0/0`.
 
 On such a machine the Nvidia GPU is found by `/dev/dxg` (4.2), and the setup script's firewall handling does not apply (the machine's firewall is the Windows one).
+
+Behind Docker Desktop every caller of a published port appears to the agent as the gateway, Potluck and any other machine on the network alike, so `--allow-from` cannot narrow who reaches a published port there: whoever reaches the machine's port is admitted. Narrow it with the machine's own firewall (allow `50060`, `50052` and `50061` from Potluck's address only); a later release may add a key on the agent's port, as the host port already has.
 
 **Inbound ports and the firewall.** The machine must accept TCP connections from Potluck on `50060` (agent API) and `50052` (worker), and on `50061` from phase 6 (section 3). The setup script opens `50060` and `50052` only (CR-9 review): no Potluck release sends a host launch yet, so `50061` is not needed; the setup of the phase 6 release will open it. The setup script handles the machine's firewall as follows:
 
