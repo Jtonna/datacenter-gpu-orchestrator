@@ -27,12 +27,13 @@ const (
 	SetAsideOther            = "other"
 )
 
-// Host values of InstanceStatus.Host and roles of PlacedNodeStatus.Role.
+// Host values of InstanceStatus.Host and roles of PlacedNodeStatus.Role
+// (the same words as the request log's lease roles).
 const (
 	HostServer = "server"
 	HostOnNode = "node"
-	RoleHost   = "host"
-	RoleHelper = "helper"
+	MemberHost   = "host"
+	MemberHelper = "helper"
 )
 
 // Free bases of NodeStatus.FreeBasis.
@@ -111,9 +112,9 @@ func (c *schedCore) memberRoles(in *inst, s *InstanceStatus) {
 	shares := instance.SplitFractions(*in.prof, in.placement)
 	for i := range s.Nodes {
 		m := &s.Nodes[i]
-		m.Role = RoleHelper
+		m.Role = MemberHelper
 		if (host != "" && m.ID == host) || (host == "" && m.Local) {
-			m.Role = RoleHost
+			m.Role = MemberHost
 		}
 		if i < len(shares) {
 			m.Share = shares[i]

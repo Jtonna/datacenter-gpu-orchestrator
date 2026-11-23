@@ -18,9 +18,9 @@ func sharesAddUp(t *testing.T, in InstanceStatus) {
 	sum, hosts := 0.0, 0
 	for _, m := range in.Nodes {
 		sum += m.Share
-		if m.Role == RoleHost {
+		if m.Role == MemberHost {
 			hosts++
-		} else if m.Role != RoleHelper {
+		} else if m.Role != MemberHelper {
 			t.Fatalf("member %s role %q", m.ID, m.Role)
 		}
 	}
@@ -61,7 +61,7 @@ func TestZone_HostOnNodeRoleAndShareFromTheSplit(t *testing.T) {
 	want := map[core.NodeID]struct {
 		role  string
 		share float64
-	}{"a": {RoleHost, .40}, "b": {RoleHelper, .35}, "c": {RoleHelper, .25}}
+	}{"a": {MemberHost, .40}, "b": {MemberHelper, .35}, "c": {MemberHelper, .25}}
 	for _, m := range in.Nodes {
 		if w := want[m.ID]; m.Role != w.role || math.Abs(m.Share-w.share) > 1e-9 {
 			t.Fatalf("member %s: %s %v, want %s %v", m.ID, m.Role, m.Share, w.role, w.share)
@@ -80,9 +80,9 @@ func TestZone_ServerHostWithItsOwnGPUIsTheHost(t *testing.T) {
 	}
 	for _, m := range in.Nodes {
 		switch {
-		case m.ID == "host-1" && (m.Role != RoleHost || m.Share != .25):
+		case m.ID == "host-1" && (m.Role != MemberHost || m.Share != .25):
 			t.Fatalf("local %+v", m)
-		case m.ID == "a" && (m.Role != RoleHelper || m.Share != .75):
+		case m.ID == "a" && (m.Role != MemberHelper || m.Share != .75):
 			t.Fatalf("a %+v", m)
 		}
 	}
@@ -98,7 +98,7 @@ func TestZone_ServerHostWithRemoteWorkersOnlyHasHelpersByBudget(t *testing.T) {
 		t.Fatalf("%+v", in)
 	}
 	for _, m := range in.Nodes {
-		if m.Role != RoleHelper || m.Share <= 0 {
+		if m.Role != MemberHelper || m.Share <= 0 {
 			t.Fatalf("member %+v", m)
 		}
 	}
@@ -115,7 +115,7 @@ func TestZone_SingleNodeIsTheWholeModel(t *testing.T) {
 	h.llama("m", 8000)
 	h.ready("m")
 	in := instOf(t, h.c.statusDoc(), "m")
-	if len(in.Nodes) != 1 || in.Nodes[0].Role != RoleHelper || in.Nodes[0].Share != 1 {
+	if len(in.Nodes) != 1 || in.Nodes[0].Role != MemberHelper || in.Nodes[0].Share != 1 {
 		t.Fatalf("%+v", in.Nodes)
 	}
 }
