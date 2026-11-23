@@ -22,6 +22,7 @@ CREATE TABLE usage_meta (
   key   TEXT PRIMARY KEY,
   value INTEGER NOT NULL
 );`},
+	{Name: "node_hours", SQL: nodeHoursSQL}, // nodehours.go
 }
 
 // NewerSchemaError: a newer scheduler migrated the file. It is kept as it
