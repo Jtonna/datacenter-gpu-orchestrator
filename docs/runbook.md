@@ -418,7 +418,7 @@ curl -s "$H/api/requests/summary?step=hour" | jq '{totals, live, oldest_ts, hist
 curl -s $H/api/system | jq .storage.usage
 ```
 
-`storage.usage.moved_aside` names a damaged file that was moved aside at the start; `dropped` counts updates lost to a full queue. The file can be deleted while Potluck is stopped: it starts a new history.
+`storage.usage.moved_aside` names a damaged file that was moved aside at the start; `dropped` counts updates lost to a full queue; `size_bytes` is the file and its WAL. A request row takes about 0.5 KB on disk (indexes and hourly and daily totals included), a machine-hour of availability about 0.13 KB; the WAL stays near 4 MiB and is cut back to 8 MiB at most after a checkpoint. On a full disk the writes fail and are counted in `failed`, with `last_error` "database or disk is full" and one WARN a minute at most; requests and the scheduler go on as before, the store stays on and writes again once space is free (the retention trim frees some itself). The file can be deleted while Potluck is stopped: it starts a new history.
 
 The list shows the queued and running requests first, from memory, then the finished ones; the last 64 finished are also kept in memory, so they show at once (before the writer stores them) and when `usage.db` is off.
 

@@ -292,3 +292,45 @@ func TestRequests_NoStoreStillServes(t *testing.T) {
 		t.Fatal(r.StatusCode)
 	}
 }
+
+// A full disk under the request log: every request is served as before,
+// /health stays 200, the failures are counted in storage.usage with the
+// error and one WARN, and the store stays on.
+func TestRequests_FullDiskNeverStopsTheScheduler(t *testing.T) {
+	dir := t.TempDir()
+	probe := usage.Open(usage.Options{Dir: dir, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	var pages int
+	probe.DB().QueryRow(`PRAGMA page_count`).Scan(&pages)
+	probe.Close()
+	logs := &syncBuf{}
+	st := usage.Open(usage.Options{Dir: dir, Logger: slog.New(slog.NewTextHandler(logs, nil)), MaxPages: pages + 2})
+	t.Cleanup(func() { st.Close() })
+	e := newEnv(t, chatOK, func(o *Options) { o.Requests, o.Usage = usage.NewRecorder(st), st })
+	for i := 0; i < 200; i++ {
+		resp := e.post("/v1/chat/completions", chat("alpha"))
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("request %d: %d", i, resp.StatusCode)
+		}
+	}
+	flushT(t, st)
+	if r := e.get("/health"); r.StatusCode != 200 {
+		t.Fatal(r.StatusCode)
+	}
+	var sys struct {
+		Storage struct {
+			Usage usage.Stats `json:"usage"`
+		} `json:"storage"`
+	}
+	json.Unmarshal([]byte(body(t, e.get("/api/system"))), &sys)
+	u := sys.Storage.Usage
+	if !u.On || u.Failed == 0 || !strings.Contains(u.LastError, "full") || u.SizeBytes == 0 {
+		t.Fatalf("storage.usage %+v", u)
+	}
+	if n := strings.Count(logs.String(), "a write failed"); n != 1 {
+		t.Fatalf("%d WARN lines", n)
+	}
+	if p := listRequests(t, e, "?limit=500"); len(p.Requests) == 0 {
+		t.Fatal("the routes answer nothing")
+	}
+}
