@@ -472,8 +472,22 @@ func TestActivityRecordsFinishedRequestsWithTokens(t *testing.T) {
 	e := newEnv(t, chatOK)
 	e.post("/v1/chat/completions", chat("alpha")).Body.Close()
 	e.post("/v1/embeddings", chat("alpha-old")).Body.Close()
-	m := jsonOf(t, body(t, e.get("/api/metrics/activity")))
-	data := m["data"].([]any)
+	// A request's record is written after its answer has gone out, so the
+	// second one can arrive a moment after the client has its response:
+	// wait for both, finished, before reading them.
+	var data []any
+	eventually(t, "both records", func() bool {
+		data = jsonOf(t, body(t, e.get("/api/metrics/activity")))["data"].([]any)
+		if len(data) != 2 {
+			return false
+		}
+		for _, d := range data {
+			if tk, _ := d.(map[string]any)["tokens"].(map[string]any); tk == nil || tk["output_tokens"] != float64(7) {
+				return false
+			}
+		}
+		return true
+	})
 	if len(data) != 2 {
 		t.Fatalf("data = %v", data)
 	}

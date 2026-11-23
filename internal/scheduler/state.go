@@ -236,6 +236,7 @@ type entry struct {
 	victims    []string      // profiles of victim instances
 	stoppedAny bool          // a victim has been stopped (or exited)
 	evictHeld  time.Time     // when evictWaits first held its eviction (neverfits.go)
+	occ        *occCase      // its only option was an occupied console (occupied.go)
 }
 
 func (e *entry) claimed() bool { return e.claim != nil }

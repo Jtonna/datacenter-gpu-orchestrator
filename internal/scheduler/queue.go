@@ -114,7 +114,11 @@ func (c *schedCore) evalEntry(e *entry) {
 		return
 	}
 	if c.insts[p.Name] == nil {
-		if c.place(e) || c.plan(e) {
+		if c.place(e) {
+			return
+		}
+		c.noteOccupied(e) // occupied.go: observation only
+		if c.plan(e) {
 			return
 		}
 	}
@@ -199,6 +203,7 @@ func (c *schedCore) plan(e *entry) bool {
 	}
 	e.victims = slices.Clone(res.Victims)
 	e.stoppedAny = false
+	c.occEvicted(e, res.Victims) // occupied.go
 	c.changed = true
 	c.log.Info("claim made", "profile", e.prof.Name, "nodes", nodeIDStrings(e.claim), "victims", slices.Clone(res.Victims),
 		"waiters", len(e.waiters))
@@ -397,6 +402,7 @@ func (c *schedCore) checkTimeout(e *entry) {
 		return
 	}
 	reason, why := c.waitWhy(e.prof)
+	c.occRefused(e, "queue_timeout") // occupied.go
 	c.log.Warn("queue timeout", "profile", e.prof.Name, "waited", e.clock, "reason", string(reason), "detail", why, "waiters", len(e.waiters))
 	c.answerEntry(e, err503(reason, fmt.Sprintf("no room for %s within queue_timeout: %s", e.prof.Name, why), queueRetryAfter))
 }
@@ -405,6 +411,7 @@ func (c *schedCore) checkTimeout(e *entry) {
 // deletes it. Waiters are answered first so that a victim returning to
 // ready cannot admit them.
 func (c *schedCore) answerEntry(e *entry, err *Error) {
+	c.occRefused(e, "refused: "+string(err.Reason)) // occupied.go; a timeout said so first
 	ws := e.waiters
 	e.waiters = nil
 	c.failAll(ws, err)
@@ -415,6 +422,7 @@ func (c *schedCore) answerEntry(e *entry, err *Error) {
 // needFailed: the profile's need could not be determined (unreadable model
 // file). That is a load failure for the profile: 502 and backoff.
 func (c *schedCore) needFailed(e *entry, err error) {
+	c.occRefused(e, "refused: memory need unknown") // occupied.go
 	ws := e.waiters
 	e.waiters = nil
 	c.failAll(ws, err502(fmt.Sprintf("memory need of %s: %v", e.prof.Name, err), nil))

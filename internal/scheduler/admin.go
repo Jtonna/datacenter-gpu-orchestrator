@@ -80,6 +80,7 @@ func (c *schedCore) beginShutdown(force bool) {
 		// Every queued waiter first, so a claim dropped below cannot admit
 		// a queued waiter to a victim returning to ready.
 		for _, e := range c.orderedEntries() {
+			c.occRefused(e, "refused: shutting down") // occupied.go
 			ws := e.waiters
 			e.waiters = nil
 			c.failAll(ws, err503(ReasonShuttingDown, "the scheduler is shutting down", queueRetryAfter))
