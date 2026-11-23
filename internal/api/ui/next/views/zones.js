@@ -19,7 +19,7 @@
 import { h } from '../core/dom.js';
 import { registerView, navigate } from '../core/router.js';
 import { state, on } from '../core/store.js';
-import { liveView, pageHead, chips, filterSelect, searchField, zoneStatus, colourKey, sidePanel, skeleton, empty, button } from '../core/ui.js';
+import { liveView, pageHead, chips, filterSelect, searchField, zoneStatus, colourKey, sidePanel, skeleton, badge, empty, button } from '../core/ui.js';
 import { num, gb, gbNum, ago, at, plural, DASH } from '../core/format.js';
 import { viewNodes } from '../core/status.js';
 import { agentsMode, agentOf, notPlaceable } from '../core/nodeactions.js';
@@ -40,9 +40,11 @@ export function zoneOf(st, n) {
   if (n.excluded || (agent && agent.excluded)) {
     const running = (agent && agent.running_while_excluded) || (n.holder ? { profile: n.holder } : null);
     const by = n.excluded_by || (agent && agent.excluded_by) || '';
+    // why it is off, in view: the exclude_nodes entry that matches it
+    const why = by ? h('span.mut', 'Off by exclude_nodes: ', mono(by)) : h('span.mut', 'Off by exclude_nodes');
     return { group: 'off', square: 'off', label: 'Off', rank: 6,
       title: by ? 'Excluded in the configuration (exclude_nodes: ' + by + ')' : 'Excluded in the configuration',
-      doing: running ? [h('span.warn-t', 'Excluded, still running '), mono(running.profile)] : h('span.mut', 'Switched off in the configuration') };
+      doing: running ? [h('span.warn-t', 'Excluded, still running '), mono(running.profile), h('br'), why] : why };
   }
   if (!n.online) {
     return { group: 'down', square: 'down', label: 'Offline', rank: 0,
@@ -159,7 +161,9 @@ registerView({
           return h('tr', { key: n.id, class: 'click' + (r.query.zone === n.id ? ' sel' : ''), tabindex: '0', 'aria-label': (n.hostname || n.id) + ', ' + z.label,
             onclick: () => pick(n.id), onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(n.id); } } },
           h('td', zoneStatus(z.square, z.label, z.title)),
-          h('td', h('span.zname', n.hostname || n.id), dev ? h('span.zchip', ' | ' + dev) : null, n.local ? h('span.zchip', ' · runs Potluck') : null),
+          h('td', h('span.zname', n.hostname || n.id), dev ? h('span.zchip', ' | ' + dev) : null, n.local ? h('span.zchip', ' · runs Potluck') : null,
+            // no_auto_nodes: automatic placement never picks it (status view: auto false)
+            n.auto === false && z.group !== 'off' ? [' ', badge('Named only', 'line', 'In no_auto_nodes: only a profile that names this zone in force_nodes puts a model here')] : null),
           h('td', z.doing),
           h('td.r', { class: z.group === 'off' ? 'r mut' : 'r' }, memoryOf(n)),
           h('td.r', { class: z.group === 'off' ? 'r mut' : 'r' }, tempOf(agent)));

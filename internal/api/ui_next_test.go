@@ -95,10 +95,10 @@ func TestUINextAllModulesLoad(t *testing.T) {
 // and the scheduler's own machine), a scheduler with profiles and the
 // benchmark store, and an empty scheduler (no agents, no profiles, no runs).
 func TestUINextScreensExecute(t *testing.T) {
-	const active, paused, excluded = "02:00:00:00:00:01", "02:00:00:00:00:02", "02:00:00:00:00:03"
+	const active, paused, excluded, named = "02:00:00:00:00:01", "02:00:00:00:00:02", "02:00:00:00:00:03", "02:00:00:00:00:04"
 	var conf *config.Config
-	fe, p, _ := feedEnv(t, func(c *config.Config) { c.ExcludeNodes = []string{excluded}; conf = c })
-	for _, id := range []string{active, paused, excluded} {
+	fe, p, _ := feedEnv(t, func(c *config.Config) { c.ExcludeNodes = []string{excluded}; c.NoAutoNodes = []string{named}; conf = c })
+	for _, id := range []string{active, paused, excluded, named} {
 		register(t, fe, id)
 		feedHeartbeat(t, p, id, "")
 	}
@@ -106,8 +106,8 @@ func TestUINextScreensExecute(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := statusWithAgentNodes(t, fe, func() *config.Config { return conf })
-	if s, _ := json.Marshal(st); !strings.Contains(string(s), `"paused":true`) || !strings.Contains(string(s), `"excluded_by":"`+excluded+`"`) {
-		t.Fatalf("the status lacks the paused or the excluded machine: %s", s)
+	if s, _ := json.Marshal(st); !strings.Contains(string(s), `"paused":true`) || !strings.Contains(string(s), `"excluded_by":"`+excluded+`"`) || !strings.Contains(string(s), `"auto":false`) {
+		t.Fatalf("the status lacks the paused, the excluded or the named-only machine: %s", s)
 	}
 	every := func(label string, status any, extra map[string][]string) []any {
 		out := []any{}
@@ -122,10 +122,12 @@ func TestUINextScreensExecute(t *testing.T) {
 	}
 	// the zones of the agent cluster, and the side panel of one of them
 	cluster := every("agents", st, map[string][]string{
-		"zones": {"Zones", "All zones", "1 off", "Off", "Not accepting", "console-1", "Colour key", "Showing 4 of 4"},
+		"zones": {"Zones", "All zones", "1 off", "Off", "Not accepting", "console-1", "Colour key", "Showing 5 of 5", "Named only"},
 	})
 	cluster = append(cluster, map[string]any{"name": "agents: zones, one zone opened", "route": "#/zones?zone=" + active, "status": st, "absent": designSamples},
-		map[string]any{"name": "agents: zones, only the off ones", "route": "#/zones?show=off", "status": st, "expect": []string{"Showing 1 of 4", "Switched off in the configuration"}})
+		// the reason a zone is off: the exclude_nodes entry that matches it
+		map[string]any{"name": "agents: zones, only the off ones", "route": "#/zones?show=off", "status": st,
+			"expect": []string{"Showing 1 of 5", "Off by exclude_nodes: " + excluded}, "absent": []string{"Named only"}})
 	uiExec(t, map[string]any{"shell": "next", "app": true, "base": fe.front.URL, "cases": cluster})
 
 	be := benchEnv(t)
