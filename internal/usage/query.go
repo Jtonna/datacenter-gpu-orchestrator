@@ -118,12 +118,16 @@ func (r *Recorder) List(f Filter) (Page, error) {
 	}
 	f.Limit = min(f.Limit, 500)
 	page := Page{Requests: []Request{}}
+	seen := map[int64]bool{}
 	if f.Before == 0 {
 		var queued, running []Request
 		for _, row := range r.Live() {
-			if !f.matchesLive(&row) {
+			// A request that ended while Live copied it is already
+			// final: it is listed once, below, among the finished.
+			if row.Status != StatusQueued && row.Status != StatusRunning || !f.matchesLive(&row) {
 				continue
 			}
+			seen[row.ID] = true
 			if row.Status == StatusQueued {
 				queued = append(queued, row)
 			} else {
@@ -149,7 +153,7 @@ func (r *Recorder) List(f Filter) (Page, error) {
 	}
 	// Rows that just ended may not be stored yet (or never, on an off
 	// store): the recorder's recent ones fill the gap.
-	seen := map[int64]bool{}
+	stored = slices.DeleteFunc(stored, func(row Request) bool { return seen[row.ID] })
 	for _, row := range stored {
 		seen[row.ID] = true
 	}
