@@ -172,7 +172,7 @@ func (m *Manager) execute(ctx context.Context, q *queued) {
 	var baseRun *Run
 	if r.BaselineRunID != "" {
 		baseRun, _ = m.o.Store.GetRun(r.BaselineRunID)
-	} else if prev, err := m.o.Store.PreviousCompleted(r.SuiteID, r.ID); err == nil && prev != nil {
+	} else if prev, err := m.o.Store.PreviousCompletedOf(runKind(r), runTarget(r), r.ID); err == nil && prev != nil {
 		baseRun = prev
 		ar.setRun(func(r *Run) { r.BaselineRunID = prev.ID })
 		m.o.Store.SetRunSummary(r.ID, nil, prev.ID)
@@ -202,8 +202,12 @@ func (m *Manager) execute(ctx context.Context, q *queued) {
 			}
 		}
 	}()
-	m.record(history.TBenchRunStarted, history.Info, "", fmt.Sprintf("Benchmark run %s of suite %s started (%d steps).", r.ID, r.SuiteName, ar.total),
-		map[string]any{"bench_run": r.ID, "suite": r.SuiteID, "steps": ar.total, "trigger": r.Trigger, "baseline": ar.snapshot().BaselineRunID})
+	startData := map[string]any{"bench_run": r.ID, "suite": r.SuiteID, "steps": ar.total, "trigger": r.Trigger, "baseline": ar.snapshot().BaselineRunID}
+	what := "suite"
+	if r.BenchmarkID != "" {
+		what, startData["benchmark"], startData["kind"] = "benchmark", r.BenchmarkID, RunKindBenchmark
+	}
+	m.record(history.TBenchRunStarted, history.Info, "", fmt.Sprintf("Benchmark run %s of %s %s started (%d steps).", r.ID, what, r.SuiteName, ar.total), startData)
 
 	suite := q.plan.Suite
 	var steps []*Step
@@ -329,8 +333,12 @@ run:
 	if errText != "" {
 		summary += " " + strings.TrimRight(errText, ".") + "."
 	}
-	m.record(history.TBenchRunFinished, sev, "", summary, map[string]any{"bench_run": r.ID, "suite": r.SuiteID, "state": state, "error": errText,
-		"steps": sum.Steps, "passed": sum.Passed, "failed": sum.Failed, "refused_by_exclusion": sum.RefusedByExclusion, "regressions": sum.Regressions, "duration_s": float64(end-r.QueuedAt) / 1000})
+	data := map[string]any{"bench_run": r.ID, "suite": r.SuiteID, "state": state, "error": errText,
+		"steps": sum.Steps, "passed": sum.Passed, "failed": sum.Failed, "refused_by_exclusion": sum.RefusedByExclusion, "regressions": sum.Regressions, "duration_s": float64(end-r.QueuedAt) / 1000}
+	if r.BenchmarkID != "" {
+		data["benchmark"], data["kind"] = r.BenchmarkID, RunKindBenchmark
+	}
+	m.record(history.TBenchRunFinished, sev, "", summary, data)
 }
 
 // leafBenchmarks are the plain benchmarks an item runs (a parallel step expands to its members).

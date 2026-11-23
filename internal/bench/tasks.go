@@ -473,7 +473,7 @@ func (s *Store) PutScores(runID, scorer string, doc ScoresDoc, now int64) (*Scor
 				return err
 			}
 		}
-		return nil
+		return refreshTaskPoints(tx, runID)
 	})
 	if err != nil {
 		return nil, err
@@ -535,7 +535,7 @@ func (s *Store) DeleteScores(runID, scorer string) error {
 		if n, _ := res.RowsAffected(); n == 0 {
 			return ErrNotFound
 		}
-		return nil
+		return refreshTaskPoints(tx, runID)
 	})
 }
 

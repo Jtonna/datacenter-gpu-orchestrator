@@ -288,7 +288,10 @@ func (m *Manager) record(typ, sev, profile, summary string, data map[string]any)
 func (m *Manager) brief(r *Run) map[string]any {
 	b := map[string]any{"id": r.ID, "suite_id": r.SuiteID, "suite_name": r.SuiteName, "state": r.State, "trigger": r.Trigger,
 		"queued_at": r.QueuedAt, "started_at": r.StartedAt, "finished_at": r.FinishedAt, "note": r.Note,
-		"baseline_run_id": r.BaselineRunID, "error": r.Error}
+		"baseline_run_id": r.BaselineRunID, "error": r.Error, "kind": runKind(r)}
+	if r.BenchmarkID != "" {
+		b["benchmark_id"] = r.BenchmarkID
+	}
 	if r.Summary != nil {
 		b["summary"] = r.Summary
 	}
@@ -298,6 +301,22 @@ func (m *Manager) brief(r *Run) map[string]any {
 	}
 	m.mu.Unlock()
 	return b
+}
+
+// runKind is a run's kind, suite for a run read without one.
+func runKind(r *Run) string {
+	if r.Kind == RunKindBenchmark {
+		return RunKindBenchmark
+	}
+	return RunKindSuite
+}
+
+// runTarget is what a run executed: the suite id, or the benchmark id of a direct run.
+func runTarget(r *Run) string {
+	if runKind(r) == RunKindBenchmark {
+		return r.BenchmarkID
+	}
+	return r.SuiteID
 }
 
 func (m *Manager) publishRun(r *Run) {
@@ -384,9 +403,6 @@ func (m *Manager) Enqueue(suiteID string, o EnqueueOptions) (*Run, error) {
 	if !ss.Spec.Runnable() {
 		return nil, fmt.Errorf("%w: suite %q is %s and cannot be run: %s", ErrNotRunnable, suiteID, ss.Spec.Status, ss.Spec.Reason)
 	}
-	if len(o.Note) > 500 {
-		return nil, fmt.Errorf("%w: note is longer than 500 characters", ErrInvalid)
-	}
 	spec := ss.Spec
 	if o.EvictOthers != nil {
 		c := *spec
@@ -394,13 +410,49 @@ func (m *Manager) Enqueue(suiteID string, o EnqueueOptions) (*Run, error) {
 		c.EvictOthers = &v
 		spec = &c
 	}
-	plan, err := m.resolve(spec)
-	if err != nil {
-		return nil, err
-	}
 	baseline := o.Baseline
 	if baseline == "" {
 		baseline = ss.Spec.Baseline
+	}
+	return m.enqueue(spec, &Run{Kind: RunKindSuite, SuiteID: suiteID, SuiteName: ss.Spec.Title()}, baseline, o.Note, o.Trigger)
+}
+
+// BenchRunOptions are the optional fields of a direct run of one benchmark.
+// The waiting options are those of a suite (nil: the suite defaults: wait
+// until idle, up to 600 s, never unload other users' models).
+type BenchRunOptions struct {
+	Baseline     string
+	Note         string
+	EvictOthers  *bool
+	OnlyWhenIdle *bool
+	IdleWaitS    *int
+}
+
+// EnqueueBenchmark queues a run of one benchmark on its own (data model step
+// 1): a run of kind "benchmark" with one step and no suite. Its default
+// baseline is the benchmark's previous completed direct run.
+func (m *Manager) EnqueueBenchmark(id string, o BenchRunOptions) (*Run, error) {
+	sb, err := m.o.Store.GetBenchmark(id)
+	if err != nil {
+		return nil, err
+	}
+	if o.IdleWaitS != nil && (*o.IdleWaitS < 0 || *o.IdleWaitS > 86400) {
+		return nil, fmt.Errorf("%w: idle_wait_s must be 0 to 86400", ErrInvalid)
+	}
+	zero := 0
+	spec := &benchspec.Suite{Name: sb.Spec.Title(), Benchmarks: []benchspec.SuiteItem{{Ref: id}}, CooldownS: &zero,
+		OnlyWhenIdle: o.OnlyWhenIdle, IdleWaitS: o.IdleWaitS, EvictOthers: o.EvictOthers}
+	return m.enqueue(spec, &Run{Kind: RunKindBenchmark, BenchmarkID: id, SuiteName: sb.Spec.Title()}, o.Baseline, o.Note, "")
+}
+
+// enqueue resolves spec, checks the note and the baseline, and queues r.
+func (m *Manager) enqueue(spec *benchspec.Suite, r *Run, baseline, note, trig string) (*Run, error) {
+	if len(note) > 500 {
+		return nil, fmt.Errorf("%w: note is longer than 500 characters", ErrInvalid)
+	}
+	plan, err := m.resolve(spec)
+	if err != nil {
+		return nil, err
 	}
 	if baseline != "" {
 		if _, err := m.o.Store.GetRun(baseline); err != nil {
@@ -408,13 +460,11 @@ func (m *Manager) Enqueue(suiteID string, o EnqueueOptions) (*Run, error) {
 		}
 	}
 	snap, _ := json.Marshal(plan)
-	trig := o.Trigger
 	if trig == "" {
 		trig = "manual"
 	}
 	now := m.o.Now()
-	r := &Run{ID: newRunID(now), SuiteID: suiteID, SuiteName: ss.Spec.Title(), State: RunQueued, Note: o.Note, Trigger: trig,
-		BaselineRunID: baseline, QueuedAt: now.UnixMilli(), Version: m.o.Version, Suite: snap}
+	r.ID, r.State, r.Note, r.Trigger, r.BaselineRunID, r.QueuedAt, r.Version, r.Suite = newRunID(now), RunQueued, note, trig, baseline, now.UnixMilli(), m.o.Version, snap
 	m.mu.Lock()
 	if m.stopping {
 		m.mu.Unlock()

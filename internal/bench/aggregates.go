@@ -431,10 +431,14 @@ func (s *Store) Aggregate(f AggFilter, th Thresholds, now time.Time) (*Aggregate
 		r := &runs[ri]
 		at := runTime(r)
 		// suites
-		sa := suites[r.SuiteID]
-		if sa == nil {
-			sa = &SuiteAgg{SuiteID: r.SuiteID, States: map[string]int{}}
-			suites[r.SuiteID] = sa
+		// A direct run of one benchmark counts for its benchmark only: sa is
+		// then a scratch entry that is not listed (its key "" is no suite).
+		sa := &SuiteAgg{States: map[string]int{}}
+		if runKind(r) == RunKindSuite {
+			if sa = suites[r.SuiteID]; sa == nil {
+				sa = &SuiteAgg{SuiteID: r.SuiteID, States: map[string]int{}}
+				suites[r.SuiteID] = sa
+			}
 		}
 		sa.Name = r.SuiteName
 		sa.Runs++

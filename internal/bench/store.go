@@ -236,6 +236,38 @@ CREATE TABLE task_scores (
 );
 CREATE INDEX task_scores_run ON task_scores (run_id, scorer);
 `},
+	{"runs of one benchmark, measurements", `
+ALTER TABLE runs ADD COLUMN kind TEXT NOT NULL DEFAULT 'suite';
+ALTER TABLE runs ADD COLUMN target_id TEXT NOT NULL DEFAULT '';
+UPDATE runs SET target_id = suite_id;
+CREATE INDEX runs_target ON runs (kind, target_id, queued_at);
+CREATE TABLE measurements (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id       TEXT NOT NULL REFERENCES runs (id) ON DELETE CASCADE,
+  step_id      INTEGER NOT NULL REFERENCES run_steps (id) ON DELETE CASCADE,
+  step_idx     INTEGER NOT NULL,
+  phase_idx    INTEGER,
+  phase_type   TEXT NOT NULL DEFAULT '',
+  phase_label  TEXT NOT NULL DEFAULT '',
+  benchmark_id TEXT NOT NULL,
+  profile      TEXT NOT NULL DEFAULT '',
+  model        TEXT NOT NULL DEFAULT '',
+  node_count   INTEGER NOT NULL DEFAULT 0,
+  node         TEXT NOT NULL DEFAULT '',
+  subject      TEXT NOT NULL DEFAULT '',
+  seq          INTEGER NOT NULL DEFAULT 0,
+  metric       TEXT NOT NULL,
+  value        REAL NOT NULL,
+  of_value     REAL,
+  unit         TEXT NOT NULL,
+  conditions   TEXT CHECK (conditions IS NULL OR json_valid(conditions)),
+  at           INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX measurements_run ON measurements (run_id, step_idx, phase_idx);
+CREATE INDEX measurements_metric ON measurements (metric, benchmark_id, at);
+CREATE INDEX measurements_profile ON measurements (profile, metric, at);
+CREATE TABLE bench_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+`},
 }
 
 type job struct {
@@ -292,6 +324,12 @@ func openStore(dir string, upTo int) (*Store, error) {
 	}
 	s.wg.Add(1)
 	go s.writer()
+	if upTo >= len(migrations) {
+		if err := s.backfillMeasurements(); err != nil {
+			s.Close()
+			return nil, fmt.Errorf("mapping old runs into measurements in %s: %w", path, err)
+		}
+	}
 	return s, nil
 }
 
@@ -637,10 +675,14 @@ func (s *Store) CreateRun(r *Run) error {
 			return err
 		}
 	}
+	kind, target := RunKindSuite, r.SuiteID
+	if r.Kind == RunKindBenchmark {
+		kind, target = RunKindBenchmark, r.BenchmarkID
+	}
 	return s.write(func(tx *sql.Tx) error {
-		_, err := tx.Exec(`INSERT INTO runs (id, suite_id, suite_name, state, note, triggered_by, baseline_run_id, queued_at, started_at, finished_at, error, version, suite, summary, env)
-		  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, r.ID, r.SuiteID, r.SuiteName, r.State, r.Note, trig, r.BaselineRunID, r.QueuedAt,
-			r.StartedAt, r.FinishedAt, r.Error, r.Version, suite, sum, env)
+		_, err := tx.Exec(`INSERT INTO runs (id, suite_id, suite_name, state, note, triggered_by, baseline_run_id, queued_at, started_at, finished_at, error, version, suite, summary, env, kind, target_id)
+		  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, r.ID, r.SuiteID, r.SuiteName, r.State, r.Note, trig, r.BaselineRunID, r.QueuedAt,
+			r.StartedAt, r.FinishedAt, r.Error, r.Version, suite, sum, env, kind, target)
 		return err
 	})
 }
@@ -689,15 +731,18 @@ func (s *Store) SetRunSummary(id string, sum *RunSummary, baseline string) error
 	})
 }
 
-const runCols = `id, suite_id, suite_name, state, note, triggered_by, baseline_run_id, queued_at, started_at, finished_at, error, version, suite, summary, env`
+const runCols = `id, suite_id, suite_name, state, note, triggered_by, baseline_run_id, queued_at, started_at, finished_at, error, version, suite, summary, env, kind, target_id`
 
 func scanRun(sc interface{ Scan(...any) error }) (*Run, error) {
 	var r Run
-	var suite string
+	var suite, target string
 	var sum, env sql.NullString
 	if err := sc.Scan(&r.ID, &r.SuiteID, &r.SuiteName, &r.State, &r.Note, &r.Trigger, &r.BaselineRunID, &r.QueuedAt,
-		&r.StartedAt, &r.FinishedAt, &r.Error, &r.Version, &suite, &sum, &env); err != nil {
+		&r.StartedAt, &r.FinishedAt, &r.Error, &r.Version, &suite, &sum, &env, &r.Kind, &target); err != nil {
 		return nil, err
+	}
+	if r.Kind == RunKindBenchmark {
+		r.BenchmarkID = target
 	}
 	r.Suite = json.RawMessage(suite)
 	unmarshalNull(env, &r.Env)
@@ -717,6 +762,14 @@ func (s *Store) ListRuns(f RunFilter) ([]Run, error) {
 	if f.Suite != "" {
 		q += ` AND suite_id=?`
 		args = append(args, f.Suite)
+	}
+	if f.Kind != "" {
+		q += ` AND kind=?`
+		args = append(args, f.Kind)
+	}
+	if f.Benchmark != "" {
+		q += ` AND ((kind='benchmark' AND target_id=?) OR id IN (SELECT run_id FROM run_steps WHERE benchmark_id=?))`
+		args = append(args, f.Benchmark, f.Benchmark)
 	}
 	if f.State != "" {
 		q += ` AND state=?`
@@ -768,9 +821,15 @@ func (s *Store) GetRun(id string) (*Run, error) {
 // PreviousCompleted is the newest completed run of a suite other than
 // exclude, started before it: the default baseline. nil when there is none.
 func (s *Store) PreviousCompleted(suiteID, exclude string) (*Run, error) {
-	r, err := scanRun(s.db.QueryRow(`SELECT `+runCols+` FROM runs WHERE suite_id=? AND state='completed' AND id<>?
+	return s.PreviousCompletedOf(RunKindSuite, suiteID, exclude)
+}
+
+// PreviousCompletedOf is PreviousCompleted for a kind of run: the runs of a
+// suite, or the direct runs of one benchmark.
+func (s *Store) PreviousCompletedOf(kind, target, exclude string) (*Run, error) {
+	r, err := scanRun(s.db.QueryRow(`SELECT `+runCols+` FROM runs WHERE kind=? AND target_id=? AND state='completed' AND id<>?
 	  AND queued_at < COALESCE((SELECT queued_at FROM runs WHERE id=?), 9223372036854775807)
-	  ORDER BY queued_at DESC, id DESC LIMIT 1`, suiteID, exclude, exclude))
+	  ORDER BY queued_at DESC, id DESC LIMIT 1`, kind, target, exclude, exclude))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

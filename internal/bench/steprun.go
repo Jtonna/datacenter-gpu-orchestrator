@@ -1174,6 +1174,11 @@ func (x *suiteExec) finish(br *benchRun) {
 		m.log.Error("cannot store a benchmark step", "run", st.RunID, "benchmark", b.ID, "err", err)
 		x.a.cancel("the database failed: " + err.Error())
 	}
+	withReqs := *st
+	withReqs.Requests = reqs
+	if err := m.o.Store.ReplaceStepMeasurements(&withReqs); err != nil {
+		m.log.Warn("cannot store a step's measurements", "run", st.RunID, "benchmark", b.ID, "err", err)
+	}
 	x.finishTrack(br.track)
 	x.a.mu.Lock()
 	x.a.done++
