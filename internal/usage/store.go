@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -92,6 +93,10 @@ type Stats struct {
 	Failed          uint64 `json:"failed"`           // operations that returned an error, or whose batch failed
 	LastError       string `json:"last_error,omitempty"`
 	MovedAside      string `json:"moved_aside,omitempty"` // a damaged file moved aside at open
+	// QueueHighWater is the most operations the queue held at once since the
+	// start (QueueSize is the bound where drops begin).
+	QueueHighWater int `json:"queue_high_water"`
+	QueueSize      int `json:"queue_size"`
 }
 
 // Store is the usage database. All methods are safe for concurrent use and
@@ -113,6 +118,9 @@ type Store struct {
 	cancel  context.CancelFunc
 	tasks   sync.WaitGroup
 	lastErr string
+	// highWater is the longest the queue has been (under mu).
+	highWater int
+	claimed   bool // this store holds the path (claim)
 
 	written, batches, dropped, droppedTerminal, failed atomic.Uint64
 	tx                                                 *sql.Tx // the batch in progress (writer only)
@@ -145,7 +153,15 @@ func Open(o Options) *Store {
 		return s
 	}
 	s.path = filepath.Join(o.Dir, FileName)
+	if !claim(s.path) {
+		s.log.Warn("the usage history is off for this store: usage.db is already open in this process (only one store may write it)", "path", s.path)
+		close(s.done)
+		return s
+	}
+	s.claimed = true
 	if err := s.open(); err != nil {
+		release(s.path)
+		s.claimed = false
 		s.log.Warn("the usage history is off: its file cannot be used; the scheduler runs without it", "path", s.path, "err", err)
 		s.db = nil
 		close(s.done)
@@ -300,6 +316,9 @@ func (s *Store) Submit(op Op) bool {
 	if kept {
 		s.queue = append(s.queue, op)
 	}
+	if n := len(s.queue); n > s.highWater {
+		s.highWater = n
+	}
 	select {
 	case s.wake <- struct{}{}:
 	default:
@@ -380,7 +399,44 @@ func (s *Store) Close() error {
 	}
 	s.cancel()
 	s.tasks.Wait()
-	return s.db.Close()
+	err := s.db.Close()
+	release(s.path)
+	return err
+}
+
+// open is the set of usage.db paths a Store holds in this process: a second
+// Store on the same file would be a second writer.
+var (
+	openMu    sync.Mutex
+	openPaths = map[string]bool{}
+)
+
+func pathKey(p string) string {
+	if a, err := filepath.Abs(p); err == nil {
+		p = a
+	}
+	p = filepath.Clean(p)
+	if runtime.GOOS == "windows" {
+		p = strings.ToLower(p)
+	}
+	return p
+}
+
+func claim(p string) bool {
+	openMu.Lock()
+	defer openMu.Unlock()
+	k := pathKey(p)
+	if openPaths[k] {
+		return false
+	}
+	openPaths[k] = true
+	return true
+}
+
+func release(p string) {
+	openMu.Lock()
+	defer openMu.Unlock()
+	delete(openPaths, pathKey(p))
 }
 
 // markClosing stops Submit; false when Close already ran.
@@ -406,7 +462,7 @@ func (s *Store) Stats() Stats {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	st.Queued, st.LastError = len(s.queue), s.lastErr
+	st.Queued, st.LastError, st.QueueHighWater, st.QueueSize = len(s.queue), s.lastErr, s.highWater, s.opt.QueueSize
 	return st
 }
 

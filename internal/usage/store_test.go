@@ -384,3 +384,45 @@ func TestClose_IsBoundedWhenTheDiskHangs(t *testing.T) {
 		t.Fatal(buf.String())
 	}
 }
+
+// usage.db may be opened by one Store per process: a second Open of the same
+// file (by any spelling of its folder) is off with one WARN, never a second
+// writer. After Close the file can be opened again.
+func TestOpen_SecondStoreOnTheSameFileIsOff(t *testing.T) {
+	dir := t.TempDir()
+	first := openT(t, Options{Dir: dir})
+	log, buf := newLog()
+	second := Open(Options{Dir: filepath.Join(dir, ".", "sub", ".."), Logger: log})
+	if !first.On() || second.On() || buf.warns() != 1 || !strings.Contains(buf.String(), "already open") {
+		t.Fatalf("first %v second %v log:\n%s", first.On(), second.On(), buf)
+	}
+	if second.Submit(Op{Terminal: true, Apply: func(*sql.Tx) error { return nil }}) || second.Close() != nil {
+		t.Fatal("the second store writes")
+	}
+	exec(t, first, `CREATE TABLE t (x INTEGER)`) // the first is unaffected
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	again := openT(t, Options{Dir: dir})
+	if !again.On() {
+		t.Fatal("cannot reopen after Close")
+	}
+}
+
+func TestStats_QueueHighWater(t *testing.T) {
+	gate := newGate()
+	s := openT(t, Options{Dir: t.TempDir(), QueueSize: 100, BeforeBatch: gate.pass})
+	release := gate.block()
+	s.Submit(Op{Terminal: true, Apply: func(*sql.Tx) error { return nil }})
+	gate.waitEntered(t)
+	for i := 0; i < 7; i++ {
+		s.Submit(Op{Apply: func(*sql.Tx) error { return nil }})
+	}
+	close(release)
+	if err := s.Flush(ctxT(t)); err != nil {
+		t.Fatal(err)
+	}
+	if st := s.Stats(); st.QueueHighWater < 7 || st.QueueHighWater > 8 || st.QueueSize != 100 || st.Queued != 0 || st.Dropped != 0 {
+		t.Fatalf("%+v", st)
+	}
+}
