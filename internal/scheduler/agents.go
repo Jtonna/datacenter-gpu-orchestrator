@@ -228,6 +228,7 @@ func (c *schedCore) launchWorkers(in *inst) {
 			continue
 		}
 		n, _ := c.node(pn.ID)
+		host := pn.ID == in.placement.Host // hostnode.go: the host launch, not a worker
 		// The node's own watchdog floor when its agent reports one (CR-9).
 		floor := int64(c.cfg.Defaults.WatchdogFloorMiB)
 		if n.WatchdogFloorMiB > 0 {
@@ -240,10 +241,17 @@ func (c *schedCore) launchWorkers(in *inst) {
 		min := floor
 		if n.SharedMemory {
 			min += int64(pn.BudgetMiB)
+			if host {
+				min += int64(c.hostOverhead(in.prof, in.placement, pn.ID))
+			}
 		}
 		wt := WorkerTarget{Node: pn.ID, Addr: pn.Addr, MinMemAvailableMiB: min}
 		if expect != nil {
 			wt.ExpectMiB = int64(expect[i]) // CR-9: the agent refuses a launch that would not fit
+		}
+		if host {
+			in.hostTarget = wt
+			continue
 		}
 		spec.Workers = append(spec.Workers, wt)
 	}

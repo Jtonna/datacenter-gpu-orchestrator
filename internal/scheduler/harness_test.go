@@ -60,6 +60,10 @@ type harness struct {
 	wstops    []effStopWorkers
 	wforce    []core.NodeID
 	wloaded   []uint64 // effWorkersLoaded
+
+	// Host launches on a node (hostnode_test.go).
+	hosts    []HostLaunchSpec
+	hostFail error // the next host start fails with it
 }
 
 func ptrDur(d time.Duration) *time.Duration { return &d }
@@ -258,6 +262,9 @@ func (h *harness) runProbe(ef effProbe) event {
 }
 
 func (h *harness) runStart(ef effStart) event {
+	if ef.host != nil {
+		return h.runHostStart(ef)
+	}
 	ch, err := h.launcher.Start(ef.spec)
 	if err != nil {
 		return evChildStarted{iid: ef.iid, err: err}

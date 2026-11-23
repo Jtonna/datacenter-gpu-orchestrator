@@ -25,8 +25,10 @@ func (c *schedCore) startInstance(p *core.Profile, pl core.Placement, waiters []
 	if c.insts[p.Name] != nil {
 		panic(fmt.Sprintf("scheduler: second instance for %s", p.Name))
 	}
+	pl.Host = hostOf(p, pl) // hostnode.go: "" unless the profile has host: node
 	in := &inst{iid: c.next(), prof: p, state: stStarting, phase: phPreflight, placement: pl,
-		created: c.now, waiters: waiters, entryCreated: e.created, entrySeq: e.seq, entryClock: e.clock}
+		created: c.now, waiters: waiters, entryCreated: e.created, entrySeq: e.seq, entryClock: e.clock,
+		gone: make(chan struct{})}
 	for _, w := range waiters {
 		if w.benchRun != "" {
 			in.benchRun = w.benchRun
@@ -61,6 +63,10 @@ func (c *schedCore) startInstance(p *core.Profile, pl core.Placement, waiters []
 			c.failLoad(in, err.Error(), nil, false)
 			return
 		}
+	}
+	if msg := c.hostPlacementError(p, pl); msg != "" {
+		c.failLoad(in, msg, nil, false) // hostnode.go: never falls back to the scheduler's machine
+		return
 	}
 	var targets []probeTarget
 	for _, n := range pl.Nodes {
@@ -234,6 +240,13 @@ func (c *schedCore) launch(in *inst) {
 		health = p.CheckEndpoint
 	}
 	in.phase = phLaunching
+	if pl.Host != "" {
+		// hostnode.go: the host process runs on the node, as a host launch.
+		spec := c.hostSpec(in)
+		c.log.Info("starting host launch", "profile", p.Name, "node", pl.Host, "workers", len(spec.Workers))
+		c.effects = append(c.effects, effStart{iid: in.iid, host: &spec})
+		return
+	}
 	c.effects = append(c.effects, effStart{iid: in.iid, spec: instance.StartSpec{
 		Build:      func(port int) ([]string, error) { return instance.BuildArgs(p, pl, port, opts) },
 		HealthPath: health,
@@ -380,6 +393,10 @@ func (c *schedCore) removeInst(in *inst, settle bool) {
 		c.releaseNode(n.ID, in.prof.Name, settle)
 	}
 	c.stopWorkers(in) // agents.go: after the child has exited (or none ran)
+	if in.gone != nil {
+		close(in.gone) // the leases of its requests end
+		in.gone = nil
+	}
 	delete(c.insts, in.prof.Name)
 	c.changed = true
 	c.finishLoad(in, LoadCancelled, cancelReason(in.stopReason)) // only if still open
@@ -430,6 +447,11 @@ func (c *schedCore) exited(iid uint64, st instance.ExitStatus, workers []WorkerR
 		return
 	}
 	in.exit = st.String()
+	if h := in.placement.Host; h != "" && !st.Requested {
+		// A host on a node ended by its memory watchdog or the OOM killer
+		// raises the learned need, as a worker's does.
+		c.raiseNeedOnKill(in, h, hostExitInfo(st))
+	}
 	// The host program ends within milliseconds when a worker goes away, so
 	// its exit is often seen before the worker's. When a worker launch ended
 	// by itself, that is the failure, not the host's abort.

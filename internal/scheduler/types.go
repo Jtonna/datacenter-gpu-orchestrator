@@ -181,7 +181,7 @@ type InstanceStatus struct {
 	State          string // starting, ready, draining, stopping
 	RunningState   RunningState
 	Phase          string // starting only: preflight, launching, loading
-	Addr           string // 127.0.0.1:port once the child runs
+	Addr           string // 127.0.0.1:port, or the host node's address, once the child runs
 	Cmd            string
 	LogFile        string // file holding the child's full output; empty when not kept
 	Created        time.Time

@@ -155,6 +155,13 @@ type inst struct {
 	forceNodes []core.NodeID                       // nodes whose launch is stopped with force (force unload)
 	launchIDs  map[core.NodeID]string              // the launch on each worker node
 	agentLoad  map[string]*agentproto.LoadProgress // per worker rpc address: the agent's own load figures
+	// hostTarget is the host launch's memory figures (placement.Host set):
+	// expect_mib and min_mem_available_mib, as for a worker (hostnode.go).
+	hostTarget WorkerTarget
+	// gone is closed when the instance is removed: the leases of its
+	// requests end with it (a host on a node that went away leaves no
+	// connection to break).
+	gone chan struct{}
 
 	// baseFree is each node's free figure when the instance was created
 	// (reserve.go): what the node gives up for it is measured against it.
@@ -203,8 +210,10 @@ type waiter struct {
 type grant struct {
 	ID      uint64
 	Addr    string
+	APIKey  string // the key requests to Addr carry; "" for none
 	Profile string
 	Alias   bool
+	Gone    <-chan struct{} // closed when the instance is removed
 }
 
 type answer struct {

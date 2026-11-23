@@ -95,6 +95,7 @@ type snapshot struct {
 	recent   []LoadOutcome
 	profiles []ProfileState
 	upstream map[string]string
+	upKeys   map[string]string // the key of an upstream that wants one (a host on a node)
 }
 
 // New builds a scheduler for a validated config. Call Run to start it.
@@ -210,13 +211,16 @@ func (s *Scheduler) Run(ctx context.Context) error {
 // woken by a reply (say, a new lease) already sees the state it implies.
 func (s *Scheduler) step(ev event) {
 	s.core.handle(ev)
-	up := map[string]string{}
-	for name := range s.core.insts {
+	up, keys := map[string]string{}, map[string]string{}
+	for name, in := range s.core.insts {
 		if a, ok := s.core.upstream(name); ok {
 			up[name] = a
+			if k := instance.APIKeyOf(in.child); k != "" {
+				keys[name] = k
+			}
 		}
 	}
-	s.snap.Store(&snapshot{running: s.core.runningList(), recent: s.core.recentLoads(), profiles: s.core.profileStates(), upstream: up})
+	s.snap.Store(&snapshot{running: s.core.runningList(), recent: s.core.recentLoads(), profiles: s.core.profileStates(), upstream: up, upKeys: keys})
 	for _, ef := range s.core.takeEffects() {
 		s.exec(ef)
 	}
@@ -321,7 +325,13 @@ func (s *Scheduler) exec(ef effect) {
 }
 
 func (s *Scheduler) startChild(ctx context.Context, ef effStart) {
-	ch, err := s.opts.Launcher.Start(ef.spec)
+	var ch instance.Child
+	var err error
+	if ef.host != nil {
+		ch, err = s.startHost(ctx, *ef.host) // hostnode.go
+	} else {
+		ch, err = s.opts.Launcher.Start(ef.spec)
+	}
 	if err != nil {
 		s.post(context.Background(), evChildStarted{iid: ef.iid, err: err})
 		return
@@ -358,8 +368,15 @@ func (s *Scheduler) startChild(ctx context.Context, ef effStart) {
 // Lease is an admitted request. Call Release exactly once when the
 // response has ended (extra calls are ignored).
 type Lease struct {
-	ID      uint64 // request id, also used in the feed
-	Addr    string // upstream address, 127.0.0.1:port
+	ID   uint64 // request id, also used in the feed
+	Addr string // upstream address: 127.0.0.1:port, or a host node's address (phase 6)
+	// APIKey is sent as "Authorization: Bearer <key>" to Addr when set (a
+	// host on a node has a per-launch key).
+	APIKey string
+	// Gone is closed when the instance is removed (it exited, was stopped
+	// or its node was lost): a request still forwarded then is ended. Nil
+	// never closes.
+	Gone    <-chan struct{}
 	Profile string // profile name, never an alias
 	Alias   bool   // the request named an alias (log it with the caller's address)
 	// StallTimeout is the profile's stall_timeout for the proxy (8.4): the
@@ -443,7 +460,7 @@ func (s *Scheduler) lease(a answer) (*Lease, error) {
 	if p := cfg.Profiles[g.Profile]; p != nil {
 		stall = cfg.EffectiveStallTimeout(p)
 	}
-	return &Lease{ID: g.ID, Addr: g.Addr, Profile: g.Profile, Alias: g.Alias, StallTimeout: stall, s: s}, nil
+	return &Lease{ID: g.ID, Addr: g.Addr, APIKey: g.APIKey, Gone: g.Gone, Profile: g.Profile, Alias: g.Alias, StallTimeout: stall, s: s}, nil
 }
 
 // Load is POST /api/load: a waiter that never disconnects (8.2 step 6).
@@ -614,6 +631,16 @@ func (s *Scheduler) Upstream(model string) (string, bool) {
 	}
 	a, ok := s.snap.Load().upstream[p.Name]
 	return a, ok
+}
+
+// UpstreamKey is the key requests to Upstream(model) must carry as
+// "Authorization: Bearer <key>"; "" when none (phase 6: a host on a node).
+func (s *Scheduler) UpstreamKey(model string) string {
+	p, _, ok := s.Config().Resolve(model)
+	if !ok {
+		return ""
+	}
+	return s.snap.Load().upKeys[p.Name]
 }
 
 // Running is the /running list (design A.1). It never waits.

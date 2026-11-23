@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -84,7 +83,7 @@ func (c *schedCore) upstream(profile string) (string, bool) {
 	if in == nil || (in.state != stReady && in.state != stDraining) || in.child == nil {
 		return "", false
 	}
-	return "127.0.0.1:" + strconv.Itoa(in.child.Port()), true
+	return instance.AddrOf(in.child), true
 }
 
 func memOf(d instance.DeviceMem) DeviceMemory {
@@ -124,7 +123,7 @@ func (c *schedCore) instStatus(in *inst) InstanceStatus {
 		s.Load = c.loadReport(in)
 	}
 	if in.child != nil {
-		s.Addr = "127.0.0.1:" + strconv.Itoa(in.child.Port())
+		s.Addr = instance.AddrOf(in.child)
 	}
 	idx := map[string]int{}
 	for i, pn := range in.placement.Nodes {
