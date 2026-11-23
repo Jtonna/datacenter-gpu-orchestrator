@@ -431,14 +431,14 @@ func (s *Server) handleV1(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		e := &scheduler.Error{Status: http.StatusNotFound, Reason: scheduler.ReasonUnknownModel,
 			Message: fmt.Sprintf("model %q not found", ex.Model)}
-		s.trackRequest(r, usage.KindV1, ex.Model, nil, benchRun).Ended(refusedEnd(e))
+		s.trackRequest(r, r.URL.Path, usage.KindV1, ex.Model, nil, benchRun).Ended(refusedEnd(e))
 		writeSchedError(w, e)
 		return
 	}
 	if alias {
 		s.logAlias(r, ex.Model, p.Name)
 	}
-	track := s.trackRequest(r, usage.KindV1, ex.Model, p, benchRun)
+	track := s.trackRequest(r, r.URL.Path, usage.KindV1, ex.Model, p, benchRun)
 	if n := ex.BufferedBytes(); n > 0 {
 		if !s.reserveBody(n) {
 			e := &scheduler.Error{Status: http.StatusServiceUnavailable, Reason: scheduler.ReasonClusterBusy,
@@ -620,17 +620,6 @@ func (s *Server) handleUpstream(w http.ResponseWriter, r *http.Request) {
 	if alias {
 		s.logAlias(r, model, p.Name)
 	}
-	track := s.trackRequest(r, usage.KindUpstream, model, p, benchRunHeader(r.Header.Get("X-Bench-Run")))
-	addr, ready := s.sched.Upstream(model)
-	if !ready {
-		e := &scheduler.Error{Status: http.StatusServiceUnavailable, Reason: "not ready",
-			Message: fmt.Sprintf("%s is not loaded or is not ready; /upstream never starts a model", p.Name), RetryAfter: time.Second}
-		track.Ended(refusedEnd(e))
-		writeSchedError(w, e)
-		return
-	}
-	live := &proxy.Live{}
-	track.Started(usage.Placement{}, live) // a passthrough has no lease: its machines are not known here
 	// Strip "/upstream/{model}" from the escaped path, keeping the rest as written.
 	esc := strings.TrimPrefix(r.URL.EscapedPath(), "/upstream/")
 	tail := "/"
@@ -641,6 +630,22 @@ func (s *Server) handleUpstream(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		plain = tail
 	}
+	// Only inference is a row; a monitoring call (/slots, /props, /health)
+	// gets a nil tracker and no live counter: no recorder work at all.
+	track := s.trackRequest(r, plain, usage.KindUpstream, model, p, benchRunHeader(r.Header.Get("X-Bench-Run")))
+	addr, ready := s.sched.Upstream(model)
+	if !ready {
+		e := &scheduler.Error{Status: http.StatusServiceUnavailable, Reason: "not ready",
+			Message: fmt.Sprintf("%s is not loaded or is not ready; /upstream never starts a model", p.Name), RetryAfter: time.Second}
+		track.Ended(refusedEnd(e))
+		writeSchedError(w, e)
+		return
+	}
+	var live *proxy.Live
+	if track != nil {
+		live = &proxy.Live{}
+	}
+	track.Started(usage.Placement{}, live) // a passthrough has no lease: its machines are not known here
 	var res proxy.Result
 	defer func() { track.Ended(resultEnd(res)) }() // also when Forward panics
 	res = proxy.Forward(w, r, proxy.Options{Addr: addr, Path: plain, RawPath: tail, StallTimeout: s.conf().EffectiveStallTimeout(p),

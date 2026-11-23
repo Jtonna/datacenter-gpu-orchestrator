@@ -21,8 +21,14 @@ import (
 // (/api/metrics/activity) is kept as it was.
 
 // trackRequest records a request as it arrives. p is nil for a model that
-// is not known (the row is refused at once).
-func (s *Server) trackRequest(r *http.Request, kind, requested string, p *core.Profile, benchRun string) *usage.Tracker {
+// is not known (the row is refused at once). Only inference is recorded:
+// a request whose method and path (sent, as the model server sees it) do
+// not run the model gets a nil tracker, whose methods do nothing, so it
+// costs the recorder no row, no live entry and no write.
+func (s *Server) trackRequest(r *http.Request, sent, kind, requested string, p *core.Profile, benchRun string) *usage.Tracker {
+	if !usage.IsInference(r.Method, sent) {
+		return nil
+	}
 	b := usage.Begin{Kind: kind, Path: r.URL.Path, Requested: requested, BenchRun: benchRun, SourceAddr: callerOf(r),
 		Caller: audit.DefaultActor, CallerKind: "default"}
 	if p != nil {

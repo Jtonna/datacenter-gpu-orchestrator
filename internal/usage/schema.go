@@ -12,6 +12,9 @@ import (
 type Migration struct {
 	Name string
 	SQL  string
+	// Apply, when set, runs after SQL in the same transaction (a data
+	// migration that needs Go).
+	Apply func(tx *sql.Tx) error
 }
 
 // migrations of usage.db, applied in order, once each, in their own
@@ -24,7 +27,8 @@ CREATE TABLE usage_meta (
   value INTEGER NOT NULL
 );`},
 	{Name: "requests", SQL: requestsSQL},
-	{Name: "node_hours", SQL: nodeHoursSQL}, // nodehours.go
+	{Name: "node_hours", SQL: nodeHoursSQL},                        // nodehours.go
+	{Name: "drop_non_inference_rows", Apply: dropNonInferenceRows}, // cleanup.go
 }
 
 // NewerSchemaError: a newer scheduler migrated the file. It is kept as it
@@ -55,9 +59,17 @@ func migrate(db *sql.DB, now time.Time) error {
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(migrations[i].SQL); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("usage migration %d (%s): %w", i+1, migrations[i].Name, err)
+		if m := migrations[i]; m.SQL != "" {
+			if _, err := tx.Exec(m.SQL); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("usage migration %d (%s): %w", i+1, m.Name, err)
+			}
+		}
+		if m := migrations[i]; m.Apply != nil {
+			if err := m.Apply(tx); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("usage migration %d (%s): %w", i+1, m.Name, err)
+			}
 		}
 		if _, err := tx.Exec(`INSERT INTO usage_migrations (version, name, applied_at) VALUES (?,?,?)`, i+1, migrations[i].Name, now.UnixMilli()); err != nil {
 			tx.Rollback()
