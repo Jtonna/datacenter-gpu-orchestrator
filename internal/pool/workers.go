@@ -203,15 +203,7 @@ func (p *Pool) Launch(ctx context.Context, spec scheduler.WorkerLaunchSpec, repo
 	var wg sync.WaitGroup
 	fan := supervise.NewFanout("pool.launch_send") // one load's launches count once toward escalation
 	for i, l := range ls {
-		wg.Add(1)
-		go fan.Once(func() {
-			sentOK := false
-			defer func() { // a panic is this launch's failure; the load's stop ends it if it started
-				if !sentOK {
-					res[i] = sent{err: errors.New("internal error while sending the launch")}
-				}
-				wg.Done()
-			}()
+		fan.Go(&wg, func() {
 			supervise.Point("pool.launch_send", spec.IID) // test hook, per load
 			req := agentproto.LaunchRequest{LaunchID: l.id, Role: agentproto.RoleWorker, Release: p.o.PotluckRelease,
 				Label: spec.Label, LeaseTTLS: LeaseTTL.Seconds(), MinMemAvailableMiB: spec.Workers[i].MinMemAvailableMiB,
@@ -238,8 +230,9 @@ func (p *Pool) Launch(ctx context.Context, spec scheduler.WorkerLaunchSpec, repo
 				}
 			}
 			res[i] = sent{ref, err}
-			sentOK = true
-		}, nil)
+		}, func(any) { // a panic is this launch's failure; the load's stop ends it if it started
+			res[i] = sent{err: errors.New("internal error while sending the launch")}
+		})
 	}
 	wg.Wait()
 	ids := map[core.NodeID]string{}
@@ -621,11 +614,10 @@ func (p *Pool) Stop(iid uint64, force []core.NodeID) {
 		defer p.stops.Done()
 		var wg sync.WaitGroup
 		for _, j := range jobs {
-			wg.Add(1)
-			go fan.Once(func() {
-				defer wg.Done()
+			fan.Go(&wg, func() {
+				supervise.Point("pool.stop", iid) // test hook, per load
 				p.stopLaunch(j.l, j.force, j.lost)
-			}, nil)
+			}, nil) // stopLaunch's own deferred end drops the launch
 		}
 		wg.Wait()
 	}, nil)

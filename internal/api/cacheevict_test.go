@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -11,11 +13,13 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/filecache"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/pool"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/release"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/progtree"
 )
 
@@ -158,5 +162,33 @@ func TestCacheEvictLocalFailureIsReported(t *testing.T) {
 	}
 	if len(ans.Nodes) != 1 || ans.Nodes[0].Reason != "no_agents" {
 		t.Fatalf("%+v", ans.Nodes)
+	}
+}
+
+// A node whose eviction panics (fan-out api.cache_evict) is that node's
+// failure in the answer, never an empty entry: the answer is written only
+// after the failure result is in (supervise.Fanout.Go; run it under -race).
+func TestCacheEvictMemberPanicIsThatNodesFailure(t *testing.T) {
+	supervise.ResetForTest()
+	defer supervise.ResetForTest()
+	defer supervise.Configure(supervise.Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Fatal: func(r string) { t.Errorf("escalated: %s", r) }})()
+	e := newEnv(t, chatOK)
+	models := t.TempDir()
+	os.WriteFile(filepath.Join(models, "a.gguf"), make([]byte, 2048), 0o644)
+	e.sched.Config().ModelsDir = models
+	h, fired := supervise.PanicAtForTest(supervise.PointName("api.cache_evict", "x"), 1)
+	defer supervise.SetHookForTest(h)()
+	resp := e.post("/api/cache/evict", `{"model":"alpha","nodes":["x","y"]}`)
+	b := body(t, resp)
+	var ans bench.CacheEvictAnswer
+	if resp.StatusCode != 200 || json.Unmarshal([]byte(b), &ans) != nil || len(ans.Nodes) != 2 {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	if fired() != 1 || ans.Nodes[0].ID != "x" || ans.Nodes[0].Reason != filecache.ReasonFailed || ans.Nodes[0].Error != "internal error" {
+		t.Fatalf("panicked node %+v (fired %d)", ans.Nodes[0], fired())
+	}
+	if ans.Nodes[1].ID != "y" || ans.Nodes[1].Reason != "no_agents" {
+		t.Fatalf("other node %+v", ans.Nodes[1])
 	}
 }

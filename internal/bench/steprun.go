@@ -962,20 +962,9 @@ func (br *benchRun) phaseConcurrent(i int, p *benchspec.Phase, pr *PhaseResult) 
 	fire := make(chan struct{})
 	fan := supervise.NewFanout("bench.concurrent") // one step's requests count once toward escalation
 	for k := 0; k < n; k++ {
-		wg.Add(1)
-		go fan.Once(func() {
-			ok := false
-			defer func() { // a failure is this request's error
-				if !ok {
-					func() {
-						dmu.Lock()
-						defer supervise.Unlocked("bench", dmu.Unlock)
-						items[k] = ConcurrentItem{Index: k + 1, Error: "internal error"}
-					}()
-				}
-				wg.Done()
-			}()
+		fan.Go(&wg, func() {
 			<-fire
+			supervise.Point("bench.concurrent", br.x.a.run.ID) // test hook, per run
 			rr, resp, err := br.send(br.ctx, req, PhaseConcurrent, i, k+1)
 			it := ConcurrentItem{Index: k + 1, WallMS: rr.WallMS, DecodeTPS: rr.DecodeTPS, PrefillTPS: rr.PromptTPS}
 			switch {
@@ -994,9 +983,12 @@ func (br *benchRun) phaseConcurrent(i int, p *benchspec.Phase, pr *PhaseResult) 
 				finished++
 				f = finished
 			}()
-			ok = true
 			br.x.unitDone(br.track, fmt.Sprintf("Simultaneous requests: %d of %d done", f, n))
-		}, nil)
+		}, func(any) { // a failure is this request's error
+			dmu.Lock()
+			defer supervise.Unlocked("bench", dmu.Unlock)
+			items[k] = ConcurrentItem{Index: k + 1, Error: "internal error"}
+		})
 	}
 	start := time.Now()
 	close(fire)

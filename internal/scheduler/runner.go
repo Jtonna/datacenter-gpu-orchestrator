@@ -261,12 +261,11 @@ func (s *Scheduler) post(ctx context.Context, ev event) bool {
 // result event each one posts, so onPanic must post that event as a failure
 // (background-task isolation): a recovered worker that posts nothing would
 // leave its instance stuck.
+//
+// The worker is counted in s.wg until onPanic has returned too, so that Run
+// does not return while a failed start still kills its child.
 func (s *Scheduler) goBg(name string, f func(ctx context.Context), onPanic func(p any)) {
-	s.wg.Add(1)
-	go supervise.Once(name, func() {
-		defer s.wg.Done()
-		f(s.bgCtx)
-	}, onPanic)
+	supervise.OnceIn(&s.wg, name, func() { f(s.bgCtx) }, onPanic)
 }
 
 // internalErr is the failure result of an effect worker that panicked.
@@ -302,20 +301,13 @@ func (s *Scheduler) exec(ef effect) {
 			var wg sync.WaitGroup
 			fan := supervise.NewFanout("scheduler.probe") // one pre-flight's targets count once toward escalation
 			for i, tg := range ef.targets {
-				wg.Add(1)
-				go fan.Once(func() {
-					done := false
-					defer func() { // a panic makes this target's result an error
-						if !done {
-							out[i] = probeOutcome{id: tg.id, addr: tg.addr, err: errors.New("internal error in the probe")}
-						}
-						wg.Done()
-					}()
+				fan.Go(&wg, func() {
 					began := s.opts.Clock.Now()
 					r, err := s.opts.Prober.Probe(ctx, tg.addr)
 					out[i] = probeOutcome{id: tg.id, addr: tg.addr, result: r, err: err, took: s.opts.Clock.Now().Sub(began)}
-					done = true
-				}, nil)
+				}, func(any) { // a panic makes this target's result an error
+					out[i] = probeOutcome{id: tg.id, addr: tg.addr, err: errors.New("internal error in the probe")}
+				})
 			}
 			wg.Wait()
 			s.post(context.Background(), evPreflight{iid: ef.iid, results: out})

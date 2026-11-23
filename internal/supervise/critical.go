@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"runtime/debug"
+	"sync"
 	"sync/atomic"
 )
 
@@ -83,9 +84,29 @@ type Fanout struct {
 // NewFanout starts one fan-out operation of the task name.
 func NewFanout(name string) *Fanout { return &Fanout{name: name} }
 
-// Once runs one member: `go fan.Once(run, onPanic)`, as supervise.Once.
-func (f *Fanout) Once(run func(), onPanic func(p any)) {
-	guardCount(f.name, "once", run, onPanic, func() bool { return f.counted.CompareAndSwap(false, true) })
+// Go starts one member in its own goroutine, counted in wg: wg.Add(1) now,
+// and wg.Done only once run has returned or, when it panicked, the failure
+// is counted and onPanic (the member's failure result) has returned. A
+// caller that waits on wg therefore never reads a failed member's result
+// before it is written. run must not touch wg itself.
+func (f *Fanout) Go(wg *sync.WaitGroup, run func(), onPanic func(p any)) {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		guardCount(f.name, "once", run, onPanic, func() bool { return f.counted.CompareAndSwap(false, true) })
+	}()
+}
+
+// OnceIn is `go Once(name, run, onPanic)` counted in wg: wg.Add(1) now, and
+// wg.Done only once run has returned or, when it panicked, onPanic (its
+// failure result) has returned. A caller that waits on wg (a shutdown) never
+// goes on while a failed worker's onPanic still runs. run must not touch wg.
+func OnceIn(wg *sync.WaitGroup, name string, run func(), onPanic func(p any)) {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		guard(name, "once", run, onPanic)
+	}()
 }
 
 // PointName is the name a test hook sees at Point(name, inst): the point and

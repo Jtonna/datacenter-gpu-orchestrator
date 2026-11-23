@@ -520,20 +520,14 @@ func (x *suiteExec) runItem(idx int, it benchspec.SuiteItem) []*Step {
 	var wg sync.WaitGroup
 	fan := supervise.NewFanout("bench.member") // one group's members count once toward escalation
 	for i, mb := range members {
-		wg.Add(1)
-		go fan.Once(func() {
-			ok := false
-			defer func() { // a failure ends this member with an error; the others are not held at the gate
-				if !ok {
-					out[i] = &Step{RunID: x.a.run.ID, Idx: idx, Group: b.ID, BenchmarkID: mb.ID, Name: mb.Title(), Profile: mb.Profile,
-						State: StepFailed, Outcome: OutcomeError, Error: "internal error"}
-					g.arrive(i)
-				}
-				wg.Done()
-			}()
+		fan.Go(&wg, func() {
+			supervise.Point("bench.member", x.a.run.ID) // test hook, per run
 			out[i] = x.runBenchmark(mb, idx, b.ID, g, i)
-			ok = true
-		}, nil)
+		}, func(any) { // a failure ends this member with an error; the others are not held at the gate
+			out[i] = &Step{RunID: x.a.run.ID, Idx: idx, Group: b.ID, BenchmarkID: mb.ID, Name: mb.Title(), Profile: mb.Profile,
+				State: StepFailed, Outcome: OutcomeError, Error: "internal error"}
+			g.arrive(i)
+		})
 	}
 	wg.Wait()
 	return out

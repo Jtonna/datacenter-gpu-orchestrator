@@ -45,20 +45,12 @@ func (s *Server) handleCacheEvict(w http.ResponseWriter, r *http.Request) {
 	var wg sync.WaitGroup
 	fan := supervise.NewFanout("api.cache_evict") // one request's nodes count once toward escalation
 	for i, id := range req.Nodes {
-		wg.Add(1)
-		go fan.Once(func() {
+		fan.Go(&wg, func() {
+			supervise.Point("api.cache_evict", id) // test hook, per node
 			n := bench.NodeEvict{ID: id}
-			answered := false
-			defer func() { // a failure is this node's error, not the request's
-				if !answered {
-					n.Reason, n.Error = filecache.ReasonFailed, "internal error"
-					ans.Nodes[i] = n
-				}
-				wg.Done()
-			}()
 			if s.opts.Pool == nil {
 				n.Reason, n.Error = "no_agents", "the scheduler has no agent membership"
-				ans.Nodes[i], answered = n, true
+				ans.Nodes[i] = n
 				return
 			}
 			res := s.opts.Pool.EvictFileCache(r.Context(), id, p.Model)
@@ -66,8 +58,10 @@ func (s *Server) handleCacheEvict(w http.ResponseWriter, r *http.Request) {
 			if a := res.Answer; a != nil {
 				n.EvictFigures = &bench.EvictFigures{FileBytes: a.FileBytes, CachedBefore: a.CachedBefore, CachedAfter: a.CachedAfter, DurationS: a.DurationS}
 			}
-			ans.Nodes[i], answered = n, true
-		}, nil)
+			ans.Nodes[i] = n
+		}, func(any) { // a failure is this node's error, not the request's
+			ans.Nodes[i] = bench.NodeEvict{ID: id, Reason: filecache.ReasonFailed, Error: "internal error"}
+		})
 	}
 	if req.Local {
 		ans.Local = s.evictLocal(cfg.ModelsDir, p.Model)

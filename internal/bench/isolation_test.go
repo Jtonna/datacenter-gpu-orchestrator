@@ -99,3 +99,31 @@ func TestManagerPanicInsideTheRunLockIsFatal(t *testing.T) {
 		}
 	}
 }
+
+// Simultaneous requests whose members panic (fan-out bench.concurrent) are
+// each that request's error, all present when the step reads them
+// (supervise.Fanout.Go; run it under -race); one step counts once toward
+// escalation.
+func TestConcurrentMemberPanicIsThatRequestsError(t *testing.T) {
+	supervise.ResetForTest()
+	defer supervise.ResetForTest()
+	defer supervise.Configure(supervise.Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Fatal: func(r string) { t.Errorf("escalated: %s", r) }})()
+	defer supervise.SetHookForTest(func(point string) {
+		if strings.HasPrefix(point, "bench.concurrent/") {
+			panic("injected")
+		}
+	})()
+	api := newFake().prof("gemma", fakeProf{})
+	tm := newTestMgr(t, api)
+	r := tm.runOne(`{"id":"b","profile":"gemma","phases":[{"type":"concurrent_requests","n":3,"request":{"prompt":"hi","max_tokens":4}}]}`)
+	c := r.Steps[0].Phases[0].Concurrent
+	if c == nil || len(c.Items) != 3 || c.Errors != 3 {
+		t.Fatalf("%+v", c)
+	}
+	for i, it := range c.Items {
+		if it.Error != "internal error" || it.Index != i+1 {
+			t.Fatalf("item %d %+v", i, it)
+		}
+	}
+}

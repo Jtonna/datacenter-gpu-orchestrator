@@ -226,3 +226,36 @@ func TestLaunchFanoutFailsOnceTowardEscalation(t *testing.T) {
 		t.Fatalf("one load's failures escalated: stats %+v, %d fatal", got, fatals())
 	}
 }
+
+// A load's stop whose members panic (fan-out pool.stop): the stop's
+// WaitGroup is done only after each failure is counted, so WaitStops
+// returns with the failures in (supervise.Fanout.Go; run it under -race),
+// and one load counts once toward escalation.
+func TestStopFanoutMemberPanicIsCountedBeforeTheStopEnds(t *testing.T) {
+	fatals := fatalCounter(t)
+	r := newRig(t)
+	as := []*fakeagent.Agent{r.agent(1), r.agent(2)}
+	for _, a := range as {
+		r.waitNode(a.ID)
+	}
+	if res := r.p.Launch(context.Background(), spec(5, as...), (&reports{}).add); res.Reason != "" {
+		t.Fatalf("%+v", res)
+	}
+	h, fired := supervise.PanicAtForTest(supervise.PointName("pool.stop", uint64(5)), 2)
+	restore := supervise.SetHookForTest(h)
+	r.p.Stop(5, nil)
+	r.p.WaitStops(10 * time.Second)
+	restore()
+	if fired() != 2 {
+		t.Fatalf("fired %d", fired())
+	}
+	var got supervise.TaskStats
+	for _, s := range supervise.Stats() {
+		if s.Name == "pool.stop" {
+			got = s
+		}
+	}
+	if got.Failures != 2 || got.FailuresLastMin != 1 || fatals() != 0 {
+		t.Fatalf("stats %+v, %d fatal", got, fatals())
+	}
+}

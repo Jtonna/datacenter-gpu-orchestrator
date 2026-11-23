@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // A panic inside a critical section releases the lock and ends the process
@@ -121,8 +122,7 @@ func TestFanoutCountsOncePerOperation(t *testing.T) {
 	var wg sync.WaitGroup
 	results := make([]string, 3)
 	for i := range 3 {
-		wg.Add(1)
-		go fan.Once(func() { defer wg.Done(); panic("bad input") }, func(any) { results[i] = "failed" })
+		fan.Go(&wg, func() { panic("bad input") }, func(any) { results[i] = "failed" })
 	}
 	wg.Wait()
 	eventually(t, "three records", func() bool { return f.recordCount() == 3 })
@@ -138,7 +138,9 @@ func TestFanoutCountsOncePerOperation(t *testing.T) {
 		}
 	}
 	for range 2 {
-		NewFanout("t.fan").Once(func() { panic("again") }, nil)
+		var wg sync.WaitGroup
+		NewFanout("t.fan").Go(&wg, func() { panic("again") }, nil)
+		wg.Wait()
 	}
 	if f.fatalCount() != 1 {
 		t.Fatalf("three operations failing in a minute: fatal %d", f.fatalCount())
@@ -180,5 +182,60 @@ func TestGuardReadNeverEscalates(t *testing.T) {
 	}, nil)
 	if fatals != 1 {
 		t.Fatalf("a critical panic in a read: fatal %d", fatals)
+	}
+}
+
+// Review (race in the fan-out test): the WaitGroup a fan-out member is
+// counted in is done only after the member's failure result (onPanic) is
+// in and the failure counted, so a caller that waits never reads a failed
+// member's result before it is written, even when onPanic is slow. Run it
+// under the race detector.
+func TestFanoutDoneAfterTheFailureResult(t *testing.T) {
+	f := setup(t)
+	fan := NewFanout("t.fan_slow")
+	var wg sync.WaitGroup
+	results := make([]string, 4)
+	for i := range results {
+		fan.Go(&wg, func() {
+			if i%2 == 0 {
+				panic("bad input")
+			}
+			results[i] = "ok"
+		}, func(any) {
+			time.Sleep(50 * time.Millisecond) // a slow failure result
+			results[i] = "failed"
+		})
+	}
+	wg.Wait()
+	for i, r := range results {
+		want := map[bool]string{true: "failed", false: "ok"}[i%2 == 0]
+		if r != want {
+			t.Fatalf("member %d result %q, want %q (read before the failure result was in)", i, r, want)
+		}
+	}
+	if s, _ := stat("t.fan_slow"); s.Failures != 2 {
+		t.Fatalf("failures counted after Wait: %+v", s)
+	}
+	if f.fatalCount() != 0 {
+		t.Fatalf("fatal %v", f.fatals)
+	}
+}
+
+// OnceIn: the WaitGroup is done only after a failed worker's onPanic has
+// returned (the scheduler's effect workers: Run waits on them at shutdown).
+func TestOnceInDoneAfterTheFailureResult(t *testing.T) {
+	setup(t)
+	var wg sync.WaitGroup
+	var result string
+	OnceIn(&wg, "t.once_in", func() { panic("x") }, func(any) {
+		time.Sleep(50 * time.Millisecond)
+		result = "failed"
+	})
+	wg.Wait()
+	if result != "failed" {
+		t.Fatalf("result %q: Wait returned before onPanic", result)
+	}
+	if s, _ := stat("t.once_in"); s.Failures != 1 {
+		t.Fatalf("stats %+v", s)
 	}
 }
