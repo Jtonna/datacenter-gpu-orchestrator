@@ -11,8 +11,12 @@ The heading takes the release number when it ships.
 - **One benchmark on its own.** `POST /api/bench/benchmarks/<id>/run` (MCP `run_benchmark`) runs a benchmark without a suite. The run has `kind: "benchmark"` and `benchmark_id`; every other run has `kind: "suite"`. `GET /api/bench/runs` filters by `kind` and `benchmark`. See the benchmark guide, section 4.
 - **The measurement record.** Every number a step measures is also a row of one shape: metric, value (of), unit, where it came from, what it describes, and its conditions (cold verified, first or steady generation, thinking, memory kind, scorer). `GET /api/bench/runs/<id>/measurements` (MCP `get_run_measurements`), the history across runs at `GET /api/bench/measurements` (MCP `query_measurements`), the metric list at `GET /api/bench/metrics`. See the benchmark guide, section 5.
 
+- **Recipes and groups.** A benchmark with `inputs` (model, ctx, placement, thinking) instead of a profile is a recipe; the profile is made from the inputs before each step (`generated: true`, never over a profile a person wrote). Placements offer consoles only: `auto`, `all`, `any:N`, `nodes:a,b`; one that cannot be met is a refused step. Suites are also groups (`/api/bench/groups`): entries can use a recipe with inputs, a matrix of models, placements, contexts and thinking, or another group. `GET /api/bench/groups/<id>/expand` (MCP `expand_group`) previews the steps; `run_benchmark` takes `inputs`. A recipe's measurements are under the recipe with `variant`, `ctx`, `placement` and the condition `thinking_input`, and `query_measurements` filters by them. See the benchmark guide, sections "Recipes" and "Groups".
+- **Editor and schema.** `GET /api/bench/schema` gains `input_options`, `entry_options`, `placement_forms`, the new limits and two templates: "Tasks" (an inline task set) and "Cold load recipe". The benchmark editor can make a benchmark a recipe and edits a tasks phase's inline set.
+
 ### What changes without any setting
 
+- Migration 7 adds `measurements.variant`, `ctx` and `placement`; the measurements are mapped again once at the first start. Old suites run exactly as before.
 - The database gains the columns `runs.kind` and `runs.target_id` and the tables `measurements` and `bench_meta` (migration 6). At the first start every stored run is mapped into measurements once; old runs read as before, as kind `suite`.
 - The suite aggregates leave direct benchmark runs out; the benchmark aggregates and the history count them.
 

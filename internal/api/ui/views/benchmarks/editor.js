@@ -111,7 +111,8 @@ export function benchmarkEditor(o) {
   function startFrom(id) {
     const t = id === 'blank' ? null : (cache.schema.templates || []).find(x => x.id === id);
     bm = t ? clone(t.benchmark) : { id: '', name: '', description: '', profile: '', phases: [{ type: 'load' }, { type: 'unload' }] };
-    bm.id = ''; bm.name = ''; bm.profile = '';
+    bm.id = ''; bm.name = '';
+    if (bm.inputs) delete bm.profile; else bm.profile = ''; // a recipe takes inputs, not a profile
     if (t) bm.description = (t.benchmark.description || '');
     stage = 'edit'; idTouched = false;
   }
@@ -144,6 +145,14 @@ export function benchmarkEditor(o) {
       profiles.map(p => h('option', { value: p.id, selected: bm.profile === p.id }, p.id + (p.kind && p.kind !== 'llama' ? ` (${p.kind})` : ''))),
       bm.profile && !profiles.some(p => p.id === bm.profile) ? h('option', { value: bm.profile, selected: true }, bm.profile + ' (not a profile now)') : null);
     profSel.addEventListener('change', () => { bm.profile = profSel.value; updateSummary(); });
+    // A recipe (data model step 2) names no profile: it takes its model,
+    // context and placement as inputs, filled in by a group entry or a run.
+    const recipe = !parallel && !!bm.inputs;
+    const recipeSw = toggle(recipe, v => {
+      if (v) { bm.inputs = bm.inputs || {}; delete bm.profile; } else { delete bm.inputs; bm.profile = ''; }
+      draw();
+    }, 'A recipe: takes its model as an input');
+    const inputsForm = recipe ? bindForm(bm.inputs, (schema.input_options || []).map(toField), updateSummary, null) : null;
     const tOpt = (schema.benchmark_options || []).find(x => x.name === 'timeout_s') || {};
     const timeoutForm = bindForm(bm, [Object.assign(toField(tOpt), { label: 'Time limit', description: 'The whole benchmark, load and holds included.' })], () => {}, null);
     const tagsCtl = tagInput(bm.tags || [], v => { if (v.length) bm.tags = v; else delete bm.tags; }, 'Add a tag');
@@ -152,7 +161,10 @@ export function benchmarkEditor(o) {
       h('div.cb', h('div.form-grid',
         mk('name', 'Name', nameIn), mk('id', 'Id', idIn, { help: 'Used in suites and in the API.' }),
         mk('description', 'Description', descIn, { wide: true }),
-        parallel ? null : mk('profile', 'Profile', profSel, { help: 'The model to benchmark.' }),
+        parallel ? null : h('label.check.wide', recipeSw, h('span', { style: 'font-weight:700' }, 'A recipe'),
+          h('span.mut', { style: 'font-weight:500' }, recipe ? 'It takes the model, context and placement as inputs; the defaults below can be left empty and filled in by a group or a run.' : 'Off: it runs one fixed profile.')),
+        parallel || recipe ? null : mk('profile', 'Profile', profSel, { help: 'The model to benchmark.' }),
+        recipe ? h('div.wide', h('div.lab', 'Inputs (defaults)'), inputsForm.el) : null,
         parallel ? null : timeoutForm.el,
         mk('tags', 'Tags', tagsCtl, { plain: true, help: 'Optional, for filtering.' }))));
 
@@ -248,6 +260,7 @@ export function benchmarkEditor(o) {
       if (opt.type === 'list' && opt.item_type === 'request') body.push(requestList(p, opt, limits));
       else if (opt.type === 'list' && opt.item_type === 'turn') body.push(turnList(p, opt, limits));
       else if (opt.type === 'request') body.push(singleRequest(p, opt));
+      else if (opt.type === 'object') body.push(objectOption(p, opt));
     }
     return h('div', { style: 'border:1px solid var(--line-2);border-radius:12px;overflow:hidden' },
       h('div.ch', { style: 'background:var(--inset);padding:10px 14px' },
@@ -288,6 +301,13 @@ export function benchmarkEditor(o) {
       h('div.row', smallBtn('+ Add a turn', () => { list.push({ content: '' }); draw(); }, '', { disabled: list.length >= max })));
   }
 
+  // An option whose value is an object (the tasks phase's inline task set),
+  // edited as JSON.
+  function objectOption(p, opt) {
+    const label = opt.name === 'tasks' ? 'Inline task set' : opt.name;
+    return bindForm(p, [{ key: opt.name, type: 'json', label, description: opt.description }], updateSummary, null).el;
+  }
+
   function singleRequest(p, opt) {
     const on = !!p[opt.name];
     const sw = toggle(on, v => { if (v) p[opt.name] = { name: 'request-1', prompt: '', max_tokens: 32 }; else delete p[opt.name]; draw(); }, 'Use its own request');
@@ -315,7 +335,7 @@ export function benchmarkEditor(o) {
     errs = parseErrors('');
     const local = {};
     if (!bm.id) local.id = 'Give it an id. It is filled in from the name; you can change it.';
-    if (!bm.parallel && !bm.profile) local.profile = 'Choose the profile to benchmark.';
+    if (!bm.parallel && !bm.profile && !bm.inputs) local.profile = 'Choose the profile to benchmark, or make it a recipe.';
     if (Object.keys(local).length) { errs.top = local; draw(); toast('Fix the marked fields first.', 'err'); return; }
     saving = true;
     try {

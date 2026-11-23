@@ -112,6 +112,39 @@ A score names its task by `result` (the `result_id`), or by `step` and `task` (a
 
 A benchmark names a profile. A profile with `force_nodes` pins the benchmark to chosen nodes, which makes runs comparable. A forced profile is still checked against the nodes' memory, so a test of a model that must not fit uses `expect: {"outcome": "refused"}`. For good results on automatic profiles, give the profile a measured `needs_mib` (runbook section G).
 
+### Recipes: one benchmark for every model
+
+A benchmark with `inputs` instead of `profile` is a recipe. It says what to do (its phases) and leaves open which model, how much context and where. The profile is made from the inputs just before each step, so one recipe serves every model and every placement.
+
+| Input | Meaning |
+|---|---|
+| `model` | The model file under the models directory |
+| `ctx` | Context size per slot (256 to 1048576) |
+| `placement` | Consoles only: `auto` (Potluck chooses, the default), `all` (every console that can take a load), `any:N` (N consoles, those with the most available memory, ties by name), `nodes:a,b` (these consoles, by name or id) |
+| `thinking` | `false` turns reasoning off (`--reasoning-budget 0`); leave it out for the model's default |
+| `kv_quant`, `flash_attn` | As in a profile |
+
+The recipe's own `inputs` are defaults; a group entry or a direct run fills in or overrides them. `model` and `ctx` must be known by then. A console is an agent node that is active, not excluded and not the scheduler's own machine. A placement that cannot be met when the step starts (a named console paused, fewer than N consoles free) is a refused step with the reason, not an error, and no profile is made for it.
+
+The profile is named after the inputs, for example `bench-gemma-3-12b-q4-any2-8k-nothink`, and is marked `generated: true`. It is created when missing, rewritten when the placement now picks other consoles, and left alone when it is already right. A profile of that id that a person wrote (`generated: false`) is never replaced; the step fails and says so. Each use of a recipe is a step with its own id, `<recipe>.<6 hex digits of the inputs>`, the same in every run, and a name such as `Cold load (gemma.gguf, 8k, any:2, thinking off)`. The step's `spec` keeps `recipe` and `applied_inputs`.
+
+Members of a parallel benchmark still name fixed profiles.
+
+### Groups
+
+A suite is also called a group; `/api/bench/groups` takes the same requests as `/api/bench/suites` and old suites read unchanged. An entry of a group is one of:
+
+- a benchmark id, or an inline benchmark, as before;
+- `{"benchmark": "<recipe>", "inputs": {...}}`: one use of a recipe;
+- `{"benchmark": "<recipe>", "inputs": {...}, "matrix": {"model": [...], "placement": [...], "ctx": [...], "thinking": [...]}}`: one use per combination, model outermost (up to 64 values per list and 500 combinations);
+- `{"group": "<id>"}`: another group's entries, run in its place. Its own run options (cooldown, idle wait) are not used; the outer group's are. A group that contains itself, directly or through others, is refused, and so is nesting deeper than 8.
+
+A run expands the group when it is queued (at most 1000 steps) and keeps the expanded list. `GET /api/bench/groups/<id>/expand` (MCP `expand_group`) shows that list without running anything: each entry's id, name, profile, recipe and inputs. A group that another group names cannot be deleted (`409`, naming the groups).
+
+```sh
+curl -s -X POST $B/api/bench/groups -d '{"id":"cold-loads","benchmarks":[{"benchmark":"cold-load","matrix":{"model":["gemma-3-12b-q4.gguf","qwen3-8b-q4.gguf"],"placement":["any:1","any:2","all"]}}]}'
+```
+
 ## 3. Create benchmarks and suites
 
 REST: `POST $B/api/bench/benchmarks` and `POST $B/api/bench/suites` with the JSON object; `PUT` and `DELETE` on `/api/bench/benchmarks/{id}` and `/api/bench/suites/{id}`. MCP: `create_benchmark`, `update_benchmark`, `delete_benchmark`, `create_suite`, `update_suite`, `delete_suite`. A first install can also seed them from the `bench:` block of the import file (see `deploy/seed-config.yaml`).
@@ -148,7 +181,7 @@ MCP: `run_suite` with `id`, optional `baseline`, `note` and `evict_others`. The 
 curl -s -X POST $B/api/bench/benchmarks/gemma12b-load-1/run -d '{"note":"after the firmware update"}'
 ```
 
-MCP: `run_benchmark` with `id`, optional `baseline`, `note`, `only_when_idle` (default true), `idle_wait_s` (default 600) and `evict_others` (default false). It is an ordinary run with one step and `kind: "benchmark"`, `benchmark_id` naming the benchmark, an empty `suite_id` and the benchmark's title as `suite_name`. Its default baseline is the benchmark's previous completed direct run. Every other run has `kind: "suite"` (older runs read the same way). `GET /api/bench/runs?kind=benchmark&benchmark=<id>` lists the direct runs; `?benchmark=<id>` alone lists every run with a step of it. The suite aggregates leave direct runs out; the benchmark aggregates count them.
+MCP: `run_benchmark` with `id`, optional `baseline`, `note`, `only_when_idle` (default true), `idle_wait_s` (default 600), `evict_others` (default false) and, for a recipe, `inputs` (for example `{"inputs":{"model":"gemma-3-12b-q4.gguf","placement":"any:2"}}`). A recipe without a model, or inputs on a benchmark with a fixed profile, is refused with `422`. It is an ordinary run with one step and `kind: "benchmark"`, `benchmark_id` naming the benchmark, an empty `suite_id` and the benchmark's title as `suite_name`. Its default baseline is the benchmark's previous completed direct run. Every other run has `kind: "suite"` (older runs read the same way). `GET /api/bench/runs?kind=benchmark&benchmark=<id>` lists the direct runs; `?benchmark=<id>` alone lists every run with a step of it. The suite aggregates leave direct runs out; the benchmark aggregates count them.
 
 - **Idle first.** Benchmarks load and unload real models. With `only_when_idle` a run does not start, and pauses between benchmarks, while another model is loaded, a request that is not the run's is in flight, or anything is queued. A model someone used stays loaded for its `ttl` (300 s by default), so a run may wait that long. After `idle_wait_s` the run ends `skipped` and keeps what it measured. Set `only_when_idle: false` only when nobody else uses the pool. With `evict_others: true` (a suite option, or `{"evict_others": true}` in the body of `POST /api/bench/suites/<id>/run` for that run only) the run does not wait for other people's models that are loaded but idle; its loads may make the scheduler unload them to make room, as any load does. Requests in flight and the queue are still waited for.
 - **Clean-up.** A benchmark that does not end ready (a failed phase, its `timeout_s`, a cancel) ends with a forced unload of its profile before the next benchmark starts, after up to 3 s for its last request to be counted as ended. An `unload` phase (or the unload before a load) that the scheduler refuses because a request is still in flight is tried again for those 3 s: the scheduler counts a request's end a moment after the answer has arrived. A request that really stays in flight still makes it fail. A benchmark that ends ready keeps what it left loaded on purpose until the end of the run.
@@ -187,9 +220,10 @@ Every number a step measures is also stored as one row of one shape, so that com
 |---|---|
 | `metric`, `value`, `of`, `unit` | What and how much, for example `load_s` 35.4 `s`, or `task_points` 12 of 17 `points` |
 | `run_id`, `step`, `phase`, `phase_type`, `phase_label` | Where it came from (`phase` is absent for a figure of the whole step) |
-| `benchmark_id`, `profile`, `model`, `node_count`, `node` | What it describes; `node` for per-machine figures |
+| `benchmark_id`, `profile`, `model`, `node_count`, `node` | What it describes; `node` for per-machine figures. For a recipe, `benchmark_id` is the recipe |
+| `variant`, `ctx`, `placement` | For a recipe only: the use (the step's id) and its context and placement inputs |
 | `subject`, `seq` | The request (by name), turn (`turn 2`), simultaneous request or task, and which repeat |
-| `conditions` | `cold` and `cold_verified` (of the load, and of the last load before a request), `load_mode`, `generation` (`first` for warm-up, `steady`, `after_hold`), `thinking` (`seen`, `not_seen`), `memory` (`system`, `gpu`) and `window` (`load`, `step`), `scorer` |
+| `conditions` | `thinking_input` (`on`, `off`, for a recipe that sets it), `cold` and `cold_verified` (of the load, and of the last load before a request), `load_mode`, `generation` (`first` for warm-up, `steady`, `after_hold`), `thinking` (`seen`, `not_seen`), `memory` (`system`, `gpu`) and `window` (`load`, `step`), `scorer` |
 | `at` | When the request started, else when the phase or step started (unix ms) |
 
 `GET /api/bench/metrics` (MCP `list_bench_metrics`) lists the metrics with unit, description, the phase types that record them, whether they are per machine and whether higher is better. A failed request has no figures (its error stays in the step); a simultaneous-requests phase records `errors` of `n`. Task points are rows of `task_points`, written when a scorer posts and removed with its scores.
@@ -197,7 +231,7 @@ Every number a step measures is also stored as one row of one shape, so that com
 | Ask | REST | MCP |
 |---|---|---|
 | A run's numbers | `GET /api/bench/runs/<id>/measurements` (`?step=N`, `?metric=load_s,ttft_ms`) | `get_run_measurements` |
-| The history of a metric | `GET /api/bench/measurements?benchmark=<id>&metric=ttft_ms&since=30d` (also `profile`, `model`, `node`, `kind`, `until`, `limit` up to 10000) | `query_measurements` |
+| The history of a metric | `GET /api/bench/measurements?benchmark=<id>&metric=ttft_ms&since=30d` (also `profile`, `model`, `node`, `variant`, `ctx`, `placement`, `kind`, `until`, `limit` up to 10000) | `query_measurements` |
 
 History rows, oldest first, carry their run's `run_state`, `run_kind`, `release` and `config_revision`. The rows are derived from the step results when a step ends; runs stored before this release are mapped once when the scheduler starts, so their history is there too.
 
