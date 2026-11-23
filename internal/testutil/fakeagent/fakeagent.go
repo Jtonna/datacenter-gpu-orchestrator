@@ -18,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -67,6 +68,11 @@ type Agent struct {
 	// answers 404 (an agent without the request).
 	Capabilities []string
 	CacheEvict   func(agentproto.CacheEvictRequest) (int, any)
+	// HostPort is where a host launch's fake llama-server listens (phase 6);
+	// a host launch is taken only when Capabilities holds host_launch and
+	// HostPort is set, else it is refused with invalid_request as an agent
+	// of release 0.1.6 would.
+	HostPort int
 
 	mu         sync.Mutex
 	srv        *http.Server
@@ -80,6 +86,8 @@ type Agent struct {
 	calls      []string
 	cur        *launchRun
 	stopLaunch []string
+	launches   []agentproto.LaunchRequest // every accepted launch request
+	hostAuth   []string                   // the Authorization header of each request to a host launch
 }
 
 type launchRun struct {
@@ -90,6 +98,7 @@ type launchRun struct {
 	exit    *agentproto.ExitInfo
 	cmd     *exec.Cmd
 	ln      net.Listener
+	hsrv    *http.Server // a host launch's fake llama-server
 	leases  int
 	started time.Time
 	log     syncBuf
@@ -313,7 +322,7 @@ func (a *Agent) heartbeat(ctx context.Context) int {
 		hb["devices"] = []agentproto.Device{}
 	}
 	if a.cur != nil && a.cur.state != agentproto.StateExited {
-		hb["role"], hb["launch_id"] = agentproto.RoleWorker, a.cur.req.LaunchID
+		hb["role"], hb["launch_id"] = roleOf(a.cur.req), a.cur.req.LaunchID
 	}
 	if a.Stats != nil {
 		hb["stats"] = a.Stats
@@ -401,6 +410,14 @@ func (a *Agent) handler() http.Handler {
 			writeJSON(w, agentproto.LaunchRefusalStatus[ref.Reason], ref)
 			return
 		}
+		if req.Role == agentproto.RoleHost {
+			if !slices.Contains(a.Capabilities, agentproto.CapHostLaunch) || a.HostPort == 0 || req.Host == nil {
+				refuse(w, agentproto.ReasonInvalidRequest, "this agent takes worker launches only")
+				return
+			}
+			a.startHostLocked(w, req)
+			return
+		}
 		run := &launchRun{req: req, state: agentproto.StateStarting, started: time.Now()}
 		addr := net.JoinHostPort(a.Addr, strconv.Itoa(a.WorkerPort))
 		if a.RPCServer != "" {
@@ -429,6 +446,7 @@ func (a *Agent) handler() http.Handler {
 		}
 		fmt.Fprintf(&run.log, "fake agent: worker launch %s for %s\n", req.LaunchID, req.Label)
 		a.cur = run
+		a.launches = append(a.launches, req)
 		go a.becomeReady(run, addr)
 		writeJSON(w, http.StatusAccepted, a.stateLocked())
 	})
@@ -531,10 +549,17 @@ func (a *Agent) becomeReady(run *launchRun, addr string) {
 // device is known, and MemAvailable minus the floor unless the device is a
 // CUDA device that does not share system memory (no device: MemAvailable).
 func (a *Agent) wouldNotFitLocked(req agentproto.LaunchRequest) *agentproto.LaunchRefusal {
-	if req.Worker == nil || req.Worker.ExpectMiB <= 0 {
+	var expect int64
+	switch {
+	case req.Worker != nil:
+		expect = req.Worker.ExpectMiB
+	case req.Host != nil:
+		expect = req.Host.ExpectMiB
+	}
+	if expect <= 0 {
 		return nil
 	}
-	floor, expect := a.WatchdogFloorMiB, req.Worker.ExpectMiB
+	floor := a.WatchdogFloorMiB
 	if floor == 0 {
 		floor = 1000
 	}
@@ -574,6 +599,9 @@ func (a *Agent) endLocked(reason string) {
 	if run.ln != nil {
 		run.ln.Close()
 	}
+	if run.hsrv != nil {
+		run.hsrv.Close()
+	}
 	code := 0
 	run.state = agentproto.StateExited
 	run.exit = &agentproto.ExitInfo{Code: &code, Reason: reason, LogTail: []string{}}
@@ -586,6 +614,9 @@ func (a *Agent) stateLocked() agentproto.LaunchState {
 	r := a.cur
 	st := agentproto.LaunchState{LaunchID: r.req.LaunchID, Role: agentproto.RoleWorker, State: r.state,
 		Port: a.WorkerPort, Command: []string{"rpc-server"}, Exit: r.exit, MemAvailableMiB: a.MemAvail}
+	if r.req.Role == agentproto.RoleHost {
+		st.Role, st.Port, st.Command = agentproto.RoleHost, a.HostPort, []string{"llama-server", "--port", strconv.Itoa(a.HostPort)}
+	}
 	if r.state != agentproto.StateExited {
 		ttl := r.req.LeaseTTLS
 		st.LeaseExpiresInS = &ttl
@@ -604,4 +635,70 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(v)
+}
+
+// ---- host launches (phase 6) ----
+
+func roleOf(req agentproto.LaunchRequest) string {
+	if req.Role == agentproto.RoleHost {
+		return agentproto.RoleHost
+	}
+	return agentproto.RoleWorker
+}
+
+// startHostLocked starts a host launch: a fake llama-server on HostPort that
+// answers /health without a key and everything else only with the launch's
+// key, and writes the buffer lines a real host writes at -lv 4.
+func (a *Agent) startHostLocked(w http.ResponseWriter, req agentproto.LaunchRequest) {
+	addr := net.JoinHostPort(a.Addr, strconv.Itoa(a.HostPort))
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		writeJSON(w, 409, agentproto.LaunchRefusal{Reason: agentproto.ReasonPortInUse, Message: err.Error()})
+		return
+	}
+	key := req.Host.APIKey
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]string{"status": "ok"})
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		got := r.Header.Get("Authorization")
+		a.mu.Lock()
+		a.hostAuth = append(a.hostAuth, got)
+		a.mu.Unlock()
+		if key != "" && got != "Bearer "+key {
+			writeJSON(w, 401, map[string]any{"error": map[string]any{"message": "Invalid API Key", "type": "authentication_error"}})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"object": "chat.completion",
+			"choices": []map[string]any{{"index": 0, "message": map[string]string{"role": "assistant", "content": "hello"}}},
+			"usage":   map[string]int{"prompt_tokens": 1, "completion_tokens": 1}})
+	})
+	run := &launchRun{req: req, state: agentproto.StateStarting, started: time.Now(), ln: ln, hsrv: &http.Server{Handler: mux}}
+	go run.hsrv.Serve(ln)
+	fmt.Fprintf(&run.log, "fake agent: host launch %s for %s\n", req.LaunchID, req.Label)
+	fmt.Fprintf(&run.log, "load_tensors:      Vulkan0 model buffer size =  2000.00 MiB\n")
+	for i, wk := range req.Host.Workers {
+		fmt.Fprintf(&run.log, "load_tensors: RPC%d[%s] model buffer size =  1000.00 MiB\n", i, wk)
+	}
+	fmt.Fprintf(&run.log, "llama_kv_cache:    Vulkan0 KV buffer size =   256.00 MiB\n")
+	a.cur = run
+	a.launches = append(a.launches, req)
+	go a.becomeReady(run, addr)
+	writeJSON(w, http.StatusAccepted, a.stateLocked())
+}
+
+// Launches are the launch requests the agent accepted, in order.
+func (a *Agent) Launches() []agentproto.LaunchRequest {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]agentproto.LaunchRequest(nil), a.launches...)
+}
+
+// HostAuth are the Authorization headers of the requests a host launch got
+// (/health excluded), in order.
+func (a *Agent) HostAuth() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]string(nil), a.hostAuth...)
 }

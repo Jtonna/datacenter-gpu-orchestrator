@@ -47,6 +47,9 @@ type launch struct {
 	profile string // the profile the load is for (CR-10: a trusted field of the launch's log lines)
 	base    string // http://addr:50060
 	rpcAddr string
+	// feed, set for a host launch (hostlaunch.go), takes the launch log's
+	// new bytes as they are copied: the remote child reads its output there.
+	feed func([]byte)
 
 	mu       sync.Mutex
 	st       agentproto.LaunchState
@@ -417,7 +420,7 @@ func (p *Pool) reportIfNeeded(l *launch) {
 
 // copyLog appends the launch's new log bytes to <LogDir>/<launch id>.log.
 func (p *Pool) copyLog(ctx context.Context, l *launch) {
-	if p.o.LogDir == "" {
+	if p.o.LogDir == "" && l.feed == nil {
 		return
 	}
 	l.mu.Lock()
@@ -442,8 +445,15 @@ func (p *Pool) copyLog(ctx context.Context, l *launch) {
 	if err != nil {
 		next = off + int64(len(data))
 	}
-	if len(data) > 0 {
-		f, err := os.OpenFile(filepath.Join(p.o.LogDir, "worker-"+l.name+"-"+l.id+".log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if len(data) > 0 && l.feed != nil {
+		l.feed(data)
+	}
+	if len(data) > 0 && p.o.LogDir != "" {
+		role := "worker-"
+		if l.feed != nil {
+			role = "host-"
+		}
+		f, err := os.OpenFile(filepath.Join(p.o.LogDir, role+l.name+"-"+l.id+".log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 		if err != nil {
 			return
 		}
