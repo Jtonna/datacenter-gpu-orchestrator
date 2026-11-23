@@ -55,7 +55,7 @@ curl -s $B/api/bench/schema | jq '.templates[] | select(.id=="cold-reload-loaded
 
 ### Expectations
 
-`expect` turns a benchmark into a pass or fail check: `outcome` (`ready`, or `refused` for a model that is supposed not to fit), `max_load_s`, `max_unload_s`, `min_decode_tps`, `min_prefill_tps`, `max_ttft_ms`, `min_reused_tokens`, `max_errors`, `max_concurrent_wall_s`. A step that was refused or failed is a result with the scheduler's reason, not an error. One outcome is never judged: `refused_by_exclusion`, for a profile that forces a node `exclude_nodes` names. Its result is `not_judged`; it is neither a pass nor a failure and stays out of the pass rates (from release 0.1.7). An ordinary `refused` is judged like any outcome.
+`expect` turns a benchmark into a pass or fail check: `outcome` (`ready`, or `refused` for a model that is supposed not to fit), `max_load_s`, `max_unload_s`, `min_decode_tps`, `min_prefill_tps`, `max_ttft_ms`, `min_reused_tokens`, `max_errors`, `max_concurrent_wall_s`. A step that was refused or failed is a result with the scheduler's reason, not an error. One outcome is never judged: `refused_by_exclusion`, for a profile that forces a node `exclude_nodes` names. Its result is `not_judged`; it is neither a pass nor a failure and stays out of the pass rates (from release 0.1.7). An ordinary `refused` is judged like any outcome. So a benchmark that expects `outcome: refused` on a profile that forces an excluded node is not judged either, rather than passing. A benchmark or suite with nothing judged has no pass rate (`pass_rate: null`, `judged: 0`).
 
 ### Choosing profiles
 
