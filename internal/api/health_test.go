@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -450,5 +451,146 @@ func TestHealth_ZonesExcludedAndRemoved(t *testing.T) {
 	row = judgeZones(statusOf(view...), facts, true, time.Time{})
 	if row.State != HealthProblem || row.Text != "6 of 7 reachable · 1 down" || row.Count != 1 || row.Facts["set_aside"] != int64(1) {
 		t.Fatalf("set aside: %+v", row)
+	}
+}
+
+// healthFrames reads the health frames that arrive within d.
+func healthFrames(c *wsc, d time.Duration) []HealthSummary {
+	var out []HealthSummary
+	for _, m := range c.collect(d) {
+		if m.Type == TopicHealth {
+			var s HealthSummary
+			json.Unmarshal(m.Data, &s)
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// pushEnv is an env whose health push runs only when the test calls
+// healthTick (the loop's own period is an hour), with a disk the test moves.
+func pushEnv(t *testing.T) (*env, *atomic.Int64, *history.Store) {
+	used := &atomic.Int64{}
+	used.Store(50 * gb)
+	hist := history.Open(history.Options{Dir: t.TempDir()})
+	t.Cleanup(hist.Close)
+	e := newEnv(t, chatOK, func(o *Options) {
+		o.History = hist
+		o.System.DataDir = "/srv/data"
+		o.diskEvery, o.healthEvery = time.Hour, time.Hour
+		o.diskStat = func(string) (diskstat.FS, error) {
+			u := uint64(used.Load())
+			return diskstat.FS{Total: uint64(240 * gb), Used: u, Free: uint64(240*gb) - u}, nil
+		}
+		o.taskStats = func() []supervise.TaskStats { return nil }
+	})
+	eventually(t, "a disk pass", func() bool { return e.api.disks.Passes() >= 1 })
+	return e, used, hist
+}
+
+// Five still minutes (a tick every 2 s, the clock moving with it, the disk
+// read every 30 s with its checked_at and free bytes moving by less than the
+// sentence shows): the subscribe frame, then one frame per minute at most
+// for the Scheduler row's "up N min" (the mockup's sentence keeps the
+// uptime): at most 6 frames.
+func TestHealth_PushOnlyWhatAPersonReads(t *testing.T) {
+	e, used, _ := pushEnv(t)
+	c := dialWS(t, e, nil)
+	c.until(t, TopicHello, 3*time.Second)
+	c.send(t, map[string]any{"type": "subscribe", "topics": []string{TopicHealth}})
+	if f := healthFrames(c, 300*time.Millisecond); len(f) != 1 {
+		t.Fatalf("on subscribe: %d frames", len(f))
+	}
+	for i := 1; i <= 150; i++ {
+		e.advance(2 * time.Second)
+		if i%15 == 0 {
+			used.Add(1_000_000) // 1 MB: the sentence shows 0.1 GB steps
+			e.api.disks.Pass(context.Background())
+		}
+		e.api.healthTick(context.Background())
+	}
+	f := healthFrames(c, 300*time.Millisecond)
+	t.Logf("%d frames after the subscribe frame in five still minutes", len(f))
+	if len(f) > 5 {
+		t.Fatalf("%d frames in five still minutes, want at most 5 after the first", len(f))
+	}
+	for _, s := range f {
+		for _, r := range s.Rows {
+			if r.ID == "scheduler" && !strings.Contains(r.Text, " min") {
+				t.Errorf("a frame that is not the uptime minute: %q", r.Text)
+			}
+		}
+	}
+
+	// a row changing state: exactly one frame
+	used.Store(230 * gb)
+	e.api.disks.Pass(context.Background())
+	e.api.healthTick(context.Background())
+	e.api.healthTick(context.Background())
+	if f := healthFrames(c, 300*time.Millisecond); len(f) != 1 || rowOf(f[0], "storage").State != HealthAttention {
+		t.Fatalf("a storage change: %d frames", len(f))
+	}
+}
+
+func rowOf(s HealthSummary, id string) HealthRow {
+	for _, r := range s.Rows {
+		if r.ID == id {
+			return r
+		}
+	}
+	return HealthRow{}
+}
+
+// Two changes seen in one evaluation (a failed benchmark run: the Runs row
+// and the recent list) make one frame; a second client's subscribe sends
+// the summary to that client only.
+func TestHealth_PushTwoChangesOneFrame(t *testing.T) {
+	e, _, hist := pushEnv(t)
+	c := dialWS(t, e, nil)
+	c.until(t, TopicHello, 3*time.Second)
+	c.send(t, map[string]any{"type": "subscribe", "topics": []string{TopicHealth}})
+	if f := healthFrames(c, 300*time.Millisecond); len(f) != 1 {
+		t.Fatalf("on subscribe: %d frames", len(f))
+	}
+	hist.Record(history.Event{Ts: e.api.opts.Now().UnixMilli(), Type: history.TBenchRunFinished, Severity: history.Error,
+		Nodes: []string{}, Data: map[string]any{"state": "failed", "bench_run": "r-9"}, Summary: "x."})
+	e.advance(11 * time.Second) // past the Runs cache
+	e.api.healthTick(context.Background())
+	e.api.healthTick(context.Background())
+	f := healthFrames(c, 300*time.Millisecond)
+	if len(f) != 1 || rowOf(f[0], "runs").Text != "Request log is off" || len(f[0].Recent) != 1 {
+		t.Fatalf("two changes: %d frames %+v", len(f), f)
+	}
+	c2 := dialWS(t, e, nil)
+	c2.until(t, TopicHello, 3*time.Second)
+	c2.send(t, map[string]any{"type": "subscribe", "topics": []string{TopicHealth}})
+	if f := healthFrames(c2, 300*time.Millisecond); len(f) != 1 {
+		t.Fatalf("second subscriber: %d frames", len(f))
+	}
+	if f := healthFrames(c, 100*time.Millisecond); len(f) != 0 {
+		t.Fatalf("the first client got %d frames from the second's subscribe", len(f))
+	}
+}
+
+// With no subscriber the summary is never evaluated.
+func TestHealth_NoSubscriberNoWork(t *testing.T) {
+	e := newEnv(t, chatOK, func(o *Options) { o.healthEvery = 5 * time.Millisecond })
+	time.Sleep(100 * time.Millisecond)
+	if n := e.api.health.evals.Load(); n != 0 {
+		t.Fatalf("%d evaluations without a subscriber", n)
+	}
+	c := dialWS(t, e, nil)
+	c.until(t, TopicHello, 3*time.Second)
+	c.send(t, map[string]any{"type": "subscribe", "topics": []string{TopicHealth}})
+	healthFrames(c, 100*time.Millisecond)
+	if e.api.health.evals.Load() == 0 {
+		t.Fatal("no evaluation with a subscriber")
+	}
+	c.send(t, map[string]any{"type": "subscribe", "topics": []string{TopicStatus}})
+	time.Sleep(50 * time.Millisecond)
+	n := e.api.health.evals.Load()
+	time.Sleep(100 * time.Millisecond)
+	if m := e.api.health.evals.Load(); m != n {
+		t.Fatalf("%d evaluations after the client left the topic", m-n)
 	}
 }

@@ -108,12 +108,19 @@ type HealthSummary struct {
 
 // healthState is the server's part: the last good status and the push.
 type healthState struct {
-	last    atomic.Pointer[scheduler.Status]
-	lastAt  atomic.Int64 // unix ms of last
+	last   atomic.Pointer[scheduler.Status]
+	lastAt atomic.Int64 // unix ms of last
+	runs   runsCache
+	every  time.Duration
+	// wake starts an evaluation now (a client subscribed); evals counts
+	// the evaluations of the push.
+	wake  chan struct{}
+	evals atomic.Int64
+	// mu guards what one evaluation of the push owns: the signature of
+	// the last frame sent and the clients waiting for their first frame.
 	mu      sync.Mutex
 	lastSig string
-	runs    runsCache
-	every   time.Duration
+	pending []*wsClient
 }
 
 type runsCache struct {
@@ -135,50 +142,102 @@ func (s *Server) startHealth() {
 	s.bgWG.Add(1)
 	s.disks.Start(s.bg, s.bgWG.Done)
 	s.health.every = orDur(s.opts.healthEvery, 2*time.Second)
+	s.health.wake = make(chan struct{}, 1)
 	s.bgWG.Add(1)
+	// While no client wants the topic the task waits for a subscribe and
+	// does nothing else (no timer, no evaluation); while one does, it
+	// evaluates every 2 s.
 	supervise.Go(s.bg, supervise.Spec{Name: "api.health", Policy: supervise.Restart, Done: s.bgWG.Done,
-		Rebuild: func(any) { s.health.setSig("") }}, func(ctx context.Context) {
-		t := time.NewTicker(s.health.every)
-		defer t.Stop()
+		Rebuild: func(any) { s.health.reset() }}, func(ctx context.Context) {
 		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-			}
 			if s.ws.wantsAny(TopicHealth) {
-				s.pushHealth(ctx)
+				t := time.NewTimer(s.health.every)
+				select {
+				case <-ctx.Done():
+					t.Stop()
+					return
+				case <-t.C:
+				case <-s.health.wake:
+					t.Stop()
+				}
+			} else {
+				select {
+				case <-ctx.Done():
+					return
+				case <-s.health.wake:
+				}
 			}
+			s.healthTick(ctx)
 		}
 	})
 }
 
-func (h *healthState) setSig(v string) {
+func (h *healthState) reset() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.lastSig = v
+	h.lastSig, h.pending = "", nil
 }
 
-// pushHealth sends the summary to the topic's clients when it changed
-// (updated_at aside).
-func (s *Server) pushHealth(ctx context.Context) {
-	sum := s.healthSummary(ctx)
-	cp := sum
-	cp.UpdatedAt = ""
-	b, _ := json.Marshal(cp)
-	sig := string(b)
-	changed := func() bool {
+// healthSubscribe is a client subscribing to the topic: it gets the summary
+// from the next evaluation, which starts now.
+func (s *Server) healthSubscribe(c *wsClient) {
+	func() {
 		s.health.mu.Lock()
 		defer s.health.mu.Unlock()
-		if sig == s.health.lastSig {
-			return false
-		}
-		s.health.lastSig = sig
-		return true
+		s.health.pending = append(s.health.pending, c)
 	}()
-	if changed {
-		s.ws.broadcast(TopicHealth, wsFrame(TopicHealth, s.opts.Now(), sum))
+	select {
+	case s.health.wake <- struct{}{}:
+	default:
 	}
+}
+
+// healthTick is one evaluation of the push: every subscriber gets a frame
+// when what a person reads changed (healthSig), a client that just
+// subscribed gets one in any case, nobody else does.
+func (s *Server) healthTick(ctx context.Context) {
+	s.health.mu.Lock()
+	defer s.health.mu.Unlock()
+	pending := s.health.pending
+	s.health.pending = nil
+	if len(pending) == 0 && !s.ws.wantsAny(TopicHealth) {
+		return
+	}
+	s.health.evals.Add(1)
+	sum := s.healthSummary(ctx)
+	frame := wsFrame(TopicHealth, s.opts.Now(), sum)
+	if sig := healthSig(sum); sig != s.health.lastSig {
+		s.health.lastSig = sig
+		s.ws.broadcast(TopicHealth, frame)
+		return
+	}
+	for _, c := range pending {
+		if c.wants(TopicHealth) {
+			s.ws.enqueue(c, frame)
+		}
+	}
+}
+
+// healthSig is what a person reads in the summary: the heart, each row's
+// state, sentence, count and link, and the recent lines. Facts that move by
+// themselves (uptime_s, loop steps, checked_at, free bytes, updated_at) are
+// left out; they reach a client with the next frame that is sent.
+func healthSig(sum HealthSummary) string {
+	type row struct {
+		ID, State, Text, Link string
+		Count                 int64
+	}
+	v := struct {
+		State, Color, Sentence string
+		Issues                 int
+		Rows                   []row
+		Recent                 []HealthEvent
+	}{State: sum.State, Color: sum.Color, Sentence: sum.Sentence, Issues: sum.Issues, Recent: sum.Recent}
+	for _, r := range sum.Rows {
+		v.Rows = append(v.Rows, row{r.ID, r.State, r.Text, r.Link, r.Count})
+	}
+	b, _ := json.Marshal(v)
+	return string(b)
 }
 
 // healthStatus is the scheduler's status, or the last good one (fresh
@@ -775,7 +834,8 @@ func spanText(d time.Duration) string {
 	return fmt.Sprintf("%d h %d min", int(d.Hours()), int(d.Minutes())%60)
 }
 
-// upText is an uptime: "12 d", "5 h", "3 min", "40 s".
+// upText is an uptime as the mockup writes it: "12 d", "5 h", "3 min", and
+// "under 1 min" (no seconds, so the sentence changes once a minute at most).
 func upText(d time.Duration) string {
 	switch {
 	case d >= 24*time.Hour:
@@ -785,7 +845,7 @@ func upText(d time.Duration) string {
 	case d >= time.Minute:
 		return fmt.Sprintf("%d min", int(d.Minutes()))
 	}
-	return fmt.Sprintf("%d s", int(d.Seconds()))
+	return "under 1 min"
 }
 
 // withModelsDisk puts "disk" (the models folder's disk from the one reader,

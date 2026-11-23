@@ -99,7 +99,7 @@ type wsHub struct {
 	snapshot func() []map[string]any          // extra messages for a new client (bench state)
 	models   func(ctx context.Context) []byte // the whole catalog as a frame's data, or nil
 	onStatus func(v any)                      // every status the loop looked at
-	health   func(ctx context.Context) any    // the health summary (health.go)
+	health   func(c *wsClient)                // a client subscribed to the health topic (health.go)
 	log      func(msg string, args ...any)
 
 	mu        sync.Mutex
@@ -305,7 +305,7 @@ func (h *wsHub) serve(ctx context.Context, conn wsConn) {
 				h.sendRequests(c, gen)
 			}
 			if next[TopicHealth] && !prev[TopicHealth] && h.health != nil {
-				h.sendHealth(c)
+				h.health(c)
 			}
 		case "pong":
 		}
@@ -611,7 +611,7 @@ func (s *Server) newWSHub() *wsHub {
 		}
 	}
 	h.onStatus = s.catalogStatus
-	h.health = func(ctx context.Context) any { return s.healthSummary(ctx) }
+	h.health = s.healthSubscribe
 	h.models = func(ctx context.Context) []byte {
 		snap, err := s.catalogGet(ctx)
 		if err != nil {
@@ -643,15 +643,4 @@ func (h *wsHub) wantsAny(topic string) bool {
 		}
 	}
 	return false
-}
-
-// sendHealth queues the health summary for a client that just subscribed.
-func (h *wsHub) sendHealth(c *wsClient) {
-	go supervise.Once("api.ws.health", func() { // a failure sends nothing; the client gets the next change
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if v := h.health(ctx); c.wants(TopicHealth) {
-			h.enqueue(c, wsFrame(TopicHealth, h.now(), v))
-		}
-	}, nil)
 }
