@@ -62,10 +62,14 @@ type NeedInfo struct {
 	// scheduler's machine, used for a host: node profile that has none of
 	// its own yet (the host overhead is added on the host node's share).
 	FromServer bool
+	// DerivedFromCtx: Need is derived (derive.go) from the measurement of the
+	// same model at this other context; 0 otherwise.
+	DerivedFromCtx int
 
 	// what at needs to give the need of another device count
 	figs       []learnedFig
-	serverFigs bool // figs are the server-hosted shape's (planLearnedOf)
+	serverFigs bool        // figs are the server-hosted shape's (planLearnedOf)
+	derive     *deriveFrom // figs are derived from another context (derive.go)
 	baseNeed   placer.Need
 	baseSource NeedSource
 	perDevice  int
@@ -83,6 +87,9 @@ const (
 	// NeedRestored is a measurement of an earlier run read from the store at
 	// start; the plan's basis says "measured on <date>, restored at start".
 	NeedRestored NeedSource = "restored at start"
+	// NeedDerived is derived from a measurement of the same model at another
+	// context (derive.go).
+	NeedDerived NeedSource = "derived"
 )
 
 // NeedProvider gives a profile's memory need (design 7.2). An error is a

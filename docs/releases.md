@@ -2,7 +2,11 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
-## Next scheduler image (agent stays 0.1.9)
+## Next scheduler image (after v22; agent stays 0.1.9)
+
+- **Derived needs.** A profile with no measurement of its own shape takes its need from the same model measured at another context (same slots, cache type, flash attention, extra arguments and host kind; the nearest context): the measured total with the part that grows with the window (KV cache, and the compute buffer on each device) recomputed by the estimate's formula. Not from a measurement more than 512 MiB below its own window's estimate (a sliding-window model). When the model has pairs of measurements at two contexts, each is predicted from the other and all must be within 512 MiB, else the estimate stays; without such pairs the derived figure gets the estimate margin (+5%). The basis reads "derived from the measurement at ctx N (date); …", `/api/profiles` and `/api/models` add `derived_from_ctx`, and `GET /api/needs` adds `derivation_check` (the tolerance and every pair with its error). The first load records the shape's own measurement, which replaces it. Order of sources: own measurement, then (host: node) the server-hosted one, then derived, then the estimate.
+
+## Scheduler v20 to v22 (agent stays 0.1.9)
 
 - **A `host: node` profile is planned from the server-hosted measurement** of the same shape (model, context, slots, cache, arguments) until a load hosted on a node measured its own; the host overhead is still added on the host node, and the basis says "hosted on the scheduler's machine (no measurement hosted on a node yet), plus N MiB host overhead". Stored peaks stay per shape.
 - **The host node's own device share** (its `Vulkan0`, ... rows) shows under that node in an instance's `nodes`, like a worker's row; it used to be listed as unmatched. Host-side buffers stay in `host_memory`.
