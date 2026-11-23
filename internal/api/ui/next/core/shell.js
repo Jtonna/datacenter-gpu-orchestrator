@@ -8,16 +8,26 @@
 // live channel is down or the fleet feed is stale, a slim bar says so above
 // the screen, and goes away by itself.
 //
-// Left out until their backend ships (the plan, section 3): the Ask Potluck
-// rail item (U9), the System health heart and its popup (U7), Overview (U4)
-// and Alerts and webhooks (U7). No item is drawn that leads nowhere.
+// The rail as the design draws it (Components board 2, the rail of every
+// page): the mark (not a link), Monitor, Zones, Models, Benchmarks; then at
+// its foot Ask Potluck, MCP and the System health heart; and the gear
+// "Settings" (Q69), which holds Profiles, Tiers and zones, Settings, Audit,
+// About and the link to the classic UI (Q73). Rail items are buttons with a
+// title, as drawn. Ask Potluck opens a drawer at the right edge that says it
+// is not built yet; the heart opens the health popup (core/health.js), and
+// its dot is the worst row's colour.
+//
+// Overview is the home page (Q76): the Monitor item opens it, and it opens
+// with the section menu closed (Q9), as the design draws it; the Monitor
+// item opens the menu again while on it, for that visit only.
 //
 // Every export of the classic core/shell.js is here with the same name:
 // NAV, connectionFacts, connection, setShellSlot, startShell.
 
 import { h, morph, icon } from './dom.js';
 import { state, on } from './store.js';
-import { href, onRoute, parse } from './router.js';
+import { href, onRoute, parse, navigate } from './router.js';
+import { healthPopup, heart, readHealth } from './health.js';
 import { getActor, setActor } from './api.js';
 import { dur, durShort, plural, num } from './format.js';
 import { promptText } from './ui.js';
@@ -32,6 +42,10 @@ const I = {
   configure: ['M3 6h8M15 6h2M3 14h2M9 14h8', { tag: 'circle', cx: 13, cy: 6, r: 2 }, { tag: 'circle', cx: 7, cy: 14, r: 2 }],
   mcp: 'M7 3v4M13 3v4M5 7h10v3a5 5 0 01-10 0zM10 15v2.5',
   about: [{ tag: 'circle', cx: 10, cy: 10, r: 7 }, 'M10 9v5M10 6v.5'],
+  ask: [{ tag: 'rect', x: 3, y: 3, width: 14, height: 14, rx: 4 }, 'M11.5 6.5l-3 7'],
+  heart: 'M10 16.5S3.5 12.5 3.5 7.8A3.3 3.3 0 0110 6.3a3.3 3.3 0 016.5 1.5c0 4.7-6.5 8.7-6.5 8.7z',
+  gear: [{ tag: 'circle', cx: 10, cy: 10, r: 2.4 }, 'M10 2.8v2M10 15.2v2M2.8 10h2M15.2 10h2M4.9 4.9l1.4 1.4M13.7 13.7l1.4 1.4M4.9 15.1l1.4-1.4M13.7 6.3l1.4-1.4', { tag: 'circle', cx: 10, cy: 10, r: 5 }],
+  x: 'M5 5l10 10M15 5L5 15',
   menu: 'M3 5h14M3 10h14M3 15h14',
   close: 'M12 5l-5 5 5 5',
 };
@@ -39,13 +53,17 @@ const I = {
 // The sections and their pages. A page is a view id (views/<id>.js) and
 // optionally the first part of its rest ('runs' for #/benchmarks/runs).
 // `also` lists other view ids that belong to the section (the classic
-// Nodes page is reachable under Zones). `foot` sections sit at the foot of
-// the rail.
+// Nodes page is reachable under Zones; the request list behind the
+// Overview's "All N" and the 24-hour report under Monitor). `foot` sections
+// sit at the foot of the rail. A page with `link` is another section's page
+// listed here too (Models in the Monitor menu, as drawn); it does not make
+// this section current. `href` is a plain link (the classic UI).
 export const NAV = [
-  { id: 'monitor', label: 'Monitor', icon: I.monitor, pages: [
+  { id: 'monitor', label: 'Monitor', icon: I.monitor, also: ['report', 'requests'], pages: [
+    { id: 'overview', label: 'Overview' },
+    { id: 'models', label: 'Models', link: true },
     { id: 'queue', label: 'Queue' },
     { id: 'activity', label: 'Activity' },
-    { id: 'placement', label: 'Placement preview' },
   ] },
   { id: 'zones', label: 'Zones', icon: I.zones, also: ['nodes'], pages: [
     { id: 'zones', label: 'Zones', desc: 'Every machine, its state and what it is doing' },
@@ -59,32 +77,35 @@ export const NAV = [
     { id: 'benchmarks', rest: ['runs'], label: 'Runs', match: r => r.rest[0] === 'runs' },
     { id: 'benchmarks', rest: ['trends'], label: 'Aggregates', match: r => r.rest[0] === 'trends' },
   ] },
-  { id: 'configure', label: 'Configure', icon: I.configure, foot: true, pages: [
-    { id: 'profiles', label: 'Profiles', desc: 'Models, context size and memory need' },
-    { id: 'tiers', label: 'Tiers and zones', desc: 'Priority, link speed, switch zones off' },
-    { id: 'settings', label: 'Timing defaults', desc: 'Holds, timeouts and settle time' },
-    { id: 'audit', label: 'Audit', desc: 'Every change, who made it and why' },
-  ] },
   { id: 'mcp', label: 'MCP', icon: I.mcp, foot: true, pages: [
     { id: 'mcp', label: 'MCP', desc: 'The MCP server and the keys of AI agents' },
   ] },
-  { id: 'about', label: 'About', icon: I.about, foot: true, pages: [
+  // the gear (Q69): everything that configures Potluck or describes it
+  { id: 'settings', label: 'Settings', icon: I.gear, foot: true, gear: true, pages: [
+    { id: 'profiles', label: 'Profiles', desc: 'Models, context size and memory need' },
+    { id: 'tiers', label: 'Tiers and zones', desc: 'Priority, link speed, switch zones off' },
+    { id: 'settings', label: 'Settings', desc: 'Holds, timeouts, settle time and the other defaults' },
+    { id: 'audit', label: 'Audit', desc: 'Every change, who made it and why' },
     { id: 'about', label: 'About', desc: 'Release, connection and data on disk' },
+    // until it folds into the zone panel's "Load a model" (D8)
+    { id: 'placement', label: 'Placement preview', desc: 'Where a profile would load now, and why' },
     // Logs is not a view of this page: it opens the log store's own search
     // page in a new tab (core/logs.js), and is there only while logging is on.
     { id: 'logs', label: 'Logs', external: true },
+    // the classic UI stays at /ui/classic/ until every screen is replaced (Q73)
+    { id: 'classic', label: 'Classic UI', href: 'classic/', desc: 'The previous interface, at /ui/classic/' },
   ] },
 ];
 
 // sectionOf(route) -> the section a route belongs to, or null.
 export function sectionOf(route) {
-  return NAV.find(s => s.pages.some(p => p.id === route.id) || (s.also || []).includes(route.id)) || null;
+  return NAV.find(s => s.pages.some(p => !p.link && !p.href && p.id === route.id) || (s.also || []).includes(route.id)) || null;
 }
 
 const pageOn = (p, route) => p.id === route.id && (!p.match || p.match(route));
 
 // The mark: a pot, from the design's rail.
-const mark = size => h('svg', { width: size, height: size, viewBox: '0 0 32 32', role: 'img', 'aria-label': 'Potluck' },
+const mark = size => h('svg', { width: size, height: size, viewBox: '0 0 32 32', role: 'img', 'aria-label': 'Potluck, Datacenter GPU Orchestrator' },
   h('rect', { width: 32, height: 32, rx: 9, fill: '#0f6b4a' }),
   h('path', { d: 'M8 15h16a8 8 0 01-16 0z', fill: '#fff' }),
   h('path', { d: 'M11 10.5h10', stroke: '#fff', 'stroke-width': 2.6, 'stroke-linecap': 'round' }));
@@ -194,39 +215,85 @@ function placeSlots() {
 
 const CLOSED_KEY = 'llm-scheduler.menu-closed';
 function menuClosed() { try { return localStorage.getItem(CLOSED_KEY) === '1'; } catch { return false; } }
+// The Overview opens with the menu closed (Q9); opening it there lasts until
+// the page is left, and is not kept.
+let overviewMenuOpen = false;
+const OPENS_CLOSED = ['overview'];
+const menuShut = () => (OPENS_CLOSED.includes(route.id) ? !overviewMenuOpen : menuClosed());
 function setMenuClosed(v) {
-  try { localStorage.setItem(CLOSED_KEY, v ? '1' : '0'); } catch { /* private mode */ }
-  root.classList.toggle('menu-closed', v);
+  if (OPENS_CLOSED.includes(route.id)) overviewMenuOpen = !v;
+  else try { localStorage.setItem(CLOSED_KEY, v ? '1' : '0'); } catch { /* private mode */ }
+  root.classList.toggle('menu-closed', menuShut());
   draw();
 }
 
-let root = null, route = { id: 'models', rest: [], query: {} }, connBar = null;
+let root = null, route = { id: 'overview', rest: [], query: {} }, connBar = null, surfaceBox = null;
 
+// A rail item is a button, as drawn: it opens the section's first page, or
+// (on the current section, while its menu is closed) opens the menu again.
 function railItem(s, current) {
   const on_ = current && current.id === s.id;
-  const first = s.pages.find(p => !p.external);
-  return h('a', { class: 'rb' + (on_ ? ' on' : ''), href: href(first.id, first.rest), 'aria-label': s.label, 'data-label': s.label,
-    'aria-current': on_ ? 'page' : null, key: 'rb-' + s.id,
-    // the current section's item opens its menu again when it was closed
-    onclick: e => { if (on_ && root.classList.contains('menu-closed') && !narrow.matches) { e.preventDefault(); setMenuClosed(false); } closeDrawer(); } },
+  const first = s.pages.find(p => !p.external && !p.href && !p.link);
+  return h('button', { class: 'rb' + (on_ ? ' on' : ''), type: 'button', 'aria-label': s.label, title: s.label, 'data-label': s.label,
+    'aria-current': on_ ? 'page' : null, key: 'rb-' + s.id, 'data-section': s.id,
+    onclick: () => {
+      closeSurfaces(); closeDrawer();
+      if (on_ && root.classList.contains('menu-closed') && !narrow.matches) { setMenuClosed(false); return; }
+      navigate(first.id, first.rest || []);
+    } },
   icon(s.icon));
 }
 
+// The surfaces the rail opens over the page: the health popup and the Ask
+// Potluck drawer, one at a time.
+let surface = ''; // '' | 'health' | 'ask'
+function openSurface(which) {
+  surface = surface === which ? '' : which;
+  if (surface === 'health') readHealth(draw);
+  draw();
+}
+function closeSurfaces() { if (surface) { surface = ''; draw(); } }
+
 function railNode() {
   const cur = sectionOf(route);
+  const hb = heart();
+  const foot = NAV.filter(s => s.foot);
   return [
-    h('a.mark', { href: href('models'), 'aria-label': 'Potluck, home', key: 'mark' }, mark(32)),
+    h('span.mark', { key: 'mark' }, mark(32)),
     NAV.filter(s => !s.foot).map(s => railItem(s, cur)),
     h('span.gap', { 'aria-hidden': 'true', key: 'gap' }),
-    NAV.filter(s => s.foot).map(s => railItem(s, cur)),
-    // the classic UI, which stays at /ui/classic/ until the owner retires it
-    h('a.uiswitch', { href: 'classic/', key: 'classic', title: 'Open the classic UI (/ui/classic/)' }, 'Classic UI'),
+    h('button', { class: 'rb' + (surface === 'ask' ? ' open' : ''), type: 'button', key: 'rb-ask', 'aria-label': 'Ask Potluck', title: 'Ask Potluck', 'data-label': 'Ask Potluck',
+      'aria-expanded': surface === 'ask' ? 'true' : 'false', onclick: () => openSurface('ask') }, icon(I.ask)),
+    foot.filter(s => !s.gear).map(s => railItem(s, cur)),
+    h('button', { class: 'rb' + (surface === 'health' ? ' open' : ''), type: 'button', key: 'rb-health',
+      'aria-label': hb.issues ? `System health, ${plural(hb.issues, 'issue')}` : 'System health', title: 'System health', 'data-label': 'System health',
+      'aria-expanded': surface === 'health' ? 'true' : 'false', onclick: () => openSurface('health') },
+      icon(I.heart), hb.issues ? h('span', { class: 'dotmark ' + hb.level, 'aria-hidden': 'true' }) : null),
+    foot.filter(s => s.gear).map(s => railItem(s, cur)),
     h('button', { class: 'rb menu-open-btn', type: 'button', key: 'menu-btn', 'aria-label': 'Menu', 'aria-expanded': root.classList.contains('menu-open') ? 'true' : 'false',
       onclick: () => { root.classList.toggle('menu-open'); draw(); } }, icon(I.menu)),
   ];
 }
 
+// The Ask Potluck drawer (design: Chat boards, .drw2, 440 wide at the right
+// edge). The assistant is not built yet: the drawer says so in one line.
+function askNode() {
+  return h('aside.drw2', { 'aria-label': 'Ask Potluck', key: 'ask' },
+    h('div.dh2',
+      h('h2', 'Ask Potluck'),
+      h('span', { style: 'margin-left:auto' }),
+      h('button.ib', { type: 'button', 'aria-label': 'Close Ask Potluck', title: 'Close Ask Potluck', onclick: closeSurfaces }, icon(I.x))),
+    h('p.drw2-note', 'Ask Potluck is not built yet: here you will ask about zones, models and runs in plain words.'));
+}
+
+function surfaceNode() {
+  if (surface === 'health') return healthPopup(closeSurfaces, to => { surface = ''; location.hash = to; draw(); });
+  if (surface === 'ask') return askNode();
+  return [];
+}
+
 function menuItem(p, c) {
+  if (p.href) return h('a.ni', { href: p.href, key: 'p-' + p.id, title: p.desc }, p.label);
   if (p.external) {
     if (p.id !== 'logs' || !logsOn(state.status)) return null;
     return h('a.ni', { href: logsURL('*'), target: '_blank', rel: 'noopener', title: 'Search the central log in a new tab (' + LOGS_PAGE + ')', onclick: closeDrawer, key: 'logs' },
@@ -269,6 +336,7 @@ function draw() {
   }
   morph(root.querySelector('.rail'), railNode());
   morph(root.querySelector('.menu'), menuNode());
+  if (surfaceBox) morph(surfaceBox, surfaceNode());
   placeSlots();
 }
 
@@ -292,10 +360,31 @@ export function startShell(app) {
   const stage = h('div.stage');
   main.replaceWith(stage);
   stage.append(connBar, strip, main);
-  root.classList.toggle('menu-closed', menuClosed());
-  narrow.addEventListener('change', placeSlots);
+  // the popup and the drawer the rail opens, over the page
+  surfaceBox = h('div.surfaces');
+  root.appendChild(surfaceBox);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSurfaces(); });
+  document.addEventListener('mousedown', e => {
+    if (!surface || !e.target || !e.target.closest) return;
+    if (e.target.closest('.surfaces') || e.target.closest('.rail')) return;
+    closeSurfaces();
+  }, true);
+  // the heart's rows that need reads: at the start and after each reconnect
+  readHealth(draw);
+  on(['hello'], () => readHealth(draw));
   route = parse(location.hash);
-  onRoute(r => { route = r; closeDrawer(); draw(); });
-  on(['status', 'conn', 'hello', 'tick'], draw);
+  // ?health=open on any page opens the popup with it (a link to the popup)
+  if (route.query.health === 'open') openSurface('health');
+  root.classList.toggle('menu-closed', menuShut());
+  narrow.addEventListener('change', placeSlots);
+  onRoute(r => {
+    if (r.id !== route.id) overviewMenuOpen = false;
+    if (r.id !== route.id && surface === 'health') surface = '';
+    if (r.query.health === 'open' && surface !== 'health') { surface = 'health'; readHealth(draw); }
+    route = r;
+    root.classList.toggle('menu-closed', menuShut());
+    closeDrawer(); draw();
+  });
+  on(['status', 'conn', 'hello', 'tick', 'events'], draw);
   draw();
 }

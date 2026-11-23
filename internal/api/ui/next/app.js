@@ -8,6 +8,9 @@ import { start as startRouter } from './core/router.js';
 import { start as startLive } from './core/live.js';
 import { startShell } from './core/shell.js';
 
+import './views/overview.js';
+import './views/requests.js';
+import './views/report.js';
 import './views/zones.js';
 import './views/models.js';
 import './views/nodes.js';
@@ -21,6 +24,10 @@ import './views/settings.js';
 import './views/audit.js';
 import './views/mcp.js';
 import './views/about.js';
+
+// The home page is the Overview (Q76): /ui/ with no screen named opens it.
+// (The shared router's own default, kept for the classic UI, is Models.)
+if (!location.hash || location.hash === '#' || location.hash === '#/') history.replaceState(null, '', '#/overview');
 
 startShell(document.getElementById('app'));
 startRouter(document.getElementById('main'));

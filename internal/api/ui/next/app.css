@@ -16,7 +16,7 @@
   /* zone states: free, in use 1 to 4 (darker is busier), loading, down, switched off, failed run */
   --z-free:#e3e9e5; --z-use1:#bfe3d0; --z-use2:#7fcaa6; --z-use3:#2f9d72; --z-use4:#0f6b4a;
   --z-load:#e0a030; --z-down:#e58a76; --z-off:#aab4ae; --z-off-2:#eef1ef;
-  --failed:#c8402b; --failed-row:#fbefec; --failed-line:#f2d6d0; --queued:#b7791f; --cancelled:#9aa49e; --up:#1f9d6b; --alert-dot:#d6452f;
+  --tok-in:#a8d8c0; --failed:#c8402b; --failed-row:#fbefec; --failed-line:#f2d6d0; --queued:#b7791f; --cancelled:#9aa49e; --up:#1f9d6b; --alert-dot:#d6452f;
   /* type: Manrope 800 down to 600, JetBrains Mono for values */
   --sans:Manrope,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
   --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
@@ -96,7 +96,7 @@ b.mono,a.mono,.mono b,h1 .mono,h2 .mono,h3 .mono,b .mono{font-weight:500}
 .ni:hover{background:var(--hover-bg);color:var(--ink);text-decoration:none}
 .ni.on{background:var(--accent-tint);color:var(--accent-ink)}
 .nd{display:flex;flex-direction:column;gap:1px;padding:8px 10px;border-radius:8px;color:var(--ink-2);font-weight:600}
-.nd b{font-weight:700}
+.nd b{font-weight:700;display:flex;align-items:center;gap:8px}
 .nd span{font-size:12px;color:var(--mut);font-weight:600}
 .nd:hover{background:var(--hover-bg);color:var(--ink);text-decoration:none}
 .nd.on{background:var(--accent-tint);color:var(--accent-ink)}
@@ -179,12 +179,15 @@ b.mono,a.mono,.mono b,h1 .mono,h2 .mono,h3 .mono,b .mono{font-weight:500}
 .seg button:last-child{border-right:0}
 .seg button.on{background:var(--ink);color:#fff}
 /* date stepper */
-.stepper{display:inline-flex;align-items:center;height:32px;border:1px solid var(--ctl-border);border-radius:var(--r-btn);background:var(--surface)}
+.stepper{position:relative;display:inline-flex;align-items:center;height:32px;border:1px solid var(--ctl-border);border-radius:var(--r-btn);background:var(--surface)}
 .stepper button{height:30px;border:0;background:transparent;color:var(--ink-2);display:flex;align-items:center;justify-content:center;cursor:pointer;font-weight:700}
 .stepper .arrow{width:30px}
 .stepper .arrow .ic{width:15px;height:15px}
 .stepper .when{padding:0 8px;gap:8px;color:var(--ink)}
 .stepper button:disabled{color:var(--z-off);cursor:default}
+.stepper .when .ic{width:15px;height:15px}
+/* the browser's own date picker, opened by the calendar button */
+.stepper-pick{position:absolute;left:30px;bottom:0;width:1px;height:1px;padding:0;border:0;opacity:0;pointer-events:none}
 /* a toggle the size of a table cell ("Zones") */
 .zb{height:22px;min-width:58px;padding:0 8px;border-radius:6px;border:1px solid var(--ctl-border);background:var(--surface);color:var(--ink-2);font-size:var(--fs-label);font-weight:700;cursor:pointer;white-space:nowrap}
 .zb:hover{border-color:var(--accent);color:var(--accent-ink)}
@@ -225,6 +228,8 @@ b.mono,a.mono,.mono b,h1 .mono,h2 .mono,h3 .mono,b .mono{font-weight:500}
 /* run status: an icon and the length */
 .rs{display:inline-flex;align-items:center;gap:8px;font-weight:600;white-space:nowrap}
 .rs svg{width:16px;height:16px;flex:none}
+/* the length and the queued time keep the row's weight, as drawn (.mono alone is 400) */
+.rs .mono,.runs td.qd .mono{font-weight:600}
 tr.fail td{background:var(--failed-row)}
 tr.canc td{color:var(--quiet)}
 /* availability: 24 squares, oldest left */
@@ -424,7 +429,7 @@ svg .f-mint{fill:var(--z-use3)}svg .f-amber{fill:var(--z-load)}svg .f-coral{fill
 .tokens-plot{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:flex-end}
 .hbars{display:flex;gap:4px}
 .hbars i{flex:1;display:block;min-width:0}
-.hbars.in{align-items:flex-end}.hbars.in i{background:#a8d8c0}
+.hbars.in{align-items:flex-end}.hbars.in i{background:var(--tok-in)}
 .hbars.out{align-items:flex-start}.hbars.out i{background:var(--accent)}
 .hbars-axis{height:1px;background:var(--quiet);margin:2px 0}
 .hbars-x{display:flex;gap:4px;padding-top:4px}
@@ -670,3 +675,138 @@ input.file::file-selector-button{font:inherit;font-weight:700;font-size:12.5px;c
 .zev time{color:var(--muted);white-space:nowrap}
 .zev.sev-warn{background:var(--amber-bg)}
 .zev.sev-error{background:#fbefec}
+
+/* ---------- Overview (Main board): header row, tokens, runs, zones with availability ---------- */
+.ov{display:flex;flex-direction:column;gap:var(--gap-panel);font-weight:400}
+.ov-head{display:flex;align-items:center;gap:12px;min-height:34px;flex:none;flex-wrap:wrap}
+.ov-head .acts{margin-left:auto;display:flex;gap:8px}
+.ov-note{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:var(--mut);margin-top:-4px}
+.ov-note.warn{color:var(--amber-text)}
+.ov-row{display:flex;gap:var(--gap-panel);flex:none;height:306px}
+.ov-row>.panel{min-width:0}
+.ov-tok{flex:.66;display:flex;flex-direction:column}
+.ov-req{flex:1.34;overflow:hidden;display:flex;flex-direction:column}
+.ov-row>.solo{flex:1}
+.ov-zones{flex:none;padding-bottom:8px}
+/* the design's panel header: 40 high, title left, its key and link right */
+.wh{display:flex;align-items:center;justify-content:space-between;gap:12px;height:40px;padding:0 var(--pad-panel);flex:none}
+.wh h2{font-size:var(--fs-panel);font-weight:800}
+.ov-tok .tokens{flex:1}
+.tokens-plot{position:relative}
+.tokens-empty{position:absolute;left:0;right:0;top:40%;text-align:center;font-size:12.5px;font-weight:600;color:var(--mut)}
+.tokkey{color:var(--mut);font-size:12px;font-weight:600;white-space:nowrap}
+.tokkey .sw{width:11px;height:11px;margin-right:5px}
+.sw.tin{background:var(--tok-in)}.sw.tout{background:var(--accent);margin-left:12px}
+/* the key of a runs table, and its link */
+.runkey{display:flex;align-items:center;gap:12px;font-size:12px;font-weight:600;color:var(--mut);white-space:nowrap}
+.runkey>span{display:flex;align-items:center;gap:5px}
+.runkey>a{font-weight:700}
+/* runs table, 30 px rows (Components board 3) */
+.ov-req .runs-box{flex:1;min-height:0;overflow:hidden}
+table.runs{width:100%;border-collapse:collapse}
+.runs th{text-align:left;font-size:var(--fs-label);font-weight:700;color:var(--mut);padding:5px 8px;border-top:1px solid var(--line);white-space:nowrap}
+.runs td{height:var(--row-runs);padding:0 8px;border-top:1px solid var(--line);white-space:nowrap}
+.runs th:first-child,.runs td:first-child{padding-left:var(--pad-panel)}
+.runs th:last-child,.runs td:last-child{padding-right:12px}
+.runs th.num,.runs td.num{text-align:right}
+.runs .rs{display:flex}
+.runs td.qd{font-weight:600}
+.runs tr.fail td{background:var(--failed-row)}
+.runs tr.canc td{color:var(--quiet)}
+.runs tr.none td{height:auto;padding:22px var(--pad-panel);color:var(--mut);font-weight:600;white-space:normal}
+.runs tr.none td b{display:block;color:var(--ink);font-size:var(--fs-panel);font-weight:800;margin-bottom:4px}
+.zb{width:58px;padding:0}
+/* the flat filter buttons of the Overview's zones panel (no arrow, as drawn) */
+.fs.bare{padding:0 9px;background-image:none}
+/* zones panel: filter bar 46, heads 28, rows 34, the list scrolls at 6 rows */
+.zp-head{display:flex;align-items:center;justify-content:space-between;gap:8px 12px;min-height:46px;padding:0 var(--pad-panel);flex-wrap:wrap}
+.zp-head>div{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.zp-body{overflow-x:auto}
+.zp-grid{min-width:1180px}
+.zr{display:grid;grid-template-columns:112px 210px minmax(0,1fr) 118px 52px 405px;gap:16px;align-items:center;flex:none;height:var(--row-zones);padding:0 10px;margin:0 6px;border-top:1px solid var(--line);border-left:1px solid transparent;border-right:1px solid transparent;white-space:nowrap}
+.zr>span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.zr .r{text-align:right}
+.zr.axr{height:28px}
+.zr.axr .strip-h{display:flex;justify-content:space-between}
+.zr.axr .strip-h>:last-child{color:var(--ink)}
+.zr .zs{font-weight:700}
+.zr.isoff,.zr.isoff .zname{color:var(--mut)}
+.zsc{display:flex;flex-direction:column;height:204px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--z-off) transparent}
+.zsc .zempty{border-top:1px solid var(--line);margin:0 6px}
+.zr.hi{background:var(--accent-tint);border-left-color:var(--selected);border-right-color:var(--selected)}
+.zr.g-top,.zr.g-solo{border-top-color:var(--selected);border-radius:7px 7px 0 0}
+.zr.g-mid,.zr.g-bot{border-top-color:var(--accent-tint)}
+.zr.g-bot{border-radius:0 0 7px 7px;box-shadow:inset 0 -1px 0 var(--selected)}
+.zr.hi+.zr{border-top-color:transparent}
+.zr.g-solo{border-radius:7px;box-shadow:inset 0 -1px 0 var(--selected)}
+.dim .zr{opacity:.45}
+.dim .zr.hi{opacity:1}
+.panel.ov-zones>.key{margin-top:4px}
+/* Customize: the panels in order, each with its switch and its arrows */
+.cz-list{display:flex;flex-direction:column;border:1px solid var(--line-panel);border-radius:10px;overflow:hidden}
+.cz-item{display:flex;align-items:center;gap:10px;padding:8px 12px;border-top:1px solid var(--line)}
+.cz-item:first-child{border-top:0}
+.cz-item b{flex:1;font-weight:700}
+/* a plain list of requests (#/requests) and the 24-hour report (#/report) */
+.rq-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 12px;min-height:46px;padding:8px var(--pad-panel)}
+.rq-bar>div{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.rq-foot{display:flex;align-items:center;gap:10px;padding:10px var(--pad-panel) 12px;border-top:1px solid var(--line);font-size:12px;font-weight:600;color:var(--mut)}
+.rq-foot .grow{flex:1}
+.rp-strips{display:flex;flex-direction:column}
+.rp-strip{display:grid;grid-template-columns:210px 405px auto;gap:16px;align-items:center;padding:8px var(--pad-panel);border-top:1px solid var(--line)}
+@media print{.rail,.menu,.connbar,.topslots,.rp-noprint{display:none!important}.main{padding:0}}
+@media(max-width:1100px){
+  .ov-row{flex-direction:column;height:auto}
+  .ov-tok{min-height:306px}
+  .ov-req{overflow-x:auto}
+  .ov-req .runs-box{overflow:visible}
+}
+/* the Overview's filter dropdowns: a flat button and its menu under it */
+.dd{position:relative;display:inline-flex}
+.fs.bare.open{border-color:var(--ink-2)}
+.dd-menu{position:absolute;right:0;top:28px;z-index:30;min-width:100%;display:flex;flex-direction:column;padding:4px;background:var(--surface);border:1px solid var(--line-panel);border-radius:8px;box-shadow:0 8px 24px rgba(19,26,23,.14)}
+.dd-menu button{height:28px;padding:0 10px;border:0;border-radius:6px;background:transparent;text-align:left;font-size:12px;font-weight:600;color:var(--ink-2);white-space:nowrap;cursor:pointer}
+.dd-menu button:hover{background:var(--hover-bg)}
+.dd-menu button[aria-checked=true]{color:var(--accent-ink);font-weight:700;background:var(--accent-tint)}
+
+/* ---------- the rail's surfaces (Phase 2): the heart's popup, the Ask drawer ---------- */
+.rail .mark{cursor:default}
+.rb.open{box-shadow:inset 0 0 0 2px #5fae8a;color:var(--accent-ink)}
+.rb .dotmark.warn{background:#e0a030}
+.surfaces{position:fixed;inset:0;pointer-events:none;z-index:40}
+.surfaces > *{pointer-events:auto}
+/* the health popup (design: Health board, .hp), anchored to the heart */
+.hp{position:fixed;left:calc(var(--rail-w) + 10px);bottom:10px;width:420px;box-sizing:border-box;background:#fff;border:1px solid #c5cec9;border-radius:14px;box-shadow:0 16px 40px rgba(19,26,23,.2);display:flex;flex-direction:column;overflow:hidden;font-size:13px}
+.hp-head{display:flex;align-items:center;gap:10px;padding:14px 12px 12px 16px}
+.hp-title{font-size:15px;font-weight:800}
+.hp-sum{display:flex;align-items:center;gap:8px;font-weight:700;padding-top:3px}
+.hp-upd{font-size:12px;font-weight:600}
+.hp-x{width:30px;height:30px;flex:none;border:0;border-radius:8px;background:transparent;color:#3f4a44;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.hp-x:hover{background:var(--hover-bg)}
+.hp-x .ic{width:17px;height:17px}
+.hd{width:9px;height:9px;border-radius:50%;flex:none;box-sizing:border-box}
+.hd.ok{background:#0f6b4a}.hd.bad{background:#c8402b}.hd.warn{background:#e0a030}
+.hd.wait{background:transparent;border:1.5px solid #9aa49e}
+.hp-row{display:grid;grid-template-columns:9px 120px minmax(0,1fr) 16px;gap:12px;align-items:center;min-height:40px;padding:0 14px 0 16px;border-top:1px solid #e9eeeb;cursor:pointer}
+.hp-row:hover,.hp-row:focus-visible{background:#f6f8f6;outline:0}
+.hp-row.nolink{cursor:default}
+.hp-row.nolink:hover{background:transparent}
+.hr-name{font-weight:700}
+.hr-text{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hr-chev{color:#9aa49e;display:flex}
+.hr-chev .ic{width:15px;height:15px}
+.hp-last{display:flex;align-items:center;justify-content:space-between;padding:12px 16px 8px;border-top:1px solid #dfe5e1;background:#f8faf8}
+.hp-last b{font-weight:800}
+.hp-last a{font-weight:700}
+.hp-ev{display:grid;grid-template-columns:76px minmax(0,1fr);gap:12px;padding:7px 16px;border-top:1px solid #e9eeeb;background:#f8faf8}
+.hp-foot{display:flex;align-items:center;gap:3px;padding:11px 16px 12px;border-top:1px solid #dfe5e1;font-weight:700;color:var(--muted);cursor:not-allowed}
+.hp-foot .ic{width:15px;height:15px}
+/* the Ask Potluck drawer (design: Chat boards, .drw2), not built yet */
+.drw2{position:fixed;top:0;right:0;bottom:0;width:440px;max-width:100vw;box-sizing:border-box;display:flex;flex-direction:column;background:#fff;border-left:1px solid #dfe5e1;box-shadow:-14px 0 36px rgba(19,26,23,.12)}
+.dh2{height:52px;flex:none;display:flex;align-items:center;gap:8px;padding:0 10px 0 16px;border-bottom:1px solid #e9eeeb}
+.dh2 h2{margin:0;font-size:14px;font-weight:800}
+.ib{width:32px;height:32px;flex:none;border:0;border-radius:8px;background:transparent;color:#3f4a44;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.ib:hover{background:var(--hover-bg);color:var(--ink)}
+.ib .ic{width:17px;height:17px}
+.drw2-note{margin:18px;color:var(--muted);font-weight:600}
+@media(max-width:860px){.hp{left:10px;right:10px;width:auto;top:62px;bottom:auto;max-height:calc(100vh - 72px);overflow:auto}}

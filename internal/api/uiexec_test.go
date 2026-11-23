@@ -254,8 +254,8 @@ func TestUIExecBaseUsesTheServersPage(t *testing.T) {
 			t.Fatalf("good page: exit %d, want %q\n%s", code, want, out)
 		}
 	}
-	if !strings.Contains(out, "PASS: 14 screens") || !strings.Contains(out, "PASS: 15 screens") {
-		t.Fatalf("good page: want the classic UI's 14 screens and the new shell's 15 (with Zones)\n%s", out)
+	if !strings.Contains(out, "PASS: 14 screens") || !strings.Contains(out, "PASS: 18 screens") {
+		t.Fatalf("good page: want the classic UI's 14 screens and the new shell's 18 (with Overview, Requests, the 24-hour report and Zones)\n%s", out)
 	}
 	for _, c := range []struct{ name, path, body, want string }{
 		{"does not parse", "/ui/views/benchmarks/editor.js", "export const x = 'users' idle';\n", "views/benchmarks/editor.js:1: does not parse as an ES module"},

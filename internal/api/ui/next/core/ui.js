@@ -7,9 +7,9 @@
 // drawn with the design's classes; the design's own components follow at the
 // end of the file.
 
-import { h, morph } from './dom.js';
+import { h, morph, icon } from './dom.js';
 import { on } from './store.js';
-import { num, mib, gb, gbNum, parseGoDuration } from './format.js';
+import { num, mib, gb, gbNum, parseGoDuration, clock, dur, DASH } from './format.js';
 
 // ---------- live rendering ----------
 
@@ -149,9 +149,11 @@ export function table(o) {
 }
 
 // chips([{id:'all', label:'All', count: 12}], 'all', id => {}) -> filter chips.
+// An option may carry cls (extra classes: 'all' for the design's "ALL ZONES")
+// and title.
 export function chips(options, current, onPick, label) {
   return h('div.chips', { role: 'group', 'aria-label': label || 'Filter' }, options.map(o =>
-    h('button', { class: 'fc' + (o.id === current ? ' on' : ''), type: 'button', 'aria-pressed': o.id === current ? 'true' : 'false', onclick: () => onPick(o.id) },
+    h('button', { class: 'fc' + (o.cls ? ' ' + o.cls : '') + (o.id === current ? ' on' : ''), type: 'button', title: o.title, 'aria-pressed': o.id === current ? 'true' : 'false', onclick: () => onPick(o.id) },
       o.label, o.count != null ? h('span.n', num(o.count)) : null)));
 }
 
@@ -517,8 +519,9 @@ export function segmented(options, current, onPick, label) {
 // filterSelect(label, [{id, label}], current, id => {}) -> the design's filter
 // dropdown ("Sort: needs attention first"): a native select, so it works
 // with the keyboard and on a phone.
-export function filterSelect(label, options, current, onPick) {
-  return h('select.fs', { 'aria-label': label, key: 'fs-' + label, onchange() { onPick(this.value); } },
+// opts.bare draws it as the Overview's flat button (no arrow), as drawn there.
+export function filterSelect(label, options, current, onPick, opts = {}) {
+  return h('select', { class: 'fs' + (opts.bare ? ' bare' : ''), 'aria-label': label, key: 'fs-' + label, onchange() { onPick(this.value); } },
     options.map(o => h('option', { value: o.id, selected: o.id === current }, label + ': ' + o.label)));
 }
 
@@ -558,11 +561,28 @@ export function colourKey(extra) {
 
 // availStrip(cells, label) -> 24 squares, oldest on the left, current hour on
 // the right. cells: 24 square classes (ZONE_SQUARE), or null for an hour
-// nothing is known about. Draw it only from a real series: there is none
-// before the per-machine availability series of phase U4.
+// nothing is known about (an empty outlined square), or {cls, title}. Draw
+// it only from a real series (GET /api/nodes/availability, availClass()).
 export function availStrip(cells, label) {
   return h('div.avail', { role: 'img', 'aria-label': label || 'Availability, hour by hour' },
-    (cells || []).slice(-24).map(c => h('i', { class: c ? ZONE_SQUARE[c] || 'none' : 'none' })));
+    (cells || []).slice(-24).map(c => {
+      const cls = c && typeof c === 'object' ? c.cls : c;
+      return h('i', { class: cls ? ZONE_SQUARE[cls] || 'none' : 'none', title: c && typeof c === 'object' ? c.title : null });
+    }));
+}
+
+// availClass(cell) -> the square of one cell of GET /api/nodes/availability:
+// its state (free, in_use, loading, down, off, unknown) and, in use, its
+// busy level 1 to 4 (darker is busier). Unknown is null (an empty square).
+export function availClass(cell) {
+  switch (cell && cell.state) {
+    case 'free': return 'free';
+    case 'in_use': return 'use' + Math.min(4, Math.max(1, cell.busy_level || 1));
+    case 'loading': return 'load';
+    case 'down': return 'down';
+    case 'off': return 'off';
+    default: return null;
+  }
 }
 
 // The run states and their icons (Components board 2): queued, running,
@@ -574,6 +594,17 @@ const RUN_ICON = {
   failed: ['Failed', () => [h('circle', { cx: 8, cy: 8, r: 7, fill: 'var(--failed)' }), h('path', { d: 'M5.5 5.5l5 5M10.5 5.5l-5 5', stroke: '#fff', 'stroke-width': 1.8, 'stroke-linecap': 'round' })], null],
   cancelled: ['Cancelled', () => [h('circle', { cx: 8, cy: 8, r: 6, fill: 'none', stroke: 'currentColor', 'stroke-width': 2 }), h('path', { d: 'M4 12l8-8', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round' })], 'var(--cancelled)'],
 };
+// A request turned away before it ran is drawn with the Failed icon (it did
+// not get an answer); its name for a screen reader says what happened.
+RUN_ICON.refused = ['Refused', RUN_ICON.failed[1], null];
+
+// runIcon('done', 14) -> the state's icon alone (the legend of a runs table).
+export function runIcon(stateName, size = 16, labelled = false) {
+  const r = RUN_ICON[stateName];
+  if (!r) return null;
+  return h('svg', { viewBox: '0 0 16 16', width: size, height: size, role: labelled ? 'img' : null, 'aria-label': labelled ? r[0] : null,
+    'aria-hidden': labelled ? null : 'true', style: r[2] ? 'color:' + r[2] : null }, r[1]());
+}
 
 // runStatus('running', '22.6 s', title) -> the design's run status: the
 // state's icon (named for a screen reader) and a length or a word. A state
@@ -632,4 +663,234 @@ export function sidePanel(o) {
   document.addEventListener('keydown', onKey, true);
   closeBtn.focus();
   return { close, redraw: fill, el: pane };
+}
+
+// ---------- the Overview's components (Main board; Components board 3) ----------
+
+const CHEVRON_L = 'M12 5l-5 5 5 5', CHEVRON_R = 'M8 5l5 5-5 5';
+const CALENDAR = [{ tag: 'rect', x: 3, y: 4.5, width: 14, height: 12.5, rx: 2 }, 'M3 8.5h14M7 3v3M13 3v3'];
+
+// dateStepper({label, value, min, max, onPick, onPrev, onNext, prevDisabled,
+// nextDisabled, prevLabel, nextLabel}) -> the design's date stepper: a
+// previous arrow, a calendar button with the period's name ("Tue 17 Nov 2026
+// · today"), a next arrow. The calendar button opens the browser's own date
+// picker (value, min and max are YYYY-MM-DD); onPick gets the date chosen.
+export function dateStepper(o) {
+  const pick = h('input.stepper-pick', { type: 'date', value: o.value || '', min: o.min || null, max: o.max || null, tabindex: '-1', 'aria-hidden': 'true',
+    onchange() { if (this.value && o.onPick) o.onPick(this.value); } });
+  const open = () => {
+    try { if (pick.showPicker) { pick.showPicker(); return; } } catch { /* not allowed here: fall back to focus */ }
+    pick.focus();
+  };
+  return h('div.stepper', { role: 'group', 'aria-label': 'Date' },
+    h('button.arrow', { type: 'button', 'aria-label': o.prevLabel || 'Previous', title: o.prevLabel || 'Previous', disabled: !!o.prevDisabled, onclick: o.onPrev }, icon(CHEVRON_L)),
+    h('button.when', { type: 'button', title: 'Pick a date', onclick: open }, icon(CALENDAR), o.label),
+    h('button.arrow', { type: 'button', 'aria-label': o.nextLabel || 'Next', title: o.nextLabel || 'Next', disabled: !!o.nextDisabled, onclick: o.onNext }, icon(CHEVRON_R)),
+    pick);
+}
+
+// zonesToggle(on, attrs) -> the "Zones" toggle of a runs row: pressed, it
+// marks the request's zones in the zones panel.
+export function zonesToggle(on, attrs = {}) {
+  return h('button', Object.assign({ class: 'zb' + (on ? ' on' : ''), type: 'button', 'aria-pressed': on ? 'true' : 'false' }, attrs), 'Zones');
+}
+
+// runLegend(extra) -> the key of a runs table: the five states with their
+// icons, then extra (the "All 203" link).
+export function runLegend(extra) {
+  return h('div.runkey', ['queued', 'running', 'done', 'failed', 'cancelled'].map(s => h('span', runIcon(s, 14), RUN_ICON[s][0])), extra || null);
+}
+
+// tokensLegend(unit) -> "in, out, per hour": the tokens panel's key.
+export function tokensLegend(unit) {
+  return h('span.tokkey', h('span.sw.tin'), 'in', h('span.sw.tout'), 'out · ' + unit);
+}
+
+// tokensChart({tin, tout, buckets: [{in, out, label, title}], ariaIn, ariaOut,
+// empty}) -> the two big totals beside mirrored bars, tokens in above the
+// line and tokens out below, one bar of each per bucket, with the axis
+// labels under them. Each side is scaled to its own largest bucket (the
+// design: in 130 px, out 64 px). A bucket with nothing draws no bar.
+export function tokensChart(o) {
+  const b = o.buckets || [];
+  const maxIn = Math.max(0, ...b.map(x => x.in || 0)), maxOut = Math.max(0, ...b.map(x => x.out || 0));
+  const bar = (v, max, full) => (v > 0 && max > 0 ? Math.max(2, Math.round((v / max) * full)) : 0);
+  const total = v => (v == null ? DASH : num(v));
+  return h('div.tokens',
+    h('div.tokens-tot',
+      h('div', h('div.bign', total(o.tin)), h('div.lbl', 'tokens in')),
+      h('div', h('div.bign', total(o.tout)), h('div.lbl', 'tokens out'))),
+    h('div.tokens-plot',
+      o.empty ? h('div.tokens-empty', o.empty) : null,
+      h('div.hbars.in', { role: 'img', 'aria-label': o.ariaIn || 'Tokens in' },
+        b.map((x, i) => { const v = bar(x.in, maxIn, 130); return h('i', { key: 'i' + i, title: x.title || null, style: v ? `height:${v}px` : null }); })),
+      h('div.hbars-axis'),
+      h('div.hbars.out', { role: 'img', 'aria-label': o.ariaOut || 'Tokens out' },
+        b.map((x, i) => { const v = bar(x.out, maxOut, 64); return h('i', { key: 'o' + i, title: x.title || null, style: v ? `height:${v}px` : null }); })),
+      h('div.hbars-x', { 'aria-hidden': 'true' }, b.map((x, i) => h('span', { key: 'x' + i }, x.label || '')))));
+}
+
+// runLength(ms) -> "22.6 s" under a minute, else "1 min 12 s".
+export function runLength(ms) {
+  if (ms == null || ms < 0) return DASH;
+  const s = ms / 1000;
+  return s < 60 ? num(s, 1) + ' s' : dur(s);
+}
+
+// A rate of tokens per second: one decimal below 100, whole above (as drawn:
+// "412" in, "14.1" out).
+const rateText = v => (v == null || !(v > 0) ? DASH : v >= 100 ? num(v) : num(v, 1));
+const firstUp = t => (t ? t.charAt(0).toUpperCase() + t.slice(1) : t);
+
+// roleShare(role, share) -> "Host 50%", "Helper 100%", or "Host" alone when
+// the machine holds no share of the model (share absent or 0: the
+// scheduler's own machine hosting while the others hold the whole model).
+// share is a fraction of the model (0.5 is 50 %), as /api/status and the
+// request log carry it. An unknown role gives ''.
+const ROLES = { host: 'Host', helper: 'Helper' };
+export function roleShare(role, share) {
+  const r = ROLES[role];
+  if (!r) return '';
+  return typeof share === 'number' && share > 0 ? `${r} ${Math.round(share * 100)}%` : r;
+}
+
+// runMachines(nodes) -> "node-a Host 50%, node-b Helper 50%": the machines
+// that served a request (its nodes, host first), each with its role and
+// share; '' when there are none.
+export function runMachines(nodes) {
+  return (nodes || []).map(n => [n.name || n.id, roleShare(n.role, n.share)].filter(Boolean).join(' ')).join(', ');
+}
+
+// runWhy(row) -> the tooltip of a row's status: what happened, in words.
+export function runWhy(r) {
+  const msg = r.message || '';
+  switch (r.status) {
+    case 'failed': return 'Failed' + (msg ? ': ' + msg : r.reason ? ': ' + r.reason : '');
+    case 'refused': return 'Refused' + (msg ? ': ' + msg : r.reason ? ': ' + r.reason : '');
+    case 'cancelled': return msg ? firstUp(msg) : 'Cancelled';
+    case 'queued': return 'Waiting since ' + clock(r.queued_at);
+    case 'running': return r.live ? 'Running; tokens out are counted from the stream until it ends' : 'Running';
+    default: return null;
+  }
+}
+
+// runsTable({rows, now, pin, onPick, onOver, onOut, zones, zonesTitle, extra,
+// empty}) -> the design's runs table, 30 px rows: Status and length ·
+// Started at · Model · Tokens in · In tok/s · Tokens out · Out tok/s · the
+// Zones toggle. rows are request log rows (GET /api/requests). Row states:
+// queued ("Not started", "queued 16:08:30"), running (a live length: its
+// span carries data-run-start, which tickRuns() advances), done, failed (red
+// row, its reason on hover), refused (the Failed icon and row, its reason on
+// hover), cancelled (greyed). zones: false leaves the toggle column out;
+// extra adds columns [{label, cls, render}] before it.
+export function runsTable(o) {
+  const rows = o.rows || [];
+  const extra = o.extra || [];
+  const withZones = o.zones !== false;
+  const now = o.now || Date.now();
+  // dashTitle: why a running row has no figure yet (it shows one as soon as its row carries it)
+  const fig = (v, title, isRate, dashTitle) => {
+    const t = v == null || v < 0 ? DASH : isRate ? rateText(v) : num(v);
+    return h('td', { class: 'num mono' + (t === DASH ? ' mut' : ''), title: t === DASH ? dashTitle || null : title || null }, t);
+  };
+  // o.liveTimings: the setting requests_live_timings (false: off, true: on, null: not known)
+  const PROMPT_LATER = o.liveTimings === false ? 'Live prompt figures are off: they arrive when the run ends (setting requests_live_timings)'
+    : 'The prompt figures arrive from the first token on, or when the run ends';
+  return h('table.runs',
+    h('thead', h('tr',
+      h('th', { scope: 'col' }, 'Status and length'), h('th', { scope: 'col' }, 'Started at'), h('th', { scope: 'col' }, 'Model'),
+      h('th.num', { scope: 'col' }, 'Tokens in'), h('th.num', { scope: 'col' }, 'In tok/s'), h('th.num', { scope: 'col' }, 'Tokens out'), h('th.num', { scope: 'col' }, 'Out tok/s'),
+      extra.map(c => h('th', { scope: 'col', class: c.cls || null }, c.label)),
+      withZones ? h('th', { scope: 'col' }, h('span.sr', 'Zones')) : null)),
+    h('tbody', rows.length ? rows.map(r => {
+      const st = r.status;
+      const notStarted = st === 'queued' || !r.started_at;
+      let text;
+      if (st === 'queued') text = 'Not started';
+      else if (st === 'running') text = runLength(now - (r.started_at || r.queued_at));
+      else if (notStarted) text = runLength(r.wait_ms);
+      else text = runLength(r.duration_ms);
+      const status = runStatus(st, text, runWhy(r));
+      if (st === 'running' && status.lastChild) {
+        status.lastChild.setAttribute('data-run-start', String(r.started_at || r.queued_at));
+        // drawn by us: morph() removes it when the row has ended (core/dom.js keeps only foreign attributes)
+        if (status.lastChild.__own) status.lastChild.__own.add('data-run-start');
+      }
+      const waiting = st === 'queued';
+      const id = String(r.id);
+      return h('tr', { key: 'r' + id, 'data-req': id, class: [st === 'failed' || st === 'refused' ? 'fail' : st === 'cancelled' ? 'canc' : '', o.pin === id ? 'pinned' : ''].filter(Boolean).join(' ') || null },
+        h('td', status),
+        notStarted ? h('td.mut.qd', 'queued ', h('span.mono', clock(r.queued_at))) : h('td.mono', clock(r.started_at)),
+        h('td.mono', { title: r.requested && r.requested !== r.profile ? 'Sent as ' + r.requested : null }, r.profile || r.requested || DASH),
+        fig(waiting ? null : r.tokens_in, r.tokens_reused > 0 ? `${num(r.tokens_reused)} of them reused from the cache` : null, false, st === 'running' ? PROMPT_LATER : null),
+        fig(waiting ? null : r.prefill_tps, null, true, st === 'running' ? PROMPT_LATER : null),
+        fig(waiting ? null : r.tokens_out, r.live ? 'Counted from the stream so far' : null),
+        fig(waiting ? null : r.decode_tps, null, true),
+        extra.map(c => h('td', { class: c.cls || null }, c.render(r))),
+        withZones ? h('td.num', zonesToggle(o.pin === id, {
+          'data-zones': id, title: o.zonesTitle ? o.zonesTitle(r) : null,
+          onclick: () => o.onPick && o.onPick(id), onmouseenter: () => o.onOver && o.onOver(id), onmouseleave: () => o.onOut && o.onOut(),
+          onfocus: () => o.onOver && o.onOver(id), onblur: () => o.onOut && o.onOut() })) : null);
+    }) : o.empty ? h('tr.none', { key: 'none' }, h('td', { colspan: String(7 + extra.length + (withZones ? 1 : 0)) }, o.empty)) : null));
+}
+
+// tickRuns(root) sets the live length of every running row under root from
+// its start (data-run-start), without a redraw. The Overview calls it every
+// 100 ms.
+export function tickRuns(root, nowMs) {
+  const t = nowMs || Date.now();
+  for (const el of root.querySelectorAll('[data-run-start]')) {
+    const v = runLength(t - Number(el.getAttribute('data-run-start')));
+    if (el.textContent !== v) el.textContent = v;
+  }
+}
+
+// groupClass(ids, order) -> {id: 'hi g-top' | 'hi g-mid' | 'hi g-bot' |
+// 'hi g-solo'}: how each highlighted row joins its neighbours into one
+// outlined box (the design's zone highlight). order is the drawn order.
+export function groupClass(ids, order) {
+  const on = new Set(ids), out = {};
+  order.forEach((z, i) => {
+    if (!on.has(z)) return;
+    const up = i > 0 && on.has(order[i - 1]);
+    const dn = i < order.length - 1 && on.has(order[i + 1]);
+    out[z] = 'hi ' + (up && dn ? 'g-mid' : up ? 'g-bot' : dn ? 'g-top' : 'g-solo');
+  });
+  return out;
+}
+
+// dropButton(label, [{id, label}], current, id => {}, key) -> the design's
+// filter dropdown as drawn on the Overview: a flat button that reads
+// "Sort: needs attention first" and opens a short menu of the choices under
+// it. One menu is open at a time; Escape, a choice or a click elsewhere
+// closes it. The open menu survives a redraw (it is drawn from the module's
+// own state), so a live page does not close it under the pointer.
+let openDrop = null;
+const dropRedraws = new Set();
+function closeDrop() {
+  if (!openDrop) return;
+  openDrop = null;
+  for (const fn of Array.from(dropRedraws)) fn();
+}
+let dropWired = false;
+function wireDrop() {
+  if (dropWired || typeof document === 'undefined') return;
+  dropWired = true;
+  document.addEventListener('mousedown', e => { if (openDrop && !(e.target && e.target.closest && e.target.closest('.dd'))) closeDrop(); }, true);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && openDrop) closeDrop(); }, true);
+}
+// onDropChange(fn) -> unsubscribe: fn() after a menu opens or closes (a view redraws).
+// The unsubscribe also closes an open menu: the view that drew it is gone.
+export function onDropChange(fn) { dropRedraws.add(fn); return () => { dropRedraws.delete(fn); openDrop = null; }; }
+export function dropButton(label, options, current, onPick, key) {
+  wireDrop();
+  const id = key || 'dd-' + label;
+  const cur = options.find(o => o.id === current) || options[0];
+  const open = openDrop === id;
+  return h('span.dd', { key: id },
+    h('button', { class: 'fs bare' + (open ? ' open' : ''), type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': open ? 'true' : 'false', 'data-dd': id,
+      onclick: () => { openDrop = open ? null : id; for (const fn of Array.from(dropRedraws)) fn(); } }, label + ': ' + (cur ? cur.label : '')),
+    open ? h('span.dd-menu', { role: 'menu', 'aria-label': label }, options.map(o =>
+      h('button', { type: 'button', role: 'menuitemradio', 'aria-checked': o.id === (cur && cur.id) ? 'true' : 'false', 'data-dd-opt': o.id,
+        onclick: () => { openDrop = null; onPick(o.id); for (const fn of Array.from(dropRedraws)) fn(); } }, o.label))) : null);
 }
