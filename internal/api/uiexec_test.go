@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
@@ -289,4 +291,63 @@ func TestUIExecIgnoresAParentPackageJSON(t *testing.T) {
 	}
 	uiExec(t, map[string]any{"ui": ui, "modules": []string{"views/about.js"},
 		"cases": []any{map[string]any{"name": "about under a stray package.json", "route": "#/about", "status": map[string]any{}}}})
+}
+
+// 0.1.7 review, S2-1 and S2-2: a run whose only step was refused by an
+// exclusion (the profile forces an excluded node) is drawn as not judged
+// everywhere: never "Failed", "Not met", "did not pass" or a 0 % pass
+// rate, and the step card has no red error edge. The run is a real one
+// (the bench manager against the real scheduler); the screens draw from
+// the API's real answers, the Activity feed from the events such a run
+// records.
+func TestUINotJudgedScreens(t *testing.T) {
+	e := benchEnv(t)
+	nc := *e.cfg
+	nc.Profiles = maps.Clone(e.cfg.Profiles)
+	fx := *nc.Profiles["alpha"]
+	fx.Name, fx.ForceNodes = "fx", []string{"host-1"}
+	nc.Profiles["fx"] = &fx
+	nc.ExcludeNodes = []string{"host-1"}
+	e.sched.ApplyConfig(&nc)
+	if st, b, _ := e.do("POST", "/api/bench/benchmarks", `{"id":"fx-bench","name":"Forced bench","profile":"fx","repeats":1,"expect":{"outcome":"ready"},"requests":[{"name":"q","prompt":"hi","max_tokens":4}]}`); st != 201 {
+		t.Fatalf("%d %s", st, b)
+	}
+	if st, b, _ := e.do("POST", "/api/bench/suites", `{"id":"s","name":"Forced suite","benchmarks":["fx-bench"],"cooldown_s":0,"only_when_idle":false}`); st != 201 {
+		t.Fatalf("%d %s", st, b)
+	}
+	_, b, _ := e.do("POST", "/api/bench/suites/s/run", "")
+	id := jsonOf(t, b)["id"].(string)
+	var run map[string]any
+	eventually(t, "run completed", func() bool {
+		_, b, _ := e.do("GET", "/api/bench/runs/"+id, "")
+		run = jsonOf(t, b)
+		return run["state"] == "completed"
+	})
+	if st := run["steps"].([]any)[0].(map[string]any); st["outcome"] != "refused_by_exclusion" {
+		t.Fatalf("step %v", st)
+	}
+	now := time.Now().UnixMilli()
+	history := map[string]any{"history": "on", "events": []any{
+		map[string]any{"ts": now, "type": "benchRunFinished", "severity": "info", "summary": "Benchmark run finished",
+			"data": map[string]any{"bench_run": id, "suite": "s", "state": "completed", "steps": 1, "passed": 0, "failed": 0, "refused_by_exclusion": 1, "regressions": 0}},
+		map[string]any{"ts": now - 1000, "type": "benchStepFinished", "severity": "info", "profile": "fx", "summary": "Benchmark fx-bench on fx finished",
+			"data": map[string]any{"bench_run": id, "benchmark": "fx-bench", "idx": 0, "outcome": "refused_by_exclusion", "result": "not_judged"}},
+	}}
+	failWords := []string{"Failed", "Not met", "did not pass", "0%", "0 failed"}
+	uiExec(t, map[string]any{"base": e.front.URL, "modules": []string{"views/benchmarks.js", "views/activity.js"},
+		"fetch": map[string]any{"/api/history": history, "/api/history/summary": map[string]any{"counts": map[string]any{}}, "/api/metrics/activity": map[string]any{"data": []any{}}},
+		"cases": []any{
+			map[string]any{"name": "run with a not-judged step", "route": "#/benchmarks/runs/" + id, "status": "fetch",
+				"expect": []string{"Not judged"}, "absent": []string{")Failed", "Not met", "did not pass", "0%"}, "none": []string{"section.flag-err"}},
+			map[string]any{"name": "benchmark page", "route": "#/benchmarks/benchmark/fx-bench", "status": "fetch",
+				"expect": []string{"Not judged"}, "absent": failWords},
+			map[string]any{"name": "suite page", "route": "#/benchmarks/suite/s", "status": "fetch",
+				"expect": []string{"not judged"}, "absent": []string{"0%", "Passed 0 of 1", "0 of 1"}},
+			map[string]any{"name": "overview", "route": "#/benchmarks", "status": "fetch", "expect": []string{"not judged"}, "absent": []string{"0%"}},
+			map[string]any{"name": "trends", "route": "#/benchmarks/trends", "status": "fetch", "expect": []string{"not judged"},
+				"absent": []string{"0%", "refused_by_exclusion"}},
+			map[string]any{"name": "runs list", "route": "#/benchmarks/runs", "status": "fetch", "expect": []string{"Not judged"}},
+			map[string]any{"name": "activity feed", "route": "#/activity", "status": "fetch",
+				"expect": []string{"was not judged", "1 not judged"}, "absent": []string{"did not pass"}},
+		}})
 }

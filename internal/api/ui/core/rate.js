@@ -30,5 +30,8 @@ export function passDots(recent, rate, o = {}) {
   if (!marks.length) return h('span.mut', o.empty || 'Not run yet');
   const d = dots(marks, { label: o.label || 'Runs, oldest first', max: o.max });
   if (o.large) d.classList.add('lg');
-  return h('span.rate', d, rate != null ? h('span.rate-n', { title: 'The share that passed, over the stored runs' }, num(rate * 100) + '%') : null);
+  // rate null (with runs): nothing was judged (every step refused by an
+  // exclusion), so there is no rate to show, and certainly not 0 %.
+  return h('span.rate', d, rate != null ? h('span.rate-n', { title: 'The share that passed, over the stored runs' }, num(rate * 100) + '%')
+    : rate === null ? h('span.rate-n.mut', { title: 'Every run was refused because the profile forces a node that exclude_nodes names: nothing was judged' }, 'not judged') : null);
 }

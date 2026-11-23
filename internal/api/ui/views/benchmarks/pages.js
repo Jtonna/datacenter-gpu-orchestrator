@@ -34,6 +34,14 @@ export async function loadResults(id, redraw) {
   redraw();
 }
 
+// passedOf(summary) -> "1 of 2", over the judged steps; steps refused by an
+// exclusion are not judged and are said apart ("not judged" when all were).
+function passedOf(sum) {
+  const nj = sum.refused_by_exclusion || 0, judged = (sum.steps || 0) - nj;
+  if (nj && !judged) return h('span.mut', 'not judged');
+  return h('span', `${num(sum.passed)} of ${num(judged)}`, nj ? h('span.sub', `${num(nj)} not judged`) : null);
+}
+
 const RESULT_BADGE = { pass: ['Passed', 'ready'], partial: ['Partly passed', 'load'], fail: ['Failed', 'fail'], cancelled: ['Cancelled', 'n'], none: ['No result', 'n'], not_judged: ['Not judged (excluded node)', 'n'] };
 const RESULT_COLOR = { pass: 'mint', partial: 'amber', fail: 'coral', cancelled: 'mut', none: 'mut', not_judged: 'mut' };
 const resultBadge = r => { const [t, k] = RESULT_BADGE[r] || [r, 'n']; return badge(t, k); };
@@ -121,7 +129,7 @@ export function suitePage(id) {
         { label: 'When', cls: 'tight', render: r => h('span', ago(r.started_at || r.queued_at), r.trigger === 'schedule' ? h('span.sub', 'Scheduled') : null) },
         { label: 'State', cls: 'tight', render: r => runBadge(r.state) },
         { label: 'Result', cls: 'tight', render: r => (['queued', 'running', 'paused'].includes(r.state) ? h('span.mut', DASH) : resultBadge(runResult(r))) },
-        { label: 'Passed', cls: 'r', render: r => (r.summary ? `${num(r.summary.passed)} of ${num(r.summary.steps)}` : DASH) },
+        { label: 'Passed', cls: 'r', render: r => (r.summary ? passedOf(r.summary) : DASH) },
         { label: 'Duration', cls: 'r', render: r => (runSeconds(r) != null ? dur(runSeconds(r)) : DASH) },
         { label: 'Against the run before', title: 'The duration and the number of passed benchmarks, compared with the run before this one', render: r => {
           const i = runs.indexOf(r), prev = runs.slice(i + 1).find(x => runSeconds(x) != null && x.summary);
@@ -222,13 +230,14 @@ export function benchmarkPage(id) {
   // the expectation, and whether the last run met it
   const keys = Object.keys(bm.expect || {});
   const checks = Object.fromEntries((((last || {}).expect || {}).checks || []).map(c => [c.name, c]));
+  const lastNotJudged = !!last && (last.outcome === 'refused_by_exclusion' || !!(last.expect && last.expect.not_judged));
   const expect = h('section.card', { key: 'expect' },
     h('div.ch', h('h2', 'What it expects'), h('span.note', keys.length ? (last ? 'With the result of the last run' : 'Not run yet, so nothing is checked yet') : null)),
     h('div.cb.col', { style: 'gap:8px' }, keys.length ? keys.map(k => {
       const c = checks[k];
       const text = (EXPECT_WORD[k] || (v => `${k}: ${v}`))(bm.expect[k]);
       return h('div.why', { key: k }, h('i', { class: c ? (c.pass ? 'm' : 'x') : '' }), h('span', text, c && c.detail ? h('span.mut', ' · ' + c.detail) : null),
-        c ? badge(c.pass ? 'Met' : 'Not met', c.pass ? 'use' : 'aside') : h('span'));
+        c ? (c.pass ? badge('Met', 'use') : lastNotJudged ? badge('Not judged', 'n', 'The last run refused it: the profile forces a node that exclude_nodes names') : badge('Not met', 'aside')) : h('span'));
     }) : h('p.mut', { style: 'font-weight:600' }, 'No expectation is set: a run passes when the model loads and answers. Open the configuration to add a limit, such as a longest load time.')));
 
   // trends
