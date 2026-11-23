@@ -216,6 +216,19 @@ type ChatResponse struct {
 	Text       string
 	ErrMessage string // the scheduler's error message for a non-200 answer
 	ErrReason  string
+	// Reasoning is the reasoning_content (a model's thinking, when the server
+	// keeps it apart from the answer), FinishReason the choice's finish_reason
+	// (stop, length, ...), PromptTokens and CompletionTokens the usage block
+	// (0 when the server sent none). Empty on answers that carry none.
+	Reasoning        string
+	FinishReason     string
+	PromptTokens     int
+	CompletionTokens int
+}
+
+type wireUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
 }
 
 // BuildChatRequest makes the JSON body for a benchmark request.
@@ -664,9 +677,11 @@ type chatChunk struct {
 			Content          string `json:"content"`
 			ReasoningContent string `json:"reasoning_content"`
 		} `json:"delta"`
-		Message map[string]any `json:"message"`
+		Message      map[string]any `json:"message"`
+		FinishReason string         `json:"finish_reason"`
 	} `json:"choices"`
 	Timings json.RawMessage `json:"timings"`
+	Usage   *wireUsage      `json:"usage"`
 }
 
 // Chat implements API.
@@ -700,11 +715,20 @@ func (h *HTTPAPI) Chat(ctx context.Context, runID string, req ChatRequest, onPro
 			return nil, fmt.Errorf("the answer is not JSON: %w", err)
 		}
 		out.Timings = c.Timings
+		if c.Usage != nil {
+			out.PromptTokens, out.CompletionTokens = c.Usage.PromptTokens, c.Usage.CompletionTokens
+		}
 		if len(c.Choices) > 0 && c.Choices[0].Message != nil {
 			out.Message, _ = json.Marshal(c.Choices[0].Message) // maps marshal with sorted keys: canonical
 			if s, ok := c.Choices[0].Message["content"].(string); ok {
 				out.Text = s
 			}
+			if s, ok := c.Choices[0].Message["reasoning_content"].(string); ok {
+				out.Reasoning = s
+			}
+		}
+		if len(c.Choices) > 0 {
+			out.FinishReason = c.Choices[0].FinishReason
 		}
 		return out, nil
 	}
@@ -730,8 +754,14 @@ func (h *HTTPAPI) Chat(ctx context.Context, runID string, req ChatRequest, onPro
 		if len(c.Timings) > 0 && string(c.Timings) != "null" {
 			out.Timings = c.Timings
 		}
+		if c.Usage != nil {
+			out.PromptTokens, out.CompletionTokens = c.Usage.PromptTokens, c.Usage.CompletionTokens
+		}
 		if len(c.Choices) == 0 {
 			continue
+		}
+		if fr := c.Choices[0].FinishReason; fr != "" {
+			out.FinishReason = fr
 		}
 		d := c.Choices[0].Delta
 		if d.Content != "" || d.ReasoningContent != "" {
@@ -749,21 +779,26 @@ func (h *HTTPAPI) Chat(ctx context.Context, runID string, req ChatRequest, onPro
 		}
 	}
 	out.WallMS = ms(time.Since(start))
-	if err := sc.Err(); err != nil {
-		return nil, err
-	}
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
-	}
-	if onProgress != nil {
-		onProgress(ChatProgress{Tokens: chunks, ElapsedMS: out.WallMS})
-	}
 	msg := map[string]any{"role": "assistant", "content": text.String()}
 	if reasoning.Len() > 0 {
 		msg["reasoning_content"] = reasoning.String()
 	}
 	out.Message, _ = json.Marshal(msg)
-	out.Text = text.String()
+	out.Text, out.Reasoning = text.String(), reasoning.String()
+	// Cut off (a deadline, a lost connection): the error, with what had
+	// arrived so far. Callers that only want whole answers look at the error.
+	if err := sc.Err(); err != nil {
+		if ctx.Err() != nil {
+			return out, ctx.Err()
+		}
+		return out, err
+	}
+	if ctx.Err() != nil {
+		return out, ctx.Err()
+	}
+	if onProgress != nil {
+		onProgress(ChatProgress{Tokens: chunks, ElapsedMS: out.WallMS})
+	}
 	return out, nil
 }
 

@@ -18,7 +18,7 @@ const (
 )
 
 // PhaseTypes lists the phase types in the order a UI should offer them.
-var PhaseTypes = []string{PhaseLoad, PhaseWarmup, PhaseRequests, PhaseConversation, PhaseHold, PhaseConcurrent, PhaseUnload}
+var PhaseTypes = []string{PhaseLoad, PhaseWarmup, PhaseRequests, PhaseConversation, PhaseHold, PhaseConcurrent, PhaseTasks, PhaseUnload}
 
 // Limits and defaults of phases.
 const (
@@ -72,6 +72,13 @@ type Phase struct {
 
 	// load: drop the model file from the file caches before the load.
 	Cold *bool `json:"cold,omitempty" yaml:"cold,omitempty"`
+
+	// tasks: a stored task set (TaskSet, and TaskSetVersion, 0 for the
+	// newest) or an inline one (Tasks), and the phase's own time limit.
+	TaskSet        string   `json:"task_set,omitempty" yaml:"task_set,omitempty"`
+	TaskSetVersion int      `json:"task_set_version,omitempty" yaml:"task_set_version,omitempty"`
+	Tasks          *TaskSet `json:"tasks,omitempty" yaml:"tasks,omitempty"`
+	TimeoutS       *int     `json:"timeout_s,omitempty" yaml:"timeout_s,omitempty"`
 
 	// soft marks the unload that the simple form's unload_after expands to: it
 	// only unloads what the run itself loaded.
@@ -253,6 +260,7 @@ var allowed = map[string][]string{
 	PhaseConversation: {"system", "turns", "max_tokens", "temperature", "seed", "cache_prompt", "stream"},
 	PhaseHold:         {"seconds", "request"},
 	PhaseConcurrent:   {"n", "request"},
+	PhaseTasks:        {"task_set", "task_set_version", "tasks", "timeout_s"},
 	PhaseUnload:       {},
 }
 
@@ -278,6 +286,10 @@ func (p *Phase) setOptions() []string {
 	add(p.Seconds != nil, "seconds")
 	add(p.N != 0, "n")
 	add(p.Cold != nil, "cold")
+	add(p.TaskSet != "", "task_set")
+	add(p.TaskSetVersion != 0, "task_set_version")
+	add(p.Tasks != nil, "tasks")
+	add(p.TimeoutS != nil, "timeout_s")
 	return s
 }
 
@@ -424,6 +436,8 @@ func (b *Benchmark) validatePhases() []error {
 				w("n must be 2 to %d (default %d)", MaxConcurrent, DefaultConcurrent)
 			}
 			reqNeeded()
+		case PhaseTasks:
+			b.validateTasksPhase(p, w)
 		}
 	}
 	return errs

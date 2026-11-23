@@ -218,6 +218,8 @@ func (br *benchRun) runPhase(i int, p *benchspec.Phase) {
 		br.phaseHold(i, p, pr)
 	case benchspec.PhaseConcurrent:
 		br.phaseConcurrent(i, p, pr)
+	case benchspec.PhaseTasks:
+		br.phaseTasks(i, p, pr)
 	case benchspec.PhaseUnload:
 		br.phaseUnload(p, pr)
 	}
