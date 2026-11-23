@@ -97,11 +97,21 @@ What the deployment keeps under `POTLUCK_ROOT` (default `/srv/potluck`):
 
 | Folder | Holds |
 |---|---|
-| `data/` | `scheduler.db`: configuration, revisions, audit log, benchmarks and runs, learned memory needs, node pause and removal |
+| `data/` | `scheduler.db`: configuration, revisions, audit log, benchmarks and runs, learned memory needs, node pause and removal. `usage.db`: the request log and its hourly and daily totals (section 3.1) |
 | `history/` | The event history, JSON Lines |
 | `child-logs/` | The full output of every `llama-server` and a copy of every worker launch log |
 | `programs/` | The program releases handed out to agents |
 | `logs-store/` | The log store's data |
+
+### 3.1 The usage file
+
+`usage.db` (package `internal/usage`) is a second SQLite file beside `scheduler.db`, with its own schema version table (`usage_migrations`). It holds the request log (`client_requests`, one row per `/v1` and `/upstream` request) and its totals per hour (`request_hours`) and per day (`request_days`), by profile, counted in the UTC hour and day the request arrived. It is optional in every sense:
+
+- An older image ignores it. A newer schema version is left untouched and the request log stays off.
+- When it opens, a quick integrity check runs. A file that fails it, or cannot be opened, is renamed `usage.db.damaged-<UTC time>` (with its `-wal` and `-shm`) and an empty file takes its place; one WARN, and `history_begins_at` says from when the history is complete. A data folder that cannot be used leaves the request log off. None of this makes the scheduler unhealthy.
+- Nothing writes to it on a request's path or in the core loop. The `/v1` and `/upstream` handlers tell the recorder what happened (arrived, admitted with the instance's machines and roles, ended with its figures); the recorder keeps queued and running requests in memory and queues each change for one writer goroutine (supervised, `usage.writer`), which writes in batches of up to 256 per transaction. The queue holds 4096 changes; when full it drops the oldest non-final update (the final row always carries everything), counted in `/api/system` `storage.usage.dropped`. Shutdown waits up to 10 s for the queue.
+- Live rows (queued, running) are never written per token: the list merges memory and the file, and a running row's tokens out are the streamed chunks so far, replaced by the server's figure at the end. Rows a stopped process left open are closed as `failed`, `scheduler_restart`, at the next start.
+- Retention (task `usage.retention`, an hour after another, deleting 500 rows per transaction): rows after `usage_request_days` (90), hourly totals after `usage_hourly_days` (396); daily totals stay.
 
 ## 4. How a node joins
 

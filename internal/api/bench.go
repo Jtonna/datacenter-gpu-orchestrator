@@ -732,6 +732,7 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	storage["database"] = db
+	storage["usage"] = s.reqs.Store().Stats() // the request log's own file (usage.db)
 	if sys.ChildLogDir != "" {
 		b, n := dirBytes(sys.ChildLogDir)
 		storage["child_logs"] = map[string]any{"dir": sys.ChildLogDir, "bytes": b, "files": n}

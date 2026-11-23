@@ -359,6 +359,14 @@ func (c *Config) validateDefaults(add func(string, ...any)) {
 	if c.HistoryKeepFiles < 1 {
 		add("history_keep_files: must be at least 1, got %d", c.HistoryKeepFiles)
 	}
+	for _, u := range []struct {
+		key string
+		v   int
+	}{{"usage_request_days", c.UsageRequestDays}, {"usage_hourly_days", c.UsageHourlyDays}} {
+		if u.v < 1 || u.v > MaxUsageDays {
+			add("%s: must be from 1 to %d, got %d", u.key, MaxUsageDays, u.v)
+		}
+	}
 	if c.HistoryMemoryEvents < 1 {
 		add("history_memory_events: must be at least 1, got %d", c.HistoryMemoryEvents)
 	} else if c.HistoryMemoryEvents > MaxHistoryMemoryEvents {

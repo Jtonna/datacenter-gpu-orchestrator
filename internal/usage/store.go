@@ -60,6 +60,10 @@ type Options struct {
 	// BeforeBatch, when set, runs on the writer goroutine before each batch
 	// is written (tests: a slow or blocked disk).
 	BeforeBatch func()
+	// CloseWait bounds how long Close waits for the writer to write what is
+	// queued (default 10 s): a disk that does not answer never holds a
+	// shutdown up. What was not written then is lost.
+	CloseWait time.Duration
 }
 
 // Op is one write. Apply runs on the writer goroutine inside the batch's
@@ -130,6 +134,9 @@ func Open(o Options) *Store {
 	}
 	if o.Now == nil {
 		o.Now = time.Now
+	}
+	if o.CloseWait <= 0 {
+		o.CloseWait = 10 * time.Second
 	}
 	o.Retention = o.Retention.withDefaults()
 	s := &Store{opt: o, log: o.Logger, wake: make(chan struct{}, 1), done: make(chan struct{})}
@@ -356,14 +363,21 @@ func (s *Store) Close() error {
 		return nil
 	}
 	if !s.markClosing() {
-		<-s.done
 		return nil
 	}
 	select {
 	case s.wake <- struct{}{}:
 	default:
 	}
-	<-s.done
+	t := time.NewTimer(s.opt.CloseWait)
+	defer t.Stop()
+	select {
+	case <-s.done:
+	case <-t.C:
+		s.cancel()
+		s.log.Warn("usage history: the writer did not finish in time; the queued changes are lost", "queued", s.Stats().Queued)
+		return errors.New("usage: the writer did not finish in time")
+	}
 	s.cancel()
 	s.tasks.Wait()
 	return s.db.Close()

@@ -362,3 +362,25 @@ func TestTrim_DeletesInBatches(t *testing.T) {
 		t.Fatalf("%d transactions: not trimmed in batches", b)
 	}
 }
+
+// A disk that never answers does not hold Close (the shutdown) up.
+func TestClose_IsBoundedWhenTheDiskHangs(t *testing.T) {
+	gate := newGate()
+	log, buf := newLog()
+	s := Open(Options{Dir: t.TempDir(), Logger: log, CloseWait: 50 * time.Millisecond, BeforeBatch: gate.pass})
+	release := gate.block()
+	defer func() { // let the stuck writer end so the file can be removed
+		close(release)
+		<-s.done
+		s.db.Close()
+	}()
+	s.Submit(Op{Terminal: true, Apply: func(*sql.Tx) error { return nil }})
+	gate.waitEntered(t)
+	t0 := time.Now()
+	if err := s.Close(); err == nil || time.Since(t0) > 2*time.Second {
+		t.Fatalf("close %v after %v", err, time.Since(t0))
+	}
+	if !strings.Contains(buf.String(), "did not finish in time") {
+		t.Fatal(buf.String())
+	}
+}

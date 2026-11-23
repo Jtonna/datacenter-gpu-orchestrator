@@ -46,6 +46,15 @@ const (
 	MaxHistoryMemoryEvents = 200000
 )
 
+// Defaults of the usage history settings (see internal/usage): request rows
+// 90 days, hourly totals 13 months.
+const (
+	DefaultUsageRequestDays = 90
+	DefaultUsageHourlyDays  = 396
+	// MaxUsageDays bounds both (a sanity limit on the file's size).
+	MaxUsageDays = 3660
+)
+
 // DefaultLocalProbeCmd is the nvidia-smi query of design 5.1.
 const DefaultLocalProbeCmd = "nvidia-smi --query-gpu=memory.total,memory.used --format=csv,noheader,nounits"
 
@@ -77,6 +86,7 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 		ModelsDir:         "/models",
 		ChildLogKeep:      DefaultChildLogKeep,
 		HistoryMaxFileMiB: DefaultHistoryMaxFileMiB, HistoryKeepFiles: DefaultHistoryKeepFiles, HistoryMemoryEvents: DefaultHistoryMemoryEvents,
+		UsageRequestDays: DefaultUsageRequestDays, UsageHourlyDays: DefaultUsageHourlyDays,
 		LocalProbeCmd: DefaultLocalProbeCmd,
 		WSMaxClients:  DefaultWSMaxClients,
 		Bench:         rawBench{RegressLoadPct: DefaultRegressLoadPct, RegressDecodePct: DefaultRegressDecodePct, MaxRunMinutes: DefaultMaxRunMinutes},
@@ -97,10 +107,11 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 		ChildLogKeep: raw.ChildLogKeep,
 		HistoryDir:   strings.TrimSpace(raw.HistoryDir), HistoryMaxFileMiB: raw.HistoryMaxFileMiB, HistoryKeepFiles: raw.HistoryKeepFiles,
 		HistoryMemoryEvents: raw.HistoryMemoryEvents,
-		LocalProbeCmd:       raw.LocalProbeCmd,
-		LocalNode:           strings.TrimSpace(raw.LocalNode),
-		DataDir:             strings.TrimSpace(raw.DataDir),
-		WSMaxClients:        raw.WSMaxClients,
+		UsageRequestDays:    raw.UsageRequestDays, UsageHourlyDays: raw.UsageHourlyDays,
+		LocalProbeCmd: raw.LocalProbeCmd,
+		LocalNode:     strings.TrimSpace(raw.LocalNode),
+		DataDir:       strings.TrimSpace(raw.DataDir),
+		WSMaxClients:  raw.WSMaxClients,
 		Bench: Bench{RegressLoadPct: raw.Bench.RegressLoadPct, RegressDecodePct: raw.Bench.RegressDecodePct,
 			MaxRunMinutes: raw.Bench.MaxRunMinutes, RetentionDays: DefaultBenchRetentionDays, Benchmarks: raw.Bench.Benchmarks, Suites: raw.Bench.Suites},
 		Defaults:      raw.Defaults.value(),
@@ -170,6 +181,8 @@ type rawConfig struct {
 	HistoryMaxFileMiB   int                         `yaml:"history_max_file_mib" json:"history_max_file_mib,omitempty"`
 	HistoryKeepFiles    int                         `yaml:"history_keep_files" json:"history_keep_files,omitempty"`
 	HistoryMemoryEvents int                         `yaml:"history_memory_events" json:"history_memory_events,omitempty"`
+	UsageRequestDays    int                         `yaml:"usage_request_days" json:"usage_request_days,omitempty"`
+	UsageHourlyDays     int                         `yaml:"usage_hourly_days" json:"usage_hourly_days,omitempty"`
 	LocalProbeCmd       string                      `yaml:"local_probe_cmd" json:"local_probe_cmd,omitempty"`
 	LocalNode           string                      `yaml:"local_node" json:"local_node,omitempty"`
 	DataDir             string                      `yaml:"data_dir" json:"data_dir,omitempty"`

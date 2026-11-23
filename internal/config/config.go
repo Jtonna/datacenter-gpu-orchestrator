@@ -28,7 +28,12 @@ type Config struct {
 	HistoryMaxFileMiB   int
 	HistoryKeepFiles    int
 	HistoryMemoryEvents int
-	LocalProbeCmd       string
+	// UsageRequestDays is how long the request log (usage.db in DataDir)
+	// keeps request rows, UsageHourlyDays its hourly totals; daily totals
+	// are kept for ever.
+	UsageRequestDays int
+	UsageHourlyDays  int
+	LocalProbeCmd    string
 	// LocalNode is the name of the scheduler's own machine as a node (the
 	// local_node setting). See LocalNodeName for when it is used.
 	LocalNode string

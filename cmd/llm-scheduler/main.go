@@ -49,6 +49,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/release"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/usage"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -413,8 +414,15 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 		pl.SetForceUnload(sched.ForceUnloadNode)
 	}
 
+	// The usage history (usage.db beside scheduler.db): the request log and its
+	// totals. Like the event history it never fails and never blocks a request:
+	// a damaged file is moved aside and the history begins again.
+	usageStore := usage.Open(usage.Options{Dir: cfg.DataDir, Logger: log, Retention: usage.Retention{
+		KeepRequests: time.Duration(cfg.UsageRequestDays) * 24 * time.Hour, KeepHourly: time.Duration(cfg.UsageHourlyDays) * 24 * time.Hour}})
+	defer usageStore.Close()
+
 	benchStore, benchMgr := openBench(svc, dbStore, ln, hist, log)
-	ao := api.Options{Logger: log, History: hist, Version: version, WSMaxClients: cfg.WSMaxClients, Bench: benchMgr, BenchStore: benchStore, Config: svc,
+	ao := api.Options{Logger: log, History: hist, Requests: usage.NewRecorder(usageStore), Version: version, WSMaxClients: cfg.WSMaxClients, Bench: benchMgr, BenchStore: benchStore, Config: svc,
 		System: api.SystemInfo{Listen: cfg.Listen, Safety: safetySummary(cfg), HistoryDir: cfg.HistoryDir, DataDir: cfg.DataDir,
 			ChildLogDir: cfg.ChildLogDir, ModelsDir: cfg.ModelsDir, Bench: map[string]any{"enabled": benchMgr != nil, "regress_load_pct": cfg.Bench.RegressLoadPct,
 				"regress_decode_pct": cfg.Bench.RegressDecodePct, "max_run_minutes": cfg.Bench.MaxRunMinutes}}}

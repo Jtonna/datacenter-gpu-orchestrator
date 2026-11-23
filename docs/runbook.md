@@ -310,7 +310,7 @@ curl -s -X POST $H/api/config/revisions/7/rollback -H 'X-Comment: bad tiers'   #
 
 ### Backup and restore
 
-The configuration, revisions, audit log, benchmarks and learned needs are in `/srv/potluck/data/scheduler.db`, with its `-wal` and `-shm` files.
+The configuration, revisions, audit log, benchmarks and learned needs are in `/srv/potluck/data/scheduler.db`, with its `-wal` and `-shm` files. The request log is in `usage.db` in the same folder; the copy below takes both.
 
 ```sh
 cd /opt/potluck && docker compose stop potluck && sudo cp -a /srv/potluck/data /srv/potluck/data.bak-$(date -u +%Y%m%dT%H%M%SZ) && docker compose start potluck
@@ -394,6 +394,18 @@ curl -s "$H/api/history?severity=warn&since=$SINCE" | jq '.events[] | {ts, type,
 curl -s "$H/api/history?session_id=<load session id>&order=asc"
 curl -s "$H/api/history/export?since=$SINCE" > history-last6h.jsonl
 ```
+
+### Request log
+
+Every `/v1` and `/upstream` request, with its status, times, tokens, rates, machines and caller, is kept in `POTLUCK_ROOT/data/usage.db` (rows 90 days, hourly totals 13 months, daily totals for ever: settings `usage_request_days`, `usage_hourly_days`).
+
+```sh
+curl -s "$H/api/requests?status=failed,refused&limit=20" | jq '.requests[] | {id, status, reason, profile, queued_at}'
+curl -s "$H/api/requests/summary?step=hour" | jq '{totals, live, oldest_ts, history_begins_at}'
+curl -s $H/api/system | jq .storage.usage
+```
+
+`storage.usage.moved_aside` names a damaged file that was moved aside at the start; `dropped` counts updates lost to a full queue. The file can be deleted while Potluck is stopped: it starts a new history.
 
 ### Child output logs
 

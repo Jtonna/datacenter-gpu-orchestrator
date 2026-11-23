@@ -114,6 +114,8 @@ func buildSettingFields() []Field {
 		i("history_max_file_mib", "retention", "Size at which an event history file is rotated.", "MiB", func(c *Config) *int { return &c.HistoryMaxFileMiB }, num(1), nil),
 		i("history_keep_files", "retention", "Most event history files kept; the oldest are deleted.", "files", func(c *Config) *int { return &c.HistoryKeepFiles }, num(1), nil),
 		i("history_memory_events", "retention", "Newest events held in memory for history queries.", "events", func(c *Config) *int { return &c.HistoryMemoryEvents }, num(1), num(MaxHistoryMemoryEvents)),
+		i("usage_request_days", "retention", "Days the request log (usage.db in the data directory) keeps each request.", "days", func(c *Config) *int { return &c.UsageRequestDays }, num(1), num(MaxUsageDays)),
+		i("usage_hourly_days", "retention", "Days the request log keeps its hourly totals; daily totals are kept for ever.", "days", func(c *Config) *int { return &c.UsageHourlyDays }, num(1), num(MaxUsageDays)),
 		i("audit_retention_days", "retention", "Audit entries older than this many days may be pruned by an operator; the application itself never deletes entries (0 keeps everything and is the default).", "days", func(c *Config) *int { return &c.AuditRetentionDays }, num(0), nil),
 		b("logs_enabled", "logs", "Central logging (CR-10). Off: no logs object is handed out and the log routes answer 404. It is also off while Potluck has no log store address (LLM_SCHEDULER_LOGS_STORE_URL) and logs_push_url is empty.", func(c *Config) *bool { return &c.Logs.Enabled }),
 		i("logs_retention_days", "logs", "How long the log store keeps lines. Passed to the store when it starts.", "days", func(c *Config) *int { return &c.Logs.RetentionDays }, num(1), num(MaxLogsRetentionDays)),
@@ -140,7 +142,7 @@ func buildSettingFields() []Field {
 	}
 	// Restart-required: read once at startup by long-lived components.
 	restart := map[string]string{"server_bin": S, "child_log_keep": S, "history_max_file_mib": S, "history_keep_files": S,
-		"history_memory_events": S, "ws_max_clients": S, "bench_enabled": S, "bench_regress_load_pct": S, "bench_regress_decode_pct": S,
+		"history_memory_events": S, "usage_request_days": S, "usage_hourly_days": S, "ws_max_clients": S, "bench_enabled": S, "bench_regress_load_pct": S, "bench_regress_decode_pct": S,
 		"bench_max_run_minutes": S, "url": F, "local_node": F, "membership": S}
 	base := newBase(Bootstrap{})
 	for n := range fs {
