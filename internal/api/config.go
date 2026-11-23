@@ -74,6 +74,7 @@ func (s *Server) cfgErr(w http.ResponseWriter, err error) {
 	var ve *cfgsvc.ValidationError
 	var st *cfgstore.ErrStale
 	var re *cfgsvc.RefError
+	var ue *cfgsvc.UnknownFieldsError
 	body := func(status int, typ string, extra map[string]any) {
 		e := map[string]any{"message": err.Error(), "type": typ}
 		for k, v := range extra {
@@ -86,6 +87,8 @@ func (s *Server) cfgErr(w http.ResponseWriter, err error) {
 		body(http.StatusBadRequest, "invalid_config", map[string]any{"messages": ve.Messages})
 	case errors.As(err, &st):
 		body(http.StatusConflict, "stale_revision", map[string]any{"current_revision": st.Current})
+	case errors.As(err, &ue):
+		body(http.StatusConflict, "unknown_stored_fields", map[string]any{"fields": ue.Fields})
 	case errors.As(err, &re):
 		body(http.StatusConflict, "profile_referenced", map[string]any{"warnings": re.Warnings})
 	case errors.Is(err, cfgsvc.ErrExists), errors.Is(err, cfgstore.ErrNotEmpty):

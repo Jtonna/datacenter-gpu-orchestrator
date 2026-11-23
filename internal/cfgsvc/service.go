@@ -55,6 +55,17 @@ func (e *RefError) Error() string {
 	return fmt.Sprintf("profile %q is referenced; repeat with force to delete it anyway: %s", e.ID, strings.Join(e.Warnings, "; "))
 }
 
+// UnknownFieldsError refuses a write while the stored configuration has
+// fields this version does not know (a newer version wrote them): the write
+// would store the document without them, so they would be lost. Force
+// writes anyway.
+type UnknownFieldsError struct{ Fields []string }
+
+func (e *UnknownFieldsError) Error() string {
+	return "the stored configuration has fields this version does not know (" + strings.Join(e.Fields, ", ") +
+		"), written by a newer version; a write now would drop them. Write with the newer version, or repeat with force to write anyway and drop them"
+}
+
 // WriteOpts are the options every write takes.
 type WriteOpts struct {
 	Origin  audit.Origin
@@ -127,6 +138,10 @@ type Service struct {
 	cfgMu   sync.RWMutex
 	cfg     *config.Config
 	loadErr string
+	// unknown names the fields of the stored configuration this version
+	// does not know (config.ParseStoredDocument); while there are any,
+	// writes are refused unless forced. Guarded by mu.
+	unknown []string
 }
 
 // New loads the latest revision. A database failure or an invalid stored
@@ -153,6 +168,13 @@ func New(ctx context.Context, o Options) *Service {
 		return s
 	}
 	s.rev, s.updated, s.doc = r.Revision, r.TS, r.Doc
+	if len(r.Unknown) > 0 {
+		s.unknown = append([]string(nil), r.Unknown...)
+		for _, f := range r.Unknown {
+			s.log.Warn("the stored configuration has a field this version does not know (a newer version wrote it); it is ignored, everything else is used, and configuration writes are refused unless forced because they would drop it",
+				"revision", r.Revision, "field", f)
+		}
+	}
 	cfg, err := config.Build(r.Doc, o.Boot, o.Parse)
 	if err != nil {
 		// A model file that went missing must not stop the scheduler: build without the file check.
@@ -194,6 +216,14 @@ func (s *Service) Config() *config.Config {
 	s.cfgMu.RLock()
 	defer supervise.Unlocked("cfgsvc", s.cfgMu.RUnlock)
 	return s.cfg
+}
+
+// UnknownFields names the fields of the stored configuration this version
+// does not know; nil when there are none (GET /api/system).
+func (s *Service) UnknownFields() []string {
+	s.mu.Lock()
+	defer supervise.Unlocked("cfgsvc", s.mu.Unlock)
+	return append([]string(nil), s.unknown...)
 }
 
 // LoadError is non-empty when the stored configuration could not be used.
@@ -323,6 +353,9 @@ func (s *Service) commit(ctx context.Context, o WriteOpts, m mutation) (*Result,
 	if s.o.Store == nil {
 		return nil, nil, ErrNoStore
 	}
+	if len(s.unknown) > 0 && !o.Force {
+		return nil, nil, &UnknownFieldsError{Fields: append([]string(nil), s.unknown...)}
+	}
 	before := s.doc.Clone()
 	after := s.doc.Clone()
 	if err := m.fn(after); err != nil {
@@ -384,6 +417,7 @@ func (s *Service) commit(ctx context.Context, o WriteOpts, m mutation) (*Result,
 	}
 	cfg.Revision = rev
 	s.rev, s.doc = rev, after
+	s.unknown = nil                     // the new revision holds only what this version knows
 	supervise.Point("config.commit", s) // test hook, under s.mu: the revision is taken, the config not set
 	s.updated = time.Now().UnixMilli()
 	s.setConfig(cfg)

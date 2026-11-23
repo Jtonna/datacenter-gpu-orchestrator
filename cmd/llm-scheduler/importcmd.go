@@ -29,9 +29,10 @@ func importConfig(args []string, stdout, stderr io.Writer) int {
 	check := fs.Bool("check", false, "only validate the file and print what would be imported")
 	noModels := fs.Bool("no-model-check", false, "do not require the model files to exist")
 	actor := fs.String("actor", "", "name recorded in the audit log (default: the OS user)")
+	force := fs.Bool("force", false, "write even when the stored configuration has fields this version does not know (a newer version wrote them; they are dropped)")
 	comment := fs.String("comment", "import of the YAML configuration file", "comment recorded in the audit log")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: llm-scheduler import-config [--data-dir DIR] [--models-dir DIR] [--replace] [--check] [--no-model-check] file.yaml")
+		fmt.Fprintln(stderr, "usage: llm-scheduler import-config [--data-dir DIR] [--models-dir DIR] [--replace] [--force] [--check] [--no-model-check] file.yaml")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -83,7 +84,7 @@ func importConfig(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	ctx := context.Background()
-	o := cfgsvc.WriteOpts{Origin: audit.Origin{Source: audit.SourceImport, Actor: importActor(*actor), Comment: *comment}}
+	o := cfgsvc.WriteOpts{Origin: audit.Origin{Source: audit.SourceImport, Actor: importActor(*actor), Comment: *comment}, Force: *force}
 	boot.ModelsDir = imp.Config.ModelsDir
 	svc := cfgsvc.New(ctx, cfgsvc.Options{Store: cs, Boot: boot, Parse: opts})
 	res, err := svc.Import(ctx, o, imp.Doc, *replace)

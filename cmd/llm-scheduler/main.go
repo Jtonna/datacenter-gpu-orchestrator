@@ -198,19 +198,20 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 				h.Record(failureEvent(f))
 			}
 		}})
-	// The database holds the configuration. If it cannot be opened the scheduler
-	// still starts (built-in defaults, no profiles); configuration changes then answer 503.
+	// The database holds the configuration. A first start creates it. One
+	// that exists but cannot be used (a newer version migrated it, it is
+	// damaged) never runs as built-in defaults with no profiles, healthy and
+	// empty: the scheduler stays up unhealthy with the reason (unhealthy.go).
 	var dbStore *bench.Store
 	var cs *cfgstore.Store
-	if st, err := bench.OpenStore(boot.DataDir); err != nil {
-		log.Error("the database cannot be opened; running with built-in defaults and no profiles, configuration changes are unavailable", "data_dir", boot.DataDir, "err", err)
-	} else {
-		dbStore = st
-		defer func() { dbStore.Close(); stepDone("store closed", dbStore) }() // the last step: every user of the store has stopped
-		if cs, err = cfgstore.Open(st); err != nil {
-			log.Error("the configuration tables cannot be opened; configuration changes are unavailable", "err", err)
-			cs = nil
-		}
+	st, err := bench.OpenStore(boot.DataDir)
+	if err != nil {
+		return serveUnhealthy(boot, log, sigs, storeFailure(err))
+	}
+	dbStore = st
+	defer func() { dbStore.Close(); stepDone("store closed", dbStore) }() // the last step: every user of the store has stopped
+	if cs, err = cfgstore.Open(st); err != nil {
+		return serveUnhealthy(boot, log, sigs, "the configuration tables cannot be opened: "+err.Error())
 	}
 	var (
 		sched   *scheduler.Scheduler
@@ -254,6 +255,10 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 			return sched.LoadedOnExcluded(ctx, c)
 		}}
 	svc := cfgsvc.New(context.Background(), so0)
+	if e := svc.LoadError(); e != "" {
+		// the stored configuration exists but cannot be used: not empty and healthy either
+		return serveUnhealthy(boot, log, sigs, e)
+	}
 	cfg := svc.Config()
 	curCfg.CompareAndSwap(nil, cfg)
 	cfgAt.Store(cfg)

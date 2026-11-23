@@ -136,6 +136,10 @@ type Revision struct {
 	Actor    string
 	Comment  string
 	Doc      *config.Document
+	// Unknown names the fields of the stored document this version does
+	// not know (a newer version wrote them): they are not in Doc
+	// (config.ParseStoredDocument).
+	Unknown []string
 }
 
 // ErrStale reports that the current revision is not the one the caller expected.
@@ -183,11 +187,11 @@ func (s *Store) revision(ctx context.Context, n int64) (*Revision, error) {
 	if err != nil {
 		return nil, err
 	}
-	d, err := config.ParseDocument([]byte(doc))
+	d, unknown, err := config.ParseStoredDocument([]byte(doc))
 	if err != nil {
 		return nil, fmt.Errorf("revision %d: %w", r.Revision, err)
 	}
-	r.Doc = d
+	r.Doc, r.Unknown = d, unknown
 	return &r, nil
 }
 
