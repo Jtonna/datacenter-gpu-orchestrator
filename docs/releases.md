@@ -2,6 +2,16 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: system health (phase 2)
+
+Ships after slice 1b. No agent change, no `scheduler.db` or `usage.db` schema change, no new port.
+
+- **One judged health summary.** `GET /api/health` (MCP `get_system_health`, `/ws` topic `health` asked for by name, sent again on change) answers the System health popup's rows (Zones, Runs, Scheduler, MCP server, Storage, Queue, Alerts), each with a state, its sentence, a count and a link, the warnings of the last 2 hours in short sentences, and the heart's state, colour and issue count; it answers while the core loop is stalled. See the runbook, "System health".
+- **Disk capacity and free space.** One reader runs `statfs` on the data, history, child log and models folders every 30 s with a 5 s timeout per read (a hung network share keeps its last figures and is marked `timeout`); `/api/system` `storage.folders` and `GET /api/models` `disk` read its cache.
+- **Core-loop health in production** (B9): `/api/system` `loop` has the step in progress (`busy_now_ms`) and the longest step in the last minute, 10 minutes, hour and since the start; a step over the new setting `loop_step_warn_ms` (1000) is a `loopSlowStep` history event, at most one a minute.
+- **Setting `models_disk_budget_gb`** (0, off): the Storage row also judges the model files against it.
+- **`nodeQuarantined` events** add `reason` and `until` to their data.
+
 ## Scheduler image: live requests (slice 1b)
 
 Ships with or after slice 1a. No agent change, no `scheduler.db` or `usage.db` schema change, no new port.

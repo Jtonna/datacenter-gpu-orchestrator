@@ -453,6 +453,29 @@ curl -s "$H/api/nodes/availability?node=zone-a&step=day&from=7d"
 - `paused_at`/`paused_actor` and `excluded_at`/`excluded_actor`: who switched the node off and when, read from the audit log (the newest pause; the newest configuration change that added the matching `exclude_nodes` entry). Absent when the audit log does not have it.
 - `free_at`, `free_in_s`, `free_basis` and `next` for a node that is claimed or settling: `settling` (the settle end), `fetching` (now), `stopping` (the victim stops: now plus the node's settle), `draining` (no time: the victim's requests are still running) or `claimed` (now). `view.nodes[]` has `free_at` and `free_basis`.
 
+### System health
+
+One judged summary of the System health popup, the same for the UI and the MCP server (`get_system_health`). It answers while the core loop is stalled: the status is asked for with a one-second timeout and the last good one is used when the loop does not answer.
+
+```sh
+curl -s "$H/api/health" | jq '{state, issues, sentence, rows: [.rows[] | {id, state, text}], recent: [.recent[].text]}'
+```
+
+- `state` (`ok`, `attention`, `problem`, `unknown`) is the worst row; `color` (`green`, `amber`, `red`, `grey`) the heart's dot; `issues` the rows in attention or problem; `sentence` ("2 things need attention", "All good"). Rows always come in this order, each with `state`, `text` (the sentence shown), `count`, `link` and `facts`:
+  - **Zones**: "221 of 232 reachable · 11 down". Down is lost or set aside; paused and excluded zones are off (reachable, not down); removed ones are left out. Any zone down is a problem; no machines is unknown.
+  - **Runs**: failed and refused requests of the last hour from the request log, plus benchmark runs that failed (history). Any is attention; five or more making more than half of the hour's requests is a problem. Unknown while the request log (`usage.db`) is off.
+  - **Scheduler**: "Running · release <image tag> · up 12 d". Problem when a task whose failure ends the process has failed, or the core loop is on one step for 5 s or does not answer. Attention for a background task failure in the last hour, a read panic, stored settings from a newer release, or a step over `loop_step_warn_ms` in the last 10 minutes.
+  - **MCP server**: "Running · 3 keys active" (keys not revoked). The MCP server runs inside the scheduler.
+  - **Storage**: the fullest disk among the data, history, child log and models folders, "50.3 of 240 GB used". Attention at 90 % used, under 10 GB free, or a folder whose disk does not answer or cannot be read; problem at 97 % or under 2 GB free. With `models_disk_budget_gb` set, the model files are also judged against it (attention at 90 %, problem over it).
+  - **Queue**: "2 waiting · longest 5 min 48 s". Attention when the oldest wait reaches three quarters of `queue_timeout`, problem at nine tenths.
+  - **Alerts**: unknown, "Not set up yet" (webhooks are not built).
+- `recent`: warnings and errors of the last 2 hours in short sentences, newest first, at most 20, each with `at`, `type`, `severity`, `text`, and `node` and `until` (a set-aside's end) when they apply.
+- Live: subscribe to the `/ws` topic `health` (not on by default). It sends the summary when a client subscribes, and again when it changes (checked every 2 s while a client wants it).
+
+**Disk figures.** One reader runs `statfs` on the data, history, child log and models folders every 30 s, off every request path, each read with a 5 s timeout. A read that does not come back (a network share that hangs) marks the folder `timeout` and keeps its last figures; no second read of that folder starts until it returns. `/api/system` `storage.folders` lists each folder: `state` (`ok`, `waiting`, `timeout`, `error`, `unknown` on a platform without `statfs`), `total_bytes`, `free_bytes` (what an unprivileged writer may still use), `used_bytes`, `used_percent`, `potluck_bytes` and `files` (the files directly in the folder), `same_disk_as`, `checked_at`, `late_since`. `GET /api/models` has `disk`: the models folder's figures, `model_bytes`, and `budget_bytes` when `models_disk_budget_gb` is set.
+
+**Core loop.** `/api/system` `loop`: `busy_now_ms` and `current_event` (the step in progress), the longest step in the last minute, 10 minutes and hour and since the start (`max_last_minute_ms`, `max_10m_ms`, `max_last_hour_ms`, `max_ms`, each with its `_event`), `steps`, `slow_steps` and `warn_ms`. A step longer than `loop_step_warn_ms` (1000) is a `loopSlowStep` history event (warn, at most one a minute). The loop only stores a start time and compares the step's length; readers never ask the loop.
+
 ### Child output logs
 
 Each `llama-server` writes its full output to `POTLUCK_ROOT/child-logs/<UTC time>-<profile>-<instance id>.log`. Worker launch logs are copied next to them as `worker-<node name>-<launch id>.log`. These hold the KV cache size, the memory breakdown and the exact out-of-memory error. The oldest files go past `child_log_keep` (200). `log_file` in `/api/status` names the current file.
