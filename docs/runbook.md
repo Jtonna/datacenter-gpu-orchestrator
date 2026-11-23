@@ -335,6 +335,19 @@ curl -s $H/running
 - `/api/nodes`: the node feed for dashboards: `{time, seq, nodes}`. Each entry is an entry of `agents` of `/api/status`, plus Potluck's own machine with `"local": true`. A new `seq` means something changed besides ages and uptimes.
 - `/running`: the loaded models, llama-swap compatible, with `recent_loads`.
 
+### Unload everything idle
+
+```sh
+curl -s -X POST $H/api/models/unload   # JSON: {"msg":"ok","unloaded":[…]}
+curl -s -X POST $H/unload              # plain "OK", llama-swap's shape
+```
+
+`GET /unload` does the same and still works for llama-swap clients, but it is deprecated because a GET should not change state: its answer carries `Deprecation: true` and a `Warning` header naming the POST routes, and every call logs one WARN line with the caller's address. Find the callers before it is removed:
+
+```sh
+docker logs potluck 2>&1 | grep 'GET /unload is deprecated' | tail -50
+```
+
 ### Watch a load
 
 ```sh

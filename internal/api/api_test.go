@@ -320,6 +320,40 @@ func requestsEnded(t *testing.T, e *env) {
 	})
 }
 
+// GET /unload (llama-swap's "unload everything idle") changes state, so it is
+// deprecated: it still works, marks its answer deprecated, names the POST
+// routes and logs one WARN per call with the caller's address; POST /unload
+// does the same work without the warning (B3).
+func TestUnloadAllGetIsDeprecatedAndPostWorks(t *testing.T) {
+	e := newEnv(t, chatOK)
+	load := func() {
+		e.post("/v1/chat/completions", chat("alpha")).Body.Close()
+		requestsEnded(t, e)
+		eventually(t, "alpha loaded", func() bool { return runningOnly(t, e) != `{"running":[]}` })
+	}
+	load()
+	code, b, h := e.do("GET", "/unload", "")
+	if code != 200 || b != "OK\n" || h.Get("Deprecation") != "true" || !strings.Contains(h.Get("Warning"), "POST /unload") ||
+		!strings.Contains(h.Get("Warning"), "POST /api/models/unload") {
+		t.Fatalf("GET /unload: %d %q %v", code, b, h)
+	}
+	eventually(t, "everything idle stopped", func() bool { return runningOnly(t, e) == `{"running":[]}` })
+	logs := e.logs.String()
+	if n := strings.Count(logs, "GET /unload is deprecated"); n != 1 || !strings.Contains(logs, "level=WARN") || !strings.Contains(logs, "caller=127.0.0.1") {
+		t.Fatalf("want one WARN naming the caller, got %d in:\n%s", n, logs)
+	}
+
+	load()
+	code, b, h = e.do("POST", "/unload", "")
+	if code != 200 || b != "OK\n" || h.Get("Deprecation") != "" {
+		t.Fatalf("POST /unload: %d %q %v", code, b, h)
+	}
+	eventually(t, "everything idle stopped", func() bool { return runningOnly(t, e) == `{"running":[]}` })
+	if n := strings.Count(e.logs.String(), "GET /unload is deprecated"); n != 1 {
+		t.Fatalf("POST /unload logged the deprecation (%d)", n)
+	}
+}
+
 func TestUnloadEndpoints(t *testing.T) {
 	e := newEnv(t, chatOK)
 	e.post("/v1/chat/completions", chat("alpha")).Body.Close()

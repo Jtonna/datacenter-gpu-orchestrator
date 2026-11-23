@@ -7,6 +7,7 @@ What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent
 - **History `node` filter takes an id or a name.** `GET /api/history?node=` (and MCP `query_history`) matches events that name the node by its id or its hostname, so the zone panel's "Recent events" (which asks by id) lists the zone's events.
 - **A missing model file no longer blocks every configuration write.** A write is refused for a missing file only when it adds a profile or points one at a new file; profiles that already pointed at the missing file stay, other writes (settings, other profiles, deleting those profiles) go through. Loading such a profile is refused at plan time: "memory need unknown: model file "x.gguf" is missing from models_dir …".
 - **`bench_max_run_minutes` applies without a restart.** The benchmark manager reads it when each run starts (it was read once at start, so a raised limit kept cutting runs at the old one until a restart). Its range is still 1 to 10080 minutes (720 allowed); the default stays 240: set 720 for a 6 to 7 hour Full pass.
+- **`GET /unload` is deprecated; `POST /unload` added.** `POST /unload` unloads everything idle and answers `OK` like the GET. `GET /unload` still works but answers with `Deprecation: true` and a `Warning` header naming `POST /unload` and `POST /api/models/unload`, and logs one WARN per call with the caller's address (runbook, "Unload everything idle"). Nothing in this repository calls the GET.
 
 ## Next scheduler image (after v25; agent stays 0.1.9)
 
