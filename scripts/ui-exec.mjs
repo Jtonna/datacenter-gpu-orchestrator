@@ -531,6 +531,7 @@ for (const c of spec.cases) {
     await settle();
     for (const m of c.ws || []) {
       if (m.type === 'hello') { store.set('conn', 'live'); store.set('hello', m.data); }
+      if (m.type === 'status') { store.state.statusAt = Date.now(); store.set('status', m.data); }
       store.publish(m.type, m.data, Date.now());
       await settle();
     }

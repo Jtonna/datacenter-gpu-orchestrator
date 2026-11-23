@@ -63,3 +63,43 @@ func TestUINextZonesPanelDocks(t *testing.T) {
 			"pageHas": []string{"div.side-back aside.side"}},
 	}})
 }
+
+// Deep links (S17, SH-5): the design's addresses inside the hash. A zone's
+// panel is #/zones/<zone name>; the old ?zone=<id> still opens it and the
+// page then writes the path; opening a panel adds a history entry, so Back
+// closes it and Forward opens it again; a name the status does not know yet
+// is looked up again when the status arrives; the server's own links
+// (#/monitor/queue, #/zones?filter=down) open their pages.
+func TestUINextDeepLinks(t *testing.T) {
+	now := time.Now()
+	st := ovStatus(now)
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": map[string]any{}, "cases": []any{
+		map[string]any{"name": "deep link: a zone by name", "route": "#/zones/node-a", "status": st, "width": 1440,
+			"pageHas": []string{"aside.side.docked", "tr.sel[aria-label^=node-a]"}, "page": []string{"node-a"}},
+		map[string]any{"name": "deep link: the old form", "route": "#/zones?zone=" + ovA, "status": st,
+			"pageHas": []string{"aside.side"}},
+		// a row click writes the design's address and adds an entry; Back closes the panel
+		map[string]any{"name": "deep link: a row opens the path", "route": "#/zones", "status": st, "click": []string{"tr[aria-label^=node-b]"},
+			"pageHas": []string{"aside.side"}, "hash": "#/zones/node-b"},
+		map[string]any{"name": "deep link: Back closes the panel", "route": "#/zones", "status": st, "click": []string{"tr[aria-label^=node-b]"}, "back": 1,
+			"pageNone": []string{"aside.side"}, "hash": "#/zones"},
+		// closing it adds an entry too: Back opens it again
+		map[string]any{"name": "deep link: Back after a close opens it", "route": "#/zones/node-b", "status": st, "click": []string{"aside.side button.x"}, "back": 1,
+			"pageHas": []string{"aside.side"}, "hash": "#/zones/node-b"},
+		// a filter replaces the address (no entry), keeping the panel in it
+		map[string]any{"name": "deep link: the server's Zones filter", "route": "#/zones?filter=down", "status": st,
+			"expect": []string{"node-e"}, "absent": []string{"node-b"}, "notOnPage": []string{"There is no such screen"}},
+		map[string]any{"name": "deep link: #/monitor/queue", "route": "#/monitor/queue", "status": st,
+			"pageHas": []string{"button.rb[title=Monitor][aria-current=page]"}, "notOnPage": []string{"There is no such screen"}},
+	}})
+	// a reload: the address names a zone before the first status
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": map[string]any{}, "cases": []any{
+		map[string]any{"name": "deep link: the name resolves when the status comes", "route": "#/zones/node-c",
+			"ws": []any{map[string]any{"type": "status", "data": st}}, "pageHas": []string{"aside.side", "tr.sel[aria-label^=node-c]"}},
+	}})
+	// the components page: a run's panel by address, Back and Forward
+	uiExec(t, map[string]any{"shell": "next", "app": true, "modules": []string{"_fixture/components.js"}, "fetch": fixtureRuns(now), "cases": []any{
+		map[string]any{"name": "deep link: Back closes a run's panel", "route": "#/components", "click": []string{"button[data-run=101]"}, "back": 1,
+			"pageNone": []string{"aside.side"}, "hash": "#/components"},
+	}})
+}
