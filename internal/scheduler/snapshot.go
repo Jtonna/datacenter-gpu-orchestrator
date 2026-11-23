@@ -128,9 +128,12 @@ func (c *schedCore) instStatus(in *inst) InstanceStatus {
 	idx := map[string]int{}
 	for i, pn := range in.placement.Nodes {
 		s.Nodes = append(s.Nodes, PlacedNodeStatus{ID: pn.ID, Addr: pn.Addr, Local: pn.Local, BudgetMiB: pn.BudgetMiB})
-		if pn.Local {
+		switch {
+		case pn.Local:
 			idx[c.build.LocalDevice] = i
-		} else {
+		case pn.ID == in.placement.Host:
+			idx[string(pn.ID)] = i // a host on a node: its own devices (as loadByNode)
+		default:
 			idx[pn.Addr] = i
 		}
 	}
@@ -145,6 +148,9 @@ func (c *schedCore) instStatus(in *inst) InstanceStatus {
 			key := endpointOf(d.Name)
 			if key == "" {
 				key = d.Name
+				if h := in.placement.Host; h != "" {
+					key = string(h)
+				}
 			}
 			if i, ok := idx[key]; ok {
 				s.Nodes[i].Memory = append(s.Nodes[i].Memory, m)
