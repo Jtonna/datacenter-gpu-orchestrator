@@ -28,6 +28,12 @@ func (c *feedClock) advance(d time.Duration) { c.mu.Lock(); c.t = c.t.Add(d); c.
 // local node (a local probe that always answers).
 func feedEnv(t *testing.T, mod ...func(*config.Config)) (*env, *pool.Pool, *feedClock) {
 	t.Helper()
+	return feedEnvOpts(t, nil, mod...)
+}
+
+// feedEnvOpts is feedEnv with a change to the API options (apiMod may be nil).
+func feedEnvOpts(t *testing.T, apiMod func(*Options), mod ...func(*config.Config)) (*env, *pool.Pool, *feedClock) {
+	t.Helper()
 	root := progtree.Write(t, t.TempDir(), progtree.Tree{Release: "0.1.0", Llama: "a01665d30",
 		Folders: map[string]map[string][]byte{
 			"agent":              {"potluck-agent-linux-amd64": []byte("AGENT-BINARY")},
@@ -54,7 +60,12 @@ func feedEnv(t *testing.T, mod ...func(*config.Config)) (*env, *pool.Pool, *feed
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go p.Run(ctx) // the local probe runs at once
-	e := newEnv(t, chatOK, func(o *Options) { o.Pool = p })
+	e := newEnv(t, chatOK, func(o *Options) {
+		o.Pool = p
+		if apiMod != nil {
+			apiMod(o)
+		}
+	})
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		if _, ok := p.Local(); ok {
