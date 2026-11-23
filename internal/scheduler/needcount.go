@@ -125,6 +125,7 @@ type learnedFig struct {
 	trusted  bool
 	at       time.Time
 	slope    *DerivedSlope // a figure read from the model's own line (ownslope.go)
+	formula  bool          // a figure derived by the formula step (derive.go)
 }
 
 // trusted: l was measured this run, or it was measured on the llama build
@@ -162,26 +163,40 @@ func (info NeedInfo) at(k int) NeedInfo {
 	out := info
 	out.Devices, out.FromDevices, out.fromTotal, out.FromServer, out.DerivedFromCtx, out.Slope = k, 0, 0, false, 0, nil
 	out.Need, out.Source, out.MeasuredAt = info.baseNeed, info.baseSource, time.Time{}
-	rule := needRule{PerDevice: info.perDevice, Floor: info.baseNeed.Measured, Rows: make([]needRow, len(info.figs))}
+	// A line decides only on its own device count (ownslope.go): for k it
+	// is a row when it is on k, and it then outranks the formula step;
+	// lines on other counts take no part.
+	line := slices.ContainsFunc(info.figs, func(f learnedFig) bool { return f.slope != nil && f.devices == k })
+	figs := make([]learnedFig, 0, len(info.figs))
+	for _, f := range info.figs {
+		if (f.slope != nil && f.devices != k) || (line && f.formula) {
+			continue
+		}
+		figs = append(figs, f)
+	}
+	if len(figs) == 0 {
+		return out
+	}
+	rule := needRule{PerDevice: info.perDevice, Floor: info.baseNeed.Measured, Rows: make([]needRow, len(figs))}
 	if info.baseNeed.Measured { // a configured needs_mib
 		rule.Estimate = func(int) int { return info.baseNeed.MiB }
 	} else {
 		rule.Estimate = func(k int) int { return info.baseNeed.WithMargin() + k*info.perDevice }
 	}
-	for i, f := range info.figs {
+	for i, f := range figs {
 		rule.Rows[i] = needRow{Devices: f.devices, Total: f.total, Trusted: f.trusted}
 	}
 	fig, from := needFor(rule, k)
 	if from < 0 {
 		return out
 	}
-	src := info.figs[from]
+	src := figs[from]
 	out.Need, out.Source, out.MeasuredAt, out.FromDevices, out.fromTotal = placer.Measured(fig), NeedLearned, src.at, src.devices, src.total
 	out.FromServer = info.serverFigs
 	if src.restored {
 		out.Source = NeedRestored
 	}
-	if info.derive != nil {
+	if src.formula {
 		out.Source, out.DerivedFromCtx = NeedDerived, info.derive.ctx
 	}
 	if src.slope != nil {
@@ -216,7 +231,7 @@ func (c *schedCore) withLearned(p *core.Profile, info, base NeedInfo) NeedInfo {
 			have[l.count()] = true
 		}
 	}
-	if !server { // a confirmed line on a count the shape has no row on joins its rows (ownslope.go)
+	if !server { // a confirmed line on a count the shape has no row on joins its rows there (ownslope.go)
 		for _, f := range c.slopeFigs(p, base, false) {
 			if !have[f.devices] {
 				info.figs = append(info.figs, f)

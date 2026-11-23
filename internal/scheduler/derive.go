@@ -484,34 +484,47 @@ func nearestCtx(srcs map[int][]*learnedNeed, r int, ok func(int) bool) int {
 
 // withDerived is withLearned for a profile without measurements of its own
 // shape: the derived figures when a derivation applies (see the top of the
-// file), else info unchanged.
+// file), else info unchanged. The model's own lines (ownslope.go) join the
+// formula step's figures; at decides with a line only on its own count, and
+// there it outranks the formula step.
 func (c *schedCore) withDerived(p *core.Profile, info, base NeedInfo) NeedInfo {
 	if p.Kind == core.KindCommand || base.Need.Measured {
 		return info // a configured need is never replaced
 	}
-	if figs := c.slopeFigs(p, base, true); len(figs) > 0 { // the model's own line comes first (ownslope.go)
-		info.figs = figs
-		info.baseNeed, info.baseSource, info.perDevice = info.Need, info.Source, c.perDeviceCost(base)
-		k, latest := 0, figs[0].at
-		for _, f := range figs {
+	lines := c.slopeFigs(p, base, true) // the model's own lines (ownslope.go): each decides on its own count only
+	figs, from, k := c.formulaFigs(p, info, base)
+	if len(figs) == 0 && len(lines) == 0 {
+		return info
+	}
+	if len(figs) == 0 { // shown on the count of the latest line
+		latest := lines[0].at
+		for _, f := range lines {
 			if k == 0 || f.at.After(latest) {
 				k, latest = f.devices, f.at
 			}
 		}
-		if len(p.ForceNodes) > 0 {
-			k = len(p.ForceNodes)
-		}
-		return info.at(max(k, 1))
 	}
+	info.figs, info.derive = append(figs, lines...), from
+	info.baseNeed, info.baseSource, info.perDevice = info.Need, info.Source, c.perDeviceCost(base)
+	if len(p.ForceNodes) > 0 {
+		k = len(p.ForceNodes)
+	}
+	return info.at(max(k, 1))
+}
+
+// formulaFigs is p's figures by the formula step, one per device count of
+// the context it derives from, the derivation, and the count of its latest
+// measurement; nil when no derivation applies. info is the estimate.
+func (c *schedCore) formulaFigs(p *core.Profile, info, base NeedInfo) ([]learnedFig, *deriveFrom, int) {
 	d := c.deriveIndex()
 	srcs := c.derivedSources(d, p, base.FileBytes)
 	if len(srcs) == 0 {
-		return info
+		return nil, nil, 0
 	}
 	key := needKeyOf(p)
 	ch := c.groupIn(d, key.noCtx()).check
 	if !ch.upSafe {
-		return info // the model costs more than the formula: no derivation
+		return nil, nil, 0 // the model costs more than the formula: no derivation
 	}
 	if _, ok := c.derive.est[key]; !ok && base.Need.MiB > 0 { // the profile's own estimate is the one at its window
 		if c.derive.est == nil {
@@ -553,7 +566,7 @@ func (c *schedCore) withDerived(p *core.Profile, info, base NeedInfo) NeedInfo {
 		}
 	}
 	if from < 0 {
-		return info
+		return nil, nil, 0
 	}
 	st := steps[from]
 	perDevice := c.perDeviceCost(base)
@@ -573,20 +586,15 @@ func (c *schedCore) withDerived(p *core.Profile, info, base NeedInfo) NeedInfo {
 		if t <= 0 {
 			continue
 		}
-		figs = append(figs, learnedFig{devices: l.count(), total: t, restored: l.restored, trusted: c.trusted(l), at: l.at})
+		figs = append(figs, learnedFig{devices: l.count(), total: t, restored: l.restored, trusted: c.trusted(l), at: l.at, formula: true})
 		if k == 0 || l.at.After(latest) {
 			k, latest = l.count(), l.at
 		}
 	}
 	if len(figs) == 0 {
-		return info
+		return nil, nil, 0
 	}
-	info.figs, info.derive = figs, &deriveFrom{ctx: from, check: ch, mode: mode}
-	info.baseNeed, info.baseSource, info.perDevice = info.Need, info.Source, perDevice
-	if len(p.ForceNodes) > 0 {
-		k = len(p.ForceNodes)
-	}
-	return info.at(max(k, 1))
+	return figs, &deriveFrom{ctx: from, check: ch, mode: mode}, k
 }
 
 // deriveFrom is what a NeedInfo keeps of the derivation its figs come from.

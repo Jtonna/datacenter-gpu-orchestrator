@@ -235,3 +235,58 @@ func TestOwnSlope_SlidingWindowNeverUnderPredicts(t *testing.T) {
 		t.Fatalf("only %d lines exercised", lines)
 	}
 }
+
+// A line decides only on its own device count. Live (rel/v28 gate): a line
+// on 2 devices, moved up by four per-device costs, rose above the shape's
+// own measurement on 6 devices at the same context; a line on 6 devices was
+// kept for 2- and 3-console profiles. Neither may happen: on another count a
+// profile takes what it took without own slope (its shape's measurements
+// under the count rule, else the formula step), and a line never decides
+// over a measurement of the shape on the count it is placed on.
+func TestOwnSlope_OnlyOnItsOwnCount(t *testing.T) {
+	h := deriveHarness(t)
+	h.measure("m.gguf", 2048, 6, 15321)
+	h.measure("m.gguf", 8192, 2, 15257)
+	h.measure("m.gguf", 16384, 2, lineAt(8192, 15257, 32768, 19289, 16384))
+	h.measure("m.gguf", 32768, 2, 19289)
+	auto := h.llama("auto", 0, func(p *core.Profile) { p.Model, p.Ctx = "m.gguf", 2048 })
+	if info, _ := h.c.need(auto); info.Source == NeedOwnSlope || info.Need.MiB != 15321 || info.Devices != 6 {
+		t.Fatalf("a line on 2 devices over the shape's measurement on 6: %+v %q on %d", info.Need, info.Source, info.Devices)
+	}
+	line := lineAt(8192, 15257, 32768, 19289, 2048)
+	if info, _ := h.c.needAt(auto, 2); info.Source != NeedOwnSlope || info.Need.MiB != line {
+		t.Fatalf("the line on its own count: %+v %q, want %d", info.Need, info.Source, line)
+	}
+	for _, k := range []int{1, 3, 4, 5} {
+		info, _ := h.c.needAt(auto, k)
+		if info.Source == NeedOwnSlope || info.Need.MiB != 15321 {
+			t.Fatalf("on %d devices: %+v %q, want the measurement on 6 kept (15321)", k, info.Need, info.Source)
+		}
+		if b := h.c.needBasis(info); strings.Contains(b, "own slope") {
+			t.Fatalf("on %d devices: %s", k, b)
+		}
+	}
+
+	// Rows on 6 devices only: a profile forced onto 2 takes the formula
+	// step (as before own slope), never the 6-device line kept for 2; one
+	// not forced shows the line on 6.
+	h = deriveHarness(t)
+	h.measure("m.gguf", 8192, 6, 30000)
+	h.measure("m.gguf", 16384, 6, derivedFrom(30000, 8192, 16384, 6))
+	h.measure("m.gguf", 32768, 6, derivedFrom(30000, 8192, 32768, 6))
+	two := h.llama("two", 0, func(p *core.Profile) { p.Model, p.Ctx, p.ForceNodes = "m.gguf", 2048, []string{"a", "b"} })
+	info, _ := h.c.need(two)
+	if info.Source != NeedDerived || info.Slope != nil {
+		t.Fatalf("a line on 6 devices for a profile forced onto 2: %+v %q %+v", info.Need, info.Source, info.Slope)
+	}
+	if b := h.c.needBasis(info); strings.Contains(b, "own slope") {
+		t.Fatal(b)
+	}
+	free := h.llama("free", 0, func(p *core.Profile) { p.Model, p.Ctx = "m.gguf", 2048 })
+	if info, _ := h.c.need(free); info.Source != NeedOwnSlope || info.Devices != 6 || info.FromDevices != 6 || strings.Contains(h.c.needBasis(info), "measured on") {
+		t.Fatalf("the line on its own count, not forced: %+v %q on %d: %s", info.Need, info.Source, info.Devices, h.c.needBasis(info))
+	}
+	if info, _ := h.c.needAt(free, 3); info.Source != NeedDerived {
+		t.Fatalf("the same profile placed on 3: %+v %q", info.Need, info.Source)
+	}
+}
