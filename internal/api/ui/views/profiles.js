@@ -355,6 +355,7 @@ registerView({
         const p = get(id), del = pending.has(id) && pending.get(id).type === 'delete';
         return h('tr', { key: 'p-' + id, class: 'click sub' + (del ? ' mut' : ''), tabindex: '0', onclick: () => navigate('profiles', [id]), onkeydown: e => { if (e.key === 'Enter') navigate('profiles', [id]); } },
           h('td', h('span.mono.nowrap', { style: 'font-weight:500' }, id), gen(id) ? null : null,
+            p.description ? h('span.sub', p.description) : null,
             (p.aliases || []).length ? h('span.sub', 'also ' + p.aliases.join(', ')) : null,
             p.kind === 'command' ? h('span.sub.mono.wrap-any', p.cmd || '') : null,
             pending.has(id) && pending.get(id).errors && pending.get(id).errors.length ? h('span.sub.err-t', pending.get(id).errors[0]) : null),
