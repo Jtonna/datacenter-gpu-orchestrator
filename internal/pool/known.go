@@ -13,8 +13,9 @@ import (
 
 // Known machines across a restart. The pool keeps its agents in memory only,
 // so a machine whose agent does not register again after a Potluck restart
-// would not be listed at all. The members when the previous run ended are
-// read back from the event history (KnownFrom: no table of its own), and one
+// would not be listed at all. The machines listed when the previous run
+// ended are read back from the event history (KnownFrom: no table of its
+// own), and one
 // that has not registered when KnownGrace has passed since the start is
 // listed as lost, with when it was last seen, until its agent registers or
 // the owner removes it. It is never a node of the scheduler's view:
@@ -44,54 +45,59 @@ type HistoryScanner interface {
 }
 
 // KnownFrom folds the history, oldest first, into the known machines: the
-// members when the previous run of the scheduler ended, as of the last
-// schedulerStarted event (the run doing the reading; its own events are not
-// looked at). It reads these events:
+// machines listed when the previous run of the scheduler ended (active or
+// lost in that run's own list; not removed, not left), as of the last
+// schedulerStarted event. The run doing the reading (after that event) is
+// not looked at. It reads these events:
 //
-//   - schedulerStarted: a run begins. The members of the run that ended
-//     are carried into the new one: each machine whose last nodeMembership
-//     event in that run was active (joined, back), last seen when that run
-//     ended (its schedulerStopping event, or its last event of any kind after
-//     a crash), and each machine carried into that run that never registered
-//     in it, with the last seen it had.
-//   - nodeMembership state active: the machine is a member, seen then.
-//   - nodeMembership state lost or left: the machine is dropped at the next
-//     start, as the pool drops a lost agent at a restart today. The event
-//     this file writes for a carried machine that has not come back (data
-//     known: true) is not a loss and is skipped.
-//   - nodeAdmin action remove: the machine is dropped.
+//   - schedulerStarted (written at every start): a run begins; the one
+//     before ended. Its list becomes the known machines, and the new run's
+//     list starts empty.
+//   - schedulerStopping (written at every shutdown and by the fatal path),
+//     or after a crash the run's last event of any kind: when the run ended,
+//     the last seen of a machine still active in it.
+//   - nodeMembership state active (joined, back): the machine is listed,
+//     active, seen then.
+//   - nodeMembership state lost: the machine is listed, lost; last seen is
+//     the event's last_seen, or for an event without it (older images) the
+//     event's time less LostAfter.
+//   - nodeMembership with known: true: written by this image for a machine
+//     it carries (SetKnown) and when such a machine is listed (the grace
+//     over). The machine is listed, lost, with the last seen in the event,
+//     unless it registered in the run.
+//   - nodeMembership state left, and nodeAdmin action remove: the machine is
+//     not listed.
 //
-// Without a schedulerStarted event nothing is known.
+// An older image listed only the machines that registered in a run (active,
+// or lost after registering) and wrote no known: true events, so a run of
+// it is judged by the same rule without telling the images apart: a machine
+// it did not list is not carried. Without a schedulerStarted event nothing
+// is known.
 func KnownFrom(scan func(fn func(history.Event))) []KnownNode {
 	type rec struct {
-		name    string
-		active  bool // registered and not lost, left or removed in this run
-		carried bool // a member when the previous run ended, not seen in this run
-		seen    int64
+		name   string
+		active bool // registered and not lost since: last seen when the run ends
+		seen   int64
 	}
-	recs := map[string]*rec{}
+	list := map[string]*rec{}
 	var runLast int64
 	var snap []KnownNode
 	started := false
 	scan(func(e history.Event) {
 		if e.Type == history.TSchedulerStarted {
-			next := map[string]*rec{}
 			snap = snap[:0]
-			for id, r := range recs {
-				if !r.active && !r.carried {
-					continue
+			for id, r := range list {
+				seen := r.seen
+				if r.active && runLast > seen {
+					seen = runLast
 				}
-				if r.active && runLast > r.seen {
-					r.seen = runLast
-				}
-				next[id] = &rec{name: r.name, carried: true, seen: r.seen}
 				name := r.name
 				if name == "" {
 					name = id
 				}
-				snap = append(snap, KnownNode{ID: id, Name: name, LastSeen: time.UnixMilli(r.seen)})
+				snap = append(snap, KnownNode{ID: id, Name: name, LastSeen: time.UnixMilli(seen)})
 			}
-			recs, runLast, started = next, e.Ts, true
+			list, runLast, started = map[string]*rec{}, e.Ts, true
 			return
 		}
 		if e.Ts > runLast {
@@ -101,26 +107,34 @@ func KnownFrom(scan func(fn func(history.Event))) []KnownNode {
 		if id == "" {
 			return
 		}
-		switch {
-		case e.Type == history.TNodeAdmin && e.Data["action"] == "remove":
-			delete(recs, id)
-			return
-		case e.Type != history.TNodeMembership || e.Data["known"] == true:
+		if e.Type == history.TNodeAdmin {
+			if e.Data["action"] == "remove" {
+				delete(list, id)
+			}
 			return
 		}
-		r := recs[id]
-		if r == nil {
-			r = &rec{}
-			recs[id] = r
+		if e.Type != history.TNodeMembership {
+			return
 		}
+		name := id
 		if len(e.Nodes) > 0 && e.Nodes[0] != "" {
-			r.name = e.Nodes[0]
+			name = e.Nodes[0]
 		}
-		switch e.Data["state"] {
-		case StateActive:
-			r.active, r.carried, r.seen = true, false, e.Ts
-		case StateLost, StateLeft:
-			r.active, r.carried = false, false
+		ms, hasSeen := millis(e.Data["last_seen"])
+		switch {
+		case e.Data["known"] == true:
+			if _, ok := list[id]; !ok && hasSeen {
+				list[id] = &rec{name: name, seen: ms}
+			}
+		case e.Data["state"] == StateActive:
+			list[id] = &rec{name: name, active: true, seen: e.Ts}
+		case e.Data["state"] == StateLost:
+			if !hasSeen {
+				ms = e.Ts - LostAfter.Milliseconds()
+			}
+			list[id] = &rec{name: name, seen: ms}
+		case e.Data["state"] == StateLeft:
+			delete(list, id)
 		}
 	})
 	if !started {
@@ -131,6 +145,20 @@ func KnownFrom(scan func(fn func(history.Event))) []KnownNode {
 	return out
 }
 
+// millis reads a time in unix ms from event data, as recorded (int64) or as
+// read back from a file (float64).
+func millis(v any) (int64, bool) {
+	switch x := v.(type) {
+	case int64:
+		return x, true
+	case int:
+		return int64(x), true
+	case float64:
+		return int64(x), true
+	}
+	return 0, false
+}
+
 // SetKnown gives the pool the machines of earlier runs (KnownFrom).
 func (p *Pool) SetKnown(ks []KnownNode) {
 	p.mu.Lock()
@@ -138,6 +166,17 @@ func (p *Pool) SetKnown(ks []KnownNode) {
 	p.known = map[string]KnownNode{}
 	for _, k := range ks {
 		p.known[k.ID] = k
+		if _, ok := p.agents[k.ID]; ok || p.admin[k.ID].Removed {
+			continue // registered already (its own event lists it) or removed
+		}
+		// The carry event: this run lists the machine from its start, so the
+		// next start carries it again even if this run ends inside the grace.
+		p.historyLocked(history.Event{Ts: p.o.Clock().UnixMilli(), Type: history.TNodeMembership, Severity: history.Info,
+			Nodes: []string{k.Name},
+			Summary: fmt.Sprintf("Node %s is known from the previous run (last seen %s); it is listed as lost if its agent has not registered %s after the start.",
+				k.Name, k.LastSeen.UTC().Format(time.RFC3339), KnownGrace),
+			Data: map[string]any{"id": k.ID, "state": StateLost, "known": true, "carried": true, "absent_since_start": true,
+				"last_seen": k.LastSeen.UnixMilli()}})
 	}
 }
 
@@ -205,6 +244,6 @@ func (p *Pool) announceKnownLocked(now time.Time) {
 			Nodes: []string{k.Name},
 			Summary: fmt.Sprintf("Node %s has not come back since Potluck started; last seen %s ago.", k.Name,
 				now.Sub(k.LastSeen).Round(time.Minute)),
-			Data: map[string]any{"id": k.ID, "state": StateLost, "known": true, "last_seen": k.LastSeen.UnixMilli()}})
+			Data: map[string]any{"id": k.ID, "state": StateLost, "known": true, "absent_since_start": true, "last_seen": k.LastSeen.UnixMilli()}})
 	}
 }

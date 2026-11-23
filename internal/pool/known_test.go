@@ -34,54 +34,61 @@ func knownByID(ks []KnownNode) map[string]KnownNode {
 	return m
 }
 
-// The known machines are the members when the previous run ended: a
-// machine registered (active) when that run stopped, or carried into it
-// from the run before and never seen in it. A machine lost, left or removed
-// before the previous run stopped is dropped, as the pool drops it at a
-// restart today; the run doing the reading (after the last start) is not
-// looked at.
+// The known machines are the machines listed when the previous run ended:
+// active or lost in that run's own list, not removed or left. A run of an
+// older image listed only the machines that registered in it (active, or
+// lost after registering); a run of this image also lists the machines it
+// carried, and says so with a carry event (data known: true). The run doing
+// the reading (after the last start) is not looked at.
 func TestKnownFrom_Fold(t *testing.T) {
 	evs := []history.Event{
-		{Ts: 1000, Type: history.TSchedulerStarted}, // run 1
+		{Ts: 1000, Type: history.TSchedulerStarted}, // run 1, an older image
 		member(1100, "id-a", "node-a", StateActive, nil),
 		member(1200, "id-b", "node-b", StateActive, nil),
 		member(1300, "id-c", "node-c", StateActive, nil),
-		member(1400, "id-c", "node-c", StateLeft, nil),
+		member(1400, "id-c", "node-c", StateLeft, nil), // left: never known
 		member(1500, "id-d", "node-d", StateActive, nil),
-		member(30000, "id-d", "node-d", StateLost, map[string]any{"last_seen": float64(20000)}), // lost before the stop: dropped
-		member(31000, "id-f", "node-f", StateActive, nil),
-		member(31500, "id-g", "node-g", StateActive, nil),
+		member(30000, "id-d", "node-d", StateLost, map[string]any{"last_seen": float64(20000)}), // lost: still listed by run 1
+		member(31000, "id-e", "node-e", StateActive, nil),
+		member(45000, "id-e", "node-e", StateLost, nil), // no last_seen (older image): Ts - LostAfter
 		{Ts: 50000, Type: history.TSchedulerStopping},
-		{Ts: 60000, Type: history.TSchedulerStarted}, // run 2: a, b, f and g carried
-		member(61000, "id-b", "node-b", StateActive, nil),
-		member(62000, "id-f", "node-f", StateActive, nil),
-		member(65000, "id-f", "node-f", StateLost, nil), // the ghost: registered, then lost in run 2
-		{Ts: 66000, Type: history.TNodeAdmin, Nodes: []string{"id-g"}, Data: map[string]any{"id": "id-g", "action": "remove"}},
-		member(66500, "id-a", "node-a", StateLost, map[string]any{"known": true, "last_seen": int64(50000)}), // run 2 listed a as not back
-		{Ts: 70000, Type: history.TLoadStarted},                                                              // run 2 crashed after this
-		{Ts: 90000, Type: history.TSchedulerStarted},                                                         // run 3: this one
-		member(91000, "id-h", "node-h", StateActive, nil),
-		member(92000, "id-b", "node-b", StateActive, nil),
 	}
-	got := knownByID(KnownFrom(scanOf(evs)))
-	want := map[string]int64{"id-a": 50000, "id-b": 70000}
+	got := knownByID(KnownFrom(scanOf(append(evs, history.Event{Ts: 60000, Type: history.TSchedulerStarted}))))
+	want := map[string]int64{"id-a": 50000, "id-b": 50000, "id-d": 20000, "id-e": 45000 - LostAfter.Milliseconds()}
 	if len(got) != len(want) {
-		t.Fatalf("known = %+v, want a and b only", got)
+		t.Fatalf("after run 1: %+v", got)
 	}
 	for id, ms := range want {
 		if k, ok := got[id]; !ok || k.LastSeen.UnixMilli() != ms {
-			t.Errorf("%s: %+v, want last seen %d", id, k, ms)
+			t.Errorf("after run 1, %s: %+v, want last seen %d", id, k, ms)
 		}
 	}
-	if got["id-a"].Name != "node-a" {
-		t.Errorf("name %q", got["id-a"].Name)
-	}
-	// A carried machine stays known across further restarts until it
-	// registers (and is then dropped only if it is lost again) or is removed.
-	evs = append(evs, history.Event{Ts: 100000, Type: history.TSchedulerStopping}, history.Event{Ts: 200000, Type: history.TSchedulerStarted})
+	// Run 2 is an older image too: it lists only b (registered again).
+	// a, d and e were dropped by it; they stay unlisted (the ghost, E).
+	evs = append(evs,
+		history.Event{Ts: 60000, Type: history.TSchedulerStarted},
+		member(61000, "id-b", "node-b", StateActive, nil),
+		history.Event{Ts: 70000, Type: history.TLoadStarted},      // run 2 crashed after this
+		history.Event{Ts: 90000, Type: history.TSchedulerStarted}, // run 3, this image
+	)
 	got = knownByID(KnownFrom(scanOf(evs)))
-	if got["id-a"].LastSeen.UnixMilli() != 50000 || got["id-b"].LastSeen.UnixMilli() != 100000 || got["id-h"].LastSeen.UnixMilli() != 100000 || len(got) != 3 {
-		t.Errorf("after a fourth start: %+v", got)
+	if len(got) != 1 || got["id-b"].LastSeen.UnixMilli() != 70000 || got["id-b"].Name != "node-b" {
+		t.Fatalf("after run 2 (E): %+v", got)
+	}
+	// Run 3 (this image) carries b and writes its carry event; f registers
+	// and is lost; g registers and is removed (C).
+	evs = append(evs,
+		member(90500, "id-b", "node-b", StateLost, map[string]any{"known": true, "carried": true, "last_seen": int64(70000)}),
+		member(91000, "id-f", "node-f", StateActive, nil),
+		member(92000, "id-f", "node-f", StateLost, map[string]any{"last_seen": int64(91500)}),
+		member(93000, "id-g", "node-g", StateActive, nil),
+		history.Event{Ts: 94000, Type: history.TNodeAdmin, Nodes: []string{"node-g"}, Data: map[string]any{"id": "id-g", "action": "remove"}},
+		history.Event{Ts: 95000, Type: history.TSchedulerStopping},
+		history.Event{Ts: 100000, Type: history.TSchedulerStarted}, // run 4
+	)
+	got = knownByID(KnownFrom(scanOf(evs)))
+	if len(got) != 2 || got["id-b"].LastSeen.UnixMilli() != 70000 || got["id-f"].LastSeen.UnixMilli() != 91500 {
+		t.Fatalf("after run 3: %+v", got)
 	}
 	// No start marker at all: nothing is known.
 	if ks := KnownFrom(scanOf(evs[1:8])); len(ks) != 0 {
@@ -197,7 +204,7 @@ func TestKnown_AnnouncedOnce(t *testing.T) {
 		r.hist.mu.Lock()
 		defer r.hist.mu.Unlock()
 		for _, e := range r.hist.ev {
-			if e.Type == history.TNodeMembership && e.Data["known"] == true {
+			if e.Type == history.TNodeMembership && e.Data["known"] == true && e.Severity == history.Warn {
 				n++
 				last = e
 			}
@@ -207,6 +214,20 @@ func TestKnown_AnnouncedOnce(t *testing.T) {
 	r.p.CheckLost()
 	if n, _ := count(); n != 0 {
 		t.Fatal("announced during the grace")
+	}
+	// The carry event is written at once: the run lists the machine from its
+	// start, so the next start carries it even if this run ends in the grace.
+	r.hist.mu.Lock()
+	var carry []history.Event
+	for _, e := range r.hist.ev {
+		if e.Data["carried"] == true {
+			carry = append(carry, e)
+		}
+	}
+	r.hist.mu.Unlock()
+	if len(carry) != 1 || carry[0].Severity != history.Info || carry[0].Data["state"] != StateLost || carry[0].Data["known"] != true ||
+		carry[0].Data["last_seen"] != seen.UnixMilli() || carry[0].Data["absent_since_start"] != true || carry[0].Nodes[0] != "node-9" {
+		t.Fatalf("carry event: %+v", carry)
 	}
 	r.clk.advance(KnownGrace)
 	r.p.CheckLost()
@@ -271,30 +292,111 @@ func TestKnown_LoadedFromHistoryStore(t *testing.T) {
 	}, "the known machine from the store")
 }
 
-// A machine lost before the previous run stopped is not listed after the
-// restart: the pool drops it today, and it stays dropped.
-func TestKnown_LostBeforeStopIsNotListed(t *testing.T) {
-	r := newRig(t)
-	a := r.agent(1)
-	eventually(t, 5*time.Second, func() bool { f, _ := knownFact(r.p, a.ID); return f.State == StateActive }, "registered")
-	a.Close()
-	r.clk.advance(LeaseTTL + time.Second)
-	r.p.CheckLost()
-	if f, _ := knownFact(r.p, a.ID); f.State != StateLost {
-		t.Fatalf("not lost: %+v", f)
-	}
+// restart appends the stop of the run under way and the start of a new
+// one, starts a new pool on the same store and history, and gives it the
+// machines KnownFrom reads from that history, as SetHistory does.
+func (r *rig) restart() {
 	r.hist.mu.Lock()
-	r.hist.ev = append([]history.Event{{Ts: 1, Type: history.TSchedulerStarted}}, r.hist.ev...)
+	if len(r.hist.ev) == 0 || r.hist.ev[0].Type != history.TSchedulerStarted {
+		r.hist.ev = append([]history.Event{{Ts: 1, Type: history.TSchedulerStarted}}, r.hist.ev...)
+	}
 	r.hist.ev = append(r.hist.ev, history.Event{Ts: r.clk.now().UnixMilli(), Type: history.TSchedulerStopping})
 	r.hist.mu.Unlock()
+	r.clk.advance(time.Minute)
 	r.start()
 	r.hist.mu.Lock()
 	r.hist.ev = append(r.hist.ev, history.Event{Ts: r.clk.now().UnixMilli(), Type: history.TSchedulerStarted})
 	evs := append([]history.Event(nil), r.hist.ev...)
 	r.hist.mu.Unlock()
 	r.p.SetKnown(KnownFrom(scanOf(evs)))
+}
+
+// D: a machine already lost when the previous run ended stays listed as
+// lost after the restart, with its last seen from before, and again after a
+// second and a third restart (each run writes its carry event).
+func TestKnown_LostStaysListedAcrossThreeRestarts(t *testing.T) {
+	r := newRig(t)
+	a := r.agent(1)
+	eventually(t, 5*time.Second, func() bool { f, _ := knownFact(r.p, a.ID); return f.State == StateActive }, "registered")
+	a.Close()
+	r.clk.advance(LeaseTTL + time.Second)
+	r.p.CheckLost()
+	f, _ := knownFact(r.p, a.ID)
+	if f.State != StateLost || f.LastSeenAt == nil {
+		t.Fatalf("not lost: %+v", f)
+	}
+	seen := f.LastSeenAt.UnixMilli()
+	for i := 1; i <= 3; i++ {
+		r.restart()
+		if _, n := knownFact(r.p, a.ID); n != 0 {
+			t.Fatalf("restart %d: listed during the grace", i)
+		}
+		if i == 2 {
+			r.clk.advance(10 * time.Second) // this run ends inside its grace: still carried
+			continue
+		}
+		r.clk.advance(KnownGrace)
+		r.p.CheckLost()
+		f, n := knownFact(r.p, a.ID)
+		if n != 1 || f.State != StateLost || !f.AbsentSinceStart || f.Name != "node-1" || f.LastSeenAt == nil || f.LastSeenAt.UnixMilli() != seen {
+			t.Fatalf("restart %d: %d %+v, want last seen %d", i, n, f, seen)
+		}
+	}
+}
+
+// C: a machine removed before the restart stays removed and is not listed
+// as lost.
+func TestKnown_RemovedBeforeRestartStaysRemoved(t *testing.T) {
+	r := newRig(t)
+	a := r.agent(1)
+	eventually(t, 5*time.Second, func() bool { f, _ := knownFact(r.p, a.ID); return f.State == StateActive }, "registered")
+	if err := r.p.Remove(context.Background(), a.ID); err != nil {
+		t.Fatal(err)
+	}
+	r.p.Record(a.ID, "Node was removed from the pool: test", map[string]any{"action": "remove", "comment": "test"})
+	a.Close()
+	for i := 1; i <= 2; i++ {
+		r.restart()
+		r.clk.advance(KnownGrace)
+		r.p.CheckLost()
+		if f, n := knownFact(r.p, a.ID); n != 1 || f.State != StateRemoved || f.AbsentSinceStart {
+			t.Fatalf("restart %d: %d %+v", i, n, f)
+		}
+	}
+	// Re-admitted, it is listed again only when its agent registers.
+	if err := r.p.Readmit(a.ID); err != nil {
+		t.Fatal(err)
+	}
+	r.restart()
 	r.clk.advance(KnownGrace)
 	if _, n := knownFact(r.p, a.ID); n != 0 {
-		t.Fatal("a machine lost before the stop came back as a ghost")
+		t.Fatal("listed after a re-admit without registering")
+	}
+}
+
+// E: a machine an older image had already dropped (lost several restarts
+// ago, not listed by the run that just ended) stays unlisted.
+func TestKnown_DroppedByAnOlderRunStaysUnlisted(t *testing.T) {
+	evs := []history.Event{
+		{Ts: 1000, Type: history.TSchedulerStarted},
+		member(1100, "02:00:00:00:00:0e", "ghost", StateActive, nil),
+		member(5000, "02:00:00:00:00:0e", "ghost", StateLost, nil),
+		{Ts: 9000, Type: history.TSchedulerStopping},
+		{Ts: 10000, Type: history.TSchedulerStarted}, // older image: lists only what registers
+		member(10100, "02:00:00:00:00:01", "node-1", StateActive, nil),
+		{Ts: 19000, Type: history.TSchedulerStopping},
+		{Ts: 20000, Type: history.TSchedulerStarted}, // older image again
+		member(20100, "02:00:00:00:00:01", "node-1", StateActive, nil),
+		{Ts: 29000, Type: history.TSchedulerStopping},
+		{Ts: 30000, Type: history.TSchedulerStarted}, // this image
+	}
+	r := newRig(t)
+	r.p.SetKnown(KnownFrom(scanOf(evs)))
+	r.clk.advance(KnownGrace)
+	if _, n := knownFact(r.p, "02:00:00:00:00:0e"); n != 0 {
+		t.Fatal("the ghost is listed")
+	}
+	if f, n := knownFact(r.p, "02:00:00:00:00:01"); n != 1 || f.State != StateLost || f.LastSeenAt.UnixMilli() != 29000 {
+		t.Fatalf("node-1: %d %+v", n, f)
 	}
 }
