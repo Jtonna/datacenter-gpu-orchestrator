@@ -237,6 +237,12 @@ func Forward(w http.ResponseWriter, r *http.Request, o Options) (res Result) {
 			pr.Out.URL.Scheme = "http"
 			pr.Out.URL.Host = o.Addr
 			pr.Out.Host = o.Addr
+			// The client's credentials are not the model server's business:
+			// an Authorization header (often another provider's real key,
+			// sent by habit) and a Potluck access key are dropped; the
+			// server gets Potluck's own launch key when it has one.
+			pr.Out.Header.Del("Authorization")
+			pr.Out.Header.Del("X-Agent-Key")
 			if o.APIKey != "" {
 				pr.Out.Header.Set("Authorization", "Bearer "+o.APIKey)
 			}

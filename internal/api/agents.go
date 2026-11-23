@@ -127,6 +127,7 @@ func (g *agentRegistry) reset() {
 var (
 	errUnknownKey = errors.New("unknown agent key: no agent has this key (it may be mistyped, or it was replaced by a newer one). Requests without a key are accepted; a wrong key is refused so that its actions are not recorded as nobody's")
 	errRevokedKey = errors.New("this agent key was revoked. Create a new key (or ask the owner for one) under MCP in the web UI")
+	errTwoKeys    = errors.New("this request carries two different agent keys in Authorization headers; send one")
 	errExpiredKey = errors.New("this agent key has expired. The owner can extend it or rotate it under MCP in the web UI")
 )
 
@@ -241,20 +242,41 @@ func (g *agentRegistry) flush() {
 	}
 }
 
-// keyOf reads an agent key from a request: X-Agent-Key, or a Bearer token
-// that starts with ptl_ (or lls_, the older keys). Any other Authorization
-// value is not an agent key (OpenAI clients always send one) and is
-// ignored, as it always was.
-func keyOf(r *http.Request) string {
+// keyOf reads an access key from a request: the header X-Agent-Key
+// (Potluck's own: any value there is a key, as it always was), or an
+// Authorization header "Bearer <value>" whose value begins with ptl_ or lls_
+// (the scheme in any case, spaces around it ignored). A value beginning
+// ptl_ or lls_ is always taken as a Potluck key, so a wrong one is refused.
+// Anything else in Authorization (OpenAI-style keys clients send by habit,
+// an empty Bearer, Basic, other schemes) is not a key and is ignored: the
+// request is keyless. It is not kept, logged or passed on (the proxy drops
+// the header before the model server). conflict is true when the request
+// carries two different Potluck keys.
+func keyOf(r *http.Request) (key string, conflict bool) {
 	if k := strings.TrimSpace(r.Header.Get("X-Agent-Key")); k != "" {
-		return k
+		return k, false
 	}
-	if a := r.Header.Get("Authorization"); len(a) > 7 && strings.EqualFold(a[:7], "Bearer ") {
-		if k := strings.TrimSpace(a[7:]); strings.HasPrefix(k, AgentKeyPrefix) || strings.HasPrefix(k, LegacyKeyPrefix) {
-			return k
+	for _, a := range r.Header.Values("Authorization") {
+		a = strings.TrimSpace(a)
+		i := strings.IndexAny(a, " 	")
+		if i < 0 || !strings.EqualFold(a[:i], "Bearer") {
+			continue
 		}
+		v := strings.TrimSpace(a[i:])
+		if !looksLikeKey(v) {
+			continue
+		}
+		if key != "" && key != v {
+			return "", true
+		}
+		key = v
 	}
-	return ""
+	return key, false
+}
+
+// looksLikeKey: the value begins with a Potluck key prefix.
+func looksLikeKey(v string) bool {
+	return strings.HasPrefix(v, AgentKeyPrefix) || strings.HasPrefix(v, LegacyKeyPrefix)
 }
 
 // identify resolves the agent key of a request, if it carries one. ok false
@@ -286,7 +308,10 @@ func (s *Server) IdentifyAgent(r *http.Request) (context.Context, int, error) {
 	if _, _, ok := audit.AgentFrom(ctx); ok {
 		return ctx, 0, nil
 	}
-	key := keyOf(r)
+	key, conflict := keyOf(r)
+	if conflict {
+		return ctx, http.StatusUnauthorized, errTwoKeys
+	}
 	if key == "" {
 		return ctx, 0, nil
 	}

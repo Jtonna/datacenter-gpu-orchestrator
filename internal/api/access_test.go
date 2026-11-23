@@ -420,17 +420,21 @@ func TestAccessKeys_ForeignBearerTokensAreIgnored(t *testing.T) {
 	}
 	t.Logf("keyless answers: %v", keyless)
 	foreign := map[string]map[string]string{
-		"Bearer sk-anything":  {"Authorization": "Bearer sk-anything"},
-		"Bearer sk-local":     {"Authorization": "Bearer sk-local"},
-		"Bearer none":         {"Authorization": "Bearer none"},
-		"Bearer dummy":        {"Authorization": "Bearer dummy"},
-		"empty Bearer":        {"Authorization": "Bearer "},
-		"bare Bearer":         {"Authorization": "Bearer"},
-		"empty Authorization": {"Authorization": ""},
-		"Basic auth":          {"Authorization": "Basic dXNlcjpwYXNz"},
-		"an OpenAI-style key": {"Authorization": "Bearer sk-proj-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
-		"a prefix mid-token":  {"Authorization": "Bearer x-ptl_abc"},
-		"Token scheme ptl_":   {"Authorization": "Token ptl_abcdefabcdefabcdefabcdefabcdefab"},
+		"Bearer sk-anything":    {"Authorization": "Bearer sk-anything"},
+		"Bearer sk-local":       {"Authorization": "Bearer sk-local"},
+		"Bearer none":           {"Authorization": "Bearer none"},
+		"Bearer dummy":          {"Authorization": "Bearer dummy"},
+		"empty Bearer":          {"Authorization": "Bearer "},
+		"bare Bearer":           {"Authorization": "Bearer"},
+		"empty Authorization":   {"Authorization": ""},
+		"Basic auth":            {"Authorization": "Basic dXNlcjpwYXNz"},
+		"an OpenAI-style key":   {"Authorization": "Bearer sk-proj-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
+		"a prefix mid-token":    {"Authorization": "Bearer x-ptl_abc"},
+		"Token scheme ptl_":     {"Authorization": "Token ptl_abcdefabcdefabcdefabcdefabcdefab"},
+		"200 random characters": {"Authorization": "Bearer " + strings.Repeat("aZ9-_x.Q~", 23)[:200]},
+		"lower-case bearer sk":  {"Authorization": "bearer sk-lower"},
+		"spaces around sk":      {"Authorization": "   Bearer    sk-spaced   "},
+		"ptl_ in the middle":    {"Authorization": "Bearer sk-ptl_lls_inside"},
 	}
 	for name, hdr := range foreign {
 		for _, r := range routes {
@@ -475,7 +479,10 @@ func TestAccessKeys_ForeignBearerTokensAreIgnored(t *testing.T) {
 	for _, hdr := range []map[string]string{
 		{"Authorization": "Bearer ptl_unknownunknownunknownunknownunkn"},
 		{"Authorization": "bearer lls_unknownunknownunknownunknownunkn"},
-		{"X-Agent-Key": "sk-local"}, // Potluck's own header: any value is a key, as before
+		{"X-Agent-Key": "sk-local"},                  // Potluck's own header: any value is a key, as before
+		{"Authorization": "Bearer ptl_!!garbage##"},  // begins ptl_: always taken as a Potluck key
+		{"Authorization": "  bearer   ptl_spaced  "}, // any case, any spaces
+		{"Authorization": "Bearer ptl_ two words"},   // still begins ptl_
 	} {
 		for _, r := range routes {
 			h := map[string]string{"Content-Type": "application/json"}
@@ -489,6 +496,38 @@ func TestAccessKeys_ForeignBearerTokensAreIgnored(t *testing.T) {
 		}
 		if code, out := mcpCall(mcp, "get_status", `{}`, hdr); code != 401 || !strings.Contains(out, "unknown agent key") {
 			t.Errorf("%v over MCP: %d %s", hdr, code, out)
+		}
+	}
+}
+
+// Two Authorization headers: a Potluck key in either counts; two different
+// Potluck keys are refused; two foreign values are keyless.
+func TestAccessKeys_TwoAuthorizationHeaders(t *testing.T) {
+	e, _, _ := accessEnv(t)
+	key, _ := newKey(t, e, `{"name":"two-headers"}`)
+	do := func(vals ...string) (int, string) {
+		req := httptest.NewRequest("GET", "/api/status", nil)
+		for _, v := range vals {
+			req.Header.Add("Authorization", v)
+		}
+		rec := httptest.NewRecorder()
+		e.api.ServeHTTP(rec, req)
+		return rec.Code, rec.Body.String()
+	}
+	for _, c := range []struct {
+		vals []string
+		want int
+		has  string
+	}{
+		{[]string{"Bearer sk-one", "Basic dXNlcjpwYXNz"}, 200, ""},
+		{[]string{"Bearer sk-one", "Bearer " + key}, 200, ""},
+		{[]string{"Bearer " + key, "Bearer " + key}, 200, ""},
+		{[]string{"Bearer sk-one", "Bearer ptl_unknownunknownunknownunknownunkn"}, 401, "unknown agent key"},
+		{[]string{"Bearer " + key, "Bearer ptl_unknownunknownunknownunknownunkn"}, 401, "two different agent keys"},
+	} {
+		st, body := do(c.vals...)
+		if st != c.want || !strings.Contains(body, c.has) {
+			t.Errorf("%q: %d %s", c.vals, st, body)
 		}
 	}
 }

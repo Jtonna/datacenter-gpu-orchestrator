@@ -400,3 +400,35 @@ func TestForward_ClientLeavingMidStreamIsClientLeft(t *testing.T) {
 		t.Fatalf("%+v reason %q", r, r.Reason())
 	}
 }
+
+// The client's credentials never reach the model server: its Authorization
+// header (often another provider's real key) and a Potluck access key are
+// dropped; a model server with a launch key gets that key instead.
+func TestForward_ClientCredentialsAreNotForwarded(t *testing.T) {
+	var got atomic.Value
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got.Store([2][]string{r.Header.Values("Authorization"), r.Header.Values("X-Agent-Key")})
+		fmt.Fprint(w, `{}`)
+	}))
+	defer up.Close()
+	for _, launchKey := range []string{"", "launch-key-1"} {
+		f := front(t, Options{Addr: upstreamAddr(up), APIKey: launchKey}, nil)
+		req, _ := http.NewRequest("POST", f.URL+"/v1/chat/completions", strings.NewReader(`{}`))
+		req.Header.Add("Authorization", "Bearer sk-CANARY-forwarded")
+		req.Header.Add("Authorization", "Basic dXNlcjpwYXNz")
+		req.Header.Set("X-Agent-Key", "ptl_CANARYCANARYCANARYCANARYCANARYCA")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		h := got.Load().([2][]string)
+		want := []string(nil)
+		if launchKey != "" {
+			want = []string{"Bearer " + launchKey}
+		}
+		if fmt.Sprint(h[0]) != fmt.Sprint(want) || len(h[1]) != 0 {
+			t.Errorf("launch key %q: the model server got Authorization %q, X-Agent-Key %q", launchKey, h[0], h[1])
+		}
+	}
+}

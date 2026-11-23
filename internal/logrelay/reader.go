@@ -204,6 +204,7 @@ func (r *Relay) ServePages(w http.ResponseWriter, req *http.Request) {
 			pr.Out.Host = target.Host
 			pr.Out.Header.Del("Cookie")
 			pr.Out.Header.Del("Authorization")
+			pr.Out.Header.Del("X-Agent-Key")
 		},
 		Transport:     r.read.tr,
 		FlushInterval: -1, // pass every write on at once: the search page tails logs
