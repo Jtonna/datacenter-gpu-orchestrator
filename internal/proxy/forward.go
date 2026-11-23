@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -42,6 +43,9 @@ type Options struct {
 	// Live, when set, is updated while the response streams (the request
 	// log's live rows): no allocation, no lock, nothing written anywhere.
 	Live *Live
+	// BodyLen, when above 0, is Body's length: the Content-Length of a body
+	// that differs from the client's (Extracted.AddTimingsPerToken).
+	BodyLen int64
 }
 
 // Live is a forwarded request's progress while it runs. Read it with its
@@ -235,6 +239,11 @@ func Forward(w http.ResponseWriter, r *http.Request, o Options) (res Result) {
 			}
 			if o.Body != nil {
 				pr.Out.Body = o.Body
+				if o.BodyLen > 0 {
+					pr.Out.ContentLength = o.BodyLen
+					pr.Out.Header.Set("Content-Length", strconv.FormatInt(o.BodyLen, 10))
+					pr.Out.TransferEncoding = nil
+				}
 			}
 			pr.SetXForwarded()
 		},

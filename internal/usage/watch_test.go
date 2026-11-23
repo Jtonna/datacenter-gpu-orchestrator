@@ -143,3 +143,61 @@ func TestRecorder_LiveRowSaysThePromptWhenTheServerDoes(t *testing.T) {
 		t.Fatalf("%+v", row)
 	}
 }
+
+// No request is listed twice in one page, whatever it is doing while the
+// page is built: a request that ends while the live rows are copied (here
+// still in the live set when it is already final), a finished one both in
+// memory and stored, and one stored while still kept in memory.
+func TestList_NoRowTwiceAcrossLiveMemoryAndStore(t *testing.T) {
+	c := &clock{t: time.Date(2026, 11, 17, 16, 0, 0, 0, time.UTC)}
+	r, st := recorderT(t, t.TempDir(), c)
+	var all []*Tracker
+	for i := 0; i < 10; i++ {
+		tr := r.Queued(begin("p"))
+		tr.Started(Placement{}, nil)
+		c.add(time.Second)
+		if i < 8 {
+			tr.Ended(done(10, 0, 2))
+		}
+		all = append(all, tr)
+	}
+	if err := r.Flush(t.Context()); err != nil { // the 8 finished: stored and still in memory
+		t.Fatal(err)
+	}
+	// The race window: a tracker still in the live set whose row is final.
+	all[7].mu.Lock()
+	all[7].row.Status = StatusDone
+	all[7].mu.Unlock()
+	func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.live[all[7].row.ID] = all[7]
+	}()
+	for _, f := range []Filter{{}, {Limit: 3}, {Limit: 9}, {Status: []string{StatusDone, StatusRunning}}} {
+		ids := map[int64]int{}
+		var walk []Request
+		for page := (Page{}); ; {
+			p, err := r.List(Filter{Status: f.Status, Limit: f.Limit, Before: page.Next})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, row := range p.Requests {
+				ids[row.ID]++
+				walk = append(walk, row)
+			}
+			if p.Next == 0 {
+				break
+			}
+			page = p
+		}
+		for id, n := range ids {
+			if n != 1 {
+				t.Fatalf("filter %+v: request %d listed %d times in %+v", f, id, n, walk)
+			}
+		}
+		if len(ids) != 10 {
+			t.Fatalf("filter %+v: %d requests, want 10", f, len(ids))
+		}
+	}
+	_ = st
+}

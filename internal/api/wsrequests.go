@@ -239,11 +239,3 @@ func (s *Server) wireRequests(h *wsHub) {
 	s.reqs.SetWatcher(h)
 	h.cancels = append(h.cancels, func() { s.reqs.SetWatcher(nil) })
 }
-
-// beginsAt is the store's history_begins_at in unix ms; nil when off.
-func beginsAt(st *usage.Store) any {
-	if !st.On() {
-		return nil
-	}
-	return st.HistoryBeginsAt().UnixMilli()
-}

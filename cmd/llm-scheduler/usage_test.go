@@ -30,7 +30,7 @@ func TestDamagedOrMissingUsageFileStartsHealthy(t *testing.T) {
 			t.Fatalf("damaged=%v: /health %d %s\n%s", damaged, hcode, hbody, logs.String())
 		}
 		var sum usage.Summary
-		if code != 200 || json.Unmarshal([]byte(body), &sum) != nil || !sum.On || sum.HistoryBeginsAt == 0 {
+		if code != 200 || json.Unmarshal([]byte(body), &sum) != nil || !sum.On || sum.HistoryBeginsAt == nil || *sum.HistoryBeginsAt <= 0 {
 			t.Fatalf("damaged=%v: summary %d %s", damaged, code, body)
 		}
 		warns := 0

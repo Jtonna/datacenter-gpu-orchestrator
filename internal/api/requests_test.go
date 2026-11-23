@@ -285,8 +285,11 @@ func TestRequests_NoStoreStillServes(t *testing.T) {
 	if p.On || len(p.Requests) != 1 || p.Requests[0].Status != usage.StatusDone {
 		t.Fatalf("%+v", p)
 	}
-	if raw := body(t, e.get("/api/requests")); !strings.Contains(raw, `"history_begins_at":null`) {
-		t.Fatalf("an off store has no history start: %s", raw)
+	// An off store has no history start: null, not the zero time.
+	for _, path := range []string{"/api/requests", "/api/requests/summary"} {
+		if raw := body(t, e.get(path)); !strings.Contains(raw, `"history_begins_at":null`) {
+			t.Fatalf("%s: %s", path, raw)
+		}
 	}
 	if r := e.get("/api/requests/summary"); r.StatusCode != 200 {
 		t.Fatal(r.StatusCode)
@@ -332,5 +335,76 @@ func TestRequests_FullDiskNeverStopsTheScheduler(t *testing.T) {
 	}
 	if p := listRequests(t, e, "?limit=500"); len(p.Requests) == 0 {
 		t.Fatal("the routes answer nothing")
+	}
+}
+
+// requests_live_timings: a streamed chat or completion request that does
+// not set timings_per_token gets it (with the right Content-Length); off,
+// non-streamed, already set, a benchmark's request, or another path: the
+// body arrives byte for byte as the client sent it.
+func TestRequests_LiveTimingsRewritesOnlyWhenOnAndUnset(t *testing.T) {
+	var mu sync.Mutex
+	var got []string
+	var lengths []int64
+	up := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		got, lengths = append(got, string(b)), append(lengths, r.ContentLength)
+		mu.Unlock()
+		chatOK(w, r)
+	})
+	e := newEnv(t, up)
+	send := func(path, body string, bench bool) string {
+		t.Helper()
+		req, _ := http.NewRequest("POST", e.front.URL+path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		if bench {
+			req.Header.Set("X-Bench-Run", "run-1")
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("%s: %d", body, resp.StatusCode)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		last := got[len(got)-1]
+		if lengths[len(lengths)-1] != int64(len(last)) {
+			t.Fatalf("Content-Length %d for %d bytes", lengths[len(lengths)-1], len(last))
+		}
+		return last
+	}
+	stream := `{"model":"alpha","stream":true,"messages":[{"role":"user","content":"hi"}]}`
+	if b := send("/v1/chat/completions", stream, false); b != stream {
+		t.Fatalf("rewritten while off: %s", b)
+	}
+	e.cfg.RequestsLiveTimings = true
+	if b := send("/v1/chat/completions", stream, false); b != `{"timings_per_token":true,`+stream[1:] {
+		t.Fatalf("chat stream: %s", b)
+	}
+	completion := `{"model":"alpha","stream":true,"prompt":"hi"}`
+	if b := send("/v1/completions", completion, false); b != `{"timings_per_token":true,`+completion[1:] {
+		t.Fatalf("completion stream: %s", b)
+	}
+	for _, c := range []struct {
+		path, body string
+		bench      bool
+	}{
+		{"/v1/chat/completions", `{"model":"alpha","messages":[{"role":"user","content":"hi"}]}`, false},
+		{"/v1/chat/completions", `{"model":"alpha","stream":true,"timings_per_token":false,"messages":[]}`, false},
+		{"/v1/chat/completions", stream, true},
+		{"/v1/embeddings", `{"model":"alpha","stream":true,"input":"hi"}`, false},
+	} {
+		if b := send(c.path, c.body, c.bench); b != c.body {
+			t.Fatalf("%s %s (bench %v) rewritten: %s", c.path, c.body, c.bench, b)
+		}
+	}
+	// A body that is not JSON never reaches the model server (400, as before).
+	if r := e.post("/v1/chat/completions", `not json`); r.StatusCode != 400 {
+		t.Fatalf("not JSON: %d", r.StatusCode)
 	}
 }

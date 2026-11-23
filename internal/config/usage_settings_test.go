@@ -36,3 +36,31 @@ func TestUsageSettingsAreStoredOnlyWhenSet(t *testing.T) {
 		t.Fatal("0 days accepted")
 	}
 }
+
+// requests_live_timings is off unless set, stored only when set, and
+// reaches the Config.
+func TestRequestsLiveTimingsIsOffAndStoredOnlyWhenSet(t *testing.T) {
+	for _, c := range []struct {
+		yml       string
+		wantStore bool
+	}{
+		{"history_keep_files: 7\n", false},
+		{"requests_live_timings: false\n", false},
+		{"requests_live_timings: true\n", true},
+	} {
+		imp, err := ParseYAMLImport([]byte(c.yml), Bootstrap{ModelsDir: "/m"}, Options{FileExists: always})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, got := imp.Doc.Settings["requests_live_timings"]; got != c.wantStore {
+			t.Fatalf("%q: stored settings %v", c.yml, imp.Doc.Settings)
+		}
+		cfg, err := Build(imp.Doc, Bootstrap{ModelsDir: "/m"}, Options{FileExists: always})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.RequestsLiveTimings != c.wantStore {
+			t.Fatalf("%q: %v", c.yml, cfg.RequestsLiveTimings)
+		}
+	}
+}

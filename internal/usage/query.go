@@ -118,12 +118,16 @@ func (r *Recorder) List(f Filter) (Page, error) {
 	}
 	f.Limit = min(f.Limit, 500)
 	page := Page{Requests: []Request{}}
+	seen := map[int64]bool{}
 	if f.Before == 0 {
 		var queued, running []Request
 		for _, row := range r.Live() {
-			if !f.matchesLive(&row) {
+			// A request that ended while Live copied it is already
+			// final: it is listed once, below, among the finished.
+			if row.Status != StatusQueued && row.Status != StatusRunning || !f.matchesLive(&row) {
 				continue
 			}
+			seen[row.ID] = true
 			if row.Status == StatusQueued {
 				queued = append(queued, row)
 			} else {
@@ -149,7 +153,7 @@ func (r *Recorder) List(f Filter) (Page, error) {
 	}
 	// Rows that just ended may not be stored yet (or never, on an off
 	// store): the recorder's recent ones fill the gap.
-	seen := map[int64]bool{}
+	stored = slices.DeleteFunc(stored, func(row Request) bool { return seen[row.ID] })
 	for _, row := range stored {
 		seen[row.ID] = true
 	}
@@ -322,9 +326,9 @@ type Summary struct {
 	// when there is none): the Overview disables "previous" before it.
 	OldestTS int64 `json:"oldest_ts"`
 	// HistoryBeginsAt is when the usage file began: before it, nothing was
-	// recorded (0 when the store is off).
-	HistoryBeginsAt int64 `json:"history_begins_at"`
-	On              bool  `json:"on"`
+	// recorded (unix ms; null when the store is off).
+	HistoryBeginsAt *int64 `json:"history_begins_at"`
+	On              bool   `json:"on"`
 }
 
 // MaxBuckets bounds a series.
@@ -372,7 +376,8 @@ func (r *Recorder) Summarize(from, to int64, step, profile string) (Summary, err
 		return sum, nil
 	}
 	sum.On = true
-	sum.HistoryBeginsAt = st.HistoryBeginsAt().UnixMilli()
+	begins := st.HistoryBeginsAt().UnixMilli()
+	sum.HistoryBeginsAt = &begins
 	table := "request_hours"
 	if step == StepDay && from < hourOf(st.Now().Add(-st.opt.Retention.KeepHourly).UnixMilli())+int64(time.Hour/time.Millisecond) {
 		table, sum.Source = "request_days", "daily"

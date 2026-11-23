@@ -428,6 +428,11 @@ func (s *Server) handleV1(w http.ResponseWriter, r *http.Request) {
 	defer ex.Body.Close()
 
 	benchRun := benchRunHeader(r.Header.Get("X-Bench-Run"))
+	// Live prompt figures (requests_live_timings): a benchmark's requests
+	// are left as sent, so it measures the server as a client sees it.
+	if s.conf().RequestsLiveTimings && benchRun == "" && liveTimingsPath(r.URL.Path) {
+		ex.AddTimingsPerToken()
+	}
 	p, alias, ok := s.conf().Resolve(ex.Model)
 	if !ok {
 		e := &scheduler.Error{Status: http.StatusNotFound, Reason: scheduler.ReasonUnknownModel,
@@ -493,11 +498,21 @@ func (s *Server) handleV1(w http.ResponseWriter, r *http.Request) {
 		})
 		s.hub.activityDone()
 	}()
-	res = proxy.Forward(w, r, proxy.Options{Addr: lease.Addr, Body: ex.Body, StallTimeout: lease.StallTimeout,
+	bodyLen := int64(0)
+	if ex.Rewritten() {
+		bodyLen = ex.BufferedBytes()
+	}
+	res = proxy.Forward(w, r, proxy.Options{Addr: lease.Addr, Body: ex.Body, BodyLen: bodyLen, StallTimeout: lease.StallTimeout,
 		APIKey: lease.APIKey, Gone: lease.Gone, Live: live})
 	if res.Aborted {
 		panic(http.ErrAbortHandler)
 	}
+}
+
+// liveTimingsPath is whether requests_live_timings applies to a /v1 path:
+// chat and text completions, the requests that stream tokens.
+func liveTimingsPath(p string) bool {
+	return p == "/v1/chat/completions" || p == "/v1/completions"
 }
 
 // reserveBody counts n buffered body bytes against the global cap.

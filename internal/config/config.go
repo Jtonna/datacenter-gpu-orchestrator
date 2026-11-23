@@ -33,7 +33,11 @@ type Config struct {
 	// are kept for ever.
 	UsageRequestDays int
 	UsageHourlyDays  int
-	LocalProbeCmd    string
+	// RequestsLiveTimings adds "timings_per_token": true to streamed /v1
+	// chat and completion requests that do not set it (benchmark requests
+	// excepted), so a running request shows its prompt figures live.
+	RequestsLiveTimings bool
+	LocalProbeCmd       string
 	// LocalNode is the name of the scheduler's own machine as a node (the
 	// local_node setting). See LocalNodeName for when it is used.
 	LocalNode string
