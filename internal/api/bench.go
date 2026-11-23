@@ -717,5 +717,8 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 	if sys.Programs != nil {
 		out["programs"] = sys.Programs()
 	}
+	if s.sched != nil {
+		out["read_panics"] = s.sched.ReadPanics() // read-only queries that panicked and were recovered; 0 when all is well
+	}
 	writeJSON(w, http.StatusOK, out)
 }

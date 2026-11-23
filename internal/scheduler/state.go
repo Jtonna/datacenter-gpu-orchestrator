@@ -672,8 +672,8 @@ func (c *schedCore) need(p *core.Profile) (NeedInfo, error) {
 		if base, err = c.needs.Need(p); err != nil {
 			return NeedInfo{}, err
 		}
-		c.needs_[p.Name] = base
 		c.checkModelBytes(p, base)
+		c.needs_[p.Name] = base // after the check: a panic in it leaves nothing half done (readGuard)
 	}
 	return c.effectiveNeed(p, base), nil
 }
