@@ -36,7 +36,11 @@ type ManagerOptions struct {
 	Version    string
 	Thresholds Thresholds
 	// MaxRun stops a run that takes longer (bench.max_run_minutes).
-	MaxRun time.Duration
+	// MaxRunSetting, when set, gives the limit instead: it is read when each
+	// run starts, so a change of the setting applies to the next run without
+	// a restart; a zero or negative answer falls back to MaxRun.
+	MaxRun        time.Duration
+	MaxRunSetting func() time.Duration
 	// ProfileOK says whether a profile id exists (checked again when a run is queued).
 	ProfileOK func(string) bool
 	// Record receives the benchmark history events; nil drops them.

@@ -141,7 +141,7 @@ func buildSettingFields() []Field {
 	// Restart-required: read once at startup by long-lived components.
 	restart := map[string]string{"server_bin": S, "child_log_keep": S, "history_max_file_mib": S, "history_keep_files": S,
 		"history_memory_events": S, "ws_max_clients": S, "bench_enabled": S, "bench_regress_load_pct": S, "bench_regress_decode_pct": S,
-		"bench_max_run_minutes": S, "url": F, "local_node": F, "membership": S}
+		"url": F, "local_node": F, "membership": S}
 	base := newBase(Bootstrap{})
 	for n := range fs {
 		if sc, ok := restart[fs[n].Key]; ok && sc == fs[n].Scope {
