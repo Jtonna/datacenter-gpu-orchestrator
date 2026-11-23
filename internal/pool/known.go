@@ -13,11 +13,12 @@ import (
 
 // Known machines across a restart. The pool keeps its agents in memory only,
 // so a machine whose agent does not register again after a Potluck restart
-// would not be listed at all. The machines Potluck knew are read back from
-// the event history (the membership events of earlier runs: no table of its
-// own), and one that has not registered when KnownGrace has passed since the
-// start is listed as lost, with when it was last seen. It is never a node
-// of the scheduler's view: placement and plans do not see it.
+// would not be listed at all. The members when the previous run ended are
+// read back from the event history (KnownFrom: no table of its own), and one
+// that has not registered when KnownGrace has passed since the start is
+// listed as lost, with when it was last seen, until its agent registers or
+// the owner removes it. It is never a node of the scheduler's view:
+// placement and plans do not see it.
 
 // KnownGrace is how long after the start a known machine may take to
 // register before it is listed as lost (and counted down). An agent whose
@@ -42,42 +43,69 @@ type HistoryScanner interface {
 	Scan(fn func(history.Event))
 }
 
-// KnownFrom folds the history, oldest first, into the known machines. A
-// machine connected when a run ended was last seen when that run ended: its
-// stopping event, or its last event of any kind when it crashed. A lost one
-// was last seen when its heartbeats stopped (last_seen in the event, or the
-// event's time less LostAfter for events written before that field). One
-// that left (deregistered by its uninstall) is not known.
+// KnownFrom folds the history, oldest first, into the known machines: the
+// members when the previous run of the scheduler ended, as of the last
+// schedulerStarted event (the run doing the reading; its own events are not
+// looked at). It reads these events:
+//
+//   - schedulerStarted: a run begins. The members of the run that ended
+//     are carried into the new one: each machine whose last nodeMembership
+//     event in that run was active (joined, back), last seen when that run
+//     ended (its schedulerStopping event, or its last event of any kind after
+//     a crash), and each machine carried into that run that never registered
+//     in it, with the last seen it had.
+//   - nodeMembership state active: the machine is a member, seen then.
+//   - nodeMembership state lost or left: the machine is dropped at the next
+//     start, as the pool drops a lost agent at a restart today. The event
+//     this file writes for a carried machine that has not come back (data
+//     known: true) is not a loss and is skipped.
+//   - nodeAdmin action remove: the machine is dropped.
+//
+// Without a schedulerStarted event nothing is known.
 func KnownFrom(scan func(fn func(history.Event))) []KnownNode {
 	type rec struct {
-		name   string
-		active bool
-		left   bool
-		seen   int64
+		name    string
+		active  bool // registered and not lost, left or removed in this run
+		carried bool // a member when the previous run ended, not seen in this run
+		seen    int64
 	}
 	recs := map[string]*rec{}
 	var runLast int64
+	var snap []KnownNode
+	started := false
 	scan(func(e history.Event) {
 		if e.Type == history.TSchedulerStarted {
-			for _, r := range recs {
-				if r.active {
-					r.active = false
-					if runLast > r.seen {
-						r.seen = runLast
-					}
+			next := map[string]*rec{}
+			snap = snap[:0]
+			for id, r := range recs {
+				if !r.active && !r.carried {
+					continue
 				}
+				if r.active && runLast > r.seen {
+					r.seen = runLast
+				}
+				next[id] = &rec{name: r.name, carried: true, seen: r.seen}
+				name := r.name
+				if name == "" {
+					name = id
+				}
+				snap = append(snap, KnownNode{ID: id, Name: name, LastSeen: time.UnixMilli(r.seen)})
 			}
-			runLast = e.Ts
+			recs, runLast, started = next, e.Ts, true
 			return
 		}
 		if e.Ts > runLast {
 			runLast = e.Ts
 		}
-		if e.Type != history.TNodeMembership {
-			return
-		}
 		id, _ := e.Data["id"].(string)
 		if id == "" {
+			return
+		}
+		switch {
+		case e.Type == history.TNodeAdmin && e.Data["action"] == "remove":
+			delete(recs, id)
+			return
+		case e.Type != history.TNodeMembership || e.Data["known"] == true:
 			return
 		}
 		r := recs[id]
@@ -90,49 +118,17 @@ func KnownFrom(scan func(fn func(history.Event))) []KnownNode {
 		}
 		switch e.Data["state"] {
 		case StateActive:
-			r.active, r.left, r.seen = true, false, e.Ts
-		case StateLost:
-			r.active, r.left = false, false
-			if ms, ok := millis(e.Data["last_seen"]); ok {
-				r.seen = ms
-			} else {
-				r.seen = e.Ts - LostAfter.Milliseconds()
-			}
-		case StateLeft:
-			r.active, r.left, r.seen = false, true, e.Ts
+			r.active, r.carried, r.seen = true, false, e.Ts
+		case StateLost, StateLeft:
+			r.active, r.carried = false, false
 		}
 	})
-	var out []KnownNode
-	for id, r := range recs {
-		if r.left {
-			continue
-		}
-		seen := r.seen
-		if r.active && runLast > seen {
-			seen = runLast // connected in the run being read (this one): the pool lists its agent
-		}
-		name := r.name
-		if name == "" {
-			name = id
-		}
-		out = append(out, KnownNode{ID: id, Name: name, LastSeen: time.UnixMilli(seen)})
+	if !started {
+		return nil
 	}
+	out := append([]KnownNode(nil), snap...)
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
-}
-
-// millis reads a time in unix ms from event data, as recorded (int64) or as
-// read back from a file (float64).
-func millis(v any) (int64, bool) {
-	switch x := v.(type) {
-	case int64:
-		return x, true
-	case int:
-		return int64(x), true
-	case float64:
-		return int64(x), true
-	}
-	return 0, false
 }
 
 // SetKnown gives the pool the machines of earlier runs (KnownFrom).
