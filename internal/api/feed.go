@@ -75,6 +75,11 @@ func (s *Server) handleNodeFeed(w http.ResponseWriter, r *http.Request) {
 		nodes = append(nodes, f)
 	}
 	if l, ok := s.opts.Pool.Local(); ok {
+		if l.Excluded && stp != nil {
+			if on := instancesOnNodes(stp)[l.ID]; len(on) > 0 {
+				l.RunningWhileExcluded = &on[0]
+			}
+		}
 		nodes = append(nodes, l)
 	}
 	b, err := json.Marshal(nodes)

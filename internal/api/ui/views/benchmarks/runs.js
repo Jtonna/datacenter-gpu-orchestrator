@@ -38,6 +38,8 @@ export function runsList(suiteFilter, setFilter) {
       { label: 'Duration', cls: 'r', render: r => (r.started_at && r.finished_at ? dur((r.finished_at - r.started_at) / 1000) : DASH) },
       { label: 'Passed', cls: 'r', render: r => (r.summary ? num(r.summary.passed) : DASH) },
       { label: 'Failed', cls: 'r', render: r => (r.summary ? h('span', { class: r.summary.failed ? 'err-t' : '' }, num(r.summary.failed)) : DASH) },
+      { label: 'Not judged', cls: 'r', title: 'Steps refused because their profile forces a node that exclude_nodes names: neither passed nor failed',
+        render: r => (r.summary ? h('span', { class: r.summary.refused_by_exclusion ? '' : 'mut' }, num(r.summary.refused_by_exclusion || 0)) : DASH) },
       { label: 'Regressions', cls: 'r', render: r => (r.summary ? h('span', { class: r.summary.regressions ? 'err-t' : '' }, num(r.summary.regressions)) : DASH) },
     ],
   });
@@ -64,12 +66,18 @@ function envCard(run) {
       h('dt', 'Workers'), h('dd', workers.length ? h('div.col', { style: 'gap:6px' }, workers.map(w => h('span', h('span.node', w.node), h('span.mono.mut', '  rpc-server ' + (w.rpc_server_version || DASH))))) : h('span.mut', 'None (the model ran on the scheduler host)')))));
 }
 
+// notJudged(step): refused because its profile forces an excluded node; the
+// step was not judged, so nothing about it is a pass or a failure.
+export const notJudged = step => !!step && (step.outcome === 'refused_by_exclusion' || !!(step.expect && step.expect.not_judged));
+
 function checks(step) {
   const ex = step.expect;
   if (!ex || !(ex.checks || []).length) return null;
+  const nj = notJudged(step);
   return h('div.cs', h('div', { style: 'font-weight:700;margin-bottom:8px' }, 'Expectations'),
     h('div', { style: 'display:flex;flex-direction:column;gap:8px' }, ex.checks.map(c =>
-      h('div.why', h('i', { class: c.pass ? 'm' : 'x' }), h('span', h('span.mono', c.name), c.detail ? h('span.mut', ' · ' + c.detail) : null), badge(c.pass ? 'Passed' : 'Failed', c.pass ? 'use' : 'aside')))));
+      h('div.why', h('i', { class: c.pass ? 'm' : nj ? '' : 'x' }), h('span', h('span.mono', c.name), c.detail ? h('span.mut', ' · ' + c.detail) : null),
+        c.pass ? badge('Passed', 'use') : nj ? badge('Not judged', 'n', 'The profile forces a node that exclude_nodes names, so the step was refused and not judged') : badge('Failed', 'aside')))));
 }
 
 function comparison(step) {
@@ -322,13 +330,13 @@ function stepCard(step) {
   const ph = step.phases || [];
   const hasPhases = ph.length > 0;
   const bad = step.outcome && step.outcome !== 'ready';
-  return h('section', { class: 'card ' + (bad || (step.expect && !step.expect.pass) ? 'flag-err' : ''), key: 'step-' + step.idx },
+  return h('section', { class: 'card ' + (!notJudged(step) && (bad || (step.expect && !step.expect.pass)) ? 'flag-err' : ''), key: 'step-' + step.idx },
     h('div.ch',
       h('h2', step.name || step.benchmark_id), passBadge(step), outcomeBadge(step.outcome), step.comparison && step.comparison.regression ? badge('Regression', 'aside') : null,
       h('span.mono.mut', step.profile), stepRoles(step) ? h('span.mut', stepRoles(step)) : step.node_count ? h('span.mut', plural(step.node_count, 'worker')) : null,
       step.model_file ? h('span.mono.mut.right.wrap-any', { title: 'Model file' }, step.model_file) : null),
-    step.reason || step.error ? h('div.cb', banner(step.outcome === 'refused' ? 'warn' : 'err',
-      [step.outcome === 'refused' ? 'The scheduler refused it: ' : step.outcome === 'failed' ? 'It failed: ' : '', reasonNode(step.reason || step.error), step.http_status ? ` (HTTP ${step.http_status})` : ''])) : null,
+    step.reason || step.error ? h('div.cb', banner(step.outcome === 'refused' || step.outcome === 'refused_by_exclusion' ? 'warn' : 'err',
+      [step.outcome === 'refused' ? 'The scheduler refused it: ' : step.outcome === 'refused_by_exclusion' ? 'Refused because a forced node is excluded (not judged): ' : step.outcome === 'failed' ? 'It failed: ' : '', reasonNode(step.reason || step.error), step.http_status ? ` (HTTP ${step.http_status})` : ''])) : null,
     h('div.stats', { style: 'padding-top:2px' },
       stat('Started', step.started_at ? at(step.started_at) : DASH),
       stat('Took', step.started_at && step.finished_at ? dur((step.finished_at - step.started_at) / 1000) : DASH),
@@ -359,6 +367,7 @@ export function runDetail(run, error) {
         stat('Suite', run.suite_name || run.suite_id), stat('Started', run.started_at ? ago(run.started_at) : DASH),
         stat('Took', run.started_at && run.finished_at ? dur((run.finished_at - run.started_at) / 1000) : run.finished_at ? DASH : 'Not finished'),
         stat('Benchmarks', num(sum.steps)), stat('Passed', num(sum.passed)), stat('Failed', num(sum.failed), null, { cls: sum.failed ? 'err-t' : '' }),
+        sum.refused_by_exclusion ? stat('Not judged (excluded node)', num(sum.refused_by_exclusion)) : null,
         stat('Regressions', num(sum.regressions), null, { cls: sum.regressions ? 'err-t' : '' })),
       run.note || run.baseline_run_id ? h('div.cb', h('dl.kv',
         run.note ? [h('dt', 'Note'), h('dd', run.note)] : null,

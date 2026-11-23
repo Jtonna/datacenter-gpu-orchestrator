@@ -230,6 +230,15 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 			if started.Load() {
 				apiSrv.PublishConfig(ev)
 			}
+		},
+		// Instances left running on nodes a write excludes (reported, not drained).
+		LoadedOnExcluded: func(c *config.Config) []config.LoadedOnExcluded {
+			if !started.Load() {
+				return nil
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			return sched.LoadedOnExcluded(ctx, c)
 		}}
 	svc := cfgsvc.New(context.Background(), so0)
 	cfg := svc.Config()

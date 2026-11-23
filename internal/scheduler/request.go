@@ -73,7 +73,7 @@ func (c *schedCore) arrive(w *waiter) {
 			// Retry-After: RetryAfter stays zero and the API omits the header.
 			e := &Error{Status: http.StatusServiceUnavailable, Reason: ReasonDoesNotFit,
 				Message: fmt.Sprintf("profile %s needs %d MiB (fit rule requires %d MiB) but the cluster can hold at most %d MiB",
-					p.Name, np.NeedMiB, np.RequiredMiB, np.CapacityMiB) + c.excludedNote(p)}
+					p.Name, np.NeedMiB, np.RequiredMiB, np.CapacityMiB) + c.capacityNote(p, np.CapacityMiB)}
 			e.NeedMiB, e.RequiredMiB, e.CapacityMiB = np.NeedMiB, np.RequiredMiB, np.CapacityMiB
 			c.log.Warn("request can never fit the cluster", "profile", p.Name, "need_mib", np.NeedMiB,
 				"required_mib", np.RequiredMiB, "capacity_mib", np.CapacityMiB)
@@ -98,34 +98,55 @@ func (c *schedCore) arrive(w *waiter) {
 	c.changed = true
 }
 
-// forcedExcluded finds a force_nodes entry of p that resolves to a node
-// excluded by config (excluding wins, design 6). Config load catches the
-// cases it can; this catches an id against a hostname glob and the like. A
-// forced node that is merely absent from the fleet is not reported here: it
-// may come online, so the request queues.
+// forcedExcluded finds a force_nodes entry of p that names a node excluded
+// by config (excluding wins, design 6): by the name alone (as a node id or a
+// hostname, also while the node is not in the view), or by the node it
+// resolves to (an id against a hostname glob and the like). Such a profile is
+// valid configuration (0.1.7): it is kept and refused here until the
+// exclusion is lifted. The reason names the exclude_nodes entry. A forced
+// node that is merely absent from the fleet is not reported here: it may
+// come online, so the request queues.
 //
 // A command profile is tied to the local node in the same way: when
 // exclude_nodes names the local node, it fails the same way.
 func (c *schedCore) forcedExcluded(p *core.Profile) (string, bool) {
+	why, _, bad := c.forcedExclusion(p)
+	return why, bad
+}
+
+// forcedExclusion is forcedExcluded with the exclude_nodes entry that
+// matched, for the plan (PlanReport.ExcludedBy).
+func (c *schedCore) forcedExclusion(p *core.Profile) (string, string, bool) {
 	if localOnly(p) {
 		for _, id := range c.sortedNodeIDs() {
-			if n, ok := c.node(id); ok && n.Local && c.excluded(n) {
-				return fmt.Sprintf("profile %s is a command profile and runs only on the local node %s, which is excluded by config (excluding wins: change exclude_nodes)",
-					p.Name, nodeLabel(id, n)), true
+			if n, ok := c.node(id); ok && n.Local {
+				if e, ex := c.cfg.ExcludedBy(n.ID, n.Hostname); ex {
+					return fmt.Sprintf("profile %s is a command profile and runs only on the local node %s, which is excluded by config (exclude_nodes entry %q; excluding wins: change exclude_nodes)",
+						p.Name, nodeLabel(id, n), e), e, true
+				}
 			}
 		}
 	}
 	for _, name := range p.ForceNodes {
+		label := name
 		id, err := c.view.Resolve(name)
-		if err != nil {
-			continue
+		n, inView := core.Node{}, false
+		if err == nil {
+			n, inView = c.node(id)
+			if inView {
+				label = nodeLabel(id, n)
+			}
 		}
-		if n, ok := c.node(id); ok && c.excluded(n) {
-			return fmt.Sprintf("profile %s forces node %s, but node %s is excluded by config (excluding wins: change exclude_nodes or force_nodes)",
-				p.Name, name, nodeLabel(id, n)), true
+		e, ex := c.cfg.ExcludedBy(core.NodeID(name), name)
+		if !ex && inView {
+			e, ex = c.cfg.ExcludedBy(n.ID, n.Hostname)
+		}
+		if ex {
+			return fmt.Sprintf("profile %s forces node %s, but node %s is excluded by config (exclude_nodes entry %q; excluding wins: change exclude_nodes or force_nodes)",
+				p.Name, name, label, e), e, true
 		}
 	}
-	return "", false
+	return "", "", false
 }
 
 // pausedNode: an operator paused node n and has not unpaused it (a node whose
@@ -171,6 +192,27 @@ func (c *schedCore) excludedForcedErr(p *core.Profile, why string) *Error {
 // excludedNote lists the nodes exclude_nodes kept out of a capacity check
 // that the profile could otherwise have used, so a "does not fit" is not a
 // mystery. Empty when none.
+// capacityNote is excludedNote, except when allow_tiers leaves the profile
+// only excluded nodes (capacity 0): then it says that, once (0.1.7 review,
+// N2-2). Still the ordinary "does not fit" refusal, judged by a benchmark.
+func (c *schedCore) capacityNote(p *core.Profile, capacity int) string {
+	if len(p.AllowTiers) == 0 || capacity > 0 {
+		return c.excludedNote(p)
+	}
+	var names []string
+	for _, id := range c.sortedNodeIDs() {
+		n, ok := c.node(id)
+		if !ok || !c.excluded(n) || !(n.Local || n.Online) || (localOnly(p) && !n.Local) || !slices.Contains(p.AllowTiers, n.Priority) {
+			continue
+		}
+		names = append(names, nodeLabel(id, n))
+	}
+	if len(names) == 0 {
+		return c.excludedNote(p)
+	}
+	return fmt.Sprintf("; allow_tiers %v admits only nodes excluded by config: %s", p.AllowTiers, strings.Join(names, ", "))
+}
+
 func (c *schedCore) excludedNote(p *core.Profile) string {
 	var names []string
 	for _, id := range c.sortedNodeIDs() {

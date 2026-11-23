@@ -401,7 +401,9 @@ func (br *benchRun) loadModel(cold bool) bool {
 	case ans.Status >= 300:
 		x.a.markLoaded(b.Profile, false)
 		st.HTTPStatus, st.Reason = ans.Status, ans.Msg
-		if ans.Status == 503 || (ans.Status >= 400 && ans.Status < 500) {
+		if ans.Status == 503 && ans.Reason == ReasonNodeExcluded {
+			br.fail(OutcomeRefusedByExclusion, ans.Msg)
+		} else if ans.Status == 503 || (ans.Status >= 400 && ans.Status < 500) {
 			br.fail(OutcomeRefused, ans.Msg)
 		} else {
 			br.fail(OutcomeFailed, ans.Msg)
@@ -478,7 +480,11 @@ func (br *benchRun) loadModel(cold bool) bool {
 		if st.HTTPStatus == 0 {
 			st.HTTPStatus = 503
 		}
-		br.fail(OutcomeRefused, st.Reason)
+		if refused.Reason == ReasonNodeExcluded {
+			br.fail(OutcomeRefusedByExclusion, st.Reason)
+		} else {
+			br.fail(OutcomeRefused, st.Reason)
+		}
 		return false
 	}
 	if failure != "" {
@@ -1148,7 +1154,7 @@ func (x *suiteExec) finish(br *benchRun) {
 	br.mu.Unlock()
 	st.Stats = ComputeStats(reqs)
 	switch st.Outcome {
-	case OutcomeReady, OutcomeRefused, OutcomeFailed:
+	case OutcomeReady, OutcomeRefused, OutcomeRefusedByExclusion, OutcomeFailed:
 		st.State = StepDone
 	case OutcomeCancelled:
 		st.State = StepCancelled
@@ -1174,10 +1180,14 @@ func (x *suiteExec) finish(br *benchRun) {
 	m.emit(map[string]any{"kind": "step_finished", "run_id": st.RunID, "step": stepBrief(st)})
 	sev := history.Info
 	pass := st.Expect != nil && st.Expect.Pass
-	if !pass || (st.Comparison != nil && st.Comparison.Regression) {
+	notJudged := st.Outcome == OutcomeRefusedByExclusion
+	if !notJudged && (!pass || (st.Comparison != nil && st.Comparison.Regression)) {
 		sev = history.Warn
 	}
-	data := map[string]any{"bench_run": st.RunID, "benchmark": b.ID, "idx": st.Idx, "outcome": st.Outcome, "pass": pass}
+	data := map[string]any{"bench_run": st.RunID, "benchmark": b.ID, "idx": st.Idx, "outcome": st.Outcome, "result": StepResult(st)}
+	if !notJudged {
+		data["pass"] = pass // a step refused by an exclusion has no pass value: it was not judged
+	}
 	if st.Load != nil {
 		data["load_s"] = st.Load.LoadS
 	}
@@ -1194,7 +1204,10 @@ func (x *suiteExec) finish(br *benchRun) {
 	if st.Stats != nil && st.Stats.Decode != nil {
 		text += fmt.Sprintf(", decode %.1f tok/s", st.Stats.Decode.Mean)
 	}
-	if !pass {
+	switch {
+	case notJudged:
+		text += ", not judged: the profile forces a node that exclude_nodes names"
+	case !pass:
 		text += ", expectations not met"
 	}
 	if st.Comparison != nil && st.Comparison.Regression {

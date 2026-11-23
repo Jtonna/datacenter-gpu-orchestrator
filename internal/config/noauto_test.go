@@ -28,17 +28,17 @@ func TestNoAutoNodes(t *testing.T) {
 	}
 }
 
-// CR-9 review, C: a forced profile may name a no_auto node; it still may not
-// name an excluded one (excluding wins over both).
+// CR-9 review, C: a forced profile may name a no_auto node. It may also name
+// an excluded one (0.1.7): the configuration is valid, excluding wins at run
+// time, and ExclusionBlocks names the profile.
 func TestValidateNoAutoNodes(t *testing.T) {
 	llama := "  p:\n    model: m.gguf\n    ctx: 4096\n"
 	forced := prof(llama + "    force_nodes: [laptop-1]\n")
 	if err := parseErr(forced+"no_auto_nodes: [\"laptop-*\"]\n", nil); err != nil {
 		t.Fatalf("force_nodes on a no_auto node refused: %v", err)
 	}
-	err := parseErr(forced+"no_auto_nodes: [\"laptop-*\"]\nexclude_nodes: [laptop-1]\n", nil)
-	if err == nil || !strings.Contains(err.Error(), "excluded") {
-		t.Fatalf("force_nodes on an excluded node accepted: %v", err)
+	if err := parseErr(forced+"no_auto_nodes: [\"laptop-*\"]\nexclude_nodes: [laptop-1]\n", nil); err != nil {
+		t.Fatalf("force_nodes on an excluded node refused: %v", err)
 	}
 	for _, tt := range []struct{ name, yaml, want string }{
 		{"empty entry", baseHeader + "no_auto_nodes: [\"\"]\n", "empty"},

@@ -324,10 +324,15 @@ func (c *schedCore) justReleased(id core.NodeID) bool {
 const agentHeartbeat = 2 * time.Second
 
 // releaseWindowEnd is when node id's just-released window ends; ok is false
-// when the node is held or nothing that ran has left it.
+// when the node is held, excluded, or nothing that ran has left it.
 func (c *schedCore) releaseWindowEnd(id core.NodeID) (time.Time, bool) {
 	ns := c.nodes[id]
 	if ns == nil || ns.holder != "" || ns.releasedAt.IsZero() {
+		return time.Time{}, false
+	}
+	// An excluded node takes no load: nothing waits for its figures (the
+	// exclusion refuses a profile that forces it, at once).
+	if n, ok := c.node(id); ok && c.excluded(n) {
 		return time.Time{}, false
 	}
 	w := c.cfg.Defaults.FreeAverageWindow

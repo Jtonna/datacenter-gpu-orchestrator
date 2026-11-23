@@ -50,12 +50,19 @@ const (
 
 // Step outcomes: what the scheduler did with the benchmark's first request.
 const (
-	OutcomeReady     = "ready"     // loaded and served
-	OutcomeRefused   = "refused"   // 4xx or 503 before any load started (does not fit, backoff, ...)
-	OutcomeFailed    = "failed"    // the load or a request failed (502, child exited, timeout)
-	OutcomeError     = "error"     // the runner could not do its job (network, bad answer)
-	OutcomeCancelled = "cancelled" // the run was cancelled during this step
-	OutcomeSkipped   = "skipped"   // never started (stop_on_failure, cancel)
+	OutcomeReady   = "ready"   // loaded and served
+	OutcomeRefused = "refused" // 4xx or 503 before any load started (does not fit, backoff, ...)
+	// OutcomeRefusedByExclusion: refused because the profile forces a node
+	// that exclude_nodes names (the scheduler's reason "node excluded"). Not
+	// judged and not a failure: the configuration keeps the machine out on
+	// purpose, and only lifting the exclusion makes the step run again.
+	OutcomeRefusedByExclusion = "refused_by_exclusion"
+	// ReasonNodeExcluded is the scheduler's reason code for that refusal.
+	ReasonNodeExcluded = "node excluded"
+	OutcomeFailed      = "failed"    // the load or a request failed (502, child exited, timeout)
+	OutcomeError       = "error"     // the runner could not do its job (network, bad answer)
+	OutcomeCancelled   = "cancelled" // the run was cancelled during this step
+	OutcomeSkipped     = "skipped"   // never started (stop_on_failure, cancel)
 )
 
 // Request phases: what a stored request row was for.
@@ -221,8 +228,12 @@ type Check struct {
 
 // ExpectResult is the verdict on a benchmark's expect block.
 type ExpectResult struct {
-	Pass   bool    `json:"pass"`
-	Checks []Check `json:"checks"`
+	Pass bool `json:"pass"`
+	// NotJudged: the step was not judged at all (outcome
+	// refused_by_exclusion): Pass is false, and it is neither a pass nor a
+	// failure. Every reader that counts or words passes looks at this first.
+	NotJudged bool    `json:"not_judged,omitempty"`
+	Checks    []Check `json:"checks"`
 }
 
 // Comparison is a step against the same benchmark in the baseline run.
@@ -396,10 +407,17 @@ type Step struct {
 
 // RunSummary counts a run's steps.
 type RunSummary struct {
-	Steps       int `json:"steps"`
-	Passed      int `json:"passed"`
-	Failed      int `json:"failed"`
-	Regressions int `json:"regressions"`
+	Steps int `json:"steps"`
+	// Ran counts the steps that were judged (passed or failed).
+	// RefusedByExclusion counts the steps with the outcome
+	// refused_by_exclusion: not judged, neither passed nor failed. (An
+	// ordinary refusal, outcome "refused", is judged against the expectation
+	// and counts as passed or failed.) Skipped steps are in none of these.
+	Ran                int `json:"ran"`
+	Passed             int `json:"passed"`
+	Failed             int `json:"failed"`
+	RefusedByExclusion int `json:"refused_by_exclusion"`
+	Regressions        int `json:"regressions"`
 }
 
 // Run is one execution of a suite.

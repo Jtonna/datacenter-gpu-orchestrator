@@ -552,7 +552,7 @@ before drawing a field.
   Read-only; headers sort, long text cells fold.
 - Aggregates: `GET /api/bench/aggregates?suite=&benchmark=&profile=&since=&until=&env=`
   -> `{runs_considered, environment, benchmarks: [{benchmark_id, runs, steps,
-  pass_rate (a fraction, 0 to 1), outcomes, metrics: {<metric>: {count, min, median, mean, max, stdev,
+  pass_rate (a fraction, 0 to 1; null when nothing was judged), judged, outcomes, metrics: {<metric>: {count, min, median, mean, max, stdev,
   last, best, change_pct, threshold_pct, regression, points: [{run_id, at, value}]}},
   turns: [...], last_run_id, last_at}], suites: [...], by_model: [...],
   by_model_nodes: [{model_file, nodes, runs, steps, metrics}]}`.

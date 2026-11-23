@@ -462,15 +462,23 @@ type NodeFacts struct {
 	// bad_floor: the floor and the bound it breaks). A
 	// node that is paused and has no reason of its own has paused (CR-9). A
 	// lost, left or removed node is not placeable either; its state says so.
-	Placeable       bool   `json:"placeable"`
-	Unplaced        string `json:"unplaced,omitempty"`
-	UnplacedMessage string `json:"unplaced_message,omitempty"`
+	// Capabilities are the words the agent advertised at registration (agent
+	// contract 6.13), sorted; an empty list when it advertised none.
+	Capabilities    []string `json:"capabilities"`
+	Placeable       bool     `json:"placeable"`
+	Unplaced        string   `json:"unplaced,omitempty"`
+	UnplacedMessage string   `json:"unplaced_message,omitempty"`
 	// Excluded: exclude_nodes names the node (ExcludedBy, the matching
 	// entry), as /api/status's view says. Such a node is not placeable and
 	// its unplaced reason is excluded, whatever else holds; the rest of its
 	// entry is as for any node. Absent when not excluded.
 	Excluded   bool   `json:"excluded,omitempty"`
 	ExcludedBy string `json:"excluded_by,omitempty"`
+	// RunningWhileExcluded: the node is excluded, yet an instance placed
+	// before the exclusion still runs there. Exclusion only stops new
+	// placements; the instance keeps running and serving until it is
+	// unloaded. Absent otherwise.
+	RunningWhileExcluded *RunningInstance `json:"running_while_excluded,omitempty"`
 	// WatchdogFloorMiB is the watchdog floor the agent reports (CR-9); absent
 	// for an agent that reports none (release 0.1.0). FloorMismatch says so
 	// when it differs from defaults.watchdog_floor_mib; the agent's is used
@@ -543,7 +551,7 @@ func (p *Pool) Facts() []NodeFacts {
 		f := NodeFacts{ID: id, Name: a.reg.Name, Addr: a.reg.Addr, State: StateActive, Install: a.reg.Install,
 			Release: a.reg.AgentRelease, Platform: a.platform, Paused: p.admin[id].Paused, UnpausePending: p.unpausePendingLocked(id, a),
 			HostAgent:   p.isHostAgentLocked(a),
-			ModelSource: a.reg.ModelSource, Stats: a.stats, StatsNote: a.statsNote}
+			ModelSource: a.reg.ModelSource, Stats: a.stats, StatsNote: a.statsNote, Capabilities: sortedWords(a.reg.Capabilities)}
 		switch {
 		case p.admin[id].Removed:
 			f.State = StateRemoved
@@ -605,7 +613,7 @@ func (p *Pool) Facts() []NodeFacts {
 	}
 	for id, adm := range p.admin {
 		if _, ok := p.agents[id]; !ok && adm.Removed {
-			out = append(out, NodeFacts{ID: id, Name: id, State: StateRemoved})
+			out = append(out, NodeFacts{ID: id, Name: id, State: StateRemoved, Capabilities: []string{}})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
@@ -698,3 +706,18 @@ func (p *Pool) wantedFigureLocked(nodes []core.Node) bool {
 
 // notifiedFig is the reading and launch end last notified for a node.
 type notifiedFig struct{ fig, stop time.Time }
+
+// sortedWords is a sorted copy of words, never nil.
+func sortedWords(words []string) []string {
+	out := append([]string{}, words...)
+	sort.Strings(out)
+	return out
+}
+
+// RunningInstance is an instance that holds a node: the profile, its state
+// (starting, ready, draining, stopping) and since when it is there (unix ms).
+type RunningInstance struct {
+	Profile string `json:"profile"`
+	State   string `json:"state"`
+	Since   int64  `json:"since"`
+}

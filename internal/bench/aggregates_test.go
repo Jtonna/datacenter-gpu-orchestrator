@@ -77,6 +77,14 @@ var th = Thresholds{LoadPct: 15, DecodePct: 7}
 
 func close2(a, b float64) bool { return math.Abs(a-b) < 0.01 }
 
+// rateOf is a pass rate, or -1 when there is none (nothing judged).
+func rateOf(p *float64) float64 {
+	if p == nil {
+		return -1
+	}
+	return *p
+}
+
 func TestAggregateMathsOverARunHistory(t *testing.T) {
 	s, _ := openTemp(t)
 	loads := []float64{60, 62, 61, 80}
@@ -95,7 +103,7 @@ func TestAggregateMathsOverARunHistory(t *testing.T) {
 		t.Fatalf("%+v", doc)
 	}
 	b := doc.Benchmarks[0]
-	if b.BenchmarkID != "gemma" || b.Runs != 6 || b.Steps != 6 || b.Outcomes["ready"] != 4 || b.Outcomes["refused"] != 1 || b.Outcomes["failed"] != 1 || !close2(b.PassRate, 4.0/6) {
+	if b.BenchmarkID != "gemma" || b.Runs != 6 || b.Steps != 6 || b.Outcomes["ready"] != 4 || b.Outcomes["refused"] != 1 || b.Outcomes["failed"] != 1 || !close2(rateOf(b.PassRate), 4.0/6) || b.Judged != 6 {
 		t.Fatalf("%+v", b)
 	}
 	if b.LastRunID != "run-f" {
@@ -133,7 +141,7 @@ func TestAggregateMathsOverARunHistory(t *testing.T) {
 		t.Fatalf("%+v", doc.Suites)
 	}
 	su := doc.Suites[0]
-	if su.SuiteID != "nightly" || su.Runs != 6 || su.States[RunCompleted] != 5 || su.States[RunFailed] != 1 || !close2(su.PassRate, 4.0/6) || !close2(su.MeanDurationS, 60) {
+	if su.SuiteID != "nightly" || su.Runs != 6 || su.States[RunCompleted] != 5 || su.States[RunFailed] != 1 || !close2(rateOf(su.PassRate), 4.0/6) || su.Judged != 6 || !close2(su.MeanDurationS, 60) {
 		t.Fatalf("%+v", su)
 	}
 	if su.LastRun == nil || su.LastRun.ID != "run-f" || su.LastRun.State != RunFailed || su.LastRun.Summary == nil || su.LastRun.Summary.Failed != 1 {
