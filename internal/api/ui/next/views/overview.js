@@ -30,7 +30,7 @@ import { h } from '../core/dom.js';
 import { registerView, navigate, href } from '../core/router.js';
 import { state, on } from '../core/store.js';
 import * as api from '../core/api.js';
-import { roleShare, runMachines, liveView, segmented, dateStepper, button, chips, dropButton, onDropChange, zoneStatus, colourKey, availStrip, availClass, tokensChart, tokensLegend,
+import { roleShare, runMachines, liveView, segmented, dateStepper, button, chips, dropButton, onDropChange, zoneStatus, colourKey, availStrip, availClass, availState, availLevel, tokensChart, tokensLegend,
   runsTable, runLegend, tickRuns, groupClass, dialog, toggle, skeleton } from '../core/ui.js';
 import { num, gb, gbNum, dur, clock, dateTime, DASH } from '../core/format.js';
 import { viewNodes } from '../core/status.js';
@@ -196,12 +196,13 @@ function stripOf(series, z, current) {
   const cells = (ns && ns.cells) || [];
   const out = cells.slice(-24).map(c => {
     const t = tms(c.start);
-    const word = STATE_WORD[c.state];
-    return { cls: availClass(c), title: (t ? bucketTitle(t, 'hour') + ' · ' : '') + (word ? word + (c.state === 'in_use' && c.busy_level ? `, busy ${c.busy_level} of 4` : '') : 'Nothing known') };
+    const state = availState(c);
+    const word = STATE_WORD[state];
+    return { cls: availClass(c), title: (t ? bucketTitle(t, 'hour') + ' · ' : '') + (word ? word + (state === 'in_use' ? `, busy ${availLevel(c)} of 4` : '') : 'Nothing known') };
   });
   while (out.length < 24) out.unshift(null);
   const count = {};
-  for (const c of cells.slice(-24)) count[c.state] = (count[c.state] || 0) + 1;
+  for (const c of cells.slice(-24)) { const k = availState(c); count[k] = (count[k] || 0) + 1; }
   const parts = Object.keys(STATE_WORD).filter(k => count[k]).map(k => `${STATE_WORD[k].toLowerCase()} ${count[k]} h`);
   const span = current ? 'last 24 hours' : 'that day';
   return { cells: out, label: `${z.name}, ${span}: ${parts.length ? parts.join(', ') : 'nothing known'}` };

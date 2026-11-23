@@ -49,3 +49,28 @@ func TestUINextOverviewTemperature(t *testing.T) {
 			"expect": []string{"52 °C", "58 °C", "Showing 6 of 8 · scroll for more"}, "absent": []string{"51.6", "51,6"}},
 	}})
 }
+
+// (c) The availability strip: an hour with any use is never Free. The
+// server colours an hour in_use only from a quarter of its known time in
+// use; an hour with less use comes as free with seconds.in_use > 0, and the
+// page draws it in use, shaded by its busy level (busy_level, from busy:
+// under 25 % level 1, under 50 % level 2, under 75 % level 3, else 4).
+func TestUINextOverviewStripAnyUse(t *testing.T) {
+	now := time.Now()
+	fetch := ovFetch(now, ovRequests(now), true)
+	hour := now.Truncate(time.Hour)
+	cell := func(i int, state string, inUse float64, busy any, level int) map[string]any {
+		return map[string]any{"start": hour.Add(-time.Duration(i) * time.Hour).UTC().Format(time.RFC3339), "state": state, "span_s": 3600,
+			"seconds": map[string]any{"free": 3600 - inUse, "in_use": inUse}, "busy": busy, "busy_level": level}
+	}
+	cells := []any{}
+	for i := 23; i >= 3; i-- {
+		cells = append(cells, cell(i, "free", 0, nil, 0))
+	}
+	cells = append(cells, cell(2, "free", 120, 0.1, 1), cell(1, "free", 600, 0.9, 4), cell(0, "free", 60, 0.4, 2))
+	fetch["/api/nodes/availability"] = map[string]any{"recording": true, "nodes": []any{map[string]any{"id": ovD, "name": "node-d", "cells": cells}}}
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
+		map[string]any{"name": "strip: a little use is in use", "route": "#/overview", "status": ovStatus(now),
+			"has": []string{".avail i.use1", ".avail i.use4", ".avail i.use2", ".avail i.free"}},
+	}})
+}

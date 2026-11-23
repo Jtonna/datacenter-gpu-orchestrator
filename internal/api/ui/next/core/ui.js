@@ -606,13 +606,30 @@ export function availStrip(cells, label) {
     }));
 }
 
+// availState(cell) -> the state a cell is drawn in. The server colours an
+// hour in_use only from a quarter of its known time in use; an hour with any
+// use is never drawn Free, so a free cell with seconds.in_use > 0 is in use.
+export function availState(cell) {
+  const st = cell && cell.state;
+  return st === 'free' && cell.seconds && cell.seconds.in_use > 0 ? 'in_use' : st;
+}
+
+// availLevel(cell) -> its busy level 1 to 4 (darker is busier): busy_level,
+// the server's quarter of busy (the mean of in flight over parallel across
+// the in-use time): under 25 % 1, under 50 % 2, under 75 % 3, else 4.
+export function availLevel(cell) {
+  let l = cell && cell.busy_level;
+  if (!l && cell && typeof cell.busy === 'number') l = cell.busy < 0.25 ? 1 : cell.busy < 0.5 ? 2 : cell.busy < 0.75 ? 3 : 4;
+  return Math.min(4, Math.max(1, l || 1));
+}
+
 // availClass(cell) -> the square of one cell of GET /api/nodes/availability:
-// its state (free, in_use, loading, down, off, unknown) and, in use, its
-// busy level 1 to 4 (darker is busier). Unknown is null (an empty square).
+// its state (free, in_use, loading, down, off, unknown; availState) and, in
+// use, its busy level 1 to 4 (availLevel). Unknown is null (an empty square).
 export function availClass(cell) {
-  switch (cell && cell.state) {
+  switch (availState(cell)) {
     case 'free': return 'free';
-    case 'in_use': return 'use' + Math.min(4, Math.max(1, cell.busy_level || 1));
+    case 'in_use': return 'use' + availLevel(cell);
     case 'loading': return 'load';
     case 'down': return 'down';
     case 'off': return 'off';
