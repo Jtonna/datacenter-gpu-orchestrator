@@ -69,7 +69,7 @@ flowchart TB
 | `internal/placer` | Pure functions: place a model, plan an eviction, or say why neither works. |
 | `internal/estimate`, `internal/gguf` | Read the model file header and estimate the memory need. |
 | `internal/instance` | Builds the `llama-server` command line, starts, health-checks and stops one child, follows its load; `RemoteChild` stands for a host running on a node. |
-| `internal/pool` | Agent membership: the registry of agents, the node view the scheduler reads, worker launches and host launches. |
+| `internal/pool` | Agent membership: the registry of agents, the node view the scheduler reads, worker launches and host launches. The machines of earlier runs are read back from the event history at start (`known.go`). |
 | `internal/release` | Loads and verifies the program release handed out to agents. |
 | `internal/needstore` | Keeps learned memory needs in the database across restarts. |
 | `internal/startups` | Turns the agents' start-up reports into start-up figures per node. |

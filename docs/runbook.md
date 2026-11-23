@@ -154,6 +154,15 @@ curl -s -X POST $H/api/nodes/02:00:00:00:00:01/readmit      -d '{"comment":"why"
 - **Remove**: for a machine that is gone. It is refused at registration until it is re-admitted.
 - **Uninstall** (on the node): `potluck-agent-uninstall` deregisters the node and removes everything the setup put there.
 
+### A machine that is off across a restart
+
+Potluck remembers the machines it knew. At start it reads them back from the event history (the `nodeMembership` events; no table of its own). A machine whose agent has not registered 65 s after the start is listed as `lost` in `/api/nodes` and in `agents` of `/api/status`, with `absent_since_start: true`, `last_seen_at` (when Potluck last heard from it) and `last_seen_ago_s`. It counts as down in `/api/health` ("7 of 8 reachable · 1 down") and its hours are lost in the availability series. It is never placed on: the scheduler's view does not hold it. A `nodeMembership` warning, "has not come back since Potluck started", is written once per start; the next start reads the last seen from it, so a machine off across several restarts keeps its first last seen.
+
+- **Why 65 s**: an agent whose Potluck went away retries after 5 s, doubling up to 60 s; 60 s plus its 5 s request timeout covers the slowest agent that is up, so a running machine is not counted down for the length of a restart.
+- **Last seen**: for a machine connected when Potluck stopped, the stop (`schedulerStopping`); after a crash, the last event of that run, which can be earlier than the crash. For a machine already lost, when its heartbeats stopped.
+- **Gone for good**: remove it (`DELETE /api/nodes/<id>`): it is then listed as `removed` under its name and not counted. A machine that deregistered (uninstall) is not listed after a restart.
+- **Forgotten**: a machine whose last event is older than the history kept (20 files of 16 MiB by default).
+
 ### Keep a node out of the pool
 
 Two node lists. Each entry is a node id or a hostname glob; matching ignores case; the whole list is replaced; add `?dry_run=1` to check first.
@@ -628,7 +637,7 @@ Nothing has to be started by hand when these hold:
 1. Docker starts at boot (`systemctl is-enabled docker`).
 2. The three services are `restart: unless-stopped`. A service stopped by hand stays stopped; start it with `docker compose up -d`. The optional host agent comes back too once it was started with `--profile local-agent`.
 3. The share needs the `nfs` and `nfsd` modules at boot.
-4. The agents keep retrying and register again. Their share mounts resume when `potluck-share` is up; a share restart costs clients about 16 s. Check the NFS times: `docker exec potluck-share cat /proc/fs/nfsd/nfsv4gracetime /proc/fs/nfsd/nfsv4leasetime` prints `10` twice.
+4. The agents keep retrying and register again. A machine that has not registered 65 s after the start is listed as `lost` with its last seen (section D, "A machine that is off across a restart"). Their share mounts resume when `potluck-share` is up; a share restart costs clients about 16 s. Check the NFS times: `docker exec potluck-share cat /proc/fs/nfsd/nfsv4gracetime /proc/fs/nfsd/nfsv4leasetime` prints `10` twice.
 5. No model is loaded at start. Launches left on the nodes are stopped by their agents.
 6. Learned memory needs come back from the database. The queue, backoffs and quarantines start empty.
 
