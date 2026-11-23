@@ -105,3 +105,49 @@ func TestSchedulerLoopPanicTakesTheFatalPath(t *testing.T) {
 		t.Fatalf("the history lacks the failure or the stopping event:\n%s", ev)
 	}
 }
+
+// Review IS2: once the graceful shutdown has begun, a task failure does not
+// cut it short. It is recorded (the exit code is 3), but nothing is sent on
+// ch (main no longer reads it) and the 5 s watchdog is not armed: only a
+// watchdog past the shutdown's own bound is, in case the shutdown hangs.
+func TestFailureDuringTheGracefulShutdownKeepsTheGrace(t *testing.T) {
+	exited := make(chan int, 1)
+	prevExit := fatalExit
+	fatalExit = func(code int) { exited <- code }
+	defer func() { fatalExit = prevExit }()
+
+	f := newFatalPath()
+	f.beginShutdown(fatalWatchdog + 300*time.Millisecond) // a grace longer than the 5 s watchdog
+	f.trigger("bench.manager: boom")
+	if !f.fired.Load() {
+		t.Fatal("the failure was not recorded")
+	}
+	select {
+	case r := <-f.ch:
+		t.Fatalf("sent %q on ch during the shutdown", r)
+	default:
+	}
+	select {
+	case code := <-exited:
+		t.Fatalf("exit %d within the grace", code)
+	case <-time.After(fatalWatchdog + 100*time.Millisecond):
+	}
+	select { // the shutdown's bound, then the watchdog, ends a shutdown that hangs
+	case code := <-exited:
+		if code != supervise.ExitCode {
+			t.Fatalf("exit %d", code)
+		}
+	case <-time.After(fatalWatchdog + 2*time.Second):
+		t.Fatal("no watchdog past the shutdown's bound")
+	}
+
+	g := newFatalPath() // a shutdown that finishes disarms it
+	g.beginShutdown(50 * time.Millisecond)
+	g.trigger("x")
+	g.disarm()
+	select {
+	case code := <-exited:
+		t.Fatalf("exit %d after disarm", code)
+	case <-time.After(fatalWatchdog + 300*time.Millisecond):
+	}
+}

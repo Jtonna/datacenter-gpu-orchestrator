@@ -466,6 +466,9 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 	// A second signal kills everything at once.
 	ln.Close()
 	grace := svc.Config().Defaults.ShutdownGrace + shutdownSlack
+	// A task failure from here on does not shorten the grace (review IS2);
+	// the bound covers the benchmark stop, the servers and the waits below.
+	fatal.beginShutdown(grace + apiGrace + 10*time.Second + fatalWatchdog)
 	sctx, scancel := context.WithTimeout(context.Background(), grace)
 	defer scancel()
 	go supervise.Once("main.second_signal", func() {

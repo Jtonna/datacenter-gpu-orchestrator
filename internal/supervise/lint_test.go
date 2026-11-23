@@ -28,7 +28,7 @@ const enforce = true
 // function is "(*T).M" or "F"; kinds: go, afterfunc, recover); the value is
 // why that site needs no supervision.
 var allowlist = map[string]string{
-	"afterfunc cmd/llm-scheduler/fatal.go (*fatalPath).trigger": "the fatal path's watchdog: it prints and exits, and must not depend on the supervisor",
+	"afterfunc cmd/llm-scheduler/fatal.go (*fatalPath).watchdog": "the fatal path's watchdog: it prints and exits, and must not depend on the supervisor",
 	"afterfunc internal/bench/runner.go (*Manager).execute":     "max_run timer: sets a flag under a lock and cancels the run",
 	"afterfunc internal/proxy/forward.go (*watchBody).Read":     "stall timer: sets a flag and closes the body",
 	"afterfunc internal/scheduler/builds.go sleepOn":            "closes a channel",

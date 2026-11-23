@@ -42,6 +42,30 @@ type fatalPath struct {
 	fired atomic.Bool
 	mu    sync.Mutex
 	timer *time.Timer
+	// shutdownBy is when the graceful shutdown's own bound runs out; set
+	// (beginShutdown) once main has left its select and no longer reads ch.
+	shutdownBy time.Time
+}
+
+// beginShutdown says that the graceful shutdown has begun and may take up to
+// bound. A task failure from now on does not cut it short (review IS2): it
+// is recorded (exit code 3), and only a watchdog past the bound is armed, in
+// case the shutdown hangs on the task that failed.
+func (f *fatalPath) beginShutdown(bound time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.shutdownBy = time.Now().Add(bound)
+	if f.timer != nil && f.timer.Stop() { // a failure that raced the signal: main took the signal
+		f.timer = f.watchdog(bound+fatalWatchdog, "a background task failed as the shutdown began")
+	}
+}
+
+// watchdog arms the exit after d (f.mu held).
+func (f *fatalPath) watchdog(d time.Duration, reason string) *time.Timer {
+	return time.AfterFunc(d, func() {
+		fmt.Fprintln(os.Stderr, "llm-scheduler: the fatal path overran its", d, "bound; exiting now:", reason)
+		fatalExit(supervise.ExitCode)
+	})
 }
 
 func newFatalPath() *fatalPath { return &fatalPath{ch: make(chan string, 1)} }
@@ -51,14 +75,24 @@ func newFatalPath() *fatalPath { return &fatalPath{ch: make(chan string, 1)} }
 func (f *fatalPath) trigger(reason string) {
 	f.once.Do(func() {
 		f.fired.Store(true)
-		f.mu.Lock()
-		f.timer = time.AfterFunc(fatalWatchdog, func() {
-			fmt.Fprintln(os.Stderr, "llm-scheduler: the fatal path overran its", fatalWatchdog, "bound; exiting now:", reason)
-			fatalExit(supervise.ExitCode)
-		})
-		f.mu.Unlock()
-		f.ch <- reason
+		if f.arm(reason) {
+			f.ch <- reason
+		}
 	})
+}
+
+// arm arms the watchdog for a failure: fatalWatchdog before the graceful
+// shutdown (true: the fatal path runs), past the shutdown's bound during it
+// (false: the shutdown goes on and exits with code 3).
+func (f *fatalPath) arm(reason string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.shutdownBy.IsZero() {
+		f.timer = f.watchdog(fatalWatchdog, reason)
+		return true
+	}
+	f.timer = f.watchdog(time.Until(f.shutdownBy)+fatalWatchdog, reason)
+	return false
 }
 
 // disarm stops the watchdog once serveUntil has returned (main exits next).
