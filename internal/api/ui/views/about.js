@@ -45,7 +45,7 @@ const settingLabel = k => humanize(k.replace(/_(s|pct|minutes|mib)$/, ''));
 // a task that fails is restarted alone, or turns its failure into its
 // result; a failure that must not continue stops Potluck so that it is
 // started again. Failures are also on the Activity page (internalFailure).
-const POLICY = { restart: 'Restarts alone', exit: 'Stops Potluck', once: 'One-shot', guard: 'Guarded call', report: 'Reported' };
+const POLICY = { restart: 'Restarts alone', exit: 'Stops Potluck', once: 'One-shot', guard: 'Guarded call', read: 'Read-only query', report: 'Reported' };
 function tasksCard(sys) {
   const tasks = (sys && sys.tasks) || [];
   const hour = now() - 3600 * 1000;

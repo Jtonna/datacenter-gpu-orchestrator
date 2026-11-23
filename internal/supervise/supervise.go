@@ -333,6 +333,14 @@ func Guard(name string, fn func(), onPanic func(p any)) (panicked bool) {
 	return guard(name, "guard", fn, onPanic)
 }
 
+// GuardRead is Guard for a read-only query (the scheduler's plan, status and
+// needs): reported and counted, but it never counts toward escalation, since
+// it changed nothing and a restart would not help. A panic out of a critical
+// section still ends the process.
+func GuardRead(name string, fn func(), onPanic func(p any)) (panicked bool) {
+	return guardCount(name, "read", fn, onPanic, func() bool { return false })
+}
+
 // GuardExit runs fn inline; a panic in it ends the process through Fatal
 // (after it is reported). It returns whether fn panicked, so that the caller
 // can answer its own caller before the process ends.

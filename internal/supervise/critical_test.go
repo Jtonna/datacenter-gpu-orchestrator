@@ -2,6 +2,8 @@ package supervise
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -140,5 +142,43 @@ func TestFanoutCountsOncePerOperation(t *testing.T) {
 	}
 	if f.fatalCount() != 1 {
 		t.Fatalf("three operations failing in a minute: fatal %d", f.fatalCount())
+	}
+}
+
+// GuardRead (a read-only query: the scheduler's plan, status, needs) is
+// reported and counted like Guard but never escalates, however often it
+// fails: it changed nothing, and a restart would not help. A panic out of a
+// critical section still does.
+func TestGuardReadNeverEscalates(t *testing.T) {
+	ResetForTest()
+	defer ResetForTest()
+	fatals := 0
+	defer Configure(Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Fatal: func(string) { fatals++ }})()
+	got := 0
+	for i := 0; i < 5; i++ {
+		if !GuardRead("t.read", func() { panic("divide by zero") }, func(any) { got++ }) {
+			t.Fatal("not reported as panicked")
+		}
+	}
+	if fatals != 0 || got != 5 {
+		t.Fatalf("fatal %d, onPanic %d", fatals, got)
+	}
+	var st TaskStats
+	for _, s := range Stats() {
+		if s.Name == "t.read" {
+			st = s
+		}
+	}
+	if st.Policy != "read" || st.Failures != 5 || st.FailuresLastMin != 0 {
+		t.Fatalf("stats %+v", st)
+	}
+	var mu sync.Mutex
+	GuardRead("t.read", func() {
+		mu.Lock()
+		defer Unlocked("test", mu.Unlock)
+		panic("inside")
+	}, nil)
+	if fatals != 1 {
+		t.Fatalf("a critical panic in a read: fatal %d", fatals)
 	}
 }

@@ -319,6 +319,10 @@ func CheckCapacity(req Request, eligible []Candidate) error {
 	}
 	required := required(req.Need)
 	switch {
+	case len(top) == 0:
+		// no candidate node at all (every node excluded, or none in the
+		// profile's tiers): nothing to spread a margin over; the capacity
+		// is 0 and the need is refused as it stands
 	case req.nodeMargins():
 		// the configured margin on every shared node counted, as fitsSet
 		// applies it (review N4)

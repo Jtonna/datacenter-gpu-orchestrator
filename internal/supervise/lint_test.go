@@ -29,17 +29,17 @@ const enforce = true
 // why that site needs no supervision.
 var allowlist = map[string]string{
 	"afterfunc cmd/llm-scheduler/fatal.go (*fatalPath).watchdog": "the fatal path's watchdog: it prints and exits, and must not depend on the supervisor",
-	"afterfunc internal/bench/runner.go (*Manager).execute":     "max_run timer: sets a flag under a lock and cancels the run",
-	"afterfunc internal/proxy/forward.go (*watchBody).Read":     "stall timer: sets a flag and closes the body",
-	"afterfunc internal/scheduler/builds.go sleepOn":            "closes a channel",
-	"afterfunc internal/scheduler/runner.go (*Scheduler).Run":   "the loop's timer: a non-blocking send on the tick channel",
-	"go internal/agent/logship/journal.go (*Journal).Run":       "the node agent's journal reader; the scheduler never runs it",
-	"go internal/bench/runner.go (*Manager).execute":            "watches ctx: a select that cancels the run",
-	"go internal/bench/runner.go newGate":                       "a WaitGroup wait, then close",
-	"go internal/bench/store.go openStore":                      "the SQLite writer: runJob recovers each job (rollback, error) and reports it",
-	"go internal/pool/pool.go (*Pool).WaitStops":                "a WaitGroup wait, then close",
-	"recover internal/bench/store.go (*Store).runJob":           "per-job isolation of the SQLite writer, reported through supervise.Report",
-	"recover internal/proxy/forward.go Forward":                 "re-panics everything but http.ErrAbortHandler (the client went away)",
+	"afterfunc internal/bench/runner.go (*Manager).execute":      "max_run timer: sets a flag under a lock and cancels the run",
+	"afterfunc internal/proxy/forward.go (*watchBody).Read":      "stall timer: sets a flag and closes the body",
+	"afterfunc internal/scheduler/builds.go sleepOn":             "closes a channel",
+	"afterfunc internal/scheduler/runner.go (*Scheduler).Run":    "the loop's timer: a non-blocking send on the tick channel",
+	"go internal/agent/logship/journal.go (*Journal).Run":        "the node agent's journal reader; the scheduler never runs it",
+	"go internal/bench/runner.go (*Manager).execute":             "watches ctx: a select that cancels the run",
+	"go internal/bench/runner.go newGate":                        "a WaitGroup wait, then close",
+	"go internal/bench/store.go openStore":                       "the SQLite writer: runJob recovers each job (rollback, error) and reports it",
+	"go internal/pool/pool.go (*Pool).WaitStops":                 "a WaitGroup wait, then close",
+	"recover internal/bench/store.go (*Store).runJob":            "per-job isolation of the SQLite writer, reported through supervise.Report",
+	"recover internal/proxy/forward.go Forward":                  "re-panics everything but http.ErrAbortHandler (the client went away)",
 }
 
 // scanRoots are the trees the scheduler binary is built from (relative to

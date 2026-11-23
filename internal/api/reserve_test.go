@@ -84,6 +84,9 @@ func TestPlanMemorySection(t *testing.T) {
 		r["free_average_window_s"] != 30.0 {
 		t.Fatalf("system reserve %v", sys["reserve"])
 	}
+	if sys["read_panics"] != 0.0 {
+		t.Fatalf("system read_panics %v, want 0", sys["read_panics"])
+	}
 }
 
 // The agent facts (the agents of /api/status and the node feed) carry the

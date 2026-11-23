@@ -722,5 +722,8 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 	// and failures (the About page's "Background tasks" card).
 	out["tasks"] = supervise.Stats()
 	out["internal_failures_total"] = supervise.Total()
+	if s.sched != nil {
+		out["read_panics"] = s.sched.ReadPanics() // read-only queries that panicked and were recovered; 0 when all is well
+	}
 	writeJSON(w, http.StatusOK, out)
 }
