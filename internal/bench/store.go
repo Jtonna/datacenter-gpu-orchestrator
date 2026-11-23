@@ -274,6 +274,27 @@ ALTER TABLE measurements ADD COLUMN ctx INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE measurements ADD COLUMN placement TEXT NOT NULL DEFAULT '';
 CREATE INDEX measurements_variant ON measurements (variant, metric, at);
 `},
+	{"retention: pinned runs and the removal log", `
+ALTER TABLE runs ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE run_removals (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id       TEXT NOT NULL,
+  kind         TEXT NOT NULL DEFAULT 'suite',
+  target_id    TEXT NOT NULL DEFAULT '',
+  name         TEXT NOT NULL DEFAULT '',
+  state        TEXT NOT NULL DEFAULT '',
+  queued_at    INTEGER NOT NULL DEFAULT 0,
+  finished_at  INTEGER NOT NULL DEFAULT 0,
+  removed_at   INTEGER NOT NULL,
+  reason       TEXT NOT NULL DEFAULT '',
+  actor        TEXT NOT NULL DEFAULT '',
+  steps        INTEGER NOT NULL DEFAULT 0,
+  measurements INTEGER NOT NULL DEFAULT 0,
+  file_bytes   INTEGER NOT NULL DEFAULT 0,
+  files_error  TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX run_removals_at ON run_removals (removed_at);
+`},
 }
 
 type job struct {
@@ -755,14 +776,14 @@ func (s *Store) SetRunSummary(id string, sum *RunSummary, baseline string) error
 	})
 }
 
-const runCols = `id, suite_id, suite_name, state, note, triggered_by, baseline_run_id, queued_at, started_at, finished_at, error, version, suite, summary, env, kind, target_id`
+const runCols = `id, suite_id, suite_name, state, note, triggered_by, baseline_run_id, queued_at, started_at, finished_at, error, version, suite, summary, env, kind, target_id, pinned`
 
 func scanRun(sc interface{ Scan(...any) error }) (*Run, error) {
 	var r Run
 	var suite, target string
 	var sum, env sql.NullString
 	if err := sc.Scan(&r.ID, &r.SuiteID, &r.SuiteName, &r.State, &r.Note, &r.Trigger, &r.BaselineRunID, &r.QueuedAt,
-		&r.StartedAt, &r.FinishedAt, &r.Error, &r.Version, &suite, &sum, &env, &r.Kind, &target); err != nil {
+		&r.StartedAt, &r.FinishedAt, &r.Error, &r.Version, &suite, &sum, &env, &r.Kind, &target, &r.Pinned); err != nil {
 		return nil, err
 	}
 	if r.Kind == RunKindBenchmark {

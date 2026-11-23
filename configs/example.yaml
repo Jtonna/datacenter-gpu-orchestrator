@@ -132,6 +132,7 @@ profiles:                  # what clients can ask for; the key is the model name
 #   regress_load_pct: 15       # a load this much slower than the baseline run's is flagged as a regression
 #   regress_decode_pct: 7      # decode tokens/s this much lower than the baseline's is flagged
 #   max_run_minutes: 240       # a run that takes longer is stopped and marked failed
+#   retention_days: 183        # finished runs older than this are removed (rows and transcripts); 0 keeps for ever; pinned runs stay
 #   benchmarks:
 #     - id: qwen-cold          # a slug: letters, digits, . - _
 #       name: Qwen 4B cold start

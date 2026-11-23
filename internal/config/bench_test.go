@@ -17,7 +17,7 @@ const benchProfiles = `profiles:
 func TestBenchConfigDefaults(t *testing.T) {
 	c := mustParse(t, "profiles: {}\n")
 	if c.DataDir != "" || c.WSMaxClients != 32 || c.Bench.Enabled || c.Bench.RegressLoadPct != 15 ||
-		c.Bench.RegressDecodePct != 7 || c.Bench.MaxRunMinutes != 240 {
+		c.Bench.RegressDecodePct != 7 || c.Bench.MaxRunMinutes != 240 || c.Bench.RetentionDays != 183 {
 		t.Fatalf("defaults: %+v", c)
 	}
 	c = mustParse(t, "data_dir: /var/lib/llm-scheduler/data\nprofiles: {}\n")
@@ -28,6 +28,9 @@ func TestBenchConfigDefaults(t *testing.T) {
 	if c.Bench.Enabled {
 		t.Fatal("bench.enabled false ignored")
 	}
+	if c = mustParse(t, "data_dir: /d\nbench: {retention_days: 0}\nprofiles: {}\n"); c.Bench.RetentionDays != 0 {
+		t.Fatalf("retention_days 0 (keep for ever) read as %d", c.Bench.RetentionDays)
+	}
 }
 
 func TestBenchConfigValidation(t *testing.T) {
@@ -37,6 +40,7 @@ func TestBenchConfigValidation(t *testing.T) {
 		"regress load":             "data_dir: /d\nbench: {regress_load_pct: 0}\nprofiles: {}\n",
 		"regress decode":           "data_dir: /d\nbench: {regress_decode_pct: -1}\nprofiles: {}\n",
 		"max run":                  "data_dir: /d\nbench: {max_run_minutes: 0}\nprofiles: {}\n",
+		"retention":                "data_dir: /d\nbench: {retention_days: -1}\nprofiles: {}\n",
 		"unknown key":              "data_dir: /d\nbench: {nope: 1}\nprofiles: {}\n",
 		"unknown profile":          "data_dir: /d\nbench:\n  benchmarks:\n    - {id: a, profile: ghost, requests: [{prompt: x, max_tokens: 4}]}\n" + benchProfiles,
 		"duplicate id":             "data_dir: /d\nbench:\n  benchmarks:\n    - {id: a, profile: tiny, requests: [{prompt: x, max_tokens: 4}]}\n    - {id: a, profile: tiny, requests: [{prompt: x, max_tokens: 4}]}\n" + benchProfiles,

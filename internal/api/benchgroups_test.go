@@ -183,6 +183,31 @@ func TestTranscriptsOverREST(t *testing.T) {
 	if st != 200 || !strings.HasPrefix(hdr.Get("Content-Type"), "text/html") || !strings.Contains(string(raw), "Download as PDF") || !strings.Contains(string(raw), "format=md") {
 		t.Fatalf("html: %d %s", st, raw)
 	}
+	// Pin and unpin; the removal log; the retention setting.
+	if st, b, _ := e.do("PUT", "/api/bench/runs/"+id+"/pin", ""); st != 200 || !strings.Contains(b, `"pinned":true`) {
+		t.Fatalf("pin: %d %s", st, b)
+	}
+	if _, b, _ := e.do("GET", "/api/bench/runs/"+id, ""); jsonOf(t, b)["pinned"] != true {
+		t.Fatalf("run not pinned: %s", b)
+	}
+	if st, b, _ := e.do("DELETE", "/api/bench/runs/"+id+"/pin", ""); st != 200 || !strings.Contains(b, `"pinned":false`) {
+		t.Fatalf("unpin: %d %s", st, b)
+	}
+	if st, _, _ := e.do("PUT", "/api/bench/runs/nope/pin", ""); st != 404 {
+		t.Fatalf("pin unknown: %d", st)
+	}
+	if st, b, _ := e.do("GET", "/api/bench/removals", ""); st != 200 || !strings.Contains(b, `"removals":[]`) {
+		t.Fatalf("removals: %d %s", st, b)
+	}
+	if st, b, _ := e.do("PATCH", "/api/config/settings", `{"bench_retention_days":0}`); st != 200 {
+		t.Fatalf("keep for ever: %d %s", st, b)
+	}
+	if _, b, _ := e.do("GET", "/api/config/settings", ""); !strings.Contains(b, `"bench_retention_days":0`) {
+		t.Fatalf("settings: %s", b)
+	}
+	if st, b, _ := e.do("PATCH", "/api/config/settings", `{"bench_retention_days":-3}`); st == 200 {
+		t.Fatalf("negative retention accepted: %s", b)
+	}
 	for q, want := range map[string]int{"?step=7": 404, "?step=0&phase=9": 404, "?phase=1": 400, "?format=pdf": 400, "?step=x": 400} {
 		if st, b, _ := e.do("GET", "/api/bench/runs/"+id+"/report"+q, ""); st != want {
 			t.Errorf("%s: %d %s, want %d", q, st, b, want)

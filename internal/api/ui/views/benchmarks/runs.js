@@ -390,6 +390,23 @@ function stepCard(step, runId) {
     step.log_file ? h('div.cs', h('span.mut', 'Child log '), h('code.cmd', step.log_file)) : null);
 }
 
+// Pin keeps a run from being removed by retention (bench_retention_days).
+function pinButton(run) {
+  const path = `/api/bench/runs/${encodeURIComponent(run.id)}/pin`;
+  const tip = on => on ? 'Pinned: retention never removes this run. Click to unpin.' : 'Retention removes finished runs after bench_retention_days. Pin to keep this one.';
+  const b = h('button.btn.sm', { type: 'button', title: tip(run.pinned), 'aria-pressed': run.pinned ? 'true' : 'false' }, run.pinned ? 'Pinned' : 'Pin');
+  b.addEventListener('click', async () => {
+    b.disabled = true;
+    try {
+      const r = run.pinned ? await api.del(path) : await api.put(path);
+      run.pinned = !!r.pinned;
+      b.textContent = run.pinned ? 'Pinned' : 'Pin'; b.title = tip(run.pinned); b.setAttribute('aria-pressed', run.pinned ? 'true' : 'false');
+    } catch (e) { b.title = e.message; }
+    b.disabled = false;
+  });
+  return b;
+}
+
 export function runDetail(run, error) {
   if (error) return [h('div.card', empty('The run could not be read', error)), ];
   if (!run) return [h('section.card', skeleton(4))];
@@ -401,7 +418,7 @@ export function runDetail(run, error) {
     run.error ? errorBanner(reasonNode(run.error)) : null,
     h('section.card', { key: 'head' },
       h('div.ch', h('h2.mono', id), runBadge(run.state), run.trigger === 'schedule' ? badge('Scheduled', 'n') : null,
-        h('span.right.row', { style: 'gap:8px' }, runLogs(run),
+        h('span.right.row', { style: 'gap:8px' }, runLogs(run), pinButton(run),
           h('a.btn.sm.pri', { href: api.url(`/api/bench/runs/${encodeURIComponent(id)}/report`, { format: 'html' }), target: '_blank', rel: 'noopener', title: 'The report of this run, with Markdown and PDF downloads' }, 'Report'),
           exportLink(id, 'Markdown', { format: 'md' }), exportLink(id, 'CSV', { format: 'csv' }), exportLink(id, 'JSON', { format: 'json' }),
           h('details', { style: 'position:relative' }, h('summary.btn.sm', { style: 'list-style:none' }, 'More exports'),

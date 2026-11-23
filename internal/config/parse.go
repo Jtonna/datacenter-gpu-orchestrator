@@ -101,7 +101,7 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 		DataDir:             strings.TrimSpace(raw.DataDir),
 		WSMaxClients:        raw.WSMaxClients,
 		Bench: Bench{RegressLoadPct: raw.Bench.RegressLoadPct, RegressDecodePct: raw.Bench.RegressDecodePct,
-			MaxRunMinutes: raw.Bench.MaxRunMinutes, Benchmarks: raw.Bench.Benchmarks, Suites: raw.Bench.Suites},
+			MaxRunMinutes: raw.Bench.MaxRunMinutes, RetentionDays: DefaultBenchRetentionDays, Benchmarks: raw.Bench.Benchmarks, Suites: raw.Bench.Suites},
 		Defaults:      raw.Defaults.value(),
 		NodeOverrides: map[string]NodeOverride{},
 		ExcludeNodes:  trimAll(raw.ExcludeNodes),
@@ -109,6 +109,9 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 		Recovery:      raw.Recovery.value(),
 		Logs:          raw.Logs.value(),
 		Profiles:      map[string]*core.Profile{},
+	}
+	if raw.Bench.RetentionDays != nil {
+		c.Bench.RetentionDays = *raw.Bench.RetentionDays
 	}
 	for _, t := range raw.Tiers {
 		c.Tiers = append(c.Tiers, TierRule{
@@ -399,6 +402,7 @@ type rawBench struct {
 	RegressLoadPct   float64                `yaml:"regress_load_pct" json:"regress_load_pct,omitempty"`
 	RegressDecodePct float64                `yaml:"regress_decode_pct" json:"regress_decode_pct,omitempty"`
 	MaxRunMinutes    int                    `yaml:"max_run_minutes" json:"max_run_minutes,omitempty"`
+	RetentionDays    *int                   `yaml:"retention_days" json:"retention_days,omitempty"`
 	Benchmarks       []*benchspec.Benchmark `yaml:"benchmarks" json:"benchmarks,omitempty"`
 	Suites           []*benchspec.Suite     `yaml:"suites" json:"suites,omitempty"`
 }

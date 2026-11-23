@@ -37,6 +37,48 @@ func (s *Server) modelRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/bench/runs/{id}/steps/{step}/transcript", g(s.getTranscript))
 	// Reports, generated when opened.
 	m.HandleFunc("GET /api/bench/runs/{id}/report", g(s.getReport))
+	// Retention: pin a run so it is never removed; the removal log.
+	m.HandleFunc("PUT /api/bench/runs/{id}/pin", g(s.pinRun(true)))
+	m.HandleFunc("DELETE /api/bench/runs/{id}/pin", g(s.pinRun(false)))
+	m.HandleFunc("GET /api/bench/removals", g(s.listRemovals))
+}
+
+// pinRun is PUT and DELETE /api/bench/runs/{id}/pin.
+func (s *Server) pinRun(pin bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		run, err := s.opts.BenchStore.SetPinned(id, pin)
+		if err != nil {
+			s.storeErr(w, err)
+			return
+		}
+		action := "unpin"
+		if pin {
+			action = "pin"
+		}
+		s.audit(r, action, "run:"+id, nil, map[string]any{"pinned": pin})
+		writeJSON(w, http.StatusOK, map[string]any{"id": run.ID, "pinned": run.Pinned})
+	}
+}
+
+// listRemovals is GET /api/bench/removals: the runs removed by retention,
+// newest first (?limit=, default 100).
+func (s *Server) listRemovals(w http.ResponseWriter, r *http.Request) {
+	limit := 0
+	if v := r.URL.Query().Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 1000 {
+			badParam(w, "limit must be 1 to 1000, got %q", v)
+			return
+		}
+		limit = n
+	}
+	list, err := s.opts.BenchStore.Removals(limit)
+	if err != nil {
+		s.storeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"removals": list})
 }
 
 // getReport is GET /api/bench/runs/{id}/report: the run's own report (the

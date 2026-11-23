@@ -66,6 +66,11 @@ type ManagerOptions struct {
 	// right after the last request can meet it (default 3 s, negative: no
 	// retry). The end-of-step clean-up unloads with force after it.
 	UnloadGrace time.Duration
+	// Retention is how long a finished run is kept (bench_retention_days,
+	// read at every check); 0 or nil keeps runs for ever. RetentionEvery is
+	// how often expired runs are looked for (default 1 h).
+	Retention      func() time.Duration
+	RetentionEvery time.Duration
 }
 
 // runPlan is the suite and every benchmark it names, as they were when the run
@@ -139,6 +144,9 @@ func NewManager(o ManagerOptions) (*Manager, error) {
 	if o.MaxRun <= 0 {
 		o.MaxRun = 240 * time.Minute
 	}
+	if o.RetentionEvery <= 0 {
+		o.RetentionEvery = DefaultRetentionEvery
+	}
 	if o.Thresholds.LoadPct <= 0 {
 		o.Thresholds.LoadPct = 15
 	}
@@ -191,6 +199,8 @@ func (m *Manager) loop(ctx context.Context) {
 	tick := time.NewTicker(30 * time.Second)
 	defer tick.Stop()
 	m.checkSchedules(true)
+	m.sweepRetention()
+	lastSweep := time.Now()
 	for {
 		m.mu.Lock()
 		var next *queued
@@ -210,6 +220,10 @@ func (m *Manager) loop(ctx context.Context) {
 		case <-m.wake:
 		case <-tick.C:
 			m.checkSchedules(true)
+			if time.Since(lastSweep) >= m.o.RetentionEvery {
+				m.sweepRetention()
+				lastSweep = time.Now()
+			}
 		}
 		m.mu.Lock()
 		stop := m.stopping

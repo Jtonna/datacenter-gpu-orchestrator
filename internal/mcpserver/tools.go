@@ -290,6 +290,7 @@ func allTools() []*tool {
 		rd("get_run_report", "The report of a benchmark run, generated from its recorded data (nothing judged, no baselines): for a group run the summary (headline counts, the issues, one table per metric with average, lowest and highest, an index of the benchmark reports); for a direct run, or with step, the benchmark report (inputs, then a section per phase with figures, conditions, issues and a transcript link); with step and phase one section. format md gives Markdown.", P{
 			"id": s("The run id."), "step": i("A step index (0-based) for its benchmark report."), "phase": i("With step: one phase (0-based)."), "format": en("json (default) or md.", "json", "md")},
 			[]string{"id"}, "GET", "/api/bench/runs/{id}/report", "step", "phase", "format"),
+		rd("list_run_removals", "The benchmark runs removed by retention (bench_retention_days), newest first: run id, kind, name, state, when it finished and was removed, why, and how many steps, measurements and file bytes went with it.", P{"limit": i("Maximum entries (default 100).")}, nil, "GET", "/api/bench/removals", "limit"),
 		rd("list_bench_metrics", "The metrics of the measurement record: name, unit, description, the phase types that record it, whether it is per machine and whether higher is better.", nil, nil, "GET", "/api/bench/metrics"),
 		rd("get_run", "Get one benchmark run with its steps, requests, statistics and comparison against the baseline.", idArg("run"), []string{"id"}, "GET", "/api/bench/runs/{id}"),
 		rd("export_run", "Export a benchmark run as a markdown table, CSV or JSON, returned as text.", P{"id": s("The run id."), "format": en("Export format (json by default).", "markdown", "csv", "json"),
@@ -367,6 +368,10 @@ func allTools() []*tool {
 				"evict_others": b("Do not wait for other users' idle loaded models (default false)."),
 				"inputs":       obj("For a recipe: inputs that fill in or override its defaults: {model, ctx, placement (auto, all, any:N, nodes:a,b; consoles only), thinking, kv_quant, flash_attn}.")},
 			Required: []string{"id"}, Method: "POST", Path: "/api/bench/benchmarks/{id}/run", Body: []string{"baseline", "note", "only_when_idle", "idle_wait_s", "evict_others", "inputs"}},
+		{Name: "pin_run", Desc: "Pin a benchmark run so retention (bench_retention_days) never removes it.",
+			Props: idArg("run"), Required: []string{"id"}, Idempotent: true, Method: "PUT", Path: "/api/bench/runs/{id}/pin"},
+		{Name: "unpin_run", Desc: "Unpin a benchmark run: retention removes it once it is older than bench_retention_days.",
+			Props: idArg("run"), Required: []string{"id"}, Destructive: true, Idempotent: true, Method: "DELETE", Path: "/api/bench/runs/{id}/pin"},
 		{Name: "create_task_set", Desc: "Store a task set version for tasks phases: {id, version, title, system, max_tokens, seed, tasks: [{id, prompt, system?, max_tokens?, timeout_s?}]}. Sampling is fixed (temperature 0). A stored version cannot change: the same content again is accepted, other prompts under the same version are refused (409), so give a changed set a new version.",
 			Props: P{"task_set": obj("The task set, including its id and version.")}, Required: []string{"task_set"}, Idempotent: true, Method: "POST", Path: "/api/bench/task-sets", BodyArg: "task_set"},
 		{Name: "put_task_scores", Desc: "Attach a scorer's points to a run's tasks. Replaces everything this scorer posted on the run before, so posting the same scores again changes nothing. Potluck never scores answers itself; this is how a scorer (tests in a sandbox, a rubric) reports. Each score names its task by result id, or by step and task id (and phase when the step has two tasks phases).",

@@ -402,6 +402,9 @@ func (c *Config) validateBench(add func(string, ...any)) {
 	if b.MaxRunMinutes < 1 || b.MaxRunMinutes > 10080 {
 		add("bench.max_run_minutes must be 1 to 10080, got %d", b.MaxRunMinutes)
 	}
+	if b.RetentionDays < 0 || b.RetentionDays > MaxBenchRetentionDays {
+		add("bench.retention_days must be 0 (keep for ever) to %d, got %d", MaxBenchRetentionDays, b.RetentionDays)
+	}
 	profileOK := func(id string) bool { _, _, ok := c.Resolve(id); return ok }
 	byID := map[string]*benchspec.Benchmark{}
 	for i, bm := range b.Benchmarks {

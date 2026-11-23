@@ -30,7 +30,7 @@ func TestSchemaCoversEveryYAMLKey(t *testing.T) {
 		"local_device", "forced_node_grace", "forced_fit_check", "worker_probe_interval", "worker_silence", "worker_probe_during_inference",
 		"split_skew_margin", "estimate_margin", "load_memory_floor_mib", "local_probe_cmd", "child_log_keep", "history_max_file_mib",
 		"history_keep_files", "history_memory_events", "ws_max_clients", "bench_enabled", "bench_regress_load_pct", "bench_regress_decode_pct",
-		"bench_max_run_minutes", "local_node", "logs_enabled", "logs_retention_days", "logs_max_disk_gib", "logs_push_url", "logs_client_intake"} {
+		"bench_max_run_minutes", "bench_retention_days", "local_node", "logs_enabled", "logs_retention_days", "logs_max_disk_gib", "logs_push_url", "logs_client_intake"} {
 		if !have["settings."+k] {
 			t.Errorf("settings key %s missing from the schema", k)
 		}

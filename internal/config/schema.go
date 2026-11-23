@@ -122,6 +122,7 @@ func buildSettingFields() []Field {
 		f("bench_regress_load_pct", "bench", "A load this much slower than the baseline run's is flagged as a regression.", func(c *Config) *float64 { return &c.Bench.RegressLoadPct }, num(0.001), num(1000)),
 		f("bench_regress_decode_pct", "bench", "Decode tokens per second this much lower than the baseline's is flagged as a regression.", func(c *Config) *float64 { return &c.Bench.RegressDecodePct }, num(0.001), num(100)),
 		i("bench_max_run_minutes", "bench", "A benchmark run that takes longer than this is stopped and marked failed.", "minutes", func(c *Config) *int { return &c.Bench.MaxRunMinutes }, num(1), num(10080)),
+		i("bench_retention_days", "bench", "How long a finished benchmark run is kept, its rows and transcripts together; 0 keeps runs for ever. A pinned run is never removed. Checked every hour.", "days", func(c *Config) *int { return &c.Bench.RetentionDays }, num(0), num(MaxBenchRetentionDays)),
 
 		{Key: "enabled", Scope: R, Section: "recovery", Type: "bool", Description: "Send recovery requests for hung workers; off means nothing is ever sent." + notWithAgents, ptr: func(c *Config) any { return &c.Recovery.Enabled }},
 		{Key: "actions", Scope: R, Section: "recovery", Type: "list", Enum: RecoveryActions, Description: "Recovery actions in escalation order; each may appear once, in the order restart_rpc_server, restart_docker, reboot." + notWithAgents, ptr: func(c *Config) any { return &c.Recovery.Actions }},

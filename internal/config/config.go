@@ -305,6 +305,10 @@ type Bench struct {
 	RegressDecodePct float64
 	// MaxRunMinutes stops a run that takes longer (default 240).
 	MaxRunMinutes int
+	// RetentionDays is how long a finished run is kept, rows and transcripts
+	// together (default 183, about 6 months); 0 keeps runs for ever. A pinned
+	// run is never removed.
+	RetentionDays int
 	// Benchmarks and Suites are seeded into the database at start (source "config").
 	Benchmarks []*benchspec.Benchmark
 	Suites     []*benchspec.Suite
@@ -317,4 +321,7 @@ const (
 	DefaultRegressLoadPct   = 15
 	DefaultRegressDecodePct = 7
 	DefaultMaxRunMinutes    = 240
+	// DefaultBenchRetentionDays and MaxBenchRetentionDays bound bench_retention_days.
+	DefaultBenchRetentionDays = 183
+	MaxBenchRetentionDays     = 36500
 )
