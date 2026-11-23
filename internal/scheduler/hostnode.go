@@ -199,6 +199,10 @@ type LeaseNode struct {
 	Name string `json:"name"`           // hostname when known, else the id
 	Role string `json:"role"`           // host (runs llama-server) or helper (an RPC worker)
 	Addr string `json:"addr,omitempty"` // rpc address; empty for the local node
+	// Share is the machine's fraction of the model (its tensor split weight
+	// over the sum, as in /api/status). 0 when it holds none of the split:
+	// the scheduler's machine hosting with no layers, or a command profile.
+	Share float64 `json:"share,omitempty"`
 }
 
 // Roles of a LeaseNode.
@@ -207,23 +211,63 @@ const (
 	RoleHelper = "helper"
 )
 
-// leaseNodesOf is in's machines with their roles, built once per instance.
-// The host is the placement's host node; with none (the scheduler's machine
-// hosts), the local node is the host when it is placed, and every other node
-// is a helper.
+// leaseNodesOf is in's machines with their roles and shares, host first,
+// built once per instance. The host is the placement's host node; with
+// none, llama-server runs on the scheduler's machine: the local node when
+// it is placed, else the scheduler's machine is added as host with no
+// share (it holds no layers). Every other node is a helper.
 func (c *schedCore) leaseNodesOf(in *inst) []LeaseNode {
-	if in.leaseNodes != nil || len(in.placement.Nodes) == 0 {
+	if in.leaseNodes != nil {
 		return in.leaseNodes
 	}
-	host := hostOf(in.prof, in.placement)
-	out := make([]LeaseNode, len(in.placement.Nodes))
-	for i, pn := range in.placement.Nodes {
-		role := RoleHelper
-		if pn.ID == host || host == "" && pn.Local {
-			role = RoleHost
-		}
-		out[i] = LeaseNode{ID: string(pn.ID), Name: c.nodeName(pn.ID), Role: role, Addr: pn.Addr}
+	llama := in.prof.Kind != core.KindCommand
+	if len(in.placement.Nodes) == 0 && !llama {
+		return nil
 	}
-	in.leaseNodes = out
-	return out
+	host := hostOf(in.prof, in.placement)
+	var shares []float64
+	if llama {
+		shares = instance.SplitFractions(*in.prof, in.placement)
+	}
+	var hosts, helpers []LeaseNode
+	for i, pn := range in.placement.Nodes {
+		n := LeaseNode{ID: string(pn.ID), Name: c.nodeName(pn.ID), Role: RoleHelper, Addr: pn.Addr}
+		if i < len(shares) {
+			n.Share = shares[i]
+		}
+		if pn.ID == host || host == "" && pn.Local {
+			n.Role = RoleHost
+			hosts = append(hosts, n)
+			continue
+		}
+		helpers = append(helpers, n)
+	}
+	if len(hosts) == 0 && host == "" && llama {
+		id, name := c.serverMachine()
+		hosts = append(hosts, LeaseNode{ID: id, Name: name, Role: RoleHost})
+	}
+	in.leaseNodes = append(hosts, helpers...)
+	return in.leaseNodes
+}
+
+// serverMachine is the scheduler's own machine as an instance member: the
+// local node of the view (its id and name), else the configured local node
+// name.
+func (c *schedCore) serverMachine() (id, name string) {
+	for nid, n := range c.raw {
+		if n.Local {
+			id = string(nid)
+			break
+		}
+	}
+	name = c.cfg.LocalNodeName()
+	switch {
+	case id == "" && name == "":
+		return "scheduler", "scheduler"
+	case id == "":
+		return name, name
+	case name == "":
+		return id, c.nodeName(core.NodeID(id))
+	}
+	return id, name
 }

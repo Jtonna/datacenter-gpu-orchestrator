@@ -104,7 +104,7 @@ func TestRequests_RecordedListedAndSummarized(t *testing.T) {
 	e.post("/v1/chat/completions", chat("alpha")).Body.Close()
 	e.post("/v1/chat/completions", chat("alpha-old")).Body.Close()
 	e.post("/v1/chat/completions", chat("nope")).Body.Close()
-	resp, err := http.Get(e.front.URL + "/upstream/alpha/props")
+	resp, err := http.Post(e.front.URL+"/upstream/alpha/v1/chat/completions", "application/json", strings.NewReader(chat("alpha")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestRequests_RecordedListedAndSummarized(t *testing.T) {
 	var sum usage.Summary
 	now := time.Now().UnixMilli()
 	json.Unmarshal([]byte(body(t, e.get(fmt.Sprintf("/api/requests/summary?from=%d&to=%d&step=hour", now-2*3600000, now+3600000)))), &sum)
-	if sum.Totals.Requests != 4 || sum.Totals.Done != 3 || sum.Totals.Refused != 1 || sum.Totals.TokensIn != 10 || sum.Totals.TokensOut != 14 ||
+	if sum.Totals.Requests != 4 || sum.Totals.Done != 3 || sum.Totals.Refused != 1 || sum.Totals.TokensIn != 15 || sum.Totals.TokensOut != 21 ||
 		len(sum.Series) != 3 || sum.OldestTS == 0 || !sum.On {
 		t.Fatalf("summary %+v", sum)
 	}
@@ -406,5 +406,95 @@ func TestRequests_LiveTimingsRewritesOnlyWhenOnAndUnset(t *testing.T) {
 	// A body that is not JSON never reaches the model server (400, as before).
 	if r := e.post("/v1/chat/completions", `not json`); r.StatusCode != 400 {
 		t.Fatalf("not JSON: %d", r.StatusCode)
+	}
+}
+
+// Only inference is a row: a table of methods and paths through /v1 and
+// /upstream, each answered as before, recorded or not.
+func TestRequests_OnlyInferenceIsRecorded(t *testing.T) {
+	e, st := usageEnv(t, chatOK, nil)
+	e.post("/v1/chat/completions", chat("alpha")).Body.Close() // loads alpha, so /upstream is ready
+	eventually(t, "ended", func() bool { return e.api.reqs.Ended() == 1 })
+	for _, c := range []struct {
+		method, path string
+		recorded     bool
+	}{
+		{"POST", "/v1/chat/completions", true},
+		{"POST", "/v1/completions", true},
+		{"POST", "/v1/embeddings", true},
+		{"POST", "/v1/rerank", true},
+		{"GET", "/v1/models", false},
+		{"POST", "/v1/tokenize", false},
+		{"POST", "/v1/chat/completions/input_tokens", false},
+		{"POST", "/upstream/alpha/completion", true},
+		{"POST", "/upstream/alpha/v1/chat/completions", true},
+		{"POST", "/upstream/alpha/embedding", true},
+		{"POST", "/upstream/alpha/infill", true},
+		{"POST", "/upstream/alpha/v1/messages", true},
+		{"GET", "/upstream/alpha/slots", false},
+		{"GET", "/upstream/alpha/props", false},
+		{"POST", "/upstream/alpha/props", false},
+		{"GET", "/upstream/alpha/health", false},
+		{"GET", "/upstream/alpha/metrics", false},
+		{"GET", "/upstream/alpha/v1/models", false},
+		{"POST", "/upstream/alpha/tokenize", false},
+		{"POST", "/upstream/alpha/detokenize", false},
+		{"POST", "/upstream/alpha/apply-template", false},
+		{"GET", "/upstream/alpha/lora-adapters", false},
+		{"GET", "/upstream/alpha", false},
+		{"GET", "/upstream/alpha/v1/chat/completions", false},
+	} {
+		before := e.api.reqs.Ended()
+		req, _ := http.NewRequest(c.method, e.front.URL+c.path, strings.NewReader(chat("alpha")))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("%s %s: %d", c.method, c.path, resp.StatusCode)
+		}
+		if c.recorded {
+			eventually(t, c.method+" "+c.path+" recorded", func() bool { return e.api.reqs.Ended() == before+1 })
+		} else if e.api.reqs.Ended() != before {
+			t.Fatalf("%s %s recorded", c.method, c.path)
+		}
+	}
+	flushT(t, st)
+	for _, r := range listRequests(t, e, "?limit=500").Requests {
+		if strings.Contains(r.Path, "slots") || strings.Contains(r.Path, "props") || strings.Contains(r.Path, "tokenize") || strings.Contains(r.Path, "models") {
+			t.Fatalf("a monitoring call is a row: %+v", r)
+		}
+	}
+}
+
+// 1,000 polls of /upstream/<model>/slots cost the request log nothing: no
+// live tracker at any time, no write, no row.
+func TestRequests_MonitoringPollsCostNoRecorderWork(t *testing.T) {
+	e, st := usageEnv(t, chatOK, nil)
+	e.post("/v1/chat/completions", chat("alpha")).Body.Close()
+	eventually(t, "ended", func() bool { return e.api.reqs.Ended() == 1 })
+	flushT(t, st)
+	s0 := st.Stats()
+	for i := 0; i < 1000; i++ {
+		resp := e.get("/upstream/alpha/slots")
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("poll %d: %d", i, resp.StatusCode)
+		}
+		if i%100 == 0 && len(e.api.reqs.Live()) != 0 {
+			t.Fatal("a poll made a live tracker")
+		}
+	}
+	flushT(t, st)
+	s1 := st.Stats()
+	if s1.Written != s0.Written || s1.Batches != s0.Batches || s1.Dropped != 0 || s1.Failed != 0 || e.api.reqs.Ended() != 1 {
+		t.Fatalf("before %+v after %+v, ended %d", s0, s1, e.api.reqs.Ended())
+	}
+	if n := len(listRequests(t, e, "?limit=500").Requests); n != 1 {
+		t.Fatalf("%d rows", n)
 	}
 }

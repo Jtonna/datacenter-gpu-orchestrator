@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
@@ -119,6 +120,20 @@ func (c *schedCore) memberRoles(in *inst, s *InstanceStatus) {
 			m.Share = shares[i]
 		}
 	}
+	// Host first. These are the placed machines only (availability and the
+	// reserve read them as "in use"): when the scheduler's machine hosts
+	// with no layers it is not one of them, and host: server says so. The
+	// request log's row (leaseNodesOf) lists it as the host.
+	slices.SortStableFunc(s.Nodes, func(a, b PlacedNodeStatus) int {
+		return boolOrder(b.Role == RoleHost) - boolOrder(a.Role == RoleHost)
+	})
+}
+
+func boolOrder(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // zoneNodeFacts fills the set-aside reason and the expected free time of a

@@ -94,6 +94,7 @@ func TestZone_ServerHostWithRemoteWorkersOnlyHasHelpersByBudget(t *testing.T) {
 	h.llama("m", 16000)
 	h.ready("m")
 	in := instOf(t, h.c.statusDoc(), "m")
+	// The scheduler's machine hosts with no layers: not a placed member.
 	if in.Host != HostServer || len(in.Nodes) != 2 {
 		t.Fatalf("%+v", in)
 	}

@@ -410,7 +410,7 @@ curl -s "$H/api/history/export?since=$SINCE" > history-last6h.jsonl
 
 ### Request log
 
-Every `/v1` and `/upstream` request, with its status, times, tokens, rates, machines and caller, is kept in `POTLUCK_ROOT/data/usage.db` (rows 90 days, hourly totals 13 months, daily totals for ever: settings `usage_request_days`, `usage_hourly_days`).
+Every inference request through `/v1` and `/upstream` (a POST to one of llama-server's routes that runs the model: chat and text completions, responses, messages, infill, embeddings, rerank, audio), with its status, times, tokens, rates, machines and caller, is kept in `POTLUCK_ROOT/data/usage.db` (rows 90 days, hourly totals 13 months, daily totals for ever: settings `usage_request_days`, `usage_hourly_days`).
 
 ```sh
 curl -s "$H/api/requests?status=failed,refused&limit=20" | jq '.requests[] | {id, status, reason, profile, queued_at}'
@@ -425,6 +425,10 @@ The list shows the queued and running requests first, from memory, then the fini
 **Live rows on `/ws`.** Subscribe to the `requests` topic (`{"type":"subscribe","topics":[..., "requests"]}`; not on by default). Frames are `{"type":"requests","data":{"kind": ...}}`: `snapshot` (the first page of `/api/requests`, sent when the client subscribes), `queued`, `started` and `ended` (`request`: the row, as `/api/requests/<id>` answers it) as they happen, and `tick` (`requests`: the running rows) once a second while any request runs. With no subscriber the topic does no work at all.
 
 A running row counts `tokens_out` from the stream (an estimate, marked `live`). Tokens in, reused tokens, the prefill rate and `prefill_processed` (how many prompt tokens are read so far) are known while the request runs only when the request itself asked llama-server for them, with `"return_progress": true` (progress while the prompt is read) or `"timings_per_token": true` (from the first token on); otherwise they come with the end. The setting `requests_live_timings` (off by default) adds `"timings_per_token": true` to streamed chat and completion requests that do not set it, benchmark requests excepted, so every running row has them from its first token. `tokens_in` counts every prompt token, reused ones included, as llama-server's `usage.prompt_tokens` does; `tokens_reused` is its `prompt_tokens_details.cached_tokens` (`timings.cache_n`). `/upstream` rows name the instance and machines that served the model then (no lease is taken).
+
+Monitoring calls (`/upstream/<model>/slots`, `/props`, `/health`, `/metrics`, `/models`, `/tokenize`, `/detokenize`, `/apply-template`, `/lora-adapters`, `GET /v1/models`) pass through unrecorded. A row's `nodes` list the host first, then the helpers, each with its `share` of the model's layers; for a model hosted on the scheduler's machine with no layers there, that machine is the host with no `share`.
+
+`source_addr` is the address the TCP connection came from. Behind a published container port that is the Docker bridge gateway (for example `172.17.0.1`) for every caller, not the client's address: the scheduler does not read `X-Forwarded-For` or any other forwarding header. Use the caller name (agent key) to tell callers apart.
 
 ### Availability, hour by hour
 

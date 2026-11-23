@@ -39,7 +39,10 @@ const (
 type Node struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
-	Role string `json:"role"` // host or helper
+	Role string `json:"role"` // host or helper; the host is listed first
+	// Share is the machine's fraction of the model's layers; absent when
+	// it holds none (the scheduler's machine hosting, a command profile).
+	Share float64 `json:"share,omitempty"`
 }
 
 // Request is one row of the request log, stored or live. Times are unix

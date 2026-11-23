@@ -21,8 +21,14 @@ import (
 // (/api/metrics/activity) is kept as it was.
 
 // trackRequest records a request as it arrives. p is nil for a model that
-// is not known (the row is refused at once).
-func (s *Server) trackRequest(r *http.Request, kind, requested string, p *core.Profile, benchRun string) *usage.Tracker {
+// is not known (the row is refused at once). Only inference is recorded:
+// a request whose method and path (sent, as the model server sees it) do
+// not run the model gets a nil tracker, whose methods do nothing, so it
+// costs the recorder no row, no live entry and no write.
+func (s *Server) trackRequest(r *http.Request, sent, kind, requested string, p *core.Profile, benchRun string) *usage.Tracker {
+	if !usage.IsInference(r.Method, sent) {
+		return nil
+	}
 	b := usage.Begin{Kind: kind, Path: r.URL.Path, Requested: requested, BenchRun: benchRun, SourceAddr: callerOf(r),
 		Caller: audit.DefaultActor, CallerKind: "default"}
 	if p != nil {
@@ -38,7 +44,7 @@ func (s *Server) trackRequest(r *http.Request, kind, requested string, p *core.P
 func leasePlacement(l *scheduler.Lease) usage.Placement {
 	pl := usage.Placement{SchedID: l.ID, Instance: l.Instance, Session: l.Session, Nodes: make([]usage.Node, len(l.Nodes))}
 	for i, n := range l.Nodes {
-		pl.Nodes[i] = usage.Node{ID: n.ID, Name: n.Name, Role: n.Role}
+		pl.Nodes[i] = usage.Node{ID: n.ID, Name: n.Name, Role: n.Role, Share: n.Share}
 		if n.Role == scheduler.RoleHost {
 			pl.HostNode = n.ID
 		}
@@ -52,7 +58,7 @@ func leasePlacement(l *scheduler.Lease) usage.Placement {
 func upstreamPlacement(u scheduler.UpstreamPlacement) usage.Placement {
 	pl := usage.Placement{Instance: u.Instance, Session: u.Session, Nodes: make([]usage.Node, len(u.Nodes))}
 	for i, n := range u.Nodes {
-		pl.Nodes[i] = usage.Node{ID: n.ID, Name: n.Name, Role: n.Role}
+		pl.Nodes[i] = usage.Node{ID: n.ID, Name: n.Name, Role: n.Role, Share: n.Share}
 		if n.Role == scheduler.RoleHost {
 			pl.HostNode = n.ID
 		}
