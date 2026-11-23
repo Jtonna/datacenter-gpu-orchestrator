@@ -248,7 +248,7 @@ func (s *Store) openFile() error {
 	if check != "ok" {
 		return fail(fmt.Errorf("integrity check: %s", check))
 	}
-	if err := migrate(db, s.opt.Now()); err != nil {
+	if err := migrate(db, s.opt.Now(), s.log); err != nil {
 		return fail(err)
 	}
 	var begins int64

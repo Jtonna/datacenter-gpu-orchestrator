@@ -2,12 +2,15 @@ package availability
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -68,6 +71,9 @@ func TestClassify_EveryStateFromMembershipAndStatus(t *testing.T) {
 	}
 	for _, s := range got {
 		w, ok := want[s.Name]
+		if s.Removed != (s.Name == "zone-removed") {
+			t.Errorf("%s: removed %v", s.Name, s.Removed)
+		}
 		if !ok || s.State != w.state || s.Busy != w.busy || s.Reachable != w.reachable {
 			t.Errorf("%s: %s busy %v reachable %v, want %+v", s.Name, s.State, s.Busy, s.Reachable, w)
 		}
@@ -426,7 +432,7 @@ func TestRead_DayRollUpInUTCDays(t *testing.T) {
 		math.Abs(sumSeconds(d1.Seconds)-d1.SpanS) > 1e-6 {
 		t.Fatalf("day 1 %+v", d1)
 	}
-	if u := *s.Nodes[0].Uptime; math.Abs(u-(9000.0/10800)) > 1e-9 {
+	if u := *s.Nodes[0].Uptime; u != .833 { // 9000/10800, to 3 decimals
 		t.Fatalf("uptime %v", u)
 	}
 	// The same hours step by step.
@@ -500,5 +506,68 @@ func TestSampler_StartRunsAndWritesTheRestWhenItStops(t *testing.T) {
 	}
 	if len(smp.Pending()) != 0 {
 		t.Fatal("pending time left unwritten")
+	}
+}
+
+// A removed machine is left out of a period it was only off in (the sampler
+// counts it off once removed), and kept where it did anything else; asked
+// for by name it is answered.
+func TestRead_RemovedMachinesOnlyOffAreLeftOut(t *testing.T) {
+	c := newClock(h10)
+	store := openStore(t, t.TempDir(), c)
+	gone := Sample{Node: "02:00:00:00:00:06", Name: "zone-removed", State: Off, Removed: true}
+	src := &script{}
+	src.set(a, gone)
+	smp := New(store, src.src, Options{Now: c.now, Logger: quiet})
+	smp.Tick(ctxT(t))
+	run(smp, c, time.Hour)
+	smp.Flush()
+	flushStore(t, store)
+	names := func(s Series) string {
+		out := ""
+		for _, n := range s.Nodes {
+			out += n.Name + " "
+		}
+		return out
+	}
+	if s := readAll(t, store, smp, Query{From: h10, To: c.now()}, c.now()); names(s) != "zone-a " {
+		t.Fatalf("listed %q", names(s))
+	}
+	if s := readAll(t, store, smp, Query{From: h10, To: c.now(), Node: "zone-removed"}, c.now()); len(s.Nodes) != 1 {
+		t.Fatalf("by name: %+v", s.Nodes)
+	}
+	// Free in an earlier hour of the period: it did something, so it stays.
+	store.AddNodeHours([]usage.NodeHour{{Node: gone.Node, Name: gone.Name, Hour: h10.Add(-time.Hour), FreeMs: 600_000, ReachableMs: 600_000}})
+	flushStore(t, store)
+	if s := readAll(t, store, smp, Query{From: h10.Add(-time.Hour), To: c.now()}, c.now()); names(s) != "zone-a zone-removed " {
+		t.Fatalf("listed %q", names(s))
+	}
+	// A machine that is only off but not removed (paused) stays listed.
+	src.set(a, Sample{Node: "02:00:00:00:00:02", Name: "zone-paused", State: Off, Reachable: true})
+	run(smp, c, time.Minute)
+	if s := readAll(t, store, smp, Query{From: h10, To: c.now()}, c.now()); !strings.Contains(names(s), "zone-paused") {
+		t.Fatalf("listed %q", names(s))
+	}
+}
+
+// Every figure of the series goes out with 3 decimals at most.
+func TestRead_FiguresAreRoundedToThreeDecimals(t *testing.T) {
+	c := newClock(h10.Add(20*time.Minute + 333*time.Millisecond))
+	store := openStore(t, t.TempDir(), c)
+	store.AddNodeHours([]usage.NodeHour{{Node: "n1", Name: "zone-a", Hour: h10, FreeMs: 700_001, LostMs: 500_000, ReachableMs: 700_001}})
+	flushStore(t, store)
+	s := readAll(t, store, nil, Query{From: h10, To: c.now()}, c.now())
+	b, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range regexp.MustCompile(`\d+\.(\d+)`).FindAllStringSubmatch(string(b), -1) {
+		if len(m[1]) > 3 {
+			t.Fatalf("%s in %s", m[0], b)
+		}
+	}
+	n := s.Nodes[0]
+	if *n.Uptime != .583 || *n.Cells[0].Uptime != .583 || n.Cells[0].SpanS != 1200.333 || n.Cells[0].Seconds.Unknown != .332 {
+		t.Fatalf("%s", b)
 	}
 }

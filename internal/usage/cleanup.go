@@ -2,6 +2,7 @@ package usage
 
 import (
 	"database/sql"
+	"log/slog"
 	"strings"
 )
 
@@ -18,17 +19,32 @@ func upstreamTail(path string) string {
 	return "/"
 }
 
-// dropNonInferenceRows (migration 4) deletes the passthrough rows that did
-// not run the model (the image that shipped first recorded every
-// /upstream call: /slots polls, /props, /health), and takes each deleted
-// finished row's share back out of its hourly and daily totals: the exact
-// inverse of addRollups, so the totals equal what they would have been had
-// the rows never been recorded (also for hours whose other rows were
-// trimmed already). A total left with no request is deleted. The rows
-// were all POST or GET passthroughs; the method was not stored, so a row
-// is kept exactly when its path is an inference route.
-func dropNonInferenceRows(tx *sql.Tx) error {
-	rows, err := tx.Query(`SELECT `+rowColumns+` FROM client_requests WHERE kind = ?`, KindUpstream)
+// sentPath is the path a stored row sent to the model server, as
+// IsInference reads it: the /v1 path itself, or a passthrough's tail.
+func sentPath(r *Request) string {
+	if r.Kind == KindUpstream {
+		return upstreamTail(r.Path)
+	}
+	return r.Path
+}
+
+// dropNonInferenceRows (migration 4) deletes the rows that did not run the
+// model: the first image recorded every /upstream call (the /slots and
+// /props polls of a monitoring client) and every POST under /v1 (tokenize
+// and the like). The method is not stored; /v1 rows were POSTs only, and a
+// row is kept exactly when its path is on the inference allow-list
+// (routes.go), the same table both entry points use. The hourly totals of
+// every hour that held a deleted row, and the daily totals of every such
+// UTC day, are then rebuilt from the rows that remain, so they equal a
+// fresh roll-up of the kept rows. (The rows of those hours and days are
+// all still stored: they are younger than the 90-day row retention, the
+// first image having shipped days ago.) One INFO line gives the counts.
+func dropNonInferenceRows(tx *sql.Tx, log *slog.Logger) error {
+	var before int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM client_requests`).Scan(&before); err != nil {
+		return err
+	}
+	rows, err := tx.Query(`SELECT ` + rowColumns + ` FROM client_requests`)
 	if err != nil {
 		return err
 	}
@@ -36,44 +52,49 @@ func dropNonInferenceRows(tx *sql.Tx) error {
 	if err != nil {
 		return err
 	}
+	hours, days := map[int64]bool{}, map[int64]bool{}
+	deleted := 0
 	for i := range all {
 		r := &all[i]
-		if inferenceRoutes[upstreamTail(r.Path)] {
+		if inferenceRoutes[sentPath(r)] {
 			continue
-		}
-		if r.Status != StatusQueued && r.Status != StatusRunning { // finished: it is in the totals
-			if err := subRollups(tx, r); err != nil {
-				return err
-			}
 		}
 		if _, err := tx.Exec(`DELETE FROM client_requests WHERE id = ?`, r.ID); err != nil {
 			return err
 		}
+		hours[hourOf(r.QueuedAt)], days[dayOf(r.QueuedAt)] = true, true
+		deleted++
 	}
-	for _, t := range []string{"request_hours", "request_days"} {
-		if _, err := tx.Exec(`DELETE FROM ` + t + ` WHERE requests <= 0`); err != nil {
-			return err
+	for _, t := range []struct {
+		table   string
+		buckets map[int64]bool
+	}{{"request_hours", hours}, {"request_days", days}} {
+		for b := range t.buckets {
+			if _, err := tx.Exec(`DELETE FROM `+t.table+` WHERE bucket = ?`, b); err != nil {
+				return err
+			}
 		}
 	}
-	return nil
-}
-
-// subRollups takes one finished request back out of its buckets.
-func subRollups(tx *sql.Tx, r *Request) error {
-	a := rollupOf(r)
-	for _, b := range []struct {
-		table  string
-		bucket int64
-	}{{"request_hours", hourOf(r.QueuedAt)}, {"request_days", dayOf(r.QueuedAt)}} {
-		_, err := tx.Exec(`UPDATE `+b.table+` SET requests=requests-1, done=done-?, failed=failed-?, refused=refused-?, cancelled=cancelled-?,
-  tokens_in=tokens_in-?, tokens_reused=tokens_reused-?, tokens_out=tokens_out-?, wait_ms=wait_ms-?, duration_ms=duration_ms-?,
-  prefill_tokens=prefill_tokens-?, prefill_ms=prefill_ms-?, decode_tokens=decode_tokens-?, decode_ms=decode_ms-?
-WHERE bucket = ? AND profile = ?`,
-			a.done, a.failed, a.refused, a.cancelled, a.in, a.reused, a.out, a.wait, a.dur,
-			a.prefillTok, a.prefillMS, a.decodeTok, a.decodeMS, b.bucket, r.Profile)
-		if err != nil {
-			return err
+	for i := range all {
+		r := &all[i]
+		if r.Status == StatusQueued || r.Status == StatusRunning || !inferenceRoutes[sentPath(r)] {
+			continue // not in the totals yet, or deleted
 		}
+		if h := hourOf(r.QueuedAt); hours[h] {
+			if err := addRollup(tx, "request_hours", h, r); err != nil {
+				return err
+			}
+		}
+		if d := dayOf(r.QueuedAt); days[d] {
+			if err := addRollup(tx, "request_days", d, r); err != nil {
+				return err
+			}
+		}
+	}
+	if log != nil {
+		log.Info("usage migration 4: removed the request rows that were not inference",
+			"rows_before", before, "rows_deleted", deleted, "rows_after", before-deleted,
+			"hours_rebuilt", len(hours), "days_rebuilt", len(days))
 	}
 	return nil
 }
