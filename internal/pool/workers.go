@@ -338,7 +338,7 @@ func (p *Pool) supervise(l *launch) {
 			case <-ctx.Done():
 				return
 			case <-lease.C:
-				supervise.Point("pool.launch")
+				supervise.Point("pool.launch/" + l.id) // test hook, per launch: several supervisors share the task name
 				p.renew(ctx, l)
 			case <-logs.C:
 				p.copyLog(ctx, l)

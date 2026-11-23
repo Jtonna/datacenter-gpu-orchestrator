@@ -52,17 +52,29 @@ func TestLaunchSupervisorRestartsAndRenews(t *testing.T) {
 		t.Fatalf("%+v", res)
 	}
 	id := a.LaunchState().LaunchID
-	h, fired := supervise.PanicAtForTest("pool.launch", 1)
+	// The point names this launch: the rigs of earlier tests leave their
+	// pools (and launch supervisors) running, and a bare "pool.launch" hook
+	// could fire in one of theirs (seen under -race).
+	h, fired := supervise.PanicAtForTest("pool.launch/"+id, 1)
 	defer supervise.SetHookForTest(h)()
 	eventually(t, 5*time.Second, func() bool { return fired() == 1 }, "the injected failure")
+	// Wait for the state asserted: restarted once, out of its backoff.
+	var got supervise.TaskStats
+	eventually(t, 5*time.Second, func() bool {
+		got = supervise.TaskStats{}
+		for _, s := range supervise.Stats() {
+			if s.Name == "pool.launch" {
+				got = s
+			}
+		}
+		return got.Restarts == 1 && got.State == "running"
+	}, "the launch supervisor restarted")
+	if got.Failures != 1 {
+		t.Fatalf("stats %+v", got)
+	}
 	before := a.Leases()
 	eventually(t, 5*time.Second, func() bool { return a.Leases() >= before+2 }, "leases renewed after the restart")
 	if st := a.LaunchState(); st.LaunchID != id || st.State != agentproto.StateReady {
 		t.Fatalf("the launch was disturbed: %+v", st)
-	}
-	for _, s := range supervise.Stats() {
-		if s.Name == "pool.launch" && (s.Restarts != 1 || s.Failures != 1) {
-			t.Fatalf("stats %+v", s)
-		}
 	}
 }

@@ -297,3 +297,36 @@ func TestReportRepanic(t *testing.T) {
 		t.Fatalf("stats %+v", s)
 	}
 }
+
+// The figures through one restart, each read once the state it describes is
+// reached: in the backoff the instance still counts as running (it is
+// supervised), the restart counts only once it runs again, and the count
+// drops only when it ends for good.
+func TestStatsThroughARestart(t *testing.T) {
+	setup(t)
+	restore := Configure(Options{Backoff: func(int) time.Duration { return 200 * time.Millisecond }, Fatal: func(string) {}})
+	defer restore()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	var runs atomic.Int64
+	Go(ctx, Spec{Name: "t.stats", Done: func() { close(done) }}, func(ctx context.Context) {
+		if runs.Add(1) == 1 {
+			panic("x")
+		}
+		<-ctx.Done()
+	})
+	var s TaskStats
+	eventually(t, "backoff", func() bool { s, _ = stat("t.stats"); return s.State == "backoff" })
+	if s.Running != 1 || s.Restarts != 0 || s.Failures != 1 {
+		t.Fatalf("in the backoff: %+v", s)
+	}
+	eventually(t, "running again", func() bool { s, _ = stat("t.stats"); return s.State == "running" && s.Restarts == 1 })
+	if s.Running != 1 || s.Failures != 1 {
+		t.Fatalf("after the restart: %+v", s)
+	}
+	cancel()
+	<-done
+	if s, _ = stat("t.stats"); s.State != "done" || s.Running != 0 || s.Restarts != 1 {
+		t.Fatalf("after the end: %+v", s)
+	}
+}

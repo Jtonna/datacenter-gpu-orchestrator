@@ -109,9 +109,14 @@ const (
 
 // TaskStats is one task as GET /api/system lists it.
 type TaskStats struct {
-	Name            string `json:"name"`
-	Policy          string `json:"policy"` // restart, exit, once, guard, report
-	State           string `json:"state"`  // running, backoff, done, failed, idle
+	Name   string `json:"name"`
+	Policy string `json:"policy"` // restart, exit, once, guard, report
+	// State is backoff while any instance of the name waits to restart,
+	// else running while any instance is supervised.
+	State string `json:"state"` // running, backoff, done, failed, idle
+	// Running counts the supervised instances of the name (one per launch
+	// for pool.launch), including one waiting in its backoff: an instance
+	// leaves the count only when it ends for good.
 	Running         int    `json:"running"`
 	Restarts        int    `json:"restarts"`
 	Failures        int    `json:"failures"`
