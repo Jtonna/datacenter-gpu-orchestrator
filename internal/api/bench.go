@@ -733,6 +733,7 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 	}
 	storage["database"] = db
 	storage["usage"] = s.reqs.Store().Stats() // the request log's own file (usage.db)
+	storage["folders"] = s.disks.Folders()    // each folder's disk: capacity and free space, read every 30 s (health.go)
 	if sys.ChildLogDir != "" {
 		b, n := dirBytes(sys.ChildLogDir)
 		storage["child_logs"] = map[string]any{"dir": sys.ChildLogDir, "bytes": b, "files": n}
@@ -762,6 +763,7 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 	out["occupied_only"] = s.occ.view()
 	if s.sched != nil {
 		out["read_panics"] = s.sched.ReadPanics() // read-only queries that panicked and were recovered; 0 when all is well
+		out["loop"] = s.sched.LoopStats()         // the core loop's step times (B9), read without the loop
 	}
 	writeJSON(w, http.StatusOK, out)
 }

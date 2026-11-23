@@ -1,0 +1,416 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/diskstat"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/pool"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/usage"
+)
+
+const gb = int64(1_000_000_000)
+
+func viewNode(id string, online bool, quarantined bool, excluded bool) scheduler.NodeStatus {
+	n := scheduler.NodeStatus{ID: core.NodeID(id), Hostname: id, Online: online, Excluded: excluded}
+	if quarantined {
+		n.Quarantined = time.Unix(1_800_000_000, 0)
+	}
+	return n
+}
+
+func statusOf(nodes ...scheduler.NodeStatus) *scheduler.Status {
+	st := &scheduler.Status{}
+	st.View.Nodes = nodes
+	return st
+}
+
+// Zones: down = lost or set aside (C2); switched off is reachable and not
+// down; removed zones are left out; no machines is unknown.
+func TestHealth_ZonesRow(t *testing.T) {
+	at := time.Unix(1_800_000_000, 0)
+	for _, c := range []struct {
+		name  string
+		st    *scheduler.Status
+		facts []pool.NodeFacts
+		state string
+		text  string
+		count int64
+	}{
+		{"status not read", nil, nil, HealthUnknown, "Status not read yet", 0},
+		{"no machines", statusOf(), nil, HealthUnknown, "No zones yet", 0},
+		{"all reachable", statusOf(viewNode("ps5-01", true, false, false), viewNode("ps5-02", true, false, false)), nil, HealthOK, "2 of 2 reachable", 0},
+		{"off is not down", statusOf(viewNode("ps5-01", true, false, false), viewNode("ps5-02", true, false, true)), nil, HealthOK, "2 of 2 reachable", 0},
+		{"lost and set aside are down", statusOf(viewNode("ps5-01", true, false, false), viewNode("ps5-02", false, false, false), viewNode("ps5-03", true, true, false)),
+			nil, HealthProblem, "1 of 3 reachable · 2 down", 2},
+		{"removed left out, paused off", statusOf(), []pool.NodeFacts{{ID: "a", Name: "zone-a", State: pool.StateActive}, {ID: "b", Name: "zone-b", State: pool.StateRemoved},
+			{ID: "c", Name: "zone-c", State: pool.StateActive, Paused: true}, {ID: "d", Name: "zone-d", State: pool.StateLost}}, HealthProblem, "2 of 3 reachable · 1 down", 1},
+	} {
+		row := judgeZones(c.st, c.facts, true, at)
+		if row.State != c.state || row.Text != c.text || row.Count != c.count || row.ID != "zones" || row.Label != "Zones" || row.Link == "" {
+			t.Errorf("%s: %+v", c.name, row)
+		}
+	}
+	row := judgeZones(statusOf(viewNode("ps5-01", false, false, false)), nil, false, at)
+	if row.Facts["status_fresh"] != false || row.Facts["status_at"] == nil || row.Facts["down_names"].([]string)[0] != "ps5-01" {
+		t.Fatalf("stale status facts: %+v", row.Facts)
+	}
+}
+
+func TestHealth_RunsRow(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		in    runsIn
+		state string
+		text  string
+		count int64
+	}{
+		{"request log off", runsIn{benchFailed: 1}, HealthUnknown, "Request log is off", 1},
+		{"none", runsIn{logOn: true, total: 40}, HealthOK, "None failed in the last hour", 0},
+		{"one request", runsIn{logOn: true, failed: 1, total: 40}, HealthAttention, "1 failed in the last hour", 1},
+		{"one benchmark run", runsIn{logOn: true, benchFailed: 1}, HealthAttention, "1 failed in the last hour", 1},
+		{"many, but few of the hour", runsIn{logOn: true, failed: 6, total: 40}, HealthAttention, "6 failed in the last hour", 6},
+		{"most of the hour", runsIn{logOn: true, failed: 6, total: 8}, HealthProblem, "6 failed in the last hour", 6},
+		{"four of four is attention", runsIn{logOn: true, failed: 4, total: 4}, HealthAttention, "4 failed in the last hour", 4},
+		{"more than a page", runsIn{logOn: true, failed: 500, total: 500, capped: true}, HealthProblem, "500+ failed in the last hour", 500},
+	} {
+		if row := judgeRuns(c.in); row.State != c.state || row.Text != c.text || row.Count != c.count {
+			t.Errorf("%s: %+v", c.name, row)
+		}
+	}
+}
+
+func TestHealth_SchedulerRow(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	ok := schedIn{version: "v31-abc1234", uptime: 12*24*time.Hour + time.Hour, now: now, statusFresh: true,
+		loop: scheduler.LoopStats{WarnMs: 1000, Max10mMs: 30}, tasks: []supervise.TaskStats{{Name: "api.ws.status", Policy: "restart", State: "running"}}}
+	with := func(f func(*schedIn)) schedIn { c := ok; f(&c); return c }
+	for _, c := range []struct {
+		name  string
+		in    schedIn
+		state string
+		text  string
+	}{
+		{"ok", ok, HealthOK, "Running · release v31-abc1234 · up 12 d"},
+		{"no version", with(func(c *schedIn) { c.version = ""; c.uptime = 90 * time.Second }), HealthOK, "Running · release unknown · up 1 min"},
+		{"old task failure", with(func(c *schedIn) {
+			c.tasks = []supervise.TaskStats{{Name: "x", Policy: "restart", State: "running", LastFailureAt: now.Add(-2 * time.Hour).UnixMilli()}}
+		}), HealthOK, "Running · release v31-abc1234 · up 12 d"},
+		{"task failed this hour", with(func(c *schedIn) {
+			c.tasks = []supervise.TaskStats{{Name: "x", Policy: "restart", State: "running", LastFailureAt: now.Add(-10 * time.Minute).UnixMilli()}}
+		}), HealthAttention, "1 task failed in the last hour · up 12 d"},
+		{"slow step in 10 min", with(func(c *schedIn) { c.loop.Max10mMs = 1400 }), HealthAttention, "Slowest step 1.4 s in 10 min · up 12 d"},
+		{"step at the threshold", with(func(c *schedIn) { c.loop.Max10mMs = 1000 }), HealthOK, "Running · release v31-abc1234 · up 12 d"},
+		{"read panic", with(func(c *schedIn) { c.readPanics = 2 }), HealthAttention, "2 read panics · up 12 d"},
+		{"newer settings", with(func(c *schedIn) { c.writesNeedForce = true }), HealthAttention, "Stored settings from a newer release · up 12 d"},
+		{"busy now", with(func(c *schedIn) { c.loop.BusyNowMs = 6000; c.statusFresh = false }), HealthProblem, "Core loop busy 6.0 s on one step · up 12 d"},
+		{"not answering", with(func(c *schedIn) { c.statusFresh = false }), HealthProblem, "Core loop not answering · up 12 d"},
+		{"essential task stopped", with(func(c *schedIn) {
+			c.tasks = []supervise.TaskStats{{Name: "scheduler.loop", Policy: "exit", State: "failed", LastFailureAt: now.UnixMilli()}}
+		}), HealthProblem, "1 essential task stopped · 1 task failed in the last hour · up 12 d"},
+	} {
+		if row := judgeScheduler(c.in); row.State != c.state || row.Text != c.text {
+			t.Errorf("%s: %s %q", c.name, row.State, row.Text)
+		}
+	}
+	if row := judgeScheduler(ok); row.Facts["release"] != "v31-abc1234" || row.Facts["uptime_s"] != int64(12*24*3600+3600) || row.Link != "#/about" {
+		t.Fatalf("facts %+v", row)
+	}
+}
+
+func TestHealth_MCPRow(t *testing.T) {
+	if r := judgeMCP(3, true); r.State != HealthOK || r.Text != "Running · 3 keys active" || r.Count != 3 {
+		t.Fatalf("%+v", r)
+	}
+	if r := judgeMCP(1, true); r.Text != "Running · 1 key active" {
+		t.Fatalf("%+v", r)
+	}
+	if r := judgeMCP(0, false); r.State != HealthOK || r.Text != "Running" {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func disk(name string, total, used int64, state string) diskstat.Entry {
+	e := diskstat.Entry{Name: name, Path: "/srv/" + name, State: state, SameDiskAs: []string{}}
+	if state == diskstat.StateOK || state == diskstat.StateTimeout {
+		e = readEntry(e, total, used)
+	}
+	return e
+}
+
+// readEntry gives an entry figures as a read that answered would.
+func readEntry(e diskstat.Entry, total, used int64) diskstat.Entry {
+	r := diskstat.New(diskstat.Options{Folders: []diskstat.Folder{{Name: e.Name, Path: e.Path}},
+		Stat: func(string) (diskstat.FS, error) {
+			return diskstat.FS{Total: uint64(total), Used: uint64(used), Free: uint64(total - used)}, nil
+		},
+		Files: func(string) (int64, int) { return used / 2, 3 }})
+	r.Pass(context.Background())
+	got, _ := r.Folder(e.Name)
+	got.State = e.State
+	return got
+}
+
+func TestHealth_StorageRow(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		folders []diskstat.Entry
+		budget  int64
+		state   string
+		text    string
+	}{
+		{"nothing to watch", nil, 0, HealthUnknown, "No folders to watch"},
+		{"not read yet", []diskstat.Entry{disk("data", 0, 0, diskstat.StateWaiting)}, 0, HealthUnknown, "Disk figures not read yet"},
+		{"platform", []diskstat.Entry{disk("data", 0, 0, diskstat.StateUnknown)}, 0, HealthUnknown, "Disk figures not read on this platform"},
+		{"the mockup", []diskstat.Entry{disk("data", 240*gb, 50_300_000_000, diskstat.StateOK)}, 0, HealthOK, "50.3 of 240 GB used"},
+		{"fullest shown", []diskstat.Entry{disk("data", 240*gb, 50*gb, diskstat.StateOK), disk("models", 1000*gb, 800*gb, diskstat.StateOK)}, 0, HealthOK, "800 of 1000 GB used"},
+		{"90 percent", []diskstat.Entry{disk("data", 1000*gb, 900*gb, diskstat.StateOK)}, 0, HealthAttention, "900 of 1000 GB used"},
+		{"under 10 GB free", []diskstat.Entry{disk("data", 60*gb, 51*gb, diskstat.StateOK)}, 0, HealthAttention, "51.0 of 60.0 GB used · 9.0 GB free"},
+		{"97 percent", []diskstat.Entry{disk("data", 1000*gb, 970*gb, diskstat.StateOK)}, 0, HealthProblem, "970 of 1000 GB used"},
+		{"under 2 GB free", []diskstat.Entry{disk("data", 20*gb, 18_500_000_000, diskstat.StateOK)}, 0, HealthProblem, "18.5 of 20.0 GB used · 1.5 GB free"},
+		{"a hung share keeps its figures", []diskstat.Entry{disk("data", 240*gb, 50*gb, diskstat.StateOK), disk("models", 500*gb, 100*gb, diskstat.StateTimeout)}, 0,
+			HealthAttention, "Models folder not answering · 50.0 of 240 GB used"},
+		{"a hung share never read", []diskstat.Entry{disk("models", 0, 0, diskstat.StateWaiting)}, 0, HealthUnknown, "Disk figures not read yet"},
+		{"unreadable", []diskstat.Entry{disk("logs", 0, 0, diskstat.StateError)}, 0, HealthAttention, "Logs folder unreadable"},
+		// the models folder's files are half of used (readEntry): 200 GB
+		{"budget 90 percent", []diskstat.Entry{disk("models", 1000*gb, 400*gb, diskstat.StateOK)}, 220 * gb, HealthAttention, "models 200 of 220 GB budget · 400 of 1000 GB used"},
+		{"over budget", []diskstat.Entry{disk("models", 1000*gb, 400*gb, diskstat.StateOK)}, 150 * gb, HealthProblem, "models 200 of 150 GB budget · 400 of 1000 GB used"},
+		{"within budget", []diskstat.Entry{disk("models", 1000*gb, 400*gb, diskstat.StateOK)}, 400 * gb, HealthOK, "400 of 1000 GB used"},
+	} {
+		row := judgeStorage(c.folders, c.budget)
+		if row.State != c.state || row.Text != c.text {
+			t.Errorf("%s: %s %q", c.name, row.State, row.Text)
+		}
+	}
+	// two folders on one disk count once
+	r := diskstat.New(diskstat.Options{Folders: []diskstat.Folder{{Name: "data", Path: "/a"}, {Name: "history", Path: "/b"}},
+		Stat: func(string) (diskstat.FS, error) {
+			return diskstat.FS{Total: uint64(100 * gb), Used: uint64(95 * gb), Free: uint64(5 * gb), Dev: 7}, nil
+		}})
+	r.Pass(context.Background())
+	if row := judgeStorage(r.Folders(), 0); row.State != HealthAttention || row.Facts["fullest"] != "data" || row.Count != 95 {
+		t.Fatalf("same disk: %+v", row)
+	}
+}
+
+func TestHealth_QueueRow(t *testing.T) {
+	q := func(ages ...time.Duration) *scheduler.Status {
+		st := &scheduler.Status{}
+		for _, a := range ages {
+			st.Queue = append(st.Queue, scheduler.EntryStatus{Profile: "p", Waiters: 1, Age: a})
+		}
+		return st
+	}
+	timeout := 600 * time.Second
+	for _, c := range []struct {
+		name  string
+		st    *scheduler.Status
+		state string
+		text  string
+	}{
+		{"not read", nil, HealthUnknown, "Status not read yet"},
+		{"empty", q(), HealthOK, "Nothing waiting"},
+		{"the mockup", q(5*time.Minute+48*time.Second, 30*time.Second), HealthOK, "2 waiting · longest 5 min 48 s"},
+		{"three quarters", q(450 * time.Second), HealthAttention, "1 waiting · longest 7 min 30 s"},
+		{"nine tenths", q(540 * time.Second), HealthProblem, "1 waiting · longest 9 min 0 s"},
+	} {
+		if row := judgeQueue(c.st, timeout); row.State != c.state || row.Text != c.text {
+			t.Errorf("%s: %s %q", c.name, row.State, row.Text)
+		}
+	}
+}
+
+func TestHealth_SummaryCountAndColour(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	row := func(id, state string) HealthRow { return HealthRow{ID: id, State: state} }
+	for _, c := range []struct {
+		rows                   []HealthRow
+		state, color, sentence string
+		issues                 int
+	}{
+		{[]HealthRow{row("zones", HealthProblem), row("runs", HealthAttention), row("scheduler", HealthOK), judgeAlerts()}, HealthProblem, "red", "2 things need attention", 2},
+		{[]HealthRow{row("runs", HealthAttention), judgeAlerts()}, HealthAttention, "amber", "1 thing needs attention", 1},
+		{[]HealthRow{row("zones", HealthOK), judgeAlerts()}, HealthOK, "green", "All good", 0},
+		{[]HealthRow{row("zones", HealthUnknown), judgeAlerts()}, HealthUnknown, "grey", "Health not known yet", 0},
+	} {
+		s := summarize(c.rows, nil, now)
+		if s.State != c.state || s.Color != c.color || s.Sentence != c.sentence || s.Issues != c.issues {
+			t.Errorf("%+v", s)
+		}
+	}
+	if a := judgeAlerts(); a.State != HealthUnknown || a.Text != "Not set up yet" || a.Link != "#/health/alerts" {
+		t.Fatalf("alerts %+v", a)
+	}
+}
+
+func TestHealth_ShortSentences(t *testing.T) {
+	ev := func(typ, sev string, nodes []string, data map[string]any, summary string) history.Event {
+		return history.Event{Ts: 1_800_000_000_000, Type: typ, Severity: sev, Nodes: nodes, Data: data, Summary: summary, Profile: "qwen-4b"}
+	}
+	for _, c := range []struct {
+		e          history.Event
+		text, node string
+	}{
+		{ev(history.TNodeQuarantined, "warn", []string{"ps5-05"}, map[string]any{"reason": scheduler.SetAsidePreflight, "until": int64(1_800_001_080_000)}, ""), "ps5-05 failed a load and was set aside", "ps5-05"},
+		{ev(history.TNodeQuarantined, "warn", []string{"ps5-05"}, map[string]any{"reason": scheduler.SetAsideWorkerHung}, ""), "ps5-05 had a worker stop answering and was set aside", "ps5-05"},
+		{ev(history.TNodeLost, "error", []string{"ra-36"}, nil, ""), "ra-36 went offline", "ra-36"},
+		{ev(history.TNodeMembership, "error", []string{"ps5-06"}, map[string]any{"state": pool.StateLost}, "Node ps5-06 was lost: no heartbeat for 12s."), "ps5-06 went offline", "ps5-06"},
+		{ev(history.TBenchRunFinished, "error", nil, map[string]any{"state": "failed", "bench_run": "r-12"}, ""), "Benchmark run r-12 failed", ""},
+		{ev(history.TRequestRefused, "warn", nil, nil, ""), "A request for qwen-4b was refused", ""},
+		{ev(history.TLoopSlowStep, "warn", nil, map[string]any{"ms": float64(1400)}, ""), "The core loop was busy 1.4 s on one step", ""},
+		{ev("fleetViewStale", "warn", nil, nil, "The fleet view is 90 s old. Remote nodes are not used."), "The fleet view is 90 s old", ""},
+	} {
+		got := shortEvent(c.e)
+		if got.Text != c.text || got.Node != c.node {
+			t.Errorf("%s: %+v", c.e.Type, got)
+		}
+	}
+	if got := shortEvent(ev(history.TNodeQuarantined, "warn", []string{"ps5-05"}, map[string]any{"until": float64(1_800_001_080_000)}, "")); got.Until != "2027-01-15T08:18:00.000Z" {
+		t.Fatalf("until %q", got.Until)
+	}
+}
+
+// The route with the request log off, a models share whose statfs hangs and
+// one machine: it answers at once, each row says what it can.
+func TestHealth_RouteUsageOffAndHungDisk(t *testing.T) {
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	e := newEnv(t, chatOK, func(o *Options) {
+		o.System.DataDir, o.System.ModelsDir = "/srv/data", "/mnt/share"
+		o.diskTimeout, o.diskEvery = 50*time.Millisecond, time.Hour
+		o.diskStat = func(p string) (diskstat.FS, error) {
+			if p == "/mnt/share" {
+				<-release
+			}
+			return diskstat.FS{Total: uint64(240 * gb), Used: uint64(50 * gb), Free: uint64(190 * gb), Dev: 1}, nil
+		}
+		o.taskStats = func() []supervise.TaskStats { return nil }
+	})
+	eventually(t, "a disk pass", func() bool { return e.api.disks.Passes() >= 1 })
+	t0 := time.Now()
+	var sum HealthSummary
+	if err := json.Unmarshal([]byte(body(t, e.get("/api/health"))), &sum); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(t0); d > 3*time.Second {
+		t.Fatalf("the summary took %v", d)
+	}
+	rows := map[string]HealthRow{}
+	ids := []string{}
+	for _, r := range sum.Rows {
+		rows[r.ID] = r
+		ids = append(ids, r.ID)
+	}
+	if strings.Join(ids, ",") != "zones,runs,scheduler,mcp,storage,queue,alerts" {
+		t.Fatalf("rows %v", ids)
+	}
+	if r := rows["zones"]; r.State != HealthOK || r.Text != "1 of 1 reachable" {
+		t.Errorf("zones %+v", r)
+	}
+	if r := rows["runs"]; r.State != HealthUnknown || r.Text != "Request log is off" {
+		t.Errorf("runs %+v", r)
+	}
+	if r := rows["storage"]; r.State != HealthAttention || r.Text != "Models folder not answering · 50.0 of 240 GB used" {
+		t.Errorf("storage %+v", r)
+	}
+	if r := rows["scheduler"]; r.State != HealthOK || !strings.HasPrefix(r.Text, "Running · release ") {
+		t.Errorf("scheduler %+v", r)
+	}
+	if r := rows["queue"]; r.State != HealthOK || r.Text != "Nothing waiting" {
+		t.Errorf("queue %+v", r)
+	}
+	if r := rows["mcp"]; r.State != HealthOK {
+		t.Errorf("mcp %+v", r)
+	}
+	if sum.State != HealthAttention || sum.Issues != 1 || sum.Color != "amber" || sum.Sentence != "1 thing needs attention" || len(sum.Recent) != 0 {
+		t.Errorf("summary %+v", sum)
+	}
+	// /api/system and the catalog read the same cache
+	var sys struct {
+		Storage struct {
+			Folders []diskstat.Entry `json:"folders"`
+		} `json:"storage"`
+		Loop scheduler.LoopStats `json:"loop"`
+	}
+	json.Unmarshal([]byte(body(t, e.get("/api/system"))), &sys)
+	if len(sys.Storage.Folders) != 2 || sys.Storage.Folders[0].State != diskstat.StateOK || sys.Storage.Folders[1].State != diskstat.StateTimeout || sys.Loop.WarnMs != 1000 {
+		t.Errorf("system %+v", sys)
+	}
+	var cat struct {
+		Disk   map[string]any `json:"disk"`
+		Models []any          `json:"models"`
+	}
+	json.Unmarshal([]byte(body(t, e.get("/api/models"))), &cat)
+	if cat.Disk["state"] != diskstat.StateTimeout || cat.Disk["path"] != "/mnt/share" || cat.Models == nil {
+		t.Errorf("catalog disk %+v", cat.Disk)
+	}
+}
+
+// With the request log on, a failed benchmark run in the hour counts as a
+// failed run, and the warnings of the last two hours come in short
+// sentences, newest first; info events and older ones are left out. The
+// /ws topic sends the summary on subscribe and again when it changes.
+func TestHealth_RouteRecentRunsAndPush(t *testing.T) {
+	dir := t.TempDir()
+	store := usage.Open(usage.Options{Dir: dir})
+	t.Cleanup(func() { store.Close() })
+	hist := history.Open(history.Options{Dir: t.TempDir()})
+	t.Cleanup(hist.Close)
+	e := newEnv(t, chatOK, func(o *Options) {
+		o.Usage, o.Requests, o.History = store, usage.NewRecorder(store), hist
+		o.healthEvery = 20 * time.Millisecond
+		o.taskStats = func() []supervise.TaskStats { return nil }
+	})
+	now := e.api.opts.Now()
+	rec := func(ago time.Duration, typ, sev string, nodes []string, data map[string]any) {
+		hist.Record(history.Event{Ts: now.Add(-ago).UnixMilli(), Type: typ, Severity: sev, Nodes: nodes, Data: data, Summary: typ + "."})
+	}
+	rec(3*time.Hour, history.TNodeLost, history.Error, []string{"zone-old"}, nil)
+	rec(90*time.Minute, history.TNodeLost, history.Error, []string{"zone-b"}, nil)
+	rec(30*time.Minute, history.TLoadStarted, history.Info, nil, nil)
+	rec(20*time.Minute, history.TBenchRunFinished, history.Error, nil, map[string]any{"state": "failed", "bench_run": "r-1"})
+	rec(10*time.Minute, history.TNodeQuarantined, history.Warn, []string{"zone-c"}, map[string]any{"reason": "other"})
+
+	c := dialWS(t, e, nil)
+	c.until(t, TopicHello, 3*time.Second)
+	c.send(t, map[string]any{"type": "subscribe", "topics": []string{TopicHealth}})
+	m := c.until(t, TopicHealth, 3*time.Second)
+	var sum HealthSummary
+	if err := json.Unmarshal(m.Data, &sum); err != nil {
+		t.Fatal(err)
+	}
+	texts := []string{}
+	for _, r := range sum.Recent {
+		texts = append(texts, r.Text)
+	}
+	if strings.Join(texts, " | ") != "zone-c failed a load and was set aside | Benchmark run r-1 failed | zone-b went offline" {
+		t.Fatalf("recent %q", texts)
+	}
+	var runs HealthRow
+	for _, r := range sum.Rows {
+		if r.ID == "runs" {
+			runs = r
+		}
+	}
+	if runs.State != HealthAttention || runs.Text != "1 failed in the last hour" || runs.Facts["request_log"] != "on" {
+		t.Fatalf("runs %+v", runs)
+	}
+	// a change is pushed: a zone set aside now is the newest line
+	rec(0, history.TNodeQuarantined, history.Warn, []string{"zone-d"}, map[string]any{"reason": "other"})
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		m := c.until(t, TopicHealth, time.Until(deadline))
+		var s2 HealthSummary
+		json.Unmarshal(m.Data, &s2)
+		if len(s2.Recent) == 4 && s2.Recent[0].Node == "zone-d" {
+			break
+		}
+	}
+}
