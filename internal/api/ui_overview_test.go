@@ -168,6 +168,42 @@ func TestUINextOverview(t *testing.T) {
 	}})
 }
 
+// A running row with requests_live_timings off, as /api/requests and the
+// requests topic carry it: tokens_in, tokens_reused and prefill_tps are null
+// until it ends, tokens_out and decode_tps are live. The null cells show the
+// dash (as a queued row does), never 0 and never "null".
+func TestUINextOverviewRunningRowBlanks(t *testing.T) {
+	now := time.Now()
+	st := ovStatus(now)
+	ms := func(d time.Duration) int64 { return now.Add(d).UnixMilli() }
+	served := []any{map[string]any{"id": ovA, "name": "node-a", "role": "host", "share": 0.6}, map[string]any{"id": ovB, "name": "node-b", "role": "helper", "share": 0.4}}
+	running := func(id int, out int, tps float64) map[string]any {
+		return map[string]any{"id": id, "kind": "v1", "status": "running", "profile": "alpha", "live": true, "queued_at": ms(-10 * time.Second), "started_at": ms(-9 * time.Second),
+			"tokens_in": nil, "tokens_reused": nil, "prefill_tps": nil, "tokens_out": out, "decode_tps": tps, "nodes": served}
+	}
+	// a dash cell is muted and says on hover when its prompt figures come
+	// (one word only: the test's selectors split on spaces)
+	dashes := func(id string) []string {
+		return []string{"tr[data-req='" + id + "'] td.num.mut[title*=figures]"}
+	}
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": ovFetch(now, []any{running(15, 318, 14.1)}, true), "cases": []any{
+		map[string]any{"name": "blanks: polled running row", "route": "#/overview", "status": st,
+			"expect": []string{"318", "14.1"}, "absent": []string{"null", "NaN", "undefined"}, "has": dashes("15")},
+		map[string]any{"name": "blanks: the requests list", "route": "#/requests", "status": st,
+			"expect": []string{"318", "14.1"}, "absent": []string{"null", "NaN", "undefined"}, "has": dashes("15")},
+	}})
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": ovFetch(now, []any{}, true), "cases": []any{
+		map[string]any{"name": "blanks: started then ticked on the topic", "route": "#/overview", "status": st,
+			"ws": []any{
+				map[string]any{"type": "hello", "data": map[string]any{"topics": []any{"status", "requests"}}},
+				map[string]any{"type": "requests", "data": map[string]any{"kind": "snapshot", "on": true, "requests": []any{}}},
+				map[string]any{"type": "requests", "data": map[string]any{"kind": "started", "request": running(50, 0, 0)}},
+				map[string]any{"type": "requests", "data": map[string]any{"kind": "tick", "requests": []any{running(50, 777, 12.5)}}},
+			},
+			"expect": []string{"777", "12.5"}, "absent": []string{"null", "NaN", "undefined"}, "has": dashes("50")},
+	}})
+}
+
 // The home page is the Overview: an empty hash opens it, the mark links to
 // it, Monitor's first page is it, and it opens with the section menu closed.
 func TestUINextOverviewIsHome(t *testing.T) {

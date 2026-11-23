@@ -7,7 +7,7 @@
 // artboard can be compared like for like. Node only, no dependencies.
 //
 // usage: node scripts/ui-fixture-server.mjs [--port 3122] [--ui internal/api/ui] [--host 0.0.0.0]
-//                                           [--state normal|empty|off|loading] [--sequence]
+//                                           [--state normal|empty|off|loading] [--sequence] [--live-timings]
 //
 //   /ui/...      the new shell (ui/next laid over the classic files, as the
 //                scheduler serves it), /ui/classic/... the classic UI
@@ -24,6 +24,11 @@
 // The fixture's machines name their first device after its chip ("Oberon",
 // "RTX 3070 Ti"); the Zone column shows that name until agents report a
 // chip field.
+//
+// --live-timings: the setting requests_live_timings on, so running rows carry
+// their prompt figures (tokens in, reused, in tok/s) as the mockup draws them.
+// Without it, as on a scheduler with the setting off (its default), those
+// three are null until the run ends and the table shows a dash.
 //
 // --sequence: a scripted change for screenshots: 4 s after a client
 // subscribes to the requests topic, the queued run 202 starts (a "started"
@@ -43,6 +48,7 @@ const PORT = Number(opt('--port', '3122'));
 const HOST = opt('--host', '0.0.0.0');
 const STATE = opt('--state', 'normal');
 const SEQUENCE = argv.includes('--sequence');
+const LIVE_TIMINGS = argv.includes('--live-timings');
 
 // ---------- the fixture (the Overview mockup's sample data) ----------
 
@@ -105,7 +111,9 @@ function requests(now) {
   const nodes = ids => ids.map(n => ({ id: mac(n), name: MACHINES.find(m => m.n === n).name, role: n === 1 ? 'host' : 'helper' }));
   const big = nodes([1, 2, 5]);
   const row = (id, o) => Object.assign({ id, kind: 'v1', stream: true, nodes: [], caller: 'anonymous', caller_kind: 'default',
-    tokens_in: null, tokens_reused: null, tokens_out: null, prefill_tps: null, decode_tps: null, wait_ms: 0, duration_ms: 0 }, o);
+    tokens_in: null, tokens_reused: null, tokens_out: null, prefill_tps: null, decode_tps: null, wait_ms: 0, duration_ms: 0 }, o,
+    // a running row's prompt figures come when it ends unless requests_live_timings is on
+    o.status === 'running' && !LIVE_TIMINGS ? { tokens_in: null, tokens_reused: null, prefill_tps: null } : {});
   return [
     row(203, { status: 'queued', queued_at: now - 344000, profile: SMALL, live: true, wait_ms: 344000 }),
     row(202, { status: 'queued', queued_at: now - 37000, profile: QWEN, live: true, wait_ms: 37000 }),
@@ -217,7 +225,7 @@ const server = http.createServer((req, res) => {
     stored_config: { unknown_fields: [], writes_need_force: false },
     storage: { database: { dir: '/data', on: true, bytes: 37600000 }, history: { dir: '/data/history', on: true, bytes: 3000000, files: 4 }, usage: { size_bytes: 9400000 }, child_logs: { dir: '/data/logs', bytes: 23700000, files: 12 } } });
   if (p === '/api/agents') return json(res, 200, { agents: ['ops-bot', 'coding agent', 'report writer'].map((name, i) => ({ id: 'agent-' + i, name, key_prefix: 'ptk_' + i, created_at: now - (i + 2) * 24 * H, request_count: 10 * i })) });
-  if (p === '/api/config/settings') return json(res, 200, { settings: { queue_timeout: '30m0s', requests_live_timings: false } });
+  if (p === '/api/config/settings') return json(res, 200, { settings: { queue_timeout: '30m0s', requests_live_timings: LIVE_TIMINGS } });
   if (p === '/api/history') return json(res, 200, { events: [
     { ts: now - 12 * 60000, seq: 41, type: 'nodeQuarantined', severity: 'warn', nodes: ['ps5-05'], summary: 'Node ps5-05 was quarantined for 18m0s (level 1): preflight failed.', data: { for_s: 1080, level: 1 } },
     { ts: now - 54 * 60000, seq: 40, type: 'nodeLost', severity: 'error', nodes: ['ps5-07'], summary: 'Node ps5-07 was lost.', data: {} },
