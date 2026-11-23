@@ -18,6 +18,10 @@ What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent
 - Nothing for profiles without `host: node`: they run on the scheduler's machine as before.
 - Every agent must be 0.1.9: 0.1.6 agents are refused with `agent_too_old` and update themselves.
 
+### Fixed before release
+
+- **A host launch asked the node for its whole budget.** `min_mem_available_mib` of a launch on a shared-memory node was the watchdog floor plus the node's whole budget (plus the host overhead on a host node), not this load's share; the agent then refused a console-hosted load that fit (`low_memory`, found on the canary). It is now the floor plus the node's `expect_mib`, for host and worker launches alike. Scheduler only: the 0.1.9 agent is unchanged.
+
 ### Known limits
 
 - **No stall detection for a node-hosted load.** The stall rule needs Potluck's own byte count of an upload, and a host on a node is not Potluck's process, so a stuck node-hosted load ends only at its load timeout: the profile's `load_timeout`, else 120 s + 2 x (file size x share / link speed) over every node, the host node included. Set `load_timeout` on a `host: node` profile to bound it.

@@ -402,3 +402,62 @@ func TestHost_LoadTimeoutCountsTheHostsShare(t *testing.T) {
 		t.Fatal("stalled without a measurement")
 	}
 }
+
+// The memory figures a launch is sent belong to this load: expect_mib is the
+// node's share of the need (plus host_overhead_mib on the host node), and
+// min_mem_available_mib is the watchdog floor plus that share, never the
+// node's whole budget. (Canary finding: the host launch was sent floor +
+// budget + overhead, which an idle console met by a few MiB and a busy one
+// never.)
+func TestHost_MemoryFiguresAreTheLoadsNotTheBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		freeA  int
+		accept bool
+	}{
+		{"idle console", 15000, true},
+		{"another model already loaded, enough room", 8000, true},
+		{"too little room", 5000, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t).nodes(ps5("a", 2, tc.freeA), ps5("b", 4, 15000))
+			h.cfg.Defaults.Membership = config.MembershipAgents
+			h.cfg.Defaults.WorkerProbeInterval = 0
+			h.c.agents = true
+			h.llama("m", 8000, func(p *core.Profile) {
+				p.ForceNodes, p.TensorSplit, p.TTL, p.Host = []string{"a", "b"}, []int{1, 1}, ptrDur(0), core.HostNode
+			})
+			floor, over := int64(h.cfg.Defaults.WatchdogFloorMiB), int64(h.cfg.Defaults.HostOverheadMiB)
+			h.request("m")
+			in := h.c.insts["m"]
+			if !tc.accept {
+				// Too little room: refused by the fit check before any launch
+				// is sent, so the agent never sees a figure.
+				if len(h.hosts) != 0 || (in != nil && in.hostTarget.ExpectMiB > 0) {
+					t.Fatalf("a launch was prepared on a node with %d free: %+v", tc.freeA, in.hostTarget)
+				}
+				return
+			}
+			if in == nil {
+				t.Fatal("no instance")
+			}
+			l := h.lastLaunch()
+			exp := h.c.expectShares(in.prof, in.placement)
+			h.workersUp()
+			hs := h.lastHost()
+			if hs.ExpectMiB != int64(exp[0]) || hs.ExpectMiB < 4000+over || hs.ExpectMiB > 4000*2+over {
+				t.Fatalf("host expect_mib %d, want the share of 8000 plus %d overhead (%v)", hs.ExpectMiB, over, exp)
+			}
+			if hs.MinMemAvailableMiB != floor+hs.ExpectMiB {
+				t.Fatalf("host min_mem_available %d, want floor %d + expect %d", hs.MinMemAvailableMiB, floor, hs.ExpectMiB)
+			}
+			if hs.MinMemAvailableMiB > int64(tc.freeA) {
+				t.Fatalf("host min_mem_available %d above the node's %d free: the agent would refuse a launch that fits", hs.MinMemAvailableMiB, tc.freeA)
+			}
+			w := l.spec.Workers[0]
+			if w.ExpectMiB != int64(exp[1]) || w.MinMemAvailableMiB != floor+w.ExpectMiB || w.ExpectMiB >= hs.ExpectMiB {
+				t.Fatalf("worker %+v, expect shares %v", w, exp)
+			}
+		})
+	}
+}

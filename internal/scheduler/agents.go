@@ -234,15 +234,23 @@ func (c *schedCore) launchWorkers(in *inst) {
 		if n.WatchdogFloorMiB > 0 {
 			floor = int64(n.WatchdogFloorMiB)
 		}
-		// Settled as built by CR-5 (agent contract 11.1). The question was: 6.2 says min_mem_available_mib comes "from the
-		// budget" without a formula. A node whose device shares system memory
-		// needs its budget plus the watchdog floor available; any other node
-		// is asked for the floor only (the weights go to its own VRAM).
+		// A node whose device shares system memory must have the watchdog
+		// floor plus this load's share of it available: the share it is
+		// expected to take (expect_mib, which carries host_overhead_mib on
+		// the host node). Any other node is asked for the floor only (the
+		// weights go to its own VRAM). Never the node's whole budget: a
+		// forced placement's budget is everything free less headroom, so
+		// floor + budget asks for more than the node has once the floor
+		// exceeds the headroom (always so on a host node, with its
+		// overhead), and the agent refuses a load that fits (release 0.1.9
+		// canary). Only when the share is unknown is the budget used.
 		min := floor
 		if n.SharedMemory {
-			min += int64(pn.BudgetMiB)
-			if host {
-				min += int64(c.hostOverhead(in.prof, in.placement, pn.ID))
+			switch {
+			case expect != nil && expect[i] > 0:
+				min += int64(expect[i])
+			default:
+				min += int64(pn.BudgetMiB) + int64(c.hostOverhead(in.prof, in.placement, pn.ID))
 			}
 		}
 		wt := WorkerTarget{Node: pn.ID, Addr: pn.Addr, MinMemAvailableMiB: min}
