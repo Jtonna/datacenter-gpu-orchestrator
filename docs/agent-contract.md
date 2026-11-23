@@ -41,7 +41,7 @@ Each term has one meaning in this document.
 | 2049 | share (NFSv4) | `192.0.2.1` | nodes that mount the share |
 | 50060 | agent API | the node's address that reaches Potluck, and `127.0.0.1` | Potluck; local programs for `GET /status` only |
 | 50052 | `rpc-server` during a worker launch | the node's address that reaches Potluck | the host of that load (Potluck's own host in phase 4, a host node from phase 6) |
-| 50061 | `llama-server` during a host launch (phase 6) | same address | Potluck only |
+| 50061 | `llama-server` during a host launch (phase 6, release 0.1.9) | the node's address that reaches Potluck | Potluck only: every route but `/health` wants the launch's per-launch key (6.15); open only while the host launch exists |
 | 50070 | `node_exporter` | `127.0.0.1` | the local agent only |
 | 50071 | `nvidia_gpu_exporter` (Nvidia nodes) | `127.0.0.1` | the local agent only |
 
@@ -94,7 +94,7 @@ Sent at agent start, and again whenever Potluck answers a heartbeat with `410`.
 - `launch_id`: a launch that exists on the node at registration (the agent restarted, or Potluck did).
 - `foreign_processes`: any `rpc-server` or `llama-server` process on the node that the agent did not start, as `[{"pid", "exe"}]`. Not empty means the agent sends the registration, is refused (`foreign_process`), and starts nothing.
 - `watchdog_floor_mib` (CR-9; optional, sent from release 0.1.1): the agent's memory watchdog floor in MiB (section 6.7), for example `"watchdog_floor_mib": 1000`. Section 11.2, item 2.
-- `capabilities` (optional, sent from release 0.1.6): optional requests this agent answers, as a list of words. Missing or empty means none. Known words: `file_cache_evict` (section 6.13), sent by a Linux agent whose model source has a model folder. Potluck ignores words it does not know, and never sends an optional request to an agent that does not list it.
+- `capabilities` (optional, sent from release 0.1.6): optional requests this agent answers, as a list of words. Missing or empty means none. Known words: `file_cache_evict` (section 6.13), sent by a Linux agent whose model source has a model folder; `host_launch` (section 6.15, from release 0.1.9), sent by an agent whose model source is not `push`. Potluck ignores words it does not know, and never sends an optional request to an agent that does not list it.
 
 Answer `200`:
 
@@ -376,6 +376,7 @@ Stopping a launch is always: SIGTERM, wait up to 10 s, SIGKILL. A forced stop sk
 - `tensor_split` is required when `workers` is not empty, one entry per member, host first.
 - `extra_args` are appended last. The agent refuses arguments it sets itself.
 - The agent never starts `llama-server` with fewer workers than the request names.
+- From release 0.1.9 a host launch also takes `expect_mib`, `rpc_file_load` and `api_key`, and is sent only to an agent that advertises `host_launch`. Section 6.15.
 
 Checks before anything starts. Each failure is a refusal with a `reason` word and a `message`:
 
@@ -387,7 +388,7 @@ Checks before anything starts. Each failure is a refusal with a `reason` word an
 | `503` | `model_source_unreachable` | For a host, or a worker with `model_dir`: the last share probe succeeded (section 8). |
 | `404` | `model_not_found` | Host only: the model file exists and is readable. |
 | `507` | `low_memory` | `MemAvailable` is at least `min_mem_available_mib`. |
-| `409` | `would_not_fit` | CR-9, from release 0.1.1. Worker with `expect_mib` only. Two tests; every one that applies must pass. The device test: the device's `free_mib` is at least `expect_mib`. The `MemAvailable` test: `MemAvailable - expect_mib` is at least the watchdog floor; it applies unless the device is known to have memory of its own, and always when no device figure is known. When `MemAvailable` cannot be read and that test applies, the launch is refused with a message that says no memory figure could be read. The message names the numbers. Section 11.2, item 1. |
+| `409` | `would_not_fit` | CR-9, from release 0.1.1. Worker with `expect_mib` only (from release 0.1.9 also a host with `expect_mib`, 6.15). Two tests; every one that applies must pass. The device test: the device's `free_mib` is at least `expect_mib`. The `MemAvailable` test: `MemAvailable - expect_mib` is at least the watchdog floor; it applies unless the device is known to have memory of its own, and always when no device figure is known. When `MemAvailable` cannot be read and that test applies, the launch is refused with a message that says no memory figure could be read. The message names the numbers. Section 11.2, item 1. |
 | `502` | `worker_unreachable` | Host only: every worker accepts a TCP connection within 5 s. The agent closes each connection at once and sends no bytes (see below). The body lists the ones that failed. |
 | `409` | `port_in_use` | The launch port is free. A bind failure is retried for 3 s before it is reported, because the previous launch's port can take a moment to free. |
 
@@ -606,6 +607,54 @@ Added in release 0.1.6. Additive. Software on the node that must not disturb it 
 - **Docker install.** There are no systemd units for launches. A launch is a child process of the agent inside the agent's container (6.1), and it ends with the container. On that install the busy file (if a path is given) and `GET /status` are the signals.
 
 The same fact is in `GET /status` (6.9): `busy` (true or false), `launches` and `busy_since` (Unix seconds, `null` when idle).
+
+### 6.15 Host launches: a console as host (release 0.1.9)
+
+Added in release 0.1.9 (phase 6). Additive and versioned:
+
+- An agent that can run a host launch says so with the capability word `host_launch` (4.2). Potluck sends `role: "host"` only to such an agent. An agent of release 0.1.6 does not send the word and is never asked: the load fails on Potluck's side with `host_not_capable` before anything is launched. A `push` node never advertises it (the host reads the model from the node's model folder).
+- Every new field is optional. A 0.1.9 agent takes a host request in the 0.1.6 form (no `expect_mib`, no `rpc_file_load`, no `api_key`) as before: `strict_file_load` decides `LLAMA_RPC_FILE_LOAD`, no memory test, no key.
+- Potluck chooses a node to host only when a profile asks for it (`host: node`, which needs `force_nodes`): the first forced node hosts. It never picks a host by itself.
+
+New fields of the `host` object:
+
+```json
+"host": {
+  "model": "gemma-4-12b-it-Q4_K_M.gguf",
+  "ctx": 8192,
+  "parallel": 1,
+  "workers": ["192.0.2.122:50052"],
+  "tensor_split": [0.5, 0.5],
+  "strict_file_load": false,
+  "rpc_file_load": "0",
+  "expect_mib": 7400,
+  "api_key": "<32 random characters>",
+  "extra_args": ["--n-gpu-layers", "999", "--fit", "off", "--jinja", "--cache-ram", "0", "-lv", "4"]
+}
+```
+
+- `expect_mib`: the memory Potluck expects the host to take on the node: its device share of the weights, its context (KV cache and compute buffers) and the host process itself (`host_overhead_mib`, default 1024). The agent makes the same `would_not_fit` test as for a worker (6.2). `min_mem_available_mib` of a host carries the host process too.
+- `rpc_file_load`: the host's `LLAMA_RPC_FILE_LOAD`, `"required"` (the workers read the file themselves; set when Potluck's `worker_model_dir` is on) or `"0"` (the weights go over the worker connection). Any other value is refused with `invalid_request`. When it is missing, `strict_file_load` decides as before: true is `required`, false is `1`.
+- `api_key`: a per-launch key, 16 to 256 characters of letters, digits, `.`, `_` and `-`; anything else is refused with `invalid_request`. With it the agent writes the key to a file readable by the launch only (mode `0600`, in the agent's state folder under `/run`, which is RAM), starts `llama-server --api-key-file <that file>`, and removes the file when the launch ends and when the start fails. The key is never on the command line, in the unit's environment, in the state object, in the launch log or in the agent's own log. `llama-server` then answers every route but `/health` only with `Authorization: Bearer <key>`. Potluck makes a new key for every launch and sends it on every request it forwards; the client's own `Authorization` header is not passed on.
+- `extra_args` may not name `--api-key`, `--api-key-file`, `--device` or `-dev` (the agent sets them).
+
+What the agent does differently for a host from 0.1.9:
+
+- **Its own device first.** With workers, the agent passes `--device <its own device>,RPC0,RPC1,...` so that the first weight of `tensor_split` is the host's own device. When the agent knows no device of its own and the request names workers, it refuses with `invalid_request`.
+- **Read progress.** While a host starts, `load.bytes_loaded` is the bytes the host process has read (`rchar` of `/proc/<pid>/io`), capped at the model file's size, with `bytes_total` the file's size. This counts `read()` calls only: with memory-mapped loading (the default) it stays near 0 and the agent reports no progress; it counts with `--no-mmap` (Potluck's `host_no_mmap`, default off until measured). Potluck's stall rule never fires on figures it does not have.
+- **Ports.** The host listens on 50061 on the node's address that reaches Potluck (3). The port is opened by the launch and closed when it ends. The host connects out from the node to the workers' 50052.
+- **Nothing on the USB drives.** The model is read from the read-only model folder; the key file and the launch log live in RAM (`/run`). The rules of 2 hold as for a worker. Nothing in a host launch reboots or power-cycles the node.
+- **Busy file.** A host launch makes the node busy exactly as a worker launch does (6.14); the unit is `potluck-launch-<launch_id>.service` whatever the role.
+
+What Potluck does with a host launch:
+
+- The worker launches of the load are started first; the host launch is sent once they are ready. The host node is not also a worker.
+- The host's state is read, its lease renewed and its log copied as for a worker (6.3, 6.4, 6.6). When the agent reports `ready`, Potluck checks `http://<node>:50061/health` itself (5 tries, 1 s apart) before the instance takes requests; when that fails the launch is stopped with force and the load fails with `host_unreachable`.
+- A plain unload is `DELETE /launch/<id>`, a forced one `DELETE ...?force=1`, then `/reset` after 5 s (7.2). A lost node is not called; its launch ends by its lease on the node.
+- A host that ends by itself (watchdog, OOM kill, crash) ends the instance, its worker launches are stopped, and a watchdog or OOM kill raises the learned need as a worker's does (11.1).
+- **Potluck restart.** A console-hosted model is not kept across a Potluck restart: the new run does not hold the launch, and it is stopped as any orphan launch is (4.2 `stop_launch`, 11).
+- **Memory accounting.** Learned needs of a load hosted on a node are stored under a shape of their own (the shape key gains `host=node`), so they never mix with loads hosted on Potluck's machine. The host node's reservation carries `host_overhead_mib` on top of its device share.
+- Requests in flight to a host whose instance is removed (its node lost, the host ended) are ended by Potluck: a console that loses power sends no reset.
 
 ## 7. Stats and controls
 
@@ -1010,6 +1059,7 @@ History only: this section adds nothing to the contract. Code comments cite thes
 | CR-10 | Central logging through Potluck. Batch 1, the Potluck side (settings, the `logs` object, `logs_revision`, the pass-through with its limits and counters, items 1 to 10). The agent batch: the shipper, `server_time_unix_ms`, the `--logs`, `--log-buffer-mib` and `--journal-dir` options (items 11 to 15). The last batch: the read side under `/logs/`, `GET /api/logs/query`, Potluck's own lines and the store's container (items 16 to 19). | 4.2, 4.3, 9, 11.3 |
 | Cold load | The `capabilities` list in registration and `file_cache_evict`; `POST /cache/evict` (drop one model file from the node's page cache, with counts before and after). Additive: an agent without it is never asked. | 4.2, 6.13 |
 | Busy file | `/run/potluck/busy` while a launch exists, for other software on the node, and `busy`, `launches`, `busy_since` in `GET /status`. Additive. | 6.9, 6.14 |
+| Host on node | Phase 6: the capability `host_launch`; `host.expect_mib`, `host.rpc_file_load`, `host.api_key` (key file, `--api-key-file`); the host names its own device first; read progress from `rchar`; Potluck sends a host launch only to an agent that advertises it, never picks a host by itself, and stops a console-hosted model at a restart. Additive. | 3, 4.2, 6.2, 6.15 |
 
 | Release | What it carries |
 |---|---|
@@ -1020,3 +1070,4 @@ History only: this section adds nothing to the contract. Code comments cite thes
 | 0.1.4 | The refusal at arrival of a forced profile that can never fit; the unpause delivered to the agent before the node takes load (`unpause_pending`, 7.2); lowest available memory by kind (GPU or system) and the file cache figures; the node feed and start-up records (11.4, `GET /api/nodes`, `GET /api/startups`, expect-restart, `host_uptime_s`, `boot_id`, `startup_ack`); the node feed keeps the model source's `target` (6.10); the `local_node` setting and the "pool" wording in agents mode (compose project `potluck`); learned memory needs kept across a Potluck restart, with `POST /api/forget-need`; an agent that does not remount a share that is mounted but not answering (8); stale start-up marks ignored after a soft restart (11.4). |
 | 0.1.5 | Not a program release: a scheduler image only (its version said 0.1.5) that still served and required 0.1.4. Nothing on the wire changed. |
 | 0.1.6 | For the agent: the `boot_origin` and `boot_origin_partial` lines of the start-up marks file, passed through in `external_marks`, with Potluck's figure counted from `boot_origin` and the record's `origin` (11.4); the `capabilities` list with `file_cache_evict` and `POST /cache/evict` (4.2, 6.13); the busy file `/run/potluck/busy`, the `--busy-file` option and `busy`, `launches`, `busy_since` in `GET /status` (6.9, 6.14). For Potluck only: an excluded node says so (11.2, item 6); a `command` profile is not shut out by `no_auto_nodes` (11.1, known limits); a raised need is kept by the shape of the load and its device count (11.1), listed by `GET /api/needs` and forgotten by `POST /api/needs/forget` as well as `POST /api/forget-need`; `POST /api/cache/evict` for the benchmark's cold load. |
+| 0.1.9 | A console as host (6.15): `host_launch`, the new `host` fields, the key file, the host's own device first, read progress. Potluck: `host: node` profiles, `host_overhead_mib`, `host_no_mmap`, separate need shapes for a host on a node. A 0.1.6 agent works with a 0.1.9 Potluck (it is never asked to host) and a 0.1.9 agent takes a 0.1.6-style host request. |
