@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"cmp"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -139,9 +140,38 @@ func (r *Recorder) List(f Filter) (Page, error) {
 			final = append(final, s)
 		}
 	}
-	db := r.Store().DB()
-	if db == nil || len(final) == 0 {
+	if len(final) == 0 {
 		return page, nil
+	}
+	stored, err := r.listStored(f, final)
+	if err != nil {
+		return page, err
+	}
+	// Rows that just ended may not be stored yet (or never, on an off
+	// store): the recorder's recent ones fill the gap.
+	seen := map[int64]bool{}
+	for _, row := range stored {
+		seen[row.ID] = true
+	}
+	for _, row := range r.recentRows() {
+		if !seen[row.ID] && (f.Before == 0 || row.ID < f.Before) && f.matchesLive(&row) {
+			stored = append(stored, row)
+		}
+	}
+	slices.SortFunc(stored, func(a, b Request) int { return cmp.Compare(b.ID, a.ID) })
+	if len(stored) > f.Limit {
+		stored = stored[:f.Limit]
+		page.Next = stored[len(stored)-1].ID
+	}
+	page.Requests = append(page.Requests, stored...)
+	return page, nil
+}
+
+// listStored reads up to f.Limit+1 stored final rows, newest first.
+func (r *Recorder) listStored(f Filter, final []string) ([]Request, error) {
+	db := r.Store().DB()
+	if db == nil {
+		return nil, nil
 	}
 	where := []string{`status IN (` + strings.TrimSuffix(strings.Repeat("?,", len(final)), ",") + `)`}
 	var args []any
@@ -180,24 +210,20 @@ func (r *Recorder) List(f Filter) (Page, error) {
 	args = append(args, f.Limit+1)
 	rows, err := db.Query(`SELECT `+rowColumns+` FROM client_requests WHERE `+strings.Join(where, " AND ")+` ORDER BY id DESC LIMIT ?`, args...)
 	if err != nil {
-		return page, err
+		return nil, err
 	}
-	stored, err := scanRows(rows)
-	if err != nil {
-		return page, err
-	}
-	if len(stored) > f.Limit {
-		stored = stored[:f.Limit]
-		page.Next = stored[len(stored)-1].ID
-	}
-	page.Requests = append(page.Requests, stored...)
-	return page, nil
+	return scanRows(rows)
 }
 
 // Get returns one request, live or stored.
 func (r *Recorder) Get(id int64) (Request, error) {
 	if row, ok := r.LiveByID(id); ok {
 		return row, nil
+	}
+	for _, row := range r.recentRows() {
+		if row.ID == id {
+			return row, nil
+		}
 	}
 	db := r.Store().DB()
 	if db == nil {

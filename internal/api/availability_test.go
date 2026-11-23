@@ -166,18 +166,15 @@ func TestAvailability_SamplerCostsTheCoreLoopNothing(t *testing.T) {
 }
 
 func TestAvailability_StoreOffOrDamagedKeepsTheSchedulerHealthy(t *testing.T) {
-	// Off: the sampler runs, nothing is recorded, every hour reads unknown.
+	// Off: no sampler starts (no core query at all), the route answers an
+	// empty series that says it is not recording.
 	e := newEnv(t, chatOK, func(o *Options) { o.Usage = usage.Open(usage.Options{Logger: o.Logger}) })
-	waitFor(t, func() bool { return e.api.avail.Reads() >= 1 })
-	tick(e, 3)
-	code, a, raw := getAvail(t, e, "")
-	if code != 200 || a.Recording || a.HistoryBeginsAt != nil || len(a.Nodes) != 1 {
-		t.Fatalf("%d %s", code, raw)
+	if e.api.avail != nil {
+		t.Fatal("the sampler started on an off store")
 	}
-	for _, c := range a.Nodes[0].Cells {
-		if c.State != availability.Unknown {
-			t.Fatalf("%+v", c)
-		}
+	code, a, raw := getAvail(t, e, "")
+	if code != 200 || a.Recording || a.HistoryBeginsAt != nil || len(a.Nodes) != 0 {
+		t.Fatalf("%d %s", code, raw)
 	}
 	for _, p := range []string{"/health", "/api/status", "/api/nodes"} {
 		if r := e.get(p); r.StatusCode != 200 && !(p == "/api/nodes" && r.StatusCode == 503) {

@@ -106,6 +106,15 @@ type snapshot struct {
 	profiles []ProfileState
 	upstream map[string]string
 	upKeys   map[string]string // the key of an upstream that wants one (a host on a node)
+	upPlace  map[string]UpstreamPlacement
+}
+
+// UpstreamPlacement is where a ready instance runs, for a passthrough
+// request that holds no lease: what the request log keeps of its machines.
+type UpstreamPlacement struct {
+	Instance uint64
+	Session  string
+	Nodes    []LeaseNode // shared read-only: do not modify
 }
 
 // New builds a scheduler for a validated config. Call Run to start it.
@@ -232,16 +241,17 @@ func (s *Scheduler) step(ev event) {
 		}
 	}()
 	s.core.handle(ev)
-	up, keys := map[string]string{}, map[string]string{}
+	up, keys, place := map[string]string{}, map[string]string{}, map[string]UpstreamPlacement{}
 	for name, in := range s.core.insts {
 		if a, ok := s.core.upstream(name); ok {
 			up[name] = a
 			if k := instance.APIKeyOf(in.child); k != "" {
 				keys[name] = k
 			}
+			place[name] = UpstreamPlacement{Instance: in.iid, Session: in.sessionID, Nodes: s.core.leaseNodesOf(in)} // built once per instance
 		}
 	}
-	s.snap.Store(&snapshot{running: s.core.runningList(), recent: s.core.recentLoads(), profiles: s.core.profileStates(), upstream: up, upKeys: keys})
+	s.snap.Store(&snapshot{running: s.core.runningList(), recent: s.core.recentLoads(), profiles: s.core.profileStates(), upstream: up, upKeys: keys, upPlace: place})
 	for _, ef := range s.core.takeEffects() {
 		s.exec(ef)
 	}
@@ -751,6 +761,17 @@ func (s *Scheduler) Upstream(model string) (string, bool) {
 	}
 	a, ok := s.snap.Load().upstream[p.Name]
 	return a, ok
+}
+
+// UpstreamPlacement is where Upstream(model)'s instance runs; false when
+// it is not ready. It never waits and takes no lease.
+func (s *Scheduler) UpstreamPlacement(model string) (UpstreamPlacement, bool) {
+	p, _, ok := s.Config().Resolve(model)
+	if !ok {
+		return UpstreamPlacement{}, false
+	}
+	pl, ok := s.snap.Load().upPlace[p.Name]
+	return pl, ok
 }
 
 // UpstreamKey is the key requests to Upstream(model) must carry as

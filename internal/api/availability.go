@@ -30,12 +30,13 @@ func (s *Server) availabilityRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/nodes/availability", s.handleAvailability)
 }
 
-// startAvailability starts the sampler when a usage store was given (even
-// an off one: the route then lists the machines with unknown hours). It
-// stops with the server's background work (Close cancels s.bg and waits),
-// writing what it counted last.
+// startAvailability starts the sampler when a usage store is recording. An
+// off store (or none) starts nothing, so it costs the core loop no query;
+// the route then answers an empty series with recording false. It stops
+// with the server's background work (Close cancels s.bg and waits), writing
+// what it counted last.
 func (s *Server) startAvailability() {
-	if s.opts.Usage == nil || s.sched == nil {
+	if !s.opts.Usage.On() || s.sched == nil {
 		return
 	}
 	s.avail = availability.New(s.opts.Usage, s.availabilitySource, availability.Options{Now: s.opts.Now, Logger: s.log})

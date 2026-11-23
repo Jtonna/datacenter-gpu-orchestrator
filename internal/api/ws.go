@@ -38,10 +38,15 @@ const (
 	// not among the topics a new connection gets by default, so a client that
 	// does not know it never receives the large first frame.
 	TopicModels = "models"
+	// TopicRequests carries the request log's rows (wsrequests.go): a
+	// snapshot when a client subscribes, each queued, started and ended row,
+	// and once a second the running rows with their live figures. Asked
+	// for by name, like models.
+	TopicRequests = "requests"
 )
 
 // subscribable are the topics a client can switch on and off; hello and ping always arrive.
-var subscribable = map[string]bool{TopicStatus: true, TopicEvent: true, TopicBench: true, TopicConfig: true, TopicModels: true}
+var subscribable = map[string]bool{TopicStatus: true, TopicEvent: true, TopicBench: true, TopicConfig: true, TopicModels: true, TopicRequests: true}
 
 // wsConn is what the hub needs of a connection (*websocket.Conn satisfies it).
 type wsConn interface {
@@ -60,6 +65,13 @@ type wsClient struct {
 
 	mu     sync.Mutex
 	topics map[string]bool
+	gone   bool // dropped: its topics no longer count
+	// While a requests snapshot is being built, the topic's frames wait in
+	// reqHeld so the client gets the snapshot first, then every change
+	// since, in order (wsrequests.go).
+	reqPending bool
+	reqGen     int
+	reqHeld    [][]byte
 }
 
 func (c *wsClient) wants(topic string) bool {
@@ -101,6 +113,8 @@ type wsHub struct {
 	// the last status sent, to send only changes
 	lastSig  string
 	lastSent time.Time
+
+	reqs reqTopic // the requests topic (wsrequests.go)
 }
 
 func wsFrame(typ string, ts time.Time, data any) []byte {
@@ -142,6 +156,7 @@ func (h *wsHub) drop(c *wsClient, code websocket.StatusCode, reason string) {
 			defer h.mu.Unlock()
 			delete(h.clients, c)
 		}()
+		h.reqs.left(c)
 		close(c.done)
 		go supervise.Once("api.ws.close", func() {
 			done := make(chan struct{})
@@ -280,16 +295,13 @@ func (h *wsHub) serve(ctx context.Context, conn wsConn) {
 					next[t] = true
 				}
 			}
-			var prev map[string]bool
-			func() {
-				c.mu.Lock()
-				defer c.mu.Unlock()
-				prev = c.topics
-				c.topics = next
-			}()
+			prev, gen := h.reqs.setTopics(c, next)
 			h.sendSnapshot(c, next[TopicStatus] && !prev[TopicStatus], next[TopicBench] && !prev[TopicBench])
 			if next[TopicModels] && !prev[TopicModels] {
 				h.sendModels(c)
+			}
+			if next[TopicRequests] && !prev[TopicRequests] {
+				h.sendRequests(c, gen)
 			}
 		case "pong":
 		}
@@ -457,6 +469,10 @@ func (h *wsHub) pingLoop() {
 func (h *wsHub) start() {
 	ctx, cancel := context.WithCancel(context.Background())
 	h.stopLoops = cancel
+	if h.reqs.running != nil {
+		h.wg.Add(1)
+		supervise.Go(ctx, supervise.Spec{Name: "api.ws.requests", Policy: supervise.Restart, Done: h.wg.Done}, func(context.Context) { h.requestsLoop() })
+	}
 	h.wg.Add(2)
 	// A failed status loop starts over with nothing sent, so its next tick
 	// sends every client a full status.
@@ -582,7 +598,7 @@ func (s *Server) newWSHub() *wsHub {
 			benchState = "on"
 		}
 		return map[string]any{"version": o.Version, "started_at": s.start.UnixMilli(), "server_time": s.opts.Now().UnixMilli(),
-			"history": hist, "bench": benchState, "topics": []string{TopicStatus, TopicEvent, TopicBench, TopicConfig, TopicPing, TopicModels}, "ws_max_clients": max, "config_revision": s.configRevision()}
+			"history": hist, "bench": benchState, "topics": []string{TopicStatus, TopicEvent, TopicBench, TopicConfig, TopicPing, TopicModels, TopicRequests}, "ws_max_clients": max, "config_revision": s.configRevision()}
 	}
 	h.status = o.statusSource
 	if h.status == nil {
@@ -601,6 +617,7 @@ func (s *Server) newWSHub() *wsHub {
 	if s.hist.On() {
 		h.cancels = append(h.cancels, s.hist.Subscribe(h.publishEvent))
 	}
+	s.wireRequests(h)
 	if s.benchOn() {
 		h.cancels = append(h.cancels, o.Bench.Subscribe(h.publishBench))
 		h.snapshot = func() []map[string]any {

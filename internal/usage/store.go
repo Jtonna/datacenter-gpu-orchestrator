@@ -65,7 +65,18 @@ type Options struct {
 	// queued (default 10 s): a disk that does not answer never holds a
 	// shutdown up. What was not written then is lost.
 	CloseWait time.Duration
+	// MaxPages, when set, caps the file at that many pages (SQLite's
+	// max_page_count on every connection): a write past it fails as a full
+	// disk does ("database or disk is full"). Tests use it.
+	MaxPages int
 }
+
+// walLimit is the size the WAL file is truncated back to after a
+// checkpoint (journal_size_limit). SQLite checkpoints on its own once the
+// WAL holds 1000 pages (wal_autocheckpoint, about 4 MiB), so the WAL stays
+// near 4 MiB plus one batch, and never keeps more than walLimit on disk
+// once checkpointed.
+const walLimit = 8 << 20
 
 // Op is one write. Apply runs on the writer goroutine inside the batch's
 // transaction; it must only touch the usage tables.
@@ -93,6 +104,8 @@ type Stats struct {
 	Failed          uint64 `json:"failed"`           // operations that returned an error, or whose batch failed
 	LastError       string `json:"last_error,omitempty"`
 	MovedAside      string `json:"moved_aside,omitempty"` // a damaged file moved aside at open
+	// SizeBytes is the file and its WAL on disk now.
+	SizeBytes int64 `json:"size_bytes"`
 	// QueueHighWater is the most operations the queue held at once since the
 	// start (QueueSize is the bound where drops begin).
 	QueueHighWater int `json:"queue_high_water"`
@@ -118,6 +131,7 @@ type Store struct {
 	cancel  context.CancelFunc
 	tasks   sync.WaitGroup
 	lastErr string
+	lastLog atomic.Int64 // when the last write-failure WARN was logged (unix ns)
 	// highWater is the longest the queue has been (under mu).
 	highWater int
 	claimed   bool // this store holds the path (claim)
@@ -210,7 +224,11 @@ func (s *Store) open() error {
 }
 
 func (s *Store) openFile() error {
-	dsn := "file:" + filepath.ToSlash(s.path) + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)"
+	dsn := "file:" + filepath.ToSlash(s.path) + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)" +
+		fmt.Sprintf("&_pragma=journal_size_limit(%d)", walLimit)
+	if s.opt.MaxPages > 0 {
+		dsn += fmt.Sprintf("&_pragma=max_page_count(%d)", s.opt.MaxPages)
+	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return err
@@ -463,7 +481,22 @@ func (s *Store) Stats() Stats {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st.Queued, st.LastError, st.QueueHighWater, st.QueueSize = len(s.queue), s.lastErr, s.highWater, s.opt.QueueSize
+	st.SizeBytes = s.sizeBytes()
 	return st
+}
+
+// sizeBytes is the file plus its WAL (0 for a store with no file).
+func (s *Store) sizeBytes() int64 {
+	if s.path == "" || !s.On() {
+		return 0
+	}
+	var n int64
+	for _, p := range []string{s.path, s.path + "-wal"} {
+		if fi, err := os.Stat(p); err == nil {
+			n += fi.Size()
+		}
+	}
+	return n
 }
 
 // take removes up to BatchSize operations; done once closing with nothing left.
@@ -530,17 +563,35 @@ func (s *Store) writeBatch(batch []Op) {
 		return
 	}
 	s.tx = tx
-	applied := 0
+	// Each operation runs in its own savepoint: a failed one is undone
+	// alone and the batch goes on. When the savepoint cannot be undone the
+	// transaction is gone (SQLite rolls the whole transaction back on a
+	// full disk, and later statements would run outside it): the batch is
+	// abandoned and every operation in it counted as failed.
+	applied, left := 0, work
 	for _, op := range batch {
 		if op.flush != nil {
 			continue
 		}
+		left--
+		if _, err := tx.Exec(`SAVEPOINT op`); err != nil {
+			s.abandon(tx, applied+left+1, err)
+			return
+		}
 		if err := op.Apply(tx); err != nil {
 			s.failed.Add(1)
 			s.noteErr(err)
-			continue
+			if _, rerr := tx.Exec(`ROLLBACK TO op`); rerr != nil {
+				s.abandon(tx, applied+left, err)
+				return
+			}
+		} else {
+			applied++
 		}
-		applied++
+		if _, err := tx.Exec(`RELEASE op`); err != nil {
+			s.abandon(tx, applied+left, err)
+			return
+		}
 	}
 	s.tx = nil
 	if err := tx.Commit(); err != nil {
@@ -552,19 +603,28 @@ func (s *Store) writeBatch(batch []Op) {
 	s.batches.Add(1)
 }
 
+// abandon rolls back a batch whose transaction is lost; n operations of
+// it are counted as failed, with err (the first cause) as the last error.
+func (s *Store) abandon(tx *sql.Tx, n int, err error) {
+	s.tx = nil
+	tx.Rollback()
+	s.failBatch(n, err)
+}
+
 func (s *Store) failBatch(n int, err error) {
 	s.failed.Add(uint64(n))
 	s.noteErr(err)
 }
 
-var lastErrLog atomic.Int64
-
 // noteErr keeps the error for Stats and logs at most one WARN a minute.
+// The store stays on: the failed operations are counted and lost, and the
+// next batch is tried as usual (a full disk is often freed again, and the
+// retention trim frees pages itself).
 func (s *Store) noteErr(err error) {
 	s.setErr(err)
 	now := time.Now().UnixNano()
-	last := lastErrLog.Load()
-	if now-last >= errLogEvery.Nanoseconds() && lastErrLog.CompareAndSwap(last, now) {
+	last := s.lastLog.Load()
+	if (last == 0 || now-last >= errLogEvery.Nanoseconds()) && s.lastLog.CompareAndSwap(last, now) {
 		s.log.Warn("usage history: a write failed; the scheduler goes on without it", "err", err, "failed_total", s.failed.Load())
 	}
 }

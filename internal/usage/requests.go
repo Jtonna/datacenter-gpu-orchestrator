@@ -74,8 +74,11 @@ type Request struct {
 	PrefillTPS   *float64 `json:"prefill_tps"`
 	DecodeTPS    *float64 `json:"decode_tps"`
 	// Live: tokens_out is an estimate counted from the stream, replaced by
-	// the server's own figure at the end.
-	Live bool `json:"live,omitempty"`
+	// the server's own figure at the end. While a running request is still
+	// reading its prompt, PrefillProcessed is how many of tokens_in are done
+	// (only when the model server reports prompt progress; never stored).
+	Live             bool `json:"live,omitempty"`
+	PrefillProcessed *int `json:"prefill_processed,omitempty"`
 
 	SchedID  uint64 `json:"sched_id,omitempty"` // the scheduler's request id (feed, events)
 	Instance uint64 `json:"instance,omitempty"`
@@ -139,6 +142,33 @@ type LiveSource interface {
 	Chunks() int64
 }
 
+// PrefillSource is a LiveSource that may also know the prompt while it is
+// read: every prompt token (reused ones included), the reused ones, how many
+// are done, and the prefill rate (0 when not known yet). ok is false until
+// the model server said anything about it.
+type PrefillSource interface {
+	Prefill() (total, reused, processed int, tps float64, ok bool)
+}
+
+// Change kinds a Watcher hears of.
+const (
+	ChangeQueued  = "queued"
+	ChangeStarted = "started"
+	ChangeEnded   = "ended"
+)
+
+// Watcher hears of every change to a request row, on the goroutine that
+// made it (a request's own). Watching is asked first, so a watcher with no
+// one listening costs one call and no row copy. Changed must not block.
+type Watcher interface {
+	Watching() bool
+	Changed(kind string, row Request)
+}
+
+// recentEnded is how many just-finished rows the recorder keeps in memory,
+// so a list shows them before the writer has stored them.
+const recentEnded = 64
+
 // Recorder keeps the live requests in memory and hands every change to the
 // store's writer. It never touches the disk on the caller's goroutine. A
 // recorder on an off store still lists live requests.
@@ -149,8 +179,34 @@ type Recorder struct {
 	mu     sync.Mutex
 	live   map[int64]*Tracker
 	lastID int64
+	recent []Request // the last recentEnded final rows, oldest first
 
 	ended atomic.Uint64
+	watch atomic.Pointer[watcherBox]
+}
+
+type watcherBox struct{ w Watcher }
+
+// SetWatcher sets the one watcher of the recorder's changes (nil: none).
+func (r *Recorder) SetWatcher(w Watcher) {
+	if r == nil {
+		return
+	}
+	if w == nil {
+		r.watch.Store(nil)
+		return
+	}
+	r.watch.Store(&watcherBox{w})
+}
+
+// notify tells the watcher, when anyone listens, of a change; row builds
+// the row only then.
+func (r *Recorder) notify(kind string, row func() Request) {
+	b := r.watch.Load()
+	if b == nil || !b.w.Watching() {
+		return
+	}
+	b.w.Changed(kind, row())
 }
 
 // NewRecorder starts the request log on st (which may be off): rows that a
@@ -209,6 +265,7 @@ func (r *Recorder) Queued(b Begin) *Tracker {
 	r.add(t, now)
 	row := t.row
 	r.st.Submit(Op{Apply: func(tx *sql.Tx) error { return upsertRow(tx, &row, false) }})
+	r.notify(ChangeQueued, func() Request { return t.snapshot(r.now().UnixMilli()) })
 	return t
 }
 
@@ -219,10 +276,23 @@ func (r *Recorder) add(t *Tracker, now time.Time) {
 	r.live[t.row.ID] = t
 }
 
-func (r *Recorder) remove(id int64) {
+// remove takes a finished row out of the live set and keeps it among the
+// recent ones.
+func (r *Recorder) remove(final Request) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	delete(r.live, id)
+	delete(r.live, final.ID)
+	if len(r.recent) >= recentEnded {
+		r.recent = append(r.recent[:0], r.recent[1:]...)
+	}
+	r.recent = append(r.recent, final)
+}
+
+// recentRows is a copy of the recent final rows, oldest first.
+func (r *Recorder) recentRows() []Request {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]Request(nil), r.recent...)
 }
 
 // ID is the request's id in the log (0 for a nil tracker).
@@ -241,10 +311,16 @@ func (t *Tracker) Started(p Placement, src LiveSource) {
 	if t == nil {
 		return
 	}
+	if t.start(p, src) {
+		t.r.notify(ChangeStarted, func() Request { return t.snapshot(t.r.now().UnixMilli()) })
+	}
+}
+
+func (t *Tracker) start(p Placement, src LiveSource) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.stopped {
-		return
+		return false
 	}
 	t.row.Status = StatusRunning
 	t.row.StartedAt = t.r.now().UnixMilli()
@@ -253,6 +329,7 @@ func (t *Tracker) Started(p Placement, src LiveSource) {
 	t.src = src
 	row := t.row
 	t.r.st.Submit(Op{Apply: func(tx *sql.Tx) error { return upsertRow(tx, &row, false) }})
+	return true
 }
 
 // Ended records the end and hands the final row (and its roll-ups) to the
@@ -261,10 +338,16 @@ func (t *Tracker) Ended(e End) {
 	if t == nil {
 		return
 	}
+	if final, ok := t.end(e); ok {
+		t.r.notify(ChangeEnded, func() Request { return final })
+	}
+}
+
+func (t *Tracker) end(e End) (Request, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.stopped {
-		return
+		return Request{}, false
 	}
 	t.stopped = true
 	now := t.r.now().UnixMilli()
@@ -282,8 +365,9 @@ func (t *Tracker) Ended(e End) {
 	row.prefillMS, row.decodeMS = e.PrefillMS, e.DecodeMS
 	row.WaitMS, row.DurationMS = spans(row, now)
 	final := *row
+	final.Nodes = nonNil(append([]Node(nil), row.Nodes...))
 	t.src = nil
-	t.r.remove(row.ID)
+	t.r.remove(final)
 	t.r.ended.Add(1)
 	t.r.st.Submit(Op{Terminal: true, Apply: func(tx *sql.Tx) error {
 		if err := upsertRow(tx, &final, true); err != nil {
@@ -291,6 +375,7 @@ func (t *Tracker) Ended(e End) {
 		}
 		return addRollups(tx, &final)
 	}})
+	return final, true
 }
 
 // spans is (wait, duration) for a row at now (ms).
@@ -311,8 +396,19 @@ func (t *Tracker) snapshot(now int64) Request {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	row := t.row
-	row.Nodes = append([]Node(nil), t.row.Nodes...)
+	row.Nodes = nonNil(append([]Node(nil), t.row.Nodes...))
 	row.WaitMS, row.DurationMS = spans(&row, now)
+	if ps, ok := t.src.(PrefillSource); ok {
+		if total, reused, done, tps, ok := ps.Prefill(); ok {
+			row.TokensIn, row.TokensReused, row.Live = &total, &reused, true
+			if done < total {
+				row.PrefillProcessed = &done
+			}
+			if tps > 0 {
+				row.PrefillTPS = &tps
+			}
+		}
+	}
 	if t.src != nil {
 		if fb := t.src.FirstByte(); !fb.IsZero() {
 			row.FirstTokenAt = fb.UnixMilli()

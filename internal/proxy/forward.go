@@ -49,7 +49,70 @@ type Options struct {
 type Live struct {
 	firstNS atomic.Int64 // first response body bytes, unix ns; 0 before
 	chunks  atomic.Int64 // SSE data events seen (about one per output token)
+	prefill atomic.Pointer[prefill]
 }
+
+// prefill is what the stream said about the prompt so far.
+type prefill struct {
+	total, reused, processed int
+	tps                      float64
+}
+
+// Prefill is what llama-server said about the prompt while it streams:
+// every prompt token (reused ones included), the reused ones, how many are
+// done, and the prefill rate (0 before it is known). llama-server says it
+// only when the request asked: "return_progress" (prompt_progress events
+// while the prompt is read) or "timings_per_token" (timings on every
+// event, from the first token on). ok is false until then.
+func (l *Live) Prefill() (total, reused, processed int, tps float64, ok bool) {
+	if l == nil {
+		return 0, 0, 0, 0, false
+	}
+	p := l.prefill.Load()
+	if p == nil {
+		return 0, 0, 0, 0, false
+	}
+	return p.total, p.reused, p.processed, p.tps, true
+}
+
+// noteStream reads the prompt figures in one read of an event stream: the
+// last prompt_progress object ({total, cache, processed, time_ms}; processed
+// counts the reused tokens) or the last timings object (prompt_n, the tokens
+// read, and cache_n, the reused ones; prompt_per_second). Objects split
+// across two reads are skipped; the next event carries newer figures.
+func (l *Live) noteStream(b []byte) {
+	if bytes.Contains(b, timingsKey) {
+		if t := lastObject(b, string(timingsKey)); t != nil {
+			if n, c := firstInt(t, "prompt_n"), firstInt(t, "cache_n"); n >= 0 {
+				p := &prefill{total: n + max(c, 0), reused: max(c, 0)}
+				p.processed = p.total
+				if v, ok := num(t["prompt_per_second"]); ok && v > 0 {
+					p.tps = v
+				}
+				l.prefill.Store(p)
+				return
+			}
+		}
+	}
+	if bytes.Contains(b, progressKey) {
+		if t := lastObject(b, string(progressKey)); t != nil {
+			total, cache, done := firstInt(t, "total"), firstInt(t, "cache"), firstInt(t, "processed")
+			if total < 0 || done < 0 {
+				return
+			}
+			p := &prefill{total: total, reused: max(cache, 0), processed: done}
+			if ms, ok := num(t["time_ms"]); ok && ms > 0 && done > p.reused {
+				p.tps = float64(done-p.reused) / (ms / 1000)
+			}
+			l.prefill.Store(p)
+		}
+	}
+}
+
+var (
+	timingsKey  = []byte(`"timings"`)
+	progressKey = []byte(`"prompt_progress"`)
+)
 
 // FirstByte is when the first bytes of the response body arrived (zero
 // before): for a stream, about the first token.
@@ -319,19 +382,38 @@ func (b *watchBody) Read(p []byte) (int, error) {
 		b.timer.Stop()
 	}
 	if n > 0 {
-		if !b.gotFirst && b.live != nil {
-			b.live.firstNS.CompareAndSwap(0, time.Now().UnixNano())
-		}
 		b.gotFirst = true
 		b.tail.Write(p[:n])
-		if b.live != nil && b.sse {
-			b.live.chunks.Add(int64(bytes.Count(p[:n], dataPrefix)))
+		if b.live != nil {
+			b.watchLive(p[:n])
 		}
 	}
 	if b.stalled.Load() && n == 0 {
 		return b.emitStall(p)
 	}
 	return n, err
+}
+
+// watchLive notes a read in b.live: the first byte, and for an event stream
+// the data events and the prompt figures. Progress events (prompt_progress,
+// sent while the prompt is read) are neither tokens nor the first token.
+func (b *watchBody) watchLive(p []byte) {
+	if !b.sse {
+		b.live.firstNS.CompareAndSwap(0, time.Now().UnixNano())
+		return
+	}
+	events := int64(bytes.Count(p, dataPrefix))
+	progress := int64(0)
+	if bytes.Contains(p, progressKey) {
+		progress = int64(bytes.Count(p, progressKey))
+	}
+	if events > progress || events == 0 && progress == 0 {
+		b.live.firstNS.CompareAndSwap(0, time.Now().UnixNano())
+	}
+	if events > progress {
+		b.live.chunks.Add(events - progress)
+	}
+	b.live.noteStream(p)
 }
 
 func (b *watchBody) emitStall(p []byte) (int, error) {

@@ -130,11 +130,23 @@ func TestRequests_RecordedListedAndSummarized(t *testing.T) {
 	if len(done) != 3 { // two /v1 and the /upstream one
 		t.Fatalf("%d done rows", len(done))
 	}
+	var v1, up usage.Request
 	for _, r := range done {
 		if r.Kind == usage.KindV1 && (r.TokensIn == nil || *r.TokensIn != 5 || *r.TokensOut != 7 || *r.DecodeTPS != 12.5 ||
 			r.Instance == 0 || r.SchedID == 0 || r.StartedAt == 0 || r.Profile != "alpha") {
 			t.Fatalf("done row %+v", r)
 		}
+		if r.Kind == usage.KindV1 {
+			v1 = r
+		} else {
+			up = r
+		}
+	}
+	// The passthrough holds no lease, yet says the instance and machines
+	// that served it, as the /v1 rows do.
+	if up.Instance != v1.Instance || up.Session != v1.Session || up.SchedID != 0 || len(up.Nodes) != len(v1.Nodes) || len(up.Nodes) == 0 ||
+		up.Nodes[0] != v1.Nodes[0] || up.HostNode != v1.HostNode {
+		t.Fatalf("upstream %+v, v1 %+v", up, v1)
 	}
 	ref := listRequests(t, e, "?status=refused").Requests[0]
 	if ref.Reason != "unknown model" || ref.HTTPStatus != 404 || ref.Requested != "nope" {
@@ -264,15 +276,61 @@ func TestRequests_BlockedDiskNeverDelaysRequestsOrTheCoreLoop(t *testing.T) {
 }
 
 // With no usage store (or an unusable one) requests run as before and the
-// routes answer from memory.
+// routes answer from memory: the live rows and the last finished ones.
 func TestRequests_NoStoreStillServes(t *testing.T) {
 	e := newEnv(t, chatOK)
 	e.post("/v1/chat/completions", chat("alpha")).Body.Close()
+	eventually(t, "ended", func() bool { return e.api.reqs.Ended() == 1 })
 	p := listRequests(t, e, "")
-	if p.On || len(p.Requests) != 0 {
+	if p.On || len(p.Requests) != 1 || p.Requests[0].Status != usage.StatusDone {
 		t.Fatalf("%+v", p)
+	}
+	if raw := body(t, e.get("/api/requests")); !strings.Contains(raw, `"history_begins_at":null`) {
+		t.Fatalf("an off store has no history start: %s", raw)
 	}
 	if r := e.get("/api/requests/summary"); r.StatusCode != 200 {
 		t.Fatal(r.StatusCode)
+	}
+}
+
+// A full disk under the request log: every request is served as before,
+// /health stays 200, the failures are counted in storage.usage with the
+// error and one WARN, and the store stays on.
+func TestRequests_FullDiskNeverStopsTheScheduler(t *testing.T) {
+	dir := t.TempDir()
+	probe := usage.Open(usage.Options{Dir: dir, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	var pages int
+	probe.DB().QueryRow(`PRAGMA page_count`).Scan(&pages)
+	probe.Close()
+	logs := &syncBuf{}
+	st := usage.Open(usage.Options{Dir: dir, Logger: slog.New(slog.NewTextHandler(logs, nil)), MaxPages: pages + 2})
+	t.Cleanup(func() { st.Close() })
+	e := newEnv(t, chatOK, func(o *Options) { o.Requests, o.Usage = usage.NewRecorder(st), st })
+	for i := 0; i < 200; i++ {
+		resp := e.post("/v1/chat/completions", chat("alpha"))
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("request %d: %d", i, resp.StatusCode)
+		}
+	}
+	flushT(t, st)
+	if r := e.get("/health"); r.StatusCode != 200 {
+		t.Fatal(r.StatusCode)
+	}
+	var sys struct {
+		Storage struct {
+			Usage usage.Stats `json:"usage"`
+		} `json:"storage"`
+	}
+	json.Unmarshal([]byte(body(t, e.get("/api/system"))), &sys)
+	u := sys.Storage.Usage
+	if !u.On || u.Failed == 0 || !strings.Contains(u.LastError, "full") || u.SizeBytes == 0 {
+		t.Fatalf("storage.usage %+v", u)
+	}
+	if n := strings.Count(logs.String(), "a write failed"); n != 1 {
+		t.Fatalf("%d WARN lines", n)
+	}
+	if p := listRequests(t, e, "?limit=500"); len(p.Requests) == 0 {
+		t.Fatal("the routes answer nothing")
 	}
 }

@@ -227,9 +227,10 @@ type InstanceStatus struct {
 	// or "node" (HostNode, phase 6); empty for a command profile. Parallel
 	// is the profile's parallel slots (at least 1): busy = InFlight/Parallel.
 	// Additive (zonefacts.go).
-	Host     string
-	HostNode core.NodeID
-	Parallel int
+	// None is said while zero (view:"omitempty").
+	Host     string      `view:"omitempty"`
+	HostNode core.NodeID `view:"omitempty"`
+	Parallel int         `view:"omitempty"`
 }
 
 // PlacedNodeStatus is one node of an instance's placement with the memory
@@ -244,8 +245,8 @@ type PlacedNodeStatus struct {
 	// worker); Share is its fraction of the model (0 to 1): its tensor split
 	// weight over the sum, exactly the split the launch was given. Shares
 	// of an instance's members add up to 1. Additive (zonefacts.go).
-	Role  string
-	Share float64
+	Role  string  `view:"omitempty"`
+	Share float64 `view:"omitempty"`
 }
 
 // DeviceMemory is one buffer name's sizes from the load log, in MiB.
@@ -283,10 +284,10 @@ type QuarantineStatus struct {
 	// agent_unreachable, worker_hung, node_lost), Message the cause in
 	// words, Profile the load it happened in (when one), Since when.
 	// Additive (zonefacts.go).
-	Reason  string
-	Message string
-	Profile string
-	Since   time.Time
+	Reason  string    `view:"omitempty"`
+	Message string    `view:"omitempty"`
+	Profile string    `view:"omitempty"`
+	Since   time.Time `view:"omitempty"`
 }
 
 // BackoffStatus is one backed-off profile (design 8.4).
@@ -384,9 +385,10 @@ type NodeStatus struct {
 	// free figure is being read), stopping (the victim stops; now plus the
 	// node's settle), draining (the victim still serves; no FreeAt) or
 	// claimed (nothing left on it: now). Additive (zonefacts.go).
-	QuarantineReason string
-	FreeAt           time.Time
-	FreeBasis        string
+	// None is said while zero (view:"omitempty").
+	QuarantineReason string    `view:"omitempty"`
+	FreeAt           time.Time `view:"omitempty"`
+	FreeBasis        string    `view:"omitempty"`
 }
 
 // RecoveryStatus is status.recovery of a node (design 8.4b).
