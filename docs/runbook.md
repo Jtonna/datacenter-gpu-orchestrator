@@ -501,13 +501,39 @@ The scheduler runs benchmarks through its own API and keeps every result in the 
 
 ### AI agents (MCP)
 
-The MCP server is at `http://<host>:3122/mcp` (Streamable HTTP, no authentication). Each tool runs the REST request of the same name, with the same audit trail (source `mcp`).
+The MCP server is at `http://<host>:3122/mcp` (Streamable HTTP). Each tool runs the REST request of the same name, with the same audit trail (source `mcp`). Give every agent its own access key (web UI, MCP page, "New key"); the key is shown once, with the settings to paste:
 
 ```sh
-claude mcp add --transport http potluck http://<host>:3122/mcp
+claude mcp add --transport http potluck http://<host>:3122/mcp --header "Authorization: Bearer ptl_..."
 ```
 
-Useful tools: `get_status`, `plan_load`, `load_model`, `update_settings` (with `dry_run`), `query_audit`, `rollback_config`, `query_logs`. Give an agent that must not change anything only the read-only tools.
+Useful tools: `get_status`, `plan_load`, `load_model`, `update_settings` (with `dry_run`), `query_audit`, `rollback_config`, `query_logs`.
+
+### Access keys
+
+Access is open: the web UI and the REST API need no key, and a request without one is the default user (audit actor `anonymous`, or the name the web UI sends) with full access. An access key is the one restriction there is, so that what an agent does is limited and attributed:
+
+- A request with a key (`Authorization: Bearer ptl_...` or `X-Agent-Key: ptl_...`) gets exactly its key's permissions, on REST and over MCP, and every change it makes is recorded under `agent:<name>` with the key's id. Beyond its permissions it is refused with 403 and a sentence that names the permission (`permission_denied`; `approval_required` for a permission set to Ask me, which is refused until approvals exist; `owner_only` for managing keys). Over MCP the tools a key has Off are not listed, and calling one answers a tool error with the same sentence.
+- An unknown, expired or revoked key is refused with 401, never treated as no key.
+- A new key may observe only and expires in 30 days unless set otherwise. Expiring means within 7 days. An expired key can be extended (Manage, new expiry) or rotated; a revoked key is final.
+- Keys made before permissions existed (`lls_...`) keep working as before: every permission allowed, no expiry. Setting a permission or an expiry on one in Manage makes it a key like any other; its value does not change.
+- Only the SHA-256 of a key is stored. The key appears once, in the answer that made or rotated it; never in the list, the audit log, an event or a log line.
+- The MCP URL in the settings to copy is built from the address the browser used (the `Host` header); no forwarding header is read.
+
+What each permission covers (the table in `internal/api/scopes.go`; a route missing there needs observe for GET and settings otherwise):
+
+<!-- access-table:begin (written by TestRouteScopes_DocsTable -update-docs) -->
+| Permission | Levels | Routes |
+|---|---|---|
+| Observe (`observe`) | allow, off | `GET /api/about`, `GET /api/audit`, `GET /api/audit/{id}`, `GET /api/bench/aggregates`, `GET /api/bench/benchmarks`, `GET /api/bench/benchmarks/{id}`, `GET /api/bench/benchmarks/{id}/results`, `GET /api/bench/external`, `GET /api/bench/external/{id}`, `GET /api/bench/groups`, `GET /api/bench/groups/{id}`, `GET /api/bench/groups/{id}/expand`, `GET /api/bench/measurements`, `GET /api/bench/metrics`, `GET /api/bench/profiles`, `GET /api/bench/removals`, `GET /api/bench/removals/preview`, `GET /api/bench/runs`, `GET /api/bench/runs/{id}`, `GET /api/bench/runs/{id}/export`, `GET /api/bench/runs/{id}/measurements`, `GET /api/bench/runs/{id}/report`, `GET /api/bench/runs/{id}/scores`, `GET /api/bench/runs/{id}/steps/{step}/transcript`, `GET /api/bench/runs/{id}/tasks`, `GET /api/bench/runs/{id}/tasks/{result}`, `GET /api/bench/runs/{id}/transcripts`, `GET /api/bench/schema`, `GET /api/bench/state`, `GET /api/bench/suites`, `GET /api/bench/suites/{id}`, `GET /api/bench/suites/{id}/expand`, `GET /api/bench/task-sets`, `GET /api/bench/task-sets/{id}`, `GET /api/bench/trends`, `GET /api/config`, `GET /api/config/exclude-nodes`, `GET /api/config/export`, `GET /api/config/fleet`, `GET /api/config/no-auto-nodes`, `GET /api/config/node-overrides`, `GET /api/config/profiles`, `GET /api/config/profiles/{id...}`, `GET /api/config/recovery`, `GET /api/config/revisions`, `GET /api/config/revisions/{n}`, `GET /api/config/schema`, `GET /api/config/settings`, `GET /api/config/tiers`, `GET /api/events`, `GET /api/health`, `GET /api/history`, `GET /api/history/export`, `GET /api/history/summary`, `GET /api/logs/query`, `GET /api/mcp/tools`, `GET /api/metrics/activity`, `GET /api/models`, `GET /api/models/{key...}`, `GET /api/needs`, `GET /api/nodes`, `GET /api/nodes/availability`, `GET /api/nodes/{id}/startups`, `POST /api/plan`, `GET /api/profiles`, `GET /api/requests`, `GET /api/requests/summary`, `GET /api/requests/{id}`, `GET /api/startups`, `GET /api/status`, `GET /api/system`, `/logs/`, `GET /running`, `GET /ws` |
+| Switch zones on or off (`zones`) | allow, ask, off | `PUT /api/config/exclude-nodes`, `PUT /api/config/no-auto-nodes`, `POST /api/nodes/{id}/expect-restart`, `POST /api/nodes/{id}/pause`, `POST /api/nodes/{id}/readmit`, `POST /api/nodes/{id}/unpause` |
+| Load and unload models (`models`) | allow, ask, off | `POST /api/bench/benchmarks/{id}/run`, `POST /api/bench/groups/{id}/run`, `POST /api/bench/runs/{id}/cancel`, `POST /api/bench/suites/{id}/run`, `POST /api/cache/evict`, `POST /api/load`, `POST /api/models/unload`, `POST /api/models/unload/{model...}`, `POST /api/nodes/{id}/force-unload`, `POST /api/unload`, `GET /unload`, `POST /unload` |
+| Change settings (`settings`) | allow, ask, off | `POST /api/bench/benchmarks`, `DELETE /api/bench/benchmarks/{id}`, `PUT /api/bench/benchmarks/{id}`, `POST /api/bench/external`, `DELETE /api/bench/external/{id}`, `PUT /api/bench/external/{id}`, `POST /api/bench/groups`, `DELETE /api/bench/groups/{id}`, `PUT /api/bench/groups/{id}`, `DELETE /api/bench/runs/{id}/pin`, `PUT /api/bench/runs/{id}/pin`, `DELETE /api/bench/runs/{id}/scores/{scorer}`, `PUT /api/bench/runs/{id}/scores/{scorer}`, `POST /api/bench/suites`, `DELETE /api/bench/suites/{id}`, `PUT /api/bench/suites/{id}`, `POST /api/bench/task-sets`, `DELETE /api/bench/task-sets/{id}`, `PATCH /api/config/fleet`, `PUT /api/config/fleet`, `POST /api/config/import`, `PUT /api/config/node-overrides`, `POST /api/config/profiles`, `DELETE /api/config/profiles/{id...}`, `PUT /api/config/profiles/{id...}`, `PATCH /api/config/recovery`, `PUT /api/config/recovery`, `POST /api/config/revisions/{n}/rollback`, `PATCH /api/config/settings`, `PUT /api/config/tiers`, `POST /api/forget-need`, `DELETE /api/models/{key...}`, `PUT /api/models/{key...}`, `POST /api/needs/forget`, `DELETE /api/nodes/{id}` |
+| Manage access keys (`owner`) | no key may (the default user only) | `GET /api/agents`, `POST /api/agents`, `DELETE /api/agents/{id}`, `PATCH /api/agents/{id}`, `POST /api/agents/{id}/rotate` |
+| Console agents' protocol (`agents`) | not checked | `POST /api/logs`, `GET /api/logs/config`, `POST /api/pool/nodes/{id}/deregister`, `POST /api/pool/nodes/{id}/heartbeat`, `GET /api/pool/nodes/{id}/logs`, `POST /api/pool/nodes/{id}/logs`, `GET /api/pool/programs/{release}/{platform}/{file}`, `POST /api/pool/register`, `GET /api/pool/release` |
+| Model API (a key there is checked for validity only) (`model_api`) | not checked | `/upstream/{model}`, `/upstream/{model}/{rest...}`, `/v1/`, `GET /v1/models` |
+| Always open (`open`) | not checked | `/`, `GET /health`, `GET /ui`, `GET /ui/`, `GET /ui/classic`, `GET /ui/classic/{$}`, `GET /ui/{$}`, `GET /{$}` |
+<!-- access-table:end -->
 
 ### Phase out a model alias
 

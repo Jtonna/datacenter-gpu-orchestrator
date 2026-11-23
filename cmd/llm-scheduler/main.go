@@ -441,7 +441,7 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 	// MCP at /mcp on the same port; its tools run in-process through apiSrv (design 9.5).
 	mcpSrv := mcpserver.New(apiSrv, mcpserver.Options{Version: version, Guide: docs.BenchmarkGuide,
 		Bridge:   func(ctx context.Context, actor string) context.Context { return audit.WithSource(ctx, "mcp", actor) },
-		Identify: apiSrv.IdentifyAgent}) // an agent key names the agent in the audit log (it is not access control)
+		Identify: apiSrv.IdentifyAgent, Scope: apiSrv.ScopeOf}) // an access key names the agent in the audit log and limits it to its permissions
 	apiSrv.SetMCPTools(mcpSrv.ToolInfo)
 	apiSrv.Warm()                                                           // the model catalog is built in the background, before anyone asks
 	root := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { // not a ServeMux: it would clean paths the API serves verbatim

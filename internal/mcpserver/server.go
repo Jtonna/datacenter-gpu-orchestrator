@@ -14,6 +14,8 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/access"
 )
 
 // Protocol versions this server speaks, newest first. initialize answers with
@@ -48,6 +50,12 @@ type Options struct {
 	// is answered with the given HTTP status (an unknown or revoked key: 401)
 	// and nothing is run. A request without a key passes unchanged.
 	Identify func(r *http.Request) (ctx context.Context, status int, err error)
+	// Scope, when set, is what a request to method and path needs from an
+	// access key (the API's route table). A tool needs what its route needs:
+	// a key whose permission for it is Off does not see the tool in
+	// tools/list, and calling it (or a tool set to Ask me) answers a tool
+	// error that says why. A call without a key is not checked.
+	Scope func(method, path string) access.Scope
 }
 
 // Server is the http.Handler for /mcp. inner is the scheduler's REST handler.
@@ -256,7 +264,7 @@ func (s *Server) handle(r *http.Request, raw []byte, sid string) (*rpcResponse, 
 	case "ping":
 		return ok(map[string]any{})
 	case "tools/list":
-		return ok(map[string]any{"tools": s.toolList()})
+		return ok(map[string]any{"tools": s.toolListFor(r.Context())})
 	case "tools/call":
 		var p struct {
 			Name      string          `json:"name"`
@@ -403,12 +411,46 @@ func originAllowed(r *http.Request) bool {
 
 // ---- tools ----
 
-func (s *Server) toolList() []any {
+func (s *Server) toolList() []any { return s.toolListFor(context.Background()) }
+
+// toolListFor is tools/list for a request: a request with an access key does
+// not see the tools its key has Off.
+func (s *Server) toolListFor(ctx context.Context) []any {
+	g, keyed := access.GrantFrom(ctx)
 	out := make([]any, 0, len(s.tools))
 	for _, t := range s.tools {
+		if keyed {
+			if sc := s.scopeOf(t); isPermission(sc) && g.Grants.Of(sc) == access.Off {
+				continue
+			}
+		}
 		out = append(out, map[string]any{"name": t.Name, "description": t.Desc, "inputSchema": t.schema(), "annotations": t.annotations()})
 	}
 	return out
+}
+
+// scopeOf is what a tool needs: what its route needs. A route outside the
+// four permissions (the model API's list of models), or no table: a
+// read-only tool needs observe and any other settings.
+func (s *Server) scopeOf(t *tool) access.Scope {
+	if s.opts.Scope != nil && t.Path != "" {
+		if sc := s.opts.Scope(t.Method, t.Path); isPermission(sc) {
+			return sc
+		}
+	}
+	if t.ReadOnly {
+		return access.Observe
+	}
+	return access.Settings
+}
+
+func isPermission(sc access.Scope) bool {
+	for _, p := range access.Permissions {
+		if p == sc {
+			return true
+		}
+	}
+	return false
 }
 
 // Tool groups of ToolInfo.
@@ -444,7 +486,7 @@ func (s *Server) ToolInfo() any {
 			summary = summary[:i+1]
 		}
 		tools = append(tools, map[string]any{"name": t.Name, "group": t.group(), "summary": summary, "description": desc,
-			"read_only": t.ReadOnly, "destructive": !t.ReadOnly && t.Destructive, "input_schema": t.schema()})
+			"read_only": t.ReadOnly, "destructive": !t.ReadOnly && t.Destructive, "input_schema": t.schema(), "scope": s.scopeOf(t)})
 	}
 	return map[string]any{"server": map[string]any{"name": "llm-scheduler", "version": s.opts.Version}, "path": "/mcp", "transport": "http",
 		"protocol_versions": protocolVersions, "instructions": instructions, "tools": tools,
@@ -537,6 +579,11 @@ func actorFor(client string, args map[string]any) string {
 }
 
 func (s *Server) callTool(ctx context.Context, t *tool, args map[string]any, client string) toolResult {
+	if g, keyed := access.GrantFrom(ctx); keyed {
+		if ref := access.Check(g, s.scopeOf(t)); ref != nil {
+			return textResult(t.Name+" was refused: "+ref.Message+".", true)
+		}
+	}
 	if err := t.validate(args); err != nil {
 		return textResult("invalid arguments for "+t.Name+": "+err.Error(), true)
 	}
