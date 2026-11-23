@@ -94,7 +94,7 @@ func (f *fwEnv) run(script string, args ...string) {
 
 // fwPorts are the ports the setup opens: the agent API and the worker. 50061
 // (an agent-hosted server, phase 6) is not opened yet (CR-9 review, D3).
-var fwPorts = []string{"50060", "50052"}
+var fwPorts = []string{"50060", "50052", "50061"}
 
 func allow(src string) []string {
 	var out []string
@@ -186,21 +186,19 @@ func TestSetupPrintsAnInstructionForFirewalld(t *testing.T) {
 	f := newFw(t, "firewall-cmd")
 	f.set("firewalld.running", "")
 	f.run("potluck-agent-setup", setupArgs...)
-	for _, want := range []string{"firewalld is active", "192.0.2.1", "50060", "50052"} {
+	// 50061: a host launch (release 0.1.9) listens there; Potluck checks it.
+	for _, want := range []string{"firewalld is active", "192.0.2.1", "50060", "50052", "50061"} {
 		if !strings.Contains(f.out, want) {
 			t.Fatalf("the instruction does not say %q:\n%s", want, f.out)
 		}
 	}
-	if strings.Contains(f.out, "50061") {
-		t.Fatalf("the instruction names 50061, which is not opened yet:\n%s", f.out)
-	}
 	same(t, "firewall-cmd calls", f.lines("firewall-cmd.log"), []string{"--state"})
 }
 
-// CR-9 review, D3: an older setup also opened 50061. Its rules are listed in
-// /etc/potluck/firewall-rules; the uninstall removes them all, and a new setup
-// removes the 50061 ones it no longer asks for.
-func TestOlder50061RulesAreRemoved(t *testing.T) {
+// The rules a setup made are listed in /etc/potluck/firewall-rules; the
+// uninstall removes them all (50061 among them), and a new setup keeps the
+// 50061 rule, which it asks for again (release 0.1.9: host launches).
+func TestOlder50061RulesAreKept(t *testing.T) {
 	old := "192.0.2.1 50060\n192.0.2.1 50052\n192.0.2.1 50061\n"
 	f := newFw(t, "ufw")
 	f.set("ufw.status", "Status: active\n")
@@ -214,9 +212,9 @@ func TestOlder50061RulesAreRemoved(t *testing.T) {
 	os.MkdirAll(f.etc, 0o755)
 	os.WriteFile(filepath.Join(f.etc, "firewall-rules"), []byte(old), 0o644)
 	f.run("potluck-agent-setup", setupArgs...)
-	same(t, "ufw calls of the setup", f.lines("ufw.log"), append(allow("192.0.2.1"), remove("192.0.2.1", "50061")...))
+	same(t, "ufw calls of the setup", f.lines("ufw.log"), allow("192.0.2.1"))
 	b, _ := os.ReadFile(filepath.Join(f.etc, "firewall-rules"))
-	if string(b) != "192.0.2.1 50060\n192.0.2.1 50052\n" {
+	if string(b) != "192.0.2.1 50060\n192.0.2.1 50052\n192.0.2.1 50061\n" {
 		t.Fatalf("rule list %q", b)
 	}
 }
