@@ -252,7 +252,13 @@ func TranscriptMarkdown(t *Transcript) string {
 		fmt.Fprintf(&b, ", model `%s`", t.Model)
 	}
 	b.WriteString(".\n")
+	lastPhase := -1
 	for k, e := range t.Entries {
+		if e.PhaseIdx != lastPhase {
+			// The anchor a report's section links to.
+			fmt.Fprintf(&b, "\n<a id=\"phase-%d\"></a>\n", e.PhaseIdx)
+			lastPhase = e.PhaseIdx
+		}
 		fmt.Fprintf(&b, "\n## %d. %s, phase %d (%s)", k+1, e.Name, e.PhaseIdx+1, e.Phase)
 		if e.Turn > 0 {
 			fmt.Fprintf(&b, ", turn %d", e.Turn)

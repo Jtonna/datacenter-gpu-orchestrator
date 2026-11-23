@@ -287,6 +287,9 @@ func allTools() []*tool {
 		rd("get_step_transcript", "The full exchange of one step of a run, in order: what was sent (a later conversation turn holds only its new messages), the answer and reasoning, status, tokens and timings. format md gives a readable chat. Can be large.", P{
 			"id": s("The run id."), "step": i("The step index (0-based)."), "format": en("json (the stored file, default) or md.", "json", "md")},
 			[]string{"id", "step"}, "GET", "/api/bench/runs/{id}/steps/{step}/transcript", "format"),
+		rd("get_run_report", "The report of a benchmark run, generated from its recorded data (nothing judged, no baselines): for a group run the summary (headline counts, the issues, one table per metric with average, lowest and highest, an index of the benchmark reports); for a direct run, or with step, the benchmark report (inputs, then a section per phase with figures, conditions, issues and a transcript link); with step and phase one section. format md gives Markdown.", P{
+			"id": s("The run id."), "step": i("A step index (0-based) for its benchmark report."), "phase": i("With step: one phase (0-based)."), "format": en("json (default) or md.", "json", "md")},
+			[]string{"id"}, "GET", "/api/bench/runs/{id}/report", "step", "phase", "format"),
 		rd("list_bench_metrics", "The metrics of the measurement record: name, unit, description, the phase types that record it, whether it is per machine and whether higher is better.", nil, nil, "GET", "/api/bench/metrics"),
 		rd("get_run", "Get one benchmark run with its steps, requests, statistics and comparison against the baseline.", idArg("run"), []string{"id"}, "GET", "/api/bench/runs/{id}"),
 		rd("export_run", "Export a benchmark run as a markdown table, CSV or JSON, returned as text.", P{"id": s("The run id."), "format": en("Export format (json by default).", "markdown", "csv", "json"),

@@ -35,6 +35,95 @@ func (s *Server) modelRoutes(m *http.ServeMux) {
 	// Transcripts (data model step 4).
 	m.HandleFunc("GET /api/bench/runs/{id}/transcripts", g(s.listTranscripts))
 	m.HandleFunc("GET /api/bench/runs/{id}/steps/{step}/transcript", g(s.getTranscript))
+	// Reports, generated when opened.
+	m.HandleFunc("GET /api/bench/runs/{id}/report", g(s.getReport))
+}
+
+// getReport is GET /api/bench/runs/{id}/report: the run's own report (the
+// summary of a group run, the benchmark report of a direct run), ?step=N for
+// the benchmark report of a step, &phase=P for one section; ?format=json
+// (default), md or html (a page with a print layout).
+func (s *Server) getReport(w http.ResponseWriter, r *http.Request) {
+	id, q := r.PathValue("id"), r.URL.Query()
+	var o bench.ReportOptions
+	for _, p := range []struct {
+		name string
+		dst  **int
+	}{{"step", &o.Step}, {"phase", &o.Phase}} {
+		if v := q.Get(p.name); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 0 {
+				badParam(w, "%s must be an index (0, 1, ...), got %q", p.name, v)
+				return
+			}
+			*p.dst = &n
+		}
+	}
+	if o.Phase != nil && o.Step == nil {
+		badParam(w, "phase needs step")
+		return
+	}
+	format := q.Get("format")
+	switch format {
+	case "", "json", "md", "markdown", "html":
+	default:
+		badParam(w, "format must be json, md or html, got %q", format)
+		return
+	}
+	run, err := s.opts.BenchStore.GetRun(id)
+	if err != nil {
+		s.storeErr(w, err)
+		return
+	}
+	ms, err := s.opts.BenchStore.RunMeasurements(id, bench.MeasureQuery{})
+	if err != nil {
+		s.storeErr(w, err)
+		return
+	}
+	list, err := s.opts.BenchStore.Transcripts(id)
+	if err != nil {
+		s.storeErr(w, err)
+		return
+	}
+	o.Transcripts = map[int]bool{}
+	for _, t := range list {
+		o.Transcripts[t.Step] = true
+	}
+	rep, err := bench.BuildReport(run, ms, o)
+	if errors.Is(err, bench.ErrNotFound) {
+		apiErr(w, http.StatusNotFound, "%v", strings.TrimPrefix(err.Error(), bench.ErrNotFound.Error()+": "))
+		return
+	}
+	if err != nil {
+		s.storeErr(w, err)
+		return
+	}
+	name := id
+	if o.Step != nil {
+		name += fmt.Sprintf("-step-%d", *o.Step+1)
+	}
+	if o.Phase != nil {
+		name += fmt.Sprintf("-phase-%d", *o.Phase+1)
+	}
+	switch format {
+	case "md", "markdown":
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", name+"-report.md"))
+		w.Write([]byte(bench.ReportMarkdown(rep)))
+	case "html":
+		mq := r.URL.Query()
+		mq.Set("format", "md")
+		page, err := bench.ReportHTML(rep, r.URL.Path+"?"+mq.Encode())
+		if err != nil {
+			apiErr(w, http.StatusInternalServerError, "the report cannot be drawn: %v", err)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'")
+		w.Write(page)
+	default:
+		writeJSON(w, http.StatusOK, rep)
+	}
 }
 
 // listTranscripts is GET /api/bench/runs/{id}/transcripts: the steps that

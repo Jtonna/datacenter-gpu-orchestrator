@@ -169,4 +169,23 @@ func TestTranscriptsOverREST(t *testing.T) {
 	if st, _, _ := e.do("GET", "/api/bench/runs/nope/transcripts", ""); st != 404 {
 		t.Fatalf("unknown run: %d", st)
 	}
+
+	// The run's report: a direct run's own report is its benchmark report.
+	st, b, _ = e.do("GET", "/api/bench/runs/"+id+"/report", "")
+	if st != 200 || jsonOf(t, b)["kind"] != "benchmark" || !strings.Contains(b, `"transcript":"/api/bench/runs/`+id+`/steps/0/transcript?format=md"`) {
+		t.Fatalf("report: %d %s", st, b)
+	}
+	st, raw, hdr := e.hdo("GET", "/api/bench/runs/"+id+"/report?format=md", nil, nil)
+	if st != 200 || !strings.HasPrefix(hdr.Get("Content-Type"), "text/markdown") || !strings.Contains(string(raw), "## Inputs") {
+		t.Fatalf("md: %d %s", st, raw)
+	}
+	st, raw, hdr = e.hdo("GET", "/api/bench/runs/"+id+"/report?format=html&step=0&phase=1", nil, nil)
+	if st != 200 || !strings.HasPrefix(hdr.Get("Content-Type"), "text/html") || !strings.Contains(string(raw), "Download as PDF") || !strings.Contains(string(raw), "format=md") {
+		t.Fatalf("html: %d %s", st, raw)
+	}
+	for q, want := range map[string]int{"?step=7": 404, "?step=0&phase=9": 404, "?phase=1": 400, "?format=pdf": 400, "?step=x": 400} {
+		if st, b, _ := e.do("GET", "/api/bench/runs/"+id+"/report"+q, ""); st != want {
+			t.Errorf("%s: %d %s, want %d", q, st, b, want)
+		}
+	}
 }
