@@ -181,16 +181,21 @@ func TestAgents_LostNodeEndsTheInstanceAtOnce(t *testing.T) {
 	}
 }
 
+// A forced profile on a paused node is refused at once with the true reason
+// (fifth review N2); after the unpause a new request launches.
 func TestAgents_PausedNodeTakesNoNewLoad(t *testing.T) {
 	h := agentsHarness(t)
 	h.view.modify("a", func(n *core.Node) { n.Paused = true })
-	w := h.request("m")
-	h.pending(w)
+	h.viewChanged()
+	if e := h.failed(h.request("m"), 503, ReasonForcedUnavailable); !strings.Contains(e.Message, "paused") {
+		t.Fatalf("refusal %q", e.Message)
+	}
 	if len(h.wlaunches) != 0 {
 		t.Fatal("launched on a paused node")
 	}
 	h.view.modify("a", func(n *core.Node) { n.Paused = false })
 	h.viewChanged()
+	h.request("m")
 	if len(h.wlaunches) != 1 {
 		t.Fatal("not launched after unpause")
 	}

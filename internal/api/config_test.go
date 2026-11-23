@@ -36,7 +36,10 @@ func cfgEnvWith(t *testing.T, mod ...func(*Options)) (*env, *cfgsvc.Service, *cf
 	var e *env
 	svc := cfgsvc.New(context.Background(), cfgsvc.Options{Store: cs, Parse: config.Options{FileExists: func(string) bool { return true }},
 		Apply:    func(c *config.Config) { e.sched.ApplyConfig(c) },
-		OnChange: func(ev cfgsvc.ChangeEvent) { e.api.PublishConfig(ev) }})
+		OnChange: func(ev cfgsvc.ChangeEvent) { e.api.PublishConfig(ev) },
+		LoadedOnExcluded: func(c *config.Config) []config.LoadedOnExcluded {
+			return e.sched.LoadedOnExcluded(context.Background(), c)
+		}})
 	e = newEnv(t, okUpstream(), append([]func(*Options){func(o *Options) { o.Config, o.Audit = svc, cs }}, mod...)...)
 	return e, svc, cs
 }

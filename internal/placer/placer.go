@@ -93,6 +93,11 @@ type Request struct {
 	// own compute buffer). An entry whose Need.MiB is above 0 replaces Need
 	// and the margins above for a set of that many nodes (For).
 	ByCount []CountNeed
+
+	// MinNodes, when above 1, leaves out placements of fewer nodes (not
+	// checked when forced). The scheduler sets it to ask again for a larger
+	// set when its memory reservation gate refuses a smaller one.
+	MinNodes int
 }
 
 // CountNeed is the need and margins of a placement of one node count.
@@ -530,10 +535,12 @@ func choose(req Request, nodes []cand, ev []Evictable) ([]cand, error) {
 				level = append(level, c)
 			}
 		}
-		if best := s.bestSingle(level); best != nil {
-			return best, nil
+		if req.MinNodes <= 1 {
+			if best := s.bestSingle(level); best != nil {
+				return best, nil
+			}
 		}
-		for k := 2; k <= req.MaxPool && k <= len(level); k++ {
+		for k := max(2, req.MinNodes); k <= req.MaxPool && k <= len(level); k++ {
 			if best := s.bestPool(level, k); best != nil {
 				return best, nil
 			}

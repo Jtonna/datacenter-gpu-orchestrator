@@ -295,6 +295,10 @@ func TestStep4_RefitFails_DropsClaimAndRecordsEmpty(t *testing.T) {
 	h.exitChild(h.inst("big").iid, instanceExit(0))
 	h.step(evTick{})
 	h.advance(3 * time.Second) // settle + fetch: a has 9000 free, budget 8000 < 12000
+	// just released: the claim waits for figures after the window (AS1)
+	h.wantClaim("other", "a")
+	h.advance(30 * time.Second)
+	h.viewChanged()
 	h.noClaim("other")
 	ns := h.c.nodes["a"]
 	if !ns.hasClaim || ns.emptyClaim != 9000 {

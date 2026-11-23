@@ -165,14 +165,9 @@ func (c *Config) validateLlama(p *core.Profile, r *ProfileSpec, pf func(field, f
 			}
 		}
 	}
-	for _, name := range p.ForceNodes {
-		// DESIGN: excluding wins over forcing. Only what config alone can tell is
-		// checked here (the name against the entries as an id and as a hostname);
-		// a hostname glob against an id is left to the scheduler at request time.
-		if e, ok := c.ExcludedBy(core.NodeID(name), name); ok {
-			pf("force_nodes", "node %q is excluded by exclude_nodes entry %q; excluding wins, so drop it from force_nodes or from exclude_nodes", name, e)
-		}
-	}
+	// DESIGN: excluding wins over forcing, at run time. A profile that forces
+	// an excluded node is valid configuration (0.1.7): it is kept, refused at
+	// run time, and named by ExclusionBlocks (a warning, not an error).
 	for i, a := range p.ExtraArgs {
 		name := a
 		if strings.HasPrefix(a, "-") {

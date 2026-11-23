@@ -77,6 +77,10 @@ func (c *schedCore) forcedWhy(p *core.Profile, np *placer.NoPlacement) (Reason, 
 			parts = append(parts, fmt.Sprintf("node %s has no known address", name))
 		case c.quarantined(id):
 			parts = append(parts, fmt.Sprintf("forced node %s is quarantined until %s", name, c.nodes[id].quarUntil.Format("15:04:05")))
+		case c.pausedNode(n):
+			parts = append(parts, fmt.Sprintf("forced node %s is paused", name))
+		case n.Paused && n.UnpausePending:
+			parts = append(parts, fmt.Sprintf("forced node %s was unpaused; its agent has not been told yet (next heartbeat)", name))
 		case c.eligible(id):
 			busy = append(busy, name) // held, claimed or settling: a wait, not an absence
 		default:
@@ -142,12 +146,18 @@ func (c *schedCore) filteredWhy(p *core.Profile, req placer.Request) (Reason, st
 			reason = ReasonNodeNoAddress
 		}
 	}
+	// An excluded node is named, but it does not set the reason: this profile
+	// does not force it (forcedWhy covers that), so it is an ordinary lack of
+	// room in the remaining pool, refused as such (0.1.7 review, ES3). The
+	// reason "node excluded" is kept for a profile that forces an excluded
+	// node, which can run nowhere else.
 	slices.Sort(excluded)
-	for _, name := range excluded {
-		parts = append(parts, fmt.Sprintf("node %s is excluded by config", name))
-		if reason == ReasonClusterBusy {
-			reason = ReasonNodeExcluded
+	if len(excluded) > 0 {
+		word := "nodes"
+		if len(excluded) == 1 {
+			word = "node"
 		}
+		parts = append(parts, fmt.Sprintf("%d %s excluded by config: %s", len(excluded), word, strings.Join(excluded, ", ")))
 	}
 	slices.Sort(noAuto)
 	for _, name := range noAuto {

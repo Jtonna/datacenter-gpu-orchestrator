@@ -439,8 +439,12 @@ type PlanReport struct {
 	Placement []PlacedNodeStatus
 	Victims   []PlanVictim
 	Reason    string // why there is no placement (queue, reject, backoff)
-	NeedMiB   int    // the profile's need before the estimate margin
-	Measured  bool
+	// ExcludedBy is the exclude_nodes entry that refuses this profile: it
+	// forces a node the entry names (or is a command profile and the local
+	// node is excluded). Empty otherwise.
+	ExcludedBy string
+	NeedMiB    int // the profile's need before the estimate margin
+	Measured   bool
 	// FitNeedMiB is the need the fit rules use (NeedMiB with the estimate
 	// margin when it is an estimate), and NeedBasis says where it comes from:
 	// "measured, needs_mib", "estimated, +5% margin; the estimate is N MiB" or

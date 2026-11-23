@@ -241,6 +241,9 @@ run:
 		steps = append(steps, got...)
 		if suite.StopOnFailure {
 			for _, st := range got {
+				if st.Outcome == OutcomeRefusedByExclusion {
+					continue // not a failure: the configuration keeps the machine out
+				}
 				if st.Outcome == OutcomeError || (st.Expect != nil && !st.Expect.Pass) {
 					state, errText = RunFailed, fmt.Sprintf("stopped after %q did not pass (stop_on_failure)", st.BenchmarkID)
 					break run
@@ -280,6 +283,11 @@ run:
 		if st.Outcome == OutcomeSkipped {
 			continue
 		}
+		if st.Outcome == OutcomeRefusedByExclusion {
+			sum.RefusedByExclusion++
+			continue
+		}
+		sum.Ran++
 		if st.Expect != nil && st.Expect.Pass {
 			sum.Passed++
 		} else {
@@ -320,12 +328,16 @@ run:
 	if state == RunFailed || sum.Failed > 0 || sum.Regressions > 0 {
 		sev = history.Warn
 	}
-	summary := fmt.Sprintf("Benchmark run %s %s: %d steps, %d passed, %d failed, %d regressions.", r.ID, state, sum.Steps, sum.Passed, sum.Failed, sum.Regressions)
+	summary := fmt.Sprintf("Benchmark run %s %s: %d steps, %d passed, %d failed", r.ID, state, sum.Steps, sum.Passed, sum.Failed)
+	if sum.RefusedByExclusion > 0 {
+		summary += fmt.Sprintf(", %d not judged (refused by an exclusion)", sum.RefusedByExclusion)
+	}
+	summary += fmt.Sprintf(", %d regressions.", sum.Regressions)
 	if errText != "" {
 		summary += " " + strings.TrimRight(errText, ".") + "."
 	}
 	m.record(history.TBenchRunFinished, sev, "", summary, map[string]any{"bench_run": r.ID, "suite": r.SuiteID, "state": state, "error": errText,
-		"steps": sum.Steps, "passed": sum.Passed, "failed": sum.Failed, "regressions": sum.Regressions, "duration_s": float64(end-r.QueuedAt) / 1000})
+		"steps": sum.Steps, "passed": sum.Passed, "failed": sum.Failed, "refused_by_exclusion": sum.RefusedByExclusion, "regressions": sum.Regressions, "duration_s": float64(end-r.QueuedAt) / 1000})
 }
 
 // leafBenchmarks are the plain benchmarks an item runs (a parallel step expands to its members).

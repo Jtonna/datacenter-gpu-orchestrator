@@ -128,8 +128,20 @@ func (c *schedCore) place(e *entry) bool {
 		c.needFailed(e, err)
 		return true
 	}
-	pl, err := placer.Place(req, c.freeCandidates(e.prof))
-	if err != nil || c.reserveGate(e.prof, pl, nil) != "" {
+	pl, gate, tried, err := c.gatedPlace(e.prof, req) // neverfits.go
+	if err != nil {
+		return false
+	}
+	if gate != "" {
+		if ne := c.gateNeverFits(e.prof, tried); ne != nil {
+			c.log.Warn("request cannot fit even with nothing of ours in the way; refused", "profile", e.prof.Name,
+				"need_mib", ne.NeedMiB, "available_mib", ne.CapacityMiB, "nodes", placementIDs(pl), "tried", placementsText(tried), "reason", ne.Message)
+			c.answerEntry(e, ne)
+			return true
+		}
+		return false
+	}
+	if c.forcedFitWaits(e.prof, pl) { // neverfits.go
 		return false
 	}
 	c.deleteEntry(e)
@@ -150,6 +162,21 @@ func (c *schedCore) plan(e *entry) bool {
 	}
 	res, err := placer.Plan(req, c.freeCandidates(e.prof), ev)
 	if err != nil || c.reserveGate(e.prof, res.Placement, res.Victims) != "" {
+		return false
+	}
+	// A forced profile whose node was just released waits: the refusal
+	// below must run on figures that do not lag, and nothing is evicted for
+	// a request it would then refuse (seventh review AB1). Only where such
+	// a refusal exists (eighth review): in fleet membership with the
+	// defaults nothing refuses a forced placement before its launch, and
+	// it evicts as in 0.1.6.
+	if len(e.prof.ForceNodes) > 0 && c.refusesBeforeEvict() && c.anyJustReleased(res.Placement) {
+		return false
+	}
+	if c.evictWaits(e.prof, res.Placement, res.Victims, e.evictHeld) {
+		if e.evictHeld.IsZero() {
+			e.evictHeld = c.now
+		}
 		return false
 	}
 	// A forced profile that could not fit its nodes even with nothing loaded
@@ -289,6 +316,15 @@ func (c *schedCore) claimSettled(e *entry) bool {
 	return true
 }
 
+// claimNodes is a placement's node list for the claimed ids.
+func claimNodes(ids []core.NodeID) []core.PlacedNode {
+	out := make([]core.PlacedNode, len(ids))
+	for i, id := range ids {
+		out[i] = core.PlacedNode{ID: id}
+	}
+	return out
+}
+
 // startOnClaim is step 4: place over exactly the claimed nodes at live
 // budgets. On failure the observed free figures become the nodes' empty
 // figures and the claim is dropped.
@@ -304,7 +340,18 @@ func (c *schedCore) startOnClaim(e *entry) bool {
 		cands = append(cands, placer.FromNode(n, c.liveBudget(id, n)))
 	}
 	pl, err := placer.Place(req, cands)
-	if err == nil && c.reserveGate(e.prof, pl, nil) == "" {
+	gate := ""
+	if err == nil {
+		gate = c.reserveGate(e.prof, pl, nil)
+	}
+	// The victims' release makes the claimed nodes just released: their
+	// figures may still show the victims. Keep the claim and decide on the
+	// next figures; never refuse, drop the claim or learn an empty figure
+	// from a lagging one (seventh review AS1).
+	if c.anyJustReleased(core.Placement{Nodes: claimNodes(e.claim)}) && (err != nil || gate != "" || c.forcedFitWaits(e.prof, pl)) {
+		return true
+	}
+	if err == nil && gate == "" {
 		c.dropClaim(e) // nodes it does not use are released
 		c.deleteEntry(e)
 		c.startInstance(e.prof, pl, e.waiters, e)

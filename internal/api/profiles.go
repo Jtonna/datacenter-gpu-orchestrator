@@ -86,6 +86,12 @@ func (s *Server) profileEntriesOf(ctx context.Context, cfg *config.Config) []map
 		if p.NeedsMiB > 0 {
 			e["needs_mib_configured"] = p.NeedsMiB
 		}
+		// It forces a node exclude_nodes names: kept, refused until lifted.
+		if b, ok := cfg.BlockedByExclusion(n); ok {
+			e["blocked_by_exclusion"] = b.Entry
+		} else if err == nil && rep.ExcludedBy != "" {
+			e["blocked_by_exclusion"] = rep.ExcludedBy // matched at run time (a hostname glob against an id)
+		}
 		if err != nil {
 			e["plan"] = map[string]any{"action": "unknown", "reason": err.Error()}
 		} else {

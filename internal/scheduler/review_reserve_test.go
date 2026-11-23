@@ -2,12 +2,14 @@ package scheduler
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/placer"
 )
@@ -382,8 +384,11 @@ func TestReview_N1_DefaultsWriteNoPeaks(t *testing.T) {
 // The table covers 1, 2 and 3 nodes (forced over the first nodes, or
 // max_pool for an automatic profile) against a measurement stored on 2
 // (review SB1, SS4), in fleet membership, fleet membership with a lower
-// pre-flight, and agents membership. A third of the situations (8640 of
-// 25920) store measurements on two or three device counts with an
+// pre-flight, and agents membership, each with nothing before, right after
+// an unload on a whose figure the view still shows (FB1), the same with
+// another profile idle on b (sixth review SS1, SS2), and with another
+// profile loaded and idle on a (the owner's case): see loadBefore and
+// beforeRule. A third of the situations (34560 of 120960) store measurements on two or three device counts with an
 // untrusted row among them (third review, TN5): "counts-untrusted" has a
 // trusted 1-device row and an untrusted 3-device row below it (TB1),
 // "counts-between" trusted rows on 1 and 3 devices and an untrusted one on
@@ -395,18 +400,41 @@ func TestReview_GeneralRule(t *testing.T) {
 		fill, margin int
 		uses         bool
 	}
+	// Under the race detector the table runs one situation in 11 (the
+	// harness drives the core on one goroutine, so the detector finds
+	// nothing in it; the sample only keeps the race run short). 11 shares no
+	// factor with any dimension's size; that alone does not guarantee every
+	// value is reached, so the test checks that every value of every
+	// dimension ran. The plain pass runs them all.
+	every := 1
+	if raceOn {
+		every = 11
+	}
+	evictRefused = map[string]int{}
+	evictChecked, evictSeen = map[string]int{}, map[string]int{}
+	seen := map[string]bool{}
 	n := 0
-	for _, need := range []int{8000, 16000, 20000, 23000, 26000, 30000} {
+	for _, need := range []int{8000, 16000, 20000, 23000, 26000, 30000, 40000} { // 40000: never fits three nodes
 		for _, cBudget := range []int{12400, 9000} {
 			for _, avgDrop := range []int{0, 2500} {
-				for _, tg := range []tight{{8, 300, true}, {64, 100, true}, {8, 1000, false}, {0, 300, true}, {8, 0, true}} {
+				for _, tg := range []tight{{8, 300, true}, {64, 100, true}, {8, 1000, false}, {0, 300, true}, {8, 0, true}, {0, 0, false}} {
 					for _, ctx := range []int{4096, 65536} {
 						for _, shape := range []string{"auto", "forced", "skewed", "skewed-peak", "counts-untrusted", "counts-between"} {
 							for _, ov := range []int{0, 15500} { // a pre-flight override above the fleet's figure on a
 								for _, nodes := range []int{1, 2, 3} {
 									for _, mode := range []string{"fleet", "fleet, lower pre-flight", "agents"} {
-										n++
-										checkGeneralRule(t, need, cBudget, avgDrop, tg.fill, tg.margin, tg.uses, ctx, shape, ov, nodes, mode)
+										for _, before := range []string{"", "unload", "unload-holder", "owner"} {
+											n++
+											if n%every != 0 {
+												continue
+											}
+											for _, v := range []string{fmt.Sprint("need ", need), fmt.Sprint("c ", cBudget), fmt.Sprint("avg ", avgDrop),
+												fmt.Sprint("tight ", tg), "ctx " + fmt.Sprint(ctx), "shape " + shape, fmt.Sprint("ov ", ov),
+												fmt.Sprint("nodes ", nodes), "mode " + mode, "before " + before} {
+												seen[v] = true
+											}
+											checkGeneralRule(t, need, cBudget, avgDrop, tg.fill, tg.margin, tg.uses, ctx, shape, ov, nodes, mode, before)
+										}
 									}
 								}
 							}
@@ -416,18 +444,33 @@ func TestReview_GeneralRule(t *testing.T) {
 			}
 		}
 	}
-	if n != 25920 {
-		t.Fatalf("%d situations, the table says 25920", n)
+	if n != 145152 {
+		t.Fatalf("%d situations, the table says 145152", n)
+	}
+	// 7 needs + 2 + 2 + 6 settings + 2 + 6 shapes + 2 + 3 + 3 modes + 4 befores
+	if len(seen) != 37 {
+		t.Fatalf("%d dimension values run, want all 37", len(seen))
+	}
+	// the invariant of the seventh review: no eviction for a request that
+	// is then refused, in either membership mode, with either settings
+	total := 0
+	for k, v := range evictRefused {
+		total += v
+		t.Errorf("%d situations (%s) evicted for m and then refused it", v, k)
+	}
+	if total == 0 {
+		t.Logf("situations followed on: %v; of them with an eviction for m: %v", evictChecked, evictSeen)
 	}
 }
 
-func checkGeneralRule(t *testing.T, need, cBudget, avgDrop, fill, margin int, uses bool, ctx int, shape string, ov, nodes int, mode string) {
+func checkGeneralRule(t *testing.T, need, cBudget, avgDrop, fill, margin int, uses bool, ctx int, shape string, ov, nodes int, mode, before string) {
 	t.Helper()
 	name := func() string {
-		return fmt.Sprintf("need %d, c %d, average -%d, fill %d, margin %d, uses %v, ctx %d, %s, override %d, %d nodes, %s",
-			need, cBudget, avgDrop, fill, margin, uses, ctx, shape, ov, nodes, mode)
+		return fmt.Sprintf("need %d, c %d, average -%d, fill %d, margin %d, uses %v, ctx %d, %s, override %d, %d nodes, %s, before %q",
+			need, cBudget, avgDrop, fill, margin, uses, ctx, shape, ov, nodes, mode, before)
 	}
 	h := newHarness(t).nodes(psNode("a", 2, 12400), psNode("b", 4, 12400), psNode("c", 6, cBudget))
+	key := mode + ", gate " + fmt.Sprint(fill > 0 || margin > 0 || uses)
 	if mode == "agents" {
 		h.cfg.Defaults.Membership, h.cfg.Defaults.WorkerProbeInterval = config.MembershipAgents, 0
 		h.c.agents = true
@@ -483,6 +526,13 @@ func checkGeneralRule(t *testing.T, need, cBudget, avgDrop, fill, margin int, us
 		h.c.putLearned(l)
 	}
 	h.viewChanged()
+	orig := map[core.NodeID]int{}
+	for _, nd := range h.view.Nodes() {
+		orig[nd.ID] = nd.FreeMiB
+	}
+	if before != "" {
+		loadBefore(t, h, mode, before, fill, margin, uses)
+	}
 	if ov > 0 {
 		ns := h.c.ns("a")
 		ns.ovFree, ns.ovUntil = ov, h.clk.Now().Add(time.Minute)
@@ -536,6 +586,8 @@ func checkGeneralRule(t *testing.T, need, cBudget, avgDrop, fill, margin int, us
 		if r.Action == PlanStart {
 			t.Errorf("%s: the plan starts but the placer finds nothing", name())
 		}
+		beforeRule(t, h, p, r, before, name)
+		afterwards(t, h, agrees(t, h, r, mode, name), orig, key, name)
 		return
 	}
 	freed := map[string]bool{"m": true}
@@ -554,13 +606,15 @@ func checkGeneralRule(t *testing.T, need, cBudget, avgDrop, fill, margin int, us
 		if tr.AvailableMiB > dr.AvailableMiB {
 			t.Errorf("%s: node %s available %d with tight settings, %d by default", name(), tr.Node, tr.AvailableMiB, dr.AvailableMiB)
 		}
-		if r.Action == PlanStart && tr.Shared && dr.WillTakeMiB+tr.MarginMiB > dr.AvailableMiB {
+		if r.Action == PlanStart && h.c.gateOn() && tr.Shared && dr.WillTakeMiB+tr.MarginMiB > dr.AvailableMiB {
 			t.Errorf("%s: admitted, but node %s's default check fails beyond the margin difference: %d + %d > %d",
 				name(), tr.Node, dr.WillTakeMiB, tr.MarginMiB, dr.AvailableMiB)
 		}
 	}
+	beforeRule(t, h, p, r, before, name)
 	// what a request does (every launch also checks the gate: checkGated)
-	h.request("m")
+	w := agrees(t, h, r, mode, name)
+	defer afterwards(t, h, w, orig, key, name)
 	in := h.c.insts["m"]
 	switch {
 	case mode == "agents":
@@ -575,4 +629,208 @@ func checkGeneralRule(t *testing.T, need, cBudget, avgDrop, fill, margin int, us
 			t.Errorf("%s: launched, but node %s is short by %d MiB on the figures its pre-flight left", name(), node, by)
 		}
 	}
+}
+
+// agrees sends a request for "m" and checks it against the plan: a plan that
+// rejects is a request refused at once, and a request refused at once had a
+// plan that rejects (in fleet membership a plan that starts may still be
+// refused by the pre-flight in the same step); one that queues is not
+// answered (the live finding after 0.1.6: never fits must be refused, and
+// what may fit later must wait).
+func agrees(t *testing.T, h *harness, r PlanReport, mode string, name func() string) *waiter {
+	t.Helper()
+	// nothing of ours is loaded in these situations: a plan held back by
+	// the reservation rule would wait for nothing, unless a pre-flight's
+	// figure stands in for the view's for a while (the override dimension)
+	overridden := h.c.overridden("a") || h.c.overridden("b") || h.c.overridden("c") || h.c.justReleased("a")
+	if len(h.c.insts) == 0 && !overridden && r.Action == PlanQueue && strings.HasPrefix(r.Reason, "memory reservation") {
+		t.Errorf("%s: plan queue on the reservation rule with nothing loaded (%s): it can never fit and must be refused", name(), r.Reason)
+	}
+	w := h.request("m")
+	a, answered := h.peek(w)
+	refused := answered && a.err != nil
+	switch {
+	case r.Action == PlanReject && !refused:
+		t.Errorf("%s: plan reject (%s) but the request was not refused at once", name(), r.Reason)
+	case refused && r.Action != PlanReject && !(mode != "agents" && r.Action == PlanStart):
+		t.Errorf("%s: plan %s (%s) but the request was refused: %v", name(), r.Action, r.Reason, a.err)
+	case r.Action == PlanQueue && answered:
+		t.Errorf("%s: plan queue but the request was answered", name())
+	}
+	return w
+}
+
+// evictRefused counts, by mode and settings, the situations where something
+// was evicted for m and m was then refused; evictChecked the situations
+// followed through. TestReview_GeneralRule requires no such situation.
+var evictRefused, evictChecked, evictSeen map[string]int
+
+// afterwards follows m's request on: the stops and settles run, then the
+// view catches up (every node nothing holds shows its figure from before
+// the situation, one stale reading after the stop first) and the windows
+// end. No eviction may have been started for a request that is refused at
+// any time within the follow-up (seventh review AB1, AS1; ninth NB1): the
+// waiter's answer is kept, so a refusal at any point is seen at the end.
+func afterwards(t *testing.T, h *harness, w *waiter, orig map[core.NodeID]int, key string, name func() string) {
+	agents := h.c.agents
+	t.Helper()
+	// Each round: stops and settles run; then, for every node nothing holds,
+	// the workers' stop is seen with a stale reading (still the old figure,
+	// as a heartbeat measured before the stop would show), and only the next
+	// reading has caught up (ninth review NB1: the table catches a wait that
+	// ends on the stale one).
+	for range 4 {
+		h.advance(10 * time.Second)
+		var free []core.NodeID
+		for id := range orig {
+			if ns := h.c.nodes[id]; ns == nil || ns.holder == "" {
+				free = append(free, id)
+			}
+		}
+		now := h.clk.Now()
+		for _, id := range free { // fleet membership reports no reading times
+			if agents {
+				h.view.modify(id, func(n *core.Node) { n.FigureAt, n.StopSeenAt, n.FiguresSinceStop = now, now, 1 })
+			}
+		}
+		h.viewChanged()
+		h.advance(2 * time.Second)
+		now = h.clk.Now()
+		for _, id := range free {
+			h.view.modify(id, func(n *core.Node) {
+				n.FreeMiB = orig[id]
+				if agents {
+					n.FigureAt, n.FiguresSinceStop = now, 2
+				}
+			})
+		}
+		h.viewChanged()
+	}
+	h.advance(40 * time.Second)
+	h.viewChanged()
+	evicted := 0
+	for _, e := range h.of(history.TEviction) {
+		if fmt.Sprint(e.Data["for_profile"]) == "m" {
+			evicted++
+		}
+	}
+	a, ok := h.peek(w)
+	if evictChecked != nil {
+		evictChecked[key]++
+		if evicted > 0 {
+			evictSeen[key]++
+		}
+	}
+	if evicted > 0 && ok && a.err != nil {
+		if evictRefused != nil {
+			evictRefused[key]++
+		}
+		t.Errorf("%s: evicted %d for m, then refused it: %v", name(), evicted, a.err)
+	}
+}
+
+// loadBefore runs what happened on node a before m is asked for (fifth
+// review): "unload" loads "x" (3000 MiB) on a, shows it in the view as 3500
+// MiB used, unloads it and lets the settle end with the view still showing
+// it (FB1, the benchmark pattern); "owner" leaves x loaded and idle there,
+// past min_hold (the owner's case). The tight settings are on while x
+// loads, as they would be live.
+func loadBefore(t *testing.T, h *harness, mode, before string, fill, margin int, uses bool) {
+	t.Helper()
+	d := &h.c.cfg.Defaults
+	d.FillReserveKiBPerToken, d.MarginMeasuredMiB, d.PlacementUsesReserved = fill, margin, uses
+	h.llama("x", 3000, func(p *core.Profile) { p.ForceNodes = []string{"a"} })
+	h.viewChanged()
+	if mode == "agents" {
+		h.release(h.agentReady("x"))
+	} else {
+		h.release(h.ready("x"))
+	}
+	h.view.modify("a", func(n *core.Node) { n.FreeMiB -= 3500 })
+	h.viewChanged()
+	if before == "unload-holder" { // y idle on b, past min_hold (SS1)
+		h.llama("y", 2000, func(p *core.Profile) { p.ForceNodes = []string{"b"} })
+		h.viewChanged()
+		if mode == "agents" {
+			h.release(h.agentReady("y"))
+		} else {
+			h.release(h.ready("y"))
+		}
+		h.view.modify("b", func(n *core.Node) { n.FreeMiB -= 2500 })
+		h.advance(time.Minute)
+	}
+	switch before {
+	case "unload", "unload-holder":
+		h.step(evUnload{profile: "x", force: true})
+		h.advance(10 * time.Second)
+		if h.c.insts["x"] != nil {
+			t.Fatalf("x is still there after its unload")
+		}
+	case "owner":
+		h.advance(time.Minute)
+		if in := h.c.insts["x"]; in == nil || in.state != stReady {
+			t.Fatalf("x is not loaded and idle")
+		}
+	}
+}
+
+// beforeRule checks the plan of m against what happened before: right
+// after an unload the reservation rule never refuses with "waiting cannot
+// help" (the view may still show the unloaded model); with x loaded on a
+// forced node, a forced m that is short even with x stopped (counted as
+// the refusal counts it) is refused, never queued.
+func beforeRule(t *testing.T, h *harness, p *core.Profile, r PlanReport, before string, name func() string) {
+	t.Helper()
+	switch before {
+	case "unload", "unload-holder":
+		// no refusal on the lagging figure: not by the gate, not by the
+		// owner's case, not before an eviction (SS1)
+		for _, s := range []string{"waiting cannot help", "even with", "nothing loaded is stopped", "would refuse the launch"} {
+			if r.Action == PlanReject && strings.Contains(r.Reason, s) {
+				t.Errorf("%s: refused right after the unload while the view still shows it: %s", name(), r.Reason)
+			}
+		}
+		// an automatic profile is not moved or widened while a node of the
+		// placer's first choice was just released (SS2)
+		if len(p.ForceNodes) == 0 && r.Action == PlanStart {
+			req, _, _ := h.c.request(p)
+			first, err := placer.Place(req, h.c.freeCandidates(p))
+			var got []core.NodeID
+			for _, n := range r.Placement {
+				got = append(got, n.ID)
+			}
+			if err == nil && h.c.anyJustReleased(first) && !slices.Equal(got, placementNodeIDs(first)) {
+				t.Errorf("%s: started on %v right after the unload, not on the placer's first choice %v", name(), got, placementNodeIDs(first))
+			}
+		}
+	case "owner":
+		if len(p.ForceNodes) == 0 || r.Action == PlanReject || !h.c.gateOn() {
+			return
+		}
+		var pl core.Placement
+		for _, f := range p.ForceNodes {
+			nd, _ := h.c.node(core.NodeID(f))
+			pl.Nodes = append(pl.Nodes, core.PlacedNode{ID: nd.ID, Addr: nd.Addr})
+		}
+		pl.TensorSplit = p.TensorSplit
+		rows, ok := h.c.memoryRows(p, pl, map[string]bool{"m": true, "x": true})
+		if node, by := rowsShort(rows); ok && by > 0 && freeOrHeldBy(h, pl, "x") {
+			t.Errorf("%s: plan %s (%s) but node %s is short by %d MiB even with x stopped: it must be refused", name(), r.Action, r.Reason, node, by)
+		}
+	}
+}
+
+// freeOrHeldBy: every node of pl is free, or held by holder alone (no claim,
+// no settle, no pause): nothing else there can change.
+func freeOrHeldBy(h *harness, pl core.Placement, holder string) bool {
+	for _, pn := range pl.Nodes {
+		if h.c.isFree(pn.ID) {
+			continue
+		}
+		ns := h.c.nodes[pn.ID]
+		if ns == nil || ns.holder != holder || ns.claim != "" || ns.settle != setNone || h.c.noNewLoad(pn.ID) {
+			return false
+		}
+	}
+	return true
 }

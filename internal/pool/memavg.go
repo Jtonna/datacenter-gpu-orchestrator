@@ -30,6 +30,9 @@ func (p *Pool) sampleMemLocked(a *agent, now time.Time) {
 		s.devFree, s.devOK = d.FreeMiB, true
 	}
 	a.mem = append(a.mem, s)
+	if !a.stopSeen.IsZero() {
+		a.figsSinceStop++
+	}
 	window := p.o.Config().Defaults.FreeAverageWindow
 	keep := 0
 	for keep < len(a.mem)-1 && now.Sub(a.mem[keep].at) > window {

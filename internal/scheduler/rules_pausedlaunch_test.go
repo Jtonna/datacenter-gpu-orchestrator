@@ -42,14 +42,14 @@ func TestPausedLaunchRefusalPlansAgain(t *testing.T) {
 // paused: the request waits, and is placed once the node is listed unpaused.
 func TestUnpausePendingNodeIsNotPlaced(t *testing.T) {
 	h := agentsHarness(t)
-	h.view.modify("a", func(n *core.Node) { n.Paused = true })
+	h.view.modify("a", func(n *core.Node) { n.Paused, n.UnpausePending = true, true })
 	h.viewChanged()
 	w := h.request("m")
 	h.pending(w)
 	if len(h.wlaunches) != 0 {
 		t.Fatal("placed on a paused node")
 	}
-	h.view.modify("a", func(n *core.Node) { n.Paused = false })
+	h.view.modify("a", func(n *core.Node) { n.Paused, n.UnpausePending = false, false })
 	h.viewChanged()
 	if len(h.wlaunches) != 1 {
 		t.Fatalf("%d launches after the unpause reached the agent", len(h.wlaunches))

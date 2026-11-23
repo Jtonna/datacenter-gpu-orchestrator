@@ -223,6 +223,7 @@ type entry struct {
 	claim      []core.NodeID // nil when unclaimed
 	victims    []string      // profiles of victim instances
 	stoppedAny bool          // a victim has been stopped (or exited)
+	evictHeld  time.Time     // when evictWaits first held its eviction (neverfits.go)
 }
 
 func (e *entry) claimed() bool { return e.claim != nil }
@@ -268,6 +269,15 @@ type nodeState struct {
 	// released): the average free figure is not used for a window after it
 	// (reserve.go, avgStale).
 	heldChanged time.Time
+	// releasedAt is when an instance that ran (the settling kind of
+	// release) last left the node: its figure may still show it for a while
+	// (neverfits.go, justReleased). A refused or returned placement that
+	// never ran does not set it.
+	releasedAt time.Time
+	// expectStop: the release left worker launches of ours on the node to
+	// be stopped, so its memory is back only once the view has seen them
+	// end (neverfits.go, justReleased).
+	expectStop bool
 
 	emptyPF, emptyClaim int
 	hasPF, hasClaim     bool
@@ -304,6 +314,10 @@ type lease struct {
 // on one goroutine, and depends on its collaborators only through
 // interfaces. Slow work is emitted as effects for the runner.
 type schedCore struct {
+	// avgAlways: avgStale is false for the check under way (evictWaits).
+	avgAlways bool
+	// wantFig: the nodes last given to a FigureWatch view (neverfits.go).
+	wantFig map[core.NodeID]time.Time
 	// localSysMiB is this machine's system memory (0 when unknown) and
 	// envFileLoad the LLAMA_RPC_FILE_LOAD the host child inherits; both are
 	// read once, for the reload-from-cache figure and the load mode.

@@ -149,7 +149,7 @@ curl -s -X DELETE $H/api/nodes/02:00:00:00:00:01            -d '{"comment":"why"
 curl -s -X POST $H/api/nodes/02:00:00:00:00:01/readmit      -d '{"comment":"why"}'
 ```
 
-- **Pause**: no new load; a running load continues. Kept across restarts.
+- **Pause**: no new load; a running load continues. Kept across restarts. A new request for a profile forced onto a paused node is refused at once (503 `forced nodes unavailable`, "paused by an operator", Retry-After 30 s); a request that was already waiting keeps waiting and is served after the unpause.
 - **Force unload**: stops every model that uses the node now. Requests waiting for it fail with a 502 that names the force unload. Use pause when the node should only stop taking new loads.
 - **Remove**: for a machine that is gone. It is refused at registration until it is re-admitted.
 - **Uninstall** (on the node): `potluck-agent-uninstall` deregisters the node and removes everything the setup put there.
@@ -163,7 +163,7 @@ curl -s -X PUT $H/api/config/exclude-nodes -d '["console-test*", "02:00:00:00:00
 curl -s -X PUT $H/api/config/no-auto-nodes -d '["laptop-*"]'
 ```
 
-- `exclude_nodes`: never used, not counted in capacity. Status and `GET /api/nodes` show `excluded: true`, `excluded_by` (the entry), `placeable: false` and `unplaced: excluded`; the agent keeps reporting. A profile that forces an excluded node is refused.
+- `exclude_nodes`: never used, not counted in capacity. Status and `GET /api/nodes` show `excluded: true`, `excluded_by` (the entry), `placeable: false` and `unplaced: excluded`; the agent keeps reporting. A profile that forces an excluded node is kept and refused at run time (503, reason `node excluded`, naming the entry) until the exclusion is lifted; the configuration write that creates the combination is accepted and lists each such profile in `warnings` and `blocked_by_exclusion`, and `GET /api/profiles` marks the profile with `blocked_by_exclusion: <entry>`. A benchmark step of such a profile ends `refused_by_exclusion` with the result `not_judged`: neither a pass nor a failure, and out of the pass rates. An automatic profile short of room because nodes are excluded gets the ordinary refusal and counts as a failure. Excluding a node does not drain it: a model already loaded there keeps serving until you unload it; the write lists it in `loaded_on_excluded_nodes`, and the node shows `running_while_excluded`. Unload the profile (`POST /api/unload`) to empty the machine.
 - `no_auto_nodes`: used only by profiles that name the node in `force_nodes`; automatic placement never picks it or evicts from it. Status shows `auto: false`. A `command` profile runs on the local node alone by definition, so `no_auto_nodes` does not apply to it; an excluded local node refuses it (reason `node_excluded`).
 - Excluding wins over both forcing and `no_auto_nodes`. Models already running keep running.
 
@@ -218,6 +218,8 @@ cd /opt/potluck && docker compose up -d potluck
 ```
 
 The agents register again by themselves. Models load again on the next request.
+
+**Canary with a paused console.** When a roll-out pauses a console on the live scheduler (to point it at a throwaway scheduler for the canary), every new request for a profile forced onto that console is refused at once with Retry-After for as long as the pause lasts: for example, all the `*-6ps5` profiles. Requests that were already waiting keep waiting. So pause benchmark traffic for those profiles during the canary. The bench runner does not retry: it records such a step as `refused`, with the reason "paused by an operator", so a report shows why.
 
 To roll back: `docker tag llm-scheduler:previous llm-scheduler:local && docker compose up -d potluck`. An older image may refuse a configuration that uses settings it does not know; remove those settings first (`PATCH /api/config/settings` with the key set to `null`).
 

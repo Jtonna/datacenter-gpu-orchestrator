@@ -258,12 +258,6 @@ func TestValidateExcludeNodes(t *testing.T) {
 		{"empty entry", baseHeader + "exclude_nodes: [\"\"]\n", []string{"exclude_nodes", "empty"}},
 		{"blank entry", baseHeader + "exclude_nodes: [\"  \"]\n", []string{"exclude_nodes", "empty"}},
 		{"bad glob", baseHeader + "exclude_nodes: [\"ps5-[\"]\n", []string{"exclude_nodes", "invalid glob", "ps5-["}},
-		{"forced profile names excluded id", prof(llama+"    force_nodes: [\"02:00:00:00:00:AB\"]\n") +
-			"exclude_nodes: [\"02:00:00:00:00:ab\"]\n", []string{`profile "p"`, "force_nodes", "02:00:00:00:00:AB", "excluded"}},
-		{"forced profile names hostname matched by glob", prof(llama+"    force_nodes: [laptop-1, ps5-test1]\n") +
-			"exclude_nodes: [\"PS5-TEST*\"]\n", []string{`profile "p"`, "force_nodes", "ps5-test1", "excluded"}},
-		{"forced profile names excluded local node", prof(llama+"    force_nodes: [host-1]\n") +
-			"exclude_nodes: [host-1]\n", []string{`profile "p"`, "host-1", "excluded"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -277,6 +271,18 @@ func TestValidateExcludeNodes(t *testing.T) {
 				}
 			}
 		})
+	}
+	// A forced profile that names an excluded node is valid (0.1.7): it is kept
+	// and named by ExclusionBlocks, with the forced name and the entry.
+	for _, c := range []struct{ yaml, node, entry string }{
+		{prof(llama+"    force_nodes: [\"02:00:00:00:00:AB\"]\n") + "exclude_nodes: [\"02:00:00:00:00:ab\"]\n", "02:00:00:00:00:AB", "02:00:00:00:00:ab"},
+		{prof(llama+"    force_nodes: [laptop-1, ps5-test1]\n") + "exclude_nodes: [\"PS5-TEST*\"]\n", "ps5-test1", "PS5-TEST*"},
+		{prof(llama+"    force_nodes: [host-1]\n") + "exclude_nodes: [host-1]\n", "host-1", "host-1"},
+	} {
+		b := mustParse(t, c.yaml).ExclusionBlocks()
+		if len(b) != 1 || b[0].Profile != "p" || b[0].Node != c.node || b[0].Entry != c.entry {
+			t.Errorf("%s: %+v", c.node, b)
+		}
 	}
 	// A forced name that only a runtime lookup can tie to an exclusion is not a load-time error.
 	ok := prof(llama+"    force_nodes: [\"02:00:00:00:00:ab\"]\n") + "exclude_nodes: [\"ps5-*\"]\n"

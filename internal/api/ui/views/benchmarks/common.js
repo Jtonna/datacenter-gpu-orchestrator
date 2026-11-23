@@ -93,7 +93,7 @@ const RUN_STATE = {
 export const runBadge = st => { const [t, k, title] = RUN_STATE[st] || [st || 'Unknown', 'n']; return badge(t, k, title); };
 
 const OUTCOME = {
-  ready: ['Loaded and served', 'use'], refused: ['Refused', 'aside'], failed: ['Failed', 'fail'], error: ['Runner error', 'fail'],
+  ready: ['Loaded and served', 'use'], refused: ['Refused', 'aside'], refused_by_exclusion: ['Refused: node excluded', 'aside'], failed: ['Failed', 'fail'], error: ['Runner error', 'fail'],
   cancelled: ['Cancelled', 'n'], skipped: ['Skipped', 'settle'],
 };
 export const outcomeBadge = o => { if (!o) return null; const [t, k] = OUTCOME[o] || [o, 'n']; return badge(t, k); };
@@ -103,6 +103,7 @@ export function passBadge(step) {
   if (step.state === 'running') return badge('Running', 'load');
   if (step.outcome === 'skipped' || step.state === 'skipped') return badge('Skipped', 'settle');
   if (step.outcome === 'cancelled') return badge('Cancelled', 'n');
+  if (step.outcome === 'refused_by_exclusion') return badge('Refused, not judged', 'aside');
   if (step.expect) return step.expect.pass ? badge('Passed', 'ready') : badge('Failed', 'fail');
   return step.outcome === 'ready' ? badge('Passed', 'ready') : badge('Failed', 'fail');
 }

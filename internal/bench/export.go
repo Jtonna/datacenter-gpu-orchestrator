@@ -34,6 +34,9 @@ func passText(st *Step) string {
 	if st.Expect == nil {
 		return ""
 	}
+	if st.Expect.NotJudged || st.Outcome == OutcomeRefusedByExclusion {
+		return "not judged"
+	}
 	if st.Expect.Pass {
 		return "passed"
 	}

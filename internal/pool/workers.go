@@ -222,10 +222,10 @@ func (p *Pool) Launch(ctx context.Context, spec scheduler.WorkerLaunchSpec, repo
 		r := res[i]
 		switch {
 		case r.ref != nil:
-			p.forget(l)
+			p.forget(l, true)
 			return scheduler.WorkerResult{LaunchIDs: ids, Node: l.node, Reason: r.ref.Reason, Message: r.ref.Message}
 		case r.err != nil:
-			p.forget(l)
+			p.forget(l, false)
 			var ue *url.Error
 			if errors.As(r.err, &ue) && ctx.Err() == nil { // no answer at all, and not our own stop
 				p.agentUnreachable(l.node, r.err)
@@ -285,17 +285,18 @@ func (p *Pool) dropLaunches(iid uint64, ls []*launch) {
 	p.mu.Lock()
 	defer p.unlock()
 	for _, l := range ls {
-		p.endLaunchLocked(l)
+		p.endLaunchLocked(l, true) // never sent
 	}
 	delete(p.byIID, iid)
 	p.publishLogSnapLocked()
 }
 
-// forget drops a launch that the agent refused (nothing runs to stop).
-func (p *Pool) forget(l *launch) {
+// forget drops a launch that the agent refused (nothing runs to stop), or
+// whose launch call got no answer (refused false: it may have started).
+func (p *Pool) forget(l *launch, refused bool) {
 	p.mu.Lock()
 	defer p.unlock()
-	p.endLaunchLocked(l)
+	p.endLaunchLocked(l, refused)
 	p.publishLogSnapLocked()
 	ls := p.byIID[l.iid]
 	for i, x := range ls {
@@ -597,6 +598,10 @@ func (p *Pool) Stop(iid uint64, force []core.NodeID) {
 	}, nil)
 }
 
+// stopExitWait is how long a plain stop waits for the launch to report
+// exited (a variable for the tests).
+var stopExitWait = 15 * time.Second
+
 // stopLaunch stops one launch: DELETE, or forced DELETE then /reset after 5 s
 // (7.2). A lost node is not waited for (11).
 func (p *Pool) stopLaunch(l *launch, force, lost bool) {
@@ -607,9 +612,10 @@ func (p *Pool) stopLaunch(l *launch, force, lost bool) {
 		cancel() // no more lease renewals
 		<-l.done
 	}
+	confirmed := false // the agent confirmed the launch no longer runs (TS1)
 	defer func() {
 		p.mu.Lock()
-		p.endLaunchLocked(l)
+		p.endLaunchLocked(l, confirmed)
 		p.publishLogSnapLocked()
 		p.unlock()
 	}()
@@ -624,6 +630,7 @@ func (p *Pool) stopLaunch(l *launch, force, lost bool) {
 		// The agent restarted and no longer has this launch: a stop would be
 		// answered 409 (its current launch is another one) or find none.
 		p.log.Debug("worker launch not stopped: it ended with its agent", "launch", l.id, "node", l.node, "reason", gone)
+		confirmed = true
 		return
 	}
 	ctx, done := context.WithTimeout(context.Background(), 30*time.Second)
@@ -633,17 +640,19 @@ func (p *Pool) stopLaunch(l *launch, force, lost bool) {
 		p.log.Warn("stopping worker launch failed", "launch", l.id, "node", l.node, "err", err)
 	}
 	if force {
-		p.forceTail(ctx, l.base, l.id, string(l.node))
+		confirmed = p.forceTail(ctx, l.base, l.id, string(l.node))
 	} else {
-		p.waitExited(ctx, l.base, l.id, 15*time.Second)
+		confirmed = p.waitExited(ctx, l.base, l.id, stopExitWait)
 	}
 	p.copyLog(ctx, l)
 }
 
-// forceTail waits up to 5 s for the launch to report exited, then resets the agent.
-func (p *Pool) forceTail(ctx context.Context, base, id, node string) {
+// forceTail waits up to 5 s for the launch to report exited, then resets the
+// agent. It reports whether the launch is known to have ended (exited, or the
+// reset was answered).
+func (p *Pool) forceTail(ctx context.Context, base, id, node string) bool {
 	if p.waitExited(ctx, base, id, ForceResetWait) {
-		return
+		return true
 	}
 	p.log.Warn("forced stop did not end the launch within 5 s; resetting the agent", "launch", id, "node", node)
 	rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -652,11 +661,15 @@ func (p *Pool) forceTail(ctx context.Context, base, id, node string) {
 	resp, err := p.o.HTTP.Do(req)
 	if err != nil {
 		p.log.Warn("reset failed", "node", node, "err", err)
-		return
+		return false
 	}
 	var ra agentproto.ResetAnswer
 	json.NewDecoder(resp.Body).Decode(&ra)
 	resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		p.log.Warn("reset failed", "node", node, "status", resp.StatusCode)
+		return false
+	}
 	p.log.Info("agent reset", "node", node, "killed", len(ra.Killed))
 	p.mu.Lock()
 	if a := p.agents[node]; a != nil {
@@ -664,6 +677,7 @@ func (p *Pool) forceTail(ctx context.Context, base, id, node string) {
 			map[string]any{"launch_id": id, "killed": len(ra.Killed)})
 	}
 	p.unlock()
+	return true
 }
 
 // waitExited polls GET /launch until the launch is exited (or another launch

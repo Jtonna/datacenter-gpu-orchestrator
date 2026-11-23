@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
@@ -282,8 +283,12 @@ func (c *schedCore) dryPlan(profile string) (r PlanReport) {
 		r.Action, r.Reason = PlanBackoff, fmt.Sprintf("backed off until %s", b.until.Format("15:04:05"))
 		return r
 	}
-	if why, bad := c.forcedExcluded(p); bad && c.insts[profile] == nil {
-		r.Action, r.Reason = PlanReject, why
+	if why, entry, bad := c.forcedExclusion(p); bad && c.insts[profile] == nil {
+		r.Action, r.Reason, r.ExcludedBy = PlanReject, why, entry
+		return r
+	}
+	if fe := c.forcedPausedErr(p); fe != nil && c.insts[profile] == nil {
+		r.Action, r.Reason = PlanReject, fe.Message
 		return r
 	}
 	if fe := c.forcedGoneErr(p); fe != nil && c.insts[profile] == nil {
@@ -331,10 +336,13 @@ func (c *schedCore) dryPlan(profile string) (r PlanReport) {
 	}
 	// The reservation gate (reserve.go) holds what the placer finds to the
 	// memory rows, as place, plan and startOnClaim do.
-	gate := ""
-	pl, perr := placer.Place(req, c.freeCandidates(p))
+	pl, gate, tried, perr := c.gatedPlace(p, req) // neverfits.go, as place
 	if perr == nil {
-		if gate = c.reserveGate(p, pl, nil); gate == "" {
+		if gate == "" && c.forcedFitWaits(p, pl) {
+			r.Action, r.Reason = PlanQueue, forcedFitWaitText(pl, c)
+			return r
+		}
+		if gate == "" {
 			r.Action, r.Placement, placed = PlanStart, c.placedStatus(pl), &pl
 			c.applyForcedFit(&r, p, pl)
 			return r
@@ -342,11 +350,18 @@ func (c *schedCore) dryPlan(profile string) (r PlanReport) {
 	}
 	if ev := c.evictables(p, 0); len(ev) > 0 {
 		if res, err := placer.Plan(req, c.freeCandidates(p), ev); err == nil {
+			if len(p.ForceNodes) > 0 && c.refusesBeforeEvict() && c.anyJustReleased(res.Placement) { // as plan() (AB1)
+				r.Action, r.Reason = PlanQueue, forcedFitWaitText(res.Placement, c)
+				return r
+			}
 			if fe := c.forcedRefusalBeforeEvict(p, res.Placement); fe != nil {
 				r.Action, r.Reason, r.Placement = PlanReject, fe.Message, c.placedStatus(res.Placement)
 				return r
 			}
-			if g := c.reserveGate(p, res.Placement, res.Victims); g == "" {
+			if g := c.reserveGate(p, res.Placement, res.Victims); g == "" && c.evictWaits(p, res.Placement, res.Victims, time.Time{}) { // as plan(); a queued entry returned above
+				r.Action, r.Reason = PlanQueue, "waits until the average free figure of its nodes counts again after a release: the eviction would pass only without it"
+				return r
+			} else if g == "" {
 				r.Action, r.Placement, placed = PlanEvict, c.placedStatus(res.Placement), &res.Placement
 				for _, v := range res.Victims {
 					r.Victims = append(r.Victims, PlanVictim{Profile: v, Busy: c.insts[v].inFlight > 0})
@@ -355,6 +370,13 @@ func (c *schedCore) dryPlan(profile string) (r PlanReport) {
 			} else if gate == "" {
 				gate = g
 			}
+		}
+	}
+	if gate != "" && perr == nil {
+		if ne := c.gateNeverFits(p, tried); ne != nil { // neverfits.go: as place refuses it
+			r.Action, r.Reason, r.Placement = PlanReject, ne.Message, c.placedStatus(pl)
+			r.RequiredMiB, r.CapacityMiB = ne.NeedMiB, ne.CapacityMiB
+			return r
 		}
 	}
 	r.Action = PlanQueue

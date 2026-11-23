@@ -370,7 +370,13 @@ func (c *schedCore) removeInst(in *inst, settle bool) {
 		}
 	}
 	c.endPeakCycle(in) // reserve.go
+	// workers launched or a child ran: something of ours may have held
+	// memory on the nodes even without a settling release (AS2)
+	mayHeld := in.workers || in.childRan
 	for _, n := range in.placement.Nodes {
+		if ns := c.nodes[n.ID]; mayHeld && ns != nil && ns.holder == in.prof.Name {
+			ns.releasedAt, ns.expectStop = c.now, in.workers && !n.Local
+		}
 		c.releaseNode(n.ID, in.prof.Name, settle)
 	}
 	c.stopWorkers(in) // agents.go: after the child has exited (or none ran)
@@ -411,6 +417,7 @@ func (c *schedCore) releaseNode(id core.NodeID, holder string, settle bool) {
 		return
 	}
 	n, _ := c.node(id)
+	ns.releasedAt = c.now
 	ns.settle, ns.settleAt = setWaiting, c.now.Add(n.Settle)
 	ns.ovUntil = timeZero // an instance released from the node ends the override
 	ns.failLog = false

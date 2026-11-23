@@ -11,6 +11,10 @@ const (
 	ResultFail      = "fail"      // an expectation did not hold, or the run failed
 	ResultCancelled = "cancelled" // stopped before it finished
 	ResultNone      = "none"      // skipped, or nothing to judge
+	// ResultNotJudged: a step with the outcome refused_by_exclusion, or a run
+	// whose every step had it. Not a pass and not a failure. (The outcome
+	// "refused" is something else: an ordinary refusal, judged.)
+	ResultNotJudged = "not_judged"
 )
 
 // MaxRecent is how many marks an aggregate carries (the newest ones).
@@ -35,6 +39,8 @@ func StepResult(st *Step) string {
 		return ResultNone
 	case st.Outcome == OutcomeCancelled:
 		return ResultCancelled
+	case st.Outcome == OutcomeRefusedByExclusion:
+		return ResultNotJudged
 	case st.Expect != nil && st.Expect.Pass:
 		return ResultPass
 	case st.Expect == nil && st.Outcome == "":
@@ -58,6 +64,8 @@ func RunResult(r *Run) string {
 		return ResultNone
 	}
 	switch {
+	case r.Summary.Ran == 0 && r.Summary.RefusedByExclusion > 0 && r.State == RunCompleted:
+		return ResultNotJudged // nothing ran: every step was refused by an exclusion
 	case r.Summary.Failed == 0 && r.State == RunCompleted:
 		return ResultPass
 	case r.Summary.Passed > 0 && r.Summary.Failed > 0:

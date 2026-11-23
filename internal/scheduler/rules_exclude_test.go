@@ -55,18 +55,22 @@ func TestExclude_OnlyFittingNodeExcluded_RequestWaitsWithReason(t *testing.T) {
 	h.llama("m", 8000)
 	h.step(evTick{})
 	r := h.c.dryPlan("m")
-	if r.Action != PlanQueue || !strings.Contains(r.Reason, "node a is excluded by config") {
+	if r.Action != PlanQueue || !strings.Contains(r.Reason, "1 node excluded by config: a") {
 		t.Fatalf("plan = %+v", r)
 	}
 	w := h.request("m")
 	h.pending(w)
 	h.wantState("m", "absent")
-	if got := h.waitReasonOf("m"); !strings.Contains(got, "node a is excluded by config") {
+	if got := h.waitReasonOf("m"); !strings.Contains(got, "1 node excluded by config: a") {
 		t.Fatalf("status wait reason = %q", got)
 	}
 	h.advance(5 * time.Minute)
-	e := h.failed(w, http.StatusServiceUnavailable, ReasonNodeExcluded)
-	if e.RetryAfter == 0 || !strings.Contains(e.Message, "node a is excluded by config") {
+	// 0.1.7 review, ES3: an automatic profile is not refused for the
+	// exclusion (only a profile that forces an excluded node is): it keeps
+	// the ordinary refusal of a request that found no room, and the message
+	// says how many nodes are excluded.
+	e := h.failed(w, http.StatusServiceUnavailable, ReasonClusterBusy)
+	if e.RetryAfter == 0 || !strings.Contains(e.Message, "1 node excluded by config: a") || strings.Count(e.Message, "excluded by config") != 1 {
 		t.Fatalf("error = %+v", e)
 	}
 	if len(h.prober.calls) != 0 {
@@ -145,13 +149,17 @@ func TestExclude_ForcedProfileNamingExcludedNodeFailsPermanently(t *testing.T) {
 }
 
 func TestExclude_ForcedNodeExcludedAfterQueueingFailsPermanently(t *testing.T) {
-	// The forced node is absent at first (queues, by design), then appears and is excluded.
+	// The forced node (named by id) is absent at first (queues, by design: only
+	// its hostname can tie it to the glob), then appears and is excluded. A
+	// forced name that exclude_nodes names itself is refused at once (0.1.7,
+	// TestExclude_RefusalNamesTheEntryAndCoversAnAbsentNode).
 	h := newHarness(t).nodes(ps5("b", 4, 15000))
-	h.cfg.ExcludeNodes = []string{"ps5-new"}
-	h.llama("f", 8000, func(p *core.Profile) { p.ForceNodes = []string{"ps5-new"} })
+	h.cfg.ExcludeNodes = []string{"ps5-new*"}
+	h.llama("f", 8000, func(p *core.Profile) { p.ForceNodes = []string{"02:00:00:00:00:09"} })
 	w := h.request("f")
 	h.pending(w)
-	n := ps5("ps5-new", 2, 15000)
+	n := ps5("02:00:00:00:00:09", 2, 15000)
+	n.Hostname = "ps5-new"
 	h.view.set(ps5("b", 4, 15000), n)
 	h.viewChanged()
 	e := h.failed(w, http.StatusServiceUnavailable, ReasonNodeExcluded)
@@ -207,5 +215,65 @@ func TestExclude_NoExclusionsNoLog(t *testing.T) {
 	h.step(evTick{})
 	if n := len(h.logs.find("excluded node in fleet view")); n != 0 {
 		t.Fatalf("logged %d times", n)
+	}
+}
+
+// 0.1.7: the refusal names the exclude_nodes entry, and a forced node that
+// exclude_nodes names is refused even while it is not in the view (an
+// excluded agent that is away): only a configuration change fixes it.
+func TestExclude_RefusalNamesTheEntryAndCoversAnAbsentNode(t *testing.T) {
+	a := ps5("02:00:00:00:00:01", 2, 15000)
+	a.Hostname = "ps5-test7"
+	h := newHarness(t).nodes(a, ps5("b", 4, 15000))
+	h.cfg.ExcludeNodes = []string{"ps5-test*", "02:00:00:00:00:31"}
+	h.llama("f", 8000, func(p *core.Profile) { p.ForceNodes = []string{"02:00:00:00:00:01"} })
+	h.llama("g", 8000, func(p *core.Profile) { p.ForceNodes = []string{"02:00:00:00:00:31"} }) // not in the view
+	h.step(evTick{})
+	for name, entry := range map[string]string{"f": "ps5-test*", "g": "02:00:00:00:00:31"} {
+		r := h.c.dryPlan(name)
+		if r.Action != PlanReject || !strings.Contains(r.Reason, `exclude_nodes entry "`+entry+`"`) || !strings.Contains(r.Reason, "is excluded by config") ||
+			r.ExcludedBy != entry {
+			t.Fatalf("%s: plan = %+v", name, r)
+		}
+		e := h.failed(h.request(name), http.StatusServiceUnavailable, ReasonNodeExcluded)
+		if e.RetryAfter != 0 || e.Message != r.Reason {
+			t.Fatalf("%s: error = %+v", name, e)
+		}
+	}
+	// Lifting the exclusion makes f work again, untouched.
+	nc := cloneCfg(h.cfg)
+	nc.ExcludeNodes = nil
+	h.step(evConfig{cfg: nc})
+	if r := h.c.dryPlan("f"); r.Action != PlanStart {
+		t.Fatalf("after lifting: %+v", r)
+	}
+	h.ready("f")
+	h.wantNodes("f", "02:00:00:00:00:01")
+}
+
+// 0.1.7 review, N2-2: an automatic profile whose allow_tiers only excluded
+// nodes satisfy can never be placed while the exclusion holds. It is refused
+// at once (not after queue_timeout, and not as "cluster busy": nothing is
+// busy), with the ordinary reason "does not fit" (a judged refusal, not
+// "node excluded", which is kept for profiles that force an excluded node),
+// and the message names the exclusion.
+func TestExclude_AllowTiersOnlyExcludedNodes_RefusedAtOnce(t *testing.T) {
+	b := ps5("b", 4, 15000)
+	b.Priority = 2
+	h := newHarness(t).nodes(ps5("a", 2, 15000), b)
+	h.cfg.ExcludeNodes = []string{"a"}
+	h.cfg.Defaults.QueueTimeout = 5 * time.Minute
+	h.llama("m", 8000, func(p *core.Profile) { p.AllowTiers = []int{1} })
+	h.step(evTick{})
+	if r := h.c.dryPlan("m"); r.Action != PlanReject || r.ExcludedBy != "" || !strings.Contains(r.Reason, "excluded by config") {
+		t.Fatalf("plan = %+v", r)
+	}
+	w := h.request("m")
+	e := h.failed(w, http.StatusServiceUnavailable, ReasonDoesNotFit)
+	if e.RetryAfter != 0 || !strings.Contains(e.Message, "allow_tiers [1] admits only nodes excluded by config: a") {
+		t.Fatalf("error = %+v", e)
+	}
+	if strings.Count(e.Message, "excluded by config") != 1 {
+		t.Fatalf("the exclusion is said more than once: %q", e.Message)
 	}
 }

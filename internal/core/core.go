@@ -18,7 +18,10 @@ type Node struct {
 	// Paused: the node takes no new load (agents membership, agent contract
 	// 7.2). A load already on it continues; it stays counted in capacity.
 	Paused bool
-	Addr   string // rpc ip:port; empty for the local node
+	// UnpausePending: Paused only because the operator's unpause has not
+	// reached the node's agent yet (it takes load again within a heartbeat).
+	UnpausePending bool
+	Addr           string // rpc ip:port; empty for the local node
 
 	TotalMiB int // total device memory
 	// SystemMiB is the machine's system memory (RAM) when known, 0 otherwise:
@@ -34,6 +37,18 @@ type Node struct {
 	// it is 0 only because "unknown is not free". The load memory watch must
 	// not read such a zero as a real reading.
 	FreeUnknown bool
+	// FigureAt is when the memory reading behind FreeMiB was taken (agents
+	// membership: the heartbeat that carried it); zero when not known. A
+	// node something of ours just left is decided on a reading taken after
+	// the release (scheduler, justReleased).
+	FigureAt time.Time
+	// StopSeenAt is when the scheduler's host last saw a worker launch on
+	// the node end (its stop confirmed, or its exit); FiguresSinceStop
+	// counts the memory readings received after that. A reading measured
+	// after the workers freed their memory is certain from the second one
+	// (agents membership; zero otherwise).
+	StopSeenAt       time.Time
+	FiguresSinceStop int
 	// FreeAvgMiB is FreeMiB averaged over defaults.free_average_window, valid
 	// when FreeAvgKnown (agents membership: from the heartbeats the pool
 	// receives). placement_uses_reserved places on min(FreeMiB, FreeAvgMiB).

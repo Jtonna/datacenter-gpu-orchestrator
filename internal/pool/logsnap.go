@@ -61,12 +61,22 @@ type endedLaunch struct {
 }
 
 // endLaunchLocked drops a launch from the pool and remembers its profile for
-// the log routes.
-func (p *Pool) endLaunchLocked(l *launch) {
+// the log routes. confirmed: the launch is known not to run any more (the
+// agent reported it exited or no longer has it, was reset, or never started
+// it); only then is the stop seen (core.Node.StopSeenAt). A worker still
+// stopping when the wait gave up leaves it unseen: its memory may still be
+// held, and the scheduler then waits to the end of the window (TS1).
+func (p *Pool) endLaunchLocked(l *launch, confirmed bool) {
 	if _, held := p.launches[l.id]; !held {
 		return
 	}
 	delete(p.launches, l.id)
+	if a := p.agents[string(l.node)]; a != nil {
+		if confirmed {
+			a.stopSeen, a.figsSinceStop = p.o.Clock(), 0
+		}
+		p.rebuildLocked()
+	}
 	p.ended = append(p.ended, endedLaunch{l.id, logLaunch{string(l.node), l.profile}})
 	if n := len(p.ended) - keepEndedLaunches; n > 0 {
 		p.ended = append(p.ended[:0:0], p.ended[n:]...)

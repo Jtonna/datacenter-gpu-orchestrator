@@ -19,7 +19,7 @@ import { registerView, href } from '../core/router.js';
 import { state, on } from '../core/store.js';
 import * as api from '../core/api.js';
 import { liveView, pageHead, badge, button, dialog, toast, stat, empty, skeleton, memBar, facts, copyButton, more } from '../core/ui.js';
-import { num, mib, gb, gbNum, dur, ago, until, at, plural, toMs, now, shortId, DASH } from '../core/format.js';
+import { num, mib, gb, gbNum, dur, ago, until, at, plural, toMs, now, shortId, dateTime, DASH } from '../core/format.js';
 import { viewNodes, nodeMemory, staleBanner } from '../core/status.js';
 import { logsLink, nodeQuery } from '../core/logs.js';
 import { agentsMode, agentOf, notPlaceable, holdsSomething, pauseAction, sendNodeAction, NODE_ACTIONS } from '../core/nodeactions.js';
@@ -44,7 +44,7 @@ const excludedOf = (n, a) => !!(n.excluded || (a && a.excluded));
 // stateOf(node) -> [label, badge kind, sort rank]
 function stateOf(st, n, inst, agent) {
   const q = (st.quarantines || []).find(x => x.node === n.id);
-  if (excludedOf(n, agent)) return ['Excluded', 'dash', 9];
+  if (excludedOf(n, agent)) return [n.holder || (agent && agent.running_while_excluded) ? 'Excluded, busy' : 'Excluded', 'dash', 9];
   if (!n.online) return ['Offline', 'n', 8];
   if (n.health && n.health.state === 'hung') return ['Not answering', 'fail', 0];
   if (q || n.quarantined) return ['Set aside', 'aside', 1];
@@ -174,7 +174,7 @@ function tile(st, n, refresh) {
   const np = notPlaceable(n, agent);
   // Excluded (exclude_nodes): the view says so, and so do the agent facts, with the entry.
   const excl = excludedOf(n, agent);
-  const exBy = excl_by || (agent && agent.excluded_by) || '';
+  const exBy = n.excluded_by || (agent && agent.excluded_by) || '';
   const npOther = np && np.code !== 'paused' && np.code !== 'excluded'; // a reason other than a pause or the exclusion
   const inst = n.holder ? (st.instances || []).find(i => i.profile === n.holder) : null;
   const placed = inst ? (inst.nodes || []).find(p => p.id === n.id) : null;
@@ -203,7 +203,18 @@ function tile(st, n, refresh) {
   const notes = [];
   const note = (cls, node) => notes.push(h('div.hit', h('i', { class: cls }), h('span', node)));
 
-  if (excl) note('', ['Excluded in the configuration', exBy ? [' (exclude_nodes: ', h('span.mono', exBy), ')'] : '', ': it gets no model and is not counted in the capacity.']);
+  // Excluded while a model runs on it (0.1.7): the exclusion stops new
+  // placements only; the running instance is not drained.
+  const runningX = excl ? ((agent && agent.running_while_excluded) || (n.holder ? { profile: n.holder, state: inst && inst.state } : null)) : null;
+  if (excl) note('', ['Excluded in the configuration', exBy ? [' (exclude_nodes: ', h('span.mono', exBy), ')'] : '',
+    runningX ? ': it gets no new model and is not counted in the capacity.' : ': it gets no model and is not counted in the capacity.']);
+  if (runningX) note('a', [h('b', 'Excluded, but still busy. '), h('span.mono', runningX.profile), ' was placed here before the exclusion',
+    runningX.since ? [' (', runningX.state === 'starting' ? 'loading since ' : 'loaded since ', dateTime(runningX.since), ')'] : '',
+    ': it keeps running and serving until it is unloaded. Unload it to empty the machine.']);
+  // What the agent can do beyond the basics (agent contract 6.13), in plain words.
+  if (agent && Array.isArray(agent.capabilities)) {
+    note('', agent.capabilities.length ? ['Its agent can also: ', h('span.mono', agent.capabilities.join(', ')), '.'] : 'Its agent advertises no extra capabilities.');
+  }
   if (np && np.paused) note('', 'Paused by an operator: it keeps what it holds and takes no new model until it is unpaused.');
   if (npOther) {
     note('a', h('span', { title: np.code ? 'The scheduler says: ' + np.code : null }, h('b', 'Not placeable. '),
@@ -256,7 +267,7 @@ function tile(st, n, refresh) {
       : h('span.mut', excl ? 'Never used' : !n.online ? 'Nothing can be placed here' : 'Nothing loaded');
   return h('section', { class: 'card ncard ' + (excl ? 'quiet ' : '') + (kind === 'fail' || kind === 'aside' ? 'flag-err' : kind === 'load' && !inst ? 'flag-warn' : npOther ? 'flag-warn' : ''), key: 'node-' + n.id, 'aria-label': name },
     h('div.ch', { style: 'padding-bottom:10px' },
-      h('h2.mono', name), np && label === 'Free' ? null : badge(label, kind, label === 'Excluded' && exBy ? 'excluded by exclude_nodes: ' + exBy : undefined),
+      h('h2.mono', name), np && label === 'Free' ? null : badge(label, kind, label.startsWith('Excluded') && exBy ? 'excluded by exclude_nodes: ' + exBy : undefined),
       np && np.paused ? badge('Paused', 'settle', 'Paused by an operator: it takes no new model') : null,
       npOther ? badge('Not placeable', 'aside', np.known ? np.short : np.code) : null,
       n.auto === false && !excl ? badge('Forced only', 'line', 'In no_auto_nodes: only a profile that names this node in force_nodes puts a model here') : null,

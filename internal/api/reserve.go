@@ -23,12 +23,18 @@ func reservationFacts(facts []pool.NodeFacts, st *scheduler.Status) {
 	for _, n := range st.View.Nodes {
 		byID[string(n.ID)] = n
 	}
+	on := instancesOnNodes(st)
 	for i := range facts {
+		f := &facts[i]
+		if f.Excluded {
+			if l := on[f.ID]; len(l) > 0 {
+				f.RunningWhileExcluded = &l[0]
+			}
+		}
 		n, ok := byID[facts[i].ID]
 		if !ok {
 			continue
 		}
-		f := &facts[i]
 		f.Reserved = jsonView(n.Reserved)
 		reserved, free := n.ReservedMiB, n.FreeForNewLoadMiB
 		f.ReservedMiB, f.FreeForNewLoadMiB = &reserved, &free
@@ -46,4 +52,19 @@ func reserveSettings(c *config.Config) map[string]any {
 		"margin_estimated_percent": d.MarginEstimatedPercent, "margin_estimated_min_mib": d.MarginEstimatedMinMiB,
 		"free_average_window_s": d.FreeAverageWindow.Seconds(),
 	}
+}
+
+// instancesOnNodes: per node id, the instances placed there (oldest first).
+func instancesOnNodes(st *scheduler.Status) map[string][]pool.RunningInstance {
+	out := map[string][]pool.RunningInstance{}
+	for _, in := range st.Instances {
+		since := in.Created
+		if !in.ReadySince.IsZero() {
+			since = in.ReadySince
+		}
+		for _, n := range in.Nodes {
+			out[string(n.ID)] = append(out[string(n.ID)], pool.RunningInstance{Profile: in.Profile, State: in.State, Since: since.UnixMilli()})
+		}
+	}
+	return out
 }

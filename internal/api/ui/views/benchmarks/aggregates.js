@@ -80,7 +80,7 @@ function metricRows(b) {
 function benchCard(b, redraw) {
   const rows = metricRows(b);
   const out = b.outcomes || {};
-  const odd = Object.keys(out).filter(k => k !== 'ready' && out[k]).map(k => `${out[k]} ${k}`);
+  const odd = Object.keys(out).filter(k => k !== 'ready' && out[k]).map(k => `${out[k]} ${k === 'refused_by_exclusion' ? 'not judged (excluded node)' : k}`);
   return h('section.card', { key: 'bagg-' + b.benchmark_id },
     h('div.ch', h('h2', h('a', { href: href('benchmarks', ['benchmark', b.benchmark_id]), style: 'color:inherit' }, b.name || b.benchmark_id)),
       b.recent && b.recent.length ? passDots(b.recent, b.pass_rate, { label: `Runs of ${b.name || b.benchmark_id}, oldest first` }) : rateBadge(b.pass_rate), h('span.mono.mut', b.profile),

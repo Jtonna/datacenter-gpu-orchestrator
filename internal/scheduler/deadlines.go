@@ -28,6 +28,29 @@ func (c *schedCore) nextDeadline() (time.Time, bool) {
 		}
 	}
 
+	// A just-released node's window ends (neverfits.go): what waits on it
+	// is decided then, not at the next event (eighth review ES1).
+	if waiting {
+		for id, ns := range c.nodes {
+			// and when a node's average counts again (evictWaits)
+			if w := d.FreeAverageWindow; w > 0 && c.avgStale(id) {
+				add(ns.heldChanged.Add(w))
+			}
+			if c.justReleased(id) {
+				if end, ok := c.releaseWindowEnd(id); ok {
+					add(end)
+				}
+			}
+		}
+	}
+
+	// An evictWaits hold ends one window after it began (tenth review).
+	for _, e := range c.entries {
+		if end, ok := c.evictHoldEnd(e.evictHeld); ok && end.After(c.now) {
+			add(end)
+		}
+	}
+
 	// Forced nodes gone: the fail-fast of design 8.4 is due when the grace ends.
 	for _, e := range c.entries {
 		for _, name := range e.prof.ForceNodes {

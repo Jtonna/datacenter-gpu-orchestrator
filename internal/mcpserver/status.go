@@ -65,10 +65,26 @@ func deriveStatus(doc map[string]any, args map[string]any) any {
 		o["nodes"] = nodes
 		insts = append(insts, o)
 	}
+	// capabilities: the agent's words from the status agents (sorted there);
+	// an empty list for a node with no agent entry (the local node).
+	caps := map[string]any{}
+	for _, x := range arr(doc["agents"]) {
+		a := mp(x)
+		if id, _ := a["id"].(string); id != "" && a["capabilities"] != nil {
+			caps[id] = a["capabilities"]
+		}
+	}
 	nodes := []any{}
 	for _, x := range arr(mp(doc["view"])["nodes"]) {
-		nodes = append(nodes, pick(mp(x), "id", "hostname", "local", "online", "excluded", "excluded_by", "auto", "eligible", "unplaced", "unplaced_message", "total_mib", "free_mib",
-			"live_budget_mib", "holder", "claimed_by", "settling", "quarantined", "health", "recovery"))
+		n := pick(mp(x), "id", "hostname", "local", "online", "excluded", "excluded_by", "auto", "eligible", "unplaced", "unplaced_message", "total_mib", "free_mib",
+			"live_budget_mib", "holder", "claimed_by", "settling", "quarantined", "health", "recovery")
+		id, _ := n["id"].(string)
+		if c, ok := caps[id]; ok {
+			n["capabilities"] = c
+		} else {
+			n["capabilities"] = []any{}
+		}
+		nodes = append(nodes, n)
 	}
 	recent := arr(doc["recent_loads"])
 	if len(recent) > 5 {

@@ -85,6 +85,7 @@ func (c *fakeClock) Advance(d time.Duration) { c.Set(c.Now().Add(d)) }
 
 type fakeView struct {
 	mu            sync.Mutex
+	wantFig       map[core.NodeID]time.Time // the last WantFigures
 	clk           *fakeClock
 	nodes         map[core.NodeID]core.Node
 	lastByte      time.Time
@@ -664,4 +665,11 @@ func (p *fakeRecoveryPoster) all() []recPost {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([]recPost(nil), p.posts...)
+}
+
+// WantFigures records what the core asks for (scheduler.FigureWatch).
+func (v *fakeView) WantFigures(after map[core.NodeID]time.Time) {
+	v.mu.Lock()
+	v.wantFig = after
+	v.mu.Unlock()
 }

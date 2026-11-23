@@ -146,17 +146,21 @@ type TurnAgg struct {
 
 // BenchmarkAgg is one benchmark over the runs.
 type BenchmarkAgg struct {
-	BenchmarkID string                `json:"benchmark_id"`
-	Name        string                `json:"name"`
-	Profile     string                `json:"profile"`
-	Runs        int                   `json:"runs"`
-	Steps       int                   `json:"steps"`
-	PassRate    float64               `json:"pass_rate"`
-	Outcomes    map[string]int        `json:"outcomes"`
-	Metrics     map[string]*MetricAgg `json:"metrics"`
-	Turns       []TurnAgg             `json:"turns,omitempty"`
-	LastRunID   string                `json:"last_run_id"`
-	LastAt      int64                 `json:"last_at"`
+	BenchmarkID string `json:"benchmark_id"`
+	Name        string `json:"name"`
+	Profile     string `json:"profile"`
+	Runs        int    `json:"runs"`
+	Steps       int    `json:"steps"`
+	// PassRate is passed / Judged; null when nothing was judged (every step
+	// refused by an exclusion), so no rate is shown rather than 0 %.
+	PassRate *float64 `json:"pass_rate"`
+	// Judged counts the steps judged (all but those refused by an exclusion).
+	Judged    int                   `json:"judged"`
+	Outcomes  map[string]int        `json:"outcomes"`
+	Metrics   map[string]*MetricAgg `json:"metrics"`
+	Turns     []TurnAgg             `json:"turns,omitempty"`
+	LastRunID string                `json:"last_run_id"`
+	LastAt    int64                 `json:"last_at"`
 	// Recent is its pass/fail history, oldest first, at most MaxRecent runs.
 	Recent []RecentMark `json:"recent"`
 }
@@ -173,13 +177,15 @@ type SuiteLastRun struct {
 
 // SuiteAgg is one suite over the runs.
 type SuiteAgg struct {
-	SuiteID       string         `json:"suite_id"`
-	Name          string         `json:"name"`
-	Runs          int            `json:"runs"`
-	States        map[string]int `json:"states"`
-	PassRate      float64        `json:"pass_rate"`
-	MeanDurationS float64        `json:"mean_duration_s"`
-	LastRun       *SuiteLastRun  `json:"last_run,omitempty"`
+	SuiteID string         `json:"suite_id"`
+	Name    string         `json:"name"`
+	Runs    int            `json:"runs"`
+	States  map[string]int `json:"states"`
+	// PassRate is over the Judged runs; null when none was judged.
+	PassRate      *float64      `json:"pass_rate"`
+	Judged        int           `json:"judged"`
+	MeanDurationS float64       `json:"mean_duration_s"`
+	LastRun       *SuiteLastRun `json:"last_run,omitempty"`
 	// Recent is its pass/fail history, oldest first, at most MaxRecent runs.
 	Recent []RecentMark `json:"recent"`
 }
@@ -395,6 +401,7 @@ func (s *Store) Aggregate(f AggFilter, th Thresholds, now time.Time) (*Aggregate
 		agg      BenchmarkAgg
 		runs     map[string]bool
 		passed   int
+		refused  int
 		metrics  metricSet
 		turns    map[[2]int]metricSet
 		hasTurns bool
@@ -418,6 +425,7 @@ func (s *Store) Aggregate(f AggFilter, th Thresholds, now time.Time) (*Aggregate
 	suites := map[string]*SuiteAgg{}
 	suiteDur := map[string][]float64{}
 	suitePass := map[string]int{}
+	suiteUnjudged := map[string]int{} // runs in which every step was refused by an exclusion: out of the pass rate
 
 	for ri := range runs {
 		r := &runs[ri]
@@ -431,7 +439,10 @@ func (s *Store) Aggregate(f AggFilter, th Thresholds, now time.Time) (*Aggregate
 		sa.Name = r.SuiteName
 		sa.Runs++
 		sa.States[r.State]++
-		if r.State == RunCompleted && r.Summary != nil && r.Summary.Failed == 0 {
+		switch {
+		case RunResult(r) == ResultNotJudged:
+			suiteUnjudged[r.SuiteID]++
+		case r.State == RunCompleted && r.Summary != nil && r.Summary.Failed == 0:
 			suitePass[r.SuiteID]++
 		}
 		dur := 0.0
@@ -461,7 +472,9 @@ func (s *Store) Aggregate(f AggFilter, th Thresholds, now time.Time) (*Aggregate
 			ba.runs[r.ID] = true
 			ba.agg.Steps++
 			ba.agg.Outcomes[st.Outcome]++
-			if st.Expect != nil && st.Expect.Pass {
+			if st.Outcome == OutcomeRefusedByExclusion {
+				ba.refused++ // not judged: out of the pass rate
+			} else if st.Expect != nil && st.Expect.Pass {
 				ba.passed++
 			}
 			vals := stepValues(st)
@@ -532,8 +545,9 @@ func (s *Store) Aggregate(f AggFilter, th Thresholds, now time.Time) (*Aggregate
 		a := ba.agg
 		a.Recent = clipRecent(benchMarks[id])
 		a.Runs = len(ba.runs)
-		if a.Steps > 0 {
-			a.PassRate = round4(float64(ba.passed) / float64(a.Steps))
+		if a.Judged = a.Steps - ba.refused; a.Judged > 0 {
+			r := round4(float64(ba.passed) / float64(a.Judged))
+			a.PassRate = &r
 		}
 		a.Metrics = ba.metrics.summarize(th)
 		if ba.hasTurns {
@@ -556,8 +570,9 @@ func (s *Store) Aggregate(f AggFilter, th Thresholds, now time.Time) (*Aggregate
 	for _, id := range sortedKeys(suites) {
 		sa := suites[id]
 		sa.Recent = clipRecent(suiteMarks[id])
-		if sa.Runs > 0 {
-			sa.PassRate = round4(float64(suitePass[id]) / float64(sa.Runs))
+		if sa.Judged = sa.Runs - suiteUnjudged[id]; sa.Judged > 0 {
+			r := round4(float64(suitePass[id]) / float64(sa.Judged))
+			sa.PassRate = &r
 		}
 		if d := suiteDur[id]; len(d) > 0 {
 			var sum float64

@@ -188,7 +188,7 @@ func (p *Pool) rebuildLocked() {
 	// change of the average alone is kept without notifying (review N2).
 	useAvg := cfg.Defaults.PlacementUsesReserved
 	if (!sameNodes(nodes, p.nodes, useAvg) && !(len(nodes) == 0 && len(p.nodes) == 0)) || !reflect.DeepEqual(unplaced, p.unplaced) ||
-		!reflect.DeepEqual(msgs, p.unplacedMsg) {
+		!reflect.DeepEqual(msgs, p.unplacedMsg) || p.wantedFigureLocked(nodes) {
 		p.nodes, p.unplaced, p.unplacedMsg = nodes, unplaced, msgs
 		select {
 		case p.notify <- struct{}{}:
@@ -210,7 +210,7 @@ func (p *Pool) nodeFromAgentLocked(cfg *config.Config, a *agent) (core.Node, boo
 	n := core.Node{ID: core.NodeID(a.reg.ID), Hostname: a.reg.Name, Online: !a.lost,
 		Addr:     net.JoinHostPort(a.reg.Addr, strconv.Itoa(p.o.WorkerPort)),
 		Priority: t.Priority, HeadroomMiB: t.HeadroomMiB, SharedMemory: t.SharedMemory, LinkMBs: t.LinkMBs, Settle: t.Settle,
-		Paused: p.pausedLocked(a.reg.ID, a), FreeUnknown: true, SystemMiB: int(a.reg.MemTotalMiB),
+		Paused: p.pausedLocked(a.reg.ID, a), UnpausePending: p.unpausePendingLocked(a.reg.ID, a), FreeUnknown: true, SystemMiB: int(a.reg.MemTotalMiB),
 		// The floor is the node's own when its agent reports it (CR-9).
 		WatchdogFloorMiB: int(nodeFloor(cfg, a)), CachedMiB: a.cachedMiB, CachedKnown: a.cachedKnown}
 	if a.hb == nil {
@@ -221,6 +221,10 @@ func (p *Pool) nodeFromAgentLocked(cfg *config.Config, a *agent) (core.Node, boo
 		return n, tiered
 	}
 	n.TotalMiB, n.FreeMiB, n.FreeUnknown = int(d.TotalMiB), int(max(d.FreeMiB, 0)), false
+	if len(a.mem) > 0 {
+		n.FigureAt = a.mem[len(a.mem)-1].at
+	}
+	n.StopSeenAt, n.FiguresSinceStop = a.stopSeen, a.figsSinceStop
 	_, avgDev, avgOK := a.memAverage()
 	if avgOK {
 		n.FreeAvgMiB, n.FreeAvgKnown = int(max(avgDev, 0)), true
@@ -469,15 +473,23 @@ type NodeFacts struct {
 	// bad_floor: the floor and the bound it breaks). A
 	// node that is paused and has no reason of its own has paused (CR-9). A
 	// lost, left or removed node is not placeable either; its state says so.
-	Placeable       bool   `json:"placeable"`
-	Unplaced        string `json:"unplaced,omitempty"`
-	UnplacedMessage string `json:"unplaced_message,omitempty"`
+	// Capabilities are the words the agent advertised at registration (agent
+	// contract 6.13), sorted; an empty list when it advertised none.
+	Capabilities    []string `json:"capabilities"`
+	Placeable       bool     `json:"placeable"`
+	Unplaced        string   `json:"unplaced,omitempty"`
+	UnplacedMessage string   `json:"unplaced_message,omitempty"`
 	// Excluded: exclude_nodes names the node (ExcludedBy, the matching
 	// entry), as /api/status's view says. Such a node is not placeable and
 	// its unplaced reason is excluded, whatever else holds; the rest of its
 	// entry is as for any node. Absent when not excluded.
 	Excluded   bool   `json:"excluded,omitempty"`
 	ExcludedBy string `json:"excluded_by,omitempty"`
+	// RunningWhileExcluded: the node is excluded, yet an instance placed
+	// before the exclusion still runs there. Exclusion only stops new
+	// placements; the instance keeps running and serving until it is
+	// unloaded. Absent otherwise.
+	RunningWhileExcluded *RunningInstance `json:"running_while_excluded,omitempty"`
 	// WatchdogFloorMiB is the watchdog floor the agent reports (CR-9); absent
 	// for an agent that reports none (release 0.1.0). FloorMismatch says so
 	// when it differs from defaults.watchdog_floor_mib; the agent's is used
@@ -550,7 +562,7 @@ func (p *Pool) Facts() []NodeFacts {
 		f := NodeFacts{ID: id, Name: a.reg.Name, Addr: a.reg.Addr, State: StateActive, Install: a.reg.Install,
 			Release: a.reg.AgentRelease, Platform: a.platform, Paused: p.admin[id].Paused, UnpausePending: p.unpausePendingLocked(id, a),
 			HostAgent:   p.isHostAgentLocked(a),
-			ModelSource: a.reg.ModelSource, Stats: a.stats, StatsNote: a.statsNote}
+			ModelSource: a.reg.ModelSource, Stats: a.stats, StatsNote: a.statsNote, Capabilities: sortedWords(a.reg.Capabilities)}
 		switch {
 		case p.admin[id].Removed:
 			f.State = StateRemoved
@@ -612,7 +624,7 @@ func (p *Pool) Facts() []NodeFacts {
 	}
 	for id, adm := range p.admin {
 		if _, ok := p.agents[id]; !ok && adm.Removed {
-			out = append(out, NodeFacts{ID: id, Name: id, State: StateRemoved})
+			out = append(out, NodeFacts{ID: id, Name: id, State: StateRemoved, Capabilities: []string{}})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
@@ -647,15 +659,76 @@ func (p *Pool) ReleaseStatus() map[string]any {
 // sameNodes compares two node lists; without useAvg the average free
 // figures are left out of the comparison.
 func sameNodes(a, b []core.Node, useAvg bool) bool {
-	if useAvg || len(a) != len(b) {
-		return reflect.DeepEqual(a, b)
+	if len(a) != len(b) {
+		return false
 	}
 	for i := range a {
 		x, y := a[i], b[i]
-		x.FreeAvgMiB, x.FreeAvgKnown, y.FreeAvgMiB, y.FreeAvgKnown = 0, false, 0, false
+		// the reading's time alone does not notify (FigureWatch does, for a
+		// node the scheduler waits on)
+		x.FigureAt, y.FigureAt = time.Time{}, time.Time{}
+		x.StopSeenAt, y.StopSeenAt, x.FiguresSinceStop, y.FiguresSinceStop = time.Time{}, time.Time{}, 0, 0
+		if !useAvg {
+			x.FreeAvgMiB, x.FreeAvgKnown, y.FreeAvgMiB, y.FreeAvgKnown = 0, false, 0, false
+		}
 		if !reflect.DeepEqual(x, y) {
 			return false
 		}
 	}
 	return true
+}
+
+// WantFigures implements scheduler.FigureWatch: the scheduler waits for a
+// memory reading of each node taken after the time given (something of
+// ours just left it). The next such reading notifies, as a change does.
+func (p *Pool) WantFigures(after map[core.NodeID]time.Time) {
+	p.mu.Lock()
+	defer p.unlock()
+	p.wantFig = after
+	if p.figNotified == nil {
+		p.figNotified = map[core.NodeID]notifiedFig{}
+	}
+	for id := range p.figNotified {
+		if _, ok := after[id]; !ok {
+			delete(p.figNotified, id)
+		}
+	}
+}
+
+// wantedFigureLocked reports whether a node the scheduler waits on carries
+// a new reading taken after the time given, or a new launch end: each is
+// notified once. The scheduler decides whether the reading is fresh enough
+// (justReleased) and drops the node from its request when it is.
+func (p *Pool) wantedFigureLocked(nodes []core.Node) bool {
+	hit := false
+	for _, n := range nodes {
+		t, ok := p.wantFig[n.ID]
+		if !ok {
+			continue
+		}
+		last := p.figNotified[n.ID]
+		if (n.FigureAt.After(t) && n.FigureAt.After(last.fig)) || n.StopSeenAt.After(last.stop) {
+			p.figNotified[n.ID] = notifiedFig{n.FigureAt, n.StopSeenAt}
+			hit = true
+		}
+	}
+	return hit
+}
+
+// notifiedFig is the reading and launch end last notified for a node.
+type notifiedFig struct{ fig, stop time.Time }
+
+// sortedWords is a sorted copy of words, never nil.
+func sortedWords(words []string) []string {
+	out := append([]string{}, words...)
+	sort.Strings(out)
+	return out
+}
+
+// RunningInstance is an instance that holds a node: the profile, its state
+// (starting, ready, draining, stopping) and since when it is there (unix ms).
+type RunningInstance struct {
+	Profile string `json:"profile"`
+	State   string `json:"state"`
+	Since   int64  `json:"since"`
 }

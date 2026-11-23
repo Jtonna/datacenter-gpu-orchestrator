@@ -214,6 +214,11 @@ type agent struct {
 	// extraWarned: the warning about extra devices of the backend was given
 	// for this registration.
 	extraWarned bool
+	// stopSeen is when a worker launch of ours on the node was last seen to
+	// end; figsSinceStop counts the heartbeats with a memory figure since
+	// (core.Node.StopSeenAt, FiguresSinceStop).
+	stopSeen      time.Time
+	figsSinceStop int
 	// noTierLogged: the line about matching no tier was written for this
 	// registration.
 	noTierLogged bool
@@ -249,13 +254,17 @@ type Pool struct {
 	o   Options
 	log *slog.Logger
 
-	mu          sync.Mutex
-	agents      map[string]*agent
-	admin       map[string]cfgstore.NodeAdmin
-	nodes       []core.Node
-	notify      chan struct{}
-	unplaced    map[core.NodeID]string // why a listed node takes no new load (view.go)
-	unplacedMsg map[core.NodeID]string // more about that reason, when there is more to say
+	mu     sync.Mutex
+	agents map[string]*agent
+	admin  map[string]cfgstore.NodeAdmin
+	nodes  []core.Node
+	notify chan struct{}
+	// wantFig: nodes whose next memory reading after the time the scheduler
+	// waits for (WantFigures).
+	wantFig     map[core.NodeID]time.Time
+	figNotified map[core.NodeID]notifiedFig // the readings last notified for wantFig
+	unplaced    map[core.NodeID]string      // why a listed node takes no new load (view.go)
+	unplacedMsg map[core.NodeID]string      // more about that reason, when there is more to say
 	// inlineCallBack makes Register run the first call-back check itself
 	// before it returns (tests only; the check is otherwise a goroutine).
 	inlineCallBack bool

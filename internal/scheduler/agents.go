@@ -100,6 +100,14 @@ type NodeGate interface {
 	Unplaced() map[core.NodeID]string
 }
 
+// FigureWatch is implemented by a view that can notify when a node reports
+// a memory reading taken after a given time (the pool: its next heartbeat).
+// The scheduler names the nodes something of ours just left, so a wait on
+// their figures ends with the first fresh reading (eighth review ES2).
+type FigureWatch interface {
+	WantFigures(after map[core.NodeID]time.Time)
+}
+
 // NodeGateDetail is implemented by a NodeGate that can say more about a
 // reason than its word (agent_unreachable: the address and what to check).
 type NodeGateDetail interface {

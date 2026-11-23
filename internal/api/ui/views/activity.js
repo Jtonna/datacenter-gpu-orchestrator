@@ -142,10 +142,13 @@ function sentenceOf(e) {
     case 'learnedNeed': return ['Measured ', p, ': it needs ', gb(d.measured_mib), '.'];
     case 'needsMibTooLow': return ['The memory need set for ', p, ' is too low: ', gb(d.configured_mib), ' set, ', gb(d.measured_mib), ' measured. The measured figure is used.'];
     case 'nodeMemory': return [gb(d.available_mib), ' free of ', gb(d.total_mib), d.reason ? ` (${String(d.reason).replace(/_/g, ' ')})` : '', '.'];
-    case 'benchStepFinished': return ['Benchmark ', h('span.mono', d.benchmark || ''), d.pass ? ' passed' : d.outcome === 'refused' ? ' was refused' : ' did not pass',
+    case 'benchStepFinished': return ['Benchmark ', h('span.mono', d.benchmark || ''),
+      d.result === 'not_judged' || d.outcome === 'refused_by_exclusion' ? ' was not judged (the profile forces a node that exclude_nodes names)'
+        : d.pass ? ' passed' : d.outcome === 'refused' ? ' was refused' : ' did not pass',
       d.load_s != null ? `: load ${dur(d.load_s)}` : '', d.decode_tps ? `, ${num(d.decode_tps, 1)} tok/s` : '', d.regression ? ', slower than before' : '', '.'];
     case 'benchRunStarted': return [`A benchmark run of suite ${d.suite || ''} started (${plural(d.steps || 0, 'step')}).`];
     case 'benchRunFinished': return [`The benchmark run of suite ${d.suite || ''} ${d.state || 'finished'}: ${num(d.passed || 0)} passed, ${num(d.failed || 0)} failed`,
+      d.refused_by_exclusion ? `, ${num(d.refused_by_exclusion)} not judged` : '',
       d.regressions ? `, ${plural(d.regressions, 'regression')}` : '', '.'];
   }
   return [e.summary || e.type];

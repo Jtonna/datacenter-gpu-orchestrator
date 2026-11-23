@@ -193,7 +193,7 @@ func TestLogSnapshotKnowsTheProfileOfALaunch(t *testing.T) {
 	for i := range keepEndedLaunches {
 		l := &launch{id: "ln-old-" + string(rune('a'+i%26)) + "-" + time.Duration(i).String(), node: "x", profile: "p"}
 		r.p.launches[l.id] = l
-		r.p.endLaunchLocked(l)
+		r.p.endLaunchLocked(l, true)
 	}
 	n := len(r.p.ended)
 	r.p.publishLogSnapLocked()

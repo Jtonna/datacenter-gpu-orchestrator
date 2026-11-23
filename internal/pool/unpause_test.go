@@ -60,12 +60,19 @@ func TestUnpauseWaitsUntilTheAgentHasBeenTold(t *testing.T) {
 	if f.Paused || !f.UnpausePending || f.UnplacedMessage != UnpausePendingMessage {
 		t.Fatalf("facts %+v", f)
 	}
+	// the scheduler's node says so too: a wait, not an operator's pause
+	if n, _ := r.node(upID); !n.Paused || !n.UnpausePending {
+		t.Fatalf("node while the unpause is pending: paused %v unpause pending %v", n.Paused, n.UnpausePending)
+	}
 	if res := r.heartbeat(upID); res.Answer.Paused {
 		t.Fatal("the answer still carries the pause")
 	}
 	r.wantPlaceable(upID, true)
 	if f := r.fact(upID); f.UnpausePending || f.UnplacedMessage != "" {
 		t.Fatalf("facts after delivery %+v", f)
+	}
+	if n, _ := r.node(upID); n.Paused || n.UnpausePending {
+		t.Fatalf("node after delivery: paused %v unpause pending %v", n.Paused, n.UnpausePending)
 	}
 }
 
