@@ -30,8 +30,8 @@ const (
 // Host values of InstanceStatus.Host and roles of PlacedNodeStatus.Role
 // (the same words as the request log's lease roles).
 const (
-	HostServer = "server"
-	HostOnNode = "node"
+	HostServer   = "server"
+	HostOnNode   = "node"
 	MemberHost   = "host"
 	MemberHelper = "helper"
 )
