@@ -33,6 +33,7 @@ import * as api from '../core/api.js';
 import { roleShare, runMachines, liveView, segmented, dateStepper, button, chips, dropButton, onDropChange, zoneStatus, colourKey, availStrip, availClass, availState, availLevel, tokensChart, tokensLegend,
   runsTable, runLegend, tickRuns, groupClass, dialog, toggle, skeleton } from '../core/ui.js';
 import { num, gb, gbNum, dur, clock, dateTime, DASH } from '../core/format.js';
+import { onCatalog, needCatalog } from '../core/catalog.js';
 import { viewNodes } from '../core/status.js';
 import { agentOf, notPlaceable } from '../core/nodeactions.js';
 import { requestFeed, every, onLiveTimings, liveTimings } from '../core/requests.js';
@@ -426,6 +427,9 @@ registerView({
         colourKey(`Showing ${num(shown)} of ${num(rows.length)}` + (rows.length > shown ? ' · scroll for more' : '') + (filtered && rows.length !== all.length ? ` (${num(all.length)} in all)` : '')));
     }
 
+    // the Model column names runs from the catalog (runModel)
+    const offCat = onCatalog(() => view.refresh());
+    needCatalog();
     const view = liveView(el, () => {
       const st = state.status;
       const p = per();
@@ -461,7 +465,7 @@ registerView({
     sync();
     return {
       update(nr) { r = nr; sync(); view.refresh(); },
-      unmount() { dead = true; feed.stop(); offStatus(); offTimings(); sumSoon.cancel(); availSoon.cancel(); ticker(); offDrop(); view.unmount(); },
+      unmount() { dead = true; offCat(); feed.stop(); offStatus(); offTimings(); sumSoon.cancel(); availSoon.cancel(); ticker(); offDrop(); view.unmount(); },
     };
   },
 });

@@ -9,6 +9,7 @@
 
 import { h, morph, icon } from './dom.js';
 import { on } from './store.js';
+import { catalog } from './catalog.js';
 import { openPanel } from './panel.js';
 import { num, mib, gb, gbNum, parseGoDuration, clock, dur, DASH } from './format.js';
 
@@ -755,6 +756,33 @@ export function runLength(ms) {
 // "412" in, "14.1" out).
 const rateText = v => (v == null || !(v > 0) ? DASH : v >= 100 ? num(v) : num(v, 1));
 
+// The quantisation in a model file name, as the server reads it (api
+// ModelFileFromName): Q4_K_M, IQ3_XS, BF16, F16, F32.
+const QUANT = /(^|[-_.])((?:IQ|Q)\d+(?:_[A-Z0-9]+)*|BF16|F16|F32)(?=$|[-_.])/i;
+
+// fileShort('/models/Gemma-4-27B-it-Q4_K_M.gguf') -> 'gemma-4-27b-it': the
+// file name without its directory, the .gguf extension and the quantisation,
+// in lower case.
+export function fileShort(file) {
+  let s = String(file || '').split(/[\\/]/).pop().replace(/\.gguf$/i, '');
+  s = s.replace(QUANT, '$1').replace(/[-_.]{2,}/g, m => m[0]).replace(/^[-_.]+|[-_.]+$/g, '');
+  return s.toLowerCase();
+}
+
+// runModel(r) -> the design's model name of a run, "gemma-4-27b:32k": the
+// short name of its model file (the catalog entry of its profile, else the
+// row's model_file) and its profile's ctx in k (8192 -> 8k). The API has no
+// short name; a run whose file is not known keeps its profile id.
+export function runModel(r) {
+  const entry = r && r.profile ? catalog.byProfile[r.profile] : null;
+  const file = (entry && entry.file) || (r && r.model_file) || '';
+  const short = fileShort(file);
+  if (!short) return (r && (r.profile || r.requested)) || '';
+  const prof = entry && (entry.profiles || []).find(p => p.id === r.profile);
+  const ctx = prof && prof.ctx > 0 ? Math.round(prof.ctx / 1024) + 'k' : '';
+  return ctx ? short + ':' + ctx : short;
+}
+
 // promptRate(r) -> {rate, title} for a run's "In tok/s": its prefill_tps,
 // or null with a hover when fewer than READ_MIN prompt tokens were read
 // (tokens_in minus tokens_reused): a prompt almost all reused from the cache
@@ -849,7 +877,7 @@ export function runsTable(o) {
       return h('tr', { key: 'r' + id, 'data-req': id, class: [st === 'failed' || st === 'refused' ? 'fail' : st === 'cancelled' ? 'canc' : '', o.pin === id ? 'pinned' : ''].filter(Boolean).join(' ') || null },
         h('td', status),
         notStarted ? h('td.mut.qd', 'queued ', h('span.mono', clock(r.queued_at))) : h('td.mono', clock(r.started_at)),
-        h('td.mono', { title: r.requested && r.requested !== r.profile ? 'Sent as ' + r.requested : null }, r.profile || r.requested || DASH),
+        h('td.mono', { title: r.profile ? r.profile + (r.requested && r.requested !== r.profile ? ' · sent as ' + r.requested : '') : r.requested ? 'Sent as ' + r.requested : null }, runModel(r) || DASH),
         fig(waiting ? null : r.tokens_in, r.tokens_reused > 0 ? `${num(r.tokens_reused)} of them reused from the cache` : null, false, st === 'running' ? PROMPT_LATER : null),
         (pr => fig(waiting ? null : pr.rate, null, true, pr.title || (st === 'running' ? PROMPT_LATER : null)))(promptRate(r)),
         fig(waiting ? null : r.tokens_out, r.live ? 'Counted from the stream so far' : null),

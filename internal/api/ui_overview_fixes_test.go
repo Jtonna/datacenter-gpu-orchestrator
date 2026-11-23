@@ -111,3 +111,30 @@ func TestUINextRunDetailInRateAfterReuse(t *testing.T) {
 			"page": []string{"In tok/s", "377"}},
 	}})
 }
+
+// (e) The Model column: the model's short name and context, as the design
+// ("gemma-4-27b:32k"), with the profile id on hover. The API has no short
+// name, so it is the model file's name (GET /api/models: the entry of the
+// row's profile; else the row's model_file) without the directory, the
+// .gguf extension and the quantisation, in lower case, and the profile's
+// ctx in k. A profile the catalog does not know keeps its id.
+func TestUINextRunsModelShortName(t *testing.T) {
+	now := time.Now()
+	rows := ovRequests(now)
+	rows[4].(map[string]any)["profile"] = "unknown-profile"
+	rows[3].(map[string]any)["profile"] = "delta"
+	rows[3].(map[string]any)["model_file"] = "/models/Mistral-Small-3.1-24B-Q5_K_M.gguf"
+	fetch := ovFetch(now, rows, true)
+	fetch["/api/models"] = map[string]any{"version": 1, "models": []any{
+		map[string]any{"key": "gemma", "kind": "llama", "file": "/models/sub/Gemma-4-27B-it-Q4_K_M.gguf", "name": "Gemma 4 27B it",
+			"profiles": []any{map[string]any{"id": "alpha", "ctx": 32768}, map[string]any{"id": "beta", "ctx": 8192}}},
+	}}
+	for _, route := range []string{"#/overview", "#/requests"} {
+		uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
+			map[string]any{"name": "model: " + route, "route": route, "status": ovStatus(now),
+				"expect": []string{"gemma-4-27b-it:32k", "gemma-4-27b-it:8k", "mistral-small-3.1-24b", "unknown-profile"},
+				"absent": []string{"Q4_K_M", "q4_k_m", ".gguf", "mistral-small-3.1-24b:"},
+				"has":    []string{"tr[data-req='14'] td.mono[title=alpha]", "tr[data-req='16'] td.mono[title=beta]"}},
+		}})
+	}
+}
