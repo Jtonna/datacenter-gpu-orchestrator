@@ -29,7 +29,9 @@ func TestForwardSendsTheKey(t *testing.T) {
 	if a := <-got; a != "Bearer k0123456789abcdef" {
 		t.Fatal(a)
 	}
-	// Without a key the request goes as it came (a host on the scheduler's machine).
+	// Without a launch key (a host on the scheduler's machine) the client's
+	// own Authorization is dropped, not passed on: it is the client's
+	// credential, often another provider's real key.
 	fr = front(t, Options{Addr: upstreamAddr(up)}, nil)
 	req, _ = http.NewRequest(http.MethodPost, fr.URL+"/v1/chat/completions", nil)
 	req.Header.Set("Authorization", "Bearer the-clients-own")
@@ -37,7 +39,7 @@ func TestForwardSendsTheKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if a := <-got; a != "Bearer the-clients-own" {
+	if a := <-got; a != "" {
 		t.Fatal(a)
 	}
 }

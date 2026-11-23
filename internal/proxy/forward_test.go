@@ -400,3 +400,62 @@ func TestForward_ClientLeavingMidStreamIsClientLeft(t *testing.T) {
 		t.Fatalf("%+v reason %q", r, r.Reason())
 	}
 }
+
+// No client credential header reaches the model server, for a server on the
+// scheduler's machine (no launch key) and one hosted on a console (launch
+// key), streamed and not: each header in ClientCredentialHeaders is dropped,
+// and a hosted server gets exactly Potluck's launch key, never the client's
+// value in its place or beside it.
+func TestForward_NoClientCredentialHeaderReachesTheModelServer(t *testing.T) {
+	type seen struct{ h http.Header }
+	got := make(chan seen, 1)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- seen{r.Header.Clone()}
+		b, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(b), `"stream":true`) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(w, "data: {}\n\ndata: [DONE]\n\n")
+			return
+		}
+		fmt.Fprint(w, `{}`)
+	}))
+	defer up.Close()
+	const marked = "sk-test-CANARY-0001"
+	for _, launchKey := range []string{"", "launch-key-test-0001"} {
+		f := front(t, Options{Addr: upstreamAddr(up), APIKey: launchKey}, nil)
+		for _, stream := range []bool{false, true} {
+			for _, name := range ClientCredentialHeaders {
+				body := `{"model":"m"}`
+				if stream {
+					body = `{"model":"m","stream":true}`
+				}
+				req, _ := http.NewRequest("POST", f.URL+"/v1/chat/completions", strings.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Add(name, "Bearer "+marked)
+				req.Header.Add(name, marked+"-second")
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				io.ReadAll(resp.Body)
+				resp.Body.Close()
+				h := (<-got).h
+				for k, vs := range h {
+					if strings.Contains(strings.Join(vs, " "), marked) {
+						t.Errorf("launch key %q, stream %v: %s reached the model server as %s: %q", launchKey, stream, name, k, vs)
+					}
+				}
+				want := []string(nil)
+				if launchKey != "" {
+					want = []string{"Bearer " + launchKey}
+				}
+				if fmt.Sprint(h.Values("Authorization")) != fmt.Sprint(want) {
+					t.Errorf("launch key %q, stream %v, client %s: the model server got Authorization %q", launchKey, stream, name, h.Values("Authorization"))
+				}
+				if h.Get("Content-Type") != "application/json" {
+					t.Errorf("other headers must still pass: %v", h)
+				}
+			}
+		}
+	}
+}
