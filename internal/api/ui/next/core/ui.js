@@ -9,6 +9,8 @@
 
 import { h, morph, icon } from './dom.js';
 import { on } from './store.js';
+import { catalog } from './catalog.js';
+import { openPanel } from './panel.js';
 import { num, mib, gb, gbNum, parseGoDuration, clock, dur, DASH } from './format.js';
 
 // ---------- live rendering ----------
@@ -204,9 +206,20 @@ export function diffView(diff) {
 // ---------- dialog, confirm, toast ----------
 
 let openDialogs = 0;
-// dialog({title, body, actions:[{label, kind, value, autofocus}], wide}) resolves
-// with the picked action's value (undefined on Escape or a backdrop click).
-// body may be a node or a function (close => node) for a body with its own controls.
+// dialog({title, body, actions:[{label, kind, value, autofocus}], wide, comment})
+// resolves with the picked action's value (undefined on Escape, the close
+// button or a backdrop click). body may be a node or a function (close =>
+// node) for a body with its own controls.
+//
+// The design's dialog (Zones "Confirm": "Unload … from …?", "Reboot 3
+// zones?"): 500 wide, a 14 px radius, 20 by 22 px of padding, the title
+// (18 px, 800) and a close button in one row, the actions on the right of
+// the last row, 34 px high. wide makes it 820 (a diff to review).
+//
+// comment (optional, the comment field the audit needs, 00-combined S27):
+// {label, required, placeholder, value}. A text box above the actions; the
+// dialog then resolves with {value, comment} for an action, and a required
+// comment keeps the main action (kind pri or dng) disabled while it is empty.
 export function dialog(o) {
   return new Promise(resolve => {
     const prev = document.activeElement;
@@ -216,6 +229,12 @@ export function dialog(o) {
       openDialogs--;
       if (prev && prev.focus) prev.focus();
       resolve(v);
+    };
+    const note = o.comment ? h('textarea.input.dlg-comment', { rows: 3, maxlength: 500, placeholder: o.comment.placeholder || '', 'aria-label': o.comment.label || 'Comment' }) : null;
+    if (note && o.comment.value) note.value = o.comment.value;
+    const pick = a => () => {
+      const v = typeof a.value === 'function' ? a.value() : a.value;
+      close(note ? (v === undefined ? undefined : { value: v, comment: note.value.trim() }) : v);
     };
     const onKey = e => {
       if (e.key === 'Escape') { e.stopPropagation(); close(undefined); }
@@ -228,14 +247,24 @@ export function dialog(o) {
       }
     };
     const id = 'dlg-' + Date.now();
+    const main = [];
     const dlg = h('div', { class: 'dlg' + (o.wide ? ' wide' : ''), role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': id },
-      h('h2', { id }, o.title),
+      h('div.dlg-head', h('h2', { id }, o.title),
+        h('button.x', { type: 'button', 'aria-label': 'Close', title: 'Close', onclick: () => close(undefined) },
+          h('svg', { class: 'ic', viewBox: '0 0 20 20', 'aria-hidden': 'true' }, h('path', { d: 'M5 5l10 10M15 5L5 15' })))),
       typeof o.body === 'function' ? o.body(close) : o.body,
+      note ? h('div.field.dlg-note', h('label', o.comment.label || 'Comment', o.comment.required ? ' (required)' : ''), note) : null,
       o.actions ? h('div.dlg-foot', o.actions.map(a => {
-        const b = h('button', { class: 'btn lg ' + (a.kind || ''), type: 'button', onclick: () => close(typeof a.value === 'function' ? a.value() : a.value) }, a.label);
+        const b = h('button', { class: 'btn lg ' + (a.kind || ''), type: 'button', onclick: pick(a) }, a.label);
         if (a.autofocus) b.dataset.autofocus = '1';
+        if (/\b(pri|dng)\b/.test(a.kind || '')) main.push(b);
         return b;
       })) : null);
+    if (note && o.comment.required) {
+      const gate = () => { for (const b of main) { if (note.value.trim()) b.removeAttribute('disabled'); else b.setAttribute('disabled', ''); } };
+      note.addEventListener('input', gate);
+      gate();
+    }
     const back = h('div.backdrop', { onmousedown: e => { if (e.target === back) close(undefined); } }, dlg);
     document.body.appendChild(back);
     openDialogs++;
@@ -529,10 +558,17 @@ export function filterSelect(label, options, current, onPick, opts = {}) {
 // node is kept by morph (data-keep with a key: give each box on a screen its
 // own), so typing is never interrupted by a redraw. onInput is the one given
 // at the first draw: pass a function that reads the view's current state.
-export function searchField(value, onInput, placeholder, key = 'search') {
-  const i = h('input.search', { type: 'search', value: value || '', placeholder: placeholder || 'Search', 'aria-label': placeholder || 'Search', 'data-keep': '', key });
+//
+// Drawn as the design's search field (Models, Zones, Benchmarks): a
+// magnifier inside the box, then the text. opts.size 'lg' is the Zones
+// page's (28 px high, 290 wide, 12.5 px text); the default is the small one
+// of the panels and tables (24 px, 150 wide, 12 px). opts.width sets the
+// width. The box is kept by morph, the input inside it with it.
+export function searchField(value, onInput, placeholder, key = 'search', opts = {}) {
+  const i = h('input', { type: 'search', value: value || '', placeholder: placeholder || 'Search', 'aria-label': placeholder || 'Search' });
   i.addEventListener('input', () => onInput(i.value));
-  return i;
+  return h('label', { class: 'sx' + (opts.size === 'lg' ? ' lg' : ''), 'data-keep': '', key, style: opts.width ? 'width:' + opts.width + 'px' : null },
+    h('svg', { class: 'ic', viewBox: '0 0 20 20', 'aria-hidden': 'true' }, h('circle', { cx: 9, cy: 9, r: 5.5 }), h('path', { d: 'M13.5 13.5L17 17' })), i);
 }
 
 // The zone state colours: free, in use 1 to 4 (darker is busier), loading,
@@ -571,13 +607,30 @@ export function availStrip(cells, label) {
     }));
 }
 
+// availState(cell) -> the state a cell is drawn in. The server colours an
+// hour in_use only from a quarter of its known time in use; an hour with any
+// use is never drawn Free, so a free cell with seconds.in_use > 0 is in use.
+export function availState(cell) {
+  const st = cell && cell.state;
+  return st === 'free' && cell.seconds && cell.seconds.in_use > 0 ? 'in_use' : st;
+}
+
+// availLevel(cell) -> its busy level 1 to 4 (darker is busier): busy_level,
+// the server's quarter of busy (the mean of in flight over parallel across
+// the in-use time): under 25 % 1, under 50 % 2, under 75 % 3, else 4.
+export function availLevel(cell) {
+  let l = cell && cell.busy_level;
+  if (!l && cell && typeof cell.busy === 'number') l = cell.busy < 0.25 ? 1 : cell.busy < 0.5 ? 2 : cell.busy < 0.75 ? 3 : 4;
+  return Math.min(4, Math.max(1, l || 1));
+}
+
 // availClass(cell) -> the square of one cell of GET /api/nodes/availability:
-// its state (free, in_use, loading, down, off, unknown) and, in use, its
-// busy level 1 to 4 (darker is busier). Unknown is null (an empty square).
+// its state (free, in_use, loading, down, off, unknown; availState) and, in
+// use, its busy level 1 to 4 (availLevel). Unknown is null (an empty square).
 export function availClass(cell) {
-  switch (cell && cell.state) {
+  switch (availState(cell)) {
     case 'free': return 'free';
-    case 'in_use': return 'use' + Math.min(4, Math.max(1, cell.busy_level || 1));
+    case 'in_use': return 'use' + availLevel(cell);
     case 'loading': return 'load';
     case 'down': return 'down';
     case 'off': return 'off';
@@ -617,52 +670,14 @@ export function runStatus(stateName, text, title) {
     text != null ? h('span', { class: stateName === 'queued' ? 'mut' : 'mono' }, text) : h('span', r[0]));
 }
 
-// sidePanel({title, body, onClose}) opens a panel from the right, 620 wide
-// (full screen on a phone), over the page. body is a node, or a function
-// (close => node) called again by redraw(). Escape, the close button or a
-// click beside it closes it; onClose is called once when it closes.
+// sidePanel({title, body, onClose, label, sub, controls, foot}) opens the
+// side panel (core/panel.js): beside the page at 1400 px and wider, over it
+// below that; one at a time; Escape or the close button closes it and the
+// focus goes back to what opened it. body is a node, or a function (close =>
+// node) called again by redraw(). onClose is called once when it closes.
 // Returns {close(), redraw(), el}.
 export function sidePanel(o) {
-  const prev = document.activeElement;
-  let closed = false;
-  const close = () => {
-    if (closed) return;
-    closed = true;
-    document.removeEventListener('keydown', onKey, true);
-    back.remove();
-    if (prev && prev.focus) prev.focus();
-    if (o.onClose) o.onClose();
-  };
-  const onKey = e => {
-    if (openDialogs > 0) return; // a dialog above the panel handles its own keys
-    if (e.key === 'Escape') { e.stopPropagation(); close(); }
-    if (e.key === 'Tab') {
-      const f = pane.querySelectorAll('button,input,select,textarea,a[href]');
-      if (!f.length) return;
-      const first = f[0], last = f[f.length - 1];
-      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-    }
-  };
-  const id = 'side-' + Date.now();
-  const closeBtn = h('button.btn.icon', { type: 'button', 'aria-label': 'Close', onclick: close },
-    h('svg', { class: 'ic', viewBox: '0 0 20 20', 'aria-hidden': 'true' }, h('path', { d: 'M5 5l10 10M15 5L5 15' })));
-  const title = h('h2', { id });
-  const body = h('div.sidepanel-body');
-  const pane = h('div.sidepanel', { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': id },
-    h('div.sidepanel-head', title, closeBtn), body);
-  const back = h('div.side-back', { onmousedown: e => { if (e.target === back) close(); } }, pane);
-  const fill = () => {
-    if (closed) return;
-    morph(title, typeof o.title === 'function' ? o.title() : o.title);
-    const b = typeof o.body === 'function' ? o.body(close) : o.body;
-    morph(body, b == null ? [] : b);
-  };
-  fill();
-  document.body.appendChild(back);
-  document.addEventListener('keydown', onKey, true);
-  closeBtn.focus();
-  return { close, redraw: fill, el: pane };
+  return openPanel(o);
 }
 
 // ---------- the Overview's components (Main board; Components board 3) ----------
@@ -740,6 +755,47 @@ export function runLength(ms) {
 // A rate of tokens per second: one decimal below 100, whole above (as drawn:
 // "412" in, "14.1" out).
 const rateText = v => (v == null || !(v > 0) ? DASH : v >= 100 ? num(v) : num(v, 1));
+
+// The quantisation in a model file name, as the server reads it (api
+// ModelFileFromName): Q4_K_M, IQ3_XS, BF16, F16, F32.
+const QUANT = /(^|[-_.])((?:IQ|Q)\d+(?:_[A-Z0-9]+)*|BF16|F16|F32)(?=$|[-_.])/i;
+
+// fileShort('/models/Gemma-4-27B-it-Q4_K_M.gguf') -> 'gemma-4-27b-it': the
+// file name without its directory, the .gguf extension and the quantisation,
+// in lower case.
+export function fileShort(file) {
+  let s = String(file || '').split(/[\\/]/).pop().replace(/\.gguf$/i, '');
+  s = s.replace(QUANT, '$1').replace(/[-_.]{2,}/g, m => m[0]).replace(/^[-_.]+|[-_.]+$/g, '');
+  return s.toLowerCase();
+}
+
+// runModel(r) -> the design's model name of a run, "gemma-4-27b:32k": the
+// short name of its model file (the catalog entry of its profile, else the
+// row's model_file) and its profile's ctx in k (8192 -> 8k). The API has no
+// short name; a run whose file is not known keeps its profile id.
+export function runModel(r) {
+  const entry = r && r.profile ? catalog.byProfile[r.profile] : null;
+  const file = (entry && entry.file) || (r && r.model_file) || '';
+  const short = fileShort(file);
+  if (!short) return (r && (r.profile || r.requested)) || '';
+  const prof = entry && (entry.profiles || []).find(p => p.id === r.profile);
+  const ctx = prof && prof.ctx > 0 ? Math.round(prof.ctx / 1024) + 'k' : '';
+  return ctx ? short + ':' + ctx : short;
+}
+
+// promptRate(r) -> {rate, title} for a run's "In tok/s": its prefill_tps,
+// or null with a hover when fewer than READ_MIN prompt tokens were read
+// (tokens_in minus tokens_reused): a prompt almost all reused from the cache
+// is read too fast to say anything about the machine. Used by the run list
+// and the run detail.
+export const READ_MIN = 16;
+export function promptRate(r) {
+  const tin = r && r.tokens_in, reused = r && r.tokens_reused, tps = r && r.prefill_tps;
+  if (tps != null && tin != null && reused > 0 && tin - reused < READ_MIN) {
+    return { rate: null, title: `Almost all of the prompt was reused from the cache (${num(reused)} of ${num(tin)} tokens); measured ${rateText(tps)} tok/s` };
+  }
+  return { rate: tps == null ? null : tps, title: null };
+}
 const firstUp = t => (t ? t.charAt(0).toUpperCase() + t.slice(1) : t);
 
 // roleShare(role, share) -> "Host 50%", "Helper 100%", or "Host" alone when
@@ -821,9 +877,9 @@ export function runsTable(o) {
       return h('tr', { key: 'r' + id, 'data-req': id, class: [st === 'failed' || st === 'refused' ? 'fail' : st === 'cancelled' ? 'canc' : '', o.pin === id ? 'pinned' : ''].filter(Boolean).join(' ') || null },
         h('td', status),
         notStarted ? h('td.mut.qd', 'queued ', h('span.mono', clock(r.queued_at))) : h('td.mono', clock(r.started_at)),
-        h('td.mono', { title: r.requested && r.requested !== r.profile ? 'Sent as ' + r.requested : null }, r.profile || r.requested || DASH),
+        h('td.mono', { title: r.profile ? r.profile + (r.requested && r.requested !== r.profile ? ' · sent as ' + r.requested : '') : r.requested ? 'Sent as ' + r.requested : null }, runModel(r) || DASH),
         fig(waiting ? null : r.tokens_in, r.tokens_reused > 0 ? `${num(r.tokens_reused)} of them reused from the cache` : null, false, st === 'running' ? PROMPT_LATER : null),
-        fig(waiting ? null : r.prefill_tps, null, true, st === 'running' ? PROMPT_LATER : null),
+        (pr => fig(waiting ? null : pr.rate, null, true, pr.title || (st === 'running' ? PROMPT_LATER : null)))(promptRate(r)),
         fig(waiting ? null : r.tokens_out, r.live ? 'Counted from the stream so far' : null),
         fig(waiting ? null : r.decode_tps, null, true),
         extra.map(c => h('td', { class: c.cls || null }, c.render(r))),

@@ -30,9 +30,10 @@ import { h } from '../core/dom.js';
 import { registerView, navigate, href } from '../core/router.js';
 import { state, on } from '../core/store.js';
 import * as api from '../core/api.js';
-import { roleShare, runMachines, liveView, segmented, dateStepper, button, chips, dropButton, onDropChange, zoneStatus, colourKey, availStrip, availClass, tokensChart, tokensLegend,
+import { roleShare, runMachines, liveView, segmented, dateStepper, button, chips, dropButton, onDropChange, zoneStatus, colourKey, availStrip, availClass, availState, availLevel, tokensChart, tokensLegend,
   runsTable, runLegend, tickRuns, groupClass, dialog, toggle, skeleton } from '../core/ui.js';
 import { num, gb, gbNum, dur, clock, dateTime, DASH } from '../core/format.js';
+import { onCatalog, needCatalog } from '../core/catalog.js';
 import { viewNodes } from '../core/status.js';
 import { agentOf, notPlaceable } from '../core/nodeactions.js';
 import { requestFeed, every, onLiveTimings, liveTimings } from '../core/requests.js';
@@ -92,6 +93,13 @@ function member(st, id) {
     if (m) return { inst, role: m.role || '', share: typeof m.share === 'number' ? m.share : null };
   }
   return null;
+}
+
+// zoneNodes(st) -> the machines drawn as zones: every view node but those an
+// operator removed from the pool (the answers keep them, by their MAC and with
+// no stats, until they are re-admitted; they are no zone).
+export function zoneNodes(st) {
+  return viewNodes(st).filter(n => n.state !== 'removed' && (agentOf(st, n) || {}).state !== 'removed');
 }
 
 // zoneOf(st, n, i) -> one zones row: its group (use, free, down, off: the
@@ -189,12 +197,13 @@ function stripOf(series, z, current) {
   const cells = (ns && ns.cells) || [];
   const out = cells.slice(-24).map(c => {
     const t = tms(c.start);
-    const word = STATE_WORD[c.state];
-    return { cls: availClass(c), title: (t ? bucketTitle(t, 'hour') + ' · ' : '') + (word ? word + (c.state === 'in_use' && c.busy_level ? `, busy ${c.busy_level} of 4` : '') : 'Nothing known') };
+    const state = availState(c);
+    const word = STATE_WORD[state];
+    return { cls: availClass(c), title: (t ? bucketTitle(t, 'hour') + ' · ' : '') + (word ? word + (state === 'in_use' ? `, busy ${availLevel(c)} of 4` : '') : 'Nothing known') };
   });
   while (out.length < 24) out.unshift(null);
   const count = {};
-  for (const c of cells.slice(-24)) count[c.state] = (count[c.state] || 0) + 1;
+  for (const c of cells.slice(-24)) { const k = availState(c); count[k] = (count[k] || 0) + 1; }
   const parts = Object.keys(STATE_WORD).filter(k => count[k]).map(k => `${STATE_WORD[k].toLowerCase()} ${count[k]} h`);
   const span = current ? 'last 24 hours' : 'that day';
   return { cells: out, label: `${z.name}, ${span}: ${parts.length ? parts.join(', ') : 'nothing known'}` };
@@ -278,7 +287,7 @@ registerView({
     const availSoon = throttle(() => { if (!document.hidden) readAvail(per()); }, 10000);
     const offStatus = on('status', () => {
       const st = state.status;
-      const sig = viewNodes(st).map(n => [n.id, n.online, n.holder, !!n.quarantined, n.excluded].join(':')).join('|');
+      const sig = zoneNodes(st).map(n => [n.id, n.online, n.holder, !!n.quarantined, n.excluded].join(':')).join('|');
       const hour = Math.floor(Date.now() / 3600000);
       if ((zoneSig && sig !== zoneSig) || hour !== hourAt) { availSoon(); if (hour !== hourAt) sumSoon(); }
       zoneSig = sig; hourAt = hour;
@@ -364,7 +373,7 @@ registerView({
 
     function zonesPanel(p, st) {
       if (!st) return h('section.panel.ov-zones', { key: 'zones', 'aria-label': 'Zones' }, h('div.zp-head', h('h2.sr', 'Zones')), skeleton(4));
-      const all = viewNodes(st).map((n, i) => zoneOf(st, n, i));
+      const all = zoneNodes(st).map((n, i) => zoneOf(st, n, i));
       const count = g => all.filter(z => z.group === g).length;
       const show = PILLS.some(([g]) => g === r.query.show) ? r.query.show : '';
       const sort = SORTS.some(s => s.id === r.query.sort) ? r.query.sort : 'attention';
@@ -418,6 +427,9 @@ registerView({
         colourKey(`Showing ${num(shown)} of ${num(rows.length)}` + (rows.length > shown ? ' · scroll for more' : '') + (filtered && rows.length !== all.length ? ` (${num(all.length)} in all)` : '')));
     }
 
+    // the Model column names runs from the catalog (runModel)
+    const offCat = onCatalog(() => view.refresh());
+    needCatalog();
     const view = liveView(el, () => {
       const st = state.status;
       const p = per();
@@ -453,7 +465,7 @@ registerView({
     sync();
     return {
       update(nr) { r = nr; sync(); view.refresh(); },
-      unmount() { dead = true; feed.stop(); offStatus(); offTimings(); sumSoon.cancel(); availSoon.cancel(); ticker(); offDrop(); view.unmount(); },
+      unmount() { dead = true; offCat(); feed.stop(); offStatus(); offTimings(); sumSoon.cancel(); availSoon.cancel(); ticker(); offDrop(); view.unmount(); },
     };
   },
 });

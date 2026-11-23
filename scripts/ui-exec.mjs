@@ -42,6 +42,13 @@
 //               "ws": [{"type": "hello"|"requests"|..., "data": {...}}, ...]: live-channel
 //               messages delivered after the screen is drawn (hello also sets the
 //               connection live), before the clicks
+//               "wsAfter": [...]: the same, delivered after the clicks
+//               "keys": ["Escape", {"key": "Tab", "shiftKey": true}]: key presses after that
+//               "back": 1: history.back() that many times after that
+//               "width": 1440: the window's width for the case (default 1280);
+//               "widthAfter": a width set at the end (a resize)
+//               "focused": "css selector the focused element must match"
+//               "modules" (top level, with "app"): modules loaded before app.js
 //               "links": [{"text": "Classic UI", "path": "/ui/classic/"}, ...],
 //               "click": ["css selector clicked after the draw", ...],
 //               "page": ["text anywhere on the page: shell, side panel, dialog", ...],
@@ -269,15 +276,58 @@ def('window', globalThis);
 globalThis.addEventListener = (t, f) => winListeners.addEventListener(t, f);
 globalThis.removeEventListener = (t, f) => winListeners.removeEventListener(t, f);
 globalThis.dispatchEvent = e => winListeners.dispatchEvent(e);
-def('matchMedia', () => ({ matches: false, media: '', addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }));
+// matchMedia answers width queries ((min-width:Npx), (max-width:Npx)) against
+// innerWidth; a case's "width" changes it and tells the queries that flip.
+// Any other query does not match.
+const mqls = new Set();
+const evalMedia = q => /width/.test(q) && Array.from(q.matchAll(/\((min|max)-width:\s*(\d+)px\)/g)).every(m => (m[1] === 'min' ? globalThis.innerWidth >= +m[2] : globalThis.innerWidth <= +m[2]));
+def('matchMedia', q => {
+  const l = new Set();
+  const mql = { media: q, get matches() { return evalMedia(q); }, addEventListener(t, f) { l.add(f); }, removeEventListener(t, f) { l.delete(f); },
+    addListener(f) { l.add(f); }, removeListener(f) { l.delete(f); }, _l: l, _last: false };
+  mql._last = mql.matches;
+  mqls.add(mql);
+  return mql;
+});
+function setWidth(w) {
+  globalThis.innerWidth = w;
+  for (const m of mqls) {
+    const now = m.matches;
+    if (now === m._last) continue;
+    m._last = now;
+    for (const f of Array.from(m._l)) f({ matches: now, media: m.media });
+  }
+}
 def('scrollTo', () => {}); def('scrollX', 0); def('scrollY', 0); def('innerWidth', 1280); def('innerHeight', 900); def('devicePixelRatio', 1);
 def('getComputedStyle', () => new Proxy({}, { get: (t, k) => (k === 'getPropertyValue' ? () => '' : '') }));
 def('requestAnimationFrame', fn => setTimeout(() => fn(Date.now()), 0)); def('cancelAnimationFrame', id => clearTimeout(id));
 // The page's address: /ui/ for the new shell, /ui/classic/ for the classic UI
 // (set before any UI module is imported; core/api.js reads it once).
-const location = { href: 'http://potluck.test/ui/', origin: 'http://potluck.test', protocol: 'http:', host: 'potluck.test', pathname: '/ui/', search: '', hash: '#/' };
+// The address keeps a history of entries, as a browser's: a page that sets
+// location.hash adds an entry and gets a hashchange event (on the next
+// turn); pushState adds one and replaceState changes the current one, both
+// without an event; back() and forward() move between entries with an event.
+const location = { href: 'http://potluck.test/ui/', origin: 'http://potluck.test', protocol: 'http:', host: 'potluck.test', pathname: '/ui/', search: '' };
+const entries = ['#/'];
+let entry = 0;
+const hashOf = to => { const i = String(to).indexOf('#'); return i >= 0 ? String(to).slice(i) : String(to); };
+const fireHash = () => setTimeout(() => globalThis.dispatchEvent(new FakeEvent('hashchange')), 0);
+const pushEntry = h => { entries.length = entry + 1; entries.push(h); entry = entries.length - 1; };
+Object.defineProperty(location, 'hash', {
+  get: () => entries[entry],
+  set: v => { const h = hashOf(v); if (h === entries[entry]) return; pushEntry(h); fireHash(); },
+  enumerable: true,
+});
+// setHashQuietly: the harness's own moves (mounting a case's route); it sends the event itself
+const setHashQuietly = v => pushEntry(hashOf(v));
 def('location', location);
-def('history', { replaceState(_, __, to) { location.hash = to; }, pushState(_, __, to) { location.hash = to; }, back() {} });
+def('history', {
+  replaceState(_, __, to) { entries[entry] = hashOf(to); },
+  pushState(_, __, to) { pushEntry(hashOf(to)); },
+  back() { if (entry > 0) { entry--; fireHash(); } },
+  forward() { if (entry < entries.length - 1) { entry++; fireHash(); } },
+  get length() { return entries.length; },
+});
 const ls = new Map();
 def('localStorage', { getItem: k => (ls.has(k) ? ls.get(k) : null), setItem: (k, v) => ls.set(k, String(v)), removeItem: k => ls.delete(k), clear: () => ls.clear() });
 def('sessionStorage', globalThis.localStorage);
@@ -414,6 +464,9 @@ function isolatedCopy(src, which) {
   cpSync(src, ui, { recursive: true });
   rmSync(path.join(ui, 'next'), { recursive: true, force: true });
   if (which === 'next') cpSync(path.join(src, 'next'), ui, { recursive: true });
+  // the fixture's demonstration modules (scripts/ui-fixture), served by
+  // ui-fixture-server.mjs at /ui/_fixture/
+  cpSync(path.join(here, 'ui-fixture'), path.join(ui, '_fixture'), { recursive: true });
   writeFileSync(path.join(dir, 'package.json'), '{"type":"module"}\n');
   return ui;
 }
@@ -442,7 +495,9 @@ if (spec.app) {
     stack.push(el);
   }
   outlet = document.getElementById('main');
-  location.hash = '#/__ui_exec_blank';
+  setHashQuietly('#/__ui_exec_blank');
+  // modules loaded before app.js, as the fixture's components page does
+  for (const m of spec.modules || []) { try { await mod(m); } catch (e) { errors.push(m + ' did not load: ' + (e.stack || e)); } }
   try { await mod('app.js'); } catch (e) { errors.push('app.js did not load: ' + (e.stack || e)); }
   await settle();
   console.log((errors.length ? 'FAIL' : 'ok  ') + ' start module app.js' + (errors.length ? '\n  ' + errors.join('\n  ') : ''));
@@ -455,10 +510,10 @@ if (errors.length) { origError('module import errors:\n' + errors.join('\n')); p
 if (!spec.app) {
   outlet = new Element('main');
   document.body.replaceChildren(outlet);
-  location.hash = '#/__ui_exec_blank';
+  setHashQuietly('#/__ui_exec_blank');
   router.start(outlet);
 }
-const go = async hash => { location.hash = hash; globalThis.dispatchEvent(new FakeEvent('hashchange')); await settle(); };
+const go = async hash => { setHashQuietly(hash); globalThis.dispatchEvent(new FakeEvent('hashchange')); await settle(); };
 
 let failed = 0;
 for (const c of spec.cases) {
@@ -467,6 +522,7 @@ for (const c of spec.cases) {
   const route = router.parse(c.route);
   if (!router.getView(route.id)) errors.push('no view registered for ' + route.id);
   else {
+    setWidth(c.width || 1280);
     if (c.status === 'fetch') c.status = await (await realFetch(base + '/api/status')).json();
     store.set('status', c.status === undefined ? null : c.status);
     await go(route.hash);
@@ -475,6 +531,7 @@ for (const c of spec.cases) {
     await settle();
     for (const m of c.ws || []) {
       if (m.type === 'hello') { store.set('conn', 'live'); store.set('hello', m.data); }
+      if (m.type === 'status') { store.state.statusAt = Date.now(); store.set('status', m.data); }
       store.publish(m.type, m.data, Date.now());
       await settle();
     }
@@ -482,9 +539,28 @@ for (const c of spec.cases) {
     for (const sel of c.click || []) {
       const el = document.body.querySelector(sel);
       if (!el) { errors.push('nothing to click: ' + sel); break; }
+      // a click focuses what can take the focus, as in a browser
+      if (/^(BUTTON|A|INPUT|SELECT|TEXTAREA)$/.test(el.nodeName) || el.getAttribute('tabindex') != null) el.focus();
       el.click();
       await settle();
     }
+    // wsAfter: live-channel messages delivered after the clicks
+    for (const m of c.wsAfter || []) {
+      store.publish(m.type, m.data, Date.now());
+      await settle();
+    }
+    // keys: key presses after that, sent to the focused element (or the body)
+    // and up through its ancestors to the document, as a browser does
+    for (const k of c.keys || []) {
+      const ev = new FakeEvent('keydown', typeof k === 'string' ? { key: k } : k);
+      const at = document.activeElement || document.body;
+      for (let n = at; n; n = n.parentNode) { ev.target = at; n.dispatchEvent(ev); }
+      await settle();
+    }
+    // back: history.back() that many times (a hash change each)
+    for (let i = 0; i < (c.back || 0); i++) { globalThis.history.back(); await settle(); }
+    // widthAfter: the window resized after all that
+    if (c.widthAfter) { setWidth(c.widthAfter); await settle(); }
   }
   const text = outlet.textContent;
   for (const bad of ['could not be drawn', 'failed to start']) if (text.includes(bad)) errors.push('banner: ' + text.slice(Math.max(0, text.indexOf(bad) - 40), text.indexOf(bad) + 200));
@@ -495,6 +571,8 @@ for (const c of spec.cases) {
   if (c.hash && location.hash !== c.hash) errors.push('the address is ' + location.hash + ', want ' + c.hash);
   for (const sel of c.pageHas || []) if (!document.body.querySelector(sel)) errors.push('no element on the page matches: ' + sel);
   for (const sel of c.pageNone || []) if (document.body.querySelector(sel)) errors.push('an element on the page that must not be there: ' + sel);
+  if (c.focused && !(document.activeElement && document.activeElement.matches && document.activeElement.matches(c.focused)))
+    errors.push('the focus is on ' + (document.activeElement ? document.activeElement.nodeName + ' ' + JSON.stringify(document.activeElement.getAttribute ? document.activeElement.getAttribute('class') : '') : 'nothing') + ', want ' + c.focused);
   // page: texts that must be anywhere on the page, the shell, side panels and dialogs included
   const pageText = document.body.textContent;
   for (const want of c.page || []) if (!pageText.includes(want)) errors.push('missing on the page: ' + JSON.stringify(want));
@@ -523,6 +601,13 @@ for (const c of spec.cases) {
     if (flag('--reserved')) for (const r of rows) if (!r.excluded && !r.reserved) errors.push(`no reserved-against-measured block on ${r.name}`);
   }
   await go('#/__ui_exec_blank'); // unmounts the screen
+  // a dialog or a popover left open by a case is closed the way a person would
+  for (let i = 0; i < 3 && document.body.querySelector('div.backdrop, div.pop'); i++) {
+    const ev = new FakeEvent('keydown', { key: 'Escape' });
+    ev.target = document.body;
+    document.dispatchEvent(ev);
+    await settle();
+  }
   if (errors.length) {
     failed++;
     console.log(`FAIL ${c.name}${extra}\n  ` + errors.join('\n  ').split('\n').slice(0, 30).join('\n  '));
