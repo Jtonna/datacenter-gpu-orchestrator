@@ -308,6 +308,8 @@ var expected = map[string]struct {
 	"query_measurements":    {`{"benchmark":"b","metric":"ttft_ms","since":"7d","limit":50,"ctx":8192,"placement":"any:2"}`, "GET", "/api/bench/measurements", "benchmark=b&ctx=8192&limit=50&metric=ttft_ms&placement=any%3A2&since=7d", "", nil},
 	"list_bench_metrics":    {`{}`, "GET", "/api/bench/metrics", "", "", nil},
 	"expand_group":          {`{"id":"g"}`, "GET", "/api/bench/groups/g/expand", "", "", nil},
+	"list_run_transcripts":  {`{"id":"r1"}`, "GET", "/api/bench/runs/r1/transcripts", "", "", nil},
+	"get_step_transcript":   {`{"id":"r1","step":2,"format":"md"}`, "GET", "/api/bench/runs/r1/steps/2/transcript", "format=md", "", nil},
 	"run_benchmark":         {`{"id":"lo","note":"n","only_when_idle":false,"inputs":{"model":"m.gguf"}}`, "POST", "/api/bench/benchmarks/lo/run", "", `{"inputs":{"model":"m.gguf"},"note":"n","only_when_idle":false}`, nil},
 	"get_run":               {`{"id":"br-1"}`, "GET", "/api/bench/runs/br-1", "", "", nil},
 	"export_run":            {`{"id":"br-1","format":"csv","detail":"phases"}`, "GET", "/api/bench/runs/br-1/export", "detail=phases&format=csv", "", nil},

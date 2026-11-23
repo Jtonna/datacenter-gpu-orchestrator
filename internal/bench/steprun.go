@@ -95,6 +95,13 @@ type benchRun struct {
 	// before the load (the load phase's cold option); cold is the result.
 	wantCold bool
 	cold     *ColdResult
+
+	// The step's transcript (transcript.go): every request and answer; conv
+	// counts the messages of each conversation phase it already holds;
+	// curPhase is the phase running now.
+	transcript []TranscriptEntry
+	conv       map[int]int
+	curPhase   int
 }
 
 func (br *benchRun) fail(outcome, why string) {
@@ -223,6 +230,7 @@ func (br *benchRun) runPhase(i int, p *benchspec.Phase) {
 		x.m.log.Warn("cannot store a phase", "err", err)
 	}
 	before := st.Outcome
+	br.curPhase = i
 	x.setPhase(br.track, i, firstText(p.Type, br.b.Profile))
 	switch p.Type {
 	case benchspec.PhaseLoad:
@@ -747,6 +755,7 @@ func (br *benchRun) send(ctx context.Context, r benchspec.Request, phase string,
 	rr := &RequestResult{StepID: st.ID, RunID: st.RunID, Seq: seq, Name: r.Name, Phase: phase, PhaseIdx: pidx, Turn: turn,
 		Deterministic: r.Deterministic(), StartedAt: x.m.o.Now().UnixMilli()}
 	x.emitRequest(st, map[string]any{"phase": phase, "request": r.Name, "seq": seq, "state": "started"})
+	conv := br.convSeen(phase, pidx, turn)
 	resp, err := x.m.o.API.Chat(ctx, st.RunID, BuildChatRequest(br.b.Profile, r), func(p ChatProgress) {
 		x.emitRequest(st, map[string]any{"phase": phase, "request": r.Name, "seq": seq, "state": "streaming", "tokens": p.Tokens, "elapsed_ms": p.ElapsedMS})
 		if phase != PhaseConcurrent {
@@ -756,12 +765,14 @@ func (br *benchRun) send(ctx context.Context, r benchspec.Request, phase string,
 	if err != nil {
 		rr.Error = err.Error()
 		br.record(rr)
+		br.addTranscript(transcriptEntry(rr, r, nil, conv))
 		return rr, nil, err
 	}
 	rr.Status, rr.WallMS, rr.TTFTMS = resp.Status, resp.WallMS, resp.TTFTMS
 	if resp.Status != 200 {
 		rr.Error = resp.ErrMessage
 		br.record(rr)
+		br.addTranscript(transcriptEntry(rr, r, resp, conv))
 		return rr, resp, nil
 	}
 	rr.Timings = resp.Timings
@@ -785,6 +796,8 @@ func (br *benchRun) send(ctx context.Context, r benchspec.Request, phase string,
 		rr.WaitMS = &wait
 	}
 	br.record(rr)
+	br.addTranscript(transcriptEntry(rr, r, resp, conv))
+	br.convAdd(phase, pidx, len(r.ChatMessages()))
 	return rr, resp, nil
 }
 
@@ -1193,6 +1206,7 @@ func (x *suiteExec) finish(br *benchRun) {
 		m.log.Error("cannot store a benchmark step", "run", st.RunID, "benchmark", b.ID, "err", err)
 		x.a.cancel("the database failed: " + err.Error())
 	}
+	x.saveTranscript(br)
 	withReqs := *st
 	withReqs.Requests = reqs
 	if err := m.o.Store.ReplaceStepMeasurements(&withReqs); err != nil {

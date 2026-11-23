@@ -1,6 +1,9 @@
 package api
 
 import (
+	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -29,6 +32,65 @@ func (s *Server) modelRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/bench/groups/{id}/run", g(s.runSuite))
 	m.HandleFunc("GET /api/bench/groups/{id}/expand", g(s.expandGroup))
 	m.HandleFunc("GET /api/bench/suites/{id}/expand", g(s.expandGroup))
+	// Transcripts (data model step 4).
+	m.HandleFunc("GET /api/bench/runs/{id}/transcripts", g(s.listTranscripts))
+	m.HandleFunc("GET /api/bench/runs/{id}/steps/{step}/transcript", g(s.getTranscript))
+}
+
+// listTranscripts is GET /api/bench/runs/{id}/transcripts: the steps that
+// saved a transcript, with its size.
+func (s *Server) listTranscripts(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.runExists(w, id) {
+		return
+	}
+	list, err := s.opts.BenchStore.Transcripts(id)
+	if err != nil {
+		s.storeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"run_id": id, "transcripts": list})
+}
+
+// getTranscript is GET /api/bench/runs/{id}/steps/{step}/transcript
+// (?format=json, the stored file, or md, a readable chat).
+func (s *Server) getTranscript(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	step, err := strconv.Atoi(r.PathValue("step"))
+	if err != nil || step < 0 {
+		badParam(w, "step must be a step index (0, 1, ...), got %q", r.PathValue("step"))
+		return
+	}
+	format := r.URL.Query().Get("format")
+	if format != "" && format != "json" && format != "md" && format != "markdown" {
+		badParam(w, "format must be json or md, got %q", format)
+		return
+	}
+	if !s.runExists(w, id) {
+		return
+	}
+	raw, err := s.opts.BenchStore.ReadTranscript(id, step)
+	if errors.Is(err, bench.ErrNotFound) {
+		apiErr(w, http.StatusNotFound, "%v", strings.TrimPrefix(err.Error(), bench.ErrNotFound.Error()+": "))
+		return
+	}
+	if err != nil {
+		s.storeErr(w, err)
+		return
+	}
+	if format == "md" || format == "markdown" {
+		var t bench.Transcript
+		if err := json.Unmarshal(raw, &t); err != nil {
+			apiErr(w, http.StatusInternalServerError, "the transcript cannot be read: %v", err)
+			return
+		}
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", fmt.Sprintf("%s-step-%d-transcript.md", id, step+1)))
+		w.Write([]byte(bench.TranscriptMarkdown(&t)))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(raw)
 }
 
 func (s *Server) groupLookup(id string) (*benchspec.Suite, bool) {

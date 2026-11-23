@@ -131,3 +131,42 @@ func TestGroupsOfRecipesOverREST(t *testing.T) {
 		t.Fatalf("runs of the recipe: %v", runs)
 	}
 }
+
+// Transcripts over REST: the list, the stored file and the readable chat.
+func TestTranscriptsOverREST(t *testing.T) {
+	e := benchCfgEnv(t)
+	if st, b, _ := e.do("POST", "/api/bench/benchmarks", `{"id":"ask","inputs":{"ctx":4096,"model":"m1.gguf"},"phases":[{"type":"load"},{"type":"requests","requests":[{"name":"hi","prompt":"Say hi.","max_tokens":8}]},{"type":"unload"}]}`); st != 201 {
+		t.Fatalf("%d %s", st, b)
+	}
+	st, b, _ := e.do("POST", "/api/bench/benchmarks/ask/run", `{"only_when_idle":false}`)
+	if st != 202 {
+		t.Fatalf("%d %s", st, b)
+	}
+	id := jsonOf(t, b)["id"].(string)
+	eventually(t, "run completed", func() bool {
+		_, b, _ := e.do("GET", "/api/bench/runs/"+id, "")
+		return jsonOf(t, b)["state"] == "completed"
+	})
+	_, b, _ = e.do("GET", "/api/bench/runs/"+id, "")
+	if step := jsonOf(t, b)["steps"].([]any)[0].(map[string]any); step["outcome"] != "ready" {
+		t.Fatalf("step %v", step)
+	}
+	st, b, _ = e.do("GET", "/api/bench/runs/"+id+"/transcripts", "")
+	if st != 200 || !strings.Contains(b, `"step":0`) || !strings.Contains(b, `"entries":1`) {
+		t.Fatalf("list: %d %s", st, b)
+	}
+	st, b, _ = e.do("GET", "/api/bench/runs/"+id+"/steps/0/transcript", "")
+	if st != 200 || !strings.Contains(b, `"format":"potluck-transcript/1"`) || !strings.Contains(b, `"content":"Say hi."`) {
+		t.Fatalf("json: %d %s", st, b)
+	}
+	st, b, _ = e.do("GET", "/api/bench/runs/"+id+"/steps/0/transcript?format=md", "")
+	if st != 200 || !strings.Contains(b, "> Say hi.") {
+		t.Fatalf("md: %d %s", st, b)
+	}
+	if st, b, _ := e.do("GET", "/api/bench/runs/"+id+"/steps/5/transcript", ""); st != 404 || !strings.Contains(b, "no transcript for step 5") {
+		t.Fatalf("missing: %d %s", st, b)
+	}
+	if st, _, _ := e.do("GET", "/api/bench/runs/nope/transcripts", ""); st != 404 {
+		t.Fatalf("unknown run: %d", st)
+	}
+}

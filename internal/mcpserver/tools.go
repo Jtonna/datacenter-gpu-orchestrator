@@ -283,6 +283,10 @@ func allTools() []*tool {
 			"metric": s("Metric name (comma separated for several)."), "kind": en("Only suite runs or only direct benchmark runs.", "suite", "benchmark"),
 			"since": s("From: unix ms, RFC 3339, or an age such as 24h or 7d."), "until": s("Until, the same forms."), "limit": i("Maximum rows (default 1000, at most 10000).")},
 			nil, "GET", "/api/bench/measurements", "benchmark", "profile", "model", "node", "variant", "ctx", "placement", "metric", "kind", "since", "until", "limit"),
+		rd("list_run_transcripts", "The steps of a benchmark run that saved a transcript (every step that sent prompts), with the size and number of exchanges of each.", idArg("run"), []string{"id"}, "GET", "/api/bench/runs/{id}/transcripts"),
+		rd("get_step_transcript", "The full exchange of one step of a run, in order: what was sent (a later conversation turn holds only its new messages), the answer and reasoning, status, tokens and timings. format md gives a readable chat. Can be large.", P{
+			"id": s("The run id."), "step": i("The step index (0-based)."), "format": en("json (the stored file, default) or md.", "json", "md")},
+			[]string{"id", "step"}, "GET", "/api/bench/runs/{id}/steps/{step}/transcript", "format"),
 		rd("list_bench_metrics", "The metrics of the measurement record: name, unit, description, the phase types that record it, whether it is per machine and whether higher is better.", nil, nil, "GET", "/api/bench/metrics"),
 		rd("get_run", "Get one benchmark run with its steps, requests, statistics and comparison against the baseline.", idArg("run"), []string{"id"}, "GET", "/api/bench/runs/{id}"),
 		rd("export_run", "Export a benchmark run as a markdown table, CSV or JSON, returned as text.", P{"id": s("The run id."), "format": en("Export format (json by default).", "markdown", "csv", "json"),

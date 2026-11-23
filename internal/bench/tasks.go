@@ -811,6 +811,14 @@ func (br *benchRun) sendTask(pctx context.Context, set *benchspec.TaskSet, t ben
 		}
 	}
 	x.emitRequest(st, map[string]any{"phase": benchspec.PhaseTasks, "request": t.ID, "state": r.State})
+	e := TranscriptEntry{Phase: benchspec.PhaseTasks, PhaseIdx: br.curPhase, Name: t.ID, StartedAt: r.StartedAt, Messages: req.ChatMessages(),
+		Sampling: map[string]any{"max_tokens": req.MaxTok(), "temperature": req.Temp(), "seed": req.SeedVal(), "stream": req.Streams()},
+		Status:   r.Status, Error: r.Error, TTFTMS: r.TTFTMS, WallMS: r.WallMS, FinishReason: r.FinishReason,
+		PromptTokens: r.PromptTokens, CompletionTokens: r.CompletionTokens}
+	if resp != nil {
+		e.Answer, e.Reasoning, e.Timings = resp.Text, resp.Reasoning, resp.Timings
+	}
+	br.addTranscript(e)
 	return r
 }
 
