@@ -70,10 +70,10 @@ next/core/ui.js        the classic components plus panel, segmented, filterSelec
                        dateStepper, dropButton, tokensChart, tokensLegend, runsTable, runLegend,
                        runIcon, runWhy, tickRuns (100 ms run clock), availClass, groupClass,
                        roleShare and runMachines ("Host 50%": a role and a share of the model)
-next/views/overview.js Overview, the home page (Main board): Tokens, Requests (the design's "Runs",
-                       Q2), Zones with the hour-by-hour strip; Zones toggles outline a request's
+next/views/overview.js Overview, the home page (Main board): Tokens, Runs (the design's word, Q2;
+                       the route and the API keep "requests"), Zones with the hour-by-hour strip; Zones toggles outline a request's
                        zones; Customize (Q1, kept in localStorage potluck.overview.layout)
-next/views/requests.js Requests: the paged request list behind "All N" (Q3; no mockup yet)
+next/views/requests.js Runs (#/requests): the paged request list behind "All N" (Q3; no mockup yet)
 next/views/report.js   24-hour report behind "View 24-hour report" (no mockup yet)
 next/views/zones.js    Zones: one row per machine (zone); selection with Stop accepting models /
                        Accept models again; the zone panel (state, facts, recent events, machine card)
