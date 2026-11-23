@@ -468,6 +468,15 @@ type PlanReport struct {
 	// completely, what the node has free, what is reserved there and what
 	// remains; and whether it fits. Nil when the need is unknown.
 	Memory *PlanMemory
+	// Host is where the profile's llama-server runs: core.HostServer (the
+	// scheduler's machine) or core.HostNode (phase 6). HostNode is the node
+	// that hosts (the first forced node), HostOverheadMiB what hosting adds
+	// to its reservation (host_overhead_mib), HostProblem why it cannot host
+	// now (for example host_not_capable); all empty or 0 for the server.
+	Host            string
+	HostNode        core.NodeID
+	HostOverheadMiB int
+	HostProblem     string
 }
 
 // PlanMemory is the memory section of a plan (reserve.go).
@@ -516,6 +525,9 @@ type PlanMemoryNode struct {
 	MarginMiB      int
 	MarginRule     string
 	RemainsMiB     int
+	// HostOverheadMiB is host_overhead_mib on the node that hosts the load
+	// (in ContextMiB and WillTakeMiB already); 0 on any other node.
+	HostOverheadMiB int
 }
 
 // PlanReservedBy is what another (or the same) profile holds on a node.

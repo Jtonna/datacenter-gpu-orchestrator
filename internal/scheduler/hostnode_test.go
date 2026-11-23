@@ -347,3 +347,58 @@ func TestHost_LoadByNodeNamesTheHostNode(t *testing.T) {
 		t.Fatal(mib, seen)
 	}
 }
+
+// POST /api/plan names the host node and its overhead, on the plan and on
+// the host node's memory row.
+func TestHost_PlanShowsTheHostAndItsOverhead(t *testing.T) {
+	h := hostHarness(t)
+	h.viewChanged()
+	r := h.c.dryPlan("m")
+	if r.Host != core.HostNode || r.HostNode != "a" || r.HostOverheadMiB != h.cfg.Defaults.HostOverheadMiB || r.HostProblem != "" {
+		t.Fatalf("%+v", r)
+	}
+	if r.Memory == nil || len(r.Memory.Nodes) != 2 || r.Memory.Nodes[0].HostOverheadMiB != h.cfg.Defaults.HostOverheadMiB ||
+		r.Memory.Nodes[1].HostOverheadMiB != 0 {
+		t.Fatalf("%+v %+v", r, r.Memory)
+	}
+	// A node that cannot host says so in the plan.
+	h.c.view = hostGateView{fakeView: h.view, no: map[core.NodeID]string{"a": "its agent does not advertise host_launch"}}
+	if r := h.c.dryPlan("m"); !strings.Contains(r.HostProblem, ReasonHostNotCapable) {
+		t.Fatalf("%+v", r)
+	}
+	// A server-hosted profile: host server, no overhead.
+	h.llama("s", 4000, func(p *core.Profile) { p.ForceNodes = []string{"b"} })
+	if r := h.c.dryPlan("s"); r.Host != core.HostServer || r.HostNode != "" || r.HostOverheadMiB != 0 {
+		t.Fatalf("%+v", r)
+	}
+}
+
+// A node-hosted load has no byte counter (the host process is not
+// Potluck's child), so the stall rule never applies to it: the load timeout
+// alone ends a stuck load. That timeout is the design 7.6 formula with the
+// host node's own share counted over its link, since the host reads its
+// part from the share: 120 s + 2 x (file x fraction / link) per node.
+func TestHost_LoadTimeoutCountsTheHostsShare(t *testing.T) {
+	h := hostHarness(t)
+	h.request("m")
+	h.workersUp()
+	in := h.c.insts["m"]
+	if in == nil {
+		t.Fatal("no instance")
+	}
+	want := instance.LoadTimeoutFor(1<<30, []instance.NodeShare{{Fraction: 0.5, LinkMBs: 11}, {Fraction: 0.5, LinkMBs: 11}})
+	if in.loadTimeout != want {
+		t.Fatalf("load timeout %v, want %v (both nodes' shares)", in.loadTimeout, want)
+	}
+	// The real host child counts no bytes; the harness fake does, so hide it.
+	if _, ok := any(&instance.RemoteChild{}).(instance.ByteCounter); ok {
+		t.Fatal("RemoteChild became a byte counter: the stall rule now applies, update the docs")
+	}
+	in.child = struct{ instance.Child }{in.child}
+	if h.c.wantsSample(in) {
+		t.Fatal("a node-hosted load is never sampled, so the stall rule cannot fire")
+	}
+	if _, stalled := h.c.loadStalled(in); stalled {
+		t.Fatal("stalled without a measurement")
+	}
+}

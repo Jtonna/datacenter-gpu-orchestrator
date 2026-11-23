@@ -162,3 +162,32 @@ func hostExitInfo(st instance.ExitStatus) *agentproto.ExitInfo {
 	reason, msg, _ := strings.Cut(st.Reason, ": ")
 	return &agentproto.ExitInfo{Reason: reason, Message: msg}
 }
+
+// planHost fills the host part of a plan: where llama-server would run, the
+// overhead on that node, and why it cannot host now.
+func (c *schedCore) planHost(r *PlanReport, p *core.Profile, placed *core.Placement) {
+	r.Host = core.HostServer
+	if p.Host != core.HostNode {
+		return
+	}
+	r.Host, r.HostOverheadMiB = core.HostNode, max(c.cfg.Defaults.HostOverheadMiB, 0)
+	var pl core.Placement
+	switch {
+	case placed != nil && len(placed.Nodes) > 0:
+		pl = *placed
+	case len(p.ForceNodes) > 0:
+		for _, f := range p.ForceNodes {
+			id, err := c.view.Resolve(f)
+			if err != nil {
+				r.HostProblem = fmt.Sprintf("forced node %q: %v", f, err)
+				return
+			}
+			n, _ := c.node(id)
+			pl.Nodes = append(pl.Nodes, core.PlacedNode{ID: id, Addr: n.Addr, Local: n.Local})
+		}
+	}
+	if len(pl.Nodes) > 0 {
+		r.HostNode = pl.Nodes[0].ID
+	}
+	r.HostProblem = c.hostPlacementError(p, pl)
+}

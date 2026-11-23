@@ -530,7 +530,7 @@ func (c *schedCore) memoryRows(p *core.Profile, pl core.Placement, freed map[str
 		e := PlanMemoryNode{ID: pn.ID, Node: nodeLabel(pn.ID, n), Shared: n.SharedMemory, TotalMiB: n.TotalMiB,
 			WeightsMiB: r.Weights, ContextMiB: r.Context, FillReserveMiB: r.Fill, WillTakeMiB: r.Total, Basis: r.Basis,
 			FreeNowMiB: c.freeMiB(pn.ID, n), HeadroomMiB: n.HeadroomMiB, MarginMiB: r.Margin, MarginRule: r.MarginRule,
-			ReservedBy: []PlanReservedBy{}, AvailableMiB: c.liveBudget(pn.ID, n)}
+			ReservedBy: []PlanReservedBy{}, AvailableMiB: c.liveBudget(pn.ID, n), HostOverheadMiB: r.Host}
 		e.FreeAvgMiB, e.FreeAvgKnown = e.FreeNowMiB, n.FreeAvgKnown
 		if n.FreeAvgKnown {
 			e.FreeAvgMiB = n.FreeAvgMiB

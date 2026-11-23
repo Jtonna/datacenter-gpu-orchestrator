@@ -268,6 +268,7 @@ func (c *schedCore) dryPlan(profile string) (r PlanReport) {
 		}
 		if p != nil {
 			r.Memory = c.planMemory(p, placed, r.Victims) // reserve.go
+			c.planHost(&r, p, placed)                     // hostnode.go
 		}
 	}()
 	if p == nil {

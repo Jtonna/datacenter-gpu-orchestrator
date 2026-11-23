@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 )
 
@@ -126,10 +127,32 @@ func (s *Server) profileEntriesOf(ctx context.Context, cfg *config.Config) []map
 				plan["memory"] = jsonView(rep.Memory)
 			}
 			e["plan"] = plan
+			hostEntry(e, rep, host)
 		}
 		out = append(out, e)
 	}
 	return out
+}
+
+// hostEntry adds where the profile's llama-server runs (phase 6): host
+// "server" or "node"; for a node, host_node (its name), host_overhead_mib
+// and, when it cannot host now, host_problem.
+func hostEntry(e map[string]any, rep scheduler.PlanReport, names map[string]string) {
+	if rep.Host == "" {
+		return
+	}
+	e["host"] = rep.Host
+	if rep.Host != core.HostNode {
+		return
+	}
+	name := names[string(rep.HostNode)]
+	if name == "" {
+		name = string(rep.HostNode)
+	}
+	e["host_node"], e["host_overhead_mib"] = name, rep.HostOverheadMiB
+	if rep.HostProblem != "" {
+		e["host_problem"] = rep.HostProblem
+	}
 }
 
 // reloadEntries is the reload rule of a plan's nodes with their host names
