@@ -97,6 +97,7 @@ type Options struct {
 
 // Server is the http.Handler for the whole API.
 type Server struct {
+	occ *occupiedTotals // occupied.go: /api/system occupied_only
 	// bg is cancelled by Close, which then waits for bgWG: the background
 	// work started outside a request (Warm) that reads the store.
 	bg       context.Context
@@ -158,6 +159,7 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 	s := &Server{cfg: cfg, sched: sched, opts: o, log: o.Logger, start: o.Now(), hist: o.History,
 		activity: newActivityLog(200), aliasSeen: map[string]time.Time{}}
 	s.bg, s.bgCancel = context.WithCancel(context.Background())
+	s.occ = startOccupied(o.History)
 	s.store, _ = o.Audit.(*cfgstore.Store)
 	s.agents.store = s.store
 	s.hub = newHub(sched, o.Now)
@@ -200,6 +202,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // and the agents table hold. Nothing of the server uses the store after it
 // returns, so the caller may close the database then.
 func (s *Server) Close() {
+	s.occ.cancel()
 	s.bgCancel()
 	s.bgWG.Wait()
 	s.stopCatalog()

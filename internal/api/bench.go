@@ -756,6 +756,9 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 		unknown := sv.UnknownFields()
 		out["stored_config"] = map[string]any{"unknown_fields": nonNil(unknown), "writes_need_force": len(unknown) > 0}
 	}
+	// how often a request's only option was a console another instance
+	// held, and how it ended (occupied.go; kept in the history store)
+	out["occupied_only"] = s.occ.view()
 	if s.sched != nil {
 		out["read_panics"] = s.sched.ReadPanics() // read-only queries that panicked and were recovered; 0 when all is well
 	}

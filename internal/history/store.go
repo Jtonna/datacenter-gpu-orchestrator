@@ -844,3 +844,14 @@ func (s *Store) Subscribe(fn func(Event)) (cancel func()) {
 		delete(s.subs, id)
 	}
 }
+
+// ScanType calls fn, oldest first, for every kept event of type typ: the
+// files, then the in-memory window. Used to rebuild totals from history at
+// start (api occupied_only).
+func (s *Store) ScanType(typ string, fn func(Event)) {
+	s.scanRange(0, math.MaxInt64, func(e *Event) {
+		if e.Type == typ {
+			fn(*e)
+		}
+	})
+}
