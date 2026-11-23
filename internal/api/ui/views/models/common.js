@@ -231,10 +231,10 @@ export function planCell(p, st) {
   // Whether a reload of the model can come from the nodes' file cache.
   const reload = reloadLine(plan.reload_from_cache, r => r.node || nodeName(st, r.id));
   switch (plan.action) {
-    case 'start': return h('span', h('span.ok-t', { style: 'font-weight:700' }, 'Yes'), nodes ? [h('span.mut', ' · on '), nodes] : null, plan.warning ? h('span.sub.warn-t', plan.warning) : null, reload);
+    case 'start': return h('span', h('span.ok-t', { style: 'font-weight:700' }, 'Yes'), nodes ? [h('span.mut', ' · on '), nodes] : null, plan.tight_fit ? [' ', badge('Tight fit', 'n', plan.reason)] : null, plan.warning ? h('span.sub.warn-t', plan.warning) : null, reload);
     case 'serve': return h('span', h('span.ok-t', { style: 'font-weight:700' }, 'Loaded now'), reload);
     case 'wait': return h('span.warn-t', { style: 'font-weight:700' }, 'Loading now');
-    case 'evict': return h('span', h('span', { style: 'font-weight:700' }, 'Yes, after making room'), nodes ? [h('span.mut', ' · on '), nodes] : null, reload);
+    case 'evict': return h('span', h('span', { style: 'font-weight:700' }, 'Yes, after making room'), nodes ? [h('span.mut', ' · on '), nodes] : null, plan.tight_fit ? [' ', badge('Tight fit', 'n', plan.reason)] : null, reload);
     case 'queue': return h('span', { title: raw }, h('span', { style: 'font-weight:700' }, 'Would wait'), h('span.sub', plainReason(plan.reason)));
     case 'backoff': return h('span', { title: raw }, h('span.err-t', { style: 'font-weight:700' }, 'Held back'), h('span.sub', 'Its last load failed'));
     case 'reject': return h('span', { title: raw }, h('span', { style: 'font-weight:700' }, 'No'), h('span.sub', plainReason(plan.reason)));
