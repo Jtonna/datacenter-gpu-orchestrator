@@ -2,6 +2,35 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## 0.1.9
+
+### What is new
+
+- **A console as host.** A profile with `host: node` runs its `llama-server` on the first of its `force_nodes`, started by that node's agent (agent contract 6.15), instead of on the scheduler's machine. Potluck never picks a console host by itself: only a profile asks for it, and it must force its nodes. The other forced nodes are its workers, as before. Requests go to the host node's port 50061 with a key made for that launch; the port is open only while the launch exists, and every route but `/health` refuses a request without the key.
+- **The host's memory is counted.** The host node's reservation carries `host_overhead_mib` (default 1024) on top of its device share, and learned needs of node-hosted loads are kept under a shape of their own, never mixed with loads hosted on the scheduler's machine.
+- **The plan says where it runs.** `POST /api/plan` and `GET /api/profiles` have `host` (`server` or `node`); for a node, `host_node`, `host_overhead_mib` and, when it cannot host now, `host_problem`. The host node's row in the plan's memory section has `host_overhead_mib`.
+- **`host_no_mmap`** (default off): the host reads the model with `--no-mmap`, so its read progress counts. Leave it off until measured.
+- **Agent: `--advertise-addr`** for a Docker agent behind NAT, and a WARN for an `--allow-from` that covers every address.
+- **Agent: an Nvidia GPU under WSL2 or Docker Desktop** (`/dev/dxg`) is found and reported as `linux-amd64-cuda`.
+
+### What changes without any setting
+
+- Nothing for profiles without `host: node`: they run on the scheduler's machine as before.
+- Every agent must be 0.1.9: 0.1.6 agents are refused with `agent_too_old` and update themselves.
+
+### Known limits
+
+- **No stall detection for a node-hosted load.** The stall rule needs Potluck's own byte count of an upload, and a host on a node is not Potluck's process, so a stuck node-hosted load ends only at its load timeout: the profile's `load_timeout`, else 120 s + 2 x (file size x share / link speed) over every node, the host node included. Set `load_timeout` on a `host: node` profile to bound it.
+- **A console-hosted model is stopped at a scheduler restart**, not kept.
+- **The tensor split is not reduced by the overhead** on the host node; give the host node a smaller split by hand if it is tight.
+
+### What to do at the roll-out
+
+- Make `programs/0.1.9/` on the scheduler's host: `release.json` with `"release": "0.1.9"`, the same `builds` (`llama` must be a fork build whose `llama-server` takes `--api-key-file`) and `platforms` as 0.1.6; `agent/` with the 0.1.9 `potluck-agent-linux-amd64` and its `SHA256SUMS`; the platform folders copied from `programs/0.1.6/` when the llama build did not change (each with its `SHA256SUMS`).
+- Keep `programs/0.1.6/release.json` in place: stored needs measured under it stay trusted only through it.
+- Start the 0.1.9 scheduler. The consoles are refused with `agent_too_old`, download the 0.1.9 agent from the scheduler and come back; a Docker node needs the image `potluck-agent:0.1.9`.
+- Before the first `host: node` load, open the host node's port 50061 to the scheduler's address only; open 50052 between consoles only for a node-hosted load that also uses other consoles as workers.
+
 ## 0.1.8
 
 ### What is new

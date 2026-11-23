@@ -42,8 +42,15 @@ package agentproto
 // /api/needs, POST /api/needs/forget), cold-load benchmarks (POST
 // /api/cache/evict), excluded nodes shown as excluded, and command profiles
 // not shut out by no_auto_nodes. An agent of an older release is refused with
-// agent_too_old and updates as section 5.4 says.
-const Release = "0.1.6"
+// agent_too_old and updates as section 5.4 says. 0.1.7 and 0.1.8 were
+// scheduler images only: they served and required 0.1.6. 0.1.9 adds a
+// console as host (section 6.15: the host_launch capability, host
+// expect_mib, rpc_file_load and api_key, the host's own device first, read
+// progress), --advertise-addr, and the Nvidia GPU under WSL2 / Docker Desktop
+// (/dev/dxg); for Potluck, host: node profiles, host_overhead_mib and
+// host_no_mmap, and learned needs of node-hosted loads under a shape of their
+// own.
+const Release = "0.1.9"
 
 // Ports, all fixed (agent contract section 3).
 const (
