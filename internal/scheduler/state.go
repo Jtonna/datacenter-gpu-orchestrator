@@ -100,7 +100,7 @@ func (p phase) String() string {
 type inst struct {
 	// tight are the nodes of a tight fit (tight.go): the load fits them
 	// without its margin only. Empty for any other load.
-	tight []PlanMemoryNode
+	tight     []PlanMemoryNode
 	iid       uint64
 	prof      *core.Profile
 	state     instState
@@ -161,6 +161,9 @@ type inst struct {
 	// hostTarget is the host launch's memory figures (placement.Host set):
 	// expect_mib and min_mem_available_mib, as for a worker (hostnode.go).
 	hostTarget WorkerTarget
+	// leaseNodes are the placement's machines with their roles, built at the
+	// first admission and shared read-only by every lease (leaseNodesOf).
+	leaseNodes []LeaseNode
 	// gone is closed when the instance is removed: the leases of its
 	// requests end with it (a host on a node that went away leaves no
 	// connection to break).
@@ -217,6 +220,11 @@ type grant struct {
 	Profile string
 	Alias   bool
 	Gone    <-chan struct{} // closed when the instance is removed
+	// Where the request runs, for the request log: the instance, its load
+	// session and its machines with their roles (shared, never modified).
+	Instance uint64
+	Session  string
+	Nodes    []LeaseNode
 }
 
 type answer struct {

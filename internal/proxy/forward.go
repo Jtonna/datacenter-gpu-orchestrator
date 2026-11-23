@@ -39,6 +39,34 @@ type Options struct {
 	// Gone, when it closes, ends the forwarded request: the instance behind
 	// Addr was removed (its node was lost, it exited). Nil never closes.
 	Gone <-chan struct{}
+	// Live, when set, is updated while the response streams (the request
+	// log's live rows): no allocation, no lock, nothing written anywhere.
+	Live *Live
+}
+
+// Live is a forwarded request's progress while it runs. Read it with its
+// methods from any goroutine.
+type Live struct {
+	firstNS atomic.Int64 // first response body bytes, unix ns; 0 before
+	chunks  atomic.Int64 // SSE data events seen (about one per output token)
+}
+
+// FirstByte is when the first bytes of the response body arrived (zero
+// before): for a stream, about the first token.
+func (l *Live) FirstByte() time.Time {
+	if l == nil || l.firstNS.Load() == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, l.firstNS.Load())
+}
+
+// Chunks is the number of SSE data events streamed so far: an estimate of
+// the output tokens while a stream runs (one event is usually one token).
+func (l *Live) Chunks() int64 {
+	if l == nil {
+		return 0
+	}
+	return l.chunks.Load()
 }
 
 // Result describes how one forwarded request ended.
@@ -61,6 +89,32 @@ type Result struct {
 	Err error
 	// Cut is true when Options.Gone ended the request.
 	Cut bool
+	// Timings from the tail (llama-server's "timings"); -1 when absent.
+	// CachedTokens are prompt tokens reused from the prompt cache (cache_n);
+	// PromptMS and PredictedMS are the prefill and decode times, and
+	// PromptPerSecond the prefill rate.
+	CachedTokens          int
+	PromptMS, PredictedMS float64
+	PromptPerSecond       float64
+}
+
+// Reason names how the forwarded request failed, in the request log's words;
+// "" when it did not fail on the proxy's side. A status the upstream sent
+// (4xx, 5xx) is the caller's to read from Status.
+func (r Result) Reason() string {
+	switch {
+	case r.Stalled:
+		return "stall"
+	case r.Cut:
+		return "cut"
+	case r.Err != nil:
+		return "upstream_error"
+	case r.Status == 499:
+		return "client_left"
+	case r.Aborted:
+		return "aborted"
+	}
+	return ""
 }
 
 // transport is shared by every proxied request. No ResponseHeaderTimeout:
@@ -124,7 +178,8 @@ func Forward(w http.ResponseWriter, r *http.Request, o Options) (res Result) {
 			if strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
 				stall = o.StallTimeout
 			}
-			body = &watchBody{rc: resp.Body, tail: tail, stall: stall}
+			body = &watchBody{rc: resp.Body, tail: tail, stall: stall, live: o.Live,
+				sse: strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream")}
 			resp.Body = body
 			return nil
 		},
@@ -154,6 +209,7 @@ func Forward(w http.ResponseWriter, r *http.Request, o Options) (res Result) {
 			}
 		}
 		res.InputTokens, res.OutputTokens, res.TokensPerSecond = extractUsage(tail.bytes())
+		res.CachedTokens, res.PromptMS, res.PredictedMS, res.PromptPerSecond = extractTimings(tail.bytes())
 		res.Stalled = body != nil && body.stalled.Load()
 	}()
 	rp.ServeHTTP(sw, r)
@@ -220,6 +276,8 @@ type watchBody struct {
 	rc    io.ReadCloser
 	tail  *tailBuf
 	stall time.Duration
+	live  *Live // nil: not watched
+	sse   bool  // an event stream: data events are counted in live
 
 	gotFirst bool
 	timer    *time.Timer
@@ -255,8 +313,14 @@ func (b *watchBody) Read(p []byte) (int, error) {
 		b.timer.Stop()
 	}
 	if n > 0 {
+		if !b.gotFirst && b.live != nil {
+			b.live.firstNS.CompareAndSwap(0, time.Now().UnixNano())
+		}
 		b.gotFirst = true
 		b.tail.Write(p[:n])
+		if b.live != nil && b.sse {
+			b.live.chunks.Add(int64(bytes.Count(p[:n], dataPrefix)))
+		}
 	}
 	if b.stalled.Load() && n == 0 {
 		return b.emitStall(p)
@@ -323,6 +387,32 @@ func extractUsage(tail []byte) (in, out int, tps float64) {
 		}
 	}
 	return in, out, tps
+}
+
+// dataPrefix starts an SSE data line (a data line split across two reads is
+// missed: the count is an estimate, replaced by the real figure at the end).
+var dataPrefix = []byte("data: {")
+
+// extractTimings reads llama-server's "timings" object in the tail: prompt
+// tokens reused from the cache (cache_n), prefill and decode times in ms and
+// the prefill rate; -1 for each that is absent.
+func extractTimings(tail []byte) (cached int, promptMS, predictedMS, promptTPS float64) {
+	cached, promptMS, predictedMS, promptTPS = -1, -1, -1, -1
+	t := lastObject(tail, `"timings"`)
+	if t == nil {
+		return
+	}
+	cached = firstInt(t, "cache_n")
+	if v, ok := num(t["prompt_ms"]); ok {
+		promptMS = v
+	}
+	if v, ok := num(t["predicted_ms"]); ok {
+		predictedMS = v
+	}
+	if v, ok := num(t["prompt_per_second"]); ok {
+		promptTPS = v
+	}
+	return
 }
 
 func num(v any) (float64, bool) {

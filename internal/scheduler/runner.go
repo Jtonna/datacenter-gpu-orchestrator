@@ -84,8 +84,8 @@ type Scheduler struct {
 	// never stall).
 	stepMax   atomic.Int64
 	stepMaxEv atomic.Value
-	runDone    chan struct{} // closed when Run has returned
-	snap       atomic.Pointer[snapshot]
+	runDone   chan struct{} // closed when Run has returned
+	snap      atomic.Pointer[snapshot]
 
 	bgCtx    context.Context
 	bgCancel context.CancelFunc
@@ -450,6 +450,13 @@ type Lease struct {
 	// StallTimeout is the profile's stall_timeout for the proxy (8.4): the
 	// longest gap between streamed chunks after the first; 0 disables it.
 	StallTimeout time.Duration
+	// Instance is the instance that serves the request, Session its load
+	// session (the history's session_id) and Nodes its machines with their
+	// roles, as placed when the request was admitted. Nodes is shared: never
+	// modify it.
+	Instance uint64
+	Session  string
+	Nodes    []LeaseNode
 
 	once sync.Once
 	s    *Scheduler
@@ -528,7 +535,8 @@ func (s *Scheduler) lease(a answer) (*Lease, error) {
 	if p := cfg.Profiles[g.Profile]; p != nil {
 		stall = cfg.EffectiveStallTimeout(p)
 	}
-	return &Lease{ID: g.ID, Addr: g.Addr, APIKey: g.APIKey, Gone: g.Gone, Profile: g.Profile, Alias: g.Alias, StallTimeout: stall, s: s}, nil
+	return &Lease{ID: g.ID, Addr: g.Addr, APIKey: g.APIKey, Gone: g.Gone, Profile: g.Profile, Alias: g.Alias, StallTimeout: stall,
+		Instance: g.Instance, Session: g.Session, Nodes: g.Nodes, s: s}, nil
 }
 
 // Load is POST /api/load: a waiter that never disconnects (8.2 step 6).
@@ -880,4 +888,14 @@ func eventName(ev event) string {
 		return "read " + q.read
 	}
 	return fmt.Sprintf("%T", ev)
+}
+
+// StepMaxForTest is the longest time one event took in the core loop since
+// the start or the last reset (tests outside the package: a side store must
+// never make the loop wait).
+func (s *Scheduler) StepMaxForTest(reset bool) time.Duration {
+	if reset {
+		s.stepMax.Store(0)
+	}
+	return time.Duration(s.stepMax.Load())
 }

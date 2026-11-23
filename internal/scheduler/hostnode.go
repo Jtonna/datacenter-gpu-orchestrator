@@ -191,3 +191,39 @@ func (c *schedCore) planHost(r *PlanReport, p *core.Profile, placed *core.Placem
 	}
 	r.HostProblem = c.hostPlacementError(p, pl)
 }
+
+// LeaseNode is one machine of the instance that serves a request, as the
+// request log keeps it.
+type LeaseNode struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`           // hostname when known, else the id
+	Role string `json:"role"`           // host (runs llama-server) or helper (an RPC worker)
+	Addr string `json:"addr,omitempty"` // rpc address; empty for the local node
+}
+
+// Roles of a LeaseNode.
+const (
+	RoleHost   = "host"
+	RoleHelper = "helper"
+)
+
+// leaseNodesOf is in's machines with their roles, built once per instance.
+// The host is the placement's host node; with none (the scheduler's machine
+// hosts), the local node is the host when it is placed, and every other node
+// is a helper.
+func (c *schedCore) leaseNodesOf(in *inst) []LeaseNode {
+	if in.leaseNodes != nil || len(in.placement.Nodes) == 0 {
+		return in.leaseNodes
+	}
+	host := hostOf(in.prof, in.placement)
+	out := make([]LeaseNode, len(in.placement.Nodes))
+	for i, pn := range in.placement.Nodes {
+		role := RoleHelper
+		if pn.ID == host || host == "" && pn.Local {
+			role = RoleHost
+		}
+		out[i] = LeaseNode{ID: string(pn.ID), Name: c.nodeName(pn.ID), Role: role, Addr: pn.Addr}
+	}
+	in.leaseNodes = out
+	return out
+}

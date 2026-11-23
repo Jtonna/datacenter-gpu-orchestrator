@@ -287,7 +287,7 @@ func (c *schedCore) admit(in *inst, w *waiter) {
 	in.served++
 	in.lastUsed = c.now
 	c.answer(w, answer{grant: &grant{ID: id, Addr: instance.AddrOf(in.child), APIKey: instance.APIKeyOf(in.child),
-		Profile: in.prof.Name, Alias: w.alias, Gone: in.gone}})
+		Profile: in.prof.Name, Alias: w.alias, Gone: in.gone, Instance: in.iid, Session: in.sessionID, Nodes: c.leaseNodesOf(in)}})
 	c.emit(FeedAdmitted, in.prof.Name, func(e *FeedEvent) { e.RequestID = id })
 }
 
