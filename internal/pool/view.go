@@ -452,6 +452,15 @@ type NodeFacts struct {
 	UnpausePending bool     `json:"unpause_pending,omitempty"`
 	HostAgent      bool     `json:"host_agent,omitempty"`
 	LastSeenAgoS   *float64 `json:"last_seen_ago_s,omitempty"`
+
+	// LastSeenAt: when Potluck last heard from the agent, for a node that is
+	// not active (lost, left); absent while active. AbsentSinceStart: the
+	// machine is known from an earlier run and its agent has not registered
+	// since this Potluck started (known.go); it is listed as lost once
+	// KnownGrace has passed. Both additive.
+	LastSeenAt       *time.Time `json:"last_seen_at,omitempty"`
+	AbsentSinceStart bool       `json:"absent_since_start,omitempty"`
+
 	// Role and LaunchID are what the agent last reported in its heartbeat.
 	Role     string  `json:"role,omitempty"`
 	LaunchID *string `json:"launch_id"`
@@ -584,6 +593,10 @@ func (p *Pool) Facts() []NodeFacts {
 		}
 		ago := now.Sub(a.lastSeen).Seconds()
 		f.LastSeenAgoS = &ago
+		if f.State != StateActive {
+			seen := a.lastSeen // fixed once the agent is gone; absent while active (it moves with every heartbeat)
+			f.LastSeenAt = &seen
+		}
 		if hb := a.hb; hb != nil {
 			f.ProgramsReady, f.ProgramsError, f.Role, f.LaunchID = hb.ProgramsReady, hb.ProgramsError, hb.Role, hb.LaunchID
 			f.ModelSource, f.Devices = FeedModelSource{hb.ModelSource, a.reg.ModelSource.Target}, hb.Devices
@@ -633,9 +646,16 @@ func (p *Pool) Facts() []NodeFacts {
 		f.Placeable = f.State == StateActive && !f.Paused && !f.UnpausePending && !f.HostAgent && f.Unplaced == ""
 		out = append(out, f)
 	}
+	for _, k := range p.absentKnownLocked(now) {
+		out = append(out, p.knownFactsLocked(cfg, now, k))
+	}
 	for id, adm := range p.admin {
 		if _, ok := p.agents[id]; !ok && adm.Removed {
-			out = append(out, NodeFacts{ID: id, Name: id, State: StateRemoved, Capabilities: []string{}})
+			name := id
+			if k, ok := p.known[id]; ok {
+				name = k.Name
+			}
+			out = append(out, NodeFacts{ID: id, Name: name, State: StateRemoved, Capabilities: []string{}})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
