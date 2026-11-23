@@ -1,0 +1,95 @@
+{
+  "_comment": "Placeholder fake console agents for potluck-fake-agents (locally administered MACs). Addresses default to --addr-base (127.0.0.2, then .3 ...); a node may set \"addr\" instead, e.g. 192.0.2.11.",
+  "nodes": [
+    {
+      "id": "02:00:00:00:00:01",
+      "name": "ps5-a",
+      "mem_total_mib": 16000,
+      "mem_available_mib": 14200,
+      "devices": [
+        {
+          "name": "Vulkan0",
+          "backend": "vulkan",
+          "total_mib": 14336,
+          "free_mib": 14200,
+          "shares_system_memory": true
+        }
+      ]
+    },
+    {
+      "id": "02:00:00:00:00:02",
+      "name": "ps5-b",
+      "mem_total_mib": 16000,
+      "mem_available_mib": 14200,
+      "devices": [
+        {
+          "name": "Vulkan0",
+          "backend": "vulkan",
+          "total_mib": 14336,
+          "free_mib": 14200,
+          "shares_system_memory": true
+        }
+      ]
+    },
+    {
+      "id": "02:00:00:00:00:03",
+      "name": "ps5-c",
+      "mem_total_mib": 16000,
+      "mem_available_mib": 14200,
+      "devices": [
+        {
+          "name": "Vulkan0",
+          "backend": "vulkan",
+          "total_mib": 14336,
+          "free_mib": 14200,
+          "shares_system_memory": true
+        }
+      ]
+    },
+    {
+      "id": "02:00:00:00:00:04",
+      "name": "ps5-d",
+      "mem_total_mib": 16000,
+      "mem_available_mib": 14200,
+      "devices": [
+        {
+          "name": "Vulkan0",
+          "backend": "vulkan",
+          "total_mib": 14336,
+          "free_mib": 14200,
+          "shares_system_memory": true
+        }
+      ]
+    },
+    {
+      "id": "02:00:00:00:00:05",
+      "name": "ps5-e",
+      "mem_total_mib": 16000,
+      "mem_available_mib": 14200,
+      "devices": [
+        {
+          "name": "Vulkan0",
+          "backend": "vulkan",
+          "total_mib": 14336,
+          "free_mib": 14200,
+          "shares_system_memory": true
+        }
+      ]
+    },
+    {
+      "id": "02:00:00:00:00:06",
+      "name": "ps5-f",
+      "mem_total_mib": 16000,
+      "mem_available_mib": 14200,
+      "devices": [
+        {
+          "name": "Vulkan0",
+          "backend": "vulkan",
+          "total_mib": 14336,
+          "free_mib": 14200,
+          "shares_system_memory": true
+        }
+      ]
+    }
+  ]
+}
