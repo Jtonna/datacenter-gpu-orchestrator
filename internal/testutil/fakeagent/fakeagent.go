@@ -40,7 +40,9 @@ type Agent struct {
 	GPUs       []agentproto.GPU
 	Devices    []agentproto.Device
 	MemAvail   int64
-	Foreign    []agentproto.ForeignProcess
+	// MemTotalMiB is the registration's mem_total_mib; 0 sends 16000.
+	MemTotalMiB int64
+	Foreign     []agentproto.ForeignProcess
 	// RegLaunchID is sent as the registration's launch_id (a launch the node
 	// still runs from before).
 	RegLaunchID *string
@@ -106,6 +108,13 @@ func (s *syncBuf) Bytes() []byte {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]byte(nil), s.b.Bytes()...)
+}
+
+func (a *Agent) memTotal() int64 {
+	if a.MemTotalMiB > 0 {
+		return a.MemTotalMiB
+	}
+	return 16000
 }
 
 // Start serves the agent API and starts registering and heartbeating.
@@ -278,7 +287,7 @@ func (a *Agent) register(ctx context.Context) bool {
 	}
 	req := agentproto.RegisterRequest{ID: a.ID, Name: a.Name, AgentRelease: a.Release, AgentStartID: a.StartID,
 		OS: "linux", Arch: "amd64", Install: a.Install, Addr: a.Addr, GPUs: a.GPUs, Backends: a.Backends,
-		MemTotalMiB: 16000, ModelSource: agentproto.ModelSource{Kind: agentproto.ModelSourceShare, Target: "192.0.2.1:/"},
+		MemTotalMiB: a.memTotal(), ModelSource: agentproto.ModelSource{Kind: agentproto.ModelSourceShare, Target: "192.0.2.1:/"},
 		LaunchID: lid, ForeignProcesses: a.Foreign, WatchdogFloorMiB: a.WatchdogFloorMiB, Capabilities: a.Capabilities}
 	a.mu.Unlock()
 	req.FillEmpty()
