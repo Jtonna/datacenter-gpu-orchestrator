@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/usage"
 )
 
@@ -412,5 +413,64 @@ func TestRequests_MonitoringPollsCostNoRecorderWork(t *testing.T) {
 	}
 	if n := len(listRequests(t, e, "?limit=500").Requests); n != 1 {
 		t.Fatalf("%d rows", n)
+	}
+}
+
+// The stored row keeps the machines as the lease gives them, host first,
+// each with its share, in the three shapes: hosted on the scheduler's
+// machine with helpers (that machine first, no share); a console alone
+// (share 1); a console host with helpers (shares add up to 1).
+func TestRequests_StoredRowNodesHostFirstWithShares(t *testing.T) {
+	e, st := usageEnv(t, chatOK, nil)
+	shapes := []struct {
+		name  string
+		nodes []scheduler.LeaseNode
+		json  string
+	}{
+		{"server host and helpers", []scheduler.LeaseNode{{ID: "host-1", Name: "scheduler-host", Role: "host"},
+			{ID: "a", Name: "zone-a", Role: "helper", Share: .6}, {ID: "b", Name: "zone-b", Role: "helper", Share: .4}},
+			`[{"id":"host-1","name":"scheduler-host","role":"host"},{"id":"a","name":"zone-a","role":"helper","share":0.6},{"id":"b","name":"zone-b","role":"helper","share":0.4}]`},
+		{"console alone", []scheduler.LeaseNode{{ID: "a", Name: "zone-a", Role: "host", Share: 1}},
+			`[{"id":"a","name":"zone-a","role":"host","share":1}]`},
+		{"console host and helpers", []scheduler.LeaseNode{{ID: "a", Name: "zone-a", Role: "host", Share: .5},
+			{ID: "b", Name: "zone-b", Role: "helper", Share: .3}, {ID: "c", Name: "zone-c", Role: "helper", Share: .2}},
+			`[{"id":"a","name":"zone-a","role":"host","share":0.5},{"id":"b","name":"zone-b","role":"helper","share":0.3},{"id":"c","name":"zone-c","role":"helper","share":0.2}]`},
+	}
+	for _, s := range shapes {
+		tr := e.api.reqs.Queued(usage.Begin{Kind: usage.KindV1, Path: "/v1/chat/completions", Profile: s.name, Requested: s.name})
+		tr.Started(leasePlacement(&scheduler.Lease{Nodes: s.nodes}), nil)
+		tr.Ended(usage.End{Status: usage.StatusDone, TokensIn: -1, Reused: -1, TokensOut: -1, PrefillTPS: -1, DecodeTPS: -1})
+	}
+	flushT(t, st)
+	var page struct {
+		Requests []struct {
+			Profile  string          `json:"profile"`
+			HostNode string          `json:"host_node"`
+			Nodes    json.RawMessage `json:"nodes"`
+		} `json:"requests"`
+	}
+	resp := e.get("/api/requests?limit=10")
+	if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	got := map[string]string{}
+	host := map[string]string{}
+	for _, r := range page.Requests {
+		got[r.Profile], host[r.Profile] = string(r.Nodes), r.HostNode
+	}
+	for _, s := range shapes {
+		if got[s.name] != s.json {
+			t.Errorf("%s: nodes %s, want %s", s.name, got[s.name], s.json)
+		}
+		if host[s.name] != s.nodes[0].ID {
+			t.Errorf("%s: host_node %q", s.name, host[s.name])
+		}
+	}
+	// And straight from the file, not the in-memory ring.
+	var stored string
+	st.DB().QueryRow(`SELECT nodes FROM client_requests WHERE profile = ?`, "console host and helpers").Scan(&stored)
+	if !strings.Contains(stored, `"share":0.5`) || strings.Index(stored, `"a"`) > strings.Index(stored, `"b"`) {
+		t.Fatalf("stored %s", stored)
 	}
 }

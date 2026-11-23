@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"math"
 	"testing"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
@@ -78,6 +79,13 @@ func TestLease_HostFirstWithSharesInTheThreeShapes(t *testing.T) {
 		if len(got) != len(w) || len(st) != len(w)-skip {
 			t.Fatalf("%s: lease %+v status %+v", name, got, st)
 		}
+		sum := 0.0
+		for _, g := range got {
+			sum += g.Share
+		}
+		if math.Abs(sum-1) > 1e-9 {
+			t.Fatalf("%s: shares add up to %v", name, sum)
+		}
 		for i := range w {
 			g := got[i]
 			placed := i >= skip
@@ -103,6 +111,13 @@ func TestLease_HostFirstWithSharesInTheThreeShapes(t *testing.T) {
 	g := h.ready("m")
 	check("server host", g.Nodes, instOf(t, h.c.statusDoc(), "m").Nodes,
 		[]want{{"host-1", RoleHost, 0}, {"a", RoleHelper, .6}, {"b", RoleHelper, .4}})
+
+	// (1b) The scheduler's machine hosts; one console holds every layer.
+	h = newHarness(t).nodes(ps5("a", 2, 15000))
+	h.llama("m", 8000)
+	g = h.ready("m")
+	check("server host, one helper", g.Nodes, instOf(t, h.c.statusDoc(), "m").Nodes,
+		[]want{{"host-1", RoleHost, 0}, {"a", RoleHelper, 1}})
 
 	// (2) A console hosts alone.
 	h = hostHarnessWith(t, []string{"a"}, nil)
