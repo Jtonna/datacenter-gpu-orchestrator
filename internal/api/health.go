@@ -67,13 +67,18 @@ type HealthRow struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
 	State string `json:"state"`
-	// Text is the sentence the row shows; Count the figure the row is about
-	// (zones down, runs failed, issues, keys active, percent used of the
-	// fullest disk, requests waiting).
+	// Text is the sentence the row shows. Count is the number of issues the
+	// row reports, 0 when it is ok or unknown (zones down, runs failed,
+	// scheduler issues, storage folders or disks in trouble, requests waiting
+	// past the threshold); the row's other figures are in Facts.
 	Text  string         `json:"text"`
 	Count int64          `json:"count"`
 	Link  string         `json:"link"`
 	Facts map[string]any `json:"facts"`
+
+	// sigText is Text without the parts that move by themselves (the
+	// Scheduler row's uptime), for the push's comparison; empty: Text.
+	sigText string
 }
 
 // HealthEvent is one line of "Last 2 hours".
@@ -107,12 +112,19 @@ type HealthSummary struct {
 
 // healthState is the server's part: the last good status and the push.
 type healthState struct {
-	last    atomic.Pointer[scheduler.Status]
-	lastAt  atomic.Int64 // unix ms of last
+	last   atomic.Pointer[scheduler.Status]
+	lastAt atomic.Int64 // unix ms of last
+	runs   runsCache
+	every  time.Duration
+	// wake starts an evaluation now (a client subscribed); evals counts
+	// the evaluations of the push.
+	wake  chan struct{}
+	evals atomic.Int64
+	// mu guards what one evaluation of the push owns: the signature of
+	// the last frame sent and the clients waiting for their first frame.
 	mu      sync.Mutex
 	lastSig string
-	runs    runsCache
-	every   time.Duration
+	pending []*wsClient
 }
 
 type runsCache struct {
@@ -134,50 +146,107 @@ func (s *Server) startHealth() {
 	s.bgWG.Add(1)
 	s.disks.Start(s.bg, s.bgWG.Done)
 	s.health.every = orDur(s.opts.healthEvery, 2*time.Second)
+	s.health.wake = make(chan struct{}, 1)
 	s.bgWG.Add(1)
+	// While no client wants the topic the task waits for a subscribe and
+	// does nothing else (no timer, no evaluation); while one does, it
+	// evaluates every 2 s.
 	supervise.Go(s.bg, supervise.Spec{Name: "api.health", Policy: supervise.Restart, Done: s.bgWG.Done,
-		Rebuild: func(any) { s.health.setSig("") }}, func(ctx context.Context) {
-		t := time.NewTicker(s.health.every)
-		defer t.Stop()
+		Rebuild: func(any) { s.health.reset() }}, func(ctx context.Context) {
 		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-			}
 			if s.ws.wantsAny(TopicHealth) {
-				s.pushHealth(ctx)
+				t := time.NewTimer(s.health.every)
+				select {
+				case <-ctx.Done():
+					t.Stop()
+					return
+				case <-t.C:
+				case <-s.health.wake:
+					t.Stop()
+				}
+			} else {
+				select {
+				case <-ctx.Done():
+					return
+				case <-s.health.wake:
+				}
 			}
+			s.healthTick(ctx)
 		}
 	})
 }
 
-func (h *healthState) setSig(v string) {
+func (h *healthState) reset() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.lastSig = v
+	h.lastSig, h.pending = "", nil
 }
 
-// pushHealth sends the summary to the topic's clients when it changed
-// (updated_at aside).
-func (s *Server) pushHealth(ctx context.Context) {
-	sum := s.healthSummary(ctx)
-	cp := sum
-	cp.UpdatedAt = ""
-	b, _ := json.Marshal(cp)
-	sig := string(b)
-	changed := func() bool {
+// healthSubscribe is a client subscribing to the topic: it gets the summary
+// from the next evaluation, which starts now.
+func (s *Server) healthSubscribe(c *wsClient) {
+	func() {
 		s.health.mu.Lock()
 		defer s.health.mu.Unlock()
-		if sig == s.health.lastSig {
-			return false
-		}
-		s.health.lastSig = sig
-		return true
+		s.health.pending = append(s.health.pending, c)
 	}()
-	if changed {
-		s.ws.broadcast(TopicHealth, wsFrame(TopicHealth, s.opts.Now(), sum))
+	select {
+	case s.health.wake <- struct{}{}:
+	default:
 	}
+}
+
+// healthTick is one evaluation of the push: every subscriber gets a frame
+// when what a person reads changed (healthSig), a client that just
+// subscribed gets one in any case, nobody else does.
+func (s *Server) healthTick(ctx context.Context) {
+	s.health.mu.Lock()
+	defer s.health.mu.Unlock()
+	pending := s.health.pending
+	s.health.pending = nil
+	if len(pending) == 0 && !s.ws.wantsAny(TopicHealth) {
+		return
+	}
+	s.health.evals.Add(1)
+	sum := s.healthSummary(ctx)
+	frame := wsFrame(TopicHealth, s.opts.Now(), sum)
+	if sig := healthSig(sum); sig != s.health.lastSig {
+		s.health.lastSig = sig
+		s.ws.broadcast(TopicHealth, frame)
+		return
+	}
+	for _, c := range pending {
+		if c.wants(TopicHealth) {
+			s.ws.enqueue(c, frame)
+		}
+	}
+}
+
+// healthSig is what a person reads in the summary: the heart, each row's
+// state, sentence, count and link, and the recent lines. Facts that move by
+// themselves (uptime_s, loop steps, checked_at, free bytes, updated_at) and
+// the uptime at the end of the Scheduler sentence are left out; they reach a
+// client with the next frame that is sent.
+func healthSig(sum HealthSummary) string {
+	type row struct {
+		ID, State, Text, Link string
+		Count                 int64
+	}
+	v := struct {
+		State, Color, Sentence string
+		Issues                 int
+		Rows                   []row
+		Recent                 []HealthEvent
+	}{State: sum.State, Color: sum.Color, Sentence: sum.Sentence, Issues: sum.Issues, Recent: sum.Recent}
+	for _, r := range sum.Rows {
+		text := r.Text
+		if r.sigText != "" {
+			text = r.sigText
+		}
+		v.Rows = append(v.Rows, row{r.ID, r.State, text, r.Link, r.Count})
+	}
+	b, _ := json.Marshal(v)
+	return string(b)
 }
 
 // healthStatus is the scheduler's status, or the last good one (fresh
@@ -363,7 +432,7 @@ func judgeZones(st *scheduler.Status, facts []pool.NodeFacts, fresh bool, at tim
 	var total, lost, setAside, off int64
 	downNames := []string{}
 	for _, smp := range availability.Classify(st, facts) {
-		if removed[smp.Node] {
+		if smp.Removed || removed[smp.Node] {
 			continue
 		}
 		total++
@@ -407,7 +476,6 @@ func judgeRuns(in runsIn) HealthRow {
 			"failed_bench_runs": in.benchFailed, "bench_runs": nonNil(in.benchFailedIDs), "more": in.capped}}
 	if !in.logOn {
 		row.State, row.Text = HealthUnknown, "Request log is off"
-		row.Count = in.benchFailed
 		return row
 	}
 	n := in.failed + in.benchFailed
@@ -482,16 +550,19 @@ func judgeScheduler(in schedIn) HealthRow {
 	if in.writesNeedForce {
 		warnings = append(warnings, "Stored settings from a newer release")
 	}
-	up := "up " + upText(in.uptime)
 	row.Count = int64(len(problems) + len(warnings))
 	switch {
 	case len(problems) > 0:
-		row.State, row.Text = HealthProblem, strings.Join(append(problems, warnings...), " · ")+" · "+up
+		row.State, row.sigText = HealthProblem, strings.Join(append(problems, warnings...), " · ")
 	case len(warnings) > 0:
-		row.State, row.Text = HealthAttention, strings.Join(warnings, " · ")+" · "+up
+		row.State, row.sigText = HealthAttention, strings.Join(warnings, " · ")
 	default:
-		row.State, row.Text = HealthOK, "Running · release "+orText(in.version, "unknown")+" · "+up
+		row.State, row.sigText = HealthOK, "Running · release "+orText(in.version, "unknown")
 	}
+	// The sentence ends with the uptime, as the mockup shows it; the push
+	// compares the sentence without it (sigText), so the uptime alone never
+	// sends a frame (it is also facts.uptime_s).
+	row.Text = row.sigText + " · up " + upText(in.uptime)
 	return row
 }
 
@@ -499,7 +570,6 @@ func judgeScheduler(in schedIn) HealthRow {
 // answers; the row says how many agent keys are active (not revoked).
 func judgeMCP(keys int, known bool) HealthRow {
 	row := HealthRow{ID: "mcp", Label: "MCP server", Link: "#/mcp", State: HealthOK, Facts: map[string]any{"keys_active": keys, "keys_known": known}}
-	row.Count = int64(keys)
 	if !known {
 		row.Text = "Running"
 		return row
@@ -535,9 +605,11 @@ func judgeStorage(folders []diskstat.Entry, budget int64) HealthRow {
 		case diskstat.StateTimeout:
 			worse(HealthAttention)
 			notes = append(notes, titleCase(f.Name)+" folder not answering")
+			row.Count++
 		case diskstat.StateError:
 			worse(HealthAttention)
 			notes = append(notes, titleCase(f.Name)+" folder unreadable")
+			row.Count++
 		case diskstat.StateUnknown:
 			unsupported++
 		}
@@ -547,8 +619,10 @@ func judgeStorage(folders []diskstat.Entry, budget int64) HealthRow {
 		switch {
 		case f.UsedPercent >= diskProblemPct || f.FreeBytes < diskProblemFree:
 			worse(HealthProblem)
+			row.Count++
 		case f.UsedPercent >= diskAttentionPct || f.FreeBytes < diskAttentionFree:
 			worse(HealthAttention)
+			row.Count++
 		}
 		if fullest == nil || f.UsedPercent > fullest.UsedPercent {
 			fullest = f
@@ -572,8 +646,7 @@ func judgeStorage(folders []diskstat.Entry, budget int64) HealthRow {
 		}
 		return row
 	}
-	row.Count = int64(math.Round(fullest.UsedPercent))
-	row.Facts["fullest"] = fullest.Name
+	row.Facts["fullest"], row.Facts["used_percent"] = fullest.Name, fullest.UsedPercent
 	text := fmt.Sprintf("%s of %s GB used", gbText(fullest.UsedBytes), gbText(fullest.TotalBytes))
 	if fullest.FreeBytes < diskAttentionFree {
 		text += " · " + gbText(fullest.FreeBytes) + " GB free"
@@ -588,9 +661,11 @@ func judgeStorage(folders []diskstat.Entry, budget int64) HealthRow {
 			case pct > 100:
 				worse(HealthProblem)
 				text = bt + " · " + text
+				row.Count++
 			case pct >= budgetAttentionPct:
 				worse(HealthAttention)
 				text = bt + " · " + text
+				row.Count++
 			}
 		}
 	}
@@ -618,13 +693,14 @@ func judgeQueue(st *scheduler.Status, timeout time.Duration) HealthRow {
 			longest = e.Age
 		}
 	}
-	row.Count = waiting
 	row.Facts["waiting"], row.Facts["entries"], row.Facts["longest_s"] = waiting, len(st.Queue), int64(longest/time.Second)
 	if waiting == 0 {
 		row.State, row.Text = HealthOK, "Nothing waiting"
 		return row
 	}
-	row.Text = fmt.Sprintf("%d waiting · longest %s", waiting, spanText(longest))
+	// "longest" grows by itself: the push compares the count and the state
+	row.sigText = fmt.Sprintf("%d waiting", waiting)
+	row.Text = row.sigText + " · longest " + spanText(longest)
 	switch {
 	case timeout > 0 && longest*10 >= timeout*9:
 		row.State = HealthProblem
@@ -632,6 +708,9 @@ func judgeQueue(st *scheduler.Status, timeout time.Duration) HealthRow {
 		row.State = HealthAttention
 	default:
 		row.State = HealthOK
+	}
+	if row.State != HealthOK {
+		row.Count = waiting
 	}
 	return row
 }
@@ -769,7 +848,8 @@ func spanText(d time.Duration) string {
 	return fmt.Sprintf("%d h %d min", int(d.Hours()), int(d.Minutes())%60)
 }
 
-// upText is an uptime: "12 d", "5 h", "3 min", "40 s".
+// upText is an uptime as the mockup writes it: "12 d", "5 h", "3 min", and
+// "under 1 min" (no seconds, so the sentence changes once a minute at most).
 func upText(d time.Duration) string {
 	switch {
 	case d >= 24*time.Hour:
@@ -779,7 +859,7 @@ func upText(d time.Duration) string {
 	case d >= time.Minute:
 		return fmt.Sprintf("%d min", int(d.Minutes()))
 	}
-	return fmt.Sprintf("%d s", int(d.Seconds()))
+	return "under 1 min"
 }
 
 // withModelsDisk puts "disk" (the models folder's disk from the one reader,

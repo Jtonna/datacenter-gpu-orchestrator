@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -72,7 +73,7 @@ func TestHealth_RunsRow(t *testing.T) {
 		text  string
 		count int64
 	}{
-		{"request log off", runsIn{benchFailed: 1}, HealthUnknown, "Request log is off", 1},
+		{"request log off", runsIn{benchFailed: 1}, HealthUnknown, "Request log is off", 0},
 		{"none", runsIn{logOn: true, total: 40}, HealthOK, "None failed in the last hour", 0},
 		{"one request", runsIn{logOn: true, failed: 1, total: 40}, HealthAttention, "1 failed in the last hour", 1},
 		{"one benchmark run", runsIn{logOn: true, benchFailed: 1}, HealthAttention, "1 failed in the last hour", 1},
@@ -126,7 +127,7 @@ func TestHealth_SchedulerRow(t *testing.T) {
 }
 
 func TestHealth_MCPRow(t *testing.T) {
-	if r := judgeMCP(3, true); r.State != HealthOK || r.Text != "Running · 3 keys active" || r.Count != 3 {
+	if r := judgeMCP(3, true); r.State != HealthOK || r.Text != "Running · 3 keys active" || r.Count != 0 || r.Facts["keys_active"] != 3 {
 		t.Fatalf("%+v", r)
 	}
 	if r := judgeMCP(1, true); r.Text != "Running · 1 key active" {
@@ -165,29 +166,34 @@ func TestHealth_StorageRow(t *testing.T) {
 		budget  int64
 		state   string
 		text    string
+		count   int64
 	}{
-		{"nothing to watch", nil, 0, HealthUnknown, "No folders to watch"},
-		{"not read yet", []diskstat.Entry{disk("data", 0, 0, diskstat.StateWaiting)}, 0, HealthUnknown, "Disk figures not read yet"},
-		{"platform", []diskstat.Entry{disk("data", 0, 0, diskstat.StateUnknown)}, 0, HealthUnknown, "Disk figures not read on this platform"},
-		{"the mockup", []diskstat.Entry{disk("data", 240*gb, 50_300_000_000, diskstat.StateOK)}, 0, HealthOK, "50.3 of 240 GB used"},
-		{"fullest shown", []diskstat.Entry{disk("data", 240*gb, 50*gb, diskstat.StateOK), disk("models", 1000*gb, 800*gb, diskstat.StateOK)}, 0, HealthOK, "800 of 1000 GB used"},
-		{"90 percent", []diskstat.Entry{disk("data", 1000*gb, 900*gb, diskstat.StateOK)}, 0, HealthAttention, "900 of 1000 GB used"},
-		{"under 10 GB free", []diskstat.Entry{disk("data", 60*gb, 51*gb, diskstat.StateOK)}, 0, HealthAttention, "51.0 of 60.0 GB used · 9.0 GB free"},
-		{"97 percent", []diskstat.Entry{disk("data", 1000*gb, 970*gb, diskstat.StateOK)}, 0, HealthProblem, "970 of 1000 GB used"},
-		{"under 2 GB free", []diskstat.Entry{disk("data", 20*gb, 18_500_000_000, diskstat.StateOK)}, 0, HealthProblem, "18.5 of 20.0 GB used · 1.5 GB free"},
+		{"nothing to watch", nil, 0, HealthUnknown, "No folders to watch", 0},
+		{"not read yet", []diskstat.Entry{disk("data", 0, 0, diskstat.StateWaiting)}, 0, HealthUnknown, "Disk figures not read yet", 0},
+		{"platform", []diskstat.Entry{disk("data", 0, 0, diskstat.StateUnknown)}, 0, HealthUnknown, "Disk figures not read on this platform", 0},
+		{"the mockup", []diskstat.Entry{disk("data", 240*gb, 50_300_000_000, diskstat.StateOK)}, 0, HealthOK, "50.3 of 240 GB used", 0},
+		{"fullest shown", []diskstat.Entry{disk("data", 240*gb, 50*gb, diskstat.StateOK), disk("models", 1000*gb, 800*gb, diskstat.StateOK)}, 0, HealthOK, "800 of 1000 GB used", 0},
+		{"90 percent", []diskstat.Entry{disk("data", 1000*gb, 900*gb, diskstat.StateOK)}, 0, HealthAttention, "900 of 1000 GB used", 1},
+		{"under 10 GB free", []diskstat.Entry{disk("data", 60*gb, 51*gb, diskstat.StateOK)}, 0, HealthAttention, "51.0 of 60.0 GB used · 9.0 GB free", 1},
+		{"97 percent", []diskstat.Entry{disk("data", 1000*gb, 970*gb, diskstat.StateOK)}, 0, HealthProblem, "970 of 1000 GB used", 1},
+		{"under 2 GB free", []diskstat.Entry{disk("data", 20*gb, 18_500_000_000, diskstat.StateOK)}, 0, HealthProblem, "18.5 of 20.0 GB used · 1.5 GB free", 1},
 		{"a hung share keeps its figures", []diskstat.Entry{disk("data", 240*gb, 50*gb, diskstat.StateOK), disk("models", 500*gb, 100*gb, diskstat.StateTimeout)}, 0,
-			HealthAttention, "Models folder not answering · 50.0 of 240 GB used"},
-		{"a hung share never read", []diskstat.Entry{disk("models", 0, 0, diskstat.StateWaiting)}, 0, HealthUnknown, "Disk figures not read yet"},
-		{"unreadable", []diskstat.Entry{disk("logs", 0, 0, diskstat.StateError)}, 0, HealthAttention, "Logs folder unreadable"},
+			HealthAttention, "Models folder not answering · 50.0 of 240 GB used", 1},
+		{"a hung share never read", []diskstat.Entry{disk("models", 0, 0, diskstat.StateWaiting)}, 0, HealthUnknown, "Disk figures not read yet", 0},
+		{"unreadable", []diskstat.Entry{disk("logs", 0, 0, diskstat.StateError)}, 0, HealthAttention, "Logs folder unreadable", 1},
 		// the models folder's files are half of used (readEntry): 200 GB
-		{"budget 90 percent", []diskstat.Entry{disk("models", 1000*gb, 400*gb, diskstat.StateOK)}, 220 * gb, HealthAttention, "models 200 of 220 GB budget · 400 of 1000 GB used"},
-		{"over budget", []diskstat.Entry{disk("models", 1000*gb, 400*gb, diskstat.StateOK)}, 150 * gb, HealthProblem, "models 200 of 150 GB budget · 400 of 1000 GB used"},
-		{"within budget", []diskstat.Entry{disk("models", 1000*gb, 400*gb, diskstat.StateOK)}, 400 * gb, HealthOK, "400 of 1000 GB used"},
+		{"budget 90 percent", []diskstat.Entry{disk("models", 1000*gb, 400*gb, diskstat.StateOK)}, 220 * gb, HealthAttention, "models 200 of 220 GB budget · 400 of 1000 GB used", 1},
+		{"over budget", []diskstat.Entry{disk("models", 1000*gb, 400*gb, diskstat.StateOK)}, 150 * gb, HealthProblem, "models 200 of 150 GB budget · 400 of 1000 GB used", 1},
+		{"within budget", []diskstat.Entry{disk("models", 1000*gb, 400*gb, diskstat.StateOK)}, 400 * gb, HealthOK, "400 of 1000 GB used", 0},
 	} {
 		row := judgeStorage(c.folders, c.budget)
-		if row.State != c.state || row.Text != c.text {
-			t.Errorf("%s: %s %q", c.name, row.State, row.Text)
+		if row.State != c.state || row.Text != c.text || row.Count != c.count {
+			t.Errorf("%s: %s %q count %d", c.name, row.State, row.Text, row.Count)
 		}
+	}
+	// the copy of live: 58 % used is no issue; the percent is in facts
+	if row := judgeStorage([]diskstat.Entry{disk("data", 240*gb, 140*gb, diskstat.StateOK)}, 0); row.State != HealthOK || row.Count != 0 || row.Facts["used_percent"] != 58.3 {
+		t.Fatalf("58 percent used: %s count %d facts %v", row.State, row.Count, row.Facts["used_percent"])
 	}
 	// two folders on one disk count once
 	r := diskstat.New(diskstat.Options{Folders: []diskstat.Folder{{Name: "data", Path: "/a"}, {Name: "history", Path: "/b"}},
@@ -195,7 +201,7 @@ func TestHealth_StorageRow(t *testing.T) {
 			return diskstat.FS{Total: uint64(100 * gb), Used: uint64(95 * gb), Free: uint64(5 * gb), Dev: 7}, nil
 		}})
 	r.Pass(context.Background())
-	if row := judgeStorage(r.Folders(), 0); row.State != HealthAttention || row.Facts["fullest"] != "data" || row.Count != 95 {
+	if row := judgeStorage(r.Folders(), 0); row.State != HealthAttention || row.Facts["fullest"] != "data" || row.Count != 1 || row.Facts["used_percent"] != 95.0 {
 		t.Fatalf("same disk: %+v", row)
 	}
 }
@@ -221,8 +227,12 @@ func TestHealth_QueueRow(t *testing.T) {
 		{"three quarters", q(450 * time.Second), HealthAttention, "1 waiting · longest 7 min 30 s"},
 		{"nine tenths", q(540 * time.Second), HealthProblem, "1 waiting · longest 9 min 0 s"},
 	} {
-		if row := judgeQueue(c.st, timeout); row.State != c.state || row.Text != c.text {
+		row := judgeQueue(c.st, timeout)
+		if row.State != c.state || row.Text != c.text {
 			t.Errorf("%s: %s %q", c.name, row.State, row.Text)
+		}
+		if (row.State == HealthAttention || row.State == HealthProblem) != (row.Count > 0) {
+			t.Errorf("%s: count %d at %s", c.name, row.Count, row.State)
 		}
 	}
 }
@@ -329,6 +339,11 @@ func TestHealth_RouteUsageOffAndHungDisk(t *testing.T) {
 	if r := rows["mcp"]; r.State != HealthOK {
 		t.Errorf("mcp %+v", r)
 	}
+	for _, r := range sum.Rows {
+		if (r.State == HealthAttention || r.State == HealthProblem) != (r.Count > 0) {
+			t.Errorf("%s: count %d at %s", r.ID, r.Count, r.State)
+		}
+	}
 	if sum.State != HealthAttention || sum.Issues != 1 || sum.Color != "amber" || sum.Sentence != "1 thing needs attention" || len(sum.Recent) != 0 {
 		t.Errorf("summary %+v", sum)
 	}
@@ -412,5 +427,226 @@ func TestHealth_RouteRecentRunsAndPush(t *testing.T) {
 		if len(s2.Recent) == 4 && s2.Recent[0].Node == "zone-d" {
 			break
 		}
+	}
+}
+
+// The copy of live: seven active machines, one of them excluded (switched
+// off: reachable, not down), and one removed machine (left out). Set aside
+// (quarantined) is down.
+func TestHealth_ZonesExcludedAndRemoved(t *testing.T) {
+	facts := []pool.NodeFacts{{ID: "r", Name: "zone-removed", State: pool.StateRemoved}}
+	var view []scheduler.NodeStatus
+	for i := 1; i <= 7; i++ {
+		id := "zone-" + string(rune('0'+i))
+		f := pool.NodeFacts{ID: id, Name: id, State: pool.StateActive}
+		f.Excluded = i == 7
+		facts = append(facts, f)
+		view = append(view, viewNode(id, true, false, i == 7))
+	}
+	row := judgeZones(statusOf(view...), facts, true, time.Time{})
+	if row.State != HealthOK || row.Text != "7 of 7 reachable" || row.Count != 0 || row.Facts["off"] != int64(1) || row.Facts["total"] != int64(7) {
+		t.Fatalf("excluded and removed: %+v", row)
+	}
+	view[0] = viewNode("zone-1", true, true, false)
+	row = judgeZones(statusOf(view...), facts, true, time.Time{})
+	if row.State != HealthProblem || row.Text != "6 of 7 reachable · 1 down" || row.Count != 1 || row.Facts["set_aside"] != int64(1) {
+		t.Fatalf("set aside: %+v", row)
+	}
+}
+
+// healthFrames reads the health frames that arrive within d.
+func healthFrames(c *wsc, d time.Duration) []HealthSummary {
+	var out []HealthSummary
+	for _, m := range c.collect(d) {
+		if m.Type == TopicHealth {
+			var s HealthSummary
+			json.Unmarshal(m.Data, &s)
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// pushEnv is an env whose health push runs only when the test calls
+// healthTick (the loop's own period is an hour), with a disk the test moves.
+func pushEnv(t *testing.T) (*env, *atomic.Int64, *history.Store) {
+	used := &atomic.Int64{}
+	used.Store(50 * gb)
+	hist := history.Open(history.Options{Dir: t.TempDir()})
+	t.Cleanup(hist.Close)
+	e := newEnv(t, chatOK, func(o *Options) {
+		o.History = hist
+		o.System.DataDir = "/srv/data"
+		o.diskEvery, o.healthEvery = time.Hour, time.Hour
+		o.diskStat = func(string) (diskstat.FS, error) {
+			u := uint64(used.Load())
+			return diskstat.FS{Total: uint64(240 * gb), Used: u, Free: uint64(240*gb) - u}, nil
+		}
+		o.taskStats = func() []supervise.TaskStats { return nil }
+	})
+	eventually(t, "a disk pass", func() bool { return e.api.disks.Passes() >= 1 })
+	return e, used, hist
+}
+
+// subscribeHealth dials, subscribes to the health topic and takes the
+// subscribe frame.
+func subscribeHealth(t *testing.T, e *env) *wsc {
+	t.Helper()
+	c := dialWS(t, e, nil)
+	c.until(t, TopicHello, 3*time.Second)
+	c.send(t, map[string]any{"type": "subscribe", "topics": []string{TopicHealth}})
+	if f := healthFrames(c, 300*time.Millisecond); len(f) != 1 {
+		t.Fatalf("on subscribe: %d frames", len(f))
+	}
+	return c
+}
+
+// stillMinute evaluates the push every 2 s of clock for 60 s, the disk read
+// every 30 s with its free bytes moving by less than the sentence shows.
+func stillMinute(e *env, used *atomic.Int64) {
+	for i := 1; i <= 30; i++ {
+		e.advance(2 * time.Second)
+		if i%15 == 0 {
+			used.Add(1_000_000)
+			e.api.disks.Pass(context.Background())
+		}
+		e.api.healthTick(context.Background())
+	}
+}
+
+// Bar 1: 0 frames in 60 s idle, the minute in which the uptime goes from
+// "under 1 min" to "1 min" included (the sentence carries it, the frame
+// comparison does not), and none in the next four minutes either.
+func TestHealth_Frames_ZeroIn60sIdle(t *testing.T) {
+	e, used, _ := pushEnv(t)
+	c := subscribeHealth(t, e)
+	e.advance(30 * time.Second)
+	stillMinute(e, used)
+	if f := healthFrames(c, 300*time.Millisecond); len(f) != 0 {
+		t.Fatalf("%d frames in 60 s idle", len(f))
+	}
+	var sum HealthSummary
+	json.Unmarshal([]byte(body(t, e.get("/api/health"))), &sum)
+	if txt := rowOf(sum, "scheduler").Text; !strings.HasSuffix(txt, " · up 1 min") {
+		t.Fatalf("the route's sentence keeps the uptime: %q", txt)
+	}
+	for range 4 {
+		stillMinute(e, used)
+	}
+	if f := healthFrames(c, 300*time.Millisecond); len(f) != 0 {
+		t.Fatalf("%d frames in four more idle minutes", len(f))
+	}
+}
+
+// Bar 2: 0 frames in 60 s with a model loaded and no request.
+func TestHealth_Frames_ZeroIn60sWithModelLoaded(t *testing.T) {
+	e, used, _ := pushEnv(t)
+	if r := e.post("/v1/chat/completions", `{"model":"alpha","messages":[{"role":"user","content":"hi"}]}`); r.StatusCode != 200 {
+		t.Fatalf("load: %d %s", r.StatusCode, body(t, r))
+	} else {
+		r.Body.Close()
+	}
+	eventually(t, "the model loaded", func() bool {
+		st, err := e.sched.Status(context.Background())
+		return err == nil && len(st.Instances) == 1 && st.Instances[0].State == "ready"
+	})
+	c := subscribeHealth(t, e)
+	stillMinute(e, used)
+	if f := healthFrames(c, 300*time.Millisecond); len(f) != 0 {
+		t.Fatalf("%d frames in 60 s with a model loaded", len(f))
+	}
+}
+
+// Bar 3: exactly 1 frame per real change: a row changing state, then two
+// changes seen in one evaluation (a failed benchmark run: the Runs facts
+// and a recent line), each followed by more evaluations. A second client's
+// subscribe sends its frame to that client only.
+func TestHealth_Frames_OnePerRealChange(t *testing.T) {
+	e, used, hist := pushEnv(t)
+	c := subscribeHealth(t, e)
+
+	used.Store(230 * gb)
+	e.api.disks.Pass(context.Background())
+	for range 3 {
+		e.api.healthTick(context.Background())
+	}
+	if f := healthFrames(c, 300*time.Millisecond); len(f) != 1 || rowOf(f[0], "storage").State != HealthAttention {
+		t.Fatalf("a storage change: %d frames", len(f))
+	}
+
+	hist.Record(history.Event{Ts: e.api.opts.Now().UnixMilli(), Type: history.TBenchRunFinished, Severity: history.Error,
+		Nodes: []string{}, Data: map[string]any{"state": "failed", "bench_run": "r-9"}, Summary: "x."})
+	e.advance(11 * time.Second) // past the Runs cache
+	for range 3 {
+		e.api.healthTick(context.Background())
+	}
+	f := healthFrames(c, 300*time.Millisecond)
+	if len(f) != 1 || len(f[0].Recent) != 1 || rowOf(f[0], "runs").Facts["failed_bench_runs"] != 1.0 {
+		t.Fatalf("two changes in one evaluation: %d frames %+v", len(f), f)
+	}
+
+	c2 := dialWS(t, e, nil)
+	c2.until(t, TopicHello, 3*time.Second)
+	c2.send(t, map[string]any{"type": "subscribe", "topics": []string{TopicHealth}})
+	if f := healthFrames(c2, 300*time.Millisecond); len(f) != 1 {
+		t.Fatalf("second subscriber: %d frames", len(f))
+	}
+	if f := healthFrames(c, 100*time.Millisecond); len(f) != 0 {
+		t.Fatalf("the first client got %d frames from the second's subscribe", len(f))
+	}
+}
+
+func rowOf(s HealthSummary, id string) HealthRow {
+	for _, r := range s.Rows {
+		if r.ID == id {
+			return r
+		}
+	}
+	return HealthRow{}
+}
+
+// With no subscriber the summary is never evaluated.
+func TestHealth_NoSubscriberNoWork(t *testing.T) {
+	e := newEnv(t, chatOK, func(o *Options) { o.healthEvery = 5 * time.Millisecond })
+	time.Sleep(100 * time.Millisecond)
+	if n := e.api.health.evals.Load(); n != 0 {
+		t.Fatalf("%d evaluations without a subscriber", n)
+	}
+	c := dialWS(t, e, nil)
+	c.until(t, TopicHello, 3*time.Second)
+	c.send(t, map[string]any{"type": "subscribe", "topics": []string{TopicHealth}})
+	healthFrames(c, 100*time.Millisecond)
+	if e.api.health.evals.Load() == 0 {
+		t.Fatal("no evaluation with a subscriber")
+	}
+	c.send(t, map[string]any{"type": "subscribe", "topics": []string{TopicStatus}})
+	time.Sleep(50 * time.Millisecond)
+	n := e.api.health.evals.Load()
+	time.Sleep(100 * time.Millisecond)
+	if m := e.api.health.evals.Load(); m != n {
+		t.Fatalf("%d evaluations after the client left the topic", m-n)
+	}
+}
+
+// A wait that only grows ("longest 1 min 40 s" to "1 min 42 s") and the
+// uptime alone are not changes for the push; the count waiting is.
+func TestHealth_TickingSentencePartsAreNotChanges(t *testing.T) {
+	q := func(age time.Duration, n int) *scheduler.Status {
+		return &scheduler.Status{Queue: []scheduler.EntryStatus{{Profile: "p", Waiters: n, Age: age}}}
+	}
+	sig := func(r HealthRow) string { return healthSig(HealthSummary{Rows: []HealthRow{r}}) }
+	a, b := judgeQueue(q(100*time.Second, 1), 600*time.Second), judgeQueue(q(102*time.Second, 1), 600*time.Second)
+	if a.Text == b.Text || sig(a) != sig(b) {
+		t.Fatalf("a longer wait: %q / %q", a.Text, b.Text)
+	}
+	if sig(a) == sig(judgeQueue(q(100*time.Second, 2), 600*time.Second)) {
+		t.Fatal("a second waiter is not a change")
+	}
+	in := schedIn{version: "v1", uptime: 59 * time.Second, statusFresh: true, now: time.Unix(1_800_000_000, 0)}
+	x := judgeScheduler(in)
+	in.uptime = 61 * time.Second
+	y := judgeScheduler(in)
+	if x.Text != "Running · release v1 · up under 1 min" || y.Text != "Running · release v1 · up 1 min" || sig(x) != sig(y) {
+		t.Fatalf("uptime: %q / %q", x.Text, y.Text)
 	}
 }
