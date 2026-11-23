@@ -124,14 +124,14 @@ services:
   # The image: build deploy/agent/Dockerfile with the agent binary Potluck serves
   # (GET /api/pool/release, check its sha256), tagged with the release:
   #   docker build -f deploy/agent/Dockerfile --build-arg AGENT_BIN=potluck-agent-linux-amd64 \
-  #     -t potluck-agent:0.1.9 <folder holding the binary>
+  #     -t potluck-agent:0.1.10 <folder holding the binary>
   # It sits on the compose network, NOT on the host network: container-to-container traffic on
   # this network does not pass the host firewall, and it reaches Potluck at its fixed address.
   # The agent takes an IPv4 address and port (not a host name): the scheduler's address on this
   # network and its port inside the container (8080, not the published 3122).
   potluck-agent:
     profiles: [local-agent]
-    image: potluck-agent:0.1.9
+    image: potluck-agent:0.1.10
     container_name: potluck-agent
     # The node's display name: the agent's --name defaults to the hostname, which without
     # this line is the container's random id and changes when the container is re-created

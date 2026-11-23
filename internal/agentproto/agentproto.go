@@ -49,8 +49,12 @@ package agentproto
 // progress), --advertise-addr, and the Nvidia GPU under WSL2 / Docker Desktop
 // (/dev/dxg); for Potluck, host: node profiles, host_overhead_mib and
 // host_no_mmap, and learned needs of node-hosted loads under a shape of their
-// own.
-const Release = "0.1.9"
+// own. 0.1.10 is an agent release on the same llama build: a discrete
+// Nvidia device's free figure from the Nvidia exporter at every heartbeat,
+// the setup script opening 50061, the same-release re-fetch
+// (RegisterAnswer.AgentSHA256), and --log-level debug naming the source of
+// allowed API calls. Release numbers compare by number: 0.1.9 < 0.1.10.
+const Release = "0.1.10"
 
 // Ports, all fixed (agent contract section 3).
 const (

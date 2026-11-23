@@ -35,11 +35,33 @@ The heading takes the release number when it ships.
 - **The host node's own device share** (its `Vulkan0`, ... rows) shows under that node in an instance's `nodes`, like a worker's row; it used to be listed as unmatched. Host-side buffers stay in `host_memory`.
 - **Profile `description`**: optional free text, one line, at most 500 characters. Shown in `/api/config`, `/api/profiles`, `/api/models` and both UIs' profile lists. Changing only the description does not make a loaded model stale.
 
-## Next agent release (after 0.1.9)
+## 0.1.10
+
+An agent release on the same llama build as 0.1.9 (`03c9c28`): the scheduler code changes only to serve it, name its sha256 and refuse older agents.
+
+### What is new
 
 - **A discrete Nvidia GPU's `free_mib` follows the GPU**: taken from the Nvidia exporter at every heartbeat while that source is ok, instead of the `--list-devices` read from before the last launch (the Docker laptop showed 7,679 MiB free throughout).
 - **The setup script opens 50061** (host launches) from Potluck's address with 50060 and 50052; a setup run again keeps an existing 50061 rule.
-- **Same-release re-fetch**: the registration answer names the served agent's `agent_sha256`; a bare or RAM-only agent of the right release with another build fetches it once while idle (the scheduler side of this ships with the next scheduler image and is harmless to 0.1.9 agents, which ignore the field).
+- **Same-release re-fetch**: the registration answer names the served agent's `agent_sha256`; a bare or RAM-only agent of the right release with another build fetches it once per (release, sha256) while it has no launch. A Docker agent ignores it (its binary is the image's). So a rebuilt agent of the same release reaches the consoles without a release bump.
+- **Who calls the agent**: `--log-level debug` (default `info`) names the source address of each allowed API call, once per source per minute. Behind Docker Desktop every caller appears as the gateway.
+
+### What changes without any setting
+
+- Every agent must be 0.1.10: 0.1.9 agents are refused with `agent_too_old` and update themselves; a Docker agent exits (75) and needs the image `potluck-agent:0.1.10`.
+- A 0.1.10 agent that meets a 0.1.9 scheduler is refused with `potluck_too_old` and waits, asking again, until the scheduler serves 0.1.10. Agents never downgrade.
+- Stored memory needs stay trusted: a need is trusted when the llama build it was measured on is the host program's and the served release's build, and 0.1.10 names the same build as 0.1.9.
+
+### What to do at the roll-out
+
+- Make `programs/0.1.10/` on the scheduler's host:
+  - `release.json`: `"release": "0.1.10"`, `builds` and `platforms` exactly as in `programs/0.1.9/release.json` (`builds.llama` stays `03c9c28...`, the full commit as written there).
+  - `agent/`: the 0.1.10 `potluck-agent-linux-amd64`, `potluck-starter.sh` (unchanged, copy it), and `SHA256SUMS` over both.
+  - The platform folders (`linux-amd64-vulkan`, `linux-amd64-cuda`, ...) copied unchanged from `programs/0.1.9/`, each with its `SHA256SUMS` (copied too: the files did not change).
+- Keep `programs/0.1.9/release.json` (and the older ones) in place: only stored needs without a recorded build are matched through their release's `release.json`.
+- Build `potluck-agent:0.1.10` for the Docker laptop (deploy/agent/Dockerfile with the served binary) before the switch.
+- Start the 0.1.10 scheduler. The consoles are refused with `agent_too_old`, download 0.1.10 from the scheduler and come back; on the Docker node run `potluck-agent-setup --docker ...` again (or start the new image).
+- Check: `curl -s $H/api/nodes | jq '.nodes[] | {name, state, release}'` shows 0.1.10 everywhere, and `GET /api/needs` shows the same trusted count as before.
 
 ## 0.1.9
 
