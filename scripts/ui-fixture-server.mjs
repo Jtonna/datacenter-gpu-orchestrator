@@ -89,6 +89,9 @@
 // server's 400 sentence; taken: its 409), DELETE answers it cancelled. The
 // setting default_model_source reads share:192.0.2.10:/models (nosource:
 // empty). The command names Potluck as 192.0.2.1:8080. Nothing is kept.
+// --pending mixed: the list holds zone-9 waiting and zone-8
+// (pz-0000000000000002) cancelled, as the server keeps a cancelled zone
+// listed with its state until its expiry; each answers by its id.
 //
 // --sequence: a scripted change for screenshots: 4 s after a client
 // subscribes to the requests topic, the queued run 202 starts (a "started"
@@ -134,11 +137,11 @@ const NO_HOST_UPTIME = argv.includes('--no-host-uptime');
 // --pending: the Create new zone states (see the header)
 const PENDING = opt('--pending', '');
 const PZ_SOURCE = PENDING && PENDING !== 'nosource' ? 'share:192.0.2.10:/models' : '';
-const PZ_ID = 'pz-0000000000000001';
+const PZ_ID = 'pz-0000000000000001', PZ_ID2 = 'pz-0000000000000002';
 const PZ_TEXT = { waiting: 'Waiting for the machine to check in', joined: 'Joined', expired: 'Expired: the machine did not check in in time', cancelled: 'Cancelled' };
-function pendingZone(state, b = {}) {
-  const t = Date.now(), name = b.name || 'zone-9', script = '/install.sh?zone=' + PZ_ID;
-  const z = { id: PZ_ID, name, group: b.group === undefined ? 'rack-a' : b.group || undefined, model_source: b.model_source || PZ_SOURCE || 'push', mode: 'bare',
+function pendingZone(state, b = {}, id = PZ_ID) {
+  const t = Date.now(), name = b.name || 'zone-9', script = '/install.sh?zone=' + id;
+  const z = { id, name, group: b.group === undefined ? 'rack-a' : b.group || undefined, model_source: b.model_source || PZ_SOURCE || 'push', mode: 'bare',
     state, state_text: PZ_TEXT[state], created_at: new Date(t - 4 * 60000).toISOString(), expires_at: new Date(t + 56 * 60000).toISOString(),
     command: "curl -sSL 'http://192.0.2.1:8080" + script + "' | sudo sh", script_path: script, download_path: script + '&download=1', download_name: 'potluck-zone-' + name + '.sh' };
   if (state === 'joined') Object.assign(z, { joined_node: '02:00:00:00:01:09', joined_at: new Date(t - 60000).toISOString() });
@@ -152,8 +155,12 @@ function pendingRoute(req, res, p) {
     json(res, 201, pendingZone('waiting', b));
   });
   if (p === '/api/zones/pending' && req.method === 'GET') {
-    const list = PENDING && PENDING !== 'gone' && PZ_TEXT[PENDING] ? [pendingZone(PENDING)] : [];
+    const list = PENDING === 'mixed' ? [pendingZone('waiting'), pendingZone('cancelled', { name: 'zone-8' }, PZ_ID2)]
+      : PENDING && PENDING !== 'gone' && PZ_TEXT[PENDING] ? [pendingZone(PENDING)] : [];
     return json(res, 200, { pending: list, default_model_source: PZ_SOURCE });
+  }
+  if (PENDING === 'mixed' && p === '/api/zones/pending/' + PZ_ID2) {
+    if (req.method === 'GET' || req.method === 'DELETE') return json(res, 200, pendingZone('cancelled', { name: 'zone-8' }, PZ_ID2));
   }
   if (p === '/api/zones/pending/' + PZ_ID) {
     if (PENDING === 'gone' || !PENDING) return json(res, 404, { error: { code: 404, message: 'no pending zone ' + PZ_ID, type: 'invalid_request_error' } });

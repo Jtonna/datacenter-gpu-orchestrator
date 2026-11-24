@@ -1,6 +1,9 @@
 package api
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // Zones-Create: the Create new zone dialog wired to the server's pending
 // zones (POST /api/zones/pending, GET /api/zones/pending/{id}, DELETE).
@@ -19,7 +22,7 @@ func TestUINextZonesCreate(t *testing.T) {
 	const cmd = "curl -sSL 'http://192.0.2.1:8080/install.sh?zone=pz-0000000000000001' | sudo sh"
 	pz := func(state, text string) map[string]any {
 		z := map[string]any{"id": "pz-0000000000000001", "name": "zone-9", "group": "rack-a", "model_source": src, "mode": "bare",
-			"state": state, "state_text": text, "created_at": znIso(0), "expires_at": "2026-05-04T11:00:00Z",
+			"state": state, "state_text": text, "created_at": znIso(0), "expires_at": znIso(46 * time.Minute),
 			"command": cmd, "script_path": "/install.sh?zone=pz-0000000000000001", "download_path": "/install.sh?zone=pz-0000000000000001&download=1",
 			"download_name": "potluck-zone-zone-9.sh"}
 		if state == "joined" {
@@ -100,6 +103,25 @@ func TestUINextZonesCreate(t *testing.T) {
 			"page":     []string{"This zone was not found: create it again.", "a restart of the scheduler forgets them"},
 			"pageHas":  []string{"[data-cz=state][data-state=gone]"},
 			"pageNone": []string{"button[data-cz=cancel]", "button.copy", "a[data-cz=download]"}},
+	))
+	// never WAITING unless the server says waiting before the expiry: a
+	// waiting zone read after its expiry is drawn expired; no state, "unknown"
+	late := pz("waiting", "Waiting for the machine to check in")
+	late["expires_at"] = znIso(-time.Minute)
+	uiExec(t, znSpec(with(src, answers(late)),
+		map[string]any{"name": "create: waiting past its expiry", "route": "#/zones", "status": st, "click": made(),
+			"page":     []string{"Expired: the machine did not check in in time", "The command no longer works"},
+			"pageHas":  []string{"[data-cz=state][data-state=expired]"},
+			"pageNone": []string{"[data-state=waiting]", "button[data-cz=cancel]", "button.copy"}},
+	))
+	noState := pz("", "")
+	delete(noState, "state")
+	delete(noState, "state_text")
+	uiExec(t, znSpec(with(src, answers(noState)),
+		map[string]any{"name": "create: no state is not waiting", "route": "#/zones", "status": st, "click": made(),
+			"page":     []string{"State not known: the server did not say"},
+			"pageHas":  []string{"[data-cz=state][data-state=unknown]"},
+			"pageNone": []string{"[data-state=waiting]", "button.copy"}},
 	))
 	uiExec(t, znSpec(with("", map[string]any{"POST /api/zones/pending": err(400, noSource)}),
 		map[string]any{"name": "create: no default model source", "route": "#/zones", "status": st, "click": []any{open},
