@@ -129,6 +129,12 @@ function detailOf(e) {
 // mbps(x) -> an upload speed in words, or '' when it was not measured (absent,
 // zero, not a number): never "0".
 const mbps = x => (typeof x === 'number' && isFinite(x) && x > 0 ? (x < 10 ? num(x, 1) : num(x)) : '');
+// loadRate(data) -> a load's MB/s as text, or '' (drawn as a dash): fewer
+// than 1 MiB uploaded (a cached load: its few kB over the load time is no
+// speed), or a rate that is absent, 0 or not a number.
+const TINY_UPLOAD = 1 << 20;
+const tinyUpload = d => typeof d.bytes === 'number' && d.bytes < TINY_UPLOAD;
+const loadRate = d => (tinyUpload(d) ? '' : mbps(d.avg_mb_s));
 
 // learnedSentence: the learnedNeed events in plain words. The scheduler
 // records several kinds under this one type: a model's measured memory need,
@@ -162,7 +168,7 @@ function sentenceOf(e) {
   switch (e.type) {
     case 'loadStarted': return ['Loading ', p, '.'];
     case 'loadFinished':
-      if (d.outcome === 'ready') return [p, ' is ready: loaded in ', dur(d.load_s), mbps(d.avg_mb_s) ? ` at ${mbps(d.avg_mb_s)} MB/s` : '', '.'];
+      if (d.outcome === 'ready') return [p, ' is ready: loaded in ', dur(d.load_s), loadRate(d) ? ` at ${loadRate(d)} MB/s` : '', '.'];
       return [p, d.outcome === 'cancelled' ? ' stopped loading' : ' failed to load', d.load_s != null ? ` after ${dur(d.load_s)}` : '', d.reason ? ['. ', plainReason(d.reason)] : '.'];
     case 'requestRefused': return ['A request for ', p, ' was refused. ', plainReason(d.message || d.reason)];
     case 'instanceUnloaded': return [p, ' was unloaded', d.loaded_for_s != null ? ` after ${dur(d.loaded_for_s)}` : '', d.requests_served != null ? ` and ${plural(d.requests_served, 'request')}` : '', '.'];
@@ -321,7 +327,7 @@ registerView({
                   { label: 'Model', cls: 'clip', render: e => h('span', { title: e.profile + ' on ' + (e.nodes || []).join(', ') }, h('span.mono', e.profile),
                     h('span.sub', (e.data || {}).outcome !== 'ready' ? h('span.err-t', (e.data || {}).outcome === 'cancelled' ? 'Cancelled · ' : 'Failed · ') : null, plural((e.nodes || []).length, 'node'))) },
                   { label: 'Took', cls: 'r', title: 'Load time in seconds', render: e => ((e.data || {}).load_s != null ? num(e.data.load_s) + ' s' : '–') },
-                  { label: 'MB/s', cls: 'r', title: 'Average upload speed; a dash when it was not measured', render: e => mbps((e.data || {}).avg_mb_s) || h('span.mut', { title: 'Not measured' }, '–') },
+                  { label: 'MB/s', cls: 'r', title: 'Average upload speed; a dash when it was not measured', render: e => loadRate(e.data || {}) || h('span.mut', { title: tinyUpload(e.data || {}) ? 'Less than 1 MiB uploaded (from the cache): no speed to show' : 'Not measured' }, '–') },
                 ],
                 empty: empty('No load finished', `No model finished loading in the last ${r[1]}.`),
               })),
