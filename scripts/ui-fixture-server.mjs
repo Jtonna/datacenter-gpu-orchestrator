@@ -137,6 +137,8 @@ const CONFIG = opt('--config', 'normal');
 const CATALOG = argv.includes('--catalog');
 // --named-only <name>: that zone is in no_auto_nodes (auto: false)
 const NAMED_ONLY = opt('--named-only', '');
+// --named-only-id <name>: that zone's ID (not its name) is added to no_auto_nodes (auto: false), as a stored id the Tiers page names
+const NAMED_ONLY_ID = opt('--named-only-id', '');
 // --no-host-uptime: no agent reports host_uptime_s (the zone panel leaves Uptime out)
 const NO_HOST_UPTIME = argv.includes('--no-host-uptime');
 // --pending: the Create new zone states (see the header)
@@ -210,7 +212,9 @@ const SCHED = { id: 'scheduler', name: 'scheduler', role: 'host' };
 // status(now) -> the status of the --zones state
 // with --models the instances are the catalog's (one loaded model, or none)
 const status = now => applyTiers(named(zonesStatus(MODELS_STATE ? modelsInstances(baseStatus(now), MODELS_STATE, mac) : baseStatus(now), now, ZONES, { drain: DRAIN, pinned: PINNED, hostUptime: !NO_HOST_UPTIME })), TIERS);
-const named = st => { if (NAMED_ONLY) for (const n of (st.view && st.view.nodes) || []) if (n.hostname === NAMED_ONLY) n.auto = false; return st; };
+const named = st => { for (const n of (st.view && st.view.nodes) || []) if ((NAMED_ONLY && n.hostname === NAMED_ONLY) || (NAMED_ONLY_ID && n.hostname === NAMED_ONLY_ID)) n.auto = false; return st; };
+// withNamedId(doc, now): --named-only-id appends the zone's id to the stored no_auto_nodes
+const withNamedId = (d, now) => { if (!NAMED_ONLY_ID) return d; const z = (status(now).agents || []).find(a => a.name === NAMED_ONLY_ID); if (z) d.no_auto_nodes = [...(d.no_auto_nodes || []), z.id]; return d; };
 
 function baseStatus(now) {
   const t = Math.round(now / 1000) * 1000;
@@ -419,7 +423,7 @@ const server = http.createServer((req, res) => {
   if (p === '/api/status') return json(res, 200, status(now));
   if (p === '/api/models') return json(res, 200, MODELS_STATE ? modelsDoc(MODELS_STATE, now) : { version: 1, models: CATALOG ? cfgCatalog() : [] });
   if (p === '/api/profiles') return json(res, 200, { profiles: profileEntries() });
-  if (p === '/api/config') { const d = cfgDoc(); return json(res, 200, Object.assign({ updated_at: now - 3 * H, configured: d.revision > 0, tiers: [], exclude_nodes: [], no_auto_nodes: NAMED_ONLY ? [NAMED_ONLY] : [], node_overrides: {} }, d, TIER_LISTS, { profiles: profileSpecs() })); }
+  if (p === '/api/config') { const d = cfgDoc(); return json(res, 200, withNamedId(Object.assign({ updated_at: now - 3 * H, configured: d.revision > 0, tiers: [], exclude_nodes: [], no_auto_nodes: NAMED_ONLY ? [NAMED_ONLY] : [], node_overrides: {} }, d, TIER_LISTS, { profiles: profileSpecs() }), now)); }
   // what the health popup reads (the Health board's sample, generic names)
   if (p === '/api/about') return json(res, 200, { version: '0.1.5', started_at: now - 12 * 24 * H, now, uptime_s: 12 * 24 * 3600, history: 'on' });
   if (p === '/api/system') return json(res, 200, { version: '0.1.5', started_at: now - 12 * 24 * H, now, uptime_s: 12 * 24 * 3600, read_panics: 0, internal_failures_total: 0,
