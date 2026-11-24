@@ -1,6 +1,8 @@
 package api
 
 import (
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelname"
+
 	"math"
 	"os"
 	"path/filepath"
@@ -794,6 +796,9 @@ func BuildModelCatalog(in CatalogInput, detailKey string) []map[string]any {
 			"name": a.file.Name, "meta_source": a.file.MetaSource, "brand": brand, "icon": nil}
 		if a.kind == "command" {
 			e["exists"] = true
+		}
+		if sn := modelname.Short(a.file.File); sn != "" {
+			e["short_name"] = sn // the page's model name ("qwen3.5-4b"); internal/modelname
 		}
 		if a.file.RawName != "" {
 			e["raw_name"] = a.file.RawName
