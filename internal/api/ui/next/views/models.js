@@ -253,7 +253,7 @@ function mountHome(el, route) {
       sub: () => {
         const m = find();
         if (!m) return null;
-        return [sizeText(m), ' · ', m.state === 'ready' ? 'loaded now' : m.state === 'loading' ? 'loading now' : m.last_active ? ['last used ', ago(m.last_active)] : 'never used', ' ', stateBadge(m, state.status || {})];
+        return [sizeText(m), ' · ', m.state === 'ready' ? 'loaded now' : m.state === 'loading' ? 'loading now' : m.last_active ? ['last used ', ago(m.last_active)] : 'never used'];
       },
       body, onClose: () => { if (side === p) { side = null; setQuery({ model: '' }); } },
     });
