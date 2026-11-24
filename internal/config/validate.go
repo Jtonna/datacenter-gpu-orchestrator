@@ -320,7 +320,7 @@ func (c *Config) validateDefaults(add func(string, ...any)) {
 	}{{"device_overhead_mib", d.DeviceOverheadMiB}, {"min_share_mib", d.MinShareMiB}, {"cache_ram_mib", d.CacheRAMMiB},
 		{"load_memory_floor_mib", d.LoadMemoryFloorMiB}, {"fill_reserve_kib_per_token", d.FillReserveKiBPerToken},
 		{"reserved_drift_warn_mib", d.ReservedDriftWarnMiB}, {"margin_measured_mib", d.MarginMeasuredMiB},
-		{"margin_estimated_min_mib", d.MarginEstimatedMinMiB}} {
+		{"margin_estimated_min_mib", d.MarginEstimatedMinMiB}, {"placement_tolerance_mib", d.PlacementToleranceMiB}} {
 		if x.v < 0 {
 			add("defaults: %s: must not be negative", x.name)
 		}

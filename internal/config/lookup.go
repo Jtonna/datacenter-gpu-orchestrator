@@ -54,7 +54,7 @@ type TierQuery struct {
 // node's device names must match. Every key set in a clause must hold, so a
 // tier that sets only platform and device does not depend on the hostname.
 func (c *Config) MatchTierNode(q TierQuery) (core.Tier, bool) {
-	for _, t := range c.Tiers {
+	for i, t := range c.Tiers {
 		m := t.Match
 		if m.Hostname != "" && !globFold(m.Hostname, q.Hostname) {
 			continue
@@ -74,7 +74,9 @@ func (c *Config) MatchTierNode(q TierQuery) (core.Tier, bool) {
 		if m.Device != "" && !slices.ContainsFunc(q.Devices, func(d string) bool { return globFold(m.Device, d) }) {
 			continue
 		}
-		return t.Tier, true
+		tier := t.Tier
+		tier.Index = i + 1
+		return tier, true
 	}
 	return core.Tier{}, false
 }

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/hw"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/launch"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/modelsrc"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/osx"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/runner"
@@ -340,7 +341,14 @@ func newTenvWith(t *testing.T, mod func(*Options, *Deps)) *tenv {
 		Updater: e.upd, RegisterRetry: 30 * time.Millisecond, ErrorRetry: 20 * time.Millisecond,
 		ProgramsRetry: 30 * time.Millisecond, ProgramsRetryIn: time.Millisecond, LaunchTick: 5 * time.Millisecond,
 		ProbeEvery: 20 * time.Millisecond, ProbeTimeout: time.Second, StatsMin: 30 * time.Millisecond,
-		ExporterPorts: []int{e.nodePort}, WorkerPort: freePort(t), HostPort: freePort(t), Logger: testLogger()}
+		ExporterPorts: []int{e.nodePort}, WorkerPort: freePort(t), HostPort: freePort(t), Logger: testLogger(),
+		// No real bind for the port checks: freePort's port is free only when
+		// it is read, and any loopback connection on the machine (this test's
+		// heartbeats, other packages' servers in a full run) may take it as
+		// its local port before the agent binds it, making a launch answer
+		// port_in_use after the 3 s retry. A test of the port check sets its
+		// own (launch.BindFree for the real one).
+		PortFree: func(string, int) error { return nil }}
 	if mod != nil {
 		mod(&opt, &deps)
 		e.runner, e.stateDir, e.clock = deps.Runner, opt.StateDir, deps.Clock.(*osx.FakeClock)
@@ -683,7 +691,7 @@ func TestWrongChecksumReported(t *testing.T) {
 }
 
 func TestPortTakenBlocksRegistration(t *testing.T) {
-	e := newTenv(t)
+	e := newTenvWith(t, func(o *Options, d *Deps) { d.PortFree = launch.BindFree }) // the real check
 	l, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(e.nodePort))
 	if err != nil {
 		t.Skip("port raced")

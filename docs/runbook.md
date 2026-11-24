@@ -136,6 +136,12 @@ The node must accept TCP `50060` and `50052` from Potluck. The script adds ufw r
 
 Check: `curl -s $H/api/nodes | jq '.nodes[] | {name, state, placeable, unplaced}'`. A new node shows `state: active` within a few seconds.
 
+### Which tier a zone is in
+
+Every zone in `/api/nodes` and in `agents` of `/api/status` carries `tier`: the tier the scheduler matched it to. It has `index` (1-based position in the tier list), `priority`, `rule` (the match fields as stored, `{}` for none), `headroom_mib`, `shared_memory`, `link_mb_s` and `settle`. A zone that fits no tier has no `tier` and `tier_reason: "no tier matches"` (and `unplaced: no_tier_match`). A removed zone has neither. `GET /api/config/tiers` lists, next to `tiers`, `tier_zones`: one entry per tier with its `index`, its `zones` now (`id`, `name`; active and lost zones and the local node) and `never_reached: true` when a tier above it has an empty match. The configuration refuses to store an empty match (validation), so on a stored configuration `never_reached` is false; the field guards the page against one all the same. A catch-all such as `hostname: "*"` has the same effect but is not flagged.
+
+Check: `curl -s $H/api/nodes | jq '.nodes[] | {name, tier: .tier.index, tier_reason}'`.
+
 ### Why a node gets no load
 
 An active node that gets no load says why in `unplaced` (in `/api/nodes`, in `agents` and `view.nodes` of `/api/status`, and in the MCP status), with `unplaced_message`:
@@ -473,6 +479,17 @@ A node whose GPU uses system memory freezes when a load takes all of it, so the 
 - `load_memory_floor_mib` (768): a load is cancelled when a node's available memory falls below this. Waiting requests get `502` "load cancelled: <node> ran low on memory during the load". `0` turns it off.
 
 The agent's own watchdog (`--watchdog-floor-mib`, default 1000) kills a launch whose node falls below its floor.
+
+#### Stable placement among equal consoles
+
+Free memory on an idle console moves by 2 to 25 MiB between reads. `placement_tolerance_mib` (128) keeps an automatic profile's plan from following that noise:
+
+- **Equal consoles.** Consoles whose usable memory differs by less than the tolerance are equal. Among equal consoles that fit, a warm one comes first (the last load that became ready there used the profile's model file, so the file is likely in its page cache), then the one whose name sorts first. A console clearly smaller (by the tolerance or more) is still preferred for a single-console load, as before: the smallest that fits.
+- **Held figure.** The figure a console is ordered by moves only when its usable memory has moved by more than twice the tolerance, so readings that jitter by up to the tolerance either way never reorder anything.
+- **Even split.** A model split over equal consoles is split evenly (by the class figure) when every console holds its share that way on its exact figure; otherwise it is split by the exact figures, as before. The pre-flight keeps the even split only while its exact figures are within twice the tolerance of the held ones and still hold every share; the launch splits exactly as the plan said.
+- **What it never changes.** Fit is always checked on the exact figures: a console that does not fit is never chosen because it sorts first, and every profile's action (start, queue, reject) is what it was. Forced profiles and loads on chosen zones are untouched: their plans are byte-identical to before, and their rows still follow the live figures. The tight-fit rule, the margins and the watchdog floor are unchanged.
+
+`0` turns it off: the smallest budget that fits, then the id, and the split by exact budget.
 
 #### Tightening or loosening the reservation
 

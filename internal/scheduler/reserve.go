@@ -686,15 +686,11 @@ func (c *schedCore) hypotheticalPlacement(p *core.Profile) core.Placement {
 	if len(cands) == 0 {
 		cands = held
 	}
-	slices.SortStableFunc(cands, func(a, b core.PlacedNode) int { return b.BudgetMiB - a.BudgetMiB })
 	k := max(c.cfg.Defaults.MaxPool, 1)
 	if localOnly(p) {
 		k = 1
 	}
-	if len(cands) > k {
-		cands = cands[:k]
-	}
-	pl.Nodes = cands
+	pl.Nodes = c.stableHypothetical(p, cands, k) // stable.go
 	return pl
 }
 
