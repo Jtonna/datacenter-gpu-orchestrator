@@ -47,6 +47,7 @@ import { defaultUser } from '../core/requests.js';
 import { createGroup, addMembers, removeMembers, renameGroup, pauseGroup, GROUP_NAME_RULE } from '../core/groups.js';
 import { unloadModel, planLoad, loadModel, drainModel, undrainModel } from '../core/modelactions.js';
 import { settlePending } from './nodes.js';
+import { createZone } from '../core/zonecreate.js';
 
 const PAGE = 16; // zones a page, as drawn (232 zones on 15 pages)
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -336,18 +337,6 @@ function eventsPart(hist, none = 'No load, unload or trouble recorded for this z
     h('span', e.summary || e.type))));
   return h('section.zpart', { key: 'events' }, h('h3', 'Recent events'), body,
     hist && hist.events && hist.events.length ? h('a', { href: href('activity'), style: 'font-size:12px' }, 'All events on Activity') : null);
-}
-
-// ---------- Create new zone (waits for the agent track) ----------
-
-function createInfo() {
-  return dialog({
-    title: 'Create new zone',
-    body: h('div.col', { style: 'gap:10px' },
-      h('p', { style: 'margin:0' }, 'Making a zone from here is not built yet. It needs an install script Potluck serves with its own address filled in, an enrolment token the new machine carries when it first checks in, and a Windows and a USB variant of the script.'),
-      h('p.mut', { style: 'margin:0' }, 'Until then a machine joins by itself: install the agent on it and start it with Potluck\'s address; it appears in this list when it checks in, under "No group", and can then be moved into a group.')),
-    actions: [{ label: 'Close', kind: 'pri', value: true, autofocus: true }],
-  });
 }
 
 // ---------- filters ----------
@@ -1068,7 +1057,7 @@ registerView({
         `ALL ${num(c.total)} ZONE${c.total === 1 ? '' : 'S'}`),
         pillsHere.map(([id, word, key]) => h('button', { class: 'fc' + (show === id ? ' on' : ''), type: 'button', 'aria-pressed': show === id ? 'true' : 'false', 'data-show': id,
           onclick: () => setQuery({ show: show === id ? '' : id }) }, `${num(c[key] || 0)} ${word}`)),
-        narrow ? null : button([icon('M10 4v12M4 10h12'), 'Create new zone'], createInfo, 'pri', { 'data-act': 'create', style: 'margin-left:auto' }));
+        narrow ? null : button([icon('M10 4v12M4 10h12'), 'Create new zone'], () => createZone({ groups: ((groupsDoc && groupsDoc.groups) || []).map(g => g.name) }).then(made => { if (made) readSoon(); }), 'pri', { 'data-act': 'create', style: 'margin-left:auto' }));
       if (!st) return [pills, h('section.w.zfleet', { 'aria-label': 'Zones' }, skeleton(6))];
 
       // filters

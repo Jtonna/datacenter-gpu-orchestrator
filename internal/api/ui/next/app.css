@@ -1123,3 +1123,26 @@ table.runs{width:100%;border-collapse:collapse}
 .prf-ebody{display:flex;flex-direction:column;gap:22px;padding:16px var(--pad-panel)}
 .prf-esec h3{font-size:var(--fs-label);font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);margin-bottom:10px}
 .prf-efoot{position:sticky;bottom:0;display:flex;align-items:center;gap:10px;padding:10px var(--pad-panel);border-top:1px solid var(--line);background:var(--surface);border-radius:0 0 12px 12px}
+/* Create new zone (core/zonecreate.js, board Zones-Create) */
+.zc{display:flex;flex-direction:column;gap:12px;min-width:0}
+.zc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.zc-tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.zc-tab{border:0;background:none;padding:8px 12px;font:inherit;font-weight:700;color:var(--text-2);border-bottom:2px solid transparent;cursor:pointer;margin-bottom:-1px}
+.zc-tab.on{color:var(--text);border-bottom-color:var(--accent)}
+.zc-tab[disabled]{color:var(--mut);cursor:not-allowed}
+.zc-pane{display:flex;flex-direction:column;gap:8px}
+.zc-lab{font-size:12px;font-weight:700;color:var(--text-2)}
+.zc-os{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.zc-os>b{min-width:64px;font-size:12px}
+.zc-cmd{display:flex;align-items:center;gap:8px;flex:1;min-width:0;padding:8px 10px;border-radius:8px;background:var(--ink);color:#fff}
+.zc-cmd code{flex:1;min-width:0;overflow-wrap:anywhere;font-size:12px}
+.zc-tile{display:flex;gap:10px;align-items:baseline;padding:8px 10px;border:1px dashed var(--line);border-radius:8px;font-size:12px}
+.zc-tile b{min-width:64px}
+.zc-safe{margin:0;font-size:12px;color:var(--text-2)}
+.zc-src{font-size:12px}
+.zc-state{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 12px;border-radius:8px;background:var(--amber-bg);border:1px solid var(--amber-line);font-size:13px}
+.zc-state.joined{background:var(--mint-bg);border-color:var(--mint-line)}
+.zc-state.expired,.zc-state.cancelled,.zc-state.bad{background:var(--coral-bg);border-color:var(--coral-line)}
+.zc-spin{width:8px;height:8px;border-radius:50%;background:var(--amber);animation:pulse 1.4s infinite}
+.zc .err{font-size:12px;color:var(--coral-text);font-weight:700}
+.zc-cancel{display:flex;flex-direction:column;gap:8px}

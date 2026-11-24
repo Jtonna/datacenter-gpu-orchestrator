@@ -280,7 +280,8 @@ func znSpec(fetch map[string]any, cases ...any) map[string]any {
 }
 
 // Zones-Fleet: the count pills from the one set of counts (the ALL pill's
-// hover is the health popup's sentence), Create new zone, the toolbar
+// hover is the health popup's sentence), Create new zone (its dialog is
+// in ui_zones_create_test.go), the toolbar
 // (search, Chip, Model, Memory free, Grouped, Collapse all, Sort), the
 // column heads, a group row per group with its totals and a "No group" row,
 // the zone rows (status words, memory, temperature, 7-day uptime, the
@@ -332,8 +333,8 @@ func TestUINextZonesFleet(t *testing.T) {
 			"expect": []string{"rack-a", "home", "No group", "Expand all"}, "absent": []string{"node-a", "node-e", "node-h"}},
 		map[string]any{"name": "fleet: a zone opens its panel", "route": "#/zones", "status": st, "width": 1536, "click": []string{"[data-zone='" + znMac(4) + "']"},
 			"pageHas": []string{"aside.side"}, "hash": "#/zones/node-d"},
-		map[string]any{"name": "fleet: create new zone says what is missing", "route": "#/zones", "status": st, "click": []string{"button[data-act=create]"},
-			"pageHas": []string{"div.dlg"}, "page": []string{"Create new zone", "not built yet"}},
+		map[string]any{"name": "fleet: create new zone opens its dialog", "route": "#/zones", "status": st, "click": []string{"button[data-act=create]"},
+			"pageHas": []string{"div.dlg [data-create-zone]"}, "page": []string{"Create new zone", "Zone name"}, "notOnPage": []string{"not built yet"}},
 		map[string]any{"name": "fleet: sort by name", "route": "#/zones?sort=name&flat=1", "status": st, "expect": []string{"Sort: name"}},
 	))
 }
