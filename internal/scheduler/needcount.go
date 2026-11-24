@@ -341,7 +341,7 @@ func (c *schedCore) learnedRows() []LearnedRow {
 // forgetShape drops every measurement of a shape, in memory and in the
 // store; it reports whether there was one.
 func (c *schedCore) forgetShape(shape string) bool {
-	had := len(c.learned[shape]) > 0 || len(c.hostOHs[shape]) > 0
+	had := len(c.learned[shape]) > 0 || c.hasHostOverheads(shape)
 	if had {
 		c.dropLearned(shape, "", "forgotten by an operator") // and its host overheads
 	}
