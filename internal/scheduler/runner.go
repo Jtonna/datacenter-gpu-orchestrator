@@ -838,7 +838,9 @@ func (s *Scheduler) Needs(ctx context.Context) (NeedsDoc, error) {
 		return NeedsDoc{HostBuild: c.llamaBuild, Release: c.buildRelease, ServedBuild: c.servedBuild, Rows: c.learnedRows(),
 			DerivePairs: c.derivePairs(nil), DeriveToleranceMiB: deriveToleranceMiB,
 			HostOverheads: c.hostOverheadRows(), HostOverheadSettingMiB: max(c.cfg.Defaults.HostOverheadMiB, 0),
-			HostOverheadSettingOnly: c.cfg.Defaults.HostOverheadSettingOnly}
+			HostOverheadSettingOnly: c.cfg.Defaults.HostOverheadSettingOnly,
+			DeviceOverheads:         c.deviceOverheadRows(), DeviceOverheadSettingMiB: max(c.cfg.Defaults.DeviceOverheadMiB, 0),
+			DeviceOverheadSettingOnly: c.cfg.Defaults.DeviceOverheadSettingOnly}
 	})
 }
 

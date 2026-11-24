@@ -183,6 +183,9 @@ type inst struct {
 	// cycle (hostoverhead.go).
 	hostMeasured bool
 	hostHigh     int
+	// devMeasured: the per-device overheads of this cycle were read
+	// (deviceoverhead.go).
+	devMeasured bool
 
 	benchRun   string // the bench run whose request started this instance (history records only)
 	served     int    // requests admitted (logged when the instance stops)
@@ -383,6 +386,7 @@ type schedCore struct {
 	derive       deriveState                     // what the derivation keeps between calls (derive.go)
 	needOps      []needOp                        // learned-need store writes, taken by the runner after each step (needs.go)
 	hostOHs      map[hostKey]*hostOH             // measured host overheads by shape, node and device count (hostoverhead.go)
+	devOHs       map[hostKey]*hostOH             // measured per-device overheads by shape, node and device count (deviceoverhead.go)
 	hostEventsFn HostReadingEvents               // the history's learnedNeed events, read once for the rows of the release before device counts
 	hostEvents   []history.Event                 // what hostEventsFn returned (nil: not read yet)
 	persist      bool                            // a need store is attached: learned needs are queued for it
@@ -688,7 +692,8 @@ func (c *schedCore) request(p *core.Profile) (placer.Request, NeedInfo, error) {
 			req.ByCount[k] = placer.CountNeed{Need: info.at(k).Need}
 		}
 	}
-	c.applyReserve(&req, p, info) // reserve.go: no change with the defaults
+	req.NodeDeviceMiB = c.nodeDeviceMiB(p, info) // deviceoverhead.go: nil until a figure is measured for p's shape
+	c.applyReserve(&req, p, info)                // reserve.go: no change with the defaults
 	if localOnly(p) {
 		req.MaxPool = 1
 		req.AllowTiers = nil

@@ -160,3 +160,30 @@ func TestHostEntryNamesTheOverheadSource(t *testing.T) {
 		t.Fatalf("no time for the setting: %v", e)
 	}
 }
+
+// GET /api/needs lists the measured per-device overheads with the setting
+// they replace; a row names the log's part as log_part_mib.
+func TestNeedsListsDeviceOverheads(t *testing.T) {
+	e, _, _ := cfgEnv(t)
+	code, got := e.cdo("GET", "/api/needs", "", nil)
+	if rows, ok := got["device_overheads"].([]any); code != 200 || !ok || len(rows) != 0 {
+		t.Fatalf("%d device_overheads %v", code, got["device_overheads"])
+	}
+	if got["device_overhead_setting_mib"] != float64(600) || got["device_overhead_setting_only"] != false {
+		t.Fatalf("settings %v %v", got["device_overhead_setting_mib"], got["device_overhead_setting_only"])
+	}
+	b, _ := json.Marshal(deviceOverheadJSON(scheduler.HostOverheadRow{Shape: "s", Node: "b", NodeName: "ps5-b", Devices: 2, MiB: 420, LogHostMiB: 310,
+		MeasuredBy: "q", Cause: "load", Profiles: []string{"q"},
+		Readings: []needstore.HostReading{{MiB: 420, At: time.Date(2026, 11, 24, 6, 0, 0, 0, time.UTC), Cause: "load"}}}))
+	var m map[string]any
+	json.Unmarshal(b, &m)
+	for _, k := range []string{"shape", "node", "node_name", "devices", "mib", "log_part_mib", "measured_by", "measured_at", "release", "llama_build",
+		"cause", "restored", "used", "profiles", "readings"} {
+		if _, ok := m[k]; !ok {
+			t.Errorf("no %q in %s", k, b)
+		}
+	}
+	if _, ok := m["log_host_mib"]; ok || m["log_part_mib"] != float64(310) || m["devices"] != float64(2) {
+		t.Fatalf("%s", b)
+	}
+}

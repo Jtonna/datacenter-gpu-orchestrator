@@ -237,6 +237,9 @@ func Open(db DB) (*Store, error) {
 		if err := importOlder(tx); err != nil { // host.go: what a rollback measured
 			return err
 		}
+		if err := migrate(tx, "needs_device_migrations", deviceMigrations); err != nil { // device.go
+			return err
+		}
 		if err := undoDevelopmentV2(tx); err != nil {
 			return err
 		}
@@ -425,7 +428,7 @@ func (s *Store) Put(r Record) error {
 }
 
 // Delete removes every row of the shape, in both tables (so it cannot come
-// back at the next start), and its measured host overheads; no row is not
+// back at the next start), and its measured host and per-device overheads; no row is not
 // an error.
 func (s *Store) Delete(shape string) error {
 	var left []string
@@ -442,7 +445,7 @@ func (s *Store) Delete(shape string) error {
 		if _, err := tx.Exec(`DELETE FROM needs_by_placement WHERE shape = ?`, shape); err != nil {
 			return err
 		}
-		for _, t := range []string{"needs_host_overhead", "needs_host_by_count"} { // host.go
+		for _, t := range []string{"needs_host_overhead", "needs_host_by_count", "needs_device_overhead"} { // host.go, device.go
 			if _, err := tx.Exec(`DELETE FROM `+t+` WHERE shape = ?`, shape); err != nil {
 				return err
 			}

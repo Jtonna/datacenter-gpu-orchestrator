@@ -2,6 +2,15 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: the per-device overhead measured per shape, machine and device count
+
+No agent change, no new port. Schema: one new table, `needs_device_overhead` (shape, node, devices, the figure in force with its date, the log's part, the last three readings with their dates), under its own ledger `needs_device_migrations` (v1). No existing table or ledger changes, so the previous image opens the file as before.
+
+- **The per-device overhead is measured** on every worker node of a ready load, per shape, machine and device count, never used across counts, by the keep-the-higher rule. Until then, and with `device_overhead_setting_only`, `device_overhead_mib` (600) is used.
+- **Where it applies:** an estimated need of that shape on that machine and device count. The load that measures it also stores the shape's own measured need, which plans without any per-device overhead, so on its own the figure changes no plan; `GET /api/needs` lists `device_overheads` with `used`.
+- **The plan's memory rows** of an estimated need show `device_overhead_mib`, `device_overhead_source` and `device_overhead_measured_at`.
+- **A host overhead row lists only the profiles that use it**: a forced profile on its first forced node and its device count; one without forced nodes on any row of its shape.
+
 ## Scheduler image: zone actions take names
 
 No agent change, no new port, no schema change.
