@@ -107,7 +107,7 @@ func newBase(b Bootstrap) *Config {
 		Fleet:        Fleet{StaleAfter: 60 * time.Second},
 		ChildLogKeep: DefaultChildLogKeep, HistoryMaxFileMiB: DefaultHistoryMaxFileMiB, HistoryKeepFiles: DefaultHistoryKeepFiles,
 		HistoryMemoryEvents: DefaultHistoryMemoryEvents, UsageRequestDays: DefaultUsageRequestDays, UsageHourlyDays: DefaultUsageHourlyDays, LocalProbeCmd: DefaultLocalProbeCmd, WSMaxClients: DefaultWSMaxClients, LoopStepWarnMs: DefaultLoopStepWarnMs,
-		DefaultUserName: DefaultDefaultUserName, UIModelActions: true,
+		DefaultUserName: DefaultDefaultUserName,
 		Bench:         Bench{EnabledSetting: true, RegressLoadPct: DefaultRegressLoadPct, RegressDecodePct: DefaultRegressDecodePct, MaxRunMinutes: DefaultMaxRunMinutes, RetentionDays: DefaultBenchRetentionDays},
 		Defaults:      DefaultDefaults(),
 		Recovery:      DefaultRecovery(),

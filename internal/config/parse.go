@@ -165,7 +165,6 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 	c.Bench.Enabled = c.DataDir != "" && (raw.Bench.Enabled == nil || *raw.Bench.Enabled)
 	c.benchEnabledSet = raw.Bench.Enabled
 	c.Bench.EnabledSetting = raw.Bench.Enabled == nil || *raw.Bench.Enabled
-	c.UIModelActions = raw.UIModelActions == nil || *raw.UIModelActions
 	if err := c.validate(rawProfiles, c.modelCheck(o, exists)); err != nil {
 		return nil, nil, nil, err
 	}
@@ -213,7 +212,7 @@ type rawConfig struct {
 	LoopStepWarnMs      int                         `yaml:"loop_step_warn_ms" json:"loop_step_warn_ms,omitempty"`
 	ModelsDiskBudgetGB  int                         `yaml:"models_disk_budget_gb" json:"models_disk_budget_gb,omitempty"`
 	DefaultUserName     string                      `yaml:"default_user_name" json:"default_user_name,omitempty"`
-	UIModelActions      *bool                       `yaml:"ui_model_actions" json:"ui_model_actions,omitempty"`
+	UIModelActions      *bool                       `yaml:"ui_model_actions" json:"-"` // retired (RetiredSettings): read from a file and ignored
 	LocalProbeCmd       string                      `yaml:"local_probe_cmd" json:"local_probe_cmd,omitempty"`
 	LocalNode           string                      `yaml:"local_node" json:"local_node,omitempty"`
 	DataDir             string                      `yaml:"data_dir" json:"data_dir,omitempty"`

@@ -31,6 +31,9 @@ func ParseStoredDocument(b []byte) (d *Document, unknown []string, err error) {
 			unknown = append(unknown, p)
 		}
 	}
+	for k := range RetiredSettings {
+		delete(d.Settings, k) // a retired key is dropped quietly: it is not unknown
+	}
 	unknownIn(json.RawMessage(b), reflect.TypeOf(Document{}), "", add)
 	for _, sc := range []struct {
 		scope string
@@ -46,6 +49,15 @@ func ParseStoredDocument(b []byte) (d *Document, unknown []string, err error) {
 	sort.Strings(unknown)
 	d.Normalize()
 	return d, unknown, nil
+}
+
+// RetiredSettings are settings an earlier release had and this one removed.
+// A stored document that has one still opens: the key is dropped without
+// counting as an unknown field (so writes need no force), and the next
+// revision is stored without it. What a client sends stays strict: a PATCH
+// with a retired key is refused as any key the schema does not know.
+var RetiredSettings = map[string]string{
+	"ui_model_actions": "v47 and v48: a page switch for Load, Unload and Force unload (default true); the page always has them now",
 }
 
 var (

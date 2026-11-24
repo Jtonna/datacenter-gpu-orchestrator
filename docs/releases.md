@@ -12,7 +12,7 @@ No agent change, no new port, no schema change.
 
 No agent change. No new listening port.
 
-- **Setting `ui_model_actions`** (default true, no restart): false and the web UI offers no Load a model, Unload or Force unload. A page switch only: REST and MCP are unchanged by it. The page reads it as `settings.ui_model_actions` of `GET /api/config/settings`.
+- **Setting `ui_model_actions` removed.** It existed in v47 and v48 (default true, a page switch for Load, Unload and Force unload) and is gone: those actions are simply part of the page. A database where it was stored still opens: the stored value is dropped without an error and does not count as an unknown field (configuration writes need no force); the next revision is stored without it. `PATCH /api/config/settings {"ui_model_actions": ...}` now answers 400 `invalid_config` ("unknown settings setting"), as any key the schema does not know. In a YAML file it is read and ignored. v47 and v48 on data this image wrote start as before (the key is absent: their default, true).
 - **Uptime leaves removed machines out.** `GET /api/nodes/uptime`: a removed machine is not in `zones` and its seconds count in no group and not in the fleet.
 - **History by zone group or list.** `GET /api/history?group=<name>` and `node=a,b,c` (ids or names); MCP `query_history` takes `group`.
 - **Load on chosen zones.** `POST /api/load` and `/api/plan` take `nodes`: this load is placed there as `force_nodes` would, the profile unchanged; `pinned_nodes` on the instance; 409 while the model is loaded or queued, or when a chosen zone is lost, excluded, paused, set aside or outside the pool. MCP `load_model`, `plan_load` take `nodes`.

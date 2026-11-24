@@ -61,3 +61,22 @@ func TestParseStoredDocumentToleratesUnknownFields(t *testing.T) {
 		t.Fatal("broken JSON accepted")
 	}
 }
+
+// A retired setting (ui_model_actions, v47 and v48) in a stored document is
+// dropped quietly: not an unknown field, not served, the rest kept. In a
+// YAML file it is read and ignored. What a client sends stays strict.
+func TestRetiredSettingDropped(t *testing.T) {
+	d, unknown, err := ParseStoredDocument([]byte(`{"settings":{"queue_timeout":"90s","ui_model_actions":false}}`))
+	if err != nil || len(unknown) != 0 {
+		t.Fatalf("%v %v", unknown, err)
+	}
+	if _, ok := d.Settings["ui_model_actions"]; ok || d.Settings["queue_timeout"] != "90s" {
+		t.Fatalf("settings %v", d.Settings)
+	}
+	if _, ok := findField(ScopeSettings, "ui_model_actions"); ok {
+		t.Fatal("still in the schema")
+	}
+	if _, err := Parse([]byte("ui_model_actions: false\nprofiles: {}\n")); err != nil {
+		t.Fatalf("a file with it: %v", err)
+	}
+}
