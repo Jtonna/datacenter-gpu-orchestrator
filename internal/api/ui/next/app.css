@@ -1350,6 +1350,9 @@ a.tbar{text-decoration:none;cursor:pointer}
 .del-acts .btn.pri{display:inline-flex;align-items:center;gap:7px}
 .del-ptbl tbody.ro td{color:#7c8882}
 .del-why{margin:0;overflow-wrap:anywhere}
+.del-note{margin:0}
+.dlg .mono{font-variant-ligatures:none}
+.dbox[data-interrupts] .mono{white-space:nowrap}
 .del-list{margin:4px 0 0;padding-left:18px}
 @container (max-width:640px){.mdl .mr.del{grid-template-columns:28px minmax(0,1fr) 96px 100px}.mdl .mr.del .del-pc{display:none}}
 @container (max-width:460px){.mdl .mr.del{grid-template-columns:28px minmax(0,1fr) 96px}.mdl .mr.del .del-at{display:none}}

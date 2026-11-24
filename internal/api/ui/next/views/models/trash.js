@@ -50,6 +50,8 @@ const daysAgo = ms => {
   return h('time', { datetime: new Date(ms).toISOString(), title: dateTime(ms) }, d >= 1 ? plural(d, 'day') + ' ago' : agoText(ms));
 };
 const daysLeft = ms => Math.max(0, Math.ceil((ms - now()) / DAY));
+// monoList(['a', 'b', 'c']) -> "a, b and c" with each name in mono
+const monoList = xs => xs.flatMap((x, k) => [k ? (k === xs.length - 1 ? ' and ' : ', ') : null, h('span.mono', x)]);
 const was = (n, one, many) => `${plural(n, one, many)} ${n === 1 ? 'was' : 'were'}`;
 
 const PURGE_OFF = 'Nothing removes a deleted model on this scheduler (purge is off): it stays in Deleted models, and keeps using the disk, until it is restored.';
@@ -78,7 +80,7 @@ const pt = (ic, color, ...text) => h('div.pt', h('span', { class: 'pt-ic ' + col
 
 const roNote = () => (readOnlySeen
   ? box('ro', { 'data-ro-note': '' }, pt(icon(WARN), 'amber', h('b', 'This scheduler answered that its models folder is read-only'),
-    ' the last time a delete or restore was tried from this page, so this one will most likely be refused too, with nothing changed. ', h('span.mut', readOnlySeen)))
+    ' the last time a delete or restore was tried from this page, so this one will most likely be refused too, with nothing changed.'), h('p.dmsg', readOnlySeen))
   : null);
 const roState = (what, msg) => box('warn', { 'data-ro': '' }, pt(icon(WARN), 'red', h('b', 'The models folder is read-only on this scheduler: nothing was changed. '), what),
   h('p.dmsg', msg));
@@ -130,7 +132,7 @@ function interrupts(would, m) {
     const cat = (m.instances || []).find(x => x.profile === i.profile);
     const nodes = cat && cat.nodes && cat.nodes.length ? cat.nodes : null;
     n += (i.in_flight || 0) + (i.waiters || 0);
-    parts.push([h('span.mono', i.profile), ' is ', i.state === 'ready' ? 'loaded' : i.state, nodes ? [' on ', list(nodes)] : null,
+    parts.push([h('span.mono', i.profile), ' is ', i.state === 'ready' ? 'loaded' : i.state, nodes ? [' on ', monoList(nodes)] : null,
       i.in_flight ? ` with ${plural(i.in_flight, 'request')} in flight` : null, i.waiters ? ` and ${plural(i.waiters, 'request')} waiting for it` : null]);
   }
   for (const q of would.queued || []) {
@@ -275,7 +277,7 @@ function restoreItem(it, onDone) {
     let kids;
     if (state === 'ask' || state === 'sending') {
       kids = [box('ok', null, pt(icon(BACK), 'green', h('b', 'Restorable.'), ' The file moves back to the models folder',
-        ids.length ? [ids.length === 1 ? ' and its 1 profile comes back as it was: ' : ` and its ${ids.length} profiles come back as they were: `, list(ids), '.'] : '. It had no profiles.')),
+        ids.length ? [ids.length === 1 ? ' and its 1 profile comes back as it was: ' : ` and its ${ids.length} profiles come back as they were: `, monoList(ids), '.'] : '. It had no profiles.')),
       roNote(),
       h('div.field.dlg-note', h('label.dlbl', 'Comment (required)'), note),
       h('div.dlg-foot', closeBtn('Cancel'), go)];
@@ -343,7 +345,7 @@ function itemPanel(it, purgeOn, onRestore) {
         : h('button.btn.pri', { type: 'button', 'data-act': 'restore', onclick: () => onRestore(it) }, icon(BACK), 'Restore model'),
       off('button.btn.red', 'Removing a model for good is not built: nothing on this scheduler erases a model file. It stays here until it is restored.', { 'data-act': 'remove', style: 'margin-left:auto' }, 'Remove now')),
     bad ? h('div.banner.err', { key: 'prob', role: 'status' }, h('span.grow', h('b', 'Needs a look. '), it.problem || `It is ${it.state}.`)) : null,
-    it.comment ? h('p.mdl-pad.del-why', { key: 'why' }, h('span.mut', 'Comment: '), it.comment) : null,
+    it.comment ? h('p.del-why', { key: 'why' }, h('span.mut', 'Comment: '), it.comment) : null,
     h('section.mdl-cfg', { key: 'cfg' },
       h('div.dh', h('h3', 'Configurations ', h('span.mut', profs.length ? plural(profs.length, 'profile') : 'No profiles'))),
       profs.length ? h('table.tbl.mdl-ptbl.del-ptbl',
@@ -355,7 +357,7 @@ function itemPanel(it, purgeOn, onRestore) {
         })))
         : h('p.mut.mdl-pad', 'It had no profiles.'),
       profs.length ? h('p.mut.mdl-pad', 'These profiles come back with a restore, as they were when it was deleted. They cannot be edited here.') : null),
-    h('p.mut.mdl-pad', { key: 'purge' }, purgeOn ? `It is removed for good on ${dateTime(it.purge_at)}.` : PURGE_OFF),
+    h('p.mut.del-note', { key: 'purge' }, purgeOn ? `It is removed for good on ${dateTime(it.purge_at)}.` : PURGE_OFF),
   ];
 }
 
@@ -380,7 +382,7 @@ export function mountTrash(el, route) {
         const it = find();
         if (!it) return null;
         return [gbOf(it.size_bytes) + ' GB · deleted ', daysAgo(it.deleted_at), it.actor ? ' by ' + it.actor : null, ' · ',
-          data.purge_on ? ['clears in ', keptCell(it, true)] : ['Kept until ', keptCell(it, false)]];
+          data.purge_on ? ['clears in ', keptCell(it, true)] : ['kept until ', keptCell(it, false)]];
       },
       body: () => {
         const it = find();
