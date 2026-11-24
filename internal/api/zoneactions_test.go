@@ -126,3 +126,35 @@ func TestZoneActions_DrainPlan(t *testing.T) {
 		t.Fatalf("pause plan says next_load %q", fp.NextLoad)
 	}
 }
+
+// A selection may name zones by id or by name (any case), as /api/load
+// does; a name two zones share is refused with a sentence that says so;
+// an unknown one is still 400. The plan and the real call act on the ids.
+func TestZoneActions_Names(t *testing.T) {
+	e, p, _ := groupsEnv(t) // zone-1, zone-2, zone-3 on 02:00:00:00:00:01..03
+	var plan ZoneActionPlan
+	json.Unmarshal([]byte(status(t, e.post("/api/zone-actions/pause", `{"nodes":["zone-1","02:00:00:00:00:02"],"dry_run":true}`), http.StatusOK)), &plan)
+	if len(plan.Zones) != 2 || plan.Zones[0].ID != "02:00:00:00:00:01" || plan.Zones[0].Name != "zone-1" || plan.Zones[1].ID != "02:00:00:00:00:02" {
+		t.Fatalf("%+v", plan)
+	}
+	// the same zone by name and by id counts once
+	json.Unmarshal([]byte(status(t, e.post("/api/zone-actions/pause", `{"nodes":["ZONE-1","02:00:00:00:00:01"],"dry_run":true}`), http.StatusOK)), &plan)
+	if len(plan.Zones) != 1 {
+		t.Fatalf("twice %+v", plan)
+	}
+	if got := status(t, e.post("/api/zone-actions/pause", `{"nodes":["no-such"],"dry_run":true}`), http.StatusBadRequest); !strings.Contains(got, "no-such is not a zone Potluck knows") {
+		t.Fatal(got)
+	}
+	registerNamed(t, e, "02:00:00:00:00:04", "zone-1") // a second zone with that name
+	if got := status(t, e.post("/api/zone-actions/pause", `{"nodes":["zone-1"],"dry_run":true}`), http.StatusBadRequest); !strings.Contains(got, "zone-1 is the name of 2 zones (02:00:00:00:00:01, 02:00:00:00:00:04): name the zone by its id") {
+		t.Fatal(got)
+	}
+	status(t, e.post("/api/zone-actions/pause", `{"nodes":["zone-2","zone-3"],"comment":"rack work"}`), http.StatusOK)
+	paused := map[string]bool{}
+	for _, f := range p.Facts() {
+		paused[f.ID] = f.Paused
+	}
+	if !paused["02:00:00:00:00:02"] || !paused["02:00:00:00:00:03"] || paused["02:00:00:00:00:01"] {
+		t.Fatalf("paused %v", paused)
+	}
+}

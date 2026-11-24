@@ -226,7 +226,7 @@ const (
 // action, so each has its own permission).
 func zoneAction(name, what, action string) *tool {
 	return &tool{Name: name, Desc: what + " With dry_run true nothing is done: the answer says per zone what would happen, which models would unload (and every zone each leaves, inside the selection or not) and how many runs would be cut or waited for. Without dry_run each zone is acted on as its single-zone tool does, one audit entry per zone. Only with membership agents.",
-		Props:    P{"nodes": strs("The zone ids."), "comment": s("Why, stored in the audit log (required unless dry_run)."), "dry_run": b("Only say what would happen.")},
+		Props:    P{"nodes": strs("The zones: ids or names (any case); a name two zones share is refused."), "comment": s("Why, stored in the audit log (required unless dry_run)."), "dry_run": b("Only say what would happen.")},
 		Required: []string{"nodes"}, Destructive: action == "force-unload", Method: "POST", Path: "/api/zone-actions/" + action, Body: []string{"nodes", "comment", "dry_run"}}
 }
 

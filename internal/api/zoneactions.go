@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/audit"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/fleet"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 )
 
@@ -300,10 +301,10 @@ func (s *Server) handleZoneAction(w http.ResponseWriter, r *http.Request, action
 	}
 	dry := b.DryRun || r.URL.Query().Get("dry_run") == "1" || r.URL.Query().Get("dry_run") == "true"
 	if len(b.Nodes) == 0 {
-		apiErr(w, http.StatusBadRequest, "nodes is required: the ids of the zones")
+		apiErr(w, http.StatusBadRequest, "nodes is required: the ids or names of the zones")
 		return
 	}
-	if !s.checkZones(w, r, b.Nodes) {
+	if b.Nodes, ok = s.resolveZones(w, r, b.Nodes); !ok {
 		return
 	}
 	if !dry && b.Comment == "" {
@@ -366,4 +367,41 @@ func (s *Server) handleZoneAction(w http.ResponseWriter, r *http.Request, action
 	}
 	s.groupsChanged()
 	writeJSON(w, http.StatusOK, map[string]any{"plan": plan, "results": results})
+}
+
+// resolveZones turns a selection of zone ids or names into ids, as
+// /api/load resolves its nodes (pool.Resolve: an id, the scheduler's own
+// machine by its name, or the name of one live zone, any case). A known id
+// is taken as is (a lost zone included). A name two zones share is
+// refused; so is one Potluck does not know. The same zone named twice
+// (say by name and by id) counts once, in the order first given.
+func (s *Server) resolveZones(w http.ResponseWriter, r *http.Request, entries []string) ([]string, bool) {
+	known := s.knownZones(r.Context())
+	out := make([]string, 0, len(entries))
+	seen := map[string]bool{}
+	for _, e := range entries {
+		id := e
+		if !known[e] {
+			rid, err := s.opts.Pool.Resolve(e)
+			var amb *fleet.AmbiguousError
+			switch {
+			case errors.As(err, &amb):
+				ids := make([]string, len(amb.IDs))
+				for i, x := range amb.IDs {
+					ids[i] = string(x)
+				}
+				apiErr(w, http.StatusBadRequest, "%s is the name of %d zones (%s): name the zone by its id", e, len(ids), strings.Join(ids, ", "))
+				return nil, false
+			case err != nil || !known[string(rid)]:
+				apiErr(w, http.StatusBadRequest, "%s is not a zone Potluck knows", e)
+				return nil, false
+			}
+			id = string(rid)
+		}
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out, true
 }

@@ -280,7 +280,8 @@ func znSpec(fetch map[string]any, cases ...any) map[string]any {
 }
 
 // Zones-Fleet: the count pills from the one set of counts (the ALL pill's
-// hover is the health popup's sentence), Create new zone, the toolbar
+// hover is the health popup's sentence), Create new zone (its dialog is
+// in ui_zones_create_test.go), the toolbar
 // (search, Chip, Model, Memory free, Grouped, Collapse all, Sort), the
 // column heads, a group row per group with its totals and a "No group" row,
 // the zone rows (status words, memory, temperature, 7-day uptime, the
@@ -332,8 +333,8 @@ func TestUINextZonesFleet(t *testing.T) {
 			"expect": []string{"rack-a", "home", "No group", "Expand all"}, "absent": []string{"node-a", "node-e", "node-h"}},
 		map[string]any{"name": "fleet: a zone opens its panel", "route": "#/zones", "status": st, "width": 1536, "click": []string{"[data-zone='" + znMac(4) + "']"},
 			"pageHas": []string{"aside.side"}, "hash": "#/zones/node-d"},
-		map[string]any{"name": "fleet: create new zone says what is missing", "route": "#/zones", "status": st, "click": []string{"button[data-act=create]"},
-			"pageHas": []string{"div.dlg"}, "page": []string{"Create new zone", "not built yet"}},
+		map[string]any{"name": "fleet: create new zone opens its dialog", "route": "#/zones", "status": st, "click": []string{"button[data-act=create]"},
+			"pageHas": []string{"div.dlg [data-create-zone]"}, "page": []string{"Create new zone", "Zone name"}, "notOnPage": []string{"not built yet"}},
 		map[string]any{"name": "fleet: sort by name", "route": "#/zones?sort=name&flat=1", "status": st, "expect": []string{"Sort: name"}},
 	))
 }
@@ -579,13 +580,18 @@ func TestUINextZonesDetail(t *testing.T) {
 	typed := func(sel, v string) map[string]any { return map[string]any{"type": sel, "value": v} }
 	esc := func(s string) string { return strings.NewReplacer(":", "%3A").Replace(s) }
 	wide := 1600
+	// the agents report no host_uptime_s (an older agent; a console fed by the fleet console)
+	noUp := znStatus(fleet)
+	for _, a := range noUp["agents"].([]any) {
+		delete(a.(map[string]any), "host_uptime_s")
+	}
 
 	uiExec(t, znSpec(fetch,
 		map[string]any{"name": "detail: a zone in use", "route": "#/zones/node-a", "status": st, "width": wide,
 			"page": []string{"Selected zone", "node-a", "| Oberon", "In use", "rack-a", "tier 1", "Accepting models",
 				"SSH: not available yet", "Copy", "Open terminal", "Reboot",
-				"Memory", "10.7", "of 13.5 GB", "Temperature", "61 °C", "Ping", "not measured", "Uptime", "12 d 4 h",
-				"Link speed", "≥ 104 MB/s", "last cold load, 24 Nov 02:14", "Up, last 7 days", "99.5%",
+				"Memory", "10.7", "of 13.5 GB", "Temperature", "61 °C", "Ping", "not measured", "Machine up", "12 d 4 h",
+				"Link speed", "≥ 104 MB/s", "cold load, 24 Nov 02:14", "Up, last 7 days", "99.5%",
 				"Loaded now", "alpha", "Host 60%", "helper", "node-b", "2 requests", "loaded 38 min ago", "Force unload",
 				"Load a model", "Choose a profile", "Last 7 days", "Idle", "Busy", "Down", "Activity for this zone"},
 			"notOnPage": []string{"ssh 192.0.2.11", "2 runs"},
@@ -598,7 +604,13 @@ func TestUINextZonesDetail(t *testing.T) {
 			"page": []string{"Link speed", "no cold load yet", "Set aside", "home", "Nothing is loaded"}, "notOnPage": []string{"Mbit/s", "0 MB/s"},
 			"titles": []string{"No load has sent this zone a model over the network yet"}},
 		map[string]any{"name": "detail: a lost zone", "route": "#/zones/node-f", "status": st, "width": wide,
-			"page": []string{"Offline", "gone for 54 min", "Nothing is loaded"}},
+			"page": []string{"Offline", "gone for 54 min", "Nothing is loaded"}, "pageNone": []string{"b[data-zp=uptime]"}},
+		// Uptime is the machine's own uptime (host_uptime_s + last_seen_ago_s):
+		// drawn when the agent reports it, left out (not a dash) when not
+		map[string]any{"name": "detail: the machine's uptime", "route": "#/zones/node-a", "status": st, "width": wide,
+			"pageHas": []string{"b[data-zp=uptime]"}, "titles": []string{"How long the machine has been up since it last started"}},
+		map[string]any{"name": "detail: no uptime reported: no tile", "route": "#/zones/node-a", "status": noUp, "width": wide,
+			"page": []string{"Memory", "Temperature", "Ping", "Link speed"}, "pageNone": []string{"b[data-zp=uptime]"}, "notOnPage": []string{"Machine up"}},
 		map[string]any{"name": "detail: a zone switched off", "route": "#/zones/node-g", "status": st, "width": wide,
 			"page": []string{"Switched off"}, "pageHas": []string{"aside.side button.switch[aria-checked=false]"}},
 		map[string]any{"name": "detail: an excluded zone", "route": "#/zones/node-h", "status": st, "width": wide,

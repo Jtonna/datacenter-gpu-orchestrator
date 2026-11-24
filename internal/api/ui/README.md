@@ -4,46 +4,42 @@ Static files embedded in the scheduler binary and served below `/ui/`
 (`internal/api/uifiles.go`). Plain JavaScript modules, one stylesheet, two
 bundled fonts. No build step, no framework, nothing fetched from another host.
 
+The files of `ui/` below are the modules the page shares; `next/` (further
+down) holds the page itself, the stylesheet and the modules that draw.
+
 ```
-index.html          the shell markup (top bar, navigation pane, <main>)
-app.css             the design system: tokens, shell, every shared component
-app.js              entry: imports the views, starts shell, router and live channel
-core/dom.js         h() element builder, morph() in-place update, icon()
 core/format.js      numbers, units, durations, "38 min ago" with the time on hover
 core/store.js       the live store: state, on(), listen()
-core/live.js        the WebSocket client (reconnects by itself)
 core/api.js         REST helper: get(), send(), post/put/patch/del (X-Source, X-Actor)
-core/router.js      hash router and the view registry
-core/shell.js       navigation, the connection warning, the name that signs changes
 core/status.js      helpers that read the status document
 core/reasons.js     the scheduler's reason strings in plain words (no DOM)
 core/nodeactions.js agent machines: why one takes no new model, and the two operator actions (no DOM)
 core/startup.js     start-up figures of agent machines: the words, and GET /api/startups on demand (no DOM)
 core/reserve.js     the memory reservation rule: a node's reserved list and a plan's memory table
-core/ui.js          the shared components (below)
 core/charts.js      every chart and the chart tooltip: inline SVG and plain boxes ("Charts" below)
 core/catalog.js     the model catalog, kept for the life of the page (fed by the live channel)
 core/avatar.js      the picture of a model: the owner's icon, else a drawn tile
 core/rate.js        the pass rate as dots (passDots)
-views/<id>.js       one module per screen; it registers itself
+views/<id>.js       the screens next/ does not rebuild (nodes, queue, activity, benchmarks, tiers,
+                    audit, mcp, about); each registers itself
 views/models/       the instance card and the model page of the Models screen
 views/benchmarks/   the parts of Benchmarks; pages.js is a suite's and a benchmark's own page
 fonts/              Manrope (variable) and JetBrains Mono, with their licences (OFL)
 ```
 
-## Two UIs: the new shell at /ui/, the classic UI at /ui/classic/
+## One UI, at /ui/ (the classic UI is removed)
 
-The UI rewrite (plan phase U1) adds a new shell without moving the current UI:
+The classic UI that was served at `/ui/classic/` is removed (the owner's
+word, 24 Nov): its page, stylesheet, drawing modules and the screens next/
+rebuilt are deleted, and `/ui/classic/` answers 404.
 
-- `/ui/classic/<p>` serves the classic file `<p>` above, unchanged. It stays
-  until the owner says it can go; every classic test reads these files.
-- `/ui/<p>` serves `next/<p>` when that file exists, else the classic `<p>`
+- `/ui/<p>` serves `next/<p>` when that file exists, else `<p>` of `ui/`
   (`uiResolve` in `internal/api/uifiles.go`). `next/` itself is never served.
-  So the new shell reuses every classic view and data module, and a classic
-  view loaded below `/ui/` imports the new `core/ui.js` and `core/shell.js`.
-- A `next/` module that replaces a classic one keeps every export of it
-  (`TestUINextKeepsTheClassicExports`); the benchmark views are mounted as
-  they are.
+  So the page reuses the shared views and data modules, which import the
+  `core/ui.js` and `core/shell.js` of `next/`.
+- every named import of every module resolves to an export of the file the
+  server serves there (`TestUINamedImportsResolve`); the benchmark views are
+  mounted as they are.
 
 ```
 next/index.html        rail, section menu and <main>; light only (the design defines no dark)
@@ -53,15 +49,17 @@ next/app.js            entry of the new shell; imports the classic views and the
 next/core/shell.js     the design's rail: buttons with titles; Monitor, Zones, Models, Benchmarks;
                        Ask Potluck (a drawer that says it is not built yet), MCP, the System
                        health heart (dot = worst row), the gear Settings (Q69: Profiles, Tiers
-                       and zones, Settings, Audit, About, Placement preview, Logs, Classic UI,
-                       Q73); section menu (collapsible; closed on the Overview, Q9), fleet card,
+                       and zones, Settings, Audit, About, Placement preview, Logs); section menu (collapsible; closed on the Overview, Q9), fleet card,
                        phone drawer; ?health=open on any page opens the health popup
 next/core/health.js    the health popup (Health board): Zones, Requests (the server's row "runs"), Scheduler, MCP server,
                        Storage, Queue, Alerts, Last 2 hours; rows without data are drawn and
                        marked "waiting for data" (grey ring)
-next/core/dom.js       the classic dom.js; morph() keeps attributes it did not set
+next/core/dom.js       h() element builder, morph() in-place update (keeps attributes it did not set), icon()
+next/core/router.js    hash router and the view registry
+next/core/zonecreate.js Create new zone: POST /api/zones/pending, the command and the script, the
+                       state (waiting, joined, expired, cancelled, not found), Cancel (DELETE)
 next/core/period.js    Day / Week / Month / All time: bounds, step, stepper label, axis labels
-next/core/live.js      the classic live.js; adds the opt-in "requests" topic when hello lists it
+next/core/live.js      the WebSocket client (reconnects by itself); adds the opt-in "requests" topic when hello lists it
 next/core/requests.js  requestFeed(): the "requests" topic (snapshot, queued/started/ended, tick);
                        a filtered or older page is read once and the frames laid over it; the 2 s
                        poll runs only while the channel is down; every() (the 100 ms run clock)
@@ -89,8 +87,7 @@ next/views/profiles.js Profiles: one row per profile, generated ones hidden unti
                        panel; the editor (#/profiles/<id>, new, new?from=)
 ```
 
-Each UI links to the other: "Classic UI" at the foot of the new rail, "New UI"
-in the classic header and pane. `GET /` on the scheduler redirects to `/ui/`.
+`GET /` on the scheduler redirects to `/ui/`.
 
 Harness case fields for the new shell: `click` (selectors clicked after the
 draw), `has` (selectors that must match; `[a^=v]` and `[a*=v]` work), `ws` (live-channel
@@ -105,12 +102,11 @@ loaded, drained or unloaded only through `next/core/modelactions.js` behind
 a confirm dialog. SSH is left out for now: the zone panel's SSH row and
 "Open SSH" are drawn as not available yet, with the reason.
 
-The harness checks both: `scripts/ui-exec.mjs --base URL` runs the live
-screens of `/ui/` and of `/ui/classic/`; a case file with `"shell":"next"`
-runs the new shell over a merged copy of the files.
+The harness: `scripts/ui-exec.mjs --base URL` runs the live screens of
+`/ui/`; a case file runs over a merged copy of the files (next/ over ui/),
+as the server serves them.
 
-Run it: `scripts/ui-dev.sh` (the dev harness), then `http://127.0.0.1:8790/ui/`
-(the new shell) or `http://127.0.0.1:8790/ui/classic/`.
+Run it: `scripts/ui-dev.sh` (the dev harness), then `http://127.0.0.1:8790/ui/`.
 One screenshot: `scripts/ui-screens.sh http://127.0.0.1:8790 models loading desktop out.png`.
 
 ## Rules

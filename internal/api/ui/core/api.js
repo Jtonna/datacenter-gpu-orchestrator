@@ -5,7 +5,7 @@
 // with no access key as the default user (setting default_user_name).
 
 // The API root is what comes before /ui/ in the page's path, so the page also
-// works behind a path prefix, and at /ui/classic/ as well as at /ui/.
+// works behind a path prefix.
 const ROOT = (p => { const i = p.lastIndexOf('/ui/'); return i >= 0 ? p.slice(0, i) : new URL('..', new URL('.', location.href)).pathname.replace(/\/$/, ''); })(location.pathname);
 export const url = (path, params) => {
   let u = ROOT + path;

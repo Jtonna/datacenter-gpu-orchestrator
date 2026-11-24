@@ -540,7 +540,7 @@ func (c *schedCore) memoryRows(p *core.Profile, pl core.Placement, freed map[str
 			FreeNowMiB: c.freeMiB(pn.ID, n), HeadroomMiB: n.HeadroomMiB, MarginMiB: r.Margin, MarginRule: r.MarginRule,
 			ReservedBy: []PlanReservedBy{}, AvailableMiB: c.liveBudget(pn.ID, n), HostOverheadMiB: r.Host}
 		if h := hostOf(p, pl); h != "" && h == pn.ID {
-			_, e.HostOverheadSource, e.HostOverheadMeasuredAt = c.hostOverheadOf(p, pn.ID) // hostoverhead.go
+			_, e.HostOverheadSource, e.HostOverheadMeasuredAt = c.hostOverheadOf(p, pn.ID, len(pl.Nodes)) // hostoverhead.go
 		}
 		e.FreeAvgMiB, e.FreeAvgKnown = e.FreeNowMiB, n.FreeAvgKnown
 		if n.FreeAvgKnown {

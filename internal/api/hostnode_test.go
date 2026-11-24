@@ -27,13 +27,13 @@ func TestProfilesHostEntry(t *testing.T) {
 	}
 }
 
-// Both UIs draw where a node-hosted profile runs: the classic Profiles list
-// (from GET /api/profiles) and the new shell's model panel (from GET
-// /api/models, which passes the host keys through).
-func TestUIHostOnNodeDrawsInBothUIs(t *testing.T) {
+// The UI draws where a node-hosted profile runs: the Profiles list (from GET
+// /api/profiles) and the model panel (from GET /api/models, which passes the
+// host keys through).
+func TestUIHostOnNodeDraws(t *testing.T) {
 	host := map[string]any{"host": "node", "host_node": "console-a", "host_overhead_mib": 1024.0, "description": "Qwen for the canary"}
 
-	// classic: the Profiles list, with one profile hosted on a node
+	// Profiles: the list row, and its side panel says where it is hosted
 	e, _, _ := cfgEnv(t)
 	if st, m := e.cdo("POST", "/api/config/profiles", `{"id":"h1","model":"h1.gguf","ctx":2048,"needs_mib":100,"description":"Qwen for the canary"}`, nil); st >= 300 {
 		t.Fatalf("%d %v", st, m)
@@ -53,7 +53,8 @@ func TestUIHostOnNodeDrawsInBothUIs(t *testing.T) {
 		}
 	}
 	uiExec(t, map[string]any{"modules": []string{"views/profiles.js"}, "base": e.front.URL, "fetch": map[string]any{"/api/profiles": profiles}, "cases": []any{
-		map[string]any{"name": "profiles list, a profile hosted on a node", "route": "#/profiles?q=" + id, "status": "fetch", "expect": []string{id, "hosted on console-a", "for the host", "Qwen for the canary"}},
+		map[string]any{"name": "profiles, a profile hosted on a node", "route": "#/profiles?q=" + id + "&profile=" + id, "status": "fetch",
+			"expect": []string{id, "Qwen for the canary"}, "page": []string{"hosted on console-a", "for the host"}},
 	}})
 
 	// new shell: the model panel, from the catalog

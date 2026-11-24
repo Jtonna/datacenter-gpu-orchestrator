@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/needstore"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 )
 
@@ -126,15 +127,19 @@ func TestNeedsListsHostOverheads(t *testing.T) {
 	if got["host_overhead_setting_mib"] != float64(1024) || got["host_overhead_setting_only"] != false {
 		t.Fatalf("settings %v %v", got["host_overhead_setting_mib"], got["host_overhead_setting_only"])
 	}
-	b, _ := json.Marshal(hostOverheadJSON(scheduler.HostOverheadRow{Shape: "s", Node: "a", NodeName: "ps5-a", MiB: 600, LogHostMiB: 150,
-		MeasuredBy: "q", Cause: "load", Profiles: []string{"q"}, Used: true}))
+	b, _ := json.Marshal(hostOverheadJSON(scheduler.HostOverheadRow{Shape: "s", Node: "a", NodeName: "ps5-a", Devices: 1, MiB: 600, LogHostMiB: 150,
+		MeasuredBy: "q", Cause: "load", Profiles: []string{"q"}, Used: true,
+		Readings: []needstore.HostReading{{MiB: 500, At: time.Date(2026, 11, 24, 6, 0, 0, 0, time.UTC), Cause: "load"}}}))
 	var m map[string]any
 	json.Unmarshal(b, &m)
-	for _, k := range []string{"shape", "node", "node_name", "mib", "log_host_mib", "measured_by", "measured_at", "release", "llama_build",
-		"cause", "restored", "used", "profiles"} {
+	for _, k := range []string{"shape", "node", "node_name", "devices", "mib", "log_host_mib", "measured_by", "measured_at", "release", "llama_build",
+		"cause", "restored", "used", "profiles", "readings"} {
 		if _, ok := m[k]; !ok {
 			t.Errorf("no %q in %s", k, b)
 		}
+	}
+	if rs, _ := m["readings"].([]any); len(rs) != 1 || rs[0].(map[string]any)["mib"] != float64(500) || rs[0].(map[string]any)["at"] != "2026-11-24T06:00:00Z" {
+		t.Fatalf("readings %v", m["readings"])
 	}
 }
 

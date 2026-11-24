@@ -12,25 +12,20 @@ import (
 // page, a stylesheet, plain JavaScript modules, and two bundled fonts.
 // Nothing is fetched from another host.
 //
-// Two UIs are served from the one ui directory (UI rewrite, phase U1):
+// One UI is served, at /ui/ (the classic UI that was served at /ui/classic/
+// is removed: the owner's word, 24 Nov). A path below /ui/ is the file of the
+// same path in ui/next/ when that exists, else the file of the ui directory
+// itself: ui/next/ holds the page, the stylesheet, the modules that draw
+// (core/ui.js, core/shell.js and so on) and the rebuilt screens; ui/ holds
+// the modules they share (the data helpers, the views mounted unchanged).
 //
-//   - /ui/classic/ is the UI as it was before the rewrite: the files of the
-//     ui directory itself, outside ui/next/. It stays until the owner says it
-//     can go.
-//   - /ui/ is the new shell. A path below /ui/ is the file of the same path
-//     in ui/next/ when that exists, else the classic file: the new shell
-//     replaces the page, the stylesheet and the modules that draw (core/ui.js,
-//     core/shell.js and so on) and adds its own screens, and it shares every
-//     other module (the data helpers, the views it mounts unchanged). A
-//     classic view loaded below /ui/ therefore imports the new core modules,
-//     and the same file loaded below /ui/classic/ imports the classic ones.
-//
-// ui/next/ itself is never served under its own name.
+// ui/next/ itself is never served under its own name, and /ui/classic/ is
+// not served at all (404).
 
 //go:embed all:ui
 var uiEmbed embed.FS
 
-// uiFS is the ui directory as a file system rooted at /ui/classic/.
+// uiFS is the ui directory as a file system.
 var uiFS = func() fs.FS {
 	sub, err := fs.Sub(uiEmbed, "ui")
 	if err != nil {
@@ -67,13 +62,7 @@ func uiResolve(p string) string {
 	if p == "" || p == "." {
 		return ""
 	}
-	if rest, ok := strings.CutPrefix(p, "classic/"); ok {
-		if strings.HasPrefix(rest, uiNextDir) || !uiExists(rest) {
-			return ""
-		}
-		return rest
-	}
-	if strings.HasPrefix(p, uiNextDir) {
+	if strings.HasPrefix(p, uiNextDir) || p == "classic" || strings.HasPrefix(p, "classic/") {
 		return ""
 	}
 	if uiExists(uiNextDir + p) {
@@ -91,15 +80,11 @@ func (s *Server) uiRoutes(m *http.ServeMux) {
 	// the API's 404. 302, not 301, so browsers do not cache it for good.
 	m.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/ui/", http.StatusFound) })
 	m.HandleFunc("GET /ui/{$}", func(w http.ResponseWriter, r *http.Request) { serveUIFile(w, r, uiNextDir+"index.html") })
-	m.HandleFunc("GET /ui/classic/{$}", func(w http.ResponseWriter, r *http.Request) { serveUIFile(w, r, "index.html") })
 	m.HandleFunc("GET /ui/", s.handleUIFile)
 	m.HandleFunc("GET /ui", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/ui/", http.StatusMovedPermanently) })
-	m.HandleFunc("GET /ui/classic", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/ui/classic/", http.StatusMovedPermanently)
-	})
 }
 
-// handleUIFile serves one embedded file below /ui/ or /ui/classic/. Read-only.
+// handleUIFile serves one embedded file below /ui/. Read-only.
 func (s *Server) handleUIFile(w http.ResponseWriter, r *http.Request) {
 	p := strings.TrimPrefix(path.Clean("/"+strings.TrimPrefix(r.URL.Path, "/ui/")), "/")
 	name := uiResolve(p)

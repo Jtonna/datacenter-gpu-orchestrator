@@ -11,27 +11,37 @@ import (
 
 // The rail as the design draws it (Phase 2, SH-1, SH-2, Q69, Q73): buttons
 // with titles, the mark not a link, Ask Potluck and the heart at the foot,
-// the gear holding the configuration pages and the classic UI link.
+// the gear holding the configuration pages (the classic UI link is gone).
 func TestUINextRail(t *testing.T) {
 	now := time.Now()
 	st := ovStatus(now)
 	fetch := ovFetch(now, ovRequests(now), true)
+	noInst := ovStatus(now)
+	noInst["instances"] = []any{}
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
 		map[string]any{"name": "rail: buttons with titles, in the design's order", "route": "#/overview", "status": st,
-			"pageHas": []string{"button.rb[title=Monitor][aria-current=page]", "button.rb[title=Zones]", "button.rb[title=Models]", "button.rb[title=Benchmarks]",
+			"pageHas": []string{"button.rb[title=Monitor][aria-current=page]", "button.rb[title=Zones]", "button.rb[data-section=models][data-label=Models]", "button.rb[title=Benchmarks]",
 				"button.rb[title^=Ask]", "button.rb[title=MCP]", "button.rb[title^=System][aria-expanded=false]", "button.rb[title=Settings]", "span.mark"},
 			"pageNone": []string{"a.rb", "a.mark", "a.uiswitch"},
 			// the Monitor menu as drawn: Overview, Models, Queue, Activity
 			"links":     []map[string]string{{"text": "Overview", "path": "/ui/"}, {"text": "Models", "path": "/ui/"}, {"text": "Activity", "path": "/ui/"}},
 			"page":      []string{"Queue"},
 			"notOnPage": []string{"Placement preview", "Configure", "Timing defaults"}},
+		// the Models button carries the number of loaded models (the classic
+		// rail's count: every instance, loading ones too), and so does the
+		// Models page in its menu; none loaded: no badge
+		map[string]any{"name": "rail: the Models badge", "route": "#/models", "status": st,
+			"pageHas": []string{"button.rb[data-section=models] span.rbn", "a.nd span.nb"},
+			"titles":  []string{"Models, 2 models loaded", "2 models loaded"}},
+		map[string]any{"name": "rail: no Models badge with nothing loaded", "route": "#/models", "status": noInst,
+			"pageHas": []string{"button.rb[title=Models]"}, "pageNone": []string{"span.rbn", "a.nd span.nb"}},
 		// a rail button opens its section's first page
 		map[string]any{"name": "rail: Zones opens Zones", "route": "#/overview", "status": st, "click": []string{"button.rb[title=Zones]"}, "hash": "#/zones"},
-		// the gear's menu (Q69): the five pages, the placement preview until it folds, the classic UI (Q73)
+		// the gear's menu (Q69): the five pages and the placement preview; no classic UI link (removed)
 		map[string]any{"name": "rail: the Settings menu", "route": "#/profiles", "status": st,
-			"pageHas": []string{"button.rb[title=Settings][aria-current=page]"},
-			"page":    []string{"Profiles", "Tiers and zones", "Settings", "Audit", "About", "Placement preview"},
-			"links":   []map[string]string{{"text": "Classic UI", "path": "/ui/classic/"}}},
+			"pageHas":   []string{"button.rb[title=Settings][aria-current=page]"},
+			"page":      []string{"Profiles", "Tiers and zones", "Settings", "Audit", "About", "Placement preview"},
+			"notOnPage": []string{"Classic UI"}},
 		// Ask Potluck: a drawer that says it is not built yet
 		map[string]any{"name": "rail: Ask Potluck", "route": "#/overview", "status": st, "click": []string{"button.rb[title^=Ask]"},
 			"pageHas": []string{"button.rb[title^=Ask][aria-expanded=true]", "aside.drw2"}, "page": []string{"Ask Potluck is not built yet"}},
