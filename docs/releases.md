@@ -9,7 +9,6 @@ No agent change. No new listening port.
 - **Setting `ui_model_actions`** (default true, no restart): false and the web UI offers no Load a model, Unload or Force unload. A page switch only: REST and MCP are unchanged by it. The page reads it as `settings.ui_model_actions` of `GET /api/config/settings`.
 - **Uptime leaves removed machines out.** `GET /api/nodes/uptime`: a removed machine is not in `zones` and its seconds count in no group and not in the fleet.
 - **History by zone group or list.** `GET /api/history?group=<name>` and `node=a,b,c` (ids or names); MCP `query_history` takes `group`.
-- **Actions on a selection of zones.** `POST /api/zone-actions/{pause|unpause|force-unload}` with `nodes` and `comment`; `dry_run` answers what would happen (per zone effect, models that unload and every zone they leave, runs cut) for the confirm dialog. MCP `act_on_zones`.
 - **Last cold load per zone.** `last_load_link` {mb_s, bytes, load_s, at, model, kind} from the newest ready load that really moved the model to the zone (measured bytes, at least 256 MiB to that zone, at least 2 s; history `loadFinished`); warm, short and unmeasured loads keep the previous figure. `kind: "lower_bound"`: over the whole load time, not a link test.
 
 - **Chip name.** `chip` per zone from its stats' GPU name (absent on a PS5, which reports none); `chip` per group (common name; `mixed` when two names differ; absent when a member reports none).
