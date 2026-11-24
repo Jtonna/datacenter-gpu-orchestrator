@@ -310,7 +310,7 @@ func (s *Server) pendingCreate(w http.ResponseWriter, r *http.Request) {
 	z.ScriptPath = "/install.sh?zone=" + z.ID
 	z.DownloadPath = z.ScriptPath + "&download=1"
 	z.DownloadName = "potluck-zone-" + z.Name + ".sh"
-	z.Command = fmt.Sprintf("curl -fsSL 'http://%s%s' | sudo sh", host, z.ScriptPath)
+	z.Command = installCommand(*z, host)
 	out, err := s.pending.add(z, now)
 	if err != nil {
 		apiErr(w, http.StatusConflict, "%v", err)
@@ -446,7 +446,7 @@ func installScriptText(z PendingZone, host string) string {
 		"# Made by Potluck at " + host + "; valid until " + z.ExpiresAt + ". Run as root.\n" +
 		"# It prints what it will do first; --dry-run prints that and stops.\n" +
 		"# Extra arguments are passed to potluck-agent-setup (for example --allow-from or --no-firewall).\n" +
-		"# It refuses to run on a console (consoles are provisioned by the fleet console)\n" +
+		"# It refuses to run on a console (consoles are set up by the fleet console)\n" +
 		"# and on the machine that runs the Potluck scheduler.\n" +
 		"set -eu\n" +
 		"PATH=${POTLUCK_INSTALL_TEST_PATH:+$POTLUCK_INSTALL_TEST_PATH:}$PATH\n" +
@@ -454,9 +454,30 @@ func installScriptText(z PendingZone, host string) string {
 		"potluck='" + host + "'\n" +
 		"potluck_addr='" + addr + "'\n" +
 		"refuse() { echo \"potluck: $*\" >&2; exit 1; }\n" +
-		"# A console: the fleet console's starter settings, a root file system in memory, or the console GPU.\n" +
+		"# Arguments: --dry-run prints the plan and stops; the rest go to potluck-agent-setup.\n" +
+		"dry=no\n" +
+		"override=no\n" +
+		"n=$#\n" +
+		"while [ \"$n\" -gt 0 ]; do\n" +
+		"\ta=$1\n" +
+		"\tshift\n" +
+		"\tn=$((n - 1))\n" +
+		"\tcase $a in\n" +
+		"\t--dry-run) dry=yes ;;\n" +
+		"\t" + consoleOverrideFlag + ") override=yes ;;\n" +
+		"\t*) set -- \"$@\" \"$a\" ;;\n" +
+		"\tesac\n" +
+		"done\n" +
+		"# A console. Any one marker refuses: the fleet console's payload version file or its units,\n" +
+		"# the starter settings, a root file system in memory, or the console GPU.\n" +
 		"console=''\n" +
-		"if [ -e \"$root/etc/potluck/starter.env\" ]; then console='it has the console starter settings (/etc/potluck/starter.env)'; fi\n" +
+		"if [ -e \"$root/etc/node-payload-version\" ]; then console='it has the fleet console payload version file (/etc/node-payload-version)'; fi\n" +
+		"for unit in ps5-bootstrap.timer node-agent.service; do\n" +
+		"\tfor d in /etc/systemd/system /run/systemd/system /run/systemd/transient /lib/systemd/system /usr/lib/systemd/system; do\n" +
+		"\t\tif [ -z \"$console\" ] && [ -e \"$root$d/$unit\" ]; then console=\"it has the fleet console unit $unit ($d)\"; fi\n" +
+		"\tdone\n" +
+		"done\n" +
+		"if [ -z \"$console\" ] && [ -e \"$root/etc/potluck/starter.env\" ]; then console='it has the console starter settings (/etc/potluck/starter.env)'; fi\n" +
 		"if [ -z \"$console\" ] && [ -r \"$root/proc/mounts\" ]; then\n" +
 		"\trootfs=''\n" +
 		"\twhile read -r _dev mnt fs _rest; do if [ \"$mnt\" = / ]; then rootfs=$fs; fi; done <\"$root/proc/mounts\"\n" +
@@ -465,7 +486,12 @@ func installScriptText(z PendingZone, host string) string {
 		"if [ -z \"$console\" ] && command -v lspci >/dev/null 2>&1 && lspci 2>/dev/null | grep -qi oberon; then\n" +
 		"\tconsole='it has the console GPU (Oberon)'\n" +
 		"fi\n" +
-		"[ -z \"$console\" ] || refuse \"this machine looks like a console: $console. Consoles are provisioned by the fleet console, not by this script; nothing was changed.\"\n" +
+		"# In doubt, refuse: a host name starting with ps5- (unless the override is given).\n" +
+		"name=$(cat \"$root/proc/sys/kernel/hostname\" 2>/dev/null || uname -n 2>/dev/null || echo '')\n" +
+		"if [ -z \"$console\" ] && [ $override = no ]; then\n" +
+		"\tcase $name in ps5-*) console=\"its host name is $name\" ;; esac\n" +
+		"fi\n" +
+		"[ -z \"$console\" ] || refuse \"this machine looks like a console: $console. Consoles are set up by the fleet console, not by this script; nothing was changed.\"\n" +
 		"# The machine that runs the scheduler: Potluck's address is one of its own.\n" +
 		"case $potluck_addr in\n" +
 		"\tlocalhost|127.*|::1) refuse \"this machine runs the Potluck scheduler (Potluck is at $potluck); install the agent on another machine. Nothing was changed.\" ;;\n" +
@@ -481,8 +507,6 @@ func installScriptText(z PendingZone, host string) string {
 		"for t in $targets; do for a in $mine; do\n" +
 		"\tif [ \"$t\" = \"$a\" ]; then refuse \"this machine runs the Potluck scheduler (it has Potluck's address $t); install the agent on another machine. Nothing was changed.\"; fi\n" +
 		"done; done\n" +
-		"dry=no\n" +
-		"if [ \"${1:-}\" = --dry-run ]; then dry=yes; shift; fi\n" +
 		"echo 'potluck: this will, on this machine:'\n" +
 		"echo \"  - download potluck-agent-setup from http://$potluck/install/potluck-agent-setup into a temporary file\"\n" +
 		"echo \"  - run it: potluck-agent-setup --" + z.Mode + " --potluck $potluck --model-source " + z.ModelSource + " --name " + z.Name + " $*\"\n" +
@@ -496,6 +520,18 @@ func installScriptText(z PendingZone, host string) string {
 		"curl -fsS --connect-timeout 5 --max-time 60 -o \"$setup\" \"http://$potluck/install/potluck-agent-setup\"\n" +
 		"sh \"$setup\" --" + z.Mode + " --potluck \"$potluck\" --model-source '" + z.ModelSource + "' --name '" + z.Name + "' \"$@\"\n"
 }
+
+// installCommand is the line the Create dialog shows. It never carries
+// consoleOverrideFlag.
+func installCommand(z PendingZone, host string) string {
+	return fmt.Sprintf("curl -fsSL 'http://%s/install.sh?zone=%s' | sudo sh", host, z.ID)
+}
+
+// consoleOverrideFlag lets the script run on a machine whose host name
+// starts with ps5- but that carries none of the console markers. Named in
+// the runbook only; the dialog never prints it, and it does not override a
+// marker.
+const consoleOverrideFlag = "--not-a-console"
 
 func (s *Server) installSetup(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")

@@ -24,7 +24,8 @@ type fakeMachine struct {
 	hosts  string   // what `getent hosts` prints
 	lspci  string   // what `lspci` prints
 	mounts string   // /proc/mounts
-	files  []string // files to create under root
+	files  []string // files to create under root ("path" or "path=text")
+	host   string   // the machine's host name (default box-1)
 }
 
 func installRun(t *testing.T, script string, m fakeMachine, args ...string) (string, bool) {
@@ -63,8 +64,20 @@ func installRun(t *testing.T, script string, m fakeMachine, args ...string) (str
 	if err := os.WriteFile(filepath.Join(root, "proc", "mounts"), []byte(m.mounts), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, f := range m.files {
-		if err := os.WriteFile(filepath.Join(root, f), []byte("x\n"), 0o644); err != nil {
+	host := m.host
+	if host == "" {
+		host = "box-1"
+	}
+	files := append([]string{"proc/sys/kernel/hostname=" + host + "\n"}, m.files...)
+	for _, f := range files {
+		name, text, ok := strings.Cut(f, "=")
+		if !ok {
+			text = "x\n"
+		}
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, name), []byte(text), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -126,7 +139,7 @@ func TestInstallScript_PrintsItsPlanFirst(t *testing.T) {
 // before downloading anything.
 func TestInstallScript_RefusesConsoleAndSchedulerMachine(t *testing.T) {
 	script := installScriptText(testPendingZone(), "192.0.2.10:3122")
-	console := "Consoles are provisioned by the fleet console"
+	console := "Consoles are set up by the fleet console"
 	cases := []struct {
 		name string
 		m    fakeMachine
@@ -237,5 +250,45 @@ func TestPendingZone_CountedNowhere(t *testing.T) {
 	}
 	if after := counts(); !reflect.DeepEqual(before, after) {
 		t.Fatalf("counts changed: %v -> %v", before, after)
+	}
+}
+
+// Condition 5, the fleet console's markers: each one alone makes the
+// script refuse, with or without the override; a host name starting with
+// ps5- refuses unless the override flag (named in the runbook only, never
+// in the dialog's command) is given.
+func TestInstallScript_ConsoleMarkersAndHostName(t *testing.T) {
+	z := testPendingZone()
+	script := installScriptText(z, "192.0.2.10:3122")
+	if strings.Contains(installCommand(z, "192.0.2.10:3122"), consoleOverrideFlag) || strings.Contains(script, "# "+consoleOverrideFlag) {
+		t.Fatal("the dialog's command or the script's header names the override")
+	}
+	console := "Consoles are set up by the fleet console"
+	base := func() fakeMachine { return fakeMachine{addrs: []string{"192.0.2.21"}, mounts: diskMounts} }
+	for _, f := range []string{"etc/potluck/starter.env", "etc/node-payload-version",
+		"etc/systemd/system/ps5-bootstrap.timer", "lib/systemd/system/ps5-bootstrap.timer", "usr/lib/systemd/system/ps5-bootstrap.timer", "run/systemd/system/ps5-bootstrap.timer",
+		"etc/systemd/system/node-agent.service", "usr/lib/systemd/system/node-agent.service", "run/systemd/transient/node-agent.service"} {
+		m := base()
+		m.files = []string{f}
+		for _, args := range [][]string{nil, {consoleOverrideFlag}} {
+			out, ok := installRun(t, script, m, args...)
+			if ok || !strings.Contains(out, console) || strings.Contains(out, "CURL") {
+				t.Errorf("%s %v: ok %v\n%s", f, args, ok, out)
+			}
+		}
+	}
+	m := base()
+	m.host = "ps5-example"
+	if out, ok := installRun(t, script, m); ok || !strings.Contains(out, console) || !strings.Contains(out, "ps5-example") || strings.Contains(out, "CURL") {
+		t.Errorf("host name: ok %v\n%s", ok, out)
+	}
+	out, ok := installRun(t, script, m, consoleOverrideFlag, "--no-firewall")
+	if !ok || !strings.Contains(out, "SETUP --bare") || strings.Contains(out, "SETUP --bare --potluck 192.0.2.10:3122 --model-source share:192.0.2.10:/srv/models --name zone-9 "+consoleOverrideFlag) ||
+		!strings.Contains(out, "--name zone-9 --no-firewall") {
+		t.Errorf("host name with the override: ok %v\n%s", ok, out)
+	}
+	m.host = "rack-ps5-1"
+	if out, ok := installRun(t, script, m); !ok {
+		t.Errorf("ps5 inside the name refused:\n%s", out)
 	}
 }
