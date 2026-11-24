@@ -136,6 +136,12 @@ The node must accept TCP `50060` and `50052` from Potluck. The script adds ufw r
 
 Check: `curl -s $H/api/nodes | jq '.nodes[] | {name, state, placeable, unplaced}'`. A new node shows `state: active` within a few seconds.
 
+### Which tier a zone is in
+
+Every zone in `/api/nodes` and in `agents` of `/api/status` carries `tier`: the tier the scheduler matched it to. It has `index` (1-based position in the tier list), `priority`, `rule` (the match fields as stored, `{}` for none), `headroom_mib`, `shared_memory`, `link_mb_s` and `settle`. A zone that fits no tier has no `tier` and `tier_reason: "no tier matches"` (and `unplaced: no_tier_match`). A removed zone has neither. `GET /api/config/tiers` lists, next to `tiers`, `tier_zones`: one entry per tier with its `index`, its `zones` now (`id`, `name`; active and lost zones and the local node) and `never_reached: true` when a tier above it has an empty match. The configuration refuses to store an empty match (validation), so on a stored configuration `never_reached` is false; the field guards the page against one all the same. A catch-all such as `hostname: "*"` has the same effect but is not flagged.
+
+Check: `curl -s $H/api/nodes | jq '.nodes[] | {name, tier: .tier.index, tier_reason}'`.
+
 ### Why a node gets no load
 
 An active node that gets no load says why in `unplaced` (in `/api/nodes`, in `agents` and `view.nodes` of `/api/status`, and in the MCP status), with `unplaced_message`:

@@ -180,7 +180,7 @@ func (p *Pool) rebuildLocked() {
 		ln := core.Node{ID: p.localIDLocked(), Hostname: cfg.LocalNodeName(), Local: true, Online: true,
 			TotalMiB: p.probeTotal, FreeMiB: max(p.probeTotal-p.probeUsed, 0)}
 		if t, ok := cfg.MatchTier(ln.Hostname, "", "", true); ok {
-			ln.Priority, ln.HeadroomMiB, ln.SharedMemory, ln.LinkMBs, ln.Settle = t.Priority, t.HeadroomMiB, t.SharedMemory, t.LinkMBs, t.Settle
+			ln.Priority, ln.HeadroomMiB, ln.SharedMemory, ln.LinkMBs, ln.Settle, ln.TierIndex = t.Priority, t.HeadroomMiB, t.SharedMemory, t.LinkMBs, t.Settle, t.Index
 			nodes = append(nodes, ln)
 		}
 	}
@@ -210,7 +210,7 @@ func (p *Pool) nodeFromAgentLocked(cfg *config.Config, a *agent) (core.Node, boo
 	t, tiered := agentTier(cfg, a)
 	n := core.Node{ID: core.NodeID(a.reg.ID), Hostname: a.reg.Name, Online: !a.lost,
 		Addr:     net.JoinHostPort(a.reg.Addr, strconv.Itoa(p.o.WorkerPort)),
-		Priority: t.Priority, HeadroomMiB: t.HeadroomMiB, SharedMemory: t.SharedMemory, LinkMBs: t.LinkMBs, Settle: t.Settle,
+		Priority: t.Priority, HeadroomMiB: t.HeadroomMiB, SharedMemory: t.SharedMemory, LinkMBs: t.LinkMBs, Settle: t.Settle, TierIndex: t.Index,
 		Paused: p.pausedLocked(a.reg.ID, a), UnpausePending: p.unpausePendingLocked(a.reg.ID, a), FreeUnknown: true, SystemMiB: int(a.reg.MemTotalMiB),
 		// The floor is the node's own when its agent reports it (CR-9).
 		WatchdogFloorMiB: int(nodeFloor(cfg, a)), CachedMiB: a.cachedMiB, CachedKnown: a.cachedKnown}
@@ -543,6 +543,13 @@ type NodeFacts struct {
 	// condition still missing. Absent for an agent that sends no start-up
 	// report.
 	LastStartup *startups.Last `json:"last_startup,omitempty"`
+	// Tier is the tier the scheduler's node view assigned the zone
+	// (zonetier.go); absent with TierReason "no tier matches" when it fits
+	// none, and absent for a removed zone or a known machine not registered
+	// since Potluck started.
+	Tier       *ZoneTier `json:"tier,omitempty"`
+	TierReason string    `json:"tier_reason,omitempty"`
+
 	// ZoneFacts: role, share, set-aside, who switched it off, free at (zonefacts.go).
 	ZoneFacts
 }
@@ -636,6 +643,9 @@ func (p *Pool) Facts() []NodeFacts {
 					f.UnplacedMessage = UnpausePendingMessage
 				}
 			}
+		}
+		if f.State != StateRemoved { // zonetier.go: the tier the node view was built with
+			f.Tier, f.TierReason = agentTierFacts(cfg, a)
 		}
 		if e, ok := cfg.ExcludedBy(core.NodeID(id), a.reg.Name); ok {
 			f.Excluded, f.ExcludedBy = true, e

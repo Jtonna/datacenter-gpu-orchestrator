@@ -22,6 +22,9 @@ type Node struct {
 	// reached the node's agent yet (it takes load again within a heartbeat).
 	UnpausePending bool
 	Addr           string // rpc ip:port; empty for the local node
+	// TierIndex is the 1-based position of the tier the node was matched to
+	// (core.Tier.Index); 0 when it matches none.
+	TierIndex int
 
 	TotalMiB int // total device memory
 	// SystemMiB is the machine's system memory (RAM) when known, 0 otherwise:
@@ -108,6 +111,10 @@ type Tier struct {
 	SharedMemory bool          // GPU memory is system RAM
 	LinkMBs      float64       // link speed in MB/s
 	Settle       time.Duration // settle time after a release
+	// Index is the tier's 1-based position in the configured list, set by
+	// the matcher on the tier it returns (config.MatchTierNode); 0 in the
+	// configuration itself.
+	Index int
 }
 
 // Kind says how a profile is started.

@@ -2,6 +2,12 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: each zone's tier
+
+No agent change, no new port, no schema change.
+
+- **Each zone says its tier.** `/api/nodes` and `/api/status` `agents` carry `tier` (index, priority, rule as stored, headroom, shared memory, link speed, settle) as the scheduler matched it, or `tier_reason: "no tier matches"`; `GET /api/config/tiers` adds `tier_zones` (each tier's zones now, and `never_reached` below an empty match). Runbook: "Which tier a zone is in".
+
 ## Scheduler image: the per-device overhead measured per shape, machine and device count
 
 No agent change, no new port. Schema: one new table, `needs_device_overhead` (shape, node, devices, the figure in force with its date, the log's part, the last three readings with their dates), under its own ledger `needs_device_migrations` (v1). No existing table or ledger changes, so the previous image opens the file as before.
