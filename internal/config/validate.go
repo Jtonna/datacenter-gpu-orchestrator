@@ -41,6 +41,9 @@ func (c *Config) validate(raw map[string]*ProfileSpec, modelOK func(*core.Profil
 	c.validateRecovery(add)
 	c.validateBench(add)
 	c.validateLogs(add)
+	if c.DefaultModelSource != "" && !ModelSourceRE.MatchString(c.DefaultModelSource) {
+		add("default_model_source must be empty, share:<host>:/<path>, dir:/<path> or push, got %q", c.DefaultModelSource)
+	}
 	c.validateTiers(add)
 	for _, l := range []struct {
 		key  string

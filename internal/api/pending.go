@@ -17,7 +17,7 @@ import (
 
 	agentdeploy "github.com/Jtonna/datacenter-gpu-orchestrator/deploy/agent"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/audit"
-	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/pool"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
@@ -92,7 +92,7 @@ type pendingZones struct {
 
 var (
 	zoneNameRE    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$`)
-	modelSourceRE = regexp.MustCompile(`^(push|share:[^\s'"\\$%:]+:/[^\s'"\\$%]*|dir:/[^\s'"\\$%]*)$`)
+	modelSourceRE = config.ModelSourceRE
 	hostRE        = regexp.MustCompile(`^[A-Za-z0-9.\-]+:[0-9]{1,5}$|^\[[0-9A-Fa-f:.]+\]:[0-9]{1,5}$`)
 )
 
@@ -208,35 +208,9 @@ func requestHost(r *http.Request) (string, bool) {
 	return h, hostRE.MatchString(h)
 }
 
-// defaultModelSource is the model source most registered agents use
-// (share:<target>, or dir:<path> for a folder); "" when none is known.
-func (s *Server) defaultModelSource() string {
-	if s.opts.Pool == nil {
-		return ""
-	}
-	count := map[string]int{}
-	for _, f := range s.opts.Pool.Facts() {
-		ms, _ := f.ModelSource.(pool.FeedModelSource)
-		t := ms.Target
-		if t == "" || f.State == pool.StateRemoved {
-			continue
-		}
-		src := "share:" + t
-		if strings.HasPrefix(t, "/") {
-			src = "dir:" + t
-		}
-		if modelSourceRE.MatchString(src) {
-			count[src]++
-		}
-	}
-	best, n := "", 0
-	for src, c := range count {
-		if c > n || (c == n && src < best) {
-			best, n = src, c
-		}
-	}
-	return best
-}
+// NoModelSource is the refusal when neither the request nor the setting
+// default_model_source gives a model source.
+const NoModelSource = "no model source: set the default model source for new machines or give one for this zone"
 
 func (s *Server) pendingRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/zones/pending", s.pendingCreate)
@@ -290,10 +264,16 @@ func (s *Server) pendingCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if b.ModelSource == "" {
-		b.ModelSource = s.defaultModelSource()
+		if c := s.conf(); c != nil {
+			b.ModelSource = c.DefaultModelSource
+		}
+	}
+	if b.ModelSource == "" {
+		apiErr(w, http.StatusBadRequest, "%s", NoModelSource)
+		return
 	}
 	if !modelSourceRE.MatchString(b.ModelSource) {
-		apiErr(w, http.StatusBadRequest, "model_source is required (share:<ip>:/<path>, dir:/<path> or push): no registered machine has one to copy")
+		apiErr(w, http.StatusBadRequest, "model_source is share:<host>:/<path>, dir:/<path> or push, got %q", b.ModelSource)
 		return
 	}
 	ttl := pendingDefaultTTL
@@ -348,7 +328,11 @@ func (s *Server) pendingList(w http.ResponseWriter, r *http.Request) {
 	if changed {
 		s.groupsChanged()
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"pending": list})
+	def := "" // the setting default_model_source, for the Create dialog ("": it must ask)
+	if c := s.conf(); c != nil {
+		def = c.DefaultModelSource
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"pending": list, "default_model_source": def})
 }
 
 func (s *Server) pendingByID(id string) (PendingZone, bool) {

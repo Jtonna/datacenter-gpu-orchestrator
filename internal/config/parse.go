@@ -124,6 +124,7 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 		DefaultUserName:     strings.TrimSpace(raw.DefaultUserName),
 		LocalProbeCmd:       raw.LocalProbeCmd,
 		LocalNode:           strings.TrimSpace(raw.LocalNode),
+		DefaultModelSource:  strings.TrimSpace(raw.DefaultModelSource),
 		DataDir:             strings.TrimSpace(raw.DataDir),
 		WSMaxClients:        raw.WSMaxClients,
 		Bench: Bench{RegressLoadPct: raw.Bench.RegressLoadPct, RegressDecodePct: raw.Bench.RegressDecodePct,
@@ -215,6 +216,7 @@ type rawConfig struct {
 	UIModelActions      *bool                       `yaml:"ui_model_actions" json:"-"` // retired (RetiredSettings): read from a file and ignored
 	LocalProbeCmd       string                      `yaml:"local_probe_cmd" json:"local_probe_cmd,omitempty"`
 	LocalNode           string                      `yaml:"local_node" json:"local_node,omitempty"`
+	DefaultModelSource  string                      `yaml:"default_model_source" json:"default_model_source,omitempty"`
 	DataDir             string                      `yaml:"data_dir" json:"data_dir,omitempty"`
 	WSMaxClients        int                         `yaml:"ws_max_clients" json:"ws_max_clients,omitempty"`
 	Bench               rawBench                    `yaml:"bench" json:"bench,omitempty"`

@@ -41,6 +41,11 @@ type Config struct {
 	// LocalNode is the name of the scheduler's own machine as a node (the
 	// local_node setting). See LocalNodeName for when it is used.
 	LocalNode string
+	// DefaultModelSource is the model source a machine made with Create new
+	// zone is given when the request names none: share:<host>:/<path>,
+	// dir:/<path> or push (ModelSourceRE); empty: none, the create is
+	// refused. Never guessed from the registered machines.
+	DefaultModelSource string
 	// DataDir holds the scheduler database (benchmarks, runs, results) as
 	// scheduler.db; empty turns the benchmark feature off. WSMaxClients is the
 	// most concurrent /ws clients.
