@@ -351,3 +351,89 @@ func flipWhy(a, b PlanReport) string {
 		return "same nodes, even split in place of the split by live budget"
 	}
 }
+
+// liveShapeFleet is live's shape: six equal consoles, one laptop with memory
+// of its own, and the local node.
+func liveShapeFleet(r *rand.Rand, jitter int) []core.Node {
+	j := func() int {
+		if r == nil {
+			return 0
+		}
+		return r.Intn(2*jitter+1) - jitter
+	}
+	var ns []core.Node
+	for i, b := range []int{13010, 13024, 12998, 13031, 13005, 13017} {
+		ns = append(ns, ps5(fmt.Sprintf("console-%d", i+1), 10+i, b+j()))
+	}
+	return append(ns, laptop("laptop-1", 7600+j()), hostNode(7000+j()))
+}
+
+// For live's shape, between tolerance 128 and 0 on every one of 20 jittered
+// reads: no profile's action, need, fit need, device count or tiers used
+// changes. What changes is listed: which console a single load lands on,
+// the device order and the split.
+func TestStable_LiveShapeFlipList(t *testing.T) {
+	build := func(tol int) (*harness, []string) {
+		h := newHarness(t)
+		h.cfg.Defaults.PlacementToleranceMiB = tol
+		h.nodes(liveShapeFleet(nil, 0)...)
+		r := rand.New(rand.NewSource(55))
+		var names []string
+		for i := 0; i < 120; i++ {
+			name := fmt.Sprintf("p%03d", i)
+			names = append(names, name)
+			switch {
+			case i%11 == 0:
+				h.command(name, 500+r.Intn(4000))
+			case i%13 == 0:
+				h.llama(name, 3000+r.Intn(8000), func(p *core.Profile) { p.ForceNodes = []string{fmt.Sprintf("console-%d", 1+i%6)} })
+			case i%4 == 0:
+				h.llama(name, 0)
+				h.needs[name] = NeedInfo{Need: placer.Estimated(800 + r.Intn(40000)), FileBytes: 1 << 30}
+			case i%7 == 0:
+				h.llama(name, 60000+r.Intn(60000)) // too large: refused
+			default:
+				h.llama(name, 500+r.Intn(44000))
+			}
+		}
+		h.viewChanged()
+		return h, names
+	}
+	on, names := build(stableTol)
+	off, _ := build(0)
+	prios := func(h *harness, r PlanReport) []int {
+		var out []int
+		for _, pn := range r.Placement {
+			n, _ := h.c.node(pn.ID)
+			out = append(out, n.Priority)
+		}
+		slices.Sort(out)
+		return out
+	}
+	rng := rand.New(rand.NewSource(3))
+	kinds := map[string]int{}
+	actions := map[PlanAction]int{}
+	for i := 0; i < 20; i++ {
+		fleet := liveShapeFleet(rng, 25)
+		on.nodes(fleet...)
+		on.viewChanged()
+		off.nodes(fleet...)
+		off.viewChanged()
+		for _, n := range names {
+			a, b := on.c.dryPlan(n), off.c.dryPlan(n)
+			if a.Action != b.Action || a.NeedMiB != b.NeedMiB || a.FitNeedMiB != b.FitNeedMiB || len(a.Placement) != len(b.Placement) ||
+				!slices.Equal(prios(on, a), prios(off, b)) || a.TightFit != b.TightFit {
+				t.Fatalf("read %d %s: action %s/%s need %d/%d fit %d/%d devices %d/%d tiers %v/%v tight %v/%v", i, n,
+					a.Action, b.Action, a.NeedMiB, b.NeedMiB, a.FitNeedMiB, b.FitNeedMiB, len(a.Placement), len(b.Placement),
+					prios(on, a), prios(off, b), a.TightFit, b.TightFit)
+			}
+			if i == 0 {
+				actions[b.Action]++
+				if why := flipWhy(a, b); why != "" {
+					kinds[fmt.Sprintf("%d device(s): %s", max(len(a.Placement), len(a.Memory.Nodes)), why)]++
+				}
+			}
+		}
+	}
+	t.Logf("live shape, %d profiles %v: on the first read %v", len(names), actions, kinds)
+}
