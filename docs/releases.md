@@ -10,7 +10,7 @@ No agent change, no new port. **Schema: one new table, `model_trash`, as step 2 
 - **Trash list.** `GET /api/models/trash` (**observe**): items with `file`, `size_bytes`, `deleted_at`, `purge_at`, `state`, the saved profiles, `actor`, `comment`, `problem`; `total_bytes`, `next_purge_at`, `trash_days`, `purge_on` (false: nothing removes files yet).
 - **Restore.** `POST /api/models/trash/{id}/restore` {comment, rename_taken} (**models**): renames the file back and adds its profiles in one revision.
 - **Catalog.** `disk` gains `trash_bytes`, `trash_count`, `next_purge_at`, `trash_purge_on`. Trashed files are not listed.
-- **Setting** `model_trash_days` (1 to 365, default 30; section models).
+- **Setting** `model_trash_days` (1 to 365, default 30; settings section retention).
 - **Configuration.** A write or rollback that adds a profile on a trashed file is refused with "it is in the trash since ...".
 - **Crash safety.** A kill between any two steps is repaired or reported at the next start.
 - **MCP.** `delete_model`, `list_deleted_models`, `restore_model`.
