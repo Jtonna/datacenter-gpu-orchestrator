@@ -85,6 +85,10 @@ const (
 	// TLoopSlowStep: one step of the scheduler's core loop took longer than
 	// loop_step_warn_ms (at most one a minute; scheduler/loophealth.go).
 	TLoopSlowStep = "loopSlowStep"
+	// TKnownMachines: at a start, the machines the scheduler knows from its
+	// previous run (data machines: [{id, name, last_seen}]). One event for
+	// the fleet, naming no node.
+	TKnownMachines = "knownMachines"
 )
 
 // Event is one history record. Ts is unix milliseconds; Seq is monotonic per

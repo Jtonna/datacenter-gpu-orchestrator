@@ -9,6 +9,12 @@ Fix on top of v36. No agent change, no schema change, no new port.
 - **No client credential header is passed on to a model server**, on every proxied route (`/v1/...`, `/upstream/...`), streamed or not, for a llama-server on the scheduler's machine and one hosted on a console alike. Dropped: `Authorization`, `Proxy-Authorization`, `X-Api-Key`, `Api-Key`, `X-Goog-Api-Key`, `X-Auth-Token`, `Cookie`, `X-Agent-Key` (one list, `proxy.ClientCredentialHeaders`). Before, a llama-server on the scheduler's machine received the client's `Authorization` header (often another provider's real key, sent by habit), and every model server received the client's other credential headers. A console-hosted server still gets exactly Potluck's own launch key (`Authorization: Bearer <launch key>`), never the client's value instead of it or beside it. The log store proxy (`/logs/`) drops the same list.
 - A `command` profile whose own server checks a key from the client's header would now be refused by that server; none is known (llama-server launches never take the client's key).
 
+## Scheduler image: Zones backend (phase 4)
+
+No agent change. No new listening port.
+
+- **One event per start for the known machines.** The start writes one `knownMachines` event for the fleet (data `machines`: id, name, last_seen) in place of one `nodeMembership` event per carried machine, which filled each machine's recent events at every start. The per-machine warning stays, written only for a machine that ends up listed as lost. The events of v39 to v41 are still read.
+
 ## Scheduler image: known machines across a restart (phase 4)
 
 No agent change, no `scheduler.db` or `usage.db` schema change, no new port.

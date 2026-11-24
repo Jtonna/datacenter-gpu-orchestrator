@@ -61,9 +61,10 @@ type HistoryScanner interface {
 //   - nodeMembership state lost: the machine is listed, lost; last seen is
 //     the event's last_seen, or for an event without it (older images) the
 //     event's time less LostAfter.
-//   - nodeMembership with known: true: written by this image for a machine
-//     it carries (SetKnown) and when such a machine is listed (the grace
-//     over). The machine is listed, lost, with the last seen in the event,
+//   - knownMachines (one per start, written by SetKnown) and nodeMembership
+//     with known: true (written when a carried machine is listed lost, the
+//     grace over; images v39 to v41 also wrote one per carried machine at the
+//     start): the machine is listed, lost, with the last seen in the event,
 //     unless it registered in the run.
 //   - nodeMembership state left, and nodeAdmin action remove: the machine is
 //     not listed.
@@ -102,6 +103,20 @@ func KnownFrom(scan func(fn func(history.Event))) []KnownNode {
 		}
 		if e.Ts > runLast {
 			runLast = e.Ts
+		}
+		if e.Type == history.TKnownMachines {
+			for _, m := range eventMachines(e.Data["machines"]) {
+				id, _ := m["id"].(string)
+				ms, ok := millis(m["last_seen"])
+				if _, listed := list[id]; id != "" && ok && !listed {
+					name, _ := m["name"].(string)
+					if name == "" {
+						name = id
+					}
+					list[id] = &rec{name: name, seen: ms}
+				}
+			}
+			return
 		}
 		id, _ := e.Data["id"].(string)
 		if id == "" {
@@ -145,6 +160,24 @@ func KnownFrom(scan func(fn func(history.Event))) []KnownNode {
 	return out
 }
 
+// eventMachines reads the machines list of a knownMachines event, as
+// recorded ([]map[string]any) or as read back from a file ([]any).
+func eventMachines(v any) []map[string]any {
+	switch x := v.(type) {
+	case []map[string]any:
+		return x
+	case []any:
+		var out []map[string]any
+		for _, e := range x {
+			if m, ok := e.(map[string]any); ok {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
 // millis reads a time in unix ms from event data, as recorded (int64) or as
 // read back from a file (float64).
 func millis(v any) (int64, bool) {
@@ -164,20 +197,26 @@ func (p *Pool) SetKnown(ks []KnownNode) {
 	p.mu.Lock()
 	defer supervise.Unlocked("pool", p.unlock)
 	p.known = map[string]KnownNode{}
+	var carried []map[string]any
 	for _, k := range ks {
 		p.known[k.ID] = k
 		if _, ok := p.agents[k.ID]; ok || p.admin[k.ID].Removed {
 			continue // registered already (its own event lists it) or removed
 		}
-		// The carry event: this run lists the machine from its start, so the
-		// next start carries it again even if this run ends inside the grace.
-		p.historyLocked(history.Event{Ts: p.o.Clock().UnixMilli(), Type: history.TNodeMembership, Severity: history.Info,
-			Nodes: []string{k.Name},
-			Summary: fmt.Sprintf("Node %s is known from the previous run (last seen %s); it is listed as lost if its agent has not registered %s after the start.",
-				k.Name, k.LastSeen.UTC().Format(time.RFC3339), KnownGrace),
-			Data: map[string]any{"id": k.ID, "state": StateLost, "known": true, "carried": true, "absent_since_start": true,
-				"last_seen": k.LastSeen.UnixMilli()}})
+		carried = append(carried, map[string]any{"id": k.ID, "name": k.Name, "last_seen": k.LastSeen.UnixMilli()})
 	}
+	if len(carried) == 0 {
+		return
+	}
+	sort.Slice(carried, func(i, j int) bool { return carried[i]["id"].(string) < carried[j]["id"].(string) })
+	// The carry event: this run lists these machines from its start, so the
+	// next start carries them again even if this run ends inside the grace.
+	// One event for the fleet, naming no node: a machine's own recent events
+	// get only the warning written when it is listed as lost.
+	p.historyLocked(history.Event{Ts: p.o.Clock().UnixMilli(), Type: history.TKnownMachines, Severity: history.Info,
+		Summary: fmt.Sprintf("Potluck knows %s from its previous run; one whose agent has not registered %s after the start is listed as lost.",
+			plural(len(carried), "machine", "machines"), KnownGrace),
+		Data: map[string]any{"machines": carried}})
 }
 
 // loadKnown reads the known machines from h in the background, when h can
@@ -246,4 +285,12 @@ func (p *Pool) announceKnownLocked(now time.Time) {
 				now.Sub(k.LastSeen).Round(time.Minute)),
 			Data: map[string]any{"id": k.ID, "state": StateLost, "known": true, "absent_since_start": true, "last_seen": k.LastSeen.UnixMilli()}})
 	}
+}
+
+// plural is "1 machine" or "N machines".
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return fmt.Sprintf("%d %s", n, many)
 }
