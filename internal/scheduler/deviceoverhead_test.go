@@ -320,58 +320,78 @@ func TestDeviceOverhead_OnlyFromAColdLoad(t *testing.T) {
 }
 
 // At start, a stored row whose reading came from a cached load is dropped,
-// with a history line saying why: its load is found in the event history
-// (the learnedNeed event that recorded the reading, then the loadFinished
-// event of that load before it: its bytes to that node). A row from a cold
-// load, and a row with no events, are kept.
+// with a history line, and a count line is written either way. The fixture
+// has the shape of live's events for the cached TinyLlama reload: the
+// reading was taken by a generated benchmark profile that is no longer in
+// the configuration; the events name the consoles by hostname while the
+// rows are keyed by node id; the reading's learnedNeed comes one average
+// window after the loadFinished; the events are on disk in the history
+// directory and read back by a fresh history store, as after a restart. A
+// row from a cold load, and a row with no events, are kept.
 func TestDeviceOverhead_RowsFromCachedLoadsDroppedAtStart(t *testing.T) {
 	h := devHarness(t)
+	for _, id := range []core.NodeID{"a", "b"} {
+		h.view.modify(id, func(n *core.Node) { n.Hostname = "console-" + string(id) })
+	}
+	h.viewChanged()
 	st := openNeedStore(t)
 	h.c.restoreNeeds(st)
 	e := h.c.cfg.Profiles["e"]
-	t1, t2 := h.clk.Now().Add(-2*time.Hour), h.clk.Now().Add(-time.Hour)
+	ready := h.clk.Now().Add(-time.Hour).Truncate(time.Millisecond)
+	readAt := ready.Add(36 * time.Second)
+	coldAt := ready.Add(-time.Hour)
 	for _, r := range []struct {
 		node core.NodeID
 		mib  int
-		at   time.Time
-	}{{"a", 82, t2}, {"b", 39, t2}} {
-		row := devMeasured(shapeOf(e), r.node, 2, r.mib, r.at, h.c.llamaBuild)
-		row.Readings[0].At, row.MeasuredAt = r.at, r.at
+	}{{"a", 82}, {"b", 39}} {
+		row := devMeasured(shapeOf(e), r.node, 2, r.mib, readAt, h.c.llamaBuild)
+		row.Profile = "bench-gone"
 		h.c.putDeviceOverhead(row)
 	}
-	cold := devMeasured(shapeOf(h.c.cfg.Profiles["e1"]), "a", 1, 300, t1, h.c.llamaBuild)
-	h.c.putDeviceOverhead(cold) // e1 has e's shape on one device: a cold load
+	h.c.putDeviceOverhead(devMeasured(shapeOf(e), "a", 1, 300, coldAt, h.c.llamaBuild))   // a cold load (e1)
+	h.c.putDeviceOverhead(devMeasured(shapeOf(e), "b", 1, 250, coldAt.Add(-time.Hour), h.c.llamaBuild)) // no events
 	flushNeeds(h, st)
-	h = devHarness(t)
-	h.c.restoreNeeds(st)
-	ev := func(ts time.Time, typ, profile string, nodes []string, data map[string]any) history.Event {
-		return history.Event{Ts: ts.UnixMilli(), Type: typ, Profile: profile, Nodes: nodes, Data: data}
+
+	dir := t.TempDir()
+	hs := history.Open(history.Options{Dir: dir})
+	both := []string{"console-a", "console-b"}
+	detail := func(a, b float64) []map[string]any {
+		return []map[string]any{{"node": "console-a", "bytes": a, "memory_mib": 430.0}, {"node": "console-b", "bytes": b, "memory_mib": 389.0}}
 	}
-	detail := func(a, b float64) []any {
-		return []any{map[string]any{"node": "a", "bytes": a, "memory_mib": 430.0}, map[string]any{"node": "b", "bytes": b, "memory_mib": 389.0}}
-	}
-	reads := 0
-	h.c.devEventsFn = func() []history.Event {
-		reads++
-		return []history.Event{
-			ev(t1.Add(-time.Minute), history.TLoadFinished, "e1", []string{"a"},
-				map[string]any{"bytes_measured": true, "nodes_detail": []any{map[string]any{"node": "a", "bytes": float64(3600 << 20), "memory_mib": 4350.0}}}),
-			ev(t1, history.TLearnedNeed, "e1", []string{"a"}, map[string]any{"node": "a", "device_overhead_mib": 300.0, "devices": 1.0}),
-			// an older cold load of e on both, then the cached reload that measured
-			ev(t2.Add(-time.Hour), history.TLoadFinished, "e", []string{"a", "b"},
-				map[string]any{"bytes_measured": true, "nodes_detail": detail(float64(3600<<20), float64(3600<<20))}),
-			ev(t2.Add(-time.Minute), history.TLoadFinished, "e", []string{"a", "b"},
-				map[string]any{"bytes_measured": true, "nodes_detail": detail(34062, 29442)}),
-			ev(t2, history.TLearnedNeed, "e", []string{"a", "b"}, map[string]any{"node": "a", "device_overhead_mib": 82.0, "devices": 2.0}),
-			ev(t2, history.TLearnedNeed, "e", []string{"a", "b"}, map[string]any{"node": "b", "device_overhead_mib": 39.0, "devices": 2.0}),
+	for _, ev := range []history.Event{
+		{Ts: coldAt.Add(-40 * time.Second).UnixMilli(), Type: history.TLoadFinished, Profile: "e1", Nodes: []string{"console-a"},
+			Data: map[string]any{"outcome": "ready", "bytes_measured": true, "bytes": 3600 << 20, "nodes_detail": []map[string]any{{"node": "console-a", "bytes": 3600 << 20, "memory_mib": 4350.0}}}},
+		{Ts: coldAt.UnixMilli(), Type: history.TLearnedNeed, Profile: "e1", Nodes: []string{"console-a"},
+			Data: map[string]any{"node": "console-a", "device_overhead_mib": 300, "devices": 1}},
+		// an earlier cold load of the benchmark profile, then the cached reload that measured
+		{Ts: ready.Add(-30 * time.Minute).UnixMilli(), Type: history.TLoadFinished, Profile: "bench-gone", Nodes: both,
+			Data: map[string]any{"outcome": "ready", "bytes_measured": true, "bytes": 2 * 3600 << 20, "nodes_detail": detail(3600<<20, 3600<<20)}},
+		{Ts: ready.UnixMilli(), Type: history.TLoadFinished, Profile: "bench-gone", Nodes: both,
+			Data: map[string]any{"outcome": "ready", "bytes_measured": true, "bytes": 63504, "load_s": 4.0, "nodes_detail": detail(34062, 29442)}},
+		{Ts: readAt.UnixMilli(), Type: history.TLearnedNeed, Profile: "bench-gone", Nodes: both,
+			Data: map[string]any{"node": "console-a", "device_overhead_mib": 82, "devices": 2}},
+		{Ts: readAt.UnixMilli(), Type: history.TLearnedNeed, Profile: "bench-gone", Nodes: both,
+			Data: map[string]any{"node": "console-b", "device_overhead_mib": 39, "devices": 2}},
+	} {
+		ev.Summary = ev.Profile + " finished loading in 4.0 s."
+		if ev.Type == history.TLearnedNeed {
+			ev.Summary = "Measured the per-device overhead of " + ev.Profile + " (as the image writes it)."
 		}
+		hs.Record(ev)
 	}
-	h.c.servedBuild = h.c.llamaBuild
+	hs.Close()
+	hs = history.Open(history.Options{Dir: dir}) // a restart: read back from disk
+	t.Cleanup(hs.Close)
+
+	h = devHarness(t)
+	for _, id := range []core.NodeID{"a", "b"} {
+		h.view.modify(id, func(n *core.Node) { n.Hostname = "console-" + string(id) })
+	}
+	h.viewChanged()
+	h.c.restoreNeeds(st)
+	h.c.devEventsFn = func(q history.Query) []history.Event { return hs.Query(q).Events }
 	h.step(evTick{})
 	h.step(evTick{})
-	if reads != 1 {
-		t.Fatalf("history read %d times", reads)
-	}
 	if _, ok := devRow(h, shapeOf(e), "a", 2); ok {
 		t.Fatal("the cached row on a is kept")
 	}
@@ -381,19 +401,38 @@ func TestDeviceOverhead_RowsFromCachedLoadsDroppedAtStart(t *testing.T) {
 	if _, ok := devRow(h, shapeOf(e), "a", 1); !ok {
 		t.Fatal("the cold row is dropped")
 	}
-	n := 0
+	if _, ok := devRow(h, shapeOf(e), "b", 1); !ok {
+		t.Fatal("the row with no events is dropped")
+	}
+	lines, counts := 0, 0
 	for _, x := range h.histTypes(history.TLearnedNeed) {
 		if _, ok := x.Data["dropped_device_overhead_mib"]; ok {
-			n++
+			lines++
+		}
+		if x.Data["device_rows_checked"] == 4 && x.Data["device_rows_dropped"] == 2 && x.Data["device_rows_cold"] == 1 && x.Data["device_rows_not_found"] == 1 {
+			counts++
 		}
 	}
-	if n != 2 {
-		t.Fatalf("history lines %d", n)
+	if lines != 2 || counts != 1 {
+		t.Fatalf("drop lines %d, count lines %d", lines, counts)
 	}
 	flushNeeds(h, st)
-	if rows, _ := st.AllDevice(); len(rows) != 1 || rows[0].Devices != 1 {
+	if rows, _ := st.AllDevice(); len(rows) != 2 {
 		t.Fatalf("stored %+v", rows)
 	}
+}
+
+// With nothing stored, the count line still says so (a proof reads it).
+func TestDeviceOverhead_CountLineWhenNothingIsStored(t *testing.T) {
+	h := devHarness(t)
+	h.c.devEventsFn = func(history.Query) []history.Event { return nil }
+	h.step(evTick{})
+	for _, x := range h.histTypes(history.TLearnedNeed) {
+		if x.Data["device_rows_checked"] == 0 && x.Data["device_rows_dropped"] == 0 {
+			return
+		}
+	}
+	t.Fatal("no count line")
 }
 
 // The same settled-base rule per worker: b had an instance leave it just

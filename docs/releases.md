@@ -7,7 +7,7 @@ What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent
 No agent change, no new port, no schema change.
 
 - **A per-device overhead reading is taken only from a cold load** on that node: measured bytes sent there of at least half of what the log puts on its devices. A cached reload (the worker already held the tensors) gives no reading.
-- **Rows read from cached loads are dropped once at start**, decided from the event history, with a history line.
+- **Rows read from cached loads are dropped once at start**, decided from the event history, with a history line, also when the reading's profile is a generated benchmark profile no longer in the configuration. Each start writes a count line and a `learnedNeed` event with `device_rows_checked` and `device_rows_dropped`, also when none are dropped.
 - **No host or per-device reading from an unsettled base**: when an instance that ran left the node less than one `free_average_window` before the new one was created, the base free figure may still show it; that load gives no reading.
 
 ## Scheduler image: the per-device overhead measured per shape, machine and device count
