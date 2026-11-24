@@ -38,7 +38,7 @@ import { liveView, pageHead, badge, nodeChips, empty, banner, skeleton, button, 
 import { openPanel, openPanelNow } from '../core/panel.js';
 import { pager } from '../core/pager.js';
 import { num, mib, gb, ctx, plural } from '../core/format.js';
-import { plainReason, plainBasis } from '../core/status.js';
+import { plainReason, plainBasis, machines, nodeName } from '../core/status.js';
 import { loadSchema, loadConfig, fieldsOf, clone, fieldOfMessage } from '../core/configdata.js';
 import { reviewChanges, savedBanner, watchConfig, noticeBanner } from '../core/changes.js';
 import { catalog, onCatalog, needCatalog } from '../core/catalog.js';
@@ -270,6 +270,18 @@ registerView({
     }
 
     // ---- the side panel: one profile, its placements ----
+    // whereText(profile, plan, instance): names only where they are given
+    // (the page rule): a forced profile's own zones, or the machines a loaded
+    // instance is on. An automatic profile's plan picks among equal machines
+    // and can pick others a moment later, so it says how many.
+    function whereText(e, plan, inst) {
+      const st = state.status || {};
+      if ((e.force_nodes || []).length || e.placement === 'forced') return (plan.nodes || []).length ? [h('span.mut', 'on'), nodeChips(plan.nodes)] : null;
+      const on = inst ? (inst.nodes || []).map(n => nodeName(st, n && typeof n === 'object' ? n.id : n)) : [];
+      if (on.length) return h('span.row', { style: 'gap:8px', 'data-loaded-on': String(on.length) }, h('span.mut', 'Loaded on'), nodeChips(on));
+      const n = (plan.nodes || []).length;
+      return n ? h('span', { 'data-would': String(n) }, 'would load on ' + machines(st, n)) : null;
+    }
     function panelBody(id) {
       const e = (list || []).find(x => x.id === id);
       if (!e) return [empty('There is no profile ' + id, 'It may have been deleted, or its name changed.')];
@@ -296,7 +308,7 @@ registerView({
           e.host === 'node' ? h('div', hostLine(e)) : null,
           e.blocked_by_exclusion ? h('div.err-t', 'Blocked: a forced zone is switched off (' + e.blocked_by_exclusion + ').') : null),
         h('section.prf-part', { key: 'plan' }, h('h3', 'Where it would go now'),
-          h('div.row', { style: 'gap:8px' }, badge(label, kind, why), (plan.nodes || []).length ? [h('span.mut', 'on'), nodeChips(plan.nodes)] : null, plan.tight_fit ? badge('Tight fit', 'load') : null),
+          h('div.row', { style: 'gap:8px' }, badge(label, kind, why), whereText(e, plan, inst), plan.tight_fit ? badge('Tight fit', 'load') : null),
           plan.reason ? h('p.mut', { title: plan.reason }, plainReason(plan.reason)) : null,
           plan.warning ? h('p.warn-t', { title: plan.warning }, plainReason(plan.warning)) : null,
           inst ? h('p', inst.stale_profile ? 'A model of this profile is loaded with an older definition.' : 'A model of this profile is loaded now.') : null,
