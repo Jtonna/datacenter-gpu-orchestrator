@@ -61,13 +61,13 @@ func TestUINextMCP(t *testing.T) {
 		map[string]any{"name": "mcp: New key, Ask me noted", "route": "#/mcp?new=1", "status": st, "click": []string{"button[data-level=ask]"},
 			"page": []string{"Ask me is kept, but approvals are not built yet"}},
 		map[string]any{"name": "mcp: Manage", "route": "#/mcp?key=ag_000000000001", "status": st,
-			"page": []string{"Manage access", "ops-bot", "Active", "last used", "times in the last 7 days", "3 refused", "Key expires", "Permissions",
+			"page": []string{"Manage access", "ops-bot", "Active", "last used", "requests in 7 days, 3 refused", "Key expires", "Permissions",
 				"MCP settings for the agent", "<paste your key>", "ptl_••••7c2e", "Rotate key", "Revoke key", "Save", "Ask me is kept"},
 			"has": []string{"tr.sel[data-key=ag_000000000001]"}, "notOnPage": []string{mcpCreatedKey, "ptl_fixture"}},
 		map[string]any{"name": "mcp: Manage a revoked key", "route": "#/mcp?key=ag_000000000006", "status": st,
 			"page": []string{"was revoked", "cannot be changed", "Close"}, "pageNone": []string{"button[data-act=save]", "button[data-act=rotate]", "input#mcp-name"}},
 		map[string]any{"name": "mcp: Manage an expired key", "route": "#/mcp?key=ag_000000000005", "status": st, "page": []string{"This key expired", "Rotate key"}},
-		map[string]any{"name": "mcp: Manage a legacy key", "route": "#/mcp?key=ag_000000000007", "status": st, "page": []string{"Made before permissions existed", "Used 4 times in the last 7 days"}},
+		map[string]any{"name": "mcp: Manage a legacy key", "route": "#/mcp?key=ag_000000000007", "status": st, "page": []string{"Made before permissions existed", "4 requests in 7 days"}},
 	}})
 	none := fixtureAnswers(t, []string{"--keys", "none"}, "/api/agents")
 	none["/api/status"] = st

@@ -1160,6 +1160,17 @@ table.runs{width:100%;border-collapse:collapse}
 .mcp-tbl tbody tr:hover .go,.mcp-tbl tr.sel .go,.mcp-tbl .go:focus-visible{color:var(--link)}
 .mcp-tbl tbody tr:hover .go .tx,.mcp-tbl tr.sel .go .tx,.mcp-tbl .go:focus-visible .tx{visibility:visible}
 @container (max-width:900px){.mcp-tbl .c-key,.mcp-tbl .c-used{display:none}}
+@container (max-width:600px){
+  .mcp-tbl{table-layout:fixed}
+  .mcp-tbl td{overflow:hidden;text-overflow:ellipsis}
+  .mcp-tbl th:nth-child(1){width:34%}
+  .mcp-tbl th:nth-child(4){width:96px}
+  .mcp-tbl th:nth-child(6){width:128px}
+  .mcp-tbl .c-go{width:34px}
+  .mcp-tbl .go .tx{display:none}
+  .mcp-tbl td.nm>span:first-child{max-width:100%}
+  .mcp-tbl td.nm .ktag{display:none}
+}
 .ktag{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:6px;font-size:12px;font-weight:700;white-space:nowrap;box-sizing:border-box}
 .ktag.t-ok{background:#dcf0e5;color:#0a4a32}
 .ktag.t-soon{background:#f8e7bd;color:#553a00}
@@ -1186,5 +1197,5 @@ table.runs{width:100%;border-collapse:collapse}
 .mcp-perms .mcp-level{font-weight:700;text-align:right}
 .mcp-snip{margin:0;padding:12px 14px;border:1px solid var(--line-panel);border-radius:10px;background:#f8faf8;font-family:var(--mono);font-size:12px;line-height:1.6;color:var(--text);white-space:pre;overflow-x:auto}
 .mcp-note{margin:0;font-size:12px;font-weight:600}
-.mcp-use{margin:0;font-weight:600}
+.mcp-use{font-weight:600}
 .mcp-list{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px}

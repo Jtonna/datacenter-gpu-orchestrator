@@ -60,16 +60,23 @@ export function statusTag(a) {
 const gone = a => a.status === 'expired' || a.status === 'revoked';
 const expiresText = a => (a.status === 'revoked' ? '–' : a.expires_at ? dateLong(a.expires_at) : 'Never');
 
-// usageLine(a) -> "Used 1,284 times in the last 7 days · 3 refused"
+// usageLine(a) -> "1,284 requests in 7 days, 3 refused" (Ask me refusals are counted in refused)
 export function usageLine(a) {
   const u = a.usage || {};
-  if (!u.requests && !u.denied) return 'Not used in the last ' + (u.days || 7) + ' days';
-  return ['Used ' + plural(u.requests || 0, 'time') + ' in the last ' + (u.days || 7) + ' days', u.denied ? num(u.denied) + ' refused' : null,
-    u.asked ? num(u.asked) + ' waited for Ask me, refused' : null].filter(Boolean).join(' · ');
+  if (!u.requests && !u.denied) return 'not used in the last ' + (u.days || 7) + ' days';
+  return [plural(u.requests || 0, 'request') + ' in ' + (u.days || 7) + ' days', u.denied ? num(u.denied) + ' refused' : null].filter(Boolean).join(', ');
 }
 
-// the snippet as JSON text
-const snippetText = s => JSON.stringify(s || {}, null, 2);
+// snippetText(s) -> the settings as the boards write them: the server entry's
+// fields one per line, the rest closed on the first and last lines (valid JSON)
+export function snippetText(s) {
+  const servers = s && s.mcpServers;
+  const names = servers ? Object.keys(servers) : [];
+  if (names.length !== 1 || typeof servers[names[0]] !== 'object') return JSON.stringify(s || {}, null, 2);
+  const one = servers[names[0]];
+  const lines = Object.keys(one).map(k => '    ' + JSON.stringify(k) + ': ' + JSON.stringify(one[k]).replace(/^\{"/, '{ "').replace(/"\}$/, '" }').replace(/":"/g, '": "').replace(/","/g, '", "'));
+  return '{ "mcpServers": { ' + JSON.stringify(names[0]) + ': {\n' + lines.join(',\n') + '\n} } }';
+}
 
 // copy(text, what): to the clipboard; never echoes the text (it may be a key)
 async function copy(text, what) {
@@ -254,7 +261,8 @@ registerView({
         sub: () => {
           const a = agentOf(id);
           if (!a) return null;
-          return [statusTag(a), a.last_used_at ? [' last used ', h('time', { title: full(a.last_used_at) }, stamp(a.last_used_at))] : ' never used'];
+          return [statusTag(a), a.last_used_at ? [' last used ', h('time', { title: full(a.last_used_at) }, stamp(a.last_used_at))] : ' never used',
+            a.status === 'revoked' ? null : h('span.mcp-use', { 'data-usage': '' }, ' · ' + usageLine(a))];
         },
         body: () => {
           const a = agentOf(id);
@@ -266,7 +274,6 @@ registerView({
             h('div.mcp-form', { key: 'form-' + id },
               a.legacy ? banner('info', 'Made before permissions existed: it may do everything and never expires. Setting an expiry or a permission here gives it its own; the key itself stays the same.') : null,
               a.status === 'expired' ? banner('warn', 'This key expired on ' + dateLong(a.expires_at) + '. Pick a new expiry and save to turn it back on, or rotate it.') : null,
-              h('p.mut.mcp-use', { 'data-usage': '' }, usageLine(a)),
               h('div.fld', h('label.lbl', { for: 'mcp-name' }, 'Name'),
                 h('input.inp', { id: 'mcp-name', type: 'text', value: f.name, maxlength: 64, autocomplete: 'off', spellcheck: 'false', 'data-keep': '', oninput() { f.name = this.value; } })),
               expiryField(f, redraw, a),
