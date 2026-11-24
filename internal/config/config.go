@@ -85,6 +85,12 @@ type Config struct {
 	// health summary's Storage row then also judges the model files against
 	// it. 0 (the default) judges the real free space only.
 	ModelsDiskBudgetGB int
+	// ModelTrashDays is how long a deleted model file is kept in the trash
+	// before the purge may remove it (models slice 3 records the date; the
+	// purge itself is slice 4). 1 to MaxModelTrashDays, default 30.
+	ModelTrashDays int
+	// modelNote is Options.ModelNote while the configuration is checked.
+	modelNote func(string) string
 	// DefaultUserName is the default user: the name that signs what is done
 	// without an access key and without a name of the client's own (the web
 	// UI, curl, scripts) in the audit log and the request log. There is no
@@ -364,6 +370,9 @@ type Options struct {
 	// points one at a new file is (a load of the profile is refused at plan
 	// time instead).
 	KeepModels map[string]string
+	// ModelNote, when set, adds a sentence to the refusal of a model file
+	// that is not there (models slice 3: "it is in the trash since ...").
+	ModelNote func(model string) string
 }
 
 // Bench is the benchmark feature's settings (design 9.3).

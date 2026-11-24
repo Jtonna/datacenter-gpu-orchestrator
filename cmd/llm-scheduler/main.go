@@ -452,6 +452,7 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 	}
 	apiSrv = api.New(cfg, sched, ao)
 	started.Store(true)
+	apiSrv.RepairTrash(context.Background()) // a model delete or restore a kill left half done (models slice 3); after started, so profiles it adds back reach the scheduler
 	// MCP at /mcp on the same port; its tools run in-process through apiSrv (design 9.5).
 	mcpSrv := mcpserver.New(apiSrv, mcpserver.Options{Version: version, Guide: docs.BenchmarkGuide,
 		Bridge:   func(ctx context.Context, actor string) context.Context { return audit.WithSource(ctx, "mcp", actor) },
