@@ -1020,3 +1020,42 @@ table.runs{width:100%;border-collapse:collapse}
 .plc-raw summary{cursor:pointer;color:var(--link);font-weight:700;font-size:12.5px}
 .plc-raw pre{max-height:360px;overflow:auto;margin:8px 0 0;padding:10px 12px;background:var(--inset);border:1px solid var(--line-panel);border-radius:8px;font-family:var(--mono);font-size:11.5px;white-space:pre}
 @media(max-width:1100px){.plc{grid-template-columns:1fr}}
+
+/* ---------- Profiles (views/profiles.js; no mockup, phase 5: inferred) ----------
+   One panel: a toolbar (search, "Show generated (N)", the count), one table
+   row per profile (name with its description under it, model, context,
+   zones, the plan's pill), the pager as the foot. The placements live in
+   the docked side panel. The editor is its own page (.prf-editor). */
+.prf{display:flex;flex-direction:column;min-width:0}
+.prf-bar{display:flex;align-items:center;flex-wrap:wrap;gap:10px 12px;padding:10px var(--pad-panel);border-bottom:1px solid var(--line)}
+.prf-bar .sx{flex:1 1 280px;max-width:460px}
+.prf-count{margin-left:auto;font-size:12.5px;font-weight:600}
+.prf-scroll{overflow-x:auto}
+.prf-tbl{width:100%;table-layout:fixed;min-width:640px}
+.prf-tbl th:nth-child(1){width:auto}
+.prf-tbl th:nth-child(2){width:22%}
+.prf-tbl th:nth-child(3){width:84px}
+.prf-tbl th:nth-child(4){width:120px}
+.prf-tbl th:nth-child(5){width:150px}
+.prf-tbl td{vertical-align:middle}
+.prf-tbl tr.sel td{background:var(--accent-tint)}
+.prf-tbl tr.sel td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
+.prf-name{min-width:0}
+.prf-id{display:flex;align-items:center;gap:8px;min-width:0}
+.prf-id .mono{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
+.prf-d{font-size:12px;font-weight:600;color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:1px}
+.prf-model span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prf-zones{white-space:nowrap;color:var(--text-2)}
+.prf-foot{display:flex;justify-content:flex-end;padding:8px var(--pad-panel);border-top:1px solid var(--line)}
+.prf-desc{margin:0 0 4px;overflow-wrap:anywhere}
+.prf-part{display:flex;flex-direction:column;gap:8px;padding:12px 0;border-top:1px solid var(--line)}
+.prf-part:first-child{border-top:0}
+.prf-part h3{font-size:var(--fs-label);font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--mut)}
+.prf-part p{margin:0;overflow-wrap:anywhere}
+.warn-t{color:var(--warn-text,#8a5a00)}
+.prf-editor{display:flex;flex-direction:column;min-width:0}
+.prf-ebar{display:flex;align-items:center;gap:12px;min-height:52px;padding:0 var(--pad-panel);border-bottom:1px solid var(--line)}
+.prf-ebar h2{flex:1;font-size:var(--fs-panel);font-weight:800;overflow-wrap:anywhere}
+.prf-ebody{display:flex;flex-direction:column;gap:22px;padding:16px var(--pad-panel)}
+.prf-esec h3{font-size:var(--fs-label);font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);margin-bottom:10px}
+.prf-efoot{position:sticky;bottom:0;display:flex;align-items:center;gap:10px;padding:10px var(--pad-panel);border-top:1px solid var(--line);background:var(--surface);border-radius:0 0 12px 12px}
