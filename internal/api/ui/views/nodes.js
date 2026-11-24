@@ -277,7 +277,7 @@ export function tile(st, n, refresh) {
       h('h2.mono', name), np && label === 'Free' ? null : badge(label, kind, label.startsWith('Excluded') && exBy ? 'excluded by exclude_nodes: ' + exBy : undefined),
       np && np.paused ? badge('Paused', 'settle', 'Paused by an operator: it takes no new model') : null,
       npOther ? badge('Not placeable', 'aside', np.known ? np.short : np.code) : null,
-      n.auto === false && !excl ? badge('Forced only', 'line', 'In no_auto_nodes: only a profile that names this node in force_nodes puts a model here') : null,
+      n.auto === false && !excl ? badge('Named only', 'line', 'In no_auto_nodes: a model comes here only from a profile or a load that names this machine') : null,
       n.local ? badge('This machine', 'n', 'The scheduler runs here: models are read from disk, nothing is uploaded') : null),
     h('div.body',
       h('div.on-it', onIt),

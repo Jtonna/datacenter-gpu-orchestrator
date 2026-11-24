@@ -32,15 +32,15 @@ func TestConfigNoAutoNodes(t *testing.T) {
 }
 
 // CR-9 review, C: a view node carries "auto" (false for a node in
-// no_auto_nodes), the Nodes page shows "Forced only" for it, and the tiers
+// no_auto_nodes), Machine details shows "Named only" for it, and the tiers
 // page edits the list through PUT /api/config/no-auto-nodes.
 func TestNoAutoNodesInStatusAndUI(t *testing.T) {
 	m, _ := jsonView(scheduler.NodeStatus{ID: "a"}).(map[string]any)
 	if v, ok := m["auto"]; !ok || v != false {
 		t.Fatalf("view node: auto = %v (present %v)", v, ok)
 	}
-	if src := uiText(t, "views/nodes.js"); !strings.Contains(src, "n.auto === false") || !strings.Contains(src, "'Forced only'") {
-		t.Error("views/nodes.js does not show a Forced only badge for auto false")
+	if src := uiText(t, "views/nodes.js"); !strings.Contains(src, "n.auto === false") || !strings.Contains(src, "'Named only'") {
+		t.Error("views/nodes.js does not show a Named only badge for auto false")
 	}
 	if src := uiText(t, uiNextDir+"views/tiers.js"); !strings.Contains(src, "'/api/config/no-auto-nodes'") || !strings.Contains(src, "no_auto_nodes: draft.noauto") {
 		t.Error("next/views/tiers.js does not write no_auto_nodes")
