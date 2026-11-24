@@ -83,12 +83,17 @@ var routeScopes = map[string]access.Scope{
 	"GET /api/requests/summary": access.Observe, "GET /api/requests/{id}": access.Observe, "GET /api/startups": access.Observe,
 	"GET /api/status": access.Observe, "GET /api/system": access.Observe, "GET /running": access.Observe, "GET /ws": access.Observe,
 	"GET " + agentproto.PathLogsQuery: access.Observe, agentproto.PathLogsPages: access.Observe,
-	"POST /api/plan": access.Observe, // what would happen, changes nothing
+	"POST /api/plan":  access.Observe, // what would happen, changes nothing
+	"GET /api/groups": access.Observe, "GET /api/nodes/uptime": access.Observe,
 
 	// zones: switch zones on or off
 	"POST /api/nodes/{id}/pause": access.Zones, "POST /api/nodes/{id}/unpause": access.Zones,
 	"POST /api/nodes/{id}/readmit": access.Zones, "POST /api/nodes/{id}/expect-restart": access.Zones,
 	"PUT /api/config/exclude-nodes": access.Zones, "PUT /api/config/no-auto-nodes": access.Zones,
+	// zone groups: pausing a group pauses its zones; arranging groups changes no zone
+	"POST /api/groups/{name}/pause": access.Zones, "POST /api/groups/{name}/unpause": access.Zones,
+	"POST /api/groups": access.Zones, "PATCH /api/groups/{name}": access.Zones, "DELETE /api/groups/{name}": access.Zones,
+	"POST /api/groups/{name}/members": access.Zones, "DELETE /api/groups/{name}/members": access.Zones,
 
 	// models: load and unload (a benchmark run loads models)
 	"POST /api/load": access.Models, "POST /api/unload": access.Models, "POST /api/models/unload": access.Models,
