@@ -165,16 +165,17 @@ func TestUINextHealthHeart(t *testing.T) {
 // beside the rail (its script is empty: the heart's click does nothing more
 // than open the popup). Opening the popup closes the open section menu for
 // as long as the popup is open; closing the popup brings the menu back as
-// the person had it (their stored choice is not changed).
+// the person had it (their stored choice is not changed). (On Models: the
+// Overview and Zones open with the menu closed.)
 func TestUINextHealthPopupClosesTheMenu(t *testing.T) {
 	now := time.Now()
 	st := ovStatus(now)
 	doc := healthDoc(now, nil, nil)
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": map[string]any{"/api/health": doc}, "cases": []any{
-		map[string]any{"name": "menu: open on Zones", "route": "#/zones", "status": st, "pageNone": []string{"div.app.menu-closed"}},
-		map[string]any{"name": "menu: the popup closes it", "route": "#/zones", "status": st, "click": []string{"button.rb[data-surface=health]"},
+		map[string]any{"name": "menu: open on Models", "route": "#/models", "status": st, "pageNone": []string{"div.app.menu-closed"}},
+		map[string]any{"name": "menu: the popup closes it", "route": "#/models", "status": st, "click": []string{"button.rb[data-surface=health]"},
 			"pageHas": []string{"div.app.menu-closed", "div.hp"}},
-		map[string]any{"name": "menu: back when the popup closes", "route": "#/zones", "status": st, "click": []string{"button.rb[data-surface=health]", "div.hp button.hp-x"},
+		map[string]any{"name": "menu: back when the popup closes", "route": "#/models", "status": st, "click": []string{"button.rb[data-surface=health]", "div.hp button.hp-x"},
 			"pageNone": []string{"div.app.menu-closed", "div.hp"}},
 	}})
 }
