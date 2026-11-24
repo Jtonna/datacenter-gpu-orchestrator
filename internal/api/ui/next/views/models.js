@@ -228,7 +228,7 @@ function listPanel(st, models, disk, error, r, query, setQuery, onFind) {
     sec('Pinned', h('span.lbl.mdl-off', 'not built yet'), { 'data-sec': 'pinned', title: NOT_YET.pin }),
     sec('All models', models ? diskLine(models, disk) : null, { 'data-sec': 'all' }),
     rows.length ? h('div.mr.mr-h', { 'aria-hidden': 'true' }, h('span'), h('span'),
-      h('span.lbl', { title: 'The memory its lightest configuration needs on the nodes' }, 'Needs'), h('span.lbl', 'Profiles'), h('span.lbl', 'Last used')) : null,
+      h('span.lbl.mdl-needs', { title: 'The memory its lightest configuration needs on the nodes' }, 'Needs'), h('span.lbl.mdl-pc', 'Profiles'), h('span.lbl', 'Last used')) : null,
     body,
     off('button.tbar', NOT_YET.trash, { 'data-act': 'trash' }, icon('M4 6h12M8 6V4h4v2M6 6l1 10h6l1-10'), 'Deleted models', h('span.mut', ' · not built yet')));
 }

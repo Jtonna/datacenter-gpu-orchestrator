@@ -103,6 +103,7 @@ b.mono,a.mono,.mono b,h1 .mono,h2 .mono,h3 .mono,b .mono{font-weight:500}
 .nd.on{background:var(--accent-tint);color:var(--accent-ink)}
 .nb{margin-left:auto;min-width:20px;height:20px;padding:0 5px;border-radius:5px;background:var(--accent);color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;font-variant-numeric:tabular-nums}
 .nb.alert{background:var(--failed)}
+.nd b .nb{color:#fff;font-weight:700} /* a described menu entry's count (the Models entry): .nd span would grey it */
 .ni .ext{margin-left:auto;color:var(--mut);font-size:12px}
 .menu-foot{margin-top:auto;padding-top:12px;display:flex;flex-direction:column;gap:10px}
 /* fleet status card, at the foot of a section menu */
@@ -1269,7 +1270,7 @@ table.runs{width:100%;border-collapse:collapse}
 .mdl .mr.mr-h:hover{background:none}
 .mdl-needs{text-align:right;white-space:nowrap}
 .mdl-needs .sub{display:block}
-.mdl .mr-h .lbl:nth-child(3){text-align:right}
+.mdl .mr-h .mdl-needs{text-align:right}
 @container (max-width:640px){.mdl .mr{grid-template-columns:28px minmax(0,1fr) 84px 96px}.mdl .mr .mdl-pc{display:none}}
 @container (max-width:460px){.mdl .mr{grid-template-columns:28px minmax(0,1fr) 84px}.mdl .mr .mdl-needs{display:none}}
 .mdl-acts{display:flex;gap:8px;flex-wrap:wrap}

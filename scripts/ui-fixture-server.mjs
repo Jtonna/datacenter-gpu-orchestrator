@@ -97,7 +97,7 @@ import { fileURLToPath } from 'node:url';
 import { zonesStatus, counts, groupsDoc, uptimeDoc, fleetStrip } from './ui-fixture/zones.mjs';
 import { schema as cfgSchema, configDoc, storedConfig, dryRun } from './ui-fixture/config.mjs';
 import { profileEntries, profileSpecs, catalog as cfgCatalog, planAnswer } from './ui-fixture/profiles.mjs';
-import { Keys } from './ui-fixture/keys.mjs';
+import { Keys, toolsAnswer } from './ui-fixture/keys.mjs';
 import { modelsDoc, modelsInstances } from './ui-fixture/models.mjs';
 
 const argv = process.argv.slice(2);
@@ -375,6 +375,7 @@ const server = http.createServer((req, res) => {
   // the placement preview's dry run writes nothing
   // POST /api/plan: the Zones fixture's answers when --load names a load state (the Load dialog's states),
   // else the configuration pages' (profiles.mjs, Placement preview); the other model actions are the Zones fixture's
+  if (KEYS && p === '/api/mcp/tools') return json(res, 200, toolsAnswer());
   if (KEYS && (p === '/api/agents' || p.startsWith('/api/agents/'))) {
     const host = req.headers.host || 'fixture';
     const rot = /^\/api\/agents\/([^/]+)\/rotate$/.exec(p), one = /^\/api\/agents\/([^/]+)$/.exec(p);
