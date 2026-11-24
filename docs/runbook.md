@@ -400,7 +400,7 @@ curl -s "$H/api/audit?section=profiles&target=qwen3-4b"
 curl -s $H/api/audit/42 | jq '{before, after, diff}'
 ```
 
-`source` is `ui`, `rest`, `mcp`, `import` or `system`. Loads and unloads asked for over REST or MCP are in section `runtime`. The scheduler's own actions (benchmark loads and unloads) have source `system`.
+`source` is `ui`, `rest`, `mcp`, `import` or `system`. Loads and unloads asked for from the web UI (source `ui`), over REST or with MCP are in section `runtime`. The scheduler's own actions (benchmark loads and unloads) have source `system`.
 
 ### Roll back
 
