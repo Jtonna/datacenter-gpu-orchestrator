@@ -915,8 +915,9 @@ table.runs{width:100%;border-collapse:collapse}
 .fr .gmeta{font-weight:600}
 .fr .mono{font-size:12.5px}
 .cb{width:16px;height:16px;margin:0;accent-color:#0f6b4a}
-.more{width:20px;height:20px;border:0;border-radius:5px;background:transparent;color:#55615b;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
-.more:hover{background:#e9eeeb}
+/* the Zones fold icon only (views/zones.js, in .gn): the Show/Hide text buttons keep .more above */
+.gn .more{width:20px;height:20px;border:0;border-radius:5px;background:transparent;color:#55615b;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
+.gn .more:hover{background:#e9eeeb}
 .sts{display:flex;align-items:center;gap:8px;white-space:nowrap;overflow:hidden}
 .sts .stx{overflow:hidden;text-overflow:ellipsis}
 .sts .mut{font-weight:600}
