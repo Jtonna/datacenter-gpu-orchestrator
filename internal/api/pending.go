@@ -36,7 +36,7 @@ import (
 //
 // Pending zones are kept in memory (no schema change): a restart of
 // Potluck forgets them; the machine still joins with its name, without the
-// group. They expire after ttl_min (default 60, at most 1440). The groups
+// group. They expire after ttl_min (5 to 60, default 60: at most an hour). The groups
 // topic on /ws carries them (pending_zones) and is sent when one changes.
 
 // Pending zone states.
@@ -47,6 +47,16 @@ const (
 	PendingCancelled = "cancelled"
 )
 
+// pendingStateText is State in words.
+var pendingStateText = map[string]string{
+	PendingWaiting:   "Waiting for the machine to check in",
+	PendingJoined:    "Joined",
+	PendingExpired:   "Expired: the machine did not check in in time",
+	PendingCancelled: "Cancelled",
+}
+
+func (z *PendingZone) setState(st string) { z.State, z.StateText = st, pendingStateText[st] }
+
 // PendingZone is one zone made before its machine joined.
 type PendingZone struct {
 	ID          string `json:"id"`
@@ -55,10 +65,14 @@ type PendingZone struct {
 	ModelSource string `json:"model_source"`
 	Mode        string `json:"mode"` // bare or docker
 	State       string `json:"state"`
-	CreatedAt   string `json:"created_at"`
-	ExpiresAt   string `json:"expires_at"`
-	JoinedNode  string `json:"joined_node,omitempty"`
-	JoinedAt    string `json:"joined_at,omitempty"`
+	// StateText is the state in words for the page: "Waiting for the
+	// machine to check in" while waiting; a waiting zone is never down or
+	// lost and is counted nowhere (not a pool node).
+	StateText  string `json:"state_text"`
+	CreatedAt  string `json:"created_at"`
+	ExpiresAt  string `json:"expires_at"`
+	JoinedNode string `json:"joined_node,omitempty"`
+	JoinedAt   string `json:"joined_at,omitempty"`
 	// Command is the line to run on the machine; ScriptPath and
 	// DownloadPath are on Potluck's address (the one the request used).
 	Command      string `json:"command"`
@@ -84,7 +98,7 @@ var (
 
 const (
 	pendingDefaultTTL = time.Hour
-	pendingMaxTTL     = 24 * time.Hour
+	pendingMaxTTL     = time.Hour
 	pendingKeep       = 50
 )
 
@@ -101,7 +115,7 @@ func (p *pendingZones) expireLocked(now time.Time) bool {
 	var done []*PendingZone
 	for _, z := range p.byID {
 		if z.State == PendingWaiting && !now.Before(z.expires) {
-			z.State = PendingExpired
+			z.setState(PendingExpired)
 			changed = true
 		}
 		if z.State != PendingWaiting {
@@ -142,7 +156,8 @@ func (p *pendingZones) join(id, name string, now time.Time) (PendingZone, bool) 
 	p.expireLocked(now)
 	for _, z := range p.byID {
 		if z.State == PendingWaiting && strings.EqualFold(z.Name, name) {
-			z.State, z.JoinedNode, z.JoinedAt = PendingJoined, id, isoT(now)
+			z.setState(PendingJoined)
+			z.JoinedNode, z.JoinedAt = id, isoT(now)
 			return *z, true
 		}
 	}
@@ -174,7 +189,7 @@ func (p *pendingZones) cancel(id string) (PendingZone, bool, error) {
 	case z.State != PendingWaiting:
 		return PendingZone{}, true, fmt.Errorf("pending zone %s is %s, not waiting", id, z.State)
 	}
-	z.State = PendingCancelled
+	z.setState(PendingCancelled)
 	return *z, true, nil
 }
 
@@ -289,7 +304,7 @@ func (s *Server) pendingCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := s.opts.Now()
-	z := &PendingZone{ID: newPendingID(), Name: b.Name, Group: b.Group, ModelSource: b.ModelSource, Mode: b.Mode, State: PendingWaiting,
+	z := &PendingZone{ID: newPendingID(), Name: b.Name, Group: b.Group, ModelSource: b.ModelSource, Mode: b.Mode, State: PendingWaiting, StateText: pendingStateText[PendingWaiting],
 		created: now, expires: now.Add(ttl), host: host}
 	z.CreatedAt, z.ExpiresAt = isoT(z.created), isoT(z.expires)
 	z.ScriptPath = "/install.sh?zone=" + z.ID
@@ -416,16 +431,70 @@ func installScriptText(z PendingZone, host string) string {
 	if z.Group != "" {
 		group = z.Group
 	}
+	addr := host
+	if i := strings.LastIndex(addr, ":"); i > 0 && !strings.HasSuffix(addr, "]") {
+		addr = addr[:i]
+	}
+	addr = strings.Trim(addr, "[]")
+	what := "  - install /usr/local/bin/potluck-agent and the systemd unit potluck-agent.service, then start (or restart) only that unit\n"
+	if z.Mode == "docker" {
+		what = "  - start the potluck-agent container (an existing one of that name is replaced); with a share: add a read-only mount unit for it\n" +
+			"    and a drop-in so Docker starts after it (Docker itself is not restarted)\n"
+	}
 	return "#!/bin/sh\n" +
 		"# Potluck: install this machine as zone " + z.Name + " (group " + group + ", pending zone " + z.ID + ").\n" +
 		"# Made by Potluck at " + host + "; valid until " + z.ExpiresAt + ". Run as root.\n" +
+		"# It prints what it will do first; --dry-run prints that and stops.\n" +
 		"# Extra arguments are passed to potluck-agent-setup (for example --allow-from or --no-firewall).\n" +
+		"# It refuses to run on a console (consoles are provisioned by the fleet console)\n" +
+		"# and on the machine that runs the Potluck scheduler.\n" +
 		"set -eu\n" +
+		"PATH=${POTLUCK_INSTALL_TEST_PATH:+$POTLUCK_INSTALL_TEST_PATH:}$PATH\n" +
+		"root=${POTLUCK_INSTALL_TEST_ROOT:-}\n" +
+		"potluck='" + host + "'\n" +
+		"potluck_addr='" + addr + "'\n" +
+		"refuse() { echo \"potluck: $*\" >&2; exit 1; }\n" +
+		"# A console: the fleet console's starter settings, a root file system in memory, or the console GPU.\n" +
+		"console=''\n" +
+		"if [ -e \"$root/etc/potluck/starter.env\" ]; then console='it has the console starter settings (/etc/potluck/starter.env)'; fi\n" +
+		"if [ -z \"$console\" ] && [ -r \"$root/proc/mounts\" ]; then\n" +
+		"\trootfs=''\n" +
+		"\twhile read -r _dev mnt fs _rest; do if [ \"$mnt\" = / ]; then rootfs=$fs; fi; done <\"$root/proc/mounts\"\n" +
+		"\tcase $rootfs in tmpfs|ramfs) console=\"its root file system is in memory ($rootfs)\" ;; esac\n" +
+		"fi\n" +
+		"if [ -z \"$console\" ] && command -v lspci >/dev/null 2>&1 && lspci 2>/dev/null | grep -qi oberon; then\n" +
+		"\tconsole='it has the console GPU (Oberon)'\n" +
+		"fi\n" +
+		"[ -z \"$console\" ] || refuse \"this machine looks like a console: $console. Consoles are provisioned by the fleet console, not by this script; nothing was changed.\"\n" +
+		"# The machine that runs the scheduler: Potluck's address is one of its own.\n" +
+		"case $potluck_addr in\n" +
+		"\tlocalhost|127.*|::1) refuse \"this machine runs the Potluck scheduler (Potluck is at $potluck); install the agent on another machine. Nothing was changed.\" ;;\n" +
+		"esac\n" +
+		"targets=$potluck_addr\n" +
+		"case $potluck_addr in\n" +
+		"\t*[!0-9.]*) case $potluck_addr in *:*) ;; *) targets=$(getent hosts \"$potluck_addr\" 2>/dev/null | while read -r a _n; do echo \"$a\"; done) || targets='' ;; esac ;;\n" +
+		"esac\n" +
+		"mine=''\n" +
+		"if command -v ip >/dev/null 2>&1; then\n" +
+		"\tmine=$(ip -o addr show 2>/dev/null | sed -n 's/.* inet6\\{0,1\\} \\([^/ ]*\\).*/\\1/p') || mine=''\n" +
+		"fi\n" +
+		"for t in $targets; do for a in $mine; do\n" +
+		"\tif [ \"$t\" = \"$a\" ]; then refuse \"this machine runs the Potluck scheduler (it has Potluck's address $t); install the agent on another machine. Nothing was changed.\"; fi\n" +
+		"done; done\n" +
+		"dry=no\n" +
+		"if [ \"${1:-}\" = --dry-run ]; then dry=yes; shift; fi\n" +
+		"echo 'potluck: this will, on this machine:'\n" +
+		"echo \"  - download potluck-agent-setup from http://$potluck/install/potluck-agent-setup into a temporary file\"\n" +
+		"echo \"  - run it: potluck-agent-setup --" + z.Mode + " --potluck $potluck --model-source " + z.ModelSource + " --name " + z.Name + " $*\"\n" +
+		"printf '%s' '" + strings.ReplaceAll(what, "'", "") + "'\n" +
+		"echo '  - when ufw is active, allow TCP 50060, 50052 and 50061 from Potluck (comment potluck-agent); --no-firewall skips this'\n" +
+		"echo '  - nothing is rebooted and no other service is restarted; running it again gives the same result'\n" +
+		"[ $dry = no ] || exit 0\n" +
 		"command -v curl >/dev/null 2>&1 || { echo 'potluck: curl is required' >&2; exit 1; }\n" +
 		"setup=$(mktemp)\n" +
 		"trap 'rm -f \"$setup\"' EXIT\n" +
-		"curl -fsS --connect-timeout 5 --max-time 60 -o \"$setup\" 'http://" + host + "/install/potluck-agent-setup'\n" +
-		"sh \"$setup\" --" + z.Mode + " --potluck '" + host + "' --model-source '" + z.ModelSource + "' --name '" + z.Name + "' \"$@\"\n"
+		"curl -fsS --connect-timeout 5 --max-time 60 -o \"$setup\" \"http://$potluck/install/potluck-agent-setup\"\n" +
+		"sh \"$setup\" --" + z.Mode + " --potluck \"$potluck\" --model-source '" + z.ModelSource + "' --name '" + z.Name + "' \"$@\"\n"
 }
 
 func (s *Server) installSetup(w http.ResponseWriter, r *http.Request) {

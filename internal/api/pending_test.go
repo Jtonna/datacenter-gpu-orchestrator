@@ -34,8 +34,9 @@ func TestPendingZone_CreateServeJoin(t *testing.T) {
 	resp := e.get(z.DownloadPath)
 	script := status(t, resp, 200)
 	if resp.Header.Get("Content-Disposition") != `attachment; filename="potluck-zone-zone-9.sh"` ||
-		!strings.Contains(script, "sh \"$setup\" --bare --potluck '"+host+"' --model-source 'share:192.0.2.1:/srv/models' --name 'zone-9' \"$@\"") ||
-		!strings.Contains(script, "'http://"+host+"/install/potluck-agent-setup'") {
+		!strings.Contains(script, "potluck='"+host+"'\n") ||
+		!strings.Contains(script, "sh \"$setup\" --bare --potluck \"$potluck\" --model-source 'share:192.0.2.1:/srv/models' --name 'zone-9' \"$@\"") ||
+		!strings.Contains(script, "\"http://$potluck/install/potluck-agent-setup\"") {
 		t.Fatalf("script:\n%s", script)
 	}
 	if sh, err := exec.LookPath("sh"); err == nil {
