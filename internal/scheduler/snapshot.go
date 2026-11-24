@@ -103,7 +103,7 @@ func (c *schedCore) instStatus(in *inst) InstanceStatus {
 	s := InstanceStatus{
 		Profile: in.prof.Name, State: in.state.String(), RunningState: in.state.running(),
 		Cmd: c.cmdline(in), LogFile: in.logFile, Created: in.created, LastUsed: in.lastUsed, LoadDuration: in.loadDuration,
-		InFlight: in.inFlight, Waiters: len(in.waiters), VictimOf: in.victimOf,
+		InFlight: in.inFlight, Waiters: len(in.waiters), VictimOf: in.victimOf, Drain: in.drain,
 		ModelFile: in.prof.Model, RequestsServed: in.served,
 		StaleProfile: c.staleProfile(in), LoadMode: c.loadModeFor(in.prof, in.placement),
 	}
@@ -115,6 +115,9 @@ func (c *schedCore) instStatus(in *inst) InstanceStatus {
 	}
 	if in.state == stReady || in.state == stDraining {
 		s.ReadySince = in.readyAt
+	}
+	if (in.state == stReady || in.state == stDraining) && in.inFlight > 0 {
+		s.DrainEtaS = c.drainETA(in)
 	}
 	if in.state == stStarting {
 		v := c.loadView(in)

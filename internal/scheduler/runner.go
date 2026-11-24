@@ -691,6 +691,38 @@ func (s *Scheduler) Unload(ctx context.Context, model string, force bool) error 
 	return err
 }
 
+// Drain is POST /api/models/drain/{model}: the instance admits nothing
+// new and stops once its runs finish (drain.go); the answer is the ETA in
+// seconds (nil: idle and stopped now, or no run length known yet).
+func (s *Scheduler) Drain(ctx context.Context, model string) (*float64, error) {
+	p, _, ok := s.Config().Resolve(model)
+	if !ok {
+		return nil, errUnknown(model)
+	}
+	type res struct {
+		eta *float64
+		err error
+	}
+	r, qerr := ask(s, ctx, func(c *schedCore) res { eta, err := c.drain(p.Name); return res{eta, err} })
+	if qerr != nil {
+		return nil, qerr
+	}
+	return r.eta, r.err
+}
+
+// Undrain takes a drain back: the instance admits again.
+func (s *Scheduler) Undrain(ctx context.Context, model string) error {
+	p, _, ok := s.Config().Resolve(model)
+	if !ok {
+		return errUnknown(model)
+	}
+	err, qerr := ask(s, ctx, func(c *schedCore) error { return c.undrain(p.Name) })
+	if qerr != nil {
+		return qerr
+	}
+	return err
+}
+
 // UnloadAllIdle stops every ready instance with nothing in flight
 // (POST /api/models/unload, GET /unload) and returns their profiles.
 func (s *Scheduler) UnloadAllIdle(ctx context.Context) ([]string, error) {

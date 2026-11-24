@@ -197,6 +197,12 @@ type InstanceStatus struct {
 	// StaleProfile: the profile was changed or deleted after this instance started; it keeps the definition it started with until its next load.
 	StaleProfile bool
 	VictimOf     string // profile of the claimed entry this instance drains or stops for
+	// Drain: an operator asked it to stop once its runs finish (drain.go).
+	// DrainEtaS (ready or draining with runs in flight) estimates when
+	// they end, so when a drain would stop it, from the profile's average
+	// run length (nil when no run of it has finished yet).
+	Drain     bool
+	DrainEtaS *float64
 	// LoadMode is how the instance's nodes get the weights: file_read (the
 	// workers read the model file), pushed (the host sends them), local (no
 	// remote worker); empty for a command profile or when not known.

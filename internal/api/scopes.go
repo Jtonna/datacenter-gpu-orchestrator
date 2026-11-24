@@ -98,6 +98,7 @@ var routeScopes = map[string]access.Scope{
 
 	// models: load and unload (a benchmark run loads models)
 	"POST /api/load": access.Models, "POST /api/unload": access.Models, "POST /api/models/unload": access.Models,
+	"POST /api/models/drain/{model...}": access.Models, "POST /api/models/undrain/{model...}": access.Models,
 	"POST /api/models/unload/{model...}": access.Models, "GET /unload": access.Models, "POST /unload": access.Models,
 	"POST /api/nodes/{id}/force-unload": access.Models, "POST /api/cache/evict": access.Models,
 	"POST /api/bench/benchmarks/{id}/run": access.Models, "POST /api/bench/groups/{id}/run": access.Models,

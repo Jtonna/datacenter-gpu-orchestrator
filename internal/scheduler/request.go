@@ -282,7 +282,7 @@ func (c *schedCore) admit(in *inst, w *waiter) {
 		return
 	}
 	id := c.next()
-	c.leases[id] = &lease{id: id, profile: in.prof.Name, iid: in.iid}
+	c.leases[id] = &lease{id: id, profile: in.prof.Name, iid: in.iid, admitted: c.now}
 	in.inFlight++
 	in.served++
 	in.lastUsed = c.now
@@ -329,6 +329,7 @@ func (c *schedCore) release(id uint64) {
 		return
 	}
 	delete(c.leases, id)
+	c.noteRunLength(l) // drain.go
 	c.emit(FeedFinished, l.profile, func(e *FeedEvent) { e.RequestID = id })
 	in := c.instByIID(l.iid)
 	if in == nil {
@@ -337,7 +338,11 @@ func (c *schedCore) release(id uint64) {
 	in.inFlight--
 	in.lastUsed = c.now
 	if in.state == stDraining && in.inFlight == 0 {
-		c.stopFor(in, stopGraceful, "evicted for "+in.victimOf)
+		if in.victimOf == "" { // drain.go: drained on request
+			c.stopFor(in, stopGraceful, "admin")
+		} else {
+			c.stopFor(in, stopGraceful, "evicted for "+in.victimOf)
+		}
 	}
 	c.changed = true
 }

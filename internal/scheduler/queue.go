@@ -389,7 +389,7 @@ func (c *schedCore) dropClaim(e *entry) {
 			continue
 		}
 		in.victimOf = ""
-		if in.state == stDraining {
+		if in.state == stDraining && !in.drain { // drain.go: an asked drain goes on
 			in.state = stReady
 			c.admitEntry(in)
 		}

@@ -297,6 +297,8 @@ func (s *Server) routes() *http.ServeMux {
 	m.HandleFunc("GET /unload", s.handleUnloadAllTextGet) // deprecated: a GET that changes state
 	m.HandleFunc("POST /unload", s.handleUnloadAllText)
 	m.HandleFunc("POST /api/models/unload/{model...}", s.handleUnloadByName)
+	m.HandleFunc("POST /api/models/drain/{model...}", s.handleDrain)     // drain.go
+	m.HandleFunc("POST /api/models/undrain/{model...}", s.handleUndrain) // drain.go
 	m.HandleFunc("/upstream/{model}/{rest...}", s.handleUpstream)
 	m.HandleFunc("/upstream/{model}", s.handleUpstream)
 	m.HandleFunc("GET /api/events", s.handleEvents)

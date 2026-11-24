@@ -415,6 +415,10 @@ func allTools() []*tool {
 			Method: "POST", Path: "/api/nodes/{id}/force-unload", Body: []string{"comment"}},
 
 		// ---- zone groups (a label and a way to act on many zones; never a placement rule) ----
+		{Name: "drain_model", Desc: "Unload a model once its runs finish: it admits nothing new now, nothing is cut, and it stops when the last run ends (eta_s estimates when, from its average run length). Requests arriving meanwhile queue and load it again afterwards. undrain_model takes it back.",
+			Props: P{"model": s("The model (profile or alias).")}, Required: []string{"model"}, Idempotent: true, Method: "POST", Path: "/api/models/drain/{model}"},
+		{Name: "undrain_model", Desc: "Take back a drain: the model admits requests again (the ones that queued meanwhile first).",
+			Props: P{"model": s("The model (profile or alias).")}, Required: []string{"model"}, Idempotent: true, Method: "POST", Path: "/api/models/undrain/{model}"},
 		rd("list_zones", "List the zones (agent machines and Potluck's own) as the Zones page does: each with zone_state (free, in_use, loading, lost, set_aside, off, removed), attention_rank, group, memory and temperature facts, plus counts by state for the fleet. sort=attention gives the page's needs-attention-first order (lost or not answering, then set aside or faulty, loading, in use, paused, free, excluded, removed; then by name); without sort, Potluck's own order.",
 			P{"sort": en("Order.", "attention", "name")}, nil, "GET", "/api/nodes", "sort"),
 		rd("get_uptime", "Uptime over the last days (default 7, at most 90) per zone, per zone group, for the zones in no group and for the fleet: up (free, in use, loading) over counted time (up, lost, set aside); switched-off time (paused, excluded, removed) is left out and given as off_s; unknown time (Potluck not running) is in neither. The window says from when it covers and whether the history covers all of it.",

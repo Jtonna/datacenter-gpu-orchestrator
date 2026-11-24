@@ -359,6 +359,8 @@ var expected = map[string]struct {
 	"unpause_node":          {`{"id":"n1","comment":"fixed"}`, "POST", "/api/nodes/n1/unpause", "", `{"comment":"fixed"}`, nil},
 	"force_unload_node":     {`{"id":"n1","comment":"hung"}`, "POST", "/api/nodes/n1/force-unload", "", `{"comment":"hung"}`, nil},
 	"list_groups":           {`{}`, "GET", "/api/groups", "", "", nil},
+	"drain_model":           {`{"model":"gemma"}`, "POST", "/api/models/drain/gemma", "", "", nil},
+	"undrain_model":         {`{"model":"gemma"}`, "POST", "/api/models/undrain/gemma", "", "", nil},
 	"list_zones":            {`{"sort":"name"}`, "GET", "/api/nodes", "sort=name", "", nil},
 	"get_uptime":            {`{"days":30}`, "GET", "/api/nodes/uptime", "days=30", "", nil},
 	"create_group":          {`{"name":"rack-a","members":["n1"],"comment":"first"}`, "POST", "/api/groups", "", `{"comment":"first","members":["n1"],"name":"rack-a"}`, nil},
