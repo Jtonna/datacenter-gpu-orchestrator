@@ -149,6 +149,35 @@ func (p *pendingZones) join(id, name string, now time.Time) (PendingZone, bool) 
 	return PendingZone{}, false
 }
 
+// add keeps z unless a waiting pending zone has its name.
+func (p *pendingZones) add(z *PendingZone, now time.Time) (PendingZone, error) {
+	p.mu.Lock()
+	defer supervise.Unlocked("pending", p.mu.Unlock)
+	for _, o := range p.byID {
+		if o.State == PendingWaiting && now.Before(o.expires) && strings.EqualFold(o.Name, z.Name) {
+			return PendingZone{}, fmt.Errorf("a pending zone named %s is already waiting (%s)", o.Name, o.ID)
+		}
+	}
+	p.byID[z.ID] = z
+	return *z, nil
+}
+
+// cancel marks a waiting pending zone cancelled; ok is false when there is
+// no such id, err set when it is not waiting.
+func (p *pendingZones) cancel(id string) (PendingZone, bool, error) {
+	p.mu.Lock()
+	defer supervise.Unlocked("pending", p.mu.Unlock)
+	z, ok := p.byID[id]
+	switch {
+	case !ok:
+		return PendingZone{}, false, errors.New("no pending zone " + id)
+	case z.State != PendingWaiting:
+		return PendingZone{}, true, fmt.Errorf("pending zone %s is %s, not waiting", id, z.State)
+	}
+	z.State = PendingCancelled
+	return *z, true, nil
+}
+
 func newPendingID() string {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
@@ -267,17 +296,11 @@ func (s *Server) pendingCreate(w http.ResponseWriter, r *http.Request) {
 	z.DownloadPath = z.ScriptPath + "&download=1"
 	z.DownloadName = "potluck-zone-" + z.Name + ".sh"
 	z.Command = fmt.Sprintf("curl -fsSL 'http://%s%s' | sudo sh", host, z.ScriptPath)
-	s.pending.mu.Lock()
-	for _, o := range s.pending.byID {
-		if o.State == PendingWaiting && now.Before(o.expires) && strings.EqualFold(o.Name, z.Name) {
-			s.pending.mu.Unlock()
-			apiErr(w, http.StatusConflict, "a pending zone named %s is already waiting (%s)", o.Name, o.ID)
-			return
-		}
+	out, err := s.pending.add(z, now)
+	if err != nil {
+		apiErr(w, http.StatusConflict, "%v", err)
+		return
 	}
-	s.pending.byID[z.ID] = z
-	out := *z
-	s.pending.mu.Unlock()
 	s.auditPending(r, "create_pending", out, strings.TrimSpace(b.Comment))
 	s.groupsChanged()
 	writeJSON(w, http.StatusCreated, out)
@@ -328,20 +351,7 @@ func (s *Server) pendingGet(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) pendingCancel(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	s.pending.mu.Lock()
-	z, ok := s.pending.byID[id]
-	var out PendingZone
-	var err error
-	switch {
-	case !ok:
-		err = errors.New("no pending zone " + id)
-	case z.State != PendingWaiting:
-		err = fmt.Errorf("pending zone %s is %s, not waiting", id, z.State)
-	default:
-		z.State = PendingCancelled
-		out = *z
-	}
-	s.pending.mu.Unlock()
+	out, ok, err := s.pending.cancel(id)
 	if !ok {
 		apiErr(w, http.StatusNotFound, "%v", err)
 		return
