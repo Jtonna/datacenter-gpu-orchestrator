@@ -409,7 +409,7 @@ func (c *schedCore) deviceOverheadRows() []HostOverheadRow {
 // DeviceHistory answers an event-history query (history.Store.Query);
 // the per-device rows read from cached loads are found with it once at start
 // (dropCachedDevice). nil: no history.
-type DeviceHistory func(history.Query) []history.Event
+type DeviceHistory func(history.Query) history.Result
 
 // devCheckWait is how long the check at start waits for the nodes of the
 // restored rows to appear in the view.
@@ -456,7 +456,8 @@ func (c *schedCore) dropCachedDevice() {
 	slices.SortFunc(keys, func(a, b hostKey) int {
 		return strings.Compare(fmt.Sprint(a.shape, a.node, a.devices), fmt.Sprint(b.shape, b.node, b.devices))
 	})
-	var dropped, cold, unknown int
+	var dropped, cold, unknown, older int
+	var oldest int64
 	for _, k := range keys {
 		e := c.devOHs[k]
 		name := c.nodeName(k.node)
@@ -467,10 +468,17 @@ func (c *schedCore) dropCachedDevice() {
 				at = r.At
 			}
 		}
+		// The reading's event: that figure and device count, from the row's
+		// profile (or one of its shape), within 5 s. The node is matched by
+		// its name or id; when the view does not know the console's name
+		// (it has not sent a heartbeat), a single candidate is taken.
 		var read *history.Event
-		for _, ev := range c.devEventsFn(history.Query{Types: []string{history.TLearnedNeed}, Since: at.Add(-5 * time.Second).UnixMilli(),
-			Until: at.Add(5 * time.Second).UnixMilli(), Limit: history.MaxLimit}) {
-			if v, ok := numberOf(ev.Data["device_overhead_mib"]); !ok || v != e.MiB || !isNode(ev.Data["node"]) {
+		var cands []history.Event
+		res := c.devEventsFn(history.Query{Types: []string{history.TLearnedNeed}, Since: at.Add(-5 * time.Second).UnixMilli(),
+			Until: at.Add(5 * time.Second).UnixMilli(), Limit: history.MaxLimit})
+		oldest = res.OldestTs
+		for _, ev := range res.Events {
+			if v, ok := numberOf(ev.Data["device_overhead_mib"]); !ok || v != e.MiB {
 				continue
 			}
 			if d, ok := numberOf(ev.Data["devices"]); ok && d != k.devices {
@@ -479,12 +487,18 @@ func (c *schedCore) dropCachedDevice() {
 			if p := c.cfg.Profiles[ev.Profile]; ev.Profile != e.Profile && (p == nil || shapeOf(p) != k.shape) {
 				continue
 			}
-			read = &ev
-			break
+			if isNode(ev.Data["node"]) {
+				read = &ev
+				break
+			}
+			cands = append(cands, ev)
+		}
+		if read == nil && len(cands) == 1 {
+			read = &cands[0]
 		}
 		var load *history.Event
 		if read != nil {
-			for _, ev := range c.devEventsFn(history.Query{Types: []string{history.TLoadFinished}, Profile: read.Profile, Until: read.Ts, Limit: 1}) {
+			for _, ev := range c.devEventsFn(history.Query{Types: []string{history.TLoadFinished}, Profile: read.Profile, Until: read.Ts, Limit: 1}).Events {
 				if slices.Equal(ev.Nodes, read.Nodes) {
 					load = &ev
 				}
@@ -493,10 +507,11 @@ func (c *schedCore) dropCachedDevice() {
 		var sent, logMiB float64
 		found := false
 		if load != nil {
+			evNode, _ := read.Data["node"].(string) // the console's name when the reading was taken
 			detail, _ := load.Data["nodes_detail"].([]any)
 			for _, d := range detail {
 				m, _ := d.(map[string]any)
-				if isNode(m["node"]) {
+				if n, _ := m["node"].(string); n != "" && (n == evNode || isNode(n)) {
 					sent, _ = history.Num(m["bytes"])
 					logMiB, _ = history.Num(m["memory_mib"])
 					found = logMiB > 0
@@ -504,7 +519,11 @@ func (c *schedCore) dropCachedDevice() {
 			}
 		}
 		if !found {
-			unknown++
+			if oldest > 0 && at.UnixMilli() < oldest {
+				older++
+			} else {
+				unknown++
+			}
 			c.log.Debug("per-device overhead kept: its load is not in the history", "node", name, "devices", k.devices, "mib", e.MiB)
 			continue
 		}
@@ -525,9 +544,11 @@ func (c *schedCore) dropCachedDevice() {
 				read.Profile, name, plural(k.devices, "device"), e.MiB, int64(sent), name, logMiB),
 			read.Nodes, "", map[string]any{"node": name, "devices": k.devices, "dropped_device_overhead_mib": e.MiB, "bytes_sent": int64(sent), "log_mib": logMiB})
 	}
-	c.log.Info("stored per-device overheads checked against the event history", "rows", len(keys), "dropped", dropped, "kept_cold", cold, "kept_not_found", unknown)
+	c.log.Info("stored per-device overheads checked against the event history", "rows", len(keys), "dropped", dropped, "kept_cold", cold,
+		"kept_older_than_history", older, "kept_not_found", unknown)
 	c.record(history.TLearnedNeed, history.Info, "",
-		fmt.Sprintf("Checked %d stored per-device overhead rows against the event history: %d dropped (read from a cached load), %d kept (a cold load), %d kept (load not found in the history).",
-			len(keys), dropped, cold, unknown),
-		nil, "", map[string]any{"device_rows_checked": len(keys), "device_rows_dropped": dropped, "device_rows_cold": cold, "device_rows_not_found": unknown})
+		fmt.Sprintf("Checked %d stored per-device overhead rows against the event history: %d dropped (read from a cached load), %d kept (a cold load), %d kept (read before the oldest event in the history), %d kept (load not found in the history).",
+			len(keys), dropped, cold, older, unknown),
+		nil, "", map[string]any{"device_rows_checked": len(keys), "device_rows_dropped": dropped, "device_rows_cold": cold,
+			"device_rows_older_than_history": older, "device_rows_not_found": unknown})
 }

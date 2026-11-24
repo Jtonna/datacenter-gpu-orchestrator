@@ -1,6 +1,11 @@
 package scheduler
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -389,7 +394,7 @@ func TestDeviceOverhead_RowsFromCachedLoadsDroppedAtStart(t *testing.T) {
 	}
 	h.viewChanged()
 	h.c.restoreNeeds(st)
-	h.c.devEventsFn = func(q history.Query) []history.Event { return hs.Query(q).Events }
+	h.c.devEventsFn = hs.Query
 	h.step(evTick{})
 	h.step(evTick{})
 	if _, ok := devRow(h, shapeOf(e), "a", 2); ok {
@@ -409,7 +414,7 @@ func TestDeviceOverhead_RowsFromCachedLoadsDroppedAtStart(t *testing.T) {
 		if _, ok := x.Data["dropped_device_overhead_mib"]; ok {
 			lines++
 		}
-		if x.Data["device_rows_checked"] == 4 && x.Data["device_rows_dropped"] == 2 && x.Data["device_rows_cold"] == 1 && x.Data["device_rows_not_found"] == 1 {
+		if x.Data["device_rows_checked"] == 4 && x.Data["device_rows_dropped"] == 2 && x.Data["device_rows_cold"] == 1 && x.Data["device_rows_older_than_history"] == 1 && x.Data["device_rows_not_found"] == 0 {
 			counts++
 		}
 	}
@@ -447,14 +452,14 @@ func TestDeviceOverhead_DropWaitsForTheRowsNodes(t *testing.T) {
 	h.view.modify("b", func(n *core.Node) { n.Hostname = "console-b" })
 	h.viewChanged()
 	h.c.restoreNeeds(st)
-	h.c.devEventsFn = func(q history.Query) []history.Event {
+	h.c.devEventsFn = func(q history.Query) history.Result {
 		var out []history.Event
 		for i := len(evs) - 1; i >= 0; i-- {
 			if q.Match(&evs[i]) && (q.Until == 0 || evs[i].Ts <= q.Until) && (q.Since == 0 || evs[i].Ts >= q.Since) {
 				out = append(out, evs[i])
 			}
 		}
-		return out
+		return history.Result{Events: out, OldestTs: evs[0].Ts}
 	}
 	b := h.c.raw["b"]
 	delete(h.c.raw, "b") // b's first heartbeat has not come yet
@@ -472,7 +477,7 @@ func TestDeviceOverhead_DropWaitsForTheRowsNodes(t *testing.T) {
 // With nothing stored, the count line still says so (a proof reads it).
 func TestDeviceOverhead_CountLineWhenNothingIsStored(t *testing.T) {
 	h := devHarness(t)
-	h.c.devEventsFn = func(history.Query) []history.Event { return nil }
+	h.c.devEventsFn = func(history.Query) history.Result { return history.Result{} }
 	h.step(evTick{})
 	for _, x := range h.histTypes(history.TLearnedNeed) {
 		if x.Data["device_rows_checked"] == 0 && x.Data["device_rows_dropped"] == 0 {
@@ -495,5 +500,143 @@ func TestDeviceOverhead_NoReadingFromAnUnsettledBase(t *testing.T) {
 	}
 	if _, ok := devRow(h, shapeOf(e), "b", 2); ok {
 		t.Fatal("a reading on b from an unsettled base")
+	}
+}
+
+// liveShapeHistory writes, as the history file holds them (one JSON object
+// per line: ts in epoch milliseconds, seq, type, severity, profile,
+// model_file, nodes, session_id, summary, data), the ten events of a cached
+// two-console reload of a generated benchmark profile, from loadStarted to
+// instanceUnloaded, with generic ids. ready is the loadFinished time; the
+// readings come one average window (30 s) and 1 ms later... exactly as live
+// stamps them: loadFinished at T, the readings at T + 30.001 s.
+func liveShapeHistory(t *testing.T, dir string, ready time.Time) {
+	t.Helper()
+	start := ready.Add(-4013 * time.Millisecond).UnixMilli()
+	fin := ready.UnixMilli()
+	read := ready.Add(30001 * time.Millisecond).UnixMilli()
+	both := []string{"console-a", "console-b"}
+	sess := fmt.Sprintf("ld-%d-13", start)
+	mem := func(ts int64, seq int, node, why string) map[string]any {
+		return map[string]any{"ts": ts, "seq": seq, "type": "nodeMemory", "severity": "info", "profile": "bench-gen-auto-2048", "model_file": "m.gguf",
+			"nodes": []string{node}, "summary": "Memory on " + node + ".", "data": map[string]any{"available_mib": 12449, "reason": why}}
+	}
+	lines := []map[string]any{
+		{"ts": start, "seq": 23, "type": "loadStarted", "severity": "info", "profile": "bench-gen-auto-2048", "model_file": "m.gguf", "nodes": both, "session_id": sess,
+			"summary": "Loading bench-gen-auto-2048 onto console-a, console-b.", "data": map[string]any{"bytes_total": 668788096, "need_mib": 682,
+				"cache_verdict": []map[string]any{{"node": "console-a", "id": "a", "verdict": "full"}, {"node": "console-b", "id": "b", "verdict": "full"}}}},
+		mem(start, 24, "console-a", "load_start"), mem(start, 25, "console-b", "load_start"),
+		{"ts": fin, "seq": 26, "type": "loadFinished", "severity": "info", "profile": "bench-gen-auto-2048", "model_file": "m.gguf", "nodes": both, "session_id": sess,
+			"summary": "bench-gen-auto-2048 finished loading in 4.0 s (0.0 MB/s).", "data": map[string]any{"avg_mb_s": 0, "bytes": 63504, "bytes_measured": true, "load_s": 4,
+				"nodes_detail": []map[string]any{{"bytes": 34062, "memory_mib": 430.5, "node": "console-a"}, {"bytes": 29442, "memory_mib": 388.6, "node": "console-b"}},
+				"outcome": "ready", "reason": ""}},
+		mem(fin, 27, "console-a", "load_end"), mem(fin, 28, "console-b", "load_end"),
+		{"ts": fin, "seq": 29, "type": "learnedNeed", "severity": "info", "profile": "bench-gen-auto-2048", "model_file": "m.gguf", "nodes": both, "session_id": sess,
+			"summary": "Measured the memory need of bench-gen-auto-2048 at 820 MiB.", "data": map[string]any{"highest_mib": 820, "measured_mib": 820}},
+		{"ts": read, "seq": 30, "type": "learnedNeed", "severity": "info", "profile": "bench-gen-auto-2048", "model_file": "m.gguf", "nodes": both, "session_id": sess,
+			"summary": "Measured the per-device overhead of bench-gen-auto-2048 on console-a at 82 MiB (2 devices); the figure in force. device_overhead_mib is 600.",
+			"data": map[string]any{"device_overhead_mib": 82, "devices": 2, "in_force_mib": 82, "log_part_mib": 82, "node": "console-a", "rule": "first", "setting_mib": 600}},
+		{"ts": read, "seq": 31, "type": "learnedNeed", "severity": "info", "profile": "bench-gen-auto-2048", "model_file": "m.gguf", "nodes": both, "session_id": sess,
+			"summary": "Measured the per-device overhead of bench-gen-auto-2048 on console-b at 39 MiB (2 devices); the figure in force. device_overhead_mib is 600.",
+			"data": map[string]any{"device_overhead_mib": 39, "devices": 2, "in_force_mib": 39, "log_part_mib": 39, "node": "console-b", "rule": "first", "setting_mib": 600}},
+		{"ts": ready.Add(38 * time.Second).UnixMilli(), "seq": 32, "type": "instanceUnloaded", "severity": "info", "profile": "bench-gen-auto-2048", "model_file": "m.gguf",
+			"nodes": both, "session_id": sess, "summary": "bench-gen-auto-2048 was unloaded (api).", "data": map[string]any{"reason": "api"}},
+	}
+	var buf bytes.Buffer
+	for _, l := range lines {
+		b, err := json.Marshal(l)
+		if err != nil {
+			t.Fatal(err)
+		}
+		buf.Write(append(b, '\n'))
+	}
+	name := "events-" + ready.Add(-time.Hour).UTC().Format("20060102T150405Z") + ".jsonl"
+	if err := os.WriteFile(filepath.Join(dir, name), buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The cached reload exactly as live's history file holds it, read by a
+// history store opened on that file (as at start), against the two rows as
+// live's store holds them (measured_by the generated profile, measured_at
+// the reading's instant). Both rows are dropped, whether the generated
+// profile is configured (live: yes, with no force_nodes) or not.
+//
+// "unnamed": the view knows the consoles by id only (the two-minute wait
+// ran out): the single event of that figure, profile and device count in
+// the window is the reading, and its own node name finds the load's bytes.
+// "consoles late": at start the fleet view holds only the scheduler's own
+// machine (it is in the view at once; the consoles come with their first
+// heartbeats). A check run then knows the consoles by id only, while the
+// events name them by hostname: this is how live kept both rows (the count
+// line said "2 kept (load not found in the history)", at every start).
+func TestDeviceOverhead_LiveShapedCachedReloadDropped(t *testing.T) {
+	for _, tc := range []struct{ configured, late, unnamed bool }{{true, false, false}, {false, false, false}, {true, true, false}, {true, false, true}} {
+		configured := tc.configured
+		t.Run(fmt.Sprintf("configured %v, consoles late %v, unnamed %v", tc.configured, tc.late, tc.unnamed), func(t *testing.T) {
+			h := devHarness(t)
+			for _, id := range []core.NodeID{"a", "b"} {
+				h.view.modify(id, func(n *core.Node) { n.Hostname = "console-" + string(id) })
+			}
+			e := h.c.cfg.Profiles["e"]
+			if configured {
+				h.llama("bench-gen-auto-2048", 0, func(p *core.Profile) { p.Model, p.TTL = e.Model, ptrDur(0) })
+			}
+			h.viewChanged()
+			st := openNeedStore(t)
+			h.c.restoreNeeds(st)
+			ready := h.clk.Now().Add(-3 * time.Hour).Truncate(time.Millisecond)
+			readAt := time.UnixMilli(ready.Add(30001 * time.Millisecond).UnixMilli())
+			for _, r := range []struct {
+				node core.NodeID
+				mib  int
+			}{{"a", 82}, {"b", 39}} {
+				row := devMeasured(shapeOf(e), r.node, 2, r.mib, readAt, h.c.llamaBuild)
+				row.Profile = "bench-gen-auto-2048"
+				h.c.putDeviceOverhead(row)
+			}
+			flushNeeds(h, st)
+			dir := t.TempDir()
+			liveShapeHistory(t, dir, ready)
+			hs := history.Open(history.Options{Dir: dir, MemoryEvents: 3})
+			t.Cleanup(hs.Close)
+
+			h2 := devHarness(t)
+			for _, id := range []core.NodeID{"a", "b"} {
+				h2.view.modify(id, func(n *core.Node) {
+					n.Hostname = "console-" + string(id)
+					if tc.unnamed {
+						n.Hostname = "" // the view knows the console by id only
+					}
+				})
+			}
+			if configured {
+				h2.llama("bench-gen-auto-2048", 0, func(p *core.Profile) { p.Model, p.TTL = e.Model, ptrDur(0) })
+			}
+			h2.viewChanged()
+			h2.c.restoreNeeds(st)
+			h2.c.devEventsFn = hs.Query
+			if tc.late {
+				ra, rb := h2.c.raw["a"], h2.c.raw["b"]
+				delete(h2.c.raw, "a")
+				delete(h2.c.raw, "b")
+				h2.c.raw["sched"] = core.Node{ID: "sched", Hostname: "scheduler", Local: true, Online: true}
+				h2.c.dropCachedDevice() // only the scheduler's machine is in the view
+				h2.c.raw["a"], h2.c.raw["b"] = ra, rb
+				delete(h2.c.raw, "sched")
+			}
+			h2.c.dropCachedDevice()
+			for _, x := range h2.histTypes(history.TLearnedNeed) {
+				if _, ok := x.Data["device_rows_checked"]; ok {
+					t.Log(x.Summary)
+				}
+			}
+			if _, ok := devRow(h2, shapeOf(e), "a", 2); ok {
+				t.Fatal("the cached row on a is kept")
+			}
+			if _, ok := devRow(h2, shapeOf(e), "b", 2); ok {
+				t.Fatal("the cached row on b is kept")
+			}
+		})
 	}
 }
