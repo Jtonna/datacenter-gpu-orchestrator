@@ -239,7 +239,7 @@ func TestUINextModelsListAndPanel(t *testing.T) {
 	}
 	noControls := []string{"Pin", "Delete", "Add a model", "Remove now", "Unload"}
 	uiExec(t, map[string]any{"shell": "next", "app": true, "base": e.front.URL, "cases": []any{
-		map[string]any{"name": "the list", "route": "#/models", "status": "fetch", "expect": append([]string{"All models", "Configurations", "Last used"}, names...),
+		map[string]any{"name": "the list", "route": "#/models", "status": "fetch", "expect": append([]string{"All models", "Needs", "Configurations", "Last used"}, names...),
 			"absent": append(append([]string{}, designSamples...), noControls...)},
 		map[string]any{"name": "one model's panel", "route": "#/models?model=" + key, "status": "fetch",
 			"page": []string{name, file, "Configurations", profile, "Edit under Profiles", "Open the model page"}, "notOnPage": noControls},
