@@ -499,6 +499,7 @@ curl -s "$H/api/nodes/availability?node=zone-a&step=day&from=7d"
 - `free_at`, `free_in_s`, `free_basis` and `next` for a node that is claimed or settling: `settling` (the settle end), `fetching` (now), `stopping` (the victim stops: now plus the node's settle), `draining` (no time: the victim's requests are still running) or `claimed` (now). `view.nodes[]` has `free_at` and `free_basis`.
 - `group`: the zone group the node is in (section D, "Zone groups"); absent when in none.
 - `zone_state`: the state the zone is counted in: `free`, `in_use`, `loading`, `lost`, `set_aside`, `off` (paused or excluded), or `removed` (not counted).
+- `attention_rank`: the "needs attention first" order: 0 lost or its worker not answering, 1 set aside or kept out for a fault (no tier, unreachable, ...), 2 loading, 3 in use, 4 paused, 5 free, 6 excluded, 7 removed. `GET /api/nodes?sort=attention` lists the zones in that order (then by name, then id); `sort=name` by name; without `sort` the order is as before. MCP `list_zones` takes the same `sort`.
 
 `GET /api/nodes` also answers `counts`: `total` (removed zones left out), `reachable` (total less down; switched-off zones are reachable), `up` (free + in use + loading, that is reachable less off), `down` (lost + set aside), `lost`, `set_aside`, `off`, `in_use`, `free`, `loading`. The Zones row of `/api/health` has the same figures in its `facts`, from the same count, so a page heading and the health popup cannot disagree: "8 of 8 reachable" there is `reachable` of `total`; "7 up · 1 off" is `up` and `off`.
 

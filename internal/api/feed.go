@@ -60,7 +60,7 @@ func (s *Server) agentFacts(st *scheduler.Status) []pool.NodeFacts {
 	reservationFacts(facts, st) // reserve.go: what is reserved on each node
 	s.zoneFacts(facts, st)      // zonefacts.go: role, share, set-aside, who switched it off, free at
 	_, states, _ := zoneCountsOf(st, facts)
-	setZoneStates(facts, states) // counts.go: the state each zone is counted in
+	setZoneStates(st, facts, states) // counts.go: the state each zone is counted in, and its attention rank
 	return facts
 }
 
@@ -69,7 +69,13 @@ func (s *Server) handleNodeFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := s.opts.Now()
+	order := r.URL.Query().Get("sort")
+	if order != "" && order != "attention" && order != "name" {
+		apiErr(w, http.StatusBadRequest, "sort is attention or name")
+		return
+	}
 	nodes := []any{}
+	var zs []rankedZone
 	var stp *scheduler.Status
 	if st, err := s.sched.Status(r.Context()); err == nil {
 		stp = &st
@@ -77,6 +83,7 @@ func (s *Server) handleNodeFeed(w http.ResponseWriter, r *http.Request) {
 	facts := s.agentFacts(stp)
 	for _, f := range facts {
 		nodes = append(nodes, f)
+		zs = append(zs, rankedZone{rank: f.AttentionRank, name: f.Name, id: f.ID, v: f})
 	}
 	counts, states, _ := zoneCountsOf(stp, facts) // counts.go: the same counts as /api/health's Zones row
 	if l, ok := s.opts.Pool.Local(); ok {
@@ -87,7 +94,9 @@ func (s *Server) handleNodeFeed(w http.ResponseWriter, r *http.Request) {
 		}
 		l.ZoneFacts = s.zoneFactsOf(l.ID, stp, false, l.ExcludedBy) // zonefacts.go
 		l.ZoneState = states[l.ID]
+		l.AttentionRank = attentionRank(l.ZoneState, l.Unplaced, l.Excluded, hungNodes(stp)[l.ID])
 		nodes = append(nodes, l)
+		zs = append(zs, rankedZone{rank: l.AttentionRank, name: l.Name, id: l.ID, v: l})
 	}
 	b, err := json.Marshal(nodes)
 	if err != nil {
@@ -98,7 +107,19 @@ func (s *Server) handleNodeFeed(w http.ResponseWriter, r *http.Request) {
 	json.Unmarshal(b, &plain)
 	stripAges(plain)
 	canon, _ := json.Marshal(plain) // map keys are sorted: a stable form
-	seq := s.feed.next(sha256.Sum256(canon), s.start.UnixMilli())
+	seq := s.feed.next(sha256.Sum256(canon), s.start.UnixMilli()) // over the unsorted list: the order asked for is not a change
+	if order != "" {
+		if order == "attention" {
+			sortByAttention(zs)
+		} else {
+			sortByName(zs)
+		}
+		sorted := make([]any, len(zs))
+		for i, z := range zs {
+			sorted[i] = z.v
+		}
+		b, _ = json.Marshal(sorted)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"time": isoTime(now), "seq": seq, "nodes": json.RawMessage(b), "counts": counts})
 }
 

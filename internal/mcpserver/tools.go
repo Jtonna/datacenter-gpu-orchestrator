@@ -415,6 +415,8 @@ func allTools() []*tool {
 			Method: "POST", Path: "/api/nodes/{id}/force-unload", Body: []string{"comment"}},
 
 		// ---- zone groups (a label and a way to act on many zones; never a placement rule) ----
+		rd("list_zones", "List the zones (agent machines and Potluck's own) as the Zones page does: each with zone_state (free, in_use, loading, lost, set_aside, off, removed), attention_rank, group, memory and temperature facts, plus counts by state for the fleet. sort=attention gives the page's needs-attention-first order (lost or not answering, then set aside or faulty, loading, in use, paused, free, excluded, removed; then by name); without sort, Potluck's own order.",
+			P{"sort": en("Order.", "attention", "name")}, nil, "GET", "/api/nodes", "sort"),
 		rd("get_uptime", "Uptime over the last days (default 7, at most 90) per zone, per zone group, for the zones in no group and for the fleet: up (free, in use, loading) over counted time (up, lost, set aside); switched-off time (paused, excluded, removed) is left out and given as off_s; unknown time (Potluck not running) is in neither. The window says from when it covers and whether the history covers all of it.",
 			P{"days": i("Days back from now, 1 to 90 (default 7).")}, nil, "GET", "/api/nodes/uptime", "days"),
 		rd("list_groups", "List the zone groups in the order they were made: each with its members (node ids and names), counts by state (total, reachable, down, lost, set_aside, off, in_use, free, loading), memory, temperature, whether its zones accept models (all, none, mixed), the zones that need attention and the models placed on it; and the zones in no group.", nil, nil, "GET", "/api/groups"),

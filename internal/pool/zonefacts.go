@@ -35,6 +35,10 @@ type ZoneFacts struct {
 	// not counted): the same classification as the Zones row of
 	// /api/health and the counts of GET /api/nodes.
 	ZoneState string `json:"zone_state,omitempty"`
+	// AttentionRank orders "needs attention first" (0 down, 1 trouble, 2
+	// loading, 3 in use, 4 paused, 5 free, 6 excluded, 7 removed); the
+	// page and MCP list_zones use the same order (internal/api/counts.go).
+	AttentionRank int `json:"attention_rank"`
 }
 
 // MemberFacts is a node's part in an instance: its role (host runs

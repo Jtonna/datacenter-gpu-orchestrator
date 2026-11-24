@@ -268,6 +268,13 @@ func summarizeGroup(g groups.Group, idx zoneIndex) GroupSummary {
 	case paused > 0:
 		out.Accepting = AcceptingMixed
 	}
+	sort.SliceStable(out.NeedsAttention, func(i, j int) bool { // the attention order: lost before set aside, then by name
+		a, b := out.NeedsAttention[i], out.NeedsAttention[j]
+		if a.State != b.State {
+			return a.State == string(availability.Lost)
+		}
+		return a.Name < b.Name
+	})
 	for p, n := range models {
 		out.Models = append(out.Models, GroupModel{Profile: p, Zones: n})
 	}

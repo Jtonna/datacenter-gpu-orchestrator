@@ -7,6 +7,7 @@ What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent
 No agent change. No new listening port.
 
 - **History by zone group or list.** `GET /api/history?group=<name>` and `node=a,b,c` (ids or names); MCP `query_history` takes `group`.
+- **Needs attention first, defined by the server.** Each zone in `/api/nodes` (and `/api/status` agents) has `attention_rank`; `GET /api/nodes?sort=attention|name`; MCP `list_zones`. A group's `needs_attention` lists lost before set aside.
 
 ## Scheduler image: MCP access keys (phase 3)
 
