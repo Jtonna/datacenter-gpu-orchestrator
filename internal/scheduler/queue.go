@@ -247,7 +247,7 @@ func (c *schedCore) evictables(p *core.Profile, clock time.Duration) []placer.Ev
 			if !ok || !c.eligible(pn.ID) || c.noNewLoad(pn.ID) || (localOnly(p) && !n.Local) {
 				continue
 			}
-			ev.Nodes = append(ev.Nodes, placer.FromNode(n, c.planBudget(pn.ID, n)))
+			ev.Nodes = append(ev.Nodes, c.candidate(p, pn.ID, n, c.planBudget(pn.ID, n), false))
 		}
 		if len(ev.Nodes) > 0 {
 			out = append(out, ev)
@@ -342,7 +342,7 @@ func (c *schedCore) startOnClaim(e *entry) bool {
 	var cands []placer.Candidate
 	for _, id := range e.claim {
 		n, _ := c.node(id)
-		cands = append(cands, placer.FromNode(n, c.liveBudget(id, n)))
+		cands = append(cands, c.candidate(e.prof, id, n, c.liveBudget(id, n), true))
 	}
 	pl, err := placer.Place(req, cands)
 	gate := ""

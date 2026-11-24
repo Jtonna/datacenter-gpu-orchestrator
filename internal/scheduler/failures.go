@@ -126,6 +126,7 @@ func (c *schedCore) refreshView() {
 		}
 	}
 	c.trackForced(reconnected)
+	c.trackSteady() // stable.go
 }
 
 // forcedState says whether the node a force_nodes name points at is gone:
