@@ -93,6 +93,7 @@ type queued struct {
 type schedState struct {
 	sig string
 	due time.Time
+	seq uint64 // when it was made (Manager.schedSeq)
 }
 
 // Manager owns the run queue, the schedule and the one running run.
@@ -108,10 +109,18 @@ type Manager struct {
 	subSeq   int
 	modelOf  func(profile string) string // the model file of a profile, from the config
 	sched    map[string]*schedState
+	schedSeq uint64 // counts the schedule states made; a check knows which are newer than its suite list
 	wake     chan struct{}
 	done     chan struct{}
 	running  *queued // the run the loop executes (the loop's goroutine only; recoverRun reads it)
 	started  bool
+	// startupChecked is closed when the loop's first schedule check is done
+	// (once: the loop is started again after a panic).
+	startupChecked chan struct{}
+	startupOnce    sync.Once
+	// afterList, in tests, runs in checkSchedules right after the suite list
+	// is read (nil in the product).
+	afterList func()
 }
 
 // NewManager creates a manager and marks runs that an earlier process left
@@ -160,7 +169,7 @@ func NewManager(o ManagerOptions) (*Manager, error) {
 		o.Thresholds.DecodePct = 7
 	}
 	m := &Manager{o: o, log: o.Logger, subs: map[int]func(map[string]any){}, sched: map[string]*schedState{},
-		wake: make(chan struct{}, 1), done: make(chan struct{})}
+		wake: make(chan struct{}, 1), done: make(chan struct{}), startupChecked: make(chan struct{})}
 	n, err := o.Store.RecoverInterrupted(o.Now().UnixMilli())
 	if err != nil {
 		return nil, err
@@ -226,6 +235,7 @@ func (m *Manager) loop(ctx context.Context) {
 	tick := time.NewTicker(30 * time.Second)
 	defer tick.Stop()
 	m.checkSchedules(true)
+	m.startupOnce.Do(func() { close(m.startupChecked) })
 	m.sweepRetention()
 	lastSweep := time.Now()
 	for {
@@ -718,9 +728,23 @@ func schedSig(s *benchspec.Schedule) string { return s.Every + "|" + s.At }
 // of that suite is already queued or running. Called every 30 s (fire true); State
 // calls it with fire false only to learn the next due times.
 func (m *Manager) checkSchedules(fire bool) {
+	// The suite list is read outside the lock, so another check with a newer
+	// list may run in between: the states it made (seq after listedAt) are
+	// left as they are, never replaced or deleted on this older list (a
+	// state made again from now would push a passed "at" time to tomorrow
+	// and miss today's run).
+	var listedAt uint64
+	func() {
+		m.mu.Lock()
+		defer supervise.Unlocked("bench", m.mu.Unlock)
+		listedAt = m.schedSeq
+	}()
 	suites, err := m.o.Store.ListSuites()
 	if err != nil {
 		return
+	}
+	if m.afterList != nil {
+		m.afterList()
 	}
 	now := m.o.Now()
 	var due []string
@@ -737,7 +761,7 @@ func (m *Manager) checkSchedules(fire bool) {
 			}
 			live[su.Spec.ID] = true
 			st := m.sched[su.Spec.ID]
-			if st == nil || st.sig != schedSig(sc) {
+			if st == nil || st.sig != schedSig(sc) && st.seq <= listedAt {
 				var last time.Time
 				if ms, err := m.o.Store.LastScheduledStart(su.Spec.ID); err == nil && ms > 0 {
 					last = time.UnixMilli(ms)
@@ -746,7 +770,8 @@ func (m *Manager) checkSchedules(fire bool) {
 				if !ok {
 					continue
 				}
-				st = &schedState{sig: schedSig(sc), due: next}
+				m.schedSeq++
+				st = &schedState{sig: schedSig(sc), due: next, seq: m.schedSeq}
 				m.sched[su.Spec.ID] = st
 			}
 			if fire && !now.Before(st.due) {
@@ -756,8 +781,8 @@ func (m *Manager) checkSchedules(fire bool) {
 				}
 			}
 		}
-		for id := range m.sched {
-			if !live[id] {
+		for id, st := range m.sched {
+			if !live[id] && st.seq <= listedAt {
 				delete(m.sched, id)
 			}
 		}

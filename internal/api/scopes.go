@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"regexp"
 	"sort"
@@ -97,6 +98,7 @@ var routeScopes = map[string]access.Scope{
 
 	// models: load and unload (a benchmark run loads models)
 	"POST /api/load": access.Models, "POST /api/unload": access.Models, "POST /api/models/unload": access.Models,
+	"POST /api/models/drain/{model...}": access.Models, "POST /api/models/undrain/{model...}": access.Models,
 	"POST /api/models/unload/{model...}": access.Models, "GET /unload": access.Models, "POST /unload": access.Models,
 	"POST /api/nodes/{id}/force-unload": access.Models, "POST /api/cache/evict": access.Models,
 	"POST /api/bench/benchmarks/{id}/run": access.Models, "POST /api/bench/groups/{id}/run": access.Models,
@@ -160,6 +162,14 @@ var placeholder = regexp.MustCompile(`\{[^}]*\}`)
 
 // ScopeOf is what a request to method and path needs; path may hold {name}
 // placeholders (an MCP tool's route). The MCP server asks it for each tool.
+// NoteRefusal counts a refusal another transport made for a keyed request
+// (an MCP tool call refused by the key's permissions), as authorize does.
+func (s *Server) NoteRefusal(ctx context.Context, ref *access.Refusal) {
+	if g, ok := access.GrantFrom(ctx); ok && ref != nil {
+		s.agents.refused(g.AgentID, ref.Type, s.opts.Now())
+	}
+}
+
 func (s *Server) ScopeOf(method, path string) access.Scope {
 	r, err := http.NewRequest(method, "http://in-process"+placeholder.ReplaceAllString(path, "x"), nil)
 	if err != nil {
@@ -181,6 +191,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) bool {
 	if ref == nil {
 		return true
 	}
+	s.agents.refused(g.AgentID, ref.Type, s.opts.Now()) // P6
 	writeJSON(w, ref.Status, map[string]any{"error": map[string]any{"message": ref.Message, "type": ref.Type, "scope": ref.Scope}})
 	return false
 }

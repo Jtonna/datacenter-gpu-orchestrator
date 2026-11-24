@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -300,5 +301,72 @@ func TestZoneCounts_NodesAndHealthAgree(t *testing.T) {
 	}
 	if states["02:00:00:00:00:02"] != "off" || states["02:00:00:00:00:01"] != "free" {
 		t.Fatalf("zone states %v", states)
+	}
+}
+
+// The attention order: the same rank on each zone and in ?sort=attention.
+func TestZones_AttentionOrder(t *testing.T) {
+	if attentionRank("lost", "", false, false) != RankDown || attentionRank("free", "", false, true) != RankDown ||
+		attentionRank("set_aside", "", false, false) != RankTrouble || attentionRank("free", "no_tier_match", false, false) != RankTrouble ||
+		attentionRank("loading", "", false, false) != RankLoading || attentionRank("in_use", "", false, false) != RankInUse ||
+		attentionRank("off", "paused", false, false) != RankPaused || attentionRank("free", "", false, false) != RankFree ||
+		attentionRank("off", "excluded", true, false) != RankExcluded || attentionRank("removed", "", false, false) != RankRemoved ||
+		attentionRank("free", "host_machine", false, false) != RankFree {
+		t.Fatal("ranks")
+	}
+	e, p, _ := groupsEnv(t)
+	p.SetPaused("02:00:00:00:00:01", true)
+	order := func(q string) []string {
+		var f struct {
+			Nodes []struct {
+				Name string `json:"name"`
+				Rank int    `json:"attention_rank"`
+			} `json:"nodes"`
+		}
+		json.Unmarshal([]byte(status(t, e.get("/api/nodes"+q), 200)), &f)
+		var out []string
+		for _, n := range f.Nodes {
+			out = append(out, n.Name+":"+strconv.Itoa(n.Rank))
+		}
+		return out
+	}
+	// The test agents match no tier: each is kept out for a fault (rank 1),
+	// except the paused one.
+	if got := strings.Join(order("?sort=attention"), " "); got != "zone-2:1 zone-3:1 zone-1:4" {
+		t.Fatalf("attention: %s", got)
+	}
+	if got := strings.Join(order("?sort=name"), " "); got != "zone-1:4 zone-2:1 zone-3:1" {
+		t.Fatalf("name: %s", got)
+	}
+	status(t, e.get("/api/nodes?sort=size"), 400)
+}
+
+// The chip is the stats' GPU name; a group's chip is common or "mixed";
+// absent when a member reports none (a console today) and the ones that do
+// agree: Potluck does not know the console's chip, so it does not say mixed.
+func TestZones_Chip(t *testing.T) {
+	gpu := func(names ...string) json.RawMessage {
+		var gs []map[string]any
+		for _, n := range names {
+			gs = append(gs, map[string]any{"id": "g", "vendor": "nvidia", "name": n})
+		}
+		b, _ := json.Marshal(map[string]any{"stats_version": 1, "gpus": gs})
+		return b
+	}
+	if chipOf(gpu("RTX 5060")) != "RTX 5060" || chipOf(gpu("A", "A", "B")) != "A + B" || chipOf(gpu("")) != "" || chipOf(nil) != "" {
+		t.Fatal("chipOf")
+	}
+	for in, want := range map[string]string{"a,a": "a", "a,b": ChipMixed, "a,": "", "a,b,": ChipMixed, ",": "", "": ""} {
+		var cs []string
+		if in != "" {
+			cs = strings.Split(in, ",")
+		}
+		if got := groupChip(cs); got != want {
+			t.Errorf("%q: %q", in, got)
+		}
+	}
+	facts := []pool.NodeFacts{{ID: "a", Name: "a", State: pool.StateActive, Stats: gpu("RTX 3070 Ti")}, {ID: "b", Name: "b", State: pool.StateActive, Stats: gpu("RTX 3070 Ti")}}
+	if g := summarizeGroup(groups.Group{Name: "row", Members: []string{"a", "b"}}, indexZones(nil, facts)); g.Chip != "RTX 3070 Ti" {
+		t.Fatalf("group chip %q", g.Chip)
 	}
 }

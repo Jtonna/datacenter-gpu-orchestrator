@@ -32,6 +32,19 @@ CREATE TABLE usage_meta (
 	{Name: "drop_non_inference_rows", Apply: dropNonInferenceRows}, // cleanup.go
 }
 
+// extMigrations are added columns, in their own ledger
+// (usage_ext_migrations) so usage_migrations stays at 4: the previous image
+// (v44), which knows version 4, keeps its history on with a file this build
+// extended. Only steps an older image can ignore go here: a nullable column
+// it never names (every statement lists its columns). Version n is
+// extMigrations[n-1]; never edit one that has shipped.
+var extMigrations = []Migration{
+	{Name: "request_ctx", SQL: `ALTER TABLE client_requests ADD COLUMN ctx INTEGER`}, // the profile's ctx at request time
+}
+
+// ExtVersion is the number of extMigrations this build knows.
+func ExtVersion() int { return len(extMigrations) }
+
 // NewerSchemaError: a newer scheduler migrated the file. It is kept as it
 // is and the store stays off (going back to an older image never loses the
 // newer history).
@@ -82,4 +95,37 @@ func migrate(db *sql.DB, now time.Time, log *slog.Logger) error {
 	}
 	_, err := db.Exec(`INSERT OR IGNORE INTO usage_meta (key, value) VALUES ('history_begins_at', ?)`, now.UnixMilli())
 	return err
+}
+
+// migrateExt applies extMigrations after migrate. A ledger ahead of this
+// build is a NewerSchemaError: the file is kept as it is and the store is off.
+func migrateExt(db *sql.DB, now time.Time) error {
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS usage_ext_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at INTEGER NOT NULL)`); err != nil {
+		return err
+	}
+	var have int
+	if err := db.QueryRow(`SELECT COALESCE(MAX(version),0) FROM usage_ext_migrations`).Scan(&have); err != nil {
+		return err
+	}
+	if have > len(extMigrations) {
+		return &NewerSchemaError{Have: have, Know: len(extMigrations)}
+	}
+	for i := have; i < len(extMigrations); i++ {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(extMigrations[i].SQL); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("usage ext migration %d (%s): %w", i+1, extMigrations[i].Name, err)
+		}
+		if _, err := tx.Exec(`INSERT INTO usage_ext_migrations (version, name, applied_at) VALUES (?,?,?)`, i+1, extMigrations[i].Name, now.UnixMilli()); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+	return nil
 }

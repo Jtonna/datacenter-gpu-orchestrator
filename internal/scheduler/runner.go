@@ -594,6 +594,53 @@ func (s *Scheduler) LoadFor(ctx context.Context, model, benchRun string) error {
 	return nil
 }
 
+// LoadOn is POST /api/load with nodes: load model on those nodes only,
+// as force_nodes would, for this load (pin.go). The profile is unchanged.
+// A model already loaded or queued is refused (409).
+func (s *Scheduler) LoadOn(ctx context.Context, model string, nodes []string) error {
+	p, _, ok := s.Config().Resolve(model)
+	if !ok {
+		return errUnknown(model)
+	}
+	w := &waiter{profile: p.Name, synthetic: true, reply: make(chan answer, 1), pin: append([]string{}, nodes...)}
+	if !s.post(ctx, evAcquire{w: w}) {
+		return errShutting()
+	}
+	if err := s.query(ctx, func(*schedCore) {}); err != nil {
+		return err
+	}
+	select {
+	case a := <-w.reply:
+		if a.err != nil {
+			return a.err
+		}
+	default:
+	}
+	return nil
+}
+
+// PlanOn is the plan of a load on chosen nodes (LoadOn); nothing changes.
+func (s *Scheduler) PlanOn(ctx context.Context, model string, nodes []string) (PlanReport, error) {
+	p, alias, ok := s.Config().Resolve(model)
+	if !ok {
+		return PlanReport{}, errUnknown(model)
+	}
+	r, err := askRead(s, ctx, "plan of "+p.Name+" on chosen nodes", func(c *schedCore) PlanReport {
+		if e := c.pinConflict(p); e != nil {
+			return PlanReport{Profile: p.Name, Action: PlanReject, Reason: e.Message}
+		}
+		if e := c.pinUnusable(p, nodes); e != nil {
+			return PlanReport{Profile: p.Name, Action: PlanReject, Reason: e.Message}
+		}
+		return c.dryPlanOf(p.Name, pinCopy(p, nodes))
+	})
+	if err != nil {
+		return PlanReport{}, err
+	}
+	r.Alias = alias
+	return r, nil
+}
+
 // ask runs fn on the core goroutine and returns its result. The result
 // travels over a channel the query owns, so a caller that gave up (its
 // context ended while the loop was busy) gets the context error and a zero
@@ -685,6 +732,38 @@ func (s *Scheduler) Unload(ctx context.Context, model string, force bool) error 
 		return errUnknown(model)
 	}
 	err, qerr := ask(s, ctx, func(c *schedCore) error { return c.unload(p.Name, force) })
+	if qerr != nil {
+		return qerr
+	}
+	return err
+}
+
+// Drain is POST /api/models/drain/{model}: the instance admits nothing
+// new and stops once its runs finish (drain.go); the answer is the ETA in
+// seconds (nil: idle and stopped now, or no run length known yet).
+func (s *Scheduler) Drain(ctx context.Context, model string) (*float64, error) {
+	p, _, ok := s.Config().Resolve(model)
+	if !ok {
+		return nil, errUnknown(model)
+	}
+	type res struct {
+		eta *float64
+		err error
+	}
+	r, qerr := ask(s, ctx, func(c *schedCore) res { eta, err := c.drain(p.Name); return res{eta, err} })
+	if qerr != nil {
+		return nil, qerr
+	}
+	return r.eta, r.err
+}
+
+// Undrain takes a drain back: the instance admits again.
+func (s *Scheduler) Undrain(ctx context.Context, model string) error {
+	p, _, ok := s.Config().Resolve(model)
+	if !ok {
+		return errUnknown(model)
+	}
+	err, qerr := ask(s, ctx, func(c *schedCore) error { return c.undrain(p.Name) })
 	if qerr != nil {
 		return qerr
 	}

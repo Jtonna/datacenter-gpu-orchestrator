@@ -243,13 +243,13 @@ func allTools() []*tool {
 		rd("list_model_files", "The model catalog: one entry per model file the cluster has (not per profile), with its name, size, quantization, how many configurations (profiles) use it, whether it is loaded and on which nodes, the memory it was measured to need per node count, load times from the history, the last refusal and benchmark figures. Use it to answer \"which models are there\"; list_profiles lists every configuration instead.", nil, nil, "GET", "/api/models"),
 		rd("get_model_file", "One model of the catalog by file name (or command:<profile id> for a command profile), with its configurations, current instances, recent history events and the benchmarks that use it.", P{"file": s("The model file name as list_model_files shows it in key, for example gemma-4-12b-it-Q4_K_M.gguf.")}, []string{"file"}, "GET", "/api/models/{file}"),
 		{Name: "plan_load", Desc: "Dry run: what would happen if this model were requested now (placement, which instances would be evicted, or why it cannot be placed). Changes nothing. Call this before load_model.",
-			Props: P{"model": s("Profile id or alias.")}, Required: []string{"model"}, ReadOnly: true, Method: "POST", Path: "/api/plan", Body: []string{"model"}},
+			Props: P{"model": s("Profile id or alias."), "nodes": strs("Optional: plan a load on these zones only (ids or names), as load_model with nodes would do it.")}, Required: []string{"model"}, ReadOnly: true, Method: "POST", Path: "/api/plan", Body: []string{"model", "nodes"}},
 		rd("query_history", "Search the persisted event history (loads, refusals, stalls, node loss, recoveries, evictions). Newest first by default.", P{
 			"since": i("Only events at or after this unix time in milliseconds."), "until": i("Only events before this unix time in milliseconds."),
 			"type": s("Comma-separated event types, for example loadFinished,nodeLost."), "severity": en("Minimum severity.", "info", "warn", "error"),
-			"node": s("Node hostname or id."), "profile": s("Profile id."), "session_id": s("A load session id such as ld-1795055840000-3."),
+			"node": s("Node hostname or id, or a comma-separated list."), "group": s("A zone group: events of its zones."), "profile": s("Profile id."), "session_id": s("A load session id such as ld-1795055840000-3."),
 			"q": s("Case-insensitive substring of the event summary."), "limit": i("Maximum events (default 200, at most 2000)."), "order": en("Sort order.", "desc", "asc")},
-			nil, "GET", "/api/history", "since", "until", "type", "severity", "node", "profile", "session_id", "q", "limit", "order"),
+			nil, "GET", "/api/history", "since", "until", "type", "severity", "node", "group", "profile", "session_id", "q", "limit", "order"),
 		rd("list_requests", "The request log: one row per client request (/v1 and /upstream), newest first, the queued and running ones first with live token counts. Each row has its status (queued, running, done, failed, refused, cancelled) and reason, times, profile, tokens in (reused ones counted, and also shown apart), tokens out, prefill and decode rates, the machines with their role (host or helper), the caller and the benchmark run. Page with before=next.", P{
 			"status": s("Comma-separated statuses: queued, running, done, failed, refused, cancelled."), "profile": s("Profile id."),
 			"node": s("A machine id or hostname the request ran on."), "from": i("Arrived at or after this unix time in milliseconds."),
@@ -337,8 +337,8 @@ func allTools() []*tool {
 			"id": s("The run id."), "result": i("The task result id.")}, []string{"id", "result"}, "GET", "/api/bench/runs/{id}/tasks/{result}"),
 
 		// ---- write ----
-		{Name: "load_model", Desc: "Start loading a model ahead of time. Returns at once (HTTP 202); a load takes minutes, so poll get_status. Run plan_load first to see whether it fits and what it would evict.",
-			Props: P{"model": s("Profile id or alias.")}, Required: []string{"model"}, Method: "POST", Path: "/api/load", Body: []string{"model"}},
+		{Name: "load_model", Desc: "Start loading a model ahead of time. Returns at once (HTTP 202); a load takes minutes, so poll get_status. Run plan_load first to see whether it fits and what it would evict. With nodes it is placed on those zones only, as force_nodes would, for this load (the profile is unchanged; refused with 409 while the model is loaded or queued).",
+			Props: P{"model": s("Profile id or alias."), "nodes": strs("Optional: the zones to load it on (ids or names).")}, Required: []string{"model"}, Method: "POST", Path: "/api/load", Body: []string{"model", "nodes"}},
 		{Name: "unload_model", Desc: "Stop a loaded model. Without force it only stops an instance with no requests in flight. force=true cuts off running generations: use it only when the owner asked.",
 			Props: P{"model": s("Profile id or alias."), "force": b("Stop even if requests are in flight (they are cut off). Default false.")}, Required: []string{"model"}, Destructive: true, Idempotent: true,
 			Method: "POST", Path: "/api/unload", Body: []string{"model", "force"}},
@@ -415,6 +415,12 @@ func allTools() []*tool {
 			Method: "POST", Path: "/api/nodes/{id}/force-unload", Body: []string{"comment"}},
 
 		// ---- zone groups (a label and a way to act on many zones; never a placement rule) ----
+		{Name: "drain_model", Desc: "Unload a model once its runs finish: it admits nothing new now, nothing is cut, and it stops when the last run ends (eta_s estimates when, from its average run length). Requests arriving meanwhile queue and load it again afterwards. undrain_model takes it back.",
+			Props: P{"model": s("The model (profile or alias).")}, Required: []string{"model"}, Idempotent: true, Method: "POST", Path: "/api/models/drain/{model}"},
+		{Name: "undrain_model", Desc: "Take back a drain: the model admits requests again (the ones that queued meanwhile first).",
+			Props: P{"model": s("The model (profile or alias).")}, Required: []string{"model"}, Idempotent: true, Method: "POST", Path: "/api/models/undrain/{model}"},
+		rd("list_zones", "List the zones (agent machines and Potluck's own) as the Zones page does: each with zone_state (free, in_use, loading, lost, set_aside, off, removed), attention_rank, group, memory and temperature facts, plus counts by state for the fleet. sort=attention gives the page's needs-attention-first order (lost or not answering, then set aside or faulty, loading, in use, paused, free, excluded, removed; then by name); without sort, Potluck's own order.",
+			P{"sort": en("Order.", "attention", "name")}, nil, "GET", "/api/nodes", "sort"),
 		rd("get_uptime", "Uptime over the last days (default 7, at most 90) per zone, per zone group, for the zones in no group and for the fleet: up (free, in use, loading) over counted time (up, lost, set aside); switched-off time (paused, excluded, removed) is left out and given as off_s; unknown time (Potluck not running) is in neither. The window says from when it covers and whether the history covers all of it.",
 			P{"days": i("Days back from now, 1 to 90 (default 7).")}, nil, "GET", "/api/nodes/uptime", "days"),
 		rd("list_groups", "List the zone groups in the order they were made: each with its members (node ids and names), counts by state (total, reachable, down, lost, set_aside, off, in_use, free, loading), memory, temperature, whether its zones accept models (all, none, mixed), the zones that need attention and the models placed on it; and the zones in no group.", nil, nil, "GET", "/api/groups"),

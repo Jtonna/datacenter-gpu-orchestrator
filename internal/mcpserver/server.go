@@ -56,6 +56,9 @@ type Options struct {
 	// tools/list, and calling it (or a tool set to Ask me) answers a tool
 	// error that says why. A call without a key is not checked.
 	Scope func(method, path string) access.Scope
+	// Refused, when set, is told of every tool call refused by the key's
+	// permissions (the API counts them per key: P6).
+	Refused func(ctx context.Context, ref *access.Refusal)
 }
 
 // Server is the http.Handler for /mcp. inner is the scheduler's REST handler.
@@ -581,6 +584,9 @@ func actorFor(client string, args map[string]any) string {
 func (s *Server) callTool(ctx context.Context, t *tool, args map[string]any, client string) toolResult {
 	if g, keyed := access.GrantFrom(ctx); keyed {
 		if ref := access.Check(g, s.scopeOf(t)); ref != nil {
+			if s.opts.Refused != nil {
+				s.opts.Refused(ctx, ref)
+			}
 			return textResult(t.Name+" was refused: "+ref.Message+".", true)
 		}
 	}

@@ -129,6 +129,9 @@ type inst struct {
 	drainInFlight     int // in_flight when draining began; it may only fall
 	victimOf          string
 	stopMode          instance.StopMode
+	// drain: an operator asked it to stop once its runs finish (drain.go);
+	// it admits nothing meanwhile, as a draining victim.
+	drain bool
 
 	// Load progress (loadprogress.go).
 	loadStart   time.Time // the child started; the upload begins about now
@@ -209,7 +212,8 @@ type waiter struct {
 	arrived   time.Time
 	reply     chan answer // nil for synthetic waiters
 	answered  bool
-	benchRun  string // X-Bench-Run id of the benchmark run that sent it; only tags history records
+	benchRun  string   // X-Bench-Run id of the benchmark run that sent it; only tags history records
+	pin       []string // pin.go: load on these nodes only, for this load
 }
 
 // grant is a successful admission.
@@ -327,9 +331,10 @@ type backoff struct {
 }
 
 type lease struct {
-	id      uint64
-	profile string
-	iid     uint64
+	id       uint64
+	profile  string
+	iid      uint64
+	admitted time.Time // drain.go: run lengths for the drain ETA
 }
 
 // schedCore is all scheduler state. It is mutated only by handle (step.go),
@@ -366,6 +371,8 @@ type schedCore struct {
 	backoffs     map[string]*backoff
 	waiters      map[uint64]*waiter
 	leases       map[uint64]*lease
+	runAvg       map[string]time.Duration        // drain.go: average run length per profile
+	pins         map[*core.Profile][]string      // pin.go: one-off copies of a profile and their nodes
 	needs_       map[string]NeedInfo             // provider results, before the estimate margin and learned figures
 	learned      map[string]map[int]*learnedNeed // by shape and device count (needcount.go)
 	derive       deriveState                     // what the derivation keeps between calls (derive.go)
@@ -433,7 +440,7 @@ func newCore(cfg *config.Config, clock Clock, view fleet.View, needs NeedProvide
 	return &schedCore{
 		cfg: cfg, clock: clock, view: view, needs: needs, build: build, log: log,
 		insts: map[string]*inst{}, entries: map[string]*entry{}, nodes: map[core.NodeID]*nodeState{},
-		backoffs: map[string]*backoff{}, waiters: map[uint64]*waiter{}, leases: map[uint64]*lease{},
+		backoffs: map[string]*backoff{}, waiters: map[uint64]*waiter{}, leases: map[uint64]*lease{}, runAvg: map[string]time.Duration{}, pins: map[*core.Profile][]string{},
 		needs_: map[string]NeedInfo{}, learned: map[string]map[int]*learnedNeed{}, warnedLow: map[string]bool{}, raw: map[core.NodeID]core.Node{}, excludedSeen: map[core.NodeID]bool{},
 		forcedGone: map[string]time.Time{}, health: map[core.NodeID]*workerHealth{},
 		recov: map[core.NodeID]*recoveryNode{}, memNext: map[core.NodeID]time.Time{}, refused: map[string]*refusal{}, lastRefusal: map[string]RefusalStatus{},

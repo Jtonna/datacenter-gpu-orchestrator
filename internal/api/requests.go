@@ -32,7 +32,7 @@ func (s *Server) trackRequest(r *http.Request, sent, kind, requested string, p *
 	b := usage.Begin{Kind: kind, Path: r.URL.Path, Requested: requested, BenchRun: benchRun, SourceAddr: callerOf(r),
 		Caller: s.defaultUser(), CallerKind: "default"}
 	if p != nil {
-		b.Profile, b.ModelFile = p.Name, p.Model
+		b.Profile, b.ModelFile, b.Ctx = p.Name, p.Model, p.Ctx
 	}
 	if _, name, ok := audit.AgentFrom(r.Context()); ok {
 		b.Caller, b.CallerKind = name, "key"

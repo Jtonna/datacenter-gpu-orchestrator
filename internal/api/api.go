@@ -167,6 +167,7 @@ type Server struct {
 	health healthState
 	// groups is the zone groups (groups.go); in memory when Options.Groups is nil.
 	groups *groups.Store
+	links  *loadLinks // linkspeed.go
 }
 
 // New builds the API for a scheduler (whose Run is started by the caller)
@@ -195,6 +196,7 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 	if s.reqs == nil {
 		s.reqs = usage.NewRecorder(nil) // live rows only
 	}
+	s.reqs.SetNamer(s.modelName) // short_name: the same rule as /api/models
 	s.bg, s.bgCancel = context.WithCancel(context.Background())
 	s.occ = startOccupied(o.History)
 	s.groups = o.Groups
@@ -211,6 +213,7 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 	s.startAvailability() // availability.go
 	s.startHealth()       // health.go
 	s.startKeyExpiry()    // keyexpiry.go
+	s.startLoadLinks()    // linkspeed.go
 	if o.Audit != nil {
 		s.SetAuditHook(s.recorderHook(o.Audit)) // benchmark changes and runs are audited too (section bench)
 	}
@@ -258,6 +261,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // returns, so the caller may close the database then.
 func (s *Server) Close() {
 	s.occ.cancel()
+	s.stopLoadLinks()
 	s.bgCancel()
 	s.bgWG.Wait()
 	s.stopCatalog()
@@ -293,6 +297,8 @@ func (s *Server) routes() *http.ServeMux {
 	m.HandleFunc("GET /unload", s.handleUnloadAllTextGet) // deprecated: a GET that changes state
 	m.HandleFunc("POST /unload", s.handleUnloadAllText)
 	m.HandleFunc("POST /api/models/unload/{model...}", s.handleUnloadByName)
+	m.HandleFunc("POST /api/models/drain/{model...}", s.handleDrain)     // drain.go
+	m.HandleFunc("POST /api/models/undrain/{model...}", s.handleUndrain) // drain.go
 	m.HandleFunc("/upstream/{model}/{rest...}", s.handleUpstream)
 	m.HandleFunc("/upstream/{model}", s.handleUpstream)
 	m.HandleFunc("GET /api/events", s.handleEvents)
@@ -723,6 +729,9 @@ func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
 type modelRequest struct {
 	Model string `json:"model"`
 	Force bool   `json:"force"`
+	// Nodes (load and plan): place this load on these nodes only, as
+	// force_nodes would, without changing the profile (pin.go).
+	Nodes []string `json:"nodes"`
 }
 
 func readModelRequest(w http.ResponseWriter, r *http.Request) (modelRequest, bool) {
@@ -749,7 +758,16 @@ func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rep, err := s.sched.Plan(r.Context(), req.Model)
+	var rep scheduler.PlanReport
+	var err error
+	if len(req.Nodes) > 0 {
+		if !s.checkViewNodes(w, r, req.Nodes) {
+			return
+		}
+		rep, err = s.sched.PlanOn(r.Context(), req.Model, req.Nodes)
+	} else {
+		rep, err = s.sched.Plan(r.Context(), req.Model)
+	}
 	if err != nil {
 		s.writeErr(w, err)
 		return
@@ -768,7 +786,16 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.sched.LoadFor(r.Context(), req.Model, benchRunHeader(r.Header.Get("X-Bench-Run"))); err != nil {
+	var err error
+	if len(req.Nodes) > 0 {
+		if !s.checkViewNodes(w, r, req.Nodes) {
+			return
+		}
+		err = s.sched.LoadOn(r.Context(), req.Model, req.Nodes)
+	} else {
+		err = s.sched.LoadFor(r.Context(), req.Model, benchRunHeader(r.Header.Get("X-Bench-Run")))
+	}
+	if err != nil {
 		s.writeErr(w, err)
 		return
 	}
@@ -776,8 +803,14 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 	if p, _, ok := s.conf().Resolve(req.Model); ok {
 		name = p.Name
 	}
-	s.auditRuntime(r, audit.ActionLoad, name, nil)
-	writeJSON(w, http.StatusAccepted, map[string]any{"msg": "loading", "model": name})
+	var after map[string]any
+	out := map[string]any{"msg": "loading", "model": name}
+	if len(req.Nodes) > 0 {
+		after = map[string]any{"nodes": req.Nodes}
+		out["nodes"] = req.Nodes
+	}
+	s.auditRuntime(r, audit.ActionLoad, name, after)
+	writeJSON(w, http.StatusAccepted, out)
 }
 
 func (s *Server) handleUnload(w http.ResponseWriter, r *http.Request) {

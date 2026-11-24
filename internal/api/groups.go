@@ -121,11 +121,15 @@ type GroupModel struct {
 
 // GroupSummary is one group as GET /api/groups answers it.
 type GroupSummary struct {
-	Name           string       `json:"name,omitempty"`
-	CreatedAt      *time.Time   `json:"created_at,omitempty"`
-	Members        []string     `json:"members"`
-	MemberNames    []string     `json:"member_names"`
-	Count          int          `json:"count"`
+	Name        string     `json:"name,omitempty"`
+	CreatedAt   *time.Time `json:"created_at,omitempty"`
+	Members     []string   `json:"members"`
+	MemberNames []string   `json:"member_names"`
+	Count       int        `json:"count"`
+	// Chip is the members' common GPU name; "mixed" when two members
+	// report different names; absent when a member reports none (a
+	// console today) and the rest agree, or when none reports one.
+	Chip           string       `json:"chip,omitempty"`
 	Counts         ZoneCounts   `json:"counts"`
 	Memory         GroupMemory  `json:"memory"`
 	Temp           GroupTemp    `json:"temp"`
@@ -209,6 +213,7 @@ func summarizeGroup(g groups.Group, idx zoneIndex) GroupSummary {
 	var temps, paused, unpaused int
 	var each int64 = -1
 	models := map[string]int{}
+	var chips []string
 	for _, id := range g.Members {
 		z := idx[id]
 		if z == nil {
@@ -233,6 +238,7 @@ func summarizeGroup(g groups.Group, idx zoneIndex) GroupSummary {
 			}
 		}
 		if f := z.fact; f != nil {
+			chips = append(chips, chipOf(f.Stats))
 			if t, ok := headlineTemp(f.Stats); ok {
 				tempSum += t
 				temps++
@@ -256,6 +262,7 @@ func summarizeGroup(g groups.Group, idx zoneIndex) GroupSummary {
 	if each > 0 {
 		out.Memory.EachTotalMiB = &each
 	}
+	out.Chip = groupChip(chips)
 	if temps > 0 {
 		avg := float64(int(tempSum/float64(temps)*10+0.5)) / 10
 		out.Temp.AvgC = &avg
@@ -268,6 +275,13 @@ func summarizeGroup(g groups.Group, idx zoneIndex) GroupSummary {
 	case paused > 0:
 		out.Accepting = AcceptingMixed
 	}
+	sort.SliceStable(out.NeedsAttention, func(i, j int) bool { // the attention order: lost before set aside, then by name
+		a, b := out.NeedsAttention[i], out.NeedsAttention[j]
+		if a.State != b.State {
+			return a.State == string(availability.Lost)
+		}
+		return a.Name < b.Name
+	})
 	for p, n := range models {
 		out.Models = append(out.Models, GroupModel{Profile: p, Zones: n})
 	}

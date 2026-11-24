@@ -1,6 +1,8 @@
 package usage
 
 import (
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelname"
+
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -70,6 +72,15 @@ type Request struct {
 	Profile   string `json:"profile"`             // never an alias
 	Requested string `json:"requested,omitempty"` // the model name the client sent
 	ModelFile string `json:"model_file,omitempty"`
+	// ShortName is the model file's name as the page shows it
+	// ("qwen3.5-4b"): not stored, derived from ModelFile whenever a row is
+	// read, with the namer the API sets (SetNamer: the catalog as it is
+	// then, so it follows the same rule as /api/models). Ctx is the
+	// profile's ctx when the request came in (0 when unknown: a row of an
+	// older build, or a profile without one). The page draws
+	// "qwen3.5-4b:8k" from the two, even after the profile is deleted.
+	ShortName string `json:"short_name,omitempty"`
+	Ctx       int    `json:"ctx,omitempty"`
 
 	TokensIn     *int     `json:"tokens_in"`     // every prompt token, reused ones included
 	TokensReused *int     `json:"tokens_reused"` // prompt tokens reused from the cache
@@ -105,6 +116,7 @@ type Begin struct {
 	Profile    string
 	Requested  string
 	ModelFile  string
+	Ctx        int // the profile's ctx now (kept on the row)
 	Caller     string
 	CallerKind string
 	SourceAddr string
@@ -186,7 +198,38 @@ type Recorder struct {
 
 	ended atomic.Uint64
 	watch atomic.Pointer[watcherBox]
+	namer atomic.Pointer[func(file string) string]
 }
+
+// SetNamer sets how a row's model file is named (short_name); nil: the
+// suffix rule without a catalog (modelname.Namer nil).
+func (r *Recorder) SetNamer(f func(file string) string) {
+	if r == nil {
+		return
+	}
+	if f == nil {
+		r.namer.Store(nil)
+		return
+	}
+	r.namer.Store(&f)
+}
+
+// named fills short_name on rows leaving the recorder.
+func (r *Recorder) named(rows []Request) []Request {
+	f := r.namer.Load()
+	for i := range rows {
+		if rows[i].ModelFile == "" {
+			rows[i].ShortName = ""
+		} else if f != nil {
+			rows[i].ShortName = (*f)(rows[i].ModelFile)
+		} else {
+			rows[i].ShortName = (*modelname.Namer)(nil).Name(rows[i].ModelFile)
+		}
+	}
+	return rows
+}
+
+func (r *Recorder) namedOne(row Request) Request { return r.named([]Request{row})[0] }
 
 type watcherBox struct{ w Watcher }
 
@@ -209,7 +252,7 @@ func (r *Recorder) notify(kind string, row func() Request) {
 	if b == nil || !b.w.Watching() {
 		return
 	}
-	b.w.Changed(kind, row())
+	b.w.Changed(kind, r.namedOne(row()))
 }
 
 // NewRecorder starts the request log on st (which may be off): rows that a
@@ -264,6 +307,7 @@ func (r *Recorder) Queued(b Begin) *Tracker {
 	now := r.now()
 	t := &Tracker{r: r, row: Request{Status: StatusQueued, Kind: b.Kind, Path: b.Path, Stream: b.Stream,
 		QueuedAt: now.UnixMilli(), Profile: b.Profile, Requested: b.Requested, ModelFile: b.ModelFile,
+		Ctx:    max(b.Ctx, 0),
 		Caller: b.Caller, CallerKind: b.CallerKind, SourceAddr: b.SourceAddr, BenchRun: b.BenchRun}}
 	r.add(t, now)
 	row := t.row
@@ -477,7 +521,7 @@ func (r *Recorder) Live() []Request {
 		out = append(out, t.snapshot(now))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out
+	return r.named(out)
 }
 
 func (r *Recorder) liveTrackers() []*Tracker {
@@ -499,7 +543,7 @@ func (r *Recorder) LiveByID(id int64) (Request, bool) {
 	if t == nil {
 		return Request{}, false
 	}
-	return t.snapshot(r.now().UnixMilli()), true
+	return r.namedOne(t.snapshot(r.now().UnixMilli())), true
 }
 
 func (r *Recorder) tracker(id int64) *Tracker {
@@ -561,6 +605,14 @@ func nullStr(s string) any {
 	return s
 }
 
+// nullCtx is a ctx, NULL when unknown.
+func nullCtx(v int) any {
+	if v <= 0 {
+		return nil
+	}
+	return v
+}
+
 func nullPos(v float64) any {
 	if v < 0 {
 		return nil
@@ -572,6 +624,10 @@ const rowColumns = `id, status, reason, message, http_status, kind, path, stream
   profile, requested, model_file, tokens_in, tokens_reused, tokens_out, prefill_tps, decode_tps, prefill_ms, decode_ms,
   sched_id, instance_id, session_id, host_node, nodes, caller, caller_kind, source_addr, bench_run`
 
+// readColumns is rowColumns and the columns of extMigrations (scanRows reads
+// either list).
+const readColumns = rowColumns + `, ctx`
+
 // upsertRow writes the whole row. A non-final write never replaces a final
 // one (an update that arrives late).
 func upsertRow(tx *sql.Tx, r *Request, final bool) error {
@@ -579,12 +635,13 @@ func upsertRow(tx *sql.Tx, r *Request, final bool) error {
 	if err != nil {
 		return err
 	}
-	q := `INSERT INTO client_requests (` + rowColumns + `) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	q := `INSERT INTO client_requests (` + readColumns + `) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET status=excluded.status, reason=excluded.reason, message=excluded.message, http_status=excluded.http_status,
   stream=excluded.stream, started_at=excluded.started_at, first_token_at=excluded.first_token_at, ended_at=excluded.ended_at,
   tokens_in=excluded.tokens_in, tokens_reused=excluded.tokens_reused, tokens_out=excluded.tokens_out,
   prefill_tps=excluded.prefill_tps, decode_tps=excluded.decode_tps, prefill_ms=excluded.prefill_ms, decode_ms=excluded.decode_ms,
-  sched_id=excluded.sched_id, instance_id=excluded.instance_id, session_id=excluded.session_id, host_node=excluded.host_node, nodes=excluded.nodes`
+  sched_id=excluded.sched_id, instance_id=excluded.instance_id, session_id=excluded.session_id, host_node=excluded.host_node, nodes=excluded.nodes,
+  ctx=COALESCE(excluded.ctx, client_requests.ctx)`
 	if !final {
 		q += ` WHERE client_requests.status IN ('queued','running')`
 	}
@@ -597,7 +654,7 @@ ON CONFLICT(id) DO UPDATE SET status=excluded.status, reason=excluded.reason, me
 		r.Profile, nullStr(r.Requested), nullStr(r.ModelFile), nullInt(r.TokensIn), nullInt(r.TokensReused), nullInt(r.TokensOut),
 		nullFloat(r.PrefillTPS), nullFloat(r.DecodeTPS), nullPos(r.prefillMS), nullPos(r.decodeMS),
 		int64(r.SchedID), int64(r.Instance), nullStr(r.Session), nullStr(r.HostNode), string(nodes),
-		r.Caller, r.CallerKind, nullStr(r.SourceAddr), nullStr(r.BenchRun))
+		r.Caller, r.CallerKind, nullStr(r.SourceAddr), nullStr(r.BenchRun), nullCtx(r.Ctx))
 	return err
 }
 
@@ -610,7 +667,7 @@ func nonNil(n []Node) []Node {
 
 // closeStale ends the rows a previous process left queued or running.
 func closeStale(tx *sql.Tx) error {
-	rows, err := tx.Query(`SELECT ` + rowColumns + ` FROM client_requests WHERE status IN ('queued','running')`)
+	rows, err := tx.Query(`SELECT ` + readColumns + ` FROM client_requests WHERE status IN ('queued','running')`)
 	if err != nil {
 		return err
 	}
