@@ -575,6 +575,7 @@ Access is open: the web UI and the REST API need no key, and a request without o
 - Keys made before permissions existed (`lls_...`) keep working as before: every permission allowed, no expiry. Setting a permission or an expiry on one in Manage makes it a key like any other; its value does not change.
 - Only the SHA-256 of a key is stored. The key appears once, in the answer that made or rotated it; never in the list, the audit log, an event or a log line.
 - Expiry warnings: history events `agentKeyExpiring` once at 7 days and once at 1 day left, `agentKeyExpired` once when it has expired (checked hourly; a restart does not repeat them; a new expiry starts them over).
+- Usage per key: each key's requests per UTC day, and of them the ones refused for want of a permission (`denied`, REST and MCP, owner-only routes included) and the ones refused because the permission is Ask me (`asked`). `GET /api/agents` gives each key `usage`: `days` (7), the sums `requests`, `denied`, `asked`, and `by_day`, the 7 UTC days with today last (`"day": "2026-11-17"`). The days are kept 90 days (`agent_usage` in `scheduler.db`, version 2 of `access_migrations`). Counts are written at most once a second per key, and on shutdown; the list adds the ones not written yet.
 - The MCP URL in the settings to copy is built from the address the browser used (the `Host` header); no forwarding header is read.
 
 What each permission covers (the table in `internal/api/scopes.go`; a route missing there needs observe for GET and settings otherwise):

@@ -74,6 +74,58 @@ type agentUse struct {
 	n       int64
 	last    int64
 	flushed time.Time
+	days    map[int64]*cfgstore.AgentDayUse // P6: per UTC day, not written yet
+}
+
+// dayMS is one UTC day; usage days start at a multiple of it.
+const dayMS = int64(24 * time.Hour / time.Millisecond)
+
+// UsageDays is how many days GET /api/agents sums ("this week"); stored days
+// older than UsageKeepDays are trimmed by the hourly key task.
+const (
+	UsageDays     = 7
+	UsageKeepDays = 90
+)
+
+func (u *agentUse) day(at int64) *cfgstore.AgentDayUse {
+	d := at - at%dayMS
+	if u.days == nil {
+		u.days = map[int64]*cfgstore.AgentDayUse{}
+	}
+	x := u.days[d]
+	if x == nil {
+		x = &cfgstore.AgentDayUse{Day: d}
+		u.days[d] = x
+	}
+	return x
+}
+
+func (u *agentUse) pending() bool { return u.n > 0 || len(u.days) > 0 }
+
+// useOf is the counter of an agent (the caller holds mu).
+func (g *agentRegistry) useOf(id string) *agentUse {
+	if g.use == nil {
+		g.use = map[string]*agentUse{}
+	}
+	u := g.use[id]
+	if u == nil {
+		u = &agentUse{}
+		g.use[id] = u
+	}
+	return u
+}
+
+// refused counts a keyed request refused by its permissions: Ask me is
+// "asked", anything else "denied". It is written with the next flush.
+func (g *agentRegistry) refused(id, typ string, now time.Time) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	d := g.useOf(id).day(now.UnixMilli())
+	if typ == "approval_required" { // access.Check: Ask me
+		d.Asked++
+	} else {
+		d.Denied++
+	}
 }
 
 // agentRegistry resolves keys in memory and keeps the use counters, which are
@@ -198,16 +250,10 @@ func (g *agentRegistry) resolve(ctx context.Context, key string, now time.Time) 
 	if st, _ := keyStatus(hit, now); st == KeyExpired {
 		return nil, errExpiredKey
 	}
-	if g.use == nil {
-		g.use = map[string]*agentUse{}
-	}
-	u := g.use[hit.ID]
-	if u == nil {
-		u = &agentUse{}
-		g.use[hit.ID] = u
-	}
+	u := g.useOf(hit.ID)
 	u.n++
 	u.last = now.UnixMilli()
+	u.day(u.last).Requests++
 	if time.Since(u.flushed) >= time.Second {
 		g.flushOne(hit.ID, u)
 	}
@@ -217,11 +263,15 @@ func (g *agentRegistry) resolve(ctx context.Context, key string, now time.Time) 
 
 // flushOne writes the pending counter of one agent (the caller holds mu).
 func (g *agentRegistry) flushOne(id string, u *agentUse) {
-	if u.n == 0 {
+	if !u.pending() {
 		return
 	}
-	if err := g.store.TouchAgent(id, u.n, u.last); err != nil {
-		return // keep the count for the next try
+	days := make([]cfgstore.AgentDayUse, 0, len(u.days))
+	for _, d := range u.days {
+		days = append(days, *d)
+	}
+	if err := g.store.RecordAgentUse(id, u.n, u.last, days); err != nil {
+		return // keep the counts for the next try
 	}
 	for i := range g.list {
 		if g.list[i].ID == id {
@@ -231,7 +281,7 @@ func (g *agentRegistry) flushOne(id string, u *agentUse) {
 			}
 		}
 	}
-	u.n, u.flushed = 0, time.Now()
+	u.n, u.days, u.flushed = 0, nil, time.Now()
 }
 
 func (g *agentRegistry) flush() {
@@ -376,7 +426,7 @@ func mcpSettings(r *http.Request, key string) map[string]any {
 		"type": "http", "url": mcpURL(r), "headers": map[string]any{"Authorization": "Bearer " + key}}}}
 }
 
-func (s *Server) agentView(r *http.Request, a cfgstore.Agent, actions int) map[string]any {
+func (s *Server) agentView(r *http.Request, a cfgstore.Agent, actions int, use ...[]cfgstore.AgentDayUse) map[string]any {
 	now := s.opts.Now()
 	status, days := keyStatus(&a, now)
 	g := grantsOf(&a)
@@ -391,17 +441,38 @@ func (s *Server) agentView(r *http.Request, a cfgstore.Agent, actions int) map[s
 	if days > 0 {
 		v["expires_in_days"] = days
 	}
+	// P6: requests, denied and asked over the last UsageDays UTC days
+	var stored, pending []cfgstore.AgentDayUse
+	if len(use) > 0 {
+		stored = use[0]
+	}
+	if len(use) > 1 {
+		pending = use[1]
+	}
+	v["usage"] = keyUsageView(now, stored, pending)
 	return v
 }
 
 // agentsNow lists the agents with the counters that are not written yet.
 func (s *Server) agentsNow(ctx context.Context) ([]cfgstore.Agent, error) {
+	list, _, err := s.agentsWithPending(ctx)
+	return list, err
+}
+
+// agentsWithPending is agentsNow and the usage days not written yet.
+func (s *Server) agentsWithPending(ctx context.Context) ([]cfgstore.Agent, map[string][]cfgstore.AgentDayUse, error) {
 	g := &s.agents
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	list, err := g.load(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	pending := map[string][]cfgstore.AgentDayUse{}
+	for id, u := range g.use {
+		for _, d := range u.days {
+			pending[id] = append(pending[id], *d)
+		}
 	}
 	out := append([]cfgstore.Agent(nil), list...)
 	for i := range out {
@@ -412,23 +483,58 @@ func (s *Server) agentsNow(ctx context.Context) ([]cfgstore.Agent, error) {
 			}
 		}
 	}
-	return out, nil
+	return out, pending, nil
+}
+
+// keyUsageView is a key's last UsageDays UTC days, today last: the sums and
+// each day ("2026-11-17"), stored and not yet written added together.
+func keyUsageView(now time.Time, stored, pending []cfgstore.AgentDayUse) map[string]any {
+	today := now.UnixMilli() - now.UnixMilli()%dayMS
+	first := today - (UsageDays-1)*dayMS
+	var sum cfgstore.AgentDayUse
+	per := map[int64]*cfgstore.AgentDayUse{}
+	for _, list := range [][]cfgstore.AgentDayUse{stored, pending} {
+		for _, d := range list {
+			if d.Day < first || d.Day > today {
+				continue
+			}
+			x := per[d.Day]
+			if x == nil {
+				x = &cfgstore.AgentDayUse{Day: d.Day}
+				per[d.Day] = x
+			}
+			x.Requests, x.Denied, x.Asked = x.Requests+d.Requests, x.Denied+d.Denied, x.Asked+d.Asked
+			sum.Requests, sum.Denied, sum.Asked = sum.Requests+d.Requests, sum.Denied+d.Denied, sum.Asked+d.Asked
+		}
+	}
+	byDay := make([]map[string]any, UsageDays)
+	for i := range byDay {
+		day := first + int64(i)*dayMS
+		x := per[day]
+		if x == nil {
+			x = &cfgstore.AgentDayUse{}
+		}
+		byDay[i] = map[string]any{"day": time.UnixMilli(day).UTC().Format("2006-01-02"), "requests": x.Requests, "denied": x.Denied, "asked": x.Asked}
+	}
+	return map[string]any{"days": UsageDays, "requests": sum.Requests, "denied": sum.Denied, "asked": sum.Asked, "by_day": byDay}
 }
 
 func (s *Server) agentsList(w http.ResponseWriter, r *http.Request) {
 	if !s.agentStore(w) {
 		return
 	}
-	list, err := s.agentsNow(r.Context())
+	list, pending, err := s.agentsWithPending(r.Context())
 	if err != nil {
 		apiErr(w, http.StatusInternalServerError, "%v", err)
 		return
 	}
 	actions, _ := s.store.AgentActions(r.Context())
+	now := s.opts.Now().UnixMilli()
+	stored, _ := s.store.AgentUsage(r.Context(), now-now%dayMS-(UsageDays-1)*dayMS)
 	out := make([]map[string]any, 0, len(list))
 	active := 0
 	for _, a := range list {
-		v := s.agentView(r, a, actions[a.ID])
+		v := s.agentView(r, a, actions[a.ID], stored[a.ID], pending[a.ID])
 		if st := v["status"]; st == KeyActive || st == KeyExpiring {
 			active++
 		}

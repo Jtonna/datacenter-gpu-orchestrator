@@ -19,7 +19,7 @@ import (
 func accessEnv(t *testing.T) (*env, *mcpserver.Server, *cfgstore.Store) {
 	t.Helper()
 	e, _, cs := cfgEnvWith(t, func(o *Options) { o.keyExpiryEvery = -1 }) // the tests run the expiry check themselves
-	mcp := mcpserver.New(e.api, mcpserver.Options{Version: "test", Identify: e.api.IdentifyAgent, Scope: e.api.ScopeOf,
+	mcp := mcpserver.New(e.api, mcpserver.Options{Version: "test", Identify: e.api.IdentifyAgent, Scope: e.api.ScopeOf, Refused: e.api.NoteRefusal,
 		Bridge: func(ctx context.Context, actor string) context.Context { return audit.WithSource(ctx, "mcp", actor) }})
 	e.api.SetMCPTools(mcp.ToolInfo)
 	return e, mcp, cs
