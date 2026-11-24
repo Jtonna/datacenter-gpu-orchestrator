@@ -2,6 +2,12 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: short names without a publisher prefix
+
+No agent change, no new port, no schema change.
+
+- **Short names drop a publisher prefix.** A leading word of letters (no digit, no hyphen) followed by an underscore is dropped from `short_name`: `moonshotai_kimi-dev-72b` is now `kimi-dev-72b`, `thudm_glm-4-32b-0414` is `glm-4-32b-0414`, `google_gemma-3-4b-it` is `gemma-3-4b`. When two catalog files would then share a name, both keep their prefix. It applies to `/api/models` and to request rows (worked out on read, so older rows follow). The full file name is still in `model_file` and `file`.
+
 ## Scheduler image: usage per key and model short names (phase 3, slice 2)
 
 No agent change, no new port.

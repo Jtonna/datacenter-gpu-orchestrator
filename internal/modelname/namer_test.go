@@ -12,7 +12,7 @@ func TestNamer_DropsTheSuffixUnlessTwoFilesWouldShareTheName(t *testing.T) {
 		"/models/Llama-3.2-1B-Q8_0.gguf",           // the base model
 		"/models/Qwen_Qwen3.5-9B-Q4_K_M.gguf",      // no suffix
 		"/models/Qwen_Qwen3.5-9B-Q8_0.gguf",        // the same model in another quantisation: the same name, no collision
-		"/models/google_gemma-3-4b-it-Q4_0.gguf",   // an unrepeated publisher stays
+		"/models/google_gemma-3-4b-it-Q4_0.gguf",   // a publisher prefix goes too
 		"/models/Mistral-7B-Instruct-v0.3-Q4.gguf", // the suffix is not last: kept
 	})
 	for _, c := range []struct{ file, want string }{
@@ -21,7 +21,7 @@ func TestNamer_DropsTheSuffixUnlessTwoFilesWouldShareTheName(t *testing.T) {
 		{"/models/Llama-3.2-1B-Q8_0.gguf", "llama-3.2-1b"},
 		{"/models/Qwen_Qwen3.5-9B-Q4_K_M.gguf", "qwen3.5-9b"},
 		{"/models/Qwen_Qwen3.5-9B-Q8_0.gguf", "qwen3.5-9b"},
-		{"/models/google_gemma-3-4b-it-Q4_0.gguf", "google_gemma-3-4b"},
+		{"/models/google_gemma-3-4b-it-Q4_0.gguf", "gemma-3-4b"},
 		{"/models/Mistral-7B-Instruct-v0.3-Q4.gguf", "mistral-7b-instruct-v0.3"},
 		// a file the catalog does not have (a run of a model since removed):
 		// named against the catalog as it is now

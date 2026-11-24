@@ -41,49 +41,79 @@ func Short(file string) string {
 // tuned is a trailing "-it" or "-instruct" (any separator).
 var tuned = regexp.MustCompile(`[-_.](?:it|instruct)$`)
 
-// Namer names model files the way the page shows them: Short without a
-// trailing "-it" or "-instruct" ("gemma-4-27b"), unless two files of the
-// catalog would then share one name; those keep their suffix (both of
-// them). It is the one rule for /api/models and the request rows.
+// publisher is a leading word of letters only (no digit, no hyphen)
+// followed by an underscore: the "org_repo" form of a Hugging Face path
+// ("moonshotai_kimi-dev-72b", "thudm_glm-4-32b-0414", "google_gemma-3-4b").
+var publisher = regexp.MustCompile(`^[a-z]+_`)
+
+func dropPublisher(s string) string {
+	if m := publisher.FindString(s); m != "" && len(s) > len(m) {
+		return s[len(m):]
+	}
+	return s
+}
+
+func dropTuned(s string) string { return tuned.ReplaceAllString(s, "") }
+
+// Namer names model files the way the page shows them. From Short it drops,
+// in this order:
+//  1. a publisher prefix ("moonshotai_kimi-dev-72b" -> "kimi-dev-72b"),
+//  2. a trailing "-it" or "-instruct" ("gemma-4-27b-it" -> "gemma-4-27b"),
+//
+// each unless two files of the catalog would then share one name: those keep
+// what that step would drop (both of them). The same model in two
+// quantisations shares its name. It is the one rule for /api/models and the
+// request rows; the full file name stays in model_file and file.
 type Namer struct {
-	byBase map[string]map[string]bool // name without the suffix -> the Short names that give it
+	byPub   map[string]map[string]bool // without the publisher -> the Short names that give it
+	byTuned map[string]map[string]bool // without the suffix -> the step-1 names that give it
 }
 
 // NewNamer is the namer of a catalog's model files.
 func NewNamer(files []string) *Namer {
-	n := &Namer{byBase: map[string]map[string]bool{}}
+	n := &Namer{byPub: map[string]map[string]bool{}, byTuned: map[string]map[string]bool{}}
+	add := func(m map[string]map[string]bool, k, v string) {
+		if m[k] == nil {
+			m[k] = map[string]bool{}
+		}
+		m[k][v] = true
+	}
+	var shorts []string
 	for _, f := range files {
-		sh := Short(f)
-		if sh == "" {
-			continue
+		if sh := Short(f); sh != "" {
+			shorts = append(shorts, sh)
+			add(n.byPub, dropPublisher(sh), sh)
 		}
-		b := tuned.ReplaceAllString(sh, "")
-		if n.byBase[b] == nil {
-			n.byBase[b] = map[string]bool{}
-		}
-		n.byBase[b][sh] = true
+	}
+	for _, sh := range shorts {
+		a := n.step(n.byPub, sh, dropPublisher)
+		add(n.byTuned, dropTuned(a), a)
 	}
 	return n
 }
 
-// Name is the page's name of file. A file the catalog does not have is
-// named against the catalog as it is: it keeps its suffix when a catalog
-// file without it (or with another) gives the same name. A nil Namer (no
-// catalog) drops the suffix.
-func (n *Namer) Name(file string) string {
-	sh := Short(file)
-	b := tuned.ReplaceAllString(sh, "")
-	if n == nil || b == sh {
-		return b
+// step drops what drop removes from from, unless another catalog name gives
+// the same result.
+func (n *Namer) step(m map[string]map[string]bool, from string, drop func(string) string) string {
+	to := drop(from)
+	if to == from || n == nil {
+		return to
 	}
-	others := 0
-	for s := range n.byBase[b] {
-		if s != sh {
-			others++
+	for other := range m[to] {
+		if other != from {
+			return from
 		}
 	}
-	if others > 0 {
-		return sh
+	return to
+}
+
+// Name is the page's name of file. A file the catalog does not have is
+// named against the catalog as it is. A nil Namer (no catalog) drops both.
+func (n *Namer) Name(file string) string {
+	sh := Short(file)
+	if n == nil {
+		return dropTuned(dropPublisher(sh))
 	}
-	return b
+	a := n.step(n.byPub, sh, dropPublisher)
+	return n.step(n.byTuned, a, dropTuned)
 }
