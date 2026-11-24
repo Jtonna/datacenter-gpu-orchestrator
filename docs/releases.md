@@ -2,6 +2,20 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: delete a model to the trash, and restore it (models slice 3)
+
+No agent change, no new port. **Schema: one new table, `model_trash`, as step 2 of the `model_migrations` ledger.** `cfg_migrations` does not move. **Needs the scheduler's models mount read-write to act; not applied: until the owner agrees, it stays `:ro` and the routes refuse with "the models folder is read-only here".**
+
+- **Delete.** `POST /api/models/delete/{file}` {comment, dry_run} (permission **models**): renames the file into `<models>/.trash/<id>/` and takes every profile that names it out of the configuration in one revision; refused while it is loaded, loading or queued, while a benchmark run touches it, for a link, and on a read-only folder.
+- **Trash list.** `GET /api/models/trash` (**observe**): items with `file`, `size_bytes`, `deleted_at`, `purge_at`, `state`, the saved profiles, `actor`, `comment`, `problem`; `total_bytes`, `next_purge_at`, `trash_days`, `purge_on` (false: nothing removes files yet).
+- **Restore.** `POST /api/models/trash/{id}/restore` {comment, rename_taken} (**models**): renames the file back and adds its profiles in one revision.
+- **Catalog.** `disk` gains `trash_bytes`, `trash_count`, `next_purge_at`, `trash_purge_on`. Trashed files are not listed.
+- **Setting** `model_trash_days` (1 to 365, default 30; section models).
+- **Configuration.** A write or rollback that adds a profile on a trashed file is refused with "it is in the trash since ...".
+- **Crash safety.** A kill between any two steps is repaired or reported at the next start.
+- **MCP.** `delete_model`, `list_deleted_models`, `restore_model`.
+- **Going back.** The image before (b162acd) opens the same database and ignores `model_trash`. It never lists a file in `.trash/` (its catalog reads only the top of the models folder) and never removes one. Profiles taken out by a delete stay out there; restore them with this image. If `model_trash_days` was set, the image before reads it as an unknown setting: configuration writes there need `force` until that key is dropped.
+
 ## Scheduler image: pinned models (models slice 2)
 
 No agent change, no new port. **Schema: one new table, `model_pins`, under a new ledger `model_migrations` (version 1).** `cfg_migrations` does not move.

@@ -27,6 +27,10 @@ services:
     ports:
       - "0.0.0.0:3122:8080"           # the API, the web UI and the agents' address (agents use <host ip>:3122)
     volumes:
+      # NOTE (models slice 3, NOT applied): deleting and restoring model files from the
+      # models page needs this one mount read-write ("- models:/models"). It stays :ro
+      # until the owner agrees; until then those routes answer "the models folder is
+      # read-only here". The share and the agents stay read-only either way.
       - models:/models:ro             # the models volume, defined at the bottom
       # Full output of every child llama-server, one file per start (LLM_SCHEDULER_CHILD_LOG_DIR).
       # Old files are pruned.
