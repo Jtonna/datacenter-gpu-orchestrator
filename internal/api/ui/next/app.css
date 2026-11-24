@@ -934,10 +934,13 @@ table.runs{width:100%;border-collapse:collapse}
 .setp-head p{font-size:12.5px;max-width:760px}
 .setp-count{font-size:12px}
 .setp-sub{font-size:var(--fs-label);font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);padding:14px var(--pad-panel) 6px;border-top:1px solid var(--line)}
-.setp-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(170px,230px) minmax(130px,170px);gap:6px 18px;align-items:start;padding:10px var(--pad-panel);border-top:1px solid var(--line);min-height:56px}
+.setp-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(170px,230px) minmax(130px,170px);grid-template-areas:"name ctl def" "help help def";gap:3px 18px;align-items:start;padding:10px var(--pad-panel);border-top:1px solid var(--line);min-height:56px}
 .setp-row.edited{background:#f7f5fb}
 .setp-row.bad{background:var(--coral-bg)}
-.setp-name{min-width:0;display:flex;flex-direction:column;gap:2px}
+.setp-name{grid-area:name;min-width:0;display:flex;flex-direction:column;gap:2px}
+.setp-helpline{grid-area:help;min-width:0;display:flex;align-items:baseline;gap:4px 10px;flex-wrap:wrap}
+.setp-helpline .setp-help{flex:1 1 0;min-width:0}
+.setp-helpline.open .setp-help{flex-basis:100%}
 .setp-title{display:flex;align-items:center;gap:7px;flex-wrap:wrap;min-width:0}
 .setp-title b{font-weight:700;overflow-wrap:anywhere}
 .setp-key{font-size:11.5px;color:var(--mut);overflow-wrap:anywhere}
@@ -945,13 +948,13 @@ table.runs{width:100%;border-collapse:collapse}
 .setp-help.open{white-space:normal;overflow:visible;overflow-wrap:anywhere}
 .setp-more{align-self:flex-start;border:0;background:none;padding:0;color:var(--link);font-size:12px;font-weight:700;cursor:pointer;font-family:var(--sans)}
 .setp-more:hover{text-decoration:underline}
-.setp-err{font-size:12px;font-weight:700;color:var(--coral-text);overflow-wrap:anywhere}
-.setp-ctl{min-width:0;display:flex;flex-direction:column;gap:4px}
+.setp-err{flex-basis:100%;font-size:12px;font-weight:700;color:var(--coral-text);overflow-wrap:anywhere}
+.setp-ctl{grid-area:ctl;min-width:0;display:flex;flex-direction:column;gap:4px}
 .setp-ctl .input,.setp-ctl .select{height:30px}
 .setp-ctl .unit .input{min-width:0}
 .setp-bool{display:flex;align-items:center;gap:9px;height:30px;font-weight:700}
 .setp-checks{display:flex;flex-direction:column;gap:6px;padding-top:4px}
-.setp-def{display:flex;flex-direction:column;align-items:flex-start;gap:4px;font-size:12px;min-width:0;padding-top:6px}
+.setp-def{grid-area:def;display:flex;flex-direction:column;align-items:flex-start;gap:4px;font-size:12px;min-width:0;padding-top:6px}
 .setp-def .mut{overflow-wrap:anywhere}
 .setp-def .btn.ghost{height:22px;padding:0;font-size:12px}
 .setp-row.ro{min-height:44px}
@@ -961,5 +964,5 @@ table.runs{width:100%;border-collapse:collapse}
 .setp-msgs{margin:6px 0 0;padding-left:18px;display:flex;flex-direction:column;gap:4px;font-weight:600}
 .setp-chgs{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:8px}
 .setp-chg .mono{overflow-wrap:anywhere}
-@media(max-width:1100px){.setp-row{grid-template-columns:minmax(0,1fr) minmax(160px,210px)}.setp-def{grid-column:1/-1;flex-direction:row;flex-wrap:wrap;align-items:center;gap:6px 12px;padding-top:0}}
-@media(max-width:860px){.setp-body{grid-template-columns:1fr}.setp-menu{flex-direction:row;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line);border-radius:0}.setp-gi{flex:none}.setp-row{grid-template-columns:1fr}}
+@media(max-width:1100px){.setp-row{grid-template-columns:minmax(0,1fr) minmax(160px,210px);grid-template-areas:"name ctl" "help help" "def def"}.setp-def{flex-direction:row;flex-wrap:wrap;align-items:center;gap:6px 12px;padding-top:0}}
+@media(max-width:860px){.setp-body{grid-template-columns:1fr}.setp-menu{flex-direction:row;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line);border-radius:0}.setp-gi{flex:none}.setp-row{grid-template-columns:1fr;grid-template-areas:"name" "ctl" "help" "def"}}

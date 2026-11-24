@@ -78,6 +78,10 @@ const ACTION_ORDER = ['restart_rpc_server', 'restart_docker', 'reboot'];
 const UNIT_WORD = { percent: '%' };
 const HELP_FOLD = 110; // a help longer than this is cut to one line, the rest behind "More"
 
+// label(f) -> the setting's name: the schema's key in words, with the units spelled as units
+const WORDS = { kib: 'KiB', gib: 'GiB', gb: 'GB', ws: 'WebSocket', ui: 'UI', api: 'API', url: 'URL', pct: 'percent', rpc: 'RPC' };
+export const label = f => fieldLabel(f).replace(/\b(kib|gib|gb|ws|ui|api|url|pct|rpc)\b/gi, w => WORDS[w.toLowerCase()]);
+
 const pkey = (scope, key) => scope + '.' + key;
 const pid = f => pkey(f.scope, f.key);
 // Two values are the same setting when they parse to the same thing ("5m" and "5m0s").
@@ -200,21 +204,21 @@ registerView({
     }
 
     function control(f) {
-      const id = pid(f), v = shown(f), label = fieldLabel(f);
+      const id = pid(f), v = shown(f), name = label(f);
       const bad = errors.has(id);
       if (f.type === 'bool') {
         return h('div.setp-bool', { key: 'c-' + id },
-          toggle(!!v, on => stage(f, on), label),
+          toggle(!!v, on => stage(f, on), name),
           h('span', { 'aria-hidden': 'true' }, v ? 'On' : 'Off'));
       }
       if (f.type === 'enum') {
-        return h('select.select', { key: 'c-' + id, 'aria-label': label, onchange() { stage(f, this.value); } },
+        return h('select.select', { key: 'c-' + id, 'aria-label': name, onchange() { stage(f, this.value); } },
           (f.enum || []).map(o => h('option', { value: o, selected: o === v }, o)));
       }
       if (f.type === 'list' && f.enum) {
         const chosen = new Set(Array.isArray(v) ? v : []);
         const order = f.enum.length ? f.enum : ACTION_ORDER;
-        return h('div.setp-checks', { key: 'c-' + id, role: 'group', 'aria-label': label }, order.map(a => h('label.check',
+        return h('div.setp-checks', { key: 'c-' + id, role: 'group', 'aria-label': name }, order.map(a => h('label.check',
           h('input.cb', { type: 'checkbox', checked: chosen.has(a), 'aria-label': a, onchange() {
             if (this.checked) chosen.add(a); else chosen.delete(a);
             stage(f, order.filter(x => chosen.has(x)));
@@ -227,16 +231,16 @@ registerView({
       const text = drafts.has(id) ? drafts.get(id) : f.type === 'duration' ? String(tidyDur(v ?? '')) : v == null ? '' : String(v);
       if (f.type === 'int' || f.type === 'float') {
         const unit = f.unit ? (UNIT_WORD[f.unit] || f.unit) : '';
-        const input = h('input', { class: 'input mono', type: 'text', inputmode: 'decimal', value: text, 'aria-label': label + (unit ? ' (' + unit + ')' : ''), 'aria-invalid': bad ? 'true' : null,
+        const input = h('input', { class: 'input mono', type: 'text', inputmode: 'decimal', value: text, 'aria-label': name + (unit ? ' (' + unit + ')' : ''), 'aria-invalid': bad ? 'true' : null,
           oninput() { typed(f, this.value); } });
         return unit ? h('div.unit', { key: 'c-' + id }, input, h('span', unit)) : h('div', { key: 'c-' + id }, input);
       }
       if (f.type === 'duration') {
-        return h('input', { key: 'c-' + id, class: 'input mono', type: 'text', value: text, placeholder: 'e.g. 90s, 5m', 'aria-label': label, 'aria-invalid': bad ? 'true' : null,
+        return h('input', { key: 'c-' + id, class: 'input mono', type: 'text', value: text, placeholder: 'e.g. 90s, 5m', 'aria-label': name, 'aria-invalid': bad ? 'true' : null,
           oninput() { typed(f, this.value); } });
       }
       // string
-      return h('input', { key: 'c-' + id, class: 'input mono', type: 'text', value: text, spellcheck: 'false', autocomplete: 'off', 'aria-label': label,
+      return h('input', { key: 'c-' + id, class: 'input mono', type: 'text', value: text, spellcheck: 'false', autocomplete: 'off', 'aria-label': name,
         placeholder: f.default ? String(f.default) : 'not set', oninput() { stage(f, this.value); } });
     }
 
@@ -252,19 +256,19 @@ registerView({
         h('div.setp-name',
           h('div.setp-title',
             differs ? h('span.changed', { title: 'Differs from the default (' + valueText(f, f.default) + ')', 'aria-label': 'Differs from the default' }) : null,
-            h('b', fieldLabel(f)),
+            h('b', label(f)),
             edited ? badge('Unsaved', 'q') : null),
-          h('span.mono.setp-key', f.scope === 'settings' ? f.key : f.scope + '.' + f.key),
-          help ? h('div', { class: 'setp-help' + (unfolded ? ' open' : '') , title: unfolded ? null : help }, help) : null,
-          unfolded && risk ? h('div.setp-help.open.warn-t', risk) : null,
-          long ? h('button.setp-more', { type: 'button', 'aria-expanded': unfolded ? 'true' : 'false', onclick: () => { if (unfolded) open.delete(id); else open.add(id); view.refresh(); } }, unfolded ? 'Less' : 'More') : null,
-          errors.has(id) ? h('div.setp-err', { role: 'alert' }, errors.get(id)) : null),
+          h('span.mono.setp-key', f.scope === 'settings' ? f.key : f.scope + '.' + f.key)),
         h('div.setp-ctl', control(f)),
         h('div.setp-def',
           h('span.mut', 'Default ', h('span.mono', valueText(f, f.default))),
           f.restart_required ? badge('Needs restart', 'settle', 'Saved now; takes effect the next time the scheduler starts') : null,
           differs ? button('Reset to default', () => reset(f), 'sm ghost', { 'aria-label': 'Reset ' + f.key + ' to its default', 'data-reset': f.key })
-            : edited ? button('Undo', () => { pending.delete(id); errors.delete(id); drafts.delete(id); view.refresh(); }, 'sm ghost', { 'aria-label': 'Undo the change of ' + f.key }) : null));
+            : edited ? button('Undo', () => { pending.delete(id); errors.delete(id); drafts.delete(id); view.refresh(); }, 'sm ghost', { 'aria-label': 'Undo the change of ' + f.key }) : null),
+        help || errors.has(id) ? h('div', { class: 'setp-helpline' + (unfolded ? ' open' : '') },
+          help ? h('div', { class: 'setp-help' + (unfolded ? ' open' : ''), title: unfolded ? null : help }, help, unfolded && risk ? h('span.warn-t', ' ' + risk) : null) : null,
+          long ? h('button.setp-more', { type: 'button', 'aria-expanded': unfolded ? 'true' : 'false', onclick: () => { if (unfolded) open.delete(id); else open.add(id); view.refresh(); } }, unfolded ? 'Less' : 'More') : null,
+          errors.has(id) ? h('div.setp-err', { role: 'alert' }, errors.get(id)) : null) : null);
     }
 
     function unknownRows(g) {
@@ -341,7 +345,7 @@ registerView({
       const lines = ops.flatMap(op => op.keys.map(k => {
         const f = fields.find(x => x.scope === op.scope && x.key === k);
         const nv = op.body[k] === null ? f.default : op.body[k];
-        return h('li.setp-chg', h('b', fieldLabel(f)), ' ', h('span.mono.mut', op.scope === 'settings' ? k : op.scope + '.' + k), h('br'),
+        return h('li.setp-chg', h('b', label(f)), ' ', h('span.mono.mut', op.scope === 'settings' ? k : op.scope + '.' + k), h('br'),
           h('span.mono.err-t', valueText(f, savedValue(f))), ' → ', h('span.mono.ok-t', valueText(f, nv)), op.body[k] === null ? h('span.mut', ' (the default)') : null);
       }));
       // 2. one comment, then the writes

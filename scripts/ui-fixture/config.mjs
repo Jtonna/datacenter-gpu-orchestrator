@@ -48,6 +48,8 @@ export const storedConfig = (state = 'normal') => (state === 'unknown'
   ? { unknown_fields: ['settings.gpu_affinity_hint'], writes_need_force: true }
   : { unknown_fields: [], writes_need_force: false });
 
+const secs = v => { if (typeof v !== 'string') return null; let t = 0, m; const re = /(\d+(?:\.\d+)?)(ms|s|m|h)/g; while ((m = re.exec(v))) t += parseFloat(m[1]) * { ms: 0.001, s: 1, m: 60, h: 3600 }[m[2]]; return t; };
+
 // dryRun(scope, body, doc) -> the answer of PATCH /api/config/<scope>?dry_run=1
 // (internal/cfgsvc Result), or {status: 400, body} when a value is out of the
 // schema's range, in the server's words ("settings: max_pool: must be at most 16").
@@ -62,6 +64,11 @@ export function dryRun(scope, body, doc) {
     if (typeof v === 'number' && f.max != null && v > f.max) messages.push(`${scope}: ${k}: must be at most ${f.max}`);
     diff.push({ path: scope + '.' + k, old: cur[k] ?? null, new: v === null ? f.default : v });
     if (f.restart_required) restart.push(scope + '.' + k);
+  }
+  // a rule across two settings, as the server checks it: max_hold must be at least min_hold
+  if (scope === 'settings' && body && body.max_hold != null) {
+    const min = secs(body.min_hold ?? cur.min_hold), max = secs(body.max_hold);
+    if (min != null && max != null && max < min) messages.push('settings: max_hold: must be at least min_hold (' + (body.min_hold ?? cur.min_hold) + ')');
   }
   if (messages.length) return { status: 400, body: { error: { type: 'invalid_config', message: messages.join('; '), messages } } };
   return { status: 200, body: { revision: doc.revision, changed: diff.length > 0, dry_run: true, audit_entry_ids: [], diff, warnings: [], restart_required: restart } };
