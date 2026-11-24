@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -318,5 +319,89 @@ func TestUIFixtureServerModelActions(t *testing.T) {
 	}
 	if st, v := post("/api/models/undrain/gemma-4-27b%3A32k", ``); st != 200 || v["msg"] != "ok" {
 		t.Errorf("undrain: %d %v", st, v)
+	}
+}
+
+// The fixture's Create new zone answers (--pending) have the server's shapes:
+// the fields of PendingZone, the state words of pendingStateText, the 400
+// sentence NoModelSource, a 409 for a taken name, 404 for an id the
+// scheduler forgot, the cancel answer, and the setting default_model_source
+// on GET /api/zones/pending and GET /api/config/settings.
+func TestUIFixtureServerPending(t *testing.T) {
+	keys := func(v map[string]any) string {
+		var k []string
+		for n := range v {
+			k = append(k, n)
+		}
+		sort.Strings(k)
+		return strings.Join(k, ",")
+	}
+	var want map[string]any
+	b, _ := json.Marshal(PendingZone{Group: "g", JoinedNode: "n", JoinedAt: "t"})
+	json.Unmarshal(b, &want)
+
+	for _, st := range []string{PendingWaiting, PendingJoined, PendingExpired, PendingCancelled} {
+		get, base := fixtureStart(t, "--zones", "groups", "--pending", st)
+		var list struct {
+			Pending []map[string]any `json:"pending"`
+			Default string           `json:"default_model_source"`
+		}
+		get("/api/zones/pending", &list)
+		if len(list.Pending) != 1 || list.Pending[0]["state"] != st || list.Pending[0]["state_text"] != pendingStateText[st] || list.Default != "share:192.0.2.10:/models" {
+			t.Fatalf("%s: list %+v", st, list)
+		}
+		var z map[string]any
+		get("/api/zones/pending/pz-0000000000000001", &z)
+		if st == PendingJoined {
+			if keys(z) != keys(want) {
+				t.Errorf("fields: fixture %s, server %s", keys(z), keys(want))
+			}
+		}
+		if c, _ := z["command"].(string); !strings.HasPrefix(c, "curl -sSL 'http://192.0.2.1:8080/install.sh?zone=pz-") || !strings.HasSuffix(c, "' | sudo sh") {
+			t.Errorf("command %q", c)
+		}
+		var s struct {
+			Settings map[string]any `json:"settings"`
+		}
+		get("/api/config/settings", &s)
+		if s.Settings["default_model_source"] != "share:192.0.2.10:/models" {
+			t.Errorf("setting %v", s.Settings["default_model_source"])
+		}
+		if st == PendingWaiting {
+			req, _ := http.NewRequest(http.MethodDelete, base+"/api/zones/pending/pz-0000000000000001", nil)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var c map[string]any
+			json.NewDecoder(resp.Body).Decode(&c)
+			resp.Body.Close()
+			if resp.StatusCode != 200 || c["state"] != PendingCancelled {
+				t.Errorf("cancel: %d %v", resp.StatusCode, c)
+			}
+			post := fixturePost(t, "--zones", "groups", "--pending", st)
+			if code, v := post("/api/zones/pending", `{"name":"zone-7","ttl_min":30,"comment":"x"}`); code != 201 || v["name"] != "zone-7" || v["state"] != PendingWaiting {
+				t.Errorf("create: %d %v", code, v)
+			}
+		}
+	}
+	msg := func(v map[string]any) string {
+		e, _ := v["error"].(map[string]any)
+		m, _ := e["message"].(string)
+		return m
+	}
+	post := fixturePost(t, "--zones", "groups", "--pending", "nosource")
+	if code, v := post("/api/zones/pending", `{"name":"zone-7"}`); code != 400 || msg(v) != NoModelSource {
+		t.Errorf("no source: %d %v", code, v)
+	}
+	post = fixturePost(t, "--zones", "groups", "--pending", "taken")
+	if code, v := post("/api/zones/pending", `{"name":"zone-7","model_source":"push"}`); code != 409 || !strings.HasPrefix(msg(v), "the name zone-7 is already taken by the zone ") {
+		t.Errorf("taken: %d %v", code, v)
+	}
+	get, base := fixtureStart(t, "--zones", "groups", "--pending", "gone")
+	var warm any
+	get("/api/status", &warm)
+	if resp, err := http.Get(base + "/api/zones/pending/pz-0000000000000001"); err != nil || resp.StatusCode != 404 {
+		t.Errorf("gone: %v %v", resp, err)
 	}
 }

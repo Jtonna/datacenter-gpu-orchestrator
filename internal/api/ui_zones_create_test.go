@@ -70,7 +70,7 @@ func TestUINextZonesCreate(t *testing.T) {
 			"fetchedQuery": []string{`^POST /api/zones/pending \{"name":"zone-9","ttl_min":15,"comment":"a new box","group":"rack-a","model_source":"dir:/models"\}$`}},
 		map[string]any{"name": "create: the command and the wait", "route": "#/zones", "status": st, "click": made(),
 			"page": []string{"Run this on the machine", "Linux", cmd, "Copy", "Waiting for the machine to check in", "the command works until",
-				"Model files from " + src, "Windows", "Not available yet: there is no Windows installer", "Cancel this zone", "Close"},
+				"Model files from " + src, "Windows: not available yet, there is no Windows installer", "Cancel this zone", "Close"},
 			"pageHas":      []string{"[data-cz=state][data-state=waiting]", "button.copy"},
 			"notOnPage":    []string{"Create zone"},
 			"fetchedQuery": []string{`^GET /api/zones/pending/pz-0000000000000001$`}},

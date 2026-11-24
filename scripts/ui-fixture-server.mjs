@@ -11,6 +11,7 @@
 //                                           [--health two|good|unknown] [--release 0.1.5]
 //                                           [--zones none|groups|live|one-group|fleet] [--uptime-partial]
 //                                           [--load start|reject|evict|loaded|unknown] [--drain eta|noeta] [--pinned]
+//                                           [--pending waiting|joined|expired|cancelled|gone|nosource|taken]
 //
 //   /ui/components.html  the shell's shared components (scripts/ui-fixture/components.js)
 //   /ui/fx-<name>.html   the app driven by scripts/ui-fixture/fx-<name>.js (a board
@@ -73,6 +74,14 @@
 // /api/models/drain answers eta_s 40 unless --drain noeta. --pinned: that
 // instance was loaded on chosen zones (pinned_nodes).
 //
+// --pending: Create new zone (internal/api/pending.go). GET /api/zones/pending
+// lists the one pending zone zone-9 (rack-a) in that state, GET
+// /api/zones/pending/pz-0000000000000001 answers it (gone: 404, as after a
+// restart of the scheduler), POST answers 201 waiting (nosource: the
+// server's 400 sentence; taken: its 409), DELETE answers it cancelled. The
+// setting default_model_source reads share:192.0.2.10:/models (nosource:
+// empty). The command names Potluck as 192.0.2.1:8080. Nothing is kept.
+//
 // --sequence: a scripted change for screenshots: 4 s after a client
 // subscribes to the requests topic, the queued run 202 starts (a "started"
 // frame), so a queued row can be seen turning into a running one.
@@ -110,6 +119,37 @@ const CONFIG = opt('--config', 'normal');
 const CATALOG = argv.includes('--catalog');
 // --named-only <name>: that zone is in no_auto_nodes (auto: false)
 const NAMED_ONLY = opt('--named-only', '');
+// --pending: the Create new zone states (see the header)
+const PENDING = opt('--pending', '');
+const PZ_SOURCE = PENDING && PENDING !== 'nosource' ? 'share:192.0.2.10:/models' : '';
+const PZ_ID = 'pz-0000000000000001';
+const PZ_TEXT = { waiting: 'Waiting for the machine to check in', joined: 'Joined', expired: 'Expired: the machine did not check in in time', cancelled: 'Cancelled' };
+function pendingZone(state, b = {}) {
+  const t = Date.now(), name = b.name || 'zone-9', script = '/install.sh?zone=' + PZ_ID;
+  const z = { id: PZ_ID, name, group: b.group === undefined ? 'rack-a' : b.group || undefined, model_source: b.model_source || PZ_SOURCE || 'push', mode: 'bare',
+    state, state_text: PZ_TEXT[state], created_at: new Date(t - 4 * 60000).toISOString(), expires_at: new Date(t + 56 * 60000).toISOString(),
+    command: "curl -sSL 'http://192.0.2.1:8080" + script + "' | sudo sh", script_path: script, download_path: script + '&download=1', download_name: 'potluck-zone-' + name + '.sh' };
+  if (state === 'joined') Object.assign(z, { joined_node: '02:00:00:00:01:09', joined_at: new Date(t - 60000).toISOString() });
+  return z;
+}
+function pendingRoute(req, res, p) {
+  if (p === '/api/zones/pending' && req.method === 'POST') return readBody(req, b => {
+    b = b && typeof b === 'object' ? b : {};
+    if (PENDING === 'nosource' && !b.model_source) return json(res, 400, { error: { code: 400, message: 'no model source: set the default model source for new machines or give one for this zone', type: 'invalid_request_error' } });
+    if (PENDING === 'taken') return json(res, 409, { error: { code: 409, message: 'the name ' + (b.name || 'zone-9') + ' is already taken by the zone 02:00:00:00:01:01 (active, lost or removed): choose another name', type: 'invalid_request_error' } });
+    json(res, 201, pendingZone('waiting', b));
+  });
+  if (p === '/api/zones/pending' && req.method === 'GET') {
+    const list = PENDING && PENDING !== 'gone' && PZ_TEXT[PENDING] ? [pendingZone(PENDING)] : [];
+    return json(res, 200, { pending: list, default_model_source: PZ_SOURCE });
+  }
+  if (p === '/api/zones/pending/' + PZ_ID) {
+    if (PENDING === 'gone' || !PENDING) return json(res, 404, { error: { code: 404, message: 'no pending zone ' + PZ_ID, type: 'invalid_request_error' } });
+    if (req.method === 'DELETE') return json(res, 200, pendingZone('cancelled'));
+    if (req.method === 'GET') return json(res, 200, pendingZone(PZ_TEXT[PENDING] ? PENDING : 'waiting'));
+  }
+  return json(res, 404, { error: { code: 404, message: 'no pending zone ' + p.split('/').pop(), type: 'invalid_request_error' } });
+}
 const cfgDoc = () => { const d = configDoc(CONFIG); d.settings.requests_live_timings = LIVE_TIMINGS; return d; };
 
 // ---------- the fixture (the Overview mockup's sample data) ----------
@@ -324,6 +364,7 @@ const server = http.createServer((req, res) => {
   // else the configuration pages' (profiles.mjs, Placement preview); the other model actions are the Zones fixture's
   if (p === '/api/plan' && req.method === 'POST' && !LOAD_SET) return readBody(req, b => { const r = planAnswer(b); json(res, r.status, r.body); });
   if (req.method === 'POST' && MODEL_ROUTE.test(p)) return modelAction(req, res, p);
+  if (p.startsWith('/api/zones/pending')) return pendingRoute(req, res, p);
   if (req.method !== 'GET') return json(res, 405, { error: { message: 'the fixture is read-only' } });
   if (STATE === 'loading' && p.startsWith('/api/requests')) return; // never answers
   if (p === '/api/status') return json(res, 200, status(now));
@@ -338,7 +379,7 @@ const server = http.createServer((req, res) => {
     storage: { database: { dir: '/data', on: true, bytes: 37600000 }, history: { dir: '/data/history', on: true, bytes: 3000000, files: 4 }, usage: { size_bytes: 9400000 }, child_logs: { dir: '/data/logs', bytes: 23700000, files: 12 } } });
   if (p === '/api/agents') return json(res, 200, { agents: ['ops-bot', 'coding agent', 'report writer'].map((name, i) => ({ id: 'agent-' + i, name, key_prefix: 'ptk_' + i, created_at: now - (i + 2) * 24 * H, request_count: 10 * i })) });
   if (p === '/api/config/schema') return json(res, 200, cfgSchema);
-  if (p === '/api/config/settings') { const d = cfgDoc(); return json(res, 200, { revision: d.revision, settings: d.settings, settings_set: d.settings_set }); }
+  if (p === '/api/config/settings') { const d = cfgDoc(); return json(res, 200, { revision: d.revision, settings: PENDING ? Object.assign({}, d.settings, { default_model_source: PZ_SOURCE }) : d.settings, settings_set: d.settings_set }); }
   if (p === '/api/config/recovery') { const d = cfgDoc(); return json(res, 200, { revision: d.revision, recovery: d.recovery }); }
   if (p === '/api/config/fleet') { const d = cfgDoc(); return json(res, 200, { revision: d.revision, fleet: d.fleet }); }
   if (p === '/api/history') return json(res, 200, { events: [

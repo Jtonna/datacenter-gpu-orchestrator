@@ -19,7 +19,7 @@
 // The server's sentences are shown as they come: 400 (no model source, a bad
 // name or source), 409 (a taken name), 404 (no such group).
 
-import { h } from './dom.js';
+import { h, icon } from './dom.js';
 import { href } from './router.js';
 import * as api from './api.js';
 import { dialog, button, copyButton, badge } from './ui.js';
@@ -30,33 +30,42 @@ const WIN_WHY = 'Not available yet: there is no Windows installer. The agent run
 const USB_WHY = 'Not available yet: there is no USB drive image.';
 const SOURCE_HINT = 'share:<host>:/<path>, dir:/<path> or push';
 const TTLS = [15, 30, 60];
+const IC = {
+  cmd: ['M3 4h14v12H3z', 'M6 8l2.5 2L6 12M10 12h4'],
+  dl: ['M10 3v9M6 8.5l4 4 4-4M4 16h12'],
+  ssh: ['M11 4h5v12h-5M3 10h9M9 7l3 3-3 3'],
+  file: ['M5 2.5h6.5l3.5 3.5v11.5H5z', 'M11.5 2.5V6H15'],
+  usb: ['M7 9h6v8.5H7zM8.5 2.5h3V9h-3z'],
+};
 
 const errText = e => (e && e.body && e.body.error && e.body.error.message) || (e && e.message) || 'The request failed.';
 
 // stateLine(z, gone) -> the state of a pending zone in words.
 function stateLine(z, gone) {
-  if (gone) return h('div.zc-state.bad', { 'data-cz': 'state', 'data-state': 'gone' }, h('b', 'This zone was not found: create it again.'),
-    h('span.mut', ' Pending zones are kept in memory, so a restart of the scheduler forgets them; the command above no longer works.'));
+  if (gone) return h('div.zc-state.bad', { 'data-cz': 'state', 'data-state': 'gone' }, h('span.zc-dot', { 'aria-hidden': 'true' }),
+    h('span', h('b', 'This zone was not found: create it again.'),
+      h('span.mut', ' Pending zones are kept in memory, so a restart of the scheduler forgets them; the command above no longer works.')));
   const st = z.state || 'waiting';
   const text = z.state_text || ({ waiting: 'Waiting for the machine to check in', joined: 'Joined', expired: 'Expired: the machine did not check in in time', cancelled: 'Cancelled' })[st] || st;
   return h('div', { class: 'zc-state ' + st, 'data-cz': 'state', 'data-state': st },
-    st === 'waiting' ? h('span.zc-spin', { 'aria-hidden': 'true' }) : null,
-    h('b', text),
+    h('span.zc-dot', { 'aria-hidden': 'true' }),
+    h('span', h('b', text),
     st === 'waiting' && z.expires_at ? h('span.mut', { title: dateTime(z.expires_at) }, ' · the command works until ' + clock(z.expires_at, false)) : null,
     st === 'joined' ? h('span.mut', ' as ', h('span.mono', z.name), z.group ? [' in ', h('span.mono', z.group)] : null, z.joined_at ? ' at ' + clock(z.joined_at, false) : null) : null,
-    st === 'expired' || st === 'cancelled' ? h('span.mut', ' The command no longer works; create the zone again to get a new one.') : null);
+    st === 'expired' || st === 'cancelled' ? h('span.mut', ' The command no longer works; create the zone again to get a new one.') : null));
 }
 
-// createZone({groups, group}) opens the dialog; groups are the group names to
-// offer, group the one to preselect. Resolves when it closes.
+// createZone({groups}) opens the dialog; groups are the group names the page
+// has (the dialog also reads GET /api/groups). Resolves true when a zone was
+// made, else false or undefined.
 export function createZone(o = {}) {
   let timer = 0;
-  return dialog({ title: 'Create new zone', wide: true, body: close => {
+  return dialog({ title: 'Create new zone', body: close => {
     const root = h('div.zc', { 'data-create-zone': '' });
     const st = { phase: 'form', def: null, defErr: '', z: null, gone: false, tab: 'cmd', err: '', errSource: false, busy: false, cancelOpen: false };
-    const name = h('input.input.mono', { 'data-cz': 'name', 'aria-label': 'Zone name', placeholder: 'for example zone-9', autocomplete: 'off', spellcheck: 'false', maxlength: 63 });
+    const name = h('input.input.mono', { 'data-cz': 'name', 'aria-label': 'Zone name', placeholder: 'Machine\'s hostname', autocomplete: 'off', spellcheck: 'false', maxlength: 63 });
     const group = h('select.select', { 'data-cz': 'group', 'aria-label': 'Group' },
-      h('option', { value: '' }, 'No group'), (o.groups || []).map(g => h('option', { value: g, selected: g === o.group }, g)));
+      h('option', { value: '' }, 'No group'), (o.groups || []).map(g => h('option', { value: g }, g)));
     const source = h('input.input.mono', { 'data-cz': 'source', 'aria-label': 'Model source', placeholder: SOURCE_HINT, autocomplete: 'off', spellcheck: 'false' });
     const ttl = h('select.select', { 'data-cz': 'ttl', 'aria-label': 'The command works for' }, TTLS.map(m => h('option', { value: String(m), selected: m === 60 }, m + ' min')));
     const comment = h('textarea.textarea', { rows: 2, maxlength: 400, 'data-cz': 'comment', placeholder: 'Why? It is kept in the audit log.', 'aria-label': 'Comment' });
@@ -65,9 +74,26 @@ export function createZone(o = {}) {
     const done = v => { stop(); close(v); };
 
     const tab = (id, label, why) => h('button', { type: 'button', role: 'tab', class: 'zc-tab' + (st.tab === id ? ' on' : ''), 'aria-selected': st.tab === id ? 'true' : 'false',
-      'data-cz-tab': id, disabled: !!why, title: why || null, onclick: () => { st.tab = id; draw(); } }, label);
-    const tile = (label, why) => h('div.zc-tile.off', { title: why, 'data-cz-off': label }, h('b', label), h('span.mut', why));
+      'data-cz-tab': id, disabled: !!why, title: why || null, onclick: () => { st.tab = id; draw(); } }, icon(IC[id]), h('span', label));
+    const tabs = () => h('div.zc-tabs', { role: 'tablist', 'aria-label': 'How to install' }, tab('cmd', 'Run a command'), tab('dl', 'Download a script'), tab('ssh', 'Install over SSH', SSH_WHY));
+    const head = () => h('div.zc-grid',
+      h('label.field', h('span.lab', 'Zone name'), name),
+      h('label.field', h('span.lab', 'Group'), group));
+    // a file row of Download a script: an unavailable one says why instead of a file name
+    const fileRow = (ic, os, file, link, why) => h('div.zc-file', { 'data-cz-file': os },
+      icon(IC[ic]), h('div.zc-file-t', h('b', os), why ? h('span.mut', why) : h('span.mono', file)),
+      link ? h('a.btn', { href: link, download: file, 'data-cz': 'download' }, 'Download') : h('button.btn', { type: 'button', disabled: true, title: why || null }, 'Download'));
 
+    // the groups to offer: what the page had, then GET /api/groups (the page may
+    // not have read it yet when the dialog opens)
+    const fillGroups = names => {
+      const keep = group.value;
+      group.replaceChildren(h('option', { value: '' }, 'No group'), ...names.map(g => h('option', { value: g }, g)));
+      group.value = names.includes(keep) ? keep : '';
+    };
+    async function readGroups() {
+      try { const d = await api.get('/api/groups'); const names = ((d && d.groups) || []).map(g => g.name).filter(Boolean); if (names.length && st.phase === 'form') fillGroups(names); } catch { /* keep what the page had */ }
+    }
     async function readDefault() {
       try {
         const r = await api.get('/api/config/settings');
@@ -121,10 +147,8 @@ export function createZone(o = {}) {
           : h('span.help', { 'data-cz': 'default' }, 'No default is set for new machines: give one for this zone, or set it under ',
             h('a', { href: href('settings', ['agents']), 'data-cz': 'settings-link', onclick: () => done(false) }, 'Settings, Agents'), '.');
       return [
-        h('div.zc-grid',
-          h('label.field', h('span.lab', 'Zone name'), name),
-          h('label.field', h('span.lab', 'Group'), group)),
-        h('div.zc-tabs', { role: 'tablist', 'aria-label': 'How to install' }, tab('cmd', 'Run a command'), tab('dl', 'Download a script'), tab('ssh', 'Install over SSH', SSH_WHY)),
+        head(),
+        tabs(),
         h('div.zc-grid',
           h('label.field', h('span.lab', 'Model source'), source, srcNote),
           h('label.field', h('span.lab', 'The command works for'), ttl, h('span.help', 'At most an hour. A restart of Potluck also ends it.'))),
@@ -140,18 +164,21 @@ export function createZone(o = {}) {
       const z = st.z;
       const live = z.state === 'waiting' && !st.gone;
       const cmdTab = h('div.zc-pane', { 'data-cz-pane': 'cmd' },
-        h('div.zc-lab', 'Run this on the machine'),
-        h('div.zc-os', h('b', 'Linux'), h('div.zc-cmd', h('code.mono', { 'data-cz': 'command' }, z.command || ''), live ? copyButton(z.command || '', 'the command') : null)),
-        tile('Windows', WIN_WHY));
-      const dlTab = h('div.zc-pane', { 'data-cz-pane': 'dl' },
-        h('div.zc-os', h('b', 'Linux'), h('span.mono', z.download_name || 'potluck-zone.sh'),
-          live && z.download_path ? h('a.btn', { href: z.download_path, download: z.download_name || '', 'data-cz': 'download' }, 'Download') : null),
-        tile('Windows', WIN_WHY), tile('USB drive', USB_WHY));
+        h('div.zc-row', h('span.zc-lab', 'Run this on the machine'),
+          h('div.zc-seg', { role: 'group', 'aria-label': 'System' }, h('button', { type: 'button', class: 'on', 'aria-pressed': 'true' }, 'Linux'),
+            h('button', { type: 'button', disabled: true, title: WIN_WHY, 'data-cz-off': 'Windows' }, 'Windows'))),
+        h('pre.zc-cmd', h('code.mono', { 'data-cz': 'command' }, z.command || '')),
+        live ? h('div.zc-copy', copyButton(z.command || '', 'the command')) : null,
+        h('div.zc-note', 'Windows: ' + WIN_WHY.replace(/^Not available yet: /, 'not available yet, ')));
+      const dlTab = h('div.zc-pane.zc-files', { 'data-cz-pane': 'dl' },
+        fileRow('file', 'Linux', z.download_name || 'potluck-zone.sh', live ? z.download_path : '', live ? '' : 'The script no longer works.'),
+        fileRow('file', 'Windows', '', '', WIN_WHY),
+        fileRow('usb', 'USB drive', '', '', USB_WHY));
+      name.value = z.name; name.disabled = true; name.setAttribute('disabled', '');
+      group.value = z.group || ''; group.disabled = true; group.setAttribute('disabled', '');
       return [
-        h('div.zc-grid',
-          h('div.field', h('span.lab', 'Zone name'), h('b.mono', { 'data-cz': 'made-name' }, z.name)),
-          h('div.field', h('span.lab', 'Group'), z.group ? h('b.mono', z.group) : h('span.mut', 'No group'))),
-        h('div.zc-tabs', { role: 'tablist', 'aria-label': 'How to install' }, tab('cmd', 'Run a command'), tab('dl', 'Download a script'), tab('ssh', 'Install over SSH', SSH_WHY)),
+        head(),
+        tabs(),
         st.tab === 'dl' ? dlTab : cmdTab,
         h('div.mut.zc-src', 'Model files from ', h('span.mono', z.model_source || '?'), ' · installs the agent as ', z.mode === 'docker' ? 'a container' : 'a service', '.'),
         stateLine(z, st.gone),
@@ -169,6 +196,7 @@ export function createZone(o = {}) {
     cancelNote.addEventListener('input', () => { const b = root.querySelector('[data-cz=cancel-go]'); if (b) { if (cancelNote.value.trim()) b.removeAttribute('disabled'); else b.setAttribute('disabled', ''); } });
     draw();
     readDefault();
+    readGroups();
     return root;
   } }).finally(() => { clearInterval(timer); });
 }

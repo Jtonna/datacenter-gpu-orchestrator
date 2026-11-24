@@ -1125,24 +1125,38 @@ table.runs{width:100%;border-collapse:collapse}
 .prf-efoot{position:sticky;bottom:0;display:flex;align-items:center;gap:10px;padding:10px var(--pad-panel);border-top:1px solid var(--line);background:var(--surface);border-radius:0 0 12px 12px}
 /* Create new zone (core/zonecreate.js, board Zones-Create) */
 .zc{display:flex;flex-direction:column;gap:12px;min-width:0}
-.zc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
-.zc-tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);flex-wrap:wrap}
-.zc-tab{border:0;background:none;padding:8px 12px;font:inherit;font-weight:700;color:var(--text-2);border-bottom:2px solid transparent;cursor:pointer;margin-bottom:-1px}
-.zc-tab.on{color:var(--text);border-bottom-color:var(--accent)}
-.zc-tab[disabled]{color:var(--mut);cursor:not-allowed}
+.zc-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.zc-tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.zc-tab{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:60px;padding:8px;border:1px solid var(--ctl-border);border-radius:10px;background:var(--surface);font:inherit;font-size:13px;font-weight:600;color:var(--text);cursor:pointer}
+.zc-tab .ic{width:16px;height:16px}
+.zc-tab.on{background:var(--mint-bg);border-color:var(--mint-line);color:var(--mint-text)}
+.zc-tab[disabled]{color:var(--mut);cursor:not-allowed;border-style:dashed}
 .zc-pane{display:flex;flex-direction:column;gap:8px}
-.zc-lab{font-size:12px;font-weight:700;color:var(--text-2)}
-.zc-os{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.zc-os>b{min-width:64px;font-size:12px}
-.zc-cmd{display:flex;align-items:center;gap:8px;flex:1;min-width:0;padding:8px 10px;border-radius:8px;background:var(--ink);color:#fff}
-.zc-cmd code{flex:1;min-width:0;overflow-wrap:anywhere;font-size:12px}
-.zc-tile{display:flex;gap:10px;align-items:baseline;padding:8px 10px;border:1px dashed var(--line);border-radius:8px;font-size:12px}
-.zc-tile b{min-width:64px}
+.zc-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.zc-lab{font-size:13px;font-weight:700}
+.zc-seg{display:inline-flex;border:1px solid var(--ctl-border);border-radius:8px;overflow:hidden}
+.zc-seg button{border:0;background:var(--surface);padding:5px 12px;font:inherit;font-size:12px;font-weight:600;color:var(--text)}
+.zc-seg button.on{background:var(--ink);color:#fff}
+.zc-seg button[disabled]{color:var(--mut);cursor:not-allowed}
+.zc-cmd{margin:0;padding:12px 14px;border-radius:8px;background:var(--ink);color:#fff;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.5}
+.zc-copy{display:flex;justify-content:flex-end}
+.zc-copy .copy{height:26px;padding:0 10px;font-size:12px}
+.zc-note{font-size:12px;color:var(--text-2)}
+.zc-files{gap:0;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.zc-file{display:flex;align-items:center;gap:12px;padding:10px 14px}
+.zc-file+.zc-file{border-top:1px solid var(--line)}
+.zc-file>.ic{width:16px;height:16px;color:var(--text-2);flex:none}
+.zc-file-t{display:flex;flex-direction:column;flex:1;min-width:0;font-size:13px}
+.zc-file-t span{font-size:12px}
+.zc-file .btn{flex:none}
 .zc-safe{margin:0;font-size:12px;color:var(--text-2)}
 .zc-src{font-size:12px}
-.zc-state{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 12px;border-radius:8px;background:var(--amber-bg);border:1px solid var(--amber-line);font-size:13px}
-.zc-state.joined{background:var(--mint-bg);border-color:var(--mint-line)}
-.zc-state.expired,.zc-state.cancelled,.zc-state.bad{background:var(--coral-bg);border-color:var(--coral-line)}
-.zc-spin{width:8px;height:8px;border-radius:50%;background:var(--amber);animation:pulse 1.4s infinite}
+.zc-state{display:flex;align-items:baseline;gap:10px;padding:12px 14px;border-radius:10px;background:var(--inset);border:1px solid var(--line);font-size:13px}
+.zc-dot{width:12px;height:12px;border-radius:3px;background:var(--amber);flex:none;align-self:center}
+.zc-state.waiting .zc-dot{animation:pulse 1.6s infinite}
+.zc-state.joined .zc-dot{background:var(--mint)}
+.zc-state.expired .zc-dot,.zc-state.cancelled .zc-dot{background:var(--mut)}
+.zc-state.bad .zc-dot{background:var(--coral)}
 .zc .err{font-size:12px;color:var(--coral-text);font-weight:700}
 .zc-cancel{display:flex;flex-direction:column;gap:8px}
+@media (max-width:420px){.zc-grid{grid-template-columns:1fr}}
