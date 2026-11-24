@@ -193,6 +193,15 @@ const ROWS_SHOWN = 6; // the list is 204 px: six rows of 34, then it scrolls
 
 // stripOf(series, z, day) -> the 24 cells of one zone and their words.
 const STATE_WORD = { free: 'Free', in_use: 'In use', loading: 'Loading', down: 'Down', off: 'Switched off' };
+// inUseWords(cell) -> the hover of an in-use hour, with the shade rule: the
+// shade is busy_level, how full the model's slots were during the hour's use
+// (in flight over parallel), not how much of the hour was used; so one short
+// request on a one-slot model reads darkest.
+const SHADE_RULE = "how full the model's slots were during that use, not how much of the hour was used";
+function inUseWords(c) {
+  const s = c.seconds && c.seconds.in_use > 0 ? c.seconds.in_use : 0;
+  return 'In use' + (s ? ` for ${Math.max(1, Math.round(s / 60))} min` : '') + ` · busy ${availLevel(c)} of 4 (${SHADE_RULE})`;
+}
 function stripOf(series, z, current) {
   const ns = series && (series.nodes || []).find(x => x.id === z.id || x.name === z.name);
   const cells = (ns && ns.cells) || [];
@@ -200,7 +209,7 @@ function stripOf(series, z, current) {
     const t = tms(c.start);
     const state = availState(c);
     const word = STATE_WORD[state];
-    return { cls: availClass(c), title: (t ? bucketTitle(t, 'hour') + ' · ' : '') + (word ? word + (state === 'in_use' ? `, busy ${availLevel(c)} of 4` : '') : 'Nothing known') };
+    return { cls: availClass(c), title: (t ? bucketTitle(t, 'hour') + ' · ' : '') + (word ? (state === 'in_use' ? inUseWords(c) : word) : 'Nothing known') };
   });
   while (out.length < 24) out.unshift(null);
   const count = {};

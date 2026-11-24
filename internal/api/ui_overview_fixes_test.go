@@ -160,3 +160,26 @@ func TestUINextRunsModelVendorWord(t *testing.T) {
 			"titles": []string{"alpha · Qwen_Qwen3.5-9B-Q4_K_M.gguf", "delta · DEEPSEEK_DeepSeek-R1-Distill-Q4_K_M.gguf"}},
 	}})
 }
+
+// A cell's hover states the shade rule: the shade is how full the model's
+// slots were during the hour's use, not how much of the hour was used, so a
+// single short request on a one-slot model reads darkest.
+func TestUINextOverviewStripHoverRule(t *testing.T) {
+	now := time.Now()
+	fetch := ovFetch(now, ovRequests(now), true)
+	hour := now.Truncate(time.Hour)
+	cells := []any{}
+	for i := 23; i >= 0; i-- {
+		c := map[string]any{"start": hour.Add(-time.Duration(i) * time.Hour).UTC().Format(time.RFC3339), "state": "free", "span_s": 3600,
+			"seconds": map[string]any{"free": 3600, "in_use": 0}, "busy": nil, "busy_level": 0}
+		if i == 1 {
+			c["seconds"], c["busy"], c["busy_level"] = map[string]any{"free": 3480, "in_use": 120}, 1.0, 4
+		}
+		cells = append(cells, c)
+	}
+	fetch["/api/nodes/availability"] = map[string]any{"recording": true, "nodes": []any{map[string]any{"id": ovD, "name": "node-d", "cells": cells}}}
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
+		map[string]any{"name": "strip hover: the rule", "route": "#/overview", "status": ovStatus(now), "has": []string{".avail i.use4"},
+			"titles": []string{" · In use for 2 min · busy 4 of 4 (how full the model's slots were during that use, not how much of the hour was used)"}},
+	}})
+}
