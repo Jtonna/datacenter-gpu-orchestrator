@@ -76,7 +76,7 @@ func TestUIReserveReadsOnlyServerKeys(t *testing.T) {
 	if v := uiText(t, "views/nodes.js"); !strings.Contains(v, "reservedPart(n)") {
 		t.Error("views/nodes.js does not show the reserved list")
 	}
-	if v := uiText(t, "views/placement.js"); !strings.Contains(v, "memoryTable(plan.memory") {
-		t.Error("views/placement.js does not show the plan's memory table")
+	if v := uiText(t, uiNextDir+"views/placement.js"); !strings.Contains(v, "memoryTable(plan.memory") {
+		t.Error("next/views/placement.js does not show the plan's memory table")
 	}
 }

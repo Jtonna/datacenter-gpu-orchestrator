@@ -1,6 +1,6 @@
 // Profiles (the gear's Profiles; no mockup: inferred from the design
-// language, phase 5). Replaces the classic page below /ui/ (the classic file
-// stays at /ui/classic/). The owner's complaint: the page listed every
+// language, phase 5). Replaced the classic page (the classic UI
+// is removed). The owner's complaint: the page listed every
 // placement of every profile and was hard to read. Here:
 //
 //   - one row per profile: name (with its description on one line), the

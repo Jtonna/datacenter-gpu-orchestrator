@@ -38,7 +38,7 @@ func TestRootRedirectsToTheUI(t *testing.T) {
 			t.Errorf("%s %s: Location %q, type %q, body %s: want a JSON error and no redirect", c.method, c.path, resp.Header.Get("Location"), resp.Header.Get("Content-Type"), b)
 		}
 	}
-	for _, p := range []string{"/health", "/api/status", "/ui/", "/ui/classic/"} {
+	for _, p := range []string{"/health", "/api/status", "/ui/"} {
 		if resp := do("GET", p); resp.StatusCode != http.StatusOK {
 			t.Errorf("GET %s: %d, want 200", p, resp.StatusCode)
 		}

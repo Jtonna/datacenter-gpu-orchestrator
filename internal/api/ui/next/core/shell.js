@@ -12,7 +12,7 @@
 // page): the mark (not a link), Monitor, Zones, Models, Benchmarks; then at
 // its foot Ask Potluck, MCP and the System health heart; and the gear
 // "Settings" (Q69), which holds Profiles, Tiers and zones, Settings, Audit,
-// About and the link to the classic UI (Q73). Rail items are buttons with a
+// About (the link to the classic UI is gone with it, 24 Nov). Rail items are buttons with a
 // title, as drawn. Ask Potluck opens a drawer at the right edge that says it
 // is not built yet; the heart opens the health popup (core/health.js), and
 // its dot is the worst row's colour.
@@ -90,8 +90,6 @@ export const NAV = [
     // Logs is not a view of this page: it opens the log store's own search
     // page in a new tab (core/logs.js), and is there only while logging is on.
     { id: 'logs', label: 'Logs', external: true },
-    // the classic UI stays at /ui/classic/ until every screen is replaced (Q73)
-    { id: 'classic', label: 'Classic UI', href: 'classic/', desc: 'The previous interface, at /ui/classic/' },
   ] },
 ];
 

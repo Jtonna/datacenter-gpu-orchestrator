@@ -16,8 +16,8 @@
 //   /ui/components.html  the shell's shared components (scripts/ui-fixture/components.js)
 //   /ui/fx-<name>.html   the app driven by scripts/ui-fixture/fx-<name>.js (a board
 //                that needs clicks, e.g. fx-zones-selected with --zones fleet)
-//   /ui/...      the new shell (ui/next laid over the classic files, as the
-//                scheduler serves it), /ui/classic/... the classic UI
+//   /ui/...      the UI (ui/next laid over the shared files of ui/, as the
+//                scheduler serves it)
 //   /api/status, /api/requests, /api/requests/summary, /api/requests/{id},
 //   /api/nodes/availability, /api/nodes, /api/models, and for the health popup
 //   /api/system, /api/about, /api/agents, /api/config/settings, /api/history:
@@ -308,13 +308,11 @@ function availability(q, now) {
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8', '.md': 'text/markdown; charset=utf-8' };
 const isFile = p => existsSync(p) && statSync(p).isFile();
-// as internal/api/uifiles.go: /ui/<p> is next/<p> when it exists, else <p>; /ui/classic/<p> is <p>
+// as internal/api/uifiles.go: /ui/<p> is next/<p> when it exists, else <p>; /ui/classic/ is gone
 function uiFile(rel) {
   rel = path.posix.normalize('/' + rel).slice(1);
   if (rel === '' ) return path.join(UI, 'next', 'index.html');
-  if (rel === 'classic' || rel === 'classic/') return path.join(UI, 'index.html');
-  if (rel.startsWith('next/')) return null;
-  if (rel.startsWith('classic/')) { const r = rel.slice(8); return r.startsWith('next/') || !isFile(path.join(UI, r)) ? null : path.join(UI, r); }
+  if (rel.startsWith('next/') || rel === 'classic' || rel.startsWith('classic/')) return null;
   if (isFile(path.join(UI, 'next', rel))) return path.join(UI, 'next', rel);
   return isFile(path.join(UI, rel)) ? path.join(UI, rel) : null;
 }

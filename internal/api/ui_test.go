@@ -2,6 +2,7 @@ package api
 
 import (
 	"io/fs"
+	"net/http"
 	"path"
 	"regexp"
 	"strings"
@@ -49,8 +50,8 @@ func isUICode(name string) bool {
 
 // Every embedded file is served with the content type of its kind: a file of
 // ui/next/ below /ui/ under its path inside next/, every other file below
-// /ui/classic/, and below /ui/ too unless ui/next/ has a file of that path
-// (uifiles.go). ui/next/ is never served under its own name.
+// /ui/ unless ui/next/ has a file of that path (uifiles.go). ui/next/ is
+// never served under its own name, and /ui/classic/ is gone (404).
 func TestUIFilesServedWithContentType(t *testing.T) {
 	e := newEnv(t, chatOK)
 	check := func(url, name string) {
@@ -84,17 +85,21 @@ func TestUIFilesServedWithContentType(t *testing.T) {
 			check("/ui/"+rel, name)
 			continue
 		}
-		check("/ui/classic/"+name, name)
 		if !have[uiNextDir+name] {
 			check("/ui/"+name, name)
 		}
 	}
 	check("/ui/", uiNextDir+"index.html")
-	check("/ui/classic/", "index.html")
 	for _, p := range []string{"/ui/nope.js", "/ui/../api.go", "/ui/views/", "/ui/fonts", "/ui/core/dom",
-		"/ui/next/index.html", "/ui/next/app.css", "/ui/classic/next/index.html", "/ui/classic/nope.js", "/ui/classic/views/"} {
+		"/ui/next/index.html", "/ui/next/app.css"} {
 		if resp := e.get(p); resp.StatusCode == 200 && !strings.Contains(body(t, resp), "<!doctype html>") {
 			t.Errorf("GET %s: status 200 for something that is not a UI file", p)
+		}
+	}
+	// the classic UI is removed: nothing below /ui/classic/ is served
+	for _, p := range []string{"/ui/classic/", "/ui/classic", "/ui/classic/index.html", "/ui/classic/app.js", "/ui/classic/core/format.js", "/ui/classic/next/index.html"} {
+		if resp := e.get(p); resp.StatusCode != http.StatusNotFound {
+			t.Errorf("GET %s: status %d, want 404 (the classic UI is removed)", p, resp.StatusCode)
 		}
 	}
 }
@@ -185,16 +190,12 @@ func TestUIImportsResolve(t *testing.T) {
 	}
 	imp := regexp.MustCompile(`(?m)^\s*(?:import|export)\s+(?:[\w*{}\s,$]+\s+from\s+)?['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)`)
 	// served(name, ref) says whether the file that name refers to with ref
-	// is served: a classic file below /ui/classic/ sees the classic files;
-	// a file of ui/next/ is served below /ui/, where a path is the next/
-	// file or else the classic one (uiResolve).
+	// is served: every file is served below /ui/ (a file of ui/next/ without
+	// next/), where a path is the next/ file or else the shared one of ui/
+	// (uiResolve). The classic UI is removed.
 	served := func(name, ref string) (string, bool) {
-		if rel, ok := strings.CutPrefix(name, uiNextDir); ok {
-			target := path.Join(path.Dir(rel), ref)
-			return target, !strings.HasPrefix(target, "..") && uiResolve(target) != ""
-		}
-		target := path.Join(path.Dir(name), ref)
-		return target, have[target] && !strings.HasPrefix(target, uiNextDir)
+		target := path.Join(path.Dir(strings.TrimPrefix(name, uiNextDir)), ref)
+		return target, !strings.HasPrefix(target, "..") && uiResolve(target) != ""
 	}
 	for name := range have {
 		if path.Ext(name) != ".js" {
@@ -214,7 +215,7 @@ func TestUIImportsResolve(t *testing.T) {
 			}
 		}
 	}
-	for _, pg := range []struct{ page, api string }{{"index.html", "../../api/"}, {uiNextDir + "index.html", "../api/"}} {
+	for _, pg := range []struct{ page, api string }{{uiNextDir + "index.html", "../api/"}} {
 		for _, m := range regexp.MustCompile(`(?:src|href)="([^"#]+)"`).FindAllStringSubmatch(uiText(t, pg.page), -1) {
 			ref := m[1]
 			if strings.HasPrefix(ref, "data:") || strings.HasPrefix(ref, pg.api) {
@@ -225,7 +226,7 @@ func TestUIImportsResolve(t *testing.T) {
 			}
 		}
 	}
-	for _, css := range []string{"app.css", uiNextDir + "app.css"} {
+	for _, css := range []string{uiNextDir + "app.css"} {
 		if !have[css] {
 			continue
 		}

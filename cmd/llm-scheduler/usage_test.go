@@ -65,7 +65,7 @@ func TestUsageStoreOffLeavesTheOtherRoutesAlone(t *testing.T) {
 	addr, logs, stop := startOn(t, data)
 	codes := map[string]int{}
 	bodies := map[string]string{}
-	for _, p := range []string{"/health", "/api/status", "/api/nodes", "/ui/", "/ui/classic/", "/api/requests", "/api/nodes/availability", "/api/system"} {
+	for _, p := range []string{"/health", "/api/status", "/api/nodes", "/ui/", "/api/requests", "/api/nodes/availability", "/api/system"} {
 		codes[p], bodies[p] = get(t, "http://"+addr+p)
 	}
 	if c := stop(); c != 0 {
