@@ -2,6 +2,12 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: Zones backend, second slice (phase 4)
+
+No agent change. No new listening port.
+
+- **History by zone group or list.** `GET /api/history?group=<name>` and `node=a,b,c` (ids or names); MCP `query_history` takes `group`.
+
 ## Scheduler image: MCP access keys (phase 3)
 
 No agent change, no new port. **`scheduler.db`: a new table `agent_access` with its own ledger `access_migrations` (version 1); `cfg_migrations` stays at 3**, so the previous image still opens the database (it ignores the two tables). See the runbook, "Access keys".

@@ -84,8 +84,50 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	q.NodeAliases = s.nodeAliases(r.Context(), q.Node)
+	if !s.historyNodes(w, r, &q) {
+		return
+	}
 	writeJSON(w, http.StatusOK, s.hist.Query(q))
+}
+
+// noNode matches no event: the node filter of an empty selection.
+const noNode = "\x00none"
+
+// historyNodes turns node= (one name or id, or a comma-separated list) and
+// group= (a zone group's members) into the query's node filter: an event
+// naming any of them, by id or by name, matches. An unknown group is 404;
+// a group with no members matches nothing.
+func (s *Server) historyNodes(w http.ResponseWriter, r *http.Request, q *history.Query) bool {
+	var names []string
+	for _, n := range strings.Split(q.Node, ",") {
+		if n = strings.TrimSpace(n); n != "" {
+			names = append(names, n)
+		}
+	}
+	group := r.URL.Query().Get("group")
+	if group != "" {
+		g, ok := s.groups.Get(group)
+		if !ok {
+			apiErr(w, http.StatusNotFound, "no zone group %q", group)
+			return false
+		}
+		names = append(names, g.Members...)
+	}
+	if len(names) == 0 {
+		if group != "" {
+			q.Node = noNode
+		}
+		return true
+	}
+	q.Node, q.NodeAliases = names[0], nil
+	for _, n := range names {
+		for _, a := range append([]string{n}, s.nodeAliases(r.Context(), n)...) {
+			if a != q.Node && !slices.Contains(q.NodeAliases, a) {
+				q.NodeAliases = append(q.NodeAliases, a)
+			}
+		}
+	}
+	return true
 }
 
 // nodeAliases gives the other names of the node called name (by id or by

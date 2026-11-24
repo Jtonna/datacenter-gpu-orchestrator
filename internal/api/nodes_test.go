@@ -34,7 +34,7 @@ func (m *memAudit) Query(context.Context, cfgstore.Filter) ([]audit.Entry, int, 
 }
 func (m *memAudit) GetEntry(context.Context, int64) (*audit.Entry, error) { return nil, nil }
 
-func agentsEnv(t *testing.T) (*env, *pool.Pool, *memAudit) {
+func agentsEnv(t *testing.T, mods ...func(*Options)) (*env, *pool.Pool, *memAudit) {
 	root := progtree.Write(t, t.TempDir(), progtree.Tree{Release: "0.1.0", Llama: "a01665d30",
 		Folders: map[string]map[string][]byte{
 			"agent":              {"potluck-agent-linux-amd64": []byte("AGENT-BINARY")},
@@ -52,7 +52,12 @@ func agentsEnv(t *testing.T) (*env, *pool.Pool, *memAudit) {
 		t.Fatal(err)
 	}
 	au := &memAudit{}
-	e := newEnv(t, chatOK, func(o *Options) { o.Pool, o.Audit = p, au })
+	e := newEnv(t, chatOK, func(o *Options) {
+		o.Pool, o.Audit = p, au
+		for _, m := range mods {
+			m(o)
+		}
+	})
 	p.SetForceUnload(e.sched.ForceUnloadNode)
 	return e, p, au
 }

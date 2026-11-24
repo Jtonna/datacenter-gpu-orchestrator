@@ -247,9 +247,9 @@ func allTools() []*tool {
 		rd("query_history", "Search the persisted event history (loads, refusals, stalls, node loss, recoveries, evictions). Newest first by default.", P{
 			"since": i("Only events at or after this unix time in milliseconds."), "until": i("Only events before this unix time in milliseconds."),
 			"type": s("Comma-separated event types, for example loadFinished,nodeLost."), "severity": en("Minimum severity.", "info", "warn", "error"),
-			"node": s("Node hostname or id."), "profile": s("Profile id."), "session_id": s("A load session id such as ld-1795055840000-3."),
+			"node": s("Node hostname or id, or a comma-separated list."), "group": s("A zone group: events of its zones."), "profile": s("Profile id."), "session_id": s("A load session id such as ld-1795055840000-3."),
 			"q": s("Case-insensitive substring of the event summary."), "limit": i("Maximum events (default 200, at most 2000)."), "order": en("Sort order.", "desc", "asc")},
-			nil, "GET", "/api/history", "since", "until", "type", "severity", "node", "profile", "session_id", "q", "limit", "order"),
+			nil, "GET", "/api/history", "since", "until", "type", "severity", "node", "group", "profile", "session_id", "q", "limit", "order"),
 		rd("list_requests", "The request log: one row per client request (/v1 and /upstream), newest first, the queued and running ones first with live token counts. Each row has its status (queued, running, done, failed, refused, cancelled) and reason, times, profile, tokens in (reused ones counted, and also shown apart), tokens out, prefill and decode rates, the machines with their role (host or helper), the caller and the benchmark run. Page with before=next.", P{
 			"status": s("Comma-separated statuses: queued, running, done, failed, refused, cancelled."), "profile": s("Profile id."),
 			"node": s("A machine id or hostname the request ran on."), "from": i("Arrived at or after this unix time in milliseconds."),

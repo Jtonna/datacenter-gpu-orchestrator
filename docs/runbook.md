@@ -441,6 +441,8 @@ curl -s "$H/api/history?session_id=<load session id>&order=asc"
 curl -s "$H/api/history/export?since=$SINCE" > history-last6h.jsonl
 ```
 
+Filter by machine with `node=` (an id or a name, or a comma-separated list; an event naming the machine by either matches) or by zone group with `group=` (its members; 404 for an unknown group, nothing for an empty one). Both together match either.
+
 ### Request log
 
 Every inference request through `/v1` and `/upstream` (a POST to one of llama-server's routes that runs the model: chat and text completions, responses, messages, infill, embeddings, rerank, audio), with its status, times, tokens, rates, machines and caller, is kept in `POTLUCK_ROOT/data/usage.db` (rows 90 days, hourly totals 13 months, daily totals for ever: settings `usage_request_days`, `usage_hourly_days`).
