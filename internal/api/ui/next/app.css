@@ -1325,6 +1325,48 @@ table.runs{width:100%;border-collapse:collapse}
 .mdl-ptbl tbody tr:hover .go,.mdl-ptbl .go:focus-visible{color:var(--link)}
 .mdl-ptbl tbody tr:hover .go .tx,.mdl-ptbl .go:focus-visible .tx{visibility:visible}
 .mdl-pad{padding:8px 16px}
+/* the trash (v65; views/models/trash.js; boards Models-Trash, Models-Delete and the Models footer row) */
+a.tbar{text-decoration:none;cursor:pointer}
+.mdl a.tbar:hover{background:#f1f4f2;color:#131a17;text-decoration:none}
+.mdl .tbar[data-off]{cursor:not-allowed}
+.mdl .tbar .mut{font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tbar-ic{color:#55615b;display:flex}
+.tbar-go{margin-left:auto;display:flex;align-items:center;gap:3px;color:#0b6444;flex:none}
+.tbar-go .ic{width:15px;height:15px}
+.mdl .mr.del{grid-template-columns:28px minmax(0,1fr) 110px 130px 110px}
+.del-ic{color:#7c8882;display:flex;justify-content:center}
+.mdl .mr.del.sel .del-ic{color:#55615b}
+.del-pc{font-weight:600}
+.del-at{font-weight:600}
+.del-until{font-weight:700}
+.del-until .del-soon{color:#9a2a21}
+.del-prob{font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.del-view .mdl-bar>.btn{display:inline-flex;align-items:center;gap:7px;text-decoration:none}
+.del-view .mdl-bar>.btn .ic{width:15px;height:15px}
+.del-view .mdl-bar>.sx{flex:1 1 220px}
+.del-title{color:#55615b;font-weight:500}
+.del-acts{align-items:center}
+.del-acts .btn .ic{width:15px;height:15px}
+.del-acts .btn.pri{display:inline-flex;align-items:center;gap:7px}
+.del-ptbl tbody.ro td{color:#7c8882}
+.del-why{margin:0;overflow-wrap:anywhere}
+.del-list{margin:4px 0 0;padding-left:18px}
+@container (max-width:640px){.mdl .mr.del{grid-template-columns:28px minmax(0,1fr) 96px 100px}.mdl .mr.del .del-pc{display:none}}
+@container (max-width:460px){.mdl .mr.del{grid-template-columns:28px minmax(0,1fr) 96px}.mdl .mr.del .del-at{display:none}}
+.dcol{display:flex;flex-direction:column;gap:14px}
+.dbox{padding:12px 14px;border-radius:10px;display:flex;flex-direction:column;gap:10px}
+.dbox.warn{background:#fbefec;border:1px solid #f0cfc7}
+.dbox.ok{background:#f8faf8;border:1px solid #dfe5e1}
+.dbox.ro{background:var(--amber-bg,#fdf6e3);border:1px solid var(--amber-line,#ecd9a8)}
+.dbox .pt{display:grid;grid-template-columns:20px minmax(0,1fr);gap:10px;align-items:start;overflow-wrap:anywhere}
+.dbox .pt-ic{display:flex;margin-top:1px}
+.dbox .pt-ic .ic{width:17px;height:17px}
+.pt-ic.red{color:#b3311f}.pt-ic.green{color:#0f6b4a}.pt-ic.amber{color:var(--amber-text,#8a5a00)}
+.dbox .dmsg{margin:0;padding-left:30px;font-size:12px;color:var(--text-2);overflow-wrap:anywhere}
+.dlbl{display:block;padding-bottom:6px;font-size:12.5px;font-weight:700;color:#28322d}
+.dlbl .mono{font-weight:500}
+.dinp{width:100%;box-sizing:border-box;height:38px;font-family:var(--mono);font-size:12.5px}
+.dinp.ok{border-color:#5fae8a}
 
 /* ---------- MCP tools (views/mcp.js toolsPart; not on the boards) ---------- */
 .mcp-tools{margin-top:16px}

@@ -110,6 +110,7 @@ import { schema as cfgSchema, configDoc, storedConfig, dryRun } from './ui-fixtu
 import { profileEntries, profileSpecs, catalog as cfgCatalog, planAnswer } from './ui-fixture/profiles.mjs';
 import { Keys, toolsAnswer } from './ui-fixture/keys.mjs';
 import { modelsDoc, modelsInstances, seedPins, pinRoute } from './ui-fixture/models.mjs';
+import { TRASH_STATES, seedTrash, trashList, withTrash, deleteRoute, restoreRoute } from './ui-fixture/trash.mjs';
 import { tierLists, applyTiers, localEntry, tiersDoc } from './ui-fixture/tiers.mjs';
 
 const argv = process.argv.slice(2);
@@ -185,8 +186,17 @@ function pendingRoute(req, res, p) {
 // names-only /api/agents answer stays.
 const KEYS_STATE = opt('--keys', '');
 // --models none|five|full: GET /api/models as the Models list reads it, with the disk block (scripts/ui-fixture/models.mjs)
-const MODELS_STATE = opt('--models', '');
+// --trash <state>: the models trash (v65, models slice 3; scripts/ui-fixture/trash.mjs): GET /api/models/trash,
+// POST /api/models/delete/{file} (dry run, interrupt), POST /api/models/trash/{id}/restore, and the trash
+// figures in the catalog's disk block. It implies --models five. States: empty, two, in-use, run, read-only,
+// taken, incomplete, again (trash.mjs says what each answers). Without it the catalog has no trash fields
+// (a server older than v65).
+const TRASH_STATE = opt('--trash', '');
+if (TRASH_STATE && !TRASH_STATES.includes(TRASH_STATE)) { console.error('--trash: one of ' + TRASH_STATES.join(', ')); process.exit(2); }
+const MODELS_STATE = opt('--models', TRASH_STATE ? 'five' : '');
 if (MODELS_STATE) seedPins();
+if (TRASH_STATE) seedTrash(TRASH_STATE);
+const catalogDoc = now => (TRASH_STATE ? withTrash(modelsDoc(MODELS_STATE, now)) : modelsDoc(MODELS_STATE, now));
 const KEYS = KEYS_STATE ? new Keys(KEYS_STATE) : null;
 // --tiers live|catchall: the Tiers and zones page (tiers.mjs)
 const TIERS = opt('--tiers', '');
@@ -433,11 +443,24 @@ const server = http.createServer((req, res) => {
     const r = pinRoute(req.method, decodeURIComponent(p.slice('/api/models/pin/'.length)), comment, MODELS_STATE);
     json(res, r.status, r.body);
   });
+  // --trash: delete to the trash and restore (v65), the comment in the body or X-Comment
+  if (TRASH_STATE && req.method === 'POST' && p.startsWith('/api/models/delete/')) return readBody(req, b => {
+    b = Object.assign({}, b || {}); if (!b.comment && req.headers['x-comment']) b.comment = String(req.headers['x-comment']);
+    const r = deleteRoute(TRASH_STATE, decodeURIComponent(p.slice('/api/models/delete/'.length)), b, u.searchParams, catalogDoc(now), now);
+    json(res, r.status, r.body);
+  });
+  const rst = /^\/api\/models\/trash\/([^/]+)\/restore$/.exec(p);
+  if (TRASH_STATE && req.method === 'POST' && rst) return readBody(req, b => {
+    b = Object.assign({}, b || {}); if (!b.comment && req.headers['x-comment']) b.comment = String(req.headers['x-comment']);
+    const r = restoreRoute(TRASH_STATE, decodeURIComponent(rst[1]), b);
+    json(res, r.status, r.body);
+  });
   if (p.startsWith('/api/zones/pending')) return pendingRoute(req, res, p);
   if (req.method !== 'GET') return json(res, 405, { error: { message: 'the fixture is read-only' } });
   if (STATE === 'loading' && p.startsWith('/api/requests')) return; // never answers
   if (p === '/api/status') return json(res, 200, status(now));
-  if (p === '/api/models') return json(res, 200, MODELS_STATE ? modelsDoc(MODELS_STATE, now) : { version: 1, models: CATALOG ? cfgCatalog() : [] });
+  if (p === '/api/models') return json(res, 200, MODELS_STATE ? catalogDoc(now) : { version: 1, models: CATALOG ? cfgCatalog() : [] });
+  if (p === '/api/models/trash' && TRASH_STATE) return json(res, 200, trashList());
   if (p === '/api/profiles') return json(res, 200, { profiles: profileEntries() });
   if (p === '/api/config') { const d = cfgDoc(); return json(res, 200, withNamedId(Object.assign({ updated_at: now - 3 * H, configured: d.revision > 0, tiers: [], exclude_nodes: [], no_auto_nodes: NAMED_ONLY ? [NAMED_ONLY] : [], node_overrides: {} }, d, TIER_LISTS, { profiles: profileSpecs() }), now)); }
   // what the health popup reads (the Health board's sample, generic names)

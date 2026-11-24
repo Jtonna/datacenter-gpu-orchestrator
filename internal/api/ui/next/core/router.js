@@ -69,7 +69,7 @@ export const SHAPES = {
 // selected row), even through navigate(..., replace).
 export const PUSHED = {
   zones: ['zone'],
-  models: ['model'],
+  models: ['model', 'item'],
 };
 // ALIASES: the Zones page's filter written by the server
 const QUERY_ALIASES = { zones: { filter: 'show' } };

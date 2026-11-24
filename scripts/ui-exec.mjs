@@ -60,11 +60,16 @@
 //               "noHeader": ["X-Actor", ...]: no request of the case carried it,
 //               "sentHeader": ["^X-Comment: why$"]: a header line "Name: value" matched each,
 //               "noHeaderLine": ["ptl_"]: no header line matched any}],
-//    (fetch answers: "POST /api/agents" before "/api/agents"; {"$status": 409, "$body": {...}} for an error)
+//    (fetch answers: "POST /api/agents" before "/api/agents"; {"$status": 409, "$body": {...}} for an error;
+//     {"$match": [["regexp", answer], ...]}: the first regexp that matches the request line
+//     "METHOD /path?query body" picks the answer, none answers 404: one route, answers by query or body)
 //    "now": "2026-11-24T06:30:00Z",               // the clock starts there (Date.now, new Date())
 //    "tz": "America/Los_Angeles"}                 // the zone: uiExec sets TZ for node
 //
-// With "base", "status": "fetch" takes GET <base>/api/status.
+// With "base", "status": "fetch" takes GET <base>/api/status, and a request
+// with no answer in "fetch" goes to the base server: GETs, POST /api/plan and
+// writes with ?dry_run=1 (they only read); any other write is refused (405)
+// unless "passWrites": ["regexp on METHOD /path?query body", ...] names it.
 //
 // Each case sets the live status, mounts the route's view, lets fetches and
 // re-draws settle, and fails on any console.error, unhandled rejection, a
@@ -353,14 +358,22 @@ const sentHeaders = new Set(); // every header name a request carried, for "noHe
 const sentHeaderLines = []; // "Name: value" of every header sent, for "sentHeader"
 const realFetch = globalThis.fetch;
 let base = null;
+let passWrites = [];
 def('fetch', async (u, opts = {}) => {
   const full = new URL(String(u), location.href);
   const p = full.pathname;
   if (base && !Object.prototype.hasOwnProperty.call(fetchAnswers, p)) {
-    fetched.push((opts.method || 'GET') + ' ' + p);
-    // Writes are refused; POST /api/plan only reads (a dry run), so it goes through.
-    if ((opts.method || 'GET') !== 'GET' && p !== '/api/plan') return { ok: false, status: 405, statusText: 'refused by ui-exec', text: async () => '{"error":{"message":"writes are refused"}}' };
-    return realFetch(base + p + full.search, { method: opts.method || 'GET', headers: opts.headers, body: opts.body });
+    const m = opts.method || 'GET';
+    fetched.push(m + ' ' + p);
+    const line = m + ' ' + p + full.search + (opts.body != null ? ' ' + String(opts.body) : '');
+    fetchedFull.push(line);
+    for (const k of Object.keys(opts.headers || {})) { sentHeaders.add(k); sentHeaderLines.push(k + ': ' + opts.headers[k]); }
+    // Writes are refused. What only reads goes through: POST /api/plan, a
+    // write with ?dry_run=1, and a write the spec lets through by name
+    // ("passWrites": regexps on the request line, for a test that owns its server).
+    const reads = p === '/api/plan' || full.searchParams.get('dry_run') === '1';
+    if (m !== 'GET' && !reads && !passWrites.some(re => new RegExp(re).test(line))) return { ok: false, status: 405, statusText: 'refused by ui-exec', text: async () => '{"error":{"message":"writes are refused"}}' };
+    return realFetch(base + p + full.search, { method: m, headers: opts.headers, body: opts.body });
   }
   const method = opts.method || 'GET';
   fetched.push(method + ' ' + p);
@@ -369,6 +382,11 @@ def('fetch', async (u, opts = {}) => {
   // an answer by "METHOD /path" first, then by path; {"$status": 409, "$body": {...}} answers an error
   const has = k => Object.prototype.hasOwnProperty.call(fetchAnswers, k);
   let ans = has(method + ' ' + p) ? fetchAnswers[method + ' ' + p] : has(p) ? fetchAnswers[p] : undefined;
+  if (ans && typeof ans === 'object' && Array.isArray(ans.$match)) {
+    const line = method + ' ' + p + full.search + (opts.body != null ? ' ' + String(opts.body) : '');
+    const hit = ans.$match.find(([re]) => new RegExp(re).test(line));
+    ans = hit ? hit[1] : undefined;
+  }
   let status = ans !== undefined ? 200 : 404;
   if (ans && typeof ans === 'object' && ans.$status) { status = ans.$status; ans = ans.$body; }
   const ok = status >= 200 && status < 300;
@@ -450,6 +468,7 @@ const spec = live
       cases: LIVE_SCREENS[which].map(r => ({ name: r, route: '#/' + r, status: 'fetch' })) }
   : JSON.parse(readFileSync(argv[0], 'utf8'));
 base = spec.base ? spec.base.replace(/\/$/, '') : null;
+passWrites = spec.passWrites || [];
 // "now": "2026-11-24T06:30:00Z" fixes the clock there (it runs on from it):
 // new Date(), Date.now(). The zone is the process's (TZ, set by the caller).
 if (spec.now) {

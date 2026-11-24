@@ -14,8 +14,11 @@
 // to its full page (#/models/<key>, views/models/detail.js, unchanged).
 //
 // Drawn as on the board but not available yet, each with its reason on
-// hover (p7-models-backend-STATUS.md, M1 to M6): Add a model, Downloading,
-// the panel's Delete model, deleted models. Pins (v61): the star, the
+// hover (p7-models-backend-STATUS.md, M1 to M6): Add a model, Downloading.
+// The trash (v65, models slice 3; views/models/trash.js): the footer row
+// "Deleted models" with the disk's trash figures and the way into
+// #/models/deleted, and the panel's Delete model (a dry run, the name typed,
+// a comment); both unavailable on an older server. Pins (v61): the star, the
 // Pinned group and the panel's Pin / Pinned are real (PUT / DELETE
 // /api/models/pin/{key} with a required comment); unavailable before v61.
 // From v60 (models slice 1): "added <date>" (added_at), "Benchmarks · N
@@ -41,14 +44,15 @@ import { logsLink, profileQuery, padded } from '../core/logs.js';
 import { tipText } from '../core/charts.js';
 import { instanceCard, stateBadge, fitOf, cannotRun, runsOnCell } from './models/common.js';
 import { mountDetail } from './models/detail.js';
+import { trashFooter, hasTrash, deleteModel, deletedText, mountTrash } from './models/trash.js';
 
 // the reasons of what is drawn but not built yet (p7-models-backend-STATUS.md)
 export const NOT_YET = {
   add: 'Adding a model from this page is not built yet. Put the .gguf file in the models folder and it appears here.',
   downloads: 'Downloads are not built yet: a model added from this page would show its progress here.',
   pin: 'Pins are not available: this scheduler is older than v61 (models slice 2).',
-  del: 'Deleting a model is not built yet: the file stays in the models folder.',
-  trash: 'Deleted models are not built yet.',
+  del: 'Deleting a model needs a scheduler of v65 or later (models slice 3): this one is older, or its models folder figures are not read yet.',
+  trash: 'Deleted models need a scheduler of v65 or later (models slice 3): this one is older.',
 };
 // ---- pins (v61, models slice 2): PUT / DELETE /api/models/pin/{key} with a required comment ----
 const STAR = 'M10 3l2.1 4.3 4.7.7-3.4 3.3.8 4.7L10 13.8 5.8 16l.8-4.7L3.2 8l4.7-.7z';
@@ -165,6 +169,15 @@ function needsCell(m, st) {
   return h('span.mdl-needs', { 'data-col': 'needs' }, f.need ? h('span', { title: f.title || null }, gb(f.need), h('span.sub', f.sub)) : h('span.mut', DASH));
 }
 
+// deleteButton(m, disk, onDeleted) -> the panel's "Delete model": the delete dialog
+// (views/models/trash.js), or unavailable with the reason
+function deleteButton(m, disk, onDeleted) {
+  if (!hasTrash(disk)) return off('button.btn.red', NOT_YET.del, { 'data-act': 'delete' }, 'Delete model');
+  if (m.kind === 'command') return off('button.btn.red', 'A command profile has no model file to delete.', { 'data-act': 'delete' }, 'Delete model');
+  if (m.exists === false) return off('button.btn.red', 'The file is not in the models folder: there is nothing to delete.', { 'data-act': 'delete' }, 'Delete model');
+  return h('button.btn.red', { type: 'button', 'data-act': 'delete', onclick: () => deleteModel(m, onDeleted) }, 'Delete model');
+}
+
 // the side panel of one model
 function modelPanel(st, m, ps) {
   const f = fitOf(m, st);
@@ -192,7 +205,7 @@ function modelPanel(st, m, ps) {
         ? h('button', { type: 'button', class: 'btn' + (m.pinned ? ' mdl-pinned' : ''), 'aria-pressed': m.pinned ? 'true' : 'false', 'data-act': 'pin',
           title: m.pinned ? 'Pinned: click to unpin' : 'Pin: list it under Pinned', onclick: () => togglePin(m) }, m.pinned ? [icon(STAR), ' Pinned'] : 'Pin')
         : off('button.btn', NOT_YET.pin, { 'aria-pressed': 'false', 'data-act': 'pin' }, 'Pinned'),
-      off('button.btn.red', NOT_YET.del, { 'data-act': 'delete' }, 'Delete model')),
+      deleteButton(m, ps.disk(), ps.onDeleted)),
     insts.length ? h('section.zpart', { key: 'loaded' }, h('h3', 'Loaded now'),
       insts.map(i => h('div.mdl-inst', { key: 'i-' + i.profile },
         h('span.mono', i.profile), i.state === 'starting' ? badge('Loading', 'load') : badge('Ready', 'ready'),
@@ -235,7 +248,7 @@ function modelPanel(st, m, ps) {
   ];
 }
 
-function listPanel(st, models, disk, error, r, query, setQuery, onFind) {
+function listPanel(st, models, disk, error, r, query, setQuery, onFind, done) {
   const filter = FILTERS.some(f => f[0] === r.query.show) ? r.query.show : 'all';
   const sort = SORT[r.query.sort] ? r.query.sort : 'used';
   const counts = {};
@@ -277,6 +290,7 @@ function listPanel(st, models, disk, error, r, query, setQuery, onFind) {
       off('button.btn.pri', NOT_YET.add, { 'data-act': 'add' }, icon('M10 4v12M4 10h12'), 'Add a model')),
     sec('Downloading', h('span.lbl.mdl-off', 'not built yet'), { 'data-sec': 'downloading', title: NOT_YET.downloads }),
     pinErr ? h('div.banner.err', { role: 'alert', 'data-pin-err': '' }, h('span.grow', pinErr)) : null,
+    done ? h('div.banner.info', { role: 'status', 'data-trash-done': '' }, h('span.grow', done), h('a', { href: href('models', ['deleted']) }, 'View deleted models')) : null,
     pins
       ? [sec('Pinned', pinnedRows.length ? null : h('span.lbl.mut', 'No pinned model' + (q || filter !== 'all' ? ' matches' : '') + '. The star on a row pins it.'), { 'data-sec': 'pinned' }),
         pinnedRows.length ? [heads(), h('div.mdl-rows', { role: 'list', 'aria-label': 'Pinned models', 'data-pinned-rows': '' }, pinnedRows.map(rowOf))] : null]
@@ -284,11 +298,11 @@ function listPanel(st, models, disk, error, r, query, setQuery, onFind) {
     sec('All models', models ? diskLine(models, disk) : null, { 'data-sec': 'all' }),
     restRows.length ? heads() : null,
     body,
-    off('button.tbar', NOT_YET.trash, { 'data-act': 'trash' }, icon('M4 6h12M8 6V4h4v2M6 6l1 10h6l1-10'), 'Deleted models', h('span.mut', ' · not built yet')));
+    trashFooter(disk, NOT_YET.trash));
 }
 
 function mountHome(el, route) {
-  let r = route, query = r.query.q || '', side = null, disk = null, alive = true;
+  let r = route, query = r.query.q || '', side = null, disk = null, alive = true, done = '';
   const open = new Set();
   const toggle = k => { if (open.has(k)) open.delete(k); else open.add(k); view.refresh(); };
   const offCatalog = onCatalog(() => { readDisk(); view.refresh(); if (side) side.redraw(); });
@@ -313,7 +327,9 @@ function mountHome(el, route) {
     if (side && side.key === key) { side.redraw(); return; }
     if (side) { const s = side; side = null; s.close(); }
     const find = () => (catalog.models || []).find(m => m.key === key) || null;
-    const ps = { q: '', ctx: '', redraw: () => p.redraw() };
+    const ps = { q: '', ctx: '', redraw: () => p.redraw(), disk: () => disk,
+      // after a delete: the sentence on the list, the panel closed, the disk figures read again
+      onDeleted: res => { done = deletedText(res); diskAt = 0; readDisk(); setQuery({ model: '' }); view.refresh(); } };
     const body = () => {
       const m = find();
       if (m) return modelPanel(state.status || {}, m, ps);
@@ -364,7 +380,7 @@ function mountHome(el, route) {
           : view_.configured === false ? null : h('section.card', { key: 'none' }, h('div.strip', h('b', 'Nothing is loaded right now.'),
             h('span', 'A model loads when a request asks for it, and unloads after it has been idle for a while.'))),
       view_.configured === false && models && !models.length ? null
-        : listPanel(view_, models, disk, catalog.error, r, query, setQuery, v => { query = v; view.refresh(); }),
+        : listPanel(view_, models, disk, catalog.error, r, query, setQuery, v => { query = v; view.refresh(); }, done),
     ];
   };
   const view = liveView(el, render, ['status', 'tick', 'conn', 'hello']);
@@ -380,8 +396,10 @@ registerView({
   id: 'models', title: 'Models',
   mount(el, route) {
     // one view, two pages: the home (with its side panel), and a model's own page under #/models/<key>
+    // #/models/deleted is the Deleted models view (no model key is "deleted": a key is a .gguf file or command:<id>)
+    const pageOf = (k, rt) => (k === 'deleted' ? mountTrash(el, rt) : k ? mountDetail(el, k, rt) : mountHome(el, rt));
     let key = route.rest.join('/');
-    let page = key ? mountDetail(el, key, route) : mountHome(el, route);
+    let page = pageOf(key, route);
     return {
       update(r) {
         const k = r.rest.join('/');
@@ -390,7 +408,7 @@ registerView({
         el.replaceChildren();
         window.scrollTo(0, 0);
         key = k;
-        page = key ? mountDetail(el, key, r) : mountHome(el, r);
+        page = pageOf(key, r);
       },
       unmount() { page.unmount(); },
     };
