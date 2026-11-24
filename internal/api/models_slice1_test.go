@@ -124,4 +124,3 @@ func TestModelsSlice1_ReadAdditions(t *testing.T) {
 		t.Errorf("no filter: %v", got)
 	}
 }
-
