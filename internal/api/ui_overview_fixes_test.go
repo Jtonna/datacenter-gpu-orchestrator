@@ -134,7 +134,29 @@ func TestUINextRunsModelShortName(t *testing.T) {
 			map[string]any{"name": "model: " + route, "route": route, "status": ovStatus(now),
 				"expect": []string{"gemma-4-27b-it:32k", "gemma-4-27b-it:8k", "mistral-small-3.1-24b", "unknown-profile"},
 				"absent": []string{"Q4_K_M", "q4_k_m", ".gguf", "mistral-small-3.1-24b:"},
-				"has":    []string{"tr[data-req='14'] td.mono[title=alpha]", "tr[data-req='16'] td.mono[title=beta]"}},
+				"has":    []string{"tr[data-req='14'] td.mono[title^=alpha]", "tr[data-req='16'] td.mono[title^=beta]"}},
 		}})
 	}
+}
+
+// The short name drops a leading vendor word that the next word repeats
+// ("Qwen_Qwen3.5-9B" -> "qwen3.5-9b", any case); different words stay
+// ("google_gemma-3-4b-it"). The hover keeps the profile and the full file name.
+func TestUINextRunsModelVendorWord(t *testing.T) {
+	now := time.Now()
+	rows := ovRequests(now)
+	rows[3].(map[string]any)["profile"] = "delta"
+	rows[3].(map[string]any)["model_file"] = "/models/DEEPSEEK_DeepSeek-R1-Distill-Q4_K_M.gguf"
+	rows[4].(map[string]any)["profile"] = "eps"
+	rows[4].(map[string]any)["model_file"] = "/models/google_gemma-3-4b-it-Q4_0.gguf"
+	fetch := ovFetch(now, rows, true)
+	fetch["/api/models"] = map[string]any{"version": 1, "models": []any{
+		map[string]any{"key": "qwen", "kind": "llama", "file": "/models/Qwen_Qwen3.5-9B-Q4_K_M.gguf", "profiles": []any{map[string]any{"id": "alpha", "ctx": 32768}}},
+	}}
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
+		map[string]any{"name": "vendor word", "route": "#/requests", "status": ovStatus(now),
+			"expect": []string{"qwen3.5-9b:32k", "deepseek-r1-distill", "google_gemma-3-4b-it"},
+			"absent": []string{"qwen_qwen", "deepseek_deepseek"},
+			"titles": []string{"alpha · Qwen_Qwen3.5-9B-Q4_K_M.gguf", "delta · DEEPSEEK_DeepSeek-R1-Distill-Q4_K_M.gguf"}},
+	}})
 }
