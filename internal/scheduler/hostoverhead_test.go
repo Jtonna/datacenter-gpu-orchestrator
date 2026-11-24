@@ -435,3 +435,27 @@ func TestHostOverhead_CorrectsTheCopiedRowFromTheHistory(t *testing.T) {
 		t.Fatalf("split %d %q q %d", after["split"].HostOverheadMiB, after["split"].HostOverheadSource, after["q"].HostOverheadMiB)
 	}
 }
+
+// A row lists only the profiles that use it: a forced profile when its host
+// node (the first forced node) and its device count are the row's; a
+// profile with no forced nodes on any row of its shape (its placement
+// decides the node and the count).
+func TestHostOverhead_RowListsOnlyTheProfilesThatUseIt(t *testing.T) {
+	h := ohHarness(t)
+	q := h.c.cfg.Profiles["q"]
+	h.llama("split", 6000, func(p *core.Profile) {
+		p.ForceNodes, p.TensorSplit, p.Host, p.Model, p.TTL = []string{"a", "b"}, []int{1, 1}, core.HostNode, q.Model, ptrDur(0)
+	})
+	h.llama("free", 4000, func(p *core.Profile) { p.Host, p.Model, p.TTL = core.HostNode, q.Model, ptrDur(0) })
+	h.viewChanged()
+	h.c.putHostOverhead(measured(shapeOf(q), "a", 1, 401, h.clk.Now(), h.c.llamaBuild))
+	h.c.putHostOverhead(measured(shapeOf(q), "a", 2, 251, h.clk.Now(), h.c.llamaBuild))
+	got := map[int][]string{}
+	for _, r := range h.c.hostOverheadRows() {
+		got[r.Devices] = r.Profiles
+	}
+	want := map[int][]string{1: {"free", "q"}, 2: {"free", "split"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("profiles %v, want %v", got, want)
+	}
+}
