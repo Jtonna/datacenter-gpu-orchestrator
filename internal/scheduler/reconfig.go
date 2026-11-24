@@ -81,6 +81,9 @@ func (c *schedCore) applyConfig(nc *config.Config) {
 			c.failAll(ws, err)
 			continue
 		}
+		if pin, ok := c.pins[e.prof]; ok { // pin.go: a queued load on chosen nodes keeps them
+			np = c.pinned(np, pin)
+		}
 		e.prof = np
 	}
 	c.log.Info("configuration applied", "revision", nc.Revision, "profiles", len(nc.Profiles))

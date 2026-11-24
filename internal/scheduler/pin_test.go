@@ -77,3 +77,24 @@ func TestPin_ForgottenAfterUnload(t *testing.T) {
 	h.healthy("m")
 	h.wantNodes("m", "a")
 }
+
+// A queued load on chosen nodes keeps them across a configuration change.
+func TestPin_QueuedKeepsNodesAcrossReconfig(t *testing.T) {
+	h := newHarness(t).nodes(ps5("a", 2, 15000), ps5("b", 4, 15000))
+	h.llama("big", 14000, func(p *core.Profile) { p.ForceNodes = []string{"b"} })
+	h.llama("m", 8000)
+	h.autoExit = false
+	h.ready("big")
+	h.loadOn("m", "b") // waits for big to leave b
+	if e := h.entry("m"); e == nil || len(e.prof.ForceNodes) != 1 {
+		t.Fatal("no pinned entry")
+	}
+	nc := cloneCfg(h.cfg)
+	nc.Profiles["m"].Ctx = 8192
+	nc.Revision = 2
+	h.step(evConfig{cfg: nc})
+	h.cfg = nc
+	if e := h.entry("m"); e.prof.Ctx != 8192 || len(e.prof.ForceNodes) != 1 || e.prof.ForceNodes[0] != "b" || len(h.c.pins) != 1 {
+		t.Fatalf("entry %+v pins %d", e.prof, len(h.c.pins))
+	}
+}
