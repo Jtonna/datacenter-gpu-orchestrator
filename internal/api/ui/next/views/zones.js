@@ -47,6 +47,7 @@ import { defaultUser } from '../core/requests.js';
 import { createGroup, addMembers, removeMembers, renameGroup, pauseGroup, GROUP_NAME_RULE } from '../core/groups.js';
 import { unloadModel, planLoad, loadModel, drainModel, undrainModel } from '../core/modelactions.js';
 import { settlePending } from './nodes.js';
+import { createZone } from '../core/zonecreate.js';
 
 const PAGE = 16; // zones a page, as drawn (232 zones on 15 pages)
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -338,16 +339,13 @@ function eventsPart(hist, none = 'No load, unload or trouble recorded for this z
     hist && hist.events && hist.events.length ? h('a', { href: href('activity'), style: 'font-size:12px' }, 'All events on Activity') : null);
 }
 
-// ---------- Create new zone (waits for the agent track) ----------
-
-function createInfo() {
-  return dialog({
-    title: 'Create new zone',
-    body: h('div.col', { style: 'gap:10px' },
-      h('p', { style: 'margin:0' }, 'Making a zone from here is not built yet. It needs an install script Potluck serves with its own address filled in, an enrolment token the new machine carries when it first checks in, and a Windows and a USB variant of the script.'),
-      h('p.mut', { style: 'margin:0' }, 'Until then a machine joins by itself: install the agent on it and start it with Potluck\'s address; it appears in this list when it checks in, under "No group", and can then be moved into a group.')),
-    actions: [{ label: 'Close', kind: 'pri', value: true, autofocus: true }],
-  });
+// hostUptime(a, n) -> the machine's uptime in seconds now, or null: the
+// agent's host_uptime_s at its last heartbeat plus last_seen_ago_s, for a
+// reachable zone only.
+function hostUptime(a, n) {
+  if (!a || typeof a.host_uptime_s !== 'number' || a.host_uptime_s < 0) return null;
+  if (n && n.online === false) return null;
+  return a.host_uptime_s + (typeof a.last_seen_ago_s === 'number' && a.last_seen_ago_s > 0 ? a.last_seen_ago_s : 0);
 }
 
 // ---------- filters ----------
@@ -1009,12 +1007,17 @@ registerView({
             mem ? h('div.mb', { role: 'img', 'aria-label': `${Math.round(mem.used / mem.total * 100)}% of memory in use` }, h('span', { style: `width:${Math.round(mem.used / mem.total * 100)}%` })) : null),
           fact('Temperature', h('b', temp == null ? DASH : `${num(temp)} °C`)),
           fact('Ping', h('b.mut', { title: 'Ping is not measured yet: the agent does not time its heartbeat to Potluck (it needs the agent track).' }, 'not measured')),
-          fact('Uptime', typeof a.host_uptime_s === 'number' ? h('b', { title: 'Since the machine last started, as its agent reports it' }, goneFor(a.host_uptime_s * 1000)) : h('b.mut', { title: 'The agent reports no uptime' }, DASH)),
+          // Uptime: the machine's own uptime (since its kernel booted), the agent's
+          // host_uptime_s from its last heartbeat plus the time since that
+          // heartbeat (last_seen_ago_s). Left out, not a dash, when the agent
+          // reports none (an older agent, a console fed by the fleet console)
+          // or the zone is not reachable (the figure would be stale).
+          hostUptime(a, n) != null ? fact('Machine up', h('b', { 'data-zp': 'uptime', title: 'How long the machine has been up since it last started, as its agent reports it' }, goneFor(hostUptime(a, n) * 1000))) : null,
           fact('Link speed', link
             ? h('b', { 'data-link': '', title: `At least this fast: ${num(link.bytes || 0)} bytes in ${num(Math.round((link.load_s || 0) * 10) / 10)} s, and that time also holds the model's start. Not a link test.` }, `≥ ${num(Math.round(link.mb_s))} MB/s`)
             : h('b.mut', { 'data-link': '', title: 'No load has sent this zone a model over the network yet (a cached or a short load does not count).' }, 'no cold load yet'),
-          link ? h('span.mut', { style: 'font-size:12px;font-weight:600' }, 'last cold load, ', tms(link.at) ? `${dayText(tms(link.at))} ${clock(tms(link.at), false)}` : DASH,
-            link.model ? [' · ', h('span.mono', { title: link.model }, modelName(link.model))] : null) : null),
+          // one line, so the panel's last 7 days fit under it; the model on hover
+          link ? h('span.mut.zl1', { 'data-link-at': '', title: 'The last cold load of this zone' + (link.model ? ': ' + link.model : '') }, 'cold load, ', tms(link.at) ? `${dayText(tms(link.at))} ${clock(tms(link.at), false)}` : DASH) : null),
           fact(since ? 'Up, since ' + since : 'Up, last 7 days', h('b', pctText(u ? u.uptime : null)))),
         h('div.dh', { key: 'loaded-h' }, h('h3', 'Loaded now')),
         loaded,
@@ -1068,7 +1071,7 @@ registerView({
         `ALL ${num(c.total)} ZONE${c.total === 1 ? '' : 'S'}`),
         pillsHere.map(([id, word, key]) => h('button', { class: 'fc' + (show === id ? ' on' : ''), type: 'button', 'aria-pressed': show === id ? 'true' : 'false', 'data-show': id,
           onclick: () => setQuery({ show: show === id ? '' : id }) }, `${num(c[key] || 0)} ${word}`)),
-        narrow ? null : button([icon('M10 4v12M4 10h12'), 'Create new zone'], createInfo, 'pri', { 'data-act': 'create', style: 'margin-left:auto' }));
+        narrow ? null : button([icon('M10 4v12M4 10h12'), 'Create new zone'], () => createZone({ groups: ((groupsDoc && groupsDoc.groups) || []).map(g => g.name) }).then(made => { if (made) readSoon(); }), 'pri', { 'data-act': 'create', style: 'margin-left:auto' }));
       if (!st) return [pills, h('section.w.zfleet', { 'aria-label': 'Zones' }, skeleton(6))];
 
       // filters

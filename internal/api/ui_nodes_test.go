@@ -147,9 +147,9 @@ func TestUINodeRequestIsAcceptedAndAudited(t *testing.T) {
 // CR-9 review, A3: the settings page says that agent machines are checked
 // whatever forced_fit_check is.
 func TestUIForcedFitCheckNamesTheAgentRefusal(t *testing.T) {
-	text := uiText(t, "views/settings.js")
+	text := uiText(t, uiNextDir+"views/settings.js")
 	if !strings.Contains(text, "Machines that join through agents are always checked") {
-		t.Fatal("views/settings.js: the forced_fit_check note does not say that agent machines are always checked")
+		t.Fatal("next/views/settings.js: the forced_fit_check note does not say that agent machines are always checked")
 	}
 }
 

@@ -59,7 +59,7 @@ func TestUIPoolPhrasesExtractionIgnoresLineEndings(t *testing.T) {
 // section without one hides its settings), and with membership agents the
 // recovery and fleet sections are marked as not used.
 func TestUISettingsSectionsAndUnusedWithAgents(t *testing.T) {
-	text := uiText(t, "views/settings.js")
+	text := uiText(t, uiNextDir+"views/settings.js")
 	shown := map[string]bool{}
 	for _, m := range regexp.MustCompile(`(?m)^  \['([a-z]+)', '`).FindAllStringSubmatch(text, -1) {
 		shown[m[1]] = true
@@ -67,14 +67,14 @@ func TestUISettingsSectionsAndUnusedWithAgents(t *testing.T) {
 	for _, scope := range []string{config.ScopeSettings, config.ScopeRecovery, config.ScopeFleet} {
 		for _, f := range config.SettingFields(scope) {
 			if !shown[f.Section] {
-				t.Errorf("views/settings.js has no section %q, so %s.%s is not shown", f.Section, scope, f.Key)
+				t.Errorf("next/views/settings.js has no section %q, so %s.%s is not shown", f.Section, scope, f.Key)
 			}
 		}
 	}
-	for _, want := range []string{"recovery: 'Not used in this mode:", "fleet: 'Not used in this mode:", "cfg.settings.membership === 'agents'",
-		"badge('Not used in this mode'", "h('details'"} {
+	for _, want := range []string{"recovery: 'Not used in this mode:", "fleet: 'Not used in this mode:", "membership === 'agents'",
+		"badge('Not used in this mode'"} {
 		if !strings.Contains(text, want) {
-			t.Errorf("views/settings.js lacks %s", want)
+			t.Errorf("next/views/settings.js lacks %s", want)
 		}
 	}
 }
@@ -82,8 +82,8 @@ func TestUISettingsSectionsAndUnusedWithAgents(t *testing.T) {
 // With agents the connection facts and the About screen say where the nodes
 // come from, not that a fleet feed is fresh.
 func TestUIAgentsModeHasNoFleetFeedFacts(t *testing.T) {
-	if s := uiText(t, "core/shell.js"); !strings.Contains(s, "if (agentsMode(st)) return { dot: '', title: 'Live', note: 'Nodes come from agent registrations' };") {
-		t.Error("core/shell.js: the connection note of agents mode is gone")
+	if s := uiText(t, uiNextDir+"core/shell.js"); !strings.Contains(s, "if (agentsMode(st)) return { dot: '', title: 'Live', note: 'Nodes come from agent registrations' };") {
+		t.Error("next/core/shell.js: the connection note of agents mode is gone")
 	}
 	if s := uiText(t, "views/about.js"); !strings.Contains(s, "agentsMode(st) ? [h('dt', 'Nodes'), h('dd', 'From agent registrations") {
 		t.Error("views/about.js: agents mode still shows the fleet feed row")

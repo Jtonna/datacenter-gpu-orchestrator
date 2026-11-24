@@ -30,7 +30,7 @@ func TestPlanRowFigureNames(t *testing.T) {
 	}
 }
 
-// The classic Placement preview draws one line per shared-memory node:
+// The Placement preview ("How the memory was worked out") draws one line per shared-memory node:
 // "available A − floor F − headroom H = placeable P; after this load about
 // L left", from the server's figures.
 func TestUIPlanFiguresLine(t *testing.T) {
