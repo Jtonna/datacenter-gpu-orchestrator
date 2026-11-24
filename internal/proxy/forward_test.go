@@ -459,3 +459,73 @@ func TestForward_NoClientCredentialHeaderReachesTheModelServer(t *testing.T) {
 		}
 	}
 }
+
+// What does leave for the model server, pinned. Besides the request itself,
+// headers a person might take for identifying are passed on as the client
+// sent them, except: the credential headers (ClientCredentialHeaders), the
+// hop-by-hop headers, and the client's own Forwarded and X-Forwarded-*,
+// which the proxy replaces with its own X-Forwarded-For (the address of the
+// TCP connection the client came from), X-Forwarded-Host (the Host the
+// client used) and X-Forwarded-Proto. If this list changes, update the
+// release note and the runbook ("What a model server sees").
+func TestForward_WhatTheModelServerSeesIsPinned(t *testing.T) {
+	passed := []string{"User-Agent", "Origin", "Referer", "X-Real-Ip", "Via", "X-Client-Ip", "True-Client-Ip", "Cf-Connecting-Ip",
+		"X-Request-Id", "Accept-Language", "Accept", "Content-Type", "X-Actor", "X-Source", "X-Comment", "X-Some-Custom-Header"}
+	dropped := append([]string{"Forwarded", "Connection", "Te", "Upgrade", "Proxy-Connection", "Keep-Alive"}, ClientCredentialHeaders...)
+	replaced := []string{"X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto"}
+	got := make(chan http.Header, 1)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { got <- r.Header.Clone(); fmt.Fprint(w, "{}") }))
+	defer up.Close()
+	for _, launchKey := range []string{"", "launch-key-test-0002"} {
+		f := front(t, Options{Addr: upstreamAddr(up), APIKey: launchKey}, nil)
+		req, _ := http.NewRequest("POST", f.URL+"/v1/chat/completions", strings.NewReader("{}"))
+		for _, set := range [][]string{passed, dropped, replaced} {
+			for _, h := range set {
+				req.Header.Set(h, "client-"+h)
+			}
+		}
+		req.Header.Set("Connection", "keep-alive") // a real hop-by-hop value
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		h := <-got
+		for _, k := range passed {
+			if h.Get(k) != "client-"+k {
+				t.Errorf("launch key %q: %s should pass as sent, got %q", launchKey, k, h.Get(k))
+			}
+		}
+		for _, k := range dropped {
+			want := ""
+			if k == "Authorization" && launchKey != "" {
+				want = "Bearer " + launchKey // Potluck's own, not the client's
+			}
+			if v := h.Get(k); v != want {
+				t.Errorf("launch key %q: %s should not pass, got %q", launchKey, k, v)
+			}
+		}
+		for _, k := range replaced {
+			if v := h.Get(k); v == "" || strings.Contains(v, "client-") {
+				t.Errorf("launch key %q: %s should be the proxy's own, got %q", launchKey, k, v)
+			}
+		}
+		if h.Get("X-Forwarded-For") != "127.0.0.1" || h.Get("X-Forwarded-Proto") != "http" || !strings.HasPrefix(h.Get("X-Forwarded-Host"), "127.0.0.1:") {
+			t.Errorf("launch key %q: X-Forwarded-*: %q %q %q", launchKey, h.Get("X-Forwarded-For"), h.Get("X-Forwarded-Host"), h.Get("X-Forwarded-Proto"))
+		}
+		// nothing else arrives: the passed, the replaced, the body's own
+		// length and encoding, and the launch key
+		allowed := map[string]bool{"Content-Length": true, "Accept-Encoding": true}
+		for _, k := range append(append([]string{}, passed...), replaced...) {
+			allowed[http.CanonicalHeaderKey(k)] = true
+		}
+		if launchKey != "" {
+			allowed["Authorization"] = true
+		}
+		for k := range h {
+			if !allowed[k] {
+				t.Errorf("launch key %q: unexpected header %s = %q reached the model server", launchKey, k, h.Values(k))
+			}
+		}
+	}
+}

@@ -509,6 +509,14 @@ Potluck, its `llama-server` children, every agent, each launch and each node's j
 
 The scheduler runs benchmarks through its own API and keeps every result in the database. Define benchmarks and suites, run them, read and compare the runs: [benchmark-guide.md](benchmark-guide.md). The web UI has a Benchmarks page.
 
+### What a model server sees
+
+The scheduler forwards a client's request to llama-server with most of its headers. What changes on the way (`internal/proxy/forward.go`, pinned by `TestForward_WhatTheModelServerSeesIsPinned`):
+
+- **Dropped**: the client's credentials (`Authorization`, `Proxy-Authorization`, `X-Api-Key`, `Api-Key`, `X-Goog-Api-Key`, `X-Auth-Token`, `Cookie`, `X-Agent-Key`), the hop-by-hop headers (`Connection`, `Keep-Alive`, `Te`, `Upgrade`, `Proxy-Connection`), and the client's own `Forwarded` and `X-Forwarded-*`.
+- **Set by the scheduler**: `X-Forwarded-For` (the address of the connection the request came from: behind a published Docker port that is the bridge gateway, not the client), `X-Forwarded-Host` (the host name the client used) and `X-Forwarded-Proto`; and, for a server hosted on a console, `Authorization: Bearer <launch key>`.
+- **Passed on as sent**, including ones a person might take for identifying: `User-Agent`, `Origin`, `Referer`, `X-Real-Ip`, `Via`, `X-Client-Ip`, `True-Client-Ip`, `Cf-Connecting-Ip`, `X-Request-Id`, `Accept-Language`, Potluck's own `X-Actor`, `X-Source` and `X-Comment`, and any other header the client adds. llama-server does not log request headers; a `command` profile's server might.
+
 ### AI agents (MCP)
 
 The MCP server is at `http://<host>:3122/mcp` (Streamable HTTP). Each tool runs the REST request of the same name, with the same audit trail (source `mcp`). Give every agent its own access key (web UI, MCP page, "New key"); the key is shown once, with the settings to paste:
