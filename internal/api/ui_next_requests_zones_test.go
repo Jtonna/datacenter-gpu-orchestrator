@@ -11,8 +11,10 @@ import (
 // Zones toggle, never a list of machines): a request served by three or six
 // machines wrapped nowhere, so the column pushed "Sent by" out of the card
 // and the page scrolled sideways (at 1536, three machines with real names).
-// The cell now wraps between machines, each machine kept whole on one line
-// (span.mc, nowrap), and the other columns keep their width.
+// Up to three machines the cell wraps between machines, each machine kept
+// whole on one line (span.mc, nowrap); beyond three it reads "<host> Host +
+// N helpers" with the full list on hover (the reviewer's rule when no
+// mockup decides). The other columns keep their width.
 func TestUIRequestsZonesWrap(t *testing.T) {
 	css := uiText(t, uiNextDir+"app.css")
 	for _, want := range []string{
@@ -49,13 +51,15 @@ func TestUIRequestsZonesWrap(t *testing.T) {
 		uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
 			map[string]any{"name": "requests: long zone lists wrap between machines", "route": "#/requests", "status": st, "width": w,
 				"expect": []string{"Zones", "Sent by", "console-01 Host 100%",
-					"console-01 Host 33%", "console-03 Helper 33%",
-					"console-01 Host 17%", "console-06 Helper 17%"},
+					"console-01 Host 33%, console-02 Helper 33%, console-03 Helper 33%",
+					// more than three: shortened, the full list on hover
+					"console-01 Host + 5 helpers"},
+				"absent": []string{"console-06 Helper 17%"},
 				"has": []string{
 					"tr[data-req='21'] td.rq-zones span[data-machines='1'] span.mc",
 					"tr[data-req='22'] td.rq-zones span[data-machines='2'] span.mc",
 					"tr[data-req='23'] td.rq-zones span[data-machines='3'] span.mc",
-					"tr[data-req='24'] td.rq-zones span[data-machines='6'] span.mc",
+					"tr[data-req='24'] td.rq-zones span[data-machines='6'][title^='console-01'][title*='console-06'] span.mc",
 				}},
 		}})
 	}

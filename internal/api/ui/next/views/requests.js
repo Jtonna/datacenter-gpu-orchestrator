@@ -11,18 +11,26 @@
 import { h } from '../core/dom.js';
 import { registerView, navigate, href } from '../core/router.js';
 import { onCatalog, needCatalog } from '../core/catalog.js';
-import { liveView, pageHead, chips, button, runsTable, runLegend, tickRuns, skeleton, filterSelect, roleShare } from '../core/ui.js';
+import { liveView, pageHead, chips, button, runsTable, runLegend, tickRuns, skeleton, filterSelect, roleShare, runMachines } from '../core/ui.js';
 import { num, dateTime, clock } from '../core/format.js';
 import { requestFeed, every, onLiveTimings, liveTimings } from '../core/requests.js';
 
 const STATES = [['', 'All'], ['queued', 'Queued'], ['running', 'Running'], ['done', 'Done'], ['failed', 'Failed'], ['refused', 'Refused'], ['cancelled', 'Cancelled']];
 const PAGE = 50;
 
-// machineList(nodes) -> the Zones cell: the same words as runMachines
-// ("node-a Host 50%, node-b Helper 50%"), each machine in its own span.mc
-// that never breaks, so a long list wraps between machines inside the
-// column (td.rq-zones) instead of pushing the table out of its card.
+// machineList(nodes) -> the Zones cell (no mockup draws it). Up to three
+// machines: the same words as runMachines ("node-a Host 50%, node-b Helper
+// 50%"), each machine in its own span.mc that never breaks, so the list
+// wraps between machines inside the column (td.rq-zones) instead of pushing
+// the table out of its card. More than three: "node-a Host + 5 helpers",
+// the full list on hover.
+const MACHINES_LISTED = 3;
 function machineList(nodes) {
+  if (nodes.length > MACHINES_LISTED) {
+    const host = nodes[0];
+    return h('span.mono', { 'data-machines': String(nodes.length), title: runMachines(nodes) },
+      h('span.mc', `${host.name || host.id} ${roleShare(host.role) || 'Host'} + ${nodes.length - 1} helpers`));
+  }
   return h('span.mono', { 'data-machines': String(nodes.length) }, nodes.map((n, i) => [
     i ? ' ' : null,
     h('span.mc', [n.name || n.id, roleShare(n.role, n.share)].filter(Boolean).join(' ') + (i < nodes.length - 1 ? ',' : '')),
