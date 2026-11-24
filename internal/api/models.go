@@ -1,8 +1,6 @@
 package api
 
 import (
-	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelname"
-
 	"math"
 	"os"
 	"path/filepath"
@@ -13,8 +11,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/gguf"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelname"
 )
 
 // The model catalog (GET /api/models, GET /api/models/{key}): one entry per
@@ -57,6 +57,9 @@ type ModelFile struct {
 	Quant         string `json:"quant,omitempty"`
 	ContextLength int    `json:"context_length,omitempty"` // the model's trained context
 	MetaSource    string `json:"meta_source"`
+	// ModifiedMS is the file's modification time (unix ms), read with every
+	// listing (never stored with the metadata): the catalog's added_at.
+	ModifiedMS int64 `json:"-"`
 }
 
 var (
@@ -185,7 +188,7 @@ func ReadModelFile(dir, file string) ModelFile {
 	if err != nil || st.IsDir() {
 		return mf
 	}
-	mf.Exists, mf.SizeBytes = true, st.Size()
+	mf.Exists, mf.SizeBytes, mf.ModifiedMS = true, st.Size(), st.ModTime().UnixMilli()
 	metaReads.Add(1)
 	meta, err := gguf.ReadMeta(filepath.Join(dir, file))
 	if err != nil {
@@ -272,13 +275,16 @@ func (c *modelFileCache) list(dir string, named []string) []ModelFile {
 			out = append(out, ModelFileFromName(n))
 			continue
 		}
+		mod := st.ModTime().UnixMilli()
 		if e, ok := c.seen[n]; ok && e.size == st.Size() && e.mod.Equal(st.ModTime()) {
+			e.mf.ModifiedMS = mod
 			out = append(out, e.mf)
 			continue
 		}
 		full := filepath.Join(dir, n)
 		var sm storedMeta
 		if c.store != nil && c.store.FileMeta(full, st.Size(), st.ModTime().UnixNano(), &sm) && sm.Format == metaFormat {
+			sm.File.ModifiedMS = mod
 			c.seen[n] = cachedFile{size: st.Size(), mod: st.ModTime(), mf: sm.File}
 			out = append(out, sm.File)
 			continue
@@ -310,6 +316,9 @@ type CatalogInput struct {
 	// "family:<brand>"); Now is the clock for the activity buckets (default time.Now).
 	Icons map[string]string
 	Now   time.Time
+	// RunModels are the (run, model file, profile) of completed benchmark
+	// runs' steps: bench.reports counts a model's completed runs from them.
+	RunModels []bench.RunStepModel
 }
 
 // recentLoads is how many marks loads.recent carries (the Models list draws them).
@@ -783,6 +792,25 @@ func BuildModelCatalog(in CatalogInput, detailKey string) []map[string]any {
 		b.benchmarks = append(b.benchmarks, row)
 	}
 
+	// completed benchmark runs per model (the panel's "N reports")
+	reports := map[string]map[string]bool{}
+	for _, m := range in.RunModels {
+		key := m.ModelFile
+		if key == "" {
+			key = profileModel[m.Profile]
+		}
+		if key == "" {
+			continue
+		}
+		if reports[key] == nil {
+			reports[key] = map[string]bool{}
+		}
+		reports[key][m.RunID] = true
+	}
+	for key := range reports {
+		ba(key)
+	}
+
 	// ---- one entry per model ----
 	out := make([]map[string]any, 0, len(accs))
 	for key, a := range accs {
@@ -820,6 +848,12 @@ func BuildModelCatalog(in CatalogInput, detailKey string) []map[string]any {
 		if a.file.ContextLength > 0 {
 			e["context_length"] = a.file.ContextLength
 		}
+		// added: the file's modification time (an upload will record its
+		// arrival); nil for a command profile or a missing file
+		e["added_at"] = nil
+		if a.kind != "command" && a.file.Exists {
+			e["added_at"] = nilIfZero(a.file.ModifiedMS)
+		}
 
 		// configurations
 		sort.Slice(a.profiles, func(i, j int) bool { return jstr(a.profiles[i]["id"]) < jstr(a.profiles[j]["id"]) })
@@ -846,7 +880,7 @@ func BuildModelCatalog(in CatalogInput, detailKey string) []map[string]any {
 			if pe["tensor_split"] == nil {
 				pe["tensor_split"] = []any{}
 			}
-			for _, k := range []string{"host", "host_node", "host_overhead_mib", "host_overhead_source", "host_overhead_measured_at", "host_problem", "description", "derived_from_ctx", "derived_slope_mib_per_1k_ctx", "derived_slope_from_ctx"} { // a profile hosted on a node; a derived need
+			for _, k := range []string{"ttl_s", "host", "host_node", "host_overhead_mib", "host_overhead_source", "host_overhead_measured_at", "host_problem", "description", "derived_from_ctx", "derived_slope_mib_per_1k_ctx", "derived_slope_from_ctx"} { // a profile hosted on a node; a derived need
 				if v, ok := p[k]; ok {
 					pe[k] = v
 				}
@@ -976,7 +1010,10 @@ func BuildModelCatalog(in CatalogInput, detailKey string) []map[string]any {
 		if b := benches[key]; b != nil {
 			sort.Slice(b.byNodes, func(i, j int) bool { return b.byNodes[i]["nodes"].(int) < b.byNodes[j]["nodes"].(int) })
 			sort.Strings(b.ids)
-			bm := map[string]any{"benchmarks": b.ids, "runs": b.runs, "by_nodes": b.byNodes}
+			if b.ids == nil {
+				b.ids = []string{}
+			}
+			bm := map[string]any{"benchmarks": b.ids, "runs": b.runs, "by_nodes": b.byNodes, "reports": len(reports[key])}
 			if b.byNodes == nil {
 				bm["by_nodes"] = []any{}
 			}

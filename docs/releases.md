@@ -2,6 +2,15 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: models page read additions (models slice 1)
+
+Read-only fields; no agent change, no new port, no schema change, no new route.
+
+- **Unload when idle.** Each profile in `GET /api/profiles` and each profile row of `GET /api/models` carries `ttl_s`: the effective idle unload (the profile's `ttl`, else `defaults.ttl`) in seconds; 0 means never.
+- **Added.** Each model file in `GET /api/models` carries `added_at` (unix ms): the file's modification time on the models folder; null for a missing file or a command profile.
+- **Which machine the disk is.** The `disk` block of `GET /api/models` carries `host`: the scheduler's node name (`local_node`).
+- **Benchmarks of a model.** `GET /api/bench/runs?model=<file>` lists the runs with a step on that model file (a step recorded before steps carried their file matches by the profiles of that file now). The catalog entry's `bench.reports` counts that model's completed runs. MCP `list_runs` takes `model`.
+
 ## Scheduler image: per-device readings only from a cold load
 
 No agent change, no new port, no schema change.

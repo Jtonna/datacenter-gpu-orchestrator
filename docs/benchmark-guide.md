@@ -196,6 +196,7 @@ The runner tags its requests with `X-Bench-Run: <run id>`. Its loads and unloads
 | Ask | REST | MCP |
 |---|---|---|
 | Runs of a suite | `GET /api/bench/runs?suite=<id>` | `list_runs` |
+| Runs on a model file | `GET /api/bench/runs?model=<file>` | `list_runs` (`model`) |
 | One run, every step, phase and request | `GET /api/bench/runs/<id>` | `get_run` |
 | A table for a document | `GET /api/bench/runs/<id>/export?format=md` (also `csv`, `json`; `&detail=phases`, `&detail=turns` or `&detail=tasks` for CSV) | `export_run` |
 | Points over past runs for a chart | `GET /api/bench/trends?benchmark=<id>&metric=load_s` | `get_bench_trends` |
