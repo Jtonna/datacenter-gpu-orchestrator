@@ -411,6 +411,10 @@ func (c *schedCore) deviceOverheadRows() []HostOverheadRow {
 // (dropCachedDevice). nil: no history.
 type DeviceHistory func(history.Query) []history.Event
 
+// devCheckWait is how long the check at start waits for the nodes of the
+// restored rows to appear in the view.
+const devCheckWait = 2 * time.Minute
+
 // dropCachedDevice drops, once at start, every restored row whose figure in
 // force came from a cached reload (the release before took readings from any
 // load). For each row, the event history is asked:
@@ -428,6 +432,19 @@ type DeviceHistory func(history.Query) []history.Event
 func (c *schedCore) dropCachedDevice() {
 	if c.devChecked || c.devEventsFn == nil || len(c.raw) == 0 {
 		return
+	}
+	// The events name a console by its hostname, known once the console is
+	// in the view: wait for every restored row's node, at most devCheckWait
+	// after the first node was seen.
+	if c.devCheckFrom.IsZero() {
+		c.devCheckFrom = c.now
+	}
+	if c.now.Before(c.devCheckFrom.Add(devCheckWait)) {
+		for k, e := range c.devOHs {
+			if _, ok := c.raw[k.node]; e.restored && !ok {
+				return
+			}
+		}
 	}
 	c.devChecked = true
 	keys := make([]hostKey, 0, len(c.devOHs))

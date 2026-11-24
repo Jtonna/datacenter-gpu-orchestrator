@@ -422,6 +422,53 @@ func TestDeviceOverhead_RowsFromCachedLoadsDroppedAtStart(t *testing.T) {
 	}
 }
 
+// At start the fleet view fills node by node. Events name a console by its
+// hostname, which is known only once that console is in the view; the check
+// waits for every restored row's node (at most two minutes, then it goes on
+// with what it knows) instead of running on the first node seen.
+func TestDeviceOverhead_DropWaitsForTheRowsNodes(t *testing.T) {
+	h := devHarness(t)
+	h.view.modify("b", func(n *core.Node) { n.Hostname = "console-b" })
+	h.viewChanged()
+	st := openNeedStore(t)
+	h.c.restoreNeeds(st)
+	e := h.c.cfg.Profiles["e"]
+	readAt := h.clk.Now().Add(-time.Hour).Truncate(time.Millisecond)
+	row := devMeasured(shapeOf(e), "b", 2, 39, readAt, h.c.llamaBuild)
+	h.c.putDeviceOverhead(row)
+	flushNeeds(h, st)
+	evs := []history.Event{
+		{Ts: readAt.Add(-36 * time.Second).UnixMilli(), Type: history.TLoadFinished, Profile: "e", Nodes: []string{"a", "console-b"},
+			Data: map[string]any{"bytes_measured": true, "nodes_detail": []any{map[string]any{"node": "console-b", "bytes": 29442.0, "memory_mib": 389.0}}}},
+		{Ts: readAt.UnixMilli(), Type: history.TLearnedNeed, Profile: "e", Nodes: []string{"a", "console-b"},
+			Data: map[string]any{"node": "console-b", "device_overhead_mib": 39.0, "devices": 2.0}},
+	}
+	h = devHarness(t)
+	h.view.modify("b", func(n *core.Node) { n.Hostname = "console-b" })
+	h.viewChanged()
+	h.c.restoreNeeds(st)
+	h.c.devEventsFn = func(q history.Query) []history.Event {
+		var out []history.Event
+		for i := len(evs) - 1; i >= 0; i-- {
+			if q.Match(&evs[i]) && (q.Until == 0 || evs[i].Ts <= q.Until) && (q.Since == 0 || evs[i].Ts >= q.Since) {
+				out = append(out, evs[i])
+			}
+		}
+		return out
+	}
+	b := h.c.raw["b"]
+	delete(h.c.raw, "b") // b's first heartbeat has not come yet
+	h.c.dropCachedDevice()
+	if _, ok := devRow(h, shapeOf(e), "b", 2); !ok || h.c.devChecked {
+		t.Fatal("checked before b was known")
+	}
+	h.c.raw["b"] = b
+	h.c.dropCachedDevice()
+	if _, ok := devRow(h, shapeOf(e), "b", 2); ok {
+		t.Fatal("the cached row on b is kept once b is known")
+	}
+}
+
 // With nothing stored, the count line still says so (a proof reads it).
 func TestDeviceOverhead_CountLineWhenNothingIsStored(t *testing.T) {
 	h := devHarness(t)
