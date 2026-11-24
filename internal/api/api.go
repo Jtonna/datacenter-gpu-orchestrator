@@ -116,6 +116,8 @@ type Options struct {
 	diskEvery   time.Duration
 	healthEvery time.Duration
 	taskStats   func() []supervise.TaskStats
+	// keyExpiryEvery: how often access key expiry is checked; < 0 off (tests).
+	keyExpiryEvery time.Duration
 }
 
 // Server is the http.Handler for the whole API.
@@ -208,6 +210,7 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 	s.startAudit()
 	s.startAvailability() // availability.go
 	s.startHealth()       // health.go
+	s.startKeyExpiry()    // keyexpiry.go
 	if o.Audit != nil {
 		s.SetAuditHook(s.recorderHook(o.Audit)) // benchmark changes and runs are audited too (section bench)
 	}
@@ -215,11 +218,22 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 }
 
 // ServeHTTP implements http.Handler.
-// A request that carries an agent key is attributed to that agent first (agents.go).
+// A request that carries an access key is attributed to that agent first
+// (agents.go) and may do only what its key allows (scopes.go); a request
+// without one is the default user.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r, ok := s.identify(w, r); ok {
+	r = r.WithContext(audit.WithDefaultUser(r.Context(), s.defaultUser()))
+	if r, ok := s.identify(w, r); ok && s.authorize(w, r) {
 		s.mux.ServeHTTP(w, r)
 	}
+}
+
+// defaultUser is the name of the default user (setting default_user_name).
+func (s *Server) defaultUser() string {
+	if c := s.conf(); c != nil && c.DefaultUserName != "" {
+		return c.DefaultUserName
+	}
+	return audit.DefaultActor
 }
 
 // BeginShutdown makes every new request that would start work answer 503

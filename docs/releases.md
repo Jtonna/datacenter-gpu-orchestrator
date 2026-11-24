@@ -2,6 +2,18 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: MCP access keys (phase 3)
+
+No agent change, no new port. **`scheduler.db`: a new table `agent_access` with its own ledger `access_migrations` (version 1); `cfg_migrations` stays at 3**, so the previous image still opens the database (it ignores the two tables). See the runbook, "Access keys".
+
+- **Access keys with expiry and permissions.** New keys start with `ptl_` and show as `ptl_••••7c2e`; each has an expiry (default 30 days, or never) and four permissions: Observe (allow, off), Switch zones, Load and unload models, Change settings (allow, ask, off). A new key may observe only unless set otherwise. Status: active, expiring (within 7 days), expired, revoked. Create and Manage take name, description, `expires_at` and `permissions`; the create and rotate answers carry the settings to paste into an MCP client (`mcp_settings`, URL from the `Host` header).
+- **Enforced for requests that carry a key, on REST and MCP.** One route table (`internal/api/scopes.go`) decides what each route needs; beyond its permissions a keyed request gets 403 with a sentence naming the permission; over MCP the tools a key has Off are not listed. Ask me is refused until approvals exist. Unknown, expired and revoked keys get 401. A request without a key is the default user with full access, as before.
+- **Existing keys keep working unchanged**: every key made before (`lls_...`) has every permission and no expiry until its permissions or expiry are set in Manage.
+- **Expiry warnings.** History events `agentKeyExpiring` (once at 7 days, once at 1 day left) and `agentKeyExpired` (once), checked hourly, kept with the key so a restart does not repeat them. The health summary's MCP row says "· N expire soon" and needs attention while a key expires within 7 days.
+- **Client credentials stay with the client.** A credential that is not a Potluck key (`Authorization: Bearer sk-...`, Basic, anything not beginning `ptl_` or `lls_`) is ignored and written nowhere (log, audit, events, request log). The header fix of v40 (below) keeps every client credential header away from the model servers.
+- **Setting `default_user_name`** (`anonymous` unless set, no restart): the name of the default user in the audit log and the request log.
+- **Going back to the previous image:** it starts on the migrated database and loses nothing. There, `lls_` keys work as before; `ptl_` keys work as identity when sent as `X-Agent-Key`, while a `ptl_` Bearer token is not read as a key (the request runs as the default user); expiry and permissions are not enforced; revoked keys stay revoked. A key rotated there keeps its permissions and expiry when this image returns, with the stored start as its hint.
+
 ## Scheduler image: client credentials stay with the client
 
 Fix on top of v36. No agent change, no schema change, no new port.

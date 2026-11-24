@@ -80,6 +80,11 @@ type Config struct {
 	// health summary's Storage row then also judges the model files against
 	// it. 0 (the default) judges the real free space only.
 	ModelsDiskBudgetGB int
+	// DefaultUserName is the default user: the name that signs what is done
+	// without an access key and without a name of the client's own (the web
+	// UI, curl, scripts) in the audit log and the request log. There is no
+	// login; everyone using the site is this user.
+	DefaultUserName string
 }
 
 // Logs are the central logging settings (docs/architecture.md section 6). The

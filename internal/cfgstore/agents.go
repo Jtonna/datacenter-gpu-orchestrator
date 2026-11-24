@@ -24,6 +24,9 @@ type Agent struct {
 	LastUsedAt    int64  `json:"last_used_at,omitempty"`
 	RevokedAt     int64  `json:"revoked_at,omitempty"`
 	RequestCount  int64  `json:"request_count"`
+	// Access is the key's expiry and permissions (access.go); nil for a key
+	// made before they existed: full permissions, no expiry.
+	Access *AgentAccess `json:"-"`
 }
 
 const agentCols = `id, name, description, key_hash, key_prefix, created_at, created_source, created_actor, rotated_at, last_used_at, revoked_at, request_count`
@@ -36,14 +39,14 @@ func scanAgent(r interface{ Scan(...any) error }) (Agent, error) {
 
 // Agents lists every agent, revoked ones included, oldest first.
 func (s *Store) Agents(ctx context.Context) ([]Agent, error) {
-	rows, err := s.db.DB().QueryContext(ctx, `SELECT `+agentCols+` FROM agents ORDER BY created_at, id`)
+	rows, err := s.db.DB().QueryContext(ctx, accessJoin()+` ORDER BY a.created_at, a.id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := []Agent{}
 	for rows.Next() {
-		a, err := scanAgent(rows)
+		a, err := scanAgentAccess(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -54,7 +57,7 @@ func (s *Store) Agents(ctx context.Context) ([]Agent, error) {
 
 // Agent returns one agent by id.
 func (s *Store) Agent(ctx context.Context, id string) (*Agent, error) {
-	a, err := scanAgent(s.db.DB().QueryRowContext(ctx, `SELECT `+agentCols+` FROM agents WHERE id = ?`, id))
+	a, err := scanAgentAccess(s.db.DB().QueryRowContext(ctx, accessJoin()+` WHERE a.id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

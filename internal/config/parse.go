@@ -59,7 +59,11 @@ const (
 // is its upper bound.
 const (
 	DefaultLoopStepWarnMs = 1000
-	MaxLoopStepWarnMs     = 600000
+	// DefaultDefaultUserName is default_user_name unless set;
+	// MaxDefaultUserName is its longest (in characters).
+	DefaultDefaultUserName = "anonymous"
+	MaxDefaultUserName     = 40
+	MaxLoopStepWarnMs      = 600000
 )
 
 // DefaultLocalProbeCmd is the nvidia-smi query of design 5.1.
@@ -94,12 +98,13 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 		ChildLogKeep:      DefaultChildLogKeep,
 		HistoryMaxFileMiB: DefaultHistoryMaxFileMiB, HistoryKeepFiles: DefaultHistoryKeepFiles, HistoryMemoryEvents: DefaultHistoryMemoryEvents,
 		UsageRequestDays: DefaultUsageRequestDays, UsageHourlyDays: DefaultUsageHourlyDays, LoopStepWarnMs: DefaultLoopStepWarnMs,
-		LocalProbeCmd: DefaultLocalProbeCmd,
-		WSMaxClients:  DefaultWSMaxClients,
-		Bench:         rawBench{RegressLoadPct: DefaultRegressLoadPct, RegressDecodePct: DefaultRegressDecodePct, MaxRunMinutes: DefaultMaxRunMinutes},
-		Defaults:      rawDefaultsFrom(DefaultDefaults()),
-		Recovery:      rawRecoveryFrom(DefaultRecovery()),
-		Logs:          rawLogsFrom(DefaultLogs()),
+		DefaultUserName: DefaultDefaultUserName,
+		LocalProbeCmd:   DefaultLocalProbeCmd,
+		WSMaxClients:    DefaultWSMaxClients,
+		Bench:           rawBench{RegressLoadPct: DefaultRegressLoadPct, RegressDecodePct: DefaultRegressDecodePct, MaxRunMinutes: DefaultMaxRunMinutes},
+		Defaults:        rawDefaultsFrom(DefaultDefaults()),
+		Recovery:        rawRecoveryFrom(DefaultRecovery()),
+		Logs:            rawLogsFrom(DefaultLogs()),
 	}
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
@@ -116,6 +121,7 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 		HistoryMemoryEvents: raw.HistoryMemoryEvents,
 		UsageRequestDays:    raw.UsageRequestDays, UsageHourlyDays: raw.UsageHourlyDays, LoopStepWarnMs: raw.LoopStepWarnMs, ModelsDiskBudgetGB: raw.ModelsDiskBudgetGB,
 		RequestsLiveTimings: raw.RequestsLiveTimings,
+		DefaultUserName:     strings.TrimSpace(raw.DefaultUserName),
 		LocalProbeCmd:       raw.LocalProbeCmd,
 		LocalNode:           strings.TrimSpace(raw.LocalNode),
 		DataDir:             strings.TrimSpace(raw.DataDir),
@@ -205,6 +211,7 @@ type rawConfig struct {
 	RequestsLiveTimings bool                        `yaml:"requests_live_timings" json:"requests_live_timings,omitempty"`
 	LoopStepWarnMs      int                         `yaml:"loop_step_warn_ms" json:"loop_step_warn_ms,omitempty"`
 	ModelsDiskBudgetGB  int                         `yaml:"models_disk_budget_gb" json:"models_disk_budget_gb,omitempty"`
+	DefaultUserName     string                      `yaml:"default_user_name" json:"default_user_name,omitempty"`
 	LocalProbeCmd       string                      `yaml:"local_probe_cmd" json:"local_probe_cmd,omitempty"`
 	LocalNode           string                      `yaml:"local_node" json:"local_node,omitempty"`
 	DataDir             string                      `yaml:"data_dir" json:"data_dir,omitempty"`

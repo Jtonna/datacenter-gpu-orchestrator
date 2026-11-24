@@ -370,6 +370,10 @@ func (c *Config) validateDefaults(add func(string, ...any)) {
 	if c.LoopStepWarnMs < 10 || c.LoopStepWarnMs > MaxLoopStepWarnMs {
 		add("loop_step_warn_ms: must be from 10 to %d, got %d", MaxLoopStepWarnMs, c.LoopStepWarnMs)
 	}
+	if n := utf8.RuneCountInString(c.DefaultUserName); n < 1 || n > MaxDefaultUserName || strings.TrimSpace(c.DefaultUserName) != c.DefaultUserName ||
+		strings.IndexFunc(c.DefaultUserName, unicode.IsControl) >= 0 {
+		add("default_user_name: must be 1 to %d characters without control characters or surrounding spaces, got %q", MaxDefaultUserName, c.DefaultUserName)
+	}
 	if c.ModelsDiskBudgetGB < 0 {
 		add("models_disk_budget_gb: must not be negative, got %d", c.ModelsDiskBudgetGB)
 	}

@@ -111,19 +111,27 @@ func (h *harness) ownAudit(ctx context.Context) []any {
 func seedAgents(c *cluster) error {
 	sc := newSeedClient(c.url)
 	asJacob := who{source: "ui", actor: "alex"}
-	mk := func(name, desc string) (string, error) {
-		out, err := sc.do("POST", "/api/agents", asJacob, map[string]any{"name": name, "description": desc})
+	mk := func(name, desc string, extra map[string]any) (string, error) {
+		body := map[string]any{"name": name, "description": desc}
+		for k, v := range extra {
+			body[k] = v
+		}
+		out, err := sc.do("POST", "/api/agents", asJacob, body)
 		if err != nil {
 			return "", err
 		}
 		key, _ := out["key"].(string)
 		return key, nil
 	}
-	k1, err := mk("claude-code-laptop", "Claude Code on the laptop: day-to-day changes")
+	// both may change settings (what they do below); the first expires in 30
+	// days and may switch zones, the second never expires and may load models
+	k1, err := mk("claude-code-laptop", "Claude Code on the laptop: day-to-day changes",
+		map[string]any{"permissions": map[string]any{"zones": "allow", "settings": "allow"}})
 	if err != nil {
 		return err
 	}
-	k2, err := mk("nightly-bench-agent", "Runs the nightly suite and reads the results")
+	k2, err := mk("nightly-bench-agent", "Runs the nightly suite and reads the results",
+		map[string]any{"expires_at": 0, "permissions": map[string]any{"models": "allow", "settings": "allow"}})
 	if err != nil {
 		return err
 	}

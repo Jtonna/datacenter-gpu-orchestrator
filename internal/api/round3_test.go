@@ -334,14 +334,14 @@ func TestAgentKeysAttributeActionsInTheAudit(t *testing.T) {
 	ui := map[string]string{"X-Source": "ui", "X-Actor": "alex", "Content-Type": "application/json"}
 
 	// create: the key is shown once, only its hash is stored
-	st, m := e.cdo("POST", "/api/agents", `{"name":"claude-code laptop","description":"my coding agent"}`, ui)
+	st, m := e.cdo("POST", "/api/agents", `{"name":"claude-code laptop","description":"my coding agent","permissions":{"settings":"allow"}}`, ui)
 	if st != 201 {
 		t.Fatalf("create: %d %v", st, m)
 	}
 	key, _ := m["key"].(string)
 	ag := m["agent"].(map[string]any)
 	id := ag["id"].(string)
-	if !strings.HasPrefix(key, "lls_") || len(key) < 28 || ag["name"] != "claude-code laptop" || ag["key_prefix"] != key[:10] || ag["actor"] != "agent:claude-code laptop" ||
+	if !strings.HasPrefix(key, "ptl_") || len(key) < 28 || ag["name"] != "claude-code laptop" || ag["key_prefix"] != key[:10] || ag["actor"] != "agent:claude-code laptop" ||
 		ag["created_by"].(map[string]any)["actor"] != "alex" || ag["created_by"].(map[string]any)["source"] != "ui" {
 		t.Fatalf("created agent: key %q, %v", key, ag)
 	}
@@ -442,7 +442,7 @@ func TestAgentKeysAttributeActionsInTheAudit(t *testing.T) {
 	// rotate: the old key stops working, the new one works
 	st, m = e.cdo("POST", "/api/agents/"+id+"/rotate", "", ui)
 	key2, _ := m["key"].(string)
-	if st != 200 || key2 == key || !strings.HasPrefix(key2, "lls_") {
+	if st != 200 || key2 == key || !strings.HasPrefix(key2, "ptl_") {
 		t.Fatalf("rotate: %d %v", st, m)
 	}
 	if st, _ := e.cdo("GET", "/api/status", "", map[string]string{"X-Agent-Key": key}); st != 401 {

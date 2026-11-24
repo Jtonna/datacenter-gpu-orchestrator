@@ -127,13 +127,16 @@ func TestHealth_SchedulerRow(t *testing.T) {
 }
 
 func TestHealth_MCPRow(t *testing.T) {
-	if r := judgeMCP(3, true); r.State != HealthOK || r.Text != "Running · 3 keys active" || r.Count != 0 || r.Facts["keys_active"] != 3 {
+	if r := judgeMCP(3, 0, true); r.State != HealthOK || r.Text != "Running · 3 keys active" || r.Count != 0 || r.Facts["keys_active"] != 3 {
 		t.Fatalf("%+v", r)
 	}
-	if r := judgeMCP(1, true); r.Text != "Running · 1 key active" {
+	if r := judgeMCP(1, 0, true); r.Text != "Running · 1 key active" {
 		t.Fatalf("%+v", r)
 	}
-	if r := judgeMCP(0, false); r.State != HealthOK || r.Text != "Running" {
+	if r := judgeMCP(3, 1, true); r.State != HealthAttention || r.Count != 1 || r.Text != "Running · 3 keys active · 1 expires soon" || r.Facts["keys_expiring"] != 1 {
+		t.Fatalf("%+v", r)
+	}
+	if r := judgeMCP(0, 0, false); r.State != HealthOK || r.Text != "Running" {
 		t.Fatalf("%+v", r)
 	}
 }
