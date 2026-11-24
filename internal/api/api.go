@@ -196,6 +196,7 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 	if s.reqs == nil {
 		s.reqs = usage.NewRecorder(nil) // live rows only
 	}
+	s.reqs.SetNamer(s.modelName) // short_name: the same rule as /api/models
 	s.bg, s.bgCancel = context.WithCancel(context.Background())
 	s.occ = startOccupied(o.History)
 	s.groups = o.Groups

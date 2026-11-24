@@ -64,8 +64,10 @@ func TestUINodeControlsAreTheTwoActions(t *testing.T) {
 			continue
 		}
 		src := uiText(t, name)
-		// the availability series is a read, not an action on a machine
-		if name != "core/nodeactions.js" && strings.Contains(strings.ReplaceAll(src, "/api/nodes/availability", ""), "/api/nodes") {
+		// the availability series, the uptime and the list with its counts
+		// (the Zones page) are reads, not actions on a machine
+		reads := strings.NewReplacer("/api/nodes/availability", "", "/api/nodes/uptime", "", "get('/api/nodes'", "", "GET /api/nodes", "")
+		if name != "core/nodeactions.js" && strings.Contains(reads.Replace(src), "/api/nodes") {
 			t.Errorf("%s names /api/nodes: node actions go through core/nodeactions.js", name)
 		}
 		if strings.Contains(src, "readmit") || regexp.MustCompile(`del\(\s*['"`+"`"+`]/api/nodes`).MatchString(src) {

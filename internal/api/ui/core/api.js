@@ -1,17 +1,8 @@
 // REST helper. REST is only for what the page pulls on demand or pushes;
 // nothing here runs on a timer (live data comes over the WebSocket).
-// Every write carries X-Source: ui and X-Actor (the name set in the shell).
-
-const ACTOR_KEY = 'llm-scheduler.actor';
-
-export function getActor() {
-  try { return localStorage.getItem(ACTOR_KEY) || 'web'; } catch { return 'web'; }
-}
-export function setActor(name) {
-  const v = String(name || '').trim().slice(0, 64) || 'web';
-  try { localStorage.setItem(ACTOR_KEY, v); } catch { /* private mode */ }
-  return v;
-}
+// Every write carries X-Source: ui. It carries no actor: the page does not
+// ask who you are (there is no login), and the server signs a change made
+// with no access key as the default user (setting default_user_name).
 
 // The API root is what comes before /ui/ in the page's path, so the page also
 // works behind a path prefix, and at /ui/classic/ as well as at /ui/.
@@ -67,7 +58,7 @@ export async function get(path, params, opts = {}) {
 // opts.dryRun adds ?dry_run=1, opts.ifMatch sets If-Match, opts.comment sets
 // X-Comment. A 409 or 422 throws ApiError with .status and .body.
 export async function send(method, path, body, opts = {}) {
-  const headers = { Accept: 'application/json', 'X-Source': 'ui', 'X-Actor': hdr(getActor()) };
+  const headers = { Accept: 'application/json', 'X-Source': 'ui' };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (opts.ifMatch != null) headers['If-Match'] = String(opts.ifMatch);
   if (opts.comment) headers['X-Comment'] = hdr(opts.comment);
@@ -84,7 +75,7 @@ export async function send(method, path, body, opts = {}) {
 // upload('PUT', '/api/models/<key>/icon', file, {params: {scope: 'family'}})
 // sends a file (or a Blob) as the raw body with its own content type.
 export async function upload(method, path, blob, opts = {}) {
-  const headers = { Accept: 'application/json', 'X-Source': 'ui', 'X-Actor': hdr(getActor()), 'Content-Type': blob.type || 'application/octet-stream' };
+  const headers = { Accept: 'application/json', 'X-Source': 'ui', 'Content-Type': blob.type || 'application/octet-stream' };
   let resp;
   try { resp = await fetch(url(path, opts.params), { method, headers, body: blob }); } catch {
     throw new ApiError(0, 'The scheduler did not answer. Nothing was changed.', null);

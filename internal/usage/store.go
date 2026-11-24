@@ -251,6 +251,9 @@ func (s *Store) openFile() error {
 	if err := migrate(db, s.opt.Now(), s.log); err != nil {
 		return fail(err)
 	}
+	if err := migrateExt(db, s.opt.Now()); err != nil {
+		return fail(err)
+	}
 	var begins int64
 	if err := db.QueryRow(`SELECT value FROM usage_meta WHERE key = 'history_begins_at'`).Scan(&begins); err != nil {
 		return fail(fmt.Errorf("reading history_begins_at: %w", err))

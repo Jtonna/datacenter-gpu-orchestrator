@@ -48,6 +48,14 @@ func newTestMgr(t *testing.T, api *fakeAPI, mod ...func(*ManagerOptions)) *testM
 	ctx, cancel := context.WithCancel(context.Background())
 	m.Start(ctx)
 	t.Cleanup(func() { cancel(); m.Stop(context.Background()) })
+	// The loop's start-up schedule check runs in its own goroutine; a test
+	// that moves the clock waits for it, or the check would act on the
+	// test's suites at a time the test does not choose (next: the 30 s tick).
+	select {
+	case <-m.startupChecked:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the manager loop did not make its start-up schedule check")
+	}
 	return tm
 }
 
