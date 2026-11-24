@@ -7,7 +7,7 @@
 // artboard can be compared like for like. Node only, no dependencies.
 //
 // usage: node scripts/ui-fixture-server.mjs [--port 3122] [--ui internal/api/ui] [--host 0.0.0.0]
-//                                           [--state normal|empty|off|loading] [--sequence] [--live-timings]
+//                                           [--state normal|empty|off|loading] [--sequence] [--live-timings] [--wide-zones]
 //                                           [--health two|good|unknown] [--release 0.1.5]
 //                                           [--zones none|groups|live|one-group|fleet] [--uptime-partial]
 //                                           [--load start|reject|evict|loaded|unknown] [--drain eta|noeta] [--pinned]
@@ -93,6 +93,9 @@
 // (pz-0000000000000002) cancelled, as the server keeps a cancelled zone
 // listed with its state until its expiry; each answers by its id.
 //
+// --wide-zones: the request list also holds rows served by one, three and
+// six machines (ids 190 to 192), for the Requests page's Zones column.
+//
 // --sequence: a scripted change for screenshots: 4 s after a client
 // subscribes to the requests topic, the queued run 202 starts (a "started"
 // frame), so a queued row can be seen turning into a running one.
@@ -117,6 +120,7 @@ const HOST = opt('--host', '0.0.0.0');
 const STATE = opt('--state', 'normal');
 const SEQUENCE = argv.includes('--sequence');
 const LIVE_TIMINGS = argv.includes('--live-timings');
+const WIDE_ZONES = argv.includes('--wide-zones');
 const HEALTH = opt('--health', 'two');
 // --release: the scheduler's release the Scheduler row names (facts.release)
 const RELEASE = opt('--release', '0.1.5');
@@ -264,7 +268,12 @@ function requests(now) {
     row(195, { status: 'refused', reason: 'queue_timeout', message: 'it waited longer than the queue time limit', queued_at: now - 700000, ended_at: now - 100000, profile: QWEN, wait_ms: 600000 }),
     // a non-streamed request whose app left: cancelled, no token counted
     row(194, { status: 'cancelled', reason: 'client_left', message: 'cancelled by the app that sent it', stream: false, queued_at: now - 760000, started_at: now - 759800, ended_at: now - 751800, profile: QWEN, nodes: onSched([4, 1]), duration_ms: 8000, wait_ms: 200 }),
-  ];
+  ].concat(WIDE_ZONES ? [
+    // --wide-zones: one, three and six machines
+    row(192, { status: 'done', queued_at: now - 800000, started_at: now - 799800, ended_at: now - 795900, profile: QWEN, tokens_in: 32, prefill_tps: 53.3, tokens_out: 160, decode_tps: 48.0, nodes: nodes([3, 1]), duration_ms: 3900, wait_ms: 200 }),
+    row(191, { status: 'done', queued_at: now - 820000, started_at: now - 819800, ended_at: now - 817400, profile: BIG, tokens_in: 28, prefill_tps: 120, tokens_out: 134, decode_tps: 62.1, nodes: onSched([3, 0.5], [4, 0.5]), duration_ms: 2400, wait_ms: 200 }),
+    row(190, { status: 'done', queued_at: now - 840000, started_at: now - 839800, ended_at: now - 834500, profile: BIG, tokens_in: 39, prefill_tps: 377, tokens_out: 160, decode_tps: 47.8, nodes: nodes([1, 0.17], [2, 0.17], [3, 0.17], [4, 0.17], [5, 0.16], [6, 0.16]), duration_ms: 5300, wait_ms: 200 }),
+  ] : []);
 }
 
 // tokens in and out per hour of the mockup's day (00:00 to 23:00)
