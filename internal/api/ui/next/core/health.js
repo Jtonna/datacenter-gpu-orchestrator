@@ -84,6 +84,16 @@ function updated() {
 
 // healthPopup(onClose, onGo) -> the popup (the design's .hp). onGo(hash)
 // follows a link of it (the shell closes the popup and goes there).
+// rowText(row) -> the row's sentence as the server wrote it, with
+// facts.release set in mono where the sentence names it (the Scheduler row,
+// as the Health board draws it). The sentence wraps; it is never cut.
+function rowText(r) {
+  const rel = r.facts && typeof r.facts.release === 'string' ? r.facts.release : '';
+  const t = String(r.text || '');
+  const i = rel ? t.indexOf(rel) : -1;
+  return i < 0 ? t : [t.slice(0, i), h('span.mono', rel), t.slice(i + rel.length)];
+}
+
 export function healthPopup(onClose, onGo) {
   const d = state.health;
   const go = to => e => { if (!to) return; if (e) e.preventDefault(); onGo(to); };
@@ -101,7 +111,7 @@ export function healthPopup(onClose, onGo) {
       { key: 'hr-' + r.id, 'data-health': r.id, 'data-state': r.state },
       h('span', { class: 'hd ' + (DOT[r.state] || 'wait') }),
       h('span.hr-name', r.label),
-      h('span.mut.hr-text', { title: r.text }, r.text),
+      h('span.mut.hr-text', rowText(r)),
       h('span.hr-chev', { 'aria-hidden': 'true' }, icon(I.chev)))),
     h('div.hp-last',
       h('span', h('b', 'Last 2 hours')),

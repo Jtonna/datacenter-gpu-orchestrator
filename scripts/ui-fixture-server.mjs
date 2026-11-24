@@ -8,7 +8,7 @@
 //
 // usage: node scripts/ui-fixture-server.mjs [--port 3122] [--ui internal/api/ui] [--host 0.0.0.0]
 //                                           [--state normal|empty|off|loading] [--sequence] [--live-timings]
-//                                           [--health two|good|unknown]
+//                                           [--health two|good|unknown] [--release 0.1.5]
 //
 //   /ui/components.html  the shell's shared components (scripts/ui-fixture/components.js)
 //   /ui/...      the new shell (ui/next laid over the classic files, as the
@@ -57,6 +57,8 @@ const STATE = opt('--state', 'normal');
 const SEQUENCE = argv.includes('--sequence');
 const LIVE_TIMINGS = argv.includes('--live-timings');
 const HEALTH = opt('--health', 'two');
+// --release: the scheduler's release the Scheduler row names (facts.release)
+const RELEASE = opt('--release', '0.1.5');
 
 // ---------- the fixture (the Overview mockup's sample data) ----------
 
@@ -288,7 +290,7 @@ function health(now) {
     unknown ? row('zones', 'Zones', 'unknown', 'Status not read yet', '#/zones?filter=down')
       : two ? row('zones', 'Zones', 'problem', '7 of 8 reachable · 1 down', '#/zones?filter=down', 1) : row('zones', 'Zones', 'ok', '8 of 8 reachable', '#/zones'),
     two ? row('runs', 'Runs', 'attention', '1 failed in the last hour', '#/overview?runs=failed', 1) : row('runs', 'Runs', 'ok', 'None failed in the last hour', '#/overview'),
-    row('scheduler', 'Scheduler', 'ok', 'Running · release 0.1.5 · up 12 d', '#/about'),
+    Object.assign(row('scheduler', 'Scheduler', 'ok', `Running · release ${RELEASE} · up 12 d`, '#/about'), { facts: { release: RELEASE, uptime_s: 12 * 86400 } }),
     row('mcp', 'MCP server', 'ok', 'Running · 3 keys active', '#/mcp', 3),
     row('storage', 'Storage', 'ok', '50.3 of 240 GB used', '#/about', 21),
     unknown ? row('queue', 'Queue', 'unknown', 'Status not read yet', '#/monitor/queue') : row('queue', 'Queue', 'ok', '2 waiting · longest 5 min 48 s', '#/monitor/queue', 2),
