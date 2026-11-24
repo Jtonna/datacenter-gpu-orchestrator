@@ -325,7 +325,7 @@ func TestModelTrash_ReadOnlyFolder(t *testing.T) {
 	rev := te.svc.Revision()
 	te.ro = true
 	st, m := te.cdo("POST", "/api/models/delete/a.gguf", `{"comment":"x"}`, trashUI)
-	if st != 409 || errOf(m)["reason"] != "read_only" || !strings.HasPrefix(errOf(m)["message"].(string), "the models folder is read-only here") {
+	if st != 409 || errOf(m)["reason"] != "read_only" || !readOnlyOnce(errOf(m)["message"].(string), "mkdir") {
 		t.Fatalf("read-only delete: %d %v", st, m)
 	}
 	if !te.has("a.gguf") || te.has(".trash") || te.svc.Revision() != rev || len(te.profileIDs()) != 3 {
@@ -340,7 +340,7 @@ func TestModelTrash_ReadOnlyFolder(t *testing.T) {
 	te.api.opts.trashOps.Mkdir = os.Mkdir
 	te.ro = true
 	st, m = te.cdo("POST", "/api/models/delete/a.gguf", `{"comment":"x"}`, trashUI)
-	if st != 409 || errOf(m)["reason"] != "read_only" {
+	if st != 409 || errOf(m)["reason"] != "read_only" || !readOnlyOnce(errOf(m)["message"].(string), "rename") {
 		t.Fatalf("read-only rename: %d %v", st, m)
 	}
 	if !te.has("a.gguf") || len(te.profileIDs()) != 3 {
@@ -358,7 +358,7 @@ func TestModelTrash_ReadOnlyFolder(t *testing.T) {
 	id := m["trash_id"].(string)
 	te.ro = true
 	st, m = te.cdo("POST", "/api/models/trash/"+id+"/restore", `{"comment":"x"}`, trashUI)
-	if st != 409 || errOf(m)["reason"] != "read_only" {
+	if st != 409 || errOf(m)["reason"] != "read_only" || !readOnlyOnce(errOf(m)["message"].(string), "rename") {
 		t.Fatalf("read-only restore: %d %v", st, m)
 	}
 	if r, _ := te.cs.TrashGet(context.Background(), id); r.State != cfgstore.TrashTrashed || !te.has(filepath.Join(".trash", id, "a.gguf")) {
@@ -516,4 +516,13 @@ func TestModelTrash_ReadOnlyStartIsQuiet(t *testing.T) {
 	if te.has(".trash") || !te.has("a.gguf") || len(te.profileIDs()) != 3 {
 		t.Fatal("something changed")
 	}
+}
+
+// readOnlyOnce: the refusal says its first clause once, then the OS error
+// of op, then the sentence on the mount.
+func readOnlyOnce(msg, op string) bool {
+	const head = "the models folder is read-only here: nothing was changed ("
+	const tail = "). Deleting and restoring model files need the scheduler's models folder mounted read-write."
+	return strings.HasPrefix(msg, head+op+" ") && strings.HasSuffix(msg, "read-only file system"+tail) &&
+		strings.Count(msg, "read-only here") == 1
 }

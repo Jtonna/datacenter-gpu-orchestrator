@@ -135,7 +135,7 @@ func (s *Server) trashReady(w http.ResponseWriter) bool {
 
 // readOnlyMsg is the refusal of a write to a read-only models folder.
 func readOnlyMsg(err error) string {
-	return fmt.Sprintf("the models folder is read-only here: nothing was changed (%v). Deleting and restoring model files need the scheduler's models folder mounted read-write.", err)
+	return fmt.Sprintf("the models folder is read-only here: nothing was changed (%v). Deleting and restoring model files need the scheduler's models folder mounted read-write.", modelfiles.ReadOnlyCause(err))
 }
 
 // docAt is the configuration document with the revision it is at.

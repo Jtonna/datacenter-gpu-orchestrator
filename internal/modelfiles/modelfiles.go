@@ -303,14 +303,35 @@ func (d Dir) RemoveEmptyTrashDir(id string) error {
 	return classify(d.ops().Remove(p))
 }
 
-// classify turns a read-only or permission error into ErrReadOnly (keeping
-// the cause in the text).
+// ReadOnlyError is a write refused because the folder is read-only (or
+// not writable); Cause is the OS error. It matches ErrReadOnly.
+type ReadOnlyError struct{ Cause error }
+
+func (e *ReadOnlyError) Error() string        { return fmt.Sprintf("%v (%v)", ErrReadOnly, e.Cause) }
+func (e *ReadOnlyError) Is(target error) bool { return target == ErrReadOnly }
+func (e *ReadOnlyError) Unwrap() error        { return e.Cause }
+
+// ReadOnlyCause is the OS error behind a read-only refusal (err itself when
+// it is not one), so a message can say "read-only" once.
+func ReadOnlyCause(err error) error {
+	var ro *ReadOnlyError
+	if errors.As(err, &ro) {
+		return ro.Cause
+	}
+	return err
+}
+
+// classify turns a read-only or permission error into a *ReadOnlyError.
 func classify(err error) error {
 	if err == nil {
 		return nil
 	}
+	var ro *ReadOnlyError
+	if errors.As(err, &ro) {
+		return err
+	}
 	if IsReadOnly(err) {
-		return fmt.Errorf("%w (%v)", ErrReadOnly, err)
+		return &ReadOnlyError{Cause: err}
 	}
 	return err
 }
