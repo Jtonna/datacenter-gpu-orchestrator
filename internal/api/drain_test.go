@@ -27,6 +27,11 @@ func TestDrain_BusyModelUnloadsAfterItsRun(t *testing.T) {
 		}
 	}()
 	<-started
+	// An ordinary busy instance: the status has none of the new fields.
+	if b := body(t, e.get("/api/status")); !strings.Contains(b, `"in_flight":1`) || strings.Contains(b, `"drain`) ||
+		strings.Contains(b, `"pinned_nodes"`) || strings.Contains(b, `"runs_eta_s"`) {
+		t.Fatalf("ordinary status %s", b)
+	}
 	if b := status(t, e.post("/api/models/drain/alpha", ""), 200); !strings.Contains(b, `"msg":"draining"`) {
 		t.Fatal(b)
 	}

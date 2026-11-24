@@ -198,15 +198,19 @@ type InstanceStatus struct {
 	// StaleProfile: the profile was changed or deleted after this instance started; it keeps the definition it started with until its next load.
 	StaleProfile bool
 	VictimOf     string // profile of the claimed entry this instance drains or stops for
-	// Drain: an operator asked it to stop once its runs finish (drain.go).
-	// DrainEtaS (ready or draining with runs in flight) estimates when
-	// they end, so when a drain would stop it, from the profile's average
-	// run length (nil when no run of it has finished yet).
-	Drain     bool
+	// Drain: an operator asked it to stop once its runs finish (drain.go);
+	// DrainEtaS estimates when, while it drains (nil otherwise, or when no
+	// run of the profile has finished yet). Both are left out of the status
+	// of an instance not drained on request.
+	Drain     bool `view:"omitempty"`
 	DrainEtaS *float64
+	// RunsEtaS is the same estimate for any ready or draining instance with
+	// runs in flight: what a drain would wait (the zone action's dry run).
+	// Internal: never in the status document (view:"-").
+	RunsEtaS *float64 `view:"-"`
 	// PinnedNodes: loaded on these nodes by a one-off load on chosen nodes
-	// (pin.go), not by its profile's force_nodes.
-	PinnedNodes []string
+	// (pin.go), not by its profile's force_nodes; absent otherwise.
+	PinnedNodes []string `view:"omitempty"`
 	// LoadMode is how the instance's nodes get the weights: file_read (the
 	// workers read the model file), pushed (the host sends them), local (no
 	// remote worker); empty for a command profile or when not known.

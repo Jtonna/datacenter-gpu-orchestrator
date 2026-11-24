@@ -117,7 +117,10 @@ func (c *schedCore) instStatus(in *inst) InstanceStatus {
 		s.ReadySince = in.readyAt
 	}
 	if (in.state == stReady || in.state == stDraining) && in.inFlight > 0 {
-		s.DrainEtaS = c.drainETA(in)
+		s.RunsEtaS = c.drainETA(in)
+	}
+	if in.drain && in.state == stDraining {
+		s.DrainEtaS = s.RunsEtaS
 	}
 	if in.state == stStarting {
 		v := c.loadView(in)

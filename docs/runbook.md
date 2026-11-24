@@ -156,7 +156,7 @@ curl -s -X POST $H/api/nodes/02:00:00:00:00:01/readmit      -d '{"comment":"why"
 
 ### Drain a model: wait for its runs, then unload
 
-`POST /api/models/drain/<model>` (answer `eta_s`): the model admits nothing new, nothing is cut, and it unloads once its runs finish; `eta_s` comes from the profile's average run length (absent until a run of it has finished since Potluck started). A request arriving meanwhile queues and loads the model again once it has stopped. Taken back with `POST /api/models/undrain/<model>`. The status shows `drain: true` and `drain_eta_s`. A loading model is refused (409; force unload cancels a load). Audited as `unload` with `drain: true`. MCP: `drain_model`, `undrain_model`.
+`POST /api/models/drain/<model>` (answer `eta_s`): the model admits nothing new, nothing is cut, and it unloads once its runs finish; `eta_s` comes from the profile's average run length (absent until a run of it has finished since Potluck started). A request arriving meanwhile queues and loads the model again once it has stopped. Taken back with `POST /api/models/undrain/<model>`. The status shows `drain: true` and `drain_eta_s` on that instance (both left out on every other instance). A loading model is refused (409; force unload cancels a load). Audited as `unload` with `drain: true`. MCP: `drain_model`, `undrain_model`.
 
 ### Load a model on chosen zones
 
@@ -165,7 +165,7 @@ curl -s -X POST $H/api/plan -d '{"model":"gemma","nodes":["ps5-02","ps5-03"]}'  
 curl -s -X POST $H/api/load -d '{"model":"gemma","nodes":["ps5-02","ps5-03"]}'
 ```
 
-`nodes` (ids or names the fleet view holds, in device order) places this one load as `force_nodes` would, without changing the profile: as `force_nodes`, the fit check is skipped and a load that can never fit there is refused. The instance shows `pinned_nodes` in `/api/status` and is not reported stale for them; its next load follows the profile again. Refused with 409 (`already loaded or queued`) while the model is loaded, loading, stopping or queued: unload it first. Audited as `load` with `nodes`. MCP: `plan_load` and `load_model` take `nodes`.
+`nodes` (ids or names the fleet view holds, in device order) places this one load as `force_nodes` would, without changing the profile: as `force_nodes`, the fit check is skipped and a load that can never fit there is refused. The instance shows `pinned_nodes` in `/api/status` (absent on any other instance) and is not reported stale for them; its next load follows the profile again. Refused with 409 (`already loaded or queued`) while the model is loaded, loading, stopping or queued: unload it first. Audited as `load` with `nodes`. MCP: `plan_load` and `load_model` take `nodes`.
 
 ### A machine that is off across a restart
 
