@@ -140,6 +140,18 @@ b.mono,a.mono,.mono b,h1 .mono,h2 .mono,h3 .mono,b .mono{font-weight:500}
 .cols{display:flex;flex-wrap:wrap;gap:var(--gap-panel);align-items:flex-start}
 .cols>.wide{flex:999 1 560px;min-width:0;display:flex;flex-direction:column;gap:var(--gap-panel)}
 .cols>.side{flex:1 1 320px;max-width:420px;min-width:0;display:flex;flex-direction:column;gap:var(--gap-panel)}
+/* .cols>.side is a column, not the docked side panel: none of the panel's
+   look (.side below: white ground, left border, shadow, 620 px, clipped,
+   13 px text), which drew the right-hand column as a white box under its
+   cards. Also two columns side by side (About, Activity, Queue): a grid, so both columns
+   start on the same line at every desktop width (the flex row let the
+   right-hand column drop below the left one when the left one's content
+   was wide, Activity at 1280). Narrower: one column, as before. */
+.cols>.side{width:auto;background:none;border-left:0;box-shadow:none;overflow:visible;font-size:inherit}
+@media(min-width:1180px){
+  .cols{display:grid;grid-template-columns:minmax(0,1fr) clamp(320px,30%,420px);align-items:start}
+  .cols>.wide,.cols>.side{width:auto;max-width:none;min-width:0}
+}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(320px,100%),1fr));gap:var(--gap-panel)}
 
 .rail .menu-open-btn{display:none}
@@ -463,7 +475,7 @@ svg.chart .gridline{stroke:var(--line);stroke-width:1}
 svg .s-mint{stroke:var(--z-use3)}svg .s-amber{stroke:var(--z-load)}svg .s-coral{stroke:var(--failed)}svg .s-lilac{stroke:var(--lilac)}svg .s-mut{stroke:var(--mut)}
 svg .f-mint{fill:var(--z-use3)}svg .f-amber{fill:var(--z-load)}svg .f-coral{fill:var(--failed)}svg .f-lilac{fill:var(--lilac)}svg .f-mut{fill:var(--mut)}
 /* tokens chart: totals beside mirrored hourly bars, in above the line and out below */
-.tokens{display:flex;gap:18px;padding:2px var(--pad-panel) 14px}
+.tokens{display:flex;gap:18px;padding:2px var(--pad-panel) 14px;flex:1 1 auto;min-width:0;box-sizing:border-box;max-width:100%}
 .tokens-tot{width:150px;flex:none;display:flex;flex-direction:column;justify-content:flex-end;gap:56px;padding-bottom:29px}
 .tokens-plot{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:flex-end}
 .hbars{display:flex;gap:4px}
