@@ -953,3 +953,5 @@ table.runs{width:100%;border-collapse:collapse}
 .addz{max-height:240px;overflow:auto;border:1px solid #dfe5e1;border-radius:8px}
 .addrow{display:grid;grid-template-columns:16px 140px 1fr;gap:10px;align-items:center;padding:6px 10px;border-top:1px solid #e9eeeb;cursor:pointer}
 .addrow:first-child{border-top:0}
+.side-body:has(>.gp-acts){padding:0;gap:0;border-top:0}
+.sf .gp-act{padding:0;margin:0}

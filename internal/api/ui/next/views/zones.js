@@ -661,7 +661,9 @@ registerView({
       const win = (groupsDoc && groupsDoc.uptime_window) || (uptimeDoc && uptimeDoc.window);
       const since = win && win.complete === false && tms(win.covered_from) ? dayText(tms(win.covered_from)) : '';
       const fact = (label, value, more, attrs = {}) => h('div.fact', attrs, h('span.lbl', label), value, more || null);
-      const attn = doc.needs_attention || [];
+      // lost first, then set aside, each by name (the list's order)
+      const attn = (doc.needs_attention || []).slice().sort((a, b) => ((a.state === 'lost' ? 0 : 1) - (b.state === 'lost' ? 0 : 1)) ||
+        String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true }));
       const models = (doc.models || []).slice().sort((a, b) => (b.zones || 0) - (a.zones || 0));
       return [
         h('div.gp-acts', { key: 'acts' },
@@ -745,7 +747,7 @@ registerView({
         `ALL ${num(c.total)} ZONE${c.total === 1 ? '' : 'S'}`),
         pillsHere.map(([id, word, key]) => h('button', { class: 'fc' + (show === id ? ' on' : ''), type: 'button', 'aria-pressed': show === id ? 'true' : 'false', 'data-show': id,
           onclick: () => setQuery({ show: show === id ? '' : id }) }, `${num(c[key] || 0)} ${word}`)),
-        button([icon('M10 4v12M4 10h12'), 'Create new zone'], createInfo, 'pri', { 'data-act': 'create', style: 'margin-left:auto' }));
+        narrow ? null : button([icon('M10 4v12M4 10h12'), 'Create new zone'], createInfo, 'pri', { 'data-act': 'create', style: 'margin-left:auto' }));
       if (!st) return [pills, h('section.w.zfleet', { 'aria-label': 'Zones' }, skeleton(6))];
 
       // filters
@@ -920,7 +922,7 @@ registerView({
         bulkCount('unpause') ? bulkButton('unpause') : null,
         button('Force unload', () => forceUnload(chosenNow()), 'sm red', { 'data-bulk': 'force', disabled: !holds, title: holds ? null : 'None of the selected zones holds a model' }),
         button('Clear', () => { sel.clear(); view.refresh(); }, 'sm ghost', { 'data-act': 'clear' }));
-      const foot = h('div.bulk', { key: 'foot' }, chosen.length ? selPart : keyPart,
+      const foot = h('div.bulk', { key: 'foot' }, chosen.length ? selPart : narrow ? null : keyPart,
         pager({ page, pages, onPage: n => setQuery({ page: n === 1 ? '' : String(n) }, true), label: 'Zone pages' }));
 
       const body = all.length
