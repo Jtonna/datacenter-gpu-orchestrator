@@ -592,3 +592,48 @@ func TestUINextZonesDetail(t *testing.T) {
 			"fetchedQuery": []string{`^POST /api/unload \{"model":"alpha","force":true,"comment":"stuck"\}`}},
 	))
 }
+
+// Zones-Confirm: the unload dialog. It says what the unload ends (the runs
+// in flight, the helpers that go with a host), offers "Wait for the runs"
+// (drawn disabled with the reason: the server cannot wait and hold new runs
+// yet) or "Force unload now" (chosen when runs are going), and asks for a
+// comment; with nothing running it offers "Unload now" and sends no force.
+// Force unload on a selection of one zone opens this dialog too. The Reboot
+// dialog of the board is not built: Reboot stays disabled.
+func TestUINextZonesConfirm(t *testing.T) {
+	fleet := znFleet()
+	st := znStatus(fleet)
+	fetch := znFetch(fleet, true)
+	writes := map[string]any{}
+	for k, v := range fetch {
+		writes[k] = v
+	}
+	writes["POST /api/unload"] = map[string]any{"msg": "ok", "model": "alpha"}
+	idle := znStatus(fleet)
+	for _, in := range idle["instances"].([]any) {
+		in.(map[string]any)["in_flight"] = 0
+	}
+	typed := func(sel, v string) map[string]any { return map[string]any{"type": sel, "value": v} }
+
+	uiExec(t, znSpec(fetch,
+		map[string]any{"name": "confirm: runs in flight", "route": "#/zones/node-a", "status": st, "width": 1600,
+			"click": []any{"button[data-zp=force]"},
+			"page": []string{"Unload alpha from node-a?", "2 runs are in flight.", "is the host, so the model also unloads from its helper",
+				"Wait for the 2 runs, then unload", "Force unload now", "Both runs fail straight away.", "Cancel", "Unload"},
+			"pageHas": []string{"div[role=radiogroup] input[data-when=wait][disabled]", "input[data-when=force][checked]", "div.box.warn", "button.dng[data-go]"},
+			"titles":  []string{"Waiting for the runs is not built yet"}},
+		map[string]any{"name": "confirm: a comment is required", "route": "#/zones/node-a", "status": st, "width": 1600,
+			"click": []any{"button[data-zp=force]", "button[data-go]"}, "page": []string{"A comment is required."}},
+		map[string]any{"name": "confirm: nothing running", "route": "#/zones/node-a", "status": idle, "width": 1600,
+			"click": []any{"button[data-zp=force]"},
+			"page":  []string{"No run is in flight.", "Unload now"}, "pageNone": []string{"Wait for the"}},
+		map[string]any{"name": "confirm: one zone ticked opens the dialog", "route": "#/zones", "status": st,
+			"click": []any{"input[data-sel='" + znMac(1) + "']", "button[data-bulk=force]"},
+			"page":  []string{"Unload alpha from node-a?", "Force unload now"}},
+	))
+	uiExec(t, znSpec(writes,
+		map[string]any{"name": "confirm: unload without force", "route": "#/zones/node-a", "status": idle, "width": 1600,
+			"click":        []any{"button[data-zp=force]", typed("textarea[data-field=comment]", "done"), "button[data-go]"},
+			"fetchedQuery": []string{`^POST /api/unload \{"model":"alpha","force":false,"comment":"done"\}`}},
+	))
+}

@@ -430,6 +430,8 @@ registerView({
     }
     function forceUnload(xs) {
       const hold = xs.filter(holding);
+      // one zone: the Zones-Confirm dialog for the model it holds
+      if (hold.length === 1) return askUnload(holding(hold[0]), { zone: hold[0].id });
       const models = {};
       hold.forEach(x => (models[holding(x)] = models[holding(x)] || []).push(x));
       return ask({ title: `Force unload ${plural(hold.length, 'zone')}?`, go: 'Force unload', red: true,
@@ -563,7 +565,7 @@ registerView({
       return dialog({ title: o.zone ? ['Unload ', h('span.mono', model), ' from ', h('span.mono', nameOfId(o.zone)), '?'] : ['Unload ', h('span.mono', model), '?'], body: close => {
         const comment = h('textarea.textarea', { rows: 2, maxlength: 400, 'data-field': 'comment', placeholder: 'Why? It is kept in the audit log.', 'aria-label': 'Comment' });
         const err = h('span.err', { role: 'alert' });
-        const go = button('Unload', null, 'lg dng', { 'data-go': '' });
+        const go = button('Unload', null, 'lg dng solid', { 'data-go': '' });
         const cancel = button('Cancel', () => close(false), 'lg');
         const opt = (id, label, sub, extra = {}) => {
           const input = h('input', Object.assign({ type: 'radio', name: 'unload-when', 'data-when': id, checked: when === id, onclick: () => { when = id; box.querySelectorAll('.opt').forEach(l => l.classList.toggle('on', l.contains(input))); } }, extra));
