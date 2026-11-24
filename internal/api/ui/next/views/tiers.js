@@ -18,16 +18,22 @@
 //   - "Node overrides" (node_overrides) with membership fleet; with agents
 //     one line says they are not used (any stored ones are still listed, so
 //     they can be removed);
-//   - "Zones and their tier": which tier each known zone is in now, and
-//     with the unsaved tier list;
+//   - "Zones and their tier": which tier each known zone is in now;
 //   - ONE save bar ("N changes · Save"), and ONE save dialog: a dry run of
 //     every part first (a refusal shows the server's sentence and saves
 //     nothing), then the list of changes and the required comment, then
 //     the writes with If-Match.
 //
-// Reads: REST GET /api/config, GET /api/config/schema (scope "tier");
-// WebSocket "status" (view.nodes: hostname, priority, eligible, excluded,
-// auto, online, local) and "config".
+// The page NEVER works out which tier a zone is in: "Zones now", the
+// panel's zones and "Tier now" come only from the server (tier_zones on GET
+// /api/config/tiers; tier / tier_reason on GET /api/nodes). A tier's
+// "Never reached" warning is the server's never_reached; the save dialog
+// says the same when the unsaved order puts a tier below an empty match.
+//
+// Reads: REST GET /api/config, GET /api/config/schema (scope "tier"), GET
+// /api/config/tiers and GET /api/nodes (again on status messages, at most
+// every 5 s); WebSocket "status" (view.nodes: excluded, auto, eligible) and
+// "config".
 // Writes: PUT /api/config/tiers, /api/config/exclude-nodes,
 // /api/config/no-auto-nodes, /api/config/node-overrides (whole lists, only
 // the ones that changed), each with a dry run first, If-Match and the
@@ -36,7 +42,7 @@
 
 import { h } from '../core/dom.js';
 import { registerView, navigate } from '../core/router.js';
-import { state } from '../core/store.js';
+import { state, on } from '../core/store.js';
 import * as api from '../core/api.js';
 import { liveView, pageHead, badge, nodeChips, empty, banner, skeleton, button, dialog, schemaForm, confirm, toast } from '../core/ui.js';
 import { openPanel, openPanelNow } from '../core/panel.js';
@@ -49,46 +55,41 @@ import { savedBanner, watchConfig, noticeBanner } from '../core/changes.js';
 // Unsaved edits survive a visit to another screen: {tiers, exclude, noauto, overrides} or null.
 let draft = null;
 
-// A glob like the server's: * ? and [..], case-insensitive.
-export function globTest(pattern, s) {
-  const re = '^' + String(pattern).replace(/[.+^${}()|\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$';
-  try { return new RegExp(re, 'i').test(s); } catch { return false; }
-}
+const zname = n => n.hostname || n.name || n.id;
 
-// Does a zone (from the status view) fit a tier's rule? true, false, or null
-// when the rule uses what the status does not carry (role, source, platform,
-// device).
-function fits(node, tier) {
-  const m = tier.match || {};
-  if (m.hostname && !globTest(m.hostname, node.hostname || node.id)) return false;
-  if (m.local != null && !!node.local !== !!m.local) return false;
-  if (m.role || m.source || m.platform || m.device) return null;
-  return true;
-}
-export function matchTier(node, tiers) {
-  for (let i = 0; i < tiers.length; i++) {
-    const f = fits(node, tiers[i]);
-    if (f === true) return { index: i, certain: true };
-    if (f === null) return { index: i, certain: false };
-  }
-  return { index: -1, certain: true };
-}
-const zname = n => n.hostname || n.id;
-
-// The rule in plain words.
+// The rule in plain words: every field of the match, joined with " and ".
+// A key the page does not know is written as "<key> is <value>", never
+// dropped. "Every zone (no rule)" only for a truly empty match.
+const RULE_WORDS = {
+  hostname: v => 'host name matches ' + v,
+  role: v => 'role is ' + v,
+  source: v => 'source is ' + v,
+  platform: v => 'platform is ' + v,
+  device: v => 'a device name matches ' + v,
+  local: v => (v === true ? 'only the local zone' : v === false ? 'only remote zones' : 'local is ' + v),
+};
+const RULE_ORDER = ['hostname', 'role', 'source', 'platform', 'device', 'local'];
+const isEmptyMatch = m => !m || !Object.keys(m).length;
 export function ruleText(t) {
   const m = (t && t.match) || {};
-  const bits = [];
-  if (m.hostname) bits.push('host name matches ' + m.hostname);
-  if (m.role) bits.push('role is ' + m.role);
-  if (m.source) bits.push('source is ' + m.source);
-  if (m.platform) bits.push('platform is ' + m.platform);
-  if (m.device) bits.push('a device matches ' + m.device);
-  if (m.local === true) bits.push('only the local zone');
-  if (m.local === false) bits.push('only remote zones');
+  const keys = Object.keys(m).sort((a, b) => {
+    const x = RULE_ORDER.indexOf(a), y = RULE_ORDER.indexOf(b);
+    return (x < 0 ? 99 : x) - (y < 0 ? 99 : y) || (a < b ? -1 : a > b ? 1 : 0);
+  });
+  const bits = keys.map(k => (RULE_WORDS[k] ? RULE_WORDS[k](m[k]) : k + ' is ' + (typeof m[k] === 'string' ? m[k] : JSON.stringify(m[k]))));
   if (!bits.length) return 'Every zone (no rule)';
   const s = bits.join(' and ');
   return s[0].toUpperCase() + s.slice(1);
+}
+// The sentence of a tier below an empty match (the server's never_reached).
+export const neverText = above => 'Never reached: tier ' + above + ' above matches every zone';
+// neverReached(tiers) -> [{index, above}] for each tier below an empty match
+// (1-based); this reads the order of the list only, not which zone is where.
+export function neverReached(tiers) {
+  const out = [];
+  let above = 0;
+  tiers.forEach((t, i) => { if (above) out.push({ index: i + 1, above }); else if (isEmptyMatch(t.match)) above = i + 1; });
+  return out;
 }
 const facts = t => ({
   priority: t.priority != null ? String(t.priority) : DASH,
@@ -122,6 +123,8 @@ function tierDialog(fields, initial, index, isNew) {
         if (!form.validate()) return;
         const v = form.values();
         const out = { match: {} };
+        // a key the form does not offer stays as it was
+        for (const [k, x] of Object.entries((initial && initial.match) || {})) if (!MATCH_KEYS.includes(k) && k !== 'local') out.match[k] = x;
         for (const k of MATCH_KEYS) if (v.match && v.match[k]) out.match[k] = v.match[k];
         if (v.where === LOCAL_CHOICES[1]) out.match.local = true; else if (v.where === LOCAL_CHOICES[2]) out.match.local = false;
         if (v.priority != null && v.priority !== '') out.priority = v.priority;
@@ -169,6 +172,7 @@ registerView({
     let route = r0 || { query: {} };
     let cfg = null, fields = null, error = '', saved = null, refusal = null, alive = true, saving = false;
     let panel = null, panelFor = '';
+    let tierDoc = null, nodesDoc = null;
     const addText = { exclude: '', noauto: '' }, addErr = { exclude: '', noauto: '' };
 
     const rev = () => (cfg ? cfg.revision : 0);
@@ -209,12 +213,33 @@ registerView({
       return out;
     }
 
+    // The server's membership: GET /api/config/tiers (tier_zones, each tier's
+    // zones now, and never_reached) and GET /api/nodes (each zone's tier or
+    // tier_reason; the local node too). Read with the configuration and again
+    // on the live channel's status messages, at most every 5 s (no timer of
+    // their own). A failed read keeps what was there (the page then says
+    // "not known").
+    const readFacts = async () => {
+      await Promise.all([
+        api.get('/api/config/tiers').then(v => { tierDoc = v; }, () => {}),
+        api.get('/api/nodes').then(v => { nodesDoc = v; }, () => { nodesDoc = null; }),
+      ]);
+      if (alive) { view.refresh(); if (panel) panel.redraw(); }
+    };
+    let soon = null, lastRead = 0;
+    const offStatus = on('status', () => {
+      if (!alive || soon) return;
+      soon = setTimeout(() => { soon = null; lastRead = Date.now(); readFacts(); }, Math.max(0, 5000 - (Date.now() - lastRead)));
+    });
+
     async function load() {
       try {
         const [c, f] = await Promise.all([loadConfig(), loadSchema()]);
         cfg = c; fields = fieldsOf(f, 'tier'); error = '';
         if (draft && !dirtyAny()) draft = null;
       } catch (e) { error = e.message; }
+      lastRead = Date.now();
+      await readFacts();
       if (alive) { view.refresh(); syncPanel(); }
     }
     const watch = watchConfig({ revision: rev, pending: () => !!draft, refresh: load, redraw: () => view.refresh() });
@@ -225,6 +250,13 @@ registerView({
       dirty.noauto() ? { what: 'the named-only zones', path: '/api/config/no-auto-nodes', body: { no_auto_nodes: draft.noauto } } : null,
       dirty.overrides() ? { what: 'the node overrides', path: '/api/config/node-overrides', body: { node_overrides: draft.overrides } } : null,
     ].filter(Boolean);
+
+    // tiers the unsaved order leaves below an empty match that were reached before
+    function newlyNever() {
+      if (!dirty.tiers()) return [];
+      const before = neverReached(cfg.tiers || []);
+      return neverReached(draft.tiers).filter(x => !before.some(b => same(cfg.tiers[b.index - 1], draft.tiers[x.index - 1])));
+    }
 
     function refused(e, op) {
       const err = e && e.body && e.body.error;
@@ -260,11 +292,13 @@ registerView({
         body: h('div.col', { style: 'gap:12px' },
           h('p', 'This writes a new configuration revision on top of revision ' + rev() + '. The scheduler uses it at once.'),
           h('ul.trs-chgs', lines.map(l => h('li', { 'data-chg': l.kind }, l.text, l.mark ? h('span.mut', ' (' + l.mark + ')') : null))),
-          warnings.length ? banner('warn', h('span', h('b', 'Check this first. '), warnings.join(' '))) : null),
+          warnings.length ? banner('warn', h('span', h('b', 'Check this first. '), warnings.join(' '))) : null,
+          newlyNever().map(x => h('div.banner.warn', { role: 'status', 'data-never': String(x.index) }, h('span.grow', h('b', 'Tier ' + x.index + ': '), neverText(x.above))))),
         comment: { label: 'Comment', required: true, placeholder: 'Why are you changing this? It is kept in the audit log.' },
         actions: [{ label: 'Cancel', value: false }, { label: 'Save ' + plural(lines.length, 'change'), kind: 'pri', value: true }],
       });
-      if (!ans || ans.value !== true) return;
+      // nothing is saved without the comment (the dialog keeps Save disabled while it is empty)
+      if (!ans || ans.value !== true || !ans.comment) return;
       let revision = rev(), done = 0;
       for (const op of list) {
         try {
@@ -310,7 +344,8 @@ registerView({
       const ok = await confirm({
         title: 'Remove tier ' + (i + 1) + '?', intro: 'The tier leaves the list. Nothing changes on the server until you save.',
         hits: [{ kind: '', text: ['Rule: ', ruleText(t)] },
-          { kind: mine.length ? 'x' : '', text: mine.length ? ['These zones are in this tier now and would join the next tier that fits, or none: ', nodeChips(mine.map(zname))] : 'No known zone is in this tier now.' }],
+          mine == null ? { kind: '', text: zonesUnknown(i) }
+            : { kind: mine.length ? 'x' : '', text: mine.length ? ['These zones are in this tier now and would join the next tier that fits, or none: ', nodeChips(mine.map(zname))] : 'No zone is in this tier now.' }],
         confirmLabel: 'Remove from the list', danger: true,
       });
       if (!ok) return;
@@ -324,15 +359,41 @@ registerView({
       edit(w => { if (node && node !== v.node) delete w.overrides[node]; w.overrides[v.node] = { rpc: v.rpc }; });
     }
 
-    // the zones in tier i now: by the rule when it can be checked here, else
-    // by the priority the server gives the zone
+    // The zones in (draft) tier i now, ONLY from the server's tier_zones (GET
+    // /api/config/tiers): the row is matched to the stored tier it is (same
+    // fields), and that tier's entry is read. A new or edited tier, or no
+    // answer yet: null (not known; drawn as a dash). The table, the panel and
+    // the remove dialog all read this one function.
+    function savedIndexOf(i) {
+      const tiers = work().tiers, stored = (tierDoc && tierDoc.tiers) || [];
+      const used = new Set();
+      for (let j = 0; j <= i; j++) {
+        const k = stored.findIndex((s, x) => !used.has(x) && same(s, tiers[j]));
+        if (k < 0) { if (j === i) return -1; continue; }
+        used.add(k);
+        if (j === i) return k;
+      }
+      return -1;
+    }
+    function tierEntry(i) {
+      if (!tierDoc || !Array.isArray(tierDoc.tier_zones)) return null;
+      const k = savedIndexOf(i);
+      return k < 0 ? null : tierDoc.tier_zones.find(z => z.index === k + 1) || null;
+    }
     function zonesOf(i) {
-      const tiers = work().tiers, t = tiers[i];
-      return viewNodes(state.status).filter(n => {
-        const m = matchTier(n, tiers);
-        if (m.certain) return m.index === i;
-        return m.index <= i && t && n.priority === t.priority;
-      });
+      const e = tierEntry(i);
+      return e ? (e.zones || []) : null;
+    }
+    const zonesUnknown = i => (!tierDoc ? 'Not known yet: the tier list with its zones has not been read.'
+      : !Array.isArray(tierDoc.tier_zones) ? 'Not known in this run: the server does not report the zones of each tier.'
+        : 'Not known until you save: this tier is new or edited.');
+    // the server's never_reached for a row of the saved list (null while the list is edited)
+    function neverOf(i) {
+      if (dirty.tiers()) return null;
+      const e = tierEntry(i);
+      if (!e || !e.never_reached) return null;
+      const above = work().tiers.findIndex(t => !t.match || !Object.keys(t.match).length);
+      return neverText(above >= 0 ? above + 1 : '?');
     }
 
     // ---- the side panel (?tier=<n>) ----
@@ -350,16 +411,18 @@ registerView({
       const tier = () => work().tiers[idx()] || {};
       panel = openPanel({
         label: 'Tier', name: 'Tier ' + want,
-        title: () => 'Tier ' + panelFor + ' · ' + plural(zonesOf(idx()).length, 'zone'),
+        title: () => { const m = zonesOf(idx()); return 'Tier ' + panelFor + ' · ' + (m == null ? DASH + ' zones' : plural(m.length, 'zone')); },
         sub: () => ruleText(tier()),
         body: () => {
-          const t = tier(), f = facts(t), mine = zonesOf(idx()), n = work().tiers.length;
+          const t = tier(), f = facts(t), mine = zonesOf(idx()), n = work().tiers.length, never = neverOf(idx());
           return [
+            never ? h('div.banner.warn', { key: 'never', role: 'status', 'data-never': 'panel' }, h('span.grow', never)) : null,
             h('div.trs-facts', { key: 'facts' },
               [['Checked', ordinal(idx()) + ' of ' + n], ['Priority', f.priority], ['Headroom', f.headroom], ['Memory', f.memory === 'Shared' ? 'Shared with the system' : 'Dedicated'], ['Link speed', f.link], ['Settle time', f.settle]]
                 .map(([k, v]) => h('div', h('span.lbl', k), h('b', v)))),
             h('h3.trs-sub', { key: 'zh' }, 'Zones in this tier now'),
-            mine.length ? h('div.trs-zones', { key: 'zones' }, nodeChips(mine.map(zname))) : h('p.mut', { key: 'none' }, 'No known zone is in this tier now.'),
+            mine == null ? h('p.mut', { key: 'unknown', title: zonesUnknown(idx()) }, DASH + ' ' + zonesUnknown(idx()))
+              : mine.length ? h('div.trs-zones', { key: 'zones', 'data-panel-zones': String(mine.length) }, nodeChips(mine.map(zname))) : h('p.mut', { key: 'none', 'data-panel-zones': '0' }, 'No zone is in this tier now.'),
             dirty.tiers() ? h('p.mut', { key: 'unsaved' }, 'With the unsaved tier list. Nothing changes until you save.') : null,
             h('p.mut', { key: 'help' }, 'Order decides which tier a zone joins: the first that fits. Priority decides which tier a model is placed on first: a lower number is tried first.'),
           ];
@@ -395,15 +458,17 @@ registerView({
               h('th.r', { scope: 'col', title: 'How long a zone rests after a model leaves it' }, 'Settle'), h('th.r', { scope: 'col' }, 'Zones now'),
               h('th.trs-mv', { scope: 'col' }, h('span.sr', 'Move')))),
             h('tbody', tiers.map((t, i) => {
-              const f = facts(t), mine = zonesOf(i), n = String(i + 1);
+              const f = facts(t), mine = zonesOf(i), n = String(i + 1), never = neverOf(i);
               const edited = dirty.tiers() && !t0.some(o => same(o, t));
               const openRow = () => go({ tier: n });
               return h('tr', { key: 'tier-' + i, class: 'click' + (open === n ? ' sel' : ''), tabindex: '0', 'data-tier': n, 'aria-selected': open === n ? 'true' : null,
                 onclick: e => { if (!e.target.closest('button')) openRow(); }, onkeydown: e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openRow(); } } },
                 h('td.r', n),
-                h('td.trs-rule', h('span', { class: (t.match && Object.keys(t.match).length) ? null : 'mut' }, ruleText(t)), edited ? [' ', badge('Edited', 'q')] : null),
+                h('td.trs-rule', h('span', { class: (t.match && Object.keys(t.match).length) ? null : 'mut' }, ruleText(t)), edited ? [' ', badge('Edited', 'q')] : null,
+                  never ? h('span.trs-never', { 'data-never': n }, never) : null),
                 h('td.r', f.priority), h('td.r', f.headroom), h('td', f.memory), h('td.r', f.link), h('td.r', f.settle),
-                h('td.r', { 'data-zones': '', title: mine.length ? mine.map(zname).join(', ') : 'No known zone is in this tier now' }, num(mine.length)),
+                mine == null ? h('td.r.mut', { 'data-zones': '-', title: zonesUnknown(i) }, DASH)
+                  : h('td.r', { 'data-zones': String(mine.length), title: mine.length ? mine.map(zname).join(', ') : 'No zone is in this tier now' }, num(mine.length)),
                 h('td.trs-mv',
                   h('button.trs-ib', { type: 'button', 'aria-label': 'Move tier ' + n + ' up', title: 'Move up', disabled: i === 0, 'data-mv': 'up', onclick: () => move(i, -1) }, '↑'),
                   h('button.trs-ib', { type: 'button', 'aria-label': 'Move tier ' + n + ' down', title: 'Move down', disabled: i === tiers.length - 1, 'data-mv': 'down', onclick: () => move(i, 1) }, '↓')));
@@ -450,25 +515,33 @@ registerView({
           : agents ? null : h('p.trs-none.mut', 'No overrides: every zone uses the address the fleet console reports.'));
     }
 
+    // "Zones and their tier": the tier each zone is in now, ONLY from the
+    // server (GET /api/nodes, else the status agents): `tier` or, when it
+    // fits none, `tier_reason`. Neither (removed, or not seen since start):
+    // a dash, "not known in this run". An excluded zone keeps the tier the
+    // server gives and reads "Excluded" under Takes models.
     function zonesPanel() {
-      const nodes = viewNodes(state.status), tiers = work().tiers, t0 = cfg.tiers || [];
-      const now = n => { const p = n.priority; const i = p ? t0.findIndex(t => t.priority === p) : -1; return i >= 0 ? 'Tier ' + (i + 1) : null; };
+      const view0 = viewNodes(state.status), byId = new Map(view0.map(n => [n.id, n]));
+      const src = nodesDoc && Array.isArray(nodesDoc.nodes) ? nodesDoc.nodes
+        : state.status && Array.isArray(state.status.agents) && state.status.agents.length ? state.status.agents : view0;
+      const zones = src.filter(z => z.state !== 'removed' && z.zone_state !== 'removed');
+      const tierCell = z => (z.tier && z.tier.index ? h('td', { 'data-tier-now': String(z.tier.index) }, 'Tier ' + z.tier.index)
+        : h('td.mut', { 'data-tier-now': '-', title: z.tier_reason || 'not known in this run' }, DASH, h('span.sr', ' ' + (z.tier_reason || 'not known in this run'))));
+      const takes = (z, v) => ((z.excluded || (v && v.excluded)) ? badge('Excluded', 'dash', 'exclude_nodes: never receives a model')
+        : (z.auto === false || (v && v.auto === false)) ? badge('Named only', 'n', 'no_auto_nodes') : (v ? v.eligible : z.placeable) ? 'Yes' : h('span.mut', 'Not now'));
+      const online = (z, v) => (z.state ? (z.state === 'active' ? 'Online' : z.state === 'lost' ? h('span.err-t', 'Offline') : h('span.mut', z.state))
+        : v && v.online ? 'Online' : h('span.err-t', 'Offline'));
       return h('section.panel.trs', { key: 'zones' },
-        h('div.ch', h('h2', 'Zones and their tier'), h('span.note', plural(nodes.length, 'zone'))),
-        h('p.trs-help', 'From the live fleet view. Rules on role, source, platform or device cannot be checked here: those zones show the tier the scheduler reports.'),
-        !nodes.length ? h('p.trs-none.mut', 'No zone is known yet. Machines appear here when their agent registers.')
+        h('div.ch', h('h2', 'Zones and their tier'), h('span.note', plural(zones.length, 'zone'))),
+        h('p.trs-help', 'The tier each zone is in now, as the scheduler reports it.' + (dirty.tiers() ? ' Your unsaved tier changes move zones only after you save.' : '')),
+        !zones.length ? h('p.trs-none.mut', 'No zone is known yet. Machines appear here when their agent registers.')
           : h('div.trs-scroll', h('table.tbl.trs-ztbl',
             h('thead', h('tr', h('th', { scope: 'col' }, 'Zone'), h('th', { scope: 'col' }, 'Tier now'),
-              dirty.tiers() ? h('th', { scope: 'col' }, 'With your unsaved tiers') : null,
               h('th', { scope: 'col' }, 'Takes models'), h('th', { scope: 'col' }, 'Online'))),
-            h('tbody', nodes.map(n => {
-              const m = matchTier(n, tiers);
-              return h('tr', { key: 'z-' + n.id },
-                h('td.mono', zname(n)),
-                h('td', now(n) || h('span.mut', 'No tier')),
-                dirty.tiers() ? h('td', m.index < 0 ? h('span.err-t', 'No tier: never used') : ['Tier ' + (m.index + 1), m.certain ? null : h('span.sub', 'depends on a rule not checked here')]) : null,
-                h('td', n.excluded ? badge('Excluded', 'dash', 'exclude_nodes') : n.auto === false ? badge('Named only', 'n', 'no_auto_nodes') : n.eligible ? 'Yes' : h('span.mut', 'Not now')),
-                h('td', n.online ? 'Online' : h('span.err-t', 'Offline')));
+            h('tbody', zones.map(z => {
+              const v = byId.get(z.id);
+              return h('tr', { key: 'z-' + z.id, 'data-zone': zname(z) },
+                h('td.mono', zname(z), z.local ? h('span.mut', ' (local)') : null), tierCell(z), h('td', takes(z, v)), h('td', online(z, v)));
             })))));
     }
 
@@ -503,7 +576,7 @@ registerView({
     load();
     return {
       update(r) { route = r; view.refresh(); syncPanel(); },
-      unmount() { alive = false; watch.off(); if (panel) { const p = panel; panel = null; p.close(); } view.unmount(); },
+      unmount() { alive = false; offStatus(); if (soon) clearTimeout(soon); watch.off(); if (panel) { const p = panel; panel = null; p.close(); } view.unmount(); },
     };
   },
 });

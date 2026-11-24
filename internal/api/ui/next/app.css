@@ -1284,3 +1284,4 @@ table.runs{width:100%;border-collapse:collapse}
 .trs-facts>div{display:flex;flex-direction:column;gap:2px}
 .trs-sub{margin:4px 0 8px;font-size:13px;font-weight:800}
 .trs-zones{margin-bottom:12px}
+.trs-tbl td.trs-rule .trs-never{display:block;margin-top:3px;color:var(--warn-text,#8a5a00);font-size:12px;font-weight:700}

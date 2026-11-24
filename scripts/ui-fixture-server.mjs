@@ -35,8 +35,11 @@
 // --config normal|unknown|fresh: the settings state (config.mjs). --catalog:
 // /api/models lists the profile fixture's model files. --named-only <zone>:
 // that zone is in no_auto_nodes (auto: false), drawn "Named only".
-// --tiers live: GET /api/config carries the tier lists as the live pool has
-// them (four tiers, two excluded, one named only), for the Tiers and zones page.
+// --tiers live|catchall (with --zones live): the Tiers and zones page's
+// states (scripts/ui-fixture/tiers.mjs): GET /api/config carries the tier
+// lists, GET /api/config/tiers adds tier_zones, the zones on GET /api/nodes
+// and /api/status agents carry tier / tier_reason as the server gives them,
+// and GET /api/nodes lists the local node.
 //
 // --state empty: no request in the period; off: the request log is off
 // (usage.db not open); loading: the request routes never answer.
@@ -100,6 +103,7 @@ import { zonesStatus, counts, groupsDoc, uptimeDoc, fleetStrip } from './ui-fixt
 import { schema as cfgSchema, configDoc, storedConfig, dryRun } from './ui-fixture/config.mjs';
 import { profileEntries, profileSpecs, catalog as cfgCatalog, planAnswer } from './ui-fixture/profiles.mjs';
 import { Keys } from './ui-fixture/keys.mjs';
+import { tierLists, applyTiers, localEntry, tiersDoc } from './ui-fixture/tiers.mjs';
 
 const argv = process.argv.slice(2);
 const opt = (k, d) => { const i = argv.indexOf(k); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
@@ -163,16 +167,9 @@ function pendingRoute(req, res, p) {
 // names-only /api/agents answer stays.
 const KEYS_STATE = opt('--keys', '');
 const KEYS = KEYS_STATE ? new Keys(KEYS_STATE) : null;
-// --tiers live: the tier lists as the live pool has them (Tiers and zones page): a catch-all,
-// "host name matches alienware*", "only the local zone", "laptop-*"; two zones excluded, one named only
+// --tiers live|catchall: the Tiers and zones page (tiers.mjs)
 const TIERS = opt('--tiers', '');
-const TIER_LISTS = TIERS === 'live' ? {
-  tiers: [{ match: {}, priority: 1, headroom_mib: 1024, shared_memory: true, link_mb_s: 100, settle: '3s' },
-    { match: { hostname: 'alienware*' }, priority: 2, headroom_mib: 256, link_mb_s: 60, settle: '8s' },
-    { match: { local: true }, priority: 3, headroom_mib: 450, settle: '2s' },
-    { match: { hostname: 'laptop-*' }, priority: 4, headroom_mib: 500, link_mb_s: 10 }],
-  exclude_nodes: ['laptop-02', '02:00:00:00:00:77'], no_auto_nodes: ['laptop-01'], node_overrides: {},
-} : null;
+const TIER_LISTS = tierLists(TIERS);
 const cfgDoc = () => { const d = configDoc(CONFIG); d.settings.requests_live_timings = LIVE_TIMINGS; return d; };
 
 // ---------- the fixture (the Overview mockup's sample data) ----------
@@ -197,7 +194,7 @@ const iso = ms => new Date(ms).toISOString();
 const SCHED = { id: 'scheduler', name: 'scheduler', role: 'host' };
 
 // status(now) -> the status of the --zones state
-const status = now => named(zonesStatus(baseStatus(now), now, ZONES, { drain: DRAIN, pinned: PINNED, hostUptime: !NO_HOST_UPTIME }));
+const status = now => applyTiers(named(zonesStatus(baseStatus(now), now, ZONES, { drain: DRAIN, pinned: PINNED, hostUptime: !NO_HOST_UPTIME })), TIERS);
 const named = st => { if (NAMED_ONLY) for (const n of (st.view && st.view.nodes) || []) if (n.hostname === NAMED_ONLY) n.auto = false; return st; };
 
 function baseStatus(now) {
@@ -419,7 +416,8 @@ const server = http.createServer((req, res) => {
     { ts: now - 70 * 60000, seq: 39, type: 'nodeLost', severity: 'error', nodes: ['ps5-06'], summary: 'Node ps5-06 was lost.', data: {} },
   ], total_matching: 3 });
   if (p === '/api/health') return json(res, 200, health(now));
-  if (p === '/api/nodes') { const st = status(now); return json(res, 200, { nodes: st.agents, counts: counts(st.agents) }); }
+  if (p === '/api/nodes') { const st = status(now), l = localEntry(TIERS); return json(res, 200, { nodes: l ? [...st.agents, l] : st.agents, counts: counts(st.agents) }); }
+  if (p === '/api/config/tiers') return json(res, 200, tiersDoc(TIERS, status(now), cfgDoc().revision));
   if (p === '/api/groups') return json(res, 200, groupsDoc(status(now), now, UPTIME_PARTIAL));
   if (p === '/api/nodes/uptime') return json(res, 200, uptimeDoc(status(now), now, UPTIME_PARTIAL));
   if (p === '/api/nodes/availability') return json(res, 200, availability(u.searchParams, now));
