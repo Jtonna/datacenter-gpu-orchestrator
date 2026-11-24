@@ -480,6 +480,17 @@ A node whose GPU uses system memory freezes when a load takes all of it, so the 
 
 The agent's own watchdog (`--watchdog-floor-mib`, default 1000) kills a launch whose node falls below its floor.
 
+#### Stable placement among equal consoles
+
+Free memory on an idle console moves by 2 to 25 MiB between reads. `placement_tolerance_mib` (128) keeps an automatic profile's plan from following that noise:
+
+- **Equal consoles.** Consoles whose usable memory differs by less than the tolerance are equal. Among equal consoles that fit, a warm one comes first (the last load that became ready there used the profile's model file, so the file is likely in its page cache), then the one whose name sorts first. A console clearly smaller (by the tolerance or more) is still preferred for a single-console load, as before: the smallest that fits.
+- **Held figure.** The figure a console is ordered by moves only when its usable memory has moved by more than twice the tolerance, so readings that jitter by up to the tolerance either way never reorder anything.
+- **Even split.** A model split over equal consoles is split evenly (by the class figure) when every console holds its share that way on its exact figure; otherwise it is split by the exact figures, as before. The pre-flight keeps the even split only while its exact figures are within twice the tolerance of the held ones and still hold every share; the launch splits exactly as the plan said.
+- **What it never changes.** Fit is always checked on the exact figures: a console that does not fit is never chosen because it sorts first, and every profile's action (start, queue, reject) is what it was. Forced profiles and loads on chosen zones are untouched: their plans are byte-identical to before, and their rows still follow the live figures. The tight-fit rule, the margins and the watchdog floor are unchanged.
+
+`0` turns it off: the smallest budget that fits, then the id, and the split by exact budget.
+
 #### Tightening or loosening the reservation
 
 The memory reservation rule is off by default. It is changed at run time like any setting, and `GET /api/system` shows what is in force under `reserve`:

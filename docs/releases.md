@@ -2,6 +2,12 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: stable placement among equal consoles
+
+No agent change, no new port, no schema change.
+
+- **An idle plan no longer follows free-memory noise.** New setting `placement_tolerance_mib` (128): consoles within it are equal, taken warm first (the last ready load there used the profile's model file), then by name; a split over them is even. The figure a console is ordered by moves only after its usable memory moves by more than twice the tolerance. Fit is still checked on the exact figures, so every profile's action is unchanged; forced profiles and chosen-zones loads are byte-identical to before. `0` restores the old order. Runbook: "Stable placement among equal consoles".
+
 ## Scheduler image: each zone's tier
 
 No agent change, no new port, no schema change.

@@ -154,8 +154,20 @@ func HostLaunchArgs(p core.Profile, noMmap bool) []string {
 	return append(args, profileTail(p)...)
 }
 
+// steadySplit: every node of the placement carries a steady split weight
+// (core.PlacedNode.SplitMiB, set by the placer's stable order).
+func steadySplit(pl core.Placement) bool {
+	for _, node := range pl.Nodes {
+		if node.SplitMiB <= 0 {
+			return false
+		}
+	}
+	return len(pl.Nodes) > 1
+}
+
 // splitWeights returns the per-node tensor split weights in placement order:
-// the placement's explicit split, else the profile's, else the node budgets.
+// the placement's explicit split, else the profile's, else the steady split
+// weights when every node has one, else the node budgets.
 // For a single node it returns that node's weight without validating it.
 func splitWeights(p core.Profile, pl core.Placement) ([]int, error) {
 	n := len(pl.Nodes)
@@ -168,6 +180,11 @@ func splitWeights(p core.Profile, pl core.Placement) ([]int, error) {
 		w = pl.TensorSplit
 	case len(p.TensorSplit) > 0:
 		w = p.TensorSplit
+	case steadySplit(pl):
+		w = make([]int, n)
+		for i, node := range pl.Nodes {
+			w[i] = node.SplitMiB
+		}
 	default:
 		w = make([]int, n)
 		for i, node := range pl.Nodes {

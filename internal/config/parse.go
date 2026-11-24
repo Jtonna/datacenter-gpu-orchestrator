@@ -30,7 +30,7 @@ func DefaultDefaults() Defaults {
 		SplitSkewMargin: 0.15, EstimateMargin: 0.05, LoadMemoryFloorMiB: 768,
 		Membership: MembershipFleet, WatchdogFloorMiB: 1000, WorkerStartTimeout: 15 * time.Second,
 		ReservedDriftWarnMiB: 500, FreeAverageWindow: 30 * time.Second,
-		HostOverheadMiB: 1024,
+		HostOverheadMiB: 1024, PlacementToleranceMiB: 128,
 	}
 }
 
@@ -390,6 +390,7 @@ type rawDefaults struct {
 	HostOverheadSettingOnly   bool     `yaml:"host_overhead_setting_only" json:"host_overhead_setting_only,omitempty"`
 	HostNoMmap                bool     `yaml:"host_no_mmap" json:"host_no_mmap,omitempty"`
 	DeviceOverheadSettingOnly bool     `yaml:"device_overhead_setting_only" json:"device_overhead_setting_only,omitempty"`
+	PlacementToleranceMiB     int      `yaml:"placement_tolerance_mib" json:"placement_tolerance_mib,omitempty"`
 }
 
 func rawDefaultsFrom(d Defaults) rawDefaults {
@@ -402,7 +403,7 @@ func rawDefaultsFrom(d Defaults) rawDefaults {
 		d.Membership, d.WorkerModelDir, d.WatchdogFloorMiB, duration(d.WorkerStartTimeout),
 		d.FillReserveKiBPerToken, d.PlacementUsesReserved, d.ReservedDriftWarnMiB, d.MarginMeasuredMiB,
 		d.MarginEstimatedPercent, d.MarginEstimatedMinMiB, d.MarginRefuses, duration(d.FreeAverageWindow),
-		d.HostOverheadMiB, d.HostOverheadSettingOnly, d.HostNoMmap, d.DeviceOverheadSettingOnly}
+		d.HostOverheadMiB, d.HostOverheadSettingOnly, d.HostNoMmap, d.DeviceOverheadSettingOnly, d.PlacementToleranceMiB}
 }
 
 func (r rawDefaults) value() Defaults {
@@ -416,7 +417,7 @@ func (r rawDefaults) value() Defaults {
 		r.Membership, r.WorkerModelDir, r.WatchdogFloorMiB, time.Duration(r.WorkerStartTimeout),
 		r.FillReserveKiBPerToken, r.PlacementUsesReserved, r.ReservedDriftWarnMiB, r.MarginMeasuredMiB,
 		r.MarginEstimatedPercent, r.MarginEstimatedMinMiB, r.MarginRefuses, time.Duration(r.FreeAverageWindow),
-		r.HostOverheadMiB, r.HostOverheadSettingOnly, r.HostNoMmap, r.DeviceOverheadSettingOnly}
+		r.HostOverheadMiB, r.HostOverheadSettingOnly, r.HostNoMmap, r.DeviceOverheadSettingOnly, r.PlacementToleranceMiB}
 }
 
 type rawRecovery struct {
