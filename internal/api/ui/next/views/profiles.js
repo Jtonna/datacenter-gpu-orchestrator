@@ -280,7 +280,9 @@ registerView({
       const on = inst ? (inst.nodes || []).map(n => nodeName(st, n && typeof n === 'object' ? n.id : n)) : [];
       if (on.length) return h('span.row', { style: 'gap:8px', 'data-loaded-on': String(on.length) }, h('span.mut', 'Loaded on'), nodeChips(on));
       const n = (plan.nodes || []).length;
-      return n ? h('span', { 'data-would': String(n) }, 'would load on ' + machines(st, n)) : null;
+      // loaded or loading but its instance not in the status yet: a count, not "would load"
+      const now = plan.action === 'serve' || plan.action === 'wait';
+      return n ? h('span', { 'data-would': String(n) }, (now ? 'on ' : 'would load on ') + machines(st, n)) : null;
     }
     function panelBody(id) {
       const e = (list || []).find(x => x.id === id);

@@ -209,4 +209,9 @@ func TestUINextProfilesPanelPlanNames(t *testing.T) {
 		map[string]any{"name": "profiles panel: loaded, where it is loaded", "route": "#/profiles?profile=gemma-4-27b", "status": st,
 			"page": []string{"Loaded on", "ps5-03", "ps5-04"}, "pageHas": []string{"aside.side [data-loaded-on] span.nodes"}, "pageNone": []string{"aside.side [data-would]"}},
 	}})
+	// the plan says it is loaded (serve) but the status has no instance of it yet: a count, never "would load"
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
+		map[string]any{"name": "profiles panel: loaded, no instance in the status", "route": "#/profiles?profile=gemma-4-27b", "status": fetch["/api/status"],
+			"pageHas": []string{"aside.side [data-would='2']"}, "pageNone": []string{"aside.side span.nodes"}, "notOnPage": []string{"would load on"}},
+	}})
 }
