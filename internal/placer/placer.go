@@ -66,6 +66,13 @@ type Request struct {
 	MaxPool           int   // defaults.max_pool, at least 1 (not checked when forced)
 	MinShareMiB       int   // defaults.min_share_mib
 	DeviceOverheadMiB int   // defaults.device_overhead_mib (estimated needs only)
+	// NodeDeviceMiB, when set, is the per-device cost of an estimated need
+	// on node id in a placement of n nodes, in place of DeviceOverheadMiB
+	// (a figure measured on that node for that device count). An unknown id
+	// ("") gets the figure for no node in particular. The bounds of the
+	// search use the lowest over the candidates (lowest), so they stay
+	// optimistic.
+	NodeDeviceMiB func(id core.NodeID, n int) int
 	// SkewPermille is defaults.split_skew_margin in thousandths. When a
 	// placement of two or more nodes includes a shared-memory node, that
 	// node's expected share, need x split fraction x (1 + skew), must fit its
@@ -114,6 +121,37 @@ func (req Request) For(n int) Request {
 	if n > 0 && n < len(req.ByCount) && req.ByCount[n].Need.MiB > 0 {
 		c := req.ByCount[n]
 		req.Need, req.MarginMiB, req.MarginPermille, req.MarginMinMiB = c.Need, c.MarginMiB, c.MarginPermille, c.MarginMinMiB
+	}
+	return req
+}
+
+// deviceMiB is the per-device cost of an estimated need on node id in a
+// placement of n nodes.
+func (req Request) deviceMiB(id core.NodeID, n int) int {
+	if req.NodeDeviceMiB == nil {
+		return req.DeviceOverheadMiB
+	}
+	return req.NodeDeviceMiB(id, n)
+}
+
+// lowest is req with every node's per-device cost the lowest of nodes' for
+// that count: the fit rules with it are a bound that no set of nodes beats
+// (the rules are monotone in the budgets only with one cost for all nodes).
+func (req Request) lowest(nodes []Candidate) Request {
+	if req.NodeDeviceMiB == nil {
+		return req
+	}
+	f := req.NodeDeviceMiB
+	ids := make([]core.NodeID, len(nodes))
+	for i, c := range nodes {
+		ids[i] = c.ID
+	}
+	req.NodeDeviceMiB = func(_ core.NodeID, n int) int {
+		m := f("", n)
+		for _, id := range ids {
+			m = min(m, f(id, n))
+		}
+		return m
 	}
 	return req
 }
@@ -291,6 +329,7 @@ func CheckCapacity(req Request, eligible []Candidate) error {
 		}
 		return nodes[i].ID < nodes[j].ID
 	})
+	lo := req.lowest(candidatesOf(nodes)) // every eligible node's lowest per-device cost: a bound no set beats
 	if len(nodes) > req.MaxPool {
 		nodes = nodes[:req.MaxPool]
 	}
@@ -302,7 +341,7 @@ func CheckCapacity(req Request, eligible []Candidate) error {
 		top[i] = c.Candidate
 	}
 	for k := 1; k <= len(top); k++ {
-		if fitsSet(req, top[:k]) {
+		if fitsSet(lo, top[:k]) {
 			return nil
 		}
 	}
@@ -311,7 +350,7 @@ func CheckCapacity(req Request, eligible []Candidate) error {
 	for _, c := range top {
 		b := c.BudgetMiB
 		if !req.Need.Measured {
-			b -= req.DeviceOverheadMiB
+			b -= req.deviceMiB(c.ID, len(top))
 		}
 		if b > 0 {
 			capacity += b
@@ -369,6 +408,16 @@ type cand struct {
 }
 
 func fits(req Request, budgets []int) bool {
+	ovh := make([]int, len(budgets))
+	for i := range ovh {
+		ovh[i] = req.deviceMiB("", len(budgets))
+	}
+	return fitsWith(req, budgets, ovh)
+}
+
+// fitsWith is the sum rule with each node's own per-device cost (ovh, for an
+// estimated need).
+func fitsWith(req Request, budgets, ovh []int) bool {
 	req = req.For(len(budgets))
 	if req.PerNodeReserveMiB > 0 {
 		less := make([]int, len(budgets))
@@ -380,7 +429,13 @@ func fits(req Request, budgets []int) bool {
 	if req.Need.Measured {
 		return estimate.FitsMeasured(budgets, req.Need.MiB)
 	}
-	return estimate.FitsEstimatedMargin(budgets, req.Need.MiB, req.DeviceOverheadMiB, req.Need.MarginPermille)
+	var sum int64
+	for i, b := range budgets {
+		if v := b - ovh[i]; v > 0 {
+			sum += int64(v)
+		}
+	}
+	return sum >= int64(estimate.MarginMiB(req.Need.MiB, req.Need.MarginPermille))
 }
 
 // required is what the fit rule asks the summed budgets to reach: the need, or
@@ -410,10 +465,12 @@ func skewApplies(req Request, set []Candidate) bool {
 func fitsSet(req Request, set []Candidate) bool {
 	req = req.For(len(set))
 	budgets := make([]int, len(set))
+	ovh := make([]int, len(set))
 	for i, c := range set {
 		budgets[i] = c.BudgetMiB
+		ovh[i] = req.deviceMiB(c.ID, len(set))
 	}
-	if !fits(req, budgets) {
+	if !fitsWith(req, budgets, ovh) {
 		return false
 	}
 	if !req.nodeMargins() && !skewApplies(req, set) {
@@ -424,7 +481,7 @@ func fitsSet(req Request, set []Candidate) bool {
 		sum += int64(max(c.BudgetMiB, 1))
 	}
 	need := int64(req.Need.WithMargin())
-	for _, c := range set {
+	for i, c := range set {
 		if !c.Shared {
 			continue
 		}
@@ -433,7 +490,7 @@ func fitsSet(req Request, set []Candidate) bool {
 			num := need * int64(max(c.BudgetMiB, 1))
 			share = (num + sum - 1) / sum
 			if !req.Need.Measured {
-				share += int64(req.DeviceOverheadMiB)
+				share += int64(ovh[i])
 			}
 			share += int64(req.NodeMarginMiB(int(share)))
 		} else {
@@ -441,7 +498,7 @@ func fitsSet(req Request, set []Candidate) bool {
 			den := sum * 1000
 			share = (num + den - 1) / den
 			if !req.Need.Measured {
-				share += int64(req.DeviceOverheadMiB)
+				share += int64(ovh[i])
 			}
 		}
 		if share+int64(req.PerNodeReserveMiB) > int64(c.BudgetMiB) {
@@ -738,7 +795,8 @@ func (s searcher) bestPool(level []cand, k int) []cand {
 	for i := range top {
 		top[i] = byBudget[i].BudgetMiB
 	}
-	if !fits(s.req, top) {
+	lo := s.req.lowest(candidatesOf(level)) // the bounds: optimistic over every node of the level
+	if !fits(lo, top) {
 		return nil
 	}
 	var best []cand
@@ -761,7 +819,7 @@ func (s searcher) bestPool(level []cand, k int) []cand {
 		for i := start; i+need <= len(byBudget); i++ {
 			// Bound: the best this branch can do is byBudget[i : i+need].
 			bound := append(slices.Clone(budgets), budgetsOf(byBudget[i:i+need])...)
-			if !fits(s.req, bound) {
+			if !fits(lo, bound) {
 				return // later i only have smaller budgets
 			}
 			chosen = append(chosen, byBudget[i])
