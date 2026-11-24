@@ -118,7 +118,7 @@ export function memBar(o, label) {
     h('div.track',
       o.model > 0 ? h('span.m', { style: 'width:' + pct(o.model), title: 'Models ' + mib(o.model) }) : null,
       o.other > 0 ? h('span.o', { style: 'width:' + pct(o.other), title: 'Other use ' + mib(o.other) }) : null),
-    o.limit != null && o.limit > 0 && o.limit < t ? h('i.lim', { style: 'left:' + pct(o.limit), title: 'New models may fill the node up to here; the rest is kept free' }) : null);
+    o.limit != null && o.limit > 0 && o.limit < t ? h('i.lim', { style: 'left:' + pct(o.limit), title: 'New models may fill the zone up to here; the rest is kept free' }) : null);
 }
 
 // progress({fraction: 0.41, cls: 'a', left: node, mid: node, right: node, foot: [l, r], striped: 0.2})

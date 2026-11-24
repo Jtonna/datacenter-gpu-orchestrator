@@ -153,7 +153,7 @@ function diskLine(models, disk) {
 
 // hostLine(p) -> "hosted on <node> · +1.5 GB for the host" for a profile whose llama-server runs on a node
 const hostLine = p => (p.host === 'node'
-  ? h('span.sub', { title: 'llama-server runs on this node, started by its agent' }, 'hosted on ' + (p.host_node || 'its first forced node'),
+  ? h('span.sub', { title: 'llama-server runs on this zone, started by its agent' }, 'hosted on ' + (p.host_node || 'its first forced zone'),
     p.host_overhead_mib ? ` · +${gb(p.host_overhead_mib)} for the host` : null, p.host_problem ? h('span.err-t', ' · ' + p.host_problem) : null)
   : null);
 
@@ -261,7 +261,7 @@ function listPanel(st, models, disk, error, r, query, setQuery, onFind) {
   const pinnedRows = pins ? rows.filter(m => m.pinned) : [];
   const restRows = pins ? rows.filter(m => !m.pinned) : rows;
   const heads = () => h('div.mr.mr-h', { 'aria-hidden': 'true' }, h('span'), h('span'),
-    h('span.lbl.mdl-needs', { title: 'The memory its lightest configuration needs on the nodes' }, 'Needs'), h('span.lbl.mdl-pc', 'Profiles'), h('span.lbl', 'Last used'));
+    h('span.lbl.mdl-needs', { title: 'The memory its lightest configuration needs on the zones' }, 'Needs'), h('span.lbl.mdl-pc', 'Profiles'), h('span.lbl', 'Last used'));
   if (error && !models) body = empty('The model list could not be read', error);
   else if (!models) body = skeleton(6);
   else if (!models.length) body = empty('No models yet', 'A model appears here once a .gguf file is in the models folder, or a profile names a model file.');

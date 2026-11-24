@@ -94,6 +94,6 @@ func TestUIRequestsWideRowsFit(t *testing.T) {
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": ovFetch(now, rows, true), "cases": []any{
 		map[string]any{"name": "requests: wide rows give way in Model and Sent by", "route": "#/requests", "status": ovStatus(now), "width": 1280,
 			"expect": []string{"tinyllama-1.1b-chat-v1.0:2k", "1,034", "scheduler-host Host,", "console-05 Helper 100%", "anonymous"},
-			"has": []string{"tr[data-req='31'] td.rq-model[title*=tinyllama]", "tr[data-req='31'] td.rq-sent span[title^=anonymous][title*='192.0.2.40']"}},
+			"has":    []string{"tr[data-req='31'] td.rq-model[title*=tinyllama]", "tr[data-req='31'] td.rq-sent span[title^=anonymous][title*='192.0.2.40']"}},
 	}})
 }

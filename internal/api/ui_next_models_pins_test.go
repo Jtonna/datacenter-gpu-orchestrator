@@ -26,7 +26,7 @@ func TestUINextModelsPins(t *testing.T) {
 		return f
 	}
 	ok := with(map[string]any{
-		"PUT /api/models/pin/" + free:      map[string]any{"key": free, "pinned": true, "changed": true, "audit_id": 41},
+		"PUT /api/models/pin/" + free:       map[string]any{"key": free, "pinned": true, "changed": true, "audit_id": 41},
 		"DELETE /api/models/pin/" + pinnedA: map[string]any{"key": pinnedA, "pinned": false, "changed": true, "audit_id": 42},
 	})
 	run := func(f map[string]any, cases ...any) {
@@ -42,7 +42,7 @@ func TestUINextModelsPins(t *testing.T) {
 			"has": []string{
 				"[data-pinned-rows] div.mr[data-model='" + pinnedA + "']", "[data-pinned-rows] div.mr[data-model='" + pinnedB + "']",
 				"div.mr[data-model='" + pinnedA + "'] button.star[aria-pressed=true]", "div.mr[data-model='" + free + "'] button.star[aria-pressed=false]"},
-			"none": []string{"[data-pinned-rows] div.mr[data-model='" + free + "']", "button.star[data-off]", "div.sech[data-sec=pinned][title^=Pins]"},
+			"none":  []string{"[data-pinned-rows] div.mr[data-model='" + free + "']", "button.star[data-off]", "div.sech[data-sec=pinned][title^=Pins]"},
 			"order": []string{"Pinned", pinnedA, pinnedB, "All models", free}},
 		map[string]any{"name": "pins: the panel's Pinned button", "route": "#/models?model=" + pinnedA, "status": st,
 			"pageHas": []string{"aside.side button[data-act=pin][aria-pressed=true]"}, "pageNone": []string{"aside.side button[data-act=pin][data-off]"}},

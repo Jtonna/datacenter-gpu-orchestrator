@@ -153,8 +153,8 @@ export function connection() {
   if (st && st.shutting_down) return { title: 'The scheduler is shutting down.', note: 'It finishes the requests in flight and takes no new ones.' };
   if (!view) return null;
   const age = view.age >= 0 ? view.age + (Date.now() - state.statusAt) / 1000 : null;
-  if (view.stale) return { title: 'The fleet feed is stale' + (age != null ? ` (${dur(Math.round(age))} old).` : '.'), note: 'Remote nodes are not used for new loads until it recovers; models that are already loaded keep serving.' };
-  if (!view.connected) return { title: 'The fleet feed is disconnected.', note: 'The node figures may be old. The scheduler keeps trying to reconnect.' };
+  if (view.stale) return { title: 'The fleet feed is stale' + (age != null ? ` (${dur(Math.round(age))} old).` : '.'), note: 'Remote zones are not used for new loads until it recovers; models that are already loaded keep serving.' };
+  if (!view.connected) return { title: 'The fleet feed is disconnected.', note: 'The zone figures may be old. The scheduler keeps trying to reconnect.' };
   return null;
 }
 

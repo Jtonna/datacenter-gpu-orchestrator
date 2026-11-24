@@ -16,6 +16,12 @@ No agent change, no new port. **Schema: one new table, `model_trash`, as step 2 
 - **MCP.** `delete_model`, `list_deleted_models`, `restore_model`.
 - **Going back.** The image before (b162acd) opens the same database and ignores `model_trash`. It never lists a file in `.trash/` (its catalog reads only the top of the models folder) and never removes one. Profiles taken out by a delete stay out there; restore them with this image. If `model_trash_days` was set, the image before reads it as an unknown setting: configuration writes there need `force` until that key is dropped.
 
+## Scheduler image: a plan says when an unpause is only pending
+
+No agent change, no new port, no schema change.
+
+- **"Starts within about 2 s".** A plan (and a queued entry's reason) that waits only because a node it needs was unpaused and its agent has not heard it yet says "unpause pending: it was unpaused and its agent is told with its next heartbeat, so the load starts within about 2 s", naming the node. The action stays `queue`; placement is unchanged.
+
 ## Scheduler image: pinned models (models slice 2)
 
 No agent change, no new port. **Schema: one new table, `model_pins`, under a new ledger `model_migrations` (version 1).** `cfg_migrations` does not move.
