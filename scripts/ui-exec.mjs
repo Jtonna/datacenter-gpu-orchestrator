@@ -55,6 +55,7 @@
 //               "notOnPage": ["text nowhere on the page", ...],
 //               "titles": ["text some title attribute on the page contains", ...],
 //               "fetchedQuery": ["regexp a request (GET /path?query body) must match", ...],
+//               "notFetched": ["regexp no request of the case may match", ...],
 //               "noHeader": ["X-Actor", ...]: no request of the case carried it}],
 //    (fetch answers: "POST /api/agents" before "/api/agents"; {"$status": 409, "$body": {...}} for an error)
 //    "now": "2026-11-24T06:30:00Z",               // the clock starts there (Date.now, new Date())
@@ -619,6 +620,8 @@ for (const c of spec.cases) {
   }
   // fetchedQuery: regular expressions some request (method, path and query) must match
   for (const re of c.fetchedQuery || []) if (!fetchedFull.some(f => new RegExp(re).test(f))) errors.push('no request matches /' + re + '/ (requests: ' + JSON.stringify([...new Set(fetchedFull)]) + ')');
+  // notFetched: regular expressions no request may match (a write that must not be sent)
+  for (const re of c.notFetched || []) { const hit = fetchedFull.find(f => new RegExp(re).test(f)); if (hit) errors.push('a request that must not be sent: ' + hit); }
   for (const hd of c.noHeader || []) if (sentHeaders.has(hd)) errors.push('a request carried the header ' + hd);
   for (const sel of c.pageHas || []) if (!document.body.querySelector(sel)) errors.push('no element on the page matches: ' + sel);
   for (const sel of c.pageNone || []) if (document.body.querySelector(sel)) errors.push('an element on the page that must not be there: ' + sel);

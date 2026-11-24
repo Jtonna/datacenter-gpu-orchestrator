@@ -124,7 +124,7 @@ func TestUINextScreensExecute(t *testing.T) {
 	}
 	// the zones of the agent cluster, and the side panel of one of them
 	cluster := every("agents", st, map[string][]string{
-		"zones": {"ALL 5 ZONES", "2 off", "Switched off", "console-1", "In use, darker is busier", "Page 1 of 1"},
+		"zones": {"ALL 5 ZONES", "2 off", "Switched off", "console-1", "In use, darker is busier"},
 	})
 	cluster = append(cluster, map[string]any{"name": "agents: zones, one zone opened", "route": "#/zones?zone=" + active, "status": st, "absent": designSamples},
 		// the reason a zone is off: the exclude_nodes entry that matches it
@@ -137,7 +137,7 @@ func TestUINextScreensExecute(t *testing.T) {
 
 	empty, _, _ := feedEnv(t)
 	uiExec(t, map[string]any{"shell": "next", "app": true, "base": empty.front.URL,
-		"cases": every("empty", "fetch", map[string][]string{"zones": {"Create new zone", "Page 1 of 1"}})})
+		"cases": every("empty", "fetch", map[string][]string{"zones": {"Create new zone"}})})
 }
 
 // The Zones page's selection and its zone panel, on a real agent cluster:
@@ -161,9 +161,9 @@ func TestUINextZonesSelectionAndPanel(t *testing.T) {
 	uiExec(t, map[string]any{"shell": "next", "app": true, "base": fe.front.URL, "cases": []any{
 		// this scheduler keeps no history: the panel says so
 		map[string]any{"name": "one zone's panel", "route": "#/zones?zone=" + active, "status": st, "absent": designSamples,
-			"page": []string{"Platform", "linux-amd64-vulkan", "Agent release", "0.1.0", "Recent events", "The event history is off", "Pause", "Force unload"}},
+			"page": []string{"Platform", "linux-amd64-vulkan", "Agent release", "0.1.0", "Recent events", "The event history is off", "Accepting models", "Last 7 days"}},
 		map[string]any{"name": "the paused zone's panel", "route": "#/zones?zone=" + paused, "status": st,
-			"page": []string{"Switched off", "Unpause"}},
+			"page": []string{"Switched off"}, "pageHas": []string{"aside.side button.switch[aria-checked=false]"}},
 		map[string]any{"name": "the excluded zone's panel", "route": "#/zones?zone=" + excluded, "status": st,
 			"page": []string{"Switched off"}, "titles": []string{"exclude_nodes: " + excluded}},
 		map[string]any{"name": "a selection", "route": "#/zones", "status": st, "click": []string{"input[data-sel=all]"},

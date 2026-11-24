@@ -56,7 +56,7 @@ next/core/shell.js     the design's rail: buttons with titles; Monitor, Zones, M
                        and zones, Settings, Audit, About, Placement preview, Logs, Classic UI,
                        Q73); section menu (collapsible; closed on the Overview, Q9), fleet card,
                        phone drawer; ?health=open on any page opens the health popup
-next/core/health.js    the health popup (Health board): Zones, Runs, Scheduler, MCP server,
+next/core/health.js    the health popup (Health board): Zones, Requests (the server's row "runs"), Scheduler, MCP server,
                        Storage, Queue, Alerts, Last 2 hours; rows without data are drawn and
                        marked "waiting for data" (grey ring)
 next/core/dom.js       the classic dom.js; morph() keeps attributes it did not set
@@ -70,15 +70,23 @@ next/core/ui.js        the classic components plus panel, segmented, filterSelec
                        dateStepper, dropButton, tokensChart, tokensLegend, runsTable, runLegend,
                        runIcon, runWhy, tickRuns (100 ms run clock), availClass, groupClass,
                        roleShare and runMachines ("Host 50%": a role and a share of the model)
-next/views/overview.js Overview, the home page (Main board): Tokens, Runs (the design's word, Q2;
-                       the route and the API keep "requests"), Zones with the hour-by-hour strip; Zones toggles outline a request's
+next/views/overview.js Overview, the home page (Main board): Tokens, Requests (the owner's word,
+                       24 Nov: "Runs" means benchmark runs only), Zones with the hour-by-hour strip; Zones toggles outline a request's
                        zones; Customize (Q1, kept in localStorage potluck.overview.layout)
-next/views/requests.js Runs (#/requests): the paged request list behind "All N" (Q3; no mockup yet)
+next/views/requests.js Requests (#/requests): the paged request list behind "All N" (Q3; no mockup yet)
 next/views/report.js   24-hour report behind "View 24-hour report" (no mockup yet)
 next/views/zones.js    Zones: one row per machine (zone); selection with Stop accepting models /
-                       Accept models again; the zone panel (state, facts, recent events, machine card)
+                       Accept models again; the group and zone panels; Load a model on chosen zones,
+                       Unload (wait for the requests, or force), Force unload, through modelactions.js
+next/core/modelactions.js  the model actions: plan, load on chosen zones, drain, undrain, unload
 next/views/models.js   Models: loaded instances, every model file with size and disk total, the
                        model panel (?model=<key>); #/models/<key> is still views/models/detail.js
+next/views/settings.js Settings: the group menu, one group in view, one row per setting, the save bar
+                       (dry run, the changes, a comment, then PATCH with If-Match)
+next/views/placement.js Placement preview: the Ask panel (profile, any zone or only these zones) and the
+                       result card; POST /api/plan only (a dry run)
+next/views/profiles.js Profiles: one row per profile, generated ones hidden until asked for, the side
+                       panel; the editor (#/profiles/<id>, new, new?from=)
 ```
 
 Each UI links to the other: "Classic UI" at the foot of the new rail, "New UI"
@@ -91,8 +99,11 @@ dialogs included), `links` (`{text, path}`).
 
 Words of the new shell: a zone is one node; Off = excluded, "Not accepting"
 = paused, Set aside = quarantined. Nothing is drawn without data behind it,
-no control may reboot or restart a machine (`TestUINoRebootOrRestartControl`),
-and there is no load or unload control.
+no control may reboot or restart a machine (`TestUINoRebootOrRestartControl`;
+the Zones pages draw Reboot disabled, with the reason), and a model is
+loaded, drained or unloaded only through `next/core/modelactions.js` behind
+a confirm dialog. SSH is left out for now: the zone panel's SSH row and
+"Open SSH" are drawn as not available yet, with the reason.
 
 The harness checks both: `scripts/ui-exec.mjs --base URL` runs the live
 screens of `/ui/` and of `/ui/classic/`; a case file with `"shell":"next"`
@@ -107,14 +118,28 @@ One screenshot: `scripts/ui-screens.sh http://127.0.0.1:8790 models loading desk
 1. **Reality only.** A screen shows what the server sends. Read the field from
    the Go code or the contract before you draw it; if the data does not exist,
    the element does not exist. No sample data in a view.
-2. **No load, unload, force load or cancel load control, anywhere.** Running a
-   benchmark suite is the one action that causes loads, and it sits behind a
-   confirm dialog that says so. `internal/api/ui_test.go` fails the build if a
-   UI file names `/api/load`, `/api/unload` or `/api/models/unload`. (The
-   catalog `GET /api/models` and `GET /api/models/<key>` are read-only and are
-   what the Models screen reads.) The one exception, decided by the owner: in
-   agents membership a machine card on Nodes has Pause / Unpause and Force
-   unload, and nothing else ("Machines that join through agents" below).
+2. **Model actions only behind a confirm dialog, from one module.** The owner
+   withdrew the earlier "no load or unload control" rule (DECISIONS, 24 Nov
+   05:29: "yes as the mockups show is fine. no setting to turn it off without
+   a release"). The Zones pages load and unload models as the mockups draw
+   it: Load a model on chosen zones (the plan first, `POST /api/plan
+   {model, nodes}`, its verdict and memory line, then `POST /api/load` with
+   the same body), Unload by waiting for the requests (`POST
+   /api/models/drain/<model>`, taken back with `/api/models/undrain/<model>`)
+   or at once, and Force unload. Each goes through `next/core/modelactions.js`
+   only, always after a confirm dialog that says what it does and asks for a
+   comment (X-Comment; the audit entry is signed by the default user). There
+   is no setting that hides them: the page switch `ui_model_actions` is gone
+   from the page. Running a benchmark suite also causes loads, behind its own
+   confirm dialog. `internal/api/ui_test.go` (`TestUIModelActionsInOneModule`)
+   fails the build if any other UI file names `/api/load`, `/api/unload`,
+   `/api/models/unload`, `/api/models/drain` or `/api/models/undrain`, or if
+   any UI file still reads `ui_model_actions`. (The catalog `GET /api/models`
+   and `GET /api/models/<key>` are read-only and are what the Models screen
+   reads; `POST /api/plan` changes nothing and the Placement preview uses it
+   too.) The one other exception, decided by the owner: in agents membership
+   a machine card on Nodes has Pause / Unpause and Force unload, and nothing
+   else ("Machines that join through agents" below).
    `internal/api/ui_nodes_test.go` fails the build if the UI gains a third
    node action or names `/api/nodes` outside `core/nodeactions.js`.
 3. **WebSocket for live, REST for pull and push.** Live data comes from the

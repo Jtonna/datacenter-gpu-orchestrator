@@ -760,10 +760,25 @@ const rateText = v => (v == null || !(v > 0) ? DASH : v >= 100 ? num(v) : num(v,
 // ModelFileFromName): Q4_K_M, IQ3_XS, BF16, F16, F32.
 const QUANT = /(^|[-_.])((?:IQ|Q)\d+(?:_[A-Z0-9]+)*|BF16|F16|F32)(?=$|[-_.])/i;
 
-// fileShort('/models/Gemma-4-27B-it-Q4_K_M.gguf') -> 'gemma-4-27b-it': the
+// fileName('/models/Qwen_Qwen3.5-9B-Q4_K_M.gguf') -> 'Qwen_Qwen3.5-9B-Q4_K_M.gguf'.
+const fileName = file => String(file || '').split(/[\\/]/).pop();
+const TUNE = /[-_.](it|instruct)(?=$|[-_.])/i;
+
+// fileShort('/models/Gemma-4-27B-it-Q4_K_M.gguf') -> 'gemma-4-27b': the
 // file name without its directory, the .gguf extension and the quantisation,
-// in lower case.
+// in lower case; "-it" and "-instruct" are dropped unless another file of the
+// catalog would then get the same short name (the server's rule for
+// short_name, used when the server sends none).
 export function fileShort(file) {
+  const keep = fileShortKeep(file);
+  const dropped = keep.replace(TUNE, '').replace(/[-_.]{2,}/g, m => m[0]);
+  if (dropped === keep) return keep;
+  const me = fileName(file);
+  const files = (catalog.models || []).map(m => m && m.file).filter(f => f && fileName(f) !== me);
+  // another file that keeps the same name (another quantisation) is no clash
+  return files.some(f => { const k = fileShortKeep(f); return k !== keep && (k === dropped || k.replace(TUNE, '').replace(/[-_.]{2,}/g, m => m[0]) === dropped); }) ? keep : dropped;
+}
+function fileShortKeep(file) {
   let s = String(file || '').split(/[\\/]/).pop().replace(/\.gguf$/i, '');
   s = s.replace(QUANT, '$1').replace(/[-_.]{2,}/g, m => m[0]).replace(/^[-_.]+|[-_.]+$/g, '');
   // a leading vendor word the next word repeats: "Qwen_Qwen3.5-9B" -> "Qwen3.5-9B" (any case)
@@ -772,8 +787,6 @@ export function fileShort(file) {
   return s.toLowerCase();
 }
 
-// fileName('/models/Qwen_Qwen3.5-9B-Q4_K_M.gguf') -> 'Qwen_Qwen3.5-9B-Q4_K_M.gguf'.
-const fileName = file => String(file || '').split(/[\\/]/).pop();
 
 // runModelTitle(r) -> the Model cell's hover: the profile id and the full
 // model file name (and the name the client sent, when it was an alias).
@@ -787,15 +800,18 @@ export function runModelTitle(r) {
 
 // runModel(r) -> the design's model name of a run, "gemma-4-27b:32k": the
 // short name of its model file (the catalog entry of its profile, else the
-// row's model_file) and its profile's ctx in k (8192 -> 8k). The API has no
-// short name; a run whose file is not known keeps its profile id.
+// row's model_file) and its profile's ctx in k (8192 -> 8k). The server's
+// short_name (on the row, else on the catalog entry) and the row's ctx win
+// when present; a run whose file is not known keeps its profile id.
 export function runModel(r) {
   const entry = r && r.profile ? catalog.byProfile[r.profile] : null;
   const file = (entry && entry.file) || (r && r.model_file) || '';
-  const short = fileShort(file);
+  const sent = (r && typeof r.short_name === 'string' && r.short_name) || (entry && typeof entry.short_name === 'string' && entry.short_name) || '';
+  const short = sent || fileShort(file);
   if (!short) return (r && (r.profile || r.requested)) || '';
   const prof = entry && (entry.profiles || []).find(p => p.id === r.profile);
-  const ctx = prof && prof.ctx > 0 ? Math.round(prof.ctx / 1024) + 'k' : '';
+  const c = r && r.ctx > 0 ? r.ctx : prof && prof.ctx > 0 ? prof.ctx : 0;
+  const ctx = c ? Math.round(c / 1024) + 'k' : '';
   return ctx ? short + ':' + ctx : short;
 }
 
@@ -866,8 +882,8 @@ export function runsTable(o) {
     return h('td', { class: 'num mono' + (t === DASH ? ' mut' : ''), title: t === DASH ? dashTitle || null : title || null }, t);
   };
   // o.liveTimings: the setting requests_live_timings (false: off, true: on, null: not known)
-  const PROMPT_LATER = o.liveTimings === false ? 'Live prompt figures are off: they arrive when the run ends (setting requests_live_timings)'
-    : 'The prompt figures arrive from the first token on, or when the run ends';
+  const PROMPT_LATER = o.liveTimings === false ? 'Live prompt figures are off: they arrive when the request ends (setting requests_live_timings)'
+    : 'The prompt figures arrive from the first token on, or when the request ends';
   return h('table.runs',
     h('thead', h('tr',
       h('th', { scope: 'col' }, 'Status and length'), h('th', { scope: 'col' }, 'Started at'), h('th', { scope: 'col' }, 'Model'),

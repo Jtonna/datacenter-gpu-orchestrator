@@ -126,19 +126,53 @@ func TestUIHasNoExternalReference(t *testing.T) {
 	}
 }
 
-// Loading and unloading a model is not possible from the web UI: no file
-// names the endpoints that do it.
-func TestUIHasNoLoadOrUnloadControl(t *testing.T) {
-	bad := []string{"/api/load", "/api/unload", "/api/models/unload", `'/unload'`, `"/unload"`, "`/unload`"}
+// Model actions from the web UI go through one module,
+// next/core/modelactions.js, and only with a comment. The owner withdrew the
+// rule that the page may not load or unload (DECISIONS 24 Nov 05:29: "yes as
+// the mockups show is fine. no setting to turn it off without a release"):
+// the Zones pages load on chosen zones (plan first), drain, take a drain
+// back, unload and force unload, each behind a confirm dialog with a comment
+// and an audit entry. No other UI file names those routes, and nothing reads
+// the removed page switch ui_model_actions.
+func TestUIModelActionsInOneModule(t *testing.T) {
+	const home = uiNextDir + "core/modelactions.js"
+	bad := []string{"/api/load", "/api/unload", "/api/models/unload", "/api/models/drain", "/api/models/undrain", `'/unload'`, `"/unload"`, "`/unload`"}
 	for _, name := range uiFiles(t) {
 		if !isUICode(name) {
 			continue
 		}
 		text := uiText(t, name)
+		if strings.Contains(text, "ui_model_actions") || strings.Contains(text, "modelActionsOn") {
+			t.Errorf("%s still reads the removed switch ui_model_actions: the model actions are always offered", name)
+		}
+		if name == home {
+			continue
+		}
 		for _, b := range bad {
 			if strings.Contains(text, b) {
-				t.Errorf("%s names %s: the UI must not be able to load or unload a model", name, b)
+				t.Errorf("%s names %s: model actions go through %s", name, b, home)
 			}
+		}
+	}
+	text := uiText(t, home)
+	for _, want := range []string{
+		`api.post('/api/unload', { model, force: !!force, comment: c }, { comment: c })`,
+		`api.post('/api/plan', { model, nodes: nodes.slice() })`,
+		`api.post('/api/load', { model, nodes: nodes.slice() }, { comment: c })`,
+		`api.post(path('drain', model), undefined, { comment: c })`,
+		`api.post(path('undrain', model), undefined, { comment: c })`,
+		`if (!c) return noComment();`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("%s lacks %s", home, want)
+		}
+	}
+	if n := strings.Count(text, "if (!c) return noComment();"); n != 4 {
+		t.Errorf("%s: %d writes check their comment, want 4 (unload, load, drain, undrain)", home, n)
+	}
+	for _, b := range []string{"/api/models/unload", "'/unload'"} {
+		if strings.Contains(text, b) {
+			t.Errorf("%s names %s", home, b)
 		}
 	}
 }

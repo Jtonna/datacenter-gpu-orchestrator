@@ -6,6 +6,10 @@
 //   none    the Overview's eight machines, no group (the default)
 //   groups  the same eight in two groups (rack-a, home) and one with no
 //           group; one lost machine, one set aside
+//   live    as the live pool is: eight zones and no group (six consoles,
+//           laptop-01 named only, laptop-02 the scheduler's own machine
+//           switched off) and one removed machine the page leaves out
+//   one-group  live with one group (pair: ps5-01, ps5-02)
 //   fleet   232 zones as the Zones-Fleet mockup draws them: rack-a (48
 //           Oberon, its first rows as drawn), rack-b, rack-c, rack-d, a
 //           paused group gpu-row-1 and 28 with no group; 15 pages
@@ -22,6 +26,7 @@ const fmac = n => '02:00:00:00:' + hex(n >> 8) + ':' + hex(n & 255);
 export function zoneState(st, a) {
   const inst = (st.instances || []).find(i => (i.nodes || []).some(m => m.id === a.id));
   const node = ((st.view && st.view.nodes) || []).find(n => n.id === a.id) || {};
+  if (a.state === 'removed') return 'removed';
   if (a.excluded) return 'off';
   if (a.state === 'lost' || node.online === false) return 'lost';
   if (a.set_aside || (st.quarantines || []).some(q => q.node === a.id)) return 'set_aside';
@@ -166,14 +171,58 @@ function fleetStatus(base, now) {
 const GROUPS_OF_EIGHT = { 'ps5-01': 'rack-a', 'ps5-02': 'rack-a', 'ps5-03': 'rack-a', 'ps5-04': 'rack-a', 'laptop-01': 'home', 'ps5-05': 'home', 'ps5-06': 'home' };
 const UP_OF_EIGHT = { 'ps5-01': 0.995, 'ps5-02': 0.996, 'ps5-03': 0.988, 'ps5-04': 0.999, 'laptop-01': 0.991, 'ps5-05': 0.994, 'ps5-06': 0.947, 'laptop-02': null };
 
-// zonesStatus(base, now, mode) -> the status with zone_state and group on each agent
-export function zonesStatus(base, now, mode) {
+// attention_rank (internal/api/counts.go): 0 lost, 1 set aside, 2 loading,
+// 3 in use, 4 paused, 5 free, 6 excluded, 7 removed
+const RANK = { lost: 0, set_aside: 1, loading: 2, in_use: 3, free: 5, removed: 7 };
+const rankOf = a => (a.zone_state === 'off' ? (a.excluded ? 6 : 4) : RANK[a.zone_state] ?? 5);
+
+// zonesStatus(base, now, mode, o) -> the status with zone_state, group,
+// attention_rank, chip and last_load_link on each agent. o.drain: the
+// first instance is draining ('eta': with an estimate, 'noeta': none yet);
+// o.pinned: it was loaded on chosen zones (pinned_nodes).
+export function zonesStatus(base, now, mode, o = {}) {
   const st = mode === 'fleet' ? fleetStatus(base, now) : Object.assign({}, base, { agents: base.agents.map(a => Object.assign({}, a)) });
+  if (mode === 'live' || mode === 'one-group') liveLike(st, now, mode === 'one-group');
+  if (mode !== 'fleet') {
+    for (const a of st.agents) {
+      // only the laptops report a chip (their stats name the GPU); a PS5 reports none
+      const d = (a.devices || [])[0];
+      if (d && d.backend === 'cuda' && !a.chip) a.chip = d.name;
+    }
+    // the last cold load: two consoles have one, the others none yet
+    const link = (name, mb_s, hoursAgo, model) => { const a = st.agents.find(x => x.name === name); if (a) a.last_load_link = { mb_s, bytes: Math.round(mb_s * 1e6 * 21.4), load_s: 21.4, at: iso(now - hoursAgo * H), model, kind: 'lower_bound' }; };
+    link('ps5-01', 104.6, 14, 'gemma-4-27b:32k');
+    link('ps5-02', 98.2, 14, 'gemma-4-27b:32k');
+  }
+  if ((o.drain || o.pinned) && st.instances && st.instances[0]) {
+    const i0 = st.instances[0] = Object.assign({}, st.instances[0]);
+    if (o.drain) Object.assign(i0, { state: 'draining', drain: true }, o.drain === 'eta' ? { drain_eta_s: 40 } : {});
+    if (o.pinned) i0.pinned_nodes = (i0.nodes || []).map(m => (st.agents.find(a => a.id === m.id) || {}).name || m.id);
+  }
   for (const a of st.agents) {
     if (mode === 'groups' && GROUPS_OF_EIGHT[a.name]) a.group = GROUPS_OF_EIGHT[a.name];
     a.zone_state = zoneState(st, a);
+    a.attention_rank = rankOf(a);
   }
   return st;
+}
+
+// liveLike(st, now, oneGroup): the eight machines as the live pool has them
+function liveLike(st, now, oneGroup) {
+  const view = Object.assign({}, st.view, { nodes: ((st.view && st.view.nodes) || []).map(n => Object.assign({}, n)) });
+  st.view = view;
+  const node = name => view.nodes.find(n => n.hostname === name) || {};
+  const agent = name => st.agents.find(a => a.name === name) || {};
+  // all six consoles reachable
+  Object.assign(node('ps5-06'), { online: true, missing_since: null });
+  Object.assign(agent('ps5-06'), { state: 'active', placeable: true });
+  // laptop-01: named only (no_auto_nodes)
+  node('laptop-01').auto = false;
+  // laptop-02: the scheduler's own machine, switched off (exclude_nodes)
+  node('laptop-02').local = true;
+  // a removed machine: in the agent list, left out of the page
+  st.agents.push({ id: '02:00:00:00:00:99', name: 'ps5-old', addr: '192.0.2.199', state: 'removed', paused: false, placeable: false, last_seen_ago_s: 9 * 86400 });
+  if (oneGroup) { agent('ps5-01').group = 'pair'; agent('ps5-02').group = 'pair'; }
 }
 
 const sum = (xs, f) => xs.reduce((s, x) => s + (f(x) || 0), 0);
@@ -198,7 +247,7 @@ function groupFigures(st, name, agents) {
   const models = {};
   for (const i of st.instances || []) for (const m of i.nodes || []) if (agents.some(a => a.id === m.id)) models[i.profile] = (models[i.profile] || 0) + 1;
   const paused = agents.filter(a => a.paused).length;
-  return {
+  return Object.assign({
     name, members: agents.map(a => a.id), member_names: agents.map(a => a.name), count: agents.length, counts: counts(agents),
     memory: { used_mib: sum(online, a => nodeOf(a).total_mib - nodeOf(a).free_mib), total_mib: sum(agents, a => nodeOf(a).total_mib), each_total_mib: nodes.length ? nodeOf(agents[0]).total_mib : 0 },
     temp: temps.length ? { avg_c: Math.round(sum(temps, x => x.t) / temps.length), hottest_c: hot.t, hottest_id: hot.a.id, hottest_name: hot.a.name } : { avg_c: null, hottest_c: null },
@@ -206,7 +255,17 @@ function groupFigures(st, name, agents) {
     needs_attention: agents.filter(a => a.zone_state === 'lost' || a.zone_state === 'set_aside').map(a => ({ id: a.id, name: a.name, state: a.zone_state })),
     models: Object.entries(models).map(([profile, zones]) => ({ profile, zones })),
     uptime_7d: upTotals(st, agents),
-  };
+  }, groupChip(agents));
+}
+
+// groupChip(agents) -> {chip} as the server gives it: the one name when every
+// member reports the same one; "mixed" when two report different names;
+// nothing when a member reports none and the rest agree
+function groupChip(agents) {
+  const names = [...new Set(agents.map(a => a.chip).filter(Boolean))];
+  if (names.length > 1) return { chip: 'mixed' };
+  if (names.length === 1 && agents.every(a => a.chip)) return { chip: names[0] };
+  return {};
 }
 
 // window(now, partial) -> the uptime window (from the start of the UTC hour 7 days ago)

@@ -3,10 +3,9 @@
 // Tokens panel and the Requests panel side by side, then the zones panel
 // with each zone's availability hour by hour.
 //
-// The runs panel is titled "Runs", as the design draws it (a run is one
-// client request; routes, code and the API say "requests"). Benchmark runs
-// keep their own pages and are called "benchmark runs" where both could
-// meet.
+// The requests panel is titled "Requests" (the owner, 24 Nov: "Runs" means
+// benchmark runs only; the design drew "Runs"). Benchmark runs keep their
+// own pages under Benchmarks.
 //
 // Clicking a request's Zones toggle pins it: the zones that served it (or,
 // for a queued one, the zones it waits for) are outlined in the zones panel,
@@ -42,7 +41,7 @@ import { PERIODS, isPeriod, periodOf, bucketTitle, shortDay, ymd, addDays, foldL
 // ---------- Customize (Q1): kept in this browser until the owner has a mockup for it ----------
 
 const LAYOUT_KEY = 'potluck.overview.layout';
-const PANELS = { tokens: 'Tokens', requests: 'Runs', zones: 'Zones' };
+const PANELS = { tokens: 'Tokens', requests: 'Requests', zones: 'Zones' };
 export function readLayout() {
   let v = null;
   try { v = JSON.parse(localStorage.getItem(LAYOUT_KEY) || 'null'); } catch { v = null; }
@@ -338,9 +337,9 @@ registerView({
       const out_ = [];
       const begins = (sum && sum.history_begins_at) || feed.data.historyBeginsAt;
       const off = (sum && sum.on === false) || feed.data.on === false;
-      if (off) out_.push(h('div.ov-note.warn', { key: 'off', role: 'status' }, 'The request log is off on this scheduler: runs are not recorded, so the totals and past runs are empty. Live runs still show.'));
+      if (off) out_.push(h('div.ov-note.warn', { key: 'off', role: 'status' }, 'The request log is off on this scheduler: requests are not recorded, so the totals and past requests are empty. Live requests still show.'));
       else if (begins && p.from < begins) out_.push(h('div.ov-note', { key: 'begins' }, `History begins at ${dateTime(begins)}: nothing was recorded before it.`));
-      if (feed.data.error) out_.push(h('div.ov-note.warn', { key: 'stale', role: 'status' }, `The runs could not be read (${feed.data.error}).` + (feed.data.at ? ` Last updated ${clock(feed.data.at)}.` : '')));
+      if (feed.data.error) out_.push(h('div.ov-note.warn', { key: 'stale', role: 'status' }, `The requests could not be read (${feed.data.error}).` + (feed.data.at ? ` Last updated ${clock(feed.data.at)}.` : '')));
       if (sumErr) out_.push(h('div.ov-note.warn', { key: 'sumerr' }, `The totals could not be read (${sumErr}).`));
       if (availErr) out_.push(h('div.ov-note.warn', { key: 'avaerr' }, `The availability could not be read (${availErr}).`));
       return out_;
@@ -354,7 +353,7 @@ registerView({
         const b = byT.get(t) || null;
         const future = t > nowMs;
         return { in: b ? b.tokens_in : 0, out: b ? b.tokens_out : 0, label: p.labels[i],
-          title: future ? null : `${bucketTitle(t, p.step)} · ${num(b ? b.tokens_in : 0)} in · ${num(b ? b.tokens_out : 0)} out` + (b && b.requests ? ` · ${num(b.requests)} runs` : '') };
+          title: future ? null : `${bucketTitle(t, p.step)} · ${num(b ? b.tokens_in : 0)} in · ${num(b ? b.tokens_out : 0)} out` + (b && b.requests ? ` · ${num(b.requests)} requests` : '') };
       });
       const peak = (key, word) => {
         let best = null;
@@ -363,7 +362,7 @@ registerView({
       };
       const t = sum && sum.totals;
       const off = sum && sum.on === false;
-      const empty = !sum ? (sumErr ? 'The totals could not be read.' : 'Reading the totals…') : off ? 'The request log is off.' : !t.requests ? 'No runs in this period.' : null;
+      const empty = !sum ? (sumErr ? 'The totals could not be read.' : 'Reading the totals…') : off ? 'The request log is off.' : !t.requests ? 'No requests in this period.' : null;
       return h('section', { key: 'tokens', class: 'panel ov-tok' + (solo ? ' solo' : ''), 'aria-label': 'Tokens' },
         h('div.wh', h('h2', 'Tokens'), tokensLegend(p.unit)),
         tokensChart({ tin: t ? t.tokens_in : null, tout: t ? t.tokens_out : null, buckets, ariaIn: peak('in', 'in'), ariaOut: peak('out', 'out'), empty }));
@@ -382,9 +381,9 @@ registerView({
       const body = feed.data.loading && !rows.length ? skeleton(5)
         : runsTable({ rows, now: Date.now(), liveTimings: liveTimings(), pin: pin || null, onPick: pick, onOver: over, onOut: out,
           zonesTitle: x => { if ((x.nodes || []).length) return 'Show its zones: ' + runMachines(x.nodes); const ids = st ? zonesOf(st, x) : []; return ids.length ? 'Show its zones: ' + ids.map(id => nameOf(st, id)).join(', ') : 'No zone is known for it'; },
-          empty: [h('b', 'No runs ' + word), feed.data.on === false ? 'The request log is off on this scheduler.' : 'Requests sent to the scheduler appear here as they arrive.'] });
-      return h('section', { key: 'requests', class: 'panel ov-req' + (solo ? ' solo' : ''), 'aria-label': 'Runs' },
-        h('div.wh', h('h2', 'Runs'), runLegend(allLink)),
+          empty: [h('b', 'No requests ' + word), feed.data.on === false ? 'The request log is off on this scheduler.' : 'Requests sent to the scheduler appear here as they arrive.'] });
+      return h('section', { key: 'requests', class: 'panel ov-req' + (solo ? ' solo' : ''), 'aria-label': 'Requests' },
+        h('div.wh', h('h2', 'Requests'), runLegend(allLink)),
         h('div.runs-box', body));
     }
 
