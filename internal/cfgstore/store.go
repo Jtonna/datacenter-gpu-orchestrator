@@ -120,7 +120,10 @@ func Open(db DB) (*Store, error) {
 				return err
 			}
 		}
-		return migrateAccess(tx, s.now().UnixMilli()) // access.go: its own ledger
+		if err := migrateAccess(tx, s.now().UnixMilli()); err != nil { // access.go: its own ledger
+			return err
+		}
+		return migrateModels(tx, s.now().UnixMilli()) // modelpins.go: its own ledger
 	})
 	if err != nil {
 		return nil, err

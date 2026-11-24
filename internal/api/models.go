@@ -316,6 +316,8 @@ type CatalogInput struct {
 	// "family:<brand>"); Now is the clock for the activity buckets (default time.Now).
 	Icons map[string]string
 	Now   time.Time
+	// Pins is catalog key -> pinned_at (unix ms) of the pinned models.
+	Pins map[string]int64
 	// RunModels are the (run, model file, profile) of completed benchmark
 	// runs' steps: bench.reports counts a model's completed runs from them.
 	RunModels []bench.RunStepModel
@@ -847,6 +849,10 @@ func BuildModelCatalog(in CatalogInput, detailKey string) []map[string]any {
 		}
 		if a.file.ContextLength > 0 {
 			e["context_length"] = a.file.ContextLength
+		}
+		e["pinned"], e["pinned_at"] = false, nil
+		if at, ok := in.Pins[key]; ok {
+			e["pinned"], e["pinned_at"] = true, at
 		}
 		// added: the file's modification time (an upload will record its
 		// arrival); nil for a command profile or a missing file

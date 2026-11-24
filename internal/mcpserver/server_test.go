@@ -365,6 +365,8 @@ var expected = map[string]struct {
 	"force_unload_zones":    {`{"nodes":["n1"],"dry_run":true}`, "POST", "/api/zone-actions/force-unload", "", `{"dry_run":true,"nodes":["n1"]}`, nil},
 	"drain_model":           {`{"model":"gemma"}`, "POST", "/api/models/drain/gemma", "", "", nil},
 	"undrain_model":         {`{"model":"gemma"}`, "POST", "/api/models/undrain/gemma", "", "", nil},
+	"pin_model":             {`{"file":"gemma.gguf","comment":"daily"}`, "PUT", "/api/models/pin/gemma.gguf", "", `{"comment":"daily"}`, nil},
+	"unpin_model":           {`{"file":"command:whisper","comment":"done"}`, "DELETE", "/api/models/pin/command:whisper", "", `{"comment":"done"}`, nil},
 	"create_pending_zone":   {`{"name":"zone-9","group":"rack-a"}`, "POST", "/api/zones/pending", "", `{"group":"rack-a","name":"zone-9"}`, nil},
 	"list_pending_zones":    {`{}`, "GET", "/api/zones/pending", "", "", nil},
 	"cancel_pending_zone":   {`{"id":"pz-1"}`, "DELETE", "/api/zones/pending/pz-1", "", "", nil},

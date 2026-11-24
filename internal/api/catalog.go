@@ -370,6 +370,7 @@ func (s *Server) catalogBuildFrom(ctx context.Context, in CatalogInput, sig stri
 	c.builds.Add(1)
 	if s.store != nil {
 		in.Icons, _ = s.store.IconTags(ctx)
+		in.Pins = s.modelPins(ctx)
 	}
 	in.Now = time.Now()
 	snap := newCatalogSnap(in, prev, "/models")
@@ -440,6 +441,7 @@ func (s *Server) catalogBuild(ctx context.Context, st any) (*catalogSnap, error)
 	}
 	if s.store != nil {
 		in.Icons, _ = s.store.IconTags(ctx)
+		in.Pins = s.modelPins(ctx)
 	}
 	in.Events = c.eventsCopy()
 
