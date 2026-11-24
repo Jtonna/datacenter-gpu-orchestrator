@@ -272,6 +272,11 @@ type Defaults struct {
 	// tokenizer and slots. It is added to the host node's reservation and
 	// taken off its split weight until it is measured. Default 1024.
 	HostOverheadMiB int
+	// HostOverheadSettingOnly plans every host on a node with
+	// HostOverheadMiB, ignoring the overhead measured per node and shape
+	// (the measurements are kept). Off by default: a measured figure is
+	// used once there is one.
+	HostOverheadSettingOnly bool
 	// HostNoMmap starts a host on a node with --no-mmap: its weights are
 	// anonymous memory (counted in MemAvailable, watched by the watchdog)
 	// instead of pages mapped from the share. Off by default until measured.

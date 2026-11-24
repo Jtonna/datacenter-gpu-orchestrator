@@ -378,16 +378,17 @@ type rawDefaults struct {
 
 	WorkerStartTimeout duration `yaml:"worker_start_timeout" json:"worker_start_timeout,omitempty"`
 
-	FillReserveKiBPerToken int      `yaml:"fill_reserve_kib_per_token" json:"fill_reserve_kib_per_token,omitempty"`
-	PlacementUsesReserved  bool     `yaml:"placement_uses_reserved" json:"placement_uses_reserved,omitempty"`
-	ReservedDriftWarnMiB   int      `yaml:"reserved_drift_warn_mib" json:"reserved_drift_warn_mib,omitempty"`
-	MarginMeasuredMiB      int      `yaml:"margin_measured_mib" json:"margin_measured_mib,omitempty"`
-	MarginEstimatedPercent int      `yaml:"margin_estimated_percent" json:"margin_estimated_percent,omitempty"`
-	MarginEstimatedMinMiB  int      `yaml:"margin_estimated_min_mib" json:"margin_estimated_min_mib,omitempty"`
-	MarginRefuses          bool     `yaml:"margin_refuses" json:"margin_refuses,omitempty"`
-	FreeAverageWindow      duration `yaml:"free_average_window" json:"free_average_window,omitempty"`
-	HostOverheadMiB        int      `yaml:"host_overhead_mib" json:"host_overhead_mib,omitempty"`
-	HostNoMmap             bool     `yaml:"host_no_mmap" json:"host_no_mmap,omitempty"`
+	FillReserveKiBPerToken  int      `yaml:"fill_reserve_kib_per_token" json:"fill_reserve_kib_per_token,omitempty"`
+	PlacementUsesReserved   bool     `yaml:"placement_uses_reserved" json:"placement_uses_reserved,omitempty"`
+	ReservedDriftWarnMiB    int      `yaml:"reserved_drift_warn_mib" json:"reserved_drift_warn_mib,omitempty"`
+	MarginMeasuredMiB       int      `yaml:"margin_measured_mib" json:"margin_measured_mib,omitempty"`
+	MarginEstimatedPercent  int      `yaml:"margin_estimated_percent" json:"margin_estimated_percent,omitempty"`
+	MarginEstimatedMinMiB   int      `yaml:"margin_estimated_min_mib" json:"margin_estimated_min_mib,omitempty"`
+	MarginRefuses           bool     `yaml:"margin_refuses" json:"margin_refuses,omitempty"`
+	FreeAverageWindow       duration `yaml:"free_average_window" json:"free_average_window,omitempty"`
+	HostOverheadMiB         int      `yaml:"host_overhead_mib" json:"host_overhead_mib,omitempty"`
+	HostOverheadSettingOnly bool     `yaml:"host_overhead_setting_only" json:"host_overhead_setting_only,omitempty"`
+	HostNoMmap              bool     `yaml:"host_no_mmap" json:"host_no_mmap,omitempty"`
 }
 
 func rawDefaultsFrom(d Defaults) rawDefaults {
@@ -400,7 +401,7 @@ func rawDefaultsFrom(d Defaults) rawDefaults {
 		d.Membership, d.WorkerModelDir, d.WatchdogFloorMiB, duration(d.WorkerStartTimeout),
 		d.FillReserveKiBPerToken, d.PlacementUsesReserved, d.ReservedDriftWarnMiB, d.MarginMeasuredMiB,
 		d.MarginEstimatedPercent, d.MarginEstimatedMinMiB, d.MarginRefuses, duration(d.FreeAverageWindow),
-		d.HostOverheadMiB, d.HostNoMmap}
+		d.HostOverheadMiB, d.HostOverheadSettingOnly, d.HostNoMmap}
 }
 
 func (r rawDefaults) value() Defaults {
@@ -414,7 +415,7 @@ func (r rawDefaults) value() Defaults {
 		r.Membership, r.WorkerModelDir, r.WatchdogFloorMiB, time.Duration(r.WorkerStartTimeout),
 		r.FillReserveKiBPerToken, r.PlacementUsesReserved, r.ReservedDriftWarnMiB, r.MarginMeasuredMiB,
 		r.MarginEstimatedPercent, r.MarginEstimatedMinMiB, r.MarginRefuses, time.Duration(r.FreeAverageWindow),
-		r.HostOverheadMiB, r.HostNoMmap}
+		r.HostOverheadMiB, r.HostOverheadSettingOnly, r.HostNoMmap}
 }
 
 type rawRecovery struct {

@@ -15,6 +15,13 @@ func (c *schedCore) nextDeadline() (time.Time, bool) {
 	d := c.cfg.Defaults
 	waiting := len(c.entries) > 0
 
+	// A host on a node whose overhead is due to be read (hostoverhead.go).
+	for _, in := range c.insts {
+		if at := c.hostSettleAt(in); !at.IsZero() {
+			add(at)
+		}
+	}
+
 	// Queue clocks (they run only while no instance is starting).
 	if !c.anyStarting() {
 		for _, e := range c.entries {

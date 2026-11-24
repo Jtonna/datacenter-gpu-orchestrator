@@ -384,6 +384,7 @@ func (c *schedCore) removeInst(in *inst, settle bool) {
 		}
 	}
 	c.endPeakCycle(in) // reserve.go
+	c.endHostCycle(in) // hostoverhead.go
 	// workers launched or a child ran: something of ours may have held
 	// memory on the nodes even without a settling release (AS2)
 	mayHeld := in.workers || in.childRan
