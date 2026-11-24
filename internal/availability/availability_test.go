@@ -62,7 +62,7 @@ func TestClassify_EveryStateFromMembershipAndStatus(t *testing.T) {
 		"zone-free": {Free, 0, true}, "zone-paused": {Off, 0, true}, "zone-excluded": {Off, 0, true},
 		"zone-lost": {Lost, 0, false}, "zone-left": {Lost, 0, false}, "zone-removed": {Off, 0, false},
 		"zone-aside": {SetAside, 0, true}, "zone-loading": {Loading, 0, true}, "zone-busy": {InUse, .75, true},
-		"zone-helper": {InUse, .75, true}, "zone-lost-paused": {Off, 0, false}, "zone-stopping": {InUse, 0, true},
+		"zone-helper": {InUse, .75, true}, "zone-lost-paused": {Lost, 0, false}, "zone-stopping": {InUse, 0, true},
 		"scheduler-box": {Free, 0, true}, "fleet-offline": {Lost, 0, false}, "fleet-excluded": {Off, 0, true},
 	}
 	got := Classify(st, facts)
@@ -569,5 +569,24 @@ func TestRead_FiguresAreRoundedToThreeDecimals(t *testing.T) {
 	n := s.Nodes[0]
 	if *n.Uptime != .583 || *n.Cells[0].Uptime != .583 || n.Cells[0].SpanS != 1200.333 || n.Cells[0].Seconds.Unknown != .332 {
 		t.Fatalf("%s", b)
+	}
+}
+
+// A machine whose membership state is lost or left is down, whatever the
+// exclude setting or a pause says about it: the node list calls it lost,
+// and the health row and the hours agree.
+func TestClassify_LostWinsOverExcludedAndPaused(t *testing.T) {
+	facts := []pool.NodeFacts{
+		{ID: "a", Name: "zone-a", State: pool.StateLost, Excluded: true, AbsentSinceStart: true},
+		{ID: "b", Name: "zone-b", State: pool.StateLost, Paused: true},
+		{ID: "c", Name: "zone-c", State: pool.StateLeft, Excluded: true},
+		{ID: "d", Name: "zone-d", State: pool.StateRemoved},
+		{ID: "e", Name: "zone-e", State: pool.StateActive, Excluded: true},
+	}
+	want := map[string]State{"a": Lost, "b": Lost, "c": Lost, "d": Off, "e": Off}
+	for _, s := range Classify(&scheduler.Status{}, facts) {
+		if s.State != want[s.Node] || s.Reachable != (s.Node == "e") {
+			t.Errorf("%s: %+v, want %s", s.Node, s, want[s.Node])
+		}
 	}
 }

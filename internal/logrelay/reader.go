@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/proxy"
 )
 
 // The read side (design section 7): Potluck serves the store's own search
@@ -202,9 +203,9 @@ func (r *Relay) ServePages(w http.ResponseWriter, req *http.Request) {
 			// The path that was checked, re-encoded: the store reads exactly it.
 			pr.Out.URL = &url.URL{Scheme: target.Scheme, Host: target.Host, Path: target.Path + rest, RawQuery: pr.In.URL.RawQuery}
 			pr.Out.Host = target.Host
-			pr.Out.Header.Del("Cookie")
-			pr.Out.Header.Del("Authorization")
-			pr.Out.Header.Del("X-Agent-Key")
+			for _, k := range proxy.ClientCredentialHeaders { // the store gets none of the client's credentials
+				pr.Out.Header.Del(k)
+			}
 		},
 		Transport:     r.read.tr,
 		FlushInterval: -1, // pass every write on at once: the search page tails logs

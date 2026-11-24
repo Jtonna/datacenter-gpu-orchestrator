@@ -294,6 +294,14 @@ type Pool struct {
 
 	// expect holds the pending expect-restart calls by node id (startup.go).
 	expect map[string]*expectation
+
+	// known: the machines of earlier runs, read from the history (known.go);
+	// started is when this pool began, the start of KnownGrace; knownTold the
+	// known machines written to the history as not back in this run.
+	known     map[string]KnownNode
+	started   time.Time
+	knownTold map[string]bool
+	knownLoad atomic.Bool
 }
 
 // New builds a pool. It loads the operator state from the store.
@@ -357,6 +365,8 @@ func New(o Options) (*Pool, error) {
 	}
 	p.callBack = p.readLaunchState
 	p.logSnap.Store(&LogSnapshot{})
+	p.started = o.Clock()
+	p.loadKnown(o.History)
 	return p, nil
 }
 
@@ -911,7 +921,8 @@ var ErrUnknownNode = errors.New("pool: unknown node")
 func (p *Pool) knownLocked(id string) bool {
 	_, ok := p.agents[id]
 	_, adm := p.admin[id]
-	return ok || adm
+	_, known := p.known[id]
+	return ok || adm || known
 }
 
 // SetPaused pauses or unpauses a node (7.2). It returns the previous value.
@@ -957,8 +968,8 @@ func (p *Pool) Remove(ctx context.Context, id string) error {
 	func() {
 		p.mu.Lock()
 		defer supervise.Unlocked("pool", p.unlock)
-		if known = p.knownLocked(id); known {
-			fu = p.forceUnload
+		if known = p.knownLocked(id); known && (p.agents[id] != nil || p.known[id].ID == "") {
+			fu = p.forceUnload // a known machine that never registered in this run holds nothing
 		}
 	}()
 	if !known {
@@ -1014,6 +1025,7 @@ func (p *Pool) CheckLost() {
 	p.mu.Lock()
 	defer supervise.Unlocked("pool", p.unlock)
 	p.checkStartupsLocked(now) // first: an expired expect-restart no longer excuses a silence
+	p.announceKnownLocked(now)
 	changed := false
 	for _, id := range p.sortedIDsLocked() {
 		a := p.agents[id]
@@ -1042,13 +1054,13 @@ func (p *Pool) CheckLost() {
 				"silent_for", now.Sub(a.lastSeen).Round(time.Second))
 			p.recordLocked(history.TNodeMembership, history.Info, a,
 				fmt.Sprintf("Node %s is away for an expected restart (%s).", a.reg.Name, e.kind),
-				map[string]any{"state": StateLost, "expected": true, "kind": e.kind})
+				map[string]any{"state": StateLost, "expected": true, "kind": e.kind, "last_seen": a.lastSeen.UnixMilli()})
 			continue
 		}
 		p.log.Error("agent lost: no heartbeat", "id", id, "name", a.reg.Name, "silent_for", now.Sub(a.lastSeen).Round(time.Second), "launches", held)
 		p.recordLocked(history.TNodeMembership, history.Error, a,
 			fmt.Sprintf("Node %s was lost: no heartbeat for %s.", a.reg.Name, now.Sub(a.lastSeen).Round(time.Second)),
-			map[string]any{"state": StateLost, "launches": held})
+			map[string]any{"state": StateLost, "launches": held, "last_seen": a.lastSeen.UnixMilli()})
 	}
 	if changed {
 		p.rebuildLocked()
@@ -1176,6 +1188,7 @@ func (p *Pool) SetHistory(h HistorySink) {
 		defer supervise.Unlocked("pool", p.unlock)
 		p.o.History = h
 	}()
+	p.loadKnown(h)
 }
 
 // WaitStops waits up to d for the worker launch stops under way.

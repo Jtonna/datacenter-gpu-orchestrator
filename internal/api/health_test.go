@@ -653,3 +653,53 @@ func TestHealth_TickingSentencePartsAreNotChanges(t *testing.T) {
 		t.Fatalf("uptime: %q / %q", x.Text, y.Text)
 	}
 }
+
+// The Scheduler row's facts.release is the bare release string, and in the
+// ok sentence it is the exact text between "Running · release " and
+// " · up ", so the page can set it in mono without rewording the sentence.
+func TestHealth_SchedulerReleaseFact(t *testing.T) {
+	e := newEnv(t, chatOK, func(o *Options) {
+		o.Version = "v36-311213b"
+		o.taskStats = func() []supervise.TaskStats { return nil }
+	})
+	var h struct {
+		Rows []struct {
+			ID    string         `json:"id"`
+			State string         `json:"state"`
+			Text  string         `json:"text"`
+			Facts map[string]any `json:"facts"`
+		} `json:"rows"`
+	}
+	json.Unmarshal([]byte(body(t, e.get("/api/health"))), &h)
+	for _, r := range h.Rows {
+		if r.ID != "scheduler" {
+			continue
+		}
+		rel, _ := r.Facts["release"].(string)
+		if rel != "v36-311213b" || r.State != HealthOK || !strings.HasPrefix(r.Text, "Running · release "+rel+" · up ") ||
+			strings.Count(r.Text, rel) != 1 {
+			t.Fatalf("scheduler row: %+v", r)
+		}
+		return
+	}
+	t.Fatal("no scheduler row")
+}
+
+// An excluded machine that is absent after a restart (listed lost) reads
+// as down in the Zones row, not as switched off.
+func TestHealth_ZonesExcludedAbsentIsDown(t *testing.T) {
+	facts := []pool.NodeFacts{{ID: "zone-x", Name: "zone-x", State: pool.StateLost, Excluded: true, AbsentSinceStart: true}}
+	var view []scheduler.NodeStatus
+	for i := 1; i <= 7; i++ {
+		id := "zone-" + string(rune('0'+i))
+		facts = append(facts, pool.NodeFacts{ID: id, Name: id, State: pool.StateActive})
+		view = append(view, viewNode(id, true, false, false))
+	}
+	row := judgeZones(statusOf(view...), facts, true, time.Time{})
+	if row.State != HealthProblem || row.Text != "7 of 8 reachable · 1 down" || row.Count != 1 || row.Facts["off"] != int64(0) ||
+		row.Facts["lost"] != int64(1) || toJSONText(row.Facts["down_names"]) != `["zone-x"]` {
+		t.Fatalf("%+v", row)
+	}
+}
+
+func toJSONText(v any) string { b, _ := json.Marshal(v); return string(b) }

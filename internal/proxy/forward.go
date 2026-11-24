@@ -192,6 +192,28 @@ func (r Result) Reason() string {
 	return ""
 }
 
+// ClientCredentialHeaders are the request headers that carry a client's
+// credentials. None of them is passed on to a model server: they belong to
+// the client (often another provider's real key, sent by habit), and the
+// model server is Potluck's. A server with a launch key gets Potluck's own
+// "Authorization: Bearer <launch key>" instead, never the client's.
+var ClientCredentialHeaders = []string{
+	"Authorization",
+	"Proxy-Authorization",
+	"X-Api-Key",
+	"Api-Key",        // Azure OpenAI style
+	"X-Goog-Api-Key", // Google style
+	"X-Auth-Token",
+	"Cookie",
+	"X-Agent-Key", // a Potluck agent key: for Potluck, not for the model server
+}
+
+func dropClientCredentials(h http.Header) {
+	for _, k := range ClientCredentialHeaders {
+		h.Del(k)
+	}
+}
+
 // transport is shared by every proxied request. No ResponseHeaderTimeout:
 // prompt processing can take minutes before the first byte. Compression is
 // left to the client and upstream (the body is passed through verbatim).
@@ -237,12 +259,7 @@ func Forward(w http.ResponseWriter, r *http.Request, o Options) (res Result) {
 			pr.Out.URL.Scheme = "http"
 			pr.Out.URL.Host = o.Addr
 			pr.Out.Host = o.Addr
-			// The client's credentials are not the model server's business:
-			// an Authorization header (often another provider's real key,
-			// sent by habit) and a Potluck access key are dropped; the
-			// server gets Potluck's own launch key when it has one.
-			pr.Out.Header.Del("Authorization")
-			pr.Out.Header.Del("X-Agent-Key")
+			dropClientCredentials(pr.Out.Header)
 			if o.APIKey != "" {
 				pr.Out.Header.Set("Authorization", "Bearer "+o.APIKey)
 			}

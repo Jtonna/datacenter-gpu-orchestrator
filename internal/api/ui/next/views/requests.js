@@ -10,6 +10,7 @@
 
 import { h } from '../core/dom.js';
 import { registerView, navigate, href } from '../core/router.js';
+import { onCatalog, needCatalog } from '../core/catalog.js';
 import { liveView, pageHead, chips, button, runsTable, runLegend, tickRuns, skeleton, filterSelect, runMachines } from '../core/ui.js';
 import { num, dateTime, clock } from '../core/format.js';
 import { requestFeed, every, onLiveTimings, liveTimings } from '../core/requests.js';
@@ -35,6 +36,9 @@ registerView({
     const ticker = every(100, () => tickRuns(el));
     const offTimings = onLiveTimings(() => view.refresh());
 
+    // the Model column names runs from the catalog (runModel)
+    const offCat = onCatalog(() => view.refresh());
+    needCatalog();
     const view = liveView(el, () => {
       const d = feed.data;
       const rows = d.rows || [];
@@ -62,7 +66,7 @@ registerView({
 
     return {
       update(nr) { r = nr; feed.set(params()); view.refresh(); },
-      unmount() { feed.stop(); offTimings(); ticker(); view.unmount(); },
+      unmount() { offCat(); feed.stop(); offTimings(); ticker(); view.unmount(); },
     };
   },
 });

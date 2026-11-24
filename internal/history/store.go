@@ -855,3 +855,10 @@ func (s *Store) ScanType(typ string, fn func(Event)) {
 		}
 	})
 }
+
+// Scan calls fn for every event kept, oldest first (the files, then the
+// memory window). Used once at start to read back the machines of earlier
+// runs (pool.KnownFrom).
+func (s *Store) Scan(fn func(Event)) {
+	s.scanRange(0, math.MaxInt64, func(e *Event) { fn(*e) })
+}

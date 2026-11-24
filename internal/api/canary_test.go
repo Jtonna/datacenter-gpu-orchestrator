@@ -9,8 +9,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -25,22 +23,6 @@ func canary(t *testing.T) string {
 	var b [12]byte
 	rand.Read(b[:])
 	return "sk-CANARY-" + hex.EncodeToString(b[:])
-}
-
-// filesHolding lists the files under dir whose bytes contain s.
-func filesHolding(t *testing.T, dir, s string) []string {
-	t.Helper()
-	var out []string
-	filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		if b, err := os.ReadFile(p); err == nil && strings.Contains(string(b), s) {
-			out = append(out, p)
-		}
-		return nil
-	})
-	return out
 }
 
 // A credential that is not a Potluck key (another provider's real key, sent
@@ -153,10 +135,10 @@ func TestAccessKeys_ForeignCredentialIsWrittenNowhere(t *testing.T) {
 	if !strings.Contains(seenUp.String(), "Content-Type") {
 		t.Fatal("the model server's headers were not seen")
 	}
-	if f := filesHolding(t, usageDir, tok); len(f) > 0 {
+	if f := filesHolding(usageDir, tok); len(f) > 0 {
 		t.Errorf("usage files hold the foreign credential: %v", f)
 	}
-	if f := filesHolding(t, histDir, tok); len(f) > 0 {
+	if f := filesHolding(histDir, tok); len(f) > 0 {
 		t.Errorf("history files hold the foreign credential: %v", f)
 	}
 	// the test reached the sinks: rows, events and log lines exist

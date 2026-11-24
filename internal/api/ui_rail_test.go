@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -36,43 +37,141 @@ func TestUINextRail(t *testing.T) {
 	}})
 }
 
-// The health popup (Health board): the rows whose data exists, the ones
-// that wait for theirs, the heart's dot and count.
+// healthDoc is a GET /api/health answer (health.go, HealthSummary) with the
+// seven rows in the design's order; states maps a row id to its state and
+// sentence, the others are ok.
+func healthDoc(now time.Time, states map[string][2]string, recent []any) map[string]any {
+	type row struct{ id, label, text, link string }
+	rows := []row{
+		{"zones", "Zones", "8 of 8 reachable", "#/zones"},
+		{"runs", "Runs", "None failed in the last hour", "#/overview"},
+		{"scheduler", "Scheduler", "Running · release v1-test · up 12 d", "#/about"},
+		{"mcp", "MCP server", "Running · 3 keys active", "#/mcp"},
+		{"storage", "Storage", "50.3 of 240 GB used", "#/about"},
+		{"queue", "Queue", "Nothing waiting", "#/monitor/queue"},
+		{"alerts", "Alerts", "Not set up yet", "#/health/alerts"},
+	}
+	out := []any{}
+	issues, worst := 0, "ok"
+	for _, r := range rows {
+		state, text := "ok", r.text
+		if r.id == "alerts" {
+			state = "unknown"
+		}
+		if s, ok := states[r.id]; ok {
+			state, text = s[0], s[1]
+		}
+		switch state {
+		case "attention":
+			issues++
+			if worst == "ok" {
+				worst = "attention"
+			}
+		case "problem":
+			issues++
+			worst = "problem"
+		}
+		out = append(out, map[string]any{"id": r.id, "label": r.label, "state": state, "text": text, "count": 0, "link": r.link, "facts": map[string]any{}})
+	}
+	sentence := map[int]string{0: "All good", 1: "1 thing needs attention"}[issues]
+	if sentence == "" {
+		sentence = fmt.Sprintf("%d things need attention", issues)
+	}
+	if recent == nil {
+		recent = []any{}
+	}
+	return map[string]any{"state": worst, "color": map[string]string{"ok": "green", "attention": "amber", "problem": "red"}[worst],
+		"issues": issues, "sentence": sentence, "updated_at": now.UTC().Format(time.RFC3339), "rows": out, "recent": recent,
+		"recent_link": "#/activity?range=2h&sev=warn", "alerts_link": "#/health/alerts"}
+}
+
+// The health popup (Health board) draws GET /api/health and the "health"
+// topic as the server judged them: the sentences as written, a dot per row
+// (ok, attention, problem; a row the server cannot judge, Alerts "Not set
+// up yet", gets the neutral ring), each row a link to its page, the heart's
+// dot and issue count from the same document. Nothing is judged in the page.
 func TestUINextHealthPopup(t *testing.T) {
 	now := time.Now()
-	st := ovStatus(now) // node-e set aside: one zone down; one request waiting
-	st["queue"] = []any{map[string]any{"profile": "beta", "waiters": 2, "age": 348.0, "claim": []any{ovC}}}
-	fetch := ovFetch(now, ovRequests(now), true)
-	fetch["/api/requests/summary"] = map[string]any{"on": true, "totals": map[string]any{"requests": 9, "failed": 1, "refused": 0}, "series": []any{}}
-	fetch["/api/system"] = map[string]any{"version": "v1.2.3", "uptime_s": 1036800, "read_panics": 0,
-		"tasks":   []any{map[string]any{"name": "loop", "policy": "exit", "state": "running"}},
-		"storage": map[string]any{"database": map[string]any{"bytes": 40000000}, "history": map[string]any{"bytes": 3000000}, "usage": map[string]any{"size_bytes": 7000000}}}
-	fetch["/api/agents"] = map[string]any{"agents": []any{map[string]any{"id": "a1"}, map[string]any{"id": "a2"}, map[string]any{"id": "a3", "revoked_at": 1}}}
-	fetch["/api/config/settings"] = map[string]any{"settings": map[string]any{"queue_timeout": "10m0s"}}
-	fetch["/api/history"] = map[string]any{"events": []any{
-		map[string]any{"ts": now.Add(-10 * time.Minute).UnixMilli(), "seq": 7, "type": "nodeQuarantined", "severity": "warn", "nodes": []any{"node-e"}, "data": map[string]any{"for_s": 600}},
-		map[string]any{"ts": now.Add(-50 * time.Minute).UnixMilli(), "seq": 6, "type": "nodeLost", "severity": "error", "nodes": []any{"node-x"}},
-	}}
-	open := []string{"button.rb[title^=System]"}
-	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
-		map[string]any{"name": "health: the heart's dot", "route": "#/overview", "status": st,
-			"pageHas": []string{"button.rb[title^=System] span.dotmark.bad"}},
-		map[string]any{"name": "health: the popup's rows", "route": "#/overview", "status": st, "click": open,
-			"pageHas": []string{"div.hp[role=dialog]", "button.rb[title^=System][aria-expanded=true]",
-				"div.hp-row[data-health=zones] span.hd.bad", "div.hp-row[data-health=runs] span.hd.warn", "div.hp-row[data-health=scheduler] span.hd.ok",
-				"div.hp-row[data-health=mcp] span.hd.ok", "div.hp-row[data-health=storage] span.hd.wait", "div.hp-row[data-health=queue] span.hd.warn", "div.hp-row.nolink[data-health=alerts] span.hd.wait"},
-			"page": []string{"System health", "3 things need attention", "Zones", "5 of 6 reachable · 1 down", "Runs", "1 failed in the last hour",
-				"Scheduler", "Running · release ", "v1.2.3", " · up 12 d", "MCP server", "Running · 2 keys active", "Storage", "of Potluck data · disk: waiting for data",
-				"Queue", "2 waiting · longest 5 min 48 s", "Alerts", "Not built yet: waiting for data",
-				"Last 2 hours", "All activity", "failed a load and was set aside until", "went offline", "Alert settings"}},
-		map[string]any{"name": "health: a row opens its page", "route": "#/overview", "status": st, "click": []string{"button.rb[title^=System]", "div.hp-row[data-health=queue]"},
+	st := ovStatus(now)
+	open := []string{"button.rb[data-surface=health]"}
+	good := healthDoc(now, nil, nil)
+	two := healthDoc(now, map[string][2]string{
+		"zones": {"problem", "7 of 8 reachable · 1 down"},
+		"runs":  {"attention", "1 failed in the last hour"},
+	}, []any{
+		map[string]any{"at": now.Add(-10 * time.Minute).UTC().Format(time.RFC3339), "seq": 7, "type": "nodeQuarantined", "severity": "warn",
+			"text": "node-e failed a load and was set aside", "node": "node-e", "until": now.Add(8 * time.Minute).UTC().Format(time.RFC3339)},
+		map[string]any{"at": now.Add(-50 * time.Minute).UTC().Format(time.RFC3339), "seq": 6, "type": "nodeLost", "severity": "error",
+			"text": "node-x went offline", "node": "node-x"},
+		map[string]any{"at": now.Add(-70 * time.Minute).UTC().Format(time.RFC3339), "seq": 5, "type": "requestRefused", "severity": "warn",
+			"text": "A request for beta was refused"},
+	})
+	hello := map[string]any{"type": "hello", "data": map[string]any{"topics": []any{"status", "event", "health"}}}
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": map[string]any{"/api/health": two}, "cases": []any{
+		// two issues: the summary, the rows as the server wrote them, the recent lines
+		map[string]any{"name": "health: two issues", "route": "#/overview", "status": st, "click": open,
+			"pageHas": []string{"div.hp[role=dialog]", "button.rb[data-surface=health][aria-expanded=true]", "button.rb[data-surface=health][data-issues=2]",
+				"button.rb[data-surface=health] span.dotmark", "div.hp-sum span.hd.bad",
+				"a.hp-row[data-health=zones] span.hd.bad", "a.hp-row[data-health=runs] span.hd.warn", "a.hp-row[data-health=scheduler] span.hd.ok",
+				"a.hp-row[data-health=mcp] span.hd.ok", "a.hp-row[data-health=storage] span.hd.ok", "a.hp-row[data-health=queue] span.hd.ok",
+				"a.hp-row[data-health=alerts] span.hd.wait",
+				"a.hp-row[data-health=zones][href='#/zones']", "a.hp-row[data-health=queue][href='#/monitor/queue']", "a.hp-row[data-health=alerts][href='#/health/alerts']",
+				"div.hp-ev span.mono", "a.hp-foot[href='#/health/alerts']", "div.hp-last a[href='#/activity?range=2h&sev=warn']"},
+			"pageNone": []string{"div.hp-row", "span.hr-count"},
+			"page": []string{"System health", "2 things need attention", "Zones", "7 of 8 reachable · 1 down", "Runs", "1 failed in the last hour",
+				"Scheduler", "Running · release v1-test · up 12 d", "MCP server", "Running · 3 keys active", "Storage", "50.3 of 240 GB used",
+				"Queue", "Nothing waiting", "Alerts", "Not set up yet",
+				"Last 2 hours", "All activity", "node-e", " failed a load and was set aside until ", "node-x", " went offline", "A request for beta was refused", "Alert settings"}},
+		// a row is a link: following it closes the popup and goes there
+		map[string]any{"name": "health: a row opens its page", "route": "#/overview", "status": st, "click": []string{"button.rb[data-surface=health]", "a.hp-row[data-health=mcp]"},
+			"pageNone": []string{"div.hp"}, "hash": "#/mcp"},
+		map[string]any{"name": "health: the close button", "route": "#/overview", "status": st, "click": []string{"button.rb[data-surface=health]", "div.hp button.hp-x"},
 			"pageNone": []string{"div.hp"}},
-		map[string]any{"name": "health: the close button", "route": "#/overview", "status": st, "click": []string{"button.rb[title^=System]", "div.hp button.hp-x"},
-			"pageNone": []string{"div.hp"}},
+		// all good: no dot on the heart, no count, the server's sentence
+		map[string]any{"name": "health: no issues", "route": "#/overview", "status": st, "fetch": map[string]any{"/api/health": good}, "click": open,
+			"pageHas":  []string{"div.hp-sum span.hd.ok", "button.rb[data-surface=health][data-issues=0]", "a.hp-row[data-health=alerts] span.hd.wait"},
+			"pageNone": []string{"button.rb[data-surface=health] span.dotmark", "span.hd.bad", "span.hd.warn"},
+			"page":     []string{"All good", "8 of 8 reachable", "Nothing to report in the last 2 hours."}, "notOnPage": []string{"need attention"}},
+		// a frame on the health topic changes the heart and an open popup at once
+		map[string]any{"name": "health: the topic's frame", "route": "#/overview", "status": st, "fetch": map[string]any{"/api/health": good}, "click": open,
+			"ws": []any{hello}, "wsAfter": []any{map[string]any{"type": "health", "data": two}},
+			"pageHas": []string{"button.rb[data-surface=health][data-issues=2]", "button.rb[data-surface=health] span.dotmark", "a.hp-row[data-health=zones] span.hd.bad"},
+			"page":    []string{"2 things need attention", "7 of 8 reachable · 1 down"}},
 	}})
-	// nothing read yet: every row waits, the heart has no dot
+	// a server that does not answer /api/health: the popup says it has no data, the heart has no dot
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": map[string]any{}, "cases": []any{
-		map[string]any{"name": "health: before any data", "route": "#/overview", "click": []string{"button.rb[title^=System]"},
-			"page": []string{"Waiting for the first status", "Waiting for data"}, "pageNone": []string{"span.dotmark"}},
+		map[string]any{"name": "health: before any data", "route": "#/overview", "click": open,
+			"page": []string{"System health", "Waiting for data"}, "pageNone": []string{"span.dotmark", "a.hp-row"}},
+	}})
+}
+
+// The heart's dot is amber when the worst row needs attention, red for a
+// problem; its label counts the issues ("System health, 1 issue").
+func TestUINextHealthHeart(t *testing.T) {
+	now := time.Now()
+	one := healthDoc(now, map[string][2]string{"queue": {"attention", "2 waiting · longest 8 min"}}, nil)
+	hello := map[string]any{"type": "hello", "data": map[string]any{"topics": []any{"status", "health"}}}
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": map[string]any{}, "cases": []any{
+		map[string]any{"name": "heart: attention", "route": "#/overview", "status": ovStatus(now),
+			"ws":      []any{hello, map[string]any{"type": "health", "data": one}},
+			"pageHas": []string{"button.rb[data-surface=health][data-issues=1] span.dotmark.warn", "button.rb[aria-label$=issue]"}},
+	}})
+}
+
+// The Health board draws the popup over the page with no section menu
+// beside the rail (its script is empty: the heart's click does nothing more
+// than open the popup). Opening the popup closes the open section menu for
+// as long as the popup is open; closing the popup brings the menu back as
+// the person had it (their stored choice is not changed).
+func TestUINextHealthPopupClosesTheMenu(t *testing.T) {
+	now := time.Now()
+	st := ovStatus(now)
+	doc := healthDoc(now, nil, nil)
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": map[string]any{"/api/health": doc}, "cases": []any{
+		map[string]any{"name": "menu: open on Zones", "route": "#/zones", "status": st, "pageNone": []string{"div.app.menu-closed"}},
+		map[string]any{"name": "menu: the popup closes it", "route": "#/zones", "status": st, "click": []string{"button.rb[data-surface=health]"},
+			"pageHas": []string{"div.app.menu-closed", "div.hp"}},
+		map[string]any{"name": "menu: back when the popup closes", "route": "#/zones", "status": st, "click": []string{"button.rb[data-surface=health]", "div.hp button.hp-x"},
+			"pageNone": []string{"div.app.menu-closed", "div.hp"}},
 	}})
 }

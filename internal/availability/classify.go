@@ -54,8 +54,10 @@ type Sample struct {
 // agents membership) into one sample per machine, in this order of
 // precedence:
 //
-//	off       paused, excluded (exclude_nodes) or removed
-//	lost      membership state lost or left, or offline in the scheduler's view
+//	off       removed
+//	lost      membership state lost or left (even when paused or excluded)
+//	off       paused or excluded (exclude_nodes)
+//	lost      offline in the scheduler's view
 //	set_aside quarantined now (the scheduler's view)
 //	loading   placed for an instance that is starting
 //	in_use    placed for an instance that is ready, draining or stopping;
@@ -127,9 +129,13 @@ func Classify(st *scheduler.Status, facts []pool.NodeFacts) []Sample {
 			}
 		}
 		switch {
-		case f != nil && (f.Paused || f.Excluded || f.State == pool.StateRemoved), v != nil && v.Excluded:
+		case f != nil && f.State == pool.StateRemoved:
 			s.State = Off
-		case f != nil && (f.State == pool.StateLost || f.State == pool.StateLeft), v != nil && !v.Online, f == nil && v == nil:
+		case f != nil && (f.State == pool.StateLost || f.State == pool.StateLeft):
+			s.State = Lost // whatever a pause or exclude_nodes says: the node list calls it lost
+		case f != nil && (f.Paused || f.Excluded), v != nil && v.Excluded:
+			s.State = Off
+		case v != nil && !v.Online, f == nil && v == nil:
 			s.State = Lost
 		case v != nil && !v.Quarantined.IsZero():
 			s.State = SetAside
