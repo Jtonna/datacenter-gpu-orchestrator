@@ -72,9 +72,12 @@ type Request struct {
 	Profile   string `json:"profile"`             // never an alias
 	Requested string `json:"requested,omitempty"` // the model name the client sent
 	ModelFile string `json:"model_file,omitempty"`
-	// ShortName is the model file's short name (modelname.Short: "qwen3.5-4b");
-	// Ctx the profile's ctx when the request came in (0 when unknown: a row
-	// of an older build, or a profile without one). The page draws
+	// ShortName is the model file's name as the page shows it
+	// ("qwen3.5-4b"): not stored, derived from ModelFile whenever a row is
+	// read, with the namer the API sets (SetNamer: the catalog as it is
+	// then, so it follows the same rule as /api/models). Ctx is the
+	// profile's ctx when the request came in (0 when unknown: a row of an
+	// older build, or a profile without one). The page draws
 	// "qwen3.5-4b:8k" from the two, even after the profile is deleted.
 	ShortName string `json:"short_name,omitempty"`
 	Ctx       int    `json:"ctx,omitempty"`
@@ -195,7 +198,38 @@ type Recorder struct {
 
 	ended atomic.Uint64
 	watch atomic.Pointer[watcherBox]
+	namer atomic.Pointer[func(file string) string]
 }
+
+// SetNamer sets how a row's model file is named (short_name); nil: the
+// suffix rule without a catalog (modelname.Namer nil).
+func (r *Recorder) SetNamer(f func(file string) string) {
+	if r == nil {
+		return
+	}
+	if f == nil {
+		r.namer.Store(nil)
+		return
+	}
+	r.namer.Store(&f)
+}
+
+// named fills short_name on rows leaving the recorder.
+func (r *Recorder) named(rows []Request) []Request {
+	f := r.namer.Load()
+	for i := range rows {
+		if rows[i].ModelFile == "" {
+			rows[i].ShortName = ""
+		} else if f != nil {
+			rows[i].ShortName = (*f)(rows[i].ModelFile)
+		} else {
+			rows[i].ShortName = (*modelname.Namer)(nil).Name(rows[i].ModelFile)
+		}
+	}
+	return rows
+}
+
+func (r *Recorder) namedOne(row Request) Request { return r.named([]Request{row})[0] }
 
 type watcherBox struct{ w Watcher }
 
@@ -218,7 +252,7 @@ func (r *Recorder) notify(kind string, row func() Request) {
 	if b == nil || !b.w.Watching() {
 		return
 	}
-	b.w.Changed(kind, row())
+	b.w.Changed(kind, r.namedOne(row()))
 }
 
 // NewRecorder starts the request log on st (which may be off): rows that a
@@ -273,7 +307,7 @@ func (r *Recorder) Queued(b Begin) *Tracker {
 	now := r.now()
 	t := &Tracker{r: r, row: Request{Status: StatusQueued, Kind: b.Kind, Path: b.Path, Stream: b.Stream,
 		QueuedAt: now.UnixMilli(), Profile: b.Profile, Requested: b.Requested, ModelFile: b.ModelFile,
-		ShortName: modelname.Short(b.ModelFile), Ctx: max(b.Ctx, 0),
+		Ctx:    max(b.Ctx, 0),
 		Caller: b.Caller, CallerKind: b.CallerKind, SourceAddr: b.SourceAddr, BenchRun: b.BenchRun}}
 	r.add(t, now)
 	row := t.row
@@ -487,7 +521,7 @@ func (r *Recorder) Live() []Request {
 		out = append(out, t.snapshot(now))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out
+	return r.named(out)
 }
 
 func (r *Recorder) liveTrackers() []*Tracker {
@@ -509,7 +543,7 @@ func (r *Recorder) LiveByID(id int64) (Request, bool) {
 	if t == nil {
 		return Request{}, false
 	}
-	return t.snapshot(r.now().UnixMilli()), true
+	return r.namedOne(t.snapshot(r.now().UnixMilli())), true
 }
 
 func (r *Recorder) tracker(id int64) *Tracker {

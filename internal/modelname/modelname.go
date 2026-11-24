@@ -37,3 +37,53 @@ func Short(file string) string {
 	}
 	return strings.ToLower(s)
 }
+
+// tuned is a trailing "-it" or "-instruct" (any separator).
+var tuned = regexp.MustCompile(`[-_.](?:it|instruct)$`)
+
+// Namer names model files the way the page shows them: Short without a
+// trailing "-it" or "-instruct" ("gemma-4-27b"), unless two files of the
+// catalog would then share one name; those keep their suffix (both of
+// them). It is the one rule for /api/models and the request rows.
+type Namer struct {
+	byBase map[string]map[string]bool // name without the suffix -> the Short names that give it
+}
+
+// NewNamer is the namer of a catalog's model files.
+func NewNamer(files []string) *Namer {
+	n := &Namer{byBase: map[string]map[string]bool{}}
+	for _, f := range files {
+		sh := Short(f)
+		if sh == "" {
+			continue
+		}
+		b := tuned.ReplaceAllString(sh, "")
+		if n.byBase[b] == nil {
+			n.byBase[b] = map[string]bool{}
+		}
+		n.byBase[b][sh] = true
+	}
+	return n
+}
+
+// Name is the page's name of file. A file the catalog does not have is
+// named against the catalog as it is: it keeps its suffix when a catalog
+// file without it (or with another) gives the same name. A nil Namer (no
+// catalog) drops the suffix.
+func (n *Namer) Name(file string) string {
+	sh := Short(file)
+	b := tuned.ReplaceAllString(sh, "")
+	if n == nil || b == sh {
+		return b
+	}
+	others := 0
+	for s := range n.byBase[b] {
+		if s != sh {
+			others++
+		}
+	}
+	if others > 0 {
+		return sh
+	}
+	return b
+}

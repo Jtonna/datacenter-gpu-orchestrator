@@ -1,8 +1,6 @@
 package usage
 
 import (
-	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelname"
-
 	"cmp"
 	"database/sql"
 	"encoding/json"
@@ -44,7 +42,6 @@ func scanRows(rows *sql.Rows) ([]Request, error) {
 			return nil, err
 		}
 		r.Ctx = int(max(ctx.Int64, 0))
-		r.ShortName = modelname.Short(modelFile.String)
 		r.Reason, r.Message, r.Path, r.Requested, r.ModelFile = reason.String, message.String, path.String, requested.String, modelFile.String
 		r.Session, r.HostNode, r.SourceAddr, r.BenchRun = session.String, host.String, source.String, bench.String
 		r.Stream = stream != 0
@@ -127,6 +124,12 @@ func (f Filter) matchesLive(r *Request) bool {
 // requests that match, queued first, then running, then the stored
 // finished ones, newest first.
 func (r *Recorder) List(f Filter) (Page, error) {
+	page, err := r.list(f)
+	page.Requests = r.named(page.Requests)
+	return page, err
+}
+
+func (r *Recorder) list(f Filter) (Page, error) {
 	if f.Limit <= 0 {
 		f.Limit = 50
 	}
@@ -235,6 +238,14 @@ func (r *Recorder) listStored(f Filter, final []string) ([]Request, error) {
 
 // Get returns one request, live or stored.
 func (r *Recorder) Get(id int64) (Request, error) {
+	row, err := r.get(id)
+	if err != nil {
+		return row, err
+	}
+	return r.namedOne(row), nil
+}
+
+func (r *Recorder) get(id int64) (Request, error) {
 	if row, ok := r.LiveByID(id); ok {
 		return row, nil
 	}

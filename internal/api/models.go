@@ -388,6 +388,7 @@ type modelAcc struct {
 // one entry and adds its recent events and its benchmarks; the result then
 // has at most one element.
 func BuildModelCatalog(in CatalogInput, detailKey string) []map[string]any {
+	namer := modelname.NewNamer(catalogFiles(in))
 	files := map[string]ModelFile{}
 	for _, f := range in.Files {
 		files[f.File] = f
@@ -797,8 +798,10 @@ func BuildModelCatalog(in CatalogInput, detailKey string) []map[string]any {
 		if a.kind == "command" {
 			e["exists"] = true
 		}
-		if sn := modelname.Short(a.file.File); sn != "" {
-			e["short_name"] = sn // the page's model name ("qwen3.5-4b"); internal/modelname
+		if a.kind != "command" {
+			if sn := namer.Name(a.file.File); sn != "" {
+				e["short_name"] = sn // the page's model name ("gemma-4-27b"); modelname.Namer, as the request rows
+			}
 		}
 		if a.file.RawName != "" {
 			e["raw_name"] = a.file.RawName
@@ -1048,3 +1051,19 @@ func nilIfZero(v int64) any {
 var catalogEventTypes = []string{history.TLoadStarted, history.TLoadFinished, history.TInstanceUnloaded, history.TRequestRefused,
 	history.TLearnedNeed, history.TLoadStalled, history.TLoadLowMemory, history.TEviction, history.TChildExited, history.TProfileBackedOff,
 	history.TPreflightFailed, history.TNeedsMiBTooLow, history.TBenchStepFinished}
+
+// catalogFiles is every model file of the catalog of in: the files the
+// llama profiles name and the files in the models directory. The short
+// names are chosen among them (modelname.Namer).
+func catalogFiles(in CatalogInput) []string {
+	var out []string
+	for _, p := range in.Profiles {
+		if m := jstr(p["model"]); m != "" && jstr(p["kind"]) != "command" {
+			out = append(out, m)
+		}
+	}
+	for _, f := range in.Files {
+		out = append(out, f.File)
+	}
+	return out
+}

@@ -9,7 +9,7 @@ No agent change, no new port.
 - **`usage.db`: a new column `client_requests.ctx` under a new ledger `usage_ext_migrations` (version 1); `usage_migrations` stays at 4.**
 
 - **Usage per key.** Each key's requests per UTC day, with the ones denied by its permissions and the ones refused because a permission is Ask me, over REST and MCP. `GET /api/agents` gives each key `usage` for the last 7 days (sums and `by_day`). Kept 90 days.
-- **Model short names.** `/api/models` entries and request rows carry `short_name` (`qwen3.5-4b`), the rule the page used; request rows keep `ctx`, the profile's ctx when the request came in, so a run reads `qwen3.5-4b:8k` after its profile is deleted.
+- **Model short names.** `/api/models` entries and request rows carry `short_name` (`qwen3.5-4b`, `gemma-4-27b`): the page's rule, and a trailing `-it` or `-instruct` dropped unless two catalog files would then share the name (those keep it). One rule for both; a row's name is worked out on read, against the catalog as it is then; request rows keep `ctx`, the profile's ctx when the request came in, so a run reads `qwen3.5-4b:8k` after its profile is deleted.
 - **Going back to v44:** it opens both files and loses nothing. It ignores `agent_usage` (its access ledger check lets a newer ledger be): keys resolve, `request_count` and last use go on, the days it runs are not counted per day. It keeps its request log on with the newer `usage.db` (its ledger is still at 4; it never names `ctx`); its rows have no `ctx` and show without one when this image returns.
 
 ## Scheduler image: MCP access keys (phase 3)

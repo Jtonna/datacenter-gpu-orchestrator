@@ -13,6 +13,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelname"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/proxy"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
@@ -44,6 +45,7 @@ type catalogSnap struct {
 	list    []byte // the GET /api/models document
 	sig     string // the status it was built from
 	builtAt time.Time
+	namer   *modelname.Namer // the short names of its files (request rows use it too)
 }
 
 type catalogCache struct {
@@ -475,7 +477,7 @@ func (c *catalogCache) eventsCopy() []history.Event {
 // differs from prev (or there is no prev).
 func newCatalogSnap(in CatalogInput, prev *catalogSnap, modelsDir string) *catalogSnap {
 	entries := BuildModelCatalog(in, "")
-	snap := &catalogSnap{in: in, raw: map[string]json.RawMessage{}, hash: map[string]string{}}
+	snap := &catalogSnap{in: in, raw: map[string]json.RawMessage{}, hash: map[string]string{}, namer: modelname.NewNamer(catalogFiles(in))}
 	changed := prev == nil || len(prev.keys) != len(entries)
 	list := make([]json.RawMessage, 0, len(entries))
 	for i, e := range entries {
@@ -568,4 +570,22 @@ func (s *Server) handleModelDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, out[0])
+}
+
+// modelName is a model file's short name with the catalog as it is now (the
+// request rows: usage.Recorder.SetNamer). Before the first catalog is built
+// it chooses among the configured profiles' files.
+func (s *Server) modelName(file string) string {
+	if snap, _ := s.catalog.current(); snap != nil && snap.namer != nil {
+		return snap.namer.Name(file)
+	}
+	var files []string
+	if c := s.conf(); c != nil {
+		for _, p := range c.Profiles {
+			if p != nil && p.Model != "" {
+				files = append(files, p.Model)
+			}
+		}
+	}
+	return modelname.NewNamer(files).Name(file)
 }
