@@ -31,7 +31,11 @@ import (
 //	     - the compute buffer
 //
 // and never below the log's exact part L = (what the load log put on the
-// node) - the share - the compute buffer. It is not taken from a command
+// node) - the share - the compute buffer. It is taken only from a COLD load
+// on that node (coldLoad: the bytes sent there on the wire, measured, reach
+// half of what the log puts on its devices): after a cached reload the
+// worker already held the tensors, the node gave up almost nothing, and the
+// reading would be the log's part alone. It is not taken from a command
 // profile, a configured need, a model with a sliding window (whose estimate
 // is far off), a load whose log does not account for every node, or while
 // a node's latest and average free figures differ by more than
@@ -65,6 +69,16 @@ const deviceMovingMiB = 128
 type DeviceOverheadStore interface {
 	AllDevice() ([]needstore.DeviceOverhead, error)
 	PutDevice(needstore.DeviceOverhead) error
+	DeleteDeviceRow(shape, node string, devices int) error
+}
+
+// coldLoad: the bytes the host sent to a node on the wire (measured) reach
+// at least half of what the load log puts on that node's devices (logMiB):
+// the load really moved the model there. A cached or partly cached reload
+// (the worker already held the tensors: kilobytes cross the wire) is not
+// cold, and what the node gave up for it says nothing about the load.
+func coldLoad(sentBytes int64, measured bool, logMiB float64) bool {
+	return measured && logMiB > 0 && float64(sentBytes) >= logMiB*float64(1<<20)/2
 }
 
 func (c *schedCore) deviceOverheadAt(shape string, id core.NodeID, devices int) (*hostOH, bool) {
@@ -252,6 +266,11 @@ func (c *schedCore) deviceReadings(in *inst) (out []deviceReading, wait bool) {
 			return nil, true
 		}
 		logMiB, _ := c.reportedOn(in, id)
+		if !coldLoad(in.peerSent[in.placement.Nodes[i].Addr], in.sentBytes > 0, float64(logMiB)) {
+			c.log.Debug("no per-device overhead reading: not a cold load on this node", "profile", in.prof.Name, "node", c.nodeName(id),
+				"bytes_sent", in.peerSent[in.placement.Nodes[i].Addr], "log_mib", logMiB)
+			continue
+		}
 		share := int(math.Ceil(float64(base.Need.MiB)*fracs[i] - 1e-6))
 		comp := max(base.DeviceMiB, 0)
 		logPart := logMiB - share - comp
@@ -264,6 +283,7 @@ func (c *schedCore) deviceReadings(in *inst) (out []deviceReading, wait bool) {
 // measureDeviceOverheads runs every step: it reads every settled load's
 // per-device overheads once per cycle.
 func (c *schedCore) measureDeviceOverheads() {
+	c.dropCachedDevice()
 	for _, in := range c.insts {
 		if in.state != stReady && in.state != stDraining {
 			continue
@@ -380,4 +400,93 @@ func (c *schedCore) deviceOverheadRows() []HostOverheadRow {
 		return a.Devices - b.Devices
 	})
 	return out
+}
+
+// dropCachedDevice drops, once at start, every restored row whose reading
+// came from a cached reload (the release before took readings from any
+// load). For each row it finds in the event history the learnedNeed event
+// that recorded the reading (the row's profile shape, node, device count and
+// figure, at the reading's date), then the loadFinished event of that load:
+// the newest one before it for the same profile and node list. The row is
+// dropped when that load's measured bytes to the node are below the cold
+// floor (coldLoad), with a history line. A row whose load cannot be found
+// is kept.
+func (c *schedCore) dropCachedDevice() {
+	if c.devChecked || c.devEventsFn == nil || len(c.raw) == 0 {
+		return
+	}
+	c.devChecked = true
+	restored := false
+	for _, e := range c.devOHs {
+		restored = restored || e.restored
+	}
+	if !restored {
+		return
+	}
+	evs := c.devEventsFn()
+	slices.SortStableFunc(evs, func(a, b history.Event) int { return int(a.Ts - b.Ts) })
+	for k, e := range c.devOHs {
+		if !e.restored || len(e.Readings) == 0 {
+			continue
+		}
+		at := e.Readings[0].At.UnixMilli()
+		name := c.nodeName(k.node)
+		read := -1
+		for i, ev := range evs {
+			if ev.Type != history.TLearnedNeed || len(ev.Nodes) != k.devices || ev.Ts < at-2000 || ev.Ts > at+2000 {
+				continue
+			}
+			p := c.cfg.Profiles[ev.Profile]
+			if p == nil || shapeOf(p) != k.shape {
+				continue
+			}
+			if n, _ := ev.Data["node"].(string); n != name && n != string(k.node) {
+				continue
+			}
+			if v, ok := numberOf(ev.Data["device_overhead_mib"]); !ok || v != e.Readings[0].MiB {
+				continue
+			}
+			read = i
+		}
+		if read < 0 {
+			continue
+		}
+		var load *history.Event
+		for i := read - 1; i >= 0; i-- {
+			ev := evs[i]
+			if ev.Type == history.TLoadFinished && ev.Profile == evs[read].Profile && slices.Equal(ev.Nodes, evs[read].Nodes) {
+				load = &evs[i]
+				break
+			}
+		}
+		if load == nil {
+			continue
+		}
+		measured, _ := load.Data["bytes_measured"].(bool)
+		var sent, logMiB float64
+		found := false
+		detail, _ := load.Data["nodes_detail"].([]any)
+		for _, d := range detail {
+			m, _ := d.(map[string]any)
+			if n, _ := m["node"].(string); n == name || n == string(k.node) {
+				sent, _ = m["bytes"].(float64)
+				logMiB, _ = m["memory_mib"].(float64)
+				found = true
+			}
+		}
+		if !found || logMiB <= 0 || coldLoad(int64(sent), measured, logMiB) {
+			continue
+		}
+		delete(c.devOHs, k)
+		c.changed = true
+		if c.persist {
+			row := e.HostOverhead
+			c.needOps = append(c.needOps, needOp{shape: k.shape, dev: &row, drop: true})
+		}
+		c.log.Info("per-device overhead from a cached load dropped", "node", name, "devices", k.devices, "mib", e.MiB, "bytes_sent", int64(sent))
+		c.record(history.TLearnedNeed, history.Info, evs[read].Profile,
+			fmt.Sprintf("Dropped the per-device overhead of %s on %s (%s, %d MiB): the load it was read from was a cached reload (%d bytes sent to %s, under half of the %.0f MiB the log put there), so the reading measured nothing of the load.",
+				evs[read].Profile, name, plural(k.devices, "device"), e.MiB, int64(sent), name, logMiB),
+			evs[read].Nodes, "", map[string]any{"node": name, "devices": k.devices, "dropped_device_overhead_mib": e.MiB, "bytes_sent": int64(sent), "log_mib": logMiB})
+	}
 }

@@ -36,8 +36,18 @@ func devHarness(t *testing.T) *harness {
 // nodes give up usedA and usedB (their averages follow at once).
 func twoConsoleLoad(h *harness, usedA, usedB int) {
 	h.t.Helper()
+	loadOnTwo(h, usedA, usedB, 3600<<20, 3600<<20) // a cold load: the weights crossed the wire
+}
+
+// loadOnTwo is twoConsoleLoad with the bytes the host sent to a and b
+// (measured on the wire).
+func loadOnTwo(h *harness, usedA, usedB int, sentA, sentB int64) {
+	h.t.Helper()
 	w := h.request("e")
 	h.step(evWorkersLaunched{iid: h.lastLaunch().spec.IID, res: WorkerResult{LaunchIDs: map[core.NodeID]string{}}})
+	in := h.inst("e") // its load has begun: the bytes the log progress would report
+	in.peerSent = map[string]int64{addrA: sentA, addrB: sentB}
+	in.sentBytes = sentA + sentB
 	setLoad(h, "e", rpcDev(addrA, 3600, 400, 350), rpcDev(addrB, 3600, 400, 350))
 	h.healthy("e")
 	h.release(h.granted(w))
@@ -272,5 +282,116 @@ func TestDeviceOverhead_KeepsTheHigherAndSaysWhenItIsUnused(t *testing.T) {
 	}
 	if len(h.c.learned[shapeOf(e)]) == 0 {
 		t.Fatal("the load stored no measured need")
+	}
+}
+
+// A cached reload (the workers already hold the tensors: kilobytes cross
+// the wire) gives no reading; nor does a node that received less than half
+// of what the log puts on it, or a load whose bytes were not measured. A
+// cold load does.
+func TestDeviceOverhead_OnlyFromAColdLoad(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		sentA, sentB int64
+		wantA, wantB bool
+	}{
+		{"cached reload", 34062, 29442, false, false},
+		{"b partly cached", 3600 << 20, 1000 << 20, true, false},
+		{"half of the log on each", 2175 << 20, 2175 << 20, true, true},
+		{"not measured", 0, 0, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := devHarness(t)
+			e := h.c.cfg.Profiles["e"]
+			loadOnTwo(h, 4600, 4300, tc.sentA, tc.sentB)
+			h.advance(h.cfg.Defaults.FreeAverageWindow + time.Second)
+			_, okA := devRow(h, shapeOf(e), "a", 2)
+			_, okB := devRow(h, shapeOf(e), "b", 2)
+			if okA != tc.wantA || okB != tc.wantB {
+				t.Fatalf("a %v b %v, want %v %v", okA, okB, tc.wantA, tc.wantB)
+			}
+			for _, ev := range h.histTypes(history.TLearnedNeed) {
+				if ev.Severity != history.Info {
+					t.Fatalf("a cached load warned: %+v", ev)
+				}
+			}
+		})
+	}
+}
+
+// At start, a stored row whose reading came from a cached load is dropped,
+// with a history line saying why: its load is found in the event history
+// (the learnedNeed event that recorded the reading, then the loadFinished
+// event of that load before it: its bytes to that node). A row from a cold
+// load, and a row with no events, are kept.
+func TestDeviceOverhead_RowsFromCachedLoadsDroppedAtStart(t *testing.T) {
+	h := devHarness(t)
+	st := openNeedStore(t)
+	h.c.restoreNeeds(st)
+	e := h.c.cfg.Profiles["e"]
+	t1, t2 := h.clk.Now().Add(-2*time.Hour), h.clk.Now().Add(-time.Hour)
+	for _, r := range []struct {
+		node core.NodeID
+		mib  int
+		at   time.Time
+	}{{"a", 82, t2}, {"b", 39, t2}} {
+		row := devMeasured(shapeOf(e), r.node, 2, r.mib, r.at, h.c.llamaBuild)
+		row.Readings[0].At, row.MeasuredAt = r.at, r.at
+		h.c.putDeviceOverhead(row)
+	}
+	cold := devMeasured(shapeOf(h.c.cfg.Profiles["e1"]), "a", 1, 300, t1, h.c.llamaBuild)
+	h.c.putDeviceOverhead(cold) // e1 has e's shape on one device: a cold load
+	flushNeeds(h, st)
+	h = devHarness(t)
+	h.c.restoreNeeds(st)
+	ev := func(ts time.Time, typ, profile string, nodes []string, data map[string]any) history.Event {
+		return history.Event{Ts: ts.UnixMilli(), Type: typ, Profile: profile, Nodes: nodes, Data: data}
+	}
+	detail := func(a, b float64) []any {
+		return []any{map[string]any{"node": "a", "bytes": a, "memory_mib": 430.0}, map[string]any{"node": "b", "bytes": b, "memory_mib": 389.0}}
+	}
+	reads := 0
+	h.c.devEventsFn = func() []history.Event {
+		reads++
+		return []history.Event{
+			ev(t1.Add(-time.Minute), history.TLoadFinished, "e1", []string{"a"},
+				map[string]any{"bytes_measured": true, "nodes_detail": []any{map[string]any{"node": "a", "bytes": float64(3600 << 20), "memory_mib": 4350.0}}}),
+			ev(t1, history.TLearnedNeed, "e1", []string{"a"}, map[string]any{"node": "a", "device_overhead_mib": 300.0, "devices": 1.0}),
+			// an older cold load of e on both, then the cached reload that measured
+			ev(t2.Add(-time.Hour), history.TLoadFinished, "e", []string{"a", "b"},
+				map[string]any{"bytes_measured": true, "nodes_detail": detail(float64(3600<<20), float64(3600<<20))}),
+			ev(t2.Add(-time.Minute), history.TLoadFinished, "e", []string{"a", "b"},
+				map[string]any{"bytes_measured": true, "nodes_detail": detail(34062, 29442)}),
+			ev(t2, history.TLearnedNeed, "e", []string{"a", "b"}, map[string]any{"node": "a", "device_overhead_mib": 82.0, "devices": 2.0}),
+			ev(t2, history.TLearnedNeed, "e", []string{"a", "b"}, map[string]any{"node": "b", "device_overhead_mib": 39.0, "devices": 2.0}),
+		}
+	}
+	h.c.servedBuild = h.c.llamaBuild
+	h.step(evTick{})
+	h.step(evTick{})
+	if reads != 1 {
+		t.Fatalf("history read %d times", reads)
+	}
+	if _, ok := devRow(h, shapeOf(e), "a", 2); ok {
+		t.Fatal("the cached row on a is kept")
+	}
+	if _, ok := devRow(h, shapeOf(e), "b", 2); ok {
+		t.Fatal("the cached row on b is kept")
+	}
+	if _, ok := devRow(h, shapeOf(e), "a", 1); !ok {
+		t.Fatal("the cold row is dropped")
+	}
+	n := 0
+	for _, x := range h.histTypes(history.TLearnedNeed) {
+		if _, ok := x.Data["dropped_device_overhead_mib"]; ok {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Fatalf("history lines %d", n)
+	}
+	flushNeeds(h, st)
+	if rows, _ := st.AllDevice(); len(rows) != 1 || rows[0].Devices != 1 {
+		t.Fatalf("stored %+v", rows)
 	}
 }

@@ -387,6 +387,8 @@ type schedCore struct {
 	needOps      []needOp                        // learned-need store writes, taken by the runner after each step (needs.go)
 	hostOHs      map[hostKey]*hostOH             // measured host overheads by shape, node and device count (hostoverhead.go)
 	devOHs       map[hostKey]*hostOH             // measured per-device overheads by shape, node and device count (deviceoverhead.go)
+	devEventsFn  HostReadingEvents               // loadFinished and per-device learnedNeed events, read once at start (dropCachedDevice)
+	devChecked   bool                            // dropCachedDevice ran
 	hostEventsFn HostReadingEvents               // the history's learnedNeed events, read once for the rows of the release before device counts
 	hostEvents   []history.Event                 // what hostEventsFn returned (nil: not read yet)
 	persist      bool                            // a need store is attached: learned needs are queued for it
