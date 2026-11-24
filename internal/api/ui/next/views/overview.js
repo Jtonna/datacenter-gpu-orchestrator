@@ -3,10 +3,9 @@
 // Tokens panel and the Requests panel side by side, then the zones panel
 // with each zone's availability hour by hour.
 //
-// The runs panel is titled "Runs", as the design draws it (a run is one
-// client request; routes, code and the API say "requests"). Benchmark runs
-// keep their own pages and are called "benchmark runs" where both could
-// meet.
+// The requests panel is titled "Requests" (the owner, 24 Nov: "Runs" means
+// benchmark runs only; the design drew "Runs"). Benchmark runs keep their
+// own pages under Benchmarks.
 //
 // Clicking a request's Zones toggle pins it: the zones that served it (or,
 // for a queued one, the zones it waits for) are outlined in the zones panel,

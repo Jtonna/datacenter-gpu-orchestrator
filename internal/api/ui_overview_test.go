@@ -118,7 +118,6 @@ func TestUINextOverview(t *testing.T) {
 			"expect": []string{"Day", "Week", "Month", "All time", "· today", "Customize", "View 24-hour report",
 				"Tokens", "tokens in", "tokens out", "per hour", "Requests", "Queued", "Running", "Done", "Failed", "Cancelled", "All 6",
 				"Status and length", "Started at", "In tok/s", "Out tok/s", "Not started", "queued ", "42.5 s", "8.2 s", "4.0 s", "10 min", "2,460", "412", "14.1"},
-			"absent": []string{"Requests"},
 			"has":    []string{"tr.fail", "tr.canc", "[data-run-start]", "span[title^='Failed:']", "span[title^='Refused:']", "span[title^='Cancelled']", "button.zb.on[data-zones='15']"}},
 		map[string]any{"name": "overview: zones in the design's words", "route": "#/overview", "status": st,
 			"expect": []string{"ALL ZONES", "3 in use", "1 free", "1 down", "1 off", "Sort: needs attention first", "Chip: any", "Memory: any", "Temperature: any",
@@ -151,7 +150,7 @@ func TestUINextOverview(t *testing.T) {
 		map[string]any{"name": "overview: history begins", "route": "#/overview?date=2020-01-06", "status": st, "expect": []string{"History begins at"}},
 		// the requests list and the report it links to
 		map[string]any{"name": "requests list", "route": "#/requests", "status": st, "expect": []string{"Requests", "Refused", "Sent by", "node-a Host, node-b Helper", "Older", "Newer"}},
-		map[string]any{"name": "24-hour report", "route": "#/report", "status": st, "expect": []string{"24-hour report", "Failed and refused runs", "Zones, hour by hour", "Print"}},
+		map[string]any{"name": "24-hour report", "route": "#/report", "status": st, "expect": []string{"24-hour report", "Failed and refused requests", "Zones, hour by hour", "Print"}},
 	}})
 
 	// no request in the period, and the request log off
