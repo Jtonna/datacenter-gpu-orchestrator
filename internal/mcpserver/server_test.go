@@ -359,6 +359,7 @@ var expected = map[string]struct {
 	"unpause_node":          {`{"id":"n1","comment":"fixed"}`, "POST", "/api/nodes/n1/unpause", "", `{"comment":"fixed"}`, nil},
 	"force_unload_node":     {`{"id":"n1","comment":"hung"}`, "POST", "/api/nodes/n1/force-unload", "", `{"comment":"hung"}`, nil},
 	"list_groups":           {`{}`, "GET", "/api/groups", "", "", nil},
+	"get_uptime":            {`{"days":30}`, "GET", "/api/nodes/uptime", "days=30", "", nil},
 	"create_group":          {`{"name":"rack-a","members":["n1"],"comment":"first"}`, "POST", "/api/groups", "", `{"comment":"first","members":["n1"],"name":"rack-a"}`, nil},
 	"rename_group":          {`{"group":"rack-a","name":"rack-b"}`, "PATCH", "/api/groups/rack-a", "", `{"name":"rack-b"}`, nil},
 	"delete_group":          {`{"group":"rack-a"}`, "DELETE", "/api/groups/rack-a", "", "", nil},

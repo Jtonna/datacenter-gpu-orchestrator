@@ -119,14 +119,44 @@ func TestAvailability_RouteAnswersEachMachineHourByHour(t *testing.T) {
 	if code, a, raw := getAvail(t, e, "?node=host-1&step=day&from=2d"); code != 200 || a.Step != "day" || len(a.Nodes) != 1 || len(a.Nodes[0].Cells) != 3 {
 		t.Fatalf("%d %s", code, raw)
 	}
-	for q, want := range map[string]int{"?node=nope": 404, "?group=rack-a": 501, "?step=week": 400, "?from=yesterday": 400,
+	for q, want := range map[string]int{"?node=nope": 404, "?group=nope": 404, "?step=week": 400, "?from=yesterday": 400,
 		"?from=1795000000000&to=1794000000000": 400, "?from=900d": 400} {
 		if code, _, raw := getAvail(t, e, q); code != want {
 			t.Errorf("%s: %d %s", q, code, raw)
 		}
 	}
-	if _, _, raw := getAvail(t, e, "?group=rack-a"); !json.Valid([]byte(raw)) || !strings.Contains(raw, "groups are not available yet") {
-		t.Fatalf("group: %s", raw)
+	// One zone group: only its zones.
+	if code, a, raw := getAvail(t, e, "?group=rack-a"); code != 404 || len(a.Nodes) != 0 {
+		t.Fatalf("group before it exists: %d %s", code, raw)
+	}
+	e.api.groups.Create("rack-a", nil)
+	if code, a, raw := getAvail(t, e, "?group=rack-a"); code != 200 || len(a.Nodes) != 0 {
+		t.Fatalf("empty group: %d %s", code, raw)
+	}
+	e.api.groups.AddMembers("rack-a", []string{"host-1"})
+	if code, a, raw := getAvail(t, e, "?group=RACK-A"); code != 200 || len(a.Nodes) != 1 || a.Nodes[0].ID != "host-1" {
+		t.Fatalf("group: %d %s", code, raw)
+	}
+
+	// Uptime over 7 days: the history is three minutes old, all of it up.
+	var up UptimeDoc
+	resp := e.get("/api/nodes/uptime")
+	raw = body(t, resp)
+	if err := json.Unmarshal([]byte(raw), &up); err != nil || resp.StatusCode != 200 {
+		t.Fatalf("%d %s", resp.StatusCode, raw)
+	}
+	if up.Window.Days != 7 || up.Window.Complete || !up.Window.Recording || up.Window.CoveredFrom == nil ||
+		len(up.Zones) != 1 || up.Zones[0].Group != "rack-a" || up.Zones[0].Uptime == nil || *up.Zones[0].Uptime != 1 || up.Zones[0].UpS < 170 ||
+		len(up.Groups) != 1 || up.Groups[0].Name != "rack-a" || *up.Groups[0].Uptime != 1 || up.Ungrouped.Uptime != nil || *up.Fleet.Uptime != 1 {
+		t.Fatalf("uptime %s", raw)
+	}
+	if !strings.Contains(body(t, e.get("/api/groups")), `"uptime_7d":{"free_s"`) {
+		t.Fatal("no uptime_7d on the groups")
+	}
+	for _, q := range []string{"?days=0", "?days=91", "?days=x"} {
+		if r := e.get("/api/nodes/uptime" + q); r.StatusCode != 400 {
+			t.Errorf("%s: %d", q, r.StatusCode)
+		}
 	}
 }
 

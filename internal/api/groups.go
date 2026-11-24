@@ -129,6 +129,10 @@ type GroupSummary struct {
 	Accepting      string       `json:"accepting,omitempty"`
 	NeedsAttention []ZoneRef    `json:"needs_attention"`
 	Models         []GroupModel `json:"models"`
+	// Uptime7d is the members' uptime over the last 7 days (uptime.go;
+	// the document's uptime_window says what it covers). Absent without a
+	// usage store.
+	Uptime7d *availability.Totals `json:"uptime_7d,omitempty"`
 }
 
 // zoneInfo is what the group figures read of one zone.
@@ -322,7 +326,22 @@ func (s *Server) groupsDoc(ctx context.Context) map[string]any {
 	}
 	sort.Strings(rest)
 	ungrouped := summarizeGroup(groups.Group{Members: rest}, idx)
-	return map[string]any{"revision": rev, "groups": out, "ungrouped": ungrouped}
+	doc := map[string]any{"revision": rev, "groups": out, "ungrouped": ungrouped}
+	if s.opts.Usage.On() {
+		up := s.uptimeDoc(ctx, uptimeDefaultDays)
+		for i := range out {
+			for _, g := range up.Groups {
+				if g.Name == out[i].Name {
+					t := g.Totals
+					out[i].Uptime7d = &t
+				}
+			}
+		}
+		ungrouped.Uptime7d = &up.Ungrouped
+		doc["ungrouped"] = ungrouped
+		doc["uptime_window"] = up.Window
+	}
+	return doc
 }
 
 func (s *Server) handleGroups(w http.ResponseWriter, r *http.Request) {

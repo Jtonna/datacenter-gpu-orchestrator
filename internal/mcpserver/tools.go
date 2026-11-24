@@ -264,7 +264,7 @@ func allTools() []*tool {
 		rd("get_history_summary", "Aggregate the event history over a time range: counts by type and severity, load statistics per profile, per-node incidents and every error event.", P{
 			"since": i("Range start, unix milliseconds."), "until": i("Range end, unix milliseconds.")}, nil, "GET", "/api/history/summary", "since", "until"),
 		rd("get_availability", "Per machine, hour by hour (or per UTC day), how long it was free, in use (with how busy: in flight over parallel slots, busy_level 1 to 4), loading, down (lost or set aside), switched off (paused, excluded or removed) or unknown (Potluck was not running or not yet sampling), with its uptime (reachable over known time) and history_begins_at. Default: every machine, the last 24 hours, by hour.", P{
-			"node": s("A machine id or name (default every machine)."), "group": s("A zone group (not available yet: answered 501)."),
+			"node": s("A machine id or name (default every machine)."), "group": s("A zone group: only its zones."),
 			"from": s("Start: unix ms, RFC 3339, or a span back from now such as 24h or 7d (default 24 hours before to)."), "to": s("End, the same forms (default now)."),
 			"step": en("Cell size.", "hour", "day")},
 			nil, "GET", "/api/nodes/availability", "node", "group", "from", "to", "step"),
@@ -415,6 +415,8 @@ func allTools() []*tool {
 			Method: "POST", Path: "/api/nodes/{id}/force-unload", Body: []string{"comment"}},
 
 		// ---- zone groups (a label and a way to act on many zones; never a placement rule) ----
+		rd("get_uptime", "Uptime over the last days (default 7, at most 90) per zone, per zone group, for the zones in no group and for the fleet: up (free, in use, loading) over counted time (up, lost, set aside); switched-off time (paused, excluded, removed) is left out and given as off_s; unknown time (Potluck not running) is in neither. The window says from when it covers and whether the history covers all of it.",
+			P{"days": i("Days back from now, 1 to 90 (default 7).")}, nil, "GET", "/api/nodes/uptime", "days"),
 		rd("list_groups", "List the zone groups in the order they were made: each with its members (node ids and names), counts by state (total, reachable, down, lost, set_aside, off, in_use, free, loading), memory, temperature, whether its zones accept models (all, none, mixed), the zones that need attention and the models placed on it; and the zones in no group.", nil, nil, "GET", "/api/groups"),
 		{Name: "create_group", Desc: "Make a zone group, optionally with members. A zone is in at most one group: a member given here moves out of the group it was in.",
 			Props:    P{"name": s("The group name: 1 to 64 letters, digits, '.', '_' or '-'."), "members": strs("Optional: node ids to put in the group."), "comment": s("Optional: why, stored in the audit log.")},

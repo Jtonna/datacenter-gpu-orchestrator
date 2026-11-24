@@ -474,11 +474,18 @@ curl -s "$H/api/nodes/availability" | jq '.nodes[] | {name, uptime, now: .cells[
 curl -s "$H/api/nodes/availability?node=zone-a&step=day&from=7d"
 ```
 
-- `node=` an id or name (default every machine); `from`/`to` unix ms, RFC 3339 or a span back such as `24h` or `7d` (default: 24 hour cells, or 7 day cells, the last one the current); `step=hour|day` (UTC days, summed when read); `group=` answers 501 until zone groups exist. MCP: `get_availability`.
+- `node=` an id or name (default every machine); `from`/`to` unix ms, RFC 3339 or a span back such as `24h` or `7d` (default: 24 hour cells, or 7 day cells, the last one the current); `step=hour|day` (UTC days, summed when read); `group=` a zone group name: only its zones (404 for an unknown group). MCP: `get_availability`.
 - Each cell: `seconds` per state (`free`, `in_use`, `loading`, `down`, `off`, `unknown`; they add up to `span_s`), `down_lost_s` and `down_set_aside_s`, `busy` (in flight over the instance's parallel slots, averaged over the in-use time) and `busy_level` 1 to 4, `reachable_s`, `uptime` (reachable over known time) and `state`, the strip colour: unknown when nothing is known, off when switched off half the known time or more, down from 5 minutes down (or half), loading from half, in use from a quarter, else free. Each machine also has its `uptime` over the whole range; the answer has `history_begins_at` and `recording`. With `usage.db` off (see "Request log") nothing is sampled and the answer is an empty list with `recording` false.
 - How a machine is classed at each sample, first match wins: **off** removed; **down (lost)** membership state lost or left, even when paused or excluded (a machine the node list calls lost is always down); **off** paused or excluded; **down (lost)** offline in the view; **down (set aside)** quarantined; **loading** placed for an instance that is starting; **in use** placed for a ready, draining or stopping one; **free** otherwise. Time with no sample (Potluck not running, a node not known yet, the rest of a gap after a failed read) is **unknown**, never free.
 - A removed machine (membership state removed) is left out of the list for a range it was only off in, which is every range after its removal; `node=` still answers it. Seconds and `uptime` are sent with 3 decimals at most.
 - A missing or damaged `usage.db` never stops Potluck: a damaged one is moved aside, the history begins again and the route answers empty cells.
+
+**Uptime over days** (the Zones page's "Uptime, 7 days"): `curl -s "$H/api/nodes/uptime?days=7"` (1 to 90, default 7; MCP `get_uptime`). Per zone (with its `group`), per group, for the zones in no group (`ungrouped`) and for the whole fleet (`fleet`):
+
+- `uptime` = up / counted, where up = free + in use + loading and counted = up + lost + set aside. Switched-off time (paused, excluded, removed) is in neither and is given as `off_s`: the owner chose it. Set-aside time counts as down, as in `/api/health`; it is given as `set_aside_s` apart from `lost_s`. Unknown time (Potluck not running) is in neither. `null` when nothing was counted (for example a zone switched off the whole time).
+- A group's figure is its members' seconds summed (weighted by time), not an average of their percentages.
+- `window`: `from` (the start of the UTC hour `days` ago) to `to` (now), `history_begins_at`, `covered_from` (the later of the two) and `complete` (false while the history is younger than the window: the figure is then over the history there is, from `covered_from`).
+- This is not the `uptime` of `/api/nodes/availability` (reachable over known time, where a paused zone that answers counts up); that field keeps its meaning. `GET /api/groups` carries each group's 7-day figure as `uptime_7d` and the window as `uptime_window`.
 
 ### What a zone is doing
 
