@@ -10,13 +10,22 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
-// The last load's transfer rate per zone (Zones-Fleet-Detail "Link
-// speed"): from the newest loadFinished event that ended ready and sent
-// the zone at least 1 MiB, the bytes Potluck's host sent to that zone's
-// worker over the load's time. It is a lower bound of the link's rate (the
-// load time also holds the host's own work); it is not a link test, which
-// needs the agent (R1). Kept in memory: seeded from the history in the
-// background at start, then from each new event.
+// The last cold load per zone (Zones-Fleet-Detail "Link speed"): the
+// newest loadFinished event that
+//   - ended ready,
+//   - has bytes_measured true (bytes counted on the wire; an unmeasured
+//     event's bytes are the file size and never give a rate; an event
+//     without the flag is treated as unmeasured),
+//   - lasted at least minLinkLoad (2 s), and
+//   - sent this zone at least minLinkBytes (256 MiB) by measurement: a
+//     warm load, whose worker already holds the weights, moves kilobytes
+//     and is not a measurement.
+// Anything else leaves the zone's previous figure (with its at and model),
+// or none. The rate is bytes over the WHOLE load time: the event has no
+// transfer time of its own and the load time also holds the model's start,
+// so it is a lower bound of the link's rate (kind "lower_bound"); it is not
+// a link test, which needs the agent (R1). Kept in memory: seeded from the
+// history in the background at start, then from each new event.
 
 // LoadLink is one zone's last load transfer (pool.LoadLink, a zone fact).
 type LoadLink = pool.LoadLink
@@ -32,7 +41,11 @@ type loadLinkAt struct {
 	l  LoadLink
 }
 
-const minLinkBytes = 1 << 20 // less than this is the handshake only
+const (
+	minLinkBytes = 256 << 20     // less moved to a zone: a warm or mostly cached load
+	minLinkLoad  = 2.0           // seconds; a shorter load is not a measurement
+	linkKind     = "lower_bound" // mb_s is over the whole load, not the transfer alone
+)
 
 func asFloat(v any) (float64, bool) {
 	switch x := v.(type) {
@@ -68,7 +81,7 @@ func (ll *loadLinks) add(e history.Event) {
 		return
 	}
 	loadS, ok := asFloat(e.Data["load_s"])
-	if !ok || loadS <= 0 {
+	if !ok || loadS < minLinkLoad || e.Data["bytes_measured"] != true {
 		return
 	}
 	at := time.UnixMilli(e.Ts).UTC().Format("2006-01-02T15:04:05.000Z")
@@ -83,7 +96,7 @@ func (ll *loadLinks) add(e history.Event) {
 		if old, ok := ll.byName[name]; ok && old.ts > e.Ts {
 			continue
 		}
-		ll.byName[name] = loadLinkAt{e.Ts, LoadLink{MBs: math.Round(b/1e6/loadS*10) / 10, Bytes: int64(b), LoadS: loadS, At: at, Model: e.Profile}}
+		ll.byName[name] = loadLinkAt{e.Ts, LoadLink{MBs: math.Round(b/1e6/loadS*10) / 10, Bytes: int64(b), LoadS: loadS, At: at, Model: e.Profile, Kind: linkKind}}
 	}
 }
 

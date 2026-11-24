@@ -84,11 +84,13 @@ func chipOf(raw json.RawMessage) string {
 	return strings.Join(names, " + ")
 }
 
-// ChipMixed is a group's chip when its members differ, or some report none.
+// ChipMixed is a group's chip when members report different names.
 const ChipMixed = "mixed"
 
-// groupChip is a group's common chip: the one every member reports, "" when
-// none reports one, ChipMixed otherwise.
+// groupChip is a group's common chip: the one every member that reports a
+// name reports, when all do; ChipMixed when two names differ; "" when a
+// member reports none (a console today) and the others agree, or when none
+// reports one: Potluck does not know that member's chip.
 func groupChip(chips []string) string {
 	common, some, none := "", false, false
 	for _, c := range chips {
@@ -105,7 +107,7 @@ func groupChip(chips []string) string {
 	case !some:
 		return ""
 	case none:
-		return ChipMixed
+		return ""
 	}
 	return common
 }
