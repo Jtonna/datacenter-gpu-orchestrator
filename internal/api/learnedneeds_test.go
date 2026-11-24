@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 )
@@ -111,5 +112,46 @@ func TestNeedRowJSON(t *testing.T) {
 		if _, ok := m[k]; !ok {
 			t.Errorf("no %q in %s", k, b)
 		}
+	}
+}
+
+// GET /api/needs lists the measured host overheads (none here) under
+// host_overheads; a row's field names.
+func TestNeedsListsHostOverheads(t *testing.T) {
+	e, _, _ := cfgEnv(t)
+	code, got := e.cdo("GET", "/api/needs", "", nil)
+	if rows, ok := got["host_overheads"].([]any); code != 200 || !ok || len(rows) != 0 {
+		t.Fatalf("%d host_overheads %v", code, got["host_overheads"])
+	}
+	if got["host_overhead_setting_mib"] != float64(1024) || got["host_overhead_setting_only"] != false {
+		t.Fatalf("settings %v %v", got["host_overhead_setting_mib"], got["host_overhead_setting_only"])
+	}
+	b, _ := json.Marshal(hostOverheadJSON(scheduler.HostOverheadRow{Shape: "s", Node: "a", NodeName: "ps5-a", MiB: 600, LogHostMiB: 150,
+		MeasuredBy: "q", Cause: "load", Profiles: []string{"q"}, Used: true}))
+	var m map[string]any
+	json.Unmarshal(b, &m)
+	for _, k := range []string{"shape", "node", "node_name", "mib", "log_host_mib", "measured_by", "measured_at", "release", "llama_build",
+		"cause", "restored", "used", "profiles"} {
+		if _, ok := m[k]; !ok {
+			t.Errorf("no %q in %s", k, b)
+		}
+	}
+}
+
+// A plan of a profile hosted on a node names which host overhead it used.
+func TestHostEntryNamesTheOverheadSource(t *testing.T) {
+	e := map[string]any{}
+	hostEntry(e, scheduler.PlanReport{Host: "node", HostNode: "a", HostOverheadMiB: 600, HostOverheadSource: scheduler.HostOverheadMeasured,
+		HostOverheadMeasuredAt: time.Date(2026, 11, 23, 6, 0, 0, 0, time.UTC)}, map[string]string{"a": "ps5-a"})
+	if e["host_overhead_mib"] != 600 || e["host_overhead_source"] != "measured" || e["host_overhead_measured_at"] != "2026-11-23T06:00:00.000Z" {
+		t.Fatalf("%v", e)
+	}
+	e = map[string]any{}
+	hostEntry(e, scheduler.PlanReport{Host: "node", HostNode: "a", HostOverheadMiB: 1024, HostOverheadSource: scheduler.HostOverheadFromSetting}, nil)
+	if e["host_overhead_source"] != "setting" {
+		t.Fatalf("%v", e)
+	}
+	if _, ok := e["host_overhead_measured_at"]; ok {
+		t.Fatalf("no time for the setting: %v", e)
 	}
 }

@@ -163,6 +163,12 @@ func hostEntry(e map[string]any, rep scheduler.PlanReport, names map[string]stri
 		name = string(rep.HostNode)
 	}
 	e["host_node"], e["host_overhead_mib"] = name, rep.HostOverheadMiB
+	if rep.HostOverheadSource != "" { // which figure: "setting" (host_overhead_mib) or "measured" there
+		e["host_overhead_source"] = rep.HostOverheadSource
+	}
+	if !rep.HostOverheadMeasuredAt.IsZero() {
+		e["host_overhead_measured_at"] = isoTime(rep.HostOverheadMeasuredAt)
+	}
 	if rep.HostProblem != "" {
 		e["host_problem"] = rep.HostProblem
 	}

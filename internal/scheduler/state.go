@@ -178,6 +178,11 @@ type inst struct {
 	// cyclePeak is the most each node gave up for this instance in this
 	// load-to-unload cycle (reserve.go, endPeakCycle).
 	cyclePeak map[core.NodeID]int
+	// hostMeasured: the host overhead of this cycle was read (or found out
+	// of range); hostHigh is the most the host took on its node in the
+	// cycle (hostoverhead.go).
+	hostMeasured bool
+	hostHigh     int
 
 	benchRun   string // the bench run whose request started this instance (history records only)
 	served     int    // requests admitted (logged when the instance stops)
@@ -371,20 +376,21 @@ type schedCore struct {
 	backoffs     map[string]*backoff
 	waiters      map[uint64]*waiter
 	leases       map[uint64]*lease
-	runAvg       map[string]time.Duration        // drain.go: average run length per profile
-	pins         map[*core.Profile][]string      // pin.go: one-off copies of a profile and their nodes
-	needs_       map[string]NeedInfo             // provider results, before the estimate margin and learned figures
-	learned      map[string]map[int]*learnedNeed // by shape and device count (needcount.go)
-	derive       deriveState                     // what the derivation keeps between calls (derive.go)
-	needOps      []needOp                        // learned-need store writes, taken by the runner after each step (needs.go)
-	persist      bool                            // a need store is attached: learned needs are queued for it
-	buildRelease string                          // this build's release, stored with each measurement
-	steps        uint64                          // events handled (checkGated)
-	llamaBuild   string                          // the llama.cpp commit loads run on; "" when not known (needcount.go)
-	releaseBuild func(string) string             // the llama build a release's release.json names; "" when not known (nil: none)
-	servedBuild  string                          // the llama build the served release names, read at restore ("" : not known; nothing restored is trusted)
-	gated        gateMark                        // the latest gate call (checkGated)
-	warnedLow    map[string]bool                 // profiles whose too-low needs_mib was already warned about
+	runAvg       map[string]time.Duration           // drain.go: average run length per profile
+	pins         map[*core.Profile][]string         // pin.go: one-off copies of a profile and their nodes
+	needs_       map[string]NeedInfo                // provider results, before the estimate margin and learned figures
+	learned      map[string]map[int]*learnedNeed    // by shape and device count (needcount.go)
+	derive       deriveState                        // what the derivation keeps between calls (derive.go)
+	needOps      []needOp                           // learned-need store writes, taken by the runner after each step (needs.go)
+	hostOHs      map[string]map[core.NodeID]*hostOH // measured host overheads by shape and node (hostoverhead.go)
+	persist      bool                               // a need store is attached: learned needs are queued for it
+	buildRelease string                             // this build's release, stored with each measurement
+	steps        uint64                             // events handled (checkGated)
+	llamaBuild   string                             // the llama.cpp commit loads run on; "" when not known (needcount.go)
+	releaseBuild func(string) string                // the llama build a release's release.json names; "" when not known (nil: none)
+	servedBuild  string                             // the llama build the served release names, read at restore ("" : not known; nothing restored is trusted)
+	gated        gateMark                           // the latest gate call (checkGated)
+	warnedLow    map[string]bool                    // profiles whose too-low needs_mib was already warned about
 
 	raw           map[core.NodeID]core.Node // view this step
 	fresh         bool
