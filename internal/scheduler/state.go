@@ -403,6 +403,7 @@ type schedCore struct {
 	age           time.Duration
 	seenReconnect time.Time
 	excludedSeen  map[core.NodeID]bool          // excluded nodes already logged
+	steady        map[core.NodeID]int           // stable.go: each node's live budget held still
 	unplaced      map[core.NodeID]string        // why a listed node takes no new load (NodeGate), read with the view
 	unplacedMsg   map[core.NodeID]string        // the message of that reason (NodeGateDetail), when it has one
 	forcedGone    map[string]time.Time          // force_nodes name -> when it was first seen absent or offline in a live view
@@ -453,7 +454,7 @@ func newCore(cfg *config.Config, clock Clock, view fleet.View, needs NeedProvide
 		cfg: cfg, clock: clock, view: view, needs: needs, build: build, log: log,
 		insts: map[string]*inst{}, entries: map[string]*entry{}, nodes: map[core.NodeID]*nodeState{},
 		backoffs: map[string]*backoff{}, waiters: map[uint64]*waiter{}, leases: map[uint64]*lease{}, runAvg: map[string]time.Duration{}, pins: map[*core.Profile][]string{},
-		needs_: map[string]NeedInfo{}, learned: map[string]map[int]*learnedNeed{}, warnedLow: map[string]bool{}, raw: map[core.NodeID]core.Node{}, excludedSeen: map[core.NodeID]bool{},
+		needs_: map[string]NeedInfo{}, learned: map[string]map[int]*learnedNeed{}, warnedLow: map[string]bool{}, raw: map[core.NodeID]core.Node{}, excludedSeen: map[core.NodeID]bool{}, steady: map[core.NodeID]int{},
 		forcedGone: map[string]time.Time{}, health: map[core.NodeID]*workerHealth{},
 		recov: map[core.NodeID]*recoveryNode{}, memNext: map[core.NodeID]time.Time{}, refused: map[string]*refusal{}, lastRefusal: map[string]RefusalStatus{},
 		localSysMiB: localSystemMiB(), envFileLoad: os.Getenv(EnvRPCFileLoad),
@@ -668,7 +669,7 @@ func (c *schedCore) freeCandidates(p *core.Profile) []placer.Candidate {
 		if !ok || !c.isFree(id) || (localOnly(p) && !n.Local) || c.autoOff(p, n) {
 			continue
 		}
-		out = append(out, placer.FromNode(n, c.liveBudget(id, n)))
+		out = append(out, c.candidate(p, id, n, c.liveBudget(id, n), true))
 	}
 	return out
 }
@@ -684,7 +685,7 @@ func (c *schedCore) request(p *core.Profile) (placer.Request, NeedInfo, error) {
 	req := placer.Request{
 		Need: info.Need, AllowTiers: p.AllowTiers, TensorSplit: p.TensorSplit,
 		MaxPool: max(d.MaxPool, 1), MinShareMiB: d.MinShareMiB, DeviceOverheadMiB: d.DeviceOverheadMiB + info.DeviceMiB,
-		SkewPermille: permille(d.SplitSkewMargin),
+		SkewPermille: permille(d.SplitSkewMargin), EqualMiB: d.PlacementToleranceMiB,
 	}
 	if len(info.figs) > 0 { // needcount.go: the need of every device count the placer may try
 		req.ByCount = make([]placer.CountNeed, max(req.MaxPool, len(p.ForceNodes), 1)+1)

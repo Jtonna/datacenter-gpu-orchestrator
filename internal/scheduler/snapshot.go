@@ -225,7 +225,7 @@ func (c *schedCore) statusDoc() Status {
 			}
 			continue
 		}
-		s := NodeStatus{ID: id, Hostname: n.Hostname, Local: n.Local, Online: n.Online, Addr: n.Addr, Priority: n.Priority,
+		s := NodeStatus{ID: id, Hostname: n.Hostname, Local: n.Local, Online: n.Online, Addr: n.Addr, Priority: n.Priority, TierIndex: n.TierIndex,
 			Eligible: c.eligible(id), Excluded: c.excluded(n), Auto: !c.noAuto(n), Unplaced: c.unplaced[id], UnplacedMessage: c.unplacedMsg[id], TotalMiB: n.TotalMiB, FreeMiB: c.freeMiB(id, n), LiveBudgetMiB: c.liveBudget(id, n),
 			EmptyMiB: c.emptyMiB(id, n), PlanBudgetMiB: c.planBudget(id, n)}
 		s.ExcludedBy, _ = c.cfg.ExcludedBy(n.ID, n.Hostname)

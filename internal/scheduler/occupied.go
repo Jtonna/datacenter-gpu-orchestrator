@@ -113,7 +113,7 @@ func (c *schedCore) occupiedOnly(p *core.Profile) (nodes []core.NodeID, occupant
 			continue
 		}
 		held[id] = true
-		cands = append(cands, placer.FromNode(n, c.planBudget(id, n)))
+		cands = append(cands, c.candidate(p, id, n, c.planBudget(id, n), false))
 	}
 	if len(held) == 0 {
 		return nil, nil

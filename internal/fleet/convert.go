@@ -36,7 +36,7 @@ func nodeFromMember(cfg *config.Config, m Member, local bool) (core.Node, bool) 
 	n := core.Node{
 		ID: core.NodeID(m.ID), Hostname: m.Hostname, Local: local, Online: m.Online,
 		Priority: tier.Priority, HeadroomMiB: tier.HeadroomMiB, SharedMemory: tier.SharedMemory,
-		LinkMBs: tier.LinkMBs, Settle: tier.Settle,
+		LinkMBs: tier.LinkMBs, Settle: tier.Settle, TierIndex: tier.Index,
 	}
 	if m.RPCServerMemMiB != nil {
 		n.RPCServerMemMiB, n.RPCServerMemKnown = *m.RPCServerMemMiB, true
