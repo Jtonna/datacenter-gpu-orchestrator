@@ -180,6 +180,13 @@ type PlacedNode struct {
 	Addr      string // rpc ip:port; empty for the local node
 	Local     bool
 	BudgetMiB int // budget used for the tensor split
+	// SplitMiB, when above 0 on every node of an automatic placement of
+	// two or more nodes, is the node's tensor split weight in place of
+	// BudgetMiB: the steady figure of the node's class (placer EqualMiB), so
+	// the split does not follow a few MiB of free-memory noise. The placer
+	// sets it only when every node holds its share that way; the pre-flight
+	// drops it when the exact figures no longer allow it.
+	SplitMiB int
 }
 
 // Placement is where an instance will run.
