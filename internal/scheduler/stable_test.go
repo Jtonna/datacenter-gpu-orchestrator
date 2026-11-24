@@ -354,7 +354,8 @@ func flipWhy(a, b PlanReport) string {
 
 // liveShapeFleet is live's shape: six equal consoles, one laptop with memory
 // of its own, and the local node.
-func liveShapeFleet(r *rand.Rand, jitter int) []core.Node {
+// lower takes that many MiB off console-3's free memory.
+func liveShapeFleet(r *rand.Rand, jitter, lower int) []core.Node {
 	j := func() int {
 		if r == nil {
 			return 0
@@ -363,6 +364,9 @@ func liveShapeFleet(r *rand.Rand, jitter int) []core.Node {
 	}
 	var ns []core.Node
 	for i, b := range []int{13010, 13024, 12998, 13031, 13005, 13017} {
+		if i == 2 {
+			b -= lower
+		}
 		ns = append(ns, ps5(fmt.Sprintf("console-%d", i+1), 10+i, b+j()))
 	}
 	return append(ns, laptop("laptop-1", 7600+j()), hostNode(7000+j()))
@@ -373,10 +377,25 @@ func liveShapeFleet(r *rand.Rand, jitter int) []core.Node {
 // changes. What changes is listed: which console a single load lands on,
 // the device order and the split.
 func TestStable_LiveShapeFlipList(t *testing.T) {
+	liveShapeCompare(t, 0)
+}
+
+// The same with console-3 lower by 60 and 127 MiB (still of the class: the
+// even split against unequal real memory) and by 700 and 2,500 MiB (a class
+// of its own): no profile that starts at tolerance 0 queues or is refused
+// at 128, and nothing else in the list above changes either.
+func TestStable_LiveShapeOneConsoleLower(t *testing.T) {
+	for _, d := range []int{60, 127, 700, 2500} {
+		t.Run(fmt.Sprintf("lower_%d", d), func(t *testing.T) { liveShapeCompare(t, d) })
+	}
+}
+
+func liveShapeCompare(t *testing.T, lower int) {
+	t.Helper()
 	build := func(tol int) (*harness, []string) {
 		h := newHarness(t)
 		h.cfg.Defaults.PlacementToleranceMiB = tol
-		h.nodes(liveShapeFleet(nil, 0)...)
+		h.nodes(liveShapeFleet(nil, 0, lower)...)
 		r := rand.New(rand.NewSource(55))
 		var names []string
 		for i := 0; i < 120; i++ {
@@ -414,7 +433,7 @@ func TestStable_LiveShapeFlipList(t *testing.T) {
 	kinds := map[string]int{}
 	actions := map[PlanAction]int{}
 	for i := 0; i < 20; i++ {
-		fleet := liveShapeFleet(rng, 25)
+		fleet := liveShapeFleet(rng, 25, lower)
 		on.nodes(fleet...)
 		on.viewChanged()
 		off.nodes(fleet...)
@@ -435,5 +454,58 @@ func TestStable_LiveShapeFlipList(t *testing.T) {
 			}
 		}
 	}
-	t.Logf("live shape, %d profiles %v: on the first read %v", len(names), actions, kinds)
+	t.Logf("live shape, console-3 lower by %d MiB, %d profiles %v: on the first read %v", lower, len(names), actions, kinds)
+}
+
+// (Reviewer 1) A profile measured on two consoles stays measured on any two
+// consoles: the measured need is kept per shape and device count, not per
+// machine set (needstore needs_by_placement, PRIMARY KEY (shape, devices)).
+// Per-node figures and peaks apply only to the very set and split they were
+// measured on; on another set the stored peaks still raise the need of
+// that device count (peakNeed), spread by the split. Here the stable order
+// takes console-1 and console-2 although the measurement was taken on
+// console-4 and console-5.
+func TestStable_MeasuredOnOtherConsolesStaysMeasured(t *testing.T) {
+	plan := func(tol int, set []core.NodeID) PlanReport {
+		h := newHarness(t)
+		h.cfg.Defaults.PlacementToleranceMiB = tol
+		h.cfg.Defaults.FillReserveKiBPerToken = 8
+		h.nodes(liveShapeFleet(nil, 0, 0)...)
+		p := h.llama("m", 0, func(p *core.Profile) { p.Ctx = 4096 })
+		h.needs["m"] = NeedInfo{Need: placer.Estimated(17000), FileBytes: 8 << 30}
+		h.c.putLearned(&learnedNeed{TotalMiB: 19000, key: needKeyOf(p), profile: "m", placement: set, devices: 2,
+			split: []float64{0.5, 0.5}, Nodes: []learnedNode{{ID: set[0], Fraction: 0.5, MiB: 9500, PeakMiB: 9800}, {ID: set[1], Fraction: 0.5, MiB: 9500, PeakMiB: 9800}}})
+		h.c.needs_ = map[string]NeedInfo{}
+		h.viewChanged()
+		return h.c.dryPlan("m")
+	}
+	rows := func(r PlanReport) (ids []core.NodeID, take int, basis []string) {
+		for _, n := range r.Memory.Nodes {
+			ids, take, basis = append(ids, n.ID), take+n.WillTakeMiB, append(basis, n.Basis)
+		}
+		return
+	}
+	measuredOn := []core.NodeID{"console-4", "console-5"}
+	on, off := plan(stableTol, measuredOn), plan(0, measuredOn)
+	for _, r := range []PlanReport{on, off} {
+		if r.Action != PlanStart || !r.Measured || r.NeedMiB != 19000 || len(r.Placement) != 2 {
+			t.Fatalf("%s measured %v need %d on %d", r.Action, r.Measured, r.NeedMiB, len(r.Placement))
+		}
+	}
+	if on.FitNeedMiB != off.FitNeedMiB {
+		t.Fatalf("fit need %d at 128, %d at 0", on.FitNeedMiB, off.FitNeedMiB)
+	}
+	ids, take, basis := rows(on)
+	if !slices.Equal(ids, []core.NodeID{"console-1", "console-2"}) || take < 2*9800 || basis[0] != BasisPeak {
+		t.Fatalf("at 128 on %v: will take %d, basis %v (want at least the peak total 19600, basis peak)", ids, take, basis)
+	}
+	oids, otake, obasis := rows(off)
+	t.Logf("measured on %v: at 128 on %v will take %d (%v); at 0 on %v will take %d (%v)", measuredOn, ids, take, basis, oids, otake, obasis)
+
+	// measured on the set the stable order takes: its own per-node peaks
+	same := plan(stableTol, []core.NodeID{"console-1", "console-2"})
+	ids, take, basis = rows(same)
+	if !same.Measured || same.NeedMiB != 19000 || take != 2*9800 || basis[0] != BasisPeak {
+		t.Fatalf("on its own set %v: measured %v need %d will take %d basis %v", ids, same.Measured, same.NeedMiB, take, basis)
+	}
 }

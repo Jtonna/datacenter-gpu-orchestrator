@@ -127,3 +127,63 @@ func TestStable_ForcedUntouched(t *testing.T) {
 		t.Fatalf("%+v %+v", a, b)
 	}
 }
+
+// Whatever the need, a request that places at tolerance 0 places at 128 on
+// as many nodes, and every share fits its node's EXACT budget: with equal
+// consoles, with one console lower inside the class (60 and 127 MiB, where
+// the even split meets unequal real memory) and outside it (700 and 2,500
+// MiB), and with the live reading of one console below its steady figure.
+func TestStable_NeverWorseThanToleranceZero(t *testing.T) {
+	for _, d := range []int{0, 60, 127, 700, 2500} {
+		for _, liveShort := range []int{0, 90} {
+			var nodes []Candidate
+			for i, name := range []string{"ps5-a", "ps5-b", "ps5-c", "ps5-d"} {
+				steady := 12010 - i*3
+				if i == 2 {
+					steady -= d
+				}
+				live := steady
+				if i == 1 {
+					live -= liveShort
+				}
+				nodes = append(nodes, console(name, live, steady))
+			}
+			placed := 0
+			for need := 1000; need <= 49000; need += 37 {
+				req := stableReq(need)
+				old := req
+				old.EqualMiB = 0
+				b, errB := Place(old, nodes)
+				a, errA := Place(req, nodes)
+				if errB != nil {
+					continue
+				}
+				placed++
+				if errA != nil || len(a.Nodes) != len(b.Nodes) {
+					t.Fatalf("lower %d, live short %d, need %d: tolerance 0 places on %d, 128 gives %+v %v", d, liveShort, need, len(b.Nodes), a, errA)
+				}
+				if len(a.Nodes) > 1 {
+					w := make([]int, len(a.Nodes))
+					for i, n := range a.Nodes {
+						w[i] = n.BudgetMiB
+						if n.SplitMiB > 0 {
+							w[i] = n.SplitMiB
+						}
+					}
+					sum := 0
+					for _, x := range w {
+						sum += x
+					}
+					for i, n := range a.Nodes {
+						if share := need * w[i] / sum; share > n.BudgetMiB {
+							t.Fatalf("lower %d, live short %d, need %d: %s takes %d of its exact budget %d (%+v)", d, liveShort, need, n.ID, share, n.BudgetMiB, a)
+						}
+					}
+				}
+			}
+			if placed < 1000 {
+				t.Fatalf("lower %d: only %d needs placed; the sweep is too narrow", d, placed)
+			}
+		}
+	}
+}
