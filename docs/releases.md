@@ -2,6 +2,12 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: zone actions take names
+
+No agent change, no new port, no schema change.
+
+- **Zone actions take names.** `POST /api/zone-actions/{pause|unpause|force-unload|drain}` (dry run and real call) and the MCP tools `pause_zones`, `unpause_zones`, `drain_zones`, `force_unload_zones` take zone names as well as ids, resolved as `/api/load` does; a name two zones share is refused with a sentence naming them; an unknown one is still 400.
+
 ## Scheduler image: short names without a publisher prefix
 
 No agent change, no new port, no schema change.
