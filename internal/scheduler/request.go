@@ -28,6 +28,10 @@ func (c *schedCore) arrive(w *waiter) {
 			c.fail(w, err)
 			return
 		}
+		if err := c.pinUnusable(p, w.pin); err != nil {
+			c.fail(w, err)
+			return
+		}
 		p = c.pinned(p, w.pin)
 	}
 	if c.shutdown {

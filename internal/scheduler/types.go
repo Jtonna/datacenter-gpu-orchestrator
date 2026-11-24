@@ -28,6 +28,7 @@ const (
 	ReasonNodeExcluded      Reason = "node excluded"            // 503, exclude_nodes keeps out the nodes this needs (permanent for a forced profile)
 	ReasonUnloaded          Reason = "unloaded"                 // 503, a loading instance was force-unloaded
 	ReasonPinConflict       Reason = "already loaded or queued" // 409, a load on chosen nodes while the model is loaded or queued (pin.go)
+	ReasonPinUnusable       Reason = "chosen zone unusable"     // 409, a chosen node is lost, offline, excluded, paused, set aside or outside the pool (pin.go)
 	ReasonClientGone        Reason = "client gone"              // 499, the caller's context ended
 	ReasonInternal          Reason = "internal error"           // 500, a read-only query panicked (recovered, counted in /api/system)
 )

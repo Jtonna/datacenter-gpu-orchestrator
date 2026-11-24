@@ -50,6 +50,38 @@ func (c *schedCore) prunePins() {
 	}
 }
 
+// pinUnusable refuses a load on chosen nodes when one of them may not take
+// a model now: not in the fleet view, lost or offline, excluded, paused,
+// set aside (quarantined), outside the pool (unplaced) or failed to settle.
+// A configured force_nodes profile waits for such a node; a chosen-zones
+// load is refused at once instead, so it is never placed on one.
+func (c *schedCore) pinUnusable(p *core.Profile, nodes []string) *Error {
+	for _, name := range nodes {
+		why := ""
+		id, err := c.view.Resolve(name)
+		n, ok := c.node(id)
+		switch {
+		case err != nil || !ok:
+			why = "is not in the fleet view"
+		case c.excluded(n):
+			why = "is excluded (exclude_nodes)"
+		case n.Paused:
+			why = "is paused"
+		case c.quarantined(id):
+			why = "is set aside"
+		case c.unplaced[id] != "":
+			why = "is outside the pool (" + string(c.unplaced[id]) + ")"
+		case !c.eligible(id):
+			why = "is lost or offline"
+		}
+		if why != "" {
+			return &Error{Status: http.StatusConflict, Reason: ReasonPinUnusable,
+				Message: fmt.Sprintf("%s cannot be loaded on the chosen zones: %s %s", p.Name, name, why)}
+		}
+	}
+	return nil
+}
+
 // pinConflict refuses a pinned load while the profile is loaded, loading,
 // stopping or queued: its nodes cannot be chosen then.
 func (c *schedCore) pinConflict(p *core.Profile) *Error {

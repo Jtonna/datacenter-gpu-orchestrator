@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 )
@@ -94,4 +95,24 @@ func TestDrain_IdleLoadingAndCancel(t *testing.T) {
 	if err := h.c.undrain("n"); !errors.Is(err, ErrNotDraining) {
 		t.Fatalf("undrain twice: %v", err)
 	}
+}
+
+// A shutdown (Potluck stopping or restarting) mid-drain is an ordinary
+// shutdown: the queued request is answered 503, the run in flight may
+// finish within shutdown_grace, then everything stops; nothing of the
+// drain is kept (after a restart nothing is loaded and nothing drains).
+func TestDrain_ShutdownMidDrain(t *testing.T) {
+	h := newHarness(t).nodes(ps5("a", 2, 15000))
+	h.llama("m", 8000)
+	h.autoExit = false
+	g := h.ready("m")
+	if _, err := h.c.drain("m"); err != nil {
+		t.Fatal(err)
+	}
+	w := h.request("m")
+	h.step(evShutdown{})
+	h.failed(w, http.StatusServiceUnavailable, ReasonShuttingDown)
+	h.wantState("m", "draining") // its run goes on within the grace
+	h.release(g)
+	h.wantState("m", "stopping")
 }

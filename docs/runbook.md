@@ -165,7 +165,7 @@ curl -s -X POST $H/api/plan -d '{"model":"gemma","nodes":["ps5-02","ps5-03"]}'  
 curl -s -X POST $H/api/load -d '{"model":"gemma","nodes":["ps5-02","ps5-03"]}'
 ```
 
-`nodes` (ids or names the fleet view holds, in device order) places this one load as `force_nodes` would, without changing the profile: as `force_nodes`, the fit check is skipped and a load that can never fit there is refused. The instance shows `pinned_nodes` in `/api/status` (absent on any other instance) and is not reported stale for them; its next load follows the profile again. Refused with 409 (`already loaded or queued`) while the model is loaded, loading, stopping or queued: unload it first. Audited as `load` with `nodes`. MCP: `plan_load` and `load_model` take `nodes`.
+`nodes` (ids or names the fleet view holds, in device order) places this one load as `force_nodes` would, without changing the profile: as `force_nodes`, the fit check is skipped and a load that can never fit there is refused. The instance shows `pinned_nodes` in `/api/status` (absent on any other instance) and is not reported stale for them; its next load follows the profile again. Refused with 409 (`already loaded or queued`) while the model is loaded, loading, stopping or queued: unload it first. Refused at once with 409 (`chosen zone unusable`) when a chosen zone is not in the fleet view, lost or offline, excluded, paused (also while an unpause is pending), set aside or outside the pool: a chosen-zones load never waits for such a zone, unlike a configured `force_nodes` profile. Audited as `load` with `nodes`. MCP: `plan_load` and `load_model` take `nodes`.
 
 ### A machine that is off across a restart
 

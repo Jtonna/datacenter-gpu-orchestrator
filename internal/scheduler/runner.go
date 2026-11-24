@@ -629,6 +629,9 @@ func (s *Scheduler) PlanOn(ctx context.Context, model string, nodes []string) (P
 		if e := c.pinConflict(p); e != nil {
 			return PlanReport{Profile: p.Name, Action: PlanReject, Reason: e.Message}
 		}
+		if e := c.pinUnusable(p, nodes); e != nil {
+			return PlanReport{Profile: p.Name, Action: PlanReject, Reason: e.Message}
+		}
 		return c.dryPlanOf(p.Name, pinCopy(p, nodes))
 	})
 	if err != nil {
