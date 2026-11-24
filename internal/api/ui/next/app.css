@@ -913,3 +913,53 @@ table.runs{width:100%;border-collapse:collapse}
 .cm .lbl{padding:5px 10px 6px;font-size:11.5px;font-weight:700;color:#55615b}
 .cm .mono{font-weight:700;font-size:12.5px}
 .zsel .btn.ghost{color:#131a17}
+
+/* ---------- Settings (views/settings.js; no mockup, phase 5: inferred) ----------
+   One panel: a 48 px toolbar (search), the group menu at the left (the
+   section-menu pattern: 36 px items, the current one tinted), one group in
+   view; each setting one row: name, key and one-line help | control |
+   default, restart, reset. The save bar sticks to the foot of the window. */
+.setp{display:flex;flex-direction:column}
+.setp-bar{display:flex;align-items:center;gap:10px 16px;flex-wrap:wrap;min-height:48px;padding:0 var(--pad-panel);border-bottom:1px solid var(--line)}
+.setp-legend{display:flex;align-items:center;gap:6px;font-size:12px;margin-left:auto}
+.setp-body{display:grid;grid-template-columns:212px minmax(0,1fr);min-height:0}
+.setp-menu{display:flex;flex-direction:column;gap:2px;padding:10px 8px;border-right:1px solid var(--line);background:var(--menu-bg);border-bottom-left-radius:var(--r-panel)}
+.setp-gi{gap:8px}
+.setp-gi .setp-n{font-family:var(--mono);font-size:12px;font-weight:400;color:var(--mut);min-width:18px;text-align:right}
+.setp-gi .nb{margin-left:0}
+.setp-gi.dim{color:var(--quiet)}
+.setp-pane{min-width:0;display:flex;flex-direction:column;padding:0 0 8px}
+.setp-head{display:flex;flex-direction:column;gap:4px;padding:14px var(--pad-panel) 10px}
+.setp-head h2{font-size:16px;font-weight:800}
+.setp-head p{font-size:12.5px;max-width:760px}
+.setp-count{font-size:12px}
+.setp-sub{font-size:var(--fs-label);font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);padding:14px var(--pad-panel) 6px;border-top:1px solid var(--line)}
+.setp-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(170px,230px) minmax(130px,170px);gap:6px 18px;align-items:start;padding:10px var(--pad-panel);border-top:1px solid var(--line);min-height:56px}
+.setp-row.edited{background:#f7f5fb}
+.setp-row.bad{background:var(--coral-bg)}
+.setp-name{min-width:0;display:flex;flex-direction:column;gap:2px}
+.setp-title{display:flex;align-items:center;gap:7px;flex-wrap:wrap;min-width:0}
+.setp-title b{font-weight:700;overflow-wrap:anywhere}
+.setp-key{font-size:11.5px;color:var(--mut);overflow-wrap:anywhere}
+.setp-help{font-size:12px;font-weight:600;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.setp-help.open{white-space:normal;overflow:visible;overflow-wrap:anywhere}
+.setp-more{align-self:flex-start;border:0;background:none;padding:0;color:var(--link);font-size:12px;font-weight:700;cursor:pointer;font-family:var(--sans)}
+.setp-more:hover{text-decoration:underline}
+.setp-err{font-size:12px;font-weight:700;color:var(--coral-text);overflow-wrap:anywhere}
+.setp-ctl{min-width:0;display:flex;flex-direction:column;gap:4px}
+.setp-ctl .input,.setp-ctl .select{height:30px}
+.setp-ctl .unit .input{min-width:0}
+.setp-bool{display:flex;align-items:center;gap:9px;height:30px;font-weight:700}
+.setp-checks{display:flex;flex-direction:column;gap:6px;padding-top:4px}
+.setp-def{display:flex;flex-direction:column;align-items:flex-start;gap:4px;font-size:12px;min-width:0;padding-top:6px}
+.setp-def .mut{overflow-wrap:anywhere}
+.setp-def .btn.ghost{height:22px;padding:0;font-size:12px}
+.setp-row.ro{min-height:44px}
+.setp-note{margin:0 var(--pad-panel) 10px;padding:10px 12px;border:1px solid var(--amber-line);background:var(--amber-bg);color:var(--amber-text);border-radius:10px;font-weight:600;font-size:12.5px}
+.setp-save{position:sticky;bottom:0;z-index:6;display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;min-height:48px;padding:8px var(--pad-panel);border-top:1px solid var(--line-panel);background:#f8faf8;border-radius:0 0 var(--r-panel) var(--r-panel);box-shadow:0 -6px 18px rgba(19,26,23,.06)}
+.setp-save-btns{margin-left:auto;display:flex;gap:8px}
+.setp-msgs{margin:6px 0 0;padding-left:18px;display:flex;flex-direction:column;gap:4px;font-weight:600}
+.setp-chgs{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:8px}
+.setp-chg .mono{overflow-wrap:anywhere}
+@media(max-width:1100px){.setp-row{grid-template-columns:minmax(0,1fr) minmax(160px,210px)}.setp-def{grid-column:1/-1;flex-direction:row;flex-wrap:wrap;align-items:center;gap:6px 12px;padding-top:0}}
+@media(max-width:860px){.setp-body{grid-template-columns:1fr}.setp-menu{flex-direction:row;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line);border-radius:0}.setp-gi{flex:none}.setp-row{grid-template-columns:1fr}}

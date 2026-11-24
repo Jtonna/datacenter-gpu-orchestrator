@@ -58,6 +58,7 @@ import { readFileSync, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { zonesStatus, counts, groupsDoc, uptimeDoc, fleetStrip } from './ui-fixture/zones.mjs';
+import { schema as cfgSchema, configDoc, storedConfig, dryRun } from './ui-fixture/config.mjs';
 
 const argv = process.argv.slice(2);
 const opt = (k, d) => { const i = argv.indexOf(k); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
@@ -73,6 +74,9 @@ const HEALTH = opt('--health', 'two');
 const RELEASE = opt('--release', '0.1.5');
 const ZONES = opt('--zones', 'none');
 const UPTIME_PARTIAL = argv.includes('--uptime-partial');
+// --config: the configuration pages' state (scripts/ui-fixture/config.mjs)
+const CONFIG = opt('--config', 'normal');
+const cfgDoc = () => { const d = configDoc(CONFIG); d.settings.requests_live_timings = LIVE_TIMINGS; return d; };
 
 // ---------- the fixture (the Overview mockup's sample data) ----------
 
@@ -234,6 +238,7 @@ function uiFile(rel) {
   return isFile(path.join(UI, rel)) ? path.join(UI, rel) : null;
 }
 
+const readBody = (req, fn) => { let s = ''; req.on('data', c => { s += c; }); req.on('end', () => { let b = null; try { b = JSON.parse(s || 'null'); } catch { /* not JSON */ } fn(b); }); };
 const json = (res, code, body) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' }); res.end(JSON.stringify(body)); };
 const notFound = (res, what) => json(res, 404, { error: { message: 'not in the fixture: ' + what, type: 'invalid_request_error' } });
 
@@ -275,6 +280,9 @@ const server = http.createServer((req, res) => {
     return res.end(readFileSync(f));
   }
   if (!p.startsWith('/api/')) return notFound(res, p);
+  // a dry run of a settings write writes nothing: it answers what the server would
+  const cfgW = /^\/api\/config\/(settings|recovery|fleet)$/.exec(p);
+  if (cfgW && req.method === 'PATCH' && u.searchParams.get('dry_run')) return readBody(req, b => { const r = dryRun(cfgW[1], b, cfgDoc()); json(res, r.status, r.body); });
   if (req.method !== 'GET') return json(res, 405, { error: { message: 'the fixture is read-only' } });
   if (STATE === 'loading' && p.startsWith('/api/requests')) return; // never answers
   if (p === '/api/status') return json(res, 200, status(now));
@@ -283,10 +291,13 @@ const server = http.createServer((req, res) => {
   if (p === '/api/about') return json(res, 200, { version: '0.1.5', started_at: now - 12 * 24 * H, now, uptime_s: 12 * 24 * 3600, history: 'on' });
   if (p === '/api/system') return json(res, 200, { version: '0.1.5', started_at: now - 12 * 24 * H, now, uptime_s: 12 * 24 * 3600, read_panics: 0, internal_failures_total: 0,
     tasks: [{ name: 'core loop', policy: 'exit', state: 'running', running: 1, restarts: 0, failures: 0, failures_last_min: 0 }],
-    stored_config: { unknown_fields: [], writes_need_force: false },
+    stored_config: storedConfig(CONFIG),
     storage: { database: { dir: '/data', on: true, bytes: 37600000 }, history: { dir: '/data/history', on: true, bytes: 3000000, files: 4 }, usage: { size_bytes: 9400000 }, child_logs: { dir: '/data/logs', bytes: 23700000, files: 12 } } });
   if (p === '/api/agents') return json(res, 200, { agents: ['ops-bot', 'coding agent', 'report writer'].map((name, i) => ({ id: 'agent-' + i, name, key_prefix: 'ptk_' + i, created_at: now - (i + 2) * 24 * H, request_count: 10 * i })) });
-  if (p === '/api/config/settings') return json(res, 200, { settings: { queue_timeout: '30m0s', requests_live_timings: LIVE_TIMINGS } });
+  if (p === '/api/config/schema') return json(res, 200, cfgSchema);
+  if (p === '/api/config/settings') { const d = cfgDoc(); return json(res, 200, { revision: d.revision, settings: d.settings, settings_set: d.settings_set }); }
+  if (p === '/api/config/recovery') { const d = cfgDoc(); return json(res, 200, { revision: d.revision, recovery: d.recovery }); }
+  if (p === '/api/config/fleet') { const d = cfgDoc(); return json(res, 200, { revision: d.revision, fleet: d.fleet }); }
   if (p === '/api/history') return json(res, 200, { events: [
     { ts: now - 12 * 60000, seq: 41, type: 'nodeQuarantined', severity: 'warn', nodes: ['ps5-05'], summary: 'Node ps5-05 was quarantined for 18m0s (level 1): preflight failed.', data: { for_s: 1080, level: 1 } },
     { ts: now - 54 * 60000, seq: 40, type: 'nodeLost', severity: 'error', nodes: ['ps5-07'], summary: 'Node ps5-07 was lost.', data: {} },
