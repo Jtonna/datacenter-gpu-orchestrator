@@ -206,7 +206,8 @@ func TestUINextZonesSelectionAndPanel(t *testing.T) {
 // model file is a row with its name; ?model=<key> opens its panel with the
 // file, its hand-written configurations and the link to its full page; a key
 // that is not in the catalog says so; and #/models/<key> is still the full
-// model page. No Pin, Delete or Add control is drawn (no backend yet).
+// model page. Pin, Delete, Add a model and deleted models are drawn as on
+// the board but disabled (no backend yet, phase 7); nothing removes a model.
 func TestUINextModelsListAndPanel(t *testing.T) {
 	e := benchEnv(t)
 	var cat struct {
@@ -222,9 +223,11 @@ func TestUINextModelsListAndPanel(t *testing.T) {
 		t.Fatal(err)
 	}
 	var key, name, file, profile string
-	var names []string
+	var files []string
 	for _, m := range cat.Models {
-		names = append(names, m.Name)
+		if m.File != "" {
+			files = append(files, m.File)
+		}
 		if key == "" && m.Kind == "llama" {
 			for _, p := range m.Profiles {
 				if !p.Generated {
@@ -237,12 +240,14 @@ func TestUINextModelsListAndPanel(t *testing.T) {
 	if key == "" {
 		t.Fatalf("no model file with a hand-written profile in the test catalog: %+v", cat.Models)
 	}
-	noControls := []string{"Pin", "Delete", "Add a model", "Remove now", "Unload"}
+	noControls := []string{"Remove now", "Unload"}
+	disabled := []string{"button[data-act=add][aria-disabled=true]", "button.star[aria-disabled=true]", "button[data-act=trash][aria-disabled=true]"}
 	uiExec(t, map[string]any{"shell": "next", "app": true, "base": e.front.URL, "cases": []any{
-		map[string]any{"name": "the list", "route": "#/models", "status": "fetch", "expect": append([]string{"All models", "Configurations", "Last used"}, names...),
-			"absent": append(append([]string{}, designSamples...), noControls...)},
+		map[string]any{"name": "the list", "route": "#/models", "status": "fetch", "expect": append([]string{"All models", "model file", "Add a model"}, files...),
+			"absent": append(append([]string{}, designSamples...), noControls...), "has": disabled},
 		map[string]any{"name": "one model's panel", "route": "#/models?model=" + key, "status": "fetch",
-			"page": []string{name, file, "Configurations", profile, "Edit under Profiles", "Open the model page"}, "notOnPage": noControls},
+			"page": []string{name, file, "Configurations", profile, "Edit under Profiles", "Open the model page"}, "notOnPage": noControls,
+			"pageHas": []string{"aside.side button[data-act=delete][aria-disabled=true]", "aside.side button[data-act=pin][aria-disabled=true]"}},
 		map[string]any{"name": "a model that is not there", "route": "#/models?model=no-such-model.gguf", "status": "fetch",
 			"page": []string{"This model is not in the catalog"}},
 		map[string]any{"name": "the full model page", "route": "#/models/" + key, "status": "fetch", "expect": []string{name}},

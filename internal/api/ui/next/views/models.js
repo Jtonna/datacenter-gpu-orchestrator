@@ -1,34 +1,54 @@
-// Models (the home screen of the new shell; design: Models board 1, "Models
-// list and sidebar"). A model is a model FILE, not a profile (README rule 9).
-// The page shows what is loaded now (one card per instance, as before), then
-// every model file in one list with its size, its state, its configurations
-// and when it was last used, and the disk the files take together. A row
-// opens the model's side panel (?model=<key>): its facts, its benchmarks, its
-// hand-written configurations (the generated ones counted), and a link to its
-// full page (#/models/<key>, views/models/detail.js, unchanged).
+// Models (the home screen of the new shell; design: board Models, "Models
+// list and sidebar", phase 7: built from what the server feeds today). A
+// model is a model FILE, not a profile (README rule 9).
 //
-// Left out until their backend exists (plan, U4 and U5): Pin and pinned
-// models, Delete, Deleted models, Add a model, downloads in progress, free
-// disk space, the "reports" count of the new benchmark model, and a
-// profile's unload-when-idle in the side panel (not in the catalog).
+// The page: what is loaded now (one card per instance), then the list as
+// the board draws it: search, "Show" (all, loaded, fits on one, needs
+// several, cannot run), "Sort: last used"; the sections Downloading, Pinned
+// and All models ("N model files · X of Y GB used", from the catalog's disk
+// block); one row per file (star, file name, size, "N profiles", last used:
+// Now, 48 s ago or Never). A row opens the side panel (?model=<key>): size
+// and last used, Benchmarks, what is loaded where, where it runs and what it
+// needs, its facts, and its configurations (search, context, the memory
+// each needs, a Now pill on a loaded one, Edit, Add profile), and the link
+// to its full page (#/models/<key>, views/models/detail.js, unchanged).
+//
+// Drawn as on the board but not available yet, each with its reason on
+// hover (p7-models-backend-STATUS.md, M1 to M6): Add a model, Downloading,
+// Pinned and the star, the panel's Pinned and Delete model, deleted models.
+// Left out: "added <date>", the benchmark "reports" count, "Unload when
+// idle" (no data yet), the Needs column and the loaded-models badge (p4-ui).
 //
 // Reads: the catalog (core/catalog.js; the live channel's "models" topic,
-// REST GET /api/models as its fallback) and the WebSocket status for the
-// instance cards. Read-only: models load when a request asks for one.
-// Routes: #/models, #/models?model=<key> (side panel), #/models/<key> (page)
+// REST GET /api/models as its fallback); GET /api/models every 30 s for its
+// disk block (the live channel's copy has none); the WebSocket status for
+// the instance cards. Read-only: models load when a request asks for one.
+// Routes: #/models?q=&show=&sort=&model=<key>, #/models/<key> (page)
 
 import { h } from '../core/dom.js';
 import { registerView, href, navigate } from '../core/router.js';
 import { state } from '../core/store.js';
-import { liveView, pageHead, legend, chips, empty, skeleton, searchField, sidePanel, facts, badge } from '../core/ui.js';
+import * as api from '../core/api.js';
+import { liveView, pageHead, legend, empty, skeleton, searchField, sidePanel, facts, badge, filterSelect } from '../core/ui.js';
 import { num, gb, dur, ago, plural, agoText, dateTime, bytes, DASH } from '../core/format.js';
 import { staleBanner, machines, shortReason } from '../core/status.js';
 import { catalog, onCatalog, needCatalog } from '../core/catalog.js';
 import { logsLink, profileQuery, padded } from '../core/logs.js';
-import { avatar } from '../core/avatar.js';
 import { tipText } from '../core/charts.js';
-import { instanceCard, sizeLine, stateBadge, fitOf, cannotRun, runsOnCell } from './models/common.js';
+import { instanceCard, stateBadge, fitOf, cannotRun, runsOnCell } from './models/common.js';
 import { mountDetail } from './models/detail.js';
+
+// the reasons of what is drawn but not built yet (p7-models-backend-STATUS.md)
+export const NOT_YET = {
+  add: 'Adding a model from this page is not built yet. Put the .gguf file in the models folder and it appears here.',
+  downloads: 'Downloads are not built yet: a model added from this page would show its progress here.',
+  pin: 'Pins are not built yet.',
+  del: 'Deleting a model is not built yet: the file stays in the models folder.',
+  trash: 'Deleted models are not built yet.',
+};
+// off(tag, reason, attrs, ...kids) -> a control that is drawn but not available: it says why on hover and does nothing
+const off = (tag, reason, attrs, ...kids) => h(tag, Object.assign({ type: 'button', 'aria-disabled': 'true', title: reason, 'data-off': '', onclick: e => { e.preventDefault(); e.stopPropagation(); } }, attrs), ...kids);
+const icon = d => h('svg', { class: 'ic', viewBox: '0 0 20 20', 'aria-hidden': 'true' }, h('path', { d }));
 
 // loadLogs(st, load) -> a link to the log lines of a load, or null while
 // central logging is off (as on the classic page).
@@ -45,6 +65,13 @@ const FILTERS = [
   ['several', 'Needs several', (m, st) => fitOf(m, st).kind === 'several'],
   ['none', 'Cannot run', (m, st) => fitOf(m, st).kind === 'none' || !!cannotRun(m)],
 ];
+const SORTS = [['used', 'last used'], ['name', 'name'], ['size', 'size']];
+const usedKey = m => (m.state && m.state !== 'not_loaded' ? Infinity : m.last_active || -1);
+const SORT = {
+  used: (a, b) => usedKey(b) - usedKey(a) || (a.file || a.name).localeCompare(b.file || b.name),
+  name: (a, b) => (a.file || a.name).localeCompare(b.file || b.name),
+  size: (a, b) => (b.size_bytes || 0) - (a.size_bytes || 0) || (a.file || a.name).localeCompare(b.file || b.name),
+};
 
 // loadTip(mark, st) -> the tooltip of one mark of a "last loads" chart. Kept
 // with the classic name (views/models.js exports it).
@@ -58,114 +85,154 @@ export function loadTip(l, st) {
   return tipText(head, [when, l.profile, l.nodes ? 'On ' + machines(st, l.nodes) : null, figs || null]);
 }
 
-const lastUsed = m => (m.state !== 'not_loaded' ? h('span.ok-t', { style: 'font-weight:700' }, 'Now') : ago(m.last_active, m.history === false ? DASH : 'Never'));
+// lastUsed(m) -> Now (loaded), Loading, "48 s ago" (exact time on hover) or Never
+function lastUsed(m) {
+  if (m.state === 'ready') return h('time.mdl-now', { title: m.last_active ? dateTime(m.last_active) : 'Loaded now' }, 'Now');
+  if (m.state === 'loading') return h('span.mdl-now', 'Loading');
+  return ago(m.last_active, m.history === false ? DASH : 'Never');
+}
+// profilesText(m) -> "11 profiles", "1 profile", "No profiles"
+const profilesText = m => (m.profile_count ? plural(m.profile_count, 'profile') : 'No profiles');
+// sizeText(m) -> "16.5 GB", or why there is none (decimal GB, as the board and the disk line)
+const gbOf = v => (v / 1e9).toLocaleString('en-US', { maximumFractionDigits: 1, minimumFractionDigits: v >= 100e9 ? 0 : 1 });
+const sizeText = m => (m.kind === 'command' ? 'A program on this machine' : m.size_bytes ? gbOf(m.size_bytes) + ' GB' : DASH);
 
-// configsCell(m) -> "5 · 2 by hand"
-function configsCell(m) {
-  const hand = m.profile_count - m.generated_count;
-  return h('span', num(m.profile_count), m.profile_count ? h('span.sub', !m.generated_count ? 'all by hand' : hand ? `${num(hand)} by hand` : 'all generated') : null);
+// diskLine(models, disk) -> "5 model files · 50.3 of 240 GB used", amber at 90 %
+function diskLine(models, disk) {
+  const files = (models || []).filter(m => m.kind !== 'command' && m.exists !== false).length;
+  const parts = [plural(files, 'model file')];
+  let full = false, title = null;
+  if (disk && disk.total_bytes) {
+    const budget = disk.budget_bytes;
+    const used = budget ? disk.model_bytes || 0 : disk.used_bytes;
+    const of = budget || disk.total_bytes;
+    parts.push(`${gbOf(used)} of ${gbOf(of)} GB used`);
+    full = used / of >= 0.9;
+    title = [budget ? `The model files take ${gbOf(used)} GB of their ${gbOf(budget)} GB budget (models_disk_budget_gb).`
+      : `The disk of the models folder: ${gbOf(disk.used_bytes)} of ${gbOf(disk.total_bytes)} GB used.`,
+    disk.free_bytes != null ? `${gbOf(disk.free_bytes)} GB free.` : null,
+    !budget && disk.model_bytes != null ? `The model files take ${gbOf(disk.model_bytes)} GB.` : null,
+    disk.checked_at ? `Read ${agoText(disk.checked_at)}.` : null].filter(Boolean).join(' ');
+  }
+  return h('span', { class: 'lbl mdl-disk' + (full ? ' full' : ''), title, 'data-disk': '' }, parts.join(' · '), full ? ' · nearly full' : null);
 }
 
-// profileRows(m) -> the hand-written configurations of a model, the generated
-// ones counted (README rule 9).
-function profilesPart(m) {
-  const ps = m.profiles || [];
-  const hand = ps.filter(p => !p.generated);
-  const gen = ps.length - hand.length;
-  const need = p => (p.needs_mib ? h('span', gb(p.needs_mib), h('span.mut', p.needs_measured ? ' measured' : ' estimated')) : h('span.mut', DASH));
-  return h('section.zpart', { key: 'profiles' },
-    h('h3', 'Configurations'),
-    hand.length ? h('div.scroll', h('table.tbl', { style: 'min-width:420px' },
-      h('thead', h('tr', h('th', { scope: 'col' }, 'Profile'), h('th.r', { scope: 'col' }, 'Context'), h('th.r', { scope: 'col' }, 'Needs'), h('th.r', { scope: 'col' }, 'Parallel'))),
-      h('tbody', hand.map(p => h('tr', { key: p.id },
-        h('td', h('span.mono', p.id), p.description ? h('span.sub', p.description) : null, p.host === 'node'
-          ? h('span.sub', { title: 'llama-server runs on this node, started by its agent' }, 'hosted on ' + (p.host_node || 'its first forced node'),
-            p.host_overhead_mib ? ` · +${gb(p.host_overhead_mib)} for the host` : null, p.host_problem ? h('span.err-t', ' · ' + p.host_problem) : null)
-          : null),
-        h('td.r', p.ctx ? num(p.ctx) : DASH),
-        h('td.r', need(p)),
-        h('td.r', p.parallel ? num(p.parallel) : DASH))))))
-      : h('span.mut', ps.length ? 'Every configuration of this model was generated.' : 'No configuration uses this file yet.'),
-    gen ? h('span.mut', `${plural(gen, 'generated configuration')} (benchmark matrices), listed on the model's page and under Profiles.`) : null,
-    h('div.row', { style: 'gap:12px' }, h('a', { href: href('profiles') }, 'Edit under Profiles')));
-}
+// hostLine(p) -> "hosted on <node> · +1.5 GB for the host" for a profile whose llama-server runs on a node
+const hostLine = p => (p.host === 'node'
+  ? h('span.sub', { title: 'llama-server runs on this node, started by its agent' }, 'hosted on ' + (p.host_node || 'its first forced node'),
+    p.host_overhead_mib ? ` · +${gb(p.host_overhead_mib)} for the host` : null, p.host_problem ? h('span.err-t', ' · ' + p.host_problem) : null)
+  : null);
 
-// modelPanel(st, m) -> the side panel of one model.
-function modelPanel(st, m) {
+// the side panel of one model
+function modelPanel(st, m, ps) {
   const f = fitOf(m, st);
   const b = m.bench || {};
   const l = m.loads || {};
+  const insts = m.instances || [];
+  const loadedProfiles = new Set(insts.filter(i => i.state !== 'starting').map(i => i.profile));
+  const all = m.profiles || [];
+  const hand = all.filter(p => !p.generated);
+  const gen = all.length - hand.length;
+  const ctxs = [...new Set(hand.map(p => p.ctx).filter(Boolean))].sort((x, y) => x - y);
+  const q = ps.q.trim().toLowerCase();
+  const rows = hand.filter(p => (!q || p.id.toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q)) && (!ps.ctx || String(p.ctx) === ps.ctx));
   return [
-    h('section.zpart', { key: 'head' },
-      h('span.named', avatar(m, 48), h('span.grow', h('b', m.name), h('span.sub', m.publisher ? [m.publisher, ' · '] : null, sizeLine(m)))),
-      h('div.row', { style: 'gap:10px;flex-wrap:wrap' }, stateBadge(m, st), m.kind === 'llama' && !m.exists ? badge('File missing', 'fail') : null),
-      h('div', h('span.mut', 'Runs on: '), runsOnCell(m, st), f.need ? [h('span.mut', ' · needs '), h('span', { title: f.title }, gb(f.need))] : null)),
-    h('section.zpart', { key: 'facts' }, facts([
-      m.file ? ['File', h('span.mono', m.file)] : null,
-      m.kind === 'llama' ? ['On disk', h('span', m.exists ? (m.size_bytes ? bytes(m.size_bytes) : DASH) : 'missing')] : null,
-      m.family ? ['Family', h('span', m.family)] : null,
-      m.parameters ? ['Parameters', h('span', m.parameters)] : null,
-      m.quant ? ['Quantization', h('span', m.quant)] : null,
-      m.context_length ? ['Trained context', h('span', num(m.context_length)), 'The context the model was trained with, from its file'] : null,
-      ['Last used', lastUsed(m)],
-      m.requests_served != null ? ['Requests served', h('span', num(m.requests_served))] : null,
-      l.count ? ['Loads', h('span', num(l.count), l.failed ? h('span.err-t', ` · ${num(l.failed)} failed`) : null)] : null,
-    ])),
-    b.benchmarks || b.runs ? h('section.zpart', { key: 'bench' }, h('h3', 'Benchmarks'),
-      h('span', plural(b.benchmarks || 0, 'benchmark'), ' · ', plural(b.runs || 0, 'run')),
-      h('a', { href: href('benchmarks') }, 'Open Benchmarks')) : null,
-    profilesPart(m),
-    h('div', { key: 'page' }, h('a.btn', { href: href('models', [m.key]) }, 'Open the model page')),
+    h('div.mdl-acts', { key: 'acts' },
+      h('a.btn', { href: href('benchmarks'), title: b.runs ? 'Benchmarks that used a profile of this model' : 'No benchmark has used this model yet' }, 'Benchmarks ',
+        h('span.mut', b.runs ? plural(b.runs, 'run') : 'none yet')),
+      off('button.btn', NOT_YET.pin, { 'aria-pressed': 'false', 'data-act': 'pin' }, 'Pinned'),
+      off('button.btn.red', NOT_YET.del, { 'data-act': 'delete' }, 'Delete model')),
+    insts.length ? h('section.zpart', { key: 'loaded' }, h('h3', 'Loaded now'),
+      insts.map(i => h('div.mdl-inst', { key: 'i-' + i.profile },
+        h('span.mono', i.profile), i.state === 'starting' ? badge('Loading', 'load') : badge('Ready', 'ready'),
+        (i.nodes || []).length ? h('span.mut', 'on ' + i.nodes.join(', ')) : null,
+        i.in_flight ? h('span.mut', plural(i.in_flight, 'request') + ' in flight') : null))) : null,
+    h('section.zpart', { key: 'runs' },
+      h('div.row', { style: 'gap:10px;flex-wrap:wrap' }, h('b', m.short_name || m.name), m.publisher ? h('span.mut', m.publisher) : null,
+        stateBadge(m, st), m.kind === 'llama' && !m.exists ? badge('File missing', 'fail') : null),
+      h('div', h('span.mut', 'Runs on: '), runsOnCell(m, st), f.need ? [h('span.mut', ' · needs '), h('span', { title: f.title }, gb(f.need))] : null),
+      facts([
+        m.family ? ['Family', h('span', m.family)] : null,
+        m.parameters ? ['Parameters', h('span', m.parameters)] : null,
+        m.quant ? ['Quantization', h('span', m.quant)] : null,
+        m.context_length ? ['Trained context', h('span', num(m.context_length)), 'The context the model was trained with, from its file'] : null,
+        m.requests_served != null ? ['Requests served', h('span', num(m.requests_served))] : null,
+        l.count ? ['Loads', h('span', num(l.count), l.failed ? h('span.err-t', ` · ${num(l.failed)} failed`) : null)] : null,
+      ].filter(Boolean))),
+    h('section.mdl-cfg', { key: 'cfg' },
+      h('div.dh', h('h3', 'Configurations ', h('span.mut', profilesText(m))),
+        h('div.mdl-cfg-tools',
+          hand.length > 1 ? searchField(ps.q, v => { ps.q = v; ps.redraw(); }, 'Search profiles', 'mdl-psearch') : null,
+          ctxs.length > 1 ? filterSelect('Context', [{ id: '', label: 'any' }].concat(ctxs.map(c => ({ id: String(c), label: num(c) }))), ps.ctx, v => { ps.ctx = v; ps.redraw(); }) : null,
+          h('a.btn.sm', { href: href('profiles', ['new']), title: 'Open the profile editor' }, 'Add profile'))),
+      hand.length ? (rows.length ? h('table.tbl.mdl-ptbl',
+        h('thead', h('tr', h('th', { scope: 'col' }, 'Profile'), h('th.r', { scope: 'col' }, 'Context'),
+          h('th.r', { scope: 'col', title: 'What a load of this profile needs: measured, or estimated from the file' }, 'Memory needed'),
+          h('th', { scope: 'col' }, h('span.sr', 'Edit')))),
+        h('tbody', rows.map(p => h('tr', { key: p.id, 'data-profile': p.id },
+          h('td', h('span.mono', p.id), loadedProfiles.has(p.id) ? h('span.mdl-pill', { title: 'Loaded now' }, 'Now') : null, p.description ? h('span.sub', p.description) : null,
+            p.parallel > 1 ? h('span.sub', `${num(p.parallel)} requests in parallel`) : null, hostLine(p)),
+          h('td.r.mono', p.ctx ? num(p.ctx) : DASH),
+          h('td.r', p.needs_mib ? [h('span.mono', num(p.needs_mib) + ' MiB'), h('span.sub', { title: p.needs_basis || null }, p.needs_measured ? 'measured' : 'estimated')] : h('span.mut', DASH)),
+          h('td.r', h('a.go', { href: href('profiles', [p.id]), 'aria-label': 'Edit ' + p.id }, h('span.tx', 'Edit'), icon('M8 5l5 5-5 5')))))))
+        : h('p.mut.mdl-pad', 'No profile matches.'))
+        : h('p.mut.mdl-pad', all.length ? 'Every configuration of this model was generated.' : 'No configuration uses this file yet. Add a profile to load it.'),
+      gen ? h('p.mut.mdl-pad', `${plural(gen, 'generated configuration')} (benchmark matrices), listed on the model's page and under Profiles.`) : null),
+    h('div.mdl-pad.row', { key: 'page', style: 'gap:12px' }, h('a.btn', { href: href('models', [m.key]) }, 'Open the model page'), h('a', { href: href('profiles') }, 'Edit under Profiles')),
   ];
 }
 
-function listPanel(st, models, error, r, query, setQuery, onFind) {
+function listPanel(st, models, disk, error, r, query, setQuery, onFind) {
   const filter = FILTERS.some(f => f[0] === r.query.show) ? r.query.show : 'all';
+  const sort = SORT[r.query.sort] ? r.query.sort : 'used';
   const counts = {};
   for (const [id, , test] of FILTERS) counts[id] = (models || []).filter(m => test(m, st)).length;
   const q = (query || '').trim().toLowerCase();
   const test = (FILTERS.find(f => f[0] === filter) || FILTERS[0])[2];
-  const rows = (models || []).filter(m => test(m, st) && (!q || [m.name, m.raw_name, m.file, m.family, m.publisher, m.quant, m.parameters]
-    .concat((m.profiles || []).map(p => p.id)).some(x => String(x || '').toLowerCase().includes(q))));
+  const rows = (models || []).filter(m => test(m, st) && (!q || [m.name, m.raw_name, m.file, m.short_name, m.family, m.publisher, m.quant, m.parameters]
+    .concat((m.profiles || []).map(p => p.id)).some(x => String(x || '').toLowerCase().includes(q)))).sort(SORT[sort]);
+  const openKey = r.query.model || '';
+  const open = key => setQuery({ model: key });
   let body;
   if (error && !models) body = empty('The model list could not be read', error);
   else if (!models) body = skeleton(6);
-  else if (!models.length) body = empty('No models yet', 'A model appears here once a profile names a model file, or a GGUF file is put in the models directory. Add a profile under Configure, Profiles.');
-  else if (!rows.length) body = empty('No model matches', q ? `Nothing matches "${query}". Search looks at the name, the file name and the configuration names.` : 'No model is in this group right now.');
-  else {
-    const open = key => setQuery({ model: key });
-    body = h('div.scroll', h('table.tbl.models', { style: 'min-width:860px' },
-      h('thead', h('tr', h('th', { scope: 'col' }, 'Model'), h('th', { scope: 'col' }, 'State'), h('th.r', { scope: 'col' }, 'Size'),
-        h('th', { scope: 'col' }, 'Runs on'), h('th.r', { scope: 'col', title: 'Profiles that load this model; the generated ones were made for benchmarks' }, 'Configurations'),
-        h('th', { scope: 'col' }, 'Last used'))),
-      h('tbody', rows.map(m => h('tr', { key: m.key, class: 'click' + (r.query.model === m.key ? ' sel' : ''), tabindex: '0', 'aria-label': m.name,
-        onclick: () => open(m.key), onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(m.key); } } },
-      h('td', h('span.named', avatar(m, 32), h('span.grow', h('b', { title: m.file || m.name }, m.name),
-        h('span.sub', m.publisher ? [m.publisher, ' · '] : null, [m.parameters, m.quant].filter(Boolean).join(' · ') || (m.kind === 'command' ? 'A program on this machine' : ''),
-          m.kind === 'llama' && !m.exists ? h('span.err-t', ' · file missing') : null)))),
-      h('td', stateBadge(m, st)),
-      h('td.r', m.kind === 'llama' && m.size_bytes ? bytes(m.size_bytes) : DASH),
-      h('td', runsOnCell(m, st)),
-      h('td.r', configsCell(m)),
-      h('td', lastUsed(m)))))));
-  }
-  const disk = (models || []).filter(m => m.kind === 'llama' && m.exists).reduce((s, m) => s + (m.size_bytes || 0), 0);
-  return h('section.panel', { key: 'catalog', 'aria-label': 'All models' },
-    h('div.ch.split', h('h2', 'All models'),
-      models ? h('span.mut', `${plural(models.length, 'model')}` + (disk ? ` · ${bytes(disk)} on disk` : '')) : h('span.mut', 'Reading the catalog…')),
-    models && models.length ? h('div.zfilters',
-      h('div', chips(FILTERS.map(([id, label]) => ({ id, label: id === 'one' ? 'Fits on ' + machines(st, 1).replace(/^1 /, 'one ') : label, count: id === 'all' ? null : counts[id] })),
-        filter, id => setQuery({ show: id === 'all' ? '' : id }), 'Filter the models')),
-      h('div', searchField(query, onFind, 'Search models', 'model-search'))) : null,
-    body);
+  else if (!models.length) body = empty('No models yet', 'A model appears here once a .gguf file is in the models folder, or a profile names a model file.');
+  else if (!rows.length) body = empty('No model matches', q ? `Nothing matches "${query}". Search looks at the file name, the name and the profile names.` : 'No model is in this group right now.');
+  else body = h('div.mdl-rows', { role: 'list', 'aria-label': 'All models' }, rows.map(m => h('div', {
+    key: m.key, role: 'listitem', class: 'mr' + (openKey === m.key ? ' sel' : ''), 'aria-current': openKey === m.key ? 'true' : null, 'data-model': m.key, tabindex: '0',
+    onclick: e => { if (!e.target.closest('[data-off]')) open(m.key); },
+    onkeydown: e => { if ((e.key === 'Enter' || e.key === ' ') && !e.target.closest('[data-off]')) { e.preventDefault(); open(m.key); } } },
+  off('button.star', NOT_YET.pin, { 'aria-label': 'Pin ' + (m.short_name || m.name) + ' (not available)', 'aria-pressed': 'false' }, icon('M10 3l2.1 4.3 4.7.7-3.4 3.3.8 4.7L10 13.8 5.8 16l.8-4.7L3.2 8l4.7-.7z')),
+  h('span.mdl-name', h('span.mono.nm', { title: m.short_name && m.short_name !== m.file ? m.short_name : null }, m.file || m.name),
+    h('span.mut', sizeText(m), m.kind !== 'command' && m.exists === false ? h('span.err-t', ' · the file is missing') : null)),
+  h('span', { class: m.profile_count ? 'mdl-pc' : 'mdl-pc mut' }, profilesText(m)),
+  h('span.mut.mdl-used', lastUsed(m)))));
+  const sec = (label, right, attrs) => h('div.sech', attrs || null, h('span.lbl', label), right || null);
+  return h('section.panel.mdl', { key: 'catalog', 'aria-label': 'Models' },
+    h('div.mdl-bar',
+      searchField(query, onFind, 'Search models', 'model-search', { size: 'lg' }),
+      models && models.length ? filterSelect('Show', FILTERS.map(([id, label]) => ({ id, label: label + (id === 'all' ? '' : ` (${counts[id]})`) })),
+        filter, id => setQuery({ show: id === 'all' ? '' : id })) : null,
+      filterSelect('Sort', SORTS.map(([id, label]) => ({ id, label })), sort, id => setQuery({ sort: id === 'used' ? '' : id })),
+      off('button.btn.pri', NOT_YET.add, { 'data-act': 'add' }, icon('M10 4v12M4 10h12'), 'Add a model')),
+    sec('Downloading', h('span.lbl.mdl-off', 'not built yet'), { 'data-sec': 'downloading', title: NOT_YET.downloads }),
+    sec('Pinned', h('span.lbl.mdl-off', 'not built yet'), { 'data-sec': 'pinned', title: NOT_YET.pin }),
+    sec('All models', models ? diskLine(models, disk) : null, { 'data-sec': 'all' }),
+    body,
+    off('button.tbar', NOT_YET.trash, { 'data-act': 'trash' }, icon('M4 6h12M8 6V4h4v2M6 6l1 10h6l1-10'), 'Deleted models', h('span.mut', ' · not built yet')));
 }
 
 function mountHome(el, route) {
-  let r = route, query = '', side = null;
+  let r = route, query = r.query.q || '', side = null, disk = null, alive = true;
   const open = new Set();
   const toggle = k => { if (open.has(k)) open.delete(k); else open.add(k); view.refresh(); };
   const offCatalog = onCatalog(() => { view.refresh(); if (side) side.redraw(); });
   const setQuery = q => navigate('models', [], Object.assign({}, r.query, q), true);
+
+  // the disk block: only the REST answer carries it; its figures move every 30 s
+  const readDisk = () => api.get('/api/models').then(d => { disk = (d && d.disk) || null; if (alive) view.refresh(); }, () => {});
+  readDisk();
+  const diskTimer = setInterval(readDisk, 30000);
 
   // The side panel of the open model (?model=<key>).
   const syncSide = () => {
@@ -174,12 +241,22 @@ function mountHome(el, route) {
     if (side && side.key === key) { side.redraw(); return; }
     if (side) { const s = side; side = null; s.close(); }
     const find = () => (catalog.models || []).find(m => m.key === key) || null;
+    const ps = { q: '', ctx: '', redraw: () => p.redraw() };
     const body = () => {
       const m = find();
-      if (m) return modelPanel(state.status || {}, m);
+      if (m) return modelPanel(state.status || {}, m, ps);
       return catalog.models ? h('section.card', empty('This model is not in the catalog', 'Its file may have gone. Close this panel to see the models there are.')) : skeleton(3);
     };
-    const p = sidePanel({ title: () => { const m = find(); return m ? m.name : 'Model'; }, body, onClose: () => { if (side === p) { side = null; setQuery({ model: '' }); } } });
+    const p = sidePanel({
+      label: 'Selected model', name: 'Selected model: ' + key,
+      title: () => { const m = find(); return h('span.mono', m ? m.file || m.name : key); },
+      sub: () => {
+        const m = find();
+        if (!m) return null;
+        return [sizeText(m), ' · ', m.state === 'ready' ? 'loaded now' : m.state === 'loading' ? 'loading now' : m.last_active ? ['last used ', ago(m.last_active)] : 'never used', ' ', stateBadge(m, state.status || {})];
+      },
+      body, onClose: () => { if (side === p) { side = null; setQuery({ model: '' }); } },
+    });
     p.key = key;
     side = p;
   };
@@ -212,7 +289,7 @@ function mountHome(el, route) {
           : view_.configured === false ? null : h('section.card', { key: 'none' }, h('div.strip', h('b', 'Nothing is loaded right now.'),
             h('span', 'A model loads when a request asks for it, and unloads after it has been idle for a while.'))),
       view_.configured === false && models && !models.length ? null
-        : listPanel(view_, models, catalog.error, r, query, setQuery, v => { query = v; view.refresh(); }),
+        : listPanel(view_, models, disk, catalog.error, r, query, setQuery, v => { query = v; view.refresh(); }),
     ];
   };
   const view = liveView(el, render, ['status', 'tick', 'conn', 'hello']);
@@ -220,7 +297,7 @@ function mountHome(el, route) {
   syncSide();
   return {
     update(nr) { r = nr; syncSide(); view.refresh(); },
-    unmount() { offCatalog(); if (side) { const s = side; side = null; s.close(); } view.unmount(); },
+    unmount() { alive = false; clearInterval(diskTimer); offCatalog(); if (side) { const s = side; side = null; s.close(); } view.unmount(); },
   };
 }
 

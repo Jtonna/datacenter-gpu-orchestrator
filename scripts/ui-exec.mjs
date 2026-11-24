@@ -36,6 +36,7 @@
 //    "base": "http://127.0.0.1:8790",              // or: GET requests go to this server (cmd/devcluster), writes are refused
 //    "cases": [{"name": "...", "route": "#/nodes", "status": {...} or "fetch", "fetch": {...}, "expect": ["text", ...],
 //               "absent": ["text that must not be drawn", ...], "none": ["css selector that must match nothing", ...],
+//               "order": ["text", "text drawn after it", ...],
 //               "has": ["css selector that must match something on the screen", ...],
 //               "pageHas" / "pageNone": the same over the whole page (shell, popups)
 //               "hash": "#/zones": the address after the clicks
@@ -610,6 +611,8 @@ for (const c of spec.cases) {
   const text = outlet.textContent;
   for (const bad of ['could not be drawn', 'failed to start']) if (text.includes(bad)) errors.push('banner: ' + text.slice(Math.max(0, text.indexOf(bad) - 40), text.indexOf(bad) + 200));
   for (const want of c.expect || []) if (!text.includes(want)) errors.push('missing text: ' + JSON.stringify(want));
+  // order: texts that must appear in this order (a sorted list)
+  { let at = -1; for (const want of c.order || []) { const i = text.indexOf(want, at + 1); if (i < 0) { errors.push('out of order or missing: ' + JSON.stringify(want)); break; } at = i; } }
   for (const bad of c.absent || []) if (text.includes(bad)) errors.push('text that must not be there: ' + JSON.stringify(bad) + ' in ' + JSON.stringify(text.slice(Math.max(0, text.indexOf(bad) - 80), text.indexOf(bad) + 80)));
   for (const sel of c.none || []) if (outlet.querySelector(sel)) errors.push('an element that must not be there: ' + sel);
   for (const sel of c.has || []) if (!outlet.querySelector(sel)) errors.push('no element matches: ' + sel);

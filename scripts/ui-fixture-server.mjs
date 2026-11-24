@@ -86,7 +86,7 @@ import { zonesStatus, counts, groupsDoc, uptimeDoc, fleetStrip } from './ui-fixt
 import { schema as cfgSchema, configDoc, storedConfig, dryRun } from './ui-fixture/config.mjs';
 import { profileEntries, profileSpecs, catalog as cfgCatalog, planAnswer } from './ui-fixture/profiles.mjs';
 import { Keys } from './ui-fixture/keys.mjs';
-import { modelsDoc } from './ui-fixture/models.mjs';
+import { modelsDoc, modelsInstances } from './ui-fixture/models.mjs';
 
 const argv = process.argv.slice(2);
 const opt = (k, d) => { const i = argv.indexOf(k); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
@@ -143,7 +143,8 @@ const iso = ms => new Date(ms).toISOString();
 const SCHED = { id: 'scheduler', name: 'scheduler', role: 'host' };
 
 // status(now) -> the status of the --zones state
-const status = now => named(zonesStatus(baseStatus(now), now, ZONES, { drain: DRAIN, pinned: PINNED }));
+// with --models the instances are the catalog's (one loaded model, or none)
+const status = now => named(zonesStatus(MODELS_STATE ? modelsInstances(baseStatus(now), MODELS_STATE, mac) : baseStatus(now), now, ZONES, { drain: DRAIN, pinned: PINNED }));
 const named = st => { if (NAMED_ONLY) for (const n of (st.view && st.view.nodes) || []) if (n.hostname === NAMED_ONLY) n.auto = false; return st; };
 
 function baseStatus(now) {

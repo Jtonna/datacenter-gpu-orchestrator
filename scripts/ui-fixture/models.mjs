@@ -34,7 +34,7 @@ export function modelsDoc(state, now = Date.now()) {
   const H = 3600e3;
   const files = state === 'none' ? [] : [
     { file: 'gemma-4-27b-it-Q4_K_M.gguf', gb: 16.5, name: 'gemma-4-27b', publisher: 'Google', family: 'Gemma', parameters: '27B', quant: 'Q4_K_M', trained: 131072,
-      profiles: [profile('gemma-4-27b', 8192, 17480, { description: 'The default chat model.' }), profile('gemma-4-27b:32k', 32768, 20890),
+      profiles: [profile('gemma-4-27b', 8192, 17480, { description: 'The default chat model.' }), profile('gemma-4-27b:long', 32768, 20890),
         profile('bench-gemma-4-27b-c16k-n2', 16384, 18620, { generated: true, needs_measured: false, needs_basis: 'estimated, +5% margin; the estimate is 17734 MiB' })],
       extra: n => ({ state: 'ready', last_loaded: n - 2 * H, last_active: n - 4e3, requests_served: 1840,
         instances: [{ profile: 'gemma-4-27b', state: 'ready', nodes: ['ps5-01', 'ps5-02'], memory_mib: 17480, in_flight: 2, waiters: 0, requests_served: 1840, last_used: n - 4e3, stale_profile: false }],
@@ -55,6 +55,14 @@ export function modelsDoc(state, now = Date.now()) {
   const disk = { path: '/models', state: 'ok', total_bytes: total, free_bytes: total - used, used_bytes: used, used_percent: Math.round((used / total) * 1000) / 10,
     model_bytes: modelBytes, files: models.length, checked_at: now - 12e3 };
   return { disk, models, models_dir: '/models', history: true, version: 7 };
+}
+
+// modelsInstances(status, state, mac) -> the status with the instances the
+// catalog names: gemma-4-27b ready on the first two consoles, or none
+export function modelsInstances(st, state, mac) {
+  const insts = state === 'none' ? [] : [{ profile: 'gemma-4-27b', state: 'ready', in_flight: 2, waiters: 0, parallel: 1, host: 'server', requests_served: 1840,
+    nodes: [{ id: mac(1), role: 'host', share: 0.5 }, { id: mac(2), role: 'helper', share: 0.5 }] }];
+  return Object.assign({}, st, { instances: insts, queue: [], recent_loads: [] });
 }
 
 export const MIB_PER_GB = GB / MIB;
