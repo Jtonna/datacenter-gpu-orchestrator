@@ -226,13 +226,19 @@ function mountHome(el, route) {
   let r = route, query = r.query.q || '', side = null, disk = null, alive = true;
   const open = new Set();
   const toggle = k => { if (open.has(k)) open.delete(k); else open.add(k); view.refresh(); };
-  const offCatalog = onCatalog(() => { view.refresh(); if (side) side.redraw(); });
+  const offCatalog = onCatalog(() => { readDisk(); view.refresh(); if (side) side.redraw(); });
   const setQuery = q => navigate('models', [], Object.assign({}, r.query, q), true);
 
-  // the disk block: only the REST answer carries it; its figures move every 30 s
-  const readDisk = () => api.get('/api/models').then(d => { disk = (d && d.disk) || null; if (alive) view.refresh(); }, () => {});
+  // the disk block: only the REST answer carries it; its figures move every
+  // 30 s, so it is read again on a live message (status, catalog) at most
+  // every 30 s, never on a timer of its own
+  let diskAt = 0;
+  const readDisk = () => {
+    if (!alive || Date.now() - diskAt < 30000) return;
+    diskAt = Date.now();
+    api.get('/api/models').then(d => { disk = (d && d.disk) || null; if (alive) view.refresh(); }, () => { diskAt = 0; });
+  };
   readDisk();
-  const diskTimer = setInterval(readDisk, 30000);
 
   // The side panel of the open model (?model=<key>).
   const syncSide = () => {
@@ -268,6 +274,7 @@ function mountHome(el, route) {
     const insts = view_.instances || [];
     const ready = insts.filter(i => i.state !== 'starting').length, loading = insts.length - ready;
     const failed = (view_.recent_loads || []).filter(l => l.outcome && l.outcome !== 'ready');
+    readDisk();
     if (side) side.redraw();
     const sub = st
       ? [h('b', num(ready)), ' ready · ', h('b', num(loading)), ' loading', models ? [' · ', h('b', num(models.length)), ' in the catalog'] : null]
@@ -297,7 +304,7 @@ function mountHome(el, route) {
   syncSide();
   return {
     update(nr) { r = nr; syncSide(); view.refresh(); },
-    unmount() { alive = false; clearInterval(diskTimer); offCatalog(); if (side) { const s = side; side = null; s.close(); } view.unmount(); },
+    unmount() { alive = false; offCatalog(); if (side) { const s = side; side = null; s.close(); } view.unmount(); },
   };
 }
 
