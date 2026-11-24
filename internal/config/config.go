@@ -286,6 +286,18 @@ type Defaults struct {
 	// per shape, node and device count (the measurements are kept). Off by
 	// default: a measured figure is used once there is one.
 	DeviceOverheadSettingOnly bool
+
+	// PlacementToleranceMiB: nodes whose usable memory differs by less than
+	// this are equal for automatic placement. Equal nodes are taken warm
+	// first (the last load that became ready there used the profile's model
+	// file), then by name, and a model split over them splits by one steady
+	// figure, so an idle plan does not follow a few MiB of free-memory noise
+	// (idle readings move by 2 to 25 MiB between reads). The figure a node is
+	// ordered by moves only when its usable memory moves by more than twice
+	// this. Fit is still checked on the exact figures. 0 turns it off (the
+	// smallest budget that fits, then the id; the split by exact budget).
+	// Default 128.
+	PlacementToleranceMiB int
 }
 
 // Values of defaults.membership. MembershipFleet is the legacy mode, kept
