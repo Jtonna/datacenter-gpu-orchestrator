@@ -35,6 +35,8 @@
 // --config normal|unknown|fresh: the settings state (config.mjs). --catalog:
 // /api/models lists the profile fixture's model files. --named-only <zone>:
 // that zone is in no_auto_nodes (auto: false), drawn "Named only".
+// --tiers live: GET /api/config carries the tier lists as the live pool has
+// them (four tiers, two excluded, one named only), for the Tiers and zones page.
 //
 // --state empty: no request in the period; off: the request log is off
 // (usage.db not open); loading: the request routes never answer.
@@ -161,6 +163,16 @@ function pendingRoute(req, res, p) {
 // names-only /api/agents answer stays.
 const KEYS_STATE = opt('--keys', '');
 const KEYS = KEYS_STATE ? new Keys(KEYS_STATE) : null;
+// --tiers live: the tier lists as the live pool has them (Tiers and zones page): a catch-all,
+// "host name matches alienware*", "only the local zone", "laptop-*"; two zones excluded, one named only
+const TIERS = opt('--tiers', '');
+const TIER_LISTS = TIERS === 'live' ? {
+  tiers: [{ match: {}, priority: 1, headroom_mib: 1024, shared_memory: true, link_mb_s: 100, settle: '3s' },
+    { match: { hostname: 'alienware*' }, priority: 2, headroom_mib: 256, link_mb_s: 60, settle: '8s' },
+    { match: { local: true }, priority: 3, headroom_mib: 450, settle: '2s' },
+    { match: { hostname: 'laptop-*' }, priority: 4, headroom_mib: 500, link_mb_s: 10 }],
+  exclude_nodes: ['laptop-02', '02:00:00:00:00:77'], no_auto_nodes: ['laptop-01'], node_overrides: {},
+} : null;
 const cfgDoc = () => { const d = configDoc(CONFIG); d.settings.requests_live_timings = LIVE_TIMINGS; return d; };
 
 // ---------- the fixture (the Overview mockup's sample data) ----------
@@ -389,7 +401,7 @@ const server = http.createServer((req, res) => {
   if (p === '/api/status') return json(res, 200, status(now));
   if (p === '/api/models') return json(res, 200, { version: 1, models: CATALOG ? cfgCatalog() : [] });
   if (p === '/api/profiles') return json(res, 200, { profiles: profileEntries() });
-  if (p === '/api/config') { const d = cfgDoc(); return json(res, 200, Object.assign({ updated_at: now - 3 * H, configured: d.revision > 0, tiers: [], exclude_nodes: [], no_auto_nodes: NAMED_ONLY ? [NAMED_ONLY] : [], node_overrides: {} }, d, { profiles: profileSpecs() })); }
+  if (p === '/api/config') { const d = cfgDoc(); return json(res, 200, Object.assign({ updated_at: now - 3 * H, configured: d.revision > 0, tiers: [], exclude_nodes: [], no_auto_nodes: NAMED_ONLY ? [NAMED_ONLY] : [], node_overrides: {} }, d, TIER_LISTS, { profiles: profileSpecs() })); }
   // what the health popup reads (the Health board's sample, generic names)
   if (p === '/api/about') return json(res, 200, { version: '0.1.5', started_at: now - 12 * 24 * H, now, uptime_s: 12 * 24 * 3600, history: 'on' });
   if (p === '/api/system') return json(res, 200, { version: '0.1.5', started_at: now - 12 * 24 * H, now, uptime_s: 12 * 24 * 3600, read_panics: 0, internal_failures_total: 0,
