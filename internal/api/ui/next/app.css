@@ -1237,3 +1237,13 @@ table.runs{width:100%;border-collapse:collapse}
 .mdl-ptbl tbody tr:hover .go,.mdl-ptbl .go:focus-visible{color:var(--link)}
 .mdl-ptbl tbody tr:hover .go .tx,.mdl-ptbl .go:focus-visible .tx{visibility:visible}
 .mdl-pad{padding:8px 16px}
+
+/* ---------- MCP tools (views/mcp.js toolsPart; not on the boards) ---------- */
+.mcp-tools{margin-top:16px}
+.mcp-pad{padding:0 20px 16px}
+.mcp-tg{border-top:1px solid #e9eeeb}
+.mcp-tg>summary{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;padding:12px 20px;cursor:pointer;list-style-position:inside}
+.mcp-tg>summary .mut{flex:1 1 320px;font-size:13px}
+.mcp-ttbl td{vertical-align:top}
+.mcp-ttbl td.mono{white-space:nowrap}
+.mcp-dz{margin-left:8px;height:20px;font-size:11px}

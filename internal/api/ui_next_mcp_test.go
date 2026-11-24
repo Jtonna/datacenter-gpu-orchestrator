@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -148,4 +149,28 @@ func TestUINextMCP(t *testing.T) {
 		"fetchedQuery": []string{`^DELETE /api/agents/ag_000000000001$`},
 		"sentHeader":   []string{`^X-Comment: laptop sold$`},
 		"page":         []string{"Revoked ops-bot"}}) // the revoked panel itself: "Manage a revoked key"
+}
+
+// The MCP page's Tools section (not on the boards; the classic MCP page
+// listed them): every tool the server's MCP part offers, by group, with
+// what it does and the permission it needs; read-only. Read from a real
+// scheduler's GET /api/mcp/tools.
+func TestUINextMCPTools(t *testing.T) {
+	e, _, _ := accessEnv(t)
+	front := httptest.NewServer(e.api)
+	defer front.Close()
+	uiExec(t, map[string]any{"shell": "next", "app": true, "base": front.URL, "cases": []any{
+		map[string]any{"name": "mcp tools: the list", "route": "#/mcp", "status": "fetch",
+			"expect": []string{"Access keys", "Tools", "tools an agent can call", "version test", "Read", "Configuration", "Benchmarks", "Load and unload",
+				"get_status", "load_model", "pause_node", "update_settings", "What it does", "Needs", "Observe", "Switch zones on or off", "Load and unload models", "Change settings", "Changes or removes"},
+			"has":  []string{"section.mcp-tools details.mcp-tg[data-group] summary", "tr[data-tool=load_model]", "tr[data-tool=get_status]"},
+			"none": []string{"section.mcp-tools button", "section.mcp-tools input"}},
+	}})
+	// a scheduler without the MCP part answers 503: the section says so, the keys still draw
+	fetch := fixtureAnswers(t, []string{"--keys", "normal"}, "/api/agents", "/api/status")
+	fetch["/api/mcp/tools"] = map[string]any{"$status": 503, "$body": map[string]any{"error": map[string]any{"message": "the MCP server is not part of this process"}}}
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
+		map[string]any{"name": "mcp tools: not available", "route": "#/mcp", "status": fetch["/api/status"],
+			"expect": []string{"ops-bot", "Tools", "The tool list could not be read", "the MCP server is not part of this process"}},
+	}})
 }
