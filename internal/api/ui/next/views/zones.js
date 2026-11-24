@@ -339,6 +339,15 @@ function eventsPart(hist, none = 'No load, unload or trouble recorded for this z
     hist && hist.events && hist.events.length ? h('a', { href: href('activity'), style: 'font-size:12px' }, 'All events on Activity') : null);
 }
 
+// hostUptime(a, n) -> the machine's uptime in seconds now, or null: the
+// agent's host_uptime_s at its last heartbeat plus last_seen_ago_s, for a
+// reachable zone only.
+function hostUptime(a, n) {
+  if (!a || typeof a.host_uptime_s !== 'number' || a.host_uptime_s < 0) return null;
+  if (n && n.online === false) return null;
+  return a.host_uptime_s + (typeof a.last_seen_ago_s === 'number' && a.last_seen_ago_s > 0 ? a.last_seen_ago_s : 0);
+}
+
 // ---------- filters ----------
 
 const SORTS = [{ id: 'attention', label: 'needs attention first' }, { id: 'name', label: 'name' }, { id: 'memory', label: 'memory used' }, { id: 'temp', label: 'hottest first' }];
@@ -998,7 +1007,12 @@ registerView({
             mem ? h('div.mb', { role: 'img', 'aria-label': `${Math.round(mem.used / mem.total * 100)}% of memory in use` }, h('span', { style: `width:${Math.round(mem.used / mem.total * 100)}%` })) : null),
           fact('Temperature', h('b', temp == null ? DASH : `${num(temp)} °C`)),
           fact('Ping', h('b.mut', { title: 'Ping is not measured yet: the agent does not time its heartbeat to Potluck (it needs the agent track).' }, 'not measured')),
-          fact('Uptime', typeof a.host_uptime_s === 'number' ? h('b', { title: 'Since the machine last started, as its agent reports it' }, goneFor(a.host_uptime_s * 1000)) : h('b.mut', { title: 'The agent reports no uptime' }, DASH)),
+          // Uptime: the machine's own uptime (since its kernel booted), the agent's
+          // host_uptime_s from its last heartbeat plus the time since that
+          // heartbeat (last_seen_ago_s). Left out, not a dash, when the agent
+          // reports none (an older agent, a console fed by the fleet console)
+          // or the zone is not reachable (the figure would be stale).
+          hostUptime(a, n) != null ? fact('Uptime', h('b', { 'data-zp': 'uptime', title: 'How long the machine has been up since it last started, as its agent reports it' }, goneFor(hostUptime(a, n) * 1000))) : null,
           fact('Link speed', link
             ? h('b', { 'data-link': '', title: `At least this fast: ${num(link.bytes || 0)} bytes in ${num(Math.round((link.load_s || 0) * 10) / 10)} s, and that time also holds the model's start. Not a link test.` }, `≥ ${num(Math.round(link.mb_s))} MB/s`)
             : h('b.mut', { 'data-link': '', title: 'No load has sent this zone a model over the network yet (a cached or a short load does not count).' }, 'no cold load yet'),

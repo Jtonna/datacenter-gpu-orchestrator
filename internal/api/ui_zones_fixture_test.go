@@ -405,3 +405,33 @@ func TestUIFixtureServerPending(t *testing.T) {
 		t.Errorf("gone: %v %v", resp, err)
 	}
 }
+
+// The fixture's agents report the machine's own uptime (host_uptime_s) when
+// reachable; --no-host-uptime: none does, as an older agent or a console fed
+// by the fleet console (the zone panel then leaves the Uptime tile out).
+func TestUIFixtureServerHostUptime(t *testing.T) {
+	for _, off := range []bool{false, true} {
+		args := []string{"--zones", "groups"}
+		if off {
+			args = append(args, "--no-host-uptime")
+		}
+		get := fixtureServer(t, args...)
+		var st struct {
+			Agents []map[string]any `json:"agents"`
+		}
+		get("/api/status", &st)
+		with := 0
+		for _, a := range st.Agents {
+			up, has := a["host_uptime_s"].(float64)
+			if has {
+				with++
+				if a["state"] != "active" || up <= 0 {
+					t.Errorf("off=%v: %v reports %v while %v", off, a["name"], up, a["state"])
+				}
+			}
+		}
+		if off && with != 0 || !off && with == 0 {
+			t.Errorf("off=%v: %d agents report host_uptime_s", off, with)
+		}
+	}
+}

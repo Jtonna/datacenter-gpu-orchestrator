@@ -580,6 +580,11 @@ func TestUINextZonesDetail(t *testing.T) {
 	typed := func(sel, v string) map[string]any { return map[string]any{"type": sel, "value": v} }
 	esc := func(s string) string { return strings.NewReplacer(":", "%3A").Replace(s) }
 	wide := 1600
+	// the agents report no host_uptime_s (an older agent; a console fed by the fleet console)
+	noUp := znStatus(fleet)
+	for _, a := range noUp["agents"].([]any) {
+		delete(a.(map[string]any), "host_uptime_s")
+	}
 
 	uiExec(t, znSpec(fetch,
 		map[string]any{"name": "detail: a zone in use", "route": "#/zones/node-a", "status": st, "width": wide,
@@ -599,7 +604,13 @@ func TestUINextZonesDetail(t *testing.T) {
 			"page": []string{"Link speed", "no cold load yet", "Set aside", "home", "Nothing is loaded"}, "notOnPage": []string{"Mbit/s", "0 MB/s"},
 			"titles": []string{"No load has sent this zone a model over the network yet"}},
 		map[string]any{"name": "detail: a lost zone", "route": "#/zones/node-f", "status": st, "width": wide,
-			"page": []string{"Offline", "gone for 54 min", "Nothing is loaded"}},
+			"page": []string{"Offline", "gone for 54 min", "Nothing is loaded"}, "pageNone": []string{"b[data-zp=uptime]"}},
+		// Uptime is the machine's own uptime (host_uptime_s + last_seen_ago_s):
+		// drawn when the agent reports it, left out (not a dash) when not
+		map[string]any{"name": "detail: the machine's uptime", "route": "#/zones/node-a", "status": st, "width": wide,
+			"pageHas": []string{"b[data-zp=uptime]"}, "titles": []string{"How long the machine has been up since it last started"}},
+		map[string]any{"name": "detail: no uptime reported: no tile", "route": "#/zones/node-a", "status": noUp, "width": wide,
+			"page": []string{"Memory", "Temperature", "Ping", "Link speed"}, "pageNone": []string{"b[data-zp=uptime]"}, "notOnPage": []string{"Uptime"}},
 		map[string]any{"name": "detail: a zone switched off", "route": "#/zones/node-g", "status": st, "width": wide,
 			"page": []string{"Switched off"}, "pageHas": []string{"aside.side button.switch[aria-checked=false]"}},
 		map[string]any{"name": "detail: an excluded zone", "route": "#/zones/node-h", "status": st, "width": wide,

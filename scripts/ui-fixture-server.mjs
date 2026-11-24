@@ -11,7 +11,7 @@
 //                                           [--health two|good|unknown] [--release 0.1.5]
 //                                           [--zones none|groups|live|one-group|fleet] [--uptime-partial]
 //                                           [--load start|reject|evict|loaded|unknown] [--drain eta|noeta] [--pinned]
-//                                           [--pending waiting|joined|expired|cancelled|gone|nosource|taken]
+//                                           [--pending waiting|joined|expired|cancelled|gone|nosource|taken] [--no-host-uptime]
 //
 //   /ui/components.html  the shell's shared components (scripts/ui-fixture/components.js)
 //   /ui/fx-<name>.html   the app driven by scripts/ui-fixture/fx-<name>.js (a board
@@ -74,6 +74,9 @@
 // /api/models/drain answers eta_s 40 unless --drain noeta. --pinned: that
 // instance was loaded on chosen zones (pinned_nodes).
 //
+// --no-host-uptime: no agent reports host_uptime_s (an older agent, a console
+// fed by the fleet console); otherwise every reachable agent does.
+//
 // --pending: Create new zone (internal/api/pending.go). GET /api/zones/pending
 // lists the one pending zone zone-9 (rack-a) in that state, GET
 // /api/zones/pending/pz-0000000000000001 answers it (gone: 404, as after a
@@ -119,6 +122,8 @@ const CONFIG = opt('--config', 'normal');
 const CATALOG = argv.includes('--catalog');
 // --named-only <name>: that zone is in no_auto_nodes (auto: false)
 const NAMED_ONLY = opt('--named-only', '');
+// --no-host-uptime: no agent reports host_uptime_s (the zone panel leaves Uptime out)
+const NO_HOST_UPTIME = argv.includes('--no-host-uptime');
 // --pending: the Create new zone states (see the header)
 const PENDING = opt('--pending', '');
 const PZ_SOURCE = PENDING && PENDING !== 'nosource' ? 'share:192.0.2.10:/models' : '';
@@ -174,7 +179,7 @@ const iso = ms => new Date(ms).toISOString();
 const SCHED = { id: 'scheduler', name: 'scheduler', role: 'host' };
 
 // status(now) -> the status of the --zones state
-const status = now => named(zonesStatus(baseStatus(now), now, ZONES, { drain: DRAIN, pinned: PINNED }));
+const status = now => named(zonesStatus(baseStatus(now), now, ZONES, { drain: DRAIN, pinned: PINNED, hostUptime: !NO_HOST_UPTIME }));
 const named = st => { if (NAMED_ONLY) for (const n of (st.view && st.view.nodes) || []) if (n.hostname === NAMED_ONLY) n.auto = false; return st; };
 
 function baseStatus(now) {

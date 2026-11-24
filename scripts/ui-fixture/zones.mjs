@@ -199,6 +199,14 @@ export function zonesStatus(base, now, mode, o = {}) {
     if (o.drain) Object.assign(i0, { state: 'draining', drain: true }, o.drain === 'eta' ? { drain_eta_s: 40 } : {});
     if (o.pinned) i0.pinned_nodes = (i0.nodes || []).map(m => (st.agents.find(a => a.id === m.id) || {}).name || m.id);
   }
+  // the machine's own uptime (host_uptime_s, from the agent's heartbeat) on
+  // every reachable agent, 12 d 4 h on the first and less on the others;
+  // o.hostUptime === false: no agent reports it (older agents, consoles fed by
+  // the fleet console), and the zone panel leaves the Uptime tile out
+  st.agents.forEach((a, i) => {
+    if (o.hostUptime === false || a.state !== 'active') delete a.host_uptime_s;
+    else a.host_uptime_s = 12 * 86400 + 4 * 3600 - (i % 9) * 86400 - (i % 5) * 3600;
+  });
   for (const a of st.agents) {
     if (mode === 'groups' && GROUPS_OF_EIGHT[a.name]) a.group = GROUPS_OF_EIGHT[a.name];
     a.zone_state = zoneState(st, a);
