@@ -11,6 +11,23 @@ No agent change, no new port. **Schema: one new table, `model_pins`, under a new
 - **MCP.** `pin_model` and `unpin_model` (`file`, `comment`).
 - **Going back.** The image before opens the same database: it never reads `model_migrations` or `model_pins`, so it shows no pins. They are there again when this image comes back.
 
+## Scheduler image: models page read additions (models slice 1)
+
+Read-only fields; no agent change, no new port, no schema change, no new route.
+
+- **Unload when idle.** Each profile in `GET /api/profiles` and each profile row of `GET /api/models` carries `ttl_s`: the effective idle unload (the profile's `ttl`, else `defaults.ttl`) in seconds; 0 means never.
+- **Added.** Each model file in `GET /api/models` carries `added_at` (unix ms): the file's modification time on the models folder; null for a missing file or a command profile.
+- **Which machine the disk is.** The `disk` block of `GET /api/models` carries `host`: the scheduler's node name (`local_node`).
+- **Benchmarks of a model.** `GET /api/bench/runs?model=<file>` lists the runs with a step on that model file (a step recorded before steps carried their file matches by the profiles of that file now). The catalog entry's `bench.reports` counts that model's completed runs. MCP `list_runs` takes `model`.
+
+## Scheduler image: per-device readings only from a cold load
+
+No agent change, no new port, no schema change.
+
+- **A per-device overhead reading is taken only from a cold load** on that node: measured bytes sent there of at least half of what the log puts on its devices. A cached reload (the worker already held the tensors) gives no reading.
+- **Rows read from cached loads are dropped once at start**, decided from the event history, with a history line, also when the reading's profile is a generated benchmark profile no longer in the configuration. Each start writes a count line and a `learnedNeed` event with `device_rows_checked` and `device_rows_dropped`, also when none are dropped.
+- **No host or per-device reading from an unsettled base**: when an instance that ran left the node less than one `free_average_window` before the new one was created, the base free figure may still show it; that load gives no reading.
+
 ## Scheduler image: stable placement among equal consoles
 
 No agent change, no new port, no schema change.

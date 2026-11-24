@@ -466,6 +466,11 @@ type RunFilter struct {
 	// direct runs of a benchmark and every run with a step of it.
 	Kind      string
 	Benchmark string
+	// Model: the runs with a step on that model file. A step recorded
+	// before steps carried their file matches by its profile, when
+	// ModelProfiles names it (the profiles of that file now).
+	Model         string
+	ModelProfiles []string
 }
 
 // TrendPoint is one value of a metric over past runs.

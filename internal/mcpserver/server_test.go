@@ -308,7 +308,7 @@ var expected = map[string]struct {
 	"list_suites":           {`{}`, "GET", "/api/bench/suites", "", "", nil},
 	"get_suite":             {`{"id":"s1"}`, "GET", "/api/bench/suites/s1", "", "", nil},
 	"get_bench_state":       {`{}`, "GET", "/api/bench/state", "", "", nil},
-	"list_runs":             {`{"suite":"s1","state":"completed","limit":5,"kind":"suite","benchmark":"b"}`, "GET", "/api/bench/runs", "benchmark=b&kind=suite&limit=5&state=completed&suite=s1", "", nil},
+	"list_runs":             {`{"suite":"s1","state":"completed","limit":5,"kind":"suite","benchmark":"b","model":"a.gguf"}`, "GET", "/api/bench/runs", "benchmark=b&kind=suite&limit=5&model=a.gguf&state=completed&suite=s1", "", nil},
 	"get_run_measurements":  {`{"id":"br-1","step":0,"metric":"load_s"}`, "GET", "/api/bench/runs/br-1/measurements", "metric=load_s&step=0", "", nil},
 	"query_measurements":    {`{"benchmark":"b","metric":"ttft_ms","since":"7d","limit":50,"ctx":8192,"placement":"any:2"}`, "GET", "/api/bench/measurements", "benchmark=b&ctx=8192&limit=50&metric=ttft_ms&placement=any%3A2&since=7d", "", nil},
 	"list_bench_metrics":    {`{}`, "GET", "/api/bench/metrics", "", "", nil},

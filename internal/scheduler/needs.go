@@ -117,6 +117,7 @@ type needOp struct {
 	rec   *needstore.Record
 	host  *needstore.HostOverhead
 	dev   *needstore.DeviceOverhead // one node's measured per-device overhead (deviceoverhead.go)
+	drop  bool                      // with dev: delete that row instead
 }
 
 // key is what the writer merges ops by: the shape, and the device count of
@@ -310,6 +311,10 @@ func applyNeedOps(st NeedStore, ops []needOp, log *slog.Logger) {
 		case op.host != nil:
 			if hs, ok := st.(HostOverheadStore); ok {
 				err = hs.PutHost(*op.host)
+			}
+		case op.dev != nil && op.drop:
+			if ds, ok := st.(DeviceOverheadStore); ok {
+				err = ds.DeleteDeviceRow(op.dev.Shape, op.dev.Node, op.dev.Devices)
 			}
 		case op.dev != nil:
 			if ds, ok := st.(DeviceOverheadStore); ok {

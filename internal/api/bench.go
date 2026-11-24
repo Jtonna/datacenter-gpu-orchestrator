@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/proxy"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
@@ -489,7 +492,15 @@ func (s *Server) runSuite(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	f := bench.RunFilter{Suite: q.Get("suite"), State: q.Get("state"), Kind: q.Get("kind"), Benchmark: q.Get("benchmark")}
+	f := bench.RunFilter{Suite: q.Get("suite"), State: q.Get("state"), Kind: q.Get("kind"), Benchmark: q.Get("benchmark"), Model: q.Get("model")}
+	if f.Model != "" { // a model file: its steps' file, or for older steps their profile among the file's profiles now
+		cfg := s.conf()
+		for _, id := range slices.Sorted(maps.Keys(cfg.Profiles)) {
+			if p := cfg.Profiles[id]; p.Kind != core.KindCommand && p.Model == f.Model {
+				f.ModelProfiles = append(f.ModelProfiles, id)
+			}
+		}
+	}
 	switch f.Kind {
 	case "", bench.RunKindSuite, bench.RunKindBenchmark:
 	default:

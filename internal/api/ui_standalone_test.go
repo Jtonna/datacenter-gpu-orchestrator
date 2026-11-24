@@ -88,7 +88,7 @@ func TestUIAgentsModeHasNoFleetFeedFacts(t *testing.T) {
 	if s := uiText(t, "views/about.js"); !strings.Contains(s, "agentsMode(st) ? [h('dt', 'Nodes'), h('dd', 'From agent registrations") {
 		t.Error("views/about.js: agents mode still shows the fleet feed row")
 	}
-	if s := uiText(t, "views/tiers.js"); !strings.Contains(s, "badge('Not used in this mode'") {
-		t.Error("views/tiers.js: node overrides are not marked unused with agents")
+	if s := uiText(t, uiNextDir+"views/tiers.js"); !strings.Contains(s, "badge('Not used in this mode'") {
+		t.Error("next/views/tiers.js: node overrides are not marked unused with agents")
 	}
 }

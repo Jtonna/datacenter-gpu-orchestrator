@@ -126,6 +126,33 @@ function detailOf(e) {
   return parts.join(' · ');
 }
 
+// mbps(x) -> an upload speed in words, or '' when it was not measured (absent,
+// zero, not a number): never "0".
+const mbps = x => (typeof x === 'number' && isFinite(x) && x > 0 ? (x < 10 ? num(x, 1) : num(x)) : '');
+
+// learnedSentence: the learnedNeed events in plain words. The scheduler
+// records several kinds under this one type: a model's measured memory need,
+// a measured host or per-device overhead (in MiB, small), a reading out of
+// range (not used), the higher of two host readings kept, and a need raised
+// after a worker was ended. Each is told from its data; anything else: the
+// scheduler's own summary.
+function learnedSentence(e, d, p) {
+  const on = d.node ? [' on ', h('span.mono', d.node)] : [];
+  const devs = d.devices ? ` with ${plural(d.devices, 'device')}` : '';
+  const mib = x => num(x) + ' MiB';
+  if (d.measured_mib != null) return ['Measured ', p, ': it needs ', gb(d.measured_mib), '.'];
+  if (d.host_overhead_mib != null) return ['Measured how much memory ', p, ' takes on its host', on, devs, ' beyond the model: ', mib(d.host_overhead_mib),
+    d.in_force_mib != null && d.in_force_mib !== d.host_overhead_mib ? `. ${mib(d.in_force_mib)} is used from now on` : '', '.'];
+  if (d.device_overhead_mib != null) return ['Measured how much extra memory ', p, ' takes on each device', on, devs, ': ', mib(d.device_overhead_mib),
+    d.in_force_mib != null && d.in_force_mib !== d.device_overhead_mib ? `. ${mib(d.in_force_mib)} is used from now on` : '', '.'];
+  if (d.host_overhead_reading_mib != null) return ['A host memory reading of ', p, on, ' was ', mib(d.host_overhead_reading_mib), ', which cannot be right: it was not used.'];
+  if (d.device_overhead_reading_mib != null) return ['A per-device memory reading of ', p, on, ' was ', mib(d.device_overhead_reading_mib), ', which cannot be right: it was not used.'];
+  if (d.kept_mib != null) return ['Kept the higher of the host memory readings', on, devs, ': ', mib(d.kept_mib), d.was_mib != null ? `, not ${mib(d.was_mib)}` : '', '.'];
+  if (d.to_mib != null) return ['The memory need of ', p, ' was raised', d.from_mib != null ? ` from ${gb(d.from_mib)}` : '', ` to ${gb(d.to_mib)}`,
+    ' after its worker', on, ' was ended', d.exit ? ` (${String(d.exit).replace(/_/g, ' ')})` : '', '.'];
+  return [e.summary || 'Measured ' + (e.profile || 'a model') + '.'];
+}
+
 // sentenceOf(event) -> the event as one short plain sentence. The scheduler's
 // own summary (kept in the record, behind "Details") is used for the types that
 // have no shorter wording here.
@@ -135,11 +162,11 @@ function sentenceOf(e) {
   switch (e.type) {
     case 'loadStarted': return ['Loading ', p, '.'];
     case 'loadFinished':
-      if (d.outcome === 'ready') return [p, ' is ready: loaded in ', dur(d.load_s), d.avg_mb_s ? ` at ${num(d.avg_mb_s)} MB/s` : '', '.'];
+      if (d.outcome === 'ready') return [p, ' is ready: loaded in ', dur(d.load_s), mbps(d.avg_mb_s) ? ` at ${mbps(d.avg_mb_s)} MB/s` : '', '.'];
       return [p, d.outcome === 'cancelled' ? ' stopped loading' : ' failed to load', d.load_s != null ? ` after ${dur(d.load_s)}` : '', d.reason ? ['. ', plainReason(d.reason)] : '.'];
     case 'requestRefused': return ['A request for ', p, ' was refused. ', plainReason(d.message || d.reason)];
     case 'instanceUnloaded': return [p, ' was unloaded', d.loaded_for_s != null ? ` after ${dur(d.loaded_for_s)}` : '', d.requests_served != null ? ` and ${plural(d.requests_served, 'request')}` : '', '.'];
-    case 'learnedNeed': return ['Measured ', p, ': it needs ', gb(d.measured_mib), '.'];
+    case 'learnedNeed': return learnedSentence(e, d, p);
     case 'needsMibTooLow': return ['The memory need set for ', p, ' is too low: ', gb(d.configured_mib), ' set, ', gb(d.measured_mib), ' measured. The measured figure is used.'];
     case 'nodeMemory': return [gb(d.available_mib), ' free of ', gb(d.total_mib), d.reason ? ` (${String(d.reason).replace(/_/g, ' ')})` : '', '.'];
     case 'benchStepFinished': return ['Benchmark ', h('span.mono', d.benchmark || ''),
@@ -294,7 +321,7 @@ registerView({
                   { label: 'Model', cls: 'clip', render: e => h('span', { title: e.profile + ' on ' + (e.nodes || []).join(', ') }, h('span.mono', e.profile),
                     h('span.sub', (e.data || {}).outcome !== 'ready' ? h('span.err-t', (e.data || {}).outcome === 'cancelled' ? 'Cancelled · ' : 'Failed · ') : null, plural((e.nodes || []).length, 'node'))) },
                   { label: 'Took', cls: 'r', title: 'Load time in seconds', render: e => ((e.data || {}).load_s != null ? num(e.data.load_s) + ' s' : '–') },
-                  { label: 'MB/s', cls: 'r', render: e => ((e.data || {}).avg_mb_s ? num(e.data.avg_mb_s) : '–') },
+                  { label: 'MB/s', cls: 'r', title: 'Average upload speed; a dash when it was not measured', render: e => mbps((e.data || {}).avg_mb_s) || h('span.mut', { title: 'Not measured' }, '–') },
                 ],
                 empty: empty('No load finished', `No model finished loading in the last ${r[1]}.`),
               })),

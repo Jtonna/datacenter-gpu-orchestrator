@@ -54,7 +54,8 @@ type catalogCache struct {
 	dirty   bool // an event, a configuration change or an icon change arrived since the build
 	aggOld  bool // the benchmark aggregates must be computed again
 	agg     map[string]any
-	events  []history.Event // newest first: the catalog's own copy of the events it reads
+	runs    []bench.RunStepModel // completed runs' steps, read with agg
+	events  []history.Event      // newest first: the catalog's own copy of the events it reads
 	seeded  bool
 	pending []history.Event // arrived before the seed
 
@@ -419,8 +420,13 @@ func (s *Server) catalogBuild(ctx context.Context, st any) (*catalogSnap, error)
 			if doc, err := s.opts.Bench.Aggregates(bench.AggFilter{}); err == nil {
 				c.agg = viaJSON(doc)
 			}
+			if s.opts.BenchStore != nil {
+				if rm, err := s.opts.BenchStore.CompletedRunModels(); err == nil {
+					c.runs = rm
+				}
+			}
 		}
-		in.Aggregates = c.agg
+		in.Aggregates, in.RunModels = c.agg, c.runs
 	}
 	if s.opts.modelFiles != nil {
 		in.Files = s.opts.modelFiles()
