@@ -61,6 +61,30 @@ type trashState struct {
 	op      sync.Mutex
 }
 
+func (t *trashState) summary() trashSummary {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.sum
+}
+
+func (t *trashState) setSummary(sum trashSummary) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.sum = sum
+}
+
+func (t *trashState) repairList() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]string{}, t.repairs...)
+}
+
+func (t *trashState) setRepairs(notes []string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.repairs = notes
+}
+
 func (s *Server) modelDir() modelfiles.Dir {
 	d := modelfiles.Dir{Ops: s.opts.trashOps}
 	if c := s.conf(); c != nil {
@@ -581,9 +605,7 @@ func (s *Server) handleTrashList(w http.ResponseWriter, r *http.Request) {
 			"purge_at": rec.PurgeAt, "state": rec.State, "profile_count": len(rec.Profiles), "profiles": profs, "revision": rec.Revision,
 			"actor": rec.Actor, "comment": rec.Comment, "problem": nilIfEmpty(problem), "in_trash_folder": ferr == nil})
 	}
-	s.trash.mu.Lock()
-	repairs := append([]string{}, s.trash.repairs...)
-	s.trash.mu.Unlock()
+	repairs := s.trash.repairList()
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "count": sum.Count, "total_bytes": sum.Bytes, "next_purge_at": nilIfZero(sum.NextPurgeAt),
 		"trash_days": s.trashDays(), "purge_on": false, "repairs_at_start": repairs})
 }
@@ -621,9 +643,7 @@ func (s *Server) refreshTrash(ctx context.Context) {
 		s.log.Warn("the trash summary was not read", "err", err)
 		return
 	}
-	s.trash.mu.Lock()
-	s.trash.sum = summarizeTrash(recs)
-	s.trash.mu.Unlock()
+	s.trash.setSummary(summarizeTrash(recs))
 }
 
 // trashDisk adds the trash figures to the catalog's disk block.
@@ -631,9 +651,7 @@ func (s *Server) trashDisk(d map[string]any) {
 	if s.store == nil {
 		return
 	}
-	s.trash.mu.Lock()
-	sum := s.trash.sum
-	s.trash.mu.Unlock()
+	sum := s.trash.summary()
 	d["trash_bytes"], d["trash_count"], d["next_purge_at"], d["trash_purge_on"] = sum.Bytes, sum.Count, nilIfZero(sum.NextPurgeAt), false
 }
 
@@ -720,8 +738,6 @@ func (s *Server) repairTrash(ctx context.Context) {
 			interrupted(rec, "a "+map[bool]string{true: "delete", false: "restore"}[rec.State == cfgstore.TrashPending]+" stopped and the file is not in exactly one place ("+where+"); nothing was moved")
 		}
 	}
-	s.trash.mu.Lock()
-	s.trash.repairs = notes
-	s.trash.mu.Unlock()
+	s.trash.setRepairs(notes)
 	s.refreshTrash(ctx)
 }

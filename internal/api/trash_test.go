@@ -380,8 +380,8 @@ func TestModelTrash_KillAndRepairAtStart(t *testing.T) {
 		if l, _ := te.cs.TrashList(ctx); len(l) != 0 || !te.has("a.gguf") || len(te.profileIDs()) != 3 {
 			t.Fatalf("records %v file %v profiles %v", l, te.has("a.gguf"), te.profileIDs())
 		}
-		if len(s2.trash.repairs) != 1 || !strings.Contains(s2.trash.repairs[0], "undone") {
-			t.Fatalf("repairs: %v", s2.trash.repairs)
+		if len(s2.trash.repairList()) != 1 || !strings.Contains(s2.trash.repairList()[0], "undone") {
+			t.Fatalf("repairs: %v", s2.trash.repairList())
 		}
 	})
 	t.Run("delete killed after the revision, before the rename", func(t *testing.T) {
@@ -419,8 +419,8 @@ func TestModelTrash_KillAndRepairAtStart(t *testing.T) {
 		if len(l) != 1 || l[0].State != cfgstore.TrashTrashed || te.has("a.gguf") || len(te.profileIDs()) != 1 {
 			t.Fatalf("after the start: %+v", l)
 		}
-		if s2.trash.sum.Count != 1 || !strings.Contains(s2.trash.repairs[0], "completed") {
-			t.Fatalf("summary %+v repairs %v", s2.trash.sum, s2.trash.repairs)
+		if s2.trash.summary().Count != 1 || !strings.Contains(s2.trash.repairList()[0], "completed") {
+			t.Fatalf("summary %+v repairs %v", s2.trash.summary(), s2.trash.repairList())
 		}
 	})
 	t.Run("restore killed after the record, before the rename", func(t *testing.T) {
@@ -463,8 +463,8 @@ func TestModelTrash_KillAndRepairAtStart(t *testing.T) {
 		os.Rename(filepath.Join(te.dir, ".trash", l[0].ID, "a.gguf"), filepath.Join(te.outer, "a.gguf")) // someone took it away
 		s2 := te.restart()
 		r, _ := te.cs.TrashGet(ctx, l[0].ID)
-		if r.State != cfgstore.TrashInterrupted || !strings.Contains(r.Problem, "not in exactly one place") || !strings.Contains(s2.trash.repairs[0], "needs a look") {
-			t.Fatalf("after the start: %+v %v", r, s2.trash.repairs)
+		if r.State != cfgstore.TrashInterrupted || !strings.Contains(r.Problem, "not in exactly one place") || !strings.Contains(s2.trash.repairList()[0], "needs a look") {
+			t.Fatalf("after the start: %+v %v", r, s2.trash.repairList())
 		}
 		if len(r.Profiles) != 2 {
 			t.Fatal("the saved profiles were lost")
