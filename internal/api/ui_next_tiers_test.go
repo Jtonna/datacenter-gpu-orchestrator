@@ -204,3 +204,33 @@ func TestUINextTiersNeverReached(t *testing.T) {
 		t.Error("next/views/tiers.js does not read never_reached")
 	}
 }
+
+// Long pages: the rail and the section menu stay in place for the full
+// height while the page scrolls (sticky, top 0, the window's height; checked
+// in Chromium by scrolling: their rectangles stay 0..window height), and the
+// .app background repeats their columns so a full-page picture, which draws
+// a sticky element once, shows them full height too.
+func TestUIRailAndMenuForLongPages(t *testing.T) {
+	css := uiText(t, uiNextDir+"app.css")
+	rule := func(sel string) string {
+		i := strings.Index(css, "\n"+sel+"{")
+		if i < 0 {
+			t.Fatalf("app.css has no rule %s", sel)
+		}
+		j := strings.Index(css[i:], "}")
+		return css[i : i+j]
+	}
+	for _, sel := range []string{".rail", ".menu"} {
+		r := rule(sel)
+		for _, want := range []string{"position:sticky", "top:0", "height:100vh"} {
+			if !strings.Contains(r, want) {
+				t.Errorf("app.css %s: no %s (it must stay in place while a long page scrolls)", sel, want)
+			}
+		}
+	}
+	for _, want := range []string{".app{background:linear-gradient(to right,var(--surface)", "var(--menu-bg) var(--rail-w)", ".app.menu-closed{background:linear-gradient("} {
+		if !strings.Contains(css, want) {
+			t.Errorf("app.css: the .app background no longer repeats the rail and menu columns (%s)", want)
+		}
+	}
+}

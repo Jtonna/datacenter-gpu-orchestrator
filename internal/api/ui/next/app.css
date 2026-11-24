@@ -143,6 +143,15 @@ b.mono,a.mono,.mono b,h1 .mono,h2 .mono,h3 .mono,b .mono{font-weight:500}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(320px,100%),1fr));gap:var(--gap-panel)}
 
 .rail .menu-open-btn{display:none}
+/* Long pages: the rail and the section menu are sticky (top 0, the window's
+   height), so they stay in place for the full height while the page
+   scrolls. A full-page picture renders them once, one window high; the
+   .app background repeats their two columns (and their right borders) for
+   the whole height, so the picture shows them full height too. */
+@media(min-width:861px){
+  .app{background:linear-gradient(to right,var(--surface) 0 calc(var(--rail-w) - 1px),var(--line-panel) calc(var(--rail-w) - 1px) var(--rail-w),var(--menu-bg) var(--rail-w) calc(var(--rail-w) + var(--menu-w) - 1px),var(--line-panel) calc(var(--rail-w) + var(--menu-w) - 1px) calc(var(--rail-w) + var(--menu-w)),transparent calc(var(--rail-w) + var(--menu-w)))}
+  .app.menu-closed{background:linear-gradient(to right,var(--surface) 0 calc(var(--rail-w) - 1px),var(--line-panel) calc(var(--rail-w) - 1px) var(--rail-w),transparent var(--rail-w))}
+}
 /* phone (D37): the rail becomes a top bar, the section menu a drawer under it */
 @media(max-width:860px){
   .app{flex-direction:column}
