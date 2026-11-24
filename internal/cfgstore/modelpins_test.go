@@ -23,7 +23,7 @@ func TestModelPins_LedgerAndWayBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v := countRows(t, s, `SELECT MAX(version) FROM model_migrations`); v != 1 || ModelVersion() != 1 {
+	if v := countRows(t, s, `SELECT MAX(version) FROM model_migrations`); v != ModelVersion() || ModelVersion() < 1 {
 		t.Fatalf("model_migrations at %d (know %d)", v, ModelVersion())
 	}
 	if v := countRows(t, s, `SELECT MAX(version) FROM cfg_migrations`); v != len(migrations) {
@@ -66,7 +66,7 @@ func TestModelPins_LedgerAndWayBack(t *testing.T) {
 	if err != nil || len(pins) != 1 || pins["a.gguf"] != 100 {
 		t.Fatalf("pins after the way back: %v %v", pins, err)
 	}
-	if v := countRows(t, s2, `SELECT COUNT(*) FROM model_migrations`); v != 1 {
+	if v := countRows(t, s2, `SELECT COUNT(*) FROM model_migrations`); v != ModelVersion() {
 		t.Fatalf("model_migrations rows %d after reopening", v)
 	}
 }

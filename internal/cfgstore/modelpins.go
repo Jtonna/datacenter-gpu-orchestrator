@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-// The models page's tables (pins now; the trash and upload jobs later) have
+// The models page's tables (v1 pins, v2 the trash; upload jobs later) have
 // their own ledger, model_migrations, never cfg_migrations: an older image
 // refuses a database whose cfg_migrations is ahead of it, and it never reads
 // these tables, so going back to it stays a plain image swap (its catalog
@@ -16,12 +16,33 @@ CREATE TABLE model_pins (
   key       TEXT PRIMARY KEY,
   pinned_at INTEGER NOT NULL
 ) WITHOUT ROWID;
+`, `
+CREATE TABLE model_trash (
+  id               TEXT PRIMARY KEY,
+  file             TEXT NOT NULL,
+  size_bytes       INTEGER NOT NULL,
+  deleted_at       INTEGER NOT NULL,
+  purge_at         INTEGER NOT NULL,
+  state            TEXT NOT NULL,
+  profiles         TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(profiles)),
+  restore_profiles TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(restore_profiles)),
+  revision         INTEGER NOT NULL DEFAULT 0,
+  actor            TEXT NOT NULL DEFAULT '',
+  comment          TEXT NOT NULL DEFAULT '',
+  problem          TEXT NOT NULL DEFAULT '',
+  updated_at       INTEGER NOT NULL
+);
+CREATE INDEX model_trash_file ON model_trash (file);
 `}
 
 // ModelVersion is the version of the models page's tables this build writes.
 func ModelVersion() int { return len(modelMigrations) }
 
-func migrateModels(tx *sql.Tx, now int64) error {
+func migrateModels(tx *sql.Tx, now int64) error { return migrateModelsList(tx, now, modelMigrations) }
+
+// migrateModelsList applies list (an older image's list in the way-back
+// tests). A ledger ahead of list is left alone.
+func migrateModelsList(tx *sql.Tx, now int64, list []string) error {
 	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS model_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)`); err != nil {
 		return err
 	}
@@ -29,11 +50,11 @@ func migrateModels(tx *sql.Tx, now int64) error {
 	if err := tx.QueryRow(`SELECT COALESCE(MAX(version),0) FROM model_migrations`).Scan(&have); err != nil {
 		return err
 	}
-	if have > len(modelMigrations) {
+	if have > len(list) {
 		return nil // a newer image wrote them: the pins still read, the rest is left alone
 	}
-	for i := have; i < len(modelMigrations); i++ {
-		if _, err := tx.Exec(modelMigrations[i]); err != nil {
+	for i := have; i < len(list); i++ {
+		if _, err := tx.Exec(list[i]); err != nil {
 			return fmt.Errorf("model migration %d: %w", i+1, err)
 		}
 		if _, err := tx.Exec(`INSERT INTO model_migrations (version, applied_at) VALUES (?,?)`, i+1, now); err != nil {
