@@ -966,3 +966,56 @@ table.runs{width:100%;border-collapse:collapse}
 .setp-chg .mono{overflow-wrap:anywhere}
 @media(max-width:1100px){.setp-row{grid-template-columns:minmax(0,1fr) minmax(160px,210px);grid-template-areas:"name ctl" "help help" "def def"}.setp-def{flex-direction:row;flex-wrap:wrap;align-items:center;gap:6px 12px;padding-top:0}}
 @media(max-width:860px){.setp-body{grid-template-columns:1fr}.setp-menu{flex-direction:row;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line);border-radius:0}.setp-gi{flex:none}.setp-row{grid-template-columns:1fr;grid-template-areas:"name" "ctl" "help" "def"}}
+
+/* ---------- Placement preview (views/placement.js; no mockup, phase 5: inferred) ----------
+   Two panels: Ask (380 wide: the profile picker with its search, the zones)
+   and the result card (verdict, the scheduler's sentence, the memory line,
+   the zones table, victims, host, the full answer folded). */
+.plc{display:grid;grid-template-columns:minmax(300px,380px) minmax(0,1fr);gap:var(--gap-panel);align-items:start}
+.plc-ask{display:flex;flex-direction:column;min-width:0}
+.plc-bar{display:flex;align-items:center;min-height:48px;padding:0 var(--pad-panel);border-bottom:1px solid var(--line)}
+.plc-bar h2{font-size:var(--fs-panel);font-weight:800}
+.plc-sec{display:flex;flex-direction:column;gap:8px;padding:12px var(--pad-panel);border-top:1px solid var(--line);min-width:0}
+.plc-bar+.plc-sec{border-top:0}
+.plc-lab{display:flex;align-items:baseline;justify-content:space-between;gap:8px;font-weight:700}
+.plc-lab .mut{font-size:12px;font-weight:600}
+.plc-list{display:flex;flex-direction:column;max-height:300px;overflow-y:auto;border:1px solid var(--line-panel);border-radius:10px;background:var(--surface)}
+.plc-opt{display:grid;grid-template-columns:minmax(0,1fr) 10px;grid-template-areas:"name dot" "sub dot";gap:1px 10px;align-items:center;text-align:left;padding:7px 12px;border:0;border-top:1px solid var(--line);background:transparent;cursor:pointer;color:var(--text);font-family:var(--sans)}
+.plc-opt:first-child{border-top:0}
+.plc-opt:hover{background:var(--hover)}
+.plc-opt.on{background:var(--accent-tint);box-shadow:inset 3px 0 0 var(--accent)}
+.plc-oname{grid-area:name;display:flex;align-items:center;gap:8px;min-width:0}
+.plc-oname .mono{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
+.plc-osub{grid-area:sub;font-size:12px;font-weight:600;color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.plc-gen{flex:none;font-size:11px;font-weight:700;color:var(--mut);border:1px dashed var(--z-off);border-radius:5px;padding:0 5px}
+.plc-dot{grid-area:dot;width:9px;height:9px;border-radius:50%;background:var(--z-off)}
+.plc-dot.k-ready,.plc-dot.k-use{background:var(--up)}
+.plc-dot.k-load{background:var(--z-load)}
+.plc-dot.k-q{background:var(--lilac)}
+.plc-dot.k-fail,.plc-dot.k-aside{background:var(--failed)}
+.plc-none{padding:10px 12px;color:var(--mut);font-size:12.5px;font-weight:600}
+.plc-gentoggle{font-size:12.5px}
+.plc-note{font-size:12px;color:var(--mut);font-weight:600}
+.plc-zones{display:flex;flex-direction:column;gap:2px;max-height:240px;overflow-y:auto}
+.plc-zone{display:flex;align-items:center;gap:8px;min-height:30px;padding:0 4px;border-radius:7px;flex-wrap:wrap}
+.plc-zone:hover{background:var(--hover)}
+.plc-result{min-width:0;display:flex;flex-direction:column}
+.plc-rhead{display:flex;align-items:flex-start;gap:12px;padding:14px var(--pad-panel) 12px;border-bottom:1px solid var(--line)}
+.plc-rtitle{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:2px 0 3px}
+.plc-rtitle h2{font-size:17px;font-weight:500;overflow-wrap:anywhere}
+.plc-say{display:flex;flex-direction:column;gap:4px;padding:12px var(--pad-panel) 4px}
+.plc-say p{overflow-wrap:anywhere}
+.plc-pad{padding:8px var(--pad-panel) 0}
+.plc-mem{display:flex;flex-wrap:wrap;gap:12px 36px;padding:12px var(--pad-panel) 14px}
+.plc-fig{display:flex;flex-direction:column;gap:1px;min-width:0}
+.plc-fig b{font-size:20px;font-weight:800;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+.plc-fig .mut{font-size:12px;font-weight:600;max-width:260px;overflow-wrap:anywhere}
+.plc-zt{overflow-x:auto}
+.plc-zt .tbl{width:100%;min-width:560px}
+.plc-block{display:flex;flex-direction:column;gap:6px;padding:12px var(--pad-panel);border-top:1px solid var(--line)}
+.plc-block h3{font-size:var(--fs-label);font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--mut)}
+.plc-victims{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px}
+.plc-raw{padding:10px var(--pad-panel) 14px;border-top:1px solid var(--line)}
+.plc-raw summary{cursor:pointer;color:var(--link);font-weight:700;font-size:12.5px}
+.plc-raw pre{max-height:360px;overflow:auto;margin:8px 0 0;padding:10px 12px;background:var(--inset);border:1px solid var(--line-panel);border-radius:8px;font-family:var(--mono);font-size:11.5px;white-space:pre}
+@media(max-width:1100px){.plc{grid-template-columns:1fr}}

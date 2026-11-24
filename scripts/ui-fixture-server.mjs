@@ -21,7 +21,14 @@
 //   /api/system, /api/about, /api/agents, /api/config/settings, /api/history:
 //   fixed answers (times relative to now)
 //   /ws          a WebSocket: hello, the status every 5 s, the requests topic
+//   /api/config, /api/config/schema|settings|recovery|fleet, /api/profiles,
+//   POST /api/plan and settings dry runs (PATCH ...?dry_run=1): the
+//   configuration pages' fixture (scripts/ui-fixture/config.mjs, profiles.mjs)
 //   any other /api/... answers 404 in the API's error shape; writes 405.
+//
+// --config normal|unknown|fresh: the settings state (config.mjs). --catalog:
+// /api/models lists the profile fixture's model files. --named-only <zone>:
+// that zone is in no_auto_nodes (auto: false), drawn "Named only".
 //
 // --state empty: no request in the period; off: the request log is off
 // (usage.db not open); loading: the request routes never answer.
@@ -59,6 +66,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { zonesStatus, counts, groupsDoc, uptimeDoc, fleetStrip } from './ui-fixture/zones.mjs';
 import { schema as cfgSchema, configDoc, storedConfig, dryRun } from './ui-fixture/config.mjs';
+import { profileEntries, profileSpecs, catalog as cfgCatalog, planAnswer } from './ui-fixture/profiles.mjs';
 
 const argv = process.argv.slice(2);
 const opt = (k, d) => { const i = argv.indexOf(k); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
@@ -76,6 +84,10 @@ const ZONES = opt('--zones', 'none');
 const UPTIME_PARTIAL = argv.includes('--uptime-partial');
 // --config: the configuration pages' state (scripts/ui-fixture/config.mjs)
 const CONFIG = opt('--config', 'normal');
+// --catalog: GET /api/models answers the profile fixture's six model files (default: none)
+const CATALOG = argv.includes('--catalog');
+// --named-only <name>: that zone is in no_auto_nodes (auto: false)
+const NAMED_ONLY = opt('--named-only', '');
 const cfgDoc = () => { const d = configDoc(CONFIG); d.settings.requests_live_timings = LIVE_TIMINGS; return d; };
 
 // ---------- the fixture (the Overview mockup's sample data) ----------
@@ -100,7 +112,8 @@ const iso = ms => new Date(ms).toISOString();
 const SCHED = { id: 'scheduler', name: 'scheduler', role: 'host' };
 
 // status(now) -> the status of the --zones state
-const status = now => zonesStatus(baseStatus(now), now, ZONES);
+const status = now => named(zonesStatus(baseStatus(now), now, ZONES));
+const named = st => { if (NAMED_ONLY) for (const n of (st.view && st.view.nodes) || []) if (n.hostname === NAMED_ONLY) n.auto = false; return st; };
 
 function baseStatus(now) {
   const t = Math.round(now / 1000) * 1000;
@@ -283,10 +296,14 @@ const server = http.createServer((req, res) => {
   // a dry run of a settings write writes nothing: it answers what the server would
   const cfgW = /^\/api\/config\/(settings|recovery|fleet)$/.exec(p);
   if (cfgW && req.method === 'PATCH' && u.searchParams.get('dry_run')) return readBody(req, b => { const r = dryRun(cfgW[1], b, cfgDoc()); json(res, r.status, r.body); });
+  // the placement preview's dry run writes nothing
+  if (p === '/api/plan' && req.method === 'POST') return readBody(req, b => { const r = planAnswer(b); json(res, r.status, r.body); });
   if (req.method !== 'GET') return json(res, 405, { error: { message: 'the fixture is read-only' } });
   if (STATE === 'loading' && p.startsWith('/api/requests')) return; // never answers
   if (p === '/api/status') return json(res, 200, status(now));
-  if (p === '/api/models') return json(res, 200, { version: 1, models: [] });
+  if (p === '/api/models') return json(res, 200, { version: 1, models: CATALOG ? cfgCatalog() : [] });
+  if (p === '/api/profiles') return json(res, 200, { profiles: profileEntries() });
+  if (p === '/api/config') { const d = cfgDoc(); return json(res, 200, Object.assign({ updated_at: now - 3 * H, configured: d.revision > 0, tiers: [], exclude_nodes: [], no_auto_nodes: NAMED_ONLY ? [NAMED_ONLY] : [], node_overrides: {} }, d, { profiles: profileSpecs() })); }
   // what the health popup reads (the Health board's sample, generic names)
   if (p === '/api/about') return json(res, 200, { version: '0.1.5', started_at: now - 12 * 24 * H, now, uptime_s: 12 * 24 * 3600, history: 'on' });
   if (p === '/api/system') return json(res, 200, { version: '0.1.5', started_at: now - 12 * 24 * H, now, uptime_s: 12 * 24 * 3600, read_panics: 0, internal_failures_total: 0,
