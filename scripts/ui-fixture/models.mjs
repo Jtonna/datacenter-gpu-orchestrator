@@ -30,6 +30,11 @@ function entry(now, o) {
   return Object.assign(base, o.extra ? o.extra(now) : {});
 }
 
+// pins (v61, models slice 2): key -> pinned_at; the board's two pinned files to start with.
+// The fixture server's PUT / DELETE /api/models/pin/{key} change it (pinRoute below).
+export const PINS = new Map();
+export function seedPins(now = Date.now()) { PINS.clear(); PINS.set('gemma-4-27b-it-Q4_K_M.gguf', now - 3 * 24 * 3600e3); PINS.set('qwen3-14b-Q5_K_M.gguf', now - 26 * 3600e3); }
+
 export function modelsDoc(state, now = Date.now()) {
   const H = 3600e3;
   const files = state === 'none' ? [] : [
@@ -50,6 +55,7 @@ export function modelsDoc(state, now = Date.now()) {
     { file: 'nomic-embed-text-v2.gguf', gb: 0.3, name: 'nomic-embed-text-v2', publisher: 'Nomic', family: 'Nomic BERT', parameters: '475M', quant: 'F16', trained: 8192, profiles: [] },
   ];
   const models = files.map(f => entry(now, f)).sort((a, b) => a.name.localeCompare(b.name));
+  for (const m of models) { m.pinned = PINS.has(m.key); m.pinned_at = PINS.has(m.key) ? PINS.get(m.key) : null; }
   const modelBytes = models.reduce((s, m) => s + m.size_bytes, 0);
   const total = 240 * GB;
   const used = state === 'full' ? 228.4 * GB : state === 'none' ? 1.2 * GB : 50.3 * GB;
@@ -67,3 +73,16 @@ export function modelsInstances(st, state, mac) {
 }
 
 export const MIB_PER_GB = GB / MIB;
+
+// pinRoute(method, key, comment, state) -> {status, body}, as internal/api/pins.go answers:
+// a comment is required (400), an unknown key 404, unpinning a model that is not pinned 404.
+export function pinRoute(method, key, comment, state, now = Date.now()) {
+  const known = modelsDoc(state, now).models.some(m => m.key === key);
+  const err = (status, message) => ({ status, body: { error: { code: status, message } } });
+  if (!comment) return err(400, 'a comment is required: say why (body {"comment": "..."} or X-Comment)');
+  if (!known) return err(404, 'no model ' + key + ' in the catalog');
+  if (method === 'PUT') { const changed = !PINS.has(key); if (changed) PINS.set(key, now); return { status: 200, body: { key, pinned: true, pinned_at: PINS.get(key), changed, audit_id: changed ? 100 + PINS.size : null } }; }
+  if (!PINS.has(key)) return err(404, key + ' is not pinned');
+  PINS.delete(key);
+  return { status: 200, body: { key, pinned: false, changed: true, audit_id: 200 + PINS.size } };
+}

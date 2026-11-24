@@ -77,4 +77,7 @@ on('hello', hello => { if (hello && !(hello.topics || []).includes('models')) pu
 // the channel is down the next open asks again
 on('conn', c => { if (c !== 'live') asked = false; });
 
+// refreshCatalog(): read the catalog again now (after a write the page made, such as a pin)
+export const refreshCatalog = () => pull();
+
 export const modelFor = x => (x && (catalog.byProfile[x.profile] || catalog.byKey[x.model_file])) || null;

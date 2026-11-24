@@ -109,7 +109,7 @@ import { zonesStatus, counts, groupsDoc, uptimeDoc, fleetStrip } from './ui-fixt
 import { schema as cfgSchema, configDoc, storedConfig, dryRun } from './ui-fixture/config.mjs';
 import { profileEntries, profileSpecs, catalog as cfgCatalog, planAnswer } from './ui-fixture/profiles.mjs';
 import { Keys, toolsAnswer } from './ui-fixture/keys.mjs';
-import { modelsDoc, modelsInstances } from './ui-fixture/models.mjs';
+import { modelsDoc, modelsInstances, seedPins, pinRoute } from './ui-fixture/models.mjs';
 import { tierLists, applyTiers, localEntry, tiersDoc } from './ui-fixture/tiers.mjs';
 
 const argv = process.argv.slice(2);
@@ -184,6 +184,7 @@ function pendingRoute(req, res, p) {
 const KEYS_STATE = opt('--keys', '');
 // --models none|five|full: GET /api/models as the Models list reads it, with the disk block (scripts/ui-fixture/models.mjs)
 const MODELS_STATE = opt('--models', '');
+if (MODELS_STATE) seedPins();
 const KEYS = KEYS_STATE ? new Keys(KEYS_STATE) : null;
 // --tiers live|catchall: the Tiers and zones page (tiers.mjs)
 const TIERS = opt('--tiers', '');
@@ -419,6 +420,12 @@ const server = http.createServer((req, res) => {
   }
   if (p === '/api/plan' && req.method === 'POST' && !LOAD_SET) return readBody(req, b => { const r = planAnswer(b); json(res, r.status, r.body); });
   if (req.method === 'POST' && MODEL_ROUTE.test(p)) return modelAction(req, res, p);
+  // --models: PUT / DELETE /api/models/pin/{key} (v61), the comment in the body or X-Comment
+  if (MODELS_STATE && p.startsWith('/api/models/pin/') && (req.method === 'PUT' || req.method === 'DELETE')) return readBody(req, b => {
+    const comment = ((b && b.comment) || String(req.headers['x-comment'] || '')).trim();
+    const r = pinRoute(req.method, decodeURIComponent(p.slice('/api/models/pin/'.length)), comment, MODELS_STATE);
+    json(res, r.status, r.body);
+  });
   if (p.startsWith('/api/zones/pending')) return pendingRoute(req, res, p);
   if (req.method !== 'GET') return json(res, 405, { error: { message: 'the fixture is read-only' } });
   if (STATE === 'loading' && p.startsWith('/api/requests')) return; // never answers

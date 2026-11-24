@@ -15,7 +15,9 @@
 //
 // Drawn as on the board but not available yet, each with its reason on
 // hover (p7-models-backend-STATUS.md, M1 to M6): Add a model, Downloading,
-// Pinned and the star, the panel's Pinned and Delete model, deleted models.
+// the panel's Delete model, deleted models. Pins (v61): the star, the
+// Pinned group and the panel's Pin / Pinned are real (PUT / DELETE
+// /api/models/pin/{key} with a required comment); unavailable before v61.
 // From v60 (models slice 1): "added <date>" (added_at), "Benchmarks · N
 // reports" (bench.reports), "Unload when idle" (ttl_s), the disk's host in
 // the disk line's hover; an older server without them gets the earlier
@@ -31,10 +33,10 @@ import { h } from '../core/dom.js';
 import { registerView, href, navigate } from '../core/router.js';
 import { state } from '../core/store.js';
 import * as api from '../core/api.js';
-import { liveView, pageHead, legend, empty, skeleton, searchField, sidePanel, facts, badge, filterSelect } from '../core/ui.js';
+import { liveView, pageHead, legend, empty, skeleton, searchField, sidePanel, facts, badge, filterSelect, dialog } from '../core/ui.js';
 import { num, gb, dur, ago, plural, agoText, dateTime, bytes, DASH } from '../core/format.js';
 import { staleBanner, machines, shortReason } from '../core/status.js';
-import { catalog, onCatalog, needCatalog } from '../core/catalog.js';
+import { catalog, onCatalog, needCatalog, refreshCatalog } from '../core/catalog.js';
 import { logsLink, profileQuery, padded } from '../core/logs.js';
 import { tipText } from '../core/charts.js';
 import { instanceCard, stateBadge, fitOf, cannotRun, runsOnCell } from './models/common.js';
@@ -44,10 +46,38 @@ import { mountDetail } from './models/detail.js';
 export const NOT_YET = {
   add: 'Adding a model from this page is not built yet. Put the .gguf file in the models folder and it appears here.',
   downloads: 'Downloads are not built yet: a model added from this page would show its progress here.',
-  pin: 'Pins are not built yet.',
+  pin: 'Pins are not available: this scheduler is older than v61 (models slice 2).',
   del: 'Deleting a model is not built yet: the file stays in the models folder.',
   trash: 'Deleted models are not built yet.',
 };
+// ---- pins (v61, models slice 2): PUT / DELETE /api/models/pin/{key} with a required comment ----
+const STAR = 'M10 3l2.1 4.3 4.7.7-3.4 3.3.8 4.7L10 13.8 5.8 16l.8-4.7L3.2 8l4.7-.7z';
+// pinsOn(models): the server feeds `pinned` (v61 and later)
+const pinsOn = models => (models || []).some(m => typeof m.pinned === 'boolean');
+let pinErr = '', pinRedraw = () => {};
+// togglePin(m): the comment dialog the other writes use (its button stays off
+// while the comment is empty), then the write; a refusal in the server's words
+async function togglePin(m) {
+  const on = !m.pinned, name = m.file || m.name;
+  const r = await dialog({ title: (on ? 'Pin ' : 'Unpin ') + name + '?',
+    body: h('p', on ? 'It is listed under Pinned at the top of the list. A pin changes nothing in where or when the model loads.' : 'It goes back to All models. Nothing else changes.'),
+    comment: { label: 'Comment', required: true, placeholder: 'Why? It is kept in the audit log with the change.' },
+    actions: [{ label: 'Cancel', value: undefined }, { label: on ? 'Pin' : 'Unpin', kind: 'pri', value: true }] });
+  if (!r || !r.value || !r.comment) return;
+  pinErr = '';
+  try {
+    await api.send(on ? 'PUT' : 'DELETE', '/api/models/pin/' + encodeURIComponent(m.key), { comment: r.comment }, { comment: r.comment });
+    m.pinned = on; m.pinned_at = on ? Date.now() : null;
+    refreshCatalog();
+  } catch (e) { pinErr = (on ? 'Could not pin ' : 'Could not unpin ') + name + ': ' + e.message; }
+  pinRedraw();
+}
+// starButton(m, models): the row's star; unavailable on an older server
+const starButton = (m, models) => (pinsOn(models)
+  ? h('button', { type: 'button', class: 'star' + (m.pinned ? ' on' : ''), 'aria-pressed': m.pinned ? 'true' : 'false', 'aria-label': (m.pinned ? 'Unpin ' : 'Pin ') + (m.file || m.name),
+    title: m.pinned ? 'Pinned' + (m.pinned_at ? ' ' + agoText(m.pinned_at) : '') + ': click to unpin' : 'Pin: list it under Pinned', onclick: e => { e.stopPropagation(); togglePin(m); } }, icon(STAR))
+  : off('button.star', NOT_YET.pin, { 'aria-label': 'Pin ' + (m.short_name || m.name) + ' (not available)', 'aria-pressed': 'false' }, icon(STAR)));
+
 // off(tag, reason, attrs, ...kids) -> a control that is drawn but not available: it says why on hover and does nothing
 const off = (tag, reason, attrs, ...kids) => h(tag, Object.assign({ type: 'button', 'aria-disabled': 'true', title: reason, 'data-off': '', onclick: e => { e.preventDefault(); e.stopPropagation(); } }, attrs), ...kids);
 const icon = d => h('svg', { class: 'ic', viewBox: '0 0 20 20', 'aria-hidden': 'true' }, h('path', { d }));
@@ -158,7 +188,10 @@ function modelPanel(st, m, ps) {
           h('span.mut', b.reports ? plural(b.reports, 'report') : 'no reports'))
         : h('a.btn', { href: href('benchmarks'), title: b.runs ? 'Benchmarks that used a profile of this model' : 'No benchmark has used this model yet' }, 'Benchmarks ',
           h('span.mut', b.runs ? plural(b.runs, 'run') : 'none yet')),
-      off('button.btn', NOT_YET.pin, { 'aria-pressed': 'false', 'data-act': 'pin' }, 'Pinned'),
+      typeof m.pinned === 'boolean'
+        ? h('button', { type: 'button', class: 'btn' + (m.pinned ? ' mdl-pinned' : ''), 'aria-pressed': m.pinned ? 'true' : 'false', 'data-act': 'pin',
+          title: m.pinned ? 'Pinned: click to unpin' : 'Pin: list it under Pinned', onclick: () => togglePin(m) }, m.pinned ? [icon(STAR), ' Pinned'] : 'Pin')
+        : off('button.btn', NOT_YET.pin, { 'aria-pressed': 'false', 'data-act': 'pin' }, 'Pinned'),
       off('button.btn.red', NOT_YET.del, { 'data-act': 'delete' }, 'Delete model')),
     insts.length ? h('section.zpart', { key: 'loaded' }, h('h3', 'Loaded now'),
       insts.map(i => h('div.mdl-inst', { key: 'i-' + i.profile },
@@ -214,20 +247,26 @@ function listPanel(st, models, disk, error, r, query, setQuery, onFind) {
   const openKey = r.query.model || '';
   const open = key => setQuery({ model: key });
   let body;
-  if (error && !models) body = empty('The model list could not be read', error);
-  else if (!models) body = skeleton(6);
-  else if (!models.length) body = empty('No models yet', 'A model appears here once a .gguf file is in the models folder, or a profile names a model file.');
-  else if (!rows.length) body = empty('No model matches', q ? `Nothing matches "${query}". Search looks at the file name, the name and the profile names.` : 'No model is in this group right now.');
-  else body = h('div.mdl-rows', { role: 'list', 'aria-label': 'All models' }, rows.map(m => h('div', {
+  const pins = pinsOn(models);
+  const rowOf = m => h('div', {
     key: m.key, role: 'listitem', class: 'mr' + (openKey === m.key ? ' sel' : ''), 'aria-current': openKey === m.key ? 'true' : null, 'data-model': m.key, tabindex: '0',
     onclick: e => { if (!e.target.closest('[data-off]')) open(m.key); },
-    onkeydown: e => { if ((e.key === 'Enter' || e.key === ' ') && !e.target.closest('[data-off]')) { e.preventDefault(); open(m.key); } } },
-  off('button.star', NOT_YET.pin, { 'aria-label': 'Pin ' + (m.short_name || m.name) + ' (not available)', 'aria-pressed': 'false' }, icon('M10 3l2.1 4.3 4.7.7-3.4 3.3.8 4.7L10 13.8 5.8 16l.8-4.7L3.2 8l4.7-.7z')),
+    onkeydown: e => { if ((e.key === 'Enter' || e.key === ' ') && !e.target.closest('[data-off]') && !e.target.closest('button')) { e.preventDefault(); open(m.key); } } },
+  starButton(m, models),
   h('span.mdl-name', h('span.mono.nm', { title: m.short_name && m.short_name !== m.file ? m.short_name : null }, m.file || m.name),
     h('span.mut', sizeText(m), m.kind !== 'command' && m.exists === false ? h('span.err-t', ' · the file is missing') : null)),
   needsCell(m, st),
   h('span', { class: m.profile_count ? 'mdl-pc' : 'mdl-pc mut' }, profilesText(m)),
-  h('span.mut.mdl-used', lastUsed(m)))));
+  h('span.mut.mdl-used', lastUsed(m)));
+  const pinnedRows = pins ? rows.filter(m => m.pinned) : [];
+  const restRows = pins ? rows.filter(m => !m.pinned) : rows;
+  const heads = () => h('div.mr.mr-h', { 'aria-hidden': 'true' }, h('span'), h('span'),
+    h('span.lbl.mdl-needs', { title: 'The memory its lightest configuration needs on the nodes' }, 'Needs'), h('span.lbl.mdl-pc', 'Profiles'), h('span.lbl', 'Last used'));
+  if (error && !models) body = empty('The model list could not be read', error);
+  else if (!models) body = skeleton(6);
+  else if (!models.length) body = empty('No models yet', 'A model appears here once a .gguf file is in the models folder, or a profile names a model file.');
+  else if (!rows.length) body = empty('No model matches', q ? `Nothing matches "${query}". Search looks at the file name, the name and the profile names.` : 'No model is in this group right now.');
+  else body = restRows.length ? h('div.mdl-rows', { role: 'list', 'aria-label': 'All models' }, restRows.map(rowOf)) : h('p.mut.mdl-pad', 'Every model here is pinned.');
   const sec = (label, right, attrs) => h('div.sech', attrs || null, h('span.lbl', label), right || null);
   return h('section.panel.mdl', { key: 'catalog', 'aria-label': 'Models' },
     h('div.mdl-bar',
@@ -237,10 +276,13 @@ function listPanel(st, models, disk, error, r, query, setQuery, onFind) {
       filterSelect('Sort', SORTS.map(([id, label]) => ({ id, label })), sort, id => setQuery({ sort: id === 'used' ? '' : id })),
       off('button.btn.pri', NOT_YET.add, { 'data-act': 'add' }, icon('M10 4v12M4 10h12'), 'Add a model')),
     sec('Downloading', h('span.lbl.mdl-off', 'not built yet'), { 'data-sec': 'downloading', title: NOT_YET.downloads }),
-    sec('Pinned', h('span.lbl.mdl-off', 'not built yet'), { 'data-sec': 'pinned', title: NOT_YET.pin }),
+    pinErr ? h('div.banner.err', { role: 'alert', 'data-pin-err': '' }, h('span.grow', pinErr)) : null,
+    pins
+      ? [sec('Pinned', pinnedRows.length ? null : h('span.lbl.mut', 'No pinned model' + (q || filter !== 'all' ? ' matches' : '') + '. The star on a row pins it.'), { 'data-sec': 'pinned' }),
+        pinnedRows.length ? [heads(), h('div.mdl-rows', { role: 'list', 'aria-label': 'Pinned models', 'data-pinned-rows': '' }, pinnedRows.map(rowOf))] : null]
+      : sec('Pinned', h('span.lbl.mdl-off', 'not built yet'), { 'data-sec': 'pinned', title: NOT_YET.pin }),
     sec('All models', models ? diskLine(models, disk) : null, { 'data-sec': 'all' }),
-    rows.length ? h('div.mr.mr-h', { 'aria-hidden': 'true' }, h('span'), h('span'),
-      h('span.lbl.mdl-needs', { title: 'The memory its lightest configuration needs on the nodes' }, 'Needs'), h('span.lbl.mdl-pc', 'Profiles'), h('span.lbl', 'Last used')) : null,
+    restRows.length ? heads() : null,
     body,
     off('button.tbar', NOT_YET.trash, { 'data-act': 'trash' }, icon('M4 6h12M8 6V4h4v2M6 6l1 10h6l1-10'), 'Deleted models', h('span.mut', ' · not built yet')));
 }
@@ -250,6 +292,7 @@ function mountHome(el, route) {
   const open = new Set();
   const toggle = k => { if (open.has(k)) open.delete(k); else open.add(k); view.refresh(); };
   const offCatalog = onCatalog(() => { readDisk(); view.refresh(); if (side) side.redraw(); });
+  pinRedraw = () => { if (!alive) return; view.refresh(); if (side) side.redraw(); };
   const setQuery = q => navigate('models', [], Object.assign({}, r.query, q), true);
 
   // the disk block: only the REST answer carries it; its figures move every

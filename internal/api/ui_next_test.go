@@ -256,7 +256,7 @@ func TestUINextModelsListAndPanel(t *testing.T) {
 		t.Fatalf("no model file with a hand-written profile in the test catalog: %+v", cat.Models)
 	}
 	noControls := []string{"Remove now", "Unload"}
-	disabled := []string{"button[data-act=add][aria-disabled=true]", "button.star[aria-disabled=true]", "button[data-act=trash][aria-disabled=true]"}
+	disabled := []string{"button[data-act=add][aria-disabled=true]", "button.star[aria-pressed=false]", "button[data-act=trash][aria-disabled=true]"}
 	uiExec(t, map[string]any{"shell": "next", "app": true, "base": e.front.URL, "cases": []any{
 		map[string]any{"name": "the list", "route": "#/models", "status": "fetch", "expect": append([]string{"All models", "model file", "Needs", "Profiles", "Last used", "Add a model"}, files...),
 			"absent": append(append([]string{}, designSamples...), noControls...), "has": disabled},
@@ -264,7 +264,7 @@ func TestUINextModelsListAndPanel(t *testing.T) {
 			"page": []string{name, file, "Configurations", profile, "Edit under Profiles", "Open the model page"}, "notOnPage": []string{"Remove now"},
 			// no Unload button in the panel (its "Unload when idle" column, v60, is a heading, not a control)
 			"pageNone": []string{"aside.side button[data-act=unload]"},
-			"pageHas": []string{"aside.side button[data-act=delete][aria-disabled=true]", "aside.side button[data-act=pin][aria-disabled=true]"}},
+			"pageHas": []string{"aside.side button[data-act=delete][aria-disabled=true]", "aside.side button[data-act=pin][aria-pressed=false]"}},
 		map[string]any{"name": "a model that is not there", "route": "#/models?model=no-such-model.gguf", "status": "fetch",
 			"page": []string{"This model is not in the catalog"}},
 		map[string]any{"name": "the full model page", "route": "#/models/" + key, "status": "fetch", "expect": []string{name}},
