@@ -104,6 +104,20 @@ Expected: `PASS` lines, one plan line per profile, `SMOKE PASSED`. Add `--load <
 
 ### Add a node
 
+**From the Zones page (Create new zone)**: make the zone first, then run the command it gives on the machine.
+
+```sh
+curl -s -X POST $H/api/zones/pending -d '{"name":"zone-9","group":"rack-a"}'
+# answer: {"id":"pz-…","command":"curl -fsSL 'http://<potluck>/install.sh?zone=pz-…' | sudo sh", ...}
+```
+
+- `model_source` defaults to the one most registered machines use (`share:<ip>:/<path>` or `dir:/<path>`); give it when none has one. `mode` is `bare` (default) or `docker`. Extra arguments after `sudo sh -s --` go to `potluck-agent-setup` (for example `--allow-from` or `--no-firewall`).
+- `GET /install.sh?zone=<id>` serves the script (`&download=1` as `potluck-zone-<name>.sh`); it fetches `potluck-agent-setup` from `GET /install/potluck-agent-setup` and runs it with `--potluck` (Potluck's address as the browser reached it), `--model-source` and `--name`. Nothing secret is in it: anyone on the LAN could fetch it, as they can the agent binary today.
+- The first agent that registers with that name (any case) joins the pending zone: it reads `joined` with `joined_node`, and the machine is put in the group (audit entry `add_members`, comment "joined as pending zone …"). `GET /api/zones/pending` lists them; `DELETE /api/zones/pending/<id>` cancels a waiting one. They expire after `ttl_min` (default 60, 5 to 1440) and live in memory only: a Potluck restart forgets them (the machine still joins under its name, without the group). `/api/groups` and its `/ws` topic carry them as `pending_zones`. MCP: `create_pending_zone`, `list_pending_zones`, `cancel_pending_zone`.
+- Windows, the USB drive bundle and install over SSH are not served yet.
+
+**By hand**:
+
 On the node, as root, with the setup script from `deploy/agent/`:
 
 ```sh

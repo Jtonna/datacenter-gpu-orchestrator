@@ -296,6 +296,7 @@ func summarizeGroup(g groups.Group, idx zoneIndex) GroupSummary {
 
 func (s *Server) groupRoutes(m *http.ServeMux) {
 	s.zoneActionRoutes(m) // zoneactions.go
+	s.pendingRoutes(m)    // pending.go
 	m.HandleFunc("GET /api/groups", s.handleGroups)
 	m.HandleFunc("POST /api/groups", s.groupCreate)
 	m.HandleFunc("PATCH /api/groups/{name}", s.groupRename)
@@ -344,7 +345,8 @@ func (s *Server) groupsDoc(ctx context.Context) map[string]any {
 	}
 	sort.Strings(rest)
 	ungrouped := summarizeGroup(groups.Group{Members: rest}, idx)
-	doc := map[string]any{"revision": rev, "groups": out, "ungrouped": ungrouped}
+	pending, _ := s.pending.list(s.opts.Now())
+	doc := map[string]any{"revision": rev, "groups": out, "ungrouped": ungrouped, "pending_zones": pending}
 	if s.opts.Usage.On() {
 		up := s.uptimeDoc(ctx, uptimeDefaultDays)
 		for i := range out {

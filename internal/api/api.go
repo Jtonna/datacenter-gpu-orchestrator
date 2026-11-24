@@ -168,6 +168,8 @@ type Server struct {
 	// groups is the zone groups (groups.go); in memory when Options.Groups is nil.
 	groups *groups.Store
 	links  *loadLinks // linkspeed.go
+	// pending is the zones made before their machine joined (pending.go).
+	pending *pendingZones
 }
 
 // New builds the API for a scheduler (whose Run is started by the caller)
@@ -200,6 +202,7 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 	s.bg, s.bgCancel = context.WithCancel(context.Background())
 	s.occ = startOccupied(o.History)
 	s.groups = o.Groups
+	s.pending = newPendingZones()
 	if s.groups == nil {
 		s.groups = groups.Memory()
 	}

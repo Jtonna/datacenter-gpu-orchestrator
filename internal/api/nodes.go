@@ -96,7 +96,11 @@ func (s *Server) agentRegister(w http.ResponseWriter, r *http.Request) {
 		}
 		s.log.Warn("registration: start-up report unreadable, left out", "id", req.ID, "name", req.Name)
 	}
-	writeJSON(w, http.StatusOK, s.opts.Pool.Register(req))
+	ans := s.opts.Pool.Register(req)
+	if ans.Accepted {
+		s.pendingJoined(r, req.ID, req.Name) // pending.go: a zone made before this machine joined
+	}
+	writeJSON(w, http.StatusOK, ans)
 }
 
 func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
