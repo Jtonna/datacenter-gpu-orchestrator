@@ -310,8 +310,10 @@ func (s *Server) routes() *http.ServeMux {
 	s.configRoutes(m) // /api/config, /api/audit (config.go)
 	m.HandleFunc("GET /api/profiles", s.handleProfiles)
 	m.HandleFunc("GET /api/models", s.handleModelCatalog)
-	m.HandleFunc("GET /api/models/{key...}", s.handleModelDetail) // and GET /api/models/{key}/icon
-	m.HandleFunc("PUT /api/models/{key...}", s.handleIconPut)     // only /api/models/{key}/icon
+	m.HandleFunc("GET /api/models/{key...}", s.handleModelDetail)      // and GET /api/models/{key}/icon
+	m.HandleFunc("PUT /api/models/pin/{key...}", s.handlePinPut)       // pins.go
+	m.HandleFunc("DELETE /api/models/pin/{key...}", s.handlePinDelete) // pins.go
+	m.HandleFunc("PUT /api/models/{key...}", s.handleIconPut)          // only /api/models/{key}/icon
 	m.HandleFunc("DELETE /api/models/{key...}", s.handleIconDelete)
 	// GET /api/nodes/availability (availability.go)
 	s.availabilityRoutes(m)

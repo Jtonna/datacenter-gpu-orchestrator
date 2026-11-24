@@ -310,6 +310,8 @@ type CatalogInput struct {
 	// "family:<brand>"); Now is the clock for the activity buckets (default time.Now).
 	Icons map[string]string
 	Now   time.Time
+	// Pins is catalog key -> pinned_at (unix ms) of the pinned models.
+	Pins map[string]int64
 }
 
 // recentLoads is how many marks loads.recent carries (the Models list draws them).
@@ -819,6 +821,10 @@ func BuildModelCatalog(in CatalogInput, detailKey string) []map[string]any {
 		}
 		if a.file.ContextLength > 0 {
 			e["context_length"] = a.file.ContextLength
+		}
+		e["pinned"], e["pinned_at"] = false, nil
+		if at, ok := in.Pins[key]; ok {
+			e["pinned"], e["pinned_at"] = true, at
 		}
 
 		// configurations

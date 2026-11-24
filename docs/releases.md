@@ -2,6 +2,15 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: pinned models (models slice 2)
+
+No agent change, no new port. **Schema: one new table, `model_pins`, under a new ledger `model_migrations` (version 1).** `cfg_migrations` does not move.
+
+- **Pin a model.** `PUT /api/models/pin/{key}` pins a model by its catalog key (the file name, or `command:<profile id>`); `DELETE /api/models/pin/{key}` takes the pin off (404 when it was not pinned). Both need the permission **models**, a comment (body `{"comment": "..."}` or `X-Comment`), and write an audit entry in section models (target `pin:<key>`). Pinning a pinned model changes nothing and writes no entry (`changed: false`). A pin changes nothing in scheduling; pins are global.
+- **The catalog says so.** Every entry of `GET /api/models` carries `pinned` (true or false) and `pinned_at` (unix ms, or null).
+- **MCP.** `pin_model` and `unpin_model` (`file`, `comment`).
+- **Going back.** The image before opens the same database: it never reads `model_migrations` or `model_pins`, so it shows no pins. They are there again when this image comes back.
+
 ## Scheduler image: the per-device overhead measured per shape, machine and device count
 
 No agent change, no new port. Schema: one new table, `needs_device_overhead` (shape, node, devices, the figure in force with its date, the log's part, the last three readings with their dates), under its own ledger `needs_device_migrations` (v1). No existing table or ledger changes, so the previous image opens the file as before.
