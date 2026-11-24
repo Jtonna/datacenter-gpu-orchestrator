@@ -123,6 +123,14 @@ const hostLine = p => (p.host === 'node'
     p.host_overhead_mib ? ` · +${gb(p.host_overhead_mib)} for the host` : null, p.host_problem ? h('span.err-t', ' · ' + p.host_problem) : null)
   : null);
 
+// needsCell(m, st) -> the Needs cell, as the classic list drew it: the memory
+// of the lightest configuration (fit.need_mib) and how it is known (measured,
+// estimated, set in the profile), the sentence on hover; a dash when unknown
+function needsCell(m, st) {
+  const f = fitOf(m, st);
+  return h('span.mdl-needs', { 'data-col': 'needs' }, f.need ? h('span', { title: f.title || null }, gb(f.need), h('span.sub', f.sub)) : h('span.mut', DASH));
+}
+
 // the side panel of one model
 function modelPanel(st, m, ps) {
   const f = fitOf(m, st);
@@ -205,6 +213,7 @@ function listPanel(st, models, disk, error, r, query, setQuery, onFind) {
   off('button.star', NOT_YET.pin, { 'aria-label': 'Pin ' + (m.short_name || m.name) + ' (not available)', 'aria-pressed': 'false' }, icon('M10 3l2.1 4.3 4.7.7-3.4 3.3.8 4.7L10 13.8 5.8 16l.8-4.7L3.2 8l4.7-.7z')),
   h('span.mdl-name', h('span.mono.nm', { title: m.short_name && m.short_name !== m.file ? m.short_name : null }, m.file || m.name),
     h('span.mut', sizeText(m), m.kind !== 'command' && m.exists === false ? h('span.err-t', ' · the file is missing') : null)),
+  needsCell(m, st),
   h('span', { class: m.profile_count ? 'mdl-pc' : 'mdl-pc mut' }, profilesText(m)),
   h('span.mut.mdl-used', lastUsed(m)))));
   const sec = (label, right, attrs) => h('div.sech', attrs || null, h('span.lbl', label), right || null);
@@ -218,6 +227,8 @@ function listPanel(st, models, disk, error, r, query, setQuery, onFind) {
     sec('Downloading', h('span.lbl.mdl-off', 'not built yet'), { 'data-sec': 'downloading', title: NOT_YET.downloads }),
     sec('Pinned', h('span.lbl.mdl-off', 'not built yet'), { 'data-sec': 'pinned', title: NOT_YET.pin }),
     sec('All models', models ? diskLine(models, disk) : null, { 'data-sec': 'all' }),
+    rows.length ? h('div.mr.mr-h', { 'aria-hidden': 'true' }, h('span'), h('span'),
+      h('span.lbl', { title: 'The memory its lightest configuration needs on the nodes' }, 'Needs'), h('span.lbl', 'Profiles'), h('span.lbl', 'Last used')) : null,
     body,
     off('button.tbar', NOT_YET.trash, { 'data-act': 'trash' }, icon('M4 6h12M8 6V4h4v2M6 6l1 10h6l1-10'), 'Deleted models', h('span.mut', ' · not built yet')));
 }
