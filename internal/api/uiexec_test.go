@@ -37,7 +37,12 @@ func uiExec(t *testing.T, spec map[string]any) {
 	if err := os.WriteFile(file, b, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, err := exec.Command(node, filepath.Join(dir, "..", "..", "scripts", "ui-exec.mjs"), file).CombinedOutput()
+	cmd := exec.Command(node, filepath.Join(dir, "..", "..", "scripts", "ui-exec.mjs"), file)
+	// "tz": the page's time zone (the node process's TZ)
+	if tz, _ := spec["tz"].(string); tz != "" {
+		cmd.Env = append(os.Environ(), "TZ="+tz)
+	}
+	out, err := cmd.CombinedOutput()
 	t.Logf("ui-exec:\n%s", out)
 	if err != nil {
 		t.Fatalf("a UI screen failed at run time: %v", err)
