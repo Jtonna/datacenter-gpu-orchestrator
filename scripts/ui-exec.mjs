@@ -50,11 +50,13 @@
 //               "focused": "css selector the focused element must match"
 //               "modules" (top level, with "app"): modules loaded before app.js
 //               "links": [{"text": "Classic UI", "path": "/ui/classic/"}, ...],
-//               "click": ["css selector clicked after the draw", ...],
+//               "click": ["css selector clicked after the draw", {"type": "css selector", "value": "typed"}, ...],
 //               "page": ["text anywhere on the page: shell, side panel, dialog", ...],
 //               "notOnPage": ["text nowhere on the page", ...],
 //               "titles": ["text some title attribute on the page contains", ...],
-//               "fetchedQuery": ["regexp a request (GET /path?query) must match", ...]}],
+//               "fetchedQuery": ["regexp a request (GET /path?query body) must match", ...],
+//               "noHeader": ["X-Actor", ...]: no request of the case carried it}],
+//    (fetch answers: "POST /api/agents" before "/api/agents"; {"$status": 409, "$body": {...}} for an error)
 //    "now": "2026-11-24T06:30:00Z",               // the clock starts there (Date.now, new Date())
 //    "tz": "America/Los_Angeles"}                 // the zone: uiExec sets TZ for node
 //
@@ -342,7 +344,8 @@ def('alert', () => {}); def('confirm', () => false); def('prompt', () => null);
 
 let fetchAnswers = {};
 const fetched = [];
-const fetchedFull = []; // with the query, for "fetchedQuery"
+const fetchedFull = []; // with the query and the body, for "fetchedQuery"
+const sentHeaders = new Set(); // every header name a request carried, for "noHeader"
 const realFetch = globalThis.fetch;
 let base = null;
 def('fetch', async (u, opts = {}) => {
@@ -354,12 +357,18 @@ def('fetch', async (u, opts = {}) => {
     if ((opts.method || 'GET') !== 'GET' && p !== '/api/plan') return { ok: false, status: 405, statusText: 'refused by ui-exec', text: async () => '{"error":{"message":"writes are refused"}}' };
     return realFetch(base + p + full.search, { method: opts.method || 'GET', headers: opts.headers, body: opts.body });
   }
-  fetched.push((opts.method || 'GET') + ' ' + p);
-  fetchedFull.push((opts.method || 'GET') + ' ' + p + full.search);
-  const ans = Object.prototype.hasOwnProperty.call(fetchAnswers, p) ? fetchAnswers[p] : undefined;
-  const ok = ans !== undefined;
-  const text = ok ? JSON.stringify(ans) : JSON.stringify({ error: { message: 'not in the fixture: ' + p } });
-  return { ok, status: ok ? 200 : 404, statusText: ok ? 'OK' : 'Not Found', headers: new Map([['content-type', 'application/json']]),
+  const method = opts.method || 'GET';
+  fetched.push(method + ' ' + p);
+  fetchedFull.push(method + ' ' + p + full.search + (opts.body != null ? ' ' + String(opts.body) : ''));
+  for (const k of Object.keys(opts.headers || {})) sentHeaders.add(k);
+  // an answer by "METHOD /path" first, then by path; {"$status": 409, "$body": {...}} answers an error
+  const has = k => Object.prototype.hasOwnProperty.call(fetchAnswers, k);
+  let ans = has(method + ' ' + p) ? fetchAnswers[method + ' ' + p] : has(p) ? fetchAnswers[p] : undefined;
+  let status = ans !== undefined ? 200 : 404;
+  if (ans && typeof ans === 'object' && ans.$status) { status = ans.$status; ans = ans.$body; }
+  const ok = status >= 200 && status < 300;
+  const text = ans !== undefined ? JSON.stringify(ans) : JSON.stringify({ error: { message: 'not in the fixture: ' + method + ' ' + p } });
+  return { ok, status, statusText: ok ? 'OK' : 'Not Found', headers: new Map([['content-type', 'application/json']]),
     text: async () => text, json: async () => JSON.parse(text), blob: async () => text };
 });
 
@@ -533,7 +542,7 @@ const go = async hash => { setHashQuietly(hash); globalThis.dispatchEvent(new Fa
 
 let failed = 0;
 for (const c of spec.cases) {
-  errors.length = 0; fetched.length = 0; fetchedFull.length = 0;
+  errors.length = 0; fetched.length = 0; fetchedFull.length = 0; sentHeaders.clear();
   fetchAnswers = Object.assign({}, spec.fetch || {}, c.fetch || {});
   const route = router.parse(c.route);
   if (!router.getView(route.id)) errors.push('no view registered for ' + route.id);
@@ -553,6 +562,14 @@ for (const c of spec.cases) {
     }
     // click: css selectors, clicked in order (the first match on the page each)
     for (const sel of c.click || []) {
+      // {"type": "css selector", "value": "text"}: the text typed into that field (an input event)
+      if (sel && typeof sel === 'object') {
+        const f = document.body.querySelector(sel.type);
+        if (!f) { errors.push('nothing to type into: ' + sel.type); break; }
+        f.focus(); f.value = sel.value; f.dispatchEvent(new FakeEvent('input')); f.dispatchEvent(new FakeEvent('change'));
+        await settle();
+        continue;
+      }
       const el = document.body.querySelector(sel);
       if (!el) { errors.push('nothing to click: ' + sel); break; }
       // a click focuses what can take the focus, as in a browser
@@ -594,6 +611,7 @@ for (const c of spec.cases) {
   }
   // fetchedQuery: regular expressions some request (method, path and query) must match
   for (const re of c.fetchedQuery || []) if (!fetchedFull.some(f => new RegExp(re).test(f))) errors.push('no request matches /' + re + '/ (requests: ' + JSON.stringify([...new Set(fetchedFull)]) + ')');
+  for (const hd of c.noHeader || []) if (sentHeaders.has(hd)) errors.push('a request carried the header ' + hd);
   for (const sel of c.pageHas || []) if (!document.body.querySelector(sel)) errors.push('no element on the page matches: ' + sel);
   for (const sel of c.pageNone || []) if (document.body.querySelector(sel)) errors.push('an element on the page that must not be there: ' + sel);
   if (c.focused && !(document.activeElement && document.activeElement.matches && document.activeElement.matches(c.focused)))
