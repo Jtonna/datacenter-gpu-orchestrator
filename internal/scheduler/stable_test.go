@@ -8,6 +8,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/placer"
 )
@@ -392,10 +393,31 @@ func TestStable_LiveShapeOneConsoleLower(t *testing.T) {
 
 func liveShapeCompare(t *testing.T, lower int) {
 	t.Helper()
-	build := func(tol int) (*harness, []string) {
+	liveShapeDiff(t, lower, stableTol, false, 0, false)
+}
+
+// The preference for consoles with stored figures (after warm ones) against
+// the order before it, both at tolerance 128, on live's shape with stored
+// per-node figures and host readings: nothing but the consoles chosen, the
+// device order and the rows that follow them changes.
+func TestStable_PreferStoredFlipList(t *testing.T) {
+	for _, d := range []int{0, 700} {
+		t.Run(fmt.Sprintf("lower_%d", d), func(t *testing.T) { liveShapeDiff(t, d, stableTol, false, stableTol, true) })
+	}
+}
+
+// liveShapeDiff compares the plans of two harnesses on live's shape (the
+// first at tolA, the second at tolB; noPrefer drops the preference for
+// stored figures), with stored per-node figures on some profiles.
+func liveShapeDiff(t *testing.T, lower, tolA int, noPreferA bool, tolB int, noPreferB bool) {
+	t.Helper()
+	storedSet := map[string][]core.NodeID{}
+	build := func(tol int, noPrefer bool) (*harness, []string) {
 		h := newHarness(t)
 		h.cfg.Defaults.PlacementToleranceMiB = tol
+		h.c.noPreferStored = noPrefer
 		h.nodes(liveShapeFleet(nil, 0, lower)...)
+		stored := rand.New(rand.NewSource(77))
 		r := rand.New(rand.NewSource(55))
 		var names []string
 		for i := 0; i < 120; i++ {
@@ -412,14 +434,29 @@ func liveShapeCompare(t *testing.T, lower int) {
 			case i%7 == 0:
 				h.llama(name, 60000+r.Intn(60000)) // too large: refused
 			default:
-				h.llama(name, 500+r.Intn(44000))
+				need := 500 + r.Intn(44000)
+				p := h.llama(name, need)
+				if i%3 == 0 { // measured with per-node figures on random consoles
+					k := min((need+11000)/12000, 4)
+					perm := stored.Perm(6)
+					l := &learnedNeed{TotalMiB: need, key: needKeyOf(p), profile: name, devices: k}
+					for j := 0; j < k; j++ {
+						id := core.NodeID(fmt.Sprintf("console-%d", 1+perm[j]))
+						l.placement = append(l.placement, id)
+						l.split = append(l.split, 1/float64(k))
+						l.Nodes = append(l.Nodes, learnedNode{ID: id, Fraction: 1 / float64(k), MiB: need / k, PeakMiB: need/k + 150})
+					}
+					h.c.putLearned(l)
+					storedSet[name] = slices.Sorted(slices.Values(l.placement))
+				}
 			}
 		}
+		h.c.needs_ = map[string]NeedInfo{}
 		h.viewChanged()
 		return h, names
 	}
-	on, names := build(stableTol)
-	off, _ := build(0)
+	on, names := build(tolA, noPreferA)
+	off, _ := build(tolB, noPreferB)
 	prios := func(h *harness, r PlanReport) []int {
 		var out []int
 		for _, pn := range r.Placement {
@@ -432,6 +469,14 @@ func liveShapeCompare(t *testing.T, lower int) {
 	rng := rand.New(rand.NewSource(3))
 	kinds := map[string]int{}
 	actions := map[PlanAction]int{}
+	onStored := [2]int{} // profiles placed on exactly their stored set: first harness, second
+	sameSet := func(r PlanReport, want []core.NodeID) bool {
+		var got []core.NodeID
+		for _, pn := range r.Placement {
+			got = append(got, pn.ID)
+		}
+		return want != nil && slices.Equal(slices.Sorted(slices.Values(got)), want)
+	}
 	for i := 0; i < 20; i++ {
 		fleet := liveShapeFleet(rng, 25, lower)
 		on.nodes(fleet...)
@@ -447,6 +492,12 @@ func liveShapeCompare(t *testing.T, lower int) {
 					prios(on, a), prios(off, b), a.TightFit, b.TightFit)
 			}
 			if i == 0 {
+				if sameSet(a, storedSet[n]) {
+					onStored[0]++
+				}
+				if sameSet(b, storedSet[n]) {
+					onStored[1]++
+				}
 				actions[b.Action]++
 				if why := flipWhy(a, b); why != "" {
 					kinds[fmt.Sprintf("%d device(s): %s", max(len(a.Placement), len(a.Memory.Nodes)), why)]++
@@ -454,20 +505,22 @@ func liveShapeCompare(t *testing.T, lower int) {
 			}
 		}
 	}
-	t.Logf("live shape, console-3 lower by %d MiB, %d profiles %v: on the first read %v", lower, len(names), actions, kinds)
+	t.Logf("live shape, console-3 lower by %d MiB, tolerance %d (no preference %v) against %d (no preference %v), %d profiles %v, %d with stored per-node figures (on exactly that set: %d against %d): on the first read %v",
+		lower, tolA, noPreferA, tolB, noPreferB, len(names), actions, len(storedSet), onStored[0], onStored[1], kinds)
 }
 
 // (Reviewer 1) A profile measured on two consoles stays measured on any two
 // consoles: the measured need is kept per shape and device count, not per
 // machine set (needstore needs_by_placement, PRIMARY KEY (shape, devices)).
 // Per-node figures and peaks apply only to the very set and split they were
-// measured on; on another set the stored peaks still raise the need of
-// that device count (peakNeed), spread by the split. Here the stable order
-// takes console-1 and console-2 although the measurement was taken on
-// console-4 and console-5.
+// measured on. Among equal consoles the ones with per-node figures of the
+// shape go first (after warm ones), so here the plan comes back to
+// console-4 and console-5 and their own peaks apply; without that order it
+// takes console-1 and console-2, where the peak total still holds.
 func TestStable_MeasuredOnOtherConsolesStaysMeasured(t *testing.T) {
-	plan := func(tol int, set []core.NodeID) PlanReport {
+	plan := func(tol int, set []core.NodeID, noPrefer ...bool) PlanReport {
 		h := newHarness(t)
+		h.c.noPreferStored = len(noPrefer) > 0
 		h.cfg.Defaults.PlacementToleranceMiB = tol
 		h.cfg.Defaults.FillReserveKiBPerToken = 8
 		h.nodes(liveShapeFleet(nil, 0, 0)...)
@@ -496,8 +549,12 @@ func TestStable_MeasuredOnOtherConsolesStaysMeasured(t *testing.T) {
 		t.Fatalf("fit need %d at 128, %d at 0", on.FitNeedMiB, off.FitNeedMiB)
 	}
 	ids, take, basis := rows(on)
-	if !slices.Equal(ids, []core.NodeID{"console-1", "console-2"}) || take < 2*9800 || basis[0] != BasisPeak {
-		t.Fatalf("at 128 on %v: will take %d, basis %v (want at least the peak total 19600, basis peak)", ids, take, basis)
+	if !slices.Equal(ids, measuredOn) || take != 2*9800 || basis[0] != BasisPeak {
+		t.Fatalf("at 128 on %v: will take %d, basis %v (want the measured set with its own peaks, 19600)", ids, take, basis)
+	}
+	plain := plan(stableTol, measuredOn, true)
+	if pids, ptake, _ := rows(plain); !slices.Equal(pids, []core.NodeID{"console-1", "console-2"}) || ptake < 2*9800 || !plain.Measured || plain.NeedMiB != 19000 {
+		t.Fatalf("without the preference on %v: will take %d, measured %v need %d", pids, ptake, plain.Measured, plain.NeedMiB)
 	}
 	oids, otake, obasis := rows(off)
 	t.Logf("measured on %v: at 128 on %v will take %d (%v); at 0 on %v will take %d (%v)", measuredOn, ids, take, basis, oids, otake, obasis)
@@ -507,5 +564,37 @@ func TestStable_MeasuredOnOtherConsolesStaysMeasured(t *testing.T) {
 	ids, take, basis = rows(same)
 	if !same.Measured || same.NeedMiB != 19000 || take != 2*9800 || basis[0] != BasisPeak {
 		t.Fatalf("on its own set %v: measured %v need %d will take %d basis %v", ids, same.Measured, same.NeedMiB, take, basis)
+	}
+}
+
+// A host: node profile placed automatically on equal consoles is hosted by
+// the console with a measured host overhead of its shape (the first node
+// of the placement), so its host row is measured, not the setting.
+func TestStable_HostReadingConsoleHosts(t *testing.T) {
+	h := newHarness(t)
+	h.cfg.Defaults.Membership = config.MembershipAgents
+	h.cfg.Defaults.WorkerProbeInterval = 0
+	h.c.agents = true
+	h.cfg.Defaults.PlacementToleranceMiB = stableTol
+	h.nodes(liveShapeFleet(nil, 0, 0)...)
+	q := h.llama("q", 16000, func(p *core.Profile) { p.Host = core.HostNode })
+	h.c.putHostOverhead(measured(shapeOf(q), "console-5", 2, 700, h.clk.Now(), h.c.llamaBuild))
+	h.viewChanged()
+	r := h.c.dryPlan("q")
+	if r.Action != PlanStart || len(r.Placement) != 2 || r.Placement[0].ID != "console-5" {
+		t.Fatalf("%s %+v", r.Action, r.Placement)
+	}
+	var host *PlanMemoryNode
+	for i := range r.Memory.Nodes {
+		if r.Memory.Nodes[i].ID == "console-5" {
+			host = &r.Memory.Nodes[i]
+		}
+	}
+	if host == nil || host.HostOverheadMiB != 700 || host.HostOverheadSource != HostOverheadMeasured {
+		t.Fatalf("host row %+v", host)
+	}
+	h.c.noPreferStored = true
+	if r := h.c.dryPlan("q"); r.Placement[0].ID != "console-1" {
+		t.Fatalf("without the preference the host is the first by name: %+v", r.Placement)
 	}
 }

@@ -2,6 +2,14 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: equal consoles with stored figures first
+
+No agent change, no new port, no schema change, no new setting.
+
+- **The order among equal consoles** (stable placement, `placement_tolerance_mib` above 0) is now: warm first; then, for a `host: node` profile, the console with a measured host overhead of the shape (it hosts, so the host row is measured instead of `host_overhead_mib`); then consoles a stored measurement of the shape has per-node figures for; then by name. A multi-console load takes the set with more of them in that order.
+- **Why.** The measured need follows the shape and device count on any consoles, but per-node peaks and learned shares apply only to the set they were measured on. Taking that set again makes them apply.
+- **What it never changes.** Fit is still decided on the exact figures, and every action (start, queue, reject) is what it was. Forced profiles, chosen zones and tolerance 0 are untouched.
+
 ## Scheduler image: stable placement among equal consoles
 
 No agent change, no new port, no schema change.

@@ -20,7 +20,10 @@ import (
 //     figure is its smallest member's steady figure.
 //   - Where today's rule compares budgets, the class figures are compared;
 //     within a class the nodes are equal: a warm node (its page cache likely
-//     holds the profile's model file) first, then by name, then by ID.
+//     holds the profile's model file) first, then one with a measured host
+//     overhead of the shape (a host: node profile), then one a stored
+//     measurement of the shape has per-node figures for, then by name, then
+//     by ID.
 //   - A split of two or more nodes is by the class figures (core.PlacedNode
 //     .SplitMiB) when every node holds its share that way on its exact
 //     budget; otherwise it stays the split by exact budget.
@@ -80,13 +83,19 @@ func ClassFigures(nodes []Candidate, equalMiB int) []int {
 	return classFigures(nodes, equalMiB)
 }
 
-// StableLess orders two nodes of the same class: warm first, then by name,
-// then by ID.
+// StableLess orders two nodes of the same class: warm first, then with a
+// host reading, then measured, then by name, then by ID.
 func StableLess(a, b Candidate) bool { return stableLess(a, b) }
 
 func stableLess(a, b Candidate) bool {
 	if a.Warm != b.Warm {
 		return a.Warm
+	}
+	if a.HostReading != b.HostReading {
+		return a.HostReading
+	}
+	if a.Measured != b.Measured {
+		return a.Measured
 	}
 	if c := cmp.Compare(nameOf(a), nameOf(b)); c != 0 {
 		return c < 0

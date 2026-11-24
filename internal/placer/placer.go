@@ -209,10 +209,15 @@ type Candidate struct {
 	// likely holds this profile's model file (the last load that became
 	// ready there used it); SteadyMiB is the node's budget with idle noise
 	// filtered out by the caller (0: BudgetMiB). Fit is always checked on
-	// BudgetMiB.
-	Name      string
-	Warm      bool
-	SteadyMiB int
+	// BudgetMiB. HostReading says the node has a measured host overhead of
+	// the profile's shape (a host: node profile; its host is the first
+	// node); Measured says a stored measurement of the shape has per-node
+	// figures for the node. Both only order nodes of one class.
+	Name        string
+	Warm        bool
+	HostReading bool
+	Measured    bool
+	SteadyMiB   int
 
 	rep int // the steady figure of the node's class (stable.go); 0 when not used
 }
@@ -815,10 +820,13 @@ type poolKey struct {
 	total   int
 	ids     []core.NodeID // sorted
 	// stable.go (EqualMiB): total is the class figures' sum; then more warm
-	// nodes first; then the sorted names.
-	stable bool
-	warm   int
-	names  []string
+	// nodes first, then more with a host reading, then more measured; then
+	// the sorted names.
+	stable   bool
+	warm     int
+	host     int
+	measured int
+	names    []string
 }
 
 func (s searcher) poolKey(set []cand) poolKey {
@@ -830,6 +838,12 @@ func (s searcher) poolKey(set []cand) poolKey {
 			k.names = append(k.names, nameOf(c.Candidate))
 			if c.Warm {
 				k.warm++
+			}
+			if c.HostReading {
+				k.host++
+			}
+			if c.Measured {
+				k.measured++
 			}
 		} else {
 			k.total += c.BudgetMiB
@@ -854,6 +868,12 @@ func poolLess(a, b poolKey) bool {
 	if a.stable && b.stable {
 		if a.warm != b.warm {
 			return a.warm > b.warm
+		}
+		if a.host != b.host {
+			return a.host > b.host
+		}
+		if a.measured != b.measured {
+			return a.measured > b.measured
 		}
 		if c := slices.Compare(a.names, b.names); c != 0 {
 			return c < 0

@@ -49,12 +49,55 @@ func (c *schedCore) warmFor(id core.NodeID, p *core.Profile) bool {
 	return ns != nil && ns.lastFile != "" && ns.lastFile == lastFileOf(p)
 }
 
+// measuredFor: a stored measurement of p's shape (any device count; for a
+// host: node profile without its own, the server twin's, as planning reads
+// them) has a per-node figure for the node. Such a node's peaks and learned
+// shares apply when the set and split come back (memfit.go shareFor), so
+// among equal consoles it goes first.
+func (c *schedCore) measuredFor(id core.NodeID, p *core.Profile) bool {
+	if p == nil || p.Kind == core.KindCommand {
+		return false
+	}
+	ls, _ := c.planLearnedOf(p)
+	for _, l := range ls {
+		if !c.trusted(l) {
+			continue
+		}
+		for _, n := range l.Nodes {
+			if n.ID == id && (n.MiB > 0 || n.PeakMiB > 0) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hostReadingFor: p is hosted on a node and the node has a measured host
+// overhead of p's shape (any device count) that planning would use, so the
+// host's row is measured, not the setting (hostoverhead.go hostOverheadOf).
+func (c *schedCore) hostReadingFor(id core.NodeID, p *core.Profile) bool {
+	if p == nil || p.Host != core.HostNode || c.cfg.Defaults.HostOverheadSettingOnly {
+		return false
+	}
+	shape := shapeOf(p)
+	for k, e := range c.hostOHs {
+		if k.shape == shape && k.node == id && !c.otherModelFile(p, e) && (!e.restored || c.buildsAgree(e.LlamaBuild)) {
+			return true
+		}
+	}
+	return false
+}
+
 // candidate is placer.FromNode with what the stable order needs. steady
 // false: budget is already a steady figure (a plan budget).
 func (c *schedCore) candidate(p *core.Profile, id core.NodeID, n core.Node, budget int, steady bool) placer.Candidate {
 	cd := placer.FromNode(n, budget)
 	cd.Name = n.Hostname
 	cd.Warm = c.warmFor(id, p)
+	if !c.noPreferStored {
+		cd.HostReading = c.hostReadingFor(id, p)
+		cd.Measured = c.measuredFor(id, p)
+	}
 	if steady {
 		cd.SteadyMiB = c.steadyOf(id, budget)
 	}

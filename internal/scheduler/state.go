@@ -402,15 +402,19 @@ type schedCore struct {
 	fresh         bool
 	age           time.Duration
 	seenReconnect time.Time
-	excludedSeen  map[core.NodeID]bool          // excluded nodes already logged
-	steady        map[core.NodeID]int           // stable.go: each node's live budget held still
-	unplaced      map[core.NodeID]string        // why a listed node takes no new load (NodeGate), read with the view
-	unplacedMsg   map[core.NodeID]string        // the message of that reason (NodeGateDetail), when it has one
-	forcedGone    map[string]time.Time          // force_nodes name -> when it was first seen absent or offline in a live view
-	health        map[core.NodeID]*workerHealth // worker health (workerhealth.go)
-	probeGen      uint64
-	recov         map[core.NodeID]*recoveryNode // recovery requests (recovery.go)
-	nonceFn       func() string                 // nonce source; nil: crypto/rand (tests set it)
+	excludedSeen  map[core.NodeID]bool // excluded nodes already logged
+	steady        map[core.NodeID]int  // stable.go: each node's live budget held still
+	// noPreferStored drops, among equal consoles, the preference for those
+	// with stored figures of the shape (stable.go); only tests set it, to
+	// compare with the order before.
+	noPreferStored bool
+	unplaced       map[core.NodeID]string        // why a listed node takes no new load (NodeGate), read with the view
+	unplacedMsg    map[core.NodeID]string        // the message of that reason (NodeGateDetail), when it has one
+	forcedGone     map[string]time.Time          // force_nodes name -> when it was first seen absent or offline in a live view
+	health         map[core.NodeID]*workerHealth // worker health (workerhealth.go)
+	probeGen       uint64
+	recov          map[core.NodeID]*recoveryNode // recovery requests (recovery.go)
+	nonceFn        func() string                 // nonce source; nil: crypto/rand (tests set it)
 
 	shutdown   bool
 	shutdownDL time.Time

@@ -3,6 +3,7 @@ package placer
 import (
 	"math/rand"
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
@@ -185,5 +186,53 @@ func TestStable_NeverWorseThanToleranceZero(t *testing.T) {
 				t.Fatalf("lower %d: only %d needs placed; the sweep is too narrow", d, placed)
 			}
 		}
+	}
+}
+
+// Among equal consoles: warm first, then one with a host reading, then one
+// with stored per-node figures, then by name. A pool takes the set with
+// more of them in that order, and the host reading's node leads the device
+// order (it hosts a host: node profile). Tolerance 0 ignores all of it.
+func TestStable_HostReadingAndMeasuredOrder(t *testing.T) {
+	mk := func(name string, warm, host, measured bool) Candidate {
+		c := console(name, 13000, 13000)
+		c.Warm, c.HostReading, c.Measured = warm, host, measured
+		return c
+	}
+	ids := func(pl core.Placement) (out []string) {
+		for _, n := range pl.Nodes {
+			out = append(out, string(n.ID))
+		}
+		return
+	}
+	// single loads
+	for _, c := range []struct {
+		nodes []Candidate
+		want  string
+	}{
+		{[]Candidate{mk("ps5-a", false, false, false), mk("ps5-b", false, false, true)}, "id-ps5-b"},
+		{[]Candidate{mk("ps5-a", false, false, true), mk("ps5-b", false, true, false)}, "id-ps5-b"},
+		{[]Candidate{mk("ps5-a", false, true, true), mk("ps5-b", true, false, false)}, "id-ps5-b"},
+		{[]Candidate{mk("ps5-a", false, false, true), mk("ps5-b", false, false, true)}, "id-ps5-a"},
+	} {
+		pl, err := Place(stableReq(8000), c.nodes)
+		if err != nil || len(pl.Nodes) != 1 || string(pl.Nodes[0].ID) != c.want {
+			t.Errorf("%+v: %v %v, want %s", c.nodes, ids(pl), err, c.want)
+		}
+	}
+	// pools of two out of four
+	nodes := []Candidate{mk("ps5-a", false, false, false), mk("ps5-b", false, false, false), mk("ps5-c", false, false, true), mk("ps5-d", false, true, true)}
+	pl, err := Place(stableReq(20000), nodes)
+	if err != nil || !slices.Equal(ids(pl), []string{"id-ps5-d", "id-ps5-c"}) || pl.Nodes[0].SplitMiB != pl.Nodes[1].SplitMiB {
+		t.Fatalf("pool: %v %v %+v", ids(pl), err, pl)
+	}
+	// tolerance 0: today's rule, untouched
+	old := stableReq(20000)
+	old.EqualMiB = 0
+	plain := []Candidate{console("ps5-a", 13000, 13000), console("ps5-b", 13000, 13000), console("ps5-c", 13000, 13000), console("ps5-d", 13000, 13000)}
+	a, _ := Place(old, nodes)
+	b, _ := Place(old, plain)
+	if !reflect.DeepEqual(a, b) {
+		t.Fatalf("tolerance 0 moved: %+v %+v", a, b)
 	}
 }
