@@ -11,24 +11,35 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/needstore"
 )
 
-// The host overhead measured per node and shape (phase 6, host: node).
+// The host overhead measured per node, shape and device count (phase 6,
+// host: node).
 //
 // What a host process on a node takes there besides its device share is
 // host_overhead_mib until it is measured. The first hosted load of a shape
-// on a node plans with the setting; once that load is ready and one full
-// free_average_window has passed, the node's measured use (its free figure
-// when the instance was created less its free figure now, the average when
-// known) less what the load log put on the node's own devices is that
-// node's host overhead for the shape. Later plans of that shape hosted on
-// that node use it, with the margin rules as they are; every other node
-// and shape keeps the setting. A normal cycle replaces the figure with its
-// own reading; a cycle that ends abnormally (the watchdog, an OOM kill, a
-// failure) can only raise it, to the most the host was seen to take in the
-// cycle. A figure measured on another llama build, restored at start, may
-// only raise the setting; one measured on a model file of another size is
-// not used. Forgetting the shape forgets its host overheads.
-// host_overhead_setting_only plans every host with the setting again (the
-// figures are kept).
+// on a node, on a given device count, plans with the setting; once that load
+// is ready and one full free_average_window has passed, the node's measured
+// use (its free figure when the instance was created less its free figure
+// now, the average when known) less what the load log put on the node's
+// own devices is a reading for that shape, node and device count. A
+// measurement is never used across device counts: a host holding half the
+// model does other work than one holding all of it.
+//
+// The figure in force follows the keep-the-higher rule (needstore Add): a
+// reading replaces it only when higher; it comes down only when the llama
+// build or the model file changed, or when three consecutive readings are
+// all lower (then to the highest of the three). A cycle that ends
+// abnormally gives its highest reading of the cycle, by the same rule. A
+// figure restored from another llama build may only raise the setting; one
+// measured on a model file of another size is not used. Forgetting the
+// shape forgets its host overheads. host_overhead_setting_only plans every
+// host with the setting again (the figures are kept).
+//
+// A row copied from the release before device counts (needstore Pending)
+// kept only its latest reading. Once, when its node is known, its readings
+// are read back from the event history (the learnedNeed events that carry
+// host_overhead_mib for that shape, node and device count, the device count
+// being the event's node list) and the figure in force becomes the highest
+// of them; a history line says why when that changes the figure.
 //
 // The agent does not report a process's memory, so the host process is not
 // told apart by process but by subtraction, on the host node only. With
@@ -39,7 +50,7 @@ import (
 // Values of PlanReport.HostOverheadSource and PlanMemoryNode.HostOverheadSource.
 const (
 	HostOverheadFromSetting = "setting"  // host_overhead_mib
-	HostOverheadMeasured    = "measured" // measured on that node for that shape
+	HostOverheadMeasured    = "measured" // measured on that node for that shape and device count
 )
 
 // HostOverheadStore keeps the measured host overheads (needstore.Store).
@@ -49,38 +60,36 @@ type HostOverheadStore interface {
 	PutHost(needstore.HostOverhead) error
 }
 
-// hostOH is one node's measured host overhead for one shape.
-type hostOH struct {
-	mib, logHost int
-	at           time.Time
-	release      string
-	build        string
-	modelBytes   int64
-	profile      string
-	cause        string
-	restored     bool
+// hostKey is a measured host overhead's key.
+type hostKey struct {
+	shape   string
+	node    core.NodeID
+	devices int
 }
 
-func (c *schedCore) hostOverheadAt(shape string, id core.NodeID) (*hostOH, bool) {
-	e := c.hostOHs[shape][id]
+// hostOH is one measured host overhead: the stored row, and whether it was
+// restored at start (its llama build then decides whether it is trusted).
+type hostOH struct {
+	needstore.HostOverhead
+	restored bool
+}
+
+func (c *schedCore) hostOverheadAt(shape string, id core.NodeID, devices int) (*hostOH, bool) {
+	e := c.hostOHs[hostKey{shape, id, devices}]
 	return e, e != nil
 }
 
-// putHostOverhead keeps e as shape's figure on node id and queues it for the
-// store.
-func (c *schedCore) putHostOverhead(shape string, id core.NodeID, e *hostOH) {
+// putHostOverhead keeps e under its key and queues it for the store.
+func (c *schedCore) putHostOverhead(e *hostOH) {
 	if c.hostOHs == nil {
-		c.hostOHs = map[string]map[core.NodeID]*hostOH{}
+		c.hostOHs = map[hostKey]*hostOH{}
 	}
-	if c.hostOHs[shape] == nil {
-		c.hostOHs[shape] = map[core.NodeID]*hostOH{}
-	}
-	c.hostOHs[shape][id] = e
+	c.hostOHs[hostKey{e.Shape, core.NodeID(e.Node), e.Devices}] = e
 	c.changed = true
 	if c.persist {
-		c.needOps = append(c.needOps, needOp{shape: shape, host: &needstore.HostOverhead{Shape: shape, Node: string(id), MiB: e.mib,
-			LogHostMiB: e.logHost, MeasuredAt: e.at, Release: e.release, LlamaBuild: e.build, ModelBytes: e.modelBytes,
-			Profile: e.profile, Cause: e.cause}})
+		row := e.HostOverhead
+		row.Readings = slices.Clone(row.Readings)
+		c.needOps = append(c.needOps, needOp{shape: e.Shape, host: &row})
 	}
 }
 
@@ -97,49 +106,66 @@ func (c *schedCore) restoreHostOverheads(st NeedStore) {
 	}
 	for _, r := range rows {
 		if c.hostOHs == nil {
-			c.hostOHs = map[string]map[core.NodeID]*hostOH{}
+			c.hostOHs = map[hostKey]*hostOH{}
 		}
-		if c.hostOHs[r.Shape] == nil {
-			c.hostOHs[r.Shape] = map[core.NodeID]*hostOH{}
-		}
-		c.hostOHs[r.Shape][core.NodeID(r.Node)] = &hostOH{mib: r.MiB, logHost: r.LogHostMiB, at: r.MeasuredAt, release: r.Release,
-			build: r.LlamaBuild, modelBytes: r.ModelBytes, profile: r.Profile, cause: r.Cause, restored: true}
+		c.hostOHs[hostKey{r.Shape, core.NodeID(r.Node), r.Devices}] = &hostOH{HostOverhead: r, restored: true}
 	}
 	if len(rows) > 0 {
 		c.log.Info("measured host overheads restored", "rows", len(rows))
 	}
 }
 
-// hostOverheadOf is what hosting p takes on node id: the figure, where it
-// comes from (HostOverheadFromSetting or HostOverheadMeasured) and, for a
-// measured one, when it was measured.
-func (c *schedCore) hostOverheadOf(p *core.Profile, id core.NodeID) (int, string, time.Time) {
+// hostOverheadOf is what hosting p on node id of a placement of devices
+// devices takes: the figure, where it comes from (HostOverheadFromSetting or
+// HostOverheadMeasured) and, for a measured one, the date of the reading in
+// force.
+func (c *schedCore) hostOverheadOf(p *core.Profile, id core.NodeID, devices int) (int, string, time.Time) {
 	setting := max(c.cfg.Defaults.HostOverheadMiB, 0)
 	if c.cfg.Defaults.HostOverheadSettingOnly || id == "" {
 		return setting, HostOverheadFromSetting, time.Time{}
 	}
-	e, ok := c.hostOverheadAt(shapeOf(p), id)
+	e, ok := c.hostOverheadAt(shapeOf(p), id, devices)
 	if !ok {
 		return setting, HostOverheadFromSetting, time.Time{}
 	}
-	if base, ok := c.needs_[p.Name]; ok && e.modelBytes > 0 && base.FileBytes > 0 && e.modelBytes != base.FileBytes {
-		return setting, HostOverheadFromSetting, time.Time{} // measured on another model file
+	if c.otherModelFile(p, e) {
+		return setting, HostOverheadFromSetting, time.Time{}
 	}
-	if e.restored && !c.buildsAgree(e.build) && e.mib <= setting {
+	if e.restored && !c.buildsAgree(e.LlamaBuild) && e.MiB <= setting {
 		return setting, HostOverheadFromSetting, time.Time{} // another llama build: it only raises the setting
 	}
-	return e.mib, HostOverheadMeasured, e.at
+	return e.MiB, HostOverheadMeasured, e.MeasuredAt
+}
+
+// otherModelFile: e was measured on a model file of another size than p's.
+func (c *schedCore) otherModelFile(p *core.Profile, e *hostOH) bool {
+	base, ok := c.needs_[p.Name]
+	return ok && e.ModelBytes > 0 && base.FileBytes > 0 && e.ModelBytes != base.FileBytes
 }
 
 // forgetHostOverheads drops shape's figures in memory (the store's rows go
 // with the shape's delete); it reports whether there were any.
 func (c *schedCore) forgetHostOverheads(shape string) bool {
-	had := len(c.hostOHs[shape]) > 0
-	delete(c.hostOHs, shape)
+	had := false
+	for k := range c.hostOHs {
+		if k.shape == shape {
+			delete(c.hostOHs, k)
+			had = true
+		}
+	}
 	if had {
 		c.changed = true
 	}
 	return had
+}
+
+func (c *schedCore) hasHostOverheads(shape string) bool {
+	for k := range c.hostOHs {
+		if k.shape == shape {
+			return true
+		}
+	}
+	return false
 }
 
 // hostReading is what the host took on its node now: the node's measured
@@ -178,8 +204,10 @@ func (c *schedCore) hostSettleAt(in *inst) time.Time {
 
 // measureHostOverheads runs every step: for every ready host on a node, it
 // tracks the most the host took in the cycle, and reads its figure once the
-// cycle has settled.
+// cycle has settled. It also corrects, once, the rows copied from the
+// release before device counts (correctPending).
 func (c *schedCore) measureHostOverheads() {
+	c.correctPending()
 	for _, in := range c.insts {
 		if in.placement.Host == "" || in.child == nil || in.readyAt.IsZero() || (in.state != stReady && in.state != stDraining) {
 			continue
@@ -198,41 +226,58 @@ func (c *schedCore) measureHostOverheads() {
 		in.hostMeasured = true
 		id := in.placement.Host
 		if mib < 0 || mib > needstore.MaxHostOverheadMiB {
-			c.log.Warn("host overhead reading out of range; host_overhead_mib stays", "profile", in.prof.Name, "node", c.nodeName(id), "mib", mib)
+			c.log.Warn("host overhead reading out of range; the figure in force stays", "profile", in.prof.Name, "node", c.nodeName(id), "mib", mib)
 			c.recordInst(in, history.TLearnedNeed, history.Warn,
-				fmt.Sprintf("The host overhead of %s on %s read %d MiB, outside 0 to %d MiB: not used; plans keep %d MiB.",
-					in.prof.Name, c.nodeName(id), mib, needstore.MaxHostOverheadMiB, max(c.cfg.Defaults.HostOverheadMiB, 0)),
+				fmt.Sprintf("The host overhead of %s on %s read %d MiB, outside 0 to %d MiB: not used.",
+					in.prof.Name, c.nodeName(id), mib, needstore.MaxHostOverheadMiB),
 				map[string]any{"node": c.nodeName(id), "host_overhead_reading_mib": mib})
 			continue
 		}
-		c.storeHostOverhead(in, mib, logHost, needstore.CauseLoad)
+		c.addHostReading(in, mib, logHost, needstore.CauseLoad)
 	}
 }
 
-func (c *schedCore) storeHostOverhead(in *inst, mib, logHost int, cause string) {
-	id := in.placement.Host
-	e := &hostOH{mib: mib, logHost: logHost, at: c.now, release: c.buildRelease, build: c.llamaBuild, profile: in.prof.Name, cause: cause}
+// addHostReading applies one reading of in's host overhead by the
+// keep-the-higher rule, stores the row and records it.
+func (c *schedCore) addHostReading(in *inst, mib, logHost int, cause string) {
+	id, k, shape := in.placement.Host, len(in.placement.Nodes), shapeOf(in.prof)
+	e, ok := c.hostOverheadAt(shape, id, k)
+	if !ok {
+		e = &hostOH{HostOverhead: needstore.HostOverhead{Shape: shape, Node: string(id), Devices: k}}
+	}
+	var bytes int64
 	if base, ok := c.needs_[in.prof.Name]; ok {
-		e.modelBytes = base.FileBytes
+		bytes = base.FileBytes
 	}
-	c.putHostOverhead(shapeOf(in.prof), id, e)
-	c.log.Info("measured host overhead", "profile", in.prof.Name, "node", c.nodeName(id), "mib", mib, "log_host_mib", logHost,
-		"setting_mib", c.cfg.Defaults.HostOverheadMiB, "cause", cause)
+	reset := ok && (e.LlamaBuild != c.llamaBuild || (e.ModelBytes > 0 && bytes > 0 && e.ModelBytes != bytes))
+	was := e.MiB
+	outcome := e.Add(needstore.HostReading{MiB: mib, At: c.now, Cause: cause}, reset)
+	e.LogHostMiB, e.Release, e.LlamaBuild, e.ModelBytes, e.Profile, e.restored = logHost, c.buildRelease, c.llamaBuild, bytes, in.prof.Name, false
+	c.putHostOverhead(e)
+	c.log.Info("measured host overhead", "profile", in.prof.Name, "node", c.nodeName(id), "devices", k, "reading_mib", mib,
+		"in_force_mib", e.MiB, "rule", outcome, "log_host_mib", logHost, "cause", cause)
+	var why string
+	switch outcome {
+	case needstore.HostFirst, needstore.HostRaised:
+		why = "the figure in force"
+	case needstore.HostKept:
+		why = fmt.Sprintf("the figure in force stays %d MiB (keep the higher)", was)
+	case needstore.HostLowered:
+		why = fmt.Sprintf("three consecutive lower readings: the figure in force is now %d MiB, the highest of them", e.MiB)
+	case needstore.HostReset:
+		why = "the llama build or the model file changed: the figure in force"
+	}
 	c.recordInst(in, history.TLearnedNeed, history.Info,
-		fmt.Sprintf("Measured the host overhead of %s on %s at %d MiB (host_overhead_mib is %d); plans of this shape hosted there use it.",
-			in.prof.Name, c.nodeName(id), mib, c.cfg.Defaults.HostOverheadMiB),
-		map[string]any{"node": c.nodeName(id), "host_overhead_mib": mib, "log_host_mib": logHost,
-			"setting_mib": c.cfg.Defaults.HostOverheadMiB, "cause": cause})
+		fmt.Sprintf("Measured the host overhead of %s on %s at %d MiB (%s); %s. host_overhead_mib is %d.",
+			in.prof.Name, c.nodeName(id), mib, plural(k, "device"), why, c.cfg.Defaults.HostOverheadMiB),
+		map[string]any{"node": c.nodeName(id), "host_overhead_mib": mib, "in_force_mib": e.MiB, "rule": outcome, "devices": k,
+			"log_host_mib": logHost, "llama_build": c.llamaBuild, "setting_mib": c.cfg.Defaults.HostOverheadMiB, "cause": cause})
 }
 
-// endHostCycle: a cycle that ended abnormally raises the stored figure to
-// the most the host took in it (removeInst).
+// endHostCycle: a cycle that ended abnormally gives the most the host took
+// in it as a reading (removeInst).
 func (c *schedCore) endHostCycle(in *inst) {
 	if in.placement.Host == "" || in.readyAt.IsZero() || normalStop(in) || in.hostHigh <= 0 {
-		return
-	}
-	e, ok := c.hostOverheadAt(shapeOf(in.prof), in.placement.Host)
-	if ok && e.mib >= in.hostHigh {
 		return
 	}
 	cause := in.stopReason
@@ -243,7 +288,89 @@ func (c *schedCore) endHostCycle(in *inst) {
 	if in.child != nil {
 		logHost = int(in.child.Load().HostMiB() + 0.999)
 	}
-	c.storeHostOverhead(in, min(in.hostHigh, needstore.MaxHostOverheadMiB), logHost, cause)
+	c.addHostReading(in, min(in.hostHigh, needstore.MaxHostOverheadMiB), logHost, cause)
+}
+
+// HostReadingEvents returns the history's learnedNeed events (Options); the
+// rows copied from the release before device counts read their readings
+// from it once (correctPending). nil: no history.
+type HostReadingEvents func() []history.Event
+
+// correctPending gives every row copied from the release before device
+// counts its readings from the event history, once its node is known: the
+// readings of host_overhead_mib for the row's shape (from the event's
+// profile), node (the first node of the event, the host) and device count
+// (the event's node count), on the row's llama build when the event names
+// one. The figure in force becomes the highest of them and of the row's
+// own; a history line says why when that changes it.
+func (c *schedCore) correctPending() {
+	for _, e := range c.hostOHs {
+		if !e.Pending() {
+			continue
+		}
+		id := core.NodeID(e.Node)
+		if _, known := c.raw[id]; !known {
+			continue // its name is needed to match the events
+		}
+		if c.hostEvents == nil && c.hostEventsFn != nil {
+			c.hostEvents = c.hostEventsFn()
+			if c.hostEvents == nil {
+				c.hostEvents = []history.Event{}
+			}
+		}
+		name := c.nodeName(id)
+		var rs []needstore.HostReading
+		for _, ev := range c.hostEvents {
+			mib, ok := numberOf(ev.Data["host_overhead_mib"])
+			p := c.cfg.Profiles[ev.Profile]
+			if !ok || p == nil || ev.Type != history.TLearnedNeed || len(ev.Nodes) != e.Devices || len(ev.Nodes) == 0 ||
+				(ev.Nodes[0] != name && ev.Nodes[0] != e.Node) || shapeOf(p) != e.Shape {
+				continue
+			}
+			if b, _ := ev.Data["llama_build"].(string); b != "" && e.LlamaBuild != "" && b != e.LlamaBuild {
+				continue
+			}
+			cause, _ := ev.Data["cause"].(string)
+			rs = append(rs, needstore.HostReading{MiB: mib, At: time.UnixMilli(ev.Ts).UTC(), Cause: cause})
+		}
+		slices.SortFunc(rs, func(a, b needstore.HostReading) int { return b.At.Compare(a.At) }) // newest first
+		was, top := e.MiB, needstore.HostReading{MiB: e.MiB, At: e.MeasuredAt, Cause: e.Cause}
+		for _, r := range rs {
+			if r.MiB > top.MiB {
+				top = r
+			}
+		}
+		if len(rs) == 0 {
+			rs = []needstore.HostReading{top}
+		}
+		if len(rs) > needstore.MaxHostReadings {
+			rs = rs[:needstore.MaxHostReadings]
+		}
+		e.Readings = rs
+		e.MiB, e.MeasuredAt, e.Cause = top.MiB, top.At, top.Cause
+		c.putHostOverhead(e)
+		if top.MiB != was {
+			c.log.Info("host overhead corrected from the history: kept the higher of the readings", "node", name, "devices", e.Devices,
+				"kept_mib", top.MiB, "was_mib", was)
+			c.record(history.TLearnedNeed, history.Info, e.Profile,
+				fmt.Sprintf("Kept the higher of the readings of the host overhead on %s (%s, the shape %s measured): %d MiB, not %d MiB. The release before kept only the latest reading.",
+					name, plural(e.Devices, "device"), e.Profile, top.MiB, was),
+				[]string{name}, "", map[string]any{"node": name, "devices": e.Devices, "kept_mib": top.MiB, "was_mib": was,
+					"readings": len(rs)})
+		}
+	}
+}
+
+func numberOf(v any) (int, bool) {
+	switch x := v.(type) {
+	case float64:
+		return int(x), true
+	case int:
+		return x, true
+	case int64:
+		return int(x), true
+	}
+	return 0, false
 }
 
 // HostOverheadRow is one measured host overhead in GET /api/needs. Used
@@ -254,6 +381,7 @@ type HostOverheadRow struct {
 	Shape      string
 	Node       core.NodeID
 	NodeName   string
+	Devices    int
 	MiB        int
 	LogHostMiB int
 	MeasuredBy string
@@ -263,10 +391,12 @@ type HostOverheadRow struct {
 	Cause      string
 	Restored   bool
 	Used       bool
+	Readings   []needstore.HostReading
 	Profiles   []string
 }
 
-// hostOverheadRows lists the measured host overheads by shape and node.
+// hostOverheadRows lists the measured host overheads by shape, node and
+// device count.
 func (c *schedCore) hostOverheadRows() []HostOverheadRow {
 	users := map[string][]string{}
 	for name, p := range c.cfg.Profiles {
@@ -274,23 +404,27 @@ func (c *schedCore) hostOverheadRows() []HostOverheadRow {
 	}
 	setting := max(c.cfg.Defaults.HostOverheadMiB, 0)
 	out := []HostOverheadRow{}
-	for shape, byNode := range c.hostOHs {
-		for id, e := range byNode {
-			r := HostOverheadRow{Shape: shape, Node: id, NodeName: c.nodeName(id), MiB: e.mib, LogHostMiB: e.logHost, MeasuredBy: e.profile,
-				MeasuredAt: e.at, Release: e.release, LlamaBuild: e.build, Cause: e.cause, Restored: e.restored,
-				Used:     !c.cfg.Defaults.HostOverheadSettingOnly && (!e.restored || c.buildsAgree(e.build) || e.mib > setting),
-				Profiles: slices.Sorted(slices.Values(users[shape]))}
-			if r.Profiles == nil {
-				r.Profiles = []string{}
-			}
-			out = append(out, r)
+	for k, e := range c.hostOHs {
+		r := HostOverheadRow{Shape: k.shape, Node: k.node, NodeName: c.nodeName(k.node), Devices: k.devices, MiB: e.MiB, LogHostMiB: e.LogHostMiB,
+			MeasuredBy: e.Profile, MeasuredAt: e.MeasuredAt, Release: e.Release, LlamaBuild: e.LlamaBuild, Cause: e.Cause, Restored: e.restored,
+			Used:     !c.cfg.Defaults.HostOverheadSettingOnly && (!e.restored || c.buildsAgree(e.LlamaBuild) || e.MiB > setting),
+			Readings: slices.Clone(e.Readings), Profiles: slices.Sorted(slices.Values(users[k.shape]))}
+		if r.Profiles == nil {
+			r.Profiles = []string{}
 		}
+		if r.Readings == nil {
+			r.Readings = []needstore.HostReading{}
+		}
+		out = append(out, r)
 	}
 	slices.SortFunc(out, func(a, b HostOverheadRow) int {
 		if a.Shape != b.Shape {
 			return strings.Compare(a.Shape, b.Shape)
 		}
-		return strings.Compare(string(a.Node), string(b.Node))
+		if a.Node != b.Node {
+			return strings.Compare(string(a.Node), string(b.Node))
+		}
+		return a.Devices - b.Devices
 	})
 	return out
 }

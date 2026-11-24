@@ -231,6 +231,12 @@ func Open(db DB) (*Store, error) {
 		if err := migrate(tx, "needs_host_migrations", hostMigrations); err != nil { // host.go
 			return err
 		}
+		if err := migrate(tx, "needs_host_count_migrations", hostCountMigrations); err != nil { // host.go
+			return err
+		}
+		if err := importOlder(tx); err != nil { // host.go: what a rollback measured
+			return err
+		}
 		if err := undoDevelopmentV2(tx); err != nil {
 			return err
 		}
@@ -436,8 +442,10 @@ func (s *Store) Delete(shape string) error {
 		if _, err := tx.Exec(`DELETE FROM needs_by_placement WHERE shape = ?`, shape); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`DELETE FROM needs_host_overhead WHERE shape = ?`, shape); err != nil { // host.go
-			return err
+		for _, t := range []string{"needs_host_overhead", "needs_host_by_count"} { // host.go
+			if _, err := tx.Exec(`DELETE FROM `+t+` WHERE shape = ?`, shape); err != nil {
+				return err
+			}
 		}
 		for _, p := range left {
 			if _, err := tx.Exec(`DELETE FROM learned_needs WHERE profile = ?`, p); err != nil {

@@ -60,6 +60,7 @@ type hostOverheadRow struct {
 	Shape      string     `json:"shape"`
 	Node       string     `json:"node"`
 	NodeName   string     `json:"node_name"`
+	Devices    int        `json:"devices"`
 	MiB        int        `json:"mib"`
 	LogHostMiB int        `json:"log_host_mib"`
 	MeasuredBy string     `json:"measured_by"`
@@ -70,10 +71,19 @@ type hostOverheadRow struct {
 	Restored   bool       `json:"restored"`
 	Used       bool       `json:"used"`
 	Profiles   []string   `json:"profiles"`
+	// Readings are the last three, newest first: the figure in force is mib
+	// (keep the higher), dated measured_at.
+	Readings []hostReadingRow `json:"readings"`
+}
+
+type hostReadingRow struct {
+	MiB   int       `json:"mib"`
+	At    time.Time `json:"at"`
+	Cause string    `json:"cause"`
 }
 
 func hostOverheadJSON(r scheduler.HostOverheadRow) hostOverheadRow {
-	out := hostOverheadRow{Shape: r.Shape, Node: string(r.Node), NodeName: r.NodeName, MiB: r.MiB, LogHostMiB: r.LogHostMiB,
+	out := hostOverheadRow{Shape: r.Shape, Node: string(r.Node), NodeName: r.NodeName, Devices: r.Devices, MiB: r.MiB, LogHostMiB: r.LogHostMiB,
 		MeasuredBy: r.MeasuredBy, Release: r.Release, LlamaBuild: r.LlamaBuild, Cause: r.Cause, Restored: r.Restored, Used: r.Used,
 		Profiles: r.Profiles}
 	if !r.MeasuredAt.IsZero() {
@@ -82,6 +92,10 @@ func hostOverheadJSON(r scheduler.HostOverheadRow) hostOverheadRow {
 	}
 	if out.Profiles == nil {
 		out.Profiles = []string{}
+	}
+	out.Readings = make([]hostReadingRow, 0, len(r.Readings))
+	for _, x := range r.Readings {
+		out.Readings = append(out.Readings, hostReadingRow{MiB: x.MiB, At: x.At.UTC(), Cause: x.Cause})
 	}
 	return out
 }

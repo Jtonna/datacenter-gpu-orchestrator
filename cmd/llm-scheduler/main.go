@@ -395,6 +395,11 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 			log.Warn("learned memory needs are kept in memory only", "err", err)
 		} else {
 			so.NeedStore = ns
+			if hist.On() {
+				so.HostReadings = func() []history.Event { // host overheads of the release before device counts
+					return hist.Query(history.Query{Types: []string{history.TLearnedNeed}, Text: "host overhead", Limit: history.MaxLimit}).Events
+				}
+			}
 		}
 	}
 	if pl != nil {
