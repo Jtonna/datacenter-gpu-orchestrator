@@ -225,9 +225,10 @@ function availability(q, now) {
   const to = Number(q.get('to')) || now;
   const last = Math.floor((to - 1) / H) * H;
   const first = Number(q.get('from')) ? Math.floor(Number(q.get('from')) / H) * H : last - 23 * H;
-  const nodes = st.agents.filter(a => !group || a.group === group).map(a => {
+  // a removed machine is left out, as the server does
+  const nodes = st.agents.filter(a => a.zone_state !== 'removed' && (!group || a.group === group)).map(a => {
     const m = MACHINES.find(x => mac(x.n) === a.id && x.name === a.name) || { offline: a.zone_state === 'lost' };
-    const codes = m.n ? STRIPS[m.n].split(' ') : fleetStrip(st, a);
+    const codes = (m.n ? STRIPS[m.n].split(' ') : fleetStrip(st, a)) || ['?'];
     const cells = [];
     for (let s = first, i = 0; s <= last; s += H, i++) {
       const [state, busy] = STATE === 'off' ? ['unknown', 0] : CELL[codes[i % codes.length]] || ['unknown', 0];
