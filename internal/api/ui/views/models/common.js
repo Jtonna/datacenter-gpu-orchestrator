@@ -147,14 +147,14 @@ function readyCard(st, inst, model, open, toggle) {
       stat('Last used', serving ? 'now' : ago(inst.last_used, 'not yet')),
       stat('Load took', dur(inst.load_duration)),
       stat('Served', num(inst.requests_served || 0), inst.requests_served === 1 ? 'request' : 'requests'),
-      stat('Memory', gbNum(inst.device_total_mib || 0), 'GB', { title: mib(inst.device_total_mib || 0) + ' on the nodes, from the load log' }),
+      stat('Memory', gbNum(inst.device_total_mib || 0), 'GB', { title: mib(inst.device_total_mib || 0) + ' on the zones, from the load log' }),
       host > 0 ? stat('Host RAM', gbNum(host), 'GB', { title: mib(host) + ' on the machine that runs the scheduler' }) : null),
     (inst.nodes || []).map(n => {
       const name = nodeName(st, n.id), mem = nodeMemory(n);
       const hb = healthBadge(findNode(st, n.id)) || machineBadge(st, findNode(st, n.id));
       if (!mem.total_mib) {
         return h('div.nr', { key: 'mem-' + name }, h('span.mono', name, hb ? [' ', hb] : null), bar([], 1, 'No memory report'),
-          h('span.mono.fig.mut', n.budget_mib ? `– / ${gb(n.budget_mib)}` : DASH), h('span.mut.split', 'No memory was reported for this node'));
+          h('span.mono.fig.mut', n.budget_mib ? `– / ${gb(n.budget_mib)}` : DASH), h('span.mut.split', 'No memory was reported for this zone'));
       }
       return memoryRow(name, mem, n.budget_mib, hb);
     }),
@@ -182,9 +182,9 @@ function loadingCard(st, inst, model, open, toggle) {
   const uploadNote = total == null ? (phase === 'loading' ? 'Loading on this machine' : 'No upload needed')
     : sent != null ? `${bytes(sent)} of ${bytes(total)}` + (rate ? ` · ${num(rate, 0)} MB/s` : '') : `${bytes(total)} to upload`;
   const stepItems = [
-    { label: 'Pre-load check', state: at_('preflight'), note: phase === 'preflight' ? 'Checking free memory on the nodes' : 'Passed' },
+    { label: 'Pre-load check', state: at_('preflight'), note: phase === 'preflight' ? 'Checking free memory on the zones' : 'Passed' },
     { label: 'Start the server', state: at_('launching'), note: phase === 'launching' ? 'Starting' : phase === 'loading' ? 'Running' : '' },
-    { label: workers.length ? 'Upload to the nodes' : 'Load into memory', state: phase === 'loading' ? (stalled != null ? 'fail' : 'now') : '', note: phase === 'loading' ? uploadNote : '' },
+    { label: workers.length ? 'Upload to the zones' : 'Load into memory', state: phase === 'loading' ? (stalled != null ? 'fail' : 'now') : '', note: phase === 'loading' ? uploadNote : '' },
     { label: 'Ready', state: '', note: eta != null && stalled == null ? ['Expected ≈ ', clock(now() + eta * 1000, false)] : 'Not known yet' },
   ];
   const left = stalled != null ? h('span.err-t', `Stalled: nothing new for ${dur(Math.round(stalled))}`)
@@ -199,7 +199,7 @@ function loadingCard(st, inst, model, open, toggle) {
       left: h('span', frac != null ? h('span.pct', Math.round(frac * 100) + '%') : null, h('span.mut', { style: 'font-weight:600' }, frac != null ? ' · ' : '', `${dur(Math.round(elapsed))} elapsed`)),
       mid: left,
       right: deadline ? h('span', 'Gives up ', until(deadline)) : null,
-      foot: [startedAt ? 'Started ' + clock(startedAt) : '', frac != null ? (measured ? 'Measured from the nodes' : 'Estimated from the link speed') : ''],
+      foot: [startedAt ? 'Started ' + clock(startedAt) : '', frac != null ? (measured ? 'Measured from the zones' : 'Estimated from the link speed') : ''],
     })),
     workers.map(w => {
       const node = nodeByAddr(st, w.addr);

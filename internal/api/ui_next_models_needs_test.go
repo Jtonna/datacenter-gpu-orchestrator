@@ -26,6 +26,6 @@ func TestUINextModelsNeeds(t *testing.T) {
 		map[string]any{"name": "models: the Needs column", "route": "#/models", "status": ovStatus(now), "width": 1536,
 			"expect": []string{"Needs", "18.0 GB", "measured", "5.0 GB", "estimated", "Profiles", "Last used"},
 			"has":    []string{"span.mdl-needs[data-col=needs] span.mut"},
-			"titles": []string{"The memory its lightest configuration needs on the nodes", "18,432 MiB measured on a load across 2 nodes"}},
+			"titles": []string{"The memory its lightest configuration needs on the zones", "18,432 MiB measured on a load across 2 zones"}},
 	}})
 }
