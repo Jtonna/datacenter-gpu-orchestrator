@@ -23,8 +23,12 @@ func TestValidName(t *testing.T) {
 			t.Errorf("%q: %v", ok, err)
 		}
 	}
-	for _, bad := range []string{"", ".", "..", "../a.gguf", "..\\a.gguf", "sub/a.gguf", "/etc/a.gguf", `C:\a.gguf`, "C:a.gguf",
-		".trash", ".a.gguf", "a.txt", "a.gguf/..", "a\x00.gguf", "a.gguf:x", "/models/a.gguf"} {
+	// The rule is its own, the same on every OS (the scheduler runs on
+	// Linux; filepath's rules differ): no '/', '\', ':' or NUL anywhere, no
+	// leading dot, ends .gguf after at least one other character.
+	for _, bad := range []string{"", ".", "..", "../a.gguf", "..\\a.gguf", "sub/a.gguf", `sub\a.gguf`, "/etc/a.gguf", `\a.gguf`,
+		`C:\a.gguf`, "C:a.gguf", "a:b.gguf", ":a.gguf", `\\host\share\a.gguf`, `a\.gguf`, "a/", `a\`,
+		".trash", ".a.gguf", "a.txt", ".gguf", "gguf", "a.gguf/..", "a\x00.gguf", "a.gguf:x", "/models/a.gguf"} {
 		if err := ValidName(bad); !errors.Is(err, ErrBadName) {
 			t.Errorf("%q: %v, want ErrBadName", bad, err)
 		}

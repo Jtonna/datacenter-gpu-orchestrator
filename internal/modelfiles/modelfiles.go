@@ -57,17 +57,20 @@ var trashID = regexp.MustCompile(`^[0-9a-f]{12}$`)
 func ValidID(id string) bool { return trashID.MatchString(id) }
 
 // ValidName checks a model file name: one path part, ending .gguf (any
-// case), no leading dot, no separator, no NUL.
+// case), no leading dot, no separator, no NUL. The rule is its own and the
+// same on every OS: it does not use path/filepath, whose idea of a drive or
+// a separator differs between Windows and Linux. Refused: empty; any '/',
+// '\', ':' or NUL; a leading dot (so "." and ".." too); not ending .gguf
+// after at least one other character.
 func ValidName(name string) error {
+	const ext = ".gguf"
 	switch {
-	case name == "", name == ".", name == "..":
-		return fmt.Errorf("%w: %q", ErrBadName, name)
-	case strings.ContainsAny(name, `/\`+"\x00"), strings.HasPrefix(name, "."), filepath.IsAbs(name), filepath.VolumeName(name) != "":
-		return fmt.Errorf("%w: %q must be one file name in the models folder, without a folder and without a leading dot", ErrBadName, name)
-	case !strings.EqualFold(filepath.Ext(name), ".gguf"):
+	case name == "":
+		return fmt.Errorf("%w: empty", ErrBadName)
+	case strings.ContainsAny(name, "/\\:\x00"), strings.HasPrefix(name, "."):
+		return fmt.Errorf("%w: %q must be one file name in the models folder, without a folder, a drive, a colon or a leading dot", ErrBadName, name)
+	case len(name) <= len(ext) || !strings.EqualFold(name[len(name)-len(ext):], ext):
 		return fmt.Errorf("%w: %q does not end in .gguf", ErrBadName, name)
-	case filepath.Base(name) != name:
-		return fmt.Errorf("%w: %q", ErrBadName, name)
 	}
 	return nil
 }
