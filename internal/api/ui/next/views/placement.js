@@ -180,7 +180,7 @@ registerView({
             const mark = !m ? null : left < 0 ? badge('Short ' + gb(-left), 'fail') : m.tight ? badge('Tight', 'load', 'Less than its margin (' + mib(m.margin_mib) + ') would stay free') : badge('Fits', 'use');
             return h('tr', { key: 'z-' + n.id },
               h('td', h('span.mono', zoneName(n.id)), n.local ? h('span.sub', 'Runs Potluck') : null),
-              h('td', n.role ? (n.role === 'host' ? 'Host' : 'Helper') + (n.share ? ' · ' + Math.round(n.share * 100) + '%' : '') : 'Whole model'),
+              h('td', n.role ? (n.role === 'host' ? 'Host' : 'Helper') + (n.share ? ' · ' + Math.round(n.share * 100) + '%' : '') : 'All of it'),
               h('td.r', { title: mib(n.budget_mib) }, gb(n.budget_mib)),
               h('td.r', m ? { title: mib(m.free_now_mib) } : null, m ? gb(m.free_now_mib) : '–'),
               h('td.r', m ? { title: mib(m.will_take_mib) + (m.basis ? ', ' + m.basis : '') } : null, m ? gb(m.will_take_mib) : '–'),
