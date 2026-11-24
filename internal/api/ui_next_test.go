@@ -264,7 +264,7 @@ func TestUINextModelsListAndPanel(t *testing.T) {
 			"page": []string{name, file, "Configurations", profile, "Edit under Profiles", "Open the model page"}, "notOnPage": []string{"Remove now"},
 			// no Unload button in the panel (its "Unload when idle" column, v60, is a heading, not a control)
 			"pageNone": []string{"aside.side button[data-act=unload]"},
-			"pageHas": []string{"aside.side button[data-act=delete][aria-disabled=true]", "aside.side button[data-act=pin][aria-pressed=false]"}},
+			"pageHas":  []string{"aside.side button[data-act=delete][aria-disabled=true]", "aside.side button[data-act=pin][aria-pressed=false]"}},
 		map[string]any{"name": "a model that is not there", "route": "#/models?model=no-such-model.gguf", "status": "fetch",
 			"page": []string{"This model is not in the catalog"}},
 		map[string]any{"name": "the full model page", "route": "#/models/" + key, "status": "fetch", "expect": []string{name}},
