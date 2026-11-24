@@ -6,6 +6,7 @@ What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent
 
 No agent change. No new listening port.
 
+- **Uptime leaves removed machines out.** `GET /api/nodes/uptime`: a removed machine is not in `zones` and its seconds count in no group and not in the fleet.
 - **History by zone group or list.** `GET /api/history?group=<name>` and `node=a,b,c` (ids or names); MCP `query_history` takes `group`.
 - **Actions on a selection of zones.** `POST /api/zone-actions/{pause|unpause|force-unload}` with `nodes` and `comment`; `dry_run` answers what would happen (per zone effect, models that unload and every zone they leave, runs cut) for the confirm dialog. MCP `act_on_zones`.
 - **Last load transfer rate per zone.** `last_load_link` {mb_s, bytes, load_s, at, model} from the newest ready load that sent the zone data (history `loadFinished`); a lower bound, not a link test.

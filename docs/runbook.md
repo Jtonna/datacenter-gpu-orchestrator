@@ -486,6 +486,7 @@ curl -s "$H/api/nodes/availability?node=zone-a&step=day&from=7d"
 
 - `uptime` = up / counted, where up = free + in use + loading and counted = up + lost + set aside. Switched-off time (paused, excluded, removed) is in neither and is given as `off_s`: the owner chose it. Set-aside time counts as down, as in `/api/health`; it is given as `set_aside_s` apart from `lost_s`. Unknown time (Potluck not running) is in neither. `null` when nothing was counted (for example a zone switched off the whole time).
 - A group's figure is its members' seconds summed (weighted by time), not an average of their percentages.
+- A removed machine is left out: it is not in `zones`, and its seconds are in no group, not in `ungrouped` and not in `fleet` (as the counts leave it out).
 - `window`: `from` (the start of the UTC hour `days` ago) to `to` (now), `history_begins_at`, `covered_from` (the later of the two) and `complete` (false while the history is younger than the window: the figure is then over the history there is, from `covered_from`).
 - This is not the `uptime` of `/api/nodes/availability` (reachable over known time, where a paused zone that answers counts up); that field keeps its meaning. `GET /api/groups` carries each group's 7-day figure as `uptime_7d` and the window as `uptime_window`.
 

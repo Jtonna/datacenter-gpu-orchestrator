@@ -7,6 +7,8 @@ import (
 	"strconv"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/availability"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/groups"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/pool"
 )
 
 // GET /api/nodes/uptime?days=7: uptime over the last days (1 to 90,
@@ -53,14 +55,36 @@ func (s *Server) uptimeDoc(ctx context.Context, days int) UptimeDoc {
 	if err != nil {
 		s.log.Warn("uptime: the availability hours could not be read", "err", err)
 	}
+	return sumUptime(w, m, s.groups.Memberships(), s.groups.List(), s.removedZones())
+}
+
+// removedZones is the ids of the removed machines (pool facts).
+func (s *Server) removedZones() map[string]bool {
+	out := map[string]bool{}
+	if s.opts.Pool == nil {
+		return out
+	}
+	for _, f := range s.opts.Pool.Facts() {
+		if f.State == pool.StateRemoved {
+			out[f.ID] = true
+		}
+	}
+	return out
+}
+
+// sumUptime sums the machines' totals per group, ungrouped and for the
+// fleet. A removed machine is left out everywhere (it has no uptime), as
+// the counts leave it out.
+func sumUptime(w availability.Window, m map[string]*availability.MachineTotals, of map[string]string, list []groups.Group, removed map[string]bool) UptimeDoc {
 	doc := UptimeDoc{Window: w, Zones: []ZoneUptime{}, Groups: []GroupUptime{}}
-	of := s.groups.Memberships()
 	byGroup := map[string]*availability.Totals{}
-	list := s.groups.List()
 	for _, g := range list {
 		byGroup[g.Name] = &availability.Totals{}
 	}
 	for _, mt := range m {
+		if removed[mt.ID] {
+			continue
+		}
 		z := ZoneUptime{MachineTotals: *mt, Group: of[mt.ID]}
 		if t := byGroup[z.Group]; t != nil {
 			t.Add(mt.Totals)
