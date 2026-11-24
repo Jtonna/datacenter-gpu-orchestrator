@@ -462,7 +462,8 @@ func TestForward_NoClientCredentialHeaderReachesTheModelServer(t *testing.T) {
 
 // What does leave for the model server, pinned. Besides the request itself,
 // headers a person might take for identifying are passed on as the client
-// sent them, except: the credential headers (ClientCredentialHeaders), the
+// sent them, except: the credential headers (ClientCredentialHeaders),
+// Potluck's own X-Actor, X-Comment and X-Source (PotluckHeaders), the
 // hop-by-hop headers, and the client's own Forwarded and X-Forwarded-*,
 // which the proxy replaces with its own X-Forwarded-For (the address of the
 // TCP connection the client came from), X-Forwarded-Host (the Host the
@@ -470,8 +471,8 @@ func TestForward_NoClientCredentialHeaderReachesTheModelServer(t *testing.T) {
 // release note and the runbook ("What a model server sees").
 func TestForward_WhatTheModelServerSeesIsPinned(t *testing.T) {
 	passed := []string{"User-Agent", "Origin", "Referer", "X-Real-Ip", "Via", "X-Client-Ip", "True-Client-Ip", "Cf-Connecting-Ip",
-		"X-Request-Id", "Accept-Language", "Accept", "Content-Type", "X-Actor", "X-Source", "X-Comment", "X-Some-Custom-Header"}
-	dropped := append([]string{"Forwarded", "Connection", "Te", "Upgrade", "Proxy-Connection", "Keep-Alive"}, ClientCredentialHeaders...)
+		"X-Request-Id", "Accept-Language", "Accept", "Content-Type", "X-Some-Custom-Header"}
+	dropped := append(append([]string{"Forwarded", "Connection", "Te", "Upgrade", "Proxy-Connection", "Keep-Alive"}, ClientCredentialHeaders...), PotluckHeaders...)
 	replaced := []string{"X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto"}
 	got := make(chan http.Header, 1)
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { got <- r.Header.Clone(); fmt.Fprint(w, "{}") }))
@@ -526,6 +527,39 @@ func TestForward_WhatTheModelServerSeesIsPinned(t *testing.T) {
 			if !allowed[k] {
 				t.Errorf("launch key %q: unexpected header %s = %q reached the model server", launchKey, k, h.Values(k))
 			}
+		}
+	}
+}
+
+// Potluck's own headers (X-Actor, X-Comment, X-Source) stay on the request
+// Potluck handles, so the audit and the request log still read them; only
+// the copy sent to the model server goes without them.
+func TestForward_PotluckHeadersStayForPotluck(t *testing.T) {
+	got := make(chan http.Header, 1)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { got <- r.Header.Clone(); fmt.Fprint(w, "{}") }))
+	defer up.Close()
+	after := make(chan http.Header, 1)
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		Forward(w, r, Options{Addr: upstreamAddr(up)})
+		after <- r.Header.Clone() // what Potluck's own code reads after forwarding
+	}))
+	defer s.Close()
+	req, _ := http.NewRequest("POST", s.URL+"/v1/chat/completions", strings.NewReader("{}"))
+	for _, h := range PotluckHeaders {
+		req.Header.Set(h, "set-"+h)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	up1, in := <-got, <-after
+	for _, h := range PotluckHeaders {
+		if up1.Get(h) != "" {
+			t.Errorf("%s reached the model server", h)
+		}
+		if in.Get(h) != "set-"+h {
+			t.Errorf("%s is gone from the request Potluck reads: %q", h, in.Get(h))
 		}
 	}
 }

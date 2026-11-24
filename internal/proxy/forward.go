@@ -208,8 +208,19 @@ var ClientCredentialHeaders = []string{
 	"X-Agent-Key", // a Potluck agent key: for Potluck, not for the model server
 }
 
+// PotluckHeaders are Potluck's own request headers: who made a change, why,
+// and from where (the web UI). Potluck reads them for its audit and request
+// log; the model server has no use for them, so they are not passed on.
+var PotluckHeaders = []string{"X-Actor", "X-Comment", "X-Source"}
+
+// dropClientCredentials removes, from the copy sent to the model server
+// (never the request Potluck reads), the client's credentials and Potluck's
+// own headers.
 func dropClientCredentials(h http.Header) {
 	for _, k := range ClientCredentialHeaders {
+		h.Del(k)
+	}
+	for _, k := range PotluckHeaders {
 		h.Del(k)
 	}
 }
