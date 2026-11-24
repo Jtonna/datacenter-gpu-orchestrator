@@ -1,6 +1,6 @@
 // Settings (the gear's Settings page; no mockup: inferred from the design
-// language, phase 5). Replaces the classic page below /ui/ (the classic file
-// stays at /ui/classic/). The owner's complaint was a page that scrolled far
+// language, phase 5). Replaced the classic page (the classic UI
+// is removed). The owner's complaint was a page that scrolled far
 // with jumbled text; this one shows ONE group of settings at a time:
 //
 //   - the groups (the schema's sections) in a menu at the left of the page,

@@ -377,6 +377,15 @@
    "restart_required": false
   },
   {
+   "key": "default_model_source",
+   "scope": "settings",
+   "section": "agents",
+   "type": "string",
+   "default": "",
+   "description": "The model source a machine made with Create new zone is given when the dialog names none: share:<host>:/<path> (an NFS export the machine mounts), dir:/<path> (a folder on the machine) or push (the weights are sent over the worker connection). Empty (the default): there is none, and creating a zone without a model source is refused. Write it as the new machines reach it.",
+   "restart_required": false
+  },
+  {
    "key": "watchdog_floor_mib",
    "scope": "settings",
    "section": "agents",

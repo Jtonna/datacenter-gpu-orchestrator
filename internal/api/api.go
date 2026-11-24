@@ -322,7 +322,7 @@ func (s *Server) routes() *http.ServeMux {
 	s.logRoutes(m)   // central logging: /api/pool/nodes/{id}/logs, /api/logs (logs.go)
 	m.HandleFunc("GET /api/metrics/activity", s.handleActivity)
 	s.requestRoutes(m) // the request log: /api/requests... (requests.go)
-	s.uiRoutes(m)      // the web UI at /ui/ and the classic one at /ui/classic/ (uifiles.go)
+	s.uiRoutes(m)      // the web UI at /ui/ (uifiles.go)
 	m.HandleFunc("GET /api/status", s.handleStatus)
 	m.HandleFunc("GET /api/history", s.handleHistory)
 	m.HandleFunc("GET /api/history/summary", s.handleHistorySummary)

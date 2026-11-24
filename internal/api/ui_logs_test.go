@@ -23,18 +23,18 @@ func TestUILogsEntryAndLinks(t *testing.T) {
 			t.Errorf("core/logs.js lacks %s", want)
 		}
 	}
-	shell := uiText(t, "core/shell.js")
+	shell := uiText(t, uiNextDir+"core/shell.js")
 	for _, want := range []string{"{ id: 'logs', label: 'Logs', external: true", "!logsOn(state.status)) return null", "target: '_blank'"} {
 		if !strings.Contains(shell, want) {
-			t.Errorf("core/shell.js lacks %s", want)
+			t.Errorf("next/core/shell.js lacks %s", want)
 		}
 	}
 	// every link goes through logsLink, which returns null while logging is off
 	for file, want := range map[string]string{
-		"views/nodes.js":           "logsLink(state.status, ' Logs', nodeQuery(n.id)",
-		"views/models/common.js":   "logsLink(st, 'Logs', profileQuery(inst.profile)",
-		"views/models.js":          "logsLink(st, 'Logs', profileQuery(l.model), from, to",
-		"views/benchmarks/runs.js": "logsLink(state.status, 'Logs', '*', from, to",
+		"views/nodes.js":              "logsLink(state.status, ' Logs', nodeQuery(n.id)",
+		"views/models/common.js":      "logsLink(st, 'Logs', profileQuery(inst.profile)",
+		uiNextDir + "views/models.js": "logsLink(st, 'Logs', profileQuery(l.model), from, to",
+		"views/benchmarks/runs.js":    "logsLink(state.status, 'Logs', '*', from, to",
 	} {
 		text := uiText(t, file)
 		if !strings.Contains(text, want) {

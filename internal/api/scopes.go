@@ -23,14 +23,12 @@ import (
 // else settings.
 var routeScopes = map[string]access.Scope{
 	// always open
-	"/":                   access.Open, // the catch-all: it only answers "no such path"
-	"GET /health":         access.Open,
-	"GET /{$}":            access.Open,
-	"GET /ui":             access.Open,
-	"GET /ui/":            access.Open,
-	"GET /ui/{$}":         access.Open,
-	"GET /ui/classic":     access.Open,
-	"GET /ui/classic/{$}": access.Open,
+	"/":           access.Open, // the catch-all: it only answers "no such path"
+	"GET /health": access.Open,
+	"GET /{$}":    access.Open,
+	"GET /ui":     access.Open,
+	"GET /ui/":    access.Open,
+	"GET /ui/{$}": access.Open,
 
 	// the model API: a key there is checked (unknown, expired, revoked:
 	// refused) but grants nothing yet (07 P7)
