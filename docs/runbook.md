@@ -152,7 +152,7 @@ An active node that gets no load says why in `unplaced` (in `/api/nodes`, in `ag
 | `programs_not_ready` | The agent has not fetched or verified its programs. | Read `programs_error` in the node's `agent` status. |
 | `model_source_unreachable` | The node cannot read the model files. | Check the share mount on the node and the `potluck-share` container. |
 | `no_tier_match` | No tier matches the node. | Add a tier, or fix its match (`platform`, `device`, `hostname`). |
-| `paused` | The node is paused. With `unpause_pending: true`, the unpause reaches the agent with its next heartbeat. | Unpause it. |
+| `paused` | The node is paused. With `unpause_pending: true`, the unpause reaches the agent with its next heartbeat. A plan that queues only because of such a node says "unpause pending: ... the load starts within about 2 s" (its action stays `queue`). | Unpause it. |
 | `silent` | No heartbeat for 10 s from a node that runs a launch. | Wait: it is lost at 20 s or comes back. |
 | `orphan_launch` | The node reports a launch Potluck does not hold. Potluck stops it. | Wait for the next heartbeat. |
 | `bad_floor` | The agent's watchdog floor is larger than half its memory or 16384 MiB. | Reinstall the agent with a sensible `--watchdog-floor-mib`. |

@@ -2,6 +2,12 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: a plan says when an unpause is only pending
+
+No agent change, no new port, no schema change.
+
+- **"Starts within about 2 s".** A plan (and a queued entry's reason) that waits only because a node it needs was unpaused and its agent has not heard it yet says "unpause pending: it was unpaused and its agent is told with its next heartbeat, so the load starts within about 2 s", naming the node. The action stays `queue`; placement is unchanged.
+
 ## Scheduler image: pinned models (models slice 2)
 
 No agent change, no new port. **Schema: one new table, `model_pins`, under a new ledger `model_migrations` (version 1).** `cfg_migrations` does not move.
