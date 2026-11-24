@@ -166,6 +166,14 @@ curl -s -X POST $H/api/load -d '{"model":"gemma","nodes":["ps5-02","ps5-03"]}'
 ```
 
 `nodes` (ids or names the fleet view holds, in device order) places this one load as `force_nodes` would, without changing the profile: as `force_nodes`, the fit check is skipped and a load that can never fit there is refused. The instance shows `pinned_nodes` in `/api/status` (absent on any other instance) and is not reported stale for them; its next load follows the profile again. Refused with 409 (`already loaded or queued`) while the model is loaded, loading, stopping or queued: unload it first. Refused at once with 409 (`chosen zone unusable`) when a chosen zone is not in the fleet view, lost or offline, excluded, paused (also while an unpause is pending), set aside or outside the pool: a chosen-zones load never waits for such a zone, unlike a configured `force_nodes` profile. Audited as `load` with `nodes`. MCP: `plan_load` and `load_model` take `nodes`.
+### Act on many zones at once
+
+```sh
+curl -s -X POST "$H/api/zone-actions/force-unload?dry_run=1" -d '{"nodes":["02:00:00:00:00:01","02:00:00:00:00:02"]}'
+curl -s -X POST $H/api/zone-actions/pause -d '{"nodes":["02:00:00:00:00:01","02:00:00:00:00:02"],"comment":"rack work"}'
+```
+
+Actions: `pause`, `unpause`, `force-unload`. With `dry_run` (body or query) nothing is done: the answer has, per zone, `effect` (plain words), `changes`, the `models` that unload because of it and `runs_cut`; for the whole selection `models` (each with `in_flight`, `host`, every zone it leaves in `zones` and those outside the selection in `outside`), `runs_cut` (each model's runs counted once) and a `summary` sentence. This is what the confirm dialog says. Without `dry_run` a `comment` is required and each zone is acted on as its own route does (one history event and one audit entry per zone); the answer has the plan worked out before acting and a result per zone. MCP: `act_on_zones`.
 
 ### A machine that is off across a restart
 

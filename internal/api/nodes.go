@@ -216,10 +216,20 @@ func (s *Server) nodePause(w http.ResponseWriter, r *http.Request, pause bool) {
 	if !ok {
 		return
 	}
-	prev, err := s.opts.Pool.SetPaused(id, pause)
+	aid, err := s.pauseZone(r, id, pause, c)
 	if err != nil {
 		nodeErr(w, id, err)
 		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"node": id, "paused": pause, "audit_id": aid})
+}
+
+// pauseZone pauses or unpauses one zone: history event, audit entry. The
+// single-zone route and the selection route (zoneactions.go) both use it.
+func (s *Server) pauseZone(r *http.Request, id string, pause bool, c string) (int64, error) {
+	prev, err := s.opts.Pool.SetPaused(id, pause)
+	if err != nil {
+		return 0, err
 	}
 	action := "pause"
 	if !pause {
@@ -229,7 +239,7 @@ func (s *Server) nodePause(w http.ResponseWriter, r *http.Request, pause bool) {
 	s.opts.Pool.Record(id, "Node "+id+" was "+action+"d: "+c, map[string]any{"action": action, "comment": c})
 	aid := s.auditNode(r, action, id, c, map[string]any{"paused": prev}, map[string]any{"paused": pause})
 	s.forgetPauseActor(id) // zonefacts.go
-	writeJSON(w, http.StatusOK, map[string]any{"node": id, "paused": pause, "audit_id": aid})
+	return aid, nil
 }
 
 func (s *Server) nodeForceUnload(w http.ResponseWriter, r *http.Request) {
@@ -241,15 +251,24 @@ func (s *Server) nodeForceUnload(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	prof, err := s.sched.ForceUnloadNode(r.Context(), core.NodeID(id))
+	prof, aid, err := s.forceUnloadZone(r, id, c)
 	if err != nil {
 		apiErr(w, http.StatusServiceUnavailable, "%v", err)
 		return
 	}
+	writeJSON(w, http.StatusOK, map[string]any{"node": id, "stopped_profile": prof, "audit_id": aid})
+}
+
+// forceUnloadZone force unloads one zone: history event, audit entry.
+func (s *Server) forceUnloadZone(r *http.Request, id, c string) (string, int64, error) {
+	prof, err := s.sched.ForceUnloadNode(r.Context(), core.NodeID(id))
+	if err != nil {
+		return "", 0, err
+	}
 	s.log.Warn("node force unloaded", "node", id, "profile", prof, "comment", c)
 	s.opts.Pool.Record(id, "Node "+id+" was force unloaded: "+c, map[string]any{"action": "force_unload", "profile": prof, "comment": c})
 	aid := s.auditNode(r, "force_unload", id, c, nil, map[string]any{"stopped_profile": prof})
-	writeJSON(w, http.StatusOK, map[string]any{"node": id, "stopped_profile": prof, "audit_id": aid})
+	return prof, aid, nil
 }
 
 func (s *Server) nodeRemove(w http.ResponseWriter, r *http.Request) {

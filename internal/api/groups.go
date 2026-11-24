@@ -295,6 +295,7 @@ func summarizeGroup(g groups.Group, idx zoneIndex) GroupSummary {
 }
 
 func (s *Server) groupRoutes(m *http.ServeMux) {
+	s.zoneActionRoutes(m) // zoneactions.go
 	m.HandleFunc("GET /api/groups", s.handleGroups)
 	m.HandleFunc("POST /api/groups", s.groupCreate)
 	m.HandleFunc("PATCH /api/groups/{name}", s.groupRename)
