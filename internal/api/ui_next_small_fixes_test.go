@@ -104,3 +104,17 @@ func TestUIActivityTinyUploadHasNoRate(t *testing.T) {
 			"absent": []string{"0.1 MB/s", "0.5 MB/s", "at 0.1", "at 0.5", "n/a MB/s"}},
 	}})
 }
+
+// A card whose zone rows (.nr: name, bar, figure, sentence) do not fit their
+// four columns stacks them, as on a narrow window: beside the docked Models
+// panel the instance card's "No memory was reported for this node" ran out
+// of the card under the panel. Checked in Chromium at 1536 with the panel.
+func TestUINodeRowsStackInANarrowCard(t *testing.T) {
+	css := uiText(t, uiNextDir+"app.css")
+	for _, want := range []string{".card:has(>.nr){container-type:inline-size}",
+		"@container (max-width:800px){.nr{grid-template-columns:minmax(0,1fr) auto}.nr>.bar{grid-column:1/-1;order:3}.nr>:nth-child(4){grid-column:1/-1;order:4}"} {
+		if !strings.Contains(css, want) {
+			t.Errorf("app.css lacks %s", want)
+		}
+	}
+}

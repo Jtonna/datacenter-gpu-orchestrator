@@ -139,6 +139,8 @@ const CATALOG = argv.includes('--catalog');
 const NAMED_ONLY = opt('--named-only', '');
 // --named-only-id <name>: that zone's ID (not its name) is added to no_auto_nodes (auto: false), as a stored id the Tiers page names
 const NAMED_ONLY_ID = opt('--named-only-id', '');
+// --loads: GET /api/history also holds two loadFinished events (a cached load that sent 414 kB, a full upload), for Activity's Loads
+const LOADS = argv.includes('--loads');
 // --no-host-uptime: no agent reports host_uptime_s (the zone panel leaves Uptime out)
 const NO_HOST_UPTIME = argv.includes('--no-host-uptime');
 // --pending: the Create new zone states (see the header)
@@ -435,6 +437,16 @@ const server = http.createServer((req, res) => {
   if (p === '/api/config/settings') { const d = cfgDoc(); return json(res, 200, { revision: d.revision, settings: PENDING ? Object.assign({}, d.settings, { default_model_source: PZ_SOURCE }) : d.settings, settings_set: d.settings_set }); }
   if (p === '/api/config/recovery') { const d = cfgDoc(); return json(res, 200, { revision: d.revision, recovery: d.recovery }); }
   if (p === '/api/config/fleet') { const d = cfgDoc(); return json(res, 200, { revision: d.revision, fleet: d.fleet }); }
+  if (p === '/api/history/summary' && LOADS) return json(res, 200, { events: 3, by_severity: { info: 2, warn: 1 }, loads: { ready: 2, failed: 0, cancelled: 0 }, incidents: [] });
+  if (p === '/api/history' && LOADS) {
+    const ld = [
+      { ts: now - 3 * 60000, seq: 43, type: 'loadFinished', severity: 'info', profile: 'qwen3-14b:16k', nodes: ['ps5-01'], summary: 'qwen3-14b:16k is ready.', data: { outcome: 'ready', load_s: 6.3, bytes: 414000, avg_mb_s: 0.066 } },
+      { ts: now - 9 * 60000, seq: 42, type: 'loadFinished', severity: 'info', profile: 'gemma-4-27b:32k', nodes: ['ps5-02', 'ps5-03'], summary: 'gemma-4-27b:32k is ready.', data: { outcome: 'ready', load_s: 21, bytes: 16500000000, avg_mb_s: 104.6 } },
+    ];
+    if (u.searchParams.get('type') === 'loadFinished') return json(res, 200, { events: ld, total_matching: ld.length });
+    return json(res, 200, { events: [...ld,
+      { ts: now - 12 * 60000, seq: 41, type: 'nodeQuarantined', severity: 'warn', nodes: ['ps5-05'], summary: 'Node ps5-05 was quarantined for 18m0s (level 1): preflight failed.', data: { for_s: 1080, level: 1 } }], total_matching: 3 });
+  }
   if (p === '/api/history') return json(res, 200, { events: [
     { ts: now - 12 * 60000, seq: 41, type: 'nodeQuarantined', severity: 'warn', nodes: ['ps5-05'], summary: 'Node ps5-05 was quarantined for 18m0s (level 1): preflight failed.', data: { for_s: 1080, level: 1 } },
     { ts: now - 54 * 60000, seq: 40, type: 'nodeLost', severity: 'error', nodes: ['ps5-07'], summary: 'Node ps5-07 was lost.', data: {} },

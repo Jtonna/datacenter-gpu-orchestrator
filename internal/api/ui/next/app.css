@@ -312,6 +312,10 @@ tr.canc td{color:var(--quiet)}
 /* node row: name | bar | figure | detail */
 .nr{display:grid;grid-template-columns:150px minmax(140px,1fr) 190px minmax(220px,auto);gap:6px 18px;align-items:center;padding:9px var(--pad-panel);border-top:1px solid var(--line)}
 .nr>.mono:first-child{font-weight:500}
+/* a card narrower than the four columns need (about 790 px: beside the docked
+   Models panel) stacks its rows as on a narrow window, so nothing runs out of the card */
+.card:has(>.nr){container-type:inline-size}
+@container (max-width:800px){.nr{grid-template-columns:minmax(0,1fr) auto}.nr>.bar{grid-column:1/-1;order:3}.nr>:nth-child(4){grid-column:1/-1;order:4}.nr .fig{text-align:right}}
 .nr .fig{text-align:right}
 @media(max-width:860px){.nr{grid-template-columns:1fr auto}.nr>.bar{grid-column:1/-1;order:3}.nr>:nth-child(4){grid-column:1/-1;order:4}.nr .fig{text-align:right}}
 /* progress with a headline */
