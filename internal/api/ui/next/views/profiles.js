@@ -277,7 +277,6 @@ registerView({
       const [label, kind, why] = verdict(plan);
       const inst = ((state.status && state.status.instances) || []).find(i => i.profile === id);
       const force = e.force_nodes || [];
-      const needWord = e.needs_mib_configured ? 'set by hand' : e.needs_measured ? 'measured' : 'estimated';
       return [
         e.description ? h('p.prf-desc', { key: 'desc' }, e.description) : null,
         h('section.prf-part', { key: 'facts' }, facts([
@@ -286,7 +285,8 @@ registerView({
           e.kind === 'command' ? ['Kind', 'command'] : ['Context', e.ctx ? ctx(e.ctx) : '–'],
           (e.parallel || 1) > 1 ? ['Parallel slots', String(e.parallel)] : null,
           (e.aliases || []).length ? ['Aliases', e.aliases.join(', ')] : null,
-          e.needs_mib ? ['Memory need', h('span', { title: plainBasis(e.needs_basis) + ' · ' + mib(e.needs_mib) }, gb(e.needs_mib) + ' · ' + needWord)] : null,
+          e.needs_mib ? ['Memory need', h('span', { title: mib(e.needs_mib) + (e.needs_basis ? ' · ' + e.needs_basis : '') }, gb(e.needs_mib))] : null,
+          e.needs_mib && e.needs_basis ? ['Worked out', h('span', { title: e.needs_basis }, plainBasis(e.needs_basis))] : null,
           ['Generated', e.generated ? 'yes, for benchmarks' : 'no, made by hand'],
         ])),
         h('section.prf-part', { key: 'placement' }, h('h3', 'Placement'),

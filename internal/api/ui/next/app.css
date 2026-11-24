@@ -1026,7 +1026,7 @@ table.runs{width:100%;border-collapse:collapse}
    row per profile (name with its description under it, model, context,
    zones, the plan's pill), the pager as the foot. The placements live in
    the docked side panel. The editor is its own page (.prf-editor). */
-.prf{display:flex;flex-direction:column;min-width:0}
+.prf{display:flex;flex-direction:column;min-width:0;container-type:inline-size}
 .prf-bar{display:flex;align-items:center;flex-wrap:wrap;gap:10px 12px;padding:10px var(--pad-panel);border-bottom:1px solid var(--line)}
 .prf-bar .sx{flex:1 1 280px;max-width:460px}
 .prf-count{margin-left:auto;font-size:12.5px;font-weight:600}
@@ -1038,6 +1038,13 @@ table.runs{width:100%;border-collapse:collapse}
 .prf-tbl th:nth-child(4){width:120px}
 .prf-tbl th:nth-child(5){width:150px}
 .prf-tbl td{vertical-align:middle}
+@container (max-width:720px){
+  .prf-tbl{min-width:0}
+  .prf-tbl th:nth-child(2),.prf-tbl td:nth-child(2){display:none}
+  .prf-tbl th:nth-child(3){width:64px}
+  .prf-tbl th:nth-child(4){width:108px}
+  .prf-tbl th:nth-child(5){width:146px}
+}
 .prf-tbl tr.sel td{background:var(--accent-tint)}
 .prf-tbl tr.sel td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
 .prf-name{min-width:0}
