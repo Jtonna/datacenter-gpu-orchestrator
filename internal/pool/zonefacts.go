@@ -30,6 +30,11 @@ type ZoneFacts struct {
 	Next      string   `json:"next,omitempty"`
 	// Group is the zone group the node is in (absent when in none).
 	Group string `json:"group,omitempty"`
+	// ZoneState is the state the zone is counted in (free, in_use,
+	// loading, lost, set_aside, off; removed for a removed one, which is
+	// not counted): the same classification as the Zones row of
+	// /api/health and the counts of GET /api/nodes.
+	ZoneState string `json:"zone_state,omitempty"`
 }
 
 // MemberFacts is a node's part in an instance: its role (host runs

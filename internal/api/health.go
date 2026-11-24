@@ -23,7 +23,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/availability"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/diskstat"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/pool"
@@ -420,36 +419,11 @@ func judgeZones(st *scheduler.Status, facts []pool.NodeFacts, fresh bool, at tim
 		row.State, row.Text = HealthUnknown, "Status not read yet"
 		return row
 	}
-	removed := map[string]bool{}
-	for _, f := range facts {
-		if f.State == pool.StateRemoved {
-			removed[f.ID] = true
-		}
-	}
-	if st == nil {
-		st = &scheduler.Status{}
-	}
-	var total, lost, setAside, off int64
-	downNames := []string{}
-	for _, smp := range availability.Classify(st, facts) {
-		if smp.Removed || removed[smp.Node] {
-			continue
-		}
-		total++
-		switch smp.State {
-		case availability.Lost:
-			lost++
-			downNames = append(downNames, smp.Name)
-		case availability.SetAside:
-			setAside++
-			downNames = append(downNames, smp.Name)
-		case availability.Off:
-			off++
-		}
-	}
-	down := lost + setAside
+	c, _, downNames := zoneCountsOf(st, facts) // counts.go: the counts GET /api/nodes answers too
+	total, down := int64(c.Total), int64(c.Down)
 	row.Count = down
-	row.Facts = map[string]any{"total": total, "reachable": total - down, "down": down, "lost": lost, "set_aside": setAside, "off": off,
+	row.Facts = map[string]any{"total": total, "reachable": int64(c.Reachable), "down": down, "lost": int64(c.Lost), "set_aside": int64(c.SetAside),
+		"off": int64(c.Off), "up": int64(c.Up), "in_use": int64(c.InUse), "free": int64(c.Free), "loading": int64(c.Loading),
 		"down_names": downNames, "status_fresh": fresh}
 	if !fresh && !at.IsZero() && at.Unix() > 0 {
 		row.Facts["status_at"] = isoTime(at)

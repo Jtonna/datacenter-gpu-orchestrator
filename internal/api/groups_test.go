@@ -255,3 +255,50 @@ func TestGroups_Summary(t *testing.T) {
 		t.Fatalf("models %+v accepting %q", g.Models, g.Accepting)
 	}
 }
+
+// One set of counts: GET /api/nodes answers the counts the Zones row of
+// /api/health has, and each zone the state it was counted in.
+func TestZoneCounts_NodesAndHealthAgree(t *testing.T) {
+	e, p, _ := groupsEnv(t)
+	p.SetPaused("02:00:00:00:00:02", true)
+	var feed struct {
+		Counts ZoneCounts `json:"counts"`
+		Nodes  []struct {
+			ID        string `json:"id"`
+			ZoneState string `json:"zone_state"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(body(t, e.get("/api/nodes"))), &feed); err != nil {
+		t.Fatal(err)
+	}
+	var h struct {
+		Rows []struct {
+			ID    string         `json:"id"`
+			Facts map[string]any `json:"facts"`
+		} `json:"rows"`
+	}
+	json.Unmarshal([]byte(body(t, e.get("/api/health"))), &h)
+	var zones map[string]any
+	for _, r := range h.Rows {
+		if r.ID == "zones" {
+			zones = r.Facts
+		}
+	}
+	c := feed.Counts
+	if c.Total != 4 || c.Off != 1 || c.Up != 3 || c.Reachable != 4 || c.Down != 0 { // three agents and the test scheduler's own machine (in its view, not a pool node here)
+		t.Fatalf("counts %+v", c)
+	}
+	for k, v := range map[string]int{"total": c.Total, "reachable": c.Reachable, "up": c.Up, "down": c.Down, "lost": c.Lost,
+		"set_aside": c.SetAside, "off": c.Off, "in_use": c.InUse, "free": c.Free, "loading": c.Loading} {
+		if f, _ := zones[k].(float64); int(f) != v {
+			t.Errorf("health %s = %v, nodes %d", k, zones[k], v)
+		}
+	}
+	states := map[string]string{}
+	for _, n := range feed.Nodes {
+		states[n.ID] = n.ZoneState
+	}
+	if states["02:00:00:00:00:02"] != "off" || states["02:00:00:00:00:01"] != "free" {
+		t.Fatalf("zone states %v", states)
+	}
+}

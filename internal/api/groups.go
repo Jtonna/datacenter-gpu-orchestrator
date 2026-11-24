@@ -49,12 +49,14 @@ const (
 )
 
 // ZoneCounts are the zones by state, as the health Zones row counts them
-// (availability.Classify; removed zones are left out): down is lost plus
-// set aside; reachable is every zone that is not down, switched-off ones
-// included.
+// (availability.Classify; removed zones are left out; counts.go): down is
+// lost plus set aside; reachable is every zone that is not down,
+// switched-off ones included; up is free plus in use plus loading (that
+// is, reachable less off).
 type ZoneCounts struct {
 	Total     int `json:"total"`
 	Reachable int `json:"reachable"`
+	Up        int `json:"up"`
 	Down      int `json:"down"`
 	Lost      int `json:"lost"`
 	SetAside  int `json:"set_aside"`
@@ -83,6 +85,7 @@ func (c *ZoneCounts) add(state availability.State) {
 		c.Free++
 	}
 	c.Reachable = c.Total - c.Down
+	c.Up = c.Free + c.InUse + c.Loading
 }
 
 // GroupMemory sums the members' memory as the scheduler's view has it.

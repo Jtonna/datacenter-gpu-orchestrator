@@ -495,6 +495,10 @@ curl -s "$H/api/nodes/availability?node=zone-a&step=day&from=7d"
 - `set_aside`: why the node is quarantined: `reason` (`preflight_failed`, `agent_unreachable`, `worker_hung`, `node_lost`), `message`, the load it happened in (`profile`), `since`, `until` and `level`. The same reason is in `quarantines[]` and in `view.nodes[].quarantine_reason` of `/api/status`.
 - `paused_at`/`paused_actor` and `excluded_at`/`excluded_actor`: who switched the node off and when, read from the audit log (the newest pause; the newest configuration change that added the matching `exclude_nodes` entry). Absent when the audit log does not have it.
 - `free_at`, `free_in_s`, `free_basis` and `next` for a node that is claimed or settling: `settling` (the settle end), `fetching` (now), `stopping` (the victim stops: now plus the node's settle), `draining` (no time: the victim's requests are still running) or `claimed` (now). `view.nodes[]` has `free_at` and `free_basis`.
+- `group`: the zone group the node is in (section D, "Zone groups"); absent when in none.
+- `zone_state`: the state the zone is counted in: `free`, `in_use`, `loading`, `lost`, `set_aside`, `off` (paused or excluded), or `removed` (not counted).
+
+`GET /api/nodes` also answers `counts`: `total` (removed zones left out), `reachable` (total less down; switched-off zones are reachable), `up` (free + in use + loading, that is reachable less off), `down` (lost + set aside), `lost`, `set_aside`, `off`, `in_use`, `free`, `loading`. The Zones row of `/api/health` has the same figures in its `facts`, from the same count, so a page heading and the health popup cannot disagree: "8 of 8 reachable" there is `reachable` of `total`; "7 up · 1 off" is `up` and `off`.
 
 ### System health
 
