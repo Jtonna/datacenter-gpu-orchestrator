@@ -18,7 +18,7 @@ func loadEvent(ts int64, profile, outcome string, loadS float64, detail any) his
 func TestLoadLinks_NewestReadyLoad(t *testing.T) {
 	ll := &loadLinks{byName: map[string]loadLinkAt{}}
 	ll.add(loadEvent(2000, "gemma", "ready", 10, []map[string]any{{"node": "zone-1", "bytes": int64(120e6)}, {"node": "zone-2", "bytes": int64(1000)}}))
-	ll.add(loadEvent(1000, "old", "ready", 1, []map[string]any{{"node": "zone-1", "bytes": int64(500e6)}}))  // older
+	ll.add(loadEvent(1000, "old", "ready", 1, []map[string]any{{"node": "zone-1", "bytes": int64(500e6)}}))   // older
 	ll.add(loadEvent(3000, "qwen", "failed", 1, []map[string]any{{"node": "zone-1", "bytes": int64(500e6)}})) // failed
 	// The form read back from a history file.
 	var detail any
