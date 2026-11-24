@@ -1166,7 +1166,8 @@ table.runs{width:100%;border-collapse:collapse}
   .mcp-tbl th:nth-child(1){width:34%}
   .mcp-tbl th:nth-child(4){width:96px}
   .mcp-tbl th:nth-child(6){width:128px}
-  .mcp-tbl .c-go{width:34px}
+  .mcp-tbl .c-go{width:44px}
+  .mcp-tbl td.c-go{overflow:visible;text-overflow:clip}
   .mcp-tbl .go .tx{display:none}
   .mcp-tbl td.nm>span:first-child{max-width:100%}
   .mcp-tbl td.nm .ktag{display:none}
