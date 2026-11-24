@@ -136,6 +136,12 @@ The node must accept TCP `50060` and `50052` from Potluck. The script adds ufw r
 
 Check: `curl -s $H/api/nodes | jq '.nodes[] | {name, state, placeable, unplaced}'`. A new node shows `state: active` within a few seconds.
 
+### Which tier a zone is in
+
+Every zone in `/api/nodes` and in `agents` of `/api/status` carries `tier`: the tier the scheduler matched it to. It has `index` (1-based position in the tier list), `priority`, `rule` (the match fields as stored, `{}` for none), `headroom_mib`, `shared_memory`, `link_mb_s` and `settle`. A zone that fits no tier has no `tier` and `tier_reason: "no tier matches"` (and `unplaced: no_tier_match`). A removed zone has neither. `GET /api/config/tiers` lists, next to `tiers`, `tier_zones`: one entry per tier with its `index`, its `zones` now (`id`, `name`; active and lost zones and the local node) and `never_reached: true` when a tier above it has an empty match. The configuration refuses to store an empty match (validation), so on a stored configuration `never_reached` is false; the field guards the page against one all the same. A catch-all such as `hostname: "*"` has the same effect but is not flagged.
+
+Check: `curl -s $H/api/nodes | jq '.nodes[] | {name, tier: .tier.index, tier_reason}'`.
+
 ### Why a node gets no load
 
 An active node that gets no load says why in `unplaced` (in `/api/nodes`, in `agents` and `view.nodes` of `/api/status`, and in the MCP status), with `unplaced_message`:
@@ -339,6 +345,19 @@ A profile with `host: node` adds what its host process takes on the host node on
 - To plan every host with the setting again without losing the figures: `curl -s -X PATCH $H/api/config/settings -H 'X-Comment: host overhead from the setting' -d '{"host_overhead_setting_only":true}'`; false uses them again.
 - They live in `needs_host_by_count` (ledger `needs_host_count_migrations` v1). The table of the release before device counts, `needs_host_overhead` (ledger `needs_host_migrations` v1), is left at version 1 and receives the one-device figure in force, so that release, after a rollback, opens the database and plans every host with the one-device figure, as it did. A reading it makes meanwhile is taken in at the next start of this release as a one-device reading, by the keep-the-higher rule (that release does not record the device count). Images before host overhead ignore both tables.
 - The first start of this release copies each row of the release before as the one-device figure, and once its machine is known reads its readings back from the event history (the `learnedNeed` events with `host_overhead_mib` for that shape, machine and one device): the figure in force becomes the highest of them, with a history line "Kept the higher of the readings of the host overhead on <machine> …: <higher> MiB, not <latest> MiB." A split host measured by that release has no row of its own: it plans with the setting until its own split-host load measures it.
+
+### The per-device overhead, measured
+
+`device_overhead_mib` (default 600) is what one device of a placement holds beyond the estimator's share of the weights and KV cache and the compute buffer that grows with the context. It is added only to an estimated need; a measured need already holds it. A figure is kept per shape, node and device count, and never used across device counts.
+
+- The reading: on every worker node of a ready load (never the node that hosts it), once per load, one full `free_average_window` after ready: what the node gave up for the load (its free figure when the load was placed less its average free figure now) less its share of the estimate and the compute buffer. It is never below the log's own part (what the load log put on that node less the same two), which no memory noise can lower. The history has a `learnedNeed` event with `device_overhead_mib`.
+- No reading is taken from a configured `needs_mib`, a command profile, a model with a sliding window (its estimate is far off), a load whose log does not account for every node, or while a node's latest and average free figures differ by more than 128 MiB (it waits for the node to settle). A reading below 0 or above 4096 MiB is not used.
+- Keep the higher, as for the host overhead. A figure from another llama build only raises the setting; one from a model file of another size is not used.
+- Where it is used: where that shape's need on that device count is an estimate, on that node: the placer's per-node cost, the expected shares, and the plan's `memory` rows, which show `device_overhead_mib`, `device_overhead_source` (`setting` or `measured`) and `device_overhead_measured_at` for an estimated need.
+- What the shape key leaves to replace: the same load stores the shape's own measured need, and a shape with a measured need plans from it (no per-device overhead at all). So a stored figure normally changes no plan; `used` in `GET /api/needs` is false while the shape plans from its own measurement. Moving a measured need to another device count keeps `device_overhead_mib` (a measurement is never used across counts).
+- `curl -s $H/api/needs` lists them under `device_overheads` (the host overhead row's fields, with `log_part_mib` for the log's part), with `device_overhead_setting_mib` and `device_overhead_setting_only`. Forgetting the shape forgets them.
+- To plan with the setting again without losing the figures: `curl -s -X PATCH $H/api/config/settings -H 'X-Comment: per-device overhead from the setting' -d '{"device_overhead_setting_only":true}'`; null uses them again.
+- They live in `needs_device_overhead` (ledger `needs_device_migrations` v1). Earlier images never look at it and open the database as before.
 
 Rolling back to a release before shape keys (0.1.5 and earlier) keeps the measurements: the older release reads its own table, which is left in place and also receives every new measurement under the profile that made it. It sees, for each profile, the highest figure of that profile's shape over every device count, written when that profile last measured; a profile whose shape was measured only by another profile falls back to its estimate until it loads once. Rolling forward again reads what the older release wrote; the higher figure wins.
 

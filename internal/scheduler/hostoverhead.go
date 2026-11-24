@@ -402,16 +402,23 @@ func (c *schedCore) hostOverheadRows() []HostOverheadRow {
 	for name, p := range c.cfg.Profiles {
 		users[shapeOf(p)] = append(users[shapeOf(p)], name)
 	}
+	usersOf := func(k hostKey) []string {
+		out := []string{}
+		for _, name := range users[k.shape] {
+			if c.usesHostRow(c.cfg.Profiles[name], k) {
+				out = append(out, name)
+			}
+		}
+		slices.Sort(out)
+		return out
+	}
 	setting := max(c.cfg.Defaults.HostOverheadMiB, 0)
 	out := []HostOverheadRow{}
 	for k, e := range c.hostOHs {
 		r := HostOverheadRow{Shape: k.shape, Node: k.node, NodeName: c.nodeName(k.node), Devices: k.devices, MiB: e.MiB, LogHostMiB: e.LogHostMiB,
 			MeasuredBy: e.Profile, MeasuredAt: e.MeasuredAt, Release: e.Release, LlamaBuild: e.LlamaBuild, Cause: e.Cause, Restored: e.restored,
 			Used:     !c.cfg.Defaults.HostOverheadSettingOnly && (!e.restored || c.buildsAgree(e.LlamaBuild) || e.MiB > setting),
-			Readings: slices.Clone(e.Readings), Profiles: slices.Sorted(slices.Values(users[k.shape]))}
-		if r.Profiles == nil {
-			r.Profiles = []string{}
-		}
+			Readings: slices.Clone(e.Readings), Profiles: usersOf(k)}
 		if r.Readings == nil {
 			r.Readings = []needstore.HostReading{}
 		}
@@ -427,4 +434,15 @@ func (c *schedCore) hostOverheadRows() []HostOverheadRow {
 		return a.Devices - b.Devices
 	})
 	return out
+}
+
+// usesHostRow: p (of the row's shape) can plan with the row of k. A profile
+// with forced nodes is hosted on its first one, on as many devices as it
+// forces; one without forced nodes may be placed on any node and count.
+func (c *schedCore) usesHostRow(p *core.Profile, k hostKey) bool {
+	if len(p.ForceNodes) == 0 {
+		return true
+	}
+	first := p.ForceNodes[0]
+	return len(p.ForceNodes) == k.devices && (first == string(k.node) || first == c.nodeName(k.node))
 }

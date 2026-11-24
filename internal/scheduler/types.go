@@ -338,8 +338,12 @@ type NodeStatus struct {
 	Online   bool
 	Addr     string
 	Priority int
-	Eligible bool // ignoring the profile-specific rules (allow_tiers, min_share)
-	Excluded bool // kept out of the pool by exclude_nodes; never eligible
+	// TierIndex is the 1-based position of the tier the node view matched
+	// (core.Node.TierIndex); not shown in the status (the Tiers page reads
+	// GET /api/config/tiers tier_zones).
+	TierIndex int  `view:"-"`
+	Eligible  bool // ignoring the profile-specific rules (allow_tiers, min_share)
+	Excluded  bool // kept out of the pool by exclude_nodes; never eligible
 	// ExcludedBy is the exclude_nodes entry that matches the node ("" when
 	// not excluded).
 	ExcludedBy string
@@ -600,6 +604,13 @@ type PlanMemoryNode struct {
 	// which figure HostOverheadMiB is (as PlanReport's); empty elsewhere.
 	HostOverheadSource     string    `view:"omitempty"`
 	HostOverheadMeasuredAt time.Time `view:"omitempty"`
+	// DeviceOverheadMiB is, for an estimated need, the per-device overhead
+	// in WillTakeMiB on this node (device_overhead_mib, or the figure
+	// measured on this node for this shape and device count), with its
+	// source and date; zero and empty for a measured need.
+	DeviceOverheadMiB        int       `view:"omitempty"`
+	DeviceOverheadSource     string    `view:"omitempty"`
+	DeviceOverheadMeasuredAt time.Time `view:"omitempty"`
 	// SpareMiB is AvailableMiB - WillTakeMiB: what the node keeps beyond
 	// the load before the margin. Tight: the node holds the load without
 	// its margin only (0 <= spare < margin; tight.go), short of the margin

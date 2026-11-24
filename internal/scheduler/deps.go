@@ -47,7 +47,7 @@ type NeedInfo struct {
 	// placement holds on top of its share of Need, which grows with the
 	// context (estimate.ComputeMiB); defaults.device_overhead_mib is the
 	// fixed part. 0 for a configured need. It is counted once per device
-	// (deviceCost), never spread over the split.
+	// (deviceCostOn), never spread over the split.
 	DeviceMiB int
 
 	// Set by the core (schedCore.need), not by a NeedProvider: where Need

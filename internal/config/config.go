@@ -281,6 +281,11 @@ type Defaults struct {
 	// anonymous memory (counted in MemAvailable, watched by the watchdog)
 	// instead of pages mapped from the share. Off by default until measured.
 	HostNoMmap bool
+	// DeviceOverheadSettingOnly plans every estimated need with
+	// DeviceOverheadMiB per device, ignoring the per-device overhead measured
+	// per shape, node and device count (the measurements are kept). Off by
+	// default: a measured figure is used once there is one.
+	DeviceOverheadSettingOnly bool
 }
 
 // Values of defaults.membership. MembershipFleet is the legacy mode, kept

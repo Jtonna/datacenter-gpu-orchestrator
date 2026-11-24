@@ -20,6 +20,9 @@ func (c *schedCore) nextDeadline() (time.Time, bool) {
 		if at := c.hostSettleAt(in); !at.IsZero() {
 			add(at)
 		}
+		if at := c.deviceSettleAt(in); !at.IsZero() { // deviceoverhead.go
+			add(at)
+		}
 	}
 
 	// Queue clocks (they run only while no instance is starting).

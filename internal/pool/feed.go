@@ -31,6 +31,9 @@ type LocalFacts struct {
 	UnplacedMessage      string           `json:"unplaced_message,omitempty"`
 	HostUptimeS          *float64         `json:"host_uptime_s,omitempty"`
 	BootID               string           `json:"boot_id,omitempty"`
+	// Tier: the tier the local node was matched to (zonetier.go); the
+	// local node is in the view only when it matches one.
+	Tier *ZoneTier `json:"tier,omitempty"`
 	// ZoneFacts: as for an agent node (zonefacts.go).
 	ZoneFacts
 }
@@ -71,7 +74,7 @@ func (p *Pool) Local() (LocalFacts, bool) {
 		for _, n := range p.nodes {
 			if n.Local {
 				f = LocalFacts{ID: string(n.ID), Name: n.Hostname, State: StateActive, Release: p.o.PotluckRelease, Local: true,
-					Placeable: !n.Paused, Capabilities: []string{}}
+					Placeable: !n.Paused, Capabilities: []string{}, Tier: TierFacts(cfg, n.TierIndex)}
 				if f.Name == "" {
 					f.Name = f.ID
 				}

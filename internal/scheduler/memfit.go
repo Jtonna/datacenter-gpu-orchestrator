@@ -157,17 +157,6 @@ func (c *schedCore) effectiveNeed(p *core.Profile, base NeedInfo) NeedInfo {
 	return c.withLearned(p, info, base) // needcount.go: by device count
 }
 
-// deviceCost is what every device of a placement holds beyond its share of
-// an estimated need: the fixed defaults.device_overhead_mib plus the compute
-// buffer that grows with the context (NeedInfo.DeviceMiB). A measured need
-// (configured, learned or restored) already includes it: 0.
-func (c *schedCore) deviceCost(info NeedInfo) int {
-	if info.Need.Measured {
-		return 0
-	}
-	return max(c.cfg.Defaults.DeviceOverheadMiB, 0) + max(info.DeviceMiB, 0)
-}
-
 // needBasis is the plain-words basis of a need for messages and plans.
 func (c *schedCore) needBasis(info NeedInfo) string {
 	if info.FromServer && (info.Source == NeedLearned || info.Source == NeedRestored) {
@@ -462,7 +451,7 @@ func (s nodeShort) text() string {
 //
 //	share = need x fraction x (1 + split_skew_margin) + device cost
 //
-// the device cost (deviceCost) being what every device holds beyond its share
+// the device cost (deviceCostOn) being what every device holds beyond its share
 // of an estimated need, as in the placer's rule; 0 for a measured need.
 // where fraction is the node's share of the split the child gets
 // (instance.SplitFractions). A node whose share was measured by a load this
@@ -484,7 +473,10 @@ func (c *schedCore) sharedShortfalls(p *core.Profile, info NeedInfo, pl core.Pla
 	}
 	skew := c.cfg.Defaults.SplitSkewMargin
 	need := info.Need.WithMargin()
-	dev := c.deviceCost(info)
+	devs := make([]int, len(pl.Nodes)) // deviceoverhead.go: each node's own per-device cost
+	for i, pn := range pl.Nodes {
+		devs[i] = c.deviceCostOn(p, info, pn.ID, len(pl.Nodes))
+	}
 	learned := c.learnedShares(p, pl, fracs, need)
 	for i, pn := range pl.Nodes {
 		n, ok := c.node(pn.ID)
@@ -508,11 +500,11 @@ func (c *schedCore) sharedShortfalls(p *core.Profile, info NeedInfo, pl core.Pla
 			}
 		}
 		if fit == "" {
-			share = int(math.Ceil(float64(need)*fracs[i]*(1+skew)-1e-6)) + dev
+			share = int(math.Ceil(float64(need)*fracs[i]*(1+skew)-1e-6)) + devs[i]
 			fit = fmt.Sprintf("need %d MiB x %s%% of the split x %s skew margin",
 				need, strconv.FormatFloat(math.Round(fracs[i]*1000)/10, 'f', -1, 64), strconv.FormatFloat(1+skew, 'f', -1, 64))
-			if dev > 0 {
-				fit += fmt.Sprintf(" + %d MiB per device", dev)
+			if devs[i] > 0 {
+				fit += fmt.Sprintf(" + %d MiB per device", devs[i])
 			}
 		}
 		if share > usable {
