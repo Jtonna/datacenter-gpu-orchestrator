@@ -16,7 +16,7 @@ import (
 //
 // A request arriving meanwhile queues and loads the model again after it
 // has stopped. The status shows drain and drain_eta_s on the instance;
-// (zones: part 3).
+// for zones: POST /api/zone-actions/drain.
 
 func (s *Server) handleDrain(w http.ResponseWriter, r *http.Request) {
 	model := r.PathValue("model")
@@ -24,7 +24,7 @@ func (s *Server) handleDrain(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case err == nil:
 		s.auditRuntime(r, audit.ActionUnload, model, map[string]any{"drain": true})
-		out := map[string]any{"msg": "draining", "model": model}
+		out := map[string]any{"msg": "draining", "model": model, "next_load": NextLoadMayMove}
 		if eta != nil {
 			out["eta_s"] = *eta
 		}

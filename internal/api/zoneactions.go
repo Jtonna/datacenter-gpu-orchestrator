@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -13,7 +14,14 @@ import (
 
 // Actions on a selection of zones (Zones-Fleet-Selected, Zones-Confirm):
 //
-//	POST /api/zone-actions/{action}   {nodes, comment, dry_run?}   action: pause, unpause, force-unload
+//	POST /api/zone-actions/{action}   {nodes, comment, dry_run?}   action: pause, unpause, force-unload, drain
+//
+// Each action is its own route (scopes.go): pause and unpause need the
+// zones permission, force-unload and drain the models permission.
+//
+// drain is "Wait for the runs, then unload": every model on the zones
+// admits nothing new and unloads once its runs finish (eta_s from the
+// profile's average run length); new requests queue until it loads again.
 //
 // With dry_run (body or ?dry_run=1) nothing is done: the answer says, per
 // zone, what the action would do, which models would unload (and every
@@ -30,6 +38,7 @@ const (
 	ZoneActionPause       = "pause"
 	ZoneActionUnpause     = "unpause"
 	ZoneActionForceUnload = "force-unload"
+	ZoneActionDrain       = "drain"
 )
 
 // ZoneEffect is what an action does to one zone.
@@ -51,6 +60,9 @@ type ModelEffect struct {
 	Host     string   `json:"host,omitempty"` // the zone that runs llama-server, when it is a zone
 	Zones    []string `json:"zones"`          // every zone it leaves, by name
 	Outside  []string `json:"outside"`        // of those, the zones not in the selection
+	// EtaS (drain): seconds until its runs should end; absent when no run
+	// of it has finished yet (unknown) or nothing is in flight.
+	EtaS *float64 `json:"eta_s,omitempty"`
 }
 
 // ZoneActionPlan is the dry-run answer, and the consequences part of a real one.
@@ -60,11 +72,28 @@ type ZoneActionPlan struct {
 	Zones   []ZoneEffect  `json:"zones"`
 	Models  []ModelEffect `json:"models"`
 	RunsCut int           `json:"runs_cut"`
-	Summary string        `json:"summary"`
+	// RunsWait (drain): the runs waited for; EtaS the longest model's ETA.
+	RunsWait int      `json:"runs_wait"`
+	EtaS     *float64 `json:"eta_s,omitempty"`
+	Summary  string   `json:"summary"`
+	// NextLoad (drain): NextLoadMayMove, for the Confirm dialog.
+	NextLoad string `json:"next_load,omitempty"`
 }
 
+// NextLoadMayMove is said with every drain: the load that serves the
+// requests queued meanwhile is placed afresh once the model has stopped
+// and may start on another zone (the drained one may still be releasing
+// its memory; a pin is not kept).
+const NextLoadMayMove = "The next load may start on another zone."
+
 func (s *Server) zoneActionRoutes(m *http.ServeMux) {
-	m.HandleFunc("POST /api/zone-actions/{action}", s.handleZoneAction)
+	act := func(action string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) { s.handleZoneAction(w, r, action) }
+	}
+	m.HandleFunc("POST /api/zone-actions/pause", act(ZoneActionPause))
+	m.HandleFunc("POST /api/zone-actions/unpause", act(ZoneActionUnpause))
+	m.HandleFunc("POST /api/zone-actions/force-unload", act(ZoneActionForceUnload))
+	m.HandleFunc("POST /api/zone-actions/drain", act(ZoneActionDrain))
 }
 
 // planZoneAction works out the consequences of action on ids.
@@ -124,7 +153,8 @@ func planZoneAction(action string, ids []string, st *scheduler.Status, idx zoneI
 			} else {
 				e.Effect = "already takes models: nothing changes"
 			}
-		case ZoneActionForceUnload:
+		case ZoneActionForceUnload, ZoneActionDrain:
+			drain := action == ZoneActionDrain
 			var parts []string
 			for _, i := range touching[id] {
 				in := st.Instances[i]
@@ -134,6 +164,15 @@ func planZoneAction(action string, ids []string, st *scheduler.Status, idx zoneI
 				case counted[i]:
 					parts = append(parts, in.Profile+" unloads (counted with another zone)")
 					continue
+				case drain && in.State == "starting":
+					parts = append(parts, in.Profile+" is loading: a drain refuses it (force unload cancels the load)")
+				case drain && in.State == "stopping":
+					parts = append(parts, in.Profile+" is already stopping")
+				case drain && in.InFlight > 0:
+					parts = append(parts, fmt.Sprintf("%s unloads after its %s%s; new runs queue until it loads again",
+						in.Profile, plural(in.InFlight, "run", "runs"), etaWords(in.RunsEtaS)))
+				case drain:
+					parts = append(parts, in.Profile+" unloads now; nothing in flight")
 				case in.State == "starting":
 					parts = append(parts, "the load of "+in.Profile+" is cancelled")
 				case in.InFlight > 0:
@@ -142,7 +181,9 @@ func planZoneAction(action string, ids []string, st *scheduler.Status, idx zoneI
 					parts = append(parts, in.Profile+" unloads; nothing in flight")
 				}
 				counted[i] = true
-				e.RunsCut += in.InFlight
+				if !drain {
+					e.RunsCut += in.InFlight
+				}
 			}
 			if len(parts) == 0 {
 				parts = append(parts, "nothing loaded: nothing interrupted")
@@ -152,7 +193,7 @@ func planZoneAction(action string, ids []string, st *scheduler.Status, idx zoneI
 		plan.RunsCut += e.RunsCut
 		plan.Zones = append(plan.Zones, e)
 	}
-	if action == ZoneActionForceUnload {
+	if action == ZoneActionForceUnload || action == ZoneActionDrain {
 		var order []int
 		for i := range counted {
 			order = append(order, i)
@@ -161,6 +202,13 @@ func planZoneAction(action string, ids []string, st *scheduler.Status, idx zoneI
 		for _, i := range order {
 			in := st.Instances[i]
 			m := ModelEffect{Profile: in.Profile, State: in.State, InFlight: in.InFlight, Zones: []string{}, Outside: []string{}}
+			if action == ZoneActionDrain && in.State != "starting" {
+				m.EtaS = in.RunsEtaS
+				plan.RunsWait += in.InFlight
+				if m.EtaS != nil && (plan.EtaS == nil || *m.EtaS > *plan.EtaS) {
+					plan.EtaS = m.EtaS
+				}
+			}
 			if in.HostNode != "" {
 				m.Host = name(string(in.HostNode))
 			}
@@ -174,6 +222,10 @@ func planZoneAction(action string, ids []string, st *scheduler.Status, idx zoneI
 		}
 	}
 	plan.Summary = planSummary(plan)
+	if action == ZoneActionDrain && len(plan.Models) > 0 {
+		plan.NextLoad = NextLoadMayMove
+		plan.Summary += " " + NextLoadMayMove
+	}
 	return plan
 }
 
@@ -199,21 +251,33 @@ func planSummary(p ZoneActionPlan) string {
 		outside = append(outside, m.Outside...)
 	}
 	s := fmt.Sprintf("%s unload; %s fail straight away.", plural(len(p.Models), "model", "models"), plural(p.RunsCut, "run", "runs"))
+	if p.Action == ZoneActionDrain {
+		s = fmt.Sprintf("%s unload once their %s finish%s; nothing is cut and new runs queue until they load again.",
+			plural(len(p.Models), "model", "models"), plural(p.RunsWait, "run", "runs"), etaWords(p.EtaS))
+	}
 	if len(outside) > 0 {
 		s += " They also leave " + strings.Join(outside, ", ") + "."
 	}
 	return s
 }
 
-func (s *Server) handleZoneAction(w http.ResponseWriter, r *http.Request) {
-	if !s.agentsOn(w) {
-		return
+// etaWords is " (about 40 s)", " (about 3 min)", or "" when unknown.
+func etaWords(eta *float64) string {
+	if eta == nil {
+		return ""
 	}
-	action := r.PathValue("action")
-	switch action {
-	case ZoneActionPause, ZoneActionUnpause, ZoneActionForceUnload:
+	switch v := *eta; {
+	case v < 1:
+		return " (any moment now)"
+	case v < 90:
+		return fmt.Sprintf(" (about %.0f s)", v)
 	default:
-		apiErr(w, http.StatusNotFound, "no zone action %q (pause, unpause, force-unload)", action)
+		return fmt.Sprintf(" (about %.0f min)", v/60)
+	}
+}
+
+func (s *Server) handleZoneAction(w http.ResponseWriter, r *http.Request, action string) {
+	if !s.agentsOn(w) {
 		return
 	}
 	raw, ok := readBody(w, r)
@@ -254,6 +318,7 @@ func (s *Server) handleZoneAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	results := []map[string]any{}
+	drained := map[string]bool{}
 	for _, id := range b.Nodes {
 		res := map[string]any{"node": id}
 		switch action {
@@ -270,6 +335,31 @@ func (s *Server) handleZoneAction(w http.ResponseWriter, r *http.Request) {
 				res["error"] = err.Error()
 			} else {
 				res["stopped_profile"], res["audit_id"] = prof, aid
+			}
+		case ZoneActionDrain:
+			var profs, errs []string
+			for _, z := range plan.Zones {
+				if z.ID != id {
+					continue
+				}
+				for _, prof := range z.Models {
+					if drained[prof] {
+						continue
+					}
+					drained[prof] = true
+					if _, err := s.sched.Drain(r.Context(), prof); err != nil && !errors.Is(err, scheduler.ErrNotLoaded) {
+						errs = append(errs, err.Error())
+						continue
+					}
+					profs = append(profs, prof)
+				}
+			}
+			res["drained"] = append([]string{}, profs...)
+			if len(errs) > 0 {
+				res["error"] = strings.Join(errs, "; ")
+			}
+			if len(profs) > 0 {
+				res["audit_id"] = s.auditNode(r, "drain", id, b.Comment, nil, map[string]any{"drained": profs})
 			}
 		}
 		results = append(results, res)

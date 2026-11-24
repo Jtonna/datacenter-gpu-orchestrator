@@ -66,7 +66,7 @@ func TestZoneActions_Route(t *testing.T) {
 			t.Fatal("a dry run paused a zone")
 		}
 	}
-	status(t, e.post("/api/zone-actions/pause", `{"nodes":`+ids+`}`), http.StatusBadRequest)         // no comment
+	status(t, e.post("/api/zone-actions/pause", `{"nodes":`+ids+`}`), http.StatusBadRequest)           // no comment
 	status(t, e.post("/api/zone-actions/pause", `{"nodes":["02:00:00:00:00:09"],"comment":"x"}`), 400) // unknown zone
 	status(t, e.post("/api/zone-actions/reboot", `{"nodes":`+ids+`,"comment":"x"}`), http.StatusNotFound)
 	status(t, e.post("/api/zone-actions/pause", `{"nodes":`+ids+`,"comment":"rack work"}`), http.StatusOK)
@@ -94,5 +94,35 @@ func TestZoneActions_Route(t *testing.T) {
 	json.Unmarshal([]byte(status(t, e.post("/api/zone-actions/force-unload?dry_run=1", `{"nodes":`+ids+`}`), 200)), &plan)
 	if plan.RunsCut != 0 || plan.Summary != "Nothing is loaded on the 2 zones: nothing is interrupted." {
 		t.Fatalf("force unload dry run %+v", plan)
+	}
+}
+
+// Drain: the dialog's "Wait for the 2 runs, then unload · About 40 s".
+func TestZoneActions_DrainPlan(t *testing.T) {
+	facts := []pool.NodeFacts{{ID: "a", Name: "ps5-01", State: pool.StateActive}, {ID: "b", Name: "ps5-02", State: pool.StateActive},
+		{ID: "c", Name: "ps5-03", State: pool.StateActive}}
+	eta := 40.0
+	st := &scheduler.Status{Instances: []scheduler.InstanceStatus{
+		{Profile: "gemma", State: "ready", InFlight: 2, RunsEtaS: &eta, Nodes: []scheduler.PlacedNodeStatus{{ID: "a"}, {ID: "b"}}},
+		{Profile: "qwen", State: "ready", Nodes: []scheduler.PlacedNodeStatus{{ID: "c"}}},
+	}}
+	p := planZoneAction(ZoneActionDrain, []string{"a", "c"}, st, indexZones(st, facts))
+	if p.RunsCut != 0 || p.RunsWait != 2 || p.EtaS == nil || *p.EtaS != 40 || len(p.Models) != 2 {
+		t.Fatalf("%+v", p)
+	}
+	if z := p.Zones[0]; z.Effect != "gemma unloads after its 2 runs (about 40 s); new runs queue until it loads again" || z.RunsCut != 0 {
+		t.Fatalf("a %+v", z)
+	}
+	if z := p.Zones[1]; z.Effect != "qwen unloads now; nothing in flight" {
+		t.Fatalf("c %+v", z)
+	}
+	if p.Summary != "2 models unload once their 2 runs finish (about 40 s); nothing is cut and new runs queue until they load again. They also leave ps5-02. The next load may start on another zone." {
+		t.Fatalf("summary %q", p.Summary)
+	}
+	if p.NextLoad != NextLoadMayMove {
+		t.Fatalf("next_load %q", p.NextLoad)
+	}
+	if fp := planZoneAction(ZoneActionPause, []string{"a"}, st, indexZones(st, facts)); fp.NextLoad != "" {
+		t.Fatalf("pause plan says next_load %q", fp.NextLoad)
 	}
 }

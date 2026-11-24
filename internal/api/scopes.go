@@ -86,6 +86,11 @@ var routeScopes = map[string]access.Scope{
 	"GET " + agentproto.PathLogsQuery: access.Observe, agentproto.PathLogsPages: access.Observe,
 	"POST /api/plan":  access.Observe, // what would happen, changes nothing
 	"GET /api/groups": access.Observe, "GET /api/nodes/uptime": access.Observe,
+	"GET /api/zones/pending": access.Observe, "GET /api/zones/pending/{id}": access.Observe,
+
+	// the install script a joining machine fetches with curl, without a key
+	// (pending.go): nothing secret in it, as the agent binary under /api/pool
+	"GET /install.sh": access.Agents, "GET /install/potluck-agent-setup": access.Agents,
 
 	// zones: switch zones on or off
 	"POST /api/nodes/{id}/pause": access.Zones, "POST /api/nodes/{id}/unpause": access.Zones,
@@ -95,12 +100,16 @@ var routeScopes = map[string]access.Scope{
 	"POST /api/groups/{name}/pause": access.Zones, "POST /api/groups/{name}/unpause": access.Zones,
 	"POST /api/groups": access.Zones, "PATCH /api/groups/{name}": access.Zones, "DELETE /api/groups/{name}": access.Zones,
 	"POST /api/groups/{name}/members": access.Zones, "DELETE /api/groups/{name}/members": access.Zones,
+	// a selection of zones, a zone made before its machine
+	"POST /api/zone-actions/pause": access.Zones, "POST /api/zone-actions/unpause": access.Zones,
+	"POST /api/zones/pending": access.Zones, "DELETE /api/zones/pending/{id}": access.Zones,
 
 	// models: load and unload (a benchmark run loads models)
 	"POST /api/load": access.Models, "POST /api/unload": access.Models, "POST /api/models/unload": access.Models,
-	"POST /api/models/drain/{model...}": access.Models, "POST /api/models/undrain/{model...}": access.Models,
 	"POST /api/models/unload/{model...}": access.Models, "GET /unload": access.Models, "POST /unload": access.Models,
 	"POST /api/nodes/{id}/force-unload": access.Models, "POST /api/cache/evict": access.Models,
+	"POST /api/models/drain/{model...}": access.Models, "POST /api/models/undrain/{model...}": access.Models,
+	"POST /api/zone-actions/force-unload": access.Models, "POST /api/zone-actions/drain": access.Models,
 	"POST /api/bench/benchmarks/{id}/run": access.Models, "POST /api/bench/groups/{id}/run": access.Models,
 	"POST /api/bench/suites/{id}/run": access.Models, "POST /api/bench/runs/{id}/cancel": access.Models,
 

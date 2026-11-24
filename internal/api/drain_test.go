@@ -32,7 +32,8 @@ func TestDrain_BusyModelUnloadsAfterItsRun(t *testing.T) {
 		strings.Contains(b, `"pinned_nodes"`) || strings.Contains(b, `"runs_eta_s"`) {
 		t.Fatalf("ordinary status %s", b)
 	}
-	if b := status(t, e.post("/api/models/drain/alpha", ""), 200); !strings.Contains(b, `"msg":"draining"`) {
+	if b := status(t, e.post("/api/models/drain/alpha", ""), 200); !strings.Contains(b, `"msg":"draining"`) ||
+		!strings.Contains(b, `"next_load":"`+NextLoadMayMove+`"`) {
 		t.Fatal(b)
 	}
 	if b := body(t, e.get("/api/status")); !strings.Contains(b, `"drain":true`) || !strings.Contains(b, `"state":"draining"`) {

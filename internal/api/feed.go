@@ -108,7 +108,7 @@ func (s *Server) handleNodeFeed(w http.ResponseWriter, r *http.Request) {
 	var plain any
 	json.Unmarshal(b, &plain)
 	stripAges(plain)
-	canon, _ := json.Marshal(plain)                               // map keys are sorted: a stable form
+	canon, _ := json.Marshal(plain) // map keys are sorted: a stable form
 	seq := s.feed.next(sha256.Sum256(canon), s.start.UnixMilli()) // over the unsorted list: the order asked for is not a change
 	if order != "" {
 		if order == "attention" {

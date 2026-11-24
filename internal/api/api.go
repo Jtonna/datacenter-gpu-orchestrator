@@ -215,8 +215,8 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 	s.startAudit()
 	s.startAvailability() // availability.go
 	s.startHealth()       // health.go
-	s.startKeyExpiry()    // keyexpiry.go
 	s.startLoadLinks()    // linkspeed.go
+	s.startKeyExpiry()    // keyexpiry.go
 	if o.Audit != nil {
 		s.SetAuditHook(s.recorderHook(o.Audit)) // benchmark changes and runs are audited too (section bench)
 	}

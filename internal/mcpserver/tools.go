@@ -222,6 +222,14 @@ const (
 	valNote = "The new value of the whole section, in the shape get_config shows for it (tiers: a list; exclude_nodes and no_auto_nodes: a list of node ids or hostname globs; node_overrides: an object of node id to override; recovery and fleet: an object). Sent as the request body."
 )
 
+// zoneAction is a tool for POST /api/zone-actions/<action> (one route per
+// action, so each has its own permission).
+func zoneAction(name, what, action string) *tool {
+	return &tool{Name: name, Desc: what + " With dry_run true nothing is done: the answer says per zone what would happen, which models would unload (and every zone each leaves, inside the selection or not) and how many runs would be cut or waited for. Without dry_run each zone is acted on as its single-zone tool does, one audit entry per zone. Only with membership agents.",
+		Props:    P{"nodes": strs("The zone ids."), "comment": s("Why, stored in the audit log (required unless dry_run)."), "dry_run": b("Only say what would happen.")},
+		Required: []string{"nodes"}, Destructive: action == "force-unload", Method: "POST", Path: "/api/zone-actions/" + action, Body: []string{"nodes", "comment", "dry_run"}}
+}
+
 func rd(name, desc string, props P, req []string, method, path string, query ...string) *tool {
 	return &tool{Name: name, Desc: desc, Props: props, Required: req, ReadOnly: true, Method: method, Path: path, Query: query}
 }
@@ -415,13 +423,14 @@ func allTools() []*tool {
 			Method: "POST", Path: "/api/nodes/{id}/force-unload", Body: []string{"comment"}},
 
 		// ---- zone groups (a label and a way to act on many zones; never a placement rule) ----
-		{Name: "drain_model", Desc: "Unload a model once its runs finish: it admits nothing new now, nothing is cut, and it stops when the last run ends (eta_s estimates when, from its average run length). Requests arriving meanwhile queue and load it again afterwards. undrain_model takes it back.",
+		zoneAction("pause_zones", "Pause a selection of zones: they take no new model; nothing running is interrupted.", "pause"),
+		zoneAction("unpause_zones", "Unpause a selection of zones: they take models again.", "unpause"),
+		zoneAction("drain_zones", "Wait for the runs, then unload: every model on the selected zones admits nothing new and unloads once its runs finish; nothing is cut (eta_s says when); new runs queue until it loads again.", "drain"),
+		zoneAction("force_unload_zones", "Force unload a selection of zones: every model on them stops now and its runs in flight fail. Ask with dry_run first and tell the owner what would be cut.", "force-unload"),
+		{Name: "drain_model", Desc: "Unload a model once its runs finish: it admits nothing new now, nothing is cut, and it stops when the last run ends (eta_s estimates when, from its average run length). Requests arriving meanwhile queue and load it again afterwards, possibly on another zone (next_load says so). undrain_model takes it back.",
 			Props: P{"model": s("The model (profile or alias).")}, Required: []string{"model"}, Idempotent: true, Method: "POST", Path: "/api/models/drain/{model}"},
 		{Name: "undrain_model", Desc: "Take back a drain: the model admits requests again (the ones that queued meanwhile first).",
 			Props: P{"model": s("The model (profile or alias).")}, Required: []string{"model"}, Idempotent: true, Method: "POST", Path: "/api/models/undrain/{model}"},
-		{Name: "act_on_zones", Desc: "Pause, unpause or force unload a selection of zones in one call. With dry_run true nothing is done: the answer says per zone what would happen, which models would unload (and every zone each leaves, inside the selection or not) and how many runs would be cut; ask that first and tell the owner before a force unload. Without dry_run each zone is acted on as pause_node, unpause_node or force_unload_node do, one audit entry per zone. Only with membership agents.",
-			Props: P{"action": en("The action.", "pause", "unpause", "force-unload"), "nodes": strs("The zone ids."), "comment": s("Why, stored in the audit log (required unless dry_run)."), "dry_run": b("Only say what would happen.")},
-			Required: []string{"action", "nodes"}, Destructive: true, Method: "POST", Path: "/api/zone-actions/{action}", Body: []string{"nodes", "comment", "dry_run"}},
 		{Name: "create_pending_zone", Desc: "Make a zone before its machine has an agent (Create new zone): a name, optionally a group. The answer has the command to run on the machine (it fetches an install script from Potluck with Potluck's address, the name and the model source filled in). The first agent that registers with that name joins it and is put in the group. Kept in memory, expires after ttl_min (5 to 60, default 60). The script refuses on a console and on the scheduler's machine and prints what it will do first.",
 			Props: P{"name": s("The zone name (the machine's name in Potluck)."), "group": s("Optional: the zone group it joins."), "model_source": s("Optional: share:<ip>:/<path>, dir:/<path> or push (default: the one most machines use)."),
 				"mode": en("Install kind (default bare).", "bare", "docker"), "ttl_min": i("Minutes it waits (5 to 60, default 60)."), "comment": s("Optional: why, stored in the audit log.")},
