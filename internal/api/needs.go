@@ -145,7 +145,8 @@ func (s *Server) handleNeeds(w http.ResponseWriter, r *http.Request) {
 		"host_overhead_setting_only": doc.HostOverheadSettingOnly,
 		"device_overheads":           devices, "device_overhead_setting_mib": doc.DeviceOverheadSettingMiB,
 		"device_overhead_setting_only": doc.DeviceOverheadSettingOnly,
-		"derivation_check":             map[string]any{"tolerance_mib": doc.DeriveToleranceMiB, "pairs": pairs}})
+		"derivation_check":             map[string]any{"tolerance_mib": doc.DeriveToleranceMiB, "pairs": pairs},
+		"peak_cycles":                  s.peaks.view()}) // peakcycles.go: collected only
 }
 
 // handleForgetShape drops every learned need of a shape (in memory and in

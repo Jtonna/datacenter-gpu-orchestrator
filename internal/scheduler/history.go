@@ -338,6 +338,7 @@ func (c *schedCore) historyUnloaded(in *inst) {
 	if in.exit != "" {
 		data["exit"] = in.exit
 	}
+	c.cyclePeakFields(in, data) // peakcycle.go
 	c.recordInst(in, history.TInstanceUnloaded, sev,
 		fmt.Sprintf("%s was unloaded (%s) after %s loaded and %d requests served.", in.prof.Name, reason,
 			loadedFor.Round(time.Second), in.served), data)

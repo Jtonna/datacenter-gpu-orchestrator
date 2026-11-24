@@ -2,6 +2,14 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: every cycle's peak, collected only
+
+No agent change, no new port, no schema change, no new route, no new setting. No plan changes.
+
+- **The unload event carries the cycle's peaks.** Every `instanceUnloaded` event (unload, ttl, eviction, shutdown, failure) carries `shape`, `ended_normally` and `cycle_peaks`: per node of the placement `node_id`, `node`, `peak_mib` (null, with `no_peak` saying why, when the node had no free-memory reading in the cycle), and the plan's `share_mib`, `reserved_mib` and `basis` for that node when the load started. Peaks are tracked with the fill reserve off too; they are still stored and used only with it on.
+- **How many profiles have enough peaks.** `GET /api/needs` carries `peak_cycles`: a row per shape and node set with `cycles` (a peak on every node), `normal_cycles`, `cycles_without_peak`, `total` and per-node `nodes` (`low_mib`, `high_mib`, `latest_mib`), `first_at`, `last_at`, `profiles`; and `totals` (`rows`, `at_least_1`, `at_least_3`, `at_least_5`). A tally kept in memory: rebuilt from the history store at start, then counted as unload events are recorded; `/api/needs` never reads the history files.
+- **Going back.** The image before reads the same history files: the new fields are plain event data it shows and ignores.
+
 ## Scheduler image: delete a model to the trash, and restore it (models slice 3)
 
 No agent change, no new port. **Schema: one new table, `model_trash`, as step 2 of the `model_migrations` ledger.** `cfg_migrations` does not move. **Needs the scheduler's models mount read-write to act; not applied: until the owner agrees, it stays `:ro` and the routes refuse with "the models folder is read-only here".**

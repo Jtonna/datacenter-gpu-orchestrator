@@ -182,6 +182,11 @@ type inst struct {
 	// cyclePeak is the most each node gave up for this instance in this
 	// load-to-unload cycle (reserve.go, endPeakCycle).
 	cyclePeak map[core.NodeID]int
+	// planned is what the plan reserved on each node of the placement when
+	// the instance was created, in placement order; nil when the need was
+	// not known. Reported in the instanceUnloaded event beside the cycle's
+	// peaks (peakcycle.go); never read for a decision.
+	planned []reservedShare
 	// hostMeasured: the host overhead of this cycle was read (or found out
 	// of range); hostHigh is the most the host took on its node in the
 	// cycle (hostoverhead.go).

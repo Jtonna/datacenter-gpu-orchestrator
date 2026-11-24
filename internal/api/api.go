@@ -130,7 +130,8 @@ type Options struct {
 
 // Server is the http.Handler for the whole API.
 type Server struct {
-	occ *occupiedTotals // occupied.go: /api/system occupied_only
+	occ   *occupiedTotals // occupied.go: /api/system occupied_only
+	peaks *peakCycles     // peakcycles.go: /api/needs peak_cycles
 	// bg is cancelled by Close, which then waits for bgWG: the background
 	// work started outside a request (Warm) that reads the store.
 	bg       context.Context
@@ -210,6 +211,7 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 	s.reqs.SetNamer(s.modelName) // short_name: the same rule as /api/models
 	s.bg, s.bgCancel = context.WithCancel(context.Background())
 	s.occ = startOccupied(o.History)
+	s.peaks = startPeakCycles(o.History)
 	s.groups = o.Groups
 	s.pending = newPendingZones()
 	if s.groups == nil {
@@ -273,6 +275,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // returns, so the caller may close the database then.
 func (s *Server) Close() {
 	s.occ.cancel()
+	s.peaks.cancel()
 	s.stopLoadLinks()
 	s.bgCancel()
 	s.bgWG.Wait()

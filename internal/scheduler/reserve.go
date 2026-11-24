@@ -301,6 +301,7 @@ func (c *schedCore) recordBaseFree(in *inst) {
 			in.baseFree[pn.ID] = n.FreeMiB
 		}
 	}
+	in.planned, _ = c.reservedShares(in.prof, in.placement) // peakcycle.go: reported only
 }
 
 // unsettledBase: an instance that ran left node id less than one
@@ -338,11 +339,10 @@ func (c *schedCore) measuredUse(in *inst, id core.NodeID) (int, bool) {
 // for it in this load-to-unload cycle (in.cyclePeak). Nothing is stored
 // while the cycle runs: endPeakCycle commits the cycle's peaks when it ends,
 // so the reservation of a loaded instance stays the one it was placed with
-// and its drift shows. Only with the reserve on (review N1).
+// and its drift shows. The cycle's peaks are tracked with the reserve off
+// too, for the instanceUnloaded event only (peakcycle.go); they are stored
+// and used only with the reserve on (endPeakCycle, review N1).
 func (c *schedCore) trackPeaks() {
-	if !c.reserveOn() {
-		return
-	}
 	for _, in := range c.insts {
 		if in.state != stReady && in.state != stDraining {
 			continue
