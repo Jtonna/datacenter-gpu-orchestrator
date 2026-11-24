@@ -476,3 +476,44 @@ func jsonText(m map[string]any) string {
 	b, _ := json.Marshal(m)
 	return string(b)
 }
+
+// Ruling 2 (step A ships with the folder read-only): a start on a
+// read-only folder with no trash records writes nothing at WARN or ERROR
+// for the trash and makes no directory; the trash list is empty; the
+// catalog's disk block says an empty trash; delete and restore refuse
+// with read_only or not_found and change nothing.
+func TestModelTrash_ReadOnlyStartIsQuiet(t *testing.T) {
+	te := newTrashEnv(t)
+	te.setup()
+	te.ro = true
+	before := len(te.logs.String())
+	s2 := te.restart()
+	logged := te.logs.String()[before:]
+	for _, l := range strings.Split(logged, "\n") {
+		if (strings.Contains(l, "level=WARN") || strings.Contains(l, "level=ERROR")) && strings.Contains(strings.ToLower(l), "trash") {
+			t.Errorf("start logged: %s", l)
+		}
+	}
+	if len(s2.trash.repairList()) != 0 || te.has(".trash") {
+		t.Fatalf("repairs %v, .trash made %v", s2.trash.repairList(), te.has(".trash"))
+	}
+	st, m := te.cdo("GET", "/api/models/trash", "", nil)
+	if st != 200 || len(m["items"].([]any)) != 0 || m["count"] != float64(0) || m["total_bytes"] != float64(0) || m["next_purge_at"] != nil {
+		t.Fatalf("trash list: %d %v", st, m)
+	}
+	if d := catalogKeys(t, te.env)["__disk"]; d["trash_count"] != float64(0) || d["trash_bytes"] != float64(0) || d["next_purge_at"] != nil {
+		t.Fatalf("disk: %v", d)
+	}
+	if st, m := te.cdo("POST", "/api/models/delete/a.gguf", `{"comment":"x","dry_run":true}`, trashUI); st != 200 || m["dry_run"] != true {
+		t.Fatalf("dry run on a read-only folder: %d %v", st, m)
+	}
+	if st, m := te.cdo("POST", "/api/models/delete/a.gguf", `{"comment":"x"}`, trashUI); st != 409 || errOf(m)["reason"] != "read_only" {
+		t.Fatalf("delete: %d %v", st, m)
+	}
+	if st, m := te.cdo("POST", "/api/models/trash/0123456789ab/restore", `{"comment":"x"}`, trashUI); st != 404 {
+		t.Fatalf("restore: %d %v", st, m)
+	}
+	if te.has(".trash") || !te.has("a.gguf") || len(te.profileIDs()) != 3 {
+		t.Fatal("something changed")
+	}
+}
