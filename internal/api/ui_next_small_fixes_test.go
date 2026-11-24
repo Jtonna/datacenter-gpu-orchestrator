@@ -155,3 +155,58 @@ func TestUINextModelsSliceOneFields(t *testing.T) {
 			"pageNone": []string{"aside.side td[data-ttl]"}},
 	}})
 }
+
+// Models: the side panel, docked beside the page (1400 px and wider), closes
+// the section menu as the Tiers and MCP panels do; the board draws no menu
+// beside it, and the list keeps its Profiles column.
+func TestUINextModelsPanelClosesMenu(t *testing.T) {
+	fetch := fixtureAnswers(t, []string{"--models", "five"}, "/api/models", "/api/status")
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
+		map[string]any{"name": "models: docked panel, menu closed", "route": "#/models?model=gemma-4-27b-it-Q4_K_M.gguf", "status": fetch["/api/status"], "width": 1536,
+			"pageHas": []string{"aside.side.docked", ".app.menu-closed"}},
+		map[string]any{"name": "models: no panel, menu open", "route": "#/models", "status": fetch["/api/status"], "width": 1536,
+			"pageNone": []string{".app.menu-closed"}},
+	}})
+}
+
+// The model page's "Show the N generated configurations" is a text button
+// at the foot of the Configurations card. A later rule for the Zones fold
+// icon (.more: 20 px square, centred) made it 20 px wide, so its words ran
+// out of the card to the left, under the section menu. The icon's rule is
+// now scoped to its place (.gn .more); the text button keeps its own.
+func TestUIMoreButtonStaysInItsCard(t *testing.T) {
+	css := uiText(t, uiNextDir+"app.css")
+	if strings.Contains(css, "\n.more{width:20px") {
+		t.Error("app.css: a bare .more rule makes every Show/Hide text button 20 px wide")
+	}
+	if !strings.Contains(css, ".gn .more{width:20px;height:20px") {
+		t.Error("app.css: the Zones fold icon (.gn .more) lost its size")
+	}
+	if s := uiText(t, "views/models/detail.js"); !strings.Contains(s, "h('div.cs', more(showGenerated") {
+		t.Error("views/models/detail.js: the generated-configurations button is no longer in the card's foot")
+	}
+}
+
+// Profiles side panel, "Where it would go now": an automatic profile's plan
+// says how many machines ("would load on 1 …"), no names; a forced profile
+// names its own zones; a loaded profile names the machines it is loaded on.
+func TestUINextProfilesPanelPlanNames(t *testing.T) {
+	fetch := fixtureAnswers(t, []string{"--catalog"}, "/api/profiles", "/api/models", "/api/config", "/api/config/schema", "/api/status")
+	st := mcpCopy(t, fetch["/api/status"])
+	idOf := map[string]string{}
+	for _, n := range st["view"].(map[string]any)["nodes"].([]any) {
+		m := n.(map[string]any)
+		idOf[m["hostname"].(string)] = m["id"].(string)
+	}
+	st["instances"] = append(st["instances"].([]any), map[string]any{"profile": "gemma-4-27b", "state": "ready", "in_flight": 0, "waiters": 0, "parallel": 1,
+		"nodes": []any{map[string]any{"id": idOf["ps5-03"], "role": "host", "share": 0.5}, map[string]any{"id": idOf["ps5-04"], "role": "helper", "share": 0.5}}})
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
+		map[string]any{"name": "profiles panel: automatic, a count", "route": "#/profiles?profile=qwen3-14b", "status": st,
+			"page": []string{"Where it would go now", "would load on 1 "}, "pageHas": []string{"aside.side [data-would='1']"},
+			"pageNone": []string{"aside.side span.nodes"}, "notOnPage": []string{"ps5-05"}},
+		map[string]any{"name": "profiles panel: forced, its names", "route": "#/profiles?profile=qwen3-32b-split", "status": st,
+			"page": []string{"ps5-03", "ps5-04", "ps5-05"}, "pageHas": []string{"aside.side span.nodes"}, "pageNone": []string{"aside.side [data-would]"}},
+		map[string]any{"name": "profiles panel: loaded, where it is loaded", "route": "#/profiles?profile=gemma-4-27b", "status": st,
+			"page": []string{"Loaded on", "ps5-03", "ps5-04"}, "pageHas": []string{"aside.side [data-loaded-on] span.nodes"}, "pageNone": []string{"aside.side [data-would]"}},
+	}})
+}

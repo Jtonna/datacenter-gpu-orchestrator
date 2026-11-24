@@ -277,6 +277,8 @@ function mountHome(el, route) {
       return catalog.models ? h('section.card', empty('This model is not in the catalog', 'Its file may have gone. Close this panel to see the models there are.')) : skeleton(3);
     };
     const p = sidePanel({
+      // docked beside the page it closes the section menu, as the board draws it (no menu beside the panel)
+      closesMenu: true,
       label: 'Selected model', name: 'Selected model: ' + key,
       title: () => { const m = find(); return h('span.mono', m ? m.file || m.name : key); },
       sub: () => {
