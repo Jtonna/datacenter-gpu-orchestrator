@@ -1,6 +1,7 @@
 package api
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -34,7 +35,9 @@ func TestView_IdleFleetSaysNoneOfTheAdditiveFacts(t *testing.T) {
 		if r.StatusCode != 200 || !strings.Contains(raw, "02:00:00:00:00:01") {
 			t.Fatalf("%s: %d %s", p, r.StatusCode, raw)
 		}
-		check(p+" (agents)", raw)
+		// The fleet's counts (counts.go) name every state, set_aside too;
+		// they are not a node's fact.
+		check(p+" (agents)", regexp.MustCompile(`"counts":\{[^}]*\},?`).ReplaceAllString(raw, ""))
 	}
 }
 
