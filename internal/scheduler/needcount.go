@@ -304,6 +304,12 @@ type NeedsDoc struct {
 	HostOverheads           []HostOverheadRow
 	HostOverheadSettingMiB  int
 	HostOverheadSettingOnly bool
+	// DeviceOverheads are the measured per-device overheads
+	// (deviceoverhead.go), with the setting they replace and
+	// device_overhead_setting_only.
+	DeviceOverheads           []HostOverheadRow
+	DeviceOverheadSettingMiB  int
+	DeviceOverheadSettingOnly bool
 }
 
 // learnedRows lists every measurement, by shape and device count.

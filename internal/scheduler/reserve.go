@@ -206,14 +206,17 @@ func (c *schedCore) reservedShares(p *core.Profile, pl core.Placement) ([]reserv
 		}
 	}
 	need := info.Need.WithMargin()
-	dev := c.deviceCost(info)
+	devs := make([]int, len(pl.Nodes)) // deviceoverhead.go: each node's own per-device cost
+	for i, pn := range pl.Nodes {
+		devs[i] = c.deviceCostOn(p, info, pn.ID, len(pl.Nodes))
+	}
 	fileMiB := int((info.FileBytes + (1 << 20) - 1) >> 20)
 	peaks, havePeak := c.peakFor(p, pl)
 	// Without per-node peaks for this node set and split, the peaks of the
 	// shape still raise the need of a placement of this many devices.
 	raised := false
 	if pn := c.peakNeed(p, info, len(pl.Nodes)); !havePeak && pn > need {
-		need, dev, raised = pn, 0, true
+		need, devs, raised = pn, make([]int, len(pl.Nodes)), true
 	}
 	fill := c.fillReserveMiB(p)
 	skew := c.cfg.Defaults.SplitSkewMargin
@@ -237,12 +240,12 @@ func (c *schedCore) reservedShares(p *core.Profile, pl core.Placement) ([]reserv
 		share, learned := 0, false
 		switch {
 		case len(pl.Nodes) == 1:
-			share = need + dev
+			share = need + devs[i]
 		default:
 			if learnedMiB != nil {
 				share, learned, r.Basis = learnedMiB[i], true, BasisMeasured
 			} else {
-				share = int(math.Ceil(float64(need)*fracs[i]-1e-6)) + dev
+				share = int(math.Ceil(float64(need)*fracs[i]-1e-6)) + devs[i]
 			}
 		}
 		// A host on the node takes its process besides its device share
@@ -274,7 +277,7 @@ func (c *schedCore) reservedShares(p *core.Profile, pl core.Placement) ([]reserv
 		default:
 			// The split skew margin as the fit rules apply it: one rounding
 			// over need x fraction x (1 + skew).
-			r.Margin = int(math.Ceil(float64(need)*fracs[i]*(1+skew)-1e-6)) + dev - share
+			r.Margin = int(math.Ceil(float64(need)*fracs[i]*(1+skew)-1e-6)) + devs[i] - share
 			r.MarginRule = fmt.Sprintf("split_skew_margin %g", skew)
 		}
 		out[i] = r
@@ -541,6 +544,9 @@ func (c *schedCore) memoryRows(p *core.Profile, pl core.Placement, freed map[str
 			ReservedBy: []PlanReservedBy{}, AvailableMiB: c.liveBudget(pn.ID, n), HostOverheadMiB: r.Host}
 		if h := hostOf(p, pl); h != "" && h == pn.ID {
 			_, e.HostOverheadSource, e.HostOverheadMeasuredAt = c.hostOverheadOf(p, pn.ID, len(pl.Nodes)) // hostoverhead.go
+		}
+		if r.Basis == BasisEstimated { // deviceoverhead.go: the per-device overhead in this row's figures
+			e.DeviceOverheadMiB, e.DeviceOverheadSource, e.DeviceOverheadMeasuredAt = c.deviceOverheadOf(p, pn.ID, len(pl.Nodes))
 		}
 		e.FreeAvgMiB, e.FreeAvgKnown = e.FreeNowMiB, n.FreeAvgKnown
 		if n.FreeAvgKnown {

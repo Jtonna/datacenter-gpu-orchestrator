@@ -100,6 +100,20 @@ func hostOverheadJSON(r scheduler.HostOverheadRow) hostOverheadRow {
 	return out
 }
 
+// deviceOverheadRow is one measured per-device overhead (scheduler
+// deviceoverhead.go): the host overhead row's fields, with log_part_mib (the
+// log's exact part of the latest reading) in place of log_host_mib. used is
+// false while the shape plans from its own measured need.
+type deviceOverheadRow struct {
+	hostOverheadRow
+	LogHostMiB int `json:"log_host_mib,omitempty"`
+	LogPartMiB int `json:"log_part_mib"`
+}
+
+func deviceOverheadJSON(r scheduler.HostOverheadRow) deviceOverheadRow {
+	return deviceOverheadRow{hostOverheadRow: hostOverheadJSON(r), LogPartMiB: r.LogHostMiB}
+}
+
 func (s *Server) handleNeeds(w http.ResponseWriter, r *http.Request) {
 	doc, err := s.sched.Needs(r.Context())
 	if err != nil {
@@ -122,10 +136,16 @@ func (s *Server) handleNeeds(w http.ResponseWriter, r *http.Request) {
 	for _, h := range doc.HostOverheads {
 		hosts = append(hosts, hostOverheadJSON(h))
 	}
+	devices := make([]deviceOverheadRow, 0, len(doc.DeviceOverheads))
+	for _, d := range doc.DeviceOverheads {
+		devices = append(devices, deviceOverheadJSON(d))
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"needs": out, "host_build": doc.HostBuild, "release": doc.Release,
 		"served_build": doc.ServedBuild, "host_overheads": hosts, "host_overhead_setting_mib": doc.HostOverheadSettingMiB,
 		"host_overhead_setting_only": doc.HostOverheadSettingOnly,
-		"derivation_check":           map[string]any{"tolerance_mib": doc.DeriveToleranceMiB, "pairs": pairs}})
+		"device_overheads":           devices, "device_overhead_setting_mib": doc.DeviceOverheadSettingMiB,
+		"device_overhead_setting_only": doc.DeviceOverheadSettingOnly,
+		"derivation_check":             map[string]any{"tolerance_mib": doc.DeriveToleranceMiB, "pairs": pairs}})
 }
 
 // handleForgetShape drops every learned need of a shape (in memory and in
