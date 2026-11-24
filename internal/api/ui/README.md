@@ -79,6 +79,9 @@ next/views/zones.js    Zones: one row per machine (zone); selection with Stop ac
 next/core/modelactions.js  the model actions: plan, load on chosen zones, drain, undrain, unload
 next/views/models.js   Models: loaded instances, every model file with size and disk total, the
                        model panel (?model=<key>); #/models/<key> is still views/models/detail.js
+next/views/models/trash.js  the models trash (v65): the list's "Deleted models" row, #/models/deleted
+                       (GET /api/models/trash, ?item=<id> panel, Restore), the panel's Delete model
+                       (a dry run, the name typed, a comment); nothing removes a file for good
 next/views/settings.js Settings: the group menu, one group in view, one row per setting, the save bar
                        (dry run, the changes, a comment, then PATCH with If-Match)
 next/views/placement.js Placement preview: the Ask panel (profile, any zone or only these zones) and the
