@@ -27,13 +27,17 @@
 // /api/nodes/uptime?days=7, GET /api/nodes/availability, read again while
 // the page is open; GET /api/history?node= for the open zone's events.
 // Writes: the node actions of core/nodeactions.js (pause, unpause, force
-// unload), each with a comment, signed by the default user.
+// unload), the group routes of core/groups.js and the model actions of
+// core/modelactions.js (plan then load on chosen zones, wait for the
+// requests then unload, take that back, unload or force unload), each with
+// a comment, signed by the default user. There is no setting that hides the
+// model actions (the owner's decision of 24 Nov).
 
 import { h } from '../core/dom.js';
 import { registerView, navigate, href } from '../core/router.js';
-import { state, on } from '../core/store.js';
+import { state, on, listen } from '../core/store.js';
 import * as api from '../core/api.js';
-import { liveView, zoneStatus, sidePanel, skeleton, badge, empty, button, facts, dialog, toast, availStrip, availClass, availState, availLevel, dropButton, onDropChange, roleShare } from '../core/ui.js';
+import { liveView, zoneStatus, sidePanel, skeleton, badge, empty, button, facts, dialog, toast, availStrip, availClass, availState, availLevel, dropButton, onDropChange, roleShare, runModel } from '../core/ui.js';
 import { pager } from '../core/pager.js';
 import { num, gb, gbNum, plural, durShort, dateTime, agoText, clock, DASH } from '../core/format.js';
 import { viewNodes } from '../core/status.js';
@@ -41,7 +45,7 @@ import { agentsMode, agentOf, notPlaceable, sendNodeAction } from '../core/nodea
 import { onStartups } from '../core/startup.js';
 import { defaultUser } from '../core/requests.js';
 import { createGroup, addMembers, removeMembers, renameGroup, pauseGroup, GROUP_NAME_RULE } from '../core/groups.js';
-import { unloadModel, modelActionsOn, onModelActions } from '../core/modelactions.js';
+import { unloadModel, planLoad, loadModel, drainModel, undrainModel } from '../core/modelactions.js';
 import { settlePending } from './nodes.js';
 
 const PAGE = 16; // zones a page, as drawn (232 zones on 15 pages)
@@ -105,7 +109,7 @@ export function zoneOf(st, n) {
   }
   if (inst && inst.state === 'starting') {
     const frac = inst.load && inst.load.progress != null ? inst.load.progress : inst.load_progress;
-    return out({ pill: 'load', square: 'load', label: frac != null ? `${num(frac * 100)}% loaded` : 'Loading', rank: 2, rest: [sep, mono(inst.profile)] });
+    return out({ pill: 'load', square: 'load', label: frac != null ? `${num(frac * 100)}% loaded` : 'Loading', rank: 2, rest: [sep, h('span.mono', { title: inst.profile }, modelName(inst.profile))] });
   }
   if (inst || n.holder) {
     const prof = (inst && inst.profile) || n.holder;
@@ -113,7 +117,8 @@ export function zoneOf(st, n) {
     // the status square is the state's colour; how busy it was is the strip's shading
     return out({ pill: 'use', square: 'use4', label: role || 'In use', rank: 3,
       title: m && m.share > 0 ? 'Its share of the model: the split the load was given' : null,
-      rest: [sep, mono(prof), a.paused ? h('span.mut', ' · not accepting models') : null] });
+      rest: [sep, h('span.mono', { title: prof }, modelName(prof)), isDraining(inst) ? h('span.mut', { 'data-draining': '' }, ' · unloads when its requests end') : null,
+        a.paused ? h('span.mut', ' · not accepting models') : null] });
   }
   if (a.paused) {
     return out({ pill: 'off', square: 'off', label: 'Switched off' + byWhom(a.paused_actor), rank: 5,
@@ -194,10 +199,63 @@ function groupStrip(strips, name) {
   return { cells, label: `${name}, last 24 hours, all zones` };
 }
 
+// groupChip(doc, members) -> the group's chip: the server's `chip` (absent or
+// "mixed" give none); until /api/groups is read, the one every member
+// reports, when all report the same one.
+function groupChip(doc, members) {
+  if (doc && 'chip' in doc) return typeof doc.chip === 'string' && doc.chip && doc.chip !== 'mixed' ? doc.chip : '';
+  if (doc || !members.length) return '';
+  const r = [...new Set(members.map(x => x.reported || ''))];
+  return r.length === 1 && r[0] ? r[0] : '';
+}
+// isDraining(inst): a drain was asked for (the server's state "draining" or drain true)
+export const isDraining = inst => !!inst && (inst.drain === true || inst.state === 'draining');
+// drainText(inst) -> "about 40 s left" or "no estimate yet"
+const drainText = inst => (typeof inst.drain_eta_s === 'number' && inst.drain_eta_s >= 0 ? `about ${durShort(Math.max(1, Math.round(inst.drain_eta_s)))} left` : 'no estimate yet');
+// pinnedOf(inst) -> the zones a load on chosen zones named, or []
+const pinnedOf = inst => (inst && Array.isArray(inst.pinned_nodes) ? inst.pinned_nodes : []);
+// modelName(profile) -> the design's short name ("gemma-4-27b:32k"), else the profile id
+const modelName = profile => runModel({ profile }) || profile;
+
+// planView(plan, err, sig): the plan for a load on chosen zones, in words:
+// its verdict (the server's sentence for a refusal) and its memory line.
+const VERDICT = {
+  start: ['Starts now', 'ready', 'The chosen zones can take it: the load starts at once.'],
+  serve: ['Already loaded', 'ready', 'It is loaded already.'],
+  wait: ['Loading now', 'load', 'It is loading already.'],
+  evict: ['Makes room first', 'q', 'A model on the chosen zones is unloaded first.'],
+  queue: ['Waits', 'n', 'The chosen zones cannot take it now: the load waits in the queue.'],
+  backoff: ['Held back', 'aside', 'Its last load failed: it is held back for now.'],
+  reject: ['Refused', 'fail', ''],
+};
+function planView(plan, err, sig) {
+  if (!sig) return h('span.mut', 'Choose at least one zone: the plan is read for the zones you choose.');
+  if (err) return h('div.box.warn', { 'data-verdict': 'error' }, h('div.pt', h('span', h('b', 'The plan was refused: '), err)));
+  if (!plan) return h('span.mut', { 'data-verdict': '' }, 'Asking the scheduler for its plan…');
+  const [label, kind, text] = VERDICT[plan.action] || [String(plan.action || 'Not known'), 'n', ''];
+  const need = plan.fit_need_mib || plan.need_mib || 0;
+  const place = plan.placement || [];
+  const usable = place.reduce((s, n) => s + (n.budget_mib || 0), 0);
+  const victims = (plan.victims || []).map(v => v.profile).filter(Boolean);
+  const mem = [];
+  if (need) mem.push(h('span', { title: num(need) + ' MiB' }, 'Needs ', h('b', gb(need))));
+  if (place.length) mem.push(h('span', { title: place.map(n => `${n.id}: ${num(n.budget_mib || 0)} MiB usable`).join('; ') }, 'usable on the chosen zones ', h('b', gb(usable))));
+  if (plan.required_mib) mem.push(h('span', { title: num(plan.required_mib) + ' MiB' }, 'it would need ', h('b', gb(plan.required_mib)), ' with the margins'));
+  const reason = plan.reason ? String(plan.reason) : '';
+  return h('div.col', { style: 'gap:8px', 'data-verdict': plan.action || '' },
+    h('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap' }, badge(label, kind),
+      plan.tight_fit ? badge('Tight fit', 'n', 'It fits only without its safety margin; it starts anyway.') : null,
+      h('span', plan.action === 'reject' ? reason || 'The scheduler refuses this load.' : text)),
+    victims.length ? h('div.hit', h('i.a'), h('span', 'It unloads ', h('span.mono', victims.join(', ')), ' first.')) : null,
+    plan.action !== 'reject' && reason ? h('div.hit', h('i'), h('span', { title: reason }, plan.action === 'queue' ? 'Why it waits: ' : '', reason)) : null,
+    mem.length ? h('div.mut', { 'data-memory': '', style: 'font-weight:600' }, mem.map((x, i) => [i ? ' · ' : '', x])) : null,
+    plan.warning ? h('div.box.warn', h('div.pt', h('span', String(plan.warning)))) : null);
+}
+
 // The node actions on a selection: a pause on each zone, or the opposite.
 // Reboot and Open SSH: drawn as designed, not built
 const REBOOT_WHY = 'Not available: Potluck cannot restart a machine yet (there is no server route for it), and a PS5 is never rebooted from here: a Linux reboot drops a console to the PlayStation system.';
-const SSH_WHY = 'Open SSH is not built yet: Potluck has no terminal or SSH route. The zone panel shows its address.';
+const SSH_WHY = 'Not available yet: SSH from these pages is left out for now, so that nothing here depends on one particular setup (a user name, a key or a jump host).';
 
 const BULK = {
   pause: { label: 'Stop accepting models', node: 'pause', busy: 'Stopping', applies: a => !!a && !a.paused,
@@ -267,12 +325,12 @@ function zoneFacts(n, agent) {
   ]);
 }
 
-function eventsPart(hist) {
+function eventsPart(hist, none = 'No load, unload or trouble recorded for this zone yet.') {
   let body;
   if (!hist || hist.loading) body = h('span.mut', 'Reading the history…');
   else if (hist.error) body = h('span.err-t', 'The history could not be read: ' + hist.error);
   else if (hist.off) body = h('span.mut', 'The event history is off on this scheduler.');
-  else if (!hist.events.length) body = h('span.mut', 'No load, unload or trouble recorded for this zone yet.');
+  else if (!hist.events.length) body = h('span.mut', none);
   else body = h('div.zevents', hist.events.slice(0, EVENTS_SHOWN).map(e => h('div.zev', { key: e.seq + '-' + e.ts, class: 'zev sev-' + (e.severity || 'info') },
     h('time', { title: dateTime(e.ts), datetime: new Date(e.ts).toISOString() }, agoText(e.ts)),
     h('span', e.summary || e.type))));
@@ -309,7 +367,6 @@ registerView({
     const offStatus = on('status', () => { settlePending(); readSoon(); });
     const offStartups = onStartups(() => { view.refresh(); if (side) side.redraw(); });
     const offDrop = onDropChange(() => view.refresh());
-    const offActions = onModelActions(() => { if (alive) { view.refresh(); if (side) side.redraw(); } });
     const restNow = () => (r.rest && r.rest[0] === 'group' && r.rest[1] ? ['group', String(r.rest[1])] : []);
     const setQuery = (q, keepPage) => navigate('zones', restNow(), Object.assign({}, r.query, keepPage ? {} : { page: '' }, q), true);
     const pickZone = id => navigate('zones', [], Object.assign({}, r.query, { zone: id }), true);
@@ -319,7 +376,7 @@ registerView({
     // most every 5 s, the strips at most every minute, uptime at most every
     // 5 min (no timer of their own: a status message asks for them)
     const get = async (path, q, put) => { try { const v = await api.get(path, q); if (alive) { put(v); view.refresh(); } } catch { /* the figure stays as it was */ } };
-    const readCounts = () => Promise.all([get('/api/nodes', null, v => { nodesDoc = v; }), get('/api/groups', null, v => { groupsDoc = v; })]);
+    const readCounts = () => Promise.all([get('/api/nodes', { sort: 'attention' }, v => { nodesDoc = v; }), get('/api/groups', null, v => { groupsDoc = v; })]);
     const readUptime = () => get('/api/nodes/uptime', { days: 7 }, v => { uptimeDoc = v; });
     const readAvail = () => get('/api/nodes/availability', null, v => { avail = v; });
     let soon = null, lastRead = 0, lastAvail = 0, lastUptime = 0;
@@ -347,6 +404,19 @@ registerView({
       if (alive && side && side.id === id) side.redraw();
     };
 
+    // a group's recent events: GET /api/history?group=<name> (404 for a group the server does not know)
+    let ghist = null;
+    const loadGroupEvents = async name => {
+      ghist = { name, loading: true, events: [] };
+      try {
+        const res = await api.get('/api/history', { group: name, type: ZONE_EVENTS.join(','), limit: EVENTS_SHOWN });
+        if (ghist && ghist.name === name) ghist = { name, events: res.events || [], off: res.history === 'off' };
+      } catch (e) {
+        if (ghist && ghist.name === name) ghist = { name, events: [], error: (e && e.message) || 'the request failed' };
+      }
+      if (alive && side && side.key === 'g:' + name) side.redraw();
+    };
+
     // The side panel: a group's (#/zones/group/<name>) or a zone's (#/zones/<name>).
     const syncSide = () => {
       const g = groupOpen();
@@ -355,7 +425,7 @@ registerView({
       if (!key) { if (side) { const s = side; side = null; s.close(); } return; }
       if (side && side.key === key) { side.redraw(); return; }
       if (side) { const s = side; side = null; s.close(); }
-      if (g) { const p = groupPanel(g); p.key = key; side = p; return; }
+      if (g) { loadGroupEvents(g); const p = groupPanel(g); p.key = key; side = p; return; }
       loadEvents(id);
       loadWeek(id);
       const p = zonePanelOf(id);
@@ -430,7 +500,6 @@ registerView({
         run: c => each(gs_.map(g => [g, [api, g, by[g].map(y => y.id), c]]), removeMembers).then(() => toast(`${plural(n, 'zone')} taken out of their groups`, 'ok')) });
     }
     function forceUnload(xs) {
-      if (!modelActionsOn()) return null;
       const hold = xs.filter(holding);
       // one zone: the Zones-Confirm dialog for the model it holds
       if (hold.length === 1) return askUnload(holding(hold[0]), { zone: hold[0].id });
@@ -438,7 +507,7 @@ registerView({
       hold.forEach(x => (models[holding(x)] = models[holding(x)] || []).push(x));
       return ask({ title: `Force unload ${plural(hold.length, 'zone')}?`, go: 'Force unload', red: true,
         lines: Object.keys(models).map(p => [h('span.mono', p), ' ends, on ', names(models[p])])
-          .concat(['Runs on them are cut off: the apps that sent them get an error. A model spread over other zones ends there as well.']),
+          .concat(['Requests on them are cut off: the apps that sent them get an error. A model spread over other zones ends there as well.']),
         run: c => each(hold.map(x => [x.name, [api, x.id, 'force', c]]), sendNodeAction).then(() => toast(`Force unload sent to ${plural(hold.length, 'zone')}`, 'ok')) });
     }
     const pauseSome = xs => askBulk('pause', xs.map(x => x.id), done => { done.forEach(id => sel.delete(id)); view.refresh(); });
@@ -493,8 +562,8 @@ registerView({
           item('Open SSH', { 'data-cm': 'ssh', disabled: true, title: SSH_WHY }),
           item('Reboot', { 'data-cm': 'reboot', disabled: true, title: REBOOT_WHY }),
           item('Stop accepting models', { 'data-cm': 'pause', disabled: !pausable.length, title: pausable.length ? null : 'Every one of them already takes no new model' }, () => { closeMenu(); pauseSome(xs); }),
-          modelActionsOn() ? [h('hr'),
-            item('Force unload', { class: 'red', 'data-cm': 'force', disabled: !holds, title: holds ? null : 'None of them holds a model' }, () => { closeMenu(); forceUnload(xs); })] : null);
+          h('hr'),
+          item('Force unload', { class: 'red', 'data-cm': 'force', disabled: !holds, title: holds ? null : 'None of them holds a model' }, () => { closeMenu(); forceUnload(xs); }));
       }
       document.body.appendChild(el);
       const onDoc = e => {
@@ -539,14 +608,17 @@ registerView({
     const openGroup = name => navigate('zones', ['group', name], Object.assign({}, r.query, { zone: '' }));
     const zoneOfId = id => cur.all.find(x => x.id === id) || null;
 
-    // the unload dialog (Zones-Confirm): what it ends, wait or force, a comment
+    // the unload dialog (Zones-Confirm): what it ends; wait for the requests
+    // (a drain: new requests wait in the queue meanwhile), unload now, or
+    // force; a comment. A drain's answer (its estimate and the server's
+    // sentence about the next load) is shown in the dialog before it closes.
     function askUnload(model, o = {}) {
-      if (!modelActionsOn()) return null; // the page switch is off: no unload dialog
       const st = state.status || {};
       const inst = (st.instances || []).find(i => i.profile === model && (!o.zone || (i.nodes || []).some(m => m.id === o.zone))) ||
         (st.instances || []).find(i => i.profile === model) || null;
       const runs = inst ? inst.in_flight || 0 : 0;
       const loading = inst && inst.state === 'starting';
+      const draining = isDraining(inst);
       const nameOfId = id => { const x = zoneOfId(id); return x ? x.name : id; };
       const ms = inst ? (inst.nodes || []) : [];
       const host = ms.find(m => m.role === 'host');
@@ -560,12 +632,14 @@ registerView({
         where = [' It runs on ', list(ms.map(m => m.id)), host ? [' (', h('span.mono', nameOfId(host.id)), ' is the host)'] : null, '; it unloads from all of them',
           out.length ? [', ', list(out.map(m => m.id)), ' outside ', h('span.mono', o.group), ' included'] : null, '.'];
       }
-      const runsWord = runs === 1 ? '1 run is in flight.' : `${num(runs)} runs are in flight.`;
-      const lead = loading ? 'It is still loading: the load is cancelled.' : runs ? runsWord : 'No run is in flight.';
-      const failWord = runs === 0 ? 'Nothing is running on it.' : runs === 1 ? 'The run fails straight away.' : runs === 2 ? 'Both runs fail straight away.' : `All ${num(runs)} runs fail straight away.`;
-      const WAIT_WHY = 'Waiting for the runs is not built yet: Potluck refuses to unload a busy model without force, and does not yet hold new runs while it waits. It comes with the server\'s next slice.';
-      let when = runs || loading ? 'force' : 'now';
-      return dialog({ title: o.zone ? ['Unload ', h('span.mono', model), ' from ', h('span.mono', nameOfId(o.zone)), '?'] : ['Unload ', h('span.mono', model), '?'], body: close => {
+      const runsWord = runs === 1 ? '1 request is in flight.' : `${num(runs)} requests are in flight.`;
+      const lead = loading ? 'It is still loading: the load is cancelled.' : draining ? ['It is already waiting for its requests. ', runsWord] : runs ? runsWord : 'No request is in flight.';
+      const failWord = runs === 0 ? 'Nothing is running on it.' : runs === 1 ? 'The request fails straight away.' : runs === 2 ? 'Both requests fail straight away.' : `All ${num(runs)} requests fail straight away.`;
+      // the option's sentence (the owner's words): new requests wait, the next load may go elsewhere
+      const WAIT_SUB = 'New requests for this model wait in the queue meanwhile. The next load may start on another free zone.';
+      let when = loading ? 'force' : runs && !draining ? 'wait' : runs ? 'force' : 'now';
+      const title = o.zone ? ['Unload ', h('span.mono', model), ' from ', h('span.mono', nameOfId(o.zone)), '?'] : ['Unload ', h('span.mono', model), '?'];
+      return dialog({ title, body: close => {
         const comment = h('textarea.textarea', { rows: 2, maxlength: 400, 'data-field': 'comment', placeholder: 'Why? It is kept in the audit log.', 'aria-label': 'Comment' });
         const err = h('span.err', { role: 'alert' });
         const go = button('Unload', null, 'lg dng solid', { 'data-go': '' });
@@ -574,26 +648,119 @@ registerView({
           const input = h('input', Object.assign({ type: 'radio', name: 'unload-when', 'data-when': id, checked: when === id, onclick: () => { when = id; box.querySelectorAll('.opt').forEach(l => l.classList.toggle('on', l.contains(input))); } }, extra));
           return h('label', { class: 'opt' + (when === id ? ' on' : '') + (extra.disabled ? ' off' : ''), title: extra.title || null }, input, h('span', label, h('span', sub)));
         };
+        const waitLabel = `Wait for the ${runs === 1 ? 'request' : num(runs) + ' requests'}, then unload`;
         const box = h('div', { role: 'radiogroup', 'aria-label': 'When to unload', style: 'display:flex;flex-direction:column;gap:8px' },
-          runs || loading
-            ? opt('wait', loading ? 'Wait for the load, then unload' : `Wait for the ${runs === 1 ? 'run' : num(runs) + ' runs'}, then unload`, 'Not built yet: Potluck cannot wait for the runs and hold new ones meanwhile.', { disabled: true, title: WAIT_WHY })
-            : opt('now', 'Unload now', 'Nothing is running on it. A new run for this model loads it again.'),
+          loading ? opt('wait', 'Wait for the load, then unload', 'Not possible while it loads: Potluck waits for requests, not for a load. Force unload cancels the load.', { disabled: true, title: 'The server refuses to wait while the model is loading (409).' })
+            : draining ? opt('wait', waitLabel, 'Already asked: it unloads when they end. Cancel that from the zone panel.', { disabled: true, title: 'It is draining already.' })
+            : runs ? opt('wait', waitLabel, WAIT_SUB)
+            : opt('now', 'Unload now', 'Nothing is running on it. A new request for this model loads it again.'),
           opt('force', 'Force unload now', loading ? 'The load stops straight away.' : failWord));
+        const body = h('div.col', { style: 'gap:14px' },
+          h('div', { class: 'box' + (runs || loading ? ' warn' : '') },
+            h('div.pt', icon(runs || loading ? 'M10 3l8 14H2zM10 8.5v4M10 14.8v.01' : 'M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM10 9v5M10 6v.01', 15), h('span', h('b', lead), where))),
+          box,
+          h('div.field', h('label', 'Comment (required)'), comment, err),
+          h('div.dlg-foot', cancel, go));
+        // after a drain: what the server answered, then Close
+        const drained = res => {
+          const eta = res && typeof res.eta_s === 'number' && res.eta_s >= 0 ? res.eta_s : null;
+          body.replaceChildren(
+            h('div.box', { 'data-drained': '' }, h('div.pt', icon('M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM10 6v4l3 2', 15),
+              h('span', h('b', model, ' unloads when its requests end. '),
+                eta != null ? h('span', { 'data-eta': String(eta) }, 'About ', durShort(Math.max(1, Math.round(eta))), '.') : h('span', { 'data-eta': '' }, 'No estimate yet: no request of this model has finished since Potluck started.'),
+                ' New requests for it wait in the queue meanwhile.'))),
+            h('p.mut', { style: 'margin:0', 'data-next-load': '' }, (res && typeof res.next_load === 'string' && res.next_load) || 'The next load may start on another free zone.'),
+            h('div.dlg-foot', button('Close', () => close(true), 'lg pri', { 'data-close': '' })));
+        };
         go.addEventListener('click', async () => {
           const c = comment.value.trim();
           if (!c) { err.textContent = 'A comment is required. Say why, in a few words.'; comment.focus(); return; }
           err.textContent = '';
           go.disabled = cancel.disabled = true;
           try {
-            const res = await unloadModel(api, model, when === 'force', c);
-            toast(res && res.msg === 'not loaded' ? `${model} was not loaded` : `${model} unloaded`, 'ok');
-            close(true); readCounts(); view.refresh();
+            if (when === 'wait') {
+              const res = await drainModel(api, model, c);
+              if (res && res.msg === 'not loaded') { toast(`${model} was not loaded`, 'ok'); close(true); }
+              else { toast(`${model} unloads when its requests end`, 'ok'); drained(res); }
+            } else {
+              const res = await unloadModel(api, model, when === 'force', c);
+              toast(res && res.msg === 'not loaded' ? `${model} was not loaded` : `${model} unloaded`, 'ok');
+              close(true);
+            }
+            readCounts(); view.refresh();
           } catch (e) { err.textContent = (e && e.message) || 'The request failed.'; go.disabled = cancel.disabled = false; }
         });
+        return body;
+      } });
+    }
+
+    // undrainAsk(model): take a drain back; the model admits requests again
+    function undrainAsk(model) {
+      return ask({ title: ['Cancel the unload of ', h('span.mono', model), '?'], go: 'Cancel the unload',
+        lines: ['It stops waiting to unload and takes requests again, the ones queued meanwhile first.'],
+        run: c => undrainModel(api, model, c).then(() => toast(`${model} stays loaded`, 'ok')) });
+    }
+
+    // ---------- Load a model on chosen zones (Zones-Fleet-Detail) ----------
+    // The plan comes first (POST /api/plan {model, nodes}): its verdict and
+    // memory line; only then Load (loadModel, the same body). The zone
+    // picker lists every zone; one that takes a model only when named (the
+    // laptop, no_auto_nodes) carries its "Named only" badge.
+    function askLoad(model, ids) {
+      const st = state.status || {};
+      const zones = viewNodes(st).filter(n => n.state !== 'removed' && (agentOf(st, n) || {}).zone_state !== 'removed')
+        .map(n => ({ n, id: n.id, name: n.hostname || (agentOf(st, n) || {}).name || n.id, z: zoneOf(st, n) }))
+        .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+      const picked = new Set(ids.filter(id => zones.some(x => x.id === id)));
+      const nodesNow = () => zones.filter(x => picked.has(x.id)).map(x => x.name);
+      let plan = null, planErr = '', planFor = '', seq = 0;
+      return dialog({ title: ['Load ', h('span.mono', model), ' on chosen zones'], wide: true, body: close => {
+        const comment = h('textarea.textarea', { rows: 2, maxlength: 400, 'data-field': 'comment', placeholder: 'Why? It is kept in the audit log.', 'aria-label': 'Comment' });
+        const err = h('span.err', { role: 'alert' });
+        const go = button('Load', null, 'lg pri', { 'data-go': '', disabled: true });
+        const cancel = button('Cancel', () => close(false), 'lg');
+        const verdict = h('div', { 'data-plan': '' });
+        const draw = () => {
+          const sig = nodesNow().join(',');
+          go.disabled = !(plan && planFor === sig && plan.action !== 'reject' && sig);
+          verdict.replaceChildren(planView(plan && planFor === sig ? plan : null, planErr, sig));
+        };
+        const check = async () => {
+          const nodes = nodesNow(), sig = nodes.join(','), my = ++seq;
+          plan = null; planErr = ''; planFor = sig;
+          draw();
+          if (!nodes.length) return;
+          try { const p = await planLoad(api, model, nodes); if (my === seq) plan = p; } catch (e) { if (my === seq) planErr = (e && e.message) || 'The plan could not be read.'; }
+          if (my === seq) draw();
+        };
+        const picker = h('div.addz', { 'data-picker': '' }, zones.map(x => {
+          const named = x.n.auto === false;
+          return h('label.addrow', { 'data-pick-row': x.name },
+            h('input', { type: 'checkbox', class: 'cb', 'data-pick': x.name, checked: picked.has(x.id), onclick: () => { if (picked.has(x.id)) picked.delete(x.id); else picked.add(x.id); check(); } }),
+            h('span.mono', x.name),
+            h('span.mut', x.z.label, named ? [' ', badge('Named only', 'n', 'It takes a model only when a profile or a load names it (no_auto_nodes); naming it here does.')] : null));
+        }));
+        go.addEventListener('click', async () => {
+          const c = comment.value.trim();
+          if (!c) { err.textContent = 'A comment is required. Say why, in a few words.'; comment.focus(); return; }
+          const nodes = nodesNow();
+          if (!nodes.length) { err.textContent = 'Choose at least one zone.'; return; }
+          // the plan for exactly these zones first; a refused plan loads nothing
+          if (!plan || planFor !== nodes.join(',')) { err.textContent = 'Wait for the plan of these zones.'; return; }
+          if (plan.action === 'reject') { err.textContent = 'The plan refuses this load: nothing is sent.'; return; }
+          err.textContent = '';
+          go.disabled = cancel.disabled = true;
+          try {
+            await loadModel(api, model, nodes, c);
+            toast(`Loading ${model} on ${nodes.join(', ')}`, 'ok');
+            close(true); readCounts(); view.refresh();
+          } catch (e) { err.textContent = (e && e.message) || 'The request failed.'; cancel.disabled = false; draw(); }
+        });
+        check();
         return h('div.col', { style: 'gap:14px' },
-          h('div', { class: 'box' + (runs || loading ? ' warn' : '') },
-            h('div.pt', icon(runs || loading ? 'M10 3l8 14H2zM10 8.5v4M10 14.8v.01' : 'M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM10 9v5M10 6v.01', 15), h('span', h('b', lead), where))),
-          box,
+          h('div.field', h('label', 'Zones'), picker,
+            h('span.mut', { style: 'font-size:12px' }, 'The load goes on these zones only, for this one load; the profile itself is not changed.')),
+          verdict,
           h('div.field', h('label', 'Comment (required)'), comment, err),
           h('div.dlg-foot', cancel, go));
       } });
@@ -667,11 +834,18 @@ registerView({
             h('span.chev', icon('M8 5l5 5-5 5', 15)));
         }) : h('div.pf.none', { key: 'attn-none' }, h('span.mut', 'Nothing needs a look: every zone of it is reachable.')),
         h('div.dh', { key: 'models-h', style: 'margin-top:8px' }, h('h3', 'Models here')),
-        models.length ? models.map(m => h('div.pf', { key: 'm-' + m.profile },
-          h('span.mono', { style: 'font-weight:500' }, m.profile),
-          h('span', { style: 'text-align:right;font-weight:600' }, plural(m.zones || 0, 'zone')),
-          modelActionsOn() ? button('Unload', () => askUnload(m.profile, { group: name }), 'sm', { 'data-unload': m.profile, style: 'justify-content:center' }) : h('span')))
+        models.length ? models.map(m => {
+          const inst = ((state.status || {}).instances || []).find(i => i.profile === m.profile);
+          const dr = isDraining(inst);
+          return h('div.pf', { key: 'm-' + m.profile, 'data-model': m.profile },
+            h('span', h('span.mono', { style: 'font-weight:500', title: m.profile }, modelName(m.profile)),
+              dr ? h('span.mut', { style: 'font-size:12px;font-weight:600', 'data-draining': '' }, ' · unloads when its requests end, ' + drainText(inst)) : null),
+            h('span', { style: 'text-align:right;font-weight:600' }, plural(m.zones || 0, 'zone')),
+            dr ? button('Cancel unload', () => undrainAsk(m.profile), 'sm', { 'data-undrain': m.profile, style: 'justify-content:center', title: 'Take the unload back: it takes requests again' })
+              : button('Unload', () => askUnload(m.profile, { group: name }), 'sm', { 'data-unload': m.profile, style: 'justify-content:center' }));
+        })
           : h('div.pf.none', { key: 'models-none' }, h('span.mut', 'No model is loaded on its zones.')),
+        h('div.zmore', { key: 'gevents' }, eventsPart(ghist && ghist.name === name ? ghist : null, 'No load, unload or trouble recorded for its zones yet.')),
       ];
     }
     function groupPanel(name) {
@@ -680,10 +854,9 @@ registerView({
         const d = doc();
         if (!d) return null;
         const members = cur.all.filter(x => x.group === name);
-        const chips_ = [...new Set(members.map(x => x.chip).filter(Boolean))];
         const each = (d.memory && d.memory.each_total_mib) || (members.length && members.every(x => x.n.total_mib === members[0].n.total_mib) ? members[0].n.total_mib : 0);
         const count = d.count != null ? d.count : members.length;
-        return [plural(count, 'zone'), typeof d.chip === 'string' && d.chip && d.chip !== 'mixed' ? d.chip : chips_.length === 1 ? chips_[0] : null, each ? `${gb(each)} each` : null].filter(Boolean).join(' · ');
+        return [plural(count, 'zone'), groupChip(d, members) || null, each ? `${gb(each)} each` : null].filter(Boolean).join(' · ');
       };
       const controls = () => {
         const d = doc();
@@ -693,7 +866,7 @@ registerView({
           h('button.switch', { type: 'button', role: 'switch', 'aria-checked': v, 'aria-label': 'Accepting models', title: v === 'mixed' ? 'Some of its zones are not accepting models: switch it on to let them all accept again' : null,
             onclick: () => switchAsk(name, d) }, h('span')));
       };
-      const foot = () => h('a.gp-act', { href: href('activity'), title: 'The history cannot be filtered by group yet: Activity shows the events of every zone.' }, 'Activity for this group', icon('M8 5l5 5-5 5', 15));
+      const foot = () => h('a.gp-act', { href: href('activity'), 'data-gp': 'activity', title: 'Its recent events are listed above (the history filtered by this group). Activity itself shows every zone: it has no group filter yet.' }, 'Activity for this group', icon('M8 5l5 5-5 5', 15));
       return sidePanel({ label: 'Selected group', title: h('span.mono', name), sub, controls, body: () => groupBody(name), foot,
         name: 'Selected group: ' + name,
         onClose: () => { if (side && side.key === 'g:' + name) { side = null; navigate('zones', [], r.query, true); } } });
@@ -709,6 +882,31 @@ registerView({
       } catch (e) { if (week && week.id === id) week = { id, doc: null, error: (e && e.message) || 'the request failed' }; }
       if (alive && side && side.id === id) side.redraw();
     };
+    // the profiles "Load a model" offers (GET /api/profiles, read when a zone
+    // panel first opens and again after a configuration change); the
+    // generated ones (benchmark matrices) are folded into their own group
+    let profs = null; // {list, error}
+    const loadPick = new Map(); // zone id -> the chosen profile
+    const readProfiles = async () => {
+      try { const d = await api.get('/api/profiles'); profs = { list: (d && d.profiles) || [] }; } catch (e) { profs = { list: [], error: (e && e.message) || 'the request failed' }; }
+      if (alive && side) side.redraw();
+    };
+    const offConfig = listen('config', () => { if (profs) readProfiles(); });
+    function loadPart(id) {
+      if (!profs) { readProfiles(); profs = { list: null }; }
+      const list = profs.list;
+      const isGen = x => (typeof x.generated === 'boolean' ? x.generated : false);
+      const label = x => { const s = modelName(x.id); return s && s !== x.id ? `${s} · ${x.id}` : x.id; };
+      const cur_ = loadPick.get(id) || '';
+      const sel_ = h('select.select', { 'data-zp': 'profile', 'aria-label': 'Choose a profile', disabled: !list || !list.length, style: 'flex:1;font-weight:600',
+        onchange: e => { loadPick.set(id, e.target.value); if (side) side.redraw(); } },
+        h('option', { value: '', selected: !cur_ }, !list ? 'Reading the profiles…' : profs.error ? 'The profiles could not be read' : list.length ? 'Choose a profile' : 'No profile to load'),
+        list ? [list.filter(x => !isGen(x)).map(x => h('option', { value: x.id, selected: x.id === cur_ }, label(x))),
+          list.some(isGen) ? h('optgroup', { label: 'Generated for benchmarks' }, list.filter(isGen).map(x => h('option', { value: x.id, selected: x.id === cur_ }, label(x)))) : null] : null);
+      return h('div.gp-acts', { key: 'load' }, sel_,
+        button('Load', () => { const p = loadPick.get(id); if (p) askLoad(p, [id]); }, '', { 'data-zp': 'load', disabled: !cur_,
+          title: profs.error ? 'The profiles could not be read: ' + profs.error : cur_ ? 'Shows the plan for the zones you choose, then loads' : 'Choose a profile first' }));
+    }
     const STATE_SHORT = { use: 'In use', free: 'Free', load: 'Loading', off: 'Switched off' };
     function zoneHead(st, n) {
       const a = agentOf(st, n) || {};
@@ -761,18 +959,17 @@ registerView({
       if (!n) return h('div.zempty', empty('This zone is not in the status', 'It may have left the pool. Close this panel to see the zones there are.'));
       const a = agentOf(st, n) || {};
       const name = n.hostname || a.name || n.id;
-      const host = String(a.addr || n.addr || '').replace(/:\d+$/, '');
-      const ssh = host ? 'ssh ' + host : '';
       const mem = memOf(n);
       const temp = tempOf(a);
-      const links = ((a.stats && a.stats.net) || []).map(x => x && x.link_mbps).filter(v => typeof v === 'number' && v > 0);
+      // the last cold load (last_load_link): a lower bound of the link's rate; absent: none yet, never 0
+      const link = a.last_load_link && a.last_load_link.mb_s > 0 ? a.last_load_link : null;
       const u = uptimeDoc && (uptimeDoc.zones || []).find(v => v.id === id || v.name === name);
       const win = uptimeDoc && uptimeDoc.window;
       const since = win && win.complete === false && tms(win.covered_from) ? dayText(tms(win.covered_from)) : '';
       const fact = (label, value, more) => h('div.fact', h('span.lbl', label), value, more || null);
       const m = member(st, id);
       const inst = m ? m.inst : n.holder ? (st.instances || []).find(i => i.profile === n.holder) : null;
-      const nameOfId = x => { const y = viewNodes(st).find(v => v.id === x); return y ? y.hostname || y.id : x; };
+      const nameOfId = x => { const y = viewNodes(st).find(v => v.id === x || v.hostname === x); return y ? y.hostname || y.id : x; };
       let loaded;
       if (inst) {
         const others = (inst.nodes || []).filter(x => x.id !== id);
@@ -785,12 +982,17 @@ registerView({
         else if (role) parts.push(role);
         if (m && m.role === 'host' && others.length) parts.push([others.length === 1 ? 'helper ' : 'helpers ', others.map((x, i) => [i ? ', ' : '', h('span.mono', { style: 'font-size:12px' }, nameOfId(x.id))])]);
         else if (hostM && hostM.id !== id) parts.push(['host ', h('span.mono', { style: 'font-size:12px' }, nameOfId(hostM.id))]);
-        if (inst.state !== 'starting') parts.push(plural(runs, 'run'));
+        if (inst.state !== 'starting') parts.push(plural(runs, 'request'));
         if (since_) parts.push(['loaded ', h('time', { title: dateTime(since_), datetime: new Date(since_).toISOString() }, agoText(since_))]);
+        const pins = pinnedOf(inst);
+        if (pins.length) parts.push(h('span', { 'data-pinned': '', title: 'Loaded on chosen zones: ' + pins.map(nameOfId).join(', ') + '. Its next ordinary load is placed as its profile says.' }, 'on chosen zones'));
+        const dr = isDraining(inst);
         loaded = h('div.zl', { key: 'loaded' },
-          h('div', { style: 'flex:1;min-width:0' }, h('div.mono', { style: 'font-size:14px;font-weight:500' }, inst.profile),
-            h('div.mut', { style: 'font-weight:600' }, parts.map((p, i) => [i ? ' · ' : '', p]))),
-          modelActionsOn() ? button('Force unload', () => askUnload(inst.profile, { zone: id }), 'red', { 'data-zp': 'force' }) : null);
+          h('div', { style: 'flex:1;min-width:0' }, h('div.mono', { style: 'font-size:14px;font-weight:500', title: inst.profile }, modelName(inst.profile)),
+            h('div.mut', { style: 'font-weight:600' }, parts.map((p, i) => [i ? ' · ' : '', p])),
+            dr ? h('div', { 'data-draining': '', style: 'font-weight:600;font-size:12px' }, 'Unloads when its requests end, ' + drainText(inst) + '. New requests wait in the queue.') : null),
+          dr ? button('Cancel unload', () => undrainAsk(inst.profile), '', { 'data-zp': 'undrain', title: 'Take the unload back: it takes requests again' }) : null,
+          button('Force unload', () => askUnload(inst.profile, { zone: id }), 'red', { 'data-zp': 'force' }));
       } else {
         const z = zoneOf(st, n);
         loaded = h('div.zl', { key: 'loaded' }, h('span.mut', { style: 'font-weight:600' }, 'Nothing is loaded.', z.pill === 'free' && z.label !== 'Free' ? [' ', z.label, z.rest] : null));
@@ -798,9 +1000,9 @@ registerView({
       const w = week && week.id === id ? week : null;
       return [
         h('div.gp-acts', { key: 'ssh' },
-          h('div.cmd', { title: 'No SSH user is set yet for this zone or its group: ssh uses your own user name (the setting comes with the server\'s next slice).' }, h('span.mono', ssh || DASH)),
-          button('Copy', () => { try { navigator.clipboard.writeText(ssh).then(() => toast('Copied', 'ok'), () => toast('The browser did not allow copying', 'err')); } catch { toast('The browser did not allow copying', 'err'); } }, '', { 'data-zp': 'copy', disabled: !ssh }),
-          button([icon('M3 5h14v10H3zM6 9l2 1.5L6 12M10 12h4', 15), 'Open terminal'], null, '', { 'data-zp': 'terminal', disabled: true, title: 'Open terminal is not built yet: Potluck has no terminal. Copy the command instead.' }),
+          h('div.cmd', { 'data-zp': 'ssh', title: SSH_WHY }, h('span.mut', 'SSH: not available yet')),
+          button('Copy', null, '', { 'data-zp': 'copy', disabled: true, title: SSH_WHY }),
+          button([icon('M3 5h14v10H3zM6 9l2 1.5L6 12M10 12h4', 15), 'Open terminal'], null, '', { 'data-zp': 'terminal', disabled: true, title: SSH_WHY }),
           button([icon('M16 10a6 6 0 1 1-2-4.5M16 4v4h-4', 15), 'Reboot'], null, 'red', { 'data-zp': 'reboot', disabled: true, title: REBOOT_WHY })),
         h('div.f2', { key: 'facts' },
           fact('Memory', mem ? h('b', gbNum(mem.used), h('span.mut.of', ` of ${gb(mem.total)}`)) : h('b.mut', DASH),
@@ -808,16 +1010,16 @@ registerView({
           fact('Temperature', h('b', temp == null ? DASH : `${num(temp)} °C`)),
           fact('Ping', h('b.mut', { title: 'Ping is not measured yet: the agent does not time its heartbeat to Potluck (it needs the agent track).' }, 'not measured')),
           fact('Uptime', typeof a.host_uptime_s === 'number' ? h('b', { title: 'Since the machine last started, as its agent reports it' }, goneFor(a.host_uptime_s * 1000)) : h('b.mut', { title: 'The agent reports no uptime' }, DASH)),
-          fact('Link speed', links.length ? h('b', { title: 'The network card\'s negotiated speed, not a measured transfer rate: Potluck measures none yet' }, `${num(Math.max(...links))} Mbit/s`)
-            : h('b.mut', { title: 'The network card reports no speed (a PS5 reports none), and Potluck measures no transfer rate yet' }, 'not measured')),
+          fact('Link speed', link
+            ? h('b', { 'data-link': '', title: `At least this fast: ${num(link.bytes || 0)} bytes in ${num(Math.round((link.load_s || 0) * 10) / 10)} s, and that time also holds the model's start. Not a link test.` }, `≥ ${num(Math.round(link.mb_s))} MB/s`)
+            : h('b.mut', { 'data-link': '', title: 'No load has sent this zone a model over the network yet (a cached or a short load does not count).' }, 'no cold load yet'),
+          link ? h('span.mut', { style: 'font-size:12px;font-weight:600' }, 'last cold load, ', tms(link.at) ? `${dayText(tms(link.at))} ${clock(tms(link.at), false)}` : DASH,
+            link.model ? [' · ', h('span.mono', { title: link.model }, modelName(link.model))] : null) : null),
           fact(since ? 'Up, since ' + since : 'Up, last 7 days', h('b', pctText(u ? u.uptime : null)))),
         h('div.dh', { key: 'loaded-h' }, h('h3', 'Loaded now')),
         loaded,
-        modelActionsOn() ? h('div.dh', { key: 'load-h' }, h('h3', 'Load a model')) : null,
-        !modelActionsOn() ? null : h('div.gp-acts', { key: 'load' },
-          h('button', { class: 'btn', type: 'button', disabled: true, style: 'flex:1;justify-content:space-between;font-weight:600', title: 'Loading onto a chosen zone is not built yet: the server takes no zone when it loads, Potluck picks the zones itself.' },
-            'Choose a profile', icon('M5 8l5 5 5-5', 15)),
-          button('Load', null, '', { 'data-zp': 'load', disabled: true, title: 'Loading onto a chosen zone is not built yet: the server takes no zone when it loads, Potluck picks the zones itself.' })),
+        h('div.dh', { key: 'load-h' }, h('h3', 'Load a model')),
+        loadPart(id),
         h('div.dh', { key: 'week-h' }, h('h3', 'Last 7 days'),
           h('span.mut.wkey', 'Idle', h('i.sq.free'), h('i.sq.use2'), h('i.sq.use4'), 'Busy', h('i.sq.down', { style: 'margin-left:8px' }), 'Down')),
         h('div.wgbox', { key: 'week' }, !w || (!w.doc && !w.error) ? h('span.mut', 'Reading the last 7 days…') : w.error ? h('span.err-t', 'The last 7 days could not be read: ' + w.error) : weekGrid(w.doc)),
@@ -842,7 +1044,10 @@ registerView({
       const all = !st ? [] : viewNodes(st).filter(n => n.state !== 'removed' && (agentOf(st, n) || {}).zone_state !== 'removed').map(n => {
         const a = agentOf(st, n) || {};
         const z = zoneOf(st, n);
-        return { n, a, z, id: n.id, name: n.hostname || a.name || n.id, chip: chipOf(a), mem: memOf(n), temp: tempOf(a), group: a.group || n.group || '',
+        // needs attention first: the server's attention_rank (GET /api/nodes, the status agents), else the page's own
+        const nd = nodesDoc && (nodesDoc.nodes || []).find(v => v.id === n.id);
+        const rank = typeof a.attention_rank === 'number' ? a.attention_rank : nd && typeof nd.attention_rank === 'number' ? nd.attention_rank : z.rank;
+        return { n, a, z, rank, id: n.id, name: n.hostname || a.name || n.id, chip: chipOf(a), reported: typeof a.chip === 'string' ? a.chip : '', mem: memOf(n), temp: tempOf(a), group: a.group || n.group || '',
           model: (member(st, n.id) || {}).inst ? member(st, n.id).inst.profile : n.holder || '', addr: String(a.addr || n.addr || '').replace(/:\d+$/, '') };
       });
       // the one set of counts; until it is read, the same reading of the live status
@@ -878,7 +1083,7 @@ registerView({
         (!modelF || (modelF === NONE_MODEL ? !x.model : x.model === modelF)) && (!memF || memBand(x.mem) === memF) &&
         (!needle || [x.name, x.chip, x.model, x.addr, x.id].some(v => String(v || '').toLowerCase().includes(needle))));
       const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true });
-      const cmp = { name: byName, attention: (a, b) => (a.z.rank - b.z.rank) || byName(a, b),
+      const cmp = { name: byName, attention: (a, b) => (a.rank - b.rank) || byName(a, b),
         memory: (a, b) => ((b.mem ? b.mem.used / b.mem.total : -1) - (a.mem ? a.mem.used / a.mem.total : -1)) || byName(a, b),
         temp: (a, b) => ((b.temp ?? -1) - (a.temp ?? -1)) || byName(a, b) }[sort];
       rows.sort(cmp);
@@ -955,6 +1160,7 @@ registerView({
         const members = all.filter(x => x.group === name);
         const cs = (doc && doc.counts) || null;
         const chipsHere = [...new Set(members.map(x => x.chip).filter(Boolean))];
+        const gchip = groupChip(doc, members);
         const count = doc && doc.count != null ? doc.count : members.length;
         const memD = doc && doc.memory;
         const tempD = doc && doc.temp && typeof doc.temp.avg_c === 'number' ? doc.temp.avg_c : null;
@@ -972,8 +1178,9 @@ registerView({
           h('span.gn', h('button', { class: 'more', type: 'button', 'aria-expanded': closed ? 'false' : 'true', 'aria-label': (closed ? 'Expand ' : 'Collapse ') + label, 'data-fold': name || '-',
             onclick: e => { e.stopPropagation(); if (shut.has(name)) shut.delete(name); else shut.add(name); view.refresh(); } }, icon(closed ? 'M8 5l5 5-5 5' : 'M5 8l5 5 5-5', 14)),
           h(name ? 'span.mono.gname' : 'span.gname', label),
-          // one chip: "N · chip"; devices that differ: the count, "mixed" and the names on hover
-          h('span.mut.gmeta', { title: chipsHere.length > 1 ? 'mixed: ' + chipsHere.join(', ') : null }, num(count) + (chipsHere.length === 1 ? ' · ' + chipsHere[0] : count === 1 ? ' zone' : ' zones'))),
+          // the group's chip (GET /api/groups `chip`): "N · chip" only when every
+          // member reports that one; otherwise the count, "mixed" and the names on hover
+          h('span.mut.gmeta', { title: chipsHere.length > 1 ? 'mixed: ' + chipsHere.join(', ') : null }, num(count) + (gchip ? ' · ' + gchip : count === 1 ? ' zone' : ' zones'))),
           h('span.gc', gcs),
           h('span.r', h('span.mono', memD && memD.total_mib ? `${num(Math.round(memD.used_mib / 1024))} / ${num(Math.round(memD.total_mib / 1024))} GB` : DASH)),
           narrow ? null : [
@@ -1042,7 +1249,7 @@ registerView({
         button('Reboot', null, 'sm', { 'data-bulk': 'reboot', disabled: true, title: REBOOT_WHY }),
         bulkButton('pause'),
         bulkCount('unpause') ? bulkButton('unpause') : null,
-        modelActionsOn() ? button('Force unload', () => forceUnload(chosenNow()), 'sm red', { 'data-bulk': 'force', disabled: !holds, title: holds ? null : 'None of the selected zones holds a model' }) : null,
+        button('Force unload', () => forceUnload(chosenNow()), 'sm red', { 'data-bulk': 'force', disabled: !holds, title: holds ? null : 'None of the selected zones holds a model' }),
         button('Clear', () => { sel.clear(); view.refresh(); }, 'sm ghost', { 'data-act': 'clear' }));
       const totals = narrow && pages === 1 ? h('span.mut', { style: 'font-weight:600' }, (gs.length ? plural(gs.length, 'group') + ' · ' : '') + plural(all.length, 'zone')) : null;
       const foot = h('div.bulk', { key: 'foot' }, chosen.length ? selPart : narrow ? totals : keyPart,
@@ -1059,7 +1266,7 @@ registerView({
     syncSide();
     return {
       update(nr) { r = nr; syncSide(); view.refresh(); },
-      unmount() { alive = false; closeMenu(); clearTimeout(soon); offStatus(); offStartups(); offDrop(); offActions(); if (side) { const s = side; side = null; s.close(); } view.unmount(); },
+      unmount() { alive = false; closeMenu(); clearTimeout(soon); offStatus(); offStartups(); offDrop(); offConfig(); if (side) { const s = side; side = null; s.close(); } view.unmount(); },
     };
   },
 });

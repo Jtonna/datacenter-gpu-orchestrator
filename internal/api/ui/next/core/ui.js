@@ -882,8 +882,8 @@ export function runsTable(o) {
     return h('td', { class: 'num mono' + (t === DASH ? ' mut' : ''), title: t === DASH ? dashTitle || null : title || null }, t);
   };
   // o.liveTimings: the setting requests_live_timings (false: off, true: on, null: not known)
-  const PROMPT_LATER = o.liveTimings === false ? 'Live prompt figures are off: they arrive when the run ends (setting requests_live_timings)'
-    : 'The prompt figures arrive from the first token on, or when the run ends';
+  const PROMPT_LATER = o.liveTimings === false ? 'Live prompt figures are off: they arrive when the request ends (setting requests_live_timings)'
+    : 'The prompt figures arrive from the first token on, or when the request ends';
   return h('table.runs',
     h('thead', h('tr',
       h('th', { scope: 'col' }, 'Status and length'), h('th', { scope: 'col' }, 'Started at'), h('th', { scope: 'col' }, 'Model'),

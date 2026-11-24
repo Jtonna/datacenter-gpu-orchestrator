@@ -18,6 +18,13 @@ import (
 // GET that decodes its JSON answer (the test fails on anything but 200).
 func fixtureServer(t *testing.T, args ...string) func(p string, v any) {
 	t.Helper()
+	get, _ := fixtureStart(t, args...)
+	return get
+}
+
+// fixtureStart is fixtureServer that also gives the server's base URL.
+func fixtureStart(t *testing.T, args ...string) (func(p string, v any), string) {
+	t.Helper()
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node is not installed")
@@ -58,7 +65,7 @@ func fixtureServer(t *testing.T, args ...string) func(p string, v any) {
 			time.Sleep(100 * time.Millisecond)
 		}
 		t.Fatalf("the fixture server did not answer GET %s: %v\n%s", p, last, out)
-	}
+	}, base
 }
 
 type fxCounts struct{ Total, Reachable, Down, Off, InUse, Free, Loading int }
@@ -154,7 +161,7 @@ func TestUIFixtureServerZones(t *testing.T) {
 	}
 
 	// live: eight zones and no group, one removed machine counted nowhere
-	get = fixtureServer(t, "--zones", "live", "--model-actions", "off")
+	get = fixtureServer(t, "--zones", "live")
 	n = nodesDoc{}
 	get("/api/nodes", &n)
 	states = map[string]string{}
@@ -173,8 +180,8 @@ func TestUIFixtureServerZones(t *testing.T) {
 		Settings map[string]any `json:"settings"`
 	}
 	get("/api/config/settings", &set)
-	if set.Settings["ui_model_actions"] != false {
-		t.Errorf("--model-actions off: settings %v", set.Settings)
+	if _, ok := set.Settings["ui_model_actions"]; ok {
+		t.Errorf("the fixture still answers the removed setting ui_model_actions: %v", set.Settings)
 	}
 	get = fixtureServer(t, "--zones", "one-group")
 	g = groupsDoc{}
@@ -182,9 +189,134 @@ func TestUIFixtureServerZones(t *testing.T) {
 	if len(g.Groups) != 1 || g.Groups[0].Name != "pair" || g.Groups[0].Count != 2 || g.Ungrouped.Count != 6 {
 		t.Errorf("one-group: %+v", g)
 	}
-	set.Settings = nil
-	get("/api/config/settings", &set)
-	if set.Settings["ui_model_actions"] != true {
-		t.Errorf("model actions default: settings %v", set.Settings)
+}
+
+// fixturePost starts the fixture server with args and returns a POST that
+// gives the status and the decoded answer.
+func fixturePost(t *testing.T, args ...string) func(p, body string) (int, map[string]any) {
+	t.Helper()
+	get, base := fixtureStart(t, args...)
+	var warm any
+	get("/api/status", &warm) // waits until it answers
+	return func(p, body string) (int, map[string]any) {
+		t.Helper()
+		resp, err := http.Post(base+p, "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatalf("POST %s: %v", p, err)
+		}
+		defer resp.Body.Close()
+		var v map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&v)
+		return resp.StatusCode, v
+	}
+}
+
+// The fixture's model actions answer as the server does (the shapes of
+// p4-zones-backend-STATUS, "For the hardware proof"): the plan for chosen
+// zones (start; reject with the server's sentence), the load (202; 409
+// chosen zone unusable; 409 already loaded or queued; 400 for a zone the
+// view does not hold), the drain with and without an estimate and its
+// next_load sentence, undrain; the status of a draining and of a pinned
+// instance; each zone's attention_rank, chip and last_load_link.
+func TestUIFixtureServerModelActions(t *testing.T) {
+	errOf := func(v map[string]any) (reason, message string) {
+		e, _ := v["error"].(map[string]any)
+		reason, _ = e["reason"].(string)
+		message, _ = e["message"].(string)
+		return
+	}
+	const body = `{"model":"qwen3-4b","nodes":["ps5-04"]}`
+	post := fixturePost(t, "--zones", "live")
+	if st, v := post("/api/plan", body); st != 200 || v["action"] != "start" || v["need_mib"] == nil {
+		t.Errorf("plan start: %d %v", st, v)
+	}
+	if st, v := post("/api/load", body); st != 202 || v["msg"] != "loading" {
+		t.Errorf("load: %d %v", st, v)
+	}
+	if st, v := post("/api/models/drain/gemma-4-27b%3A32k", ``); st != 200 || v["eta_s"] != 40.0 || v["next_load"] == nil {
+		t.Errorf("drain: %d %v", st, v)
+	}
+	if st, v := post("/api/models/undrain/gemma-4-27b%3A32k", ``); st != 409 {
+		t.Errorf("undrain with nothing draining: %d %v", st, v)
+	} else if r, _ := errOf(v); r != "not_draining" {
+		t.Errorf("undrain reason %q", r)
+	}
+	if st, _ := post("/api/agents", `{}`); st != 405 {
+		t.Errorf("other writes: %d, want 405", st)
+	}
+
+	post = fixturePost(t, "--zones", "live", "--load", "reject")
+	if st, v := post("/api/plan", body); st != 200 || v["action"] != "reject" || !strings.Contains(v["reason"].(string), "is paused") {
+		t.Errorf("plan reject: %d %v", st, v)
+	}
+	if st, v := post("/api/load", body); st != 409 {
+		t.Errorf("load refused: %d %v", st, v)
+	} else if r, m := errOf(v); r != "chosen zone unusable" || !strings.Contains(m, "cannot be loaded on the chosen zones") {
+		t.Errorf("load refused: %q %q", r, m)
+	}
+	post = fixturePost(t, "--zones", "live", "--load", "loaded")
+	if st, v := post("/api/load", body); st != 409 {
+		t.Errorf("load already loaded: %d %v", st, v)
+	} else if r, _ := errOf(v); r != "already loaded or queued" {
+		t.Errorf("load already loaded: %q", r)
+	}
+	post = fixturePost(t, "--zones", "live", "--load", "unknown")
+	if st, v := post("/api/plan", `{"model":"qwen3-4b","nodes":["nope"]}`); st != 400 {
+		t.Errorf("plan unknown zone: %d %v", st, v)
+	} else if _, m := errOf(v); !strings.Contains(m, "is not a node in the fleet view") {
+		t.Errorf("plan unknown zone: %q", m)
+	}
+
+	type inst struct {
+		Profile  string   `json:"profile"`
+		State    string   `json:"state"`
+		Drain    bool     `json:"drain"`
+		ETA      *float64 `json:"drain_eta_s"`
+		Pinned   []string `json:"pinned_nodes"`
+		InFlight int      `json:"in_flight"`
+	}
+	type status struct {
+		Instances []inst `json:"instances"`
+		Agents    []struct {
+			Name     string         `json:"name"`
+			Rank     *int           `json:"attention_rank"`
+			Chip     string         `json:"chip"`
+			LoadLink map[string]any `json:"last_load_link"`
+		} `json:"agents"`
+	}
+	get := fixtureServer(t, "--zones", "live", "--drain", "eta", "--pinned")
+	var st status
+	get("/api/status", &st)
+	if i := st.Instances[0]; i.State != "draining" || !i.Drain || i.ETA == nil || *i.ETA != 40 || len(i.Pinned) != 3 || i.InFlight != 2 {
+		t.Errorf("draining, pinned instance: %+v", i)
+	}
+	at := map[string]int{}
+	for k, a := range st.Agents {
+		at[a.Name] = k
+		if a.Rank == nil {
+			t.Errorf("%s has no attention_rank", a.Name)
+		}
+	}
+	if a := st.Agents[at["laptop-01"]]; a.Chip != "RTX 3070 Ti" {
+		t.Errorf("laptop-01 chip %q", a.Chip)
+	}
+	if a := st.Agents[at["ps5-01"]]; a.Chip != "" || a.LoadLink == nil || a.LoadLink["mb_s"] != 104.6 {
+		t.Errorf("ps5-01: chip %q, last_load_link %v", a.Chip, a.LoadLink)
+	}
+	if a := st.Agents[at["ps5-04"]]; a.LoadLink != nil {
+		t.Errorf("ps5-04 has a last cold load: %v", a.LoadLink)
+	}
+	get = fixtureServer(t, "--zones", "live", "--drain", "noeta")
+	st = status{}
+	get("/api/status", &st)
+	if i := st.Instances[0]; i.State != "draining" || i.ETA != nil || i.Pinned != nil {
+		t.Errorf("draining without an estimate: %+v", i)
+	}
+	post = fixturePost(t, "--zones", "live", "--drain", "noeta")
+	if st, v := post("/api/models/drain/gemma-4-27b%3A32k", ``); st != 200 || v["eta_s"] != nil {
+		t.Errorf("drain without an estimate: %d %v", st, v)
+	}
+	if st, v := post("/api/models/undrain/gemma-4-27b%3A32k", ``); st != 200 || v["msg"] != "ok" {
+		t.Errorf("undrain: %d %v", st, v)
 	}
 }

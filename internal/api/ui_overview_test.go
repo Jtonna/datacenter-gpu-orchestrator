@@ -116,7 +116,7 @@ func TestUINextOverview(t *testing.T) {
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
 		map[string]any{"name": "overview: every row state", "route": "#/overview", "status": st,
 			"expect": []string{"Day", "Week", "Month", "All time", "· today", "Customize", "View 24-hour report",
-				"Tokens", "tokens in", "tokens out", "per hour", "Runs", "Queued", "Running", "Done", "Failed", "Cancelled", "All 6",
+				"Tokens", "tokens in", "tokens out", "per hour", "Requests", "Queued", "Running", "Done", "Failed", "Cancelled", "All 6",
 				"Status and length", "Started at", "In tok/s", "Out tok/s", "Not started", "queued ", "42.5 s", "8.2 s", "4.0 s", "10 min", "2,460", "412", "14.1"},
 			"absent": []string{"Requests"},
 			"has":    []string{"tr.fail", "tr.canc", "[data-run-start]", "span[title^='Failed:']", "span[title^='Refused:']", "span[title^='Cancelled']", "button.zb.on[data-zones='15']"}},
@@ -150,13 +150,13 @@ func TestUINextOverview(t *testing.T) {
 		map[string]any{"name": "overview: all time", "route": "#/overview?period=all", "status": st, "expect": []string{"per day"}, "none": []string{"div.stepper"}},
 		map[string]any{"name": "overview: history begins", "route": "#/overview?date=2020-01-06", "status": st, "expect": []string{"History begins at"}},
 		// the requests list and the report it links to
-		map[string]any{"name": "requests list", "route": "#/requests", "status": st, "expect": []string{"Runs", "Refused", "Sent by", "node-a Host, node-b Helper", "Older", "Newer"}},
+		map[string]any{"name": "requests list", "route": "#/requests", "status": st, "expect": []string{"Requests", "Refused", "Sent by", "node-a Host, node-b Helper", "Older", "Newer"}},
 		map[string]any{"name": "24-hour report", "route": "#/report", "status": st, "expect": []string{"24-hour report", "Failed and refused runs", "Zones, hour by hour", "Print"}},
 	}})
 
 	// no request in the period, and the request log off
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": ovFetch(now, []any{}, true), "cases": []any{
-		map[string]any{"name": "overview: no requests", "route": "#/overview", "status": st, "expect": []string{"No runs on this day", "No runs in this period.", "All 0"}},
+		map[string]any{"name": "overview: no requests", "route": "#/overview", "status": st, "expect": []string{"No requests on this day", "No requests in this period.", "All 0"}},
 	}})
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": ovFetch(now, ovRequests(now)[:2], false), "cases": []any{
 		map[string]any{"name": "overview: the request log is off", "route": "#/overview", "status": st,
@@ -164,7 +164,7 @@ func TestUINextOverview(t *testing.T) {
 	}})
 	// nothing answers yet: the panels say they are reading
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": map[string]any{}, "cases": []any{
-		map[string]any{"name": "overview: no answers", "route": "#/overview", "expect": []string{"The totals could not be read", "The runs could not be read"}},
+		map[string]any{"name": "overview: no answers", "route": "#/overview", "expect": []string{"The totals could not be read", "The requests could not be read"}},
 	}})
 }
 

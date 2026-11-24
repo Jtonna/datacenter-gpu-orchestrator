@@ -1,6 +1,6 @@
 // System health (design: Health board, the popup anchored to the heart at
 // the foot of the rail): a title, the summary sentence with the worst dot,
-// "Updated N s ago", the seven rows (Zones, Runs, Scheduler, MCP server,
+// "Updated N s ago", the seven rows (Zones, Requests, Scheduler, MCP server,
 // Storage, Queue, Alerts), "Last 2 hours" with "All activity", and "Alert
 // settings".
 //
@@ -84,6 +84,11 @@ function updated() {
 
 // healthPopup(onClose, onGo) -> the popup (the design's .hp). onGo(hash)
 // follows a link of it (the shell closes the popup and goes there).
+// rowLabel(row) -> the row's name. The owner's word for client requests is
+// "Requests" ("Runs" means benchmark runs only, DECISIONS 24 Nov 06:07); the
+// server still labels the row "Runs", so the page names it by its id.
+const rowLabel = r => (r && r.id === 'runs' ? 'Requests' : r.label);
+
 // rowText(row) -> the row's sentence as the server wrote it, with
 // facts.release set in mono where the sentence names it (the Scheduler row,
 // as the Health board draws it). The sentence wraps; it is never cut.
@@ -110,7 +115,7 @@ export function healthPopup(onClose, onGo) {
     rows.map(r => link('hp-row' + (r.state === 'unknown' ? ' unknown' : ''), r.link || null,
       { key: 'hr-' + r.id, 'data-health': r.id, 'data-state': r.state },
       h('span', { class: 'hd ' + (DOT[r.state] || 'wait') }),
-      h('span.hr-name', r.label),
+      h('span.hr-name', rowLabel(r)),
       h('span.mut.hr-text', rowText(r)),
       h('span.hr-chev', { 'aria-hidden': 'true' }, icon(I.chev)))),
     h('div.hp-last',

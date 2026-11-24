@@ -121,7 +121,7 @@ func TestUINextHealthPopup(t *testing.T) {
 				"a.hp-row[data-health=zones][href='#/zones']", "a.hp-row[data-health=queue][href='#/monitor/queue']", "a.hp-row[data-health=alerts][href='#/health/alerts']",
 				"div.hp-ev span.mono", "a.hp-foot[href='#/health/alerts']", "div.hp-last a[href='#/activity?range=2h&sev=warn']"},
 			"pageNone": []string{"div.hp-row", "span.hr-count"},
-			"page": []string{"System health", "2 things need attention", "Zones", "7 of 8 reachable · 1 down", "Runs", "1 failed in the last hour",
+			"page": []string{"System health", "2 things need attention", "Zones", "7 of 8 reachable · 1 down", "Requests", "1 failed in the last hour",
 				"Scheduler", "Running · release v1-test · up 12 d", "MCP server", "Running · 3 keys active", "Storage", "50.3 of 240 GB used",
 				"Queue", "Nothing waiting", "Alerts", "Not set up yet",
 				"Last 2 hours", "All activity", "node-e", " failed a load and was set aside until ", "node-x", " went offline", "A request for beta was refused", "Alert settings"}},

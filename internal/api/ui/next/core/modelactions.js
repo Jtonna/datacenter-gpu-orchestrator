@@ -1,48 +1,58 @@
-// Model actions: the one place the web UI unloads a model. The owner's rule
-// of 24 Nov (DECISIONS "RULE CHANGE"): the Zones mockups draw Unload (and
-// Load a model), so the UI may do it, each time behind a confirm dialog with
-// a required comment; the audit entry keeps the comment and is signed by the
-// default user (no X-Actor). No other UI file names these routes
+// Model actions: the one place the web UI loads, drains or unloads a model.
+// The owner's decision of 24 Nov (DECISIONS 05:29): the new UI loads and
+// unloads models as the Zones mockups draw it (Load a model on chosen zones,
+// Unload by waiting for the requests or by force, Force unload), each time
+// behind a confirm dialog with a required comment; the audit entry keeps the
+// comment (X-Comment) and is signed by the default user (no X-Actor). There
+// is no setting that switches them off. No other UI file names these routes
 // (TestUIModelActionsInOneModule).
 //
+//   POST /api/plan {model, nodes}     the plan for a load on those zones (changes nothing)
+//   POST /api/load {model, nodes}     load on those zones (202), 409 / 400 with the server's sentence
+//   POST /api/models/drain/<model>    admit nothing new, unload once the requests in flight end
+//   POST /api/models/undrain/<model>  take the drain back: it admits again
 //   POST /api/unload {model, force, comment}: without force a model that is
-//   serving runs is refused (409 "busy"); with force its runs fail at once.
+//   serving requests is refused (409 "busy"); with force they fail at once.
+
+const need = comment => {
+  const c = String(comment || '').trim();
+  return c ? c : null;
+};
+const noComment = () => Promise.reject(new Error('A comment is required.'));
+const path = (verb, model) => '/api/models/' + verb + '/' + String(model).split('/').map(encodeURIComponent).join('/');
 
 export function unloadModel(api, model, force, comment) {
-  const c = String(comment || '').trim();
-  if (!c) return Promise.reject(new Error('A comment is required.'));
+  const c = need(comment);
+  if (!c) return noComment();
   return api.post('/api/unload', { model, force: !!force, comment: c }, { comment: c });
 }
 
-// ---------- the page switch: setting ui_model_actions ----------
-//
-// GET /api/config/settings -> settings.ui_model_actions (boolean, default
-// true). When it is false the page offers no model action at all: Load a
-// model, Unload and Force unload (buttons, menu items and the unload dialog)
-// are left out, not disabled. Read defensively: missing, unreadable or not a
-// boolean means true. Read again when the configuration changes.
-import * as rest from './api.js';
-import { state, on } from './store.js';
+// planLoad(api, model, nodes) -> the plan (action start | evict | queue |
+// reject, reason, need_mib, required_mib, placement[].budget_mib,
+// tight_fit, warning, memory). Read only: no comment.
+export function planLoad(api, model, nodes) {
+  return api.post('/api/plan', { model, nodes: nodes.slice() });
+}
 
-let allowed = true, rev = -1, reading = false;
-const watchers = new Set();
-function readSwitch() {
-  if (reading) return;
-  reading = true;
-  rest.get('/api/config/settings').then(c => {
-    const s = (c && c.settings) || c || {};
-    allowed = s.ui_model_actions !== false;
-  }, () => { /* not readable: keep what is known (true at first) */ }).finally(() => {
-    reading = false;
-    for (const fn of Array.from(watchers)) fn();
-  });
+// loadModel(api, model, nodes, comment) -> {msg: "loading", model, nodes}.
+// The same body as the plan; the comment goes in X-Comment.
+export function loadModel(api, model, nodes, comment) {
+  const c = need(comment);
+  if (!c) return noComment();
+  return api.post('/api/load', { model, nodes: nodes.slice() }, { comment: c });
 }
-// modelActionsOn() -> false only when the setting says false.
-export const modelActionsOn = () => allowed;
-// onModelActions(fn) -> unsubscribe: fn() once the setting is read, and when it changes.
-export function onModelActions(fn) {
-  watchers.add(fn);
-  if (rev !== state.configRevision) { rev = state.configRevision; readSwitch(); }
-  return () => watchers.delete(fn);
+
+// drainModel(api, model, comment) -> {msg: "draining", model, eta_s?, next_load?}
+// or {msg: "not loaded"}.
+export function drainModel(api, model, comment) {
+  const c = need(comment);
+  if (!c) return noComment();
+  return api.post(path('drain', model), undefined, { comment: c });
 }
-on(['configRevision'], () => { if (watchers.size && rev !== state.configRevision) { rev = state.configRevision; readSwitch(); } });
+
+// undrainModel(api, model, comment) -> {msg: "ok"}; 409 not_draining.
+export function undrainModel(api, model, comment) {
+  const c = need(comment);
+  if (!c) return noComment();
+  return api.post(path('undrain', model), undefined, { comment: c });
+}

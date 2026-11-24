@@ -10,7 +10,7 @@
 //                                           [--state normal|empty|off|loading] [--sequence] [--live-timings]
 //                                           [--health two|good|unknown] [--release 0.1.5]
 //                                           [--zones none|groups|live|one-group|fleet] [--uptime-partial]
-//                                           [--model-actions on|off]
+//                                           [--load start|reject|evict|loaded|unknown] [--drain eta|noeta] [--pinned]
 //
 //   /ui/components.html  the shell's shared components (scripts/ui-fixture/components.js)
 //   /ui/fx-<name>.html   the app driven by scripts/ui-fixture/fx-<name>.js (a board
@@ -22,7 +22,11 @@
 //   /api/system, /api/about, /api/agents, /api/config/settings, /api/history:
 //   fixed answers (times relative to now)
 //   /ws          a WebSocket: hello, the status every 5 s, the requests topic
-//   any other /api/... answers 404 in the API's error shape; writes 405.
+//   /api/profiles: the profiles Load a model offers
+//   the model actions (POST /api/plan, /api/load, /api/unload,
+//   /api/models/drain/<model>, /api/models/undrain/<model>): fixed answers
+//   as the server gives them (--load, --drain below); nothing changes
+//   any other /api/... answers 404 in the API's error shape; other writes 405.
 //
 // --state empty: no request in the period; off: the request log is off
 // (usage.db not open); loading: the request routes never answer.
@@ -49,6 +53,19 @@
 // /api/nodes/uptime. --uptime-partial: the uptime window is not complete
 // yet (the history began 30 hours ago).
 //
+// --load: what POST /api/plan and POST /api/load answer for a load on chosen
+// zones (internal/api/api.go, pin.go): start (the plan starts it, the load
+// is accepted: 202), reject (the plan says reject with the server's
+// sentence for a paused zone; the load 409 "chosen zone unusable"), evict
+// (the plan unloads a model first), loaded (the plan starts, the load 409
+// "already loaded or queued"), unknown (400: a zone the fleet view does not
+// hold).
+//
+// --drain: the first instance (gemma-4-27b:32k, two requests in flight) is
+// draining: eta (drain_eta_s 40) or noeta (no estimate yet). POST
+// /api/models/drain answers eta_s 40 unless --drain noeta. --pinned: that
+// instance was loaded on chosen zones (pinned_nodes).
+//
 // --sequence: a scripted change for screenshots: 4 s after a client
 // subscribes to the requests topic, the queued run 202 starts (a "started"
 // frame), so a queued row can be seen turning into a running one.
@@ -74,8 +91,9 @@ const HEALTH = opt('--health', 'two');
 const RELEASE = opt('--release', '0.1.5');
 const ZONES = opt('--zones', 'none');
 const UPTIME_PARTIAL = argv.includes('--uptime-partial');
-// --model-actions off: the setting ui_model_actions is false (the page offers no Load, Unload or Force unload)
-const MODEL_ACTIONS = opt('--model-actions', 'on') !== 'off';
+const LOAD = opt('--load', 'start');
+const DRAIN = opt('--drain', '');
+const PINNED = argv.includes('--pinned');
 
 // ---------- the fixture (the Overview mockup's sample data) ----------
 
@@ -99,7 +117,7 @@ const iso = ms => new Date(ms).toISOString();
 const SCHED = { id: 'scheduler', name: 'scheduler', role: 'host' };
 
 // status(now) -> the status of the --zones state
-const status = now => zonesStatus(baseStatus(now), now, ZONES);
+const status = now => zonesStatus(baseStatus(now), now, ZONES, { drain: DRAIN, pinned: PINNED });
 
 function baseStatus(now) {
   const t = Math.round(now / 1000) * 1000;
@@ -278,10 +296,12 @@ const server = http.createServer((req, res) => {
     return res.end(readFileSync(f));
   }
   if (!p.startsWith('/api/')) return notFound(res, p);
+  if (req.method === 'POST' && MODEL_ROUTE.test(p)) return modelAction(req, res, p);
   if (req.method !== 'GET') return json(res, 405, { error: { message: 'the fixture is read-only' } });
   if (STATE === 'loading' && p.startsWith('/api/requests')) return; // never answers
   if (p === '/api/status') return json(res, 200, status(now));
   if (p === '/api/models') return json(res, 200, { version: 1, models: [] });
+  if (p === '/api/profiles') return json(res, 200, { profiles: PROFILES });
   // what the health popup reads (the Health board's sample, generic names)
   if (p === '/api/about') return json(res, 200, { version: '0.1.5', started_at: now - 12 * 24 * H, now, uptime_s: 12 * 24 * 3600, history: 'on' });
   if (p === '/api/system') return json(res, 200, { version: '0.1.5', started_at: now - 12 * 24 * H, now, uptime_s: 12 * 24 * 3600, read_panics: 0, internal_failures_total: 0,
@@ -289,7 +309,7 @@ const server = http.createServer((req, res) => {
     stored_config: { unknown_fields: [], writes_need_force: false },
     storage: { database: { dir: '/data', on: true, bytes: 37600000 }, history: { dir: '/data/history', on: true, bytes: 3000000, files: 4 }, usage: { size_bytes: 9400000 }, child_logs: { dir: '/data/logs', bytes: 23700000, files: 12 } } });
   if (p === '/api/agents') return json(res, 200, { agents: ['ops-bot', 'coding agent', 'report writer'].map((name, i) => ({ id: 'agent-' + i, name, key_prefix: 'ptk_' + i, created_at: now - (i + 2) * 24 * H, request_count: 10 * i })) });
-  if (p === '/api/config/settings') return json(res, 200, { settings: { queue_timeout: '30m0s', requests_live_timings: LIVE_TIMINGS, ui_model_actions: MODEL_ACTIONS } });
+  if (p === '/api/config/settings') return json(res, 200, { settings: { queue_timeout: '30m0s', requests_live_timings: LIVE_TIMINGS } });
   if (p === '/api/history') return json(res, 200, { events: [
     { ts: now - 12 * 60000, seq: 41, type: 'nodeQuarantined', severity: 'warn', nodes: ['ps5-05'], summary: 'Node ps5-05 was quarantined for 18m0s (level 1): preflight failed.', data: { for_s: 1080, level: 1 } },
     { ts: now - 54 * 60000, seq: 40, type: 'nodeLost', severity: 'error', nodes: ['ps5-07'], summary: 'Node ps5-07 was lost.', data: {} },
@@ -314,6 +334,49 @@ const server = http.createServer((req, res) => {
   if (m) { const r = requests(now).find(x => String(x.id) === m[1]); return r ? json(res, 200, r) : notFound(res, p); }
   return notFound(res, p);
 });
+
+// ---------- the model actions (fixed answers, nothing changes) ----------
+
+const PROFILES = [
+  { id: BIG, model: 'gemma-4-27b', ctx: 32768, needs_mib: 18900, generated: false },
+  { id: SMALL, model: 'gemma-4-12b', ctx: 65536, needs_mib: 9800, generated: false },
+  { id: QWEN, model: 'qwen3-14b', ctx: 16384, needs_mib: 11200, generated: false },
+  { id: 'qwen3-4b', model: 'qwen3-4b', ctx: 8192, needs_mib: 3900, generated: false },
+  { id: 'bench-qwen4b-auto-2048', model: 'qwen3-4b', ctx: 2048, needs_mib: 3300, generated: true },
+];
+const MODEL_ROUTE = /^\/api\/(plan|load|unload|models\/(drain|undrain)\/.+)$/;
+const apiError = (res, code, reason, message) => json(res, code, { error: { code, message, reason, type: 'invalid_request_error', param: null } });
+function readBody(req) {
+  return new Promise(resolve => { let b = ''; req.on('data', c => { b += c; }); req.on('end', () => { try { resolve(b ? JSON.parse(b) : {}); } catch { resolve({}); } }); });
+}
+async function modelAction(req, res, p) {
+  const body = await readBody(req);
+  const model = body.model || decodeURIComponent(p.replace(/^\/api\/models\/(drain|undrain)\//, ''));
+  const nodes = Array.isArray(body.nodes) ? body.nodes : [];
+  const first = nodes[0] || 'ps5-04';
+  if ((p === '/api/plan' || p === '/api/load') && nodes.length) {
+    if (LOAD === 'unknown') return apiError(res, 400, 'bad request', `"${first}" is not a node in the fleet view`);
+    if (new Set(nodes).size !== nodes.length) return apiError(res, 400, 'bad request', `"${first}" is named twice`);
+  }
+  const unusable = `${model} cannot be loaded on the chosen zones: ${first} is paused`;
+  if (p === '/api/plan') {
+    const prof = PROFILES.find(x => x.id === model) || { needs_mib: 9800 };
+    const placement = nodes.map(n => ({ id: n, addr: '', budget_mib: 13100, local: false }));
+    const base = { model, action: 'start', placement, need_mib: prof.needs_mib, fit_need_mib: Math.round(prof.needs_mib * 1.05), measured: false, reason: '', warning: '', tight_fit: false };
+    if (LOAD === 'reject') return json(res, 200, Object.assign(base, { action: 'reject', placement: [], reason: unusable }));
+    if (LOAD === 'evict') return json(res, 200, Object.assign(base, { action: 'evict', victims: [{ profile: QWEN, busy: false }] }));
+    return json(res, 200, base);
+  }
+  if (p === '/api/load') {
+    if (LOAD === 'reject') return apiError(res, 409, 'chosen zone unusable', unusable);
+    if (LOAD === 'loaded') return apiError(res, 409, 'already loaded or queued', `${model} is ready: unload it (or let the queued load start) before loading it on chosen nodes`);
+    return json(res, 202, nodes.length ? { model, msg: 'loading', nodes } : { model, msg: 'loading' });
+  }
+  if (p === '/api/unload') return json(res, 200, { model, msg: 'ok' });
+  if (p.startsWith('/api/models/drain/')) return json(res, 200, Object.assign({ model, msg: 'draining', next_load: 'The next load may start on another zone.' }, DRAIN === 'noeta' ? {} : { eta_s: 40 }));
+  if (DRAIN) return json(res, 200, { model, msg: 'ok' });
+  return apiError(res, 409, 'not_draining', model + ' is not draining');
+}
 
 // GET /api/health (internal/api/health.go): the server's judged rows and
 // sentences, as the Health board draws them, in the state --health names
