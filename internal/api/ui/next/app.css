@@ -763,6 +763,8 @@ table.runs{width:100%;border-collapse:collapse}
 .runs th.num,.runs td.num{text-align:right}
 .runs .rs{display:flex}
 .runs td.qd{font-weight:600}
+.runs td.rq-zones{white-space:normal;min-width:0;padding-top:4px;padding-bottom:4px;line-height:1.45}
+.rq-zones .mc{white-space:nowrap}
 .runs tr.fail td{background:var(--failed-row)}
 .runs tr.canc td{color:var(--quiet)}
 .runs tr.none td{height:auto;padding:22px var(--pad-panel);color:var(--mut);font-weight:600;white-space:normal}

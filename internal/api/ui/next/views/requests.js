@@ -11,12 +11,31 @@
 import { h } from '../core/dom.js';
 import { registerView, navigate, href } from '../core/router.js';
 import { onCatalog, needCatalog } from '../core/catalog.js';
-import { liveView, pageHead, chips, button, runsTable, runLegend, tickRuns, skeleton, filterSelect, runMachines } from '../core/ui.js';
+import { liveView, pageHead, chips, button, runsTable, runLegend, tickRuns, skeleton, filterSelect, roleShare, runMachines } from '../core/ui.js';
 import { num, dateTime, clock } from '../core/format.js';
 import { requestFeed, every, onLiveTimings, liveTimings } from '../core/requests.js';
 
 const STATES = [['', 'All'], ['queued', 'Queued'], ['running', 'Running'], ['done', 'Done'], ['failed', 'Failed'], ['refused', 'Refused'], ['cancelled', 'Cancelled']];
 const PAGE = 50;
+
+// machineList(nodes) -> the Zones cell (no mockup draws it). Up to three
+// machines: the same words as runMachines ("node-a Host 50%, node-b Helper
+// 50%"), each machine in its own span.mc that never breaks, so the list
+// wraps between machines inside the column (td.rq-zones) instead of pushing
+// the table out of its card. More than three: "node-a Host + 5 helpers",
+// the full list on hover.
+const MACHINES_LISTED = 3;
+function machineList(nodes) {
+  if (nodes.length > MACHINES_LISTED) {
+    const host = nodes[0];
+    return h('span.mono', { 'data-machines': String(nodes.length), title: runMachines(nodes) },
+      h('span.mc', `${host.name || host.id} ${roleShare(host.role) || 'Host'} + ${nodes.length - 1} helpers`));
+  }
+  return h('span.mono', { 'data-machines': String(nodes.length) }, nodes.map((n, i) => [
+    i ? ' ' : null,
+    h('span.mc', [n.name || n.id, roleShare(n.role, n.share)].filter(Boolean).join(' ') + (i < nodes.length - 1 ? ',' : '')),
+  ]));
+}
 
 registerView({
   id: 'requests', title: 'Requests',
@@ -54,7 +73,7 @@ registerView({
             h('div', filterSelect('Model', [{ id: '', label: 'any' }].concat(models.map(m => ({ id: m, label: m }))), r.query.profile || '', v => setQuery({ profile: v }), { bare: true }),
               runLegend())),
           d.loading && !rows.length ? skeleton(6) : runsTable({ rows, now: Date.now(), zones: false, liveTimings: liveTimings(),
-            extra: [{ label: 'Zones', render: x => (x.nodes || []).length ? h('span.mono', runMachines(x.nodes)) : h('span.mut', '–') },
+            extra: [{ label: 'Zones', cls: 'rq-zones', render: x => (x.nodes || []).length ? machineList(x.nodes) : h('span.mut', '–') },
               { label: 'Sent by', render: x => h('span', { title: x.source_addr || null }, x.caller || '–') }],
             empty: [h('b', 'No requests here'), d.on === false ? 'The request log is off on this scheduler: only live requests show.' : 'Nothing matches these filters.'] }),
           h('div.rq-foot',
