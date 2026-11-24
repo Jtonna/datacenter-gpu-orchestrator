@@ -341,7 +341,9 @@ func TestZones_AttentionOrder(t *testing.T) {
 	status(t, e.get("/api/nodes?sort=size"), 400)
 }
 
-// The chip is the stats' GPU name; a group's chip is common or "mixed".
+// The chip is the stats' GPU name; a group's chip is common or "mixed";
+// absent when a member reports none (a console today) and the ones that do
+// agree: Potluck does not know the console's chip, so it does not say mixed.
 func TestZones_Chip(t *testing.T) {
 	gpu := func(names ...string) json.RawMessage {
 		var gs []map[string]any
@@ -354,7 +356,7 @@ func TestZones_Chip(t *testing.T) {
 	if chipOf(gpu("RTX 5060")) != "RTX 5060" || chipOf(gpu("A", "A", "B")) != "A + B" || chipOf(gpu("")) != "" || chipOf(nil) != "" {
 		t.Fatal("chipOf")
 	}
-	for in, want := range map[string]string{"a,a": "a", "a,b": ChipMixed, "a,": ChipMixed, ",": "", "": ""} {
+	for in, want := range map[string]string{"a,a": "a", "a,b": ChipMixed, "a,": "", "a,b,": ChipMixed, ",": "", "": ""} {
 		var cs []string
 		if in != "" {
 			cs = strings.Split(in, ",")

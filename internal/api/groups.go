@@ -126,8 +126,9 @@ type GroupSummary struct {
 	Members     []string   `json:"members"`
 	MemberNames []string   `json:"member_names"`
 	Count       int        `json:"count"`
-	// Chip is the members' common GPU name ("mixed" when they differ or
-	// some report none; absent when none reports one).
+	// Chip is the members' common GPU name; "mixed" when two members
+	// report different names; absent when a member reports none (a
+	// console today) and the rest agree, or when none reports one.
 	Chip           string       `json:"chip,omitempty"`
 	Counts         ZoneCounts   `json:"counts"`
 	Memory         GroupMemory  `json:"memory"`

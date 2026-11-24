@@ -43,19 +43,26 @@ type ZoneFacts struct {
 	// distinct names joined with " + "). Absent when the agent reports no
 	// name, as a PS5 does today; Potluck never guesses one.
 	Chip string `json:"chip,omitempty"`
-	// LastLoadLink is the newest ready load that sent this zone at least
-	// 1 MiB: bytes over the load's time, a lower bound of the link's rate
-	// (internal/api/linkspeed.go). Absent until such a load.
+	// LastLoadLink is the zone's last cold load: the newest ready load
+	// whose measured bytes to this zone were at least 256 MiB over at
+	// least 2 s; a warm (cached) load, an unmeasured one or a short one
+	// leaves the previous figure (internal/api/linkspeed.go). Absent until
+	// such a load.
 	LastLoadLink *LoadLink `json:"last_load_link,omitempty"`
 }
 
-// LoadLink is a zone's last load transfer.
+// LoadLink is a zone's last cold load: the newest load that really moved
+// the model to the zone (internal/api/linkspeed.go has the rule).
 type LoadLink struct {
-	MBs   float64 `json:"mb_s"` // megabytes (10^6) per second
-	Bytes int64   `json:"bytes"`
-	LoadS float64 `json:"load_s"`
-	At    string  `json:"at"` // when the load finished
-	Model string  `json:"model"`
+	// MBs is megabytes (10^6) per second over the WHOLE load (bytes /
+	// load_s): the load time also holds the model's start, so it is a
+	// lower bound of the link's rate (Kind says so); not a link test.
+	MBs   float64 `json:"mb_s"`
+	Bytes int64   `json:"bytes"`  // measured bytes Potluck's host sent to the zone
+	LoadS float64 `json:"load_s"` // the load's time, seconds
+	At    string  `json:"at"`     // when that load finished (the page: "last cold load, <date>")
+	Model string  `json:"model"`  // the profile it loaded
+	Kind  string  `json:"kind"`   // always "lower_bound": mb_s is over the whole load, not the transfer alone
 }
 
 // MemberFacts is a node's part in an instance: its role (host runs

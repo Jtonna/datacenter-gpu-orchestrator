@@ -10,9 +10,9 @@ No agent change. No new listening port.
 - **Uptime leaves removed machines out.** `GET /api/nodes/uptime`: a removed machine is not in `zones` and its seconds count in no group and not in the fleet.
 - **History by zone group or list.** `GET /api/history?group=<name>` and `node=a,b,c` (ids or names); MCP `query_history` takes `group`.
 - **Actions on a selection of zones.** `POST /api/zone-actions/{pause|unpause|force-unload}` with `nodes` and `comment`; `dry_run` answers what would happen (per zone effect, models that unload and every zone they leave, runs cut) for the confirm dialog. MCP `act_on_zones`.
-- **Last load transfer rate per zone.** `last_load_link` {mb_s, bytes, load_s, at, model} from the newest ready load that sent the zone data (history `loadFinished`); a lower bound, not a link test.
+- **Last cold load per zone.** `last_load_link` {mb_s, bytes, load_s, at, model, kind} from the newest ready load that really moved the model to the zone (measured bytes, at least 256 MiB to that zone, at least 2 s; history `loadFinished`); warm, short and unmeasured loads keep the previous figure. `kind: "lower_bound"`: over the whole load time, not a link test.
 
-- **Chip name.** `chip` per zone from its stats' GPU name (absent on a PS5, which reports none); `chip` per group (common name or `mixed`).
+- **Chip name.** `chip` per zone from its stats' GPU name (absent on a PS5, which reports none); `chip` per group (common name; `mixed` when two names differ; absent when a member reports none).
 - **Needs attention first, defined by the server.** Each zone in `/api/nodes` (and `/api/status` agents) has `attention_rank`; `GET /api/nodes?sort=attention|name`; MCP `list_zones`. A group's `needs_attention` lists lost before set aside.
 
 ## Scheduler image: usage per key and model short names (phase 3, slice 2)
