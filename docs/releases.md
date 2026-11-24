@@ -2,6 +2,26 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: per-device readings only from a cold load
+
+No agent change, no new port, no schema change.
+
+- **A per-device overhead reading is taken only from a cold load** on that node: measured bytes sent there of at least half of what the log puts on its devices. A cached reload (the worker already held the tensors) gives no reading.
+- **Rows read from cached loads are dropped once at start**, decided from the event history, with a history line, also when the reading's profile is a generated benchmark profile no longer in the configuration. Each start writes a count line and a `learnedNeed` event with `device_rows_checked` and `device_rows_dropped`, also when none are dropped.
+- **No host or per-device reading from an unsettled base**: when an instance that ran left the node less than one `free_average_window` before the new one was created, the base free figure may still show it; that load gives no reading.
+
+## Scheduler image: stable placement among equal consoles
+
+No agent change, no new port, no schema change.
+
+- **An idle plan no longer follows free-memory noise.** New setting `placement_tolerance_mib` (128): consoles within it are equal, taken warm first (the last ready load there used the profile's model file), then by name; a split over them is even. The figure a console is ordered by moves only after its usable memory moves by more than twice the tolerance. Fit is still checked on the exact figures, so every profile's action is unchanged; forced profiles and chosen-zones loads are byte-identical to before. `0` restores the old order. Runbook: "Stable placement among equal consoles".
+
+## Scheduler image: each zone's tier
+
+No agent change, no new port, no schema change.
+
+- **Each zone says its tier.** `/api/nodes` and `/api/status` `agents` carry `tier` (index, priority, rule as stored, headroom, shared memory, link speed, settle) as the scheduler matched it, or `tier_reason: "no tier matches"`; `GET /api/config/tiers` adds `tier_zones` (each tier's zones now, and `never_reached` below an empty match). Runbook: "Which tier a zone is in".
+
 ## Scheduler image: the per-device overhead measured per shape, machine and device count
 
 No agent change, no new port. Schema: one new table, `needs_device_overhead` (shape, node, devices, the figure in force with its date, the log's part, the last three readings with their dates), under its own ledger `needs_device_migrations` (v1). No existing table or ledger changes, so the previous image opens the file as before.

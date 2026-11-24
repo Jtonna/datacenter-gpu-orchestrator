@@ -41,13 +41,26 @@ const IC = {
 
 const errText = e => (e && e.body && e.body.error && e.body.error.message) || (e && e.message) || 'The request failed.';
 
+// stateOf(z) -> the state the dialog draws. GET /api/zones/pending keeps a
+// cancelled, expired or joined zone, with that state, until its expiry; the
+// dialog draws exactly the server's state. It is never WAITING unless the
+// server says waiting AND the expiry has not passed (a waiting zone read
+// after its expiry is drawn expired); no state at all is drawn "unknown",
+// never waiting.
+export function stateOf(z) {
+  const s = z && z.state;
+  if (s === 'waiting' && z.expires_at && Date.parse(z.expires_at) <= Date.now()) return 'expired';
+  return s || 'unknown';
+}
+
 // stateLine(z, gone) -> the state of a pending zone in words.
 function stateLine(z, gone) {
   if (gone) return h('div.zc-state.bad', { 'data-cz': 'state', 'data-state': 'gone' }, h('span.zc-dot', { 'aria-hidden': 'true' }),
     h('span', h('b', 'This zone was not found: create it again.'),
       h('span.mut', ' Pending zones are kept in memory, so a restart of the scheduler forgets them; the command above no longer works.')));
-  const st = z.state || 'waiting';
-  const text = z.state_text || ({ waiting: 'Waiting for the machine to check in', joined: 'Joined', expired: 'Expired: the machine did not check in in time', cancelled: 'Cancelled' })[st] || st;
+  const st = stateOf(z);
+  const words = { waiting: 'Waiting for the machine to check in', joined: 'Joined', expired: 'Expired: the machine did not check in in time', cancelled: 'Cancelled', unknown: 'State not known: the server did not say' };
+  const text = (st === z.state && z.state_text) || words[st] || st;
   return h('div', { class: 'zc-state ' + st, 'data-cz': 'state', 'data-state': st },
     h('span.zc-dot', { 'aria-hidden': 'true' }),
     h('span', h('b', text),
@@ -110,9 +123,9 @@ export function createZone(o = {}) {
     }
     async function poll() {
       if (!st.z) return;
-      try { const z = await api.get('/api/zones/pending/' + encodeURIComponent(st.z.id)); st.z = Object.assign({}, st.z, z); st.gone = false; }
+      try { const z = await api.get('/api/zones/pending/' + encodeURIComponent(st.z.id)); st.z = Object.assign({}, st.z, z, { state: z && z.state, state_text: z && z.state_text }); st.gone = false; } // the state is the latest read's, never kept from before
       catch (e) { if (e && e.status === 404) { st.gone = true; stop(); } }
-      if (st.z && st.z.state !== 'waiting') stop();
+      if (st.z && stateOf(st.z) !== 'waiting') stop();
       draw();
     }
     async function create() {
@@ -166,7 +179,7 @@ export function createZone(o = {}) {
 
     function madePart() {
       const z = st.z;
-      const live = z.state === 'waiting' && !st.gone;
+      const live = stateOf(z) === 'waiting' && !st.gone;
       const cmdTab = h('div.zc-pane', { 'data-cz-pane': 'cmd' },
         h('div.zc-row', h('span.zc-lab', 'Run this on the machine'),
           h('div.zc-seg', { role: 'group', 'aria-label': 'System' }, h('button', { type: 'button', class: 'on', 'aria-pressed': 'true' }, 'Linux'),

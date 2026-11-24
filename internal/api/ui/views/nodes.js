@@ -312,7 +312,7 @@ export function tile(st, n, refresh) {
 }
 
 registerView({
-  id: 'nodes', title: 'Nodes',
+  id: 'nodes', title: 'Machine details',
   mount(el) {
     // a request the server accepted stops being "on the way" with the next status
     const off = on('status', () => { for (const [id, p] of pending) if (p.sent) pending.delete(id); });
@@ -321,7 +321,7 @@ registerView({
     const view = liveView(el, () => {
       const st = state.status;
       const agents = agentsMode(st);
-      if (!st) return [pageHead('Nodes'), staleBanner(), h('section.card', skeleton(4))];
+      if (!st) return [pageHead('Machine details'), staleBanner(), h('section.card', skeleton(4))];
       const nodes = viewNodes(st).slice().sort((a, b) => (a.excluded - b.excluded) || ((a.priority || 99) - (b.priority || 99)) || String(a.hostname || a.id).localeCompare(String(b.hostname || b.id)));
       const pool = nodes.filter(n => !n.excluded);
       const online = pool.filter(n => n.online).length;
@@ -332,7 +332,7 @@ registerView({
       const excluded = nodes.length - pool.length;
       const usable = pool.filter(n => n.online && !notPlaceable(n, agentOf(st, n))).reduce((s, n) => s + Math.max(0, n.live_budget_mib || 0), 0);
       return [
-        pageHead('Nodes', [h('b', num(online)), ' of ', h('b', num(pool.length)), ' online', bad ? [' · ', h('b.err-t', num(bad)), ' need a look'] : null,
+        pageHead('Machine details', [h('b', num(online)), ' of ', h('b', num(pool.length)), ' online', bad ? [' · ', h('b.err-t', num(bad)), ' need a look'] : null,
           excluded ? [' · ', h('b', num(excluded)), ' excluded'] : null, paused ? [' · ', h('b', num(paused)), ' paused'] : null, ' · ', h('b', gb(usable)), ' usable now'],
           h('div.legend', h('span', h('span.sw.m'), 'Model'), h('span', h('span.sw.o'), 'Other use'), h('span', h('span.sw.free'), 'Free'), h('span', h('span.sw.lim'), 'Limit for a new model'))),
         staleBanner(),

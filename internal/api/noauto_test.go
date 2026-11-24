@@ -42,7 +42,7 @@ func TestNoAutoNodesInStatusAndUI(t *testing.T) {
 	if src := uiText(t, "views/nodes.js"); !strings.Contains(src, "n.auto === false") || !strings.Contains(src, "'Forced only'") {
 		t.Error("views/nodes.js does not show a Forced only badge for auto false")
 	}
-	if src := uiText(t, "views/tiers.js"); !strings.Contains(src, "'/api/config/no-auto-nodes'") || !strings.Contains(src, "no_auto_nodes: draft.noauto") {
-		t.Error("views/tiers.js does not write no_auto_nodes")
+	if src := uiText(t, uiNextDir+"views/tiers.js"); !strings.Contains(src, "'/api/config/no-auto-nodes'") || !strings.Contains(src, "no_auto_nodes: draft.noauto") {
+		t.Error("next/views/tiers.js does not write no_auto_nodes")
 	}
 }

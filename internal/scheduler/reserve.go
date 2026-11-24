@@ -292,11 +292,31 @@ func (c *schedCore) reservedShares(p *core.Profile, pl core.Placement) ([]reserv
 // is measured against it (measured use, peaks).
 func (c *schedCore) recordBaseFree(in *inst) {
 	in.baseFree = map[core.NodeID]int{}
+	in.baseUnsettled = map[core.NodeID]bool{}
 	for _, pn := range in.placement.Nodes {
+		if c.unsettledBase(pn.ID) {
+			in.baseUnsettled[pn.ID] = true
+		}
 		if n, ok := c.raw[pn.ID]; ok && !n.FreeUnknown {
 			in.baseFree[pn.ID] = n.FreeMiB
 		}
 	}
+}
+
+// unsettledBase: an instance that ran left node id less than one
+// free_average_window ago (at least releaseGrace): the memory it held may
+// still be on its way back, so a free figure taken now is not a base an
+// overhead reading can trust.
+func (c *schedCore) unsettledBase(id core.NodeID) bool {
+	ns := c.nodes[id]
+	if ns == nil || ns.releasedAt.IsZero() {
+		return false
+	}
+	w := c.cfg.Defaults.FreeAverageWindow
+	if w <= 0 {
+		w = releaseGrace
+	}
+	return c.now.Before(ns.releasedAt.Add(w))
 }
 
 // measuredUse is what node id gives up for instance in now: its free figure
@@ -686,15 +706,11 @@ func (c *schedCore) hypotheticalPlacement(p *core.Profile) core.Placement {
 	if len(cands) == 0 {
 		cands = held
 	}
-	slices.SortStableFunc(cands, func(a, b core.PlacedNode) int { return b.BudgetMiB - a.BudgetMiB })
 	k := max(c.cfg.Defaults.MaxPool, 1)
 	if localOnly(p) {
 		k = 1
 	}
-	if len(cands) > k {
-		cands = cands[:k]
-	}
-	pl.Nodes = cands
+	pl.Nodes = c.stableHypothetical(p, cands, k) // stable.go
 	return pl
 }
 

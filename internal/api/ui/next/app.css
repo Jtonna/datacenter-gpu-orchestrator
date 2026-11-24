@@ -141,9 +141,30 @@ b.mono,a.mono,.mono b,h1 .mono,h2 .mono,h3 .mono,b .mono{font-weight:500}
 .cols{display:flex;flex-wrap:wrap;gap:var(--gap-panel);align-items:flex-start}
 .cols>.wide{flex:999 1 560px;min-width:0;display:flex;flex-direction:column;gap:var(--gap-panel)}
 .cols>.side{flex:1 1 320px;max-width:420px;min-width:0;display:flex;flex-direction:column;gap:var(--gap-panel)}
+/* .cols>.side is a column, not the docked side panel: none of the panel's
+   look (.side below: white ground, left border, shadow, 620 px, clipped,
+   13 px text), which drew the right-hand column as a white box under its
+   cards. Also two columns side by side (About, Activity, Queue): a grid, so both columns
+   start on the same line at every desktop width (the flex row let the
+   right-hand column drop below the left one when the left one's content
+   was wide, Activity at 1280). Narrower: one column, as before. */
+.cols>.side{width:auto;background:none;border-left:0;box-shadow:none;overflow:visible;font-size:inherit}
+@media(min-width:1180px){
+  .cols{display:grid;grid-template-columns:minmax(0,1fr) clamp(320px,30%,420px);align-items:start}
+  .cols>.wide,.cols>.side{width:auto;max-width:none;min-width:0}
+}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(320px,100%),1fr));gap:var(--gap-panel)}
 
 .rail .menu-open-btn{display:none}
+/* Long pages: the rail and the section menu are sticky (top 0, the window's
+   height), so they stay in place for the full height while the page
+   scrolls. A full-page picture renders them once, one window high; the
+   .app background repeats their two columns (and their right borders) for
+   the whole height, so the picture shows them full height too. */
+@media(min-width:861px){
+  .app{background:linear-gradient(to right,var(--surface) 0 calc(var(--rail-w) - 1px),var(--line-panel) calc(var(--rail-w) - 1px) var(--rail-w),var(--menu-bg) var(--rail-w) calc(var(--rail-w) + var(--menu-w) - 1px),var(--line-panel) calc(var(--rail-w) + var(--menu-w) - 1px) calc(var(--rail-w) + var(--menu-w)),transparent calc(var(--rail-w) + var(--menu-w)))}
+  .app.menu-closed{background:linear-gradient(to right,var(--surface) 0 calc(var(--rail-w) - 1px),var(--line-panel) calc(var(--rail-w) - 1px) var(--rail-w),transparent var(--rail-w))}
+}
 /* phone (D37): the rail becomes a top bar, the section menu a drawer under it */
 @media(max-width:860px){
   .app{flex-direction:column}
@@ -455,7 +476,7 @@ svg.chart .gridline{stroke:var(--line);stroke-width:1}
 svg .s-mint{stroke:var(--z-use3)}svg .s-amber{stroke:var(--z-load)}svg .s-coral{stroke:var(--failed)}svg .s-lilac{stroke:var(--lilac)}svg .s-mut{stroke:var(--mut)}
 svg .f-mint{fill:var(--z-use3)}svg .f-amber{fill:var(--z-load)}svg .f-coral{fill:var(--failed)}svg .f-lilac{fill:var(--lilac)}svg .f-mut{fill:var(--mut)}
 /* tokens chart: totals beside mirrored hourly bars, in above the line and out below */
-.tokens{display:flex;gap:18px;padding:2px var(--pad-panel) 14px}
+.tokens{display:flex;gap:18px;padding:2px var(--pad-panel) 14px;flex:1 1 auto;min-width:0;box-sizing:border-box;max-width:100%}
 .tokens-tot{width:150px;flex:none;display:flex;flex-direction:column;justify-content:flex-end;gap:56px;padding-bottom:29px}
 .tokens-plot{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:flex-end}
 .hbars{display:flex;gap:4px}
@@ -1297,3 +1318,53 @@ table.runs{width:100%;border-collapse:collapse}
 .mcp-ttbl td{vertical-align:top}
 .mcp-ttbl td.mono{white-space:nowrap}
 .mcp-dz{margin-left:8px;height:20px;font-size:11px}
+
+/* ---------- Tiers and zones (views/tiers.js; no mockup: inferred, as Settings and Profiles) ----------
+   Sections stacked in one column: Tiers (a table, one row per tier in check
+   order, ↑ ↓ in the row, the row opens the docked panel), Excluded zones,
+   Named only, Node overrides, Zones and their tier; one save bar. Nothing is
+   placed beside anything else, so nothing can overlap at any width. */
+.trs-page{display:flex;flex-direction:column;gap:var(--gap-panel);min-width:0}
+.trs{display:flex;flex-direction:column;min-width:0;container-type:inline-size}
+.trs .ch .grow{flex:1}
+.trs-help{margin:0;padding:0 var(--pad-panel) 10px;color:var(--mut);font-size:12.5px;font-weight:600;line-height:1.45;max-width:880px}
+.trs-scroll{overflow-x:auto}
+.trs-tbl{width:100%;table-layout:fixed;min-width:760px}
+.trs-tbl th:nth-child(1){width:56px}
+.trs-tbl th:nth-child(2){width:auto}
+.trs-tbl th:nth-child(3){width:76px}
+.trs-tbl th:nth-child(4){width:100px}
+.trs-tbl th:nth-child(5){width:96px}
+.trs-tbl th:nth-child(6){width:92px}
+.trs-tbl th:nth-child(7){width:72px}
+.trs-tbl th:nth-child(8){width:88px}
+.trs-tbl th:nth-child(9){width:80px}
+.trs-tbl td.trs-rule{font-weight:700;overflow-wrap:anywhere;line-height:1.35}
+/* beside a docked panel (about 800 px): tighter figure columns, so the
+   rule in words keeps room for itself */
+@container (max-width:900px){
+  .trs-tbl{min-width:640px}
+  .trs-tbl th:nth-child(1){width:40px}.trs-tbl th:nth-child(3){width:60px}.trs-tbl th:nth-child(4){width:86px}
+  .trs-tbl th:nth-child(5){width:84px}.trs-tbl th:nth-child(6){width:78px}.trs-tbl th:nth-child(7){width:54px}
+  .trs-tbl th:nth-child(8){width:76px}.trs-tbl th:nth-child(9){width:82px}
+}
+.trs-tbl td.trs-rule .b{vertical-align:middle}
+.trs-mv{white-space:nowrap;text-align:right}
+.trs-ib{display:inline-grid;place-items:center;width:28px;height:28px;margin-left:4px;border:1px solid var(--line-ctl, #c5cec9);border-radius:7px;background:var(--surface);color:var(--text);font:700 14px/1 var(--sans);cursor:pointer}
+.trs-ib:hover:not([disabled]){background:var(--hover)}
+.trs-ib[disabled]{opacity:.35;cursor:default}
+.trs-list{list-style:none;margin:0;padding:0}
+.trs-list li{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;min-height:44px;padding:6px var(--pad-panel);border-top:1px solid var(--line)}
+.trs-list li .grow{flex:1;min-width:0;overflow-wrap:anywhere}
+.trs-none{margin:0;padding:10px var(--pad-panel);border-top:1px solid var(--line);font-size:13px}
+.trs-add{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:10px var(--pad-panel) 14px;border-top:1px solid var(--line)}
+.trs-add .input{flex:0 1 340px;min-width:180px}
+.trs-ztbl{width:100%;min-width:560px}
+.trs-ztbl td{white-space:nowrap}
+.trs-save{border-radius:var(--r-panel);border:1px solid var(--line-panel)}
+.trs-chgs{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;max-height:320px;overflow-y:auto;overflow-wrap:anywhere}
+.trs-facts{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px 16px;margin-bottom:16px}
+.trs-facts>div{display:flex;flex-direction:column;gap:2px}
+.trs-sub{margin:4px 0 8px;font-size:13px;font-weight:800}
+.trs-zones{margin-bottom:12px}
+.trs-tbl td.trs-rule .trs-never{display:block;margin-top:3px;color:var(--warn-text,#8a5a00);font-size:12px;font-weight:700}

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -301,10 +302,36 @@ func TestLogsOff(t *testing.T) {
 	}
 }
 
+// beatsDuring returns the heartbeats e's agent sends while d passes, and
+// the longest gap between two of them.
+func beatsDuring(e *tenv, d time.Duration) (n int, worst time.Duration) {
+	e.pl.mu.Lock()
+	from := len(e.pl.beatAt)
+	e.pl.mu.Unlock()
+	time.Sleep(d)
+	e.pl.mu.Lock()
+	at := append([]time.Time(nil), e.pl.beatAt[from:]...)
+	e.pl.mu.Unlock()
+	for i := 1; i < len(at); i++ {
+		worst = max(worst, at[i].Sub(at[i-1]))
+	}
+	return len(at), worst
+}
+
 // The heartbeat and a launch start keep their time while the log sender
 // hangs (Potluck never answers a push), the ring is full and the journal
 // reader gets lines as fast as it can read them.
+//
+// The heartbeat is compared with a baseline taken just before on the same
+// machine with logging off, so a slow or loaded test machine slows both and
+// only what the logging adds is held to the bound.
 func TestLoggingNeverHoldsUpHeartbeatOrLaunch(t *testing.T) {
+	base, _, _ := newLogsTenv(t, true, func(o *Options, d *Deps) { o.LogsOff = true })
+	base.start()
+	base.waitReady()
+	baseN, baseWorst := beatsDuring(base, 1800*time.Millisecond)
+	base.stop()
+
 	flood := &journalFlood{}
 	e, sink, _ := newLogsTenv(t, true, func(o *Options, d *Deps) {
 		o.LogBufferBytes = 256 << 10
@@ -333,29 +360,29 @@ func TestLoggingNeverHoldsUpHeartbeatOrLaunch(t *testing.T) {
 			}
 		}
 	}()
-	e.pl.mu.Lock()
-	from := len(e.pl.beatAt)
-	e.pl.mu.Unlock()
-	time.Sleep(1500 * time.Millisecond)
-	start := time.Now()
-	w := e.do("POST", "/launch", workerReq("ln-1"), fromPotluck)
-	took := time.Since(start)
-	time.Sleep(300 * time.Millisecond)
+	var w *httptest.ResponseRecorder
+	var took time.Duration
+	launched := make(chan struct{})
+	go func() {
+		defer close(launched)
+		time.Sleep(1500 * time.Millisecond)
+		start := time.Now()
+		w = e.do("POST", "/launch", workerReq("ln-1"), fromPotluck)
+		took = time.Since(start)
+	}()
+	n, worst := beatsDuring(e, 1800*time.Millisecond)
+	<-launched
 	close(stop)
 	wg.Wait()
 	if w.Code != 202 || took > 2*time.Second {
-		t.Fatalf("launch start: %d after %v", w.Code, took)
+		t.Fatalf("launch start: %d after %v: %s", w.Code, took, w.Body.String())
 	}
-	e.pl.mu.Lock()
-	at := append([]time.Time(nil), e.pl.beatAt[from:]...)
-	e.pl.mu.Unlock()
-	var worst time.Duration
-	for i := 1; i < len(at); i++ {
-		worst = max(worst, at[i].Sub(at[i-1]))
-	}
-	// Heartbeats every 20 ms; allow for a slow test machine.
-	if len(at) < 20 || worst > 500*time.Millisecond {
-		t.Fatalf("%d heartbeats in 1.8 s, longest gap %v", len(at), worst)
+	// Heartbeats every 20 ms. A held-up heartbeat shows as a long gap: the
+	// logging may add 500 ms at most over the baseline. The count only has
+	// to show that beats keep coming: on one CPU shared with the flood it
+	// falls to 19 to 26 of 90 with no gap over 175 ms, so its floor is 10.
+	if n < 10 || worst > baseWorst+500*time.Millisecond {
+		t.Fatalf("%d heartbeats in 1.8 s, longest gap %v; with logging off %d, longest gap %v", n, worst, baseN, baseWorst)
 	}
 	if b := e.a.Ship.Ring().Bytes(); b > 256<<10 {
 		t.Fatalf("ring %d bytes", b)
@@ -363,6 +390,6 @@ func TestLoggingNeverHoldsUpHeartbeatOrLaunch(t *testing.T) {
 	if len(sink.all()) != 0 || flood.n.Load() < 10_000 {
 		t.Fatalf("pushes %d, journal lines read %d", len(sink.all()), flood.n.Load())
 	}
-	t.Logf("%d heartbeats, longest gap %v; launch start %v; journal lines read %d; dropped %d",
-		len(at), worst, took, flood.n.Load(), e.a.Ship.Ring().DroppedTotal())
+	t.Logf("%d heartbeats, longest gap %v (logging off: %d, %v); launch start %v; journal lines read %d; dropped %d",
+		n, worst, baseN, baseWorst, took, flood.n.Load(), e.a.Ship.Ring().DroppedTotal())
 }

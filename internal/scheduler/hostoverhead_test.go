@@ -459,3 +459,31 @@ func TestHostOverhead_RowListsOnlyTheProfilesThatUseIt(t *testing.T) {
 		t.Fatalf("profiles %v, want %v", got, want)
 	}
 }
+
+// A reading needs a settled base: an instance that ran left the host within
+// one free_average_window before this one was created, so the free figure
+// taken as the base may still show it (the memory is still being returned),
+// and base - free would come out low. No reading then, and no warning; a
+// release longer ago than the window gives the reading.
+func TestHostOverhead_NoReadingFromAnUnsettledBase(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ago  time.Duration
+		want bool
+	}{{"just released", 10 * time.Second, false}, {"settled", 31 * time.Second, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := ohHarness(t)
+			h.c.ns("a").releasedAt = h.clk.Now().Add(-tc.ago)
+			hostLoad(h, 4600)
+			h.advance(h.cfg.Defaults.FreeAverageWindow + time.Second)
+			if _, ok := h.c.hostOverheadAt(shapeOf(h.c.cfg.Profiles["q"]), "a", 1); ok != tc.want {
+				t.Fatalf("reading %v, want %v", ok, tc.want)
+			}
+			for _, ev := range h.histTypes(history.TLearnedNeed) {
+				if ev.Severity != history.Info {
+					t.Fatalf("warned: %+v", ev)
+				}
+			}
+		})
+	}
+}

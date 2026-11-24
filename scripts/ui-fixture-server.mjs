@@ -35,6 +35,11 @@
 // --config normal|unknown|fresh: the settings state (config.mjs). --catalog:
 // /api/models lists the profile fixture's model files. --named-only <zone>:
 // that zone is in no_auto_nodes (auto: false), drawn "Named only".
+// --tiers live|catchall (with --zones live): the Tiers and zones page's
+// states (scripts/ui-fixture/tiers.mjs): GET /api/config carries the tier
+// lists, GET /api/config/tiers adds tier_zones, the zones on GET /api/nodes
+// and /api/status agents carry tier / tier_reason as the server gives them,
+// and GET /api/nodes lists the local node.
 //
 // --state empty: no request in the period; off: the request log is off
 // (usage.db not open); loading: the request routes never answer.
@@ -84,6 +89,9 @@
 // server's 400 sentence; taken: its 409), DELETE answers it cancelled. The
 // setting default_model_source reads share:192.0.2.10:/models (nosource:
 // empty). The command names Potluck as 192.0.2.1:8080. Nothing is kept.
+// --pending mixed: the list holds zone-9 waiting and zone-8
+// (pz-0000000000000002) cancelled, as the server keeps a cancelled zone
+// listed with its state until its expiry; each answers by its id.
 //
 // --sequence: a scripted change for screenshots: 4 s after a client
 // subscribes to the requests topic, the queued run 202 starts (a "started"
@@ -99,6 +107,7 @@ import { schema as cfgSchema, configDoc, storedConfig, dryRun } from './ui-fixtu
 import { profileEntries, profileSpecs, catalog as cfgCatalog, planAnswer } from './ui-fixture/profiles.mjs';
 import { Keys, toolsAnswer } from './ui-fixture/keys.mjs';
 import { modelsDoc, modelsInstances } from './ui-fixture/models.mjs';
+import { tierLists, applyTiers, localEntry, tiersDoc } from './ui-fixture/tiers.mjs';
 
 const argv = process.argv.slice(2);
 const opt = (k, d) => { const i = argv.indexOf(k); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
@@ -129,11 +138,11 @@ const NO_HOST_UPTIME = argv.includes('--no-host-uptime');
 // --pending: the Create new zone states (see the header)
 const PENDING = opt('--pending', '');
 const PZ_SOURCE = PENDING && PENDING !== 'nosource' ? 'share:192.0.2.10:/models' : '';
-const PZ_ID = 'pz-0000000000000001';
+const PZ_ID = 'pz-0000000000000001', PZ_ID2 = 'pz-0000000000000002';
 const PZ_TEXT = { waiting: 'Waiting for the machine to check in', joined: 'Joined', expired: 'Expired: the machine did not check in in time', cancelled: 'Cancelled' };
-function pendingZone(state, b = {}) {
-  const t = Date.now(), name = b.name || 'zone-9', script = '/install.sh?zone=' + PZ_ID;
-  const z = { id: PZ_ID, name, group: b.group === undefined ? 'rack-a' : b.group || undefined, model_source: b.model_source || PZ_SOURCE || 'push', mode: 'bare',
+function pendingZone(state, b = {}, id = PZ_ID) {
+  const t = Date.now(), name = b.name || 'zone-9', script = '/install.sh?zone=' + id;
+  const z = { id, name, group: b.group === undefined ? 'rack-a' : b.group || undefined, model_source: b.model_source || PZ_SOURCE || 'push', mode: 'bare',
     state, state_text: PZ_TEXT[state], created_at: new Date(t - 4 * 60000).toISOString(), expires_at: new Date(t + 56 * 60000).toISOString(),
     command: "curl -sSL 'http://192.0.2.1:8080" + script + "' | sudo sh", script_path: script, download_path: script + '&download=1', download_name: 'potluck-zone-' + name + '.sh' };
   if (state === 'joined') Object.assign(z, { joined_node: '02:00:00:00:01:09', joined_at: new Date(t - 60000).toISOString() });
@@ -147,8 +156,12 @@ function pendingRoute(req, res, p) {
     json(res, 201, pendingZone('waiting', b));
   });
   if (p === '/api/zones/pending' && req.method === 'GET') {
-    const list = PENDING && PENDING !== 'gone' && PZ_TEXT[PENDING] ? [pendingZone(PENDING)] : [];
+    const list = PENDING === 'mixed' ? [pendingZone('waiting'), pendingZone('cancelled', { name: 'zone-8' }, PZ_ID2)]
+      : PENDING && PENDING !== 'gone' && PZ_TEXT[PENDING] ? [pendingZone(PENDING)] : [];
     return json(res, 200, { pending: list, default_model_source: PZ_SOURCE });
+  }
+  if (PENDING === 'mixed' && p === '/api/zones/pending/' + PZ_ID2) {
+    if (req.method === 'GET' || req.method === 'DELETE') return json(res, 200, pendingZone('cancelled', { name: 'zone-8' }, PZ_ID2));
   }
   if (p === '/api/zones/pending/' + PZ_ID) {
     if (PENDING === 'gone' || !PENDING) return json(res, 404, { error: { code: 404, message: 'no pending zone ' + PZ_ID, type: 'invalid_request_error' } });
@@ -164,6 +177,9 @@ const KEYS_STATE = opt('--keys', '');
 // --models none|five|full: GET /api/models as the Models list reads it, with the disk block (scripts/ui-fixture/models.mjs)
 const MODELS_STATE = opt('--models', '');
 const KEYS = KEYS_STATE ? new Keys(KEYS_STATE) : null;
+// --tiers live|catchall: the Tiers and zones page (tiers.mjs)
+const TIERS = opt('--tiers', '');
+const TIER_LISTS = tierLists(TIERS);
 const cfgDoc = () => { const d = configDoc(CONFIG); d.settings.requests_live_timings = LIVE_TIMINGS; return d; };
 
 // ---------- the fixture (the Overview mockup's sample data) ----------
@@ -189,7 +205,7 @@ const SCHED = { id: 'scheduler', name: 'scheduler', role: 'host' };
 
 // status(now) -> the status of the --zones state
 // with --models the instances are the catalog's (one loaded model, or none)
-const status = now => named(zonesStatus(MODELS_STATE ? modelsInstances(baseStatus(now), MODELS_STATE, mac) : baseStatus(now), now, ZONES, { drain: DRAIN, pinned: PINNED, hostUptime: !NO_HOST_UPTIME }));
+const status = now => applyTiers(named(zonesStatus(MODELS_STATE ? modelsInstances(baseStatus(now), MODELS_STATE, mac) : baseStatus(now), now, ZONES, { drain: DRAIN, pinned: PINNED, hostUptime: !NO_HOST_UPTIME })), TIERS);
 const named = st => { if (NAMED_ONLY) for (const n of (st.view && st.view.nodes) || []) if (n.hostname === NAMED_ONLY) n.auto = false; return st; };
 
 function baseStatus(now) {
@@ -394,7 +410,7 @@ const server = http.createServer((req, res) => {
   if (p === '/api/status') return json(res, 200, status(now));
   if (p === '/api/models') return json(res, 200, MODELS_STATE ? modelsDoc(MODELS_STATE, now) : { version: 1, models: CATALOG ? cfgCatalog() : [] });
   if (p === '/api/profiles') return json(res, 200, { profiles: profileEntries() });
-  if (p === '/api/config') { const d = cfgDoc(); return json(res, 200, Object.assign({ updated_at: now - 3 * H, configured: d.revision > 0, tiers: [], exclude_nodes: [], no_auto_nodes: NAMED_ONLY ? [NAMED_ONLY] : [], node_overrides: {} }, d, { profiles: profileSpecs() })); }
+  if (p === '/api/config') { const d = cfgDoc(); return json(res, 200, Object.assign({ updated_at: now - 3 * H, configured: d.revision > 0, tiers: [], exclude_nodes: [], no_auto_nodes: NAMED_ONLY ? [NAMED_ONLY] : [], node_overrides: {} }, d, TIER_LISTS, { profiles: profileSpecs() })); }
   // what the health popup reads (the Health board's sample, generic names)
   if (p === '/api/about') return json(res, 200, { version: '0.1.5', started_at: now - 12 * 24 * H, now, uptime_s: 12 * 24 * 3600, history: 'on' });
   if (p === '/api/system') return json(res, 200, { version: '0.1.5', started_at: now - 12 * 24 * H, now, uptime_s: 12 * 24 * 3600, read_panics: 0, internal_failures_total: 0,
@@ -412,7 +428,8 @@ const server = http.createServer((req, res) => {
     { ts: now - 70 * 60000, seq: 39, type: 'nodeLost', severity: 'error', nodes: ['ps5-06'], summary: 'Node ps5-06 was lost.', data: {} },
   ], total_matching: 3 });
   if (p === '/api/health') return json(res, 200, health(now));
-  if (p === '/api/nodes') { const st = status(now); return json(res, 200, { nodes: st.agents, counts: counts(st.agents) }); }
+  if (p === '/api/nodes') { const st = status(now), l = localEntry(TIERS); return json(res, 200, { nodes: l ? [...st.agents, l] : st.agents, counts: counts(st.agents) }); }
+  if (p === '/api/config/tiers') return json(res, 200, tiersDoc(TIERS, status(now), cfgDoc().revision));
   if (p === '/api/groups') return json(res, 200, groupsDoc(status(now), now, UPTIME_PARTIAL));
   if (p === '/api/nodes/uptime') return json(res, 200, uptimeDoc(status(now), now, UPTIME_PARTIAL));
   if (p === '/api/nodes/availability') return json(res, 200, availability(u.searchParams, now));

@@ -212,6 +212,13 @@ func (c *schedCore) measureHostOverheads() {
 		if in.placement.Host == "" || in.child == nil || in.readyAt.IsZero() || (in.state != stReady && in.state != stDraining) {
 			continue
 		}
+		if in.baseUnsettled[in.placement.Host] {
+			if !in.hostMeasured {
+				in.hostMeasured = true
+				c.log.Debug("no host overhead reading: the base was taken just after a release on the host", "profile", in.prof.Name, "node", c.nodeName(in.placement.Host))
+			}
+			continue
+		}
 		if mib, _, ok := c.hostReading(in, false); ok {
 			in.hostHigh = max(in.hostHigh, mib)
 		}

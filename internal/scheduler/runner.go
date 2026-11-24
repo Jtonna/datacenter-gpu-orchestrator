@@ -50,6 +50,10 @@ type Options struct {
 	// overheads copied from the release before device counts read their
 	// readings from it once (hostoverhead.go). nil: none.
 	HostReadings HostReadingEvents
+	// DeviceHistory answers event-history queries: the stored per-device
+	// rows whose load was a cached reload are found with it and dropped
+	// once at start (deviceoverhead.go). nil: none.
+	DeviceHistory DeviceHistory
 	// LlamaBuild is the llama.cpp commit the loads run on (the host
 	// program's); stored with each measurement, and a restored measurement
 	// of another build is not trusted (needcount.go). "" when not known.
@@ -163,6 +167,7 @@ func New(cfg *config.Config, o Options) (*Scheduler, error) {
 	s.core.buildRelease = o.Release
 	s.core.llamaBuild, s.core.releaseBuild = o.LlamaBuild, o.ReleaseBuild
 	s.core.hostEventsFn = o.HostReadings
+	s.core.devEventsFn = o.DeviceHistory
 	if o.NeedStore != nil {
 		// Read before Run, so the first request is planned with them.
 		s.core.restoreNeeds(o.NeedStore)
