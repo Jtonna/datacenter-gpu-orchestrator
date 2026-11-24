@@ -175,6 +175,10 @@ type inst struct {
 	// baseFree is each node's free figure when the instance was created
 	// (reserve.go): what the node gives up for it is measured against it.
 	baseFree map[core.NodeID]int
+	// baseUnsettled: the nodes an instance that ran left within one
+	// free_average_window before this one was created; their base may still
+	// show it, so no overhead reading is taken there (unsettledBase).
+	baseUnsettled map[core.NodeID]bool
 	// cyclePeak is the most each node gave up for this instance in this
 	// load-to-unload cycle (reserve.go, endPeakCycle).
 	cyclePeak map[core.NodeID]int
@@ -387,6 +391,9 @@ type schedCore struct {
 	needOps      []needOp                        // learned-need store writes, taken by the runner after each step (needs.go)
 	hostOHs      map[hostKey]*hostOH             // measured host overheads by shape, node and device count (hostoverhead.go)
 	devOHs       map[hostKey]*hostOH             // measured per-device overheads by shape, node and device count (deviceoverhead.go)
+	devEventsFn  DeviceHistory                   // loadFinished and per-device learnedNeed events, read once at start (dropCachedDevice)
+	devChecked   bool                            // dropCachedDevice ran
+	devCheckFrom time.Time                       // when dropCachedDevice first saw a node (it waits for the rows' nodes)
 	hostEventsFn HostReadingEvents               // the history's learnedNeed events, read once for the rows of the release before device counts
 	hostEvents   []history.Event                 // what hostEventsFn returned (nil: not read yet)
 	persist      bool                            // a need store is attached: learned needs are queued for it

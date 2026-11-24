@@ -399,6 +399,7 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 				so.HostReadings = func() []history.Event { // host overheads of the release before device counts
 					return hist.Query(history.Query{Types: []string{history.TLearnedNeed}, Text: "host overhead", Limit: history.MaxLimit}).Events
 				}
+				so.DeviceHistory = hist.Query // per-device rows: was each one's load cold?
 			}
 		}
 	}

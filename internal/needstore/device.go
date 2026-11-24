@@ -96,6 +96,15 @@ func (s *Store) AllDevice() ([]DeviceOverhead, error) {
 	return out, rows.Err()
 }
 
+// DeleteDeviceRow drops the row of one shape, node and device count; no row
+// is not an error.
+func (s *Store) DeleteDeviceRow(shape, node string, devices int) error {
+	return s.db.Write(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`DELETE FROM needs_device_overhead WHERE shape = ? AND node = ? AND devices = ?`, shape, node, devices)
+		return err
+	})
+}
+
 // DeleteDevice drops node's rows (every shape and device count); it
 // reports how many there were.
 func (s *Store) DeleteDevice(node string) (int, error) {
