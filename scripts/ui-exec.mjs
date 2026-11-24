@@ -56,7 +56,9 @@
 //               "titles": ["text some title attribute on the page contains", ...],
 //               "fetchedQuery": ["regexp a request (GET /path?query body) must match", ...],
 //               "notFetched": ["regexp no request of the case may match", ...],
-//               "noHeader": ["X-Actor", ...]: no request of the case carried it}],
+//               "noHeader": ["X-Actor", ...]: no request of the case carried it,
+//               "sentHeader": ["^X-Comment: why$"]: a header line "Name: value" matched each,
+//               "noHeaderLine": ["ptl_"]: no header line matched any}],
 //    (fetch answers: "POST /api/agents" before "/api/agents"; {"$status": 409, "$body": {...}} for an error)
 //    "now": "2026-11-24T06:30:00Z",               // the clock starts there (Date.now, new Date())
 //    "tz": "America/Los_Angeles"}                 // the zone: uiExec sets TZ for node
@@ -347,6 +349,7 @@ let fetchAnswers = {};
 const fetched = [];
 const fetchedFull = []; // with the query and the body, for "fetchedQuery"
 const sentHeaders = new Set(); // every header name a request carried, for "noHeader"
+const sentHeaderLines = []; // "Name: value" of every header sent, for "sentHeader"
 const realFetch = globalThis.fetch;
 let base = null;
 def('fetch', async (u, opts = {}) => {
@@ -361,7 +364,7 @@ def('fetch', async (u, opts = {}) => {
   const method = opts.method || 'GET';
   fetched.push(method + ' ' + p);
   fetchedFull.push(method + ' ' + p + full.search + (opts.body != null ? ' ' + String(opts.body) : ''));
-  for (const k of Object.keys(opts.headers || {})) sentHeaders.add(k);
+  for (const k of Object.keys(opts.headers || {})) { sentHeaders.add(k); sentHeaderLines.push(k + ': ' + opts.headers[k]); }
   // an answer by "METHOD /path" first, then by path; {"$status": 409, "$body": {...}} answers an error
   const has = k => Object.prototype.hasOwnProperty.call(fetchAnswers, k);
   let ans = has(method + ' ' + p) ? fetchAnswers[method + ' ' + p] : has(p) ? fetchAnswers[p] : undefined;
@@ -543,7 +546,7 @@ const go = async hash => { setHashQuietly(hash); globalThis.dispatchEvent(new Fa
 
 let failed = 0;
 for (const c of spec.cases) {
-  errors.length = 0; fetched.length = 0; fetchedFull.length = 0; sentHeaders.clear();
+  errors.length = 0; fetched.length = 0; fetchedFull.length = 0; sentHeaders.clear(); sentHeaderLines.length = 0;
   fetchAnswers = Object.assign({}, spec.fetch || {}, c.fetch || {});
   const route = router.parse(c.route);
   if (!router.getView(route.id)) errors.push('no view registered for ' + route.id);
@@ -623,6 +626,8 @@ for (const c of spec.cases) {
   // notFetched: regular expressions no request may match (a write that must not be sent)
   for (const re of c.notFetched || []) { const hit = fetchedFull.find(f => new RegExp(re).test(f)); if (hit) errors.push('a request that must not be sent: ' + hit); }
   for (const hd of c.noHeader || []) if (sentHeaders.has(hd)) errors.push('a request carried the header ' + hd);
+  for (const re of c.sentHeader || []) if (!sentHeaderLines.some(l => new RegExp(re).test(l))) errors.push('no header matches /' + re + '/ (headers: ' + JSON.stringify([...new Set(sentHeaderLines)]) + ')');
+  for (const re of c.noHeaderLine || []) { const hit = sentHeaderLines.find(l => new RegExp(re).test(l)); if (hit) errors.push('a header that must not be sent: ' + hit); }
   for (const sel of c.pageHas || []) if (!document.body.querySelector(sel)) errors.push('no element on the page matches: ' + sel);
   for (const sel of c.pageNone || []) if (document.body.querySelector(sel)) errors.push('an element on the page that must not be there: ' + sel);
   if (c.focused && !(document.activeElement && document.activeElement.matches && document.activeElement.matches(c.focused)))

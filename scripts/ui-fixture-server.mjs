@@ -85,6 +85,7 @@ import { fileURLToPath } from 'node:url';
 import { zonesStatus, counts, groupsDoc, uptimeDoc, fleetStrip } from './ui-fixture/zones.mjs';
 import { schema as cfgSchema, configDoc, storedConfig, dryRun } from './ui-fixture/config.mjs';
 import { profileEntries, profileSpecs, catalog as cfgCatalog, planAnswer } from './ui-fixture/profiles.mjs';
+import { Keys } from './ui-fixture/keys.mjs';
 
 const argv = process.argv.slice(2);
 const opt = (k, d) => { const i = argv.indexOf(k); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
@@ -110,6 +111,11 @@ const CONFIG = opt('--config', 'normal');
 const CATALOG = argv.includes('--catalog');
 // --named-only <name>: that zone is in no_auto_nodes (auto: false)
 const NAMED_ONLY = opt('--named-only', '');
+// --keys none|normal: GET/POST /api/agents, PATCH/DELETE /api/agents/{id}, POST .../rotate in the access-key shapes
+// (scripts/ui-fixture/keys.mjs; kept in memory, so the MCP pages can be driven end to end). Without it the old
+// names-only /api/agents answer stays.
+const KEYS_STATE = opt('--keys', '');
+const KEYS = KEYS_STATE ? new Keys(KEYS_STATE) : null;
 const cfgDoc = () => { const d = configDoc(CONFIG); d.settings.requests_live_timings = LIVE_TIMINGS; return d; };
 
 // ---------- the fixture (the Overview mockup's sample data) ----------
@@ -322,6 +328,16 @@ const server = http.createServer((req, res) => {
   // the placement preview's dry run writes nothing
   // POST /api/plan: the Zones fixture's answers when --load names a load state (the Load dialog's states),
   // else the configuration pages' (profiles.mjs, Placement preview); the other model actions are the Zones fixture's
+  if (KEYS && (p === '/api/agents' || p.startsWith('/api/agents/'))) {
+    const host = req.headers.host || 'fixture';
+    const rot = /^\/api\/agents\/([^/]+)\/rotate$/.exec(p), one = /^\/api\/agents\/([^/]+)$/.exec(p);
+    const send = r => json(res, r.status, r.body);
+    if (p === '/api/agents' && req.method === 'GET') return send(KEYS.listAnswer(host));
+    if (p === '/api/agents' && req.method === 'POST') return readBody(req, b => send(KEYS.create(b || {}, host)));
+    if (rot && req.method === 'POST') return send(KEYS.rotate(rot[1], host));
+    if (one && req.method === 'PATCH') return readBody(req, b => send(KEYS.patch(one[1], b || {}, host)));
+    if (one && req.method === 'DELETE') return send(KEYS.revoke(one[1], host));
+  }
   if (p === '/api/plan' && req.method === 'POST' && !LOAD_SET) return readBody(req, b => { const r = planAnswer(b); json(res, r.status, r.body); });
   if (req.method === 'POST' && MODEL_ROUTE.test(p)) return modelAction(req, res, p);
   if (req.method !== 'GET') return json(res, 405, { error: { message: 'the fixture is read-only' } });
