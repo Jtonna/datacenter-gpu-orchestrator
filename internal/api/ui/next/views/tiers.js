@@ -409,7 +409,8 @@ registerView({
       panelFor = want;
       const idx = () => Number(panelFor) - 1;
       const tier = () => work().tiers[idx()] || {};
-      panel = openPanel({
+      // closesMenu: beside the page the section menu steps aside, so the tiers table keeps its columns
+      panel = openPanel({ closesMenu: true,
         label: 'Tier', name: 'Tier ' + want,
         title: () => { const m = zonesOf(idx()); return 'Tier ' + panelFor + ' · ' + (m == null ? DASH + ' zones' : plural(m.length, 'zone')); },
         sub: () => ruleText(tier()),

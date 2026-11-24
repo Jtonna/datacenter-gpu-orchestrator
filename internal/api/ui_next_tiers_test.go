@@ -61,9 +61,11 @@ func TestUINextTiers(t *testing.T) {
 		map[string]any{"name": "tiers: a row opens the tier", "route": "#/tiers", "status": st, "width": 1536, "click": []string{"tr[data-tier='2']"}, "hash": "#/tiers?tier=2"},
 		// one source: the panel's count is the table's count
 		map[string]any{"name": "tiers: the tier in the panel", "route": "#/tiers?tier=1", "status": st, "width": 1536,
-			"page":    []string{"Tier 1 · 6 zones", "Platform is linux-amd64-vulkan", "1st of 4", "Shared with the system", "Zones in this tier now", "ps5-01", "ps5-06"},
-			"pageHas": []string{"aside.side.docked", "aside.side button[data-act=up][disabled]", "tr.sel[data-tier='1']", "aside.side [data-panel-zones='6']", "tr[data-tier='1'] td[data-zones='6']"},
-			"absent":  []string{"0 zones"}},
+			"page": []string{"Tier 1 · 6 zones", "Platform is linux-amd64-vulkan", "1st of 4", "Shared with the system", "Zones in this tier now", "ps5-01", "ps5-06"},
+			"pageHas": []string{"aside.side.docked", "aside.side button[data-act=up][disabled]", "tr.sel[data-tier='1']", "aside.side [data-panel-zones='6']", "tr[data-tier='1'] td[data-zones='6']",
+				// docked beside the page, the panel closes the section menu so the table keeps its columns
+				".app.menu-closed"},
+			"absent": []string{"0 zones"}},
 		map[string]any{"name": "tiers: an empty tier in the panel", "route": "#/tiers?tier=4", "status": st, "width": 1536,
 			"page": []string{"Tier 4 · 0 zones", "No zone is in this tier now."}, "pageHas": []string{"aside.side [data-panel-zones='0']"}},
 		map[string]any{"name": "tiers: Add a tier asks every rule field", "route": "#/tiers", "status": st, "click": []string{"button[data-act=add-tier]"},

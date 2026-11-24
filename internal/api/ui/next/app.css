@@ -1286,6 +1286,14 @@ table.runs{width:100%;border-collapse:collapse}
 .trs-tbl th:nth-child(8){width:88px}
 .trs-tbl th:nth-child(9){width:80px}
 .trs-tbl td.trs-rule{font-weight:700;overflow-wrap:anywhere;line-height:1.35}
+/* beside a docked panel (about 800 px): tighter figure columns, so the
+   rule in words keeps room for itself */
+@container (max-width:900px){
+  .trs-tbl{min-width:640px}
+  .trs-tbl th:nth-child(1){width:40px}.trs-tbl th:nth-child(3){width:60px}.trs-tbl th:nth-child(4){width:86px}
+  .trs-tbl th:nth-child(5){width:84px}.trs-tbl th:nth-child(6){width:78px}.trs-tbl th:nth-child(7){width:54px}
+  .trs-tbl th:nth-child(8){width:76px}.trs-tbl th:nth-child(9){width:82px}
+}
 .trs-tbl td.trs-rule .b{vertical-align:middle}
 .trs-mv{white-space:nowrap;text-align:right}
 .trs-ib{display:inline-grid;place-items:center;width:28px;height:28px;margin-left:4px;border:1px solid var(--line-ctl, #c5cec9);border-radius:7px;background:var(--surface);color:var(--text);font:700 14px/1 var(--sans);cursor:pointer}
