@@ -37,7 +37,7 @@ import { onCatalog, needCatalog } from '../core/catalog.js';
 import { viewNodes } from '../core/status.js';
 import { agentOf, notPlaceable } from '../core/nodeactions.js';
 import { requestFeed, every, onLiveTimings, liveTimings } from '../core/requests.js';
-import { PERIODS, isPeriod, periodOf, bucketTitle, shortDay, ymd } from '../core/period.js';
+import { PERIODS, isPeriod, periodOf, bucketTitle, shortDay, ymd, addDays, foldLocal } from '../core/period.js';
 
 // ---------- Customize (Q1): kept in this browser until the owner has a mockup for it ----------
 
@@ -188,6 +188,7 @@ const MEMS = [{ id: '', label: 'any' }, { id: 'low', label: 'under 50% used' }, 
 const TEMPS = [{ id: '', label: 'any' }, { id: 'cool', label: 'under 60 °C' }, { id: 'warm', label: '60 to 75 °C' }, { id: 'hot', label: 'over 75 °C' }];
 const memBand = m => (!m ? '' : m.used / m.total < 0.5 ? 'low' : m.used / m.total <= 0.8 ? 'mid' : 'high');
 const tempBand = t => (t == null ? '' : t < 60 ? 'cool' : t <= 75 ? 'warm' : 'hot');
+const SUMMARY_HOURS = 2000; // the most buckets one answer of GET /api/requests/summary has (usage.MaxBuckets)
 const ROWS_SHOWN = 6; // the list is 204 px: six rows of 34, then it scrolls
 
 // stripOf(series, z, day) -> the 24 cells of one zone and their words.
@@ -254,14 +255,21 @@ registerView({
 
     async function readSummary(p) {
       try {
-        const s = await api.get('/api/requests/summary', { from: p.from, to: p.to, step: p.step });
+        let s;
+        if (p.step === 'hour') s = await api.get('/api/requests/summary', { from: p.from, to: p.to, step: 'hour' });
+        else {
+          // local days: hours summed into the viewer's days (core/period.js foldLocal), at most 2000 hours an answer
+          const parts = [];
+          for (let a = p.from; a < p.to; a += SUMMARY_HOURS * 3600000) parts.push(api.get('/api/requests/summary', { from: a, to: Math.min(p.to, a + SUMMARY_HOURS * 3600000), step: 'hour' }));
+          s = foldLocal(p.buckets, p.to, await Promise.all(parts));
+        }
         if (dead) return;
         sum = s; sumErr = '';
       } catch (e) { if (!dead) sumErr = (e && e.message) || 'the request failed'; }
       view.refresh();
     }
     async function readAvail(p) {
-      const q = p.current ? {} : { from: p.stripDay, to: Math.min(Date.now(), p.stripDay + 24 * 3600000), step: 'hour' };
+      const q = p.current ? {} : { from: p.stripDay, to: Math.min(Date.now(), addDays(p.stripDay, 1)), step: 'hour' };
       try {
         const s = await api.get('/api/nodes/availability', q);
         if (dead) return;
