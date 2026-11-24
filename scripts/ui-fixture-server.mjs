@@ -122,6 +122,8 @@ const STATE = opt('--state', 'normal');
 const SEQUENCE = argv.includes('--sequence');
 const LIVE_TIMINGS = argv.includes('--live-timings');
 const WIDE_ZONES = argv.includes('--wide-zones');
+// the scheduler's own machine hosting, one console holding the whole model (live's most common row)
+const WIDE_HOST = helper => [{ id: 'local', name: 'scheduler-host', role: 'host' }, { id: '02:00:00:00:00:0b', name: helper, role: 'helper', share: 1 }];
 const HEALTH = opt('--health', 'two');
 // --release: the scheduler's release the Scheduler row names (facts.release)
 const RELEASE = opt('--release', '0.1.5');
@@ -284,6 +286,11 @@ function requests(now) {
     row(192, { status: 'done', queued_at: now - 800000, started_at: now - 799800, ended_at: now - 795900, profile: QWEN, tokens_in: 32, prefill_tps: 53.3, tokens_out: 160, decode_tps: 48.0, nodes: nodes([3, 1]), duration_ms: 3900, wait_ms: 200 }),
     row(191, { status: 'done', queued_at: now - 820000, started_at: now - 819800, ended_at: now - 817400, profile: BIG, tokens_in: 28, prefill_tps: 120, tokens_out: 134, decode_tps: 62.1, nodes: onSched([3, 0.5], [4, 0.5]), duration_ms: 2400, wait_ms: 200 }),
     row(190, { status: 'done', queued_at: now - 840000, started_at: now - 839800, ended_at: now - 834500, profile: BIG, tokens_in: 39, prefill_tps: 377, tokens_out: 160, decode_tps: 47.8, nodes: nodes([1, 0.17], [2, 0.17], [3, 0.17], [4, 0.17], [5, 0.16], [6, 0.16]), duration_ms: 5300, wait_ms: 200 }),
+    // rows as wide as live's (generic names): long model names, the scheduler's machine hosting with a
+    // long console name helping, a four-figure prompt rate; the page must stay inside 1280 with the menu open
+    row(189, { status: 'done', queued_at: now - 860000, started_at: now - 859800, ended_at: now - 859000, profile: 'tinyllama-1.1b-chat-v1.0:2k', tokens_in: 39, prefill_tps: 1034, tokens_out: 160, decode_tps: 214, nodes: WIDE_HOST('console-0a1b2c3d'), duration_ms: 800, wait_ms: 200 }),
+    row(188, { status: 'done', queued_at: now - 880000, started_at: now - 879800, ended_at: now - 877400, profile: 'qwen3-coder-30b-a3b:2k', tokens_in: 28, prefill_tps: 120, tokens_out: 134, decode_tps: 62.1, nodes: [{ id: 'local', name: 'scheduler-host', role: 'host' }, { id: mac(11), name: 'console-0a1b2c3d', role: 'helper', share: 0.5 }, { id: mac(12), name: 'console-9f8e7d6c', role: 'helper', share: 0.5 }], duration_ms: 2400, wait_ms: 200 }),
+    row(187, { status: 'done', queued_at: now - 900000, started_at: now - 899800, ended_at: now - 895900, profile: 'qwen3.5-4b:2k', tokens_in: 32, prefill_tps: 53.5, tokens_out: 160, decode_tps: 48.0, nodes: WIDE_HOST('console-05'), duration_ms: 3900, wait_ms: 200 }),
   ] : []);
 }
 

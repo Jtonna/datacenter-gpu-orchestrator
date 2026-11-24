@@ -909,7 +909,8 @@ export function runsTable(o) {
       return h('tr', { key: 'r' + id, 'data-req': id, class: [st === 'failed' || st === 'refused' ? 'fail' : st === 'cancelled' ? 'canc' : '', o.pin === id ? 'pinned' : ''].filter(Boolean).join(' ') || null },
         h('td', status),
         notStarted ? h('td.mut.qd', 'queued ', h('span.mono', clock(r.queued_at))) : h('td.mono', clock(r.started_at)),
-        h('td.mono', { title: runModelTitle(r) }, runModel(r) || DASH),
+        // o.modelClass: a page that lets the Model cell wrap (Requests: rq-model)
+        h('td', { class: 'mono' + (o.modelClass ? ' ' + o.modelClass : ''), title: runModelTitle(r) }, runModel(r) || DASH),
         fig(waiting ? null : r.tokens_in, r.tokens_reused > 0 ? `${num(r.tokens_reused)} of them reused from the cache` : null, false, st === 'running' ? PROMPT_LATER : null),
         (pr => fig(waiting ? null : pr.rate, null, true, pr.title || (st === 'running' ? PROMPT_LATER : null)))(promptRate(r)),
         fig(waiting ? null : r.tokens_out, r.live ? 'Counted from the stream so far' : null),

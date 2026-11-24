@@ -64,3 +64,36 @@ func TestUIRequestsZonesWrap(t *testing.T) {
 		}})
 	}
 }
+
+// Rows as wide as live's (a copy of live data at 1280, menu open: document
+// 1294 px, "Sent by" past the card; the --wide-zones fixture with such rows
+// measured 1374 px in Chromium): the Model cell and the Sent by cell give way
+// first: Model wraps inside its column, Sent by is shortened past 12
+// characters, Zones keeps at most 34 characters a line (full texts on hover);
+// the figures stay whole on one line. Measured in Chromium with
+// --wide-zones at 1280 and 1536, menu open and closed: scrollWidth ==
+// clientWidth and every column inside the card.
+func TestUIRequestsWideRowsFit(t *testing.T) {
+	css := uiText(t, uiNextDir+"app.css")
+	for _, want := range []string{
+		".runs td.rq-model{white-space:normal;overflow-wrap:anywhere;min-width:7ch;line-height:1.35;padding-top:4px;padding-bottom:4px}",
+		// Sent by: at most 12 characters wide, shortened with "…", the full name and address on hover
+		".runs td.rq-sent span{display:block;max-width:12ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+		// Zones: at most 34 characters a line, one machine a line when longer, so it does not take the room Model needs
+		".rq-zones>span{display:block;max-width:34ch}",
+	} {
+		if !strings.Contains(css, want) {
+			t.Errorf("app.css lacks %s", want)
+		}
+	}
+	now := time.Now()
+	ms := func(d time.Duration) int64 { return now.Add(d).UnixMilli() }
+	rows := []any{map[string]any{"id": 31, "kind": "v1", "profile": "tinyllama-1.1b-chat-v1.0:2k", "status": "done", "caller": "anonymous", "source_addr": "192.0.2.40",
+		"queued_at": ms(-time.Minute), "started_at": ms(-time.Minute), "duration_ms": 800, "tokens_in": 39, "prefill_tps": 1034, "tokens_out": 160, "decode_tps": 214,
+		"nodes": []any{map[string]any{"id": "local", "name": "scheduler-host", "role": "host"}, map[string]any{"id": "02:00:00:00:02:05", "name": "console-05", "role": "helper", "share": 1.0}}}}
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": ovFetch(now, rows, true), "cases": []any{
+		map[string]any{"name": "requests: wide rows give way in Model and Sent by", "route": "#/requests", "status": ovStatus(now), "width": 1280,
+			"expect": []string{"tinyllama-1.1b-chat-v1.0:2k", "1,034", "scheduler-host Host,", "console-05 Helper 100%", "anonymous"},
+			"has": []string{"tr[data-req='31'] td.rq-model[title*=tinyllama]", "tr[data-req='31'] td.rq-sent span[title^=anonymous][title*='192.0.2.40']"}},
+	}})
+}

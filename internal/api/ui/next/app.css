@@ -769,6 +769,10 @@ table.runs{width:100%;border-collapse:collapse}
 .runs td.qd{font-weight:600}
 .runs td.rq-zones{white-space:normal;min-width:0;padding-top:4px;padding-bottom:4px;line-height:1.45}
 .rq-zones .mc{white-space:nowrap}
+/* Requests: with rows as wide as live's the Model and Sent by cells give way first (wrap anywhere, the full text on hover); the figures stay whole */
+.runs td.rq-model{white-space:normal;overflow-wrap:anywhere;min-width:7ch;line-height:1.35;padding-top:4px;padding-bottom:4px}
+.runs td.rq-sent span{display:block;max-width:12ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rq-zones>span{display:block;max-width:34ch}
 .runs tr.fail td{background:var(--failed-row)}
 .runs tr.canc td{color:var(--quiet)}
 .runs tr.none td{height:auto;padding:22px var(--pad-panel);color:var(--mut);font-weight:600;white-space:normal}
