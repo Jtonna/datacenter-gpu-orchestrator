@@ -637,6 +637,11 @@ func (s *Server) trashDisk(d map[string]any) {
 	d["trash_bytes"], d["trash_count"], d["next_purge_at"], d["trash_purge_on"] = sum.Bytes, sum.Count, nilIfZero(sum.NextPurgeAt), false
 }
 
+// RepairTrash is called once at start, after the configuration service
+// applies its writes to the scheduler (main sets started first): a repair
+// may add profiles back.
+func (s *Server) RepairTrash(ctx context.Context) { s.repairTrash(ctx) }
+
 // repairTrash runs at start: a record a kill left pending or restoring is
 // finished or undone from where its file is; what it cannot tell is marked
 // interrupted with what it found (GET /api/models/trash shows it), and no

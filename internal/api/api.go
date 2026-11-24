@@ -226,7 +226,6 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 	if o.Audit != nil {
 		s.SetAuditHook(s.recorderHook(o.Audit)) // benchmark changes and runs are audited too (section bench)
 	}
-	s.repairTrash(context.Background()) // a delete or restore a kill left half done (trash.go)
 	return s
 }
 

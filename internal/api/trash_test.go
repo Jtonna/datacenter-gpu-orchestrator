@@ -91,11 +91,12 @@ func (te *trashEnv) profileIDs() []string {
 }
 
 // restart acts out the next start: a new API server on the same database,
-// configuration and models folder (New runs the repair).
+// configuration and models folder, then RepairTrash as main runs it.
 func (te *trashEnv) restart() *Server {
 	te.t.Helper()
 	s2 := New(te.cfg, te.sched, Options{Config: te.svc, Audit: te.cs, BenchStore: te.bs, Logger: te.api.log, Now: te.api.opts.Now})
 	te.t.Cleanup(s2.Close)
+	s2.RepairTrash(context.Background()) // as main does once the server is up
 	return s2
 }
 
