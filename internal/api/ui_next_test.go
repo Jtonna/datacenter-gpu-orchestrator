@@ -124,12 +124,12 @@ func TestUINextScreensExecute(t *testing.T) {
 	}
 	// the zones of the agent cluster, and the side panel of one of them
 	cluster := every("agents", st, map[string][]string{
-		"zones": {"Zones", "All zones", "1 off", "Off", "Not accepting", "console-1", "Colour key", "Showing 5 of 5", "Named only"},
+		"zones": {"ALL 5 ZONES", "2 off", "Switched off", "console-1", "In use, darker is busier", "Page 1 of 1"},
 	})
 	cluster = append(cluster, map[string]any{"name": "agents: zones, one zone opened", "route": "#/zones?zone=" + active, "status": st, "absent": designSamples},
 		// the reason a zone is off: the exclude_nodes entry that matches it
 		map[string]any{"name": "agents: zones, only the off ones", "route": "#/zones?show=off", "status": st,
-			"expect": []string{"Showing 1 of 5", "Off by exclude_nodes: " + excluded}, "absent": []string{"Named only"}})
+			"expect": []string{"Switched off"}, "titles": []string{"exclude_nodes: " + excluded}, "absent": []string{"host-1"}})
 	uiExec(t, map[string]any{"shell": "next", "app": true, "base": fe.front.URL, "cases": cluster})
 
 	be := benchEnv(t)
@@ -137,7 +137,7 @@ func TestUINextScreensExecute(t *testing.T) {
 
 	empty, _, _ := feedEnv(t)
 	uiExec(t, map[string]any{"shell": "next", "app": true, "base": empty.front.URL,
-		"cases": every("empty", "fetch", map[string][]string{"zones": {"Zones"}})})
+		"cases": every("empty", "fetch", map[string][]string{"zones": {"Create new zone", "Page 1 of 1"}})})
 }
 
 // The Zones page's selection and its zone panel, on a real agent cluster:
@@ -163,11 +163,11 @@ func TestUINextZonesSelectionAndPanel(t *testing.T) {
 		map[string]any{"name": "one zone's panel", "route": "#/zones?zone=" + active, "status": st, "absent": designSamples,
 			"page": []string{"Platform", "linux-amd64-vulkan", "Agent release", "0.1.0", "Recent events", "The event history is off", "Pause", "Force unload"}},
 		map[string]any{"name": "the paused zone's panel", "route": "#/zones?zone=" + paused, "status": st,
-			"page": []string{"Not accepting", "Unpause"}},
+			"page": []string{"Switched off", "Unpause"}},
 		map[string]any{"name": "the excluded zone's panel", "route": "#/zones?zone=" + excluded, "status": st,
-			"page": []string{"Off by exclude_nodes: " + excluded}},
+			"page": []string{"Switched off"}, "titles": []string{"exclude_nodes: " + excluded}},
 		map[string]any{"name": "a selection", "route": "#/zones", "status": st, "click": []string{"input[data-sel=all]"},
-			"expect": []string{"4 selected", "Stop accepting models", "Accept models again", "Clear selection"}},
+			"expect": []string{"4 selected", "Stop accepting models", "Accept models again", "Clear"}},
 		map[string]any{"name": "the bulk pause asks first", "route": "#/zones", "status": st, "click": []string{"input[data-sel=all]", "button[data-bulk=pause]"},
 			"page": []string{"Stop accepting models on 3 zones?", "Comment (required)"}},
 	}})
