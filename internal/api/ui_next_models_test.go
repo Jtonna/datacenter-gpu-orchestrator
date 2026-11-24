@@ -73,6 +73,11 @@ func TestUINextModels(t *testing.T) {
 		map[string]any{"name": "models: a file with no profiles", "route": "#/models?model=" + mdlNoProfs, "status": st,
 			"page": []string{mdlNoProfs, "No profiles", "No configuration uses this file yet", "Add profile"}, "pageNone": []string{"aside.side table"}},
 		map[string]any{"name": "models: closing the panel", "route": "#/models?model=" + mdlNever, "status": st, "click": []string{"aside.side button.x"}, "hash": "#/models"},
+		// the page rule: an automatic profile says how many nodes, a forced one names its own
+		map[string]any{"name": "models: an automatic profile's plan gives a count", "route": "#/models/" + mdlOlder, "status": st,
+			"expect": []string{"would load on 1 node"}, "has": []string{"span[data-would='1']"}, "absent": []string{"ps5-03"}},
+		map[string]any{"name": "models: a forced profile's plan names its node", "route": "#/models/" + mdlRecent, "status": st,
+			"expect": []string{"ps5-04"}, "none": []string{"span[data-would]"}},
 		map[string]any{"name": "models: a model that is not there", "route": "#/models?model=no-such-model.gguf", "status": st, "page": []string{"This model is not in the catalog"}},
 	}})
 

@@ -227,14 +227,21 @@ export function instanceCard(st, inst, model, open, toggle) {
 export function planCell(p, st) {
   const plan = p.plan || {};
   const raw = plan.reason ? 'The scheduler says: ' + plan.reason : null;
-  const nodes = plan.nodes && plan.nodes.length ? nodeChips(plan.nodes) : null;
+  // Names only where they are given (the page rule): a forced profile's own
+  // nodes. An automatic profile's plan picks among equal nodes and can pick
+  // others a moment later, so it says how many: "would load on 2 PS5s".
+  // A loaded instance names its nodes (instance cards); a chosen zone, in
+  // the Placement preview with its live memory rows.
+  const forced = (p.force_nodes || []).length > 0 || p.placement === 'forced';
+  const count = plan.nodes ? plan.nodes.length : 0;
+  const nodes = !count ? null : forced ? nodeChips(plan.nodes) : h('span', { 'data-would': count }, 'would load on ' + machines(st, count));
   // Whether a reload of the model can come from the nodes' file cache.
   const reload = reloadLine(plan.reload_from_cache, r => r.node || nodeName(st, r.id));
   switch (plan.action) {
-    case 'start': return h('span', h('span.ok-t', { style: 'font-weight:700' }, 'Yes'), nodes ? [h('span.mut', ' · on '), nodes] : null, plan.tight_fit ? [' ', badge('Tight fit', 'n', plan.reason)] : null, plan.warning ? h('span.sub.warn-t', plan.warning) : null, reload);
+    case 'start': return h('span', h('span.ok-t', { style: 'font-weight:700' }, 'Yes'), nodes ? [h('span.mut', forced ? ' · on ' : ' · '), nodes] : null, plan.tight_fit ? [' ', badge('Tight fit', 'n', plan.reason)] : null, plan.warning ? h('span.sub.warn-t', plan.warning) : null, reload);
     case 'serve': return h('span', h('span.ok-t', { style: 'font-weight:700' }, 'Loaded now'), reload);
     case 'wait': return h('span.warn-t', { style: 'font-weight:700' }, 'Loading now');
-    case 'evict': return h('span', h('span', { style: 'font-weight:700' }, 'Yes, after making room'), nodes ? [h('span.mut', ' · on '), nodes] : null, plan.tight_fit ? [' ', badge('Tight fit', 'n', plan.reason)] : null, reload);
+    case 'evict': return h('span', h('span', { style: 'font-weight:700' }, 'Yes, after making room'), nodes ? [h('span.mut', forced ? ' · on ' : ' · '), nodes] : null, plan.tight_fit ? [' ', badge('Tight fit', 'n', plan.reason)] : null, reload);
     case 'queue': return h('span', { title: raw }, h('span', { style: 'font-weight:700' }, 'Would wait'), h('span.sub', plainReason(plan.reason)));
     case 'backoff': return h('span', { title: raw }, h('span.err-t', { style: 'font-weight:700' }, 'Held back'), h('span.sub', 'Its last load failed'));
     case 'reject': return h('span', { title: raw }, h('span', { style: 'font-weight:700' }, 'No'), h('span.sub', plainReason(plan.reason)));

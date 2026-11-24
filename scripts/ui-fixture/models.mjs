@@ -15,7 +15,7 @@ const MIB = 2 ** 20;
 
 function profile(id, ctx, needs, o = {}) {
   return Object.assign({ id, ctx, parallel: 1, aliases: [], force_nodes: [], tensor_split: [], generated: false, needs_mib: needs, needs_measured: true,
-    needs_basis: 'measured on 2 zones', description: '', plan: { action: 'start', would_start: true, nodes: ['ps5-03'], reason: '' }, host: 'server' }, o);
+    needs_basis: 'measured on 2 zones', description: '', placement: 'auto', plan: { action: 'start', would_start: true, nodes: ['ps5-03'], reason: '' }, host: 'server' }, o);
 }
 
 function entry(now, o) {
@@ -40,7 +40,7 @@ export function modelsDoc(state, now = Date.now()) {
         instances: [{ profile: 'gemma-4-27b', state: 'ready', nodes: ['ps5-01', 'ps5-02'], memory_mib: 17480, in_flight: 2, waiters: 0, requests_served: 1840, last_used: n - 4e3, stale_profile: false }],
         bench: { benchmarks: 2, runs: 4 }, loads: { count: 9, failed: 1, recent: [] }, fit: { need_mib: 17480, basis: 'measured', ran_on_nodes: 2, min_nodes: 2 } }) },
     { file: 'qwen3-14b-Q5_K_M.gguf', gb: 10.1, name: 'qwen3-14b', publisher: 'Qwen', family: 'Qwen3', parameters: '14B', quant: 'Q5_K_M', trained: 40960,
-      profiles: [profile('qwen3-14b', 16384, 11200)], extra: n => ({ last_active: n - 48e3, last_loaded: n - 5 * H, requests_served: 312, loads: { count: 3, failed: 0, recent: [] }, fit: { need_mib: 11200, basis: 'measured', ran_on_nodes: 1, min_nodes: 1 } }) },
+      profiles: [profile('qwen3-14b', 16384, 11200, { force_nodes: ['ps5-04'], placement: 'forced', plan: { action: 'start', would_start: true, nodes: ['ps5-04'], reason: '' } })], extra: n => ({ last_active: n - 48e3, last_loaded: n - 5 * H, requests_served: 312, loads: { count: 3, failed: 0, recent: [] }, fit: { need_mib: 11200, basis: 'measured', ran_on_nodes: 1, min_nodes: 1 } }) },
     { file: 'gemma-4-12b-it-Q4_K_M.gguf', gb: 7.3, name: 'gemma-4-12b', publisher: 'Google', family: 'Gemma', parameters: '12B', quant: 'Q4_K_M', trained: 131072,
       profiles: [profile('gemma-4-12b', 8192, 8400), profile('gemma-4-12b:64k', 65536, 12100, { needs_measured: false, needs_basis: 'estimated, +5% margin; the estimate is 11524 MiB' })],
       extra: n => ({ last_active: n - 4 * H, last_loaded: n - 6 * H, requests_served: 41, loads: { count: 2, failed: 0, recent: [] }, fit: { need_mib: 8400, basis: 'measured', ran_on_nodes: 1, min_nodes: 1 } }) },
