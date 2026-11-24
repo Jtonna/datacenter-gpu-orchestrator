@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"sort"
+	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
@@ -80,7 +81,8 @@ func (s *Server) profileEntriesOf(ctx context.Context, cfg *config.Config) []map
 		}
 		e := map[string]any{"id": n, "kind": string(p.Kind), "model": p.Model, "ctx": p.Ctx, "parallel": p.Parallel,
 			"aliases": nonNil(p.Aliases), "force_nodes": nonNil(p.ForceNodes), "tensor_split": p.TensorSplit,
-			"generated": IsGeneratedProfile(n, p.Generated)}
+			"generated": IsGeneratedProfile(n, p.Generated),
+			"ttl_s":     int64(cfg.EffectiveTTL(p) / time.Second)} // unload when idle; 0: never
 		if p.TensorSplit == nil {
 			e["tensor_split"] = []int{}
 		}

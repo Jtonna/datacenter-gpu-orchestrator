@@ -843,6 +843,17 @@ func (s *Store) ListRuns(f RunFilter) ([]Run, error) {
 		q += ` AND ((kind='benchmark' AND target_id=?) OR id IN (SELECT run_id FROM run_steps WHERE benchmark_id=? OR json_extract(spec, '$.recipe')=?))`
 		args = append(args, f.Benchmark, f.Benchmark, f.Benchmark)
 	}
+	if f.Model != "" {
+		q += ` AND id IN (SELECT run_id FROM run_steps WHERE model_file=?`
+		args = append(args, f.Model)
+		if len(f.ModelProfiles) > 0 {
+			q += ` OR (model_file='' AND profile IN (?` + strings.Repeat(`,?`, len(f.ModelProfiles)-1) + `))`
+			for _, p := range f.ModelProfiles {
+				args = append(args, p)
+			}
+		}
+		q += `)`
+	}
 	if f.State != "" {
 		q += ` AND state=?`
 		args = append(args, f.State)
@@ -866,6 +877,31 @@ func (s *Store) ListRuns(f RunFilter) ([]Run, error) {
 		}
 		r.Suite = nil // the list stays small; GET one run for the snapshot
 		out = append(out, *r)
+	}
+	return out, rows.Err()
+}
+
+// RunStepModel is one (run, model file, profile) of a completed run's steps.
+type RunStepModel struct {
+	RunID, ModelFile, Profile string
+}
+
+// CompletedRunModels lists, once each, the model file and profile of every
+// step of a completed run: the catalog counts a model's reports from it.
+func (s *Store) CompletedRunModels() ([]RunStepModel, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT s.run_id, s.model_file, s.profile FROM run_steps s JOIN runs r ON r.id = s.run_id
+	  WHERE r.state = ? ORDER BY s.run_id`, RunCompleted)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RunStepModel
+	for rows.Next() {
+		var m RunStepModel
+		if err := rows.Scan(&m.RunID, &m.ModelFile, &m.Profile); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
 	}
 	return out, rows.Err()
 }
