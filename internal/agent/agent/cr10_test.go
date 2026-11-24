@@ -377,10 +377,11 @@ func TestLoggingNeverHoldsUpHeartbeatOrLaunch(t *testing.T) {
 	if w.Code != 202 || took > 2*time.Second {
 		t.Fatalf("launch start: %d after %v: %s", w.Code, took, w.Body.String())
 	}
-	// Heartbeats every 20 ms. The count keeps the bound it had (20 in
-	// 1.8 s); what the logging may add to the longest gap is 500 ms over the
-	// baseline.
-	if n < 20 || worst > baseWorst+500*time.Millisecond {
+	// Heartbeats every 20 ms. A held-up heartbeat shows as a long gap: the
+	// logging may add 500 ms at most over the baseline. The count only has
+	// to show that beats keep coming: on one CPU shared with the flood it
+	// falls to 19 to 26 of 90 with no gap over 175 ms, so its floor is 10.
+	if n < 10 || worst > baseWorst+500*time.Millisecond {
 		t.Fatalf("%d heartbeats in 1.8 s, longest gap %v; with logging off %d, longest gap %v", n, worst, baseN, baseWorst)
 	}
 	if b := e.a.Ship.Ring().Bytes(); b > 256<<10 {
