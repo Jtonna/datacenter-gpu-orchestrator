@@ -88,6 +88,9 @@ func (s *Server) checkKeyExpiry(ctx context.Context, now time.Time) {
 	if changed {
 		s.agents.reset()
 	}
+	// P6: keep UsageKeepDays of per-key usage
+	today := now.UnixMilli() - now.UnixMilli()%dayMS
+	s.store.TrimAgentUsage(today - (UsageKeepDays-1)*dayMS)
 }
 
 // keyExpiryEvent names the key by its agent and hint, never by the key.

@@ -1,6 +1,7 @@
 package cfgstore
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 )
@@ -22,12 +23,24 @@ CREATE TABLE agent_access (
   updated_at  INTEGER NOT NULL,
   warned      TEXT NOT NULL DEFAULT ''
 );
+`, `
+CREATE TABLE agent_usage (
+  agent_id TEXT NOT NULL,
+  day      INTEGER NOT NULL,
+  requests INTEGER NOT NULL DEFAULT 0,
+  denied   INTEGER NOT NULL DEFAULT 0,
+  asked    INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (agent_id, day)
+) WITHOUT ROWID;
 `}
 
 // AccessVersion is the version of the access tables this build writes.
 func AccessVersion() int { return len(accessMigrations) }
 
-func migrateAccess(tx *sql.Tx, now int64) error {
+func migrateAccess(tx *sql.Tx, now int64) error { return migrateAccessList(tx, now, accessMigrations) }
+
+// migrateAccessList applies list (the tests pass an older image's).
+func migrateAccessList(tx *sql.Tx, now int64, list []string) error {
 	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS access_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)`); err != nil {
 		return err
 	}
@@ -35,13 +48,13 @@ func migrateAccess(tx *sql.Tx, now int64) error {
 	if err := tx.QueryRow(`SELECT COALESCE(MAX(version),0) FROM access_migrations`).Scan(&have); err != nil {
 		return err
 	}
-	if have > len(accessMigrations) {
+	if have > len(list) {
 		// A newer image wrote them: keys still resolve here (as identity
 		// with the permissions this build can read), nothing is lost.
 		return nil
 	}
-	for i := have; i < len(accessMigrations); i++ {
-		if _, err := tx.Exec(accessMigrations[i]); err != nil {
+	for i := have; i < len(list); i++ {
+		if _, err := tx.Exec(list[i]); err != nil {
 			return fmt.Errorf("access migration %d: %w", i+1, err)
 		}
 		if _, err := tx.Exec(`INSERT INTO access_migrations (version, applied_at) VALUES (?,?)`, i+1, now); err != nil {
@@ -140,4 +153,60 @@ func (s *Store) RotateAgentAccess(id, hash, prefix string, at int64, x AgentAcce
 // MarkAgentWarned records which expiry events were sent for an agent.
 func (s *Store) MarkAgentWarned(id, warned string) error {
 	return s.execOne(`UPDATE agent_access SET warned = ? WHERE agent_id = ?`, warned, id)
+}
+
+// AgentDayUse is one key's use on one UTC day (Day: the day's start, unix
+// ms): the requests it sent, and how many of them were refused for want of
+// a permission (Denied) or because the permission is Ask me (Asked).
+type AgentDayUse struct {
+	Day                     int64
+	Requests, Denied, Asked int64
+}
+
+// RecordAgentUse adds n requests to the agent's request_count, moves its
+// last_used_at forward to last, and adds days to agent_usage, in one
+// transaction.
+func (s *Store) RecordAgentUse(id string, n, last int64, days []AgentDayUse) error {
+	return s.db.Write(func(tx *sql.Tx) error {
+		if n > 0 || last > 0 {
+			if _, err := tx.Exec(`UPDATE agents SET request_count = request_count + ?, last_used_at = MAX(last_used_at, ?) WHERE id = ?`, n, last, id); err != nil {
+				return err
+			}
+		}
+		for _, d := range days {
+			if _, err := tx.Exec(`INSERT INTO agent_usage (agent_id, day, requests, denied, asked) VALUES (?,?,?,?,?)
+ON CONFLICT(agent_id, day) DO UPDATE SET requests = requests + excluded.requests, denied = denied + excluded.denied, asked = asked + excluded.asked`,
+				id, d.Day, d.Requests, d.Denied, d.Asked); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// AgentUsage is every key's days from since on, oldest first.
+func (s *Store) AgentUsage(ctx context.Context, since int64) (map[string][]AgentDayUse, error) {
+	rows, err := s.db.DB().QueryContext(ctx, `SELECT agent_id, day, requests, denied, asked FROM agent_usage WHERE day >= ? ORDER BY agent_id, day`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]AgentDayUse{}
+	for rows.Next() {
+		var id string
+		var d AgentDayUse
+		if err := rows.Scan(&id, &d.Day, &d.Requests, &d.Denied, &d.Asked); err != nil {
+			return nil, err
+		}
+		out[id] = append(out[id], d)
+	}
+	return out, rows.Err()
+}
+
+// TrimAgentUsage deletes the days before before.
+func (s *Store) TrimAgentUsage(before int64) error {
+	return s.db.Write(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`DELETE FROM agent_usage WHERE day < ?`, before)
+		return err
+	})
 }
