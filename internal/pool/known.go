@@ -3,6 +3,7 @@ package pool
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
@@ -293,4 +294,36 @@ func plural(n int, one, many string) string {
 		return "1 " + one
 	}
 	return fmt.Sprintf("%d %s", n, many)
+}
+
+// Knows reports whether Potluck knows the machine id: registered in this run
+// (any state, removed included) or known from an earlier run.
+func (p *Pool) Knows(id string) bool {
+	p.mu.Lock()
+	defer supervise.Unlocked("pool", p.unlock)
+	return p.knownLocked(id)
+}
+
+// TakenBy is the id of the machine that already has name as its name or id
+// (case does not matter): registered in this run in any state, removed
+// included, or known from an earlier run. ok is false when none has.
+func (p *Pool) TakenBy(name string) (id string, ok bool) {
+	p.mu.Lock()
+	defer supervise.Unlocked("pool", p.unlock)
+	for aid, a := range p.agents {
+		if strings.EqualFold(aid, name) || strings.EqualFold(a.reg.Name, name) {
+			return aid, true
+		}
+	}
+	for kid, k := range p.known {
+		if strings.EqualFold(kid, name) || strings.EqualFold(k.Name, name) {
+			return kid, true
+		}
+	}
+	for aid := range p.admin {
+		if strings.EqualFold(aid, name) || strings.EqualFold(p.removedAs[aid], name) {
+			return aid, true
+		}
+	}
+	return "", false
 }

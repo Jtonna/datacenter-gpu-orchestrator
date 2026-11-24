@@ -26,7 +26,7 @@ func TestPendingZone_CreateServeJoin(t *testing.T) {
 	json.Unmarshal([]byte(status(t, e.post("/api/zones/pending", `{"name":"zone-9","group":"rack-a","model_source":"share:192.0.2.1:/srv/models","comment":"new box"}`), http.StatusCreated)), &z)
 	host := strings.TrimPrefix(e.front.URL, "http://")
 	if z.State != PendingWaiting || z.Group != "rack-a" || z.Mode != "bare" || !strings.HasPrefix(z.ID, "pz-") ||
-		z.Command != "curl -fsSL 'http://"+host+"/install.sh?zone="+z.ID+"' | sudo sh" || z.DownloadName != "potluck-zone-zone-9.sh" {
+		z.Command != "curl -sSL 'http://"+host+"/install.sh?zone="+z.ID+"' | sudo sh" || z.DownloadName != "potluck-zone-zone-9.sh" {
 		t.Fatalf("%+v", z)
 	}
 	status(t, e.post("/api/zones/pending", `{"name":"ZONE-9","model_source":"push"}`), http.StatusConflict)

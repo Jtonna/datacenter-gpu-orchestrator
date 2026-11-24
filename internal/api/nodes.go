@@ -96,9 +96,12 @@ func (s *Server) agentRegister(w http.ResponseWriter, r *http.Request) {
 		}
 		s.log.Warn("registration: start-up report unreadable, left out", "id", req.ID, "name", req.Name)
 	}
+	isNew := !s.opts.Pool.Knows(req.ID)
 	ans := s.opts.Pool.Register(req)
-	if ans.Accepted {
-		s.pendingJoined(r, req.ID, req.Name) // pending.go: a zone made before this machine joined
+	if ans.Accepted && isNew {
+		// pending.go: a zone made before this machine joined. Only a machine
+		// new to Potluck joins; the name alone grants a known zone nothing.
+		s.pendingJoined(r, req.ID, req.Name)
 	}
 	writeJSON(w, http.StatusOK, ans)
 }

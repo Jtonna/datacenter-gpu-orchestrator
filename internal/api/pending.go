@@ -268,6 +268,12 @@ func (s *Server) pendingCreate(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, http.StatusBadRequest, "a zone name is 1 to 63 letters, digits, '.', '_' or '-', starting with a letter or digit")
 		return
 	}
+	if s.opts.Pool != nil {
+		if id, taken := s.opts.Pool.TakenBy(b.Name); taken {
+			apiErr(w, http.StatusConflict, "the name %s is already taken by the zone %s (active, lost or removed): choose another name", b.Name, id)
+			return
+		}
+	}
 	if b.Group != "" {
 		g, ok := s.groups.Get(b.Group)
 		if !ok {
@@ -406,11 +412,15 @@ func (s *Server) installScript(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("zone")
 	z, ok := s.pendingByID(id)
 	if !ok {
-		apiErr(w, http.StatusNotFound, "no pending zone %q: make one first (POST /api/zones/pending)", id)
+		scriptRefusal(w, http.StatusNotFound, PendingNotFound)
 		return
 	}
 	if z.State != PendingWaiting {
-		apiErr(w, http.StatusGone, "pending zone %s is %s", z.ID, z.State)
+		said := "this zone was " + z.State + ": create it again in Potluck"
+		if z.State == PendingJoined {
+			said = "this zone has already joined Potluck as " + z.JoinedNode + ": nothing to do"
+		}
+		scriptRefusal(w, http.StatusGone, said)
 		return
 	}
 	host, ok := requestHost(r)
@@ -422,6 +432,22 @@ func (s *Server) installScript(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", `attachment; filename="`+z.DownloadName+`"`)
 	}
 	_, _ = w.Write([]byte(installScriptText(z, host)))
+}
+
+// PendingNotFound is what the script route says, and the page shows, for a
+// zone id Potluck does not know: never made, or made before a restart
+// (pending zones live in memory only).
+const PendingNotFound = "this zone was not found: create it again in Potluck"
+
+// scriptRefusal answers the script route with a script that prints said
+// and exits 1, so `curl -sSL ... | sudo sh` shows the sentence to the person
+// running it. The status stays 404 or 410 for anything that checks it.
+// said holds no single quote (it is built from fixed words, a state and a
+// node id).
+func scriptRefusal(w http.ResponseWriter, code int, said string) {
+	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
+	w.WriteHeader(code)
+	_, _ = w.Write([]byte("#!/bin/sh\necho 'potluck: " + strings.ReplaceAll(said, "'", "") + "' >&2\nexit 1\n"))
 }
 
 // installScriptText is the install script of a pending zone. Every value
@@ -524,7 +550,9 @@ func installScriptText(z PendingZone, host string) string {
 // installCommand is the line the Create dialog shows. It never carries
 // consoleOverrideFlag.
 func installCommand(z PendingZone, host string) string {
-	return fmt.Sprintf("curl -fsSL 'http://%s/install.sh?zone=%s' | sudo sh", host, z.ID)
+	// No -f: a zone Potluck no longer has answers 404 or 410 with a script
+	// that says so (scriptRefusal), which sh then prints.
+	return fmt.Sprintf("curl -sSL 'http://%s/install.sh?zone=%s' | sudo sh", host, z.ID)
 }
 
 // consoleOverrideFlag lets the script run on a machine whose host name

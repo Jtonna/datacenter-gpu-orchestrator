@@ -299,6 +299,7 @@ type Pool struct {
 	// started is when this pool began, the start of KnownGrace; knownTold the
 	// known machines written to the history as not back in this run.
 	known     map[string]KnownNode
+	removedAs map[string]string // id -> the name a machine had when removed in this run (TakenBy)
 	started   time.Time
 	knownTold map[string]bool
 	knownLoad atomic.Bool
@@ -984,6 +985,12 @@ func (p *Pool) Remove(ctx context.Context, id string) error {
 	defer supervise.Unlocked("pool", p.unlock)
 	if err := p.setAdminLocked(id, cfgstore.NodeAdmin{Removed: true}); err != nil {
 		return err
+	}
+	if a := p.agents[id]; a != nil && a.reg.Name != "" {
+		if p.removedAs == nil {
+			p.removedAs = map[string]string{}
+		}
+		p.removedAs[id] = a.reg.Name
 	}
 	delete(p.agents, id) // its programs state and place in the pool are forgotten
 	p.rebuildLocked()
