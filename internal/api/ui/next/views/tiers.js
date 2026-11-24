@@ -483,14 +483,29 @@ registerView({
       addErr[which] = ''; addText[which] = '';
       edit(w => { w[which].push(v); });
     }
+    // A stored entry that is the id of a known zone shows the zone's name
+    // beside it ("ps5-03 · 02:00:00:…"); a name, a pattern or an id no zone
+    // has stays as stored. Names from GET /api/nodes (else the status agents).
+    // Only the text changes: the list, Remove and the save use the stored value.
+    function zoneNames() {
+      const src = nodesDoc && Array.isArray(nodesDoc.nodes) ? nodesDoc.nodes : state.status && Array.isArray(state.status.agents) ? state.status.agents : [];
+      const m = new Map();
+      for (const z of src) if (z && z.id && z.name && z.name !== z.id) m.set(z.id, z.name);
+      return m;
+    }
+    function entryText(x) {
+      const name = zoneNames().get(x);
+      return name ? h('span.grow', { title: 'Stored as the zone id ' + x }, h('span', { 'data-name': name }, name), h('span.mut', ' · '), h('span.mono', x))
+        : h('span.mono.grow', x);
+    }
     function listPanel(which) {
       const L = LISTS[which], list = work()[which], e0 = cfg[L.key] || [];
       const known = viewNodes(state.status).map(zname).filter(n => !list.includes(n));
       return h('section.panel.trs', { key: which, 'data-list': which },
         h('div.ch', h('h2', L.title), h('span.note', plural(list.length, 'zone'))),
         h('p.trs-help', L.help),
-        list.length ? h('ul.trs-list', list.map(x => h('li', { key: which + '-' + x },
-          h('span.mono.grow', x), e0.includes(x) ? null : badge('Unsaved', 'q'),
+        list.length ? h('ul.trs-list', list.map(x => h('li', { key: which + '-' + x, 'data-entry': x },
+          entryText(x), e0.includes(x) ? null : badge('Unsaved', 'q'),
           button('Remove', () => edit(w => { w[which] = w[which].filter(y => y !== x); }), 'sm', { 'aria-label': L.removeLabel + x, 'data-rm': x }))))
           : h('p.trs-none.mut', L.none),
         h('div.trs-add',
