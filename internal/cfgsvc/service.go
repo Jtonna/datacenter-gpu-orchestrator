@@ -373,6 +373,7 @@ func (s *Service) commit(ctx context.Context, o WriteOpts, m mutation) (*Result,
 	}
 	parse := s.o.Parse
 	parse.KeepModels = keptModels(before)
+	parse.ModelNote = s.trashNote(ctx) // a file in the trash is named as such (models slice 3)
 	cfg, err := config.Build(after, s.o.Boot, parse)
 	if err != nil {
 		return nil, nil, validationFrom(err)

@@ -106,7 +106,7 @@ func newBase(b Bootstrap) *Config {
 		Listen: listen, ModelsDir: models, DataDir: b.DataDir, HistoryDir: b.HistoryDir, ChildLogDir: b.ChildLogDir, ProgramsDir: b.ProgramsDir,
 		Fleet:        Fleet{StaleAfter: 60 * time.Second},
 		ChildLogKeep: DefaultChildLogKeep, HistoryMaxFileMiB: DefaultHistoryMaxFileMiB, HistoryKeepFiles: DefaultHistoryKeepFiles,
-		HistoryMemoryEvents: DefaultHistoryMemoryEvents, UsageRequestDays: DefaultUsageRequestDays, UsageHourlyDays: DefaultUsageHourlyDays, LocalProbeCmd: DefaultLocalProbeCmd, WSMaxClients: DefaultWSMaxClients, LoopStepWarnMs: DefaultLoopStepWarnMs,
+		HistoryMemoryEvents: DefaultHistoryMemoryEvents, UsageRequestDays: DefaultUsageRequestDays, UsageHourlyDays: DefaultUsageHourlyDays, LocalProbeCmd: DefaultLocalProbeCmd, WSMaxClients: DefaultWSMaxClients, LoopStepWarnMs: DefaultLoopStepWarnMs, ModelTrashDays: DefaultModelTrashDays,
 		DefaultUserName: DefaultDefaultUserName,
 		Bench:         Bench{EnabledSetting: true, RegressLoadPct: DefaultRegressLoadPct, RegressDecodePct: DefaultRegressDecodePct, MaxRunMinutes: DefaultMaxRunMinutes, RetentionDays: DefaultBenchRetentionDays},
 		Defaults:      DefaultDefaults(),
@@ -174,6 +174,7 @@ func Build(doc *Document, b Bootstrap, o Options) (*Config, error) {
 	if exists == nil {
 		exists = func(p string) bool { _, err := os.Stat(p); return err == nil }
 	}
+	c.modelNote = o.ModelNote
 	if err := c.validate(raws, c.modelCheck(o, exists)); err != nil {
 		return nil, err
 	}

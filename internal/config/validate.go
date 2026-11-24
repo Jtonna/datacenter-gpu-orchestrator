@@ -138,7 +138,13 @@ func (c *Config) validateLlama(p *core.Profile, r *ProfileSpec, pf func(field, f
 	if p.Model == "" {
 		pf("model", "is required")
 	} else if !modelOK(p) {
-		pf("model", "file %q not found under models_dir %q", p.Model, c.ModelsDir)
+		note := ""
+		if c.modelNote != nil {
+			if n := c.modelNote(p.Model); n != "" {
+				note = ": " + n
+			}
+		}
+		pf("model", "file %q not found under models_dir %q%s", p.Model, c.ModelsDir, note)
 	}
 	switch {
 	case r.Ctx == nil:
@@ -376,6 +382,9 @@ func (c *Config) validateDefaults(add func(string, ...any)) {
 	if n := utf8.RuneCountInString(c.DefaultUserName); n < 1 || n > MaxDefaultUserName || strings.TrimSpace(c.DefaultUserName) != c.DefaultUserName ||
 		strings.IndexFunc(c.DefaultUserName, unicode.IsControl) >= 0 {
 		add("default_user_name: must be 1 to %d characters without control characters or surrounding spaces, got %q", MaxDefaultUserName, c.DefaultUserName)
+	}
+	if c.ModelTrashDays < 1 || c.ModelTrashDays > MaxModelTrashDays {
+		add("model_trash_days: must be from 1 to %d, got %d", MaxModelTrashDays, c.ModelTrashDays)
 	}
 	if c.ModelsDiskBudgetGB < 0 {
 		add("models_disk_budget_gb: must not be negative, got %d", c.ModelsDiskBudgetGB)

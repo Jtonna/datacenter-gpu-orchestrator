@@ -32,6 +32,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/groups"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/logrelay"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelfiles"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/pool"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/proxy"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
@@ -101,7 +102,11 @@ type Options struct {
 
 	statusSource func(ctx context.Context) (any, error) // tests replace the status the hub sends
 	modelFiles   func() []ModelFile                     // the dev harness replaces the models directory scan
-	fileCache    filecache.Sys                          // tests replace the page cache calls of POST /api/cache/evict
+	// trashOps replaces the writes of the models trash (tests act out a
+	// read-only folder); trashStop acts out a kill between its steps.
+	trashOps  *modelfiles.Ops
+	trashStop func(step string) bool
+	fileCache filecache.Sys // tests replace the page cache calls of POST /api/cache/evict
 	// catalogSource, when set and answering true, is what the model catalog is
 	// joined from instead of this server's own status, profiles, events,
 	// aggregates and files (the dev harness shows a scripted or recorded cluster).
@@ -149,6 +154,7 @@ type Server struct {
 	// store is the database behind the audit log when it is the scheduler's
 	// own: it also keeps the agents, the model icons and the file metadata.
 	store       *cfgstore.Store
+	trash       trashState // the models trash (trash.go)
 	agents      agentRegistry
 	mcpToolList atomic.Pointer[func() any]
 
@@ -220,6 +226,7 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 	if o.Audit != nil {
 		s.SetAuditHook(s.recorderHook(o.Audit)) // benchmark changes and runs are audited too (section bench)
 	}
+	s.repairTrash(context.Background()) // a delete or restore a kill left half done (trash.go)
 	return s
 }
 
@@ -310,10 +317,13 @@ func (s *Server) routes() *http.ServeMux {
 	s.configRoutes(m) // /api/config, /api/audit (config.go)
 	m.HandleFunc("GET /api/profiles", s.handleProfiles)
 	m.HandleFunc("GET /api/models", s.handleModelCatalog)
-	m.HandleFunc("GET /api/models/{key...}", s.handleModelDetail)      // and GET /api/models/{key}/icon
-	m.HandleFunc("PUT /api/models/pin/{key...}", s.handlePinPut)       // pins.go
-	m.HandleFunc("DELETE /api/models/pin/{key...}", s.handlePinDelete) // pins.go
-	m.HandleFunc("PUT /api/models/{key...}", s.handleIconPut)          // only /api/models/{key}/icon
+	m.HandleFunc("GET /api/models/{key...}", s.handleModelDetail)             // and GET /api/models/{key}/icon
+	m.HandleFunc("PUT /api/models/pin/{key...}", s.handlePinPut)              // pins.go
+	m.HandleFunc("POST /api/models/delete/{key...}", s.handleModelDelete)     // trash.go
+	m.HandleFunc("GET /api/models/trash", s.handleTrashList)                  // trash.go
+	m.HandleFunc("POST /api/models/trash/{id}/restore", s.handleModelRestore) // trash.go
+	m.HandleFunc("DELETE /api/models/pin/{key...}", s.handlePinDelete)        // pins.go
+	m.HandleFunc("PUT /api/models/{key...}", s.handleIconPut)                 // only /api/models/{key}/icon
 	m.HandleFunc("DELETE /api/models/{key...}", s.handleIconDelete)
 	// GET /api/nodes/availability (availability.go)
 	s.availabilityRoutes(m)

@@ -50,6 +50,9 @@ const (
 // 90 days, hourly totals 13 months.
 const (
 	DefaultUsageRequestDays = 90
+	// DefaultModelTrashDays and MaxModelTrashDays bound model_trash_days.
+	DefaultModelTrashDays = 30
+	MaxModelTrashDays     = 365
 	DefaultUsageHourlyDays  = 396
 	// MaxUsageDays bounds both (a sanity limit on the file's size).
 	MaxUsageDays = 3660
@@ -98,6 +101,7 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 		ChildLogKeep:      DefaultChildLogKeep,
 		HistoryMaxFileMiB: DefaultHistoryMaxFileMiB, HistoryKeepFiles: DefaultHistoryKeepFiles, HistoryMemoryEvents: DefaultHistoryMemoryEvents,
 		UsageRequestDays: DefaultUsageRequestDays, UsageHourlyDays: DefaultUsageHourlyDays, LoopStepWarnMs: DefaultLoopStepWarnMs,
+		ModelTrashDays:  DefaultModelTrashDays,
 		DefaultUserName: DefaultDefaultUserName,
 		LocalProbeCmd:   DefaultLocalProbeCmd,
 		WSMaxClients:    DefaultWSMaxClients,
@@ -120,6 +124,7 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 		HistoryDir:   strings.TrimSpace(raw.HistoryDir), HistoryMaxFileMiB: raw.HistoryMaxFileMiB, HistoryKeepFiles: raw.HistoryKeepFiles,
 		HistoryMemoryEvents: raw.HistoryMemoryEvents,
 		UsageRequestDays:    raw.UsageRequestDays, UsageHourlyDays: raw.UsageHourlyDays, LoopStepWarnMs: raw.LoopStepWarnMs, ModelsDiskBudgetGB: raw.ModelsDiskBudgetGB,
+		ModelTrashDays:      raw.ModelTrashDays,
 		RequestsLiveTimings: raw.RequestsLiveTimings,
 		DefaultUserName:     strings.TrimSpace(raw.DefaultUserName),
 		LocalProbeCmd:       raw.LocalProbeCmd,
@@ -166,6 +171,7 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 	c.Bench.Enabled = c.DataDir != "" && (raw.Bench.Enabled == nil || *raw.Bench.Enabled)
 	c.benchEnabledSet = raw.Bench.Enabled
 	c.Bench.EnabledSetting = raw.Bench.Enabled == nil || *raw.Bench.Enabled
+	c.modelNote = o.ModelNote
 	if err := c.validate(rawProfiles, c.modelCheck(o, exists)); err != nil {
 		return nil, nil, nil, err
 	}
@@ -212,6 +218,7 @@ type rawConfig struct {
 	RequestsLiveTimings bool                        `yaml:"requests_live_timings" json:"requests_live_timings,omitempty"`
 	LoopStepWarnMs      int                         `yaml:"loop_step_warn_ms" json:"loop_step_warn_ms,omitempty"`
 	ModelsDiskBudgetGB  int                         `yaml:"models_disk_budget_gb" json:"models_disk_budget_gb,omitempty"`
+	ModelTrashDays      int                         `yaml:"model_trash_days" json:"model_trash_days,omitempty"`
 	DefaultUserName     string                      `yaml:"default_user_name" json:"default_user_name,omitempty"`
 	UIModelActions      *bool                       `yaml:"ui_model_actions" json:"-"` // retired (RetiredSettings): read from a file and ignored
 	LocalProbeCmd       string                      `yaml:"local_probe_cmd" json:"local_probe_cmd,omitempty"`

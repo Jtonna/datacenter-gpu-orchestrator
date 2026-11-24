@@ -862,6 +862,7 @@ func (s *Server) withModelsDisk(list []byte) []byte {
 			d["host"] = h // the machine the models folder is on ("free on <host>")
 		}
 	}
+	s.trashDisk(d) // trash_bytes, trash_count, next_purge_at, trash_purge_on (trash.go)
 	b, err := json.Marshal(d)
 	if err != nil {
 		return list
