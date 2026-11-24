@@ -116,7 +116,7 @@ func TestMatchTier(t *testing.T) {
 		})
 	}
 	tier, _ := c.MatchTier("ps5-x", "", "", false)
-	if tier != (core.Tier{Priority: 1, HeadroomMiB: 1024}) {
+	if tier != (core.Tier{Priority: 1, HeadroomMiB: 1024, Index: 1}) { // Index: its 1-based place in the list
 		t.Errorf("settings not carried: %+v", tier)
 	}
 }

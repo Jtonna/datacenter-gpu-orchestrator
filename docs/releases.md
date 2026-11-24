@@ -11,6 +11,18 @@ Read-only fields; no agent change, no new port, no schema change, no new route.
 - **Which machine the disk is.** The `disk` block of `GET /api/models` carries `host`: the scheduler's node name (`local_node`).
 - **Benchmarks of a model.** `GET /api/bench/runs?model=<file>` lists the runs with a step on that model file (a step recorded before steps carried their file matches by the profiles of that file now). The catalog entry's `bench.reports` counts that model's completed runs. MCP `list_runs` takes `model`.
 
+## Scheduler image: stable placement among equal consoles
+
+No agent change, no new port, no schema change.
+
+- **An idle plan no longer follows free-memory noise.** New setting `placement_tolerance_mib` (128): consoles within it are equal, taken warm first (the last ready load there used the profile's model file), then by name; a split over them is even. The figure a console is ordered by moves only after its usable memory moves by more than twice the tolerance. Fit is still checked on the exact figures, so every profile's action is unchanged; forced profiles and chosen-zones loads are byte-identical to before. `0` restores the old order. Runbook: "Stable placement among equal consoles".
+
+## Scheduler image: each zone's tier
+
+No agent change, no new port, no schema change.
+
+- **Each zone says its tier.** `/api/nodes` and `/api/status` `agents` carry `tier` (index, priority, rule as stored, headroom, shared memory, link speed, settle) as the scheduler matched it, or `tier_reason: "no tier matches"`; `GET /api/config/tiers` adds `tier_zones` (each tier's zones now, and `never_reached` below an empty match). Runbook: "Which tier a zone is in".
+
 ## Scheduler image: the per-device overhead measured per shape, machine and device count
 
 No agent change, no new port. Schema: one new table, `needs_device_overhead` (shape, node, devices, the figure in force with its date, the log's part, the last three readings with their dates), under its own ledger `needs_device_migrations` (v1). No existing table or ledger changes, so the previous image opens the file as before.

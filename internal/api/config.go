@@ -185,6 +185,7 @@ func (s *Server) cfgSectionGet(section string) http.HandlerFunc {
 		switch section {
 		case "tiers":
 			out["tiers"] = v.Tiers
+			out["tier_zones"] = s.tierZones(r.Context(), v.Tiers) // zonetier.go
 		case "settings":
 			out["settings"], out["settings_set"] = v.Settings, v.SettingsSet
 		case "exclude_nodes":

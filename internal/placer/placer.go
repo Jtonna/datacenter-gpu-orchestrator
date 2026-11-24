@@ -101,6 +101,14 @@ type Request struct {
 	// and the margins above for a set of that many nodes (For).
 	ByCount []CountNeed
 
+	// EqualMiB, when above 0, makes the choice among nodes that fit stable
+	// (stable.go): nodes whose steady figures are closer than this are
+	// equal, ordered warm first, then by name; a plan's split of two or more
+	// nodes is by the class figure when every node holds its share that way.
+	// 0 keeps today's order (budget, then ID) and split (by live budget).
+	// Never used for a forced placement.
+	EqualMiB int
+
 	// MinNodes, when above 1, leaves out placements of fewer nodes (not
 	// checked when forced). The scheduler sets it to ask again for a larger
 	// set when its memory reservation gate refuses a smaller one.
@@ -195,6 +203,18 @@ type Candidate struct {
 	// takes the whole machine down, so a split placement is checked on this
 	// node's own budget, with the skew margin.
 	Shared bool
+
+	// The stable order (Request.EqualMiB above 0; see stable.go). Name is
+	// the node's name ("" orders by ID); Warm says the node's page cache
+	// likely holds this profile's model file (the last load that became
+	// ready there used it); SteadyMiB is the node's budget with idle noise
+	// filtered out by the caller (0: BudgetMiB). Fit is always checked on
+	// BudgetMiB.
+	Name      string
+	Warm      bool
+	SteadyMiB int
+
+	rep int // the steady figure of the node's class (stable.go); 0 when not used
 }
 
 // FromNode builds a Candidate from a node view entry and the budget the
@@ -476,25 +496,57 @@ func fitsSet(req Request, set []Candidate) bool {
 	if !req.nodeMargins() && !skewApplies(req, set) {
 		return true
 	}
+	return sharesFit(req, set, ovh, false)
+}
+
+// sharesFit holds each node to its share of the need. With steady false the
+// share follows the live budgets (the split a launch uses) and only
+// shared-memory nodes are checked, as before; with steady true it follows
+// the class figures (stable.go) and every node is checked, since that split
+// is not proportional to the budgets it is held to.
+func sharesFit(req Request, set []Candidate, ovh []int, steady bool) bool {
+	weight := func(c Candidate) int64 {
+		if steady {
+			return int64(max(c.rep, 1))
+		}
+		return int64(max(c.BudgetMiB, 1))
+	}
+	skew := skewApplies(req, set)
 	var sum int64
 	for _, c := range set {
-		sum += int64(max(c.BudgetMiB, 1))
+		sum += weight(c)
 	}
 	need := int64(req.Need.WithMargin())
 	for i, c := range set {
 		if !c.Shared {
+			if !steady {
+				continue
+			}
+			share := (need*weight(c) + sum - 1) / sum
+			if !req.Need.Measured {
+				share += int64(ovh[i])
+			}
+			if share+int64(req.PerNodeReserveMiB) > int64(c.BudgetMiB) {
+				return false
+			}
 			continue
 		}
 		var share int64
-		if req.nodeMargins() {
-			num := need * int64(max(c.BudgetMiB, 1))
+		switch {
+		case req.nodeMargins():
+			num := need * weight(c)
 			share = (num + sum - 1) / sum
 			if !req.Need.Measured {
 				share += int64(ovh[i])
 			}
 			share += int64(req.NodeMarginMiB(int(share)))
-		} else {
-			num := need * int64(max(c.BudgetMiB, 1)) * int64(1000+req.SkewPermille)
+		case !skew:
+			share = (need*weight(c) + sum - 1) / sum
+			if !req.Need.Measured {
+				share += int64(ovh[i])
+			}
+		default:
+			num := need * weight(c) * int64(1000+req.SkewPermille)
 			den := sum * 1000
 			share = (num + den - 1) / den
 			if !req.Need.Measured {
@@ -574,6 +626,7 @@ func prepare(req Request, free []Candidate, ev []Evictable) ([]cand, error) {
 		out = append(out, c)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	setClasses(req, out) // stable.go
 	return out, nil
 }
 
@@ -635,6 +688,9 @@ func chooseForced(req Request, nodes []cand) ([]cand, error) {
 // then larger budget, then ID. Forced nodes keep config order.
 func toPlacement(req Request, chosen []cand) core.Placement {
 	nodes := slices.Clone(chosen)
+	if stableOn(req) {
+		return stablePlacement(req, nodes)
+	}
 	if len(req.Force) == 0 {
 		sort.Slice(nodes, func(i, j int) bool {
 			a, b := nodes[i], nodes[j]
@@ -739,6 +795,12 @@ func singleLess(a cand, av victimKey, b cand, bv victimKey) bool {
 	if c := av.compare(bv); c != 0 {
 		return c < 0
 	}
+	if a.rep > 0 && b.rep > 0 { // stable.go: equal classes by warm, then name
+		if a.rep != b.rep {
+			return a.rep < b.rep
+		}
+		return stableLess(a.Candidate, b.Candidate)
+	}
 	if a.BudgetMiB != b.BudgetMiB {
 		return a.BudgetMiB < b.BudgetMiB
 	}
@@ -752,16 +814,30 @@ type poolKey struct {
 	victims victimKey
 	total   int
 	ids     []core.NodeID // sorted
+	// stable.go (EqualMiB): total is the class figures' sum; then more warm
+	// nodes first; then the sorted names.
+	stable bool
+	warm   int
+	names  []string
 }
 
 func (s searcher) poolKey(set []cand) poolKey {
-	k := poolKey{victims: s.victims(set)}
+	k := poolKey{victims: s.victims(set), stable: len(set) > 0 && set[0].rep > 0}
 	for _, c := range set {
 		k.worst = max(k.worst, c.Priority)
-		k.total += c.BudgetMiB
+		if k.stable {
+			k.total += c.rep
+			k.names = append(k.names, nameOf(c.Candidate))
+			if c.Warm {
+				k.warm++
+			}
+		} else {
+			k.total += c.BudgetMiB
+		}
 		k.ids = append(k.ids, c.ID)
 	}
 	slices.Sort(k.ids)
+	slices.Sort(k.names)
 	return k
 }
 
@@ -774,6 +850,14 @@ func poolLess(a, b poolKey) bool {
 	}
 	if a.total != b.total {
 		return a.total > b.total
+	}
+	if a.stable && b.stable {
+		if a.warm != b.warm {
+			return a.warm > b.warm
+		}
+		if c := slices.Compare(a.names, b.names); c != 0 {
+			return c < 0
+		}
 	}
 	return slices.Compare(a.ids, b.ids) < 0
 }

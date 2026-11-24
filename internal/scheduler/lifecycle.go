@@ -175,6 +175,7 @@ func (c *schedCore) fitAndLaunch(in *inst) {
 		pl.Nodes[i].BudgetMiB = budgets[i]
 		cands[i] = placer.FromNode(n, budgets[i])
 	}
+	c.keepSteadySplit(req, &pl, cands) // stable.go
 	if !placer.FitsNodes(req, cands) {
 		c.returnInst(in, "exact pre-flight figures do not fit", budgets)
 		return

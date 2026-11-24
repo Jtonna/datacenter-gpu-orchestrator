@@ -111,7 +111,7 @@ func (c *schedCore) filteredWhy(p *core.Profile, req placer.Request) (Reason, st
 		if ns := c.nodes[id]; ns != nil && (ns.holder != "" || ns.claim != "" || ns.settle != setNone) {
 			continue
 		}
-		cands = append(cands, placer.FromNode(n, c.liveBudget(id, n)))
+		cands = append(cands, c.candidate(p, id, n, c.liveBudget(id, n), true))
 	}
 	if _, err := placer.Place(req, cands); err != nil {
 		return "", "", false
