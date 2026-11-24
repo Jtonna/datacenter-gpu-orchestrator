@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -335,5 +336,104 @@ func TestUINextZonesPagingAndNoGroups(t *testing.T) {
 		map[string]any{"name": "no groups: a flat list", "route": "#/zones", "status": znStatus(plain), "fetch": znFetch(plain, true),
 			"expect": []string{"node-a", "node-h"}, "absent": []string{"No group", "Collapse all"}, "has": []string{"button[data-act=grouped][disabled]"},
 			"titles": []string{"No groups yet"}},
+	))
+}
+
+// Zones-Fleet-Selected: ticked zones turn the footer into the selection bar
+// (New group, Move to group, Reboot, Stop accepting models, Force unload,
+// Clear); a right click opens the menu for the selection (a right click on
+// an unticked zone selects that one alone). The group writes go to the v43
+// routes with the comment in the body and X-Comment; Reboot and Open SSH are
+// drawn but disabled with a plain reason (no server support, and a PS5 is
+// never rebooted from here).
+func TestUINextZonesSelected(t *testing.T) {
+	fleet := znFleet()
+	st := znStatus(fleet)
+	fetch := znFetch(fleet, true)
+	tick := func(is ...int) []any {
+		out := []any{}
+		for _, i := range is {
+			out = append(out, "input[data-sel='"+znMac(i)+"']")
+		}
+		return out
+	}
+	menuOn := func(i int, is ...int) []any {
+		return append(tick(is...), map[string]any{"context": "div.fr[data-zone='" + znMac(i) + "']"})
+	}
+	then := func(a []any, more ...any) []any { return append(append([]any{}, a...), more...) }
+	esc := func(s string) string { return strings.NewReplacer(":", "%3A").Replace(s) }
+	ok := map[string]any{"ok": true}
+	with := func(extra map[string]any) map[string]any {
+		out := map[string]any{}
+		for k, v := range fetch {
+			out[k] = v
+		}
+		for k, v := range extra {
+			out[k] = v
+		}
+		return out
+	}
+	writes := with(map[string]any{
+		"POST /api/groups/home/members":                 ok,
+		"POST /api/groups":                              map[string]any{"name": "rack-z"},
+		"DELETE /api/groups/rack-a/members":             ok,
+		"DELETE /api/groups/home/members":               ok,
+		"POST /api/nodes/" + znMac(1) + "/force-unload": ok,
+		"POST /api/nodes/" + znMac(3) + "/force-unload": ok,
+	})
+	exists := with(map[string]any{"POST /api/groups": map[string]any{"$status": 409, "$body": map[string]any{"error": map[string]any{"message": "a group with that name exists"}}}})
+	reboot := "Potluck cannot restart a machine yet"
+
+	uiExec(t, znSpec(fetch,
+		map[string]any{"name": "selected: the bar", "route": "#/zones", "status": st, "click": tick(1, 2),
+			"expect": []string{"2 selected", "New group", "Move to group", "Reboot", "Stop accepting models", "Force unload", "Clear"},
+			"absent": []string{"In use, darker is busier"},
+			"has":    []string{"div.fr.chk[data-zone='" + znMac(1) + "']", "button[data-bulk=reboot][disabled]", "button.red[data-bulk=force]", "button[data-bulk=newgroup]", "button[data-bulk=move]"},
+			"titles": []string{reboot, "a PS5 is never rebooted from here"}},
+		map[string]any{"name": "selected: the right-click menu", "route": "#/zones", "status": st, "click": menuOn(1, 1, 2),
+			"pageHas": []string{"div.cm[role=menu]", "button[data-cm=ssh][disabled]", "button[data-cm=reboot][disabled]", "button.red[data-cm=force]", "button[data-cm=move][aria-haspopup=true]"},
+			"page":    []string{"2 zones selected", "Move to group", "New group from selection", "Remove from group", "Open SSH", "Reboot", "Stop accepting models", "Force unload"},
+			"titles":  []string{"Open SSH is not built yet", reboot}},
+		map[string]any{"name": "selected: a right click on an unticked zone selects it alone", "route": "#/zones", "status": st, "click": menuOn(4, 1),
+			"page": []string{"1 zone selected"}, "expect": []string{"1 selected"}, "pageHas": []string{"div.fr.chk[data-zone='" + znMac(4) + "']"}, "pageNone": []string{"div.fr.chk[data-zone='" + znMac(1) + "']"}},
+		map[string]any{"name": "selected: Escape closes the menu", "route": "#/zones", "status": st, "click": menuOn(1, 1), "keys": []string{"Escape"},
+			"pageNone": []string{"div.cm"}, "expect": []string{"1 selected"}},
+		map[string]any{"name": "selected: Move to group lists the other groups", "route": "#/zones", "status": st, "click": then(menuOn(1, 1, 2), "button[data-cm=move]"),
+			"pageHas": []string{"div.cm.sub button[data-move=home]", "button[data-cm=move][aria-expanded=true]"}, "pageNone": []string{"button[data-move=rack-a]"},
+			"page": []string{"New group…"}},
+		map[string]any{"name": "selected: Clear", "route": "#/zones", "status": st, "click": then(tick(1, 2), "button[data-act=clear]"),
+			"expect": []string{"In use, darker is busier"}, "absent": []string{"2 selected"}},
+	))
+	uiExec(t, znSpec(writes,
+		map[string]any{"name": "selected: move two zones to home", "route": "#/zones", "status": st,
+			"click": then(menuOn(1, 1, 2), "button[data-cm=move]", "button[data-move=home]",
+				map[string]any{"type": "textarea[data-field=comment]", "value": "rack swap"}, "button[data-go]"),
+			"fetchedQuery": []string{`^POST /api/groups/home/members \{"nodes":\["` + znMac(1) + `","` + znMac(2) + `"\],"comment":"rack swap"\}`}},
+		map[string]any{"name": "selected: the move asks first", "route": "#/zones", "status": st,
+			"click": then(menuOn(1, 1, 2), "button[data-cm=move]", "button[data-move=home]"),
+			"page":  []string{"Move 2 zones to home?", "Comment (required)", "node-a", "node-b"}},
+		map[string]any{"name": "selected: a new group from the bar", "route": "#/zones", "status": st,
+			"click": then(tick(4, 8), "button[data-bulk=newgroup]", map[string]any{"type": "input[data-field=name]", "value": "rack-z"},
+				map[string]any{"type": "textarea[data-field=comment]", "value": "spare zones"}, "button[data-go]"),
+			"fetchedQuery": []string{`^POST /api/groups \{"name":"rack-z","members":\["` + znMac(4) + `","` + znMac(8) + `"\],"comment":"spare zones"\}`}},
+		map[string]any{"name": "selected: a group name the server refuses", "route": "#/zones", "status": st, "fetch": exists,
+			"click": then(menuOn(4, 4), "button[data-cm=newgroup]", map[string]any{"type": "input[data-field=name]", "value": "home"},
+				map[string]any{"type": "textarea[data-field=comment]", "value": "x"}, "button[data-go]"),
+			"page": []string{"a group with that name exists"}, "pageHas": []string{"div.dlg"}},
+		map[string]any{"name": "selected: a name that is not a group name", "route": "#/zones", "status": st,
+			"click": then(menuOn(4, 4), "button[data-cm=newgroup]", map[string]any{"type": "input[data-field=name]", "value": "my group"},
+				map[string]any{"type": "textarea[data-field=comment]", "value": "x"}, "button[data-go]"),
+			"page": []string{"1 to 64 letters, digits"}},
+		map[string]any{"name": "selected: remove from group", "route": "#/zones", "status": st,
+			"click":        then(menuOn(1, 1, 5), "button[data-cm=remove]", map[string]any{"type": "textarea[data-field=comment]", "value": "out"}, "button[data-go]"),
+			"fetchedQuery": []string{`^DELETE /api/groups/rack-a/members \{"nodes":\["` + znMac(1) + `"\],"comment":"out"\}`, `^DELETE /api/groups/home/members \{"nodes":\["` + znMac(5) + `"\],"comment":"out"\}`}},
+		map[string]any{"name": "selected: stop accepting models from the menu", "route": "#/zones", "status": st,
+			"click": then(menuOn(1, 1, 2), "button[data-cm=pause]"), "page": []string{"Stop accepting models on 2 zones?", "Comment (required)"}},
+		map[string]any{"name": "selected: force unload ends what they hold", "route": "#/zones", "status": st,
+			"click": then(tick(1, 3, 4), "button[data-bulk=force]"),
+			"page":  []string{"Force unload 2 zones?", "alpha", "beta", "Runs on them are cut off"}},
+		map[string]any{"name": "selected: force unload sends one per zone", "route": "#/zones", "status": st,
+			"click":        then(tick(1, 3, 4), "button[data-bulk=force]", map[string]any{"type": "textarea[data-field=comment]", "value": "stuck"}, "button[data-go]"),
+			"fetchedQuery": []string{`^POST /api/nodes/` + esc(znMac(1)) + `/force-unload \{"comment":"stuck"\}`, `^POST /api/nodes/` + esc(znMac(3)) + `/force-unload`}},
 	))
 }

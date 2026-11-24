@@ -563,6 +563,14 @@ for (const c of spec.cases) {
     // click: css selectors, clicked in order (the first match on the page each)
     for (const sel of c.click || []) {
       // {"type": "css selector", "value": "text"}: the text typed into that field (an input event)
+      // {"context": "css selector"}: a right click on it (a contextmenu event)
+      if (sel && typeof sel === 'object' && sel.context) {
+        const el = document.body.querySelector(sel.context);
+        if (!el) { errors.push('nothing to right-click: ' + sel.context); break; }
+        el.dispatchEvent(new FakeEvent('contextmenu', { clientX: 300, clientY: 300 }));
+        await settle();
+        continue;
+      }
       if (sel && typeof sel === 'object') {
         const f = document.body.querySelector(sel.type);
         if (!f) { errors.push('nothing to type into: ' + sel.type); break; }

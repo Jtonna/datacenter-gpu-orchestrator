@@ -12,6 +12,8 @@
 //                                           [--zones none|groups|fleet] [--uptime-partial]
 //
 //   /ui/components.html  the shell's shared components (scripts/ui-fixture/components.js)
+//   /ui/fx-<name>.html   the app driven by scripts/ui-fixture/fx-<name>.js (a board
+//                that needs clicks, e.g. fx-zones-selected with --zones fleet)
 //   /ui/...      the new shell (ui/next laid over the classic files, as the
 //                scheduler serves it), /ui/classic/... the classic UI
 //   /api/status, /api/requests, /api/requests/summary, /api/requests/{id},
@@ -246,6 +248,16 @@ const server = http.createServer((req, res) => {
   if (p === '/ui/components.html') {
     const html = readFileSync(uiFile('index.html'), 'utf8').replace('<script type="module" src="app.js"></script>',
       '<script type="module" src="_fixture/components.js"></script>' + String.fromCharCode(10) + '<script type="module" src="app.js"></script>');
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
+    return res.end(html);
+  }
+  // /ui/fx-<name>.html: the app with scripts/ui-fixture/fx-<name>.js run after
+  // it, a board the compare tool cannot reach by clicking (it drives the page
+  // itself and sends nothing)
+  const fx = /^\/ui\/fx-([a-z0-9-]+)\.html$/.exec(p);
+  if (fx && existsSync(path.join(here, 'ui-fixture', 'fx-' + fx[1] + '.js'))) {
+    const html = readFileSync(uiFile('index.html'), 'utf8').replace('<script type="module" src="app.js"></script>',
+      '<script type="module" src="app.js"></script>' + String.fromCharCode(10) + '<script type="module" src="_fixture/fx-' + fx[1] + '.js"></script>');
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
     return res.end(html);
   }

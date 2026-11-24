@@ -40,6 +40,7 @@ import { viewNodes } from '../core/status.js';
 import { agentsMode, agentOf, notPlaceable, sendNodeAction } from '../core/nodeactions.js';
 import { onStartups } from '../core/startup.js';
 import { defaultUser } from '../core/requests.js';
+import { createGroup, addMembers, removeMembers, GROUP_NAME_RULE } from '../core/groups.js';
 import { tile, settlePending } from './nodes.js';
 
 const PAGE = 16; // zones a page, as drawn (232 zones on 15 pages)
@@ -193,6 +194,10 @@ function groupStrip(strips, name) {
 }
 
 // The node actions on a selection: a pause on each zone, or the opposite.
+// Reboot and Open SSH: drawn as designed, not built
+const REBOOT_WHY = 'Not available: Potluck cannot restart a machine yet (there is no server route for it), and a PS5 is never rebooted from here: a Linux reboot drops a console to the PlayStation system.';
+const SSH_WHY = 'Open SSH is not built yet: Potluck has no terminal or SSH route. The zone panel shows its address.';
+
 const BULK = {
   pause: { label: 'Stop accepting models', node: 'pause', busy: 'Stopping', applies: a => !!a && !a.paused,
     hits: ['Each takes no new model until someone lets it accept models again.', 'What they hold now keeps serving requests.'] },
@@ -376,6 +381,169 @@ registerView({
       side = p;
     };
 
+    // ---------- actions on the selection (Zones-Fleet-Selected) ----------
+    let cur = { all: [], groups: [] }; // the last drawing's zones and groups
+    let menu = null; // the open right-click menu: {el, sub, off, back}
+    const chosenNow = () => cur.all.filter(x => sel.has(x.id));
+    const afterWrite = () => { sel.clear(); readCounts(); view.refresh(); };
+    const holding = x => { const m = member(state.status || {}, x.id); return m ? m.inst.profile : x.n.holder || ''; };
+    const names = xs => h('span.mono', xs.map(x => x.name).join(', '));
+
+    // ask({title, lines, name, go, red, run(comment, name)}): the confirm
+    // dialog of a write, with its required comment (kept in the audit log);
+    // a refusal is shown in place and the dialog stays open.
+    function ask(o) {
+      return dialog({ title: o.title, body: close => {
+        const nameIn = o.name ? h('input.input', { type: 'text', 'data-field': 'name', maxlength: 64, placeholder: 'rack-b', 'aria-label': 'Group name' }) : null;
+        const comment = h('textarea.textarea', { rows: 2, maxlength: 400, 'data-field': 'comment', placeholder: 'Why? It is kept in the audit log.', 'aria-label': 'Comment' });
+        const err = h('span.err', { role: 'alert' });
+        const go = button(o.go, null, 'lg ' + (o.red ? 'dng' : 'pri'), { 'data-go': '' });
+        const cancel = button('Cancel', () => close(false), 'lg');
+        go.addEventListener('click', async () => {
+          const c = comment.value.trim();
+          if (nameIn && !nameIn.value.trim()) { err.textContent = 'Give the group a name.'; nameIn.focus(); return; }
+          if (!c) { err.textContent = 'A comment is required. Say why, in a few words.'; comment.focus(); return; }
+          err.textContent = '';
+          go.disabled = cancel.disabled = true;
+          try { await o.run(c, nameIn ? nameIn.value.trim() : ''); close(true); afterWrite(); } catch (e) {
+            err.textContent = (e && e.message) || 'The request failed.';
+            go.disabled = cancel.disabled = false;
+            readCounts();
+          }
+        });
+        return h('div.col', { style: 'gap:14px' },
+          h('div', { style: 'display:flex;flex-direction:column;gap:8px' }, o.lines.map(t => h('div.hit', h('i', { class: o.red ? 'a' : 'm' }), h('span', t)))),
+          nameIn ? h('div.field', h('label', 'Group name'), nameIn, h('span.mut', { style: 'font-size:12px' }, GROUP_NAME_RULE)) : null,
+          h('div.field', h('label', 'Comment (required)'), comment, err),
+          h('div.dlg-foot', cancel, go));
+      } });
+    }
+    // each(items, send): every write in turn; the refused ones are named, the rest stay done
+    async function each(items, send) {
+      const failed = [];
+      for (const [label, args] of items) { try { await send(...args); } catch (e) { failed.push(label + ': ' + ((e && e.message) || 'the request failed')); } }
+      if (failed.length) throw new Error('Refused: ' + failed.join('; '));
+    }
+    function newGroup(xs) {
+      return ask({ title: `New group from ${plural(xs.length, 'zone')}`, name: true, go: 'Create group',
+        lines: [['Zones: ', names(xs)], 'A zone is in one group at most: one that is in another group moves into the new one.'],
+        run: (c, name) => createGroup(api, name, xs.map(x => x.id), c).then(() => toast(`Group ${name} created`, 'ok')) });
+    }
+    function moveTo(xs, g) {
+      return ask({ title: `Move ${plural(xs.length, 'zone')} to ${g}?`, go: 'Move',
+        lines: [['Zones: ', names(xs)], 'A zone is in one group at most: one that is in another group leaves it. Nothing they hold is touched.'],
+        run: c => addMembers(api, g, xs.map(x => x.id), c).then(() => toast(`${plural(xs.length, 'zone')} moved to ${g}`, 'ok')) });
+    }
+    function removeFrom(xs) {
+      const by = {};
+      xs.filter(x => x.group).forEach(x => (by[x.group] = by[x.group] || []).push(x));
+      const n = Object.values(by).reduce((s, ys) => s + ys.length, 0);
+      const gs_ = Object.keys(by);
+      return ask({ title: `Remove ${plural(n, 'zone')} from ${gs_.length === 1 ? gs_[0] : 'their groups'}?`, go: 'Remove from group',
+        lines: gs_.map(g => [h('span.mono', g), ': ', names(by[g])]).concat(['They stay in the pool, under "No group". Nothing they hold is touched.']),
+        run: c => each(gs_.map(g => [g, [api, g, by[g].map(y => y.id), c]]), removeMembers).then(() => toast(`${plural(n, 'zone')} taken out of their groups`, 'ok')) });
+    }
+    function forceUnload(xs) {
+      const hold = xs.filter(holding);
+      const models = {};
+      hold.forEach(x => (models[holding(x)] = models[holding(x)] || []).push(x));
+      return ask({ title: `Force unload ${plural(hold.length, 'zone')}?`, go: 'Force unload', red: true,
+        lines: Object.keys(models).map(p => [h('span.mono', p), ' ends, on ', names(models[p])])
+          .concat(['Runs on them are cut off: the apps that sent them get an error. A model spread over other zones ends there as well.']),
+        run: c => each(hold.map(x => [x.name, [api, x.id, 'force', c]]), sendNodeAction).then(() => toast(`Force unload sent to ${plural(hold.length, 'zone')}`, 'ok')) });
+    }
+    const pauseSome = xs => askBulk('pause', xs.map(x => x.id), done => { done.forEach(id => sel.delete(id)); view.refresh(); });
+
+    function closeMenu() {
+      if (!menu) return;
+      const m = menu;
+      menu = null;
+      m.el.remove();
+      if (m.sub) m.sub.remove();
+      m.off();
+      if (m.back && m.back.isConnected !== false && m.back.focus) m.back.focus();
+    }
+    const item = (label, attrs, onclick) => h('button', Object.assign({ type: 'button', role: 'menuitem', onclick: e => { e.stopPropagation(); if (onclick) onclick(e); } }, attrs), label);
+    // the groups the selection can move to: every group that does not hold all of it
+    function moveList(xs, x, y) {
+      const gs_ = cur.groups.map(g => g.name).filter(g => !xs.every(z => z.group === g));
+      return h('div.cm.sub', { role: 'menu', 'aria-label': 'Move to group', style: `left:${x}px;top:${y}px;width:190px` },
+        gs_.map(g => item(h('span.mono', g), { 'data-move': g }, () => { closeMenu(); moveTo(xs, g); })),
+        gs_.length ? h('hr') : null,
+        item('New group…', { 'data-cm': 'newgroup-sub' }, () => { closeMenu(); newGroup(xs); }));
+    }
+    // openMenu(x, y, back, onlyMove): the menu for the selection at x, y
+    // (the right click), or only its group list (the bar's Move to group)
+    function openMenu(x, y, back, onlyMove) {
+      closeMenu();
+      const xs = chosenNow();
+      if (!xs.length) return;
+      const W = window.innerWidth || 1536, H_ = window.innerHeight || 730;
+      const left = Math.max(8, Math.min(x, W - 232)), top = Math.max(8, Math.min(y, H_ - 300));
+      let el;
+      if (onlyMove) el = moveList(xs, left, top);
+      else {
+        const pausable = xs.filter(z => BULK.pause.applies(z.a && z.a.id ? z.a : null));
+        const grouped_ = xs.some(z => z.group);
+        const holds = xs.some(holding);
+        const moveBtn = item([h('span', 'Move to group'), icon('M8 5l5 5-5 5', 15)], { 'data-cm': 'move', 'aria-haspopup': 'true', 'aria-expanded': 'false' }, () => {
+          if (menu.sub) { menu.sub.remove(); menu.sub = null; moveBtn.setAttribute('aria-expanded', 'false'); moveBtn.classList.remove('on'); return; }
+          menu.sub = moveList(xs, left + 224 > W - 200 ? left - 194 : left + 224, top + 26);
+          document.body.appendChild(menu.sub);
+          moveBtn.setAttribute('aria-expanded', 'true');
+          moveBtn.classList.add('on');
+          const f = menu.sub.querySelector('button');
+          if (f) f.focus();
+        });
+        el = h('div.cm', { role: 'menu', 'aria-label': `Actions for ${plural(xs.length, 'selected zone')}`, style: `left:${left}px;top:${top}px` },
+          h('span.lbl', xs.length === 1 ? '1 zone selected' : `${num(xs.length)} zones selected`),
+          moveBtn,
+          item('New group from selection', { 'data-cm': 'newgroup' }, () => { closeMenu(); newGroup(xs); }),
+          item('Remove from group', { 'data-cm': 'remove', disabled: !grouped_, title: grouped_ ? null : 'None of them is in a group' }, () => { closeMenu(); removeFrom(xs); }),
+          h('hr'),
+          item('Open SSH', { 'data-cm': 'ssh', disabled: true, title: SSH_WHY }),
+          item('Reboot', { 'data-cm': 'reboot', disabled: true, title: REBOOT_WHY }),
+          item('Stop accepting models', { 'data-cm': 'pause', disabled: !pausable.length, title: pausable.length ? null : 'Every one of them already takes no new model' }, () => { closeMenu(); pauseSome(xs); }),
+          h('hr'),
+          item('Force unload', { class: 'red', 'data-cm': 'force', disabled: !holds, title: holds ? null : 'None of them holds a model' }, () => { closeMenu(); forceUnload(xs); }));
+      }
+      document.body.appendChild(el);
+      const onDoc = e => {
+        if (e.type === 'keydown') {
+          if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeMenu(); return; }
+          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            const box = menu.sub && menu.sub.contains(document.activeElement) ? menu.sub : menu.el;
+            const bs = Array.from(box.querySelectorAll('button')).filter(b => !b.disabled);
+            const i = bs.indexOf(document.activeElement);
+            const next = bs[(i + (e.key === 'ArrowDown' ? 1 : bs.length - 1)) % bs.length];
+            if (next) { e.preventDefault(); next.focus(); }
+          }
+          return;
+        }
+        if (menu && (menu.el.contains(e.target) || (menu.sub && menu.sub.contains(e.target)))) return;
+        closeMenu();
+      };
+      document.addEventListener('keydown', onDoc, true);
+      document.addEventListener('mousedown', onDoc, true);
+      window.addEventListener('resize', closeMenu);
+      window.addEventListener('scroll', closeMenu, true);
+      menu = { el, sub: null, back, off: () => {
+        document.removeEventListener('keydown', onDoc, true); document.removeEventListener('mousedown', onDoc, true);
+        window.removeEventListener('resize', closeMenu); window.removeEventListener('scroll', closeMenu, true);
+      } };
+      const first = Array.from(el.querySelectorAll('button')).find(b => !b.disabled);
+      if (first) first.focus();
+    }
+    // a right click (or the menu key) on a zone: on a ticked zone the menu acts
+    // on the whole selection; on another it selects that zone alone
+    function rowMenu(x, e, rowEl) {
+      if (!(x.a && x.a.id)) return;
+      e.preventDefault();
+      if (!sel.has(x.id)) { sel.clear(); sel.add(x.id); view.refresh(); }
+      const r = rowEl && rowEl.getBoundingClientRect ? rowEl.getBoundingClientRect() : null;
+      openMenu(e.clientX != null ? e.clientX : r ? r.left + 260 : 300, e.clientY != null ? e.clientY : r ? r.bottom : 300, rowEl);
+    }
+
     const view = liveView(el, () => {
       const st = state.status;
       if (side) side.redraw();
@@ -469,7 +637,8 @@ registerView({
         const u = upOf(x);
         const s = strips.get(x.id);
         return h('div', { key: 'z-' + x.id, class: 'fr v2' + (q.zone === x.id ? ' sel' : '') + (sel.has(x.id) ? ' chk' : ''), 'data-zone': x.id, role: 'row', tabindex: '0',
-          'aria-label': x.name + ', ' + z.label, onclick: () => pick(x.id), onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); pick(x.id); } } },
+          'aria-label': x.name + ', ' + z.label, onclick: () => pick(x.id), oncontextmenu: e => rowMenu(x, e, e.currentTarget),
+          onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); pick(x.id); } else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) rowMenu(x, { preventDefault: () => e.preventDefault() }, e.currentTarget); } },
         canTick(x) ? h('input', { class: 'cb', type: 'checkbox', checked: sel.has(x.id), 'aria-label': 'Select ' + x.name, 'data-sel': x.id,
           onclick: e => { e.stopPropagation(); toggle(x.id); }, onkeydown: e => e.stopPropagation() }) : h('span'),
         h('span.zn', { style: indent ? 'padding-left:26px' : null }, h('span.mono.znm', x.name)),
@@ -540,6 +709,7 @@ registerView({
         h('span.lbl.r', { title: upTitle }, since ? h('span.uph', 'Uptime', h('small', 'since ' + since)) : 'Uptime'),
         h('span.lbl.strip-h', h('span', '24 h ago'), h('span', 'Availability, hour by hour'), h('span', { style: 'color:var(--ink)' }, 'now')));
 
+      cur = { all, groups: gs };
       const chosen = all.filter(x => sel.has(x.id));
       const bulkCount = kind => chosen.filter(x => BULK[kind].applies(x.a && x.a.id ? x.a : null)).length;
       const bulkButton = kind => {
@@ -551,7 +721,15 @@ registerView({
         h('span', h('i.sq.free'), 'Free'),
         h('span', h('i.sq.use1'), h('i.sq.use2'), h('i.sq.use3'), h('i.sq.use4'), 'In use, darker is busier'),
         h('span', h('i.sq.load'), 'Loading'), h('span', h('i.sq.down'), 'Down'), h('span', h('i.sq.off'), 'Switched off'));
-      const selPart = h('div.zsel', { role: 'region', 'aria-label': 'Selection' }, h('b', `${num(chosen.length)} selected`), bulkButton('pause'), bulkButton('unpause'),
+      const holds = chosen.some(holding);
+      const selPart = h('div.zsel', { role: 'region', 'aria-label': 'Selection' }, h('span', `${num(chosen.length)} selected`), h('span', { style: 'width:4px' }),
+        button('New group', () => newGroup(chosenNow()), 'sm', { 'data-bulk': 'newgroup' }),
+        button('Move to group', e => { const b = e.currentTarget, rc = b.getBoundingClientRect(); openMenu(rc.left, rc.top - 30 * (cur.groups.length + 1) - 24, b, true); }, 'sm',
+          { 'data-bulk': 'move', 'aria-haspopup': 'true' }),
+        button('Reboot', null, 'sm', { 'data-bulk': 'reboot', disabled: true, title: REBOOT_WHY }),
+        bulkButton('pause'),
+        bulkCount('unpause') ? bulkButton('unpause') : null,
+        button('Force unload', () => forceUnload(chosenNow()), 'sm red', { 'data-bulk': 'force', disabled: !holds, title: holds ? null : 'None of the selected zones holds a model' }),
         button('Clear', () => { sel.clear(); view.refresh(); }, 'sm ghost', { 'data-act': 'clear' }));
       const foot = h('div.bulk', { key: 'foot' }, chosen.length ? selPart : keyPart,
         pager({ page, pages, onPage: n => setQuery({ page: n === 1 ? '' : String(n) }, true), label: 'Zone pages' }));
@@ -566,7 +744,7 @@ registerView({
     syncSide();
     return {
       update(nr) { r = nr; syncSide(); view.refresh(); },
-      unmount() { alive = false; clearTimeout(soon); offStatus(); offStartups(); offDrop(); if (side) { const s = side; side = null; s.close(); } view.unmount(); },
+      unmount() { alive = false; closeMenu(); clearTimeout(soon); offStatus(); offStartups(); offDrop(); if (side) { const s = side; side = null; s.close(); } view.unmount(); },
     };
   },
 });
