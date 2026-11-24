@@ -29,6 +29,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgstore"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/groups"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/logrelay"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/pool"
@@ -94,6 +95,9 @@ type Options struct {
 	// Usage is the usage history (usage.db); nil means it is not kept. The
 	// availability sampler runs when it is set (availability.go).
 	Usage *usage.Store
+	// Groups is the zone groups (scheduler.db); nil keeps them in memory
+	// for this process.
+	Groups *groups.Store
 
 	statusSource func(ctx context.Context) (any, error) // tests replace the status the hub sends
 	modelFiles   func() []ModelFile                     // the dev harness replaces the models directory scan
@@ -161,6 +165,8 @@ type Server struct {
 	// summary's state (health.go).
 	disks  *diskstat.Reader
 	health healthState
+	// groups is the zone groups (groups.go); in memory when Options.Groups is nil.
+	groups *groups.Store
 }
 
 // New builds the API for a scheduler (whose Run is started by the caller)
@@ -191,6 +197,10 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 	}
 	s.bg, s.bgCancel = context.WithCancel(context.Background())
 	s.occ = startOccupied(o.History)
+	s.groups = o.Groups
+	if s.groups == nil {
+		s.groups = groups.Memory()
+	}
 	s.store, _ = o.Audit.(*cfgstore.Store)
 	s.agents.store = s.store
 	s.hub = newHub(sched, o.Now)
@@ -298,6 +308,7 @@ func (s *Server) routes() *http.ServeMux {
 	s.availabilityRoutes(m)
 	m.HandleFunc("GET /api/health", s.handleHealthSummary)
 	s.agentRoutes(m) // /api/agents, /api/mcp/tools (agents.go)
+	s.groupRoutes(m) // zone groups (groups.go)
 	s.nodeRoutes(m)  // potluck-agent's /api/pool/..., /api/nodes/{id}/... (nodes.go)
 	s.logRoutes(m)   // central logging: /api/pool/nodes/{id}/logs, /api/logs (logs.go)
 	m.HandleFunc("GET /api/metrics/activity", s.handleActivity)

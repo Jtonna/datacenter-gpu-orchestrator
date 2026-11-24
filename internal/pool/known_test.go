@@ -2,6 +2,8 @@ package pool
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -199,7 +201,8 @@ func TestKnown_Excluded(t *testing.T) {
 func TestKnown_AnnouncedOnce(t *testing.T) {
 	r := newRig(t)
 	seen := r.clk.now().Add(-time.Hour)
-	r.p.SetKnown([]KnownNode{{ID: "02:00:00:00:00:09", Name: "node-9", LastSeen: seen}})
+	r.p.SetKnown([]KnownNode{{ID: "02:00:00:00:00:09", Name: "node-9", LastSeen: seen},
+		{ID: "02:00:00:00:00:08", Name: "node-8", LastSeen: seen}})
 	count := func() (n int, last history.Event) {
 		r.hist.mu.Lock()
 		defer r.hist.mu.Unlock()
@@ -215,20 +218,39 @@ func TestKnown_AnnouncedOnce(t *testing.T) {
 	if n, _ := count(); n != 0 {
 		t.Fatal("announced during the grace")
 	}
-	// The carry event is written at once: the run lists the machine from its
-	// start, so the next start carries it even if this run ends in the grace.
+	// The carry event is written at once, one for the whole fleet, naming no
+	// node (so it does not fill each machine's recent events): the run lists
+	// the machines from its start, so the next start carries them even if
+	// this run ends in the grace.
 	r.hist.mu.Lock()
 	var carry []history.Event
 	for _, e := range r.hist.ev {
-		if e.Data["carried"] == true {
+		if e.Type == history.TKnownMachines {
 			carry = append(carry, e)
+		}
+		if e.Type == history.TNodeMembership && e.Data["known"] == true && e.Severity == history.Info {
+			t.Errorf("a per-machine carry event: %+v", e)
 		}
 	}
 	r.hist.mu.Unlock()
-	if len(carry) != 1 || carry[0].Severity != history.Info || carry[0].Data["state"] != StateLost || carry[0].Data["known"] != true ||
-		carry[0].Data["last_seen"] != seen.UnixMilli() || carry[0].Data["absent_since_start"] != true || carry[0].Nodes[0] != "node-9" {
+	ms, _ := carry[0].Data["machines"].([]map[string]any)
+	if len(carry) != 1 || carry[0].Severity != history.Info || len(carry[0].Nodes) != 0 || len(ms) != 2 ||
+		ms[1]["id"] != "02:00:00:00:00:09" || ms[1]["name"] != "node-9" || ms[1]["last_seen"] != seen.UnixMilli() {
 		t.Fatalf("carry event: %+v", carry)
 	}
+	if !strings.Contains(carry[0].Summary, "2 machines from its previous run") {
+		t.Errorf("summary %q", carry[0].Summary)
+	}
+	// The carry event carries the machines at the next start (read back from
+	// a file: the list decodes as []any of map[string]any).
+	b, _ := json.Marshal(carry[0])
+	var back history.Event
+	json.Unmarshal(b, &back)
+	if ks := KnownFrom(scanOf([]history.Event{{Ts: 1, Type: history.TSchedulerStarted}, back, {Ts: back.Ts + 1, Type: history.TSchedulerStarted}})); len(ks) != 2 ||
+		ks[1].ID != "02:00:00:00:00:09" || ks[1].LastSeen.UnixMilli() != seen.UnixMilli() {
+		t.Fatalf("carried by the fleet event: %+v", ks)
+	}
+	r.p.Remove(context.Background(), "02:00:00:00:00:08") // only the machine that ends up lost gets its warning
 	r.clk.advance(KnownGrace)
 	r.p.CheckLost()
 	r.p.CheckLost()

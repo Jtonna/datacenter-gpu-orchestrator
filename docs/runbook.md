@@ -156,13 +156,36 @@ curl -s -X POST $H/api/nodes/02:00:00:00:00:01/readmit      -d '{"comment":"why"
 
 ### A machine that is off across a restart
 
-Potluck remembers the machines its previous run listed when it ended: active or lost in that run's list, not removed and not left. At start it reads them back from the event history (`schedulerStarted`, `schedulerStopping`, `nodeMembership` and the `nodeAdmin` removals; no table of its own). A run of an older image listed only the machines that registered in it, so a machine such a run had already dropped stays unlisted. A machine whose agent has not registered 65 s after the start is listed as `lost` in `/api/nodes` and in `agents` of `/api/status`, with `absent_since_start: true`, `last_seen_at` (when Potluck last heard from it) and `last_seen_ago_s`. It counts as down in `/api/health` ("7 of 8 reachable · 1 down") and its hours are lost in the availability series. It is never placed on: the scheduler's view does not hold it. Each start writes, for every machine it carries, an info `nodeMembership` event ("is known from the previous run", data `known`, `carried`, `absent_since_start`, `last_seen`) at once, and a warning "has not come back since Potluck started" when the 65 s are over. The next start reads the machine and its last seen from them, so a machine off across several restarts keeps its first last seen, even when a run ends inside its 65 s.
+Potluck remembers the machines its previous run listed when it ended: active or lost in that run's list, not removed and not left. At start it reads them back from the event history (`schedulerStarted`, `schedulerStopping`, `nodeMembership` and the `nodeAdmin` removals; no table of its own). A run of an older image listed only the machines that registered in it, so a machine such a run had already dropped stays unlisted. A machine whose agent has not registered 65 s after the start is listed as `lost` in `/api/nodes` and in `agents` of `/api/status`, with `absent_since_start: true`, `last_seen_at` (when Potluck last heard from it) and `last_seen_ago_s`. It counts as down in `/api/health` ("7 of 8 reachable · 1 down") and its hours are lost in the availability series. It is never placed on: the scheduler's view does not hold it. Each start writes one info `knownMachines` event for the fleet at once ("Potluck knows 7 machines from its previous run ...", data `machines`: id, name, last_seen; it names no node, so it is not in any machine's recent events), and a `nodeMembership` warning "has not come back since Potluck started" for each machine that is listed as lost when the 65 s are over. The next start reads the machine and its last seen from them, so a machine off across several restarts keeps its first last seen, even when a run ends inside its 65 s.
 
 - **Why 65 s**: an agent whose Potluck went away retries after 5 s, doubling up to 60 s; 60 s plus its 5 s request timeout covers the slowest agent that is up, so a running machine is not counted down for the length of a restart.
 - **Last seen**: for a machine connected when Potluck stopped, the stop (`schedulerStopping`); after a crash, the last event of that run, which can be earlier than the crash.
 - **How long**: listed as lost until its agent registers or the owner removes it.
 - **Gone for good**: remove it (`DELETE /api/nodes/<id>`): it is then listed as `removed` under its name, not counted, and refused at registration until it is re-admitted; after a re-admit it is listed again only once its agent registers. A machine that deregistered (uninstall) is not listed after a restart.
 - **Forgotten**: only if the history kept (20 files of 16 MiB by default) no longer holds the previous run's start and its events.
+
+### Zone groups
+
+A group is a name for a set of zones (for example one rack). Each zone is in one group or none. A group is a label and a way to act on many zones at once; it never changes where a model is placed (tiers do that).
+
+```sh
+curl -s $H/api/groups                                                   # every group with its figures, and the zones in none
+curl -s -X POST $H/api/groups -d '{"name":"rack-a","members":["02:00:00:00:00:01"],"comment":"first rack"}'
+curl -s -X POST $H/api/groups/rack-a/members -d '{"nodes":["02:00:00:00:00:02"]}'   # moves it out of its old group
+curl -s -X DELETE $H/api/groups/rack-a/members -d '{"nodes":["02:00:00:00:00:02"]}'
+curl -s -X PATCH $H/api/groups/rack-a -d '{"name":"rack-b"}'
+curl -s -X POST $H/api/groups/rack-b/pause -d '{"comment":"maintenance"}'           # "Accepting models" off
+curl -s -X POST $H/api/groups/rack-b/unpause -d '{"comment":"done"}'
+curl -s -X DELETE $H/api/groups/rack-b                                  # its zones are then in no group
+```
+
+- **Names**: 1 to 64 letters, digits, `.`, `_` or `-`, starting with a letter or digit; unique without regard to case (`409` when taken). A member must be a zone Potluck lists (`400` otherwise).
+- **Figures** per group (`GET /api/groups`): `members` and `member_names`, `count`, `counts` (total, reachable, down, lost, set_aside, off, in_use, free, loading; counted as the Zones row of `/api/health` counts them), `memory` (used_mib, total_mib, each_total_mib when all members have the same total), `temp` (avg_c, hottest_c and which zone, from the stats headline temperature), `accepting` (`all`, `none` or `mixed`: how many members are paused), `needs_attention` (members that are lost or set aside) and `models` (profiles placed on members, with how many). `ungrouped` has the same figures for the zones in no group. Each zone in `GET /api/nodes` and in `agents` of `/api/status` carries `group` (absent when in none).
+- **Pause and unpause** act on each member as `POST /api/nodes/{id}/pause` does: one audit entry and one history event per member, the comment followed by "(group <name>)". A comment is required.
+- **Audit**: every change is an entry in section `groups`, target `group:<name>`, signed by the caller (the default user unless an agent key or `X-Actor` names another).
+- **Live**: the `/ws` topic `groups` sends the `GET /api/groups` document on subscribe and again only when a group changes.
+- **MCP**: `list_groups`, `create_group`, `rename_group`, `delete_group`, `set_zone_group`, `remove_from_group`, `pause_group`, `unpause_group`.
+- **Stored** in `scheduler.db`, tables `zone_groups` and `zone_group_members`, versioned by their own ledger `group_migrations`. An older image does not know these tables and leaves them alone, so rolling back keeps the groups for when you come forward again; the older image shows no groups.
 
 ### Keep a node out of the pool
 
@@ -451,11 +474,18 @@ curl -s "$H/api/nodes/availability" | jq '.nodes[] | {name, uptime, now: .cells[
 curl -s "$H/api/nodes/availability?node=zone-a&step=day&from=7d"
 ```
 
-- `node=` an id or name (default every machine); `from`/`to` unix ms, RFC 3339 or a span back such as `24h` or `7d` (default: 24 hour cells, or 7 day cells, the last one the current); `step=hour|day` (UTC days, summed when read); `group=` answers 501 until zone groups exist. MCP: `get_availability`.
+- `node=` an id or name (default every machine); `from`/`to` unix ms, RFC 3339 or a span back such as `24h` or `7d` (default: 24 hour cells, or 7 day cells, the last one the current); `step=hour|day` (UTC days, summed when read); `group=` a zone group name: only its zones (404 for an unknown group). MCP: `get_availability`.
 - Each cell: `seconds` per state (`free`, `in_use`, `loading`, `down`, `off`, `unknown`; they add up to `span_s`), `down_lost_s` and `down_set_aside_s`, `busy` (in flight over the instance's parallel slots, averaged over the in-use time) and `busy_level` 1 to 4, `reachable_s`, `uptime` (reachable over known time) and `state`, the strip colour: unknown when nothing is known, off when switched off half the known time or more, down from 5 minutes down (or half), loading from half, in use from a quarter, else free. Each machine also has its `uptime` over the whole range; the answer has `history_begins_at` and `recording`. With `usage.db` off (see "Request log") nothing is sampled and the answer is an empty list with `recording` false.
 - How a machine is classed at each sample, first match wins: **off** removed; **down (lost)** membership state lost or left, even when paused or excluded (a machine the node list calls lost is always down); **off** paused or excluded; **down (lost)** offline in the view; **down (set aside)** quarantined; **loading** placed for an instance that is starting; **in use** placed for a ready, draining or stopping one; **free** otherwise. Time with no sample (Potluck not running, a node not known yet, the rest of a gap after a failed read) is **unknown**, never free.
 - A removed machine (membership state removed) is left out of the list for a range it was only off in, which is every range after its removal; `node=` still answers it. Seconds and `uptime` are sent with 3 decimals at most.
 - A missing or damaged `usage.db` never stops Potluck: a damaged one is moved aside, the history begins again and the route answers empty cells.
+
+**Uptime over days** (the Zones page's "Uptime, 7 days"): `curl -s "$H/api/nodes/uptime?days=7"` (1 to 90, default 7; MCP `get_uptime`). Per zone (with its `group`), per group, for the zones in no group (`ungrouped`) and for the whole fleet (`fleet`):
+
+- `uptime` = up / counted, where up = free + in use + loading and counted = up + lost + set aside. Switched-off time (paused, excluded, removed) is in neither and is given as `off_s`: the owner chose it. Set-aside time counts as down, as in `/api/health`; it is given as `set_aside_s` apart from `lost_s`. Unknown time (Potluck not running) is in neither. `null` when nothing was counted (for example a zone switched off the whole time).
+- A group's figure is its members' seconds summed (weighted by time), not an average of their percentages.
+- `window`: `from` (the start of the UTC hour `days` ago) to `to` (now), `history_begins_at`, `covered_from` (the later of the two) and `complete` (false while the history is younger than the window: the figure is then over the history there is, from `covered_from`).
+- This is not the `uptime` of `/api/nodes/availability` (reachable over known time, where a paused zone that answers counts up); that field keeps its meaning. `GET /api/groups` carries each group's 7-day figure as `uptime_7d` and the window as `uptime_window`.
 
 ### What a zone is doing
 
@@ -465,6 +495,10 @@ curl -s "$H/api/nodes/availability?node=zone-a&step=day&from=7d"
 - `set_aside`: why the node is quarantined: `reason` (`preflight_failed`, `agent_unreachable`, `worker_hung`, `node_lost`), `message`, the load it happened in (`profile`), `since`, `until` and `level`. The same reason is in `quarantines[]` and in `view.nodes[].quarantine_reason` of `/api/status`.
 - `paused_at`/`paused_actor` and `excluded_at`/`excluded_actor`: who switched the node off and when, read from the audit log (the newest pause; the newest configuration change that added the matching `exclude_nodes` entry). Absent when the audit log does not have it.
 - `free_at`, `free_in_s`, `free_basis` and `next` for a node that is claimed or settling: `settling` (the settle end), `fetching` (now), `stopping` (the victim stops: now plus the node's settle), `draining` (no time: the victim's requests are still running) or `claimed` (now). `view.nodes[]` has `free_at` and `free_basis`.
+- `group`: the zone group the node is in (section D, "Zone groups"); absent when in none.
+- `zone_state`: the state the zone is counted in: `free`, `in_use`, `loading`, `lost`, `set_aside`, `off` (paused or excluded), or `removed` (not counted).
+
+`GET /api/nodes` also answers `counts`: `total` (removed zones left out), `reachable` (total less down; switched-off zones are reachable), `up` (free + in use + loading, that is reachable less off), `down` (lost + set aside), `lost`, `set_aside`, `off`, `in_use`, `free`, `loading`. The Zones row of `/api/health` has the same figures in its `facts`, from the same count, so a page heading and the health popup cannot disagree: "8 of 8 reachable" there is `reachable` of `total`; "7 up · 1 off" is `up` and `off`.
 
 ### System health
 

@@ -91,6 +91,11 @@ const (
 	// expires_at, days_left; never the key (api/keyexpiry.go).
 	TAgentKeyExpiring = "agentKeyExpiring"
 	TAgentKeyExpired  = "agentKeyExpired"
+
+	// TKnownMachines: at a start, the machines the scheduler knows from its
+	// previous run (data machines: [{id, name, last_seen}]). One event for
+	// the fleet, naming no node.
+	TKnownMachines = "knownMachines"
 )
 
 // Event is one history record. Ts is unix milliseconds; Seq is monotonic per

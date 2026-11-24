@@ -28,6 +28,7 @@ const maxAvailabilitySpan = 400 * 24 * time.Hour
 
 func (s *Server) availabilityRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/nodes/availability", s.handleAvailability)
+	m.HandleFunc("GET /api/nodes/uptime", s.handleUptime) // uptime.go
 }
 
 // startAvailability starts the sampler when a usage store is recording. An
@@ -78,9 +79,17 @@ func availTime(v string, now time.Time) (time.Time, bool) {
 
 func (s *Server) handleAvailability(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	if q.Get("group") != "" {
-		apiErr(w, http.StatusNotImplemented, "zone groups are not available yet: ask without group (every machine), or with node")
-		return
+	var members map[string]bool // group=: only the group's zones
+	if name := q.Get("group"); name != "" {
+		g, ok := s.groups.Get(name)
+		if !ok {
+			apiErr(w, http.StatusNotFound, "no zone group %q", name)
+			return
+		}
+		members = map[string]bool{}
+		for _, id := range g.Members {
+			members[id] = true
+		}
 	}
 	now := s.opts.Now()
 	from, ok1 := availTime(q.Get("from"), now)
@@ -112,6 +121,15 @@ func (s *Server) handleAvailability(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	series, err := availability.Read(r.Context(), s.opts.Usage, s.avail, availability.Query{From: from, To: to, Step: step, Node: q.Get("node")}, now)
+	if members != nil {
+		kept := series.Nodes[:0]
+		for _, n := range series.Nodes {
+			if members[n.ID] {
+				kept = append(kept, n)
+			}
+		}
+		series.Nodes = kept
+	}
 	switch {
 	case errors.Is(err, availability.ErrUnknownNode):
 		apiErr(w, http.StatusNotFound, "no machine %q in the availability history", q.Get("node"))

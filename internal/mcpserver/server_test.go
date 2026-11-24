@@ -358,6 +358,15 @@ var expected = map[string]struct {
 	"pause_node":            {`{"id":"02:00:00:00:00:01","comment":"fan noise"}`, "POST", "/api/nodes/02:00:00:00:00:01/pause", "", `{"comment":"fan noise"}`, nil},
 	"unpause_node":          {`{"id":"n1","comment":"fixed"}`, "POST", "/api/nodes/n1/unpause", "", `{"comment":"fixed"}`, nil},
 	"force_unload_node":     {`{"id":"n1","comment":"hung"}`, "POST", "/api/nodes/n1/force-unload", "", `{"comment":"hung"}`, nil},
+	"list_groups":           {`{}`, "GET", "/api/groups", "", "", nil},
+	"get_uptime":            {`{"days":30}`, "GET", "/api/nodes/uptime", "days=30", "", nil},
+	"create_group":          {`{"name":"rack-a","members":["n1"],"comment":"first"}`, "POST", "/api/groups", "", `{"comment":"first","members":["n1"],"name":"rack-a"}`, nil},
+	"rename_group":          {`{"group":"rack-a","name":"rack-b"}`, "PATCH", "/api/groups/rack-a", "", `{"name":"rack-b"}`, nil},
+	"delete_group":          {`{"group":"rack-a"}`, "DELETE", "/api/groups/rack-a", "", "", nil},
+	"set_zone_group":        {`{"group":"rack-a","nodes":["n1","n2"]}`, "POST", "/api/groups/rack-a/members", "", `{"nodes":["n1","n2"]}`, nil},
+	"remove_from_group":     {`{"group":"rack-a","nodes":["n1"]}`, "DELETE", "/api/groups/rack-a/members", "", `{"nodes":["n1"]}`, nil},
+	"pause_group":           {`{"group":"rack-a","comment":"maintenance"}`, "POST", "/api/groups/rack-a/pause", "", `{"comment":"maintenance"}`, nil},
+	"unpause_group":         {`{"group":"rack-a","comment":"done"}`, "POST", "/api/groups/rack-a/unpause", "", `{"comment":"done"}`, nil},
 }
 
 func TestEveryToolMapsToItsRESTRequest(t *testing.T) {

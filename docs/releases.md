@@ -23,6 +23,15 @@ Fix on top of v36. No agent change, no schema change, no new port.
 - **What a model server still sees** (unchanged by this fix; see the runbook, "What a model server sees"): the client's other headers as sent, among them `User-Agent`, `Origin`, `Referer`, `X-Real-Ip`, `Via`, `X-Client-Ip`, `True-Client-Ip`, `Cf-Connecting-Ip`, `X-Request-Id`, `Accept-Language` and any custom header; and `X-Forwarded-For`, `X-Forwarded-Host` and `X-Forwarded-Proto` set by the scheduler itself (the connection's address, which behind a published Docker port is the bridge gateway, the host name the client used, and the scheme). The client's own `Forwarded` and `X-Forwarded-*` are not passed on.
 - **Potluck's own headers stay with Potluck.** `X-Actor`, `X-Comment` and `X-Source` (who made a change, why, from where) are no longer passed on to a model server; Potluck still reads them for its audit and request log.
 
+## Scheduler image: Zones backend (phase 4)
+
+No agent change. No new listening port.
+
+- **One event per start for the known machines.** The start writes one `knownMachines` event for the fleet (data `machines`: id, name, last_seen) in place of one `nodeMembership` event per carried machine, which filled each machine's recent events at every start. The per-machine warning stays, written only for a machine that ends up listed as lost. The events of v39 to v41 are still read.
+- **Zone groups.** A zone is in one group or none. `GET/POST /api/groups`, `PATCH/DELETE /api/groups/{name}`, `POST/DELETE /api/groups/{name}/members`, `POST /api/groups/{name}/pause|unpause` (each member paused or unpaused, one audit entry each), MCP tools to match, `/ws` topic `groups` (sent only on change), `group` on each zone in `/api/nodes` and `/api/status` agents. New tables `zone_groups` and `zone_group_members` in `scheduler.db` with their own ledger `group_migrations`; an older image ignores them (runbook D, "Zone groups").
+- **Uptime over days.** `GET /api/nodes/uptime?days=7` (MCP `get_uptime`): per zone, group, ungrouped and fleet, up (free, in use, loading) over counted (up, lost, set aside); switched-off time left out and given as `off_s`; `window.complete` false while the history is younger than the window. `GET /api/groups` carries `uptime_7d` per group. `/api/nodes/availability?group=` now filters to a group's zones (was 501). No schema change (reads `node_hours`).
+- **One set of zone counts.** `GET /api/nodes` answers `counts` (total, reachable, up, down, lost, set_aside, off, in_use, free, loading) and each zone its `zone_state`; the Zones row of `/api/health` takes the same count and gains `up`, `in_use`, `free` and `loading` in its facts (its other facts and its text keep their meaning).
+
 ## Scheduler image: known machines across a restart (phase 4)
 
 No agent change, no `scheduler.db` or `usage.db` schema change, no new port.

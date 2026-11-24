@@ -59,6 +59,8 @@ func (s *Server) agentFacts(st *scheduler.Status) []pool.NodeFacts {
 	s.logFacts(facts)           // CR-10: what the log route counted per node
 	reservationFacts(facts, st) // reserve.go: what is reserved on each node
 	s.zoneFacts(facts, st)      // zonefacts.go: role, share, set-aside, who switched it off, free at
+	_, states, _ := zoneCountsOf(st, facts)
+	setZoneStates(facts, states) // counts.go: the state each zone is counted in
 	return facts
 }
 
@@ -72,9 +74,11 @@ func (s *Server) handleNodeFeed(w http.ResponseWriter, r *http.Request) {
 	if st, err := s.sched.Status(r.Context()); err == nil {
 		stp = &st
 	}
-	for _, f := range s.agentFacts(stp) {
+	facts := s.agentFacts(stp)
+	for _, f := range facts {
 		nodes = append(nodes, f)
 	}
+	counts, states, _ := zoneCountsOf(stp, facts) // counts.go: the same counts as /api/health's Zones row
 	if l, ok := s.opts.Pool.Local(); ok {
 		if l.Excluded && stp != nil {
 			if on := instancesOnNodes(stp)[l.ID]; len(on) > 0 {
@@ -82,6 +86,7 @@ func (s *Server) handleNodeFeed(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		l.ZoneFacts = s.zoneFactsOf(l.ID, stp, false, l.ExcludedBy) // zonefacts.go
+		l.ZoneState = states[l.ID]
 		nodes = append(nodes, l)
 	}
 	b, err := json.Marshal(nodes)
@@ -94,7 +99,7 @@ func (s *Server) handleNodeFeed(w http.ResponseWriter, r *http.Request) {
 	stripAges(plain)
 	canon, _ := json.Marshal(plain) // map keys are sorted: a stable form
 	seq := s.feed.next(sha256.Sum256(canon), s.start.UnixMilli())
-	writeJSON(w, http.StatusOK, map[string]any{"time": isoTime(now), "seq": seq, "nodes": json.RawMessage(b)})
+	writeJSON(w, http.StatusOK, map[string]any{"time": isoTime(now), "seq": seq, "nodes": json.RawMessage(b), "counts": counts})
 }
 
 // ageKey: a figure that changes with the passing of time alone.
