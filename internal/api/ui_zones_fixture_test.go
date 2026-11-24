@@ -226,7 +226,7 @@ func TestUIFixtureServerModelActions(t *testing.T) {
 		return
 	}
 	const body = `{"model":"qwen3-4b","nodes":["ps5-04"]}`
-	post := fixturePost(t, "--zones", "live")
+	post := fixturePost(t, "--zones", "live", "--load", "start")
 	if st, v := post("/api/plan", body); st != 200 || v["action"] != "start" || v["need_mib"] == nil {
 		t.Errorf("plan start: %d %v", st, v)
 	}

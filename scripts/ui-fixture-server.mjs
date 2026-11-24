@@ -22,11 +22,18 @@
 //   /api/system, /api/about, /api/agents, /api/config/settings, /api/history:
 //   fixed answers (times relative to now)
 //   /ws          a WebSocket: hello, the status every 5 s, the requests topic
-//   /api/profiles: the profiles Load a model offers
-//   the model actions (POST /api/plan, /api/load, /api/unload,
-//   /api/models/drain/<model>, /api/models/undrain/<model>): fixed answers
-//   as the server gives them (--load, --drain below); nothing changes
+//   the model actions of the Zones pages (POST /api/load, /api/unload,
+//   /api/models/drain/<model>, /api/models/undrain/<model>, and POST
+//   /api/plan when --load is given): fixed answers as the server gives them
+//   (--load, --drain below); nothing changes
+//   /api/config, /api/config/schema|settings|recovery|fleet, /api/profiles,
+//   POST /api/plan and settings dry runs (PATCH ...?dry_run=1): the
+//   configuration pages' fixture (scripts/ui-fixture/config.mjs, profiles.mjs)
 //   any other /api/... answers 404 in the API's error shape; other writes 405.
+//
+// --config normal|unknown|fresh: the settings state (config.mjs). --catalog:
+// /api/models lists the profile fixture's model files. --named-only <zone>:
+// that zone is in no_auto_nodes (auto: false), drawn "Named only".
 //
 // --state empty: no request in the period; off: the request log is off
 // (usage.db not open); loading: the request routes never answer.
@@ -76,6 +83,8 @@ import { readFileSync, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { zonesStatus, counts, groupsDoc, uptimeDoc, fleetStrip } from './ui-fixture/zones.mjs';
+import { schema as cfgSchema, configDoc, storedConfig, dryRun } from './ui-fixture/config.mjs';
+import { profileEntries, profileSpecs, catalog as cfgCatalog, planAnswer } from './ui-fixture/profiles.mjs';
 
 const argv = process.argv.slice(2);
 const opt = (k, d) => { const i = argv.indexOf(k); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
@@ -92,8 +101,16 @@ const RELEASE = opt('--release', '0.1.5');
 const ZONES = opt('--zones', 'none');
 const UPTIME_PARTIAL = argv.includes('--uptime-partial');
 const LOAD = opt('--load', 'start');
+const LOAD_SET = argv.includes('--load');
 const DRAIN = opt('--drain', '');
 const PINNED = argv.includes('--pinned');
+// --config: the configuration pages' state (scripts/ui-fixture/config.mjs)
+const CONFIG = opt('--config', 'normal');
+// --catalog: GET /api/models answers the profile fixture's six model files (default: none)
+const CATALOG = argv.includes('--catalog');
+// --named-only <name>: that zone is in no_auto_nodes (auto: false)
+const NAMED_ONLY = opt('--named-only', '');
+const cfgDoc = () => { const d = configDoc(CONFIG); d.settings.requests_live_timings = LIVE_TIMINGS; return d; };
 
 // ---------- the fixture (the Overview mockup's sample data) ----------
 
@@ -117,7 +134,8 @@ const iso = ms => new Date(ms).toISOString();
 const SCHED = { id: 'scheduler', name: 'scheduler', role: 'host' };
 
 // status(now) -> the status of the --zones state
-const status = now => zonesStatus(baseStatus(now), now, ZONES, { drain: DRAIN, pinned: PINNED });
+const status = now => named(zonesStatus(baseStatus(now), now, ZONES, { drain: DRAIN, pinned: PINNED }));
+const named = st => { if (NAMED_ONLY) for (const n of (st.view && st.view.nodes) || []) if (n.hostname === NAMED_ONLY) n.auto = false; return st; };
 
 function baseStatus(now) {
   const t = Math.round(now / 1000) * 1000;
@@ -256,6 +274,7 @@ function uiFile(rel) {
   return isFile(path.join(UI, rel)) ? path.join(UI, rel) : null;
 }
 
+const readBody = (req, fn) => { let s = ''; req.on('data', c => { s += c; }); req.on('end', () => { let b = null; try { b = JSON.parse(s || 'null'); } catch { /* not JSON */ } fn(b); }); };
 const json = (res, code, body) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' }); res.end(JSON.stringify(body)); };
 const notFound = (res, what) => json(res, 404, { error: { message: 'not in the fixture: ' + what, type: 'invalid_request_error' } });
 
@@ -297,20 +316,31 @@ const server = http.createServer((req, res) => {
     return res.end(readFileSync(f));
   }
   if (!p.startsWith('/api/')) return notFound(res, p);
+  // a dry run of a settings write writes nothing: it answers what the server would
+  const cfgW = /^\/api\/config\/(settings|recovery|fleet)$/.exec(p);
+  if (cfgW && req.method === 'PATCH' && u.searchParams.get('dry_run')) return readBody(req, b => { const r = dryRun(cfgW[1], b, cfgDoc()); json(res, r.status, r.body); });
+  // the placement preview's dry run writes nothing
+  // POST /api/plan: the Zones fixture's answers when --load names a load state (the Load dialog's states),
+  // else the configuration pages' (profiles.mjs, Placement preview); the other model actions are the Zones fixture's
+  if (p === '/api/plan' && req.method === 'POST' && !LOAD_SET) return readBody(req, b => { const r = planAnswer(b); json(res, r.status, r.body); });
   if (req.method === 'POST' && MODEL_ROUTE.test(p)) return modelAction(req, res, p);
   if (req.method !== 'GET') return json(res, 405, { error: { message: 'the fixture is read-only' } });
   if (STATE === 'loading' && p.startsWith('/api/requests')) return; // never answers
   if (p === '/api/status') return json(res, 200, status(now));
-  if (p === '/api/models') return json(res, 200, { version: 1, models: [] });
-  if (p === '/api/profiles') return json(res, 200, { profiles: PROFILES });
+  if (p === '/api/models') return json(res, 200, { version: 1, models: CATALOG ? cfgCatalog() : [] });
+  if (p === '/api/profiles') return json(res, 200, { profiles: profileEntries() });
+  if (p === '/api/config') { const d = cfgDoc(); return json(res, 200, Object.assign({ updated_at: now - 3 * H, configured: d.revision > 0, tiers: [], exclude_nodes: [], no_auto_nodes: NAMED_ONLY ? [NAMED_ONLY] : [], node_overrides: {} }, d, { profiles: profileSpecs() })); }
   // what the health popup reads (the Health board's sample, generic names)
   if (p === '/api/about') return json(res, 200, { version: '0.1.5', started_at: now - 12 * 24 * H, now, uptime_s: 12 * 24 * 3600, history: 'on' });
   if (p === '/api/system') return json(res, 200, { version: '0.1.5', started_at: now - 12 * 24 * H, now, uptime_s: 12 * 24 * 3600, read_panics: 0, internal_failures_total: 0,
     tasks: [{ name: 'core loop', policy: 'exit', state: 'running', running: 1, restarts: 0, failures: 0, failures_last_min: 0 }],
-    stored_config: { unknown_fields: [], writes_need_force: false },
+    stored_config: storedConfig(CONFIG),
     storage: { database: { dir: '/data', on: true, bytes: 37600000 }, history: { dir: '/data/history', on: true, bytes: 3000000, files: 4 }, usage: { size_bytes: 9400000 }, child_logs: { dir: '/data/logs', bytes: 23700000, files: 12 } } });
   if (p === '/api/agents') return json(res, 200, { agents: ['ops-bot', 'coding agent', 'report writer'].map((name, i) => ({ id: 'agent-' + i, name, key_prefix: 'ptk_' + i, created_at: now - (i + 2) * 24 * H, request_count: 10 * i })) });
-  if (p === '/api/config/settings') return json(res, 200, { settings: { queue_timeout: '30m0s', requests_live_timings: LIVE_TIMINGS } });
+  if (p === '/api/config/schema') return json(res, 200, cfgSchema);
+  if (p === '/api/config/settings') { const d = cfgDoc(); return json(res, 200, { revision: d.revision, settings: d.settings, settings_set: d.settings_set }); }
+  if (p === '/api/config/recovery') { const d = cfgDoc(); return json(res, 200, { revision: d.revision, recovery: d.recovery }); }
+  if (p === '/api/config/fleet') { const d = cfgDoc(); return json(res, 200, { revision: d.revision, fleet: d.fleet }); }
   if (p === '/api/history') return json(res, 200, { events: [
     { ts: now - 12 * 60000, seq: 41, type: 'nodeQuarantined', severity: 'warn', nodes: ['ps5-05'], summary: 'Node ps5-05 was quarantined for 18m0s (level 1): preflight failed.', data: { for_s: 1080, level: 1 } },
     { ts: now - 54 * 60000, seq: 40, type: 'nodeLost', severity: 'error', nodes: ['ps5-07'], summary: 'Node ps5-07 was lost.', data: {} },
@@ -347,11 +377,8 @@ const PROFILES = [
 ];
 const MODEL_ROUTE = /^\/api\/(plan|load|unload|models\/(drain|undrain)\/.+)$/;
 const apiError = (res, code, reason, message) => json(res, code, { error: { code, message, reason, type: 'invalid_request_error', param: null } });
-function readBody(req) {
-  return new Promise(resolve => { let b = ''; req.on('data', c => { b += c; }); req.on('end', () => { try { resolve(b ? JSON.parse(b) : {}); } catch { resolve({}); } }); });
-}
 async function modelAction(req, res, p) {
-  const body = await readBody(req);
+  const body = await new Promise(ok => readBody(req, b => ok(b && typeof b === 'object' ? b : {})));
   const model = body.model || decodeURIComponent(p.replace(/^\/api\/models\/(drain|undrain)\//, ''));
   const nodes = Array.isArray(body.nodes) ? body.nodes : [];
   const first = nodes[0] || 'ps5-04';

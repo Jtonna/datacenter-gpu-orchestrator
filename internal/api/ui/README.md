@@ -81,6 +81,12 @@ next/views/zones.js    Zones: one row per machine (zone); selection with Stop ac
 next/core/modelactions.js  the model actions: plan, load on chosen zones, drain, undrain, unload
 next/views/models.js   Models: loaded instances, every model file with size and disk total, the
                        model panel (?model=<key>); #/models/<key> is still views/models/detail.js
+next/views/settings.js Settings: the group menu, one group in view, one row per setting, the save bar
+                       (dry run, the changes, a comment, then PATCH with If-Match)
+next/views/placement.js Placement preview: the Ask panel (profile, any zone or only these zones) and the
+                       result card; POST /api/plan only (a dry run)
+next/views/profiles.js Profiles: one row per profile, generated ones hidden until asked for, the side
+                       panel; the editor (#/profiles/<id>, new, new?from=)
 ```
 
 Each UI links to the other: "Classic UI" at the foot of the new rail, "New UI"
