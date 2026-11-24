@@ -204,3 +204,28 @@ func TestUINextHealthSchedulerRelease(t *testing.T) {
 		}
 	}
 }
+
+// The page no longer asks who you are: no "Changes are signed as" line and
+// no Change button in the menu; a change it sends has no X-Actor. "by you"
+// on the Overview is the default user's name (default_user_name, from GET
+// /api/config/settings; "anonymous" when unset).
+func TestUINextNoActorPrompt(t *testing.T) {
+	now := time.Now()
+	st := ovStatus(now)
+	for _, a := range st["agents"].([]any) {
+		ag := a.(map[string]any)
+		switch ag["name"] {
+		case "node-d":
+			ag["paused"], ag["paused_actor"] = true, "alex"
+		case "node-c":
+		}
+	}
+	fetch := ovFetch(now, ovRequests(now), true)
+	fetch["/api/config/settings"] = map[string]any{"settings": map[string]any{"default_user_name": "alex"}}
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
+		map[string]any{"name": "actor: no prompt in the menu", "route": "#/zones", "status": st,
+			"pageNone": []string{"div.actor"}, "notOnPage": []string{"Changes are signed as"}},
+		map[string]any{"name": "actor: by you is the default user", "route": "#/overview", "status": st,
+			"expect": []string{"Paused by you", "Switched off by anonymous"}},
+	}})
+}

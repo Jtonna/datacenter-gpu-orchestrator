@@ -7,9 +7,7 @@
 import { h, morph, icon } from './dom.js';
 import { state, on } from './store.js';
 import { href, onRoute, parse } from './router.js';
-import { getActor, setActor } from './api.js';
 import { dur, durShort, plural } from './format.js';
-import { promptText } from './ui.js';
 import { LOGS_PAGE, logsOn, logsURL } from './logs.js';
 import { agentsMode } from './nodeactions.js';
 
@@ -176,22 +174,9 @@ function draw() {
     newUILink(),
     navNode(),
     h('div.pane-foot',
-      h('div.slotbox', { key: 'slots', 'data-keep': '' }),
-      h('div.actor', h('span', 'Changes are signed as ', h('b.txt2', getActor())),
-        h('button', { type: 'button', onclick: changeActor }, 'Change'))),
+      h('div.slotbox', { key: 'slots', 'data-keep': '' })),
   ]);
   placeSlots();
-}
-
-async function changeActor() {
-  const v = await promptText({
-    title: 'Your name for the audit trail',
-    intro: 'Every change made from this page is recorded with this name, so it is clear later who changed what. It is kept in this browser only.',
-    label: 'Name', value: getActor() === 'web' ? '' : getActor(), placeholder: 'for example alex', maxlength: 64,
-  });
-  if (v == null) return;
-  setActor(v);
-  draw();
 }
 
 export function startShell(app) {

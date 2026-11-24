@@ -28,9 +28,7 @@ import { h, morph, icon } from './dom.js';
 import { state, on } from './store.js';
 import { href, onRoute, parse, navigate } from './router.js';
 import { healthPopup, heart, heartLabel, readHealth } from './health.js';
-import { getActor, setActor } from './api.js';
 import { dur, durShort, plural, num } from './format.js';
-import { promptText } from './ui.js';
 import { LOGS_PAGE, logsOn, logsURL } from './logs.js';
 import { agentsMode, agentOf } from './nodeactions.js';
 
@@ -325,9 +323,7 @@ function menuNode() {
     h('nav', { 'aria-label': s.label + ' pages', key: 'pages', style: 'display:flex;flex-direction:column;gap:4px' }, s.pages.map(p => menuItem(p, c))),
     h('div.menu-foot', { key: 'foot' },
       h('div.slotbox', { key: 'slots', 'data-keep': '' }),
-      h('div.fleet', { role: 'status' }, h('b', h('span', { class: 'dot ' + (f.dot || '') }), f.title), h('span', f.note)),
-      h('div.actor', h('span', 'Changes are signed as ', h('b.txt2', getActor())),
-        h('button', { type: 'button', onclick: changeActor }, 'Change'))),
+      h('div.fleet', { role: 'status' }, h('b', h('span', { class: 'dot ' + (f.dot || '') }), f.title), h('span', f.note))),
   ];
 }
 
@@ -344,17 +340,6 @@ function draw() {
   morph(root.querySelector('.menu'), menuNode());
   if (surfaceBox) morph(surfaceBox, surfaceNode());
   placeSlots();
-}
-
-async function changeActor() {
-  const v = await promptText({
-    title: 'Your name for the audit trail',
-    intro: 'Every change made from this page is recorded with this name, so it is clear later who changed what. It is kept in this browser only.',
-    label: 'Name', value: getActor() === 'web' ? '' : getActor(), placeholder: 'for example alex', maxlength: 64,
-  });
-  if (v == null) return;
-  setActor(v);
-  draw();
 }
 
 export function startShell(app) {
