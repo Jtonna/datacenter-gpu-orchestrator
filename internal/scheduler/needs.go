@@ -122,7 +122,7 @@ type needOp struct {
 // a write.
 func (op needOp) key() string {
 	if op.host != nil {
-		return fmt.Sprintf("%s\x00host\x00%s", op.shape, op.host.Node)
+		return fmt.Sprintf("%s\x00host\x00%s\x00%d", op.shape, op.host.Node, op.host.Devices)
 	}
 	if op.rec == nil {
 		return op.shape

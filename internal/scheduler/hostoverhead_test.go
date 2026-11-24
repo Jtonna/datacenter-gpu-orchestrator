@@ -67,12 +67,12 @@ func TestHostOverhead_SettingFirstThenTheMeasurementOnThatNodeOnly(t *testing.T)
 	}
 
 	hostLoad(h, 4600) // 4000 on the device, 600 for the host process
-	if _, ok := h.c.hostOverheadAt(shapeOf(q), "a"); ok {
+	if _, ok := h.c.hostOverheadAt(shapeOf(q), "a", 1); ok {
 		t.Fatal("measured before a full average window after ready")
 	}
 	h.advance(h.cfg.Defaults.FreeAverageWindow + time.Second)
-	e, ok := h.c.hostOverheadAt(shapeOf(q), "a")
-	if !ok || e.mib != 600 || e.logHost != 150 || e.profile != "q" {
+	e, ok := h.c.hostOverheadAt(shapeOf(q), "a", 1)
+	if !ok || e.MiB != 600 || e.LogHostMiB != 150 || e.Profile != "q" || e.Devices != 1 {
 		t.Fatalf("measured %+v %v", e, ok)
 	}
 	if ev := h.histTypes(history.TLearnedNeed); len(ev) == 0 || ev[len(ev)-1].Data["host_overhead_mib"] != 600 {
@@ -164,7 +164,7 @@ func TestHostOverhead_ANegativeReadingIsNotStored(t *testing.T) {
 	h := ohHarness(t)
 	hostLoad(h, 3500)
 	h.advance(h.cfg.Defaults.FreeAverageWindow + time.Second)
-	if e, ok := h.c.hostOverheadAt(shapeOf(h.c.cfg.Profiles["q"]), "a"); ok {
+	if e, ok := h.c.hostOverheadAt(shapeOf(h.c.cfg.Profiles["q"]), "a", 1); ok {
 		t.Fatalf("stored %+v", e)
 	}
 }
@@ -177,7 +177,7 @@ func TestHostOverhead_UsesTheAverage(t *testing.T) {
 	h.view.modify("a", func(n *core.Node) { n.FreeAvgMiB, n.FreeAvgKnown = 15000-4700, true })
 	h.viewChanged()
 	h.advance(h.cfg.Defaults.FreeAverageWindow + time.Second)
-	if e, ok := h.c.hostOverheadAt(shapeOf(h.c.cfg.Profiles["q"]), "a"); !ok || e.mib != 700 {
+	if e, ok := h.c.hostOverheadAt(shapeOf(h.c.cfg.Profiles["q"]), "a", 1); !ok || e.MiB != 700 {
 		t.Fatalf("%+v %v", e, ok)
 	}
 }
@@ -193,8 +193,8 @@ func TestHostOverhead_AWatchdogEndRaisesIt(t *testing.T) {
 	h.view.modify("a", func(n *core.Node) { n.FreeMiB -= 500 }) // the host grew by 500
 	h.viewChanged()
 	h.exit("q", 137)
-	e, ok := h.c.hostOverheadAt(shapeOf(h.c.cfg.Profiles["q"]), "a")
-	if !ok || e.mib != 1100 || e.cause == needstore.CauseLoad {
+	e, ok := h.c.hostOverheadAt(shapeOf(h.c.cfg.Profiles["q"]), "a", 1)
+	if !ok || e.MiB != 1100 || e.Cause == needstore.CauseLoad {
 		t.Fatalf("%+v %v", e, ok)
 	}
 }
@@ -236,10 +236,10 @@ func TestHostOverhead_NoMeasurementChangesNoPlan(t *testing.T) {
 			t.Fatalf("%s: %d %q", n, before[n].HostOverheadMiB, before[n].HostOverheadSource)
 		}
 	}
-	// A measurement of q's shape on a: q, and split when it has q's shape
-	// (the shape does not depend on the device count) since a hosts it; not
+	// A one-device measurement of q's shape on a: q only. Not split (q's
+	// shape hosted on a, but on two devices: never across device counts),
 	// q2 (hosted on b), other (another shape), srv or auto (not hosted).
-	h.c.putHostOverhead(shapeOf(h.c.cfg.Profiles["q"]), "a", &hostOH{mib: 600, at: h.clk.Now(), build: h.c.llamaBuild, profile: "q"})
+	h.c.putHostOverhead(measured(shapeOf(h.c.cfg.Profiles["q"]), "a", 1, 600, h.clk.Now(), h.c.llamaBuild))
 	after := plans()
 	var changed []string
 	for n := range after {
@@ -249,8 +249,8 @@ func TestHostOverhead_NoMeasurementChangesNoPlan(t *testing.T) {
 	}
 	slices.Sort(changed)
 	want := []string{"q"}
-	if shapeOf(h.c.cfg.Profiles["split"]) == shapeOf(h.c.cfg.Profiles["q"]) {
-		want = []string{"q", "split"} // same shape, hosted on a
+	if shapeOf(h.c.cfg.Profiles["split"]) != shapeOf(h.c.cfg.Profiles["q"]) {
+		t.Fatal("split must have q's shape for this test")
 	}
 	if !slices.Equal(changed, want) {
 		t.Fatalf("changed %v, want %v", changed, want)
@@ -261,5 +261,177 @@ func TestHostOverhead_NoMeasurementChangesNoPlan(t *testing.T) {
 	q := h.c.cfg.Profiles["q"]
 	if got := h.c.expectShares(q, onNode("a")); got[0] != 4000+1024-(1024-600) {
 		t.Fatalf("q's host row %v", got)
+	}
+}
+
+// measured is a stored one-reading row.
+func measured(shape string, node core.NodeID, devices, mib int, at time.Time, build string) *hostOH {
+	e := &hostOH{HostOverhead: needstore.HostOverhead{Shape: shape, Node: string(node), Devices: devices, LlamaBuild: build, Profile: "q"}}
+	e.Add(needstore.HostReading{MiB: mib, At: at, Cause: needstore.CauseLoad}, false)
+	return e
+}
+
+// againOnA unloads q, then loads it again on a with the node giving up used.
+func againOnA(h *harness, used int) {
+	h.t.Helper()
+	if h.c.insts["q"] != nil {
+		h.step(evUnload{profile: "q", force: true})
+	}
+	h.view.modify("a", func(n *core.Node) { n.FreeMiB = 15000 })
+	h.viewChanged()
+	h.advance(2 * time.Minute) // the node's release window
+	h.viewChanged()
+	hostLoad(h, used)
+	h.advance(h.cfg.Defaults.FreeAverageWindow + time.Second)
+}
+
+// Keep the higher: a lower reading does not replace the figure in force;
+// a higher one does; three consecutive lower readings bring it down to the
+// highest of the three. The plan names the figure in force and its date.
+func TestHostOverhead_KeepsTheHigher(t *testing.T) {
+	h := ohHarness(t)
+	q := h.c.cfg.Profiles["q"]
+	hostLoad(h, 4401) // 401
+	h.advance(h.cfg.Defaults.FreeAverageWindow + time.Second)
+	e0, _ := h.c.hostOverheadAt(shapeOf(q), "a", 1)
+	first := e0.MeasuredAt
+	againOnA(h, 4298) // 298: kept 401
+	e, _ := h.c.hostOverheadAt(shapeOf(q), "a", 1)
+	if e.MiB != 401 || !e.MeasuredAt.Equal(first) || len(e.Readings) != 2 || e.Readings[0].MiB != 298 {
+		t.Fatalf("after a lower reading %+v", e.HostOverhead)
+	}
+	if ev := h.histTypes(history.TLearnedNeed); ev[len(ev)-1].Data["rule"] != needstore.HostKept || ev[len(ev)-1].Data["in_force_mib"] != 401 {
+		t.Fatalf("history %+v", ev[len(ev)-1])
+	}
+	h.step(evUnload{profile: "q", force: true})
+	if r := h.c.dryPlan("q"); r.HostOverheadMiB != 401 || !r.HostOverheadMeasuredAt.Equal(first) {
+		t.Fatalf("plan %d %v", r.HostOverheadMiB, r.HostOverheadMeasuredAt)
+	}
+	againOnA(h, 4450) // higher: 450
+	if e, _ := h.c.hostOverheadAt(shapeOf(q), "a", 1); e.MiB != 450 {
+		t.Fatalf("higher %+v", e.HostOverhead)
+	}
+	againOnA(h, 4300)
+	againOnA(h, 4320)
+	if e, _ := h.c.hostOverheadAt(shapeOf(q), "a", 1); e.MiB != 450 {
+		t.Fatalf("two lower %+v", e.HostOverhead)
+	}
+	againOnA(h, 4310) // the third consecutive lower reading
+	if e, _ := h.c.hostOverheadAt(shapeOf(q), "a", 1); e.MiB != 320 || len(e.Readings) != 3 {
+		t.Fatalf("three lower %+v", e.HostOverhead)
+	}
+	// A new llama build: the next reading replaces the figure.
+	h.c.llamaBuild = "ccccccc3"
+	againOnA(h, 4250)
+	if e, _ := h.c.hostOverheadAt(shapeOf(q), "a", 1); e.MiB != 250 || len(e.Readings) != 1 {
+		t.Fatalf("new build %+v", e.HostOverhead)
+	}
+}
+
+// Keyed by device count: q2's two-device host on a keeps the setting after
+// q's one-device measurement there, and is measured on its own.
+func TestHostOverhead_NeverAcrossDeviceCounts(t *testing.T) {
+	h := ohHarness(t)
+	q := h.c.cfg.Profiles["q"]
+	h.llama("split", 6000, func(p *core.Profile) {
+		p.ForceNodes, p.TensorSplit, p.Host, p.Model, p.TTL = []string{"a", "b"}, []int{1, 1}, core.HostNode, q.Model, ptrDur(0)
+	})
+	h.viewChanged()
+	h.c.putHostOverhead(measured(shapeOf(q), "a", 1, 401, h.clk.Now(), h.c.llamaBuild))
+	if r := h.c.dryPlan("split"); r.HostOverheadMiB != 1024 || r.HostOverheadSource != HostOverheadFromSetting {
+		t.Fatalf("split %d %q", r.HostOverheadMiB, r.HostOverheadSource)
+	}
+	if r := h.c.dryPlan("q"); r.HostOverheadMiB != 401 {
+		t.Fatalf("q %d", r.HostOverheadMiB)
+	}
+	h.c.putHostOverhead(measured(shapeOf(q), "a", 2, 700, h.clk.Now(), h.c.llamaBuild))
+	if r := h.c.dryPlan("split"); r.HostOverheadMiB != 700 || r.HostOverheadSource != HostOverheadMeasured {
+		t.Fatalf("split own %d %q", r.HostOverheadMiB, r.HostOverheadSource)
+	}
+	if r := h.c.dryPlan("q"); r.HostOverheadMiB != 401 {
+		t.Fatalf("q %d", r.HostOverheadMiB)
+	}
+}
+
+// The correction of a row copied from the release before device counts:
+// it held 298 (its latest reading) after 401. At start its readings are
+// read back from the history: only q's shape, on a, on one device. The
+// figure in force becomes 401 and a history line says why. Every plan row
+// then equals the setting-only plan's, except q's host row, 1024 - 401
+// lower: the split host on a (two devices) is back on the setting, which
+// the release before had planned on 298.
+func TestHostOverhead_CorrectsTheCopiedRowFromTheHistory(t *testing.T) {
+	h := ohHarness(t)
+	reserveOnSettings(h)
+	q := h.c.cfg.Profiles["q"]
+	h.llama("split", 6000, func(p *core.Profile) {
+		p.ForceNodes, p.TensorSplit, p.Host, p.Model, p.TTL = []string{"a", "b"}, []int{1, 1}, core.HostNode, q.Model, ptrDur(0)
+	})
+	h.llama("srv", 4000, func(p *core.Profile) { p.ForceNodes = []string{"a"} })
+	h.viewChanged()
+	t1, t2 := h.clk.Now().Add(-2*time.Hour), h.clk.Now().Add(-time.Hour)
+	copied := &hostOH{HostOverhead: needstore.HostOverhead{Shape: shapeOf(q), Node: "a", Devices: 1, MiB: 298, MeasuredAt: t2,
+		LlamaBuild: h.c.llamaBuild, Profile: "q", Cause: "load"}, restored: true}
+	reads := 0
+	h.c.hostEventsFn = func() []history.Event {
+		reads++
+		ev := func(ts time.Time, profile string, nodes []string, mib any) history.Event {
+			return history.Event{Ts: ts.UnixMilli(), Type: history.TLearnedNeed, Profile: profile, Nodes: nodes,
+				Data: map[string]any{"node": nodes[0], "host_overhead_mib": mib, "cause": "load"}}
+		}
+		return []history.Event{
+			ev(t2, "q", []string{"a"}, float64(298)),
+			ev(t1, "q", []string{"a"}, float64(401)),
+			ev(t1, "split", []string{"a", "b"}, float64(900)), // two devices: another row
+			ev(t1, "q2", []string{"b"}, float64(999)),         // another machine
+			ev(t1, "srv", []string{"a"}, float64(950)),        // another shape (hosted on the scheduler)
+			{Ts: t1.UnixMilli(), Type: history.TLearnedNeed, Profile: "q", Nodes: []string{"a"}, Data: map[string]any{"measured_mib": 4000}},
+		}
+	}
+	plans := func() map[string]PlanReport {
+		out := map[string]PlanReport{}
+		for name := range h.c.cfg.Profiles {
+			out[name] = h.c.dryPlan(name)
+		}
+		return out
+	}
+	h.cfg.Defaults.HostOverheadSettingOnly = true
+	setting := plans()
+	h.cfg.Defaults.HostOverheadSettingOnly = false
+	h.c.putHostOverhead(copied)
+	h.viewChanged() // a step: the node is known, the row is corrected
+	e, _ := h.c.hostOverheadAt(shapeOf(q), "a", 1)
+	if e.MiB != 401 || !e.MeasuredAt.Equal(t1.Truncate(time.Millisecond)) || len(e.Readings) != 2 || e.Readings[0].MiB != 298 || e.Pending() {
+		t.Fatalf("corrected %+v", e.HostOverhead)
+	}
+	line := h.histTypes(history.TLearnedNeed)
+	if len(line) == 0 || line[len(line)-1].Data["kept_mib"] != 401 || line[len(line)-1].Data["was_mib"] != 298 {
+		t.Fatalf("history %+v", line)
+	}
+	h.viewChanged()
+	if reads != 1 || len(h.histTypes(history.TLearnedNeed)) != len(line) {
+		t.Fatalf("corrected once: %d reads, %d lines", reads, len(h.histTypes(history.TLearnedNeed)))
+	}
+	after := plans()
+	for name, a := range after {
+		b := setting[name]
+		if a.Memory == nil || b.Memory == nil || len(a.Memory.Nodes) != len(b.Memory.Nodes) {
+			t.Fatalf("%s: memory %+v %+v", name, a.Memory, b.Memory)
+		}
+		for i := range a.Memory.Nodes {
+			want := b.Memory.Nodes[i].WillTakeMiB
+			if name == "q" {
+				want -= 1024 - 401
+			}
+			if got := a.Memory.Nodes[i].WillTakeMiB; got != want {
+				t.Errorf("%s row %s: will take %d, want %d", name, a.Memory.Nodes[i].Node, got, want)
+			}
+		}
+		if name != "q" && !reflect.DeepEqual(a, b) {
+			t.Errorf("%s changed:\n%+v\n%+v", name, b, a)
+		}
+	}
+	if after["split"].HostOverheadMiB != 1024 || after["split"].HostOverheadSource != HostOverheadFromSetting || after["q"].HostOverheadMiB != 401 {
+		t.Fatalf("split %d %q q %d", after["split"].HostOverheadMiB, after["split"].HostOverheadSource, after["q"].HostOverheadMiB)
 	}
 }

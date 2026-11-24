@@ -376,21 +376,23 @@ type schedCore struct {
 	backoffs     map[string]*backoff
 	waiters      map[uint64]*waiter
 	leases       map[uint64]*lease
-	runAvg       map[string]time.Duration           // drain.go: average run length per profile
-	pins         map[*core.Profile][]string         // pin.go: one-off copies of a profile and their nodes
-	needs_       map[string]NeedInfo                // provider results, before the estimate margin and learned figures
-	learned      map[string]map[int]*learnedNeed    // by shape and device count (needcount.go)
-	derive       deriveState                        // what the derivation keeps between calls (derive.go)
-	needOps      []needOp                           // learned-need store writes, taken by the runner after each step (needs.go)
-	hostOHs      map[string]map[core.NodeID]*hostOH // measured host overheads by shape and node (hostoverhead.go)
-	persist      bool                               // a need store is attached: learned needs are queued for it
-	buildRelease string                             // this build's release, stored with each measurement
-	steps        uint64                             // events handled (checkGated)
-	llamaBuild   string                             // the llama.cpp commit loads run on; "" when not known (needcount.go)
-	releaseBuild func(string) string                // the llama build a release's release.json names; "" when not known (nil: none)
-	servedBuild  string                             // the llama build the served release names, read at restore ("" : not known; nothing restored is trusted)
-	gated        gateMark                           // the latest gate call (checkGated)
-	warnedLow    map[string]bool                    // profiles whose too-low needs_mib was already warned about
+	runAvg       map[string]time.Duration        // drain.go: average run length per profile
+	pins         map[*core.Profile][]string      // pin.go: one-off copies of a profile and their nodes
+	needs_       map[string]NeedInfo             // provider results, before the estimate margin and learned figures
+	learned      map[string]map[int]*learnedNeed // by shape and device count (needcount.go)
+	derive       deriveState                     // what the derivation keeps between calls (derive.go)
+	needOps      []needOp                        // learned-need store writes, taken by the runner after each step (needs.go)
+	hostOHs      map[hostKey]*hostOH             // measured host overheads by shape, node and device count (hostoverhead.go)
+	hostEventsFn HostReadingEvents               // the history's learnedNeed events, read once for the rows of the release before device counts
+	hostEvents   []history.Event                 // what hostEventsFn returned (nil: not read yet)
+	persist      bool                            // a need store is attached: learned needs are queued for it
+	buildRelease string                          // this build's release, stored with each measurement
+	steps        uint64                          // events handled (checkGated)
+	llamaBuild   string                          // the llama.cpp commit loads run on; "" when not known (needcount.go)
+	releaseBuild func(string) string             // the llama build a release's release.json names; "" when not known (nil: none)
+	servedBuild  string                          // the llama build the served release names, read at restore ("" : not known; nothing restored is trusted)
+	gated        gateMark                        // the latest gate call (checkGated)
+	warnedLow    map[string]bool                 // profiles whose too-low needs_mib was already warned about
 
 	raw           map[core.NodeID]core.Node // view this step
 	fresh         bool
