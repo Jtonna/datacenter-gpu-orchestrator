@@ -1,6 +1,6 @@
 // Placement preview (the gear's "Placement preview"; no mockup: inferred
-// from the design language, phase 5). Replaces the classic page below /ui/
-// (the classic file stays at /ui/classic/). Ask what a request for a profile
+// from the design language, phase 5). Replaced the classic page
+// (the classic UI is removed). Ask what a request for a profile
 // would do right now, optionally on zones you choose, and read the answer as
 // one result card: the verdict with the scheduler's sentence, the memory
 // line, where it would go (zone by zone: usable, free, what it takes, what
@@ -23,6 +23,7 @@ import { liveView, pageHead, badge, banner, empty, skeleton, searchField, segmen
 import { num, gb, mib, ctx, plural } from '../core/format.js';
 import { nodeName, viewNodes, plainReason, plainBasis } from '../core/status.js';
 import { catalog, onCatalog, needCatalog } from '../core/catalog.js';
+import { memoryTable } from '../core/reserve.js';
 
 // the verdicts: label, badge kind, the plain sentence
 export const VERDICT = {
@@ -198,6 +199,11 @@ registerView({
           h('ul.plc-victims', plan.victims.map(v => h('li', { key: 'v-' + v.profile }, h('span.mono', v.profile),
             v.busy ? ' is serving requests: it finishes them first, then unloads.' : ' is idle: it unloads at once.')))) : null,
         hostLine(plan, zoneName),
+        // the server's memory figures per zone, as the classic page showed them
+        // (weights, context, reserve, headroom, margin; for shared memory
+        // "available − floor − headroom = placeable" and what would be left)
+        plan.memory && (plan.memory.nodes || []).length ? h('details.plc-raw', { 'data-memory-table': '' },
+          h('summary', 'How the memory was worked out'), h('div.scroll', memoryTable(plan.memory, zoneName))) : null,
         h('details.plc-raw', { open: raw ? true : null, ontoggle() { raw = this.open; } },
           h('summary', 'Show the full answer'),
           h('pre.raw', JSON.stringify(plan, null, 2))));

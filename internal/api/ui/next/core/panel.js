@@ -23,6 +23,10 @@
 // title, sub, controls, body and foot are nodes or functions (close => node),
 // drawn again by redraw(). onClose is called once, after it closed. name is
 // what a screen reader calls the panel (default: label and title).
+// o.closesMenu: while this panel sits BESIDE the page, the section menu is
+// closed (as the health popup does; the MCP boards draw no menu beside a
+// docked panel); the shell brings it back as it was when the panel closes
+// or moves over the page. onPanelHold(fn) / panelHoldsMenu() are the shell's.
 
 import { h, morph } from './dom.js';
 
@@ -30,6 +34,11 @@ export const DOCK_MIN = 1400;
 const wide = window.matchMedia('(min-width:' + DOCK_MIN + 'px)');
 
 let current = null;
+let held = false;
+const holdFns = new Set();
+export const panelHoldsMenu = () => held;
+export const onPanelHold = fn => { holdFns.add(fn); };
+function setHeld(v) { if (held !== v) { held = v; for (const fn of holdFns) fn(); } }
 // openPanel(o) -> {close, redraw, el, docked}; o.focus: a selector focused on open
 export function openPanel(o) {
   if (current) current.close();
@@ -70,6 +79,7 @@ export function openPanel(o) {
     const app = document.getElementById('app');
     const docked = wide.matches && !!app;
     pane.classList.toggle('docked', docked);
+    setHeld(docked && !!o.closesMenu);
     if (docked) {
       pane.removeAttribute('role'); pane.removeAttribute('aria-modal');
       back.remove();
@@ -103,7 +113,7 @@ export function openPanel(o) {
   function close() {
     if (closed) return;
     closed = true;
-    if (current === api) current = null;
+    if (current === api) { current = null; setHeld(false); }
     document.removeEventListener('keydown', onKey, true);
     if (wide.removeEventListener) wide.removeEventListener('change', onWidth);
     pane.remove();

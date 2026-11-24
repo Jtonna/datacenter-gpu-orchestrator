@@ -156,7 +156,7 @@ func coreID(s string) core.NodeID { return core.NodeID(s) }
 // views/benchmarks/editor.js). `node --check` on a .js file passes it. Each
 // screen's first page is drawn on an empty status as well.
 func TestUIAllModulesLoad(t *testing.T) {
-	app := uiText(t, "app.js")
+	app := uiText(t, uiNextDir+"app.js")
 	var mods []string
 	for _, line := range strings.Split(app, "\n") {
 		if s, ok := strings.CutPrefix(strings.TrimSpace(line), "import './"); ok {
@@ -246,27 +246,24 @@ func uiExecBase(t *testing.T, url string) (string, int) {
 }
 
 // --base takes the page from the server, not from the checkout, and checks
-// both UIs it serves (the new shell at /ui/, the classic UI at /ui/classic/):
-// the pages this API serves load and every screen draws (exit 0); the same
-// server with one module that does not parse, or one module it does not
-// serve, in either UI fails (exit 1) and the output names that module.
+// the UI it serves at /ui/ (the classic UI is removed): the page this API
+// serves loads and every screen draws (exit 0); the same server with one
+// module that does not parse, or one module it does not serve, fails (exit
+// 1) and the output names that module.
 func TestUIExecBaseUsesTheServersPage(t *testing.T) {
 	e := newEnv(t, chatOK)
 	out, code := uiExecBase(t, e.front.URL)
-	for _, want := range []string{"modules from " + e.front.URL + "/ui/\n", "modules from " + e.front.URL + "/ui/classic/\n",
-		"ok   start module app.js", "PASS: both UIs"} {
+	for _, want := range []string{"modules from " + e.front.URL + "/ui/\n", "ok   start module app.js", "PASS: 18 screens"} {
 		if code != 0 || !strings.Contains(out, want) {
-			t.Fatalf("good page: exit %d, want %q\n%s", code, want, out)
+			t.Fatalf("good page: exit %d, want %q (the 18 screens of /ui/, with Overview, Requests, the 24-hour report and Zones)\n%s", code, want, out)
 		}
 	}
-	if !strings.Contains(out, "PASS: 14 screens") || !strings.Contains(out, "PASS: 18 screens") {
-		t.Fatalf("good page: want the classic UI's 14 screens and the new shell's 18 (with Overview, Requests, the 24-hour report and Zones)\n%s", out)
+	if strings.Contains(out, "/ui/classic/") {
+		t.Fatalf("good page: the run looked at /ui/classic/, which is removed\n%s", out)
 	}
 	for _, c := range []struct{ name, path, body, want string }{
 		{"does not parse", "/ui/views/benchmarks/editor.js", "export const x = 'users' idle';\n", "views/benchmarks/editor.js:1: does not parse as an ES module"},
 		{"not served", "/ui/core/reserve.js", "", "core/reserve.js: the server answered 404"},
-		{"classic does not parse", "/ui/classic/views/benchmarks/editor.js", "export const x = 'users' idle';\n", "views/benchmarks/editor.js:1: does not parse as an ES module"},
-		{"classic not served", "/ui/classic/core/reserve.js", "", "core/reserve.js: the server answered 404"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

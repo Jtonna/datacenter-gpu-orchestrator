@@ -659,7 +659,7 @@ What each permission covers (the table in `internal/api/scopes.go`; a route miss
 | Manage access keys (`owner`) | no key may (the default user only) | `GET /api/agents`, `POST /api/agents`, `DELETE /api/agents/{id}`, `PATCH /api/agents/{id}`, `POST /api/agents/{id}/rotate` |
 | Console agents' protocol (`agents`) | not checked | `POST /api/logs`, `GET /api/logs/config`, `POST /api/pool/nodes/{id}/deregister`, `POST /api/pool/nodes/{id}/heartbeat`, `GET /api/pool/nodes/{id}/logs`, `POST /api/pool/nodes/{id}/logs`, `GET /api/pool/programs/{release}/{platform}/{file}`, `POST /api/pool/register`, `GET /api/pool/release`, `GET /install.sh`, `GET /install/potluck-agent-setup` |
 | Model API (a key there is checked for validity only) (`model_api`) | not checked | `/upstream/{model}`, `/upstream/{model}/{rest...}`, `/v1/`, `GET /v1/models` |
-| Always open (`open`) | not checked | `/`, `GET /health`, `GET /ui`, `GET /ui/`, `GET /ui/classic`, `GET /ui/classic/{$}`, `GET /ui/{$}`, `GET /{$}` |
+| Always open (`open`) | not checked | `/`, `GET /health`, `GET /ui`, `GET /ui/`, `GET /ui/{$}`, `GET /{$}` |
 <!-- access-table:end -->
 
 ### Phase out a model alias

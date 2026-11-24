@@ -55,9 +55,9 @@ func TestUIAboutBackgroundTasksExecutes(t *testing.T) {
 		map[string]any{"ts": time.Now().UnixMilli(), "type": "internalFailure", "severity": "error", "summary": "Background task test.task failed and was restarted.",
 			"data": map[string]any{"task": "test.task", "kind": "restart", "panic": "injected", "escalating": false}},
 	}}
-	// Both UIs the server serves: the classic one, and the new shell, which
-	// mounts the same about.js and activity.js over its own core modules.
-	for _, shell := range []string{"classic", "next"} {
+	// The UI mounts the shared about.js and activity.js over next/'s core
+	// modules (the classic UI is removed).
+	for _, shell := range []string{"next"} {
 		t.Run(shell, func(t *testing.T) {
 			uiExec(t, map[string]any{"shell": shell, "modules": []string{"views/about.js", "views/activity.js"},
 				"fetch": map[string]any{"/api/system": sys, "/api/about": map[string]any{},

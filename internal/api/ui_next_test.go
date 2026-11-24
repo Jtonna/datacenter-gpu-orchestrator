@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"io/fs"
 	"path"
 	"regexp"
 	"sort"
@@ -14,10 +13,8 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 )
 
-// The new shell (UI rewrite, phase U1) lives in ui/next/ and is served at
-// /ui/ over the classic files (uifiles.go). These tests cover it; the
-// classic UI keeps its own tests (ui_test.go, uiexec_test.go and the rest),
-// which read the classic files.
+// The UI (rewrite phase U1) lives in ui/next/ and is served at /ui/ over the
+// shared files of ui/ (uifiles.go). The classic UI is removed.
 
 // exportsOf lists the names a module exports.
 func exportsOf(src string) []string {
@@ -37,33 +34,51 @@ func exportsOf(src string) []string {
 	return out
 }
 
-// A module of ui/next/ that replaces a classic module of the same path
-// exports every name the classic one does: the classic views run on the new
-// shell's modules (they import ../core/ui.js and so on, which below /ui/ are
-// the next/ files), and the benchmark views are mounted unchanged.
-func TestUINextKeepsTheClassicExports(t *testing.T) {
+// Every named import of every UI module resolves, as the server serves the
+// files: a module's address is its path below /ui/ (a next/ file is served
+// without next/), and an import is resolved against that address with
+// uiResolve, so a shared module of ui/ that imports ../core/ui.js gets the
+// next/ file. Each imported name must be exported by the file served there
+// (the classic UI is removed; the shared views run on next/'s modules).
+func TestUINamedImportsResolve(t *testing.T) {
+	importRE := regexp.MustCompile(`(?s)import\s*\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]`)
 	n := 0
 	for _, name := range uiFiles(t) {
-		rel, ok := strings.CutPrefix(name, uiNextDir)
-		if !ok || path.Ext(rel) != ".js" || rel == "app.js" {
+		if path.Ext(name) != ".js" {
 			continue
 		}
-		if _, err := fs.Stat(uiFS, rel); err != nil {
-			continue // a module of its own
+		served := strings.TrimPrefix(name, uiNextDir)
+		if name == served && uiExists(uiNextDir+served) {
+			t.Errorf("%s is never served: next/%s shadows it", name, served)
+			continue
 		}
-		n++
-		have := map[string]bool{}
-		for _, e := range exportsOf(uiText(t, name)) {
-			have[e] = true
-		}
-		for _, e := range exportsOf(uiText(t, rel)) {
-			if !have[e] {
-				t.Errorf("%s does not export %s, which the classic %s does: a view that imports it would break below /ui/", name, e, rel)
+		for _, m := range importRE.FindAllStringSubmatch(uiText(t, name), -1) {
+			if !strings.HasPrefix(m[2], ".") {
+				continue
+			}
+			target := uiResolve(path.Clean(path.Join(path.Dir(served), m[2])))
+			if target == "" {
+				t.Errorf("%s imports %s, which is not served", name, m[2])
+				continue
+			}
+			have := map[string]bool{}
+			for _, e := range exportsOf(uiText(t, target)) {
+				have[e] = true
+			}
+			for _, part := range strings.Split(m[1], ",") {
+				f := strings.Fields(part)
+				if len(f) == 0 {
+					continue
+				}
+				n++
+				if !have[f[0]] {
+					t.Errorf("%s imports %s from %s, which %s does not export", name, f[0], m[2], target)
+				}
 			}
 		}
 	}
-	if n < 2 {
-		t.Fatalf("only %d next/ modules replace a classic one; core/ui.js and core/shell.js should", n)
+	if n < 100 {
+		t.Fatalf("only %d named imports checked", n)
 	}
 }
 
@@ -239,7 +254,7 @@ func TestUINextModelsListAndPanel(t *testing.T) {
 	}
 	noControls := []string{"Pin", "Delete", "Add a model", "Remove now", "Unload"}
 	uiExec(t, map[string]any{"shell": "next", "app": true, "base": e.front.URL, "cases": []any{
-		map[string]any{"name": "the list", "route": "#/models", "status": "fetch", "expect": append([]string{"All models", "Configurations", "Last used"}, names...),
+		map[string]any{"name": "the list", "route": "#/models", "status": "fetch", "expect": append([]string{"All models", "Needs", "Configurations", "Last used"}, names...),
 			"absent": append(append([]string{}, designSamples...), noControls...)},
 		map[string]any{"name": "one model's panel", "route": "#/models?model=" + key, "status": "fetch",
 			"page": []string{name, file, "Configurations", profile, "Edit under Profiles", "Open the model page"}, "notOnPage": noControls},
@@ -249,24 +264,19 @@ func TestUINextModelsListAndPanel(t *testing.T) {
 	}})
 }
 
-// Each UI has a visible link to the other, so the owner switches without
-// typing an address: "Classic UI" in the new shell's Settings menu (the
-// gear, Q73), "New UI" in the classic UI's header and navigation pane. Both
-// are drawn before any status arrives.
-func TestUISwitchLinks(t *testing.T) {
-	for _, c := range []struct{ shell, text, path string }{{"next", "Classic UI", "/ui/classic/"}, {"classic", "New UI", "/ui/"}} {
-		cases := []any{}
-		for _, r := range []string{"models", "zones", "about"} {
-			if r == "zones" && c.shell == "classic" {
-				r = "nodes"
-			}
-			if c.shell == "next" && r != "about" {
-				r = map[string]string{"models": "profiles", "zones": "audit"}[r]
-			}
-			cases = append(cases, map[string]any{"name": c.shell + ": " + r, "route": "#/" + r,
-				"links": []map[string]string{{"text": c.text, "path": c.path}}})
+// The classic UI is removed (the owner's word, 24 Nov): no "Classic UI"
+// link is drawn anywhere, the Settings menu (the gear) included, and no UI
+// file names /ui/classic/.
+func TestUINoClassicLink(t *testing.T) {
+	cases := []any{}
+	for _, r := range []string{"profiles", "audit", "about", "overview"} {
+		cases = append(cases, map[string]any{"name": "no classic link: " + r, "route": "#/" + r, "notOnPage": []string{"Classic UI"}, "pageNone": []string{"a[href='classic/']"}})
+	}
+	uiExec(t, map[string]any{"shell": "next", "app": true, "cases": cases, "fetch": map[string]any{}})
+	for _, name := range uiFiles(t) {
+		if isUICode(name) && strings.Contains(uiText(t, name), "ui/classic") {
+			t.Errorf("%s names ui/classic, which is removed", name)
 		}
-		uiExec(t, map[string]any{"shell": c.shell, "app": true, "cases": cases, "fetch": map[string]any{}})
 	}
 }
 

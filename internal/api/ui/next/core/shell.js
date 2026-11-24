@@ -12,7 +12,7 @@
 // page): the mark (not a link), Monitor, Zones, Models, Benchmarks; then at
 // its foot Ask Potluck, MCP and the System health heart; and the gear
 // "Settings" (Q69), which holds Profiles, Tiers and zones, Settings, Audit,
-// About and the link to the classic UI (Q73). Rail items are buttons with a
+// About (the link to the classic UI is gone with it, 24 Nov). Rail items are buttons with a
 // title, as drawn. Ask Potluck opens a drawer at the right edge that says it
 // is not built yet; the heart opens the health popup (core/health.js), and
 // its dot is the worst row's colour.
@@ -31,6 +31,7 @@ import { healthPopup, heart, heartLabel, readHealth } from './health.js';
 import { dur, durShort, plural, num } from './format.js';
 import { LOGS_PAGE, logsOn, logsURL } from './logs.js';
 import { agentsMode, agentOf } from './nodeactions.js';
+import { onPanelHold, panelHoldsMenu } from './panel.js';
 
 const I = {
   monitor: 'M2.5 10.5h3.2l2.1-5.5 4 10.5 2.2-5h3.5',
@@ -90,8 +91,6 @@ export const NAV = [
     // Logs is not a view of this page: it opens the log store's own search
     // page in a new tab (core/logs.js), and is there only while logging is on.
     { id: 'logs', label: 'Logs', external: true },
-    // the classic UI stays at /ui/classic/ until every screen is replaced (Q73)
-    { id: 'classic', label: 'Classic UI', href: 'classic/', desc: 'The previous interface, at /ui/classic/' },
   ] },
 ];
 
@@ -114,7 +113,8 @@ function counts() {
   if (!st) return {};
   const waiting = (st.queue || []).reduce((n, e) => n + Math.max(1, e.waiters || 0), 0);
   const bad = ((st.view && st.view.nodes) || []).filter(n => !n.excluded && (!n.online || n.quarantined || (n.health && n.health.state && n.health.state !== 'ok'))).length;
-  return { queue: waiting || null, zonesBad: bad || null };
+  // models: the loaded instances, as the classic rail counted them
+  return { models: (st.instances || []).length || null, queue: waiting || null, zonesBad: bad || null };
 }
 
 // connectionFacts() -> {dot, title, note}: the state of the connection in
@@ -231,8 +231,10 @@ const OPENS_CLOSED = ['overview', 'zones'];
 const menuShut = () => (OPENS_CLOSED.includes(route.id) ? !overviewMenuOpen : menuClosed());
 // While the health popup is open no section menu stands beside the rail, as
 // the Health board draws it (its script is empty: the heart only opens the
-// popup); closing the popup brings the menu back as it was.
-function applyMenu() { root.classList.toggle('menu-closed', menuShut() || surface === 'health'); }
+// popup); closing the popup brings the menu back as it was. A side panel
+// opened with closesMenu (the MCP page's) does the same while it is docked.
+function applyMenu() { root.classList.toggle('menu-closed', menuShut() || surface === 'health' || panelHoldsMenu()); }
+onPanelHold(() => { if (root) { applyMenu(); draw(); } });
 function setMenuClosed(v) {
   if (OPENS_CLOSED.includes(route.id)) overviewMenuOpen = !v;
   else try { localStorage.setItem(CLOSED_KEY, v ? '1' : '0'); } catch { /* private mode */ }
@@ -244,17 +246,20 @@ let root = null, route = { id: 'overview', rest: [], query: {} }, connBar = null
 
 // A rail item is a button, as drawn: it opens the section's first page, or
 // (on the current section, while its menu is closed) opens the menu again.
-function railItem(s, current) {
+function railItem(s, current, c = {}) {
   const on_ = current && current.id === s.id;
+  // the Models button carries the number of loaded models
+  const nb = s.id === 'models' && c.models ? h('span.rbn', { 'aria-hidden': 'true', 'data-rbn': 'models' }, num(c.models)) : null;
+  const label = nb ? `${s.label}, ${plural(c.models, 'model')} loaded` : s.label;
   const first = s.pages.find(p => !p.external && !p.href && !p.link);
-  return h('button', { class: 'rb' + (on_ ? ' on' : ''), type: 'button', 'aria-label': s.label, title: s.label, 'data-label': s.label,
+  return h('button', { class: 'rb' + (on_ ? ' on' : ''), type: 'button', 'aria-label': label, title: label, 'data-label': s.label,
     'aria-current': on_ ? 'page' : null, key: 'rb-' + s.id, 'data-section': s.id,
     onclick: () => {
       closeSurfaces(); closeDrawer();
-      if (on_ && root.classList.contains('menu-closed') && !narrow.matches) { setMenuClosed(false); return; }
+      if (on_ && menuShut() && !panelHoldsMenu() && !narrow.matches) { setMenuClosed(false); return; }
       navigate(first.id, first.rest || []);
     } },
-  icon(s.icon));
+  icon(s.icon), nb);
 }
 
 // The surfaces the rail opens over the page: the health popup and the Ask
@@ -272,9 +277,10 @@ function railNode() {
   const cur = sectionOf(route);
   const hb = heart();
   const foot = NAV.filter(s => s.foot);
+  const c = counts();
   return [
     h('span.mark', { key: 'mark' }, mark(32)),
-    NAV.filter(s => !s.foot).map(s => railItem(s, cur)),
+    NAV.filter(s => !s.foot).map(s => railItem(s, cur, c)),
     h('span.gap', { 'aria-hidden': 'true', key: 'gap' }),
     h('button', { class: 'rb' + (surface === 'ask' ? ' open' : ''), type: 'button', key: 'rb-ask', 'data-surface': 'ask', 'aria-label': 'Ask Potluck', title: 'Ask Potluck', 'data-label': 'Ask Potluck',
       'aria-expanded': surface === 'ask' ? 'true' : 'false', onclick: () => openSurface('ask') }, icon(I.ask)),
@@ -316,6 +322,7 @@ function menuItem(p, c) {
   }
   const on_ = pageOn(p, route);
   let nb = null;
+  if (p.id === 'models' && !p.link && c.models) nb = h('span.nb', { title: plural(c.models, 'model') + ' loaded' }, num(c.models));
   if (p.id === 'queue' && c.queue) nb = h('span.nb', { title: plural(c.queue, 'request') + ' waiting' }, num(c.queue));
   if (p.id === 'zones' && c.zonesBad) nb = h('span.nb.alert', { title: plural(c.zonesBad, 'zone') + ' need a look' }, num(c.zonesBad));
   const attrs = { href: href(p.id, p.rest), 'aria-current': on_ ? 'page' : null, onclick: closeDrawer, key: 'p-' + p.id + (p.rest ? '-' + p.rest.join('-') : '') };

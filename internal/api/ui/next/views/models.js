@@ -134,8 +134,9 @@ function listPanel(st, models, error, r, query, setQuery, onFind) {
   else if (!rows.length) body = empty('No model matches', q ? `Nothing matches "${query}". Search looks at the name, the file name and the configuration names.` : 'No model is in this group right now.');
   else {
     const open = key => setQuery({ model: key });
-    body = h('div.scroll', h('table.tbl.models', { style: 'min-width:860px' },
+    body = h('div.scroll', h('table.tbl.models', { style: 'min-width:940px' },
       h('thead', h('tr', h('th', { scope: 'col' }, 'Model'), h('th', { scope: 'col' }, 'State'), h('th.r', { scope: 'col' }, 'Size'),
+        h('th.r', { scope: 'col', title: 'The memory its lightest configuration needs on the nodes' }, 'Needs'),
         h('th', { scope: 'col' }, 'Runs on'), h('th.r', { scope: 'col', title: 'Profiles that load this model; the generated ones were made for benchmarks' }, 'Configurations'),
         h('th', { scope: 'col' }, 'Last used'))),
       h('tbody', rows.map(m => h('tr', { key: m.key, class: 'click' + (r.query.model === m.key ? ' sel' : ''), tabindex: '0', 'aria-label': m.name,
@@ -145,6 +146,7 @@ function listPanel(st, models, error, r, query, setQuery, onFind) {
           m.kind === 'llama' && !m.exists ? h('span.err-t', ' · file missing') : null)))),
       h('td', stateBadge(m, st)),
       h('td.r', m.kind === 'llama' && m.size_bytes ? bytes(m.size_bytes) : DASH),
+      h('td.r', { 'data-col': 'needs' }, needsCell(m, st)),
       h('td', runsOnCell(m, st)),
       h('td.r', configsCell(m)),
       h('td', lastUsed(m)))))));
@@ -158,6 +160,14 @@ function listPanel(st, models, error, r, query, setQuery, onFind) {
         filter, id => setQuery({ show: id === 'all' ? '' : id }), 'Filter the models')),
       h('div', searchField(query, onFind, 'Search models', 'model-search'))) : null,
     body);
+}
+
+// The Needs cell, as the classic list draws it: the memory of the lightest
+// configuration (fit.need_mib) and how it is known (measured, estimated, set
+// in the profile); a dash when it is not known yet.
+function needsCell(m, st) {
+  const f = fitOf(m, st);
+  return f.need ? h('span', { title: f.title || null }, gb(f.need), h('span.sub', f.sub)) : h('span.mut', DASH);
 }
 
 function mountHome(el, route) {

@@ -1,8 +1,8 @@
 // Entry point of the new shell (served at /ui/). Importing a view module
 // registers it; the order here does not matter (the navigation is NAV in
-// core/shell.js). A view this folder does not have is the classic module of
-// the same path, which then draws with this folder's core/ui.js and the rest
-// of the shared core (internal/api/uifiles.go).
+// core/shell.js). A view this folder does not have is the shared module of
+// the same path in ui/, which then draws with this folder's core/ui.js and
+// the rest of the shared core (internal/api/uifiles.go).
 
 import { start as startRouter } from './core/router.js';
 import { start as startLive } from './core/live.js';
@@ -26,7 +26,6 @@ import './views/mcp.js';
 import './views/about.js';
 
 // The home page is the Overview (Q76): /ui/ with no screen named opens it.
-// (The shared router's own default, kept for the classic UI, is Models.)
 if (!location.hash || location.hash === '#' || location.hash === '#/') history.replaceState(null, '', '#/overview');
 
 startShell(document.getElementById('app'));
