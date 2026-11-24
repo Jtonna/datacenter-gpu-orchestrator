@@ -17,6 +17,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgsvc"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelfiles"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 )
 
 // Models slice 3: delete a model file to the trash, and restore it.
@@ -194,6 +195,81 @@ func (s *Server) trashBusy(ctx context.Context, file string, profiles map[string
 	return why, extra, nil
 }
 
+// trashBusyNow is trashBusy without the benchmark runs: the instances and
+// queued requests of the file now.
+func (s *Server) trashBusyNow(ctx context.Context, file string, profiles map[string]*config.ProfileSpec) ([]string, map[string]any, error) {
+	why, extra, err := s.trashBusy(ctx, file, profiles)
+	if err != nil || extra["runs"] == nil {
+		return why, extra, err
+	}
+	var keep []string
+	for _, w := range why {
+		if !strings.HasPrefix(w, "benchmark run") {
+			keep = append(keep, w)
+		}
+	}
+	return keep, extra, nil
+}
+
+// trashUnloadWait is how long a delete with interrupt waits for the file's
+// instances to be gone: 5 s, the node force unload's bound.
+func (s *Server) trashUnloadWait() time.Duration {
+	if s.opts.trashUnloadWait > 0 {
+		return s.opts.trashUnloadWait
+	}
+	return 5 * time.Second
+}
+
+// interruptFile force unloads every instance of the file (the existing
+// forced unload: requests in flight are cut, a load in progress is stopped
+// and its waiters answered 503 unloaded), cancels the queued requests of its
+// profiles (scheduler CancelQueued, the same answer), then waits up to
+// trashUnloadWait until no instance or queue entry of it is left. It
+// returns what it interrupted and what is still there.
+func (s *Server) interruptFile(ctx context.Context, file string, profiles map[string]*config.ProfileSpec) (map[string]any, []string) {
+	insts := []map[string]any{}
+	cut := 0
+	var errs []string
+	if st, err := s.sched.Status(ctx); err == nil {
+		for _, i := range st.Instances {
+			if _, mine := profiles[i.Profile]; !mine && i.ModelFile != file {
+				continue
+			}
+			insts = append(insts, map[string]any{"profile": i.Profile, "state": i.State, "in_flight": i.InFlight, "waiters": i.Waiters})
+			cut += i.InFlight + i.Waiters
+			if err := s.sched.Unload(ctx, i.Profile, true); err != nil && !errors.Is(err, scheduler.ErrNotLoaded) {
+				errs = append(errs, fmt.Sprintf("unload %s: %v", i.Profile, err))
+			}
+		}
+	}
+	cancelled, err := s.sched.CancelQueued(ctx, keysOfSpecs(profiles))
+	if err != nil {
+		errs = append(errs, fmt.Sprintf("queued requests: %v", err))
+	}
+	out := map[string]any{"instances": insts, "requests_cut": cut, "queued_cancelled": cancelled}
+	if len(errs) > 0 {
+		out["errors"] = errs
+	}
+	deadline := time.Now().Add(s.trashUnloadWait())
+	for {
+		left, _, err := s.trashBusyNow(ctx, file, profiles)
+		if err != nil {
+			return out, []string{err.Error()}
+		}
+		if len(left) == 0 {
+			return out, nil
+		}
+		if time.Now().After(deadline) {
+			return out, left
+		}
+		select {
+		case <-ctx.Done():
+			return out, append(left, ctx.Err().Error())
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
 func keysOfSpecs(m map[string]*config.ProfileSpec) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
@@ -237,6 +313,7 @@ func (s *Server) handleModelDelete(w http.ResponseWriter, r *http.Request) {
 	if v, ok := obj["dry_run"].(bool); ok {
 		dry = dry || v
 	}
+	interrupt, _ := obj["interrupt"].(bool)
 	if strings.HasPrefix(key, "command:") {
 		trashRefuse(w, http.StatusBadRequest, "not_a_file", fmt.Sprintf("%s is a command profile: it has no model file to delete", key), nil)
 		return
@@ -272,15 +349,24 @@ func (s *Server) handleModelDelete(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, err)
 		return
 	}
-	if len(why) > 0 {
-		trashRefuse(w, http.StatusConflict, "in_use", fmt.Sprintf("%s is in use and was not deleted: %s. Unload it (or wait for the runs) first.", key, strings.Join(why, "; ")), extra)
+	_, inRun := extra["runs"]
+	switch {
+	case len(why) > 0 && interrupt && inRun:
+		trashRefuse(w, http.StatusConflict, "in_use", fmt.Sprintf("%s is in use and was not deleted: %s. interrupt does not stop benchmark runs: cancel them or wait for them first.", key, strings.Join(why, "; ")), extra)
+		return
+	case len(why) > 0 && !interrupt:
+		trashRefuse(w, http.StatusConflict, "in_use", fmt.Sprintf("%s is in use and was not deleted: %s. Unload it (or wait for the runs) first, or delete with interrupt.", key, strings.Join(why, "; ")), extra)
 		return
 	}
+	busy := len(why) > 0 // only instances and queued requests are left here: interrupt cuts them
 	now := s.opts.Now().UnixMilli()
 	days := s.trashDays()
 	purgeAt := now + int64(days)*24*3600*1000
 	ids := keysOfSpecs(profiles)
 	figures := map[string]any{"file": key, "size_bytes": st.Size(), "profiles": ids, "trash_days": days, "purge_at": purgeAt, "purge_on": false}
+	if busy {
+		figures["would_interrupt"] = extra
+	}
 	if dry {
 		figures["dry_run"] = true
 		writeJSON(w, http.StatusOK, figures)
@@ -295,6 +381,23 @@ func (s *Server) handleModelDelete(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		apiErr(w, http.StatusInternalServerError, "the trash folder could not be made: %v", err)
+		return
+	}
+	// 1b. interrupt: force unload the file's instances, cancel its queued
+	// requests, and wait (bounded) until none is left; else nothing moves
+	var interrupted map[string]any
+	if busy {
+		var left []string
+		interrupted, left = s.interruptFile(ctx, key, profiles)
+		if len(left) > 0 {
+			md.RemoveEmptyTrashDir(id)
+			trashRefuse(w, http.StatusConflict, "interrupt_incomplete", fmt.Sprintf("%s was not deleted: after the interrupt, within %s, still there: %s. Nothing was moved; the profiles are unchanged.",
+				key, s.trashUnloadWait(), strings.Join(left, "; ")), map[string]any{"interrupted": interrupted, "still": left})
+			return
+		}
+	}
+	if s.trashStop("delete:after-interrupt") {
+		apiErr(w, http.StatusInternalServerError, "stopped after the interrupt (test)")
 		return
 	}
 	actor := audit.FromRequest(r).Actor
@@ -327,6 +430,17 @@ func (s *Server) handleModelDelete(w http.ResponseWriter, r *http.Request) {
 		}
 		s.store.TrashSetState(id, cfgstore.TrashPending, res.Revision, nil, "", now)
 	}
+	// 3b. something loaded or queued the file between the check and the
+	// revision: undo the revision, nothing moves
+	if again, _, err := s.trashBusyNow(ctx, key, profiles); err != nil || len(again) > 0 {
+		s.undoDelete(rec, res != nil)
+		msg := fmt.Sprintf("%s was not deleted: it was loaded again meanwhile (%s); the profiles were put back and nothing was moved", key, strings.Join(again, "; "))
+		if err != nil {
+			msg = fmt.Sprintf("%s was not deleted: its use could not be checked again (%v); the profiles were put back and nothing was moved", key, err)
+		}
+		trashRefuse(w, http.StatusConflict, "loaded_again", msg, nil)
+		return
+	}
 	if s.trashStop("delete:after-config") {
 		apiErr(w, http.StatusInternalServerError, "stopped after the configuration (test)")
 		return
@@ -351,7 +465,7 @@ func (s *Server) handleModelDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	auditID := s.recordAuditWith(r, comment, audit.ActionDelete, audit.SectionModels, "model:"+key,
 		map[string]any{"file": key, "size_bytes": st.Size(), "profiles": ids},
-		map[string]any{"trash_id": id, "purge_at": purgeAt})
+		map[string]any{"trash_id": id, "purge_at": purgeAt, "interrupted": interrupted})
 	s.refreshTrash(ctx)
 	s.catalogDirty(false)
 	s.announce(r, audit.SectionModels, key, auditID)
@@ -359,6 +473,9 @@ func (s *Server) handleModelDelete(w http.ResponseWriter, r *http.Request) {
 		"profiles_removed": ids, "revision": 0, "warnings": []string{}, "audit_id": auditID}
 	if res != nil {
 		out["revision"], out["warnings"] = res.Revision, res.Warnings
+	}
+	if interrupted != nil {
+		out["interrupted"] = interrupted
 	}
 	writeJSON(w, http.StatusOK, out)
 }

@@ -47,11 +47,21 @@ func (noProber) Probe(context.Context, string) (instance.ProbeResult, error) {
 }
 
 // fakeLauncher starts "children" that are just a port: the test's upstream.
+// Test-only hooks (models slice 3, delete with interrupt): while hold is
+// set, a new child stays loading (WaitHealthy waits for hold to close);
+// with noExit a child ignores Stop (an unload that never completes).
 type fakeLauncher struct {
-	port int
-	mu   sync.Mutex
-	n    int
+	port   int
+	mu     sync.Mutex
+	n      int
+	hold   chan struct{}
+	noExit bool
 }
+
+func (l *fakeLauncher) setHold(ch chan struct{}) { l.mu.Lock(); defer l.mu.Unlock(); l.hold = ch }
+func (l *fakeLauncher) setNoExit(v bool)         { l.mu.Lock(); defer l.mu.Unlock(); l.noExit = v }
+func (l *fakeLauncher) holdCh() chan struct{}    { l.mu.Lock(); defer l.mu.Unlock(); return l.hold }
+func (l *fakeLauncher) exits() bool              { l.mu.Lock(); defer l.mu.Unlock(); return !l.noExit }
 
 func (l *fakeLauncher) Start(spec instance.StartSpec) (instance.Child, error) {
 	l.mu.Lock()
@@ -61,7 +71,7 @@ func (l *fakeLauncher) Start(spec instance.StartSpec) (instance.Child, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &fakeChild{port: l.port, argv: argv, exited: make(chan instance.ExitStatus, 1)}, nil
+	return &fakeChild{port: l.port, argv: argv, exited: make(chan instance.ExitStatus, 1), hold: l.holdCh(), l: l}, nil
 }
 
 type fakeChild struct {
@@ -69,16 +79,33 @@ type fakeChild struct {
 	argv   []string
 	exited chan instance.ExitStatus
 	once   sync.Once
+	hold   chan struct{} // nil: healthy at once
+	l      *fakeLauncher // nil: Stop always exits
 }
 
-func (c *fakeChild) Port() int                          { return c.port }
-func (c *fakeChild) PID() int                           { return 1 }
-func (c *fakeChild) Argv() []string                     { return c.argv }
-func (c *fakeChild) WaitHealthy(context.Context) error  { return nil }
+func (c *fakeChild) Port() int      { return c.port }
+func (c *fakeChild) PID() int       { return 1 }
+func (c *fakeChild) Argv() []string { return c.argv }
+func (c *fakeChild) WaitHealthy(ctx context.Context) error {
+	if c.hold == nil {
+		return nil
+	}
+	select {
+	case <-c.hold:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-c.exited:
+		return context.Canceled
+	}
+}
 func (c *fakeChild) Exited() <-chan instance.ExitStatus { return c.exited }
 func (c *fakeChild) Tail(int) []string                  { return nil }
 func (c *fakeChild) Load() instance.LoadStats           { return instance.LoadStats{} }
 func (c *fakeChild) Stop(instance.StopMode) {
+	if c.l != nil && !c.l.exits() {
+		return
+	}
 	c.once.Do(func() {
 		c.exited <- instance.ExitStatus{Requested: true}
 		close(c.exited)
@@ -122,6 +149,7 @@ type env struct {
 	logs     *syncBuf
 	nowMu    sync.Mutex
 	clock    time.Time
+	launcher *fakeLauncher
 }
 
 type syncBuf struct {
@@ -147,7 +175,7 @@ func newEnv(t *testing.T, upstream http.Handler, mod ...func(*Options)) *env {
 			port = port*10 + int(c-'0')
 		}
 	}
-	e := &env{t: t, cfg: cfg, upstream: up, logs: &syncBuf{}, clock: time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC)}
+	e := &env{t: t, cfg: cfg, upstream: up, logs: &syncBuf{}, clock: time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC), launcher: &fakeLauncher{port: port}}
 	opts := Options{
 		Logger:       slog.New(slog.NewTextHandler(e.logs, nil)),
 		Now:          func() time.Time { e.nowMu.Lock(); defer e.nowMu.Unlock(); return e.clock },
@@ -157,7 +185,7 @@ func newEnv(t *testing.T, upstream http.Handler, mod ...func(*Options)) *env {
 		m(&opts)
 	}
 	so := scheduler.Options{
-		View: &fakeView{ch: make(chan struct{}, 1)}, Prober: noProber{}, Launcher: &fakeLauncher{port: port},
+		View: &fakeView{ch: make(chan struct{}, 1)}, Prober: noProber{}, Launcher: e.launcher,
 		Needs: scheduler.NeedFunc(func(p *core.Profile) (scheduler.NeedInfo, error) {
 			return scheduler.NeedInfo{Need: placer.Measured(p.NeedsMiB), FileBytes: 1 << 20}, nil
 		}),

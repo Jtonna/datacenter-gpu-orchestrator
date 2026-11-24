@@ -106,7 +106,10 @@ type Options struct {
 	// read-only folder); trashStop acts out a kill between its steps.
 	trashOps  *modelfiles.Ops
 	trashStop func(step string) bool
-	fileCache filecache.Sys // tests replace the page cache calls of POST /api/cache/evict
+	// trashUnloadWait replaces the 5 s a delete with interrupt waits for the
+	// file's instances to be gone (tests).
+	trashUnloadWait time.Duration
+	fileCache       filecache.Sys // tests replace the page cache calls of POST /api/cache/evict
 	// catalogSource, when set and answering true, is what the model catalog is
 	// joined from instead of this server's own status, profiles, events,
 	// aggregates and files (the dev harness shows a scripted or recorded cluster).

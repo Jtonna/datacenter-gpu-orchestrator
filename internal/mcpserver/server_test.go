@@ -367,7 +367,7 @@ var expected = map[string]struct {
 	"undrain_model":         {`{"model":"gemma"}`, "POST", "/api/models/undrain/gemma", "", "", nil},
 	"pin_model":             {`{"file":"gemma.gguf","comment":"daily"}`, "PUT", "/api/models/pin/gemma.gguf", "", `{"comment":"daily"}`, nil},
 	"unpin_model":           {`{"file":"command:whisper","comment":"done"}`, "DELETE", "/api/models/pin/command:whisper", "", `{"comment":"done"}`, nil},
-	"delete_model":          {`{"file":"gemma.gguf","comment":"unused","dry_run":true}`, "POST", "/api/models/delete/gemma.gguf", "", `{"comment":"unused","dry_run":true}`, nil},
+	"delete_model":          {`{"file":"gemma.gguf","comment":"unused","dry_run":true,"interrupt":true}`, "POST", "/api/models/delete/gemma.gguf", "", `{"comment":"unused","dry_run":true,"interrupt":true}`, nil},
 	"list_deleted_models":   {`{}`, "GET", "/api/models/trash", "", "", nil},
 	"restore_model":         {`{"id":"0123456789ab","comment":"back","rename_taken":true}`, "POST", "/api/models/trash/0123456789ab/restore", "", `{"comment":"back","rename_taken":true}`, nil},
 	"create_pending_zone":   {`{"name":"zone-9","group":"rack-a"}`, "POST", "/api/zones/pending", "", `{"group":"rack-a","name":"zone-9"}`, nil},

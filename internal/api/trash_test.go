@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgstore"
@@ -25,14 +26,20 @@ type trashEnv struct {
 	cs    *cfgstore.Store
 	bs    *bench.Store
 	dir   string
-	stop  string // the step trashStop "kills" at
-	ro    bool   // act out a read-only folder
-	outer string // a folder outside the models folder (must stay untouched)
+	stop  string                 // the step trashStop "kills" at
+	ro    bool                   // act out a read-only folder
+	outer string                 // a folder outside the models folder (must stay untouched)
+	hook  func(step string) bool // set before newTrashEnvWith returns: runs at every step
 }
 
-func newTrashEnv(t *testing.T) *trashEnv {
+func newTrashEnv(t *testing.T) *trashEnv { t.Helper(); return newTrashEnvWith(t, nil) }
+
+func newTrashEnvWith(t *testing.T, hook func(te *trashEnv, step string) bool) *trashEnv {
 	t.Helper()
 	te := &trashEnv{dir: t.TempDir(), outer: t.TempDir()}
+	if hook != nil {
+		te.hook = func(step string) bool { return hook(te, step) }
+	}
 	st, err := bench.OpenStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -68,6 +75,10 @@ func newTrashEnv(t *testing.T) *trashEnv {
 		o.Config, o.Audit, o.BenchStore = svc, cs, st
 		o.trashOps = ops
 		o.trashStop = func(step string) bool { return te.stop != "" && step == te.stop }
+		o.trashUnloadWait = time.Second
+		if te.hook != nil {
+			o.trashStop = func(step string) bool { return te.hook(step) || (te.stop != "" && step == te.stop) }
+		}
 	})
 	te.env = e
 	return te
