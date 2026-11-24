@@ -52,7 +52,11 @@
 //               "links": [{"text": "Classic UI", "path": "/ui/classic/"}, ...],
 //               "click": ["css selector clicked after the draw", ...],
 //               "page": ["text anywhere on the page: shell, side panel, dialog", ...],
-//               "notOnPage": ["text nowhere on the page", ...]}]}
+//               "notOnPage": ["text nowhere on the page", ...],
+//               "titles": ["text some title attribute on the page contains", ...],
+//               "fetchedQuery": ["regexp a request (GET /path?query) must match", ...]}],
+//    "now": "2026-11-24T06:30:00Z",               // the clock starts there (Date.now, new Date())
+//    "tz": "America/Los_Angeles"}                 // the zone: uiExec sets TZ for node
 //
 // With "base", "status": "fetch" takes GET <base>/api/status.
 //
@@ -338,6 +342,7 @@ def('alert', () => {}); def('confirm', () => false); def('prompt', () => null);
 
 let fetchAnswers = {};
 const fetched = [];
+const fetchedFull = []; // with the query, for "fetchedQuery"
 const realFetch = globalThis.fetch;
 let base = null;
 def('fetch', async (u, opts = {}) => {
@@ -350,6 +355,7 @@ def('fetch', async (u, opts = {}) => {
     return realFetch(base + p + full.search, { method: opts.method || 'GET', headers: opts.headers, body: opts.body });
   }
   fetched.push((opts.method || 'GET') + ' ' + p);
+  fetchedFull.push((opts.method || 'GET') + ' ' + p + full.search);
   const ans = Object.prototype.hasOwnProperty.call(fetchAnswers, p) ? fetchAnswers[p] : undefined;
   const ok = ans !== undefined;
   const text = ok ? JSON.stringify(ans) : JSON.stringify({ error: { message: 'not in the fixture: ' + p } });
@@ -447,6 +453,16 @@ const spec = live
       cases: LIVE_SCREENS[which].map(r => ({ name: r, route: '#/' + r, status: 'fetch' })) }
   : JSON.parse(readFileSync(argv[0], 'utf8'));
 base = spec.base ? spec.base.replace(/\/$/, '') : null;
+// "now": "2026-11-24T06:30:00Z" fixes the clock there (it runs on from it):
+// new Date(), Date.now(). The zone is the process's (TZ, set by the caller).
+if (spec.now) {
+  const RealDate = Date, shift = RealDate.parse(spec.now) - RealDate.now();
+  class FixedDate extends RealDate {
+    constructor(...a) { if (a.length) super(...a); else super(RealDate.now() + shift); }
+    static now() { return RealDate.now() + shift; }
+  }
+  globalThis.Date = FixedDate;
+}
 const shell = spec.shell === 'next' ? 'next' : 'classic';
 location.pathname = UIS[shell];
 location.href = location.origin + UIS[shell];
@@ -517,7 +533,7 @@ const go = async hash => { setHashQuietly(hash); globalThis.dispatchEvent(new Fa
 
 let failed = 0;
 for (const c of spec.cases) {
-  errors.length = 0; fetched.length = 0;
+  errors.length = 0; fetched.length = 0; fetchedFull.length = 0;
   fetchAnswers = Object.assign({}, spec.fetch || {}, c.fetch || {});
   const route = router.parse(c.route);
   if (!router.getView(route.id)) errors.push('no view registered for ' + route.id);
@@ -569,6 +585,15 @@ for (const c of spec.cases) {
   for (const sel of c.none || []) if (outlet.querySelector(sel)) errors.push('an element that must not be there: ' + sel);
   for (const sel of c.has || []) if (!outlet.querySelector(sel)) errors.push('no element matches: ' + sel);
   if (c.hash && location.hash !== c.hash) errors.push('the address is ' + location.hash + ', want ' + c.hash);
+  // titles: texts some element's title attribute on the page contains
+  if (c.titles) {
+    const all = [];
+    const walk = n => { if (n.getAttribute) { const t = n.getAttribute('title'); if (t) all.push(t); } for (const k of n.childNodes || []) walk(k); };
+    walk(document.body);
+    for (const want of c.titles) if (!all.some(t => t.includes(want))) errors.push('no title contains ' + JSON.stringify(want) + ' (titles: ' + JSON.stringify(all.filter(t => /\d/.test(t)).slice(0, 12)) + ')');
+  }
+  // fetchedQuery: regular expressions some request (method, path and query) must match
+  for (const re of c.fetchedQuery || []) if (!fetchedFull.some(f => new RegExp(re).test(f))) errors.push('no request matches /' + re + '/ (requests: ' + JSON.stringify([...new Set(fetchedFull)]) + ')');
   for (const sel of c.pageHas || []) if (!document.body.querySelector(sel)) errors.push('no element on the page matches: ' + sel);
   for (const sel of c.pageNone || []) if (document.body.querySelector(sel)) errors.push('an element on the page that must not be there: ' + sel);
   if (c.focused && !(document.activeElement && document.activeElement.matches && document.activeElement.matches(c.focused)))

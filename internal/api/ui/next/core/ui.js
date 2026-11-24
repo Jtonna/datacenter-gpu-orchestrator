@@ -766,7 +766,23 @@ const QUANT = /(^|[-_.])((?:IQ|Q)\d+(?:_[A-Z0-9]+)*|BF16|F16|F32)(?=$|[-_.])/i;
 export function fileShort(file) {
   let s = String(file || '').split(/[\\/]/).pop().replace(/\.gguf$/i, '');
   s = s.replace(QUANT, '$1').replace(/[-_.]{2,}/g, m => m[0]).replace(/^[-_.]+|[-_.]+$/g, '');
+  // a leading vendor word the next word repeats: "Qwen_Qwen3.5-9B" -> "Qwen3.5-9B" (any case)
+  const v = /^([a-z]+)[-_]/i.exec(s);
+  if (v && s.slice(v[0].length).toLowerCase().startsWith(v[1].toLowerCase())) s = s.slice(v[0].length);
   return s.toLowerCase();
+}
+
+// fileName('/models/Qwen_Qwen3.5-9B-Q4_K_M.gguf') -> 'Qwen_Qwen3.5-9B-Q4_K_M.gguf'.
+const fileName = file => String(file || '').split(/[\\/]/).pop();
+
+// runModelTitle(r) -> the Model cell's hover: the profile id and the full
+// model file name (and the name the client sent, when it was an alias).
+export function runModelTitle(r) {
+  const entry = r && r.profile ? catalog.byProfile[r.profile] : null;
+  const file = fileName((entry && entry.file) || (r && r.model_file));
+  const parts = [r && r.profile, file].filter(Boolean);
+  if (r && r.requested && r.requested !== r.profile) parts.push('sent as ' + r.requested);
+  return parts.join(' · ') || null;
 }
 
 // runModel(r) -> the design's model name of a run, "gemma-4-27b:32k": the
@@ -877,7 +893,7 @@ export function runsTable(o) {
       return h('tr', { key: 'r' + id, 'data-req': id, class: [st === 'failed' || st === 'refused' ? 'fail' : st === 'cancelled' ? 'canc' : '', o.pin === id ? 'pinned' : ''].filter(Boolean).join(' ') || null },
         h('td', status),
         notStarted ? h('td.mut.qd', 'queued ', h('span.mono', clock(r.queued_at))) : h('td.mono', clock(r.started_at)),
-        h('td.mono', { title: r.profile ? r.profile + (r.requested && r.requested !== r.profile ? ' · sent as ' + r.requested : '') : r.requested ? 'Sent as ' + r.requested : null }, runModel(r) || DASH),
+        h('td.mono', { title: runModelTitle(r) }, runModel(r) || DASH),
         fig(waiting ? null : r.tokens_in, r.tokens_reused > 0 ? `${num(r.tokens_reused)} of them reused from the cache` : null, false, st === 'running' ? PROMPT_LATER : null),
         (pr => fig(waiting ? null : pr.rate, null, true, pr.title || (st === 'running' ? PROMPT_LATER : null)))(promptRate(r)),
         fig(waiting ? null : r.tokens_out, r.live ? 'Counted from the stream so far' : null),

@@ -2,6 +2,9 @@ package api
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -174,4 +177,30 @@ func TestUINextHealthPopupClosesTheMenu(t *testing.T) {
 		map[string]any{"name": "menu: back when the popup closes", "route": "#/zones", "status": st, "click": []string{"button.rb[data-surface=health]", "div.hp button.hp-x"},
 			"pageNone": []string{"div.app.menu-closed", "div.hp"}},
 	}})
+}
+
+// The Scheduler row sets facts.release in mono, as the Health board does,
+// and a row's sentence is never cut: a long release ("v41-962cf6a") wraps.
+func TestUINextHealthSchedulerRelease(t *testing.T) {
+	now := time.Now()
+	doc := healthDoc(now, map[string][2]string{"scheduler": {"ok", "Running · release v41-962cf6a · up 3 h"}}, nil)
+	for _, r := range doc["rows"].([]any) {
+		if row := r.(map[string]any); row["id"] == "scheduler" {
+			row["facts"] = map[string]any{"release": "v41-962cf6a", "uptime_s": 10800}
+		}
+	}
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": map[string]any{"/api/health": doc}, "cases": []any{
+		map[string]any{"name": "scheduler: release in mono", "route": "#/zones?health=open", "status": ovStatus(now),
+			"pageHas": []string{"a.hp-row[data-health=scheduler] .hr-text span.mono"},
+			"page":    []string{"Running · release v41-962cf6a · up 3 h"}},
+	}})
+	css, err := os.ReadFile(filepath.Join("ui", "next", "app.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(css), "\n") {
+		if strings.HasPrefix(line, ".hr-text{") && strings.Contains(line, "ellipsis") {
+			t.Errorf("the health rows' sentence is cut with an ellipsis: %s", line)
+		}
+	}
 }

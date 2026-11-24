@@ -83,3 +83,34 @@ export function bucketTitle(t, step) {
   if (step === 'hour') { const e = new Date(t + 3600000); return `${p2(d.getHours())}:00–${p2(e.getHours())}:00`; }
   return shortDay(t);
 }
+
+// The counts of a summary bucket (GET /api/requests/summary) that add up.
+const COUNTS = ['requests', 'done', 'failed', 'refused', 'cancelled', 'tokens_in', 'tokens_reused', 'tokens_out', 'wait_ms', 'duration_ms'];
+
+// foldLocal(buckets, to, answers) -> one summary whose series has a bucket per
+// local day (buckets: their starts, from periodOf) from hourly answers of
+// GET /api/requests/summary (step=hour; several when the period is longer
+// than one answer may be). Each hour goes to the local day it starts in, so a
+// 23 or 25 hour day (daylight saving) gets exactly its hours. The server's
+// day step makes fixed 24-hour buckets, and older than the hourly roll-ups it
+// answers UTC days; so the page asks for hours and folds them here. Rates
+// (prefill_tps, decode_tps) cannot be summed: they stay only when there is
+// one answer.
+export function foldLocal(buckets, to, answers) {
+  const zero = t => { const b = { t, prefill_tps: null, decode_tps: null }; for (const k of COUNTS) b[k] = 0; return b; };
+  const series = buckets.map(zero);
+  const totals = zero(0);
+  delete totals.t;
+  for (const a of answers) {
+    for (const h of (a && a.series) || []) {
+      if (!(h.t >= buckets[0] && h.t < to)) continue;
+      let i = buckets.length - 1;
+      while (i > 0 && buckets[i] > h.t) i--;
+      for (const k of COUNTS) series[i][k] += h[k] || 0;
+    }
+    for (const k of COUNTS) totals[k] += (a && a.totals && a.totals[k]) || 0;
+  }
+  const last = answers[answers.length - 1] || {};
+  if (answers.length === 1 && last.totals) { totals.prefill_tps = last.totals.prefill_tps ?? null; totals.decode_tps = last.totals.decode_tps ?? null; }
+  return Object.assign({}, last, { from: buckets[0], to, step: 'day', totals, series });
+}
