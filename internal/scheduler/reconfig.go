@@ -32,6 +32,9 @@ func (c *schedCore) staleProfile(in *inst) bool {
 		return true
 	}
 	a, b := *p, *in.prof
+	if _, ok := c.pins[in.prof]; ok { // pin.go: its nodes were chosen for this load
+		b.ForceNodes, b.TensorSplit = a.ForceNodes, a.TensorSplit
+	}
 	a.Description, b.Description = "", "" // words for people, not the load
 	return !reflect.DeepEqual(a, b)
 }
@@ -77,6 +80,9 @@ func (c *schedCore) applyConfig(nc *config.Config) {
 			err.Message = fmt.Sprintf("profile %q was deleted by a configuration change", name)
 			c.failAll(ws, err)
 			continue
+		}
+		if pin, ok := c.pins[e.prof]; ok { // pin.go: a queued load on chosen nodes keeps them
+			np = c.pinned(np, pin)
 		}
 		e.prof = np
 	}

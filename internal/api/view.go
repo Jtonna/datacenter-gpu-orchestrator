@@ -57,7 +57,7 @@ func view(v reflect.Value) any {
 		}
 		out := map[string]any{}
 		for i := 0; i < v.NumField(); i++ {
-			if f := v.Type().Field(i); f.IsExported() {
+			if f := v.Type().Field(i); f.IsExported() && f.Tag.Get("view") != "-" {
 				if fv := v.Field(i); fv.Kind() == reflect.Pointer && fv.IsNil() {
 					continue
 				} else if f.Tag.Get("view") == "omitempty" && fv.IsZero() {

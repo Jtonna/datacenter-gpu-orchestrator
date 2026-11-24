@@ -85,7 +85,7 @@ func (c *schedCore) checkInvariants() error {
 				bad("%s is a victim of %s, which is not a live claimed entry listing it", in.prof.Name, in.victimOf)
 			}
 		}
-		if in.state == stDraining && in.victimOf == "" {
+		if in.state == stDraining && in.victimOf == "" && !in.drain {
 			bad("%s draining for no claim", in.prof.Name)
 		}
 		if in.state != stStarting && len(in.waiters) > 0 {

@@ -12,9 +12,11 @@ No agent change, no new port, no schema change.
 
 No agent change. No new listening port.
 
+- **Drain then unload.** `POST /api/models/drain/{model}` (and `undrain`): the model admits nothing new and unloads once its runs finish, nothing cut; the answer and the status give an ETA (`eta_s`, `drain_eta_s`) from the profile's average run length. Requests arriving meanwhile queue. MCP `drain_model`, `undrain_model`.
 - **Setting `ui_model_actions`** (default true, no restart): false and the web UI offers no Load a model, Unload or Force unload. A page switch only: REST and MCP are unchanged by it. The page reads it as `settings.ui_model_actions` of `GET /api/config/settings`.
 - **Uptime leaves removed machines out.** `GET /api/nodes/uptime`: a removed machine is not in `zones` and its seconds count in no group and not in the fleet.
 - **History by zone group or list.** `GET /api/history?group=<name>` and `node=a,b,c` (ids or names); MCP `query_history` takes `group`.
+- **Load on chosen zones.** `POST /api/load` and `/api/plan` take `nodes`: this load is placed there as `force_nodes` would, the profile unchanged; `pinned_nodes` on the instance; 409 while the model is loaded or queued, or when a chosen zone is lost, excluded, paused, set aside or outside the pool. MCP `load_model`, `plan_load` take `nodes`.
 - **Last cold load per zone.** `last_load_link` {mb_s, bytes, load_s, at, model, kind} from the newest ready load that really moved the model to the zone (measured bytes, at least 256 MiB to that zone, at least 2 s; history `loadFinished`); warm, short and unmeasured loads keep the previous figure. `kind: "lower_bound"`: over the whole load time, not a link test.
 
 - **Chip name.** `chip` per zone from its stats' GPU name (absent on a PS5, which reports none); `chip` per group (common name; `mixed` when two names differ; absent when a member reports none).

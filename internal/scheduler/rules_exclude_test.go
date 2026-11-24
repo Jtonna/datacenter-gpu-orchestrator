@@ -82,7 +82,7 @@ func TestExclude_CapacityCheckIgnoresExcludedNode(t *testing.T) {
 	// a+b together could hold 20000 (15000 each by plan budget); without a they cannot.
 	h := newHarness(t).nodes(ps5("a", 2, 15000), ps5("b", 4, 15000))
 	h.llama("m", 20000)
-	if err := h.c.capacity("m"); err != nil {
+	if err := h.c.capacity(h.c.cfg.Profiles["m"]); err != nil {
 		t.Fatalf("fixture: both nodes should hold it: %v", err)
 	}
 	h.cfg.ExcludeNodes = []string{"a"}
