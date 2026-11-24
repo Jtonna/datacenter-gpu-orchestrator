@@ -5,7 +5,8 @@ import (
 	"time"
 )
 
-// The Models list has the classic list's Needs column: the memory of the
+// The Models list has the classic list's Needs column (in the rebuilt list
+// of phase 7, a column of the board's rows): the memory of the
 // lightest configuration (fit.need_mib) and how it is known (measured,
 // estimated, set in the profile), the sentence of fitOf on hover; a dash
 // when it is not known yet.
@@ -23,8 +24,8 @@ func TestUINextModelsNeeds(t *testing.T) {
 	}}
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
 		map[string]any{"name": "models: the Needs column", "route": "#/models", "status": ovStatus(now), "width": 1536,
-			"expect": []string{"Needs", "18.0 GB", "measured", "5.0 GB", "estimated", "Runs on", "Configurations"},
-			"has":    []string{"td[data-col=needs] span.mut"},
+			"expect": []string{"Needs", "18.0 GB", "measured", "5.0 GB", "estimated", "Profiles", "Last used"},
+			"has":    []string{"span.mdl-needs[data-col=needs] span.mut"},
 			"titles": []string{"The memory its lightest configuration needs on the nodes", "18,432 MiB measured on a load across 2 nodes"}},
 	}})
 }
