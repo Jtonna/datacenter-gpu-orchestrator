@@ -1012,12 +1012,12 @@ registerView({
           // heartbeat (last_seen_ago_s). Left out, not a dash, when the agent
           // reports none (an older agent, a console fed by the fleet console)
           // or the zone is not reachable (the figure would be stale).
-          hostUptime(a, n) != null ? fact('Uptime', h('b', { 'data-zp': 'uptime', title: 'How long the machine has been up since it last started, as its agent reports it' }, goneFor(hostUptime(a, n) * 1000))) : null,
+          hostUptime(a, n) != null ? fact('Machine up', h('b', { 'data-zp': 'uptime', title: 'How long the machine has been up since it last started, as its agent reports it' }, goneFor(hostUptime(a, n) * 1000))) : null,
           fact('Link speed', link
             ? h('b', { 'data-link': '', title: `At least this fast: ${num(link.bytes || 0)} bytes in ${num(Math.round((link.load_s || 0) * 10) / 10)} s, and that time also holds the model's start. Not a link test.` }, `≥ ${num(Math.round(link.mb_s))} MB/s`)
             : h('b.mut', { 'data-link': '', title: 'No load has sent this zone a model over the network yet (a cached or a short load does not count).' }, 'no cold load yet'),
-          link ? h('span.mut', { style: 'font-size:12px;font-weight:600' }, 'last cold load, ', tms(link.at) ? `${dayText(tms(link.at))} ${clock(tms(link.at), false)}` : DASH,
-            link.model ? [' · ', h('span.mono', { title: link.model }, modelName(link.model))] : null) : null),
+          // one line, so the panel's last 7 days fit under it; the model on hover
+          link ? h('span.mut.zl1', { 'data-link-at': '', title: 'The last cold load of this zone' + (link.model ? ': ' + link.model : '') }, 'cold load, ', tms(link.at) ? `${dayText(tms(link.at))} ${clock(tms(link.at), false)}` : DASH) : null),
           fact(since ? 'Up, since ' + since : 'Up, last 7 days', h('b', pctText(u ? u.uptime : null)))),
         h('div.dh', { key: 'loaded-h' }, h('h3', 'Loaded now')),
         loaded,

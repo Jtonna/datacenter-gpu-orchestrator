@@ -360,8 +360,11 @@ registerView({
                 h('td.prf-name',
                   h('div.prf-id', h('span.mono', { title: e.id }, e.id), e.generated ? h('span.plc-gen', 'generated') : null, loaded.has(e.id) && e.plan && e.plan.action !== 'serve' ? badge('Loaded', 'use') : null),
                   e.description ? h('div.prf-d', { title: e.description }, e.description) : null),
-                h('td.prf-model', h('span', { title: e.model }, shortModel(e.model) || '–')),
-                h('td.r', e.kind === 'command' ? '–' : ctx(e.ctx)),
+                // a command profile runs a program, not a model file: it has no model and no context size
+                e.kind === 'command'
+                  ? h('td.prf-model', { 'data-cmdprof': '' }, h('span.mut', { title: 'A command profile starts a program on a machine; it loads no model file and has no context size' }, 'command profile'))
+                  : h('td.prf-model', h('span', { title: e.model }, shortModel(e.model) || '–')),
+                h('td.r', e.kind === 'command' ? null : ctx(e.ctx)),
                 h('td.prf-zones', zonesText(e)),
                 h('td.tight', badge(label, kind, plainReason(e.plan && (e.plan.reason || e.plan.warning)) || why)));
             })))),

@@ -934,7 +934,7 @@ table.runs{width:100%;border-collapse:collapse}
 .fact .of{font-size:13px;font-weight:600}
 .mb{display:flex;height:6px;border-radius:3px;overflow:hidden;background:#e3e9e5}
 .mb span{display:block;background:#0f6b4a}
-.dh{display:flex;align-items:center;justify-content:space-between;gap:12px;height:44px;flex:none;padding:0 16px 0 20px;border-top:1px solid #e9eeeb}
+.dh{display:flex;align-items:center;justify-content:space-between;gap:12px;height:38px;flex:none;padding:0 16px 0 20px;border-top:1px solid #e9eeeb}
 .dh h3{margin:0;font-size:14px;font-weight:800;white-space:nowrap}
 .pf{display:grid;grid-template-columns:minmax(0,1fr) 100px 62px;gap:10px;align-items:center;height:36px;padding:0 16px 0 20px;border-top:1px solid #e9eeeb}
 .pf.attn{grid-template-columns:120px minmax(0,1fr) 20px;cursor:pointer}
@@ -963,6 +963,7 @@ table.runs{width:100%;border-collapse:collapse}
 .wkey{font-size:12px;font-weight:600;display:flex;align-items:center;gap:4px}
 .wkey .sq{width:11px;height:11px}
 .wgbox{padding:0 16px 12px 20px}
+.zl1{display:block;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wg{display:grid;grid-template-columns:34px repeat(24,14px);gap:3px;align-items:center;justify-content:start}
 .wg i{display:block;width:14px;height:14px;border-radius:3px;box-sizing:border-box}
 .wg i.fu{border:1px solid #e3e9e5}

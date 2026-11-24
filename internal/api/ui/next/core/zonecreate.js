@@ -7,8 +7,8 @@
 //    (X-Comment too; the audit entry is signed by the default user).
 // 2. The answer: the command line the server wrote ("curl -sSL
 //    '…/install.sh?zone=pz-…' | sudo sh") with Copy, the script to download,
-//    and the state, read again from GET /api/zones/pending/{id} every few
-//    seconds: waiting (with its expiry), joined, expired, cancelled; a 404
+//    and the state, read again from GET /api/zones/pending/{id} on the live
+//    channel's status messages (at most every 3 s): waiting (with its expiry), joined, expired, cancelled; a 404
 //    (the scheduler restarted: pending zones live in memory) says "This zone
 //    was not found: create it again". Cancel = DELETE /api/zones/pending/{id}
 //    with its own comment.
@@ -22,6 +22,7 @@
 import { h, icon } from './dom.js';
 import { href } from './router.js';
 import * as api from './api.js';
+import { on } from './store.js';
 import { dialog, button, copyButton, badge } from './ui.js';
 import { clock, dateTime } from './format.js';
 
@@ -59,7 +60,9 @@ function stateLine(z, gone) {
 // has (the dialog also reads GET /api/groups). Resolves true when a zone was
 // made, else false or undefined.
 export function createZone(o = {}) {
-  let timer = 0;
+  // the state is read again on each status message of the live channel (at
+  // most every 3 s), not on a timer; off() stops that
+  let off = null, lastPoll = 0;
   return dialog({ title: 'Create new zone', body: close => {
     const root = h('div.zc', { 'data-create-zone': '' });
     const st = { phase: 'form', def: null, defErr: '', z: null, gone: false, tab: 'cmd', err: '', errSource: false, busy: false, cancelOpen: false };
@@ -70,7 +73,7 @@ export function createZone(o = {}) {
     const ttl = h('select.select', { 'data-cz': 'ttl', 'aria-label': 'The command works for' }, TTLS.map(m => h('option', { value: String(m), selected: m === 60 }, m + ' min')));
     const comment = h('textarea.textarea', { rows: 2, maxlength: 400, 'data-cz': 'comment', placeholder: 'Why? It is kept in the audit log.', 'aria-label': 'Comment' });
     const cancelNote = h('textarea.textarea', { rows: 2, maxlength: 400, 'data-cz': 'cancel-comment', placeholder: 'Why cancel? It is kept in the audit log.', 'aria-label': 'Comment for the cancel' });
-    const stop = () => { clearInterval(timer); timer = 0; };
+    const stop = () => { if (off) off(); off = null; };
     const done = v => { stop(); close(v); };
 
     const tab = (id, label, why) => h('button', { type: 'button', role: 'tab', class: 'zc-tab' + (st.tab === id ? ' on' : ''), 'aria-selected': st.tab === id ? 'true' : 'false',
@@ -123,7 +126,8 @@ export function createZone(o = {}) {
       try {
         st.z = await api.post('/api/zones/pending', body, { comment: c });
         st.phase = 'made';
-        timer = setInterval(poll, 3000);
+        off = on('status', () => { if (Date.now() - lastPoll >= 3000) { lastPoll = Date.now(); poll(); } });
+        lastPoll = Date.now();
         poll();
       } catch (e) {
         st.err = errText(e);
@@ -198,5 +202,5 @@ export function createZone(o = {}) {
     readDefault();
     readGroups();
     return root;
-  } }).finally(() => { clearInterval(timer); });
+  } }).finally(() => { if (off) off(); });
 }
