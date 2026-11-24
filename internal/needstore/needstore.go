@@ -228,6 +228,9 @@ func Open(db DB) (*Store, error) {
 		if err := migrate(tx, "needs_shape_migrations", shapeMigrations); err != nil {
 			return err
 		}
+		if err := migrate(tx, "needs_host_migrations", hostMigrations); err != nil { // host.go
+			return err
+		}
 		if err := undoDevelopmentV2(tx); err != nil {
 			return err
 		}
@@ -416,7 +419,8 @@ func (s *Store) Put(r Record) error {
 }
 
 // Delete removes every row of the shape, in both tables (so it cannot come
-// back at the next start); no row is not an error.
+// back at the next start), and its measured host overheads; no row is not
+// an error.
 func (s *Store) Delete(shape string) error {
 	var left []string
 	err := s.scan(`SELECT '', profile, updated_at, record FROM learned_needs`, func(_, profile string, _ int64, doc string) {
@@ -430,6 +434,9 @@ func (s *Store) Delete(shape string) error {
 	}
 	return s.db.Write(func(tx *sql.Tx) error {
 		if _, err := tx.Exec(`DELETE FROM needs_by_placement WHERE shape = ?`, shape); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM needs_host_overhead WHERE shape = ?`, shape); err != nil { // host.go
 			return err
 		}
 		for _, p := range left {

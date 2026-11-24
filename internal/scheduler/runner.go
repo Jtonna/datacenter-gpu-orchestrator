@@ -831,7 +831,9 @@ func (s *Scheduler) LearnedRows(ctx context.Context) ([]LearnedRow, error) {
 func (s *Scheduler) Needs(ctx context.Context) (NeedsDoc, error) {
 	return askRead(s, ctx, "needs", func(c *schedCore) NeedsDoc {
 		return NeedsDoc{HostBuild: c.llamaBuild, Release: c.buildRelease, ServedBuild: c.servedBuild, Rows: c.learnedRows(),
-			DerivePairs: c.derivePairs(nil), DeriveToleranceMiB: deriveToleranceMiB}
+			DerivePairs: c.derivePairs(nil), DeriveToleranceMiB: deriveToleranceMiB,
+			HostOverheads: c.hostOverheadRows(), HostOverheadSettingMiB: max(c.cfg.Defaults.HostOverheadMiB, 0),
+			HostOverheadSettingOnly: c.cfg.Defaults.HostOverheadSettingOnly}
 	})
 }
 

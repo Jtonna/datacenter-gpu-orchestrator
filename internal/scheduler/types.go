@@ -535,7 +535,13 @@ type PlanReport struct {
 	Host            string
 	HostNode        core.NodeID
 	HostOverheadMiB int
-	HostProblem     string
+	// HostOverheadSource says which figure HostOverheadMiB is:
+	// HostOverheadFromSetting (host_overhead_mib) or HostOverheadMeasured
+	// (measured on the host node for this shape, at
+	// HostOverheadMeasuredAt; hostoverhead.go). Empty for the server.
+	HostOverheadSource     string    `view:"omitempty"`
+	HostOverheadMeasuredAt time.Time `view:"omitempty"`
+	HostProblem            string
 }
 
 // PlanMemory is the memory section of a plan (reserve.go).
@@ -590,6 +596,10 @@ type PlanMemoryNode struct {
 	// HostOverheadMiB is host_overhead_mib on the node that hosts the load
 	// (in ContextMiB and WillTakeMiB already); 0 on any other node.
 	HostOverheadMiB int
+	// HostOverheadSource and HostOverheadMeasuredAt say, on the host row,
+	// which figure HostOverheadMiB is (as PlanReport's); empty elsewhere.
+	HostOverheadSource     string    `view:"omitempty"`
+	HostOverheadMeasuredAt time.Time `view:"omitempty"`
 	// SpareMiB is AvailableMiB - WillTakeMiB: what the node keeps beyond
 	// the load before the margin. Tight: the node holds the load without
 	// its margin only (0 <= spare < margin; tight.go), short of the margin

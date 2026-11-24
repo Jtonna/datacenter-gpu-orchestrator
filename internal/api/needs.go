@@ -55,6 +55,37 @@ func needRowJSON(r scheduler.LearnedRow) needRow {
 	return out
 }
 
+// hostOverheadRow is one measured host overhead (scheduler hostoverhead.go).
+type hostOverheadRow struct {
+	Shape      string     `json:"shape"`
+	Node       string     `json:"node"`
+	NodeName   string     `json:"node_name"`
+	MiB        int        `json:"mib"`
+	LogHostMiB int        `json:"log_host_mib"`
+	MeasuredBy string     `json:"measured_by"`
+	MeasuredAt *time.Time `json:"measured_at"`
+	Release    string     `json:"release"`
+	LlamaBuild string     `json:"llama_build"`
+	Cause      string     `json:"cause"`
+	Restored   bool       `json:"restored"`
+	Used       bool       `json:"used"`
+	Profiles   []string   `json:"profiles"`
+}
+
+func hostOverheadJSON(r scheduler.HostOverheadRow) hostOverheadRow {
+	out := hostOverheadRow{Shape: r.Shape, Node: string(r.Node), NodeName: r.NodeName, MiB: r.MiB, LogHostMiB: r.LogHostMiB,
+		MeasuredBy: r.MeasuredBy, Release: r.Release, LlamaBuild: r.LlamaBuild, Cause: r.Cause, Restored: r.Restored, Used: r.Used,
+		Profiles: r.Profiles}
+	if !r.MeasuredAt.IsZero() {
+		at := r.MeasuredAt.UTC()
+		out.MeasuredAt = &at
+	}
+	if out.Profiles == nil {
+		out.Profiles = []string{}
+	}
+	return out
+}
+
 func (s *Server) handleNeeds(w http.ResponseWriter, r *http.Request) {
 	doc, err := s.sched.Needs(r.Context())
 	if err != nil {
@@ -73,9 +104,14 @@ func (s *Server) handleNeeds(w http.ResponseWriter, r *http.Request) {
 			"to_ctx": p.ToCtx, "from_mib": p.FromMiB, "predicted_mib": p.PredictedMiB, "measured_mib": p.MeasuredMiB,
 			"error_mib": p.ErrMiB, "within_tolerance": p.WithinTolerance, "below_estimate": p.BelowEstimate})
 	}
+	hosts := make([]hostOverheadRow, 0, len(doc.HostOverheads))
+	for _, h := range doc.HostOverheads {
+		hosts = append(hosts, hostOverheadJSON(h))
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"needs": out, "host_build": doc.HostBuild, "release": doc.Release,
-		"served_build": doc.ServedBuild,
-		"derivation_check": map[string]any{"tolerance_mib": doc.DeriveToleranceMiB, "pairs": pairs}})
+		"served_build": doc.ServedBuild, "host_overheads": hosts, "host_overhead_setting_mib": doc.HostOverheadSettingMiB,
+		"host_overhead_setting_only": doc.HostOverheadSettingOnly,
+		"derivation_check":           map[string]any{"tolerance_mib": doc.DeriveToleranceMiB, "pairs": pairs}})
 }
 
 // handleForgetShape drops every learned need of a shape (in memory and in

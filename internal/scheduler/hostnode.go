@@ -81,7 +81,8 @@ func hostOf(p *core.Profile, pl core.Placement) core.NodeID {
 // the host node, 0 elsewhere).
 func (c *schedCore) hostOverhead(p *core.Profile, pl core.Placement, id core.NodeID) int {
 	if h := hostOf(p, pl); h != "" && h == id {
-		return max(c.cfg.Defaults.HostOverheadMiB, 0)
+		mib, _, _ := c.hostOverheadOf(p, id) // hostoverhead.go: measured, else the setting
+		return mib
 	}
 	return 0
 }
@@ -170,7 +171,7 @@ func (c *schedCore) planHost(r *PlanReport, p *core.Profile, placed *core.Placem
 	if p.Host != core.HostNode {
 		return
 	}
-	r.Host, r.HostOverheadMiB = core.HostNode, max(c.cfg.Defaults.HostOverheadMiB, 0)
+	r.Host, r.HostOverheadMiB, r.HostOverheadSource = core.HostNode, max(c.cfg.Defaults.HostOverheadMiB, 0), HostOverheadFromSetting
 	var pl core.Placement
 	switch {
 	case placed != nil && len(placed.Nodes) > 0:
@@ -189,6 +190,7 @@ func (c *schedCore) planHost(r *PlanReport, p *core.Profile, placed *core.Placem
 	if len(pl.Nodes) > 0 {
 		r.HostNode = pl.Nodes[0].ID
 	}
+	r.HostOverheadMiB, r.HostOverheadSource, r.HostOverheadMeasuredAt = c.hostOverheadOf(p, r.HostNode)
 	r.HostProblem = c.hostPlacementError(p, pl)
 }
 

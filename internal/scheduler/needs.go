@@ -109,15 +109,21 @@ func makeNeedKey(kind core.Kind, model string, ctx, parallel int, kv string, fa 
 		extraArgs: strings.Join(extra, "\x00")}
 }
 
-// needOp is one queued store write: rec nil deletes every row of the shape.
+// needOp is one queued store write: rec nil and host nil delete every row
+// of the shape (its host overheads with it); host writes one node's measured
+// host overhead (hostoverhead.go).
 type needOp struct {
 	shape string
 	rec   *needstore.Record
+	host  *needstore.HostOverhead
 }
 
 // key is what the writer merges ops by: the shape, and the device count of
 // a write.
 func (op needOp) key() string {
+	if op.host != nil {
+		return fmt.Sprintf("%s\x00host\x00%s", op.shape, op.host.Node)
+	}
 	if op.rec == nil {
 		return op.shape
 	}
@@ -159,6 +165,7 @@ func (c *schedCore) storeLearned(l *learnedNeed) {
 func (c *schedCore) dropLearned(shape, name, why string) {
 	ls := c.learned[shape]
 	delete(c.learned, shape)
+	c.forgetHostOverheads(shape) // hostoverhead.go
 	if c.persist {
 		c.needOps = append(c.needOps, needOp{shape: shape})
 	}
@@ -189,6 +196,7 @@ func (c *schedCore) restoreNeeds(st NeedStore) {
 		}
 		c.log.Warn("some stored learned needs were ignored", "count", len(skipped), "rows", strings.Join(parts, "; "))
 	}
+	c.restoreHostOverheads(st) // hostoverhead.go
 	restored, used := 0, 0
 	for _, r := range recs {
 		c.putLearned(learnedFromRecord(r))
@@ -269,8 +277,12 @@ func (c *schedCore) forgetNeed(name string) (bool, error) {
 	ls := c.learned[shape]
 	delete(c.learned, shape)
 	delete(c.warnedLow, name)
+	hadHost := c.forgetHostOverheads(shape) // hostoverhead.go
 	if c.persist {
 		c.needOps = append(c.needOps, needOp{shape: shape})
+	}
+	if len(ls) == 0 {
+		return hadHost, nil
 	}
 	if len(ls) == 0 {
 		return false, nil
@@ -287,9 +299,14 @@ func (c *schedCore) forgetNeed(name string) (bool, error) {
 func applyNeedOps(st NeedStore, ops []needOp, log *slog.Logger) {
 	for _, op := range ops {
 		var err error
-		if op.rec == nil {
+		switch {
+		case op.host != nil:
+			if hs, ok := st.(HostOverheadStore); ok {
+				err = hs.PutHost(*op.host)
+			}
+		case op.rec == nil:
 			err = st.Delete(op.shape)
-		} else {
+		default:
 			err = st.Put(*op.rec)
 		}
 		if err != nil && log != nil {
@@ -336,9 +353,9 @@ func (w *needWriter) queue(ops []needOp) {
 		w.mu.Lock()
 		defer supervise.Unlocked("scheduler", w.mu.Unlock)
 		for _, op := range ops {
-			if op.rec == nil { // a delete of the shape makes its queued writes moot
+			if op.rec == nil && op.host == nil { // a delete of the shape makes its queued writes moot
 				for k, q := range w.pending {
-					if q.shape == op.shape && q.rec != nil {
+					if q.shape == op.shape && (q.rec != nil || q.host != nil) {
 						delete(w.pending, k)
 						w.order = slices.DeleteFunc(w.order, func(o string) bool { return o == k })
 					}

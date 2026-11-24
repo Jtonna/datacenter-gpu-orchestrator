@@ -2,6 +2,15 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: the host overhead measured per machine and model
+
+No agent change, no new port. Schema: one new table, `needs_host_overhead`, under its own ledger `needs_host_migrations` (v1) in the scheduler database; no existing table or ledger changes, so the previous image opens the file and plans as before.
+
+- **Host overhead measured.** For a profile with `host: node`, the first hosted load of a shape on a machine plans with `host_overhead_mib`; after it, plans of that shape hosted on that machine use what the load measured there (the machine's measured use less the load log's device memory on it), with the margin rules as they are. Every other machine and shape keeps the setting. Before any measurement exists, every plan is the one the previous image gives.
+- **The plan says which.** `host_overhead_source` (`setting` or `measured`) and `host_overhead_measured_at` in the plan and `GET /api/profiles`, and on the host row of the plan's `memory` section.
+- **Listed and forgotten with the needs.** `GET /api/needs` has `host_overheads`; forgetting a shape forgets them. A load that ends abnormally can only raise a figure.
+- **Setting `host_overhead_setting_only`** (default false): true plans every host with `host_overhead_mib` again; the figures are kept.
+
 ## Scheduler image: short names without a publisher prefix
 
 No agent change, no new port, no schema change.
