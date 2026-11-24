@@ -16,8 +16,10 @@
 // Drawn as on the board but not available yet, each with its reason on
 // hover (p7-models-backend-STATUS.md, M1 to M6): Add a model, Downloading,
 // Pinned and the star, the panel's Pinned and Delete model, deleted models.
-// Left out: "added <date>", the benchmark "reports" count, "Unload when
-// idle" (no data yet), the Needs column and the loaded-models badge (p4-ui).
+// From v60 (models slice 1): "added <date>" (added_at), "Benchmarks · N
+// reports" (bench.reports), "Unload when idle" (ttl_s), the disk's host in
+// the disk line's hover; an older server without them gets the earlier
+// drawing (runs, no date, no column).
 //
 // Reads: the catalog (core/catalog.js; the live channel's "models" topic,
 // REST GET /api/models as its fallback); GET /api/models every 30 s for its
@@ -92,6 +94,8 @@ function lastUsed(m) {
   return ago(m.last_active, m.history === false ? DASH : 'Never');
 }
 // profilesText(m) -> "11 profiles", "1 profile", "No profiles"
+// dayOf(ms) -> "4 Nov 2026"
+const dayOf = ms => { const d = new Date(ms); return `${d.getDate()} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()]} ${d.getFullYear()}`; };
 const profilesText = m => (m.profile_count ? plural(m.profile_count, 'profile') : 'No profiles');
 // sizeText(m) -> "16.5 GB", or why there is none (decimal GB, as the board and the disk line)
 const gbOf = v => (v / 1e9).toLocaleString('en-US', { maximumFractionDigits: 1, minimumFractionDigits: v >= 100e9 ? 0 : 1 });
@@ -110,7 +114,7 @@ function diskLine(models, disk) {
     full = used / of >= 0.9;
     title = [budget ? `The model files take ${gbOf(used)} GB of their ${gbOf(budget)} GB budget (models_disk_budget_gb).`
       : `The disk of the models folder: ${gbOf(disk.used_bytes)} of ${gbOf(disk.total_bytes)} GB used.`,
-    disk.free_bytes != null ? `${gbOf(disk.free_bytes)} GB free.` : null,
+    disk.free_bytes != null ? `${gbOf(disk.free_bytes)} GB free${disk.host ? ' on ' + disk.host : ''}.` : null,
     !budget && disk.model_bytes != null ? `The model files take ${gbOf(disk.model_bytes)} GB.` : null,
     disk.checked_at ? `Read ${agoText(disk.checked_at)}.` : null].filter(Boolean).join(' ');
   }
@@ -143,11 +147,17 @@ function modelPanel(st, m, ps) {
   const gen = all.length - hand.length;
   const ctxs = [...new Set(hand.map(p => p.ctx).filter(Boolean))].sort((x, y) => x - y);
   const q = ps.q.trim().toLowerCase();
+  // "Unload when idle" from ttl_s (v60; 0 = never); no column when the server has no ttl_s
+  const ttlCol = hand.some(p => typeof p.ttl_s === 'number');
   const rows = hand.filter(p => (!q || p.id.toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q)) && (!ps.ctx || String(p.ctx) === ps.ctx));
   return [
     h('div.mdl-acts', { key: 'acts' },
-      h('a.btn', { href: href('benchmarks'), title: b.runs ? 'Benchmarks that used a profile of this model' : 'No benchmark has used this model yet' }, 'Benchmarks ',
-        h('span.mut', b.runs ? plural(b.runs, 'run') : 'none yet')),
+      // bench.reports (v60): finished runs with a step on this file; an older server has only runs
+      typeof b.reports === 'number'
+        ? h('a.btn', { href: href('benchmarks'), title: `Finished benchmark runs with a step on this model: ${num(b.reports)} (${plural(b.runs || 0, 'run')} in all)` }, 'Benchmarks ',
+          h('span.mut', b.reports ? plural(b.reports, 'report') : 'no reports'))
+        : h('a.btn', { href: href('benchmarks'), title: b.runs ? 'Benchmarks that used a profile of this model' : 'No benchmark has used this model yet' }, 'Benchmarks ',
+          h('span.mut', b.runs ? plural(b.runs, 'run') : 'none yet')),
       off('button.btn', NOT_YET.pin, { 'aria-pressed': 'false', 'data-act': 'pin' }, 'Pinned'),
       off('button.btn.red', NOT_YET.del, { 'data-act': 'delete' }, 'Delete model')),
     insts.length ? h('section.zpart', { key: 'loaded' }, h('h3', 'Loaded now'),
@@ -176,12 +186,14 @@ function modelPanel(st, m, ps) {
       hand.length ? (rows.length ? h('table.tbl.mdl-ptbl',
         h('thead', h('tr', h('th', { scope: 'col' }, 'Profile'), h('th.r', { scope: 'col' }, 'Context'),
           h('th.r', { scope: 'col', title: 'What a load of this profile needs: measured, or estimated from the file' }, 'Memory needed'),
+          ttlCol ? h('th.r', { scope: 'col', title: 'How long the model stays loaded with no request (the ttl of the profile, else the default)' }, 'Unload when idle') : null,
           h('th', { scope: 'col' }, h('span.sr', 'Edit')))),
         h('tbody', rows.map(p => h('tr', { key: p.id, 'data-profile': p.id },
           h('td', h('span.mono', p.id), loadedProfiles.has(p.id) ? h('span.mdl-pill', { title: 'Loaded now' }, 'Now') : null, p.description ? h('span.sub', p.description) : null,
             p.parallel > 1 ? h('span.sub', `${num(p.parallel)} requests in parallel`) : null, hostLine(p)),
           h('td.r.mono', p.ctx ? num(p.ctx) : DASH),
           h('td.r', p.needs_mib ? [h('span.mono', num(p.needs_mib) + ' MiB'), h('span.sub', { title: p.needs_basis || null }, p.needs_measured ? 'measured' : 'estimated')] : h('span.mut', DASH)),
+          ttlCol ? (typeof p.ttl_s === 'number' ? h('td.r.mono', { 'data-ttl': String(p.ttl_s) }, p.ttl_s > 0 ? dur(p.ttl_s) : 'Never') : h('td.r.mut', DASH)) : null,
           h('td.r', h('a.go', { href: href('profiles', [p.id]), 'aria-label': 'Edit ' + p.id }, h('span.tx', 'Edit'), icon('M8 5l5 5-5 5')))))))
         : h('p.mut.mdl-pad', 'No profile matches.'))
         : h('p.mut.mdl-pad', all.length ? 'Every configuration of this model was generated.' : 'No configuration uses this file yet. Add a profile to load it.'),
@@ -270,7 +282,7 @@ function mountHome(el, route) {
       sub: () => {
         const m = find();
         if (!m) return null;
-        return [sizeText(m), ' · ', m.state === 'ready' ? 'loaded now' : m.state === 'loading' ? 'loading now' : m.last_active ? ['last used ', ago(m.last_active)] : 'never used'];
+        return [sizeText(m), ' · ', m.added_at ? [h('span', { title: 'The file arrived ' + dateTime(m.added_at) }, 'added ' + dayOf(m.added_at)), ' · '] : null, m.state === 'ready' ? 'loaded now' : m.state === 'loading' ? 'loading now' : m.last_active ? ['last used ', ago(m.last_active)] : 'never used'];
       },
       body, onClose: () => { if (side === p) { side = null; setQuery({ model: '' }); } },
     });

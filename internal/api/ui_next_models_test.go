@@ -53,7 +53,7 @@ func TestUINextModels(t *testing.T) {
 
 		// the panel of the loaded model
 		map[string]any{"name": "models: the loaded model's panel", "route": "#/models?model=" + mdlLoaded, "status": st,
-			"page": []string{"Selected model", mdlLoaded, "16.5 GB", "loaded now", "Benchmarks", "4 runs", "Pinned", "Delete model",
+			"page": []string{"Selected model", mdlLoaded, "16.5 GB", "loaded now", "Benchmarks", "3 reports", "Pinned", "Delete model",
 				"Loaded now", "on ps5-01, ps5-02", "2 requests in flight", "Runs on", "gemma-4-27b", "Google",
 				"Configurations", "2 profiles", "Profile", "Context", "Memory needed", "8,192", "32,768", "17,480 MiB", "20,890 MiB", "measured",
 				"1 generated configuration", "Add profile", "Open the model page", "Edit under Profiles"},
@@ -62,7 +62,7 @@ func TestUINextModels(t *testing.T) {
 				off("aside.side button.btn[data-act=pin]", "Pins"), off("aside.side button.btn.red[data-act=delete]", "Deleting")},
 			"pageNone":  []string{"aside.side tr[data-profile='gemma-4-27b:long'] span.mdl-pill", "aside.side tr[data-profile='bench-gemma-4-27b-c16k-n2']"},
 			"has":       []string{"div.mr.sel[aria-current=true][data-model='" + mdlLoaded + "']"},
-			"notOnPage": []string{"Unload when idle", "reports", "added "}},
+			"notOnPage": []string{"4 runs"}},
 		map[string]any{"name": "models: Delete does nothing", "route": "#/models?model=" + mdlLoaded, "status": st, "click": []string{"button[data-act=delete]"},
 			"hash": "#/models?model=" + mdlLoaded, "pageNone": []string{"dialog"}},
 		map[string]any{"name": "models: the context filter", "route": "#/models?model=" + mdlOlder, "status": st,
