@@ -50,12 +50,15 @@ const (
 // 90 days, hourly totals 13 months.
 const (
 	DefaultUsageRequestDays = 90
-	// DefaultModelTrashDays and MaxModelTrashDays bound model_trash_days.
-	DefaultModelTrashDays = 30
-	MaxModelTrashDays     = 365
 	DefaultUsageHourlyDays  = 396
 	// MaxUsageDays bounds both (a sanity limit on the file's size).
 	MaxUsageDays = 3660
+)
+
+// DefaultModelTrashDays and MaxModelTrashDays bound model_trash_days.
+const (
+	DefaultModelTrashDays = 30
+	MaxModelTrashDays     = 365
 )
 
 // DefaultLoopStepWarnMs is loop_step_warn_ms unless set; MaxLoopStepWarnMs
