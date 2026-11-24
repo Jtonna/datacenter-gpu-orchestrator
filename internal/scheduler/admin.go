@@ -50,6 +50,24 @@ func (c *schedCore) unload(profile string, force bool) error {
 	}
 }
 
+// cancelQueued answers every request waiting in the queue for one of
+// profiles 503 unloaded, the answer a forced unload gives a loading
+// instance's waiters, and removes the entry with its claim. It returns how
+// many requests it answered. Only an owner's model delete with interrupt
+// calls it (models slice 3); nothing automatic does.
+func (c *schedCore) cancelQueued(profiles []string) int {
+	n := 0
+	for _, name := range profiles {
+		e := c.entries[name]
+		if e == nil {
+			continue
+		}
+		n += len(e.waiters)
+		c.answerEntry(e, err503(ReasonUnloaded, fmt.Sprintf("%s was unloaded: its model file is being deleted", name), queueRetryAfter))
+	}
+	return n
+}
+
 // unloadIdle stops every ready instance with in_flight == 0 and returns
 // their profiles.
 func (c *schedCore) unloadIdle() []string {

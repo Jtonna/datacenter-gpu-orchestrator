@@ -748,6 +748,13 @@ func (s *Scheduler) Unload(ctx context.Context, model string, force bool) error 
 	return err
 }
 
+// CancelQueued answers the queued requests of the named profiles 503
+// unloaded and drops their queue entries (cancelQueued); the number of
+// requests answered.
+func (s *Scheduler) CancelQueued(ctx context.Context, profiles []string) (int, error) {
+	return ask(s, ctx, func(c *schedCore) int { return c.cancelQueued(profiles) })
+}
+
 // Drain is POST /api/models/drain/{model}: the instance admits nothing
 // new and stops once its runs finish (drain.go); the answer is the ETA in
 // seconds (nil: idle and stopped now, or no run length known yet).
