@@ -955,3 +955,17 @@ table.runs{width:100%;border-collapse:collapse}
 .addrow:first-child{border-top:0}
 .side-body:has(>.gp-acts){padding:0;gap:0;border-top:0}
 .sf .gp-act{padding:0;margin:0}
+.cmd{flex:1;min-width:0;display:flex;align-items:center;height:32px;box-sizing:border-box;padding:0 11px;border:1px solid #c5cec9;border-radius:8px;background:#f8faf8;overflow:hidden}
+.side-body:has(>.gp-acts) .gp-acts .btn{height:32px}
+.zl{display:flex;align-items:center;gap:14px;padding:12px 16px 14px 20px;border-top:1px solid #e9eeeb}
+.wkey{font-size:12px;font-weight:600;display:flex;align-items:center;gap:4px}
+.wkey .sq{width:11px;height:11px}
+.wgbox{padding:0 16px 12px 20px}
+.wg{display:grid;grid-template-columns:34px repeat(24,14px);gap:3px;align-items:center;justify-content:start}
+.wg i{display:block;width:14px;height:14px;border-radius:3px;box-sizing:border-box}
+.wg i.fu{border:1px solid #e3e9e5}
+.wg i.nd{background:#f3f5f3}
+.wg b{font-size:11px;font-weight:600;color:#55615b}
+.wg span{grid-column:span 6;font-family:var(--mono);font-size:11px;color:#55615b}
+.zmore{display:flex;flex-direction:column;gap:14px;padding:12px 16px 16px 20px;border-top:1px solid #e9eeeb}
+.side-title .chipt{font-family:inherit;font-size:14px;font-weight:600}

@@ -63,12 +63,16 @@ func znStatus(fleet []zn) map[string]any {
 		n := map[string]any{"id": z.id, "hostname": z.name, "online": z.state != "lost", "total_mib": z.totalGB * 1024, "free_mib": (z.totalGB - z.usedGB) * 1024,
 			"holder": z.holder, "claimed_by": "", "excluded": z.excluded, "excluded_by": "", "quarantined": nil, "missing_since": nil, "free_at": nil, "settling": "", "settle_until": nil}
 		a := map[string]any{"id": z.id, "name": z.name, "addr": z.addr + ":50052", "state": "active", "paused": z.paused, "placeable": z.state == "free", "last_seen_ago_s": 1,
-			"zone_state": z.state, "chip": z.chip, "release": "0.1.10", "platform": "linux-amd64-vulkan"}
+			"zone_state": z.state, "chip": z.chip, "release": "0.1.10", "platform": "linux-amd64-vulkan", "host_uptime_s": 12*86400 + 4*3600}
+		n["priority"] = 1
 		if z.group != "" {
 			a["group"] = z.group
 		}
 		if z.temp > 0 {
 			a["stats"] = map[string]any{"headline_temp_c": z.temp}
+			if z.name == "node-e" {
+				a["stats"] = map[string]any{"headline_temp_c": z.temp, "net": []any{map[string]any{"name": "eth0", "link_mbps": 1000}}}
+			}
 		}
 		if z.excluded {
 			n["excluded_by"] = z.id
@@ -527,5 +531,64 @@ func TestUINextZonesGroupPanel(t *testing.T) {
 		map[string]any{"name": "group: unload a model", "route": "#/zones/group/rack-a", "status": st, "width": wide,
 			"click":        []any{"button[data-unload=alpha]", typed("textarea[data-field=comment]", "free it"), "button[data-go]"},
 			"fetchedQuery": []string{`^POST /api/unload \{"model":"alpha","force":true,"comment":"free it"\}`}},
+	))
+}
+
+// Zones-Fleet-Detail: the zone panel (#/zones/<name>) as designed, as far as
+// data exists: the name with its chip, the state line (state · group ·
+// tier), the Accepting models switch, the SSH line with Copy, Open
+// terminal and Reboot (both disabled with the reason), the figures (memory
+// with its bar, temperature, ping not measured, the machine's uptime, link
+// speed as the network card reports it or not measured, 7-day uptime), what
+// is loaded now with Force unload (the unload dialog), Load a model
+// (disabled: Potluck picks the zones itself), the 7-day grid by hour from
+// /api/nodes/availability, and the link to its activity. Each write asks
+// for a comment.
+func TestUINextZonesDetail(t *testing.T) {
+	fleet := znFleet()
+	st := znStatus(fleet)
+	fetch := znFetch(fleet, true)
+	writes := map[string]any{}
+	for k, v := range fetch {
+		writes[k] = v
+	}
+	writes["POST /api/nodes/"+znMac(1)+"/pause"] = map[string]any{"ok": true}
+	writes["POST /api/unload"] = map[string]any{"msg": "ok", "model": "alpha"}
+	typed := func(sel, v string) map[string]any { return map[string]any{"type": sel, "value": v} }
+	esc := func(s string) string { return strings.NewReplacer(":", "%3A").Replace(s) }
+	wide := 1600
+
+	uiExec(t, znSpec(fetch,
+		map[string]any{"name": "detail: a zone in use", "route": "#/zones/node-a", "status": st, "width": wide,
+			"page": []string{"Selected zone", "node-a", "| Oberon", "In use", "rack-a", "tier 1", "Accepting models",
+				"ssh 192.0.2.11", "Copy", "Open terminal", "Reboot",
+				"Memory", "10.7", "of 13.5 GB", "Temperature", "61 °C", "Ping", "not measured", "Uptime", "12 d 4 h", "Link speed", "Up, last 7 days", "99.5%",
+				"Loaded now", "alpha", "Host 60%", "helper", "node-b", "2 runs", "loaded 38 min ago", "Force unload",
+				"Load a model", "Choose a profile", "Last 7 days", "Idle", "Busy", "Down", "Activity for this zone"},
+			"pageHas": []string{"aside.side button.switch[aria-checked=true]", "button[data-zp=terminal][disabled]", "button[data-zp=reboot][disabled]",
+				"button[data-zp=load][disabled]", "button.red[data-zp=force]", "div.wg[role=img]", "div.cmd", "a[data-zp=activity]"},
+			"titles": []string{"Ping is not measured yet", "a PS5 is never rebooted from here", "Open terminal is not built yet",
+				"Loading onto a chosen zone is not built yet", "No SSH user is set", "The network card reports no speed"},
+			"fetchedQuery": []string{`^GET /api/nodes/availability\?.*node=` + esc(znMac(1))}},
+		map[string]any{"name": "detail: the link speed the card reports", "route": "#/zones/node-e", "status": st, "width": wide,
+			"page": []string{"1,000 Mbit/s", "Set aside", "home", "Nothing is loaded"}, "titles": []string{"negotiated speed"}},
+		map[string]any{"name": "detail: a lost zone", "route": "#/zones/node-f", "status": st, "width": wide,
+			"page": []string{"Offline", "gone for 54 min", "Nothing is loaded"}},
+		map[string]any{"name": "detail: a zone switched off", "route": "#/zones/node-g", "status": st, "width": wide,
+			"page": []string{"Switched off"}, "pageHas": []string{"aside.side button.switch[aria-checked=false]"}},
+		map[string]any{"name": "detail: an excluded zone", "route": "#/zones/node-h", "status": st, "width": wide,
+			"pageHas": []string{"aside.side button.switch[disabled]"}, "titles": []string{"exclude_nodes"}},
+		map[string]any{"name": "detail: the switch asks first", "route": "#/zones/node-a", "status": st, "width": wide,
+			"click": []any{"aside.side button.switch"}, "page": []string{"Stop accepting models on node-a?", "Comment (required)"}},
+		map[string]any{"name": "detail: force unload names the helper", "route": "#/zones/node-a", "status": st, "width": wide,
+			"click": []any{"button[data-zp=force]"}, "page": []string{"Unload alpha from node-a?", "2 runs are in flight.", "node-a is the host, so the model also unloads from its helper node-b."}},
+	))
+	uiExec(t, znSpec(writes,
+		map[string]any{"name": "detail: stop accepting models", "route": "#/zones/node-a", "status": st, "width": wide,
+			"click":        []any{"aside.side button.switch", typed("textarea[data-field=comment]", "maintenance"), "button[data-go]"},
+			"fetchedQuery": []string{`^POST /api/nodes/` + esc(znMac(1)) + `/pause \{"comment":"maintenance"\}`}},
+		map[string]any{"name": "detail: force unload", "route": "#/zones/node-a", "status": st, "width": wide,
+			"click":        []any{"button[data-zp=force]", typed("textarea[data-field=comment]", "stuck"), "button[data-go]"},
+			"fetchedQuery": []string{`^POST /api/unload \{"model":"alpha","force":true,"comment":"stuck"\}`}},
 	))
 }

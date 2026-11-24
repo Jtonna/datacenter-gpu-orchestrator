@@ -161,9 +161,9 @@ func TestUINextZonesSelectionAndPanel(t *testing.T) {
 	uiExec(t, map[string]any{"shell": "next", "app": true, "base": fe.front.URL, "cases": []any{
 		// this scheduler keeps no history: the panel says so
 		map[string]any{"name": "one zone's panel", "route": "#/zones?zone=" + active, "status": st, "absent": designSamples,
-			"page": []string{"Platform", "linux-amd64-vulkan", "Agent release", "0.1.0", "Recent events", "The event history is off", "Pause", "Force unload"}},
+			"page": []string{"Platform", "linux-amd64-vulkan", "Agent release", "0.1.0", "Recent events", "The event history is off", "Accepting models", "Last 7 days"}},
 		map[string]any{"name": "the paused zone's panel", "route": "#/zones?zone=" + paused, "status": st,
-			"page": []string{"Switched off", "Unpause"}},
+			"page": []string{"Switched off"}, "pageHas": []string{"aside.side button.switch[aria-checked=false]"}},
 		map[string]any{"name": "the excluded zone's panel", "route": "#/zones?zone=" + excluded, "status": st,
 			"page": []string{"Switched off"}, "titles": []string{"exclude_nodes: " + excluded}},
 		map[string]any{"name": "a selection", "route": "#/zones", "status": st, "click": []string{"input[data-sel=all]"},

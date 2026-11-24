@@ -42,7 +42,7 @@ import { onStartups } from '../core/startup.js';
 import { defaultUser } from '../core/requests.js';
 import { createGroup, addMembers, removeMembers, renameGroup, pauseGroup, GROUP_NAME_RULE } from '../core/groups.js';
 import { unloadModel } from '../core/modelactions.js';
-import { tile, settlePending } from './nodes.js';
+import { settlePending } from './nodes.js';
 
 const PAGE = 16; // zones a page, as drawn (232 zones on 15 pages)
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -256,17 +256,13 @@ const EVENTS_SHOWN = 8;
 function zoneFacts(n, agent) {
   const a = agent || {};
   const chip = chipOf(agent);
-  const up = typeof a.host_uptime_s === 'number' ? durShort(a.host_uptime_s) : null;
   const seen = typeof a.last_seen_ago_s === 'number' ? (a.last_seen_ago_s < 2 ? 'just now' : durShort(a.last_seen_ago_s) + ' ago') : null;
   return facts([
     chip ? ['Device', h('span', chip)] : null,
     a.platform ? ['Platform', h('span.mono', a.platform)] : null,
     a.release ? ['Agent release', h('span.mono', a.release)] : null,
     a.install ? ['Install', h('span', a.install)] : null,
-    up ? ['Up for', h('span', up), 'Since the machine last started, as its agent reports it'] : null,
     seen ? ['Last report', h('span', seen)] : null,
-    ['Memory', h('span', memText(memOf(n)))],
-    ['Temperature', h('span', tempOf(agent) == null ? DASH : `${num(tempOf(agent))} °C`)],
     ['Priority', h('span', n.priority ? String(n.priority) : 'no tier matches'), 'Lower numbers are used first when a model is placed'],
   ]);
 }
@@ -282,21 +278,6 @@ function eventsPart(hist) {
     h('span', e.summary || e.type))));
   return h('section.zpart', { key: 'events' }, h('h3', 'Recent events'), body,
     hist && hist.events && hist.events.length ? h('a', { href: href('activity'), style: 'font-size:12px' }, 'All events on Activity') : null);
-}
-
-function zonePanel(st, n, hist, refresh) {
-  const agent = agentOf(st, n);
-  const z = zoneOf(st, n);
-  return [
-    h('section.zpart', { key: 'state' },
-      h('div.row', { style: 'gap:10px;flex-wrap:wrap' }, zoneStatus(z.square, z.label, z.title),
-        n.auto === false && z.pill !== 'off' ? badge('Named only', 'line', 'In no_auto_nodes: only a profile that names this zone in force_nodes puts a model here') : null,
-        n.local ? badge('Runs Potluck', 'n') : null),
-      z.rest ? h('div', z.rest) : null),
-    h('section.zpart', { key: 'facts' }, zoneFacts(n, agent)),
-    eventsPart(hist),
-    h('div', { key: 'card' }, tile(st, n, refresh)),
-  ];
 }
 
 // ---------- Create new zone (waits for the agent track) ----------
@@ -374,15 +355,9 @@ registerView({
       if (side && side.key === key) { side.redraw(); return; }
       if (side) { const s = side; side = null; s.close(); }
       if (g) { const p = groupPanel(g); p.key = key; side = p; return; }
-      const card = () => {
-        const st = state.status;
-        const n = st && viewNodes(st).find(x => x.id === id);
-        if (!n) return h('section.card', empty('This zone is not in the status', 'It may have left the pool. Close this panel to see the zones there are.'));
-        return zonePanel(st, n, hist && hist.id === id ? hist : null, refresh);
-      };
       loadEvents(id);
-      const nameOf = () => { const n = state.status && viewNodes(state.status).find(x => x.id === id); return n ? h('span.mono', n.hostname || n.id) : 'Zone'; };
-      const p = sidePanel({ label: 'Selected zone', title: nameOf, body: card, onClose: () => { if (side === p) { side = null; setQuery({ zone: '' }, true); } } });
+      loadWeek(id);
+      const p = zonePanelOf(id);
       p.id = id;
       p.key = key;
       side = p;
@@ -719,6 +694,142 @@ registerView({
         onClose: () => { if (side && side.key === 'g:' + name) { side = null; navigate('zones', [], r.query, true); } } });
     }
 
+    // ---------- the zone panel (Zones-Fleet-Detail, #/zones/<name>) ----------
+    let week = null; // {id, doc} the open zone's last 7 days by hour
+    const loadWeek = async id => {
+      week = { id, doc: null };
+      try {
+        const doc = await api.get('/api/nodes/availability', { node: id, from: '7d', step: 'hour' });
+        if (week && week.id === id) week = { id, doc };
+      } catch (e) { if (week && week.id === id) week = { id, doc: null, error: (e && e.message) || 'the request failed' }; }
+      if (alive && side && side.id === id) side.redraw();
+    };
+    const STATE_SHORT = { use: 'In use', free: 'Free', load: 'Loading', off: 'Switched off' };
+    function zoneHead(st, n) {
+      const a = agentOf(st, n) || {};
+      const z = zoneOf(st, n);
+      const g = a.group || n.group || '';
+      return h('div.sts', { title: z.title },
+        h('i', { class: 'sq ' + z.square, 'aria-hidden': 'true' }),
+        z.pill === 'down' ? z.label : STATE_SHORT[z.pill] || z.label,
+        h('span.mut', { style: 'font-weight:600' }, ' · ' + (g || 'No group') + (n.priority ? ' · tier ' + n.priority : '')));
+    }
+    function zoneSwitch(st, n) {
+      const a = agentOf(st, n);
+      if (!a) return null;
+      const name = n.hostname || a.name || n.id;
+      const excluded = !!(n.excluded || a.excluded);
+      const on_ = !a.paused && !excluded;
+      const z = zoneOf(st, n);
+      return h('label.gsw', 'Accepting models',
+        h('button.switch', { type: 'button', role: 'switch', 'aria-checked': on_ ? 'true' : 'false', 'aria-label': 'Accepting models', disabled: excluded,
+          title: excluded ? z.title || 'Excluded in the configuration (exclude_nodes)' : null,
+          onclick: () => ask({ title: [on_ ? 'Stop accepting models on ' : 'Accept models again on ', h('span.mono', name), '?'], go: on_ ? 'Stop accepting models' : 'Accept models again',
+            lines: on_ ? ['It takes no new model until someone lets it accept models again.', 'What it holds now keeps serving requests.'] : ['It may take a new model again, as soon as nothing else holds it back.'],
+            run: c => sendNodeAction(api, n.id, on_ ? 'pause' : 'unpause', c).then(() => toast(on_ ? `${name} takes no new model` : `${name} accepts models again`, 'ok')) }) }, h('span')));
+    }
+    // weekGrid(doc, now) -> 7 rows (oldest day first) of 24 hours, local time
+    function weekGrid(doc) {
+      const cells = new Map();
+      const ns = doc && (doc.nodes || [])[0];
+      for (const c of (ns && ns.cells) || []) { const t = tms(c.start); if (t != null) cells.set(Math.floor(t / 3600000), c); }
+      const nowMs = Date.now();
+      const today = new Date(nowMs); today.setHours(0, 0, 0, 0);
+      const DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      const out = [h('b'), h('span', '00'), h('span', '06'), h('span', '12'), h('span', '18')];
+      for (let d = 6; d >= 0; d--) {
+        const day = new Date(today); day.setDate(today.getDate() - d);
+        out.push(h('b', DAY[day.getDay()]));
+        for (let hr = 0; hr < 24; hr++) {
+          const at_ = new Date(day); at_.setHours(hr);
+          const t = at_.getTime();
+          if (t > nowMs) { out.push(h('i.fu', { title: hourText(t) + ' · not yet' })); continue; }
+          const c = cells.get(Math.floor(t / 3600000));
+          out.push(c ? h('i', { class: 'sq ' + availClass(c), title: `${DAY[day.getDay()]} ${hourText(t)} · ${cellWords(c)}` }) : h('i.nd', { title: `${DAY[day.getDay()]} ${hourText(t)} · nothing known` }));
+        }
+      }
+      return h('div.wg', { role: 'img', 'aria-label': 'Last 7 days by hour, one row per day' }, out);
+    }
+    function zoneBody(id) {
+      const st = state.status;
+      const n = st && viewNodes(st).find(x => x.id === id);
+      if (!n) return h('div.zempty', empty('This zone is not in the status', 'It may have left the pool. Close this panel to see the zones there are.'));
+      const a = agentOf(st, n) || {};
+      const name = n.hostname || a.name || n.id;
+      const host = String(a.addr || n.addr || '').replace(/:\d+$/, '');
+      const ssh = host ? 'ssh ' + host : '';
+      const mem = memOf(n);
+      const temp = tempOf(a);
+      const links = ((a.stats && a.stats.net) || []).map(x => x && x.link_mbps).filter(v => typeof v === 'number' && v > 0);
+      const u = uptimeDoc && (uptimeDoc.zones || []).find(v => v.id === id || v.name === name);
+      const win = uptimeDoc && uptimeDoc.window;
+      const since = win && win.complete === false && tms(win.covered_from) ? dayText(tms(win.covered_from)) : '';
+      const fact = (label, value, more) => h('div.fact', h('span.lbl', label), value, more || null);
+      const m = member(st, id);
+      const inst = m ? m.inst : n.holder ? (st.instances || []).find(i => i.profile === n.holder) : null;
+      const nameOfId = x => { const y = viewNodes(st).find(v => v.id === x); return y ? y.hostname || y.id : x; };
+      let loaded;
+      if (inst) {
+        const others = (inst.nodes || []).filter(x => x.id !== id);
+        const hostM = (inst.nodes || []).find(x => x.role === 'host');
+        const role = m ? roleShare(m.role, m.share) : '';
+        const runs = inst.in_flight || 0;
+        const since_ = tms(inst.ready_since);
+        const parts = [];
+        if (inst.state === 'starting') { const f = inst.load && inst.load.progress != null ? inst.load.progress : inst.load_progress; parts.push(f != null ? `${num(f * 100)}% loaded` : 'Loading'); }
+        else if (role) parts.push(role);
+        if (m && m.role === 'host' && others.length) parts.push([others.length === 1 ? 'helper ' : 'helpers ', others.map((x, i) => [i ? ', ' : '', h('span.mono', { style: 'font-size:12px' }, nameOfId(x.id))])]);
+        else if (hostM && hostM.id !== id) parts.push(['host ', h('span.mono', { style: 'font-size:12px' }, nameOfId(hostM.id))]);
+        if (inst.state !== 'starting') parts.push(plural(runs, 'run'));
+        if (since_) parts.push(['loaded ', h('time', { title: dateTime(since_), datetime: new Date(since_).toISOString() }, agoText(since_))]);
+        loaded = h('div.zl', { key: 'loaded' },
+          h('div', { style: 'flex:1;min-width:0' }, h('div.mono', { style: 'font-size:14px;font-weight:500' }, inst.profile),
+            h('div.mut', { style: 'font-weight:600' }, parts.map((p, i) => [i ? ' · ' : '', p]))),
+          button('Force unload', () => askUnload(inst.profile, { zone: id }), 'red', { 'data-zp': 'force' }));
+      } else {
+        const z = zoneOf(st, n);
+        loaded = h('div.zl', { key: 'loaded' }, h('span.mut', { style: 'font-weight:600' }, 'Nothing is loaded.', z.pill === 'free' && z.label !== 'Free' ? [' ', z.label, z.rest] : null));
+      }
+      const w = week && week.id === id ? week : null;
+      return [
+        h('div.gp-acts', { key: 'ssh' },
+          h('div.cmd', { title: 'No SSH user is set yet for this zone or its group: ssh uses your own user name (the setting comes with the server\'s next slice).' }, h('span.mono', ssh || DASH)),
+          button('Copy', () => { try { navigator.clipboard.writeText(ssh).then(() => toast('Copied', 'ok'), () => toast('The browser did not allow copying', 'err')); } catch { toast('The browser did not allow copying', 'err'); } }, '', { 'data-zp': 'copy', disabled: !ssh }),
+          button([icon('M3 5h14v10H3zM6 9l2 1.5L6 12M10 12h4', 15), 'Open terminal'], null, '', { 'data-zp': 'terminal', disabled: true, title: 'Open terminal is not built yet: Potluck has no terminal. Copy the command instead.' }),
+          button([icon('M16 10a6 6 0 1 1-2-4.5M16 4v4h-4', 15), 'Reboot'], null, 'red', { 'data-zp': 'reboot', disabled: true, title: REBOOT_WHY })),
+        h('div.f2', { key: 'facts' },
+          fact('Memory', mem ? h('b', gbNum(mem.used), h('span.mut.of', ` of ${gb(mem.total)}`)) : h('b.mut', DASH),
+            mem ? h('div.mb', { role: 'img', 'aria-label': `${Math.round(mem.used / mem.total * 100)}% of memory in use` }, h('span', { style: `width:${Math.round(mem.used / mem.total * 100)}%` })) : null),
+          fact('Temperature', h('b', temp == null ? DASH : `${num(temp)} °C`)),
+          fact('Ping', h('b.mut', { title: 'Ping is not measured yet: the agent does not time its heartbeat to Potluck (it needs the agent track).' }, 'not measured')),
+          fact('Uptime', typeof a.host_uptime_s === 'number' ? h('b', { title: 'Since the machine last started, as its agent reports it' }, goneFor(a.host_uptime_s * 1000)) : h('b.mut', { title: 'The agent reports no uptime' }, DASH)),
+          fact('Link speed', links.length ? h('b', { title: 'The network card\'s negotiated speed, not a measured transfer rate: Potluck measures none yet' }, `${num(Math.max(...links))} Mbit/s`)
+            : h('b.mut', { title: 'The network card reports no speed (a PS5 reports none), and Potluck measures no transfer rate yet' }, 'not measured')),
+          fact(since ? 'Up, since ' + since : 'Up, last 7 days', h('b', pctText(u ? u.uptime : null)))),
+        h('div.dh', { key: 'loaded-h' }, h('h3', 'Loaded now')),
+        loaded,
+        h('div.dh', { key: 'load-h' }, h('h3', 'Load a model')),
+        h('div.gp-acts', { key: 'load' },
+          h('button', { class: 'btn', type: 'button', disabled: true, style: 'flex:1;justify-content:space-between;font-weight:600', title: 'Loading onto a chosen zone is not built yet: the server takes no zone when it loads, Potluck picks the zones itself.' },
+            'Choose a profile', icon('M5 8l5 5 5-5', 15)),
+          button('Load', null, '', { 'data-zp': 'load', disabled: true, title: 'Loading onto a chosen zone is not built yet: the server takes no zone when it loads, Potluck picks the zones itself.' })),
+        h('div.dh', { key: 'week-h' }, h('h3', 'Last 7 days'),
+          h('span.mut.wkey', 'Idle', h('i.sq.free'), h('i.sq.use2'), h('i.sq.use4'), 'Busy', h('i.sq.down', { style: 'margin-left:8px' }), 'Down')),
+        h('div.wgbox', { key: 'week' }, !w || (!w.doc && !w.error) ? h('span.mut', 'Reading the last 7 days…') : w.error ? h('span.err-t', 'The last 7 days could not be read: ' + w.error) : weekGrid(w.doc)),
+        h('div.zmore', { key: 'more' }, eventsPart(hist && hist.id === id ? hist : null), h('section.zpart', h('h3', 'Machine'), zoneFacts(n, agentOf(st, n)))),
+      ];
+    }
+    function zonePanelOf(id) {
+      const nodeNow = () => state.status && viewNodes(state.status).find(x => x.id === id);
+      const title = () => { const n = nodeNow(); if (!n) return 'Zone'; const a = agentOf(state.status, n); const c = chipOf(a); return [h('span.mono', n.hostname || n.id), c ? h('span.mut.chipt', ' | ' + c) : null]; };
+      const sub = () => { const n = nodeNow(); return n ? zoneHead(state.status, n) : null; };
+      const controls = () => { const n = nodeNow(); return n ? zoneSwitch(state.status, n) : null; };
+      const foot = () => { const n = nodeNow(); return h('a.gp-act', { href: href('activity', [], { q: (n && n.hostname) || id }), 'data-zp': 'activity', title: 'Activity, searched for this zone\'s name' }, 'Activity for this zone', icon('M8 5l5 5-5 5', 15)); };
+      const p = sidePanel({ label: 'Selected zone', title, sub, controls, body: () => zoneBody(id), foot,
+        onClose: () => { if (side === p) { side = null; setQuery({ zone: '' }, true); } } });
+      return p;
+    }
+
     const view = liveView(el, () => {
       const st = state.status;
       if (side) side.redraw();
@@ -809,6 +920,9 @@ registerView({
       const tickMany = (xs, on_) => { xs.forEach(x => (on_ ? sel.add(x.id) : sel.delete(x.id))); view.refresh(); };
 
       const strips = new Map(all.map(x => [x.id, stripOf(avail, x)]));
+      // groups whose zones do not share one chip: each row names its own
+      const mixedChip = new Set();
+      for (const g of new Set(all.map(x => x.group))) if (new Set(all.filter(x => x.group === g && x.chip).map(x => x.chip)).size > 1) mixedChip.add(g);
       const pick = pickZone;
       const grid = narrow ? 'fr v2n' : 'fr v2';
       const zoneRow = (x, indent) => {
@@ -821,7 +935,7 @@ registerView({
           onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); pick(x.id); } else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) rowMenu(x, { preventDefault: () => e.preventDefault() }, e.currentTarget); } },
         canTick(x) ? h('input', { class: 'cb', type: 'checkbox', checked: sel.has(x.id), 'aria-label': 'Select ' + x.name, 'data-sel': x.id,
           onclick: e => { e.stopPropagation(); toggle(x.id); }, onkeydown: e => e.stopPropagation() }) : h('span'),
-        h('span.zn', { style: indent ? 'padding-left:26px' : null }, h('span.mono.znm', x.name)),
+        h('span.zn', { style: indent ? 'padding-left:26px' : null }, h('span.mono.znm', x.name), x.chip && mixedChip.has(x.group) ? h('span.mut', { style: 'font-weight:600' }, ' | ' + x.chip) : null),
         h('span.sts', { title: z.title }, h('i', { class: 'sq ' + z.square, 'aria-hidden': 'true' }), h('span.stx', z.label, z.rest)),
         h('span', { class: 'r mono' + (!x.mem || off ? ' mut' : '') }, memText(x.mem)),
         narrow ? null : [
@@ -851,7 +965,7 @@ registerView({
           h('span.gn', h('button', { class: 'more', type: 'button', 'aria-expanded': closed ? 'false' : 'true', 'aria-label': (closed ? 'Expand ' : 'Collapse ') + label, 'data-fold': name || '-',
             onclick: e => { e.stopPropagation(); if (shut.has(name)) shut.delete(name); else shut.add(name); view.refresh(); } }, icon(closed ? 'M8 5l5 5-5 5' : 'M5 8l5 5 5-5', 14)),
           h(name ? 'span.mono.gname' : 'span.gname', label),
-          h('span.mut.gmeta', num(count) + (chipsHere.length === 1 ? ' · ' + chipsHere[0] : count === 1 ? ' zone' : ' zones'))),
+          h('span.mut.gmeta', num(count) + (chipsHere.length === 1 ? ' · ' + chipsHere[0] : chipsHere.length > 1 ? ' · mixed' : count === 1 ? ' zone' : ' zones'))),
           h('span.gc', gcs),
           h('span.r', h('span.mono', memD && memD.total_mib ? `${num(Math.round(memD.used_mib / 1024))} / ${num(Math.round(memD.total_mib / 1024))} GB` : DASH)),
           narrow ? null : [
@@ -922,7 +1036,8 @@ registerView({
         bulkCount('unpause') ? bulkButton('unpause') : null,
         button('Force unload', () => forceUnload(chosenNow()), 'sm red', { 'data-bulk': 'force', disabled: !holds, title: holds ? null : 'None of the selected zones holds a model' }),
         button('Clear', () => { sel.clear(); view.refresh(); }, 'sm ghost', { 'data-act': 'clear' }));
-      const foot = h('div.bulk', { key: 'foot' }, chosen.length ? selPart : narrow ? null : keyPart,
+      const totals = narrow && pages === 1 ? h('span.mut', { style: 'font-weight:600' }, (gs.length ? plural(gs.length, 'group') + ' · ' : '') + plural(all.length, 'zone')) : null;
+      const foot = h('div.bulk', { key: 'foot' }, chosen.length ? selPart : narrow ? totals : keyPart,
         pager({ page, pages, onPage: n => setQuery({ page: n === 1 ? '' : String(n) }, true), label: 'Zone pages' }));
 
       const body = all.length
