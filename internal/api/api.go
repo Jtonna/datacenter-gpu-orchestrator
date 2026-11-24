@@ -167,6 +167,7 @@ type Server struct {
 	health healthState
 	// groups is the zone groups (groups.go); in memory when Options.Groups is nil.
 	groups *groups.Store
+	links  *loadLinks // linkspeed.go
 }
 
 // New builds the API for a scheduler (whose Run is started by the caller)
@@ -211,6 +212,7 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 	s.startAvailability() // availability.go
 	s.startHealth()       // health.go
 	s.startKeyExpiry()    // keyexpiry.go
+	s.startLoadLinks()    // linkspeed.go
 	if o.Audit != nil {
 		s.SetAuditHook(s.recorderHook(o.Audit)) // benchmark changes and runs are audited too (section bench)
 	}
@@ -258,6 +260,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // returns, so the caller may close the database then.
 func (s *Server) Close() {
 	s.occ.cancel()
+	s.stopLoadLinks()
 	s.bgCancel()
 	s.bgWG.Wait()
 	s.stopCatalog()

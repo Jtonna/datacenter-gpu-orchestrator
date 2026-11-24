@@ -61,6 +61,7 @@ func (s *Server) agentFacts(st *scheduler.Status) []pool.NodeFacts {
 	s.zoneFacts(facts, st)      // zonefacts.go: role, share, set-aside, who switched it off, free at
 	_, states, _ := zoneCountsOf(st, facts)
 	setZoneStates(st, facts, states) // counts.go: the state each zone is counted in, and its attention rank
+	s.setLoadLinks(facts)            // linkspeed.go
 	return facts
 }
 
@@ -94,6 +95,7 @@ func (s *Server) handleNodeFeed(w http.ResponseWriter, r *http.Request) {
 		}
 		l.ZoneFacts = s.zoneFactsOf(l.ID, stp, false, l.ExcludedBy) // zonefacts.go
 		l.ZoneState = states[l.ID]
+		l.LastLoadLink = s.linkOf(l.Name)
 		l.AttentionRank = attentionRank(l.ZoneState, l.Unplaced, l.Excluded, hungNodes(stp)[l.ID])
 		nodes = append(nodes, l)
 		zs = append(zs, rankedZone{rank: l.AttentionRank, name: l.Name, id: l.ID, v: l})

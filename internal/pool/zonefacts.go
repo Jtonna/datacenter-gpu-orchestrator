@@ -43,6 +43,19 @@ type ZoneFacts struct {
 	// distinct names joined with " + "). Absent when the agent reports no
 	// name, as a PS5 does today; Potluck never guesses one.
 	Chip string `json:"chip,omitempty"`
+	// LastLoadLink is the newest ready load that sent this zone at least
+	// 1 MiB: bytes over the load's time, a lower bound of the link's rate
+	// (internal/api/linkspeed.go). Absent until such a load.
+	LastLoadLink *LoadLink `json:"last_load_link,omitempty"`
+}
+
+// LoadLink is a zone's last load transfer.
+type LoadLink struct {
+	MBs   float64 `json:"mb_s"` // megabytes (10^6) per second
+	Bytes int64   `json:"bytes"`
+	LoadS float64 `json:"load_s"`
+	At    string  `json:"at"` // when the load finished
+	Model string  `json:"model"`
 }
 
 // MemberFacts is a node's part in an instance: its role (host runs
