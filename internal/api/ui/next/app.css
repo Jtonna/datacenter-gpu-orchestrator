@@ -1123,3 +1123,80 @@ table.runs{width:100%;border-collapse:collapse}
 .prf-ebody{display:flex;flex-direction:column;gap:22px;padding:16px var(--pad-panel)}
 .prf-esec h3{font-size:var(--fs-label);font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);margin-bottom:10px}
 .prf-efoot{position:sticky;bottom:0;display:flex;align-items:center;gap:10px;padding:10px var(--pad-panel);border-top:1px solid var(--line);background:var(--surface);border-radius:0 0 12px 12px}
+
+/* ---------- MCP access keys (views/mcp.js; boards MCP, MCP-New, MCP-Created, MCP-Manage) ----------
+   The list panel (.mcp): a 56 px head (Access keys · N active, New key),
+   the table (42 px rows; expired and revoked rows muted; the open row
+   tinted with the green edge; a just-made row tinted lighter); "Manage ›"
+   shows on the row's hover. The panel parts (.mcp-form): fields with a
+   small label, 36 px inputs, the permission rows (name | 190 px levels),
+   the settings snippet. Key and Last used drop out when the list is
+   narrow (the docked panel beside it), as the three panel boards draw it. */
+.mcp{display:flex;flex-direction:column;min-width:0;background:var(--surface);border:1px solid var(--line-panel);border-radius:12px;overflow:hidden;container-type:inline-size}
+.mcp-head{display:flex;align-items:center;gap:12px;height:56px;flex:none;padding:0 14px 0 20px}
+.mcp-head h2{margin:0;font-size:14px;font-weight:800}
+.mcp-head h2 .mut{font-size:12px;font-weight:600}
+.mcp-head .btn{margin-left:auto}
+.mcp-scroll{overflow-x:auto}
+.mcp-tbl{width:100%;border-collapse:collapse}
+.mcp-tbl th{text-align:left;font-size:11.5px;font-weight:700;color:var(--mut);padding:6px 8px;border-top:1px solid #e9eeeb;white-space:nowrap}
+.mcp-tbl td{height:42px;box-sizing:border-box;padding:0 8px;border-top:1px solid #e9eeeb;white-space:nowrap}
+.mcp-tbl tr:last-child td{border-bottom:1px solid #e9eeeb}
+.mcp-tbl th:first-child,.mcp-tbl td:first-child{padding-left:20px}
+.mcp-tbl th:last-child,.mcp-tbl td:last-child{padding-right:16px}
+.mcp-tbl td.num{text-align:right}
+.mcp-tbl .c-go{width:90px}
+.mcp-tbl tbody tr{cursor:pointer}
+.mcp-tbl tbody tr:hover td{background:#f3f6f4}
+.mcp-tbl tr.fresh td{background:#f1f8f4}
+.mcp-tbl tr.sel td{background:#e2f1e9}
+.mcp-tbl tr.sel td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
+.mcp-tbl tr.gone td{color:#7c8882}
+.mcp-tbl td.nm{font-weight:700}
+.mcp-tbl td.nm>span:first-child{display:inline-block;max-width:260px;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
+.mcp-tbl td.nm .ktag{margin-left:8px}
+.mcp-tbl .go{display:inline-flex;align-items:center;gap:3px;font-weight:700;color:#9aa49e;text-decoration:none}
+.mcp-tbl .go .tx{visibility:hidden}
+.mcp-tbl tbody tr:hover .go,.mcp-tbl tr.sel .go,.mcp-tbl .go:focus-visible{color:var(--link)}
+.mcp-tbl tbody tr:hover .go .tx,.mcp-tbl tr.sel .go .tx,.mcp-tbl .go:focus-visible .tx{visibility:visible}
+@container (max-width:900px){.mcp-tbl .c-key,.mcp-tbl .c-used{display:none}}
+@container (max-width:600px){
+  .mcp-tbl{table-layout:fixed}
+  .mcp-tbl td{overflow:hidden;text-overflow:ellipsis}
+  .mcp-tbl th:nth-child(1){width:34%}
+  .mcp-tbl th:nth-child(4){width:96px}
+  .mcp-tbl th:nth-child(6){width:128px}
+  .mcp-tbl .c-go{width:44px}
+  .mcp-tbl td.c-go{overflow:visible;text-overflow:clip}
+  .mcp-tbl .go .tx{display:none}
+  .mcp-tbl td.nm>span:first-child{max-width:100%}
+  .mcp-tbl td.nm .ktag{display:none}
+}
+.ktag{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:6px;font-size:12px;font-weight:700;white-space:nowrap;box-sizing:border-box}
+.ktag.t-ok{background:#dcf0e5;color:#0a4a32}
+.ktag.t-soon{background:#f8e7bd;color:#553a00}
+.ktag.t-gone{background:#e9eeeb;color:#55615b}
+.ktag.t-line{height:20px;padding:0 6px;font-size:11px;border:1px dashed #b9c3bd;color:#55615b;background:transparent}
+.mcp-form{display:flex;flex-direction:column;gap:16px;min-width:0}
+.mcp-form .fld{display:flex;flex-direction:column;gap:6px;min-width:0}
+.mcp-form .fld-h{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.mcp-form .lbl{font-size:11.5px}
+.mcp-form .once{color:#9a2a21}
+.mcp-form .mcp-when{color:var(--text)}
+.mcp-form .inp{height:36px;box-sizing:border-box;padding:0 11px;border:1px solid var(--ctl-border);border-radius:8px;background:var(--surface);font-family:inherit;font-size:13px;font-weight:600;color:var(--text);width:100%}
+.mcp-form .inp.mono{font-family:var(--mono);font-weight:500}
+.mcp-form .mcp-key{display:flex;align-items:center;border-color:#5fae8a;background:#f6fbf8;overflow-x:auto;white-space:nowrap;user-select:all}
+.mcp-form .mcp-date{max-width:200px}
+.mcp-form .seg{display:flex;width:100%}
+.mcp-form .seg button{flex:1;white-space:nowrap}
+.mcp-perms{display:flex;flex-direction:column}
+.mcp-perms .pr{display:grid;grid-template-columns:minmax(0,1fr) 190px;gap:12px;align-items:center;padding:9px 0;border-top:1px solid #e9eeeb}
+.mcp-perms .pr:first-child{border-top:0}
+.mcp-perms .pr-name{font-weight:700}
+.mcp-perms .pr-name .mut{font-weight:600}
+.mcp-perms .seg{height:28px}
+.mcp-perms .mcp-level{font-weight:700;text-align:right}
+.mcp-snip{margin:0;padding:12px 14px;border:1px solid var(--line-panel);border-radius:10px;background:#f8faf8;font-family:var(--mono);font-size:12px;line-height:1.6;color:var(--text);white-space:pre;overflow-x:auto}
+.mcp-note{margin:0;font-size:12px;font-weight:600}
+.mcp-use{font-weight:600}
+.mcp-list{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px}
