@@ -28,6 +28,8 @@ type ZoneFacts struct {
 	FreeInS   *float64 `json:"free_in_s,omitempty"`
 	FreeBasis string   `json:"free_basis,omitempty"`
 	Next      string   `json:"next,omitempty"`
+	// Group is the zone group the node is in (absent when in none).
+	Group string `json:"group,omitempty"`
 }
 
 // MemberFacts is a node's part in an instance: its role (host runs

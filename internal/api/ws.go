@@ -46,7 +46,7 @@ const (
 )
 
 // subscribable are the topics a client can switch on and off; hello and ping always arrive.
-var subscribable = map[string]bool{TopicStatus: true, TopicEvent: true, TopicBench: true, TopicConfig: true, TopicModels: true, TopicRequests: true, TopicHealth: true}
+var subscribable = map[string]bool{TopicStatus: true, TopicEvent: true, TopicBench: true, TopicConfig: true, TopicModels: true, TopicRequests: true, TopicHealth: true, TopicGroups: true}
 
 // wsConn is what the hub needs of a connection (*websocket.Conn satisfies it).
 type wsConn interface {
@@ -100,6 +100,7 @@ type wsHub struct {
 	models   func(ctx context.Context) []byte // the whole catalog as a frame's data, or nil
 	onStatus func(v any)                      // every status the loop looked at
 	health   func(c *wsClient)                // a client subscribed to the health topic (health.go)
+	groups   func(c *wsClient)                // a client subscribed to the groups topic (groups.go)
 	log      func(msg string, args ...any)
 
 	mu        sync.Mutex
@@ -306,6 +307,9 @@ func (h *wsHub) serve(ctx context.Context, conn wsConn) {
 			}
 			if next[TopicHealth] && !prev[TopicHealth] && h.health != nil {
 				h.health(c)
+			}
+			if next[TopicGroups] && !prev[TopicGroups] && h.groups != nil {
+				h.groups(c)
 			}
 		case "pong":
 		}
@@ -602,7 +606,7 @@ func (s *Server) newWSHub() *wsHub {
 			benchState = "on"
 		}
 		return map[string]any{"version": o.Version, "started_at": s.start.UnixMilli(), "server_time": s.opts.Now().UnixMilli(),
-			"history": hist, "bench": benchState, "topics": []string{TopicStatus, TopicEvent, TopicBench, TopicConfig, TopicPing, TopicModels, TopicRequests, TopicHealth}, "ws_max_clients": max, "config_revision": s.configRevision()}
+			"history": hist, "bench": benchState, "topics": []string{TopicStatus, TopicEvent, TopicBench, TopicConfig, TopicPing, TopicModels, TopicRequests, TopicHealth, TopicGroups}, "ws_max_clients": max, "config_revision": s.configRevision()}
 	}
 	h.status = o.statusSource
 	if h.status == nil {
@@ -612,6 +616,7 @@ func (s *Server) newWSHub() *wsHub {
 	}
 	h.onStatus = s.catalogStatus
 	h.health = s.healthSubscribe
+	h.groups = s.sendGroups
 	h.models = func(ctx context.Context) []byte {
 		snap, err := s.catalogGet(ctx)
 		if err != nil {

@@ -40,6 +40,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/fleet"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/gguf"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/groups"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/logrelay"
@@ -436,6 +437,13 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 	}
 	ao.Logs = logRelay
 	ao.Usage = usageStore // the availability sampler records into it
+	if dbStore != nil {
+		if gs, err := groups.Open(dbStore); err != nil {
+			log.Warn("zone groups not opened: they are kept in memory until the next start", "err", err)
+		} else {
+			ao.Groups = gs
+		}
+	}
 	apiSrv = api.New(cfg, sched, ao)
 	started.Store(true)
 	// MCP at /mcp on the same port; its tools run in-process through apiSrv (design 9.5).

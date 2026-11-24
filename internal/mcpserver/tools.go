@@ -48,6 +48,9 @@ func i(desc string) P    { return P{"type": "integer", "description": desc} }
 func b(desc string) P    { return P{"type": "boolean", "description": desc} }
 func obj(desc string) P  { return P{"type": "object", "description": desc} }
 func anyv(desc string) P { return P{"description": desc} }
+func strs(desc string) P {
+	return P{"type": "array", "items": P{"type": "string"}, "description": desc}
+}
 func en(desc string, vals ...string) P {
 	return P{"type": "string", "description": desc, "enum": vals}
 }
@@ -410,6 +413,30 @@ func allTools() []*tool {
 		{Name: "force_unload_node", Desc: "Force unload an agent node: the model instance using it is killed (requests in flight are cut off) and the node's launch is stopped with force, then the agent is reset if it does not stop within 5 s. Use it only when the owner asked. Only with membership agents.",
 			Props: P{"id": s("The node id."), "comment": s("Required: why, stored in the audit log.")}, Required: []string{"id", "comment"}, Destructive: true, Idempotent: true,
 			Method: "POST", Path: "/api/nodes/{id}/force-unload", Body: []string{"comment"}},
+
+		// ---- zone groups (a label and a way to act on many zones; never a placement rule) ----
+		rd("list_groups", "List the zone groups in the order they were made: each with its members (node ids and names), counts by state (total, reachable, down, lost, set_aside, off, in_use, free, loading), memory, temperature, whether its zones accept models (all, none, mixed), the zones that need attention and the models placed on it; and the zones in no group.", nil, nil, "GET", "/api/groups"),
+		{Name: "create_group", Desc: "Make a zone group, optionally with members. A zone is in at most one group: a member given here moves out of the group it was in.",
+			Props:    P{"name": s("The group name: 1 to 64 letters, digits, '.', '_' or '-'."), "members": strs("Optional: node ids to put in the group."), "comment": s("Optional: why, stored in the audit log.")},
+			Required: []string{"name"}, Method: "POST", Path: "/api/groups", Body: []string{"name", "members", "comment"}},
+		{Name: "rename_group", Desc: "Give a zone group another name.",
+			Props:    P{"group": s("The group's current name."), "name": s("The new name."), "comment": s("Optional: why, stored in the audit log.")},
+			Required: []string{"group", "name"}, Idempotent: true, Method: "PATCH", Path: "/api/groups/{group}", Body: []string{"name", "comment"}},
+		{Name: "delete_group", Desc: "Delete a zone group; its zones are then in no group. The zones themselves are not changed.",
+			Props:    P{"group": s("The group name."), "comment": s("Optional: why, stored in the audit log.")},
+			Required: []string{"group"}, Destructive: true, Idempotent: true, Method: "DELETE", Path: "/api/groups/{group}", Body: []string{"comment"}},
+		{Name: "set_zone_group", Desc: "Put zones in a group (moving them out of the group they were in).",
+			Props:    P{"group": s("The group name."), "nodes": strs("The node ids."), "comment": s("Optional: why, stored in the audit log.")},
+			Required: []string{"group", "nodes"}, Idempotent: true, Method: "POST", Path: "/api/groups/{group}/members", Body: []string{"nodes", "comment"}},
+		{Name: "remove_from_group", Desc: "Take zones out of a group; they are then in no group.",
+			Props:    P{"group": s("The group name."), "nodes": strs("The node ids."), "comment": s("Optional: why, stored in the audit log.")},
+			Required: []string{"group", "nodes"}, Idempotent: true, Method: "DELETE", Path: "/api/groups/{group}/members", Body: []string{"nodes", "comment"}},
+		{Name: "pause_group", Desc: "Pause every zone in a group (Accepting models off): no new load is placed on them; loads already running continue. One audit entry per zone. Only with membership agents.",
+			Props:    P{"group": s("The group name."), "comment": s("Required: why, stored in the audit log.")},
+			Required: []string{"group", "comment"}, Idempotent: true, Method: "POST", Path: "/api/groups/{group}/pause", Body: []string{"comment"}},
+		{Name: "unpause_group", Desc: "Return every zone in a group to the pool (Accepting models on). One audit entry per zone. Only with membership agents.",
+			Props:    P{"group": s("The group name."), "comment": s("Required: why, stored in the audit log.")},
+			Required: []string{"group", "comment"}, Idempotent: true, Method: "POST", Path: "/api/groups/{group}/unpause", Body: []string{"comment"}},
 	}
 	for _, t := range T {
 		if !t.ReadOnly {

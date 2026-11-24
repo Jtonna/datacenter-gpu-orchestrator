@@ -164,6 +164,29 @@ Potluck remembers the machines its previous run listed when it ended: active or 
 - **Gone for good**: remove it (`DELETE /api/nodes/<id>`): it is then listed as `removed` under its name, not counted, and refused at registration until it is re-admitted; after a re-admit it is listed again only once its agent registers. A machine that deregistered (uninstall) is not listed after a restart.
 - **Forgotten**: only if the history kept (20 files of 16 MiB by default) no longer holds the previous run's start and its events.
 
+### Zone groups
+
+A group is a name for a set of zones (for example one rack). Each zone is in one group or none. A group is a label and a way to act on many zones at once; it never changes where a model is placed (tiers do that).
+
+```sh
+curl -s $H/api/groups                                                   # every group with its figures, and the zones in none
+curl -s -X POST $H/api/groups -d '{"name":"rack-a","members":["02:00:00:00:00:01"],"comment":"first rack"}'
+curl -s -X POST $H/api/groups/rack-a/members -d '{"nodes":["02:00:00:00:00:02"]}'   # moves it out of its old group
+curl -s -X DELETE $H/api/groups/rack-a/members -d '{"nodes":["02:00:00:00:00:02"]}'
+curl -s -X PATCH $H/api/groups/rack-a -d '{"name":"rack-b"}'
+curl -s -X POST $H/api/groups/rack-b/pause -d '{"comment":"maintenance"}'           # "Accepting models" off
+curl -s -X POST $H/api/groups/rack-b/unpause -d '{"comment":"done"}'
+curl -s -X DELETE $H/api/groups/rack-b                                  # its zones are then in no group
+```
+
+- **Names**: 1 to 64 letters, digits, `.`, `_` or `-`, starting with a letter or digit; unique without regard to case (`409` when taken). A member must be a zone Potluck lists (`400` otherwise).
+- **Figures** per group (`GET /api/groups`): `members` and `member_names`, `count`, `counts` (total, reachable, down, lost, set_aside, off, in_use, free, loading; counted as the Zones row of `/api/health` counts them), `memory` (used_mib, total_mib, each_total_mib when all members have the same total), `temp` (avg_c, hottest_c and which zone, from the stats headline temperature), `accepting` (`all`, `none` or `mixed`: how many members are paused), `needs_attention` (members that are lost or set aside) and `models` (profiles placed on members, with how many). `ungrouped` has the same figures for the zones in no group. Each zone in `GET /api/nodes` and in `agents` of `/api/status` carries `group` (absent when in none).
+- **Pause and unpause** act on each member as `POST /api/nodes/{id}/pause` does: one audit entry and one history event per member, the comment followed by "(group <name>)". A comment is required.
+- **Audit**: every change is an entry in section `groups`, target `group:<name>`, signed by the caller (the default user unless an agent key or `X-Actor` names another).
+- **Live**: the `/ws` topic `groups` sends the `GET /api/groups` document on subscribe and again only when a group changes.
+- **MCP**: `list_groups`, `create_group`, `rename_group`, `delete_group`, `set_zone_group`, `remove_from_group`, `pause_group`, `unpause_group`.
+- **Stored** in `scheduler.db`, tables `zone_groups` and `zone_group_members`, versioned by their own ledger `group_migrations`. An older image does not know these tables and leaves them alone, so rolling back keeps the groups for when you come forward again; the older image shows no groups.
+
 ### Keep a node out of the pool
 
 Two node lists. Each entry is a node id or a hostname glob; matching ignores case; the whole list is replaced; add `?dry_run=1` to check first.

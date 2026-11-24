@@ -131,6 +131,9 @@ func listHas(raw json.RawMessage, entry string) bool {
 // it could not be read) and the node's paused and excluded facts.
 func (s *Server) zoneFactsOf(id string, st *scheduler.Status, paused bool, excludedBy string) pool.ZoneFacts {
 	var z pool.ZoneFacts
+	if s.groups != nil {
+		z.Group, _ = s.groups.GroupOf(id)
+	}
 	if paused {
 		if f := s.pausedBy(id); f.at > 0 {
 			z.PausedAt, z.PausedActor = isoTime(time.UnixMilli(f.at)), f.actor

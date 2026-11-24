@@ -14,6 +14,7 @@ Fix on top of v36. No agent change, no schema change, no new port.
 No agent change. No new listening port.
 
 - **One event per start for the known machines.** The start writes one `knownMachines` event for the fleet (data `machines`: id, name, last_seen) in place of one `nodeMembership` event per carried machine, which filled each machine's recent events at every start. The per-machine warning stays, written only for a machine that ends up listed as lost. The events of v39 to v41 are still read.
+- **Zone groups.** A zone is in one group or none. `GET/POST /api/groups`, `PATCH/DELETE /api/groups/{name}`, `POST/DELETE /api/groups/{name}/members`, `POST /api/groups/{name}/pause|unpause` (each member paused or unpaused, one audit entry each), MCP tools to match, `/ws` topic `groups` (sent only on change), `group` on each zone in `/api/nodes` and `/api/status` agents. New tables `zone_groups` and `zone_group_members` in `scheduler.db` with their own ledger `group_migrations`; an older image ignores them (runbook D, "Zone groups").
 
 ## Scheduler image: known machines across a restart (phase 4)
 
