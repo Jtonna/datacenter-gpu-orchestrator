@@ -76,6 +76,7 @@ func startScheduler(t *testing.T, agentPort, workerPort int) string {
 		Folders: map[string]map[string][]byte{
 			"agent":              {"potluck-agent-linux-amd64": []byte("AGENT")},
 			"linux-amd64-vulkan": {"llama-server": []byte("L"), "rpc-server": []byte("R")},
+			"linux-amd64-cuda":   {"llama-server": []byte("L"), "rpc-server": []byte("R")},
 		}})
 	rel, err := release.Load(root, agentproto.Release)
 	if err != nil {
@@ -408,5 +409,82 @@ func TestMemFileSilentWithholdsReports(t *testing.T) {
 	time.Sleep(time.Until(wrote.Add(2500 * time.Millisecond)))
 	if a := ago("ps5-b"); a > 0.45 {
 		t.Fatalf("ps5-b did not report at once after its silence: last seen %.2f s ago, 2.5 s after the write", a)
+	}
+}
+
+// A fake has the platform nodes.json gives it ("linux-amd64-cuda" for a
+// laptop with an NVIDIA GPU), and --from-status mirrors each zone's platform,
+// so a copy of a fleet with such a zone shows it in its own tier. The
+// default stays linux-amd64-vulkan. Devices of another backend than the
+// platform's are refused.
+func TestPlatformPerFake(t *testing.T) {
+	agentPort, workerPort := freeLoopbackPort(t), freeLoopbackPort(t)
+	base := startScheduler(t, agentPort, workerPort)
+	nodes := []Node{{ID: "02:00:00:00:00:01", Name: "ps5-a"}, {ID: "02:00:00:00:00:07", Name: "laptop-1", Platform: "linux-amd64-cuda", MemTotalMiB: 8192}}
+	for i := range nodes {
+		fillDefaults(&nodes[i])
+	}
+	if d := nodes[1].Devices; len(d) != 1 || d[0].Backend != agentproto.BackendCUDA || d[0].SharesSystemMemory || d[0].TotalMiB != 8192 {
+		t.Fatalf("cuda default devices: %+v", d)
+	}
+	if g := nodes[1].GPUs; len(g) != 1 || g[0].Vendor != agentproto.VendorNvidia || g[0].Integrated {
+		t.Fatalf("cuda default gpus: %+v", g)
+	}
+	if err := assignAddrs(nodes, "127.0.0.2"); err != nil {
+		t.Fatal(err)
+	}
+	f, err := Start(context.Background(), Options{Scheduler: base, Release: "auto", AgentPort: agentPort, WorkerPort: workerPort,
+		Heartbeat: 100 * time.Millisecond}, nodes, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(f.Close)
+	want := map[string]string{"ps5-a": "linux-amd64-vulkan", "laptop-1": "linux-amd64-cuda"}
+	var st map[string]any
+	eventually(t, "both agents active with their platforms", func() bool {
+		st = getMap(t, base+"/api/status")
+		n := 0
+		for _, x := range st["agents"].([]any) {
+			a := x.(map[string]any)
+			if a["state"] == "active" && a["platform"] == want[a["name"].(string)] {
+				n++
+			}
+		}
+		return n == 2
+	})
+
+	// --from-status mirrors the platform, from /api/status and /api/nodes
+	file := filepath.Join(t.TempDir(), "status.json")
+	raw, _ := json.Marshal(st)
+	os.WriteFile(file, raw, 0o644)
+	for _, src := range []string{file, base + "/api/status", base + "/api/nodes"} {
+		got, err := nodesFromStatus(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		plat := map[string]string{}
+		for _, n := range got {
+			plat[n.Name] = n.Platform
+			if n.Name == "laptop-1" && (len(n.Devices) != 1 || n.Devices[0].Backend != agentproto.BackendCUDA || len(n.GPUs) != 1 || n.GPUs[0].Vendor != agentproto.VendorNvidia) {
+				t.Errorf("%s: laptop mirrored as %+v", src, n)
+			}
+		}
+		if plat["ps5-a"] != "linux-amd64-vulkan" || plat["laptop-1"] != "linux-amd64-cuda" {
+			t.Errorf("%s: platforms %v", src, plat)
+		}
+	}
+
+	// refused: a platform that is not os-arch-backend, a backend no
+	// release has, devices of another backend than the platform's
+	for _, bad := range []Node{
+		{ID: "02:00:00:00:00:11", Name: "x1", Platform: "cuda"},
+		{ID: "02:00:00:00:00:12", Name: "x2", Platform: "linux-amd64-rocm"},
+		{ID: "02:00:00:00:00:13", Name: "x3", Platform: "linux-amd64-cuda", Devices: []agentproto.Device{{Name: "Vulkan0", Backend: agentproto.BackendVulkan, TotalMiB: 8000}}},
+		{ID: "02:00:00:00:00:14", Name: "x4", Devices: []agentproto.Device{{Name: "CUDA0", Backend: agentproto.BackendCUDA, TotalMiB: 8000}}},
+	} {
+		fillDefaults(&bad)
+		if err := assignAddrs([]Node{bad}, "127.0.0.2"); err == nil || !strings.Contains(err.Error(), bad.Name) {
+			t.Errorf("%s: %v", bad.Name, err)
+		}
 	}
 }

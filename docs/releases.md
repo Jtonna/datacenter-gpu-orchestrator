@@ -2,6 +2,14 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Test tool: fake agents keep each zone's platform
+
+`potluck-fake-agents` only (the readiness tool); the scheduler and agent images do not change.
+
+- **A platform per fake.** A node in `--nodes` may give `platform` (`<os>-<arch>-<backend>`, default `linux-amd64-vulkan`). `linux-amd64-cuda` registers with the cuda backend and an NVIDIA GPU, so the scheduler gives it the cuda platform and the tier that matches it. Its default device is a `CUDA0` with memory of its own.
+- **Mirrored.** `--from-status` copies each zone's `platform` from `GET /api/status` or `GET /api/nodes`, so a copy of a fleet with a cuda laptop shows it in its own tier.
+- **Checked.** A platform that does not read, or devices of another backend than the platform's, stop the tool at start with the node named.
+
 ## Web UI: the Models list's Needs cell holds the figure alone; Requests at 1280
 
 No server change.
