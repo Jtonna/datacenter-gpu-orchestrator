@@ -258,6 +258,10 @@ func (c *schedCore) deviceReadings(in *inst) (out []deviceReading, wait bool) {
 		if !ok {
 			return nil, false
 		}
+		if in.baseUnsettled[id] {
+			c.log.Debug("no per-device overhead reading: the base was taken just after a release on this node", "profile", in.prof.Name, "node", c.nodeName(id))
+			continue
+		}
 		n, ok := c.raw[id]
 		if !ok || n.FreeUnknown || !n.Online || !n.FreeAvgKnown {
 			return nil, true

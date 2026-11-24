@@ -175,6 +175,10 @@ type inst struct {
 	// baseFree is each node's free figure when the instance was created
 	// (reserve.go): what the node gives up for it is measured against it.
 	baseFree map[core.NodeID]int
+	// baseUnsettled: the nodes an instance that ran left within one
+	// free_average_window before this one was created; their base may still
+	// show it, so no overhead reading is taken there (unsettledBase).
+	baseUnsettled map[core.NodeID]bool
 	// cyclePeak is the most each node gave up for this instance in this
 	// load-to-unload cycle (reserve.go, endPeakCycle).
 	cyclePeak map[core.NodeID]int

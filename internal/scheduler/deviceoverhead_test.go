@@ -395,3 +395,19 @@ func TestDeviceOverhead_RowsFromCachedLoadsDroppedAtStart(t *testing.T) {
 		t.Fatalf("stored %+v", rows)
 	}
 }
+
+// The same settled-base rule per worker: b had an instance leave it just
+// before; a had not. Only a gives a reading.
+func TestDeviceOverhead_NoReadingFromAnUnsettledBase(t *testing.T) {
+	h := devHarness(t)
+	h.c.ns("b").releasedAt = h.clk.Now().Add(-5 * time.Second)
+	twoConsoleLoad(h, 4600, 4300)
+	h.advance(h.cfg.Defaults.FreeAverageWindow + time.Second)
+	e := h.c.cfg.Profiles["e"]
+	if _, ok := devRow(h, shapeOf(e), "a", 2); !ok {
+		t.Fatal("no reading on a")
+	}
+	if _, ok := devRow(h, shapeOf(e), "b", 2); ok {
+		t.Fatal("a reading on b from an unsettled base")
+	}
+}
