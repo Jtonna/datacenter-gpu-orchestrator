@@ -86,6 +86,7 @@ import { zonesStatus, counts, groupsDoc, uptimeDoc, fleetStrip } from './ui-fixt
 import { schema as cfgSchema, configDoc, storedConfig, dryRun } from './ui-fixture/config.mjs';
 import { profileEntries, profileSpecs, catalog as cfgCatalog, planAnswer } from './ui-fixture/profiles.mjs';
 import { Keys } from './ui-fixture/keys.mjs';
+import { modelsDoc } from './ui-fixture/models.mjs';
 
 const argv = process.argv.slice(2);
 const opt = (k, d) => { const i = argv.indexOf(k); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
@@ -115,6 +116,8 @@ const NAMED_ONLY = opt('--named-only', '');
 // (scripts/ui-fixture/keys.mjs; kept in memory, so the MCP pages can be driven end to end). Without it the old
 // names-only /api/agents answer stays.
 const KEYS_STATE = opt('--keys', '');
+// --models none|five|full: GET /api/models as the Models list reads it, with the disk block (scripts/ui-fixture/models.mjs)
+const MODELS_STATE = opt('--models', '');
 const KEYS = KEYS_STATE ? new Keys(KEYS_STATE) : null;
 const cfgDoc = () => { const d = configDoc(CONFIG); d.settings.requests_live_timings = LIVE_TIMINGS; return d; };
 
@@ -343,7 +346,7 @@ const server = http.createServer((req, res) => {
   if (req.method !== 'GET') return json(res, 405, { error: { message: 'the fixture is read-only' } });
   if (STATE === 'loading' && p.startsWith('/api/requests')) return; // never answers
   if (p === '/api/status') return json(res, 200, status(now));
-  if (p === '/api/models') return json(res, 200, { version: 1, models: CATALOG ? cfgCatalog() : [] });
+  if (p === '/api/models') return json(res, 200, MODELS_STATE ? modelsDoc(MODELS_STATE, now) : { version: 1, models: CATALOG ? cfgCatalog() : [] });
   if (p === '/api/profiles') return json(res, 200, { profiles: profileEntries() });
   if (p === '/api/config') { const d = cfgDoc(); return json(res, 200, Object.assign({ updated_at: now - 3 * H, configured: d.revision > 0, tiers: [], exclude_nodes: [], no_auto_nodes: NAMED_ONLY ? [NAMED_ONLY] : [], node_overrides: {} }, d, { profiles: profileSpecs() })); }
   // what the health popup reads (the Health board's sample, generic names)
