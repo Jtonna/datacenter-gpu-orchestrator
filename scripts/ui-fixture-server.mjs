@@ -9,6 +9,7 @@
 // usage: node scripts/ui-fixture-server.mjs [--port 3122] [--ui internal/api/ui] [--host 0.0.0.0]
 //                                           [--state normal|empty|off|loading] [--sequence] [--live-timings]
 //                                           [--health two|good|unknown] [--release 0.1.5]
+//                                           [--zones none|groups|fleet] [--uptime-partial]
 //
 //   /ui/components.html  the shell's shared components (scripts/ui-fixture/components.js)
 //   /ui/...      the new shell (ui/next laid over the classic files, as the
@@ -37,6 +38,14 @@
 // attention, as the mockup draws it), good (no issue), unknown (no status
 // read yet: Zones and Queue unknown, as is Alerts in every state).
 //
+// --zones: the Zones pages' states (scripts/ui-fixture/zones.mjs): none (the
+// eight machines, no group; the default), groups (the eight in rack-a and
+// home, one with no group), fleet (232 zones as Zones-Fleet draws them, a
+// paused group, 15 pages). Every state has zone_state and group on the
+// zones, the counts on GET /api/nodes, GET /api/groups and GET
+// /api/nodes/uptime. --uptime-partial: the uptime window is not complete
+// yet (the history began 30 hours ago).
+//
 // --sequence: a scripted change for screenshots: 4 s after a client
 // subscribes to the requests topic, the queued run 202 starts (a "started"
 // frame), so a queued row can be seen turning into a running one.
@@ -46,6 +55,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { zonesStatus, counts, groupsDoc, uptimeDoc, fleetStrip } from './ui-fixture/zones.mjs';
 
 const argv = process.argv.slice(2);
 const opt = (k, d) => { const i = argv.indexOf(k); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
@@ -59,6 +69,8 @@ const LIVE_TIMINGS = argv.includes('--live-timings');
 const HEALTH = opt('--health', 'two');
 // --release: the scheduler's release the Scheduler row names (facts.release)
 const RELEASE = opt('--release', '0.1.5');
+const ZONES = opt('--zones', 'none');
+const UPTIME_PARTIAL = argv.includes('--uptime-partial');
 
 // ---------- the fixture (the Overview mockup's sample data) ----------
 
@@ -81,7 +93,10 @@ const iso = ms => new Date(ms).toISOString();
 // the scheduler's own machine, when it hosts llama-server for consoles that hold the whole model
 const SCHED = { id: 'scheduler', name: 'scheduler', role: 'host' };
 
-function status(now) {
+// status(now) -> the status of the --zones state
+const status = now => zonesStatus(baseStatus(now), now, ZONES);
+
+function baseStatus(now) {
   const t = Math.round(now / 1000) * 1000;
   const nodes = MACHINES.map(m => ({
     id: mac(m.n), hostname: m.name, local: false, online: !m.offline, addr: '', priority: 1, eligible: !m.excluded, auto: true,
@@ -181,19 +196,22 @@ const STRIPS = {
 };
 const CELL = { a: ['free', 0], c1: ['in_use', 1], c2: ['in_use', 2], c3: ['in_use', 3], c4: ['in_use', 4], ld: ['loading', 0], dn: ['down', 0], x: ['off', 0] };
 function availability(q, now) {
+  const st = status(now);
+  const group = q.get('group');
   const hourNow = Math.floor(now / H) * H;
   const to = Number(q.get('to')) || now;
   const last = Math.floor((to - 1) / H) * H;
   const first = Number(q.get('from')) ? Math.floor(Number(q.get('from')) / H) * H : last - 23 * H;
-  const nodes = MACHINES.map(m => {
-    const codes = STRIPS[m.n].split(' ');
+  const nodes = st.agents.filter(a => !group || a.group === group).map(a => {
+    const m = MACHINES.find(x => mac(x.n) === a.id && x.name === a.name) || { offline: a.zone_state === 'lost' };
+    const codes = m.n ? STRIPS[m.n].split(' ') : fleetStrip(st, a);
     const cells = [];
     for (let s = first, i = 0; s <= last; s += H, i++) {
       const [state, busy] = STATE === 'off' ? ['unknown', 0] : CELL[codes[i % codes.length]] || ['unknown', 0];
       cells.push({ start: iso(s), span_s: s === hourNow ? (now - s) / 1000 : 3600, partial: s === hourNow, busy_level: busy, state,
         seconds: { free: 0, in_use: 0, loading: 0, down: 0, off: 0, unknown: 0 }, down_lost_s: 0, down_set_aside_s: 0, busy: null, reachable_s: 0, uptime: null });
     }
-    return { id: mac(m.n), name: m.name, known_s: 86400, reachable_s: 86400, uptime: m.offline ? 0.83 : 1, cells };
+    return { id: a.id, name: a.name, known_s: 86400, reachable_s: 86400, uptime: m.offline ? 0.83 : 1, cells };
   });
   return { from: iso(first), to: iso(to), step: 'hour', history_begins_at: STATE === 'off' ? null : iso(now - 9 * 24 * H), recording: STATE !== 'off', nodes };
 }
@@ -263,7 +281,9 @@ const server = http.createServer((req, res) => {
     { ts: now - 70 * 60000, seq: 39, type: 'nodeLost', severity: 'error', nodes: ['ps5-06'], summary: 'Node ps5-06 was lost.', data: {} },
   ], total_matching: 3 });
   if (p === '/api/health') return json(res, 200, health(now));
-  if (p === '/api/nodes') return json(res, 200, { nodes: status(now).agents });
+  if (p === '/api/nodes') { const st = status(now); return json(res, 200, { nodes: st.agents, counts: counts(st.agents) }); }
+  if (p === '/api/groups') return json(res, 200, groupsDoc(status(now), now, UPTIME_PARTIAL));
+  if (p === '/api/nodes/uptime') return json(res, 200, uptimeDoc(status(now), now, UPTIME_PARTIAL));
   if (p === '/api/nodes/availability') return json(res, 200, availability(u.searchParams, now));
   if (p === '/api/requests/summary') return json(res, 200, summary(u.searchParams, now));
   if (p === '/api/requests') {

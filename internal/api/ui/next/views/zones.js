@@ -108,8 +108,8 @@ export function zoneOf(st, n) {
   if (inst || n.holder) {
     const prof = (inst && inst.profile) || n.holder;
     const role = m ? roleShare(m.role, m.share) : '';
-    const lvl = inst && inst.parallel > 0 ? Math.min(4, Math.max(1, Math.ceil((inst.in_flight || 0) / inst.parallel * 4))) : 4;
-    return out({ pill: 'use', square: 'use' + lvl, label: role || 'In use', rank: 3,
+    // the status square is the state's colour; how busy it was is the strip's shading
+    return out({ pill: 'use', square: 'use4', label: role || 'In use', rank: 3,
       title: m && m.share > 0 ? 'Its share of the model: the split the load was given' : null,
       rest: [sep, mono(prof), a.paused ? h('span.mut', ' · not accepting models') : null] });
   }
@@ -421,7 +421,10 @@ registerView({
       rows.sort(cmp);
 
       // groups: as the server lists them, then No group
-      const gs = ((groupsDoc && groupsDoc.groups) || []).slice().sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true }));
+      // groups by name; under "needs attention first", those with a zone down first
+      const downIn = g => (g.counts ? g.counts.down || 0 : (g.needs_attention || []).length);
+      const gs = ((groupsDoc && groupsDoc.groups) || []).slice().sort((a, b) => (sort === 'attention' ? (downIn(b) > 0) - (downIn(a) > 0) : 0) ||
+        String(a.name).localeCompare(String(b.name), undefined, { numeric: true }));
       const hasGroups = gs.length > 0 || all.some(x => x.group);
       const grouped = hasGroups && q.flat !== '1';
       const groupNames = [...new Set(gs.map(g => g.name).concat(all.map(x => x.group).filter(Boolean)))];
@@ -498,7 +501,7 @@ registerView({
           h(name ? 'span.mono.gname' : 'span.gname', label),
           h('span.mut.gmeta', num(count) + (chipsHere.length === 1 ? ' · ' + chipsHere[0] : count === 1 ? ' zone' : ' zones'))),
           h('span.gc', gcs),
-          h('span.r', h('span.mono', memD && memD.total_mib ? `${gbNum(memD.used_mib)} / ${gb(memD.total_mib)}` : DASH)),
+          h('span.r', h('span.mono', memD && memD.total_mib ? `${num(Math.round(memD.used_mib / 1024))} / ${num(Math.round(memD.total_mib / 1024))} GB` : DASH)),
           h('span.r.mono', { title: 'Average across the group' }, tempD == null ? DASH : `${num(tempD)} °C`),
           h('span.r.mono', { title: up7 == null ? 'Not known yet' : 'Over the time of all its zones' + (since ? ' since ' + since : ', last 7 days') }, pctText(up7)),
           availStrip(gstrip.cells, gstrip.label));
@@ -531,7 +534,7 @@ registerView({
             anyOpen ? 'Collapse all' : 'Expand all') : null,
           fs('Sort', SORTS, sort, 'sort')));
 
-      const head = h('div.fr.v2.hd', { key: 'head', role: 'row' },
+      const head = h('div.fr.v2.fhd', { key: 'head', role: 'row' },
         h('input', { class: 'cb', type: 'checkbox', checked: allTicked, 'aria-label': 'Select all', 'data-sel': 'all', disabled: !shownZones.length, onclick: () => tickMany(shownZones, !allTicked) }),
         h('span.lbl', 'Zone'), h('span.lbl', 'Model status'), h('span.lbl.r', 'Memory'), h('span.lbl.r', 'Temp'),
         h('span.lbl.r', { title: upTitle }, since ? h('span.uph', 'Uptime', h('small', 'since ' + since)) : 'Uptime'),

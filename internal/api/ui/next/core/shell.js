@@ -158,9 +158,13 @@ export function connection() {
   return null;
 }
 
-// fleetFacts() -> {dot, title, note} of the fleet status card: how many zones
-// (machines) are up, how many are switched off (excluded), and how fresh the
-// picture is. While the connection is not live it says so instead.
+// fleetFacts() -> {dot, title, note} of the fleet status card, in the one
+// sentence of the zone counts (as the health popup and the Zones page's
+// ALL pill say it): "221 of 232 reachable", then "11 down · 10 off". A
+// zone's state is the server's zone_state (GET /api/nodes `counts` reads
+// the same); without it (a fleet feed) the same reading made here: lost or
+// set aside is down, excluded is off, and off zones are reachable. While
+// the connection is not live it says so instead.
 export function fleetFacts() {
   const st = state.status;
   const nodes = (st && st.view && st.view.nodes) || null;
@@ -168,18 +172,24 @@ export function fleetFacts() {
     const c = connectionFacts();
     return { dot: c.dot, title: c.title, note: c.note };
   }
-  const off = nodes.filter(n => n.excluded || agentExcluded(st, n));
-  const on_ = nodes.filter(n => !off.includes(n));
-  const up = on_.filter(n => n.online).length;
+  const stateOf = n => {
+    const a = agentOf(st, n);
+    if (a && a.zone_state) return a.zone_state;
+    if (n.excluded || (a && a.excluded)) return 'off';
+    if (!n.online) return 'lost';
+    if ((st.quarantines || []).some(q => q.node === n.id)) return 'set_aside';
+    return 'up';
+  };
+  const states = nodes.map(stateOf).filter(s => s !== 'removed');
+  const down = states.filter(s => s === 'lost' || s === 'set_aside').length;
+  const off = states.filter(s => s === 'off').length;
   const updated = state.statusAt ? 'Updated ' + durShort(Math.max(0, (Date.now() - state.statusAt) / 1000)) + ' ago' : 'Waiting for the first status';
   return {
-    dot: on_.length && up < on_.length ? 'warn' : '',
-    title: on_.length ? `${num(up)} of ${plural(on_.length, 'zone')} up` : 'No zones yet',
-    note: (off.length ? `${num(off.length)} off · ` : '') + updated,
+    dot: down ? 'warn' : '',
+    title: states.length ? `${num(states.length - down)} of ${num(states.length)} reachable` : 'No zones yet',
+    note: (down ? `${num(down)} down · ` : '') + (off ? `${num(off)} off · ` : '') + updated,
   };
 }
-// A machine whose agent facts report the exclusion although the view does not.
-const agentExcluded = (st, n) => { const a = agentOf(st, n); return !!(a && a.excluded); };
 
 const slots = {};
 const narrow = window.matchMedia('(max-width:860px)');
@@ -213,10 +223,11 @@ function placeSlots() {
 
 const CLOSED_KEY = 'llm-scheduler.menu-closed';
 function menuClosed() { try { return localStorage.getItem(CLOSED_KEY) === '1'; } catch { return false; } }
-// The Overview opens with the menu closed (Q9); opening it there lasts until
-// the page is left, and is not kept.
+// The Overview (Q9) and Zones (the Zones boards draw no section menu) open
+// with the menu closed; opening it there lasts until the page is left, and
+// is not kept.
 let overviewMenuOpen = false;
-const OPENS_CLOSED = ['overview'];
+const OPENS_CLOSED = ['overview', 'zones'];
 const menuShut = () => (OPENS_CLOSED.includes(route.id) ? !overviewMenuOpen : menuClosed());
 // While the health popup is open no section menu stands beside the rail, as
 // the Health board draws it (its script is empty: the heart only opens the

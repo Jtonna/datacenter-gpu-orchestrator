@@ -280,7 +280,10 @@ func TestUINextZonesFleet(t *testing.T) {
 			"has": []string{"button.fc.on[data-show='']", "[data-group=rack-a] .gc", "[data-group=rack-a] div.avail[role=img]", "[data-zone='" + znMac(1) + "'] div.avail[role=img]",
 				"input.cb[data-sel='group:rack-a']", "button.more[aria-expanded=true][data-fold=rack-a]"},
 			"titles": []string{"6 of 8 reachable · 2 down", "Share of the last 7 days the zone was reachable", "Average across the group", "2 in use"},
-			"none":   []string{"h1"}},
+			// the shell's fleet card says the same sentence from the same zone states
+			"pageHas": []string{"div.fr.gh[data-group=home]"}, "page": []string{"6 of 8 reachable", "2 down · 2 off · Updated"},
+			"ws":   []any{map[string]any{"type": "hello", "data": map[string]any{}}, map[string]any{"type": "status", "data": st}},
+			"none": []string{"h1"}},
 		map[string]any{"name": "fleet: incomplete window", "route": "#/zones", "status": st, "fetch": map[string]any{"/api/nodes/uptime": znUptime(fleet, false)},
 			"expect": []string{"since 23 Nov"}},
 		map[string]any{"name": "fleet: a pill filters", "route": "#/zones?show=down", "status": st,
