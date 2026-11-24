@@ -152,7 +152,7 @@ registerView({
         } catch (e) { f.busy = false; f.err = e.message; redraw(); }
       }
       panelFor = 'new';
-      panel = openPanel({
+      panel = openPanel({ closesMenu: true,
         label: 'New key', name: 'New key', title: 'New key', focus: 'input',
         body: () => [
           f.err ? h('div.mcp-err', { key: 'err' }, banner('err', f.err)) : null,
@@ -177,7 +177,7 @@ registerView({
       shown = { id: agent.id };
       panelFor = which;
       const a = () => agentOf(agent.id) || agent;
-      panel = openPanel({
+      panel = openPanel({ closesMenu: true,
         label: rotated ? 'Key rotated' : 'New key', name: (rotated ? 'Key rotated: ' : 'New key: ') + agent.name,
         title: () => a().name,
         sub: () => [h('span.ktag.t-ok', rotated ? 'Rotated' : 'Created'), ' ', a().can + (a().expires_at ? ' · expires ' + dateLong(a().expires_at) : ' · never expires')],
@@ -255,7 +255,7 @@ registerView({
         } catch (e) { f.err = e.message; redraw(); }
       }
       panelFor = which;
-      panel = openPanel({
+      panel = openPanel({ closesMenu: true,
         label: 'Manage access', name: 'Manage access: ' + (a0 ? a0.name : id),
         title: () => (agentOf(id) || { name: id }).name,
         sub: () => {
@@ -341,13 +341,13 @@ registerView({
           h('button.btn.pri', { type: 'button', 'data-act': 'new', onclick: () => go({ new: '1' }) }, h('svg', { class: 'ic', viewBox: '0 0 20 20', 'aria-hidden': 'true' }, h('path', { d: 'M10 4v12M4 10h12' })), 'New key')),
         !agents.length ? empty('No access keys yet', 'A key lets an AI agent use Potluck over MCP, with only the permissions you give it, and records what it does under its name. Requests without a key keep working as the default user.')
           : h('div.mcp-scroll', h('table.mcp-tbl',
-            h('thead', h('tr', h('th', { scope: 'col' }, 'Name'), h('th.c-key', { scope: 'col' }, 'Key'), h('th', { scope: 'col' }, 'Can'), h('th', { scope: 'col' }, 'Expires'),
+            h('thead', h('tr', h('th', { scope: 'col' }, 'Name'), h('th.c-key', { scope: 'col' }, 'Key'), h('th.c-can', { scope: 'col' }, 'Can'), h('th', { scope: 'col' }, 'Expires'),
               h('th.c-used', { scope: 'col' }, 'Last used'), h('th', { scope: 'col' }, 'Status'), h('th.c-go', { scope: 'col' }, h('span.sr', 'Manage')))),
             h('tbody', agents.map(a => h('tr', { key: 'k-' + a.id, 'data-key': a.id, class: [gone(a) ? 'gone' : '', a.id === open ? 'sel' : '', a.id === fresh ? 'fresh' : ''].filter(Boolean).join(' ') || null,
               onclick: e => { if (!e.target.closest('a')) go({ key: a.id }); } },
               h('td.nm', h('span', { title: a.description || null }, a.name), a.legacy ? h('span.ktag.t-line', { title: 'Made before permissions existed' }, 'legacy') : null),
               h('td.mono.c-key', a.key_hint),
-              h('td', { title: (a.asks || []).length ? 'Ask me: ' + a.asks.map(k => LABEL[k]).join(', ') : null }, a.can),
+              h('td.c-can', { title: (a.asks || []).length ? 'Ask me: ' + a.asks.map(k => LABEL[k]).join(', ') : null }, a.can),
               h('td', expiresText(a)),
               h('td.c-used', a.last_used_at ? h('time', { title: full(a.last_used_at) }, stamp(a.last_used_at)) : h('span.mut', 'never')),
               h('td', statusTag(a)),

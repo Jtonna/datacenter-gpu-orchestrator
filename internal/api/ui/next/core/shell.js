@@ -31,6 +31,7 @@ import { healthPopup, heart, heartLabel, readHealth } from './health.js';
 import { dur, durShort, plural, num } from './format.js';
 import { LOGS_PAGE, logsOn, logsURL } from './logs.js';
 import { agentsMode, agentOf } from './nodeactions.js';
+import { onPanelHold, panelHoldsMenu } from './panel.js';
 
 const I = {
   monitor: 'M2.5 10.5h3.2l2.1-5.5 4 10.5 2.2-5h3.5',
@@ -230,8 +231,10 @@ const OPENS_CLOSED = ['overview', 'zones'];
 const menuShut = () => (OPENS_CLOSED.includes(route.id) ? !overviewMenuOpen : menuClosed());
 // While the health popup is open no section menu stands beside the rail, as
 // the Health board draws it (its script is empty: the heart only opens the
-// popup); closing the popup brings the menu back as it was.
-function applyMenu() { root.classList.toggle('menu-closed', menuShut() || surface === 'health'); }
+// popup); closing the popup brings the menu back as it was. A side panel
+// opened with closesMenu (the MCP page's) does the same while it is docked.
+function applyMenu() { root.classList.toggle('menu-closed', menuShut() || surface === 'health' || panelHoldsMenu()); }
+onPanelHold(() => { if (root) { applyMenu(); draw(); } });
 function setMenuClosed(v) {
   if (OPENS_CLOSED.includes(route.id)) overviewMenuOpen = !v;
   else try { localStorage.setItem(CLOSED_KEY, v ? '1' : '0'); } catch { /* private mode */ }
@@ -253,7 +256,7 @@ function railItem(s, current, c = {}) {
     'aria-current': on_ ? 'page' : null, key: 'rb-' + s.id, 'data-section': s.id,
     onclick: () => {
       closeSurfaces(); closeDrawer();
-      if (on_ && root.classList.contains('menu-closed') && !narrow.matches) { setMenuClosed(false); return; }
+      if (on_ && menuShut() && !panelHoldsMenu() && !narrow.matches) { setMenuClosed(false); return; }
       navigate(first.id, first.rest || []);
     } },
   icon(s.icon), nb);
