@@ -39,6 +39,10 @@ type ZoneFacts struct {
 	// loading, 3 in use, 4 paused, 5 free, 6 excluded, 7 removed); the
 	// page and MCP list_zones use the same order (internal/api/counts.go).
 	AttentionRank int `json:"attention_rank"`
+	// Chip is the zone's GPU name as its stats report it (gpus[].name;
+	// distinct names joined with " + "). Absent when the agent reports no
+	// name, as a PS5 does today; Potluck never guesses one.
+	Chip string `json:"chip,omitempty"`
 }
 
 // MemberFacts is a node's part in an instance: its role (host runs

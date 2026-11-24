@@ -1,7 +1,10 @@
 package api
 
 import (
+	"encoding/json"
+	"slices"
 	"sort"
+	"strings"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/availability"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/pool"
@@ -54,7 +57,57 @@ func setZoneStates(st *scheduler.Status, facts []pool.NodeFacts, states map[stri
 		f := &facts[i]
 		f.ZoneState = states[f.ID]
 		f.AttentionRank = attentionRank(f.ZoneState, f.Unplaced, f.Excluded, hung[f.ID])
+		f.Chip = chipOf(f.Stats)
 	}
+}
+
+// chipOf names the GPUs a stats object reports: the distinct gpus[].name
+// in order, joined with " + "; "" when none has a name.
+func chipOf(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s struct {
+		GPUs []struct {
+			Name string `json:"name"`
+		} `json:"gpus"`
+	}
+	if json.Unmarshal(raw, &s) != nil {
+		return ""
+	}
+	var names []string
+	for _, g := range s.GPUs {
+		if n := strings.TrimSpace(g.Name); n != "" && !slices.Contains(names, n) {
+			names = append(names, n)
+		}
+	}
+	return strings.Join(names, " + ")
+}
+
+// ChipMixed is a group's chip when its members differ, or some report none.
+const ChipMixed = "mixed"
+
+// groupChip is a group's common chip: the one every member reports, "" when
+// none reports one, ChipMixed otherwise.
+func groupChip(chips []string) string {
+	common, some, none := "", false, false
+	for _, c := range chips {
+		switch {
+		case c == "":
+			none = true
+		case !some:
+			common, some = c, true
+		case c != common:
+			return ChipMixed
+		}
+	}
+	switch {
+	case !some:
+		return ""
+	case none:
+		return ChipMixed
+	}
+	return common
 }
 
 // hungNodes are the nodes whose worker stopped answering (worker health).

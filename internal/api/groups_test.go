@@ -340,3 +340,31 @@ func TestZones_AttentionOrder(t *testing.T) {
 	}
 	status(t, e.get("/api/nodes?sort=size"), 400)
 }
+
+// The chip is the stats' GPU name; a group's chip is common or "mixed".
+func TestZones_Chip(t *testing.T) {
+	gpu := func(names ...string) json.RawMessage {
+		var gs []map[string]any
+		for _, n := range names {
+			gs = append(gs, map[string]any{"id": "g", "vendor": "nvidia", "name": n})
+		}
+		b, _ := json.Marshal(map[string]any{"stats_version": 1, "gpus": gs})
+		return b
+	}
+	if chipOf(gpu("RTX 5060")) != "RTX 5060" || chipOf(gpu("A", "A", "B")) != "A + B" || chipOf(gpu("")) != "" || chipOf(nil) != "" {
+		t.Fatal("chipOf")
+	}
+	for in, want := range map[string]string{"a,a": "a", "a,b": ChipMixed, "a,": ChipMixed, ",": "", "": ""} {
+		var cs []string
+		if in != "" {
+			cs = strings.Split(in, ",")
+		}
+		if got := groupChip(cs); got != want {
+			t.Errorf("%q: %q", in, got)
+		}
+	}
+	facts := []pool.NodeFacts{{ID: "a", Name: "a", State: pool.StateActive, Stats: gpu("RTX 3070 Ti")}, {ID: "b", Name: "b", State: pool.StateActive, Stats: gpu("RTX 3070 Ti")}}
+	if g := summarizeGroup(groups.Group{Name: "row", Members: []string{"a", "b"}}, indexZones(nil, facts)); g.Chip != "RTX 3070 Ti" {
+		t.Fatalf("group chip %q", g.Chip)
+	}
+}
