@@ -281,14 +281,14 @@ func TestUINextZonesFleet(t *testing.T) {
 				"node-b", "Helper 40%", "node-c", "49% loaded", "beta", "node-d", "Free",
 				"node-e", "Set aside", "load failed, back at 16:17", "node-f", "Offline", "gone for 54 min",
 				"node-g", "Switched off", "node-h", "99.1%", "96.2%",
-				"Free", "In use, darker is busier", "Loading", "Down", "Switched off", "Page 1 of 1"},
+				"Free", "In use, darker is busier", "Loading", "Down", "Switched off"},
 			"has": []string{"button.fc.on[data-show='']", "[data-group=rack-a] .gc", "[data-group=rack-a] div.avail[role=img]", "[data-zone='" + znMac(1) + "'] div.avail[role=img]",
 				"input.cb[data-sel='group:rack-a']", "button.more[aria-expanded=true][data-fold=rack-a]"},
 			"titles": []string{"6 of 8 reachable · 2 down", "Share of the last 7 days the zone was reachable", "Average across the group", "2 in use"},
 			// the shell's fleet card says the same sentence from the same zone states
 			"pageHas": []string{"div.fr.gh[data-group=home]"}, "page": []string{"6 of 8 reachable", "2 down · 2 off · Updated"},
 			"ws":   []any{map[string]any{"type": "hello", "data": map[string]any{}}, map[string]any{"type": "status", "data": st}},
-			"none": []string{"h1"}},
+			"none": []string{"h1", "nav.pager"}},
 		map[string]any{"name": "fleet: incomplete window", "route": "#/zones", "status": st, "fetch": map[string]any{"/api/nodes/uptime": znUptime(fleet, false)},
 			"expect": []string{"since 23 Nov"}},
 		map[string]any{"name": "fleet: a pill filters", "route": "#/zones?show=down", "status": st,
@@ -635,5 +635,74 @@ func TestUINextZonesConfirm(t *testing.T) {
 		map[string]any{"name": "confirm: unload without force", "route": "#/zones/node-a", "status": idle, "width": 1600,
 			"click":        []any{"button[data-zp=force]", typed("textarea[data-field=comment]", "done"), "button[data-go]"},
 			"fetchedQuery": []string{`^POST /api/unload \{"model":"alpha","force":false,"comment":"done"\}`}},
+	))
+}
+
+// The fleet as live has it: zones and no group. They are listed flat, with
+// no group row (no lone "No group"); "Grouped" stays, disabled with the
+// reason; New group is on the selection bar and in the right-click menu;
+// with everything on one page there is no pager (no "Page 1 of 1") and the
+// footer keeps the colour key. With one group of two, the group row comes
+// first, then "No group" with the rest. A group whose zones' devices differ
+// shows its count only, "mixed" and the names on hover; one device:
+// "N · <chip>".
+func TestUINextZonesUngroupedAndOneGroup(t *testing.T) {
+	bare := znFleet()
+	for i := range bare {
+		bare[i].group = ""
+	}
+	one := znFleet()
+	for i := range one {
+		one[i].group = map[int]string{0: "pair", 1: "pair"}[i]
+	}
+	mixed := znFleet()
+	mixed[7].group = "home" // node-h, RTX 5060, joins the RTX 3070 Ti laptops
+	uiExec(t, znSpec(znFetch(bare, true),
+		map[string]any{"name": "ungrouped: flat, no group row", "route": "#/zones", "status": znStatus(bare),
+			"page":     []string{"node-a", "node-h", "Grouped", "In use, darker is busier"},
+			"pageNone": []string{"div.fr.gh", "nav.pager"}, "pageHas": []string{"button[data-act=grouped][disabled]"},
+			"titles": []string{"No groups yet: select zones and make one from the selection"}},
+		map[string]any{"name": "ungrouped: new group from the selection bar", "route": "#/zones", "status": znStatus(bare),
+			"click": []any{"input[data-sel='" + znMac(1) + "']", "input[data-sel='" + znMac(2) + "']"}, "pageHas": []string{"button[data-bulk=newgroup]"}},
+		map[string]any{"name": "ungrouped: new group from the menu", "route": "#/zones", "status": znStatus(bare),
+			"click": []any{map[string]any{"context": "div.fr[data-zone='" + znMac(1) + "']"}}, "pageHas": []string{"button[data-cm=newgroup]"}},
+	))
+	uiExec(t, znSpec(znFetch(one, true),
+		map[string]any{"name": "one group: its row, then No group", "route": "#/zones", "status": znStatus(one),
+			"page":    []string{"pair", "2 · Oberon", "No group", "6 zones"},
+			"pageHas": []string{"div.fr.gh[data-group=pair]", "div.fr.gh[data-group='-']", "button[data-act=grouped][aria-pressed=true]"}, "pageNone": []string{"nav.pager"}},
+	))
+	uiExec(t, znSpec(znFetch(mixed, true),
+		map[string]any{"name": "mixed chips: the count, mixed on hover", "route": "#/zones", "status": znStatus(mixed),
+			"page": []string{"4 · Oberon"}, "absent": []string{"4 · RTX"},
+			"titles": []string{"mixed: RTX 3070 Ti, RTX 5060"}},
+	))
+}
+
+// The page switch ui_model_actions (GET /api/config/settings): when false
+// the page offers no Load a model, Unload or Force unload anywhere (zone
+// panel, group panel, selection bar, right-click menu); they are absent,
+// not disabled. Missing or unreadable means true (the other tests answer no
+// settings and see them).
+func TestUINextZonesModelActionsSwitch(t *testing.T) {
+	fleet := znFleet()
+	st := znStatus(fleet)
+	off := znFetch(fleet, true)
+	off["/api/config/settings"] = map[string]any{"settings": map[string]any{"ui_model_actions": false}}
+	on := znFetch(fleet, true)
+	on["/api/config/settings"] = map[string]any{"settings": map[string]any{"ui_model_actions": true}}
+	uiExec(t, znSpec(off,
+		map[string]any{"name": "switch off: zone panel", "route": "#/zones/node-a", "status": st, "width": 1600,
+			"page": []string{"Loaded now", "alpha"}, "pageNone": []string{"button[data-zp=force]", "button[data-zp=load]"}, "absent": []string{"Load a model", "Force unload"}},
+		map[string]any{"name": "switch off: group panel", "route": "#/zones/group/rack-a", "status": st, "width": 1600,
+			"page": []string{"Models here", "alpha"}, "pageNone": []string{"button[data-unload]"}},
+		map[string]any{"name": "switch off: selection and menu", "route": "#/zones", "status": st,
+			"click":    []any{"input[data-sel='" + znMac(1) + "']", map[string]any{"context": "div.fr[data-zone='" + znMac(1) + "']"}},
+			"pageHas":  []string{"button[data-bulk=pause]", "button[data-cm=pause]"},
+			"pageNone": []string{"button[data-bulk=force]", "button[data-cm=force]"}},
+	))
+	uiExec(t, znSpec(on,
+		map[string]any{"name": "switch on: zone panel", "route": "#/zones/node-a", "status": st, "width": 1600,
+			"page": []string{"Load a model", "Force unload"}, "pageHas": []string{"button[data-zp=force]"}},
 	))
 }

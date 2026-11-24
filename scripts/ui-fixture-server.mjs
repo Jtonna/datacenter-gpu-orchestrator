@@ -9,7 +9,8 @@
 // usage: node scripts/ui-fixture-server.mjs [--port 3122] [--ui internal/api/ui] [--host 0.0.0.0]
 //                                           [--state normal|empty|off|loading] [--sequence] [--live-timings]
 //                                           [--health two|good|unknown] [--release 0.1.5]
-//                                           [--zones none|groups|fleet] [--uptime-partial]
+//                                           [--zones none|groups|live|one-group|fleet] [--uptime-partial]
+//                                           [--model-actions on|off]
 //
 //   /ui/components.html  the shell's shared components (scripts/ui-fixture/components.js)
 //   /ui/fx-<name>.html   the app driven by scripts/ui-fixture/fx-<name>.js (a board
@@ -73,6 +74,8 @@ const HEALTH = opt('--health', 'two');
 const RELEASE = opt('--release', '0.1.5');
 const ZONES = opt('--zones', 'none');
 const UPTIME_PARTIAL = argv.includes('--uptime-partial');
+// --model-actions off: the setting ui_model_actions is false (the page offers no Load, Unload or Force unload)
+const MODEL_ACTIONS = opt('--model-actions', 'on') !== 'off';
 
 // ---------- the fixture (the Overview mockup's sample data) ----------
 
@@ -286,7 +289,7 @@ const server = http.createServer((req, res) => {
     stored_config: { unknown_fields: [], writes_need_force: false },
     storage: { database: { dir: '/data', on: true, bytes: 37600000 }, history: { dir: '/data/history', on: true, bytes: 3000000, files: 4 }, usage: { size_bytes: 9400000 }, child_logs: { dir: '/data/logs', bytes: 23700000, files: 12 } } });
   if (p === '/api/agents') return json(res, 200, { agents: ['ops-bot', 'coding agent', 'report writer'].map((name, i) => ({ id: 'agent-' + i, name, key_prefix: 'ptk_' + i, created_at: now - (i + 2) * 24 * H, request_count: 10 * i })) });
-  if (p === '/api/config/settings') return json(res, 200, { settings: { queue_timeout: '30m0s', requests_live_timings: LIVE_TIMINGS } });
+  if (p === '/api/config/settings') return json(res, 200, { settings: { queue_timeout: '30m0s', requests_live_timings: LIVE_TIMINGS, ui_model_actions: MODEL_ACTIONS } });
   if (p === '/api/history') return json(res, 200, { events: [
     { ts: now - 12 * 60000, seq: 41, type: 'nodeQuarantined', severity: 'warn', nodes: ['ps5-05'], summary: 'Node ps5-05 was quarantined for 18m0s (level 1): preflight failed.', data: { for_s: 1080, level: 1 } },
     { ts: now - 54 * 60000, seq: 40, type: 'nodeLost', severity: 'error', nodes: ['ps5-07'], summary: 'Node ps5-07 was lost.', data: {} },

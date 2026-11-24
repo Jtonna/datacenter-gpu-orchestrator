@@ -112,6 +112,25 @@ func TestUINextRunDetailInRateAfterReuse(t *testing.T) {
 	}})
 }
 
+// The server's short_name wins (on the row, else on the catalog entry), with
+// the row's ctx; "-it" stays when dropping it would give two files of the
+// catalog one short name. The full file name stays on hover.
+func TestUINextRunsModelShortNameFromServer(t *testing.T) {
+	now := time.Now()
+	rows := ovRequests(now)
+	rows[3].(map[string]any)["short_name"], rows[3].(map[string]any)["ctx"] = "server-short", 16384
+	fetch := ovFetch(now, rows, true)
+	fetch["/api/models"] = map[string]any{"version": 1, "models": []any{
+		map[string]any{"key": "gemma", "kind": "llama", "file": "/models/Gemma-4-27B-it-Q4_K_M.gguf", "profiles": []any{map[string]any{"id": "alpha", "ctx": 32768}}},
+		map[string]any{"key": "gemma-base", "kind": "llama", "file": "/models/Gemma-4-27B-Q8_0.gguf", "profiles": []any{map[string]any{"id": "beta", "ctx": 8192}}},
+	}}
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
+		map[string]any{"name": "short name: server and clash", "route": "#/requests", "status": ovStatus(now),
+			"expect": []string{"server-short:16k", "gemma-4-27b-it:32k", "gemma-4-27b:8k"},
+			"has":    []string{"td.mono[title*='Gemma-4-27B-it-Q4_K_M.gguf']"}},
+	}})
+}
+
 // (e) The Model column: the model's short name and context, as the design
 // ("gemma-4-27b:32k"), with the profile id on hover. The API has no short
 // name, so it is the model file's name (GET /api/models: the entry of the
@@ -132,8 +151,8 @@ func TestUINextRunsModelShortName(t *testing.T) {
 	for _, route := range []string{"#/overview", "#/requests"} {
 		uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
 			map[string]any{"name": "model: " + route, "route": route, "status": ovStatus(now),
-				"expect": []string{"gemma-4-27b-it:32k", "gemma-4-27b-it:8k", "mistral-small-3.1-24b", "unknown-profile"},
-				"absent": []string{"Q4_K_M", "q4_k_m", ".gguf", "mistral-small-3.1-24b:"},
+				"expect": []string{"gemma-4-27b:32k", "gemma-4-27b:8k", "mistral-small-3.1-24b", "unknown-profile"},
+				"absent": []string{"Q4_K_M", "q4_k_m", ".gguf", "mistral-small-3.1-24b:", "gemma-4-27b-it"},
 				"has":    []string{"tr[data-req='14'] td.mono[title^=alpha]", "tr[data-req='16'] td.mono[title^=beta]"}},
 		}})
 	}
@@ -141,7 +160,7 @@ func TestUINextRunsModelShortName(t *testing.T) {
 
 // The short name drops a leading vendor word that the next word repeats
 // ("Qwen_Qwen3.5-9B" -> "qwen3.5-9b", any case); different words stay
-// ("google_gemma-3-4b-it"). The hover keeps the profile and the full file name.
+// ("google_gemma-3-4b", "-it" dropped). The hover keeps the profile and the full file name.
 func TestUINextRunsModelVendorWord(t *testing.T) {
 	now := time.Now()
 	rows := ovRequests(now)
@@ -155,7 +174,7 @@ func TestUINextRunsModelVendorWord(t *testing.T) {
 	}}
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
 		map[string]any{"name": "vendor word", "route": "#/requests", "status": ovStatus(now),
-			"expect": []string{"qwen3.5-9b:32k", "deepseek-r1-distill", "google_gemma-3-4b-it"},
+			"expect": []string{"qwen3.5-9b:32k", "deepseek-r1-distill", "google_gemma-3-4b"},
 			"absent": []string{"qwen_qwen", "deepseek_deepseek"},
 			"titles": []string{"alpha · Qwen_Qwen3.5-9B-Q4_K_M.gguf", "delta · DEEPSEEK_DeepSeek-R1-Distill-Q4_K_M.gguf"}},
 	}})

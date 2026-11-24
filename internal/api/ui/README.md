@@ -114,7 +114,9 @@ One screenshot: `scripts/ui-screens.sh http://127.0.0.1:8790 models loading desk
    "Models here", the zones' Force unload) through `next/core/modelactions.js`
    only, always after a confirm dialog that says what ends and asks for a
    comment (body and X-Comment; the audit entry is signed by the default
-   user). Running a benchmark suite also causes loads, behind its own confirm
+   user). The setting `ui_model_actions` (default true; missing counts as
+   true) switches them off: when it is false the page offers no Load a model,
+   Unload or Force unload at all. Running a benchmark suite also causes loads, behind its own confirm
    dialog. `internal/api/ui_test.go` (`TestUIModelActionsInOneModule`) fails
    the build if any other UI file names `/api/load`, `/api/unload` or
    `/api/models/unload`. (The

@@ -6,6 +6,10 @@
 //   none    the Overview's eight machines, no group (the default)
 //   groups  the same eight in two groups (rack-a, home) and one with no
 //           group; one lost machine, one set aside
+//   live    as the live pool is: eight zones and no group (six consoles,
+//           laptop-01 named only, laptop-02 the scheduler's own machine
+//           switched off) and one removed machine the page leaves out
+//   one-group  live with one group (pair: ps5-01, ps5-02)
 //   fleet   232 zones as the Zones-Fleet mockup draws them: rack-a (48
 //           Oberon, its first rows as drawn), rack-b, rack-c, rack-d, a
 //           paused group gpu-row-1 and 28 with no group; 15 pages
@@ -22,6 +26,7 @@ const fmac = n => '02:00:00:00:' + hex(n >> 8) + ':' + hex(n & 255);
 export function zoneState(st, a) {
   const inst = (st.instances || []).find(i => (i.nodes || []).some(m => m.id === a.id));
   const node = ((st.view && st.view.nodes) || []).find(n => n.id === a.id) || {};
+  if (a.state === 'removed') return 'removed';
   if (a.excluded) return 'off';
   if (a.state === 'lost' || node.online === false) return 'lost';
   if (a.set_aside || (st.quarantines || []).some(q => q.node === a.id)) return 'set_aside';
@@ -169,11 +174,30 @@ const UP_OF_EIGHT = { 'ps5-01': 0.995, 'ps5-02': 0.996, 'ps5-03': 0.988, 'ps5-04
 // zonesStatus(base, now, mode) -> the status with zone_state and group on each agent
 export function zonesStatus(base, now, mode) {
   const st = mode === 'fleet' ? fleetStatus(base, now) : Object.assign({}, base, { agents: base.agents.map(a => Object.assign({}, a)) });
+  if (mode === 'live' || mode === 'one-group') liveLike(st, now, mode === 'one-group');
   for (const a of st.agents) {
     if (mode === 'groups' && GROUPS_OF_EIGHT[a.name]) a.group = GROUPS_OF_EIGHT[a.name];
     a.zone_state = zoneState(st, a);
   }
   return st;
+}
+
+// liveLike(st, now, oneGroup): the eight machines as the live pool has them
+function liveLike(st, now, oneGroup) {
+  const view = Object.assign({}, st.view, { nodes: ((st.view && st.view.nodes) || []).map(n => Object.assign({}, n)) });
+  st.view = view;
+  const node = name => view.nodes.find(n => n.hostname === name) || {};
+  const agent = name => st.agents.find(a => a.name === name) || {};
+  // all six consoles reachable
+  Object.assign(node('ps5-06'), { online: true, missing_since: null });
+  Object.assign(agent('ps5-06'), { state: 'active', placeable: true });
+  // laptop-01: named only (no_auto_nodes)
+  node('laptop-01').auto = false;
+  // laptop-02: the scheduler's own machine, switched off (exclude_nodes)
+  node('laptop-02').local = true;
+  // a removed machine: in the agent list, left out of the page
+  st.agents.push({ id: '02:00:00:00:00:99', name: 'ps5-old', addr: '192.0.2.199', state: 'removed', paused: false, placeable: false, last_seen_ago_s: 9 * 86400 });
+  if (oneGroup) { agent('ps5-01').group = 'pair'; agent('ps5-02').group = 'pair'; }
 }
 
 const sum = (xs, f) => xs.reduce((s, x) => s + (f(x) || 0), 0);

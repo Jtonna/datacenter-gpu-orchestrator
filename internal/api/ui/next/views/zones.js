@@ -41,7 +41,7 @@ import { agentsMode, agentOf, notPlaceable, sendNodeAction } from '../core/nodea
 import { onStartups } from '../core/startup.js';
 import { defaultUser } from '../core/requests.js';
 import { createGroup, addMembers, removeMembers, renameGroup, pauseGroup, GROUP_NAME_RULE } from '../core/groups.js';
-import { unloadModel } from '../core/modelactions.js';
+import { unloadModel, modelActionsOn, onModelActions } from '../core/modelactions.js';
 import { settlePending } from './nodes.js';
 
 const PAGE = 16; // zones a page, as drawn (232 zones on 15 pages)
@@ -309,6 +309,7 @@ registerView({
     const offStatus = on('status', () => { settlePending(); readSoon(); });
     const offStartups = onStartups(() => { view.refresh(); if (side) side.redraw(); });
     const offDrop = onDropChange(() => view.refresh());
+    const offActions = onModelActions(() => { if (alive) { view.refresh(); if (side) side.redraw(); } });
     const restNow = () => (r.rest && r.rest[0] === 'group' && r.rest[1] ? ['group', String(r.rest[1])] : []);
     const setQuery = (q, keepPage) => navigate('zones', restNow(), Object.assign({}, r.query, keepPage ? {} : { page: '' }, q), true);
     const pickZone = id => navigate('zones', [], Object.assign({}, r.query, { zone: id }), true);
@@ -429,6 +430,7 @@ registerView({
         run: c => each(gs_.map(g => [g, [api, g, by[g].map(y => y.id), c]]), removeMembers).then(() => toast(`${plural(n, 'zone')} taken out of their groups`, 'ok')) });
     }
     function forceUnload(xs) {
+      if (!modelActionsOn()) return null;
       const hold = xs.filter(holding);
       // one zone: the Zones-Confirm dialog for the model it holds
       if (hold.length === 1) return askUnload(holding(hold[0]), { zone: hold[0].id });
@@ -491,8 +493,8 @@ registerView({
           item('Open SSH', { 'data-cm': 'ssh', disabled: true, title: SSH_WHY }),
           item('Reboot', { 'data-cm': 'reboot', disabled: true, title: REBOOT_WHY }),
           item('Stop accepting models', { 'data-cm': 'pause', disabled: !pausable.length, title: pausable.length ? null : 'Every one of them already takes no new model' }, () => { closeMenu(); pauseSome(xs); }),
-          h('hr'),
-          item('Force unload', { class: 'red', 'data-cm': 'force', disabled: !holds, title: holds ? null : 'None of them holds a model' }, () => { closeMenu(); forceUnload(xs); }));
+          modelActionsOn() ? [h('hr'),
+            item('Force unload', { class: 'red', 'data-cm': 'force', disabled: !holds, title: holds ? null : 'None of them holds a model' }, () => { closeMenu(); forceUnload(xs); })] : null);
       }
       document.body.appendChild(el);
       const onDoc = e => {
@@ -539,6 +541,7 @@ registerView({
 
     // the unload dialog (Zones-Confirm): what it ends, wait or force, a comment
     function askUnload(model, o = {}) {
+      if (!modelActionsOn()) return null; // the page switch is off: no unload dialog
       const st = state.status || {};
       const inst = (st.instances || []).find(i => i.profile === model && (!o.zone || (i.nodes || []).some(m => m.id === o.zone))) ||
         (st.instances || []).find(i => i.profile === model) || null;
@@ -667,7 +670,7 @@ registerView({
         models.length ? models.map(m => h('div.pf', { key: 'm-' + m.profile },
           h('span.mono', { style: 'font-weight:500' }, m.profile),
           h('span', { style: 'text-align:right;font-weight:600' }, plural(m.zones || 0, 'zone')),
-          button('Unload', () => askUnload(m.profile, { group: name }), 'sm', { 'data-unload': m.profile, style: 'justify-content:center' })))
+          modelActionsOn() ? button('Unload', () => askUnload(m.profile, { group: name }), 'sm', { 'data-unload': m.profile, style: 'justify-content:center' }) : h('span')))
           : h('div.pf.none', { key: 'models-none' }, h('span.mut', 'No model is loaded on its zones.')),
       ];
     }
@@ -787,7 +790,7 @@ registerView({
         loaded = h('div.zl', { key: 'loaded' },
           h('div', { style: 'flex:1;min-width:0' }, h('div.mono', { style: 'font-size:14px;font-weight:500' }, inst.profile),
             h('div.mut', { style: 'font-weight:600' }, parts.map((p, i) => [i ? ' · ' : '', p]))),
-          button('Force unload', () => askUnload(inst.profile, { zone: id }), 'red', { 'data-zp': 'force' }));
+          modelActionsOn() ? button('Force unload', () => askUnload(inst.profile, { zone: id }), 'red', { 'data-zp': 'force' }) : null);
       } else {
         const z = zoneOf(st, n);
         loaded = h('div.zl', { key: 'loaded' }, h('span.mut', { style: 'font-weight:600' }, 'Nothing is loaded.', z.pill === 'free' && z.label !== 'Free' ? [' ', z.label, z.rest] : null));
@@ -810,8 +813,8 @@ registerView({
           fact(since ? 'Up, since ' + since : 'Up, last 7 days', h('b', pctText(u ? u.uptime : null)))),
         h('div.dh', { key: 'loaded-h' }, h('h3', 'Loaded now')),
         loaded,
-        h('div.dh', { key: 'load-h' }, h('h3', 'Load a model')),
-        h('div.gp-acts', { key: 'load' },
+        modelActionsOn() ? h('div.dh', { key: 'load-h' }, h('h3', 'Load a model')) : null,
+        !modelActionsOn() ? null : h('div.gp-acts', { key: 'load' },
           h('button', { class: 'btn', type: 'button', disabled: true, style: 'flex:1;justify-content:space-between;font-weight:600', title: 'Loading onto a chosen zone is not built yet: the server takes no zone when it loads, Potluck picks the zones itself.' },
             'Choose a profile', icon('M5 8l5 5 5-5', 15)),
           button('Load', null, '', { 'data-zp': 'load', disabled: true, title: 'Loading onto a chosen zone is not built yet: the server takes no zone when it loads, Potluck picks the zones itself.' })),
@@ -898,7 +901,9 @@ registerView({
 
       // the page's items: [group row, its zones] or zones
       const items = []; // {kind: 'group'|'zone', ...}
-      if (grouped) {
+      // with no group at all the zones are listed flat: no lone "No group" row
+      const headed = grouped && groupNames.length > 0;
+      if (headed) {
         for (const name of groupNames.concat([''])) {
           const zs = rows.filter(x => x.group === name);
           const doc = docOf(name);
@@ -967,7 +972,8 @@ registerView({
           h('span.gn', h('button', { class: 'more', type: 'button', 'aria-expanded': closed ? 'false' : 'true', 'aria-label': (closed ? 'Expand ' : 'Collapse ') + label, 'data-fold': name || '-',
             onclick: e => { e.stopPropagation(); if (shut.has(name)) shut.delete(name); else shut.add(name); view.refresh(); } }, icon(closed ? 'M8 5l5 5-5 5' : 'M5 8l5 5 5-5', 14)),
           h(name ? 'span.mono.gname' : 'span.gname', label),
-          h('span.mut.gmeta', num(count) + (chipsHere.length === 1 ? ' · ' + chipsHere[0] : chipsHere.length > 1 ? ' · mixed' : count === 1 ? ' zone' : ' zones'))),
+          // one chip: "N · chip"; devices that differ: the count, "mixed" and the names on hover
+          h('span.mut.gmeta', { title: chipsHere.length > 1 ? 'mixed: ' + chipsHere.join(', ') : null }, num(count) + (chipsHere.length === 1 ? ' · ' + chipsHere[0] : count === 1 ? ' zone' : ' zones'))),
           h('span.gc', gcs),
           h('span.r', h('span.mono', memD && memD.total_mib ? `${num(Math.round(memD.used_mib / 1024))} / ${num(Math.round(memD.total_mib / 1024))} GB` : DASH)),
           narrow ? null : [
@@ -980,8 +986,8 @@ registerView({
       let lastGroup = null;
       for (const it of onPage) {
         if (it.kind === 'group') { list.push(groupRow(it.name, it.zs, it.doc, it.shut)); lastGroup = it.name; continue; }
-        if (grouped && it.group !== lastGroup) { list.push(groupRow(it.group, it.zs, it.doc, false)); lastGroup = it.group; }
-        list.push(zoneRow(it.x, grouped));
+        if (headed && it.group !== lastGroup) { list.push(groupRow(it.group, it.zs, it.doc, false)); lastGroup = it.group; }
+        list.push(zoneRow(it.x, headed));
       }
 
       const fs = (label, opts, cur, key) => dropButton(label, opts, cur, v => setQuery({ [key]: v === opts[0].id ? '' : v }), 'zn-' + key);
@@ -1036,11 +1042,12 @@ registerView({
         button('Reboot', null, 'sm', { 'data-bulk': 'reboot', disabled: true, title: REBOOT_WHY }),
         bulkButton('pause'),
         bulkCount('unpause') ? bulkButton('unpause') : null,
-        button('Force unload', () => forceUnload(chosenNow()), 'sm red', { 'data-bulk': 'force', disabled: !holds, title: holds ? null : 'None of the selected zones holds a model' }),
+        modelActionsOn() ? button('Force unload', () => forceUnload(chosenNow()), 'sm red', { 'data-bulk': 'force', disabled: !holds, title: holds ? null : 'None of the selected zones holds a model' }) : null,
         button('Clear', () => { sel.clear(); view.refresh(); }, 'sm ghost', { 'data-act': 'clear' }));
       const totals = narrow && pages === 1 ? h('span.mut', { style: 'font-weight:600' }, (gs.length ? plural(gs.length, 'group') + ' · ' : '') + plural(all.length, 'zone')) : null;
       const foot = h('div.bulk', { key: 'foot' }, chosen.length ? selPart : narrow ? totals : keyPart,
-        pager({ page, pages, onPage: n => setQuery({ page: n === 1 ? '' : String(n) }, true), label: 'Zone pages' }));
+        // no pager (no "Page 1 of 1") when everything fits on one page
+        pages > 1 ? pager({ page, pages, onPage: n => setQuery({ page: n === 1 ? '' : String(n) }, true), label: 'Zone pages' }) : null);
 
       const body = all.length
         ? (list.length ? list : h('div.zempty', 'No zone matches.'))
@@ -1052,7 +1059,7 @@ registerView({
     syncSide();
     return {
       update(nr) { r = nr; syncSide(); view.refresh(); },
-      unmount() { alive = false; closeMenu(); clearTimeout(soon); offStatus(); offStartups(); offDrop(); if (side) { const s = side; side = null; s.close(); } view.unmount(); },
+      unmount() { alive = false; closeMenu(); clearTimeout(soon); offStatus(); offStartups(); offDrop(); offActions(); if (side) { const s = side; side = null; s.close(); } view.unmount(); },
     };
   },
 });

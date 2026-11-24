@@ -13,3 +13,36 @@ export function unloadModel(api, model, force, comment) {
   if (!c) return Promise.reject(new Error('A comment is required.'));
   return api.post('/api/unload', { model, force: !!force, comment: c }, { comment: c });
 }
+
+// ---------- the page switch: setting ui_model_actions ----------
+//
+// GET /api/config/settings -> settings.ui_model_actions (boolean, default
+// true). When it is false the page offers no model action at all: Load a
+// model, Unload and Force unload (buttons, menu items and the unload dialog)
+// are left out, not disabled. Read defensively: missing, unreadable or not a
+// boolean means true. Read again when the configuration changes.
+import * as rest from './api.js';
+import { state, on } from './store.js';
+
+let allowed = true, rev = -1, reading = false;
+const watchers = new Set();
+function readSwitch() {
+  if (reading) return;
+  reading = true;
+  rest.get('/api/config/settings').then(c => {
+    const s = (c && c.settings) || c || {};
+    allowed = s.ui_model_actions !== false;
+  }, () => { /* not readable: keep what is known (true at first) */ }).finally(() => {
+    reading = false;
+    for (const fn of Array.from(watchers)) fn();
+  });
+}
+// modelActionsOn() -> false only when the setting says false.
+export const modelActionsOn = () => allowed;
+// onModelActions(fn) -> unsubscribe: fn() once the setting is read, and when it changes.
+export function onModelActions(fn) {
+  watchers.add(fn);
+  if (rev !== state.configRevision) { rev = state.configRevision; readSwitch(); }
+  return () => watchers.delete(fn);
+}
+on(['configRevision'], () => { if (watchers.size && rev !== state.configRevision) { rev = state.configRevision; readSwitch(); } });

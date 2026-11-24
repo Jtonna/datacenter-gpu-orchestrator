@@ -152,4 +152,39 @@ func TestUIFixtureServerZones(t *testing.T) {
 	if u.Window.Complete || u.Window.CoveredFrom == "" {
 		t.Errorf("--uptime-partial: %+v", u.Window)
 	}
+
+	// live: eight zones and no group, one removed machine counted nowhere
+	get = fixtureServer(t, "--zones", "live", "--model-actions", "off")
+	n = nodesDoc{}
+	get("/api/nodes", &n)
+	states = map[string]string{}
+	for _, z := range n.Nodes {
+		states[z.Name] = z.ZoneState + "/" + z.Group
+	}
+	if n.Counts.Total != 8 || n.Counts.Off != 1 || states["ps5-old"] != "removed/" || states["ps5-06"] == "lost/" || states["laptop-02"] != "off/" {
+		t.Errorf("live: counts %+v, states %v", n.Counts, states)
+	}
+	g = groupsDoc{}
+	get("/api/groups", &g)
+	if len(g.Groups) != 0 || g.Ungrouped.Count != 8 {
+		t.Errorf("live groups: %+v", g)
+	}
+	var set struct {
+		Settings map[string]any `json:"settings"`
+	}
+	get("/api/config/settings", &set)
+	if set.Settings["ui_model_actions"] != false {
+		t.Errorf("--model-actions off: settings %v", set.Settings)
+	}
+	get = fixtureServer(t, "--zones", "one-group")
+	g = groupsDoc{}
+	get("/api/groups", &g)
+	if len(g.Groups) != 1 || g.Groups[0].Name != "pair" || g.Groups[0].Count != 2 || g.Ungrouped.Count != 6 {
+		t.Errorf("one-group: %+v", g)
+	}
+	set.Settings = nil
+	get("/api/config/settings", &set)
+	if set.Settings["ui_model_actions"] != true {
+		t.Errorf("model actions default: settings %v", set.Settings)
+	}
 }

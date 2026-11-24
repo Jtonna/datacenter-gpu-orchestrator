@@ -124,7 +124,7 @@ func TestUINextScreensExecute(t *testing.T) {
 	}
 	// the zones of the agent cluster, and the side panel of one of them
 	cluster := every("agents", st, map[string][]string{
-		"zones": {"ALL 5 ZONES", "2 off", "Switched off", "console-1", "In use, darker is busier", "Page 1 of 1"},
+		"zones": {"ALL 5 ZONES", "2 off", "Switched off", "console-1", "In use, darker is busier"},
 	})
 	cluster = append(cluster, map[string]any{"name": "agents: zones, one zone opened", "route": "#/zones?zone=" + active, "status": st, "absent": designSamples},
 		// the reason a zone is off: the exclude_nodes entry that matches it
@@ -137,7 +137,7 @@ func TestUINextScreensExecute(t *testing.T) {
 
 	empty, _, _ := feedEnv(t)
 	uiExec(t, map[string]any{"shell": "next", "app": true, "base": empty.front.URL,
-		"cases": every("empty", "fetch", map[string][]string{"zones": {"Create new zone", "Page 1 of 1"}})})
+		"cases": every("empty", "fetch", map[string][]string{"zones": {"Create new zone"}})})
 }
 
 // The Zones page's selection and its zone panel, on a real agent cluster:
