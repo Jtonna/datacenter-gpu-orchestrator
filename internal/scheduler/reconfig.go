@@ -32,6 +32,9 @@ func (c *schedCore) staleProfile(in *inst) bool {
 		return true
 	}
 	a, b := *p, *in.prof
+	if _, ok := c.pins[in.prof]; ok { // pin.go: its nodes were chosen for this load
+		b.ForceNodes, b.TensorSplit = a.ForceNodes, a.TensorSplit
+	}
 	a.Description, b.Description = "", "" // words for people, not the load
 	return !reflect.DeepEqual(a, b)
 }

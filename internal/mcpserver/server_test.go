@@ -288,7 +288,7 @@ var expected = map[string]struct {
 	"get_profile":           {`{"id":"a b"}`, "GET", "/api/config/profiles/a b", "", "", nil},
 	"list_model_files":      {`{}`, "GET", "/api/models", "", "", nil},
 	"get_model_file":        {`{"file":"gemma 4.gguf"}`, "GET", "/api/models/gemma 4.gguf", "", "", nil},
-	"plan_load":             {`{"model":"gemma"}`, "POST", "/api/plan", "", `{"model":"gemma"}`, nil},
+	"plan_load":             {`{"model":"gemma","nodes":["ps5-02"]}`, "POST", "/api/plan", "", `{"model":"gemma","nodes":["ps5-02"]}`, nil},
 	"query_history":         {`{"since":5,"type":"nodeLost,loadFinished","severity":"warn","limit":10,"order":"asc","q":"x y"}`, "GET", "/api/history", "limit=10&order=asc&q=x+y&severity=warn&since=5&type=nodeLost%2CloadFinished", "", nil},
 	"get_history_summary":   {`{"since":1,"until":2}`, "GET", "/api/history/summary", "since=1&until=2", "", nil},
 	"get_availability":      {`{"node":"zone-a","from":"7d","step":"day"}`, "GET", "/api/nodes/availability", "from=7d&node=zone-a&step=day", "", nil},

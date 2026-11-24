@@ -51,3 +51,30 @@ func (s *Server) handleUndrain(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, err)
 	}
 }
+
+// checkViewNodes accepts node ids or hostnames the scheduler's view holds
+// (a load on chosen nodes); anything else is a 400.
+func (s *Server) checkViewNodes(w http.ResponseWriter, r *http.Request, nodes []string) bool {
+	st, err := s.sched.Status(r.Context())
+	if err != nil {
+		s.writeErr(w, err)
+		return false
+	}
+	known := map[string]bool{}
+	for _, n := range st.View.Nodes {
+		known[string(n.ID)], known[n.Hostname] = true, true
+	}
+	seen := map[string]bool{}
+	for _, n := range nodes {
+		if n == "" || !known[n] {
+			apiErr(w, http.StatusBadRequest, "%q is not a node in the fleet view", n)
+			return false
+		}
+		if seen[n] {
+			apiErr(w, http.StatusBadRequest, "%q is named twice", n)
+			return false
+		}
+		seen[n] = true
+	}
+	return true
+}

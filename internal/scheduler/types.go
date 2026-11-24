@@ -27,6 +27,7 @@ const (
 	ReasonForcedDoesNotFit  Reason = "forced nodes do not fit"  // 503, forced_fit_check: reject and the need exceeds the forced nodes' free memory
 	ReasonNodeExcluded      Reason = "node excluded"            // 503, exclude_nodes keeps out the nodes this needs (permanent for a forced profile)
 	ReasonUnloaded          Reason = "unloaded"                 // 503, a loading instance was force-unloaded
+	ReasonPinConflict       Reason = "already loaded or queued" // 409, a load on chosen nodes while the model is loaded or queued (pin.go)
 	ReasonClientGone        Reason = "client gone"              // 499, the caller's context ended
 	ReasonInternal          Reason = "internal error"           // 500, a read-only query panicked (recovered, counted in /api/system)
 )
@@ -203,6 +204,9 @@ type InstanceStatus struct {
 	// run length (nil when no run of it has finished yet).
 	Drain     bool
 	DrainEtaS *float64
+	// PinnedNodes: loaded on these nodes by a one-off load on chosen nodes
+	// (pin.go), not by its profile's force_nodes.
+	PinnedNodes []string
 	// LoadMode is how the instance's nodes get the weights: file_read (the
 	// workers read the model file), pushed (the host sends them), local (no
 	// remote worker); empty for a command profile or when not known.

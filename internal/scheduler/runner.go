@@ -594,6 +594,50 @@ func (s *Scheduler) LoadFor(ctx context.Context, model, benchRun string) error {
 	return nil
 }
 
+// LoadOn is POST /api/load with nodes: load model on those nodes only,
+// as force_nodes would, for this load (pin.go). The profile is unchanged.
+// A model already loaded or queued is refused (409).
+func (s *Scheduler) LoadOn(ctx context.Context, model string, nodes []string) error {
+	p, _, ok := s.Config().Resolve(model)
+	if !ok {
+		return errUnknown(model)
+	}
+	w := &waiter{profile: p.Name, synthetic: true, reply: make(chan answer, 1), pin: append([]string{}, nodes...)}
+	if !s.post(ctx, evAcquire{w: w}) {
+		return errShutting()
+	}
+	if err := s.query(ctx, func(*schedCore) {}); err != nil {
+		return err
+	}
+	select {
+	case a := <-w.reply:
+		if a.err != nil {
+			return a.err
+		}
+	default:
+	}
+	return nil
+}
+
+// PlanOn is the plan of a load on chosen nodes (LoadOn); nothing changes.
+func (s *Scheduler) PlanOn(ctx context.Context, model string, nodes []string) (PlanReport, error) {
+	p, alias, ok := s.Config().Resolve(model)
+	if !ok {
+		return PlanReport{}, errUnknown(model)
+	}
+	r, err := askRead(s, ctx, "plan of "+p.Name+" on chosen nodes", func(c *schedCore) PlanReport {
+		if e := c.pinConflict(p); e != nil {
+			return PlanReport{Profile: p.Name, Action: PlanReject, Reason: e.Message}
+		}
+		return c.dryPlanOf(p.Name, pinCopy(p, nodes))
+	})
+	if err != nil {
+		return PlanReport{}, err
+	}
+	r.Alias = alias
+	return r, nil
+}
+
 // ask runs fn on the core goroutine and returns its result. The result
 // travels over a channel the query owns, so a caller that gave up (its
 // context ended while the loop was busy) gets the context error and a zero

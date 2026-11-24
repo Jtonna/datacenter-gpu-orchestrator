@@ -23,6 +23,13 @@ func (c *schedCore) arrive(w *waiter) {
 		c.fail(w, errUnknown(w.profile))
 		return
 	}
+	if len(w.pin) > 0 { // pin.go: a load on chosen nodes
+		if err := c.pinConflict(p); err != nil {
+			c.fail(w, err)
+			return
+		}
+		p = c.pinned(p, w.pin)
+	}
 	if c.shutdown {
 		c.fail(w, err503(ReasonShuttingDown, "the scheduler is shutting down", queueRetryAfter))
 		return
@@ -66,7 +73,7 @@ func (c *schedCore) arrive(w *waiter) {
 		return
 	}
 	// draining, stopping or no instance: the queue (7.2 capacity check first).
-	if err := c.capacity(w.profile); err != nil {
+	if err := c.capacity(p); err != nil {
 		var np *placer.NoPlacement
 		if errors.As(err, &np) && np.Reason == placer.ExceedsCapacity {
 			// Permanent (the config or the cluster must change), so no
@@ -244,8 +251,7 @@ func (c *schedCore) excludedNote(p *core.Profile) string {
 // budgets of every node the profile could ever use (best max_pool of them),
 // counting quarantined and settling nodes. Skipped while the view is
 // stale. A need error is returned as is.
-func (c *schedCore) capacity(profile string) error {
-	p := c.cfg.Profiles[profile]
+func (c *schedCore) capacity(p *core.Profile) error {
 	req, _, err := c.request(p)
 	if err != nil {
 		return err

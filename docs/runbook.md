@@ -158,6 +158,15 @@ curl -s -X POST $H/api/nodes/02:00:00:00:00:01/readmit      -d '{"comment":"why"
 
 `POST /api/models/drain/<model>` (answer `eta_s`): the model admits nothing new, nothing is cut, and it unloads once its runs finish; `eta_s` comes from the profile's average run length (absent until a run of it has finished since Potluck started). A request arriving meanwhile queues and loads the model again once it has stopped. Taken back with `POST /api/models/undrain/<model>`. The status shows `drain: true` and `drain_eta_s`. A loading model is refused (409; force unload cancels a load). Audited as `unload` with `drain: true`. MCP: `drain_model`, `undrain_model`.
 
+### Load a model on chosen zones
+
+```sh
+curl -s -X POST $H/api/plan -d '{"model":"gemma","nodes":["ps5-02","ps5-03"]}'   # plan first: changes nothing
+curl -s -X POST $H/api/load -d '{"model":"gemma","nodes":["ps5-02","ps5-03"]}'
+```
+
+`nodes` (ids or names the fleet view holds, in device order) places this one load as `force_nodes` would, without changing the profile: as `force_nodes`, the fit check is skipped and a load that can never fit there is refused. The instance shows `pinned_nodes` in `/api/status` and is not reported stale for them; its next load follows the profile again. Refused with 409 (`already loaded or queued`) while the model is loaded, loading, stopping or queued: unload it first. Audited as `load` with `nodes`. MCP: `plan_load` and `load_model` take `nodes`.
+
 ### A machine that is off across a restart
 
 Potluck remembers the machines its previous run listed when it ended: active or lost in that run's list, not removed and not left. At start it reads them back from the event history (`schedulerStarted`, `schedulerStopping`, `nodeMembership` and the `nodeAdmin` removals; no table of its own). A run of an older image listed only the machines that registered in it, so a machine such a run had already dropped stays unlisted. A machine whose agent has not registered 65 s after the start is listed as `lost` in `/api/nodes` and in `agents` of `/api/status`, with `absent_since_start: true`, `last_seen_at` (when Potluck last heard from it) and `last_seen_ago_s`. It counts as down in `/api/health` ("7 of 8 reachable · 1 down") and its hours are lost in the availability series. It is never placed on: the scheduler's view does not hold it. Each start writes one info `knownMachines` event for the fleet at once ("Potluck knows 7 machines from its previous run ...", data `machines`: id, name, last_seen; it names no node, so it is not in any machine's recent events), and a `nodeMembership` warning "has not come back since Potluck started" for each machine that is listed as lost when the 65 s are over. The next start reads the machine and its last seen from them, so a machine off across several restarts keeps its first last seen, even when a run ends inside its 65 s.

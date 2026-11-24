@@ -103,7 +103,7 @@ func (c *schedCore) instStatus(in *inst) InstanceStatus {
 	s := InstanceStatus{
 		Profile: in.prof.Name, State: in.state.String(), RunningState: in.state.running(),
 		Cmd: c.cmdline(in), LogFile: in.logFile, Created: in.created, LastUsed: in.lastUsed, LoadDuration: in.loadDuration,
-		InFlight: in.inFlight, Waiters: len(in.waiters), VictimOf: in.victimOf, Drain: in.drain,
+		InFlight: in.inFlight, Waiters: len(in.waiters), VictimOf: in.victimOf, Drain: in.drain, PinnedNodes: c.pins[in.prof],
 		ModelFile: in.prof.Model, RequestsServed: in.served,
 		StaleProfile: c.staleProfile(in), LoadMode: c.loadModeFor(in.prof, in.placement),
 	}
@@ -268,9 +268,13 @@ func (c *schedCore) placedStatus(pl core.Placement) []PlacedNodeStatus {
 
 // dryPlan is POST /api/plan: what a request for profile would meet now.
 // It changes nothing (the need provider's result may be cached).
-func (c *schedCore) dryPlan(profile string) (r PlanReport) {
+func (c *schedCore) dryPlan(profile string) PlanReport {
+	return c.dryPlanOf(profile, c.cfg.Profiles[profile])
+}
+
+// dryPlanOf is dryPlan for p, which may be a one-off pinned copy (pin.go).
+func (c *schedCore) dryPlanOf(profile string, p *core.Profile) (r PlanReport) {
 	r = PlanReport{Profile: profile}
-	p := c.cfg.Profiles[profile]
 	var placed *core.Placement
 	defer func() {
 		if placed != nil && len(r.Placement) > 0 {
@@ -340,7 +344,7 @@ func (c *schedCore) dryPlan(profile string) (r PlanReport) {
 		}
 		return r
 	}
-	if err := c.capacity(profile); err != nil {
+	if err := c.capacity(p); err != nil {
 		var np *placer.NoPlacement
 		if errors.As(err, &np) {
 			r.RequiredMiB, r.CapacityMiB = np.RequiredMiB, np.CapacityMiB

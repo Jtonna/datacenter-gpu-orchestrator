@@ -729,6 +729,9 @@ func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
 type modelRequest struct {
 	Model string `json:"model"`
 	Force bool   `json:"force"`
+	// Nodes (load and plan): place this load on these nodes only, as
+	// force_nodes would, without changing the profile (pin.go).
+	Nodes []string `json:"nodes"`
 }
 
 func readModelRequest(w http.ResponseWriter, r *http.Request) (modelRequest, bool) {
@@ -755,7 +758,16 @@ func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rep, err := s.sched.Plan(r.Context(), req.Model)
+	var rep scheduler.PlanReport
+	var err error
+	if len(req.Nodes) > 0 {
+		if !s.checkViewNodes(w, r, req.Nodes) {
+			return
+		}
+		rep, err = s.sched.PlanOn(r.Context(), req.Model, req.Nodes)
+	} else {
+		rep, err = s.sched.Plan(r.Context(), req.Model)
+	}
 	if err != nil {
 		s.writeErr(w, err)
 		return
@@ -774,7 +786,16 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.sched.LoadFor(r.Context(), req.Model, benchRunHeader(r.Header.Get("X-Bench-Run"))); err != nil {
+	var err error
+	if len(req.Nodes) > 0 {
+		if !s.checkViewNodes(w, r, req.Nodes) {
+			return
+		}
+		err = s.sched.LoadOn(r.Context(), req.Model, req.Nodes)
+	} else {
+		err = s.sched.LoadFor(r.Context(), req.Model, benchRunHeader(r.Header.Get("X-Bench-Run")))
+	}
+	if err != nil {
 		s.writeErr(w, err)
 		return
 	}
@@ -782,8 +803,14 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 	if p, _, ok := s.conf().Resolve(req.Model); ok {
 		name = p.Name
 	}
-	s.auditRuntime(r, audit.ActionLoad, name, nil)
-	writeJSON(w, http.StatusAccepted, map[string]any{"msg": "loading", "model": name})
+	var after map[string]any
+	out := map[string]any{"msg": "loading", "model": name}
+	if len(req.Nodes) > 0 {
+		after = map[string]any{"nodes": req.Nodes}
+		out["nodes"] = req.Nodes
+	}
+	s.auditRuntime(r, audit.ActionLoad, name, after)
+	writeJSON(w, http.StatusAccepted, out)
 }
 
 func (s *Server) handleUnload(w http.ResponseWriter, r *http.Request) {

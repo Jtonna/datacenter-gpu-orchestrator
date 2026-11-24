@@ -41,3 +41,24 @@ func TestDrain_BusyModelUnloadsAfterItsRun(t *testing.T) {
 		t.Fatal(b)
 	}
 }
+
+// Load on chosen nodes: plan first, then load; the instance names them;
+// a second pinned load while it is loaded is 409; unknown nodes are 400.
+func TestLoadOnChosenNodes(t *testing.T) {
+	e := newEnv(t, chatOK)
+	status(t, e.post("/api/plan", `{"model":"alpha","nodes":["nope"]}`), http.StatusBadRequest)
+	status(t, e.post("/api/load", `{"model":"alpha","nodes":["host-1","host-1"]}`), http.StatusBadRequest)
+	if b := status(t, e.post("/api/plan", `{"model":"alpha","nodes":["host-1"]}`), 200); !strings.Contains(b, `"action":"start"`) {
+		t.Fatalf("plan %s", b)
+	}
+	if b := status(t, e.post("/api/load", `{"model":"alpha","nodes":["host-1"]}`), http.StatusAccepted); !strings.Contains(b, `"nodes":["host-1"]`) {
+		t.Fatalf("load %s", b)
+	}
+	eventually(t, "pinned_nodes on the status", func() bool {
+		return strings.Contains(body(t, e.get("/api/status")), `"pinned_nodes":["host-1"]`)
+	})
+	status(t, e.post("/api/load", `{"model":"alpha","nodes":["host-1"]}`), http.StatusConflict)
+	if b := status(t, e.post("/api/plan", `{"model":"alpha","nodes":["host-1"]}`), 200); !strings.Contains(b, `"action":"reject"`) {
+		t.Fatalf("plan while loaded %s", b)
+	}
+}
