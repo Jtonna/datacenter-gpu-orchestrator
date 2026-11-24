@@ -411,7 +411,7 @@ func (c *Client) localFromProbeLocked(total, used int) (core.Node, bool) {
 	if !ok {
 		return core.Node{}, false
 	}
-	n.Priority, n.HeadroomMiB, n.SharedMemory, n.LinkMBs, n.Settle = t.Priority, t.HeadroomMiB, t.SharedMemory, t.LinkMBs, t.Settle
+	n.Priority, n.HeadroomMiB, n.SharedMemory, n.LinkMBs, n.Settle, n.TierIndex = t.Priority, t.HeadroomMiB, t.SharedMemory, t.LinkMBs, t.Settle, t.Index
 	return n, true
 }
 

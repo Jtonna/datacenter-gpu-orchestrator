@@ -10,6 +10,12 @@ No agent change, no new port, no schema change.
 - **Rows read from cached loads are dropped once at start**, decided from the event history, with a history line, also when the reading's profile is a generated benchmark profile no longer in the configuration. Each start writes a count line and a `learnedNeed` event with `device_rows_checked` and `device_rows_dropped`, also when none are dropped.
 - **No host or per-device reading from an unsettled base**: when an instance that ran left the node less than one `free_average_window` before the new one was created, the base free figure may still show it; that load gives no reading.
 
+## Scheduler image: each zone's tier
+
+No agent change, no new port, no schema change.
+
+- **Each zone says its tier.** `/api/nodes` and `/api/status` `agents` carry `tier` (index, priority, rule as stored, headroom, shared memory, link speed, settle) as the scheduler matched it, or `tier_reason: "no tier matches"`; `GET /api/config/tiers` adds `tier_zones` (each tier's zones now, and `never_reached` below an empty match). Runbook: "Which tier a zone is in".
+
 ## Scheduler image: the per-device overhead measured per shape, machine and device count
 
 No agent change, no new port. Schema: one new table, `needs_device_overhead` (shape, node, devices, the figure in force with its date, the log's part, the last three readings with their dates), under its own ledger `needs_device_migrations` (v1). No existing table or ledger changes, so the previous image opens the file as before.

@@ -338,8 +338,12 @@ type NodeStatus struct {
 	Online   bool
 	Addr     string
 	Priority int
-	Eligible bool // ignoring the profile-specific rules (allow_tiers, min_share)
-	Excluded bool // kept out of the pool by exclude_nodes; never eligible
+	// TierIndex is the 1-based position of the tier the node view matched
+	// (core.Node.TierIndex); not shown in the status (the Tiers page reads
+	// GET /api/config/tiers tier_zones).
+	TierIndex int  `view:"-"`
+	Eligible  bool // ignoring the profile-specific rules (allow_tiers, min_share)
+	Excluded  bool // kept out of the pool by exclude_nodes; never eligible
 	// ExcludedBy is the exclude_nodes entry that matches the node ("" when
 	// not excluded).
 	ExcludedBy string
