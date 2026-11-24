@@ -854,8 +854,13 @@ func (s *Server) withModelsDisk(list []byte) []byte {
 		d = map[string]any{"path": e.Path, "state": e.State, "total_bytes": e.TotalBytes, "free_bytes": e.FreeBytes, "used_bytes": e.UsedBytes,
 			"used_percent": e.UsedPercent, "model_bytes": e.PotluckBytes, "files": e.FileCount, "checked_at": e.CheckedAt}
 	}
-	if c := s.conf(); c != nil && c.ModelsDiskBudgetGB > 0 {
-		d["budget_bytes"] = int64(c.ModelsDiskBudgetGB) * 1_000_000_000
+	if c := s.conf(); c != nil {
+		if c.ModelsDiskBudgetGB > 0 {
+			d["budget_bytes"] = int64(c.ModelsDiskBudgetGB) * 1_000_000_000
+		}
+		if h := c.LocalNodeName(); h != "" {
+			d["host"] = h // the machine the models folder is on ("free on <host>")
+		}
 	}
 	b, err := json.Marshal(d)
 	if err != nil {
