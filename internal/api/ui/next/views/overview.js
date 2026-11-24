@@ -36,7 +36,7 @@ import { num, gb, gbNum, dur, clock, dateTime, DASH } from '../core/format.js';
 import { onCatalog, needCatalog } from '../core/catalog.js';
 import { viewNodes } from '../core/status.js';
 import { agentOf, notPlaceable } from '../core/nodeactions.js';
-import { requestFeed, every, onLiveTimings, liveTimings } from '../core/requests.js';
+import { requestFeed, every, onLiveTimings, liveTimings, defaultUser } from '../core/requests.js';
 import { PERIODS, isPeriod, periodOf, bucketTitle, shortDay, ymd, addDays, foldLocal } from '../core/period.js';
 
 // ---------- Customize (Q1): kept in this browser until the owner has a mockup for it ----------
@@ -81,8 +81,8 @@ function customize(onSave) {
 // ---------- zones: the state of each machine in the design's words ----------
 
 const ASIDE = { preflight_failed: 'Load failed', agent_unreachable: 'Agent not reachable', worker_hung: 'Worker stopped answering', node_lost: 'Lost for a while' };
-const DEFAULT_ACTOR = 'anonymous'; // the default user of the site (no login): everyone using it is "you"
-const byWhom = actor => (!actor ? '' : actor === DEFAULT_ACTOR || actor === api.getActor() ? ' by you' : ' by ' + actor);
+// "by you": the default user (setting default_user_name) stands for anyone using the site (no login)
+const byWhom = actor => (!actor ? '' : actor === defaultUser() ? ' by you' : ' by ' + actor);
 const tms = t => { const v = t ? Date.parse(t) : NaN; return Number.isNaN(v) ? null : v; };
 const timeAt = (ms, title) => h('time', { datetime: new Date(ms).toISOString(), title: title || dateTime(ms) }, clock(ms, false));
 

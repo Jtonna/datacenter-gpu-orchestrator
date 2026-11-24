@@ -165,16 +165,17 @@ func TestUINextHealthHeart(t *testing.T) {
 // beside the rail (its script is empty: the heart's click does nothing more
 // than open the popup). Opening the popup closes the open section menu for
 // as long as the popup is open; closing the popup brings the menu back as
-// the person had it (their stored choice is not changed).
+// the person had it (their stored choice is not changed). (On Models: the
+// Overview and Zones open with the menu closed.)
 func TestUINextHealthPopupClosesTheMenu(t *testing.T) {
 	now := time.Now()
 	st := ovStatus(now)
 	doc := healthDoc(now, nil, nil)
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": map[string]any{"/api/health": doc}, "cases": []any{
-		map[string]any{"name": "menu: open on Zones", "route": "#/zones", "status": st, "pageNone": []string{"div.app.menu-closed"}},
-		map[string]any{"name": "menu: the popup closes it", "route": "#/zones", "status": st, "click": []string{"button.rb[data-surface=health]"},
+		map[string]any{"name": "menu: open on Models", "route": "#/models", "status": st, "pageNone": []string{"div.app.menu-closed"}},
+		map[string]any{"name": "menu: the popup closes it", "route": "#/models", "status": st, "click": []string{"button.rb[data-surface=health]"},
 			"pageHas": []string{"div.app.menu-closed", "div.hp"}},
-		map[string]any{"name": "menu: back when the popup closes", "route": "#/zones", "status": st, "click": []string{"button.rb[data-surface=health]", "div.hp button.hp-x"},
+		map[string]any{"name": "menu: back when the popup closes", "route": "#/models", "status": st, "click": []string{"button.rb[data-surface=health]", "div.hp button.hp-x"},
 			"pageNone": []string{"div.app.menu-closed", "div.hp"}},
 	}})
 }
@@ -203,4 +204,29 @@ func TestUINextHealthSchedulerRelease(t *testing.T) {
 			t.Errorf("the health rows' sentence is cut with an ellipsis: %s", line)
 		}
 	}
+}
+
+// The page no longer asks who you are: no "Changes are signed as" line and
+// no Change button in the menu; a change it sends has no X-Actor. "by you"
+// on the Overview is the default user's name (default_user_name, from GET
+// /api/config/settings; "anonymous" when unset).
+func TestUINextNoActorPrompt(t *testing.T) {
+	now := time.Now()
+	st := ovStatus(now)
+	for _, a := range st["agents"].([]any) {
+		ag := a.(map[string]any)
+		switch ag["name"] {
+		case "node-d":
+			ag["paused"], ag["paused_actor"] = true, "alex"
+		case "node-c":
+		}
+	}
+	fetch := ovFetch(now, ovRequests(now), true)
+	fetch["/api/config/settings"] = map[string]any{"settings": map[string]any{"default_user_name": "alex"}}
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
+		map[string]any{"name": "actor: no prompt in the menu", "route": "#/zones", "status": st,
+			"pageNone": []string{"div.actor"}, "notOnPage": []string{"Changes are signed as"}},
+		map[string]any{"name": "actor: by you is the default user", "route": "#/overview", "status": st,
+			"expect": []string{"Paused by you", "Switched off by anonymous"}},
+	}})
 }

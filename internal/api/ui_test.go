@@ -205,12 +205,19 @@ func TestUIImportsResolve(t *testing.T) {
 	}
 }
 
-// Every write the UI sends is marked as coming from the web UI, with an actor.
-func TestUIWritesCarrySourceAndActor(t *testing.T) {
+// Every write the UI sends is marked as coming from the web UI. It carries
+// no actor of its own: the page no longer asks who you are, and the server
+// signs a keyless change with the default user (setting default_user_name).
+func TestUIWritesCarrySourceAndNoActor(t *testing.T) {
 	text := uiText(t, "core/api.js")
-	for _, want := range []string{`'X-Source': 'ui'`, `'X-Actor'`, `If-Match`, `X-Comment`, `dry_run`} {
+	for _, want := range []string{`'X-Source': 'ui'`, `If-Match`, `X-Comment`, `dry_run`} {
 		if !strings.Contains(text, want) {
 			t.Errorf("core/api.js lacks %s", want)
+		}
+	}
+	for _, name := range uiFiles(t) {
+		if path.Ext(name) == ".js" && regexp.MustCompile(`X-Actor'|getActor|setActor|Changes are signed as`).MatchString(uiText(t, name)) {
+			t.Errorf("%s still asks who you are or sends X-Actor", name)
 		}
 	}
 	// fetch is only used through the REST helper, so no view can skip the headers.

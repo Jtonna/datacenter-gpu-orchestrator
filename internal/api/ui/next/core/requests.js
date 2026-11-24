@@ -127,6 +127,7 @@ function readTimings() {
   api.get('/api/config/settings').then(c => {
     const s = (c && c.settings) || c || {};
     timings = s.requests_live_timings === true;
+    userName = typeof s.default_user_name === 'string' && s.default_user_name.trim() ? s.default_user_name.trim() : DEFAULT_USER;
   }, () => { /* not readable: stays unknown */ }).finally(() => {
     timingsReading = false;
     for (const fn of Array.from(timingsWatchers)) fn();
@@ -139,6 +140,12 @@ export function onLiveTimings(fn) {
   return () => timingsWatchers.delete(fn);
 }
 export const liveTimings = () => timings;
+// defaultUser() -> the default user's name (setting default_user_name, read
+// with the setting above; "anonymous" when unset): there is no login, the
+// default user stands for anyone using the site and signs keyless changes.
+export const DEFAULT_USER = 'anonymous';
+let userName = DEFAULT_USER;
+export const defaultUser = () => userName;
 on(['configRevision'], () => { if (timingsWatchers.size && timingsRev !== state.configRevision) { timingsRev = state.configRevision; readTimings(); } });
 
 // ---------- the feed ----------

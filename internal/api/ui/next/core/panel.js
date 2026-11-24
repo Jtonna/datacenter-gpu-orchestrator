@@ -30,7 +30,7 @@ export const DOCK_MIN = 1400;
 const wide = window.matchMedia('(min-width:' + DOCK_MIN + 'px)');
 
 let current = null;
-// openPanel(o) -> {close, redraw, el, docked}
+// openPanel(o) -> {close, redraw, el, docked}; o.focus: a selector focused on open
 export function openPanel(o) {
   if (current) current.close();
   const prev = document.activeElement;
@@ -53,6 +53,8 @@ export function openPanel(o) {
     if (closed) return;
     const put = (el, v) => { const x = val(v); morph(el, x == null ? [] : x); if (x == null || (Array.isArray(x) && !x.length)) el.setAttribute('hidden', ''); else el.removeAttribute('hidden'); };
     put(label, o.label);
+    const lt = val(o.label);
+    closeBtn.setAttribute('aria-label', 'Close' + (typeof lt === 'string' && lt ? ' ' + lt.toLowerCase() : ''));
     morph(title, val(o.title) == null ? [] : val(o.title));
     put(sub, o.sub);
     put(controls, o.controls);
@@ -115,7 +117,9 @@ export function openPanel(o) {
   place();
   if (wide.addEventListener) wide.addEventListener('change', onWidth);
   document.addEventListener('keydown', onKey, true);
-  closeBtn.focus();
+  // the first field when the panel asks for one (o.focus: a css selector), else the close button
+  const first = o.focus ? pane.querySelector(o.focus) : null;
+  (first || closeBtn).focus();
   current = api;
   return api;
 }
