@@ -126,19 +126,33 @@ func TestUIHasNoExternalReference(t *testing.T) {
 	}
 }
 
-// Loading and unloading a model is not possible from the web UI: no file
-// names the endpoints that do it.
-func TestUIHasNoLoadOrUnloadControl(t *testing.T) {
+// Unloading a model from the web UI goes through one module,
+// next/core/modelactions.js, and only with a comment (the owner's rule change
+// of 24 Nov: the Zones mockups draw Unload, behind a confirm dialog with an
+// audit entry). No other UI file names the load or unload endpoints.
+func TestUIModelActionsInOneModule(t *testing.T) {
+	const home = uiNextDir + "core/modelactions.js"
 	bad := []string{"/api/load", "/api/unload", "/api/models/unload", `'/unload'`, `"/unload"`, "`/unload`"}
 	for _, name := range uiFiles(t) {
-		if !isUICode(name) {
+		if !isUICode(name) || name == home {
 			continue
 		}
 		text := uiText(t, name)
 		for _, b := range bad {
 			if strings.Contains(text, b) {
-				t.Errorf("%s names %s: the UI must not be able to load or unload a model", name, b)
+				t.Errorf("%s names %s: model actions go through %s", name, b, home)
 			}
+		}
+	}
+	text := uiText(t, home)
+	for _, want := range []string{`api.post('/api/unload', { model, force: !!force, comment: c }, { comment: c })`, `if (!c) return Promise.reject(`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("%s lacks %s", home, want)
+		}
+	}
+	for _, b := range []string{"/api/load", "/api/models/unload", "'/unload'"} {
+		if strings.Contains(text, b) {
+			t.Errorf("%s names %s: only the unload route is used", home, b)
 		}
 	}
 }

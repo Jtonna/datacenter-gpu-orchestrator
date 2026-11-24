@@ -91,8 +91,9 @@ dialogs included), `links` (`{text, path}`).
 
 Words of the new shell: a zone is one node; Off = excluded, "Not accepting"
 = paused, Set aside = quarantined. Nothing is drawn without data behind it,
-no control may reboot or restart a machine (`TestUINoRebootOrRestartControl`),
-and there is no load or unload control.
+no control may reboot or restart a machine (`TestUINoRebootOrRestartControl`;
+the Zones pages draw Reboot disabled, with the reason), and a model is
+unloaded only through `next/core/modelactions.js` behind a confirm dialog.
 
 The harness checks both: `scripts/ui-exec.mjs --base URL` runs the live
 screens of `/ui/` and of `/ui/classic/`; a case file with `"shell":"next"`
@@ -107,10 +108,16 @@ One screenshot: `scripts/ui-screens.sh http://127.0.0.1:8790 models loading desk
 1. **Reality only.** A screen shows what the server sends. Read the field from
    the Go code or the contract before you draw it; if the data does not exist,
    the element does not exist. No sample data in a view.
-2. **No load, unload, force load or cancel load control, anywhere.** Running a
-   benchmark suite is the one action that causes loads, and it sits behind a
-   confirm dialog that says so. `internal/api/ui_test.go` fails the build if a
-   UI file names `/api/load`, `/api/unload` or `/api/models/unload`. (The
+2. **Model actions only behind a confirm dialog, from one module.** The owner
+   withdrew the earlier "no load or unload control" rule on 24 Nov because the
+   Zones mockups draw Unload: the Zones pages unload a model (a group's
+   "Models here", the zones' Force unload) through `next/core/modelactions.js`
+   only, always after a confirm dialog that says what ends and asks for a
+   comment (body and X-Comment; the audit entry is signed by the default
+   user). Running a benchmark suite also causes loads, behind its own confirm
+   dialog. `internal/api/ui_test.go` (`TestUIModelActionsInOneModule`) fails
+   the build if any other UI file names `/api/load`, `/api/unload` or
+   `/api/models/unload`. (The
    catalog `GET /api/models` and `GET /api/models/<key>` are read-only and are
    what the Models screen reads.) The one exception, decided by the owner: in
    agents membership a machine card on Nodes has Pause / Unpause and Force

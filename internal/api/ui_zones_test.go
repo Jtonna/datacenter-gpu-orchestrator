@@ -437,3 +437,95 @@ func TestUINextZonesSelected(t *testing.T) {
 			"fetchedQuery": []string{`^POST /api/nodes/` + esc(znMac(1)) + `/force-unload \{"comment":"stuck"\}`, `^POST /api/nodes/` + esc(znMac(3)) + `/force-unload`}},
 	))
 }
+
+// Zones-Fleet-Group: a click on a group row opens its panel at
+// #/zones/group/<name> (docked beside the list, which narrows to Zone, Model
+// status and Memory, with Filters gathering the filters and the pills
+// without loading and off): the group's name, "N zones · chip · N GB
+// each", the Accepting models switch (on, off or mixed), Rename, Add zones,
+// Reboot all (disabled, with the reason), the figures (memory, average and
+// hottest temperature, in use, ping not measured, 7-day uptime), the zones
+// that need attention (each opens its zone), the models here with Unload,
+// and the link to its activity (not filterable by group yet). Each write
+// asks for a comment and uses the v43 group routes or POST /api/unload.
+func TestUINextZonesGroupPanel(t *testing.T) {
+	fleet := znFleet()
+	st := znStatus(fleet)
+	fetch := znFetch(fleet, true)
+	with := func(extra map[string]any) map[string]any {
+		out := map[string]any{}
+		for k, v := range fetch {
+			out[k] = v
+		}
+		for k, v := range extra {
+			out[k] = v
+		}
+		return out
+	}
+	ok := map[string]any{"ok": true}
+	writes := with(map[string]any{
+		"POST /api/groups/rack-a/pause":   ok,
+		"POST /api/groups/home/unpause":   ok,
+		"PATCH /api/groups/rack-a":        map[string]any{"name": "rack-z"},
+		"POST /api/groups/rack-a/members": ok,
+		"POST /api/unload":                map[string]any{"msg": "ok", "model": "alpha"},
+	})
+	typed := func(sel, v string) map[string]any { return map[string]any{"type": sel, "value": v} }
+	wide := 1600
+
+	uiExec(t, znSpec(fetch,
+		map[string]any{"name": "group: a click on its row opens the panel", "route": "#/zones", "status": st, "width": wide,
+			"click": []any{"div.fr.gh[data-group=rack-a]"}, "hash": "#/zones/group/rack-a",
+			"pageHas": []string{"aside.side.docked", "div.fr.gh.sel[data-group=rack-a]"}},
+		map[string]any{"name": "group: the panel", "route": "#/zones/group/rack-a", "status": st, "width": wide,
+			"page": []string{"Selected group", "rack-a", "4 zones · Oberon · 13.5 GB each", "Accepting models", "Rename", "Add zones", "Reboot all",
+				"Memory", "26", "of 54 GB", "Temperature, average", "59 °C", "Hottest", "63 °C", "node-b", "In use", "2", "of 4 zones",
+				"Ping, average", "not measured", "Uptime, 7 days", "99.1%", "Needs attention", "Nothing needs a look",
+				"Models here", "alpha", "2 zones", "beta", "1 zone", "Unload", "Activity for this group"},
+			"pageHas": []string{"aside.side button.switch[role=switch][aria-checked=true]", "aside.side button[data-gp=reboot][disabled]", "aside.side button[data-unload=alpha]",
+				"div.fr.v2n[data-zone='" + znMac(1) + "']", "div.mb[role=img]"},
+			"pageNone": []string{"div.fr.v2[data-zone='" + znMac(1) + "']", "button[data-act=collapse]", "button[data-show=load]", "button[data-show=off]"},
+			"expect":   []string{"Filters", "2 in use", "1 free", "2 down"},
+			"titles":   []string{"Ping is not measured yet", "a PS5 is never rebooted from here", "cannot be filtered by group yet"}},
+		map[string]any{"name": "group: Filters shows the filters", "route": "#/zones/group/rack-a", "status": st, "width": wide,
+			"click": []any{"button[data-act=filters]"}, "expect": []string{"Chip: any", "Model: any", "Memory free: any", "Sort: needs attention first"}},
+		map[string]any{"name": "group: a filter keeps the panel open", "route": "#/zones/group/rack-a?q=node-a", "status": st, "width": wide,
+			"expect": []string{"node-a"}, "absent": []string{"node-d"}, "page": []string{"Selected group"}},
+		map[string]any{"name": "group: needs attention and the mixed switch", "route": "#/zones/group/home", "status": st, "width": wide,
+			"page":    []string{"Needs attention", "node-e", "Set aside", "node-f", "Offline", "Some zones"},
+			"pageHas": []string{"aside.side button.switch[aria-checked=mixed]", "[data-attn='" + znMac(6) + "']"}},
+		map[string]any{"name": "group: a zone that needs attention opens its panel", "route": "#/zones/group/home", "status": st, "width": wide,
+			"click": []any{"[data-attn='" + znMac(6) + "']"}, "hash": "#/zones/node-f", "page": []string{"Selected zone"}},
+		map[string]any{"name": "group: a group that is not there", "route": "#/zones/group/nope", "status": st, "width": wide,
+			"page": []string{"No group named nope"}},
+		map[string]any{"name": "group: close", "route": "#/zones/group/rack-a", "status": st, "width": wide,
+			"click": []any{"aside.side button.x"}, "hash": "#/zones", "pageNone": []string{"aside.side"}},
+		map[string]any{"name": "group: the unload asks first", "route": "#/zones/group/rack-a", "status": st, "width": wide,
+			"click":   []any{"button[data-unload=alpha]"},
+			"page":    []string{"Unload alpha?", "2 runs are in flight.", "node-a", "node-b", "Wait for the 2 runs, then unload", "Force unload now", "Both runs fail straight away.", "Comment (required)"},
+			"pageHas": []string{"input[data-when=wait][disabled]", "input[data-when=force][checked]"},
+			"titles":  []string{"Waiting for the runs is not built yet"}},
+	))
+	uiExec(t, znSpec(writes,
+		map[string]any{"name": "group: stop accepting models", "route": "#/zones/group/rack-a", "status": st, "width": wide,
+			"click":        []any{"aside.side button.switch", typed("textarea[data-field=comment]", "maintenance"), "button[data-go]"},
+			"fetchedQuery": []string{`^POST /api/groups/rack-a/pause \{"comment":"maintenance"\}`}},
+		map[string]any{"name": "group: the switch asks first", "route": "#/zones/group/rack-a", "status": st, "width": wide,
+			"click": []any{"aside.side button.switch"}, "page": []string{"Stop accepting models on rack-a?", "4 zones", "What they hold now keeps serving"}},
+		map[string]any{"name": "group: a mixed group accepts again", "route": "#/zones/group/home", "status": st, "width": wide,
+			"click":        []any{"aside.side button.switch", typed("textarea[data-field=comment]", "back"), "button[data-go]"},
+			"fetchedQuery": []string{`^POST /api/groups/home/unpause \{"comment":"back"\}`}},
+		map[string]any{"name": "group: rename", "route": "#/zones/group/rack-a", "status": st, "width": wide,
+			"click":        []any{"button[data-gp=rename]", typed("input[data-field=name]", "rack-z"), typed("textarea[data-field=comment]", "new name"), "button[data-go]"},
+			"fetchedQuery": []string{`^PATCH /api/groups/rack-a \{"name":"rack-z","comment":"new name"\}`}, "hash": "#/zones/group/rack-z"},
+		map[string]any{"name": "group: add zones", "route": "#/zones/group/rack-a", "status": st, "width": wide,
+			"click":        []any{"button[data-gp=add]", "input[data-add='" + znMac(8) + "']", typed("textarea[data-field=comment]", "more"), "button[data-go]"},
+			"fetchedQuery": []string{`^POST /api/groups/rack-a/members \{"nodes":\["` + znMac(8) + `"\],"comment":"more"\}`}},
+		map[string]any{"name": "group: add zones lists the zones outside it", "route": "#/zones/group/rack-a", "status": st, "width": wide,
+			"click": []any{"button[data-gp=add]"}, "page": []string{"Add zones to rack-a", "node-e", "home", "node-h", "No group"},
+			"pageNone": []string{"input[data-add='" + znMac(1) + "']"}},
+		map[string]any{"name": "group: unload a model", "route": "#/zones/group/rack-a", "status": st, "width": wide,
+			"click":        []any{"button[data-unload=alpha]", typed("textarea[data-field=comment]", "free it"), "button[data-go]"},
+			"fetchedQuery": []string{`^POST /api/unload \{"model":"alpha","force":true,"comment":"free it"\}`}},
+	))
+}

@@ -40,7 +40,8 @@ import { viewNodes } from '../core/status.js';
 import { agentsMode, agentOf, notPlaceable, sendNodeAction } from '../core/nodeactions.js';
 import { onStartups } from '../core/startup.js';
 import { defaultUser } from '../core/requests.js';
-import { createGroup, addMembers, removeMembers, GROUP_NAME_RULE } from '../core/groups.js';
+import { createGroup, addMembers, removeMembers, renameGroup, pauseGroup, GROUP_NAME_RULE } from '../core/groups.js';
+import { unloadModel } from '../core/modelactions.js';
 import { tile, settlePending } from './nodes.js';
 
 const PAGE = 16; // zones a page, as drawn (232 zones on 15 pages)
@@ -320,14 +321,16 @@ const NONE_MODEL = '-';
 registerView({
   id: 'zones', title: 'Zones',
   mount(el, route) {
-    let r = route, side = null, hist = null, alive = true;
+    let r = route, side = null, hist = null, alive = true, filtersOpen = false;
     let nodesDoc = null, groupsDoc = null, uptimeDoc = null, avail = null;
     const sel = new Set(); // the ticked zones (ids)
     const shut = new Set(); // collapsed groups ('' is No group)
     const offStatus = on('status', () => { settlePending(); readSoon(); });
     const offStartups = onStartups(() => { view.refresh(); if (side) side.redraw(); });
     const offDrop = onDropChange(() => view.refresh());
-    const setQuery = (q, keepPage) => navigate('zones', [], Object.assign({}, r.query, keepPage ? {} : { page: '' }, q), true);
+    const restNow = () => (r.rest && r.rest[0] === 'group' && r.rest[1] ? ['group', String(r.rest[1])] : []);
+    const setQuery = (q, keepPage) => navigate('zones', restNow(), Object.assign({}, r.query, keepPage ? {} : { page: '' }, q), true);
+    const pickZone = id => navigate('zones', [], Object.assign({}, r.query, { zone: id }), true);
     const refresh = () => { view.refresh(); if (side) side.redraw(); };
 
     // the server's figures follow the live status: counts and groups at
@@ -362,12 +365,15 @@ registerView({
       if (alive && side && side.id === id) side.redraw();
     };
 
-    // The side panel of the open zone (#/zones/<name>).
+    // The side panel: a group's (#/zones/group/<name>) or a zone's (#/zones/<name>).
     const syncSide = () => {
-      const id = r.query.zone || '';
-      if (!id) { if (side) { const s = side; side = null; s.close(); } return; }
-      if (side && side.id === id) { side.redraw(); return; }
+      const g = groupOpen();
+      const id = g ? '' : r.query.zone || '';
+      const key = g ? 'g:' + g : id ? 'z:' + id : '';
+      if (!key) { if (side) { const s = side; side = null; s.close(); } return; }
+      if (side && side.key === key) { side.redraw(); return; }
       if (side) { const s = side; side = null; s.close(); }
+      if (g) { const p = groupPanel(g); p.key = key; side = p; return; }
       const card = () => {
         const st = state.status;
         const n = st && viewNodes(st).find(x => x.id === id);
@@ -378,6 +384,7 @@ registerView({
       const nameOf = () => { const n = state.status && viewNodes(state.status).find(x => x.id === id); return n ? h('span.mono', n.hostname || n.id) : 'Zone'; };
       const p = sidePanel({ label: 'Selected zone', title: nameOf, body: card, onClose: () => { if (side === p) { side = null; setQuery({ zone: '' }, true); } } });
       p.id = id;
+      p.key = key;
       side = p;
     };
 
@@ -402,6 +409,8 @@ registerView({
         go.addEventListener('click', async () => {
           const c = comment.value.trim();
           if (nameIn && !nameIn.value.trim()) { err.textContent = 'Give the group a name.'; nameIn.focus(); return; }
+          const bad = o.check ? o.check() : '';
+          if (bad) { err.textContent = bad; return; }
           if (!c) { err.textContent = 'A comment is required. Say why, in a few words.'; comment.focus(); return; }
           err.textContent = '';
           go.disabled = cancel.disabled = true;
@@ -414,6 +423,7 @@ registerView({
         return h('div.col', { style: 'gap:14px' },
           h('div', { style: 'display:flex;flex-direction:column;gap:8px' }, o.lines.map(t => h('div.hit', h('i', { class: o.red ? 'a' : 'm' }), h('span', t)))),
           nameIn ? h('div.field', h('label', 'Group name'), nameIn, h('span.mut', { style: 'font-size:12px' }, GROUP_NAME_RULE)) : null,
+          o.extra || null,
           h('div.field', h('label', 'Comment (required)'), comment, err),
           h('div.dlg-foot', cancel, go));
       } });
@@ -544,6 +554,169 @@ registerView({
       openMenu(e.clientX != null ? e.clientX : r ? r.left + 260 : 300, e.clientY != null ? e.clientY : r ? r.bottom : 300, rowEl);
     }
 
+    // ---------- the group panel (Zones-Fleet-Group, #/zones/group/<name>) ----------
+    const groupOpen = () => (r.rest && r.rest[0] === 'group' && r.rest[1] ? String(r.rest[1]) : '');
+    const groupDoc = name => ((groupsDoc && groupsDoc.groups) || []).find(g => g.name === name) || null;
+    const openGroup = name => navigate('zones', ['group', name], Object.assign({}, r.query, { zone: '' }));
+    const zoneOfId = id => cur.all.find(x => x.id === id) || null;
+
+    // the unload dialog (Zones-Confirm): what it ends, wait or force, a comment
+    function askUnload(model, o = {}) {
+      const st = state.status || {};
+      const inst = (st.instances || []).find(i => i.profile === model && (!o.zone || (i.nodes || []).some(m => m.id === o.zone))) ||
+        (st.instances || []).find(i => i.profile === model) || null;
+      const runs = inst ? inst.in_flight || 0 : 0;
+      const loading = inst && inst.state === 'starting';
+      const nameOfId = id => { const x = zoneOfId(id); return x ? x.name : id; };
+      const ms = inst ? (inst.nodes || []) : [];
+      const host = ms.find(m => m.role === 'host');
+      const helpers = ms.filter(m => m !== host);
+      const list = ids => h('span.mono', ids.map(nameOfId).join(', '));
+      let where = null;
+      if (o.zone && host && host.id === o.zone && helpers.length) where = [' ', h('span.mono', nameOfId(o.zone)), ' is the host, so the model also unloads from its ', helpers.length === 1 ? 'helper ' : 'helpers ', list(helpers.map(m => m.id)), '.'];
+      else if (o.zone && ms.length > 1) where = [' The model unloads from all its zones: ', list(ms.map(m => m.id)), '.'];
+      else if (!o.zone && ms.length) {
+        const out = o.group ? ms.filter(m => { const x = zoneOfId(m.id); return !x || x.group !== o.group; }) : [];
+        where = [' It runs on ', list(ms.map(m => m.id)), host ? [' (', h('span.mono', nameOfId(host.id)), ' is the host)'] : null, '; it unloads from all of them',
+          out.length ? [', ', list(out.map(m => m.id)), ' outside ', h('span.mono', o.group), ' included'] : null, '.'];
+      }
+      const runsWord = runs === 1 ? '1 run is in flight.' : `${num(runs)} runs are in flight.`;
+      const lead = loading ? 'It is still loading: the load is cancelled.' : runs ? runsWord : 'No run is in flight.';
+      const failWord = runs === 0 ? 'Nothing is running on it.' : runs === 1 ? 'The run fails straight away.' : runs === 2 ? 'Both runs fail straight away.' : `All ${num(runs)} runs fail straight away.`;
+      const WAIT_WHY = 'Waiting for the runs is not built yet: Potluck refuses to unload a busy model without force, and does not yet hold new runs while it waits. It comes with the server\'s next slice.';
+      let when = runs || loading ? 'force' : 'now';
+      return dialog({ title: o.zone ? ['Unload ', h('span.mono', model), ' from ', h('span.mono', nameOfId(o.zone)), '?'] : ['Unload ', h('span.mono', model), '?'], body: close => {
+        const comment = h('textarea.textarea', { rows: 2, maxlength: 400, 'data-field': 'comment', placeholder: 'Why? It is kept in the audit log.', 'aria-label': 'Comment' });
+        const err = h('span.err', { role: 'alert' });
+        const go = button('Unload', null, 'lg dng', { 'data-go': '' });
+        const cancel = button('Cancel', () => close(false), 'lg');
+        const opt = (id, label, sub, extra = {}) => {
+          const input = h('input', Object.assign({ type: 'radio', name: 'unload-when', 'data-when': id, checked: when === id, onclick: () => { when = id; box.querySelectorAll('.opt').forEach(l => l.classList.toggle('on', l.contains(input))); } }, extra));
+          return h('label', { class: 'opt' + (when === id ? ' on' : '') + (extra.disabled ? ' off' : ''), title: extra.title || null }, input, h('span', label, h('span', sub)));
+        };
+        const box = h('div', { role: 'radiogroup', 'aria-label': 'When to unload', style: 'display:flex;flex-direction:column;gap:8px' },
+          runs || loading
+            ? opt('wait', loading ? 'Wait for the load, then unload' : `Wait for the ${runs === 1 ? 'run' : num(runs) + ' runs'}, then unload`, 'Not built yet: Potluck cannot wait for the runs and hold new ones meanwhile.', { disabled: true, title: WAIT_WHY })
+            : opt('now', 'Unload now', 'Nothing is running on it. A new run for this model loads it again.'),
+          opt('force', 'Force unload now', loading ? 'The load stops straight away.' : failWord));
+        go.addEventListener('click', async () => {
+          const c = comment.value.trim();
+          if (!c) { err.textContent = 'A comment is required. Say why, in a few words.'; comment.focus(); return; }
+          err.textContent = '';
+          go.disabled = cancel.disabled = true;
+          try {
+            const res = await unloadModel(api, model, when === 'force', c);
+            toast(res && res.msg === 'not loaded' ? `${model} was not loaded` : `${model} unloaded`, 'ok');
+            close(true); readCounts(); view.refresh();
+          } catch (e) { err.textContent = (e && e.message) || 'The request failed.'; go.disabled = cancel.disabled = false; }
+        });
+        return h('div.col', { style: 'gap:14px' },
+          h('div', { class: 'box' + (runs || loading ? ' warn' : '') },
+            h('div.pt', icon(runs || loading ? 'M10 3l8 14H2zM10 8.5v4M10 14.8v.01' : 'M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM10 9v5M10 6v.01', 15), h('span', h('b', lead), where))),
+          box,
+          h('div.field', h('label', 'Comment (required)'), comment, err),
+          h('div.dlg-foot', cancel, go));
+      } });
+    }
+
+    function renameAsk(name) {
+      return ask({ title: ['Rename ', h('span.mono', name)], name: true, go: 'Rename',
+        lines: ['Its zones stay in it; only the name changes.'],
+        run: (c, to) => renameGroup(api, name, to, c).then(() => {
+          const g = groupDoc(name);
+          if (g) g.name = to;
+          toast(`${name} is now ${to}`, 'ok');
+          navigate('zones', ['group', to], r.query, true);
+        }) });
+    }
+    function addAsk(name) {
+      const outside = cur.all.filter(x => x.group !== name && x.a && x.a.id).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+      const picked = new Set();
+      const listBox = h('div.addz', outside.length ? outside.map(x => h('label.addrow', h('input', { type: 'checkbox', class: 'cb', 'data-add': x.id, onclick: () => { if (picked.has(x.id)) picked.delete(x.id); else picked.add(x.id); } }),
+        h('span.mono', x.name), h('span.mut', x.group ? h('span.mono', x.group) : 'No group'))) : h('span.mut', 'Every zone is in this group already.'));
+      return ask({ title: ['Add zones to ', h('span.mono', name)], go: 'Add zones', extra: h('div.field', h('label', 'Zones'), listBox),
+        lines: ['A zone is in one group at most: one that is in another group leaves it. Nothing they hold is touched.'],
+        check: () => (picked.size ? '' : 'Tick at least one zone.'),
+        run: c => addMembers(api, name, outside.filter(x => picked.has(x.id)).map(x => x.id), c).then(() => toast(`${plural(picked.size, 'zone')} added to ${name}`, 'ok')) });
+    }
+    function switchAsk(name, doc) {
+      const pause = doc.accepting === 'all';
+      const n = doc.count != null ? doc.count : (doc.members || []).length;
+      return ask({ title: [pause ? 'Stop accepting models on ' : 'Accept models again on ', h('span.mono', name), '?'], go: pause ? 'Stop accepting models' : 'Accept models again',
+        lines: pause ? [`Its ${plural(n, 'zone')} take no new model until the group accepts models again.`, 'What they hold now keeps serving requests.']
+          : [`Each of its ${plural(n, 'zone')} may take a new model again, as soon as nothing else holds it back.`],
+        run: c => pauseGroup(api, name, pause, c).then(() => toast(pause ? `${name} takes no new model` : `${name} accepts models again`, 'ok')) });
+    }
+
+    function groupBody(name) {
+      const doc = groupDoc(name);
+      if (!doc) return h('div.zempty', groupsDoc ? empty(`No group named ${name}`, 'It may have been renamed or deleted. Close this panel to see the groups there are.') : skeleton(4));
+      const members = cur.all.filter(x => x.group === name);
+      const count = doc.count != null ? doc.count : members.length;
+      const mem = doc.memory || {};
+      const used = Math.round((mem.used_mib || 0) / 1024), total = Math.round((mem.total_mib || 0) / 1024);
+      const pct = mem.total_mib ? Math.round((mem.used_mib || 0) / mem.total_mib * 100) : 0;
+      const t = doc.temp || {};
+      const up = doc.uptime_7d ? doc.uptime_7d.uptime : null;
+      const win = (groupsDoc && groupsDoc.uptime_window) || (uptimeDoc && uptimeDoc.window);
+      const since = win && win.complete === false && tms(win.covered_from) ? dayText(tms(win.covered_from)) : '';
+      const fact = (label, value, more, attrs = {}) => h('div.fact', attrs, h('span.lbl', label), value, more || null);
+      const attn = doc.needs_attention || [];
+      const models = (doc.models || []).slice().sort((a, b) => (b.zones || 0) - (a.zones || 0));
+      return [
+        h('div.gp-acts', { key: 'acts' },
+          button('Rename', () => renameAsk(name), '', { 'data-gp': 'rename' }),
+          button('Add zones', () => addAsk(name), '', { 'data-gp': 'add' }),
+          button([icon('M16 10a6 6 0 1 1-2-4.5M16 4v4h-4', 15), 'Reboot all'], null, 'red', { 'data-gp': 'reboot', disabled: true, title: REBOOT_WHY, style: 'margin-left:auto' })),
+        h('div.f2', { key: 'facts' },
+          fact('Memory', h('b', num(used), h('span.mut.of', ` of ${num(total)} GB`)), h('div.mb', { role: 'img', 'aria-label': `${pct}% of memory in use` }, h('span', { style: `width:${pct}%` }))),
+          fact('Temperature, average', h('b', typeof t.avg_c === 'number' ? `${num(Math.round(t.avg_c))} °C` : DASH)),
+          fact('Hottest', h('b', typeof t.hottest_c === 'number' && t.hottest_c ? `${num(Math.round(t.hottest_c))} °C` : DASH), t.hottest_name ? h('span.mono.mut', { style: 'font-size:12px' }, t.hottest_name) : null),
+          fact('In use', h('b', num((doc.counts && doc.counts.in_use) || 0), h('span.mut.of', ` of ${plural(count, 'zone')}`))),
+          fact('Ping, average', h('b.mut', { title: 'Ping is not measured yet: the agents do not time their heartbeat to Potluck (it needs the agent track).' }, 'not measured')),
+          fact(since ? 'Uptime, since ' + since : 'Uptime, 7 days', h('b', pctText(up)))),
+        h('div.dh', { key: 'attn-h' }, h('h3', 'Needs attention ', h('span.mut', { style: 'font-size:12px;font-weight:600' }, num(attn.length)))),
+        attn.length ? attn.map(a => {
+          const x = zoneOfId(a.id);
+          const z = x ? x.z : { square: 'down', label: a.state === 'lost' ? 'Offline' : 'Set aside', rest: null };
+          return h('div.pf.attn', { key: 'attn-' + a.id, 'data-attn': a.id, role: 'button', tabindex: '0', onclick: () => pickZone(a.id), onkeydown: e => { if (e.key === 'Enter') pickZone(a.id); } },
+            h('span.mono', { style: 'font-weight:500' }, a.name || (x && x.name) || a.id),
+            h('span.sts', h('i', { class: 'sq ' + z.square, 'aria-hidden': 'true' }), h('span.stx', z.label, z.rest)),
+            h('span.chev', icon('M8 5l5 5-5 5', 15)));
+        }) : h('div.pf.none', { key: 'attn-none' }, h('span.mut', 'Nothing needs a look: every zone of it is reachable.')),
+        h('div.dh', { key: 'models-h', style: 'margin-top:8px' }, h('h3', 'Models here')),
+        models.length ? models.map(m => h('div.pf', { key: 'm-' + m.profile },
+          h('span.mono', { style: 'font-weight:500' }, m.profile),
+          h('span', { style: 'text-align:right;font-weight:600' }, plural(m.zones || 0, 'zone')),
+          button('Unload', () => askUnload(m.profile, { group: name }), 'sm', { 'data-unload': m.profile, style: 'justify-content:center' })))
+          : h('div.pf.none', { key: 'models-none' }, h('span.mut', 'No model is loaded on its zones.')),
+      ];
+    }
+    function groupPanel(name) {
+      const doc = () => groupDoc(name);
+      const sub = () => {
+        const d = doc();
+        if (!d) return null;
+        const members = cur.all.filter(x => x.group === name);
+        const chips_ = [...new Set(members.map(x => x.chip).filter(Boolean))];
+        const each = (d.memory && d.memory.each_total_mib) || (members.length && members.every(x => x.n.total_mib === members[0].n.total_mib) ? members[0].n.total_mib : 0);
+        const count = d.count != null ? d.count : members.length;
+        return [plural(count, 'zone'), typeof d.chip === 'string' && d.chip && d.chip !== 'mixed' ? d.chip : chips_.length === 1 ? chips_[0] : null, each ? `${gb(each)} each` : null].filter(Boolean).join(' · ');
+      };
+      const controls = () => {
+        const d = doc();
+        if (!d) return null;
+        const v = d.accepting === 'all' ? 'true' : d.accepting === 'none' ? 'false' : 'mixed';
+        return h('label.gsw', v === 'mixed' ? h('span.mut', { style: 'font-weight:600' }, 'Some zones') : null, 'Accepting models',
+          h('button.switch', { type: 'button', role: 'switch', 'aria-checked': v, 'aria-label': 'Accepting models', title: v === 'mixed' ? 'Some of its zones are not accepting models: switch it on to let them all accept again' : null,
+            onclick: () => switchAsk(name, d) }, h('span')));
+      };
+      const foot = () => h('a.gp-act', { href: href('activity'), title: 'The history cannot be filtered by group yet: Activity shows the events of every zone.' }, 'Activity for this group', icon('M8 5l5 5-5 5', 15));
+      return sidePanel({ label: 'Selected group', title: h('span.mono', name), sub, controls, body: () => groupBody(name), foot,
+        name: 'Selected group: ' + name,
+        onClose: () => { if (side && side.key === 'g:' + name) { side = null; navigate('zones', [], r.query, true); } } });
+    }
+
     const view = liveView(el, () => {
       const st = state.status;
       if (side) side.redraw();
@@ -561,12 +734,16 @@ registerView({
         k.reachable = k.total - k.down;
         return k;
       })();
+      // with a panel open the list narrows (Zone, Model status, Memory) and
+      // the pills keep all, in use, free and down
+      const narrow = !!(groupOpen() || q.zone);
+      const pillsHere = narrow ? PILLS.filter(([id]) => ['use', 'free', 'down'].includes(id)) : PILLS;
       const show = PILLS.some(([id]) => id === q.show) ? q.show : '';
       const pills = h('div.zpills', { role: 'group', 'aria-label': 'Show' },
         h('button', { class: 'fc all' + (!show ? ' on' : ''), type: 'button', 'aria-pressed': !show ? 'true' : 'false', 'data-show': '',
           title: `${num(c.reachable)} of ${num(c.total)} reachable` + (c.down ? ` · ${num(c.down)} down` : ''), onclick: () => setQuery({ show: '' }) },
         `ALL ${num(c.total)} ZONE${c.total === 1 ? '' : 'S'}`),
-        PILLS.map(([id, word, key]) => h('button', { class: 'fc' + (show === id ? ' on' : ''), type: 'button', 'aria-pressed': show === id ? 'true' : 'false', 'data-show': id,
+        pillsHere.map(([id, word, key]) => h('button', { class: 'fc' + (show === id ? ' on' : ''), type: 'button', 'aria-pressed': show === id ? 'true' : 'false', 'data-show': id,
           onclick: () => setQuery({ show: show === id ? '' : id }) }, `${num(c[key] || 0)} ${word}`)),
         button([icon('M10 4v12M4 10h12'), 'Create new zone'], createInfo, 'pri', { 'data-act': 'create', style: 'margin-left:auto' }));
       if (!st) return [pills, h('section.w.zfleet', { 'aria-label': 'Zones' }, skeleton(6))];
@@ -630,13 +807,14 @@ registerView({
       const tickMany = (xs, on_) => { xs.forEach(x => (on_ ? sel.add(x.id) : sel.delete(x.id))); view.refresh(); };
 
       const strips = new Map(all.map(x => [x.id, stripOf(avail, x)]));
-      const pick = id => setQuery({ zone: id }, true);
+      const pick = pickZone;
+      const grid = narrow ? 'fr v2n' : 'fr v2';
       const zoneRow = (x, indent) => {
         const { z } = x;
         const off = z.pill === 'off';
         const u = upOf(x);
         const s = strips.get(x.id);
-        return h('div', { key: 'z-' + x.id, class: 'fr v2' + (q.zone === x.id ? ' sel' : '') + (sel.has(x.id) ? ' chk' : ''), 'data-zone': x.id, role: 'row', tabindex: '0',
+        return h('div', { key: 'z-' + x.id, class: grid + (q.zone === x.id ? ' sel' : '') + (sel.has(x.id) ? ' chk' : ''), 'data-zone': x.id, role: 'row', tabindex: '0',
           'aria-label': x.name + ', ' + z.label, onclick: () => pick(x.id), oncontextmenu: e => rowMenu(x, e, e.currentTarget),
           onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); pick(x.id); } else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) rowMenu(x, { preventDefault: () => e.preventDefault() }, e.currentTarget); } },
         canTick(x) ? h('input', { class: 'cb', type: 'checkbox', checked: sel.has(x.id), 'aria-label': 'Select ' + x.name, 'data-sel': x.id,
@@ -644,9 +822,10 @@ registerView({
         h('span.zn', { style: indent ? 'padding-left:26px' : null }, h('span.mono.znm', x.name)),
         h('span.sts', { title: z.title }, h('i', { class: 'sq ' + z.square, 'aria-hidden': 'true' }), h('span.stx', z.label, z.rest)),
         h('span', { class: 'r mono' + (!x.mem || off ? ' mut' : '') }, memText(x.mem)),
-        h('span', { class: 'r mono' + (x.temp == null || off ? ' mut' : '') }, x.temp == null ? DASH : `${num(x.temp)} °C`),
-        h('span', { class: 'r mono' + (u == null ? ' mut' : ''), title: u == null ? (off ? 'Switched off: its time is not counted' : 'Not known yet') : null }, pctText(u)),
-        availStrip(s.cells, s.label));
+        narrow ? null : [
+          h('span', { class: 'r mono' + (x.temp == null || off ? ' mut' : '') }, x.temp == null ? DASH : `${num(x.temp)} °C`),
+          h('span', { class: 'r mono' + (u == null ? ' mut' : ''), title: u == null ? (off ? 'Switched off: its time is not counted' : 'Not known yet') : null }, pctText(u)),
+          availStrip(s.cells, s.label)]);
       };
       const groupRow = (name, zs, doc, closed) => {
         const label = name || 'No group';
@@ -662,7 +841,9 @@ registerView({
         const gstrip = groupStrip(members.map(x => strips.get(x.id)), label);
         const visible = zs.filter(x => canTick(x) && onPage.some(i => i.kind === 'zone' && i.x === x));
         const ticked = visible.length > 0 && visible.every(x => sel.has(x.id));
-        return h('div', { key: 'g-' + label, class: 'fr v2 gh', 'data-group': name || '-', role: 'row' },
+        const open_ = name && groupOpen() === name;
+        return h('div', { key: 'g-' + label, class: grid + ' gh' + (open_ ? ' sel' : '') + (name ? ' gopen' : ''), 'data-group': name || '-', role: 'row', tabindex: name ? '0' : null,
+          'aria-label': name ? label + ', open the group' : null, onclick: name ? () => openGroup(name) : null, onkeydown: name ? e => { if (e.key === 'Enter') { e.preventDefault(); openGroup(name); } } : null },
           h('input', { class: 'cb', type: 'checkbox', checked: ticked, 'aria-label': 'Select all in ' + label, 'data-sel': 'group:' + (name || '-'), disabled: !visible.length,
             onclick: e => { e.stopPropagation(); tickMany(visible, !ticked); } }),
           h('span.gn', h('button', { class: 'more', type: 'button', 'aria-expanded': closed ? 'false' : 'true', 'aria-label': (closed ? 'Expand ' : 'Collapse ') + label, 'data-fold': name || '-',
@@ -671,9 +852,10 @@ registerView({
           h('span.mut.gmeta', num(count) + (chipsHere.length === 1 ? ' · ' + chipsHere[0] : count === 1 ? ' zone' : ' zones'))),
           h('span.gc', gcs),
           h('span.r', h('span.mono', memD && memD.total_mib ? `${num(Math.round(memD.used_mib / 1024))} / ${num(Math.round(memD.total_mib / 1024))} GB` : DASH)),
-          h('span.r.mono', { title: 'Average across the group' }, tempD == null ? DASH : `${num(tempD)} °C`),
-          h('span.r.mono', { title: up7 == null ? 'Not known yet' : 'Over the time of all its zones' + (since ? ' since ' + since : ', last 7 days') }, pctText(up7)),
-          availStrip(gstrip.cells, gstrip.label));
+          narrow ? null : [
+            h('span.r.mono', { title: 'Average across the group' }, tempD == null ? DASH : `${num(tempD)} °C`),
+            h('span.r.mono', { title: up7 == null ? 'Not known yet' : 'Over the time of all its zones' + (since ? ' since ' + since : ', last 7 days') }, pctText(up7)),
+            availStrip(gstrip.cells, gstrip.label)]);
       };
 
       const list = [];
@@ -690,24 +872,31 @@ registerView({
         (() => { const i = h('input', { type: 'text', 'data-search': 'zones', value: q.q || '', placeholder: 'Search name, chip, model or address', 'aria-label': 'Search zones' });
           i.addEventListener('input', () => setQuery({ q: i.value })); return i; })());
       const anyOpen = groupNames.concat(['']).some(n => !shut.has(n));
-      const tools = h('div.ztools',
-        findBox,
+      const filterButtons = () => [
         fs('Chip', [{ id: '', label: 'any' }].concat(chips.map(c_ => ({ id: c_, label: c_ }))), chipF, 'chip'),
         fs('Model', [{ id: '', label: 'any' }].concat(models.map(m => ({ id: m, label: m })), [{ id: NONE_MODEL, label: 'nothing loaded' }]), modelF, 'model'),
-        fs('Memory free', MEMS, memF, 'mem'),
+        fs('Memory free', MEMS, memF, 'mem')];
+      const nOn = [chipF, modelF, memF].filter(Boolean).length + (sort !== 'attention' ? 1 : 0);
+      const tools = h('div.ztools',
+        findBox,
+        narrow ? null : filterButtons(),
         h('div.ztools-r',
+          narrow ? h('button', { class: 'fs2' + (filtersOpen ? ' open' : ''), type: 'button', 'data-act': 'filters', 'aria-expanded': filtersOpen ? 'true' : 'false',
+            onclick: () => { filtersOpen = !filtersOpen; view.refresh(); } }, 'Filters' + (nOn ? ` · ${num(nOn)}` : '')) : null,
           h('button', { class: 'fs2' + (grouped ? ' on' : ''), type: 'button', 'data-act': 'grouped', 'aria-pressed': grouped ? 'true' : 'false', disabled: !hasGroups,
             title: hasGroups ? (grouped ? 'Show every zone in one list' : 'Show the zones under their groups') : 'No groups yet: select zones and make one from the selection',
             onclick: () => setQuery({ flat: grouped ? '1' : '' }) }, 'Grouped'),
-          grouped ? h('button', { class: 'fs2', type: 'button', 'data-act': 'collapse', onclick: () => { if (anyOpen) groupNames.concat(['']).forEach(n => shut.add(n)); else shut.clear(); view.refresh(); } },
+          grouped && !narrow ? h('button', { class: 'fs2', type: 'button', 'data-act': 'collapse', onclick: () => { if (anyOpen) groupNames.concat(['']).forEach(n => shut.add(n)); else shut.clear(); view.refresh(); } },
             anyOpen ? 'Collapse all' : 'Expand all') : null,
-          fs('Sort', SORTS, sort, 'sort')));
+          narrow ? null : fs('Sort', SORTS, sort, 'sort')));
+      const tools2 = narrow && filtersOpen ? h('div.ztools.ztools2', filterButtons(), fs('Sort', SORTS, sort, 'sort')) : null;
 
-      const head = h('div.fr.v2.fhd', { key: 'head', role: 'row' },
+      const head = h('div', { class: grid + ' fhd', key: 'head', role: 'row' },
         h('input', { class: 'cb', type: 'checkbox', checked: allTicked, 'aria-label': 'Select all', 'data-sel': 'all', disabled: !shownZones.length, onclick: () => tickMany(shownZones, !allTicked) }),
-        h('span.lbl', 'Zone'), h('span.lbl', 'Model status'), h('span.lbl.r', 'Memory'), h('span.lbl.r', 'Temp'),
-        h('span.lbl.r', { title: upTitle }, since ? h('span.uph', 'Uptime', h('small', 'since ' + since)) : 'Uptime'),
-        h('span.lbl.strip-h', h('span', '24 h ago'), h('span', 'Availability, hour by hour'), h('span', { style: 'color:var(--ink)' }, 'now')));
+        h('span.lbl', 'Zone'), h('span.lbl', 'Model status'), h('span.lbl.r', 'Memory'),
+        narrow ? null : [h('span.lbl.r', 'Temp'),
+          h('span.lbl.r', { title: upTitle }, since ? h('span.uph', 'Uptime', h('small', 'since ' + since)) : 'Uptime'),
+          h('span.lbl.strip-h', h('span', '24 h ago'), h('span', 'Availability, hour by hour'), h('span', { style: 'color:var(--ink)' }, 'now'))]);
 
       cur = { all, groups: gs };
       const chosen = all.filter(x => sel.has(x.id));
@@ -739,7 +928,7 @@ registerView({
         : h('div.zempty', agentsMode(st)
           ? empty('No machines have joined yet', 'Machines join through their agent. None has registered so far; start the agent on a machine and it appears here.')
           : empty('No zones are known yet', 'Zones come from the fleet feed. None has been reported so far; About shows the connection.'));
-      return [pills, h('section.w.zfleet', { 'aria-label': 'Zones' }, tools, head, h('div.zlist', body), foot)];
+      return [pills, h('section', { class: 'w zfleet' + (narrow ? ' narrow' : ''), 'aria-label': 'Zones' }, tools, tools2, head, h('div.zlist', body), foot)];
     }, ['status', 'tick', 'conn']);
     syncSide();
     return {
