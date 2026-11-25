@@ -162,12 +162,19 @@ const hostLine = p => (p.host === 'node'
     p.host_overhead_mib ? ` · +${gb(p.host_overhead_mib)} for the host` : null, p.host_problem ? h('span.err-t', ' · ' + p.host_problem) : null)
   : null);
 
-// needsCell(m, st) -> the Needs cell, as the classic list drew it: the memory
-// of the lightest configuration (fit.need_mib) and how it is known (measured,
-// estimated, set in the profile), the sentence on hover; a dash when unknown
+// NEED_DECIMALS: the decimals of a Needs figure. The owner's note 7 (25 Nov)
+// asks for one ("~18.5 GB"); two ("~18.48 GB") was drawn for the choice.
+const NEED_DECIMALS = 1;
+// needText(mib) -> "~18.5 GB": a tilde, as a need is approximate
+export const needText = mib => '~' + (mib / 1024).toLocaleString('en-US', { minimumFractionDigits: NEED_DECIMALS, maximumFractionDigits: NEED_DECIMALS }) + ' GB';
+// needsCell(m, st) -> the Needs cell: the memory of the lightest
+// configuration (fit.need_mib) as "~18.5 GB"; how it is known (measured,
+// estimated, set in the profile) and the sentence are on hover and in the
+// panel (the owner's note 7); a dash when unknown
 function needsCell(m, st) {
   const f = fitOf(m, st);
-  return h('span.mdl-needs', { 'data-col': 'needs' }, f.need ? h('span', { title: f.title || null }, gb(f.need), h('span.sub', f.sub)) : h('span.mut', DASH));
+  const how = f.title || (f.sub ? f.sub[0].toUpperCase() + f.sub.slice(1) : null);
+  return h('span.mdl-needs', { 'data-col': 'needs' }, f.need ? h('span', { title: how, 'data-basis': f.sub || null }, needText(f.need)) : h('span.mut', DASH));
 }
 
 // deleteButton(m, disk, onDeleted) -> the panel's "Delete model": the delete dialog
@@ -215,7 +222,7 @@ function modelPanel(st, m, ps) {
     h('section.zpart', { key: 'runs' },
       h('div.row', { style: 'gap:10px;flex-wrap:wrap' }, h('b', m.short_name || m.name), m.publisher ? h('span.mut', m.publisher) : null,
         stateBadge(m, st), m.kind === 'llama' && !m.exists ? badge('File missing', 'fail') : null),
-      h('div', h('span.mut', 'Runs on: '), runsOnCell(m, st), f.need ? [h('span.mut', ' · needs '), h('span', { title: f.title }, gb(f.need))] : null),
+      h('div', h('span.mut', 'Runs on: '), runsOnCell(m, st), f.need ? [h('span.mut', ' · needs '), h('span', { title: f.title }, needText(f.need)), f.sub ? h('span.mut', ' (' + f.sub + ')') : null] : null),
       facts([
         m.family ? ['Family', h('span', m.family)] : null,
         m.parameters ? ['Parameters', h('span', m.parameters)] : null,

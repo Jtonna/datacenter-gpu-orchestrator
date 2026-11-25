@@ -54,3 +54,20 @@ func TestUINextNotesMenuWords(t *testing.T) {
 			"pageHas": []string{".menu a.nd.on"}, "page": []string{"The models available to you"}, "notOnPage": []string{"Model files, what is loaded, and their profiles"}},
 	}})
 }
+
+// Note 7: Needs is written "~18.0 GB" (a tilde: approximate; one decimal)
+// with no "measured" under it in the row; how it is known is on hover and
+// in the panel.
+func TestUINextNotesNeedsTilde(t *testing.T) {
+	fetch := fixtureAnswers(t, []string{"--models", "five"}, "/api/models", "/api/status")
+	st := fetch["/api/status"]
+	row := func(k string) string { return "div.mr[data-model='" + k + "'] span.mdl-needs" }
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
+		map[string]any{"name": "notes 7: the rows", "route": "#/models", "status": st,
+			"expect": []string{"~17.1 GB", "~5.1 GB"}, "absent": []string{"measured", "estimated"},
+			"has":    []string{row(mdlLoaded) + " span[data-basis=measured][title*=measured]", row(mdlNever) + " span[data-basis=estimated][title*=estimated]"},
+			"none":   []string{row(mdlLoaded) + " span.sub"}},
+		map[string]any{"name": "notes 7: the panel says how it is known", "route": "#/models?model=" + mdlLoaded, "status": st,
+			"page": []string{"needs ~17.1 GB", "(measured)"}},
+	}})
+}
