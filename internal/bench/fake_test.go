@@ -112,6 +112,9 @@ type fakeAPI struct {
 	made     map[string]map[string]any
 	madeN    int // EnsureProfile calls
 	makeErr  error
+	// context_fill: the plan's ctx and shape_shared_with (nil: not said).
+	planCtx     int
+	shapeShared *[]SharedProfile
 }
 
 func (f *fakeAPI) Consoles(ctx context.Context) ([]Console, error) {
@@ -195,7 +198,12 @@ func (f *fakeAPI) Plan(ctx context.Context, model string) (*PlanInfo, error) {
 	if nodes == nil {
 		nodes = []string{"n1"}
 	}
-	return &PlanInfo{Action: "start", Nodes: append([]string(nil), nodes...), LoadMode: f.loadMode, Reload: append([]NodeReload(nil), f.reload...),
+	var shared *[]SharedProfile
+	if f.shapeShared != nil {
+		s := append([]SharedProfile{}, *f.shapeShared...)
+		shared = &s
+	}
+	return &PlanInfo{Action: "start", Nodes: append([]string(nil), nodes...), LoadMode: f.loadMode, Reload: append([]NodeReload(nil), f.reload...), Ctx: f.planCtx, SharedWith: shared,
 		Raw: json.RawMessage(`{"model":"` + model + `","action":"start"}`)}, nil
 }
 
@@ -572,4 +580,14 @@ func (f *fakeAPI) Chat(ctx context.Context, runID string, req ChatRequest, onPro
 		}
 	}
 	return resp, nil
+}
+
+// Tokenize implements Tokenizer: a quarter of the characters, as the chat's prompt_n.
+func (f *fakeAPI) Tokenize(ctx context.Context, profile, text string) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.insts[profile]; !ok {
+		return 0, fmt.Errorf("/tokenize answered 404: model %s is not loaded", profile)
+	}
+	return len(text) / 4, nil
 }

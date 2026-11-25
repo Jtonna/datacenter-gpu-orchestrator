@@ -73,6 +73,7 @@ const (
 	PhaseConversation = "conversation"
 	PhaseHold         = "hold"
 	PhaseConcurrent   = "concurrent"
+	PhaseFill         = "context_fill"
 )
 
 // Phase states.
@@ -346,6 +347,8 @@ type PhaseResult struct {
 	// Tasks is what a tasks phase sent and got back (tasks.go), without the
 	// answer texts, which are stored apart.
 	Tasks *TasksResult `json:"tasks,omitempty"`
+	// Fill is what a context_fill phase filled and read (contextfill.go).
+	Fill *FillResult `json:"fill,omitempty"`
 }
 
 // WorkerEnv is a worker's identity at the time of a run.

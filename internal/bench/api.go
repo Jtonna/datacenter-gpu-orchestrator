@@ -83,7 +83,21 @@ type PlanInfo struct {
 	// (node ids in Reload[].ID, no names); empty from an older scheduler.
 	LoadMode string
 	Reload   []NodeReload
-	Raw      json.RawMessage
+	// Ctx and Parallel are the profile's context and slots (0: the plan does
+	// not say). SharedWith is shape_shared_with: the other profiles with the
+	// same shape (model, ctx, parallel and options), nil when the scheduler
+	// does not say (an older build), empty when none.
+	Ctx        int
+	Parallel   int
+	SharedWith *[]SharedProfile
+	Raw        json.RawMessage
+}
+
+// SharedProfile is a profile of shape_shared_with; Generated is set for a
+// profile made from a recipe's inputs or by a benchmark.
+type SharedProfile struct {
+	ID        string `json:"id"`
+	Generated bool   `json:"generated"`
 }
 
 // LoadAnswer is the answer of /api/load.
@@ -334,8 +348,11 @@ func (h *HTTPAPI) Plan(ctx context.Context, model string) (*PlanInfo, error) {
 		Placement []struct {
 			ID string `json:"id"`
 		} `json:"placement"`
-		LoadMode string `json:"load_mode"`
-		Reload   []struct {
+		Ctx        int              `json:"ctx"`
+		Parallel   int              `json:"parallel"`
+		SharedWith *[]SharedProfile `json:"shape_shared_with"`
+		LoadMode   string           `json:"load_mode"`
+		Reload     []struct {
 			ID        string   `json:"id"`
 			Verdict   string   `json:"verdict"`
 			Shared    bool     `json:"shared"`
@@ -354,7 +371,7 @@ func (h *HTTPAPI) Plan(ctx context.Context, model string) (*PlanInfo, error) {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, fmt.Errorf("/api/plan: %w", err)
 	}
-	info := &PlanInfo{Action: p.Action, Reason: p.Reason, Raw: raw, LoadMode: p.LoadMode}
+	info := &PlanInfo{Action: p.Action, Reason: p.Reason, Raw: raw, LoadMode: p.LoadMode, Ctx: p.Ctx, Parallel: p.Parallel, SharedWith: p.SharedWith}
 	for _, r := range p.Reload {
 		info.Reload = append(info.Reload, NodeReload{ID: r.ID, Node: r.ID, Verdict: r.Verdict, CachedPct: r.CachedPct, Shared: r.Shared,
 			FileMiB: r.FileMiB, ModelMiB: r.ModelMiB, MemoryMiB: r.MemoryMiB, MarginMiB: r.MarginMiB,
