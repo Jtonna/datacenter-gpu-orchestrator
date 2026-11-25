@@ -53,18 +53,10 @@ func TestUIStartupWording(t *testing.T) {
 			t.Errorf("views/nodes.js lacks %s", want)
 		}
 	}
-	bench := uiText(t, "views/benchmarks/startups.js")
-	for _, want := range []string{
-		`h('h2', 'Start-up')`, `NOT_INCLUDED`, `key: g => g.node_id + ':' + g.kind`,
-		`{ label: 'Median'`, `{ label: 'Worst'`, `{ label: 'Last'`, `{ label: 'Starts'`,
-		`expect-restart`, `g.mixed_origins ? h('span.sub', 'counted from different origins')`,
-	} {
-		if !strings.Contains(bench, want) {
-			t.Errorf("views/benchmarks/startups.js lacks %s", want)
-		}
-	}
-	if !strings.Contains(uiText(t, "views/benchmarks/overview.js"), "startupsCard(),") {
-		t.Error("the Benchmarks overview has no Start-up section")
+	// the Benchmarks overview's Start-up card went with the classic benchmark
+	// pages (dropped 25 Nov): the figures stay on Machine details and the route stays.
+	if strings.Contains(uiText(t, uiNextDir+"views/benchmarks.js"), "startup") {
+		t.Error("the new Benchmarks pages are not to carry the start-up card (it is not on their boards)")
 	}
 }
 
@@ -76,7 +68,7 @@ func TestUIStartupKindsNeverMixed(t *testing.T) {
 	if !strings.Contains(core, `x.node_id === nodeId && x.kind === kind`) {
 		t.Error("core/startup.js looks a record up without its kind")
 	}
-	for _, name := range []string{"core/startup.js", "views/benchmarks/startups.js", "views/nodes.js"} {
+	for _, name := range []string{"core/startup.js", "views/nodes.js"} {
 		src := uiText(t, name)
 		if regexp.MustCompile(`headline_s\s*[+\-*/]|\.reduce\([^)]*(last_s|median_s|worst_s|headline_s)`).MatchString(src) {
 			t.Errorf("%s computes a start-up figure itself", name)
