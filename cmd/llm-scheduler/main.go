@@ -238,7 +238,8 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 		curCfg atomic.Pointer[config.Config]
 		curPl  atomic.Pointer[pool.Pool]
 	)
-	so0 := cfgsvc.Options{Store: cs, Boot: boot, Logger: log,
+	var trained gguf.ContextCache // a write that sets ctx above a model's trained context is refused (config.Options.TrainedCtx)
+	so0 := cfgsvc.Options{Store: cs, Boot: boot, Logger: log, Parse: config.Options{TrainedCtx: trained.TrainedCtx},
 		ProfileRefs: func(id string) []string { return benchmarksUsing(dbStore, id) },
 		Apply: func(c *config.Config) {
 			curCfg.Store(c)

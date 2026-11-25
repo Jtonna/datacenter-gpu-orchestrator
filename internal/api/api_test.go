@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -85,10 +86,16 @@ func TestMissingModelIs400AndBigJSONIs413(t *testing.T) {
 
 func TestMultipartRoutesByModelField(t *testing.T) {
 	var gotCT, gotBody string
+	var mu sync.Mutex
 	e := newEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotCT = r.Header.Get("Content-Type")
+		if r.URL.Path != "/v1/audio/transcriptions" {
+			io.WriteString(w, `{}`) // not under test: the scheduler's GET /props after the load
+			return
+		}
 		b, _ := io.ReadAll(r.Body)
-		gotBody = string(b)
+		mu.Lock()
+		gotCT, gotBody = r.Header.Get("Content-Type"), string(b)
+		mu.Unlock()
 		io.WriteString(w, `{"text":"ok"}`)
 	}))
 	var buf bytes.Buffer
@@ -104,6 +111,8 @@ func TestMultipartRoutesByModelField(t *testing.T) {
 	if b := body(t, resp); resp.StatusCode != 200 || !strings.Contains(b, "ok") {
 		t.Fatalf("status %d body %s", resp.StatusCode, b)
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	if gotBody != buf.String() || gotCT != mw.FormDataContentType() {
 		t.Fatalf("upstream got a different request (%d vs %d bytes)", len(gotBody), buf.Len())
 	}
@@ -288,6 +297,9 @@ func TestUpstreamUnloadedIs503AtOnceAndStartsNothing(t *testing.T) {
 func TestUpstreamStripsPrefixAndKeepsMethodAndQuery(t *testing.T) {
 	var got string
 	e := newEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if notUnderTest(w, r) {
+			return
+		}
 		b, _ := io.ReadAll(r.Body)
 		got = r.Method + " " + r.URL.RequestURI() + " " + string(b)
 		io.WriteString(w, "ok")
@@ -391,6 +403,9 @@ func TestUnloadBusyIs409AndForceStopsIt(t *testing.T) {
 	release := make(chan struct{})
 	started := make(chan struct{}, 1)
 	e := newEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if notUnderTest(w, r) {
+			return
+		}
 		started <- struct{}{}
 		select {
 		case <-release:
@@ -696,6 +711,9 @@ func TestEventsStateChangesInflightPairAndActivity(t *testing.T) {
 	release := make(chan struct{})
 	started := make(chan struct{}, 1)
 	e := newEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if notUnderTest(w, r) {
+			return
+		}
 		started <- struct{}{}
 		<-release
 		io.WriteString(w, `{}`)
@@ -808,6 +826,9 @@ func TestEventsFlushedImmediately(t *testing.T) {
 
 func TestStallTimeoutFromProfileEndsStreamWithErrorEvent(t *testing.T) {
 	e := newEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if notUnderTest(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		io.WriteString(w, "data: one\n\n")
 		w.(http.Flusher).Flush()

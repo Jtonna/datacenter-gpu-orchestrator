@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -155,6 +156,14 @@ func (c *Config) validateLlama(p *core.Profile, r *ProfileSpec, pf func(field, f
 		pf("ctx", "is required and must be positive")
 	case *r.Ctx <= 0:
 		pf("ctx", "must be positive, got %d", *r.Ctx)
+	case !p.CtxAboveTrained && c.trainedCtx != nil && modelOK(p):
+		if k, ok := c.keepCtx[p.Name]; ok && k.Model == p.Model && k.Ctx == p.Ctx {
+			break // a stored profile that keeps its model and ctx still loads
+		}
+		if tr, ok := c.trainedCtx(c.modelPath(p)); ok && tr > 0 && p.Ctx > tr {
+			pf("ctx", "ctx %s is above this model's trained context of %s (%s): the model server would run it at %s. Use ctx %s or less, or set ctx_above_trained: true to run it above (the server is then told the model's context is %s)",
+				group(p.Ctx), group(tr), p.Model, group(tr), group(tr), group(p.Ctx))
+		}
 	}
 	if p.Parallel <= 0 {
 		pf("parallel", "must be positive, got %d", p.Parallel)
@@ -538,4 +547,22 @@ func (c *Config) validateLogs(add func(string, ...any)) {
 			add("logs_push_url must be empty or an http:// or https:// address without a user or a fragment, got %q", l.PushURL)
 		}
 	}
+}
+
+// group writes n with thousands separators (8192 -> "8,192").
+func group(n int) string {
+	s := strconv.Itoa(n)
+	neg := strings.HasPrefix(s, "-")
+	s = strings.TrimPrefix(s, "-")
+	var b strings.Builder
+	for i, c := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			b.WriteByte(',')
+		}
+		b.WriteRune(c)
+	}
+	if neg {
+		return "-" + b.String()
+	}
+	return b.String()
 }

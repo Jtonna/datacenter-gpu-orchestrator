@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
@@ -24,11 +25,18 @@ import (
 
 // FillResult is what a context_fill phase filled and read.
 type FillResult struct {
-	Ctx      int   `json:"ctx"`
-	Parallel int   `json:"parallel,omitempty"`
-	FillPct  int   `json:"fill_pct"`
-	MarksPct []int `json:"marks_pct"`
-	Seed     int64 `json:"seed"`
+	Ctx int `json:"ctx"`
+	// CtxServed is the context per slot the model server itself reports
+	// (/props, read by the scheduler after the load), checked before the
+	// first turn; nil when the scheduler does not know it. CtxNote is what
+	// the scheduler says about the context (the instance's or the plan's
+	// ctx_note).
+	CtxServed *int   `json:"ctx_served,omitempty"`
+	CtxNote   string `json:"ctx_note,omitempty"`
+	Parallel  int    `json:"parallel,omitempty"`
+	FillPct   int    `json:"fill_pct"`
+	MarksPct  []int  `json:"marks_pct"`
+	Seed      int64  `json:"seed"`
 	// The filler as sent (its hash covers the paragraphs in order, joined by a blank line).
 	FillerSHA256 string `json:"filler_sha256"`
 	FillerChars  int    `json:"filler_chars"`
@@ -43,6 +51,12 @@ type FillResult struct {
 	Recall        int    `json:"recall"` // facts planted and asked back
 	RecallCorrect *int   `json:"recall_correct,omitempty"`
 	Answer        string `json:"answer,omitempty"` // the last turn's answer (first 2,000 characters)
+	// FinishReason and ReasoningChars are the last turn's finish_reason and
+	// the length of its reasoning_content; RecallNote says why a recall is
+	// not a result (the answer was cut while the model was thinking).
+	FinishReason   string `json:"finish_reason,omitempty"`
+	ReasoningChars int    `json:"reasoning_chars,omitempty"`
+	RecallNote     string `json:"recall_note,omitempty"`
 	// StoppedBecause says why the phase stopped before the target (empty: it got there).
 	// SettleHoldMS is the hold asked after the load before the first turn
 	// (settle_s, else the scheduler's free_average_window); SettleHeldMS how
@@ -109,6 +123,10 @@ type FillNode struct {
 	// and KiB per token are then not given.
 	Stale       bool   `json:"stale,omitempty"`
 	StaleReason string `json:"stale_reason,omitempty"`
+	// NoSampleTime: the figure has no sample time (the scheduler's own
+	// machine, a GPU machine without one): it cannot be checked fresh, so
+	// growth and KiB per token are not given; it is not stale.
+	NoSampleTime bool `json:"no_sample_time,omitempty"`
 }
 
 // DefaultFillSettle is the settle hold when neither settle_s nor the
@@ -314,7 +332,7 @@ func (br *benchRun) fillFresh(after time.Time, need map[string]bool, reps *fillR
 		reps.note(s)
 		all := true
 		for _, w := range s.Workers {
-			if need[w.ID] && w.AvailMiB != nil && !reps.fresh(w, after) {
+			if need[w.ID] && w.AvailMiB != nil && !w.SampleAt.IsZero() && !reps.fresh(w, after) {
 				all = false
 			}
 		}
@@ -374,6 +392,22 @@ func (br *benchRun) phaseContextFill(i int, p *benchspec.Phase, pr *PhaseResult)
 	res := &FillResult{Ctx: ctxSize, Parallel: plan.Parallel, FillPct: p.FillTarget(), MarksPct: marks, Seed: p.FillSeed(),
 		StopLineMiB: int(line), TargetTokens: ctxSize * p.FillTarget() / 100}
 	pr.Fill = res
+	// The server's own context, before any request: a fill past it would be
+	// answered 400 "exceeds the available context size".
+	res.CtxNote = plan.CtxNote
+	if served, note := br.fillServedCtx(); served != nil || note != "" {
+		res.CtxServed = served
+		if note != "" {
+			res.CtxNote = note
+		}
+		if served != nil && *served < ctxSize {
+			why := fmt.Sprintf("context_fill: the model server runs at %s tokens per slot, the plan says %s: refused before any request (a turn past %s tokens would be answered 400)", groupInt(int64(*served)), groupInt(int64(ctxSize)), groupInt(int64(*served)))
+			res.StoppedBecause = why
+			br.st.Reason = why
+			br.fail(OutcomeFailed, why)
+			return
+		}
+	}
 	fl := newFiller(p.FillSeed(), p.RecallCount(), res.TargetTokens)
 	inUse := br.fillInUse()
 	tok := func(s string) (int, error) {
@@ -424,6 +458,10 @@ func (br *benchRun) phaseContextFill(i int, p *benchspec.Phase, pr *PhaseResult)
 		}
 	}
 	kib := map[string]float64{} // measured growth per token so far, by node
+	// Thinking is off on every turn unless the recipe asked for it: thinking
+	// tokens are unbounded, would sit in the context past the last mark, and
+	// take the recall turn's whole max_tokens before any answer.
+	noThink := !(br.b.Applied != nil && br.b.Applied.Thinking != nil && *br.b.Applied.Thinking)
 
 	var hist []benchspec.Message
 	var used []string // the filler paragraphs sent, in order
@@ -530,7 +568,7 @@ func (br *benchRun) phaseContextFill(i int, p *benchspec.Phase, pr *PhaseResult)
 		temp := 0.0
 		seed := p.FillSeed()
 		cache, stream := true, true
-		req := benchspec.Request{Name: fmt.Sprintf("fill %d%%", pct), Messages: msgs, MaxTokens: maxTok, Temperature: &temp, Seed: &seed, CachePrompt: &cache, Stream: &stream}
+		req := benchspec.Request{Name: fmt.Sprintf("fill %d%%", pct), Messages: msgs, MaxTokens: maxTok, Temperature: &temp, Seed: &seed, CachePrompt: &cache, Stream: &stream, NoThinking: noThink}
 		paras := chunk
 		func() {
 			br.mu.Lock()
@@ -607,6 +645,10 @@ func (br *benchRun) phaseContextFill(i int, p *benchspec.Phase, pr *PhaseResult)
 		if last {
 			res.Recall = fl.planted
 			res.Answer = Head(resp.Text, 2000)
+			res.FinishReason, res.ReasoningChars = resp.FinishReason, utf8.RuneCountInString(resp.Reasoning)
+			if fl.recall > 0 && resp.FinishReason == "length" && resp.Reasoning != "" {
+				res.RecallNote = fmt.Sprintf("the answer was cut at max_tokens %d while the model was thinking (%d characters of reasoning): recall is not a result", maxTok, res.ReasoningChars)
+			}
 			if fl.recall > 0 {
 				c := fl.score(resp.Text)
 				res.RecallCorrect = &c
@@ -654,7 +696,7 @@ func fillNodes(s *StatusInfo, base fillBase, inUse map[string]bool, trip *fillTr
 		fn.LowestMiB, fn.SamplesDuringTurn = trip.lowest(w.ID, turnEnd)
 		switch {
 		case w.SampleAt.IsZero():
-			fn.Stale, fn.StaleReason = true, "no fresh sample after the turn: the figure has no sample time"
+			fn.NoSampleTime = true
 		case !known || lo.Before(turnEnd):
 			fn.Stale, fn.StaleReason = true, "no fresh sample after the turn: no report was certainly read after the turn ended (the first report after the end may hold a figure read before it)"
 		}
@@ -664,11 +706,11 @@ func fillNodes(s *StatusInfo, base fillBase, inUse map[string]bool, trip *fillTr
 			fn.BeforeMiB = &bv
 			fn.BeforeSampledAt = isoMS(base.at[w.ID])
 			fn.BeforeReadAfter = isoMS(base.after[w.ID])
-			if base.stale[w.ID] && !fn.Stale {
+			if base.stale[w.ID] && !fn.Stale && !fn.NoSampleTime {
 				fn.Stale, fn.StaleReason = true, "no fresh sample before the first turn: no report was certainly read after the settle hold ended"
 			}
 		}
-		if ok && fn.InUse && !fn.Stale {
+		if ok && fn.InUse && !fn.Stale && !fn.NoSampleTime {
 			g := b - after
 			fn.GrowthMiB = &g
 			if held > 0 && g >= 0 {
@@ -741,6 +783,17 @@ func fillMD(b *strings.Builder, f *FillResult) {
 	fmt.Fprintf(b, "Context %s tokens, filled to %d %% (%s tokens): reached %s. Filler: seed %d, %s characters, sha256 `%s`. Stop line %s MiB. Settle hold %s s (%s s until the first reading).\n\n",
 		groupInt(int64(f.Ctx)), f.FillPct, groupInt(int64(f.TargetTokens)), groupInt(int64(f.ReachedTokens)), f.Seed, groupInt(int64(f.FillerChars)), f.FillerSHA256, groupInt(int64(f.StopLineMiB)),
 		fmtNum(float64(f.SettleHoldMS)/1000), fmtNum(float64(f.SettleHeldMS)/1000))
+	if f.CtxServed != nil || f.CtxNote != "" {
+		served := "not known"
+		if f.CtxServed != nil {
+			served = groupInt(int64(*f.CtxServed)) + " tokens per slot"
+		}
+		fmt.Fprintf(b, "Model server context: %s", served)
+		if f.CtxNote != "" {
+			fmt.Fprintf(b, " (%s)", mdCell(f.CtxNote))
+		}
+		b.WriteString(".\n\n")
+	}
 	b.WriteString("| Mark | Tokens held | Prefill tok/s | Machine | In use | Before MiB | After MiB | Lowest MiB | Growth MiB | KiB per token | Samples in turn |\n|---|---|---|---|---|---|---|---|---|---|---|\n")
 	opt := func(v *int64) string {
 		if v == nil {
@@ -764,6 +817,8 @@ func fillMD(b *strings.Builder, f *FillResult) {
 			growth := opt(n.GrowthMiB)
 			if n.Stale {
 				growth, kib = "stale", "stale"
+			} else if n.NoSampleTime {
+				growth, kib = "no sample time", "no sample time"
 			}
 			fmt.Fprintf(b, "| %d %% | %s | %s | %s | %v | %s | %s | %s | %s | %s | %d |\n", m.Pct, held, fmtNum(m.PrefillTPS), mdCell(n.Node), n.InUse,
 				opt(n.BeforeMiB), opt(n.AfterMiB), opt(n.LowestMiB), growth, kib, n.SamplesDuringTurn)
@@ -773,7 +828,39 @@ func fillMD(b *strings.Builder, f *FillResult) {
 	if f.RecallCorrect != nil {
 		fmt.Fprintf(b, "Recall: %d of %d planted facts given back right.\n\n", *f.RecallCorrect, f.Recall)
 	}
+	if f.RecallNote != "" {
+		fmt.Fprintf(b, "Recall note: %s.\n\n", mdCell(f.RecallNote))
+	}
 	if f.StoppedBecause != "" {
 		fmt.Fprintf(b, "Stopped: %s.\n\n", mdCell(f.StoppedBecause))
+	}
+}
+
+// fillServedCtx is the profile's instance's own context per slot as the
+// scheduler read it after the load (/props), and the scheduler's note. The
+// read runs just after the load is ready, so the fill waits for it a short
+// while (FillCtxWait); an older scheduler (no ctx on the instance) is not
+// waited for.
+func (br *benchRun) fillServedCtx() (*int, string) {
+	o := br.x.m.o
+	deadline := o.Now().Add(o.FillCtxWait)
+	poll := min(max(o.FillReportEvery/8, 5*time.Millisecond), 250*time.Millisecond)
+	for {
+		s, err := br.fillStatus()
+		if err != nil {
+			return nil, ""
+		}
+		in := s.Instance(br.b.Profile)
+		if in == nil || in.Ctx == 0 {
+			return nil, "" // an older scheduler: no context on the instance
+		}
+		if in.CtxServed != nil || strings.HasPrefix(in.CtxNote, "context not confirmed") || !o.Now().Before(deadline) {
+			return in.CtxServed, in.CtxNote
+		}
+		select {
+		case <-br.ctx.Done():
+			return nil, ""
+		case <-time.After(poll):
+		}
 	}
 }

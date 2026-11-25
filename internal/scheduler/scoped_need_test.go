@@ -18,7 +18,7 @@ import (
 // which is off by default, so the fit is the placer's here.
 func TestScoped_WrittenNeedFarBelowFormulaAt4xCtxDoesNotStart(t *testing.T) {
 	dir := t.TempDir()
-	if err := ggufgen.Write(filepath.Join(dir, "w.gguf"), ggufgen.Spec{Blocks: 32, Embd: 4096, Heads: 32, HeadsKV: 8}); err != nil {
+	if err := ggufgen.Write(filepath.Join(dir, "w.gguf"), ggufgen.Spec{Blocks: 32, Embd: 4096, Heads: 32, HeadsKV: 8, Context: 4 * 32768}); err != nil { // trained context covers 4 x ctx: these test the fit formula, not the cap
 		t.Fatal(err)
 	}
 	h := newHarness(t).nodes(ps5("a", 2, 15000))

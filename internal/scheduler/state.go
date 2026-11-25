@@ -99,6 +99,11 @@ func (p phase) String() string {
 
 // inst is one instance (design 8.1). At most one per profile.
 type inst struct {
+	// The context per slot its server runs with (/props, read once after the
+	// load: realctx.go servedCtx); 0 until read or when it could not be read
+	// (ctxErr then says why).
+	servedCtx int
+	ctxErr    string
 	// tight are the nodes of a tight fit (tight.go): the load fits them
 	// without its margin only. Empty for any other load.
 	tight     []PlanMemoryNode
@@ -261,6 +266,9 @@ type grant struct {
 	Instance uint64
 	Session  string
 	Nodes    []LeaseNode
+	// Ctx is the context per slot the instance runs with: its server's own
+	// figure once read (/props), else the planned one (realctx.go).
+	Ctx int
 }
 
 type answer struct {
@@ -477,6 +485,9 @@ type schedCore struct {
 func newCore(cfg *config.Config, clock Clock, view fleet.View, needs NeedProvider, build instance.BuildOptions, log *slog.Logger) *schedCore {
 	if log == nil {
 		log = slog.Default()
+	}
+	if tr, ok := needs.(trainedCtxReader); ok {
+		cfg = realCtx(cfg, tr) // realctx.go: planned at the trained context
 	}
 	return &schedCore{
 		cfg: cfg, clock: clock, view: view, needs: needs, build: build, log: log,

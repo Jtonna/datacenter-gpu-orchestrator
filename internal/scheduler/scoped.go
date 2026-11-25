@@ -319,6 +319,7 @@ func (c *schedCore) forgetScopedNeed(name string) {
 
 // scopedPlan is the plan of a scoped load; nothing changes.
 func (c *schedCore) scopedPlan(sp *core.Profile) PlanReport {
+	sp = c.realScoped(sp) // realctx.go: as arrive does
 	if old := c.scoped[sp.Name]; old != nil {
 		if !sameScoped(old, sp) {
 			return PlanReport{Profile: sp.Name, Action: PlanReject,

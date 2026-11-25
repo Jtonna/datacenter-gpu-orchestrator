@@ -24,6 +24,25 @@ No agent change, no new port, no schema change, no new route, no new setting. Ev
 - **MCP.** `list_runs` takes `offset` and `result`; `get_run` takes a number and `requests`. Group-named aliases: `list_bench_groups`, `get_bench_group`, `create_bench_group`, `update_bench_group`, `delete_bench_group`, `run_bench_group` (the zone-group tools keep `list_groups` and the rest).
 - **Going back.** The image before sends none of these fields; nothing it reads changed. Its pin routes take `settings` again.
 
+## Scheduler image: the real context
+
+No agent change, no new port, no schema change, no new route. One new optional profile field, `ctx_above_trained`. Plan rows change for profiles whose ctx is above their model's trained context; see below.
+
+The model server caps every slot at the model's trained context (`<arch>.context_length` in the GGUF), and says so only in its log. This is stock llama.cpp: `tools/server/server-context.cpp` `n_ctx_slot()`. A profile with ctx 8,192 on a model trained at 2,048 was planned and reserved for 8,192, but the server ran it at 2,048. A request above that was answered 400 "exceeds the available context size".
+
+- **Planned at the trained context.** Such a profile is now planned, reserved and launched at the trained context. Its plan gains `ctx` and `ctx_note`: "ctx 8,192 is above this model's trained context of 2,048; the server runs it at 2,048". The configuration document keeps the ctx it was given.
+- **Refused on a write.** A configuration write that sets a ctx above the trained context is refused, unless the profile says `ctx_above_trained: true`. A stored profile that keeps its model and ctx still loads and can be edited, the same way a missing model file is kept.
+  - With `ctx_above_trained`, the profile is planned and launched at its ctx, with `--override-kv <arch>.context_length=int:<ctx>`. That lifts the server's cap. Answers past the trained context may be poor.
+- **The server's own context, after every load.** The scheduler reads `/props` (`default_generation_settings.n_ctx`) once the load is ready. `/api/status` instances gain:
+  - `ctx`: what was planned;
+  - `ctx_served`: the server's figure;
+  - `ctx_note`.
+
+  A figure other than the planned one is a warn history event, `contextMismatch`. The instance and the plan then say "runs at 2,048, profile says 8,192". The server pads slots to 256 tokens, so a figure within that is not counted as different. The request log's `ctx` is the instance's real figure. When `/props` cannot be read, the load still succeeds and the instance says "context not confirmed: ...".
+- **Context fill.** Before its first turn, a `context_fill` phase reads `ctx_served`. If it is below the plan's ctx, the phase refuses before any request is sent. The result gains `ctx_served` and `ctx_note`. A machine with no sample time now says `no_sample_time` ("no sample time" in the report), not `stale`.
+- **Test tools.** fakellama gains `FAKELLAMA_TRAINED_CTX`, which caps `/props` like the real server; `--override-kv` lifts the cap.
+- **Going back.** An older image keeps the plan at the configured ctx. If a stored profile sets `ctx_above_trained`, the older image reads the stored configuration with that field ignored: it is listed as unknown (`internal/cfgsvc/service.go`), and configuration writes are refused unless forced. Remove the field before going back if writes must work.
+
 ## Scheduler image: a run-scoped instance counts only for itself
 
 No agent change, no new port, no schema change, no new route, no new setting.

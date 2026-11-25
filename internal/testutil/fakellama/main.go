@@ -286,6 +286,7 @@ func serve(cfg config) {
 	s.chunkDelay = envDuration("FAKELLAMA_STREAM_DELAY")
 	s.stallAfter = envInt("FAKELLAMA_STALL_AFTER", -1)
 	s.countPrompt = os.Getenv("FAKELLAMA_COUNT_PROMPT") != ""
+	s.trained = trainedCtx(cfg, envInt("FAKELLAMA_TRAINED_CTX", 0))
 
 	if os.Getenv("FAKELLAMA_EXIT_CODE") != "" {
 		code := envInt("FAKELLAMA_EXIT_CODE", 1)
@@ -305,4 +306,15 @@ func serve(cfg config) {
 		fmt.Fprintln(os.Stderr, "fakellama:", err)
 		os.Exit(1)
 	}
+}
+
+// trainedCtx is the trained context the fake caps slots at: an
+// --override-kv <arch>.context_length=int:N on the command line, else env.
+func trainedCtx(cfg config, env int) int {
+	if _, v, ok := strings.Cut(cfg.other["--override-kv"], ".context_length=int:"); ok {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return env
 }

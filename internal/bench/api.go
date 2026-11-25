@@ -90,6 +90,9 @@ type PlanInfo struct {
 	Ctx        int
 	Parallel   int
 	SharedWith *[]SharedProfile
+	// CtxNote is the plan's ctx_note: the plan is for the model's trained
+	// context, or the running server says another one ("" when none).
+	CtxNote string
 	// Generated is whether the profile itself was generated (made from a
 	// recipe's inputs or by a benchmark); nil when the plan does not say.
 	Generated *bool
@@ -147,6 +150,14 @@ type InstanceInfo struct {
 	Load           *LoadInfo
 	Nodes          []InstanceNodeInfo
 	LoadMode       string // file_read, pushed, local; empty from an older scheduler
+	// Ctx is the context per slot the instance was planned with, CtxServed
+	// the server's own figure (/props; nil until read or when it could not
+	// be) and CtxNote what the scheduler says about it ("runs at 2,048,
+	// profile says 8,192", "context not confirmed: ..."). All zero from an
+	// older scheduler.
+	Ctx       int
+	CtxServed *int
+	CtxNote   string
 }
 
 // WorkerInfo is a node of the scheduler's view with what it reports about its rpc-server.
@@ -265,6 +276,9 @@ func BuildChatRequest(profile string, r benchspec.Request) ChatRequest {
 	if r.Streams() {
 		body["stream_options"] = map[string]any{"include_usage": true}
 	}
+	if r.NoThinking { // the request's own template setting, documented (tools/server/README.md); only the command-line route is deprecated
+		body["chat_template_kwargs"] = map[string]any{"enable_thinking": false}
+	}
 	b, _ := json.Marshal(body)
 	return ChatRequest{Model: profile, Body: b, Stream: r.Streams()}
 }
@@ -354,6 +368,7 @@ func (h *HTTPAPI) Plan(ctx context.Context, model string) (*PlanInfo, error) {
 	}
 	var p struct {
 		Action    string `json:"action"`
+		CtxNote   string `json:"ctx_note"`
 		Reason    string `json:"reason"`
 		Nodes     []any  `json:"nodes"`
 		Placement []struct {
@@ -383,7 +398,7 @@ func (h *HTTPAPI) Plan(ctx context.Context, model string) (*PlanInfo, error) {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, fmt.Errorf("/api/plan: %w", err)
 	}
-	info := &PlanInfo{Action: p.Action, Reason: p.Reason, Raw: raw, LoadMode: p.LoadMode, Ctx: p.Ctx, Parallel: p.Parallel, SharedWith: p.SharedWith, Generated: p.Generated}
+	info := &PlanInfo{Action: p.Action, Reason: p.Reason, Raw: raw, CtxNote: p.CtxNote, LoadMode: p.LoadMode, Ctx: p.Ctx, Parallel: p.Parallel, SharedWith: p.SharedWith, Generated: p.Generated}
 	for _, r := range p.Reload {
 		info.Reload = append(info.Reload, NodeReload{ID: r.ID, Node: r.ID, Verdict: r.Verdict, CachedPct: r.CachedPct, Shared: r.Shared,
 			FileMiB: r.FileMiB, ModelMiB: r.ModelMiB, MemoryMiB: r.MemoryMiB, MarginMiB: r.MarginMiB,
@@ -462,6 +477,9 @@ type statusWire struct {
 		ModelFile      string  `json:"model_file"`
 		DeviceTotalMiB float64 `json:"device_total_mib"`
 		LoadMode       string  `json:"load_mode"`
+		Ctx            int     `json:"ctx"`
+		CtxServed      *int    `json:"ctx_served"`
+		CtxNote        string  `json:"ctx_note"`
 		Load           *struct {
 			SessionID  string   `json:"session_id"`
 			ElapsedS   float64  `json:"elapsed_s"`
@@ -563,7 +581,7 @@ func ParseStatus(raw []byte) (*StatusInfo, error) {
 	}
 	for i, in := range w.Instances {
 		ii := InstanceInfo{Profile: in.Profile, State: in.State, InFlight: in.InFlight, Waiters: in.Waiters, LogFile: in.LogFile, DeviceTotalMiB: in.DeviceTotalMiB,
-			Cmd: in.Cmd, ModelFile: in.ModelFile, LoadMode: in.LoadMode}
+			Cmd: in.Cmd, ModelFile: in.ModelFile, LoadMode: in.LoadMode, Ctx: in.Ctx, CtxServed: in.CtxServed, CtxNote: in.CtxNote}
 		if in.Load != nil {
 			li := &LoadInfo{SessionID: in.Load.SessionID, ElapsedS: in.Load.ElapsedS, BytesTotal: in.Load.BytesTotal, BytesSent: in.Load.BytesSent, Progress: in.Load.Progress, EtaS: in.Load.EtaS}
 			if i < len(envelope.Instances) {

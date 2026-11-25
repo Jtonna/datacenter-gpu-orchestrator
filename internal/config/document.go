@@ -108,12 +108,12 @@ func newBase(b Bootstrap) *Config {
 		ChildLogKeep: DefaultChildLogKeep, HistoryMaxFileMiB: DefaultHistoryMaxFileMiB, HistoryKeepFiles: DefaultHistoryKeepFiles,
 		HistoryMemoryEvents: DefaultHistoryMemoryEvents, UsageRequestDays: DefaultUsageRequestDays, UsageHourlyDays: DefaultUsageHourlyDays, LocalProbeCmd: DefaultLocalProbeCmd, WSMaxClients: DefaultWSMaxClients, LoopStepWarnMs: DefaultLoopStepWarnMs, ModelTrashDays: DefaultModelTrashDays,
 		DefaultUserName: DefaultDefaultUserName,
-		Bench:         Bench{EnabledSetting: true, RegressLoadPct: DefaultRegressLoadPct, RegressDecodePct: DefaultRegressDecodePct, MaxRunMinutes: DefaultMaxRunMinutes, RetentionDays: DefaultBenchRetentionDays},
-		Defaults:      DefaultDefaults(),
-		Recovery:      DefaultRecovery(),
-		Logs:          DefaultLogs(),
-		NodeOverrides: map[string]NodeOverride{},
-		Profiles:      map[string]*core.Profile{},
+		Bench:           Bench{EnabledSetting: true, RegressLoadPct: DefaultRegressLoadPct, RegressDecodePct: DefaultRegressDecodePct, MaxRunMinutes: DefaultMaxRunMinutes, RetentionDays: DefaultBenchRetentionDays},
+		Defaults:        DefaultDefaults(),
+		Recovery:        DefaultRecovery(),
+		Logs:            DefaultLogs(),
+		NodeOverrides:   map[string]NodeOverride{},
+		Profiles:        map[string]*core.Profile{},
 	}
 }
 
@@ -175,6 +175,7 @@ func Build(doc *Document, b Bootstrap, o Options) (*Config, error) {
 		exists = func(p string) bool { _, err := os.Stat(p); return err == nil }
 	}
 	c.modelNote = o.ModelNote
+	c.trainedCtx, c.keepCtx = o.TrainedCtx, o.KeepCtx
 	if err := c.validate(raws, c.modelCheck(o, exists)); err != nil {
 		return nil, err
 	}

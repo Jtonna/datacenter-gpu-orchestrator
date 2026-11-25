@@ -38,6 +38,13 @@ type (
 		iid uint64
 		err error
 	}
+	// evServedCtx: the server's own context per slot, read from /props after
+	// the load (realctx.go).
+	evServedCtx struct {
+		iid uint64
+		ctx int
+		err error
+	}
 	// evExited: the child's Exited channel delivered.
 	evExited struct {
 		iid    uint64
@@ -109,6 +116,7 @@ func (evRelease) isEvent()        {}
 func (evPreflight) isEvent()      {}
 func (evChildStarted) isEvent()   {}
 func (evHealthy) isEvent()        {}
+func (evServedCtx) isEvent()      {}
 func (evExited) isEvent()         {}
 func (evFetched) isEvent()        {}
 func (evLoadSample) isEvent()     {}
@@ -235,6 +243,8 @@ func (c *schedCore) handle(ev event) {
 		c.childStarted(e.iid, e.child, e.err)
 	case evHealthy:
 		c.healthy(e.iid, e.err)
+	case evServedCtx:
+		c.servedCtx(e.iid, e.ctx, e.err)
 	case evExited:
 		c.exited(e.iid, e.status, e.workers)
 	case evFetched:

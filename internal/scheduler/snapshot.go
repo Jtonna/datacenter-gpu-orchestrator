@@ -107,6 +107,7 @@ func (c *schedCore) instStatus(in *inst) InstanceStatus {
 		ModelFile: in.prof.Model, RequestsServed: in.served,
 		StaleProfile: c.staleProfile(in), LoadMode: c.loadModeFor(in.prof, in.placement),
 	}
+	instCtxStatus(&s, in)                              // realctx.go
 	s.Production, s.Scope, _ = c.scopeOf(in.prof.Name) // scoped.go
 	if in.state == stStarting {
 		s.Phase = in.phase.String()
@@ -301,6 +302,12 @@ func (c *schedCore) dryPlanOf(profile string, p *core.Profile) (r PlanReport) {
 	if p == nil {
 		r.Action, r.Reason = PlanReject, string(ReasonUnknownModel)
 		return r
+	}
+	if p.Kind == core.KindLlama {
+		r.Ctx, r.CtxNote = p.Ctx, ctxNote(p) // realctx.go
+		if in := c.insts[p.Name]; in != nil && ctxDiffers(in.servedCtx, in.prof.Ctx) {
+			r.CtxNote = servedNote(in.prof, in.servedCtx) // the running instance's server says otherwise
+		}
 	}
 	if c.shutdown {
 		r.Action, r.Reason = PlanReject, string(ReasonShuttingDown)

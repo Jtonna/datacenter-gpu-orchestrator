@@ -40,6 +40,7 @@ func fillMgr(t *testing.T, api *fakeAPI, mod ...func(*ManagerOptions)) *testMgr 
 		o.MemSample = 5 * time.Millisecond
 		o.FillSettle = func() time.Duration { return 0 } // no settle hold unless a test asks
 		o.FillReportEvery = 20 * time.Millisecond
+		o.FillCtxWait = 100 * time.Millisecond
 	}}, mod...)...)
 }
 
