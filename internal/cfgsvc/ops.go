@@ -31,16 +31,42 @@ func (s *Service) CreateProfile(ctx context.Context, o WriteOpts, id string, p *
 		if _, ok := d.Profiles[id]; ok {
 			return fmt.Errorf("profile %q: %w", id, ErrExists)
 		}
+		if err := keepMarks(id, nil, p); err != nil {
+			return err
+		}
 		d.Profiles[id] = p
 		return nil
 	}})
 }
 
+// keepMarks: this version reads stage and display_name but does not write
+// them (profiles plan, slice B1). A profile write that leaves both out
+// keeps the stored ones (a mark a later version wrote survives an edit
+// here); one that sets them to anything else is refused.
+func keepMarks(id string, old, p *config.ProfileSpec) error {
+	var st, dn string
+	if old != nil {
+		st, dn = old.Stage, old.DisplayName
+	}
+	if p.Stage == "" && p.DisplayName == "" {
+		p.Stage, p.DisplayName = st, dn
+		return nil
+	}
+	if p.Stage == st && p.DisplayName == dn {
+		return nil
+	}
+	return &ValidationError{Messages: []string{fmt.Sprintf("profile %q: stage and display_name are read only in this version: leave them out (the stored ones are kept)", id)}}
+}
+
 // UpdateProfile replaces a profile; ErrNotFound when it does not exist.
 func (s *Service) UpdateProfile(ctx context.Context, o WriteOpts, id string, p *config.ProfileSpec) (*Result, error) {
 	return s.mutate(ctx, o, mutation{fn: func(d *config.Document) error {
-		if _, ok := d.Profiles[id]; !ok {
+		old, ok := d.Profiles[id]
+		if !ok {
 			return fmt.Errorf("profile %q: %w", id, ErrNotFound)
+		}
+		if err := keepMarks(id, old, p); err != nil {
+			return err
 		}
 		d.Profiles[id] = p
 		return nil

@@ -92,6 +92,12 @@ func (s *Server) profileEntriesOf(ctx context.Context, cfg *config.Config) []map
 		if p.Description != "" {
 			e["description"] = p.Description
 		}
+		// The TEST / PRODUCTION marking, read only (config.EffectiveStage).
+		e["stage"], e["stage_set"] = config.EffectiveStage(p)
+		e["shown_name"] = config.ShownName(p)
+		if p.DisplayName != "" {
+			e["display_name"] = p.DisplayName
+		}
 		// It forces a node exclude_nodes names: kept, refused until lifted.
 		if b, ok := cfg.BlockedByExclusion(n); ok {
 			e["blocked_by_exclusion"] = b.Entry

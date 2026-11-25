@@ -36,6 +36,8 @@ func (c *schedCore) staleProfile(in *inst) bool {
 		b.ForceNodes, b.TensorSplit = a.ForceNodes, a.TensorSplit
 	}
 	a.Description, b.Description = "", "" // words for people, not the load
+	a.Stage, b.Stage = "", ""             // marks for people and lists, not the load
+	a.DisplayName, b.DisplayName = "", ""
 	return !reflect.DeepEqual(a, b)
 }
 

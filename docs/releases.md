@@ -2,6 +2,16 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: the TEST / PRODUCTION marking, read only (profiles slice B1)
+
+No agent change, no new port, no schema change, no new route, no new setting. No plan changes.
+
+- **Two optional profile fields are read.** `stage` (`test` or `production`) and `display_name` (one line, at most 80 characters, not starting with "TEST - ", not another profile's id, alias or display name). Both are in the configuration schema. Neither changes scheduling: a loaded instance is not stale when only they change.
+- **The effective stage.** `/api/profiles` and the configurations of `/api/models` carry `stage` (the effective one), `stage_set` (false: the rule decided) and `shown_name`, plus `display_name` when set. Absent, the rule decides: a generated profile (the `generated` field, else a `bench-`, `b-` or `m-` id) or one with `force_nodes` is test, any other production. An explicit stage always wins. The shown name is the display name or the id, with "TEST - " before it for a test profile.
+- **Read only in this image.** A profile write (`POST`/`PUT /api/config/profiles`, the MCP profile tools) that leaves both fields out keeps the stored ones. One that sets them to other values is refused 400. A whole-document import keeps them as written.
+- **`@` is refused in profile ids and aliases.** It is kept for run-scoped names (`<id>@<scope>`). A configuration that already holds one does not load: check before deploying.
+- **Going back.** This image writes neither field. A document a later image marked is read by the image before leniently: it refuses configuration writes until forced, and a forced write drops the marks. The rule gives the same split without them.
+
 ## Scheduler image: run-scoped profiles (profiles slice A)
 
 No agent change, no new port, no schema change, no new route, no new setting. No plan changes while no scoped profile is held.
