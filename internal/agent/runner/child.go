@@ -63,7 +63,7 @@ func (c *Child) Start(ctx context.Context, s Spec) (Proc, error) {
 	c.mu.Unlock()
 
 	cmd := exec.Command(runnablePath(s.Path), s.Args...)
-	cmd.Env = append(os.Environ(), s.Env...)
+	cmd.Env = scrubLlamaArgs(append(os.Environ(), s.Env...)) // no LLAMA_ARG_*: the command line is the one source
 	var logf *os.File
 	if s.LogPath != "" {
 		f, err := os.OpenFile(s.LogPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
