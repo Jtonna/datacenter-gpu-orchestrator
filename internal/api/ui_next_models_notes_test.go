@@ -17,6 +17,15 @@ func TestUINextNotesMenuHasNoHealthCard(t *testing.T) {
 			"pageNone": []string{".menu .fleet", ".fleet"}, "notOnPage": []string{"reachable · ", "Updated 0 s ago"},
 			"pageHas": []string{".menu .menu-foot .slotbox", "button.rb[data-surface=health]"}})
 	}
+	// the Benchmarks run card stays at the menu's foot while a run goes
+	running := map[string]any{}
+	for k, v := range fetch {
+		running[k] = v
+	}
+	running["/api/bench/state"] = map[string]any{"run": map[string]any{"id": "run-1", "state": "running", "suite_id": "cold-warm", "suite_name": "Cold and warm loads", "percent": 40,
+		"started_at": 1764057600000, "current": map[string]any{"name": "Load on two consoles"}}}
+	cases = append(cases, map[string]any{"name": "menu: the run card stays on Benchmarks", "route": "#/benchmarks", "status": st, "fetch": running,
+		"pageHas": []string{".menu .menu-foot .slotbox a.run-ind"}, "pageNone": []string{".fleet"}, "page": []string{"Benchmark running", "Cold and warm loads"}})
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": cases})
 }
 
@@ -150,7 +159,7 @@ func TestUINextNotesPanelResize(t *testing.T) {
 	open := "#/models?model=" + mdlRecent
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
 		map[string]any{"name": "notes 6: docked, a handle at the default width", "route": open, "status": st, "width": 1536,
-			"pageHas": []string{grip + "[aria-valuenow='620'][aria-valuemin='420']", "aside.side[data-w='620']"}},
+			"pageHas": []string{grip + "[aria-valuenow='620'][aria-valuemin='520']", "aside.side[data-w='620']"}},
 		map[string]any{"name": "notes 6: arrow keys resize (left widens)", "route": open, "status": st, "width": 1536,
 			"click": []string{"aside.side .side-grip"}, "keys": []any{"ArrowLeft", "ArrowLeft", "ArrowLeft", "ArrowRight"},
 			"pageHas": []string{"aside.side[data-w='652']", grip + "[aria-valuenow='652']"}},
@@ -158,7 +167,7 @@ func TestUINextNotesPanelResize(t *testing.T) {
 			"pageHas": []string{"aside.side[data-w='652']"}},
 		map[string]any{"name": "notes 6: never below the minimum", "route": open, "status": st, "width": 1536,
 			"click": []string{"aside.side .side-grip"}, "keys": []any{"Home", "ArrowRight", "ArrowRight"},
-			"pageHas": []string{"aside.side[data-w='420']"}},
+			"pageHas": []string{"aside.side[data-w='520']"}},
 		map[string]any{"name": "notes 6: never above the maximum", "route": open, "status": st, "width": 1536,
 			"click": []string{"aside.side .side-grip"}, "keys": []any{"End", "ArrowLeft"},
 			"pageHas": []string{"aside.side[data-w='916']", grip + "[aria-valuemax='916']"}},

@@ -34,7 +34,7 @@
 // End for the least and the most); a double click goes back to 620. The
 // page beside it reflows. The width is remembered per panel kind (o.kind,
 // else its label) in localStorage when the browser allows it; the panel
-// works the same without. Between 420 px and what leaves the page 560 px
+// works the same without. Between 520 px and what leaves the page 560 px
 // beside the rail (at most 1000). Over the page there is no handle.
 
 import { h, morph } from './dom.js';
@@ -42,7 +42,7 @@ import { h, morph } from './dom.js';
 export const DOCK_MIN = 1400;
 const wide = window.matchMedia('(min-width:' + DOCK_MIN + 'px)');
 
-export const SIDE_W = 620, SIDE_MIN = 420;
+export const SIDE_W = 620, SIDE_MIN = 520;
 const SIDE_MAX = 1000, PAGE_KEEP = 560, RAIL = 60, STEP = 16, BIG_STEP = 64;
 // sideMax() -> the widest a docked panel may be at this window width
 const sideMax = () => Math.max(SIDE_MIN, Math.min(SIDE_MAX, (window.innerWidth || 0) - RAIL - PAGE_KEEP));

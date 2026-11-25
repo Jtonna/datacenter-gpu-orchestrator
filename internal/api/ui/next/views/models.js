@@ -263,12 +263,12 @@ function modelPanel(st, m, ps) {
           hand.length > 1 ? searchField(ps.q, v => { ps.q = v; ps.redraw(); }, 'Search profiles', 'mdl-psearch') : null,
           ctxs.length > 1 ? filterSelect('Context', [{ id: '', label: 'any' }].concat(ctxs.map(c => ({ id: String(c), label: num(c) }))), ps.ctx, v => { ps.ctx = v; ps.redraw(); }) : null,
           h('a.btn.sm', { href: href('profiles', ['new']), title: 'Open the profile editor' }, 'Add profile'))),
-      hand.length ? (rows.length ? h('table.tbl.mdl-ptbl',
+      hand.length ? (rows.length ? h('div.scroll.mdl-pscroll', h('table.tbl.mdl-ptbl',
         h('thead', h('tr', h('th', { scope: 'col' }, 'Profile'), h('th.r', { scope: 'col' }, 'Context'),
           h('th.r', { scope: 'col', title: 'What a load of this profile needs: measured, or estimated from the file' }, 'Memory needed'),
           ttlCol ? h('th.r', { scope: 'col', title: 'How long the model stays loaded with no request (the ttl of the profile, else the default)' }, 'Unload when idle') : null,
           h('th', { scope: 'col' }, h('span.sr', 'Edit')))),
-        h('tbody', rows.map(profileRow)))
+        h('tbody', rows.map(profileRow))))
         : h('p.mut.mdl-pad', 'No profile matches.'))
         : h('p.mut.mdl-pad', all.length ? 'No profile: only test and benchmark configurations.' : 'No configuration uses this file yet. Add a profile to load it.'),
       // the test and benchmark configurations: one collapsed line, never counted as profiles

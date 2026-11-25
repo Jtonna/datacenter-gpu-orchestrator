@@ -1338,13 +1338,13 @@ input.cb{width:16px;height:16px;margin:0;accent-color:#0f6b4a}
 .mdl-cfg .dh{height:auto;min-height:44px;flex-wrap:wrap;padding:6px 16px}
 .mdl-cfg-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .mdl-ptbl,.mdl-ttbl{width:100%}
+.mdl-ptbl td:first-child,.mdl-ttbl td:first-child{min-width:150px}
 .mdl-ptbl td .sub,.mdl-ttbl td .sub{display:block}
 .mdl-pill{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:9px;background:#e2f1e9;color:var(--mint-text);font-size:11px;font-weight:800;vertical-align:1px}
-.mdl-ttbl .go{display:inline-flex;align-items:center;gap:3px;font-weight:700;color:var(--link);text-decoration:none}
-.mdl-ptbl .go{display:inline-flex;align-items:center;gap:3px;font-weight:700;color:#9aa49e;text-decoration:none}
-.mdl-ptbl .go .tx{visibility:hidden}
-.mdl-ptbl tbody tr:hover .go,.mdl-ptbl .go:focus-visible{color:var(--link)}
-.mdl-ptbl tbody tr:hover .go .tx,.mdl-ptbl .go:focus-visible .tx{visibility:visible}
+.mdl-ptbl .go,.mdl-ttbl .go{display:inline-flex;align-items:center;gap:3px;font-weight:700;color:#9aa49e;text-decoration:none}
+.mdl-ptbl .go .tx,.mdl-ttbl .go .tx{visibility:hidden}
+.mdl-ptbl tbody tr:hover .go,.mdl-ptbl .go:focus-visible,.mdl-ttbl tbody tr:hover .go,.mdl-ttbl .go:focus-visible{color:var(--link)}
+.mdl-ptbl tbody tr:hover .go .tx,.mdl-ptbl .go:focus-visible .tx,.mdl-ttbl tbody tr:hover .go .tx,.mdl-ttbl .go:focus-visible .tx{visibility:visible}
 .mdl-pad{padding:8px 16px}
 /* the panel's deeper views (owner's note 8): the way back, the runs list, the editor in the panel */
 .mdl-back{margin:-4px 0 2px}
@@ -1365,7 +1365,7 @@ input.cb{width:16px;height:16px;margin:0;accent-color:#0f6b4a}
 .mdl-plan .sub{flex-basis:100%;color:var(--mut);font-size:12px}
 .prf-inpanel{border:0;box-shadow:none;background:none;margin:0 -16px}
 .prf-inpanel .prf-ebody{padding:0 16px 24px}
-.prf-inpanel .prf-efoot{border-radius:0;margin-bottom:-1px}
+.prf-inpanel .prf-efoot{border-radius:0;bottom:-20px;z-index:2;margin-bottom:-20px;padding-bottom:16px}
 /* the test and benchmark configurations: one collapsed line (owner's note 9; views/models/kinds.js) */
 .mdl-tests{border-top:1px solid #e9eeeb}
 .mdl-tests>summary{padding:10px 16px;cursor:pointer;color:var(--mut);font-weight:600}
