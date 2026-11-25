@@ -18,7 +18,7 @@ const benchProfiles = `profiles:
 func TestBenchConfigDefaults(t *testing.T) {
 	c := mustParse(t, "profiles: {}\n")
 	if c.DataDir != "" || c.WSMaxClients != 32 || c.Bench.Enabled || c.Bench.RegressLoadPct != 15 ||
-		c.Bench.RegressDecodePct != 7 || c.Bench.MaxRunMinutes != 240 || c.Bench.RetentionDays != 0 { // retention is off by default
+		c.Bench.RegressDecodePct != 7 || c.Bench.MaxRunMinutes != 720 || c.Bench.RetentionDays != 0 { // retention is off by default
 		t.Fatalf("defaults: %+v", c)
 	}
 	c = mustParse(t, "data_dir: /var/lib/llm-scheduler/data\nprofiles: {}\n")
@@ -90,7 +90,7 @@ func TestExampleConfigsDocumentTheBenchBlock(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, want := range []string{"data_dir:", "# ws_max_clients: 32", "# bench:", "#   regress_load_pct: 15",
-			"#   regress_decode_pct: 7", "#   max_run_minutes: 240", "#   suites:"} {
+			"#   regress_decode_pct: 7", "#   max_run_minutes: 720", "#   suites:"} {
 			if !strings.Contains(string(b), want) {
 				t.Errorf("%s lacks %q", rel, want)
 			}
