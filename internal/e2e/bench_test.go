@@ -312,8 +312,8 @@ func TestBenchPhasesEndToEnd(t *testing.T) {
 		t.Fatalf("%v", cb)
 	}
 	sc := mustStatus(t, c, "GET", "/api/bench/schema", "", 200)
-	// eight templates since tasks and the cold load recipe; the suite options are listed too
-	if len(sc["phase_types"].([]any)) != 8 || len(sc["templates"].([]any)) != 8 || len(sc["suite_options"].([]any)) != 5 {
+	// nine phase types and nine templates since context_fill; the suite options are listed too
+	if len(sc["phase_types"].([]any)) != 9 || len(sc["templates"].([]any)) != 9 || len(sc["suite_options"].([]any)) != 5 {
 		t.Fatalf("%v", sc)
 	}
 }

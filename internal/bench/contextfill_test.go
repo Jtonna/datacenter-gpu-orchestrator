@@ -123,6 +123,18 @@ func TestContextFill_FillsToTheMarksRecallsAndReadsGrowth(t *testing.T) {
 			t.Errorf("recall row %+v", m)
 		}
 	}
+	// The benchmark report carries the readings, one row per mark and machine.
+	zero := 0
+	rep, err := BuildReport(r, ms, ReportOptions{Step: &zero})
+	if err != nil {
+		t.Fatal(err)
+	}
+	md := ReportMarkdown(rep)
+	for _, want := range []string{"Context fill", "| Mark | Tokens held |", "| 90 % |", "| ps5-a | true |", "Recall: 8 of 8 planted facts", "Context 4,096 tokens, filled to 90 % (3,686 tokens)"} {
+		if !strings.Contains(md, want) {
+			t.Errorf("report lacks %q:\n%s", want, md)
+		}
+	}
 	if seen["fill_tokens"] != 4 || seen["fill_kib_per_token"] < 4 || seen["fill_growth_mib"] < 4 || seen["recall_correct"] != 1 || seen["prefill_tps"] < 4 {
 		t.Errorf("metrics %v", seen)
 	}

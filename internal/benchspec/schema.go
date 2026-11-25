@@ -204,6 +204,8 @@ func Schema() *SchemaDoc {
 			`{"id":"tasks-example","name":"Tasks","description":"Cold load, the tasks of a task set, unload.","profile":"your-profile","timeout_s":3600,"phases":[{"type":"load","cold":true},{"type":"tasks","label":"tasks","tasks":{"id":"example-tasks","version":1,"title":"Example tasks","max_tokens":1024,"tasks":[{"id":"fib","prompt":"Write a Python function fib(n) that returns the n-th Fibonacci number."},{"id":"sql-top3","prompt":"Write a SQL query that returns the three highest salaries per department from employees(name, department, salary)."}]}},{"type":"unload"}]}`),
 		tpl(TemplateRecipe, "Cold load recipe", "A recipe: no fixed profile, it takes its model, context and placement as inputs, so one definition serves every model. Use it in a group with inputs or a matrix, or run it with inputs.",
 			`{"id":"cold-load-recipe-example","name":"Cold load","description":"Cold load, first answer, unload; for any model.","inputs":{"ctx":8192,"placement":"any:2"},"phases":[{"type":"load","cold":true},{"type":"warmup","label":"first generation","count":1,"request":{"name":"first","prompt":"Say hello in five words.","max_tokens":16,"stream":true}},{"type":"unload"}]}`),
+		tpl(TemplateContextFill, "Context fill recipe", "A recipe that fills the context of any model to 90 % with generated filler, reading every machine's memory at 25, 50, 75 and 90 %, then asks back the facts planted in the filler. Pick a context no profile you wrote uses: by default the step refuses a shape a written profile shares, because its memory peak becomes that shape's stored peak.",
+			`{"id":"context-fill-recipe-example","name":"Context fill","description":"Load, fill the context to 90 % in four turns, recall, unload; for any model.","inputs":{"ctx":7936,"placement":"any:1"},"timeout_s":3600,"phases":[{"type":"load"},{"type":"context_fill","fill_pct":90,"recall":8,"stop_available_mib":2000},{"type":"unload"}]}`),
 	}
 	return d
 }
@@ -212,6 +214,8 @@ func Schema() *SchemaDoc {
 const (
 	TemplateTasks  = "tasks"
 	TemplateRecipe = "cold-load-recipe"
+	// TemplateContextFill is the id of the context_fill recipe template (B8).
+	TemplateContextFill = "context-fill-recipe"
 )
 
 func itoa(n int) string { return strconv.Itoa(n) }

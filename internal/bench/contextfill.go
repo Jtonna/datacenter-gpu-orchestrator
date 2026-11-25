@@ -532,3 +532,41 @@ func fillRows(p *PhaseResult, add func(*PhaseResult, string, float64, string, fu
 		})
 	}
 }
+
+// fillMD writes a context_fill phase's readings: the settings, one row per
+// mark and machine, and how it ended.
+func fillMD(b *strings.Builder, f *FillResult) {
+	fmt.Fprintf(b, "Context %s tokens, filled to %d %% (%s tokens): reached %s. Filler: seed %d, %s characters, sha256 `%s`. Stop line %s MiB.\n\n",
+		groupInt(int64(f.Ctx)), f.FillPct, groupInt(int64(f.TargetTokens)), groupInt(int64(f.ReachedTokens)), f.Seed, groupInt(int64(f.FillerChars)), f.FillerSHA256, groupInt(int64(f.StopLineMiB)))
+	b.WriteString("| Mark | Tokens held | Prefill tok/s | Machine | In use | Before MiB | After MiB | Lowest MiB | Growth MiB | KiB per token |\n|---|---|---|---|---|---|---|---|---|---|\n")
+	opt := func(v *int64) string {
+		if v == nil {
+			return ""
+		}
+		return groupInt(*v)
+	}
+	for _, m := range f.Marks {
+		held := groupInt(int64(m.TokensHeld))
+		if m.Status != 200 {
+			held = "cut off"
+		}
+		if len(m.Nodes) == 0 {
+			fmt.Fprintf(b, "| %d %% | %s | %s | | | | | | | |\n", m.Pct, held, fmtNum(m.PrefillTPS))
+		}
+		for _, n := range m.Nodes {
+			kib := ""
+			if n.KiBPerToken != nil {
+				kib = fmtNum(*n.KiBPerToken)
+			}
+			fmt.Fprintf(b, "| %d %% | %s | %s | %s | %v | %s | %s | %s | %s | %s |\n", m.Pct, held, fmtNum(m.PrefillTPS), mdCell(n.Node), n.InUse,
+				opt(n.BeforeMiB), opt(n.AfterMiB), opt(n.LowestMiB), opt(n.GrowthMiB), kib)
+		}
+	}
+	b.WriteString("\n")
+	if f.RecallCorrect != nil {
+		fmt.Fprintf(b, "Recall: %d of %d planted facts given back right.\n\n", *f.RecallCorrect, f.Recall)
+	}
+	if f.StoppedBecause != "" {
+		fmt.Fprintf(b, "Stopped: %s.\n\n", mdCell(f.StoppedBecause))
+	}
+}
