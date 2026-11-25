@@ -174,30 +174,7 @@ func applyFacts(r *Run, steps []*factStep) {
 	c := RunCounts{}
 	cold := ColdSummary{}
 	for _, st := range steps {
-		switch st.outcome {
-		case OutcomeReady:
-			c.Completed++
-			if readyIssue(st) {
-				c.WithIssues++
-			} else {
-				c.Passed++
-			}
-		case OutcomeFailed, OutcomeError:
-			c.Failed++
-		case OutcomeRefused, OutcomeRefusedByExclusion:
-			c.Refused++
-		case OutcomeCancelled:
-			c.Cancelled++
-		case OutcomeSkipped:
-			c.Skipped++
-		default:
-			if st.state == StepSkipped {
-				c.Skipped++
-			}
-		}
-		if st.outcome != "" || st.state == StepSkipped {
-			c.Done++
-		}
+		c.add(st)
 		loads := 0
 		for _, p := range st.phases {
 			if p.Type != "load" {
@@ -642,4 +619,110 @@ func EntrySlugs(steps []Step) []string {
 		}
 	}
 	return out
+}
+
+// ---- last use of a benchmark (B3) ----
+
+// LastUse is the newest step that ran a benchmark.
+type LastUse struct {
+	RunID     string  `json:"run_id"`
+	RunNumber int     `json:"run_number"`
+	Step      int     `json:"step"`
+	At        int64   `json:"at"`      // the step's start (unix ms), or the run's queue time
+	Outcome   string  `json:"outcome"` // the step's outcome, or "running"
+	DurationS float64 `json:"duration_s,omitempty"`
+}
+
+// LastUses maps a benchmark id to its last use: a step with that id, or an
+// expanded use of it as a recipe (the step's spec names the recipe). A
+// skipped step is not a use.
+func (s *Store) LastUses() (map[string]*LastUse, error) {
+	nums, err := s.RunNumbers()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(`SELECT s.run_id, s.idx, s.benchmark_id, COALESCE(json_extract(s.spec, '$.recipe'), ''), s.state, s.outcome, s.started_at, s.finished_at, r.queued_at
+	  FROM run_steps s JOIN runs r ON r.id = s.run_id
+	  WHERE s.outcome <> ? AND s.state <> ?
+	  ORDER BY r.queued_at, r.id, s.idx, s.id`, OutcomeSkipped, StepSkipped)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]*LastUse{}
+	for rows.Next() {
+		var u LastUse
+		var bid, recipe, state string
+		var started, finished, queued int64
+		if err := rows.Scan(&u.RunID, &u.Step, &bid, &recipe, &state, &u.Outcome, &started, &finished, &queued); err != nil {
+			return nil, err
+		}
+		u.RunNumber = nums[u.RunID]
+		u.At = started
+		if u.At == 0 {
+			u.At = queued
+		}
+		if u.Outcome == "" {
+			u.Outcome = "running"
+		}
+		if finished > started && started > 0 {
+			u.DurationS = round3(float64(finished-started) / 1000)
+		}
+		out[bid] = &u
+		if recipe != "" {
+			c := u
+			out[recipe] = &c
+		}
+	}
+	return out, rows.Err()
+}
+
+// add counts one step's outcome (Steps and ToGo are left to the caller).
+func (c *RunCounts) add(st *factStep) {
+	switch st.outcome {
+	case OutcomeReady:
+		c.Completed++
+		if readyIssue(st) {
+			c.WithIssues++
+		} else {
+			c.Passed++
+		}
+	case OutcomeFailed, OutcomeError:
+		c.Failed++
+	case OutcomeRefused, OutcomeRefusedByExclusion:
+		c.Refused++
+	case OutcomeCancelled:
+		c.Cancelled++
+	case OutcomeSkipped:
+		c.Skipped++
+	default:
+		if st.state == StepSkipped {
+			c.Skipped++
+		}
+	}
+	if st.outcome != "" || st.state == StepSkipped {
+		c.Done++
+	}
+}
+
+// ---- progress (B12) ----
+
+// PlacementFixed is current.placement for a benchmark with a fixed profile:
+// its profile says where it goes.
+const PlacementFixed = "fixed"
+
+// placement is the requested placement of an entry: auto, all, any:N,
+// nodes:a,b for a use of a recipe; fixed for a fixed profile.
+func (it *itemPlan) placement() string {
+	if len(it.members) == 0 {
+		return ""
+	}
+	b := it.members[0]
+	if b.Recipe == "" && b.Applied == nil {
+		return PlacementFixed
+	}
+	if b.Applied == nil || b.Applied.Placement == nil {
+		return benchspec.PlaceAuto
+	}
+	return b.Applied.Placement.String()
 }

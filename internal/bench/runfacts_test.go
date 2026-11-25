@@ -285,3 +285,40 @@ func TestListRunsPage_OffsetTotalAndResultFilter(t *testing.T) {
 		t.Fatalf("ListRuns: %v %+v", err, old)
 	}
 }
+
+// B3: a benchmark's last use is the newest step that ran it, by its own id
+// or as the recipe of an expanded use; a skipped step is not a use.
+func TestLastUses_ByIdAndRecipe(t *testing.T) {
+	f := newFactsStore(t)
+	recipe := func(id string) *benchspec.Benchmark {
+		return &benchspec.Benchmark{ID: id, Recipe: "cold", Profile: "bench-x"}
+	}
+	f.run(&Run{ID: "r1", SuiteID: "g", State: RunCompleted, QueuedAt: 10})
+	f.step(&Step{RunID: "r1", Idx: 0, BenchmarkID: "plain", State: StepDone, Outcome: OutcomeReady, StartedAt: 11, FinishedAt: 41011})
+	f.step(&Step{RunID: "r1", Idx: 1, BenchmarkID: "cold.aa", Spec: recipe("cold.aa"), State: StepDone, Outcome: OutcomeFailed, StartedAt: 50, FinishedAt: 60})
+	f.run(&Run{ID: "r2", SuiteID: "g", State: RunCompleted, QueuedAt: 20})
+	f.step(&Step{RunID: "r2", Idx: 0, BenchmarkID: "cold.bb", Spec: recipe("cold.bb"), State: StepDone, Outcome: OutcomeRefused, StartedAt: 21, FinishedAt: 22})
+	f.step(&Step{RunID: "r2", Idx: 1, BenchmarkID: "plain", State: StepSkipped, Outcome: OutcomeSkipped})
+	f.run(&Run{ID: "r3", SuiteID: "g", State: RunRunning, QueuedAt: 30})
+	f.step(&Step{RunID: "r3", Idx: 0, BenchmarkID: "busy", State: StepRunning, StartedAt: 31})
+
+	got, err := f.st.LastUses()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u := got["plain"]; u == nil || *u != (LastUse{RunID: "r1", RunNumber: 1, Step: 0, At: 11, Outcome: OutcomeReady, DurationS: 41}) {
+		t.Errorf("plain: %+v", u)
+	}
+	if u := got["cold"]; u == nil || *u != (LastUse{RunID: "r2", RunNumber: 2, Step: 0, At: 21, Outcome: OutcomeRefused, DurationS: 0.001}) {
+		t.Errorf("recipe cold: %+v", u)
+	}
+	if u := got["cold.aa"]; u == nil || u.RunID != "r1" {
+		t.Errorf("the expanded id: %+v", u)
+	}
+	if u := got["busy"]; u == nil || u.Outcome != "running" || u.DurationS != 0 {
+		t.Errorf("running: %+v", u)
+	}
+	if got["never"] != nil {
+		t.Error("never run")
+	}
+}
