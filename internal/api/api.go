@@ -110,6 +110,9 @@ type Options struct {
 	// read-only folder); trashStop acts out a kill between its steps.
 	trashOps  *modelfiles.Ops
 	trashStop func(step string) bool
+	// proxyOnResponse is passed to the proxy as Options.OnResponse (tests cut
+	// a request once the model server's headers arrived).
+	proxyOnResponse func()
 	// trashUnloadWait replaces the 5 s a delete with interrupt waits for the
 	// file's instances to be gone (tests).
 	trashUnloadWait time.Duration
@@ -585,7 +588,8 @@ func (s *Server) handleV1(w http.ResponseWriter, r *http.Request) {
 		bodyLen = ex.BufferedBytes()
 	}
 	res = proxy.Forward(w, r, proxy.Options{Addr: lease.Addr, Body: ex.Body, BodyLen: bodyLen, StallTimeout: lease.StallTimeout,
-		APIKey: lease.APIKey, Gone: lease.Gone, Live: live, CutBy: cutByOf(lease)})
+		APIKey: lease.APIKey, Gone: lease.Gone, Live: live, CutBy: cutByOf(lease),
+		OnResponse: s.opts.proxyOnResponse})
 	if res.Aborted {
 		panic(http.ErrAbortHandler)
 	}
