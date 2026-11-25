@@ -571,3 +571,18 @@ func TestTokenizeAndCountedPrompt(t *testing.T) {
 		t.Fatalf("%v / %v", ta, tb)
 	}
 }
+
+// FAKELLAMA_TRAINED_CTX caps the slot context /props reports, as the real
+// server caps it at the model's trained context; --override-kv lifts it.
+func TestTrainedCtxCapsTheSlot(t *testing.T) {
+	c := parseArgs([]string{"--ctx-size", "8192", "--parallel", "1"})
+	s := &server{cfg: c, trained: trainedCtx(c, 2048)}
+	if n := s.slotCtx(); n != 2048 {
+		t.Fatalf("capped slot %d", n)
+	}
+	c = parseArgs([]string{"--ctx-size", "8192", "--parallel", "1", "--override-kv", "llama.context_length=int:8192"})
+	s = &server{cfg: c, trained: trainedCtx(c, 2048)}
+	if n := s.slotCtx(); n != 8192 {
+		t.Fatalf("overridden slot %d", n)
+	}
+}

@@ -69,6 +69,9 @@ type Options struct {
 	// are, then decides trust (builds.go; fourth review, FS2). nil: the host
 	// build is only LlamaBuild.
 	HostBuild func(ctx context.Context) (string, error)
+	// ReadSlotCtx reads a ready llama server's context per slot (/props)
+	// after every load (realctx.go); default instance.ReadSlotCtx.
+	ReadSlotCtx func(ctx context.Context, addr, key string) (int, error)
 }
 
 // Scheduler is the scheduler core plus the one goroutine (Run) that owns
@@ -132,6 +135,9 @@ type UpstreamPlacement struct {
 func New(cfg *config.Config, o Options) (*Scheduler, error) {
 	if cfg == nil || o.View == nil || o.Prober == nil || o.Launcher == nil {
 		return nil, errors.New("scheduler: config, View, Prober and Launcher are required")
+	}
+	if o.ReadSlotCtx == nil {
+		o.ReadSlotCtx = instance.ReadSlotCtx
 	}
 	if o.Clock == nil {
 		o.Clock = RealClock{}
@@ -456,6 +462,13 @@ func (s *Scheduler) startChild(ctx context.Context, ef effStart, st *startState)
 		}()
 		cancel()
 		s.post(context.Background(), evHealthy{iid: ef.iid, err: err})
+		if err == nil && ef.spec.HealthPath != "" && ef.spec.HealthPath != "/health" {
+			return // a command profile: no model server context
+		}
+		if err == nil {
+			n, perr := s.opts.ReadSlotCtx(ctx, instance.AddrOf(ch), instance.APIKeyOf(ch))
+			s.post(context.Background(), evServedCtx{iid: ef.iid, ctx: n, err: perr})
+		}
 	}, func(p any) {
 		cancel()
 		s.post(context.Background(), evHealthy{iid: ef.iid, err: internalErr(p)})
@@ -493,6 +506,9 @@ type Lease struct {
 	Instance uint64
 	Session  string
 	Nodes    []LeaseNode
+	// Ctx is the context per slot the instance runs with (the server's own
+	// figure once read, else the planned one): the request log's ctx.
+	Ctx int
 
 	once sync.Once
 	s    *Scheduler
@@ -572,7 +588,7 @@ func (s *Scheduler) lease(a answer) (*Lease, error) {
 		stall = cfg.EffectiveStallTimeout(p)
 	}
 	return &Lease{ID: g.ID, Addr: g.Addr, APIKey: g.APIKey, Gone: g.Gone, CutBy: g.CutBy, Profile: g.Profile, Alias: g.Alias, StallTimeout: stall,
-		Instance: g.Instance, Session: g.Session, Nodes: g.Nodes, s: s}, nil
+		Instance: g.Instance, Session: g.Session, Nodes: g.Nodes, Ctx: g.Ctx, s: s}, nil
 }
 
 // Load is POST /api/load: a waiter that never disconnects (8.2 step 6).

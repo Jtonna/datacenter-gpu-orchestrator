@@ -8,6 +8,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelpath"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
@@ -126,4 +127,80 @@ func groupThousands(n int) string {
 		b.WriteRune(c)
 	}
 	return b.String()
+}
+
+// ctxPad is the slot padding of the model server (llama.cpp pads the
+// context per sequence to 256 tokens): a served context up to this much
+// above the planned one is the same context.
+const ctxPad = 256
+
+// servedCtx records the context per slot the instance's server reports
+// after the load. A read that fails is not a load failure: the instance
+// says "context not confirmed". A context other than the planned one is a
+// warn event, and the instance and the plan say "runs at 2,048, profile
+// says 8,192".
+func (c *schedCore) servedCtx(iid uint64, n int, err error) {
+	in := c.instByIID(iid)
+	if in == nil || in.prof.Kind != core.KindLlama {
+		return
+	}
+	c.changed = true
+	if err != nil {
+		in.servedCtx, in.ctxErr = 0, "context not confirmed: "+err.Error()
+		c.log.Info("the model server's context could not be read; context not confirmed", "profile", in.prof.Name, "err", err)
+		return
+	}
+	in.servedCtx, in.ctxErr = n, ""
+	if !ctxDiffers(n, in.prof.Ctx) {
+		return
+	}
+	text := servedNote(in.prof, n)
+	c.log.Warn("the model server runs another context than the plan: "+text, "profile", in.prof.Name, "ctx", in.prof.Ctx, "served_ctx", n)
+	data := map[string]any{"ctx": in.prof.Ctx, "served_ctx": n, "parallel": max(in.prof.Parallel, 1)}
+	if in.prof.CtxAsked > 0 {
+		data["ctx_asked"] = in.prof.CtxAsked
+	}
+	c.recordInst(in, history.TContextMismatch, history.Warn, in.prof.Name+" "+text, data)
+}
+
+// ctxDiffers says whether a served context per slot is not the planned one
+// (beyond the server's padding).
+func ctxDiffers(served, planned int) bool {
+	return served > 0 && planned > 0 && (served < planned || served >= planned+ctxPad)
+}
+
+// servedNote is "runs at 2,048, profile says 8,192".
+func servedNote(p *core.Profile, served int) string {
+	return fmt.Sprintf("runs at %s, profile says %s", groupThousands(served), groupThousands(p.Ctx))
+}
+
+// instCtx is the context per slot requests to in get: the server's own
+// figure once read, else the planned one.
+func instCtx(in *inst) int {
+	if in.servedCtx > 0 {
+		return in.servedCtx
+	}
+	return in.prof.Ctx
+}
+
+// instCtxStatus fills an instance's context fields: the planned ctx, the
+// server's own figure, and the note (the trained-context cap, a mismatch,
+// or "context not confirmed").
+func instCtxStatus(s *InstanceStatus, in *inst) {
+	if in.prof.Kind != core.KindLlama {
+		return
+	}
+	s.Ctx = in.prof.Ctx
+	if in.servedCtx > 0 {
+		v := in.servedCtx
+		s.CtxServed = &v
+	}
+	switch {
+	case in.ctxErr != "":
+		s.CtxNote = in.ctxErr
+	case ctxDiffers(in.servedCtx, in.prof.Ctx):
+		s.CtxNote = servedNote(in.prof, in.servedCtx)
+	default:
+		s.CtxNote = ctxNote(in.prof)
+	}
 }

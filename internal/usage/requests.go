@@ -130,6 +130,9 @@ type Placement struct {
 	Session  string
 	HostNode string
 	Nodes    []Node
+	// Ctx is the context per slot the instance runs with (the model
+	// server's own figure once read); 0 keeps the row's ctx.
+	Ctx int
 }
 
 // End is how a request ended. Counts and rates below 0 are unknown.
@@ -373,6 +376,9 @@ func (t *Tracker) start(p Placement, src LiveSource) bool {
 	t.row.StartedAt = t.r.now().UnixMilli()
 	t.row.SchedID, t.row.Instance, t.row.Session, t.row.HostNode = p.SchedID, p.Instance, p.Session, p.HostNode
 	t.row.Nodes = append([]Node(nil), p.Nodes...)
+	if p.Ctx > 0 {
+		t.row.Ctx = p.Ctx
+	}
 	t.src = src
 	row := t.row
 	t.r.st.Submit(Op{Apply: func(tx *sql.Tx) error { return upsertRow(tx, &row, false) }})
