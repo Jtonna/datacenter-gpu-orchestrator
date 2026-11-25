@@ -148,6 +148,7 @@ func Schema() *SchemaDoc {
 				{Name: "max_tokens", Type: "integer", Default: DefaultFillAnswerTok, Min: 1, Max: MaxFillAnswerTok, Unit: "tokens", Description: "The answer budget of the last turn (earlier turns answer in at most 8 tokens)."},
 				{Name: "stop_available_mib", Type: "integer", Default: DefaultStopAvailMiB, Min: MinStopAvailMiB, Max: MaxStopAvailMiB, Unit: "MiB", Description: "Stop the step when any machine's available memory falls, or would fall with the next turn, below this."},
 				{Name: "refuse_shared_shape", Type: "boolean", Default: true, Description: "Refuse the step when a profile a person wrote has the same shape (model, context, parallel and options), so the fill's memory peak cannot move that profile's plan. Whatever it says, a step whose own profile a person wrote is always refused: use the recipe."},
+				{Name: "settle_s", Type: "integer", Min: 0, Max: MaxSettleS, Unit: "s", Description: "The hold after the load before the first turn, so the scheduler takes the cycle's settle use and the growth reading can be worked out. Default: the scheduler's free_average_window (30 s unless configured); 0: no hold."},
 			}},
 		{Type: PhaseHold, Title: "Hold", Description: "Keep the model loaded and idle for a while, then send one request to see how it behaves after the idle time.",
 			Records: []string{"held_s", "decode_tps", "prefill_tps", "ttft_ms"}, Options: []Option{

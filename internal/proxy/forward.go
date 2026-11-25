@@ -367,9 +367,6 @@ func Forward(w http.ResponseWriter, r *http.Request, o Options) (res Result) {
 		}
 		res.InputTokens, res.OutputTokens, res.TokensPerSecond = extractUsage(tail.bytes())
 		res.CachedTokens, res.PromptMS, res.PredictedMS, res.PromptPerSecond = extractTimings(tail.bytes())
-		if res.CachedTokens > 0 && res.InputTokens >= 0 && lastObject(tail.bytes(), `"usage"`) == nil {
-			res.InputTokens += res.CachedTokens // timings' prompt_n leaves out the reused tokens; usage counts them
-		}
 		res.Stream = body != nil && body.sse
 		res.Stalled = body != nil && body.stalled.Load()
 		res.Unloaded = res.Unloaded || body != nil && body.cutSent
@@ -586,12 +583,16 @@ func WriteError(w http.ResponseWriter, status int, message, typ, reason string, 
 // extractUsage finds the last usable "usage" and "timings" objects in the
 // tail of a response (a JSON body, or the final data: chunks of an event
 // stream) and returns prompt tokens, completion tokens and predicted tokens
-// per second; -1 for each that is absent. The tail may start mid-document,
-// so it searches for the keys instead of parsing the whole thing. Keys
-// inside JSON strings are escaped (\"usage\") and so never match.
+// per second; -1 for each that is absent. Prompt tokens are the whole
+// prompt, reused ones included: usage.prompt_tokens, or, for an answer with
+// no usage object (the model server's native /completion route), the
+// timings' prompt_n + cache_n. The tail may start mid-document, so it
+// searches for the keys instead of parsing the whole thing. Keys inside
+// JSON strings are escaped (\"usage\") and so never match.
 func extractUsage(tail []byte) (in, out int, tps float64) {
 	in, out, tps = -1, -1, -1
-	if u := lastObject(tail, `"usage"`); u != nil {
+	u := lastObject(tail, `"usage"`)
+	if u != nil {
 		in = firstInt(u, "prompt_tokens", "input_tokens")
 		out = firstInt(u, "completion_tokens", "output_tokens")
 	}
@@ -601,6 +602,9 @@ func extractUsage(tail []byte) (in, out int, tps float64) {
 		}
 		if in < 0 {
 			in = firstInt(t, "prompt_n")
+			if c := firstInt(t, "cache_n"); in >= 0 && c > 0 && u == nil {
+				in += c // prompt_n leaves out the reused tokens; usage.prompt_tokens counts them
+			}
 		}
 		if out < 0 {
 			out = firstInt(t, "predicted_n")

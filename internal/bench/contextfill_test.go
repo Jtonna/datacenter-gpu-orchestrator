@@ -36,7 +36,11 @@ func fillMgr(t *testing.T, api *fakeAPI, mod ...func(*ManagerOptions)) *testMgr 
 	api.shapeShared = &shared
 	gen := true // the fixed profiles of these tests stand for generated ones
 	api.planGenerated = &gen
-	return newTestMgr(t, api, append([]func(*ManagerOptions){func(o *ManagerOptions) { o.MemSample = 5 * time.Millisecond }}, mod...)...)
+	return newTestMgr(t, api, append([]func(*ManagerOptions){func(o *ManagerOptions) {
+		o.MemSample = 5 * time.Millisecond
+		o.FillSettle = func() time.Duration { return 0 } // no settle hold unless a test asks
+		o.FillReportEvery = 20 * time.Millisecond
+	}}, mod...)...)
 }
 
 func fillOf(t *testing.T, r *Run, step int) *FillResult {

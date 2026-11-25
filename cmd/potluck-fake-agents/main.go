@@ -126,7 +126,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&o.AcceptLaunches, "accept-launches", false, "accept launches and report a fake running worker (default: refuse every launch)")
 	fs.DurationVar(&o.Heartbeat, "heartbeat", 2*time.Second, "heartbeat interval (the scheduler asks for 2 s)")
 	fs.BoolVar(&printOnly, "print", false, "print the node list as JSON and exit")
-	fs.StringVar(&o.MemFile, "mem-file", "", "a JSON file of node id or name to MemAvailable MiB, read every heartbeat: a listed node reports that figure (scripted memory drop)")
+	fs.StringVar(&o.MemFile, "mem-file", "", "a JSON file of node id or name to MemAvailable MiB, read every heartbeat: a listed node reports that figure (scripted memory drop); a key silent:<id or name> with N withholds that agent's reports for N s (at most 8)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -218,7 +218,9 @@ func Start(ctx context.Context, o Options, nodes []Node, out io.Writer) (*Fleet,
 		f.Agents = append(f.Agents, a)
 	}
 	if o.MemFile != "" {
-		go f.followMemFile(ctx, o.MemFile, o.Heartbeat, nodes, out)
+		// Read every 100 ms (not once per heartbeat): a key takes effect at most
+		// 100 ms after it is written, before the next heartbeat goes out.
+		go f.followMemFile(ctx, o.MemFile, min(o.Heartbeat, memFilePoll), nodes, out)
 	}
 	mode := "launches refused"
 	if o.AcceptLaunches {
@@ -434,6 +436,9 @@ func assignAddrs(nodes []Node, base string) error {
 	return nil
 }
 
+// memFilePoll is how often the memory file is read.
+const memFilePoll = 100 * time.Millisecond
+
 // followMemFile applies the memory file every interval until ctx ends: a
 // node listed by id or name reports that MemAvailable (and the same
 // available memory in its stats). A missing or bad file changes nothing.
@@ -445,6 +450,22 @@ func (f *Fleet) followMemFile(ctx context.Context, file string, every time.Durat
 		if b, err := os.ReadFile(file); err == nil {
 			var want map[string]int64
 			if json.Unmarshal(b, &want) == nil {
+				for _, a := range f.Agents {
+					// "silent:<id or name>": N withholds that agent's reports for N s
+					// (at most 8 s, short of the pool's LostAfter), once per new N.
+					key := "silent:" + a.ID
+					s, ok := want[key]
+					if !ok {
+						key = "silent:" + a.Name
+						s, ok = want[key]
+					}
+					if ok && s > 0 && applied[key] != s {
+						d := time.Duration(min(s, 8)) * time.Second
+						a.SilentFor(d)
+						applied[key] = s
+						fmt.Fprintf(out, "  %-20s withholds its reports for %s (%s)\n", a.Name, d, file)
+					}
+				}
 				for i, a := range f.Agents {
 					v, ok := want[a.ID]
 					if !ok {

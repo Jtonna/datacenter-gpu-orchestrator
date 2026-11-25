@@ -116,6 +116,14 @@ type fakeAPI struct {
 	planCtx       int
 	shapeShared   *[]SharedProfile
 	planGenerated *bool // the plan's generated for the profile itself (nil: not said)
+	// reportEvery > 0: each node reports its memory once per interval, as an
+	// agent.s heartbeat does; the status shows the last report and its time
+	// (SampleAt). 0: every status read is a fresh sample taken now. withhold
+	// drops a node.s report (the agent is silent) given the chats sent so far.
+	reportEvery time.Duration
+	withhold    func(id string, chats int) bool
+	reportEpoch time.Time
+	reports     map[string]fakeReport
 }
 
 func (f *fakeAPI) Consoles(ctx context.Context) ([]Console, error) {
@@ -412,7 +420,7 @@ func (f *fakeAPI) Status(ctx context.Context) (*StatusInfo, error) {
 			chats += n
 		}
 		for i := range st.Workers {
-			st.Workers[i].AvailMiB = f.mem(st.Workers[i].ID, loading, chats)
+			st.Workers[i].AvailMiB, st.Workers[i].SampleAt = f.report(st.Workers[i].ID, loading, chats)
 		}
 	}
 	for name, until := range f.gone { // an unloaded instance lingers for a moment
@@ -591,4 +599,39 @@ func (f *fakeAPI) Tokenize(ctx context.Context, profile, text string) (int, erro
 		return 0, fmt.Errorf("/tokenize answered 404: model %s is not loaded", profile)
 	}
 	return len(text) / 4, nil
+}
+
+// fakeReport is a node's last memory report: its interval number, figure and time.
+type fakeReport struct {
+	k  int64
+	v  *int64
+	at time.Time
+}
+
+// report is a node's figure and its sample time as the status shows them
+// (f.mu held): see reportEvery and withhold.
+func (f *fakeAPI) report(id string, loading bool, chats int) (*int64, time.Time) {
+	if f.reportEvery <= 0 {
+		v := f.mem(id, loading, chats)
+		if v == nil {
+			return nil, time.Time{}
+		}
+		return v, time.Now()
+	}
+	if f.reportEpoch.IsZero() {
+		f.reportEpoch = time.Now()
+	}
+	if f.reports == nil {
+		f.reports = map[string]fakeReport{}
+	}
+	k := int64(time.Since(f.reportEpoch) / f.reportEvery)
+	r, ok := f.reports[id]
+	if (!ok || k > r.k) && (f.withhold == nil || !f.withhold(id, chats)) {
+		r = fakeReport{k: k, v: f.mem(id, loading, chats), at: f.reportEpoch.Add(time.Duration(k) * f.reportEvery)}
+		f.reports[id] = r
+	}
+	if r.v == nil {
+		return nil, time.Time{}
+	}
+	return r.v, r.at
 }

@@ -86,3 +86,41 @@ func TestPeakCycles_GrowthReadings(t *testing.T) {
 		t.Errorf("window %s", calls[len(calls)-1])
 	}
 }
+
+// An unload event from before the profile's kind was stored (no
+// profile_kind, profile_ctx or profile_parallel) says so; it is not a
+// non-llama profile, and the request log is not read for it. A non-llama
+// event still says it is not a llama profile.
+func TestPeakCycles_GrowthReadings_EventBeforeTheKindWasStored(t *testing.T) {
+	now := time.UnixMilli(10_000_000)
+	pc := &peakCycles{rows: map[string]*peakCycleRow{}, now: func() time.Time { return now }}
+	reads := 0
+	pc.tokens = func(ctx context.Context, profile, session string, from, need, to int64) (usage.SessionTokens, error) {
+		reads++
+		return usage.SessionTokens{MaxHeld: 7000, Counted: 4}, nil
+	}
+	t0 := now.UnixMilli() - 60_000
+	old := growthEvent(t0, "s-old-shape", "", 0, 0, mib(5000), mib(5875))
+	delete(old.Data, "profile_kind")
+	delete(old.Data, "profile_ctx")
+	delete(old.Data, "profile_parallel")
+	pc.addLocked(old)
+	pc.addLocked(growthEvent(t0+1, "s-cmd", "command", 8192, 1, mib(5000), mib(5875)))
+	rows := pc.view()["rows"].([]map[string]any)
+	gr := rows[0]["growth_readings"].([]map[string]any)
+	if len(gr) != 2 {
+		t.Fatalf("%v", gr)
+	}
+	if got := gr[1]["not_computed"]; got != growthBeforeKind || got == growthNotLlama {
+		t.Errorf("old-shape event: %v, want %q", got, growthBeforeKind)
+	}
+	if growthBeforeKind != "not computed: recorded before the profile's kind was stored" {
+		t.Errorf("sentence %q", growthBeforeKind)
+	}
+	if got := gr[0]["not_computed"]; got != growthNotLlama {
+		t.Errorf("command profile: %v", got)
+	}
+	if reads != 0 {
+		t.Errorf("the log was read %d times", reads)
+	}
+}
