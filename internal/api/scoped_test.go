@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/fleet"
@@ -333,5 +334,20 @@ func TestScopedLoad_NoModelPathOverride(t *testing.T) {
 	}
 	if _, ok := e.sched.Scoped("alpha@p"); ok {
 		t.Fatal("a refused body left a scoped profile")
+	}
+}
+
+// The caller's check (bench.HTTPAPI.LoadScoped) passes against this
+// scheduler's real answer.
+func TestScopedLoad_CallerCheckPassesOnThisImage(t *testing.T) {
+	e := newConsolesEnv(t, chatOK)
+	ctx := 8192
+	ans, err := (&bench.HTTPAPI{Base: e.front.URL}).LoadScoped(context.Background(),
+		bench.ScopedLoadRequest{Model: "alpha-old", Scope: "chk", Nodes: []string{"con-2"}, Ctx: &ctx})
+	if err != nil || ans.Status != 202 || ans.Model != "alpha@chk" || ans.Production != "alpha" || ans.Scope != "chk" {
+		t.Fatalf("%+v %v", ans, err)
+	}
+	if _, ok := e.sched.Scoped("alpha@chk"); !ok {
+		t.Fatal("not held")
 	}
 }
