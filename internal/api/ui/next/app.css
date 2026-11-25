@@ -1486,3 +1486,4 @@ a.tbar{text-decoration:none;cursor:pointer}
 .trs-sub{margin:4px 0 8px;font-size:13px;font-weight:800}
 .trs-zones{margin-bottom:12px}
 .trs-tbl td.trs-rule .trs-never{display:block;margin-top:3px;color:var(--warn-text,#8a5a00);font-size:12px;font-weight:700}
+.mdl-need-ends{display:block;font-size:12px;margin-top:2px}

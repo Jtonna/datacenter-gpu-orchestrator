@@ -258,7 +258,7 @@ function needsLine(m, st, f) {
   const r = prodNeeds(m);
   if (r) {
     return h('div', { 'data-needs': '' }, h('span.mut', 'Runs on: '), runsOnRange(m, st, r) || runsOnCell(m, st),
-      h('span.mut', ' · needs '), h('span', needRange(r)), h('span.sub.mdl-need-ends', needEnds(r)));
+      h('span.mut', ' · needs '), h('span', needRange(r)), h('span.mut.mdl-need-ends', needEnds(r)));
   }
   const tail = [f.sub, noProd(m) ? 'smallest test configuration' : ''].filter(Boolean).join(' · ');
   return h('div', { 'data-needs': '' }, h('span.mut', 'Runs on: '), runsOnCell(m, st),
