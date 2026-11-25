@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelpath"
 )
 
 // DefaultMinGap is the shortest time between two evictions on one machine.
@@ -104,14 +106,13 @@ func Resolve(root, name string) (string, *Error) {
 	if strings.ContainsRune(name, 0) {
 		return "", refuse(400, ReasonInvalid, "the file name has a NUL byte")
 	}
-	slashed := filepath.ToSlash(name)
-	if filepath.IsAbs(name) || strings.HasPrefix(slashed, "/") || filepath.VolumeName(name) != "" {
-		return "", refuse(400, ReasonInvalid, "%q is absolute: name a file relative to the model folder", name)
+	// the shared rule for a model path (internal/modelpath): relative, forward
+	// slashes, no ".." and no part that starts with a dot (.trash, .incoming,
+	// .potluck-uploads are not model files to evict)
+	if err := modelpath.Check(name); err != nil {
+		return "", refuse(400, ReasonInvalid, "%v", err)
 	}
-	clean := filepath.Clean(filepath.FromSlash(name))
-	if clean == ".." || strings.HasPrefix(filepath.ToSlash(clean), "../") {
-		return "", refuse(400, ReasonInvalid, "%q leaves the model folder", name)
-	}
+	clean := filepath.FromSlash(name)
 	if root == "" {
 		return "", refuse(503, ReasonUnreachable, "no model folder")
 	}
@@ -129,6 +130,9 @@ func Resolve(root, name string) (string, *Error) {
 	rel, err := filepath.Rel(rootReal, real)
 	if err != nil || rel == ".." || strings.HasPrefix(filepath.ToSlash(rel), "../") || filepath.IsAbs(rel) {
 		return "", refuse(400, ReasonInvalid, "%q resolves outside the model folder", name)
+	}
+	if modelpath.Check(filepath.ToSlash(rel)) != nil {
+		return "", refuse(400, ReasonInvalid, "%q resolves into a dot-folder of the model folder", name)
 	}
 	fi, err := os.Stat(real)
 	if err != nil {
