@@ -55,13 +55,15 @@ export function timeLeft(run) {
 }
 export function runningRow(run, opts = {}) {
   const pct = Math.max(0, Math.min(100, run.percent || 0));
-  return h('div.bp-running', { key: 'running', role: 'listitem', 'data-running': run.id || '' },
+  return h('div', { key: 'running', role: 'listitem', 'data-running': run.id || '', class: 'bp-running' + (opts.inline ? ' inline' : '') },
     h('span.bp-ri', runIcon('running', 16, true)),
     h('div.bp-main',
+      opts.inline ? h('span.bp-word', 'Running') : null,
       h('a.bp-name', { href: run.suite_id ? href('benchmarks', ['all', run.suite_id]) : href('benchmarks', ['runs']) }, run.suite_name || run.suite_id),
-      h('div.bp-sub', runningLine(run))),
-    h('div.bp-bar', bar([{ cls: 'a', value: pct }], 100, `${Math.round(pct)} percent of the run is done`, 'sm'), h('span.mut', timeLeft(run))),
-    opts.noCancel ? null : notYet(h('span.btn.sm', 'Cancel'), WHY.run));
+      h('div.bp-sub', { title: runningLine(run) }, opts.inline ? ' · ' : null, runningLine(run))),
+    h('div.bp-bar', bar([{ cls: 'a', value: pct }], 100, `${Math.round(pct)} percent of the run is done`, 'sm'), h('span.mut.bp-left', timeLeft(run))),
+    opts.noCancel ? null : notYet(h('span.btn.sm', 'Cancel'), WHY.run),
+    opts.after || null);
 }
 
 // ---------- rows ----------
@@ -111,18 +113,18 @@ export function listColumn(r, q, setQ, narrow) {
   const bs = benches.filter(b => match(q, b.id, b.name, b.description));
   const open = r.rest[1] || '';
   return h('div', { class: 'bp-list' + (narrow ? ' narrow' : '') },
-    h('div.bp-tools',
-      searchField(q, setQ, 'Search benchmarks', 'bench-search'),
-      h('span.grow'),
-      narrow ? null : notYet(h('span.btn', 'New group'), WHY.edit),
-      notYet(h('span.btn.pri', 'New benchmark'), WHY.edit)),
-    run ? [h('h2.bp-sec', 'Running now · 1'), h('div.bp-rows', { role: 'list', 'aria-label': 'Running now' }, runningRow(run))] : null,
-    h('h2.bp-sec', 'Groups'),
-    gs.length ? h('div.bp-rows', { role: 'list', 'aria-label': 'Groups' }, gs.map(g => groupRow(g, run, g.id === open)))
-      : h('p.mut.bp-none', groups.length ? 'No group matches the search.' : 'No groups yet. A group runs several benchmarks, or one benchmark over several models and placements, in one go.'),
-    h('h2.bp-sec', 'Benchmarks'),
-    bs.length ? h('div.bp-rows', { role: 'list', 'aria-label': 'Benchmarks' }, bs.map(benchRow))
-      : h('p.mut.bp-none', benches.length ? 'No benchmark matches the search.' : 'No benchmarks yet.'));
+    h('section.bp-card', { 'aria-label': 'Groups and benchmarks' },
+      h('div.bp-tools.bp-cardtools',
+        searchField(q, setQ, 'Search benchmarks and groups', 'bench-search'),
+        narrow ? null : notYet(h('span.btn', 'New group'), WHY.edit),
+        notYet(h('span.btn.pri', 'New benchmark'), WHY.edit)),
+      run ? [h('h2.bp-sec.now', 'Running now · 1'), h('div.bp-rows', { role: 'list', 'aria-label': 'Running now' }, runningRow(run))] : null,
+      h('h2.bp-sec', 'Groups'),
+      gs.length ? h('div.bp-rows', { role: 'list', 'aria-label': 'Groups' }, gs.map(g => groupRow(g, run, g.id === open)))
+        : h('p.mut.bp-none', groups.length ? 'No group matches the search.' : 'No groups yet. A group runs several benchmarks, or one benchmark over several models and placements, in one go.'),
+      h('h2.bp-sec', 'Benchmarks'),
+      bs.length ? h('div.bp-rows', { role: 'list', 'aria-label': 'Benchmarks' }, bs.map(benchRow))
+        : h('p.mut.bp-none', benches.length ? 'No benchmark matches the search.' : 'No benchmarks yet.')));
 }
 
 // ---------- a group's panel ----------

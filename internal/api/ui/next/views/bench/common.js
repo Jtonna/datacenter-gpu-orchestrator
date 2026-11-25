@@ -119,9 +119,16 @@ const RESULT_WORD = { passed: 'Passed', with_issues: 'Passed with issues', faile
   // refused because the profile forces an excluded zone: neither a pass nor a failure (0.1.7 review)
   not_judged: 'Not judged' };
 export const resultOf = r => (r && (r.result || (r.state === 'completed' ? 'passed' : r.state === 'paused' ? 'waiting' : r.state))) || '';
+// the boards' own marks: a passed run is a green tick, a refused one an
+// amber circle with a bar (the Requests screens keep their icons)
+const BOARD_ICON = {
+  done: () => [h('path', { d: 'M3.5 8.5l3 3 6-7', fill: 'none', stroke: 'var(--up)', 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })],
+  refused: () => [h('circle', { cx: 8, cy: 8, r: 6.2, fill: 'none', stroke: 'var(--queued)', 'stroke-width': 1.8 }), h('path', { d: 'M5 8h6', stroke: 'var(--queued)', 'stroke-width': 1.8, 'stroke-linecap': 'round' })],
+};
 export function resultIcon(r, size = 16) {
   const res = resultOf(r);
-  const icon = runIcon(RESULT_ICON[res] || 'queued', size, true);
+  const kind = RESULT_ICON[res] || 'queued';
+  const icon = BOARD_ICON[kind] ? h('svg', { viewBox: '0 0 16 16', width: size, height: size, role: 'img', 'aria-label': RESULT_WORD[res] || res }, BOARD_ICON[kind]()) : runIcon(kind, size, true);
   return h('span.bp-ri', { title: RESULT_WORD[res] || res, 'data-result': res }, icon);
 }
 export const resultWord = r => RESULT_WORD[resultOf(r)] || resultOf(r);

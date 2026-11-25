@@ -215,10 +215,13 @@ function placeSlots() {
   if (!root) return;
   const inMenu = !narrow.matches && !root.classList.contains('menu-closed');
   const menuBox = root.querySelector('.menu .slotbox');
-  const box = inMenu ? menuBox : strip;
-  if (!box) return;
+  // the Benchmarks pages draw the run themselves (the Overview's run card,
+  // the list's "Running now" row; board Bench-Group has no strip): there the
+  // strip stays empty
+  const box = inMenu ? menuBox : route.id === 'benchmarks' ? null : strip;
+  if (!box && (inMenu || route.id !== 'benchmarks')) return;
   const want = Object.keys(slots).map(k => slots[k]);
-  for (const n of want) if (n.parentNode !== box) box.appendChild(n);
+  if (box) for (const n of want) if (n.parentNode !== box) box.appendChild(n);
   for (const other of [strip, menuBox]) {
     if (!other) continue;
     for (const c of Array.from(other.children)) if (!want.includes(c) || other !== box) c.remove();

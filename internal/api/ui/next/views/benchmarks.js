@@ -26,7 +26,7 @@ import { num, DASH } from '../core/format.js';
 import { staleBanner } from '../core/status.js';
 import { needCatalog, onCatalog } from '../core/catalog.js';
 import { bench, onBench, loadLists, seedState, activeRun, when, tookS, resultIcon, dots, inputsLine, notYet, WHY } from './bench/common.js';
-import { listColumn, groupPanel, runningRow } from './bench/list.js';
+import { listColumn, groupPanel, runningRow, kindIcon } from './bench/list.js';
 import { runsData, loadRuns, runsColumn, runPanel, reportPanel, directLine } from './bench/runs.js';
 import { dur } from '../core/format.js';
 import './bench/live.js';
@@ -37,10 +37,14 @@ const LATEST_COLS = ['Model', 'Smallest fit', 'Cold load', 'Reload', 'Generation
 
 function recentRow(rn) {
   const direct = rn.kind === 'benchmark';
+  const name = rn.suite_name || rn.benchmark_id || rn.suite_id || rn.id;
+  const inp = direct ? inputsLine(rn) : '';
   return h('a.bp-recent', { key: rn.id, href: href('benchmarks', ['runs', String(rn.number || rn.id)]), role: 'listitem', 'data-run': rn.number || rn.id },
+    h('span.bp-ri', resultIcon(rn, 14)),
     h('span.bp-when', when(rn.started_at || rn.queued_at)),
-    h('span.bp-name', { title: direct ? directLine(rn) : rn.suite_name }, direct ? directLine(rn) : rn.suite_name || rn.suite_id),
-    h('span.bp-resw', resultIcon(rn, 14), dots(rn.counts, rn.result === 'running')),
+    kindIcon(!direct),
+    h('span.bp-name', { title: direct ? directLine(rn) : name }, name, inp ? h('span.bp-sub', ' · ' + inp) : null),
+    h('span.bp-resw', dots(rn.counts, rn.result === 'running')),
     h('span.mut.bp-took', tookS(rn) != null ? dur(tookS(rn)) : DASH));
 }
 
@@ -48,8 +52,8 @@ function overview(ov) {
   const run = activeRun();
   return [
     h('h1.sr', 'Benchmarks'),
-    run ? h('section.card.bp-runcard', { 'aria-label': 'Running now' }, runningRow(run)) : null,
-    h('div.bp-tools', h('span.grow'), notYet(h('span.btn.pri', 'Run a benchmark'), WHY.run)),
+    run ? h('section.card.bp-runcard', { 'aria-label': 'Running now' }, runningRow(run, { inline: true, after: notYet(h('span.btn.pri', 'Run a benchmark'), WHY.run) }))
+      : h('div.bp-tools', h('span.grow'), notYet(h('span.btn.pri', 'Run a benchmark'), WHY.run)),
     h('section.card.bp-latest', { 'aria-label': 'Latest result for each model' },
       h('div.ch', h('h2', 'Latest result for each model'), h('span.grow'), notYet(h('span.mut', 'Smallest fit · context 8,192'), WHY.b5)),
       h('div.bp-tablewrap', h('table.bp-runs', h('thead', h('tr', LATEST_COLS.map(c => h('th', c)))),

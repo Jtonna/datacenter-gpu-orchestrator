@@ -32,7 +32,7 @@ import { catalog } from '../../core/catalog.js';
 import { state } from '../../core/store.js';
 import { logsLink, padded } from '../../core/logs.js';
 import { when, tookS, resultIcon, resultWord, dots, coldNote, inputsLine, notYet, WHY, modelName, placementWords, zonesWord, phaseWord } from './common.js';
-import { pinButton } from './list.js';
+import { pinButton, kindIcon } from './list.js';
 
 export const PAGE = 12;
 
@@ -68,11 +68,13 @@ export function directLine(rn) {
 function runRow(rn, q) {
   const direct = rn.kind === 'benchmark';
   const open = href('benchmarks', ['runs', String(rn.number || rn.id)], q);
+  const name = rn.suite_name || rn.benchmark_id || rn.suite_id || rn.id;
+  const inp = direct ? inputsLine(rn) : '';
   return h('tr', { key: rn.id, 'data-run': rn.number || rn.id, class: direct ? 'direct' : null },
-    h('td.bp-start', direct ? h('div', when(rn.started_at || rn.queued_at), h('div.bp-sub', { title: directLine(rn) }, directLine(rn))) : when(rn.started_at || rn.queued_at)),
-    h('td.bp-name', direct ? h('a', { href: open, 'aria-label': 'Open run ' + (rn.number || rn.id) }, h('span.sr', directLine(rn)))
-      : h('a', { href: open, title: rn.suite_name || rn.suite_id }, rn.suite_name || rn.suite_id, rn.state === 'cancelled' ? h('span.mut', ' · cancelled') : null)),
-    h('td.bp-res', h('span.bp-resw', resultIcon(rn, 14), dots(rn.counts, rn.result === 'running'))),
+    h('td.bp-start', h('span.bp-resw', resultIcon(rn, 14), when(rn.started_at || rn.queued_at))),
+    h('td.bp-name', { title: direct ? directLine(rn) : name }, kindIcon(!direct),
+      h('a', { href: open }, name), inp ? h('span.bp-sub', ' · ' + inp) : null, rn.state === 'cancelled' ? h('span.mut', ' · cancelled') : null),
+    h('td.bp-res', dots(rn.counts, rn.result === 'running')),
     h('td.bp-took.mut', tookS(rn) != null ? dur(tookS(rn)) : DASH),
     h('td.bp-pincell', pinButton(rn)));
 }
@@ -95,7 +97,7 @@ export function runsColumn(d, r) {
   const set = patch => navigate('benchmarks', r.rest.length > 1 ? ['runs'] : r.rest, Object.assign({}, q, patch, { page: '' }), true);
   const models = [{ id: '', label: 'any' }].concat((catalog.models || []).filter(m => m.file).map(m => ({ id: m.file, label: m.name || m.file })));
   if (q.model && !models.some(m => m.id === q.model)) models.push({ id: q.model, label: modelName(q.model) });
-  return h('div.bp-runsp',
+  return h('div', { class: 'bp-runsp' + (r.rest.length > 1 ? ' beside' : '') },
     h('div.bp-tools', { role: 'group', 'aria-label': 'Views and filters' },
       h('div.bp-views', { role: 'tablist', 'aria-label': 'Views' }, VIEWS.map(([id, label]) => id === 'runs'
         ? h('span.bp-view.on', { role: 'tab', 'aria-selected': 'true' }, label.toUpperCase())
