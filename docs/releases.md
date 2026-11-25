@@ -6,7 +6,7 @@ What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent
 
 No schema change, no setting. One new read route and one new field:
 
-- **`GET /api/bench/results/models`** (`?ctx=`, permission **observe**): per model file the newest finished step's figures (`cold_load_s` with `cold` and `cold_verified`, `reload_s`, `decode_tps`, `ttft_ms`, `memory_mib`, `lowest_available_mib`), the newest step per zone count (`by_nodes`) and `smallest_fit` (the fewest zones a load of the file completed on, in any run). Read from the steps and the measurement record; nothing stored. A figure the step did not measure is left out. The Overview's "Latest result for each model" and the Runs page's views Load times, Generation speed, First token and Memory draw it.
+- **`GET /api/bench/results/models`** (`?ctx=`, permission **observe**): per model file the newest finished step's figures (`cold_load_s` with `cold` and `cold_verified`, `reload_s`, `decode_tps`, `ttft_ms`, `memory_mib`, `lowest_available_mib`: the lowest available system memory of the machines the step used, with `lowest_available_node`), the newest step per zone count (`by_nodes`) and `smallest_fit` (the fewest zones a load of the file completed on, in any run). Read from the steps and the measurement record; nothing stored. A figure the step did not measure is left out. `file_gone` marks a model file no longer in the models folder; such rows come last. The Overview's "Latest result for each model" and the Runs page's views Load times, Generation speed, First token and Memory draw it.
 - **Groups list: `task_count`**, the coding tasks a run of the group sends (its tasks phases' stored or inline task sets), when it has any.
 
 - **Benchmarks.** The new pages of the boards: the Overview, the groups and benchmarks (a group's panel beside the list), the runs (views, filters, pages of 12), a run's panel and a benchmark's report. The report's four headline figures come from the step's phases. What the server does not serve yet is drawn greyed with the missing thing and its slice on hover (the Coding figures, "smallest that fits", the group option "cold loads", Compare, drop-out notes, one-click PDF, the editors, run control). The menu: Overview, Benchmarks, Runs, Settings.
@@ -23,6 +23,13 @@ No agent change, no new port, no schema change, no new route, no new setting. Ev
 - **Behaviour change for keys: pinning a run takes the permission `models`** (it was `settings`), as a model pin does. A key with only `settings` is now refused 403 on `PUT`/`DELETE /api/bench/runs/{id}/pin`.
 - **MCP.** `list_runs` takes `offset` and `result`; `get_run` takes a number and `requests`. Group-named aliases: `list_bench_groups`, `get_bench_group`, `create_bench_group`, `update_bench_group`, `delete_bench_group`, `run_bench_group` (the zone-group tools keep `list_groups` and the rest).
 - **Going back.** The image before sends none of these fields; nothing it reads changed. Its pin routes take `settings` again.
+
+## Scheduler image: the fill's stop check uses the measured growth
+
+No agent change, no schema, no new route, no new setting.
+- **Plans.** `POST /api/plan` answers `growth_history` (`kib_per_token`, `readings`, `capped_skipped`: the highest stored growth per token of the planned shape) and `fill_reserve_kib_per_token`.
+- **Context fill.** Before a turn the stop check assumes the highest stored reading for the shape, 12 KiB per token with none, never less than `fill_reserve_kib_per_token` (it was a fixed 8). The fill result says which figure and why (`growth_floor_kib_per_token`, `growth_floor_basis`), as does a refusal. `reasoning_chars` and `recall_note` are always written (0 and "" when there is nothing).
+- **Going back.** Nothing is stored. A fill run against the image before gets no `growth_history` and uses 12 KiB per token, saying so.
 
 ## Scheduler image: the real context
 
