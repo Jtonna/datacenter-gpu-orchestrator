@@ -478,9 +478,14 @@ requests, ended, bench_run`) and `activity.hours[24]` / `activity.days[7]`
 The catalog is kept in memory on the server and on the page. Use
 `core/catalog.js`: `catalog.models`, `catalog.byKey`, `catalog.byProfile`,
 `onCatalog(fn)`, `needCatalog()`, `modelFor({profile, model_file})`. The live
-channel sends the whole catalog when it connects (topic `models`) and then
-only the entries that changed, so a view never fetches it and never polls;
-going back to Models draws at once. The instance cards are drawn from the
+channel sends the whole catalog when the page subscribes to topic `models` and
+then only the entries that changed, so a view never fetches it and never polls;
+going back to Models draws at once. The page subscribes to `models` only while
+the open screen called `needCatalog()` (Models, a model's page, Deleted models,
+Profiles, Placement): the server computes every profile's plan for that topic.
+A screen that only names models (Overview, Requests, Benchmarks) calls
+`needCatalog({live: false})`: one copy, no live updates. Leaving a screen lets
+the topic go (`releaseCatalog()`, called by the router hook in `next/app.js`). The instance cards are drawn from the
 WebSocket status (they need the live load figures). A model's icon: `PUT`
 (raw image body), `GET`, `DELETE /api/models/<key>/icon[?scope=family]`
 (`api.upload`, `api.del`).

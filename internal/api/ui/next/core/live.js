@@ -8,17 +8,23 @@
 // topics added. A subscribe replaces the whole set,
 // so every topic is named again; on a server without the topic nothing
 // changes. core/requests.js reads the frames.
+//
+// The "models" topic (the model catalog, core/catalog.js) is named only while
+// the open screen asked for it (state.catalogLive, set by needCatalog()): the
+// server computes every profile's plan for it, so a screen that does not draw
+// the catalog must not keep that going.
 
-import { state, set, emit, publish } from './store.js';
+import { state, set, emit, publish, on } from './store.js';
 import { setServerTime } from './format.js';
 import { url } from './api.js';
 
-const TOPICS = ['status', 'event', 'bench', 'config', 'models'];
+const TOPICS = ['status', 'event', 'bench', 'config'];
 const OPT_IN = ['requests', 'health'];
 const SILENCE_MS = 40000;
 const MAX_EVENTS = 300;
 
 let ws = null;
+let sent = ''; // the topics of the last subscribe on this connection
 let attempt = 0;
 let retryTimer = 0;
 let watchdog = 0;
@@ -31,6 +37,31 @@ function wsURL() {
   u.search = '';
   return u.href;
 }
+
+// topics(): what this page subscribes to now
+function topics() {
+  const t = TOPICS.slice();
+  if (state.catalogLive) t.push('models');
+  const hello = state.hello;
+  if (ws && ws.helloSeen && hello) for (const x of OPT_IN) if (Array.isArray(hello.topics) && hello.topics.includes(x)) t.push(x);
+  return t;
+}
+// subscribe(): send the topics when they differ from the last subscribe
+function subscribe(sock) {
+  const t = topics();
+  const key = t.join(',');
+  if (!sock || key === sent) return;
+  try { sock.send(JSON.stringify({ type: 'subscribe', topics: t })); sent = key; } catch { /* closing */ }
+}
+// The open screen asked for the catalog or let it go: subscribe again once
+// the screen change is over (a release and the next screen's ask in one
+// change send nothing).
+let pending = false;
+on('catalogLive', () => {
+  if (pending) return;
+  pending = true;
+  queueMicrotask(() => { pending = false; if (ws && ws.readyState === WebSocket.OPEN) subscribe(ws); });
+});
 
 function setConn(c) {
   if (state.conn === c) return;
@@ -45,11 +76,9 @@ function handle(msg) {
     case 'hello':
       if (d.server_time) setServerTime(d.server_time);
       if (d.config_revision != null) set('configRevision', d.config_revision);
+      if (ws) ws.helloSeen = true;
       set('hello', d);
-      {
-        const extra = OPT_IN.filter(t => Array.isArray(d.topics) && d.topics.includes(t));
-        if (extra.length) try { ws && ws.send(JSON.stringify({ type: 'subscribe', topics: TOPICS.concat(extra) })); } catch { /* closing */ }
-      }
+      subscribe(ws);
       break;
     case 'status':
       state.statusAt = Date.now();
@@ -89,11 +118,12 @@ function connect() {
   let sock;
   try { sock = new WebSocket(wsURL()); } catch { schedule(); return; }
   ws = sock;
+  sent = '';
   sock.onopen = () => {
     attempt = 0;
     state.lastMsg = Date.now();
     setConn('live');
-    try { sock.send(JSON.stringify({ type: 'subscribe', topics: TOPICS })); } catch { /* closing */ }
+    subscribe(sock);
   };
   sock.onmessage = e => {
     let msg;
