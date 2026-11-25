@@ -441,7 +441,7 @@ func TestScoped_WrittenNeedOnlyAtTheProductionShape(t *testing.T) {
 		h.needs["tiny@s1"] = NeedInfo{Need: placer.Estimated(2600), FileBytes: 1 << 30} // what the estimate gives for its shape
 		h.c.forgetScopedNeed("tiny@s1")
 		r := h.c.scopedPlan(sp)
-		if r.NeedMiB != 2600 || !strings.Contains(r.NeedBasis, "written need not used: the scoped shape differs from tiny") {
+		if r.NeedMiB != 2600 || !strings.Contains(r.NeedBasis, "written need not used: shape differs from tiny") {
 			t.Fatalf("%+v: plan need %d basis %q", c, r.NeedMiB, r.NeedBasis)
 		}
 	}

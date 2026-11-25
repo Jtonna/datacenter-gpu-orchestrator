@@ -205,7 +205,7 @@ func (c *schedCore) writtenNeedDropped(p *core.Profile) string {
 		return ""
 	}
 	if bp := c.cfg.Profiles[base]; bp != nil && bp.NeedsMiB > 0 && p.NeedsMiB == 0 && shapeOf(bp) != shapeOf(p) {
-		return "; written need not used: the scoped shape differs from " + base
+		return "; written need not used: shape differs from " + base
 	}
 	return ""
 }
