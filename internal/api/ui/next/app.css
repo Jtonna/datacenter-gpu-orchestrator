@@ -1328,14 +1328,19 @@ input.cb{width:16px;height:16px;margin:0;accent-color:#0f6b4a}
 .mdl-cfg{display:flex;flex-direction:column;margin:0 -16px}
 .mdl-cfg .dh{height:auto;min-height:44px;flex-wrap:wrap;padding:6px 16px}
 .mdl-cfg-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.mdl-ptbl{width:100%}
-.mdl-ptbl td .sub{display:block}
+.mdl-ptbl,.mdl-ttbl{width:100%}
+.mdl-ptbl td .sub,.mdl-ttbl td .sub{display:block}
 .mdl-pill{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:9px;background:#e2f1e9;color:var(--mint-text);font-size:11px;font-weight:800;vertical-align:1px}
+.mdl-ttbl .go{display:inline-flex;align-items:center;gap:3px;font-weight:700;color:var(--link);text-decoration:none}
 .mdl-ptbl .go{display:inline-flex;align-items:center;gap:3px;font-weight:700;color:#9aa49e;text-decoration:none}
 .mdl-ptbl .go .tx{visibility:hidden}
 .mdl-ptbl tbody tr:hover .go,.mdl-ptbl .go:focus-visible{color:var(--link)}
 .mdl-ptbl tbody tr:hover .go .tx,.mdl-ptbl .go:focus-visible .tx{visibility:visible}
 .mdl-pad{padding:8px 16px}
+/* the test and benchmark configurations: one collapsed line (owner's note 9; views/models/kinds.js) */
+.mdl-tests{border-top:1px solid #e9eeeb}
+.mdl-tests>summary{padding:10px 16px;cursor:pointer;color:var(--mut);font-weight:600}
+.mdl-tests>summary:hover{color:var(--ink,#1f2a24)}
 /* the trash (v65; views/models/trash.js; boards Models-Trash, Models-Delete and the Models footer row) */
 a.tbar{text-decoration:none;cursor:pointer}
 .mdl a.tbar:hover{background:#f1f4f2;color:#131a17;text-decoration:none}

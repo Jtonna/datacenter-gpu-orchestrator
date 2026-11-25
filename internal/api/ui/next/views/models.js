@@ -46,6 +46,7 @@ import { logsLink, profileQuery, padded } from '../core/logs.js';
 import { tipText } from '../core/charts.js';
 import { instanceCard, stateBadge, fitOf, cannotRun, runsOnCell } from './models/common.js';
 import { mountDetail } from './models/detail.js';
+import { splitProfiles, prodText, testText } from './models/kinds.js';
 import { trashFooter, hasTrash, deleteModel, deletedText, mountTrash } from './models/trash.js';
 
 // the reasons of what is drawn but not built yet (p7-models-backend-STATUS.md)
@@ -128,10 +129,11 @@ function lastUsed(m) {
   if (m.state === 'loading') return h('span.mdl-now', 'Loading');
   return ago(m.last_active, m.history === false ? DASH : 'Never');
 }
-// profilesText(m) -> "11 profiles", "1 profile", "No profiles"
 // dayOf(ms) -> "4 Nov 2026"
 const dayOf = ms => { const d = new Date(ms); return `${d.getDate()} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()]} ${d.getFullYear()}`; };
-const profilesText = m => (m.profile_count ? plural(m.profile_count, 'profile') : 'No profiles');
+// prodCount(m) -> the model's production profiles (views/models/kinds.js;
+// the test and benchmark configurations are never counted with them)
+const prodCount = m => splitProfiles(m.profiles).prod.length;
 // sizeText(m) -> "16.5 GB", or why there is none (decimal GB, as the board and the disk line)
 const gbOf = v => (v / 1e9).toLocaleString('en-US', { maximumFractionDigits: 1, minimumFractionDigits: v >= 100e9 ? 0 : 1 });
 const sizeText = m => (m.kind === 'command' ? 'A program on this machine' : m.size_bytes ? gbOf(m.size_bytes) + ' GB' : DASH);
@@ -194,8 +196,8 @@ function modelPanel(st, m, ps) {
   const insts = m.instances || [];
   const loadedProfiles = new Set(insts.filter(i => i.state !== 'starting').map(i => i.profile));
   const all = m.profiles || [];
-  const hand = all.filter(p => !p.generated);
-  const gen = all.length - hand.length;
+  // the production profiles are the model's profiles; the rest is one collapsed line (views/models/kinds.js)
+  const { prod: hand, test: tests } = splitProfiles(all);
   const ctxs = [...new Set(hand.map(p => p.ctx).filter(Boolean))].sort((x, y) => x - y);
   const q = ps.q.trim().toLowerCase();
   // "Unload when idle" from ttl_s (v60; 0 = never); no column when the server has no ttl_s
@@ -232,7 +234,7 @@ function modelPanel(st, m, ps) {
         l.count ? ['Loads', h('span', num(l.count), l.failed ? h('span.err-t', ` · ${num(l.failed)} failed`) : null)] : null,
       ].filter(Boolean))),
     h('section.mdl-cfg', { key: 'cfg' },
-      h('div.dh', h('h3', 'Configurations ', h('span.mut', profilesText(m))),
+      h('div.dh', h('h3', 'Configurations ', h('span.mut', prodText(hand.length))),
         h('div.mdl-cfg-tools',
           hand.length > 1 ? searchField(ps.q, v => { ps.q = v; ps.redraw(); }, 'Search profiles', 'mdl-psearch') : null,
           ctxs.length > 1 ? filterSelect('Context', [{ id: '', label: 'any' }].concat(ctxs.map(c => ({ id: String(c), label: num(c) }))), ps.ctx, v => { ps.ctx = v; ps.redraw(); }) : null,
@@ -242,18 +244,24 @@ function modelPanel(st, m, ps) {
           h('th.r', { scope: 'col', title: 'What a load of this profile needs: measured, or estimated from the file' }, 'Memory needed'),
           ttlCol ? h('th.r', { scope: 'col', title: 'How long the model stays loaded with no request (the ttl of the profile, else the default)' }, 'Unload when idle') : null,
           h('th', { scope: 'col' }, h('span.sr', 'Edit')))),
-        h('tbody', rows.map(p => h('tr', { key: p.id, 'data-profile': p.id },
+        h('tbody', rows.map(profileRow)))
+        : h('p.mut.mdl-pad', 'No profile matches.'))
+        : h('p.mut.mdl-pad', all.length ? 'No profile: only test and benchmark configurations.' : 'No configuration uses this file yet. Add a profile to load it.'),
+      // the test and benchmark configurations: one collapsed line, never counted as profiles
+      tests.length ? h('details.mdl-tests', { key: 'tests' }, h('summary', testText(tests.length)),
+        h('table.tbl.mdl-ttbl', h('tbody', tests.map(profileRow)))) : null),
+    h('div.mdl-pad.row', { key: 'page', style: 'gap:12px' }, h('a.btn', { href: href('models', [m.key]) }, 'Open the model page'), h('a', { href: href('profiles') }, 'Edit under Profiles')),
+  ];
+  // one profile's row (production table and the test list)
+  function profileRow(p) {
+    return h('tr', { key: p.id, 'data-profile': p.id },
           h('td', h('span.mono', p.id), loadedProfiles.has(p.id) ? h('span.mdl-pill', { title: 'Loaded now' }, 'Now') : null, p.description ? h('span.sub', p.description) : null,
             p.parallel > 1 ? h('span.sub', `${num(p.parallel)} requests in parallel`) : null, hostLine(p)),
           h('td.r.mono', p.ctx ? num(p.ctx) : DASH),
           h('td.r', p.needs_mib ? [h('span.mono', num(p.needs_mib) + ' MiB'), h('span.sub', { title: p.needs_basis || null }, p.needs_measured ? 'measured' : 'estimated')] : h('span.mut', DASH)),
           ttlCol ? (typeof p.ttl_s === 'number' ? h('td.r.mono', { 'data-ttl': String(p.ttl_s) }, p.ttl_s > 0 ? dur(p.ttl_s) : 'Never') : h('td.r.mut', DASH)) : null,
-          h('td.r', h('a.go', { href: href('profiles', [p.id]), 'aria-label': 'Edit ' + p.id }, h('span.tx', 'Edit'), icon('M8 5l5 5-5 5')))))))
-        : h('p.mut.mdl-pad', 'No profile matches.'))
-        : h('p.mut.mdl-pad', all.length ? 'Every configuration of this model was generated.' : 'No configuration uses this file yet. Add a profile to load it.'),
-      gen ? h('p.mut.mdl-pad', `${plural(gen, 'generated configuration')} (benchmark matrices), listed on the model's page and under Profiles.`) : null),
-    h('div.mdl-pad.row', { key: 'page', style: 'gap:12px' }, h('a.btn', { href: href('models', [m.key]) }, 'Open the model page'), h('a', { href: href('profiles') }, 'Edit under Profiles')),
-  ];
+          h('td.r', h('a.go', { href: href('profiles', [p.id]), 'aria-label': 'Edit ' + p.id }, h('span.tx', 'Edit'), icon('M8 5l5 5-5 5'))));
+  }
 }
 
 function listPanel(st, models, disk, error, r, query, setQuery, onFind, done) {
@@ -277,7 +285,7 @@ function listPanel(st, models, disk, error, r, query, setQuery, onFind, done) {
   h('span.mdl-name', h('span.mono.nm', { title: m.short_name && m.short_name !== m.file ? m.short_name : null }, m.file || m.name),
     h('span.mut', sizeText(m), m.kind !== 'command' && m.exists === false ? h('span.err-t', ' · the file is missing') : null)),
   needsCell(m, st),
-  h('span', { class: m.profile_count ? 'mdl-pc' : 'mdl-pc mut' }, profilesText(m)),
+  h('span', { class: prodCount(m) ? 'mdl-pc' : 'mdl-pc mut', 'data-prod': String(prodCount(m)) }, prodText(prodCount(m))),
   h('span.mut.mdl-used', lastUsed(m)));
   const pinnedRows = pins ? rows.filter(m => m.pinned) : [];
   const restRows = pins ? rows.filter(m => !m.pinned) : rows;
