@@ -101,6 +101,10 @@ type Config struct {
 	// lateArgs what the check let through for it (LateManagedArgs).
 	keepArgs map[string][]string
 	lateArgs []string
+	// trainedCtx and keepCtx are Options.TrainedCtx and KeepCtx while the
+	// configuration is checked.
+	trainedCtx func(string) (int, bool)
+	keepCtx    map[string]KeptCtx
 	// DefaultUserName is the default user: the name that signs what is done
 	// without an access key and without a name of the client's own (the web
 	// UI, curl, scripts) in the audit log and the request log. There is no
@@ -401,6 +405,20 @@ type Options struct {
 	// unchanged is not refused for a flag the scheduler began to manage
 	// later (lateManaged): an older configuration stays loadable.
 	KeepArgs map[string][]string
+	// TrainedCtx reads the trained context of a model file (its GGUF
+	// <arch>.context_length); false when unknown. Nil: not checked. A llama
+	// profile whose ctx is above it is refused unless it says
+	// ctx_above_trained, or it keeps its stored model and ctx (KeepCtx).
+	TrainedCtx func(path string) (int, bool)
+	// KeepCtx maps a profile to its model and ctx before the write being
+	// checked: a stored profile that keeps both still loads.
+	KeepCtx map[string]KeptCtx
+}
+
+// KeptCtx is a stored profile's model and ctx (Options.KeepCtx).
+type KeptCtx struct {
+	Model string
+	Ctx   int
 }
 
 // Bench is the benchmark feature's settings (design 9.3).

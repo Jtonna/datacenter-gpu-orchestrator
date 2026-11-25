@@ -11,7 +11,11 @@ import (
 )
 
 type server struct {
-	cfg        config
+	cfg config
+	// trained (FAKELLAMA_TRAINED_CTX, or an --override-kv
+	// <arch>.context_length=int:N): the slot context is capped there, as the
+	// real server caps it at the model's trained context; 0: no cap.
+	trained    int
 	ready      atomic.Bool
 	chunks     int           // content chunks per streamed reply
 	chunkDelay time.Duration // pause between chunks
@@ -57,7 +61,13 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
-func (s *server) slotCtx() int { return s.cfg.ctxSize / s.cfg.parallel }
+func (s *server) slotCtx() int {
+	n := s.cfg.ctxSize / s.cfg.parallel
+	if s.trained > 0 && n > s.trained {
+		n = s.trained
+	}
+	return n
+}
 
 func (s *server) modelName() string {
 	if s.cfg.model == "" {

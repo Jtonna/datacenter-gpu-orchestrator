@@ -49,11 +49,14 @@ func (c *schedCore) staleProfile(in *inst) bool {
 //     so they apply from the next one.
 func (c *schedCore) applyConfig(nc *config.Config) {
 	old := c.cfg
-	c.cfg = nc
-	c.build = instance.OptionsFromConfig(nc)
 	if r, ok := c.needs.(Reconfigurer); ok {
 		r.Reconfigure(nc)
 	}
+	if tr, ok := c.needs.(trainedCtxReader); ok {
+		nc = realCtx(nc, tr) // realctx.go: planned at the trained context
+	}
+	c.cfg = nc
+	c.build = instance.OptionsFromConfig(nc)
 	if old.ModelsDir != nc.ModelsDir {
 		c.derive.est, c.derive.groups = nil, nil // estimates of files in another folder
 	}

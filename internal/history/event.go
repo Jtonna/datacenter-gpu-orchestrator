@@ -86,6 +86,12 @@ const (
 	// loop_step_warn_ms (at most one a minute; scheduler/loophealth.go).
 	TLoopSlowStep = "loopSlowStep"
 
+	// TContextMismatch: after a load, the model server reports (/props) a
+	// context per slot other than the one the plan was for (warn). Data:
+	// ctx (planned), served_ctx, and ctx_asked when the plan used the
+	// trained context (scheduler/realctx.go).
+	TContextMismatch = "contextMismatch"
+
 	// An MCP access key expires within 7 days (sent once), within 1 day
 	// (once), or has expired (once). Data: agent_id, name, key_hint,
 	// expires_at, days_left; never the key (api/keyexpiry.go).

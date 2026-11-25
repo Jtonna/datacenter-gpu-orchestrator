@@ -18,7 +18,7 @@ import (
 
 // queuedEnv is an env whose upstream holds "alpha" chat requests until
 // release is closed (keeping alpha busy so a "beta:64k" request must queue)
-// and records the multipart bodies it receives.
+// and records the multipart bodies POSTed to /v1/audio/transcriptions.
 type queuedEnv struct {
 	*env
 	release chan struct{}
@@ -34,6 +34,11 @@ func newQueuedEnv(t *testing.T, mod ...func(*Options)) *queuedEnv {
 		if r.URL.Path == "/v1/chat/completions" {
 			<-q.release
 			io.WriteString(w, `{"ok":true}`)
+			return
+		}
+		if r.URL.Path != "/v1/audio/transcriptions" {
+			// not under test: the scheduler's own reads after a load (GET /props)
+			io.WriteString(w, `{}`)
 			return
 		}
 		b, _ := io.ReadAll(r.Body)

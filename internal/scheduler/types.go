@@ -184,7 +184,14 @@ type Status struct {
 
 // InstanceStatus describes one instance.
 type InstanceStatus struct {
-	Profile        string
+	Profile string
+	// Ctx is the context per slot the instance was planned and launched with
+	// (llama); CtxServed the server's own figure (/props), nil until read or
+	// when it could not be; CtxNote the trained-context cap, "runs at 2,048,
+	// profile says 8,192", or "context not confirmed: ..." (realctx.go).
+	Ctx            int `view:"omitempty"`
+	CtxServed      *int
+	CtxNote        string `view:"omitempty"`
 	State          string // starting, ready, draining, stopping
 	RunningState   RunningState
 	Phase          string // starting only: preflight, launching, loading
@@ -498,7 +505,12 @@ const (
 
 // PlanReport is the answer to POST /api/plan. Nothing is changed by it.
 type PlanReport struct {
-	Profile   string
+	Profile string
+	// Ctx is the context per slot the plan is for (llama), and CtxNote says
+	// when that is not the configured ctx: "ctx 8,192 is above this model's
+	// trained context of 2,048; the server runs it at 2,048" (realctx.go).
+	Ctx       int
+	CtxNote   string `view:"omitempty"`
 	Alias     bool
 	Action    PlanAction
 	Instance  string // state of the profile's instance, if any

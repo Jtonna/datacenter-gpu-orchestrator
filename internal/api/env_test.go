@@ -254,6 +254,18 @@ func eventually(t *testing.T, what string, f func() bool) {
 	agenttest.Eventually(t, 5*time.Second, what, f)
 }
 
+// notUnderTest answers the scheduler's own GET /props after a load (the read of
+// the server's context) for a fake upstream that tracks the requests under
+// test, so that read is neither counted nor held. It reports whether it did.
+func notUnderTest(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method != http.MethodGet || r.URL.Path != "/props" {
+		return false
+	}
+	w.Header().Set("Content-Type", "application/json")
+	io.WriteString(w, `{}`)
+	return true
+}
+
 var chatOK = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/props":
