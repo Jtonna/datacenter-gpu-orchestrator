@@ -29,16 +29,17 @@ const growthMaxKiB = 1024.0
 
 // Why a cycle gives no reading.
 const (
-	growthNotLlama  = "not computed: not a llama profile"
-	growthParallel  = "not computed: parallel > 1"
-	growthNoLog     = "tokens unknown: no request log"
-	growthNoSession = "tokens unknown: the cycle has no load session"
-	growthTrimmed   = "tokens unknown: the request log no longer holds the cycle"
-	growthNoCounts  = "tokens unknown: no request of the cycle has token counts"
-	growthLogError  = "tokens unknown: the request log could not be read"
-	growthFewTokens = "not computed: the cycle held fewer tokens than a quarter of ctx × parallel"
-	growthPending   = "pending: the request log is read 10 s after the unload"
-	growthNoFigures = "not computed: no node has both the settle use and the peak"
+	growthNotLlama   = "not computed: not a llama profile"
+	growthBeforeKind = "not computed: recorded before the profile's kind was stored"
+	growthParallel   = "not computed: parallel > 1"
+	growthNoLog      = "tokens unknown: no request log"
+	growthNoSession  = "tokens unknown: the cycle has no load session"
+	growthTrimmed    = "tokens unknown: the request log no longer holds the cycle"
+	growthNoCounts   = "tokens unknown: no request of the cycle has token counts"
+	growthLogError   = "tokens unknown: the request log could not be read"
+	growthFewTokens  = "not computed: the cycle held fewer tokens than a quarter of ctx × parallel"
+	growthPending    = "pending: the request log is read 10 s after the unload"
+	growthNoFigures  = "not computed: no node has both the settle use and the peak"
 )
 
 type growthNode struct {
@@ -123,6 +124,8 @@ func (pc *peakCycles) growthView(r *peakCycleRow) []map[string]any {
 // is old enough), and says why there are none ("" when there are).
 func (pc *peakCycles) growthTokens(g *growthCycle, now time.Time) string {
 	switch {
+	case g.kind == "": // an unload event from before profile_kind was stored
+		return growthBeforeKind
 	case g.kind != "llama":
 		return growthNotLlama
 	case g.parallel > 1:
