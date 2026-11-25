@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/audit"
@@ -89,6 +90,10 @@ func (s *Server) removeTrashed(ctx context.Context, rec *cfgstore.TrashRecord, r
 	case st.Size() != rec.SizeBytes:
 		return nil, false, &removeRefusal{status: http.StatusConflict, reason: "changed",
 			msg: fmt.Sprintf("%s in .trash/%s is %d bytes, %d were deleted: it is not the file that was deleted, so it was not removed", rec.File, rec.ID, st.Size(), rec.SizeBytes)}
+	}
+	if ids := s.profilesInTrashFolder(rec.ID, rec.File); len(ids) > 0 {
+		return nil, false, &removeRefusal{status: http.StatusConflict, reason: "in_use_by_profile", extra: map[string]any{"profiles": ids},
+			msg: fmt.Sprintf("%s (trash id %s) was not removed: profile(s) %s name a file in its trash folder (.trash/%s/). Change or delete them first; nothing was changed", rec.File, rec.ID, strings.Join(ids, ", "), rec.ID)}
 	}
 	readOnly := false
 	if err := md.TrashWritable(rec.ID); err != nil {

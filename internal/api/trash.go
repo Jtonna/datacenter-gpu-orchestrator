@@ -238,6 +238,7 @@ func zoneNames(view []scheduler.NodeStatus, i scheduler.InstanceStatus) []string
 func (s *Server) trashBusy(ctx context.Context, file string, profiles map[string]*config.ProfileSpec) ([]string, map[string]any, error) {
 	var why []string
 	extra := map[string]any{}
+	profiles = s.withProfilesOnFile(file, profiles) // also a profile that reaches the file by a link or another path
 	if s.sched != nil {
 		st, err := s.sched.Status(ctx)
 		if err != nil {
