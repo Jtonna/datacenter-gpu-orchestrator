@@ -60,6 +60,52 @@ type trashState struct {
 	sum     trashSummary
 	repairs []string // what the last start repaired or could not
 	op      sync.Mutex
+	wr      writableRead // models_writable, read at most every writableEvery
+}
+
+// writableRead is the last answer of modelfiles.Writable for a folder.
+type writableRead struct {
+	dir      string
+	at       time.Time
+	writable bool
+	ok       bool
+}
+
+// writableEvery is how often models_writable is read again: as often as the
+// disk figures of the models folder (the diskstat reader's 30 s).
+const writableEvery = 30 * time.Second
+
+func (t *trashState) writable() writableRead {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.wr
+}
+
+func (t *trashState) setWritable(w writableRead) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.wr = w
+}
+
+// modelsWritable says whether the models folder can be written here, read
+// without writing anything (modelfiles.Writable: the mount's ro/rw from
+// /proc/self/mountinfo, else access(W_OK)); ok is false when it cannot be
+// told, and the field is then left out. The answer is kept for
+// writableEvery: the first read is the first request after start.
+func (s *Server) modelsWritable() (writable, ok bool) {
+	dir := s.modelDir().Root
+	if dir == "" {
+		return false, false
+	}
+	if s.opts.modelsWritable != nil {
+		return s.opts.modelsWritable(dir)
+	}
+	if w := s.trash.writable(); w.dir == dir && !w.at.IsZero() && time.Since(w.at) < writableEvery {
+		return w.writable, w.ok
+	}
+	writable, ok = modelfiles.Writable(dir)
+	s.trash.setWritable(writableRead{dir: dir, at: time.Now(), writable: writable, ok: ok})
+	return writable, ok
 }
 
 func (t *trashState) summary() trashSummary {
@@ -723,8 +769,12 @@ func (s *Server) handleTrashList(w http.ResponseWriter, r *http.Request) {
 			"actor": rec.Actor, "comment": rec.Comment, "problem": nilIfEmpty(problem), "in_trash_folder": ferr == nil})
 	}
 	repairs := s.trash.repairList()
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "count": sum.Count, "total_bytes": sum.Bytes, "next_purge_at": nilIfZero(sum.NextPurgeAt),
-		"trash_days": s.trashDays(), "purge_on": false, "repairs_at_start": repairs})
+	out := map[string]any{"items": items, "count": sum.Count, "total_bytes": sum.Bytes, "next_purge_at": nilIfZero(sum.NextPurgeAt),
+		"trash_days": s.trashDays(), "purge_on": false, "repairs_at_start": repairs}
+	if wr, ok := s.modelsWritable(); ok {
+		out["models_writable"] = wr
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func nilIfEmpty(s string) any {

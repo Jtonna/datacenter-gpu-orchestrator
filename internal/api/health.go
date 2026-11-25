@@ -863,6 +863,9 @@ func (s *Server) withModelsDisk(list []byte) []byte {
 		}
 	}
 	s.trashDisk(d) // trash_bytes, trash_count, next_purge_at, trash_purge_on (trash.go)
+	if wr, ok := s.modelsWritable(); ok {
+		d["models_writable"] = wr // read without writing; left out when it cannot be told (trash.go)
+	}
 	b, err := json.Marshal(d)
 	if err != nil {
 		return list

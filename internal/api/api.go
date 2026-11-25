@@ -109,7 +109,10 @@ type Options struct {
 	// trashUnloadWait replaces the 5 s a delete with interrupt waits for the
 	// file's instances to be gone (tests).
 	trashUnloadWait time.Duration
-	fileCache       filecache.Sys // tests replace the page cache calls of POST /api/cache/evict
+	// modelsWritable replaces modelfiles.Writable (tests act out a read-only
+	// folder, or one where it cannot be told); it is then asked every time.
+	modelsWritable func(dir string) (writable, ok bool)
+	fileCache      filecache.Sys // tests replace the page cache calls of POST /api/cache/evict
 	// catalogSource, when set and answering true, is what the model catalog is
 	// joined from instead of this server's own status, profiles, events,
 	// aggregates and files (the dev harness shows a scripted or recorded cluster).

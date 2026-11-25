@@ -34,3 +34,15 @@ func TestRuntimeGroupNoteStatesTheUIRule(t *testing.T) {
 		t.Errorf("the note must end at the Zones and Machine details clause: %s", note)
 	}
 }
+
+// list_model_files and list_deleted_models name models_writable, so an agent
+// knows before it tries whether a delete or a restore can work here.
+func TestModelToolsNameTheWritableFlag(t *testing.T) {
+	for _, tl := range allTools() {
+		if tl.Name == "list_model_files" || tl.Name == "list_deleted_models" {
+			if !strings.Contains(tl.Desc, "models_writable") {
+				t.Errorf("%s does not name models_writable: %s", tl.Name, tl.Desc)
+			}
+		}
+	}
+}
