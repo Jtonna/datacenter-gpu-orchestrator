@@ -79,6 +79,10 @@ type Options struct {
 	// endpoints answer 503).
 	Bench      *bench.Manager
 	BenchStore *bench.Store
+	// BenchOffReason: the database's bench tables are newer than this build
+	// (bench.OpenShared): the bench routes answer 503 with this reason and
+	// enabled false, and the health summary has a Benchmarks row.
+	BenchOffReason string
 	// System is what /api/system reports about the configuration and storage.
 	System SystemInfo
 	// Config is the configuration service (REST /api/config); Audit receives the audit entries of runtime actions. Nil turns the endpoints off (503).

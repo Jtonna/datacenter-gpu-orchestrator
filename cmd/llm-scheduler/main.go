@@ -206,11 +206,19 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 	// empty: the scheduler stays up unhealthy with the reason (unhealthy.go).
 	var dbStore *bench.Store
 	var cs *cfgstore.Store
-	st, err := bench.OpenStore(boot.DataDir)
+	// Only the bench tables ahead of this build (a newer version's bench
+	// migration) switch off the benchmarks alone: the rest of the file is
+	// in use as usual (bench.OpenShared). Every other failure is unhealthy.
+	st, err := bench.OpenShared(boot.DataDir)
 	if err != nil {
 		return serveUnhealthy(boot, log, sigs, storeFailure(err))
 	}
 	dbStore = st
+	benchOff := ""
+	if ne := st.BenchOff(); ne != nil {
+		benchOff = ne.BenchOffReason()
+		log.Warn(benchOff+"; the rest of the scheduler runs as usual and the benchmark tables are left as they are", "data_dir", boot.DataDir)
+	}
 	defer func() { dbStore.Close(); stepDone("store closed", dbStore) }() // the last step: every user of the store has stopped
 	if cs, err = cfgstore.Open(st); err != nil {
 		return serveUnhealthy(boot, log, sigs, "the configuration tables cannot be opened: "+err.Error())
@@ -429,11 +437,14 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 		pl.SetForceUnload(sched.ForceUnloadNode)
 	}
 
-	benchStore, benchMgr := openBench(svc, dbStore, ln, hist, log)
-	ao := api.Options{Logger: log, History: hist, Requests: usage.NewRecorder(usageStore), Version: version, WSMaxClients: cfg.WSMaxClients, Bench: benchMgr, BenchStore: benchStore, Config: svc,
+	benchStore, benchMgr := openBench(svc, dbStore, ln, hist, log) // nil, nil while benchOff
+	ao := api.Options{Logger: log, History: hist, Requests: usage.NewRecorder(usageStore), Version: version, WSMaxClients: cfg.WSMaxClients, Bench: benchMgr, BenchStore: benchStore, BenchOffReason: benchOff, Config: svc,
 		System: api.SystemInfo{Listen: cfg.Listen, Safety: safetySummary(cfg), HistoryDir: cfg.HistoryDir, DataDir: cfg.DataDir,
 			ChildLogDir: cfg.ChildLogDir, ModelsDir: cfg.ModelsDir, Bench: map[string]any{"enabled": benchMgr != nil, "regress_load_pct": cfg.Bench.RegressLoadPct,
 				"regress_decode_pct": cfg.Bench.RegressDecodePct, "max_run_minutes": cfg.Bench.MaxRunMinutes}}}
+	if benchOff != "" {
+		ao.System.Bench["off_reason"] = benchOff
+	}
 	if cs != nil {
 		ao.Audit = cs
 	}

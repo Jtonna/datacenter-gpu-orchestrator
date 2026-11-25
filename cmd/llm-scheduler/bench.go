@@ -28,7 +28,7 @@ func loopbackURL(ln net.Addr) string {
 
 // benchmarksUsing lists the benchmarks that refer to a profile (for the delete warning).
 func benchmarksUsing(st *bench.Store, profile string) []string {
-	if st == nil {
+	if st == nil || st.BenchOff() != nil { // a newer version's bench tables are not read
 		return nil
 	}
 	bms, err := st.ListBenchmarks()
@@ -49,7 +49,7 @@ func benchmarksUsing(st *bench.Store, profile string) []string {
 // (nil, nil): its endpoints answer 503 and nothing else is affected.
 func openBench(svc *cfgsvc.Service, st *bench.Store, ln net.Listener, hist *history.Store, log *slog.Logger) (*bench.Store, *bench.Manager) {
 	cfg := svc.Config()
-	if !cfg.Bench.Enabled || st == nil {
+	if !cfg.Bench.Enabled || st == nil || st.BenchOff() != nil { // BenchOff: warned at start (main.go)
 		return nil, nil
 	}
 	o := bench.ManagerOptions{Store: st, API: &bench.HTTPAPI{Base: loopbackURL(ln.Addr())}, Version: version, Logger: log,

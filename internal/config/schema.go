@@ -135,7 +135,7 @@ func buildSettingFields() []Field {
 		b("bench_enabled", "bench", "Turn the benchmark feature on or off.", func(c *Config) *bool { return &c.Bench.EnabledSetting }),
 		f("bench_regress_load_pct", "bench", "A load this much slower than the baseline run's is flagged as a regression.", func(c *Config) *float64 { return &c.Bench.RegressLoadPct }, num(0.001), num(1000)),
 		f("bench_regress_decode_pct", "bench", "Decode tokens per second this much lower than the baseline's is flagged as a regression.", func(c *Config) *float64 { return &c.Bench.RegressDecodePct }, num(0.001), num(100)),
-		i("bench_max_run_minutes", "bench", "A benchmark run that takes longer than this is stopped and marked failed.", "minutes", func(c *Config) *int { return &c.Bench.MaxRunMinutes }, num(1), num(10080)),
+		i("bench_max_run_minutes", "bench", "A benchmark run that takes longer than this is stopped and marked failed. Default 720 (12 hours): a Full pass takes 6 to 7 hours. A stored value is kept.", "minutes", func(c *Config) *int { return &c.Bench.MaxRunMinutes }, num(1), num(10080)),
 		i("bench_retention_days", "bench", "Off by default (0): nothing is removed. When set, a finished, unpinned benchmark run older than this many days is trimmed: its requests and transcripts are removed, the run, its steps and its measurements stay, and the trim is logged. Checked every hour. Preview with GET /api/bench/removals/preview?days=N.", "days", func(c *Config) *int { return &c.Bench.RetentionDays }, num(0), num(MaxBenchRetentionDays)),
 
 		{Key: "enabled", Scope: R, Section: "recovery", Type: "bool", Description: "Send recovery requests for hung workers; off means nothing is ever sent." + notWithAgents, ptr: func(c *Config) any { return &c.Recovery.Enabled }},

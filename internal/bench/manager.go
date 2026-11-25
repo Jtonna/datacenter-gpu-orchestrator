@@ -125,6 +125,10 @@ type Manager struct {
 
 // NewManager creates a manager and marks runs that an earlier process left
 // running as failed (interrupted).
+// DefaultMaxRun is the run limit when none is given: a Full pass takes 6 to
+// 7 hours (config.DefaultMaxRunMinutes is the same).
+const DefaultMaxRun = 720 * time.Minute
+
 func NewManager(o ManagerOptions) (*Manager, error) {
 	if o.Store == nil || o.API == nil {
 		return nil, errors.New("bench: Store and API are required")
@@ -157,7 +161,7 @@ func NewManager(o ManagerOptions) (*Manager, error) {
 		o.GoneTimeout = 2 * time.Minute
 	}
 	if o.MaxRun <= 0 {
-		o.MaxRun = 240 * time.Minute
+		o.MaxRun = DefaultMaxRun
 	}
 	if o.RetentionEvery <= 0 {
 		o.RetentionEvery = DefaultRetentionEvery

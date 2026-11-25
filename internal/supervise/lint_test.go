@@ -36,7 +36,7 @@ var allowlist = map[string]string{
 	"go internal/agent/logship/journal.go (*Journal).Run":        "the node agent's journal reader; the scheduler never runs it",
 	"go internal/bench/runner.go (*Manager).execute":             "watches ctx: a select that cancels the run",
 	"go internal/bench/runner.go newGate":                        "a WaitGroup wait, then close",
-	"go internal/bench/store.go openStore":                       "the SQLite writer: runJob recovers each job (rollback, error) and reports it",
+	"go internal/bench/store.go openStoreOpt":                    "the SQLite writer: runJob recovers each job (rollback, error) and reports it",
 	"go internal/pool/pool.go (*Pool).WaitStops":                 "a WaitGroup wait, then close",
 	"recover internal/bench/store.go (*Store).runJob":            "per-job isolation of the SQLite writer, reported through supervise.Report",
 	"recover internal/proxy/forward.go Forward":                  "re-panics everything but http.ErrAbortHandler (the client went away)",

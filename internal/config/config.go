@@ -385,7 +385,7 @@ type Bench struct {
 	RegressLoadPct float64
 	// RegressDecodePct: decode tokens per second this much lower is a regression (default 7).
 	RegressDecodePct float64
-	// MaxRunMinutes stops a run that takes longer (default 240).
+	// MaxRunMinutes stops a run that takes longer (default 720: a Full pass takes 6 to 7 hours).
 	MaxRunMinutes int
 	// RetentionDays: a finished, unpinned run older than this many days is
 	// trimmed (its requests and transcripts removed; the run, its steps and its
@@ -402,7 +402,7 @@ const (
 	MaxWSMaxClients         = 1000
 	DefaultRegressLoadPct   = 15
 	DefaultRegressDecodePct = 7
-	DefaultMaxRunMinutes    = 240
+	DefaultMaxRunMinutes    = 720
 	// DefaultBenchRetentionDays and MaxBenchRetentionDays bound bench_retention_days.
 	DefaultBenchRetentionDays = 0 // off: nothing is trimmed until the owner sets it
 	MaxBenchRetentionDays     = 36500
