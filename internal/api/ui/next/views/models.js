@@ -279,9 +279,13 @@ function needsLine(m, st, f) {
 function convMemory(m) {
   const hm = (m.profiles || []).map(p => p.host_memory).find(x => x && x.family && x.family !== 'plain' && x.checkpoints > 0);
   if (!hm) return null;
-  return h('div.mut', { 'data-convmem': '', title: hm.estimate ? 'The size of a restore point is an estimate for a sliding-window model' : null },
-    `Conversation memory: this model keeps restore points on the machine that hosts it: about ${num(Math.round(hm.cell_mib))} MB each, up to ${num(hm.checkpoints)} (${num(hm.checkpoints_mib)} MB)`
-    + (hm.counted ? ', counted in what it needs.' : ', not yet counted.'));
+  const lead = 'Conversation memory: this model keeps restore points on the machine that hosts it: ';
+  // a window model whose size the header does not tell: no number until a load's log gives it
+  if (hm.size_unknown) return h('div.mut', { 'data-convmem': 'unknown' }, lead + 'size not yet known: read at the first load.');
+  // a window model's restore point holds at most the window: "at most", not "about"
+  const each = hm.estimate ? `at most ${num(Math.round(hm.cell_mib))} MB each` : `about ${num(Math.round(hm.cell_mib))} MB each`;
+  return h('div.mut', { 'data-convmem': '', title: hm.from_log ? 'The size the model server logged at a load this run' : null },
+    lead + `${each}, up to ${num(hm.checkpoints)} (${num(hm.checkpoints_mib)} MB)` + (hm.counted ? ', counted in what it needs.' : ', not yet counted.'));
 }
 
 // the side panel of one model

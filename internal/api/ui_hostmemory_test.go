@@ -45,6 +45,8 @@ func TestUIHostMemoryLine(t *testing.T) {
 	}
 	counted["counted"] = true
 	plain := map[string]any{"family": "plain", "cell_mib": 0, "checkpoints": 32, "checkpoints_mib": 0, "on_node": false, "counted": false}
+	unknown := map[string]any{"family": "windowed", "cell_mib": 0, "checkpoints": 32, "checkpoints_mib": 0, "prompt_cache_mib": 2048, "on_node": false, "counted": false, "size_unknown": true, "estimate": false}
+	window := map[string]any{"family": "windowed", "cell_mib": 320, "checkpoints": 32, "checkpoints_mib": 10240, "prompt_cache_mib": 2048, "on_node": false, "counted": false, "estimate": true}
 	with := func(hm map[string]any) map[string]any {
 		f := map[string]any{}
 		for k, v := range fetch {
@@ -62,6 +64,11 @@ func TestUIHostMemoryLine(t *testing.T) {
 		{rec, map[string]any{"name": "host memory: not yet counted", "page": []string{line + ", not yet counted."}, "pageHas": []string{"[data-convmem]"}}},
 		{counted, map[string]any{"name": "host memory: counted", "page": []string{line + ", counted in what it needs."}}},
 		{plain, map[string]any{"name": "host memory: nothing for a plain family", "pageNone": []string{"[data-convmem]"}, "notOnPage": []string{"Conversation memory"}}},
+		{unknown, map[string]any{"name": "host memory: a window size not yet known shows no number",
+			"page":      []string{"Conversation memory: this model keeps restore points on the machine that hosts it: size not yet known: read at the first load."},
+			"notOnPage": []string{" MB each", "(0 MB)"}}},
+		{window, map[string]any{"name": "host memory: a window model says at most",
+			"page": []string{"Conversation memory: this model keeps restore points on the machine that hosts it: at most 320 MB each, up to 32 (10,240 MB), not yet counted."}}},
 	} {
 		f := with(c.hm)
 		c.want["route"], c.want["status"] = "#/models?model="+mdlLoaded, st

@@ -457,10 +457,14 @@ type schedCore struct {
 	feedSeq uint64
 
 	// History (history.go).
-	hist        []history.Event
-	memNext     map[core.NodeID]time.Time // next periodic nodeMemory sample per node that backs an instance
-	lastRefusal map[string]RefusalStatus  // newest recorded refusal per profile (status only; not deduplicated)
-	refused     map[string]*refusal       // last recorded refusal per profile and reason
+	hist    []history.Event
+	memNext map[core.NodeID]time.Time // next periodic nodeMemory sample per node that backs an instance
+	// ckptSeen is, per model file, the largest context checkpoint the
+	// server logged this run, for a window model whose size the header does
+	// not tell (hostmem.go); memory only, gone at a restart.
+	ckptSeen    map[string]float64
+	lastRefusal map[string]RefusalStatus // newest recorded refusal per profile (status only; not deduplicated)
+	refused     map[string]*refusal      // last recorded refusal per profile and reason
 	viewSeen    bool
 	viewFresh   bool
 	viewConn    bool

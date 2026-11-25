@@ -147,3 +147,47 @@ func TestHostMemory_LoggedSizeAgainstTheFormula(t *testing.T) {
 		t.Fatalf("%+v", ev)
 	}
 }
+
+// 1% is the threshold: the recurrent formula is exact, so a figure 1.5%
+// off (which the 5% of before let through) is a WARN.
+func TestHostMemory_OnePercentIsEnough(t *testing.T) {
+	h := withCheckpoints(newHarness(t).nodes(ps5("a", 2, 15000)))
+	h.llama("s", 4000)
+	h.release(h.granted(func() *waiter { w := h.request("s"); h.healthy("s"); return w }()))
+	ch := h.child("s")
+	ch.mu.Lock()
+	ch.load = instance.LoadStats{HostMem: instance.HostMem{RecurrentMiB: 51.0}} // 1.5% above 50.25
+	ch.mu.Unlock()
+	h.step(evTick{})
+	if ev := h.histTypes(history.TLearnedNeed); len(ev) != 1 || ev[0].Severity != history.Warn {
+		t.Fatalf("%+v", ev)
+	}
+}
+
+// A window model whose window layers the header does not tell: no figure
+// (SizeUnknown, 0 MiB of checkpoints, the plan's note says so); once a
+// load's log shows a checkpoint, the largest logged is the size for that
+// model file for the run.
+func TestHostMemory_WindowSizeUnknownUntilALoadLogsIt(t *testing.T) {
+	h := newHarness(t).nodes(ps5("a", 2, 15000))
+	h.c.needs = ckptNeeds{NeedProvider: h.c.needs, ck: estimate.Ckpt{Family: gguf.FamilyWindowed, Unknown: true}}
+	h.llama("s", 4000)
+	r := h.c.dryPlan("s")
+	if r.HostMemory == nil || !r.HostMemory.SizeUnknown || r.HostMemory.CheckpointsMiB != 0 || r.HostMemory.CellMiB != 0 ||
+		!strings.Contains(r.HostMemoryNote, "size not yet known, read at the first load") {
+		t.Fatalf("%+v %q", r.HostMemory, r.HostMemoryNote)
+	}
+	h.release(h.granted(func() *waiter { w := h.request("s"); h.healthy("s"); return w }()))
+	ch := h.child("s")
+	ch.mu.Lock()
+	ch.load = instance.LoadStats{HostMem: instance.HostMem{CheckpointMiB: 40.5, CheckpointsCreated: 1, CheckpointsHeld: 1}}
+	ch.mu.Unlock()
+	h.step(evTick{})
+	r = h.c.dryPlan("s")
+	if r.HostMemory.SizeUnknown || !r.HostMemory.FromLog || r.HostMemory.CellMiB != 40.5 || r.HostMemory.CheckpointsMiB != 1296 {
+		t.Fatalf("after the log: %+v", r.HostMemory)
+	}
+	if ev := h.histTypes(history.TLearnedNeed); len(ev) != 0 {
+		t.Fatalf("no comparison without a formula: %+v", ev)
+	}
+}

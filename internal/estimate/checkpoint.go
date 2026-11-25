@@ -2,40 +2,49 @@ package estimate
 
 import "github.com/Jtonna/datacenter-gpu-orchestrator/internal/gguf"
 
-// CheckpointUbatch is the model server's default n_ubatch, which bounds a
-// sliding-window checkpoint together with the window.
-const CheckpointUbatch = 512
-
 // Ckpt is the size of one context checkpoint of a model: the copy of a
 // slot's state the model server keeps in the HOST process's memory (up to
 // --ctx-checkpoints per slot).
 type Ckpt struct {
 	Family    gguf.Family
-	CellBytes int64 // one checkpoint, bytes; 0 for a plain model
+	CellBytes int64 // one checkpoint, bytes; 0 for a plain model or when Unknown
 	// Estimate: CellBytes is a bound, not the exact figure (a sliding
-	// window: the window's cells times the K+V of every attention layer,
-	// where the server copies only the window layers' cells).
+	// window: exact once a conversation is longer than the window).
 	Estimate bool
+	// Unknown: a windowed model whose window layers this reader cannot
+	// tell from the header; no figure (read at the first load instead).
+	Unknown bool
 }
 
-// Checkpoint is m's checkpoint size. Recurrent or hybrid: one recurrent
-// cell (gguf RecurrentCellBytes), exact. Sliding window: at most (n_swa +
-// n_ubatch) cells, padded to 256 (llama-kv-cache-iswa.cpp), times the
-// per-token K+V of the attention layers at the cache type kvQuant, an
-// upper bound. Plain attention: none.
-func Checkpoint(m *gguf.Meta, kvQuant string) Ckpt {
+// Checkpoint is m's checkpoint size, as the pinned model server makes it
+// (tools/server: llama_state_seq_get_size_ext with PARTIAL_ONLY).
+//
+//   - Recurrent or hybrid: one recurrent cell (gguf RecurrentCellBytes),
+//     exact; the attention KV is not copied.
+//   - Sliding window: the window cache's cells of the sequence that are
+//     not masked (llama_kv_cache::state_write keeps pos > pos_max - n_swa),
+//     so at most min(window, ctxPerSlot) cells, times the window layers'
+//     K+V per token (gguf WindowKVElemsPerToken) at the cache type kvQuant;
+//     the full-attention cache writes nothing under PARTIAL_ONLY. Unknown
+//     when the window layers are not known from the header.
+//   - Plain attention: none.
+func Checkpoint(m *gguf.Meta, kvQuant string, ctxPerSlot int) Ckpt {
 	out := Ckpt{Family: m.Family()}
 	switch out.Family {
 	case gguf.FamilyRecurrent:
 		out.CellBytes = m.RecurrentCellBytes()
 	case gguf.FamilyWindowed:
-		elems, err := m.KVElemsPerToken()
-		bpe, err2 := KVBytesPerElement(kvQuant)
-		if err != nil || err2 != nil {
+		elems, ok := m.WindowKVElemsPerToken()
+		bpe, err := KVBytesPerElement(kvQuant)
+		if !ok || err != nil {
+			out.Unknown = true
 			return out
 		}
-		cells := (int64(m.WindowSize) + CheckpointUbatch + 255) / 256 * 256
-		out.CellBytes, out.Estimate = int64(float64(cells)*float64(elems)*bpe), true
+		cells := int64(m.WindowSize)
+		if ctxPerSlot > 0 && int64(ctxPerSlot) < cells {
+			cells = int64(ctxPerSlot)
+		}
+		out.CellBytes, out.Estimate = int64(float64(cells)*float64(elems)*bpe+0.5), true
 	}
 	return out
 }

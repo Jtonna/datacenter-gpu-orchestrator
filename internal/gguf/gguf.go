@@ -70,7 +70,21 @@ type Meta struct {
 	// kvListed: head_count_kv was a per-layer array in the file (a 0 there
 	// marks a layer without attention: a recurrent layer).
 	kvListed bool
-	FileSize int64 // set by ReadMeta only
+	// NextN is <arch>.nextn_predict_layers: MTP blocks at the end of the
+	// block list, outside the trunk (TrunkLayers), never recurrent.
+	NextN uint32
+	// recurrentList is <arch>.attention.recurrent_layers, nil when absent.
+	recurrentList []bool
+	// swa marks the window layers (llama_hparams is_swa): the file's
+	// <arch>.attention.sliding_window_pattern array, else the server's
+	// pattern for the architecture (swaDefaultPattern, or the scalar key);
+	// nil when the rule is not known here.
+	swa []bool
+	// SharedKVLayers is <arch>.attention.shared_kv_layers: the last blocks
+	// read another layer's cache and own none. KeyLengthSWA and
+	// ValueLengthSWA are a window layer's head sizes (0: as a full layer).
+	SharedKVLayers, KeyLengthSWA, ValueLengthSWA uint32
+	FileSize                                     int64 // set by ReadMeta only
 
 	scalars map[string]any
 }
@@ -157,6 +171,13 @@ func fixedSize(t uint32) uint64 {
 		return 4
 	case tU64, tI64, tF64:
 		return 8
+	}
+	return 0
+}
+
+func b2u(b bool) uint64 {
+	if b {
+		return 1
 	}
 	return 0
 }
@@ -316,7 +337,7 @@ func Read(r io.Reader) (*Meta, error) {
 		if err != nil {
 			return nil, err
 		}
-		if isInt(et) && n <= maxKeptArray {
+		if (isInt(et) || et == tBool) && n <= maxKeptArray {
 			vals := make([]uint64, 0, n)
 			for j := uint64(0); j < n; j++ {
 				v, err := p.scalar(et)
@@ -324,6 +345,8 @@ func Read(r io.Reader) (*Meta, error) {
 					return nil, fmt.Errorf("key %q: %w", key, err)
 				}
 				switch x := v.(type) {
+				case bool:
+					vals = append(vals, b2u(x))
 				case uint64:
 					vals = append(vals, x)
 				case int64:
@@ -415,6 +438,43 @@ func build(ver uint32, tensors uint64, scalars map[string]any, arrays map[string
 		}
 	}
 	_, m.kvListed = arrays[pre+"attention.head_count_kv"]
+	for _, k := range []struct {
+		key string
+		dst *uint32
+	}{{"nextn_predict_layers", &m.NextN}, {"attention.shared_kv_layers", &m.SharedKVLayers},
+		{"attention.key_length_swa", &m.KeyLengthSWA}, {"attention.value_length_swa", &m.ValueLengthSWA}} {
+		if *k.dst, _, err = u32(pre + k.key); err != nil {
+			return nil, err
+		}
+	}
+	if m.NextN > m.BlockCount || m.SharedKVLayers > m.BlockCount {
+		return nil, fmt.Errorf("nextn_predict_layers %d / shared_kv_layers %d exceed block_count %d", m.NextN, m.SharedKVLayers, m.BlockCount)
+	}
+	bools := func(key string) []bool {
+		a, ok := arrays[key]
+		if !ok || len(a) != int(m.BlockCount) {
+			return nil
+		}
+		out := make([]bool, len(a))
+		for i, v := range a {
+			out[i] = v != 0
+		}
+		return out
+	}
+	m.recurrentList = bools(pre + "attention.recurrent_layers")
+	if m.SlidingWindow {
+		if m.swa = bools(pre + "attention.sliding_window_pattern"); m.swa == nil {
+			if n, known := swaDefaultPattern[arch]; known {
+				if v, ok, err := u32(pre + "attention.sliding_window_pattern"); err == nil && ok {
+					n = v
+				}
+				m.swa = make([]bool, m.BlockCount)
+				for il := 0; il < m.TrunkLayers(); il++ { // llama_hparams::set_swa_pattern, dense_first false
+					m.swa[il] = n == 0 || uint32(il)%n < n-1
+				}
+			}
+		}
+	}
 
 	heads := func(key string) ([]uint32, error) {
 		if a, ok := arrays[key]; ok {
@@ -558,15 +618,21 @@ func (m *Meta) Family() Family {
 }
 
 // IsRecurrent reports whether layer il keeps a recurrent state, as the
-// server decides it (llama-model.cpp, hparams.recurrent_layer_arr): only
-// in a model with a recurrent state shape (ssm.state_size and inner_size);
-// then a layer the file lists with no KV heads (a per-layer head_count_kv
-// with 0), else a layer that is not every full_attention_interval-th (the
-// file's key, or the server's default for the architecture), else every
-// layer (a purely recurrent model).
+// server at the pinned llama.cpp decides it: only in a model with a
+// recurrent state shape (ssm.state_size and inner_size) and only in the
+// trunk (il < TrunkLayers: the hybrid memory's filter_recr takes
+// il < n_layer(), and qwen35's loader marks the MTP blocks non-recurrent);
+// there, the file's recurrent_layers list when it has one (qwen35
+// load_arch_hparams), else a layer it lists with no KV heads (a per-layer
+// head_count_kv with 0), else a layer that is not every
+// full_attention_interval-th (the file's key, or the server's default for
+// the architecture), else every layer (a purely recurrent model).
 func (m *Meta) IsRecurrent(il int) bool {
-	if m.SSMState == 0 || m.SSMInner == 0 || il < 0 || il >= int(m.BlockCount) {
-		return false
+	if m.SSMState == 0 || m.SSMInner == 0 || il < 0 || il >= m.TrunkLayers() {
+		return false // the MTP blocks are never recurrent (filter_recr: il < n_layer())
+	}
+	if m.recurrentList != nil {
+		return m.recurrentList[il]
 	}
 	if m.kvListed && il < len(m.HeadCountKV) {
 		for _, v := range m.HeadCountKV {
@@ -579,6 +645,49 @@ func (m *Meta) IsRecurrent(il int) bool {
 		return !m.HasKV(il)
 	}
 	return true
+}
+
+// TrunkLayers is the model's own blocks without the MTP (nextn) blocks at
+// the end: llama_hparams::n_layer().
+func (m *Meta) TrunkLayers() int { return int(m.BlockCount) - int(m.NextN) }
+
+// swaDefaultPattern is n for the architectures whose loader calls
+// load_swa_pattern(ml, n) when the file lists no pattern (pinned
+// llama.cpp: src/models/gemma2.cpp, gemma3.cpp).
+var swaDefaultPattern = map[string]uint32{"gemma2": 2, "gemma3": 6}
+
+// WindowKVElemsPerToken is the K+V elements per token of the layers that
+// keep a window cache: window layers (is_swa) of the trunk that own a cache
+// (not among the last shared_kv_layers), each head_count_kv x (key + value
+// head size, the window sizes when the file has them). false when which
+// layers are window layers is not known from the header.
+func (m *Meta) WindowKVElemsPerToken() (int, bool) {
+	if m.swa == nil || len(m.HeadCountKV) < int(m.BlockCount) {
+		return 0, false
+	}
+	own := min(m.TrunkLayers(), int(m.BlockCount)-int(m.SharedKVLayers))
+	total := 0
+	for il := 0; il < own; il++ {
+		if !m.swa[il] {
+			continue
+		}
+		k, v := m.KeyLengthSWA, m.ValueLengthSWA
+		if k == 0 {
+			k = m.KeyLength
+		}
+		if v == 0 {
+			v = m.ValueLength
+		}
+		if k == 0 || v == 0 {
+			if len(m.HeadCount) <= il || m.HeadCount[il] == 0 {
+				return 0, false
+			}
+			d := m.EmbeddingLength / m.HeadCount[il]
+			k, v = max(k, d), max(v, d)
+		}
+		total += int(m.HeadCountKV[il]) * int(k+v)
+	}
+	return total, true
 }
 
 // RecurrentLayers counts the layers IsRecurrent marks.

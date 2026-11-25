@@ -16,7 +16,7 @@ No agent change needed, no new port, no new route, no table. Three new settings 
 - **New settings** in the existing settings document: `node_host_cache_ram_mib` (0), `ctx_checkpoints` (32) and `count_host_memory` (off). `cache_ram_mib` (2048) is unchanged.
 - **Explicit arguments.** Both launch paths pass `--cache-ram` and `--ctx-checkpoints`. The command lines are those of the image before, plus `--ctx-checkpoints 32` after `--cache-ram`. That is the model server's own default, so nothing it does changes.
 - **A managed flag.** `--ctx-checkpoints`, `-ctxcp` and `--swa-checkpoints` in `extra_args` are refused on a write. A stored profile that already has one still loads, with a WARN, and the launch drops it.
-- **The term.** Plans, profiles and the catalog show `host_memory`. `/api/status` shows `server_host_memory`. A host on a node counts it only with `count_host_memory` on. A WARN `learnedNeed` event appears when the logged size is more than 5% from the formula.
+- **The term.** Plans, profiles and the catalog show `host_memory`. `/api/status` shows `server_host_memory` and `/api/system` shows `host_memory`. A host on a node counts it only with `count_host_memory` on. A WARN `learnedNeed` event appears when the logged size is more than 1% from the formula. A windowed model whose window layers the header does not tell shows "size not yet known: read at the first load", with no number.
 - **Peak cycles.** A `GET /api/needs` `peak_cycles` row whose shape no profile has now is kept, with `no_profile: true` and the note "no profile has this shape now".
 - **Going back.** The image before ignores the three settings and refuses no flag. Its launches pass no `--ctx-checkpoints`, which is the same 32.
 

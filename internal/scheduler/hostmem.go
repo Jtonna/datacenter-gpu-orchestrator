@@ -7,6 +7,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/estimate"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/gguf"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelpath"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
@@ -31,11 +32,19 @@ import (
 // HostMemory is the host-memory term of a profile.
 type HostMemory struct {
 	// Family is plain, recurrent or windowed; CellMiB one checkpoint
-	// (Estimate: a windowed bound); Checkpoints ctx_checkpoints × slots.
+	// (Estimate: a windowed bound, "at most"); Checkpoints ctx_checkpoints
+	// × slots.
 	Family      string
 	CellMiB     float64
 	Estimate    bool
 	Checkpoints int
+	// SizeUnknown: a windowed model whose window layers are not known from
+	// its header and whose checkpoint the server has not logged yet this
+	// run: no figure is shown, and the checkpoints add 0 to the term.
+	// FromLog: CellMiB is the largest checkpoint the server logged for the
+	// model file this run (held in memory only).
+	SizeUnknown bool
+	FromLog     bool
 	// CheckpointsMiB is Checkpoints × CellMiB, rounded up; PromptCacheMiB
 	// the --cache-ram the launch passes where it is hosted.
 	CheckpointsMiB int
@@ -76,7 +85,7 @@ func (c *ConfigNeeds) CheckpointOf(p *core.Profile) (estimate.Ckpt, error) {
 	if q == "" {
 		q = "f16"
 	}
-	return estimate.Checkpoint(meta, q), nil
+	return estimate.Checkpoint(meta, q, p.Ctx), nil // p.Ctx is per slot
 }
 
 // hostMemoryOf is p's host-memory term hosted on a node (onNode) or on the
@@ -96,7 +105,13 @@ func (c *schedCore) hostMemoryOf(p *core.Profile, onNode bool) (HostMemory, bool
 	d := c.cfg.Defaults
 	n := max(d.CtxCheckpoints, 0) * max(p.Parallel, 1)
 	h := HostMemory{Family: string(ck.Family), CellMiB: ck.CellMiB(), Estimate: ck.Estimate, Checkpoints: n,
-		CheckpointsMiB: ck.TotalMiB(n), OnNode: onNode}
+		CheckpointsMiB: ck.TotalMiB(n), OnNode: onNode, SizeUnknown: ck.Unknown}
+	if ck.Unknown {
+		if seen := c.ckptSeen[p.Model]; seen > 0 { // read at a load this run
+			h.SizeUnknown, h.FromLog, h.Estimate, h.CellMiB = false, true, true, seen
+			h.CheckpointsMiB = int(math.Ceil(float64(n)*seen - 1e-9))
+		}
+	}
 	if onNode {
 		h.PromptCacheMiB = max(d.NodeHostCacheRAMMiB, 0)
 		h.Counted = d.CountHostMemory
@@ -141,8 +156,13 @@ func (c *schedCore) planHostMemory(r *PlanReport, p *core.Profile) {
 	}
 	r.HostMemory = &hm
 	if !hm.OnNode {
-		r.HostMemoryNote = fmt.Sprintf("on %s: up to %d MiB, not placed (context checkpoints %d MiB, prompt cache %d MiB)",
-			hm.Machine, hm.TermMiB(), hm.CheckpointsMiB, hm.PromptCacheMiB)
+		if hm.SizeUnknown {
+			r.HostMemoryNote = fmt.Sprintf("on %s: up to %d MiB, not placed (context checkpoints: size not yet known, read at the first load; prompt cache %d MiB)",
+				hm.Machine, hm.TermMiB(), hm.PromptCacheMiB)
+		} else {
+			r.HostMemoryNote = fmt.Sprintf("on %s: up to %d MiB, not placed (context checkpoints %d MiB, prompt cache %d MiB)",
+				hm.Machine, hm.TermMiB(), hm.CheckpointsMiB, hm.PromptCacheMiB)
+		}
 	}
 }
 
@@ -154,6 +174,9 @@ type ServerHostMemory struct {
 	CheckpointsMiB int
 	PromptCacheMiB int
 	Instances      []string
+	// SizeUnknown names the instances whose checkpoint size is not known
+	// yet (HostMemory.SizeUnknown): they add their prompt cache only.
+	SizeUnknown []string
 }
 
 // serverHostMemory sums the term over the loaded instances hosted on the
@@ -171,19 +194,29 @@ func (c *schedCore) serverHostMemory() ServerHostMemory {
 		s.CheckpointsMiB += hm.CheckpointsMiB
 		s.PromptCacheMiB += hm.PromptCacheMiB
 		s.Instances = append(s.Instances, in.prof.Name)
+		if hm.SizeUnknown {
+			s.SizeUnknown = append(s.SizeUnknown, in.prof.Name)
+		}
 	}
 	sort.Strings(s.Instances)
+	sort.Strings(s.SizeUnknown)
 	return s
 }
 
 // ckptDriftPct is how far the logged size may be from the formula before a
-// WARN event says so.
-const ckptDriftPct = 5.0
+// WARN event says so. The recurrent formula is exact (the server prints
+// 50.25 and 50.251 MiB for a 50.25 MiB cell, 0.002% apart), so 1% only
+// leaves room for the log's rounding and a few bytes of metadata.
+const ckptDriftPct = 1.0
 
-// checkHostMemorySizes compares, once per instance and source, what the
-// server logged against the formula: the recurrent state at load (one cell
-// per slot) and the first checkpoint created. A difference of more than
-// ckptDriftPct is a WARN learnedNeed event naming both figures.
+// checkHostMemorySizes compares what the server logged against the
+// formula, once per instance and source: the recurrent state at load (one
+// cell per slot) and the first checkpoint created, more than ckptDriftPct
+// apart either way; for a window model, any checkpoint above the bound by
+// more than ckptDriftPct (a smaller one is normal: a conversation shorter
+// than the window). Either is a WARN learnedNeed event naming both figures.
+// For a window model whose size is not known from its header, the largest
+// checkpoint logged is kept for the model file for the run (ckptSeen).
 func (c *schedCore) checkHostMemorySizes() {
 	for _, in := range c.insts {
 		if in.child == nil || in.prof == nil || in.prof.Kind != core.KindLlama || in.ckptChecked == 3 {
@@ -196,6 +229,26 @@ func (c *schedCore) checkHostMemorySizes() {
 		f, ok := c.hostMemoryOf(in.prof, hostOf(in.prof, in.placement) != "")
 		if !ok {
 			in.ckptChecked = 3
+			continue
+		}
+		if f.SizeUnknown || f.FromLog {
+			if hm.CheckpointMiB > c.ckptSeen[in.prof.Model] {
+				if c.ckptSeen == nil {
+					c.ckptSeen = map[string]float64{}
+				}
+				c.ckptSeen[in.prof.Model] = hm.CheckpointMiB
+			}
+			continue // nothing to compare with: the log is the figure
+		}
+		if f.Family == string(gguf.FamilyWindowed) {
+			if in.ckptChecked&2 == 0 && f.CellMiB > 0 && hm.CheckpointMiB > f.CellMiB*(1+ckptDriftPct/100) {
+				in.ckptChecked |= 2
+				d := 100 * (hm.CheckpointMiB - f.CellMiB) / f.CellMiB
+				c.recordInst(in, history.TLearnedNeed, history.Warn,
+					fmt.Sprintf("A context checkpoint of %s is %.2f MiB in the server log; the window bound says at most %.2f MiB (%.1f%% above). The host memory shown for it may be wrong.",
+						in.prof.Name, hm.CheckpointMiB, f.CellMiB, d),
+					map[string]any{"logged_mib": hm.CheckpointMiB, "formula_mib": f.CellMiB, "family": f.Family, "source": "context checkpoint"})
+			}
 			continue
 		}
 		check := func(bit int, what string, logged float64) {
