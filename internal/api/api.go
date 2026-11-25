@@ -569,6 +569,9 @@ func (s *Server) handleV1(w http.ResponseWriter, r *http.Request) {
 	var res proxy.Result
 	defer func() {
 		lease.Release()
+		if res.Unloaded && res.Err != nil { // the request log says why; the transport's word stays here
+			s.log.Debug("a request was cut by a forced unload", "profile", lease.Profile, "transport", res.Err)
+		}
 		track.Ended(resultEnd(res))
 		s.activity.add(activityRecord{
 			Timestamp: s.opts.Now(), Model: lease.Profile, ReqPath: r.URL.Path, Status: res.Status,
