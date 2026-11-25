@@ -25,6 +25,7 @@ type activeRun struct {
 	loaded     map[string]bool // profiles this run loaded and has not unloaded yet
 	total      int
 	done       int
+	counts     RunCounts      // outcomes so far (the progress document)
 	step       map[string]any // the step in flight (the first one, for a parallel step)
 	paused     string         // why the run is paused, when it is
 
@@ -282,6 +283,11 @@ run:
 			st := &Step{RunID: r.ID, Idx: i, BenchmarkID: b.ID, Name: b.Title(), Profile: b.Profile, State: StepSkipped, Outcome: OutcomeSkipped, Spec: b}
 			if err := m.o.Store.AddStep(st); err == nil {
 				steps = append(steps, st)
+				func() {
+					ar.mu.Lock()
+					defer supervise.Unlocked("bench", ar.mu.Unlock)
+					ar.counts.add(&factStep{outcome: OutcomeSkipped, state: StepSkipped})
+				}()
 			}
 		}
 	}

@@ -862,58 +862,11 @@ func scanRun(sc interface{ Scan(...any) error }) (*Run, error) {
 	return &r, nil
 }
 
-// ListRuns lists runs newest first, without their steps.
+// ListRuns lists runs newest first, without their steps, with their number
+// and facts (ListRunsPage without the total).
 func (s *Store) ListRuns(f RunFilter) ([]Run, error) {
-	q := `SELECT ` + runCols + ` FROM runs WHERE 1=1`
-	var args []any
-	if f.Suite != "" {
-		q += ` AND suite_id=?`
-		args = append(args, f.Suite)
-	}
-	if f.Kind != "" {
-		q += ` AND kind=?`
-		args = append(args, f.Kind)
-	}
-	if f.Benchmark != "" {
-		q += ` AND ((kind='benchmark' AND target_id=?) OR id IN (SELECT run_id FROM run_steps WHERE benchmark_id=? OR json_extract(spec, '$.recipe')=?))`
-		args = append(args, f.Benchmark, f.Benchmark, f.Benchmark)
-	}
-	if f.Model != "" {
-		q += ` AND id IN (SELECT run_id FROM run_steps WHERE model_file=?`
-		args = append(args, f.Model)
-		if len(f.ModelProfiles) > 0 {
-			q += ` OR (model_file='' AND profile IN (?` + strings.Repeat(`,?`, len(f.ModelProfiles)-1) + `))`
-			for _, p := range f.ModelProfiles {
-				args = append(args, p)
-			}
-		}
-		q += `)`
-	}
-	if f.State != "" {
-		q += ` AND state=?`
-		args = append(args, f.State)
-	}
-	limit := f.Limit
-	if limit <= 0 || limit > 1000 {
-		limit = 100
-	}
-	q += ` ORDER BY queued_at DESC, id DESC LIMIT ?`
-	args = append(args, limit)
-	rows, err := s.db.Query(q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []Run
-	for rows.Next() {
-		r, err := scanRun(rows)
-		if err != nil {
-			return nil, err
-		}
-		r.Suite = nil // the list stays small; GET one run for the snapshot
-		out = append(out, *r)
-	}
-	return out, rows.Err()
+	rs, _, err := s.ListRunsPage(f)
+	return rs, err
 }
 
 // RunStepModel is one (run, model file, profile) of a completed run's steps.
@@ -942,7 +895,11 @@ func (s *Store) CompletedRunModels() ([]RunStepModel, error) {
 }
 
 // GetRun returns a run with its steps and their requests, or ErrNotFound.
-func (s *Store) GetRun(id string) (*Run, error) {
+func (s *Store) GetRun(id string) (*Run, error) { return s.GetRunOpt(id, true) }
+
+// GetRunOpt is GetRun; without requests the steps come without their
+// request rows (phases, statistics and facts stay).
+func (s *Store) GetRunOpt(id string, requests bool) (*Run, error) {
 	r, err := scanRun(s.db.QueryRow(`SELECT `+runCols+` FROM runs WHERE id=?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -950,13 +907,19 @@ func (s *Store) GetRun(id string) (*Run, error) {
 	if err != nil {
 		return nil, err
 	}
-	steps, err := s.steps(id)
+	steps, err := s.stepsOpt(id, requests)
 	if err != nil {
 		return nil, err
 	}
 	r.Steps = steps
 	if err := s.attachTaskScores(r); err != nil {
 		return nil, err
+	}
+	if err := s.withFacts([]*Run{r}, nil); err != nil {
+		return nil, err
+	}
+	for i, slug := range EntrySlugs(r.Steps) {
+		r.Steps[i].Slug = slug
 	}
 	return r, nil
 }
