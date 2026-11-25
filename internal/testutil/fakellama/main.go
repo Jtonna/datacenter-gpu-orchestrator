@@ -285,6 +285,7 @@ func serve(cfg config) {
 	s.chunks = envInt("FAKELLAMA_STREAM_CHUNKS", 5)
 	s.chunkDelay = envDuration("FAKELLAMA_STREAM_DELAY")
 	s.stallAfter = envInt("FAKELLAMA_STALL_AFTER", -1)
+	s.countPrompt = os.Getenv("FAKELLAMA_COUNT_PROMPT") != ""
 
 	if os.Getenv("FAKELLAMA_EXIT_CODE") != "" {
 		code := envInt("FAKELLAMA_EXIT_CODE", 1)

@@ -311,3 +311,38 @@ func postPlan(t *testing.T, base, model string) map[string]any {
 }
 
 func toJSON(v any) string { b, _ := json.Marshal(v); return string(b) }
+
+// --mem-file: a node listed by name reports the figure from the next
+// heartbeat on (a scripted memory drop for a context fill's stop line).
+func TestMemFileDropsANodesMemory(t *testing.T) {
+	agentPort, workerPort := freeLoopbackPort(t), freeLoopbackPort(t)
+	base := startScheduler(t, agentPort, workerPort)
+	nodes := []Node{{ID: "02:00:00:00:00:01", Name: "ps5-a"}, {ID: "02:00:00:00:00:02", Name: "ps5-b"}}
+	for i := range nodes {
+		fillDefaults(&nodes[i])
+	}
+	assignAddrs(nodes, "127.0.0.2")
+	file := filepath.Join(t.TempDir(), "mem.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	f, err := Start(ctx, Options{Scheduler: base, Release: "auto", AgentPort: agentPort, WorkerPort: workerPort,
+		Heartbeat: 100 * time.Millisecond, MemFile: file}, nodes, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(f.Close)
+	avail := func(name string) any {
+		for _, x := range getMap(t, base+"/api/status")["agents"].([]any) {
+			if a := x.(map[string]any); a["name"] == name {
+				return a["mem_available_mib"]
+			}
+		}
+		return nil
+	}
+	eventually(t, "both at the start figure", func() bool { return avail("ps5-a") == float64(15000) && avail("ps5-b") == float64(15000) })
+	os.WriteFile(file, []byte(`{"ps5-b": 1500}`), 0o644)
+	eventually(t, "ps5-b dropped", func() bool { return avail("ps5-b") == float64(1500) })
+	if avail("ps5-a") != float64(15000) {
+		t.Fatalf("ps5-a moved: %v", avail("ps5-a"))
+	}
+}
