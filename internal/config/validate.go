@@ -1,12 +1,12 @@
 package config
 
 import (
-	"slices"
 	"errors"
 	"fmt"
 	"net/netip"
 	"net/url"
 	"path"
+	"slices"
 	"sort"
 	"strings"
 	"time"
