@@ -33,6 +33,10 @@ const (
 const (
 	RemovedByOwner    = "owner"    // "Remove for good" (the API or MCP)
 	RemovedByClearing = "clearing" // the timed clearing after model_trash_days
+	// RemovedByRepair: a start completed a removal whose record was removing
+	// with the file gone but no tombstone (not a state a kill produces: a
+	// damaged or hand-edited database).
+	RemovedByRepair = "repair"
 )
 
 // RemovedRecord is the tombstone of a model file removed for good. The
@@ -113,7 +117,13 @@ func (s *Store) RemoveBegin(id, reason, by, comment string, at int64) (*RemovedR
 }
 
 // RemoveFinish is step 3: the file is gone; the trash record goes and the
-// tombstone says removed, in one transaction.
+// tombstone says removed, in one transaction. A record left removing without
+// its tombstone (not a state a kill produces: step 1 writes both in one
+// transaction; a damaged or hand-edited database) is completed too: the
+// tombstone is written from the record, reason RemovedByRepair, signed
+// potluck, so the record never stays removing. A tombstone already removed
+// only has the record go. ErrNotFound: neither a tombstone removing nor a
+// record removing.
 func (s *Store) RemoveFinish(id string, at int64) error {
 	return s.db.Write(func(tx *sql.Tx) error {
 		res, err := tx.Exec(`UPDATE model_trash_removed SET state = ?, removed_at = ?, updated_at = ? WHERE id = ? AND state = ?`, RemovedRemoved, at, at, id, TrashRemoving)
@@ -121,7 +131,40 @@ func (s *Store) RemoveFinish(id string, at int64) error {
 			return err
 		}
 		if n, _ := res.RowsAffected(); n == 0 {
-			return ErrNotFound
+			var state string
+			err := tx.QueryRow(`SELECT state FROM model_trash_removed WHERE id = ?`, id).Scan(&state)
+			switch {
+			case errors.Is(err, sql.ErrNoRows): // no tombstone at all: write it from the record
+				rec, err := scanTrash(tx.QueryRow(`SELECT `+trashCols+` FROM model_trash WHERE id = ? AND state = ?`, id, TrashRemoving))
+				if errors.Is(err, sql.ErrNoRows) {
+					return ErrNotFound
+				}
+				if err != nil {
+					return err
+				}
+				ids := make([]string, 0, len(rec.Profiles))
+				for k := range rec.Profiles {
+					ids = append(ids, k)
+				}
+				sort.Strings(ids)
+				b, _ := json.Marshal(ids)
+				if _, err := tx.Exec(`INSERT INTO model_trash_removed (`+removedCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+					rec.ID, rec.File, rec.SizeBytes, rec.DeletedAt, rec.PurgeAt, at, RemovedRemoved, RemovedByRepair, string(b), rec.Revision,
+					rec.Actor, rec.Comment, "potluck", "completed at start: the record was removing with the file gone and no tombstone", at); err != nil {
+					return err
+				}
+			case err != nil:
+				return err
+			default: // a tombstone in another state (removed): only the record goes
+				res, err := tx.Exec(`DELETE FROM model_trash WHERE id = ? AND state = ?`, id, TrashRemoving)
+				if err != nil {
+					return err
+				}
+				if n, _ := res.RowsAffected(); n == 0 {
+					return ErrNotFound
+				}
+				return nil
+			}
 		}
 		_, err = tx.Exec(`DELETE FROM model_trash WHERE id = ? AND state = ?`, id, TrashRemoving)
 		return err

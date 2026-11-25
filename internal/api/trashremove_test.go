@@ -285,6 +285,45 @@ func TestModelRemove_KillAndRepair(t *testing.T) {
 			t.Fatalf("tombstone: %+v %v", tb, err)
 		}
 	})
+	// Not a state a kill can produce (step 1 writes the record's removing and
+	// the tombstone in one transaction), but a damaged or hand-edited
+	// database can: the record removing, no tombstone, the file gone. The
+	// start completes it (a tombstone with reason repair, the event, an audit
+	// entry signed potluck), once: it never stays removing.
+	t.Run("record removing, no tombstone, file gone (hand-made)", func(t *testing.T) {
+		te := newTrashEnv(t)
+		te.setup()
+		id := te.trashed("a.gguf")
+		if err := te.cs.TrashSetState(id, cfgstore.TrashRemoving, 0, nil, "", 1); err != nil {
+			t.Fatal(err)
+		}
+		os.Remove(filepath.Join(te.dir, ".trash", id, "a.gguf"))
+		s2 := te.restart()
+		if _, err := te.cs.TrashGet(ctx, id); !errors.Is(err, cfgstore.ErrNotFound) {
+			t.Fatalf("the record stayed after the start: %v", err)
+		}
+		tb, err := te.cs.RemovedGet(ctx, id)
+		if err != nil || tb.State != cfgstore.RemovedRemoved || tb.Reason != cfgstore.RemovedByRepair || tb.RemovedBy != "potluck" || tb.File != "a.gguf" || tb.RemovedAt == 0 {
+			t.Fatalf("tombstone: %+v %v", tb, err)
+		}
+		if n := s2.trash.repairList(); len(n) != 1 || !strings.Contains(n[0], "completed") {
+			t.Fatalf("repairs: %v", n)
+		}
+		es := auditOf(t, te.env, "section=models&action=remove")
+		if len(es) != 1 || es[0]["actor"] != "potluck" {
+			t.Fatalf("audit: %v", es)
+		}
+		if ev := te.removedEvents(); len(ev) != 1 {
+			t.Fatalf("history: %+v", ev)
+		}
+		if s3 := te.restart(); len(s3.trash.repairList()) != 0 {
+			t.Fatalf("a second start repaired again: %v", s3.trash.repairList())
+		}
+		_, m := te.cdo("GET", "/api/models/trash", "", nil)
+		if items, _ := m["items"].([]any); len(items) != 0 {
+			t.Fatalf("still listed in the trash: %v", items)
+		}
+	})
 	t.Run("killed after the record, the file now somewhere else", func(t *testing.T) {
 		te := newTrashEnv(t)
 		te.setup()
@@ -404,5 +443,27 @@ func TestTrashClearing(t *testing.T) {
 	}
 	if ents, _ := os.ReadDir(filepath.Join(te.dir, ".trash")); len(ents) != 0 {
 		t.Fatalf("trash folders left: %v", ents)
+	}
+}
+
+// The clearing's "waits" line (Info, once) is written by a pass that finds a
+// due file on a read-only folder: the first pass runs at start, right after
+// the start's repair, then hourly. With nothing due there is nothing to
+// wait for and no line, purge on or not.
+func TestTrashClearing_ReadOnlyLineOnlyWhenSomethingIsDue(t *testing.T) {
+	ctx := context.Background()
+	te := newTrashEnv(t)
+	te.setup()
+	te.trashed("a.gguf")
+	te.setting(`{"model_trash_purge":true}`)
+	te.ro = true
+	te.api.clearTrash(ctx) // nothing due yet
+	if strings.Contains(te.logs.String(), "clearing waits") {
+		t.Fatal("a waits line with nothing due")
+	}
+	te.advance(31 * 24 * time.Hour)
+	te.api.clearTrash(ctx) // now a.gguf is due
+	if n := strings.Count(te.logs.String(), "clearing waits"); n != 1 {
+		t.Fatalf("waits lines: %d", n)
 	}
 }

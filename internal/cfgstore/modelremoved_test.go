@@ -161,3 +161,80 @@ func TestModelRemoved_LedgerAndWayBack(t *testing.T) {
 		t.Fatalf("model_migrations rows %d", v)
 	}
 }
+
+// RemoveFinish settles every leftover of a removal, so a record never stays
+// removing: the real state after a kill between the steps (record removing,
+// tombstone removing), a record removing without its tombstone (damaged or
+// hand-edited: completed with reason repair, signed potluck), and a record
+// removing whose tombstone already says removed (only the record goes).
+// Neither a record nor a tombstone removing: ErrNotFound.
+func TestRemoveFinish_SettlesEveryLeftover(t *testing.T) {
+	db, err := bench.OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	s, err := Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	gone := func(id string) {
+		t.Helper()
+		if _, err := s.TrashGet(ctx, id); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("%s: the record stayed: %v", id, err)
+		}
+	}
+	// the real state after a kill between step 2 and step 3
+	trashedRec(t, s, "aaaaaaaaaaaa", "a.gguf")
+	if _, err := s.RemoveBegin("aaaaaaaaaaaa", RemovedByOwner, "sam", "x", 3000); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RemoveFinish("aaaaaaaaaaaa", 4000); err != nil {
+		t.Fatal(err)
+	}
+	gone("aaaaaaaaaaaa")
+	if tb, _ := s.RemovedGet(ctx, "aaaaaaaaaaaa"); tb.State != RemovedRemoved || tb.Reason != RemovedByOwner || tb.RemovedBy != "sam" || tb.RemovedAt != 4000 {
+		t.Fatalf("real: %+v", tb)
+	}
+	// record removing, no tombstone
+	trashedRec(t, s, "bbbbbbbbbbbb", "b.gguf")
+	if err := s.TrashSetState("bbbbbbbbbbbb", TrashRemoving, 0, nil, "", 3000); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RemoveFinish("bbbbbbbbbbbb", 4000); err != nil {
+		t.Fatalf("no tombstone: %v", err)
+	}
+	gone("bbbbbbbbbbbb")
+	tb, err := s.RemovedGet(ctx, "bbbbbbbbbbbb")
+	if err != nil || tb.State != RemovedRemoved || tb.Reason != RemovedByRepair || tb.RemovedBy != "potluck" || tb.File != "b.gguf" || tb.SizeBytes != 42 ||
+		tb.DeletedBy != "alex" || tb.RemovedAt != 4000 || len(tb.ProfileIDs) != 2 || tb.Revision != 7 {
+		t.Fatalf("no tombstone: %+v %v", tb, err)
+	}
+	// record removing, tombstone already removed
+	trashedRec(t, s, "cccccccccccc", "c.gguf")
+	if _, err := s.RemoveBegin("cccccccccccc", RemovedByOwner, "sam", "x", 3000); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.DB().Exec(`UPDATE model_trash_removed SET state = ?, removed_at = 3500 WHERE id = ?`, RemovedRemoved, "cccccccccccc"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RemoveFinish("cccccccccccc", 4000); err != nil {
+		t.Fatalf("tombstone already removed: %v", err)
+	}
+	gone("cccccccccccc")
+	if tb, _ := s.RemovedGet(ctx, "cccccccccccc"); tb.RemovedAt != 3500 {
+		t.Fatalf("the tombstone was rewritten: %+v", tb)
+	}
+	// nothing to settle
+	if err := s.RemoveFinish("dddddddddddd", 4000); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("none: %v", err)
+	}
+	trashedRec(t, s, "eeeeeeeeeeee", "e.gguf") // trashed, not removing: not finished
+	if err := s.RemoveFinish("eeeeeeeeeeee", 4000); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("trashed: %v", err)
+	}
+	if r, _ := s.TrashGet(ctx, "eeeeeeeeeeee"); r == nil || r.State != TrashTrashed {
+		t.Fatalf("a trashed record was touched: %+v", r)
+	}
+}
