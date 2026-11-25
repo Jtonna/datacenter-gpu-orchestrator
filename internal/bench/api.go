@@ -276,6 +276,9 @@ func BuildChatRequest(profile string, r benchspec.Request) ChatRequest {
 	if r.Streams() {
 		body["stream_options"] = map[string]any{"include_usage": true}
 	}
+	if r.NoThinking { // the request's own template setting, documented (tools/server/README.md); only the command-line route is deprecated
+		body["chat_template_kwargs"] = map[string]any{"enable_thinking": false}
+	}
 	b, _ := json.Marshal(body)
 	return ChatRequest{Model: profile, Body: b, Stream: r.Streams()}
 }

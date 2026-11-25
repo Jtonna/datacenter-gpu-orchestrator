@@ -82,6 +82,9 @@ func transcriptEntry(rr *RequestResult, r benchspec.Request, resp *ChatResponse,
 	e := TranscriptEntry{Seq: rr.Seq, Phase: rr.Phase, PhaseIdx: rr.PhaseIdx, Turn: rr.Turn, Name: r.Name, StartedAt: rr.StartedAt,
 		Sampling: map[string]any{"max_tokens": r.MaxTok(), "temperature": r.Temp(), "seed": r.SeedVal(), "stream": r.Streams(), "cache_prompt": r.CachesPrompt()},
 		Messages: r.ChatMessages(), Status: rr.Status, Error: rr.Error, TTFTMS: rr.TTFTMS, WallMS: rr.WallMS, Timings: rr.Timings}
+	if r.NoThinking {
+		e.Sampling["enable_thinking"] = false
+	}
 	if conv > 0 && conv <= len(e.Messages) {
 		e.Messages, e.Continues = e.Messages[conv:], true
 	}

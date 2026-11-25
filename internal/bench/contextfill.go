@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
@@ -50,6 +51,12 @@ type FillResult struct {
 	Recall        int    `json:"recall"` // facts planted and asked back
 	RecallCorrect *int   `json:"recall_correct,omitempty"`
 	Answer        string `json:"answer,omitempty"` // the last turn's answer (first 2,000 characters)
+	// FinishReason and ReasoningChars are the last turn's finish_reason and
+	// the length of its reasoning_content; RecallNote says why a recall is
+	// not a result (the answer was cut while the model was thinking).
+	FinishReason   string `json:"finish_reason,omitempty"`
+	ReasoningChars int    `json:"reasoning_chars,omitempty"`
+	RecallNote     string `json:"recall_note,omitempty"`
 	// StoppedBecause says why the phase stopped before the target (empty: it got there).
 	// SettleHoldMS is the hold asked after the load before the first turn
 	// (settle_s, else the scheduler's free_average_window); SettleHeldMS how
@@ -451,6 +458,10 @@ func (br *benchRun) phaseContextFill(i int, p *benchspec.Phase, pr *PhaseResult)
 		}
 	}
 	kib := map[string]float64{} // measured growth per token so far, by node
+	// Thinking is off on every turn unless the recipe asked for it: thinking
+	// tokens are unbounded, would sit in the context past the last mark, and
+	// take the recall turn's whole max_tokens before any answer.
+	noThink := !(br.b.Applied != nil && br.b.Applied.Thinking != nil && *br.b.Applied.Thinking)
 
 	var hist []benchspec.Message
 	var used []string // the filler paragraphs sent, in order
@@ -557,7 +568,7 @@ func (br *benchRun) phaseContextFill(i int, p *benchspec.Phase, pr *PhaseResult)
 		temp := 0.0
 		seed := p.FillSeed()
 		cache, stream := true, true
-		req := benchspec.Request{Name: fmt.Sprintf("fill %d%%", pct), Messages: msgs, MaxTokens: maxTok, Temperature: &temp, Seed: &seed, CachePrompt: &cache, Stream: &stream}
+		req := benchspec.Request{Name: fmt.Sprintf("fill %d%%", pct), Messages: msgs, MaxTokens: maxTok, Temperature: &temp, Seed: &seed, CachePrompt: &cache, Stream: &stream, NoThinking: noThink}
 		paras := chunk
 		func() {
 			br.mu.Lock()
@@ -634,6 +645,10 @@ func (br *benchRun) phaseContextFill(i int, p *benchspec.Phase, pr *PhaseResult)
 		if last {
 			res.Recall = fl.planted
 			res.Answer = Head(resp.Text, 2000)
+			res.FinishReason, res.ReasoningChars = resp.FinishReason, utf8.RuneCountInString(resp.Reasoning)
+			if fl.recall > 0 && resp.FinishReason == "length" && resp.Reasoning != "" {
+				res.RecallNote = fmt.Sprintf("the answer was cut at max_tokens %d while the model was thinking (%d characters of reasoning): recall is not a result", maxTok, res.ReasoningChars)
+			}
 			if fl.recall > 0 {
 				c := fl.score(resp.Text)
 				res.RecallCorrect = &c
@@ -812,6 +827,9 @@ func fillMD(b *strings.Builder, f *FillResult) {
 	b.WriteString("\n")
 	if f.RecallCorrect != nil {
 		fmt.Fprintf(b, "Recall: %d of %d planted facts given back right.\n\n", *f.RecallCorrect, f.Recall)
+	}
+	if f.RecallNote != "" {
+		fmt.Fprintf(b, "Recall note: %s.\n\n", mdCell(f.RecallNote))
 	}
 	if f.StoppedBecause != "" {
 		fmt.Fprintf(b, "Stopped: %s.\n\n", mdCell(f.StoppedBecause))
