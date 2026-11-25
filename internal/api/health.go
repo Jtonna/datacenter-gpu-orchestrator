@@ -306,6 +306,10 @@ func (s *Server) healthSummary(ctx context.Context) HealthSummary {
 		judgeQueue(st, queueTimeout),
 		judgeAlerts(),
 	}
+	if why := s.opts.BenchOffReason; why != "" {
+		rows = append(rows, HealthRow{ID: "benchmarks", Label: "Benchmarks", State: HealthAttention, Text: why, Count: 1,
+			Link: "#/benchmarks", Facts: map[string]any{"enabled": false}})
+	}
 	return summarize(rows, s.recentEvents(now), now)
 }
 

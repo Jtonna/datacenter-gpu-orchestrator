@@ -85,6 +85,16 @@ const benchOffMessage = "the benchmark feature is off: set data_dir in the confi
 // benchGuard answers 503 when the feature is off.
 func (s *Server) benchGuard(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if why := s.opts.BenchOffReason; why != "" {
+			// the bench tables are newer than this build: the same 503 as
+			// the feature off, with its reason, enabled false besides
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			b, _ := json.Marshal(map[string]any{"error": map[string]any{"message": why, "type": "server_error", "param": nil,
+				"code": http.StatusServiceUnavailable, "reason": "benchmarks off"}, "enabled": false, "reason": why})
+			w.Write(b)
+			return
+		}
 		if !s.benchOn() {
 			w.Header().Set("Retry-After", "0")
 			proxy.WriteError(w, http.StatusServiceUnavailable, benchOffMessage, "server_error", "benchmarks off", nil)

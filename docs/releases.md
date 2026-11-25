@@ -2,6 +2,14 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: newer benchmark tables switch off only the benchmarks; run limit 720 minutes
+
+No agent change, no new port, no schema change, no new route, no new setting.
+
+- **A newer image's bench migration no longer takes the scheduler down.** When the database's bench `migrations` ledger is ahead of this image (and only then), the scheduler starts as usual and only the benchmarks are off: every `/api/bench/...` route, the report pages and the MCP bench tools answer `503` with "benchmarks are off: this database's benchmark tables are at version N, this version knows up to M; start a version that knows N or newer" (body also `enabled: false`, `reason`), `GET /api/health` has a Benchmarks row in attention, `GET /api/system` has `bench.enabled: false` and `bench.off_reason`, one WARN at start. Nothing is written to the bench tables in that state. The configuration ledger ahead, a damaged file or any other failure to open: unhealthy as before.
+- **The run limit defaults to 720 minutes** (`bench_max_run_minutes`, was 240): a Full pass takes 6 to 7 hours. A stored setting is kept.
+- **Going back.** The image before still serves the whole scheduler unhealthy on a newer bench ledger; this image adds no bench migration.
+
 ## Scheduler image: every cycle's peak, collected only
 
 No agent change, no new port, no schema change, no new route, no new setting. No plan changes.

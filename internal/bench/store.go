@@ -317,6 +317,19 @@ type Store struct {
 	closed bool
 	wg     sync.WaitGroup
 	late   atomic.Int64 // writes refused because the store was closed (LateWrites)
+	// benchOff: the bench migrations are ahead of this build (OpenShared).
+	// The database serves the other ledgers; the bench tables are not
+	// migrated, backfilled or written, and the benchmark feature stays off.
+	benchOff *NewerSchemaError
+}
+
+// BenchOff is the reason the bench tables cannot be used by this build (a
+// newer version migrated them), else nil. Only OpenShared opens such a store.
+func (s *Store) BenchOff() *NewerSchemaError {
+	if s == nil {
+		return nil
+	}
+	return s.benchOff
 }
 
 // LateWrites is how many writes were refused because the store was already
@@ -328,8 +341,20 @@ func (s *Store) LateWrites() int64 { return s.late.Load() }
 // applies the migrations. An error means the benchmark feature stays off.
 func OpenStore(dir string) (*Store, error) { return openStore(dir, len(migrations)) }
 
-// openStore applies at most upTo migrations (tests use it to build an older database).
-func openStore(dir string, upTo int) (*Store, error) {
+// OpenShared is OpenStore for the scheduler, whose other ledgers (the
+// configuration, access keys, model pins, learned needs, groups) share the
+// file: when only the bench migrations are ahead of this build it opens
+// the database anyway with the bench tables left exactly as they are (no
+// migration, no backfill) and BenchOff saying why. Every other failure is
+// OpenStore's.
+func OpenShared(dir string) (*Store, error) { return openStoreOpt(dir, len(migrations), true) }
+
+// openStore applies at most upTo migrations (tests use it to build an older
+// database).
+func openStore(dir string, upTo int) (*Store, error) { return openStoreOpt(dir, upTo, false) }
+
+// openStoreOpt is openStore; newerOK: see OpenShared.
+func openStoreOpt(dir string, upTo int, newerOK bool) (*Store, error) {
 	if strings.TrimSpace(dir) == "" {
 		return nil, errors.New("no data directory")
 	}
@@ -349,12 +374,16 @@ func openStore(dir string, upTo int) (*Store, error) {
 	}
 	s := &Store{db: db, path: path, jobs: make(chan job, 64)}
 	if err := s.migrate(upTo); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrating %s: %w", path, err)
+		var ne *NewerSchemaError
+		if !newerOK || !errors.As(err, &ne) {
+			db.Close()
+			return nil, fmt.Errorf("migrating %s: %w", path, err)
+		}
+		s.benchOff = ne
 	}
 	s.wg.Add(1)
 	go s.writer()
-	if upTo >= len(migrations) {
+	if s.benchOff == nil && upTo >= len(migrations) {
 		if err := s.backfillMeasurements(); err != nil {
 			s.Close()
 			return nil, fmt.Errorf("mapping old runs into measurements in %s: %w", path, err)
@@ -369,6 +398,12 @@ type NewerSchemaError struct{ Have, Know int }
 
 func (e *NewerSchemaError) Error() string {
 	return fmt.Sprintf("database is newer than this version: %d > %d (schema version; a newer scheduler migrated it)", e.Have, e.Know)
+}
+
+// BenchOffReason is what the benchmark routes, the health row and the log
+// say when only the bench tables are newer (OpenShared).
+func (e *NewerSchemaError) BenchOffReason() string {
+	return fmt.Sprintf("benchmarks are off: this database's benchmark tables are at version %d, this version knows up to %d; start a version that knows %d or newer", e.Have, e.Know, e.Have)
 }
 
 func (s *Store) migrate(upTo int) error {
