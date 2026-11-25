@@ -96,7 +96,12 @@ type PlanInfo struct {
 	// Generated is whether the profile itself was generated (made from a
 	// recipe's inputs or by a benchmark); nil when the plan does not say.
 	Generated *bool
-	Raw       json.RawMessage
+	// Growth is the plan's growth_history: the highest stored growth per token
+	// for the shape and how many readings count (nil: the scheduler does not
+	// say). ReserveKiB is its fill_reserve_kib_per_token (nil: not said).
+	Growth     *GrowthHistory
+	ReserveKiB *int
+	Raw        json.RawMessage
 }
 
 // SharedProfile is a profile of shape_shared_with; Generated is set for a
@@ -378,6 +383,8 @@ func (h *HTTPAPI) Plan(ctx context.Context, model string) (*PlanInfo, error) {
 		Parallel   int              `json:"parallel"`
 		SharedWith *[]SharedProfile `json:"shape_shared_with"`
 		Generated  *bool            `json:"generated"`
+		Growth     *GrowthHistory   `json:"growth_history"`
+		ReserveKiB *int             `json:"fill_reserve_kib_per_token"`
 		LoadMode   string           `json:"load_mode"`
 		Reload     []struct {
 			ID        string   `json:"id"`
@@ -398,7 +405,7 @@ func (h *HTTPAPI) Plan(ctx context.Context, model string) (*PlanInfo, error) {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, fmt.Errorf("/api/plan: %w", err)
 	}
-	info := &PlanInfo{Action: p.Action, Reason: p.Reason, Raw: raw, CtxNote: p.CtxNote, LoadMode: p.LoadMode, Ctx: p.Ctx, Parallel: p.Parallel, SharedWith: p.SharedWith, Generated: p.Generated}
+	info := &PlanInfo{Action: p.Action, Reason: p.Reason, Raw: raw, CtxNote: p.CtxNote, LoadMode: p.LoadMode, Ctx: p.Ctx, Parallel: p.Parallel, SharedWith: p.SharedWith, Generated: p.Generated, Growth: p.Growth, ReserveKiB: p.ReserveKiB}
 	for _, r := range p.Reload {
 		info.Reload = append(info.Reload, NodeReload{ID: r.ID, Node: r.ID, Verdict: r.Verdict, CachedPct: r.CachedPct, Shared: r.Shared,
 			FileMiB: r.FileMiB, ModelMiB: r.ModelMiB, MemoryMiB: r.MemoryMiB, MarginMiB: r.MarginMiB,
@@ -853,3 +860,12 @@ func (h *HTTPAPI) Chat(ctx context.Context, runID string, req ChatRequest, onPro
 }
 
 func ms(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
+
+// GrowthHistory is a plan's growth_history: the highest stored growth per
+// token (KiB) of the plan's shape, the readings that count and the capped
+// ones left out. Readings 0: the shape has no history.
+type GrowthHistory struct {
+	KiBPerToken   float64 `json:"kib_per_token"`
+	Readings      int     `json:"readings"`
+	CappedSkipped int     `json:"capped_skipped"`
+}

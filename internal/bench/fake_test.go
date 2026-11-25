@@ -87,9 +87,12 @@ type fakeAPI struct {
 	// mem gives a node's available memory for the status (nil: unknown);
 	// loading says whether an instance is starting, chats counts the chat
 	// requests sent so far.
-	mem      func(id string, loading bool, chats int) *int64
-	loadMode string       // instances' load_mode
-	reload   []NodeReload // the plan's reload_from_cache
+	mem func(id string, loading bool, chats int) *int64
+	// growth and reserveKiB are the plan's growth_history and fill_reserve_kib_per_token (nil: not said).
+	growth     *GrowthHistory
+	reserveKiB *int
+	loadMode   string       // instances' load_mode
+	reload     []NodeReload // the plan's reload_from_cache
 	// The file cache eviction (POST /api/cache/evict): planNodes are the
 	// nodes the plan names (default n1); evictNode scripts a node's answers
 	// in turn (the last one repeats; default: dropped to 0); evictLocal is
@@ -217,7 +220,7 @@ func (f *fakeAPI) Plan(ctx context.Context, model string) (*PlanInfo, error) {
 		s := append([]SharedProfile{}, *f.shapeShared...)
 		shared = &s
 	}
-	return &PlanInfo{Action: "start", Nodes: append([]string(nil), nodes...), LoadMode: f.loadMode, Reload: append([]NodeReload(nil), f.reload...), Ctx: f.planCtx, SharedWith: shared, Generated: f.planGenerated,
+	return &PlanInfo{Action: "start", Nodes: append([]string(nil), nodes...), LoadMode: f.loadMode, Reload: append([]NodeReload(nil), f.reload...), Ctx: f.planCtx, SharedWith: shared, Generated: f.planGenerated, Growth: f.growth, ReserveKiB: f.reserveKiB,
 		Raw: json.RawMessage(`{"model":"` + model + `","action":"start"}`)}, nil
 }
 

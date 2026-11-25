@@ -920,6 +920,7 @@ func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {
 	v["model"] = v["profile"]
 	delete(v, "profile")
 	addShapeFacts(v, s.conf(), req.Model)
+	s.addGrowthFacts(v, req.Model, req.scoped())
 	writeJSON(w, http.StatusOK, v)
 }
 

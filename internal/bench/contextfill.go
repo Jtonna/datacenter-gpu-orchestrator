@@ -55,8 +55,13 @@ type FillResult struct {
 	// the length of its reasoning_content; RecallNote says why a recall is
 	// not a result (the answer was cut while the model was thinking).
 	FinishReason   string `json:"finish_reason,omitempty"`
-	ReasoningChars int    `json:"reasoning_chars,omitempty"`
-	RecallNote     string `json:"recall_note,omitempty"`
+	ReasoningChars int    `json:"reasoning_chars"`
+	RecallNote     string `json:"recall_note"`
+	// GrowthFloorKiBPerToken is the growth per token the stop check assumes
+	// before a turn (a machine's own reading in this run raises it there);
+	// GrowthFloorBasis says where it came from (fillGrowthFloor).
+	GrowthFloorKiBPerToken float64 `json:"growth_floor_kib_per_token"`
+	GrowthFloorBasis       string  `json:"growth_floor_basis"`
 	// StoppedBecause says why the phase stopped before the target (empty: it got there).
 	// SettleHoldMS is the hold asked after the load before the first turn
 	// (settle_s, else the scheduler's free_average_window); SettleHeldMS how
@@ -138,8 +143,39 @@ const (
 	DefaultFillReportEvery = 2 * time.Second
 )
 
-// fillMinKiBPerToken is the growth per token assumed before one is measured.
-const fillMinKiBPerToken = 8.0
+// fillNoHistoryKiBPerToken is the growth per token the stop check assumes
+// for a shape with no stored growth reading (reviewer's order: four runs of
+// one shape measured up to 9.73).
+const fillNoHistoryKiBPerToken = 12.0
+
+// fillGrowthFloor is the growth per token the stop check assumes, and where
+// it came from: the highest stored reading for the plan's shape, or 12 with
+// no history; never less than fill_reserve_kib_per_token.
+func fillGrowthFloor(plan *PlanInfo) (float64, string) {
+	h, basis := fillNoHistoryKiBPerToken, "no history for this shape: 12 KiB per token"
+	lower := "no history for this shape; 12 is lower"
+	switch g := plan.Growth; {
+	case g == nil:
+		basis = "no history (the scheduler does not report it): 12 KiB per token"
+		lower = "the scheduler does not report history; 12 is lower"
+	case g.Readings > 0:
+		h = g.KiBPerToken
+		word := "readings"
+		if g.Readings == 1 {
+			word = "reading"
+		}
+		// Each row keeps its latest 16 cycles (growthKeep): "highest ever" would be untrue.
+		basis = fmt.Sprintf("highest of the latest 16 cycles' readings for this shape (%d %s): %s KiB per token", g.Readings, word, kibStr(h))
+		lower = fmt.Sprintf("the highest reading, %s, is lower", kibStr(h))
+	}
+	if s := plan.ReserveKiB; s != nil && float64(*s) > h {
+		return float64(*s), fmt.Sprintf("the setting: %d KiB per token (%s)", *s, lower)
+	}
+	return h, basis
+}
+
+// kibStr writes a KiB-per-token figure as stored (9.73, 12).
+func kibStr(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
 
 // fillShortAnswer is the answer budget of the turns before the last.
 const fillShortAnswer = 8
@@ -392,6 +428,8 @@ func (br *benchRun) phaseContextFill(i int, p *benchspec.Phase, pr *PhaseResult)
 	res := &FillResult{Ctx: ctxSize, Parallel: plan.Parallel, FillPct: p.FillTarget(), MarksPct: marks, Seed: p.FillSeed(),
 		StopLineMiB: int(line), TargetTokens: ctxSize * p.FillTarget() / 100}
 	pr.Fill = res
+	floorKiB, floorBasis := fillGrowthFloor(plan) // the stop check's growth per token before a turn
+	res.GrowthFloorKiBPerToken, res.GrowthFloorBasis = floorKiB, floorBasis
 	// The server's own context, before any request: a fill past it would be
 	// answered 400 "exceeds the available context size".
 	res.CtxNote = plan.CtxNote
@@ -552,12 +590,16 @@ func (br *benchRun) phaseContextFill(i int, p *benchspec.Phase, pr *PhaseResult)
 				continue
 			}
 			var need int64
+			per, basis := floorKiB, floorBasis
+			if kib[w.ID] > per { // this run's own reading on the machine is higher
+				per, basis = kib[w.ID], "this run's own reading on "+nodeName(w)
+			}
 			if inUse[w.ID] {
-				need = int64(math.Ceil(float64(turnTokens) * math.Max(fillMinKiBPerToken, kib[w.ID]) / 1024))
+				need = int64(math.Ceil(float64(turnTokens) * per / 1024))
 			}
 			if *w.AvailMiB < line+need {
-				stop(fmt.Sprintf("stopped at the stop line before the turn to %d %%: %s has %s MiB available, and the turn (about %s tokens) would take about %s MiB more, below the stop line of %s MiB",
-					pct, nodeName(w), groupInt(*w.AvailMiB), groupInt(int64(turnTokens)), groupInt(need), groupInt(line)))
+				stop(fmt.Sprintf("stopped at the stop line before the turn to %d %%: %s has %s MiB available, and the turn (about %s tokens) would take about %s MiB more at %s KiB per token (%s), below the stop line of %s MiB",
+					pct, nodeName(w), groupInt(*w.AvailMiB), groupInt(int64(turnTokens)), groupInt(need), kibStr(per), basis, groupInt(line)))
 				return
 			}
 		}
@@ -830,6 +872,10 @@ func fillMD(b *strings.Builder, f *FillResult) {
 	}
 	if f.RecallNote != "" {
 		fmt.Fprintf(b, "Recall note: %s.\n\n", mdCell(f.RecallNote))
+	}
+	if f.GrowthFloorBasis != "" {
+		fmt.Fprintf(b, "Stop check: before each turn every machine in use must keep the stop line with the turn's tokens at %s KiB per token (%s), or at the machine's own reading in this run when higher.\n\n",
+			kibStr(f.GrowthFloorKiBPerToken), mdCell(f.GrowthFloorBasis))
 	}
 	if f.StoppedBecause != "" {
 		fmt.Fprintf(b, "Stopped: %s.\n\n", mdCell(f.StoppedBecause))

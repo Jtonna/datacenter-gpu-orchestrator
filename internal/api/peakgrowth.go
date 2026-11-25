@@ -2,10 +2,13 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/usage"
 )
@@ -162,4 +165,129 @@ func (pc *peakCycles) setTokens(f func(ctx context.Context, profile, session str
 	pc.mu.Lock()
 	defer supervise.Unlocked("peakcycles", pc.mu.Unlock)
 	pc.tokens = f
+}
+
+// growthShape is what makes stored growth readings count for a plan: the
+// model file (as written), ctx (the planned one), parallel, kv_quant ("" is
+// f16), flash_attn and host ("" or "server": the scheduler's machine).
+// Extra args, the profile's name and the node set do not count.
+type growthShape struct {
+	Model     string
+	Ctx       int
+	Parallel  int
+	KVQuant   string
+	FlashAttn bool
+	Host      string
+}
+
+// growthHigh is the plan's growth_history: the highest reading of a shape
+// in KiB per token, how many readings count, and how many capped ones were
+// left out (a capped reading is a bound, not a measurement).
+type growthHigh struct {
+	KiBPerToken   float64 `json:"kib_per_token"`
+	Readings      int     `json:"readings"`
+	CappedSkipped int     `json:"capped_skipped"`
+}
+
+// matches says whether a stored shape key is sh.
+func (sh growthShape) matches(key string) bool {
+	var k []any
+	if json.Unmarshal([]byte(key), &k) != nil || len(k) < 7 {
+		return false
+	}
+	kind, _ := k[0].(string)
+	model, _ := k[1].(string)
+	ctx, _ := k[2].(float64)
+	par, _ := k[3].(float64)
+	kv, _ := k[4].(string)
+	fa, _ := k[5].(bool)
+	host := ""
+	if len(k) > 7 {
+		h, _ := k[7].(string)
+		host = strings.TrimPrefix(h, "host=")
+	}
+	norm := func(s, def string) string {
+		if s == "" {
+			return def
+		}
+		return s
+	}
+	want := sh.Host
+	if want == "server" {
+		want = ""
+	}
+	return kind == "llama" && model == sh.Model && int(ctx) == sh.Ctx && int(par) == max(sh.Parallel, 1) &&
+		norm(kv, "f16") == norm(sh.KVQuant, "f16") && fa == sh.FlashAttn && host == want
+}
+
+// highestGrowth is the highest growth reading of shape sh over every row of
+// that shape (each row keeps its latest growthKeep cycles; every node of a
+// cycle is a reading). A nil tally has none.
+func (pc *peakCycles) highestGrowth(sh growthShape) growthHigh {
+	var out growthHigh
+	if pc == nil {
+		return out
+	}
+	pc.mu.Lock()
+	defer supervise.Unlocked("peakcycles", pc.mu.Unlock)
+	for _, r := range pc.rows {
+		if !sh.matches(r.shape) {
+			continue
+		}
+		for _, g := range pc.growthView(r) {
+			nodes, _ := g["nodes"].([]map[string]any)
+			for _, n := range nodes {
+				if c, _ := n["capped"].(bool); c {
+					out.CappedSkipped++
+					continue
+				}
+				k, _ := n["kib_per_token"].(float64)
+				out.Readings++
+				out.KiBPerToken = max(out.KiBPerToken, k)
+			}
+		}
+	}
+	return out
+}
+
+// addGrowthFacts adds to a plan answer growth_history (the highest stored
+// growth per token of the planned shape: a context fill's stop check uses
+// it) and the fill_reserve_kib_per_token setting. The shape is the
+// profile's, with a scoped load's own settings, at the plan's ctx.
+func (s *Server) addGrowthFacts(v map[string]any, model string, sc scheduler.ScopedLoad) {
+	cfg := s.conf()
+	v["fill_reserve_kib_per_token"] = cfg.Defaults.FillReserveKiBPerToken
+	p, _, ok := cfg.Resolve(model)
+	if !ok {
+		if sp, held := s.sched.Scoped(model); held {
+			p, ok = sp, true
+		}
+	}
+	if !ok {
+		return
+	}
+	sh := growthShape{Model: p.Model, Ctx: p.Ctx, Parallel: p.Parallel, KVQuant: p.KVQuant, FlashAttn: p.FlashAttn, Host: p.Host}
+	if sc.Parallel != nil {
+		sh.Parallel = *sc.Parallel
+	}
+	if sc.KVQuant != nil {
+		sh.KVQuant = *sc.KVQuant
+	}
+	if sc.FlashAttn != nil {
+		sh.FlashAttn = *sc.FlashAttn
+	}
+	if sc.Host != nil {
+		sh.Host = *sc.Host
+	}
+	switch c := v["ctx"].(type) { // the planned ctx (the trained context when ctx is above it)
+	case int:
+		if c > 0 {
+			sh.Ctx = c
+		}
+	case float64:
+		if c > 0 {
+			sh.Ctx = int(c)
+		}
+	}
+	v["growth_history"] = s.peaks.highestGrowth(sh)
 }
