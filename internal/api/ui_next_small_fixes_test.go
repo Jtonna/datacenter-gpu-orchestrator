@@ -133,7 +133,7 @@ func TestUINextModelsSliceOneFields(t *testing.T) {
 		map[string]any{"name": "models: slice 1 fields in the panel", "route": "#/models?model=" + loaded, "status": st,
 			"page": []string{"16.5 GB · added 4 Nov 2026 · loaded now", "Benchmarks", "3 reports", "Unload when idle", "10 min", "Never"},
 			"pageHas": []string{"aside.side tr[data-profile='gemma-4-27b'] td[data-ttl='600']", "aside.side tr[data-profile='gemma-4-27b:long'] td[data-ttl='0']",
-				"aside.side a.btn[title^=Finished]"},
+				"aside.side button.btn[data-act=bench][title^=Finished]"},
 			"notOnPage": []string{"4 runs"}},
 		map[string]any{"name": "models: the disk's host", "route": "#/models", "status": st, "titles": []string{"GB free on scheduler-host"}},
 	}})

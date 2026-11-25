@@ -109,7 +109,11 @@ function fromForm(vals, fields, orig) {
   return out;
 }
 
-function makeEditor(o) {
+// makeEditor(o) -> {el}: the profile editor. Used here (its own page) and in
+// the Models side panel (views/models.js, the owner's note 8): there o.inPanel
+// is set, o.onCancel replaces the links back to the list, and o.above (a node)
+// sits above the fields (the plan preview).
+export function makeEditor(o) {
   const { fields, mode, id } = o;
   const orig = o.initial || {};
   let current = toForm(orig);
@@ -178,17 +182,31 @@ function makeEditor(o) {
     collect();
     o.onSave(mode === 'edit' ? id : idInput.value.trim(), fromForm(current, fields, orig), setMessages);
   }
-  const el = h('section.panel.prf-editor', { 'data-keep': '', key: 'editor-' + (mode === 'edit' ? id : mode) + '-' + Math.random().toString(36).slice(2, 7), 'aria-label': mode === 'edit' ? 'Edit ' + id : 'New profile' },
-    h('div.prf-ebar', h('h2', mode === 'edit' ? ['Edit profile ', h('span.mono', id)] : mode === 'dup' ? ['New profile, copied from ', h('span.mono', o.from)] : 'New profile'),
+  const cancel = o.onCancel ? h('button.btn.lg', { type: 'button', 'data-cancel': '', onclick: () => o.onCancel() }, 'Cancel') : h('a.btn.lg', { href: o.back }, 'Cancel');
+  const el = h('section', { class: 'panel prf-editor' + (o.inPanel ? ' prf-inpanel' : ''), 'data-keep': '', key: 'editor-' + (mode === 'edit' ? id : mode) + '-' + Math.random().toString(36).slice(2, 7), 'aria-label': mode === 'edit' ? 'Edit ' + id : 'New profile' },
+    o.inPanel ? null : h('div.prf-ebar', h('h2', mode === 'edit' ? ['Edit profile ', h('span.mono', id)] : mode === 'dup' ? ['New profile, copied from ', h('span.mono', o.from)] : 'New profile'),
       h('a.btn.sm', { href: o.back }, 'Back to the list')),
     h('div.prf-ebody',
+      o.above || null,
       serverBox,
       mode === 'edit' ? null : h('div.field', { style: 'max-width:460px' }, h('label', 'Name', h('span', { class: 'b b-n' }, 'Required')), idInput,
         h('span.help', 'The model name clients send. It cannot be changed later; to rename, copy the profile and delete the old one.'), idErr),
       host),
     h('div.prf-efoot', h('span.mut', 'Saving runs a check first, then asks for a comment.'), h('span.grow'),
-      h('a.btn.lg', { href: o.back }, 'Cancel'), button('Save', save, 'lg pri', { 'data-save': '' })));
+      cancel, button('Save', save, 'lg pri', { 'data-save': '' })));
   return { el };
+}
+
+// saveProfile({pid, prof, exists, getRevision, reload, onInvalid}) -> the
+// review and the write of one profile (a dry run, the diff, a comment the
+// save waits for, If-Match; the audit entry is the server's): POST for a new one,
+// PUT for an existing one. Resolves to reviewChanges' answer. Used by the
+// editor page here and by the Models side panel.
+export function saveProfile(o) {
+  const { pid, prof, exists } = o;
+  const op = exists ? { label: `Change profile ${pid}`, method: 'PUT', path: '/api/config/profiles/' + encodeURIComponent(pid), body: { profile: prof } }
+    : { label: `Create profile ${pid}`, method: 'POST', path: '/api/config/profiles', body: { id: pid, profile: prof } };
+  return reviewChanges({ title: exists ? 'Save profile ' + pid : 'Create profile ' + pid, getRevision: o.getRevision, buildOps: () => [op], reload: o.reload, onInvalid: o.onInvalid, requireComment: true });
 }
 
 // ---------- the view ----------
@@ -246,10 +264,7 @@ registerView({
         fields, mode, id, from, newId, initial, back: listHref({ profile: mode === 'edit' ? id : from }),
         exists: v => !!profiles[v],
         onSave: async (pid, prof, setMessages) => {
-          const exists = !!profiles[pid];
-          const op = exists ? { label: `Change profile ${pid}`, method: 'PUT', path: '/api/config/profiles/' + encodeURIComponent(pid), body: { profile: prof } }
-            : { label: `Create profile ${pid}`, method: 'POST', path: '/api/config/profiles', body: { id: pid, profile: prof } };
-          const r = await reviewChanges({ title: exists ? 'Save profile ' + pid : 'Create profile ' + pid, getRevision: rev, buildOps: () => [op], reload: loadEditorData, onInvalid: setMessages });
+          const r = await saveProfile({ pid, prof, exists: !!profiles[pid], getRevision: rev, reload: loadEditorData, onInvalid: setMessages });
           if (r && r.saved) {
             saved = r; editor = null; editorKey = '';
             navigate('profiles', [], { q: q() || null, show: showAll() ? 'all' : null, profile: pid });

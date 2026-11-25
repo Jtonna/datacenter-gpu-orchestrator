@@ -572,6 +572,14 @@ for (const c of spec.cases) {
     for (const sel of c.click || []) {
       // {"type": "css selector", "value": "text"}: the text typed into that field (an input event)
       // {"context": "css selector"}: a right click on it (a contextmenu event)
+      // {"dbl": "css selector"}: a double click on it (a dblclick event)
+      if (sel && typeof sel === 'object' && sel.dbl) {
+        const el = document.body.querySelector(sel.dbl);
+        if (!el) { errors.push('nothing to double-click: ' + sel.dbl); break; }
+        el.dispatchEvent(new FakeEvent('dblclick'));
+        await settle();
+        continue;
+      }
       if (sel && typeof sel === 'object' && sel.context) {
         const el = document.body.querySelector(sel.context);
         if (!el) { errors.push('nothing to right-click: ' + sel.context); break; }

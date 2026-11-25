@@ -202,7 +202,7 @@ func TestUINextModelsTrash(t *testing.T) {
 		map[string]any{"name": "delete: in use, the dialog says what it interrupts", "route": "#/models?model=" + gemma, "status": st, "click": open,
 			"fetchedQuery": []string{reDryPlain, reDryInterrupt}, "notFetched": []string{reAnyReal},
 			"page": []string{"This interrupts 3 requests.", "gemma-4-27b is loaded on ps5-01 and ps5-02 with 2 requests in flight", "1 request for gemma-4-27b:long is queued",
-				"unloaded", "Kept in Deleted models", "16.5 GB", "3 profiles"},
+				"unloaded", "Kept in Deleted models", "16.5 GB", "2 profiles", "1 test and benchmark configuration"},
 			"pageHas": []string{"div.dlg[data-dlg=delete][data-state=ready] [data-interrupts]", "div.dlg input[data-confirm]"}},
 		map[string]any{"name": "delete: in use, confirmed with interrupt", "route": "#/models?model=" + gemma, "status": st,
 			"click":        append(append([]any{}, open...), confirm("gemma-4-27b"), comment("replace it"), "div.dlg button[data-go]"),
