@@ -146,7 +146,19 @@ func (s *Server) handleNeeds(w http.ResponseWriter, r *http.Request) {
 		"device_overheads":           devices, "device_overhead_setting_mib": doc.DeviceOverheadSettingMiB,
 		"device_overhead_setting_only": doc.DeviceOverheadSettingOnly,
 		"derivation_check":             map[string]any{"tolerance_mib": doc.DeriveToleranceMiB, "pairs": pairs},
-		"peak_cycles":                  s.peaks.view()}) // peakcycles.go: collected only
+		"peak_cycles":                  s.peaks.viewWith(s.profileShapes())}) // peakcycles.go: collected only
+}
+
+// profileShapes is the set of shapes the profiles in force have
+// (peak_cycles' no_profile).
+func (s *Server) profileShapes() map[string]bool {
+	out := map[string]bool{}
+	if c := s.conf(); c != nil {
+		for _, p := range c.Profiles {
+			out[scheduler.ShapeOf(p)] = true
+		}
+	}
+	return out
 }
 
 // handleForgetShape drops every learned need of a shape (in memory and in

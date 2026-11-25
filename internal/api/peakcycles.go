@@ -183,7 +183,16 @@ func (pc *peakCycles) addLocked(e history.Event) {
 
 // view is the JSON of peak_cycles: a row per shape and node set (sorted),
 // and how many of them have at least 1, 3 and 5 cycles with a peak.
-func (pc *peakCycles) view() map[string]any {
+func (pc *peakCycles) view() map[string]any { return pc.viewWith(nil) }
+
+// noProfileNote is the wording of a row whose shape no profile has now.
+const noProfileNote = "no profile has this shape now"
+
+// viewWith is view with each row marked by whether a profile of the
+// configuration in force has its shape (shapes, scheduler.ShapeOf): a row
+// whose profile was deleted or changed is kept, with no_profile true and
+// the note noProfileNote. nil shapes: the rows are not marked.
+func (pc *peakCycles) viewWith(shapes map[string]bool) map[string]any {
 	pc.mu.Lock()
 	defer supervise.Unlocked("peakcycles", pc.mu.Unlock)
 	keys := make([]string, 0, len(pc.rows))
@@ -212,6 +221,12 @@ func (pc *peakCycles) view() map[string]any {
 			row["nodes"] = []map[string]any{}
 		}
 		row["growth_readings"] = pc.growthView(r) // peakgrowth.go
+		if shapes != nil {
+			row["no_profile"] = !shapes[r.shape]
+			if !shapes[r.shape] {
+				row["note"] = noProfileNote
+			}
+		}
 		rows = append(rows, row)
 	}
 	var since any

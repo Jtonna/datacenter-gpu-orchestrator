@@ -2,6 +2,24 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Agent release: children start without `LLAMA_ARG_*`
+
+Agent only; the scheduler image below ships without it.
+
+- **The agent's children start without any `LLAMA_ARG_*` variable**, any case, as the scheduler's own children do. Before, the child runner passed the agent's whole environment, and both runners passed the launch's own `Env`. A `LLAMA_ARG_*` there would silently override the command line the scheduler built (`--ctx-checkpoints`, `--cache-ram`). The systemd runner passes the launch's `Env` without them; systemd-run never gives a unit the agent's own environment.
+- **Going back.** The agent before passes them again: check a node's environment for `LLAMA_ARG_*` before rolling back.
+
+## Scheduler image: host memory made explicit (checkpoints and prompt cache)
+
+No agent change needed, no new port, no new route, no table. Three new settings and no plan change by default. See the runbook, "The host process's own memory".
+
+- **New settings** in the existing settings document: `node_host_cache_ram_mib` (0), `ctx_checkpoints` (32) and `count_host_memory` (off). `cache_ram_mib` (2048) is unchanged.
+- **Explicit arguments.** Both launch paths pass `--cache-ram` and `--ctx-checkpoints`. The command lines are those of the image before, plus `--ctx-checkpoints 32` after `--cache-ram`. That is the model server's own default, so nothing it does changes.
+- **A managed flag.** `--ctx-checkpoints`, `-ctxcp` and `--swa-checkpoints` in `extra_args` are refused on a write. A stored profile that already has one still loads, with a WARN, and the launch drops it.
+- **The term.** Plans, profiles and the catalog show `host_memory`. `/api/status` shows `server_host_memory`. A host on a node counts it only with `count_host_memory` on. A WARN `learnedNeed` event appears when the logged size is more than 5% from the formula.
+- **Peak cycles.** A `GET /api/needs` `peak_cycles` row whose shape no profile has now is kept, with `no_profile: true` and the note "no profile has this shape now".
+- **Going back.** The image before ignores the three settings and refuses no flag. Its launches pass no `--ctx-checkpoints`, which is the same 32.
+
 ## Scheduler image: the TEST / PRODUCTION marking, read only (profiles slice B1)
 
 No agent change, no new port, no schema change, no new route, no new setting. No plan changes.
