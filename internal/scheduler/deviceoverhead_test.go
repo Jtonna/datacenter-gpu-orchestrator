@@ -30,7 +30,9 @@ func devHarness(t *testing.T) *harness {
 	h.c.agents = true
 	h.c.llamaBuild, h.c.servedBuild = "aaaaaaa1", "aaaaaaa1"
 	e := h.llama("e", 0, func(p *core.Profile) { p.ForceNodes, p.TTL, p.LoadTimeout = []string{"a", "b"}, ptrDur(0), time.Hour })
-	h.llama("e1", 0, func(p *core.Profile) { p.ForceNodes, p.TTL, p.Model, p.LoadTimeout = []string{"a"}, ptrDur(0), e.Model, time.Hour })
+	h.llama("e1", 0, func(p *core.Profile) {
+		p.ForceNodes, p.TTL, p.Model, p.LoadTimeout = []string{"a"}, ptrDur(0), e.Model, time.Hour
+	})
 	est := NeedInfo{Need: placer.Estimated(8000), FileBytes: 1 << 32, DeviceMiB: 100}
 	h.needs["e"], h.needs["e1"] = est, est
 	h.viewChanged()
@@ -353,7 +355,7 @@ func TestDeviceOverhead_RowsFromCachedLoadsDroppedAtStart(t *testing.T) {
 		row.Profile = "bench-gone"
 		h.c.putDeviceOverhead(row)
 	}
-	h.c.putDeviceOverhead(devMeasured(shapeOf(e), "a", 1, 300, coldAt, h.c.llamaBuild))   // a cold load (e1)
+	h.c.putDeviceOverhead(devMeasured(shapeOf(e), "a", 1, 300, coldAt, h.c.llamaBuild))                 // a cold load (e1)
 	h.c.putDeviceOverhead(devMeasured(shapeOf(e), "b", 1, 250, coldAt.Add(-time.Hour), h.c.llamaBuild)) // no events
 	flushNeeds(h, st)
 
@@ -529,16 +531,16 @@ func liveShapeHistory(t *testing.T, dir string, ready time.Time) {
 		{"ts": fin, "seq": 26, "type": "loadFinished", "severity": "info", "profile": "bench-gen-auto-2048", "model_file": "m.gguf", "nodes": both, "session_id": sess,
 			"summary": "bench-gen-auto-2048 finished loading in 4.0 s (0.0 MB/s).", "data": map[string]any{"avg_mb_s": 0, "bytes": 63504, "bytes_measured": true, "load_s": 4,
 				"nodes_detail": []map[string]any{{"bytes": 34062, "memory_mib": 430.5, "node": "console-a"}, {"bytes": 29442, "memory_mib": 388.6, "node": "console-b"}},
-				"outcome": "ready", "reason": ""}},
+				"outcome":      "ready", "reason": ""}},
 		mem(fin, 27, "console-a", "load_end"), mem(fin, 28, "console-b", "load_end"),
 		{"ts": fin, "seq": 29, "type": "learnedNeed", "severity": "info", "profile": "bench-gen-auto-2048", "model_file": "m.gguf", "nodes": both, "session_id": sess,
 			"summary": "Measured the memory need of bench-gen-auto-2048 at 820 MiB.", "data": map[string]any{"highest_mib": 820, "measured_mib": 820}},
 		{"ts": read, "seq": 30, "type": "learnedNeed", "severity": "info", "profile": "bench-gen-auto-2048", "model_file": "m.gguf", "nodes": both, "session_id": sess,
 			"summary": "Measured the per-device overhead of bench-gen-auto-2048 on console-a at 82 MiB (2 devices); the figure in force. device_overhead_mib is 600.",
-			"data": map[string]any{"device_overhead_mib": 82, "devices": 2, "in_force_mib": 82, "log_part_mib": 82, "node": "console-a", "rule": "first", "setting_mib": 600}},
+			"data":    map[string]any{"device_overhead_mib": 82, "devices": 2, "in_force_mib": 82, "log_part_mib": 82, "node": "console-a", "rule": "first", "setting_mib": 600}},
 		{"ts": read, "seq": 31, "type": "learnedNeed", "severity": "info", "profile": "bench-gen-auto-2048", "model_file": "m.gguf", "nodes": both, "session_id": sess,
 			"summary": "Measured the per-device overhead of bench-gen-auto-2048 on console-b at 39 MiB (2 devices); the figure in force. device_overhead_mib is 600.",
-			"data": map[string]any{"device_overhead_mib": 39, "devices": 2, "in_force_mib": 39, "log_part_mib": 39, "node": "console-b", "rule": "first", "setting_mib": 600}},
+			"data":    map[string]any{"device_overhead_mib": 39, "devices": 2, "in_force_mib": 39, "log_part_mib": 39, "node": "console-b", "rule": "first", "setting_mib": 600}},
 		{"ts": ready.Add(38 * time.Second).UnixMilli(), "seq": 32, "type": "instanceUnloaded", "severity": "info", "profile": "bench-gen-auto-2048", "model_file": "m.gguf",
 			"nodes": both, "session_id": sess, "summary": "bench-gen-auto-2048 was unloaded (api).", "data": map[string]any{"reason": "api"}},
 	}

@@ -102,9 +102,12 @@ func TestPathSafety(t *testing.T) {
 	outside := t.TempDir()
 	os.WriteFile(filepath.Join(outside, "secret.gguf"), []byte("x"), 0o644)
 	symlinks := os.Symlink(filepath.Join(outside, "secret.gguf"), filepath.Join(d, "escape.gguf")) == nil
+	os.MkdirAll(filepath.Join(d, ".trash", "0123"), 0o755)
+	os.WriteFile(filepath.Join(d, ".trash", "0123", "t.gguf"), make([]byte, 10), 0o644)
 	if symlinks {
 		os.Symlink(filepath.Join(d, "m.gguf"), filepath.Join(d, "inside.gguf"))
 		os.Symlink(outside, filepath.Join(d, "outdir"))
+		os.Symlink(filepath.Join(d, ".trash", "0123", "t.gguf"), filepath.Join(d, "totrash.gguf"))
 	}
 	cases := []struct {
 		name   string
@@ -117,7 +120,11 @@ func TestPathSafety(t *testing.T) {
 		{"/etc/passwd", 400, ReasonInvalid},
 		{"sub", 400, ReasonInvalid}, // a directory
 		{"missing.gguf", 404, ReasonNotFound},
-		{"sub/../m.gguf", 0, ""}, // stays inside: allowed
+		{"sub/n.gguf", 0, ""},                      // a plain sub-folder: allowed
+		{"sub/../m.gguf", 400, ReasonInvalid},      // the shared path rule (internal/modelpath) refuses any ".." part
+		{".trash/0123/t.gguf", 400, ReasonInvalid}, // a dot-folder of the models folder, though the file is there
+		{"sub/.x/t.gguf", 400, ReasonInvalid},
+		{`sub\n.gguf`, 400, ReasonInvalid},
 	}
 	if symlinks {
 		cases = append(cases,
@@ -135,7 +142,12 @@ func TestPathSafety(t *testing.T) {
 				name   string
 				status int
 				reason string
-			}{"inside.gguf", 0, ""})
+			}{"inside.gguf", 0, ""},
+			struct {
+				name   string
+				status int
+				reason string
+			}{"totrash.gguf", 400, ReasonInvalid}) // resolves into a dot-folder
 	} else {
 		t.Log("symlinks cannot be made here; the symlink cases are left to the Linux run")
 	}

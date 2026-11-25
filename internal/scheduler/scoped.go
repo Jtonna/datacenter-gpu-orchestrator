@@ -10,6 +10,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelpath"
 )
 
 // Run-scoped profiles (profiles plan, slice A). A run-scoped profile is a
@@ -115,6 +116,9 @@ func scopedProfile(cfg *config.Config, p *core.Profile, r ScopedLoad) (*core.Pro
 	}
 	if p.Kind != core.KindLlama {
 		return nil, badScoped("%s is a command profile: a scoped load is for llama profiles", p.Name)
+	}
+	if err := modelpath.Check(p.Model); err != nil { // the shared rule, as for any profile
+		return nil, badScoped("%s: model %s", p.Name, err)
 	}
 	name := ScopedName(p.Name, r.Scope)
 	if _, _, taken := cfg.Resolve(name); taken {

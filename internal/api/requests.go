@@ -84,7 +84,8 @@ func resultEnd(res proxy.Result) usage.End {
 	case reason != "":
 		e.Status, e.Reason = usage.StatusFailed, reason
 		e.Message = map[string]string{"stall": "the model stopped sending", "cut": "the zone dropped the connection",
-			"upstream_error": "the model server could not be reached", "aborted": "the answer could not be delivered"}[reason]
+			"upstream_error": "the model server could not be reached", "aborted": "the answer could not be delivered",
+			"unloaded": "it was unloaded while it ran (a forced unload)"}[reason]
 		if res.Err != nil {
 			e.Message += ": " + res.Err.Error()
 		}

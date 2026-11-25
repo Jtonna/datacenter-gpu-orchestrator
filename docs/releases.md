@@ -10,6 +10,24 @@ No agent change, no new port, no schema change, no new route, no new setting. No
 - **What is recorded.** History events and request log rows name the production id; events carry `data.scope`, rows keep the scoped name as `requested`.
 - **Going back.** Nothing is stored. The image before answers a scoped name 404 `model_not_found` and ignores `scope` in a load body (it loads the production profile): a caller checks for `scope` in the answer.
 
+## Scheduler image: a request cut by a forced unload is told why
+
+No agent change, no new port, no schema change, no new route, no new setting.
+
+- **503 unloaded, not 502.** A request in flight whose model is force unloaded used to get 502 "upstream request failed: EOF". The cases are POST /api/unload with force, the models page's force unload, a zone's or node's force unload, and a model delete with interrupt. It now gets 503 with reason `unloaded`, `Retry-After`, and the message "unloaded: <profile> was unloaded". A delete with interrupt adds ": its model file is being deleted"; a node's force unload adds ": force unload of node <id>". This is the shape a loading or queued caller already gets. The scheduler marks the instance before it kills it, and the proxy reads that mark when the model server's connection breaks; it never guesses from the error text.
+- **A stream already under way** keeps its 200. It ends with a final SSE event, `event: error`, whose data is `{"error":{"message","type","code":503,"reason":"unloaded"}}`, then closes cleanly. This is the same form as the stall timeout's error event. A body that is not an event stream and was cut after its first byte is cut as before.
+- **A model server that fails on its own** still answers 502 "upstream request failed", as before.
+- The request log's reason for such a request is `unloaded`, "it was unloaded while it ran (a forced unload)".
+
+## Scheduler image and agent: one rule for a profile's model path
+
+No new port, no schema change, no new route, no new setting. No live profile is touched: every live profile names a plain file (checked 25 Nov 2026).
+
+- **The rule.** A kind: llama profile's `model` is a path relative to `models_dir`, with forward slashes, and no part that starts with a dot. Refused: `.trash/...`, `.incoming/...`, `.potluck-uploads/...` or any other dot-part, an absolute path, a `..` part, a backslash, a drive (`C:`), a NUL byte, an empty part. A plain sub-folder (`sub/a.gguf`) stays allowed. The refusal is a configuration validation error on field `model`, whether or not a file is at that path.
+- **One function, used everywhere a model path is joined to the models folder** (`internal/modelpath`): the configuration check, the scheduler's need and header reads, the llama-server command, the catalog's list of named files (a refused path is listed as not there and never read; the folder scan also skips dot-names), the file-cache evict (also refuses a link that resolves into a dot-folder; `sub/../m.gguf` is now refused) and the agent's host launch (400 `invalid_request`).
+- **A stored profile that already names such a path** is treated as a profile whose file went missing: the scheduler starts with the stored configuration (one WARN), the profile stays, an edit that keeps its path passes, its load is refused at plan time; a write that adds a profile for such a path or points one at it is refused. Older revisions are still shown.
+- **Going back.** The image before accepts these paths again; nothing is stored differently.
+
 ## Scheduler image: newer benchmark tables switch off only the benchmarks; run limit 720 minutes
 
 No agent change, no new port, no schema change, no new route, no new setting.

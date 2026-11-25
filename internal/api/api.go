@@ -4,6 +4,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -578,9 +579,29 @@ func (s *Server) handleV1(w http.ResponseWriter, r *http.Request) {
 		bodyLen = ex.BufferedBytes()
 	}
 	res = proxy.Forward(w, r, proxy.Options{Addr: lease.Addr, Body: ex.Body, BodyLen: bodyLen, StallTimeout: lease.StallTimeout,
-		APIKey: lease.APIKey, Gone: lease.Gone, Live: live})
+		APIKey: lease.APIKey, Gone: lease.Gone, Live: live, CutBy: cutByOf(lease)})
 	if res.Aborted {
 		panic(http.ErrAbortHandler)
+	}
+}
+
+// cutByOf is what the proxy tells a request whose instance was stopped on
+// purpose while it ran (scheduler Lease.CutBy): the 503 unloaded answer a
+// loading or queued caller gets, written the same way (writeSchedError).
+func cutByOf(l *scheduler.Lease) func() *proxy.CutAnswer {
+	if l == nil || l.CutBy == nil {
+		return nil
+	}
+	return func() *proxy.CutAnswer {
+		e := l.CutBy()
+		if e == nil {
+			return nil
+		}
+		msg := string(e.Reason)
+		if e.Message != "" {
+			msg += ": " + e.Message
+		}
+		return &proxy.CutAnswer{Status: e.Status, Message: msg, Type: errType(e.Status), Reason: string(e.Reason), RetryAfter: e.RetryAfter}
 	}
 }
 
@@ -819,10 +840,25 @@ func (m modelRequest) scopedAudit() map[string]any {
 
 func readModelRequest(w http.ResponseWriter, r *http.Request) (modelRequest, bool) {
 	var req modelRequest
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
-	if err := dec.Decode(&req); err != nil || req.Model == "" {
+	b, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
+	if err == nil {
+		err = json.Unmarshal(b, &req)
+	}
+	if err != nil || req.Model == "" {
 		proxy.WriteError(w, http.StatusBadRequest, "body must be JSON with a \"model\" field", "invalid_request_error", "bad request", nil)
 		return req, false
+	}
+	// A scoped load's body is read strictly: a field this version does not
+	// know (say, a model file of its own) is refused, never ignored. The
+	// model file is always the production profile's.
+	if req.scoped().Set() {
+		dec := json.NewDecoder(bytes.NewReader(b))
+		dec.DisallowUnknownFields()
+		var strict modelRequest
+		if err := dec.Decode(&strict); err != nil {
+			proxy.WriteError(w, http.StatusBadRequest, "scoped load: "+err.Error()+" (the model file is the production profile's)", "invalid_request_error", "bad request", nil)
+			return req, false
+		}
 	}
 	return req, true
 }

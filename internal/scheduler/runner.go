@@ -478,7 +478,12 @@ type Lease struct {
 	// Gone is closed when the instance is removed (it exited, was stopped
 	// or its node was lost): a request still forwarded then is ended. Nil
 	// never closes.
-	Gone    <-chan struct{}
+	Gone <-chan struct{}
+	// CutBy, when the instance was stopped on purpose while the request
+	// ran (a forced unload), is the answer the caller gets instead of the
+	// broken connection: 503 unloaded, saying why. It returns nil when the
+	// instance was not stopped on purpose; read it once the upstream failed.
+	CutBy   func() *Error
 	Profile string // profile name, never an alias
 	Alias   bool   // the request named an alias (log it with the caller's address)
 	// StallTimeout is the profile's stall_timeout for the proxy (8.4): the
@@ -569,7 +574,7 @@ func (s *Scheduler) lease(a answer) (*Lease, error) {
 	if p, _, ok := s.resolve(g.Profile); ok {
 		stall = cfg.EffectiveStallTimeout(p)
 	}
-	return &Lease{ID: g.ID, Addr: g.Addr, APIKey: g.APIKey, Gone: g.Gone, Profile: g.Profile, Alias: g.Alias, StallTimeout: stall,
+	return &Lease{ID: g.ID, Addr: g.Addr, APIKey: g.APIKey, Gone: g.Gone, CutBy: g.CutBy, Profile: g.Profile, Alias: g.Alias, StallTimeout: stall,
 		Instance: g.Instance, Session: g.Session, Nodes: g.Nodes, s: s}, nil
 }
 
@@ -740,11 +745,18 @@ func (s *Scheduler) query(ctx context.Context, fn func(c *schedCore)) error {
 // instance if idle; force stops it even if busy or loading. ErrNotLoaded
 // and ErrBusy report why nothing was done.
 func (s *Scheduler) Unload(ctx context.Context, model string, force bool) error {
+	return s.UnloadFor(ctx, model, force, "")
+}
+
+// UnloadFor is Unload with why: a forced unload's requests in flight are
+// answered 503 unloaded, "<profile> was unloaded: <why>" (without why,
+// "<profile> was unloaded").
+func (s *Scheduler) UnloadFor(ctx context.Context, model string, force bool, why string) error {
 	p, _, ok := s.resolve(model)
 	if !ok {
 		return errUnknown(model)
 	}
-	err, qerr := ask(s, ctx, func(c *schedCore) error { return c.unload(p.Name, force) })
+	err, qerr := ask(s, ctx, func(c *schedCore) error { return c.unloadFor(p.Name, force, why) })
 	if qerr != nil {
 		return qerr
 	}

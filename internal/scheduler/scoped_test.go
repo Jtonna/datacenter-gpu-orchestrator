@@ -389,3 +389,20 @@ func TestScoped_QueuedTimesOutAsAnyEntry(t *testing.T) {
 		t.Fatal("entry without its scoped profile")
 	}
 }
+
+// The shared model path rule (internal/modelpath) applies to a scoped copy
+// as to any profile: a production profile whose stored model path breaks it
+// (dotted or absolute) gives no scoped load.
+func TestScoped_ModelPathRule(t *testing.T) {
+	h := realisticScoped(t)
+	for _, bad := range []string{"../x.gguf", "/abs/x.gguf", ".hidden/x.gguf", "a/../../x.gguf"} {
+		h.llama("bad", 1000, func(p *core.Profile) { p.Model = bad })
+		_, err := scopedProfile(h.c.cfg, h.c.cfg.Profiles["bad"], ScopedLoad{Model: "bad", Scope: "s"})
+		if err == nil || err.Status != http.StatusBadRequest || !strings.Contains(err.Message, "model") {
+			t.Errorf("%s: %v", bad, err)
+		}
+	}
+	if _, err := scopedProfile(h.c.cfg, h.c.cfg.Profiles["m"], ScopedLoad{Model: "m", Scope: "s", Ctx: ptrInt(1024)}); err != nil {
+		t.Fatal(err)
+	}
+}

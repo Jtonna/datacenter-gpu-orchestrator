@@ -276,3 +276,62 @@ func TestScopedLoad_RequestLogRow(t *testing.T) {
 	}
 	tr.Ended(usage.End{Status: usage.StatusDone})
 }
+
+// A scoped instance cut by a forced unload gives its caller the same 503
+// "unloaded" answer as any instance; production's request in flight beside
+// it is not cut by it.
+func TestScopedLoad_CutByForcedUnload(t *testing.T) {
+	u := &cutUpstream{started: make(chan struct{}, 4)}
+	e := newConsolesEnv(t, u)
+	body(t, e.post("/v1/chat/completions", chat("alpha"))) // loads production
+	status(t, e.post("/api/load", `{"model":"alpha","scope":"cut1","nodes":["con-3"]}`), http.StatusAccepted)
+	eventually(t, "scoped ready", func() bool {
+		in := instancesOf(t, e)["alpha@cut1"]
+		return in != nil && in["state"] == "ready"
+	})
+	prod := sendCut(t, e.front.URL, `{"model":"alpha","messages":[{"role":"user","content":"hold"}]}`)
+	waitStarted(t, u)
+	scoped := sendCut(t, e.front.URL, `{"model":"alpha@cut1","messages":[{"role":"user","content":"hold"}]}`)
+	waitStarted(t, u)
+	body(t, e.post("/api/unload", `{"model":"alpha@cut1","force":true}`))
+	a := waitCut(t, scoped)
+	if a.status != 503 || a.err["reason"] != "unloaded" || a.err["message"] != "unloaded: alpha@cut1 was unloaded" || a.retryAfter == "" {
+		t.Fatalf("scoped cut: %d %q %s", a.status, a.retryAfter, a.body)
+	}
+	select {
+	case p := <-prod:
+		t.Fatalf("production's request ended with the scoped unload: %d %s", p.status, p.body)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if in := instancesOf(t, e)["alpha"]; in == nil || in["in_flight"].(float64) != 1 {
+		t.Fatalf("production instance %v", in)
+	}
+	body(t, e.post("/api/unload", `{"model":"alpha","force":true}`))
+	if p := waitCut(t, prod); p.status != 503 || p.err["message"] != "unloaded: alpha was unloaded" {
+		t.Fatalf("production cut: %d %s", p.status, p.body)
+	}
+}
+
+// The model file of a scoped load is always the production profile's: a
+// body that names one of its own (dotted, absolute, or any other field this
+// version does not know) is refused 400, never ignored; a path given as the
+// model is no profile (404).
+func TestScopedLoad_NoModelPathOverride(t *testing.T) {
+	e := newConsolesEnv(t, chatOK)
+	for _, b := range []string{
+		`{"model":"alpha","scope":"p","model_file":"../../etc/passwd"}`,
+		`{"model":"alpha","scope":"p","model_path":"/abs/x.gguf"}`,
+		`{"model":"alpha","scope":"p","ctx":8192,"file":".hidden/x.gguf"}`,
+	} {
+		if b := status(t, e.post("/api/load", b), http.StatusBadRequest); !strings.Contains(b, "unknown field") {
+			t.Fatalf("%s", b)
+		}
+		status(t, e.post("/api/plan", b), http.StatusBadRequest)
+	}
+	for _, m := range []string{"../a.gguf", "/models/a.gguf", ".x/a.gguf"} {
+		status(t, e.post("/api/load", `{"model":"`+m+`","scope":"p"}`), http.StatusNotFound)
+	}
+	if _, ok := e.sched.Scoped("alpha@p"); ok {
+		t.Fatal("a refused body left a scoped profile")
+	}
+}
