@@ -37,7 +37,7 @@ func (c *schedCore) takeHistory() []history.Event {
 func (c *schedCore) record(typ, sev, profile, summary string, nodes []string, session string, data map[string]any) {
 	e := history.Event{Ts: c.now.UnixMilli(), Type: typ, Severity: sev, Profile: profile, Nodes: nodes,
 		SessionID: session, Summary: summary, Data: data}
-	if p := c.cfg.Profiles[profile]; p != nil {
+	if p := c.profile(profile); p != nil {
 		e.ModelFile = p.Model
 	}
 	if e.Nodes == nil {
@@ -45,6 +45,10 @@ func (c *schedCore) record(typ, sev, profile, summary string, nodes []string, se
 	}
 	if e.Data == nil {
 		e.Data = map[string]any{}
+	}
+	if base, scope, ok := c.scopeOf(profile); ok { // scoped.go: the production id, and the scope
+		e.Profile = base
+		e.Data["scope"] = scope
 	}
 	c.hist = append(c.hist, e)
 }

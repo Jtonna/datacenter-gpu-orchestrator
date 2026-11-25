@@ -166,3 +166,19 @@ func TestTrendKeepsKindsApart(t *testing.T) {
 		}
 	}
 }
+
+// A GPU figure comes from the stats exporter, which read it age_ms before the
+// heartbeat was built: the node's SampleAgeMS says so. A system figure is
+// read when the heartbeat is built (age 0).
+func TestStatusSampleAgeOfAGPUFigure(t *testing.T) {
+	s, err := ParseStatus(statusDoc(consoleNode, gpuNode))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]int64{"c1": 0, "g1": 400}
+	for _, w := range s.Workers {
+		if w.SampleAgeMS != want[w.ID] {
+			t.Errorf("%s: sample age %d ms, want %d (kind %s)", w.ID, w.SampleAgeMS, want[w.ID], w.AvailKind)
+		}
+	}
+}

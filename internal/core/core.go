@@ -172,6 +172,12 @@ type Profile struct {
 	// characters). It changes nothing in scheduling: a loaded instance is
 	// not stale when only its description changed.
 	Description string
+	// Stage is "test", "production" or "" (not said: the rule decides, see
+	// config.EffectiveStage). DisplayName is an optional name for people.
+	// Neither changes anything in scheduling: a loaded instance is not
+	// stale when only they changed.
+	Stage       string
+	DisplayName string
 }
 
 // HostNode is Profile.Host for a host on a node; HostServer is the profile

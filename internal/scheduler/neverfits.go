@@ -430,9 +430,11 @@ func forcedFitWaitText(pl core.Placement, c *schedCore) string {
 
 // refusesBeforeEvict: a check refuses a forced placement before an eviction
 // (forcedRefusalBeforeEvict, shortEvenFreed): agents membership,
-// forced_fit_check reject, or the reservation gate on.
-func (c *schedCore) refusesBeforeEvict() bool {
-	return c.agents || c.cfg.Defaults.ForcedFitCheck == config.ForcedFitReject || c.gateOn()
+// forced_fit_check reject (always for a scoped profile, fitRule), or the
+// reservation gate on.
+func (c *schedCore) refusesBeforeEvict(p *core.Profile) bool {
+	mode, _ := c.fitRule(p)
+	return c.agents || mode == config.ForcedFitReject || c.gateOn()
 }
 
 // evictWaits: an eviction for p on placement pl with victims passes the

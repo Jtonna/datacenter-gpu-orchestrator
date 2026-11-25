@@ -2,6 +2,54 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: the TEST / PRODUCTION marking, read only (profiles slice B1)
+
+No agent change, no new port, no schema change, no new route, no new setting. No plan changes.
+
+- **Two optional profile fields are read.** `stage` (`test` or `production`) and `display_name` (one line, at most 80 characters, not starting with "TEST - ", not another profile's id, alias or display name). Both are in the configuration schema. Neither changes scheduling: a loaded instance is not stale when only they change.
+- **The effective stage.** `/api/profiles` and the configurations of `/api/models` carry `stage` (the effective one), `stage_set` (false: the rule decided) and `shown_name`, plus `display_name` when set. Absent, the rule decides: a generated profile (the `generated` field, else a `bench-`, `b-` or `m-` id) or one with `force_nodes` is test, any other production. An explicit stage always wins. The shown name is the display name or the id, with "TEST - " before it for a test profile.
+- **Read only in this image.** A profile write (`POST`/`PUT /api/config/profiles`, the MCP profile tools) that leaves both fields out keeps the stored ones. One that sets them to other values is refused 400. A whole-document import keeps them as written.
+- **`@` is refused in profile ids and aliases.** It is kept for run-scoped names (`<id>@<scope>`). A configuration that already holds one does not load: check before deploying.
+- **Going back.** This image writes neither field. A document a later image marked is read by the image before leniently: it refuses configuration writes until forced, and a forced write drops the marks. The rule gives the same split without them.
+
+## Scheduler image: run-scoped profiles (profiles slice A)
+
+No agent change, no new port, no schema change, no new route, no new setting. No plan changes while no scoped profile is held.
+
+- **A production profile with a run's settings, under its own name.** `POST /api/load` and `POST /api/plan` take `scope` and the run's settings (`ctx`, `parallel`, `kv_quant`, `flash_attn`, `host`, `thinking`) beside `nodes`: the load runs as `<production id>@<scope>`, held in memory only, never written to the configuration. It has its own instance, queue entry and back-off, so it runs beside production traffic and neither is admitted to the other's instance. It lives while its entry or instance does. See the runbook, "A run-scoped load".
+- **What is recorded.** History events and request log rows name the production id; events carry `data.scope`, rows keep the scoped name as `requested`.
+- **Going back.** Nothing is stored. The image before answers a scoped name 404 `model_not_found` and ignores `scope` in a load body (it loads the production profile): a caller checks for `scope` in the answer.
+
+## Scheduler image: context fill reads fresh samples and holds for the settle use
+
+No agent change, no new port, no schema change, no new route, no new setting. No plan row changes.
+
+- **Fresh samples.** A `context_fill` mark's "after" reading is now a memory report certainly read after the turn ended. A report's time in the status is when the scheduler received it; the agent read the figure a moment before, when it built the heartbeat. An agent sends its next heartbeat only after the scheduler answered the last one, so a report counts only when the report before it was also received after the turn's end (less a GPU figure's exporter age). The phase waits up to three report intervals (heartbeats, 2 s each) for one. Before, a short turn could read the same report as "before", and growth showed 0. Each machine's reading at a mark gains:
+  - `after_sampled_at` and `before_sampled_at`: when the scheduler received the report;
+  - `after_read_after` and `before_read_after`: the figure was certainly read after this time;
+  - `after_wait_ms`: how long the mark waited after the turn's end;
+  - `samples_during_turn`: how many reports were read inside the turn;
+  - `stale` and `stale_reason`: no fresh report came in time, so growth and KiB per token are not given and no row is written.
+
+  `lowest_mib` counts only reports taken inside the turn, and is absent when there were none. Each mark gains `turn_started_at` and `turn_ended_at`.
+- **The settle hold.** After the load, a `context_fill` phase waits one `free_average_window` (new option `settle_s` overrides it; 0: none) before the first turn. The cycle then has a settle use, and `growth_readings` can be worked out for it. The result gains `settle_hold_ms` and `settle_held_ms`. A run takes about 30 s longer, plus up to three report intervals per mark.
+- **Status.** The benchmark runner reads each agent's `last_seen_ago_s` from `GET /api/status` to know when a report was received (the status's `time` less that age).
+- **Test tools.** In potluck-fake-agents' `--mem-file`, a key `silent:<id or name>` with N withholds that agent's reports for N s (at most 8); the file is read every 100 ms, the silence is checked before every send, and the agent reports at once when it ends.
+- **Going back.** The image before reads benchmark definitions strictly (unknown fields refused), so a benchmark that sets `settle_s` must drop it before going back; benchmarks without it are unchanged. Results stored by this image keep their new fields; the image before leaves them unread.
+
+## Scheduler image: remove a deleted model for good, and the timed clearing (models slice 4)
+
+No agent change, no new port. **Schema: one new table, `model_trash_removed` (tombstones), as step 3 of the `model_migrations` ledger; `model_trash` gains the state value `removing`.** `cfg_migrations` does not move. **The first code that erases a model file.** It acts only on a models folder mounted read-write (live's scheduler mount is read-write since 25 Nov 2026, with the owner's approval); on a read-only folder every removal answers "the models folder is read-only here" and the clearing does nothing.
+
+- **Remove for good.** `POST /api/models/trash/{id}/remove` {comment, dry_run} (permission **models**): erases `<models>/.trash/<id>/<file>`, only for an item in the trash whose file is the plain file of the recorded size; `dry_run` answers the size freed, the profiles, how many days early, `cannot_undo`, `read_only`. Interrupted items, items under way, missing, changed or non-regular files are refused with nothing changed.
+- **The only file removal.** `internal/modelfiles` `RemoveTrashed` builds the path from a checked id and name, checks `.trash` and `.trash/<id>` are plain directories and the file a regular file of the recorded size, checks the folder is writable with access(2) (writing nothing), and on Linux unlinks by descriptor (directories opened without following links, the file re-checked by inode). No other file is ever removed; there is no RemoveAll.
+- **A profile that still names the trashed file.** A profile stored before the model path rule may name `.trash/<id>/...`, or a link may resolve to the trashed file: the removal and the clearing refuse with 409 `in_use_by_profile`, naming the profiles. Slice 3's delete also counts a profile that reaches the file by a link or another path as using it.
+- **Tombstones.** `GET /api/models/trash` lists them apart in `removed`. The saved profile specs are dropped (the configuration history has them); the ids are kept.
+- **Timed clearing.** Setting `model_trash_purge` (default **false**, section retention): at start and hourly, up to 3 due files a pass; history `modelRemoved`, audit signed `potluck`. `purge_on` and `trash_purge_on` follow the setting. A file's clearing date is the later of the date it was given and its deletion plus `model_trash_days` now: lowering the setting never clears a file sooner.
+- **Crash safety.** Record `removing` and tombstone first, then the unlink, then the record goes; the next start completes or undoes a cut removal and never erases a file itself.
+- **MCP.** `remove_deleted_model` (destructive, owner-asked wording); `list_deleted_models` shows tombstones in `removed`.
+- **Going back.** The image before (af916f4) opens the same database and leaves step 3 alone. Its trash list reads `model_trash` only, so a removed file never shows there again; an item whose removal was cut by a kill shows as `removing`, which it does not restore or remove; it settles with this image. If `model_trash_purge` was set, the image before reads it as an unknown setting: configuration writes there need `force` until that key is dropped (as with `model_trash_days` for the image before slice 3).
+
 ## Scheduler image: the context_fill benchmark phase; growth per token, collected only
 
 No agent change, no new port, no schema change, no new route, no new setting. No plan row changes: nothing reads the new figures for a plan.
@@ -10,7 +58,7 @@ No agent change, no new port, no schema change, no new route, no new setting. No
 - **The stop line.** Before a turn, a machine that would fall below `stop_available_mib` with the turn's expected growth stops the step; during a turn, a sample below it cuts the turn off. The step fails with the reason and the model is unloaded; the run goes on unless `stop_on_failure`.
 - **The shape check.** `POST /api/plan` now also answers `ctx`, `parallel` and `shape_shared_with` (the other profiles of the same shape, each with `generated`). `POST /api/plan` also answers `generated` for the profile itself. A `context_fill` step is refused before anything loads when a profile a person wrote shares its shape, or when the scheduler does not say, because its memory peak becomes that shape's stored peak. It is always refused (whatever `refuse_shared_shape` says) when its own profile is a written one, as a fixed `profile` can be, or when the plan does not say `generated`; the reason says to use the recipe `context-fill-recipe`.
 - **Settle use on every unload event.** Each `cycle_peaks` entry gains `settle_use_mib`: what the node gave up one `free_average_window` after ready, taken once, null with `no_settle` when the cycle ended before, the free figure was moving (128 MiB) or there was no reading. The event also carries `profile_kind`, `profile_ctx`, `profile_parallel`.
-- **Growth readings.** `GET /api/needs` `peak_cycles` rows gain `growth_readings` (the latest 16 cycles, newest first): per node `growth_mib` (peak less settle use), `kib_per_token` over the most tokens one request of the cycle's load session held (its whole prompt, reused tokens included, plus its answer: `tokens_in + tokens_out`; read once from the request log, 10 s after the unload), `tokens`, `ctx_share`, `capped` (over 1,024 KiB per token). Only for llama profiles with tokens at least a quarter of ctx × parallel; parallel > 1 is "not computed" in this first cut; a trimmed log says "tokens unknown".
+- **Growth readings.** `GET /api/needs` `peak_cycles` rows gain `growth_readings` (the latest 16 cycles, newest first): per node `growth_mib` (peak less settle use), `kib_per_token` over the most tokens one request of the cycle's load session held (its whole prompt, reused tokens included, plus its answer: `tokens_in + tokens_out`; read once from the request log, 10 s after the unload), `tokens`, `ctx_share`, `capped` (over 1,024 KiB per token). Only for llama profiles with tokens at least a quarter of ctx × parallel; parallel > 1 is "not computed" in this first cut; a trimmed log says "tokens unknown"; an unload event from before the profile's kind was stored says "not computed: recorded before the profile's kind was stored" (it is not counted as a non-llama profile).
 - **Test tools.** fakellama answers `/tokenize`, and with `FAKELLAMA_COUNT_PROMPT` counts chat prompts by characters; `potluck-fake-agents --mem-file FILE` lets a node report a scripted MemAvailable.
 - **Going back.** The image before ignores the new event fields and a stored benchmark with a `context_fill` phase fails validation there (unknown phase type); runs already stored keep their `fill` result as plain JSON.
 

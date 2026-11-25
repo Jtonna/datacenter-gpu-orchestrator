@@ -195,3 +195,29 @@ func TestPlanCacheFields(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
+// A node's figure carries when its agent took it: the status's time less the
+// agent's last_seen_ago_s. Without either it is not known (zero).
+func TestParseStatus_SampleTime(t *testing.T) {
+	s, err := ParseStatus([]byte(`{"time":"2026-11-25T12:57:30.000Z","view":{"nodes":[
+	    {"id":"a","hostname":"ps5-a","agent":{"mem_available_mib":11000,"last_seen_ago_s":1.25}},
+	    {"id":"b","hostname":"ps5-b","agent":{"mem_available_mib":9000}},
+	    {"id":"h","hostname":"host-1","local":true,"free_mib":7000}]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"a": "2026-11-25T12:57:28.75Z", "b": "", "h": ""}
+	for _, w := range s.Workers {
+		got := ""
+		if !w.SampleAt.IsZero() {
+			got = w.SampleAt.UTC().Format(time.RFC3339Nano)
+		}
+		if got != want[w.ID] {
+			t.Errorf("%s: sample at %q, want %q", w.ID, got, want[w.ID])
+		}
+	}
+	old, _ := ParseStatus([]byte(`{"view":{"nodes":[{"id":"a","agent":{"mem_available_mib":11000,"last_seen_ago_s":1}}]}}`))
+	if !old.Workers[0].SampleAt.IsZero() {
+		t.Errorf("no status time: %v", old.Workers[0].SampleAt)
+	}
+}

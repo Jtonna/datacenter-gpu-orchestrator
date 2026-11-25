@@ -1,5 +1,7 @@
 package benchspec
 
+import "time"
+
 // The context_fill phase (B8): a conversation that fills the model's
 // context to a chosen share with generated filler, taking a memory reading
 // at each mark, and asking back the facts planted in the filler at the end.
@@ -17,6 +19,7 @@ const (
 	DefaultFillAnswerTok = 128
 	MaxFillAnswerTok     = 1024
 	DefaultFillSeed      = 1
+	MaxSettleS           = 600
 )
 
 // defaultMarks are the marks when marks_pct is not given (those below the target, then the target).
@@ -64,6 +67,15 @@ func (p *Phase) StopLine() int {
 	return *p.StopAvailableMiB
 }
 
+// SettleHold is settle_s as a duration, and whether it was given (else the
+// runner holds for the scheduler's free_average_window).
+func (p *Phase) SettleHold() (time.Duration, bool) {
+	if p.SettleS == nil {
+		return 0, false
+	}
+	return time.Duration(*p.SettleS) * time.Second, true
+}
+
 // RefusesSharedShape is refuse_shared_shape (default true).
 func (p *Phase) RefusesSharedShape() bool { return p.RefuseSharedShape == nil || *p.RefuseSharedShape }
 
@@ -108,6 +120,9 @@ func validateContextFill(p *Phase, w func(string, ...any)) {
 	}
 	if p.StopAvailableMiB != nil && (*p.StopAvailableMiB < MinStopAvailMiB || *p.StopAvailableMiB > MaxStopAvailMiB) {
 		w("stop_available_mib must be %d to %d", MinStopAvailMiB, MaxStopAvailMiB)
+	}
+	if p.SettleS != nil && (*p.SettleS < 0 || *p.SettleS > MaxSettleS) {
+		w("settle_s must be 0 to %d", MaxSettleS)
 	}
 	if p.MaxTokens < 0 || p.MaxTokens > MaxFillAnswerTok {
 		w("max_tokens must be 1 to %d (the last turn's answer)", MaxFillAnswerTok)

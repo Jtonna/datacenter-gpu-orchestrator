@@ -29,10 +29,10 @@ func TestModelTrash_LedgerAndWayBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ModelVersion() != 2 {
-		t.Fatalf("model_migrations knows %d steps, want 2 (pins, trash)", ModelVersion())
+	if ModelVersion() < 2 {
+		t.Fatalf("model_migrations knows %d steps, want at least 2 (pins, trash)", ModelVersion())
 	}
-	if v := countRows(t, s, `SELECT MAX(version) FROM model_migrations`); v != 2 {
+	if v := countRows(t, s, `SELECT MAX(version) FROM model_migrations`); v != ModelVersion() {
 		t.Fatalf("model_migrations at %d", v)
 	}
 	if v := countRows(t, s, `SELECT MAX(version) FROM cfg_migrations`); v != len(migrations) {
@@ -81,7 +81,7 @@ func TestModelTrash_LedgerAndWayBack(t *testing.T) {
 		*got.Profiles["alpha"].Ctx != 4096 || got.Profiles["alpha"].Aliases[0] != "al" || got.Actor != "alex" {
 		t.Fatalf("after the way back: %+v %v", got, err)
 	}
-	if v := countRows(t, s2, `SELECT COUNT(*) FROM model_migrations`); v != 2 {
+	if v := countRows(t, s2, `SELECT COUNT(*) FROM model_migrations`); v != ModelVersion() {
 		t.Fatalf("model_migrations rows %d", v)
 	}
 

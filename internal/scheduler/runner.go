@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/fleet"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
@@ -118,6 +120,7 @@ type snapshot struct {
 	upstream map[string]string
 	upKeys   map[string]string // the key of an upstream that wants one (a host on a node)
 	upPlace  map[string]UpstreamPlacement
+	scoped   map[string]*core.Profile // scoped.go: the run-scoped profiles held now (never modified)
 }
 
 // UpstreamPlacement is where a ready instance runs, for a passthrough
@@ -271,7 +274,7 @@ func (s *Scheduler) step(ev event) {
 			place[name] = UpstreamPlacement{Instance: in.iid, Session: in.sessionID, Nodes: s.core.leaseNodesOf(in)} // built once per instance
 		}
 	}
-	s.snap.Store(&snapshot{running: s.core.runningList(), recent: s.core.recentLoads(), profiles: s.core.profileStates(), upstream: up, upKeys: keys, upPlace: place})
+	s.snap.Store(&snapshot{running: s.core.runningList(), recent: s.core.recentLoads(), profiles: s.core.profileStates(), upstream: up, upKeys: keys, upPlace: place, scoped: maps.Clone(s.core.scoped)})
 	for _, ef := range s.core.takeEffects() {
 		s.exec(ef)
 	}
@@ -525,7 +528,7 @@ func (s *Scheduler) Acquire(ctx context.Context, model string) (*Lease, error) {
 // X-Bench-Run header). The id only tags the history records of the load the
 // request causes (data.bench_run); scheduling is unchanged.
 func (s *Scheduler) AcquireFor(ctx context.Context, model, benchRun string) (*Lease, error) {
-	p, alias, ok := s.Config().Resolve(model)
+	p, alias, ok := s.resolve(model)
 	if !ok {
 		return nil, errUnknown(model)
 	}
@@ -568,7 +571,7 @@ func (s *Scheduler) lease(a answer) (*Lease, error) {
 	g := a.grant
 	cfg := s.Config()
 	stall := cfg.Defaults.StallTimeout // the profile was deleted since the grant
-	if p := cfg.Profiles[g.Profile]; p != nil {
+	if p, _, ok := s.resolve(g.Profile); ok {
 		stall = cfg.EffectiveStallTimeout(p)
 	}
 	return &Lease{ID: g.ID, Addr: g.Addr, APIKey: g.APIKey, Gone: g.Gone, CutBy: g.CutBy, Profile: g.Profile, Alias: g.Alias, StallTimeout: stall,
@@ -586,7 +589,7 @@ func (s *Scheduler) Load(ctx context.Context, model string) error {
 // LoadFor is Load for a request that carries a bench run id (the X-Bench-Run
 // header): the id only tags the history records of the load (data.bench_run).
 func (s *Scheduler) LoadFor(ctx context.Context, model, benchRun string) error {
-	p, _, ok := s.Config().Resolve(model)
+	p, _, ok := s.resolve(model)
 	if !ok {
 		return errUnknown(model)
 	}
@@ -749,7 +752,7 @@ func (s *Scheduler) Unload(ctx context.Context, model string, force bool) error 
 // answered 503 unloaded, "<profile> was unloaded: <why>" (without why,
 // "<profile> was unloaded").
 func (s *Scheduler) UnloadFor(ctx context.Context, model string, force bool, why string) error {
-	p, _, ok := s.Config().Resolve(model)
+	p, _, ok := s.resolve(model)
 	if !ok {
 		return errUnknown(model)
 	}
@@ -771,7 +774,7 @@ func (s *Scheduler) CancelQueued(ctx context.Context, profiles []string) (int, e
 // new and stops once its runs finish (drain.go); the answer is the ETA in
 // seconds (nil: idle and stopped now, or no run length known yet).
 func (s *Scheduler) Drain(ctx context.Context, model string) (*float64, error) {
-	p, _, ok := s.Config().Resolve(model)
+	p, _, ok := s.resolve(model)
 	if !ok {
 		return nil, errUnknown(model)
 	}
@@ -788,7 +791,7 @@ func (s *Scheduler) Drain(ctx context.Context, model string) (*float64, error) {
 
 // Undrain takes a drain back: the instance admits again.
 func (s *Scheduler) Undrain(ctx context.Context, model string) error {
-	p, _, ok := s.Config().Resolve(model)
+	p, _, ok := s.resolve(model)
 	if !ok {
 		return errUnknown(model)
 	}
@@ -813,7 +816,7 @@ func (s *Scheduler) Status(ctx context.Context) (Status, error) {
 // Plan is POST /api/plan: what a request for model would meet now. It
 // changes nothing.
 func (s *Scheduler) Plan(ctx context.Context, model string) (PlanReport, error) {
-	p, alias, ok := s.Config().Resolve(model)
+	p, alias, ok := s.resolve(model)
 	if !ok {
 		return PlanReport{}, errUnknown(model)
 	}
@@ -877,7 +880,7 @@ func (s *Scheduler) ForgetShape(ctx context.Context, shape string) (bool, error)
 // Upstream is the address for /upstream/{model}: set only while the
 // profile's instance is ready or draining. It never waits.
 func (s *Scheduler) Upstream(model string) (string, bool) {
-	p, _, ok := s.Config().Resolve(model)
+	p, _, ok := s.resolve(model)
 	if !ok {
 		return "", false
 	}
@@ -888,7 +891,7 @@ func (s *Scheduler) Upstream(model string) (string, bool) {
 // UpstreamPlacement is where Upstream(model)'s instance runs; false when
 // it is not ready. It never waits and takes no lease.
 func (s *Scheduler) UpstreamPlacement(model string) (UpstreamPlacement, bool) {
-	p, _, ok := s.Config().Resolve(model)
+	p, _, ok := s.resolve(model)
 	if !ok {
 		return UpstreamPlacement{}, false
 	}
@@ -899,7 +902,7 @@ func (s *Scheduler) UpstreamPlacement(model string) (UpstreamPlacement, bool) {
 // UpstreamKey is the key requests to Upstream(model) must carry as
 // "Authorization: Bearer <key>"; "" when none (phase 6: a host on a node).
 func (s *Scheduler) UpstreamKey(model string) string {
-	p, _, ok := s.Config().Resolve(model)
+	p, _, ok := s.resolve(model)
 	if !ok {
 		return ""
 	}

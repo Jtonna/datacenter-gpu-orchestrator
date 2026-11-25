@@ -129,6 +129,7 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 		HistoryMemoryEvents: raw.HistoryMemoryEvents,
 		UsageRequestDays:    raw.UsageRequestDays, UsageHourlyDays: raw.UsageHourlyDays, LoopStepWarnMs: raw.LoopStepWarnMs, ModelsDiskBudgetGB: raw.ModelsDiskBudgetGB,
 		ModelTrashDays:      raw.ModelTrashDays,
+		ModelTrashPurge:     raw.ModelTrashPurge,
 		RequestsLiveTimings: raw.RequestsLiveTimings,
 		DefaultUserName:     strings.TrimSpace(raw.DefaultUserName),
 		LocalProbeCmd:       raw.LocalProbeCmd,
@@ -227,6 +228,7 @@ type rawConfig struct {
 	LoopStepWarnMs      int                         `yaml:"loop_step_warn_ms" json:"loop_step_warn_ms,omitempty"`
 	ModelsDiskBudgetGB  int                         `yaml:"models_disk_budget_gb" json:"models_disk_budget_gb,omitempty"`
 	ModelTrashDays      int                         `yaml:"model_trash_days" json:"model_trash_days,omitempty"`
+	ModelTrashPurge     bool                        `yaml:"model_trash_purge" json:"model_trash_purge,omitempty"`
 	DefaultUserName     string                      `yaml:"default_user_name" json:"default_user_name,omitempty"`
 	UIModelActions      *bool                       `yaml:"ui_model_actions" json:"-"` // retired (RetiredSettings): read from a file and ignored
 	LocalProbeCmd       string                      `yaml:"local_probe_cmd" json:"local_probe_cmd,omitempty"`
@@ -296,6 +298,8 @@ type ProfileSpec struct {
 	LoadStallTimeout *duration `yaml:"load_stall_timeout" json:"load_stall_timeout,omitempty"`
 	Host             string    `yaml:"host" json:"host,omitempty"`
 	Description      string    `yaml:"description" json:"description,omitempty"`
+	Stage            string    `yaml:"stage" json:"stage,omitempty"`
+	DisplayName      string    `yaml:"display_name" json:"display_name,omitempty"`
 }
 
 func (r *ProfileSpec) toCore(name string) *core.Profile {
@@ -306,6 +310,7 @@ func (r *ProfileSpec) toCore(name string) *core.Profile {
 		CheckEndpoint: r.CheckEndpoint, Aliases: r.Aliases, Generated: r.Generated,
 		TTL: r.TTL.ptr(), LoadTimeout: time.Duration(r.LoadTimeout), StallTimeout: r.StallTimeout.ptr(),
 		LoadStallTimeout: r.LoadStallTimeout.ptr(), Description: r.Description,
+		Stage: r.Stage, DisplayName: r.DisplayName,
 	}
 	if r.Host == core.HostNode {
 		p.Host = core.HostNode // "" and "server": the scheduler's machine, as before
