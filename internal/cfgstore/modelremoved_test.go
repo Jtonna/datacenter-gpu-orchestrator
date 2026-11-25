@@ -207,7 +207,7 @@ func TestRemoveFinish_SettlesEveryLeftover(t *testing.T) {
 	}
 	gone("bbbbbbbbbbbb")
 	tb, err := s.RemovedGet(ctx, "bbbbbbbbbbbb")
-	if err != nil || tb.State != RemovedRemoved || tb.Reason != RemovedByRepair || tb.RemovedBy != "potluck" || tb.File != "b.gguf" || tb.SizeBytes != 42 ||
+	if err != nil || tb.State != RemovedRemoved || tb.Reason != "repaired at start" || tb.RemovedBy != "potluck" || tb.File != "b.gguf" || tb.SizeBytes != 42 ||
 		tb.DeletedBy != "alex" || tb.RemovedAt != 4000 || len(tb.ProfileIDs) != 2 || tb.Revision != 7 {
 		t.Fatalf("no tombstone: %+v %v", tb, err)
 	}

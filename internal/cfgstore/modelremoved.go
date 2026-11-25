@@ -35,8 +35,8 @@ const (
 	RemovedByClearing = "clearing" // the timed clearing after model_trash_days
 	// RemovedByRepair: a start completed a removal whose record was removing
 	// with the file gone but no tombstone (not a state a kill produces: a
-	// damaged or hand-edited database).
-	RemovedByRepair = "repair"
+	// damaged or hand-edited database). Written as the reason, signed potluck.
+	RemovedByRepair = "repaired at start"
 )
 
 // RemovedRecord is the tombstone of a model file removed for good. The

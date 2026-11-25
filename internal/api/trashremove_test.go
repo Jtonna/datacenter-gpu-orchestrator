@@ -213,6 +213,24 @@ func TestModelRemove_ReadOnly(t *testing.T) {
 // the file is still there, and never erases a file itself.
 func TestModelRemove_KillAndRepair(t *testing.T) {
 	ctx := context.Background()
+	t.Run("killed before the record is written", func(t *testing.T) {
+		te := newTrashEnv(t)
+		te.setup()
+		id := te.trashed("a.gguf")
+		te.stop = "remove:before-record"
+		te.cdo("POST", "/api/models/trash/"+id+"/remove", `{"comment":"x"}`, trashUI)
+		te.stop = ""
+		s2 := te.restart()
+		if r, _ := te.cs.TrashGet(ctx, id); r == nil || r.State != cfgstore.TrashTrashed {
+			t.Fatalf("after the start: %+v", r)
+		}
+		if _, err := te.cs.RemovedGet(ctx, id); !errors.Is(err, cfgstore.ErrNotFound) {
+			t.Fatalf("tombstone: %v", err)
+		}
+		if !te.inTrash(id, "a.gguf") || len(s2.trash.repairList()) != 0 {
+			t.Fatalf("file %v, repairs %v", te.inTrash(id, "a.gguf"), s2.trash.repairList())
+		}
+	})
 	t.Run("killed after the record, before the unlink", func(t *testing.T) {
 		te := newTrashEnv(t)
 		te.setup()
@@ -276,13 +294,53 @@ func TestModelRemove_KillAndRepair(t *testing.T) {
 		te := newTrashEnv(t)
 		te.setup()
 		id := te.trashed("a.gguf")
+		te.stop = "remove:after-finish"
 		te.cdo("POST", "/api/models/trash/"+id+"/remove", `{"comment":"x"}`, trashUI)
+		te.stop = ""
 		s2 := te.restart()
 		if n := s2.trash.repairList(); len(n) != 0 {
 			t.Fatalf("repairs: %v", n)
 		}
-		if tb, err := te.cs.RemovedGet(ctx, id); err != nil || tb.State != cfgstore.RemovedRemoved {
+		if _, err := te.cs.TrashGet(ctx, id); !errors.Is(err, cfgstore.ErrNotFound) {
+			t.Fatalf("record: %v", err)
+		}
+		if tb, err := te.cs.RemovedGet(ctx, id); err != nil || tb.State != cfgstore.RemovedRemoved || tb.RemovedAt == 0 {
 			t.Fatalf("tombstone: %+v %v", tb, err)
+		}
+		// the kill came before the event and the audit entry: the start has
+		// nothing to find (no record), so they are missing; the tombstone is
+		// the account of the removal
+		if es := auditOf(t, te.env, "section=models&action=remove"); len(es) != 0 {
+			t.Fatalf("audit: %v", es)
+		}
+		if ev := te.removedEvents(); len(ev) != 0 {
+			t.Fatalf("history: %+v", ev)
+		}
+	})
+	t.Run("the clearing killed after the unlink", func(t *testing.T) {
+		te := newTrashEnv(t)
+		te.setup()
+		id := te.trashed("a.gguf")
+		te.setting(`{"model_trash_purge":true}`)
+		te.advance(31 * 24 * time.Hour)
+		te.stop = "remove:after-unlink"
+		te.api.clearTrash(ctx)
+		te.stop = ""
+		if te.inTrash(id, "a.gguf") {
+			t.Fatal("not erased")
+		}
+		if r, _ := te.cs.TrashGet(ctx, id); r == nil || r.State != cfgstore.TrashRemoving {
+			t.Fatalf("before the start: %+v", r)
+		}
+		s2 := te.restart()
+		if _, err := te.cs.TrashGet(ctx, id); !errors.Is(err, cfgstore.ErrNotFound) {
+			t.Fatalf("record after the start: %v", err)
+		}
+		if tb, err := te.cs.RemovedGet(ctx, id); err != nil || tb.State != cfgstore.RemovedRemoved || tb.Reason != cfgstore.RemovedByClearing {
+			t.Fatalf("tombstone: %+v %v", tb, err)
+		}
+		if n := s2.trash.repairList(); len(n) != 1 || !strings.Contains(n[0], "completed") {
+			t.Fatalf("repairs: %v", n)
 		}
 	})
 	// Not a state a kill can produce (step 1 writes the record's removing and
@@ -303,7 +361,7 @@ func TestModelRemove_KillAndRepair(t *testing.T) {
 			t.Fatalf("the record stayed after the start: %v", err)
 		}
 		tb, err := te.cs.RemovedGet(ctx, id)
-		if err != nil || tb.State != cfgstore.RemovedRemoved || tb.Reason != cfgstore.RemovedByRepair || tb.RemovedBy != "potluck" || tb.File != "a.gguf" || tb.RemovedAt == 0 {
+		if err != nil || tb.State != cfgstore.RemovedRemoved || tb.Reason != "repaired at start" || tb.RemovedBy != "potluck" || tb.File != "a.gguf" || tb.RemovedAt == 0 {
 			t.Fatalf("tombstone: %+v %v", tb, err)
 		}
 		if n := s2.trash.repairList(); len(n) != 1 || !strings.Contains(n[0], "completed") {
@@ -465,5 +523,32 @@ func TestTrashClearing_ReadOnlyLineOnlyWhenSomethingIsDue(t *testing.T) {
 	te.api.clearTrash(ctx) // now a.gguf is due
 	if n := strings.Count(te.logs.String(), "clearing waits"); n != 1 {
 		t.Fatalf("waits lines: %d", n)
+	}
+}
+
+// Before model_trash_purge is turned on the owner sees, per item, the date it
+// would be cleared (purge_at: the later of the date it was given at the
+// delete and its deletion plus model_trash_days now), the list says
+// purge_on false, and nothing is cleared, even when the date has passed.
+func TestTrashList_ClearingDateShownWhilePurgeOff(t *testing.T) {
+	ctx := context.Background()
+	te := newTrashEnv(t)
+	te.setup()
+	id := te.trashed("a.gguf")
+	rec, _ := te.cs.TrashGet(ctx, id)
+	want := rec.DeletedAt + 30*dayMS
+	_, m := te.cdo("GET", "/api/models/trash", "", nil)
+	items, _ := m["items"].([]any)
+	if m["purge_on"] != false || len(items) != 1 || int64(items[0].(map[string]any)["purge_at"].(float64)) != want || int64(m["next_purge_at"].(float64)) != want || m["trash_days"] != float64(30) {
+		t.Fatalf("list with purge off: %v", m)
+	}
+	te.setting(`{"model_trash_days":60}`) // raised: the date moves with it
+	_, m = te.cdo("GET", "/api/models/trash", "", nil)
+	if got := int64(m["items"].([]any)[0].(map[string]any)["purge_at"].(float64)); got != rec.DeletedAt+60*dayMS {
+		t.Fatalf("after raising model_trash_days: %d", got)
+	}
+	te.advance(90 * 24 * time.Hour) // overdue
+	if got := te.api.clearTrash(ctx); len(got) != 0 || !te.inTrash(id, "a.gguf") {
+		t.Fatalf("cleared while purge is off: %v", got)
 	}
 }

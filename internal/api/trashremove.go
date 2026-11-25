@@ -108,6 +108,9 @@ func (s *Server) removeTrashed(ctx context.Context, rec *cfgstore.TrashRecord, r
 	if dry {
 		return nil, readOnly, nil
 	}
+	if s.trashStop("remove:before-record") {
+		return nil, false, &removeRefusal{status: http.StatusInternalServerError, reason: "stopped", msg: "stopped before the record (test)"}
+	}
 	now := s.opts.Now().UnixMilli()
 	// 1. the record says removing; the tombstone is written
 	tomb, err := s.store.RemoveBegin(rec.ID, reason, by, comment, now)
@@ -142,6 +145,9 @@ func (s *Server) removeTrashed(ctx context.Context, rec *cfgstore.TrashRecord, r
 	now = s.opts.Now().UnixMilli()
 	if err := s.store.RemoveFinish(rec.ID, now); err != nil {
 		s.log.Warn("model file erased, its record not completed: the next start completes it", "file", rec.File, "trash_id", rec.ID, "err", err)
+	}
+	if s.trashStop("remove:after-finish") {
+		return nil, false, &removeRefusal{status: http.StatusInternalServerError, reason: "stopped", msg: "stopped after the record was completed (test)"}
 	}
 	tomb.State, tomb.RemovedAt, tomb.UpdatedAt = cfgstore.RemovedRemoved, now, now
 	md.RemoveEmptyTrashDir(rec.ID)
