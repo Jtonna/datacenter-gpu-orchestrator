@@ -129,6 +129,12 @@ func (s *Server) profileEntriesOf(ctx context.Context, cfg *config.Config) []map
 			if rep.Warning != "" {
 				plan["warning"] = rep.Warning
 			}
+			if rep.Ctx > 0 {
+				plan["ctx"] = rep.Ctx // the context the plan is for (the trained context when ctx is above it)
+			}
+			if rep.CtxNote != "" {
+				plan["ctx_note"] = rep.CtxNote
+			}
 			if rep.TightFit {
 				plan["tight_fit"] = true // the reason says where and by how much
 			}

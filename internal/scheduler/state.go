@@ -476,6 +476,9 @@ func newCore(cfg *config.Config, clock Clock, view fleet.View, needs NeedProvide
 	if log == nil {
 		log = slog.Default()
 	}
+	if tr, ok := needs.(trainedCtxReader); ok {
+		cfg = realCtx(cfg, tr) // realctx.go: planned at the trained context
+	}
 	return &schedCore{
 		cfg: cfg, clock: clock, view: view, needs: needs, build: build, log: log,
 		insts: map[string]*inst{}, entries: map[string]*entry{}, nodes: map[core.NodeID]*nodeState{},

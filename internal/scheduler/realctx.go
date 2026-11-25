@@ -1,0 +1,129 @@
+package scheduler
+
+import (
+	"fmt"
+	"maps"
+	"slices"
+	"strings"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelpath"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
+)
+
+// The model server caps every slot at the model's trained context
+// (llama.cpp tools/server/server-context.cpp n_ctx_slot: min(n_ctx_seq,
+// n_ctx_train)), and says so only in its log. A profile whose ctx is above
+// the trained context is therefore planned and launched AT the trained
+// context: what the server can use, and the memory it then takes.
+// core.Profile.CtxAsked keeps the configured ctx and the plan says so. A
+// profile with ctx_above_trained keeps its ctx and is launched with
+// --override-kv <arch>.context_length=int:<ctx>, which lifts the cap
+// (llama-model-loader get_key honours the override).
+
+// trainedCtxReader is a need provider that reads model headers.
+type trainedCtxReader interface {
+	// TrainedCtx is the model file's trained context and architecture;
+	// false when the header cannot be read or names none.
+	TrainedCtx(model string) (ctx int, arch string, ok bool)
+}
+
+// TrainedCtx implements trainedCtxReader (the header is cached: metaOf).
+func (c *ConfigNeeds) TrainedCtx(model string) (int, string, bool) {
+	c.mu.Lock()
+	defer supervise.Unlocked("scheduler", c.mu.Unlock)
+	path, err := modelpath.Join(c.Cfg.ModelsDir, model)
+	if err != nil {
+		return 0, "", false
+	}
+	meta, err := c.metaOf(path)
+	if err != nil || meta.ContextLength == 0 {
+		return 0, "", false
+	}
+	return int(meta.ContextLength), meta.Architecture, true
+}
+
+var _ trainedCtxReader = (*ConfigNeeds)(nil)
+
+// realCtx is cfg with every llama profile whose ctx is above its model's
+// trained context planned at the trained context (or, with
+// ctx_above_trained, given the override). cfg itself is never changed: a
+// changed configuration is a copy.
+func realCtx(cfg *config.Config, tr trainedCtxReader) *config.Config {
+	if cfg == nil || tr == nil {
+		return cfg
+	}
+	var out *config.Config
+	for _, name := range slices.Sorted(maps.Keys(cfg.Profiles)) {
+		p := cfg.Profiles[name]
+		if p == nil || p.Kind != core.KindLlama || p.Ctx <= 0 || p.Model == "" {
+			continue
+		}
+		trained, arch, ok := tr.TrainedCtx(p.Model)
+		if !ok || trained <= 0 || p.Ctx <= trained {
+			continue
+		}
+		q := *p
+		if p.CtxAboveTrained {
+			if hasCtxOverride(p.ExtraArgs) || arch == "" {
+				continue
+			}
+			q.ExtraArgs = append(slices.Clone(p.ExtraArgs), "--override-kv", fmt.Sprintf("%s.context_length=int:%d", arch, p.Ctx))
+		} else {
+			q.CtxAsked, q.Ctx = p.Ctx, trained
+		}
+		if out == nil {
+			cp := *cfg
+			cp.Profiles = maps.Clone(cfg.Profiles)
+			out = &cp
+		}
+		out.Profiles[name] = &q
+	}
+	if out == nil {
+		return cfg
+	}
+	return out
+}
+
+// hasCtxOverride says whether extra args already override the trained context.
+func hasCtxOverride(args []string) bool {
+	for i, a := range args {
+		v := ""
+		switch {
+		case a == "--override-kv" && i+1 < len(args):
+			v = args[i+1]
+		case strings.HasPrefix(a, "--override-kv="):
+			v = strings.TrimPrefix(a, "--override-kv=")
+		}
+		if strings.Contains(v, ".context_length=") {
+			return true
+		}
+	}
+	return false
+}
+
+// ctxNote is what a plan says about the context it plans: the trained-
+// context cap, or a running instance whose server runs another context.
+func ctxNote(p *core.Profile) string {
+	if p == nil || p.CtxAsked <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("ctx %s is above this model's trained context of %s; the server runs it at %s", groupThousands(p.CtxAsked), groupThousands(p.Ctx), groupThousands(p.Ctx))
+}
+
+// groupThousands writes n with thousands separators.
+func groupThousands(n int) string {
+	s := fmt.Sprint(n)
+	if n < 0 {
+		return "-" + groupThousands(-n)
+	}
+	var b strings.Builder
+	for i, c := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			b.WriteByte(',')
+		}
+		b.WriteRune(c)
+	}
+	return b.String()
+}

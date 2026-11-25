@@ -486,7 +486,12 @@ const (
 
 // PlanReport is the answer to POST /api/plan. Nothing is changed by it.
 type PlanReport struct {
-	Profile   string
+	Profile string
+	// Ctx is the context per slot the plan is for (llama), and CtxNote says
+	// when that is not the configured ctx: "ctx 8,192 is above this model's
+	// trained context of 2,048; the server runs it at 2,048" (realctx.go).
+	Ctx       int
+	CtxNote   string `view:"omitempty"`
 	Alias     bool
 	Action    PlanAction
 	Instance  string // state of the profile's instance, if any

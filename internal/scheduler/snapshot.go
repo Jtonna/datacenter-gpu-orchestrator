@@ -301,6 +301,9 @@ func (c *schedCore) dryPlanOf(profile string, p *core.Profile) (r PlanReport) {
 		r.Action, r.Reason = PlanReject, string(ReasonUnknownModel)
 		return r
 	}
+	if p.Kind == core.KindLlama {
+		r.Ctx, r.CtxNote = p.Ctx, ctxNote(p) // realctx.go
+	}
 	if c.shutdown {
 		r.Action, r.Reason = PlanReject, string(ReasonShuttingDown)
 		return r
