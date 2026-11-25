@@ -1335,14 +1335,14 @@ input.cb{width:16px;height:16px;margin:0;accent-color:#0f6b4a}
 .mdl-acts{display:flex;gap:8px;flex-wrap:wrap}
 .mdl-acts [data-off]{opacity:.55;cursor:not-allowed}
 .mdl-inst{display:flex;flex-direction:column;gap:6px;padding:8px 0;border-top:1px solid var(--line)}
-[data-loaded] .dh+.mdl-inst{border-top:0}
+.mdl-loaded-h+.mdl-inst{border-top:0}
 .mdl-inst-h{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .mdl-inst-f{font-size:12.5px}
 .mdl-inst .nr{grid-template-columns:minmax(0,1fr) auto;padding:6px 0 2px;border-top:0;gap:4px 12px}
 .mdl-inst .nr>.bar{grid-column:1/-1;order:3}
 .mdl-inst .nr>:nth-child(4){grid-column:1/-1;order:4;font-size:12px}
 .mdl-inst .nr .fig{text-align:right}
-[data-loaded]>.dh{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.mdl-loaded-h{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
 [data-loaded] .mdl-key{justify-content:flex-start}
 .mdl-cfg{display:flex;flex-direction:column;margin:0 -16px}
 .mdl-cfg .dh{height:auto;min-height:44px;flex-wrap:wrap;padding:6px 16px}

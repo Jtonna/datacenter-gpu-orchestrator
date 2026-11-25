@@ -325,7 +325,7 @@ function loadedBlock(st, insts) {
   const anyMem = insts.some(i => { const x = live(i.profile); return x && (x.nodes || []).some(n => nodeMemory(n).total_mib > 0); });
   const allLoading = insts.every(i => i.state === 'starting');
   return h('section.zpart', { key: 'loaded', 'data-loaded': '' },
-    h('div.dh', h('h3', allLoading ? 'Loading now' : 'Loaded now'),
+    h('div.mdl-loaded-h', h('h3', allLoading ? 'Loading now' : 'Loaded now'),
       anyMem ? h('div.mdl-key', legend([['m', 'Model'], ['k', 'KV cache'], ['c', 'Compute']])) : null),
     insts.map(i => {
       const x = live(i.profile) || {};
@@ -381,7 +381,8 @@ function benchButton(m, ps) {
   return h('button.btn', { type: 'button', 'data-act': 'bench', 'data-runs': list ? String(list.length) : null, onclick: () => ps.show('bench'),
     title: !list ? 'The benchmark runs that used this model. Opens the list here.'
       : list.length ? 'The benchmark runs with a step on this model. Opens the list here.' : 'No benchmark run has used this model yet' },
-  'Benchmarks', list ? h('span.mut', ' · ' + runsCount(list)) : null);
+  // one flex child: the count sits a space from the word, not the button's gap
+  h('span', 'Benchmarks', list ? h('span.mut', ' · ' + runsCount(list)) : null));
 }
 
 function benchView(m, ps) {
