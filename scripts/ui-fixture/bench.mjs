@@ -182,6 +182,8 @@ function boardRunDetail(r) {
     steps[16] = reportStep(16, MODELS[8], 4, { outcome: 'failed', reason: 'child exited during load: exit code 1, after 2.2 s', error: 'child exited during load: exit code 1, after 2.2 s',
       phases: [loadPh(0, 2.2, { outcome: 'failed', error: 'child exited during load: exit code 1, after 2.2 s', load: { outcome: 'failed', load_s: 2.2, reason: 'child exited during load: exit code 1' } })] });
     steps[6] = reportStep(6, MODELS[3], 1, { outcome: 'refused', reason: 'Does not fit on 1 zone', phases: [] });
+    // a context fill step: its phase type has a word on the page, never the raw id
+    steps[2].phases.push({ idx: 7, type: 'context_fill', state: 'done', outcome: 'ok', duration_s: 41, fill_pct: 90 });
     run.steps = r.id === 'run-41' ? steps.slice(0, 12) : steps;
   } else if (r.kind === 'benchmark') {
     run.steps = [reportStep(0, r.inputs.model, r.inputs.node_count, r.result === 'failed' ? { outcome: 'failed', reason: 'child exited during load: exit code 1, after 2.2 s', phases: [loadPh(0, 2.2, { outcome: 'failed' })] }
@@ -235,6 +237,11 @@ function boardResults(now) {
   out.push({ model: MODELS[9], smallest_fit: 2, latest: phi, by_nodes: [phi] });
   const llama = cell(MODELS[10], 6, 15.5, null, 70.1, 350, 5200, at);
   out.push({ model: MODELS[10], smallest_fit: 6, latest: llama, by_nodes: [llama] });
+  // a file no longer in the models folder: kept, marked, listed last
+  const old = cell('mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf', 4, 70.4, 9.9, 18.0, 1200, 26000, at - 30 * 24 * HOUR);
+  out.push({ model: 'mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf', smallest_fit: 4, latest: old, by_nodes: [old], file_gone: true });
+  // the step's machine of the lowest available figure (the hover)
+  for (const m of out) for (const c of m.by_nodes) if (c.lowest_available_mib != null) c.lowest_available_node = 'zone-' + c.node_count;
   return { ctx: 0, models: out };
 }
 

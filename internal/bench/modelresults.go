@@ -41,10 +41,17 @@ type ResultCell struct {
 	// LowestAvailableMiB the lowest available memory of one zone over the step.
 	MemoryMiB          *float64 `json:"memory_mib,omitempty"`
 	LowestAvailableMiB *float64 `json:"lowest_available_mib,omitempty"`
+	// LowestNode is the machine of that figure: only the machines the step
+	// used (its roles: the host and the workers), system memory only (a
+	// GPU's own free memory is another figure).
+	LowestNode string `json:"lowest_available_node,omitempty"`
 }
 
 // ModelResults is one model file's row.
 type ModelResults struct {
+	// FileGone: the model file is no longer in the models folder (the API
+	// sets it from the catalog's scan; such rows are listed last).
+	FileGone    bool         `json:"file_gone,omitempty"`
 	Model       string       `json:"model"`
 	SmallestFit int          `json:"smallest_fit,omitempty"` // 0: no load of the file completed
 	Latest      *ResultCell  `json:"latest"`
@@ -175,6 +182,8 @@ type stepFig struct {
 	tps, ttft   []float64
 	steadyTPS   []float64
 	mem, lowest *float64
+	lowestNode  string
+	used        map[string]bool // the step's machines (roles); nil: not recorded
 	ctx         int
 }
 
@@ -202,7 +211,7 @@ func (f *stepFig) into(c *ResultCell) {
 	if len(f.ttft) > 0 {
 		c.TTFTMs = mean(f.ttft)
 	}
-	c.MemoryMiB, c.LowestAvailableMiB = f.mem, f.lowest
+	c.MemoryMiB, c.LowestAvailableMiB, c.LowestNode = f.mem, f.lowest, f.lowestNode
 	if f.ctx > 0 {
 		c.Ctx = f.ctx
 	}
@@ -232,6 +241,28 @@ func (s *Store) stepFigures(ids map[int64]bool) (map[int64]*stepFig, error) {
 		list = append(list, "?")
 		args = append(args, id)
 	}
+	// the machines each step used (its roles), for the lowest available memory
+	used := map[int64]map[string]bool{}
+	rrows, err := s.db.Query(`SELECT id, roles FROM run_steps WHERE roles IS NOT NULL AND id IN (`+strings.Join(list, ",")+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	for rrows.Next() {
+		var id int64
+		var doc string
+		if err := rrows.Scan(&id, &doc); err != nil {
+			rrows.Close()
+			return nil, err
+		}
+		var roles []NodeRole
+		if json.Unmarshal([]byte(doc), &roles) == nil && len(roles) > 0 {
+			used[id] = map[string]bool{}
+			for _, r := range roles {
+				used[id][r.Node] = true
+			}
+		}
+	}
+	rrows.Close()
 	rows, err := s.db.Query(`SELECT step_id, COALESCE(phase_idx, -1), phase_type, node, metric, value, conditions, ctx FROM measurements
 	  WHERE metric IN ('load_s','decode_tps','ttft_ms','memory_mib','lowest_available_mib') AND step_id IN (`+strings.Join(list, ",")+`)`, args...)
 	if err != nil {
@@ -249,7 +280,7 @@ func (s *Store) stepFigures(ids map[int64]bool) (map[int64]*stepFig, error) {
 		}
 		f := out[id]
 		if f == nil {
-			f = &stepFig{}
+			f = &stepFig{used: used[id]}
 			out[id] = f
 		}
 		if ctx > 0 {
@@ -290,9 +321,17 @@ func (s *Store) stepFigures(ids map[int64]bool) (map[int64]*stepFig, error) {
 				f.mem = &x
 			}
 		case "lowest_available_mib":
+			// system memory of a machine the step used; a GPU's own free
+			// memory (memory: gpu) and machines outside the step are left out
+			if k, _ := c["memory"].(string); k != "" && k != "system" {
+				continue
+			}
+			if f.used == nil || !f.used[node] {
+				continue
+			}
 			if f.lowest == nil || v < *f.lowest {
 				x := v
-				f.lowest = &x
+				f.lowest, f.lowestNode = &x, node
 			}
 		}
 	}

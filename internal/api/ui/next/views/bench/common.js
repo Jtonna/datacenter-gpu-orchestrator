@@ -193,7 +193,10 @@ export function phaseWord(p, i, phases) {
   if (t === 'tasks') return 'Tasks';
   if (t === 'concurrent_requests') return `${num(p.n || p.count || 0)} at once`;
   if (t === 'conversation') return p.fill_pct ? `Conversation to ${num(p.fill_pct)}%` : 'Conversation';
-  return t;
+  if (t === 'context_fill') return 'Context fill';
+  // a type this page does not know yet: its id in words, never raw ("some_type" -> "Some type")
+  const w = String(t || 'step').replace(/_/g, ' ');
+  return w.charAt(0).toUpperCase() + w.slice(1);
 }
 export function phasesOf(b) {
   if (!b) return [];

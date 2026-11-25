@@ -1664,11 +1664,11 @@ table.bp-runs td.bp-start .bp-resw{gap:10px}
 .side:has(.bp-panel) .side-ctl{order:3;flex-basis:100%;flex-wrap:wrap;white-space:normal}
 .bp-tools .fs{max-width:200px;overflow:hidden;text-overflow:ellipsis}
 /* the runs beside a run's panel (board Bench-Runs-Group): views and filters on one line */
-.bp-runsp.beside .bp-tools{flex-wrap:nowrap}
-.bp-runsp.beside .bp-views{flex-wrap:nowrap;min-width:0;overflow:hidden}
+/* beside a docked panel: every view tab stays reachable; the tabs take their own line and wrap, the filters go under them */
+.bp-runsp.beside .bp-tools{flex-wrap:wrap}
+.bp-runsp.beside .bp-views{flex:1 1 100%;flex-wrap:wrap;min-width:0}
 .bp-runsp.beside .bp-view{white-space:nowrap}
 .bp-runsp.beside .bp-tools .fs{max-width:130px;flex:0 1 auto}
-.bp-runsp.beside .bp-views>:nth-child(n+5){display:none}
 .bp-kpi b{white-space:normal;overflow:visible}
 /* results per model (Overview table, the Runs page's views) */
 table.bp-runs th.r,table.bp-runs td.r{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -1681,3 +1681,6 @@ table.bp-res-t td.bp-model{font-weight:800;white-space:nowrap}
 a.bp-view{text-decoration:none}
 a.bp-view:hover{background:var(--hover-bg)}
 .bp-head b.mut{color:var(--quiet)}
+/* results: a model whose file is no longer in the models folder */
+.bp-res-t tr.gone td.bp-model{color:var(--mut)}
+.bp-res-t .bp-gone{display:block;font-size:12px}

@@ -58,8 +58,15 @@ func TestResultsByModel(t *testing.T) {
 	meas(s2, "r2", 0, 2, "requests", "", "decode_tps", 10, `{"generation":"steady"}`, 8192)
 	meas(s2, "r2", 0, 2, "requests", "", "decode_tps", 12, `{"generation":"steady"}`, 8192)
 	meas(s2, "r2", 0, 4, "load", "", "load_s", 5.8, `{}`, 8192)
-	meas(s2, "r2", 0, -1, "", "ra-01", "lowest_available_mib", 700, "", 8192)
-	meas(s2, "r2", 0, -1, "", "ra-02", "lowest_available_mib", 500, "", 8192)
+	// lowest available: only machines the step used (its roles), system
+	// memory only: ra-03 (not in the step) and the GPU figure are left out
+	exec(`UPDATE run_steps SET roles=? WHERE id=?`, `[{"node":"host-1","role":"host"},{"node":"ra-01","role":"worker"},{"node":"ra-02","role":"worker"}]`, s2)
+	meas(s2, "r2", 0, -1, "", "ra-01", "lowest_available_mib", 700, `{"memory":"system","window":"step"}`, 8192)
+	meas(s2, "r2", 0, -1, "", "ra-02", "lowest_available_mib", 500, `{"memory":"system","window":"step"}`, 8192)
+	meas(s2, "r2", 0, -1, "", "ra-03", "lowest_available_mib", 100, `{"memory":"system","window":"step"}`, 8192)
+	meas(s2, "r2", 0, -1, "", "host-1", "lowest_available_mib", 300, `{"memory":"gpu","window":"step"}`, 8192)
+	// the old step has no roles: no lowest figure (a dash), whatever was sampled
+	meas(s1, "r1", 0, -1, "", "ra-09", "lowest_available_mib", 8149, `{"memory":"system","window":"step"}`, 8192)
 	step("r2", 1, "gemma.gguf", 1, "refused", "Does not fit on 1 zone", 6000)
 	s4 := step("r2", 2, "mixtral.gguf", 4, "failed", "child exited during load", 7000)
 	_ = s4
@@ -85,7 +92,7 @@ func TestResultsByModel(t *testing.T) {
 		t.Fatalf("by nodes %+v", g.ByNodes)
 	}
 	two, six := g.ByNodes[1], g.ByNodes[2]
-	if two.RunID != "r1" || two.ColdLoadS == nil || *two.ColdLoadS != 40 || two.ReloadS != nil || two.DecodeTPS != nil || two.TTFTMs != nil {
+	if two.RunID != "r1" || two.ColdLoadS == nil || *two.ColdLoadS != 40 || two.ReloadS != nil || two.DecodeTPS != nil || two.TTFTMs != nil || two.LowestAvailableMiB != nil {
 		t.Fatalf("2 zones %+v", two)
 	}
 	f := func(p *float64) float64 {
@@ -95,7 +102,7 @@ func TestResultsByModel(t *testing.T) {
 		return *p
 	}
 	if f(six.ColdLoadS) != 21.1 || six.Cold == nil || !*six.Cold || six.ColdVerified == nil || !*six.ColdVerified || f(six.ReloadS) != 5.8 ||
-		f(six.DecodeTPS) != 11 || f(six.TTFTMs) != 1500 || f(six.MemoryMiB) != 9100 || f(six.LowestAvailableMiB) != 500 || six.Ctx != 8192 {
+		f(six.DecodeTPS) != 11 || f(six.TTFTMs) != 1500 || f(six.MemoryMiB) != 9100 || f(six.LowestAvailableMiB) != 500 || six.LowestNode != "ra-02" || six.Ctx != 8192 {
 		t.Fatalf("6 zones: cold %v %v %v reload %v tps %v ttft %v mem %v low %v ctx %d", f(six.ColdLoadS), six.Cold, six.ColdVerified, f(six.ReloadS), f(six.DecodeTPS), f(six.TTFTMs),
 			f(six.MemoryMiB), f(six.LowestAvailableMiB), six.Ctx)
 	}

@@ -55,6 +55,7 @@
 //               "click": ["css selector clicked after the draw", {"type": "css selector", "value": "typed"}, ...],
 //               "page": ["text anywhere on the page: shell, side panel, dialog", ...],
 //               "notOnPage": ["text nowhere on the page", ...],
+//               "notOnPageRe": ["regexp no text of the page may match", ...],
 //               "titles": ["text some title attribute on the page contains", ...],
 //               "fetchedQuery": ["regexp a request (GET /path?query body) must match", ...],
 //               "notFetched": ["regexp no request of the case may match", ...],
@@ -688,6 +689,7 @@ for (const c of spec.cases) {
   const pageText = document.body.textContent;
   for (const want of c.page || []) if (!pageText.includes(want)) errors.push('missing on the page: ' + JSON.stringify(want));
   for (const bad of c.notOnPage || []) if (pageText.includes(bad)) errors.push('on the page, but must not be: ' + JSON.stringify(bad));
+  for (const re of c.notOnPageRe || []) { const m = pageText.match(new RegExp(re)); if (m) errors.push('on the page, matches ' + re + ': ' + JSON.stringify(m[0])); }
   // links: [{text, path}]: somewhere on the page (shell included) a link with
   // that text whose href, resolved against the page's address, has that path.
   for (const l of c.links || []) {

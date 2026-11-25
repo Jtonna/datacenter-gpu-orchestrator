@@ -1,6 +1,7 @@
 package api
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -41,6 +42,22 @@ func TestBenchResultsByModelAndTaskCount(t *testing.T) {
 	// the test scheduler loads locally (no zones): no zone count, so no smallest fit
 	if _, has := m["smallest_fit"]; has || len(m["by_nodes"].([]any)) != 0 {
 		t.Fatalf("a local load has a smallest fit or zone cells: %s", b)
+	}
+
+	// the model file: in the models folder, no mark; gone from it, the row
+	// says so (file_gone) and is listed after the models still here
+	file := filepath.Base(m["model"].(string))
+	e.api.opts.modelFiles = func() []ModelFile {
+		return []ModelFile{{File: file, Exists: true}, {File: "other.gguf", Exists: true}}
+	}
+	_, b, _ = e.do("GET", "/api/bench/results/models", "")
+	if _, has := jsonOf(t, b)["models"].([]any)[0].(map[string]any)["file_gone"]; has {
+		t.Fatalf("a model still here is marked gone: %s", b)
+	}
+	e.api.opts.modelFiles = func() []ModelFile { return []ModelFile{{File: "other.gguf", Exists: true}, {File: file, Exists: false}} }
+	_, b, _ = e.do("GET", "/api/bench/results/models", "")
+	if jsonOf(t, b)["models"].([]any)[0].(map[string]any)["file_gone"] != true {
+		t.Fatalf("a model whose file is gone is not marked: %s", b)
 	}
 
 	// the group's task count: the stored set's three tasks; plus an inline set of two

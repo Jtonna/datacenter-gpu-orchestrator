@@ -53,13 +53,17 @@ function fig(cell, key, first) {
     return h('span.mut', { title: NOT, 'data-missing': key }, DASH);
   }
   const cold = key === 'cold_load_s' && cell.cold ? (cell.cold_verified ? ', cold verified' : ', cold not verified') : '';
-  return h('a.bp-fv', { href: reportOf(cell), title: `${zonesWord(cell.node_count)}${cold}; open the report` }, FIG[key](v));
+  const where = key === 'lowest_available_mib' && cell.lowest_available_node ? `${cell.lowest_available_node}, the lowest of the machines the step used; ` : '';
+  return h('a.bp-fv', { href: reportOf(cell), title: `${where}${zonesWord(cell.node_count)}${cold}; open the report` }, FIG[key](v));
 }
 
 const atZones = (m, n) => (m.by_nodes || []).find(c => c.node_count === n) || null;
 const atFit = m => (m.smallest_fit ? atZones(m, m.smallest_fit) : null) || m.latest;
 const fitWord = m => (m.smallest_fit ? zonesWord(m.smallest_fit) : h('span.mut', { title: 'no load of this file has completed yet' }, DASH));
-const nameCell = m => h('td.bp-model', { title: m.model }, modelName(m.model));
+// a model whose file is no longer in the models folder: its results stay
+// (they were measured), said so, and the server lists it last
+const nameCell = m => h('td.bp-model', { title: m.file_gone ? `${m.model}: this file is no longer in the models folder; the figures are from when it was` : m.model },
+  modelName(m.model), m.file_gone ? h('span.bp-sub.bp-gone', { 'data-gone': '' }, 'file no longer here') : null);
 
 function table(label, cols, rows, key) {
   return h('div.bp-tablewrap', h('table.bp-runs.bp-res-t', { 'aria-label': label, 'data-view': key || 'latest' },
@@ -86,7 +90,7 @@ export function latestTable(d) {
   const cols = ['Model', 'Smallest fit', 'Cold load', 'Reload', 'Generation, tok/s', 'First token', 'Coding, of 102'];
   return table('Latest result for each model', cols, d.rows.map(m => {
     const c = atFit(m);
-    return h('tr', { key: m.model, 'data-model': m.model },
+    return h('tr', { key: m.model, 'data-model': m.model, class: m.file_gone ? 'gone' : null },
       nameCell(m), h('td', fitWord(m)),
       h('td.r', fig(c, 'cold_load_s', true)), h('td.r', fig(c, 'reload_s')), h('td.r', fig(c, 'decode_tps')), h('td.r', fig(c, 'ttft_ms')),
       h('td.r', notYet(DASH, WHY.coding)));
@@ -111,7 +115,7 @@ export function resultsView(d, show) {
   const cols = ['Model', 'Smallest fit', `${v.word}, smallest`, most ? `${v.word}, all ${num(most)}` : `${v.word}, most zones`].concat(v.extra ? [v.extra[1]] : []);
   return table(v.label, cols, d.rows.map(m => {
     const small = m.smallest_fit ? atZones(m, m.smallest_fit) : null, all = most ? atZones(m, most) : null;
-    return h('tr', { key: m.model, 'data-model': m.model },
+    return h('tr', { key: m.model, 'data-model': m.model, class: m.file_gone ? 'gone' : null },
       nameCell(m), h('td', fitWord(m)),
       h('td.r', small ? fig(small, v.key, true) : fig(m.latest, v.key, true)),
       h('td.r', all ? fig(all, v.key, true) : h('span.mut', { title: `not run on ${zonesWord(most)}` }, 'not run')),

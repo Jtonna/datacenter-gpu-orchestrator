@@ -1,7 +1,10 @@
 package api
 
 import (
+	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -130,18 +133,28 @@ func TestUINextBenchPages(t *testing.T) {
 				"section.bp-latest tr[data-model='phi-4-14b-q4_k_m.gguf'] [data-missing=ttft_ms][title*=measured]",
 				"section.bp-latest tr[data-model='llama-3.3-8b-q4_k_m.gguf'] [data-missing=reload_s]",
 				"section.bp-latest tr[data-model='qwen3.5-4b-q4_k_m.gguf'] a.bp-fv[href='#/benchmarks/runs/run-46/0']"},
-			"count": map[string]any{"section.bp-latest tbody tr": 11, "section.bp-latest [data-notyet=coding]": 11},
+			"count": map[string]any{"section.bp-latest tbody tr": 12, "section.bp-latest [data-notyet=coding]": 12},
+			// a model file no longer in the models folder: said so, listed last
+			"order": []string{"llama-3.3-8b-q4_k_m", "mixtral-8x7b-instruct-v0.1.Q4_K_M", "file no longer here"}},
+		map[string]any{"name": "overview: a model whose file is gone", "route": "#/benchmarks", "status": st,
+			"has":   []string{"section.bp-latest tr.gone[data-model='mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf'] [data-gone]"},
+			"count": map[string]any{"section.bp-latest [data-gone]": 1},
 			"none":  []string{"section.bp-latest [data-notyet=b5]"}},
 		map[string]any{"name": "runs: the Load times view", "route": "#/benchmarks/runs?show=load-times", "status": st,
 			"expect": []string{"LOAD TIMES", "Model", "Smallest fit", "Cold, smallest", "Cold, all 6", "qwen3.5-4b-q4_k_m", "26.8 s", "11.3 s", "mixtral-8x7b-q4_k_m", "failed", "not run"},
 			"has":    []string{"table.bp-res-t[data-view=load-times]", "a.bp-view[data-view=runs]", "[data-notyet=coding]"},
-			"none":   []string{"select.fs[aria-label=Kind]", "div.bp-pager"}, "count": map[string]any{"table.bp-res-t tbody tr": 11}},
+			"none":   []string{"select.fs[aria-label=Kind]", "div.bp-pager"}, "count": map[string]any{"table.bp-res-t tbody tr": 12}},
 		map[string]any{"name": "runs: the Generation speed view", "route": "#/benchmarks/runs?show=generation", "status": st,
 			"expect": []string{"GENERATION SPEED", "tok/s, smallest", "tok/s, all 6", "96.2", "92.2"}},
 		map[string]any{"name": "runs: the First token view", "route": "#/benchmarks/runs?show=first-token", "status": st,
 			"expect": []string{"FIRST TOKEN", "First token, smallest", "0.41 s"}, "has": []string{"tr[data-model='phi-4-14b-q4_k_m.gguf'] [data-missing=ttft_ms]"}},
 		map[string]any{"name": "runs: the Memory view", "route": "#/benchmarks/runs?show=memory", "status": st,
-			"expect": []string{"MEMORY", "Memory, smallest", "Memory, all 6", "Lowest available", "3,100 MiB", "960 MiB"}},
+			"expect": []string{"MEMORY", "Memory, smallest", "Memory, all 6", "Lowest available", "3,100 MiB", "960 MiB"},
+			// the lowest available figure names its machine (one the step used)
+			"titles": []string{"zone-6, the lowest of the machines the step used"}},
+		// every phase type has its word: no raw type id ("context_fill") on the report
+		map[string]any{"name": "benchmark report: a context fill phase in words", "route": "#/benchmarks/runs/46/2", "status": st, "width": 1536,
+			"page": []string{"Context fill"}, "notOnPage": []string{"context_fill"}, "notOnPageRe": []string{`[a-z]{3,}_[a-z]{3,}`}},
 		map[string]any{"name": "runs: the second page", "route": "#/benchmarks/runs?page=2", "status": st, "expect": []string{"13–24 of 49"}, "fetchedQuery": []string{`offset=12`}},
 		map[string]any{"name": "runs: direct runs only", "route": "#/benchmarks/runs?kind=benchmark", "status": st, "expect": []string{"1–4 of 4", "Fill the context · gemma-4-12b-q4_k_m · any 2 zones · 131,072"},
 			"fetchedQuery": []string{`kind=benchmark`}, "absent": []string{"Full pass"}},
@@ -194,4 +207,26 @@ func TestUINextBenchDetailLongTexts(t *testing.T) {
 		map[string]any{"name": "long runs list", "route": "#/benchmarks/runs", "status": st, "count": map[string]any{"table.bp-runs tbody tr": 25},
 			"titles": []string{"Load times on the consoles, cold and warm, every consoles pair, programme blocks 1 and 2"}},
 	}})
+}
+
+// Beside a docked run or report panel (1536 and 1280) every view tab of the
+// Runs page stays reachable: no rule hides a tab or clips the tab row; the
+// row wraps (the Chrome pictures measure it: Bench-Runs__ui-panel-*.png).
+func TestUINextBenchViewTabsNotHidden(t *testing.T) {
+	css, err := os.ReadFile(filepath.Join("ui", "next", "app.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rule := range regexp.MustCompile(`(?s)([^{}]*)\{([^{}]*)\}`).FindAllStringSubmatch(string(css), -1) {
+		sel, body := rule[1], strings.ReplaceAll(rule[2], " ", "")
+		if !strings.Contains(sel, "bp-view") {
+			continue
+		}
+		if strings.Contains(body, "display:none") || strings.Contains(body, "overflow:hidden") || strings.Contains(body, "visibility:hidden") {
+			t.Errorf("a rule hides or clips the view tabs: %s{%s}", strings.TrimSpace(sel), rule[2])
+		}
+		if strings.Contains(sel, "bp-views") && strings.Contains(body, "flex-wrap:nowrap") {
+			t.Errorf("the view tabs may not wrap: %s{%s}", strings.TrimSpace(sel), rule[2])
+		}
+	}
 }

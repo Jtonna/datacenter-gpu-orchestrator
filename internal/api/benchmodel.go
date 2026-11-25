@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -405,6 +406,24 @@ func (s *Server) resultsByModel(w http.ResponseWriter, r *http.Request) {
 		s.storeErr(w, err)
 		return
 	}
+	// a model whose file is no longer in the models folder keeps its history
+	// (the results were measured) but is said so and listed last
+	here := map[string]bool{}
+	var files []ModelFile
+	if s.opts.modelFiles != nil {
+		files = s.opts.modelFiles()
+	} else {
+		files = s.files.list(s.conf().ModelsDir, nil)
+	}
+	for _, mf := range files {
+		if mf.Exists {
+			here[filepath.Base(mf.File)] = true
+		}
+	}
+	for i := range rows {
+		rows[i].FileGone = !here[filepath.Base(rows[i].Model)]
+	}
+	sort.SliceStable(rows, func(i, j int) bool { return !rows[i].FileGone && rows[j].FileGone })
 	writeJSON(w, http.StatusOK, map[string]any{"models": rows, "ctx": f.Ctx})
 }
 
