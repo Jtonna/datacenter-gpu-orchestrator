@@ -123,6 +123,10 @@ type fakeAPI struct {
 	reportEvery time.Duration
 	withhold    func(id string, chats int) bool
 	noTime      func(id string) bool // the node's figure has no sample time (the scheduler's own machine)
+	// ctxServed and ctxNote are every instance's ctx_served and ctx_note in
+	// the status (the server's own context per slot, realctx.go).
+	ctxServed   *int
+	ctxNote     string
 	reportEpoch time.Time
 	reports     map[string]fakeReport
 }
@@ -388,6 +392,9 @@ func (f *fakeAPI) Status(ctx context.Context) (*StatusInfo, error) {
 		p := f.profs[name]
 		ii := InstanceInfo{Profile: name, State: in.state, InFlight: in.inflight + f.stuck[name], LogFile: "/var/log/llm-children/" + name + ".log",
 			Cmd: "/opt/llama/llama-server-rpc --model x --rpc 192.0.2.2:50052", DeviceTotalMiB: 7900, LoadMode: f.loadMode}
+		if f.ctxServed != nil || f.ctxNote != "" { // else an older scheduler: no context fields
+			ii.Ctx, ii.CtxServed, ii.CtxNote = f.planCtx, f.ctxServed, f.ctxNote
+		}
 		if p != nil {
 			ii.ModelFile = p.modelFile
 			for k := range p.nodes {

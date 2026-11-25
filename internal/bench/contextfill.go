@@ -24,11 +24,18 @@ import (
 
 // FillResult is what a context_fill phase filled and read.
 type FillResult struct {
-	Ctx      int   `json:"ctx"`
-	Parallel int   `json:"parallel,omitempty"`
-	FillPct  int   `json:"fill_pct"`
-	MarksPct []int `json:"marks_pct"`
-	Seed     int64 `json:"seed"`
+	Ctx int `json:"ctx"`
+	// CtxServed is the context per slot the model server itself reports
+	// (/props, read by the scheduler after the load), checked before the
+	// first turn; nil when the scheduler does not know it. CtxNote is what
+	// the scheduler says about the context (the instance's or the plan's
+	// ctx_note).
+	CtxServed *int   `json:"ctx_served,omitempty"`
+	CtxNote   string `json:"ctx_note,omitempty"`
+	Parallel  int    `json:"parallel,omitempty"`
+	FillPct   int    `json:"fill_pct"`
+	MarksPct  []int  `json:"marks_pct"`
+	Seed      int64  `json:"seed"`
 	// The filler as sent (its hash covers the paragraphs in order, joined by a blank line).
 	FillerSHA256 string `json:"filler_sha256"`
 	FillerChars  int    `json:"filler_chars"`
@@ -378,6 +385,22 @@ func (br *benchRun) phaseContextFill(i int, p *benchspec.Phase, pr *PhaseResult)
 	res := &FillResult{Ctx: ctxSize, Parallel: plan.Parallel, FillPct: p.FillTarget(), MarksPct: marks, Seed: p.FillSeed(),
 		StopLineMiB: int(line), TargetTokens: ctxSize * p.FillTarget() / 100}
 	pr.Fill = res
+	// The server's own context, before any request: a fill past it would be
+	// answered 400 "exceeds the available context size".
+	res.CtxNote = plan.CtxNote
+	if served, note := br.fillServedCtx(); served != nil || note != "" {
+		res.CtxServed = served
+		if note != "" {
+			res.CtxNote = note
+		}
+		if served != nil && *served < ctxSize {
+			why := fmt.Sprintf("context_fill: the model server runs at %s tokens per slot, the plan says %s: refused before any request (a turn past %s tokens would be answered 400)", groupInt(int64(*served)), groupInt(int64(ctxSize)), groupInt(int64(*served)))
+			res.StoppedBecause = why
+			br.st.Reason = why
+			br.fail(OutcomeFailed, why)
+			return
+		}
+	}
 	fl := newFiller(p.FillSeed(), p.RecallCount(), res.TargetTokens)
 	inUse := br.fillInUse()
 	tok := func(s string) (int, error) {
@@ -745,6 +768,17 @@ func fillMD(b *strings.Builder, f *FillResult) {
 	fmt.Fprintf(b, "Context %s tokens, filled to %d %% (%s tokens): reached %s. Filler: seed %d, %s characters, sha256 `%s`. Stop line %s MiB. Settle hold %s s (%s s until the first reading).\n\n",
 		groupInt(int64(f.Ctx)), f.FillPct, groupInt(int64(f.TargetTokens)), groupInt(int64(f.ReachedTokens)), f.Seed, groupInt(int64(f.FillerChars)), f.FillerSHA256, groupInt(int64(f.StopLineMiB)),
 		fmtNum(float64(f.SettleHoldMS)/1000), fmtNum(float64(f.SettleHeldMS)/1000))
+	if f.CtxServed != nil || f.CtxNote != "" {
+		served := "not known"
+		if f.CtxServed != nil {
+			served = groupInt(int64(*f.CtxServed)) + " tokens per slot"
+		}
+		fmt.Fprintf(b, "Model server context: %s", served)
+		if f.CtxNote != "" {
+			fmt.Fprintf(b, " (%s)", mdCell(f.CtxNote))
+		}
+		b.WriteString(".\n\n")
+	}
 	b.WriteString("| Mark | Tokens held | Prefill tok/s | Machine | In use | Before MiB | After MiB | Lowest MiB | Growth MiB | KiB per token | Samples in turn |\n|---|---|---|---|---|---|---|---|---|---|---|\n")
 	opt := func(v *int64) string {
 		if v == nil {
@@ -781,5 +815,34 @@ func fillMD(b *strings.Builder, f *FillResult) {
 	}
 	if f.StoppedBecause != "" {
 		fmt.Fprintf(b, "Stopped: %s.\n\n", mdCell(f.StoppedBecause))
+	}
+}
+
+// fillServedCtx is the profile's instance's own context per slot as the
+// scheduler read it after the load (/props), and the scheduler's note. The
+// read runs just after the load is ready, so the fill waits for it a short
+// while (FillCtxWait); an older scheduler (no ctx on the instance) is not
+// waited for.
+func (br *benchRun) fillServedCtx() (*int, string) {
+	o := br.x.m.o
+	deadline := o.Now().Add(o.FillCtxWait)
+	poll := min(max(o.FillReportEvery/8, 5*time.Millisecond), 250*time.Millisecond)
+	for {
+		s, err := br.fillStatus()
+		if err != nil {
+			return nil, ""
+		}
+		in := s.Instance(br.b.Profile)
+		if in == nil || in.Ctx == 0 {
+			return nil, "" // an older scheduler: no context on the instance
+		}
+		if in.CtxServed != nil || strings.HasPrefix(in.CtxNote, "context not confirmed") || !o.Now().Before(deadline) {
+			return in.CtxServed, in.CtxNote
+		}
+		select {
+		case <-br.ctx.Done():
+			return nil, ""
+		case <-time.After(poll):
+		}
 	}
 }

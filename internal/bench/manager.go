@@ -62,10 +62,14 @@ type ManagerOptions struct {
 	// context_fill phase starts: its hold after the load when the phase does
 	// not give settle_s (nil: 30 s, the scheduler's default).
 	// FillReportEvery is how often an agent reports its memory (the
-	// heartbeat; default 2 s): a mark waits up to two of these for a report
-	// newer than its turn's end.
+	// heartbeat; default 2 s): a mark waits up to three of these for a report
+	// certainly read after its turn's end.
+	// FillCtxWait is how long a context_fill phase waits, before its first
+	// turn, for the scheduler to read the server's own context (default
+	// 10 s: the read is one /props, at most 5 s, just after the load).
 	FillSettle      func() time.Duration
 	FillReportEvery time.Duration
+	FillCtxWait     time.Duration
 	// ColdRetry is how long a cold load keeps asking a node that is still
 	// stopping its launch or evicted a moment ago (default 20 s, negative:
 	// once); ColdSettle is the wait before the plan is read again after the
@@ -161,6 +165,9 @@ func NewManager(o ManagerOptions) (*Manager, error) {
 	}
 	if o.FillReportEvery <= 0 {
 		o.FillReportEvery = DefaultFillReportEvery
+	}
+	if o.FillCtxWait <= 0 {
+		o.FillCtxWait = 10 * time.Second
 	}
 	if o.ColdRetry == 0 {
 		o.ColdRetry = DefaultColdRetry
