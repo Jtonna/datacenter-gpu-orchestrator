@@ -75,6 +75,7 @@ func (s *Server) profileEntriesOf(ctx context.Context, cfg *config.Config) []map
 	for _, n := range names {
 		p := cfg.Profiles[n]
 		rep, err := s.sched.Plan(ctx, n)
+		s.catalog.planReads.Add(1)
 		var se *scheduler.Error
 		if errors.As(err, &se) && se.Reason == scheduler.ReasonUnknownModel {
 			continue // deleted since the snapshot

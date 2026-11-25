@@ -57,7 +57,7 @@ registerView({
 
     // the Model column names runs from the catalog (runModel)
     const offCat = onCatalog(() => view.refresh());
-    needCatalog();
+    needCatalog({ live: false }); // names only: no live plans
     const view = liveView(el, () => {
       const d = feed.data;
       const rows = d.rows || [];

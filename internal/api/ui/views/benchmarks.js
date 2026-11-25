@@ -120,7 +120,7 @@ registerView({
     const offData = onData(() => view.refresh());
     const offStartups = onStartups(() => view.refresh());
     const offCatalog = onCatalog(() => view.refresh());
-    needCatalog();
+    needCatalog({ live: false }); // names only: no live plans
     const offBench = listen('bench', d => {
       if (!d) return;
       if (d.kind === 'aggregate_updated') { aggState.trendFor = ''; need(true); }
