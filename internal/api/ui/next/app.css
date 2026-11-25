@@ -462,6 +462,12 @@ code.cmd{font-family:var(--mono);font-size:12px;color:var(--text-2);overflow-wra
    beside the page at 1400 px and wider, over it behind a scrim below that (Q72) */
 .side{width:var(--side-w);max-width:100%;flex:none;box-sizing:border-box;display:flex;flex-direction:column;background:#fff;border-left:1px solid #dfe5e1;box-shadow:-10px 0 28px rgba(19,26,23,.07);overflow:hidden;font-size:13px}
 .side.docked{position:sticky;top:0;align-self:flex-start;height:100vh;z-index:5}
+/* the width handle on a docked panel's left edge (core/panel.js; the owner's note 6) */
+.side-grip{position:absolute;left:0;top:0;bottom:0;width:7px;cursor:col-resize;z-index:6;touch-action:none}
+.side-grip::after{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:transparent;transition:background .12s}
+.side-grip:hover::after,.side-grip:focus-visible::after,.side.resizing .side-grip::after{background:var(--accent,#0f6b4a)}
+.side-grip:focus-visible{outline:none}
+.side.resizing{user-select:none}
 .side-back{position:fixed;inset:0;z-index:40;background:var(--overlay);display:flex;justify-content:flex-end}
 .side-back .side{height:100%;box-shadow:-18px 0 40px rgba(19,26,23,.18)}
 .side-head{display:flex;align-items:flex-start;gap:12px;padding:16px 14px 14px 20px;flex:none}

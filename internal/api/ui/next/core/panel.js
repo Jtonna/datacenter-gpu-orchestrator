@@ -27,11 +27,33 @@
 // closed (as the health popup does; the MCP boards draw no menu beside a
 // docked panel); the shell brings it back as it was when the panel closes
 // or moves over the page. onPanelHold(fn) / panelHoldsMenu() are the shell's.
+//
+// Its width (the owner's note 6, 25 Nov): while it sits beside the page its
+// left edge is a handle (role separator, focusable): drag it, or use the
+// arrow keys (left widens, right narrows; Shift for bigger steps; Home and
+// End for the least and the most); a double click goes back to 620. The
+// page beside it reflows. The width is remembered per panel kind (o.kind,
+// else its label) in localStorage when the browser allows it; the panel
+// works the same without. Between 420 px and what leaves the page 560 px
+// beside the rail (at most 1000). Over the page there is no handle.
 
 import { h, morph } from './dom.js';
 
 export const DOCK_MIN = 1400;
 const wide = window.matchMedia('(min-width:' + DOCK_MIN + 'px)');
+
+export const SIDE_W = 620, SIDE_MIN = 420;
+const SIDE_MAX = 1000, PAGE_KEEP = 560, RAIL = 60, STEP = 16, BIG_STEP = 64;
+// sideMax() -> the widest a docked panel may be at this window width
+const sideMax = () => Math.max(SIDE_MIN, Math.min(SIDE_MAX, (window.innerWidth || 0) - RAIL - PAGE_KEEP));
+const clampW = w => Math.round(Math.min(sideMax(), Math.max(SIDE_MIN, w)));
+const widthKey = kind => 'potluck.panel-width.' + kind;
+function readWidth(kind) {
+  try { const v = Number(localStorage.getItem(widthKey(kind))); return v > 0 ? v : null; } catch { return null; }
+}
+function saveWidth(kind, w) {
+  try { if (w == null) localStorage.removeItem(widthKey(kind)); else localStorage.setItem(widthKey(kind), String(w)); } catch { /* not allowed here: the width lasts while the panel is open */ }
+}
 
 let current = null;
 let held = false;
@@ -55,6 +77,43 @@ export function openPanel(o) {
   const foot = h('div.sf');
   const pane = h('aside.side', { 'aria-labelledby': id },
     h('div.side-head', h('div.side-names', label, title, sub), controls, closeBtn), body, foot);
+
+  // the width handle (docked only): drag, arrow keys, a double click resets
+  const kind = o.kind || (typeof o.label === 'string' && o.label) || 'panel';
+  let width = readWidth(kind) || SIDE_W;
+  const grip = h('div.side-grip', { role: 'separator', tabindex: '0', 'aria-orientation': 'vertical', 'aria-label': 'Panel width: drag, or use the arrow keys',
+    title: 'Drag to resize · double click for the usual width' });
+  const setWidth = (w, keep) => {
+    width = clampW(w);
+    if (!pane.classList.contains('docked')) return;
+    pane.style.width = width + 'px';
+    pane.setAttribute('data-w', String(width));
+    grip.setAttribute('aria-valuenow', String(width));
+    grip.setAttribute('aria-valuemin', String(SIDE_MIN));
+    grip.setAttribute('aria-valuemax', String(sideMax()));
+    if (keep) saveWidth(kind, width === SIDE_W ? null : width);
+  };
+  grip.addEventListener('keydown', e => {
+    const step = e.shiftKey ? BIG_STEP : STEP;
+    const to = { ArrowLeft: width + step, ArrowRight: width - step, Home: SIDE_MIN, End: sideMax() }[e.key];
+    if (to == null) return;
+    e.preventDefault(); e.stopPropagation();
+    setWidth(to, true);
+  });
+  grip.addEventListener('dblclick', () => setWidth(SIDE_W, true));
+  grip.addEventListener('pointerdown', e => {
+    if (e.button != null && e.button !== 0) return;
+    e.preventDefault();
+    const x0 = e.clientX, w0 = width;
+    pane.classList.add('resizing');
+    const move = ev => setWidth(w0 + (x0 - ev.clientX), false);
+    const up = () => {
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
+      pane.classList.remove('resizing');
+      setWidth(width, true);
+    };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
+  });
   const back = h('div.side-back', { onmousedown: e => { if (e.target === back) close(); } });
 
   const val = v => (typeof v === 'function' ? v(close) : v);
@@ -80,6 +139,8 @@ export function openPanel(o) {
     const docked = wide.matches && !!app;
     pane.classList.toggle('docked', docked);
     setHeld(docked && !!o.closesMenu);
+    if (docked) { if (grip.parentNode !== pane) pane.insertBefore(grip, pane.firstChild); setWidth(width, false); }
+    else { grip.remove(); pane.style.width = ''; pane.removeAttribute('data-w'); }
     if (docked) {
       pane.removeAttribute('role'); pane.removeAttribute('aria-modal');
       back.remove();
@@ -91,6 +152,8 @@ export function openPanel(o) {
     }
   };
   const onWidth = () => place();
+  // a window resized while docked: the width keeps within the new maximum
+  const onResize = () => { if (pane.classList.contains('docked')) setWidth(readWidth(kind) || width, false); };
 
   const onKey = e => {
     if (document.querySelector('.backdrop')) return; // a dialog above the panel handles its own keys
@@ -116,6 +179,7 @@ export function openPanel(o) {
     if (current === api) { current = null; setHeld(false); }
     document.removeEventListener('keydown', onKey, true);
     if (wide.removeEventListener) wide.removeEventListener('change', onWidth);
+    window.removeEventListener('resize', onResize);
     pane.remove();
     back.remove();
     if (prev && prev.focus && prev !== document.body) try { prev.focus(); } catch { /* gone */ }
@@ -126,6 +190,7 @@ export function openPanel(o) {
   fill();
   place();
   if (wide.addEventListener) wide.addEventListener('change', onWidth);
+  window.addEventListener('resize', onResize);
   document.addEventListener('keydown', onKey, true);
   // the first field when the panel asks for one (o.focus: a css selector), else the close button
   const first = o.focus ? pane.querySelector(o.focus) : null;

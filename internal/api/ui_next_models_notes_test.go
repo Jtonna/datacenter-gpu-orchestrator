@@ -138,3 +138,33 @@ func TestUINextNotesRowInUse(t *testing.T) {
 		// (the fake DOM neither follows a link nor bubbles a click: that the link opens Zones and not the row's panel is checked in Chrome)
 	}})
 }
+
+// Note 6: the shared side panel is resizable by its edge while it is docked
+// (1400 px and wider): a focusable handle, arrow keys resize, a double
+// click resets; the width is remembered per panel kind; within a minimum
+// and a maximum. Over the page (below 1400 px) there is no handle.
+func TestUINextNotesPanelResize(t *testing.T) {
+	fetch := fixtureAnswers(t, []string{"--models", "five"}, "/api/models", "/api/status")
+	st := fetch["/api/status"]
+	grip := "aside.side.docked .side-grip[role=separator][tabindex='0'][aria-orientation=vertical]"
+	open := "#/models?model=" + mdlRecent
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
+		map[string]any{"name": "notes 6: docked, a handle at the default width", "route": open, "status": st, "width": 1536,
+			"pageHas": []string{grip + "[aria-valuenow='620'][aria-valuemin='420']", "aside.side[data-w='620']"}},
+		map[string]any{"name": "notes 6: arrow keys resize (left widens)", "route": open, "status": st, "width": 1536,
+			"click": []string{"aside.side .side-grip"}, "keys": []any{"ArrowLeft", "ArrowLeft", "ArrowLeft", "ArrowRight"},
+			"pageHas": []string{"aside.side[data-w='652']", grip + "[aria-valuenow='652']"}},
+		map[string]any{"name": "notes 6: the width is remembered for the next panel of the kind", "route": open, "status": st, "width": 1536,
+			"pageHas": []string{"aside.side[data-w='652']"}},
+		map[string]any{"name": "notes 6: never below the minimum", "route": open, "status": st, "width": 1536,
+			"click": []string{"aside.side .side-grip"}, "keys": []any{"Home", "ArrowRight", "ArrowRight"},
+			"pageHas": []string{"aside.side[data-w='420']"}},
+		map[string]any{"name": "notes 6: never above the maximum", "route": open, "status": st, "width": 1536,
+			"click": []string{"aside.side .side-grip"}, "keys": []any{"End", "ArrowLeft"},
+			"pageHas": []string{"aside.side[data-w='916']", grip + "[aria-valuemax='916']"}},
+		map[string]any{"name": "notes 6: a double click resets", "route": open, "status": st, "width": 1536,
+			"click": []any{map[string]any{"dbl": "aside.side .side-grip"}}, "pageHas": []string{"aside.side[data-w='620']"}},
+		map[string]any{"name": "notes 6: over the page, no handle", "route": open, "status": st, "width": 1280,
+			"pageHas": []string{"aside.side"}, "pageNone": []string{".side-grip", "aside.side[data-w]"}},
+	}})
+}
