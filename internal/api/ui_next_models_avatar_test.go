@@ -47,10 +47,19 @@ func TestUINextModelsAvatar(t *testing.T) {
 	st["instances"] = []any{inst("devstral"), inst("mixtral"), inst("deepseek"), inst("olmo"), inst("gemma"), inst("flux"), inst("whisper")}
 	st["queue"] = []any{}
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
-		map[string]any{"name": "models: tiles from the model's own name", "route": "#/models", "status": st,
-			"has": []string{"span.av[data-mono=De][style*='--hue:24']", "span.av[data-mono=Mi][style*='--hue:24']", "span.av[data-mono=Ge][style*='--hue:214']",
-				"span.av[data-mono=De][style*='--hue:232']", "span.av[data-mono=Ol][style*='--hue:" + olmoHue + "']", "span.av.av-28.av-cmd"},
-			"none": []string{"span.av.cmd", "span.av.plain"}},
+		// the tiles are drawn on the model pages (the list has no loaded-model
+		// cards above it since the reviewer's adjustment b, 25 Nov)
+		map[string]any{"name": "models: no tiles above the list", "route": "#/models", "status": st, "none": []string{"section.card[aria-label] span.av"}},
+		map[string]any{"name": "models: the tile of devstral-small-2505-Q4_K_M.gguf", "route": "#/models/devstral-small-2505-Q4_K_M.gguf", "status": st,
+			"has": []string{"span.av.av-72[data-mono=De][style*='--hue:24']"}, "none": []string{"span.av.cmd", "span.av.plain"}},
+		map[string]any{"name": "models: the tile of mixtral-8x7b-instruct-Q4_K_M.gguf", "route": "#/models/mixtral-8x7b-instruct-Q4_K_M.gguf", "status": st,
+			"has": []string{"span.av.av-72[data-mono=Mi][style*='--hue:24']"}, "none": []string{"span.av.cmd", "span.av.plain"}},
+		map[string]any{"name": "models: the tile of gemma-4-27b-it-Q4_K_M.gguf", "route": "#/models/gemma-4-27b-it-Q4_K_M.gguf", "status": st,
+			"has": []string{"span.av.av-72[data-mono=Ge][style*='--hue:214']"}, "none": []string{"span.av.cmd", "span.av.plain"}},
+		map[string]any{"name": "models: the tile of deepseek-r1-distill-14b-Q4_K_M.gguf", "route": "#/models/deepseek-r1-distill-14b-Q4_K_M.gguf", "status": st,
+			"has": []string{"span.av.av-72[data-mono=De][style*='--hue:232']"}, "none": []string{"span.av.cmd", "span.av.plain"}},
+		map[string]any{"name": "models: the tile of olmo-2-13b-Q4_K_M.gguf", "route": "#/models/olmo-2-13b-Q4_K_M.gguf", "status": st,
+			"has": []string{"span.av.av-72[data-mono=Ol][style*='--hue:" + olmoHue + "']"}},
 		map[string]any{"name": "models: a command profile's page tile", "route": "#/models/command:flux", "status": st,
 			"has": []string{"span.av.av-72.av-cmd"}, "none": []string{"span.av.cmd"}},
 		map[string]any{"name": "models: a model's page tile", "route": "#/models/mixtral-8x7b-instruct-Q4_K_M.gguf", "status": st,

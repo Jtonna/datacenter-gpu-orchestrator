@@ -320,7 +320,7 @@ func (s *Server) taskStats() []supervise.TaskStats {
 	return supervise.Stats()
 }
 
-// runsIn is what the Runs row judges.
+// runsIn is what the Requests row (id "runs") judges.
 type runsIn struct {
 	logOn          bool
 	failed, total  int64 // client requests in the hour: failed or refused, and all finished
@@ -447,9 +447,16 @@ func judgeZones(st *scheduler.Status, facts []pool.NodeFacts, fresh bool, at tim
 
 // judgeRuns: failed or refused client requests in the last hour, plus
 // failed benchmark runs. Any is attention; at least five making more than
-// half of the hour's requests is a problem.
+// half of the hour's requests is a problem. The row keeps its id "runs";
+// its label is "Requests" (the owner, 24 Nov: "Runs" are benchmark runs
+// only). Its link opens the Requests page on its Failed state (the page
+// reads ?status=), or Benchmarks when only benchmark runs failed.
 func judgeRuns(in runsIn) HealthRow {
-	row := HealthRow{ID: "runs", Label: "Runs", Link: "#/overview?runs=failed",
+	link := "#/requests?status=failed"
+	if in.failed == 0 && in.benchFailed > 0 {
+		link = "#/benchmarks"
+	}
+	row := HealthRow{ID: "runs", Label: "Requests", Link: link,
 		Facts: map[string]any{"request_log": map[bool]string{true: "on", false: "off"}[in.logOn], "failed_requests": in.failed, "requests": in.total,
 			"failed_bench_runs": in.benchFailed, "bench_runs": nonNil(in.benchFailedIDs), "more": in.capped}}
 	if !in.logOn {

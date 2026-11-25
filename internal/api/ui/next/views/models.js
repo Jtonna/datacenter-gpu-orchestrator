@@ -38,17 +38,17 @@ import { h } from '../core/dom.js';
 import { registerView, href, navigate } from '../core/router.js';
 import { state } from '../core/store.js';
 import * as api from '../core/api.js';
-import { liveView, legend, empty, skeleton, searchField, sidePanel, facts, badge, filterSelect, dialog, runStatus } from '../core/ui.js';
-import { num, gb, dur, ago, plural, agoText, dateTime, bytes, DASH } from '../core/format.js';
-import { staleBanner, machines, shortReason, plainReason } from '../core/status.js';
+import { liveView, legend, memoryRow, empty, skeleton, searchField, sidePanel, facts, badge, filterSelect, dialog, runStatus } from '../core/ui.js';
+import { num, gb, tps, dur, ago, plural, agoText, dateTime, bytes, DASH } from '../core/format.js';
+import { staleBanner, nodeName, nodeMemory, machines, shortReason, plainReason } from '../core/status.js';
 import { loadConfig, loadSchema, fieldsOf, clone } from '../core/configdata.js';
 import { makeEditor, saveProfile } from './profiles.js';
 import { catalog, onCatalog, needCatalog, refreshCatalog } from '../core/catalog.js';
 import { logsLink, profileQuery, padded } from '../core/logs.js';
 import { tipText } from '../core/charts.js';
-import { instanceCard, stateBadge, fitOf, cannotRun, runsOnCell } from './models/common.js';
+import { stateBadge, fitOf, cannotRun, runsOnCell } from './models/common.js';
 import { mountDetail } from './models/detail.js';
-import { splitProfiles, prodText, testText } from './models/kinds.js';
+import { splitProfiles, prodText, testText, prodNeeds, profName, needBasis, zonesFor } from './models/kinds.js';
 import { trashFooter, hasTrash, deleteModel, deletedText, mountTrash } from './models/trash.js';
 
 // the reasons of what is drawn but not built yet (p7-models-backend-STATUS.md)
@@ -129,13 +129,17 @@ export function loadTip(l, st) {
 // whose model is loaded, each zone a link to Zones with that zone selected
 // (the owner's note 3: the row says when and where, no banner); null when
 // it is not loaded. The zones are the catalog instances' (names).
+// zoneLinks(names) -> "ps5-01, ps5-02", each a link to the zone under Zones
+// (a click on one does not open the row's panel)
+const zoneLinks = list => list.flatMap((z, i) => [i ? ', ' : null, h('a.mdl-zone', { href: href('zones', [z]), title: 'Open ' + z + ' under Zones',
+  onclick: e => e.stopPropagation(), onkeydown: e => e.stopPropagation() }, z)]);
+
 function inUse(m) {
   const insts = m.instances || [];
   if (!insts.length) return null;
   const ready = [...new Set(insts.filter(i => i.state !== 'starting').flatMap(i => i.nodes || []))];
   const loading = [...new Set(insts.filter(i => i.state === 'starting').flatMap(i => i.nodes || []))].filter(z => !ready.includes(z));
-  const zones = list => list.flatMap((z, i) => [i ? ', ' : null, h('a.mdl-zone', { href: href('zones', [z]), title: 'Open ' + z + ' under Zones',
-    onclick: e => e.stopPropagation(), onkeydown: e => e.stopPropagation() }, z)]);
+  const zones = zoneLinks;
   const parts = [];
   if (ready.length) parts.push(['in use on ', ...zones(ready)]);
   else if (insts.some(i => i.state !== 'starting')) parts.push('in use');
@@ -155,6 +159,15 @@ const dayOf = ms => { const d = new Date(ms); return `${d.getDate()} ${['Jan', '
 // prodCount(m) -> the model's production profiles (views/models/kinds.js;
 // the test and benchmark configurations are never counted with them)
 const prodCount = m => splitProfiles(m.profiles).prod.length;
+// profCell(m) -> the row's Profiles cell: "2 profiles"; for a file with no
+// production profile "No profiles yet", and smaller under it the real count
+// of its test and benchmark configurations (nothing when there are none).
+function profCell(m) {
+  const { prod, test } = splitProfiles(m.profiles);
+  if (prod.length) return h('span.mdl-pc', { 'data-prod': String(prod.length) }, prodText(prod.length));
+  return h('span.mdl-pc.mut', { 'data-prod': '0' }, 'No profiles yet',
+    test.length ? h('span.sub', { 'data-test': String(test.length) }, plural(test.length, 'test configuration')) : null);
+}
 // sizeText(m) -> "16.5 GB", or why there is none (decimal GB, as the board and the disk line)
 const gbOf = v => (v / 1e9).toLocaleString('en-US', { maximumFractionDigits: 1, minimumFractionDigits: v >= 100e9 ? 0 : 1 });
 const sizeText = m => (m.kind === 'command' ? 'A program on this machine' : m.size_bytes ? gbOf(m.size_bytes) + ' GB' : DASH);
@@ -185,19 +198,47 @@ const hostLine = p => (p.host === 'node'
     p.host_overhead_mib ? ` · +${gb(p.host_overhead_mib)} for the host` : null, p.host_problem ? h('span.err-t', ' · ' + p.host_problem) : null)
   : null);
 
-// NEED_DECIMALS: the decimals of a Needs figure. The owner's note 7 (25 Nov)
-// asks for one ("~18.5 GB"); two ("~18.48 GB") was drawn for the choice.
-const NEED_DECIMALS = 1;
-// needText(mib) -> "~18.5 GB": a tilde, as a need is approximate
-export const needText = mib => '~' + (mib / 1024).toLocaleString('en-US', { minimumFractionDigits: NEED_DECIMALS, maximumFractionDigits: NEED_DECIMALS }) + ' GB';
-// needsCell(m, st) -> the Needs cell: the memory of the lightest
-// configuration (fit.need_mib) as "~18.5 GB"; how it is known (measured,
-// estimated, set in the profile) and the sentence are on hover and in the
-// panel (the owner's note 7); a dash when unknown
+// needText(mib) -> "~18.5 GB": a tilde, as a need is approximate, and one
+// decimal (the owner's note 7, 25 Nov)
+export const needText = mib => '~' + (mib / 1024).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' GB';
+// needRange(r) -> "~3.3 to 5.1 GB", or one figure when the ends read the same
+const needRange = r => (needText(r.lo.needs_mib) === needText(r.hi.needs_mib) ? needText(r.lo.needs_mib)
+  : needText(r.lo.needs_mib).replace(/ GB$/, '') + ' to ' + needText(r.hi.needs_mib).slice(1));
+// needEnd(p) -> "qwen3.5-4b at 16k ~3.3 GB (measured)"
+const needEnd = p => `${profName(p)} ${needText(p.needs_mib)} (${needBasis(p)})`;
+// needEnds(r) -> the profile at each end, or the one profile
+const needEnds = r => (r.lo === r.hi ? needEnd(r.lo) : needEnd(r.lo) + ' … ' + needEnd(r.hi));
+// noProd(m) -> true for a model file whose configurations are all tests
+const noProd = m => m.kind !== 'command' && !prodCount(m) && (m.profiles || []).length > 0;
+
+// needsCell(m, st) -> the Needs cell: the range over the model's production
+// profiles' needs ("~3.3 to 5.1 GB", the reviewer, 25 Nov), the profile at
+// each end on hover. A file with no production profile keeps the lightest
+// figure (fit.need_mib), marked "smallest test configuration". How a figure
+// is known is on hover and in the panel (the owner's note 7); a dash when
+// unknown.
 function needsCell(m, st) {
+  const r = prodNeeds(m);
+  if (r) {
+    return h('span.mdl-needs', { 'data-col': 'needs' }, h('span', { title: (r.lo === r.hi ? 'From its production profile: ' : 'From its production profiles: ') + needEnds(r),
+      'data-basis': r.basis, 'data-range': r.lo === r.hi ? null : '' }, needRange(r)));
+  }
   const f = fitOf(m, st);
-  const how = f.title || (f.sub ? f.sub[0].toUpperCase() + f.sub.slice(1) : null);
+  let how = f.title || (f.sub ? f.sub[0].toUpperCase() + f.sub.slice(1) : null);
+  if (noProd(m)) how = (how ? how + '. ' : '') + 'The smallest test configuration: no production profile yet';
   return h('span.mdl-needs', { 'data-col': 'needs' }, f.need ? h('span', { title: how, 'data-basis': f.sub || null }, needText(f.need)) : h('span.mut', DASH));
+}
+
+// runsOnRange(m, st, r) -> "1 to 2 PS5s": the fewest zones each end needs on
+// the empty cluster (fit.budgets_mib); null when the sums are not served
+function runsOnRange(m, st, r) {
+  const sums = m.fit && m.fit.budgets_mib;
+  const a = zonesFor(r.lo.needs_mib, sums), b = zonesFor(r.hi.needs_mib, sums);
+  if (a == null) return null;
+  const t = 'The fewest zones of the empty cluster that hold ' + needEnds(r);
+  if (a === 0) return h('span', { title: t, 'data-zones': '0' }, 'Too big for this cluster');
+  if (b === 0) return h('span', { title: t, 'data-zones': a + '-' }, machines(st, a), h('span.mut', ' (the largest is too big for this cluster)'));
+  return h('span.nowrap', { title: t, 'data-zones': a === b ? String(a) : a + '-' + b }, a === b ? machines(st, a) : a + ' to ' + machines(st, b));
 }
 
 // deleteButton(m, disk, onDeleted) -> the panel's "Delete model": the delete dialog
@@ -209,10 +250,24 @@ function deleteButton(m, disk, onDeleted) {
   return h('button.btn.red', { type: 'button', 'data-act': 'delete', onclick: () => deleteModel(m, onDeleted, disk ? disk.models_writable : undefined) }, 'Delete model');
 }
 
+// needsLine(m, st, f) -> the panel's "Runs on: 1 to 2 PS5s · needs ~3.3 to
+// 5.1 GB" and under it the profile at each end, measured or estimated each;
+// with no production profile, the lightest figure marked "smallest test
+// configuration"
+function needsLine(m, st, f) {
+  const r = prodNeeds(m);
+  if (r) {
+    return h('div', { 'data-needs': '' }, h('span.mut', 'Runs on: '), runsOnRange(m, st, r) || runsOnCell(m, st),
+      h('span.mut', ' · needs '), h('span', needRange(r)), h('span.mut.mdl-need-ends', needEnds(r)));
+  }
+  const tail = [f.sub, noProd(m) ? 'smallest test configuration' : ''].filter(Boolean).join(' · ');
+  return h('div', { 'data-needs': '' }, h('span.mut', 'Runs on: '), runsOnCell(m, st),
+    f.need ? [h('span.mut', ' · needs '), h('span', { title: f.title }, needText(f.need)), tail ? h('span.mut', ' (' + tail + ')') : null] : null);
+}
+
 // the side panel of one model
 function modelPanel(st, m, ps) {
   const f = fitOf(m, st);
-  const b = m.bench || {};
   const l = m.loads || {};
   const insts = m.instances || [];
   const loadedProfiles = new Set(insts.filter(i => i.state !== 'starting').map(i => i.profile));
@@ -229,26 +284,20 @@ function modelPanel(st, m, ps) {
   return [
     ps.saved ? h('div.banner.info', { key: 'saved', role: 'status', 'data-saved': '' }, h('span.grow', ps.saved)) : null,
     h('div.mdl-acts', { key: 'acts' },
-      // bench.reports (v60): finished runs with a step on this file; an older server has only runs
-      // the count opens the model's runs and reports in this panel (the owner's note 8a)
-      h('button.btn', { type: 'button', 'data-act': 'bench', onclick: () => ps.show('bench'),
-        title: typeof b.reports === 'number' ? `Finished benchmark runs with a step on this model: ${num(b.reports)} (${plural(b.runs || 0, 'run')} in all). Opens the list here.`
-          : b.runs ? 'Benchmarks that used a profile of this model. Opens the list here.' : 'No benchmark has used this model yet' }, 'Benchmarks ',
-        h('span.mut', typeof b.reports === 'number' ? (b.reports ? plural(b.reports, 'report') : 'no reports') : b.runs ? plural(b.runs, 'run') : 'none yet')),
+      // the count opens the model's runs in this panel (the owner's note 8a); it
+      // is the count of that list, from the same query (runsOf), so the two
+      // never differ; "report" is said per row only (the reviewer, 25 Nov)
+      benchButton(m, ps),
       typeof m.pinned === 'boolean'
         ? h('button', { type: 'button', class: 'btn' + (m.pinned ? ' mdl-pinned' : ''), 'aria-pressed': m.pinned ? 'true' : 'false', 'data-act': 'pin',
           title: m.pinned ? 'Pinned: click to unpin' : 'Pin: list it under Pinned', onclick: () => togglePin(m) }, m.pinned ? [icon(STAR), ' Pinned'] : 'Pin')
         : off('button.btn', NOT_YET.pin, { 'aria-pressed': 'false', 'data-act': 'pin' }, 'Pinned'),
       deleteButton(m, ps.disk(), ps.onDeleted)),
-    insts.length ? h('section.zpart', { key: 'loaded' }, h('h3', 'Loaded now'),
-      insts.map(i => h('div.mdl-inst', { key: 'i-' + i.profile },
-        h('span.mono', i.profile), i.state === 'starting' ? badge('Loading', 'load') : badge('Ready', 'ready'),
-        (i.nodes || []).length ? h('span.mut', 'on ' + i.nodes.join(', ')) : null,
-        i.in_flight ? h('span.mut', plural(i.in_flight, 'request') + ' in flight') : null))) : null,
+    loadedBlock(st, insts),
     h('section.zpart', { key: 'runs' },
       h('div.row', { style: 'gap:10px;flex-wrap:wrap' }, h('b', m.short_name || m.name), m.publisher ? h('span.mut', m.publisher) : null,
         stateBadge(m, st), m.kind === 'llama' && !m.exists ? badge('File missing', 'fail') : null),
-      h('div', h('span.mut', 'Runs on: '), runsOnCell(m, st), f.need ? [h('span.mut', ' · needs '), h('span', { title: f.title }, needText(f.need)), f.sub ? h('span.mut', ' (' + f.sub + ')') : null] : null),
+      needsLine(m, st, f),
       facts([
         m.family ? ['Family', h('span', m.family)] : null,
         m.parameters ? ['Parameters', h('span', m.parameters)] : null,
@@ -308,19 +357,86 @@ function planWords(r) {
 // benchView(m, ps): the model's benchmark runs and reports, in the panel
 // (GET /api/bench/runs?model=<file>; the owner's note 8a); each opens its
 // report page
-function benchView(m, ps) {
+// loadedBlock(st, insts) -> the panel's "Loaded now" block: per instance of
+// the model its profile, state and zones (links), then what the instance
+// card above the list used to show (the reviewer, 25 Nov): requests in
+// flight and waiting, served, the last request's speed, its memory, and the
+// memory per zone from the load log; while it loads, how far and how long.
+// The catalog names the zones; the live status (matched by profile) has the
+// figures. Nothing when the model is not loaded.
+function loadedBlock(st, insts) {
+  if (!insts.length) return null;
+  const live = p => (st.instances || []).find(x => x.profile === p) || null;
+  const anyMem = insts.some(i => { const x = live(i.profile); return x && (x.nodes || []).some(n => nodeMemory(n).total_mib > 0); });
+  const allLoading = insts.every(i => i.state === 'starting');
+  return h('section.zpart', { key: 'loaded', 'data-loaded': '' },
+    h('div.mdl-loaded-h', h('h3', allLoading ? 'Loading now' : 'Loaded now'),
+      anyMem ? h('div.mdl-key', legend([['m', 'Model'], ['k', 'KV cache'], ['c', 'Compute']])) : null),
+    insts.map(i => {
+      const x = live(i.profile) || {};
+      const loading = i.state === 'starting' || x.state === 'starting';
+      const names = (i.nodes || []).length ? i.nodes : (x.nodes || []).map(n => nodeName(st, n.id));
+      const lr = x.last_request;
+      const facts = [];
+      if (loading) {
+        const load = x.load || {};
+        const frac = load.progress != null ? load.progress : x.load_progress;
+        const eta = load.eta_s;
+        if (frac != null) facts.push(Math.round(frac * 100) + '% loaded');
+        if (eta != null) facts.push('about ' + dur(eta < 90 ? Math.round(eta) : Math.round(eta / 60) * 60) + ' left');
+        if (x.waiters > 0) facts.push(plural(x.waiters, 'request') + ' waiting for it');
+      } else {
+        const inFlight = x.in_flight != null ? x.in_flight : i.in_flight || 0;
+        facts.push(inFlight ? plural(inFlight, 'request') + ' in flight' : 'idle');
+        if (x.waiters > 0) facts.push(num(x.waiters) + ' waiting');
+        const served = x.requests_served != null ? x.requests_served : i.requests_served;
+        if (served != null) facts.push(num(served) + ' served');
+        if (lr && lr.tokens_per_second > 0) facts.push(h('span', { title: 'The last finished request: ' + num(lr.output_tokens) + ' tokens out in ' + dur((lr.duration_ms || 0) / 1000) }, tps(lr.tokens_per_second) + ' tok/s'));
+        const memMib = x.device_total_mib || i.memory_mib;
+        if (memMib) facts.push(h('span', { title: 'On the zones, from the load log' }, gb(memMib)));
+      }
+      return h('div.mdl-inst', { key: 'i-' + i.profile, 'data-profile': i.profile, 'data-state': loading ? 'starting' : 'ready' },
+        h('div.mdl-inst-h', h('span.mono', i.profile), loading ? badge('Loading', 'load') : badge('Ready', 'ready'),
+          names.length ? h('span.mut', 'on ', zoneLinks(names)) : null),
+        facts.length ? h('div.mut.mdl-inst-f', facts.flatMap((v, k) => [k ? ' · ' : null, v])) : null,
+        loading ? null : (x.nodes || []).filter(n => nodeMemory(n).total_mib > 0).map(n => memoryRow(nodeName(st, n.id), nodeMemory(n), n.budget_mib)));
+    }));
+}
+
+// RUNS_MAX: the most runs the panel lists; a longer history says "200+".
+const RUNS_MAX = 200;
+// runsOf(m, ps) -> {file, list, error}: the model's benchmark runs (GET
+// /api/bench/runs?model=<file>), asked once per panel. The Benchmarks button
+// and the list it opens both read this one answer.
+function runsOf(m, ps) {
   const file = m.file || m.key;
   if (!ps.runs || ps.runs.file !== file) {
     const r = ps.runs = { file, list: null, error: '' };
-    api.get('/api/bench/runs?model=' + encodeURIComponent(file) + '&limit=200')
+    api.get('/api/bench/runs?model=' + encodeURIComponent(file) + '&limit=' + RUNS_MAX)
       .then(d => { r.list = (d && d.runs) || []; if (ps.runs === r) ps.redraw(); }, e => { r.error = e.message; if (ps.runs === r) ps.redraw(); });
   }
-  const r = ps.runs, list = r.list;
+  return ps.runs;
+}
+// runsCount(list) -> "2 runs", "No runs", "200+ runs"
+const runsCount = list => (!list.length ? 'no runs' : list.length >= RUNS_MAX ? num(RUNS_MAX) + '+ runs' : plural(list.length, 'run'));
+
+// benchButton(m, ps) -> "Benchmarks · 2 runs": opens the list in the panel
+function benchButton(m, ps) {
+  const list = runsOf(m, ps).list;
+  return h('button.btn', { type: 'button', 'data-act': 'bench', 'data-runs': list ? String(list.length) : null, onclick: () => ps.show('bench'),
+    title: !list ? 'The benchmark runs that used this model. Opens the list here.'
+      : list.length ? 'The benchmark runs with a step on this model. Opens the list here.' : 'No benchmark run has used this model yet' },
+  // one flex child: the count sits a space from the word, not the button's gap
+  h('span', 'Benchmarks', list ? h('span.mut', ' · ' + runsCount(list)) : null));
+}
+
+function benchView(m, ps) {
+  const r = runsOf(m, ps), list = r.list;
   const when = x => x.started_at || x.queued_at;
   return [
     backBar(m, ps),
-    h('section.zpart', { key: 'bench' },
-      h('h3', 'Benchmarks ', list ? h('span.mut', plural(list.length, 'run')) : null),
+    h('section.zpart', { key: 'bench', 'data-runs': list ? String(list.length) : null },
+      h('h3', 'Benchmarks', list ? h('span.mut', ' · ' + runsCount(list)) : null),
       r.error ? h('p.err-t', 'The runs could not be read: ' + r.error)
         : !list ? skeleton(3)
           : !list.length ? h('p.mut', 'No benchmark run has used this model yet.')
@@ -406,12 +522,12 @@ function listPanel(st, models, disk, error, r, query, setQuery, onFind, done) {
     h('span.mut', sizeText(m), m.kind !== 'command' && m.exists === false ? h('span.err-t', ' · the file is missing') : null),
     inUse(m)),
   needsCell(m, st),
-  h('span', { class: prodCount(m) ? 'mdl-pc' : 'mdl-pc mut', 'data-prod': String(prodCount(m)) }, prodText(prodCount(m))),
+  profCell(m),
   h('span.mut.mdl-used', lastUsed(m)));
   const pinnedRows = pins ? rows.filter(m => m.pinned) : [];
   const restRows = pins ? rows.filter(m => !m.pinned) : rows;
   const heads = () => h('div.mr.mr-h', { 'aria-hidden': 'true' }, h('span'), h('span'),
-    h('span.lbl.mdl-needs', { title: 'The memory its lightest configuration needs on the zones' }, 'Needs'), h('span.lbl.mdl-pc', 'Profiles'), h('span.lbl', 'Last used'));
+    h('span.lbl.mdl-needs', { title: 'The memory its production profiles need on the zones, smallest to largest' }, 'Needs'), h('span.lbl.mdl-pc', 'Profiles'), h('span.lbl', 'Last used'));
   if (error && !models) body = empty('The model list could not be read', error);
   else if (!models) body = skeleton(6);
   else if (!models.length) body = empty('No models yet', 'A model appears here once a .gguf file is in the models folder, or a profile names a model file.');
@@ -440,8 +556,6 @@ function listPanel(st, models, disk, error, r, query, setQuery, onFind, done) {
 
 function mountHome(el, route) {
   let r = route, query = r.query.q || '', side = null, disk = null, alive = true, done = '';
-  const open = new Set();
-  const toggle = k => { if (open.has(k)) open.delete(k); else open.add(k); view.refresh(); };
   const offCatalog = onCatalog(() => { readDisk(); view.refresh(); if (side) side.redraw(); });
   pinRedraw = () => { if (!alive) return; view.refresh(); if (side) side.redraw(); };
   const setQuery = q => navigate('models', [], Object.assign({}, r.query, q), true);
@@ -496,17 +610,15 @@ function mountHome(el, route) {
     const st = state.status;
     const models = catalog.models;
     const view_ = st || {};
-    const insts = view_.instances || [];
-    const ready = insts.filter(i => i.state !== 'starting').length;
     const failed = (view_.recent_loads || []).filter(l => l.outcome && l.outcome !== 'ready');
     readDisk();
     if (side) side.redraw();
     return [
       // no header line: the page shows its content only (the owner's note 4,
-      // 25 Nov); its name stays for a screen reader. The key of the memory
-      // bars sits above the loaded cards while one is ready.
+      // 25 Nov); its name stays for a screen reader. Nothing about a loaded
+      // model sits above the list: its row says where it is in use, its
+      // panel's Loaded now block has the rest (the reviewer, 25 Nov).
       h('h1.sr', 'Models'),
-      ready ? h('div.mdl-key', legend([['m', 'Model'], ['k', 'KV cache'], ['c', 'Compute']])) : null,
       staleBanner(),
       view_.configured === false ? h('div.banner.info', { role: 'status' },
         h('span.grow', h('b', 'No configuration has been imported yet. '), 'The scheduler runs with its defaults and has no profiles and no tiers, so it cannot place a model. Import a configuration file with ',
@@ -517,9 +629,6 @@ function mountHome(el, route) {
           l.load_s ? ` after ${dur(l.load_s)}.` : '.'),
         h('a', { href: href('activity', null, { session: l.session_id }) }, 'See what happened'),
         loadLogs(st, l))),
-      !st ? h('section.card', { key: 'none' }, h('div.strip', skeleton(1)))
-        : insts.length ? insts.map(inst => instanceCard(st, inst, catalog.byProfile[inst.profile] || catalog.byKey[inst.model_file] || null, open, toggle))
-          : null, // nothing loaded: no banner; each row says when and where it is in use (the owner's note 3)
       view_.configured === false && models && !models.length ? null
         : listPanel(view_, models, disk, catalog.error, r, query, setQuery, v => { query = v; view.refresh(); }, done),
     ];
