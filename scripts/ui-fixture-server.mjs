@@ -82,6 +82,9 @@
 // --no-host-uptime: no agent reports host_uptime_s (an older agent, a console
 // fed by the fleet console); otherwise every reachable agent does.
 //
+// --inst-detail (with --models): the loaded instance also reports its memory
+// per zone (load log), its last finished request and its device total.
+//
 // --pending: Create new zone (internal/api/pending.go). GET /api/zones/pending
 // lists the one pending zone zone-9 (rack-a) in that state, GET
 // /api/zones/pending/pz-0000000000000001 answers it (gone: 404, as after a
@@ -147,6 +150,8 @@ const NAMED_ONLY_ID = opt('--named-only-id', '');
 const LOADS = argv.includes('--loads');
 // --no-host-uptime: no agent reports host_uptime_s (the zone panel leaves Uptime out)
 const NO_HOST_UPTIME = argv.includes('--no-host-uptime');
+// --inst-detail: a loaded instance carries its memory per zone, the last finished request and its device total
+const INST_DETAIL = argv.includes('--inst-detail');
 // --pending: the Create new zone states (see the header)
 const PENDING = opt('--pending', '');
 const PZ_SOURCE = PENDING && PENDING !== 'nosource' ? 'share:192.0.2.10:/models' : '';
@@ -231,7 +236,7 @@ const SCHED = { id: 'scheduler', name: 'scheduler', role: 'host' };
 
 // status(now) -> the status of the --zones state
 // with --models the instances are the catalog's (one loaded model, or none)
-const status = now => applyTiers(named(zonesStatus(MODELS_STATE ? modelsInstances(baseStatus(now), MODELS_STATE, mac) : baseStatus(now), now, ZONES, { drain: DRAIN, pinned: PINNED, hostUptime: !NO_HOST_UPTIME })), TIERS);
+const status = now => applyTiers(named(zonesStatus(MODELS_STATE ? modelsInstances(baseStatus(now), MODELS_STATE, mac, INST_DETAIL) : baseStatus(now), now, ZONES, { drain: DRAIN, pinned: PINNED, hostUptime: !NO_HOST_UPTIME })), TIERS);
 const named = st => { for (const n of (st.view && st.view.nodes) || []) if ((NAMED_ONLY && n.hostname === NAMED_ONLY) || (NAMED_ONLY_ID && n.hostname === NAMED_ONLY_ID)) n.auto = false; return st; };
 // withNamedId(doc, now): --named-only-id appends the zone's id to the stored no_auto_nodes
 const withNamedId = (d, now) => { if (!NAMED_ONLY_ID) return d; const z = (status(now).agents || []).find(a => a.name === NAMED_ONLY_ID); if (z) d.no_auto_nodes = [...(d.no_auto_nodes || []), z.id]; return d; };

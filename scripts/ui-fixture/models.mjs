@@ -64,11 +64,17 @@ export function modelsDoc(state, now = Date.now()) {
   return { disk, models, models_dir: '/models', history: true, version: 7 };
 }
 
-// modelsInstances(status, state, mac) -> the status with the instances the
-// catalog names: gemma-4-27b ready on the first two consoles, or none
-export function modelsInstances(st, state, mac) {
-  const insts = state === 'none' ? [] : [{ profile: 'gemma-4-27b', state: 'ready', in_flight: 2, waiters: 0, parallel: 1, host: 'server', requests_served: 1840,
-    nodes: [{ id: mac(1), role: 'host', share: 0.5 }, { id: mac(2), role: 'helper', share: 0.5 }] }];
+// modelsInstances(status, state, mac, detail) -> the status with the
+// instances the catalog names: gemma-4-27b ready on the first two consoles,
+// or none. detail (--inst-detail): what the scheduler also reports of a
+// ready instance (the memory per zone from the load log, the last finished
+// request, the device total), for the panel's Loaded now block.
+export function modelsInstances(st, state, mac, detail) {
+  const mem = (model, kv, compute) => [{ device: 'GPU0', model_mib: model, kv_mib: kv, compute_mib: compute, total_mib: model + kv + compute }];
+  const extra = detail ? { device_total_mib: 17480, last_request: { tokens_per_second: 14.2, output_tokens: 512, duration_ms: 36100 } } : {};
+  const nodeExtra = i => (detail ? { budget_mib: 12800, memory: i === 1 ? mem(7900, 760, 420) : mem(7420, 640, 340) } : {});
+  const insts = state === 'none' ? [] : [Object.assign({ profile: 'gemma-4-27b', state: 'ready', in_flight: 2, waiters: 0, parallel: 1, host: 'server', requests_served: 1840,
+    nodes: [Object.assign({ id: mac(1), role: 'host', share: 0.5 }, nodeExtra(1)), Object.assign({ id: mac(2), role: 'helper', share: 0.5 }, nodeExtra(2))] }, extra)];
   return Object.assign({}, st, { instances: insts, queue: [], recent_loads: [] });
 }
 

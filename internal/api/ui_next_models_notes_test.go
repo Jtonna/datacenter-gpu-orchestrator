@@ -260,3 +260,50 @@ func TestUINextNotesPanelDeeper(t *testing.T) {
 			"hash": older, "page": []string{"Saved gemma-4-12b", "would load on 1 zone"}, "pageHas": []string{"aside.side [data-saved]", "aside.side section.mdl-cfg"}},
 	}})
 }
+
+// The reviewer (25 Nov), adjustment b: nothing about a loaded model sits
+// above the list. The row says where it is in use (or that it is loading);
+// the panel's "Loaded now" block carries what the instance card showed:
+// requests in flight, served, speed, memory, and the memory per zone.
+func TestUINextNotesLoadedNow(t *testing.T) {
+	fetch := fixtureAnswers(t, []string{"--models", "five", "--inst-detail"}, "/api/models", "/api/status")
+	st := fetch["/api/status"]
+	row := "div.mr[data-model='" + mdlLoaded + "']"
+	inst := "aside.side section.zpart[data-loaded] div.mdl-inst[data-profile='gemma-4-27b']"
+	above := []string{"section.card[aria-label='gemma-4-27b']", "div.mdl-key:not(aside.side div.mdl-key)"}
+
+	// the same model while it loads: 40 percent in, about two minutes left
+	loading := mcpCopy(t, st)
+	for _, x := range loading["instances"].([]any) {
+		i := x.(map[string]any)
+		i["state"], i["in_flight"], i["phase"] = "starting", 0, "loading"
+		i["load"] = map[string]any{"progress": 0.4, "eta_s": 120, "elapsed_s": 80}
+		delete(i, "last_request")
+	}
+	docLoading := mcpCopy(t, fetch["/api/models"])
+	for _, x := range docLoading["models"].([]any) {
+		for _, y := range x.(map[string]any)["instances"].([]any) {
+			y.(map[string]any)["state"] = "starting"
+		}
+	}
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
+		map[string]any{"name": "adjust b: nothing above the list", "route": "#/models", "status": st,
+			"none":   []string{above[0], "div.mdl-key"},
+			"absent": []string{"Load took", "Command and log file", "Ready · serving"},
+			"has":    []string{row + " [data-inuse] a.mdl-zone[href='#/zones/ps5-01']"}, "expect": []string{"in use on"}},
+		map[string]any{"name": "adjust b: the panel's Loaded now block", "route": "#/models?model=" + mdlLoaded, "status": st, "width": 1536,
+			"pageHas": []string{inst + "[data-state=ready]", inst + " a.mdl-zone[href='#/zones/ps5-01']", inst + " a.mdl-zone[href='#/zones/ps5-02']",
+				inst + " div.nr", "aside.side section.zpart[data-loaded] div.mdl-key"},
+			"page": []string{"Loaded now", "2 requests in flight", "1,840 served", "14.2 tok/s", "17.1 GB", "8.9 / 12.5 GB", "8.2 / 12.5 GB"}},
+	}})
+	f2 := map[string]any{"/api/models": docLoading, "/api/status": loading}
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": f2, "cases": []any{
+		map[string]any{"name": "adjust b: a loading model, the row says so", "route": "#/models", "status": loading,
+			"none":   []string{above[0], "div.mdl-key"},
+			"absent": []string{"Pre-load check", "Gives up"},
+			"has":    []string{row + " [data-inuse] a.mdl-zone[href='#/zones/ps5-01']"}, "expect": []string{"loading on"}},
+		map[string]any{"name": "adjust b: a loading model in the panel", "route": "#/models?model=" + mdlLoaded, "status": loading, "width": 1536,
+			"pageHas": []string{inst + "[data-state=starting]", inst + " a.mdl-zone[href='#/zones/ps5-01']"},
+			"page":    []string{"Loading now", "40% loaded", "about 2 min left"}},
+	}})
+}

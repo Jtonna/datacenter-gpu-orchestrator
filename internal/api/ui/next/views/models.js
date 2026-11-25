@@ -38,15 +38,15 @@ import { h } from '../core/dom.js';
 import { registerView, href, navigate } from '../core/router.js';
 import { state } from '../core/store.js';
 import * as api from '../core/api.js';
-import { liveView, legend, empty, skeleton, searchField, sidePanel, facts, badge, filterSelect, dialog, runStatus } from '../core/ui.js';
-import { num, gb, dur, ago, plural, agoText, dateTime, bytes, DASH } from '../core/format.js';
-import { staleBanner, machines, shortReason, plainReason } from '../core/status.js';
+import { liveView, legend, memoryRow, empty, skeleton, searchField, sidePanel, facts, badge, filterSelect, dialog, runStatus } from '../core/ui.js';
+import { num, gb, tps, dur, ago, plural, agoText, dateTime, bytes, DASH } from '../core/format.js';
+import { staleBanner, nodeName, nodeMemory, machines, shortReason, plainReason } from '../core/status.js';
 import { loadConfig, loadSchema, fieldsOf, clone } from '../core/configdata.js';
 import { makeEditor, saveProfile } from './profiles.js';
 import { catalog, onCatalog, needCatalog, refreshCatalog } from '../core/catalog.js';
 import { logsLink, profileQuery, padded } from '../core/logs.js';
 import { tipText } from '../core/charts.js';
-import { instanceCard, stateBadge, fitOf, cannotRun, runsOnCell } from './models/common.js';
+import { stateBadge, fitOf, cannotRun, runsOnCell } from './models/common.js';
 import { mountDetail } from './models/detail.js';
 import { splitProfiles, prodText, testText } from './models/kinds.js';
 import { trashFooter, hasTrash, deleteModel, deletedText, mountTrash } from './models/trash.js';
@@ -129,13 +129,17 @@ export function loadTip(l, st) {
 // whose model is loaded, each zone a link to Zones with that zone selected
 // (the owner's note 3: the row says when and where, no banner); null when
 // it is not loaded. The zones are the catalog instances' (names).
+// zoneLinks(names) -> "ps5-01, ps5-02", each a link to the zone under Zones
+// (a click on one does not open the row's panel)
+const zoneLinks = list => list.flatMap((z, i) => [i ? ', ' : null, h('a.mdl-zone', { href: href('zones', [z]), title: 'Open ' + z + ' under Zones',
+  onclick: e => e.stopPropagation(), onkeydown: e => e.stopPropagation() }, z)]);
+
 function inUse(m) {
   const insts = m.instances || [];
   if (!insts.length) return null;
   const ready = [...new Set(insts.filter(i => i.state !== 'starting').flatMap(i => i.nodes || []))];
   const loading = [...new Set(insts.filter(i => i.state === 'starting').flatMap(i => i.nodes || []))].filter(z => !ready.includes(z));
-  const zones = list => list.flatMap((z, i) => [i ? ', ' : null, h('a.mdl-zone', { href: href('zones', [z]), title: 'Open ' + z + ' under Zones',
-    onclick: e => e.stopPropagation(), onkeydown: e => e.stopPropagation() }, z)]);
+  const zones = zoneLinks;
   const parts = [];
   if (ready.length) parts.push(['in use on ', ...zones(ready)]);
   else if (insts.some(i => i.state !== 'starting')) parts.push('in use');
@@ -244,11 +248,7 @@ function modelPanel(st, m, ps) {
           title: m.pinned ? 'Pinned: click to unpin' : 'Pin: list it under Pinned', onclick: () => togglePin(m) }, m.pinned ? [icon(STAR), ' Pinned'] : 'Pin')
         : off('button.btn', NOT_YET.pin, { 'aria-pressed': 'false', 'data-act': 'pin' }, 'Pinned'),
       deleteButton(m, ps.disk(), ps.onDeleted)),
-    insts.length ? h('section.zpart', { key: 'loaded' }, h('h3', 'Loaded now'),
-      insts.map(i => h('div.mdl-inst', { key: 'i-' + i.profile },
-        h('span.mono', i.profile), i.state === 'starting' ? badge('Loading', 'load') : badge('Ready', 'ready'),
-        (i.nodes || []).length ? h('span.mut', 'on ' + i.nodes.join(', ')) : null,
-        i.in_flight ? h('span.mut', plural(i.in_flight, 'request') + ' in flight') : null))) : null,
+    loadedBlock(st, insts),
     h('section.zpart', { key: 'runs' },
       h('div.row', { style: 'gap:10px;flex-wrap:wrap' }, h('b', m.short_name || m.name), m.publisher ? h('span.mut', m.publisher) : null,
         stateBadge(m, st), m.kind === 'llama' && !m.exists ? badge('File missing', 'fail') : null),
@@ -312,6 +312,52 @@ function planWords(r) {
 // benchView(m, ps): the model's benchmark runs and reports, in the panel
 // (GET /api/bench/runs?model=<file>; the owner's note 8a); each opens its
 // report page
+// loadedBlock(st, insts) -> the panel's "Loaded now" block: per instance of
+// the model its profile, state and zones (links), then what the instance
+// card above the list used to show (the reviewer, 25 Nov): requests in
+// flight and waiting, served, the last request's speed, its memory, and the
+// memory per zone from the load log; while it loads, how far and how long.
+// The catalog names the zones; the live status (matched by profile) has the
+// figures. Nothing when the model is not loaded.
+function loadedBlock(st, insts) {
+  if (!insts.length) return null;
+  const live = p => (st.instances || []).find(x => x.profile === p) || null;
+  const anyMem = insts.some(i => { const x = live(i.profile); return x && (x.nodes || []).some(n => nodeMemory(n).total_mib > 0); });
+  const allLoading = insts.every(i => i.state === 'starting');
+  return h('section.zpart', { key: 'loaded', 'data-loaded': '' },
+    h('div.dh', h('h3', allLoading ? 'Loading now' : 'Loaded now'),
+      anyMem ? h('div.mdl-key', legend([['m', 'Model'], ['k', 'KV cache'], ['c', 'Compute']])) : null),
+    insts.map(i => {
+      const x = live(i.profile) || {};
+      const loading = i.state === 'starting' || x.state === 'starting';
+      const names = (i.nodes || []).length ? i.nodes : (x.nodes || []).map(n => nodeName(st, n.id));
+      const lr = x.last_request;
+      const facts = [];
+      if (loading) {
+        const load = x.load || {};
+        const frac = load.progress != null ? load.progress : x.load_progress;
+        const eta = load.eta_s;
+        if (frac != null) facts.push(Math.round(frac * 100) + '% loaded');
+        if (eta != null) facts.push('about ' + dur(eta < 90 ? Math.round(eta) : Math.round(eta / 60) * 60) + ' left');
+        if (x.waiters > 0) facts.push(plural(x.waiters, 'request') + ' waiting for it');
+      } else {
+        const inFlight = x.in_flight != null ? x.in_flight : i.in_flight || 0;
+        facts.push(inFlight ? plural(inFlight, 'request') + ' in flight' : 'idle');
+        if (x.waiters > 0) facts.push(num(x.waiters) + ' waiting');
+        const served = x.requests_served != null ? x.requests_served : i.requests_served;
+        if (served != null) facts.push(num(served) + ' served');
+        if (lr && lr.tokens_per_second > 0) facts.push(h('span', { title: 'The last finished request: ' + num(lr.output_tokens) + ' tokens out in ' + dur((lr.duration_ms || 0) / 1000) }, tps(lr.tokens_per_second) + ' tok/s'));
+        const memMib = x.device_total_mib || i.memory_mib;
+        if (memMib) facts.push(h('span', { title: 'On the zones, from the load log' }, gb(memMib)));
+      }
+      return h('div.mdl-inst', { key: 'i-' + i.profile, 'data-profile': i.profile, 'data-state': loading ? 'starting' : 'ready' },
+        h('div.mdl-inst-h', h('span.mono', i.profile), loading ? badge('Loading', 'load') : badge('Ready', 'ready'),
+          names.length ? h('span.mut', 'on ', zoneLinks(names)) : null),
+        facts.length ? h('div.mut.mdl-inst-f', facts.flatMap((v, k) => [k ? ' · ' : null, v])) : null,
+        loading ? null : (x.nodes || []).filter(n => nodeMemory(n).total_mib > 0).map(n => memoryRow(nodeName(st, n.id), nodeMemory(n), n.budget_mib)));
+    }));
+}
+
 // RUNS_MAX: the most runs the panel lists; a longer history says "200+".
 const RUNS_MAX = 200;
 // runsOf(m, ps) -> {file, list, error}: the model's benchmark runs (GET
@@ -464,8 +510,6 @@ function listPanel(st, models, disk, error, r, query, setQuery, onFind, done) {
 
 function mountHome(el, route) {
   let r = route, query = r.query.q || '', side = null, disk = null, alive = true, done = '';
-  const open = new Set();
-  const toggle = k => { if (open.has(k)) open.delete(k); else open.add(k); view.refresh(); };
   const offCatalog = onCatalog(() => { readDisk(); view.refresh(); if (side) side.redraw(); });
   pinRedraw = () => { if (!alive) return; view.refresh(); if (side) side.redraw(); };
   const setQuery = q => navigate('models', [], Object.assign({}, r.query, q), true);
@@ -520,17 +564,15 @@ function mountHome(el, route) {
     const st = state.status;
     const models = catalog.models;
     const view_ = st || {};
-    const insts = view_.instances || [];
-    const ready = insts.filter(i => i.state !== 'starting').length;
     const failed = (view_.recent_loads || []).filter(l => l.outcome && l.outcome !== 'ready');
     readDisk();
     if (side) side.redraw();
     return [
       // no header line: the page shows its content only (the owner's note 4,
-      // 25 Nov); its name stays for a screen reader. The key of the memory
-      // bars sits above the loaded cards while one is ready.
+      // 25 Nov); its name stays for a screen reader. Nothing about a loaded
+      // model sits above the list: its row says where it is in use, its
+      // panel's Loaded now block has the rest (the reviewer, 25 Nov).
       h('h1.sr', 'Models'),
-      ready ? h('div.mdl-key', legend([['m', 'Model'], ['k', 'KV cache'], ['c', 'Compute']])) : null,
       staleBanner(),
       view_.configured === false ? h('div.banner.info', { role: 'status' },
         h('span.grow', h('b', 'No configuration has been imported yet. '), 'The scheduler runs with its defaults and has no profiles and no tiers, so it cannot place a model. Import a configuration file with ',
@@ -541,9 +583,6 @@ function mountHome(el, route) {
           l.load_s ? ` after ${dur(l.load_s)}.` : '.'),
         h('a', { href: href('activity', null, { session: l.session_id }) }, 'See what happened'),
         loadLogs(st, l))),
-      !st ? h('section.card', { key: 'none' }, h('div.strip', skeleton(1)))
-        : insts.length ? insts.map(inst => instanceCard(st, inst, catalog.byProfile[inst.profile] || catalog.byKey[inst.model_file] || null, open, toggle))
-          : null, // nothing loaded: no banner; each row says when and where it is in use (the owner's note 3)
       view_.configured === false && models && !models.length ? null
         : listPanel(view_, models, disk, catalog.error, r, query, setQuery, v => { query = v; view.refresh(); }, done),
     ];
