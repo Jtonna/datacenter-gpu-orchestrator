@@ -1346,6 +1346,26 @@ input.cb{width:16px;height:16px;margin:0;accent-color:#0f6b4a}
 .mdl-ptbl tbody tr:hover .go,.mdl-ptbl .go:focus-visible{color:var(--link)}
 .mdl-ptbl tbody tr:hover .go .tx,.mdl-ptbl .go:focus-visible .tx{visibility:visible}
 .mdl-pad{padding:8px 16px}
+/* the panel's deeper views (owner's note 8): the way back, the runs list, the editor in the panel */
+.mdl-back{margin:-4px 0 2px}
+.mdl-back .btn .ic{width:14px;height:14px}
+.mdl-ptbl button.go{border:0;background:none;padding:0;cursor:pointer;font:inherit}
+.mdl-ttbl button.go{border:0;background:none;padding:0;cursor:pointer;font:inherit}
+.mdl-runs{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.mdl-run{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:4px 14px;padding:10px 14px;text-decoration:none;color:inherit;border-top:1px solid var(--line)}
+.mdl-run:first-child{border-top:0}
+.mdl-run:hover,.mdl-run:focus-visible{background:var(--hover-bg)}
+.mdl-run-n{display:flex;flex-direction:column;min-width:0}
+.mdl-run-n b,.mdl-run-n .mono{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mdl-run-n .mono{font-size:11.5px}
+.mdl-run-s{display:flex;align-items:center;gap:4px;white-space:nowrap}
+.mdl-run-t{white-space:nowrap}
+.mdl-more{margin-top:10px}
+.mdl-plan{display:flex;flex-wrap:wrap;gap:2px 6px;padding:10px 12px;border-radius:10px;background:#f3f7f5;border:1px solid var(--line)}
+.mdl-plan .sub{flex-basis:100%;color:var(--mut);font-size:12px}
+.prf-inpanel{border:0;box-shadow:none;background:none;margin:0 -16px}
+.prf-inpanel .prf-ebody{padding:0 16px 24px}
+.prf-inpanel .prf-efoot{border-radius:0;margin-bottom:-1px}
 /* the test and benchmark configurations: one collapsed line (owner's note 9; views/models/kinds.js) */
 .mdl-tests{border-top:1px solid #e9eeeb}
 .mdl-tests>summary{padding:10px 16px;cursor:pointer;color:var(--mut);font-weight:600}

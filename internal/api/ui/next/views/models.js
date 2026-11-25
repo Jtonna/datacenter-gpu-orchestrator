@@ -38,9 +38,11 @@ import { h } from '../core/dom.js';
 import { registerView, href, navigate } from '../core/router.js';
 import { state } from '../core/store.js';
 import * as api from '../core/api.js';
-import { liveView, legend, empty, skeleton, searchField, sidePanel, facts, badge, filterSelect, dialog } from '../core/ui.js';
+import { liveView, legend, empty, skeleton, searchField, sidePanel, facts, badge, filterSelect, dialog, runStatus } from '../core/ui.js';
 import { num, gb, dur, ago, plural, agoText, dateTime, bytes, DASH } from '../core/format.js';
-import { staleBanner, machines, shortReason } from '../core/status.js';
+import { staleBanner, machines, shortReason, plainReason } from '../core/status.js';
+import { loadConfig, loadSchema, fieldsOf, clone } from '../core/configdata.js';
+import { makeEditor, saveProfile } from './profiles.js';
 import { catalog, onCatalog, needCatalog, refreshCatalog } from '../core/catalog.js';
 import { logsLink, profileQuery, padded } from '../core/logs.js';
 import { tipText } from '../core/charts.js';
@@ -222,14 +224,17 @@ function modelPanel(st, m, ps) {
   // "Unload when idle" from ttl_s (v60; 0 = never); no column when the server has no ttl_s
   const ttlCol = hand.some(p => typeof p.ttl_s === 'number');
   const rows = hand.filter(p => (!q || p.id.toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q)) && (!ps.ctx || String(p.ctx) === ps.ctx));
+  if (ps.view === 'bench') return benchView(m, ps);
+  if (ps.view === 'edit') return editView(m, ps);
   return [
+    ps.saved ? h('div.banner.info', { key: 'saved', role: 'status', 'data-saved': '' }, h('span.grow', ps.saved)) : null,
     h('div.mdl-acts', { key: 'acts' },
       // bench.reports (v60): finished runs with a step on this file; an older server has only runs
-      typeof b.reports === 'number'
-        ? h('a.btn', { href: href('benchmarks'), title: `Finished benchmark runs with a step on this model: ${num(b.reports)} (${plural(b.runs || 0, 'run')} in all)` }, 'Benchmarks ',
-          h('span.mut', b.reports ? plural(b.reports, 'report') : 'no reports'))
-        : h('a.btn', { href: href('benchmarks'), title: b.runs ? 'Benchmarks that used a profile of this model' : 'No benchmark has used this model yet' }, 'Benchmarks ',
-          h('span.mut', b.runs ? plural(b.runs, 'run') : 'none yet')),
+      // the count opens the model's runs and reports in this panel (the owner's note 8a)
+      h('button.btn', { type: 'button', 'data-act': 'bench', onclick: () => ps.show('bench'),
+        title: typeof b.reports === 'number' ? `Finished benchmark runs with a step on this model: ${num(b.reports)} (${plural(b.runs || 0, 'run')} in all). Opens the list here.`
+          : b.runs ? 'Benchmarks that used a profile of this model. Opens the list here.' : 'No benchmark has used this model yet' }, 'Benchmarks ',
+        h('span.mut', typeof b.reports === 'number' ? (b.reports ? plural(b.reports, 'report') : 'no reports') : b.runs ? plural(b.runs, 'run') : 'none yet')),
       typeof m.pinned === 'boolean'
         ? h('button', { type: 'button', class: 'btn' + (m.pinned ? ' mdl-pinned' : ''), 'aria-pressed': m.pinned ? 'true' : 'false', 'data-act': 'pin',
           title: m.pinned ? 'Pinned: click to unpin' : 'Pin: list it under Pinned', onclick: () => togglePin(m) }, m.pinned ? [icon(STAR), ' Pinned'] : 'Pin')
@@ -269,7 +274,7 @@ function modelPanel(st, m, ps) {
       // the test and benchmark configurations: one collapsed line, never counted as profiles
       tests.length ? h('details.mdl-tests', { key: 'tests' }, h('summary', testText(tests.length)),
         h('table.tbl.mdl-ttbl', h('tbody', tests.map(profileRow)))) : null),
-    h('div.mdl-pad.row', { key: 'page', style: 'gap:12px' }, h('a.btn', { href: href('models', [m.key]) }, 'Open the model page'), h('a', { href: href('profiles') }, 'Edit under Profiles')),
+    h('div.mdl-pad.row', { key: 'page', style: 'gap:12px' }, h('a.btn', { href: href('models', [m.key]) }, 'Open the model page')),
   ];
   // one profile's row (production table and the test list)
   function profileRow(p) {
@@ -279,8 +284,104 @@ function modelPanel(st, m, ps) {
           h('td.r.mono', p.ctx ? num(p.ctx) : DASH),
           h('td.r', p.needs_mib ? [h('span.mono', num(p.needs_mib) + ' MiB'), h('span.sub', { title: p.needs_basis || null }, p.needs_measured ? 'measured' : 'estimated')] : h('span.mut', DASH)),
           ttlCol ? (typeof p.ttl_s === 'number' ? h('td.r.mono', { 'data-ttl': String(p.ttl_s) }, p.ttl_s > 0 ? dur(p.ttl_s) : 'Never') : h('td.r.mut', DASH)) : null,
-          h('td.r', h('a.go', { href: href('profiles', [p.id]), 'aria-label': 'Edit ' + p.id }, h('span.tx', 'Edit'), icon('M8 5l5 5-5 5'))));
+          h('td.r', h('button.go', { type: 'button', 'data-act': 'edit', 'aria-label': 'Edit ' + p.id, title: 'Edit it here', onclick: () => ps.edit(p.id) }, h('span.tx', 'Edit'), icon('M8 5l5 5-5 5'))));
   }
+}
+
+// backBar(m, ps) -> the way back to the panel's main view
+const backBar = (m, ps) => h('div.mdl-back', { key: 'back' }, h('button.btn.sm', { type: 'button', 'data-back': '', onclick: () => ps.show('') },
+  icon('M12 5l-5 5 5 5'), 'Back to ' + (m.file || m.name)));
+
+// planWords(plan) -> "would load on 1 zone", "loaded now on 2 zones", or why
+// it would not load (a POST /api/plan answer, or a catalog profile's plan)
+function planWords(r) {
+  if (!r) return 'is not known';
+  const n = (r.nodes || []).length;
+  if (r.action === 'serve' || r.action === 'wait') return `is loaded now on ${plural(n, 'zone')}`;
+  if (r.action === 'reject' || (r.memory && r.memory.fits === false)) return 'does not fit: ' + (plainReason(r.reason) || 'no zones can hold it');
+  if (r.action === 'queue') return 'would wait: ' + (plainReason(r.reason) || 'no zone can take it now');
+  if (r.action === 'backoff') return 'is held back: ' + (plainReason(r.reason) || 'its last load failed');
+  if (r.would_start === false) return 'would not load now' + (r.reason ? ': ' + plainReason(r.reason) : '');
+  return n ? `would load on ${plural(n, 'zone')}` + (r.action === 'evict' ? ', unloading another model first' : '') : 'is not known';
+}
+
+// benchView(m, ps): the model's benchmark runs and reports, in the panel
+// (GET /api/bench/runs?model=<file>; the owner's note 8a); each opens its
+// report page
+function benchView(m, ps) {
+  const file = m.file || m.key;
+  if (!ps.runs || ps.runs.file !== file) {
+    const r = ps.runs = { file, list: null, error: '' };
+    api.get('/api/bench/runs?model=' + encodeURIComponent(file) + '&limit=200')
+      .then(d => { r.list = (d && d.runs) || []; if (ps.runs === r) ps.redraw(); }, e => { r.error = e.message; if (ps.runs === r) ps.redraw(); });
+  }
+  const r = ps.runs, list = r.list;
+  const when = x => x.started_at || x.queued_at;
+  return [
+    backBar(m, ps),
+    h('section.zpart', { key: 'bench' },
+      h('h3', 'Benchmarks ', list ? h('span.mut', plural(list.length, 'run')) : null),
+      r.error ? h('p.err-t', 'The runs could not be read: ' + r.error)
+        : !list ? skeleton(3)
+          : !list.length ? h('p.mut', 'No benchmark run has used this model yet.')
+            : h('div.mdl-runs', { role: 'list' }, list.map(x => {
+              const sm = x.summary || {};
+              const name = x.suite_name || x.benchmark_id || x.suite_id || x.id;
+              const icon_ = x.state === 'completed' ? (sm.failed ? 'failed' : 'done') : x.state === 'paused' ? 'running' : x.state;
+              return h('a.mdl-run', { key: x.id, role: 'listitem', href: href('benchmarks', ['runs', x.id]), title: 'Open the report of ' + x.id },
+                h('span.mdl-run-n', h('b', name), h('span.mut.mono', x.id)),
+                h('span.mdl-run-s', runStatus(icon_, x.state === 'completed' ? 'report' : x.state),
+                  sm.steps ? h('span.mut', ` · ${num(sm.passed || 0)} of ${num(sm.steps)} passed`) : null),
+                h('span.mut.mdl-run-t', when(x) ? h('time', { title: dateTime(when(x)) }, dayOf(when(x))) : DASH));
+            })),
+      h('p.mdl-more', h('a', { href: href('benchmarks') }, 'All benchmarks'))),
+  ];
+}
+
+// editView(m, ps): one configuration edited in the panel (the owner's note
+// 8b) with the profile editor of views/profiles.js (makeEditor: the same
+// fields and checks), saved through the same review (saveProfile: a dry
+// run, the diff, a required comment, If-Match; the server writes the audit
+// entry). POST /api/plan reads saved profiles only: the preview gives the
+// saved values' plan before, and the new plan after saving (status file,
+// "Backend wished for": a what-if plan of edited values).
+function editView(m, ps) {
+  const id = ps.editId;
+  const cur = (m.profiles || []).find(p => p.id === id) || null;
+  if (!ps.editor || ps.editor.id !== id) {
+    const ed = ps.editor = { id, el: null, error: '', cfg: null, preview: h('div.mdl-plan', { 'data-plan-preview': '' }) };
+    Promise.all([loadConfig(), loadSchema()]).then(([cfg, schema]) => {
+      if (ps.editor !== ed) return;
+      const spec = cfg && cfg.profiles ? cfg.profiles[id] : null;
+      if (!spec) { ed.error = 'There is no profile ' + id + ' in the configuration: it may have been deleted.'; ps.redraw(); return; }
+      ed.cfg = cfg;
+      ed.el = makeEditor({ fields: fieldsOf(schema, 'profile'), mode: 'edit', id, initial: clone(spec), inPanel: true, exists: () => true,
+        onCancel: () => ps.show(''), above: ed.preview,
+        onSave: async (pid, prof, setMessages) => {
+          const r = await saveProfile({ pid, prof, exists: true, getRevision: () => (ed.cfg ? ed.cfg.revision : 0),
+            reload: async () => { ed.cfg = await loadConfig(); }, onInvalid: setMessages });
+          if (!(r && r.saved)) return;
+          let words;
+          try { words = planWords(await api.post('/api/plan', { model: pid })); } catch (er) { words = 'has a plan that could not be read (' + er.message + ')'; }
+          ps.show('');
+          ps.saved = `Saved ${pid}${r.revision ? ` (revision ${num(r.revision)})` : ''}. With the new values it ${words}.`;
+          refreshCatalog();
+          ps.redraw();
+        } }).el;
+      ps.redraw();
+    }, er => { if (ps.editor === ed) { ed.error = er.message; ps.redraw(); } });
+  }
+  const ed = ps.editor;
+  const plan = cur && cur.plan;
+  ed.preview.replaceChildren(
+    h('b', 'Where it would load: '),
+    plan ? h('span', { 'data-would': String((plan.nodes || []).length) }, 'with the saved values it ', planWords(plan), '.') : h('span.mut', 'not known for the saved values.'),
+    h('span.sub', 'The scheduler cannot show unsaved values yet: the plan for your changes is shown when you save.'));
+  return [
+    backBar(m, ps),
+    h('section.zpart', { key: 'edit-' + id }, h('h3', 'Edit ', h('span.mono', id)),
+      ed.error ? h('p.err-t', ed.error) : ed.el || skeleton(6)),
+  ];
 }
 
 function listPanel(st, models, disk, error, r, query, setQuery, onFind, done) {
@@ -364,6 +465,10 @@ function mountHome(el, route) {
     if (side) { const s = side; side = null; s.close(); }
     const find = () => (catalog.models || []).find(m => m.key === key) || null;
     const ps = { q: '', ctx: '', redraw: () => p.redraw(), disk: () => disk,
+      // the panel's views: '' (main), 'bench' (its runs), 'edit' (a configuration in the editor)
+      view: '', editId: '', editor: null, runs: null, saved: '',
+      show: v => { ps.view = v; if (v !== 'edit') ps.editor = null; if (v === 'bench') ps.runs = null; if (v) ps.saved = ''; p.redraw(); },
+      edit: id => { ps.editId = id; ps.saved = ''; ps.show('edit'); },
       // after a delete: the sentence on the list, the panel closed, the disk figures read again
       onDeleted: res => { done = deletedText(res); diskAt = 0; readDisk(); setQuery({ model: '' }); view.refresh(); } };
     const body = () => {

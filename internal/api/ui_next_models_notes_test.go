@@ -168,3 +168,53 @@ func TestUINextNotesPanelResize(t *testing.T) {
 			"pageHas": []string{"aside.side"}, "pageNone": []string{".side-grip", "aside.side[data-w]"}},
 	}})
 }
+
+// Note 8: the side panel goes deeper without leaving it. (a) The Benchmarks
+// count opens the model's runs and reports in the panel, each opening its
+// report page, with a way back. (b) A configuration is edited in the panel
+// with the profile editor (views/profiles.js), saved through the review
+// (dry run, a required comment, If-Match), then its plan is asked again
+// (POST /api/plan: it cannot preview unsaved values, which the panel says).
+func TestUINextNotesPanelDeeper(t *testing.T) {
+	fetch := fixtureAnswers(t, []string{"--models", "five"}, "/api/models", "/api/status", "/api/config", "/api/config/schema")
+	st := fetch["/api/status"]
+	fetch["/api/bench/runs"] = map[string]any{"runs": []any{
+		map[string]any{"id": "run-20261124T0900-aa01", "kind": "suite", "suite_id": "cold-warm", "suite_name": "Cold and warm loads", "state": "completed", "trigger": "manual",
+			"queued_at": 1764061200000, "started_at": 1764061200000, "finished_at": 1764061800000, "summary": map[string]any{"steps": 6, "ran": 6, "passed": 6, "failed": 0}},
+		map[string]any{"id": "run-20261123T0900-aa02", "kind": "benchmark", "benchmark_id": "gemma27-2con", "suite_name": "", "state": "failed", "trigger": "schedule",
+			"queued_at": 1763974800000, "started_at": 1763974800000, "finished_at": 1763975100000, "error": "a step failed", "summary": map[string]any{"steps": 3, "ran": 3, "passed": 2, "failed": 1}},
+	}}
+	fetch["PUT /api/config/profiles/gemma-4-12b"] = map[string]any{"changed": true, "revision": 413, "diff": []any{map[string]any{"path": "profiles.gemma-4-12b.ctx", "old": 8192, "new": 16384}}}
+	fetch["POST /api/plan"] = map[string]any{"model": "gemma-4-12b", "action": "start", "nodes": []any{"ps5-03"}, "reason": ""}
+	open := "#/models?model=" + mdlLoaded
+	older := "#/models?model=" + mdlOlder
+	editBtn := "aside.side tr[data-profile='gemma-4-12b'] button[data-act=edit]"
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
+		map[string]any{"name": "notes 8a: Benchmarks opens the runs in the panel", "route": open, "status": st, "width": 1536,
+			"click":        []string{"aside.side button[data-act=bench]"},
+			"fetchedQuery": []string{`^GET /api/bench/runs\?model=gemma-4-27b-it-Q4_K_M\.gguf`},
+			"hash":         open,
+			"page":         []string{"Benchmarks", "2 runs", "Cold and warm loads", "gemma27-2con", "Back to " + mdlLoaded},
+			"pageHas": []string{"aside.side a.mdl-run[href='#/benchmarks/runs/run-20261124T0900-aa01']", "aside.side a.mdl-run[href='#/benchmarks/runs/run-20261123T0900-aa02']",
+				"aside.side button[data-back]"},
+			"pageNone": []string{"aside.side section.mdl-cfg"}},
+		map[string]any{"name": "notes 8a: back to the panel's main view", "route": open, "status": st, "width": 1536,
+			"click": []string{"aside.side button[data-act=bench]", "aside.side button[data-back]"}, "pageHas": []string{"aside.side section.mdl-cfg"}, "pageNone": []string{"aside.side a.mdl-run"}},
+		map[string]any{"name": "notes 8b: Edit opens the editor in the panel", "route": older, "status": st, "width": 1536,
+			"click": []string{editBtn}, "hash": older,
+			"page":    []string{"Edit gemma-4-12b", "Context size", "Parallel slots", "Description", "Save", "Cancel", "cannot show unsaved values"},
+			"pageHas": []string{"aside.side section.prf-editor.prf-inpanel", "aside.side [data-plan-preview]", "aside.side button[data-back]"},
+			"pageNone": []string{"aside.side a[href^='#/profiles/']", "aside.side section.mdl-cfg"}},
+		map[string]any{"name": "notes 8b: Cancel goes back", "route": older, "status": st, "width": 1536,
+			"click": []string{editBtn, "aside.side button[data-cancel]"}, "pageHas": []string{"aside.side section.mdl-cfg"}, "pageNone": []string{"aside.side section.prf-editor"}},
+		map[string]any{"name": "notes 8b: no save without a comment", "route": older, "status": st, "width": 1536,
+			"click":        []any{editBtn, "aside.side button[data-save]", "div.dlg-foot button.pri"},
+			"fetchedQuery": []string{`^PUT /api/config/profiles/gemma-4-12b\?dry_run=1 \{"profile":\{.*\}\}$`},
+			"notFetched":   []string{`^PUT /api/config/profiles/gemma-4-12b \{`}},
+		map[string]any{"name": "notes 8b: save with a comment, then the plan", "route": older, "status": st, "width": 1536,
+			"click": []any{editBtn, "aside.side button[data-save]", map[string]any{"type": "textarea[aria-label=Comment]", "value": "longer context"}, "div.dlg-foot button.pri"},
+			"fetchedQuery": []string{`^PUT /api/config/profiles/gemma-4-12b\?dry_run=1 \{"profile":\{.*\}\}$`, `^PUT /api/config/profiles/gemma-4-12b \{"profile":\{.*\},"comment":"longer context"\}$`,
+				`^POST /api/plan \{"model":"gemma-4-12b"\}$`},
+			"hash": older, "page": []string{"Saved gemma-4-12b", "would load on 1 zone"}, "pageHas": []string{"aside.side [data-saved]", "aside.side section.mdl-cfg"}},
+	}})
+}
