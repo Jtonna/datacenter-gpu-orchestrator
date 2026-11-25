@@ -2,6 +2,15 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: a request cut by a forced unload is told why
+
+No agent change, no new port, no schema change, no new route, no new setting.
+
+- **503 unloaded, not 502.** A request in flight whose model is force unloaded used to get 502 "upstream request failed: EOF". The cases are POST /api/unload with force, the models page's force unload, a zone's or node's force unload, and a model delete with interrupt. It now gets 503 with reason `unloaded`, `Retry-After`, and the message "unloaded: <profile> was unloaded". A delete with interrupt adds ": its model file is being deleted"; a node's force unload adds ": force unload of node <id>". This is the shape a loading or queued caller already gets. The scheduler marks the instance before it kills it, and the proxy reads that mark when the model server's connection breaks; it never guesses from the error text.
+- **A stream already under way** keeps its 200. It ends with a final SSE event, `event: error`, whose data is `{"error":{"message","type","code":503,"reason":"unloaded"}}`, then closes cleanly. This is the same form as the stall timeout's error event. A body that is not an event stream and was cut after its first byte is cut as before.
+- **A model server that fails on its own** still answers 502 "upstream request failed", as before.
+- The request log's reason for such a request is `unloaded`, "it was unloaded while it ran (a forced unload)".
+
 ## Scheduler image: newer benchmark tables switch off only the benchmarks; run limit 720 minutes
 
 No agent change, no new port, no schema change, no new route, no new setting.
