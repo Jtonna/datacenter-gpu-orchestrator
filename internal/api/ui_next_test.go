@@ -261,7 +261,7 @@ func TestUINextModelsListAndPanel(t *testing.T) {
 		map[string]any{"name": "the list", "route": "#/models", "status": "fetch", "expect": append([]string{"All models", "model file", "Needs", "Profiles", "Last used", "Add a model"}, files...),
 			"absent": append(append([]string{}, designSamples...), noControls...), "has": disabled},
 		map[string]any{"name": "one model's panel", "route": "#/models?model=" + key, "status": "fetch",
-			"page": []string{name, file, "Configurations", profile, "Edit under Profiles", "Open the model page"}, "notOnPage": []string{"Remove now"},
+			"page": []string{name, file, "Configurations", profile, "Open the model page"}, "notOnPage": []string{"Remove now", "Edit under Profiles"},
 			// no Unload button in the panel (its "Unload when idle" column, v60, is a heading, not a control)
 			"pageNone": []string{"aside.side button[data-act=unload]"},
 			"pageHas":  []string{"aside.side button[data-act=delete][aria-disabled=true]", "aside.side button[data-act=pin][aria-pressed=false]"}},

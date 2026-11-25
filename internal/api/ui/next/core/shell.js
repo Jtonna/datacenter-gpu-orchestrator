@@ -69,7 +69,7 @@ export const NAV = [
     { id: 'nodes', label: 'Machine details', desc: 'One card per machine, with its memory and checks' },
   ] },
   { id: 'models', label: 'Models', icon: I.models, pages: [
-    { id: 'models', label: 'Models', desc: 'Model files, what is loaded, and their profiles' },
+    { id: 'models', label: 'Models', desc: 'The models available to you' },
   ] },
   { id: 'benchmarks', label: 'Benchmarks', icon: I.benchmarks, pages: [
     { id: 'benchmarks', label: 'Overview', match: r => !['runs', 'trends'].includes(r.rest[0]) },
@@ -196,7 +196,7 @@ const narrow = window.matchMedia('(max-width:860px)');
 let strip = null; // the slot box above the screen, used at phone width and while the menu is closed
 
 // setShellSlot('run', node) shows a node in the shell: in the section menu
-// above the fleet card, or (at phone width, or while the menu is closed) in a
+// at its foot, or (at phone width, or while the menu is closed) in a
 // strip above the screen. null removes it. The node is yours: update it in
 // place (morph into it); the shell only decides where it sits and never
 // re-creates or re-wraps it.
@@ -333,15 +333,15 @@ function menuItem(p, c) {
 function menuNode() {
   const s = sectionOf(route) || NAV[0];
   const c = counts();
-  const f = fleetFacts();
   return [
     h('div.menu-head', { key: 'head' },
       h('div', h('b', s.label), h('span', 'Potluck')),
       h('button.menu-close', { type: 'button', 'aria-label': 'Close menu', title: 'Close menu', onclick: () => setMenuClosed(true) }, icon(I.close))),
     h('nav', { 'aria-label': s.label + ' pages', key: 'pages', style: 'display:flex;flex-direction:column;gap:4px' }, s.pages.map(p => menuItem(p, c))),
+    // the foot holds the slots (the Benchmarks run card); no health card: the
+    // heart in the rail carries it (the owner's note 2, 25 Nov)
     h('div.menu-foot', { key: 'foot' },
-      h('div.slotbox', { key: 'slots', 'data-keep': '' }),
-      h('div.fleet', { role: 'status' }, h('b', h('span', { class: 'dot ' + (f.dot || '') }), f.title), h('span', f.note))),
+      h('div.slotbox', { key: 'slots', 'data-keep': '' })),
   ];
 }
 

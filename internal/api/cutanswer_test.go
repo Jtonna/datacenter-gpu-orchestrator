@@ -16,6 +16,8 @@ import (
 //   - "hold" in a request that does not stream: nothing is sent until the
 //     request ends (the instance is killed, which the test acts out as the
 //     connection ending);
+//   - "stream":true and "quiet": nothing at all is sent (not even the
+//     headers) until the request ends: a stream cut before its first byte;
 //   - "stream":true: one token is sent, then nothing until the request ends;
 //   - "die": the connection is dropped at once, with no answer (a model
 //     server that crashed on its own);
@@ -29,6 +31,9 @@ func (u *cutUpstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.Contains(s, "die"):
 		conn, _, _ := http.NewResponseController(w).Hijack()
 		conn.Close()
+	case strings.Contains(s, `"stream":true`) && strings.Contains(s, "quiet"):
+		u.started <- struct{}{}
+		<-r.Context().Done()
 	case strings.Contains(s, `"stream":true`):
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, `data: {"choices":[{"delta":{"content":"t1"},"finish_reason":null,"index":0}],"object":"chat.completion.chunk"}`+"\n\n")
@@ -67,6 +72,38 @@ func sendCut(t *testing.T, url, body string) <-chan cutAnswer {
 		ch <- cutAnswer{status: resp.StatusCode, retryAfter: resp.Header.Get("Retry-After"), body: string(b), err: e}
 	}()
 	return ch
+}
+
+// sendStream posts a streamed request in the background; first is closed
+// once the client has read the first event (the token t1), so the test
+// knows the stream's first bytes reached the app before it cuts.
+func sendStream(t *testing.T, url, body string) (first <-chan struct{}, answer <-chan cutAnswer) {
+	f := make(chan struct{})
+	ch := make(chan cutAnswer, 1)
+	go func() {
+		resp, err := http.Post(url+"/v1/chat/completions", "application/json", strings.NewReader(body))
+		if err != nil {
+			ch <- cutAnswer{status: -1, body: err.Error()}
+			return
+		}
+		defer resp.Body.Close()
+		br := bufio.NewReader(resp.Body)
+		var got strings.Builder
+		closed := false
+		for {
+			line, err := br.ReadString('\n')
+			got.WriteString(line)
+			if !closed && strings.Contains(line, `"content":"t1"`) {
+				close(f)
+				closed = true
+			}
+			if err != nil {
+				break
+			}
+		}
+		ch <- cutAnswer{status: resp.StatusCode, retryAfter: resp.Header.Get("Retry-After"), body: got.String()}
+	}()
+	return f, ch
 }
 
 func waitCut(t *testing.T, ch <-chan cutAnswer) cutAnswer {
@@ -143,8 +180,15 @@ func TestCutAnswer_Streamed(t *testing.T) {
 	u := &cutUpstream{started: make(chan struct{}, 4)}
 	e := newEnv(t, u)
 	body(t, e.post("/v1/chat/completions", chat("alpha")))
-	ch := sendCut(t, e.front.URL, `{"model":"alpha","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+	first, ch := sendStream(t, e.front.URL, `{"model":"alpha","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
 	waitStarted(t, u)
+	select { // the app has read the first event: the stream is under way
+	case <-first:
+	case a := <-ch:
+		t.Fatalf("the stream ended before its first event: %d %s", a.status, a.body)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the first event never reached the app")
+	}
 	if err := e.sched.Unload(context.Background(), "alpha", true); err != nil {
 		t.Fatal(err)
 	}
@@ -176,5 +220,27 @@ func TestCutAnswer_UpstreamDiesOnItsOwn(t *testing.T) {
 	a := waitCut(t, sendCut(t, e.front.URL, `{"model":"alpha","messages":[{"role":"user","content":"die"}]}`))
 	if a.status != 502 || !strings.HasPrefix(fmt.Sprint(a.err["message"]), "upstream request failed") {
 		t.Fatalf("upstream died: %d %s", a.status, a.body)
+	}
+}
+
+// A stream cut before its first byte (the model server had sent nothing, not
+// even the headers) gets the same answer as a request that does not stream:
+// 503 unloaded with Retry-After, as JSON. Nothing of the stream reached the
+// app, so a status still can be given, and the app can retry at once.
+func TestCutAnswer_StreamCutBeforeFirstByte(t *testing.T) {
+	u := &cutUpstream{started: make(chan struct{}, 4)}
+	e := newEnv(t, u)
+	body(t, e.post("/v1/chat/completions", chat("alpha")))
+	ch := sendCut(t, e.front.URL, `{"model":"alpha","stream":true,"messages":[{"role":"user","content":"quiet"}]}`)
+	waitStarted(t, u) // the model server holds the request and has sent nothing
+	if err := e.sched.Unload(context.Background(), "alpha", true); err != nil {
+		t.Fatal(err)
+	}
+	a := waitCut(t, ch)
+	if a.status != 503 || a.err["reason"] != "unloaded" || a.err["message"] != "unloaded: alpha was unloaded" || a.retryAfter == "" {
+		t.Fatalf("stream cut before its first byte: %d %q %s", a.status, a.retryAfter, a.body)
+	}
+	if strings.Contains(a.body, "event: error") {
+		t.Fatalf("an SSE event where no stream had started: %s", a.body)
 	}
 }
