@@ -259,6 +259,19 @@ func (c *schedCore) addScoped(sp *core.Profile) (*core.Profile, *Error) {
 	return sp, nil
 }
 
+// fitRule is the forced fit check that applies to p, and why, in the words
+// the refusal and the plan carry. A scoped profile is always held to reject on
+// the zones it names, whatever defaults.forced_fit_check says (reviewer's
+// ruling: its shape is new, so nothing vouches for it); a production profile
+// follows the setting as before.
+func (c *schedCore) fitRule(p *core.Profile) (mode, rule string) {
+	if _, _, ok := c.scopeOf(p.Name); ok {
+		return config.ForcedFitReject, "a scoped load is always fit-checked on the zones it names"
+	}
+	mode = c.cfg.Defaults.ForcedFitCheck
+	return mode, "defaults.forced_fit_check is " + mode
+}
+
 // pruneScoped forgets the scoped profiles no entry or instance holds.
 func (c *schedCore) pruneScoped() {
 	for name, p := range c.scoped {

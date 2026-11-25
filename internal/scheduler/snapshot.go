@@ -377,7 +377,7 @@ func (c *schedCore) dryPlanOf(profile string, p *core.Profile) (r PlanReport) {
 	}
 	if ev := c.evictables(p, 0); len(ev) > 0 {
 		if res, g, err := c.evictPlan(p, req, ev); err == nil { // tight.go, as plan()
-			if len(p.ForceNodes) > 0 && c.refusesBeforeEvict() && c.anyJustReleased(res.Placement) { // as plan() (AB1)
+			if len(p.ForceNodes) > 0 && c.refusesBeforeEvict(p) && c.anyJustReleased(res.Placement) { // as plan() (AB1)
 				r.Action, r.Reason = PlanQueue, forcedFitWaitText(res.Placement, c)
 				return r
 			}
@@ -426,7 +426,7 @@ func (c *schedCore) applyForcedFit(r *PlanReport, p *core.Profile, pl core.Place
 		return
 	}
 	if ff.mode == config.ForcedFitReject {
-		r.Action, r.Reason = PlanReject, ff.message(p.Name)+" (defaults.forced_fit_check is reject)"
+		r.Action, r.Reason = PlanReject, ff.message(p.Name)+" ("+ff.rule+")"
 		return
 	}
 	r.Warning = ff.message(p.Name) + " (defaults.forced_fit_check is warn; it would start anyway)"

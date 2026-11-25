@@ -55,6 +55,14 @@ var _ fleet.View = (*consolesView)(nil)
 // in memory.
 func newConsolesEnv(t *testing.T, upstream http.Handler) *env {
 	t.Helper()
+	return newConsolesEnvNeeds(t, upstream, func(p *core.Profile) (scheduler.NeedInfo, error) {
+		return scheduler.NeedInfo{Need: placer.Measured(p.NeedsMiB), FileBytes: 1 << 20}, nil
+	})
+}
+
+// newConsolesEnvNeeds is newConsolesEnv with the need of each profile from needs.
+func newConsolesEnvNeeds(t *testing.T, upstream http.Handler, needs scheduler.NeedFunc) *env {
+	t.Helper()
 	cfg, err := config.ParseWithOptions([]byte(testYAML), config.Options{FileExists: func(string) bool { return true }})
 	if err != nil {
 		t.Fatal(err)
@@ -76,10 +84,7 @@ func newConsolesEnv(t *testing.T, upstream http.Handler) *env {
 	}
 	sched, err := scheduler.New(cfg, scheduler.Options{
 		View: &consolesView{ch: make(chan struct{}, 1)}, Prober: noProber{}, Launcher: e.launcher,
-		Needs: scheduler.NeedFunc(func(p *core.Profile) (scheduler.NeedInfo, error) {
-			return scheduler.NeedInfo{Need: placer.Measured(p.NeedsMiB), FileBytes: 1 << 20}, nil
-		}),
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Needs: needs, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -349,5 +354,41 @@ func TestScopedLoad_CallerCheckPassesOnThisImage(t *testing.T) {
 	}
 	if _, ok := e.sched.Scoped("alpha@chk"); !ok {
 		t.Fatal("not held")
+	}
+}
+
+// A scoped plan and load on a named console are fit-checked there whatever
+// defaults.forced_fit_check says (here off): at 4 x ctx the need (the
+// estimate, the written need not being used at that shape) does not fit
+// con-4, so the plan answers reject with the figures, the load answers 503
+// with them, and nothing is held. Production alpha is not touched.
+func TestScoped_NamedConsoleFitCheckedOverTheRoutes(t *testing.T) {
+	e := newConsolesEnvNeeds(t, http.NotFoundHandler(), func(p *core.Profile) (scheduler.NeedInfo, error) {
+		if p.NeedsMiB > 0 {
+			return scheduler.NeedInfo{Need: placer.Measured(p.NeedsMiB), FileBytes: 1 << 20}, nil
+		}
+		return scheduler.NeedInfo{Need: placer.Estimated(p.Ctx), FileBytes: 1 << 20}, nil // 1 MiB a token: 16384 at 4 x 4096
+	})
+	if e.cfg.Defaults.ForcedFitCheck != "" && e.cfg.Defaults.ForcedFitCheck != "off" {
+		t.Fatalf("forced_fit_check %q in the test config", e.cfg.Defaults.ForcedFitCheck)
+	}
+	body := `{"model":"alpha","scope":"big","nodes":["con-4"],"ctx":16384}`
+	b := status(t, e.post("/api/plan", body), 200)
+	for _, want := range []string{`"action":"reject"`, `"model":"alpha@big"`, "a scoped load is always fit-checked on the zones it names", "MiB usable", "written need not used: shape differs from alpha"} {
+		if !strings.Contains(b, want) {
+			t.Fatalf("plan lacks %q: %s", want, b)
+		}
+	}
+	b = status(t, e.post("/api/load", body), http.StatusServiceUnavailable)
+	for _, want := range []string{"alpha@big", "a scoped load is always fit-checked on the zones it names", "need 17204 MiB", "15000 MiB usable"} {
+		if !strings.Contains(b, want) {
+			t.Fatalf("load answer lacks %q: %s", want, b)
+		}
+	}
+	if len(instancesOf(t, e)) != 0 {
+		t.Fatalf("instances after a refused scoped load: %v", instancesOf(t, e))
+	}
+	if _, ok := e.sched.Scoped("alpha@big"); ok {
+		t.Fatal("a refused scoped load is held")
 	}
 }
