@@ -5,6 +5,7 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
@@ -171,6 +172,11 @@ type inst struct {
 	// requests end with it (a host on a node that went away leaves no
 	// connection to break).
 	gone chan struct{}
+	// cutBy is set, before the instance is killed on purpose with requests
+	// in flight (a forced unload), to the answer those requests get: 503
+	// unloaded, saying why. Their leases read it (Lease.CutBy) when the
+	// model server's connection breaks. Nil: never cut on purpose.
+	cutBy *atomic.Pointer[Error]
 
 	// baseFree is each node's free figure when the instance was created
 	// (reserve.go): what the node gives up for it is measured against it.
@@ -241,6 +247,7 @@ type grant struct {
 	Profile string
 	Alias   bool
 	Gone    <-chan struct{} // closed when the instance is removed
+	CutBy   func() *Error   // why the instance was stopped on purpose; nil when it was not
 	// Where the request runs, for the request log: the instance, its load
 	// session and its machines with their roles (shared, never modified).
 	Instance uint64
@@ -774,4 +781,23 @@ func (c *schedCore) emitState(in *inst, s RunningState) {
 			e.ReadySince = in.readyAt
 		}
 	})
+}
+
+// markCut records the answer for in's requests in flight before in is
+// killed on purpose; the first reason given stays.
+func (in *inst) markCut(e *Error) {
+	if in.cutBy != nil {
+		in.cutBy.CompareAndSwap(nil, e)
+	}
+}
+
+// cutReader is what a lease reads: the answer markCut recorded, or nil.
+func (in *inst) cutReader() func() *Error {
+	p := in.cutBy
+	return func() *Error {
+		if p == nil {
+			return nil
+		}
+		return p.Load()
+	}
 }

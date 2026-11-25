@@ -320,7 +320,7 @@ func (s *Server) interruptFile(ctx context.Context, file string, profiles map[st
 			}
 			insts = append(insts, map[string]any{"profile": i.Profile, "state": i.State, "in_flight": i.InFlight, "waiters": i.Waiters, "nodes": zoneNames(st.View.Nodes, i)})
 			cut += i.InFlight + i.Waiters
-			if err := s.sched.Unload(ctx, i.Profile, true); err != nil && !errors.Is(err, scheduler.ErrNotLoaded) {
+			if err := s.sched.UnloadFor(ctx, i.Profile, true, "its model file is being deleted"); err != nil && !errors.Is(err, scheduler.ErrNotLoaded) {
 				errs = append(errs, fmt.Sprintf("unload %s: %v", i.Profile, err))
 			}
 		}

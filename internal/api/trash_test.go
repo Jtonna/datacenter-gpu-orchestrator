@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,6 +40,12 @@ type trashEnv struct {
 func newTrashEnv(t *testing.T) *trashEnv { t.Helper(); return newTrashEnvWith(t, nil) }
 
 func newTrashEnvWith(t *testing.T, hook func(te *trashEnv, step string) bool) *trashEnv {
+	t.Helper()
+	return newTrashEnvUp(t, hook, okUpstream())
+}
+
+// newTrashEnvUp is newTrashEnvWith with the model server's handler.
+func newTrashEnvUp(t *testing.T, hook func(te *trashEnv, step string) bool, upstream http.Handler) *trashEnv {
 	t.Helper()
 	te := &trashEnv{dir: t.TempDir(), outer: t.TempDir(), hist: history.Open(history.Options{Dir: t.TempDir()})}
 	t.Cleanup(te.hist.Close)
@@ -82,7 +89,7 @@ func newTrashEnvWith(t *testing.T, hook func(te *trashEnv, step string) bool) *t
 			return nil
 		},
 	}
-	e = newEnv(t, okUpstream(), func(o *Options) {
+	e = newEnv(t, upstream, func(o *Options) {
 		o.Config, o.Audit, o.BenchStore = svc, cs, st
 		o.trashOps = ops
 		o.trashStop = func(step string) bool { return te.stop != "" && step == te.stop }

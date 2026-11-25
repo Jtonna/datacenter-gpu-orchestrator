@@ -15,6 +15,15 @@ No agent change, no new port. **Schema: one new table, `model_trash_removed` (to
 - **MCP.** `remove_deleted_model` (destructive, owner-asked wording); `list_deleted_models` shows tombstones in `removed`.
 - **Going back.** The image before (af916f4) opens the same database and leaves step 3 alone. Its trash list reads `model_trash` only, so a removed file never shows there again; an item whose removal was cut by a kill shows as `removing`, which it does not restore or remove; it settles with this image. If `model_trash_purge` was set, the image before reads it as an unknown setting: configuration writes there need `force` until that key is dropped (as with `model_trash_days` for the image before slice 3).
 
+## Scheduler image: a request cut by a forced unload is told why
+
+No agent change, no new port, no schema change, no new route, no new setting.
+
+- **503 unloaded, not 502.** A request in flight whose model is force unloaded used to get 502 "upstream request failed: EOF". The cases are POST /api/unload with force, the models page's force unload, a zone's or node's force unload, and a model delete with interrupt. It now gets 503 with reason `unloaded`, `Retry-After`, and the message "unloaded: <profile> was unloaded". A delete with interrupt adds ": its model file is being deleted"; a node's force unload adds ": force unload of node <id>". This is the shape a loading or queued caller already gets. The scheduler marks the instance before it kills it, and the proxy reads that mark when the model server's connection breaks; it never guesses from the error text.
+- **A stream already under way** keeps its 200. It ends with a final SSE event, `event: error`, whose data is `{"error":{"message","type","code":503,"reason":"unloaded"}}`, then closes cleanly. This is the same form as the stall timeout's error event. A body that is not an event stream and was cut after its first byte is cut as before.
+- **A model server that fails on its own** still answers 502 "upstream request failed", as before.
+- The request log's reason for such a request is `unloaded`, "it was unloaded while it ran (a forced unload)".
+
 ## Scheduler image and agent: one rule for a profile's model path
 
 No new port, no schema change, no new route, no new setting. No live profile is touched: every live profile names a plain file (checked 25 Nov 2026).
