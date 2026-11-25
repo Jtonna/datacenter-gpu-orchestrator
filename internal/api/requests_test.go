@@ -348,6 +348,9 @@ func TestRequests_LiveTimingsRewritesOnlyWhenOnAndUnset(t *testing.T) {
 	var got []string
 	var lengths []int64
 	up := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if notUnderTest(w, r) { // the scheduler's own GET /props after the load races the first request
+			return
+		}
 		b, _ := io.ReadAll(r.Body)
 		mu.Lock()
 		got, lengths = append(got, string(b)), append(lengths, r.ContentLength)
