@@ -69,7 +69,7 @@ export const NAV = [
     { id: 'nodes', label: 'Machine details', desc: 'One card per machine, with its memory and checks' },
   ] },
   { id: 'models', label: 'Models', icon: I.models, pages: [
-    { id: 'models', label: 'Models', desc: 'Model files, what is loaded, and their profiles' },
+    { id: 'models', label: 'Models', desc: 'The models available to you' },
   ] },
   { id: 'benchmarks', label: 'Benchmarks', icon: I.benchmarks, pages: [
     { id: 'benchmarks', label: 'Overview', match: r => !['runs', 'trends'].includes(r.rest[0]) },

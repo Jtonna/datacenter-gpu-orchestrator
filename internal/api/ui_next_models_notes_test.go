@@ -45,3 +45,12 @@ func TestUINextNotesNoPageHeader(t *testing.T) {
 			"none": []string{"div.page-head"}, "has": []string{"h1.sr"}, "absent": []string{"in the catalog", " ready · "}},
 	}})
 }
+
+// Note 5: the Models entry of the section menu says plainly what is there.
+func TestUINextNotesMenuWords(t *testing.T) {
+	fetch := fixtureAnswers(t, []string{"--models", "five"}, "/api/models", "/api/status")
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
+		map[string]any{"name": "notes 5: the Models entry", "route": "#/models", "status": fetch["/api/status"],
+			"pageHas": []string{".menu a.nd.on"}, "page": []string{"The models available to you"}, "notOnPage": []string{"Model files, what is loaded, and their profiles"}},
+	}})
+}
