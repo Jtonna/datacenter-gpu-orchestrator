@@ -16,6 +16,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgstore"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgsvc"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelfiles"
 )
 
@@ -33,6 +34,7 @@ type trashEnv struct {
 	unknown bool
 	outer   string                 // a folder outside the models folder (must stay untouched)
 	hook    func(step string) bool // set before newTrashEnvWith returns: runs at every step
+	hist    *history.Store
 }
 
 func newTrashEnv(t *testing.T) *trashEnv { t.Helper(); return newTrashEnvWith(t, nil) }
@@ -45,7 +47,8 @@ func newTrashEnvWith(t *testing.T, hook func(te *trashEnv, step string) bool) *t
 // newTrashEnvUp is newTrashEnvWith with the model server's handler.
 func newTrashEnvUp(t *testing.T, hook func(te *trashEnv, step string) bool, upstream http.Handler) *trashEnv {
 	t.Helper()
-	te := &trashEnv{dir: t.TempDir(), outer: t.TempDir()}
+	te := &trashEnv{dir: t.TempDir(), outer: t.TempDir(), hist: history.Open(history.Options{Dir: t.TempDir()})}
+	t.Cleanup(te.hist.Close)
 	if hook != nil {
 		te.hook = func(step string) bool { return hook(te, step) }
 	}
@@ -79,12 +82,20 @@ func newTrashEnvUp(t *testing.T, hook func(te *trashEnv, step string) bool, upst
 			}
 			return os.Rename(a, b)
 		},
+		Access: func(p string) error {
+			if te.ro {
+				return rofs("access", p)
+			}
+			return nil
+		},
 	}
 	e = newEnv(t, upstream, func(o *Options) {
 		o.Config, o.Audit, o.BenchStore = svc, cs, st
 		o.trashOps = ops
 		o.trashStop = func(step string) bool { return te.stop != "" && step == te.stop }
 		o.trashUnloadWait = time.Second
+		o.History = te.hist
+		o.trashClearEvery = -1 // tests run clearTrash themselves
 		o.modelsWritable = func(string) (bool, bool) { return !te.ro, !te.unknown }
 		if te.hook != nil {
 			o.trashStop = func(step string) bool { return te.hook(step) || (te.stop != "" && step == te.stop) }
@@ -115,7 +126,8 @@ func (te *trashEnv) profileIDs() []string {
 // configuration and models folder, then RepairTrash as main runs it.
 func (te *trashEnv) restart() *Server {
 	te.t.Helper()
-	s2 := New(te.cfg, te.sched, Options{Config: te.svc, Audit: te.cs, BenchStore: te.bs, Logger: te.api.log, Now: te.api.opts.Now})
+	s2 := New(te.cfg, te.sched, Options{Config: te.svc, Audit: te.cs, BenchStore: te.bs, Logger: te.api.log, Now: te.api.opts.Now, History: te.hist, trashClearEvery: -1,
+		trashStop: func(step string) bool { return te.stop != "" && step == te.stop }})
 	te.t.Cleanup(s2.Close)
 	s2.RepairTrash(context.Background()) // as main does once the server is up
 	return s2

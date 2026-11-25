@@ -265,7 +265,7 @@ func TestToolsListSchemas(t *testing.T) {
 	for _, tl := range res.Tools {
 		ann[tl.Name] = tl.Annotations
 	}
-	if ann["unload_model"]["destructiveHint"] != true || ann["rollback_config"]["destructiveHint"] != true || ann["delete_profile"]["destructiveHint"] != true {
+	if ann["unload_model"]["destructiveHint"] != true || ann["rollback_config"]["destructiveHint"] != true || ann["delete_profile"]["destructiveHint"] != true || ann["remove_deleted_model"]["destructiveHint"] != true {
 		t.Error("destructive tools must say so")
 	}
 	if ann["get_status"]["readOnlyHint"] != true || ann["load_model"]["destructiveHint"] != false {
@@ -370,6 +370,7 @@ var expected = map[string]struct {
 	"delete_model":          {`{"file":"gemma.gguf","comment":"unused","dry_run":true,"interrupt":true}`, "POST", "/api/models/delete/gemma.gguf", "", `{"comment":"unused","dry_run":true,"interrupt":true}`, nil},
 	"list_deleted_models":   {`{}`, "GET", "/api/models/trash", "", "", nil},
 	"restore_model":         {`{"id":"0123456789ab","comment":"back","rename_taken":true}`, "POST", "/api/models/trash/0123456789ab/restore", "", `{"comment":"back","rename_taken":true}`, nil},
+	"remove_deleted_model":  {`{"id":"0123456789ab","comment":"owner asked","dry_run":true}`, "POST", "/api/models/trash/0123456789ab/remove", "", `{"comment":"owner asked","dry_run":true}`, nil},
 	"create_pending_zone":   {`{"name":"zone-9","group":"rack-a"}`, "POST", "/api/zones/pending", "", `{"group":"rack-a","name":"zone-9"}`, nil},
 	"list_pending_zones":    {`{}`, "GET", "/api/zones/pending", "", "", nil},
 	"cancel_pending_zone":   {`{"id":"pz-1"}`, "DELETE", "/api/zones/pending/pz-1", "", "", nil},

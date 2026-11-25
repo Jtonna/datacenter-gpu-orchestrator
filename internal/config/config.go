@@ -86,9 +86,15 @@ type Config struct {
 	// it. 0 (the default) judges the real free space only.
 	ModelsDiskBudgetGB int
 	// ModelTrashDays is how long a deleted model file is kept in the trash
-	// before the purge may remove it (models slice 3 records the date; the
-	// purge itself is slice 4). 1 to MaxModelTrashDays, default 30.
+	// before the clearing may remove it. A file's clearing date is the later
+	// of the date set when it was deleted and its deletion time plus this
+	// many days: raising it keeps every file longer, lowering it applies to
+	// files deleted from then on only. 1 to MaxModelTrashDays, default 30.
 	ModelTrashDays int
+	// ModelTrashPurge turns the timed clearing of the models trash on
+	// (models slice 4). Off (the default): nothing but "Remove for good"
+	// removes files from the trash.
+	ModelTrashPurge bool
 	// modelNote is Options.ModelNote while the configuration is checked.
 	modelNote func(string) string
 	// DefaultUserName is the default user: the name that signs what is done

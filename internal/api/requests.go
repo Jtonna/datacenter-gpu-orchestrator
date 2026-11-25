@@ -81,7 +81,7 @@ func resultEnd(res proxy.Result) usage.End {
 		e.Message = map[string]string{"stall": "the model stopped sending", "cut": "the zone dropped the connection",
 			"upstream_error": "the model server could not be reached", "aborted": "the answer could not be delivered",
 			"unloaded": "it was unloaded while it ran (a forced unload)"}[reason]
-		if res.Err != nil {
+		if res.Err != nil && !res.Unloaded { // a cut request's reason is known: the transport's word (EOF) is noise there
 			e.Message += ": " + res.Err.Error()
 		}
 	case res.Status >= 400:

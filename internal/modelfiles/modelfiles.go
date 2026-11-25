@@ -6,9 +6,16 @@
 //   - it renames only inside the models folder, between the folder itself and
 //     <models>/.trash/<id>/, which is on the same file system, so every move
 //     is one atomic rename (never a copy);
-//   - it never removes a file. The only removal is of an EMPTY trash
+//   - it removes exactly one kind of file: a regular file at
+//     <models>/.trash/<id>/<name>, by RemoveTrashed (models slice 4, "remove
+//     for good" and the timed clearing). The path is built from a checked id
+//     and a checked name, never taken from a request or the database as a
+//     path; every directory on the way is checked to be a plain directory and
+//     the file a regular file, and on Linux the unlink is made relative to
+//     directories opened without following links, after the file is checked
+//     once more by descriptor. Nothing else is ever removed but an EMPTY trash
 //     directory it made itself (os.Remove refuses a directory with anything
-//     in it);
+//     in it). There is no RemoveAll;
 //   - it refuses a model file that is a link, and a .trash or .trash/<id>
 //     that is a link or not a directory, so nothing is written through a
 //     link to a place outside the folder.
@@ -49,6 +56,9 @@ var (
 	ErrNotRegular = errors.New("not a regular file")
 	// ErrUnsafe: the trash folder is a link or not a directory.
 	ErrUnsafe = errors.New("the trash folder is not a plain directory inside the models folder")
+	// ErrChanged: the file in the trash is not the one that was put there
+	// (another size, or it was swapped while being removed).
+	ErrChanged = errors.New("the file in the trash is not the one that was deleted")
 )
 
 var trashID = regexp.MustCompile(`^[0-9a-f]{12}$`)
@@ -81,6 +91,9 @@ type Ops struct {
 	Mkdir  func(path string, perm fs.FileMode) error
 	Rename func(oldpath, newpath string) error
 	Remove func(path string) error // only ever an empty trash directory
+	// Access reports whether the directory path can be written, without
+	// writing (access(2) W_OK on Linux; nil elsewhere).
+	Access func(path string) error
 }
 
 // Dir is the models folder.
@@ -90,8 +103,11 @@ type Dir struct {
 }
 
 func (d Dir) ops() Ops {
-	o := Ops{Mkdir: os.Mkdir, Rename: os.Rename, Remove: os.Remove}
+	o := Ops{Mkdir: os.Mkdir, Rename: os.Rename, Remove: os.Remove, Access: writable}
 	if d.Ops != nil {
+		if d.Ops.Access != nil {
+			o.Access = d.Ops.Access
+		}
 		if d.Ops.Mkdir != nil {
 			o.Mkdir = d.Ops.Mkdir
 		}
@@ -301,6 +317,86 @@ func (d Dir) RemoveEmptyTrashDir(id string) error {
 	}
 	p, _ := d.inside(TrashDir, id)
 	return classify(d.ops().Remove(p))
+}
+
+// TrashWritable reports, without writing anything, whether .trash/<id>/ (or
+// .trash itself when id is "") can be written: ErrReadOnly on a read-only
+// mount or without permission. The directories must be plain directories.
+func (d Dir) TrashWritable(id string) error {
+	parts := []string{TrashDir}
+	if id != "" {
+		if !ValidID(id) {
+			return fmt.Errorf("%w: trash id %q", ErrBadName, id)
+		}
+		parts = append(parts, id)
+	}
+	if err := d.plainDirs(id, false); err != nil {
+		return err
+	}
+	p, err := d.inside(parts...)
+	if err != nil {
+		return err
+	}
+	return classify(d.ops().Access(p))
+}
+
+// afterCheck is a test hook: it runs after the path checks of RemoveTrashed
+// and before its last check and the unlink (a swap acted out there).
+var afterCheck func()
+
+// resolvedHook is a test hook: it replaces the resolved path of the file
+// open at the moment of removal (checkResolved).
+var resolvedHook func(got string) string
+
+// checkResolved is the last check before the unlink: got, the path the file
+// open at that moment resolves to, must be <models>/.trash/<id>/<name> with
+// the models folder itself resolved (it may be reached by a link). Anything
+// else is ErrUnsafe.
+func checkResolved(root, id, name, got string) error {
+	if resolvedHook != nil {
+		got = resolvedHook(got)
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return fmt.Errorf("%w: the models folder cannot be resolved: %v", ErrUnsafe, err)
+	}
+	want := filepath.Join(realRoot, TrashDir, id, name)
+	if filepath.Clean(got) != want {
+		return fmt.Errorf("%w: %s resolves to %s, not to %s inside the models folder", ErrUnsafe, name, got, want)
+	}
+	return nil
+}
+
+// RemoveTrashed erases the regular file <models>/.trash/<id>/<name>: the
+// only file removal there is (models slice 4). size >= 0 must be its size
+// (the size recorded when it was deleted), else ErrChanged and nothing is
+// removed. Refused before any removal: a bad id or name (ErrBadName), a
+// .trash or .trash/<id> that is a link or not a directory (ErrUnsafe), a
+// file that is a link, a directory or anything not regular (ErrNotRegular),
+// no file (ErrNotFound), a folder that cannot be written (ErrReadOnly). The
+// id directory itself stays (RemoveEmptyTrashDir removes it).
+func (d Dir) RemoveTrashed(id, name string, size int64) error {
+	p, err := d.TrashPath(id, name) // checks the id and the name
+	if err != nil {
+		return err
+	}
+	if err := d.plainDirs(id, false); err != nil {
+		return err
+	}
+	st, err := regular(p)
+	if err != nil {
+		return err
+	}
+	if size >= 0 && st.Size() != size {
+		return fmt.Errorf("%w: %s is %d bytes, %d were deleted", ErrChanged, name, st.Size(), size)
+	}
+	if err := d.TrashWritable(id); err != nil {
+		return err
+	}
+	if afterCheck != nil {
+		afterCheck()
+	}
+	return classify(unlinkChecked(filepath.Clean(d.Root), id, name, st))
 }
 
 // ReadOnlyError is a write refused because the folder is read-only (or

@@ -116,6 +116,10 @@ type Options struct {
 	// trashUnloadWait replaces the 5 s a delete with interrupt waits for the
 	// file's instances to be gone (tests).
 	trashUnloadWait time.Duration
+	// trashClearEvery replaces the hour between two passes of the models
+	// trash clearing; < 0: the clearing task does not start (tests run
+	// clearTrash themselves).
+	trashClearEvery time.Duration
 	// modelsWritable replaces modelfiles.Writable (tests act out a read-only
 	// folder, or one where it cannot be told); it is then asked every time.
 	modelsWritable func(dir string) (writable, ok bool)
@@ -340,6 +344,7 @@ func (s *Server) routes() *http.ServeMux {
 	m.HandleFunc("POST /api/models/delete/{key...}", s.handleModelDelete)     // trash.go
 	m.HandleFunc("GET /api/models/trash", s.handleTrashList)                  // trash.go
 	m.HandleFunc("POST /api/models/trash/{id}/restore", s.handleModelRestore) // trash.go
+	m.HandleFunc("POST /api/models/trash/{id}/remove", s.handleTrashRemove)   // trashremove.go
 	m.HandleFunc("DELETE /api/models/pin/{key...}", s.handlePinDelete)        // pins.go
 	m.HandleFunc("PUT /api/models/{key...}", s.handleIconPut)                 // only /api/models/{key}/icon
 	m.HandleFunc("DELETE /api/models/{key...}", s.handleIconDelete)
@@ -570,6 +575,9 @@ func (s *Server) handleV1(w http.ResponseWriter, r *http.Request) {
 	var res proxy.Result
 	defer func() {
 		lease.Release()
+		if res.Unloaded && res.Err != nil { // the request log says why; the transport's word stays here
+			s.log.Debug("a request was cut by a forced unload", "profile", lease.Profile, "transport", res.Err)
+		}
 		track.Ended(resultEnd(res))
 		s.activity.add(activityRecord{
 			Timestamp: s.opts.Now(), Model: lease.Profile, ReqPath: r.URL.Path, Status: res.Status,
