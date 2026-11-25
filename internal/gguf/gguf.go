@@ -64,7 +64,13 @@ type Meta struct {
 	// <arch>.full_attention_interval, or llama.cpp's default 4 for the
 	// architectures in hybridDefaultInterval. 0: every layer has attention.
 	FullAttentionInterval uint32
-	FileSize              int64 // set by ReadMeta only
+	// The recurrent state shape (<arch>.ssm.conv_kernel, inner_size,
+	// state_size, group_count); 0 when absent (no recurrent layers).
+	SSMConv, SSMInner, SSMState, SSMGroups uint32
+	// kvListed: head_count_kv was a per-layer array in the file (a 0 there
+	// marks a layer without attention: a recurrent layer).
+	kvListed bool
+	FileSize int64 // set by ReadMeta only
 
 	scalars map[string]any
 }
@@ -400,6 +406,15 @@ func build(ver uint32, tensors uint64, scalars map[string]any, arrays map[string
 		fai = hybridDefaultInterval[arch]
 	}
 	m.FullAttentionInterval = fai
+	for _, k := range []struct {
+		key string
+		dst *uint32
+	}{{"ssm.conv_kernel", &m.SSMConv}, {"ssm.inner_size", &m.SSMInner}, {"ssm.state_size", &m.SSMState}, {"ssm.group_count", &m.SSMGroups}} {
+		if *k.dst, _, err = u32(pre + k.key); err != nil {
+			return nil, err
+		}
+	}
+	_, m.kvListed = arrays[pre+"attention.head_count_kv"]
 
 	heads := func(key string) ([]uint32, error) {
 		if a, ok := arrays[key]; ok {
@@ -516,4 +531,85 @@ func (m *Meta) KVElemsPerToken() (int, error) {
 		total += k + v
 	}
 	return total, nil
+}
+
+// Family is what a model keeps per context checkpoint (the model server's
+// rule, server-context.cpp: a checkpoint is made when the memory cannot
+// roll a sequence back, or uses a sliding window).
+type Family string
+
+const (
+	FamilyPlain     Family = "plain"     // full attention only: no checkpoint is ever made
+	FamilyRecurrent Family = "recurrent" // recurrent or hybrid: a checkpoint is one recurrent cell
+	FamilyWindowed  Family = "windowed"  // sliding-window attention: a checkpoint is the window's KV
+)
+
+// Family is m's checkpoint family: recurrent when it has recurrent layers
+// (RecurrentLayers > 0), else windowed when it has a sliding window, else
+// plain.
+func (m *Meta) Family() Family {
+	switch {
+	case m.RecurrentLayers() > 0:
+		return FamilyRecurrent
+	case m.SlidingWindow:
+		return FamilyWindowed
+	}
+	return FamilyPlain
+}
+
+// IsRecurrent reports whether layer il keeps a recurrent state, as the
+// server decides it (llama-model.cpp, hparams.recurrent_layer_arr): only
+// in a model with a recurrent state shape (ssm.state_size and inner_size);
+// then a layer the file lists with no KV heads (a per-layer head_count_kv
+// with 0), else a layer that is not every full_attention_interval-th (the
+// file's key, or the server's default for the architecture), else every
+// layer (a purely recurrent model).
+func (m *Meta) IsRecurrent(il int) bool {
+	if m.SSMState == 0 || m.SSMInner == 0 || il < 0 || il >= int(m.BlockCount) {
+		return false
+	}
+	if m.kvListed && il < len(m.HeadCountKV) {
+		for _, v := range m.HeadCountKV {
+			if v == 0 { // the file lists the recurrent layers
+				return m.HeadCountKV[il] == 0
+			}
+		}
+	}
+	if m.FullAttentionInterval > 0 {
+		return !m.HasKV(il)
+	}
+	return true
+}
+
+// RecurrentLayers counts the layers IsRecurrent marks.
+func (m *Meta) RecurrentLayers() int {
+	n := 0
+	for il := 0; il < int(m.BlockCount); il++ {
+		if m.IsRecurrent(il) {
+			n++
+		}
+	}
+	return n
+}
+
+// RecurrentCellBytes is one sequence's recurrent state, which is what a
+// context checkpoint of a recurrent or hybrid model holds (the attention
+// KV is never copied): per recurrent layer, F32
+//
+//	s = state x inner                                (llama-hparams.cpp n_embd_s)
+//	r = (conv - 1) x (inner + 2 x groups x state)    (n_embd_r)
+//
+// so 4 x (s + r) bytes. 0 for a model with no recurrent layer.
+func (m *Meta) RecurrentCellBytes() int64 {
+	n := int64(m.RecurrentLayers())
+	if n == 0 {
+		return 0
+	}
+	st, in, g := int64(m.SSMState), int64(m.SSMInner), int64(m.SSMGroups)
+	conv := int64(m.SSMConv)
+	r := int64(0)
+	if conv > 1 {
+		r = (conv - 1) * (in + 2*g*st)
+	}
+	return 4 * (st*in + r) * n
 }
