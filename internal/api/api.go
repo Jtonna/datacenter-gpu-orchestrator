@@ -219,6 +219,9 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 	s.bg, s.bgCancel = context.WithCancel(context.Background())
 	s.occ = startOccupied(o.History)
 	s.peaks = startPeakCycles(o.History)
+	if o.Usage.On() {
+		s.peaks.setTokens(o.Usage.SessionTokens)
+	}
 	s.groups = o.Groups
 	s.pending = newPendingZones()
 	if s.groups == nil {
