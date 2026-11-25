@@ -28,7 +28,7 @@ func TestUINextModels(t *testing.T) {
 		map[string]any{"name": "models: the list", "route": "#/models", "status": st,
 			"expect": []string{"Models", "Sort: last used", "Add a model", "Pinned", "All models",
 				"5 model files · 50.3 of 240 GB used", mdlLoaded, "16.5 GB", "2 profiles", "Now", mdlRecent, "10.1 GB", "1 profile",
-				mdlNoProfs, "0.3 GB", "No profiles", "Never", "Deleted models", "Needs", "~17.1 GB", "~5.1 GB"},
+				mdlNoProfs, "0.3 GB", "No profiles", "Never", "Deleted models", "Needs", "~17.1 to 20.4 GB", "~5.1 GB"},
 			"order": []string{mdlLoaded, mdlRecent, mdlOlder, mdlNoProfs, mdlNever, "Deleted models"},
 			"has": []string{off("button.btn.pri[data-act=add]", "Adding"), "button.star[aria-pressed=true]", off("button.tbar[data-act=trash]", "Deleted"),
 				"label.sx input",

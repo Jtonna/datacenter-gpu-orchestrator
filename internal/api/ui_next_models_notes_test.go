@@ -78,11 +78,12 @@ func TestUINextNotesNeedsTilde(t *testing.T) {
 	row := func(k string) string { return "div.mr[data-model='" + k + "'] span.mdl-needs" }
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
 		map[string]any{"name": "notes 7: the rows", "route": "#/models", "status": st,
-			"expect": []string{"~17.1 GB", "~5.1 GB"}, "absent": []string{"measured", "estimated"},
+			// the loaded model's two production profiles: a range (adjustment f)
+			"expect": []string{"~17.1 to 20.4 GB", "~5.1 GB"}, "absent": []string{"measured", "estimated"},
 			"has":  []string{row(mdlLoaded) + " span[data-basis=measured][title*=measured]", row(mdlNever) + " span[data-basis=estimated][title*=estimated]"},
 			"none": []string{row(mdlLoaded) + " span.sub"}},
 		map[string]any{"name": "notes 7: the panel says how it is known", "route": "#/models?model=" + mdlLoaded, "status": st,
-			"page": []string{"needs ~17.1 GB", "(measured)"}},
+			"page": []string{"needs ~17.1 to 20.4 GB", "gemma-4-27b at 8k ~17.1 GB (measured)", "gemma-4-27b:long at 32k ~20.4 GB (measured)"}},
 	}})
 	// One decimal only: the two-decimal choice drawn for the owner is gone,
 	// switch and all (the reviewer, 25 Nov).
@@ -305,5 +306,50 @@ func TestUINextNotesLoadedNow(t *testing.T) {
 		map[string]any{"name": "adjust b: a loading model in the panel", "route": "#/models?model=" + mdlLoaded, "status": loading, "width": 1536,
 			"pageHas": []string{inst + "[data-state=starting]", inst + " a.mdl-zone[href='#/zones/ps5-01']"},
 			"page":    []string{"Loading now", "40% loaded", "about 2 min left"}},
+	}})
+}
+
+// The reviewer (25 Nov), adjustment f: a model's Needs is the range over
+// its PRODUCTION profiles' needs ("~3.3 to 5.1 GB"; one figure when equal or
+// one profile), never a small test configuration's figure; the hover and
+// the panel name the profile at each end, measured or estimated each. "Runs
+// on" in the panel follows the same profiles (a zone range). A file with no
+// production profile keeps today's figure, marked "smallest test
+// configuration".
+func TestUINextNotesNeedsRange(t *testing.T) {
+	fetch := fixtureAnswers(t, []string{"--models", "five"}, "/api/models", "/api/status")
+	st := fetch["/api/status"]
+	doc := mcpCopy(t, fetch["/api/models"])
+	prof := func(id string, ctx, mib int, measured bool, force ...any) map[string]any {
+		if force == nil {
+			force = []any{}
+		}
+		return map[string]any{"id": id, "ctx": ctx, "parallel": 1, "generated": false, "force_nodes": force, "needs_mib": mib, "needs_measured": measured,
+			"plan": map[string]any{"would_start": true, "action": "start"}}
+	}
+	budgets := []any{4600, 9200, 13800, 18400}
+	for _, x := range doc["models"].([]any) {
+		m := x.(map[string]any)
+		if m["key"] == mdlNever { // as on live: two production profiles and a 2k test configuration measured at 1.8 GB
+			m["profiles"] = []any{prof("qwen3.5-4b", 16384, 3400, true), prof("qwen3.5-4b-thinking", 32768, 5200, false), prof("qwen3.5-4b:2k", 2048, 1850, true, "ps5-03")}
+			m["profile_count"] = 3
+			m["fit"] = map[string]any{"need_mib": 1850, "basis": "measured", "ran_on_nodes": 1, "min_nodes": 1, "budgets_mib": budgets}
+		}
+	}
+	fetch["/api/models"] = doc
+	row := func(k string) string { return "div.mr[data-model='" + k + "'] span.mdl-needs" }
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
+		map[string]any{"name": "adjust f: the row shows the production range", "route": "#/models", "status": st,
+			"expect": []string{"~3.3 to 5.1 GB", "~17.1 to 20.4 GB", "~10.9 GB"}, "absent": []string{"~1.8 GB"},
+			"has": []string{row(mdlNever) + " span[data-range][data-basis=mixed][title*='at'][title*='16k'][title*='32k'][title*=thinking]",
+				row(mdlLoaded) + " span[data-range][data-basis=measured]",
+				row(mdlRecent) + " span[title*=smallest]"},
+			// (the fake DOM splits a selector at spaces, so the hover's words are checked one by one; the sentence is checked in the panel)
+			"none": []string{row(mdlRecent) + " span[data-range]"}},
+		map[string]any{"name": "adjust f: the panel names the ends and the zone range", "route": "#/models?model=" + mdlNever, "status": st, "width": 1536,
+			"page":      []string{"needs ~3.3 to 5.1 GB", "qwen3.5-4b at 16k ~3.3 GB (measured)", "qwen3.5-4b-thinking at 32k ~5.1 GB (estimated)", "Runs on: 1 to 2 "},
+			"notOnPage": []string{"~1.8 GB"}},
+		map[string]any{"name": "adjust f: no production profile: the smallest test configuration", "route": "#/models?model=" + mdlRecent, "status": st, "width": 1536,
+			"page": []string{"needs ~10.9 GB", "smallest test configuration"}},
 	}})
 }

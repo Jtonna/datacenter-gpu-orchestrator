@@ -48,7 +48,7 @@ import { logsLink, profileQuery, padded } from '../core/logs.js';
 import { tipText } from '../core/charts.js';
 import { stateBadge, fitOf, cannotRun, runsOnCell } from './models/common.js';
 import { mountDetail } from './models/detail.js';
-import { splitProfiles, prodText, testText } from './models/kinds.js';
+import { splitProfiles, prodText, testText, prodNeeds, profName, needBasis, zonesFor } from './models/kinds.js';
 import { trashFooter, hasTrash, deleteModel, deletedText, mountTrash } from './models/trash.js';
 
 // the reasons of what is drawn but not built yet (p7-models-backend-STATUS.md)
@@ -201,14 +201,44 @@ const hostLine = p => (p.host === 'node'
 // needText(mib) -> "~18.5 GB": a tilde, as a need is approximate, and one
 // decimal (the owner's note 7, 25 Nov)
 export const needText = mib => '~' + (mib / 1024).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' GB';
-// needsCell(m, st) -> the Needs cell: the memory of the lightest
-// configuration (fit.need_mib) as "~18.5 GB"; how it is known (measured,
-// estimated, set in the profile) and the sentence are on hover and in the
-// panel (the owner's note 7); a dash when unknown
+// needRange(r) -> "~3.3 to 5.1 GB", or one figure when the ends read the same
+const needRange = r => (needText(r.lo.needs_mib) === needText(r.hi.needs_mib) ? needText(r.lo.needs_mib)
+  : needText(r.lo.needs_mib).replace(/ GB$/, '') + ' to ' + needText(r.hi.needs_mib).slice(1));
+// needEnd(p) -> "qwen3.5-4b at 16k ~3.3 GB (measured)"
+const needEnd = p => `${profName(p)} ${needText(p.needs_mib)} (${needBasis(p)})`;
+// needEnds(r) -> the profile at each end, or the one profile
+const needEnds = r => (r.lo === r.hi ? needEnd(r.lo) : needEnd(r.lo) + ' … ' + needEnd(r.hi));
+// noProd(m) -> true for a model file whose configurations are all tests
+const noProd = m => m.kind !== 'command' && !prodCount(m) && (m.profiles || []).length > 0;
+
+// needsCell(m, st) -> the Needs cell: the range over the model's production
+// profiles' needs ("~3.3 to 5.1 GB", the reviewer, 25 Nov), the profile at
+// each end on hover. A file with no production profile keeps the lightest
+// figure (fit.need_mib), marked "smallest test configuration". How a figure
+// is known is on hover and in the panel (the owner's note 7); a dash when
+// unknown.
 function needsCell(m, st) {
+  const r = prodNeeds(m);
+  if (r) {
+    return h('span.mdl-needs', { 'data-col': 'needs' }, h('span', { title: (r.lo === r.hi ? 'From its production profile: ' : 'From its production profiles: ') + needEnds(r),
+      'data-basis': r.basis, 'data-range': r.lo === r.hi ? null : '' }, needRange(r)));
+  }
   const f = fitOf(m, st);
-  const how = f.title || (f.sub ? f.sub[0].toUpperCase() + f.sub.slice(1) : null);
+  let how = f.title || (f.sub ? f.sub[0].toUpperCase() + f.sub.slice(1) : null);
+  if (noProd(m)) how = (how ? how + '. ' : '') + 'The smallest test configuration: no production profile yet';
   return h('span.mdl-needs', { 'data-col': 'needs' }, f.need ? h('span', { title: how, 'data-basis': f.sub || null }, needText(f.need)) : h('span.mut', DASH));
+}
+
+// runsOnRange(m, st, r) -> "1 to 2 PS5s": the fewest zones each end needs on
+// the empty cluster (fit.budgets_mib); null when the sums are not served
+function runsOnRange(m, st, r) {
+  const sums = m.fit && m.fit.budgets_mib;
+  const a = zonesFor(r.lo.needs_mib, sums), b = zonesFor(r.hi.needs_mib, sums);
+  if (a == null) return null;
+  const t = 'The fewest zones of the empty cluster that hold ' + needEnds(r);
+  if (a === 0) return h('span', { title: t, 'data-zones': '0' }, 'Too big for this cluster');
+  if (b === 0) return h('span', { title: t, 'data-zones': a + '-' }, machines(st, a), h('span.mut', ' (the largest is too big for this cluster)'));
+  return h('span.nowrap', { title: t, 'data-zones': a === b ? String(a) : a + '-' + b }, a === b ? machines(st, a) : a + ' to ' + machines(st, b));
 }
 
 // deleteButton(m, disk, onDeleted) -> the panel's "Delete model": the delete dialog
@@ -218,6 +248,21 @@ function deleteButton(m, disk, onDeleted) {
   if (m.kind === 'command') return off('button.btn.red', 'A command profile has no model file to delete.', { 'data-act': 'delete' }, 'Delete model');
   if (m.exists === false) return off('button.btn.red', 'The file is not in the models folder: there is nothing to delete.', { 'data-act': 'delete' }, 'Delete model');
   return h('button.btn.red', { type: 'button', 'data-act': 'delete', onclick: () => deleteModel(m, onDeleted, disk ? disk.models_writable : undefined) }, 'Delete model');
+}
+
+// needsLine(m, st, f) -> the panel's "Runs on: 1 to 2 PS5s · needs ~3.3 to
+// 5.1 GB" and under it the profile at each end, measured or estimated each;
+// with no production profile, the lightest figure marked "smallest test
+// configuration"
+function needsLine(m, st, f) {
+  const r = prodNeeds(m);
+  if (r) {
+    return h('div', { 'data-needs': '' }, h('span.mut', 'Runs on: '), runsOnRange(m, st, r) || runsOnCell(m, st),
+      h('span.mut', ' · needs '), h('span', needRange(r)), h('span.sub.mdl-need-ends', needEnds(r)));
+  }
+  const tail = [f.sub, noProd(m) ? 'smallest test configuration' : ''].filter(Boolean).join(' · ');
+  return h('div', { 'data-needs': '' }, h('span.mut', 'Runs on: '), runsOnCell(m, st),
+    f.need ? [h('span.mut', ' · needs '), h('span', { title: f.title }, needText(f.need)), tail ? h('span.mut', ' (' + tail + ')') : null] : null);
 }
 
 // the side panel of one model
@@ -252,7 +297,7 @@ function modelPanel(st, m, ps) {
     h('section.zpart', { key: 'runs' },
       h('div.row', { style: 'gap:10px;flex-wrap:wrap' }, h('b', m.short_name || m.name), m.publisher ? h('span.mut', m.publisher) : null,
         stateBadge(m, st), m.kind === 'llama' && !m.exists ? badge('File missing', 'fail') : null),
-      h('div', h('span.mut', 'Runs on: '), runsOnCell(m, st), f.need ? [h('span.mut', ' · needs '), h('span', { title: f.title }, needText(f.need)), f.sub ? h('span.mut', ' (' + f.sub + ')') : null] : null),
+      needsLine(m, st, f),
       facts([
         m.family ? ['Family', h('span', m.family)] : null,
         m.parameters ? ['Parameters', h('span', m.parameters)] : null,
@@ -482,7 +527,7 @@ function listPanel(st, models, disk, error, r, query, setQuery, onFind, done) {
   const pinnedRows = pins ? rows.filter(m => m.pinned) : [];
   const restRows = pins ? rows.filter(m => !m.pinned) : rows;
   const heads = () => h('div.mr.mr-h', { 'aria-hidden': 'true' }, h('span'), h('span'),
-    h('span.lbl.mdl-needs', { title: 'The memory its lightest configuration needs on the zones' }, 'Needs'), h('span.lbl.mdl-pc', 'Profiles'), h('span.lbl', 'Last used'));
+    h('span.lbl.mdl-needs', { title: 'The memory its production profiles need on the zones, smallest to largest' }, 'Needs'), h('span.lbl.mdl-pc', 'Profiles'), h('span.lbl', 'Last used'));
   if (error && !models) body = empty('The model list could not be read', error);
   else if (!models) body = skeleton(6);
   else if (!models.length) body = empty('No models yet', 'A model appears here once a .gguf file is in the models folder, or a profile names a model file.');
