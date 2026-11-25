@@ -203,6 +203,7 @@ func TestScoped_SettingsNameAndConflict(t *testing.T) {
 	want.Name, want.Aliases = "m@bench-7", nil
 	want.Ctx, want.Parallel, want.KVQuant, want.FlashAttn = 16384, 2, "q8_0", true
 	want.ForceNodes, want.ExtraArgs = []string{"c", "d"}, []string{"--reasoning-budget", "0"}
+	want.NeedsMiB = 0 // another shape: the written need is not inherited
 	if !reflect.DeepEqual(*sp, want) {
 		t.Fatalf("scoped\n%+v\nwant\n%+v", *sp, want)
 	}
@@ -404,5 +405,68 @@ func TestScoped_ModelPathRule(t *testing.T) {
 	}
 	if _, err := scopedProfile(h.c.cfg, h.c.cfg.Profiles["m"], ScopedLoad{Model: "m", Scope: "s", Ctx: ptrInt(1024)}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A written need (needs_mib) belongs to the production shape. A scoped copy
+// whose shape differs (ctx, parallel, kv_quant, flash_attn, extra args,
+// host) does not inherit it: it plans from the estimate or a measurement of
+// its own shape, and the plan says so. At the production shape the written
+// need applies as before.
+func TestScoped_WrittenNeedOnlyAtTheProductionShape(t *testing.T) {
+	h := newHarness(t).nodes(ps5("a", 2, 15000), ps5("b", 4, 15000))
+	h.llama("tiny", 700, func(p *core.Profile) { p.Ctx = 2048 })
+	h.viewChanged()
+	same := mustScoped(t, h, ScopedLoad{Model: "tiny", Scope: "s0", Nodes: []string{"b"}})
+	if same.NeedsMiB != 700 {
+		t.Fatalf("production shape: needs_mib %d, want the written 700", same.NeedsMiB)
+	}
+	r := h.c.scopedPlan(same)
+	if r.NeedMiB != 700 || strings.Contains(r.NeedBasis, "written need not used") {
+		t.Fatalf("production shape plan %+v", r)
+	}
+	for _, c := range []ScopedLoad{
+		{Ctx: ptrInt(8192), KVQuant: ptrStr("q8_0"), FlashAttn: ptrBool(true), Thinking: ptrBool(false)}, // the copy's case
+		{Ctx: ptrInt(8192)},
+		{Parallel: ptrInt(2)},
+		{KVQuant: ptrStr("q8_0"), FlashAttn: ptrBool(true)},
+		{FlashAttn: ptrBool(true)},
+		{Thinking: ptrBool(false)},
+	} {
+		c.Model, c.Scope, c.Nodes = "tiny", "s1", []string{"b"}
+		sp := mustScoped(t, h, c)
+		if sp.NeedsMiB != 0 {
+			t.Fatalf("%+v: inherited the written need %d", c, sp.NeedsMiB)
+		}
+		h.needs["tiny@s1"] = NeedInfo{Need: placer.Estimated(2600), FileBytes: 1 << 30} // what the estimate gives for its shape
+		h.c.forgetScopedNeed("tiny@s1")
+		r := h.c.scopedPlan(sp)
+		if r.NeedMiB != 2600 || !strings.Contains(r.NeedBasis, "written need not used: the scoped shape differs from tiny") {
+			t.Fatalf("%+v: plan need %d basis %q", c, r.NeedMiB, r.NeedBasis)
+		}
+	}
+	if h.c.cfg.Profiles["tiny"].NeedsMiB != 700 {
+		t.Fatal("production changed")
+	}
+}
+
+// A measured need of the production shape is used by a scoped copy at that
+// shape only; a copy with a raised ctx does not plan with it.
+func TestScoped_MeasuredNeedOnlyAtTheProductionShape(t *testing.T) {
+	h := newHarness(t).nodes(ps5("a", 2, 15000), ps5("b", 4, 15000))
+	p := h.llama("mm", 0, func(p *core.Profile) { p.Ctx = 2048 })
+	h.needs["mm"] = NeedInfo{Need: placer.Estimated(1500), FileBytes: 1 << 30}
+	h.viewChanged()
+	h.c.putLearned(&learnedNeed{TotalMiB: 3100, key: needKeyOf(p), profile: "mm", devices: 1, at: h.c.now})
+	same := mustScoped(t, h, ScopedLoad{Model: "mm", Scope: "m0", Nodes: []string{"b"}})
+	h.needs["mm@m0"] = h.needs["mm"]
+	if r := h.c.scopedPlan(same); r.NeedMiB != 3100 || !r.Measured {
+		t.Fatalf("production shape: %+v", r)
+	}
+	big := mustScoped(t, h, ScopedLoad{Model: "mm", Scope: "m1", Nodes: []string{"b"}, Ctx: ptrInt(8192)})
+	h.needs["mm@m1"] = NeedInfo{Need: placer.Estimated(2600), FileBytes: 1 << 30}
+	r := h.c.scopedPlan(big)
+	if r.NeedMiB == 3100 || (r.Measured && !strings.Contains(r.NeedBasis, "derived")) {
+		t.Fatalf("raised ctx planned with production's measurement: %+v", r)
 	}
 }

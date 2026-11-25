@@ -328,6 +328,7 @@ func (c *schedCore) dryPlanOf(profile string, p *core.Profile) (r PlanReport) {
 	}
 	r.NeedMiB, r.Measured = info.Need.MiB, info.Need.Measured
 	r.FitNeedMiB, r.NeedBasis, r.DerivedFromCtx, r.DerivedSlope = info.Need.WithMargin(), c.needBasis(info), info.DerivedFromCtx, info.Slope
+	r.NeedBasis += c.writtenNeedDropped(p) // scoped.go
 	if c.insts[profile] == nil {
 		if fe := c.forcedNeverFits(p); fe != nil {
 			r.Action, r.Reason = PlanReject, fe.Message

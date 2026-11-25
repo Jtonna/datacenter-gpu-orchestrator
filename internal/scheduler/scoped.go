@@ -187,7 +187,27 @@ func scopedProfile(cfg *config.Config, p *core.Profile, r ScopedLoad) (*core.Pro
 			cp.ExtraArgs = append(cp.ExtraArgs, thinkingOff...)
 		}
 	}
+	// A written need (needs_mib) belongs to the production shape: a copy of
+	// another shape plans from the estimate or a measurement of its own
+	// shape (writtenNeedDropped says so in its plan).
+	if shapeOf(&cp) != shapeOf(p) {
+		cp.NeedsMiB = 0
+	}
 	return &cp, nil
+}
+
+// writtenNeedDropped is the plan's note for a scoped profile that did not
+// take its production profile's written need ("" when it did, or there was
+// none).
+func (c *schedCore) writtenNeedDropped(p *core.Profile) string {
+	base, _, ok := c.scopeOf(p.Name)
+	if !ok {
+		return ""
+	}
+	if bp := c.cfg.Profiles[base]; bp != nil && bp.NeedsMiB > 0 && p.NeedsMiB == 0 && shapeOf(bp) != shapeOf(p) {
+		return "; written need not used: the scoped shape differs from " + base
+	}
+	return ""
 }
 
 // sameScoped reports whether two scoped profiles load the same way.
