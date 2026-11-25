@@ -160,13 +160,15 @@ const dayOf = ms => { const d = new Date(ms); return `${d.getDate()} ${['Jan', '
 // the test and benchmark configurations are never counted with them)
 const prodCount = m => splitProfiles(m.profiles).prod.length;
 // profCell(m) -> the row's Profiles cell: "2 profiles"; for a file with no
-// production profile "No profiles yet", and smaller under it the real count
-// of its test and benchmark configurations (nothing when there are none).
+// production profile "No profiles yet", and smaller under it, on one line,
+// the real count of its test and benchmark configurations ("22 test
+// configs"; nothing when there are none).
 function profCell(m) {
   const { prod, test } = splitProfiles(m.profiles);
   if (prod.length) return h('span.mdl-pc', { 'data-prod': String(prod.length) }, prodText(prod.length));
   return h('span.mdl-pc.mut', { 'data-prod': '0' }, 'No profiles yet',
-    test.length ? h('span.sub', { 'data-test': String(test.length) }, plural(test.length, 'test configuration')) : null);
+    // one short line: "22 test configs"; the full phrase on hover (and in the panel's collapsed line)
+    test.length ? h('span.sub', { 'data-test': String(test.length), title: testText(test.length) }, plural(test.length, 'test config')) : null);
 }
 // sizeText(m) -> "16.5 GB", or why there is none (decimal GB, as the board and the disk line)
 const gbOf = v => (v / 1e9).toLocaleString('en-US', { maximumFractionDigits: 1, minimumFractionDigits: v >= 100e9 ? 0 : 1 });
