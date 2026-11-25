@@ -122,6 +122,7 @@ type fakeAPI struct {
 	// drops a node.s report (the agent is silent) given the chats sent so far.
 	reportEvery time.Duration
 	withhold    func(id string, chats int) bool
+	noTime      func(id string) bool // the node's figure has no sample time (the scheduler's own machine)
 	reportEpoch time.Time
 	reports     map[string]fakeReport
 }
@@ -632,6 +633,9 @@ func (f *fakeAPI) report(id string, loading bool, chats int) (*int64, time.Time)
 	}
 	if r.v == nil {
 		return nil, time.Time{}
+	}
+	if f.noTime != nil && f.noTime(id) {
+		return r.v, time.Time{}
 	}
 	return r.v, r.at
 }

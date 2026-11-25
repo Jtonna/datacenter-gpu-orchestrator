@@ -181,3 +181,31 @@ func fillMDString(f *FillResult) string {
 	fillMD(&b, f)
 	return b.String()
 }
+
+// A machine whose figure has no sample time (the scheduler's own machine, a
+// GPU machine without one) says "no sample time": it is not stale, and its
+// growth is not given.
+func TestContextFill_NoSampleTimeIsSaidNotStale(t *testing.T) {
+	api := newFake().prof("small", fakeProf{chatFn: recallingFill})
+	api.reportEvery = 50 * time.Millisecond
+	api.mem = func(id string, loading bool, n int) *int64 { v := int64(9000); return &v }
+	api.noTime = func(id string) bool { return id == "n2" }
+	tm := fillMgr(t, api, func(o *ManagerOptions) { o.FillReportEvery = 50 * time.Millisecond })
+	tm.bench(`{"id":"fill","profile":"small","phases":[{"type":"load"},{"type":"context_fill","marks_pct":[50]},{"type":"unload"}]}`)
+	tm.suite(`{"id":"s","benchmarks":["fill"],"cooldown_s":0,"only_when_idle":false}`)
+	r := tm.finished(tm.run("s").ID)
+	if r.Steps[0].Outcome != OutcomeReady {
+		t.Fatalf("%s %s", r.Steps[0].Outcome, r.Steps[0].Reason)
+	}
+	f := fillOf(t, r, 0)
+	n2 := nodeOf(t, f.Marks[0], "n2")
+	if n2.Stale || n2.StaleReason != "" || !n2.NoSampleTime || n2.GrowthMiB != nil {
+		t.Errorf("n2 without a sample time: %+v", n2)
+	}
+	if n1 := nodeOf(t, f.Marks[0], "n1"); n1.Stale || n1.NoSampleTime {
+		t.Errorf("n1: %+v", n1)
+	}
+	if md := fillMDString(f); !strings.Contains(md, "no sample time") {
+		t.Errorf("report does not say no sample time:\n%s", md)
+	}
+}

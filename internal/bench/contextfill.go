@@ -109,6 +109,10 @@ type FillNode struct {
 	// and KiB per token are then not given.
 	Stale       bool   `json:"stale,omitempty"`
 	StaleReason string `json:"stale_reason,omitempty"`
+	// NoSampleTime: the figure has no sample time (the scheduler's own
+	// machine, a GPU machine without one): it cannot be checked fresh, so
+	// growth and KiB per token are not given; it is not stale.
+	NoSampleTime bool `json:"no_sample_time,omitempty"`
 }
 
 // DefaultFillSettle is the settle hold when neither settle_s nor the
@@ -314,7 +318,7 @@ func (br *benchRun) fillFresh(after time.Time, need map[string]bool, reps *fillR
 		reps.note(s)
 		all := true
 		for _, w := range s.Workers {
-			if need[w.ID] && w.AvailMiB != nil && !reps.fresh(w, after) {
+			if need[w.ID] && w.AvailMiB != nil && !w.SampleAt.IsZero() && !reps.fresh(w, after) {
 				all = false
 			}
 		}
@@ -654,7 +658,7 @@ func fillNodes(s *StatusInfo, base fillBase, inUse map[string]bool, trip *fillTr
 		fn.LowestMiB, fn.SamplesDuringTurn = trip.lowest(w.ID, turnEnd)
 		switch {
 		case w.SampleAt.IsZero():
-			fn.Stale, fn.StaleReason = true, "no fresh sample after the turn: the figure has no sample time"
+			fn.NoSampleTime = true
 		case !known || lo.Before(turnEnd):
 			fn.Stale, fn.StaleReason = true, "no fresh sample after the turn: no report was certainly read after the turn ended (the first report after the end may hold a figure read before it)"
 		}
@@ -664,11 +668,11 @@ func fillNodes(s *StatusInfo, base fillBase, inUse map[string]bool, trip *fillTr
 			fn.BeforeMiB = &bv
 			fn.BeforeSampledAt = isoMS(base.at[w.ID])
 			fn.BeforeReadAfter = isoMS(base.after[w.ID])
-			if base.stale[w.ID] && !fn.Stale {
+			if base.stale[w.ID] && !fn.Stale && !fn.NoSampleTime {
 				fn.Stale, fn.StaleReason = true, "no fresh sample before the first turn: no report was certainly read after the settle hold ended"
 			}
 		}
-		if ok && fn.InUse && !fn.Stale {
+		if ok && fn.InUse && !fn.Stale && !fn.NoSampleTime {
 			g := b - after
 			fn.GrowthMiB = &g
 			if held > 0 && g >= 0 {
@@ -764,6 +768,8 @@ func fillMD(b *strings.Builder, f *FillResult) {
 			growth := opt(n.GrowthMiB)
 			if n.Stale {
 				growth, kib = "stale", "stale"
+			} else if n.NoSampleTime {
+				growth, kib = "no sample time", "no sample time"
 			}
 			fmt.Fprintf(b, "| %d %% | %s | %s | %s | %v | %s | %s | %s | %s | %s | %d |\n", m.Pct, held, fmtNum(m.PrefillTPS), mdCell(n.Node), n.InUse,
 				opt(n.BeforeMiB), opt(n.AfterMiB), opt(n.LowestMiB), growth, kib, n.SamplesDuringTurn)
