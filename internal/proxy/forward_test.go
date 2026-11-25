@@ -323,6 +323,12 @@ func TestExtractUsageUnit(t *testing.T) {
 		{"openai", `{"usage":{"prompt_tokens":1,"completion_tokens":2}}`, 1, 2, -1},
 		{"responses api names", `{"usage":{"input_tokens":3,"output_tokens":4}}`, 3, 4, -1},
 		{"timings only", `{"timings":{"prompt_n":5,"predicted_n":6,"predicted_per_second":7.5}}`, 5, 6, 7.5},
+		// The native /completion route has no usage object: tokens_in is the
+		// whole prompt, prompt_n + cache_n, as usage.prompt_tokens would be.
+		{"native, first turn", `{"content":"x","timings":{"prompt_n":1984,"cache_n":0,"predicted_n":30}}`, 1984, 30, -1},
+		{"native, later turn with a large cache", `{"content":"x","timings":{"cache_n":5982,"prompt_n":1144,"predicted_n":30}}`, 7126, 30, -1},
+		{"openai with timings: usage wins, unchanged", `{"usage":{"prompt_tokens":7126,"completion_tokens":30},"timings":{"prompt_n":1144,"cache_n":5982,"predicted_n":30}}`, 7126, 30, -1},
+		{"neither", `{"content":"x"}`, -1, -1, -1},
 		{"truncated front", `ntent":"zzz","usage":{"prompt_tokens":8,"completion_tokens":9}}`, 8, 9, -1},
 		{"null usage", `data: {"usage":null}`, -1, -1, -1},
 		{"empty", ``, -1, -1, -1},
@@ -561,5 +567,27 @@ func TestForward_PotluckHeadersStayForPotluck(t *testing.T) {
 		if in.Get(h) != "set-"+h {
 			t.Errorf("%s is gone from the request Potluck reads: %q", h, in.Get(h))
 		}
+	}
+}
+
+// A native /completion answer (timings, no usage object) on a later turn:
+// the result's prompt tokens are the whole prompt (prompt_n + cache_n) and
+// its cached tokens are cache_n, as for an OpenAI-style answer.
+func TestForward_NativeAnswerWithoutUsageCountsTheWholePrompt(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"content":"ok","stop":true,"timings":{"prompt_n":1144,"cache_n":5982,"predicted_n":30,"predicted_per_second":50}}`)
+	}))
+	defer up.Close()
+	res := make(chan Result, 1)
+	f := front(t, Options{Addr: upstreamAddr(up)}, res)
+	resp, err := http.Post(f.URL+"/completion", "application/json", strings.NewReader(`{"prompt":"x","cache_prompt":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	r := <-res
+	if r.InputTokens != 7126 || r.CachedTokens != 5982 || r.OutputTokens != 30 {
+		t.Fatalf("in %d cached %d out %d, want 7126 5982 30", r.InputTokens, r.CachedTokens, r.OutputTokens)
 	}
 }
