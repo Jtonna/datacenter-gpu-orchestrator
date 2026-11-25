@@ -619,6 +619,21 @@ for (const c of spec.cases) {
   for (const bad of c.absent || []) if (text.includes(bad)) errors.push('text that must not be there: ' + JSON.stringify(bad) + ' in ' + JSON.stringify(text.slice(Math.max(0, text.indexOf(bad) - 80), text.indexOf(bad) + 80)));
   for (const sel of c.none || []) if (outlet.querySelector(sel)) errors.push('an element that must not be there: ' + sel);
   for (const sel of c.has || []) if (!outlet.querySelector(sel)) errors.push('no element matches: ' + sel);
+  // count: {selector: n}: exactly n elements in the view match
+  for (const [sel, n] of Object.entries(c.count || {})) { const k = outlet.querySelectorAll(sel).length; if (k !== n) errors.push(`${k} elements match ${sel}, want ${n}`); }
+  // evenX: selectors of chart points (cx) that must be spread evenly within
+  // each chart (their parent svg): the widest gap between neighbouring x
+  // values at most twice the narrowest
+  for (const sel of c.evenX || []) {
+    const charts = new Map();
+    for (const e of outlet.querySelectorAll(sel)) { const k = e.parentNode; if (!charts.has(k)) charts.set(k, new Set()); charts.get(k).add(Number(e.getAttribute('cx'))); }
+    if (!charts.size) errors.push(`evenX: no point matches ${sel}`);
+    for (const set of charts.values()) {
+      const xs = [...set].sort((x, y) => x - y), gaps = xs.slice(1).map((x, i) => x - xs[i]);
+      if (xs.length < 3) errors.push(`evenX: a chart with ${xs.length} points (${sel})`);
+      else if (Math.max(...gaps) > 2 * Math.min(...gaps)) errors.push(`evenX: ${sel} gaps from ${Math.min(...gaps).toFixed(1)} to ${Math.max(...gaps).toFixed(1)}`);
+    }
+  }
   if (c.hash && location.hash !== c.hash) errors.push('the address is ' + location.hash + ', want ' + c.hash);
   // titles: texts some element's title attribute on the page contains
   if (c.titles) {

@@ -111,6 +111,7 @@ import { profileEntries, profileSpecs, catalog as cfgCatalog, planAnswer } from 
 import { Keys, toolsAnswer } from './ui-fixture/keys.mjs';
 import { modelsDoc, modelsInstances, seedPins, pinRoute } from './ui-fixture/models.mjs';
 import { TRASH_STATES, seedTrash, trashList, withTrash, deleteRoute, restoreRoute } from './ui-fixture/trash.mjs';
+import { BENCH_STATES, benchRoute } from './ui-fixture/bench.mjs';
 import { tierLists, applyTiers, localEntry, tiersDoc } from './ui-fixture/tiers.mjs';
 
 const argv = process.argv.slice(2);
@@ -198,6 +199,10 @@ if (MODELS_STATE) seedPins();
 if (TRASH_STATE) seedTrash(TRASH_STATE);
 const catalogDoc = now => (TRASH_STATE ? withTrash(modelsDoc(MODELS_STATE, now)) : modelsDoc(MODELS_STATE, now));
 const KEYS = KEYS_STATE ? new Keys(KEYS_STATE) : null;
+// --bench <state>: the benchmark pages' GETs (/api/bench/...; scripts/ui-fixture/bench.mjs). State: long
+// (long descriptions, notes, version and failure reason; 25 runs, one failed).
+const BENCH_STATE = opt('--bench', '');
+if (BENCH_STATE && !BENCH_STATES.includes(BENCH_STATE)) { console.error('--bench: one of ' + BENCH_STATES.join(', ')); process.exit(2); }
 // --tiers live|catchall: the Tiers and zones page (tiers.mjs)
 const TIERS = opt('--tiers', '');
 const TIER_LISTS = tierLists(TIERS);
@@ -461,6 +466,7 @@ const server = http.createServer((req, res) => {
   if (p === '/api/status') return json(res, 200, status(now));
   if (p === '/api/models') return json(res, 200, MODELS_STATE ? catalogDoc(now) : { version: 1, models: CATALOG ? cfgCatalog() : [] });
   if (p === '/api/models/trash' && TRASH_STATE) return json(res, 200, trashList());
+  if (BENCH_STATE && p.startsWith('/api/bench/')) { const d = benchRoute(BENCH_STATE, p, u.searchParams, now); return d ? json(res, 200, d) : notFound(res, p); }
   if (p === '/api/profiles') return json(res, 200, { profiles: profileEntries() });
   if (p === '/api/config') { const d = cfgDoc(); return json(res, 200, withNamedId(Object.assign({ updated_at: now - 3 * H, configured: d.revision > 0, tiers: [], exclude_nodes: [], no_auto_nodes: NAMED_ONLY ? [NAMED_ONLY] : [], node_overrides: {} }, d, TIER_LISTS, { profiles: profileSpecs() }), now)); }
   // what the health popup reads (the Health board's sample, generic names)

@@ -32,7 +32,7 @@ export function runsList(suiteFilter, setFilter) {
     minWidth: 900, rows: runs, key: r => r.id, onRow: r => navigate('benchmarks', ['runs', r.id]),
     columns: [
       { label: 'Run', render: r => h('span', h('span.mono.nowrap', r.id), r.note ? h('span.sub', r.note) : null) },
-      { label: 'Suite', render: r => r.suite_name || r.suite_id },
+      { label: 'Suite', cls: 'mid', render: r => r.suite_name || r.suite_id },
       { label: 'State', cls: 'tight', render: r => h('span', runBadge(r.state), r.trigger === 'schedule' ? h('span.sub', 'Scheduled') : null) },
       { label: 'Started', cls: 'tight', render: r => ago(r.started_at || r.queued_at) },
       { label: 'Duration', cls: 'r', render: r => (r.started_at && r.finished_at ? dur((r.finished_at - r.started_at) / 1000) : DASH) },
@@ -374,7 +374,7 @@ function stepCard(step, runId) {
   const bad = step.outcome && step.outcome !== 'ready';
   return h('section', { class: 'card ' + (!notJudged(step) && (bad || (step.expect && !step.expect.pass)) ? 'flag-err' : ''), key: 'step-' + step.idx },
     h('div.ch',
-      h('h2', step.name || step.benchmark_id), passBadge(step), outcomeBadge(step.outcome), step.comparison && step.comparison.regression ? badge('Regression', 'aside') : null,
+      h('h2', step.name || step.benchmark_id), passBadge(step), step.outcome === 'failed' ? null : outcomeBadge(step.outcome), // "Failed" once step.comparison && step.comparison.regression ? badge('Regression', 'aside') : null,
       h('span.mono.mut', step.profile), stepRoles(step) ? h('span.mut', stepRoles(step)) : step.node_count ? h('span.mut', plural(step.node_count, 'worker')) : null,
       step.model_file ? h('span.mono.mut.right.wrap-any', { title: 'Model file' }, step.model_file) : null),
     step.reason || step.error ? h('div.cb', banner(step.outcome === 'refused' || step.outcome === 'refused_by_exclusion' ? 'warn' : 'err',
