@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -31,6 +32,36 @@ var managedFlags = map[string]bool{
 	"-lv": true, "--verbosity": true, "--log-verbosity": true,
 	"-v": true, "--verbose": true, "--log-verbose": true, "--log-disable": true,
 }
+
+// lateManaged are flags the scheduler began to set after profiles could
+// already carry them (--ctx-checkpoints, from the setting ctx_checkpoints).
+// A write may not set them, as with managedFlags; a stored profile that
+// already has them unchanged (Options.KeepArgs) stays loadable, and the
+// launch drops them (StripLateManaged) so the setting is the one value.
+var lateManaged = map[string]string{
+	"--ctx-checkpoints": "ctx_checkpoints", "-ctxcp": "ctx_checkpoints", "--swa-checkpoints": "ctx_checkpoints",
+}
+
+// StripLateManaged is args without the lateManaged flags and their values
+// (the next entry, for a flag written without "=").
+func StripLateManaged(args []string) []string {
+	var out []string
+	for i := 0; i < len(args); i++ {
+		name, _, eq := strings.Cut(args[i], "=")
+		if _, ok := lateManaged[name]; ok && strings.HasPrefix(args[i], "-") {
+			if !eq && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+			}
+			continue
+		}
+		out = append(out, args[i])
+	}
+	return out
+}
+
+// LateManagedArgs lists, one sentence each, the stored profiles whose
+// extra_args set a lateManaged flag that the launch drops.
+func (c *Config) LateManagedArgs() []string { return c.lateArgs }
 
 // validate checks every startup rule and returns all violations joined, in
 // a deterministic order.
@@ -213,6 +244,19 @@ func (c *Config) validateLlama(p *core.Profile, r *ProfileSpec, pf func(field, f
 		if managedFlags[name] {
 			pf("extra_args", "entry %d %q is a managed flag (%s); the scheduler sets it from the profile", i, a, name)
 		}
+		if setting, ok := lateManaged[name]; ok && strings.HasPrefix(a, "-") {
+			if kept, had := c.keepArgs[p.Name]; had && slices.Equal(kept, p.ExtraArgs) {
+				val := a
+				if _, v, eq := strings.Cut(a, "="); eq {
+					val = name + " " + v
+				} else if i+1 < len(p.ExtraArgs) {
+					val = name + " " + p.ExtraArgs[i+1]
+				}
+				c.lateArgs = append(c.lateArgs, fmt.Sprintf("profile %q: extra_args %s is not passed: the scheduler passes --ctx-checkpoints from the setting %s on every launch; remove it from the profile", p.Name, val, setting))
+				continue
+			}
+			pf("extra_args", "entry %d %q sets %s, which the scheduler passes on every launch from the setting %s; remove it here and change the setting instead", i, a, name, setting)
+		}
 	}
 }
 
@@ -330,7 +374,8 @@ func (c *Config) validateDefaults(add func(string, ...any)) {
 	}{{"device_overhead_mib", d.DeviceOverheadMiB}, {"min_share_mib", d.MinShareMiB}, {"cache_ram_mib", d.CacheRAMMiB},
 		{"load_memory_floor_mib", d.LoadMemoryFloorMiB}, {"fill_reserve_kib_per_token", d.FillReserveKiBPerToken},
 		{"reserved_drift_warn_mib", d.ReservedDriftWarnMiB}, {"margin_measured_mib", d.MarginMeasuredMiB},
-		{"margin_estimated_min_mib", d.MarginEstimatedMinMiB}, {"placement_tolerance_mib", d.PlacementToleranceMiB}} {
+		{"margin_estimated_min_mib", d.MarginEstimatedMinMiB}, {"placement_tolerance_mib", d.PlacementToleranceMiB},
+		{"node_host_cache_ram_mib", d.NodeHostCacheRAMMiB}, {"ctx_checkpoints", d.CtxCheckpoints}} {
 		if x.v < 0 {
 			add("defaults: %s: must not be negative", x.name)
 		}

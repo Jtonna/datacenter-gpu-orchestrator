@@ -174,7 +174,7 @@ func Build(doc *Document, b Bootstrap, o Options) (*Config, error) {
 	if exists == nil {
 		exists = func(p string) bool { _, err := os.Stat(p); return err == nil }
 	}
-	c.modelNote = o.ModelNote
+	c.modelNote, c.keepArgs = o.ModelNote, o.KeepArgs
 	if err := c.validate(raws, c.modelCheck(o, exists)); err != nil {
 		return nil, err
 	}

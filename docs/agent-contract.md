@@ -634,7 +634,7 @@ New fields of the `host` object:
   "rpc_file_load": "0",
   "expect_mib": 7400,
   "api_key": "<32 random characters>",
-  "extra_args": ["--n-gpu-layers", "999", "--fit", "off", "--jinja", "--cache-ram", "0", "-lv", "4"]
+  "extra_args": ["--n-gpu-layers", "999", "--fit", "off", "--jinja", "--cache-ram", "0", "--ctx-checkpoints", "32", "-lv", "4"]
 }
 ```
 

@@ -128,7 +128,7 @@ func (c *schedCore) hostSpec(in *inst) HostLaunchSpec {
 	parallel := max(p.Parallel, 1)
 	spec := HostLaunchSpec{IID: in.iid, Profile: p.Name, Label: path.Base(p.Model), Node: pl.Host,
 		Model: p.Model, Ctx: p.Ctx, Parallel: parallel,
-		ExtraArgs:          instance.HostLaunchArgs(*p, c.cfg.Defaults.HostNoMmap),
+		ExtraArgs:          instance.HostLaunchArgs(*p, instance.HostOptionsFromConfig(c.cfg)),
 		ExpectMiB:          in.hostTarget.ExpectMiB,
 		MinMemAvailableMiB: in.hostTarget.MinMemAvailableMiB,
 		RPCFileLoad:        "0",

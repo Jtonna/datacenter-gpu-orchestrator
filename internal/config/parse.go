@@ -32,6 +32,7 @@ func DefaultDefaults() Defaults {
 		Membership: MembershipFleet, WatchdogFloorMiB: 1000, WorkerStartTimeout: 15 * time.Second,
 		ReservedDriftWarnMiB: 500, FreeAverageWindow: 30 * time.Second,
 		HostOverheadMiB: 1024, PlacementToleranceMiB: 128,
+		NodeHostCacheRAMMiB: 0, CtxCheckpoints: 32, CountHostMemory: false,
 	}
 }
 
@@ -176,7 +177,7 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 	c.Bench.Enabled = c.DataDir != "" && (raw.Bench.Enabled == nil || *raw.Bench.Enabled)
 	c.benchEnabledSet = raw.Bench.Enabled
 	c.Bench.EnabledSetting = raw.Bench.Enabled == nil || *raw.Bench.Enabled
-	c.modelNote = o.ModelNote
+	c.modelNote, c.keepArgs = o.ModelNote, o.KeepArgs
 	if err := c.validate(rawProfiles, c.modelCheck(o, exists)); err != nil {
 		return nil, nil, nil, err
 	}
@@ -411,6 +412,9 @@ type rawDefaults struct {
 	HostNoMmap                bool     `yaml:"host_no_mmap" json:"host_no_mmap,omitempty"`
 	DeviceOverheadSettingOnly bool     `yaml:"device_overhead_setting_only" json:"device_overhead_setting_only,omitempty"`
 	PlacementToleranceMiB     int      `yaml:"placement_tolerance_mib" json:"placement_tolerance_mib,omitempty"`
+	NodeHostCacheRAMMiB       int      `yaml:"node_host_cache_ram_mib" json:"node_host_cache_ram_mib,omitempty"`
+	CtxCheckpoints            int      `yaml:"ctx_checkpoints" json:"ctx_checkpoints,omitempty"`
+	CountHostMemory           bool     `yaml:"count_host_memory" json:"count_host_memory,omitempty"`
 }
 
 func rawDefaultsFrom(d Defaults) rawDefaults {
@@ -423,7 +427,8 @@ func rawDefaultsFrom(d Defaults) rawDefaults {
 		d.Membership, d.WorkerModelDir, d.WatchdogFloorMiB, duration(d.WorkerStartTimeout),
 		d.FillReserveKiBPerToken, d.PlacementUsesReserved, d.ReservedDriftWarnMiB, d.MarginMeasuredMiB,
 		d.MarginEstimatedPercent, d.MarginEstimatedMinMiB, d.MarginRefuses, duration(d.FreeAverageWindow),
-		d.HostOverheadMiB, d.HostOverheadSettingOnly, d.HostNoMmap, d.DeviceOverheadSettingOnly, d.PlacementToleranceMiB}
+		d.HostOverheadMiB, d.HostOverheadSettingOnly, d.HostNoMmap, d.DeviceOverheadSettingOnly, d.PlacementToleranceMiB,
+		d.NodeHostCacheRAMMiB, d.CtxCheckpoints, d.CountHostMemory}
 }
 
 func (r rawDefaults) value() Defaults {
@@ -437,7 +442,8 @@ func (r rawDefaults) value() Defaults {
 		r.Membership, r.WorkerModelDir, r.WatchdogFloorMiB, time.Duration(r.WorkerStartTimeout),
 		r.FillReserveKiBPerToken, r.PlacementUsesReserved, r.ReservedDriftWarnMiB, r.MarginMeasuredMiB,
 		r.MarginEstimatedPercent, r.MarginEstimatedMinMiB, r.MarginRefuses, time.Duration(r.FreeAverageWindow),
-		r.HostOverheadMiB, r.HostOverheadSettingOnly, r.HostNoMmap, r.DeviceOverheadSettingOnly, r.PlacementToleranceMiB}
+		r.HostOverheadMiB, r.HostOverheadSettingOnly, r.HostNoMmap, r.DeviceOverheadSettingOnly, r.PlacementToleranceMiB,
+		r.NodeHostCacheRAMMiB, r.CtxCheckpoints, r.CountHostMemory}
 }
 
 type rawRecovery struct {

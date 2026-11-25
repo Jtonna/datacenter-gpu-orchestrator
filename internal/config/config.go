@@ -97,6 +97,10 @@ type Config struct {
 	ModelTrashPurge bool
 	// modelNote is Options.ModelNote while the configuration is checked.
 	modelNote func(string) string
+	// keepArgs is Options.KeepArgs while the configuration is checked;
+	// lateArgs what the check let through for it (LateManagedArgs).
+	keepArgs map[string][]string
+	lateArgs []string
 	// DefaultUserName is the default user: the name that signs what is done
 	// without an access key and without a name of the client's own (the web
 	// UI, curl, scripts) in the audit log and the request log. There is no
@@ -310,6 +314,19 @@ type Defaults struct {
 	// smallest budget that fits, then the id; the split by exact budget).
 	// Default 128.
 	PlacementToleranceMiB int
+
+	// The host process's own memory (the model server's prompt cache and
+	// context checkpoints), passed explicitly on both launch paths
+	// (internal/instance command.go). CacheRAMMiB above is --cache-ram for a
+	// host on the scheduler's machine (default 2048); NodeHostCacheRAMMiB is
+	// --cache-ram for a host on a node (default 0: no prompt cache there).
+	// CtxCheckpoints is --ctx-checkpoints, per slot, on both (default 32, the
+	// server's own). CountHostMemory: the host-side need (checkpoints x the
+	// family's cell, on a host on a node) enters that node's reservation;
+	// off (the default) it is computed and shown only.
+	NodeHostCacheRAMMiB int
+	CtxCheckpoints      int
+	CountHostMemory     bool
 }
 
 // Values of defaults.membership. MembershipFleet is the legacy mode, kept
@@ -379,6 +396,11 @@ type Options struct {
 	// ModelNote, when set, adds a sentence to the refusal of a model file
 	// that is not there (models slice 3: "it is in the trash since ...").
 	ModelNote func(model string) string
+	// KeepArgs maps a profile to the extra_args it had before the write being
+	// checked (or as stored, for a load). A profile whose extra_args are
+	// unchanged is not refused for a flag the scheduler began to manage
+	// later (lateManaged): an older configuration stays loadable.
+	KeepArgs map[string][]string
 }
 
 // Bench is the benchmark feature's settings (design 9.3).

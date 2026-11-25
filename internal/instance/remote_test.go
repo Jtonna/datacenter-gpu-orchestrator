@@ -144,7 +144,7 @@ func TestHostLaunchArgsMatchTheServerCommand(t *testing.T) {
 	p := core.Profile{Name: "x", Kind: core.KindLlama, Model: "m.gguf", Ctx: 8192, Parallel: 2, KVQuant: "q8_0", FlashAttn: true,
 		ExtraArgs: []string{"--temp", "0.7"}}
 	pl := core.Placement{Nodes: []core.PlacedNode{{ID: "a", Addr: "192.0.2.12:50052", BudgetMiB: 1000}, {ID: "b", Addr: "192.0.2.13:50052", BudgetMiB: 1000}}}
-	full, err := BuildArgs(p, pl, 9000, BuildOptions{ServerBin: "llama-server", ModelsDir: "/models", CacheRAMMiB: 2048})
+	full, err := BuildArgs(p, pl, 9000, BuildOptions{ServerBin: "llama-server", ModelsDir: "/models", CacheRAMMiB: 2048, CtxCheckpoints: 32})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,10 +160,10 @@ func TestHostLaunchArgsMatchTheServerCommand(t *testing.T) {
 	}
 	i := slices.Index(rest, "--cache-ram")
 	rest[i+1] = "0"
-	if got := HostLaunchArgs(p, false); !slices.Equal(got, rest) {
+	if got := HostLaunchArgs(p, HostOptions{CtxCheckpoints: 32}); !slices.Equal(got, rest) {
 		t.Fatalf("\n got %v\nwant %v", got, rest)
 	}
-	withNoMmap := HostLaunchArgs(p, true)
+	withNoMmap := HostLaunchArgs(p, HostOptions{NoMmap: true, CtxCheckpoints: 32})
 	if slices.Index(withNoMmap, "--no-mmap") < 0 || len(withNoMmap) != len(rest)+1 {
 		t.Fatal(withNoMmap)
 	}
