@@ -347,9 +347,10 @@ func TestMemFileDropsANodesMemory(t *testing.T) {
 	}
 }
 
-// --mem-file "silent:<name>": N withholds that agent's reports for N s: its
-// last_seen_ago_s grows past a heartbeat interval, then it reports again;
-// the other agent keeps reporting.
+// --mem-file "silent:<name>": N withholds that agent's reports for N s,
+// taking effect within the file's 100 ms poll (not at the next heartbeat),
+// and the agent reports at once when the silence ends; the other agent
+// keeps reporting.
 func TestMemFileSilentWithholdsReports(t *testing.T) {
 	agentPort, workerPort := freeLoopbackPort(t), freeLoopbackPort(t)
 	base := startScheduler(t, agentPort, workerPort)
@@ -362,7 +363,7 @@ func TestMemFileSilentWithholdsReports(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	f, err := Start(ctx, Options{Scheduler: base, Release: "auto", AgentPort: agentPort, WorkerPort: workerPort,
-		Heartbeat: 100 * time.Millisecond, MemFile: file}, nodes, io.Discard)
+		Heartbeat: time.Second, MemFile: file}, nodes, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,11 +377,20 @@ func TestMemFileSilentWithholdsReports(t *testing.T) {
 		}
 		return -1
 	}
-	eventually(t, "both reporting", func() bool { return ago("ps5-a") >= 0 && ago("ps5-a") < 0.5 && ago("ps5-b") >= 0 && ago("ps5-b") < 0.5 })
-	os.WriteFile(file, []byte(`{"silent:ps5-b": 1}`), 0o644)
-	eventually(t, "ps5-b silent", func() bool { return ago("ps5-b") > 0.5 })
-	if ago("ps5-a") > 0.5 {
-		t.Fatalf("ps5-a went silent too: %v", ago("ps5-a"))
+	// Write the silence just after a report of ps5-b: its next one is due about 1 s later.
+	eventually(t, "ps5-b just reported", func() bool { a := ago("ps5-b"); return a >= 0 && a < 0.1 })
+	wrote := time.Now()
+	os.WriteFile(file, []byte(`{"silent:ps5-b": 2}`), 0o644)
+	time.Sleep(time.Until(wrote.Add(1600 * time.Millisecond)))
+	if a := ago("ps5-b"); a < 1.3 { // a report at the 1 s tick would make this about 0.6
+		t.Fatalf("ps5-b reported during its silence: last seen %.2f s ago, 1.6 s after the write", a)
 	}
-	eventually(t, "ps5-b reports again", func() bool { return ago("ps5-b") < 0.5 })
+	if a := ago("ps5-a"); a > 1.2 {
+		t.Fatalf("ps5-a went silent too: %v", a)
+	}
+	// The silence ends about 2.1 s after the write: a report goes out at once.
+	time.Sleep(time.Until(wrote.Add(2500 * time.Millisecond)))
+	if a := ago("ps5-b"); a > 0.45 {
+		t.Fatalf("ps5-b did not report at once after its silence: last seen %.2f s ago, 2.5 s after the write", a)
+	}
 }

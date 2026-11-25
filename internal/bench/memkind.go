@@ -57,20 +57,20 @@ type statusDevice struct {
 //
 // The device list's free_mib is not used: the agent reads it only at
 // registration and after a launch exits, so it is stale during a load.
-func agentAvail(a *statusAgent) (v *int64, kind, note string) {
+func agentAvail(a *statusAgent) (v *int64, kind, note string, ageMS int64) {
 	dev, ok := pickStatusDevice(a)
 	if ok && !dev.SharesSystemMemory {
-		if free, ok := liveGPUFree(a.Stats, dev); ok {
-			return &free, MemKindGPU, ""
+		if free, age, ok := liveGPUFree(a.Stats, dev); ok {
+			return &free, MemKindGPU, "", age
 		}
 		if strings.EqualFold(dev.Backend, "cuda") {
 			note = MemNoteNoLiveGPU
 		}
 	}
 	if a.MemAvailMiB == nil {
-		return nil, "", ""
+		return nil, "", "", 0
 	}
-	return a.MemAvailMiB, MemKindSystem, note
+	return a.MemAvailMiB, MemKindSystem, note, 0
 }
 
 // pickStatusDevice is the device the node's worker uses, as the pool picks it:
@@ -93,10 +93,10 @@ func pickStatusDevice(a *statusAgent) (statusDevice, bool) {
 // discrete GPU and its source is ok. A CUDA<n> device is the nvidia entry with
 // index n (or the only nvidia entry when none has an index); any other device
 // is the only discrete entry, when there is exactly one.
-func liveGPUFree(raw json.RawMessage, dev statusDevice) (int64, bool) {
+func liveGPUFree(raw json.RawMessage, dev statusDevice) (free, ageMS int64, ok bool) {
 	var s agentproto.Stats
 	if len(raw) == 0 || json.Unmarshal(raw, &s) != nil || s.StatsVersion != agentproto.StatsVersion {
-		return 0, false
+		return 0, 0, false
 	}
 	var cands []agentproto.GPUStat
 	name := strings.ToUpper(dev.Name)
@@ -125,7 +125,7 @@ func liveGPUFree(raw json.RawMessage, dev statusDevice) (int64, bool) {
 		}
 	}
 	if len(cands) != 1 {
-		return 0, false
+		return 0, 0, false
 	}
 	g := cands[0]
 	src := agentproto.SourceNode
@@ -133,11 +133,14 @@ func liveGPUFree(raw json.RawMessage, dev statusDevice) (int64, bool) {
 		src = agentproto.SourceNvidia
 	}
 	if g.Kind != agentproto.GPUDiscrete || s.Sources[src].Status != agentproto.SourceOK || g.MemTotalBytes <= 0 {
-		return 0, false
+		return 0, 0, false
 	}
-	free := g.MemTotalBytes - g.MemUsedBytes
+	if a := s.Sources[src].AgeMS; a != nil && *a > 0 {
+		ageMS = *a
+	}
+	free = g.MemTotalBytes - g.MemUsedBytes
 	if g.MemReservedBytes != nil {
 		free -= *g.MemReservedBytes
 	}
-	return max(free, 0) >> 20, true
+	return max(free, 0) >> 20, ageMS, true
 }

@@ -168,6 +168,10 @@ type WorkerInfo struct {
 	// agent's last_seen_ago_s (its last report). Zero when not known (the
 	// scheduler's own machine, or a status without the age).
 	SampleAt time.Time
+	// SampleAgeMS is how old the figure already was when the heartbeat was
+	// built: a GPU figure's stats source age_ms; 0 for the system figure (read
+	// while the heartbeat is built).
+	SampleAgeMS int64
 }
 
 // RecentLoad is an entry of recent_loads.
@@ -598,8 +602,8 @@ func ParseStatus(raw []byte) (*StatusInfo, error) {
 			}
 		}
 		if n.Agent != nil {
-			if v, kind, note := agentAvail(n.Agent); v != nil {
-				wi.AvailMiB, wi.AvailKind, wi.AvailNote = v, kind, note
+			if v, kind, note, age := agentAvail(n.Agent); v != nil {
+				wi.AvailMiB, wi.AvailKind, wi.AvailNote, wi.SampleAgeMS = v, kind, note, age
 				if ago := n.Agent.LastSeenAgoS; ago != nil && !out.Time.IsZero() {
 					wi.SampleAt = out.Time.Add(-time.Duration(*ago * float64(time.Second)))
 				}

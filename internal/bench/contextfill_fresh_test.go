@@ -55,8 +55,8 @@ func TestContextFill_WaitsForASampleNewerThanTheTurn(t *testing.T) {
 	for i, m := range f.Marks {
 		n1 := nodeOf(t, m, "n1")
 		end := parseAt(t, m.TurnEndedAt)
-		if n1.Stale || n1.AfterSampledAt == "" || !parseAt(t, n1.AfterSampledAt).After(end) {
-			t.Errorf("mark %d: after not newer than the turn's end %s: %+v", i, m.TurnEndedAt, n1)
+		if n1.Stale || n1.AfterSampledAt == "" || !parseAt(t, n1.AfterSampledAt).After(end) || n1.AfterReadAfter == "" || parseAt(t, n1.AfterReadAfter).Before(end) {
+			t.Errorf("mark %d: after not read after the turn's end %s: %+v", i, m.TurnEndedAt, n1)
 		}
 		if n1.BeforeSampledAt == "" || n1.GrowthMiB == nil || *n1.GrowthMiB != int64(40*(i+1)) || n1.KiBPerToken == nil {
 			t.Errorf("mark %d growth: %+v", i, n1)
@@ -64,7 +64,7 @@ func TestContextFill_WaitsForASampleNewerThanTheTurn(t *testing.T) {
 		if n1.AfterWaitMS != nil && *n1.AfterWaitMS > 0 {
 			waited = true
 		}
-		if n1.AfterWaitMS == nil || *n1.AfterWaitMS > 2*150+100 {
+		if n1.AfterWaitMS == nil || *n1.AfterWaitMS > 3*150+100 {
 			t.Errorf("mark %d wait: %v", i, n1.AfterWaitMS)
 		}
 	}

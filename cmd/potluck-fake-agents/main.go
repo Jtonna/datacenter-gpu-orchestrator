@@ -218,7 +218,9 @@ func Start(ctx context.Context, o Options, nodes []Node, out io.Writer) (*Fleet,
 		f.Agents = append(f.Agents, a)
 	}
 	if o.MemFile != "" {
-		go f.followMemFile(ctx, o.MemFile, o.Heartbeat, nodes, out)
+		// Read every 100 ms (not once per heartbeat): a key takes effect at most
+		// 100 ms after it is written, before the next heartbeat goes out.
+		go f.followMemFile(ctx, o.MemFile, min(o.Heartbeat, memFilePoll), nodes, out)
 	}
 	mode := "launches refused"
 	if o.AcceptLaunches {
@@ -433,6 +435,9 @@ func assignAddrs(nodes []Node, base string) error {
 	}
 	return nil
 }
+
+// memFilePoll is how often the memory file is read.
+const memFilePoll = 100 * time.Millisecond
 
 // followMemFile applies the memory file every interval until ctx ends: a
 // node listed by id or name reports that MemAvailable (and the same

@@ -91,6 +91,7 @@ type Agent struct {
 	launches   []agentproto.LaunchRequest // every accepted launch request
 	hostAuth   []string                   // the Authorization header of each request to a host launch
 	silentTo   time.Time                  // no heartbeat is sent before this (SilentFor)
+	kick       chan struct{}              // sends a heartbeat at once (the end of a silence)
 }
 
 type launchRun struct {
@@ -284,6 +285,7 @@ func (a *Agent) loop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+		case <-a.kickC(): // a withheld report ends: report at once (SilentFor)
 		}
 	}
 }
@@ -736,9 +738,27 @@ func (a *Agent) SetMemAvail(mib int64, stats json.RawMessage) {
 
 // SilentFor withholds the agent's heartbeats for d from now (its memory
 // report is then as old as its last heartbeat), as an agent that misses a
-// report does. Kept short of the pool's LostAfter by the caller.
+// report does, and sends one at once when the silence ends, so the gap
+// the scheduler sees is d plus the time since the last report. Kept short
+// of the pool's LostAfter by the caller.
 func (a *Agent) SilentFor(d time.Duration) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	a.silentTo = time.Now().Add(d)
+	a.mu.Unlock()
+	k := a.kickC()
+	time.AfterFunc(d, func() {
+		select {
+		case k <- struct{}{}:
+		default:
+		}
+	})
+}
+
+func (a *Agent) kickC() chan struct{} {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.kick == nil {
+		a.kick = make(chan struct{}, 1)
+	}
+	return a.kick
 }

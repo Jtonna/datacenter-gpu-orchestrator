@@ -93,8 +93,13 @@ type FillNode struct {
 	KiBPerToken *float64 `json:"kib_per_token,omitempty"`
 	// When the agent took the before and after figures (its report; UTC, ms),
 	// and how long the mark waited after the turn's end for that report.
-	BeforeSampledAt string   `json:"before_sampled_at,omitempty"`
-	AfterSampledAt  string   `json:"after_sampled_at,omitempty"`
+	BeforeSampledAt string `json:"before_sampled_at,omitempty"`
+	AfterSampledAt  string `json:"after_sampled_at,omitempty"`
+	// BeforeReadAfter and AfterReadAfter: the figure was certainly read after
+	// this time (the report before it reached the scheduler then, less a GPU
+	// figure's age). after_sampled_at is when its report reached the scheduler.
+	BeforeReadAfter string   `json:"before_read_after,omitempty"`
+	AfterReadAfter  string   `json:"after_read_after,omitempty"`
 	AfterWaitMS     *float64 `json:"after_wait_ms,omitempty"`
 	// SamplesDuringTurn is how many reports were taken inside the turn
 	// (zero is said); LowestMiB is the lowest of them, absent when none.
@@ -186,25 +191,34 @@ type fillTrip struct {
 	line   int64
 	inUse  map[string]bool
 	cancel func()
-	start  time.Time // the turn's start: reports taken after it are kept
+	start  time.Time    // the turn's start: reports read after it are kept
+	reps   *fillReports // every report the phase has seen
 
 	mu  sync.Mutex
-	low map[string]map[int64]int64 // by node: report time (unix ns) to figure
+	low map[string]map[int64]tripSample // by node: the report's first-seen time (unix ns)
 	why string
 }
 
-// lowest is a node's lowest report taken inside the turn (after start, up
-// to end) and how many such reports there were.
+// tripSample is a report seen during the turn: its figure and when it was
+// certainly read after (fillReports.readAfter).
+type tripSample struct {
+	v     int64
+	after time.Time
+	at    time.Time
+}
+
+// lowest is a node's lowest report read inside the turn (read after its
+// start, received by its end) and how many such reports there were.
 func (t *fillTrip) lowest(id string, end time.Time) (*int64, int) {
 	var low *int64
 	n := 0
-	for at, v := range t.low[id] {
-		if at > end.UnixNano() {
+	for _, s := range t.low[id] {
+		if s.at.After(end) || s.after.Before(t.start) {
 			continue
 		}
 		n++
-		if low == nil || v < *low {
-			x := v
+		if low == nil || s.v < *low {
+			x := s.v
 			low = &x
 		}
 	}
@@ -212,6 +226,9 @@ func (t *fillTrip) lowest(id string, end time.Time) (*int64, int) {
 }
 
 func (t *fillTrip) see(s *StatusInfo) {
+	if t.reps != nil {
+		t.reps.note(s)
+	}
 	t.mu.Lock()
 	defer supervise.Unlocked("bench", t.mu.Unlock)
 	for _, w := range s.Workers {
@@ -219,11 +236,14 @@ func (t *fillTrip) see(s *StatusInfo) {
 			continue
 		}
 		v := *w.AvailMiB
-		if !w.SampleAt.IsZero() && w.SampleAt.After(t.start) {
-			if t.low[w.ID] == nil {
-				t.low[w.ID] = map[int64]int64{}
+		if t.reps != nil {
+			if after, ok := t.reps.readAfter(w); ok && !after.Before(t.start) {
+				if t.low[w.ID] == nil {
+					t.low[w.ID] = map[int64]tripSample{}
+				}
+				at := t.reps.canon(w.ID, w.SampleAt)
+				t.low[w.ID][at.UnixNano()] = tripSample{v: v, after: after, at: at}
 			}
-			t.low[w.ID][w.SampleAt.UnixNano()] = v
 		}
 		if v < t.line && t.why == "" {
 			t.why = fmt.Sprintf("stopped at the stop line: %s had %s MiB available during the turn, below the stop line of %s MiB", nodeName(w), groupInt(v), groupInt(t.line))
@@ -275,23 +295,26 @@ func (br *benchRun) fillStatus() (*StatusInfo, error) {
 	return s, nil
 }
 
-// fillFresh reads the status until every node in need reports a figure
-// taken after `after` (its agent's next report), for at most two report
-// intervals; it returns the last status read either way, and when it began
-// waiting. A node whose figure is still not newer is stale (fresh says).
-func (br *benchRun) fillFresh(after time.Time, need map[string]bool) (*StatusInfo, time.Time, error) {
+// fillFresh reads the status until every node in need has a report whose
+// figure was certainly read after `after` (fillReports.readAfter: the
+// report before it was received after `after`), for at most three report
+// intervals (the first report after `after` may hold a figure read just
+// before it, the second cannot; plus one interval of slack). It returns the
+// last status read either way. A node still without one is stale.
+func (br *benchRun) fillFresh(after time.Time, need map[string]bool, reps *fillReports) (*StatusInfo, time.Time, error) {
 	o := br.x.m.o
 	began := o.Now()
-	deadline := began.Add(2 * o.FillReportEvery)
+	deadline := began.Add(3 * o.FillReportEvery)
 	poll := min(max(o.FillReportEvery/8, 5*time.Millisecond), 250*time.Millisecond)
 	for {
 		s, err := br.fillStatus()
 		if err != nil {
 			return nil, began, err
 		}
+		reps.note(s)
 		all := true
 		for _, w := range s.Workers {
-			if need[w.ID] && w.AvailMiB != nil && !fresh(w, after) {
+			if need[w.ID] && w.AvailMiB != nil && !reps.fresh(w, after) {
 				all = false
 			}
 		}
@@ -305,9 +328,6 @@ func (br *benchRun) fillFresh(after time.Time, need map[string]bool) (*StatusInf
 		}
 	}
 }
-
-// fresh says whether a node's figure was taken after t.
-func fresh(w WorkerInfo, t time.Time) bool { return !w.SampleAt.IsZero() && w.SampleAt.After(t) }
 
 // isoMS is a time as UTC with milliseconds ("" for zero).
 func isoMS(t time.Time) string {
@@ -382,7 +402,8 @@ func (br *benchRun) phaseContextFill(i int, p *benchspec.Phase, pr *PhaseResult)
 	}
 	br.sleepCtx(hold)
 	holdEnd := br.x.m.o.Now()
-	s0, _, err := br.fillFresh(holdEnd, inUse)
+	reps := &fillReports{tol: min(250*time.Millisecond, br.x.m.o.FillReportEvery/4)}
+	s0, _, err := br.fillFresh(holdEnd, inUse, reps)
 	if err != nil {
 		br.fail(OutcomeError, "context_fill: status: "+err.Error())
 		return
@@ -390,12 +411,16 @@ func (br *benchRun) phaseContextFill(i int, p *benchspec.Phase, pr *PhaseResult)
 	res.SettleHeldMS = br.x.m.o.Now().Sub(holdStart).Milliseconds()
 	base := map[string]int64{}
 	baseAt := map[string]time.Time{}
+	baseAfter := map[string]time.Time{}
 	baseStale := map[string]bool{}
 	kinds := map[string]string{}
 	for _, w := range s0.Workers {
 		if w.AvailMiB != nil {
 			base[w.ID], kinds[w.ID], baseAt[w.ID] = *w.AvailMiB, w.AvailKind, w.SampleAt
-			baseStale[w.ID] = !fresh(w, holdEnd)
+			baseStale[w.ID] = !reps.fresh(w, holdEnd)
+			if lo, ok := reps.readAfter(w); ok {
+				baseAfter[w.ID] = lo
+			}
 		}
 	}
 	kib := map[string]float64{} // measured growth per token so far, by node
@@ -522,7 +547,7 @@ func (br *benchRun) phaseContextFill(i int, p *benchspec.Phase, pr *PhaseResult)
 		br.x.setDetail(br.track, map[string]any{"turn": j + 1, "turns": len(marks), "text": fmt.Sprintf("Context fill: to %d %% (%s of %s tokens)", pct, groupInt(int64(target)), groupInt(int64(ctxSize)))})
 		tctx, cancel := context.WithCancel(br.ctx)
 		turnStart := br.x.m.o.Now()
-		trip := &fillTrip{line: line, inUse: inUse, cancel: cancel, start: turnStart, low: map[string]map[int64]int64{}}
+		trip := &fillTrip{line: line, inUse: inUse, cancel: cancel, start: turnStart, reps: reps, low: map[string]map[int64]tripSample{}}
 		hook := trip.see
 		br.watch.hook.Store(&hook)
 		rr, resp, err := br.send(tctx, req, PhaseFill, i, j+1)
@@ -542,10 +567,10 @@ func (br *benchRun) phaseContextFill(i int, p *benchspec.Phase, pr *PhaseResult)
 		// this is also the hold before the unload, so the scheduler has seen
 		// the figure the fill read.
 		br.x.setDetail(br.track, map[string]any{"turn": j + 1, "turns": len(marks), "text": fmt.Sprintf("Context fill: reading memory after the turn to %d %%", pct)})
-		if sa, _, err := br.fillFresh(turnEnd, inUse); err == nil {
+		if sa, _, err := br.fillFresh(turnEnd, inUse, reps); err == nil {
 			waited := float64(br.x.m.o.Now().Sub(turnEnd).Microseconds()) / 1000
 			trip.see(sa) // the after figure counts for the stop line too (not for the lowest: it is after the turn)
-			mark.Nodes = fillNodes(sa, fillBase{mib: base, at: baseAt, stale: baseStale, kinds: kinds}, inUse, trip, turnEnd, waited, mark.TokensHeld, kib)
+			mark.Nodes = fillNodes(sa, fillBase{mib: base, at: baseAt, after: baseAfter, stale: baseStale, kinds: kinds}, inUse, trip, reps, turnEnd, waited, mark.TokensHeld, kib)
 		}
 		res.Marks = append(res.Marks, mark)
 		if why := trip.tripped(); why != "" {
@@ -592,21 +617,23 @@ func (br *benchRun) phaseContextFill(i int, p *benchspec.Phase, pr *PhaseResult)
 }
 
 // fillBase is every machine's reading before the first turn: its figure,
-// when its agent took it, whether that report was older than the hold's
-// end (stale), and which memory it is.
+// when its report reached the scheduler, when it was certainly read after,
+// whether it was not certainly read after the hold's end (stale), and which
+// memory it is.
 type fillBase struct {
 	mib   map[string]int64
 	at    map[string]time.Time
+	after map[string]time.Time
 	stale map[string]bool
 	kinds map[string]string
 }
 
 // fillNodes are the readings of every machine with a known figure after a
-// turn. A machine whose after figure is not newer than the turn's end, or
-// whose before figure was not newer than the hold, is stale: its growth and
-// KiB per token are not given (and kib keeps what it had). The lowest is of
-// the reports taken inside the turn only.
-func fillNodes(s *StatusInfo, base fillBase, inUse map[string]bool, trip *fillTrip, turnEnd time.Time, waitedMS float64, held int, kib map[string]float64) []FillNode {
+// turn. A machine whose after figure was not certainly read after the turn's
+// end (fillReports), or whose before figure was not certainly read after the
+// hold, is stale: its growth and KiB per token are not given (and kib keeps
+// what it had). The lowest is of the reports read inside the turn only.
+func fillNodes(s *StatusInfo, base fillBase, inUse map[string]bool, trip *fillTrip, reps *fillReports, turnEnd time.Time, waitedMS float64, held int, kib map[string]float64) []FillNode {
 	var out []FillNode
 	trip.mu.Lock()
 	defer supervise.Unlocked("bench", trip.mu.Unlock)
@@ -618,22 +645,27 @@ func fillNodes(s *StatusInfo, base fillBase, inUse map[string]bool, trip *fillTr
 		after := *w.AvailMiB
 		fn.AfterMiB = &after
 		fn.AfterSampledAt = isoMS(w.SampleAt)
+		lo, known := reps.readAfter(w)
+		if known {
+			fn.AfterReadAfter = isoMS(lo)
+		}
 		wm := waitedMS
 		fn.AfterWaitMS = &wm
 		fn.LowestMiB, fn.SamplesDuringTurn = trip.lowest(w.ID, turnEnd)
 		switch {
 		case w.SampleAt.IsZero():
 			fn.Stale, fn.StaleReason = true, "no fresh sample after the turn: the figure has no sample time"
-		case !w.SampleAt.After(turnEnd):
-			fn.Stale, fn.StaleReason = true, "no fresh sample after the turn: the newest report was taken before the turn ended"
+		case !known || lo.Before(turnEnd):
+			fn.Stale, fn.StaleReason = true, "no fresh sample after the turn: no report was certainly read after the turn ended (the first report after the end may hold a figure read before it)"
 		}
 		b, ok := base.mib[w.ID]
 		if ok {
 			bv := b
 			fn.BeforeMiB = &bv
 			fn.BeforeSampledAt = isoMS(base.at[w.ID])
+			fn.BeforeReadAfter = isoMS(base.after[w.ID])
 			if base.stale[w.ID] && !fn.Stale {
-				fn.Stale, fn.StaleReason = true, "no fresh sample before the first turn: the newest report was taken before the settle hold ended"
+				fn.Stale, fn.StaleReason = true, "no fresh sample before the first turn: no report was certainly read after the settle hold ended"
 			}
 		}
 		if ok && fn.InUse && !fn.Stale {
