@@ -197,6 +197,26 @@ func (s *Server) docAt() (*config.Document, int64) {
 	}
 }
 
+// zoneNames is the zones an instance is placed on by name, as the catalog's
+// instance names them: the node's hostname, else its id.
+func zoneNames(view []scheduler.NodeStatus, i scheduler.InstanceStatus) []string {
+	host := make(map[string]string, len(view))
+	for _, n := range view {
+		if n.Hostname != "" {
+			host[string(n.ID)] = n.Hostname
+		}
+	}
+	out := make([]string, 0, len(i.Nodes))
+	for _, n := range i.Nodes {
+		id := string(n.ID)
+		if h := host[id]; h != "" {
+			id = h
+		}
+		out = append(out, id)
+	}
+	return out
+}
+
 // trashBusy says what keeps the file from being deleted now: instances,
 // queued requests, benchmark runs.
 func (s *Server) trashBusy(ctx context.Context, file string, profiles map[string]*config.ProfileSpec) ([]string, map[string]any, error) {
@@ -210,7 +230,7 @@ func (s *Server) trashBusy(ctx context.Context, file string, profiles map[string
 		var insts []map[string]any
 		for _, i := range st.Instances {
 			if _, mine := profiles[i.Profile]; mine || i.ModelFile == file {
-				insts = append(insts, map[string]any{"profile": i.Profile, "state": i.State, "in_flight": i.InFlight})
+				insts = append(insts, map[string]any{"profile": i.Profile, "state": i.State, "in_flight": i.InFlight, "nodes": zoneNames(st.View.Nodes, i)})
 				why = append(why, fmt.Sprintf("%s is %s", i.Profile, i.State))
 			}
 		}
@@ -281,7 +301,7 @@ func (s *Server) interruptFile(ctx context.Context, file string, profiles map[st
 			if _, mine := profiles[i.Profile]; !mine && i.ModelFile != file {
 				continue
 			}
-			insts = append(insts, map[string]any{"profile": i.Profile, "state": i.State, "in_flight": i.InFlight, "waiters": i.Waiters})
+			insts = append(insts, map[string]any{"profile": i.Profile, "state": i.State, "in_flight": i.InFlight, "waiters": i.Waiters, "nodes": zoneNames(st.View.Nodes, i)})
 			cut += i.InFlight + i.Waiters
 			if err := s.sched.Unload(ctx, i.Profile, true); err != nil && !errors.Is(err, scheduler.ErrNotLoaded) {
 				errs = append(errs, fmt.Sprintf("unload %s: %v", i.Profile, err))

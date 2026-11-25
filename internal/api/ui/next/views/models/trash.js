@@ -131,13 +131,15 @@ const AGAIN = new Set(['interrupt_incomplete', 'loaded_again', 'in_use', 'move_f
 
 // interrupts(would, m) -> "gemma-4-27b is loaded on ps5-01 and ps5-02 with 2
 // requests in flight; 1 request for gemma-4-27b:long is queued", and the
-// number of requests that fail
+// number of requests that fail. The zones are the answer's own (nodes, v67);
+// a server older than that names none, and the catalog's instance is joined
 function interrupts(would, m) {
   const parts = [];
   let n = 0;
   for (const i of would.instances || []) {
-    const cat = (m.instances || []).find(x => x.profile === i.profile);
-    const nodes = cat && cat.nodes && cat.nodes.length ? cat.nodes : null;
+    const cat = Array.isArray(i.nodes) ? null : (m.instances || []).find(x => x.profile === i.profile);
+    const own = Array.isArray(i.nodes) ? i.nodes : cat && cat.nodes;
+    const nodes = own && own.length ? own : null;
     n += (i.in_flight || 0) + (i.waiters || 0);
     parts.push([h('span.mono', i.profile), ' is ', i.state === 'ready' ? 'loaded' : i.state, nodes ? [' on ', monoList(nodes)] : null,
       i.in_flight ? ` with ${plural(i.in_flight, 'request')} in flight` : null, i.waiters ? ` and ${plural(i.waiters, 'request')} waiting for it` : null]);

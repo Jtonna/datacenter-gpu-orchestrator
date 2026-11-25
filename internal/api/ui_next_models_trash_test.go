@@ -210,6 +210,33 @@ func TestUINextModelsTrash(t *testing.T) {
 			"expect":       []string{"Deleted gemma-4-27b-it-Q4_K_M.gguf", "2 requests were cut", "1 queued request was cancelled"}},
 	)
 
+	// 6b. zone names in the answer (v67): used as they are, the catalog's
+	// zones (ps5-01, ps5-02) are not joined in; without them (an older
+	// server) the catalog join above is the fallback
+	wouldZ := map[string]any{"instances": []any{map[string]any{"profile": "gemma-4-27b", "state": "ready", "in_flight": 2, "nodes": []any{"zone-07", "zone-08"}}},
+		"queued": []any{map[string]any{"profile": "gemma-4-27b:long", "waiters": 1}}}
+	run(with(two, map[string]any{"POST /api/models/delete/" + gemma: map[string]any{"$match": []any{
+		[]any{reDryInterrupt, trashDry(gemma, 16500000000, gemmaProfiles, wouldZ)},
+		[]any{reDryPlain, trashRefusal(409, "in_use", inUseMsg, wouldZ)}}}}),
+		map[string]any{"name": "delete: in use, zone names from the answer", "route": "#/models?model=" + gemma, "status": st, "click": open,
+			"page":      []string{"This interrupts 3 requests.", "gemma-4-27b is loaded on zone-07 and zone-08 with 2 requests in flight"},
+			"notOnPage": []string{"loaded on ps5-01", "ps5-02 with"}, "pageHas": []string{"div.dlg [data-interrupts] .mono"}})
+
+	// 6c. something held it, then nothing: the dry run with interrupt answers
+	// 200 with no would_interrupt key. Nothing is interrupted, and the
+	// delete is sent without interrupt.
+	run(with(two, map[string]any{"POST /api/models/delete/" + gemma: map[string]any{"$match": []any{
+		[]any{reDryInterrupt, trashDry(gemma, 16500000000, gemmaProfiles, nil)},
+		[]any{reDryPlain, trashRefusal(409, "in_use", inUseMsg, would)},
+		[]any{reRealPlain, trashDone(gemma, 16500000000, gemmaProfiles, nil)}}}}),
+		map[string]any{"name": "delete: freed meanwhile, no would_interrupt", "route": "#/models?model=" + gemma, "status": st, "click": open,
+			"fetchedQuery": []string{reDryPlain, reDryInterrupt}, "page": []string{"Nothing is interrupted"},
+			"pageHas": []string{"div.dlg[data-dlg=delete][data-state=ready] [data-free]"}, "pageNone": []string{"[data-interrupts]"}},
+		map[string]any{"name": "delete: freed meanwhile, sent without interrupt", "route": "#/models?model=" + gemma, "status": st,
+			"click":        append(append([]any{}, open...), confirm("gemma-4-27b"), comment("replace it"), "div.dlg button[data-go]"),
+			"fetchedQuery": []string{`^POST /api/models/delete/gemma-4-27b-it-Q4_K_M\.gguf \{"comment":"replace it"\}$`},
+			"notFetched":   []string{reRealInt}, "expect": []string{"Deleted gemma-4-27b-it-Q4_K_M.gguf"}})
+
 	// 7. interrupt_incomplete: nothing moved; the dialog says so and can check again
 	stillMsg := gemma + " was not deleted: after the interrupt, within 5s, still there: gemma-4-27b is stopping. Nothing was moved; the profiles are unchanged."
 	run(inUse(trashRefusal(409, "interrupt_incomplete", stillMsg, map[string]any{"interrupted": interrupted, "still": []any{"gemma-4-27b is stopping"}})),

@@ -89,7 +89,7 @@ const READ_ONLY = op => `the models folder is read-only here: nothing was change
 // busy(state, entry) -> what holds the file now: {instances, queued, runs}, as trashBusy
 function busy(state, m) {
   const out = {};
-  if (m.instances && m.instances.length) out.instances = m.instances.map(i => ({ profile: i.profile, state: i.state, in_flight: i.in_flight || 0 }));
+  if (m.instances && m.instances.length) out.instances = m.instances.map(i => ({ profile: i.profile, state: i.state, in_flight: i.in_flight || 0, nodes: (i.nodes || []).slice() }));
   if ((state === 'in-use' || state === 'incomplete') && m.key === 'gemma-4-27b-it-Q4_K_M.gguf') out.queued = [{ profile: 'gemma-4-27b:long', waiters: 1 }];
   if (state === 'run' && m.key === 'qwen3-14b-Q5_K_M.gguf') out.runs = ['r-12'];
   return out;
