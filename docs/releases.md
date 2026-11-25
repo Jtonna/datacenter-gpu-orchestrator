@@ -2,6 +2,17 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: benchmark run facts and run numbers (benchmarks slice 2)
+
+No agent change, no new port, no schema change, no new route, no new setting. Every new field is computed when it is read; nothing is stored.
+
+- **Run rows.** `GET /api/bench/runs` takes `offset` and `result` (running, queued, waiting, passed, with_issues, failed, refused, cancelled, skipped; has_failed, has_refused, clean) and answers `total` and `offset`. Each run (also `last_run` on the groups list and `GET /api/bench/runs/{id}`) carries `number`, `result`, `counts` {steps, done, to_go, completed, passed, with_issues, failed, refused, cancelled, skipped}, `cold` {loads, cold, verified, state} and, for a direct run, `inputs`. Passed means every step completed with no issue (a failed request, turn, concurrent request or task, a failed phase, or an expectation not met).
+- **Run numbers.** A run's number is its place in queue order (`queued_at`, then id; oldest 1) over the run rows and the `run_removals` log together: a trim, a restart and new runs do not move any number, and a run whose row were removed (no code does this; a remove must log the run as a trim does) keeps its number and moves no other. `GET /api/bench/runs/{id}` takes a number for `{id}`; `?requests=0` leaves out the request rows. Each step carries `slug`, its entry address (model name and placement; the step index is added only when two entries share a slug).
+- **Lists.** `GET /api/bench/benchmarks` rows carry `last_use` (by id or as a recipe); groups carry `expanded_count`. The progress document (`/ws` and `GET /api/bench/state`) carries `current.placement` and `counts`.
+- **Behaviour change for keys: pinning a run takes the permission `models`** (it was `settings`), as a model pin does. A key with only `settings` is now refused 403 on `PUT`/`DELETE /api/bench/runs/{id}/pin`.
+- **MCP.** `list_runs` takes `offset` and `result`; `get_run` takes a number and `requests`. Group-named aliases: `list_bench_groups`, `get_bench_group`, `create_bench_group`, `update_bench_group`, `delete_bench_group`, `run_bench_group` (the zone-group tools keep `list_groups` and the rest).
+- **Going back.** The image before sends none of these fields; nothing it reads changed. Its pin routes take `settings` again.
+
 ## Scheduler image: newer benchmark tables switch off only the benchmarks; run limit 720 minutes
 
 No agent change, no new port, no schema change, no new route, no new setting.

@@ -112,6 +112,7 @@ var routeScopes = map[string]access.Scope{
 	"POST /api/zone-actions/force-unload": access.Models, "POST /api/zone-actions/drain": access.Models,
 	"POST /api/bench/benchmarks/{id}/run": access.Models, "POST /api/bench/groups/{id}/run": access.Models,
 	"POST /api/bench/suites/{id}/run": access.Models, "POST /api/bench/runs/{id}/cancel": access.Models,
+	"PUT /api/bench/runs/{id}/pin": access.Models, "DELETE /api/bench/runs/{id}/pin": access.Models, // run pins, as model pins (slice 2; was settings)
 
 	// settings: configuration, profiles, benchmark definitions, scores
 	"PATCH /api/config/fleet": access.Settings, "PATCH /api/config/recovery": access.Settings, "PATCH /api/config/settings": access.Settings,
@@ -126,7 +127,6 @@ var routeScopes = map[string]access.Scope{
 	"POST /api/bench/groups": access.Settings, "PUT /api/bench/groups/{id}": access.Settings, "DELETE /api/bench/groups/{id}": access.Settings,
 	"POST /api/bench/suites": access.Settings, "PUT /api/bench/suites/{id}": access.Settings, "DELETE /api/bench/suites/{id}": access.Settings,
 	"POST /api/bench/task-sets": access.Settings, "DELETE /api/bench/task-sets/{id}": access.Settings,
-	"PUT /api/bench/runs/{id}/pin": access.Settings, "DELETE /api/bench/runs/{id}/pin": access.Settings,
 	"PUT /api/bench/runs/{id}/scores/{scorer}": access.Settings, "DELETE /api/bench/runs/{id}/scores/{scorer}": access.Settings,
 }
 
