@@ -22,9 +22,15 @@ export function sizeLine(m) {
   return [m.parameters, m.quant, m.size_bytes ? bytes(m.size_bytes) : null].filter(Boolean).join(' · ') || 'Size not known';
 }
 
-// stateBadge(m) -> the one badge of a model row.
+// testRun(i) -> "Test run e2": the mark of a run-scoped instance (its
+// scope; the catalog and the status give it), else null. Such an instance
+// counts only for itself: never in its production profile's state.
+export const testRun = i => (i && i.scope ? h('span.mdl-test', { 'data-scope': i.scope, title: 'A run-scoped load of ' + (i.production || 'its production profile') + ', under its own name' }, 'Test run ' + i.scope) : null);
+
+// stateBadge(m) -> the one badge of a model row: production's own state
+// (m.state leaves run-scoped instances out; so do the zones counted here).
 export function stateBadge(m, st) {
-  const insts = m.instances || [];
+  const insts = (m.instances || []).filter(i => !i.scope);
   if (m.state === 'ready') {
     const nodes = new Set(insts.filter(i => i.state !== 'starting').flatMap(i => i.nodes || []));
     return badge(nodes.size ? `Ready on ${machines(st, nodes.size)}` : 'Ready', 'ready');
@@ -104,7 +110,7 @@ function head(st, inst, model, extra) {
   return h('div.ch',
     avatar(model || { name: inst.model_file || inst.profile }, 28),
     h('h2.name', key ? h('a', { href: href('models', [key]), style: 'color:inherit' }, model ? model.name : inst.model_file) : inst.profile),
-    instanceBadge(inst), extra, staleMark(inst),
+    instanceBadge(inst), testRun(inst), extra, staleMark(inst),
     h('span.mut', { style: 'font-weight:600' }, 'on ', nodeChips(names),
       inst.waiters > 0 && inst.state === 'starting' ? ` · ${plural(inst.waiters, 'request')} waiting for it` : null),
     h('span.cfg.right', { title: 'The configuration (profile) it was loaded with' }, inst.profile),

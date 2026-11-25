@@ -2,6 +2,15 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: a run-scoped instance counts only for itself
+
+No agent change, no new port, no schema change, no new route, no new setting.
+
+- **Status.** A run-scoped instance carries `production` and `scope`; any other instance has neither.
+- **Catalog and Models page.** `GET /api/models` lists a scoped instance among its model's `instances` with `scope` and `production`; the model's `state` is production's own (a test run alone leaves it `not_loaded`). The row says "test run e2 on ps5-03" apart from "in use on"; the panel's Loaded now marks it "Test run e2"; the Loaded filter still shows the model.
+- **Needs.** A measurement made by a scoped load stays under its own shape's key and is never the source of a derived need or a model's own line (before, a production profile with no measurement of its own could derive its plan from it). `/api/needs` learned rows and `peak_cycles` rows gain `scopes`. The learnedNeed sentence says "run-scoped load e2 of <id>".
+- **Going back.** Nothing is stored new. The image before ignores the new fields and counts a scoped instance in its model's state again.
+
 ## Scheduler image: the TEST / PRODUCTION marking, read only (profiles slice B1)
 
 No agent change, no new port, no schema change, no new route, no new setting. No plan changes.

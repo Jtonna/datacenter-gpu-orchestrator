@@ -46,7 +46,7 @@ import { makeEditor, saveProfile } from './profiles.js';
 import { catalog, onCatalog, needCatalog, refreshCatalog } from '../core/catalog.js';
 import { logsLink, profileQuery, padded } from '../core/logs.js';
 import { tipText } from '../core/charts.js';
-import { stateBadge, fitOf, cannotRun, runsOnCell } from './models/common.js';
+import { stateBadge, fitOf, cannotRun, runsOnCell, testRun } from './models/common.js';
 import { mountDetail } from './models/detail.js';
 import { splitProfiles, prodText, testText, prodNeeds, profName, needBasis, zonesFor } from './models/kinds.js';
 import { trashFooter, hasTrash, deleteModel, deletedText, mountTrash } from './models/trash.js';
@@ -100,7 +100,7 @@ function loadLogs(st, l) {
 
 const FILTERS = [
   ['all', 'All', () => true],
-  ['loaded', 'Loaded', m => m.state !== 'not_loaded'],
+  ['loaded', 'Loaded', m => m.state !== 'not_loaded' || (m.instances || []).length > 0], // a test run is loaded too
   ['one', 'Fits on one', (m, st) => fitOf(m, st).kind === 'one'],
   ['several', 'Needs several', (m, st) => fitOf(m, st).kind === 'several'],
   ['none', 'Cannot run', (m, st) => fitOf(m, st).kind === 'none' || !!cannotRun(m)],
@@ -135,8 +135,11 @@ const zoneLinks = list => list.flatMap((z, i) => [i ? ', ' : null, h('a.mdl-zone
   onclick: e => e.stopPropagation(), onkeydown: e => e.stopPropagation() }, z)]);
 
 function inUse(m) {
-  const insts = m.instances || [];
-  if (!insts.length) return null;
+  const all = m.instances || [];
+  if (!all.length) return null;
+  // run-scoped instances are said apart, each as "test run e2 on ps5-01": never in production's zones
+  const tests = all.filter(i => i.scope).map(i => ['test run ' + i.scope + ((i.nodes || []).length ? ' on ' : ''), ...zoneLinks(i.nodes || [])]);
+  const insts = all.filter(i => !i.scope);
   const ready = [...new Set(insts.filter(i => i.state !== 'starting').flatMap(i => i.nodes || []))];
   const loading = [...new Set(insts.filter(i => i.state === 'starting').flatMap(i => i.nodes || []))].filter(z => !ready.includes(z));
   const zones = zoneLinks;
@@ -145,6 +148,7 @@ function inUse(m) {
   else if (insts.some(i => i.state !== 'starting')) parts.push('in use');
   if (loading.length) parts.push(['loading on ', ...zones(loading)]);
   else if (!ready.length && insts.some(i => i.state === 'starting')) parts.push('loading');
+  parts.push(...tests);
   return h('span.mdl-inuse', { 'data-inuse': '' }, parts.flatMap((x, i) => [i ? ' · ' : null, x]));
 }
 
@@ -398,7 +402,7 @@ function loadedBlock(st, insts) {
         if (memMib) facts.push(h('span', { title: 'On the zones, from the load log' }, gb(memMib)));
       }
       return h('div.mdl-inst', { key: 'i-' + i.profile, 'data-profile': i.profile, 'data-state': loading ? 'starting' : 'ready' },
-        h('div.mdl-inst-h', h('span.mono', i.profile), loading ? badge('Loading', 'load') : badge('Ready', 'ready'),
+        h('div.mdl-inst-h', h('span.mono', i.profile), loading ? badge('Loading', 'load') : badge('Ready', 'ready'), testRun(i),
           names.length ? h('span.mut', 'on ', zoneLinks(names)) : null),
         facts.length ? h('div.mut.mdl-inst-f', facts.flatMap((v, k) => [k ? ' · ' : null, v])) : null,
         loading ? null : (x.nodes || []).filter(n => nodeMemory(n).total_mib > 0).map(n => memoryRow(nodeName(st, n.id), nodeMemory(n), n.budget_mib)));
