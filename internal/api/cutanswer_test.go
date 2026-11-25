@@ -12,37 +12,64 @@ import (
 	"time"
 )
 
-// cutUpstream is a model server whose answers wait for the test:
-//   - "hold" in a request that does not stream: nothing is sent until the
-//     request ends (the instance is killed, which the test acts out as the
-//     connection ending);
-//   - "stream":true and "quiet": nothing at all is sent (not even the
-//     headers) until the request ends: a stream cut before its first byte;
-//   - "stream":true: one token is sent, then nothing until the request ends;
+// cutUpstream is a model server whose answers wait for the test. Each
+// window of a cut is produced on purpose; "started" is signalled once the
+// fake has written (and flushed) all it will write before the cut:
+//   - "hold" (no stream): nothing is sent, not even the headers, until the
+//     request ends (the instance is killed, which ends the connection);
+//   - "jsonhead" (no stream): status 200 and headers of a JSON body of 100
+//     bytes (Content-Length), flushed, then nothing;
+//   - "jsonpart" (no stream): the same, plus 20 of the 100 bytes;
+//   - "stream":true and "quiet": nothing at all is sent (not even the headers);
+//   - "stream":true and "headers": status 200 and the event-stream headers,
+//     flushed, then nothing (no event);
+//   - "stream":true otherwise: two events (tokens t1 and t2), each flushed,
+//     then nothing;
 //   - "die": the connection is dropped at once, with no answer (a model
 //     server that crashed on its own);
 //   - anything else: {} at once (the request that loads the model).
 type cutUpstream struct{ started chan struct{} }
 
+const cutEvent = `data: {"choices":[{"delta":{"content":"%s"},"finish_reason":null,"index":0}],"object":"chat.completion.chunk"}`
+
 func (u *cutUpstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	b, _ := io.ReadAll(r.Body)
 	s := string(b)
+	flush := func() { w.(http.Flusher).Flush() }
+	hold := func() {
+		u.started <- struct{}{}
+		<-r.Context().Done()
+	}
+	stream := strings.Contains(s, `"stream":true`)
 	switch {
 	case strings.Contains(s, "die"):
 		conn, _, _ := http.NewResponseController(w).Hijack()
 		conn.Close()
-	case strings.Contains(s, `"stream":true`) && strings.Contains(s, "quiet"):
-		u.started <- struct{}{}
-		<-r.Context().Done()
-	case strings.Contains(s, `"stream":true`):
+	case stream && strings.Contains(s, "quiet"):
+		hold()
+	case stream && strings.Contains(s, "headers"):
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, `data: {"choices":[{"delta":{"content":"t1"},"finish_reason":null,"index":0}],"object":"chat.completion.chunk"}`+"\n\n")
-		w.(http.Flusher).Flush()
-		u.started <- struct{}{}
-		<-r.Context().Done()
+		w.WriteHeader(200)
+		flush()
+		hold()
+	case stream:
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, tok := range []string{"t1", "t2"} {
+			fmt.Fprintf(w, cutEvent+"\n\n", tok)
+			flush()
+		}
+		hold()
+	case strings.Contains(s, "jsonhead"), strings.Contains(s, "jsonpart"):
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", "100")
+		w.WriteHeader(200)
+		if strings.Contains(s, "jsonpart") {
+			w.Write([]byte(`{"choices":[{"message`))
+		}
+		flush()
+		hold()
 	case strings.Contains(s, "hold"):
-		u.started <- struct{}{}
-		<-r.Context().Done()
+		hold()
 	default:
 		w.Write([]byte(`{}`))
 	}
@@ -72,38 +99,6 @@ func sendCut(t *testing.T, url, body string) <-chan cutAnswer {
 		ch <- cutAnswer{status: resp.StatusCode, retryAfter: resp.Header.Get("Retry-After"), body: string(b), err: e}
 	}()
 	return ch
-}
-
-// sendStream posts a streamed request in the background; first is closed
-// once the client has read the first event (the token t1), so the test
-// knows the stream's first bytes reached the app before it cuts.
-func sendStream(t *testing.T, url, body string) (first <-chan struct{}, answer <-chan cutAnswer) {
-	f := make(chan struct{})
-	ch := make(chan cutAnswer, 1)
-	go func() {
-		resp, err := http.Post(url+"/v1/chat/completions", "application/json", strings.NewReader(body))
-		if err != nil {
-			ch <- cutAnswer{status: -1, body: err.Error()}
-			return
-		}
-		defer resp.Body.Close()
-		br := bufio.NewReader(resp.Body)
-		var got strings.Builder
-		closed := false
-		for {
-			line, err := br.ReadString('\n')
-			got.WriteString(line)
-			if !closed && strings.Contains(line, `"content":"t1"`) {
-				close(f)
-				closed = true
-			}
-			if err != nil {
-				break
-			}
-		}
-		ch <- cutAnswer{status: resp.StatusCode, retryAfter: resp.Header.Get("Retry-After"), body: got.String()}
-	}()
-	return f, ch
 }
 
 func waitCut(t *testing.T, ch <-chan cutAnswer) cutAnswer {
@@ -174,43 +169,6 @@ func TestCutAnswer_DeleteWithInterrupt(t *testing.T) {
 	}
 }
 
-// A stream that already sent bytes keeps its 200; it ends with an SSE error
-// event carrying the same reason and message, then closes cleanly.
-func TestCutAnswer_Streamed(t *testing.T) {
-	u := &cutUpstream{started: make(chan struct{}, 4)}
-	e := newEnv(t, u)
-	body(t, e.post("/v1/chat/completions", chat("alpha")))
-	first, ch := sendStream(t, e.front.URL, `{"model":"alpha","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
-	waitStarted(t, u)
-	select { // the app has read the first event: the stream is under way
-	case <-first:
-	case a := <-ch:
-		t.Fatalf("the stream ended before its first event: %d %s", a.status, a.body)
-	case <-time.After(10 * time.Second):
-		t.Fatal("the first event never reached the app")
-	}
-	if err := e.sched.Unload(context.Background(), "alpha", true); err != nil {
-		t.Fatal(err)
-	}
-	a := waitCut(t, ch)
-	if a.status != 200 || !strings.Contains(a.body, `"content":"t1"`) {
-		t.Fatalf("stream: %d %s", a.status, a.body)
-	}
-	i := strings.Index(a.body, "event: error\ndata: ")
-	if i < 0 {
-		t.Fatalf("no error event: %q", a.body)
-	}
-	line := strings.TrimSpace(strings.SplitN(a.body[i+len("event: error\ndata: "):], "\n", 2)[0])
-	var m map[string]any
-	if err := json.Unmarshal([]byte(line), &m); err != nil {
-		t.Fatalf("event data %q: %v", line, err)
-	}
-	ev := m["error"].(map[string]any)
-	if ev["reason"] != "unloaded" || ev["message"] != "unloaded: alpha was unloaded" || ev["code"] != float64(503) {
-		t.Fatalf("error event: %v", ev)
-	}
-}
-
 // A model server that drops the connection on its own (not unloaded) is
 // answered 502 "upstream request failed", as before.
 func TestCutAnswer_UpstreamDiesOnItsOwn(t *testing.T) {
@@ -220,27 +178,5 @@ func TestCutAnswer_UpstreamDiesOnItsOwn(t *testing.T) {
 	a := waitCut(t, sendCut(t, e.front.URL, `{"model":"alpha","messages":[{"role":"user","content":"die"}]}`))
 	if a.status != 502 || !strings.HasPrefix(fmt.Sprint(a.err["message"]), "upstream request failed") {
 		t.Fatalf("upstream died: %d %s", a.status, a.body)
-	}
-}
-
-// A stream cut before its first byte (the model server had sent nothing, not
-// even the headers) gets the same answer as a request that does not stream:
-// 503 unloaded with Retry-After, as JSON. Nothing of the stream reached the
-// app, so a status still can be given, and the app can retry at once.
-func TestCutAnswer_StreamCutBeforeFirstByte(t *testing.T) {
-	u := &cutUpstream{started: make(chan struct{}, 4)}
-	e := newEnv(t, u)
-	body(t, e.post("/v1/chat/completions", chat("alpha")))
-	ch := sendCut(t, e.front.URL, `{"model":"alpha","stream":true,"messages":[{"role":"user","content":"quiet"}]}`)
-	waitStarted(t, u) // the model server holds the request and has sent nothing
-	if err := e.sched.Unload(context.Background(), "alpha", true); err != nil {
-		t.Fatal(err)
-	}
-	a := waitCut(t, ch)
-	if a.status != 503 || a.err["reason"] != "unloaded" || a.err["message"] != "unloaded: alpha was unloaded" || a.retryAfter == "" {
-		t.Fatalf("stream cut before its first byte: %d %q %s", a.status, a.retryAfter, a.body)
-	}
-	if strings.Contains(a.body, "event: error") {
-		t.Fatalf("an SSE event where no stream had started: %s", a.body)
 	}
 }
