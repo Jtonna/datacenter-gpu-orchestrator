@@ -108,7 +108,7 @@ var routeScopes = map[string]access.Scope{
 	"POST /api/nodes/{id}/force-unload": access.Models, "POST /api/cache/evict": access.Models,
 	"POST /api/models/drain/{model...}": access.Models, "POST /api/models/undrain/{model...}": access.Models,
 	"PUT /api/models/pin/{key...}": access.Models, "DELETE /api/models/pin/{key...}": access.Models, // pins (models page)
-	"POST /api/models/delete/{key...}": access.Models, "POST /api/models/trash/{id}/restore": access.Models, "GET /api/models/trash": access.Observe, // the models trash
+	"POST /api/models/delete/{key...}": access.Models, "POST /api/models/trash/{id}/restore": access.Models, "POST /api/models/trash/{id}/remove": access.Models, "GET /api/models/trash": access.Observe, // the models trash
 	"POST /api/zone-actions/force-unload": access.Models, "POST /api/zone-actions/drain": access.Models,
 	"POST /api/bench/benchmarks/{id}/run": access.Models, "POST /api/bench/groups/{id}/run": access.Models,
 	"POST /api/bench/suites/{id}/run": access.Models, "POST /api/bench/runs/{id}/cancel": access.Models,

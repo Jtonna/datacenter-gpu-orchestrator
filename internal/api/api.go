@@ -109,6 +109,10 @@ type Options struct {
 	// trashUnloadWait replaces the 5 s a delete with interrupt waits for the
 	// file's instances to be gone (tests).
 	trashUnloadWait time.Duration
+	// trashClearEvery replaces the hour between two passes of the models
+	// trash clearing; < 0: the clearing task does not start (tests run
+	// clearTrash themselves).
+	trashClearEvery time.Duration
 	fileCache       filecache.Sys // tests replace the page cache calls of POST /api/cache/evict
 	// catalogSource, when set and answering true, is what the model catalog is
 	// joined from instead of this server's own status, profiles, events,
@@ -327,6 +331,7 @@ func (s *Server) routes() *http.ServeMux {
 	m.HandleFunc("POST /api/models/delete/{key...}", s.handleModelDelete)     // trash.go
 	m.HandleFunc("GET /api/models/trash", s.handleTrashList)                  // trash.go
 	m.HandleFunc("POST /api/models/trash/{id}/restore", s.handleModelRestore) // trash.go
+	m.HandleFunc("POST /api/models/trash/{id}/remove", s.handleTrashRemove)   // trashremove.go
 	m.HandleFunc("DELETE /api/models/pin/{key...}", s.handlePinDelete)        // pins.go
 	m.HandleFunc("PUT /api/models/{key...}", s.handleIconPut)                 // only /api/models/{key}/icon
 	m.HandleFunc("DELETE /api/models/{key...}", s.handleIconDelete)

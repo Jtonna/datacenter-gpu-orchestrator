@@ -28,7 +28,7 @@ import (
 //
 // The file is renamed into <models>/.trash/<id>/ (the same file system: one
 // atomic rename, never a copy) and back; nothing is ever removed here
-// (removing for good is slice 4). Every profile that names the file leaves
+// (removing for good is slice 4, trashremove.go). Every profile that names the file leaves
 // the configuration in one revision ("model deleted") and is kept with the
 // trash record; a restore adds them back in one revision.
 //
@@ -49,9 +49,20 @@ import (
 
 // trashSummary is what the catalog's disk block shows of the trash.
 type trashSummary struct {
-	Bytes       int64
-	Count       int
-	NextPurgeAt int64 // unix ms, 0 = none
+	Bytes   int64
+	Count   int
+	trashed []*cfgstore.TrashRecord // the records in state trashed: the next clearing date is computed from them with model_trash_days now
+}
+
+// nextPurgeAt is the soonest clearing date of the trashed files (0: none).
+func (t trashSummary) nextPurgeAt(days int) int64 {
+	var next int64
+	for _, r := range t.trashed {
+		if at := clearAt(r, days); next == 0 || at < next {
+			next = at
+		}
+	}
+	return next
 }
 
 // trashState is the server's trash bookkeeping.
@@ -60,6 +71,11 @@ type trashState struct {
 	sum     trashSummary
 	repairs []string // what the last start repaired or could not
 	op      sync.Mutex
+	// the clearing (trashremove.go): why it waits, the items it failed on
+	// (each logged once), started once
+	clearBlocked string
+	clearFailed  map[string]bool
+	clearOnce    sync.Once
 }
 
 func (t *trashState) summary() trashSummary {
@@ -363,7 +379,7 @@ func (s *Server) handleModelDelete(w http.ResponseWriter, r *http.Request) {
 	days := s.trashDays()
 	purgeAt := now + int64(days)*24*3600*1000
 	ids := keysOfSpecs(profiles)
-	figures := map[string]any{"file": key, "size_bytes": st.Size(), "profiles": ids, "trash_days": days, "purge_at": purgeAt, "purge_on": false}
+	figures := map[string]any{"file": key, "size_bytes": st.Size(), "profiles": ids, "trash_days": days, "purge_at": purgeAt, "purge_on": s.trashPurgeOn()}
 	if busy {
 		figures["would_interrupt"] = extra
 	}
@@ -469,7 +485,7 @@ func (s *Server) handleModelDelete(w http.ResponseWriter, r *http.Request) {
 	s.refreshTrash(ctx)
 	s.catalogDirty(false)
 	s.announce(r, audit.SectionModels, key, auditID)
-	out := map[string]any{"trash_id": id, "file": key, "size_bytes": st.Size(), "deleted_at": now, "purge_at": purgeAt, "trash_days": days, "purge_on": false,
+	out := map[string]any{"trash_id": id, "file": key, "size_bytes": st.Size(), "deleted_at": now, "purge_at": purgeAt, "trash_days": days, "purge_on": s.trashPurgeOn(),
 		"profiles_removed": ids, "revision": 0, "warnings": []string{}, "audit_id": auditID}
 	if res != nil {
 		out["revision"], out["warnings"] = res.Revision, res.Warnings
@@ -708,6 +724,7 @@ func (s *Server) handleTrashList(w http.ResponseWriter, r *http.Request) {
 	md := s.modelDir()
 	items := []map[string]any{}
 	sum := summarizeTrash(recs)
+	days := s.trashDays()
 	for _, rec := range recs {
 		profs := []map[string]any{}
 		for _, id := range keysOfSpecs(rec.Profiles) {
@@ -719,12 +736,24 @@ func (s *Server) handleTrashList(w http.ResponseWriter, r *http.Request) {
 			problem = fmt.Sprintf("the file is not in .trash/%s: %v", rec.ID, ferr)
 		}
 		items = append(items, map[string]any{"id": rec.ID, "file": rec.File, "size_bytes": rec.SizeBytes, "deleted_at": rec.DeletedAt,
-			"purge_at": rec.PurgeAt, "state": rec.State, "profile_count": len(rec.Profiles), "profiles": profs, "revision": rec.Revision,
+			"purge_at": clearAt(rec, days), "state": rec.State, "profile_count": len(rec.Profiles), "profiles": profs, "revision": rec.Revision,
 			"actor": rec.Actor, "comment": rec.Comment, "problem": nilIfEmpty(problem), "in_trash_folder": ferr == nil})
 	}
 	repairs := s.trash.repairList()
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "count": sum.Count, "total_bytes": sum.Bytes, "next_purge_at": nilIfZero(sum.NextPurgeAt),
-		"trash_days": s.trashDays(), "purge_on": false, "repairs_at_start": repairs})
+	// the files removed for good (tombstones), apart from the trash
+	removed := []map[string]any{}
+	tombs, err := s.store.RemovedList(r.Context())
+	if err != nil {
+		apiErr(w, http.StatusInternalServerError, "%v", err)
+		return
+	}
+	for _, t := range tombs {
+		removed = append(removed, map[string]any{"id": t.ID, "file": t.File, "size_bytes": t.SizeBytes, "deleted_at": t.DeletedAt, "deleted_by": t.DeletedBy,
+			"deleted_comment": t.DeletedComment, "purge_at": t.PurgeAt, "removed_at": nilIfZero(t.RemovedAt), "state": t.State, "reason": t.Reason,
+			"removed_by": t.RemovedBy, "comment": t.Comment, "profile_ids": t.ProfileIDs, "revision": t.Revision})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "count": sum.Count, "total_bytes": sum.Bytes, "next_purge_at": nilIfZero(sum.nextPurgeAt(days)),
+		"trash_days": days, "purge_on": s.trashPurgeOn(), "repairs_at_start": repairs, "removed": removed})
 }
 
 func nilIfEmpty(s string) any {
@@ -743,8 +772,8 @@ func summarizeTrash(recs []*cfgstore.TrashRecord) trashSummary {
 		}
 		sum.Bytes += r.SizeBytes
 		sum.Count++
-		if r.State == cfgstore.TrashTrashed && (sum.NextPurgeAt == 0 || r.PurgeAt < sum.NextPurgeAt) {
-			sum.NextPurgeAt = r.PurgeAt
+		if r.State == cfgstore.TrashTrashed {
+			sum.trashed = append(sum.trashed, r)
 		}
 	}
 	return sum
@@ -769,13 +798,17 @@ func (s *Server) trashDisk(d map[string]any) {
 		return
 	}
 	sum := s.trash.summary()
-	d["trash_bytes"], d["trash_count"], d["next_purge_at"], d["trash_purge_on"] = sum.Bytes, sum.Count, nilIfZero(sum.NextPurgeAt), false
+	d["trash_bytes"], d["trash_count"], d["next_purge_at"], d["trash_purge_on"] = sum.Bytes, sum.Count, nilIfZero(sum.nextPurgeAt(s.trashDays())), s.trashPurgeOn()
 }
 
 // RepairTrash is called once at start, after the configuration service
 // applies its writes to the scheduler (main sets started first): a repair
-// may add profiles back.
-func (s *Server) RepairTrash(ctx context.Context) { s.repairTrash(ctx) }
+// may add profiles back. The trash clearing starts after it (it does
+// nothing while model_trash_purge is off).
+func (s *Server) RepairTrash(ctx context.Context) {
+	s.repairTrash(ctx)
+	s.trash.clearOnce.Do(s.startTrashClearing)
+}
 
 // repairTrash runs at start: a record a kill left pending or restoring is
 // finished or undone from where its file is; what it cannot tell is marked
@@ -807,6 +840,10 @@ func (s *Server) repairTrash(ctx context.Context) {
 		note(rec, "needs a look: "+msg, true)
 	}
 	for _, rec := range recs {
+		if rec.State == cfgstore.TrashRemoving {
+			s.repairRemoving(ctx, rec, now, note)
+			continue
+		}
 		if rec.State != cfgstore.TrashPending && rec.State != cfgstore.TrashRestoring {
 			continue
 		}
