@@ -222,6 +222,9 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 	s.bg, s.bgCancel = context.WithCancel(context.Background())
 	s.occ = startOccupied(o.History)
 	s.peaks = startPeakCycles(o.History)
+	if o.Usage.On() {
+		s.peaks.setTokens(o.Usage.SessionTokens)
+	}
 	s.groups = o.Groups
 	s.pending = newPendingZones()
 	if s.groups == nil {
@@ -826,7 +829,37 @@ func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {
 	v := jsonView(rep).(map[string]any)
 	v["model"] = v["profile"]
 	delete(v, "profile")
+	addShapeFacts(v, s.conf(), req.Model)
 	writeJSON(w, http.StatusOK, v)
+}
+
+// addShapeFacts adds to a plan answer the profile's ctx and parallel and
+// shape_shared_with: the other profiles with the same shape (model, ctx,
+// parallel and options), each with whether it was generated. A benchmark's
+// context_fill phase refuses to run on a shape a written profile shares,
+// because its memory peak becomes that shape's stored peak (B8).
+func addShapeFacts(v map[string]any, cfg *config.Config, model string) {
+	p, _, ok := cfg.Resolve(model)
+	if !ok {
+		return
+	}
+	if _, has := v["ctx"]; !has {
+		v["ctx"] = p.Ctx
+	}
+	if _, has := v["parallel"]; !has {
+		v["parallel"] = max(p.Parallel, 1)
+	}
+	if _, has := v["generated"]; !has {
+		v["generated"] = IsGeneratedProfile(p.Name, p.Generated)
+	}
+	shared := []map[string]any{}
+	for _, n := range scheduler.ProfilesOfShape(cfg, p.Name) {
+		if n == p.Name {
+			continue
+		}
+		shared = append(shared, map[string]any{"id": n, "generated": IsGeneratedProfile(n, cfg.Profiles[n].Generated)})
+	}
+	v["shape_shared_with"] = shared
 }
 
 func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {

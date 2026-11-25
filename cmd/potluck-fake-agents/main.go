@@ -102,6 +102,10 @@ type Options struct {
 	WorkerPort     int
 	AcceptLaunches bool
 	Heartbeat      time.Duration
+	// MemFile, when set, is read every heartbeat: a JSON object of node id or
+	// name to MemAvailable MiB; a listed node reports that figure from then
+	// on (a scripted memory drop for a context fill's stop line).
+	MemFile string
 }
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
@@ -122,6 +126,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&o.AcceptLaunches, "accept-launches", false, "accept launches and report a fake running worker (default: refuse every launch)")
 	fs.DurationVar(&o.Heartbeat, "heartbeat", 2*time.Second, "heartbeat interval (the scheduler asks for 2 s)")
 	fs.BoolVar(&printOnly, "print", false, "print the node list as JSON and exit")
+	fs.StringVar(&o.MemFile, "mem-file", "", "a JSON file of node id or name to MemAvailable MiB, read every heartbeat: a listed node reports that figure (scripted memory drop)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -211,6 +216,9 @@ func Start(ctx context.Context, o Options, nodes []Node, out io.Writer) (*Fleet,
 				n.Name, net.JoinHostPort(n.Addr, fmt.Sprint(o.AgentPort)), err)
 		}
 		f.Agents = append(f.Agents, a)
+	}
+	if o.MemFile != "" {
+		go f.followMemFile(ctx, o.MemFile, o.Heartbeat, nodes, out)
 	}
 	mode := "launches refused"
 	if o.AcceptLaunches {
@@ -424,4 +432,39 @@ func assignAddrs(nodes []Node, base string) error {
 		}
 	}
 	return nil
+}
+
+// followMemFile applies the memory file every interval until ctx ends: a
+// node listed by id or name reports that MemAvailable (and the same
+// available memory in its stats). A missing or bad file changes nothing.
+func (f *Fleet) followMemFile(ctx context.Context, file string, every time.Duration, nodes []Node, out io.Writer) {
+	applied := map[string]int64{}
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		if b, err := os.ReadFile(file); err == nil {
+			var want map[string]int64
+			if json.Unmarshal(b, &want) == nil {
+				for i, a := range f.Agents {
+					v, ok := want[a.ID]
+					if !ok {
+						v, ok = want[a.Name]
+					}
+					if !ok || applied[a.ID] == v {
+						continue
+					}
+					n := nodes[i]
+					n.MemAvailableMiB = v
+					a.SetMemAvail(v, statsOf(n))
+					applied[a.ID] = v
+					fmt.Fprintf(out, "  %-20s now reports %d MiB available (%s)\n", a.Name, v, file)
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
 }

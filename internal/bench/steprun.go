@@ -103,6 +103,8 @@ type benchRun struct {
 	transcript []TranscriptEntry
 	conv       map[int]int
 	curPhase   int
+	// redact replaces a context_fill turn's content in the transcript.
+	redact map[string]string
 }
 
 func (br *benchRun) fail(outcome, why string) {
@@ -181,6 +183,11 @@ func (x *suiteExec) runBenchmark(b *benchspec.Benchmark, idx int, group string, 
 		br.fail(OutcomeError, "plan: "+err.Error())
 		return st
 	}
+	if why := sharedShapeRefusal(b, plan); why != "" {
+		st.Plan, st.Reason = plan.Raw, why
+		br.fail(OutcomeRefused, why)
+		return st
+	}
 	st.Plan = plan.Raw
 	func() {
 		br.mu.Lock()
@@ -249,6 +256,8 @@ func (br *benchRun) runPhase(i int, p *benchspec.Phase) {
 		br.phaseRequests(i, p, pr)
 	case benchspec.PhaseConversation:
 		br.phaseConversation(i, p, pr)
+	case benchspec.PhaseContextFill:
+		br.phaseContextFill(i, p, pr)
 	case benchspec.PhaseHold:
 		br.phaseHold(i, p, pr)
 	case benchspec.PhaseConcurrent:
@@ -839,28 +848,39 @@ func (br *benchRun) record(rr *RequestResult) {
 
 // one sends a request of a phase and turns a failure into the step's outcome.
 func (br *benchRun) one(r benchspec.Request, phase string, pidx, turn int) (*RequestResult, *ChatResponse, bool) {
-	st := br.st
 	if br.x.a.cancelled() {
 		br.fail(OutcomeCancelled, "cancelled")
 		return nil, nil, false
 	}
 	rr, resp, err := br.send(br.ctx, r, phase, pidx, turn)
-	switch {
-	case err != nil && br.ctx.Err() != nil:
-		br.fail(OutcomeFailed, fmt.Sprintf("timed out after %s (timeout_s)", br.b.Timeout()))
-		return rr, nil, false
-	case err != nil && br.x.a.cancelled():
-		br.fail(OutcomeCancelled, "cancelled")
-		return rr, nil, false
-	case err != nil:
-		br.fail(OutcomeError, "request failed: "+err.Error())
-		return rr, nil, false
-	case resp.Status != 200:
-		st.HTTPStatus, st.Reason = resp.Status, resp.ErrMessage
-		br.fail(OutcomeFailed, resp.ErrMessage)
+	if !br.judge(resp, err) {
+		if err != nil {
+			return rr, nil, false
+		}
 		return rr, resp, false
 	}
 	return rr, resp, true
+}
+
+// judge turns a failed request into the step's outcome (false), or says it went well.
+func (br *benchRun) judge(resp *ChatResponse, err error) bool {
+	st := br.st
+	switch {
+	case err != nil && br.ctx.Err() != nil:
+		br.fail(OutcomeFailed, fmt.Sprintf("timed out after %s (timeout_s)", br.b.Timeout()))
+		return false
+	case err != nil && br.x.a.cancelled():
+		br.fail(OutcomeCancelled, "cancelled")
+		return false
+	case err != nil:
+		br.fail(OutcomeError, "request failed: "+err.Error())
+		return false
+	case resp.Status != 200:
+		st.HTTPStatus, st.Reason = resp.Status, resp.ErrMessage
+		br.fail(OutcomeFailed, resp.ErrMessage)
+		return false
+	}
+	return true
 }
 
 func (br *benchRun) phaseWarmup(i int, p *benchspec.Phase, pr *PhaseResult) {

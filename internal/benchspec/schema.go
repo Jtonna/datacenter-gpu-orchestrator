@@ -139,6 +139,16 @@ func Schema() *SchemaDoc {
 				{Name: "turns", Type: "list", ItemType: "turn", Required: true, Min: 1, Max: MaxTurns, Description: "The user's messages, in order."},
 				{Name: "cache_prompt", Type: "boolean", Default: true, Description: "Let the server reuse the cached earlier turns."},
 			}, samplingOptions...)},
+		{Type: PhaseContextFill, Title: "Context fill", Description: "A conversation that fills the model's context to a share of its size with generated filler (the same seed gives the same text), counted with the model's own tokenizer. Each mark is one turn; after it the tokens held and every machine's available memory are recorded, and the growth per token is worked out. The last turn asks back the facts planted in the filler. The step stops, and the model is unloaded, when a machine's available memory would fall below the stop line. By default it refuses to run on a shape (model, context and options) that a profile a person wrote shares, because the step's memory peak becomes that shape's stored peak.",
+			Records: []string{"fill_tokens", "fill_growth_mib", "fill_kib_per_token", "recall_correct", "prefill_tps", "ttft_ms", "wall_ms"}, Options: []Option{
+				{Name: "fill_pct", Type: "integer", Default: DefaultFillPct, Min: 1, Max: MaxFillPct, Unit: "%", Description: "The share of the context to fill."},
+				{Name: "marks_pct", Type: "list", ItemType: "integer", Min: 1, Max: MaxTurns, Unit: "%", Description: "Where a turn ends and a reading is taken, rising, ending at fill_pct (default 25, 50, 75 below it, then fill_pct)."},
+				{Name: "recall", Type: "integer", Default: DefaultRecall, Min: 0, Max: MaxRecall, Description: "How many facts to plant in the filler and ask back at the end (0: none, the last turn only asks for OK)."},
+				{Name: "seed", Type: "integer", Default: DefaultFillSeed, Description: "Seed of the filler and the facts; also the sampling seed."},
+				{Name: "max_tokens", Type: "integer", Default: DefaultFillAnswerTok, Min: 1, Max: MaxFillAnswerTok, Unit: "tokens", Description: "The answer budget of the last turn (earlier turns answer in at most 8 tokens)."},
+				{Name: "stop_available_mib", Type: "integer", Default: DefaultStopAvailMiB, Min: MinStopAvailMiB, Max: MaxStopAvailMiB, Unit: "MiB", Description: "Stop the step when any machine's available memory falls, or would fall with the next turn, below this."},
+				{Name: "refuse_shared_shape", Type: "boolean", Default: true, Description: "Refuse the step when a profile a person wrote has the same shape (model, context, parallel and options), so the fill's memory peak cannot move that profile's plan. Whatever it says, a step whose own profile a person wrote is always refused: use the recipe."},
+			}},
 		{Type: PhaseHold, Title: "Hold", Description: "Keep the model loaded and idle for a while, then send one request to see how it behaves after the idle time.",
 			Records: []string{"held_s", "decode_tps", "prefill_tps", "ttft_ms"}, Options: []Option{
 				{Name: "seconds", Type: "integer", Default: DefaultHoldS, Min: 1, Max: MaxHoldSeconds, Unit: "s", Description: "How long to stay idle."},
@@ -194,6 +204,8 @@ func Schema() *SchemaDoc {
 			`{"id":"tasks-example","name":"Tasks","description":"Cold load, the tasks of a task set, unload.","profile":"your-profile","timeout_s":3600,"phases":[{"type":"load","cold":true},{"type":"tasks","label":"tasks","tasks":{"id":"example-tasks","version":1,"title":"Example tasks","max_tokens":1024,"tasks":[{"id":"fib","prompt":"Write a Python function fib(n) that returns the n-th Fibonacci number."},{"id":"sql-top3","prompt":"Write a SQL query that returns the three highest salaries per department from employees(name, department, salary)."}]}},{"type":"unload"}]}`),
 		tpl(TemplateRecipe, "Cold load recipe", "A recipe: no fixed profile, it takes its model, context and placement as inputs, so one definition serves every model. Use it in a group with inputs or a matrix, or run it with inputs.",
 			`{"id":"cold-load-recipe-example","name":"Cold load","description":"Cold load, first answer, unload; for any model.","inputs":{"ctx":8192,"placement":"any:2"},"phases":[{"type":"load","cold":true},{"type":"warmup","label":"first generation","count":1,"request":{"name":"first","prompt":"Say hello in five words.","max_tokens":16,"stream":true}},{"type":"unload"}]}`),
+		tpl(TemplateContextFill, "Context fill recipe", "A recipe that fills the context of any model to 90 % with generated filler, reading every machine's memory at 25, 50, 75 and 90 %, then asks back the facts planted in the filler. Pick a context no profile you wrote uses: by default the step refuses a shape a written profile shares, because its memory peak becomes that shape's stored peak.",
+			`{"id":"context-fill-recipe-example","name":"Context fill","description":"Load, fill the context to 90 % in four turns, recall, unload; for any model.","inputs":{"ctx":7936,"placement":"any:1"},"timeout_s":3600,"phases":[{"type":"load"},{"type":"context_fill","fill_pct":90,"recall":8,"stop_available_mib":2000},{"type":"unload"}]}`),
 	}
 	return d
 }
@@ -202,6 +214,8 @@ func Schema() *SchemaDoc {
 const (
 	TemplateTasks  = "tasks"
 	TemplateRecipe = "cold-load-recipe"
+	// TemplateContextFill is the id of the context_fill recipe template (B8).
+	TemplateContextFill = "context-fill-recipe"
 )
 
 func itoa(n int) string { return strconv.Itoa(n) }

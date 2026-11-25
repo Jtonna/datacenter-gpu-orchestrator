@@ -99,13 +99,22 @@ func transcriptEntry(rr *RequestResult, r benchspec.Request, resp *ChatResponse,
 func (br *benchRun) addTranscript(e TranscriptEntry) {
 	br.mu.Lock()
 	defer supervise.Unlocked("bench", br.mu.Unlock)
+	if len(br.redact) > 0 { // a context_fill turn: the filler is kept as its seed, size and hash
+		msgs := append([]benchspec.Message(nil), e.Messages...)
+		for i, m := range msgs {
+			if r, ok := br.redact[m.Content]; ok {
+				msgs[i].Content = r
+			}
+		}
+		e.Messages = msgs
+	}
 	br.transcript = append(br.transcript, e)
 }
 
 // convSeen is how many messages of conversation phase pidx the transcript
 // already holds (-1 when it is not a later turn).
 func (br *benchRun) convSeen(phase string, pidx, turn int) int {
-	if phase != PhaseConversation || turn <= 1 {
+	if (phase != PhaseConversation && phase != PhaseFill) || turn <= 1 {
 		return -1
 	}
 	br.mu.Lock()
@@ -115,7 +124,7 @@ func (br *benchRun) convSeen(phase string, pidx, turn int) int {
 
 // convAdd notes that a conversation turn's messages and answer are held.
 func (br *benchRun) convAdd(phase string, pidx int, sent int) {
-	if phase != PhaseConversation {
+	if phase != PhaseConversation && phase != PhaseFill {
 		return
 	}
 	br.mu.Lock()
