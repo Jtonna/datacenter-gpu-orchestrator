@@ -139,6 +139,16 @@ func Schema() *SchemaDoc {
 				{Name: "turns", Type: "list", ItemType: "turn", Required: true, Min: 1, Max: MaxTurns, Description: "The user's messages, in order."},
 				{Name: "cache_prompt", Type: "boolean", Default: true, Description: "Let the server reuse the cached earlier turns."},
 			}, samplingOptions...)},
+		{Type: PhaseContextFill, Title: "Context fill", Description: "A conversation that fills the model's context to a share of its size with generated filler (the same seed gives the same text), counted with the model's own tokenizer. Each mark is one turn; after it the tokens held and every machine's available memory are recorded, and the growth per token is worked out. The last turn asks back the facts planted in the filler. The step stops, and the model is unloaded, when a machine's available memory would fall below the stop line. By default it refuses to run on a shape (model, context and options) that a profile a person wrote shares, because the step's memory peak becomes that shape's stored peak.",
+			Records: []string{"fill_tokens", "fill_growth_mib", "fill_kib_per_token", "recall_correct", "prefill_tps", "ttft_ms", "wall_ms"}, Options: []Option{
+				{Name: "fill_pct", Type: "integer", Default: DefaultFillPct, Min: 1, Max: MaxFillPct, Unit: "%", Description: "The share of the context to fill."},
+				{Name: "marks_pct", Type: "list", ItemType: "integer", Min: 1, Max: MaxTurns, Unit: "%", Description: "Where a turn ends and a reading is taken, rising, ending at fill_pct (default 25, 50, 75 below it, then fill_pct)."},
+				{Name: "recall", Type: "integer", Default: DefaultRecall, Min: 0, Max: MaxRecall, Description: "How many facts to plant in the filler and ask back at the end (0: none, the last turn only asks for OK)."},
+				{Name: "seed", Type: "integer", Default: DefaultFillSeed, Description: "Seed of the filler and the facts; also the sampling seed."},
+				{Name: "max_tokens", Type: "integer", Default: DefaultFillAnswerTok, Min: 1, Max: MaxFillAnswerTok, Unit: "tokens", Description: "The answer budget of the last turn (earlier turns answer in at most 8 tokens)."},
+				{Name: "stop_available_mib", Type: "integer", Default: DefaultStopAvailMiB, Min: MinStopAvailMiB, Max: MaxStopAvailMiB, Unit: "MiB", Description: "Stop the step when any machine's available memory falls, or would fall with the next turn, below this."},
+				{Name: "refuse_shared_shape", Type: "boolean", Default: true, Description: "Refuse the step when a profile a person wrote has the same shape (model, context, parallel and options), so the fill's memory peak cannot move that profile's plan."},
+			}},
 		{Type: PhaseHold, Title: "Hold", Description: "Keep the model loaded and idle for a while, then send one request to see how it behaves after the idle time.",
 			Records: []string{"held_s", "decode_tps", "prefill_tps", "ttft_ms"}, Options: []Option{
 				{Name: "seconds", Type: "integer", Default: DefaultHoldS, Min: 1, Max: MaxHoldSeconds, Unit: "s", Description: "How long to stay idle."},
