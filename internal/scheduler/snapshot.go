@@ -107,7 +107,7 @@ func (c *schedCore) instStatus(in *inst) InstanceStatus {
 		ModelFile: in.prof.Model, RequestsServed: in.served,
 		StaleProfile: c.staleProfile(in), LoadMode: c.loadModeFor(in.prof, in.placement),
 	}
-	instCtxStatus(&s, in) // realctx.go
+	instCtxStatus(&s, in)                              // realctx.go
 	s.Production, s.Scope, _ = c.scopeOf(in.prof.Name) // scoped.go
 	if in.state == stStarting {
 		s.Phase = in.phase.String()
