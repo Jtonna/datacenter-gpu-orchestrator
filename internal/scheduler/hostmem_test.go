@@ -191,3 +191,16 @@ func TestHostMemory_WindowSizeUnknownUntilALoadLogsIt(t *testing.T) {
 		t.Fatalf("no comparison without a formula: %+v", ev)
 	}
 }
+
+// The scheduler's machine is named the same on every read when several
+// nodes are local (the lowest id), so plans and the status do not change
+// between two reads of the same state.
+func TestHostMemory_ServerNameIsStable(t *testing.T) {
+	h := withCheckpoints(newHarness(t).nodes(hostNode(7000), func() core.Node { n := hostNode(7000); n.ID, n.Hostname = "host-0", "host-0"; return n }()))
+	h.viewChanged()
+	for i := 0; i < 50; i++ {
+		if got := h.c.serverName(); got != "host-0" {
+			t.Fatalf("read %d: %q", i, got)
+		}
+	}
+}

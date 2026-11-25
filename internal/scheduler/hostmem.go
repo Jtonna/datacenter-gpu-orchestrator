@@ -3,6 +3,7 @@ package scheduler
 import (
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
@@ -137,14 +138,21 @@ func (c *schedCore) hostTermOn(p *core.Profile, pl core.Placement, id core.NodeI
 	return 0
 }
 
-// serverName is the scheduler's machine as plans name it.
+// serverName is the scheduler's machine as plans name it: its local node
+// (the lowest id when there are several, so the name never moves between
+// two reads), else "the scheduler's machine".
 func (c *schedCore) serverName() string {
+	var ids []core.NodeID
 	for id, n := range c.raw {
 		if n.Local {
-			return c.nodeName(id)
+			ids = append(ids, id)
 		}
 	}
-	return "the scheduler's machine"
+	if len(ids) == 0 {
+		return "the scheduler's machine"
+	}
+	slices.Sort(ids)
+	return c.nodeName(ids[0])
 }
 
 // planHostMemory fills r.HostMemory and, for the scheduler's machine,
