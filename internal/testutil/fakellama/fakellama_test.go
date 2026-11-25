@@ -554,3 +554,20 @@ func TestListDevicesHangOnlyForNamedEndpoints(t *testing.T) {
 		t.Fatal("listed endpoint should hang")
 	}
 }
+
+// /tokenize counts a token per four characters; with FAKELLAMA_COUNT_PROMPT
+// a chat's prompt is counted the same way, the earlier prompt as cached.
+func TestTokenizeAndCountedPrompt(t *testing.T) {
+	_, base := startHealthy(t, map[string]string{"FAKELLAMA_COUNT_PROMPT": "1"})
+	st, m := postJSON(t, base+"/tokenize", `{"content":"`+strings.Repeat("a", 400)+`"}`)
+	if st != 200 || len(m["tokens"].([]any)) != 100 {
+		t.Fatalf("%d %v", st, len(m["tokens"].([]any)))
+	}
+	msg := func(n int) string { return `{"messages":[{"role":"user","content":"` + strings.Repeat("b", n) + `"}]}` }
+	_, a := postJSON(t, base+"/v1/chat/completions", msg(400))
+	_, b := postJSON(t, base+"/v1/chat/completions", msg(1200))
+	ta, tb := a["timings"].(map[string]any), b["timings"].(map[string]any)
+	if ta["prompt_n"] != float64(100) || ta["cache_n"] != float64(0) || tb["prompt_n"] != float64(200) || tb["cache_n"] != float64(100) {
+		t.Fatalf("%v / %v", ta, tb)
+	}
+}

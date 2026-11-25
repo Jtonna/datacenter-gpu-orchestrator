@@ -49,10 +49,10 @@ func TestSchemaEndpointDescribesPhasesAndTemplates(t *testing.T) {
 			t.Errorf("%v", pm)
 		}
 	}
-	if strings.Join(names, ",") != "load,warmup,requests,conversation,hold,concurrent_requests,tasks,unload" {
+	if strings.Join(names, ",") != "load,warmup,requests,conversation,context_fill,hold,concurrent_requests,tasks,unload" {
 		t.Fatalf("%v", names)
 	}
-	hold := types[4].(map[string]any)
+	hold := types[5].(map[string]any)
 	var secs map[string]any
 	for _, o := range hold["options"].([]any) {
 		if o.(map[string]any)["name"] == "seconds" {
@@ -62,7 +62,7 @@ func TestSchemaEndpointDescribesPhasesAndTemplates(t *testing.T) {
 	if secs == nil || secs["type"] != "integer" || secs["default"].(float64) != 60 || secs["min"].(float64) != 1 || secs["max"].(float64) != 3600 || secs["unit"] != "s" || secs["description"] == "" {
 		t.Fatalf("seconds option %v", secs)
 	}
-	if len(m["expect_keys"].([]any)) < 8 || len(m["templates"].([]any)) != 8 || len(m["input_options"].([]any)) != 6 || m["limits"] == nil {
+	if len(m["expect_keys"].([]any)) < 8 || len(m["templates"].([]any)) != 9 || len(m["input_options"].([]any)) != 6 || m["limits"] == nil {
 		t.Fatalf("%v", m)
 	}
 	// the load phase's cold option, the suite options and the cold, reload, loaded template

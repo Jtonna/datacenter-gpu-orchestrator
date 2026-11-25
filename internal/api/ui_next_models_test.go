@@ -26,16 +26,16 @@ func TestUINextModels(t *testing.T) {
 	off := func(sel, reason string) string { return sel + "[aria-disabled=true][data-off][title^=" + reason + "]" }
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
 		map[string]any{"name": "models: the list", "route": "#/models", "status": st,
-			"expect": []string{"Models", "Sort: last used", "Add a model", "Downloading", "Pinned", "All models",
+			"expect": []string{"Models", "Sort: last used", "Add a model", "Pinned", "All models",
 				"5 model files · 50.3 of 240 GB used", mdlLoaded, "16.5 GB", "2 profiles", "Now", mdlRecent, "10.1 GB", "1 profile",
-				mdlNoProfs, "0.3 GB", "No profiles", "Never", "Deleted models", "Needs", "17.1 GB", "measured", "5.1 GB", "estimated"},
+				mdlNoProfs, "0.3 GB", "No profiles", "Never", "Deleted models", "Needs", "~17.1 to 20.4 GB", "~5.1 GB"},
 			"order": []string{mdlLoaded, mdlRecent, mdlOlder, mdlNoProfs, mdlNever, "Deleted models"},
 			"has": []string{off("button.btn.pri[data-act=add]", "Adding"), "button.star[aria-pressed=true]", off("button.tbar[data-act=trash]", "Deleted"),
-				"div.sech[data-sec=downloading][title^=Downloads]", "div.sech[data-sec=pinned]", "label.sx input",
+				"label.sx input",
 				"span.mdl-disk[data-disk]", "select.fs[aria-label=Sort]", "select.fs[aria-label=Show]",
 				"div.mr[data-model='" + mdlNoProfs + "'] span.mdl-needs span.mut"},
 			"none": []string{"div.mr.sel", "span.mdl-disk.full"}, "absent": designSamples},
-		// the profile count does not count generated profiles out: the server's profile_count is what the row says
+		// the row counts production profiles only (views/models/kinds.js; the owner's note 9)
 		map[string]any{"name": "models: the loaded row says Now", "route": "#/models", "status": st,
 			"has": []string{"div.mr[data-model='" + mdlLoaded + "'] time.mdl-now", "div.mr[data-model='" + mdlRecent + "'] time[title]"}},
 		map[string]any{"name": "models: Add a model does nothing", "route": "#/models", "status": st, "click": []string{"button[data-act=add]"}, "hash": "#/models",
@@ -54,14 +54,14 @@ func TestUINextModels(t *testing.T) {
 
 		// the panel of the loaded model
 		map[string]any{"name": "models: the loaded model's panel", "route": "#/models?model=" + mdlLoaded, "status": st,
-			"page": []string{"Selected model", mdlLoaded, "16.5 GB", "loaded now", "Benchmarks", "3 reports", "Pinned", "Delete model",
+			"page": []string{"Selected model", mdlLoaded, "16.5 GB", "loaded now", "Benchmarks", "Pinned", "Delete model",
 				"Loaded now", "on ps5-01, ps5-02", "2 requests in flight", "Runs on", "gemma-4-27b", "Google",
 				"Configurations", "2 profiles", "Profile", "Context", "Memory needed", "8,192", "32,768", "17,480 MiB", "20,890 MiB", "measured",
-				"1 generated configuration", "Add profile", "Open the model page", "Edit under Profiles"},
-			"pageHas": []string{"aside.side tr[data-profile='gemma-4-27b'] span.mdl-pill", "aside.side a.go[href='#/profiles/gemma-4-27b']",
+				"1 test and benchmark configuration", "Add profile", "Open the model page"},
+			"pageHas": []string{"aside.side tr[data-profile='gemma-4-27b'] span.mdl-pill", "aside.side tr[data-profile='gemma-4-27b'] button.go[data-act=edit]",
 				"aside.side a.btn[href='#/profiles/new']", "aside.side select.fs[aria-label=Context]", "aside.side label.sx",
 				"aside.side button.btn[data-act=pin][aria-pressed=true]", off("aside.side button.btn.red[data-act=delete]", "Deleting")},
-			"pageNone":  []string{"aside.side tr[data-profile='gemma-4-27b:long'] span.mdl-pill", "aside.side tr[data-profile='bench-gemma-4-27b-c16k-n2']"},
+			"pageNone":  []string{"aside.side tr[data-profile='gemma-4-27b:long'] span.mdl-pill", "aside.side table.mdl-ptbl tr[data-profile='bench-gemma-4-27b-c16k-n2']"},
 			"has":       []string{"div.mr.sel[aria-current=true][data-model='" + mdlLoaded + "']"},
 			"notOnPage": []string{"4 runs"}},
 		map[string]any{"name": "models: Delete does nothing", "route": "#/models?model=" + mdlLoaded, "status": st, "click": []string{"button[data-act=delete]"},

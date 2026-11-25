@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"slices"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/usage"
 )
 
 // peakCycles is GET /api/needs peak_cycles: how many load-to-unload cycles
@@ -28,6 +30,10 @@ type peakCycles struct {
 	rows    map[string]*peakCycleRow
 	since   int64
 	cancel  func()
+	// tokens reads a load session's request rows (nil: no request log);
+	// now is the clock (tests).
+	tokens func(ctx context.Context, profile, session string, from, need, to int64) (usage.SessionTokens, error)
+	now    func() time.Time
 }
 
 // peakCycleRow is the tally of one shape and node set.
@@ -44,6 +50,8 @@ type peakCycleRow struct {
 	total     peakSpread
 	nodes     []peakSpread
 	hasCycles bool
+	// growth: the latest cycles' inputs of a growth reading (peakgrowth.go).
+	growth []*growthCycle
 }
 
 // peakSpread is the lowest, highest and latest of one figure.
@@ -67,10 +75,15 @@ type cyclePeakData struct {
 	Shape         string `json:"shape"`
 	EndedNormally bool   `json:"ended_normally"`
 	CyclePeaks    []struct {
-		NodeID  string `json:"node_id"`
-		Node    string `json:"node"`
-		PeakMiB *int   `json:"peak_mib"`
+		NodeID    string `json:"node_id"`
+		Node      string `json:"node"`
+		PeakMiB   *int   `json:"peak_mib"`
+		SettleMiB *int   `json:"settle_use_mib"`
 	} `json:"cycle_peaks"`
+	Kind       string  `json:"profile_kind"`
+	Ctx        int     `json:"profile_ctx"`
+	Parallel   int     `json:"profile_parallel"`
+	LoadedForS float64 `json:"loaded_for_s"`
 }
 
 // startPeakCycles subscribes to new instanceUnloaded events and adds the
@@ -143,6 +156,7 @@ func (pc *peakCycles) addLocked(e history.Event) {
 		}
 		sum += *n.PeakMiB
 	}
+	r.addGrowth(e, &d) // peakgrowth.go
 	if e.Profile != "" && !slices.Contains(r.profiles, e.Profile) {
 		r.profiles = append(r.profiles, e.Profile)
 		slices.Sort(r.profiles)
@@ -197,6 +211,7 @@ func (pc *peakCycles) view() map[string]any {
 		} else {
 			row["nodes"] = []map[string]any{}
 		}
+		row["growth_readings"] = pc.growthView(r) // peakgrowth.go
 		rows = append(rows, row)
 	}
 	var since any

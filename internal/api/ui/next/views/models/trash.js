@@ -31,6 +31,7 @@ import * as api from '../../core/api.js';
 import { liveView, empty, skeleton, searchField, sidePanel, filterSelect, dialog } from '../../core/ui.js';
 import { num, plural, dateTime, agoText, parseGoDuration, list, dur, DASH, now } from '../../core/format.js';
 import { onCatalog, needCatalog, refreshCatalog } from '../../core/catalog.js';
+import { isProduction, testText } from './kinds.js';
 
 const DAY = 864e5;
 const TRASH = 'M4 6h12M8 6V4h4v2M6 6l.7 10h6.6L14 6M8.5 9v4.5M11.5 9v4.5';
@@ -89,6 +90,18 @@ const RO_FLAG = 'The models folder is read-only on this scheduler: deleting and 
 const roFlag = (...figures) => [h('p.del-figs', { 'data-figures': '' }, ...figures),
   box('ro', { 'data-ro-flag': '' }, pt(icon(WARN), 'amber', h('b', RO_FLAG)))];
 const profilesOf = ids => (ids.length ? [plural(ids.length, 'profile'), ': ', monoList(ids)] : 'no profiles');
+// kindsOf(ids, m) -> the delete dialog's profiles (the owner's note 9): the
+// production profiles counted and named, the test and benchmark
+// configurations as a count only ("2 profiles: a, b and 18 test and
+// benchmark configurations"); the kind is read from the catalog's profiles
+// (views/models/kinds.js), an id it does not list counts as production
+function kindsOf(ids, m) {
+  const by = new Map((m.profiles || []).map(p => [p.id, p]));
+  const prod = ids.filter(id => isProduction(by.get(id) || {})), nTest = ids.length - prod.length;
+  return h('span', { 'data-profiles': '', 'data-prod': String(prod.length), 'data-test': String(nTest) },
+    prod.length ? [plural(prod.length, 'profile'), ': ', monoList(prod)] : 'no profiles',
+    nTest ? [prod.length ? ' and ' : ', ', testText(nTest)] : null);
+}
 const roState = (what, msg) => box('warn', { 'data-ro': '' }, pt(icon(WARN), 'red', h('b', 'The models folder is read-only on this scheduler: nothing was changed. '), what),
   h('p.dmsg', msg));
 
@@ -188,7 +201,7 @@ export function deleteModel(m, onDone, writable) {
       h('div.dlg-foot', closeBtn('Close'))];
     } else if (state === 'read-only' && !refusal) {
       const ids = (m.profiles || []).map(p => p.id).filter(Boolean);
-      kids = [...roFlag(h('span.mono', file), ' · ', m.size_bytes ? gbOf(m.size_bytes) + ' GB' : null, m.size_bytes ? ' · ' : null, profilesOf(ids)), h('div.dlg-foot', closeBtn('Close'))];
+      kids = [...roFlag(h('span.mono', file), ' · ', m.size_bytes ? gbOf(m.size_bytes) + ' GB' : null, m.size_bytes ? ' · ' : null, kindsOf(ids, m)), h('div.dlg-foot', closeBtn('Close'))];
     } else if (state === 'read-only') {
       kids = [roState(h('span', h('span.mono', file), ' stays in the models folder with its profiles.'), refusal.msg), h('div.dlg-foot', closeBtn('Close'))];
     } else if (state === 'refused') {
@@ -199,7 +212,7 @@ export function deleteModel(m, onDone, writable) {
     } else {
       const f = figures, would = f.would_interrupt;
       const it = would ? interrupts(would, m) : null;
-      const np = (f.profiles || []).length;
+      const ids = f.profiles || [], np = ids.length;
       const size = gbOf(f.size_bytes || m.size_bytes || 0) + ' GB';
       const kept = f.purge_on
         ? [h('b', `Kept for ${plural(f.trash_days, 'day')}.`), ' The file moves to Deleted models and stays there until ', h('time', { title: dateTime(f.purge_at) }, dayOf(f.purge_at)), `. It still uses ${size} until then.`]
@@ -210,7 +223,7 @@ export function deleteModel(m, onDone, writable) {
           it.n ? 'It is unloaded now and these requests fail.' : 'It is unloaded now.'))
           : box('ok', { 'data-free': '' }, pt(icon(CHECK), 'green', h('b', 'Nothing is interrupted.'), ' Nothing is loaded or queued for it now.')),
         box('ok', null, pt(clockIcon(), 'green', ...kept),
-          pt(icon(BACK), 'green', h('b', 'Restorable.'), np ? (np === 1 ? ' Restore it and its 1 profile comes back as it is now.' : ` Restore it and all ${np} profiles come back exactly as they are now.`) : ' Restore it any time. It has no profiles.')),
+          pt(icon(BACK), 'green', h('b', 'Restorable.'), np ? [' Restore it and its configuration comes back exactly as it is now: ', kindsOf(ids, m), '.'] : ' Restore it any time. It has no profiles.')),
         roNote(),
         h('div.field', h('label.dlbl', 'Type ', h('span.mono', name), ' to confirm'), typed),
         h('div.field.dlg-note', h('label.dlbl', 'Comment (required)'), note),

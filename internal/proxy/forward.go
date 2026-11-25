@@ -53,6 +53,10 @@ type Options struct {
 	// sent, that status and message; in an event stream already under way,
 	// a final SSE error event with them. Nil, or nil from it: not on purpose.
 	CutBy func() *CutAnswer
+	// OnResponse, when set, is called once the model server's status and
+	// headers have arrived, just before the status is written to the caller
+	// (tests cut a request at exactly that point).
+	OnResponse func()
 }
 
 // CutAnswer is what a request cut on purpose is told (Options.CutBy).
@@ -316,6 +320,9 @@ func Forward(w http.ResponseWriter, r *http.Request, o Options) (res Result) {
 			body = &watchBody{rc: resp.Body, tail: tail, stall: stall, live: o.Live, cutBy: o.CutBy,
 				sse: strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream")}
 			resp.Body = body
+			if o.OnResponse != nil {
+				o.OnResponse()
+			}
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {

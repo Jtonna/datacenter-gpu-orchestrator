@@ -86,6 +86,23 @@ func TestHealth_RunsRow(t *testing.T) {
 			t.Errorf("%s: %+v", c.name, row)
 		}
 	}
+	// The row is named "Requests" (the owner, 24 Nov: "Runs" are benchmark
+	// runs only). Its link opens what failed: the Requests page filtered by
+	// state (views/requests.js reads ?status=; the Overview reads no such
+	// parameter), or the Benchmarks page when only benchmark runs failed.
+	for _, c := range []struct {
+		in   runsIn
+		link string
+	}{
+		{runsIn{logOn: true, total: 40}, "#/overview"},
+		{runsIn{logOn: true, failed: 1, total: 40}, "#/requests?status=failed"},
+		{runsIn{logOn: true, failed: 1, total: 40, benchFailed: 1}, "#/requests?status=failed"},
+		{runsIn{logOn: true, benchFailed: 2}, "#/benchmarks"},
+	} {
+		if row := judgeRuns(c.in); row.ID != "runs" || row.Label != "Requests" || row.Link != c.link {
+			t.Errorf("%+v: id %q label %q link %q, want runs, Requests, %s", c.in, row.ID, row.Label, row.Link, c.link)
+		}
+	}
 }
 
 func TestHealth_SchedulerRow(t *testing.T) {

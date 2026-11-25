@@ -54,7 +54,7 @@
 // three are null until the run ends and the table shows a dash.
 //
 // --health: what GET /api/health and the health topic answer (the Health
-// board's states): two (the default: Zones a problem, Runs needing
+// board's states): two (the default: Zones a problem, Requests needing
 // attention, as the mockup draws it), good (no issue), unknown (no status
 // read yet: Zones and Queue unknown, as is Alerts in every state).
 //
@@ -81,6 +81,9 @@
 //
 // --no-host-uptime: no agent reports host_uptime_s (an older agent, a console
 // fed by the fleet console); otherwise every reachable agent does.
+//
+// --inst-detail (with --models): the loaded instance also reports its memory
+// per zone (load log), its last finished request and its device total.
 //
 // --pending: Create new zone (internal/api/pending.go). GET /api/zones/pending
 // lists the one pending zone zone-9 (rack-a) in that state, GET
@@ -147,6 +150,8 @@ const NAMED_ONLY_ID = opt('--named-only-id', '');
 const LOADS = argv.includes('--loads');
 // --no-host-uptime: no agent reports host_uptime_s (the zone panel leaves Uptime out)
 const NO_HOST_UPTIME = argv.includes('--no-host-uptime');
+// --inst-detail: a loaded instance carries its memory per zone, the last finished request and its device total
+const INST_DETAIL = argv.includes('--inst-detail');
 // --pending: the Create new zone states (see the header)
 const PENDING = opt('--pending', '');
 const PZ_SOURCE = PENDING && PENDING !== 'nosource' ? 'share:192.0.2.10:/models' : '';
@@ -231,7 +236,7 @@ const SCHED = { id: 'scheduler', name: 'scheduler', role: 'host' };
 
 // status(now) -> the status of the --zones state
 // with --models the instances are the catalog's (one loaded model, or none)
-const status = now => applyTiers(named(zonesStatus(MODELS_STATE ? modelsInstances(baseStatus(now), MODELS_STATE, mac) : baseStatus(now), now, ZONES, { drain: DRAIN, pinned: PINNED, hostUptime: !NO_HOST_UPTIME })), TIERS);
+const status = now => applyTiers(named(zonesStatus(MODELS_STATE ? modelsInstances(baseStatus(now), MODELS_STATE, mac, INST_DETAIL) : baseStatus(now), now, ZONES, { drain: DRAIN, pinned: PINNED, hostUptime: !NO_HOST_UPTIME })), TIERS);
 const named = st => { for (const n of (st.view && st.view.nodes) || []) if ((NAMED_ONLY && n.hostname === NAMED_ONLY) || (NAMED_ONLY_ID && n.hostname === NAMED_ONLY_ID)) n.auto = false; return st; };
 // withNamedId(doc, now): --named-only-id appends the zone's id to the stored no_auto_nodes
 const withNamedId = (d, now) => { if (!NAMED_ONLY_ID) return d; const z = (status(now).agents || []).find(a => a.name === NAMED_ONLY_ID); if (z) d.no_auto_nodes = [...(d.no_auto_nodes || []), z.id]; return d; };
@@ -565,7 +570,7 @@ function health(now) {
   const rows = [
     unknown ? row('zones', 'Zones', 'unknown', 'Status not read yet', '#/zones?filter=down')
       : two ? row('zones', 'Zones', 'problem', '7 of 8 reachable · 1 down', '#/zones?filter=down', 1) : row('zones', 'Zones', 'ok', '8 of 8 reachable', '#/zones'),
-    two ? row('runs', 'Runs', 'attention', '1 failed in the last hour', '#/overview?runs=failed', 1) : row('runs', 'Runs', 'ok', 'None failed in the last hour', '#/overview'),
+    two ? row('runs', 'Requests', 'attention', '1 failed in the last hour', '#/requests?status=failed', 1) : row('runs', 'Requests', 'ok', 'None failed in the last hour', '#/overview'),
     Object.assign(row('scheduler', 'Scheduler', 'ok', `Running · release ${RELEASE} · up 12 d`, '#/about'), { facts: { release: RELEASE, uptime_s: 12 * 86400 } }),
     row('mcp', 'MCP server', 'ok', 'Running · 3 keys active', '#/mcp', 3),
     row('storage', 'Storage', 'ok', '50.3 of 240 GB used', '#/about', 21),

@@ -16,6 +16,11 @@ type server struct {
 	chunks     int           // content chunks per streamed reply
 	chunkDelay time.Duration // pause between chunks
 	stallAfter int           // stop sending after this many chunks; -1 = never
+	// countPrompt (FAKELLAMA_COUNT_PROMPT): a chat's prompt is a quarter of
+	// its messages' characters, the earlier prompt counted as cached when it
+	// grows (as /tokenize counts); otherwise every prompt is 10 tokens.
+	countPrompt bool
+	lastPrompt  atomic.Int64
 }
 
 func (s *server) routes() http.Handler {
@@ -28,6 +33,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/chat/completions", s.chat)
 	mux.HandleFunc("POST /v1/completions", s.completions)
 	mux.HandleFunc("POST /v1/embeddings", s.embeddings)
+	mux.HandleFunc("POST /tokenize", s.tokenize)
 	return s.requireReady(mux)
 }
 
@@ -121,22 +127,40 @@ func (s *server) reply() string {
 
 func chunkText(i int) string { return fmt.Sprintf("tok%d ", i) }
 
-func (s *server) usage() map[string]any {
-	return map[string]any{"prompt_tokens": 10, "completion_tokens": s.chunks, "total_tokens": 10 + s.chunks}
+func (s *server) usage() map[string]any { return s.usageOf(10, 0) }
+
+func (s *server) usageOf(pn, cn int) map[string]any {
+	return map[string]any{"prompt_tokens": pn + cn, "completion_tokens": s.chunks, "total_tokens": pn + cn + s.chunks}
 }
 
-func (s *server) timings() map[string]any {
+func (s *server) timings() map[string]any { return s.timingsOf(10, 0) }
+
+func (s *server) timingsOf(pn, cn int) map[string]any {
 	return map[string]any{
-		"prompt_n": 10, "prompt_ms": 5.0, "predicted_n": s.chunks, "predicted_ms": 10.0 * float64(s.chunks),
-		"predicted_per_second": 100.0, "prompt_per_second": 2000.0, "cache_n": 0,
+		"prompt_n": pn, "prompt_ms": 5.0, "predicted_n": s.chunks, "predicted_ms": 10.0 * float64(s.chunks),
+		"predicted_per_second": 100.0, "prompt_per_second": 2000.0, "cache_n": cn,
 	}
 }
 
 func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Stream bool `json:"stream"`
+		Stream   bool `json:"stream"`
+		Messages []struct {
+			Content string `json:"content"`
+		} `json:"messages"`
 	}
 	json.NewDecoder(r.Body).Decode(&req) // an empty or odd body just means non-streaming
+	pn, cn := 10, 0
+	if s.countPrompt {
+		chars := 0
+		for _, m := range req.Messages {
+			chars += len(m.Content)
+		}
+		pn = max(chars/4, 10)
+		if last := int(s.lastPrompt.Swap(int64(pn))); last > 0 && pn > last {
+			pn, cn = pn-last, last
+		}
+	}
 
 	if !req.Stream {
 		writeJSON(w, 200, map[string]any{
@@ -145,15 +169,15 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 				"index": 0, "finish_reason": "stop",
 				"message": map[string]any{"role": "assistant", "content": s.reply()},
 			}},
-			"usage":   s.usage(),
-			"timings": s.timings(),
+			"usage":   s.usageOf(pn, cn),
+			"timings": s.timingsOf(pn, cn),
 		})
 		return
 	}
-	s.streamChat(w, r)
+	s.streamChat(w, r, pn, cn)
 }
 
-func (s *server) streamChat(w http.ResponseWriter, r *http.Request) {
+func (s *server) streamChat(w http.ResponseWriter, r *http.Request, pn, cn int) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(200)
@@ -193,11 +217,25 @@ func (s *server) streamChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	final := chunk(map[string]any{}, "stop")
-	final["usage"] = s.usage()
-	final["timings"] = s.timings()
+	final["usage"] = s.usageOf(pn, cn)
+	final["timings"] = s.timingsOf(pn, cn)
 	send(final)
 	fmt.Fprint(w, "data: [DONE]\n\n")
 	if flusher != nil {
 		flusher.Flush()
 	}
+}
+
+// tokenize answers llama-server's POST /tokenize: a token per four
+// characters of content (ids 0, 1, 2, ...), as the counted chat prompt.
+func (s *server) tokenize(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Content string `json:"content"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+	toks := make([]int, len(req.Content)/4)
+	for i := range toks {
+		toks[i] = i
+	}
+	writeJSON(w, 200, map[string]any{"tokens": toks})
 }

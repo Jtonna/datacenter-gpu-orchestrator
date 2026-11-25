@@ -312,6 +312,7 @@ tr.canc td{color:var(--quiet)}
 .sw{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px;flex:none}
 .sw.m{background:var(--z-use4)}.sw.k{background:var(--z-use3)}.sw.c{background:var(--z-use2)}.sw.o{background:var(--z-off)}.sw.a{background:var(--z-load)}.sw.x{background:var(--failed)}.sw.l{background:var(--lilac)}.sw.rsv{box-shadow:inset 0 0 0 1px var(--accent)}
 .legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;font-weight:600;color:var(--mut)}
+.mdl-key{display:flex;justify-content:flex-end}
 /* node row: name | bar | figure | detail */
 .nr{display:grid;grid-template-columns:150px minmax(140px,1fr) 190px minmax(220px,auto);gap:6px 18px;align-items:center;padding:9px var(--pad-panel);border-top:1px solid var(--line)}
 .nr>.mono:first-child{font-weight:500}
@@ -461,6 +462,12 @@ code.cmd{font-family:var(--mono);font-size:12px;color:var(--text-2);overflow-wra
    beside the page at 1400 px and wider, over it behind a scrim below that (Q72) */
 .side{width:var(--side-w);max-width:100%;flex:none;box-sizing:border-box;display:flex;flex-direction:column;background:#fff;border-left:1px solid #dfe5e1;box-shadow:-10px 0 28px rgba(19,26,23,.07);overflow:hidden;font-size:13px}
 .side.docked{position:sticky;top:0;align-self:flex-start;height:100vh;z-index:5}
+/* the width handle on a docked panel's left edge (core/panel.js; the owner's note 6) */
+.side-grip{position:absolute;left:0;top:0;bottom:0;width:7px;cursor:col-resize;z-index:6;touch-action:none}
+.side-grip::after{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:transparent;transition:background .12s}
+.side-grip:hover::after,.side-grip:focus-visible::after,.side.resizing .side-grip::after{background:var(--accent,#0f6b4a)}
+.side-grip:focus-visible{outline:none}
+.side.resizing{user-select:none}
 .side-back{position:fixed;inset:0;z-index:40;background:var(--overlay);display:flex;justify-content:flex-end}
 .side-back .side{height:100%;box-shadow:-18px 0 40px rgba(19,26,23,.18)}
 .side-head{display:flex;align-items:flex-start;gap:12px;padding:16px 14px 14px 20px;flex:none}
@@ -1298,11 +1305,14 @@ input.cb{width:16px;height:16px;margin:0;accent-color:#0f6b4a}
 .mdl .sech[title]{cursor:help}
 .mdl-off{font-weight:600;color:#7c8882}
 .mdl-disk.full{color:var(--amber-text,#8a5a00)}
-.mdl .mr{display:grid;grid-template-columns:28px minmax(0,1fr) 96px 110px 130px;gap:10px;align-items:center;min-height:48px;padding:4px 16px 4px 10px;box-sizing:border-box;border-top:1px solid #e9eeeb;color:#131a17;cursor:pointer}
+.mdl .mr{display:grid;grid-template-columns:28px minmax(0,1fr) 112px 124px 110px;gap:10px;align-items:center;min-height:48px;padding:4px 16px 4px 10px;box-sizing:border-box;border-top:1px solid #e9eeeb;color:#131a17;cursor:pointer}
 .mdl .mr:hover{background:#f6f8f6}
 .mdl .mr:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .mdl .mr.sel{background:#e2f1e9;box-shadow:inset 3px 0 0 #0f6b4a}
 .mdl-name{min-width:0;display:flex;flex-direction:column}
+.mdl-inuse{font-size:12px;color:var(--mint-text);font-weight:600}
+.mdl-inuse a.mdl-zone{color:var(--link);text-decoration:none;font-weight:700}
+.mdl-inuse a.mdl-zone:hover{text-decoration:underline}
 .mdl .mr .nm{font-weight:500;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mdl-now{font-weight:700;color:var(--mint-text)}
 .mdl .star{width:28px;height:28px;border:0;border-radius:7px;background:transparent;color:#9aa49e;display:flex;align-items:center;justify-content:center;padding:0}
@@ -1318,23 +1328,58 @@ input.cb{width:16px;height:16px;margin:0;accent-color:#0f6b4a}
 .mdl .mr.mr-h:hover{background:none}
 .mdl-needs{text-align:right;white-space:nowrap}
 .mdl-needs .sub{display:block}
+.mdl-pc .sub{display:block;font-size:11.5px;margin-top:1px;white-space:nowrap}
 .mdl .mr-h .mdl-needs{text-align:right}
 @container (max-width:640px){.mdl .mr{grid-template-columns:28px minmax(0,1fr) 84px 96px}.mdl .mr .mdl-pc{display:none}}
 @container (max-width:460px){.mdl .mr{grid-template-columns:28px minmax(0,1fr) 84px}.mdl .mr .mdl-needs{display:none}}
 .mdl-acts{display:flex;gap:8px;flex-wrap:wrap}
 .mdl-acts [data-off]{opacity:.55;cursor:not-allowed}
-.mdl-inst{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.mdl-inst{display:flex;flex-direction:column;gap:6px;padding:8px 0;border-top:1px solid var(--line)}
+.mdl-loaded-h+.mdl-inst{border-top:0}
+.mdl-inst-h{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.mdl-inst-f{font-size:12.5px}
+.mdl-inst .nr{grid-template-columns:minmax(0,1fr) auto;padding:6px 0 2px;border-top:0;gap:4px 12px}
+.mdl-inst .nr>.bar{grid-column:1/-1;order:3}
+.mdl-inst .nr>:nth-child(4){grid-column:1/-1;order:4;font-size:12px}
+.mdl-inst .nr .fig{text-align:right}
+.mdl-loaded-h{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+[data-loaded] .mdl-key{justify-content:flex-start}
 .mdl-cfg{display:flex;flex-direction:column;margin:0 -16px}
 .mdl-cfg .dh{height:auto;min-height:44px;flex-wrap:wrap;padding:6px 16px}
 .mdl-cfg-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.mdl-ptbl{width:100%}
-.mdl-ptbl td .sub{display:block}
+.mdl-ptbl,.mdl-ttbl{width:100%}
+.mdl-ptbl td:first-child,.mdl-ttbl td:first-child{min-width:150px}
+.mdl-ptbl td .sub,.mdl-ttbl td .sub{display:block}
 .mdl-pill{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:9px;background:#e2f1e9;color:var(--mint-text);font-size:11px;font-weight:800;vertical-align:1px}
-.mdl-ptbl .go{display:inline-flex;align-items:center;gap:3px;font-weight:700;color:#9aa49e;text-decoration:none}
-.mdl-ptbl .go .tx{visibility:hidden}
-.mdl-ptbl tbody tr:hover .go,.mdl-ptbl .go:focus-visible{color:var(--link)}
-.mdl-ptbl tbody tr:hover .go .tx,.mdl-ptbl .go:focus-visible .tx{visibility:visible}
+.mdl-ptbl .go,.mdl-ttbl .go{display:inline-flex;align-items:center;gap:3px;font-weight:700;color:#9aa49e;text-decoration:none}
+.mdl-ptbl .go .tx,.mdl-ttbl .go .tx{visibility:hidden}
+.mdl-ptbl tbody tr:hover .go,.mdl-ptbl .go:focus-visible,.mdl-ttbl tbody tr:hover .go,.mdl-ttbl .go:focus-visible{color:var(--link)}
+.mdl-ptbl tbody tr:hover .go .tx,.mdl-ptbl .go:focus-visible .tx,.mdl-ttbl tbody tr:hover .go .tx,.mdl-ttbl .go:focus-visible .tx{visibility:visible}
 .mdl-pad{padding:8px 16px}
+/* the panel's deeper views (owner's note 8): the way back, the runs list, the editor in the panel */
+.mdl-back{margin:-4px 0 2px}
+.mdl-back .btn .ic{width:14px;height:14px}
+.mdl-ptbl button.go{border:0;background:none;padding:0;cursor:pointer;font:inherit}
+.mdl-ttbl button.go{border:0;background:none;padding:0;cursor:pointer;font:inherit}
+.mdl-runs{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.mdl-run{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:4px 14px;padding:10px 14px;text-decoration:none;color:inherit;border-top:1px solid var(--line)}
+.mdl-run:first-child{border-top:0}
+.mdl-run:hover,.mdl-run:focus-visible{background:var(--hover-bg)}
+.mdl-run-n{display:flex;flex-direction:column;min-width:0}
+.mdl-run-n b,.mdl-run-n .mono{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mdl-run-n .mono{font-size:11.5px}
+.mdl-run-s{display:flex;align-items:center;gap:4px;white-space:nowrap}
+.mdl-run-t{white-space:nowrap}
+.mdl-more{margin-top:10px}
+.mdl-plan{display:flex;flex-wrap:wrap;gap:2px 6px;padding:10px 12px;border-radius:10px;background:#f3f7f5;border:1px solid var(--line)}
+.mdl-plan .sub{flex-basis:100%;color:var(--mut);font-size:12px}
+.prf-inpanel{border:0;box-shadow:none;background:none;margin:0 -16px}
+.prf-inpanel .prf-ebody{padding:0 16px 24px}
+.prf-inpanel .prf-efoot{border-radius:0;bottom:-20px;z-index:2;margin-bottom:-20px;padding-bottom:16px}
+/* the test and benchmark configurations: one collapsed line (owner's note 9; views/models/kinds.js) */
+.mdl-tests{border-top:1px solid #e9eeeb}
+.mdl-tests>summary{padding:10px 16px;cursor:pointer;color:var(--mut);font-weight:600}
+.mdl-tests>summary:hover{color:var(--ink,#1f2a24)}
 /* the trash (v65; views/models/trash.js; boards Models-Trash, Models-Delete and the Models footer row) */
 a.tbar{text-decoration:none;cursor:pointer}
 .mdl a.tbar:hover{background:#f1f4f2;color:#131a17;text-decoration:none}
@@ -1441,3 +1486,4 @@ a.tbar{text-decoration:none;cursor:pointer}
 .trs-sub{margin:4px 0 8px;font-size:13px;font-weight:800}
 .trs-zones{margin-bottom:12px}
 .trs-tbl td.trs-rule .trs-never{display:block;margin-top:3px;color:var(--warn-text,#8a5a00);font-size:12px;font-weight:700}
+.mdl-need-ends{display:block;font-size:12px;margin-top:2px}

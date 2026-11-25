@@ -12,32 +12,64 @@ import (
 	"time"
 )
 
-// cutUpstream is a model server whose answers wait for the test:
-//   - "hold" in a request that does not stream: nothing is sent until the
-//     request ends (the instance is killed, which the test acts out as the
-//     connection ending);
-//   - "stream":true: one token is sent, then nothing until the request ends;
+// cutUpstream is a model server whose answers wait for the test. Each
+// window of a cut is produced on purpose; "started" is signalled once the
+// fake has written (and flushed) all it will write before the cut:
+//   - "hold" (no stream): nothing is sent, not even the headers, until the
+//     request ends (the instance is killed, which ends the connection);
+//   - "jsonhead" (no stream): status 200 and headers of a JSON body of 100
+//     bytes (Content-Length), flushed, then nothing;
+//   - "jsonpart" (no stream): the same, plus 20 of the 100 bytes;
+//   - "stream":true and "quiet": nothing at all is sent (not even the headers);
+//   - "stream":true and "headers": status 200 and the event-stream headers,
+//     flushed, then nothing (no event);
+//   - "stream":true otherwise: two events (tokens t1 and t2), each flushed,
+//     then nothing;
 //   - "die": the connection is dropped at once, with no answer (a model
 //     server that crashed on its own);
 //   - anything else: {} at once (the request that loads the model).
 type cutUpstream struct{ started chan struct{} }
 
+const cutEvent = `data: {"choices":[{"delta":{"content":"%s"},"finish_reason":null,"index":0}],"object":"chat.completion.chunk"}`
+
 func (u *cutUpstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	b, _ := io.ReadAll(r.Body)
 	s := string(b)
+	flush := func() { w.(http.Flusher).Flush() }
+	hold := func() {
+		u.started <- struct{}{}
+		<-r.Context().Done()
+	}
+	stream := strings.Contains(s, `"stream":true`)
 	switch {
 	case strings.Contains(s, "die"):
 		conn, _, _ := http.NewResponseController(w).Hijack()
 		conn.Close()
-	case strings.Contains(s, `"stream":true`):
+	case stream && strings.Contains(s, "quiet"):
+		hold()
+	case stream && strings.Contains(s, "headers"):
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, `data: {"choices":[{"delta":{"content":"t1"},"finish_reason":null,"index":0}],"object":"chat.completion.chunk"}`+"\n\n")
-		w.(http.Flusher).Flush()
-		u.started <- struct{}{}
-		<-r.Context().Done()
+		w.WriteHeader(200)
+		flush()
+		hold()
+	case stream:
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, tok := range []string{"t1", "t2"} {
+			fmt.Fprintf(w, cutEvent+"\n\n", tok)
+			flush()
+		}
+		hold()
+	case strings.Contains(s, "jsonhead"), strings.Contains(s, "jsonpart"):
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", "100")
+		w.WriteHeader(200)
+		if strings.Contains(s, "jsonpart") {
+			w.Write([]byte(`{"choices":[{"message`))
+		}
+		flush()
+		hold()
 	case strings.Contains(s, "hold"):
-		u.started <- struct{}{}
-		<-r.Context().Done()
+		hold()
 	default:
 		w.Write([]byte(`{}`))
 	}
@@ -134,36 +166,6 @@ func TestCutAnswer_DeleteWithInterrupt(t *testing.T) {
 	a := waitCut(t, ch)
 	if a.status != 503 || a.err["reason"] != "unloaded" || a.err["message"] != "unloaded: a1 was unloaded: its model file is being deleted" {
 		t.Fatalf("cut by a delete with interrupt: %d %s", a.status, a.body)
-	}
-}
-
-// A stream that already sent bytes keeps its 200; it ends with an SSE error
-// event carrying the same reason and message, then closes cleanly.
-func TestCutAnswer_Streamed(t *testing.T) {
-	u := &cutUpstream{started: make(chan struct{}, 4)}
-	e := newEnv(t, u)
-	body(t, e.post("/v1/chat/completions", chat("alpha")))
-	ch := sendCut(t, e.front.URL, `{"model":"alpha","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
-	waitStarted(t, u)
-	if err := e.sched.Unload(context.Background(), "alpha", true); err != nil {
-		t.Fatal(err)
-	}
-	a := waitCut(t, ch)
-	if a.status != 200 || !strings.Contains(a.body, `"content":"t1"`) {
-		t.Fatalf("stream: %d %s", a.status, a.body)
-	}
-	i := strings.Index(a.body, "event: error\ndata: ")
-	if i < 0 {
-		t.Fatalf("no error event: %q", a.body)
-	}
-	line := strings.TrimSpace(strings.SplitN(a.body[i+len("event: error\ndata: "):], "\n", 2)[0])
-	var m map[string]any
-	if err := json.Unmarshal([]byte(line), &m); err != nil {
-		t.Fatalf("event data %q: %v", line, err)
-	}
-	ev := m["error"].(map[string]any)
-	if ev["reason"] != "unloaded" || ev["message"] != "unloaded: alpha was unloaded" || ev["code"] != float64(503) {
-		t.Fatalf("error event: %v", ev)
 	}
 }
 

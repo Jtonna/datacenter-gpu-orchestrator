@@ -711,3 +711,20 @@ func (a *Agent) HostAuth() []string {
 	defer a.mu.Unlock()
 	return append([]string(nil), a.hostAuth...)
 }
+
+// SetMemAvail changes the agent's MemAvailable from the next heartbeat on,
+// with the free figure of its devices that share system memory, and the
+// stats object when stats is not nil (a scripted memory drop).
+func (a *Agent) SetMemAvail(mib int64, stats json.RawMessage) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.MemAvail = mib
+	for i := range a.Devices {
+		if a.Devices[i].SharesSystemMemory {
+			a.Devices[i].FreeMiB = mib
+		}
+	}
+	if stats != nil {
+		a.Stats = stats
+	}
+}

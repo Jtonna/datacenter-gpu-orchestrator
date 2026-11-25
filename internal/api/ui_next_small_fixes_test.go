@@ -120,10 +120,11 @@ func TestUINodeRowsStackInANarrowCard(t *testing.T) {
 }
 
 // Models with v60's read additions (models slice 1): the panel's "added
-// <date>" from added_at, "Benchmarks · N reports" from bench.reports, the
+// <date>" from added_at (the Benchmarks count is the runs its list shows:
+// TestUINextNotesPanelDeeper), the
 // configurations' "Unload when idle" from ttl_s (0 = Never), and the disk
 // line's hover "… GB free on <host>" from disk.host. A server without them
-// (an older image) keeps the earlier drawing: "N runs", no added date, no
+// (an older image) keeps the earlier drawing: no added date, no
 // idle column, no host.
 func TestUINextModelsSliceOneFields(t *testing.T) {
 	fetch := fixtureAnswers(t, []string{"--models", "five"}, "/api/models", "/api/status")
@@ -131,10 +132,10 @@ func TestUINextModelsSliceOneFields(t *testing.T) {
 	const loaded = "gemma-4-27b-it-Q4_K_M.gguf"
 	uiExec(t, map[string]any{"shell": "next", "app": true, "tz": "UTC", "fetch": fetch, "cases": []any{
 		map[string]any{"name": "models: slice 1 fields in the panel", "route": "#/models?model=" + loaded, "status": st,
-			"page": []string{"16.5 GB · added 4 Nov 2026 · loaded now", "Benchmarks", "3 reports", "Unload when idle", "10 min", "Never"},
+			"page": []string{"16.5 GB · added 4 Nov 2026 · loaded now", "Benchmarks", "Unload when idle", "10 min", "Never"},
 			"pageHas": []string{"aside.side tr[data-profile='gemma-4-27b'] td[data-ttl='600']", "aside.side tr[data-profile='gemma-4-27b:long'] td[data-ttl='0']",
-				"aside.side a.btn[title^=Finished]"},
-			"notOnPage": []string{"4 runs"}},
+				"aside.side button.btn[data-act=bench]"},
+			"notOnPage": []string{"4 runs", "3 reports"}},
 		map[string]any{"name": "models: the disk's host", "route": "#/models", "status": st, "titles": []string{"GB free on scheduler-host"}},
 	}})
 
@@ -151,7 +152,7 @@ func TestUINextModelsSliceOneFields(t *testing.T) {
 	f := map[string]any{"/api/models": old, "/api/status": st}
 	uiExec(t, map[string]any{"shell": "next", "app": true, "tz": "UTC", "fetch": f, "cases": []any{
 		map[string]any{"name": "models: an older server", "route": "#/models?model=" + loaded, "status": st,
-			"page": []string{"16.5 GB · loaded now", "4 runs"}, "notOnPage": []string{"added ", "reports", "Unload when idle"},
+			"page": []string{"16.5 GB · loaded now"}, "notOnPage": []string{"added ", "reports", "Unload when idle"},
 			"pageNone": []string{"aside.side td[data-ttl]"}},
 	}})
 }

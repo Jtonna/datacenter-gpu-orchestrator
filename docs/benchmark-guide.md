@@ -25,6 +25,7 @@ Ask `GET $B/api/bench/schema` (MCP `get_bench_schema`) first. It lists every pha
 | `warmup` | Requests left out of the statistics. | Recorded, not counted |
 | `requests` | The measured requests, each repeated `repeats` times. | Prefill and decode tokens/s, time to first token, output hash |
 | `conversation` | A multi-turn exchange; each turn carries the earlier turns and replies. | Per turn: prefill, decode, time to first token, reused prompt tokens |
+| `context_fill` | Fills the context to `fill_pct` (default 90 %) with seeded filler, one turn per mark, and asks back the planted facts at the end (see Context fill). | Per mark: tokens held, prefill, every machine's available memory, growth and KiB per token; recall |
 | `hold` | Stays loaded and idle for `seconds`, then sends one request. | Whether the model answers as fast after idling |
 | `concurrent_requests` | `n` requests at the same moment. | Each request's wait and decode speed, total time, errors |
 | `tasks` | Sends each task of a fixed task set once, in order, and keeps every answer (see Tasks). Never runs or scores an answer. | Per task: answer, finish reason, tokens, time to first token, tok/s, wall time, error; scores posted later |
@@ -35,6 +36,16 @@ A phase that sends requests with no `load` before it loads the model if needed a
 The simple form (`cold`, `warmup_requests`, `repeats`, `requests`, `unload_after`) still works: it is expanded to `load`, `warmup`, `requests`, `unload`. Write `phases` for anything else.
 
 A benchmark with `parallel: [id, id]` starts the listed benchmarks at the same moment, to measure loads that compete.
+
+### Context fill
+
+A `context_fill` phase measures how much memory the context takes per token, instead of guessing it. It needs a loaded model and a scheduler whose plan answer gives `ctx` (this release on).
+
+- **The filler.** Plain sentences from a fixed word list, drawn by a generator seeded with `seed` (default 1): the same seed gives the same text on every build. `recall` facts (default 8, "Record 03: the harbour code is 4821.") are planted at even distances. The transcript keeps each turn's filler as its seed, paragraphs, size and sha256, not the text.
+- **The marks.** `marks_pct` (default 25, 50, 75 below `fill_pct`, then `fill_pct`). Each mark is one turn, counted with the model's own tokenizer (`POST /upstream/<profile>/tokenize`); a turn never goes past the context less `max_tokens` (default 128, the last turn's answer) less 32. Earlier turns ask for "OK" in at most 8 tokens; the last asks for the codes, and an exact code counts.
+- **The readings.** Before the first turn, and after each, every machine's available memory. For a machine the model is on: growth since the start and KiB per token held. Rows `fill_tokens`, `fill_growth_mib`, `fill_kib_per_token` (per machine), `recall_correct`, with the condition `fill_pct`.
+- **The stop line** (`stop_available_mib`, default 2,000 MiB). Before a turn, a machine whose available memory less the turn's expected growth (its tokens times the KiB per token measured so far, at least 8) would fall below the line stops the step. During a turn, a sample below the line cuts the turn off. The step fails with the reason, the model is unloaded, and the run goes on unless `stop_on_failure` is set.
+- **The shape check** (`refuse_shared_shape`, default true). A loaded instance's memory peak is stored for its shape (model, context, parallel, options), and a later plan of any profile of that shape reads it. So before anything loads, the step is refused when the plan's `shape_shared_with` names a profile a person wrote (a generated profile, `bench-`, `b-` or `m-`, does not count), or when the scheduler does not say. Apart from that option, and always: a `context_fill` step never runs on a profile a person wrote. A benchmark whose fixed `profile` is written (the plan answer's `generated` is false), or a scheduler whose plan does not say, is refused, and the reason says to use the recipe. Run it on a context no written profile uses: the template "Context fill recipe" (`context-fill-recipe`) uses 7,936.
 
 ### Cold loads
 

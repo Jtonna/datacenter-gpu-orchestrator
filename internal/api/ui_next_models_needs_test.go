@@ -24,8 +24,8 @@ func TestUINextModelsNeeds(t *testing.T) {
 	}}
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
 		map[string]any{"name": "models: the Needs column", "route": "#/models", "status": ovStatus(now), "width": 1536,
-			"expect": []string{"Needs", "18.0 GB", "measured", "5.0 GB", "estimated", "Profiles", "Last used"},
+			"expect": []string{"Needs", "~18.0 GB", "~5.0 GB", "Profiles", "Last used"}, "absent": []string{"measured"},
 			"has":    []string{"span.mdl-needs[data-col=needs] span.mut"},
-			"titles": []string{"The memory its lightest configuration needs on the zones", "18,432 MiB measured on a load across 2 zones"}},
+			"titles": []string{"The memory its production profiles need on the zones, smallest to largest", "18,432 MiB measured on a load across 2 zones"}},
 	}})
 }

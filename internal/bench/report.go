@@ -121,6 +121,8 @@ type SectionReport struct {
 	Figures    []Figure          `json:"figures"`
 	Issues     []Issue           `json:"issues"`
 	Transcript string            `json:"transcript,omitempty"` // a link, when the phase sent prompts
+	// Fill is a context_fill phase's marks and readings.
+	Fill *FillResult `json:"fill,omitempty"`
 }
 
 // BenchmarkReport is one benchmark executed in a run.
@@ -429,6 +431,7 @@ func benchmarkReport(runID string, st *Step, ms []Measurement, hasTranscript boo
 		idx := p.Idx
 		sec := SectionReport{Idx: p.Idx, Type: p.Type, Title: firstNonEmpty(phaseTitles[p.Type], p.Type), Label: p.Label, State: p.State, DurationS: p.DurationS,
 			Figures: figures(byPhase[p.Idx]), Conditions: conditionsOf(byPhase[p.Idx]), Issues: []Issue{}}
+		sec.Fill = p.Fill
 		if hasTranscript && (sent[p.Idx] || p.Tasks != nil) {
 			sec.Transcript = transcriptPath(runID, st.Idx, &idx)
 		}
@@ -758,6 +761,9 @@ func sectionMD(b *strings.Builder, s *SectionReport, h string) {
 	}
 	if len(s.Figures) > 0 {
 		figuresMD(b, s.Figures)
+	}
+	if s.Fill != nil {
+		fillMD(b, s.Fill)
 	}
 	if len(s.Issues) > 0 {
 		for _, i := range s.Issues {
