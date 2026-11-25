@@ -182,6 +182,13 @@ type inst struct {
 	// cyclePeak is the most each node gave up for this instance in this
 	// load-to-unload cycle (reserve.go, endPeakCycle).
 	cyclePeak map[core.NodeID]int
+	// settleUse is what each node gave up for this instance one
+	// free_average_window after ready (settleWhy: why a node has none);
+	// settleTaken once the reading was made. Collected for the
+	// instanceUnloaded event only (peakcycle.go); never read for a decision.
+	settleUse   map[core.NodeID]int
+	settleWhy   map[core.NodeID]string
+	settleTaken bool
 	// planned is what the plan reserved on each node of the placement when
 	// the instance was created, in placement order; nil when the need was
 	// not known. Reported in the instanceUnloaded event beside the cycle's

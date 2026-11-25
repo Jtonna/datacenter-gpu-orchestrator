@@ -355,6 +355,7 @@ func (c *schedCore) trackPeaks() {
 				in.cyclePeak[pn.ID] = max(in.cyclePeak[pn.ID], used)
 			}
 		}
+		c.noteSettleUse(in) // peakcycle.go
 	}
 }
 
