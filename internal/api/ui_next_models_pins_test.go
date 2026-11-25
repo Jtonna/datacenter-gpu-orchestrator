@@ -64,12 +64,12 @@ func TestUINextModelsPins(t *testing.T) {
 		"click":  append([]any{"div.mr[data-model='" + pinnedA + "'] button.star"}, comment("tidy")...),
 		"expect": []string{"Could not unpin gemma-4-27b-it-Q4_K_M.gguf: gemma-4-27b-it-Q4_K_M.gguf is not pinned"}})
 
-	// before v61: no pinned field, the pins stay unavailable
+	// before v61: no pinned field, the pins stay unavailable (the star says why); no Pinned group (owner's note 1)
 	old := mcpCopy(t, fetch["/api/models"])
 	for _, m := range old["models"].([]any) {
 		delete(m.(map[string]any), "pinned")
 		delete(m.(map[string]any), "pinned_at")
 	}
 	run(with(map[string]any{"/api/models": old}), map[string]any{"name": "pins: an older server", "route": "#/models", "status": st,
-		"has": []string{"button.star[data-off][aria-disabled=true]", "div.sech[data-sec=pinned][title^=Pins]"}, "none": []string{"[data-pinned-rows]"}})
+		"has": []string{"button.star[data-off][aria-disabled=true]"}, "none": []string{"[data-pinned-rows]", "div.sech[data-sec=pinned]"}})
 }

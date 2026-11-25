@@ -14,7 +14,9 @@
 // to its full page (#/models/<key>, views/models/detail.js, unchanged).
 //
 // Drawn as on the board but not available yet, each with its reason on
-// hover (p7-models-backend-STATUS.md, M1 to M6): Add a model, Downloading.
+// hover (p7-models-backend-STATUS.md, M1 to M6): Add a model. The groups
+// Downloading and Pinned are drawn only while they have a row (the owner's
+// note 1, 25 Nov).
 // The trash (v65, models slice 3; views/models/trash.js): the footer row
 // "Deleted models" with the disk's trash figures and the way into
 // #/models/deleted, and the panel's Delete model (a dry run, the name typed,
@@ -49,7 +51,6 @@ import { trashFooter, hasTrash, deleteModel, deletedText, mountTrash } from './m
 // the reasons of what is drawn but not built yet (p7-models-backend-STATUS.md)
 export const NOT_YET = {
   add: 'Adding a model from this page is not built yet. Put the .gguf file in the models folder and it appears here.',
-  downloads: 'Downloads are not built yet: a model added from this page would show its progress here.',
   pin: 'Pins are not available: this scheduler is older than v61 (models slice 2).',
   del: 'Deleting a model needs a scheduler of v65 or later (models slice 3): this one is older, or its models folder figures are not read yet.',
   trash: 'Deleted models need a scheduler of v65 or later (models slice 3): this one is older.',
@@ -288,13 +289,13 @@ function listPanel(st, models, disk, error, r, query, setQuery, onFind, done) {
         filter, id => setQuery({ show: id === 'all' ? '' : id })) : null,
       filterSelect('Sort', SORTS.map(([id, label]) => ({ id, label })), sort, id => setQuery({ sort: id === 'used' ? '' : id })),
       off('button.btn.pri', NOT_YET.add, { 'data-act': 'add' }, icon('M10 4v12M4 10h12'), 'Add a model')),
-    sec('Downloading', h('span.lbl.mdl-off', 'not built yet'), { 'data-sec': 'downloading', title: NOT_YET.downloads }),
+    // Downloading: drawn only while something downloads (the owner's note 1);
+    // no download is fed today (p7-models-backend-STATUS.md M2), so never yet
     pinErr ? h('div.banner.err', { role: 'alert', 'data-pin-err': '' }, h('span.grow', pinErr)) : null,
     done ? h('div.banner.info', { role: 'status', 'data-trash-done': '' }, h('span.grow', done), h('a', { href: href('models', ['deleted']) }, 'View deleted models')) : null,
-    pins
-      ? [sec('Pinned', pinnedRows.length ? null : h('span.lbl.mut', 'No pinned model' + (q || filter !== 'all' ? ' matches' : '') + '. The star on a row pins it.'), { 'data-sec': 'pinned' }),
-        pinnedRows.length ? [heads(), h('div.mdl-rows', { role: 'list', 'aria-label': 'Pinned models', 'data-pinned-rows': '' }, pinnedRows.map(rowOf))] : null]
-      : sec('Pinned', h('span.lbl.mdl-off', 'not built yet'), { 'data-sec': 'pinned', title: NOT_YET.pin }),
+    // Pinned: only while a model in the list is pinned (the owner's note 1)
+    pinnedRows.length ? [sec('Pinned', null, { 'data-sec': 'pinned' }), heads(),
+      h('div.mdl-rows', { role: 'list', 'aria-label': 'Pinned models', 'data-pinned-rows': '' }, pinnedRows.map(rowOf))] : null,
     sec('All models', models ? diskLine(models, disk) : null, { 'data-sec': 'all' }),
     restRows.length ? heads() : null,
     body,

@@ -26,12 +26,12 @@ func TestUINextModels(t *testing.T) {
 	off := func(sel, reason string) string { return sel + "[aria-disabled=true][data-off][title^=" + reason + "]" }
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
 		map[string]any{"name": "models: the list", "route": "#/models", "status": st,
-			"expect": []string{"Models", "Sort: last used", "Add a model", "Downloading", "Pinned", "All models",
+			"expect": []string{"Models", "Sort: last used", "Add a model", "Pinned", "All models",
 				"5 model files · 50.3 of 240 GB used", mdlLoaded, "16.5 GB", "2 profiles", "Now", mdlRecent, "10.1 GB", "1 profile",
 				mdlNoProfs, "0.3 GB", "No profiles", "Never", "Deleted models", "Needs", "17.1 GB", "measured", "5.1 GB", "estimated"},
 			"order": []string{mdlLoaded, mdlRecent, mdlOlder, mdlNoProfs, mdlNever, "Deleted models"},
 			"has": []string{off("button.btn.pri[data-act=add]", "Adding"), "button.star[aria-pressed=true]", off("button.tbar[data-act=trash]", "Deleted"),
-				"div.sech[data-sec=downloading][title^=Downloads]", "div.sech[data-sec=pinned]", "label.sx input",
+				"label.sx input",
 				"span.mdl-disk[data-disk]", "select.fs[aria-label=Sort]", "select.fs[aria-label=Show]",
 				"div.mr[data-model='" + mdlNoProfs + "'] span.mdl-needs span.mut"},
 			"none": []string{"div.mr.sel", "span.mdl-disk.full"}, "absent": designSamples},

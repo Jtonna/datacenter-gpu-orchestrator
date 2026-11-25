@@ -19,3 +19,29 @@ func TestUINextNotesMenuHasNoHealthCard(t *testing.T) {
 	}
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": cases})
 }
+
+// Note 1: "Downloading" and "Pinned" show only when something is
+// downloading or pinned: no empty group, no "not built yet" line.
+func TestUINextNotesOnlyGroupsWithRows(t *testing.T) {
+	fetch := fixtureAnswers(t, []string{"--models", "five"}, "/api/models", "/api/status")
+	st := fetch["/api/status"]
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
+		map[string]any{"name": "notes 1: two pinned models, nothing downloading", "route": "#/models", "status": st,
+			"has": []string{"div.sech[data-sec=pinned]", "div.mdl-rows[data-pinned-rows]", "div.sech[data-sec=all]"},
+			"none": []string{"div.sech[data-sec=downloading]"}, "absent": []string{"Downloading", "not built yet"}},
+		map[string]any{"name": "notes 1: no pinned model in the search", "route": "#/models?q=nomic", "status": st,
+			"none": []string{"div.sech[data-sec=pinned]", "div.sech[data-sec=downloading]"}, "absent": []string{"No pinned model", "The star on a row pins it"}},
+	}})
+}
+
+// Note 4: no page header line ("Models · 0 ready · 0 loading · 16 in the
+// catalog"); the page shows its content only. A screen reader still gets
+// the page's name.
+func TestUINextNotesNoPageHeader(t *testing.T) {
+	fetch := fixtureAnswers(t, []string{"--models", "five"}, "/api/models", "/api/status")
+	st := fetch["/api/status"]
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
+		map[string]any{"name": "notes 4: no header line", "route": "#/models", "status": st,
+			"none": []string{"div.page-head"}, "has": []string{"h1.sr"}, "absent": []string{"in the catalog", " ready · "}},
+	}})
+}
