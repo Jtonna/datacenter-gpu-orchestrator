@@ -20,7 +20,7 @@ func TestFillReports_ReadAfterNeedsTheReportBefore(t *testing.T) {
 	}
 	var l fillReports
 	l.note(&StatusInfo{Workers: []WorkerInfo{w(t0.Add(-1900*time.Millisecond), 0)}}) // before the turn ended
-	first := w(t0.Add(50*time.Millisecond), 0)                                         // received 50 ms after: read maybe before
+	first := w(t0.Add(50*time.Millisecond), 0)                                       // received 50 ms after: read maybe before
 	l.note(&StatusInfo{Workers: []WorkerInfo{first}})
 	if lo, ok := l.readAfter(first); !ok || lo.After(t0) {
 		t.Fatalf("the first report after the end proves nothing: lower bound %v ok %v", lo, ok)
