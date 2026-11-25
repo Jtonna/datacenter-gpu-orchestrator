@@ -31,6 +31,7 @@ import (
 // estimate, a measurement learned this run when there is one, else needs_mib.
 type forcedFit struct {
 	mode     string // config.ForcedFitWarn or config.ForcedFitReject
+	rule     string // why the check runs, in plain words (fitRule)
 	need     int    // MiB, with the estimate margin where it is an estimate
 	free     int    // MiB usable, summed over the forced nodes
 	measured bool   // need is measured (needs_mib or learned), not an estimate
@@ -73,7 +74,7 @@ func (c *schedCore) forcedFitCheck(p *core.Profile, pl core.Placement) *forcedFi
 // loaded on them (fitUsable). With empty it also returns nil when such a
 // figure cannot be told.
 func (c *schedCore) forcedFitCheckOn(p *core.Profile, pl core.Placement, empty bool) *forcedFit {
-	mode := c.cfg.Defaults.ForcedFitCheck
+	mode, rule := c.fitRule(p)
 	if (mode != config.ForcedFitWarn && mode != config.ForcedFitReject) || len(p.ForceNodes) == 0 || len(pl.Nodes) == 0 {
 		return nil
 	}
@@ -81,7 +82,7 @@ func (c *schedCore) forcedFitCheckOn(p *core.Profile, pl core.Placement, empty b
 	if err != nil {
 		return nil
 	}
-	f := &forcedFit{mode: mode, need: info.Need.WithMargin(), measured: info.Need.Measured, basis: c.needBasis(info), empty: empty}
+	f := &forcedFit{mode: mode, rule: rule, need: info.Need.WithMargin(), measured: info.Need.Measured, basis: c.needBasis(info), empty: empty}
 	for _, pn := range pl.Nodes {
 		n, ok := c.node(pn.ID)
 		if !ok {
@@ -217,7 +218,7 @@ func emptyWords(empty bool, what string) string {
 // forcedFitErr is the refusal for reject mode: 503, like the other
 // placement refusals. Free memory can change, so it carries a Retry-After.
 func (f *forcedFit) err(profile string) *Error {
-	e := err503(ReasonForcedDoesNotFit, f.message(profile)+" (defaults.forced_fit_check is reject)", queueRetryAfter)
+	e := err503(ReasonForcedDoesNotFit, f.message(profile)+" ("+f.rule+")", queueRetryAfter)
 	e.NeedMiB, e.CapacityMiB = f.need, f.free
 	return e
 }
@@ -397,7 +398,8 @@ func (c *schedCore) forcedRefusalBeforeEvict(p *core.Profile, pl core.Placement)
 //   - a forced node's memory figure is unknown (that stays a wait);
 //   - every forced node is free: the start path checks the real figures in
 //     the same step (pre-flight in fleet membership, agentForcedGate in
-//     agents membership).
+//     agents membership). A scoped profile is checked here as well, so its
+//     load and its plan answer the refusal at once (scoped.go fitRule).
 func (c *schedCore) forcedNeverFits(p *core.Profile) *Error {
 	if len(p.ForceNodes) == 0 {
 		return nil
@@ -424,7 +426,8 @@ func (c *schedCore) forcedNeverFits(p *core.Profile) *Error {
 		}
 		pl.Nodes = append(pl.Nodes, core.PlacedNode{ID: id, Addr: n.Addr, Local: n.Local, BudgetMiB: budget})
 	}
-	if allFree {
+	_, _, scoped := c.scopeOf(p.Name)
+	if allFree && !scoped {
 		return nil
 	}
 	if len(p.TensorSplit) > 0 {
@@ -432,6 +435,9 @@ func (c *schedCore) forcedNeverFits(p *core.Profile) *Error {
 	}
 	if e := c.forcedRefusalBeforeEvict(p, pl); e != nil {
 		return e
+	}
+	if allFree { // a scoped profile: refused up front on the free zones it names, not at the pre-flight (fitRule)
+		return nil
 	}
 	return c.shortEvenFreed(p, pl) // neverfits.go: the owner's case
 }
