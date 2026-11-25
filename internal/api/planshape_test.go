@@ -24,8 +24,12 @@ func TestPlanSaysWhichProfilesShareTheShape(t *testing.T) {
 	if st != 200 {
 		t.Fatalf("%d %v", st, m)
 	}
-	if fmt.Sprint(m["shape_shared_with"]) != "[map[generated:true id:bench-p1] map[generated:false id:p2]]" || m["ctx"] != float64(2048) || m["parallel"] != float64(1) {
-		t.Fatalf("%v %v %v", m["shape_shared_with"], m["ctx"], m["parallel"])
+	if fmt.Sprint(m["shape_shared_with"]) != "[map[generated:true id:bench-p1] map[generated:false id:p2]]" || m["ctx"] != float64(2048) || m["parallel"] != float64(1) || m["generated"] != false {
+		t.Fatalf("%v %v %v %v", m["shape_shared_with"], m["ctx"], m["parallel"], m["generated"])
+	}
+	// the profile itself: generated or written
+	if _, g := e.cdo("POST", "/api/plan", `{"model":"bench-p1"}`, nil); g["generated"] != true {
+		t.Fatalf("bench-p1 generated: %v", g["generated"])
 	}
 	_, m = e.cdo("POST", "/api/plan", `{"model":"p3"}`, nil)
 	if fmt.Sprint(m["shape_shared_with"]) != "[]" || m["ctx"] != float64(4096) {

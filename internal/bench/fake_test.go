@@ -113,8 +113,9 @@ type fakeAPI struct {
 	madeN    int // EnsureProfile calls
 	makeErr  error
 	// context_fill: the plan's ctx and shape_shared_with (nil: not said).
-	planCtx     int
-	shapeShared *[]SharedProfile
+	planCtx       int
+	shapeShared   *[]SharedProfile
+	planGenerated *bool // the plan's generated for the profile itself (nil: not said)
 }
 
 func (f *fakeAPI) Consoles(ctx context.Context) ([]Console, error) {
@@ -203,7 +204,7 @@ func (f *fakeAPI) Plan(ctx context.Context, model string) (*PlanInfo, error) {
 		s := append([]SharedProfile{}, *f.shapeShared...)
 		shared = &s
 	}
-	return &PlanInfo{Action: "start", Nodes: append([]string(nil), nodes...), LoadMode: f.loadMode, Reload: append([]NodeReload(nil), f.reload...), Ctx: f.planCtx, SharedWith: shared,
+	return &PlanInfo{Action: "start", Nodes: append([]string(nil), nodes...), LoadMode: f.loadMode, Reload: append([]NodeReload(nil), f.reload...), Ctx: f.planCtx, SharedWith: shared, Generated: f.planGenerated,
 		Raw: json.RawMessage(`{"model":"` + model + `","action":"start"}`)}, nil
 }
 

@@ -34,6 +34,8 @@ func fillMgr(t *testing.T, api *fakeAPI, mod ...func(*ManagerOptions)) *testMgr 
 	api.planCtx = 4096
 	shared := []SharedProfile{}
 	api.shapeShared = &shared
+	gen := true // the fixed profiles of these tests stand for generated ones
+	api.planGenerated = &gen
 	return newTestMgr(t, api, append([]func(*ManagerOptions){func(o *ManagerOptions) { o.MemSample = 5 * time.Millisecond }}, mod...)...)
 }
 
@@ -224,23 +226,33 @@ func TestContextFill_StopLineDuringATurn(t *testing.T) {
 // before anything loads; shared only with generated profiles, or with the
 // check off, it runs; a scheduler that does not say refuses too.
 func TestContextFill_RefusesASharedShape(t *testing.T) {
+	t1, f0 := true, false
+	yes, no := &t1, &f0
 	for _, c := range []struct {
 		name    string
 		shared  *[]SharedProfile
+		gen     *bool // the plan's generated for the step's own profile (nil: not said)
 		opt     string
 		outcome string
 		why     string
 	}{
-		{"a person's profile", &[]SharedProfile{{ID: "small-8k", Generated: false}, {ID: "bench-x", Generated: true}}, "", OutcomeRefused, "small-8k"},
-		{"generated only", &[]SharedProfile{{ID: "bench-x", Generated: true}}, "", OutcomeReady, ""},
-		{"check off", &[]SharedProfile{{ID: "small-8k"}}, `,"refuse_shared_shape":false`, OutcomeReady, ""},
-		{"not said", nil, "", OutcomeRefused, "does not say"},
+		{"a person's profile", &[]SharedProfile{{ID: "small-8k", Generated: false}, {ID: "bench-x", Generated: true}}, yes, "", OutcomeRefused, "small-8k"},
+		{"generated only", &[]SharedProfile{{ID: "bench-x", Generated: true}}, yes, "", OutcomeReady, ""},
+		{"check off", &[]SharedProfile{{ID: "small-8k"}}, yes, `,"refuse_shared_shape":false`, OutcomeReady, ""},
+		{"not said", nil, yes, "", OutcomeRefused, "does not say"},
+		// The step's own profile: a written one is refused, with the check off
+		// too; a generated one runs; a plan that does not say is refused.
+		{"own profile written", &[]SharedProfile{}, no, "", OutcomeRefused, "profile small is a profile a person wrote"},
+		{"own profile written, check off", &[]SharedProfile{}, no, `,"refuse_shared_shape":false`, OutcomeRefused, "use the recipe"},
+		{"own profile generated", &[]SharedProfile{}, yes, "", OutcomeReady, ""},
+		{"own profile not said", &[]SharedProfile{}, nil, "", OutcomeRefused, "does not say whether profile small was generated"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			api := newFake().prof("small", fakeProf{chatFn: recallingFill})
 			tm := fillMgr(t, api)
 			api.mu.Lock()
 			api.shapeShared = c.shared
+			api.planGenerated = c.gen
 			api.mu.Unlock()
 			tm.bench(`{"id":"fill","profile":"small","phases":[{"type":"load"},{"type":"context_fill","marks_pct":[25]` + c.opt + `},{"type":"unload"}]}`)
 			tm.suite(`{"id":"s","benchmarks":["fill"],"cooldown_s":0,"only_when_idle":false}`)

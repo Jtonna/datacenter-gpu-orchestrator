@@ -845,6 +845,9 @@ func addShapeFacts(v map[string]any, cfg *config.Config, model string) {
 	if _, has := v["parallel"]; !has {
 		v["parallel"] = max(p.Parallel, 1)
 	}
+	if _, has := v["generated"]; !has {
+		v["generated"] = IsGeneratedProfile(p.Name, p.Generated)
+	}
 	shared := []map[string]any{}
 	for _, n := range scheduler.ProfilesOfShape(cfg, p.Name) {
 		if n == p.Name {

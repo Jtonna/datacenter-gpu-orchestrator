@@ -147,7 +147,7 @@ func Schema() *SchemaDoc {
 				{Name: "seed", Type: "integer", Default: DefaultFillSeed, Description: "Seed of the filler and the facts; also the sampling seed."},
 				{Name: "max_tokens", Type: "integer", Default: DefaultFillAnswerTok, Min: 1, Max: MaxFillAnswerTok, Unit: "tokens", Description: "The answer budget of the last turn (earlier turns answer in at most 8 tokens)."},
 				{Name: "stop_available_mib", Type: "integer", Default: DefaultStopAvailMiB, Min: MinStopAvailMiB, Max: MaxStopAvailMiB, Unit: "MiB", Description: "Stop the step when any machine's available memory falls, or would fall with the next turn, below this."},
-				{Name: "refuse_shared_shape", Type: "boolean", Default: true, Description: "Refuse the step when a profile a person wrote has the same shape (model, context, parallel and options), so the fill's memory peak cannot move that profile's plan."},
+				{Name: "refuse_shared_shape", Type: "boolean", Default: true, Description: "Refuse the step when a profile a person wrote has the same shape (model, context, parallel and options), so the fill's memory peak cannot move that profile's plan. Whatever it says, a step whose own profile a person wrote is always refused: use the recipe."},
 			}},
 		{Type: PhaseHold, Title: "Hold", Description: "Keep the model loaded and idle for a while, then send one request to see how it behaves after the idle time.",
 			Records: []string{"held_s", "decode_tps", "prefill_tps", "ttft_ms"}, Options: []Option{

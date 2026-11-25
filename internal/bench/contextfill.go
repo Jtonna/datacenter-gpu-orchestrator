@@ -89,18 +89,30 @@ const fillMinKiBPerToken = 8.0
 // fillShortAnswer is the answer budget of the turns before the last.
 const fillShortAnswer = 8
 
-// sharedShapeRefusal is why the step is refused before anything loads: it
-// has a context_fill phase that refuses a shared shape, and the plan names a
-// profile a person wrote (not a generated one) with the same shape, or does
-// not say. Empty: go on.
+// sharedShapeRefusal is why the step is refused before anything loads. A
+// step with a context_fill phase never runs on a profile a person wrote: its
+// memory peak would become that profile's stored peak. So it is refused,
+// whatever refuse_shared_shape says, when its own profile is not generated
+// or the plan does not say; and, with refuse_shared_shape (the default),
+// when the plan names a written profile of the same shape, or does not say
+// which profiles share it. Empty: go on.
 func sharedShapeRefusal(b *benchspec.Benchmark, plan *PlanInfo) string {
-	wants := false
+	fills, wants := false, false
 	for _, p := range b.Expand() {
-		if p.Type == benchspec.PhaseContextFill && p.RefusesSharedShape() {
-			wants = true
+		if p.Type == benchspec.PhaseContextFill {
+			fills = true
+			wants = wants || p.RefusesSharedShape()
 		}
 	}
-	if !wants {
+	if !fills {
+		return ""
+	}
+	switch {
+	case plan.Generated == nil:
+		return fmt.Sprintf("context_fill refuses to run: the scheduler's plan does not say whether profile %s was generated (an older scheduler), and a fill must never run on a profile a person wrote; use the recipe context-fill-recipe on a newer scheduler", b.Profile)
+	case !*plan.Generated:
+		return fmt.Sprintf("context_fill refuses to run: profile %s is a profile a person wrote, and the fill's memory peak would become its stored peak; use the recipe context-fill-recipe, which makes a generated profile, at a context no written profile has", b.Profile)
+	case !wants:
 		return ""
 	}
 	if plan.SharedWith == nil {

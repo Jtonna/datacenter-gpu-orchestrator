@@ -90,7 +90,10 @@ type PlanInfo struct {
 	Ctx        int
 	Parallel   int
 	SharedWith *[]SharedProfile
-	Raw        json.RawMessage
+	// Generated is whether the profile itself was generated (made from a
+	// recipe's inputs or by a benchmark); nil when the plan does not say.
+	Generated *bool
+	Raw       json.RawMessage
 }
 
 // SharedProfile is a profile of shape_shared_with; Generated is set for a
@@ -351,6 +354,7 @@ func (h *HTTPAPI) Plan(ctx context.Context, model string) (*PlanInfo, error) {
 		Ctx        int              `json:"ctx"`
 		Parallel   int              `json:"parallel"`
 		SharedWith *[]SharedProfile `json:"shape_shared_with"`
+		Generated  *bool            `json:"generated"`
 		LoadMode   string           `json:"load_mode"`
 		Reload     []struct {
 			ID        string   `json:"id"`
@@ -371,7 +375,7 @@ func (h *HTTPAPI) Plan(ctx context.Context, model string) (*PlanInfo, error) {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, fmt.Errorf("/api/plan: %w", err)
 	}
-	info := &PlanInfo{Action: p.Action, Reason: p.Reason, Raw: raw, LoadMode: p.LoadMode, Ctx: p.Ctx, Parallel: p.Parallel, SharedWith: p.SharedWith}
+	info := &PlanInfo{Action: p.Action, Reason: p.Reason, Raw: raw, LoadMode: p.LoadMode, Ctx: p.Ctx, Parallel: p.Parallel, SharedWith: p.SharedWith, Generated: p.Generated}
 	for _, r := range p.Reload {
 		info.Reload = append(info.Reload, NodeReload{ID: r.ID, Node: r.ID, Verdict: r.Verdict, CachedPct: r.CachedPct, Shared: r.Shared,
 			FileMiB: r.FileMiB, ModelMiB: r.ModelMiB, MemoryMiB: r.MemoryMiB, MarginMiB: r.MarginMiB,
