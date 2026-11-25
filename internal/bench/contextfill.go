@@ -152,20 +152,24 @@ const fillNoHistoryKiBPerToken = 12.0
 // it came from: the highest stored reading for the plan's shape, or 12 with
 // no history; never less than fill_reserve_kib_per_token.
 func fillGrowthFloor(plan *PlanInfo) (float64, string) {
-	h, basis := fillNoHistoryKiBPerToken, "no history: 12 KiB per token"
+	h, basis := fillNoHistoryKiBPerToken, "no history for this shape: 12 KiB per token"
+	lower := "no history for this shape; 12 is lower"
 	switch g := plan.Growth; {
 	case g == nil:
 		basis = "no history (the scheduler does not report it): 12 KiB per token"
+		lower = "the scheduler does not report history; 12 is lower"
 	case g.Readings > 0:
 		h = g.KiBPerToken
 		word := "readings"
 		if g.Readings == 1 {
 			word = "reading"
 		}
-		basis = fmt.Sprintf("highest of %d %s for this shape: %s KiB per token", g.Readings, word, kibStr(h))
+		// Each row keeps its latest 16 cycles (growthKeep): "highest ever" would be untrue.
+		basis = fmt.Sprintf("highest of the latest 16 cycles' readings for this shape (%d %s): %s KiB per token", g.Readings, word, kibStr(h))
+		lower = fmt.Sprintf("the highest reading, %s, is lower", kibStr(h))
 	}
 	if s := plan.ReserveKiB; s != nil && float64(*s) > h {
-		return float64(*s), fmt.Sprintf("the setting fill_reserve_kib_per_token: %d KiB per token (%s)", *s, basis)
+		return float64(*s), fmt.Sprintf("the setting: %d KiB per token (%s)", *s, lower)
 	}
 	return h, basis
 }

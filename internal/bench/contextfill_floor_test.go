@@ -35,11 +35,11 @@ func TestContextFill_GrowthFloor(t *testing.T) {
 		floor   float64
 		basis   string
 	}{
-		{"no history", &GrowthHistory{}, intp(8), 12, "no history: 12 KiB per token"},
+		{"no history", &GrowthHistory{}, intp(8), 12, "no history for this shape: 12 KiB per token"},
 		{"history below the setting", &GrowthHistory{KiBPerToken: 5.78, Readings: 2}, intp(8), 8,
-			"the setting fill_reserve_kib_per_token: 8 KiB per token (highest of 2 readings for this shape: 5.78 KiB per token)"},
-		{"history above the setting", &GrowthHistory{KiBPerToken: 9.73, Readings: 4}, intp(8), 9.73, "highest of 4 readings for this shape: 9.73 KiB per token"},
-		{"no history, setting above 12", &GrowthHistory{}, intp(16), 16, "the setting fill_reserve_kib_per_token: 16 KiB per token (no history: 12 KiB per token)"},
+			"the setting: 8 KiB per token (the highest reading, 5.78, is lower)"},
+		{"history above the setting", &GrowthHistory{KiBPerToken: 9.73, Readings: 4}, intp(8), 9.73, "highest of the latest 16 cycles' readings for this shape (4 readings): 9.73 KiB per token"},
+		{"no history, setting above 12", &GrowthHistory{}, intp(16), 16, "the setting: 16 KiB per token (no history for this shape; 12 is lower)"},
 		{"an older scheduler", nil, nil, 12, "no history (the scheduler does not report it): 12 KiB per token"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -68,7 +68,7 @@ func TestContextFill_StopRefusalNamesTheGrowthFigure(t *testing.T) {
 	if st.Outcome != OutcomeFailed || len(f.Marks) != 0 {
 		t.Fatalf("%s %q, %d marks", st.Outcome, st.Reason, len(f.Marks))
 	}
-	for _, want := range []string{"stopped at the stop line before the turn to 25 %", "at 9.73 KiB per token (highest of 4 readings for this shape: 9.73 KiB per token)", "below the stop line of 3,000 MiB"} {
+	for _, want := range []string{"stopped at the stop line before the turn to 25 %", "at 9.73 KiB per token (highest of the latest 16 cycles' readings for this shape (4 readings): 9.73 KiB per token)", "below the stop line of 3,000 MiB"} {
 		if !strings.Contains(f.StoppedBecause, want) || !strings.Contains(st.Reason, want) {
 			t.Fatalf("refusal %q lacks %q", f.StoppedBecause, want)
 		}
@@ -83,7 +83,7 @@ func TestContextFill_ReasoningAndRecallNoteAlwaysWritten(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"reasoning_chars":0`, `"recall_note":""`, `"growth_floor_kib_per_token":12`, `"growth_floor_basis":"no history: 12 KiB per token"`} {
+	for _, want := range []string{`"reasoning_chars":0`, `"recall_note":""`, `"growth_floor_kib_per_token":12`, `"growth_floor_basis":"no history for this shape: 12 KiB per token"`} {
 		if !strings.Contains(string(b), want) {
 			t.Fatalf("fill result lacks %s: %s", want, b)
 		}
