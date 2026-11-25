@@ -5,6 +5,7 @@ package modelfiles
 import (
 	"fmt"
 	"io/fs"
+	"os"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -46,6 +47,16 @@ func unlinkChecked(root, id, name string, checked fs.FileInfo) error {
 	fd, err := unix.Openat(idFD, name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return fmt.Errorf("%w: %s could not be opened without following a link: %v", ErrNotRegular, name, err)
+	}
+	// the file open now resolves inside the models folder, at .trash/<id>/<name>
+	got, rerr := os.Readlink(fmt.Sprintf("/proc/self/fd/%d", fd))
+	if rerr != nil {
+		unix.Close(fd)
+		return fmt.Errorf("%w: where %s resolves cannot be read: %v", ErrUnsafe, name, rerr)
+	}
+	if err := checkResolved(root, id, name, got); err != nil {
+		unix.Close(fd)
+		return err
 	}
 	var fst unix.Stat_t
 	err = unix.Fstat(fd, &fst)

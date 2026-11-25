@@ -31,5 +31,12 @@ func unlinkChecked(root, id, name string, checked fs.FileInfo) error {
 	if !os.SameFile(st, checked) {
 		return fmt.Errorf("%w: %s changed while it was being removed", ErrChanged, name)
 	}
+	got, err := filepath.EvalSymlinks(p) // the path resolves inside the models folder, at .trash/<id>/<name>
+	if err != nil {
+		return fmt.Errorf("%w: where %s resolves cannot be read: %v", ErrUnsafe, name, err)
+	}
+	if err := checkResolved(root, id, name, got); err != nil {
+		return err
+	}
 	return os.Remove(p)
 }

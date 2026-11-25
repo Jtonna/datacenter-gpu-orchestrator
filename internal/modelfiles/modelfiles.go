@@ -344,6 +344,29 @@ func (d Dir) TrashWritable(id string) error {
 // and before its last check and the unlink (a swap acted out there).
 var afterCheck func()
 
+// resolvedHook is a test hook: it replaces the resolved path of the file
+// open at the moment of removal (checkResolved).
+var resolvedHook func(got string) string
+
+// checkResolved is the last check before the unlink: got, the path the file
+// open at that moment resolves to, must be <models>/.trash/<id>/<name> with
+// the models folder itself resolved (it may be reached by a link). Anything
+// else is ErrUnsafe.
+func checkResolved(root, id, name, got string) error {
+	if resolvedHook != nil {
+		got = resolvedHook(got)
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return fmt.Errorf("%w: the models folder cannot be resolved: %v", ErrUnsafe, err)
+	}
+	want := filepath.Join(realRoot, TrashDir, id, name)
+	if filepath.Clean(got) != want {
+		return fmt.Errorf("%w: %s resolves to %s, not to %s inside the models folder", ErrUnsafe, name, got, want)
+	}
+	return nil
+}
+
 // RemoveTrashed erases the regular file <models>/.trash/<id>/<name>: the
 // only file removal there is (models slice 4). size >= 0 must be its size
 // (the size recorded when it was deleted), else ErrChanged and nothing is
