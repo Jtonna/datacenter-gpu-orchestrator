@@ -509,6 +509,9 @@ func (c *schedCore) forceUnload(id core.NodeID) forceResult {
 			ws := in.waiters
 			in.waiters = nil
 			why := fmt.Sprintf("force unload of node %s", id)
+			if in.inFlight > 0 {
+				in.markCut(cutAnswer(in.prof.Name, why))
+			}
 			c.stopFor(in, stopKill, why)
 			c.failAll(ws, err502(fmt.Sprintf("loading %s was ended by the %s", in.prof.Name, why), nil))
 			return forceResult{profile: in.prof.Name}

@@ -580,9 +580,29 @@ func (s *Server) handleV1(w http.ResponseWriter, r *http.Request) {
 		bodyLen = ex.BufferedBytes()
 	}
 	res = proxy.Forward(w, r, proxy.Options{Addr: lease.Addr, Body: ex.Body, BodyLen: bodyLen, StallTimeout: lease.StallTimeout,
-		APIKey: lease.APIKey, Gone: lease.Gone, Live: live})
+		APIKey: lease.APIKey, Gone: lease.Gone, Live: live, CutBy: cutByOf(lease)})
 	if res.Aborted {
 		panic(http.ErrAbortHandler)
+	}
+}
+
+// cutByOf is what the proxy tells a request whose instance was stopped on
+// purpose while it ran (scheduler Lease.CutBy): the 503 unloaded answer a
+// loading or queued caller gets, written the same way (writeSchedError).
+func cutByOf(l *scheduler.Lease) func() *proxy.CutAnswer {
+	if l == nil || l.CutBy == nil {
+		return nil
+	}
+	return func() *proxy.CutAnswer {
+		e := l.CutBy()
+		if e == nil {
+			return nil
+		}
+		msg := string(e.Reason)
+		if e.Message != "" {
+			msg += ": " + e.Message
+		}
+		return &proxy.CutAnswer{Status: e.Status, Message: msg, Type: errType(e.Status), Reason: string(e.Reason), RetryAfter: e.RetryAfter}
 	}
 }
 

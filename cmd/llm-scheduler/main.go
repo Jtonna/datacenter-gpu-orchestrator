@@ -24,7 +24,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -45,6 +44,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/instance"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/logrelay"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/mcpserver"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelpath"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/needstore"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/pool"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/release"
@@ -108,7 +108,11 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 // estimate that is several times too high.
 func warnSlidingWindow(cfg *config.Config, log *slog.Logger) {
 	for _, p := range cfg.ProfilesWithoutNeedsMiB() {
-		path := filepath.Join(cfg.ModelsDir, p.Model)
+		path, err := modelpath.Join(cfg.ModelsDir, p.Model)
+		if err != nil {
+			log.Warn("profile's model path is refused; its load will be refused", "profile", p.Name, "err", err)
+			continue
+		}
 		meta, err := gguf.ReadMeta(path)
 		if err != nil {
 			log.Warn("cannot read GGUF metadata; the memory estimate will fail for this profile", "profile", p.Name, "model", path, "err", err)

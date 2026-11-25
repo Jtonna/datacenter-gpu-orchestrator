@@ -14,6 +14,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelpath"
 )
 
 // managedFlags are the llama-server flags the scheduler sets itself
@@ -137,6 +138,8 @@ func (c *Config) validateLlama(p *core.Profile, r *ProfileSpec, pf func(field, f
 	}
 	if p.Model == "" {
 		pf("model", "is required")
+	} else if err := modelpath.Check(p.Model); err != nil && !modelOK(p) {
+		pf("model", "%v", err) // the path rule; a stored profile that keeps its path passes (modelCheck)
 	} else if !modelOK(p) {
 		note := ""
 		if c.modelNote != nil {

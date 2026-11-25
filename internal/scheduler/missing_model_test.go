@@ -1,6 +1,9 @@
 package scheduler
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -27,5 +30,32 @@ func TestMissingModelFileReasonNamesTheFile(t *testing.T) {
 	r := h.c.dryPlan("m")
 	if r.Action != PlanReject || !strings.Contains(r.Reason, `model file "gone.gguf" is missing`) {
 		t.Fatalf("plan %s: %s", r.Action, r.Reason)
+	}
+}
+
+// A stored profile whose model path the path rule refuses (a dot-folder of
+// models_dir, such as the trash) is kept like a missing file (cfgsvc) and its
+// load is refused the same way, even when the file is really there.
+func TestRefusedModelPathIsNotLoaded(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".trash", "0123"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".trash", "0123", "a.gguf"), []byte("GGUF"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, needs := range []int{0, 4000} { // estimated and measured
+		c := &ConfigNeeds{Cfg: &config.Config{ModelsDir: dir}}
+		_, err := c.Need(&core.Profile{Name: "m", Kind: core.KindLlama, Model: ".trash/0123/a.gguf", Ctx: 1024, Parallel: 1, NeedsMiB: needs})
+		if err == nil || !strings.Contains(err.Error(), "starts with a dot") {
+			t.Fatalf("needs_mib %d: %v, want the load refused by the path rule", needs, err)
+		}
+		if c.HeaderReady(".trash/0123/a.gguf") {
+			t.Fatal("a refused path has a header")
+		}
+		c.Warm(context.Background(), []string{".trash/0123/a.gguf", "../x.gguf"})
+		if c.reads != 0 {
+			t.Fatalf("Warm read %d headers of refused paths", c.reads)
+		}
 	}
 }

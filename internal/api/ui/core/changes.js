@@ -93,7 +93,9 @@ export function noticeBanner(notice, o) {
 
 // ---------- review and save ----------
 
-// reviewChanges({title, intro, saveLabel, getRevision, buildOps, reload, onInvalid}) -> Promise of
+// o.requireComment: the save stays off until a comment is written (a profile
+// saved from the Models panel or the profile editor: views/profiles.js saveProfile).
+// reviewChanges({title, intro, saveLabel, getRevision, buildOps, reload, onInvalid, requireComment}) -> Promise of
 //   {saved, partial, revision, restart_required, changed} or undefined when closed unsaved.
 // An op is {label, method, path, body, params, forceable, count (how many changes it holds), summary (a node shown above the diff)}. A forceable op (delete of
 // a profile) is sent with force=1 once the user ticked the box next to its warnings.
@@ -107,6 +109,9 @@ function body(o, close) {
   let ops = o.buildOps();
   const st = { phase: 'dry', res: [], messages: [], current: null, entries: null, error: '', force: false, done: [], result: null };
 
+  let saveBtn = null, saveOff = false;
+  const noComment = () => !!o.requireComment && !comment.value.trim();
+  comment.addEventListener('input', () => { if (saveBtn) saveBtn.disabled = saveOff || noComment(); });
   const payload = op => (op.body && typeof op.body === 'object' && !Array.isArray(op.body) ? Object.assign({}, op.body, { comment: comment.value.trim() || undefined }) : op.body);
 
   async function dry() {
@@ -145,6 +150,7 @@ function body(o, close) {
   }
 
   async function save() {
+    if (noComment()) { comment.focus(); return; }
     st.phase = 'saving'; st.done = []; draw();
     saving++;
     let rev = o.getRevision();
@@ -200,11 +206,11 @@ function body(o, close) {
         if (st.force) box.checked = true;
         kids.push(h('label.check', box, h('span', 'I understand. Delete it anyway.')));
       }
-      kids.push(h('div.field', h('label', 'Comment'), comment));
-      kids.push(h('div.dlg-foot',
-        button('Cancel', () => close(undefined), 'lg'),
-        h('button', { class: 'btn lg pri', type: 'button', disabled: st.phase === 'saving' || !changed || (needForce && !st.force), onclick: save },
-          st.phase === 'saving' ? 'Saving…' : changed ? (o.saveLabel || `Save ${plural(changed, 'change')}`) : 'Nothing to save')));
+      kids.push(h('div.field', h('label', o.requireComment ? 'Comment (required)' : 'Comment'), comment));
+      saveOff = st.phase === 'saving' || !changed || (needForce && !st.force);
+      saveBtn = h('button', { class: 'btn lg pri', type: 'button', disabled: saveOff || noComment(), onclick: save },
+        st.phase === 'saving' ? 'Saving…' : changed ? (o.saveLabel || `Save ${plural(changed, 'change')}`) : 'Nothing to save');
+      kids.push(h('div.dlg-foot', button('Cancel', () => close(undefined), 'lg'), saveBtn));
     }
     if (st.phase === 'invalid') {
       kids.push(banner('err', h('span', h('b', 'The server did not accept this. '), 'Nothing was saved.')));
