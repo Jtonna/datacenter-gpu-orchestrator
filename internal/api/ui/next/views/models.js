@@ -155,6 +155,15 @@ const dayOf = ms => { const d = new Date(ms); return `${d.getDate()} ${['Jan', '
 // prodCount(m) -> the model's production profiles (views/models/kinds.js;
 // the test and benchmark configurations are never counted with them)
 const prodCount = m => splitProfiles(m.profiles).prod.length;
+// profCell(m) -> the row's Profiles cell: "2 profiles"; for a file with no
+// production profile "No profiles yet", and smaller under it the real count
+// of its test and benchmark configurations (nothing when there are none).
+function profCell(m) {
+  const { prod, test } = splitProfiles(m.profiles);
+  if (prod.length) return h('span.mdl-pc', { 'data-prod': String(prod.length) }, prodText(prod.length));
+  return h('span.mdl-pc.mut', { 'data-prod': '0' }, 'No profiles yet',
+    test.length ? h('span.sub', { 'data-test': String(test.length) }, plural(test.length, 'test configuration')) : null);
+}
 // sizeText(m) -> "16.5 GB", or why there is none (decimal GB, as the board and the disk line)
 const gbOf = v => (v / 1e9).toLocaleString('en-US', { maximumFractionDigits: 1, minimumFractionDigits: v >= 100e9 ? 0 : 1 });
 const sizeText = m => (m.kind === 'command' ? 'A program on this machine' : m.size_bytes ? gbOf(m.size_bytes) + ' GB' : DASH);
@@ -404,7 +413,7 @@ function listPanel(st, models, disk, error, r, query, setQuery, onFind, done) {
     h('span.mut', sizeText(m), m.kind !== 'command' && m.exists === false ? h('span.err-t', ' · the file is missing') : null),
     inUse(m)),
   needsCell(m, st),
-  h('span', { class: prodCount(m) ? 'mdl-pc' : 'mdl-pc mut', 'data-prod': String(prodCount(m)) }, prodText(prodCount(m))),
+  profCell(m),
   h('span.mut.mdl-used', lastUsed(m)));
   const pinnedRows = pins ? rows.filter(m => m.pinned) : [];
   const restRows = pins ? rows.filter(m => !m.pinned) : rows;

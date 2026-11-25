@@ -127,6 +127,14 @@ func TestUINextNotesProductionProfiles(t *testing.T) {
 		map[string]any{"name": "notes 9: the row counts production profiles", "route": "#/models", "status": st,
 			"has":    []string{row + " span.mdl-pc[data-prod='2']", "div.mr[data-model='" + mdlRecent + "'] span.mdl-pc[data-prod='0']"},
 			"absent": []string{"20 profiles", "19 profiles"}},
+		// The reviewer (25 Nov): a file with no production profile reads
+		// "No profiles yet", and smaller under it the real count of its test
+		// and benchmark configurations; nothing under it when there are none.
+		map[string]any{"name": "adjust c: no production profile", "route": "#/models", "status": st,
+			"has": []string{"div.mr[data-model='" + mdlRecent + "'] span.mdl-pc[data-prod='0'] span.sub[data-test='1']",
+				"div.mr[data-model='" + mdlNoProfs + "'] span.mdl-pc[data-prod='0']"},
+			"none":   []string{"div.mr[data-model='" + mdlNoProfs + "'] span.mdl-pc span.sub", row + " span.mdl-pc span.sub"},
+			"expect": []string{"No profiles yet", "1 test configuration"}},
 		map[string]any{"name": "notes 9: the panel lists production, the rest collapsed", "route": "#/models?model=" + mdlOlder, "status": st,
 			"page": []string{"2 profiles", "18 test and benchmark configurations"},
 			"pageHas": []string{"aside.side table.mdl-ptbl tr[data-profile='gemma-4-12b']", "aside.side details.mdl-tests summary",
