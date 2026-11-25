@@ -36,7 +36,7 @@ func TestUINextNotesOnlyGroupsWithRows(t *testing.T) {
 	st := fetch["/api/status"]
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
 		map[string]any{"name": "notes 1: two pinned models, nothing downloading", "route": "#/models", "status": st,
-			"has": []string{"div.sech[data-sec=pinned]", "div.mdl-rows[data-pinned-rows]", "div.sech[data-sec=all]"},
+			"has":  []string{"div.sech[data-sec=pinned]", "div.mdl-rows[data-pinned-rows]", "div.sech[data-sec=all]"},
 			"none": []string{"div.sech[data-sec=downloading]"}, "absent": []string{"Downloading", "not built yet"}},
 		map[string]any{"name": "notes 1: no pinned model in the search", "route": "#/models?q=nomic", "status": st,
 			"none": []string{"div.sech[data-sec=pinned]", "div.sech[data-sec=downloading]"}, "absent": []string{"No pinned model", "The star on a row pins it"}},
@@ -74,8 +74,8 @@ func TestUINextNotesNeedsTilde(t *testing.T) {
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
 		map[string]any{"name": "notes 7: the rows", "route": "#/models", "status": st,
 			"expect": []string{"~17.1 GB", "~5.1 GB"}, "absent": []string{"measured", "estimated"},
-			"has":    []string{row(mdlLoaded) + " span[data-basis=measured][title*=measured]", row(mdlNever) + " span[data-basis=estimated][title*=estimated]"},
-			"none":   []string{row(mdlLoaded) + " span.sub"}},
+			"has":  []string{row(mdlLoaded) + " span[data-basis=measured][title*=measured]", row(mdlNever) + " span[data-basis=estimated][title*=estimated]"},
+			"none": []string{row(mdlLoaded) + " span.sub"}},
 		map[string]any{"name": "notes 7: the panel says how it is known", "route": "#/models?model=" + mdlLoaded, "status": st,
 			"page": []string{"needs ~17.1 GB", "(measured)"}},
 	}})
@@ -111,20 +111,20 @@ func TestUINextNotesProductionProfiles(t *testing.T) {
 	row := "div.mr[data-model='" + mdlOlder + "']"
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
 		map[string]any{"name": "notes 9: the row counts production profiles", "route": "#/models", "status": st,
-			"has": []string{row + " span.mdl-pc[data-prod='2']", "div.mr[data-model='" + mdlRecent + "'] span.mdl-pc[data-prod='0']"},
+			"has":    []string{row + " span.mdl-pc[data-prod='2']", "div.mr[data-model='" + mdlRecent + "'] span.mdl-pc[data-prod='0']"},
 			"absent": []string{"20 profiles", "19 profiles"}},
 		map[string]any{"name": "notes 9: the panel lists production, the rest collapsed", "route": "#/models?model=" + mdlOlder, "status": st,
 			"page": []string{"2 profiles", "18 test and benchmark configurations"},
 			"pageHas": []string{"aside.side table.mdl-ptbl tr[data-profile='gemma-4-12b']", "aside.side details.mdl-tests summary",
 				"aside.side details.mdl-tests:not([open])", "aside.side details.mdl-tests tr[data-profile='gemma-4-12b:ps5-03']"},
-			"pageNone": []string{"aside.side table.mdl-ptbl tr[data-profile='gemma-4-12b:ps5-03']", "aside.side table.mdl-ptbl tr[data-profile='bench-gemma-4-12b-ca']"},
+			"pageNone":  []string{"aside.side table.mdl-ptbl tr[data-profile='gemma-4-12b:ps5-03']", "aside.side table.mdl-ptbl tr[data-profile='bench-gemma-4-12b-ca']"},
 			"notOnPage": []string{"20 profiles", "generated configuration"}},
 		map[string]any{"name": "notes 9: a model with only test configurations", "route": "#/models?model=" + mdlRecent, "status": st,
 			"page": []string{"No profiles", "1 test and benchmark configuration"}, "pageNone": []string{"aside.side table.mdl-ptbl"}},
 		map[string]any{"name": "notes 9: the delete dialog names production, counts the rest", "route": "#/models?model=" + mdlOlder, "status": st,
-			"click":   []any{"aside.side button[data-act=delete]"},
-			"pageHas": []string{"div.dlg[data-dlg=delete][data-state=ready] [data-profiles]"},
-			"page":    []string{"2 profiles", "gemma-4-12b:64k", "18 test and benchmark configurations"},
+			"click":     []any{"aside.side button[data-act=delete]"},
+			"pageHas":   []string{"div.dlg[data-dlg=delete][data-state=ready] [data-profiles]"},
+			"page":      []string{"2 profiles", "gemma-4-12b:64k", "18 test and benchmark configurations"},
 			"notOnPage": []string{"all 20 profiles", "20 profiles come back"}},
 	}})
 }
@@ -211,8 +211,8 @@ func TestUINextNotesPanelDeeper(t *testing.T) {
 			"click": []string{"aside.side button[data-act=bench]", "aside.side button[data-back]"}, "pageHas": []string{"aside.side section.mdl-cfg"}, "pageNone": []string{"aside.side a.mdl-run"}},
 		map[string]any{"name": "notes 8b: Edit opens the editor in the panel", "route": older, "status": st, "width": 1536,
 			"click": []string{editBtn}, "hash": older,
-			"page":    []string{"Edit gemma-4-12b", "Context size", "Parallel slots", "Description", "Save", "Cancel", "cannot show unsaved values"},
-			"pageHas": []string{"aside.side section.prf-editor.prf-inpanel", "aside.side [data-plan-preview]", "aside.side button[data-back]"},
+			"page":     []string{"Edit gemma-4-12b", "Context size", "Parallel slots", "Description", "Save", "Cancel", "cannot show unsaved values"},
+			"pageHas":  []string{"aside.side section.prf-editor.prf-inpanel", "aside.side [data-plan-preview]", "aside.side button[data-back]"},
 			"pageNone": []string{"aside.side a[href^='#/profiles/']", "aside.side section.mdl-cfg"}},
 		map[string]any{"name": "notes 8b: Cancel goes back", "route": older, "status": st, "width": 1536,
 			"click": []string{editBtn, "aside.side button[data-cancel]"}, "pageHas": []string{"aside.side section.mdl-cfg"}, "pageNone": []string{"aside.side section.prf-editor"}},
