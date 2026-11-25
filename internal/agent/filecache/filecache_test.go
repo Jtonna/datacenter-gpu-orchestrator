@@ -124,8 +124,7 @@ func TestPathSafety(t *testing.T) {
 		{"sub/../m.gguf", 400, ReasonInvalid},      // the shared path rule (internal/modelpath) refuses any ".." part
 		{".trash/0123/t.gguf", 400, ReasonInvalid}, // a dot-folder of the models folder, though the file is there
 		{"sub/.x/t.gguf", 400, ReasonInvalid},
-		{`sub
-.gguf`, 400, ReasonInvalid},
+		{`sub\n.gguf`, 400, ReasonInvalid},
 	}
 	if symlinks {
 		cases = append(cases,
