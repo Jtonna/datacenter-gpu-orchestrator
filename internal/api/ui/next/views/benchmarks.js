@@ -27,13 +27,13 @@ import { staleBanner } from '../core/status.js';
 import { needCatalog, onCatalog } from '../core/catalog.js';
 import { bench, onBench, loadLists, seedState, activeRun, when, tookS, resultIcon, dots, inputsLine, notYet, WHY } from './bench/common.js';
 import { listColumn, groupPanel, runningRow, kindIcon } from './bench/list.js';
+import { resultsData, loadResults, latestTable, latestHead } from './bench/results.js';
 import { runsData, loadRuns, runsColumn, runPanel, reportPanel, directLine } from './bench/runs.js';
 import { dur } from '../core/format.js';
 import './bench/live.js';
 
 // ---------- Overview ----------
 
-const LATEST_COLS = ['Model', 'Smallest fit', 'Cold load', 'Reload', 'Generation, tok/s', 'First token', 'Coding, of 102'];
 
 function recentRow(rn) {
   const direct = rn.kind === 'benchmark';
@@ -48,17 +48,15 @@ function recentRow(rn) {
     h('span.mut.bp-took', tookS(rn) != null ? dur(tookS(rn)) : DASH));
 }
 
-function overview(ov) {
+function overview(ov, res) {
   const run = activeRun();
   return [
     h('h1.sr', 'Benchmarks'),
     run ? h('section.card.bp-runcard', { 'aria-label': 'Running now' }, runningRow(run, { inline: true, after: notYet(h('span.btn.pri', 'Run a benchmark'), WHY.run) }))
       : h('div.bp-tools', h('span.grow'), notYet(h('span.btn.pri', 'Run a benchmark'), WHY.run)),
     h('section.card.bp-latest', { 'aria-label': 'Latest result for each model' },
-      h('div.ch', h('h2', 'Latest result for each model'), h('span.grow'), notYet(h('span.mut', 'Smallest fit · context 8,192'), WHY.b5)),
-      h('div.bp-tablewrap', h('table.bp-runs', h('thead', h('tr', LATEST_COLS.map(c => h('th', c)))),
-        h('tbody', h('tr', h('td', { colspan: LATEST_COLS.length }, notYet('Not available yet: the latest result per model is not served yet.', WHY.b5, 'p')))))),
-      h('p.mut.bp-cardnote', 'Until then each run\'s figures are in its report: ', h('a', { href: href('benchmarks', ['runs']) }, 'Runs'), '.')),
+      h('div.ch', h('h2', 'Latest result for each model'), h('span.grow'), latestHead(res)),
+      latestTable(res)),
     h('section.card.bp-recentcard', { 'aria-label': 'Recent runs' },
       h('div.ch', h('h2', 'Recent runs'), h('span.grow'), h('a', { href: href('benchmarks', ['runs']) }, ov.total != null ? `All ${num(ov.total)}` : 'All runs')),
       ov.err ? h('div.banner.err', { role: 'alert' }, ov.err) : null,
@@ -80,6 +78,10 @@ registerView({
     else if (['benchmark', 'edit', 'external', 'trends'].includes(r.rest[0])) { navigate('benchmarks', ['all'], {}, true); }
     const ov = { runs: null, total: null, err: '' };
     const rd = runsData();
+    // the results per model (Overview table, the Runs page's views): read on
+    // entry and again when a run ends
+    const res = resultsData();
+    const readResults = () => loadResults(res).then(ch => { if (ch && alive) view.refresh(); });
     const loadOverview = async () => {
       try { const d = await api.get('/api/bench/runs', { limit: 4 }); ov.runs = d.runs || []; ov.total = d.total != null ? d.total : null; ov.err = ''; } catch (e) { ov.err = e.message; ov.runs = ov.runs || []; }
       if (alive) view.refresh();
@@ -108,10 +110,10 @@ registerView({
     const render = () => {
       const pg = pageOf(r);
       if (bench.off) return [h('h1.sr', 'Benchmarks'), h('section.card', empty('Benchmarks are off', bench.off))];
-      if (pg === 'overview') return [staleBanner(), overview(ov)];
+      if (pg === 'overview') return [staleBanner(), overview(ov, res)];
       if (pg === 'runs') {
         loadRuns(rd, r.query).then(ch => { if (ch && alive) view.refresh(); });
-        return [h('h1.sr', 'Runs'), staleBanner(), runsColumn(rd, r)];
+        return [h('h1.sr', 'Runs'), staleBanner(), runsColumn(rd, r, res)];
       }
       return [h('h1.sr', 'Groups and benchmarks'), staleBanner(), listColumn(r, query, setQ, !!r.rest[1])];
     };
@@ -120,12 +122,14 @@ registerView({
     seedState();
     loadLists();
     loadOverview();
+    readResults();
     syncSide();
     return {
       update(nr) {
         const was = pageOf(r);
         r = nr;
-        if (pageOf(r) === 'overview' && was !== 'overview') loadOverview();
+        if (pageOf(r) === 'overview' && was !== 'overview') { loadOverview(); readResults(); }
+        if (pageOf(r) === 'runs' && r.query.show && was !== 'runs') readResults();
         if (pageOf(r) === 'all') loadLists();
         syncSide();
         view.refresh();

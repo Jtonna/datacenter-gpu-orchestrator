@@ -634,7 +634,10 @@ before drawing a field.
   greyed "not available yet" mark `notYet(text, WHY.<key>)` with
   `data-notyet=<key>`), `list.js` (the groups and benchmarks, a group's
   panel), `runs.js` (the runs table, a run's panel, a benchmark's report),
-  `live.js` (the menu's run card from `state.bench.run`). Routes:
+  `live.js` (the menu's run card from `state.bench.run`), `results.js` (the
+  results per model from `GET /api/bench/results/models`: the Overview table
+  and the Runs page's views `?show=load-times|generation|first-token|memory`).
+  Routes:
   `#/benchmarks` (Overview), `#/benchmarks/all[/<group>]`,
   `#/benchmarks/runs[?kind&result&model&suite&page]`,
   `#/benchmarks/runs/<number>[/<slug or step index>]`. The classic addresses

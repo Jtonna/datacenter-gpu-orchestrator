@@ -1670,3 +1670,14 @@ table.bp-runs td.bp-start .bp-resw{gap:10px}
 .bp-runsp.beside .bp-tools .fs{max-width:130px;flex:0 1 auto}
 .bp-runsp.beside .bp-views>:nth-child(n+5){display:none}
 .bp-kpi b{white-space:normal;overflow:visible}
+/* results per model (Overview table, the Runs page's views) */
+table.bp-runs th.r,table.bp-runs td.r{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+table.bp-res-t td.bp-model{font-weight:800;white-space:nowrap}
+.bp-fv{color:var(--ink);text-decoration:none;font-family:var(--mono);font-size:12.5px}
+.bp-fv:hover{text-decoration:underline}
+.bp-out{font-weight:700;text-decoration:none}
+.bp-out.bad{color:var(--failed)}
+.bp-out.ref{color:var(--amber-text)}
+a.bp-view{text-decoration:none}
+a.bp-view:hover{background:var(--hover-bg)}
+.bp-head b.mut{color:var(--quiet)}

@@ -41,7 +41,7 @@ func benchBoards(t *testing.T) map[string]any {
 		q("limit=12&offset=0"), q("limit=12&offset=12"), q("limit=12&offset=0&kind=benchmark"), q("limit=12&offset=0&result=has_failed")}
 	paths := append([]string{"/api/status", "/api/models", "/api/profiles", "/api/bench/state", "/api/bench/groups", "/api/bench/benchmarks",
 		"/api/bench/groups/all-load/expand", "/api/bench/groups/full-pass/expand", "/api/bench/groups/planned-long-context/expand",
-		"/api/bench/runs/46", "/api/bench/runs/47", "/api/bench/runs/43", "/api/bench/runs/run-47/report"}, runsQ...)
+		"/api/bench/runs/46", "/api/bench/runs/47", "/api/bench/runs/43", "/api/bench/runs/run-47/report", "/api/bench/results/models"}, runsQ...)
 	f := fixtureAnswers(t, []string{"--bench", "boards"}, paths...)
 	// GET /api/bench/runs answers by its query (the harness ignores a query otherwise)
 	f["/api/bench/runs"] = map[string]any{"$match": []any{
@@ -93,7 +93,7 @@ func TestUINextBenchGroupPage(t *testing.T) {
 			"fetchedQuery": []string{`^DELETE /api/bench/runs/run-46/pin`}, "sentHeader": []string{"^X-Comment: not needed$"}},
 		map[string]any{"name": "the list: every group and benchmark, the last runs", "route": "#/benchmarks/all", "status": st,
 			"expect": []string{"New group", "New benchmark", "Gemma 4 12B: everything", "4 benchmarks · any 2 zones", "1 benchmark × 12 models × 2 placements · 24 runs",
-				"2 groups · 96 runs", "Running now", "Fill the context", "Load · Conversation to 90% · Unload", "Eight at once", "Load · 8 at once · Unload", "Coding tasks", "Load · Tasks · Unload"},
+				"2 groups · 96 runs", "1 benchmark × 12 models · 72 tasks", "Running now", "Fill the context", "Load · Conversation to 90% · Unload", "Eight at once", "Load · 8 at once · Unload", "Coding tasks", "Load · Tasks · Unload"},
 			"has": []string{"div.bp-row[data-bench=cold-load] a[href='#/benchmarks/runs/43/0']", "a.bp-row[data-group=full-pass] .bp-now"}},
 		map[string]any{"name": "the list: the search", "route": "#/benchmarks/all", "status": st, "click": []any{map[string]any{"type": "label.sx input", "value": "gemma"}},
 			"expect": []string{"Gemma 4 12B: everything", "No benchmark matches the search."}, "none": []string{"a.bp-row[data-group=full-pass]", "a.bp-row[data-group=all-load]"}},
@@ -112,14 +112,36 @@ func TestUINextBenchPages(t *testing.T) {
 		map[string]any{"name": "overview", "route": "#/benchmarks", "status": st,
 			"expect": []string{"Full pass", "10 of 96", "Requests, step 3 of 7", "about 6 h left", "Run a benchmark", "Latest result for each model", "Smallest fit", "Cold load",
 				"Reload", "Generation, tok/s", "First token", "Coding, of 102", "Recent runs", "All 49", "Gemma 4 12B: everything", "Cold load, response and repeat · qwen2.5-72b-instruct-q2_k · all"},
-			"has":  []string{"div.bp-recent[data-run], a.bp-recent[data-run='48']", "section.bp-latest [data-notyet=b5]"},
+			"has":  []string{"div.bp-recent[data-run], a.bp-recent[data-run='48']", "section.bp-latest [data-notyet=coding]"},
 			"page": []string{"about 6 h left"}, "pageHas": []string{"a.run-ind"}},
 		map[string]any{"name": "runs", "route": "#/benchmarks/runs", "status": st,
 			"expect": []string{"RUNS", "Load times", "Generation speed", "First token", "Memory", "Coding", "Started", "Run", "Result", "Took", "1–12 of 49",
 				"Full pass", "9 passed", "87 to go", "All models: load and response · cancelled", "Cold load · mixtral-8x7b-q4_k_m · any 4 zones"},
 			"has": []string{"tr[data-run='46'] button.bp-pin.on", "tr.direct[data-run='44'] td.bp-name .bp-sub", "tr.direct[data-run='44'] td.bp-name .bp-kind", "tr[data-run='46'] td.bp-start [data-result=with_issues]", "a.bp-pg.on[aria-current=page]", "select.fs[aria-label=Kind]", "select.fs[aria-label=Result]",
-				"select.fs[aria-label=Model]", "[data-notyet=b5]"},
+				"select.fs[aria-label=Model]", "[data-notyet=coding]", "a.bp-view[data-view=load-times][href='#/benchmarks/runs?show=load-times']"},
 			"count": map[string]any{"table.bp-runs tbody tr": 12}},
+		// the results per model (GET /api/bench/results/models): figures at the
+		// smallest fit, a failed load said in the first figure column, a figure
+		// not measured is a dash with its hover, Coding greyed (slice 4)
+		map[string]any{"name": "overview: the latest result for each model", "route": "#/benchmarks", "status": st,
+			"expect": []string{"Smallest fit · context 8,192", "qwen3.5-4b-q4_k_m", "1 zone", "26.8 s", "2.0 s", "96.2", "0.41 s", "qwen2.5-72b-instruct-q2_k", "4 zones", "72.2 s", "40.4 s",
+				"8.2", "1.51 s", "mixtral-8x7b-q4_k_m", "failed", "llama-3.3-8b-q4_k_m", "6 zones"},
+			"has": []string{"section.bp-latest tr[data-model='mixtral-8x7b-q4_k_m.gguf'] a.bp-out[data-outcome=failed][href='#/benchmarks/runs/run-46/16']",
+				"section.bp-latest tr[data-model='phi-4-14b-q4_k_m.gguf'] [data-missing=ttft_ms][title*=measured]",
+				"section.bp-latest tr[data-model='llama-3.3-8b-q4_k_m.gguf'] [data-missing=reload_s]",
+				"section.bp-latest tr[data-model='qwen3.5-4b-q4_k_m.gguf'] a.bp-fv[href='#/benchmarks/runs/run-46/0']"},
+			"count": map[string]any{"section.bp-latest tbody tr": 11, "section.bp-latest [data-notyet=coding]": 11},
+			"none":  []string{"section.bp-latest [data-notyet=b5]"}},
+		map[string]any{"name": "runs: the Load times view", "route": "#/benchmarks/runs?show=load-times", "status": st,
+			"expect": []string{"LOAD TIMES", "Model", "Smallest fit", "Cold, smallest", "Cold, all 6", "qwen3.5-4b-q4_k_m", "26.8 s", "11.3 s", "mixtral-8x7b-q4_k_m", "failed", "not run"},
+			"has":    []string{"table.bp-res-t[data-view=load-times]", "a.bp-view[data-view=runs]", "[data-notyet=coding]"},
+			"none":   []string{"select.fs[aria-label=Kind]", "div.bp-pager"}, "count": map[string]any{"table.bp-res-t tbody tr": 11}},
+		map[string]any{"name": "runs: the Generation speed view", "route": "#/benchmarks/runs?show=generation", "status": st,
+			"expect": []string{"GENERATION SPEED", "tok/s, smallest", "tok/s, all 6", "96.2", "92.2"}},
+		map[string]any{"name": "runs: the First token view", "route": "#/benchmarks/runs?show=first-token", "status": st,
+			"expect": []string{"FIRST TOKEN", "First token, smallest", "0.41 s"}, "has": []string{"tr[data-model='phi-4-14b-q4_k_m.gguf'] [data-missing=ttft_ms]"}},
+		map[string]any{"name": "runs: the Memory view", "route": "#/benchmarks/runs?show=memory", "status": st,
+			"expect": []string{"MEMORY", "Memory, smallest", "Memory, all 6", "Lowest available", "3,100 MiB", "960 MiB"}},
 		map[string]any{"name": "runs: the second page", "route": "#/benchmarks/runs?page=2", "status": st, "expect": []string{"13–24 of 49"}, "fetchedQuery": []string{`offset=12`}},
 		map[string]any{"name": "runs: direct runs only", "route": "#/benchmarks/runs?kind=benchmark", "status": st, "expect": []string{"1–4 of 4", "Fill the context · gemma-4-12b-q4_k_m · any 2 zones · 131,072"},
 			"fetchedQuery": []string{`kind=benchmark`}, "absent": []string{"Full pass"}},
@@ -138,7 +160,9 @@ func TestUINextBenchPages(t *testing.T) {
 				"Passed", "Steps", "took 3 min 52 s", "Load cold", "60.5 s", "32,643 MiB", "cold verified", "Warm-up", "2.34 s to first token", "Requests, 2 × 3", "8.18 tok/s · output identical",
 				"Unload", "2.0 s", "Reload", "5.8 s · 32,643 MiB · file fully cached", "Transcript", "Measured", "Mean", "Median", "Min", "Max", "Generation, tok/s", "Prompt, tok/s",
 				"First token, s", "Total time, s", "Open full report", "Download PDF", "Run again", "The whole run"},
-			"pageHas":   []string{"aside.side a[href='/api/bench/runs/run-47/report?step=0&format=html']", "aside.side .bp-heads [data-notyet=b9]"},
+			"pageHas": []string{"aside.side a[href='/api/bench/runs/run-47/report?step=0&format=html']", "aside.side .bp-head[data-head=cold]", "aside.side .bp-head[data-head=reload]",
+				"aside.side .bp-head[data-head=tps]", "aside.side .bp-head[data-head=ttft]"},
+			"pageNone":  []string{"aside.side .bp-heads [data-notyet]", "aside.side .bp-head[data-missing]"},
 			"pageCount": map[string]any{"aside.side table.bp-stats": 2, "aside.side li.bp-step": 7}},
 		map[string]any{"name": "benchmark report: a failed direct run", "route": "#/benchmarks/runs/43/0", "status": st,
 			"page": []string{"Failed", "child exited during load: exit code 1, after 2.2 s"}, "pageCount": map[string]any{"aside.side [data-reason]": 1}},

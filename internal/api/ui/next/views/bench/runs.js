@@ -33,10 +33,11 @@ import { state } from '../../core/store.js';
 import { logsLink, padded } from '../../core/logs.js';
 import { when, tookS, resultIcon, resultWord, dots, coldNote, inputsLine, notYet, WHY, modelName, placementWords, zonesWord, phaseWord } from './common.js';
 import { pinButton, kindIcon } from './list.js';
+import { RESULT_VIEWS, resultsView } from './results.js';
 
 export const PAGE = 12;
 
-const VIEWS = [['runs', 'Runs'], ['load', 'Load times'], ['gen', 'Generation speed'], ['ttft', 'First token'], ['mem', 'Memory'], ['coding', 'Coding']];
+const VIEWS = [['runs', 'Runs'], ['load-times', 'Load times'], ['generation', 'Generation speed'], ['first-token', 'First token'], ['memory', 'Memory'], ['coding', 'Coding']];
 const KINDS = [{ id: '', label: 'any' }, { id: 'suite', label: 'group runs' }, { id: 'benchmark', label: 'direct runs' }];
 const RESULTS = [{ id: '', label: 'any' }, { id: 'clean', label: 'passed' }, { id: 'with_issues', label: 'passed with issues' }, { id: 'has_failed', label: 'something failed' },
   { id: 'has_refused', label: 'something refused' }, { id: 'cancelled', label: 'cancelled' }, { id: 'running', label: 'running' }];
@@ -92,27 +93,33 @@ function pager(q, total) {
 }
 
 // runsTable(d, r): the page (route query kept: kind, result, model, suite, page)
-export function runsColumn(d, r) {
+export function runsColumn(d, r, res) {
   const q = r.query;
+  const show = RESULT_VIEWS[q.show] ? q.show : 'runs';
+  const viewHref = id => href('benchmarks', ['runs'], id === 'runs' ? {} : { show: id });
   const set = patch => navigate('benchmarks', r.rest.length > 1 ? ['runs'] : r.rest, Object.assign({}, q, patch, { page: '' }), true);
   const models = [{ id: '', label: 'any' }].concat((catalog.models || []).filter(m => m.file).map(m => ({ id: m.file, label: m.name || m.file })));
   if (q.model && !models.some(m => m.id === q.model)) models.push({ id: q.model, label: modelName(q.model) });
   return h('div', { class: 'bp-runsp' + (r.rest.length > 1 ? ' beside' : '') },
     h('div.bp-tools', { role: 'group', 'aria-label': 'Views and filters' },
-      h('div.bp-views', { role: 'tablist', 'aria-label': 'Views' }, VIEWS.map(([id, label]) => id === 'runs'
-        ? h('span.bp-view.on', { role: 'tab', 'aria-selected': 'true' }, label.toUpperCase())
-        : notYet(h('span.bp-view', { role: 'tab', 'aria-selected': 'false' }, label), WHY.b5))),
+      h('div.bp-views', { role: 'tablist', 'aria-label': 'Views' }, VIEWS.map(([id, label]) => id === show
+        ? h('span.bp-view.on', { role: 'tab', 'aria-selected': 'true', 'data-view': id }, label.toUpperCase())
+        : id === 'coding' ? notYet(h('span.bp-view', { role: 'tab', 'aria-selected': 'false', 'data-view': id }, label), WHY.coding)
+          : h('a.bp-view', { role: 'tab', 'aria-selected': 'false', href: viewHref(id), 'data-view': id }, label))),
       h('span.grow'),
-      filterSelect('Kind', KINDS, q.kind || '', v => set({ kind: v })),
-      filterSelect('Result', RESULTS, q.result || '', v => set({ result: v })),
-      filterSelect('Model', models, q.model || '', v => set({ model: v }))),
-    q.suite ? h('div.bp-chip', 'Group: ', h('b', q.suite), ' ', h('a', { href: href('benchmarks', ['runs'], Object.assign({}, q, { suite: '', page: '' })) }, 'Show all groups')) : null,
-    d.err ? h('div.banner.err', { role: 'alert' }, d.err) : null,
-    d.runs == null ? skeleton(6) : !d.runs.length ? h('section.card', empty(q.kind || q.result || q.model || q.suite ? 'No run matches these filters' : 'No runs yet', 'A run appears here when it is queued.'))
+      show === 'runs' ? [
+        filterSelect('Kind', KINDS, q.kind || '', v => set({ kind: v })),
+        filterSelect('Result', RESULTS, q.result || '', v => set({ result: v })),
+        filterSelect('Model', models, q.model || '', v => set({ model: v }))] : null),
+    show !== 'runs' ? resultsView(res, show) : null,
+    show !== 'runs' ? null :
+    q.suite && show === 'runs' ? h('div.bp-chip', 'Group: ', h('b', q.suite), ' ', h('a', { href: href('benchmarks', ['runs'], Object.assign({}, q, { suite: '', page: '' })) }, 'Show all groups')) : null,
+    d.err && show === 'runs' ? h('div.banner.err', { role: 'alert' }, d.err) : null,
+    show !== 'runs' ? null : d.runs == null ? skeleton(6) : !d.runs.length ? h('section.card', empty(q.kind || q.result || q.model || q.suite ? 'No run matches these filters' : 'No runs yet', 'A run appears here when it is queued.'))
       : h('div.bp-tablewrap', h('table.bp-runs', { 'aria-label': 'Runs' },
         h('thead', h('tr', h('th', 'Started'), h('th', 'Run'), h('th', 'Result'), h('th', 'Took'), h('th', h('span.sr', 'Pinned')))),
         h('tbody', d.runs.map(rn => runRow(rn, q))))),
-    pager(q, d.total));
+    show === 'runs' ? pager(q, d.total) : null);
 }
 
 // ---------- a run's panel ----------
@@ -261,6 +268,30 @@ function stepTitle(ph, i, phases, spec) {
   return w;
 }
 
+// headline(phases): the report's four figures (board Bench-Report), from the
+// step's phases: the first load (said "cold load" when it was asked cold),
+// a later load (the reload), the mean generation speed and first token of
+// the request phases (the warm-up left out). A figure the step did not
+// measure is a dash with "not measured in this run".
+const REQ = ['requests', 'conversation', 'hold', 'concurrent_requests'];
+export function headline(phases) {
+  const loads = phases.filter(ph => ph.load && ph.load.load_s != null);
+  const avg = k => {
+    const v = phases.filter(ph => REQ.includes(ph.type) && ph.stats && ph.stats[k] && ph.stats[k].mean != null).map(ph => ph.stats[k].mean);
+    return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+  };
+  const tps = avg('decode_tps'), ttft = avg('ttft_ms');
+  const first = loads[0] || null;
+  const cells = [
+    ['cold', first ? secs(first.load.load_s) : null, first && !(first.cold && first.cold.requested) ? 'first load' : 'cold load'],
+    ['reload', loads[1] ? secs(loads[1].load.load_s) : null, 'reload'],
+    ['tps', tps != null ? num(tps, 1) : null, 'tok/s steady'],
+    ['ttft', ttft != null ? num(ttft / 1000, 2) + ' s' : null, 'first token'],
+  ];
+  return h('div.bp-heads', cells.map(([k, v, w]) => h('div.bp-head', { 'data-head': k, 'data-missing': v == null ? '' : null },
+    v == null ? h('b.mut', { title: 'not measured in this run' }, DASH) : h('b', v), h('span', w))));
+}
+
 export function reportPanel(ref, slug, onClose) {
   const ps = { run: null, rep: null, err: '' };
   const findStep = () => {
@@ -286,7 +317,7 @@ export function reportPanel(ref, slug, onClose) {
     const repSections = (ps.rep && ps.rep.benchmark && ps.rep.benchmark.sections) || [];
     const full = api.url(`/api/bench/runs/${encodeURIComponent(rn.id)}/report`, { step: st.idx, format: 'html' });
     return h('div.bp-panel.bp-report',
-      h('div.bp-heads', ['cold load', 'reload', 'tok/s steady', 'first token'].map(w => h('div.bp-head', notYet(h('b', DASH), WHY.b9), h('span', w)))),
+      headline(phases),
       h('div.bp-outcome', resultIcon({ result: res }, 16), ' ', h('b', resultWord({ result: res }))),
       reason ? h('div', { class: 'banner bp-why ' + (res === 'failed' ? 'err' : 'warn'), role: 'status', 'data-reason': '' }, reason) : null,
       h('div.bp-h.row', h('h3.bp-h', 'Steps', [' · ', h('span.mut', num(phases.length))]), h('span.grow'),

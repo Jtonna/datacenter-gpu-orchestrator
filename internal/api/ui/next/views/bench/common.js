@@ -241,7 +241,9 @@ export function groupSub(g) {
   else if (items.length) parts.push(groups ? `${plural(benches, 'benchmark')} and ${plural(groups, 'group')}` : plural(benches, 'benchmark'));
   const places = new Set(items.filter(e => e.inputs && e.inputs.placement).map(e => String(e.inputs.placement)));
   if (places.size === 1 && !items.some(e => e.matrix && e.matrix.placement)) parts.push(placementWords([...places][0]));
-  if (g.expanded_count != null && (groups || items.some(e => e.matrix) || g.expanded_count !== items.length)) parts.push(plural(g.expanded_count, 'run'));
+  // a coding group says its tasks (board Bench: "1 benchmark × 12 models · 72 tasks")
+  if (g.task_count) parts.push(plural(g.task_count, 'task'));
+  else if (g.expanded_count != null && (groups || items.some(e => e.matrix) || g.expanded_count !== items.length)) parts.push(plural(g.expanded_count, 'run'));
   return parts.join(' · ');
 }
 
@@ -276,16 +278,15 @@ export function notYet(text, why, tag = 'span') {
 }
 
 // The reasons, one per missing backend package (p15 plan, B-numbers).
+// Each names the thing that is missing and the slice of the benchmarks plan
+// (p15) that builds it.
 export const WHY = {
-  b4: 'the measurements do not yet tell a first load from a reload, and fixed-profile runs carry no context (B4)',
-  b5: 'the result views (latest result per model, smallest fit, load times) are not served yet (B5)',
-  b6: 'a group cannot yet ask for "the smallest that fits": the placements are auto, all, any N or named zones (B6)',
-  b7: 'a group has no "cold loads" option yet; a benchmark asks for a cold load in its own load step (B7)',
-  b9: 'the benchmark report has no headline figures and no short refusal text yet (B9)',
-  b10: 'comparing two runs is not served yet (B10)',
-  b11: 'machine drop-outs during a run are not recorded as run issues yet (B11)',
-  b13: 'one-click PDF is not served yet: open the full report and print it (B13)',
-  edit: 'the group and benchmark editors have no mockup yet',
-  run: 'starting runs from these pages comes with slice 6 (the run dialog has no mockup yet)',
-  tasks: 'the number of tasks of a coding group is not shown yet',
+  coding: 'the Coding figures need task scores per model and a default scorer, which no route serves yet (benchmarks slice 4: B5 Coding, B15)',
+  b6: 'a group cannot ask for "the smallest that fits" yet: the placements are auto, all, any N or named zones (benchmarks slice 7: B6)',
+  b7: 'a group has no "cold loads" option yet; a benchmark asks for a cold load in its own load step (benchmarks slice 7: B7)',
+  b10: 'comparing two runs has no route and no mockup of its view yet (route: benchmarks slice 5, B10; the view waits for a mockup)',
+  b11: 'what stopped a run (a machine dropping out) is not read from the history yet (benchmarks slice 5: B11)',
+  b13: 'one-click PDF is not served yet: open the full report and print it (benchmarks slice 5: B13)',
+  edit: 'the group and benchmark editors have no mockup yet; they are built after the owner draws them',
+  run: 'starting, cancelling and repeating runs from these pages is run control (benchmarks slice 6)',
 };

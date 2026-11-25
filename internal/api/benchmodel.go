@@ -23,6 +23,7 @@ func (s *Server) modelRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/bench/runs/{id}/measurements", g(s.runMeasurements))
 	m.HandleFunc("GET /api/bench/measurements", g(s.queryMeasurements))
 	m.HandleFunc("GET /api/bench/metrics", g(s.listMetrics))
+	m.HandleFunc("GET /api/bench/results/models", g(s.resultsByModel))
 	// Groups are suites (decision D24: old suites read as groups); the same
 	// routes under the new name.
 	m.HandleFunc("GET /api/bench/groups", g(s.listSuites))
@@ -382,6 +383,29 @@ func (s *Server) runMeasurements(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"run_id": id, "measurements": ms})
+}
+
+// resultsByModel is GET /api/bench/results/models (?ctx=): per model file the
+// newest finished step's figures (cold load, reload, tok/s, first token,
+// memory), the newest per zone count, and the smallest fit. Read from the
+// steps and the measurement record; nothing stored (the Overview's "Latest
+// result for each model" and the Runs page's result views).
+func (s *Server) resultsByModel(w http.ResponseWriter, r *http.Request) {
+	f := bench.ResultsFilter{}
+	if v := r.URL.Query().Get("ctx"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			badParam(w, "ctx must be a context size in tokens, got %q", v)
+			return
+		}
+		f.Ctx = n
+	}
+	rows, err := s.opts.BenchStore.ResultsByModel(f)
+	if err != nil {
+		s.storeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"models": rows, "ctx": f.Ctx})
 }
 
 // queryMeasurements is GET /api/bench/measurements: the history of the

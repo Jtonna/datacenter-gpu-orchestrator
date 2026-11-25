@@ -376,6 +376,9 @@ func (s *Server) listSuites(w http.ResponseWriter, r *http.Request) {
 		}
 		if flat, err := benchspec.ExpandGroup(all[i].Spec, s.lookup, s.groupLookup); err == nil {
 			m["expanded_count"] = len(flat.Benchmarks)
+			if n, ok := s.groupTaskCount(flat); ok {
+				m["task_count"] = n
+			}
 		}
 		out = append(out, m)
 	}
@@ -384,6 +387,41 @@ func (s *Server) listSuites(w http.ResponseWriter, r *http.Request) {
 		key = "groups"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{key: out})
+}
+
+// groupTaskCount is the coding tasks a run of the expanded group sends: per
+// entry, its tasks phases' task sets (stored, at the version the phase names
+// or the newest, or inline). ok is false when no entry has a tasks phase or a
+// named set is not stored.
+func (s *Server) groupTaskCount(flat *benchspec.Suite) (n int, ok bool) {
+	for _, it := range flat.Benchmarks {
+		b := it.Inline
+		if b == nil {
+			var found bool
+			if b, found = s.lookup(it.Ref); !found {
+				continue
+			}
+		}
+		for _, p := range b.Phases {
+			if p.Type != benchspec.PhaseTasks {
+				continue
+			}
+			switch {
+			case p.Tasks != nil:
+				n += len(p.Tasks.Tasks)
+			case p.TaskSet != "":
+				ts, err := s.opts.BenchStore.GetTaskSet(p.TaskSet, p.TaskSetVersion)
+				if err != nil || ts.Set == nil {
+					return 0, false
+				}
+				n += len(ts.Set.Tasks)
+			default:
+				continue
+			}
+			ok = true
+		}
+	}
+	return n, ok
 }
 
 func (s *Server) getSuite(w http.ResponseWriter, r *http.Request) {

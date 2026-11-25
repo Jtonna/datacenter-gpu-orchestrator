@@ -60,7 +60,7 @@ var routeScopes = map[string]access.Scope{
 	"GET /api/bench/aggregates": access.Observe, "GET /api/bench/benchmarks": access.Observe, "GET /api/bench/benchmarks/{id}": access.Observe,
 	"GET /api/bench/benchmarks/{id}/results": access.Observe, "GET /api/bench/external": access.Observe, "GET /api/bench/external/{id}": access.Observe,
 	"GET /api/bench/groups": access.Observe, "GET /api/bench/groups/{id}": access.Observe, "GET /api/bench/groups/{id}/expand": access.Observe,
-	"GET /api/bench/measurements": access.Observe, "GET /api/bench/metrics": access.Observe, "GET /api/bench/profiles": access.Observe,
+	"GET /api/bench/measurements": access.Observe, "GET /api/bench/results/models": access.Observe, "GET /api/bench/metrics": access.Observe, "GET /api/bench/profiles": access.Observe,
 	"GET /api/bench/removals": access.Observe, "GET /api/bench/removals/preview": access.Observe, "GET /api/bench/runs": access.Observe,
 	"GET /api/bench/runs/{id}": access.Observe, "GET /api/bench/runs/{id}/export": access.Observe, "GET /api/bench/runs/{id}/measurements": access.Observe,
 	"GET /api/bench/runs/{id}/report": access.Observe, "GET /api/bench/runs/{id}/scores": access.Observe,

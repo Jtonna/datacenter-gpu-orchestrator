@@ -114,7 +114,7 @@ const GROUPS = [
   { id: 'full-pass', name: 'Full pass', benchmarks: [{ group: 'all-load' }, { group: 'all-coding' }], expanded_count: 96, stop_on_failure: false, only_when_idle: true },
   { id: 'all-load', name: 'All models: load and response', description: 'Cold load, response and repeat for every model, on the smallest placement that fits and on all six zones.',
     benchmarks: [{ benchmark: 'cold-response-repeat', matrix: { model: MODELS, placement: ['auto', 'all'], ctx: [8192] } }], expanded_count: 24, stop_on_failure: false, only_when_idle: true },
-  { id: 'all-coding', name: 'All models: coding', benchmarks: [{ benchmark: 'coding-tasks', matrix: { model: MODELS } }], expanded_count: 12, only_when_idle: true },
+  { id: 'all-coding', name: 'All models: coding', benchmarks: [{ benchmark: 'coding-tasks', matrix: { model: MODELS } }], expanded_count: 12, task_count: 72, only_when_idle: true },
   { id: 'gemma-everything', name: 'Gemma 4 12B: everything', benchmarks: ['cold-load', 'cold-response-repeat', 'fill-context', 'eight-at-once'].map(b => ({ benchmark: b, inputs: { model: MODELS[1], placement: 'any:2' } })),
     expanded_count: 4, only_when_idle: false, stop_on_failure: true },
   { id: 'planned-long-context', name: 'Long context on every model', benchmarks: [{ benchmark: 'fill-context', matrix: { model: MODELS.slice(0, 4) } }], expanded_count: 4,
@@ -204,6 +204,40 @@ function paged(all, q) {
   return { runs: list.slice(offset, offset + limit), total: list.length, offset };
 }
 
+// the results per model (GET /api/bench/results/models): the board's
+// Overview figures at the smallest fit and on all 6 zones; mixtral failed at
+// its load; phi measured no first token; llama ran on 6 zones only
+function boardResults(now) {
+  const rows = [
+    // model, fit, cold, reload, tok/s, ttft ms, mem, cold all 6, tok/s all 6
+    [MODELS[0], 1, 26.8, 2.0, 96.2, 410, 3100, 11.3, 92.2], [MODELS[1], 2, 35.4, 3.0, 27.8, 800, 9100, 21.1, 24.3],
+    [MODELS[2], 2, 48.4, 3.3, 80.5, 620, 11200, 24.8, 58.9], [MODELS[3], 2, 63.7, 23.8, 31.4, 950, 15400, 30.1, 28.7],
+    [MODELS[4], 3, 61.0, 4.3, 59.3, 880, 19800, 43.7, 50.1], [MODELS[5], 3, 61.2, 10.0, 22.6, 1100, 21000, 41.4, 20.2],
+    [MODELS[6], 4, 68.2, 24.1, 9.1, 1420, 27100, 56.9, 8.8], [MODELS[7], 4, 72.2, 40.4, 8.2, 1510, 29800, 60.5, 8.18],
+  ];
+  let step = 0;
+  const cell = (file, n, cold, reload, tps, ttft, mem, at) => {
+    const c = { run_id: 'run-46', step: step++, benchmark_id: 'cold-response-repeat', node_count: n, ctx: 8192, at, outcome: 'ready', cold_load_s: cold, cold: true, cold_verified: true,
+      memory_mib: mem, lowest_available_mib: 900 + n * 10 };
+    if (reload != null) c.reload_s = reload;
+    if (tps != null) c.decode_tps = tps;
+    if (ttft != null) c.ttft_ms = ttft;
+    return c;
+  };
+  const at = now - 6 * HOUR;
+  const out = rows.map(([file, fit, cold, reload, tps, ttft, mem, cold6, tps6]) => {
+    const small = cell(file, fit, cold, reload, tps, ttft, mem, at), six = cell(file, 6, cold6, reload, tps6, ttft, mem, at);
+    return { model: file, smallest_fit: fit, latest: six, by_nodes: [small, six] };
+  });
+  const failed = { run_id: 'run-46', step: 16, benchmark_id: 'cold-response-repeat', node_count: 4, ctx: 8192, at, outcome: 'failed', reason: 'child exited during load: exit code 1, after 2.2 s' };
+  out.push({ model: MODELS[8], smallest_fit: 0, latest: failed, by_nodes: [failed] });
+  const phi = cell(MODELS[9], 2, 30.2, 3.1, 40.0, null, 8800, at);
+  out.push({ model: MODELS[9], smallest_fit: 2, latest: phi, by_nodes: [phi] });
+  const llama = cell(MODELS[10], 6, 15.5, null, 70.1, 350, 5200, at);
+  out.push({ model: MODELS[10], smallest_fit: 6, latest: llama, by_nodes: [llama] });
+  return { ctx: 0, models: out };
+}
+
 function boardsRoute(p, q, now) {
   const runs = boardRuns(now);
   const lastOf = id => runs.find(r => r.suite_id === id && r.state !== 'running') || null;
@@ -227,6 +261,7 @@ function boardsRoute(p, q, now) {
     return { id: g.id, count: g.expanded_count, entries: Array.from({ length: g.expanded_count }, (_, i) => ({ benchmark_id: 'cold-response-repeat~' + i, name: 'Cold load, response and repeat', profile: 'bench-' + i })) };
   }
   if (p === '/api/bench/benchmarks') return { benchmarks: benches };
+  if (p === '/api/bench/results/models') return boardResults(now);
   if (p === '/api/bench/runs') return paged(runs, q);
   m = /^\/api\/bench\/runs\/([^/]+)$/.exec(p);
   if (m) { const r = runs.find(x => x.id === m[1] || String(x.number) === m[1]); return r ? boardRunDetail(r) : undefined; }
