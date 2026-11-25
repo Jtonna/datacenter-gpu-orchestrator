@@ -17,8 +17,9 @@
 //               would interrupt, the delete with interrupt works
 //   run         as two; benchmark run r-12 uses qwen3-14b: refused in_use,
 //               with interrupt too
-//   read-only   as two; the models folder is read-only: every real delete
-//               and restore answers 409 read_only (dry runs answer 200)
+//   read-only   as two; the models folder is read-only: models_writable is
+//               false, every real delete and restore answers 409 read_only
+//               (dry runs answer 200). Every other state: models_writable true
 //   taken       as two; phi-4-14b's restore answers 409 profiles_taken,
 //               and works with rename_taken
 //   incomplete  as in-use; the delete with interrupt answers 409
@@ -39,9 +40,11 @@ let items = [];
 let repairs = [];
 const deleted = new Map(); // catalog file -> its catalog entry, while it is in the trash
 let seq = 0;
+let writable = true; // models_writable in the disk block and the list
 
 export function seedTrash(state, now = Date.now()) {
   items = []; repairs = []; deleted.clear(); seq = 0;
+  writable = state !== 'read-only';
   if (!state || state === 'empty') return;
   const phi = 'phi-4-14b-q4_k_m.gguf', llama = 'llama-3.3-70b-q3_k_s.gguf';
   const at1 = now - 3 * DAY - 4 * 3600e3, at2 = now - 28 * DAY;
@@ -67,14 +70,14 @@ function summary() {
 
 export const trashList = () => {
   const s = summary();
-  return { items: items.map(r => Object.assign({}, r)), count: s.count, total_bytes: s.bytes, next_purge_at: s.next, trash_days: DAYS, purge_on: false, repairs_at_start: repairs.slice() };
+  return { items: items.map(r => Object.assign({}, r)), count: s.count, total_bytes: s.bytes, next_purge_at: s.next, trash_days: DAYS, purge_on: false, repairs_at_start: repairs.slice(), models_writable: writable };
 };
 
 // withTrash(doc) -> the catalog without the files in the trash, its disk block with the trash figures
 export function withTrash(doc) {
   const s = summary();
   const models = doc.models.filter(m => !deleted.has(m.key));
-  const disk = Object.assign({}, doc.disk, { trash_bytes: s.bytes, trash_count: s.count, next_purge_at: s.next, trash_purge_on: false });
+  const disk = Object.assign({}, doc.disk, { trash_bytes: s.bytes, trash_count: s.count, next_purge_at: s.next, trash_purge_on: false, models_writable: writable });
   disk.model_bytes = models.reduce((t, m) => t + (m.size_bytes || 0), 0);
   disk.files = models.length;
   return Object.assign({}, doc, { models, disk });

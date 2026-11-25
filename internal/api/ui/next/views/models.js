@@ -175,7 +175,7 @@ function deleteButton(m, disk, onDeleted) {
   if (!hasTrash(disk)) return off('button.btn.red', NOT_YET.del, { 'data-act': 'delete' }, 'Delete model');
   if (m.kind === 'command') return off('button.btn.red', 'A command profile has no model file to delete.', { 'data-act': 'delete' }, 'Delete model');
   if (m.exists === false) return off('button.btn.red', 'The file is not in the models folder: there is nothing to delete.', { 'data-act': 'delete' }, 'Delete model');
-  return h('button.btn.red', { type: 'button', 'data-act': 'delete', onclick: () => deleteModel(m, onDeleted) }, 'Delete model');
+  return h('button.btn.red', { type: 'button', 'data-act': 'delete', onclick: () => deleteModel(m, onDeleted, disk ? disk.models_writable : undefined) }, 'Delete model');
 }
 
 // the side panel of one model
