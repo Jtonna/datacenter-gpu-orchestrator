@@ -55,13 +55,24 @@ func realCtx(cfg *config.Config, tr trainedCtxReader) *config.Config {
 	if cfg == nil || tr == nil {
 		return cfg
 	}
+	type tc struct {
+		ctx  int
+		arch string
+		ok   bool
+	}
+	seen := map[string]tc{} // one header look-up per model file, not per profile
 	var out *config.Config
 	for _, name := range slices.Sorted(maps.Keys(cfg.Profiles)) {
 		p := cfg.Profiles[name]
 		if p == nil || p.Kind != core.KindLlama || p.Ctx <= 0 || p.Model == "" {
 			continue
 		}
-		trained, arch, ok := tr.TrainedCtx(p.Model)
+		t, hit := seen[p.Model]
+		if !hit {
+			t.ctx, t.arch, t.ok = tr.TrainedCtx(p.Model)
+			seen[p.Model] = t
+		}
+		trained, arch, ok := t.ctx, t.arch, t.ok
 		if !ok || trained <= 0 || p.Ctx <= trained {
 			continue
 		}
