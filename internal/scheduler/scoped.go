@@ -272,6 +272,25 @@ func (c *schedCore) fitRule(p *core.Profile) (mode, rule string) {
 	return mode, "defaults.forced_fit_check is " + mode
 }
 
+// shownName is a profile name as a sentence says it: "run-scoped load
+// <scope> of <production id>" for a scoped name, else the name itself.
+func (c *schedCore) shownName(name string) string {
+	if base, scope, ok := c.scopeOf(name); ok {
+		return "run-scoped load " + scope + " of " + base
+	}
+	return name
+}
+
+// scopedOrigin: measurement l was made by a run-scoped load (its profile is
+// a scoped name, this run or restored from the store; configured ids never
+// hold ScopeSep). Such a row is kept under its own shape's key, and it is
+// never a source of a derived need or a model's own line (deriveIndex): a
+// run's shape must not feed another shape's plan, production's above all.
+func scopedOrigin(l *learnedNeed) bool {
+	_, _, ok := SplitScoped(l.profile)
+	return ok
+}
+
 // pruneScoped forgets the scoped profiles no entry or instance holds.
 func (c *schedCore) pruneScoped() {
 	for name, p := range c.scoped {
