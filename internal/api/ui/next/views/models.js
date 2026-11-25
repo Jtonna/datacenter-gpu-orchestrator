@@ -123,6 +123,25 @@ export function loadTip(l, st) {
   return tipText(head, [when, l.profile, l.nodes ? 'On ' + machines(st, l.nodes) : null, figs || null]);
 }
 
+// inUse(m) -> "in use on ps5-01, ps5-02" (or "loading on …") for a row
+// whose model is loaded, each zone a link to Zones with that zone selected
+// (the owner's note 3: the row says when and where, no banner); null when
+// it is not loaded. The zones are the catalog instances' (names).
+function inUse(m) {
+  const insts = m.instances || [];
+  if (!insts.length) return null;
+  const ready = [...new Set(insts.filter(i => i.state !== 'starting').flatMap(i => i.nodes || []))];
+  const loading = [...new Set(insts.filter(i => i.state === 'starting').flatMap(i => i.nodes || []))].filter(z => !ready.includes(z));
+  const zones = list => list.flatMap((z, i) => [i ? ', ' : null, h('a.mdl-zone', { href: href('zones', [z]), title: 'Open ' + z + ' under Zones',
+    onclick: e => e.stopPropagation(), onkeydown: e => e.stopPropagation() }, z)]);
+  const parts = [];
+  if (ready.length) parts.push(['in use on ', ...zones(ready)]);
+  else if (insts.some(i => i.state !== 'starting')) parts.push('in use');
+  if (loading.length) parts.push(['loading on ', ...zones(loading)]);
+  else if (!ready.length && insts.some(i => i.state === 'starting')) parts.push('loading');
+  return h('span.mdl-inuse', { 'data-inuse': '' }, parts.flatMap((x, i) => [i ? ' · ' : null, x]));
+}
+
 // lastUsed(m) -> Now (loaded), Loading, "48 s ago" (exact time on hover) or Never
 function lastUsed(m) {
   if (m.state === 'ready') return h('time.mdl-now', { title: m.last_active ? dateTime(m.last_active) : 'Loaded now' }, 'Now');
@@ -279,11 +298,12 @@ function listPanel(st, models, disk, error, r, query, setQuery, onFind, done) {
   const pins = pinsOn(models);
   const rowOf = m => h('div', {
     key: m.key, role: 'listitem', class: 'mr' + (openKey === m.key ? ' sel' : ''), 'aria-current': openKey === m.key ? 'true' : null, 'data-model': m.key, tabindex: '0',
-    onclick: e => { if (!e.target.closest('[data-off]')) open(m.key); },
-    onkeydown: e => { if ((e.key === 'Enter' || e.key === ' ') && !e.target.closest('[data-off]') && !e.target.closest('button')) { e.preventDefault(); open(m.key); } } },
+    onclick: e => { if (!e.target.closest('[data-off]') && !e.target.closest('a[href]')) open(m.key); },
+    onkeydown: e => { if ((e.key === 'Enter' || e.key === ' ') && !e.target.closest('[data-off]') && !e.target.closest('button') && !e.target.closest('a[href]')) { e.preventDefault(); open(m.key); } } },
   starButton(m, models),
   h('span.mdl-name', h('span.mono.nm', { title: m.short_name && m.short_name !== m.file ? m.short_name : null }, m.file || m.name),
-    h('span.mut', sizeText(m), m.kind !== 'command' && m.exists === false ? h('span.err-t', ' · the file is missing') : null)),
+    h('span.mut', sizeText(m), m.kind !== 'command' && m.exists === false ? h('span.err-t', ' · the file is missing') : null),
+    inUse(m)),
   needsCell(m, st),
   h('span', { class: prodCount(m) ? 'mdl-pc' : 'mdl-pc mut', 'data-prod': String(prodCount(m)) }, prodText(prodCount(m))),
   h('span.mut.mdl-used', lastUsed(m)));
@@ -394,8 +414,7 @@ function mountHome(el, route) {
         loadLogs(st, l))),
       !st ? h('section.card', { key: 'none' }, h('div.strip', skeleton(1)))
         : insts.length ? insts.map(inst => instanceCard(st, inst, catalog.byProfile[inst.profile] || catalog.byKey[inst.model_file] || null, open, toggle))
-          : view_.configured === false ? null : h('section.card', { key: 'none' }, h('div.strip', h('b', 'Nothing is loaded right now.'),
-            h('span', 'A model loads when a request asks for it, and unloads after it has been idle for a while.'))),
+          : null, // nothing loaded: no banner; each row says when and where it is in use (the owner's note 3)
       view_.configured === false && models && !models.length ? null
         : listPanel(view_, models, disk, catalog.error, r, query, setQuery, v => { query = v; view.refresh(); }, done),
     ];

@@ -119,3 +119,22 @@ func TestUINextNotesProductionProfiles(t *testing.T) {
 			"notOnPage": []string{"all 20 profiles", "20 profiles come back"}},
 	}})
 }
+
+// Note 3: no "Nothing is loaded right now" banner; a model's row says when
+// it is in use and on which zones, each zone a link to Zones with that
+// zone selected.
+func TestUINextNotesRowInUse(t *testing.T) {
+	fetch := fixtureAnswers(t, []string{"--models", "five"}, "/api/models", "/api/status")
+	st := fetch["/api/status"]
+	idle := mcpCopy(t, st)
+	idle["instances"] = []any{}
+	row := "div.mr[data-model='" + mdlLoaded + "']"
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
+		map[string]any{"name": "notes 3: no banner when nothing is loaded", "route": "#/models", "status": idle,
+			"absent": []string{"Nothing is loaded right now", "A model loads when a request asks for it"}},
+		map[string]any{"name": "notes 3: the row says in use and where", "route": "#/models", "status": st,
+			"has":  []string{row + " [data-inuse] a.mdl-zone[href='#/zones/ps5-01']", row + " [data-inuse] a.mdl-zone[href='#/zones/ps5-02']"},
+			"none": []string{"div.mr[data-model='" + mdlRecent + "'] [data-inuse]"}, "expect": []string{"in use on"}},
+		// (the fake DOM neither follows a link nor bubbles a click: that the link opens Zones and not the row's panel is checked in Chrome)
+	}})
+}
