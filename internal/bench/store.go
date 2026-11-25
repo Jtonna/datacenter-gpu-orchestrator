@@ -860,7 +860,11 @@ func (s *Store) CompletedRunModels() ([]RunStepModel, error) {
 }
 
 // GetRun returns a run with its steps and their requests, or ErrNotFound.
-func (s *Store) GetRun(id string) (*Run, error) {
+func (s *Store) GetRun(id string) (*Run, error) { return s.GetRunOpt(id, true) }
+
+// GetRunOpt is GetRun; without requests the steps come without their
+// request rows (phases, statistics and facts stay).
+func (s *Store) GetRunOpt(id string, requests bool) (*Run, error) {
 	r, err := scanRun(s.db.QueryRow(`SELECT `+runCols+` FROM runs WHERE id=?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -868,7 +872,7 @@ func (s *Store) GetRun(id string) (*Run, error) {
 	if err != nil {
 		return nil, err
 	}
-	steps, err := s.steps(id)
+	steps, err := s.stepsOpt(id, requests)
 	if err != nil {
 		return nil, err
 	}

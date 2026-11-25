@@ -201,9 +201,18 @@ func (s *Server) listBenchmarks(w http.ResponseWriter, r *http.Request) {
 		s.storeErr(w, err)
 		return
 	}
+	uses, err := s.opts.BenchStore.LastUses()
+	if err != nil {
+		s.storeErr(w, err)
+		return
+	}
 	out := make([]any, 0, len(all))
 	for i := range all {
-		out = append(out, benchmarkJSON(&all[i]))
+		m := benchmarkJSON(&all[i])
+		if u := uses[all[i].Spec.ID]; u != nil {
+			m["last_use"] = u
+		}
+		out = append(out, m)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"benchmarks": out})
 }
@@ -354,6 +363,9 @@ func (s *Server) listSuites(w http.ResponseWriter, r *http.Request) {
 		m := suiteJSON(&all[i])
 		if runs, err := s.opts.BenchStore.ListRuns(bench.RunFilter{Suite: all[i].Spec.ID, Limit: 1}); err == nil && len(runs) > 0 {
 			m["last_run"] = runs[0]
+		}
+		if flat, err := benchspec.ExpandGroup(all[i].Spec, s.lookup, s.groupLookup); err == nil {
+			m["expanded_count"] = len(flat.Benchmarks)
 		}
 		out = append(out, m)
 	}
@@ -521,7 +533,19 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 		}
 		f.Limit = n
 	}
-	runs, err := s.opts.BenchStore.ListRuns(f)
+	if v := q.Get("offset"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			badParam(w, "offset must be 0 or more, got %q", v)
+			return
+		}
+		f.Offset = n
+	}
+	if f.Result = q.Get("result"); !bench.ValidResultFilter(f.Result) {
+		badParam(w, "result must be one of %s, got %q", strings.Join(bench.ResultFilters(), ", "), f.Result)
+		return
+	}
+	runs, total, err := s.opts.BenchStore.ListRunsPage(f)
 	if err != nil {
 		s.storeErr(w, err)
 		return
@@ -529,11 +553,27 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 	if runs == nil {
 		runs = []bench.Run{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"runs": runs})
+	writeJSON(w, http.StatusOK, map[string]any{"runs": runs, "total": total, "offset": f.Offset})
 }
 
+// getRun is GET /api/bench/runs/{id}: {id} is a run id or a run number (all
+// digits); ?requests=0 (or false) leaves out the steps' request rows.
 func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
-	run, err := s.opts.BenchStore.GetRun(r.PathValue("id"))
+	withRequests := true
+	if v := r.URL.Query().Get("requests"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			badParam(w, "requests must be 0 or 1 (or false or true), got %q", v)
+			return
+		}
+		withRequests = b
+	}
+	id, err := s.opts.BenchStore.ResolveRunRef(r.PathValue("id"))
+	if err != nil {
+		s.storeErr(w, err)
+		return
+	}
+	run, err := s.opts.BenchStore.GetRunOpt(id, withRequests)
 	if err != nil {
 		s.storeErr(w, err)
 		return
