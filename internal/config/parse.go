@@ -15,6 +15,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelpath"
 )
 
 // DefaultDefaults returns the built-in policy defaults (design section 6).
@@ -196,12 +197,16 @@ func trimAll(in []string) []string {
 // modelPath is where a profile's model file is expected.
 func (c *Config) modelPath(p *core.Profile) string { return filepath.Join(c.ModelsDir, p.Model) }
 
-// modelCheck reports whether a profile's model file may be accepted: it
-// exists, or the profile keeps the file it pointed at before (o.KeepModels).
+// modelCheck reports whether a profile's model file may be accepted: its
+// path keeps the path rule (internal/modelpath) and the file exists, or
+// the profile keeps the file it pointed at before (o.KeepModels).
 func (c *Config) modelCheck(o Options, exists func(string) bool) func(*core.Profile) bool {
 	return func(p *core.Profile) bool {
 		if m, ok := o.KeepModels[p.Name]; ok && m == p.Model {
-			return true
+			return true // kept, as a missing file is: also a path the rule refuses
+		}
+		if modelpath.Check(p.Model) != nil {
+			return false // the path rule (internal/modelpath), whether the file exists or not
 		}
 		return exists(c.modelPath(p))
 	}

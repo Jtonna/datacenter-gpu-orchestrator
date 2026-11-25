@@ -14,6 +14,15 @@ No agent change, no new port. **Schema: one new table, `model_trash_removed` (to
 - **MCP.** `remove_deleted_model` (destructive, owner-asked wording); `list_deleted_models` shows tombstones in `removed`.
 - **Going back.** The image before (af916f4) opens the same database and leaves step 3 alone. Its trash list reads `model_trash` only, so a removed file never shows there again; an item whose removal was cut by a kill shows as `removing`, which it does not restore or remove; it settles with this image. If `model_trash_purge` was set, the image before reads it as an unknown setting: configuration writes there need `force` until that key is dropped (as with `model_trash_days` for the image before slice 3).
 
+## Scheduler image and agent: one rule for a profile's model path
+
+No new port, no schema change, no new route, no new setting. No live profile is touched: every live profile names a plain file (checked 25 Nov 2026).
+
+- **The rule.** A kind: llama profile's `model` is a path relative to `models_dir`, with forward slashes, and no part that starts with a dot. Refused: `.trash/...`, `.incoming/...`, `.potluck-uploads/...` or any other dot-part, an absolute path, a `..` part, a backslash, a drive (`C:`), a NUL byte, an empty part. A plain sub-folder (`sub/a.gguf`) stays allowed. The refusal is a configuration validation error on field `model`, whether or not a file is at that path.
+- **One function, used everywhere a model path is joined to the models folder** (`internal/modelpath`): the configuration check, the scheduler's need and header reads, the llama-server command, the catalog's list of named files (a refused path is listed as not there and never read; the folder scan also skips dot-names), the file-cache evict (also refuses a link that resolves into a dot-folder; `sub/../m.gguf` is now refused) and the agent's host launch (400 `invalid_request`).
+- **A stored profile that already names such a path** is treated as a profile whose file went missing: the scheduler starts with the stored configuration (one WARN), the profile stays, an edit that keeps its path passes, its load is refused at plan time; a write that adds a profile for such a path or points one at it is refused. Older revisions are still shown.
+- **Going back.** The image before accepts these paths again; nothing is stored differently.
+
 ## Scheduler image: newer benchmark tables switch off only the benchmarks; run limit 720 minutes
 
 No agent change, no new port, no schema change, no new route, no new setting.
