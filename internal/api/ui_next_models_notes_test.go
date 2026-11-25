@@ -1,6 +1,11 @@
 package api
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 // The owner's notes on the Models page image (25 Nov 2026). They overrule
 // the board where they differ. One test per note.
@@ -79,6 +84,15 @@ func TestUINextNotesNeedsTilde(t *testing.T) {
 		map[string]any{"name": "notes 7: the panel says how it is known", "route": "#/models?model=" + mdlLoaded, "status": st,
 			"page": []string{"needs ~17.1 GB", "(measured)"}},
 	}})
+	// One decimal only: the two-decimal choice drawn for the owner is gone,
+	// switch and all (the reviewer, 25 Nov).
+	js, err := os.ReadFile(filepath.Join("ui", "next", "views", "models.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(js), "NEED_DECIMALS") || strings.Contains(string(js), "18.48") {
+		t.Error("models.js still carries the two-decimal Needs choice")
+	}
 }
 
 // Note 9: a model's profiles are its PRODUCTION profiles (the interim rule

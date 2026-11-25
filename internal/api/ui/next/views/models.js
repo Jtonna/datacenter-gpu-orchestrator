@@ -185,11 +185,9 @@ const hostLine = p => (p.host === 'node'
     p.host_overhead_mib ? ` · +${gb(p.host_overhead_mib)} for the host` : null, p.host_problem ? h('span.err-t', ' · ' + p.host_problem) : null)
   : null);
 
-// NEED_DECIMALS: the decimals of a Needs figure. The owner's note 7 (25 Nov)
-// asks for one ("~18.5 GB"); two ("~18.48 GB") was drawn for the choice.
-const NEED_DECIMALS = 1;
-// needText(mib) -> "~18.5 GB": a tilde, as a need is approximate
-export const needText = mib => '~' + (mib / 1024).toLocaleString('en-US', { minimumFractionDigits: NEED_DECIMALS, maximumFractionDigits: NEED_DECIMALS }) + ' GB';
+// needText(mib) -> "~18.5 GB": a tilde, as a need is approximate, and one
+// decimal (the owner's note 7, 25 Nov)
+export const needText = mib => '~' + (mib / 1024).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' GB';
 // needsCell(m, st) -> the Needs cell: the memory of the lightest
 // configuration (fit.need_mib) as "~18.5 GB"; how it is known (measured,
 // estimated, set in the profile) and the sentence are on hover and in the
