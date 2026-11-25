@@ -267,6 +267,19 @@ function needsLine(m, st, f) {
     f.need ? [h('span.mut', ' · needs '), h('span', { title: f.title }, needText(f.need)), tail ? h('span.mut', ' (' + tail + ')') : null] : null);
 }
 
+// convMemory(m) -> the panel's "Conversation memory" line: for a recurrent
+// or windowed family, the restore points (context checkpoints) the model
+// keeps on the machine that hosts it, from its profiles' host_memory (GET
+// /api/profiles; scheduler hostmem.go), and whether what it needs counts
+// them (count_host_memory, a host on a node); nothing for a plain family
+function convMemory(m) {
+  const hm = (m.profiles || []).map(p => p.host_memory).find(x => x && x.family && x.family !== 'plain' && x.checkpoints > 0);
+  if (!hm) return null;
+  return h('div.mut', { 'data-convmem': '', title: hm.estimate ? 'The size of a restore point is an estimate for a sliding-window model' : null },
+    `Conversation memory: this model keeps restore points on the machine that hosts it: about ${num(Math.round(hm.cell_mib))} MB each, up to ${num(hm.checkpoints)} (${num(hm.checkpoints_mib)} MB)`
+    + (hm.counted ? ', counted in what it needs.' : ', not yet counted.'));
+}
+
 // the side panel of one model
 function modelPanel(st, m, ps) {
   const f = fitOf(m, st);
@@ -300,6 +313,7 @@ function modelPanel(st, m, ps) {
       h('div.row', { style: 'gap:10px;flex-wrap:wrap' }, h('b', m.short_name || m.name), m.publisher ? h('span.mut', m.publisher) : null,
         stateBadge(m, st), m.kind === 'llama' && !m.exists ? badge('File missing', 'fail') : null),
       needsLine(m, st, f),
+      convMemory(m),
       facts([
         m.family ? ['Family', h('span', m.family)] : null,
         m.parameters ? ['Parameters', h('span', m.parameters)] : null,

@@ -163,6 +163,11 @@ func hostEntry(e map[string]any, rep scheduler.PlanReport, names map[string]stri
 		return
 	}
 	e["host"] = rep.Host
+	if rep.HostMemory != nil {
+		// the host process's own memory where it is hosted (scheduler
+		// hostmem.go): checkpoints and prompt cache, counted or only shown
+		e["host_memory"] = jsonView(*rep.HostMemory)
+	}
 	if rep.Host != core.HostNode {
 		return
 	}

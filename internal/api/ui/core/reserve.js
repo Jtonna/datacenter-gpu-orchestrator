@@ -86,7 +86,8 @@ export function memoryTable(mem, name) {
       columns: [
         { label: 'Node', render: row => h('span', h('span.name.mono', row.node || name(row.id)), row.shared ? h('span.sub', 'shared memory') : null) },
         { label: 'Weights', cls: 'r', render: row => mib(row.weights_mib) },
-        { label: 'Context', cls: 'r', render: row => mib(row.context_mib) },
+        { label: 'Context', cls: 'r', render: row => h('span', mib(row.context_mib),
+          row.host_memory_mib ? h('span.sub', { 'data-hostmem': '' }, 'incl. ' + mib(row.host_memory_mib) + ' conversation memory of the host') : null) },
         { label: 'Fill reserve', cls: 'r', render: row => mib(row.fill_reserve_mib) },
         { label: 'Will take', cls: 'r', title: 'weights + context + fill reserve, or the stored peak', render: row => h('span', mib(row.will_take_mib), h('span.sub', basisText(row.basis))) },
         { label: 'Free now', cls: 'r', render: row => h('span', mib(row.free_now_mib), row.free_avg_known ? h('span.sub', 'avg ' + mib(row.free_avg_mib)) : null) },

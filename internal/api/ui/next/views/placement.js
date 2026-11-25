@@ -239,5 +239,11 @@ function hostLine(plan, name) {
   const text = plan.host === 'node'
     ? ['llama-server would run on ', h('span.mono', name(plan.host_node)), plan.host_overhead_mib ? ', which also holds ' + gb(plan.host_overhead_mib) + ' for the host process' : '', '.']
     : ["llama-server would run on the scheduler's machine; the zones hold the model."];
-  return h('div.plc-block', h('h3', 'Host'), h('p', text), plan.host_problem ? h('p.err-t', 'It cannot host now: ' + plainReason(plan.host_problem)) : null);
+  const hm = plan.host_memory;
+  const conv = hm && hm.checkpoints_mib + hm.prompt_cache_mib > 0
+    ? h('p', { 'data-hostmem': '' }, 'Conversation memory of the host process: up to ', gb(hm.checkpoints_mib + hm.prompt_cache_mib),
+      ` (restore points ${gb(hm.checkpoints_mib)}, prompt cache ${gb(hm.prompt_cache_mib)}), `,
+      hm.on_node ? (hm.counted ? 'counted in what it needs.' : 'not yet counted.') : 'not placed.')
+    : null;
+  return h('div.plc-block', h('h3', 'Host'), h('p', text), conv, plan.host_problem ? h('p.err-t', 'It cannot host now: ' + plainReason(plan.host_problem)) : null);
 }
