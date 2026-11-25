@@ -72,25 +72,16 @@ func realCtx(cfg *config.Config, tr trainedCtxReader) *config.Config {
 			t.ctx, t.arch, t.ok = tr.TrainedCtx(p.Model)
 			seen[p.Model] = t
 		}
-		trained, arch, ok := t.ctx, t.arch, t.ok
-		if !ok || trained <= 0 || p.Ctx <= trained {
+		q := capCtx(p, t.ctx, t.arch, t.ok)
+		if q == nil {
 			continue
-		}
-		q := *p
-		if p.CtxAboveTrained {
-			if hasCtxOverride(p.ExtraArgs) || arch == "" {
-				continue
-			}
-			q.ExtraArgs = append(slices.Clone(p.ExtraArgs), "--override-kv", fmt.Sprintf("%s.context_length=int:%d", arch, p.Ctx))
-		} else {
-			q.CtxAsked, q.Ctx = p.Ctx, trained
 		}
 		if out == nil {
 			cp := *cfg
 			cp.Profiles = maps.Clone(cfg.Profiles)
 			out = &cp
 		}
-		out.Profiles[name] = &q
+		out.Profiles[name] = q
 	}
 	if out == nil {
 		return cfg
@@ -214,4 +205,40 @@ func instCtxStatus(s *InstanceStatus, in *inst) {
 	default:
 		s.CtxNote = ctxNote(in.prof)
 	}
+}
+
+// capCtx is p planned at its model's trained context (CtxAsked keeps the
+// configured ctx), or with ctx_above_trained given the --override-kv that
+// lifts the cap; nil when p needs neither (ctx within the trained context,
+// the trained context unknown, or an override already written).
+func capCtx(p *core.Profile, trained int, arch string, ok bool) *core.Profile {
+	if !ok || trained <= 0 || p.Ctx <= trained {
+		return nil
+	}
+	q := *p
+	if p.CtxAboveTrained {
+		if hasCtxOverride(p.ExtraArgs) || arch == "" {
+			return nil
+		}
+		q.ExtraArgs = append(slices.Clone(p.ExtraArgs), "--override-kv", fmt.Sprintf("%s.context_length=int:%d", arch, p.Ctx))
+	} else {
+		q.CtxAsked, q.Ctx = p.Ctx, trained
+	}
+	return &q
+}
+
+// realScoped is a run-scoped profile with the same rule as a configured
+// one: it is built from the written production profile with the load's own
+// ctx, so a ctx above the trained context is planned, fit-checked on its
+// zones and launched at the trained context, with the note.
+func (c *schedCore) realScoped(sp *core.Profile) *core.Profile {
+	tr, ok := c.needs.(trainedCtxReader)
+	if !ok || sp == nil || sp.Kind != core.KindLlama || sp.Ctx <= 0 || sp.Model == "" {
+		return sp
+	}
+	trained, arch, known := tr.TrainedCtx(sp.Model)
+	if q := capCtx(sp, trained, arch, known); q != nil {
+		return q
+	}
+	return sp
 }

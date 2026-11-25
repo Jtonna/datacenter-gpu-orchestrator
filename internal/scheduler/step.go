@@ -293,6 +293,7 @@ func (c *schedCore) handle(ev event) {
 	c.pruneRecent()
 	c.runPasses()
 	c.prunePins()    // pin.go
+	c.pruneScoped()  // scoped.go
 	c.watchFigures() // neverfits.go
 	c.shutdownProgress()
 	c.last = c.now

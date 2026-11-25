@@ -314,7 +314,7 @@ func (c *schedCore) deriveIndex() *deriveState {
 	d.sum, d.all, d.groups = sum, nil, map[needKey]*deriveGroup{}
 	for _, ls := range c.learned {
 		for k, l := range ls {
-			if l.TotalMiB <= 0 || l.key.kind == core.KindCommand {
+			if l.TotalMiB <= 0 || l.key.kind == core.KindCommand || scopedOrigin(l) {
 				continue
 			}
 			g := l.key.noCtx()

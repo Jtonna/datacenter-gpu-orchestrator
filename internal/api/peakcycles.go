@@ -42,9 +42,10 @@ type peakCycleRow struct {
 	nodeIDs   []string
 	names     []string // the nodes' names in the latest cycle
 	profiles  []string
-	cycles    int // cycles with a peak on every node
-	normal    int // of them, ended normally
-	noPeak    int // cycles with no peak on at least one node
+	scopes    []string // the scopes of the run-scoped loads among the cycles (event data.scope)
+	cycles    int      // cycles with a peak on every node
+	normal    int      // of them, ended normally
+	noPeak    int      // cycles with no peak on at least one node
 	first     int64
 	last      int64
 	total     peakSpread
@@ -80,6 +81,7 @@ type cyclePeakData struct {
 		PeakMiB   *int   `json:"peak_mib"`
 		SettleMiB *int   `json:"settle_use_mib"`
 	} `json:"cycle_peaks"`
+	Scope      string  `json:"scope"` // a run-scoped load's (the event's profile is its production id)
 	Kind       string  `json:"profile_kind"`
 	Ctx        int     `json:"profile_ctx"`
 	Parallel   int     `json:"profile_parallel"`
@@ -161,6 +163,10 @@ func (pc *peakCycles) addLocked(e history.Event) {
 		r.profiles = append(r.profiles, e.Profile)
 		slices.Sort(r.profiles)
 	}
+	if d.Scope != "" && !slices.Contains(r.scopes, d.Scope) {
+		r.scopes = append(r.scopes, d.Scope)
+		slices.Sort(r.scopes)
+	}
 	if !complete {
 		r.noPeak++
 		return
@@ -196,7 +202,7 @@ func (pc *peakCycles) view() map[string]any {
 	for _, k := range keys {
 		r := pc.rows[k]
 		at1, at3, at5 = at1+b2i(r.cycles >= 1), at3+b2i(r.cycles >= 3), at5+b2i(r.cycles >= 5)
-		row := map[string]any{"shape": r.shape, "placement": r.nodeIDs, "node_names": r.names, "profiles": r.profiles,
+		row := map[string]any{"shape": r.shape, "placement": r.nodeIDs, "node_names": r.names, "profiles": r.profiles, "scopes": nonNil(r.scopes),
 			"cycles": r.cycles, "normal_cycles": r.normal, "cycles_without_peak": r.noPeak,
 			"first_at": nil, "last_at": nil, "total": nil}
 		if r.hasCycles {

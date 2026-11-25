@@ -115,6 +115,7 @@ func (c *Config) validate(raw map[string]*ProfileSpec, modelOK func(*core.Profil
 		} else if strings.ContainsFunc(d, unicode.IsControl) {
 			pf("description", "must be one line of text (no line breaks or control characters)")
 		}
+		c.validateStage(n, p, pf)
 		switch p.Kind {
 		case core.KindLlama:
 			c.validateLlama(p, raw[n], pf, modelOK)

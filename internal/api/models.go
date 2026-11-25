@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/gguf"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelname"
@@ -27,8 +28,9 @@ import (
 // Read-only.
 
 // generatedID is the naming rule for profiles a tool made: the benchmark
-// matrix writes bench-<model>-<place>-<ctx>, the earlier sweeps b-* and m-*.
-var generatedID = regexp.MustCompile(`^(bench|b|m)-`)
+// matrix writes bench-<model>-<place>-<ctx>, the earlier sweeps b-* and m-*
+// (config.GeneratedID: the stage rule uses the same one).
+var generatedID = config.GeneratedID
 
 // IsGeneratedProfile reports whether a profile is an auto-generated
 // configuration. The profile's own `generated` field decides when it is set;
@@ -503,6 +505,9 @@ func BuildModelCatalog(in CatalogInput, detailKey string) []map[string]any {
 		e := map[string]any{"profile": im["profile"], "state": state, "nodes": nodes, "memory_mib": math.Round(jnum(im["device_total_mib"])),
 			"in_flight": int(jnum(im["in_flight"])), "waiters": int(jnum(im["waiters"])), "requests_served": int(jnum(im["requests_served"])),
 			"last_used": im["last_used"], "stale_profile": jbool(im["stale_profile"])}
+		if sc := jstr(im["scope"]); sc != "" { // a run-scoped instance: its own, never its production profile's
+			e["scope"], e["production"] = sc, im["production"]
+		}
 		if state == "starting" {
 			e["since"] = im["created"]
 			e["phase"] = im["phase"]
@@ -895,7 +900,7 @@ func BuildModelCatalog(in CatalogInput, detailKey string) []map[string]any {
 			if pe["tensor_split"] == nil {
 				pe["tensor_split"] = []any{}
 			}
-			for _, k := range []string{"ttl_s", "host", "host_node", "host_overhead_mib", "host_overhead_source", "host_overhead_measured_at", "host_problem", "description", "derived_from_ctx", "derived_slope_mib_per_1k_ctx", "derived_slope_from_ctx"} { // a profile hosted on a node; a derived need
+			for _, k := range []string{"ttl_s", "host", "host_node", "host_overhead_mib", "host_overhead_source", "host_overhead_measured_at", "host_problem", "description", "stage", "stage_set", "display_name", "shown_name", "derived_from_ctx", "derived_slope_mib_per_1k_ctx", "derived_slope_from_ctx"} { // a profile hosted on a node; a derived need
 				if v, ok := p[k]; ok {
 					pe[k] = v
 				}
@@ -918,8 +923,11 @@ func BuildModelCatalog(in CatalogInput, detailKey string) []map[string]any {
 			il = instList{}
 		}
 		e["instances"] = il
-		state := "not_loaded"
+		state := "not_loaded" // production's own: a run-scoped instance is listed, marked, but counts only for itself
 		for _, i := range il {
+			if i["scope"] != nil {
+				continue
+			}
 			if i["state"] == "starting" {
 				if state == "not_loaded" {
 					state = "loading"

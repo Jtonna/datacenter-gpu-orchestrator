@@ -174,7 +174,7 @@ func (c *schedCore) plan(e *entry) bool {
 	// a refusal exists (eighth review): in fleet membership with the
 	// defaults nothing refuses a forced placement before its launch, and
 	// it evicts as in 0.1.6.
-	if len(e.prof.ForceNodes) > 0 && c.refusesBeforeEvict() && c.anyJustReleased(res.Placement) {
+	if len(e.prof.ForceNodes) > 0 && c.refusesBeforeEvict(e.prof) && c.anyJustReleased(res.Placement) {
 		return false
 	}
 	if c.evictWaits(e.prof, res.Placement, res.Victims, e.evictHeld) {

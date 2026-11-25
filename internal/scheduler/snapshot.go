@@ -108,6 +108,7 @@ func (c *schedCore) instStatus(in *inst) InstanceStatus {
 		StaleProfile: c.staleProfile(in), LoadMode: c.loadModeFor(in.prof, in.placement),
 	}
 	instCtxStatus(&s, in) // realctx.go
+	s.Production, s.Scope, _ = c.scopeOf(in.prof.Name) // scoped.go
 	if in.state == stStarting {
 		s.Phase = in.phase.String()
 		if in.phase == phLoading {
@@ -273,7 +274,7 @@ func (c *schedCore) placedStatus(pl core.Placement) []PlacedNodeStatus {
 // dryPlan is POST /api/plan: what a request for profile would meet now.
 // It changes nothing (the need provider's result may be cached).
 func (c *schedCore) dryPlan(profile string) PlanReport {
-	return c.dryPlanOf(profile, c.cfg.Profiles[profile])
+	return c.dryPlanOf(profile, c.profile(profile))
 }
 
 // dryPlanOf is dryPlan for p, which may be a one-off pinned copy (pin.go).
@@ -335,6 +336,7 @@ func (c *schedCore) dryPlanOf(profile string, p *core.Profile) (r PlanReport) {
 	}
 	r.NeedMiB, r.Measured = info.Need.MiB, info.Need.Measured
 	r.FitNeedMiB, r.NeedBasis, r.DerivedFromCtx, r.DerivedSlope = info.Need.WithMargin(), c.needBasis(info), info.DerivedFromCtx, info.Slope
+	r.NeedBasis += c.writtenNeedDropped(p) // scoped.go
 	if c.insts[profile] == nil {
 		if fe := c.forcedNeverFits(p); fe != nil {
 			r.Action, r.Reason = PlanReject, fe.Message
@@ -383,7 +385,7 @@ func (c *schedCore) dryPlanOf(profile string, p *core.Profile) (r PlanReport) {
 	}
 	if ev := c.evictables(p, 0); len(ev) > 0 {
 		if res, g, err := c.evictPlan(p, req, ev); err == nil { // tight.go, as plan()
-			if len(p.ForceNodes) > 0 && c.refusesBeforeEvict() && c.anyJustReleased(res.Placement) { // as plan() (AB1)
+			if len(p.ForceNodes) > 0 && c.refusesBeforeEvict(p) && c.anyJustReleased(res.Placement) { // as plan() (AB1)
 				r.Action, r.Reason = PlanQueue, forcedFitWaitText(res.Placement, c)
 				return r
 			}
@@ -432,7 +434,7 @@ func (c *schedCore) applyForcedFit(r *PlanReport, p *core.Profile, pl core.Place
 		return
 	}
 	if ff.mode == config.ForcedFitReject {
-		r.Action, r.Reason = PlanReject, ff.message(p.Name)+" (defaults.forced_fit_check is reject)"
+		r.Action, r.Reason = PlanReject, ff.message(p.Name)+" ("+ff.rule+")"
 		return
 	}
 	r.Warning = ff.message(p.Name) + " (defaults.forced_fit_check is warn; it would start anyway)"

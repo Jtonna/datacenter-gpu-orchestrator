@@ -21,6 +21,33 @@ The model server caps every slot at the model's trained context (`<arch>.context
 - **Test tools.** fakellama gains `FAKELLAMA_TRAINED_CTX`, which caps `/props` like the real server; `--override-kv` lifts the cap.
 - **Going back.** An older image keeps the plan at the configured ctx. If a stored profile sets `ctx_above_trained`, the older image reads the stored configuration with that field ignored: it is listed as unknown (`internal/cfgsvc/service.go`), and configuration writes are refused unless forced. Remove the field before going back if writes must work.
 
+## Scheduler image: a run-scoped instance counts only for itself
+
+No agent change, no new port, no schema change, no new route, no new setting.
+
+- **Status.** A run-scoped instance carries `production` and `scope`; any other instance has neither.
+- **Catalog and Models page.** `GET /api/models` lists a scoped instance among its model's `instances` with `scope` and `production`; the model's `state` is production's own (a test run alone leaves it `not_loaded`). The row says "test run e2 on ps5-03" apart from "in use on"; the panel's Loaded now marks it "Test run e2"; the Loaded filter still shows the model.
+- **Needs.** A measurement made by a scoped load stays under its own shape's key and is never the source of a derived need or a model's own line (before, a production profile with no measurement of its own could derive its plan from it). `/api/needs` learned rows and `peak_cycles` rows gain `scopes`. The learnedNeed sentence says "run-scoped load e2 of <id>".
+- **Going back.** Nothing is stored new. The image before ignores the new fields and counts a scoped instance in its model's state again.
+
+## Scheduler image: the TEST / PRODUCTION marking, read only (profiles slice B1)
+
+No agent change, no new port, no schema change, no new route, no new setting. No plan changes.
+
+- **Two optional profile fields are read.** `stage` (`test` or `production`) and `display_name` (one line, at most 80 characters, not starting with "TEST - ", not another profile's id, alias or display name). Both are in the configuration schema. Neither changes scheduling: a loaded instance is not stale when only they change.
+- **The effective stage.** `/api/profiles` and the configurations of `/api/models` carry `stage` (the effective one), `stage_set` (false: the rule decided) and `shown_name`, plus `display_name` when set. Absent, the rule decides: a generated profile (the `generated` field, else a `bench-`, `b-` or `m-` id) or one with `force_nodes` is test, any other production. An explicit stage always wins. The shown name is the display name or the id, with "TEST - " before it for a test profile.
+- **Read only in this image.** A profile write (`POST`/`PUT /api/config/profiles`, the MCP profile tools) that leaves both fields out keeps the stored ones. One that sets them to other values is refused 400. A whole-document import keeps them as written.
+- **`@` is refused in profile ids and aliases.** It is kept for run-scoped names (`<id>@<scope>`). A configuration that already holds one does not load: check before deploying.
+- **Going back.** This image writes neither field. A document a later image marked is read by the image before leniently: it refuses configuration writes until forced, and a forced write drops the marks. The rule gives the same split without them.
+
+## Scheduler image: run-scoped profiles (profiles slice A)
+
+No agent change, no new port, no schema change, no new route, no new setting. No plan changes while no scoped profile is held.
+
+- **A production profile with a run's settings, under its own name.** `POST /api/load` and `POST /api/plan` take `scope` and the run's settings (`ctx`, `parallel`, `kv_quant`, `flash_attn`, `host`, `thinking`) beside `nodes`: the load runs as `<production id>@<scope>`, held in memory only, never written to the configuration. It has its own instance, queue entry and back-off, so it runs beside production traffic and neither is admitted to the other's instance. It lives while its entry or instance does. See the runbook, "A run-scoped load".
+- **What is recorded.** History events and request log rows name the production id; events carry `data.scope`, rows keep the scoped name as `requested`.
+- **Going back.** Nothing is stored. The image before answers a scoped name 404 `model_not_found` and ignores `scope` in a load body (it loads the production profile): a caller checks for `scope` in the answer.
+
 ## Scheduler image: context fill reads fresh samples and holds for the settle use
 
 No agent change, no new port, no schema change, no new route, no new setting. No plan row changes.

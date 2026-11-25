@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelname"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/proxy"
@@ -44,8 +45,12 @@ type catalogSnap struct {
 	hash    map[string]string
 	list    []byte // the GET /api/models document
 	sig     string // the status it was built from
-	builtAt time.Time
-	namer   *modelname.Namer // the short names of its files (request rows use it too)
+	// plansSig is the status the profiles' plans in it were computed
+	// under (catalogPlans): sig when they are fresh, an older status when
+	// the live channel's build reused them.
+	plansSig string
+	builtAt  time.Time
+	namer    *modelname.Namer // the short names of its files (request rows use it too)
 }
 
 type catalogCache struct {
@@ -69,6 +74,32 @@ type catalogCache struct {
 
 	histQueries atomic.Int64 // how often the history store was asked (tests)
 	builds      atomic.Int64
+
+	// The profiles with their plans (GET /api/profiles' entries), kept
+	// between builds of the live channel (catalogPlans). Read and written
+	// only under buildMu.
+	plans planCache
+	// planRounds counts how often every profile's plan was computed for
+	// the catalog; planReads counts the single plans (tests).
+	planRounds atomic.Int64
+	planReads  atomic.Int64
+
+	// clock, minGap and driftGap: time.Now, catalogMinGap and
+	// catalogDriftGap unless a test set them.
+	clock    func() time.Time
+	minGap   time.Duration
+	driftGap time.Duration
+}
+
+// planCache is one computation of every profile's plan and the facts it
+// was computed from.
+type planCache struct {
+	entries []map[string]any
+	cfg     *config.Config // the configuration in force then
+	key     string         // planKey of the status then
+	free    map[string]int // planFree of the status then
+	sig     string         // catalogSig of the status then
+	at      time.Time
 }
 
 var catalogTypes = func() map[string]bool {
@@ -83,9 +114,47 @@ var catalogTypes = func() map[string]bool {
 // status asked for (node memory figures move every few seconds).
 const catalogMinGap = 2 * time.Second
 
+// The live channel's catalog does not compute every profile's plan again on
+// every rebuild (one read on the scheduler loop per profile: with 300
+// profiles and memory figures that move with every heartbeat that was 150
+// loop steps a second for as long as one page was open). It computes them
+// again (catalogPlans) when:
+//
+//   - the configuration in force changed (another *config.Config);
+//   - a fact a plan is decided on changed (planKey): a node joined, left,
+//     went offline, was excluded, quarantined, claimed, settling or set
+//     aside; an instance started, became ready, drains or stopped; a
+//     learned need, a backoff or a quarantine came or went;
+//   - a node's budget for a new load moved by catalogFreeStep or more since
+//     the plans were computed (a load or an unload elsewhere, not the noise
+//     of the heartbeats);
+//   - catalogDriftGap passed since they were computed while the status
+//     differs at all (small memory drift, cache figures, agent fields).
+//
+// So with nothing happening the plans are at most catalogDriftGap old, and
+// what a plan's action depends on reaches the page within catalogMinGap.
+// REST callers (GET /api/models, /api/profiles, POST /api/plan) always get
+// plans computed under the status they were answered with, as before.
+const (
+	catalogDriftGap = 60 * time.Second
+	catalogFreeStep = 1024 // MiB
+)
+
+func (c *catalogCache) now() time.Time {
+	if c.clock != nil {
+		return c.clock()
+	}
+	return time.Now()
+}
+
+func (c *catalogCache) gaps() (minGap, driftGap time.Duration) {
+	return orDur(c.minGap, catalogMinGap), orDur(c.driftGap, catalogDriftGap)
+}
+
 func (s *Server) startCatalog() {
 	c := &s.catalog
 	c.kick, c.quit, c.done = make(chan struct{}, 1), make(chan struct{}), make(chan struct{})
+	c.clock, c.minGap, c.driftGap = s.opts.catalogClock, s.opts.catalogMinGap, s.opts.catalogDriftGap
 	c.aggOld = true
 	if st, ok := s.opts.Audit.(fileMetaStore); ok {
 		s.files.store = st
@@ -130,11 +199,11 @@ func (s *Server) startCatalog() {
 				return
 			case <-time.After(120 * time.Millisecond):
 			}
-			if s.ws == nil || s.ws.clientCount() == 0 {
-				continue // nobody is watching: the next request builds it
+			if s.ws == nil || !s.ws.wantsAny(TopicModels) {
+				continue // nobody is watching the catalog: the next request builds it
 			}
 			bctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			s.catalogBuild(bctx, nil)
+			s.catalogBuild(bctx, nil, false)
 			cancel()
 		}
 	})
@@ -245,7 +314,8 @@ func (s *Server) catalogStatus(v any) {
 		c.poke()
 		return
 	}
-	if snap == nil || time.Since(snap.builtAt) < catalogMinGap {
+	minGap, _ := c.gaps()
+	if snap == nil || c.now().Sub(snap.builtAt) < minGap {
 		return
 	}
 	if s.opts.catalogSource != nil {
@@ -349,10 +419,29 @@ func (s *Server) catalogGet(ctx context.Context) (*catalogSnap, error) {
 		return nil, err
 	}
 	snap, dirty := c.current()
+	if snap != nil && !dirty && catalogSig(st) == snap.sig && snap.plansSig == snap.sig {
+		return snap, nil
+	}
+	return s.catalogBuild(ctx, st, true)
+}
+
+// catalogLive is the catalog for the live channel (a client that subscribes
+// to "models"): like catalogGet, but a build reuses the plans by the rules
+// of catalogPlans instead of computing every profile's plan again.
+func (s *Server) catalogLive(ctx context.Context) (*catalogSnap, error) {
+	c := &s.catalog
+	if s.opts.catalogSource != nil {
+		return s.catalogGet(ctx)
+	}
+	st, err := s.statusView(ctx)
+	if err != nil {
+		return nil, err
+	}
+	snap, dirty := c.current()
 	if snap != nil && !dirty && catalogSig(st) == snap.sig {
 		return snap, nil
 	}
-	return s.catalogBuild(ctx, st)
+	return s.catalogBuild(ctx, st, false)
 }
 
 // CatalogStatusSig is what of a status document the catalog depends on (for
@@ -374,7 +463,7 @@ func (s *Server) catalogBuildFrom(ctx context.Context, in CatalogInput, sig stri
 	}
 	in.Now = time.Now()
 	snap := newCatalogSnap(in, prev, "/models")
-	snap.sig, snap.builtAt = sig, time.Now()
+	snap.sig, snap.plansSig, snap.builtAt = sig, sig, c.now()
 	c.publish(snap)
 	built = true
 	if s.ws != nil && prev != nil && snap.version != prev.version {
@@ -384,8 +473,9 @@ func (s *Server) catalogBuildFrom(ctx context.Context, in CatalogInput, sig stri
 }
 
 // catalogBuild joins the catalog again and publishes it (st may be nil: the
-// status is then asked for).
-func (s *Server) catalogBuild(ctx context.Context, st any) (*catalogSnap, error) {
+// status is then asked for). fresh: every profile's plan is computed under
+// st (a REST caller); otherwise catalogPlans may reuse the last ones.
+func (s *Server) catalogBuild(ctx context.Context, st any, fresh bool) (*catalogSnap, error) {
 	c := &s.catalog
 	if s.opts.catalogSource != nil {
 		if in, sig, ok := s.opts.catalogSource(ctx, ""); ok {
@@ -404,7 +494,10 @@ func (s *Server) catalogBuild(ctx context.Context, st any) (*catalogSnap, error)
 	prev, dirty, aggOld := c.take()
 	built := false
 	defer c.unlessBuilt(&built)
-	if prev != nil && !dirty && prev.sig == sig { // another caller built it while this one waited
+	// another caller built it while this one waited (and under the
+	// configuration in force: a write that has not marked the catalog
+	// dirty yet still gets its plans)
+	if prev != nil && !dirty && prev.sig == sig && (!fresh || prev.plansSig == sig) && c.plans.cfg == s.conf() {
 		built = true
 		return prev, nil
 	}
@@ -414,7 +507,8 @@ func (s *Server) catalogBuild(ctx context.Context, st any) (*catalogSnap, error)
 
 	in := CatalogInput{HistoryOn: s.hist.On(), Now: time.Now()}
 	in.Status, _ = st.(map[string]any)
-	in.Profiles = s.profileEntries(ctx)
+	var plansSig string
+	in.Profiles, plansSig = s.catalogPlans(ctx, st, sig, fresh)
 	if s.opts.Bench != nil {
 		if aggOld || c.agg == nil {
 			if doc, err := s.opts.Bench.Aggregates(bench.AggFilter{}); err == nil {
@@ -446,7 +540,7 @@ func (s *Server) catalogBuild(ctx context.Context, st any) (*catalogSnap, error)
 	in.Events = c.eventsCopy()
 
 	snap := newCatalogSnap(in, prev, s.conf().ModelsDir)
-	snap.sig, snap.builtAt = sig, time.Now()
+	snap.sig, snap.plansSig, snap.builtAt = sig, plansSig, c.now()
 	c.publish(snap)
 	built = true
 	if s.ws != nil && (prev == nil || snap.version != prev.version) {
@@ -536,7 +630,7 @@ func (s *Server) Warm() {
 		defer s.bgWG.Done()
 		ctx, cancel := context.WithTimeout(s.bg, 30*time.Second)
 		defer cancel()
-		if _, err := s.catalogBuild(ctx, nil); err != nil {
+		if _, err := s.catalogBuild(ctx, nil, true); err != nil {
 			s.log.Debug("the model catalog could not be built at start; the first request builds it", "err", err)
 		}
 	}, nil)

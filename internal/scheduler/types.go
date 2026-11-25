@@ -219,6 +219,11 @@ type InstanceStatus struct {
 	// PinnedNodes: loaded on these nodes by a one-off load on chosen nodes
 	// (pin.go), not by its profile's force_nodes; absent otherwise.
 	PinnedNodes []string `view:"omitempty"`
+	// Production and Scope: a run-scoped instance's production profile and
+	// scope (scoped.go), so a page counts it for itself and not as its
+	// production profile; absent on any other instance.
+	Production string `view:"omitempty"`
+	Scope      string `view:"omitempty"`
 	// LoadMode is how the instance's nodes get the weights: file_read (the
 	// workers read the model file), pushed (the host sends them), local (no
 	// remote worker); empty for a command profile or when not known.

@@ -36,6 +36,9 @@ type needRow struct {
 	// UntrustedReason says why a row is not trusted ("" when it is).
 	UntrustedReason string   `json:"untrusted_reason"`
 	Profiles        []string `json:"profiles"`
+	// Scopes: the scope of the run-scoped load that measured the row
+	// (measured_by is then a scoped name, <id>@<scope>); empty otherwise.
+	Scopes []string `json:"scopes"`
 }
 
 func needRowJSON(r scheduler.LearnedRow) needRow {
@@ -48,6 +51,10 @@ func needRowJSON(r scheduler.LearnedRow) needRow {
 	}
 	if out.Profiles == nil {
 		out.Profiles = []string{}
+	}
+	out.Scopes = []string{}
+	if _, scope, ok := scheduler.SplitScoped(r.MeasuredBy); ok {
+		out.Scopes = append(out.Scopes, scope)
 	}
 	for _, id := range r.Placement {
 		out.Placement = append(out.Placement, string(id))

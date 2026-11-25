@@ -33,6 +33,11 @@ func (s *Server) trackRequest(r *http.Request, sent, kind, requested string, p *
 		Caller: s.defaultUser(), CallerKind: "default"}
 	if p != nil {
 		b.Profile, b.ModelFile, b.Ctx = p.Name, p.Model, p.Ctx
+		// A run-scoped profile (scheduler/scoped.go) is logged under its
+		// production id; the requested name keeps the scope.
+		if base, _, ok := scheduler.SplitScoped(p.Name); ok && s.conf().Profiles[p.Name] == nil {
+			b.Profile = base
+		}
 	}
 	if _, name, ok := audit.AgentFrom(r.Context()); ok {
 		b.Caller, b.CallerKind = name, "key"

@@ -75,6 +75,7 @@ func (s *Server) profileEntriesOf(ctx context.Context, cfg *config.Config) []map
 	for _, n := range names {
 		p := cfg.Profiles[n]
 		rep, err := s.sched.Plan(ctx, n)
+		s.catalog.planReads.Add(1)
 		var se *scheduler.Error
 		if errors.As(err, &se) && se.Reason == scheduler.ReasonUnknownModel {
 			continue // deleted since the snapshot
@@ -91,6 +92,12 @@ func (s *Server) profileEntriesOf(ctx context.Context, cfg *config.Config) []map
 		}
 		if p.Description != "" {
 			e["description"] = p.Description
+		}
+		// The TEST / PRODUCTION marking, read only (config.EffectiveStage).
+		e["stage"], e["stage_set"] = config.EffectiveStage(p)
+		e["shown_name"] = config.ShownName(p)
+		if p.DisplayName != "" {
+			e["display_name"] = p.DisplayName
 		}
 		// It forces a node exclude_nodes names: kept, refused until lifted.
 		if b, ok := cfg.BlockedByExclusion(n); ok {
