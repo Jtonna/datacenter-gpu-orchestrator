@@ -90,6 +90,7 @@ type Agent struct {
 	stopLaunch []string
 	launches   []agentproto.LaunchRequest // every accepted launch request
 	hostAuth   []string                   // the Authorization header of each request to a host launch
+	silentTo   time.Time                  // no heartbeat is sent before this (SilentFor)
 }
 
 type launchRun struct {
@@ -323,6 +324,10 @@ func (a *Agent) register(ctx context.Context) bool {
 
 func (a *Agent) heartbeat(ctx context.Context) int {
 	a.mu.Lock()
+	if time.Now().Before(a.silentTo) { // a withheld report (SilentFor)
+		a.mu.Unlock()
+		return http.StatusOK
+	}
 	hb := map[string]any{"agent_start_id": a.StartID, "seq": time.Now().UnixNano(), "uptime_s": 1.0,
 		"role": agentproto.RoleIdle, "launch_id": nil, "programs_ready": true, "programs_error": nil,
 		"model_source": map[string]any{"kind": "share", "reachable": true, "checked_age_s": 1.0},
@@ -727,4 +732,13 @@ func (a *Agent) SetMemAvail(mib int64, stats json.RawMessage) {
 	if stats != nil {
 		a.Stats = stats
 	}
+}
+
+// SilentFor withholds the agent's heartbeats for d from now (its memory
+// report is then as old as its last heartbeat), as an agent that misses a
+// report does. Kept short of the pool's LostAfter by the caller.
+func (a *Agent) SilentFor(d time.Duration) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.silentTo = time.Now().Add(d)
 }

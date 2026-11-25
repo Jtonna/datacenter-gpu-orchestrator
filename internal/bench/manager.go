@@ -58,6 +58,14 @@ type ManagerOptions struct {
 	// the background (default 500 ms); a negative value turns the background
 	// sampling off (the step still samples at its load polls and phase ends).
 	MemSample time.Duration
+	// FillSettle is the scheduler's free_average_window, read when a
+	// context_fill phase starts: its hold after the load when the phase does
+	// not give settle_s (nil: 30 s, the scheduler's default).
+	// FillReportEvery is how often an agent reports its memory (the
+	// heartbeat; default 2 s): a mark waits up to two of these for a report
+	// newer than its turn's end.
+	FillSettle      func() time.Duration
+	FillReportEvery time.Duration
 	// ColdRetry is how long a cold load keeps asking a node that is still
 	// stopping its launch or evicted a moment ago (default 20 s, negative:
 	// once); ColdSettle is the wait before the plan is read again after the
@@ -147,6 +155,12 @@ func NewManager(o ManagerOptions) (*Manager, error) {
 	}
 	if o.MemSample == 0 {
 		o.MemSample = DefaultMemSample
+	}
+	if o.FillSettle == nil {
+		o.FillSettle = func() time.Duration { return DefaultFillSettle }
+	}
+	if o.FillReportEvery <= 0 {
+		o.FillReportEvery = DefaultFillReportEvery
 	}
 	if o.ColdRetry == 0 {
 		o.ColdRetry = DefaultColdRetry

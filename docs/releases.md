@@ -2,6 +2,22 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: context fill reads fresh samples and holds for the settle use
+
+No agent change, no new port, no schema change, no new route, no new setting. No plan row changes.
+
+- **Fresh samples.** A `context_fill` mark's "after" reading is now a memory report taken after the turn ended. The phase waits up to two report intervals (heartbeats, 2 s each) for it. Before, a short turn could read the same report as "before", and growth showed 0. Each machine's reading at a mark gains:
+  - `after_sampled_at` and `before_sampled_at`: when the agent took the figure;
+  - `after_wait_ms`: how long the mark waited after the turn's end;
+  - `samples_during_turn`: how many reports were taken inside the turn;
+  - `stale` and `stale_reason`: no fresh report came in time, so growth and KiB per token are not given and no row is written.
+
+  `lowest_mib` counts only reports taken inside the turn, and is absent when there were none. Each mark gains `turn_started_at` and `turn_ended_at`.
+- **The settle hold.** After the load, a `context_fill` phase waits one `free_average_window` (new option `settle_s` overrides it; 0: none) before the first turn. The cycle then has a settle use, and `growth_readings` can be worked out for it. The result gains `settle_hold_ms` and `settle_held_ms`. A run takes about 30 s longer, plus up to two report intervals per mark.
+- **Status.** The benchmark runner reads each agent's `last_seen_ago_s` from `GET /api/status` to know when a figure was taken (the status's `time` less that age).
+- **Test tools.** In potluck-fake-agents' `--mem-file`, a key `silent:<id or name>` with N withholds that agent's reports for N s (at most 8).
+- **Going back.** The image before reads benchmark definitions strictly (unknown fields refused), so a benchmark that sets `settle_s` must drop it before going back; benchmarks without it are unchanged. Results stored by this image keep their new fields; the image before leaves them unread.
+
 ## Scheduler image: the context_fill benchmark phase; growth per token, collected only
 
 No agent change, no new port, no schema change, no new route, no new setting. No plan row changes: nothing reads the new figures for a plan.

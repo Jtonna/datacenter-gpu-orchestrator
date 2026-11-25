@@ -164,6 +164,10 @@ type WorkerInfo struct {
 	AvailMiB  *int64
 	AvailKind string
 	AvailNote string
+	// SampleAt is when the figure was taken: the status's time less the
+	// agent's last_seen_ago_s (its last report). Zero when not known (the
+	// scheduler's own machine, or a status without the age).
+	SampleAt time.Time
 }
 
 // RecentLoad is an entry of recent_loads.
@@ -596,6 +600,9 @@ func ParseStatus(raw []byte) (*StatusInfo, error) {
 		if n.Agent != nil {
 			if v, kind, note := agentAvail(n.Agent); v != nil {
 				wi.AvailMiB, wi.AvailKind, wi.AvailNote = v, kind, note
+				if ago := n.Agent.LastSeenAgoS; ago != nil && !out.Time.IsZero() {
+					wi.SampleAt = out.Time.Add(-time.Duration(*ago * float64(time.Second)))
+				}
 			}
 		}
 		out.Workers = append(out.Workers, wi)

@@ -346,3 +346,41 @@ func TestMemFileDropsANodesMemory(t *testing.T) {
 		t.Fatalf("ps5-a moved: %v", avail("ps5-a"))
 	}
 }
+
+// --mem-file "silent:<name>": N withholds that agent's reports for N s: its
+// last_seen_ago_s grows past a heartbeat interval, then it reports again;
+// the other agent keeps reporting.
+func TestMemFileSilentWithholdsReports(t *testing.T) {
+	agentPort, workerPort := freeLoopbackPort(t), freeLoopbackPort(t)
+	base := startScheduler(t, agentPort, workerPort)
+	nodes := []Node{{ID: "02:00:00:00:00:01", Name: "ps5-a"}, {ID: "02:00:00:00:00:02", Name: "ps5-b"}}
+	for i := range nodes {
+		fillDefaults(&nodes[i])
+	}
+	assignAddrs(nodes, "127.0.0.2")
+	file := filepath.Join(t.TempDir(), "mem.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	f, err := Start(ctx, Options{Scheduler: base, Release: "auto", AgentPort: agentPort, WorkerPort: workerPort,
+		Heartbeat: 100 * time.Millisecond, MemFile: file}, nodes, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(f.Close)
+	ago := func(name string) float64 {
+		for _, x := range getMap(t, base+"/api/status")["agents"].([]any) {
+			if a := x.(map[string]any); a["name"] == name {
+				v, _ := a["last_seen_ago_s"].(float64)
+				return v
+			}
+		}
+		return -1
+	}
+	eventually(t, "both reporting", func() bool { return ago("ps5-a") >= 0 && ago("ps5-a") < 0.5 && ago("ps5-b") >= 0 && ago("ps5-b") < 0.5 })
+	os.WriteFile(file, []byte(`{"silent:ps5-b": 1}`), 0o644)
+	eventually(t, "ps5-b silent", func() bool { return ago("ps5-b") > 0.5 })
+	if ago("ps5-a") > 0.5 {
+		t.Fatalf("ps5-a went silent too: %v", ago("ps5-a"))
+	}
+	eventually(t, "ps5-b reports again", func() bool { return ago("ps5-b") < 0.5 })
+}

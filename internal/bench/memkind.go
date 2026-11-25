@@ -39,6 +39,9 @@ type statusAgent struct {
 	Platform    string          `json:"platform"`
 	Devices     []statusDevice  `json:"devices"`
 	Stats       json.RawMessage `json:"stats"`
+	// LastSeenAgoS is the age of the agent's last report (its heartbeat,
+	// which carries the memory figure and the stats).
+	LastSeenAgoS *float64 `json:"last_seen_ago_s"`
 }
 
 type statusDevice struct {
