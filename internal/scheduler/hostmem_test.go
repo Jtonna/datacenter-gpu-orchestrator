@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -170,7 +171,7 @@ func TestHostMemory_OnePercentIsEnough(t *testing.T) {
 // model file for the run.
 func TestHostMemory_WindowSizeUnknownUntilALoadLogsIt(t *testing.T) {
 	h := newHarness(t).nodes(ps5("a", 2, 15000))
-	h.c.needs = ckptNeeds{NeedProvider: h.c.needs, ck: estimate.Ckpt{Family: gguf.FamilyWindowed, Unknown: true}}
+	h.c.needs = ckptNeeds{NeedProvider: h.c.needs, ck: estimate.Ckpt{Family: gguf.FamilyWindowed, Unknown: true, FileBytes: 7000000000}}
 	h.llama("s", 4000)
 	r := h.c.dryPlan("s")
 	if r.HostMemory == nil || !r.HostMemory.SizeUnknown || r.HostMemory.CheckpointsMiB != 0 || r.HostMemory.CellMiB != 0 ||
@@ -184,11 +185,41 @@ func TestHostMemory_WindowSizeUnknownUntilALoadLogsIt(t *testing.T) {
 	ch.mu.Unlock()
 	h.step(evTick{})
 	r = h.c.dryPlan("s")
-	if r.HostMemory.SizeUnknown || !r.HostMemory.FromLog || r.HostMemory.CellMiB != 40.5 || r.HostMemory.CheckpointsMiB != 1296 {
-		t.Fatalf("after the log: %+v", r.HostMemory)
+	hm := r.HostMemory
+	if hm.SizeUnknown || !hm.FromLog || hm.CellMiB != 40.5 || hm.CheckpointsMiB != 1296 {
+		t.Fatalf("after the log: %+v", hm)
+	}
+	// the figure says which file (version) and which context it was read at
+	if hm.LoggedFile != h.cfg.Profiles["s"].Model || hm.LoggedFileBytes != 7000000000 || hm.LoggedCtx != h.cfg.Profiles["s"].Ctx || hm.LoggedAt.IsZero() {
+		t.Fatalf("read at: %+v", hm)
+	}
+	if !strings.Contains(r.HostMemoryNote, "read at a load of") || !strings.Contains(r.HostMemoryNote, "ctx "+itoa(h.cfg.Profiles["s"].Ctx)) {
+		t.Fatalf("note %q", r.HostMemoryNote)
 	}
 	if ev := h.histTypes(history.TLearnedNeed); len(ev) != 0 {
 		t.Fatalf("no comparison without a formula: %+v", ev)
+	}
+	// another context, or another version of the file: not known again
+	h.llama("s2", 4000, func(p *core.Profile) { p.Model, p.Ctx = h.cfg.Profiles["s"].Model, h.cfg.Profiles["s"].Ctx*2 })
+	if r2 := h.c.dryPlan("s2"); r2.HostMemory == nil || !r2.HostMemory.SizeUnknown || r2.HostMemory.CheckpointsMiB != 0 {
+		t.Fatalf("other ctx: %+v", r2.HostMemory)
+	}
+	h.c.needs = ckptNeeds{NeedProvider: h.c.needs.(ckptNeeds).NeedProvider, ck: estimate.Ckpt{Family: gguf.FamilyWindowed, Unknown: true, FileBytes: 7100000000}}
+	if r3 := h.c.dryPlan("s"); !r3.HostMemory.SizeUnknown || r3.HostMemory.CheckpointsMiB != 0 {
+		t.Fatalf("new file version: %+v", r3.HostMemory)
+	}
+}
+
+// A model of an architecture the code has no exact rule for (recurrent
+// but unknown: estimate.Checkpoint gives Unknown) shows no number and adds
+// nothing, like a window model.
+func TestHostMemory_MadeUpArchitectureIsUnknown(t *testing.T) {
+	h := newHarness(t).nodes(ps5("a", 2, 15000))
+	h.c.needs = ckptNeeds{NeedProvider: h.c.needs, ck: estimate.Ckpt{Family: gguf.FamilyRecurrent, Unknown: true}}
+	h.llama("s", 4000)
+	r := h.c.dryPlan("s")
+	if r.HostMemory == nil || !r.HostMemory.SizeUnknown || r.HostMemory.CheckpointsMiB != 0 || r.HostMemory.CellMiB != 0 {
+		t.Fatalf("%+v", r.HostMemory)
 	}
 }
 
@@ -204,3 +235,5 @@ func TestHostMemory_ServerNameIsStable(t *testing.T) {
 		}
 	}
 }
+
+func itoa(n int) string { return strconv.Itoa(n) }

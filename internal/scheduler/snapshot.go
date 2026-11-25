@@ -106,6 +106,7 @@ func (c *schedCore) instStatus(in *inst) InstanceStatus {
 		InFlight: in.inFlight, Waiters: len(in.waiters), VictimOf: in.victimOf, Drain: in.drain, PinnedNodes: c.pins[in.prof],
 		ModelFile: in.prof.Model, RequestsServed: in.served,
 		StaleProfile: c.staleProfile(in), LoadMode: c.loadModeFor(in.prof, in.placement),
+		LaunchNote: in.launchNote,
 	}
 	s.Production, s.Scope, _ = c.scopeOf(in.prof.Name) // scoped.go
 	if in.state == stStarting {

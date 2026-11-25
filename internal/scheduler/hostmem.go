@@ -5,10 +5,12 @@ import (
 	"math"
 	"slices"
 	"sort"
+	"strings"
+	"time"
 
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/estimate"
-	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/gguf"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelpath"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
@@ -39,13 +41,20 @@ type HostMemory struct {
 	CellMiB     float64
 	Estimate    bool
 	Checkpoints int
-	// SizeUnknown: a windowed model whose window layers are not known from
-	// its header and whose checkpoint the server has not logged yet this
-	// run: no figure is shown, and the checkpoints add 0 to the term.
-	// FromLog: CellMiB is the largest checkpoint the server logged for the
-	// model file this run (held in memory only).
-	SizeUnknown bool
-	FromLog     bool
+	// SizeUnknown: a model the code has no exact checkpoint rule for (every
+	// window model; a recurrent architecture not proven against a server
+	// log) whose checkpoint the server has not logged yet, for this file
+	// version at this context, this run: no figure is shown, and the
+	// checkpoints add 0 to the term.
+	// FromLog: CellMiB is the largest checkpoint the server logged at a
+	// load of LoggedFile (LoggedFileBytes: its version) at LoggedCtx per
+	// slot, at LoggedAt (held in memory for the run only: no table).
+	SizeUnknown     bool
+	FromLog         bool
+	LoggedFile      string    `view:"omitempty"`
+	LoggedFileBytes int64     `view:"omitempty"`
+	LoggedCtx       int       `view:"omitempty"`
+	LoggedAt        time.Time `view:"omitempty"`
 	// CheckpointsMiB is Checkpoints × CellMiB, rounded up; PromptCacheMiB
 	// the --cache-ram the launch passes where it is hosted.
 	CheckpointsMiB int
@@ -58,8 +67,51 @@ type HostMemory struct {
 	Counted bool
 }
 
+// LoggedNote says where a FromLog checkpoint size was read: "checkpoint
+// size read at a load of <file> (<bytes> bytes) at ctx <n> per slot".
+func (h HostMemory) LoggedNote() string {
+	if !h.FromLog {
+		return ""
+	}
+	return fmt.Sprintf("checkpoint size %.2f MiB read at a load of %s (%d bytes) at ctx %d per slot", h.CellMiB, h.LoggedFile, h.LoggedFileBytes, h.LoggedCtx)
+}
+
+// ckptKey is a model file version at a context per slot: a checkpoint size
+// read from a load's log holds for that file and context only.
+type ckptKey struct {
+	Model     string
+	FileBytes int64
+	Ctx       int
+}
+
+// ckptLogged is the largest checkpoint a load's log showed for a ckptKey.
+type ckptLogged struct {
+	MiB float64
+	At  time.Time
+}
+
 // TermMiB is the whole term: checkpoints and prompt cache.
 func (h HostMemory) TermMiB() int { return h.CheckpointsMiB + h.PromptCacheMiB }
+
+// msgCkptFlagDropped is the one launch line for a profile whose own
+// extra_args set a checkpoint flag the scheduler passes from the setting.
+const msgCkptFlagDropped = "profile's own checkpoint flag dropped at launch"
+
+// noteDroppedCkptFlag logs, in one line, a stored profile's own checkpoint
+// flag that the launch drops (config.StripLateManaged, on the scheduler's
+// machine and on a host node alike) with the value used instead, and
+// keeps the same sentence on the instance (InstanceStatus.LaunchNote).
+func (c *schedCore) noteDroppedCkptFlag(in *inst) {
+	in.launchNote = ""
+	dropped := config.LateManagedIn(in.prof.ExtraArgs)
+	if len(dropped) == 0 {
+		return
+	}
+	d := strings.Join(dropped, ", ")
+	used := fmt.Sprintf("--ctx-checkpoints %d (setting ctx_checkpoints)", max(c.cfg.Defaults.CtxCheckpoints, 0))
+	in.launchNote = fmt.Sprintf("the profile's own %s is not passed: the launch uses %s", d, used)
+	c.log.Warn(msgCkptFlagDropped, "profile", in.prof.Name, "dropped", d, "used", used)
+}
 
 // CheckpointSizer is a NeedProvider that knows a profile's context
 // checkpoint (ConfigNeeds, from the GGUF header).
@@ -108,9 +160,11 @@ func (c *schedCore) hostMemoryOf(p *core.Profile, onNode bool) (HostMemory, bool
 	h := HostMemory{Family: string(ck.Family), CellMiB: ck.CellMiB(), Estimate: ck.Estimate, Checkpoints: n,
 		CheckpointsMiB: ck.TotalMiB(n), OnNode: onNode, SizeUnknown: ck.Unknown}
 	if ck.Unknown {
-		if seen := c.ckptSeen[p.Model]; seen > 0 { // read at a load this run
-			h.SizeUnknown, h.FromLog, h.Estimate, h.CellMiB = false, true, true, seen
-			h.CheckpointsMiB = int(math.Ceil(float64(n)*seen - 1e-9))
+		// read at a load this run, of this file version at this context
+		if seen, ok := c.ckptSeen[ckptKey{p.Model, ck.FileBytes, p.Ctx}]; ok && seen.MiB > 0 {
+			h.SizeUnknown, h.FromLog, h.CellMiB = false, true, seen.MiB
+			h.LoggedFile, h.LoggedFileBytes, h.LoggedCtx, h.LoggedAt = p.Model, ck.FileBytes, p.Ctx, seen.At
+			h.CheckpointsMiB = int(math.Ceil(float64(n)*seen.MiB - 1e-9))
 		}
 	}
 	if onNode {
@@ -171,6 +225,9 @@ func (c *schedCore) planHostMemory(r *PlanReport, p *core.Profile) {
 			r.HostMemoryNote = fmt.Sprintf("on %s: up to %d MiB, not placed (context checkpoints %d MiB, prompt cache %d MiB)",
 				hm.Machine, hm.TermMiB(), hm.CheckpointsMiB, hm.PromptCacheMiB)
 		}
+		if hm.FromLog {
+			r.HostMemoryNote += "; " + hm.LoggedNote()
+		}
 	}
 }
 
@@ -223,8 +280,9 @@ const ckptDriftPct = 1.0
 // apart either way; for a window model, any checkpoint above the bound by
 // more than ckptDriftPct (a smaller one is normal: a conversation shorter
 // than the window). Either is a WARN learnedNeed event naming both figures.
-// For a window model whose size is not known from its header, the largest
-// checkpoint logged is kept for the model file for the run (ckptSeen).
+// For a model without an exact rule (SizeUnknown), the largest checkpoint
+// logged is kept for the file version and context for the run (ckptSeen):
+// nothing is compared, the log is the figure.
 func (c *schedCore) checkHostMemorySizes() {
 	for _, in := range c.insts {
 		if in.child == nil || in.prof == nil || in.prof.Kind != core.KindLlama || in.ckptChecked == 3 {
@@ -240,24 +298,18 @@ func (c *schedCore) checkHostMemorySizes() {
 			continue
 		}
 		if f.SizeUnknown || f.FromLog {
-			if hm.CheckpointMiB > c.ckptSeen[in.prof.Model] {
-				if c.ckptSeen == nil {
-					c.ckptSeen = map[string]float64{}
+			if cs, ok := c.needs.(CheckpointSizer); ok {
+				if ck, err := cs.CheckpointOf(in.prof); err == nil {
+					k := ckptKey{in.prof.Model, ck.FileBytes, in.prof.Ctx}
+					if hm.CheckpointMiB > c.ckptSeen[k].MiB {
+						if c.ckptSeen == nil {
+							c.ckptSeen = map[ckptKey]ckptLogged{}
+						}
+						c.ckptSeen[k] = ckptLogged{MiB: hm.CheckpointMiB, At: c.now}
+					}
 				}
-				c.ckptSeen[in.prof.Model] = hm.CheckpointMiB
 			}
 			continue // nothing to compare with: the log is the figure
-		}
-		if f.Family == string(gguf.FamilyWindowed) {
-			if in.ckptChecked&2 == 0 && f.CellMiB > 0 && hm.CheckpointMiB > f.CellMiB*(1+ckptDriftPct/100) {
-				in.ckptChecked |= 2
-				d := 100 * (hm.CheckpointMiB - f.CellMiB) / f.CellMiB
-				c.recordInst(in, history.TLearnedNeed, history.Warn,
-					fmt.Sprintf("A context checkpoint of %s is %.2f MiB in the server log; the window bound says at most %.2f MiB (%.1f%% above). The host memory shown for it may be wrong.",
-						in.prof.Name, hm.CheckpointMiB, f.CellMiB, d),
-					map[string]any{"logged_mib": hm.CheckpointMiB, "formula_mib": f.CellMiB, "family": f.Family, "source": "context checkpoint"})
-			}
-			continue
 		}
 		check := func(bit int, what string, logged float64) {
 			if in.ckptChecked&bit != 0 || logged == 0 {

@@ -202,7 +202,10 @@ type InstanceStatus struct {
 	Waiters        int
 	// StaleProfile: the profile was changed or deleted after this instance started; it keeps the definition it started with until its next load.
 	StaleProfile bool
-	VictimOf     string // profile of the claimed entry this instance drains or stops for
+	// LaunchNote: what the launch changed from the profile as stored (its
+	// own --ctx-checkpoints dropped in favour of the setting ctx_checkpoints).
+	LaunchNote string `view:"omitempty"`
+	VictimOf   string // profile of the claimed entry this instance drains or stops for
 	// Drain: an operator asked it to stop once its runs finish (drain.go);
 	// DrainEtaS estimates when, while it drains (nil otherwise, or when no
 	// run of the profile has finished yet). Both are left out of the status

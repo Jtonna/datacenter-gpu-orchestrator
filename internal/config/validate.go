@@ -59,6 +59,24 @@ func StripLateManaged(args []string) []string {
 	return out
 }
 
+// LateManagedIn is what StripLateManaged drops from args: each flag with
+// its value as given ("--ctx-checkpoints 3", "-ctxcp=3"), in order.
+func LateManagedIn(args []string) []string {
+	var out []string
+	for i := 0; i < len(args); i++ {
+		name, _, eq := strings.Cut(args[i], "=")
+		if _, ok := lateManaged[name]; ok && strings.HasPrefix(args[i], "-") {
+			d := args[i]
+			if !eq && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+				d += " " + args[i]
+			}
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
 // LateManagedArgs lists, one sentence each, the stored profiles whose
 // extra_args set a lateManaged flag that the launch drops.
 func (c *Config) LateManagedArgs() []string { return c.lateArgs }

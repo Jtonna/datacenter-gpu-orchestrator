@@ -243,7 +243,7 @@ function hostLine(plan, name) {
   const conv = hm && (hm.size_unknown || hm.checkpoints_mib + hm.prompt_cache_mib > 0)
     ? h('p', { 'data-hostmem': '' }, 'Conversation memory of the host process: up to ', gb(hm.checkpoints_mib + hm.prompt_cache_mib),
       hm.size_unknown ? ` (restore points: size not yet known, read at the first load; prompt cache ${gb(hm.prompt_cache_mib)}), `
-        : ` (restore points ${gb(hm.checkpoints_mib)}, prompt cache ${gb(hm.prompt_cache_mib)}), `,
+        : ` (restore points ${gb(hm.checkpoints_mib)}${hm.from_log ? `, size as the server logged it at a load of ${hm.logged_file} at ctx ${hm.logged_ctx}` : ''}, prompt cache ${gb(hm.prompt_cache_mib)}), `,
       hm.on_node ? (hm.counted ? 'counted in what it needs.' : 'not yet counted.') : 'not placed.')
     : null;
   return h('div.plc-block', h('h3', 'Host'), h('p', text), conv, plan.host_problem ? h('p.err-t', 'It cannot host now: ' + plainReason(plan.host_problem)) : null);

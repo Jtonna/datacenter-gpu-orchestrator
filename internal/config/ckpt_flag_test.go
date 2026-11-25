@@ -47,3 +47,15 @@ func TestCtxCheckpointsStoredProfileStaysLoadable(t *testing.T) {
 		t.Fatal("a changed --ctx-checkpoints was accepted")
 	}
 }
+
+// LateManagedIn names exactly what StripLateManaged drops, flag and value.
+func TestLateManagedIn(t *testing.T) {
+	args := []string{"--jinja", "--ctx-checkpoints", "3", "-ctxcp=4", "--swa-checkpoints", "--temp", "0.2"}
+	got := LateManagedIn(args)
+	if strings.Join(got, "|") != "--ctx-checkpoints 3|-ctxcp=4|--swa-checkpoints" {
+		t.Fatalf("%q", got)
+	}
+	if len(LateManagedIn([]string{"--jinja"})) != 0 {
+		t.Fatal("nothing to drop")
+	}
+}

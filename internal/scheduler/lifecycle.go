@@ -243,6 +243,7 @@ func (c *schedCore) launch(in *inst) {
 		health = p.CheckEndpoint
 	}
 	in.phase = phLaunching
+	c.noteDroppedCkptFlag(in)
 	if pl.Host != "" {
 		// hostnode.go: the host process runs on the node, as a host launch.
 		spec := c.hostSpec(in)

@@ -282,9 +282,11 @@ function convMemory(m) {
   const lead = 'Conversation memory: this model keeps restore points on the machine that hosts it: ';
   // a window model whose size the header does not tell: no number until a load's log gives it
   if (hm.size_unknown) return h('div.mut', { 'data-convmem': 'unknown' }, lead + 'size not yet known: read at the first load.');
-  // a window model's restore point holds at most the window: "at most", not "about"
-  const each = hm.estimate ? `at most ${num(Math.round(hm.cell_mib))} MB each` : `about ${num(Math.round(hm.cell_mib))} MB each`;
-  return h('div.mut', { 'data-convmem': '', title: hm.from_log ? 'The size the model server logged at a load this run' : null },
+  // a size read from a load's log names the file and the context it was read at
+  const mb = num(Math.round(hm.cell_mib));
+  const each = hm.from_log ? `${mb} MB each as the server logged it at a load of ${hm.logged_file} at ctx ${num(hm.logged_ctx)}`
+    : hm.estimate ? `at most ${mb} MB each` : `about ${mb} MB each`;
+  return h('div.mut', { 'data-convmem': hm.from_log ? 'logged' : '', title: hm.from_log ? `Read from the model server's log this run (file of ${num(hm.logged_file_bytes)} bytes); kept until a restart` : null },
     lead + `${each}, up to ${num(hm.checkpoints)} (${num(hm.checkpoints_mib)} MB)` + (hm.counted ? ', counted in what it needs.' : ', not yet counted.'));
 }
 
