@@ -206,6 +206,14 @@ func (c *ConfigNeeds) metaOf(path string) (*gguf.Meta, error) {
 	return meta, nil
 }
 
+// Forget drops the cached need of profile name (scoped.go: a scoped name
+// may come back with other settings).
+func (c *ConfigNeeds) Forget(name string) {
+	c.mu.Lock()
+	defer supervise.Unlocked("scheduler", c.mu.Unlock)
+	delete(c.cache, name)
+}
+
 // Need implements NeedProvider.
 func (c *ConfigNeeds) Need(p *core.Profile) (NeedInfo, error) {
 	c.mu.Lock()

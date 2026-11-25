@@ -18,7 +18,17 @@ func (c *schedCore) arrive(w *waiter) {
 	w.id = c.next()
 	w.arrived = c.now
 	c.waiters[w.id] = w
-	p := c.cfg.Profiles[w.profile]
+	if w.scoped != nil { // scoped.go: a scoped load
+		if c.cfg.Profiles[w.scoped.Name] != nil {
+			c.fail(w, badScoped("%s is a configured profile id", w.scoped.Name))
+			return
+		}
+		if _, err := c.addScoped(w.scoped); err != nil {
+			c.fail(w, err)
+			return
+		}
+	}
+	p := c.profile(w.profile)
 	if p == nil {
 		c.fail(w, errUnknown(w.profile))
 		return

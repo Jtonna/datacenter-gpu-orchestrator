@@ -29,6 +29,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgstore"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/groups"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/logrelay"
@@ -507,7 +508,7 @@ func (s *Server) handleV1(w http.ResponseWriter, r *http.Request) {
 	if s.conf().RequestsLiveTimings && benchRun == "" && liveTimingsPath(r.URL.Path) {
 		ex.AddTimingsPerToken()
 	}
-	p, alias, ok := s.conf().Resolve(ex.Model)
+	p, alias, ok := s.resolveModel(ex.Model)
 	if !ok {
 		e := &scheduler.Error{Status: http.StatusNotFound, Reason: scheduler.ReasonUnknownModel,
 			Message: fmt.Sprintf("model %q not found", ex.Model)}
@@ -701,7 +702,7 @@ func (s *Server) handleUnloadByName(w http.ResponseWriter, r *http.Request) {
 // never waits: the instance must be ready or draining right now.
 func (s *Server) handleUpstream(w http.ResponseWriter, r *http.Request) {
 	model := r.PathValue("model")
-	p, alias, ok := s.conf().Resolve(model)
+	p, alias, ok := s.resolveModel(model)
 	if !ok {
 		writeSchedError(w, &scheduler.Error{Status: http.StatusNotFound, Reason: scheduler.ReasonUnknownModel,
 			Message: fmt.Sprintf("model %q not found", model)})
@@ -746,6 +747,18 @@ func (s *Server) handleUpstream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// resolveModel is config Resolve, else a run-scoped profile the scheduler
+// holds now (scheduler/scoped.go).
+func (s *Server) resolveModel(model string) (*core.Profile, bool, bool) {
+	if p, alias, ok := s.conf().Resolve(model); ok {
+		return p, alias, true
+	}
+	if p, ok := s.sched.Scoped(model); ok {
+		return p, false, true
+	}
+	return nil, false, false
+}
+
 func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"data": s.activity.snapshot()})
 }
@@ -759,6 +772,49 @@ type modelRequest struct {
 	// Nodes (load and plan): place this load on these nodes only, as
 	// force_nodes would, without changing the profile (pin.go).
 	Nodes []string `json:"nodes"`
+	// Scope and the run's settings (load and plan): a run-scoped profile,
+	// "<model>@<scope>", the production profile with these settings, held
+	// in memory only (scheduler/scoped.go).
+	Scope     string  `json:"scope"`
+	Ctx       *int    `json:"ctx"`
+	Parallel  *int    `json:"parallel"`
+	KVQuant   *string `json:"kv_quant"`
+	FlashAttn *bool   `json:"flash_attn"`
+	Host      *string `json:"host"`
+	Thinking  *bool   `json:"thinking"`
+}
+
+func (m modelRequest) scoped() scheduler.ScopedLoad {
+	return scheduler.ScopedLoad{Model: m.Model, Scope: m.Scope, Nodes: m.Nodes, Ctx: m.Ctx, Parallel: m.Parallel,
+		KVQuant: m.KVQuant, FlashAttn: m.FlashAttn, Host: m.Host, Thinking: m.Thinking}
+}
+
+// scopedAudit is what the audit keeps of a scoped load: the scope, the
+// zones and the settings the body gave.
+func (m modelRequest) scopedAudit() map[string]any {
+	out := map[string]any{"scope": m.Scope}
+	if len(m.Nodes) > 0 {
+		out["nodes"] = m.Nodes
+	}
+	if m.Ctx != nil {
+		out["ctx"] = *m.Ctx
+	}
+	if m.Parallel != nil {
+		out["parallel"] = *m.Parallel
+	}
+	if m.KVQuant != nil {
+		out["kv_quant"] = *m.KVQuant
+	}
+	if m.FlashAttn != nil {
+		out["flash_attn"] = *m.FlashAttn
+	}
+	if m.Host != nil {
+		out["host"] = *m.Host
+	}
+	if m.Thinking != nil {
+		out["thinking"] = *m.Thinking
+	}
+	return out
 }
 
 func readModelRequest(w http.ResponseWriter, r *http.Request) (modelRequest, bool) {
@@ -787,7 +843,12 @@ func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {
 	}
 	var rep scheduler.PlanReport
 	var err error
-	if len(req.Nodes) > 0 {
+	if req.scoped().Set() {
+		if len(req.Nodes) > 0 && !s.checkViewNodes(w, r, req.Nodes) {
+			return
+		}
+		rep, err = s.sched.PlanScoped(r.Context(), req.scoped())
+	} else if len(req.Nodes) > 0 {
 		if !s.checkViewNodes(w, r, req.Nodes) {
 			return
 		}
@@ -811,6 +872,10 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 	}
 	req, ok := readModelRequest(w, r)
 	if !ok {
+		return
+	}
+	if req.scoped().Set() {
+		s.loadScoped(w, r, req)
 		return
 	}
 	var err error
@@ -837,6 +902,28 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 		out["nodes"] = req.Nodes
 	}
 	s.auditRuntime(r, audit.ActionLoad, name, after)
+	writeJSON(w, http.StatusAccepted, out)
+}
+
+// loadScoped is POST /api/load with a scope: the answer names the scoped
+// profile, its production profile and the scope.
+func (s *Server) loadScoped(w http.ResponseWriter, r *http.Request, req modelRequest) {
+	if len(req.Nodes) > 0 && !s.checkViewNodes(w, r, req.Nodes) {
+		return
+	}
+	name, err := s.sched.LoadScoped(r.Context(), req.scoped(), benchRunHeader(r.Header.Get("X-Bench-Run")))
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	base, scope, _ := scheduler.SplitScoped(name)
+	after := req.scopedAudit()
+	after["production"] = base
+	s.auditRuntime(r, audit.ActionLoad, name, after)
+	out := map[string]any{"msg": "loading", "model": name, "production": base, "scope": scope}
+	if len(req.Nodes) > 0 {
+		out["nodes"] = req.Nodes
+	}
 	writeJSON(w, http.StatusAccepted, out)
 }
 

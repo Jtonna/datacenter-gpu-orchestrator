@@ -2,6 +2,14 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: run-scoped profiles (profiles slice A)
+
+No agent change, no new port, no schema change, no new route, no new setting. No plan changes while no scoped profile is held.
+
+- **A production profile with a run's settings, under its own name.** `POST /api/load` and `POST /api/plan` take `scope` and the run's settings (`ctx`, `parallel`, `kv_quant`, `flash_attn`, `host`, `thinking`) beside `nodes`: the load runs as `<production id>@<scope>`, held in memory only, never written to the configuration. It has its own instance, queue entry and back-off, so it runs beside production traffic and neither is admitted to the other's instance. It lives while its entry or instance does. See the runbook, "A run-scoped load".
+- **What is recorded.** History events and request log rows name the production id; events carry `data.scope`, rows keep the scoped name as `requested`.
+- **Going back.** Nothing is stored. The image before answers a scoped name 404 `model_not_found` and ignores `scope` in a load body (it loads the production profile): a caller checks for `scope` in the answer.
+
 ## Scheduler image: newer benchmark tables switch off only the benchmarks; run limit 720 minutes
 
 No agent change, no new port, no schema change, no new route, no new setting.

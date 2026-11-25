@@ -229,8 +229,9 @@ type waiter struct {
 	arrived   time.Time
 	reply     chan answer // nil for synthetic waiters
 	answered  bool
-	benchRun  string   // X-Bench-Run id of the benchmark run that sent it; only tags history records
-	pin       []string // pin.go: load on these nodes only, for this load
+	benchRun  string        // X-Bench-Run id of the benchmark run that sent it; only tags history records
+	pin       []string      // pin.go: load on these nodes only, for this load
+	scoped    *core.Profile // scoped.go: a scoped load; made current under its name on arrival
 }
 
 // grant is a successful admission.
@@ -390,6 +391,7 @@ type schedCore struct {
 	leases       map[uint64]*lease
 	runAvg       map[string]time.Duration        // drain.go: average run length per profile
 	pins         map[*core.Profile][]string      // pin.go: one-off copies of a profile and their nodes
+	scoped       map[string]*core.Profile        // scoped.go: run-scoped profiles by scoped name
 	needs_       map[string]NeedInfo             // provider results, before the estimate margin and learned figures
 	learned      map[string]map[int]*learnedNeed // by shape and device count (needcount.go)
 	derive       deriveState                     // what the derivation keeps between calls (derive.go)
@@ -465,7 +467,7 @@ func newCore(cfg *config.Config, clock Clock, view fleet.View, needs NeedProvide
 	return &schedCore{
 		cfg: cfg, clock: clock, view: view, needs: needs, build: build, log: log,
 		insts: map[string]*inst{}, entries: map[string]*entry{}, nodes: map[core.NodeID]*nodeState{},
-		backoffs: map[string]*backoff{}, waiters: map[uint64]*waiter{}, leases: map[uint64]*lease{}, runAvg: map[string]time.Duration{}, pins: map[*core.Profile][]string{},
+		backoffs: map[string]*backoff{}, waiters: map[uint64]*waiter{}, leases: map[uint64]*lease{}, runAvg: map[string]time.Duration{}, pins: map[*core.Profile][]string{}, scoped: map[string]*core.Profile{},
 		needs_: map[string]NeedInfo{}, learned: map[string]map[int]*learnedNeed{}, warnedLow: map[string]bool{}, raw: map[core.NodeID]core.Node{}, excludedSeen: map[core.NodeID]bool{}, steady: map[core.NodeID]int{},
 		forcedGone: map[string]time.Time{}, health: map[core.NodeID]*workerHealth{},
 		recov: map[core.NodeID]*recoveryNode{}, memNext: map[core.NodeID]time.Time{}, refused: map[string]*refusal{}, lastRefusal: map[string]RefusalStatus{},

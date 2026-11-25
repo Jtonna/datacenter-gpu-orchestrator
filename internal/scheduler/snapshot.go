@@ -272,7 +272,7 @@ func (c *schedCore) placedStatus(pl core.Placement) []PlacedNodeStatus {
 // dryPlan is POST /api/plan: what a request for profile would meet now.
 // It changes nothing (the need provider's result may be cached).
 func (c *schedCore) dryPlan(profile string) PlanReport {
-	return c.dryPlanOf(profile, c.cfg.Profiles[profile])
+	return c.dryPlanOf(profile, c.profile(profile))
 }
 
 // dryPlanOf is dryPlan for p, which may be a one-off pinned copy (pin.go).

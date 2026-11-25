@@ -27,7 +27,7 @@ func (c *ConfigNeeds) Reconfigure(cfg *config.Config) {
 
 // staleProfile reports that an instance runs with a profile definition that has since changed or been deleted.
 func (c *schedCore) staleProfile(in *inst) bool {
-	p := c.cfg.Profiles[in.prof.Name]
+	p := c.profile(in.prof.Name) // scoped.go: a scoped profile is its own definition
 	if p == nil {
 		return true
 	}
@@ -67,6 +67,12 @@ func (c *schedCore) applyConfig(nc *config.Config) {
 	// shape, if there is one.
 	for name, e := range c.entries {
 		np := nc.Profiles[name]
+		if sp := c.scoped[name]; np == nil && sp != nil { // scoped.go: kept while its production profile is
+			if base, _, _ := SplitScoped(name); nc.Profiles[base] != nil {
+				e.prof = sp
+				continue
+			}
+		}
 		if np == nil {
 			ws := append([]*waiter(nil), e.waiters...)
 			c.occRefused(e, "refused: profile removed") // occupied.go
