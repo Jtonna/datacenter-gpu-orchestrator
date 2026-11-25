@@ -205,6 +205,9 @@ type inst struct {
 	// cycle (hostoverhead.go).
 	hostMeasured bool
 	hostHigh     int
+	// ckptChecked: bit 1 the recurrent state, bit 2 the first checkpoint,
+	// compared with the formula (hostmem.go checkHostMemorySizes).
+	ckptChecked int
 	// devMeasured: the per-device overheads of this cycle were read
 	// (deviceoverhead.go).
 	devMeasured bool

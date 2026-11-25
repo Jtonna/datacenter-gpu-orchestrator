@@ -190,7 +190,14 @@ func (c *schedCore) hostReading(in *inst, avg bool) (mib, logHost int, ok bool) 
 	if !ok {
 		return 0, 0, false
 	}
-	return base - free - dev, int(in.child.Load().HostMiB() + 0.999), true
+	ls := in.child.Load()
+	mib = base - free - dev
+	if c.cfg.Defaults.CountHostMemory {
+		// the host-memory term counts the checkpoints (hostmem.go): the
+		// reading leaves out those held now, so they are not counted twice
+		mib -= int(ls.HostMem.HeldMiB())
+	}
+	return mib, int(ls.HostMiB() + 0.999), true
 }
 
 // hostSettleAt is when in's host overhead is read: one full average window

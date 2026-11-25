@@ -53,7 +53,33 @@ func (d DeviceMem) TotalMiB() float64 { return d.ModelMiB + d.KVMiB + d.ComputeM
 // seen order.
 type LoadStats struct {
 	Devices []DeviceMem
+	HostMem HostMem
 }
+
+// Host-process memory lines (llama.cpp a01665d30de2):
+//
+//	src/llama-memory-recurrent.cpp   "llama_memory_recurrent: size = %7.2f MiB (...)" (all recurrent cells, at load)
+//	tools/server/server-context.cpp  "created context checkpoint %d of %d (..., size = %.3f MiB)" (2727-2730)
+//	                                 "erasing old context checkpoint (..., size = %.3f MiB)" (2689),
+//	                                 "erasing context checkpoint too close to an earlier one (...)" (2676),
+//	                                 "erased invalidated context checkpoint (...)" (4247)
+var (
+	recurrentSizeRE = regexp.MustCompile(`llama_memory_recurrent: size\s*=\s*([0-9]+(?:\.[0-9]+)?) MiB`)
+	ckptSizeRE      = regexp.MustCompile(`created context checkpoint \d+ of \d+ \(.*size = ([0-9]+(?:\.[0-9]+)?) MiB`)
+)
+
+// HostMem is what the model server logged about its host process's own
+// memory: the recurrent state (one cell per slot) and the context
+// checkpoints, each about one cell of a recurrent model.
+type HostMem struct {
+	RecurrentMiB       float64 // llama_memory_recurrent size, 0 when not recurrent
+	CheckpointMiB      float64 // size of the last checkpoint created
+	CheckpointsCreated int
+	CheckpointsHeld    int // created less erased, all slots
+}
+
+// HeldMiB is what the checkpoints held now take, by the last size logged.
+func (h HostMem) HeldMiB() float64 { return float64(h.CheckpointsHeld) * h.CheckpointMiB }
 
 // TotalMiB is the grand sum over device buffers: the figure to use as
 // needs_mib (design 7.2). Host buffers are excluded because needs_mib is
@@ -97,6 +123,7 @@ type LoadLog struct {
 	mu    sync.Mutex
 	index map[string]int
 	devs  []DeviceMem
+	host  HostMem
 }
 
 // NewLoadLog returns an empty LoadLog.
@@ -104,6 +131,10 @@ func NewLoadLog() *LoadLog { return &LoadLog{index: map[string]int{}} }
 
 // Feed examines one line of output.
 func (l *LoadLog) Feed(line string) {
+	if strings.Contains(line, "context checkpoint") || strings.Contains(line, "llama_memory_recurrent: size") {
+		l.feedHost(line)
+		return
+	}
 	if !strings.Contains(line, "buffer size") {
 		return
 	}
@@ -133,11 +164,37 @@ func (l *LoadLog) Feed(line string) {
 	}
 }
 
+// feedHost reads a host-memory line (HostMem).
+func (l *LoadLog) feedHost(line string) {
+	l.mu.Lock()
+	defer supervise.Unlocked("instance", l.mu.Unlock)
+	h := &l.host
+	switch {
+	case strings.Contains(line, "created context checkpoint"):
+		if m := ckptSizeRE.FindStringSubmatch(line); m != nil {
+			if v, err := strconv.ParseFloat(m[1], 64); err == nil {
+				h.CheckpointMiB = v
+			}
+		}
+		h.CheckpointsCreated++
+		h.CheckpointsHeld++
+	case strings.Contains(line, "erasing old context checkpoint"), strings.Contains(line, "erasing context checkpoint"),
+		strings.Contains(line, "erased invalidated context checkpoint"):
+		h.CheckpointsHeld = max(h.CheckpointsHeld-1, 0)
+	default:
+		if m := recurrentSizeRE.FindStringSubmatch(line); m != nil {
+			if v, err := strconv.ParseFloat(m[1], 64); err == nil {
+				h.RecurrentMiB = v
+			}
+		}
+	}
+}
+
 // Snapshot returns a copy of the current totals.
 func (l *LoadLog) Snapshot() LoadStats {
 	l.mu.Lock()
 	defer supervise.Unlocked("instance", l.mu.Unlock)
-	return LoadStats{Devices: append([]DeviceMem(nil), l.devs...)}
+	return LoadStats{Devices: append([]DeviceMem(nil), l.devs...), HostMem: l.host}
 }
 
 func isHostBuffer(name string) bool {

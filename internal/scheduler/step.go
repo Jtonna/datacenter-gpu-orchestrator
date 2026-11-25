@@ -279,6 +279,7 @@ func (c *schedCore) handle(ev event) {
 	c.timers()
 	c.trackPeaks()             // reserve.go
 	c.measureHostOverheads()   // hostoverhead.go
+	c.checkHostMemorySizes()   // hostmem.go
 	c.measureDeviceOverheads() // deviceoverhead.go
 	c.pruneRecent()
 	c.runPasses()

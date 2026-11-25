@@ -82,7 +82,7 @@ func hostOf(p *core.Profile, pl core.Placement) core.NodeID {
 func (c *schedCore) hostOverhead(p *core.Profile, pl core.Placement, id core.NodeID) int {
 	if h := hostOf(p, pl); h != "" && h == id {
 		mib, _, _ := c.hostOverheadOf(p, id, len(pl.Nodes)) // hostoverhead.go: measured for this device count, else the setting
-		return mib
+		return mib + c.hostTermOn(p, pl, id)                // hostmem.go: 0 unless count_host_memory
 	}
 	return 0
 }
@@ -168,6 +168,7 @@ func hostExitInfo(st instance.ExitStatus) *agentproto.ExitInfo {
 // overhead on that node, and why it cannot host now.
 func (c *schedCore) planHost(r *PlanReport, p *core.Profile, placed *core.Placement) {
 	r.Host = core.HostServer
+	c.planHostMemory(r, p) // hostmem.go
 	if p.Host != core.HostNode {
 		return
 	}
