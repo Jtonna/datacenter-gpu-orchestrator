@@ -54,7 +54,7 @@
 // three are null until the run ends and the table shows a dash.
 //
 // --health: what GET /api/health and the health topic answer (the Health
-// board's states): two (the default: Zones a problem, Runs needing
+// board's states): two (the default: Zones a problem, Requests needing
 // attention, as the mockup draws it), good (no issue), unknown (no status
 // read yet: Zones and Queue unknown, as is Alerts in every state).
 //
@@ -565,7 +565,7 @@ function health(now) {
   const rows = [
     unknown ? row('zones', 'Zones', 'unknown', 'Status not read yet', '#/zones?filter=down')
       : two ? row('zones', 'Zones', 'problem', '7 of 8 reachable · 1 down', '#/zones?filter=down', 1) : row('zones', 'Zones', 'ok', '8 of 8 reachable', '#/zones'),
-    two ? row('runs', 'Runs', 'attention', '1 failed in the last hour', '#/overview?runs=failed', 1) : row('runs', 'Runs', 'ok', 'None failed in the last hour', '#/overview'),
+    two ? row('runs', 'Requests', 'attention', '1 failed in the last hour', '#/requests?status=failed', 1) : row('runs', 'Requests', 'ok', 'None failed in the last hour', '#/overview'),
     Object.assign(row('scheduler', 'Scheduler', 'ok', `Running · release ${RELEASE} · up 12 d`, '#/about'), { facts: { release: RELEASE, uptime_s: 12 * 86400 } }),
     row('mcp', 'MCP server', 'ok', 'Running · 3 keys active', '#/mcp', 3),
     row('storage', 'Storage', 'ok', '50.3 of 240 GB used', '#/about', 21),

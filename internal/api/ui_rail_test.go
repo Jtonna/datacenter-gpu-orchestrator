@@ -57,7 +57,7 @@ func healthDoc(now time.Time, states map[string][2]string, recent []any) map[str
 	type row struct{ id, label, text, link string }
 	rows := []row{
 		{"zones", "Zones", "8 of 8 reachable", "#/zones"},
-		{"runs", "Runs", "None failed in the last hour", "#/overview"},
+		{"runs", "Requests", "None failed in the last hour", "#/overview"},
 		{"scheduler", "Scheduler", "Running · release v1-test · up 12 d", "#/about"},
 		{"mcp", "MCP server", "Running · 3 keys active", "#/mcp"},
 		{"storage", "Storage", "50.3 of 240 GB used", "#/about"},
@@ -73,6 +73,9 @@ func healthDoc(now time.Time, states map[string][2]string, recent []any) map[str
 		}
 		if s, ok := states[r.id]; ok {
 			state, text = s[0], s[1]
+			if r.id == "runs" { // as judgeRuns links a failure
+				r.link = "#/requests?status=failed"
+			}
 		}
 		switch state {
 		case "attention":
@@ -128,7 +131,7 @@ func TestUINextHealthPopup(t *testing.T) {
 				"a.hp-row[data-health=zones] span.hd.bad", "a.hp-row[data-health=runs] span.hd.warn", "a.hp-row[data-health=scheduler] span.hd.ok",
 				"a.hp-row[data-health=mcp] span.hd.ok", "a.hp-row[data-health=storage] span.hd.ok", "a.hp-row[data-health=queue] span.hd.ok",
 				"a.hp-row[data-health=alerts] span.hd.wait",
-				"a.hp-row[data-health=zones][href='#/zones']", "a.hp-row[data-health=queue][href='#/monitor/queue']", "a.hp-row[data-health=alerts][href='#/health/alerts']",
+				"a.hp-row[data-health=zones][href='#/zones']", "a.hp-row[data-health=runs][href='#/requests?status=failed']", "a.hp-row[data-health=queue][href='#/monitor/queue']", "a.hp-row[data-health=alerts][href='#/health/alerts']",
 				"div.hp-ev span.mono", "a.hp-foot[href='#/health/alerts']", "div.hp-last a[href='#/activity?range=2h&sev=warn']"},
 			"pageNone": []string{"div.hp-row", "span.hr-count"},
 			"page": []string{"System health", "2 things need attention", "Zones", "7 of 8 reachable · 1 down", "Requests", "1 failed in the last hour",
@@ -239,4 +242,12 @@ func TestUINextNoActorPrompt(t *testing.T) {
 		map[string]any{"name": "actor: by you is the default user", "route": "#/overview", "status": st,
 			"expect": []string{"Paused by you", "Switched off by anonymous"}},
 	}})
+}
+
+// The popup names each row by the server's label: the Requests row's name
+// lives in health.go (judgeRuns), not in a page-side rename by its id.
+func TestUINextHealthRowLabelFromServer(t *testing.T) {
+	if s := uiText(t, "next/core/health.js"); strings.Contains(s, "=== 'runs'") || !strings.Contains(s, "h('span.hr-name', r.label)") {
+		t.Error("next/core/health.js renames a row by its id instead of drawing the server's label")
+	}
 }
