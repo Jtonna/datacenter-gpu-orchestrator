@@ -387,7 +387,7 @@ func (s *Service) commit(ctx context.Context, o WriteOpts, m mutation) (*Result,
 	}
 	parse := s.o.Parse
 	parse.KeepModels, parse.KeepArgs = keptModels(before), keptArgs(before)
-	parse.KeepCtx = keptCtx(before) // a stored ctx above the trained context still loads; a new one is refused
+	parse.KeepCtx = keptCtx(before)    // a stored ctx above the trained context still loads; a new one is refused
 	parse.ModelNote = s.trashNote(ctx) // a file in the trash is named as such (models slice 3)
 	cfg, err := config.Build(after, s.o.Boot, parse)
 	if err != nil {
