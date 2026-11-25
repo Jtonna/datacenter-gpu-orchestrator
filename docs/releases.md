@@ -2,6 +2,13 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: the fill's stop check uses the measured growth
+
+No agent change, no schema, no new route, no new setting.
+- **Plans.** `POST /api/plan` answers `growth_history` (`kib_per_token`, `readings`, `capped_skipped`: the highest stored growth per token of the planned shape) and `fill_reserve_kib_per_token`.
+- **Context fill.** Before a turn the stop check assumes the highest stored reading for the shape, 12 KiB per token with none, never less than `fill_reserve_kib_per_token` (it was a fixed 8). The fill result says which figure and why (`growth_floor_kib_per_token`, `growth_floor_basis`), as does a refusal. `reasoning_chars` and `recall_note` are always written (0 and "" when there is nothing).
+- **Going back.** Nothing is stored. A fill run against the image before gets no `growth_history` and uses 12 KiB per token, saying so.
+
 ## Scheduler image: the real context
 
 No agent change, no new port, no schema change, no new route. One new optional profile field, `ctx_above_trained`. Plan rows change for profiles whose ctx is above their model's trained context; see below.
