@@ -25,6 +25,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/osx"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/runner"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelpath"
 )
 
 // Gate is what the rest of the agent tells the launch manager for its checks.
@@ -438,8 +439,8 @@ func (m *Manager) Start(ctx context.Context, req agentproto.LaunchRequest) (agen
 		if m.cfg.PushOnly {
 			return agentproto.LaunchState{}, refuse(agentproto.ReasonInvalidRequest, "a push node cannot be a host")
 		}
-		if !filepath.IsLocal(filepath.FromSlash(h.Model)) || strings.Contains(h.Model, `\`) {
-			return agentproto.LaunchState{}, refuse(agentproto.ReasonInvalidRequest, "model %q leaves the model folder", h.Model)
+		if err := modelpath.Check(h.Model); err != nil { // the shared rule for a model path
+			return agentproto.LaunchState{}, refuse(agentproto.ReasonInvalidRequest, "%v", err)
 		}
 		if f := hasOwnFlag(h.ExtraArgs, hostOwnFlags); f != "" {
 			return agentproto.LaunchState{}, refuse(agentproto.ReasonInvalidRequest, "extra_args may not set %s; the agent sets it", f)
@@ -493,7 +494,7 @@ func (m *Manager) Start(ctx context.Context, req agentproto.LaunchRequest) (agen
 	// 5. model file (host)
 	modelPath := ""
 	if req.Role == agentproto.RoleHost {
-		modelPath = filepath.Join(m.cfg.ModelDir, filepath.FromSlash(req.Host.Model))
+		modelPath, _ = modelpath.Join(m.cfg.ModelDir, req.Host.Model) // checked above
 		if err := readableWithin(modelPath, 5*time.Second); err != nil {
 			return agentproto.LaunchState{}, refuse(agentproto.ReasonModelNotFound, "%s: %v", req.Host.Model, err)
 		}

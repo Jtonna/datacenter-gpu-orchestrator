@@ -304,3 +304,22 @@ func TestChildEnvOverrides(t *testing.T) {
 		t.Errorf("kind: command must be unaffected: %q", got)
 	}
 }
+
+// The instance command joins the model with the shared path rule
+// (internal/modelpath): a sub-folder keeps working, a path the rule refuses
+// never reaches llama-server.
+func TestBuildArgsModelPathRule(t *testing.T) {
+	pl := core.Placement{Nodes: []core.PlacedNode{local(1)}}
+	p := llamaProfile()
+	p.Model = "sub/g.gguf"
+	argv, err := BuildArgs(p, pl, 1, testOpts)
+	if err != nil || argv[6] != "/models/sub/g.gguf" {
+		t.Fatalf("sub-folder: %q %v", argv, err)
+	}
+	for _, bad := range []string{".trash/0123/g.gguf", "../g.gguf", "/etc/g.gguf", `sub\g.gguf`} {
+		p.Model = bad
+		if argv, err := BuildArgs(p, pl, 1, testOpts); err == nil {
+			t.Errorf("model %q: built %q, want refused", bad, argv)
+		}
+	}
+}

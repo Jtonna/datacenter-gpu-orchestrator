@@ -179,8 +179,12 @@ func New(ctx context.Context, o Options) *Service {
 	cfg, err := config.Build(r.Doc, o.Boot, o.Parse)
 	if err != nil {
 		// A model file that went missing must not stop the scheduler: build without the file check.
+		// A stored profile whose model path the path rule refuses (internal/modelpath) is kept the
+		// same way: its load is refused at plan time, and only writes that point a profile at such a
+		// path are refused.
 		loose := o.Parse
 		loose.FileExists = func(string) bool { return true }
+		loose.KeepModels = keptModels(r.Doc)
 		var err2 error
 		if cfg, err2 = config.Build(r.Doc, o.Boot, loose); err2 != nil {
 			s.loadErr = "the stored configuration (revision " + fmt.Sprint(r.Revision) + ") is invalid: " + err2.Error()
@@ -305,6 +309,7 @@ func (s *Service) RevisionView(ctx context.Context, n int64) (*View, *cfgstore.R
 	}
 	loose := s.o.Parse
 	loose.FileExists = func(string) bool { return true }
+	loose.KeepModels = keptModels(r.Doc) // an older revision may name a path the path rule now refuses
 	cfg, err := config.Build(r.Doc, s.o.Boot, loose)
 	if err != nil {
 		return nil, nil, err

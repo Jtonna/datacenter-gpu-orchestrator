@@ -294,7 +294,7 @@ func (c *schedCore) dryPlanOf(profile string, p *core.Profile) (r PlanReport) {
 					r.Reason += "; " + text
 				}
 			}
-			c.planHost(&r, p, placed)                     // hostnode.go
+			c.planHost(&r, p, placed) // hostnode.go
 		}
 	}()
 	if p == nil {
