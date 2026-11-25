@@ -38,7 +38,7 @@ import { h } from '../core/dom.js';
 import { registerView, href, navigate } from '../core/router.js';
 import { state } from '../core/store.js';
 import * as api from '../core/api.js';
-import { liveView, pageHead, legend, empty, skeleton, searchField, sidePanel, facts, badge, filterSelect, dialog } from '../core/ui.js';
+import { liveView, legend, empty, skeleton, searchField, sidePanel, facts, badge, filterSelect, dialog } from '../core/ui.js';
 import { num, gb, dur, ago, plural, agoText, dateTime, bytes, DASH } from '../core/format.js';
 import { staleBanner, machines, shortReason } from '../core/status.js';
 import { catalog, onCatalog, needCatalog, refreshCatalog } from '../core/catalog.js';
@@ -357,15 +357,16 @@ function mountHome(el, route) {
     const models = catalog.models;
     const view_ = st || {};
     const insts = view_.instances || [];
-    const ready = insts.filter(i => i.state !== 'starting').length, loading = insts.length - ready;
+    const ready = insts.filter(i => i.state !== 'starting').length;
     const failed = (view_.recent_loads || []).filter(l => l.outcome && l.outcome !== 'ready');
     readDisk();
     if (side) side.redraw();
-    const sub = st
-      ? [h('b', num(ready)), ' ready · ', h('b', num(loading)), ' loading', models ? [' · ', h('b', num(models.length)), ' in the catalog'] : null]
-      : models ? [h('b', num(models.length)), ' in the catalog'] : null;
     return [
-      pageHead('Models', sub, ready ? legend([['m', 'Model'], ['k', 'KV cache'], ['c', 'Compute']]) : null),
+      // no header line: the page shows its content only (the owner's note 4,
+      // 25 Nov); its name stays for a screen reader. The key of the memory
+      // bars sits above the loaded cards while one is ready.
+      h('h1.sr', 'Models'),
+      ready ? h('div.mdl-key', legend([['m', 'Model'], ['k', 'KV cache'], ['c', 'Compute']])) : null,
       staleBanner(),
       view_.configured === false ? h('div.banner.info', { role: 'status' },
         h('span.grow', h('b', 'No configuration has been imported yet. '), 'The scheduler runs with its defaults and has no profiles and no tiers, so it cannot place a model. Import a configuration file with ',
