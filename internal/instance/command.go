@@ -8,6 +8,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelpath"
 )
 
 // BuildOptions are the policy values the command builder needs besides the
@@ -57,6 +58,10 @@ func BuildArgs(p core.Profile, pl core.Placement, port int, o BuildOptions) ([]s
 	if len(pl.Nodes) == 0 {
 		return nil, errors.New("instance: placement has no nodes")
 	}
+	model, err := modelpath.Join(o.ModelsDir, p.Model)
+	if err != nil {
+		return nil, fmt.Errorf("instance: %w", err)
+	}
 	split, err := splitWeights(p, pl)
 	if err != nil {
 		return nil, err
@@ -88,7 +93,7 @@ func BuildArgs(p core.Profile, pl core.Placement, port int, o BuildOptions) ([]s
 		o.ServerBin,
 		"--host", "127.0.0.1",
 		"--port", strconv.Itoa(port),
-		"--model", joinModelPath(o.ModelsDir, p.Model),
+		"--model", model,
 		"--n-gpu-layers", "999",
 		"--fit", "off",
 		"--ctx-size", strconv.Itoa(p.Ctx * parallel),
@@ -207,19 +212,6 @@ func splitWeights(p core.Profile, pl core.Placement) ([]int, error) {
 		return nil, errors.New("instance: tensor split has no positive value")
 	}
 	return append([]int(nil), w...), nil
-}
-
-// joinModelPath joins dir and file with the separator dir already uses, so a
-// Linux "/models" never turns into a backslash path on a Windows dev machine.
-func joinModelPath(dir, file string) string {
-	if dir == "" {
-		return file
-	}
-	sep := "/"
-	if strings.Contains(dir, `\`) && !strings.Contains(dir, "/") {
-		sep = `\`
-	}
-	return strings.TrimRight(dir, `/\`) + sep + file
 }
 
 // ExpandCommand replaces ${PORT} in cmd and splits it into argv using

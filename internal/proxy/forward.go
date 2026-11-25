@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
+	"math"
 
 	"bytes"
 	"context"
@@ -46,6 +47,21 @@ type Options struct {
 	// BodyLen, when above 0, is Body's length: the Content-Length of a body
 	// that differs from the client's (Extracted.AddTimingsPerToken).
 	BodyLen int64
+	// CutBy, read when the upstream fails, says whether the instance behind
+	// Addr was stopped on purpose (a forced unload) and what the caller is
+	// told then, instead of the broken connection: before any byte was
+	// sent, that status and message; in an event stream already under way,
+	// a final SSE error event with them. Nil, or nil from it: not on purpose.
+	CutBy func() *CutAnswer
+}
+
+// CutAnswer is what a request cut on purpose is told (Options.CutBy).
+type CutAnswer struct {
+	Status     int
+	Message    string
+	Type       string
+	Reason     string
+	RetryAfter time.Duration
 }
 
 // Live is a forwarded request's progress while it runs. Read it with its
@@ -156,6 +172,9 @@ type Result struct {
 	Err error
 	// Cut is true when Options.Gone ended the request.
 	Cut bool
+	// Unloaded is true when the request was cut because its instance was
+	// stopped on purpose, and the caller was told so (Options.CutBy).
+	Unloaded bool
 	// ClientLeft is true when the client went away: its request context
 	// ended or a write to it failed (before or in the middle of the
 	// answer). The model server and the scheduler did not fail.
@@ -178,6 +197,8 @@ func (r Result) Reason() string {
 	switch {
 	case r.Stalled:
 		return "stall"
+	case r.Unloaded:
+		return "unloaded"
 	case r.Cut:
 		return "cut"
 	case r.ClientLeft:
@@ -292,7 +313,7 @@ func Forward(w http.ResponseWriter, r *http.Request, o Options) (res Result) {
 			if strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
 				stall = o.StallTimeout
 			}
-			body = &watchBody{rc: resp.Body, tail: tail, stall: stall, live: o.Live,
+			body = &watchBody{rc: resp.Body, tail: tail, stall: stall, live: o.Live, cutBy: o.CutBy,
 				sse: strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream")}
 			resp.Body = body
 			return nil
@@ -301,6 +322,16 @@ func Forward(w http.ResponseWriter, r *http.Request, o Options) (res Result) {
 			res.Err = err
 			if client.Err() != nil {
 				return // the client left; nobody to answer
+			}
+			if o.CutBy != nil {
+				if a := o.CutBy(); a != nil {
+					res.Unloaded = true
+					if a.RetryAfter > 0 {
+						w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(a.RetryAfter.Seconds()))))
+					}
+					WriteError(w, a.Status, a.Message, a.Type, a.Reason, nil)
+					return
+				}
 			}
 			WriteError(w, http.StatusBadGateway, "upstream request failed: "+err.Error(), "server_error", "upstream unavailable", nil)
 		},
@@ -334,6 +365,7 @@ func Forward(w http.ResponseWriter, r *http.Request, o Options) (res Result) {
 		}
 		res.Stream = body != nil && body.sse
 		res.Stalled = body != nil && body.stalled.Load()
+		res.Unloaded = res.Unloaded || body != nil && body.cutSent
 	}()
 	rp.ServeHTTP(sw, r)
 	return res
@@ -406,6 +438,11 @@ type watchBody struct {
 	stall time.Duration
 	live  *Live // nil: not watched
 	sse   bool  // an event stream: data events are counted in live
+	// cutBy says whether a broken upstream was stopped on purpose; a stream
+	// then ends with an SSE error event saying so (cutSent).
+	cutBy   func() *CutAnswer
+	cutAns  *CutAnswer
+	cutSent bool
 
 	gotFirst bool
 	timer    *time.Timer
@@ -422,6 +459,9 @@ func (b *watchBody) Read(p []byte) (int, error) {
 	}
 	if b.finished {
 		return 0, io.EOF
+	}
+	if b.cutAns != nil {
+		return b.emitCut(p)
 	}
 	if b.stalled.Load() {
 		return b.emitStall(p)
@@ -450,7 +490,33 @@ func (b *watchBody) Read(p []byte) (int, error) {
 	if b.stalled.Load() && n == 0 {
 		return b.emitStall(p)
 	}
+	// An event stream whose instance was stopped on purpose: the bytes read
+	// go out, then a final error event says why, and the stream ends cleanly.
+	// Any other body (not an event stream) is cut as before.
+	if err != nil && err != io.EOF && b.sse && b.cutBy != nil {
+		if a := b.cutBy(); a != nil {
+			b.cutAns = a
+			if n > 0 {
+				return n, nil
+			}
+			return b.emitCut(p)
+		}
+	}
 	return n, err
+}
+
+// emitCut ends an event stream with an error event: the same message,
+// reason and status a request cut before its first byte gets.
+func (b *watchBody) emitCut(p []byte) (int, error) {
+	a := b.cutAns
+	b.cutAns, b.finished, b.cutSent = nil, true, true
+	msg, _ := json.Marshal(map[string]any{"error": map[string]any{
+		"message": a.Message, "type": a.Type, "code": a.Status, "reason": a.Reason,
+	}})
+	b.pending = []byte("event: error\ndata: " + string(msg) + "\n\n")
+	n := copy(p, b.pending)
+	b.pending = b.pending[n:]
+	return n, nil
 }
 
 // watchLive notes a read in b.live: the first byte, and for an event stream

@@ -16,6 +16,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/gguf"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelname"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelpath"
 )
 
 // The model catalog (GET /api/models, GET /api/models/{key}): one entry per
@@ -248,7 +249,8 @@ type cachedFile struct {
 	mf   ModelFile
 }
 
-// list returns every *.gguf in dir plus the named files (which may be missing).
+// list returns every *.gguf in dir (not a dot-name) plus the named files
+// (which may be missing; a named path the path rule refuses counts as missing).
 // It runs on the request's goroutine: the scheduler loop is never involved.
 func (c *modelFileCache) list(dir string, named []string) []ModelFile {
 	c.mu.Lock()
@@ -264,13 +266,20 @@ func (c *modelFileCache) list(dir string, named []string) []ModelFile {
 	}
 	if ents, err := os.ReadDir(dir); err == nil {
 		for _, e := range ents {
-			if !e.IsDir() && strings.EqualFold(filepath.Ext(e.Name()), ".gguf") {
+			if !e.IsDir() && strings.EqualFold(filepath.Ext(e.Name()), ".gguf") && !strings.HasPrefix(e.Name(), ".") {
 				names[e.Name()] = true
 			}
 		}
 	}
 	out := make([]ModelFile, 0, len(names))
 	for n := range names {
+		if modelpath.Check(n) != nil {
+			// a stored profile may name a path the path rule refuses (a dot-folder
+			// such as the trash): listed as not there, never read
+			delete(c.seen, n)
+			out = append(out, ModelFileFromName(n))
+			continue
+		}
 		st, err := os.Stat(filepath.Join(dir, n))
 		if err != nil || st.IsDir() {
 			delete(c.seen, n)

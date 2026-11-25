@@ -258,11 +258,11 @@ func (s ctxStep) holds(l *learnedNeed) bool {
 type deriveState struct {
 	waiting bool // an estimate was skipped: its model's header is not read yet
 	est     map[needKey]NeedInfo
-	seed   maphash.Seed
-	seeded bool
-	sum    uint64
-	groups map[needKey]*deriveGroup
-	all    []DerivePair // every group's pairs, sorted; nil until asked
+	seed    maphash.Seed
+	seeded  bool
+	sum     uint64
+	groups  map[needKey]*deriveGroup
+	all     []DerivePair // every group's pairs, sorted; nil until asked
 	// work done (tests)
 	estCalls, pairBuilds int
 }

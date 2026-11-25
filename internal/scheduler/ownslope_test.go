@@ -29,7 +29,9 @@ func TestOwnSlope_ConfirmedLineBothDirections(t *testing.T) {
 	h.measure("m.gguf", 8192, 6, 8240)
 	h.measure("m.gguf", 32768, 6, 9200)
 	for _, c := range []struct{ ctx, want int }{{16384, 8560}, {65536, 10480}, {1024, 7960}} {
-		p := h.llama("p", 0, func(p *core.Profile) { p.Model, p.Ctx, p.ForceNodes = "m.gguf", c.ctx, []string{"1", "2", "3", "4", "5", "6"} })
+		p := h.llama("p", 0, func(p *core.Profile) {
+			p.Model, p.Ctx, p.ForceNodes = "m.gguf", c.ctx, []string{"1", "2", "3", "4", "5", "6"}
+		})
 		info, _ := h.c.need(p)
 		if info.Source != NeedOwnSlope || info.Need.MiB != c.want || !info.Need.Measured || info.Devices != 6 {
 			t.Fatalf("ctx %d: %+v %q on %d, want %d by the own slope", c.ctx, info.Need, info.Source, info.Devices, c.want)
