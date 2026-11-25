@@ -137,6 +137,85 @@ func TestRealCtx_ServedContextIsReadAndCompared(t *testing.T) {
 
 // The runner reads /props once the load is healthy, at the instance's own
 // address with its key, and the next requests carry the figure.
+// The read of the server's own context runs after the instance is ready: a
+// request queued for the load is admitted while /props is still unanswered
+// (it adds nothing to that request's wait), and a read that fails leaves
+// the instance ready with "context not confirmed".
+func TestRealCtx_SlowPropsDoesNotHoldTheQueuedRequest(t *testing.T) {
+	clk := newFakeClock()
+	view := newFakeView(clk)
+	view.set(ps5("a", 2, 15000))
+	cfg := testConfig()
+	cfg.Profiles["big"] = llamaP("big", 4000, func(p *core.Profile) { p.Ctx = 8192 })
+	started := make(chan struct{}, 4)
+	hold := make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(hold) }) }
+	t.Cleanup(release)
+	s, err := New(cfg, Options{Clock: clk, View: view, Prober: newFakeProber(view), WorkerProber: newFakeWorkerProber(),
+		Launcher: &fakeLauncher{nextPort: 5800, autoHealthy: true, autoExit: true},
+		Needs:    NeedFunc(func(p *core.Profile) (NeedInfo, error) { return NeedInfo{Need: placer.Measured(p.NeedsMiB)}, nil }),
+		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		ReadSlotCtx: func(ctx context.Context, addr, key string) (int, error) {
+			started <- struct{}{}
+			select { // a /props that hangs until the test lets it fail
+			case <-hold:
+				return 0, errors.New("/props answered 503")
+			case <-ctx.Done():
+				return 0, ctx.Err()
+			}
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go s.Run(context.Background())
+	t.Cleanup(func() {
+		release()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s.Shutdown(ctx)
+	})
+	// The first request waits for the load; it must be admitted while the
+	// read is still hanging (the bound: no wait from /props at all).
+	actx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	l, err := s.Acquire(actx, "big")
+	if err != nil {
+		t.Fatalf("the queued request was not admitted while /props hung: %v", err)
+	}
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the context read never started")
+	}
+	select {
+	case <-hold:
+		t.Fatal("the read was released before the request was admitted")
+	default:
+	}
+	l.Release()
+	release()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		st, _ := s.Status(ctxT(t))
+		if len(st.Instances) == 1 && strings.HasPrefix(st.Instances[0].CtxNote, "context not confirmed") {
+			if st.Instances[0].State != "ready" || st.Instances[0].CtxServed != nil {
+				t.Fatalf("a failed read changed the instance: %+v", st.Instances[0])
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no \"context not confirmed\": %+v", st.Instances)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	l2, err := s.Acquire(ctxT(t), "big")
+	if err != nil {
+		t.Fatalf("the instance does not serve after a failed read: %v", err)
+	}
+	l2.Release()
+}
+
 func TestRealCtx_RunnerReadsPropsAfterTheLoad(t *testing.T) {
 	clk := newFakeClock()
 	view := newFakeView(clk)
