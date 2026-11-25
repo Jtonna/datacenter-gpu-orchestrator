@@ -1351,6 +1351,7 @@ input.cb{width:16px;height:16px;margin:0;accent-color:#0f6b4a}
 .mdl-ptbl td:first-child,.mdl-ttbl td:first-child{min-width:150px}
 .mdl-ptbl td .sub,.mdl-ttbl td .sub{display:block}
 .mdl-pill{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:9px;background:#e2f1e9;color:var(--mint-text);font-size:11px;font-weight:800;vertical-align:1px}
+.mdl-test{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:9px;border:1px dashed var(--line,#c8c8c8);color:var(--muted,#666);font-size:11px;font-weight:700;vertical-align:1px}
 .mdl-ptbl .go,.mdl-ttbl .go{display:inline-flex;align-items:center;gap:3px;font-weight:700;color:#9aa49e;text-decoration:none}
 .mdl-ptbl .go .tx,.mdl-ttbl .go .tx{visibility:hidden}
 .mdl-ptbl tbody tr:hover .go,.mdl-ptbl .go:focus-visible,.mdl-ttbl tbody tr:hover .go,.mdl-ttbl .go:focus-visible{color:var(--link)}
