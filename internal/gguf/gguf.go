@@ -12,6 +12,10 @@ import (
 	"io"
 	"math"
 	"os"
+	"sync"
+	"time"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
 )
 
 // Limits applied while parsing untrusted input.
@@ -516,4 +520,53 @@ func (m *Meta) KVElemsPerToken() (int, error) {
 		total += k + v
 	}
 	return total, nil
+}
+
+// ContextCache reads the trained context (<arch>.context_length) of model
+// files, once per version of a file (size and modification time).
+type ContextCache struct {
+	mu sync.Mutex
+	m  map[string]ctxEntry
+}
+
+type ctxEntry struct {
+	size int64
+	mod  time.Time
+	ctx  int
+	ok   bool
+}
+
+// TrainedCtx is the file's trained context; false when the file or its
+// header cannot be read or names none.
+func (c *ContextCache) TrainedCtx(path string) (int, bool) {
+	st, err := os.Stat(path)
+	if err != nil {
+		return 0, false
+	}
+	e, hit := c.get(path)
+	if hit && e.size == st.Size() && e.mod.Equal(st.ModTime()) {
+		return e.ctx, e.ok
+	}
+	e = ctxEntry{size: st.Size(), mod: st.ModTime()}
+	if meta, err := ReadMeta(path); err == nil && meta.ContextLength > 0 {
+		e.ctx, e.ok = int(meta.ContextLength), true
+	}
+	c.put(path, e)
+	return e.ctx, e.ok
+}
+
+func (c *ContextCache) get(path string) (ctxEntry, bool) {
+	c.mu.Lock()
+	defer supervise.Unlocked("gguf", c.mu.Unlock)
+	e, ok := c.m[path]
+	return e, ok
+}
+
+func (c *ContextCache) put(path string, e ctxEntry) {
+	c.mu.Lock()
+	defer supervise.Unlocked("gguf", c.mu.Unlock)
+	if c.m == nil {
+		c.m = map[string]ctxEntry{}
+	}
+	c.m[path] = e
 }

@@ -97,6 +97,10 @@ type Config struct {
 	ModelTrashPurge bool
 	// modelNote is Options.ModelNote while the configuration is checked.
 	modelNote func(string) string
+	// trainedCtx and keepCtx are Options.TrainedCtx and KeepCtx while the
+	// configuration is checked.
+	trainedCtx func(string) (int, bool)
+	keepCtx    map[string]KeptCtx
 	// DefaultUserName is the default user: the name that signs what is done
 	// without an access key and without a name of the client's own (the web
 	// UI, curl, scripts) in the audit log and the request log. There is no
@@ -379,6 +383,20 @@ type Options struct {
 	// ModelNote, when set, adds a sentence to the refusal of a model file
 	// that is not there (models slice 3: "it is in the trash since ...").
 	ModelNote func(model string) string
+	// TrainedCtx reads the trained context of a model file (its GGUF
+	// <arch>.context_length); false when unknown. Nil: not checked. A llama
+	// profile whose ctx is above it is refused unless it says
+	// ctx_above_trained, or it keeps its stored model and ctx (KeepCtx).
+	TrainedCtx func(path string) (int, bool)
+	// KeepCtx maps a profile to its model and ctx before the write being
+	// checked: a stored profile that keeps both still loads.
+	KeepCtx map[string]KeptCtx
+}
+
+// KeptCtx is a stored profile's model and ctx (Options.KeepCtx).
+type KeptCtx struct {
+	Model string
+	Ctx   int
 }
 
 // Bench is the benchmark feature's settings (design 9.3).

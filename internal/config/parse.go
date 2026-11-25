@@ -177,6 +177,7 @@ func parseYAML(data []byte, o Options) (*Config, *rawConfig, map[string]*Profile
 	c.benchEnabledSet = raw.Bench.Enabled
 	c.Bench.EnabledSetting = raw.Bench.Enabled == nil || *raw.Bench.Enabled
 	c.modelNote = o.ModelNote
+	c.trainedCtx, c.keepCtx = o.TrainedCtx, o.KeepCtx
 	if err := c.validate(rawProfiles, c.modelCheck(o, exists)); err != nil {
 		return nil, nil, nil, err
 	}
@@ -277,21 +278,24 @@ type MatchSpec struct {
 
 // ProfileSpec uses pointers wherever "absent" must be told from zero.
 type ProfileSpec struct {
-	Kind             string    `yaml:"kind" json:"kind,omitempty"`
-	Model            string    `yaml:"model" json:"model,omitempty"`
-	Ctx              *int      `yaml:"ctx" json:"ctx,omitempty"`
-	Parallel         *int      `yaml:"parallel" json:"parallel,omitempty"`
-	KVQuant          string    `yaml:"kv_quant" json:"kv_quant,omitempty"`
-	FlashAttn        *bool     `yaml:"flash_attn" json:"flash_attn,omitempty"`
-	NeedsMiB         int       `yaml:"needs_mib" json:"needs_mib,omitempty"`
-	AllowTiers       []int     `yaml:"allow_tiers" json:"allow_tiers,omitempty"`
-	ForceNodes       []string  `yaml:"force_nodes" json:"force_nodes,omitempty"`
-	TensorSplit      []int     `yaml:"tensor_split" json:"tensor_split,omitempty"`
-	ExtraArgs        []string  `yaml:"extra_args" json:"extra_args,omitempty"`
-	Cmd              string    `yaml:"cmd" json:"cmd,omitempty"`
-	CheckEndpoint    string    `yaml:"check_endpoint" json:"check_endpoint,omitempty"`
-	Aliases          []string  `yaml:"aliases" json:"aliases,omitempty"`
-	Generated        *bool     `yaml:"generated" json:"generated,omitempty"`
+	Kind          string   `yaml:"kind" json:"kind,omitempty"`
+	Model         string   `yaml:"model" json:"model,omitempty"`
+	Ctx           *int     `yaml:"ctx" json:"ctx,omitempty"`
+	Parallel      *int     `yaml:"parallel" json:"parallel,omitempty"`
+	KVQuant       string   `yaml:"kv_quant" json:"kv_quant,omitempty"`
+	FlashAttn     *bool    `yaml:"flash_attn" json:"flash_attn,omitempty"`
+	NeedsMiB      int      `yaml:"needs_mib" json:"needs_mib,omitempty"`
+	AllowTiers    []int    `yaml:"allow_tiers" json:"allow_tiers,omitempty"`
+	ForceNodes    []string `yaml:"force_nodes" json:"force_nodes,omitempty"`
+	TensorSplit   []int    `yaml:"tensor_split" json:"tensor_split,omitempty"`
+	ExtraArgs     []string `yaml:"extra_args" json:"extra_args,omitempty"`
+	Cmd           string   `yaml:"cmd" json:"cmd,omitempty"`
+	CheckEndpoint string   `yaml:"check_endpoint" json:"check_endpoint,omitempty"`
+	Aliases       []string `yaml:"aliases" json:"aliases,omitempty"`
+	Generated     *bool    `yaml:"generated" json:"generated,omitempty"`
+	// CtxAboveTrained: the profile means a ctx above the model's trained
+	// context (written only when true; see core.Profile.CtxAboveTrained).
+	CtxAboveTrained  *bool     `yaml:"ctx_above_trained" json:"ctx_above_trained,omitempty"`
 	TTL              *duration `yaml:"ttl" json:"ttl,omitempty"`
 	LoadTimeout      duration  `yaml:"load_timeout" json:"load_timeout,omitempty"`
 	StallTimeout     *duration `yaml:"stall_timeout" json:"stall_timeout,omitempty"`
@@ -317,6 +321,9 @@ func (r *ProfileSpec) toCore(name string) *core.Profile {
 	}
 	if r.Ctx != nil {
 		p.Ctx = *r.Ctx
+	}
+	if r.CtxAboveTrained != nil {
+		p.CtxAboveTrained = *r.CtxAboveTrained
 	}
 	if r.FlashAttn != nil {
 		p.FlashAttn = *r.FlashAttn
