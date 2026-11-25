@@ -132,6 +132,11 @@ type Options struct {
 	// It is called with the signature of the catalog the server has; when its
 	// own signature is the same it need not gather the input again.
 	catalogSource func(ctx context.Context, have string) (in CatalogInput, sig string, ok bool)
+	// catalogClock, catalogMinGap and catalogDriftGap replace time.Now and
+	// the gaps of the live channel's catalog rebuilds (catalogplans.go; tests).
+	catalogClock    func() time.Time
+	catalogMinGap   time.Duration
+	catalogDriftGap time.Duration
 
 	// The health summary (health.go): tests replace the disk read, its
 	// timeout and period, the push period and the task counters.

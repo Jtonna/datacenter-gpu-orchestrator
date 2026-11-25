@@ -59,10 +59,13 @@
 //               "notFetched": ["regexp no request of the case may match", ...],
 //               "noHeader": ["X-Actor", ...]: no request of the case carried it,
 //               "sentHeader": ["^X-Comment: why$"]: a header line "Name: value" matched each,
-//               "noHeaderLine": ["ptl_"]: no header line matched any}],
+//               "noHeaderLine": ["ptl_"]: no header line matched any,
+//               "subscribed": ["models"] / "notSubscribed": ["models"]: topics the
+//               live channel's last subscribe names, or not (with top-level "wsOpen")}],
 //    (fetch answers: "POST /api/agents" before "/api/agents"; {"$status": 409, "$body": {...}} for an error;
 //     {"$match": [["regexp", answer], ...]}: the first regexp that matches the request line
 //     "METHOD /path?query body" picks the answer, none answers 404: one route, answers by query or body)
+//    "wsOpen": true,                               // the live channel's socket opens (with "app")
 //    "now": "2026-11-24T06:30:00Z",               // the clock starts there (Date.now, new Date())
 //    "tz": "America/Los_Angeles"}                 // the zone: uiExec sets TZ for node
 //
@@ -347,7 +350,19 @@ const ls = new Map();
 def('localStorage', { getItem: k => (ls.has(k) ? ls.get(k) : null), setItem: (k, v) => ls.set(k, String(v)), removeItem: k => ls.delete(k), clear: () => ls.clear() });
 def('sessionStorage', globalThis.localStorage);
 def('navigator', { userAgent: 'ui-exec', language: 'en', clipboard: { writeText: async () => {} } });
-def('WebSocket', class { constructor() { this.readyState = 0; } send() {} close() {} addEventListener() {} });
+// The live channel never opens, unless the cases file says "wsOpen": true:
+// then a socket opens at once and every subscribe it sends is kept, for a
+// case's "subscribed" / "notSubscribed" (the topics of the last subscribe).
+const wsSubscribes = [];
+def('WebSocket', class {
+  static OPEN = 1;
+  constructor() {
+    this.readyState = 0;
+    if (spec.wsOpen) setTimeout(() => { this.readyState = 1; if (this.onopen) this.onopen(); }, 0);
+  }
+  send(b) { try { const m = JSON.parse(b); if (m.type === 'subscribe') wsSubscribes.push(m.topics || []); } catch { /* not JSON */ } }
+  close() {} addEventListener() {}
+});
 for (const k of ['ResizeObserver', 'IntersectionObserver', 'MutationObserver']) def(k, class { observe() {} unobserve() {} disconnect() {} });
 def('alert', () => {}); def('confirm', () => false); def('prompt', () => null);
 
@@ -656,6 +671,12 @@ for (const c of spec.cases) {
   for (const re of c.notFetched || []) { const hit = fetchedFull.find(f => new RegExp(re).test(f)); if (hit) errors.push('a request that must not be sent: ' + hit); }
   for (const hd of c.noHeader || []) if (sentHeaders.has(hd)) errors.push('a request carried the header ' + hd);
   for (const re of c.sentHeader || []) if (!sentHeaderLines.some(l => new RegExp(re).test(l))) errors.push('no header matches /' + re + '/ (headers: ' + JSON.stringify([...new Set(sentHeaderLines)]) + ')');
+  // subscribed / notSubscribed: topics the live channel's last subscribe names, or not
+  {
+    const last = wsSubscribes.length ? wsSubscribes[wsSubscribes.length - 1] : [];
+    for (const t of c.subscribed || []) if (!last.includes(t)) errors.push('the live channel is not subscribed to ' + t + ' (last subscribe: ' + JSON.stringify(last) + ')');
+    for (const t of c.notSubscribed || []) if (last.includes(t)) errors.push('the live channel is subscribed to ' + t + ' (last subscribe: ' + JSON.stringify(last) + ')');
+  }
   for (const re of c.noHeaderLine || []) { const hit = sentHeaderLines.find(l => new RegExp(re).test(l)); if (hit) errors.push('a header that must not be sent: ' + hit); }
   for (const sel of c.pageHas || []) if (!document.body.querySelector(sel)) errors.push('no element on the page matches: ' + sel);
   for (const sel of c.pageNone || []) if (document.body.querySelector(sel)) errors.push('an element on the page that must not be there: ' + sel);

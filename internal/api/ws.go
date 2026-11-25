@@ -618,7 +618,7 @@ func (s *Server) newWSHub() *wsHub {
 	h.health = s.healthSubscribe
 	h.groups = s.sendGroups
 	h.models = func(ctx context.Context) []byte {
-		snap, err := s.catalogGet(ctx)
+		snap, err := s.catalogLive(ctx)
 		if err != nil {
 			return nil
 		}

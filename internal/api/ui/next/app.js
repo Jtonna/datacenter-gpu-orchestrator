@@ -4,7 +4,8 @@
 // the same path in ui/, which then draws with this folder's core/ui.js and
 // the rest of the shared core (internal/api/uifiles.go).
 
-import { start as startRouter } from './core/router.js';
+import { start as startRouter, onRoute } from './core/router.js';
+import { releaseCatalog } from './core/catalog.js';
 import { start as startLive } from './core/live.js';
 import { startShell } from './core/shell.js';
 
@@ -27,6 +28,12 @@ import './views/about.js';
 
 // The home page is the Overview (Q76): /ui/ with no screen named opens it.
 if (!location.hash || location.hash === '#' || location.hash === '#/') history.replaceState(null, '', '#/overview');
+
+// Another screen opens: the live catalog (and the plans the server computes
+// for it) is let go unless the new screen asks for it again (needCatalog()
+// in its mount, which runs right after this).
+let screen = null;
+onRoute(route => { if (route.id !== screen) { screen = route.id; releaseCatalog(); } });
 
 startShell(document.getElementById('app'));
 startRouter(document.getElementById('main'));
