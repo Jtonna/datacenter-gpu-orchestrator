@@ -219,7 +219,6 @@ function deleteButton(m, disk, onDeleted) {
 // the side panel of one model
 function modelPanel(st, m, ps) {
   const f = fitOf(m, st);
-  const b = m.bench || {};
   const l = m.loads || {};
   const insts = m.instances || [];
   const loadedProfiles = new Set(insts.filter(i => i.state !== 'starting').map(i => i.profile));
@@ -236,12 +235,10 @@ function modelPanel(st, m, ps) {
   return [
     ps.saved ? h('div.banner.info', { key: 'saved', role: 'status', 'data-saved': '' }, h('span.grow', ps.saved)) : null,
     h('div.mdl-acts', { key: 'acts' },
-      // bench.reports (v60): finished runs with a step on this file; an older server has only runs
-      // the count opens the model's runs and reports in this panel (the owner's note 8a)
-      h('button.btn', { type: 'button', 'data-act': 'bench', onclick: () => ps.show('bench'),
-        title: typeof b.reports === 'number' ? `Finished benchmark runs with a step on this model: ${num(b.reports)} (${plural(b.runs || 0, 'run')} in all). Opens the list here.`
-          : b.runs ? 'Benchmarks that used a profile of this model. Opens the list here.' : 'No benchmark has used this model yet' }, 'Benchmarks ',
-        h('span.mut', typeof b.reports === 'number' ? (b.reports ? plural(b.reports, 'report') : 'no reports') : b.runs ? plural(b.runs, 'run') : 'none yet')),
+      // the count opens the model's runs in this panel (the owner's note 8a); it
+      // is the count of that list, from the same query (runsOf), so the two
+      // never differ; "report" is said per row only (the reviewer, 25 Nov)
+      benchButton(m, ps),
       typeof m.pinned === 'boolean'
         ? h('button', { type: 'button', class: 'btn' + (m.pinned ? ' mdl-pinned' : ''), 'aria-pressed': m.pinned ? 'true' : 'false', 'data-act': 'pin',
           title: m.pinned ? 'Pinned: click to unpin' : 'Pin: list it under Pinned', onclick: () => togglePin(m) }, m.pinned ? [icon(STAR), ' Pinned'] : 'Pin')
@@ -315,19 +312,39 @@ function planWords(r) {
 // benchView(m, ps): the model's benchmark runs and reports, in the panel
 // (GET /api/bench/runs?model=<file>; the owner's note 8a); each opens its
 // report page
-function benchView(m, ps) {
+// RUNS_MAX: the most runs the panel lists; a longer history says "200+".
+const RUNS_MAX = 200;
+// runsOf(m, ps) -> {file, list, error}: the model's benchmark runs (GET
+// /api/bench/runs?model=<file>), asked once per panel. The Benchmarks button
+// and the list it opens both read this one answer.
+function runsOf(m, ps) {
   const file = m.file || m.key;
   if (!ps.runs || ps.runs.file !== file) {
     const r = ps.runs = { file, list: null, error: '' };
-    api.get('/api/bench/runs?model=' + encodeURIComponent(file) + '&limit=200')
+    api.get('/api/bench/runs?model=' + encodeURIComponent(file) + '&limit=' + RUNS_MAX)
       .then(d => { r.list = (d && d.runs) || []; if (ps.runs === r) ps.redraw(); }, e => { r.error = e.message; if (ps.runs === r) ps.redraw(); });
   }
-  const r = ps.runs, list = r.list;
+  return ps.runs;
+}
+// runsCount(list) -> "2 runs", "No runs", "200+ runs"
+const runsCount = list => (!list.length ? 'no runs' : list.length >= RUNS_MAX ? num(RUNS_MAX) + '+ runs' : plural(list.length, 'run'));
+
+// benchButton(m, ps) -> "Benchmarks · 2 runs": opens the list in the panel
+function benchButton(m, ps) {
+  const list = runsOf(m, ps).list;
+  return h('button.btn', { type: 'button', 'data-act': 'bench', 'data-runs': list ? String(list.length) : null, onclick: () => ps.show('bench'),
+    title: !list ? 'The benchmark runs that used this model. Opens the list here.'
+      : list.length ? 'The benchmark runs with a step on this model. Opens the list here.' : 'No benchmark run has used this model yet' },
+  'Benchmarks', list ? h('span.mut', ' · ' + runsCount(list)) : null);
+}
+
+function benchView(m, ps) {
+  const r = runsOf(m, ps), list = r.list;
   const when = x => x.started_at || x.queued_at;
   return [
     backBar(m, ps),
-    h('section.zpart', { key: 'bench' },
-      h('h3', 'Benchmarks ', list ? h('span.mut', plural(list.length, 'run')) : null),
+    h('section.zpart', { key: 'bench', 'data-runs': list ? String(list.length) : null },
+      h('h3', 'Benchmarks', list ? h('span.mut', ' · ' + runsCount(list)) : null),
       r.error ? h('p.err-t', 'The runs could not be read: ' + r.error)
         : !list ? skeleton(3)
           : !list.length ? h('p.mut', 'No benchmark run has used this model yet.')

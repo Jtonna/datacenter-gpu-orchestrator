@@ -221,6 +221,17 @@ func TestUINextNotesPanelDeeper(t *testing.T) {
 	older := "#/models?model=" + mdlOlder
 	editBtn := "aside.side tr[data-profile='gemma-4-12b'] button[data-act=edit]"
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
+		// The reviewer (25 Nov): one count under one word. The button reads
+		// "Benchmarks · N runs" with N from the same query its list shows
+		// (GET /api/bench/runs?model=<file>), so the two never differ; the
+		// word "report" is per row only.
+		map[string]any{"name": "adjust a: the button counts the runs its list shows", "route": open, "status": st, "width": 1536,
+			"fetchedQuery": []string{`^GET /api/bench/runs\?model=gemma-4-27b-it-Q4_K_M\.gguf&limit=200$`},
+			"pageHas":      []string{"aside.side button.btn[data-act=bench][data-runs='2']"},
+			"page":         []string{"Benchmarks · 2 runs"}, "notOnPage": []string{"3 reports", "no reports"}},
+		map[string]any{"name": "adjust a: the list has the same count", "route": open, "status": st, "width": 1536,
+			"click": []string{"aside.side button[data-act=bench]"}, "page": []string{"Benchmarks · 2 runs"},
+			"pageHas": []string{"aside.side section.zpart[data-runs='2']"}},
 		map[string]any{"name": "notes 8a: Benchmarks opens the runs in the panel", "route": open, "status": st, "width": 1536,
 			"click":        []string{"aside.side button[data-act=bench]"},
 			"fetchedQuery": []string{`^GET /api/bench/runs\?model=gemma-4-27b-it-Q4_K_M\.gguf`},

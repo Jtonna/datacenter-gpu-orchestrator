@@ -54,7 +54,7 @@ func TestUINextModels(t *testing.T) {
 
 		// the panel of the loaded model
 		map[string]any{"name": "models: the loaded model's panel", "route": "#/models?model=" + mdlLoaded, "status": st,
-			"page": []string{"Selected model", mdlLoaded, "16.5 GB", "loaded now", "Benchmarks", "3 reports", "Pinned", "Delete model",
+			"page": []string{"Selected model", mdlLoaded, "16.5 GB", "loaded now", "Benchmarks", "Pinned", "Delete model",
 				"Loaded now", "on ps5-01, ps5-02", "2 requests in flight", "Runs on", "gemma-4-27b", "Google",
 				"Configurations", "2 profiles", "Profile", "Context", "Memory needed", "8,192", "32,768", "17,480 MiB", "20,890 MiB", "measured",
 				"1 test and benchmark configuration", "Add profile", "Open the model page"},
