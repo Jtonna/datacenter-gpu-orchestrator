@@ -515,9 +515,15 @@ func TestRefusals(t *testing.T) {
 			{LaunchID: "a", Role: agentproto.RoleWorker},
 			{LaunchID: "a", Role: agentproto.RoleWorker, Worker: &agentproto.WorkerSpec{ExtraArgs: []string{"--port=1"}}},
 		}
-		h := host("a")
-		h.Host.Model = "../../etc/passwd"
-		bad = append(bad, h)
+		// the shared path rule (internal/modelpath): a dot-folder of the
+		// model folder is refused even when the file is there
+		os.MkdirAll(filepath.Join(e.cfg.ModelDir, ".trash", "0123"), 0o755)
+		os.WriteFile(filepath.Join(e.cfg.ModelDir, ".trash", "0123", "m.gguf"), []byte("GGUF"), 0o644)
+		for _, m := range []string{"../../etc/passwd", ".trash/0123/m.gguf", ".potluck-uploads/m.gguf", "sub/../m.gguf", "/m.gguf", `sub\m.gguf`} {
+			h := host("a")
+			h.Host.Model = m
+			bad = append(bad, h)
+		}
 		h2 := host("a")
 		h2.Host.TensorSplit = []float64{50, 50}
 		bad = append(bad, h2)
