@@ -131,7 +131,7 @@ export function suitePage(id) {
         { label: 'Result', cls: 'tight', render: r => (['queued', 'running', 'paused'].includes(r.state) ? h('span.mut', DASH) : resultBadge(runResult(r))) },
         { label: 'Passed', cls: 'r', render: r => (r.summary ? passedOf(r.summary) : DASH) },
         { label: 'Duration', cls: 'r', render: r => (runSeconds(r) != null ? dur(runSeconds(r)) : DASH) },
-        { label: 'Against the run before', title: 'The duration and the number of passed benchmarks, compared with the run before this one', render: r => {
+        { label: 'Against the run before', cls: 'tight', title: 'The duration and the number of passed benchmarks, compared with the run before this one', render: r => {
           const i = runs.indexOf(r), prev = runs.slice(i + 1).find(x => runSeconds(x) != null && x.summary);
           if (!prev || runSeconds(r) == null || !r.summary) return h('span.mut', prev ? DASH : 'The first run');
           const dp = r.summary.passed - prev.summary.passed;
@@ -146,7 +146,9 @@ export function suitePage(id) {
   }
 
   // trend over runs
-  const durPts = done.map(r => ({ x: r.started_at, y: runSeconds(r), color: RESULT_COLOR[runResult(r)],
+  // one step per run, oldest left (as "Benchmarks passed" beside it): a time
+  // scale squeezed a day's runs against one left edge when a later run was far off
+  const durPts = done.map((r, i) => ({ x: i, y: runSeconds(r), color: RESULT_COLOR[runResult(r)],
     tip: tipText(dur(runSeconds(r)), [RESULT_WORD[runResult(r)], `${agoText(r.started_at)} · ${dateTime(r.started_at)}`, r.summary ? `${num(r.summary.passed)} passed · ${num(r.summary.failed)} failed` : null, r.id]) }));
   const cols = done.slice(-30).map(r => ({ at: r.started_at, passed: (r.summary || {}).passed || 0, failed: (r.summary || {}).failed || 0, id: r.id }));
   const altDur = done.length ? 'Duration of the runs, oldest first: ' + done.map(r => dur(runSeconds(r))).join(', ') + '.' : 'No finished run yet.';
@@ -154,8 +156,9 @@ export function suitePage(id) {
   const trend = h('section.card', { key: 'trend' },
     h('div.ch', h('h2', 'Over its runs'), h('span.note', done.length ? `${plural(done.length, 'finished run')}` : null)),
     h('div.viz-grid',
-      viz('Duration', 'How long the whole run took, in seconds',
-        lineChart({ series: [{ name: 'Duration', color: 'mut', points: durPts }], time: true, zero: true, unit: 's', width: 560, height: 180, label: altDur, empty: 'No finished run yet' }),
+      viz('Duration', 'How long the whole run took, in seconds; per run, oldest left',
+        lineChart({ series: [{ name: 'Duration', color: 'mut', points: durPts }], zero: true, unit: 's', width: 560, height: 180, label: altDur, empty: 'No finished run yet',
+          xText: i => (done[i] ? clock(done[i].started_at, false) : '') }),
         { key: 'v-dur', alt: altDur, legend: done.length ? legendItems([[colorSwatch('mint'), 'Passed'], [colorSwatch('amber'), 'Partly passed'], [colorSwatch('coral'), 'Failed']]) : null }),
       viz('Benchmarks passed', 'Per run, oldest left',
         columns(cols, { series: [{ key: 'passed', color: 'mint' }, { key: 'failed', color: 'coral' }], height: 180, label: c => clock(c.at, false), alt: altCols, empty: 'No finished run yet',
@@ -245,11 +248,12 @@ export function benchmarkPage(id) {
   if (!results) trends = h('div.cb', skeleton(3));
   else {
     const tiles = TREND.map(([key, title, unit, better, fmt]) => {
-      const pts = results.filter(r => r[key] != null).map(r => ({ x: r.at, y: key === 'memory_mib' ? r[key] / 1024 : r[key], color: RESULT_COLOR[r.result],
+      const had = results.filter(r => r[key] != null); // one step per run, oldest left, as on the suite page
+      const pts = had.map((r, i) => ({ x: i, y: key === 'memory_mib' ? r[key] / 1024 : r[key], color: RESULT_COLOR[r.result],
         tip: tipText(fmt(r[key]), [RESULT_WORD[r.result], `${agoText(r.at)} · ${dateTime(r.at)}`, r.nodes ? 'On ' + machines(st, r.nodes) : null, r.run_id]) }));
       if (!pts.length) return null;
       const alt = `${title}, oldest first: ` + results.filter(r => r[key] != null).map(r => fmt(r[key])).join(', ') + '.';
-      return viz(title, `In ${unit}; ${better} is better`, lineChart({ series: [{ name: title, color: 'mut', points: pts }], time: true, zero: true, unit, width: 560, height: 170, label: alt }), { key: 'v-' + key, alt });
+      return viz(title, `In ${unit}; ${better} is better`, lineChart({ series: [{ name: title, color: 'mut', points: pts }], zero: true, unit, width: 560, height: 170, label: alt, xText: i => (had[i] ? clock(had[i].at, false) : '') }), { key: 'v-' + key, alt });
     }).filter(Boolean);
     trends = tiles.length ? h('div.viz-grid', tiles) : h('div.cb', h('div.viz-empty', h('span', results.length ? 'No figure was measured' : 'Not run yet'),
       h('small', results.length ? 'This benchmark expects a refusal, or never loaded, so there is no load time or speed to chart.' : 'A point appears for every run of a suite that contains this benchmark.')));
@@ -268,8 +272,8 @@ export function benchmarkPage(id) {
         { label: 'When', cls: 'tight', render: r => ago(r.at) },
         { label: 'Result', cls: 'tight', render: r => h('span', resultBadge(r.result), r.regression ? [' ', badge('Regression', 'aside')] : null) },
         { label: 'Outcome', cls: 'tight', render: r => outcomeBadge(r.outcome) || h('span.mut', DASH) },
-        { label: 'Suite', render: r => h('a', { href: href('benchmarks', ['suite', r.suite_id]), onclick: e => e.stopPropagation(), style: 'color:inherit' }, r.suite_name || r.suite_id) },
-        { label: 'On', render: r => (r.host || (r.workers || []).length ? h('span', { style: 'font-size:13px' }, rolesText(r.host, r.workers))
+        { label: 'Suite', cls: 'wide', render: r => h('a', { href: href('benchmarks', ['suite', r.suite_id]), onclick: e => e.stopPropagation(), style: 'color:inherit' }, r.suite_name || r.suite_id) },
+        { label: 'On', cls: 'wide', render: r => (r.host || (r.workers || []).length ? h('span', { style: 'font-size:13px' }, rolesText(r.host, r.workers))
           : r.nodes ? machines(st, r.nodes) : h('span.mut', DASH)) },
         { label: 'Load mode', cls: 'tight', title: 'How the weights reached the nodes', render: r => loadModeNode(r.load_mode) },
         { label: 'Load time', cls: 'r', render: r => (r.load_s != null ? dur(r.load_s) : DASH) },
@@ -288,6 +292,6 @@ export function benchmarkPage(id) {
 
   return [back, head, facts,
     h('section.card', { key: 'results' }, h('div.ch', h('h2', 'Results, run by run'), h('span.note', 'Newest first')), rows),
-    h('section.card', { key: 'trends' }, h('div.ch', h('h2', 'Over its runs'), h('span.note', 'One point per run; the colour is the result of that run')), trends),
+    h('section.card', { key: 'trends' }, h('div.ch', h('h2', 'Over its runs'), h('span.note', 'One point per run, oldest left; the colour is the result of that run')), trends),
     expect];
 }
