@@ -76,6 +76,52 @@ type trashState struct {
 	clearBlocked string
 	clearFailed  map[string]bool
 	clearOnce    sync.Once
+	wr           writableRead // models_writable, read at most every writableEvery
+}
+
+// writableRead is the last answer of modelfiles.Writable for a folder.
+type writableRead struct {
+	dir      string
+	at       time.Time
+	writable bool
+	ok       bool
+}
+
+// writableEvery is how often models_writable is read again: as often as the
+// disk figures of the models folder (the diskstat reader's 30 s).
+const writableEvery = 30 * time.Second
+
+func (t *trashState) writable() writableRead {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.wr
+}
+
+func (t *trashState) setWritable(w writableRead) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.wr = w
+}
+
+// modelsWritable says whether the models folder can be written here, read
+// without writing anything (modelfiles.Writable: the mount's ro/rw from
+// /proc/self/mountinfo, else access(W_OK)); ok is false when it cannot be
+// told, and the field is then left out. The answer is kept for
+// writableEvery: the first read is the first request after start.
+func (s *Server) modelsWritable() (writable, ok bool) {
+	dir := s.modelDir().Root
+	if dir == "" {
+		return false, false
+	}
+	if s.opts.modelsWritable != nil {
+		return s.opts.modelsWritable(dir)
+	}
+	if w := s.trash.writable(); w.dir == dir && !w.at.IsZero() && time.Since(w.at) < writableEvery {
+		return w.writable, w.ok
+	}
+	writable, ok = modelfiles.Writable(dir)
+	s.trash.setWritable(writableRead{dir: dir, at: time.Now(), writable: writable, ok: ok})
+	return writable, ok
 }
 
 func (t *trashState) summary() trashSummary {
@@ -167,6 +213,26 @@ func (s *Server) docAt() (*config.Document, int64) {
 	}
 }
 
+// zoneNames is the zones an instance is placed on by name, as the catalog's
+// instance names them: the node's hostname, else its id.
+func zoneNames(view []scheduler.NodeStatus, i scheduler.InstanceStatus) []string {
+	host := make(map[string]string, len(view))
+	for _, n := range view {
+		if n.Hostname != "" {
+			host[string(n.ID)] = n.Hostname
+		}
+	}
+	out := make([]string, 0, len(i.Nodes))
+	for _, n := range i.Nodes {
+		id := string(n.ID)
+		if h := host[id]; h != "" {
+			id = h
+		}
+		out = append(out, id)
+	}
+	return out
+}
+
 // trashBusy says what keeps the file from being deleted now: instances,
 // queued requests, benchmark runs.
 func (s *Server) trashBusy(ctx context.Context, file string, profiles map[string]*config.ProfileSpec) ([]string, map[string]any, error) {
@@ -180,7 +246,7 @@ func (s *Server) trashBusy(ctx context.Context, file string, profiles map[string
 		var insts []map[string]any
 		for _, i := range st.Instances {
 			if _, mine := profiles[i.Profile]; mine || i.ModelFile == file {
-				insts = append(insts, map[string]any{"profile": i.Profile, "state": i.State, "in_flight": i.InFlight})
+				insts = append(insts, map[string]any{"profile": i.Profile, "state": i.State, "in_flight": i.InFlight, "nodes": zoneNames(st.View.Nodes, i)})
 				why = append(why, fmt.Sprintf("%s is %s", i.Profile, i.State))
 			}
 		}
@@ -251,7 +317,7 @@ func (s *Server) interruptFile(ctx context.Context, file string, profiles map[st
 			if _, mine := profiles[i.Profile]; !mine && i.ModelFile != file {
 				continue
 			}
-			insts = append(insts, map[string]any{"profile": i.Profile, "state": i.State, "in_flight": i.InFlight, "waiters": i.Waiters})
+			insts = append(insts, map[string]any{"profile": i.Profile, "state": i.State, "in_flight": i.InFlight, "waiters": i.Waiters, "nodes": zoneNames(st.View.Nodes, i)})
 			cut += i.InFlight + i.Waiters
 			if err := s.sched.Unload(ctx, i.Profile, true); err != nil && !errors.Is(err, scheduler.ErrNotLoaded) {
 				errs = append(errs, fmt.Sprintf("unload %s: %v", i.Profile, err))
@@ -752,8 +818,12 @@ func (s *Server) handleTrashList(w http.ResponseWriter, r *http.Request) {
 			"deleted_comment": t.DeletedComment, "purge_at": t.PurgeAt, "removed_at": nilIfZero(t.RemovedAt), "state": t.State, "reason": t.Reason,
 			"removed_by": t.RemovedBy, "comment": t.Comment, "profile_ids": t.ProfileIDs, "revision": t.Revision})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "count": sum.Count, "total_bytes": sum.Bytes, "next_purge_at": nilIfZero(sum.nextPurgeAt(days)),
-		"trash_days": days, "purge_on": s.trashPurgeOn(), "repairs_at_start": repairs, "removed": removed})
+	out := map[string]any{"items": items, "count": sum.Count, "total_bytes": sum.Bytes, "next_purge_at": nilIfZero(sum.nextPurgeAt(days)),
+		"trash_days": days, "purge_on": s.trashPurgeOn(), "repairs_at_start": repairs, "removed": removed}
+	if wr, ok := s.modelsWritable(); ok {
+		out["models_writable"] = wr
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func nilIfEmpty(s string) any {

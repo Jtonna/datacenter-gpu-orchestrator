@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -248,4 +249,48 @@ func TestModelTrashInterrupt_LoadedAgainMeanwhile(t *testing.T) {
 		t.Fatalf("after: file %v profiles %v", te.has("a.gguf"), te.profileIDs())
 	}
 	var _ = cfgstore.TrashTrashed
+}
+
+// would_interrupt.instances and interrupted.instances carry each instance's
+// zone names ("nodes"), as the catalog's instance names them (hostnames,
+// not node ids), so the dialog does not have to join them from the catalog.
+func TestModelTrashInterrupt_ZoneNames(t *testing.T) {
+	te := newTrashEnv(t)
+	te.setup()
+	body(t, te.post("/v1/chat/completions", `{"model":"a1","messages":[{"role":"user","content":"hi"}]}`))
+	eventually(t, "a1 ready", func() bool { return te.instState("a1") == "ready" })
+	var want any
+	for _, x := range catalogKeys(t, te.env)["a.gguf"]["instances"].([]any) {
+		if x.(map[string]any)["profile"] == "a1" {
+			want = x.(map[string]any)["nodes"]
+		}
+	}
+	if w, _ := want.([]any); len(w) == 0 {
+		t.Fatalf("the catalog instance of a1 names no zone: %v", want)
+	}
+	nodesOf := func(what string, insts any) {
+		t.Helper()
+		l, _ := insts.([]any)
+		if len(l) != 1 {
+			t.Fatalf("%s: instances %v", what, insts)
+		}
+		if got := l[0].(map[string]any)["nodes"]; fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Fatalf("%s: nodes %v; the catalog says %v", what, got, want)
+		}
+	}
+	st, m := te.cdo("POST", "/api/models/delete/a.gguf", `{"comment":"x","interrupt":true,"dry_run":true}`, trashUI)
+	if st != 200 {
+		t.Fatalf("dry run: %d %v", st, m)
+	}
+	nodesOf("would_interrupt", m["would_interrupt"].(map[string]any)["instances"])
+	st, m = te.cdo("POST", "/api/models/delete/a.gguf", `{"comment":"x"}`, trashUI)
+	if st != 409 {
+		t.Fatalf("default: %d %v", st, m)
+	}
+	nodesOf("the in_use refusal", errOf(m)["instances"])
+	st, m = te.cdo("POST", "/api/models/delete/a.gguf", `{"comment":"owner said so","interrupt":true}`, trashUI)
+	if st != 200 {
+		t.Fatalf("interrupt: %d %v", st, m)
+	}
+	nodesOf("interrupted", interruptedOf(t, m)["instances"])
 }

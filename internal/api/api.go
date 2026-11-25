@@ -79,6 +79,10 @@ type Options struct {
 	// endpoints answer 503).
 	Bench      *bench.Manager
 	BenchStore *bench.Store
+	// BenchOffReason: the database's bench tables are newer than this build
+	// (bench.OpenShared): the bench routes answer 503 with this reason and
+	// enabled false, and the health summary has a Benchmarks row.
+	BenchOffReason string
 	// System is what /api/system reports about the configuration and storage.
 	System SystemInfo
 	// Config is the configuration service (REST /api/config); Audit receives the audit entries of runtime actions. Nil turns the endpoints off (503).
@@ -113,7 +117,10 @@ type Options struct {
 	// trash clearing; < 0: the clearing task does not start (tests run
 	// clearTrash themselves).
 	trashClearEvery time.Duration
-	fileCache       filecache.Sys // tests replace the page cache calls of POST /api/cache/evict
+	// modelsWritable replaces modelfiles.Writable (tests act out a read-only
+	// folder, or one where it cannot be told); it is then asked every time.
+	modelsWritable func(dir string) (writable, ok bool)
+	fileCache      filecache.Sys // tests replace the page cache calls of POST /api/cache/evict
 	// catalogSource, when set and answering true, is what the model catalog is
 	// joined from instead of this server's own status, profiles, events,
 	// aggregates and files (the dev harness shows a scripted or recorded cluster).

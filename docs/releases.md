@@ -4,7 +4,7 @@ What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent
 
 ## Scheduler image: remove a deleted model for good, and the timed clearing (models slice 4)
 
-No agent change, no new port. **Schema: one new table, `model_trash_removed` (tombstones), as step 3 of the `model_migrations` ledger; `model_trash` gains the state value `removing`.** `cfg_migrations` does not move. **The first code that erases a model file.** It acts only on a models folder mounted read-write; on live the mount stays `:ro` until the owner agrees, so every removal answers "the models folder is read-only here" and the clearing does nothing.
+No agent change, no new port. **Schema: one new table, `model_trash_removed` (tombstones), as step 3 of the `model_migrations` ledger; `model_trash` gains the state value `removing`.** `cfg_migrations` does not move. **The first code that erases a model file.** It acts only on a models folder mounted read-write (live's scheduler mount is read-write since 25 Nov 2026, with the owner's approval); on a read-only folder every removal answers "the models folder is read-only here" and the clearing does nothing.
 
 - **Remove for good.** `POST /api/models/trash/{id}/remove` {comment, dry_run} (permission **models**): erases `<models>/.trash/<id>/<file>`, only for an item in the trash whose file is the plain file of the recorded size; `dry_run` answers the size freed, the profiles, how many days early, `cannot_undo`, `read_only`. Interrupted items, items under way, missing, changed or non-regular files are refused with nothing changed.
 - **The only file removal.** `internal/modelfiles` `RemoveTrashed` builds the path from a checked id and name, checks `.trash` and `.trash/<id>` are plain directories and the file a regular file of the recorded size, checks the folder is writable with access(2) (writing nothing), and on Linux unlinks by descriptor (directories opened without following links, the file re-checked by inode). No other file is ever removed; there is no RemoveAll.
@@ -13,6 +13,14 @@ No agent change, no new port. **Schema: one new table, `model_trash_removed` (to
 - **Crash safety.** Record `removing` and tombstone first, then the unlink, then the record goes; the next start completes or undoes a cut removal and never erases a file itself.
 - **MCP.** `remove_deleted_model` (destructive, owner-asked wording); `list_deleted_models` shows tombstones in `removed`.
 - **Going back.** The image before (af916f4) opens the same database and leaves step 3 alone. Its trash list reads `model_trash` only, so a removed file never shows there again; an item whose removal was cut by a kill shows as `removing`, which it does not restore or remove; it settles with this image. If `model_trash_purge` was set, the image before reads it as an unknown setting: configuration writes there need `force` until that key is dropped (as with `model_trash_days` for the image before slice 3).
+
+## Scheduler image: newer benchmark tables switch off only the benchmarks; run limit 720 minutes
+
+No agent change, no new port, no schema change, no new route, no new setting.
+
+- **A newer image's bench migration no longer takes the scheduler down.** When the database's bench `migrations` ledger is ahead of this image (and only then), the scheduler starts as usual and only the benchmarks are off: every `/api/bench/...` route, the report pages and the MCP bench tools answer `503` with "benchmarks are off: this database's benchmark tables are at version N, this version knows up to M; start a version that knows N or newer" (body also `enabled: false`, `reason`), `GET /api/health` has a Benchmarks row in attention, `GET /api/system` has `bench.enabled: false` and `bench.off_reason`, one WARN at start. Nothing is written to the bench tables in that state. The configuration ledger ahead, a damaged file or any other failure to open: unhealthy as before.
+- **The run limit defaults to 720 minutes** (`bench_max_run_minutes`, was 240): a Full pass takes 6 to 7 hours. A stored setting is kept.
+- **Going back.** The image before still serves the whole scheduler unhealthy on a newer bench ledger; this image adds no bench migration.
 
 ## Scheduler image: every cycle's peak, collected only
 

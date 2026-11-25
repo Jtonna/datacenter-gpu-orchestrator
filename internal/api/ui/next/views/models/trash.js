@@ -82,6 +82,13 @@ const roNote = () => (readOnlySeen
   ? box('ro', { 'data-ro-note': '' }, pt(icon(WARN), 'amber', h('b', 'This scheduler answered that its models folder is read-only'),
     ' the last time a delete or restore was tried from this page, so this one will most likely be refused too, with nothing changed.'), h('p.dmsg', readOnlySeen))
   : null);
+// roFlag(...figures) -> the read-only state when the server says
+// models_writable false: said at once, with the file's figures above it,
+// and nothing to type or send
+const RO_FLAG = 'The models folder is read-only on this scheduler: deleting and restoring are not possible here. Nothing can be changed.';
+const roFlag = (...figures) => [h('p.del-figs', { 'data-figures': '' }, ...figures),
+  box('ro', { 'data-ro-flag': '' }, pt(icon(WARN), 'amber', h('b', RO_FLAG)))];
+const profilesOf = ids => (ids.length ? [plural(ids.length, 'profile'), ': ', monoList(ids)] : 'no profiles');
 const roState = (what, msg) => box('warn', { 'data-ro': '' }, pt(icon(WARN), 'red', h('b', 'The models folder is read-only on this scheduler: nothing was changed. '), what),
   h('p.dmsg', msg));
 
@@ -124,13 +131,15 @@ const AGAIN = new Set(['interrupt_incomplete', 'loaded_again', 'in_use', 'move_f
 
 // interrupts(would, m) -> "gemma-4-27b is loaded on ps5-01 and ps5-02 with 2
 // requests in flight; 1 request for gemma-4-27b:long is queued", and the
-// number of requests that fail
+// number of requests that fail. The zones are the answer's own (nodes, v67);
+// a server older than that names none, and the catalog's instance is joined
 function interrupts(would, m) {
   const parts = [];
   let n = 0;
   for (const i of would.instances || []) {
-    const cat = (m.instances || []).find(x => x.profile === i.profile);
-    const nodes = cat && cat.nodes && cat.nodes.length ? cat.nodes : null;
+    const cat = Array.isArray(i.nodes) ? null : (m.instances || []).find(x => x.profile === i.profile);
+    const own = Array.isArray(i.nodes) ? i.nodes : cat && cat.nodes;
+    const nodes = own && own.length ? own : null;
     n += (i.in_flight || 0) + (i.waiters || 0);
     parts.push([h('span.mono', i.profile), ' is ', i.state === 'ready' ? 'loaded' : i.state, nodes ? [' on ', monoList(nodes)] : null,
       i.in_flight ? ` with ${plural(i.in_flight, 'request')} in flight` : null, i.waiters ? ` and ${plural(i.waiters, 'request')} waiting for it` : null]);
@@ -142,8 +151,11 @@ function interrupts(would, m) {
   return { n, parts: parts.flatMap((p, i) => (i ? ['; ', p] : [p])) };
 }
 
-// deleteModel(m, onDone): the dialog; onDone(answer) after the file moved
-export function deleteModel(m, onDone) {
+// deleteModel(m, onDone, writable): the dialog; onDone(answer) after the
+// file moved. writable is the catalog disk's models_writable: false opens
+// the read-only state at once (no dry run, nothing typed, nothing sent);
+// true or undefined: the dry run first
+export function deleteModel(m, onDone, writable) {
   const file = m.file || m.key;
   const name = m.short_name || m.name || file;
   const path = '/api/models/delete/' + encodeURIComponent(m.key);
@@ -174,6 +186,9 @@ export function deleteModel(m, onDone) {
         runs.flatMap((r, i) => [i ? ', ' : null, h('a', { href: href('benchmarks', ['runs', r]) }, r)]), '. ',
         'Interrupt does not stop benchmark runs. Cancel the run or wait for it to finish, then delete the model.'), h('p.dmsg', refusal.msg)),
       h('div.dlg-foot', closeBtn('Close'))];
+    } else if (state === 'read-only' && !refusal) {
+      const ids = (m.profiles || []).map(p => p.id).filter(Boolean);
+      kids = [...roFlag(h('span.mono', file), ' · ', m.size_bytes ? gbOf(m.size_bytes) + ' GB' : null, m.size_bytes ? ' · ' : null, profilesOf(ids)), h('div.dlg-foot', closeBtn('Close'))];
     } else if (state === 'read-only') {
       kids = [roState(h('span', h('span.mono', file), ' stays in the models folder with its profiles.'), refusal.msg), h('div.dlg-foot', closeBtn('Close'))];
     } else if (state === 'refused') {
@@ -245,6 +260,7 @@ export function deleteModel(m, onDone) {
     } catch (e) { if (!closed) refuse(e); }
   }
   dialog({ title: h('span', 'Delete ', h('span.mono', file), '?'), body: close => { closeFn = close; return root; } }).then(() => { closed = true; });
+  if (writable === false) { set('read-only', null); return; }
   draw();
   check();
 }
@@ -259,9 +275,10 @@ export function deletedText(res) {
 
 // ---------- restore ----------
 
-// restoreItem(it, onDone): the restore dialog (a required comment); a 409
-// profiles_taken offers the server's rename_taken
-function restoreItem(it, onDone) {
+// restoreItem(it, onDone, writable): the restore dialog (a required
+// comment); a 409 profiles_taken offers the server's rename_taken. writable
+// false (the list's models_writable) opens the read-only state at once
+function restoreItem(it, onDone, writable) {
   let state = 'ask', refusal = null, closed = false, closeFn = () => {}, comment = '';
   const ids = (it.profiles || []).map(p => p.id);
   const note = h('textarea.input.dlg-comment', { rows: 2, maxlength: 500, placeholder: 'Why? It is kept in the audit log with the restore.', 'aria-label': 'Comment' });
@@ -287,6 +304,8 @@ function restoreItem(it, onDone) {
       kids = [box('ro', null, pt(icon(WARN), 'amber', h('b', 'Some names of its profiles are taken now: '), list(taken), '. Nothing was restored.'), h('p.dmsg', refusal.msg)),
         h('p', 'Restore with new names: a taken profile comes back as ', h('span.mono', '<id>-restored'), ' and a taken alias is left off. The other profiles keep their names.'),
         h('div.dlg-foot', closeBtn('Cancel'), h('button', { class: 'btn lg pri', type: 'button', 'data-go': 'rename', onclick: () => send(true) }, 'Restore with new names'))];
+    } else if (state === 'read-only' && !refusal) {
+      kids = [...roFlag(h('span.mono', it.file), ' · ', gbOf(it.size_bytes || 0) + ' GB · ', profilesOf(ids)), h('div.dlg-foot', closeBtn('Close'))];
     } else if (state === 'read-only') {
       kids = [roState(h('span', h('span.mono', it.file), ' stays in Deleted models.'), refusal.msg), h('div.dlg-foot', closeBtn('Close'))];
     } else {
@@ -313,6 +332,7 @@ function restoreItem(it, onDone) {
     }
   }
   dialog({ title: h('span', 'Restore ', h('span.mono', it.file), '?'), body: close => { closeFn = close; return root; } }).then(() => { closed = true; });
+  if (writable === false) { set('read-only', null); return; }
   draw();
 }
 
@@ -367,7 +387,7 @@ export function mountTrash(el, route) {
   const read = () => api.get('/api/models/trash').then(d => { data = d; error = null; if (alive) { view.refresh(); syncSide(); } }, e => { error = e; if (alive) view.refresh(); });
   const offChange = onTrashChange(read);
   const offCatalog = onCatalog(() => { if (alive) view.refresh(); });
-  const onRestore = it => restoreItem(it, res => { note = restoredText(res); if (r.query.item === it.id) setQuery({ item: '' }); read(); });
+  const onRestore = it => restoreItem(it, res => { note = restoredText(res); if (r.query.item === it.id) setQuery({ item: '' }); read(); }, data ? data.models_writable : undefined);
 
   const syncSide = () => {
     const id = r.query.item || '';

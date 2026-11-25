@@ -23,15 +23,17 @@ import (
 // checks that files exist (os.Stat), the API moves files in that folder.
 type trashEnv struct {
 	*env
-	svc   *cfgsvc.Service
-	cs    *cfgstore.Store
-	bs    *bench.Store
-	dir   string
-	stop  string                 // the step trashStop "kills" at
-	ro    bool                   // act out a read-only folder
-	outer string                 // a folder outside the models folder (must stay untouched)
-	hook  func(step string) bool // set before newTrashEnvWith returns: runs at every step
-	hist  *history.Store
+	svc  *cfgsvc.Service
+	cs   *cfgstore.Store
+	bs   *bench.Store
+	dir  string
+	stop string // the step trashStop "kills" at
+	ro   bool   // act out a read-only folder
+	// unknown: models_writable cannot be told (as on Windows)
+	unknown bool
+	outer   string                 // a folder outside the models folder (must stay untouched)
+	hook    func(step string) bool // set before newTrashEnvWith returns: runs at every step
+	hist    *history.Store
 }
 
 func newTrashEnv(t *testing.T) *trashEnv { t.Helper(); return newTrashEnvWith(t, nil) }
@@ -87,6 +89,7 @@ func newTrashEnvWith(t *testing.T, hook func(te *trashEnv, step string) bool) *t
 		o.trashUnloadWait = time.Second
 		o.History = te.hist
 		o.trashClearEvery = -1 // tests run clearTrash themselves
+		o.modelsWritable = func(string) (bool, bool) { return !te.ro, !te.unknown }
 		if te.hook != nil {
 			o.trashStop = func(step string) bool { return te.hook(step) || (te.stop != "" && step == te.stop) }
 		}

@@ -306,6 +306,10 @@ func (s *Server) healthSummary(ctx context.Context) HealthSummary {
 		judgeQueue(st, queueTimeout),
 		judgeAlerts(),
 	}
+	if why := s.opts.BenchOffReason; why != "" {
+		rows = append(rows, HealthRow{ID: "benchmarks", Label: "Benchmarks", State: HealthAttention, Text: why, Count: 1,
+			Link: "#/benchmarks", Facts: map[string]any{"enabled": false}})
+	}
 	return summarize(rows, s.recentEvents(now), now)
 }
 
@@ -863,6 +867,9 @@ func (s *Server) withModelsDisk(list []byte) []byte {
 		}
 	}
 	s.trashDisk(d) // trash_bytes, trash_count, next_purge_at, trash_purge_on (trash.go)
+	if wr, ok := s.modelsWritable(); ok {
+		d["models_writable"] = wr // read without writing; left out when it cannot be told (trash.go)
+	}
 	b, err := json.Marshal(d)
 	if err != nil {
 		return list

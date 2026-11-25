@@ -210,6 +210,33 @@ func TestUINextModelsTrash(t *testing.T) {
 			"expect":       []string{"Deleted gemma-4-27b-it-Q4_K_M.gguf", "2 requests were cut", "1 queued request was cancelled"}},
 	)
 
+	// 6b. zone names in the answer (v67): used as they are, the catalog's
+	// zones (ps5-01, ps5-02) are not joined in; without them (an older
+	// server) the catalog join above is the fallback
+	wouldZ := map[string]any{"instances": []any{map[string]any{"profile": "gemma-4-27b", "state": "ready", "in_flight": 2, "nodes": []any{"zone-07", "zone-08"}}},
+		"queued": []any{map[string]any{"profile": "gemma-4-27b:long", "waiters": 1}}}
+	run(with(two, map[string]any{"POST /api/models/delete/" + gemma: map[string]any{"$match": []any{
+		[]any{reDryInterrupt, trashDry(gemma, 16500000000, gemmaProfiles, wouldZ)},
+		[]any{reDryPlain, trashRefusal(409, "in_use", inUseMsg, wouldZ)}}}}),
+		map[string]any{"name": "delete: in use, zone names from the answer", "route": "#/models?model=" + gemma, "status": st, "click": open,
+			"page":      []string{"This interrupts 3 requests.", "gemma-4-27b is loaded on zone-07 and zone-08 with 2 requests in flight"},
+			"notOnPage": []string{"loaded on ps5-01", "ps5-02 with"}, "pageHas": []string{"div.dlg [data-interrupts] .mono"}})
+
+	// 6c. something held it, then nothing: the dry run with interrupt answers
+	// 200 with no would_interrupt key. Nothing is interrupted, and the
+	// delete is sent without interrupt.
+	run(with(two, map[string]any{"POST /api/models/delete/" + gemma: map[string]any{"$match": []any{
+		[]any{reDryInterrupt, trashDry(gemma, 16500000000, gemmaProfiles, nil)},
+		[]any{reDryPlain, trashRefusal(409, "in_use", inUseMsg, would)},
+		[]any{reRealPlain, trashDone(gemma, 16500000000, gemmaProfiles, nil)}}}}),
+		map[string]any{"name": "delete: freed meanwhile, no would_interrupt", "route": "#/models?model=" + gemma, "status": st, "click": open,
+			"fetchedQuery": []string{reDryPlain, reDryInterrupt}, "page": []string{"Nothing is interrupted"},
+			"pageHas": []string{"div.dlg[data-dlg=delete][data-state=ready] [data-free]"}, "pageNone": []string{"[data-interrupts]"}},
+		map[string]any{"name": "delete: freed meanwhile, sent without interrupt", "route": "#/models?model=" + gemma, "status": st,
+			"click":        append(append([]any{}, open...), confirm("gemma-4-27b"), comment("replace it"), "div.dlg button[data-go]"),
+			"fetchedQuery": []string{`^POST /api/models/delete/gemma-4-27b-it-Q4_K_M\.gguf \{"comment":"replace it"\}$`},
+			"notFetched":   []string{reRealInt}, "expect": []string{"Deleted gemma-4-27b-it-Q4_K_M.gguf"}})
+
 	// 7. interrupt_incomplete: nothing moved; the dialog says so and can check again
 	stillMsg := gemma + " was not deleted: after the interrupt, within 5s, still there: gemma-4-27b is stopping. Nothing was moved; the profiles are unchanged."
 	run(inUse(trashRefusal(409, "interrupt_incomplete", stillMsg, map[string]any{"interrupted": interrupted, "still": []any{"gemma-4-27b is stopping"}})),
@@ -263,6 +290,75 @@ func TestUINextModelsTrash(t *testing.T) {
 			"page":    []string{"Not deleted: it was loaded again meanwhile", againMsg, "Check again"},
 			"pageHas": []string{"div.dlg[data-dlg=delete][data-state=refused]"}},
 	)
+
+	// 11. models_writable (catalog disk and trash list): false opens the
+	// read-only state at once, with no name, no comment and nothing sent;
+	// true or absent: the dialogs as above
+	roFx := fixtureAnswers(t, []string{"--trash", "read-only"}, paths...)
+	flagOf := func(f map[string]any) (disk, trash any) {
+		return f["/api/models"].(map[string]any)["disk"].(map[string]any)["models_writable"], f["/api/models/trash"].(map[string]any)["models_writable"]
+	}
+	if d, tr := flagOf(roFx); d != false || tr != false {
+		t.Fatalf("fixture --trash read-only: models_writable disk %v, trash %v; want false", d, tr)
+	}
+	if d, tr := flagOf(two); d != true || tr != true {
+		t.Fatalf("fixture --trash two: models_writable disk %v, trash %v; want true", d, tr)
+	}
+	roText := "The models folder is read-only on this scheduler: deleting and restoring are not possible here. Nothing can be changed."
+	run(roFx,
+		map[string]any{"name": "flag false: delete opens the read-only state", "route": "#/models?model=" + qwen4, "status": st, "click": open,
+			"page":       []string{"Delete qwen3-4b-Q8_0.gguf?", roText, "4.3 GB", "1 profile", "Close"},
+			"pageHas":    []string{"div.dlg[data-dlg=delete][data-state=read-only] [data-ro-flag]", "div.dlg button[data-close]"},
+			"pageNone":   []string{"div.dlg input[data-confirm]", "div.dlg textarea", "div.dlg button[data-go]"},
+			"notFetched": []string{"^POST "}},
+		map[string]any{"name": "flag false: Delete model stays visible", "route": "#/models?model=" + qwen4, "status": st,
+			"pageHas": []string{"aside.side button[data-act=delete]"}, "pageNone": []string{"aside.side button[data-act=delete][data-off]"}},
+		map[string]any{"name": "flag false: Close closes it", "route": "#/models?model=" + qwen4, "status": st, "click": []any{"aside.side button[data-act=delete]", "div.dlg button[data-close]"},
+			"pageNone": []string{"div.dlg"}, "notFetched": []string{"^POST "}},
+		map[string]any{"name": "flag false: restore opens the read-only state", "route": "#/models/deleted?item=" + trashPhi, "status": st,
+			"click":      []any{"aside.side button[data-act=restore]"},
+			"page":       []string{"Restore phi-4-14b-q4_k_m.gguf?", roText, "8.4 GB", "3 profiles"},
+			"pageHas":    []string{"div.dlg[data-dlg=restore][data-state=read-only] [data-ro-flag]", "aside.side button[data-act=restore]"},
+			"pageNone":   []string{"div.dlg textarea", "div.dlg button[data-go]", "aside.side button[data-act=restore][data-off]"},
+			"notFetched": []string{"^POST "}},
+	)
+	run(okDel,
+		map[string]any{"name": "flag true: the delete dialog as before", "route": "#/models?model=" + qwen4, "status": st, "click": open,
+			"pageHas": []string{"div.dlg[data-dlg=delete][data-state=ready] input[data-confirm]"}, "pageNone": []string{"[data-ro-flag]"}, "notOnPage": []string{roText}},
+		map[string]any{"name": "flag true: the restore dialog as before", "route": "#/models/deleted?item=" + trashPhi, "status": st, "click": []any{"aside.side button[data-act=restore]"},
+			"pageHas": []string{"div.dlg[data-dlg=restore][data-state=ask] textarea.dlg-comment"}, "pageNone": []string{"[data-ro-flag]"}},
+	)
+	noFlag := with(okDel, map[string]any{"/api/models": withoutFlag(okDel["/api/models"], "disk"), "/api/models/trash": withoutFlag(okDel["/api/models/trash"], "")})
+	if d, tr := flagOf(noFlag); d != nil || tr != nil {
+		t.Fatalf("withoutFlag left the field: %v %v", d, tr)
+	}
+	run(noFlag,
+		map[string]any{"name": "flag absent: the delete dialog as before", "route": "#/models?model=" + qwen4, "status": st, "click": open,
+			"pageHas": []string{"div.dlg[data-dlg=delete][data-state=ready] input[data-confirm]"}, "pageNone": []string{"[data-ro-flag]"}},
+		map[string]any{"name": "flag absent: the restore dialog as before", "route": "#/models/deleted?item=" + trashPhi, "status": st, "click": []any{"aside.side button[data-act=restore]"},
+			"pageHas": []string{"div.dlg[data-dlg=restore][data-state=ask] textarea.dlg-comment"}, "pageNone": []string{"[data-ro-flag]"}},
+	)
+}
+
+// withoutFlag is a copy of a catalog (in "disk") or trash list (in "")
+// answer without models_writable, as an older server or one that cannot tell
+func withoutFlag(doc any, in string) map[string]any {
+	src := doc.(map[string]any)
+	out := map[string]any{}
+	for k, v := range src {
+		out[k] = v
+	}
+	if in == "" {
+		delete(out, "models_writable")
+		return out
+	}
+	inner := map[string]any{}
+	for k, v := range src[in].(map[string]any) {
+		inner[k] = v
+	}
+	delete(inner, "models_writable")
+	out[in] = inner
+	return out
 }
 
 // The same screens on a real scheduler with a throwaway models folder
@@ -318,12 +414,23 @@ func TestUINextModelsTrashOnARealServer(t *testing.T) {
 		t.Fatalf("profiles after the UI's delete and restore: %v", ids)
 	}
 
+	// read-only: the server says models_writable false, and the dialog says
+	// so at once, sending nothing
 	te.ro = true
 	rev := te.svc.Revision()
 	run(map[string]any{"name": "real: the folder is read-only", "route": "#/models?model=a.gguf", "status": "fetch",
+		"click":      []any{"aside.side button[data-act=delete]"},
+		"page":       []string{"The models folder is read-only on this scheduler: deleting and restoring are not possible here. Nothing can be changed."},
+		"pageHas":    []string{"div.dlg[data-dlg=delete][data-state=read-only] [data-ro-flag]"},
+		"pageNone":   []string{"div.dlg input[data-confirm]", "div.dlg textarea"},
+		"notFetched": []string{"^POST "}, "notOnPage": []string{"Deleted a.gguf"}})
+	// the flag unknown (as on Windows): the dialog as before, and the
+	// server's read_only refusal is its own state
+	te.unknown = true
+	run(map[string]any{"name": "real: read-only, the flag unknown", "route": "#/models?model=a.gguf", "status": "fetch",
 		"click":   []any{"aside.side button[data-act=delete]", map[string]any{"type": "div.dlg input[data-confirm]", "value": shortOf(t, te, "a.gguf")}, comment("tidy"), "div.dlg button[data-go]"},
 		"page":    []string{"The models folder is read-only on this scheduler: nothing was changed", "the models folder is read-only here: nothing was changed (mkdir"},
-		"pageHas": []string{"div.dlg[data-dlg=delete][data-state=read-only]"}, "notOnPage": []string{"Deleted a.gguf"}})
+		"pageHas": []string{"div.dlg[data-dlg=delete][data-state=read-only]"}, "pageNone": []string{"[data-ro-flag]"}, "notOnPage": []string{"Deleted a.gguf"}})
 	if !te.has("a.gguf") || te.svc.Revision() != rev {
 		t.Fatal("a read-only delete from the UI changed something")
 	}
