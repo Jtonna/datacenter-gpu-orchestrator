@@ -113,7 +113,7 @@ import { schema as cfgSchema, configDoc, storedConfig, dryRun } from './ui-fixtu
 import { profileEntries, profileSpecs, catalog as cfgCatalog, planAnswer } from './ui-fixture/profiles.mjs';
 import { Keys, toolsAnswer } from './ui-fixture/keys.mjs';
 import { modelsDoc, modelsInstances, seedPins, pinRoute } from './ui-fixture/models.mjs';
-import { TRASH_STATES, seedTrash, trashList, withTrash, deleteRoute, restoreRoute } from './ui-fixture/trash.mjs';
+import { TRASH_STATES, seedTrash, trashList, withTrash, deleteRoute, restoreRoute, removeRoute } from './ui-fixture/trash.mjs';
 import { BENCH_STATES, benchRoute } from './ui-fixture/bench.mjs';
 import { tierLists, applyTiers, localEntry, tiersDoc } from './ui-fixture/tiers.mjs';
 
@@ -195,7 +195,7 @@ const KEYS_STATE = opt('--keys', '');
 // --trash <state>: the models trash (v65, models slice 3; scripts/ui-fixture/trash.mjs): GET /api/models/trash,
 // POST /api/models/delete/{file} (dry run, interrupt), POST /api/models/trash/{id}/restore, and the trash
 // figures in the catalog's disk block. It implies --models five. States: empty, two, in-use, run, read-only,
-// taken, incomplete, again (trash.mjs says what each answers). Without it the catalog has no trash fields
+// taken, incomplete, again, not-regular (trash.mjs says what each answers). Without it the catalog has no trash fields
 // (a server older than v65).
 const TRASH_STATE = opt('--trash', '');
 if (TRASH_STATE && !TRASH_STATES.includes(TRASH_STATE)) { console.error('--trash: one of ' + TRASH_STATES.join(', ')); process.exit(2); }
@@ -463,6 +463,12 @@ const server = http.createServer((req, res) => {
   if (TRASH_STATE && req.method === 'POST' && rst) return readBody(req, b => {
     b = Object.assign({}, b || {}); if (!b.comment && req.headers['x-comment']) b.comment = String(req.headers['x-comment']);
     const r = restoreRoute(TRASH_STATE, decodeURIComponent(rst[1]), b);
+    json(res, r.status, r.body);
+  });
+  const rmv = /^\/api\/models\/trash\/([^/]+)\/remove$/.exec(p);
+  if (TRASH_STATE && req.method === 'POST' && rmv) return readBody(req, b => {
+    b = Object.assign({}, b || {}); if (!b.comment && req.headers['x-comment']) b.comment = String(req.headers['x-comment']);
+    const r = removeRoute(TRASH_STATE, decodeURIComponent(rmv[1]), b, u.searchParams, now);
     json(res, r.status, r.body);
   });
   if (p.startsWith('/api/zones/pending')) return pendingRoute(req, res, p);

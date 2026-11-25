@@ -20,10 +20,9 @@ core/charts.js      every chart and the chart tooltip: inline SVG and plain boxe
 core/catalog.js     the model catalog, kept for the life of the page (fed by the live channel)
 core/avatar.js      the picture of a model: the owner's icon, else a drawn tile
 core/rate.js        the pass rate as dots (passDots)
-views/<id>.js       the screens next/ does not rebuild (nodes, queue, activity, benchmarks, tiers,
+views/<id>.js       the screens next/ does not rebuild (nodes, queue, activity, tiers,
                     audit, mcp, about); each registers itself
 views/models/       the instance card and the model page of the Models screen
-views/benchmarks/   the parts of Benchmarks; pages.js is a suite's and a benchmark's own page
 fonts/              Manrope (variable) and JetBrains Mono, with their licences (OFL)
 ```
 
@@ -348,7 +347,7 @@ markup it produces, so the markup can also be written with `h()` directly.
 | Tabs | `tabs([{id, label, count}], current, onPick)` | `div.tabs > button.tab(.on)`. Sub navigation inside one screen; keep the tab in the route (`navigate(id, rest, query, true)`). |
 | Banner | `banner(kind, content, action)` | `div.banner(.info|.warn|.err)`. A condition of the whole screen. A lost connection or a stale fleet feed is not a view's business: the shell shows it above every screen. |
 | Avatar | `avatar(model, 28 | 40 | 72)`, `named(model, node)` (`core/avatar.js`) | `span.av`: the owner's icon when `model.icon` is set, else a tile with the family's letters in the family's hue (`model.brand`), a prompt glyph for a command service. 40 px in the Models list, 28 px in a card header or a table of another screen, 72 px in a page header. Wherever a model is named prominently. |
-| Panel | `aside.drawer` in `div.drawer-back` (see `views/benchmarks.js`) | A panel from the right over the page, for the configuration of the thing the page is about. It is in the route (`?edit=1`), so Back closes it; Escape and a click beside it too. |
+| Panel | `sidePanel({label, title, sub, controls, body, onClose, kind, closesMenu})` (`next/core/panel.js`) | The side panel: beside the page at 1400 px and wider, over it below. Keep what it shows in the route, so Back closes it; Escape too. |
 | Snippet | `div.snip > div.snip-h + pre` | A block of text to copy (a command, a configuration), with a Copy button in its header. |
 | Empty state | `empty(title, text, action)` | `div.empty > b + p (+ button)`. Says what is not there, why, and what would make it appear. |
 | Loading state | `skeleton(lines)` | Pulsing lines; while the first REST answer is on its way. |
@@ -629,33 +628,26 @@ before drawing a field.
   Run detail is phase-aware: a load-only benchmark shows load metrics; a
   conversation shows per turn prefill, decode, time to first token and reused
   prompt tokens.
-- A suite and a benchmark have their own page (`#/benchmarks/suite/<id>`,
-  `#/benchmarks/benchmark/<id>`): run history first, then the trend, then what
-  it contains or expects. Their configuration opens as a panel (`?edit=1`).
-  `GET /api/bench/benchmarks/<id>/results` -> `{results: [{run_id, suite_id,
-  suite_name, run_state, at, result, outcome, reason, profile, model_file,
-  nodes, duration_s, load_s, load_mb_s, memory_mib, decode_tps, prefill_tps,
-  ttft_ms, expect, regression}]}`, oldest first. Every suite and benchmark of
-  the aggregates has `recent[]` (`{run_id, at, result: pass | partial | fail |
-  cancelled | none, passed, failed, outcome}`, oldest first, at most 30): draw
-  a pass rate with `passDots(recent, pass_rate)`, never as a bare percentage.
-- External results (`views/benchmarks/external.js`): result sets measured
-  outside the runner. The overview lists `GET /api/bench/external` ->
-  `{external: [{id, title, description, note, created_at, updated_at, tables:
-  [{title, columns, row_count}], attachments: [{name, bytes}], models}]}`;
-  `#/benchmarks/external/<id>` shows `GET /api/bench/external/<id>` (`tables[]`
-  with `columns[] {key, label, unit, higher_is_better}` and `rows[]` keyed by
-  column, plus optional `model` and `profile`; `attachments[] {name, text}`).
-  Read-only; headers sort, long text cells fold.
-- Aggregates: `GET /api/bench/aggregates?suite=&benchmark=&profile=&since=&until=&env=`
-  -> `{runs_considered, environment, benchmarks: [{benchmark_id, runs, steps,
-  pass_rate (a fraction, 0 to 1; null when nothing was judged), judged, outcomes, metrics: {<metric>: {count, min, median, mean, max, stdev,
-  last, best, change_pct, threshold_pct, regression, points: [{run_id, at, value}]}},
-  turns: [...], last_run_id, last_at}], suites: [...], by_model: [...],
-  by_model_nodes: [{model_file, nodes, runs, steps, metrics}]}`.
-- The compact run indicator in the shell: `setShellSlot('run', node)` (`core/shell.js`).
-- The one-click run: `confirm({...})` first, saying that it will load and unload
-  models on the cluster, then `api.post('/api/bench/suites/<id>/run', {note})`.
+- The benchmark pages (25 Nov; boards Bench-Overview, Bench, Bench-Group,
+  Bench-Runs, Bench-Runs-Group, Bench-Report) are `next/views/benchmarks.js`
+  (the routes) and `next/views/bench/`: `common.js` (the lists, the words, the
+  greyed "not available yet" mark `notYet(text, WHY.<key>)` with
+  `data-notyet=<key>`), `list.js` (the groups and benchmarks, a group's
+  panel), `runs.js` (the runs table, a run's panel, a benchmark's report),
+  `live.js` (the menu's run card from `state.bench.run`). Routes:
+  `#/benchmarks` (Overview), `#/benchmarks/all[/<group>]`,
+  `#/benchmarks/runs[?kind&result&model&suite&page]`,
+  `#/benchmarks/runs/<number>[/<slug or step index>]`. The classic addresses
+  (`suite/<id>`, `benchmark/<id>`, `trends`, `external/...`, `edit/...`) open
+  the new pages. They read `GET /api/bench/groups`, `/benchmarks`, `/runs`
+  (offset, limit, total; kind, result, model, suite), `/runs/<ref>?requests=0`,
+  `/runs/<id>/report?step=N`, `/groups/<id>/expand`, and write only the pin
+  (`PUT`/`DELETE /api/bench/runs/<id>/pin` with a comment) and a group's
+  duplicate (`POST /api/bench/groups`). Model names come from the catalog's
+  REST copy (`needCatalog({live: false})`): these pages show no plans.
+- The classic benchmark pages (aggregates, external results, start-up
+  figures, editors, per-benchmark results, the run detail tabs) were dropped
+  on 25 Nov; their routes and data stay (`docs/releases.md` lists them).
 
 ## The dev harness
 

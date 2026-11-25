@@ -1,8 +1,9 @@
 // The models trash (v65, models slice 3; boards Models-Trash, Models-Delete
 // and the Models list's footer row). A deleted model FILE waits in the trash
-// with its profiles until it is restored; nothing removes it for good (the
-// server has no purge: purge_on is false, and this page has no control that
-// erases a file).
+// with its profiles until it is restored or removed for good (the 25 Nov
+// decision: "Remove for good" ships; the timed clearing is off while the
+// server says purge_on false, and the page then says nothing is removed
+// automatically).
 //
 //   trashFooter(disk)     the Models list's footer row "Deleted models": the
 //                         catalog disk's trash_bytes / trash_count /
@@ -18,6 +19,14 @@
 //                         read would_interrupt), then the name typed and a
 //                         comment; interrupt is sent only when the dialog
 //                         showed what it interrupts
+//   removeItem(it, done)  the panel's "Remove for good": POST
+//                         /api/models/trash/{id}/remove with dry_run first,
+//                         the server's own message sentence, the file name
+//                         typed exactly and a comment, then the real remove;
+//                         every refusal (read_only, not_regular, ...) in the
+//                         server's words
+//   removedList(removed)  "Removed for good" under the trash: the list's
+//                         tombstones (file, when, by whom, why)
 //
 // Every refusal is the server's sentence under a plain headline, never its
 // JSON. read_only (the models folder mounted read-only) is its own state;
@@ -55,7 +64,7 @@ const daysLeft = ms => Math.max(0, Math.ceil((ms - now()) / DAY));
 const monoList = xs => xs.flatMap((x, k) => [k ? (k === xs.length - 1 ? ' and ' : ', ') : null, h('span.mono', x)]);
 const was = (n, one, many) => `${plural(n, one, many)} ${n === 1 ? 'was' : 'were'}`;
 
-const PURGE_OFF = 'Nothing removes a deleted model on this scheduler (purge is off): it stays in Deleted models, and keeps using the disk, until it is restored.';
+const PURGE_OFF = 'Nothing removes a deleted model automatically on this scheduler (purge is off): it stays in Deleted models, and keeps using the disk, until it is restored or removed for good.';
 // keptCell(item, purgeOn) -> "24 Dec 2026" (kept until) or "27 days" (clears in, when purge is on)
 const keptCell = (it, purgeOn) => (purgeOn
   ? h('time', { title: 'It is removed for good on ' + dateTime(it.purge_at), class: daysLeft(it.purge_at) <= 3 ? 'del-soon' : null }, plural(daysLeft(it.purge_at), 'day'))
@@ -288,6 +297,126 @@ export function deletedText(res) {
 
 // ---------- restore ----------
 
+// ---------- remove for good ----------
+
+const RM_NOTE = 'dry run: what removing this file for good would change';
+const RM_HEADS = {
+  read_only: 'Not removed: the models folder is read-only on this scheduler.',
+  not_regular: 'Not removed: it is not a plain file in a plain trash folder.',
+  missing_from_trash: 'Not removed: the file is not in its trash folder.',
+  changed: 'Not removed: the file in the trash is not the one that was deleted.',
+  in_use_by_profile: 'Not removed: a profile names a file in its trash folder.',
+  needs_a_look: 'Not removed: its record needs a look.',
+  busy: 'Not removed: something else is under way with it.',
+  already_removed: 'It was removed for good already.',
+  not_found: 'It is not in Deleted models.',
+  remove_failed: 'Not removed: the file could not be erased.',
+  not_removable: 'Not removed: it changed meanwhile.',
+};
+
+// removeItem(it, onDone, writable): the "Remove for good" dialog. The dry run
+// first: its message is the server's own sentence ("This cannot be undone.
+// <file> and its N profiles are erased now, D days before they would have
+// been. X GB is freed."); a dry run that says read_only shows that state and
+// nothing to type. Then the file name typed exactly and a comment.
+function removeItem(it, onDone, writable) {
+  let state = 'checking', figures = null, refusal = null, closed = false, closeFn = () => {};
+  const typed = h('input.input.dinp', { type: 'text', placeholder: it.file, 'data-confirm': '', 'aria-label': `Type ${it.file} to confirm`, autocomplete: 'off', spellcheck: 'false' });
+  const note = h('textarea.input.dlg-comment', { rows: 2, maxlength: 500, placeholder: 'Why? It is kept in the audit log and in Removed for good.', 'aria-label': 'Comment' });
+  const go = h('button', { class: 'btn lg dng solid', type: 'button', 'data-go': '', onclick: () => send() }, 'Remove for good');
+  const gate = () => {
+    const ok = state === 'ready' && typed.value === it.file && !!note.value.trim();
+    if (ok) go.removeAttribute('disabled'); else go.setAttribute('disabled', '');
+    typed.classList.toggle('ok', typed.value === it.file);
+  };
+  typed.addEventListener('input', gate);
+  note.addEventListener('input', gate);
+  const root = h('div.dcol');
+  const closeBtn = label => h('button', { class: 'btn lg', type: 'button', 'data-close': '', onclick: () => closeFn(undefined) }, label);
+  const draw = () => {
+    if (closed) return;
+    const d = root.parentNode;
+    if (d && d.setAttribute) { d.setAttribute('data-dlg', 'remove'); d.setAttribute('data-state', state); }
+    let kids;
+    if (state === 'checking') kids = [h('p.mut', { role: 'status' }, 'Checking what removing it would change…'), h('div.dlg-foot', closeBtn('Cancel'))];
+    else if (state === 'read-only' && !refusal) {
+      kids = [h('p.dmsg', { 'data-msg': '' }, figures.message),
+        box('ro', { 'data-ro-flag': '' }, pt(icon(WARN), 'amber', h('b', 'The models folder is read-only on this scheduler: removing a file is not possible here. Nothing can be changed.'))),
+        h('div.dlg-foot', closeBtn('Close'))];
+    } else if (state === 'read-only') {
+      kids = [roState(h('span', h('span.mono', it.file), ' stays in Deleted models.'), refusal.msg), h('div.dlg-foot', closeBtn('Close'))];
+    } else if (state === 'refused') {
+      const r = refusal.err.reason;
+      kids = [box('warn', { 'data-refused': r || '' }, pt(icon(WARN), 'red', h('b', RM_HEADS[r] || 'Not removed.'), r === 'already_removed' ? null : ' Nothing was erased.'), h('p.dmsg', refusal.msg)),
+        h('div.dlg-foot', closeBtn('Close'))];
+    } else {
+      const np = (figures.profiles || []).length;
+      kids = [
+        box('warn', { 'data-cannot-undo': '' }, pt(icon(WARN), 'red', h('span', { 'data-msg': '' }, figures.message))),
+        np ? h('p.mut', 'Its profiles go with it: ', monoList(figures.profiles), '.') : null,
+        roNote(),
+        h('div.field', h('label.dlbl', 'Type ', h('span.mono', it.file), ' to confirm'), typed),
+        h('div.field.dlg-note', h('label.dlbl', 'Comment (required)'), note),
+        h('div.dlg-foot', closeBtn('Cancel'), go)];
+      if (state === 'sending') { go.textContent = 'Removing…'; go.setAttribute('disabled', ''); } else go.textContent = 'Remove for good';
+    }
+    root.replaceChildren(...kids.filter(Boolean));
+    if (state === 'ready') gate();
+  };
+  const set = (s, r) => { state = s; if (r !== undefined) refusal = r; draw(); };
+  const refuse = e => {
+    const er = errOf(e);
+    if (er.reason === 'read_only') { readOnlySeen = e.message; return set('read-only', { err: er, msg: e.message }); }
+    return set('refused', { err: er, msg: e.message });
+  };
+  const path = '/api/models/trash/' + encodeURIComponent(it.id) + '/remove';
+  async function check() {
+    try {
+      const f = await api.send('POST', path, { comment: RM_NOTE, dry_run: true }, { dryRun: true, comment: RM_NOTE });
+      if (closed) return;
+      figures = f;
+      if (f.read_only || writable === false) return set('read-only', null);
+      set('ready');
+      typed.focus();
+    } catch (e) { if (!closed) refuse(e); }
+  }
+  async function send() {
+    if (state !== 'ready' || typed.value !== it.file || !note.value.trim()) return;
+    const comment = note.value.trim();
+    set('sending');
+    try {
+      const res = await api.send('POST', path, { comment }, { comment });
+      if (closed) return;
+      closeFn(undefined);
+      changed();
+      if (onDone) onDone(res || {});
+    } catch (e) { if (!closed) refuse(e); }
+  }
+  dialog({ title: h('span', 'Remove ', h('span.mono', it.file), ' for good?'), body: close => { closeFn = close; return root; } }).then(() => { closed = true; });
+  draw();
+  check();
+}
+
+// removedText(res) -> the sentence after a remove
+const removedText = res => `Removed ${res.file} for good: ${gbOf(res.freed_bytes || 0)} GB freed` +
+  ((res.profiles_removed || []).length ? `; ${plural(res.profiles_removed.length, 'profile')} went with it.` : '.');
+
+// the "Removed for good" list: the tombstones, newest first
+const REASON = { owner: 'removed for good', clearing: 'the timed clearing (model_trash_days)', 'repaired at start': 'settled at a start' };
+function removedList(list) {
+  if (!list || !list.length) return null;
+  const rows = list.slice().sort((a, b) => (b.removed_at || 0) - (a.removed_at || 0));
+  return h('section.panel.mdl.del-gone', { key: 'gone', 'aria-label': 'Removed for good' },
+    h('div.sech', h('span.lbl', 'Removed for good'), h('span.lbl.mut', plural(list.length, 'file'))),
+    h('div.mr.del.gone.mr-h', { 'aria-hidden': 'true' }, h('span'), h('span.lbl', 'Model'), h('span.lbl', 'Removed'), h('span.lbl', 'By'), h('span.lbl', 'Why')),
+    h('div.mdl-rows', { role: 'list', 'aria-label': 'Removed for good' }, rows.map(t => h('div.mr.del.gone', { key: t.id, role: 'listitem', 'data-removed': t.id, 'data-reason': t.reason },
+      h('span.del-ic', icon(TRASH)),
+      h('span.mdl-name', h('span.mono.nm', { title: t.file }, t.file), h('span.mut', gbOf(t.size_bytes || 0) + ' GB' + ((t.profile_ids || []).length ? ' · ' + plural(t.profile_ids.length, 'profile') : ''))),
+      h('span.del-at', t.removed_at ? daysAgo(t.removed_at) : h('span.mut', t.state === 'removing' ? 'being removed' : DASH)),
+      h('span.del-by', t.removed_by ? t.removed_by : h('span.mut', DASH)),
+      h('span.del-why', { title: t.comment || null }, REASON[t.reason] || t.reason, t.comment ? [': ', h('span', t.comment)] : null)))));
+}
+
 // restoreItem(it, onDone, writable): the restore dialog (a required
 // comment); a 409 profiles_taken offers the server's rename_taken. writable
 // false (the list's models_writable) opens the read-only state at once
@@ -369,14 +498,15 @@ const SORT = {
 };
 const ttlText = t => { const s = t == null ? null : parseGoDuration(t); return s == null ? null : s > 0 ? dur(s) : 'Never'; };
 
-function itemPanel(it, purgeOn, onRestore) {
+function itemPanel(it, purgeOn, onRestore, onRemove) {
   const bad = it.state !== 'trashed' || it.in_trash_folder === false;
   const profs = it.profiles || [];
   return [
     h('div.mdl-acts.del-acts', { key: 'acts' },
       bad ? off('button.btn.pri', it.problem ? 'It cannot be restored: ' + it.problem : `It is ${it.state}, not in the trash: it cannot be restored.`, { 'data-act': 'restore' }, icon(BACK), 'Restore model')
         : h('button.btn.pri', { type: 'button', 'data-act': 'restore', onclick: () => onRestore(it) }, icon(BACK), 'Restore model'),
-      off('button.btn.red', 'Removing a model for good is not built: nothing on this scheduler erases a model file. It stays here until it is restored.', { 'data-act': 'remove', style: 'margin-left:auto' }, 'Remove now')),
+      bad ? off('button.btn.red', 'It needs a look first: ' + (it.problem || `it is ${it.state}`), { 'data-act': 'remove', style: 'margin-left:auto' }, 'Remove for good')
+        : h('button.btn.red', { type: 'button', 'data-act': 'remove', style: 'margin-left:auto', title: 'Erase the file and its profiles now; this cannot be undone', onclick: () => onRemove(it) }, 'Remove for good')),
     bad ? h('div.banner.err', { key: 'prob', role: 'status' }, h('span.grow', h('b', 'Needs a look. '), it.problem || `It is ${it.state}.`)) : null,
     it.comment ? h('p.del-why', { key: 'why' }, h('span.mut', 'Comment: '), it.comment) : null,
     h('section.mdl-cfg', { key: 'cfg' },
@@ -401,6 +531,7 @@ export function mountTrash(el, route) {
   const offChange = onTrashChange(read);
   const offCatalog = onCatalog(() => { if (alive) view.refresh(); });
   const onRestore = it => restoreItem(it, res => { note = restoredText(res); if (r.query.item === it.id) setQuery({ item: '' }); read(); }, data ? data.models_writable : undefined);
+  const onRemove = it => removeItem(it, res => { note = removedText(res); if (r.query.item === it.id) setQuery({ item: '' }); read(); }, data ? data.models_writable : undefined);
 
   const syncSide = () => {
     const id = r.query.item || '';
@@ -419,7 +550,7 @@ export function mountTrash(el, route) {
       },
       body: () => {
         const it = find();
-        if (it) return itemPanel(it, !!data.purge_on, onRestore);
+        if (it) return itemPanel(it, !!data.purge_on, onRestore, onRemove);
         return data ? h('section.card', empty('This item is not in Deleted models', 'It may have been restored. Close this panel to see what is there.')) : skeleton(3);
       },
       onClose: () => { if (side === p) { side = null; setQuery({ item: '' }); } },
@@ -448,7 +579,7 @@ export function mountTrash(el, route) {
     let body;
     if (error && !data) body = error.status === 404 ? empty('Deleted models are not available', 'This scheduler is older than v65 (models slice 3): it has no trash. ' + error.message) : empty('Deleted models could not be read', error.message);
     else if (!data) body = skeleton(3);
-    else if (!items.length) body = empty('Nothing in deleted models', 'A model you delete waits here, with its profiles, until you restore it. Nothing is removed automatically.');
+    else if (!items.length) body = empty('Nothing in deleted models', 'A model you delete waits here, with its profiles, until you restore it or remove it for good.' + (purgeOn ? '' : ' Nothing is removed automatically.'));
     else if (!rows.length) body = empty('No deleted model matches', `Nothing matches "${query}". Search looks at the file name, the profiles, who deleted it and the comment.`);
     else body = [h('div.mr.del.mr-h', { 'aria-hidden': 'true' }, h('span'), h('span.lbl', 'Model'), h('span.lbl', 'Profiles'), h('span.lbl', 'Deleted'), h('span.lbl', purgeOn ? 'Clears in' : 'Kept until')),
       h('div.mdl-rows', { role: 'list', 'aria-label': 'Deleted models' }, rows.map(row))];
@@ -467,6 +598,7 @@ export function mountTrash(el, route) {
         h('div.sech', { title: data ? (purgeOn ? null : PURGE_OFF) : null }, h('span.lbl', 'Deleted models'),
           data && items.length ? h('span.lbl.mut', `${plural(data.count != null ? data.count : items.length, 'file')} · ${gbOf(data.total_bytes || 0)} GB`, purgeOn ? null : ' · nothing is removed automatically yet') : null),
         body),
+      data ? removedList(data.removed) : null,
     ];
   };
   const view = liveView(el, render, ['conn', 'hello']);

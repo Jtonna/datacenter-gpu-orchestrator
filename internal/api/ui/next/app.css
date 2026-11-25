@@ -1618,3 +1618,9 @@ table.bp-stats tbody th{font-size:12.5px;color:var(--ink-2);font-weight:600;whit
   .bp-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}
   .bp-heads{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
+/* the trash: Removed for good (the tombstones) under Deleted models */
+.mdl .mr.del.gone{grid-template-columns:28px minmax(0,1fr) 110px 110px minmax(0,1.2fr);cursor:default}
+.mdl .mr.del.gone .del-ic{opacity:.5}
+.del-by{font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.del-why{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2)}
+@container (max-width:640px){.mdl .mr.del.gone{grid-template-columns:28px minmax(0,1fr) 96px minmax(0,1fr)}.mdl .mr.del.gone .del-by{display:none}}

@@ -263,7 +263,7 @@ func TestUIExecBaseUsesTheServersPage(t *testing.T) {
 		t.Fatalf("good page: the run looked at /ui/classic/, which is removed\n%s", out)
 	}
 	for _, c := range []struct{ name, path, body, want string }{
-		{"does not parse", "/ui/views/benchmarks/editor.js", "export const x = 'users' idle';\n", "views/benchmarks/editor.js:1: does not parse as an ES module"},
+		{"does not parse", "/ui/views/bench/list.js", "export const x = 'users' idle';\n", "views/bench/list.js:1: does not parse as an ES module"},
 		{"not served", "/ui/core/reserve.js", "", "core/reserve.js: the server answered 404"},
 	} {
 		t.Run(c.name, func(t *testing.T) {

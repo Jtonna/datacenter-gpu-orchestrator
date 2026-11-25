@@ -2,6 +2,14 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Web UI: the benchmark pages and "Remove for good" in the trash
+
+UI only: no new route, no schema change, no setting.
+
+- **Benchmarks.** The new pages of the boards: the Overview, the groups and benchmarks (a group's panel beside the list), the runs (views, filters, pages of 12), a run's panel and a benchmark's report. What the server does not serve yet is drawn greyed with its reason on hover (the latest result per model and the result views, "smallest that fits", the group option "cold loads", the report's headline figures, Compare, drop-out notes, one-click PDF, the editors, run control). The menu: Overview, Benchmarks, Runs, Settings.
+- **Classic benchmark pages dropped.** Their routes and data stay; these lose their page: `GET /api/bench/trends`, `GET /api/bench/aggregates` (still read by the Models pass rates), `/api/bench/external*`, `GET /api/bench/benchmarks/{id}/results`, `GET /api/bench/runs/{id}/export`, `GET /api/bench/schema`, `GET /api/bench/profiles`, the benchmark and suite writes (`POST`/`PUT`/`DELETE /api/bench/benchmarks*`, `/api/bench/suites*`), `POST /api/bench/suites/{id}/run`, `POST /api/bench/benchmarks/{id}/run`, `POST /api/bench/runs/{id}/cancel`. A group can still be duplicated and a run pinned from the pages.
+- **Trash.** Each deleted model says "Kept until <date>"; while purge is off the page says nothing is removed automatically. "Remove for good" in an item's panel: the dry run first and the server's own sentence, the file name typed exactly and a comment, then the remove; every refusal (read-only, not a plain file, ...) in the server's words. "Removed for good" under the trash lists the files removed (when, by whom, why).
+
 ## Scheduler image: benchmark run facts and run numbers (benchmarks slice 2)
 
 No agent change, no new port, no schema change, no new route, no new setting. Every new field is computed when it is read; nothing is stored.
