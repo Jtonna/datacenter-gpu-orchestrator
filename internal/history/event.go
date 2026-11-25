@@ -96,6 +96,12 @@ const (
 	// previous run (data machines: [{id, name, last_seen}]). One event for
 	// the fleet, naming no node.
 	TKnownMachines = "knownMachines"
+
+	// TModelRemoved: a model file was erased from the models trash for good,
+	// by "Remove for good" or by the timed clearing (models slice 4). Data:
+	// file, trash_id, size_bytes, reason (owner or clearing), profiles,
+	// deleted_at, removed_by. Model file: the file.
+	TModelRemoved = "modelRemoved"
 )
 
 // Event is one history record. Ts is unix milliseconds; Seq is monotonic per

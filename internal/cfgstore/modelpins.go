@@ -6,7 +6,8 @@ import (
 	"fmt"
 )
 
-// The models page's tables (v1 pins, v2 the trash; upload jobs later) have
+// The models page's tables (v1 pins, v2 the trash, v3 the tombstones of
+// files removed for good; upload jobs later) have
 // their own ledger, model_migrations, never cfg_migrations: an older image
 // refuses a database whose cfg_migrations is ahead of it, and it never reads
 // these tables, so going back to it stays a plain image swap (its catalog
@@ -33,6 +34,26 @@ CREATE TABLE model_trash (
   updated_at       INTEGER NOT NULL
 );
 CREATE INDEX model_trash_file ON model_trash (file);
+`, `
+CREATE TABLE model_trash_removed (
+  id              TEXT PRIMARY KEY,
+  file            TEXT NOT NULL,
+  size_bytes      INTEGER NOT NULL,
+  deleted_at      INTEGER NOT NULL,
+  purge_at        INTEGER NOT NULL,
+  removed_at      INTEGER NOT NULL DEFAULT 0,
+  state           TEXT NOT NULL,
+  reason          TEXT NOT NULL,
+  profile_ids     TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(profile_ids)),
+  revision        INTEGER NOT NULL DEFAULT 0,
+  deleted_by      TEXT NOT NULL DEFAULT '',
+  deleted_comment TEXT NOT NULL DEFAULT '',
+  removed_by      TEXT NOT NULL DEFAULT '',
+  comment         TEXT NOT NULL DEFAULT '',
+  updated_at      INTEGER NOT NULL,
+  audited         INTEGER NOT NULL DEFAULT 0 -- 1 once the audit entry and the modelRemoved event are written
+);
+CREATE INDEX model_trash_removed_file ON model_trash_removed (file);
 `}
 
 // ModelVersion is the version of the models page's tables this build writes.

@@ -10,6 +10,19 @@ No agent change, no new port, no schema change, no new route, no new setting. No
 - **What is recorded.** History events and request log rows name the production id; events carry `data.scope`, rows keep the scoped name as `requested`.
 - **Going back.** Nothing is stored. The image before answers a scoped name 404 `model_not_found` and ignores `scope` in a load body (it loads the production profile): a caller checks for `scope` in the answer.
 
+## Scheduler image: remove a deleted model for good, and the timed clearing (models slice 4)
+
+No agent change, no new port. **Schema: one new table, `model_trash_removed` (tombstones), as step 3 of the `model_migrations` ledger; `model_trash` gains the state value `removing`.** `cfg_migrations` does not move. **The first code that erases a model file.** It acts only on a models folder mounted read-write (live's scheduler mount is read-write since 25 Nov 2026, with the owner's approval); on a read-only folder every removal answers "the models folder is read-only here" and the clearing does nothing.
+
+- **Remove for good.** `POST /api/models/trash/{id}/remove` {comment, dry_run} (permission **models**): erases `<models>/.trash/<id>/<file>`, only for an item in the trash whose file is the plain file of the recorded size; `dry_run` answers the size freed, the profiles, how many days early, `cannot_undo`, `read_only`. Interrupted items, items under way, missing, changed or non-regular files are refused with nothing changed.
+- **The only file removal.** `internal/modelfiles` `RemoveTrashed` builds the path from a checked id and name, checks `.trash` and `.trash/<id>` are plain directories and the file a regular file of the recorded size, checks the folder is writable with access(2) (writing nothing), and on Linux unlinks by descriptor (directories opened without following links, the file re-checked by inode). No other file is ever removed; there is no RemoveAll.
+- **A profile that still names the trashed file.** A profile stored before the model path rule may name `.trash/<id>/...`, or a link may resolve to the trashed file: the removal and the clearing refuse with 409 `in_use_by_profile`, naming the profiles. Slice 3's delete also counts a profile that reaches the file by a link or another path as using it.
+- **Tombstones.** `GET /api/models/trash` lists them apart in `removed`. The saved profile specs are dropped (the configuration history has them); the ids are kept.
+- **Timed clearing.** Setting `model_trash_purge` (default **false**, section retention): at start and hourly, up to 3 due files a pass; history `modelRemoved`, audit signed `potluck`. `purge_on` and `trash_purge_on` follow the setting. A file's clearing date is the later of the date it was given and its deletion plus `model_trash_days` now: lowering the setting never clears a file sooner.
+- **Crash safety.** Record `removing` and tombstone first, then the unlink, then the record goes; the next start completes or undoes a cut removal and never erases a file itself.
+- **MCP.** `remove_deleted_model` (destructive, owner-asked wording); `list_deleted_models` shows tombstones in `removed`.
+- **Going back.** The image before (af916f4) opens the same database and leaves step 3 alone. Its trash list reads `model_trash` only, so a removed file never shows there again; an item whose removal was cut by a kill shows as `removing`, which it does not restore or remove; it settles with this image. If `model_trash_purge` was set, the image before reads it as an unknown setting: configuration writes there need `force` until that key is dropped (as with `model_trash_days` for the image before slice 3).
+
 ## Scheduler image: the context_fill benchmark phase; growth per token, collected only
 
 No agent change, no new port, no schema change, no new route, no new setting. No plan row changes: nothing reads the new figures for a plan.

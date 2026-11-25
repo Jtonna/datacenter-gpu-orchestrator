@@ -30,6 +30,9 @@ const (
 	ActionUnload   = "unload"
 	// ActionForgetNeed drops a profile's learned memory need (runtime).
 	ActionForgetNeed = "forget_need"
+	// ActionRemove erases a model file from the models trash for good
+	// (section models).
+	ActionRemove = "remove"
 )
 
 // Sections of an entry. Configuration sections are the keys of the configuration document.
