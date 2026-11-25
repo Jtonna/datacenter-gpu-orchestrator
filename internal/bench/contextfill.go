@@ -541,6 +541,7 @@ func (br *benchRun) phaseContextFill(i int, p *benchspec.Phase, pr *PhaseResult)
 		// agents' next ones, up to two report intervals). After the last mark
 		// this is also the hold before the unload, so the scheduler has seen
 		// the figure the fill read.
+		br.x.setDetail(br.track, map[string]any{"turn": j + 1, "turns": len(marks), "text": fmt.Sprintf("Context fill: reading memory after the turn to %d %%", pct)})
 		if sa, _, err := br.fillFresh(turnEnd, inUse); err == nil {
 			waited := float64(br.x.m.o.Now().Sub(turnEnd).Microseconds()) / 1000
 			trip.see(sa) // the after figure counts for the stop line too (not for the lowest: it is after the turn)
