@@ -126,7 +126,8 @@ func (te *trashEnv) profileIDs() []string {
 // configuration and models folder, then RepairTrash as main runs it.
 func (te *trashEnv) restart() *Server {
 	te.t.Helper()
-	s2 := New(te.cfg, te.sched, Options{Config: te.svc, Audit: te.cs, BenchStore: te.bs, Logger: te.api.log, Now: te.api.opts.Now, History: te.hist, trashClearEvery: -1})
+	s2 := New(te.cfg, te.sched, Options{Config: te.svc, Audit: te.cs, BenchStore: te.bs, Logger: te.api.log, Now: te.api.opts.Now, History: te.hist, trashClearEvery: -1,
+		trashStop: func(step string) bool { return te.stop != "" && step == te.stop }})
 	te.t.Cleanup(s2.Close)
 	s2.RepairTrash(context.Background()) // as main does once the server is up
 	return s2

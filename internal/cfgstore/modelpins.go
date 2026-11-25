@@ -50,7 +50,8 @@ CREATE TABLE model_trash_removed (
   deleted_comment TEXT NOT NULL DEFAULT '',
   removed_by      TEXT NOT NULL DEFAULT '',
   comment         TEXT NOT NULL DEFAULT '',
-  updated_at      INTEGER NOT NULL
+  updated_at      INTEGER NOT NULL,
+  audited         INTEGER NOT NULL DEFAULT 0 -- 1 once the audit entry and the modelRemoved event are written
 );
 CREATE INDEX model_trash_removed_file ON model_trash_removed (file);
 `}

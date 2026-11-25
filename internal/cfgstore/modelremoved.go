@@ -59,6 +59,10 @@ type RemovedRecord struct {
 	RemovedBy      string
 	Comment        string
 	UpdatedAt      int64
+	// Audited: the removal's audit entry and modelRemoved event are written
+	// (set right after them; a start writes them for a removed tombstone
+	// without the mark, see RemovedUnaudited).
+	Audited bool
 }
 
 const removedCols = `id, file, size_bytes, deleted_at, purge_at, removed_at, state, reason, profile_ids, revision, deleted_by, deleted_comment, removed_by, comment, updated_at`
@@ -67,7 +71,7 @@ func scanRemoved(sc interface{ Scan(...any) error }) (*RemovedRecord, error) {
 	var r RemovedRecord
 	var ids string
 	if err := sc.Scan(&r.ID, &r.File, &r.SizeBytes, &r.DeletedAt, &r.PurgeAt, &r.RemovedAt, &r.State, &r.Reason, &ids, &r.Revision,
-		&r.DeletedBy, &r.DeletedComment, &r.RemovedBy, &r.Comment, &r.UpdatedAt); err != nil {
+		&r.DeletedBy, &r.DeletedComment, &r.RemovedBy, &r.Comment, &r.UpdatedAt, &r.Audited); err != nil {
 		return nil, err
 	}
 	r.ProfileIDs = []string{}
@@ -191,7 +195,7 @@ func (s *Store) RemoveAbort(id, problem string, at int64) error {
 
 // RemovedGet reads one tombstone; ErrNotFound when there is none.
 func (s *Store) RemovedGet(ctx context.Context, id string) (*RemovedRecord, error) {
-	r, err := scanRemoved(s.db.DB().QueryRowContext(ctx, `SELECT `+removedCols+` FROM model_trash_removed WHERE id = ?`, id))
+	r, err := scanRemoved(s.db.DB().QueryRowContext(ctx, `SELECT `+removedCols+`, audited FROM model_trash_removed WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -201,7 +205,7 @@ func (s *Store) RemovedGet(ctx context.Context, id string) (*RemovedRecord, erro
 // RemovedList is every tombstone, the newest removal first (a removal under
 // way, removed_at 0, first of all).
 func (s *Store) RemovedList(ctx context.Context) ([]*RemovedRecord, error) {
-	rows, err := s.db.DB().QueryContext(ctx, `SELECT `+removedCols+` FROM model_trash_removed ORDER BY removed_at = 0 DESC, removed_at DESC, id`)
+	rows, err := s.db.DB().QueryContext(ctx, `SELECT `+removedCols+`, audited FROM model_trash_removed ORDER BY removed_at = 0 DESC, removed_at DESC, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -215,4 +219,39 @@ func (s *Store) RemovedList(ctx context.Context) ([]*RemovedRecord, error) {
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// RemovedUnaudited is every removed tombstone whose audit entry and event
+// are not marked written (a kill came between the removal and the mark), the
+// oldest removal first.
+func (s *Store) RemovedUnaudited(ctx context.Context) ([]*RemovedRecord, error) {
+	rows, err := s.db.DB().QueryContext(ctx, `SELECT `+removedCols+`, audited FROM model_trash_removed WHERE state = ? AND audited = 0 ORDER BY removed_at, id`, RemovedRemoved)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*RemovedRecord{}
+	for rows.Next() {
+		r, err := scanRemoved(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// RemovedSetAudited marks a removed tombstone's audit entry and event
+// written. ErrNotFound when there is no removed tombstone id.
+func (s *Store) RemovedSetAudited(id string) error {
+	return s.db.Write(func(tx *sql.Tx) error {
+		res, err := tx.Exec(`UPDATE model_trash_removed SET audited = 1 WHERE id = ? AND state = ?`, id, RemovedRemoved)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
 }

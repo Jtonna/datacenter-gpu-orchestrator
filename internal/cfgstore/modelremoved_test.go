@@ -112,6 +112,9 @@ func TestModelRemoved_LedgerAndWayBack(t *testing.T) {
 	trashedRec(t, s, "2123456789ab", "c.gguf") // still in the trash
 	s.RemoveBegin("0123456789ab", RemovedByOwner, "sam", "x", 3000)
 	s.RemoveFinish("0123456789ab", 3001)
+	if err := s.RemovedSetAudited("0123456789ab"); err != nil {
+		t.Fatal(err)
+	}
 	s.RemoveBegin("1123456789ab", RemovedByClearing, "potluck", "x", 3002)
 
 	// the way back: af916f4's Open (cfg check, access ledger, its two models steps)
@@ -151,7 +154,7 @@ func TestModelRemoved_LedgerAndWayBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if g, err := s2.RemovedGet(ctx, "0123456789ab"); err != nil || g.State != RemovedRemoved {
+	if g, err := s2.RemovedGet(ctx, "0123456789ab"); err != nil || g.State != RemovedRemoved || !g.Audited {
 		t.Fatalf("tombstone after the way back: %+v %v", g, err)
 	}
 	if g, err := s2.RemovedGet(ctx, "1123456789ab"); err != nil || g.State != TrashRemoving {
@@ -236,5 +239,42 @@ func TestRemoveFinish_SettlesEveryLeftover(t *testing.T) {
 	}
 	if r, _ := s.TrashGet(ctx, "eeeeeeeeeeee"); r == nil || r.State != TrashTrashed {
 		t.Fatalf("a trashed record was touched: %+v", r)
+	}
+}
+
+// The audited mark: a removed tombstone without it is listed by
+// RemovedUnaudited until RemovedSetAudited; a tombstone still removing is
+// neither listed nor markable.
+func TestRemoved_AuditedMark(t *testing.T) {
+	db, err := bench.OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	s, err := Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	trashedRec(t, s, "0123456789ab", "a.gguf")
+	trashedRec(t, s, "1123456789ab", "b.gguf")
+	s.RemoveBegin("0123456789ab", RemovedByOwner, "sam", "x", 3000)
+	s.RemoveFinish("0123456789ab", 3001)
+	s.RemoveBegin("1123456789ab", RemovedByOwner, "sam", "x", 3002)
+	l, err := s.RemovedUnaudited(ctx)
+	if err != nil || len(l) != 1 || l[0].ID != "0123456789ab" || l[0].Audited {
+		t.Fatalf("unaudited: %+v %v", l, err)
+	}
+	if err := s.RemovedSetAudited("1123456789ab"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("mark on a removal under way: %v", err)
+	}
+	if err := s.RemovedSetAudited("0123456789ab"); err != nil {
+		t.Fatal(err)
+	}
+	if l, _ := s.RemovedUnaudited(ctx); len(l) != 0 {
+		t.Fatalf("still unaudited: %+v", l)
+	}
+	if g, _ := s.RemovedGet(ctx, "0123456789ab"); !g.Audited {
+		t.Fatalf("mark not read back: %+v", g)
 	}
 }

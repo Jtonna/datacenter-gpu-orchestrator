@@ -298,23 +298,38 @@ func TestModelRemove_KillAndRepair(t *testing.T) {
 		te.cdo("POST", "/api/models/trash/"+id+"/remove", `{"comment":"x"}`, trashUI)
 		te.stop = ""
 		s2 := te.restart()
-		if n := s2.trash.repairList(); len(n) != 0 {
-			t.Fatalf("repairs: %v", n)
-		}
 		if _, err := te.cs.TrashGet(ctx, id); !errors.Is(err, cfgstore.ErrNotFound) {
 			t.Fatalf("record: %v", err)
 		}
 		if tb, err := te.cs.RemovedGet(ctx, id); err != nil || tb.State != cfgstore.RemovedRemoved || tb.RemovedAt == 0 {
 			t.Fatalf("tombstone: %+v %v", tb, err)
 		}
-		// the kill came before the event and the audit entry: the start has
-		// nothing to find (no record), so they are missing; the tombstone is
-		// the account of the removal
-		if es := auditOf(t, te.env, "section=models&action=remove"); len(es) != 0 {
+		// the kill came before the event and the audit entry: the start writes
+		// both, signed potluck, saying so, and sets the mark
+		es := auditOf(t, te.env, "section=models&action=remove")
+		if len(es) != 1 || es[0]["actor"] != "potluck" || !strings.Contains(es[0]["comment"].(string), "written at start for a removal made at") || !strings.Contains(es[0]["comment"].(string), "by alex") {
 			t.Fatalf("audit: %v", es)
 		}
-		if ev := te.removedEvents(); len(ev) != 0 {
+		ev := te.removedEvents()
+		if len(ev) != 1 || ev[0].Data["written_at_start"] != true || !strings.Contains(ev[0].Summary, "Written at start") {
 			t.Fatalf("history: %+v", ev)
+		}
+		if tb, _ := te.cs.RemovedGet(ctx, id); !tb.Audited {
+			t.Fatalf("mark not set: %+v", tb)
+		}
+		if n := s2.trash.repairList(); len(n) != 1 || !strings.Contains(n[0], "written at start") {
+			t.Fatalf("repairs: %v", n)
+		}
+		// a second start writes nothing
+		s3 := te.restart()
+		if es := auditOf(t, te.env, "section=models&action=remove"); len(es) != 1 {
+			t.Fatalf("audit after a second start: %v", es)
+		}
+		if ev := te.removedEvents(); len(ev) != 1 {
+			t.Fatalf("history after a second start: %+v", ev)
+		}
+		if n := s3.trash.repairList(); len(n) != 0 {
+			t.Fatalf("repairs at the second start: %v", n)
 		}
 	})
 	t.Run("the clearing killed after the unlink", func(t *testing.T) {
@@ -550,5 +565,97 @@ func TestTrashList_ClearingDateShownWhilePurgeOff(t *testing.T) {
 	te.advance(90 * 24 * time.Hour) // overdue
 	if got := te.api.clearTrash(ctx); len(got) != 0 || !te.inTrash(id, "a.gguf") {
 		t.Fatalf("cleared while purge is off: %v", got)
+	}
+}
+
+// Every removal path sets the audited mark itself, so a start adds nothing:
+// the owner's removal, the clearing, and the start's own completion of a
+// removal a kill cut after the unlink.
+func TestModelRemove_EveryPathMarksAudited(t *testing.T) {
+	ctx := context.Background()
+	te := newTrashEnv(t)
+	te.setup()
+	a := te.trashed("a.gguf")
+	b := te.trashed("b.gguf")
+	te.file("c.gguf", "GGUF-c")
+	c := te.trashed("c.gguf")
+	if st, m := te.cdo("POST", "/api/models/trash/"+a+"/remove", `{"comment":"x"}`, trashUI); st != 200 {
+		t.Fatalf("remove: %d %v", st, m)
+	}
+	te.stop = "remove:after-unlink"
+	te.cdo("POST", "/api/models/trash/"+c+"/remove", `{"comment":"x"}`, trashUI)
+	te.stop = ""
+	te.setting(`{"model_trash_purge":true}`)
+	te.advance(31 * 24 * time.Hour)
+	te.api.clearTrash(ctx) // b
+	for _, id := range []string{a, b} {
+		if tb, err := te.cs.RemovedGet(ctx, id); err != nil || !tb.Audited {
+			t.Fatalf("%s: %+v %v", id, tb, err)
+		}
+	}
+	te.setting(`{"model_trash_purge":false}`)
+	s2 := te.restart() // completes c, marked by the completion
+	if tb, err := te.cs.RemovedGet(ctx, c); err != nil || !tb.Audited || tb.State != cfgstore.RemovedRemoved {
+		t.Fatalf("c: %+v %v", tb, err)
+	}
+	if es := auditOf(t, te.env, "section=models&action=remove"); len(es) != 3 {
+		t.Fatalf("audit: %d entries %v", len(es), es)
+	}
+	if ev := te.removedEvents(); len(ev) != 3 {
+		t.Fatalf("history: %d", len(ev))
+	}
+	for _, n := range s2.trash.repairList() {
+		if strings.Contains(n, "written at start") {
+			t.Fatalf("the start wrote again: %v", s2.trash.repairList())
+		}
+	}
+	te.restart()
+	if es := auditOf(t, te.env, "section=models&action=remove"); len(es) != 3 {
+		t.Fatalf("audit after another start: %d", len(es))
+	}
+}
+
+// A kill between writing the audit entry and setting the mark never gives
+// two entries: the start looks the entry up first (target model:<file>,
+// action remove, the tombstone trash_id) and the event by its trash_id,
+// writes only what is missing, then sets the mark. Both places the entry is
+// written are killed: the owner removal, and the start writing it.
+func TestModelRemove_KillBetweenAuditAndMark(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct{ name, stop string }{
+		{"the owner removal", "remove:after-audit"},
+		{"the start writing it", "audit-at-start:after-audit"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			te := newTrashEnv(t)
+			te.setup()
+			id := te.trashed("a.gguf")
+			if tc.stop == "remove:after-audit" {
+				te.stop = tc.stop
+				te.cdo("POST", "/api/models/trash/"+id+"/remove", `{"comment":"x"}`, trashUI)
+			} else {
+				te.stop = "remove:after-finish" // no entry, no event: the start writes them
+				te.cdo("POST", "/api/models/trash/"+id+"/remove", `{"comment":"x"}`, trashUI)
+				te.stop = tc.stop
+				te.restart()
+			}
+			te.stop = ""
+			if tb, _ := te.cs.RemovedGet(ctx, id); tb == nil || tb.Audited {
+				t.Fatalf("the mark is set before the start: %+v", tb)
+			}
+			if es := auditOf(t, te.env, "section=models&action=remove"); len(es) != 1 {
+				t.Fatalf("audit before the start: %v", es)
+			}
+			te.restart()
+			if es := auditOf(t, te.env, "section=models&action=remove"); len(es) != 1 {
+				t.Fatalf("audit after the start: %d entries %v", len(es), es)
+			}
+			if ev := te.removedEvents(); len(ev) != 1 {
+				t.Fatalf("history: %d events", len(ev))
+			}
+			if tb, _ := te.cs.RemovedGet(ctx, id); !tb.Audited {
+				t.Fatalf("mark not set: %+v", tb)
+			}
+		})
 	}
 }

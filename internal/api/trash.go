@@ -963,6 +963,7 @@ func (s *Server) repairTrash(ctx context.Context) {
 			interrupted(rec, "a "+map[bool]string{true: "delete", false: "restore"}[rec.State == cfgstore.TrashPending]+" stopped and the file is not in exactly one place ("+where+"); nothing was moved")
 		}
 	}
+	s.auditMissing(ctx, note)
 	s.trash.setRepairs(notes)
 	s.refreshTrash(ctx)
 }

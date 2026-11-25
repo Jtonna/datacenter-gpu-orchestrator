@@ -158,7 +158,11 @@ func (s *Server) removeTrashed(ctx context.Context, rec *cfgstore.TrashRecord, r
 }
 
 // recordRemoved writes the history event of a removal.
-func (s *Server) recordRemoved(t *cfgstore.RemovedRecord) {
+func (s *Server) recordRemoved(t *cfgstore.RemovedRecord) { s.recordRemovedEvent(t, false) }
+
+// recordRemovedEvent writes the modelRemoved event of a removal; atStart:
+// written by a start for a removal whose event a kill may have lost.
+func (s *Server) recordRemovedEvent(t *cfgstore.RemovedRecord, atStart bool) {
 	if s.hist == nil {
 		return
 	}
@@ -166,10 +170,84 @@ func (s *Server) recordRemoved(t *cfgstore.RemovedRecord) {
 	if t.Reason == cfgstore.RemovedByClearing {
 		how = fmt.Sprintf("cleared from the models trash (in it since %s; model_trash_days)", msText(t.DeletedAt))
 	}
-	s.hist.Record(history.Event{Ts: t.RemovedAt, Type: history.TModelRemoved, Severity: history.Info, ModelFile: t.File, Nodes: []string{},
-		Summary: fmt.Sprintf("%s was %s: %.1f GB freed. It and its %d profiles cannot be restored.", t.File, how, float64(t.SizeBytes)/1e9, len(t.ProfileIDs)),
-		Data: map[string]any{"file": t.File, "trash_id": t.ID, "size_bytes": t.SizeBytes, "reason": t.Reason, "profiles": t.ProfileIDs,
-			"deleted_at": t.DeletedAt, "removed_by": t.RemovedBy}})
+	sum := fmt.Sprintf("%s was %s: %.1f GB freed. It and its %d profiles cannot be restored.", t.File, how, float64(t.SizeBytes)/1e9, len(t.ProfileIDs))
+	data := map[string]any{"file": t.File, "trash_id": t.ID, "size_bytes": t.SizeBytes, "reason": t.Reason, "profiles": t.ProfileIDs,
+		"deleted_at": t.DeletedAt, "removed_by": t.RemovedBy}
+	if atStart {
+		sum += fmt.Sprintf(" (Written at start for a removal made at %s by %s.)", msText(t.RemovedAt), t.RemovedBy)
+		data["written_at_start"] = true
+	}
+	s.hist.Record(history.Event{Ts: t.RemovedAt, Type: history.TModelRemoved, Severity: history.Info, ModelFile: t.File, Nodes: []string{}, Summary: sum, Data: data})
+}
+
+// markAudited sets a tombstone's audited mark once its audit entry is
+// written (auditID > 0; its event came before it). Unset, the next start
+// writes what is missing (auditMissing).
+func (s *Server) markAudited(t *cfgstore.RemovedRecord, auditID int64) {
+	if auditID <= 0 || s.store == nil {
+		return
+	}
+	if err := s.store.RemovedSetAudited(t.ID); err != nil {
+		s.log.Warn("a removal's audit entry is written, its mark is not: the next start sets it", "file", t.File, "trash_id", t.ID, "err", err)
+	}
+}
+
+// auditMissing runs at start: an erased model file never lacks its audit
+// entry. For each removed tombstone without the audited mark (a kill came
+// between the removal and the mark) it writes the modelRemoved event and
+// the audit entry, signed potluck, saying they were written at start for a
+// removal made at <time> by <who>, then sets the mark. Each is looked up
+// first by the tombstone's id (the event's trash_id; the audit entry's
+// target and trash_id), so a kill between writing them and the mark never
+// gives two.
+func (s *Server) auditMissing(ctx context.Context, note func(*cfgstore.TrashRecord, string, bool)) {
+	if s.store == nil || s.opts.Audit == nil {
+		return
+	}
+	tombs, err := s.store.RemovedUnaudited(ctx)
+	if err != nil {
+		s.log.Warn("the removed model files were not checked for their audit entries at start", "err", err)
+		return
+	}
+	for _, t := range tombs {
+		wrote := []string{}
+		if s.hist != nil && !s.removedEventKept(t.ID) {
+			s.recordRemovedEvent(t, true)
+			s.hist.Flush()
+			wrote = append(wrote, "history event")
+		}
+		target := "model:" + t.File
+		_, n, err := s.opts.Audit.Query(ctx, cfgstore.Filter{Section: audit.SectionModels, Action: audit.ActionRemove, Target: target, Query: `"trash_id":"` + t.ID + `"`, Limit: 1})
+		if err != nil {
+			s.log.Warn("a removal's audit entry was not looked up at start; tried again at the next start", "file", t.File, "trash_id", t.ID, "err", err)
+			continue
+		}
+		id := int64(1)
+		if n == 0 {
+			before, after := removedAudit(t)
+			id = s.recordSystemAudit(fmt.Sprintf("written at start for a removal made at %s by %s (%s: %s)", msText(t.RemovedAt), t.RemovedBy, t.Reason, t.Comment),
+				audit.ActionRemove, audit.SectionModels, target, before, after)
+			wrote = append(wrote, "audit entry")
+		}
+		if s.trashStop("audit-at-start:after-audit") {
+			return
+		}
+		s.markAudited(t, id)
+		if len(wrote) > 0 {
+			note(&cfgstore.TrashRecord{ID: t.ID, File: t.File}, "removed for good at "+msText(t.RemovedAt)+" by "+t.RemovedBy+"; its "+strings.Join(wrote, " and ")+" written at start", false)
+		}
+	}
+}
+
+// removedEventKept: the history keeps a modelRemoved event of trash item id.
+func (s *Server) removedEventKept(id string) bool {
+	found := false
+	s.hist.ScanType(history.TModelRemoved, func(e history.Event) {
+		if v, _ := e.Data["trash_id"].(string); v == id {
+			found = true
+		}
+	})
+	return found
 }
 
 // removedAudit is the audit entry of a removal: before, what was in the
@@ -295,6 +373,11 @@ func (s *Server) handleTrashRemove(w http.ResponseWriter, r *http.Request) {
 	}
 	before, after := removedAudit(tomb)
 	auditID := s.recordAuditWith(r, comment, audit.ActionRemove, audit.SectionModels, "model:"+rec.File, before, after)
+	if s.trashStop("remove:after-audit") {
+		trashRefuse(w, http.StatusInternalServerError, "stopped", "stopped after the audit entry (test)", nil)
+		return
+	}
+	s.markAudited(tomb, auditID)
 	s.announce(r, audit.SectionModels, rec.File, auditID)
 	writeJSON(w, http.StatusOK, map[string]any{"file": rec.File, "trash_id": id, "removed_at": tomb.RemovedAt, "freed_bytes": tomb.SizeBytes,
 		"profiles_removed": tomb.ProfileIDs, "reason": tomb.Reason, "cannot_undo": true, "audit_id": auditID})
@@ -389,7 +472,7 @@ func (s *Server) clearOne(ctx context.Context, id string) string {
 		return ""
 	}
 	before, after := removedAudit(tomb)
-	s.recordSystemAudit(comment, audit.ActionRemove, audit.SectionModels, "model:"+rec.File, before, after)
+	s.markAudited(tomb, s.recordSystemAudit(comment, audit.ActionRemove, audit.SectionModels, "model:"+rec.File, before, after))
 	s.log.Info("models trash: cleared", "file", rec.File, "trash_id", id, "size_bytes", rec.SizeBytes)
 	return rec.File
 }
@@ -420,7 +503,7 @@ func (s *Server) repairRemoving(ctx context.Context, rec *cfgstore.TrashRecord, 
 		if t, err := s.store.RemovedGet(ctx, rec.ID); err == nil {
 			s.recordRemoved(t)
 			before, after := removedAudit(t)
-			s.recordSystemAudit(fmt.Sprintf("completed at start (removal by %s: %s)", t.RemovedBy, t.Comment), audit.ActionRemove, audit.SectionModels, "model:"+t.File, before, after)
+			s.markAudited(t, s.recordSystemAudit(fmt.Sprintf("completed at start (removal by %s: %s)", t.RemovedBy, t.Comment), audit.ActionRemove, audit.SectionModels, "model:"+t.File, before, after))
 		}
 		note(rec, "a removal stopped after the file was erased; completed (removed for good)", false)
 	default:

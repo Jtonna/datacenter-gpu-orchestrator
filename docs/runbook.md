@@ -427,6 +427,7 @@ curl -s $H/api/models/trash | jq '.removed[] | {id, file, removed_at, reason, re
 - Audit: section models, action `remove`, target `model:<file>`. History: `modelRemoved`.
 - **The timed clearing** (`model_trash_purge: true`; off by default): at start and once an hour, up to 3 files whose `purge_at` has passed are removed the same way, the soonest first, each with a `modelRemoved` event and an audit entry signed `potluck` (source system). On a read-only folder it does nothing; that is logged once (info), not each hour. A file it cannot remove is logged once and tried again each hour.
 - A kill in the middle of a removal is settled at the next start: the file still in the trash, the removal is undone (the item is `trashed` again); the file gone, it is completed (tombstone, event, audit entry "completed at start"); anything else, the item is marked `interrupted`. The start never erases a file.
+- An erased model file never lacks its audit entry: each tombstone carries an `audited` mark, set right after the removal's `modelRemoved` event and audit entry. A kill before the mark leaves it unset; the next start then writes whichever of the two is missing (looked up first by the trash id, so never twice), signed `potluck`, "written at start for a removal made at <time> by <who>", and sets the mark. It is listed once in `repairs_at_start`.
 
 ### Read the audit log
 
