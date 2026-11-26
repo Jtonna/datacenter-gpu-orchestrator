@@ -41,15 +41,15 @@ func benchBoards(t *testing.T) map[string]any {
 	t.Helper()
 	q := func(s string) string { return "/api/bench/runs?" + s }
 	runsQ := []string{q("suite=all-load&limit=5"), q("suite=full-pass&limit=5"), q("suite=planned-long-context&limit=5"), q("limit=4"), q("limit=1"),
-		q("limit=12&offset=0"), q("limit=12&offset=12"), q("limit=12&offset=0&kind=benchmark"), q("limit=12&offset=0&result=has_failed")}
+		q("limit=12&offset=0"), q("limit=12&offset=12"), q("limit=12&offset=0&kind=benchmark"), q("limit=12&offset=0&result=has_failed"), q("suite=every-model&limit=5")}
 	paths := append([]string{"/api/status", "/api/models", "/api/profiles", "/api/bench/state", "/api/bench/groups", "/api/bench/benchmarks",
 		"/api/bench/groups/all-load/expand", "/api/bench/groups/full-pass/expand", "/api/bench/groups/planned-long-context/expand",
 		"/api/bench/runs/46", "/api/bench/runs/47", "/api/bench/runs/43", "/api/bench/runs/run-47/report", "/api/bench/results/models", "/api/bench/runs/49",
-		"/api/bench/results/models?run=47", "/api/bench/results/models?ctx=4096"}, runsQ...)
+		"/api/bench/results/models?run=47", "/api/bench/results/models?ctx=4096", "/api/bench/groups/every-model/expand"}, runsQ...)
 	f := fixtureAnswers(t, []string{"--bench", "boards"}, paths...)
 	// GET /api/bench/runs answers by its query (the harness ignores a query otherwise)
 	f["/api/bench/runs"] = map[string]any{"$match": []any{
-		[]any{`suite=all-load`, f[runsQ[0]]}, []any{`suite=full-pass`, f[runsQ[1]]}, []any{`suite=planned-long-context`, f[runsQ[2]]},
+		[]any{`suite=all-load`, f[runsQ[0]]}, []any{`suite=full-pass`, f[runsQ[1]]}, []any{`suite=planned-long-context`, f[runsQ[2]]}, []any{`suite=every-model`, f[runsQ[9]]},
 		[]any{`kind=benchmark`, f[runsQ[7]]}, []any{`result=has_failed`, f[runsQ[8]]}, []any{`offset=12`, f[runsQ[6]]},
 		[]any{`limit=4\b`, f[runsQ[3]]}, []any{`limit=1\b`, f[runsQ[4]]}, []any{`.`, f[runsQ[5]]}}}
 	f["/api/bench/runs/run-47"] = f["/api/bench/runs/47"]
@@ -77,13 +77,19 @@ func TestUINextBenchGroupPage(t *testing.T) {
 			"absent": []string{"New group"},
 			"has":    []string{"div.bp-list.narrow", "a.bp-row.sel[data-group=all-load][aria-current=true]"},
 			"page": []string{"Group", "Run group", "Edit", "Duplicate", "Contains", "24 runs", "Cold load, response and repeat", "12 models", "2 placements",
-				"placed by the scheduler, and all", "context 8,192", "carries on after a failure", "waits until idle", "cold loads",
+				"Smallest that fits", "placed by the scheduler, and all", "context 8,192", "carries on after a failure", "waits until idle", "cold loads",
 				"Runs", "22", "Compare two", "All 22 runs ›", "cold: caches dropped and verified on every load (24 loads)"},
 			"pageHas": []string{"aside.side .bp-run[data-run='46'] button.bp-pin.on[aria-pressed=true]", "aside.side a.bp-all[href='#/benchmarks/runs?suite=all-load']",
-				"aside.side [data-notyet=b7]", "aside.side [data-notyet=b10]", "aside.side [data-notyet=edit]", "aside.side [data-notyet=run]"},
+				"aside.side [data-notyet=b7]", "aside.side [data-notyet=b10]", "aside.side [data-notyet=edit]", "aside.side [data-notyet=run]",
+				"aside.side .bp-entry .bp-opts .bp-notyet[data-notyet=b6]"},
+			"titles":    []string{`Not available yet: a group cannot ask for "the smallest that fits" yet: the placements are auto, all, any N or named zones (benchmarks slice 7: B6)`},
 			"pageCount": map[string]any{"aside.side .bp-run": 5},
 			// the list draws the run itself: no run card in the strip above the page (board Bench-Group)
 			"pageNone": []string{".topslots a.run-ind", ".topslots .run-ind"}},
+		map[string]any{"name": "group page: 24 entries, all inside the panel's scrolling body", "route": "#/benchmarks/all/every-model", "status": st, "width": 1536,
+			"page":      []string{"Every model, one at a time", "Contains", "24 runs", "mistral-small-24b"},
+			"pageHas":   []string{"aside.side .side-body .bp-entries .bp-entry[data-entry='23']", "aside.side .side-body .bp-entry[data-entry='0']"},
+			"pageCount": map[string]any{"aside.side .side-body .bp-entry": 24, "aside.side .side-body .bp-entry .bp-notyet[data-notyet=b6]": 24}},
 		map[string]any{"name": "group page: a group of groups", "route": "#/benchmarks/all/full-pass", "status": st,
 			"page": []string{"Full pass", "Contains", "96 runs", "All models: load and response", "All models: coding", "Running now"}},
 		map[string]any{"name": "group page: a planned group says why it cannot run", "route": "#/benchmarks/all/planned-long-context", "status": st,
@@ -215,6 +221,8 @@ func TestUINextBenchPages(t *testing.T) {
 			"pageHas":   []string{"aside.side .bp-reports .bp-rsub[data-recipe=cold-response-repeat]", "aside.side .bp-issue [data-short]"},
 			"page":      []string{"Cold load, response and repeat", "Does not fit on 1 zone"},
 			"notOnPage": []string{"by the memory reservation rule"}, "titles": []string{"does not fit ra-01 by the memory reservation rule"},
+			// the sub-heading is the recipe's title, not the first step's generated name
+			"notOnPageRe": []string{`Cold load, response and repeat \(`},
 			"pageNone":  []string{"aside.side [data-act=cancel]"}},
 		map[string]any{"name": "run panel: Cancel on a running run", "route": "#/benchmarks/runs/49", "status": st, "width": 1536,
 			"pageHas": []string{"aside.side .bp-acts .bp-notyet[data-notyet=run] [data-act=cancel]"}},
@@ -229,7 +237,9 @@ func TestUINextBenchPages(t *testing.T) {
 			"pageHas": []string{"aside.side a[href='/api/bench/runs/run-47/report?step=0&format=html']", "aside.side .bp-head[data-head=cold]", "aside.side .bp-head[data-head=reload]",
 				"aside.side .bp-head[data-head=tps]", "aside.side .bp-head[data-head=ttft]"},
 			"pageNone":  []string{"aside.side .bp-heads [data-notyet]", "aside.side .bp-head[data-missing]"},
-			"pageCount": map[string]any{"aside.side table.bp-stats": 2, "aside.side li.bp-step": 7}},
+			// the runner's generated name ("... (qwen2.5-72b-instruct-q2_k.gguf, 8k, all)") is not printed: its words are beside it
+			"notOnPageRe": []string{`\(qwen2\.5-72b-instruct-q2_k\.gguf`, `8k, all\)`},
+			"pageCount":   map[string]any{"aside.side table.bp-stats": 2, "aside.side li.bp-step": 7}},
 		map[string]any{"name": "benchmark report: a failed direct run", "route": "#/benchmarks/runs/43/0", "status": st,
 			"page": []string{"Failed", "child exited during load: exit code 1, after 2.2 s"}, "pageCount": map[string]any{"aside.side [data-reason]": 1}},
 		map[string]any{"name": "benchmark report: an unknown step", "route": "#/benchmarks/runs/47/nope", "status": st, "page": []string{"There is no such report"}},
@@ -280,6 +290,53 @@ func TestUINextBenchViewTabsNotHidden(t *testing.T) {
 		}
 		if strings.Contains(sel, "bp-views") && strings.Contains(body, "flex-wrap:nowrap") {
 			t.Errorf("the view tabs may not wrap: %s{%s}", strings.TrimSpace(sel), rule[2])
+		}
+	}
+}
+
+// A group's panel scrolls INSIDE: the side panel is one viewport high and
+// its body (the entries, the runs) scrolls, so the last of a long group's
+// entries (live's longest group has 24) is reached by scrolling the panel,
+// never cut off below the window. The fake DOM has no layout: this pins the
+// rules the scrolling rests on, and the case "group page: 24 entries" puts
+// every entry inside .side-body. Chrome measures it at 1536 x 864 (the
+// picture group24-scrolled-1536.png: the body scrolled to its end, entry 23
+// inside the body and the window, the window itself not scrolled).
+func TestUINextBenchGroupPanelScrollsInside(t *testing.T) {
+	css, err := os.ReadFile(filepath.Join("ui", "next", "app.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := map[string]string{}
+	plain := regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(string(css), "")
+	for _, rule := range regexp.MustCompile(`(?s)([^{}]*)\{([^{}]*)\}`).FindAllStringSubmatch(plain, -1) {
+		sel, body := strings.TrimSpace(rule[1]), strings.ReplaceAll(rule[2], " ", "")
+		if _, seen := rules[sel]; !seen {
+			rules[sel] = body
+		}
+		// nothing between the body and an entry may clip it, fix its height or take it out of the flow
+		if strings.Contains(sel, "bp-panel") || strings.Contains(sel, "bp-entries") || strings.Contains(sel, "bp-entry") || strings.Contains(sel, "bp-opts") {
+			for _, bad := range []string{"overflow:hidden", "overflow-y:hidden", "max-height:", "height:", "position:fixed", "position:absolute", "display:none"} {
+				if strings.Contains(body, bad) && !strings.Contains(body, "min-"+bad) && !strings.Contains(body, "line-"+bad) {
+					t.Errorf("a rule on the group's entries has %s: %s{%s}", bad, sel, rule[2])
+				}
+			}
+		}
+	}
+	for sel, wants := range map[string][]string{
+		".side":        {"display:flex", "flex-direction:column", "overflow:hidden"},
+		".side.docked": {"height:100vh"},
+		".side-body":   {"flex:11auto", "min-height:0", "overflow-y:auto"},
+	} {
+		body, ok := rules[sel]
+		if !ok {
+			t.Errorf("no rule %s", sel)
+			continue
+		}
+		for _, w := range wants {
+			if !strings.Contains(body, w) {
+				t.Errorf("%s{%s}: want %s", sel, body, w)
+			}
 		}
 	}
 }

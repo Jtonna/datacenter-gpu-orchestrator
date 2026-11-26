@@ -161,10 +161,18 @@ func (s *Server) handleIconGet(w http.ResponseWriter, r *http.Request, key strin
 }
 
 // brandOfKey is the family of a catalog key ("" when the catalog cannot say).
+// A family comes from the file, not from the status, so any catalog that
+// lists the key says it: the one held is used, and only a key it does not
+// list asks catalogGet. (catalogGet computes every profile's plan again when
+// the status moved since the last build: every avatar of a page that showed
+// a family's icon made one page open cost a second round of plans.)
 func (s *Server) brandOfKey(ctx context.Context, key string) string {
-	snap, err := s.catalogGet(ctx)
-	if err != nil {
-		return ""
+	snap, _ := s.catalog.current()
+	if snap == nil || snap.raw[key] == nil {
+		var err error
+		if snap, err = s.catalogGet(ctx); err != nil {
+			return ""
+		}
 	}
 	var e struct {
 		Brand string `json:"brand"`

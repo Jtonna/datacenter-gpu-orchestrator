@@ -2,6 +2,14 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Web UI: benchmark pages, second round; icon reads compute no plans
+
+No agent change, no new port, no new route, no table, no setting.
+
+- A group's entries show the board's "Smallest that fits" placement greyed, with its reason on hover (benchmarks slice 7, B6): no group can ask for it yet.
+- A benchmark report's subtitle and the run panel's sub-headings name the recipe ("Cold load, response and repeat"), not the runner's generated name with its bracket ("(model.gguf, 8k, nodes:...)"); the model, the placement and the context are already said in words beside it.
+- `GET /api/models/<key>/icon` looks the model's family up in the catalog the server holds; it no longer asks for a fresh catalog, which computed every profile's plan again when the status had moved since the last `GET /api/models` (one round per page of avatars). `GET /api/models` itself still computes fresh plans when the status moved.
+
 ## Scheduler image: the need estimate leaves out the MTP block's KV
 
 No agent change, no new port, no new route, no table, no setting.

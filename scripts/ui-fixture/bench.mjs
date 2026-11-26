@@ -119,6 +119,9 @@ const GROUPS = [
     expanded_count: 4, only_when_idle: false, stop_on_failure: true },
   { id: 'planned-long-context', name: 'Long context on every model', benchmarks: [{ benchmark: 'fill-context', matrix: { model: MODELS.slice(0, 4) } }], expanded_count: 4,
     status: 'planned', reason: 'waits for the 128k profiles of the four smallest models' },
+  // 24 entries, one benchmark each (live's longest group has 24): the panel scrolls inside
+  { id: 'every-model', name: 'Every model, one at a time', benchmarks: MODELS.flatMap(m => [{ benchmark: 'cold-load', inputs: { model: m, placement: 'any:1' } },
+    { benchmark: 'cold-first-token', inputs: { model: m, placement: 'all' } }]), expanded_count: 24, only_when_idle: true },
 ];
 
 // 49 runs, newest first, the newest running
@@ -160,9 +163,10 @@ const reqPh = (idx, o = {}) => Object.assign({ idx, type: 'requests', state: 'do
     output_hashes: { a: 'h1', b: 'h1', c: 'h1' } } }, o);
 function reportStep(idx, model, nodes, o = {}) {
   const b = BENCHES[0];
-  return Object.assign({ idx, slug: `cold-response-repeat-${model.replace(/\.gguf$/, '')}-${nodes === 6 ? 'all' : 'auto'}`, benchmark_id: 'cold-response-repeat', name: b.name, profile: 'bench-' + model.replace(/\.gguf$/, ''),
+  const gen = `${b.name} (${model}, 8k, ${nodes === 6 ? 'all' : 'auto'})`;
+  return Object.assign({ idx, slug: `cold-response-repeat-${model.replace(/\.gguf$/, '')}-${nodes === 6 ? 'all' : 'auto'}`, benchmark_id: 'cold-response-repeat', name: gen, profile: 'bench-' + model.replace(/\.gguf$/, ''),
     model_file: model, node_count: nodes, state: 'done', outcome: 'ready', started_at: 1795400000000, finished_at: 1795400232000,
-    spec: { id: 'cold-response-repeat', name: b.name, phases: b.phases, applied_inputs: { model, placement: nodes === 6 ? 'all' : 'auto', ctx: 8192 } },
+    spec: { id: 'cold-response-repeat.' + (idx + 100).toString(16), name: gen, recipe: 'cold-response-repeat', phases: b.phases, applied_inputs: { model, placement: nodes === 6 ? 'all' : 'auto', ctx: 8192 } },
     load: { outcome: 'ready', load_s: 26.8 + idx, memory_mib: 32643 }, stats: { requests: 6, failed: 0, decode_tps: sum(96.2 - idx * 4, 96, 95, 97) },
     phases: [loadPh(0, 60.5, { cold: { requested: true, verified: true, nodes: [] } }), Object.assign({ idx: 1, type: 'warmup', state: 'done', outcome: 'ok', duration_s: 3, stats: { requests: 1, failed: 0, ttft_ms: sum(2340, 2340, 2340, 2340) } }),
       reqPh(2), { idx: 3, type: 'unload', state: 'done', outcome: 'ok', duration_s: 2, unload: { was_loaded: true, gone: true, unload_s: 2 } },

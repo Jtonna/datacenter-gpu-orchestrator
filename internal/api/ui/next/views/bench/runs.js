@@ -31,7 +31,7 @@ import { num, dur, plural, DASH, mib } from '../../core/format.js';
 import { catalog } from '../../core/catalog.js';
 import { state } from '../../core/store.js';
 import { logsLink, padded } from '../../core/logs.js';
-import { when, tookS, resultIcon, resultWord, dots, coldNote, inputsLine, notYet, WHY, modelName, placementWords, zonesWord, phaseWord } from './common.js';
+import { when, tookS, resultIcon, resultWord, dots, coldNote, inputsLine, notYet, WHY, modelName, placementWords, zonesWord, phaseWord, recipeTitle } from './common.js';
 import { pinButton, kindIcon } from './list.js';
 import { RESULT_VIEWS, resultsView } from './results.js';
 
@@ -175,7 +175,7 @@ function byRecipe(steps) {
   for (const st of steps) {
     const sp = st.spec || {};
     const key = sp.recipe || st.benchmark_id || sp.id || 'steps';
-    const title = sp.name || st.name || key;
+    const title = recipeTitle(st) || key;
     const last = out[out.length - 1];
     if (last && last[0] === key) last[2].push(st); else out.push([key, title, [st]]);
   }
@@ -373,10 +373,11 @@ export function reportPanel(ref, slug, onClose) {
     const st = findStep();
     if (!st) return null;
     const inp = (st.spec && st.spec.applied_inputs) || {};
-    const parts = [st.name || st.benchmark_id];
+    const parts = [recipeTitle(st)];
     if (inp.placement) parts.push(placementWords(inp.placement));
     else if (st.node_count) parts.push(zonesWord(st.node_count));
     if (inp.ctx) parts.push('context ' + num(inp.ctx));
+    if (inp.thinking != null) parts.push(inp.thinking ? 'thinking on' : 'thinking off');
     return parts.join(' · ');
   };
   const p = sidePanel({ closesMenu: true, kind: 'bench-report', label: 'Benchmark report', name: 'Benchmark report ' + ref + ' ' + slug,
