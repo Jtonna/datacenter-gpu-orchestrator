@@ -76,11 +76,11 @@ type Options struct {
 	// stopping or queued (default 2 s; with a scripted status source, the
 	// status interval: nothing wakes the loop for those). A real change
 	// wakes the loop at once (ws.go statusLoop).
-	WSIdlePace time.Duration
-	WSPingInterval   time.Duration // ping message period (default 15 s)
-	WSRequestsTick   time.Duration // running rows on the requests topic (default 1 s)
-	WSQueue          int           // per-client send queue (default 64 frames)
-	WSWriteTimeout   time.Duration // one frame write (default 10 s)
+	WSIdlePace     time.Duration
+	WSPingInterval time.Duration // ping message period (default 15 s)
+	WSRequestsTick time.Duration // running rows on the requests topic (default 1 s)
+	WSQueue        int           // per-client send queue (default 64 frames)
+	WSWriteTimeout time.Duration // one frame write (default 10 s)
 
 	// Bench and BenchStore are the benchmark feature; nil means it is off (its
 	// endpoints answer 503).
@@ -270,13 +270,34 @@ func New(cfg *config.Config, sched *scheduler.Scheduler, o Options) *Server {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r = r.WithContext(audit.WithDefaultUser(r.Context(), s.defaultUser()))
 	if r, ok := s.identify(w, r); ok && s.authorize(w, r) {
+		// a write may change what the status shows: look now, not at the
+		// next idle tick; at its start too, since a request may wait in the
+		// queue (a chat for a model that does not fit yet) until it ends
+		wakes := s.ws != nil && wakesStatus(r)
+		if wakes {
+			s.ws.poke()
+		}
 		s.mux.ServeHTTP(w, r)
-		// a write may have changed what the status shows: look now, not at
-		// the next idle tick
-		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions && s.ws != nil {
+		if wakes {
 			s.ws.poke()
 		}
 	}
+}
+
+// wakesStatus reports whether a request may change what the status shows
+// beyond memory figures: any write but an agent's heartbeat and log upload.
+// Those carry memory figures, which reach a page at the idle pace, and seven
+// agents every 2 s would keep the status loop at its fast pace for good. An
+// agent's arrival or loss is recorded in the history, which wakes the loop.
+func wakesStatus(r *http.Request) bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false
+	}
+	if p := r.URL.Path; strings.HasPrefix(p, "/api/pool/nodes/") && (strings.HasSuffix(p, "/heartbeat") || strings.HasSuffix(p, "/logs")) {
+		return false
+	}
+	return true
 }
 
 // defaultUser is the name of the default user (setting default_user_name).

@@ -73,13 +73,21 @@ listen('models', d => {
 // open; the server computes every profile's plan for that topic, so a screen
 // that needs only names passes {live: false} and a screen that needs nothing
 // does not call it. It asks over REST as well when there is no copy yet, so
-// the first paint never depends on which one is faster.
+// the first paint never depends on which one is faster. With no copy yet the
+// subscribe waits for that REST answer: the server then holds plans computed
+// under a status of a moment ago and the subscribe reuses them, where a
+// subscribe first would compute every plan once for the channel and the REST
+// read once more (two rounds of plans for one page open).
 let asked = false;
+let wantLive = false; // the open screen asked for the live catalog (releaseCatalog clears it)
 export function needCatalog(opts) {
-  if (!(opts && opts.live === false) && !state.catalogLive) set('catalogLive', true);
-  if (catalog.models || asked) return;
-  asked = true;
-  pull();
+  const live = !(opts && opts.live === false);
+  if (live) wantLive = true;
+  let first = null;
+  if (!catalog.models && !asked) { asked = true; first = pull(); }
+  if (!live || state.catalogLive) return;
+  const go = () => { if (wantLive && !state.catalogLive) set('catalogLive', true); };
+  if (first) first.then(go); else go();
 }
 // a server without the models topic (an older build): REST after every reconnect
 on('hello', hello => { if (hello && !(hello.topics || []).includes('models')) pull(); });
@@ -87,7 +95,7 @@ on('hello', hello => { if (hello && !(hello.topics || []).includes('models')) pu
 // the channel is down the next open asks again
 on('conn', c => { if (c !== 'live') asked = false; });
 
-export function releaseCatalog() { if (state.catalogLive) set('catalogLive', false); }
+export function releaseCatalog() { wantLive = false; if (state.catalogLive) set('catalogLive', false); }
 
 // refreshCatalog(): read the catalog again now (after a write the page made, such as a pin)
 export const refreshCatalog = () => pull();

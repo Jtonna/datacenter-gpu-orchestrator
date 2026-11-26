@@ -21,6 +21,10 @@ func (s *Server) statusView(ctx context.Context) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// health judges this one when it evaluates within healthReuse
+	cp := st
+	s.health.last.Store(&cp)
+	s.health.lastAt.Store(s.opts.Now().UnixMilli())
 	v := jsonView(st).(map[string]any)
 	last := s.activity.lastByModel()
 	if insts, ok := v["instances"].([]any); ok {

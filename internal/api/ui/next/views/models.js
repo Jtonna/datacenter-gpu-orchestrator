@@ -591,12 +591,13 @@ function mountHome(el, route) {
 
   // the disk block: only the REST answer carries it; its figures move every
   // 30 s, so it is read again on a live message (status, catalog) at most
-  // every 30 s, never on a timer of its own
+  // every 30 s, never on a timer of its own, and alone (?only=disk: the
+  // server computes no plans for it)
   let diskAt = 0;
   const readDisk = () => {
     if (!alive || Date.now() - diskAt < 30000) return;
     diskAt = Date.now();
-    api.get('/api/models').then(d => { disk = (d && d.disk) || null; if (alive) view.refresh(); }, () => { diskAt = 0; });
+    api.get('/api/models', { only: 'disk' }).then(d => { disk = (d && d.disk) || null; if (alive) view.refresh(); }, () => { diskAt = 0; });
   };
   readDisk();
 

@@ -642,7 +642,20 @@ func (s *Server) Warm() {
 }
 
 // handleModelCatalog is GET /api/models: one entry per model file, from memory.
+// GET /api/models?only=disk is the disk block alone ({"disk": {...}}): the
+// Models page reads it again every 30 s, and a catalog read would compute
+// every profile's plan for figures that are not plans.
 func (s *Server) handleModelCatalog(w http.ResponseWriter, r *http.Request) {
+	switch only := r.URL.Query().Get("only"); only {
+	case "":
+	case "disk":
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(s.withModelsDisk([]byte("{}")))
+		return
+	default:
+		badParam(w, "only must be disk, got %q", only)
+		return
+	}
 	snap, err := s.catalogGet(r.Context())
 	if err != nil {
 		s.writeErr(w, err)

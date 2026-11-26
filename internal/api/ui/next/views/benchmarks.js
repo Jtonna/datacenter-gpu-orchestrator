@@ -123,8 +123,10 @@ registerView({
     needCatalog({ live: false });
     seedState();
     loadLists();
-    loadOverview();
-    readResults();
+    // the Overview's recent runs and results per model only where they are
+    // drawn (the Runs page reads its own list; its result views read the
+    // results in render, with their filters)
+    if (pageOf(r) === 'overview') { loadOverview(); readResults(); }
     syncSide();
     return {
       update(nr) {
