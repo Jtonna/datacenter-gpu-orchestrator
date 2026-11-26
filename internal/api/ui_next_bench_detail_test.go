@@ -226,8 +226,8 @@ func TestUINextBenchPages(t *testing.T) {
 			"pageNone":    []string{"aside.side [data-act=cancel]"}},
 		// one Cancel in the panel, the banner's; no Run again while it runs (the review of 26 Nov)
 		map[string]any{"name": "run panel: Cancel on a running run", "route": "#/benchmarks/runs/49", "status": st, "width": 1536,
-			"pageHas":  []string{"aside.side .bp-live button.dng[data-act=cancel][data-cancel=run-49]"},
-			"pageNone": []string{"aside.side [data-notyet=run]", "aside.side .bp-acts [data-act=cancel]", "aside.side [data-act=run-again]"},
+			"pageHas":   []string{"aside.side .bp-live button.dng[data-act=cancel][data-cancel=run-49]"},
+			"pageNone":  []string{"aside.side [data-notyet=run]", "aside.side .bp-acts [data-act=cancel]", "aside.side [data-act=run-again]"},
 			"pageCount": map[string]any{"aside.side [data-act=cancel]": 1}},
 		map[string]any{"name": "run panel: All reports", "route": "#/benchmarks/runs/46", "status": st, "click": []string{"aside.side button.bp-all"},
 			"pageCount": map[string]any{"aside.side a.bp-rep": 24}},
