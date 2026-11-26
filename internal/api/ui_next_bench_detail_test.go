@@ -163,6 +163,9 @@ func TestUINextBenchPages(t *testing.T) {
 			"expect": []string{"GENERATION SPEED", "tok/s, smallest", "tok/s, all 6", "96.2", "92.2"}},
 		map[string]any{"name": "runs: the First token view", "route": "#/benchmarks/runs?show=first-token", "status": st,
 			"expect": []string{"FIRST TOKEN", "First token, smallest", "0.41 s"}, "has": []string{"tr[data-model='phi-4-14b-q4_k_m.gguf'] [data-missing=ttft_ms]"}},
+		map[string]any{"name": "runs: the Memory view: a gone file is not failed", "route": "#/benchmarks/runs?show=memory", "status": st,
+			"has":  []string{"table.bp-res-t tr.gone[data-model='mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf'] [data-missing=memory_mib]"},
+			"none": []string{"table.bp-res-t tr.gone [data-outcome]"}},
 		map[string]any{"name": "runs: the Memory view", "route": "#/benchmarks/runs?show=memory", "status": st,
 			"expect": []string{"MEMORY", "Memory, smallest", "Memory, all 6", "Lowest available", "3,100 MiB", "960 MiB"},
 			// the lowest available figure names its machine (one the step used)

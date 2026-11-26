@@ -374,6 +374,12 @@ const fetchedFull = []; // with the query and the body, for "fetchedQuery"
 const sentHeaders = new Set(); // every header name a request carried, for "noHeader"
 const sentHeaderLines = []; // "Name: value" of every header sent, for "sentHeader"
 const realFetch = globalThis.fetch;
+// requests to a real server (base) still in flight: settle() waits for them,
+// since a real answer (a write that syncs to disk, a slow race build) can
+// take longer than a few timer turns; realLog keeps each write's answer for
+// the failure report
+let inflight = 0;
+const realLog = [];
 let base = null;
 let passWrites = [];
 def('fetch', async (u, opts = {}) => {
@@ -390,7 +396,13 @@ def('fetch', async (u, opts = {}) => {
     // ("passWrites": regexps on the request line, for a test that owns its server).
     const reads = p === '/api/plan' || full.searchParams.get('dry_run') === '1';
     if (m !== 'GET' && !reads && !passWrites.some(re => new RegExp(re).test(line))) return { ok: false, status: 405, statusText: 'refused by ui-exec', text: async () => '{"error":{"message":"writes are refused"}}' };
-    return realFetch(base + p + full.search, { method: m, headers: opts.headers, body: opts.body });
+    inflight++;
+    try {
+      const r = await realFetch(base + p + full.search, { method: m, headers: opts.headers, body: opts.body });
+      const body = await r.text();
+      if (m !== 'GET') realLog.push(`${line} -> ${r.status} ${body.slice(0, 300)}`);
+      return new Response(body, { status: r.status, statusText: r.statusText, headers: r.headers });
+    } finally { inflight--; }
   }
   const method = opts.method || 'GET';
   fetched.push(method + ' ' + p);
@@ -522,7 +534,14 @@ function isolatedCopy(src) {
 }
 const ui = uiDir === spec.ui && live && !flag('--local-ui') ? path.resolve(spec.ui) : isolatedCopy(path.resolve(spec.ui));
 const mod = rel => import(pathToFileURL(path.join(ui, rel)).href);
-const settle = async () => { for (let i = 0; i < 20; i++) await new Promise(r => setTimeout(r, 0)); };
+const settle = async () => {
+  const until = Date.now() + 20000;
+  for (;;) {
+    for (let i = 0; i < 20; i++) await new Promise(r => setTimeout(r, 0));
+    if (!inflight || Date.now() > until) return;
+    while (inflight && Date.now() <= until) await new Promise(r => setTimeout(r, 5));
+  }
+};
 
 let router, store;
 try { router = await mod('core/router.js'); store = await mod('core/store.js'); } catch (e) {
@@ -567,7 +586,7 @@ const go = async hash => { setHashQuietly(hash); globalThis.dispatchEvent(new Fa
 
 let failed = 0;
 for (const c of spec.cases) {
-  errors.length = 0; fetched.length = 0; fetchedFull.length = 0; sentHeaders.clear(); sentHeaderLines.length = 0;
+  errors.length = 0; realLog.length = 0; fetched.length = 0; fetchedFull.length = 0; sentHeaders.clear(); sentHeaderLines.length = 0;
   fetchAnswers = Object.assign({}, spec.fetch || {}, c.fetch || {});
   const route = router.parse(c.route);
   if (!router.getView(route.id)) errors.push('no view registered for ' + route.id);
@@ -639,6 +658,14 @@ for (const c of spec.cases) {
   const text = outlet.textContent;
   for (const bad of ['could not be drawn', 'failed to start']) if (text.includes(bad)) errors.push('banner: ' + text.slice(Math.max(0, text.indexOf(bad) - 40), text.indexOf(bad) + 200));
   for (const want of c.expect || []) if (!text.includes(want)) errors.push('missing text: ' + JSON.stringify(want));
+  // what the page showed instead: the open dialog, the banners, the writes' answers
+  if ((c.expect || []).some(w => !text.includes(w)) || (c.page || []).some(w => !document.body.textContent.includes(w))) {
+    const dlg = document.body.querySelector('div.dlg');
+    if (dlg) errors.push(`  the dialog shows [${dlg.getAttribute('data-dlg') || ''} ${dlg.getAttribute('data-state') || ''}]: ` + JSON.stringify(dlg.textContent.slice(0, 600)));
+    for (const b of document.body.querySelectorAll('.banner')) errors.push('  a banner says: ' + JSON.stringify(b.textContent.slice(0, 300)));
+    for (const l of realLog.slice(-6)) errors.push('  a write answered: ' + l);
+    if (inflight) errors.push(`  ${inflight} request(s) to the server still unanswered after 20 s`);
+  }
   // order: texts that must appear in this order (a sorted list)
   { let at = -1; for (const want of c.order || []) { const i = text.indexOf(want, at + 1); if (i < 0) { errors.push('out of order or missing: ' + JSON.stringify(want)); break; } at = i; } }
   for (const bad of c.absent || []) if (text.includes(bad)) errors.push('text that must not be there: ' + JSON.stringify(bad) + ' in ' + JSON.stringify(text.slice(Math.max(0, text.indexOf(bad) - 80), text.indexOf(bad) + 80)));

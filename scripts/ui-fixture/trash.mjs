@@ -195,7 +195,7 @@ export function removeRoute(state, id, body, query, now = Date.now()) {
   const ids = rec.profiles.map(p => p.id).sort();
   const daysEarly = Math.max(0, Math.ceil((rec.purge_at - now) / DAY));
   const figures = { file: rec.file, trash_id: id, size_bytes: rec.size_bytes, profiles: ids, deleted_at: rec.deleted_at, purge_at: rec.purge_at, days_early: daysEarly, cannot_undo: true, purge_on: false,
-    message: `This cannot be undone. ${rec.file} and its ${ids.length} profiles are erased now, ${daysEarly} days before they would have been. ${(rec.size_bytes / 1e9).toFixed(1)} GB is freed.` };
+    message: `This cannot be undone. ${rec.file} and its ${ids.length} profiles are erased now, ${daysEarly} days before they would have been. ${rec.size_bytes >= 100e6 ? (rec.size_bytes / 1e9).toFixed(1) + ' GB' : rec.size_bytes >= 1e6 ? Math.round(rec.size_bytes / 1e6) + ' MB' : 'under 1 MB'} is freed.` };
   if (dry) return { status: 200, body: Object.assign(figures, { dry_run: true, read_only: state === 'read-only' }) };
   if (state === 'read-only') return refuse(409, 'read_only', READ_ONLY(`unlink /models/.trash/${id}/${rec.file}`));
   items = items.filter(r => r !== rec);

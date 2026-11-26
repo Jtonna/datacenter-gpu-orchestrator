@@ -115,7 +115,7 @@ export function latestTable(d) {
     const shown = c ? ['cold_load_s', 'reload_s', 'decode_tps', 'ttft_ms'].map(k => [c, k]) : [];
     return h('tr', { key: m.model, 'data-model': m.model, class: m.file_gone ? 'gone' : null },
       nameCell(m, shown), h('td', fitWord(m)),
-      h('td.r', fig(c, 'cold_load_s', true)), h('td.r', fig(c, 'reload_s')), h('td.r', fig(c, 'decode_tps')), h('td.r', fig(c, 'ttft_ms')),
+      h('td.r', fig(c, 'cold_load_s', !m.file_gone)), h('td.r', fig(c, 'reload_s')), h('td.r', fig(c, 'decode_tps')), h('td.r', fig(c, 'ttft_ms')),
       h('td.r', notYet(DASH, WHY.coding)));
   }));
 }
@@ -142,8 +142,9 @@ export function resultsView(d, show) {
     const shown = [[first, v.key], [all, v.key]].concat(v.extra ? [[all || small || m.latest, v.extra[0]]] : []);
     return h('tr', { key: m.model, 'data-model': m.model, class: m.file_gone ? 'gone' : null },
       nameCell(m, shown), h('td', fitWord(m)),
-      h('td.r', small ? fig(small, v.key, true) : fig(m.latest, v.key, true)),
-      h('td.r', all ? fig(all, v.key, true) : h('span.mut', { title: `not run on ${zonesWord(most)}` }, 'not run')),
+      // a file no longer here: the row says so; a cell without a figure is a dash, not "failed"
+      h('td.r', fig(first, v.key, !m.file_gone)),
+      h('td.r', all ? fig(all, v.key, !m.file_gone) : h('span.mut', { title: `not run on ${zonesWord(most)}` }, 'not run')),
       v.extra ? h('td.r', fig(all || small || m.latest, v.extra[0])) : null);
   }), show);
 }

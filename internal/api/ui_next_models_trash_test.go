@@ -144,9 +144,10 @@ func TestUINextModelsTrash(t *testing.T) {
 		t.Fatal(err)
 	}
 	ahead["removed"].([]any)[0].(map[string]any)["removed_at"] = float64(time.Now().Add(time.Hour).UnixMilli())
+	ahead["removed"].([]any)[0].(map[string]any)["size_bytes"] = float64(52_400_000) // under 0.1 GB: in MB
 	run(with(two, map[string]any{"/api/models/trash": ahead}),
 		map[string]any{"name": "trash: a remove stamped ahead of the clock", "route": "#/models/deleted", "status": st,
-			"expect": []string{"just now"}, "absent": []string{"in 0 s", "in 1 h", "in 59 min"}})
+			"expect": []string{"just now", "52 MB · 2 profiles"}, "absent": []string{"in 0 s", "in 1 h", "in 59 min", "0.1 GB ·", "0.0 GB"}})
 
 	// 2b. remove for good: the dry run first and the server's sentence; the
 	// file name typed exactly and a comment; then the remove; the refusals
@@ -465,7 +466,8 @@ func TestUINextModelsTrashOnARealServer(t *testing.T) {
 	}
 	run(
 		map[string]any{"name": "real: the footer row", "route": "#/models", "status": "fetch",
-			"expect": []string{"GB in deleted models", "1 file", "nothing is removed automatically yet", "View"}, "has": []string{"a.tbar[data-act=trash]"}},
+			// the test's files are a few bytes: "under 1 MB", never "0.0 GB" (the reviewer, 26 Nov)
+			"expect": []string{"under 1 MB in deleted models", "1 file", "nothing is removed automatically yet", "View"}, "has": []string{"a.tbar[data-act=trash]"}},
 		map[string]any{"name": "real: the view", "route": "#/models/deleted", "status": "fetch",
 			"expect": []string{"a.gguf", "2 profiles", "Kept until"}, "has": []string{"div.mr.del[data-trash='" + id + "'][data-state=trashed]"}},
 		map[string]any{"name": "real: the panel", "route": "#/models/deleted?item=" + id, "status": "fetch",
@@ -493,11 +495,21 @@ func TestUINextModelsTrashOnARealServer(t *testing.T) {
 		t.Fatalf("the trash before the remove: %v %v", recs, err)
 	}
 	bid := recs[0].ID
+	// the remove answers slowly, as on the Linux gate (a race build and the
+	// fsync of the trash folder, modelfiles/remove_linux.go:82): the page
+	// must wait for the answer before it is judged (the harness waits for
+	// requests to a real server still in flight)
+	te.api.opts.trashStop = func(step string) bool {
+		if step == "remove:after-record" {
+			time.Sleep(400 * time.Millisecond)
+		}
+		return false
+	}
 	uiExec(t, map[string]any{"shell": "next", "app": true, "base": te.front.URL, "passWrites": []string{`^POST /api/models/trash/` + bid + `/remove`}, "cases": []any{
 		map[string]any{"name": "real: remove b.gguf for good", "route": "#/models/deleted?item=" + bid, "status": "fetch",
 			"click":        []any{"aside.side button[data-act=remove]", map[string]any{"type": "div.dlg input[data-confirm]", "value": "b.gguf"}, comment("free the disk"), "div.dlg button[data-go]"},
 			"fetchedQuery": []string{`^POST /api/models/trash/` + bid + `/remove\?dry_run=1 `, `^POST /api/models/trash/` + bid + `/remove \{"comment":"free the disk"\}$`},
-			"expect":       []string{"Removed b.gguf for good", "Removed for good", "removed for good: free the disk"}},
+			"expect":       []string{"Removed b.gguf for good: under 1 MB freed", "Removed for good", "removed for good: free the disk", "under 1 MB"}, "absent": []string{"0.0 GB"}},
 	}})
 	if _, err := os.Lstat(filepath.Join(te.dir, ".trash", bid, "b.gguf")); !os.IsNotExist(err) {
 		t.Fatalf("b.gguf is still in its trash folder after the UI's remove: %v", err)
@@ -537,4 +549,17 @@ func shortOf(t *testing.T, te *trashEnv, file string) string {
 		}
 	}
 	return file
+}
+
+// Sizes in the trash's sentences: GB from 0.1 GB, MB below, "under 1 MB"
+// below that; never "0.0 GB" (the reviewer, 26 Nov).
+func TestTrashSizeText(t *testing.T) {
+	for _, c := range []struct {
+		b    int64
+		want string
+	}{{8_400_000_000, "8.4 GB"}, {100_000_000, "0.1 GB"}, {99_499_999, "99 MB"}, {52_400_000, "52 MB"}, {1_000_000, "1 MB"}, {999_999, "under 1 MB"}, {0, "under 1 MB"}} {
+		if got := sizeText(c.b); got != c.want {
+			t.Errorf("sizeText(%d) = %q, want %q", c.b, got, c.want)
+		}
+	}
 }

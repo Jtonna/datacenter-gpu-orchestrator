@@ -237,8 +237,10 @@ function boardResults(now) {
   const llama = cell(MODELS[10], 6, 15.5, null, 70.1, 350, 5200, at);
   out.push({ model: MODELS[10], smallest_fit: 6, latest: llama, by_nodes: [llama] });
   // a file no longer in the models folder: kept, marked, listed last
-  const old = cell('mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf', 4, 70.4, 9.9, 18.0, 1200, 26000, at - 30 * 24 * HOUR);
-  out.push({ model: 'mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf', smallest_fit: 4, latest: old, by_nodes: [old], file_gone: true });
+  // its only step failed at the load (no figure): the row says the file is
+  // gone; its cells are dashes, never "failed" (the reviewer, 26 Nov)
+  const old = { run_id: 'run-30', step: 3, benchmark_id: 'cold-response-repeat', node_count: 4, ctx: 8192, at: at - 30 * 24 * HOUR, outcome: 'failed', reason: 'child exited during load' };
+  out.push({ model: 'mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf', smallest_fit: 0, latest: old, by_nodes: [old], file_gone: true });
   // phi's file is in Deleted models (the trash fixture's a1b2c3d4e5f6): marked, linked there, last
   out.push({ model: MODELS[9], smallest_fit: 2, latest: phi, by_nodes: [phi], file_gone: true, trash_id: 'a1b2c3d4e5f6' });
   // every figure names its step (from); gemma-4-12b's newest step at its fit

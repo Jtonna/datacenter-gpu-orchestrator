@@ -52,6 +52,9 @@ const off = (tag, reason, attrs, ...kids) => h(tag, Object.assign({ type: 'butto
 
 // sizes in decimal GB, as the Models list and the boards
 const gbOf = v => (v / 1e9).toLocaleString('en-US', { maximumFractionDigits: 1, minimumFractionDigits: v >= 100e9 ? 0 : 1 });
+// sizeOf: a size with its unit: GB from 0.1 GB, MB below that, "under 1 MB"
+// for less ("0.0 GB" reads as nothing; the server's sentences say the same, trashremove.go sizeText)
+const sizeOf = v => (v >= 100e6 ? gbOf(v) + ' GB' : v >= 1e6 ? Math.round(v / 1e6).toLocaleString('en-US') + ' MB' : 'under 1 MB');
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const dayOf = ms => { const d = new Date(ms); return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`; };
 // daysAgo(ms) -> "3 days ago" (the board's words), "5 h ago" under a day; the exact time on hover
@@ -130,8 +133,8 @@ export function trashFooter(disk, notYet) {
     ic, 'No deleted models', go);
   const purge = disk.trash_purge_on && disk.next_purge_at ? ` · next clears in ${plural(daysLeft(disk.next_purge_at), 'day')}` : ' · nothing is removed automatically yet';
   return h('a.tbar', { href: href('models', ['deleted']), 'data-act': 'trash',
-    title: `${gbOf(disk.trash_bytes || 0)} GB in ${plural(n, 'deleted model file')}: they still use the disk. ` + (disk.trash_purge_on ? 'The next is removed for good on ' + dateTime(disk.next_purge_at) + '.' : PURGE_OFF) },
-  ic, `${gbOf(disk.trash_bytes || 0)} GB in deleted models`, h('span.mut', ` · ${plural(n, 'file')}${purge}`), go);
+    title: `${sizeOf(disk.trash_bytes || 0)} in ${plural(n, 'deleted model file')}: they still use the disk. ` + (disk.trash_purge_on ? 'The next is removed for good on ' + dateTime(disk.next_purge_at) + '.' : PURGE_OFF) },
+  ic, `${sizeOf(disk.trash_bytes || 0)} in deleted models`, h('span.mut', ` · ${plural(n, 'file')}${purge}`), go);
 }
 
 // ---------- the delete dialog ----------
@@ -210,7 +213,7 @@ export function deleteModel(m, onDone, writable) {
       h('div.dlg-foot', closeBtn('Close'))];
     } else if (state === 'read-only' && !refusal) {
       const ids = (m.profiles || []).map(p => p.id).filter(Boolean);
-      kids = [...roFlag(h('span.mono', file), ' · ', m.size_bytes ? gbOf(m.size_bytes) + ' GB' : null, m.size_bytes ? ' · ' : null, kindsOf(ids, m)), h('div.dlg-foot', closeBtn('Close'))];
+      kids = [...roFlag(h('span.mono', file), ' · ', m.size_bytes ? sizeOf(m.size_bytes) : null, m.size_bytes ? ' · ' : null, kindsOf(ids, m)), h('div.dlg-foot', closeBtn('Close'))];
     } else if (state === 'read-only') {
       kids = [roState(h('span', h('span.mono', file), ' stays in the models folder with its profiles.'), refusal.msg), h('div.dlg-foot', closeBtn('Close'))];
     } else if (state === 'refused') {
@@ -222,7 +225,7 @@ export function deleteModel(m, onDone, writable) {
       const f = figures, would = f.would_interrupt;
       const it = would ? interrupts(would, m) : null;
       const ids = f.profiles || [], np = ids.length;
-      const size = gbOf(f.size_bytes || m.size_bytes || 0) + ' GB';
+      const size = sizeOf(f.size_bytes || m.size_bytes || 0);
       const kept = f.purge_on
         ? [h('b', `Kept for ${plural(f.trash_days, 'day')}.`), ' The file moves to Deleted models and stays there until ', h('time', { title: dateTime(f.purge_at) }, dayOf(f.purge_at)), `. It still uses ${size} until then.`]
         : [h('b', 'Kept in Deleted models.'), ` The file moves there and still uses ${size}. Nothing removes it automatically yet: it stays until it is restored (kept until `,
@@ -398,7 +401,7 @@ function removeItem(it, onDone, writable) {
 }
 
 // removedText(res) -> the sentence after a remove
-const removedText = res => `Removed ${res.file} for good: ${gbOf(res.freed_bytes || 0)} GB freed` +
+const removedText = res => `Removed ${res.file} for good: ${sizeOf(res.freed_bytes || 0)} freed` +
   ((res.profiles_removed || []).length ? `; ${plural(res.profiles_removed.length, 'profile')} went with it.` : '.');
 
 // the "Removed for good" list: the tombstones, newest first
@@ -411,7 +414,7 @@ function removedList(list) {
     h('div.mr.del.gone.mr-h', { 'aria-hidden': 'true' }, h('span'), h('span.lbl', 'Model'), h('span.lbl', 'Removed'), h('span.lbl', 'By'), h('span.lbl', 'Why')),
     h('div.mdl-rows', { role: 'list', 'aria-label': 'Removed for good' }, rows.map(t => h('div.mr.del.gone', { key: t.id, role: 'listitem', 'data-removed': t.id, 'data-reason': t.reason },
       h('span.del-ic', icon(TRASH)),
-      h('span.mdl-name', h('span.mono.nm', { title: t.file }, t.file), h('span.mut', gbOf(t.size_bytes || 0) + ' GB' + ((t.profile_ids || []).length ? ' · ' + plural(t.profile_ids.length, 'profile') : ''))),
+      h('span.mdl-name', h('span.mono.nm', { title: t.file }, t.file), h('span.mut', sizeOf(t.size_bytes || 0) + ((t.profile_ids || []).length ? ' · ' + plural(t.profile_ids.length, 'profile') : ''))),
       // a remove the server stamped a moment ahead of this clock reads "just now", never "in 0 s"
       h('span.del-at', t.removed_at ? daysAgo(Math.min(t.removed_at, now())) : h('span.mut', t.state === 'removing' ? 'being removed' : DASH)),
       h('span.del-by', t.removed_by ? t.removed_by : h('span.mut', DASH)),
@@ -448,7 +451,7 @@ function restoreItem(it, onDone, writable) {
         h('p', 'Restore with new names: a taken profile comes back as ', h('span.mono', '<id>-restored'), ' and a taken alias is left off. The other profiles keep their names.'),
         h('div.dlg-foot', closeBtn('Cancel'), h('button', { class: 'btn lg pri', type: 'button', 'data-go': 'rename', onclick: () => send(true) }, 'Restore with new names'))];
     } else if (state === 'read-only' && !refusal) {
-      kids = [...roFlag(h('span.mono', it.file), ' · ', gbOf(it.size_bytes || 0) + ' GB · ', profilesOf(ids)), h('div.dlg-foot', closeBtn('Close'))];
+      kids = [...roFlag(h('span.mono', it.file), ' · ', sizeOf(it.size_bytes || 0) + ' · ', profilesOf(ids)), h('div.dlg-foot', closeBtn('Close'))];
     } else if (state === 'read-only') {
       kids = [roState(h('span', h('span.mono', it.file), ' stays in Deleted models.'), refusal.msg), h('div.dlg-foot', closeBtn('Close'))];
     } else {
@@ -546,7 +549,7 @@ export function mountTrash(el, route) {
       sub: () => {
         const it = find();
         if (!it) return null;
-        return [gbOf(it.size_bytes) + ' GB · deleted ', daysAgo(it.deleted_at), it.actor ? ' by ' + it.actor : null, ' · ',
+        return [sizeOf(it.size_bytes) + ' · deleted ', daysAgo(it.deleted_at), it.actor ? ' by ' + it.actor : null, ' · ',
           data.purge_on ? ['clears in ', keptCell(it, true)] : ['kept until ', keptCell(it, false)]];
       },
       body: () => {
@@ -572,7 +575,7 @@ export function mountTrash(el, route) {
       key: it.id, role: 'listitem', class: 'mr del' + (sel === it.id ? ' sel' : ''), 'aria-current': sel === it.id ? 'true' : null, 'data-trash': it.id, 'data-state': it.state, tabindex: '0',
       onclick: () => open(it.id), onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(it.id); } } },
     h('span.del-ic', icon(TRASH)),
-    h('span.mdl-name', h('span.mono.nm', it.file), h('span.mut', gbOf(it.size_bytes) + ' GB'),
+    h('span.mdl-name', h('span.mono.nm', it.file), h('span.mut', sizeOf(it.size_bytes)),
       it.state !== 'trashed' || it.problem ? h('span.err-t.del-prob', { title: it.problem || null }, 'Needs a look: ', it.problem || `it is ${it.state}`) : null),
     h('span.del-pc', plural(it.profile_count != null ? it.profile_count : (it.profiles || []).length, 'profile')),
     h('span.mut.del-at', daysAgo(it.deleted_at)),
@@ -597,7 +600,7 @@ export function mountTrash(el, route) {
           searchField(query, v => { query = v; view.refresh(); }, 'Search deleted models', 'trash-search', { size: 'lg' }),
           filterSelect('Sort', SORTS.map(([id, label]) => ({ id, label: id === 'until' && purgeOn ? 'clears soonest' : label })), sort, id => setQuery({ sort: id === 'until' ? '' : id }))),
         h('div.sech', { title: data ? (purgeOn ? null : PURGE_OFF) : null }, h('span.lbl', 'Deleted models'),
-          data && items.length ? h('span.lbl.mut', `${plural(data.count != null ? data.count : items.length, 'file')} · ${gbOf(data.total_bytes || 0)} GB`, purgeOn ? null : ' · nothing is removed automatically yet') : null),
+          data && items.length ? h('span.lbl.mut', `${plural(data.count != null ? data.count : items.length, 'file')} · ${sizeOf(data.total_bytes || 0)}`, purgeOn ? null : ' · nothing is removed automatically yet') : null),
         body),
       data ? removedList(data.removed) : null,
     ];
