@@ -78,11 +78,11 @@ export function runningRow(run, opts = {}) {
 
 // ---------- rows ----------
 
-function groupRow(g, run, selected) {
+function groupRow(g, run, selected, saved) {
   const last = g.last_run || null;
   const isRunning = run && run.suite_id === g.id;
-  return h('a.bp-row.bp-grow', { key: 'g-' + g.id, href: href('benchmarks', ['all', g.id]), role: 'listitem', class: selected ? 'sel' : null,
-    'aria-current': selected ? 'true' : null, 'data-group': g.id },
+  return h('a.bp-row.bp-grow', { key: 'g-' + g.id, href: href('benchmarks', ['all', g.id]), role: 'listitem', class: [selected ? 'sel' : '', saved ? 'saved' : ''].join(' ').trim() || null,
+    'aria-current': selected ? 'true' : null, 'data-group': g.id, 'data-saved': saved ? '' : null },
     kindIcon(true),
     h('div.bp-main', h('span.bp-name', groupTitle(g)),
       h('div.bp-sub', groupSub(g), g.status ? [h('span.bp-sep', ' · '), h('span.bp-warn', { title: g.reason || '' }, g.status === 'planned' ? 'planned: ' + (g.reason || 'not ready') : 'blocked: ' + (g.reason || 'cannot run'))] : null,
@@ -94,9 +94,9 @@ function groupRow(g, run, selected) {
     g.not_startable ? null : runButton('group', g.id, 'Run', 'btn sm bp-hover'));
 }
 
-function benchRow(b) {
+function benchRow(b, saved) {
   const u = b.last_use || null;
-  return h('div.bp-row', { key: 'b-' + b.id, role: 'listitem', 'data-bench': b.id },
+  return h('div.bp-row', { key: 'b-' + b.id, role: 'listitem', class: saved ? 'saved' : null, 'data-bench': b.id, 'data-saved': saved ? '' : null },
     kindIcon(false),
     h('div.bp-main', h('span.bp-name', benchTitle(b)), h('div.bp-sub', chain(b), b.not_startable ? [h('span.bp-sep', ' · '), notStartable(b.not_startable)] : null)),
     h('div.bp-last', u ? [resultIcon({ result: u.outcome === 'ready' ? 'passed' : u.outcome === 'running' ? 'running' : u.outcome === 'refused' ? 'refused' : u.outcome === 'refused_by_exclusion' ? 'not_judged' : 'failed' }, 14), ' ',
@@ -105,9 +105,11 @@ function benchRow(b) {
     h('div.bp-res', u ? h('span.bp-dots', h('span', { class: 'bp-dot ' + (u.outcome === 'ready' ? 'ok' : u.outcome === 'running' || u.outcome === 'refused_by_exclusion' ? '' : u.outcome === 'refused' ? 'ref' : 'bad'),
       title: u.outcome === 'ready' ? '1 passed' : u.outcome === 'refused_by_exclusion' ? 'not judged: the profile forces an excluded zone' : u.outcome }, '1')) : null),
     h('div.bp-took.mut', u && u.duration_s != null ? dur(u.duration_s) : ''),
-    h('span.bp-hacts', (b.parallel || []).length ? null : h('a.btn.sm.bp-hover', { href: editLink('benchmark', b.id), 'data-act': 'edit', title: 'Edit ' + benchTitle(b) }, 'Edit'),
+    h('span.bp-hacts', (b.parallel || []).length ? null : h('a.btn.sm.bp-edit', { href: editLink('benchmark', b.id), 'data-act': 'edit', title: 'Edit ' + benchTitle(b) }, 'Edit'),
       b.not_startable ? null : isRecipe(b) ? notYet(h('span.btn.sm.bp-hover', 'Run'), WHY.recipe) : runButton('benchmark', b.id, 'Run', 'btn sm bp-hover')));
 }
+
+let shownSaved = '';
 
 function match(q, ...texts) {
   if (!q) return true;
@@ -124,7 +126,18 @@ export function listColumn(r, q, setQ, narrow) {
   const gs = groups.filter(g => match(q, g.id, g.name, g.description));
   const bs = benches.filter(b => match(q, b.id, b.name, b.description));
   const open = r.rest[1] || '';
+  // after a save (?saved=<id>, the editors): one line naming what was saved,
+  // its row marked and brought into view once
+  const savedId = (r.query && r.query.saved) || '';
+  const savedB = savedId ? benches.find(b => b.id === savedId) : null;
+  const savedG = savedId && !savedB ? groups.find(g => g.id === savedId) : null;
+  if (savedId && (savedB || savedG) && shownSaved !== savedId) {
+    shownSaved = savedId;
+    setTimeout(() => { const e = document.querySelector(savedB ? `[data-bench="${savedId}"]` : `[data-group="${savedId}"]`); if (e && e.scrollIntoView) e.scrollIntoView({ block: 'nearest' }); }, 0);
+  }
   return h('div', { class: 'bp-list' + (narrow ? ' narrow' : '') },
+    savedB || savedG ? h('p.bp-savedline', { role: 'status', 'data-saved-line': savedId },
+      'Saved ', savedB ? 'benchmark ' : 'group ', h('b', savedB ? benchTitle(savedB) : groupTitle(savedG)), '. Its row is marked below.') : null,
     h('section.bp-card', { 'aria-label': 'Groups and benchmarks' },
       h('div.bp-tools.bp-cardtools',
         searchField(q, setQ, 'Search benchmarks and groups', 'bench-search'),
@@ -132,10 +145,10 @@ export function listColumn(r, q, setQ, narrow) {
         h('a.btn.pri', { href: href('benchmarks', ['new']), 'data-act': 'new-benchmark' }, 'New benchmark')),
       run ? [h('h2.bp-sec.now', 'Running now · 1'), h('div.bp-rows', { role: 'list', 'aria-label': 'Running now' }, runningRow(run))] : null,
       h('h2.bp-sec', 'Groups'),
-      gs.length ? h('div.bp-rows', { role: 'list', 'aria-label': 'Groups' }, gs.map(g => groupRow(g, run, g.id === open)))
+      gs.length ? h('div.bp-rows', { role: 'list', 'aria-label': 'Groups' }, gs.map(g => groupRow(g, run, g.id === open, !!savedG && g.id === savedId)))
         : h('p.mut.bp-none', groups.length ? 'No group matches the search.' : 'No groups yet. A group runs several benchmarks, or one benchmark over several models and placements, in one go.'),
       h('h2.bp-sec', 'Benchmarks'),
-      bs.length ? h('div.bp-rows', { role: 'list', 'aria-label': 'Benchmarks' }, bs.map(benchRow))
+      bs.length ? h('div.bp-rows', { role: 'list', 'aria-label': 'Benchmarks' }, bs.map(b => benchRow(b, !!savedB && b.id === savedId)))
         : h('p.mut.bp-none', benches.length ? 'No benchmark matches the search.' : 'No benchmarks yet.')));
 }
 

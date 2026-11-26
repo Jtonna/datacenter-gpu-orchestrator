@@ -152,17 +152,21 @@ export const resultWord = r => RESULT_WORD[resultOf(r)] || resultOf(r);
 export function dots(c, running) {
   if (!c) return h('span.mut', { title: 'This scheduler does not count the results of a run (older than benchmarks slice 2).' }, DASH);
   const passed = (c.passed || 0) + (c.with_issues || 0);
-  const failed = (c.failed || 0) + (c.cancelled || 0);
+  // red is what failed; cancelled and skipped steps are a neutral "not run"
+  const failed = c.failed || 0;
+  const notRun = (c.cancelled || 0) + (c.skipped || 0);
   const out = [];
   if (running) {
     out.push(h('span.bp-dot.ok', { title: plural(passed, 'run') + ' passed' }, `${num(passed)} passed`));
     if (failed) out.push(h('span.bp-dot.bad', { title: plural(failed, 'run') + ' failed' }, num(failed)));
     if (c.refused) out.push(h('span.bp-dot.ref', { title: plural(c.refused, 'run') + ' refused' }, num(c.refused)));
+    if (notRun) out.push(h('span.bp-dot.notrun', { title: `${num(notRun)} not run` }, num(notRun)));
     out.push(h('span.mut', { title: plural(c.to_go || 0, 'run') + ' to go' }, `${num(c.to_go || 0)} to go`));
   } else {
     out.push(h('span.bp-dot.ok', { title: `${num(passed)} passed` }, num(passed)));
     if (failed) out.push(h('span.bp-dot.bad', { title: `${num(failed)} failed` }, num(failed)));
     if (c.refused) out.push(h('span.bp-dot.ref', { title: `${num(c.refused)} refused` }, num(c.refused)));
+    if (notRun) out.push(h('span.bp-dot.notrun', { title: `${num(notRun)} not run` }, num(notRun)));
   }
   return h('span.bp-dots', out);
 }

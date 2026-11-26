@@ -215,8 +215,9 @@ const STEP_WORD = { ready: 'Passed', completed: 'Passed', failed: 'Failed', erro
 const stepResult = st => (st.outcome === 'ready' ? 'passed' : st.outcome === 'refused_by_exclusion' ? 'not_judged' : st.outcome === 'refused' ? 'refused' : st.outcome === 'cancelled' ? 'cancelled'
   : st.outcome === 'skipped' ? 'skipped' : st.outcome ? 'failed' : st.state === 'running' ? 'running' : 'queued');
 
+const isInterrupted = st => st.outcome === 'error' && String(st.error || '').trim() === 'interrupted';
 function kpi(n, word, cls) {
-  return h('div', { class: 'bp-kpi' + (cls ? ' ' + cls : '') }, h('b', { title: typeof n === 'string' ? n : null }, n), h('span', word));
+  return h('div', { class: 'bp-kpi' + (cls ? ' ' + cls : ''), 'data-kpi': word.replace(/ /g, '-') }, h('b', { title: typeof n === 'string' ? n : null }, n), h('span', word));
 }
 
 export function stepSlug(st) { return st.slug || String(st.idx); }
@@ -270,12 +271,18 @@ export function runPanel(ref, q, onClose) {
     const active = ACTIVE.includes(rn.state);
     const c = rn.counts || {};
     const steps = rn.steps || [];
-    const issues = steps.filter(st => ['failed', 'refused', 'not_judged'].includes(stepResult(st)));
+    // the red tile counts what failed (timed out included); what never ran to
+    // its end (cancelled, skipped, interrupted by a stop of the scheduler,
+    // which the server keeps as an error step) is a neutral "not run"
+    const interrupted = steps.filter(isInterrupted).length;
+    const failedN = Math.max(0, (c.failed || 0) - interrupted);
+    const notRun = (c.cancelled || 0) + (c.skipped || 0) + interrupted;
+    const issues = steps.filter(st => !isInterrupted(st) && ['failed', 'refused', 'not_judged'].includes(stepResult(st)));
     const shown = ps.showAll ? steps : steps.slice(0, 8);
     return h('div.bp-panel',
       liveBanner(rn, load),
       h('div.bp-kpis', kpi(num(c.done != null ? c.done : steps.length), 'ran'), kpi(num((c.passed || 0) + (c.with_issues || 0)), 'passed', 'ok'),
-        kpi(num((c.failed || 0) + (c.cancelled || 0)), 'failed', (c.failed || c.cancelled) ? 'bad' : ''), kpi(num(c.refused || 0), 'refused', c.refused ? 'ref' : ''),
+        kpi(num(failedN), 'failed', failedN ? 'bad' : ''), notRun ? kpi(num(notRun), 'not run', 'notrun') : null, kpi(num(c.refused || 0), 'refused', c.refused ? 'ref' : ''),
         kpi(tookS(rn) != null ? dur(tookS(rn)) : DASH, active ? 'so far' : 'total', 'time')),
       rn.error ? h('div.banner.err', { role: 'status' }, rn.error) : null,
       changedSince(rn),

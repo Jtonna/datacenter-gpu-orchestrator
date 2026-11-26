@@ -491,8 +491,25 @@ function edRoute(p, q, now) {
   const m = /^\/api\/bench\/benchmarks\/([^/]+)$/.exec(p);
   if (m) {
     const id = decodeURIComponent(m[1]);
-    const b = RC_BENCHES.concat(BENCHES).find(x => x.id === id);
-    return b ? Object.assign({ source: 'api', created_at: now - 40 * 24 * HOUR, updated_at: now - 3 * 24 * HOUR }, clone(b)) : undefined;
+    // <id>-kept: the same benchmark with settings the editor does not draw (a request's own sampling, messages)
+    const kept = /-kept$/.test(id);
+    const b = RC_BENCHES.concat(BENCHES).find(x => x.id === id.replace(/-kept$/, ''));
+    if (!b) return undefined;
+    const out = Object.assign({ source: 'api', created_at: now - 40 * 24 * HOUR, updated_at: now - 3 * 24 * HOUR }, clone(b));
+    if (kept) {
+      out.id = id;
+      for (const ph of out.phases || []) for (const r of ph.requests || []) Object.assign(r, { temperature: 0.7, seed: 42 });
+      const rq = (out.phases || []).find(ph => ph.type === 'requests');
+      if (rq) rq.requests.push({ name: 'chat', messages: [{ role: 'system', content: 'Answer briefly.' }, { role: 'user', content: 'What is a bridge?' }] });
+    }
+    return out;
+  }
+  // <group>-kept: the group with a matrix entry and a schedule
+  const gm = /^\/api\/bench\/groups\/([^/]+)-kept$/.exec(p);
+  if (gm) {
+    const g = boardsRoute('/api/bench/groups/' + gm[1], q, now, 'runcancel');
+    if (g) { g.id = gm[1] + '-kept'; g.schedule = { every: '24h' }; g.benchmarks = (g.benchmarks || []).concat([{ benchmark: 'ctx-fill-recipe', matrix: { ctx: [8192, 16384] } }]); }
+    return g;
   }
   const d = boardsRoute(p, q, now, 'runcancel');
   // run 51 ran qwen4b-2con, saved again since (GET /api/bench/runs/{id}: definitions_changed)

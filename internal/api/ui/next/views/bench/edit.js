@@ -132,8 +132,35 @@ const leaveDialog = (name, what) => dialog({
   actions: [{ label: 'Stay', value: false, autofocus: true }, { label: 'Leave', kind: 'dng', value: true }],
 }).then(v => v === true);
 
+// keptWords(kind, obj) -> the settings obj has that this page does not draw
+// (kept as stored, the reviewer's condition of 26 Nov): ["parallel",
+// "schedule", ...] in a fixed order, [] when none
+const REQ_OWN = ['temperature', 'seed', 'cache_prompt', 'stream'];
+export function keptWords(kind, o) {
+  if (!o) return [];
+  const out = [];
+  if (kind === 'group') {
+    const es = (o.benchmarks || []).filter(e => e && typeof e === 'object');
+    if (es.some(e => e.matrix)) out.push('matrix entries');
+    if (es.some(e => e.inputs)) out.push('entry inputs');
+    if (o.schedule) out.push('schedule');
+    if (o.baseline) out.push('baseline');
+    if (o.status) out.push('status');
+    return out;
+  }
+  if (o.inputs) out.push('inputs');
+  if ((o.parallel || []).length) out.push('parallel');
+  const reqs = [].concat(o.requests || [], ...(o.phases || []).map(p => [].concat(p.requests || [], p.turns || [], p.request ? [p.request] : [])));
+  if (reqs.some(q => q && REQ_OWN.some(k => q[k] != null))) out.push("a request's own sampling");
+  if (reqs.some(q => q && (q.messages || []).length)) out.push('messages');
+  return out;
+}
+const keptLine = words => (words.length ? h('div.ed-kept', { 'data-kept': words.join(',') },
+  `This one also has settings this page does not show (${words.join(', ')}): they are kept as they are.`) : null);
+
 // saveBar(o): the bar at the foot of the card (sticky). o = {changed: words,
-// fresh, refusal: {lines}, saving, onDiff, onCancel, onSave, comment input}
+// fresh, refusal: {lines}, saving, onDiff, onCancel, onSave, comment input,
+// kept: the settings not drawn (keptWords)}
 function saveBar(o) {
   const can = !o.saving && (o.fresh || o.changed.length) && o.comment.value.trim();
   const left = o.refusal
@@ -144,6 +171,7 @@ function saveBar(o) {
       o.fresh && !o.changed.length ? 'New: nothing is saved yet.' : o.changed.length ? ['Changed: ', andList(o.changed.slice(0, 4)), o.changed.length > 4 ? ` and ${num(o.changed.length - 4)} more` : '', '. ',
         o.fresh ? null : h('button.linkbtn', { type: 'button', 'data-act': 'diff', onclick: o.onDiff }, 'See what changed')] : 'No changes yet.');
   return h('div', { class: 'ed-savebar' + (o.refusal ? ' bad' : ''), key: 'savebar' },
+    keptLine(o.kept || []),
     h('div.ed-left', left),
     h('div.ed-acts', o.comment,
       h('button.btn', { type: 'button', 'data-act': 'cancel', onclick: o.onCancel }, 'Cancel'),
@@ -154,9 +182,29 @@ function saveBar(o) {
 function refusalOf(e) {
   const msg = (e && e.message) || 'the scheduler did not answer';
   const problems = (e && e.body && Array.isArray(e.body.problems)) ? e.body.problems : [];
-  const lines = problems.length ? problems.map(p => p.message) : String(msg).split('\n').filter(Boolean);
+  const lines = problems.length ? problems.map(placed) :String(msg).split('\n').filter(Boolean);
   return { lines, problems };
 }
+// placed(problem) -> the server's sentence with the place it names first, in
+// the page's words and counted from 1 as the page counts ('phases[2].requests[0]
+// (explain): messages or prompt is required' -> 'Phase 3, prompt "explain":
+// messages or prompt is required'); the raw sentence when the path is not one
+// the page can name
+export function placed(p) {
+  const path = (p && p.path) || '', msg = (p && p.message) || '';
+  if (!path || !msg.startsWith(path)) return msg;
+  const rest = /^(?: \(([^)]*)\))?: ?([\s\S]+)$/.exec(msg.slice(path.length));
+  if (!rest) return msg;
+  const paren = rest[1], tail = rest[2];
+  let m, place = '';
+  if ((m = /^phases\[(\d+)\]$/.exec(path))) place = `Phase ${+m[1] + 1}`;
+  else if ((m = /^phases\[(\d+)\]\.requests\[(\d+)\]$/.exec(path))) place = `Phase ${+m[1] + 1}, prompt ${paren ? `"${paren}"` : +m[2] + 1}`;
+  else if ((m = /^phases\[(\d+)\]\.request$/.exec(path))) place = `Phase ${+m[1] + 1}, its request`;
+  else if ((m = /^benchmarks\[(\d+)\]$/.exec(path))) place = `Entry ${+m[1] + 1}` + (paren ? ` (${paren})` : '');
+  return place ? `${place}: ${tail}` : msg;
+}
+// sentences(texts) -> one text, each sentence ending in its full stop
+const sentences = xs => xs.map(x => String(x || '').trim()).filter(Boolean).map(x => (/[.!?]$/.test(x) ? x : x + '.')).join(' ');
 // the sentences that name a part (path, or a part below it)
 const about = (ref, path) => (ref ? ref.problems.filter(p => p.path === path || (p.path || '').startsWith(path + '.') || (p.path || '').startsWith(path + '[')).map(p => p.message) : []);
 const problemNote = lines => (lines.length ? h('div.ed-problem', { 'data-problem': '' }, lines.map((l, i) => h('div', { key: 'p' + i }, l))) : null);
@@ -536,7 +584,7 @@ export function benchEditor(er) {
             oninput: e => { const x = Object.assign({}, st.b.expect || {}); const v = k.type === 'string' ? e.currentTarget.value.trim() || undefined : numOf(e.currentTarget.value); if (v === undefined) delete x[k.name]; else x[k.name] = v; set('expect', Object.keys(x).length ? x : undefined); } }),
             k.unit ? h('span.mut', k.unit) : null))))] : null,
         problemNote(fieldBad('expect').concat(fieldBad('timeout_s')))),
-      saveBar({ changed: sh.changed(), fresh: st.fresh, refusal: sh.refusal, saving: sh.saving, comment: sh.comment, onDiff: sh.showDiff, onSave: save,
+      saveBar({ kept: keptWords('benchmark', st.b), changed: sh.changed(), fresh: st.fresh, refusal: sh.refusal, saving: sh.saving, comment: sh.comment, onDiff: sh.showDiff, onSave: save,
         onCancel: () => navigate('benchmarks', ['all']) }),
     ]);
   }
@@ -560,13 +608,13 @@ function fitOf(kind, id, after) {
   api.send('POST', (kind === 'group' ? '/api/bench/groups/' : '/api/bench/benchmarks/') + enc(id) + '/run', {}, { params: { dry_run: 1 } })
     .then(plan => {
       const rs = plan.refusals || [];
-      if (rs.length) { v.state = 'off'; v.why = rs.map(r => r.message || r.msg).filter(Boolean).join(' '); return; }
+      if (rs.length) { v.state = 'off'; v.why = sentences(rs.map(r => r.message || r.msg)); return; }
       const fits = (plan.loads || []).map(l => l.fits || 'unknown');
       v.state = !fits.length ? 'unknown' : fits.every(f => f === 'fits') ? 'fits' : fits.includes('no') ? 'no' : fits.includes('waits') ? 'waits' : 'unknown';
       v.why = (plan.loads || []).map(l => l.reason).filter(Boolean)[0] || '';
     }, e => {
       const rs = e.body && e.body.refusals;
-      if (rs && rs.length) { v.state = 'off'; v.why = rs.map(r => r.message || r.msg).filter(Boolean).join(' '); } else { v.state = 'error'; v.why = e.message; }
+      if (rs && rs.length) { v.state = 'off'; v.why = sentences(rs.map(r => r.message || r.msg)); } else { v.state = 'error'; v.why = e.message; }
     }).then(after);
   return v;
 }
@@ -619,7 +667,7 @@ export function groupEditor(er) {
     return h('div', { class: 'ed-phase' + (probs.length ? ' bad' : ''), key: 'e' + i + ':' + JSON.stringify(raw), role: 'listitem', 'data-entry': i, 'data-fits': fit ? fit.state : null },
       h('span.n', String(i + 1)),
       h('div.body', h('div.row', h('span.ed-etitle', title), sub, fitEl),
-        fit && fit.state === 'off' ? h('span.note-s.ed-off', { 'data-off': '' }, fit.why, /[.!?]$/.test(fit.why || '') ? '' : '.', ' A group with this entry cannot be started from Potluck.') : null,
+        fit && fit.state === 'off' ? h('span.note-s.ed-off', { 'data-off': '' }, sentences([fit.why, 'A group with this entry cannot be started from Potluck.'])) : null,
         problemNote(probs)),
       h('div.tools',
         h('button.btn.sm.ghost', { type: 'button', 'data-act': 'up', 'aria-label': 'Move up', title: 'Move up', disabled: i === 0, onclick: () => { list.splice(i - 1, 0, list.splice(i, 1)[0]); draw(); } }, '↑'),
@@ -669,7 +717,7 @@ export function groupEditor(er) {
       toast(`Saved ${st.g.name || st.g.id}.`, 'ok');
       clearFits();
       await loadLists();
-      navigate('benchmarks', ['all', st.g.id]);
+      navigate('benchmarks', ['all', st.g.id], { saved: st.g.id });
     } catch (e) {
       sh.saving = false;
       sh.refusal = refusalOf(e);
@@ -718,7 +766,7 @@ export function groupEditor(er) {
             h('span.mut', 'seconds · then the run is skipped')))),
         notYet(h('span.check.ed-check.off', h('input', { type: 'checkbox', disabled: true }), h('span', h('b', 'Cold loads'), h('span.mut', ' · not available yet'))), WHY.b7),
         problemNote(['cooldown_s', 'idle_wait_s', 'only_when_idle', 'stop_on_failure', 'evict_others', 'schedule', 'baseline', 'status', 'reason'].flatMap(fieldBad))),
-      saveBar({ changed: sh.changed(), fresh: st.fresh, refusal: sh.refusal, saving: sh.saving, comment: sh.comment, onDiff: sh.showDiff, onSave: save,
+      saveBar({ kept: keptWords('group', st.g), changed: sh.changed(), fresh: st.fresh, refusal: sh.refusal, saving: sh.saving, comment: sh.comment, onDiff: sh.showDiff, onSave: save,
         onCancel: () => { location.hash = back(); } }),
     ]);
   }
