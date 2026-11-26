@@ -75,3 +75,17 @@ func TestCheckpoint_RecurrentWithoutAnExactRuleIsUnknown(t *testing.T) {
 		t.Fatalf("%+v", c)
 	}
 }
+
+// A profile capped at its trained context (the real context) changes no
+// checkpoint figure: a recurrent cell does not depend on the context, and a
+// window model is unknown at any context.
+func TestCheckpoint_DoesNotDependOnCtx(t *testing.T) {
+	q := meta(t, ggufgen.Qwen35_4B())
+	if a, b := Checkpoint(q, "f16", 2048), Checkpoint(q, "f16", 262144); a.CellBytes != b.CellBytes || a.CellBytes == 0 || a.Unknown {
+		t.Fatalf("recurrent: %+v / %+v", a, b)
+	}
+	g3 := meta(t, ggufgen.Spec{Arch: "gemma3", Blocks: 48, Embd: 3840, Heads: 16, HeadsKV: 8, KeyLength: 256, ValueLength: 256, SlidingWindow: 1024})
+	if a, b := Checkpoint(g3, "f16", 2048), Checkpoint(g3, "f16", 131072); !a.Unknown || !b.Unknown || a.CellBytes != 0 || b.CellBytes != 0 {
+		t.Fatalf("windowed: %+v / %+v", a, b)
+	}
+}

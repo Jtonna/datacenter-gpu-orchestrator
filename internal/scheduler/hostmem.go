@@ -217,10 +217,20 @@ func (c *schedCore) planHostMemory(r *PlanReport, p *core.Profile) {
 		return
 	}
 	r.HostMemory = &hm
+	// an unknown checkpoint size makes the figure a floor, never a ceiling
+	const notIncluded = "context checkpoints NOT included: size not yet known, read at the first load"
+	if hm.OnNode && hm.SizeUnknown {
+		counted := "not yet counted"
+		if hm.Counted {
+			counted = "counted in what it needs"
+		}
+		r.HostMemoryNote = fmt.Sprintf("on the host node: at least %d MiB, %s (prompt cache %d MiB; %s)",
+			hm.TermMiB(), counted, hm.PromptCacheMiB, notIncluded)
+	}
 	if !hm.OnNode {
 		if hm.SizeUnknown {
-			r.HostMemoryNote = fmt.Sprintf("on %s: up to %d MiB, not placed (context checkpoints: size not yet known, read at the first load; prompt cache %d MiB)",
-				hm.Machine, hm.TermMiB(), hm.PromptCacheMiB)
+			r.HostMemoryNote = fmt.Sprintf("on %s: at least %d MiB, not placed (prompt cache %d MiB; %s)",
+				hm.Machine, hm.TermMiB(), hm.PromptCacheMiB, notIncluded)
 		} else {
 			r.HostMemoryNote = fmt.Sprintf("on %s: up to %d MiB, not placed (context checkpoints %d MiB, prompt cache %d MiB)",
 				hm.Machine, hm.TermMiB(), hm.CheckpointsMiB, hm.PromptCacheMiB)
@@ -242,6 +252,10 @@ type ServerHostMemory struct {
 	// SizeUnknown names the instances whose checkpoint size is not known
 	// yet (HostMemory.SizeUnknown): they add their prompt cache only.
 	SizeUnknown []string
+	// Note reads the sum: "up to N MiB" when every size is known, else
+	// "at least N MiB; K loaded model(s) with checkpoints of unknown size
+	// not included" (a floor, never a ceiling); empty with nothing loaded.
+	Note string `view:"omitempty"`
 }
 
 // serverHostMemory sums the term over the loaded instances hosted on the
@@ -265,6 +279,16 @@ func (c *schedCore) serverHostMemory() ServerHostMemory {
 	}
 	sort.Strings(s.Instances)
 	sort.Strings(s.SizeUnknown)
+	total := s.CheckpointsMiB + s.PromptCacheMiB
+	switch n := len(s.SizeUnknown); {
+	case len(s.Instances) == 0:
+	case n == 0:
+		s.Note = fmt.Sprintf("up to %d MiB", total)
+	case n == 1:
+		s.Note = fmt.Sprintf("at least %d MiB; 1 loaded model with checkpoints of unknown size not included", total)
+	default:
+		s.Note = fmt.Sprintf("at least %d MiB; %d loaded models with checkpoints of unknown size not included", total, n)
+	}
 	return s
 }
 

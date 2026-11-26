@@ -241,8 +241,8 @@ function hostLine(plan, name) {
     : ["llama-server would run on the scheduler's machine; the zones hold the model."];
   const hm = plan.host_memory;
   const conv = hm && (hm.size_unknown || hm.checkpoints_mib + hm.prompt_cache_mib > 0)
-    ? h('p', { 'data-hostmem': '' }, 'Conversation memory of the host process: up to ', gb(hm.checkpoints_mib + hm.prompt_cache_mib),
-      hm.size_unknown ? ` (restore points: size not yet known, read at the first load; prompt cache ${gb(hm.prompt_cache_mib)}), `
+    ? h('p', { 'data-hostmem': '' }, 'Conversation memory of the host process: ', hm.size_unknown ? 'at least ' : 'up to ', gb(hm.checkpoints_mib + hm.prompt_cache_mib),
+      hm.size_unknown ? ` (prompt cache ${gb(hm.prompt_cache_mib)}; restore points NOT included: size not yet known, read at the first load), `
         : ` (restore points ${gb(hm.checkpoints_mib)}${hm.from_log ? `, size as the server logged it at a load of ${hm.logged_file} at ctx ${hm.logged_ctx}` : ''}, prompt cache ${gb(hm.prompt_cache_mib)}), `,
       hm.on_node ? (hm.counted ? 'counted in what it needs.' : 'not yet counted.') : 'not placed.')
     : null;
