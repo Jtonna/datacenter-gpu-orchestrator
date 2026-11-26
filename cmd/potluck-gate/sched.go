@@ -68,6 +68,7 @@ type runOpts struct {
 	Data     string // the data folder (always a copy)
 	Models   string
 	Programs string   // optional --programs-dir
+	History  string   // optional --history-dir (a copy)
 	Args     []string // extra scheduler flags
 	Env      []string // extra environment, K=V
 	Log      io.Writer
@@ -85,9 +86,16 @@ func (s schedSpec) argv(o runOpts) (prog string, args []string, container string
 			programs = "/gate/programs"
 		}
 	}
+	history := o.History
+	if s.Image != "" && history != "" {
+		history = "/gate/history"
+	}
 	sa := []string{"--listen", o.Listen, "--data-dir", data, "--models-dir", models}
 	if programs != "" {
 		sa = append(sa, "--programs-dir", programs)
+	}
+	if history != "" {
+		sa = append(sa, "--history-dir", history)
 	}
 	sa = append(sa, o.Args...)
 	if s.Image == "" {
@@ -99,6 +107,9 @@ func (s schedSpec) argv(o runOpts) (prog string, args []string, container string
 		"-v", abs(o.Data) + ":/gate/data", "-v", abs(o.Models) + ":/gate/models:ro"}
 	if o.Programs != "" {
 		da = append(da, "-v", abs(o.Programs)+":/gate/programs:ro")
+	}
+	if o.History != "" {
+		da = append(da, "-v", abs(o.History)+":/gate/history")
 	}
 	for _, kv := range o.Env {
 		da = append(da, "-e", kv)
@@ -281,8 +292,9 @@ func truncate(s string, n int) string {
 
 // copyDir copies the folder src into dst, which must not exist or be empty.
 // The gate programs work on this copy only; the source is never opened for
-// writing. Take the source from a stopped scheduler (or a snapshot of one):
-// a database being written while it is copied may be copied half-written.
+// writing. A database (*.db) is copied with SQLite (copyDB): a consistent
+// copy even while a scheduler writes it; its -wal and -shm files are not
+// copied. Every other file is copied byte by byte.
 func copyDir(src, dst string) error {
 	fi, err := os.Stat(src)
 	if err != nil {
@@ -308,25 +320,36 @@ func copyDir(src, dst string) error {
 		if d.IsDir() {
 			return os.MkdirAll(out, 0o755)
 		}
-		if !d.Type().IsRegular() {
+		if !d.Type().IsRegular() || isDBSidecar(d.Name()) {
 			return nil
 		}
-		in, err := os.Open(p)
-		if err != nil {
-			return err
+		if isDB(d.Name()) {
+			return copyDB(p, out)
 		}
-		defer in.Close()
-		info, _ := d.Info()
-		w, err := os.OpenFile(out, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm()|0o600)
-		if err != nil {
-			return err
-		}
-		if _, err := io.Copy(w, in); err != nil {
-			w.Close()
-			return err
-		}
-		return w.Close()
+		return copyFile(p, out)
 	})
+}
+
+// copyFile copies one file, its mode kept (and made writable by its owner).
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	info, err := in.Stat()
+	if err != nil {
+		return err
+	}
+	w, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm()|0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(w, in); err != nil {
+		w.Close()
+		return err
+	}
+	return w.Close()
 }
 
 // freeAddr is a free TCP address on host (port 0 bound and released).

@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -53,12 +55,12 @@ func TestNextOpTurnsCreateChangeDelete(t *testing.T) {
 func TestCopyDirMakesACopyAndRefusesItsOwnInside(t *testing.T) {
 	src := t.TempDir()
 	os.MkdirAll(filepath.Join(src, "sub"), 0o755)
-	os.WriteFile(filepath.Join(src, "sub", "a.db"), []byte("data"), 0o600)
+	os.WriteFile(filepath.Join(src, "sub", "a.bin"), []byte("data"), 0o600)
 	dst := filepath.Join(t.TempDir(), "copy")
 	if err := copyDir(src, dst); err != nil {
 		t.Fatal(err)
 	}
-	if b, _ := os.ReadFile(filepath.Join(dst, "sub", "a.db")); string(b) != "data" {
+	if b, _ := os.ReadFile(filepath.Join(dst, "sub", "a.bin")); string(b) != "data" {
 		t.Fatalf("copy %q", b)
 	}
 	if err := copyDir(src, dst); err == nil {
@@ -275,7 +277,7 @@ func TestCrashOnTheRealScheduler(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Result != "PASS" || res.Kills != 3 || res.Writes != 12 || res.Listings["profiles"] < 2 {
+	if res.Result != "PASS" || res.Kills != 3 || res.Writes != 12 || res.Listings["profiles"] < 2 || len(res.Databases) == 0 || !dbsOK(res.Databases) {
 		t.Fatalf("%s\n%+v\n%s", res.line(), res.Problems, res.Log.Samples)
 	}
 	if hashDir(t, data) != before {
@@ -298,7 +300,10 @@ func TestPlansOnTheRealSchedulerWithAFakeFleet(t *testing.T) {
 	}
 	work := filepath.Join(t.TempDir(), "work")
 	o := plansOpts{data: data, models: models, programs: programs, nodes: nodes, fakeAgents: agents, addrBase: "127.0.0.2",
-		work: work, settle: 30 * time.Second, ready: time.Minute, ignore: regexp.MustCompile(`(^|\.)[a-z_]*(_at|_at_ms)$`), print: 20}
+		work: work, settle: 30 * time.Second, ready: time.Minute,
+		// the test release has no host program: the same-build check refuses loads, which this test does not make
+		allow:  []*regexp.Regexp{regexp.MustCompile(`same-build rule`)},
+		ignore: regexp.MustCompile(`(^|\.)[a-z_]*(_at|_at_ms)$`), print: 20}
 	o.old, _ = parseSpec(sched)
 	o.new = o.old
 	var out strings.Builder
@@ -309,10 +314,56 @@ func TestPlansOnTheRealSchedulerWithAFakeFleet(t *testing.T) {
 	if rep.OldNew.Profiles != 0 || rep.WayBackOld.Profiles != 0 || rep.WayBackNew.Profiles != 0 || len(rep.Unsettled) != 0 {
 		t.Fatalf("%+v\n%s", rep, out.String())
 	}
+	for _, name := range []string{"old-1", "new-1", "old-2", "new-2"} {
+		r := rep.Runs[name]
+		if r == nil || r.Version == "" || r.MemoryRows == 0 || r.Actions == nil || r.bad() || len(r.Databases) == 0 {
+			t.Fatalf("run %s: %+v", name, r)
+		}
+		if !strings.Contains(out.String(), name+": ") || !strings.Contains(out.String(), "integrity scheduler.db ok") {
+			t.Fatalf("no run line for %s:\n%s", name, out.String())
+		}
+	}
 	var d dump
 	b, _ := os.ReadFile(filepath.Join(work, "old-1.json"))
 	json.Unmarshal(b, &d)
 	if d["alpha"]["plan.action"] == "" || d["alpha"]["plan.memory.nodes[node-a].will_take_mib"] == "" {
 		t.Fatalf("alpha's dump has no memory row of node-a: %v", d["alpha"])
+	}
+}
+
+// A database written by a running scheduler is copied whole: the rows still
+// in its write-ahead log are in the copy, and the copy passes its check.
+func TestCopyDirCopiesALiveDatabaseWhole(t *testing.T) {
+	src := t.TempDir()
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(filepath.Join(src, "scheduler.db"))+"?_pragma=journal_mode(WAL)&_pragma=wal_autocheckpoint(0)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, q := range []string{"CREATE TABLE schema_migrations (version INTEGER)", "INSERT INTO schema_migrations VALUES (1), (2)",
+		"CREATE TABLE needs_shapes (k TEXT)", "INSERT INTO needs_shapes VALUES ('a'), ('b'), ('c')"} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if fi, err := os.Stat(filepath.Join(src, "scheduler.db-wal")); err != nil || fi.Size() == 0 {
+		t.Fatalf("the test wants rows in the write-ahead log: %v", err)
+	}
+	dst := filepath.Join(t.TempDir(), "copy")
+	if err := copyDir(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "scheduler.db-wal")); err == nil {
+		t.Fatal("the write-ahead log was copied beside the database")
+	}
+	c := checkDB(filepath.Join(dst, "scheduler.db"))
+	if c.Integrity != "ok" || strings.Join(c.Tables, ",") != "needs_shapes" || fmt.Sprint(c.Ledgers["schema_migrations"]) != "[1 2]" {
+		t.Fatalf("%+v", c)
+	}
+	cp, _ := sql.Open("sqlite", "file:"+filepath.ToSlash(filepath.Join(dst, "scheduler.db"))+"?mode=ro")
+	defer cp.Close()
+	var n int
+	if err := cp.QueryRow("SELECT count(*) FROM needs_shapes").Scan(&n); err != nil || n != 3 {
+		t.Fatalf("rows in the copy: %d %v", n, err)
 	}
 }

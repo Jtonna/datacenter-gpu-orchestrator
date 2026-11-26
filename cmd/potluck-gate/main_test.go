@@ -207,12 +207,15 @@ func fakeScheduler(mode string, args []string) int {
 }
 
 // hashDir is a digest of every file under dir, to show a source folder was
-// not written.
+// not written. A database's -shm file is left out: it is SQLite's shared
+// index of the write-ahead log, which every reader of a database in WAL mode
+// updates (the live scheduler's own readers do too); the database and its
+// log are compared.
 func hashDir(t *testing.T, dir string) string {
 	t.Helper()
 	h := sha256.New()
 	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+		if err != nil || d.IsDir() || strings.HasSuffix(p, ".db-shm") {
 			return err
 		}
 		b, err := os.ReadFile(p)

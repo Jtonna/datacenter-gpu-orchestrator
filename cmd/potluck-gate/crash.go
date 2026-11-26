@@ -42,6 +42,8 @@ It asserts:
     profiles of the model catalog (/api/models) hold the same number
   - no panic line and no ERROR line in the scheduler's log (--allow-log
     exempts a line the caller expects, say a copy without a program release)
+  - after the last stop, every database of the copy passes SQLite's
+    integrity check
 
 Output: one line (cycles, writes, reads, kills, listings by kind, bad reads,
 bad writes, panics, errors, PASS or FAIL) and a JSON file (--out). Exit 0 on
@@ -53,6 +55,7 @@ flags:
 type crashOpts struct {
 	spec                         schedSpec
 	data, models, programs, work string
+	history                      string
 	out, model, listen           string
 	cycles, kills                int
 	seed                         int64
@@ -69,9 +72,10 @@ func crashMain(argv []string, stdout, stderr io.Writer) int {
 	var spec string
 	var allow, args, env multiFlag
 	fs.StringVar(&spec, "scheduler", "", "the build under test: a binary, or image:NAME (docker run --network host)")
-	fs.StringVar(&o.data, "data", "", "the data folder to copy (from a stopped scheduler or a snapshot); never written")
+	fs.StringVar(&o.data, "data", "", "the data folder to copy; never written (its databases are copied with SQLite, safe while a scheduler runs on it)")
 	fs.StringVar(&o.models, "models", "", "the models folder (mounted read-only for an image)")
 	fs.StringVar(&o.programs, "programs", "", "the program release folder (--programs-dir), optional")
+	fs.StringVar(&o.history, "history", "", "the event history folder to copy (--history-dir), optional; never written")
 	fs.StringVar(&o.work, "work", "", "the work folder for the copy, the log and the result (default: a new temporary folder)")
 	fs.StringVar(&o.out, "out", "", "the JSON result (default: <work>/crash.json)")
 	fs.StringVar(&o.model, "model", "", "the model file of the gate profiles (default: the model of the data's first profile)")
@@ -150,6 +154,7 @@ type crashResult struct {
 	ListingWaits int            `json:"listing_waits"` // listings that agreed only on a second look
 	LastRevision int            `json:"last_revision"`
 	Log          logScan        `json:"log"`
+	Databases    []dbCheck      `json:"databases"`          // after the last stop: integrity, need tables, ledgers
 	Problems     []string       `json:"problems,omitempty"` // the first 50
 	DurationS    float64        `json:"duration_s"`
 	Work         string         `json:"work"`
@@ -165,8 +170,12 @@ func (r *crashResult) line() string {
 	for _, k := range kinds {
 		ls = append(ls, fmt.Sprintf("%s=%d", k, r.Listings[k]))
 	}
-	return fmt.Sprintf("crash: %s cycles=%d writes=%d reads=%d kills=%d listings[%s] bad_reads=%d bad_writes=%d panics=%d errors=%d seed=%d",
-		r.Result, r.Cycles, r.Writes, r.Reads, r.Kills, strings.Join(ls, " "), r.BadReads, r.BadWrites, r.Log.Panics, r.Log.Errors, r.Seed)
+	integrity := "ok"
+	if !dbsOK(r.Databases) {
+		integrity = "BAD"
+	}
+	return fmt.Sprintf("crash: %s cycles=%d writes=%d reads=%d kills=%d listings[%s] bad_reads=%d bad_writes=%d panics=%d errors=%d integrity=%s seed=%d",
+		r.Result, r.Cycles, r.Writes, r.Reads, r.Kills, strings.Join(ls, " "), r.BadReads, r.BadWrites, r.Log.Panics, r.Log.Errors, integrity, r.Seed)
 }
 
 func (r *crashResult) problem(f string, a ...any) {
@@ -325,6 +334,9 @@ func runCrash(ctx context.Context, o crashOpts, stdout io.Writer) (*crashResult,
 		}
 	}
 	ro := runOpts{Listen: listen, Data: copyTo, Models: o.models, Programs: o.programs, Args: o.args, Env: o.env}
+	if o.history != "" {
+		ro.History = filepath.Join(work, "history")
+	}
 	if o.dryRun {
 		if _, err := os.Stat(o.data); err != nil {
 			return nil, fmt.Errorf("data folder: %w", err)
@@ -340,6 +352,11 @@ func runCrash(ctx context.Context, o crashOpts, stdout io.Writer) (*crashResult,
 	}
 	if err := copyDir(o.data, copyTo); err != nil {
 		return nil, err
+	}
+	if o.history != "" {
+		if err := copyDir(o.history, ro.History); err != nil {
+			return nil, err
+		}
 	}
 	lf, err := os.Create(filepath.Join(work, "scheduler.log"))
 	if err != nil {
@@ -507,9 +524,10 @@ func runCrash(ctx context.Context, o crashOpts, stdout io.Writer) (*crashResult,
 	res.LastRevision = lastRev
 	sched.stop(15 * time.Second)
 	res.Log = scanLog(logs.String(), o.allow)
+	res.Databases = checkDBs(copyTo)
 	res.DurationS = time.Since(t0).Seconds()
 	res.Result = "PASS"
-	if res.BadReads+res.BadWrites+res.Log.Panics+res.Log.Errors > 0 {
+	if res.BadReads+res.BadWrites+res.Log.Panics+res.Log.Errors > 0 || !dbsOK(res.Databases) {
 		res.Result = "FAIL"
 	}
 	if err := writeJSONFile(o.out, res); err != nil {
