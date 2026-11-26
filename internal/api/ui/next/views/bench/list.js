@@ -18,10 +18,12 @@
 // bench-run/run-cancel); an entry the setting bench_not_startable keeps from
 // starting shows "Not startable here: <reason>" in place of Run.
 //
-// Not available yet (drawn, greyed, the reason on hover; p15 plan): New
-// group, New benchmark and Edit (no editor mockup), Run on a recipe (its
-// inputs dialog has no mockup), "Smallest that fits" (B6), "cold loads"
-// (B7), Compare two (B10), the drop-out note (B11).
+// New group, New benchmark, a benchmark's Edit and the group's Edit open the
+// editors (edit.js, board bench-editors); Duplicate is its dialog there.
+//
+// Not available yet (drawn, greyed, the reason on hover; p15 plan): Run on a
+// recipe (its inputs dialog has no mockup), "Smallest that fits" (B6),
+// "cold loads" (B7), Compare two (B10), the drop-out note (B11).
 
 import { h } from '../../core/dom.js';
 import { href, navigate } from '../../core/router.js';
@@ -32,6 +34,7 @@ import { num, dur, plural, DASH } from '../../core/format.js';
 import { bench, groupById, benchmarkById, groupTitle, benchTitle, activeRun, groupSub, chain, entryOf, matrixWords, optionWords,
   when, tookS, resultIcon, dots, coldNote, notYet, WHY, placementWords, modelName } from './common.js';
 import { runButton, cancelButton, notStartable, isRecipe, queuedCount } from './run.js';
+import { duplicateGroup, editLink } from './edit.js';
 
 const GRID = 'M3 3h6v6H3zM11 3h6v6h-6zM3 11h6v6H3zM11 11h6v6h-6z';
 const LINES = 'M4 5h12M4 10h12M4 15h8';
@@ -102,7 +105,8 @@ function benchRow(b) {
     h('div.bp-res', u ? h('span.bp-dots', h('span', { class: 'bp-dot ' + (u.outcome === 'ready' ? 'ok' : u.outcome === 'running' || u.outcome === 'refused_by_exclusion' ? '' : u.outcome === 'refused' ? 'ref' : 'bad'),
       title: u.outcome === 'ready' ? '1 passed' : u.outcome === 'refused_by_exclusion' ? 'not judged: the profile forces an excluded zone' : u.outcome }, '1')) : null),
     h('div.bp-took.mut', u && u.duration_s != null ? dur(u.duration_s) : ''),
-    b.not_startable ? null : isRecipe(b) ? notYet(h('span.btn.sm.bp-hover', 'Run'), WHY.recipe) : runButton('benchmark', b.id, 'Run', 'btn sm bp-hover'));
+    h('span.bp-hacts', (b.parallel || []).length ? null : h('a.btn.sm.bp-hover', { href: editLink('benchmark', b.id), 'data-act': 'edit', title: 'Edit ' + benchTitle(b) }, 'Edit'),
+      b.not_startable ? null : isRecipe(b) ? notYet(h('span.btn.sm.bp-hover', 'Run'), WHY.recipe) : runButton('benchmark', b.id, 'Run', 'btn sm bp-hover')));
 }
 
 function match(q, ...texts) {
@@ -124,8 +128,8 @@ export function listColumn(r, q, setQ, narrow) {
     h('section.bp-card', { 'aria-label': 'Groups and benchmarks' },
       h('div.bp-tools.bp-cardtools',
         searchField(q, setQ, 'Search benchmarks and groups', 'bench-search'),
-        narrow ? null : notYet(h('span.btn', 'New group'), WHY.edit),
-        notYet(h('span.btn.pri', 'New benchmark'), WHY.edit)),
+        narrow ? null : h('a.btn', { href: href('benchmarks', ['group', 'new']), 'data-act': 'new-group' }, 'New group'),
+        h('a.btn.pri', { href: href('benchmarks', ['new']), 'data-act': 'new-benchmark' }, 'New benchmark')),
       run ? [h('h2.bp-sec.now', 'Running now · 1'), h('div.bp-rows', { role: 'list', 'aria-label': 'Running now' }, runningRow(run))] : null,
       h('h2.bp-sec', 'Groups'),
       gs.length ? h('div.bp-rows', { role: 'list', 'aria-label': 'Groups' }, gs.map(g => groupRow(g, run, g.id === open)))
@@ -225,28 +229,12 @@ export function groupPanel(id, onClose) {
         : h('p.mut', 'This group has not run yet.'),
       ps.runs && ps.runs.length ? h('a.bp-all', { href: href('benchmarks', ['runs'], { suite: id }) }, `All ${total != null ? num(total) + ' ' : ''}runs ›`) : null);
   };
-  const duplicate = async () => {
-    const g = groupById(id);
-    if (!g) return;
-    let idInput, nameInput;
-    const v = await dialog({ title: 'Duplicate this group',
-      body: h('div.col', { style: 'gap:12px' }, h('p', 'A copy with the same entries and options, under a new id. Nothing runs.'),
-        h('div.field', h('label', 'New id'), idInput = h('input.input', { type: 'text', name: 'id', value: g.id + '-copy', 'aria-label': 'New id' })),
-        h('div.field', h('label', 'Name'), nameInput = h('input.input', { type: 'text', name: 'name', value: (g.name || g.id) + ' (copy)', 'aria-label': 'Name' }))),
-      comment: { label: 'Why', required: true }, actions: [{ label: 'Cancel', value: undefined }, { label: 'Duplicate', kind: 'pri', value: () => ({ id: idInput.value.trim(), name: nameInput.value.trim() }) }] });
-    if (!v || !v.value || !v.value.id) return;
-    const copy = { id: v.value.id, name: v.value.name || v.value.id };
-    for (const k of ['description', 'benchmarks', 'stop_on_failure', 'cooldown_s', 'only_when_idle', 'idle_wait_s', 'evict_others', 'baseline']) if (g[k] !== undefined) copy[k] = g[k];
-    try {
-      await api.post('/api/bench/groups', copy, { comment: v.comment });
-      toast('Duplicated as ' + copy.id, 'ok');
-      navigate('benchmarks', ['all', copy.id]);
-    } catch (e) { toast(e.message, 'err'); }
-  };
+  // Duplicate: the board's dialog (edit.js), a copy under a new id with a comment
+  const duplicate = () => duplicateGroup(groupById(id));
   const p = sidePanel({ closesMenu: true, label: 'Group', kind: 'bench-group', name: 'Group ' + id,
     title: () => groupTitle(groupById(id)) || id,
     controls: () => h('div.bp-acts', groupById(id) && groupById(id).not_startable ? notStartable(groupById(id).not_startable) : runButton('group', id, 'Run group', 'btn pri sm'),
-      notYet(h('span.btn.sm', 'Edit'), WHY.edit),
+      groupById(id) ? h('a.btn.sm', { href: editLink('group', id), 'data-act': 'edit' }, 'Edit') : null,
       h('button.btn.sm', { type: 'button', 'data-act': 'duplicate', onclick: duplicate, disabled: groupById(id) ? null : '' }, 'Duplicate')),
     body, onClose });
   p.key = id;

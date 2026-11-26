@@ -17,10 +17,16 @@
 //           with two queued behind it, a cancelled run; the POSTs of a run
 //           (its dry read and its start) and of a cancel answer (rcPost).
 //   runwait  runcancel with the run waiting until idle.
+//   editors  runcancel plus the editors (board bench-editors): the schema
+//           (bench-schema.json, the server's own; a Go test keeps it equal),
+//           one benchmark's GET, the task sets, the plan of the board's
+//           profiles, and the saves (edWrite: a comment required, a few of
+//           the server's refusals with their sentences and problems).
 
+import { readFileSync } from 'node:fs';
 import { TPL } from './bench-tpl.mjs';
 
-export const BENCH_STATES = ['long', 'boards', 'runcancel', 'runwait'];
+export const BENCH_STATES = ['long', 'boards', 'runcancel', 'runwait', 'editors'];
 
 export const LONG = {
   suiteDesc: 'Measures load times and answer speed on the consoles with a cold page cache and again with a warm one, so the two can be compared run by run. Every step drops the caches first; the note of each run says which file was dropped from the share and on which consoles the drop was done before it.',
@@ -319,6 +325,7 @@ function boardsRoute(p, q, now, rc = '') {
 
 export function benchRoute(state, p, q, now = Date.now()) {
   if (!state) return null;
+  if (state === 'editors') return edRoute(p, q, now);
   if (state === 'runcancel' || state === 'runwait') return boardsRoute(p, q, now, state);
   return state === 'boards' ? boardsRoute(p, q, now) : longRoute(p, q, now);
 }
@@ -468,3 +475,76 @@ export function rcPost(p, q, body) {
 }
 
 export const benchRunId = runId;
+
+// ---------- --bench editors: the benchmark and group editors (board bench-editors) ----------
+
+const SCHEMA = JSON.parse(readFileSync(new URL('./bench-schema.json', import.meta.url), 'utf8'));
+const ED_PROFILES = [1, 2, 3, 4, 5].map(n => ({ id: rcProfile(n), shown_name: rcShown(n), model: QWEN, model_name: 'Qwen 3.5 4B', ctx: 16384, ctx_real: 16384,
+  stage: n === 1 ? 'production' : 'test', force_nodes: n === 1 ? [] : CONSOLES.slice(0, n), aliases: [] }))
+  .concat([{ id: 'test-s1-qwen4b-host', shown_name: 'TEST - s1-qwen4b-host', model: QWEN, model_name: 'Qwen 3.5 4B', ctx: 16384, ctx_real: 16384, stage: 'test', force_nodes: ['scheduler'], aliases: [] }]);
+export const edProfiles = () => clone(ED_PROFILES);
+const TASK_SETS = [{ id: 'coding-basics', version: 2, sha256: 'a'.repeat(64), title: 'Coding basics', tasks: 12, created_at: 1795000000000, results: 4 }];
+
+function edRoute(p, q, now) {
+  if (p === '/api/bench/schema') return SCHEMA;
+  if (p === '/api/bench/task-sets') return { task_sets: TASK_SETS };
+  const m = /^\/api\/bench\/benchmarks\/([^/]+)$/.exec(p);
+  if (m) {
+    const id = decodeURIComponent(m[1]);
+    const b = RC_BENCHES.concat(BENCHES).find(x => x.id === id);
+    return b ? Object.assign({ source: 'api', created_at: now - 40 * 24 * HOUR, updated_at: now - 3 * 24 * HOUR }, clone(b)) : undefined;
+  }
+  const d = boardsRoute(p, q, now, 'runcancel');
+  // run 51 ran qwen4b-2con, saved again since (GET /api/bench/runs/{id}: definitions_changed)
+  if (d && /^\/api\/bench\/runs\/(?:51|run-51)$/.test(p)) d.definitions_changed = [{ id: 'qwen4b-2con', name: 'Qwen 4B, 2 consoles', change: 'changed' }];
+  else if (d && /^\/api\/bench\/runs\/[^/]+$/.test(p)) d.definitions_changed = [];
+  return d;
+}
+
+// edPlan(model): POST /api/plan for the board's profiles (null: another profile)
+export function edPlan(model) {
+  const e = ED_PROFILES.find(x => x.id === model);
+  if (!e) return null;
+  if (e.id === 'test-s1-qwen4b-host') return { status: 200, body: { model, ctx: 16384, action: 'start', placement: [{ id: 'scheduler', local: true, role: 'host', share: 1 }], victims: [],
+    reason: '', excluded_by: 'scheduler', need_mib: 3400, fit_need_mib: 3400, measured: true, need_basis: 'measured, needs_mib', memory: null } };
+  const n = e.force_nodes.length || 1;
+  const names = CONSOLES.slice(0, n);
+  const take = Math.round(3400 / n);
+  return { status: 200, body: { model, ctx: 16384, action: 'start', reason: '', excluded_by: '', need_mib: 3400, fit_need_mib: 3400, measured: true, need_basis: 'measured, needs_mib',
+    placement: names.map((name, i) => ({ id: mac2(i + 1), local: false, role: i ? 'helper' : 'host', share: 1 / n })), victims: [],
+    memory: { fits: true, nodes: names.map((name, i) => ({ id: mac2(i + 1), node: name, will_take_mib: take, remains_mib: 6000 })) } } };
+}
+
+// edWrite(method, path, body): the saves. The sentences are the server's
+// (benchspec Validate / ValidateGroup, internal/api/bench.go), each with the
+// part it names (problems), as the server answers a refused save.
+const ED_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const refused = lines => ({ status: 422, body: { error: { message: lines.join('\n'), type: 'invalid_request_error', param: null, code: 422, reason: 'invalid' },
+  problems: lines.map(l => ({ path: (/^([a-z_]+(?:\[\d+\])?(?:\.[a-z_]+(?:\[\d+\])?)*)(?=[ :]|$)/.exec(l) || ['', ''])[1], message: l })) } });
+export function edWrite(method, p, body) {
+  const m = /^\/api\/bench\/(benchmarks|groups|suites)(?:\/([^/]+))?$/.exec(p);
+  if (!m || (method === 'POST') === !!m[2]) return null;
+  const comment = String(body.comment || '').trim();
+  if (!comment) return { status: 400, body: { error: { message: 'a comment is required (body {"comment": "..."} or the X-Comment header)', type: 'invalid_request_error', code: 400 } } };
+  const d = Object.assign({}, body);
+  delete d.comment;
+  const lines = [];
+  if (!ED_ID.test(d.id || '')) lines.push(`id "${d.id || ''}" must be 1 to 64 characters: lower-case letters, digits, '.', '-' or '_', starting with a letter or digit`);
+  if (m[1] === 'benchmarks') {
+    const known = RC_BENCHES.concat(BENCHES).map(b => b.id);
+    if (method === 'POST' && known.includes(d.id)) return { status: 409, body: { error: { message: `benchmark "${d.id}" already exists: use PUT /api/bench/benchmarks/${d.id} to replace it`, code: 409 } } };
+    if (!d.profile && !d.inputs) lines.push('profile or inputs is required: a fixed profile, or inputs (model, ctx, placement) for a recipe');
+    (d.phases || []).forEach((ph, i) => {
+      if (ph.type === 'requests' && !(ph.requests || []).length) lines.push(`phases[${i}] (requests): requests: between 1 and 64 are required`);
+      (ph.requests || []).forEach((r, k) => { if (!r.prompt && !r.messages) lines.push(`phases[${i}].requests[${k}] (${r.name || 'request-' + (k + 1)}): messages or prompt is required`); });
+    });
+    if (typeof d.timeout_s === 'number' && (d.timeout_s < 0 || d.timeout_s > 86400)) lines.push('timeout_s must be 0 to 86400');
+  } else {
+    const known = RC_GROUPS.concat(GROUPS).map(g => g.id);
+    if (method === 'POST' && known.includes(d.id)) return { status: 409, body: { error: { message: `suite "${d.id}" already exists: use PUT /api/bench/suites/${d.id} to replace it`, code: 409 } } };
+    const benches = RC_BENCHES.concat(BENCHES).map(b => b.id);
+    (d.benchmarks || []).forEach((e, i) => { if (typeof e === 'string' && !benches.includes(e)) lines.push(`benchmarks[${i}]: "${e}" is not a benchmark`); });
+  }
+  if (lines.length) return refused(lines);
+  return { status: method === 'POST' ? 201 : 200, body: Object.assign({ source: 'api', created_at: 1795000000000, updated_at: 1795000000000 }, d) };
+}

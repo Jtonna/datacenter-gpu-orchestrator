@@ -1771,3 +1771,91 @@ a.bp-view:hover{background:var(--hover-bg)}
   .tbl.rd-loads td{display:block;border-top:0;padding:2px 0}
   .tbl.rd-loads td.r{text-align:left}
 }
+
+/* ---------- Benchmarks · the editors (board bench-editors; views/bench/edit.js) ----------
+   One card the page's width, sections with a hairline between them (the profile
+   page's), a save bar that stays at the foot of the viewport. Under 720 px the
+   grids fall to one column and a prompt stacks as a block. */
+.ed-page{min-width:0}
+.ed-card{display:flex;flex-direction:column;min-width:0;padding:0;overflow:visible}
+.ed-sec{display:flex;flex-direction:column;gap:10px;padding:16px var(--pad-panel);border-top:1px solid var(--hairline);min-width:0}
+.ed-sec:first-child,.ed-note+.ed-sec{border-top:0}
+.ed-sec>h3{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;font-size:var(--fs-body);font-weight:800}
+.ed-sec>h3>span,.ed-h>span:not([data-name]){font-size:12.5px;font-weight:600;color:var(--mut)}
+.ed-h{font-size:var(--fs-panel);font-weight:800;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;overflow-wrap:anywhere}
+.ed-sub{font-weight:600}
+.ed-note{margin:12px var(--pad-panel) 0}
+.ed-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 16px}
+.ed-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 16px}
+.ed-grid3 .ed-wide{grid-column:span 2}
+.ed-num{display:flex;align-items:center;gap:8px;min-width:0}
+.ed-num .input{flex:1 1 auto;min-width:0}
+.ed-num>.mut{flex:none;white-space:nowrap;font-size:12.5px}
+.ed-what{display:flex;flex-direction:column;gap:4px;padding:10px 12px;border:1px solid var(--hairline);border-radius:10px;background:var(--inset);min-width:0;overflow-wrap:anywhere}
+.ed-planline .b{margin-right:6px}
+.ed-list{display:flex;flex-direction:column;gap:8px}
+.ed-phase{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--hairline);border-radius:10px;background:var(--surface);min-width:0}
+.ed-phase.open{border-color:var(--selected);background:var(--inset)}
+.ed-phase.bad{border-color:var(--failed)}
+.ed-phase .n{flex:none;width:20px;color:var(--mut);font-family:var(--mono);font-size:12.5px;padding-top:4px}
+.ed-phase .body{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
+.ed-phase .body>.row{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;min-width:0}
+.ed-phase .body>.row>*{min-width:0;overflow-wrap:anywhere}
+.ed-phase .tools{flex:none;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:2px}
+.ed-etitle{font-weight:600}
+.ed-kind-note{margin:0}
+.ed-checks{display:flex;flex-wrap:wrap;gap:8px 20px}
+.check.ed-check{align-items:flex-start;font-weight:600}
+.check.ed-check input{margin-top:3px}
+.check.ed-check.off{opacity:.5;cursor:not-allowed}
+.ed-done{justify-content:flex-end}
+.btn.dngtext{color:var(--coral-text)}
+.ed-problem{color:var(--coral-text);font-size:12.5px;font-weight:600;display:flex;flex-direction:column;gap:2px;overflow-wrap:anywhere}
+.ed-sec.bad>h3{color:var(--coral-text)}
+.ed-off{color:var(--coral-text)}
+.ed-prompts{display:flex;flex-direction:column;gap:8px;min-width:0}
+.ed-ptable{display:flex;flex-direction:column;gap:6px;min-width:0}
+.ed-prow{display:grid;grid-template-columns:120px minmax(0,1fr) 96px auto;gap:8px;align-items:start}
+.ed-prow.head{font-size:var(--fs-label);font-weight:700;color:var(--mut)}
+.ed-prow .textarea{min-height:34px}
+.ed-prow .r{text-align:right}
+.ed-chat{padding-top:6px}
+.ed-req{display:flex;flex-direction:column;gap:8px}
+.ed-addrow{align-items:flex-start}
+.ed-add{display:flex;flex-direction:column;gap:6px;width:min(340px,100%)}
+.ed-hits{display:flex;flex-direction:column;border:1px solid var(--line-panel);border-radius:10px;background:var(--surface);overflow:hidden}
+.ed-hit{all:unset;cursor:pointer;display:flex;align-items:center;gap:6px;padding:7px 10px;min-width:0;overflow-wrap:anywhere}
+.ed-hit:hover,.ed-hit:focus-visible{background:var(--inset)}
+.ed-hit .bp-kind{flex:none}
+.ed-tpl{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.ed-card-tpl{all:unset;box-sizing:border-box;cursor:pointer;display:flex;flex-direction:column;gap:4px;padding:12px;border:1px solid var(--line-panel);border-radius:10px;background:var(--surface);min-width:0;height:100%}
+.ed-card-tpl.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.ed-card-tpl:focus-visible{outline:2px solid var(--accent)}
+.ed-card-tpl.off{opacity:.5;cursor:not-allowed}
+.ed-fit{font-size:12px}
+.linkbtn{all:unset;cursor:pointer;color:var(--link);font-weight:700}
+.linkbtn:hover{text-decoration:underline}
+/* the save bar: sticky at the foot; the help text above it is not covered (room below the last section) */
+.ed-card>.ed-sec:nth-last-child(2){padding-bottom:28px}
+.ed-savebar{position:sticky;bottom:0;z-index:6;display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:10px var(--pad-panel);border-top:1px solid var(--line-panel);background:var(--surface);border-radius:0 0 12px 12px}
+.ed-savebar.bad{background:var(--failed-row)}
+.ed-left{flex:1 1 260px;min-width:0;overflow-wrap:anywhere}
+.ed-acts{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-left:auto;min-width:0}
+.ed-comment{width:280px;max-width:100%}
+.ed-refused{color:var(--coral-text);font-weight:600}
+.ed-lines{display:inline-flex;flex-direction:column;gap:2px;vertical-align:top}
+.bp-changed{margin:0}
+.bp-hacts{display:flex;gap:6px;align-items:center}
+@media (max-width:720px){
+  .ed-grid2,.ed-grid3,.ed-tpl{grid-template-columns:1fr}
+  .ed-grid3 .ed-wide{grid-column:auto}
+  .ed-prow{grid-template-columns:1fr auto}
+  .ed-prow>:nth-child(2){grid-column:1 / -1;order:3}
+  .ed-prow>:nth-child(3){order:2}
+  .ed-prow>:nth-child(4){order:4;justify-self:end}
+  .ed-prow.head{display:none}
+  .ed-phase{flex-wrap:wrap}
+  .ed-phase .tools{width:100%;justify-content:flex-start;padding-left:30px}
+  .ed-acts{width:100%;margin-left:0}
+  .ed-comment{flex:1 1 100%;width:auto}
+}

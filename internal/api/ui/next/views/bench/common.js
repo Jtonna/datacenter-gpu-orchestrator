@@ -304,6 +304,5 @@ export const WHY = {
   b10: 'comparing two runs has no route and no mockup of its view yet (route: benchmarks slice 5, B10; the view waits for a mockup)',
   b11: 'what stopped a run (a machine dropping out) is not read from the history yet (benchmarks slice 5: B11)',
   b13: 'one-click PDF is not served yet: open the full report and print it (benchmarks slice 5: B13)',
-  edit: 'the group and benchmark editors have no mockup yet; they are built after the owner draws them',
   recipe: 'a recipe asks for its inputs (model, placement, context) before it runs, and that dialog has no mockup yet (benchmarks slice 6 drew the run dialog without inputs)',
 };

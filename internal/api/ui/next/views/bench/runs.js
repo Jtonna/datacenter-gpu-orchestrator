@@ -235,6 +235,18 @@ function byRecipe(steps) {
   return out;
 }
 
+// changedSince(run): "Definition changed since this run: Alpha check." (the
+// server's definitions_changed: a benchmark the run ran whose stored
+// definition is different now, or gone). The run keeps what it ran.
+export function changedSince(rn) {
+  const ch = rn.definitions_changed || [];
+  if (!ch.length) return null;
+  const item = c => (c.change === 'gone' ? h('span', { 'data-def': c.id }, c.name || c.id, ' (removed)')
+    : h('a', { href: href('benchmarks', ['benchmark', c.id, 'edit']), 'data-def': c.id }, c.name || c.id));
+  return h('p.note-s.bp-changed', { 'data-definitions-changed': '' }, ch.length === 1 ? 'Definition changed since this run: ' : 'Definitions changed since this run: ',
+    ch.map((c, i) => [i ? (i === ch.length - 1 ? ' and ' : ', ') : null, item(c)]), '. The run keeps what it ran.');
+}
+
 export function runPanel(ref, q, onClose) {
   const ps = { run: null, err: '', showAll: false, sig: null };
   const load = async () => {
@@ -266,6 +278,7 @@ export function runPanel(ref, q, onClose) {
         kpi(num((c.failed || 0) + (c.cancelled || 0)), 'failed', (c.failed || c.cancelled) ? 'bad' : ''), kpi(num(c.refused || 0), 'refused', c.refused ? 'ref' : ''),
         kpi(tookS(rn) != null ? dur(tookS(rn)) : DASH, active ? 'so far' : 'total', 'time')),
       rn.error ? h('div.banner.err', { role: 'status' }, rn.error) : null,
+      changedSince(rn),
       h('h3.bp-h', 'Issues', [' · ', h('span.mut', num(issues.length))]),
       issues.length ? h('div.bp-issues', issues.map(st => h('div.bp-issue', { key: 'i-' + st.idx, 'data-step': st.idx },
         h('span', { class: 'bp-tag ' + (stepResult(st) === 'not_judged' ? 'refused' : stepResult(st)) }, STEP_WORD[st.outcome] || st.outcome),
