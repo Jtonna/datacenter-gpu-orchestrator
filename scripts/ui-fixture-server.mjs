@@ -454,7 +454,7 @@ const server = http.createServer((req, res) => {
   }
   const std = /^\/api\/models\/(.+)\/standard-set$/.exec(p);
   if (std && req.method === 'POST') return readBody(req, b => { b = Object.assign({}, b || {}); if (!b.comment && req.headers['x-comment']) b.comment = String(req.headers['x-comment']); const r = standardWrite(decodeURIComponent(std[1]), STDSET, b); json(res, r.status, r.body); });
-  if (std && req.method === 'GET') { const r = standardSet(decodeURIComponent(std[1]), STDSET); return json(res, r.status, r.body); }
+  if (std && req.method === 'GET') { const r = standardSet(decodeURIComponent(std[1]), STDSET, (u.searchParams.get('short') || '').trim()); return json(res, r.status, r.body); }
   const stg = /^\/api\/config\/profiles\/(.+)\/(promote|demote)$/.exec(p);
   if (stg && req.method === 'POST') return readBody(req, b => {
     const c = (b && b.comment) || req.headers['x-comment'];

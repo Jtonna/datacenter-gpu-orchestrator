@@ -79,14 +79,26 @@ func TestUINextTestProfilesPage(t *testing.T) {
 
 // The Models panel: production profiles by context under their shown names,
 // one "and N test profiles" line to the Test profiles page; "Make standard
-// profiles" and its dialog's states (checking, ready, nothing, refused,
-// error, written).
+// profiles" and its dialog's states (checking, ready, named, nothing,
+// refused, error, written), with the reviewer's rulings A to G: the name
+// prefilled from the family and editable, a refused name, the default that
+// exists at another context with what it carries, the tick boxes and the
+// count, an estimate row ticked, the estimate-does-not-fit row unticked,
+// the max_pool words, the 5% margin named.
 func TestUINextModelsStandardSet(t *testing.T) {
 	fetch := fixtureAnswers(t, []string{"--models", "five"}, "/api/models", "/api/status")
 	st := fetch["/api/status"]
-	std := fixtureAnswers(t, []string{"--stdset", "ready"}, "/api/models/"+mdlLoaded+"/standard-set")["/api/models/"+mdlLoaded+"/standard-set"]
-	none := fixtureAnswers(t, []string{"--stdset", "nothing"}, "/api/models/"+mdlLoaded+"/standard-set")["/api/models/"+mdlLoaded+"/standard-set"]
 	path := "/api/models/" + mdlLoaded + "/standard-set"
+	std := fixtureAnswers(t, []string{"--stdset", "ready"}, path)[path]
+	mine := fixtureAnswers(t, []string{"--stdset", "ready"}, path+"?short=my-gemma")[path+"?short=my-gemma"]
+	none := fixtureAnswers(t, []string{"--stdset", "nothing"}, path)[path]
+	taken := map[string]any{"$status": 400, "$body": map[string]any{"error": map[string]any{"message": "the name qwen3-14b is taken: the profile qwen3-14b is of another file (qwen3-14b-Q5_K_M.gguf)"}}}
+	// the read by its query: ?short=qwen3-14b refused, ?short=my-gemma, else the prefill
+	reads := map[string]any{"$match": []any{
+		[]any{`\?short=qwen3-14b`, taken},
+		[]any{`\?short=my-gemma`, mine},
+		[]any{`^GET `, std},
+	}}
 	with := func(get, post any) map[string]any {
 		f := map[string]any{}
 		for k, v := range fetch {
@@ -101,10 +113,13 @@ func TestUINextModelsStandardSet(t *testing.T) {
 		return f
 	}
 	open := []any{"aside.side button[data-act=standard]"}
-	written := map[string]any{"revision": 413, "changed": true, "written": []any{"gemma-4-27b:16k", "gemma-4-27b:64k", "gemma-4-27b:128k"},
-		"skipped": []any{map[string]any{"id": "gemma-4-27b", "reason": "exists, kept as it is"}, map[string]any{"id": "gemma-4-27b:256k", "reason": "not kept: it does not fit even with nothing loaded; the plan says: placer: need 63488 MiB (requires 66662 MiB) does not fit the available nodes"}}}
+	comment := map[string]any{"type": "div.dlg textarea[aria-label=Comment]", "value": "standard set for gemma"}
+	written := map[string]any{"revision": 413, "changed": true, "written": []any{"gemma-4-27b:16k", "gemma-4-27b:64k", "gemma-4-27b:128k", "gemma-4-27b:256k"},
+		"skipped": []any{map[string]any{"id": "gemma-4-27b", "reason": "gemma-4-27b exists at 8k, kept as it is; the standard default would be 32k"}}}
 	refused := map[string]any{"$status": 409, "$body": map[string]any{"error": map[string]any{"message": "configuration changed since revision 412 (now 413): read it again", "code": "stale"}}}
 	failed := map[string]any{"$status": 503, "$body": map[string]any{"error": map[string]any{"message": "the scheduler is shutting down", "code": "shutting_down"}}}
+	tr := func(ctx string) string { return "tr[data-std='gemma-4-27b" + ctx + "']" }
+	notes := func(ctx string) string { return "tr[data-std-notes='gemma-4-27b" + ctx + "']" }
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
 		map[string]any{"name": "models: a test profile is one line to the Test profiles page", "route": "#/models?model=qwen3-14b-Q5_K_M.gguf", "status": st,
 			"page":     []string{"1 test profile"},
@@ -113,22 +128,57 @@ func TestUINextModelsStandardSet(t *testing.T) {
 		map[string]any{"name": "models: the button", "route": "#/models?model=" + mdlLoaded, "status": st,
 			"pageHas": []string{"aside.side button[data-act=standard]"}, "page": []string{"Make standard profiles"}},
 		map[string]any{"name": "standard: checking", "route": "#/models?model=" + mdlLoaded, "status": st, "fetch": with(map[string]any{"$hang": true}, nil),
-			"click": open, "pageHas": []string{"div.dlg[data-dlg=standard][data-state=checking]"}, "page": []string{"Planning each context"}},
-		map[string]any{"name": "standard: ready, the read call's table", "route": "#/models?model=" + mdlLoaded, "status": st, "fetch": with(std, nil),
+			"click": open, "pageHas": []string{"div.dlg[data-dlg=standard][data-state=checking]"}, "page": []string{"Planning each context with nothing loaded"}},
+		// A, B, C, D, F, G on the read
+		map[string]any{"name": "standard: ready, the read call's table", "route": "#/models?model=" + mdlLoaded, "status": st, "fetch": with(reads, nil),
 			"click": open,
-			"pageHas": []string{"div.dlg[data-dlg=standard][data-state=ready]", "tr[data-std='gemma-4-27b'][data-exists=true]", "tr[data-std='gemma-4-27b:256k'][data-kept=false]", "tr[data-std-notes='gemma-4-27b:256k'] [data-why]", "tr[data-std='gemma-4-27b:256k'] [data-source=estimate]",
-				"tr[data-std-notes='gemma-4-27b:128k'] [data-every-zone]", "tr[data-std-notes='gemma-4-27b:64k'] [data-now=evict]", "tr[data-std-notes='gemma-4-27b:128k'] [data-host-memory=not-counted]", "[data-to-write='3']", "div.dlg-foot button[data-go][disabled]"},
-			"page": []string{"exists, kept as it is", "Not kept", "fits only by using every zone", "up to 10,240 MiB, not counted",
-				"the default context", "measured for this shape", "derived from another context", "Write 3 profiles", "Comment (required)", "now it would first unload gemma-4-12b", "Not kept: it does not fit even with nothing loaded; the plan says: placer: need 63488 MiB"}},
-		map[string]any{"name": "standard: the write sends the comment", "route": "#/models?model=" + mdlLoaded, "status": st, "fetch": with(std, written),
-			"click":        append(append([]any{}, open...), map[string]any{"type": "div.dlg textarea[aria-label=Comment]", "value": "standard set for gemma"}, "div.dlg-foot button[data-go]"),
-			"fetchedQuery": []string{`^POST /api/models/` + mdlLoaded + `/standard-set \{"comment":"standard set for gemma"\}$`},
-			"pageHas":      []string{"div.dlg[data-dlg=standard][data-state=written] [data-written='3']"}, "page": []string{"Wrote 3 profiles", "gemma-4-27b: exists, kept as it is"}},
-		map[string]any{"name": "standard: refused", "route": "#/models?model=" + mdlLoaded, "status": st, "fetch": with(std, refused),
+			"pageHas": []string{"div.dlg[data-dlg=standard][data-state=ready]",
+				// A: the name, prefilled from the family
+				"div.dlg div.std-namef[data-name-source=family] input.std-name", "div.dlg [data-name-from=family]",
+				// B: the default exists at another context, not tickable
+				tr("") + "[data-exists=true][data-ticked=false]", notes("") + " [data-exists-note]",
+				// C: ticked by default, the estimate rows' states
+				tr(":16k") + "[data-state=fits][data-ticked=true] input[data-tick]", tr(":64k") + "[data-state=fits-by-estimate][data-ticked=true] input[data-tick]",
+				tr(":128k") + "[data-ticked=true]", tr(":256k") + "[data-state=estimate-does-not-fit][data-ticked=false] input[data-tick]",
+				notes(":256k") + " [data-why=estimate-does-not-fit]", notes(":64k") + " [data-need-note]", notes(":256k") + " [data-shape-note]",
+				notes(":128k") + " [data-every-zone=max-pool]", notes(":64k") + " [data-now=evict]", notes(":128k") + " [data-host-memory=not-counted]",
+				"[data-to-write='3']", "div.dlg-foot button[data-go][disabled]"},
+			"pageNone": []string{tr("") + " input[data-tick]"},
+			"page": []string{"from the existing family", "gemma-4-27b exists at 8k, kept as it is; the standard default would be 32k",
+				"It has what a standard row would not: KV type q8_0, flash attention, thinking off (the chat-template argument), a hand-written need of 15,900 MiB, aliases (gemma-27b)",
+				"Fits, estimated", "Not measured", "Estimate only: not measured: by the file estimate it does not fit even with nothing loaded",
+				"the fit uses 13,751 MiB: the estimate with its 5% margin", "so that figure is not its own",
+				"every zone it may use (4: the setting max_pool)", "the default context", "measured for this shape", "derived from another context",
+				"Write 3 profiles", "Comment (required)", "now it would first unload gemma-4-12b", "every standard context is at or below it"}},
+		// C: a tick changes the count; untick everything and nothing can be written
+		map[string]any{"name": "standard: ticking the estimate row counts it", "route": "#/models?model=" + mdlLoaded, "status": st, "fetch": with(reads, nil),
+			"click":   append(append([]any{}, open...), tr(":256k")+" input[data-tick]", comment),
+			"pageHas": []string{tr(":256k") + "[data-ticked=true]", "[data-to-write='4']", "div.dlg-foot button[data-go]:not([disabled])"}, "page": []string{"Write 4 profiles"}},
+		map[string]any{"name": "standard: nothing ticked, nothing to write", "route": "#/models?model=" + mdlLoaded, "status": st, "fetch": with(reads, nil),
+			"click":   append(append([]any{}, open...), tr(":16k")+" input[data-tick]", tr(":64k")+" input[data-tick]", tr(":128k")+" input[data-tick]", comment),
+			"pageHas": []string{"[data-to-write='0']", "div.dlg-foot button[data-go][disabled]"}, "page": []string{"No row is ticked", "Write 0 profiles"}},
+		// the write sends the comment, the name and the ticked ids
+		map[string]any{"name": "standard: the write sends the ticked ids", "route": "#/models?model=" + mdlLoaded, "status": st, "fetch": with(reads, written),
+			"click":        append(append([]any{}, open...), tr(":256k")+" input[data-tick]", comment, "div.dlg-foot button[data-go]"),
+			"fetchedQuery": []string{`^POST /api/models/` + mdlLoaded + `/standard-set \{"comment":"standard set for gemma","short":"gemma-4-27b","ids":\["gemma-4-27b:16k","gemma-4-27b:64k","gemma-4-27b:128k","gemma-4-27b:256k"\]\}$`},
+			"pageHas":      []string{"div.dlg[data-dlg=standard][data-state=written] [data-written='4']"}, "page": []string{"Wrote 4 profiles", "gemma-4-27b: gemma-4-27b exists at 8k"}},
+		// A: a name of one's own, read again with ?short=
+		map[string]any{"name": "standard: another name reads again", "route": "#/models?model=" + mdlLoaded, "status": st, "fetch": with(reads, nil),
+			"click":        append(append([]any{}, open...), map[string]any{"type": "div.dlg input.std-name", "value": "my-gemma"}, "div.dlg button[data-go=name]"),
+			"fetchedQuery": []string{`^GET /api/models/` + mdlLoaded + `/standard-set\?short=my-gemma$`},
+			"pageHas":      []string{"div.dlg[data-state=ready] [data-name-from=asked]", "tr[data-std='my-gemma'][data-ticked=true]", "tr[data-std='my-gemma:16k']"},
+			"page":         []string{"the name you gave"}},
+		// A: a name of another file is refused, with its reason; nothing can be written
+		map[string]any{"name": "standard: a taken name is refused", "route": "#/models?model=" + mdlLoaded, "status": st, "fetch": with(reads, nil),
+			"click":    append(append([]any{}, open...), map[string]any{"type": "div.dlg input.std-name", "value": "qwen3-14b"}, "div.dlg button[data-go=name]"),
+			"pageHas":  []string{"div.dlg[data-dlg=standard][data-state=named] [data-name-refused]", "div.dlg-foot button[data-go][disabled]"},
+			"pageNone": []string{"table.std-tbl"},
+			"page":     []string{"This name cannot be used.", "the profile qwen3-14b is of another file (qwen3-14b-Q5_K_M.gguf)"}},
+		map[string]any{"name": "standard: refused", "route": "#/models?model=" + mdlLoaded, "status": st, "fetch": with(reads, refused),
 			"click":   append(append([]any{}, open...), map[string]any{"type": "div.dlg textarea[aria-label=Comment]", "value": "x"}, "div.dlg-foot button[data-go]"),
 			"pageHas": []string{"div.dlg[data-dlg=standard][data-state=refused] [data-refused]"}, "page": []string{"Not written: nothing changed.", "read it again", "Check again"}},
 		map[string]any{"name": "standard: nothing to write", "route": "#/models?model=" + mdlLoaded, "status": st, "fetch": with(none, nil),
-			"click": open, "pageHas": []string{"div.dlg[data-dlg=standard][data-state=nothing] [data-to-write='0']"}, "pageNone": []string{"div.dlg-foot button[data-go]"},
+			"click": open, "pageHas": []string{"div.dlg[data-dlg=standard][data-state=nothing] [data-to-write='0']"}, "pageNone": []string{"div.dlg-foot button[data-go]", "input[data-tick]"},
 			"page": []string{"Nothing to write"}},
 		map[string]any{"name": "standard: the read fails", "route": "#/models?model=" + mdlLoaded, "status": st, "fetch": with(failed, nil),
 			"click": open, "pageHas": []string{"div.dlg[data-dlg=standard][data-state=error]"}, "page": []string{"could not be worked out", "shutting down", "Check again"}},

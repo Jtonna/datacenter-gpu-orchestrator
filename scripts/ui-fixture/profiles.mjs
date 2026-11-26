@@ -225,44 +225,73 @@ export function testProfiles(now = Date.now()) {
   return { profiles: rows, count: rows.length, production_count: production, models, reasons, history: true };
 }
 
-// standardSet(file, state) -> GET /api/models/{file}/standard-set
-// (internal/api/standardset.go) for any file: 16k and 32k kept on one zone,
-// 64k kept on two, 128k only on every zone with the host memory not counted;
-// the default id exists; kept means it fits on an idle fleet, and 64k would
-// unload another model now. state: ready (the default), nothing (every kept one
-// exists), error (the read fails), refused (the write fails).
-export function standardSet(file, state) {
+// standardSet(file, state, short) -> GET /api/models/{file}/standard-set
+// (internal/api/standardset.go) for any file, ?short= as short. The name is
+// the file's production family (its base, gemma-4-27b for the gemma file)
+// unless short names another; "qwen3-14b" (another file's profile) and
+// "TEST - x" are refused. The rows show each state of ruling C:
+//   16k   fits, derived                       ticked
+//   32k   the default; the family has its id at 8k: exists, not written
+//   64k   fits by the estimate only            ticked; now it would unload
+//   128k  fits, measured, every zone (max_pool) ticked
+//   256k  the trained context; by the estimate it does not fit: not ticked
+//         but may be; a figure of another shape named beside it
+// state: ready (the default), nothing (every row exists), error (the read
+// fails), refused (the write fails).
+const STD_TAKEN = { 'qwen3-14b': 'the name qwen3-14b is taken: the profile qwen3-14b is of another file (qwen3-14b-Q5_K_M.gguf)' };
+export function standardSet(file, state, short) {
   if (state === 'error') return { status: 503, body: { error: { message: 'the scheduler is shutting down', type: 'server_error', code: 'shutting_down' } } };
-  const short = file.replace(/\.gguf$/i, '').replace(/-?(it-)?Q\d_K(_M)?|-?Q\d_\d$/i, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const bad = m => ({ status: 400, body: { error: { message: m, type: 'invalid_request_error' } } });
+  if (short && STD_TAKEN[short]) return bad(STD_TAKEN[short]);
+  if (short && /^test - /i.test(short)) return bad('the name must not start with "TEST - ": a test profile is shown with it already');
+  if (short && /[@:\s/]/.test(short)) return bad('the name must be one word: no spaces, ":", "@" or "/"');
+  const fam = file.replace(/\.gguf$/i, '').replace(/-?(it-)?Q\d_K(_M)?|-?Q\d_\d$/i, '').toLowerCase().replace(/[^a-z0-9.]+/g, '-').replace(/^-|-$/g, '');
+  const name = short || fam;
   const all = state === 'nothing';
-  const row = (ctx, id, x) => Object.assign({ id, ctx, kept: true, action: 'start', reason: '', zones: ['ps5-05'], zones_may_use: 6, need_mib: 9000 + ctx / 16, need_source: 'estimate',
-    need_basis: 'estimated, +5% margin; the estimate is ' + (9000 + ctx / 16) + ' MiB', uses_every_zone: false, host: 'server', host_memory_mib: 4096, host_memory_counted: false,
+  const est = ctx => 9000 + ctx / 16;
+  const row = (ctx, id, x) => Object.assign({ id, ctx, state: 'fits', kept: true, selected: !all, tickable: !all, action: 'start', reason: '', zones: ['ps5-05'], zones_may_use: 4, zones_may_use_by_max_pool: true,
+    need_mib: est(ctx), fit_need_mib: est(ctx), need_source: 'derived', need_basis: 'derived from the measurement at ctx 32768', uses_every_zone: false, host: 'server', host_memory_mib: 4096, host_memory_counted: false,
     host_memory_note: "restore points and prompt cache on the scheduler's machine: up to 4,096 MiB, not counted in what it needs (restore points 0 MiB, prompt cache 4,096 MiB)",
-    exists: all, default: false }, all ? { exists_as: 'the profile ' + id } : {}, x);
+    exists: all, default: false }, all ? { exists_as: id, exists_note: 'exists, kept as it is', exists_carries: [] } : {}, x);
+  const estRow = ctx => ({ need_source: 'estimate', need_mib: est(ctx), fit_need_mib: Math.ceil(est(ctx) * 1.05), need_basis: 'estimated, +5% margin; the estimate is ' + est(ctx) + ' MiB',
+    need_note: 'the fit uses ' + Math.ceil(est(ctx) * 1.05).toLocaleString('en-US') + ' MiB: the estimate with its 5% margin',
+    shape_note: 'the existing ' + fam + ' (8k) runs at 15,900 MiB (written by hand) with KV q8_0, flash attention; this row would use the default KV type (f16), no flash attention, so that figure is not its own' });
+  const famHas = !short || short === fam;
   const rows = [
-    row(16384, short + ':16k', { need_source: 'derived', need_basis: 'derived from the measurement at ctx 32768' }),
-    row(32768, short, { default: true, exists: true, exists_as: 'the profile ' + short, need_source: 'measured for this shape', need_basis: 'measured this run' }),
-    row(65536, short + ':64k', { zones: ['ps5-03', 'ps5-04'], action: 'evict', now_note: 'fits only when other models are unloaded: now it would first unload gemma-4-12b' }),
-    row(131072, short + ':128k', { zones: ['ps5-01', 'ps5-02', 'ps5-03', 'ps5-04', 'ps5-05', 'ps5-06'], uses_every_zone: true,
-      every_zone_note: 'this context fits only by using every zone it may use (6 of 6): nothing else can be placed beside it', host_memory_mib: 10240,
+    row(16384, name + ':16k'),
+    row(32768, name, famHas && !all ? { default: true, exists: true, selected: false, tickable: false, exists_as: fam, need_source: 'measured for this shape', need_basis: 'measured this run',
+      exists_note: fam + ' exists at 8k, kept as it is; the standard default would be 32k', exists_carries: ['KV type q8_0', 'flash attention', 'thinking off (the chat-template argument)', 'a hand-written need of 15,900 MiB', 'aliases (gemma-27b)'] }
+      : { default: true, need_source: 'measured for this shape', need_basis: 'measured this run' }),
+    row(65536, name + ':64k', Object.assign({ state: 'fits-by-estimate', zones: ['ps5-03', 'ps5-04'], action: 'evict', now_note: 'fits only when other models are unloaded: now it would first unload gemma-4-12b' }, estRow(65536))),
+    row(131072, name + ':128k', { zones: ['ps5-01', 'ps5-02', 'ps5-03', 'ps5-04'], uses_every_zone: true, need_source: 'measured for this shape', need_basis: 'measured this run',
+      every_zone_note: 'this context fits only by using every zone it may use (4: the setting max_pool): nothing else can be placed beside it', host_memory_mib: 10240,
       host_memory_note: "restore points and prompt cache on the scheduler's machine: up to 10,240 MiB, not counted in what it needs (restore points 6,144 MiB, prompt cache 4,096 MiB)" }),
-    // 256k = the trained context (not above it): planned as written, its need known; it
-    // does not fit the zones even with nothing loaded, and the reason is the plan's own
-    Object.assign(row(262144, short + ':256k'), { kept: false, action: 'reject', exists: false, zones: [], need_mib: 63488, need_source: 'estimate',
-      need_basis: 'estimated, +5% margin; the estimate is 60465 MiB', host_memory_note: '',
-      reason: 'it does not fit even with nothing loaded; the plan says: placer: need 63488 MiB (requires 66662 MiB) does not fit the available nodes' }),
+    // 256k = the trained context (not above it); only the estimate, and by it it does not fit
+    row(262144, name + ':256k', Object.assign(estRow(262144), { state: 'estimate-does-not-fit', kept: false, selected: false, tickable: !all, action: 'reject', zones: [], host_memory_note: '',
+      reason: 'not measured: by the file estimate it does not fit even with nothing loaded; the plan says: placer: need 25384 MiB (requires 26654 MiB) does not fit the available nodes' })),
   ];
-  const toWrite = rows.filter(r => r.kept && !r.exists).map(r => r.id);
-  return { status: 200, body: { file, short, trained_ctx: 262144, trained_ctx_known: true, note: 'trained at 262,144 tokens: no candidate above it', default_id: short, default_ctx: 32768, rows, to_write: toWrite } };
+  const toWrite = rows.filter(r => r.selected).map(r => r.id);
+  return { status: 200, body: { file, short: name, short_source: short ? 'asked' : 'family', family: fam, family_ids: [fam, fam + '-thinking', fam + ':48k'], trained_ctx: 262144, trained_ctx_known: true,
+    note: 'trained at 262,144 tokens: every standard context is at or below it', default_id: name, default_ctx: 32768, max_pool: 4, rows, to_write: toWrite } };
 }
 
 // standardWrite(file, state, body) -> POST /api/models/{file}/standard-set
+// {comment, short, ids}: the comment is required always; ids default to the
+// read's selection, and each must be a row that may be ticked.
 export function standardWrite(file, state, body) {
-  if (!body || !String(body.comment || '').trim()) return { status: 400, body: { error: { message: 'a comment is required (body {"comment": "..."} or the X-Comment header)', type: 'invalid_request_error' } } };
+  const bad = m => ({ status: 400, body: { error: { message: m, type: 'invalid_request_error' } } });
+  if (!body || !String(body.comment || '').trim()) return bad('a comment is required (body {"comment": "..."} or the X-Comment header)');
   if (state === 'refused') return { status: 409, body: { error: { message: 'configuration changed since revision 412 (now 413): read it again', type: 'invalid_request_error', code: 'stale' } } };
-  const set = standardSet(file, state).body;
-  const written = set.to_write;
-  const skipped = set.rows.filter(r => r.exists).map(r => ({ id: r.id, reason: 'exists, kept as it is' }))
-    .concat(set.rows.filter(r => !r.kept).map(r => ({ id: r.id, reason: 'not kept: ' + r.reason })));
-  return { status: 200, body: { revision: 413, changed: written.length > 0, written, skipped, rows: set.rows, diff: [], warnings: [], audit_entry_ids: [] } };
+  const r0 = standardSet(file, state, body.short || '');
+  if (r0.status !== 200) return r0;
+  const set = r0.body;
+  const ids = Array.isArray(body.ids) ? body.ids : set.to_write;
+  for (const id of ids) {
+    const r = set.rows.find(x => x.id === id);
+    if (!r) return bad(id + " is not one of this call's rows (" + set.rows.map(x => x.id).join(', ') + ')');
+    if (!r.tickable) return bad(id + ' cannot be written: ' + (r.exists ? r.exists_note : r.reason));
+  }
+  const written = set.rows.filter(r => ids.includes(r.id)).map(r => r.id);
+  const skipped = set.rows.filter(r => !ids.includes(r.id)).map(r => ({ id: r.id, reason: r.exists ? r.exists_note : r.tickable ? 'not chosen' : 'not kept: ' + r.reason }));
+  return { status: 200, body: { revision: 413, changed: written.length > 0, file, short: set.short, written, skipped, rows: set.rows, diff: [], warnings: [], audit_entry_ids: [] } };
 }

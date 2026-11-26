@@ -1709,3 +1709,7 @@ a.bp-view:hover{background:var(--hover-bg)}
 .tp-tbl th:nth-child(7){width:100px}
 .tp-tbl td.r .sub{display:block;white-space:normal}
 .tp-tbl td .sub{display:block}
+.std-tbl td.std-tick{width:28px;padding-right:0}
+.std-namef .row{flex-wrap:nowrap;gap:8px}
+.std-namef input.std-name{flex:1 1 auto;min-width:0;max-width:360px}
+.std-namef .banner{margin-top:6px}
