@@ -57,7 +57,7 @@ func TestGroupOfRecipesRuns(t *testing.T) {
 		s0.Name != "Cold load (g.gguf, 8k, any:2, thinking off)" || s0.ModelFile != "g.gguf" {
 		t.Fatalf("step 0: %+v", s0)
 	}
-	wantSpec := map[string]any{"model": "g.gguf", "ctx": 8192, "generated": true, "force_nodes": []string{"ps5-2", "ps5-4"}, "extra_args": []string{"--reasoning-budget", "0"}}
+	wantSpec := map[string]any{"model": "g.gguf", "ctx": 8192, "generated": true, "stage": "test", "force_nodes": []string{"ps5-2", "ps5-4"}, "extra_args": []string{"--reasoning-budget", "0"}}
 	if got := api.made["bench-g-any2-8k-nothink"]; !reflect.DeepEqual(got, wantSpec) {
 		t.Errorf("made %v, want %v", got, wantSpec)
 	}

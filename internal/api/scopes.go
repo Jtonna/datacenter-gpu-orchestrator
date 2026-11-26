@@ -119,6 +119,7 @@ var routeScopes = map[string]access.Scope{
 	"PUT /api/config/fleet": access.Settings, "PUT /api/config/node-overrides": access.Settings, "PUT /api/config/recovery": access.Settings,
 	"PUT /api/config/tiers": access.Settings, "POST /api/config/import": access.Settings, "POST /api/config/profiles": access.Settings,
 	"PUT /api/config/profiles/{id...}": access.Settings, "DELETE /api/config/profiles/{id...}": access.Settings,
+	"POST /api/config/profiles/{rest...}":     access.Settings, // {id}/promote and {id}/demote: a profile edit
 	"POST /api/config/revisions/{n}/rollback": access.Settings,
 	"PUT /api/models/{key...}":                access.Settings, "DELETE /api/models/{key...}": access.Settings,
 	"POST /api/forget-need": access.Settings, "POST /api/needs/forget": access.Settings, "DELETE /api/nodes/{id}": access.Settings,

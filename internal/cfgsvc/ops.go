@@ -39,23 +39,44 @@ func (s *Service) CreateProfile(ctx context.Context, o WriteOpts, id string, p *
 	}})
 }
 
-// keepMarks: this version reads stage and display_name but does not write
-// them (profiles plan, slice B1). A profile write that leaves both out
-// keeps the stored ones (a mark a later version wrote survives an edit
-// here); one that sets them to anything else is refused.
+// keepMarks: stage and display_name are written through create and update
+// (profiles plan, slice B2). A write that leaves both out keeps the stored
+// ones, so a client that does not know them never wipes them; one that
+// sets either writes both (validated with the configuration).
 func keepMarks(id string, old, p *config.ProfileSpec) error {
-	var st, dn string
-	if old != nil {
-		st, dn = old.Stage, old.DisplayName
+	if old != nil && p.Stage == "" && p.DisplayName == "" {
+		p.Stage, p.DisplayName = old.Stage, old.DisplayName
 	}
-	if p.Stage == "" && p.DisplayName == "" {
-		p.Stage, p.DisplayName = st, dn
+	return nil
+}
+
+// SetStage is promote (stage production) and demote (stage test): one
+// revision audited as promote or demote; nothing is written when the
+// profile already has that stage, by mark or by rule (config.EffectiveStage).
+func (s *Service) SetStage(ctx context.Context, o WriteOpts, id, stage string) (*Result, error) {
+	action := audit.ActionPromote
+	switch stage {
+	case config.StageProduction:
+	case config.StageTest:
+		action = audit.ActionDemote
+	default:
+		return nil, &ValidationError{Messages: []string{fmt.Sprintf("stage must be %s or %s, got %q", config.StageProduction, config.StageTest, stage)}}
+	}
+	if p := s.Config().Profiles[id]; p != nil {
+		if st, _ := config.EffectiveStage(p); st == stage {
+			return &Result{Revision: s.Revision(), AuditEntryIDs: []int64{}, Diff: []audit.DiffItem{}, Warnings: []string{}, RestartRequired: []string{}}, nil
+		}
+	}
+	return s.mutate(ctx, o, mutation{action: action, fn: func(d *config.Document) error {
+		p, ok := d.Profiles[id]
+		if !ok {
+			return fmt.Errorf("profile %q: %w", id, ErrNotFound)
+		}
+		cp := *p
+		cp.Stage = stage
+		d.Profiles[id] = &cp
 		return nil
-	}
-	if p.Stage == st && p.DisplayName == dn {
-		return nil
-	}
-	return &ValidationError{Messages: []string{fmt.Sprintf("profile %q: stage and display_name are read only in this version: leave them out (the stored ones are kept)", id)}}
+	}})
 }
 
 // UpdateProfile replaces a profile; ErrNotFound when it does not exist.
