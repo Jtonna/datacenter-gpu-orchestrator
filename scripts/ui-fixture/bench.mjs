@@ -181,13 +181,14 @@ function boardRunDetail(r) {
     }
     steps[16] = reportStep(16, MODELS[8], 4, { outcome: 'failed', reason: 'child exited during load: exit code 1, after 2.2 s', error: 'child exited during load: exit code 1, after 2.2 s',
       phases: [loadPh(0, 2.2, { outcome: 'failed', error: 'child exited during load: exit code 1, after 2.2 s', load: { outcome: 'failed', load_s: 2.2, reason: 'child exited during load: exit code 1' } })] });
-    steps[6] = reportStep(6, MODELS[3], 1, { outcome: 'refused', reason: 'Does not fit on 1 zone', phases: [] });
+    // a refusal: the scheduler's long sentence and the server's short note (reason_short)
+    steps[6] = reportStep(6, MODELS[3], 1, { outcome: 'refused', reason: 'profile bench-devstral-24b-q4_k_m does not fit ra-01 by the memory reservation rule: 15,400 MiB needed, 13,100 MiB free; nothing of ours is loaded there', reason_short: 'Does not fit on 1 zone', phases: [] });
     // a context fill step: its phase type has a word on the page, never the raw id
     steps[2].phases.push({ idx: 7, type: 'context_fill', state: 'done', outcome: 'ok', duration_s: 41, fill_pct: 90 });
     run.steps = r.id === 'run-41' ? steps.slice(0, 12) : steps;
   } else if (r.kind === 'benchmark') {
     run.steps = [reportStep(0, r.inputs.model, r.inputs.node_count, r.result === 'failed' ? { outcome: 'failed', reason: 'child exited during load: exit code 1, after 2.2 s', phases: [loadPh(0, 2.2, { outcome: 'failed' })] }
-      : r.result === 'refused' ? { outcome: 'refused', reason: 'Does not fit on 1 zone', phases: [] } : {})];
+      : r.result === 'refused' ? { outcome: 'refused', reason: 'profile bench-devstral-24b-q4_k_m does not fit ra-01 by the memory reservation rule: 15,400 MiB needed, 13,100 MiB free; nothing of ours is loaded there', reason_short: 'Does not fit on 1 zone', phases: [] } : {})];
   } else run.steps = [reportStep(0, MODELS[1], 2)];
   return run;
 }
@@ -209,7 +210,7 @@ function paged(all, q) {
 // the results per model (GET /api/bench/results/models): the board's
 // Overview figures at the smallest fit and on all 6 zones; mixtral failed at
 // its load; phi measured no first token; llama ran on 6 zones only
-function boardResults(now) {
+function boardResults(now, q) {
   const rows = [
     // model, fit, cold, reload, tok/s, ttft ms, mem, cold all 6, tok/s all 6
     [MODELS[0], 1, 26.8, 2.0, 96.2, 410, 3100, 11.3, 92.2], [MODELS[1], 2, 35.4, 3.0, 27.8, 800, 9100, 21.1, 24.3],
@@ -256,7 +257,13 @@ function boardResults(now) {
   q72.decode_tps = 29.4; q72.from.decode_tps = { run_id: 'run-47', run_number: 47, step: 0, at: at + 2 * HOUR, node_count: 2 }; q72.mixed = true;
   // the step's machine of the lowest available figure (the hover)
   for (const m of out) for (const c of m.by_nodes) if (c.lowest_available_mib != null) c.lowest_available_node = 'zone-' + c.node_count;
-  return { ctx: 0, models: out };
+  // ?run=<number>: one run's results (here: run 47 holds only gemma's
+  // context fill); ?ctx=: the cells at that context (all are 8,192 here)
+  const run = q && q.get('run'), ctx = q && q.get('ctx');
+  let models = out;
+  if (run) models = run === '47' ? [{ model: MODELS[1], smallest_fit: 2, latest: Object.assign({}, out[1].by_nodes[0], { run_id: 'run-47', step: 0, cold_load_s: null, reload_s: null, ttft_ms: null, memory_mib: null, lowest_available_mib: null, mixed: false, from: { decode_tps: out[1].by_nodes[0].from.decode_tps } }), by_nodes: [] }] : run === '46' ? out : [];
+  if (ctx && ctx !== '8192') models = [];
+  return { ctx: ctx ? Number(ctx) : 0, run: run ? 'run-' + run : '', contexts: [4096, 8192], models };
 }
 
 function boardsRoute(p, q, now) {
@@ -282,7 +289,7 @@ function boardsRoute(p, q, now) {
     return { id: g.id, count: g.expanded_count, entries: Array.from({ length: g.expanded_count }, (_, i) => ({ benchmark_id: 'cold-response-repeat~' + i, name: 'Cold load, response and repeat', profile: 'bench-' + i })) };
   }
   if (p === '/api/bench/benchmarks') return { benchmarks: benches };
-  if (p === '/api/bench/results/models') return boardResults(now);
+  if (p === '/api/bench/results/models') return boardResults(now, q);
   if (p === '/api/bench/runs') return paged(runs, q);
   m = /^\/api\/bench\/runs\/([^/]+)$/.exec(p);
   if (m) { const r = runs.find(x => x.id === m[1] || String(x.number) === m[1]); return r ? boardRunDetail(r) : undefined; }

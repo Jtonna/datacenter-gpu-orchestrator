@@ -110,8 +110,8 @@ export function runsColumn(d, r, res) {
       show === 'runs' ? [
         filterSelect('Kind', KINDS, q.kind || '', v => set({ kind: v })),
         filterSelect('Result', RESULTS, q.result || '', v => set({ result: v })),
-        filterSelect('Model', models, q.model || '', v => set({ model: v }))] : null),
-    show !== 'runs' ? resultsView(res, show) : null,
+        filterSelect('Model', models, q.model || '', v => set({ model: v }))] : resultFilters(d, q, res, set)),
+    show !== 'runs' ? resultsView(res, show, r) : null,
     show !== 'runs' ? null :
     q.suite && show === 'runs' ? h('div.bp-chip', 'Group: ', h('b', q.suite), ' ', h('a', { href: href('benchmarks', ['runs'], Object.assign({}, q, { suite: '', page: '' })) }, 'Show all groups')) : null,
     d.err && show === 'runs' ? h('div.banner.err', { role: 'alert' }, d.err) : null,
@@ -120,6 +120,18 @@ export function runsColumn(d, r, res) {
         h('thead', h('tr', h('th', 'Started'), h('th', 'Run'), h('th', 'Result'), h('th', 'Took'), h('th', h('span.sr', 'Pinned')))),
         h('tbody', d.runs.map(rn => runRow(rn, q))))),
     show === 'runs' ? pager(q, d.total) : null);
+}
+
+// resultFilters: the result views' "From" (the latest run of each model, or
+// one run: the runs of the list) and "Context" (the contexts the record
+// holds figures at), board Bench-Runs-Load #3 and #4; both kept in the
+// address (from, ctx) and sent to the results route (run, ctx)
+function resultFilters(d, q, res, set) {
+  const runs = [{ id: '', label: 'latest run of each' }].concat((d.runs || []).filter(rn => rn.number).map(rn => ({ id: String(rn.number), label: `run ${num(rn.number)} · ${rn.suite_name || rn.benchmark_id || rn.suite_id || rn.id}` })));
+  if (q.from && !runs.some(o => o.id === q.from)) runs.push({ id: q.from, label: 'run ' + q.from });
+  const ctxs = [{ id: '', label: 'any' }].concat((res.contexts || []).map(c => ({ id: String(c), label: num(c) })));
+  if (q.ctx && !ctxs.some(o => o.id === q.ctx)) ctxs.push({ id: q.ctx, label: num(Number(q.ctx)) });
+  return [filterSelect('From', runs, q.from || '', v => set({ from: v })), filterSelect('Context', ctxs, q.ctx || '', v => set({ ctx: v }))];
 }
 
 // ---------- a run's panel ----------
@@ -156,6 +168,20 @@ function kpi(n, word, cls) {
 
 export function stepSlug(st) { return st.slug || String(st.idx); }
 
+// byRecipe(steps) -> [[key, title, steps]] in run order: the steps grouped
+// by the recipe or benchmark they ran ("Cold load, response and repeat")
+function byRecipe(steps) {
+  const out = [];
+  for (const st of steps) {
+    const sp = st.spec || {};
+    const key = sp.recipe || st.benchmark_id || sp.id || 'steps';
+    const title = sp.name || st.name || key;
+    const last = out[out.length - 1];
+    if (last && last[0] === key) last[2].push(st); else out.push([key, title, [st]]);
+  }
+  return out;
+}
+
 export function runPanel(ref, q, onClose) {
   const ps = { run: null, err: '', showAll: false };
   const load = async () => {
@@ -179,13 +205,19 @@ export function runPanel(ref, q, onClose) {
       issues.length ? h('div.bp-issues', issues.map(st => h('div.bp-issue', { key: 'i-' + st.idx, 'data-step': st.idx },
         h('span', { class: 'bp-tag ' + (stepResult(st) === 'not_judged' ? 'refused' : stepResult(st)) }, STEP_WORD[st.outcome] || st.outcome),
         h('div.bp-main', h('a', { href: href('benchmarks', ['runs', String(rn.number || rn.id), stepSlug(st)]) }, [modelName(st.model_file) || st.profile, stepWhere(st)].filter(Boolean).join(' · ')),
-          h('div.bp-reason', reasonOnce(st) || h('span.mut', 'no reason was recorded'))))))
+          // a refusal says its short note (the full sentence on hover and in the report); a failure its own sentence
+          st.reason_short ? h('div.bp-reason', { title: reasonOnce(st), 'data-short': '' }, st.reason_short)
+            : h('div.bp-reason', reasonOnce(st) || h('span.mut', 'no reason was recorded'))))))
         : h('p.mut', 'No step failed or was refused.'),
       h('h3.bp-h', 'Reports', [' · ', h('span.mut', num(steps.length))]),
-      steps.length ? h('div.bp-reports', { role: 'list' }, shown.map(st => h('a.bp-rep', { key: 'r-' + st.idx, role: 'listitem', href: href('benchmarks', ['runs', String(rn.number || rn.id), stepSlug(st)]), 'data-step': st.idx },
-        resultIcon({ result: stepResult(st) }, 14),
-        h('span.bp-name', modelName(st.model_file) || st.profile), h('span.mut', stepWhere(st)),
-        h('span.bp-fig', ['refused', 'not_judged'].includes(stepResult(st)) ? h('span.mut', reasonOnce(st)) : st.load && st.load.load_s ? `${secs(st.load.load_s)} load` + (st.stats && st.stats.decode_tps ? ` · ${num(st.stats.decode_tps.mean, 1)} tok/s` : '') : st.state === 'running' ? 'running' : ''))))
+      steps.length ? h('div.bp-reports', { role: 'list' }, byRecipe(shown).map(([rk, title, list]) => [
+        // the sub-heading by recipe (board Bench-Runs-Group #20)
+        h('div.bp-rsub', { key: 'h-' + rk, role: 'presentation', 'data-recipe': rk }, title),
+        list.map(st => h('a.bp-rep', { key: 'r-' + st.idx, role: 'listitem', href: href('benchmarks', ['runs', String(rn.number || rn.id), stepSlug(st)]), 'data-step': st.idx },
+          resultIcon({ result: stepResult(st) }, 14),
+          h('span.bp-name', modelName(st.model_file) || st.profile), h('span.mut', stepWhere(st)),
+          h('span.bp-fig', ['refused', 'not_judged'].includes(stepResult(st)) ? h('span.mut', { title: reasonOnce(st) }, st.reason_short || reasonOnce(st))
+            : st.load && st.load.load_s ? `${secs(st.load.load_s)} load` + (st.stats && st.stats.decode_tps ? ` · ${num(st.stats.decode_tps.mean, 1)} tok/s` : '') : st.state === 'running' ? 'running' : '')))]))
         : h('p.mut', 'This run has no steps yet.'),
       steps.length > shown.length ? h('button.bp-all', { type: 'button', onclick: () => { ps.showAll = true; p.redraw(); } }, `All ${num(steps.length)} reports`) : null);
   };
@@ -201,7 +233,9 @@ export function runPanel(ref, q, onClose) {
   };
   const p = sidePanel({ closesMenu: true, kind: 'bench-run', label: 'Group run', name: 'Run ' + ref,
     title: () => (ps.run ? ps.run.suite_name || ps.run.suite_id || ps.run.id : 'Run ' + ref), sub,
-    controls: () => h('div.bp-acts', notYet(h('span.btn.sm', 'Compare'), WHY.b10), ps.run ? pinButton(ps.run, () => p.redraw()) : null,
+    // a run still going: its Cancel (board Bench-Runs-Group #26, Q44), run control: slice 6
+    controls: () => h('div.bp-acts', ps.run && ['running', 'queued', 'waiting'].includes(ps.run.state) ? notYet(h('span.btn.sm.dng', { 'data-act': 'cancel' }, 'Cancel'), WHY.run) : null,
+      notYet(h('span.btn.sm', 'Compare'), WHY.b10), ps.run ? pinButton(ps.run, () => p.redraw()) : null,
       notYet(h('span.btn.sm', 'Download PDF'), WHY.b13), notYet(h('span.btn.sm.pri', 'Run again'), WHY.run), ps.run ? runLogs(ps.run) : null),
     body, onClose });
   p.key = 'run:' + ref;

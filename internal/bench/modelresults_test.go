@@ -133,6 +133,14 @@ func TestResultsByModel(t *testing.T) {
 	if err != nil || len(at) != 0 {
 		t.Fatalf("ctx 4096: %+v %v", at, err)
 	}
+	// one run: only its steps
+	r1, err := st.ResultsByModel(ResultsFilter{RunID: "r1"})
+	if err != nil || len(r1) != 1 || r1[0].Latest.RunID != "r1" || r1[0].Latest.ColdLoadS == nil || *r1[0].Latest.ColdLoadS != 40 || r1[0].Latest.Mixed {
+		t.Fatalf("run r1: %+v %v", r1, err)
+	}
+	if ctxs, err := st.ResultContexts(); err != nil || len(ctxs) != 1 || ctxs[0] != 8192 {
+		t.Fatalf("contexts %v %v", ctxs, err)
+	}
 	at, _ = st.ResultsByModel(ResultsFilter{Ctx: 8192})
 	if len(at) != 1 || at[0].Latest.RunID != "r3" || at[0].Latest.From["cold_load_s"].RunID != "r2" {
 		t.Fatalf("ctx 8192: %+v", at)

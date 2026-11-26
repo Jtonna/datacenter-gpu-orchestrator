@@ -1117,6 +1117,7 @@ func (s *Store) stepsOpt(runID string, requests bool) ([]Step, error) {
 		unmarshalNull(stats, &st.Stats)
 		unmarshalNull(expect, &st.Expect)
 		unmarshalNull(cmp, &st.Comparison)
+		st.ReasonShort = ShortReason(st.Outcome, st.Reason, st.NodeCount)
 		out = append(out, st)
 	}
 	if err := rows.Err(); err != nil {

@@ -654,6 +654,15 @@ for (const c of spec.cases) {
     for (let i = 0; i < (c.back || 0); i++) { globalThis.history.back(); await settle(); }
     // widthAfter: the window resized after all that
     if (c.widthAfter) { setWidth(c.widthAfter); await settle(); }
+    // against a real server (base): the case is judged once its condition
+    // holds, not after a fixed number of turns: every expected text on the
+    // screen and on the page, polled (with the requests in flight answered,
+    // settle) for up to 30 s, so a loaded machine cannot fail it early
+    if (base && ((c.expect || []).length || (c.page || []).length)) {
+      const until = Date.now() + 30000;
+      const ready = () => (c.expect || []).every(w => outlet.textContent.includes(w)) && (c.page || []).every(w => document.body.textContent.includes(w));
+      while (!ready() && Date.now() < until) { await new Promise(r => setTimeout(r, 50)); await settle(); }
+    }
   }
   const text = outlet.textContent;
   for (const bad of ['could not be drawn', 'failed to start']) if (text.includes(bad)) errors.push('banner: ' + text.slice(Math.max(0, text.indexOf(bad) - 40), text.indexOf(bad) + 200));

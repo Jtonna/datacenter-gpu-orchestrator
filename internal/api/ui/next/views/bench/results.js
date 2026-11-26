@@ -21,11 +21,20 @@ import { skeleton, empty } from '../../core/ui.js';
 import { num, dur, dateTime, DASH } from '../../core/format.js';
 import { modelName, zonesWord, notYet, WHY } from './common.js';
 
-export function resultsData() { return { rows: null, err: '', loading: false }; }
-export async function loadResults(d) {
-  if (d.loading) return false;
+export function resultsData() { return { rows: null, err: '', loading: false, key: null, contexts: [] }; }
+// loadResults(d, p): p.ctx and p.run (the result views' Context and From
+// filters, board Bench-Runs-Load); read again when they change, or with
+// p.force (a run ended); true when the copy changed
+export async function loadResults(d, p = {}) {
+  const want = { ctx: p.ctx || '', run: p.run || '' };
+  const key = want.ctx + '|' + want.run;
+  if (d.loading || (d.key === key && !p.force)) return false;
   d.loading = true;
-  try { const r = await api.get('/api/bench/results/models'); d.rows = r.models || []; d.err = ''; } catch (e) { d.err = e.message; d.rows = d.rows || []; }
+  const q = {};
+  if (want.ctx) q.ctx = want.ctx;
+  if (want.run) q.run = want.run;
+  try { const r = await api.get('/api/bench/results/models', q); d.rows = r.models || []; d.contexts = r.contexts || []; d.err = ''; } catch (e) { d.err = e.message; d.rows = d.rows || []; }
+  d.key = key;
   d.loading = false;
   return true;
 }
@@ -41,14 +50,17 @@ const FIG = {
 };
 const OUTCOME = { failed: 'failed', error: 'failed', refused: 'refused', refused_by_exclusion: 'not judged', cancelled: 'cancelled' };
 
-const reportOf = c => href('benchmarks', ['runs', c.run_id, String(c.step)]);
+// reportOf(cell, at): its report; at {show, fig} keeps the result view
+// beside the report and names the cell (outlined there; board Bench-Report #2)
+const reportOf = (c, at) => href('benchmarks', ['runs', c.run_id, String(c.step)], at ? { show: at.show, fig: at.fig } : undefined);
 // the step a figure was read from (the server's from[key]; the cell itself before it said)
 const srcOf = (cell, key) => (cell.from && cell.from[key]) || { run_id: cell.run_id, step: cell.step, at: cell.at, node_count: cell.node_count };
 const runWord = f => (f.run_number ? `run ${num(f.run_number)}` : `run ${f.run_id}`) + (f.at ? `, ${dateTime(f.at)}` : '');
 
-// fig(cell, key, first): one figure; first: the row's first figure column,
-// where a step that did not pass says what happened
-function fig(cell, key, first) {
+// fig(cell, key, first, at): one figure; first: the row's first figure
+// column, where a step that did not pass says what happened; at: the view's
+// {show, fig, sel} (the link keeps the view; the selected cell is outlined)
+function fig(cell, key, first, at) {
   if (!cell) return h('span.mut', { title: 'not run on this many zones' }, DASH);
   const v = cell[key];
   if (v == null) {
@@ -61,7 +73,9 @@ function fig(cell, key, first) {
   const src = srcOf(cell, key);
   const cold = key === 'cold_load_s' && cell.cold ? (cell.cold_verified ? ', cold verified' : ', cold not verified') : '';
   const where = key === 'lowest_available_mib' && cell.lowest_available_node ? `${cell.lowest_available_node}, the lowest of the machines the step used; ` : '';
-  return h('a.bp-fv', { href: reportOf(src), 'data-run': src.run_id, title: `${where}${runWord(src)}; ${zonesWord(src.node_count)}${cold}; open the report` }, FIG[key](v));
+  const on = !!(at && at.sel && at.sel.fig === at.fig && at.sel.run === String(src.run_id) && at.sel.step === String(src.step));
+  return h('a', { class: 'bp-fv' + (on ? ' sel' : ''), href: reportOf(src, at), 'data-run': src.run_id, 'aria-current': on ? 'true' : null,
+    title: `${where}${runWord(src)}; ${zonesWord(src.node_count)}${cold}; open the report` }, FIG[key](v));
 }
 
 const atZones = (m, n) => (m.by_nodes || []).find(c => c.node_count === n) || null;
@@ -120,31 +134,43 @@ export function latestTable(d) {
   }));
 }
 
-// the views of the Runs page: one figure at the smallest fit and on the
-// most zones any model ran on (the board's "Cold, smallest" and "Cold, all 6")
+// the views of the Runs page (board Bench-Runs-Load): per figure, its value
+// at the smallest fit and on the most zones any model ran on ("Cold,
+// smallest", "Cold, all 6", "Reload, smallest", "Reload, all 6"). Beside a
+// report (board Bench-Report #2) the table narrows to its first figure.
 export const RESULT_VIEWS = {
-  'load-times': { label: 'Load times', key: 'cold_load_s', word: 'Cold' },
-  generation: { label: 'Generation speed', key: 'decode_tps', word: 'tok/s' },
-  'first-token': { label: 'First token', key: 'ttft_ms', word: 'First token' },
-  memory: { label: 'Memory', key: 'memory_mib', word: 'Memory', extra: ['lowest_available_mib', 'Lowest available'] },
+  'load-times': { label: 'Load times', keys: [['cold_load_s', 'Cold'], ['reload_s', 'Reload']] },
+  generation: { label: 'Generation speed', keys: [['decode_tps', 'tok/s']] },
+  'first-token': { label: 'First token', keys: [['ttft_ms', 'First token']] },
+  memory: { label: 'Memory', keys: [['memory_mib', 'Memory']], extra: ['lowest_available_mib', 'Lowest available'] },
 };
 
-export function resultsView(d, show) {
+// resultsView(d, show, r): r the route: r.rest [runs, run, step] and
+// r.query.fig name the selected cell
+export function resultsView(d, show, r) {
   const v = RESULT_VIEWS[show];
   if (d.rows == null) return skeleton(6);
   if (d.err && !d.rows.length) return h('div.banner.err', { role: 'alert' }, d.err);
   if (!d.rows.length) return h('section.card', empty('No results yet', 'A model appears here once a benchmark step has run on it.'));
+  const narrow = !!(r && r.rest.length > 2);
+  const keys = narrow ? v.keys.slice(0, 1) : v.keys;
+  const extra = narrow ? null : v.extra;
+  const sel = r && r.rest.length > 2 && r.query.fig ? { run: r.rest[1], step: r.rest[2], fig: r.query.fig } : null;
   const most = Math.max(0, ...d.rows.flatMap(m => (m.by_nodes || []).map(c => c.node_count)));
-  const cols = ['Model', 'Smallest fit', `${v.word}, smallest`, most ? `${v.word}, all ${num(most)}` : `${v.word}, most zones`].concat(v.extra ? [v.extra[1]] : []);
+  const cols = ['Model', 'Smallest fit'].concat(...keys.map(([, w]) => [`${w}, smallest`, most ? `${w}, all ${num(most)}` : `${w}, most zones`])).concat(extra ? [extra[1]] : []);
   return table(v.label, cols, d.rows.map(m => {
     const small = m.smallest_fit ? atZones(m, m.smallest_fit) : null, all = most ? atZones(m, most) : null;
     const first = small || m.latest;
-    const shown = [[first, v.key], [all, v.key]].concat(v.extra ? [[all || small || m.latest, v.extra[0]]] : []);
+    const shown = keys.flatMap(([k]) => [[first, k], [all, k]]).concat(extra ? [[all || small || m.latest, extra[0]]] : []);
+    const at = (k, col) => ({ show, fig: `${k}:${col}`, sel });
+    const cell = (c, k, col, lead) => {
+      const a = at(k, col), on = !!(sel && sel.fig === a.fig && c && c[k] != null && String(srcOf(c, k).run_id) === sel.run && String(srcOf(c, k).step) === sel.step);
+      return h('td', { class: 'r' + (on ? ' sel' : ''), 'data-fig': a.fig }, c ? fig(c, k, lead, a) : h('span.mut', { title: `not run on ${zonesWord(most)}` }, 'not run'));
+    };
     return h('tr', { key: m.model, 'data-model': m.model, class: m.file_gone ? 'gone' : null },
       nameCell(m, shown), h('td', fitWord(m)),
       // a file no longer here: the row says so; a cell without a figure is a dash, not "failed"
-      h('td.r', fig(first, v.key, !m.file_gone)),
-      h('td.r', all ? fig(all, v.key, !m.file_gone) : h('span.mut', { title: `not run on ${zonesWord(most)}` }, 'not run')),
-      v.extra ? h('td.r', fig(all || small || m.latest, v.extra[0])) : null);
+      keys.flatMap(([k], i) => [cell(first, k, 's', !m.file_gone && i === 0), cell(all, k, 'a', !m.file_gone && i === 0)]),
+      extra ? h('td.r', fig(all || small || m.latest, extra[0], false, at(extra[0], 'x'))) : null);
   }), show);
 }

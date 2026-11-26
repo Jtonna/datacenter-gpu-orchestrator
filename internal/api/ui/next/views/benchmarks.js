@@ -81,7 +81,7 @@ registerView({
     // the results per model (Overview table, the Runs page's views): read on
     // entry and again when a run ends
     const res = resultsData();
-    const readResults = () => loadResults(res).then(ch => { if (ch && alive) view.refresh(); });
+    const readResults = () => loadResults(res, { force: true }).then(ch => { if (ch && alive) view.refresh(); });
     const loadOverview = async () => {
       try { const d = await api.get('/api/bench/runs', { limit: 4 }); ov.runs = d.runs || []; ov.total = d.total != null ? d.total : null; ov.err = ''; } catch (e) { ov.err = e.message; ov.runs = ov.runs || []; }
       if (alive) view.refresh();
@@ -113,6 +113,8 @@ registerView({
       if (pg === 'overview') return [staleBanner(), overview(ov, res)];
       if (pg === 'runs') {
         loadRuns(rd, r.query).then(ch => { if (ch && alive) view.refresh(); });
+        // the result views' filters (From, Context) choose what the route answers
+        if (r.query.show) loadResults(res, { ctx: r.query.ctx, run: r.query.from }).then(ch => { if (ch && alive) view.refresh(); });
         return [h('h1.sr', 'Runs'), staleBanner(), runsColumn(rd, r, res)];
       }
       return [h('h1.sr', 'Groups and benchmarks'), staleBanner(), listColumn(r, query, setQ, !!r.rest[1])];

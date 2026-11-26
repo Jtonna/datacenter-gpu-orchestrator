@@ -16,7 +16,7 @@ import (
 // "72 tasks").
 func TestBenchResultsByModelAndTaskCount(t *testing.T) {
 	e := benchEnvChat(t, tasksChat)
-	if st, b, _ := e.do("GET", "/api/bench/results/models", ""); st != 200 || strings.TrimSpace(b) != `{"ctx":0,"models":[]}` {
+	if st, b, _ := e.do("GET", "/api/bench/results/models", ""); st != 200 || strings.TrimSpace(b) != `{"contexts":[],"ctx":0,"models":[],"run":""}` {
 		t.Fatalf("empty: %d %s", st, b)
 	}
 	if st, _, _ := e.do("GET", "/api/bench/results/models?ctx=x", ""); st != 400 {
@@ -40,6 +40,20 @@ func TestBenchResultsByModelAndTaskCount(t *testing.T) {
 		if _, has := lat[k]; has {
 			t.Fatalf("%s given for a run that did not measure it: %s", k, b)
 		}
+	}
+	// ?run=: one run's results, by id or number; an unknown number is 404
+	for _, c := range []struct {
+		q    string
+		code int
+		n    int
+	}{{"?run=" + id, 200, 1}, {"?run=1", 200, 1}, {"?run=run-none", 200, 0}, {"?run=999", 404, 0}} {
+		st, b, _ := e.do("GET", "/api/bench/results/models"+c.q, "")
+		if st != c.code || (st == 200 && len(jsonOf(t, b)["models"].([]any)) != c.n) {
+			t.Fatalf("%s: %d %s", c.q, st, b)
+		}
+	}
+	if _, has := jsonOf(t, b)["contexts"]; !has {
+		t.Fatalf("no contexts: %s", b)
 	}
 	// the test scheduler loads locally (no zones): no zone count, so no smallest fit
 	if _, has := m["smallest_fit"]; has || len(m["by_nodes"].([]any)) != 0 {

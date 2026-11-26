@@ -44,7 +44,8 @@ func benchBoards(t *testing.T) map[string]any {
 		q("limit=12&offset=0"), q("limit=12&offset=12"), q("limit=12&offset=0&kind=benchmark"), q("limit=12&offset=0&result=has_failed")}
 	paths := append([]string{"/api/status", "/api/models", "/api/profiles", "/api/bench/state", "/api/bench/groups", "/api/bench/benchmarks",
 		"/api/bench/groups/all-load/expand", "/api/bench/groups/full-pass/expand", "/api/bench/groups/planned-long-context/expand",
-		"/api/bench/runs/46", "/api/bench/runs/47", "/api/bench/runs/43", "/api/bench/runs/run-47/report", "/api/bench/results/models"}, runsQ...)
+		"/api/bench/runs/46", "/api/bench/runs/47", "/api/bench/runs/43", "/api/bench/runs/run-47/report", "/api/bench/results/models", "/api/bench/runs/49",
+		"/api/bench/results/models?run=47", "/api/bench/results/models?ctx=4096"}, runsQ...)
 	f := fixtureAnswers(t, []string{"--bench", "boards"}, paths...)
 	// GET /api/bench/runs answers by its query (the harness ignores a query otherwise)
 	f["/api/bench/runs"] = map[string]any{"$match": []any{
@@ -52,6 +53,10 @@ func benchBoards(t *testing.T) map[string]any {
 		[]any{`kind=benchmark`, f[runsQ[7]]}, []any{`result=has_failed`, f[runsQ[8]]}, []any{`offset=12`, f[runsQ[6]]},
 		[]any{`limit=4\b`, f[runsQ[3]]}, []any{`limit=1\b`, f[runsQ[4]]}, []any{`.`, f[runsQ[5]]}}}
 	f["/api/bench/runs/run-47"] = f["/api/bench/runs/47"]
+	f["/api/bench/runs/run-49"] = f["/api/bench/runs/49"]
+	// the results route answers by its query (the From and Context filters)
+	f["/api/bench/results/models"] = map[string]any{"$match": []any{
+		[]any{`run=47`, f["/api/bench/results/models?run=47"]}, []any{`ctx=4096`, f["/api/bench/results/models?ctx=4096"]}, []any{`.`, f["/api/bench/results/models"]}}}
 	f["/api/bench/runs/run-46"] = f["/api/bench/runs/46"]
 	f["PUT /api/bench/runs/run-46/pin"] = map[string]any{"id": "run-46", "pinned": true}
 	f["DELETE /api/bench/runs/run-46/pin"] = map[string]any{"id": "run-46", "pinned": false}
@@ -159,6 +164,26 @@ func TestUINextBenchPages(t *testing.T) {
 			"expect": []string{"LOAD TIMES", "Model", "Smallest fit", "Cold, smallest", "Cold, all 6", "qwen3.5-4b-q4_k_m", "26.8 s", "11.3 s", "mixtral-8x7b-q4_k_m", "failed", "not run"},
 			"has":    []string{"table.bp-res-t[data-view=load-times]", "a.bp-view[data-view=runs]", "[data-notyet=coding]"},
 			"none":   []string{"select.fs[aria-label=Kind]", "div.bp-pager"}, "count": map[string]any{"table.bp-res-t tbody tr": 12}},
+		// board Bench-Runs-Load: the Reload columns and the From and Context filters
+		map[string]any{"name": "load times: the Reload columns", "route": "#/benchmarks/runs?show=load-times", "status": st,
+			"expect": []string{"Reload, smallest", "Reload, all 6", "2.0 s", "From: latest run of each", "Context: any", "Context: 8,192", "Context: 4,096"},
+			"has":   []string{"select.fs[aria-label=From]", "select.fs[aria-label=Context]", "tr[data-model='qwen3.5-4b-q4_k_m.gguf'] td[data-fig='reload_s:s'] a.bp-fv"},
+			"order": []string{"Cold, smallest", "Cold, all 6", "Reload, smallest", "Reload, all 6"}},
+		map[string]any{"name": "load times: From one run", "route": "#/benchmarks/runs?show=load-times&from=47", "status": st,
+			"fetchedQuery": []string{`^GET /api/bench/results/models\?run=47$`}, "count": map[string]any{"table.bp-res-t tbody tr": 1}},
+		map[string]any{"name": "load times: pick a run in From", "route": "#/benchmarks/runs?show=load-times", "status": st,
+			"click": []any{map[string]any{"type": "select.fs[aria-label=From]", "value": "47"}}, "hash": "#/benchmarks/runs?show=load-times&from=47"},
+		map[string]any{"name": "load times: a context with no results", "route": "#/benchmarks/runs?show=load-times&ctx=4096", "status": st,
+			"fetchedQuery": []string{`^GET /api/bench/results/models\?ctx=4096$`}, "expect": []string{"No results yet"}},
+		// board Bench-Report #2: the view beside the report keeps its place,
+		// narrows to its first figure, and outlines the cell whose report is open
+		map[string]any{"name": "report beside load times: the selected cell", "route": "#/benchmarks/runs/run-46/0?show=load-times&fig=cold_load_s:s", "status": st, "width": 1536,
+			"has":    []string{"table.bp-res-t[data-view=load-times] tr[data-model='qwen3.5-4b-q4_k_m.gguf'] td.sel[data-fig='cold_load_s:s'] a.bp-fv.sel[aria-current=true]",
+				"a.bp-fv[href='#/benchmarks/runs/run-46/2?show=load-times&fig=cold_load_s%3As']"},
+			"count":  map[string]any{"table.bp-res-t td.sel": 1},
+			"absent": []string{"Reload, smallest"}, "pageHas": []string{"aside.side"}},
+		map[string]any{"name": "load times: a figure link keeps the view", "route": "#/benchmarks/runs?show=load-times", "status": st,
+			"has": []string{"tr[data-model='qwen3.5-4b-q4_k_m.gguf'] td[data-fig='cold_load_s:s'] a.bp-fv[href='#/benchmarks/runs/run-46/0?show=load-times&fig=cold_load_s%3As']"}},
 		map[string]any{"name": "runs: the Generation speed view", "route": "#/benchmarks/runs?show=generation", "status": st,
 			"expect": []string{"GENERATION SPEED", "tok/s, smallest", "tok/s, all 6", "96.2", "92.2"}},
 		map[string]any{"name": "runs: the First token view", "route": "#/benchmarks/runs?show=first-token", "status": st,
@@ -183,6 +208,16 @@ func TestUINextBenchPages(t *testing.T) {
 				"Reports", "All 24 reports", "26.8 s load · 96.2 tok/s"},
 			"pageHas":   []string{"aside.side .bp-acts button.bp-pin.on", "aside.side a.bp-rep[href='#/benchmarks/runs/46/" + "cold-response-repeat-qwen3.5-4b-q4_k_m-auto']"},
 			"pageCount": map[string]any{"aside.side .bp-issue": 2, "aside.side a.bp-rep": 8}},
+		// board Bench-Runs-Group #20 (the sub-heading by recipe), #17 (the
+		// short refusal; the scheduler's sentence on hover), #26 (Cancel on a
+		// run still going: run control, slice 6)
+		map[string]any{"name": "run panel: reports by recipe, the short refusal", "route": "#/benchmarks/runs/46", "status": st, "width": 1536,
+			"pageHas":   []string{"aside.side .bp-reports .bp-rsub[data-recipe=cold-response-repeat]", "aside.side .bp-issue [data-short]"},
+			"page":      []string{"Cold load, response and repeat", "Does not fit on 1 zone"},
+			"notOnPage": []string{"by the memory reservation rule"}, "titles": []string{"does not fit ra-01 by the memory reservation rule"},
+			"pageNone":  []string{"aside.side [data-act=cancel]"}},
+		map[string]any{"name": "run panel: Cancel on a running run", "route": "#/benchmarks/runs/49", "status": st, "width": 1536,
+			"pageHas": []string{"aside.side .bp-acts .bp-notyet[data-notyet=run] [data-act=cancel]"}},
 		map[string]any{"name": "run panel: All reports", "route": "#/benchmarks/runs/46", "status": st, "click": []string{"aside.side button.bp-all"},
 			"pageCount": map[string]any{"aside.side a.bp-rep": 24}},
 		map[string]any{"name": "run panel: an unknown run", "route": "#/benchmarks/runs/999", "status": st, "page": []string{"There is no such run"}},

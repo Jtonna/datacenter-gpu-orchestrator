@@ -81,7 +81,8 @@ type ModelResults struct {
 
 // ResultsFilter narrows the steps read.
 type ResultsFilter struct {
-	Ctx int // only steps measured at this context (a recipe's ctx input)
+	Ctx   int    // only steps measured at this context (a recipe's ctx input)
+	RunID string // only the steps of this run (board Bench-Runs-Load "From: run N"); "": the latest of each
 }
 
 // ResultsByModel reads the rows, model files in name order.
@@ -90,6 +91,10 @@ func (s *Store) ResultsByModel(f ResultsFilter) ([]ModelResults, error) {
 	if f.Ctx > 0 {
 		where += ` AND EXISTS (SELECT 1 FROM measurements c WHERE c.step_id=s.id AND c.ctx=?)`
 		args = append(args, f.Ctx)
+	}
+	if f.RunID != "" {
+		where += ` AND s.run_id=?`
+		args = append(args, f.RunID)
 	}
 	rows, err := s.db.Query(`SELECT s.id, s.run_id, s.idx, s.benchmark_id, s.model_file, s.node_count, s.outcome, s.reason, s.error,
 	    CASE WHEN s.started_at>0 THEN s.started_at ELSE s.finished_at END
@@ -190,6 +195,25 @@ func (s *Store) ResultsByModel(f ResultsFilter) ([]ModelResults, error) {
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
+
+// ResultContexts are the contexts the record holds figures at (the
+// "Context" filter of the result views), smallest first.
+func (s *Store) ResultContexts() ([]int, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT ctx FROM measurements WHERE ctx>0 AND metric IN ('load_s','decode_tps','ttft_ms','memory_mib') ORDER BY ctx`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []int{}
+	for rows.Next() {
+		var n int
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
 
 // take fills each figure c has not got yet from src, a step older than (or
 // the same as) the ones already taken, and notes where it came from.

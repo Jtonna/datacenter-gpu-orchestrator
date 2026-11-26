@@ -402,6 +402,24 @@ func (s *Server) resultsByModel(w http.ResponseWriter, r *http.Request) {
 		}
 		f.Ctx = n
 	}
+	// ?run=<id or number>: one run's results (board Bench-Runs-Load "From")
+	if v := r.URL.Query().Get("run"); v != "" {
+		id := v
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			got, err := s.opts.BenchStore.RunIDByNumber(n)
+			if err != nil {
+				apiErr(w, http.StatusNotFound, "there is no run %d", n)
+				return
+			}
+			id = got
+		}
+		f.RunID = id
+	}
+	ctxs, err := s.opts.BenchStore.ResultContexts()
+	if err != nil {
+		s.storeErr(w, err)
+		return
+	}
 	rows, err := s.opts.BenchStore.ResultsByModel(f)
 	if err != nil {
 		s.storeErr(w, err)
@@ -439,7 +457,7 @@ func (s *Server) resultsByModel(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return !rows[i].FileGone && rows[j].FileGone })
-	writeJSON(w, http.StatusOK, map[string]any{"models": rows, "ctx": f.Ctx})
+	writeJSON(w, http.StatusOK, map[string]any{"models": rows, "ctx": f.Ctx, "run": f.RunID, "contexts": ctxs})
 }
 
 // queryMeasurements is GET /api/bench/measurements: the history of the
