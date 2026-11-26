@@ -2,6 +2,14 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: the need estimate leaves out the MTP block's KV
+
+No agent change, no new port, no new route, no table, no setting.
+
+- **The KV part of an estimated need** counts only the trunk's attention layers, as the model server allocates its cache: an MTP (`nextn_predict_layers`) block at the end of the file keeps no KV cache (pinned llama.cpp: the caches take `il < n_layer()`, `n_layer() = block_count - nextn_predict_layers`).
+- **Who changes:** only profiles whose need is estimated (not measured, not written), on a file with an MTP block that the rule before counted as an attention layer: a plain (all-attention) architecture with `nextn_predict_layers`, or a hybrid whose MTP block falls on its full-attention interval. Qwen 3.5 4B (33 blocks) and Qwen 3.8 27B (65 blocks), interval 4, do not: their MTP block was never counted. Their estimates are unchanged.
+- **Going back:** the image before counts the block again; nothing stored changes.
+
 ## Web UI: the benchmark pages and "Remove for good" in the trash
 
 No schema change, no setting. One new read route and one new field:
