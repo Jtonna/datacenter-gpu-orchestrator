@@ -38,7 +38,7 @@ const SOURCE = { 'measured for this shape': 'measured for this shape', derived: 
 const FIT = {
   fits: ['Fits', 'ready', 'It fits with nothing else loaded, by a measured or derived need'],
   'fits-by-estimate': ['Fits, estimated', 'ready', 'Not measured: by the file estimate it fits with nothing else loaded'],
-  'estimate-does-not-fit': ['Not measured', 'warn', 'Not measured: by the file estimate it does not fit. Not written unless ticked'],
+  'estimate-does-not-fit': ['Not measured', 'load', 'Not measured: by the file estimate it does not fit. Not written unless ticked'],
   'does-not-fit': ['Not kept', 'fail', 'By a measured or derived need it does not fit even with nothing loaded'],
   'need-unknown': ['Not kept', 'fail', 'Its need is not known: nothing can be planned'],
 };
@@ -108,7 +108,7 @@ export function standardDialog(m, onDone) {
     set && state !== 'named' ? h('p.sub', { 'data-name-from': set.short_source },
       set.short_source === 'family' ? [SRC_LABEL.family, ' (', (set.family_ids || []).map((id, i) => [i ? ', ' : null, h('span.mono', id)]), '). The rows are ', h('span.mono', set.short), ' and ', h('span.mono', set.short + ':<N>k'), '.']
         : [SRC_LABEL[set.short_source] || '', '. The rows are ', h('span.mono', set.short), ' and ', h('span.mono', set.short + ':<N>k'), '.']) : null,
-    nameMsg ? h('div.banner.err', { 'data-name-refused': '' }, h('span', h('b', 'This name cannot be used. '), nameMsg)) : null);
+    nameMsg ? h('div.banner.err', { 'data-name-refused': '' }, h('span', h('b', 'This name cannot be used. '), nameMsg.charAt(0).toUpperCase() + nameMsg.slice(1))) : null);
   const head = () => h('p', { 'data-std-note': '' }, h('span.mono', file), ': ', set.note, '. ',
     set.default_id ? ['The default ', h('span.mono', set.default_id), ' is ', ctxText(set.default_ctx), ' (the largest context up to 32k that fits). '] : 'No context up to 32k fits, so there is no default. ',
     'Each context was planned with nothing loaded; nothing was loaded. What would happen now is said under a row when it differs.');
