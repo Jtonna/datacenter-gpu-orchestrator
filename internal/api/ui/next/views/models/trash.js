@@ -412,7 +412,8 @@ function removedList(list) {
     h('div.mdl-rows', { role: 'list', 'aria-label': 'Removed for good' }, rows.map(t => h('div.mr.del.gone', { key: t.id, role: 'listitem', 'data-removed': t.id, 'data-reason': t.reason },
       h('span.del-ic', icon(TRASH)),
       h('span.mdl-name', h('span.mono.nm', { title: t.file }, t.file), h('span.mut', gbOf(t.size_bytes || 0) + ' GB' + ((t.profile_ids || []).length ? ' · ' + plural(t.profile_ids.length, 'profile') : ''))),
-      h('span.del-at', t.removed_at ? daysAgo(t.removed_at) : h('span.mut', t.state === 'removing' ? 'being removed' : DASH)),
+      // a remove the server stamped a moment ahead of this clock reads "just now", never "in 0 s"
+      h('span.del-at', t.removed_at ? daysAgo(Math.min(t.removed_at, now())) : h('span.mut', t.state === 'removing' ? 'being removed' : DASH)),
       h('span.del-by', t.removed_by ? t.removed_by : h('span.mut', DASH)),
       h('span.del-why', { title: t.comment || null }, REASON[t.reason] || t.reason, t.comment ? [': ', h('span', t.comment)] : null)))));
 }

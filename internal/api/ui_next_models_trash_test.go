@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // The models trash in the UI (v65, models slice 3; boards Models,
@@ -136,6 +138,15 @@ func TestUINextModelsTrash(t *testing.T) {
 			"has":   []string{"section.del-gone div.mr.del.gone[data-removed='0a0b0c0d0e0f'][data-reason=owner]", "section.del-gone div.mr.del.gone[data-removed='1a1b1c1d1e1f'][data-reason=clearing]"},
 			"order": []string{"mistral-7b-v0.3-q4_k_m.gguf", "tinyllama-1.1b-q8_0.gguf"}},
 	)
+	// a remove stamped by the server a moment ahead of this clock reads "just now", never "in 0 s"
+	ahead := map[string]any{}
+	if err := json.Unmarshal([]byte(mustJSON(t, two["/api/models/trash"])), &ahead); err != nil {
+		t.Fatal(err)
+	}
+	ahead["removed"].([]any)[0].(map[string]any)["removed_at"] = float64(time.Now().Add(time.Hour).UnixMilli())
+	run(with(two, map[string]any{"/api/models/trash": ahead}),
+		map[string]any{"name": "trash: a remove stamped ahead of the clock", "route": "#/models/deleted", "status": st,
+			"expect": []string{"just now"}, "absent": []string{"in 0 s", "in 1 h", "in 59 min"}})
 
 	// 2b. remove for good: the dry run first and the server's sentence; the
 	// file name typed exactly and a comment; then the remove; the refusals
