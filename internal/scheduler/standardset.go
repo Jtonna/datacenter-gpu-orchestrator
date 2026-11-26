@@ -37,42 +37,90 @@ type CandidatePlan struct {
 	// the zones that placement uses.
 	IdleFits  bool
 	IdleZones []string
+	// Zones* is the need on the number of zones the fit was decided on: the
+	// idle placement's count when it fits, else the most it may use
+	// (MayUse). It is the figure the placer compares for that count
+	// (state.go request: ByCount from needcount.go at), which can differ
+	// from Report.NeedMiB: that one is the need on the display count (the
+	// count of the latest measurement, needcount.go displayCount), which may
+	// be more zones than max_pool allows. ZonesNeedKnown is false when the
+	// need is not known at all.
+	ZonesCount      int
+	ZonesNeedMiB    int
+	ZonesNeedFitMiB int
+	ZonesNeedSource NeedSource
+	ZonesNeedBasis  string
+	ZonesNeedKnown  bool
 }
+
+// MeasuredSource: a need taken from a measurement of this very shape (this
+// run, restored, or a written needs_mib).
+func MeasuredSource(s NeedSource) bool {
+	return s == NeedLearned || s == NeedRestored || s == NeedConfigured
+}
+
+// DerivedSource: a need derived from other contexts of the model (the
+// formula step from another context, or the model's own slope).
+func DerivedSource(s NeedSource) bool { return s == NeedDerived || s == NeedOwnSlope }
 
 // PlanCandidates plans each profile read-only on the fleet as it is. The
 // profiles are not configured; nothing is stored or changed (the needs read
 // for them are dropped again).
 func (s *Scheduler) PlanCandidates(ctx context.Context, ps []*core.Profile) ([]CandidatePlan, error) {
-	return askRead(s, ctx, "standard set plans", func(c *schedCore) []CandidatePlan {
-		out := make([]CandidatePlan, 0, len(ps))
-		for _, p := range ps {
-			cp := *p
-			cp.Name = p.Name + candidateScope
-			cp.Aliases = nil
-			sp := c.realScoped(&cp) // realctx.go: as a scoped plan
-			r := c.dryPlanOf(sp.Name, sp)
-			c.forgetScopedNeed(sp.Name)
-			r.Profile = p.Name
-			cpl := CandidatePlan{Report: r}
-			cpl.MayUse, cpl.ByPool = c.zonesMayUse(sp)
-			if pl, ok := c.idleFleetFit(sp); ok {
-				cpl.IdleFits = true
-				for _, n := range pl.Nodes {
-					cpl.IdleZones = append(cpl.IdleZones, c.nodeName(n.ID))
-				}
+	return askRead(s, ctx, "standard set plans", func(c *schedCore) []CandidatePlan { return c.planCandidates(ps) })
+}
+
+// planCandidates is PlanCandidates on the loop.
+func (c *schedCore) planCandidates(ps []*core.Profile) []CandidatePlan {
+	out := make([]CandidatePlan, 0, len(ps))
+	for _, p := range ps {
+		cp := *p
+		cp.Name = p.Name + candidateScope
+		cp.Aliases = nil
+		sp := c.realScoped(&cp) // realctx.go: as a scoped plan
+		r := c.dryPlanOf(sp.Name, sp)
+		r.Profile = p.Name
+		cpl := CandidatePlan{Report: r}
+		cpl.MayUse, cpl.ByPool = c.zonesMayUse(sp)
+		if pl, ok := c.idleFleetFit(sp); ok {
+			cpl.IdleFits = true
+			for _, n := range pl.Nodes {
+				cpl.IdleZones = append(cpl.IdleZones, c.nodeName(n.ID))
 			}
-			for _, n := range r.Placement {
-				cpl.Zones = append(cpl.Zones, c.nodeName(n.ID))
-			}
-			if len(cpl.Zones) == 0 && r.Memory != nil {
-				for _, n := range r.Memory.Nodes {
-					cpl.Zones = append(cpl.Zones, n.Node)
-				}
-			}
-			out = append(out, cpl)
 		}
-		return out
-	})
+		c.zonesNeed(sp, &cpl)
+		c.forgetScopedNeed(sp.Name) // after every read of its need
+		for _, n := range r.Placement {
+			cpl.Zones = append(cpl.Zones, c.nodeName(n.ID))
+		}
+		if len(cpl.Zones) == 0 && r.Memory != nil {
+			for _, n := range r.Memory.Nodes {
+				cpl.Zones = append(cpl.Zones, n.Node)
+			}
+		}
+		out = append(out, cpl)
+	}
+	return out
+}
+
+// zonesNeed fills cpl's Zones* from p's need on the count the fit was
+// decided on.
+func (c *schedCore) zonesNeed(p *core.Profile, cpl *CandidatePlan) {
+	_, info, err := c.request(p)
+	if err != nil {
+		return
+	}
+	k := cpl.MayUse
+	if cpl.IdleFits {
+		k = len(cpl.IdleZones)
+	}
+	at := info
+	if k > 0 && len(info.figs) > 0 {
+		at = info.at(k) // the placer's ByCount[k] (state.go request)
+	}
+	cpl.ZonesCount, cpl.ZonesNeedKnown = k, at.Need.MiB > 0
+	cpl.ZonesNeedMiB, cpl.ZonesNeedFitMiB = at.Need.MiB, at.Need.WithMargin()
+	cpl.ZonesNeedSource, cpl.ZonesNeedBasis = at.Source, c.needBasis(at)
 }
 
 // idleFleetFit places p as if nothing were loaded: the free nodes as they

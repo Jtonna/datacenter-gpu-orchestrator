@@ -21,6 +21,10 @@ const (
 	TrashTrashed     = "trashed"     // the file is in .trash/<id>/
 	TrashRestoring   = "restoring"   // a restore is under way (or was killed)
 	TrashInterrupted = "interrupted" // a start could not tell where the file is: Problem says what it found
+	// TrashHeldBack: the file was restored (it is in the models folder) but
+	// some of its profiles could not be added; Profiles holds only those,
+	// Problem says why each was held back. A restore call adds them later.
+	TrashHeldBack = "held_back"
 )
 
 // TrashRecord is one model file in the trash.
@@ -122,6 +126,14 @@ func (s *Store) TrashSetState(id, state string, revision int64, restore map[stri
 		args = append(args, profilesJSON(restore))
 	}
 	return s.execOne(q+` WHERE id = ?`, append(args, id)...)
+}
+
+// TrashHoldBack turns a record into a held-back one: the file is back in
+// the folder, held are the profiles not added (they replace Profiles), why
+// says why each was held back.
+func (s *Store) TrashHoldBack(id string, held map[string]*config.ProfileSpec, why string, at int64) error {
+	return s.execOne(`UPDATE model_trash SET state = ?, profiles = ?, restore_profiles = '{}', problem = ?, updated_at = ? WHERE id = ?`,
+		TrashHeldBack, profilesJSON(held), why, at, id)
 }
 
 // TrashDelete removes a record (the file is back in the folder, or the

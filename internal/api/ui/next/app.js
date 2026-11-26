@@ -27,6 +27,8 @@ import './views/audit.js';
 import './views/mcp.js';
 import './views/about.js';
 
+import { startWheel } from './core/wheel.js';
+
 // The home page is the Overview (Q76): /ui/ with no screen named opens it.
 if (!location.hash || location.hash === '#' || location.hash === '#/') history.replaceState(null, '', '#/overview');
 
@@ -36,6 +38,7 @@ if (!location.hash || location.hash === '#' || location.hash === '#/') history.r
 let screen = null;
 onRoute(route => { if (route.id !== screen) { screen = route.id; releaseCatalog(); } });
 
+startWheel(); // the wheel over an overlay stays with it (core/wheel.js)
 startShell(document.getElementById('app'));
 startRouter(document.getElementById('main'));
 startLive();

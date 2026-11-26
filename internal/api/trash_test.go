@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -31,10 +32,20 @@ type trashEnv struct {
 	stop string // the step trashStop "kills" at
 	ro   bool   // act out a read-only folder
 	// unknown: models_writable cannot be told (as on Windows)
-	unknown bool
-	outer   string                 // a folder outside the models folder (must stay untouched)
-	hook    func(step string) bool // set before newTrashEnvWith returns: runs at every step
-	hist    *history.Store
+	unknown   bool
+	outer     string                 // a folder outside the models folder (must stay untouched)
+	hook      func(step string) bool // set before newTrashEnvWith returns: runs at every step
+	hist      *history.Store
+	renameErr error    // when set, every rename fails with it
+	trained   sync.Map // model file base name -> its trained context (int); unknown when absent
+}
+
+func (te *trashEnv) trainedCtx(p string) (int, bool) {
+	v, ok := te.trained.Load(filepath.Base(p))
+	if !ok {
+		return 0, false
+	}
+	return v.(int), true
 }
 
 func newTrashEnv(t *testing.T) *trashEnv { t.Helper(); return newTrashEnvWith(t, nil) }
@@ -64,7 +75,7 @@ func newTrashEnvUp(t *testing.T, hook func(te *trashEnv, step string) bool, upst
 	}
 	te.cs = cs
 	var e *env
-	svc := cfgsvc.New(context.Background(), cfgsvc.Options{Store: cs, Boot: config.Bootstrap{ModelsDir: te.dir},
+	svc := cfgsvc.New(context.Background(), cfgsvc.Options{Store: cs, Boot: config.Bootstrap{ModelsDir: te.dir}, Parse: config.Options{TrainedCtx: te.trainedCtx},
 		Apply:    func(c *config.Config) { e.sched.ApplyConfig(c) },
 		OnChange: func(ev cfgsvc.ChangeEvent) { e.api.PublishConfig(ev) }})
 	te.svc = svc
@@ -79,6 +90,9 @@ func newTrashEnvUp(t *testing.T, hook func(te *trashEnv, step string) bool, upst
 		Rename: func(a, b string) error {
 			if te.ro {
 				return rofs("rename", a)
+			}
+			if te.renameErr != nil {
+				return te.renameErr
 			}
 			return os.Rename(a, b)
 		},

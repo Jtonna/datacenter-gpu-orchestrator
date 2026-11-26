@@ -774,7 +774,7 @@ input.file::file-selector-button{font:inherit;font-weight:700;font-size:12.5px;c
 .runkey>a{font-weight:700}
 /* runs table, 30 px rows (Components board 3) */
 .ov-req .runs-box{flex:1;min-height:0;overflow:hidden}
-table.runs{width:100%;border-collapse:collapse}
+table.runs{width:100%;border-collapse:collapse;position:relative} /* relative: a screen-reader label (span.sr, absolute) stays inside the scroll box of a card narrower than its table */
 .runs th{text-align:left;font-size:var(--fs-label);font-weight:700;color:var(--mut);padding:5px 8px;border-top:1px solid var(--line);white-space:nowrap}
 .runs td{height:var(--row-runs);padding:0 8px;border-top:1px solid var(--line);white-space:nowrap}
 .runs th:first-child,.runs td:first-child{padding-left:var(--pad-panel)}
@@ -782,12 +782,30 @@ table.runs{width:100%;border-collapse:collapse}
 .runs th.num,.runs td.num{text-align:right}
 .runs .rs{display:flex}
 .runs td.qd{font-weight:600}
-.runs td.rq-zones{white-space:normal;min-width:0;padding-top:4px;padding-bottom:4px;line-height:1.45}
+.runs td.rq-zones{white-space:nowrap;min-width:0}
 .rq-zones .mc{white-space:nowrap}
 /* Requests: with rows as wide as live's the Model and Sent by cells give way first (wrap anywhere, the full text on hover); the figures stay whole */
-.runs td.rq-model{white-space:normal;overflow-wrap:anywhere;min-width:7ch;line-height:1.35;padding-top:4px;padding-bottom:4px}
+/* The Model cell never widens its table (live's longest: "TEST - bench-tinyllama-...-2304 · tinyllama-1.1b-chat-v1.0"):
+   its width is a share of the table (max-width:0 keeps its text out of the table's sizing), on one line; the
+   model's short name gives way first, then the shown name, each ending in "…"; the whole text on hover (span.rpc).
+   It takes the room the other columns leave, up to a most width per layout: the Overview card 40ch, the
+   Requests page 48ch (beside Zones and Sent by; at least 12ch there, its table scrolls inside the card on a phone). */
+.runs td.rq-mc{max-width:0;width:100%}
+.runs td.rq-model{min-width:calc(20ch + 16px)} /* a profile's shown name whole at least ("TEST - p4-qwen4b-107": 20 characters) */
+.ov-req .rpc{max-width:40ch}
+.rq-model .rpc{max-width:48ch}
+.rpc{display:flex;min-width:0;overflow:hidden;white-space:nowrap}
+.rpc>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:pre} /* pre: keeps the space before " · " at the start of the model's span */
+/* the shown name never shrinks while the model's name has any width left: it keeps its own width up to the cell's */
+.rpc-n{flex:0 0 auto;max-width:100%}
+.rpc-m{flex:0 1 auto}
+/* the Requests table scrolls inside its card when the figures alone are wider (a phone) */
+.rq-scroll{overflow-x:auto}
+.rq-bar>div{min-width:0;max-width:100%}
+.rq-bar select.fs{max-width:100%;text-overflow:ellipsis}
 .runs td.rq-sent span{display:block;max-width:12ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rq-zones>span{display:block;max-width:34ch}
+/* Zones: one line of at most 18 characters ending in "…", the whole list on hover, so Model keeps the room for a profile's name (v88 review, 26 Nov) */
+.rq-zones>span{display:block;max-width:18ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .runs tr.fail td{background:var(--failed-row)}
 .runs tr.canc td{color:var(--quiet)}
 .runs tr.none td{height:auto;padding:22px var(--pad-panel);color:var(--mut);font-weight:600;white-space:normal}
@@ -1154,6 +1172,8 @@ input.cb{width:16px;height:16px;margin:0;accent-color:#0f6b4a}
   .prf-tbl th:nth-child(4){width:108px}
   .prf-tbl th:nth-child(5){width:146px}
 }
+/* a phone: Zones goes too (it is in the panel), so the profile's name keeps the room to be read */
+@container (max-width:460px){.prf-tbl th:nth-child(4),.prf-tbl td:nth-child(4){display:none}}
 .prf-tbl tr.sel td{background:var(--accent-tint)}
 .prf-tbl tr.sel td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
 .prf-name{min-width:0}
@@ -1328,8 +1348,8 @@ input.cb{width:16px;height:16px;margin:0;accent-color:#0f6b4a}
 .mdl .tbar{display:flex;align-items:center;gap:10px;width:100%;height:44px;margin-top:auto;padding:0 16px 0 15px;border:0;border-top:1px solid #dfe5e1;background:#f8faf8;color:#131a17;font:inherit;font-weight:700;text-align:left}
 .mdl .mr.mr-h{min-height:0;padding-top:4px;padding-bottom:4px;cursor:default;background:none;border-top:0}
 .mdl .mr.mr-h:hover{background:none}
-.mdl-needs{text-align:right;white-space:nowrap}
-.mdl-needs .sub{display:block}
+.mdl-needs{text-align:right;white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.mdl-sub{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mdl-pc .sub{display:block;font-size:11.5px;margin-top:1px;white-space:nowrap}
 .mdl .mr-h .mdl-needs{text-align:right}
 @container (max-width:640px){.mdl .mr{grid-template-columns:28px minmax(0,1fr) 84px 96px}.mdl .mr .mdl-pc{display:none}}

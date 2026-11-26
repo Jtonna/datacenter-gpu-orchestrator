@@ -86,6 +86,10 @@ type Scheduler struct {
 	opts Options
 	core *schedCore
 
+	// dryPlans counts the dry-run plans asked of the loop (Plan), from any
+	// caller: one step of the loop each
+	dryPlans atomic.Int64
+
 	events   chan event
 	tick     chan struct{}
 	started  atomic.Bool
@@ -841,11 +845,15 @@ func (s *Scheduler) Status(ctx context.Context) (Status, error) {
 
 // Plan is POST /api/plan: what a request for model would meet now. It
 // changes nothing.
+// DryPlans is how many dry-run plans were asked of the loop so far.
+func (s *Scheduler) DryPlans() int64 { return s.dryPlans.Load() }
+
 func (s *Scheduler) Plan(ctx context.Context, model string) (PlanReport, error) {
 	p, alias, ok := s.resolve(model)
 	if !ok {
 		return PlanReport{}, errUnknown(model)
 	}
+	s.dryPlans.Add(1)
 	r, err := askRead(s, ctx, "plan of "+p.Name, func(c *schedCore) PlanReport { return c.dryPlan(p.Name) })
 	if err != nil {
 		return PlanReport{}, err

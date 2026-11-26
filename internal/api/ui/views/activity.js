@@ -13,7 +13,8 @@ import { h } from '../core/dom.js';
 import { registerView, navigate } from '../core/router.js';
 import { state, on, listen } from '../core/store.js';
 import * as api from '../core/api.js';
-import { liveView, pageHead, badge, nodeChips, chips, stat, table, empty, skeleton, button } from '../core/ui.js';
+import { liveView, pageHead, badge, nodeChips, chips, stat, table, empty, skeleton, button, runProfileCell } from '../core/ui.js';
+import { needCatalog, onCatalog } from '../core/catalog.js';
 import { num, gb, bytes, tps, dur, plural, now, dayLabel, dateTime, agoText } from '../core/format.js';
 import { plainReason } from '../core/status.js';
 
@@ -341,7 +342,7 @@ registerView({
           rows: requests.slice(0, 10), key: r => r.id,
           columns: [
             { label: 'Finished', cls: 'tight', render: r => h('time', { title: dateTime(r.timestamp) }, agoText(r.timestamp)) },
-            { label: 'Model', cls: 'clip', render: r => h('span', { title: r.model }, h('span.mono', r.model), r.resp_status_code !== 200 ? h('span.sub.err-t', 'HTTP ' + r.resp_status_code) : null) },
+            { label: 'Model', cls: 'clip', render: r => h('span', { title: r.model }, h('span.mono', runProfileCell({ profile: r.model })), r.resp_status_code !== 200 ? h('span.sub.err-t', 'HTTP ' + r.resp_status_code) : null) },
             { label: 'Tokens', cls: 'r', title: 'Tokens generated', render: r => (r.tokens && r.tokens.output_tokens >= 0 ? num(r.tokens.output_tokens) : '–') },
             { label: 'tok/s', cls: 'r', render: r => (r.tokens ? tps(r.tokens.tokens_per_second) : '–') },
             { label: 'Took', cls: 'r', render: r => dur((r.duration_ms || 0) / 1000) },
@@ -351,6 +352,9 @@ registerView({
     }
 
     const view = liveView(el, render, ['tick', 'conn']);
+    // the recent requests name their profiles from the catalog (runProfileCell): names only, no live plans
+    needCatalog({ live: false });
+    const offCatalog = onCatalog(() => view.refresh());
     loadEvents(); loadSide(); loadRequests();
     return {
       update(r) {
@@ -361,7 +365,7 @@ registerView({
         if (rangeChanged) { summary = null; loads = null; loadSide(); }
         view.refresh();
       },
-      unmount() { alive = false; clearTimeout(sumTimer); clearTimeout(reqTimer); offEvent(); offStatus(); view.unmount(); },
+      unmount() { alive = false; clearTimeout(sumTimer); clearTimeout(reqTimer); offEvent(); offStatus(); offCatalog(); view.unmount(); },
     };
   },
 });

@@ -907,6 +907,7 @@ func BuildModelCatalog(in CatalogInput, detailKey string) []map[string]any {
 			}
 			if n := jnum(p["needs_mib"]); n > 0 {
 				pe["needs_mib"], pe["needs_basis"], pe["needs_measured"] = p["needs_mib"], p["needs_basis"], jbool(p["needs_measured"])
+				pe["needs_written"] = jbool(p["needs_written"])
 				// the model's own need is that of its lightest configuration
 				if need == 0 || n < need {
 					need, needBasis, needMeasured = n, jstr(p["needs_basis"]), jbool(p["needs_measured"])

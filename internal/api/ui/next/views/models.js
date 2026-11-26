@@ -238,6 +238,25 @@ function needsCell(m, st) {
   if (noProd(m)) how = (how ? how + '. ' : '') + 'The smallest test configuration: no production profile yet';
   return h('span.mdl-needs', { 'data-col': 'needs' }, f.need ? h('span', { title: how, 'data-basis': f.sub || null }, needText(f.need)) : h('span.mut', DASH));
 }
+// The Needs cell holds the figure alone ("~5.3 GB"), like the range rows: a
+// need written in the profile and the reason no configuration can be placed
+// go on the line under the name (nameSub), never in the Needs cell, which is
+// narrower than they are (v88 refused, 26 Nov: the text was painted over
+// Profiles and Last used).
+const byHand = (m, st) => { const r = prodNeeds(m); return r ? r.basis === 'set by hand' : fitOf(m, st).kind === 'cmd' && !!fitOf(m, st).need; };
+const lower = t => (t ? t[0].toLowerCase() + t.slice(1) : t);
+// nameSub(m, st) -> "A program on this machine · need set by hand · runs only
+// on host-1, which is excluded": one line inside the name column, an ellipsis
+// and the whole line on hover when it is longer
+function nameSub(m, st) {
+  const no = (m.profiles || []).some(p => p.needs_mib) ? cannotRun(m) : null;
+  const parts = [sizeText(m), byHand(m, st) ? 'need set by hand' : null].filter(Boolean);
+  const text = parts.concat(no ? [lower(no)] : []).join(' · ');
+  return h('span.mut.mdl-sub', { title: text },
+    parts.join(' · '),
+    no ? h('span.mdl-why', { 'data-why': '' }, ' · ', lower(no)) : null,
+    m.kind !== 'command' && m.exists === false ? h('span.err-t', ' · the file is missing') : null);
+}
 
 // runsOnRange(m, st, r) -> "1 to 2 PS5s": the fewest zones each end needs on
 // the empty cluster (fit.budgets_mib); null when the sums are not served
@@ -364,7 +383,7 @@ function modelPanel(st, m, ps) {
           h('td', h('span', { 'data-shown': '' }, profileLabel(p)), profileLabel(p) !== p.id ? h('span.sub.mono', { title: 'The id clients send' }, p.id) : null, loadedProfiles.has(p.id) ? h('span.mdl-pill', { title: 'Loaded now' }, 'Now') : null, p.description ? h('span.sub', p.description) : null,
             p.parallel > 1 ? h('span.sub', `${num(p.parallel)} requests in parallel`) : null, hostLine(p)),
           h('td.r.mono', p.ctx ? num(p.ctx) : DASH),
-          h('td.r', p.needs_mib ? [h('span.mono', num(p.needs_mib) + ' MiB'), h('span.sub', { title: p.needs_basis || null }, p.needs_measured ? 'measured' : 'estimated')] : h('span.mut', DASH)),
+          h('td.r', p.needs_mib ? [h('span.mono', num(p.needs_mib) + ' MiB'), h('span.sub', { title: p.needs_basis || null }, needBasis(p))] : h('span.mut', DASH)),
           ttlCol ? (typeof p.ttl_s === 'number' ? h('td.r.mono', { 'data-ttl': String(p.ttl_s) }, p.ttl_s > 0 ? dur(p.ttl_s) : 'Never') : h('td.r.mut', DASH)) : null,
           h('td.r', h('button.go', { type: 'button', 'data-act': 'edit', 'aria-label': 'Edit ' + p.id, title: 'Edit it here', onclick: () => ps.edit(p.id) }, h('span.tx', 'Edit'), icon('M8 5l5 5-5 5'))));
   }
@@ -560,7 +579,7 @@ function listPanel(st, models, disk, error, r, query, setQuery, onFind, done) {
     onkeydown: e => { if ((e.key === 'Enter' || e.key === ' ') && !e.target.closest('[data-off]') && !e.target.closest('button') && !e.target.closest('a[href]')) { e.preventDefault(); open(m.key); } } },
   starButton(m, models),
   h('span.mdl-name', h('span.mono.nm', { title: m.short_name && m.short_name !== m.file ? m.short_name : null }, m.file || m.name),
-    h('span.mut', sizeText(m), m.kind !== 'command' && m.exists === false ? h('span.err-t', ' · the file is missing') : null),
+    nameSub(m, st),
     inUse(m)),
   needsCell(m, st),
   profCell(m),
