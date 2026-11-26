@@ -75,13 +75,13 @@ func TestCopyDirMakesACopyAndRefusesItsOwnInside(t *testing.T) {
 func TestDumpAndCompare(t *testing.T) {
 	old := []byte(`{"profiles":[
 	 {"id":"a","needs_mib":4000,"needs_basis":"measured","plan":{"action":"start","need_mib":4000,"memory":{"nodes":[
-	   {"node":"ps5-a","will_take_mib":4100,"basis":"measured","host_overhead_mib":1024,"host_overhead_source":"setting","host_overhead_measured_at":"2026-01-01"},
-	   {"node":"ps5-b","will_take_mib":4100,"basis":"measured","host_overhead_mib":0}]}}},
+	   {"node":"node-a","will_take_mib":4100,"basis":"measured","host_overhead_mib":1024,"host_overhead_source":"setting","host_overhead_measured_at":"2026-01-01"},
+	   {"node":"node-b","will_take_mib":4100,"basis":"measured","host_overhead_mib":0}]}}},
 	 {"id":"gone","plan":{"action":"reject","nodes":[]}}]}`)
 	new := []byte(`{"profiles":[
 	 {"id":"a","needs_mib":4000,"needs_basis":"measured","plan":{"action":"start","need_mib":4000,"memory":{"nodes":[
-	   {"node":"ps5-b","will_take_mib":4100,"basis":"measured","host_overhead_mib":0},
-	   {"node":"ps5-a","will_take_mib":4612,"basis":"measured","host_overhead_mib":1536,"host_overhead_source":"measured","host_overhead_measured_at":"2026-02-02"}]}}},
+	   {"node":"node-b","will_take_mib":4100,"basis":"measured","host_overhead_mib":0},
+	   {"node":"node-a","will_take_mib":4612,"basis":"measured","host_overhead_mib":1536,"host_overhead_source":"measured","host_overhead_measured_at":"2026-02-02"}]}}},
 	 {"id":"added","plan":{"action":"start"}}]}`)
 	ign := regexp.MustCompile(`(^|\.)[a-z_]*(_at|_at_ms)$`)
 	a, err := dumpOf(old, ign)
@@ -92,7 +92,7 @@ func TestDumpAndCompare(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a["a"]["plan.memory.nodes[ps5-a].will_take_mib"] != "4100" || a["gone"]["plan.nodes"] != "[]" || a["gone"]["needs_mib"] != "(absent)" {
+	if a["a"]["plan.memory.nodes[node-a].will_take_mib"] != "4100" || a["gone"]["plan.nodes"] != "[]" || a["gone"]["needs_mib"] != "(absent)" {
 		t.Fatalf("dump %v", a)
 	}
 	for k := range a["a"] {
@@ -106,9 +106,9 @@ func TestDumpAndCompare(t *testing.T) {
 		got = append(got, r.ID+" "+r.Field+" "+r.Old+" "+r.New)
 	}
 	want := []string{
-		"a plan.memory.nodes[ps5-a].host_overhead_mib 1024 1536",
-		`a plan.memory.nodes[ps5-a].host_overhead_source "setting" "measured"`,
-		"a plan.memory.nodes[ps5-a].will_take_mib 4100 4612",
+		"a plan.memory.nodes[node-a].host_overhead_mib 1024 1536",
+		`a plan.memory.nodes[node-a].host_overhead_source "setting" "measured"`,
+		"a plan.memory.nodes[node-a].will_take_mib 4100 4612",
 		"added (profile) absent present",
 		"gone (profile) present absent",
 	}
