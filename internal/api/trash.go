@@ -366,7 +366,7 @@ func keysOfSpecs(m map[string]*config.ProfileSpec) []string {
 func (s *Server) trashedRecordOf(ctx context.Context, file string) *cfgstore.TrashRecord {
 	recs, _ := s.store.TrashList(ctx)
 	for _, r := range recs {
-		if r.File == file {
+		if r.File == file && r.State != cfgstore.TrashHeldBack { // held back: the file was restored
 			return r
 		}
 	}
@@ -452,6 +452,7 @@ func (s *Server) handleModelDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	if dry {
 		figures["dry_run"] = true
+		figures["restore_note"] = s.restoreNote(profiles)
 		writeJSON(w, http.StatusOK, figures)
 		return
 	}
@@ -593,7 +594,7 @@ func (s *Server) addMissingProfiles(ctx context.Context, ps map[string]*config.P
 		return nil, nil
 	}
 	o := cfgsvc.WriteOpts{Origin: audit.Origin{Source: audit.SourceREST, Actor: "potluck (models trash)", Comment: comment}}
-	if _, err := s.opts.Config.AddProfiles(ctx, o, add); err != nil {
+	if _, err := s.opts.Config.AddStoredProfiles(ctx, o, add, "profiles put back"); err != nil {
 		return nil, err
 	}
 	return keysOfSpecs(add), nil
@@ -617,6 +618,7 @@ func (s *Server) handleModelRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	renameTaken, _ := obj["rename_taken"].(bool)
+	holdBack, _ := obj["hold_back_refused"].(bool)
 	if !modelfiles.ValidID(id) {
 		trashRefuse(w, http.StatusNotFound, "not_found", fmt.Sprintf("no trash item %s: see GET /api/models/trash", id), nil)
 		return
@@ -632,7 +634,10 @@ func (s *Server) handleModelRestore(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, http.StatusInternalServerError, "%v", err)
 		return
 	}
-	if rec.State != cfgstore.TrashTrashed {
+	// held_back: the file is back already; this call adds the profiles held
+	// back by the restore (those that can be added now)
+	fileBack := rec.State == cfgstore.TrashHeldBack
+	if rec.State != cfgstore.TrashTrashed && !fileBack {
 		trashRefuse(w, http.StatusConflict, "not_restorable", fmt.Sprintf("trash item %s (%s) is %s, not in the trash: %s", id, rec.File, rec.State, rec.Problem), nil)
 		return
 	}
@@ -641,81 +646,195 @@ func (s *Server) handleModelRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	md := s.modelDir()
-	if _, err := md.TrashStat(id, rec.File); err != nil {
-		trashRefuse(w, http.StatusConflict, "missing_from_trash", fmt.Sprintf("%s is not in the trash folder (.trash/%s): %v", rec.File, id, err), nil)
-		return
-	}
-	if _, err := md.Stat(rec.File); !errors.Is(err, modelfiles.ErrNotFound) {
-		trashRefuse(w, http.StatusConflict, "file_exists", fmt.Sprintf("a file named %s is in the models folder again: move or delete it first, then restore", rec.File), nil)
-		return
+	if !fileBack {
+		if _, err := md.TrashStat(id, rec.File); err != nil {
+			trashRefuse(w, http.StatusConflict, "missing_from_trash", fmt.Sprintf("%s is not in the trash folder (.trash/%s): %v", rec.File, id, err), nil)
+			return
+		}
+		if _, err := md.Stat(rec.File); !errors.Is(err, modelfiles.ErrNotFound) {
+			trashRefuse(w, http.StatusConflict, "file_exists", fmt.Sprintf("a file named %s is in the models folder again: move or delete it first, then restore", rec.File), nil)
+			return
+		}
 	}
 	// the profiles: ids and aliases taken now
 	doc, _ := s.docAt()
-	add, renamed, dropped, taken := restorePlan(doc, rec.Profiles, renameTaken)
+	add, renamed, dropped, taken, held, why := restorePlan(doc, rec.Profiles, renameTaken, holdBack)
 	if len(taken) > 0 {
-		trashRefuse(w, http.StatusConflict, "profiles_taken", fmt.Sprintf("these names of %s's profiles are taken now: %s. Restore with rename_taken: true to add them as <id>-restored (taken aliases are left off)", rec.File, strings.Join(taken, ", ")), map[string]any{"taken": taken})
+		trashRefuse(w, http.StatusConflict, "profiles_taken", fmt.Sprintf("these names of %s's profiles are taken now: %s. Nothing was restored. Restore with rename_taken: true to add them as <id>-restored (taken aliases are left off), or with hold_back_refused: true to bring the file back with its other profiles and keep these in Deleted models, to add later (restore it again once the names are free)", rec.File, strings.Join(taken, ", ")), map[string]any{"taken": taken})
 		return
 	}
 	now := s.opts.Now().UnixMilli()
-	// 1. the record says restoring, with the profiles it will add
-	if err := s.store.TrashSetState(id, cfgstore.TrashRestoring, 0, add, "", now); err != nil {
-		apiErr(w, http.StatusInternalServerError, "%v", err)
-		return
-	}
-	if s.trashStop("restore:after-record") {
-		apiErr(w, http.StatusInternalServerError, "stopped after the record (test)")
-		return
-	}
-	// 2. the rename back
-	if err := md.RestoreFromTrash(id, rec.File); err != nil {
-		s.store.TrashSetState(id, cfgstore.TrashTrashed, 0, map[string]*config.ProfileSpec{}, "", now)
-		switch {
-		case modelfiles.IsReadOnly(err):
-			trashRefuse(w, http.StatusConflict, "read_only", readOnlyMsg(err), nil)
-		case errors.Is(err, modelfiles.ErrExists):
-			trashRefuse(w, http.StatusConflict, "file_exists", err.Error(), nil)
-		default:
-			apiErr(w, http.StatusInternalServerError, "%s could not be moved back: %v", rec.File, err)
+	if !fileBack {
+		// 1. the record says restoring, with the profiles it will add
+		if err := s.store.TrashSetState(id, cfgstore.TrashRestoring, 0, add, "", now); err != nil {
+			apiErr(w, http.StatusInternalServerError, "%v", err)
+			return
 		}
-		return
+		if s.trashStop("restore:after-record") {
+			apiErr(w, http.StatusInternalServerError, "stopped after the record (test)")
+			return
+		}
+		// 2. the rename back
+		if err := md.RestoreFromTrash(id, rec.File); err != nil {
+			s.store.TrashSetState(id, cfgstore.TrashTrashed, 0, map[string]*config.ProfileSpec{}, "", now)
+			switch {
+			case modelfiles.IsReadOnly(err):
+				trashRefuse(w, http.StatusConflict, "read_only", readOnlyMsg(err), nil)
+			case errors.Is(err, modelfiles.ErrExists):
+				trashRefuse(w, http.StatusConflict, "file_exists", err.Error(), nil)
+			default:
+				apiErr(w, http.StatusInternalServerError, "%s could not be moved back: %v", rec.File, err)
+			}
+			return
+		}
+		if s.trashStop("restore:after-rename") {
+			apiErr(w, http.StatusInternalServerError, "stopped after the rename (test)")
+			return
+		}
 	}
-	if s.trashStop("restore:after-rename") {
-		apiErr(w, http.StatusInternalServerError, "stopped after the rename (test)")
-		return
-	}
-	// 3. the profiles come back in one revision
+	// 3. the profiles come back in one revision, as they were stored; one a
+	// rule refuses (none since the stored treatment; any future rule) is
+	// held back, never a refusal of the restore
 	var res *cfgsvc.Result
 	if len(add) > 0 {
 		o, ok := s.writeOpts(w, r, fmt.Sprintf("model restored (%s): %s", rec.File, comment))
 		if !ok {
-			s.undoRestore(rec)
+			if !fileBack {
+				s.undoRestore(rec)
+			}
 			return
 		}
 		o.DryRun, o.Force, o.IfMatch = false, false, nil
-		res, err = s.opts.Config.AddProfiles(ctx, o, add)
+		var ruleHeld map[string]*config.ProfileSpec
+		var ruleWhy map[string]string
+		res, ruleHeld, ruleWhy, err = s.putBack(ctx, o, add, "restored profiles")
 		if err != nil {
-			s.undoRestore(rec)
+			if !fileBack {
+				s.undoRestore(rec)
+			}
 			trashRefuse(w, http.StatusConflict, "config_refused", fmt.Sprintf("the profiles of %s could not be added back, so it stays in the trash: %v", rec.File, err), nil)
 			return
 		}
+		for nid, p := range ruleHeld {
+			oid := nid
+			for o, n := range renamed {
+				if n == nid {
+					oid = o
+				}
+			}
+			held[oid], why[oid] = rec.Profiles[oid], ruleWhy[nid]
+			if held[oid] == nil {
+				held[oid] = p
+			}
+			delete(add, nid)
+			delete(renamed, oid)
+		}
 	}
-	// 4. the record goes, then its empty directory
-	if err := s.store.TrashDelete(id); err != nil {
-		s.log.Warn("model file restored, its trash record not removed: the next start completes it", "file", rec.File, "trash_id", id, "err", err)
+	// 4. the record goes (or keeps the held-back profiles), then its empty directory
+	state := "restored"
+	if len(held) == 0 {
+		if err := s.store.TrashDelete(id); err != nil {
+			s.log.Warn("model file restored, its trash record not removed: the next start completes it", "file", rec.File, "trash_id", id, "err", err)
+		}
+	} else {
+		state = cfgstore.TrashHeldBack
+		if err := s.store.TrashHoldBack(id, held, heldText(held, why), s.opts.Now().UnixMilli()); err != nil {
+			s.log.Warn("model file restored, its held-back profiles not recorded", "file", rec.File, "trash_id", id, "err", err)
+		}
 	}
 	md.RemoveEmptyTrashDir(id)
-	auditID := s.recordAuditWith(r, comment, audit.ActionCreate, audit.SectionModels, "model:"+rec.File,
-		map[string]any{"trash_id": id, "deleted_at": rec.DeletedAt},
-		map[string]any{"file": rec.File, "profiles": keysOfSpecs(add), "renamed": renamed, "aliases_dropped": dropped})
+	heldList := heldOut(held, why)
+	action := audit.ActionCreate
+	if fileBack {
+		action = audit.ActionUpdate
+	}
+	auditID := s.recordAuditWith(r, comment, action, audit.SectionModels, "model:"+rec.File,
+		map[string]any{"trash_id": id, "deleted_at": rec.DeletedAt, "state": rec.State},
+		map[string]any{"file": rec.File, "profiles": keysOfSpecs(add), "renamed": renamed, "aliases_dropped": dropped, "held_back": heldList})
 	s.refreshTrash(ctx)
 	s.catalogDirty(false)
 	s.announce(r, audit.SectionModels, rec.File, auditID)
 	out := map[string]any{"file": rec.File, "trash_id": id, "profiles_restored": keysOfSpecs(add), "renamed": renamed, "aliases_dropped": dropped,
-		"revision": 0, "audit_id": auditID}
+		"revision": 0, "audit_id": auditID, "warnings": []string{}, "held_back": heldList, "state": state}
 	if res != nil {
-		out["revision"] = res.Revision
+		out["revision"], out["warnings"] = res.Revision, res.Warnings
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// restoreNote is the delete's dry-run sentence on a later restore: every
+// profile comes back as it is stored now, with what a new profile could not
+// have (a note, never a failure).
+func (s *Server) restoreNote(ps map[string]*config.ProfileSpec) string {
+	n := len(ps)
+	if n == 0 {
+		return "it has no profiles: a restore brings the file back"
+	}
+	all := fmt.Sprintf("all %d profiles will come back as they are", n)
+	if n == 1 {
+		all = "its 1 profile will come back as it is"
+	}
+	if s.opts.Config == nil {
+		return all
+	}
+	if notes := s.opts.Config.StoredNotes(ps, "profiles"); len(notes) > 0 {
+		return all + "; " + strings.Join(notes, "; ")
+	}
+	return all
+}
+
+// putBack adds profiles as stored (one revision). A profile a rule refuses
+// is held back with the refusal (each is tried alone in a dry run to tell
+// which), and the others are added; any other error is returned.
+func (s *Server) putBack(ctx context.Context, o cfgsvc.WriteOpts, add map[string]*config.ProfileSpec, what string) (*cfgsvc.Result, map[string]*config.ProfileSpec, map[string]string, error) {
+	held, why := map[string]*config.ProfileSpec{}, map[string]string{}
+	if len(add) == 0 {
+		return nil, held, why, nil
+	}
+	res, err := s.opts.Config.AddStoredProfiles(ctx, o, add, what)
+	var ve *cfgsvc.ValidationError
+	if err == nil || !errors.As(err, &ve) {
+		return res, held, why, err
+	}
+	ok := map[string]*config.ProfileSpec{}
+	for _, id := range keysOfSpecs(add) {
+		d := o
+		d.DryRun = true
+		if _, e := s.opts.Config.AddStoredProfiles(ctx, d, map[string]*config.ProfileSpec{id: add[id]}, what); e != nil {
+			held[id], why[id] = add[id], e.Error()
+		} else {
+			ok[id] = add[id]
+		}
+	}
+	if len(ok) > 0 {
+		res, err = s.opts.Config.AddStoredProfiles(ctx, o, ok, what)
+		if errors.As(err, &ve) { // only together: hold them all
+			for id, p := range ok {
+				held[id], why[id] = p, err.Error()
+			}
+			return nil, held, why, nil
+		}
+		return res, held, why, err
+	}
+	return nil, held, why, nil
+}
+
+// heldText is the record's problem text for held-back profiles.
+func heldText(held map[string]*config.ProfileSpec, why map[string]string) string {
+	var parts []string
+	for _, id := range keysOfSpecs(held) {
+		parts = append(parts, fmt.Sprintf("profile %s: %s", id, why[id]))
+	}
+	return fmt.Sprintf("the file is restored; %d %s held back, kept here to add later (restore again): %s", len(held), map[bool]string{true: "profile was", false: "profiles were"}[len(held) == 1], strings.Join(parts, "; "))
+}
+
+// heldOut is the held-back profiles for an answer: [{id, reason}].
+func heldOut(held map[string]*config.ProfileSpec, why map[string]string) []map[string]any {
+	out := []map[string]any{}
+	for _, id := range keysOfSpecs(held) {
+		out = append(out, map[string]any{"id": id, "reason": why[id]})
+	}
+	return out
 }
 
 // undoRestore puts the file back in the trash after its profiles could not
@@ -732,8 +851,10 @@ func (s *Server) undoRestore(rec *cfgstore.TrashRecord) {
 
 // restorePlan is the profiles a restore adds: ids taken now are refused, or
 // with renameTaken become <id>-restored; a taken alias is refused, or left
-// off. taken lists what is in the way when not renaming.
-func restorePlan(doc *config.Document, ps map[string]*config.ProfileSpec, renameTaken bool) (add map[string]*config.ProfileSpec, renamed map[string]string, dropped []string, taken []string) {
+// off. With holdBack, a profile whose name (or alias, without renameTaken)
+// is taken is held back instead, with why. taken lists what is in the way
+// when neither option covers it.
+func restorePlan(doc *config.Document, ps map[string]*config.ProfileSpec, renameTaken, holdBack bool) (add map[string]*config.ProfileSpec, renamed map[string]string, dropped []string, taken []string, held map[string]*config.ProfileSpec, why map[string]string) {
 	used := map[string]bool{}
 	for id, p := range doc.Profiles {
 		used[id] = true
@@ -744,37 +865,53 @@ func restorePlan(doc *config.Document, ps map[string]*config.ProfileSpec, rename
 		}
 	}
 	add, renamed, dropped = map[string]*config.ProfileSpec{}, map[string]string{}, []string{}
+	held, why = map[string]*config.ProfileSpec{}, map[string]string{}
 	for _, id := range keysOfSpecs(ps) {
 		c := *ps[id]
 		nid := id
+		var in []string // what is in the way of this profile
 		if used[id] {
 			if !renameTaken {
-				taken = append(taken, "profile "+id)
+				in = append(in, "profile "+id)
 			} else {
 				nid = id + "-restored"
 				if used[nid] {
-					taken = append(taken, "profile "+nid)
+					in = append(in, "profile "+nid)
 				}
-				renamed[id] = nid
 			}
 		}
-		var keep []string
+		var keep, drop []string
 		for _, a := range c.Aliases {
 			if used[a] {
 				if !renameTaken {
-					taken = append(taken, "alias "+a)
+					in = append(in, "alias "+a)
 				} else {
-					dropped = append(dropped, a)
+					drop = append(drop, a)
 				}
 				continue
 			}
 			keep = append(keep, a)
 		}
+		if len(in) > 0 {
+			if holdBack {
+				held[id], why[id] = ps[id], "its name is taken now ("+strings.Join(in, ", ")+")"
+				continue
+			}
+			taken = append(taken, in...)
+			continue
+		}
+		if nid != id {
+			renamed[id] = nid
+		}
+		dropped = append(dropped, drop...)
 		c.Aliases = keep
 		used[nid] = true
+		for _, a := range keep {
+			used[a] = true
+		}
 		add[nid] = &c
 	}
-	return add, renamed, dropped, taken
+	return add, renamed, dropped, taken, held, why
 }
 
 // handleTrashList is GET /api/models/trash.
@@ -948,14 +1085,39 @@ func (s *Server) repairTrash(ctx context.Context) {
 			if len(ps) == 0 {
 				ps = rec.Profiles
 			}
-			added, err := s.addMissingProfiles(ctx, ps, fmt.Sprintf("model restore completed at start (%s)", rec.File))
+			// the profiles the restore's plan held back (not in what it adds,
+			// under their id or as <id>-restored) stay held back
+			held, why := map[string]*config.ProfileSpec{}, map[string]string{}
+			for id, p := range rec.Profiles {
+				if _, ok := ps[id]; !ok {
+					if _, ok := ps[id+"-restored"]; !ok {
+						held[id], why[id] = p, "held back by the restore (its name was taken)"
+					}
+				}
+			}
+			cur, _ := s.docAt()
+			missing := map[string]*config.ProfileSpec{}
+			for id, p := range ps {
+				if _, ok := cur.Profiles[id]; !ok {
+					missing[id] = p
+				}
+			}
+			o := cfgsvc.WriteOpts{Origin: audit.Origin{Source: audit.SourceREST, Actor: "potluck (models trash)", Comment: fmt.Sprintf("model restore completed at start (%s)", rec.File)}}
+			_, rh, rw, err := s.putBack(ctx, o, missing, "restored profiles")
 			if err != nil {
 				interrupted(rec, "a restore stopped after the move; the file is in the folder; its profiles could not be added ("+err.Error()+"); they are kept here")
 				continue
 			}
-			s.store.TrashDelete(rec.ID)
+			for id, p := range rh {
+				held[id], why[id] = p, rw[id]
+			}
+			if len(held) == 0 {
+				s.store.TrashDelete(rec.ID)
+			} else {
+				s.store.TrashHoldBack(rec.ID, held, heldText(held, why), now)
+			}
 			md.RemoveEmptyTrashDir(rec.ID)
-			note(rec, fmt.Sprintf("a restore stopped after the move; completed: profiles added: %v", added), false)
+			note(rec, fmt.Sprintf("a restore stopped after the move; completed: profiles added: %v; held back: %v", keysOfSpecs(missing), keysOfSpecs(held)), false)
 		case rec.State == cfgstore.TrashRestoring && inTrash && !inFolder:
 			s.store.TrashSetState(rec.ID, cfgstore.TrashTrashed, 0, map[string]*config.ProfileSpec{}, "", now)
 			note(rec, "a restore stopped before the move; it stays in the trash", false)

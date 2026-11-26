@@ -32,8 +32,10 @@ export const testText = n => plural(n, 'test profile');
 
 // profName(p) -> "qwen3.5-4b at 16k": a profile and its context
 export const profName = p => p.id + (p.ctx ? ' at ' + (p.ctx % 1024 === 0 ? p.ctx / 1024 + 'k' : num(p.ctx)) : '');
-// needBasis(p) -> "measured" or "estimated": how a profile's need is known
-export const needBasis = p => (p.needs_measured ? 'measured' : 'estimated');
+// needBasis(p) -> "set by hand", "measured" or "estimated": how a profile's
+// need is known (needs_written: needs_mib written in the profile, shown
+// whatever the plan says, the reviewer's ruling of 26 Nov)
+export const needBasis = p => (p.needs_written ? 'set by hand' : p.needs_measured ? 'measured' : 'estimated');
 
 // prodNeeds(m) -> null when no production profile has a need, else
 // {lo, hi, basis}: the production profiles with the smallest and largest

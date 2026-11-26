@@ -230,7 +230,7 @@ export function testProfiles(now = Date.now()) {
 // the file's production family (its base, gemma-4-27b for the gemma file)
 // unless short names another; "qwen3-14b" (another file's profile) and
 // "TEST - x" are refused. The rows show each state of ruling C:
-//   16k   fits, derived                       ticked
+//   16k   fits, derived (fits-derived)        ticked
 //   32k   the default; the family has its id at 8k: exists, not written
 //   64k   fits by the estimate only            ticked; now it would unload
 //   128k  fits, measured, every zone (max_pool) ticked
@@ -251,7 +251,7 @@ export function standardSet(file, state, short) {
   const name = short || fam;
   const all = state === 'nothing';
   const est = ctx => 9000 + ctx / 16;
-  const row = (ctx, id, x) => Object.assign({ id, ctx, state: 'fits', kept: true, selected: !all, tickable: !all, action: 'start', reason: '', zones: ['ps5-05'], zones_may_use: 4, zones_may_use_by_max_pool: true,
+  const row = (ctx, id, x) => Object.assign({ id, ctx, state: 'fits-derived', zones_need_count: 1, zones_need_mib: est(ctx), zones_need_source: 'derived', kept: true, selected: !all, tickable: !all, action: 'start', reason: '', zones: ['ps5-05'], zones_may_use: 4, zones_may_use_by_max_pool: true,
     need_mib: est(ctx), fit_need_mib: est(ctx), need_source: 'derived', need_basis: 'derived from the measurement at ctx 32768', uses_every_zone: false, host: 'server', host_memory_mib: 4096, host_memory_counted: false,
     host_memory_note: "restore points and prompt cache on the scheduler's machine: up to 4,096 MiB, not counted in what it needs (restore points 0 MiB, prompt cache 4,096 MiB)",
     exists: all, default: false }, all ? { exists_as: id, exists_note: 'exists, kept as it is', exists_carries: [] } : {}, x);
@@ -261,16 +261,18 @@ export function standardSet(file, state, short) {
   const famHas = !short || short === fam;
   const rows = [
     row(16384, name + ':16k'),
-    row(32768, name, famHas && !all ? { default: true, exists: true, selected: false, tickable: false, exists_as: fam, need_source: 'measured for this shape', need_basis: 'measured this run',
+    row(32768, name, famHas && !all ? { default: true, exists: true, selected: false, tickable: false, exists_as: fam, state: 'fits', need_source: 'measured for this shape', zones_need_source: 'measured for this shape', need_basis: 'measured this run',
       exists_note: fam + ' exists at 8k, kept as it is; the standard default would be 32k', exists_carries: ['KV type q8_0', 'flash attention', 'thinking off (the chat-template argument)', 'a hand-written need of 15,900 MiB', 'aliases (gemma-27b)'] }
-      : { default: true, need_source: 'measured for this shape', need_basis: 'measured this run' }),
+      : { default: true, state: 'fits', need_source: 'measured for this shape', zones_need_source: 'measured for this shape', need_basis: 'measured this run' }),
     row(65536, name + ':64k', Object.assign({ state: 'fits-by-estimate', zones: ['ps5-03', 'ps5-04'], action: 'evict', now_note: 'fits only when other models are unloaded: now it would first unload gemma-4-12b' }, estRow(65536))),
-    row(131072, name + ':128k', { zones: ['ps5-01', 'ps5-02', 'ps5-03', 'ps5-04'], uses_every_zone: true, need_source: 'measured for this shape', need_basis: 'measured this run',
+    row(131072, name + ':128k', { zones: ['ps5-01', 'ps5-02', 'ps5-03', 'ps5-04'], uses_every_zone: true, state: 'fits', need_source: 'measured for this shape', zones_need_source: 'measured for this shape', zones_need_count: 4, need_basis: 'measured this run',
       every_zone_note: 'this context fits only by using every zone it may use (4: the setting max_pool): nothing else can be placed beside it', host_memory_mib: 10240,
       host_memory_note: "restore points and prompt cache on the scheduler's machine: up to 10,240 MiB, not counted in what it needs (restore points 6,144 MiB, prompt cache 4,096 MiB)" }),
     // 256k = the trained context (not above it); only the estimate, and by it it does not fit
     row(262144, name + ':256k', Object.assign(estRow(262144), { state: 'estimate-does-not-fit', kept: false, selected: false, tickable: !all, action: 'reject', zones: [], host_memory_note: '',
-      reason: 'not measured: by the file estimate it does not fit even with nothing loaded; the plan says: placer: need 25384 MiB (requires 26654 MiB) does not fit the available nodes' })),
+      zones_need_count: 4, zones_need_mib: 30120, zones_need_source: 'estimate',
+      zones_need_note: "/api/plan shows 25,384 MiB, the need on the count of devices its figure rests on (estimated, +5% margin); with nothing loaded it may use at most 4 zones (the setting max_pool), and on 4 its need is 30,120 MiB (the file estimate): the figure the fit was decided on; the plan's message quotes this one",
+      reason: 'not measured: by the file estimate it does not fit even with nothing loaded (30,120 MiB on 4 zones); the plan says: placer: need 30120 MiB (requires 31626 MiB) exceeds cluster capacity 26000 MiB' })),
   ];
   if (long) {
     const shape = 'the existing ' + fam + ':48k (48k) runs at 8,210 MiB (written by hand) with KV q8_0, flash attention, extra arguments --chat-template-kwargs {"enable_thinking":false}; this row would use the default KV type (f16), no flash attention, no extra arguments, so that figure is not its own';

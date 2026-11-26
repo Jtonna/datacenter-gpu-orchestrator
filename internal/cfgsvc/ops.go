@@ -273,10 +273,13 @@ func (s *Service) Rollback(ctx context.Context, o WriteOpts, n int64) (*Result, 
 	if err != nil {
 		return nil, ErrNotFound
 	}
+	// a stored revision is restorable: its profiles are checked as stored
+	// ones (stored.go); a file it names must be there (a rollback to a
+	// revision from before a model delete is refused until it is restored)
 	return s.mutate(ctx, o, mutation{action: audit.ActionRollback, fn: func(d *config.Document) error {
 		*d = *r.Doc.Clone()
 		return nil
-	}})
+	}, stored: r.Doc.Clone().Profiles, storedWhat: fmt.Sprintf("profiles of revision %d", n)})
 }
 
 // Import replaces the configuration with doc. Without replace it is refused

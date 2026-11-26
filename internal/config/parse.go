@@ -207,6 +207,9 @@ func (c *Config) modelCheck(o Options, exists func(string) bool) func(*core.Prof
 		if m, ok := o.KeepModels[p.Name]; ok && m == p.Model {
 			return true // kept, as a missing file is: also a path the rule refuses
 		}
+		if m, ok := o.KeepPaths[p.Name]; ok && m == p.Model {
+			return exists(c.modelPath(p)) // stored elsewhere: the path rule as for a stored profile; the file must be there
+		}
 		if modelpath.Check(p.Model) != nil {
 			return false // the path rule (internal/modelpath), whether the file exists or not
 		}

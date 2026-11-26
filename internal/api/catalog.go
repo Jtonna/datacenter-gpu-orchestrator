@@ -598,7 +598,15 @@ func newCatalogSnap(in CatalogInput, prev *catalogSnap, modelsDir string) *catal
 			changed = true
 		}
 	}
-	snap.version = 1
+	// the first catalog of a process is numbered by the time it is built
+	// (unix ms): a tab open across a restart holds the old server's
+	// version and keeps the higher of two, so a count from 1 would leave
+	// it reading every change as not fitting its copy (a REST read of the
+	// whole catalog, every plan, per change)
+	snap.version = in.Now.UnixMilli()
+	if snap.version < 1 {
+		snap.version = 1
+	}
 	if prev != nil {
 		snap.version = prev.version
 		if changed {
