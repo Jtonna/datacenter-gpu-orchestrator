@@ -74,6 +74,12 @@ type Options struct {
 	// ReadSlotCtx reads a ready llama server's context per slot (/props)
 	// after every load (realctx.go); default instance.ReadSlotCtx.
 	ReadSlotCtx func(ctx context.Context, addr, key string) (int, error)
+	// LocalMemory reads the scheduler machine's available memory in MiB
+	// (MemAvailable), sampled every localMemEvery by Run; a change of
+	// localMemStep MiB or more, or an error, is posted to the core
+	// (hostbudget.go). nil: never read, and the host memory of loads hosted
+	// on the scheduler's machine is not checked.
+	LocalMemory func() (int, error)
 }
 
 // Scheduler is the scheduler core plus the one goroutine (Run) that owns
@@ -201,8 +207,9 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		s.needs.start()
 		defer s.needs.close() // what is queued is written before Run returns
 	}
-	s.startBuildReads() // builds.go
-	s.warmHeaders()     // derive.go
+	s.startBuildReads()  // builds.go
+	s.startLocalMemory() // hostbudget.go
+	s.warmHeaders()      // derive.go
 	var stopTimer func() bool
 	var timerAt time.Time
 	ctxDone := ctx.Done()

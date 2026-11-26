@@ -94,7 +94,11 @@ func TestHostMemory_CountedJoinsTheHostNodeOnly(t *testing.T) {
 	if d := on["m"].shares[0] - off["m"].shares[0]; d != 1608 || on["m"].shares[1] != off["m"].shares[1] {
 		t.Fatalf("shares off %v on %v, want +1608 on the host node only", off["m"].shares, on["m"].shares)
 	}
-	if !reflect.DeepEqual(off["s"], on["s"]) {
+	// the server-hosted plan shows the machine's budget now (hostbudget.go);
+	// without a reading nothing else of it changes
+	so, sf := on["s"], off["s"]
+	so.plan.HostRoom, so.plan.HostMemoryNote, sf.plan.HostMemoryNote = nil, "", ""
+	if !reflect.DeepEqual(sf, so) {
 		t.Fatalf("a server-hosted plan changed:\n%+v\n%+v", off["s"], on["s"])
 	}
 	r := h.c.dryPlan("m")
@@ -103,7 +107,7 @@ func TestHostMemory_CountedJoinsTheHostNodeOnly(t *testing.T) {
 		t.Fatalf("host row %+v term %+v", row, r.HostMemory)
 	}
 	s := h.c.dryPlan("s")
-	if s.HostMemory == nil || s.HostMemory.OnNode || !strings.Contains(s.HostMemoryNote, "up to 3656 MiB, not placed") {
+	if s.HostMemory == nil || s.HostMemory.OnNode || !strings.Contains(s.HostMemoryNote, "up to 3656 MiB, host memory not checked: available memory of the scheduler's machine unknown (no reading yet)") {
 		t.Fatalf("server-hosted: %+v %q", s.HostMemory, s.HostMemoryNote)
 	}
 }

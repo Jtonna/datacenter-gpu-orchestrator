@@ -381,6 +381,9 @@ func (c *schedCore) dryPlanOf(profile string, p *core.Profile) (r PlanReport) {
 		if gate == "" {
 			r.Action, r.Placement, placed = PlanStart, c.placedStatus(pl), &pl
 			c.applyForcedFit(&r, p, pl)
+			if r.Action == PlanStart {
+				c.dryHost(&r, p, nil) // hostbudget.go, as place
+			}
 			return r
 		}
 	}
@@ -402,6 +405,7 @@ func (c *schedCore) dryPlanOf(profile string, p *core.Profile) (r PlanReport) {
 				for _, v := range res.Victims {
 					r.Victims = append(r.Victims, PlanVictim{Profile: v, Busy: c.insts[v].inFlight > 0})
 				}
+				c.dryHost(&r, p, res.Victims) // hostbudget.go, as plan()
 				return r
 			} else if gate == "" {
 				gate = g

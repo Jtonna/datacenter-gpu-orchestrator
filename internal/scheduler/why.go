@@ -39,6 +39,13 @@ func (c *schedCore) waitWhy(p *core.Profile) (Reason, string) {
 	}
 	_, perr := placer.Place(req, c.freeCandidates(p))
 	if perr == nil {
+		if r, ok := c.serverHostRoom(p, nil); ok && r.Known && !r.Fits { // hostbudget.go
+			text := r.hostShortWords() + "; nothing hosted there is idle to unload"
+			if s := c.smallerWords(p); s != "" {
+				text += "; " + s
+			}
+			return ReasonClusterBusy, text
+		}
 		return ReasonClusterBusy, "a placement is available; the next queue pass starts it"
 	}
 	reason, text := ReasonClusterBusy, perr.Error()

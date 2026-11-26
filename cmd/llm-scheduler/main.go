@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/docs"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/osx"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/api"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/audit"
@@ -397,6 +398,12 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 	// When a build is not known yet, the scheduler reads both again in the
 	// background until they are (a slow share at boot).
 	so.HostBuild = func(ctx context.Context) (string, error) { return release.HostBuild(ctx, cfg.Defaults.ServerBin) }
+	// The available memory of this machine (MemAvailable), for the
+	// conversation memory of the models it hosts (count_host_memory).
+	so.LocalMemory = func() (int, error) {
+		mi, err := osx.MemInfoFile{}.MemInfo()
+		return int(mi.AvailableMiB), err
+	}
 	if hist.On() {
 		so.History = hist
 	}

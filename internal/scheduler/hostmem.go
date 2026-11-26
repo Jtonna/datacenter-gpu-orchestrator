@@ -226,12 +226,30 @@ func (c *schedCore) planHostMemory(r *PlanReport, p *core.Profile) {
 			hm.TermMiB(), counted, hm.PromptCacheMiB, notIncluded)
 	}
 	if !hm.OnNode {
+		// counted against the machine's available memory (hostbudget.go)
+		// with count_host_memory on; "not checked" when it is unknown
+		placedWord := "not placed"
+		if c.cfg.Defaults.CountHostMemory {
+			placedWord = "counted"
+			room, ok := r.HostRoom, r.HostRoom != nil
+			if !ok {
+				var rm HostRoom
+				rm, ok = c.serverHostRoom(p, nil)
+				room = &rm
+			}
+			if ok && !room.Known {
+				placedWord = room.Note
+			}
+		}
 		if hm.SizeUnknown {
-			r.HostMemoryNote = fmt.Sprintf("on %s: at least %d MiB, not placed (prompt cache %d MiB; %s)",
-				hm.Machine, hm.TermMiB(), hm.PromptCacheMiB, notIncluded)
+			r.HostMemoryNote = fmt.Sprintf("on %s: at least %d MiB, %s (prompt cache %d MiB; %s)",
+				hm.Machine, hm.TermMiB(), placedWord, hm.PromptCacheMiB, notIncluded)
 		} else {
-			r.HostMemoryNote = fmt.Sprintf("on %s: up to %d MiB, not placed (context checkpoints %d MiB, prompt cache %d MiB)",
-				hm.Machine, hm.TermMiB(), hm.CheckpointsMiB, hm.PromptCacheMiB)
+			r.HostMemoryNote = fmt.Sprintf("on %s: up to %d MiB, %s (context checkpoints %d MiB, prompt cache %d MiB)",
+				hm.Machine, hm.TermMiB(), placedWord, hm.CheckpointsMiB, hm.PromptCacheMiB)
+		}
+		if hm.CheckpointsFrom != "" {
+			r.HostMemoryNote += "; " + hm.FromWords()
 		}
 		if hm.FromLog {
 			r.HostMemoryNote += "; " + hm.LoggedNote()

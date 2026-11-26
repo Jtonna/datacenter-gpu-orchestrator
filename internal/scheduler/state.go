@@ -437,6 +437,8 @@ type schedCore struct {
 	gated        gateMark                        // the latest gate call (checkGated)
 	warnedLow    map[string]bool                 // profiles whose too-low needs_mib was already warned about
 
+	localMem localMemReading // the scheduler machine's MemAvailable (hostbudget.go)
+
 	raw           map[core.NodeID]core.Node // view this step
 	fresh         bool
 	age           time.Duration

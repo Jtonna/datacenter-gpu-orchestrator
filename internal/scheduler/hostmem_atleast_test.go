@@ -19,7 +19,7 @@ func TestHostMemory_UnknownSizeReadsAsAFloor(t *testing.T) {
 	h.llama("s", 4000)
 	h.llama("n", 4000, func(p *core.Profile) { p.Host = core.HostNode })
 	r := h.c.dryPlan("s")
-	want := "on " + r.HostMemory.Machine + ": at least 2048 MiB, not placed (prompt cache 2048 MiB; context checkpoints NOT included: size not yet known, read at the first load)"
+	want := "on " + r.HostMemory.Machine + ": at least 2048 MiB, host memory not checked: available memory of " + r.HostMemory.Machine + " unknown (no reading yet) (prompt cache 2048 MiB; context checkpoints NOT included: size not yet known, read at the first load); restore points and prompt cache the cluster default"
 	if r.HostMemoryNote != want {
 		t.Fatalf("server note\n got %q\nwant %q", r.HostMemoryNote, want)
 	}

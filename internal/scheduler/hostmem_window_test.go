@@ -24,7 +24,7 @@ func TestHostMemory_ProvenWindowIsUpTo(t *testing.T) {
 	if r.HostMemory == nil || r.HostMemory.SizeUnknown || !r.HostMemory.Estimate || r.HostMemory.CellMiB != 320 || r.HostMemory.CheckpointsMiB != 10240 {
 		t.Fatalf("%+v", r.HostMemory)
 	}
-	want := "on " + r.HostMemory.Machine + ": up to 12288 MiB, not placed (context checkpoints 10240 MiB, prompt cache 2048 MiB)"
+	want := "on " + r.HostMemory.Machine + ": up to 12288 MiB, host memory not checked: available memory of " + r.HostMemory.Machine + " unknown (no reading yet) (context checkpoints 10240 MiB, prompt cache 2048 MiB); restore points and prompt cache the cluster default"
 	if r.HostMemoryNote != want {
 		t.Fatalf("got %q\nwant %q", r.HostMemoryNote, want)
 	}

@@ -276,6 +276,8 @@ func (c *schedCore) handle(ev event) {
 		} else {
 			e.fn(c)
 		}
+	case evLocalMem:
+		c.localMemRead(e)
 	case evBuilds:
 		c.buildsKnown(e.host, e.served)
 	case evHeadersRead:

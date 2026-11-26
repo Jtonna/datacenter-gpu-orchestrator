@@ -575,6 +575,10 @@ type PlanReport struct {
 	// Nil for a command profile or an unreadable header.
 	HostMemory     *HostMemory `view:"omitempty"`
 	HostMemoryNote string      `view:"omitempty"`
+	// HostRoom is the scheduler machine's budget for a profile hosted
+	// there (hostbudget.go), when count_host_memory is on and the plan
+	// would start or evict.
+	HostRoom *HostRoom `view:"omitempty"`
 }
 
 // PlanMemory is the memory section of a plan (reserve.go).
