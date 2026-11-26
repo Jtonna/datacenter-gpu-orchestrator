@@ -80,6 +80,7 @@ const LABELS = {
   needs_mib: 'Memory need', allow_tiers: 'Allowed tiers', force_nodes: 'Forced zones', tensor_split: 'Tensor split', extra_args: 'Extra arguments',
   cmd: 'Command', check_endpoint: 'Readiness path', aliases: 'Aliases', ttl: 'Idle time before unload', load_timeout: 'Load timeout',
   stall_timeout: 'Stall timeout', load_stall_timeout: 'Load stall timeout', description: 'Description', display_name: 'Display name',
+  ctx_checkpoints: 'Restore points per conversation', cache_ram_mib: 'Prompt cache',
 };
 // stage is set by Promote and Demote (their own audited calls), not in the
 // editor: the editor leaves it out and the save keeps the stored one
@@ -129,7 +130,8 @@ export function makeEditor(o) {
   const applicable = (f, kind) => !f.applies_to || f.applies_to === (kind === 'command' ? 'command' : 'llama');
   const PLACEHOLDER = { extra_args: '--rope-scaling yarn', force_nodes: 'Zone name, then Enter', allow_tiers: 'Tier number, then Enter', tensor_split: 'One weight per forced zone, then Enter',
     ttl: 'Same as the ttl setting', stall_timeout: 'Same as the stall_timeout setting', load_stall_timeout: 'Same as the load_stall_timeout setting', load_timeout: 'Worked out from the model size',
-    needs_mib: '0 = estimate from the model file', model: 'for example gemma-4-12b-it-Q4_K_M.gguf', display_name: 'Shown in place of the id; leave empty to show the id' };
+    needs_mib: '0 = estimate from the model file', model: 'for example gemma-4-12b-it-Q4_K_M.gguf', display_name: 'Shown in place of the id; leave empty to show the id',
+    ctx_checkpoints: 'Same as the ctx_checkpoints setting (32)', cache_ram_mib: 'Same as the cache setting of where it is hosted' };
   const fieldDef = f => Object.assign({}, f, { label: LABELS[f.key], type: f.key === 'extra_args' ? 'text' : f.type, placeholder: PLACEHOLDER[f.key],
     description: f.key === 'extra_args' ? f.description + ' One argument per line.' : f.description });
   function collect() {

@@ -305,6 +305,10 @@ type ProfileSpec struct {
 	Description      string    `yaml:"description" json:"description,omitempty"`
 	Stage            string    `yaml:"stage" json:"stage,omitempty"`
 	DisplayName      string    `yaml:"display_name" json:"display_name,omitempty"`
+	// CtxCheckpoints and CacheRAMMiB: the profile's own restore points per
+	// slot and prompt cache (core.Profile); absent is the cluster value.
+	CtxCheckpoints *int `yaml:"ctx_checkpoints" json:"ctx_checkpoints,omitempty"`
+	CacheRAMMiB    *int `yaml:"cache_ram_mib" json:"cache_ram_mib,omitempty"`
 }
 
 func (r *ProfileSpec) toCore(name string) *core.Profile {
@@ -316,6 +320,7 @@ func (r *ProfileSpec) toCore(name string) *core.Profile {
 		TTL: r.TTL.ptr(), LoadTimeout: time.Duration(r.LoadTimeout), StallTimeout: r.StallTimeout.ptr(),
 		LoadStallTimeout: r.LoadStallTimeout.ptr(), Description: r.Description,
 		Stage: r.Stage, DisplayName: r.DisplayName,
+		CtxCheckpoints: r.CtxCheckpoints, CacheRAMMiB: r.CacheRAMMiB,
 	}
 	if r.Host == core.HostNode {
 		p.Host = core.HostNode // "" and "server": the scheduler's machine, as before

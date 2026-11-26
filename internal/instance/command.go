@@ -115,7 +115,7 @@ func BuildArgs(p core.Profile, pl core.Placement, port int, o BuildOptions) ([]s
 		"--ctx-size", strconv.Itoa(p.Ctx * parallel),
 		"--parallel", strconv.Itoa(parallel),
 	}
-	args = append(args, profileHead(o.CacheRAMMiB, o.CtxCheckpoints)...)
+	args = append(args, profileHead(profileHostMemory(p, o.CacheRAMMiB, o.CtxCheckpoints))...)
 	if len(rpc) > 0 {
 		args = append(args, "--rpc", strings.Join(rpc, ","))
 	}
@@ -138,6 +138,19 @@ func profileHead(cacheRAMMiB, ctxCheckpoints int) []string {
 	// Always raise the log verbosity, in this fixed position (after the host
 	// memory flags, before the placement flags): see LlamaLogVerbosity.
 	return append(args, "-lv", strconv.Itoa(LlamaLogVerbosity))
+}
+
+// profileHostMemory is the prompt cache and restore points a launch of p
+// passes: the profile's own fields when set, else the cluster values
+// (cacheRAMMiB, ctxCheckpoints) of the path it is launched on.
+func profileHostMemory(p core.Profile, cacheRAMMiB, ctxCheckpoints int) (int, int) {
+	if p.CacheRAMMiB != nil {
+		cacheRAMMiB = *p.CacheRAMMiB
+	}
+	if p.CtxCheckpoints != nil {
+		ctxCheckpoints = *p.CtxCheckpoints
+	}
+	return cacheRAMMiB, ctxCheckpoints
 }
 
 // HostMemoryArgs is what a launch says about the host process's own memory,
@@ -172,7 +185,7 @@ func profileTail(p core.Profile) []string {
 // by the watchdog, instead of pages mapped from the share.
 func HostLaunchArgs(p core.Profile, o HostOptions) []string {
 	args := []string{"--n-gpu-layers", "999", "--fit", "off"}
-	args = append(args, profileHead(o.CacheRAMMiB, o.CtxCheckpoints)...)
+	args = append(args, profileHead(profileHostMemory(p, o.CacheRAMMiB, o.CtxCheckpoints))...)
 	if o.NoMmap {
 		args = append(args, "--no-mmap")
 	}

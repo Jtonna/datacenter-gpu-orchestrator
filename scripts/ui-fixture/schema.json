@@ -851,6 +851,33 @@
    "restart_required": false
   },
   {
+   "key": "ctx_checkpoints",
+   "scope": "profile",
+   "section": "memory",
+   "type": "int",
+   "default": null,
+   "min": 0,
+   "max": 1024,
+   "unit": "restore points",
+   "description": "Restore points per conversation slot (--ctx-checkpoints): saved copies of a conversation's state that let the model continue or edit a conversation without reading it again from the start. Each costs one checkpoint of memory (tens of MiB) on the machine that hosts the model, per slot, and only recurrent and sliding-window models keep them. A lower number holds less memory: with 3, a conversation continued or edited at its last message is as fast as with 32; with 1, an edit of the last message is read again from the start (measured 25 Nov). Empty uses the setting ctx_checkpoints (32).",
+   "restart_required": false,
+   "applies_to": "llama",
+   "nullable": true
+  },
+  {
+   "key": "cache_ram_mib",
+   "scope": "profile",
+   "section": "memory",
+   "type": "int",
+   "default": null,
+   "min": 0,
+   "unit": "MiB",
+   "description": "Prompt cache (--cache-ram): memory on the machine that hosts the model where earlier prompts are kept, so a client that returns to one is answered without reading it again. It costs up to this much memory there, shared by all slots; 0 keeps no prompt cache, and a returning prompt is read again. Empty uses the setting cache_ram_mib (2,048 MiB) on the scheduler's machine, or node_host_cache_ram_mib (0) for a host on a node.",
+   "restart_required": false,
+   "applies_to": "llama",
+   "nullable": true
+  },
+  {
    "key": "allow_tiers",
    "scope": "profile",
    "section": "placement",

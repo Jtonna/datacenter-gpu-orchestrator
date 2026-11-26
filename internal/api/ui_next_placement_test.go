@@ -63,6 +63,9 @@ func TestUINextPlacement(t *testing.T) {
 				"Usable on its zones", "ps5-03", "ps5-04", "ps5-05", "Host", "Helper", "To make room it would unload", "gemma-4-12b-vision", "is idle", "is serving requests", "Show the full answer", "Fits"},
 			"has":    []string{"button.plc-opt[aria-selected=true][data-profile=gemma-4-27b-long]", "details.plc-raw", "table.tbl"},
 			"absent": []string{"bench-gemma", "m-qwen3"}},
+		// p33: the plan's host memory sentence names a profile's own value
+		map[string]any{"name": "placement: host memory set on this profile", "route": "#/placement/gemma-4-27b-long", "status": "fetch",
+			"expect": []string{"Conversation memory of the host process: up to", "not placed; set on this profile: 3 restore points per slot."}},
 		map[string]any{"name": "placement: cannot be placed", "route": "#/placement/llama-3.3-70b", "status": "fetch",
 			"expect": []string{"Cannot be placed", "A request would be refused at once.", "It would need", "The fleet can hold", "30.5 GB"}, "none": []string{"table.tbl"}},
 		map[string]any{"name": "placement: a tight fit", "route": "#/placement/gemma-4-12b-fast", "status": "fetch",

@@ -66,6 +66,30 @@ type HostMemory struct {
 	Machine string
 	// Counted: TermMiB is in the host node's reservation (count_host_memory).
 	Counted bool
+	// PerSlot is the restore points per slot the launch passes
+	// (--ctx-checkpoints). CheckpointsSet and PromptCacheSet: the value is
+	// the profile's own field (ctx_checkpoints, cache_ram_mib), not the
+	// cluster's; SetNote says so in words ("" when neither is set).
+	PerSlot        int
+	CheckpointsSet bool
+	PromptCacheSet bool
+	SetNote        string `view:"omitempty"`
+}
+
+// setNote: "set on this profile: 3 restore points per slot, prompt cache
+// 0 MiB", naming only what the profile sets.
+func (h HostMemory) setNote() string {
+	var parts []string
+	if h.CheckpointsSet {
+		parts = append(parts, fmt.Sprintf("%d restore points per slot", h.PerSlot))
+	}
+	if h.PromptCacheSet {
+		parts = append(parts, fmt.Sprintf("prompt cache %d MiB", h.PromptCacheMiB))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "set on this profile: " + strings.Join(parts, ", ")
 }
 
 // LoggedNote says where a FromLog checkpoint size was read: "checkpoint
@@ -109,7 +133,11 @@ func (c *schedCore) noteDroppedCkptFlag(in *inst) {
 		return
 	}
 	d := strings.Join(dropped, ", ")
-	used := fmt.Sprintf("--ctx-checkpoints %d (setting ctx_checkpoints)", max(c.cfg.Defaults.CtxCheckpoints, 0))
+	n, set := c.cfg.EffectiveCtxCheckpoints(in.prof)
+	used := fmt.Sprintf("--ctx-checkpoints %d (setting ctx_checkpoints)", max(n, 0))
+	if set {
+		used = fmt.Sprintf("--ctx-checkpoints %d (set on this profile)", max(n, 0))
+	}
 	in.launchNote = fmt.Sprintf("the profile's own %s is not passed: the launch uses %s", d, used)
 	c.log.Warn(msgCkptFlagDropped, "profile", in.prof.Name, "dropped", d, "used", used)
 }
@@ -157,9 +185,11 @@ func (c *schedCore) hostMemoryOf(p *core.Profile, onNode bool) (HostMemory, bool
 		return HostMemory{}, false
 	}
 	d := c.cfg.Defaults
-	n := max(d.CtxCheckpoints, 0) * max(p.Parallel, 1)
+	perSlot, ckSet := c.cfg.EffectiveCtxCheckpoints(p)
+	perSlot = max(perSlot, 0)
+	n := perSlot * max(p.Parallel, 1)
 	h := HostMemory{Family: string(ck.Family), CellMiB: ck.CellMiB(), Estimate: ck.Estimate, Checkpoints: n,
-		CheckpointsMiB: ck.TotalMiB(n), OnNode: onNode, SizeUnknown: ck.Unknown}
+		CheckpointsMiB: ck.TotalMiB(n), OnNode: onNode, SizeUnknown: ck.Unknown, PerSlot: perSlot, CheckpointsSet: ckSet}
 	if ck.Unknown {
 		// read at a load this run, of this file version at this context
 		if seen, ok := c.ckptSeen[ckptKey{p.Model, ck.FileBytes, p.Ctx}]; ok && seen.MiB > 0 {
@@ -175,6 +205,10 @@ func (c *schedCore) hostMemoryOf(p *core.Profile, onNode bool) (HostMemory, bool
 		h.PromptCacheMiB = max(d.CacheRAMMiB, 0)
 		h.Machine = c.serverName()
 	}
+	if p.CacheRAMMiB != nil { // the profile's own, on either path (config EffectiveCacheRAMMiB)
+		h.PromptCacheMiB, h.PromptCacheSet = max(*p.CacheRAMMiB, 0), true
+	}
+	h.SetNote = h.setNote()
 	return h, true
 }
 
@@ -239,6 +273,9 @@ func (c *schedCore) planHostMemory(r *PlanReport, p *core.Profile) {
 		if hm.FromLog {
 			r.HostMemoryNote += "; " + hm.LoggedNote()
 		}
+	}
+	if r.HostMemoryNote != "" && hm.SetNote != "" {
+		r.HostMemoryNote += "; " + hm.SetNote
 	}
 }
 
