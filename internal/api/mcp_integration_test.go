@@ -137,21 +137,21 @@ func TestMCPBenchmarkToolsThroughTheRealAPI(t *testing.T) {
 	e := benchEnv(t)
 	h := mcpserver.New(e.api, mcpserver.Options{Version: "test"})
 
-	if o := mcpTool(t, h, "create_benchmark", `{"benchmark":{"id":"a","profile":"ghost","requests":[{"prompt":"x","max_tokens":1}]}}`); !o.IsError || !strings.Contains(o.Text, "HTTP 422") {
+	if o := mcpTool(t, h, "create_benchmark", `{"comment":"test","benchmark":{"id":"a","profile":"ghost","requests":[{"prompt":"x","max_tokens":1}]}}`); !o.IsError || !strings.Contains(o.Text, "HTTP 422") {
 		t.Fatalf("validation error must reach the agent: %+v", o)
 	}
-	mcpJSON(t, h, "create_benchmark", `{"benchmark":`+apiBench+`}`)
+	mcpJSON(t, h, "create_benchmark", `{"comment":"test","benchmark":`+apiBench+`}`)
 	if b := mcpJSON(t, h, "get_benchmark", `{"id":"alpha-cold"}`); b["profile"] != "alpha" || b["source"] != "api" {
 		t.Fatalf("%v", b)
 	}
 	if l := mcpJSON(t, h, "list_benchmarks", `{}`); len(l["benchmarks"].([]any)) != 1 {
 		t.Fatalf("%v", l)
 	}
-	mcpJSON(t, h, "create_suite", `{"suite":{"id":"nightly","name":"Nightly","benchmarks":["alpha-cold"],"cooldown_s":0,"only_when_idle":false}}`)
+	mcpJSON(t, h, "create_suite", `{"comment":"test","suite":{"id":"nightly","name":"Nightly","benchmarks":["alpha-cold"],"cooldown_s":0,"only_when_idle":false}}`)
 	if s := mcpJSON(t, h, "get_suite", `{"id":"nightly"}`); s["id"] != "nightly" {
 		t.Fatalf("%v", s)
 	}
-	mcpJSON(t, h, "update_suite", `{"id":"nightly","suite":{"id":"nightly","name":"Nightly 2","benchmarks":["alpha-cold"],"cooldown_s":0,"only_when_idle":false}}`)
+	mcpJSON(t, h, "update_suite", `{"comment":"test","id":"nightly","suite":{"id":"nightly","name":"Nightly 2","benchmarks":["alpha-cold"],"cooldown_s":0,"only_when_idle":false}}`)
 	if l := mcpJSON(t, h, "list_suites", `{}`)["suites"].([]any); len(l) != 1 || l[0].(map[string]any)["name"] != "Nightly 2" {
 		t.Fatalf("%v", l)
 	}
@@ -186,7 +186,7 @@ func TestMCPBenchmarkToolsThroughTheRealAPI(t *testing.T) {
 	if o := mcpTool(t, h, "delete_benchmark", `{"id":"alpha-cold"}`); !o.IsError || !strings.Contains(o.Text, "HTTP 409") {
 		t.Fatalf("%+v", o)
 	}
-	mcpJSON(t, h, "update_benchmark", `{"id":"alpha-cold","benchmark":{"id":"alpha-cold","profile":"alpha","repeats":1,"requests":[{"name":"q","prompt":"hi","max_tokens":4}]}}`)
+	mcpJSON(t, h, "update_benchmark", `{"comment":"test","id":"alpha-cold","benchmark":{"id":"alpha-cold","profile":"alpha","repeats":1,"requests":[{"name":"q","prompt":"hi","max_tokens":4}]}}`)
 	if o := mcpTool(t, h, "delete_suite", `{"id":"nightly"}`); o.IsError {
 		t.Fatalf("%+v", o)
 	}

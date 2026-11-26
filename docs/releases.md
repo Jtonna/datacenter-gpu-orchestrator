@@ -2,6 +2,15 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Benchmark and group editors
+
+No agent change, no new port, no table, no setting, no migration.
+
+- **Behaviour change: every save of a benchmark or a group needs a comment** (`POST`/`PUT /api/bench/benchmarks`, `/api/bench/groups`, `/api/bench/suites`): the body's `comment` (taken out before the definition is read; it is not stored with the definition) or the `X-Comment` header. Without one: 400 "a comment is required (body {"comment": "..."} or the X-Comment header)", nothing written. The audit entry of the save carries it. MCP: `create_benchmark`, `update_benchmark`, `create_suite`, `update_suite`, `create_bench_group` and `update_bench_group` require `comment`. Scripts that write definitions without one must add it.
+- **A refused save names its parts**: the 422 answer keeps the sentences in `error.message` (as before) and adds `problems`, each sentence with the part it is about (`path`: `phases[2]`, `expect.outcome`, `benchmarks[0]`; empty when it names none).
+- **A run says what changed since it ran**: `GET /api/bench/runs/{id}` carries `definitions_changed`, the benchmarks it ran whose stored definition is different now (`changed`) or gone (`gone`), by id and name; empty when none; absent for an older run that does not keep its definitions. A recipe's entries are not compared. The run itself is unchanged: it keeps what it ran.
+- **Going back:** the image before takes saves without a comment again and leaves out `problems` and `definitions_changed`; nothing stored changes.
+
 ## Run and Cancel from the Benchmarks pages
 
 No agent change, no new port, no table, no migration. One new setting: `bench_not_startable`.

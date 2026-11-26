@@ -322,17 +322,17 @@ func TestMCPBenchToolsAggregatesSchemaAndBenchAudit(t *testing.T) {
 	j.fails(sid, "get_bench_aggregates", `{"limit_runs":1001}`, "HTTP 400")
 
 	loadOnly := `{"id":"load-only","name":"Load only","profile":"mcp-alpha","phases":[{"type":"load"},{"type":"unload"}]}`
-	j.ok(sid, "create_benchmark", `{"benchmark":`+loadOnly+`,"actor":"bench-agent"}`)
-	j.fails(sid, "create_benchmark", `{"benchmark":{"id":"g","profile":"ghost","phases":[{"type":"load"}]}}`, "HTTP 4")
-	if st, _ := j.cdo("POST", "/api/bench/benchmarks", `{"id":"rest-b","profile":"mcp-alpha","phases":[{"type":"load"}]}`, map[string]string{"X-Source": "ui", "X-Actor": "alex"}); st != 201 {
+	j.ok(sid, "create_benchmark", `{"comment":"test","benchmark":`+loadOnly+`,"actor":"bench-agent"}`)
+	j.fails(sid, "create_benchmark", `{"comment":"test","benchmark":{"id":"g","profile":"ghost","phases":[{"type":"load"}]}}`, "HTTP 4")
+	if st, _ := j.cdo("POST", "/api/bench/benchmarks", `{"id":"rest-b","profile":"mcp-alpha","phases":[{"type":"load"}]}`, map[string]string{"X-Source": "ui", "X-Actor": "alex", "X-Comment": "test"}); st != 201 {
 		t.Fatal(st)
 	}
-	if st, _ := j.cdo("POST", "/api/bench/benchmarks", `{"id":"rest-c","profile":"mcp-alpha","phases":[{"type":"load"}]}`, nil); st != 201 {
+	if st, _ := j.cdo("POST", "/api/bench/benchmarks", `{"id":"rest-c","profile":"mcp-alpha","phases":[{"type":"load"}]}`, map[string]string{"X-Comment": "test"}); st != 201 {
 		t.Fatal(st)
 	}
-	j.ok(sid, "update_benchmark", `{"id":"load-only","benchmark":`+strings.Replace(loadOnly, "Load only", "Load only v2", 1)+`}`)
-	j.ok(sid, "create_suite", `{"suite":{"id":"quick","name":"Quick","benchmarks":["load-only"],"cooldown_s":0,"only_when_idle":false}}`)
-	j.ok(sid, "update_suite", `{"id":"quick","suite":{"id":"quick","name":"Quick 2","benchmarks":["load-only"],"cooldown_s":0,"only_when_idle":false}}`)
+	j.ok(sid, "update_benchmark", `{"comment":"test","id":"load-only","benchmark":`+strings.Replace(loadOnly, "Load only", "Load only v2", 1)+`}`)
+	j.ok(sid, "create_suite", `{"comment":"test","suite":{"id":"quick","name":"Quick","benchmarks":["load-only"],"cooldown_s":0,"only_when_idle":false}}`)
+	j.ok(sid, "update_suite", `{"comment":"test","id":"quick","suite":{"id":"quick","name":"Quick 2","benchmarks":["load-only"],"cooldown_s":0,"only_when_idle":false}}`)
 	if b := j.ok(sid, "get_benchmark", `{"id":"load-only"}`); b["name"] != "Load only v2" {
 		t.Fatalf("%v", b)
 	}
@@ -424,8 +424,8 @@ func TestBenchRunLoadsAreTaggedAndAuditedAsSystem(t *testing.T) {
 	sid := j.session("claude-code")
 	j.ok(sid, "create_profile", `{"profile":`+joinedProfile+`}`)
 	eventually(t, "profile live", func() bool { return j.sched.Config().Profiles["mcp-alpha"] != nil })
-	j.ok(sid, "create_benchmark", `{"benchmark":{"id":"lo","profile":"mcp-alpha","phases":[{"type":"load"},{"type":"unload"}]}}`)
-	j.ok(sid, "create_suite", `{"suite":{"id":"s","benchmarks":["lo"],"cooldown_s":0,"only_when_idle":false}}`)
+	j.ok(sid, "create_benchmark", `{"comment":"test","benchmark":{"id":"lo","profile":"mcp-alpha","phases":[{"type":"load"},{"type":"unload"}]}}`)
+	j.ok(sid, "create_suite", `{"comment":"test","suite":{"id":"s","benchmarks":["lo"],"cooldown_s":0,"only_when_idle":false}}`)
 	id := j.ok(sid, "run_suite", `{"id":"s","comment":"test"}`)["id"].(string)
 	eventually(t, "run completed", func() bool { return j.ok(sid, "get_run", `{"id":"`+id+`"}`)["state"] == "completed" })
 

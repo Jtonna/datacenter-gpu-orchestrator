@@ -264,7 +264,7 @@ func (s *Server) benchmarkResults(w http.ResponseWriter, r *http.Request) {
 // parseBenchmark decodes and validates a benchmark body; wantID, when not
 // empty, is the id the path names.
 func (s *Server) parseBenchmark(w http.ResponseWriter, r *http.Request, wantID string) (*benchspec.Benchmark, bool) {
-	body, ok := readBody(w, r)
+	body, ok := saveBody(w, r)
 	if !ok {
 		return nil, false
 	}
@@ -282,7 +282,7 @@ func (s *Server) parseBenchmark(w http.ResponseWriter, r *http.Request, wantID s
 		}
 	}
 	if err := b.Validate(s.profileOK); err != nil {
-		apiErr(w, http.StatusUnprocessableEntity, "%v", err)
+		refuseSave(w, err)
 		return nil, false
 	}
 	for _, id := range b.Parallel {
@@ -442,7 +442,7 @@ func (s *Server) getSuite(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) parseSuite(w http.ResponseWriter, r *http.Request, wantID string) (*benchspec.Suite, bool) {
-	body, ok := readBody(w, r)
+	body, ok := saveBody(w, r)
 	if !ok {
 		return nil, false
 	}
@@ -460,7 +460,7 @@ func (s *Server) parseSuite(w http.ResponseWriter, r *http.Request, wantID strin
 		}
 	}
 	if err := su.ValidateGroup(s.profileOK, s.lookup, s.groupLookup); err != nil {
-		apiErr(w, http.StatusUnprocessableEntity, "%v", err)
+		refuseSave(w, err)
 		return nil, false
 	}
 	for i, it := range su.Benchmarks {
@@ -610,7 +610,7 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 		s.storeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, run)
+	writeJSON(w, http.StatusOK, runOut{Run: run, DefinitionsChanged: s.definitionsChanged(run)})
 }
 
 func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {

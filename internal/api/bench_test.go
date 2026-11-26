@@ -46,6 +46,10 @@ func (e *env) do(method, path, body string) (int, string, http.Header) {
 	if method == "POST" && (strings.HasSuffix(path, "/run") || strings.HasSuffix(path, "/cancel")) && !strings.Contains(body, `"comment"`) {
 		req.Header.Set("X-Comment", "test")
 	}
+	// so does a save of a benchmark or a group (the editors; benchedit_test.go checks the rule)
+	if benchSavePath(method, path) && !strings.Contains(body, `"comment"`) {
+		req.Header.Set("X-Comment", "test")
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		e.t.Fatal(err)
@@ -282,4 +286,18 @@ func TestStatusIsModelCentric(t *testing.T) {
 		len(in["nodes"].([]any)) != 1 || in["last_request"].(map[string]any)["tokens_per_second"].(float64) != 12.5 {
 		t.Fatalf("%v", in)
 	}
+}
+
+// benchSavePath: a create or an update of a benchmark or a group.
+func benchSavePath(method, path string) bool {
+	p := strings.SplitN(path, "?", 2)[0]
+	for _, root := range []string{"/api/bench/benchmarks", "/api/bench/suites", "/api/bench/groups"} {
+		if method == "POST" && p == root {
+			return true
+		}
+		if method == "PUT" && strings.HasPrefix(p, root+"/") && !strings.Contains(strings.TrimPrefix(p, root+"/"), "/") {
+			return true
+		}
+	}
+	return false
 }

@@ -139,6 +139,9 @@ func startFrozen(c *cluster, log *slog.Logger, spec *frozenSpec, emit func(map[s
 		return nil, err
 	}
 	fw.srv = api.New(cfg, c.sched, api.Options{Logger: log, Version: devVersion, Bench: fw.mgr, BenchStore: st, Config: c.svc})
+	// a frozen world replays a recorded run as it ran (some loaded on the
+	// scheduler's own machine then): the start gate of today's runs does not apply
+	fw.mgr.SetStartGate(nil)
 	cancelSub := fw.mgr.Subscribe(emit)
 	ctx, cancel := context.WithCancel(context.Background())
 	fw.mgr.Start(ctx)
