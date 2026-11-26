@@ -43,13 +43,6 @@ func TestCheckpoint_PerFamily(t *testing.T) {
 	}
 }
 
-// A window model has no exact rule proven against a server log: its size
-// is unknown (no number), whatever its header. The header arithmetic is
-// kept apart (BoundBytes: min(window, ctx) x the window layers' K+V) only
-// to be compared with the first load's log line; it is never shown.
-//
-//	gemma3 shape, window 1024: 1024 x 163,840 elements x 2 bytes (f16) = 320 MiB
-//	an architecture whose window rule is not known here: no bound either
 // Gemma 4 12B (the real file's header keys): one checkpoint is at most the
 // window's 1,024 cells x the 40 window layers' K+V, proven against the
 // server's log ("created context checkpoint ... size = 320.013 MiB" at
@@ -87,6 +80,13 @@ func TestCheckpoint_Gemma4_12BIsTheProvenBound(t *testing.T) {
 	}
 }
 
+// A window architecture other than gemma4 has no rule proven against a server log: its size
+// is unknown (no number), whatever its header. The header arithmetic is
+// kept apart (BoundBytes: min(window, ctx) x the window layers' K+V) only
+// to be compared with the first load's log line; it is never shown.
+//
+//	gemma3 shape, window 1024: 1024 x 163,840 elements x 2 bytes (f16) = 320 MiB
+//	an architecture whose window rule is not known here: no bound either
 func TestCheckpoint_WindowedIsUnknown(t *testing.T) {
 	g3 := ggufgen.Spec{Arch: "gemma3", Blocks: 48, Embd: 3840, Heads: 16, HeadsKV: 8, KeyLength: 256, ValueLength: 256, SlidingWindow: 1024}
 	w := Checkpoint(meta(t, g3), "f16", 8192)
