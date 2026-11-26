@@ -32,17 +32,24 @@ function rowsTable(set) {
   return h('div.scroll', h('table.tbl.std-tbl', { 'data-std-rows': String(set.rows.length) },
     h('thead', h('tr', h('th', { scope: 'col' }, 'Profile'), h('th.r', { scope: 'col' }, 'Context'), h('th', { scope: 'col' }, 'Kept'),
       h('th', { scope: 'col' }, 'Zones'), h('th.r', { scope: 'col' }, 'Needs'), h('th', { scope: 'col' }, 'Already there'))),
-    h('tbody', set.rows.map(r => h('tr', { key: r.id, 'data-std': r.id, 'data-kept': String(!!r.kept), 'data-exists': String(!!r.exists) },
-      h('td', h('span.mono', r.id), r.default ? h('span.sub', 'the default context') : null),
+    // the long sentences (every zone, the hosting machine's memory, why not
+    // kept) go on a full-width line under their row, so the columns stay narrow
+    h('tbody', set.rows.map(r => {
+      const notes = [
+        !r.kept && r.reason ? h('div', { 'data-why': '' }, h('b', 'Not kept: '), plainReason(r.reason)) : null,
+        r.uses_every_zone ? h('div.warn-t', { 'data-every-zone': '' }, r.every_zone_note) : null,
+        r.host_memory_note ? h('div', { 'data-host-memory': r.host_memory_counted ? 'counted' : 'not-counted' }, r.host_memory_note) : null,
+      ].filter(Boolean);
+      return [h('tr', { key: r.id, 'data-std': r.id, 'data-kept': String(!!r.kept), 'data-exists': String(!!r.exists), class: notes.length ? 'has-notes' : null },
+      h('td.std-id', h('span.mono', r.id), r.default ? h('span.sub', 'the default context') : null),
       h('td.r.mono', ctxText(r.ctx)),
-      h('td', r.kept ? badge('Kept', 'ready', r.reason ? plainReason(r.reason) : 'It would load: ' + r.action) : badge('Not kept', 'fail'),
-        !r.kept && r.reason ? h('span.sub', { 'data-why': '' }, plainReason(r.reason)) : null),
-      h('td', r.zones.length ? plural(r.zones.length, 'zone') : h('span.mut', '–'),
-        r.uses_every_zone ? h('span.sub.warn-t', { 'data-every-zone': '' }, r.every_zone_note) : null),
+      h('td', r.kept ? badge('Kept', 'ready', r.reason ? plainReason(r.reason) : 'It would load: ' + r.action) : badge('Not kept', 'fail')),
+      h('td', r.zones.length ? plural(r.zones.length, 'zone') : h('span.mut', '–'), r.uses_every_zone ? h('span.sub.warn-t', 'every zone') : null),
       h('td.r', r.need_mib != null ? h('span.mono', num(r.need_mib) + ' MiB') : h('span.mut', 'not known'),
-        h('span.sub', { 'data-source': r.need_source, title: r.need_basis || null }, SOURCE[r.need_source] || r.need_source),
-        r.host_memory_note ? h('span.sub', { 'data-host-memory': r.host_memory_counted ? 'counted' : 'not-counted' }, r.host_memory_note) : null),
-      h('td', r.exists ? h('span', { 'data-exists-note': '', title: r.exists_as || null }, 'exists, kept as it is') : h('span.mut', 'no')))))));
+        h('span.sub', { 'data-source': r.need_source, title: r.need_basis || null }, r.need_mib != null ? SOURCE[r.need_source] || r.need_source : null)),
+      h('td', r.exists ? h('span', { 'data-exists-note': '', title: r.exists_as || null }, 'exists, kept as it is') : h('span.mut', 'no'))),
+      notes.length ? h('tr.std-notes', { key: r.id + ':notes', 'data-std-notes': r.id }, h('td', { colspan: '6' }, notes)) : null];
+    }).flat().filter(Boolean))));
 }
 
 // standardDialog(m, onDone): the dialog for the catalog model m; onDone(text)

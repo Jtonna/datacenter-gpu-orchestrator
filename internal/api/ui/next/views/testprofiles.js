@@ -88,7 +88,7 @@ registerView({
               h('th', { scope: 'col' }, 'Why test'), h('th', { scope: 'col', title: 'Benchmarks and benchmark groups that name it' }, 'Referred to by'),
               h('th', { scope: 'col', title: 'Its last load, unload or benchmark step in the history kept' }, 'Last used'), h('th', { scope: 'col' }, h('span.sr', 'Promote')))),
             h('tbody', shown.map(r => h('tr', { key: 'tp-' + r.id, 'data-profile': r.id, 'data-reason': r.reason },
-              h('td.prf-name', h('div', { 'data-shown': '' }, profileLabel(r)), h('div.mono.mut.sub', { title: 'The id clients send' }, r.id)),
+              h('td.prf-name.tp-name', h('div', { 'data-shown': '', title: 'The id clients send: ' + r.id }, profileLabel(r)), r.display_name ? h('div.mono.mut.sub', { title: 'The id clients send' }, r.id) : null),
               h('td.prf-model', h('span', { title: r.model }, modelName(r.model, r))),
               ctxCell(r),
               h('td', badge(REASONS[r.reason] || r.reason, 'n', REASON_HELP[r.reason]), (r.reasons || []).length > 1 ? h('span.sub', 'also ' + r.reasons.slice(1).join(', ')) : null),

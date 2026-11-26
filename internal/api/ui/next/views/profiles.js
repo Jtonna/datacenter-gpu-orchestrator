@@ -436,7 +436,7 @@ registerView({
               return h('tr', { key: 'p-' + e.id, class: 'click' + (open === e.id ? ' sel' : ''), tabindex: '0', 'data-profile': e.id, 'aria-selected': open === e.id ? 'true' : null,
                 onclick: openRow, onkeydown: ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openRow(); } } },
                 h('td.prf-name',
-                  h('div.prf-id', h('span', { 'data-shown': '', title: e.id }, profileLabel(e)), profileLabel(e) !== e.id ? h('span.mono.mut', e.id) : null,
+                  h('div.prf-id', h('span', { 'data-shown': '', title: e.id }, profileLabel(e)), e.display_name ? h('span.mono.mut', e.id) : null,
                     isTest(e) ? h('span.plc-gen', { title: testWhy(e) }, 'test') : null, loaded.has(e.id) && e.plan && e.plan.action !== 'serve' ? badge('Loaded', 'use') : null),
                   e.description ? h('div.prf-d', { title: e.description }, e.description) : null),
                 // a command profile runs a program, not a model file: it has no model and no context size

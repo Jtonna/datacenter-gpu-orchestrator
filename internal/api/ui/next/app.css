@@ -1691,3 +1691,21 @@ a.bp-view:hover{background:var(--hover-bg)}
 /* result views beside a report: the cell whose report is open (board Bench-Report #2) */
 .bp-res-t td.sel{outline:2px solid var(--accent,#0f6b4a);outline-offset:-3px;border-radius:6px}
 .bp-res-t a.bp-fv.sel{font-weight:800}
+/* the standard profiles dialog (views/models/standard.js): narrow columns, each row's long sentences on a full-width line under it */
+.std-tbl{width:100%}
+.std-tbl td{vertical-align:top}
+.std-tbl td .sub{display:block}
+.std-tbl td.std-id{white-space:nowrap}
+.std-tbl tr.has-notes td{padding-bottom:2px}
+.std-tbl tr.std-notes td{border-top:0;height:auto;padding-top:0;font-size:12px;color:var(--mut)}
+.std-tbl tr.std-notes td div+div{margin-top:2px}
+/* the Test profiles page (views/testprofiles.js): long generated names wrap anywhere, the real context and its note in one column */
+.tp-tbl td.tp-name div{overflow-wrap:anywhere}
+.tp-tbl th:nth-child(2){width:110px}
+.tp-tbl th:nth-child(3){width:170px}
+.tp-tbl th:nth-child(4){width:140px}
+.tp-tbl th:nth-child(5){width:140px}
+.tp-tbl th:nth-child(6){width:130px}
+.tp-tbl th:nth-child(7){width:100px}
+.tp-tbl td.r .sub{display:block;white-space:normal}
+.tp-tbl td .sub{display:block}
