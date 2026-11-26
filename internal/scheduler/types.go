@@ -177,9 +177,11 @@ type Status struct {
 	ConfigRevision int64
 	Configured     bool
 	// ServerHostMemory sums, over the instances loaded on the scheduler's
-	// machine, the host-memory term nothing places there (hostmem.go):
-	// context checkpoints and prompt cache, each a ceiling.
+	// machine ONLY, the host-memory term nothing places there (hostmem.go):
+	// context checkpoints and prompt cache. NodeHostMemory is the same term
+	// per console that hosts a loaded model (empty when none does).
 	ServerHostMemory ServerHostMemory
+	NodeHostMemory   []NodeHostMemory
 }
 
 // InstanceStatus describes one instance.

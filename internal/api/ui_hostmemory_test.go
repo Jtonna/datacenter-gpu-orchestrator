@@ -46,6 +46,7 @@ func TestUIHostMemoryLine(t *testing.T) {
 	counted["counted"] = true
 	plain := map[string]any{"family": "plain", "cell_mib": 0, "checkpoints": 32, "checkpoints_mib": 0, "on_node": false, "counted": false}
 	unknown := map[string]any{"family": "windowed", "cell_mib": 0, "checkpoints": 32, "checkpoints_mib": 0, "prompt_cache_mib": 2048, "on_node": false, "counted": false, "size_unknown": true, "estimate": false}
+	window := map[string]any{"family": "windowed", "cell_mib": 320, "checkpoints": 32, "checkpoints_mib": 10240, "prompt_cache_mib": 2048, "on_node": false, "counted": false, "estimate": true}
 	madeUp := map[string]any{"family": "recurrent", "cell_mib": 0, "checkpoints": 32, "checkpoints_mib": 0, "prompt_cache_mib": 0, "on_node": true, "counted": false, "size_unknown": true}
 	logged := map[string]any{"family": "windowed", "cell_mib": 42.5, "checkpoints": 32, "checkpoints_mib": 1360, "prompt_cache_mib": 2048, "on_node": false, "counted": false,
 		"from_log": true, "logged_file": "gemma-x.gguf", "logged_file_bytes": 7000000000, "logged_ctx": 8192}
@@ -69,6 +70,8 @@ func TestUIHostMemoryLine(t *testing.T) {
 		{unknown, map[string]any{"name": "host memory: a window size not yet known shows no number",
 			"page":      []string{"Conversation memory: this model keeps restore points on the machine that hosts it: size not yet known: read at the first load."},
 			"notOnPage": []string{" MB each", "(0 MB)"}}},
+		{window, map[string]any{"name": "host memory: a proven window model (Gemma 4 12B) says at most",
+			"page": []string{"Conversation memory: this model keeps restore points on the machine that hosts it: at most 320 MB each, up to 32 (10,240 MB), not yet counted."}}},
 		{madeUp, map[string]any{"name": "host memory: an architecture without an exact rule shows no number",
 			"page":      []string{"Conversation memory: this model keeps restore points on the machine that hosts it: size not yet known: read at the first load."},
 			"notOnPage": []string{" MB each", "(0 MB)"}}},

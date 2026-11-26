@@ -76,6 +76,9 @@ type HostMem struct {
 	CheckpointMiB      float64 // size of the last checkpoint created
 	CheckpointsCreated int
 	CheckpointsHeld    int // created less erased, all slots
+	// LargestCheckpointMiB is the largest checkpoint created (a window
+	// model's grow with the conversation, up to the window).
+	LargestCheckpointMiB float64
 }
 
 // HeldMiB is what the checkpoints held now take, by the last size logged.
@@ -174,6 +177,7 @@ func (l *LoadLog) feedHost(line string) {
 		if m := ckptSizeRE.FindStringSubmatch(line); m != nil {
 			if v, err := strconv.ParseFloat(m[1], 64); err == nil {
 				h.CheckpointMiB = v
+				h.LargestCheckpointMiB = max(h.LargestCheckpointMiB, v)
 			}
 		}
 		h.CheckpointsCreated++

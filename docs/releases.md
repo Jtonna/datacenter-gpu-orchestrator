@@ -25,6 +25,16 @@ No agent change, no new port, no schema change, no new route, no new setting. Ev
 - **MCP.** `list_runs` takes `offset` and `result`; `get_run` takes a number and `requests`. Group-named aliases: `list_bench_groups`, `get_bench_group`, `create_bench_group`, `update_bench_group`, `delete_bench_group`, `run_bench_group` (the zone-group tools keep `list_groups` and the rest).
 - **Going back.** The image before sends none of these fields; nothing it reads changed. Its pin routes take `settings` again.
 
+## Scheduler image: Gemma 4's restore-point size shown as a proven bound
+
+No agent change, no new port, no new route, no table, no setting. Plans change only where `count_host_memory` is on (default off) for a gemma4 profile hosted on a node.
+
+- **Gemma 4 (architecture gemma4):** one context checkpoint is at most the window's cells times the window layers' K+V, from the header: Gemma 4 12B is 320.00 MiB at f16 (170.00 MiB at q8_0), within 0.01% of the server's own log line (320.013 MiB at every context from 2,048 to 131,072). The Models panel says "at most 320 MB each, up to 32 (10,240 MB)"; the plan note counts it as "up to". A gemma4 header without the window pattern, and every other window architecture, still shows "size not yet known: read at the first load".
+- **The log check for a window model** compares the largest checkpoint created with the bound: smaller is normal (a conversation shorter than the window), more than 1% above is a WARN `learnedNeed` event.
+- **Every machine that holds host memory:** `/api/status` `server_host_memory` and `/api/system` `host_memory` gain `scope`, "on the scheduler's machine only", and both gain `node_host_memory`: per console that hosts a loaded model, its checkpoints, prompt cache, instances and note ("at least" when a size is unknown). New fields only.
+- **Wording:** the model removal sentences say "its 1 profile", not "its 1 profiles".
+- **Going back:** the image before shows Gemma 4 as "size not yet known: read at the first load"; nothing stored changes.
+
 ## Agent release: children start without `LLAMA_ARG_*`
 
 Agent only; the scheduler image below ships with or without it (the scheduler never starts a process through the agent's runners).

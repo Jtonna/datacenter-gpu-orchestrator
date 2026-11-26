@@ -659,3 +659,39 @@ func TestModelRemove_KillBetweenAuditAndMark(t *testing.T) {
 		})
 	}
 }
+
+// The removal sentences count profiles in the singular for one:
+// "its 1 profile", never "its 1 profiles".
+func TestItsProfiles(t *testing.T) {
+	for n, want := range map[int]string{0: "its 0 profiles", 1: "its 1 profile", 2: "its 2 profiles"} {
+		if got := itsProfiles(n); got != want {
+			t.Errorf("%d: %q, want %q", n, got, want)
+		}
+	}
+}
+
+// Both removal sentences together: the profile count in the singular for one,
+// and the size in MB below 0.1 GB ("under 1 MB" for a 260 KB file).
+func TestRemovalSentences(t *testing.T) {
+	for _, c := range []struct {
+		n               int
+		size            int64
+		removed, dryRun string
+	}{
+		{0, 260e3, "a.gguf was removed: under 1 MB freed. It and its 0 profiles cannot be restored.",
+			"This cannot be undone. a.gguf and its 0 profiles are erased now, 5 days before they would have been. under 1 MB is freed."},
+		{1, 260e3, "a.gguf was removed: under 1 MB freed. It and its 1 profile cannot be restored.",
+			"This cannot be undone. a.gguf and its 1 profile are erased now, 5 days before they would have been. under 1 MB is freed."},
+		{2, 3e9, "a.gguf was removed: 3.0 GB freed. It and its 2 profiles cannot be restored.",
+			"This cannot be undone. a.gguf and its 2 profiles are erased now, 5 days before they would have been. 3.0 GB is freed."},
+		{1, 3e9, "a.gguf was removed: 3.0 GB freed. It and its 1 profile cannot be restored.",
+			"This cannot be undone. a.gguf and its 1 profile are erased now, 5 days before they would have been. 3.0 GB is freed."},
+	} {
+		if got := removedSentence("a.gguf", "removed", c.size, c.n); got != c.removed {
+			t.Errorf("removed %d/%d: %q", c.n, c.size, got)
+		}
+		if got := eraseSentence("a.gguf", c.n, 5, c.size); got != c.dryRun {
+			t.Errorf("dry run %d/%d: %q", c.n, c.size, got)
+		}
+	}
+}

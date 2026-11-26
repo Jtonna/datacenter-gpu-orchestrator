@@ -170,7 +170,7 @@ func (s *Server) recordRemovedEvent(t *cfgstore.RemovedRecord, atStart bool) {
 	if t.Reason == cfgstore.RemovedByClearing {
 		how = fmt.Sprintf("cleared from the models trash (in it since %s; model_trash_days)", msText(t.DeletedAt))
 	}
-	sum := fmt.Sprintf("%s was %s: %s freed. It and its %d profiles cannot be restored.", t.File, how, sizeText(t.SizeBytes), len(t.ProfileIDs))
+	sum := removedSentence(t.File, how, t.SizeBytes, len(t.ProfileIDs))
 	data := map[string]any{"file": t.File, "trash_id": t.ID, "size_bytes": t.SizeBytes, "reason": t.Reason, "profiles": t.ProfileIDs,
 		"deleted_at": t.DeletedAt, "removed_by": t.RemovedBy}
 	if atStart {
@@ -355,7 +355,7 @@ func (s *Server) handleTrashRemove(w http.ResponseWriter, r *http.Request) {
 	}
 	figures := map[string]any{"file": rec.File, "trash_id": id, "size_bytes": rec.SizeBytes, "profiles": ids, "deleted_at": rec.DeletedAt, "purge_at": at,
 		"days_early": daysEarly, "cannot_undo": true, "purge_on": s.trashPurgeOn(),
-		"message": fmt.Sprintf("This cannot be undone. %s and its %d profiles are erased now, %d days before they would have been. %s is freed.", rec.File, len(ids), daysEarly, sizeText(rec.SizeBytes))}
+		"message": eraseSentence(rec.File, len(ids), daysEarly, rec.SizeBytes)}
 	if dry {
 		_, ro, rf := s.removeTrashed(ctx, rec, cfgstore.RemovedByOwner, audit.FromRequest(r).Actor, comment, true)
 		if rf != nil {
@@ -550,4 +550,22 @@ func sizeText(b int64) string {
 	default:
 		return "under 1 MB"
 	}
+}
+
+// itsProfiles is "its 1 profile" or "its N profiles" (the removal sentences).
+func itsProfiles(n int) string {
+	if n == 1 {
+		return "its 1 profile"
+	}
+	return fmt.Sprintf("its %d profiles", n)
+}
+
+// removedSentence is the summary after a removal for good.
+func removedSentence(file, how string, size int64, profiles int) string {
+	return fmt.Sprintf("%s was %s: %s freed. It and %s cannot be restored.", file, how, sizeText(size), itsProfiles(profiles))
+}
+
+// eraseSentence is the dry run's warning before a removal for good.
+func eraseSentence(file string, profiles int, daysEarly, size int64) string {
+	return fmt.Sprintf("This cannot be undone. %s and %s are erased now, %d days before they would have been. %s is freed.", file, itsProfiles(profiles), daysEarly, sizeText(size))
 }

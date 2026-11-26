@@ -11,6 +11,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/estimate"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/gguf"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelpath"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
@@ -243,8 +244,11 @@ func (c *schedCore) planHostMemory(r *PlanReport, p *core.Profile) {
 
 // ServerHostMemory is the host-memory term summed over the instances loaded
 // on the scheduler's machine (Status): the most their host processes may
-// take there beyond what the load log showed.
+// take there beyond what the load log showed. It is that machine only
+// (Scope); the consoles that host a model are in Status.NodeHostMemory.
 type ServerHostMemory struct {
+	// Scope labels the sum: "on the scheduler's machine only".
+	Scope          string
 	Machine        string
 	CheckpointsMiB int
 	PromptCacheMiB int
@@ -258,10 +262,83 @@ type ServerHostMemory struct {
 	Note string `view:"omitempty"`
 }
 
+// serverScope labels ServerHostMemory.
+const serverScope = "on the scheduler's machine only"
+
+// NodeHostMemory is the host-memory term of one console that hosts loaded
+// models (a host on a node), summed over them: checkpoints and prompt
+// cache, the instances, those whose checkpoint size is unknown, and
+// whether the console's reservation counts it (count_host_memory).
+type NodeHostMemory struct {
+	Node           core.NodeID
+	Name           string
+	CheckpointsMiB int
+	PromptCacheMiB int
+	Instances      []string
+	SizeUnknown    []string `view:"omitempty"`
+	Counted        bool
+	// Note reads the figure as ServerHostMemory.Note does.
+	Note string
+}
+
+// sumNote reads a host-memory sum: "up to N MiB" when every size is known,
+// else "at least N MiB; K loaded model(s) with checkpoints of unknown size
+// not included"; empty with nothing loaded.
+func sumNote(total, instances, unknown int) string {
+	switch {
+	case instances == 0:
+		return ""
+	case unknown == 0:
+		return fmt.Sprintf("up to %d MiB", total)
+	case unknown == 1:
+		return fmt.Sprintf("at least %d MiB; 1 loaded model with checkpoints of unknown size not included", total)
+	}
+	return fmt.Sprintf("at least %d MiB; %d loaded models with checkpoints of unknown size not included", total, unknown)
+}
+
+// nodeHostMemory is, per console that hosts a loaded model, its term; in
+// node id order.
+func (c *schedCore) nodeHostMemory() []NodeHostMemory {
+	by := map[core.NodeID]*NodeHostMemory{}
+	for _, in := range c.insts {
+		if in.prof == nil || in.prof.Kind != core.KindLlama {
+			continue
+		}
+		id := hostOf(in.prof, in.placement)
+		if id == "" {
+			continue
+		}
+		hm, ok := c.hostMemoryOf(in.prof, true)
+		if !ok {
+			continue
+		}
+		n := by[id]
+		if n == nil {
+			n = &NodeHostMemory{Node: id, Name: c.nodeName(id), Counted: hm.Counted}
+			by[id] = n
+		}
+		n.CheckpointsMiB += hm.CheckpointsMiB
+		n.PromptCacheMiB += hm.PromptCacheMiB
+		n.Instances = append(n.Instances, in.prof.Name)
+		if hm.SizeUnknown {
+			n.SizeUnknown = append(n.SizeUnknown, in.prof.Name)
+		}
+	}
+	out := []NodeHostMemory{} // [] in the status, never null: no console holds any
+	for _, n := range by {
+		sort.Strings(n.Instances)
+		sort.Strings(n.SizeUnknown)
+		n.Note = sumNote(n.CheckpointsMiB+n.PromptCacheMiB, len(n.Instances), len(n.SizeUnknown))
+		out = append(out, *n)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Node < out[j].Node })
+	return out
+}
+
 // serverHostMemory sums the term over the loaded instances hosted on the
 // scheduler's machine.
 func (c *schedCore) serverHostMemory() ServerHostMemory {
-	s := ServerHostMemory{Machine: c.serverName()}
+	s := ServerHostMemory{Scope: serverScope, Machine: c.serverName()}
 	for _, in := range c.insts {
 		if in.prof == nil || in.prof.Kind != core.KindLlama || hostOf(in.prof, in.placement) != "" {
 			continue
@@ -279,16 +356,7 @@ func (c *schedCore) serverHostMemory() ServerHostMemory {
 	}
 	sort.Strings(s.Instances)
 	sort.Strings(s.SizeUnknown)
-	total := s.CheckpointsMiB + s.PromptCacheMiB
-	switch n := len(s.SizeUnknown); {
-	case len(s.Instances) == 0:
-	case n == 0:
-		s.Note = fmt.Sprintf("up to %d MiB", total)
-	case n == 1:
-		s.Note = fmt.Sprintf("at least %d MiB; 1 loaded model with checkpoints of unknown size not included", total)
-	default:
-		s.Note = fmt.Sprintf("at least %d MiB; %d loaded models with checkpoints of unknown size not included", total, n)
-	}
+	s.Note = sumNote(s.CheckpointsMiB+s.PromptCacheMiB, len(s.Instances), len(s.SizeUnknown))
 	return s
 }
 
@@ -321,19 +389,33 @@ func (c *schedCore) checkHostMemorySizes() {
 			in.ckptChecked = 3
 			continue
 		}
+		largest := max(hm.LargestCheckpointMiB, hm.CheckpointMiB)
 		if f.SizeUnknown || f.FromLog {
 			if cs, ok := c.needs.(CheckpointSizer); ok {
 				if ck, err := cs.CheckpointOf(in.prof); err == nil {
 					k := ckptKey{in.prof.Model, ck.FileBytes, in.prof.Ctx}
-					if hm.CheckpointMiB > c.ckptSeen[k].MiB {
+					if largest > c.ckptSeen[k].MiB {
 						if c.ckptSeen == nil {
 							c.ckptSeen = map[ckptKey]ckptLogged{}
 						}
-						c.ckptSeen[k] = ckptLogged{MiB: hm.CheckpointMiB, At: c.now}
+						c.ckptSeen[k] = ckptLogged{MiB: largest, At: c.now}
 					}
 				}
 			}
 			continue // nothing to compare with: the log is the figure
+		}
+		if f.Family == string(gguf.FamilyWindowed) {
+			// a bound: the largest checkpoint is compared, and only above it
+			// (a conversation shorter than the window keeps less)
+			if in.ckptChecked&2 == 0 && f.CellMiB > 0 && largest > f.CellMiB*(1+ckptDriftPct/100) {
+				in.ckptChecked |= 2
+				d := 100 * (largest - f.CellMiB) / f.CellMiB
+				c.recordInst(in, history.TLearnedNeed, history.Warn,
+					fmt.Sprintf("The largest context checkpoint of %s is %.2f MiB in the server log; the window bound says at most %.2f MiB (%.1f%% above). The host memory shown for it may be wrong.",
+						in.prof.Name, largest, f.CellMiB, d),
+					map[string]any{"logged_mib": largest, "formula_mib": f.CellMiB, "family": f.Family, "source": "largest context checkpoint"})
+			}
+			continue
 		}
 		check := func(bit int, what string, logged float64) {
 			if in.ckptChecked&bit != 0 || logged == 0 {

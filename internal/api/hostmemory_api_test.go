@@ -25,4 +25,15 @@ func TestHostMemorySumInStatusAndSystem(t *testing.T) {
 	if !reflect.DeepEqual(a, b) {
 		t.Errorf("status %v, system %v", a, b)
 	}
+	// the sum is the scheduler's machine only, and says so; the consoles that
+	// host a model are beside it (none here: an empty list, not missing)
+	if b["scope"] != "on the scheduler's machine only" {
+		t.Errorf("scope %v", b["scope"])
+	}
+	for name, doc := range map[string]map[string]any{"status": st, "system": sys} {
+		k := "node_host_memory"
+		if l, ok := doc[k].([]any); !ok || len(l) != 0 {
+			t.Errorf("%s %s = %#v, want []", name, k, doc[k])
+		}
+	}
 }
