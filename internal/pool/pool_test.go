@@ -25,6 +25,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/agenttest"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/fakeagent"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/ports"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/progtree"
 )
 
@@ -139,14 +140,9 @@ func testRelease(t *testing.T) *release.Release {
 	return rel
 }
 
-func freePort(t *testing.T) int {
-	l, err := net.Listen("tcp", "127.0.0.2:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
-}
+// freePort is a port for the rig's fake agents, bound later on 127.0.0.n:
+// outside the ephemeral range (testutil/ports).
+func freePort(t *testing.T) int { return ports.Free(t, "127.0.0.2") }
 
 func newRig(t *testing.T) *rig {
 	r := &rig{t: t, clk: &clock{}, store: &memStore{m: map[string]cfgstore.NodeAdmin{}}, hist: &hist{},

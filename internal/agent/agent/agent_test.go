@@ -29,6 +29,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agent/runner"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/agentproto"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/agenttest"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/ports"
 )
 
 func TestMain(m *testing.M) {
@@ -261,14 +262,9 @@ func (u *fakeUpdater) Update(ctx context.Context, r string) error {
 }
 func (u *fakeUpdater) n() int { u.mu.Lock(); defer u.mu.Unlock(); return len(u.calls) }
 
-func freePort(t *testing.T) int {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
-}
+// freePort is a port the agent under test binds later: outside the
+// ephemeral range (testutil/ports).
+func freePort(t *testing.T) int { return ports.Free(t, "127.0.0.1") }
 
 // ---- harness ----
 

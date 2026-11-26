@@ -73,7 +73,9 @@ type Agent struct {
 	// HostPort is where a host launch's fake llama-server listens (phase 6);
 	// a host launch is taken only when Capabilities holds host_launch and
 	// HostPort is set, else it is refused with invalid_request as an agent
-	// of release 0.1.6 would.
+	// of release 0.1.6 would. AutoPort: the launch binds port 0 and the
+	// launch state reports the port it got (HostPortNow): no port is picked
+	// first and bound later, so no other test can take it in between.
 	HostPort int
 
 	mu         sync.Mutex
@@ -89,6 +91,7 @@ type Agent struct {
 	cur        *launchRun
 	stopLaunch []string
 	launches   []agentproto.LaunchRequest // every accepted launch request
+	hostBound  int                        // the port a host launch with AutoPort bound
 	hostAuth   []string                   // the Authorization header of each request to a host launch
 	silentTo   time.Time                  // no heartbeat is sent before this (SilentFor)
 	kick       chan struct{}              // sends a heartbeat at once (the end of a silence)
@@ -631,7 +634,8 @@ func (a *Agent) stateLocked() agentproto.LaunchState {
 	st := agentproto.LaunchState{LaunchID: r.req.LaunchID, Role: agentproto.RoleWorker, State: r.state,
 		Port: a.WorkerPort, Command: []string{"rpc-server"}, Exit: r.exit, MemAvailableMiB: a.MemAvail}
 	if r.req.Role == agentproto.RoleHost {
-		st.Role, st.Port, st.Command = agentproto.RoleHost, a.HostPort, []string{"llama-server", "--port", strconv.Itoa(a.HostPort)}
+		port := a.hostPortLocked()
+		st.Role, st.Port, st.Command = agentproto.RoleHost, port, []string{"llama-server", "--port", strconv.Itoa(port)}
 	}
 	if r.state != agentproto.StateExited {
 		ttl := r.req.LeaseTTLS
@@ -666,12 +670,17 @@ func roleOf(req agentproto.LaunchRequest) string {
 // answers /health without a key and everything else only with the launch's
 // key, and writes the buffer lines a real host writes at -lv 4.
 func (a *Agent) startHostLocked(w http.ResponseWriter, req agentproto.LaunchRequest) {
-	addr := net.JoinHostPort(a.Addr, strconv.Itoa(a.HostPort))
-	ln, err := net.Listen("tcp", addr)
+	port := a.HostPort
+	if port == AutoPort {
+		port = 0
+	}
+	ln, err := net.Listen("tcp", net.JoinHostPort(a.Addr, strconv.Itoa(port)))
 	if err != nil {
 		writeJSON(w, 409, agentproto.LaunchRefusal{Reason: agentproto.ReasonPortInUse, Message: err.Error()})
 		return
 	}
+	a.hostBound = ln.Addr().(*net.TCPAddr).Port
+	addr := net.JoinHostPort(a.Addr, strconv.Itoa(a.hostBound))
 	key := req.Host.APIKey
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
@@ -702,6 +711,24 @@ func (a *Agent) startHostLocked(w http.ResponseWriter, req agentproto.LaunchRequ
 	a.launches = append(a.launches, req)
 	go a.becomeReady(run, addr)
 	writeJSON(w, http.StatusAccepted, a.stateLocked())
+}
+
+// AutoPort as Agent.HostPort: a host launch binds port 0 (see HostPort).
+const AutoPort = -1
+
+// HostPortNow is the port of the host launch: the one bound under
+// AutoPort (0 before any host launch), else HostPort.
+func (a *Agent) HostPortNow() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.hostPortLocked()
+}
+
+func (a *Agent) hostPortLocked() int {
+	if a.HostPort == AutoPort {
+		return a.hostBound
+	}
+	return a.HostPort
 }
 
 // Launches are the launch requests the agent accepted, in order.
