@@ -1683,3 +1683,5 @@ a.bp-view:hover{background:var(--hover-bg)}
 /* results: a model whose file is no longer in the models folder */
 .bp-res-t tr.gone td.bp-model{color:var(--mut)}
 .bp-res-t .bp-gone{display:block;font-size:12px}
+/* results: a row whose figures come from several runs (the runs on hover) */
+.bp-res-t .bp-mixed{display:block;font-size:12px;color:var(--mut);cursor:help}
