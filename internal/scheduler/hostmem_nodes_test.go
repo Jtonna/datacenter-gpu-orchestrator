@@ -33,7 +33,7 @@ func TestHostMemory_StatusHasEveryMachineThatHoldsIt(t *testing.T) {
 	if sv.Scope != "on the scheduler's machine only" || !reflect.DeepEqual(sv.Instances, []string{"s"}) || sv.CheckpointsMiB != 1608 || sv.PromptCacheMiB != 2048 || sv.Note != "up to 3656 MiB" {
 		t.Fatalf("server: %+v", sv)
 	}
-	want := []NodeHostMemory{{Node: "a", Name: "a", CheckpointsMiB: 1608, PromptCacheMiB: 256, Instances: []string{"m"}, Note: "up to 1864 MiB"}}
+	want := []NodeHostMemory{{Node: "a", Name: "a", CheckpointsMiB: 1608, PromptCacheMiB: 256, Instances: []string{"m"}, Counted: true, Note: "up to 1864 MiB"}}
 	if !reflect.DeepEqual(st.NodeHostMemory, want) {
 		t.Fatalf("nodes:\n got %+v\nwant %+v", st.NodeHostMemory, want)
 	}

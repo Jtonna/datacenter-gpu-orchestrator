@@ -27,7 +27,7 @@ func TestHostMemory_UnknownSizeReadsAsAFloor(t *testing.T) {
 	if rn.HostMemory == nil || !rn.HostMemory.OnNode {
 		t.Fatalf("node-hosted: %+v", rn.HostMemory)
 	}
-	want = "on the host node: at least 512 MiB, not yet counted (prompt cache 512 MiB; context checkpoints NOT included: size not yet known, read at the first load)"
+	want = "on the host node: at least 512 MiB, counted in what it needs (prompt cache 512 MiB; context checkpoints NOT included: size not yet known, read at the first load)"
 	if rn.HostMemoryNote != want {
 		t.Fatalf("node note\n got %q\nwant %q", rn.HostMemoryNote, want)
 	}

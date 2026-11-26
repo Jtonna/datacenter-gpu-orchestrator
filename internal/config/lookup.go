@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/llamaflags"
 )
 
 // Resolve finds a profile by exact, case-sensitive name or alias. isAlias
@@ -101,6 +102,45 @@ func (c *Config) EffectiveStallTimeout(p *core.Profile) time.Duration {
 		return *p.StallTimeout
 	}
 	return c.Defaults.StallTimeout
+}
+
+// Where an effective host-memory figure comes from (HostMemoryOf).
+const (
+	FromProfileArgs = "from this profile's extra arguments"
+	FromCluster     = "the cluster default"
+)
+
+// HostMemoryLimits is a profile's effective host-process memory: restore
+// points per slot and the prompt cache in MiB, each with where it comes
+// from (FromProfileArgs or FromCluster).
+type HostMemoryLimits struct {
+	CtxCheckpoints     int
+	CtxCheckpointsFrom string
+	CacheRAMMiB        int
+	CacheRAMFrom       string
+}
+
+// HostMemoryOf is p's effective restore points and prompt cache: its own
+// --ctx-checkpoints and --cache-ram (llamaflags), else the settings
+// ctx_checkpoints, and cache_ram_mib on the scheduler's machine or
+// node_host_cache_ram_mib for host: node. Both launch paths pass these.
+func (c *Config) HostMemoryOf(p *core.Profile) HostMemoryLimits {
+	l := HostMemoryLimits{CtxCheckpoints: c.Defaults.CtxCheckpoints, CtxCheckpointsFrom: FromCluster,
+		CacheRAMMiB: c.Defaults.CacheRAMMiB, CacheRAMFrom: FromCluster}
+	if p == nil {
+		return l
+	}
+	if p.Host == core.HostNode {
+		l.CacheRAMMiB = c.Defaults.NodeHostCacheRAMMiB
+	}
+	h, _ := llamaflags.Parse(p.ExtraArgs)
+	if h.HasCtxCheckpoints {
+		l.CtxCheckpoints, l.CtxCheckpointsFrom = h.CtxCheckpoints, FromProfileArgs
+	}
+	if h.HasCacheRAM {
+		l.CacheRAMMiB, l.CacheRAMFrom = h.CacheRAMMiB, FromProfileArgs
+	}
+	return l
 }
 
 // EffectiveLoadStallTimeout is how long a measured upload may acknowledge no

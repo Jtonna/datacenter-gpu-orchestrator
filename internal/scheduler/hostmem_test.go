@@ -47,21 +47,20 @@ func planFigures(h *harness, names ...string) map[string]hostPlanFigs {
 	return out
 }
 
-// With count_host_memory off (the default) the term changes no plan: the
+// With count_host_memory off (the way back for one release; on by
+// default from p33) the term changes no plan: the
 // plans and shares of a node-hosted and a server-hosted profile are the
 // same as without any checkpoint sizer; the term is only shown.
 func TestHostMemory_DarkSettingLeavesEveryPlanUnchanged(t *testing.T) {
 	mk := func() *harness {
 		h := hostHarness(t)
+		h.cfg.Defaults.CountHostMemory = false
 		h.llama("s", 4000, func(p *core.Profile) { p.ForceNodes = []string{"a"} })
 		h.viewChanged()
 		return h
 	}
 	before := planFigures(mk(), "m", "s")
 	h := withCheckpoints(mk())
-	if h.cfg.Defaults.CountHostMemory {
-		t.Fatal("count_host_memory is on by default")
-	}
 	after := planFigures(h, "m", "s")
 	if !reflect.DeepEqual(before, after) {
 		t.Fatalf("a plan changed:\n before %+v\n after  %+v", before, after)
@@ -83,6 +82,7 @@ func TestHostMemory_DarkSettingLeavesEveryPlanUnchanged(t *testing.T) {
 func TestHostMemory_CountedJoinsTheHostNodeOnly(t *testing.T) {
 	mk := func() *harness {
 		h := withCheckpoints(hostHarness(t))
+		h.cfg.Defaults.CountHostMemory = false
 		h.llama("s", 4000, func(p *core.Profile) { p.ForceNodes = []string{"a"} })
 		h.viewChanged()
 		return h

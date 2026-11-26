@@ -5,10 +5,8 @@ import (
 	"math"
 	"slices"
 	"sort"
-	"strings"
 	"time"
 
-	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/estimate"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/gguf"
@@ -66,6 +64,21 @@ type HostMemory struct {
 	Machine string
 	// Counted: TermMiB is in the host node's reservation (count_host_memory).
 	Counted bool
+	// PerSlot is the restore points per slot the launch passes; the From
+	// fields say where each figure comes from: "from this profile's extra
+	// arguments" or "the cluster default" (config HostMemoryOf).
+	PerSlot         int
+	CheckpointsFrom string
+	PromptCacheFrom string
+}
+
+// FromWords says where the two figures come from, in one phrase:
+// "restore points and prompt cache the cluster default", or each apart.
+func (h HostMemory) FromWords() string {
+	if h.CheckpointsFrom == h.PromptCacheFrom {
+		return "restore points and prompt cache " + h.CheckpointsFrom
+	}
+	return fmt.Sprintf("%d restore points per slot %s, prompt cache %s", h.PerSlot, h.CheckpointsFrom, h.PromptCacheFrom)
 }
 
 // LoggedNote says where a FromLog checkpoint size was read: "checkpoint
@@ -93,26 +106,6 @@ type ckptLogged struct {
 
 // TermMiB is the whole term: checkpoints and prompt cache.
 func (h HostMemory) TermMiB() int { return h.CheckpointsMiB + h.PromptCacheMiB }
-
-// msgCkptFlagDropped is the one launch line for a profile whose own
-// extra_args set a checkpoint flag the scheduler passes from the setting.
-const msgCkptFlagDropped = "profile's own checkpoint flag dropped at launch"
-
-// noteDroppedCkptFlag logs, in one line, a stored profile's own checkpoint
-// flag that the launch drops (config.StripLateManaged, on the scheduler's
-// machine and on a host node alike) with the value used instead, and
-// keeps the same sentence on the instance (InstanceStatus.LaunchNote).
-func (c *schedCore) noteDroppedCkptFlag(in *inst) {
-	in.launchNote = ""
-	dropped := config.LateManagedIn(in.prof.ExtraArgs)
-	if len(dropped) == 0 {
-		return
-	}
-	d := strings.Join(dropped, ", ")
-	used := fmt.Sprintf("--ctx-checkpoints %d (setting ctx_checkpoints)", max(c.cfg.Defaults.CtxCheckpoints, 0))
-	in.launchNote = fmt.Sprintf("the profile's own %s is not passed: the launch uses %s", d, used)
-	c.log.Warn(msgCkptFlagDropped, "profile", in.prof.Name, "dropped", d, "used", used)
-}
 
 // CheckpointSizer is a NeedProvider that knows a profile's context
 // checkpoint (ConfigNeeds, from the GGUF header).
@@ -157,9 +150,12 @@ func (c *schedCore) hostMemoryOf(p *core.Profile, onNode bool) (HostMemory, bool
 		return HostMemory{}, false
 	}
 	d := c.cfg.Defaults
-	n := max(d.CtxCheckpoints, 0) * max(p.Parallel, 1)
+	lim := c.cfg.HostMemoryOf(p) // its own --ctx-checkpoints / --cache-ram, else the cluster's
+	perSlot := max(lim.CtxCheckpoints, 0)
+	n := perSlot * max(p.Parallel, 1)
 	h := HostMemory{Family: string(ck.Family), CellMiB: ck.CellMiB(), Estimate: ck.Estimate, Checkpoints: n,
-		CheckpointsMiB: ck.TotalMiB(n), OnNode: onNode, SizeUnknown: ck.Unknown}
+		CheckpointsMiB: ck.TotalMiB(n), OnNode: onNode, SizeUnknown: ck.Unknown,
+		PerSlot: perSlot, CheckpointsFrom: lim.CtxCheckpointsFrom, PromptCacheFrom: lim.CacheRAMFrom}
 	if ck.Unknown {
 		// read at a load this run, of this file version at this context
 		if seen, ok := c.ckptSeen[ckptKey{p.Model, ck.FileBytes, p.Ctx}]; ok && seen.MiB > 0 {
@@ -169,12 +165,13 @@ func (c *schedCore) hostMemoryOf(p *core.Profile, onNode bool) (HostMemory, bool
 		}
 	}
 	if onNode {
-		h.PromptCacheMiB = max(d.NodeHostCacheRAMMiB, 0)
 		h.Counted = d.CountHostMemory
 	} else {
-		h.PromptCacheMiB = max(d.CacheRAMMiB, 0)
 		h.Machine = c.serverName()
 	}
+	// the cache of the path it is launched on: cache_ram_mib, or
+	// node_host_cache_ram_mib for host: node (config HostMemoryOf)
+	h.PromptCacheMiB = max(lim.CacheRAMMiB, 0)
 	return h, true
 }
 

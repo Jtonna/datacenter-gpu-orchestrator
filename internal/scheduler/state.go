@@ -210,10 +210,6 @@ type inst struct {
 	// cycle (hostoverhead.go).
 	hostMeasured bool
 	hostHigh     int
-	// launchNote: what the launch changed from the profile as stored (a
-	// checkpoint flag of its own dropped in favour of the setting;
-	// noteDroppedCkptFlag); shown in the instance's status.
-	launchNote string
 	// ckptChecked: bit 1 the recurrent state, bit 2 the first checkpoint,
 	// compared with the formula (hostmem.go checkHostMemorySizes).
 	ckptChecked int

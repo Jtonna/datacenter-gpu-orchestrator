@@ -25,6 +25,8 @@ import (
 	"fmt"
 	"sort"
 	"time"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/llamaflags"
 )
 
 // DB is what the store needs from the scheduler database (bench.Store): the
@@ -110,10 +112,14 @@ type Record struct {
 // The device count is the second part of a row's key (DeviceCount); the
 // member nodes and the split are not keys: the per-node figures inside the
 // record are only used for the same node set and split.
+//
+// --ctx-checkpoints and --cache-ram (llamaflags) are left out: they size the
+// host process's memory, not the devices'.
 func ShapeKey(kind, model string, ctx, parallel int, kvQuant string, flashAttn bool, extraArgs []string) string {
 	if kvQuant == "" {
 		kvQuant = "f16"
 	}
+	extraArgs = llamaflags.Strip(extraArgs)
 	if extraArgs == nil {
 		extraArgs = []string{}
 	}
@@ -131,6 +137,7 @@ func ShapeKeyHost(kind, model string, ctx, parallel int, kvQuant string, flashAt
 	if kvQuant == "" {
 		kvQuant = "f16"
 	}
+	extraArgs = llamaflags.Strip(extraArgs)
 	if extraArgs == nil {
 		extraArgs = []string{}
 	}

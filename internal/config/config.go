@@ -98,7 +98,7 @@ type Config struct {
 	// modelNote is Options.ModelNote while the configuration is checked.
 	modelNote func(string) string
 	// keepArgs is Options.KeepArgs while the configuration is checked;
-	// lateArgs what the check let through for it (LateManagedArgs).
+	// lateArgs what the check let through for it (HostMemoryArgProblems).
 	keepArgs map[string][]string
 	lateArgs []string
 	// trainedCtx and keepCtx are Options.TrainedCtx and KeepCtx while the

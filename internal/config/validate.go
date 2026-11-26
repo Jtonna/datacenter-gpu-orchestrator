@@ -16,6 +16,7 @@ import (
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/llamaflags"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelpath"
 )
 
@@ -26,7 +27,7 @@ var managedFlags = map[string]bool{
 	"--split-mode": true, "-sm": true, "--host": true, "--port": true, "--model": true, "-m": true,
 	"--ctx-size": true, "-c": true, "--n-gpu-layers": true, "--gpu-layers": true, "-ngl": true,
 	"--parallel": true, "-np": true, "--cache-type-k": true, "-ctk": true, "--cache-type-v": true,
-	"-ctv": true, "--fit": true, "-fit": true, "--cache-ram": true, "-cram": true,
+	"-ctv": true, "--fit": true, "-fit": true,
 	"--flash-attn": true, "-fa": true, "--main-gpu": true, "-mg": true,
 	// Log verbosity is always set by the scheduler (-lv 4, design 7.4); -v and
 	// --log-disable would change what the load-log reader sees.
@@ -34,53 +35,12 @@ var managedFlags = map[string]bool{
 	"-v": true, "--verbose": true, "--log-verbose": true, "--log-disable": true,
 }
 
-// lateManaged are flags the scheduler began to set after profiles could
-// already carry them (--ctx-checkpoints, from the setting ctx_checkpoints).
-// A write may not set them, as with managedFlags; a stored profile that
-// already has them unchanged (Options.KeepArgs) stays loadable, and the
-// launch drops them (StripLateManaged) so the setting is the one value.
-var lateManaged = map[string]string{
-	"--ctx-checkpoints": "ctx_checkpoints", "-ctxcp": "ctx_checkpoints", "--swa-checkpoints": "ctx_checkpoints",
-}
-
-// StripLateManaged is args without the lateManaged flags and their values
-// (the next entry, for a flag written without "=").
-func StripLateManaged(args []string) []string {
-	var out []string
-	for i := 0; i < len(args); i++ {
-		name, _, eq := strings.Cut(args[i], "=")
-		if _, ok := lateManaged[name]; ok && strings.HasPrefix(args[i], "-") {
-			if !eq && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-				i++
-			}
-			continue
-		}
-		out = append(out, args[i])
-	}
-	return out
-}
-
-// LateManagedIn is what StripLateManaged drops from args: each flag with
-// its value as given ("--ctx-checkpoints 3", "-ctxcp=3"), in order.
-func LateManagedIn(args []string) []string {
-	var out []string
-	for i := 0; i < len(args); i++ {
-		name, _, eq := strings.Cut(args[i], "=")
-		if _, ok := lateManaged[name]; ok && strings.HasPrefix(args[i], "-") {
-			d := args[i]
-			if !eq && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-				i++
-				d += " " + args[i]
-			}
-			out = append(out, d)
-		}
-	}
-	return out
-}
-
-// LateManagedArgs lists, one sentence each, the stored profiles whose
-// extra_args set a lateManaged flag that the launch drops.
-func (c *Config) LateManagedArgs() []string { return c.lateArgs }
+// HostMemoryArgProblems lists, one sentence each, the stored profiles whose
+// extra_args carry --ctx-checkpoints or --cache-ram in a form the check now
+// refuses (llamaflags.Parse) but which were kept as stored
+// (Options.KeepArgs): they load, and the launch passes the cluster value
+// for that flag.
+func (c *Config) HostMemoryArgProblems() []string { return c.lateArgs }
 
 // validate checks every startup rule and returns all violations joined, in
 // a deterministic order.
@@ -271,18 +231,20 @@ func (c *Config) validateLlama(p *core.Profile, r *ProfileSpec, pf func(field, f
 		if managedFlags[name] {
 			pf("extra_args", "entry %d %q is a managed flag (%s); the scheduler sets it from the profile", i, a, name)
 		}
-		if setting, ok := lateManaged[name]; ok && strings.HasPrefix(a, "-") {
-			if kept, had := c.keepArgs[p.Name]; had && slices.Equal(kept, p.ExtraArgs) {
-				val := a
-				if _, v, eq := strings.Cut(a, "="); eq {
-					val = name + " " + v
-				} else if i+1 < len(p.ExtraArgs) {
-					val = name + " " + p.ExtraArgs[i+1]
-				}
-				c.lateArgs = append(c.lateArgs, fmt.Sprintf("profile %q: extra_args %s is not passed: the scheduler passes --ctx-checkpoints from the setting %s on every launch; remove it from the profile", p.Name, val, setting))
-				continue
+	}
+	// --ctx-checkpoints and --cache-ram (every spelling) are the profile's
+	// own host-process memory: Potluck reads them (llamaflags) and passes
+	// them in place of the cluster value. A stored profile whose form is no
+	// longer accepted, unchanged, stays loadable (the cluster value is used).
+	if _, problems := llamaflags.Parse(p.ExtraArgs); len(problems) > 0 {
+		if kept, had := c.keepArgs[p.Name]; had && slices.Equal(kept, p.ExtraArgs) {
+			for _, m := range problems {
+				c.lateArgs = append(c.lateArgs, fmt.Sprintf("profile %q: extra_args %s; the launch uses the cluster value for it", p.Name, m))
 			}
-			pf("extra_args", "entry %d %q sets %s, which the scheduler passes on every launch from the setting %s; remove it here and change the setting instead", i, a, name, setting)
+		} else {
+			for _, m := range problems {
+				pf("extra_args", "%s", m)
+			}
 		}
 	}
 }
