@@ -8,6 +8,10 @@
 //          two hand-written ones), one used 48 s ago, one 4 h ago, one
 //          never used, one with no profiles; 50.3 of 240 GB used
 //   full   the same files on a nearly full disk (95 %)
+//   written  five plus what live had when v88 was refused (26 Nov): three
+//          programs on this machine whose plans reject with the long
+//          exclusion reason and whose need is written in the profile, and a
+//          file with one profile whose need is written (range rows beside them)
 // File names and zones are generic fixture names.
 
 const GB = 1e9;
@@ -54,6 +58,17 @@ export function modelsDoc(state, now = Date.now()) {
       extra: () => ({ fit: { need_mib: 5200, basis: 'estimated', min_nodes: 1 } }) },
     { file: 'nomic-embed-text-v2.gguf', gb: 0.3, name: 'nomic-embed-text-v2', publisher: 'Nomic', family: 'Nomic BERT', parameters: '475M', quant: 'F16', trained: 8192, profiles: [] },
   ];
+  if (state === 'written') {
+    const why = id => `profile ${id} is a command profile and runs only on the local node scheduler-host, which is excluded by config (exclude_nodes entry "scheduler-host"; excluding wins: change exclude_nodes)`;
+    for (const [name, mib, used] of [['speech-to-text-large', 5427, 3], ['image-gen-fast', 6963, 3], ['image-gen-dev', 7475, 0]]) {
+      files.push({ file: '', gb: 0, name, profiles: [profile(name, 0, mib, { needs_written: true, needs_basis: 'measured, needs_mib', host: 'local', ttl_s: 600,
+        plan: { action: 'reject', would_start: false, nodes: [], reason: why(name) } })],
+      extra: n => ({ key: 'command:' + name, kind: 'command', file: '', exists: true, size_bytes: 0, raw_name: name, last_active: used ? n - used * 24 * H : null, fit: null }) });
+    }
+    files.push({ file: 'tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf', gb: 0.7, name: 'tinyllama-1.1b-chat', publisher: 'TinyLlama', family: 'Llama', parameters: '1.1B', quant: 'Q4_K_M', trained: 2048,
+      profiles: [profile('tinyllama', 2048, 700, { needs_written: true, needs_basis: 'measured, needs_mib' })],
+      extra: n => ({ last_active: n - 98 * 60e3, fit: { need_mib: 700, basis: 'configured', min_nodes: 1 } }) });
+  }
   const models = files.map(f => entry(now, f)).sort((a, b) => a.name.localeCompare(b.name));
   for (const m of models) { m.pinned = PINS.has(m.key); m.pinned_at = PINS.has(m.key) ? PINS.get(m.key) : null; }
   const modelBytes = models.reduce((s, m) => s + m.size_bytes, 0);

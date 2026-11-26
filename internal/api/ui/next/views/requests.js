@@ -31,7 +31,7 @@ function machineList(nodes) {
     return h('span.mono', { 'data-machines': String(nodes.length), title: runMachines(nodes) },
       h('span.mc', `${host.name || host.id} ${roleShare(host.role) || 'Host'} + ${nodes.length - 1} helpers`));
   }
-  return h('span.mono', { 'data-machines': String(nodes.length) }, nodes.map((n, i) => [
+  return h('span.mono', { 'data-machines': String(nodes.length), title: runMachines(nodes) }, nodes.map((n, i) => [
     i ? ' ' : null,
     h('span.mc', [n.name || n.id, roleShare(n.role, n.share)].filter(Boolean).join(' ') + (i < nodes.length - 1 ? ',' : '')),
   ]));

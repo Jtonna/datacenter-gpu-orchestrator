@@ -2,6 +2,15 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Web UI: the Models list's Needs cell holds the figure alone; Requests at 1280
+
+No server change.
+
+- **Models list.** The Needs cell holds the figure alone ("~5.3 GB"), right-aligned like the range rows. That a need is written by hand, and why no configuration can be placed, are on the line under the model's name: "A program on this machine · need set by hand · runs only on host-1, which is excluded" (one line inside the name column, ending in "…" with the whole line on hover). Before, "~5.3 GB, set by hand" with the reason under it was wider than its column and was painted over Profiles and Last used; a file with one written need ran into "1 profile".
+- **Requests.** Zones is one line of at most 18 characters ending in "…", the whole list on hover, and Model keeps at least the room for a profile's shown name ("TEST - p4-qwen4b-107" whole) at 1280 px with the menu open.
+- **Profiles on a phone.** The Zones column goes below 460 px (it is in the panel), so the profile's name is not squeezed to a few letters.
+- **A layout test in a real browser.** `scripts/ui-layout.mjs` opens pages in headless Chrome and fails when the text of two cells of a table row overlaps or comes within 4 px on a line, when text runs past its row or (from 720 px) past its card, or when the page scrolls sideways. `TestUILayoutNoOverlap` runs it on the Models list and panel, Profiles and Requests (fixture `--models written --long-names`) at 1536, 1280 and 390 px; it skips without Chrome (`UI_BROWSER`) and with `-short`.
+
 ## Web UI: a request's Model cell never widens its table
 
 No server change.

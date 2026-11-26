@@ -231,18 +231,32 @@ function needsCell(m, st) {
   const r = prodNeeds(m);
   if (r) {
     return h('span.mdl-needs', { 'data-col': 'needs' }, h('span', { title: (r.lo === r.hi ? 'From its production profile: ' : 'From its production profiles: ') + needEnds(r),
-      'data-basis': r.basis, 'data-range': r.lo === r.hi ? null : '' }, needRange(r), r.basis === 'set by hand' ? HAND : null), whyNot(m));
+      'data-basis': r.basis, 'data-range': r.lo === r.hi ? null : '' }, needRange(r)));
   }
   const f = fitOf(m, st);
   let how = f.title || (f.sub ? f.sub[0].toUpperCase() + f.sub.slice(1) : null);
   if (noProd(m)) how = (how ? how + '. ' : '') + 'The smallest test configuration: no production profile yet';
-  return h('span.mdl-needs', { 'data-col': 'needs' }, f.need ? h('span', { title: how, 'data-basis': f.sub || null }, needText(f.need), f.kind === 'cmd' ? HAND : null) : h('span.mut', DASH), f.need ? whyNot(m) : null);
+  return h('span.mdl-needs', { 'data-col': 'needs' }, f.need ? h('span', { title: how, 'data-basis': f.sub || null }, needText(f.need)) : h('span.mut', DASH));
 }
-// a need written in the profile says so ("~5.3 GB, set by hand"), and the
-// reason no configuration can be placed is under it ("Runs only on
-// host-1, which is excluded"): the reviewer's ruling of 26 Nov
-const HAND = ', set by hand';
-const whyNot = m => { const no = cannotRun(m); return no ? h('span.sub.mdl-why', { 'data-why': '' }, no) : null; };
+// The Needs cell holds the figure alone ("~5.3 GB"), like the range rows: a
+// need written in the profile and the reason no configuration can be placed
+// go on the line under the name (nameSub), never in the Needs cell, which is
+// narrower than they are (v88 refused, 26 Nov: the text was painted over
+// Profiles and Last used).
+const byHand = (m, st) => { const r = prodNeeds(m); return r ? r.basis === 'set by hand' : fitOf(m, st).kind === 'cmd' && !!fitOf(m, st).need; };
+const lower = t => (t ? t[0].toLowerCase() + t.slice(1) : t);
+// nameSub(m, st) -> "A program on this machine · need set by hand · runs only
+// on host-1, which is excluded": one line inside the name column, an ellipsis
+// and the whole line on hover when it is longer
+function nameSub(m, st) {
+  const no = (m.profiles || []).some(p => p.needs_mib) ? cannotRun(m) : null;
+  const parts = [sizeText(m), byHand(m, st) ? 'need set by hand' : null].filter(Boolean);
+  const text = parts.concat(no ? [lower(no)] : []).join(' · ');
+  return h('span.mut.mdl-sub', { title: text },
+    parts.join(' · '),
+    no ? h('span.mdl-why', { 'data-why': '' }, ' · ', lower(no)) : null,
+    m.kind !== 'command' && m.exists === false ? h('span.err-t', ' · the file is missing') : null);
+}
 
 // runsOnRange(m, st, r) -> "1 to 2 PS5s": the fewest zones each end needs on
 // the empty cluster (fit.budgets_mib); null when the sums are not served
@@ -565,7 +579,7 @@ function listPanel(st, models, disk, error, r, query, setQuery, onFind, done) {
     onkeydown: e => { if ((e.key === 'Enter' || e.key === ' ') && !e.target.closest('[data-off]') && !e.target.closest('button') && !e.target.closest('a[href]')) { e.preventDefault(); open(m.key); } } },
   starButton(m, models),
   h('span.mdl-name', h('span.mono.nm', { title: m.short_name && m.short_name !== m.file ? m.short_name : null }, m.file || m.name),
-    h('span.mut', sizeText(m), m.kind !== 'command' && m.exists === false ? h('span.err-t', ' · the file is missing') : null),
+    nameSub(m, st),
     inUse(m)),
   needsCell(m, st),
   profCell(m),

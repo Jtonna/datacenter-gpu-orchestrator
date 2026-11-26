@@ -29,9 +29,11 @@ func TestUINextModelsWrittenNeedWhenRejected(t *testing.T) {
 	}}
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
 		map[string]any{"name": "models: written needs of rejected plans", "route": "#/models", "status": ovStatus(now), "width": 1536,
-			"expect": []string{"~5.3 GB, set by hand", "Runs only on host-1, which is excluded", "~3.1 GB, set by hand", "host-1 is excluded"},
-			"absent": []string{"Cannot be placed right now"},
-			"has":    []string{"span.mdl-needs[data-col=needs] span.mut"}}, // gamma: nobody knows its need
+			"expect": []string{"A program on this machine · need set by hand · runs only on host-1, which is excluded", "4.2 GB · need set by hand · ", "host-1 is excluded"},
+			"absent": []string{"Cannot be placed right now", "GB, set by hand"},
+			// the Needs cell holds the figure alone, as the range rows (v88 refused: the reason was painted over Profiles)
+			"text": map[string]any{"div.mr[data-model='command:image-gen'] span.mdl-needs": "~5.3 GB", "div.mr[data-model=tied-4b] span.mdl-needs": "~3.1 GB"},
+			"has":  []string{"span.mdl-needs[data-col=needs] span.mut"}}, // gamma: nobody knows its need
 		map[string]any{"name": "models: the panel of the tied file", "route": "#/models?model=tied-4b", "status": ovStatus(now), "width": 1536,
 			"page": []string{"needs ~3.1 GB", "(set by hand)", "host-1 is excluded"}},
 		map[string]any{"name": "models: the panel of the program", "route": "#/models?model=command:image-gen", "status": ovStatus(now), "width": 1536,

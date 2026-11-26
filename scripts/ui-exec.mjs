@@ -40,6 +40,7 @@
 //               "has": ["css selector that must match something on the screen", ...],
 //               "pageHas" / "pageNone": the same over the whole page (shell, popups)
 //               "count": {"css selector": n} on the screen; "pageCount": the same over the whole page
+//               "text": {"css selector": "whole text"}: each element it matches reads exactly that
 //               "hash": "#/zones": the address after the clicks
 //               "ws": [{"type": "hello"|"requests"|..., "data": {...}}, ...]: live-channel
 //               messages delivered after the screen is drawn (hello also sets the
@@ -688,6 +689,12 @@ for (const c of spec.cases) {
   for (const sel of c.has || []) if (!outlet.querySelector(sel)) errors.push('no element matches: ' + sel);
   // count: {selector: n}: exactly n elements in the view match
   for (const [sel, n] of Object.entries(c.count || {})) { const k = outlet.querySelectorAll(sel).length; if (k !== n) errors.push(`${k} elements match ${sel}, want ${n}`); }
+  // text: {"css selector": "the whole text of each element it matches"}
+  for (const [sel, want] of Object.entries(c.text || {})) {
+    const els = outlet.querySelectorAll(sel);
+    if (!els.length) errors.push(`no element matches: ${sel}`);
+    for (const e of els) { const got = String(e.textContent).replace(/\s+/g, ' ').trim(); if (got !== want) errors.push(`${sel} reads "${got}", want "${want}"`); }
+  }
   for (const [sel, n] of Object.entries(c.pageCount || {})) { const k = document.body.querySelectorAll(sel).length; if (k !== n) errors.push(`${k} elements on the page match ${sel}, want ${n}`); }
   // evenX: selectors of chart points (cx) that must be spread evenly within
   // each chart (their parent svg): the widest gap between neighbouring x

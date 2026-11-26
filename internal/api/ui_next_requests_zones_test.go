@@ -18,7 +18,7 @@ import (
 func TestUIRequestsZonesWrap(t *testing.T) {
 	css := uiText(t, uiNextDir+"app.css")
 	for _, want := range []string{
-		".runs td.rq-zones{white-space:normal;min-width:0;padding-top:4px;padding-bottom:4px;line-height:1.45}",
+		".runs td.rq-zones{white-space:nowrap;min-width:0}",
 		".rq-zones .mc{white-space:nowrap}",
 	} {
 		if !strings.Contains(css, want) {
@@ -57,7 +57,7 @@ func TestUIRequestsZonesWrap(t *testing.T) {
 				"absent": []string{"console-06 Helper 17%"},
 				"has": []string{
 					"tr[data-req='21'] td.rq-zones span[data-machines='1'] span.mc",
-					"tr[data-req='22'] td.rq-zones span[data-machines='2'] span.mc",
+					"tr[data-req='22'] td.rq-zones span[data-machines='2'][title^=console-01][title*=console-02] span.mc",
 					"tr[data-req='23'] td.rq-zones span[data-machines='3'] span.mc",
 					"tr[data-req='24'] td.rq-zones span[data-machines='6'][title^='console-01'][title*='console-06'] span.mc",
 				}},
@@ -80,8 +80,8 @@ func TestUIRequestsWideRowsFit(t *testing.T) {
 		".runs td.rq-mc{max-width:0;width:100%}",
 		// Sent by: at most 12 characters wide, shortened with "…", the full name and address on hover
 		".runs td.rq-sent span{display:block;max-width:12ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
-		// Zones: at most 34 characters a line, one machine a line when longer, so it does not take the room Model needs
-		".rq-zones>span{display:block;max-width:34ch}",
+		// Zones: one line of at most 18 characters ending in "…", the whole list on hover, so Model keeps the room for a profile's name (v88 review)
+		".rq-zones>span{display:block;max-width:18ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
 	} {
 		if !strings.Contains(css, want) {
 			t.Errorf("app.css lacks %s", want)

@@ -22,7 +22,7 @@ func TestUINextRequestModelCellNeverWidensItsTable(t *testing.T) {
 	for _, want := range []string{
 		"table.runs{width:100%;border-collapse:collapse;position:relative}",
 		".runs td.rq-mc{max-width:0;width:100%}",
-		".runs td.rq-model{min-width:12ch}",
+		".runs td.rq-model{min-width:calc(20ch + 16px)}",
 		".ov-req .rpc{max-width:40ch}",
 		".rq-model .rpc{max-width:48ch}",
 		".rpc{display:flex;min-width:0;overflow:hidden;white-space:nowrap}",

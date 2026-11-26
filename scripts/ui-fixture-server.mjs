@@ -222,7 +222,7 @@ function pendingRoute(req, res, p) {
 // (scripts/ui-fixture/keys.mjs; kept in memory, so the MCP pages can be driven end to end). Without it the old
 // names-only /api/agents answer stays.
 const KEYS_STATE = opt('--keys', '');
-// --models none|five|full: GET /api/models as the Models list reads it, with the disk block (scripts/ui-fixture/models.mjs)
+// --models none|five|full|written: GET /api/models as the Models list reads it, with the disk block (scripts/ui-fixture/models.mjs)
 // --trash <state>: the models trash (v65, models slice 3; scripts/ui-fixture/trash.mjs): GET /api/models/trash,
 // POST /api/models/delete/{file} (dry run, interrupt), POST /api/models/trash/{id}/restore, and the trash
 // figures in the catalog's disk block. It implies --models five. States: empty, two, in-use, run, read-only,
@@ -233,6 +233,8 @@ if (TRASH_STATE && !TRASH_STATES.includes(TRASH_STATE)) { console.error('--trash
 const MODELS_STATE = opt('--models', TRASH_STATE ? 'five' : '');
 if (MODELS_STATE) seedPins();
 if (TRASH_STATE) seedTrash(TRASH_STATE);
+const writtenProfiles = doc => doc.models.filter(m => (m.profiles || []).some(x => x.needs_written)).flatMap(m => m.profiles.map(x => Object.assign({}, x,
+  { kind: m.kind === 'command' ? 'command' : 'llama', model: m.kind === 'command' ? '' : m.file, stage: 'production', stage_set: false, shown_name: x.id })));
 const catalogDoc = now => (TRASH_STATE ? withTrash(modelsDoc(MODELS_STATE, now)) : modelsDoc(MODELS_STATE, now));
 const KEYS = KEYS_STATE ? new Keys(KEYS_STATE) : null;
 // --bench <state>: the benchmark pages' GETs (/api/bench/...; scripts/ui-fixture/bench.mjs). State: long
@@ -528,7 +530,8 @@ const server = http.createServer((req, res) => {
     tokens: { input_tokens: 1834, output_tokens: 1160, tokens_per_second: 214.6 } })) });
   if (p === '/api/models/trash' && TRASH_STATE) return json(res, 200, trashList());
   if (BENCH_STATE && p.startsWith('/api/bench/')) { const d = benchRoute(BENCH_STATE, p, u.searchParams, now); return d ? json(res, 200, d) : notFound(res, p); }
-  if (p === '/api/profiles') return json(res, 200, { profiles: profileEntries() });
+  // --models written: its written-need profiles are listed too (the Profiles page beside the Models list)
+  if (p === '/api/profiles') return json(res, 200, { profiles: (MODELS_STATE === 'written' ? writtenProfiles(catalogDoc(now)) : []).concat(profileEntries()) });
   if (p === '/api/profiles/test') return json(res, 200, testProfiles(now));
   if (p === '/api/config') { const d = cfgDoc(); return json(res, 200, withNamedId(Object.assign({ updated_at: now - 3 * H, configured: d.revision > 0, tiers: [], exclude_nodes: [], no_auto_nodes: NAMED_ONLY ? [NAMED_ONLY] : [], node_overrides: {} }, d, TIER_LISTS, { profiles: profileSpecs() }), now)); }
   // what the health popup reads (the Health board's sample, generic names)
