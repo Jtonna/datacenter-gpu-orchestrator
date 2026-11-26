@@ -115,7 +115,8 @@ export function runDialog(o = {}) {
   const setTitle = () => {
     if (st === 'confirm' || st === 'sending') titleEl.replaceChildren('Start this run?');
     else if (st === 'pick') titleEl.replaceChildren('Run a benchmark');
-    else titleEl.replaceChildren(kind === 'group' ? 'Run group ' : 'Run ', h('span.mono', name()));
+    // a benchmark's or group's name is prose: the title's own face (mono is for ids and file names)
+    else titleEl.replaceChildren(kind === 'group' ? 'Run group ' : 'Run ', h('span', { 'data-name': '' }, name()));
   };
 
   const body = () => {
@@ -324,7 +325,7 @@ export async function cancelDialog(run, after) {
         left ? `The ${plural(left, 'step')} not started ${left === 1 ? 'is' : 'are'} skipped.` : 'No step is left to skip.', 'The results so far are kept.'];
   const v = await dialog({ title: 'Cancel this run?',
     body: h('div.dcol', { style: 'gap:12px', 'data-dlg-cancel': live.state || '' },
-      h('p', h('span.mono', name), ' is ', whereNow(live), '.'),
+      h('p', h('b', { 'data-name': '' }, name), ' is ', whereNow(live), '.'),
       h('ul.rd-list', bullets.map((b, i) => h('li', { key: 'b' + i }, b)))),
     comment: { label: 'Comment', required: true, placeholder: 'Why? It is kept in the audit log.' },
     actions: [{ label: 'Keep it running', value: undefined, autofocus: true }, { label: 'Cancel the run', kind: 'dng solid', value: true }] });

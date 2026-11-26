@@ -397,6 +397,11 @@ function rcLoad(n, fits) {
   return { profile: rcProfile(n), profile_name: rcShown(n), model: QWEN, model_name: 'Qwen 3.5 4B', steps: 1, machines: ms, need_mib: 3400, need_known: true,
     action: fits ? 'start' : 'queue', reason: fits ? '' : 'gemma-4-12b:64k is loaded on ps5-01', fits: fits ? 'fits' : 'waits' };
 }
+// Run again (again_of): a definition changed since that run is a warning, not a refusal
+const withAgain = (plan, body) => {
+  if (body.again_of) plan.warnings = plan.warnings.concat([{ code: 'definition_changed', message: `changed since run ${body.again_of}: Qwen 4B, 2 consoles. This run uses the definitions as they are now` }]);
+  return plan;
+};
 const flag = (v, d) => (v === undefined || v === null ? d : !!v);
 // rcPlan(kind, id, body): the dry read of a start
 export function rcPlan(kind, id, body) {
@@ -422,8 +427,7 @@ export function rcPlan(kind, id, body) {
     if (!wait || evict) plan.would_unload = [Object.assign({}, GEMMA, { why: 'idle on ps5-01, a machine this run loads on' })];
     queue.running = 'run-52';
     queue.queued = 2;
-    if (body.again_of) plan.warnings = [{ code: 'definition_changed', message: `changed since run ${body.again_of}: Qwen 4B, 2 consoles. This run uses the definitions as they are now` }];
-    return plan;
+    return withAgain(plan, body);
   }
   const b = RC_BENCHES.find(x => x.id === id);
   if (!b) return null;
@@ -436,7 +440,7 @@ export function rcPlan(kind, id, body) {
     return plan;
   }
   plan.loads = [rcLoad(n, true)];
-  return plan;
+  return withAgain(plan, body);
 }
 // rcPost(method, path, body): {status, body} for the POSTs of the runcancel states, or null
 export function rcPost(p, q, body) {

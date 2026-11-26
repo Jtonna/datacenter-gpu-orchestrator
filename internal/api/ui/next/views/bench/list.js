@@ -82,8 +82,8 @@ function groupRow(g, run, selected) {
     'aria-current': selected ? 'true' : null, 'data-group': g.id },
     kindIcon(true),
     h('div.bp-main', h('span.bp-name', groupTitle(g)),
-      h('div.bp-sub', groupSub(g), g.status ? [' · ', h('span.bp-warn', { title: g.reason || '' }, g.status === 'planned' ? 'planned: ' + (g.reason || 'not ready') : 'blocked: ' + (g.reason || 'cannot run'))] : null,
-        g.not_startable ? [' · ', notStartable(g.not_startable)] : null)),
+      h('div.bp-sub', groupSub(g), g.status ? [h('span.bp-sep', ' · '), h('span.bp-warn', { title: g.reason || '' }, g.status === 'planned' ? 'planned: ' + (g.reason || 'not ready') : 'blocked: ' + (g.reason || 'cannot run'))] : null,
+        g.not_startable ? [h('span.bp-sep', ' · '), notStartable(g.not_startable)] : null)),
     h('div.bp-last', isRunning ? h('span.bp-now', runIcon('running', 14), 'Running now')
       : last ? [resultIcon(last, 14), ' ', when(last.started_at || last.queued_at)] : h('span.mut', 'Never run')),
     h('div.bp-res', isRunning ? dots(run.counts || null, true) : last ? dots(last.counts, false) : null),
@@ -95,7 +95,7 @@ function benchRow(b) {
   const u = b.last_use || null;
   return h('div.bp-row', { key: 'b-' + b.id, role: 'listitem', 'data-bench': b.id },
     kindIcon(false),
-    h('div.bp-main', h('span.bp-name', benchTitle(b)), h('div.bp-sub', chain(b), b.not_startable ? [' · ', notStartable(b.not_startable)] : null)),
+    h('div.bp-main', h('span.bp-name', benchTitle(b)), h('div.bp-sub', chain(b), b.not_startable ? [h('span.bp-sep', ' · '), notStartable(b.not_startable)] : null)),
     h('div.bp-last', u ? [resultIcon({ result: u.outcome === 'ready' ? 'passed' : u.outcome === 'running' ? 'running' : u.outcome === 'refused' ? 'refused' : u.outcome === 'refused_by_exclusion' ? 'not_judged' : 'failed' }, 14), ' ',
       h('a', { href: href('benchmarks', ['runs', String(u.run_number || u.run_id), String(u.step)]), title: 'Open this use: run ' + (u.run_number || u.run_id) }, when(u.at))]
       : h('span.mut', 'Never run')),

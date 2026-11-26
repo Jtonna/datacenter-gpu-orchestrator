@@ -70,7 +70,7 @@ func benchRunCancel(t *testing.T, state string) map[string]any {
 	}}
 	for _, id := range []string{"qwen4b-1con", "qwen4b-2con", "host-gpu-alone"} {
 		p := "/api/bench/benchmarks/" + id + "/run"
-		f["POST "+p] = map[string]any{"$match": []any{[]any{`dry_run=1`, dry(p, `{}`)}, []any{`.`, start(p, `{"comment":"x","evict":[]}`)}}}
+		f["POST "+p] = map[string]any{"$match": []any{[]any{`dry_run=1 .*"again_of"`, dry(p, `{"again_of":"run-51"}`)}, []any{`dry_run=1`, dry(p, `{}`)}, []any{`.`, start(p, `{"comment":"x","evict":[]}`)}}}
 	}
 	p := "/api/bench/groups/s1-ref/run"
 	f["POST "+p] = map[string]any{"$match": []any{[]any{`dry_run=1`, dry(p, `{}`)}, []any{`.`, start(p, `{"comment":"x"}`)}}}
@@ -161,11 +161,18 @@ func TestUINextBenchRunAndCancel(t *testing.T) {
 			"click":        []any{"button[data-act=run-a-benchmark]", map[string]any{"type": "div.dlg select[data-pick]", "value": "benchmark:qwen4b-1con"}, "div.dlg button[data-go=pick]"},
 			"fetchedQuery": []string{`^POST /api/bench/benchmarks/qwen4b-1con/run\?dry_run=1`}, "pageHas": []string{"div.dlg[data-state=form]"}},
 		// Run again: the run's own target, with again_of; a changed definition is a warning
-		map[string]any{"name": "run: Run again from the run's panel", "route": "#/benchmarks/runs/52", "status": st,
-			"click":        []any{"aside.side .bp-acts button[data-act=run-again]"},
-			"fetchedQuery": []string{`^POST /api/bench/groups/s3a/run\?dry_run=1 \{"again_of":"run-52"\}$`},
+		map[string]any{"name": "run: Run again from a finished run's panel", "route": "#/benchmarks/runs/51", "status": st,
+			"click":        []any{"aside.side .bp-acts button.pri[data-act=run-again]"},
+			"fetchedQuery": []string{`^POST /api/bench/benchmarks/qwen4b-2con/run\?dry_run=1 \{"again_of":"run-51"\}$`},
 			"pageHas":      []string{"div.dlg[data-state=form] [data-warning=definition_changed]"},
-			"page":         []string{"Changed since run run-52: Qwen 4B, 2 consoles. This run uses the definitions as they are now."}},
+			"page":         []string{"Changed since run run-51: Qwen 4B, 2 consoles. This run uses the definitions as they are now."}},
+		// a run still going: no Run again, one Cancel (the banner's)
+		map[string]any{"name": "run: a running run has no Run again and one Cancel", "route": "#/benchmarks/runs/52", "status": st,
+			"pageNone": []string{"aside.side [data-act=run-again]", "aside.side .bp-acts [data-act=cancel]", "aside.side .bp-acts .btn.pri"}, "pageCount": map[string]any{"aside.side [data-act=cancel]": 1}},
+		// names are prose: the dialog title holds the name in the title's face, not mono
+		map[string]any{"name": "run: the dialog title's name is not mono", "route": "#/benchmarks/all/s3a", "status": st,
+			"click":   []any{"aside.side button[data-act=run]"},
+			"pageHas": []string{"div.dlg .dlg-head h2 span[data-name]"}, "pageNone": []string{"div.dlg .dlg-head h2 .mono"}},
 		map[string]any{"name": "run: Run again of a recipe run stays greyed", "route": "#/benchmarks/runs/47", "status": st,
 			"pageHas": []string{"aside.side .bp-notyet[data-notyet=recipe]"}, "pageNone": []string{"aside.side button[data-act=run-again]"}},
 		// state 5: cancel a running run
@@ -177,11 +184,11 @@ func TestUINextBenchRunAndCancel(t *testing.T) {
 				"Comment (required)", "Keep it running", "Cancel the run"},
 			"notFetched": []string{`/cancel`}},
 		map[string]any{"name": "cancel: sends the comment", "route": "#/benchmarks/runs/52", "status": st,
-			"click":        []any{"aside.side .bp-acts button[data-act=cancel]", comment("wrong zones"), "div.dlg .dlg-foot button.dng"},
+			"click":        []any{"aside.side .bp-live button[data-act=cancel]", comment("wrong zones"), "div.dlg .dlg-foot button.dng"},
 			"fetchedQuery": []string{`^POST /api/bench/runs/run-52/cancel \{"comment":"wrong zones"\}$`}, "sentHeader": []string{"^X-Comment: wrong zones$"}},
 		// state 6: the running run's panel
 		map[string]any{"name": "panel: the run going (state 6)", "route": "#/benchmarks/runs/52", "status": st, "width": 1536,
-			"pageHas": []string{"aside.side .bp-live[data-live=running] button[data-act=cancel]", "aside.side .runbar[role=progressbar] i", "aside.side .bp-acts button.dng[data-act=cancel]",
+			"pageHas": []string{"aside.side .bp-live[data-live=running] button[data-act=cancel]", "aside.side .runbar[role=progressbar] i", "aside.side .bp-kpi.time",
 				"aside.side [data-started-by]", "aside.side [data-run-note]"},
 			"page": []string{"Step 2 of 5", "loading TEST - s3-qwen4b-2con on ps5-01 and ps5-02", "so far", "by anonymous",
 				`Note: "Re-run of S3a after the rename". Results appear here as each step ends.`}},
