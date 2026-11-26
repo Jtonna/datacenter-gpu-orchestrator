@@ -3,10 +3,15 @@ package bench
 // Results per model (the Overview's "Latest result for each model" and the
 // Runs page's result views Load times, Generation speed, First token and
 // Memory): read from the stored steps and the measurement record, nothing
-// stored. A model file's figures come from its newest finished step, and per
-// zone count from the newest finished step on that many zones; the smallest
-// fit is the fewest zones on which a load of the file completed, in any run.
-// A figure the step did not measure is left out (the page draws a dash).
+// stored. Each FIGURE (cold load, reload, tok/s, first token, memory, lowest
+// available) comes from the newest finished step of the model file that
+// measured it (reviewer's ruling, 26 Nov: a newer step that measured
+// something else, such as a context fill, does not blank the column); per
+// zone count the same among the steps on that many zones. Each figure says
+// which step it came from (From), and Mixed says the cell's figures come from
+// more than one run. The smallest fit is the fewest zones on which a load of
+// the file completed, in any run. A figure no step measured is left out (the
+// page draws a dash).
 
 import (
 	"encoding/json"
@@ -45,13 +50,29 @@ type ResultCell struct {
 	// used (its roles: the host and the workers), system memory only (a
 	// GPU's own free memory is another figure).
 	LowestNode string `json:"lowest_available_node,omitempty"`
+	// From names, per figure key (cold_load_s, reload_s, decode_tps,
+	// ttft_ms, memory_mib, lowest_available_mib), the step it was read from.
+	From map[string]FigFrom `json:"from,omitempty"`
+	// Mixed: the figures come from more than one run.
+	Mixed bool `json:"mixed,omitempty"`
+}
+
+// FigFrom is the step one figure was read from.
+type FigFrom struct {
+	RunID     string `json:"run_id"`
+	RunNumber int    `json:"run_number,omitempty"`
+	Step      int    `json:"step"`
+	At        int64  `json:"at"`
+	NodeCount int    `json:"node_count"`
 }
 
 // ModelResults is one model file's row.
 type ModelResults struct {
 	// FileGone: the model file is no longer in the models folder (the API
 	// sets it from the catalog's scan; such rows are listed last).
-	FileGone    bool         `json:"file_gone,omitempty"`
+	FileGone bool `json:"file_gone,omitempty"`
+	// TrashID: the file is in the trash (Deleted models) under this id.
+	TrashID     string       `json:"trash_id,omitempty"`
 	Model       string       `json:"model"`
 	SmallestFit int          `json:"smallest_fit,omitempty"` // 0: no load of the file completed
 	Latest      *ResultCell  `json:"latest"`
@@ -98,48 +119,46 @@ func (s *Store) ResultsByModel(f ResultsFilter) ([]ModelResults, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	// the newest step per model, and per model and zone count
-	byModel := map[string]*ModelResults{}
-	picked := map[int64]bool{}
-	seen := map[string]bool{}
-	for i := range steps {
-		r := &steps[i]
-		m := byModel[r.model]
-		if m == nil {
-			m = &ModelResults{Model: r.model, ByNodes: []ResultCell{}}
-			byModel[r.model] = m
-			c := r.cell
-			m.Latest = &c
-			picked[r.id] = true
-		}
-		key := r.model + "\x00" + itoa(r.cell.NodeCount)
-		if r.cell.NodeCount > 0 && !seen[key] {
-			seen[key] = true
-			m.ByNodes = append(m.ByNodes, r.cell)
-		}
-	}
-	// the figures of the picked steps (Latest and every ByNodes cell)
+	// the figures of every step, then per model (and per model and zone
+	// count) each figure from the newest step that measured it
 	ids := map[int64]bool{}
-	for id := range picked {
-		ids[id] = true
-	}
-	stepOf := map[string]int64{} // run\x00idx -> step id
 	for _, r := range steps {
-		stepOf[r.cell.RunID+"\x00"+itoa(r.cell.Step)] = r.id
-	}
-	for _, m := range byModel {
-		for _, c := range m.ByNodes {
-			ids[stepOf[c.RunID+"\x00"+itoa(c.Step)]] = true
-		}
+		ids[r.id] = true
 	}
 	figs, err := s.stepFigures(ids)
 	if err != nil {
 		return nil, err
 	}
-	fill := func(c *ResultCell) {
-		if fg, ok := figs[stepOf[c.RunID+"\x00"+itoa(c.Step)]]; ok {
-			sid := c
-			fg.into(sid)
+	nums, err := s.RunNumbers()
+	if err != nil {
+		return nil, err
+	}
+	byModel := map[string]*ModelResults{}
+	zone := map[string]int{} // model\x00node_count -> index in ByNodes
+	for i := range steps {
+		r := &steps[i]
+		own := r.cell
+		if fg := figs[r.id]; fg != nil {
+			fg.into(&own)
+		}
+		from := FigFrom{RunID: r.cell.RunID, RunNumber: nums[r.cell.RunID], Step: r.cell.Step, At: r.cell.At, NodeCount: r.cell.NodeCount}
+		m := byModel[r.model]
+		if m == nil {
+			m = &ModelResults{Model: r.model, ByNodes: []ResultCell{}}
+			byModel[r.model] = m
+			c := r.cell // the newest step: its run, outcome and reason
+			m.Latest = &c
+		}
+		m.Latest.take(own, from)
+		if r.cell.NodeCount > 0 {
+			key := r.model + "\x00" + itoa(r.cell.NodeCount)
+			j, ok := zone[key]
+			if !ok {
+				j = len(m.ByNodes)
+				zone[key] = j
+				m.ByNodes = append(m.ByNodes, r.cell)
+			}
+			m.ByNodes[j].take(own, from)
 		}
 	}
 	// the smallest fit: the fewest zones a load of the file completed on
@@ -162,10 +181,6 @@ func (s *Store) ResultsByModel(f ResultsFilter) ([]ModelResults, error) {
 	frows.Close()
 	out := make([]ModelResults, 0, len(byModel))
 	for _, m := range byModel {
-		fill(m.Latest)
-		for i := range m.ByNodes {
-			fill(&m.ByNodes[i])
-		}
 		sort.Slice(m.ByNodes, func(i, j int) bool { return m.ByNodes[i].NodeCount < m.ByNodes[j].NodeCount })
 		m.SmallestFit = fits[m.Model]
 		out = append(out, *m)
@@ -175,6 +190,42 @@ func (s *Store) ResultsByModel(f ResultsFilter) ([]ModelResults, error) {
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
+
+// take fills each figure c has not got yet from src, a step older than (or
+// the same as) the ones already taken, and notes where it came from.
+func (c *ResultCell) take(src ResultCell, from FigFrom) {
+	got := false
+	set := func(key string, dst **float64, v *float64) {
+		if *dst == nil && v != nil {
+			*dst = v
+			if c.From == nil {
+				c.From = map[string]FigFrom{}
+			}
+			c.From[key] = from
+			got = true
+		}
+	}
+	if c.ColdLoadS == nil && src.ColdLoadS != nil {
+		c.Cold, c.ColdVerified = src.Cold, src.ColdVerified
+	}
+	set("cold_load_s", &c.ColdLoadS, src.ColdLoadS)
+	set("reload_s", &c.ReloadS, src.ReloadS)
+	set("decode_tps", &c.DecodeTPS, src.DecodeTPS)
+	set("ttft_ms", &c.TTFTMs, src.TTFTMs)
+	set("memory_mib", &c.MemoryMiB, src.MemoryMiB)
+	if c.LowestAvailableMiB == nil && src.LowestAvailableMiB != nil {
+		c.LowestNode = src.LowestNode
+	}
+	set("lowest_available_mib", &c.LowestAvailableMiB, src.LowestAvailableMiB)
+	if got && c.Ctx == 0 {
+		c.Ctx = src.Ctx
+	}
+	runs := map[string]bool{}
+	for _, f := range c.From {
+		runs[f.RunID] = true
+	}
+	c.Mixed = len(runs) > 1
+}
 
 // stepFig gathers one step's figures from its measurement rows.
 type stepFig struct {

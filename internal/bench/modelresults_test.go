@@ -73,6 +73,12 @@ func TestResultsByModel(t *testing.T) {
 	// a running step and a skipped one are not results
 	step("r2", 3, "qwen.gguf", 2, "", "", 8000)
 	step("r2", 4, "phi.gguf", 2, "skipped", "", 8000)
+	// the newest run of all: a context fill of gemma on 6 zones that
+	// measured only its speed (reviewer's ruling A: it does not blank the
+	// other columns; they come from the newest step that measured them)
+	run("r3", 9000)
+	s7 := step("r3", 0, "gemma.gguf", 6, "ready", "", 9000)
+	meas(s7, "r3", 0, 1, "conversation", "", "decode_tps", 30, `{"generation":"steady"}`, 8192)
 
 	got, err := st.ResultsByModel(ResultsFilter{})
 	if err != nil {
@@ -85,14 +91,26 @@ func TestResultsByModel(t *testing.T) {
 	if g.SmallestFit != 2 {
 		t.Fatalf("smallest fit %d, want 2 (the old run's completed load)", g.SmallestFit)
 	}
-	if g.Latest == nil || g.Latest.RunID != "r2" || g.Latest.Step != 1 || g.Latest.Outcome != "refused" || g.Latest.Reason != "Does not fit on 1 zone" || g.Latest.ColdLoadS != nil {
-		t.Fatalf("latest %+v", g.Latest)
+	// latest: the newest step is the context fill (r3); each figure from the
+	// newest step that measured it, and the cell says it mixes runs
+	l := g.Latest
+	if l == nil || l.RunID != "r3" || l.Outcome != "ready" || l.ColdLoadS == nil || *l.ColdLoadS != 21.1 || l.DecodeTPS == nil || *l.DecodeTPS != 30 || !l.Mixed {
+		t.Fatalf("latest %+v", l)
+	}
+	if fr := l.From["cold_load_s"]; fr.RunID != "r2" || fr.RunNumber != 2 || fr.Step != 0 || fr.At != 5000 || fr.NodeCount != 6 {
+		t.Fatalf("cold load from %+v", fr)
+	}
+	if fr := l.From["decode_tps"]; fr.RunID != "r3" || fr.RunNumber != 3 || fr.Step != 0 {
+		t.Fatalf("tok/s from %+v", fr)
 	}
 	if len(g.ByNodes) != 3 || g.ByNodes[0].NodeCount != 1 || g.ByNodes[1].NodeCount != 2 || g.ByNodes[2].NodeCount != 6 {
 		t.Fatalf("by nodes %+v", g.ByNodes)
 	}
-	two, six := g.ByNodes[1], g.ByNodes[2]
-	if two.RunID != "r1" || two.ColdLoadS == nil || *two.ColdLoadS != 40 || two.ReloadS != nil || two.DecodeTPS != nil || two.TTFTMs != nil || two.LowestAvailableMiB != nil {
+	one, two, six := g.ByNodes[0], g.ByNodes[1], g.ByNodes[2]
+	if one.Outcome != "refused" || one.ColdLoadS != nil || one.Mixed || len(one.From) != 0 {
+		t.Fatalf("1 zone %+v", one)
+	}
+	if two.RunID != "r1" || two.Mixed || two.ColdLoadS == nil || *two.ColdLoadS != 40 || two.ReloadS != nil || two.DecodeTPS != nil || two.TTFTMs != nil || two.LowestAvailableMiB != nil {
 		t.Fatalf("2 zones %+v", two)
 	}
 	f := func(p *float64) float64 {
@@ -102,7 +120,7 @@ func TestResultsByModel(t *testing.T) {
 		return *p
 	}
 	if f(six.ColdLoadS) != 21.1 || six.Cold == nil || !*six.Cold || six.ColdVerified == nil || !*six.ColdVerified || f(six.ReloadS) != 5.8 ||
-		f(six.DecodeTPS) != 11 || f(six.TTFTMs) != 1500 || f(six.MemoryMiB) != 9100 || f(six.LowestAvailableMiB) != 500 || six.LowestNode != "ra-02" || six.Ctx != 8192 {
+		f(six.DecodeTPS) != 30 || !six.Mixed || six.From["ttft_ms"].RunID != "r2" || f(six.TTFTMs) != 1500 || f(six.MemoryMiB) != 9100 || f(six.LowestAvailableMiB) != 500 || six.LowestNode != "ra-02" || six.Ctx != 8192 {
 		t.Fatalf("6 zones: cold %v %v %v reload %v tps %v ttft %v mem %v low %v ctx %d", f(six.ColdLoadS), six.Cold, six.ColdVerified, f(six.ReloadS), f(six.DecodeTPS), f(six.TTFTMs),
 			f(six.MemoryMiB), f(six.LowestAvailableMiB), six.Ctx)
 	}
@@ -116,7 +134,7 @@ func TestResultsByModel(t *testing.T) {
 		t.Fatalf("ctx 4096: %+v %v", at, err)
 	}
 	at, _ = st.ResultsByModel(ResultsFilter{Ctx: 8192})
-	if len(at) != 1 || at[0].Latest.RunID != "r2" || at[0].Latest.Step != 0 {
+	if len(at) != 1 || at[0].Latest.RunID != "r3" || at[0].Latest.From["cold_load_s"].RunID != "r2" {
 		t.Fatalf("ctx 8192: %+v", at)
 	}
 }

@@ -234,12 +234,24 @@ function boardResults(now) {
   const failed = { run_id: 'run-46', step: 16, benchmark_id: 'cold-response-repeat', node_count: 4, ctx: 8192, at, outcome: 'failed', reason: 'child exited during load: exit code 1, after 2.2 s' };
   out.push({ model: MODELS[8], smallest_fit: 0, latest: failed, by_nodes: [failed] });
   const phi = cell(MODELS[9], 2, 30.2, 3.1, 40.0, null, 8800, at);
-  out.push({ model: MODELS[9], smallest_fit: 2, latest: phi, by_nodes: [phi] });
   const llama = cell(MODELS[10], 6, 15.5, null, 70.1, 350, 5200, at);
   out.push({ model: MODELS[10], smallest_fit: 6, latest: llama, by_nodes: [llama] });
   // a file no longer in the models folder: kept, marked, listed last
   const old = cell('mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf', 4, 70.4, 9.9, 18.0, 1200, 26000, at - 30 * 24 * HOUR);
   out.push({ model: 'mixtral-8x7b-instruct-v0.1.Q4_K_M.gguf', smallest_fit: 4, latest: old, by_nodes: [old], file_gone: true });
+  // phi's file is in Deleted models (the trash fixture's a1b2c3d4e5f6): marked, linked there, last
+  out.push({ model: MODELS[9], smallest_fit: 2, latest: phi, by_nodes: [phi], file_gone: true, trash_id: 'a1b2c3d4e5f6' });
+  // every figure names its step (from); gemma-4-12b's newest step at its fit
+  // was a context fill (run 47) that measured only tok/s: the other columns
+  // come from run 46 and the row says "several runs"
+  for (const m of out) for (const c of [m.latest, ...m.by_nodes]) {
+    c.from = {};
+    for (const k of ['cold_load_s', 'reload_s', 'decode_tps', 'ttft_ms', 'memory_mib', 'lowest_available_mib']) {
+      if (c[k] != null) c.from[k] = { run_id: c.run_id, run_number: Number(String(c.run_id).replace('run-', '')) || 0, step: c.step, at: c.at, node_count: c.node_count };
+    }
+  }
+  const q72 = out[1].by_nodes[0];
+  q72.decode_tps = 29.4; q72.from.decode_tps = { run_id: 'run-47', run_number: 47, step: 0, at: at + 2 * HOUR, node_count: 2 }; q72.mixed = true;
   // the step's machine of the lowest available figure (the hover)
   for (const m of out) for (const c of m.by_nodes) if (c.lowest_available_mib != null) c.lowest_available_node = 'zone-' + c.node_count;
   return { ctx: 0, models: out };

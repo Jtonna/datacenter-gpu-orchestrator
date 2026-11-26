@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgstore"
 )
 
 // GET /api/bench/results/models on a real run (the store's own rules are in
@@ -58,6 +60,22 @@ func TestBenchResultsByModelAndTaskCount(t *testing.T) {
 	_, b, _ = e.do("GET", "/api/bench/results/models", "")
 	if jsonOf(t, b)["models"].([]any)[0].(map[string]any)["file_gone"] != true {
 		t.Fatalf("a model whose file is gone is not marked: %s", b)
+	}
+	if _, has := jsonOf(t, b)["models"].([]any)[0].(map[string]any)["trash_id"]; has {
+		t.Fatalf("a gone file not in the trash has a trash id: %s", b)
+	}
+	// the file in Deleted models: the row names its trash item
+	cs, err := cfgstore.Open(e.api.opts.BenchStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.api.store = cs
+	if err := cs.TrashInsert(&cfgstore.TrashRecord{ID: "0a0b0c0d0e0f", File: file, State: cfgstore.TrashTrashed, DeletedAt: 1, PurgeAt: 2, UpdatedAt: 1}); err != nil {
+		t.Fatal(err)
+	}
+	_, b, _ = e.do("GET", "/api/bench/results/models", "")
+	if row := jsonOf(t, b)["models"].([]any)[0].(map[string]any); row["file_gone"] != true || row["trash_id"] != "0a0b0c0d0e0f" {
+		t.Fatalf("a gone file in the trash: %s", b)
 	}
 
 	// the group's task count: the stored set's three tasks; plus an inline set of two

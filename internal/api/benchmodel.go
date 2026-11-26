@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgstore"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
 )
 
@@ -420,8 +421,22 @@ func (s *Server) resultsByModel(w http.ResponseWriter, r *http.Request) {
 			here[filepath.Base(mf.File)] = true
 		}
 	}
+	inTrash := map[string]string{} // file -> trash id, files in Deleted models
+	if s.store != nil {
+		if recs, err := s.store.TrashList(r.Context()); err == nil {
+			for _, rec := range recs {
+				if rec.State == cfgstore.TrashTrashed && inTrash[filepath.Base(rec.File)] == "" {
+					inTrash[filepath.Base(rec.File)] = rec.ID
+				}
+			}
+		}
+	}
 	for i := range rows {
-		rows[i].FileGone = !here[filepath.Base(rows[i].Model)]
+		f := filepath.Base(rows[i].Model)
+		rows[i].FileGone = !here[f]
+		if rows[i].FileGone {
+			rows[i].TrashID = inTrash[f]
+		}
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return !rows[i].FileGone && rows[j].FileGone })
 	writeJSON(w, http.StatusOK, map[string]any{"models": rows, "ctx": f.Ctx})
