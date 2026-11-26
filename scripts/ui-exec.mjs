@@ -65,7 +65,8 @@
 //               "subscribed": ["models"] / "notSubscribed": ["models"]: topics the
 //               live channel's last subscribe names, or not (with top-level "wsOpen")}],
 //    (fetch answers: "POST /api/agents" before "/api/agents"; {"$status": 409, "$body": {...}} for an error;
-//     {"$match": [["regexp", answer], ...]}: the first regexp that matches the request line
+//     {"$match": [["regexp", answer], ...]}: the first regexp that matches the request line;
+//     {"$hang": true}: the request never answers, to draw a page while it waits)
 //     "METHOD /path?query body" picks the answer, none answers 404: one route, answers by query or body)
 //    "wsOpen": true,                               // the live channel's socket opens (with "app")
 //    "now": "2026-11-24T06:30:00Z",               // the clock starts there (Date.now, new Date())
@@ -416,6 +417,7 @@ def('fetch', async (u, opts = {}) => {
     const hit = ans.$match.find(([re]) => new RegExp(re).test(line));
     ans = hit ? hit[1] : undefined;
   }
+  if (ans && typeof ans === 'object' && ans.$hang) return new Promise(() => {}); // still waiting when the case is read
   let status = ans !== undefined ? 200 : 404;
   if (ans && typeof ans === 'object' && ans.$status) { status = ans.$status; ans = ans.$body; }
   const ok = status >= 200 && status < 300;

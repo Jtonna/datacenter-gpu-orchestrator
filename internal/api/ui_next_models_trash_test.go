@@ -182,6 +182,13 @@ func TestUINextModelsTrash(t *testing.T) {
 			"fetchedQuery": []string{reRmDry, `^POST /api/models/trash/` + trashPhi + `/remove \{"comment":"free the disk"\}$`}, "sentHeader": []string{"^X-Comment: free the disk$"},
 			"expect": []string{"Removed phi-4-14b-q4_k_m.gguf for good: 8.4 GB freed; 3 profiles went with it."}, "pageNone": []string{"div.dlg"}, "hash": "#/models/deleted"},
 	)
+	// while the dry run is on its way: "checking", nothing to type, only Cancel
+	run(with(two, map[string]any{removeURL: map[string]any{"$match": []any{[]any{reRmDry, map[string]any{"$hang": true}}}}}),
+		map[string]any{"name": "remove: checking while the dry run is on its way", "route": "#/models/deleted?item=" + trashPhi, "status": st, "click": []string{rmOpen},
+			"page":    []string{"Remove phi-4-14b-q4_k_m.gguf for good?", "Checking what removing it would change…", "Cancel"},
+			"pageHas": []string{"div.dlg[data-dlg=remove][data-state=checking] p[role=status]", "div.dlg button[data-close]"},
+			"pageNone": []string{"div.dlg input[data-confirm]", "div.dlg textarea", "div.dlg button[data-go]", "div.dlg [data-msg]"},
+			"fetchedQuery": []string{reRmDry}, "notFetched": []string{reRmReal}})
 	run(with(two, map[string]any{removeURL: map[string]any{"$match": []any{[]any{reRmDry, roDry}, []any{reRmReal, trashRefusal(409, "read_only", rmRoMsg, nil)}}}}),
 		map[string]any{"name": "remove: the dry run says read-only", "route": "#/models/deleted?item=" + trashPhi, "status": st, "click": []string{rmOpen},
 			"page":    []string{sentence, "The models folder is read-only on this scheduler: removing a file is not possible here. Nothing can be changed."},
@@ -467,7 +474,9 @@ func TestUINextModelsTrashOnARealServer(t *testing.T) {
 	run(
 		map[string]any{"name": "real: the footer row", "route": "#/models", "status": "fetch",
 			// the test's files are a few bytes: "under 1 MB", never "0.0 GB" (the reviewer, 26 Nov)
-			"expect": []string{"under 1 MB in deleted models", "1 file", "nothing is removed automatically yet", "View"}, "has": []string{"a.tbar[data-act=trash]"}},
+			"expect": []string{"under 1 MB in deleted models", "1 file", "nothing is removed automatically yet", "View"}, "has": []string{"a.tbar[data-act=trash]"},
+			// the list's rows write a tiny file's size the same way as the trash: "under 1 MB", never "0.0 GB"
+			"absent": []string{"0.0 GB"}},
 		map[string]any{"name": "real: the view", "route": "#/models/deleted", "status": "fetch",
 			"expect": []string{"a.gguf", "2 profiles", "Kept until"}, "has": []string{"div.mr.del[data-trash='" + id + "'][data-state=trashed]"}},
 		map[string]any{"name": "real: the panel", "route": "#/models/deleted?item=" + id, "status": "fetch",

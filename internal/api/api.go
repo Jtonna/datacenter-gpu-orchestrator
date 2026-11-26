@@ -72,6 +72,11 @@ type Options struct {
 	WSStatusInterval time.Duration // status look period: at most 4 messages a second (default 250 ms)
 	WSLoadInterval   time.Duration // least status rate while a load runs (default 1 s)
 	WSIdleInterval   time.Duration // least status rate at all (default 5 s)
+	// WSIdlePace is how often the status is read while nothing is starting,
+	// stopping or queued (default 2 s; with a scripted status source, the
+	// status interval: nothing wakes the loop for those). A real change
+	// wakes the loop at once (ws.go statusLoop).
+	WSIdlePace time.Duration
 	WSPingInterval   time.Duration // ping message period (default 15 s)
 	WSRequestsTick   time.Duration // running rows on the requests topic (default 1 s)
 	WSQueue          int           // per-client send queue (default 64 frames)
@@ -266,6 +271,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r = r.WithContext(audit.WithDefaultUser(r.Context(), s.defaultUser()))
 	if r, ok := s.identify(w, r); ok && s.authorize(w, r) {
 		s.mux.ServeHTTP(w, r)
+		// a write may have changed what the status shows: look now, not at
+		// the next idle tick
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions && s.ws != nil {
+			s.ws.poke()
+		}
 	}
 }
 
