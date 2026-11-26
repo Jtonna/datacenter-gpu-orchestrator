@@ -71,7 +71,7 @@ var routeScopes = map[string]access.Scope{
 	"GET /api/bench/task-sets/{id}": access.Observe, "GET /api/bench/trends": access.Observe,
 	"GET /api/config": access.Observe, "GET /api/config/exclude-nodes": access.Observe, "GET /api/config/export": access.Observe,
 	"GET /api/config/fleet": access.Observe, "GET /api/config/no-auto-nodes": access.Observe, "GET /api/config/node-overrides": access.Observe,
-	"GET /api/config/profiles": access.Observe, "GET /api/config/profiles/{id...}": access.Observe, "GET /api/config/recovery": access.Observe,
+	"GET /api/profiles/test": access.Observe, "GET /api/config/profiles": access.Observe, "GET /api/config/profiles/{id...}": access.Observe, "GET /api/config/recovery": access.Observe,
 	"GET /api/config/revisions": access.Observe, "GET /api/config/revisions/{n}": access.Observe, "GET /api/config/schema": access.Observe,
 	"GET /api/config/settings": access.Observe, "GET /api/config/tiers": access.Observe,
 	"GET /api/events": access.Observe, "GET /api/health": access.Observe, "GET /api/history": access.Observe,

@@ -345,6 +345,7 @@ func (s *Server) routes() *http.ServeMux {
 	s.benchRoutes(m)
 	s.configRoutes(m) // /api/config, /api/audit (config.go)
 	m.HandleFunc("GET /api/profiles", s.handleProfiles)
+	m.HandleFunc("GET /api/profiles/test", s.handleTestProfiles) // testprofiles.go
 	m.HandleFunc("GET /api/models", s.handleModelCatalog)
 	m.HandleFunc("GET /api/models/{key...}", s.handleModelDetail)             // and GET /api/models/{key}/icon
 	m.HandleFunc("PUT /api/models/pin/{key...}", s.handlePinPut)              // pins.go

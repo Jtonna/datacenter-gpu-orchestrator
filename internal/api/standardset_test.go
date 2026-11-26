@@ -51,6 +51,20 @@ func ssNeed(p *core.Profile) (scheduler.NeedInfo, error) {
 	return scheduler.NeedInfo{Need: placer.Measured(max(p.NeedsMiB, 1)), FileBytes: 1 << 20}, nil
 }
 
+// ssNeeds is ssNeed with the trained contexts of ssFiles (the scheduler's
+// real-context rule reads them).
+type ssNeeds struct{}
+
+func (ssNeeds) Need(p *core.Profile) (scheduler.NeedInfo, error) { return ssNeed(p) }
+func (ssNeeds) TrainedCtx(model string) (int, string, bool) {
+	for _, f := range ssFiles {
+		if f.File == model && f.ContextLength > 0 {
+			return f.ContextLength, "llama", true
+		}
+	}
+	return 0, "", false
+}
+
 // ssEnv is the consoles fleet (host-1 excluded: three zones) with the
 // configuration service, the catalog above and the needs of ssNeed.
 func ssEnv(t *testing.T) (*env, *cfgsvc.Service, *cfgstore.Store) {
@@ -76,7 +90,7 @@ func ssEnv(t *testing.T) (*env, *cfgsvc.Service, *cfgstore.Store) {
 		OnChange: func(ev cfgsvc.ChangeEvent) { e.api.PublishConfig(ev) }})
 	sched, err := scheduler.New(cfg, scheduler.Options{
 		View: &consolesView{ch: make(chan struct{}, 1)}, Prober: noProber{}, Launcher: e.launcher,
-		Needs: scheduler.NeedFunc(ssNeed), Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Needs: ssNeeds{}, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {
 		t.Fatal(err)
