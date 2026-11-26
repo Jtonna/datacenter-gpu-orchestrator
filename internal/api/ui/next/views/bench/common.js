@@ -305,5 +305,5 @@ export const WHY = {
   b11: 'what stopped a run (a machine dropping out) is not read from the history yet (benchmarks slice 5: B11)',
   b13: 'one-click PDF is not served yet: open the full report and print it (benchmarks slice 5: B13)',
   edit: 'the group and benchmark editors have no mockup yet; they are built after the owner draws them',
-  run: 'starting, cancelling and repeating runs from these pages is run control (benchmarks slice 6)',
+  recipe: 'a recipe asks for its inputs (model, placement, context) before it runs, and that dialog has no mockup yet (benchmarks slice 6 drew the run dialog without inputs)',
 };

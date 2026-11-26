@@ -1533,7 +1533,7 @@ a.bp-name:hover{text-decoration:underline}
 .bp-list.narrow .bp-row{grid-template-columns:20px minmax(0,1fr) auto}
 .bp-list.narrow .bp-res,.bp-list.narrow .bp-took,.bp-list.narrow .bp-hover{display:none}
 .bp-list.narrow .bp-running{grid-template-columns:20px minmax(0,1fr)}
-.bp-list.narrow .bp-running .bp-bar,.bp-list.narrow .bp-running>.bp-notyet{grid-column:2;justify-self:start}
+.bp-list.narrow .bp-running .bp-bar,.bp-list.narrow .bp-running>.bp-notyet,.bp-list.narrow .bp-running>.bp-runacts{grid-column:2;justify-self:start}
 .bp-panel{display:flex;flex-direction:column;gap:10px;min-width:0}
 .bp-acts{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .bp-h{font-size:13px;font-weight:800;margin-top:8px;display:flex;align-items:center;gap:6px}
@@ -1613,7 +1613,7 @@ table.bp-stats tbody th{font-size:12.5px;color:var(--ink-2);font-weight:600;whit
   .bp-recent{grid-template-columns:minmax(0,1fr) auto}
   .bp-res,.bp-took,.bp-hover,.bp-recent .bp-when{display:none}
   .bp-running{grid-template-columns:20px minmax(0,1fr)}
-  .bp-running .bp-bar,.bp-running>.bp-notyet{grid-column:2}
+  .bp-running .bp-bar,.bp-running>.bp-notyet,.bp-running>.bp-runacts,.bp-running>[data-act]{grid-column:2;justify-self:start}
   .bp-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}
   .bp-heads{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
@@ -1639,13 +1639,13 @@ table.bp-stats tbody th{font-size:12.5px;color:var(--ink-2);font-weight:600;whit
 .bp-list.narrow .bp-res{display:block}
 .bp-list.narrow .bp-took,.bp-list.narrow .bp-hover{display:none}
 .bp-list.narrow .bp-running{grid-template-columns:20px minmax(0,1fr) minmax(110px,200px) auto}
-.bp-list.narrow .bp-running .bp-bar,.bp-list.narrow .bp-running>.bp-notyet{grid-column:auto;justify-self:stretch}
-.bp-list.narrow .bp-running>.bp-notyet{justify-self:end}
+.bp-list.narrow .bp-running .bp-bar,.bp-list.narrow .bp-running>.bp-notyet,.bp-list.narrow .bp-running>.bp-runacts{grid-column:auto;justify-self:stretch}
+.bp-list.narrow .bp-running>.bp-notyet,.bp-list.narrow .bp-running>.bp-runacts{justify-self:end}
 .bp-running.inline{grid-template-columns:20px minmax(0,1fr) minmax(160px,300px) auto auto}
 .bp-running.inline .bp-main{flex-direction:row;align-items:baseline;gap:0;white-space:nowrap}
 .bp-running.inline .bp-word{font-weight:800;margin-right:14px}
 .bp-running.inline .bp-name{flex:none}
-.bp-running.inline .bp-sub{flex:1 1 auto;font-size:13px}
+.bp-running.inline .bp-sub{flex:1 1000 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:13px}
 .bp-running.inline .bp-bar{flex-direction:row;align-items:center;gap:12px}
 .bp-running.inline .bp-bar>:first-child{flex:1 1 80px;min-width:0}
 .bp-left{white-space:nowrap}
@@ -1658,7 +1658,7 @@ table.bp-runs td.bp-start .bp-resw{gap:10px}
   .bp-recent .bp-kind,.bp-recent .bp-took{display:none}
   .bp-running.inline{grid-template-columns:20px minmax(0,1fr)}
   .bp-running.inline .bp-main{flex-wrap:wrap;white-space:normal}
-  .bp-running.inline .bp-bar,.bp-running.inline>.bp-notyet{grid-column:2;justify-self:start}
+  .bp-running.inline .bp-bar,.bp-running.inline>.bp-notyet,.bp-running.inline>.bp-runacts,.bp-running.inline>[data-act]{grid-column:2;justify-self:start}
 }
 /* bench panels: the controls under the title (boards Bench-Group, Bench-Runs-Group), so a long title is not cut */
 .side:has(.bp-panel) .side-head{flex-wrap:wrap;row-gap:12px}
@@ -1727,3 +1727,37 @@ a.bp-view:hover{background:var(--hover-bg)}
 .std-namef .row{flex-wrap:nowrap;gap:8px}
 .std-namef input.std-name{flex:1 1 auto;min-width:0;max-width:360px}
 .std-namef .banner{margin-top:6px}
+/* Run and Cancel from the Benchmarks pages (views/bench/run.js, board bench-run/run-cancel) */
+.runbar{height:6px;border-radius:3px;background:var(--hairline);overflow:hidden}
+.runbar>i{display:block;height:100%;background:var(--z-load)}
+.dlg[data-dlg=run] .rd-what{gap:2px;padding:10px 12px}
+.rd-lbl{padding-bottom:4px}
+.tbl.rd-loads th:first-child,.tbl.rd-loads td:first-child{padding-left:0}
+.tbl.rd-loads th:last-child,.tbl.rd-loads td:last-child{padding-right:0}
+.tbl.rd-loads td{height:auto;padding-top:6px;padding-bottom:6px;vertical-align:top}
+.rd-opts{display:flex;flex-direction:column;gap:10px}
+.check.rd-check{align-items:flex-start}
+.rd-check input{margin-top:2px;accent-color:var(--accent)}
+.rd-sub{padding-left:26px}
+.rd-sub .banner{padding:8px 12px}
+.dlg[data-dlg=run] textarea.textarea{min-height:54px}
+.dlg[data-dlg=run] textarea.rd-note{min-height:34px}
+.rd-more{all:unset;cursor:pointer;color:var(--link);font-weight:700}
+.rd-more:hover{text-decoration:underline}
+.rd-refusals{display:flex;flex-direction:column;gap:6px}
+.rd-refusals p{margin:0;color:inherit}
+.rd-list{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;color:var(--text-2)}
+.bp-nostart{color:var(--amber-text);font-weight:600}
+/* a long run name in the Overview's running line ends in an ellipsis instead of running under the bar */
+.bp-running.inline .bp-main{min-width:0;overflow:hidden}
+.bp-running.inline .bp-name{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bp-runacts{display:inline-flex;align-items:center;gap:8px;justify-self:end}
+.bp-live{border-color:var(--amber-line);background:var(--amber-bg);color:var(--amber-text)}
+.bp-live .btn{margin-left:auto}
+.bp-live.idle{border-color:var(--line-panel);background:var(--surface);color:var(--text)}
+@media (max-width:640px){
+  .tbl.rd-loads thead{display:none}
+  .tbl.rd-loads tr{display:block;border-top:1px solid var(--line);padding:8px 0}
+  .tbl.rd-loads td{display:block;border-top:0;padding:2px 0}
+  .tbl.rd-loads td.r{text-align:left}
+}

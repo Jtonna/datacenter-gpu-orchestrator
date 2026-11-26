@@ -156,7 +156,6 @@ func TestEvictOthersOnlyTheNamedModels(t *testing.T) {
 	}
 }
 
-
 func (tm *testMgr) pausedReason() string {
 	tm.m.mu.Lock()
 	cur := tm.m.cur

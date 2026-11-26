@@ -390,7 +390,7 @@ type Step struct {
 	Profile     string               `json:"profile"`
 	State       string               `json:"state"`
 	Outcome     string               `json:"outcome,omitempty"`
-	Reason      string               `json:"reason,omitempty"` // the scheduler's words for a refusal or failure
+	Reason      string               `json:"reason,omitempty"`       // the scheduler's words for a refusal or failure
 	ReasonShort string               `json:"reason_short,omitempty"` // a refusal in a few words (ShortReason; read time, not stored)
 	HTTPStatus  int                  `json:"http_status,omitempty"`
 	LogFile     string               `json:"log_file,omitempty"`

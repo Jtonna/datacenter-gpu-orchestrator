@@ -145,6 +145,13 @@ func (s *Server) BenchStartGate(g *bench.GateRun) error {
 func (s *Server) wireBenchGate() {
 	if s.opts.Bench != nil {
 		s.opts.Bench.SetStartGate(s.BenchStartGate)
+		// the progress names the profile in flight as people see it
+		s.opts.Bench.SetProfileNamer(func(id string) string {
+			if p := s.conf().Profiles[id]; p != nil {
+				return config.ShownName(p)
+			}
+			return ""
+		})
 	}
 }
 
@@ -653,6 +660,43 @@ func (s *Server) leafProfile(cfg *config.Config, b *benchspec.Benchmark) (p *cor
 }
 
 // groupsWithin are the groups a group holds, at any depth.
+// notStartableWhy is why the lists show a group or benchmark as "Not
+// startable here" (the setting bench_not_startable names it, a group within
+// it, or an entry of its expanded run; flat is nil for a benchmark), or "".
+// The start gate decides the same on the run itself (planStart).
+func (s *Server) notStartableWhy(id string, flat *benchspec.Suite) string {
+	off := map[string]bool{}
+	for _, x := range s.conf().Bench.NotStartable {
+		off[strings.TrimSpace(x)] = true
+	}
+	if len(off) == 0 {
+		return ""
+	}
+	if off[id] {
+		return "listed in bench_not_startable (Settings)"
+	}
+	if flat == nil {
+		return ""
+	}
+	for _, gid := range s.groupsWithin(id) {
+		if off[gid] {
+			return fmt.Sprintf("it holds the group %s, which is listed in bench_not_startable (Settings)", gid)
+		}
+	}
+	for _, it := range flat.Benchmarks {
+		ids := []string{it.Ref}
+		if it.Inline != nil {
+			ids = append(ids, it.Inline.ID, it.Inline.Recipe)
+		}
+		for _, x := range ids {
+			if x != "" && off[x] {
+				return fmt.Sprintf("it holds %s, which is listed in bench_not_startable (Settings)", x)
+			}
+		}
+	}
+	return ""
+}
+
 func (s *Server) groupsWithin(id string) []string {
 	var out []string
 	seen := map[string]bool{id: true}

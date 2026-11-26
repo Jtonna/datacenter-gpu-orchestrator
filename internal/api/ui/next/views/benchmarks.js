@@ -25,8 +25,9 @@ import { liveView, empty, skeleton } from '../core/ui.js';
 import { num, DASH } from '../core/format.js';
 import { staleBanner } from '../core/status.js';
 import { needCatalog, onCatalog } from '../core/catalog.js';
-import { bench, onBench, loadLists, seedState, activeRun, when, tookS, resultIcon, dots, inputsLine, notYet, WHY } from './bench/common.js';
+import { bench, onBench, loadLists, seedState, activeRun, when, tookS, resultIcon, dots, inputsLine } from './bench/common.js';
 import { listColumn, groupPanel, runningRow, kindIcon } from './bench/list.js';
+import { runDialog } from './bench/run.js';
 import { resultsData, loadResults, latestTable, latestHead } from './bench/results.js';
 import { runsData, loadRuns, runsColumn, runPanel, reportPanel, directLine } from './bench/runs.js';
 import { dur } from '../core/format.js';
@@ -48,12 +49,15 @@ function recentRow(rn) {
     h('span.mut.bp-took', tookS(rn) != null ? dur(tookS(rn)) : DASH));
 }
 
+// "Run a benchmark": the run dialog, asking first what to run.
+const runABenchmark = () => h('button.btn.pri', { type: 'button', 'data-act': 'run-a-benchmark', onclick: () => runDialog({ pick: true }) }, 'Run a benchmark');
+
 function overview(ov, res) {
   const run = activeRun();
   return [
     h('h1.sr', 'Benchmarks'),
-    run ? h('section.card.bp-runcard', { 'aria-label': 'Running now' }, runningRow(run, { inline: true, after: notYet(h('span.btn.pri', 'Run a benchmark'), WHY.run) }))
-      : h('div.bp-tools', h('span.grow'), notYet(h('span.btn.pri', 'Run a benchmark'), WHY.run)),
+    run ? h('section.card.bp-runcard', { 'aria-label': 'Running now' }, runningRow(run, { inline: true, after: runABenchmark() }))
+      : h('div.bp-tools', h('span.grow'), runABenchmark()),
     h('section.card.bp-latest', { 'aria-label': 'Latest result for each model' },
       h('div.ch', h('h2', 'Latest result for each model'), h('span.grow'), latestHead(res)),
       latestTable(res)),

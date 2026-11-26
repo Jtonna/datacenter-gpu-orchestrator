@@ -223,6 +223,9 @@ func (s *Server) listBenchmarks(w http.ResponseWriter, r *http.Request) {
 		if u := uses[all[i].Spec.ID]; u != nil {
 			m["last_use"] = u
 		}
+		if why := s.notStartableWhy(all[i].Spec.ID, nil); why != "" {
+			m["not_startable"] = why
+		}
 		out = append(out, m)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"benchmarks": out})
@@ -375,7 +378,11 @@ func (s *Server) listSuites(w http.ResponseWriter, r *http.Request) {
 		if runs, err := s.opts.BenchStore.ListRuns(bench.RunFilter{Suite: all[i].Spec.ID, Limit: 1}); err == nil && len(runs) > 0 {
 			m["last_run"] = runs[0]
 		}
-		if flat, err := benchspec.ExpandGroup(all[i].Spec, s.lookup, s.groupLookup); err == nil {
+		flat, err := benchspec.ExpandGroup(all[i].Spec, s.lookup, s.groupLookup)
+		if why := s.notStartableWhy(all[i].Spec.ID, flat); why != "" {
+			m["not_startable"] = why
+		}
+		if err == nil {
 			m["expanded_count"] = len(flat.Benchmarks)
 			if n, ok := s.groupTaskCount(flat); ok {
 				m["task_count"] = n

@@ -119,7 +119,7 @@ import { profileEntries, profileSpecs, catalog as cfgCatalog, planAnswer, testPr
 import { Keys, toolsAnswer } from './ui-fixture/keys.mjs';
 import { modelsDoc, modelsInstances, seedPins, pinRoute } from './ui-fixture/models.mjs';
 import { TRASH_STATES, seedTrash, trashList, withTrash, deleteRoute, restoreRoute, removeRoute } from './ui-fixture/trash.mjs';
-import { BENCH_STATES, benchRoute } from './ui-fixture/bench.mjs';
+import { BENCH_STATES, benchRoute, rcPost } from './ui-fixture/bench.mjs';
 import { tierLists, applyTiers, localEntry, tiersDoc } from './ui-fixture/tiers.mjs';
 
 const argv = process.argv.slice(2);
@@ -486,6 +486,12 @@ const server = http.createServer((req, res) => {
     b = Object.assign({}, b || {}); if (!b.comment && req.headers['x-comment']) b.comment = String(req.headers['x-comment']);
     const r = removeRoute(TRASH_STATE, decodeURIComponent(rmv[1]), b, u.searchParams, now);
     json(res, r.status, r.body);
+  });
+  // the run dialog's dry read and start, and a cancel (--bench runcancel, runwait)
+  if ((BENCH_STATE === 'runcancel' || BENCH_STATE === 'runwait') && req.method === 'POST' && /^\/api\/bench\/(?:groups|suites|benchmarks|runs)\/[^/]+\/(?:run|cancel)$/.test(p)) return readBody(req, b => {
+    b = Object.assign({}, b || {}); if (!b.comment && req.headers['x-comment']) b.comment = String(req.headers['x-comment']);
+    const r = rcPost(p, u.searchParams, b);
+    json(res, r ? r.status : 404, r ? r.body : { error: { message: 'not found' } });
   });
   if (p.startsWith('/api/zones/pending')) return pendingRoute(req, res, p);
   if (req.method !== 'GET') return json(res, 405, { error: { message: 'the fixture is read-only' } });

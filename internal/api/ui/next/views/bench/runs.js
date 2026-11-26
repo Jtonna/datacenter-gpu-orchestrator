@@ -13,15 +13,22 @@
 // A run's panel ("Group run"): the started time, the release, the cold note;
 // the counts (ran, passed, failed, refused) and the total time; Compare
 // (B10), the pin toggle, Download PDF (B13: the full report's print page
-// instead), Run again (slice 6); "Issues · N": each failed or refused step
-// with its reason, ONCE; "Reports · N": one row per step, opening its report.
+// instead), Run again (the run dialog, run.js); "Issues · N": each failed or
+// refused step with its reason, ONCE; "Reports · N": one row per step, opening
+// its report. A run still going (board bench-run/run-cancel #6): the step it
+// is on and what it does, Cancel, the 6 px bar; queued: its place and Cancel;
+// it reads itself again as steps end.
 //
 // A benchmark report: the model, the benchmark · the zones · the context;
 // four headline figures (B9: not served yet); the outcome; "Steps · N" with
 // "took"; each step with its key figure (the step's own measurements), the
 // Transcript link, and the requests' table (Measured, Mean, Median, Min, Max)
 // inside its card; Open full report (the server's print page), Download PDF
-// (B13), Run again (slice 6). A failed or refused step prints its reason ONCE.
+// (B13), Run again. A failed or refused step prints its reason ONCE.
+//
+// The runs table (board bench-run/run-cancel #7): a queued run says its place
+// ("Queued · 2nd") and has Cancel; a cancelled one says where and who
+// (the server's outcome: 'cancelled at step 2 of 6 by ann: "wrong zones"').
 
 import { h } from '../../core/dom.js';
 import { href, navigate } from '../../core/router.js';
@@ -31,8 +38,9 @@ import { num, dur, plural, DASH, mib } from '../../core/format.js';
 import { catalog } from '../../core/catalog.js';
 import { state } from '../../core/store.js';
 import { logsLink, padded } from '../../core/logs.js';
-import { when, tookS, resultIcon, resultWord, dots, coldNote, inputsLine, notYet, WHY, modelName, placementWords, zonesWord, phaseWord, recipeTitle } from './common.js';
+import { bench, when, tookS, resultIcon, resultWord, dots, coldNote, inputsLine, notYet, WHY, modelName, placementWords, zonesWord, phaseWord, recipeTitle } from './common.js';
 import { pinButton, kindIcon } from './list.js';
+import { runButton, cancelButton, queuePos, ordinal, stepNow, isRecipe } from './run.js';
 import { RESULT_VIEWS, resultsView } from './results.js';
 
 export const PAGE = 12;
@@ -68,18 +76,59 @@ export function directLine(rn) {
   return [rn.suite_name || rn.benchmark_id || rn.id, inp].filter(Boolean).join(' · ');
 }
 
+const ACTIVE = ['queued', 'running', 'paused', 'waiting'];
+// liveOf(run): the progress document when this is the run in progress.
+const liveOf = rn => (rn && state.bench.run && state.bench.run.id === rn.id ? state.bench.run : null);
+
 function runRow(rn, q) {
   const direct = rn.kind === 'benchmark';
   const open = href('benchmarks', ['runs', String(rn.number || rn.id)], q);
   const name = rn.suite_name || rn.benchmark_id || rn.suite_id || rn.id;
   const inp = direct ? inputsLine(rn) : '';
-  return h('tr', { key: rn.id, 'data-run': rn.number || rn.id, class: direct ? 'direct' : null },
-    h('td.bp-start', h('span.bp-resw', resultIcon(rn, 14), when(rn.started_at || rn.queued_at))),
+  const queued = rn.state === 'queued', pos = queued ? queuePos(rn.id) : 0;
+  const lv = liveOf(rn);
+  const step = lv && lv.steps_total ? stepNow(lv) : null;
+  return h('tr', { key: rn.id, 'data-run': rn.number || rn.id, class: direct ? 'direct' : null, 'data-state': rn.state || null },
+    h('td.bp-start', queued ? h('span.b.b-q', { 'data-queued': String(pos) }, pos ? `Queued · ${ordinal(pos)}` : 'Queued')
+      : h('span.bp-resw', resultIcon(rn, 14), when(rn.started_at || rn.queued_at))),
     h('td.bp-name', { title: direct ? directLine(rn) : name }, kindIcon(!direct),
-      h('a', { href: open }, name), inp ? h('span.bp-sub', ' · ' + inp) : null, rn.state === 'cancelled' ? h('span.mut', ' · cancelled') : null),
-    h('td.bp-res', dots(rn.counts, rn.result === 'running')),
-    h('td.bp-took.mut', tookS(rn) != null ? dur(tookS(rn)) : DASH),
+      h('a', { href: open }, name), inp ? h('span.bp-sub', ' · ' + inp) : null,
+      step ? h('span.mut', { 'data-step': String(step.at) }, ` · step ${num(step.at)} of ${num(step.total)}`) : null,
+      rn.state === 'cancelled' ? h('span.mut', { 'data-outcome': 'cancelled' }, ' · ' + (rn.error || 'cancelled')) : null),
+    h('td.bp-res', queued ? h('span.mut', DASH) : dots(rn.counts, rn.result === 'running')),
+    h('td.bp-took.mut', queued ? cancelButton(rn) : tookS(rn) != null ? dur(tookS(rn)) : DASH),
     h('td.bp-pincell', pinButton(rn)));
+}
+
+// againButton(run, cls): "Run again" (the run dialog with again_of); a recipe
+// run asks for its inputs, a dialog not drawn yet: greyed with its reason.
+const benchmarkOf = rn => (bench.benchmarks || []).find(b => b.id === rn.benchmark_id) || null;
+function againButton(rn, cls) {
+  if (rn.kind === 'benchmark' && (rn.inputs || isRecipe(benchmarkOf(rn)))) return notYet(h('span', { class: cls }, 'Run again'), WHY.recipe);
+  if (rn.kind === 'benchmark' ? !rn.benchmark_id : !rn.suite_id) return null;
+  return runButton(rn.kind === 'benchmark' ? 'benchmark' : 'group', rn.kind === 'benchmark' ? rn.benchmark_id : rn.suite_id, 'Run again', cls, rn.id);
+}
+
+// liveBanner(run): the run panel's line while the run is going (board #6),
+// with Cancel and the 6 px bar; queued: its place in the queue; waiting
+// until idle: the reason.
+function liveBanner(rn, after) {
+  if (!ACTIVE.includes(rn.state)) return null;
+  const lv = Object.assign({}, rn, liveOf(rn) || {});
+  let text, bar = null;
+  if (lv.state === 'queued') {
+    const pos = queuePos(rn.id);
+    text = [h('b', pos ? `Queued · ${ordinal(pos)}` : 'Queued'), ': it starts when the runs before it end.'];
+  } else if (lv.state === 'paused' || lv.state === 'waiting') {
+    text = [h('b', 'Waiting until idle'), lv.paused_because ? ': ' + lv.paused_because : ''];
+  } else {
+    const { at, total, doing } = stepNow(lv);
+    text = [h('b', total ? `Step ${num(at)} of ${num(total)}` : 'Running'), doing ? ' · ' + doing : ''];
+    const pct = Math.max(0, Math.min(100, lv.percent || 0));
+    bar = h('div.runbar', { role: 'progressbar', 'aria-label': total ? `${at} of ${total} steps` : 'progress', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(Math.round(pct)) },
+      h('i', { style: `width:${pct}%` }));
+  }
+  return [h('div', { class: 'banner bp-live' + (lv.state === 'queued' ? ' idle' : ''), role: 'status', 'data-live': lv.state }, h('span', text), cancelButton(rn, 'Cancel', 'btn sm dng', after)), bar];
 }
 
 function pager(q, total) {
@@ -185,23 +234,35 @@ function byRecipe(steps) {
 }
 
 export function runPanel(ref, q, onClose) {
-  const ps = { run: null, err: '', showAll: false };
+  const ps = { run: null, err: '', showAll: false, sig: null };
   const load = async () => {
     try { ps.run = await api.get(`/api/bench/runs/${encodeURIComponent(ref)}`, { requests: 0 }); ps.err = ''; } catch (e) { ps.err = e.status === 404 ? 'not found' : e.message; }
     p.redraw();
+  };
+  // a run still going reads itself again when its step, state or place in
+  // the queue moves (the "bench" topic), and once more when it ends
+  const follow = rn => {
+    if (!ACTIVE.includes(rn.state) && ps.sig == null) return;
+    const lv = liveOf(rn);
+    const sig = lv ? `${lv.state}:${lv.steps_done}:${lv.current ? lv.current.index : ''}` : `q${queuePos(rn.id)}`;
+    if (ps.sig != null && sig !== ps.sig) setTimeout(load, 0);
+    ps.sig = ACTIVE.includes(rn.state) || lv ? sig : null;
   };
   const body = () => {
     const rn = ps.run;
     if (ps.err) return h('section.card', empty(ps.err === 'not found' ? 'There is no such run' : 'This run could not be read', ps.err === 'not found' ? 'It may have been trimmed by the retention.' : ps.err));
     if (!rn) return skeleton(5);
+    follow(rn);
+    const active = ACTIVE.includes(rn.state);
     const c = rn.counts || {};
     const steps = rn.steps || [];
     const issues = steps.filter(st => ['failed', 'refused', 'not_judged'].includes(stepResult(st)));
     const shown = ps.showAll ? steps : steps.slice(0, 8);
     return h('div.bp-panel',
+      liveBanner(rn, load),
       h('div.bp-kpis', kpi(num(c.done != null ? c.done : steps.length), 'ran'), kpi(num((c.passed || 0) + (c.with_issues || 0)), 'passed', 'ok'),
         kpi(num((c.failed || 0) + (c.cancelled || 0)), 'failed', (c.failed || c.cancelled) ? 'bad' : ''), kpi(num(c.refused || 0), 'refused', c.refused ? 'ref' : ''),
-        kpi(tookS(rn) != null ? dur(tookS(rn)) : DASH, 'total')),
+        kpi(tookS(rn) != null ? dur(tookS(rn)) : DASH, active ? 'so far' : 'total')),
       rn.error ? h('div.banner.err', { role: 'status' }, rn.error) : null,
       h('h3.bp-h', 'Issues', [' · ', h('span.mut', num(issues.length))]),
       issues.length ? h('div.bp-issues', issues.map(st => h('div.bp-issue', { key: 'i-' + st.idx, 'data-step': st.idx },
@@ -221,12 +282,14 @@ export function runPanel(ref, q, onClose) {
           h('span.bp-fig', ['refused', 'not_judged'].includes(stepResult(st)) ? h('span.mut', { title: reasonOnce(st) }, st.reason_short || reasonOnce(st))
             : st.load && st.load.load_s ? `${secs(st.load.load_s)} load` + (st.stats && st.stats.decode_tps ? ` · ${num(st.stats.decode_tps.mean, 1)} tok/s` : '') : st.state === 'running' ? 'running' : '')))]))
         : h('p.mut', 'This run has no steps yet.'),
-      steps.length > shown.length ? h('button.bp-all', { type: 'button', onclick: () => { ps.showAll = true; p.redraw(); } }, `All ${num(steps.length)} reports`) : null);
+      steps.length > shown.length ? h('button.bp-all', { type: 'button', onclick: () => { ps.showAll = true; p.redraw(); } }, `All ${num(steps.length)} reports`) : null,
+      rn.note || active ? h('p.note-s', { 'data-run-note': '' }, rn.note ? `Note: "${rn.note}". ` : '', active ? 'Results appear here as each step ends.' : '') : null);
   };
   const sub = () => {
     const rn = ps.run;
     if (!rn) return null;
     const parts = [when(rn.started_at || rn.queued_at)];
+    if (rn.started_by) parts.push(' by ', h('span', { 'data-started-by': '' }, rn.started_by));
     if (rn.version) parts.push(' · release ', rn.version);
     const cold = coldNote(rn);
     if (cold) parts.push(' · ', cold);
@@ -235,10 +298,10 @@ export function runPanel(ref, q, onClose) {
   };
   const p = sidePanel({ closesMenu: true, kind: 'bench-run', label: 'Group run', name: 'Run ' + ref,
     title: () => (ps.run ? ps.run.suite_name || ps.run.suite_id || ps.run.id : 'Run ' + ref), sub,
-    // a run still going: its Cancel (board Bench-Runs-Group #26, Q44), run control: slice 6
-    controls: () => h('div.bp-acts', ps.run && ['running', 'queued', 'waiting'].includes(ps.run.state) ? notYet(h('span.btn.sm.dng', { 'data-act': 'cancel' }, 'Cancel'), WHY.run) : null,
+    // a run still going: its Cancel (board Bench-Runs-Group #26, Q44; board bench-run/run-cancel #6)
+    controls: () => h('div.bp-acts', ps.run && ACTIVE.includes(ps.run.state) ? cancelButton(ps.run, 'Cancel run', 'btn sm dng', load) : null,
       notYet(h('span.btn.sm', 'Compare'), WHY.b10), ps.run ? pinButton(ps.run, () => p.redraw()) : null,
-      notYet(h('span.btn.sm', 'Download PDF'), WHY.b13), notYet(h('span.btn.sm.pri', 'Run again'), WHY.run), ps.run ? runLogs(ps.run) : null),
+      notYet(h('span.btn.sm', 'Download PDF'), WHY.b13), ps.run ? againButton(ps.run, 'btn sm pri') : null, ps.run ? runLogs(ps.run) : null),
     body, onClose });
   p.key = 'run:' + ref;
   load();
@@ -369,7 +432,7 @@ export function reportPanel(ref, slug, onClose) {
           ph.type === 'requests' || ph.type === 'conversation' || ph.type === 'concurrent_requests' ? statsTable(ph.stats) : null);
       })) : h('p.mut', reason ? 'No step ran.' : 'The steps appear here as they run.'),
       h('div.bp-foot', h('a.btn', { href: full, target: '_blank', rel: 'noopener' }, 'Open full report'), notYet(h('span.btn', 'Download PDF'), WHY.b13), h('span.grow'),
-        notYet(h('span.btn.pri', 'Run again'), WHY.run)));
+        againButton(rn, 'btn pri')));
   };
   const sub = () => {
     const st = findStep();

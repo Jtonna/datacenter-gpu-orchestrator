@@ -99,6 +99,13 @@ function handle(msg) {
       } else if (d.kind === 'run') {
         const r = d.run || {};
         const final = ['completed', 'failed', 'cancelled', 'skipped'].includes(r.state);
+        // the queue (the bench state's "queue", read on connect) follows each
+        // run's events: queued joins its end, any other state leaves it
+        if (state.bench.state && r.id) {
+          const q = (state.bench.state.queue || []).filter(x => x.id !== r.id);
+          if (r.state === 'queued') q.push(r);
+          state.bench.state = Object.assign({}, state.bench.state, { queue: q });
+        }
         if (final && state.bench.run && state.bench.run.id === r.id) state.bench.run = null;
       }
       emit('bench');

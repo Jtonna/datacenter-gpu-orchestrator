@@ -426,3 +426,35 @@ func TestRunRefusedWhenTheModelIsInDeletedModels(t *testing.T) {
 		t.Fatalf("%d %v", st, ans)
 	}
 }
+
+// The lists mark what bench_not_startable keeps from starting, with the
+// reason, so the page shows "Not startable here: ..." in place of Run: the
+// entry itself, and a group holding it at any depth.
+func TestRunListsMarkWhatIsNotStartable(t *testing.T) {
+	e, _ := startEnv(t)
+	e.do("POST", "/api/bench/groups", `{"id":"outer","name":"Outer","benchmarks":[{"group":"g"}],"cooldown_s":0}`)
+	e.setConf(func(c *config.Config) { c.Bench.NotStartable = []string{"b-gamma"} })
+	marks := func(path, key string) map[string]string {
+		_, m := e.jdo("GET", path, "", nil)
+		out := map[string]string{}
+		for _, it := range m[key].([]any) {
+			x := it.(map[string]any)
+			if s, _ := x["not_startable"].(string); s != "" {
+				out[x["id"].(string)] = s
+			}
+		}
+		return out
+	}
+	bs := marks("/api/bench/benchmarks", "benchmarks")
+	if len(bs) != 1 || !strings.Contains(bs["b-gamma"], "bench_not_startable") {
+		t.Fatalf("benchmarks: %v", bs)
+	}
+	gs := marks("/api/bench/groups", "groups")
+	if len(gs) != 2 || !strings.Contains(gs["g"], "b-gamma") || !strings.Contains(gs["outer"], "b-gamma") {
+		t.Fatalf("groups: %v", gs)
+	}
+	e.setConf(func(c *config.Config) { c.Bench.NotStartable = nil })
+	if gs := marks("/api/bench/groups", "groups"); len(gs) != 0 {
+		t.Fatalf("after the list was emptied: %v", gs)
+	}
+}

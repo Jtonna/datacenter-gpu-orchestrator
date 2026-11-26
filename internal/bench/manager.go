@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
@@ -149,6 +150,17 @@ type StartRefusal struct {
 
 func (e *StartRefusal) Error() string { return e.Msg }
 
+// SetProfileNamer gives the name people see for a profile id (the shown
+// name), put in the progress document's current entry as profile_name.
+func (m *Manager) SetProfileNamer(f func(string) string) { m.namer.Store(&f) }
+
+func (m *Manager) profileName(id string) string {
+	if f := m.namer.Load(); f != nil && *f != nil && id != "" {
+		return (*f)(id)
+	}
+	return ""
+}
+
 // SetStartGate sets the check every run passes before it is queued (from
 // the page, the API, MCP or a schedule); nil removes it.
 func (m *Manager) SetStartGate(g func(*GateRun) error) {
@@ -174,7 +186,8 @@ type Manager struct {
 	log *slog.Logger
 
 	mu       sync.Mutex
-	gate     func(*GateRun) error // SetStartGate
+	gate     func(*GateRun) error                // SetStartGate
+	namer    atomic.Pointer[func(string) string] // SetProfileNamer
 	queue    []*queued
 	cur      *activeRun
 	stopping bool
