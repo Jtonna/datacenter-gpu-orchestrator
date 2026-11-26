@@ -179,6 +179,7 @@ type Server struct {
 	activity *activityLog
 	reqs     *usage.Recorder // the request log (requests.go)
 	hist     *history.Store
+	rt       runtimeCache   // GET /api/system's runtime block
 	files    modelFileCache // metadata of the files in models_dir (models.go)
 	catalog  catalogCache   // the model catalog, kept in memory (catalog.go)
 	// store is the database behind the audit log when it is the scheduler's

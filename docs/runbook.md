@@ -820,6 +820,7 @@ Potluck isolates its background tasks (architecture, "What restarts when"). What
 - The log line `background task failed` at error level, with `task`, `panic`, `failures_last_min`, `restarts` and the Go `stack`.
 - An `internalFailure` event on the Activity page (filter "Scheduler"), with the task and the message.
 - The About page's "Background tasks" card: each task with what it does after a failure, its restarts, failures in the last minute and last failure. The same is in `curl -s $H/api/system | jq '.tasks, .internal_failures_total'`.
+- The scheduler's own memory, in one read: `curl -s $H/api/system | jq .runtime`: `heap_inuse_bytes`, `heap_alloc_bytes`, `heap_objects`, `sys_bytes` (obtained from the OS), `goroutines`, `gc_cycles`, `last_gc_at` and `read_at` (unix ms). It is read at most once every 5 s; a read within that time returns the same copy (same `read_at`).
 
 What to do:
 

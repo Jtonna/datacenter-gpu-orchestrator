@@ -141,7 +141,7 @@ func TestUINextModelsStandardSet(t *testing.T) {
 				// B: the default exists at another context, not tickable
 				tr("") + "[data-exists=true][data-ticked=false]", notes("") + " [data-exists-note]",
 				// C: ticked by default, the estimate rows' states
-				tr(":16k") + "[data-state=fits][data-ticked=true] input[data-tick]", tr(":64k") + "[data-state=fits-by-estimate][data-ticked=true] input[data-tick]",
+				tr(":16k") + "[data-state=fits-derived][data-ticked=true] input[data-tick]", notes(":256k") + " [data-zones-need-note]", tr(":64k") + "[data-state=fits-by-estimate][data-ticked=true] input[data-tick]",
 				tr(":128k") + "[data-ticked=true]", tr(":256k") + "[data-state=estimate-does-not-fit][data-ticked=false] input[data-tick]",
 				notes(":256k") + " [data-why=estimate-does-not-fit]", notes(":64k") + " [data-need-note]", notes(":256k") + " [data-shape-note]",
 				notes(":128k") + " [data-every-zone=max-pool]", notes(":64k") + " [data-now=evict]", notes(":128k") + " [data-host-memory=not-counted]",
@@ -151,7 +151,7 @@ func TestUINextModelsStandardSet(t *testing.T) {
 				"It has what a standard row would not: KV type q8_0, flash attention, thinking off (the chat-template argument), a hand-written need of 15,900 MiB, aliases (gemma-27b)",
 				"Fits, estimated", "Not measured", "Estimate only: not measured: by the file estimate it does not fit even with nothing loaded",
 				"the fit uses 13,751 MiB: the estimate with its 5% margin", "so that figure is not its own",
-				"every zone it may use (4: the setting max_pool)", "the default context", "measured for this shape", "derived from another context",
+				"every zone it may use (4: the setting max_pool)", "the default context", "measured for this shape", "derived from other contexts of this model", "Fits, derived", "Two figures: /api/plan shows 25,384 MiB",
 				"Write 3 profiles", "Comment (required)", "now it would first unload gemma-4-12b", "every standard context is at or below it"}},
 		// C: a tick changes the count; untick everything and nothing can be written
 		map[string]any{"name": "standard: ticking the estimate row counts it", "route": "#/models?model=" + mdlLoaded, "status": st, "fetch": with(reads, nil),

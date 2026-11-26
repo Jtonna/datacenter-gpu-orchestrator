@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -568,7 +569,7 @@ func TestPageOpenPlanReads(t *testing.T) {
 				if !standingLive {
 					le.tick(catalogDriftGap + time.Second) // nobody watched the plans for a while
 				}
-				before, reads := le.rounds(), le.api.catalog.planReads.Load()
+				before, reads, dry := le.rounds(), le.api.catalog.planReads.Load(), le.sched.DryPlans()
 
 				// the page opens
 				res := le.get("/api/models")
@@ -594,10 +595,15 @@ func TestPageOpenPlanReads(t *testing.T) {
 					res := le.get("/api/models?only=disk") // the 30 s re-read of the disk figures
 					res.Body.Close()
 				}
-				got, plans := le.rounds()-before, le.api.catalog.planReads.Load()-reads
-				t.Logf("one open of %s: %d rounds of plans (%d plan reads, %d profiles)", pg.name, got, plans, livePlanProfiles)
+				got, plans, dried := le.rounds()-before, le.api.catalog.planReads.Load()-reads, le.sched.DryPlans()-dry
+				t.Logf("one open of %s: %d catalog rounds (%d plan reads); %d dry plans at the scheduler from every caller (%d profiles)", pg.name, got, plans, dried, livePlanProfiles)
 				if got > 1 {
 					t.Fatalf("one open of %s computed %d rounds of plans, want at most 1", pg.name, got)
+				}
+				// counted at the scheduler: every dry plan of any caller
+				// (the catalog, GET /api/profiles, POST /api/plan, anything)
+				if dried > livePlanProfiles {
+					t.Fatalf("one open of %s asked the scheduler for %d dry plans, want at most one per profile (%d)", pg.name, dried, livePlanProfiles)
 				}
 			})
 		}
@@ -643,5 +649,24 @@ func TestModelsDiskOnlyComputesNoPlans(t *testing.T) {
 		t.Fatalf("only=plans: %d, want 400", res.StatusCode)
 	} else {
 		res.Body.Close()
+	}
+}
+
+// A server's catalog versions start at the time of its first catalog (unix
+// ms), not at 1: a tab that stayed open across a restart (running the page
+// it loaded from the old server, which keeps the higher of two versions)
+// takes the new server's catalog and changes, instead of reading the whole
+// catalog again over REST on every change (TestUICatalogAfterAServerRestart).
+func TestCatalogVersionsOutliveARestart(t *testing.T) {
+	before := time.Now().UnixMilli()
+	le := newLiveEnv(t, 0)
+	res := le.get("/api/models")
+	res.Body.Close()
+	v, err := strconv.ParseInt(res.Header.Get("X-Catalog-Version"), 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v < before {
+		t.Fatalf("the first catalog's version is %d: a server that ran before reached higher; want at least %d (its start, unix ms)", v, before)
 	}
 }

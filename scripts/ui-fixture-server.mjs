@@ -147,6 +147,11 @@ const PINNED = argv.includes('--pinned');
 const CONFIG = opt('--config', 'normal');
 // --catalog: GET /api/models answers the profile fixture's six model files (default: none)
 const CATALOG = argv.includes('--catalog');
+// --runs-named (with --catalog): the request rows name profiles of that catalog, one of them a test
+// profile and one a profile it no longer has (the Model column names the profile: core/ui.js runProfileCell)
+const RUNS_NAMED = argv.includes('--runs-named');
+const RUN_NAMES = { 'gemma-4-27b:32k': 'qwen3-14b-128k', 'gemma-4-12b:64k': 'p2-old-test' };
+const runNamed = rows => (RUNS_NAMED ? rows.map(r => (RUN_NAMES[r.profile] ? Object.assign({}, r, { profile: RUN_NAMES[r.profile], model_file: '', short_name: undefined }) : r)) : rows);
 // --stdset ready|long|nothing|error|refused: GET and POST /api/models/{file}/standard-set (profiles.mjs standardSet)
 const STDSET = opt('--stdset', 'ready');
 // --named-only <name>: that zone is in no_auto_nodes (auto: false)
@@ -286,7 +291,8 @@ function baseStatus(now) {
 }
 
 // the request rows of the mockup's table, the times relative to now
-function requests(now) {
+function requests(now) { return runNamed(requestRows(now)); }
+function requestRows(now) {
   // the machines that served a row, host first, each with its share of the
   // model (a fraction); the scheduler's own machine hosting holds no share
   const nodes = (...ns) => ns.map(([n, share], i) => Object.assign({ id: mac(n), name: MACHINES.find(m => m.n === n).name, role: i === 0 ? 'host' : 'helper' }, share ? { share } : {}));

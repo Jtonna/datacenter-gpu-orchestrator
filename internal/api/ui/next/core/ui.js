@@ -815,6 +815,37 @@ export function runModel(r) {
   return ctx ? short + ':' + ctx : short;
 }
 
+// runProfile(r) -> {name, model, gone}: the Model cell of a request row (the
+// reviewer's ruling, 26 Nov): the PROFILE's shown name through profileLabel
+// ("TEST - p4-qwen4b-107"), and the model's short name to put beside it
+// ("qwen3.5-4b"). A run-scoped profile ("<id>@<scope>") is named by its
+// production profile with "@<scope>". A profile the configuration no longer
+// has (the catalog is read and has no row for it) keeps its stored id, gone.
+// Before the catalog is read the id is printed as is.
+export function runProfile(r) {
+  const id = (r && (r.profile || r.requested)) || '';
+  if (!id) return { name: '', model: '', gone: false };
+  const at = id.indexOf('@');
+  const base = at > 0 ? id.slice(0, at) : id;
+  const entry = catalog.byProfile[base] || null;
+  const p = entry && (entry.profiles || []).find(x => x.id === base);
+  const file = (entry && entry.file) || (r && r.model_file) || '';
+  const model = (r && typeof r.short_name === 'string' && r.short_name) || (entry && typeof entry.short_name === 'string' && entry.short_name) || fileShort(file) || '';
+  if (!p) return { name: id, model, gone: !!catalog.models && !!(r && r.profile) };
+  return { name: profileLabel(Object.assign({ id: base }, p)) + (at > 0 ? id.slice(at) : ''), model, gone: false };
+}
+
+// runProfileCell(r) -> the Model cell's content: the shown name, then the
+// model's short name muted ("TEST - p4-qwen4b-107 · qwen3.5-4b"), or the
+// stored id with "profile no longer exists"
+export function runProfileCell(r) {
+  const x = runProfile(r);
+  if (!x.name) return DASH;
+  return [h('span', { 'data-shown': '' }, x.name),
+    x.gone ? h('span.mut', { 'data-gone': '' }, ' · profile no longer exists')
+      : x.model && x.model !== x.name ? h('span.mut', { 'data-short': '' }, ' · ' + x.model) : null];
+}
+
 // promptRate(r) -> {rate, title} for a run's "In tok/s": its prefill_tps,
 // or null with a hover when fewer than READ_MIN prompt tokens were read
 // (tokens_in minus tokens_reused): a prompt almost all reused from the cache
@@ -910,7 +941,7 @@ export function runsTable(o) {
         h('td', status),
         notStarted ? h('td.mut.qd', 'queued ', h('span.mono', clock(r.queued_at))) : h('td.mono', clock(r.started_at)),
         // o.modelClass: a page that lets the Model cell wrap (Requests: rq-model)
-        h('td', { class: 'mono' + (o.modelClass ? ' ' + o.modelClass : ''), title: runModelTitle(r) }, runModel(r) || DASH),
+        h('td', { class: 'mono' + (o.modelClass ? ' ' + o.modelClass : ''), title: runModelTitle(r) }, runProfileCell(r)),
         fig(waiting ? null : r.tokens_in, r.tokens_reused > 0 ? `${num(r.tokens_reused)} of them reused from the cache` : null, false, st === 'running' ? PROMPT_LATER : null),
         (pr => fig(waiting ? null : pr.rate, null, true, pr.title || (st === 'running' ? PROMPT_LATER : null)))(promptRate(r)),
         fig(waiting ? null : r.tokens_out, r.live ? 'Counted from the stream so far' : null),

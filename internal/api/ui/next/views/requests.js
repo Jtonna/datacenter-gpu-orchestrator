@@ -11,7 +11,7 @@
 import { h } from '../core/dom.js';
 import { registerView, navigate, href } from '../core/router.js';
 import { onCatalog, needCatalog } from '../core/catalog.js';
-import { liveView, pageHead, chips, button, runsTable, runLegend, tickRuns, skeleton, filterSelect, roleShare, runMachines } from '../core/ui.js';
+import { liveView, pageHead, chips, button, runsTable, runLegend, tickRuns, skeleton, filterSelect, roleShare, runMachines, runProfile } from '../core/ui.js';
 import { num, dateTime, clock } from '../core/format.js';
 import { requestFeed, every, onLiveTimings, liveTimings } from '../core/requests.js';
 
@@ -70,7 +70,7 @@ registerView({
         h('section.panel', { 'aria-label': 'Requests' },
           h('div.rq-bar',
             h('div', chips(STATES.map(([id, label]) => ({ id, label })), r.query.status || '', id => setQuery({ status: id }), 'State')),
-            h('div', filterSelect('Model', [{ id: '', label: 'any' }].concat(models.map(m => ({ id: m, label: m }))), r.query.profile || '', v => setQuery({ profile: v }), { bare: true }),
+            h('div', filterSelect('Model', [{ id: '', label: 'any' }].concat(models.map(m => ({ id: m, label: runProfile({ profile: m }).name || m }))), r.query.profile || '', v => setQuery({ profile: v }), { bare: true }),
               runLegend())),
           d.loading && !rows.length ? skeleton(6) : runsTable({ rows, now: Date.now(), zones: false, liveTimings: liveTimings(), modelClass: 'rq-model',
             extra: [{ label: 'Zones', cls: 'rq-zones', render: x => (x.nodes || []).length ? machineList(x.nodes) : h('span.mut', '–') },

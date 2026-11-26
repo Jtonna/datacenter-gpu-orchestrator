@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
 )
 
 // The reviewer's rulings A to G for the standard set (26 Nov), one test
@@ -290,4 +292,41 @@ func toAny(ss []string) []any {
 		out[i] = s
 	}
 	return out
+}
+
+// The labels (live's list, 26 Nov): a need derived from other contexts is
+// never "measured for this shape" (an own-slope figure is placer.Measured
+// too), and the state is that of the need on the zones the fit was decided
+// on; when that figure is not the plan's, the row names both.
+func TestStandardSet_DerivedLabelAndTwoFigures(t *testing.T) {
+	slope := &scheduler.DerivedSlope{MiBPer1kCtx: 56, Devices: 6}
+	own := scheduler.PlanReport{NeedMiB: 17627, Measured: true, DerivedSlope: slope, NeedBasis: "own slope of this model on 6 devices"}
+	if got := needSource(own); got != "derived" {
+		t.Fatalf("own slope: %q", got)
+	}
+	if got := needSource(scheduler.PlanReport{NeedMiB: 9000, Measured: true, DerivedFromCtx: 32768}); got != "derived" {
+		t.Fatalf("formula step: %q", got)
+	}
+	if got := needSource(scheduler.PlanReport{NeedMiB: 9000, Measured: true}); got != "measured for this shape" {
+		t.Fatalf("measured: %q", got)
+	}
+	for src, want := range map[scheduler.NeedSource]string{scheduler.NeedOwnSlope: "derived", scheduler.NeedDerived: "derived", scheduler.NeedRestored: "measured for this shape",
+		scheduler.NeedLearned: "measured for this shape", scheduler.NeedEstimated: "estimate"} {
+		if got := zonesSource(scheduler.CandidatePlan{ZonesNeedKnown: true, ZonesNeedSource: src}); got != want {
+			t.Errorf("zones source %q: %q, want %q", src, got, want)
+		}
+	}
+	// gemma-4-12b:256k on live: 18,499 on 6 devices in the plan, 105,440 on the 4 max_pool allows
+	gem := scheduler.PlanReport{NeedMiB: 18499, Measured: true, DerivedSlope: slope, NeedBasis: "own slope of this model on 6 devices",
+		Action: scheduler.PlanReject, Reason: "placer: need 105440 MiB (requires 113632 MiB) exceeds cluster capacity 55692 MiB"}
+	cp := scheduler.CandidatePlan{Report: gem, MayUse: 4, ByPool: true, ZonesCount: 4, ZonesNeedMiB: 105440, ZonesNeedKnown: true, ZonesNeedSource: scheduler.NeedDerived}
+	want := "/api/plan shows 18,499 MiB, the need on the count of devices its figure rests on (own slope of this model on 6 devices); " +
+		"with nothing loaded it may use at most 4 zones (the setting max_pool), and on 4 its need is 105,440 MiB (derived): the figure the fit was decided on; the plan's message quotes this one"
+	if got := zonesNeedNote(gem, cp, false); got != want {
+		t.Fatalf("note:\n%s\nwant\n%s", got, want)
+	}
+	gem.Reason = "placer: need 18499 MiB (requires 18499 MiB) does not fit the available nodes"
+	if got := zonesNeedNote(gem, cp, false); !strings.HasSuffix(got, "; the plan's message quotes 18,499 MiB, the need before a zone count is chosen") {
+		t.Fatalf("note on a does-not-fit: %s", got)
+	}
 }

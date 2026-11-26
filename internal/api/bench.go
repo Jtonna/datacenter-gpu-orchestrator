@@ -851,6 +851,9 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 	// and failures (the About page's "Background tasks" card).
 	out["tasks"] = supervise.Stats()
 	out["internal_failures_total"] = supervise.Total()
+	// the process's own memory (heap, goroutines, garbage collection), read
+	// at most once per runtimeEvery (sysruntime.go)
+	out["runtime"] = s.rt.figures(time.Now())
 	if sv := s.opts.Config; sv != nil {
 		// fields of the stored configuration this version does not know (a
 		// newer version wrote them): writes are refused unless forced

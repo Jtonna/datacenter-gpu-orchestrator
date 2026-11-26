@@ -231,13 +231,18 @@ function needsCell(m, st) {
   const r = prodNeeds(m);
   if (r) {
     return h('span.mdl-needs', { 'data-col': 'needs' }, h('span', { title: (r.lo === r.hi ? 'From its production profile: ' : 'From its production profiles: ') + needEnds(r),
-      'data-basis': r.basis, 'data-range': r.lo === r.hi ? null : '' }, needRange(r)));
+      'data-basis': r.basis, 'data-range': r.lo === r.hi ? null : '' }, needRange(r), r.basis === 'set by hand' ? HAND : null), whyNot(m));
   }
   const f = fitOf(m, st);
   let how = f.title || (f.sub ? f.sub[0].toUpperCase() + f.sub.slice(1) : null);
   if (noProd(m)) how = (how ? how + '. ' : '') + 'The smallest test configuration: no production profile yet';
-  return h('span.mdl-needs', { 'data-col': 'needs' }, f.need ? h('span', { title: how, 'data-basis': f.sub || null }, needText(f.need)) : h('span.mut', DASH));
+  return h('span.mdl-needs', { 'data-col': 'needs' }, f.need ? h('span', { title: how, 'data-basis': f.sub || null }, needText(f.need), f.kind === 'cmd' ? HAND : null) : h('span.mut', DASH), f.need ? whyNot(m) : null);
 }
+// a need written in the profile says so ("~5.3 GB, set by hand"), and the
+// reason no configuration can be placed is under it ("Runs only on
+// host-1, which is excluded"): the reviewer's ruling of 26 Nov
+const HAND = ', set by hand';
+const whyNot = m => { const no = cannotRun(m); return no ? h('span.sub.mdl-why', { 'data-why': '' }, no) : null; };
 
 // runsOnRange(m, st, r) -> "1 to 2 PS5s": the fewest zones each end needs on
 // the empty cluster (fit.budgets_mib); null when the sums are not served
@@ -364,7 +369,7 @@ function modelPanel(st, m, ps) {
           h('td', h('span', { 'data-shown': '' }, profileLabel(p)), profileLabel(p) !== p.id ? h('span.sub.mono', { title: 'The id clients send' }, p.id) : null, loadedProfiles.has(p.id) ? h('span.mdl-pill', { title: 'Loaded now' }, 'Now') : null, p.description ? h('span.sub', p.description) : null,
             p.parallel > 1 ? h('span.sub', `${num(p.parallel)} requests in parallel`) : null, hostLine(p)),
           h('td.r.mono', p.ctx ? num(p.ctx) : DASH),
-          h('td.r', p.needs_mib ? [h('span.mono', num(p.needs_mib) + ' MiB'), h('span.sub', { title: p.needs_basis || null }, p.needs_measured ? 'measured' : 'estimated')] : h('span.mut', DASH)),
+          h('td.r', p.needs_mib ? [h('span.mono', num(p.needs_mib) + ' MiB'), h('span.sub', { title: p.needs_basis || null }, needBasis(p))] : h('span.mut', DASH)),
           ttlCol ? (typeof p.ttl_s === 'number' ? h('td.r.mono', { 'data-ttl': String(p.ttl_s) }, p.ttl_s > 0 ? dur(p.ttl_s) : 'Never') : h('td.r.mut', DASH)) : null,
           h('td.r', h('button.go', { type: 'button', 'data-act': 'edit', 'aria-label': 'Edit ' + p.id, title: 'Edit it here', onclick: () => ps.edit(p.id) }, h('span.tx', 'Edit'), icon('M8 5l5 5-5 5'))));
   }

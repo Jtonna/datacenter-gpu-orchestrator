@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
@@ -116,6 +117,9 @@ func (s *Server) profileEntriesOf(ctx context.Context, cfg *config.Config) []map
 				e["needs_mib"] = rep.NeedMiB
 				e["needs_basis"] = rep.NeedBasis
 				e["needs_measured"] = rep.Measured
+				// written by hand (needs_mib in the profile): shown as such, also
+				// when the plan rejects (the reviewer, 26 Nov)
+				e["needs_written"] = strings.HasPrefix(rep.NeedBasis, string(scheduler.NeedConfigured))
 				if rep.DerivedFromCtx > 0 {
 					e["derived_from_ctx"] = rep.DerivedFromCtx // the basis says "derived from the measurement at ctx N"
 				}

@@ -71,3 +71,30 @@ func TestUIModelsOpenReadsCatalogOnce(t *testing.T) {
 			"fetchedCount": map[string]any{`^GET /api/models$`: 1, `^GET /api/models\?only=disk$`: 1}},
 	}})
 }
+
+// After the scheduler restarts (a new image), a tab that stayed open
+// reconnects to a server whose catalog versions start again. The tab kept
+// the old version, ignored the new server's full list as "older", and then
+// read every change as not fitting its copy: each change made it read the
+// whole catalog again over REST, a fresh round of every plan (live v84, the
+// owner's tab open across the switch: one more round on every page open
+// anywhere). A new server (its hello's started_at) resets the copy's
+// version, so its full list is taken and its changes apply.
+func TestUICatalogAfterAServerRestart(t *testing.T) {
+	e := newEnv(t, chatOK)
+	st := jsonOf(t, body(t, e.get("/api/status")))
+	topics := []string{"status", "event", "bench", "config", "ping", "models", "requests", "health", "groups"}
+	hello := func(at int) map[string]any {
+		return map[string]any{"type": "hello", "data": map[string]any{"started_at": at, "topics": topics, "version": "v"}}
+	}
+	full := func(v int) map[string]any {
+		return map[string]any{"type": "models", "data": map[string]any{"version": v, "models": []any{}}}
+	}
+	uiExec(t, map[string]any{"shell": "next", "app": true, "wsOpen": true, "fetch": map[string]any{"/api/profiles": map[string]any{"profiles": []any{}},
+		"/api/models": map[string]any{"version": 500, "models": []any{}}}, "cases": []any{
+		map[string]any{"name": "a change from the restarted server applies without a REST read", "route": "#/models", "status": st,
+			"ws": []any{hello(1000), full(500), hello(2000), full(3),
+				map[string]any{"type": "models", "data": map[string]any{"base": 3, "version": 4, "changed": []any{}, "removed": []any{}, "order": []any{}}}},
+			"fetchedCount": map[string]any{`^GET /api/models$`: 1}},
+	}})
+}
