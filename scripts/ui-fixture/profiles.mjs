@@ -271,7 +271,7 @@ export function standardSet(file, state, short) {
     // 256k = the trained context (not above it); only the estimate, and by it it does not fit
     row(262144, name + ':256k', Object.assign(estRow(262144), { state: 'estimate-does-not-fit', kept: false, selected: false, tickable: !all, action: 'reject', zones: [], host_memory_note: '',
       zones_need_count: 4, zones_need_mib: 30120, zones_need_source: 'estimate',
-      zones_need_note: "/api/plan shows 25,384 MiB, the need on the count of devices its figure rests on (estimated, +5% margin); with nothing loaded it may use at most 4 zones (the setting max_pool), and on 4 its need is 30,120 MiB (the file estimate): the figure the fit was decided on; the plan's message below quotes this one",
+      zones_need_note: "/api/plan shows 25,384 MiB, the need on the count of devices its figure rests on (estimated, +5% margin); with nothing loaded it may use at most 4 zones (the setting max_pool), and on 4 its need is 30,120 MiB (the file estimate): the figure the fit was decided on; the plan's message quotes this one",
       reason: 'not measured: by the file estimate it does not fit even with nothing loaded (30,120 MiB on 4 zones); the plan says: placer: need 30120 MiB (requires 31626 MiB) exceeds cluster capacity 26000 MiB' })),
   ];
   if (long) {

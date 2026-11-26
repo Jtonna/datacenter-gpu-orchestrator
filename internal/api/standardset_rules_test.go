@@ -321,12 +321,12 @@ func TestStandardSet_DerivedLabelAndTwoFigures(t *testing.T) {
 		Action: scheduler.PlanReject, Reason: "placer: need 105440 MiB (requires 113632 MiB) exceeds cluster capacity 55692 MiB"}
 	cp := scheduler.CandidatePlan{Report: gem, MayUse: 4, ByPool: true, ZonesCount: 4, ZonesNeedMiB: 105440, ZonesNeedKnown: true, ZonesNeedSource: scheduler.NeedDerived}
 	want := "/api/plan shows 18,499 MiB, the need on the count of devices its figure rests on (own slope of this model on 6 devices); " +
-		"with nothing loaded it may use at most 4 zones (the setting max_pool), and on 4 its need is 105,440 MiB (derived): the figure the fit was decided on; the plan's message below quotes this one"
+		"with nothing loaded it may use at most 4 zones (the setting max_pool), and on 4 its need is 105,440 MiB (derived): the figure the fit was decided on; the plan's message quotes this one"
 	if got := zonesNeedNote(gem, cp, false); got != want {
 		t.Fatalf("note:\n%s\nwant\n%s", got, want)
 	}
 	gem.Reason = "placer: need 18499 MiB (requires 18499 MiB) does not fit the available nodes"
-	if got := zonesNeedNote(gem, cp, false); !strings.HasSuffix(got, "; the plan's message below quotes 18,499 MiB, the need before a zone count is chosen") {
+	if got := zonesNeedNote(gem, cp, false); !strings.HasSuffix(got, "; the plan's message quotes 18,499 MiB, the need before a zone count is chosen") {
 		t.Fatalf("note on a does-not-fit: %s", got)
 	}
 }

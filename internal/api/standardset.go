@@ -519,9 +519,9 @@ func zonesNeedNote(r scheduler.PlanReport, cp scheduler.CandidatePlan, kept bool
 	// a "does not fit" the need before a count is chosen (placer.go place)
 	switch {
 	case strings.Contains(r.Reason, fmt.Sprintf("need %d MiB", cp.ZonesNeedMiB)):
-		out += "; the plan's message below quotes this one"
+		out += "; the plan's message quotes this one"
 	case strings.Contains(r.Reason, fmt.Sprintf("need %d MiB", r.NeedMiB)):
-		out += fmt.Sprintf("; the plan's message below quotes %s MiB, the need before a zone count is chosen", commas(r.NeedMiB))
+		out += fmt.Sprintf("; the plan's message quotes %s MiB, the need before a zone count is chosen", commas(r.NeedMiB))
 	}
 	return out
 }
