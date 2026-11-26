@@ -482,6 +482,8 @@ code.cmd{font-family:var(--mono);font-size:12px;color:var(--text-2);overflow-wra
 .side .x:hover{background:var(--hover-bg)}
 .side .x .ic{width:17px;height:17px}
 .side-body{flex:1 1 auto;min-height:0;overflow-y:auto;border-top:1px solid #e9eeeb;padding:16px 16px 20px 20px;display:flex;flex-direction:column;gap:var(--gap-panel)}
+/* a panel or dialog that scrolls inside keeps the wheel at its end: the page behind does not move */
+.side-body,.drawer,.dlg,.hp{overscroll-behavior:contain}
 .side .sf{margin-top:auto;flex:none;display:flex;align-items:center;gap:8px;padding:14px 16px 16px 20px;border-top:1px solid #e9eeeb}
 @media(max-width:700px){.side-head{padding:12px 12px 10px 14px}.side-body{padding:12px 14px 24px}}
 

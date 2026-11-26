@@ -364,3 +364,37 @@ func TestUINextBenchPageOpenReads(t *testing.T) {
 			"fetchedCount": map[string]any{`^GET /api/bench/runs\b`: 1, `^GET /api/bench/results/models`: 0}},
 	}})
 }
+
+// Panels and dialogs that scroll inside keep the wheel to themselves at
+// their end (overscroll-behavior: contain): on live the wheel went on to
+// scroll the list behind the group panel by 2,956 px once the panel reached
+// its last entry. The scrolling bodies, on Models, Zones and Benchmarks
+// alike (core/panel.js, core/ui.js):
+//   - .side-body: the side panel's body (a model, a deleted model, a zone, a
+//     group, a run, a report);
+//   - .drawer: the drawer (core/panel.js);
+//   - .dlg: every dialog;
+//   - .hp: the System health popup (it scrolls on a narrow window).
+// A box that scrolls inside one of them (a list in a dialog) is left to
+// chain to it, so the wheel over it still moves the panel.
+func TestUINextScrollingPanelsKeepTheWheel(t *testing.T) {
+	css, err := os.ReadFile(filepath.Join("ui", "next", "app.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(string(css), "")
+	contain := map[string]bool{}
+	for _, rule := range regexp.MustCompile(`(?s)([^{}]*)\{([^{}]*)\}`).FindAllStringSubmatch(plain, -1) {
+		if !strings.Contains(strings.ReplaceAll(rule[2], " ", ""), "overscroll-behavior:contain") {
+			continue
+		}
+		for _, sel := range strings.Split(rule[1], ",") {
+			contain[strings.TrimSpace(sel)] = true
+		}
+	}
+	for _, sel := range []string{".side-body", ".drawer", ".dlg", ".hp"} {
+		if !contain[sel] {
+			t.Errorf("%s scrolls inside but lets the wheel go on to the page behind: want overscroll-behavior:contain", sel)
+		}
+	}
+}

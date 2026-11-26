@@ -59,6 +59,10 @@ const (
 	runsWindow         = time.Hour
 	runsProblemMin     = 5 // failures in the hour, at least, for problem
 	healthStatusWait   = time.Second
+	// healthReuse: a status read this recently (by the status loop, every
+	// 2 s while a page is open) is what health judges, instead of a read of
+	// its own
+	healthReuse = 3 * time.Second
 )
 
 // HealthRow is one row of the popup.
@@ -119,6 +123,10 @@ type healthState struct {
 	// the evaluations of the push.
 	wake  chan struct{}
 	evals atomic.Int64
+	// asked counts the scheduler status reads health made itself (a status
+	// read by the status loop or GET /api/status within healthReuse is used
+	// instead)
+	asked atomic.Int64
 	// mu guards what one evaluation of the push owns: the signature of
 	// the last frame sent and the clients waiting for their first frame.
 	mu      sync.Mutex
@@ -251,7 +259,15 @@ func healthSig(sum HealthSummary) string {
 // healthStatus is the scheduler's status, or the last good one (fresh
 // false, nil before the first) when the loop does not answer in a second.
 func (s *Server) healthStatus(ctx context.Context) (st *scheduler.Status, at time.Time, fresh bool) {
+	// the status the live channel's loop (or GET /api/status) read a moment
+	// ago: one read of the scheduler's loop serves both topics
+	if last, lastAt := s.health.last.Load(), s.health.lastAt.Load(); last != nil {
+		if now := s.opts.Now(); now.Sub(time.UnixMilli(lastAt)) <= healthReuse {
+			return last, time.UnixMilli(lastAt), true
+		}
+	}
 	if s.sched != nil {
+		s.health.asked.Add(1)
 		c, cancel := context.WithTimeout(ctx, healthStatusWait)
 		v, err := s.sched.Status(c)
 		cancel()

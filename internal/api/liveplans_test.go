@@ -122,6 +122,13 @@ type liveEnv struct {
 // a fake clock for the catalog's gaps (minGap: 0 keeps catalogMinGap).
 func newLiveEnv(t *testing.T, minGap time.Duration) *liveEnv {
 	t.Helper()
+	return newLiveEnvWith(t, minGap, nil)
+}
+
+// newLiveEnvWith is newLiveEnv with more of the API's options (say a history
+// store) set by more.
+func newLiveEnvWith(t *testing.T, minGap time.Duration, more func(*Options)) *liveEnv {
+	t.Helper()
 	parse := func(y string) *config.Config {
 		cfg, err := config.ParseWithOptions([]byte(y), config.Options{FileExists: func(string) bool { return true }})
 		if err != nil {
@@ -159,9 +166,13 @@ func newLiveEnv(t *testing.T, minGap time.Duration) *liveEnv {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { sched.Run(ctx); close(done) }()
-	e.api = New(cfg, sched, Options{Logger: slog.New(slog.NewTextHandler(e.logs, nil)), PingInterval: time.Second, Now: time.Now,
+	o := Options{Logger: slog.New(slog.NewTextHandler(e.logs, nil)), PingInterval: time.Second, Now: time.Now,
 		catalogClock:  func() time.Time { clockMu.Lock(); defer clockMu.Unlock(); return clock },
-		catalogMinGap: minGap})
+		catalogMinGap: minGap}
+	if more != nil {
+		more(&o)
+	}
+	e.api = New(cfg, sched, o)
 	e.front = httptest.NewServer(e.api)
 	t.Cleanup(func() {
 		e.front.CloseClientConnections()
