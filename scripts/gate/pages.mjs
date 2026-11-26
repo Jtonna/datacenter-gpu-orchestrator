@@ -13,7 +13,23 @@
 // --dry-run and the tests need no browser and no install.
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { USAGE, parseArgs, writeVerdict, consoleCounts, apiRoutes, RouteQueue, fileName, squeezeVerdict, measurePage, pageLine } from './pages-lib.mjs';
+import { USAGE, parseArgs, writeVerdict, consoleCounts, apiRoutes, RouteQueue, fileName, squeezeVerdict, measurePage, pageLine, VIEWS } from './pages-lib.mjs';
+
+// Animations and transitions off, so a picture never catches a page mid-move.
+const STILL = `(() => {
+  const css = '*,*::before,*::after{animation-duration:0s!important;animation-delay:0s!important;animation-iteration-count:1!important;transition:none!important;caret-color:transparent!important;scroll-behavior:auto!important}';
+  const add = () => { const s = document.createElement('style'); s.textContent = css; (document.head || document.documentElement).appendChild(s); };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', add); else add();
+})();`;
+
+// settle: the network idle (at most 8 s: a page with a live socket may never
+// be), the fonts in, two frames drawn, then the caller's wait.
+async function settle(page, wait) {
+  try { await page.waitForLoadState('networkidle', { timeout: 8000 }); } catch { /* a live page: go on */ }
+  await page.evaluate(() => document.fonts.ready.then(() => true));
+  await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+  await page.waitForTimeout(wait);
+}
 
 async function getJSON(base, path) {
   const r = await fetch(base + path, { headers: { Accept: 'application/json' } });
@@ -33,6 +49,7 @@ async function loadPlaywright() {
 async function drawOne(ctx, o, route, width) {
   const page = await ctx.newPage();
   await page.setViewportSize({ width, height: o.height });
+  await page.addInitScript({ content: STILL });
   const aborted = new Set(), blocked = [], errors = [];
   await page.route('**/*', req => {
     const r = req.request();
@@ -50,7 +67,7 @@ async function drawOne(ctx, o, route, width) {
   let links = [];
   try {
     await page.goto(o.base + '/ui/#/' + route, { waitUntil: 'load', timeout: 60000 });
-    await page.waitForTimeout(o.wait);
+    await settle(page, o.wait);
     const m = await page.evaluate(measurePage, { minChars: o.minChars, verdict: squeezeVerdict.toString() });
     links = await page.evaluate(() => [...document.querySelectorAll('a[href*="#/"]')].map(a => a.getAttribute('href')));
     const png = join(o.out, fileName(route, width));
@@ -71,19 +88,20 @@ async function main() {
   if (o.help) { console.log(USAGE); return 0; }
   const found = await apiRoutes(p => getJSON(o.base, p));
   const q = new RouteQueue(found.ids, o.maxPages);
-  // the shell's views: what /ui/ redirects to and every link of its navigation, read in the browser
-  q.add('overview');
-  for (const r of found.routes) q.add(r);
+  // the UI's views, then the detail routes of the data; the links of each drawn page are added as it is drawn
+  for (const r of VIEWS) q.add(r, true);
+  for (const r of found.routes) q.add(r, true);
   if (o.dryRun) {
     for (const n of found.notes) console.log('note: ' + n);
     for (const it of q.items) console.log(`ROUTE #/${it.route}  (shape ${it.shape})`);
-    console.log(`dry run: ${q.items.length} routes from the API and the start page; the shell's links and the links of each page are added while drawing`);
+    console.log(`dry run: ${q.items.length} routes: the UI's views and the detail routes from the API; the links of each page are added while drawing`);
     return 0;
   }
   const { chromium } = await loadPlaywright();
   await mkdir(o.out, { recursive: true });
-  const browser = await chromium.launch();
-  const ctx = await browser.newContext({ deviceScaleFactor: 1 });
+  const browser = await chromium.launch({ args: ['--font-render-hinting=none', '--disable-lcd-text', '--force-color-profile=srgb', '--disable-gpu'] });
+  const ctx = await browser.newContext({ deviceScaleFactor: 1, colorScheme: 'light', reducedMotion: 'reduce', locale: 'en-US',
+    timezoneId: 'UTC', serviceWorkers: 'block' });
   const pages = [];
   try {
     for (let i = 0; i < q.items.length; i++) {

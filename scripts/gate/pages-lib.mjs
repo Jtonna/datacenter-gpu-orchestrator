@@ -7,15 +7,17 @@
 export const USAGE = `pages.mjs: draw every page of the scheduler's web UI, read-only.
 
 usage: node scripts/gate/pages.mjs --base URL [--out DIR] [--widths 1536,1280]
-         [--height 900] [--wait MS] [--max-pages N] [--min-chars N]
+         [--height 864] [--wait MS] [--max-pages N] [--min-chars N]
          [--allow-post PATH ...] [--strict] [--dry-run]
 
 --base URL       a running scheduler, http://HOST:PORT. Point it at a COPY:
                  the harness does not check that the server is not live.
 --out DIR        the PNGs and summary.json (default: pages-out)
 --widths LIST    viewport widths in CSS pixels (default 1536,1280)
---height N       the viewport height; each picture is the full page (900)
---wait MS        how long a page may draw before it is measured (2500)
+--height N       the viewport height; each picture is the full page (864)
+--wait MS        after the network is idle (at most 8 s), the fonts are in and
+                 two frames are drawn, how long more a page may draw before
+                 it is measured (1500)
 --max-pages N    the most routes drawn (default 120)
 --min-chars N    the squeezed-text rule's threshold in characters (12)
 --allow-post P   let a POST to the path P through (repeatable), for a dry-run
@@ -25,11 +27,18 @@ usage: node scripts/gate/pages.mjs --base URL [--out DIR] [--widths 1536,1280]
                  or logs a console error (default: report only, exit 0)
 --dry-run        list the routes found from the API and the shell; no pictures
 
-Routes: the shell's own links (its navigation), the detail routes computed from
-the API's answers (the first profile, model, trash item, run, group, zone),
-and every link found on a drawn page whose shape is new. A shape is the route
-with each data id replaced by *: #/profiles/<id> is drawn once, for the first
-id found, not once per profile.
+Routes: every view of the UI (a fixed list of its addresses, checked by a
+test against the views the UI registers); the detail routes computed from the
+API's answers (the first hand-made profile, the first model, the first trash
+item, the first three groups, a zone, and of the runs: the newest, a failed
+one, a group's, a direct benchmark's and a pinned or noted one, with their
+reports); and every link found on a drawn page whose shape is new. A shape is
+the route with each data id replaced by *: a crawled #/profiles/<id> is drawn
+once, not once per profile. A view part of the query (?show=, ?tab=) is
+kept, so each view of a page is drawn.
+
+Pages are drawn in a light theme with motion reduced and animations off, in
+en-US and UTC, so two runs give the same pictures.
 
 Per page and width it measures:
   sideways        the page scrolls sideways (documentElement.scrollWidth is
@@ -38,10 +47,11 @@ Per page and width it measures:
                   (scrollWidth or scrollHeight beyond the box while the
                   overflow is hidden, clipped or ellipsed; a clip whose full
                   text is in a title attribute is counted apart, as titled)
-                  or whose box is narrower than --min-chars characters (at
-                  half the font size per character) while its text wraps onto
-                  two lines or more; a screen-reader-only text (a box of
-                  2 px or less, or a CSS clip) is not judged
+                  or, for a text of at least twice --min-chars characters,
+                  whose box is narrower than --min-chars characters (at half
+                  the font size per character) while it wraps onto three lines
+                  or more; a screen-reader-only text (a box of 2 px or less,
+                  or a CSS clip) is not judged
   console_errors  console errors and uncaught exceptions, less the "failed to
                   load" errors of the writes the harness aborted itself
   blocked_writes  the non-GET requests the harness aborted
@@ -51,7 +61,7 @@ Exit 0; 1 with --strict and a finding; 2 when the run could not be made.
 `;
 
 export function parseArgs(argv) {
-  const o = { base: '', out: 'pages-out', widths: [1536, 1280], height: 900, wait: 2500, maxPages: 120, minChars: 12,
+  const o = { base: '', out: 'pages-out', widths: [1536, 1280], height: 864, wait: 1500, maxPages: 120, minChars: 12,
     allowPost: [], strict: false, dryRun: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -111,12 +121,27 @@ export function consoleCounts(msg, abortedUrls) {
 
 // ---------- routes ----------
 
-// PANEL_PARAMS: query parts that open a panel on a datum (a model, a trash
-// item, a zone, a profile); kept in a route. Other query parts (filters,
-// period, page) are dropped.
+// Query parts kept in a route. PANEL_PARAMS open a panel on a datum (a model,
+// a trash item, a zone, a profile): their values are ids, a star in a shape.
+// VIEW_PARAMS choose a view of a page (the Runs page's ?show=load-times, a
+// ?tab=): their values are words, kept in a shape, so each view is drawn.
+// PAGE_PARAMS (?page=2) are kept, a star in a shape. Every other query part
+// (filters, sort, period) is dropped.
 export const PANEL_PARAMS = ['model', 'item', 'zone', 'profile', 'session', 'suite'];
+export const VIEW_PARAMS = ['show', 'tab', 'result'];
+export const PAGE_PARAMS = ['page'];
+const KEPT = [...PANEL_PARAMS, ...VIEW_PARAMS, ...PAGE_PARAMS];
 
-// parseRoute: '#/models/a.gguf?model=x&page=2' -> {view, rest, query}
+// VIEWS: the routes drawn whatever the data. They are the UI's addresses,
+// not data: every view the new UI registers (a test reads them from
+// internal/api/ui/next/views and fails when one is missing here), the
+// shell's own pages, and the old addresses it still answers. The crawl adds
+// every other link it finds.
+export const VIEWS = ['overview', 'requests', 'report', 'queue', 'activity', 'zones', 'nodes', 'models', 'models/deleted',
+  'benchmarks', 'benchmarks/runs', 'benchmarks/all', 'benchmarks/trends', 'benchmarks/runs?result=failed', 'benchmarks/runs?page=2',
+  'mcp', 'profiles', 'profiles/new', 'test-profiles', 'tiers', 'placement', 'settings', 'audit', 'audit/revisions', 'about'];
+
+// parseRoute: '#/models/a.gguf?model=x&period=day' -> {view, rest, query}
 export function parseRoute(href) {
   const i = href.indexOf('#/');
   if (i < 0) return null;
@@ -125,7 +150,7 @@ export function parseRoute(href) {
   const parts = path.split('/').filter(Boolean).map(s => { try { return decodeURIComponent(s); } catch { return s; } });
   if (!parts.length) return null;
   const query = {};
-  for (const [k, v] of new URLSearchParams(qs || '')) if (PANEL_PARAMS.includes(k) && v) query[k] = v;
+  for (const [k, v] of new URLSearchParams(qs || '')) if (KEPT.includes(k) && v) query[k] = v;
   return { view: parts[0], rest: parts.slice(1), query };
 }
 
@@ -135,11 +160,12 @@ export function routeString(r) {
   return path + (q ? '?' + q : '');
 }
 
-// shapeOf: the route with each id replaced by *: a segment is an id when the
-// API listed it (ids) or when it holds a digit.
+// shapeOf: the route with each id replaced by *: a path segment is an id
+// when the API listed it (ids) or when it holds a digit; a panel or page
+// value is always one; a view value is kept.
 export function shapeOf(r, ids) {
   const seg = s => (ids.has(s) || /\d/.test(s) ? '*' : s);
-  const q = Object.keys(r.query).sort().map(k => k + '=*').join('&');
+  const q = Object.keys(r.query).sort().map(k => k + '=' + (VIEW_PARAMS.includes(k) ? seg(r.query[k]) : '*')).join('&');
   return [r.view, ...r.rest.map(seg)].join('/') + (q ? '?' + q : '');
 }
 
@@ -156,35 +182,55 @@ const pick = (o, keys) => {
   for (const k of keys) if (o && o[k] != null && o[k] !== '') return String(o[k]);
   return null;
 };
+const enc = encodeURIComponent;
+const runRef = r => pick(r, ['number', 'id', 'run_id']);
 
 // SOURCES: the detail routes computed from the API. Each reads one endpoint
-// and makes routes of its FIRST item; every item's id joins the ids that
-// shapes are made with. An endpoint that fails is skipped (noted).
+// and names routes of chosen items (the first, and for runs the first of
+// each kind the old gate drew: the newest, a failed one, a group's, a direct
+// benchmark's, a pinned or noted one, each with its report); every item's
+// id joins the ids that shapes are made with. An endpoint that fails is
+// skipped, with a note. These routes are drawn even when their shape was
+// drawn already: they show different data.
 export const SOURCES = [
-  { path: '/api/profiles', ids: ['id'], routes: (first, all) => {
-    const p = all.find(x => !x.generated) || first;
+  { path: '/api/profiles', ids: ['id'], routes: items => {
+    const p = items.find(x => !x.generated) || items[0];
     const id = pick(p, ['id']);
-    return id ? ['profiles/' + encodeURIComponent(id), 'placement/' + encodeURIComponent(id), 'profiles/new'] : ['profiles/new'];
+    return id ? ['profiles/' + enc(id), 'placement/' + enc(id), 'profiles?profile=' + enc(id)] : [];
   } },
-  { path: '/api/models', ids: ['key', 'file'], routes: first => {
-    const k = pick(first, ['key', 'file']);
-    return k ? ['models/' + encodeURIComponent(k), 'models?model=' + encodeURIComponent(k)] : [];
+  { path: '/api/models', ids: ['key', 'file'], routes: items => {
+    const k = pick(items[0], ['key', 'file']);
+    return k ? ['models/' + enc(k), 'models?model=' + enc(k)] : [];
   } },
-  { path: '/api/models/trash', ids: ['trash_id', 'id'], routes: first => {
-    const id = pick(first, ['trash_id', 'id']);
-    return ['models/deleted'].concat(id ? ['models/deleted?item=' + encodeURIComponent(id)] : []);
+  { path: '/api/models/trash', ids: ['trash_id', 'id'], routes: items => {
+    const id = pick(items[0], ['trash_id', 'id']);
+    return id ? ['models/deleted?item=' + enc(id)] : [];
   } },
-  { path: '/api/bench/runs', ids: ['number', 'id', 'run_id'], routes: first => {
-    const n = pick(first, ['number', 'id', 'run_id']);
-    return ['benchmarks/runs'].concat(n ? ['benchmarks/runs/' + encodeURIComponent(n)] : []);
+  { path: '/api/bench/runs?limit=200', ids: ['number', 'id', 'run_id'], routes: items => {
+    const out = [];
+    const run = (r, report) => {
+      const n = runRef(r);
+      if (!n) return;
+      out.push('benchmarks/runs/' + enc(n));
+      if (report) out.push('benchmarks/runs/' + enc(n) + '/0');
+    };
+    const failed = r => ['failed', 'error'].includes(String(r.result || r.state)) || (r.counts && r.counts.failed);
+    run(items[0], true);
+    run(items.find(failed), true);
+    run(items.find(r => r.kind && r.kind !== 'benchmark'), true);
+    run(items.find(r => r.kind === 'benchmark'), false);
+    run(items.find(r => r.note || r.pinned), false);
+    return out;
   } },
-  { path: '/api/bench/groups', ids: ['id', 'suite_id'], routes: first => {
-    const g = pick(first, ['id', 'suite_id']);
-    return g ? ['benchmarks/all/' + encodeURIComponent(g)] : [];
+  { path: '/api/bench/groups', ids: ['id', 'suite_id'], routes: items => {
+    const out = items.slice(0, 3).map(g => pick(g, ['id', 'suite_id'])).filter(Boolean).map(g => 'benchmarks/all/' + enc(g));
+    const g0 = pick(items[0], ['id', 'suite_id']);
+    if (g0) out.push('benchmarks/suite/' + enc(g0)); // the old address, still answered
+    return out;
   } },
-  { path: '/api/nodes', ids: ['id', 'hostname', 'name'], routes: first => {
-    const z = pick(first, ['hostname', 'name', 'id']);
-    return z ? ['zones/' + encodeURIComponent(z)] : [];
+  { path: '/api/nodes', ids: ['id', 'hostname', 'name'], routes: items => {
+    const z = pick(items[0], ['hostname', 'name', 'id']);
+    return z ? ['zones/' + enc(z)] : [];
   } },
   { path: '/api/config/profiles', ids: [], routes: () => [] },
 ];
@@ -200,22 +246,25 @@ export async function apiRoutes(get) {
     for (const it of items) for (const k of ['id', 'key', 'file', 'trash_id', 'number', 'run_id', 'suite_id', 'hostname', 'name']) {
       if (it && it[k] != null && it[k] !== '' && (s.ids.includes(k) || s.path === '/api/config/profiles')) ids.add(String(it[k]));
     }
-    routes.push(...s.routes(items[0] || null, items));
+    routes.push(...s.routes(items));
   }
   return { routes, ids, notes };
 }
 
-// RouteQueue keeps the routes to draw: one per shape, in the order found.
+// RouteQueue keeps the routes to draw, in the order found: a seed (a view,
+// a route from the API) unless the same route is in already; a crawled link
+// only when its shape is new.
 export class RouteQueue {
-  constructor(ids, max) { this.ids = ids; this.max = max; this.shapes = new Set(); this.items = []; this.skipped = 0; }
-  add(href) {
+  constructor(ids, max) { this.ids = ids; this.max = max; this.shapes = new Set(); this.routes = new Set(); this.items = []; this.skipped = 0; }
+  add(href, seed = false) {
     const r = parseRoute(href.startsWith('#') ? href : '#/' + href);
     if (!r) return false;
-    const shape = shapeOf(r, this.ids);
-    if (this.shapes.has(shape)) return false;
+    const route = routeString(r), shape = shapeOf(r, this.ids);
+    if (this.routes.has(route) || (!seed && this.shapes.has(shape))) return false;
     if (this.items.length >= this.max) { this.skipped++; return false; }
     this.shapes.add(shape);
-    this.items.push({ route: routeString(r), shape });
+    this.routes.add(route);
+    this.items.push({ route, shape, from: seed ? 'seed' : 'link' });
     return true;
   }
 }
@@ -235,8 +284,11 @@ export function fileName(route, width) {
 // Only texts of at least minChars characters are judged, and not a text
 // hidden on purpose for screen readers (a box of 2 px or less, or a clip).
 // Returns null (fine), 'clipped', 'titled' (clipped, with the full text in a
-// title) or 'narrow': a box narrower than minChars characters (half the font
-// size each) whose text wraps onto two lines or more.
+// title) or 'narrow': a text of at least 2 x minChars characters in a box
+// narrower than minChars characters (half the font size each) that wraps
+// onto three lines or more. (The old gate's rule was 25 characters in a box
+// under 90 px and over 60 px tall: the same idea in fixed pixels; this one
+// follows the font.)
 export function squeezeVerdict(m, minChars) {
   const text = (m.text || '').replace(/\s+/g, ' ').trim();
   if (text.length < minChars || m.width <= 2 || m.height <= 2 || m.visuallyHidden) return null;
@@ -245,7 +297,7 @@ export function squeezeVerdict(m, minChars) {
   const clippedY = m.scrollHeight > m.clientHeight + 1 && hides(m.overflowY);
   if (clippedX || clippedY) return m.hasTitle ? 'titled' : 'clipped';
   const font = m.fontSizePx || 16, charPx = font * 0.5, line = m.lineHeightPx || font * 1.2;
-  if (m.width < minChars * charPx && m.height >= line * 1.8) return 'narrow';
+  if (text.length >= 2 * minChars && m.width < minChars * charPx && m.height >= line * 2.8) return 'narrow';
   return null;
 }
 
