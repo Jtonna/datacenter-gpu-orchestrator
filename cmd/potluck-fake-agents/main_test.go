@@ -26,6 +26,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/pool"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/release"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/scheduler"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/ports"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/testutil/progtree"
 )
 
@@ -105,13 +106,14 @@ func startScheduler(t *testing.T, agentPort, workerPort int) string {
 	return srv.URL
 }
 
+// freeLoopbackPort is a port on the second loopback address that a fake
+// agent binds later: outside the ephemeral range (testutil/ports).
 func freeLoopbackPort(t *testing.T) int {
-	l, err := net.Listen("tcp", "127.0.0.2:0")
+	p, err := ports.FreeOn("127.0.0.2")
 	if err != nil {
 		t.Skipf("no second loopback address on this machine: %v", err)
 	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
+	return p
 }
 
 func getMap(t *testing.T, url string) map[string]any {
@@ -242,7 +244,21 @@ func TestAcceptLaunches(t *testing.T) {
 	if resp.StatusCode != http.StatusAccepted {
 		t.Fatalf("launch: %d", resp.StatusCode)
 	}
-	eventually(t, "the fake worker ready", func() bool { return f.Agents[0].LaunchState().State == agentproto.StateReady })
+	// The fake agent marks the launch ready once its worker port answers a
+	// TCP dial (fakeagent becomeReady): 0.16 s alone, but under a full
+	// parallel race run the machine can stall for seconds. Wait on that
+	// condition with a generous bound, and say the last state seen.
+	var last agentproto.LaunchState
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		if last = f.Agents[0].LaunchState(); last.State == agentproto.StateReady {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the fake worker did not become ready in 60 s (launch l1 state %q, port %d): the agent dials its worker port before it marks the launch ready", last.State, last.Port)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // --from-status mirrors the headline temperature of each node's stats; a

@@ -20,11 +20,13 @@ import (
 
 const testHostKey = "k0123456789abcdef0123456789abcde"
 
-// hostAgent is a node whose agent takes host launches.
+// hostAgent is a node whose agent takes host launches. Its host launch
+// binds port 0 and reports the port (fakeagent.AutoPort): a port picked
+// first and bound later could be taken in between by a parallel package
+// (port_in_use, once in a full parallel race run).
 func (r *rig) hostAgent(n int, mod ...func(*fakeagent.Agent)) *fakeagent.Agent {
-	port := freePort(r.t)
 	return r.agent(n, append([]func(*fakeagent.Agent){func(a *fakeagent.Agent) {
-		a.Capabilities, a.HostPort = []string{agentproto.CapHostLaunch}, port
+		a.Capabilities, a.HostPort = []string{agentproto.CapHostLaunch}, fakeagent.AutoPort
 	}}, mod...)...)
 }
 
@@ -82,7 +84,7 @@ func TestHostLaunchServesWithItsKeyAndStops(t *testing.T) {
 		t.Fatalf("%+v", ls)
 	}
 	addr := instance.AddrOf(ch)
-	if addr != net.JoinHostPort(a.Addr, strconv.Itoa(a.HostPort)) || instance.APIKeyOf(ch) != testHostKey || ch.PID() != 0 {
+	if addr != net.JoinHostPort(a.Addr, strconv.Itoa(a.HostPortNow())) || instance.APIKeyOf(ch) != testHostKey || ch.PID() != 0 {
 		t.Fatal(addr)
 	}
 	// The buffer sizes come from the copied launch log.
