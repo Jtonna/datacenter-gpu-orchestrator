@@ -273,6 +273,23 @@ func (c *schedCore) placedStatus(pl core.Placement) []PlacedNodeStatus {
 	return out
 }
 
+// planNeed fills r's memory need from p's need as every fit decision sees it
+// (written in the profile, learned, or estimated). A plan that rejects or
+// backs off before placing carries it too: a known need is shown whatever
+// the plan says (the reviewer, 26 Nov: the "program on this machine" rows
+// showed a dash while the local machine was excluded). An unknown need
+// leaves r as it is and returns the error.
+func (c *schedCore) planNeed(r *PlanReport, p *core.Profile) (placer.Request, NeedInfo, error) {
+	req, info, err := c.request(p)
+	if err != nil {
+		return req, info, err
+	}
+	r.NeedMiB, r.Measured = info.Need.MiB, info.Need.Measured
+	r.FitNeedMiB, r.NeedBasis, r.DerivedFromCtx, r.DerivedSlope = info.Need.WithMargin(), c.needBasis(info), info.DerivedFromCtx, info.Slope
+	r.NeedBasis += c.writtenNeedDropped(p) // scoped.go
+	return req, info, nil
+}
+
 // dryPlan is POST /api/plan: what a request for profile would meet now.
 // It changes nothing (the need provider's result may be cached).
 func (c *schedCore) dryPlan(profile string) PlanReport {
@@ -317,28 +334,29 @@ func (c *schedCore) dryPlanOf(profile string, p *core.Profile) (r PlanReport) {
 	}
 	if b, on := c.backoffActive(profile); on {
 		r.Action, r.Reason = PlanBackoff, fmt.Sprintf("backed off until %s", b.until.Format("15:04:05"))
+		c.planNeed(&r, p)
 		return r
 	}
 	if why, entry, bad := c.forcedExclusion(p); bad && c.insts[profile] == nil {
 		r.Action, r.Reason, r.ExcludedBy = PlanReject, why, entry
+		c.planNeed(&r, p)
 		return r
 	}
 	if fe := c.forcedPausedErr(p); fe != nil && c.insts[profile] == nil {
 		r.Action, r.Reason = PlanReject, fe.Message
+		c.planNeed(&r, p)
 		return r
 	}
 	if fe := c.forcedGoneErr(p); fe != nil && c.insts[profile] == nil {
 		r.Action, r.Reason = PlanReject, fe.Message
+		c.planNeed(&r, p)
 		return r
 	}
-	req, info, err := c.request(p)
+	req, _, err := c.planNeed(&r, p)
 	if err != nil {
 		r.Action, r.Reason = PlanReject, "memory need unknown: "+err.Error()
 		return r
 	}
-	r.NeedMiB, r.Measured = info.Need.MiB, info.Need.Measured
-	r.FitNeedMiB, r.NeedBasis, r.DerivedFromCtx, r.DerivedSlope = info.Need.WithMargin(), c.needBasis(info), info.DerivedFromCtx, info.Slope
-	r.NeedBasis += c.writtenNeedDropped(p) // scoped.go
 	if c.insts[profile] == nil {
 		if fe := c.forcedNeverFits(p); fe != nil {
 			r.Action, r.Reason = PlanReject, fe.Message
