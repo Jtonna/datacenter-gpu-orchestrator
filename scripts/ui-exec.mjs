@@ -66,7 +66,8 @@
 //               live channel's last subscribe names, or not (with top-level "wsOpen")}],
 //    (fetch answers: "POST /api/agents" before "/api/agents"; {"$status": 409, "$body": {...}} for an error;
 //     {"$match": [["regexp", answer], ...]}: the first regexp that matches the request line;
-//     {"$hang": true}: the request never answers, to draw a page while it waits)
+//     {"$hang": true}: the request never answers, to draw a page while it waits;
+//     {"$after": "regexp", "$then": answer, "$before": answer}: $then once an earlier request line matched)
 //     "METHOD /path?query body" picks the answer, none answers 404: one route, answers by query or body)
 //    "wsOpen": true,                               // the live channel's socket opens (with "app")
 //    "now": "2026-11-24T06:30:00Z",               // the clock starts there (Date.now, new Date())
@@ -412,6 +413,8 @@ def('fetch', async (u, opts = {}) => {
   // an answer by "METHOD /path" first, then by path; {"$status": 409, "$body": {...}} answers an error
   const has = k => Object.prototype.hasOwnProperty.call(fetchAnswers, k);
   let ans = has(method + ' ' + p) ? fetchAnswers[method + ' ' + p] : has(p) ? fetchAnswers[p] : undefined;
+  // {"$after": "regexp", "$then": answer, "$before": answer}: $then once an earlier request of the case matched (a page that reads again after a write)
+  if (ans && typeof ans === 'object' && typeof ans.$after === 'string') ans = fetchedFull.slice(0, -1).some(l => new RegExp(ans.$after).test(l)) ? ans.$then : ans.$before;
   if (ans && typeof ans === 'object' && Array.isArray(ans.$match)) {
     const line = method + ' ' + p + full.search + (opts.body != null ? ' ' + String(opts.body) : '');
     const hit = ans.$match.find(([re]) => new RegExp(re).test(line));

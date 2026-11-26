@@ -4,6 +4,7 @@
 //
 //   checking  GET /api/models/{file}/standard-set (nothing changes)
 //   ready     the table: each candidate context with its id, kept or not
+//             (kept = it fits on an idle fleet; the plan of now beside it)
 //             (and the plan's reason), the zones it would use, its need and
 //             where that figure comes from, the every-zone sentence, the
 //             memory on the hosting machine, and "exists, kept as it is";
@@ -38,12 +39,13 @@ function rowsTable(set) {
       const notes = [
         !r.kept && r.reason ? h('div', { 'data-why': '' }, h('b', 'Not kept: '), plainReason(r.reason)) : null,
         r.uses_every_zone ? h('div.warn-t', { 'data-every-zone': '' }, r.every_zone_note) : null,
+        r.now_note ? h('div', { 'data-now': r.action }, h('b', 'Now: '), r.now_note) : null,
         r.host_memory_note ? h('div', { 'data-host-memory': r.host_memory_counted ? 'counted' : 'not-counted' }, r.host_memory_note) : null,
       ].filter(Boolean);
       return [h('tr', { key: r.id, 'data-std': r.id, 'data-kept': String(!!r.kept), 'data-exists': String(!!r.exists), class: notes.length ? 'has-notes' : null },
       h('td.std-id', h('span.mono', r.id), r.default ? h('span.sub', 'the default context') : null),
       h('td.r.mono', ctxText(r.ctx)),
-      h('td', r.kept ? badge('Kept', 'ready', r.reason ? plainReason(r.reason) : 'It would load: ' + r.action) : badge('Not kept', 'fail')),
+      h('td', r.kept ? badge('Kept', 'ready', 'It fits with nothing else loaded') : badge('Not kept', 'fail')),
       h('td', r.zones.length ? plural(r.zones.length, 'zone') : h('span.mut', '–'), r.uses_every_zone ? h('span.sub.warn-t', 'every zone') : null),
       h('td.r', r.need_mib != null ? h('span.mono', num(r.need_mib) + ' MiB') : h('span.mut', 'not known'),
         h('span.sub', { 'data-source': r.need_source, title: r.need_basis || null }, r.need_mib != null ? SOURCE[r.need_source] || r.need_source : null)),

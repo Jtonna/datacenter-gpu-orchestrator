@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -84,7 +86,8 @@ func ssEnv(t *testing.T) (*env, *cfgsvc.Service, *cfgstore.Store) {
 	}
 	up := httptest.NewServer(okUpstream())
 	t.Cleanup(up.Close)
-	e := &env{t: t, cfg: cfg, upstream: up, logs: &syncBuf{}, clock: time.Date(2026, 11, 26, 10, 0, 0, 0, time.UTC), launcher: &fakeLauncher{}}
+	port, _ := strconv.Atoi(up.URL[strings.LastIndex(up.URL, ":")+1:])
+	e := &env{t: t, cfg: cfg, upstream: up, logs: &syncBuf{}, clock: time.Date(2026, 11, 26, 10, 0, 0, 0, time.UTC), launcher: &fakeLauncher{port: port}}
 	svc := cfgsvc.New(context.Background(), cfgsvc.Options{Store: cs, Parse: config.Options{FileExists: func(string) bool { return true }},
 		Apply:    func(c *config.Config) { e.sched.ApplyConfig(c) },
 		OnChange: func(ev cfgsvc.ChangeEvent) { e.api.PublishConfig(ev) }})
@@ -326,3 +329,44 @@ func TestStandardSet_HostMemorySentence(t *testing.T) {
 }
 
 var _ = http.StatusOK
+
+// Kept is decided on an idle fleet (team-lead ruling, 26 Nov): with another
+// model loaded on one zone, the 128k candidate that needs every zone cannot
+// start now (its plan would unload or wait), yet it is kept, with the plan
+// of now said beside it; it uses the three zones it would use with nothing
+// loaded. The read unloads nothing.
+func TestStandardSet_KeptOnAnIdleFleet(t *testing.T) {
+	e, _, _ := ssEnv(t)
+	resp := e.post("/v1/chat/completions", chat("older"))
+	if resp.StatusCode != 200 {
+		t.Fatalf("load older: %d %s", resp.StatusCode, body(t, resp))
+	}
+	resp.Body.Close()
+	eventually(t, "older ready", func() bool {
+		st, err := e.sched.Status(context.Background())
+		return err == nil && len(st.Instances) == 1 && st.Instances[0].State == "ready"
+	})
+	g := ssGet(t, e, "gemma-3-12b-Q4_K_M.gguf")
+	big := ssRow(t, g, 131072)
+	if !big.Kept || big.Action == "start" || big.NowNote == "" || len(big.Zones) != 3 || !big.UsesEveryZone || big.Reason != "" {
+		t.Fatalf("128k with older loaded: %+v", big)
+	}
+	if big.Action == "evict" && !strings.Contains(big.NowNote, "fits only when other models are unloaded: now it would first unload older") {
+		t.Fatalf("128k now note: %q", big.NowNote)
+	}
+	if !slices.Contains(g.ToWrite, "gemma-3-12b:128k") {
+		t.Fatalf("to write: %v", g.ToWrite)
+	}
+	if r := ssRow(t, g, 16384); !r.Kept || r.Action != "start" || r.NowNote != "" {
+		t.Fatalf("16k: %+v", r)
+	}
+	// a candidate that does not fit even with nothing loaded is not kept
+	h := ssGet(t, e, "huge.gguf")
+	if r := ssRow(t, h, 65536); r.Kept || r.Reason == "" {
+		t.Fatalf("huge 64k: %+v", r)
+	}
+	st, err := e.sched.Status(context.Background())
+	if err != nil || len(st.Instances) != 1 || st.Instances[0].Profile != "older" || st.Instances[0].State != "ready" {
+		t.Fatalf("after the read: %+v %v", st.Instances, err)
+	}
+}

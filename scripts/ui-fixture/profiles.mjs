@@ -228,7 +228,8 @@ export function testProfiles(now = Date.now()) {
 // standardSet(file, state) -> GET /api/models/{file}/standard-set
 // (internal/api/standardset.go) for any file: 16k and 32k kept on one zone,
 // 64k kept on two, 128k only on every zone with the host memory not counted;
-// the default id exists. state: ready (the default), nothing (every kept one
+// the default id exists; kept means it fits on an idle fleet, and 64k would
+// unload another model now. state: ready (the default), nothing (every kept one
 // exists), error (the read fails), refused (the write fails).
 export function standardSet(file, state) {
   if (state === 'error') return { status: 503, body: { error: { message: 'the scheduler is shutting down', type: 'server_error', code: 'shutting_down' } } };
@@ -241,7 +242,7 @@ export function standardSet(file, state) {
   const rows = [
     row(16384, short + ':16k', { need_source: 'derived', need_basis: 'derived from the measurement at ctx 32768' }),
     row(32768, short, { default: true, exists: true, exists_as: 'the profile ' + short, need_source: 'measured for this shape', need_basis: 'measured this run' }),
-    row(65536, short + ':64k', { zones: ['ps5-03', 'ps5-04'] }),
+    row(65536, short + ':64k', { zones: ['ps5-03', 'ps5-04'], action: 'evict', now_note: 'fits only when other models are unloaded: now it would first unload gemma-4-12b' }),
     row(131072, short + ':128k', { zones: ['ps5-01', 'ps5-02', 'ps5-03', 'ps5-04', 'ps5-05', 'ps5-06'], uses_every_zone: true,
       every_zone_note: 'this context fits only by using every zone it may use (6 of 6): nothing else can be placed beside it', host_memory_mib: 10240,
       host_memory_note: "restore points and prompt cache on the scheduler's machine: up to 10,240 MiB, not counted in what it needs (restore points 6,144 MiB, prompt cache 4,096 MiB)" }),

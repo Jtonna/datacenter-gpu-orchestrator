@@ -382,13 +382,16 @@ registerView({
       if (panel && panelId === id && openPanelNow() === panel) { panel.redraw(); return; }
       if (!list) return;
       panelId = id;
-      const e = list.find(x => x.id === id);
+      // the profile as the list holds it NOW: after a promote the list is read
+      // again and the title, sub and buttons follow (the owner's note: it
+      // "loses the TEST - part automatically")
+      const cur = () => (list || []).find(x => x.id === id);
       panel = openPanel({
         label: 'Profile', name: 'Profile ' + id,
-        title: () => (e ? h('span', { 'data-shown': '' }, profileLabel(e)) : h('span.mono', id)),
-        sub: () => (e ? [profileLabel(e) !== id ? id : null, shortModel(e.model), e.ctx ? ctx(e.ctx) + ' context' : null].filter(Boolean).join(' · ') : null),
+        title: () => { const e = cur(); return e ? h('span', { 'data-shown': '' }, profileLabel(e)) : h('span.mono', id); },
+        sub: () => { const e = cur(); return e ? [profileLabel(e) !== id ? id : null, shortModel(e.model), e.ctx ? ctx(e.ctx) + ' context' : null].filter(Boolean).join(' · ') : null; },
         body: () => panelBody(id),
-        foot: () => (e ? [
+        foot: () => { const e = cur(); return e ? [
           h('a.btn.pri', { href: href('profiles', [id]), 'data-act': 'edit' }, 'Edit'),
           h('a.btn', { href: href('profiles', ['new'], { from: id }), 'data-act': 'copy' }, 'Duplicate'),
           profileStage(e) === 'test'
@@ -396,7 +399,7 @@ registerView({
             : button('Demote', async () => { if (await changeStage(e, 'test')) load(); }, '', { 'data-act': 'demote', title: 'Make it a test profile (a comment is required)' }),
           h('span.grow'),
           button('Delete', () => remove(id), 'dng', { 'data-act': 'delete' }),
-        ] : null),
+        ] : null; },
         onClose: () => { if (panelId === id) { panel = null; panelId = ''; if (route.query.profile === id) go({ profile: null }); } },
       });
     }

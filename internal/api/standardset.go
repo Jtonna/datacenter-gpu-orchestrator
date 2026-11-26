@@ -22,9 +22,12 @@ import (
 //
 // Candidates are 16k, 32k, 64k, 128k and 256k, each capped at the file's
 // trained context (a file trained at 2,048 gets 2,048 alone; a file with no
-// trained context gets 16k and 32k). Each is planned read-only on the fleet
-// as it is (scheduler.PlanCandidates) and kept when the plan starts, evicts
-// or queues. The default `<short>` is the largest kept context up to 32k;
+// trained context gets 16k and 32k). Each is planned read-only
+// (scheduler.PlanCandidates) and KEPT when it fits on an idle fleet (nothing
+// loaded): what happens to be loaded at that moment does not decide a
+// model's standard set (team-lead ruling, 26 Nov). The plan on the fleet as
+// it is (start, evict, queue, reject) is shown beside it, in now and
+// now_note. The default `<short>` is the largest kept context up to 32k;
 // the others are `<short>:<N>k`. Nothing here runs at start, at scan, at a
 // download or in a migration: only these two calls.
 
@@ -112,13 +115,17 @@ func standardShort(mf ModelFile, files []ModelFile) string {
 
 // standardRow is one candidate of the standard set.
 type standardRow struct {
-	ID   string `json:"id"`
-	Ctx  int    `json:"ctx"`
-	Kept bool   `json:"kept"`
-	// Action and Reason are the plan's.
-	Action string `json:"action"`
+	ID  string `json:"id"`
+	Ctx int    `json:"ctx"`
+	// Kept: it fits on an idle fleet. Reason says why not when it is not.
+	Kept   bool   `json:"kept"`
 	Reason string `json:"reason,omitempty"`
-	// Zones are the zones it would use; MayUse how many it may use now.
+	// Action is the plan on the fleet as it is now; NowNote says it in
+	// words when it is not a plain start (it would unload, or wait).
+	Action  string `json:"action"`
+	NowNote string `json:"now_note,omitempty"`
+	// Zones are the zones it would use on an idle fleet (when kept; else
+	// the plan's); MayUse how many it may use now.
 	Zones  []string `json:"zones"`
 	MayUse int      `json:"zones_may_use"`
 	// NeedMiB is the need the plan used (null when unknown); NeedSource
@@ -271,25 +278,44 @@ func (s *Server) buildStandardSet(ctx context.Context, file string) (*standardSe
 	def := -1
 	for i, cp := range plans {
 		r := cp.Report
-		row := standardRow{ID: ps[i].Name, Ctx: ctxs[i], Action: string(r.Action), Reason: r.Reason, Zones: cp.Zones, MayUse: cp.MayUse,
-			NeedSource: needSource(r), NeedBasis: r.NeedBasis, Host: r.Host}
+		row := standardRow{ID: ps[i].Name, Ctx: ctxs[i], Action: string(r.Action), Zones: cp.Zones, MayUse: cp.MayUse,
+			NeedSource: needSource(r), NeedBasis: r.NeedBasis, Host: r.Host, Kept: cp.IdleFits}
+		if row.Kept {
+			row.Zones = cp.IdleZones
+		}
+		switch {
+		case !row.Kept && r.Action == scheduler.PlanReject:
+			row.Reason = r.Reason
+		case !row.Kept:
+			row.Reason = "it does not fit even with nothing loaded"
+		}
+		switch r.Action {
+		case scheduler.PlanEvict:
+			vs := make([]string, len(r.Victims))
+			for j, v := range r.Victims {
+				vs[j] = v.Profile
+			}
+			row.NowNote = "fits only when other models are unloaded: now it would first unload " + strings.Join(vs, ", ")
+		case scheduler.PlanQueue:
+			row.NowNote = "now it would wait: " + r.Reason
+		case scheduler.PlanReject:
+			if row.Kept {
+				row.NowNote = "now it is refused: " + r.Reason
+			}
+		}
 		if row.Zones == nil {
 			row.Zones = []string{}
 		}
 		if row.Host == "" {
 			row.Host = core.HostServer
 		}
-		switch r.Action {
-		case scheduler.PlanStart, scheduler.PlanEvict, scheduler.PlanQueue:
-			row.Kept = true
-		}
 		if r.NeedMiB > 0 {
 			n := r.FitNeedMiB
 			row.NeedMiB = &n
 		}
-		if row.Kept && len(cp.Zones) > 0 && len(cp.Zones) >= cp.MayUse {
+		if row.Kept && len(row.Zones) > 0 && len(row.Zones) >= cp.MayUse {
 			row.UsesEveryZone = true
-			row.EveryZoneNote = fmt.Sprintf("this context fits only by using every zone it may use (%d of %d): nothing else can be placed beside it", len(cp.Zones), cp.MayUse)
+			row.EveryZoneNote = fmt.Sprintf("this context fits only by using every zone it may use (%d of %d): nothing else can be placed beside it", len(row.Zones), cp.MayUse)
 		}
 		if hm := r.HostMemory; hm != nil {
 			t := hm.TermMiB()

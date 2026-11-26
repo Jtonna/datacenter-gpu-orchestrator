@@ -117,9 +117,9 @@ func TestUINextModelsStandardSet(t *testing.T) {
 		map[string]any{"name": "standard: ready, the read call's table", "route": "#/models?model=" + mdlLoaded, "status": st, "fetch": with(std, nil),
 			"click": open,
 			"pageHas": []string{"div.dlg[data-dlg=standard][data-state=ready]", "tr[data-std='gemma-4-27b'][data-exists=true]", "tr[data-std='gemma-4-27b:256k'][data-kept=false]", "tr[data-std-notes='gemma-4-27b:256k'] [data-why]",
-				"tr[data-std-notes='gemma-4-27b:128k'] [data-every-zone]", "tr[data-std-notes='gemma-4-27b:128k'] [data-host-memory=not-counted]", "[data-to-write='3']", "div.dlg-foot button[data-go][disabled]"},
+				"tr[data-std-notes='gemma-4-27b:128k'] [data-every-zone]", "tr[data-std-notes='gemma-4-27b:64k'] [data-now=evict]", "tr[data-std-notes='gemma-4-27b:128k'] [data-host-memory=not-counted]", "[data-to-write='3']", "div.dlg-foot button[data-go][disabled]"},
 			"page": []string{"exists, kept as it is", "Not kept", "fits only by using every zone", "up to 10,240 MiB, not counted",
-				"the default context", "measured for this shape", "derived from another context", "Write 3 profiles", "Comment (required)"}},
+				"the default context", "measured for this shape", "derived from another context", "Write 3 profiles", "Comment (required)", "now it would first unload gemma-4-12b"}},
 		map[string]any{"name": "standard: the write sends the comment", "route": "#/models?model=" + mdlLoaded, "status": st, "fetch": with(std, written),
 			"click":        append(append([]any{}, open...), map[string]any{"type": "div.dlg textarea[aria-label=Comment]", "value": "standard set for gemma"}, "div.dlg-foot button[data-go]"),
 			"fetchedQuery": []string{`^POST /api/models/` + mdlLoaded + `/standard-set \{"comment":"standard set for gemma"\}$`},
@@ -146,5 +146,76 @@ func TestUINextPlacementShownNames(t *testing.T) {
 			"has": []string{"button.plc-opt[data-profile=qwen3-14b-128k] [data-shown]"}},
 		map[string]any{"name": "placement: no test profile until asked", "route": "#/placement", "status": st,
 			"absent": []string{"TEST - "}, "expect": []string{"Show test profiles too"}},
+	}})
+}
+
+// The owner's note: "when promoted it loses the TEST - part automatically".
+// After Promote the page reads its list again (no page reload: the same
+// address, the same view) and the shown name drops "TEST - "; the Models
+// panel redraws from the catalog the server pushes after the change.
+func TestUINextPromoteDropsTheTestName(t *testing.T) {
+	fetch := fixtureAnswers(t, []string{"--catalog"}, "/api/profiles", "/api/profiles/test", "/api/models", "/api/config", "/api/config/schema", "/api/status")
+	st := fetch["/api/status"]
+	promoted := func(doc any, key, id string, drop bool) map[string]any {
+		d := mcpCopy(t, doc)
+		var keep []any
+		for _, r := range d[key].([]any) {
+			m := r.(map[string]any)
+			if m["id"] == id {
+				if drop {
+					continue
+				}
+				m["stage"], m["stage_set"], m["shown_name"] = "production", true, id
+			}
+			keep = append(keep, m)
+		}
+		d[key] = keep
+		return d
+	}
+	after := func(post string, before, then any) map[string]any {
+		return map[string]any{"$after": "^POST " + post, "$before": before, "$then": then}
+	}
+	laptop := "/api/config/profiles/qwen3-14b-laptop/promote"
+	trial := "/api/config/profiles/qwen3-14b-128k/promote"
+	fetch["POST "+laptop] = map[string]any{"revision": 413, "changed": true, "id": "qwen3-14b-laptop", "stage": "production"}
+	fetch["POST "+trial] = map[string]any{"revision": 413, "changed": true, "id": "qwen3-14b-128k", "stage": "production"}
+	profs := fetch["/api/profiles"]
+	fetch["/api/profiles"] = after(laptop, profs, promoted(profs, "profiles", "qwen3-14b-laptop", false))
+	tests := fetch["/api/profiles/test"]
+	fetch["/api/profiles/test"] = after(trial, tests, promoted(tests, "profiles", "qwen3-14b-128k", true))
+	confirm := func(sel string) []any {
+		return []any{sel, map[string]any{"type": "textarea[aria-label=Comment]", "value": "in use"}, "div.dlg-foot button.pri"}
+	}
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
+		map[string]any{"name": "promote: Settings > Profiles names it without TEST - at once", "route": "#/profiles?show=all&q=laptop&profile=qwen3-14b-laptop", "status": st,
+			"click": confirm("aside.side button[data-act=promote]"), "hash": "#/profiles?show=all&q=laptop&profile=qwen3-14b-laptop",
+			"fetchedQuery": []string{`^POST ` + laptop + ` `, `^GET /api/profiles$`},
+			"expect":       []string{"qwen3-14b-laptop"}, "none": []string{"tr[data-profile=qwen3-14b-laptop] span.plc-gen"},
+			"pageHas": []string{"aside.side [data-stage=production]", "aside.side button[data-act=demote]"}, "notOnPage": []string{"TEST - qwen3-14b-laptop"}},
+		map[string]any{"name": "promote: the Test profiles page drops the row at once", "route": "#/test-profiles?q=qwen3-14b-128k", "status": st,
+			"click": confirm("tr[data-profile=qwen3-14b-128k] button[data-act=promote]"), "hash": "#/test-profiles?q=qwen3-14b-128k",
+			"expect": []string{"No test profile matches"}, "notOnPage": []string{"TEST - Qwen 128k trial"}, "page": []string{"Promoted qwen3-14b-128k"}},
+	}})
+
+	// the Models panel: the catalog the server pushes after the promote
+	mf := fixtureAnswers(t, []string{"--models", "five"}, "/api/models", "/api/status")
+	cat := mcpCopy(t, mf["/api/models"])
+	for _, m := range cat["models"].([]any) {
+		mm := m.(map[string]any)
+		for _, p := range mm["profiles"].([]any) {
+			if pp := p.(map[string]any); pp["id"] == "qwen3-14b" {
+				pp["stage"], pp["stage_set"], pp["shown_name"] = "production", true, "qwen3-14b"
+			}
+		}
+	}
+	cat["version"] = 1 << 30
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": mf, "cases": []any{
+		// before first: the catalog the live channel delivers stays for the cases after it
+		map[string]any{"name": "promote: before it, the Models panel counts it as a test profile", "route": "#/models?model=qwen3-14b-Q5_K_M.gguf", "status": mf["/api/status"],
+			"pageHas": []string{"aside.side p.mdl-tests[data-tests='1']"}, "pageNone": []string{"aside.side table.mdl-ptbl tr[data-profile=qwen3-14b]"}},
+		map[string]any{"name": "promote: the Models panel moves it to the profiles, no TEST -", "route": "#/models?model=qwen3-14b-Q5_K_M.gguf", "status": mf["/api/status"],
+			"wsAfter": []any{map[string]any{"type": "models", "data": cat}},
+			"pageHas": []string{"aside.side table.mdl-ptbl tr[data-profile=qwen3-14b] [data-shown]"}, "pageNone": []string{"aside.side p.mdl-tests"},
+			"notOnPage": []string{"TEST - qwen3-14b", "1 test profile"}},
 	}})
 }

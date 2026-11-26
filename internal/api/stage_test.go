@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 
@@ -113,6 +114,17 @@ func TestPromoteDemoteRoutes(t *testing.T) {
 	}
 	// loaded, then promoted
 	e.post("/v1/chat/completions", chat("alpha")).Body.Close()
+	shown := func(path string) string { // the body of a GET, to look for the shown name in it
+		resp := e.get(path)
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return string(b)
+	}
+	for _, path := range []string{"/api/profiles", "/api/models", "/api/profiles/test"} {
+		if b := shown(path); !strings.Contains(b, `"shown_name":"TEST - alpha"`) {
+			t.Fatalf("before the promote, %s does not name it TEST - alpha: %.400s", path, b)
+		}
+	}
 	rev := svc.Revision()
 	st, m := e.cdo("POST", "/api/config/profiles/alpha/promote", `{"comment":"ready"}`, nil)
 	if st != 200 || m["changed"] != true || m["revision"] != float64(rev+1) || m["stage"] != "production" {
@@ -125,6 +137,16 @@ func TestPromoteDemoteRoutes(t *testing.T) {
 	stat, err := e.sched.Status(context.Background())
 	if err != nil || len(stat.Instances) != 1 || stat.Instances[0].StaleProfile {
 		t.Fatalf("after the promote: %+v %v", stat.Instances, err)
+	}
+	// the owner's note: a promoted profile loses "TEST - " by itself, in
+	// every answer the pages read (Profiles, the Models catalog, Test profiles)
+	for _, path := range []string{"/api/profiles", "/api/models"} {
+		if b := shown(path); strings.Contains(b, "TEST - alpha") || !strings.Contains(b, `"shown_name":"alpha"`) {
+			t.Fatalf("after the promote, %s: %.400s", path, b)
+		}
+	}
+	if b := shown("/api/profiles/test"); strings.Contains(b, `"id":"alpha"`) {
+		t.Fatalf("after the promote, the test list still has it: %.400s", b)
 	}
 	// nothing changes: no revision, no entry
 	if st, m := e.cdo("POST", "/api/config/profiles/alpha/promote", `{"comment":"again"}`, nil); st != 200 || m["changed"] != false || svc.Revision() != rev+1 {

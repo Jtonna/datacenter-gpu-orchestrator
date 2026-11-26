@@ -3,13 +3,17 @@ package scheduler
 import (
 	"context"
 	"slices"
+	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/placer"
 )
 
 // The standard set's read-only plans (profiles plan, section 6): a profile
 // that does not exist yet is planned on the fleet as it is, through the
-// same path as a scoped plan (dryPlanOf), and nothing is kept.
+// same path as a scoped plan (dryPlanOf), and nothing is kept. Whether it
+// is kept is decided on an IDLE fleet (idleFleetFit): what happens to be
+// loaded at that moment must not decide a model's standard set.
 
 // candidateScope ends the name a candidate is planned under. "@" is refused
 // in every configured id and alias (config.validateStage) and a space in
@@ -27,6 +31,10 @@ type CandidatePlan struct {
 	// MayUse is how many zones an automatic placement of it may use now:
 	// the reachable nodes it may be placed on, at most max_pool.
 	MayUse int
+	// IdleFits: it fits with nothing loaded (idleFleetFit); IdleZones are
+	// the zones that placement uses.
+	IdleFits  bool
+	IdleZones []string
 }
 
 // PlanCandidates plans each profile read-only on the fleet as it is. The
@@ -44,6 +52,12 @@ func (s *Scheduler) PlanCandidates(ctx context.Context, ps []*core.Profile) ([]C
 			c.forgetScopedNeed(sp.Name)
 			r.Profile = p.Name
 			cpl := CandidatePlan{Report: r, MayUse: c.zonesMayUse(sp)}
+			if pl, ok := c.idleFleetFit(sp); ok {
+				cpl.IdleFits = true
+				for _, n := range pl.Nodes {
+					cpl.IdleZones = append(cpl.IdleZones, c.nodeName(n.ID))
+				}
+			}
 			for _, n := range r.Placement {
 				cpl.Zones = append(cpl.Zones, c.nodeName(n.ID))
 			}
@@ -56,6 +70,48 @@ func (s *Scheduler) PlanCandidates(ctx context.Context, ps []*core.Profile) ([]C
 		}
 		return out
 	})
+}
+
+// idleFleetFit places p as if nothing were loaded: the free nodes as they
+// are, and every instance offered as a victim whatever its state, hold or
+// requests in flight (the same eviction plan as plan(), tight.go evictPlan,
+// with the reservation gate). The nodes' own limits stay (reachable,
+// eligible, no new load, no_auto, local only). Nothing is changed.
+func (c *schedCore) idleFleetFit(p *core.Profile) (core.Placement, bool) {
+	if c.shutdown || c.capacity(p) != nil {
+		return core.Placement{}, false
+	}
+	req, _, err := c.request(p)
+	if err != nil {
+		return core.Placement{}, false
+	}
+	if pl, gate, _, perr := c.gatedPlace(p, req); perr == nil && gate == "" {
+		return pl, true
+	}
+	var ev []placer.Evictable
+	for _, in := range c.sortedInsts() {
+		if c.onNoAuto(p, in) {
+			continue
+		}
+		e := placer.Evictable{Instance: in.prof.Name, LoadDuration: in.loadDuration, IdleFor: time.Hour}
+		for _, pn := range in.placement.Nodes {
+			n, ok := c.node(pn.ID)
+			if !ok || !c.eligible(pn.ID) || c.noNewLoad(pn.ID) || (localOnly(p) && !n.Local) {
+				continue
+			}
+			e.Nodes = append(e.Nodes, c.candidate(p, pn.ID, n, c.planBudget(pn.ID, n), false))
+		}
+		if len(e.Nodes) > 0 {
+			ev = append(ev, e)
+		}
+	}
+	if len(ev) == 0 {
+		return core.Placement{}, false
+	}
+	if res, gate, err := c.evictPlan(p, req, ev); err == nil && gate == "" {
+		return res.Placement, true
+	}
+	return core.Placement{}, false
 }
 
 // zonesMayUse counts the nodes an automatic placement of p may use now, at
