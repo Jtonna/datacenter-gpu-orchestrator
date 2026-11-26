@@ -267,8 +267,15 @@ func carriesWords(p *core.Profile) []string {
 		w = append(w, "flash attention")
 	}
 	var other []string
-	for _, a := range p.ExtraArgs {
-		if strings.Contains(a, "enable_thinking") && strings.Contains(a, "false") {
+	args := p.ExtraArgs
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--chat-template-kwargs" && i+1 < len(args) && thinkingOff(args[i+1]) {
+			w = append(w, "thinking off (the chat-template argument)")
+			i++
+			continue
+		}
+		if strings.HasPrefix(a, "--chat-template-kwargs=") && thinkingOff(a) {
 			w = append(w, "thinking off (the chat-template argument)")
 			continue
 		}
@@ -293,6 +300,12 @@ func carriesWords(p *core.Profile) []string {
 		w = append(w, "hosted on a node")
 	}
 	return w
+}
+
+// thinkingOff: a chat-template argument that turns thinking off.
+func thinkingOff(a string) bool {
+	a = strings.ReplaceAll(a, " ", "")
+	return strings.Contains(a, "\"enable_thinking\":false")
 }
 
 // shapeWords is how p's shape differs from a standard row's, in words (""
@@ -379,7 +392,8 @@ type standardSet struct {
 	File string `json:"file"`
 	// Short is the name the rows use; ShortSource "family" (the file's
 	// production family), "file" (the file's name) or "asked" (?short=);
-	// Family is the family's base name and FamilyIDs its production ids;
+	// Family is the family's base name and FamilyIDs the file's production
+	// ids (the family: one of them having a context makes that row exist);
 	// ShortProblem why Short cannot be used (nothing can be written then).
 	Short        string        `json:"short"`
 	ShortSource  string        `json:"short_source"`
@@ -527,12 +541,7 @@ func (s *Server) buildStandardSet(ctx context.Context, file, asked string) (*sta
 			prod = append(prod, id)
 		}
 	}
-	set.Family = familyBase(prod)
-	for _, id := range prod {
-		if set.Family != "" && inFamily(id, set.Family) {
-			set.FamilyIDs = append(set.FamilyIDs, id)
-		}
-	}
+	set.Family, set.FamilyIDs = familyBase(prod), prod
 	switch {
 	case asked != "":
 		set.Short, set.ShortSource = asked, "asked"
@@ -647,7 +656,7 @@ func (s *Server) buildStandardSet(ctx context.Context, file, asked string) (*sta
 	}
 	for i := range set.Rows {
 		row := &set.Rows[i]
-		s.standardExists(cfg, mf.File, set.Short, mine, row)
+		s.standardExists(cfg, mf.File, mine, row)
 		row.Tickable = !row.Exists && set.ShortProblem == "" && (row.Kept || row.State == stdEstimateNoFit)
 		row.Selected = row.Tickable && row.Kept
 		if row.Selected {
@@ -657,9 +666,18 @@ func (s *Server) buildStandardSet(ctx context.Context, file, asked string) (*sta
 	return set, 0, nil
 }
 
-// standardExists marks row as existing: its id or an alias is taken, or
-// the family (short) already has its context.
-func (s *Server) standardExists(cfg *config.Config, file, short string, mine []*core.Profile, row *standardRow) {
+// standardExists marks row as existing: its id or an alias is taken, or a
+// production profile of the file (the family, whatever its id:
+// gemma-4-12b-thinking at 32k counts) already has its context.
+func (s *Server) standardExists(cfg *config.Config, file string, mine []*core.Profile, row *standardRow) {
+	prodAt := func(skip string) *core.Profile {
+		for _, q := range mine {
+			if st, _ := config.EffectiveStage(q); st == config.StageProduction && q.Name != skip && q.Ctx == row.Ctx {
+				return q
+			}
+		}
+		return nil
+	}
 	if p, alias, ok := cfg.Resolve(row.ID); ok {
 		row.Exists, row.ExistsAs, row.Carries = true, p.Name, carriesWords(p)
 		switch {
@@ -674,22 +692,14 @@ func (s *Server) standardExists(cfg *config.Config, file, short string, mine []*
 		default:
 			row.ExistsNote = "exists, kept as it is"
 		}
-		if row.Default {
-			for _, q := range mine { // the family may have the default's context under another id
-				if q.Name != p.Name && inFamily(q.Name, short) && q.Ctx == row.Ctx {
-					row.ExistsNote += fmt.Sprintf(" (the family has %s as %s)", ctxTag(row.Ctx), q.Name)
-					break
-				}
-			}
+		if q := prodAt(p.Name); q != nil && p.Ctx != row.Ctx { // the family has this context under another id
+			row.ExistsNote += fmt.Sprintf(" (the family has %s as %s)", ctxTag(row.Ctx), q.Name)
 		}
 		return
 	}
-	for _, q := range mine {
-		if inFamily(q.Name, short) && q.Ctx == row.Ctx {
-			row.Exists, row.ExistsAs, row.Carries = true, q.Name, carriesWords(q)
-			row.ExistsNote = fmt.Sprintf("the family has %s as %s, kept as it is", ctxTag(row.Ctx), q.Name)
-			return
-		}
+	if q := prodAt(""); q != nil {
+		row.Exists, row.ExistsAs, row.Carries = true, q.Name, carriesWords(q)
+		row.ExistsNote = fmt.Sprintf("the family has %s as %s, kept as it is", ctxTag(row.Ctx), q.Name)
 	}
 }
 

@@ -33,6 +33,10 @@ var ssFiles = []ModelFile{
 	{File: "gemma-3-12b-Q4_K_M.gguf", Name: "Gemma 3 12B", Quant: "Q4_K_M", ContextLength: 131072, MetaSource: "gguf"},
 	{File: "huge.gguf", Name: "Huge", ContextLength: 65536, MetaSource: "gguf"},
 	{File: "unknown.gguf", Name: "Unknown", ContextLength: 32768, MetaSource: "gguf"},
+	{File: "qwen-dots.gguf", Name: "Qwen2.5 72B Instruct", ContextLength: 32768, MetaSource: "gguf"},
+	{File: "small-measured.gguf", Name: "Small Measured", ContextLength: 32768, MetaSource: "gguf"},
+	{File: "big-measured.gguf", Name: "Big Measured", ContextLength: 32768, MetaSource: "gguf"},
+	{File: "deep.gguf", Name: "Deep", ContextLength: 163840, MetaSource: "gguf"},
 }
 
 // ssNeed is each file's estimate: weights plus a slope per 1k of context.
@@ -49,6 +53,14 @@ func ssNeed(p *core.Profile) (scheduler.NeedInfo, error) {
 		return scheduler.NeedInfo{Need: placer.Estimated(20000 + k*800), FileBytes: 18 << 30}, nil
 	case "unknown.gguf":
 		return scheduler.NeedInfo{}, errors.New("the header cannot be read")
+	case "qwen-dots.gguf":
+		return scheduler.NeedInfo{Need: placer.Estimated(3000 + k*20), FileBytes: 2 << 30}, nil
+	case "small-measured.gguf":
+		return scheduler.NeedInfo{Need: placer.Measured(3000), FileBytes: 2 << 30}, nil
+	case "big-measured.gguf":
+		return scheduler.NeedInfo{Need: placer.Measured(60000), FileBytes: 2 << 30}, nil
+	case "deep.gguf":
+		return scheduler.NeedInfo{Need: placer.Estimated(1000 + k*10), FileBytes: 1 << 30}, nil
 	}
 	return scheduler.NeedInfo{Need: placer.Measured(max(p.NeedsMiB, 1)), FileBytes: 1 << 20}, nil
 }
