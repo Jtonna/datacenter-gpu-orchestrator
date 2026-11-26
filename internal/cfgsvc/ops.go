@@ -287,3 +287,45 @@ func (s *Service) Import(ctx context.Context, o WriteOpts, doc *config.Document,
 		return nil
 	}})
 }
+
+// NewProfile is one profile CreateMissing writes when its id is free.
+type NewProfile struct {
+	ID   string
+	Spec *config.ProfileSpec
+}
+
+// CreateMissing writes, in ONE revision, each profile whose id is neither a
+// profile id nor an alias; the others are skipped and never edited (the
+// standard set, profiles plan section 6). written and skipped are the ids,
+// in the order given; nothing is committed when every id is taken.
+func (s *Service) CreateMissing(ctx context.Context, o WriteOpts, ps []NewProfile) (res *Result, written, skipped []string, err error) {
+	res, err = s.mutate(ctx, o, mutation{fn: func(d *config.Document) error {
+		written, skipped = nil, nil
+		taken := map[string]bool{}
+		for id, p := range d.Profiles {
+			taken[id] = true
+			if p != nil {
+				for _, a := range p.Aliases {
+					taken[a] = true
+				}
+			}
+		}
+		for _, np := range ps {
+			if np.ID == "" || np.Spec == nil {
+				return &ValidationError{Messages: []string{"profile id must not be empty"}}
+			}
+			if taken[np.ID] {
+				skipped = append(skipped, np.ID)
+				continue
+			}
+			taken[np.ID] = true
+			d.Profiles[np.ID] = np.Spec
+			written = append(written, np.ID)
+		}
+		return nil
+	}})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return res, written, skipped, nil
+}

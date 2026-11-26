@@ -355,6 +355,7 @@ func (s *Server) routes() *http.ServeMux {
 	m.HandleFunc("DELETE /api/models/pin/{key...}", s.handlePinDelete)        // pins.go
 	m.HandleFunc("PUT /api/models/{key...}", s.handleIconPut)                 // only /api/models/{key}/icon
 	m.HandleFunc("DELETE /api/models/{key...}", s.handleIconDelete)
+	m.HandleFunc("POST /api/models/{key...}", s.handleModelPost) // only /api/models/{file}/standard-set (standardset.go)
 	// GET /api/nodes/availability (availability.go)
 	s.availabilityRoutes(m)
 	m.HandleFunc("GET /api/health", s.handleHealthSummary)

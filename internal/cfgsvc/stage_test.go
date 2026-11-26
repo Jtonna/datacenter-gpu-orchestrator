@@ -2,12 +2,14 @@ package cfgsvc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/audit"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgstore"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 )
 
 // stage and display_name are written through profile create and update
@@ -108,5 +110,52 @@ func TestPromoteAndDemote(t *testing.T) {
 	}
 	if _, err := e.svc.SetStage(ctx, o, "plain", "beta"); err == nil {
 		t.Fatal("an unknown stage was taken")
+	}
+}
+
+// v83Fields are the profile fields v83 (the image before slice B2) knows:
+// its ProfileSpec, frozen here. A stored field outside it would make v83
+// refuse configuration writes until forced (cfgstore Unknown).
+var v83Fields = map[string]bool{"kind": true, "model": true, "ctx": true, "parallel": true, "kv_quant": true, "flash_attn": true,
+	"needs_mib": true, "allow_tiers": true, "force_nodes": true, "tensor_split": true, "extra_args": true, "cmd": true,
+	"check_endpoint": true, "aliases": true, "generated": true, "ctx_above_trained": true, "ttl": true, "load_timeout": true,
+	"stall_timeout": true, "load_stall_timeout": true, "host": true, "description": true, "stage": true, "display_name": true}
+
+// Way back: what promote, display_name and the standard set store holds
+// only fields v83 reads, so v83 starts on it, shows the marks and still
+// writes without force.
+func TestWayBack_MarksAreFieldsV83Reads(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	named := llama("m.gguf", 4096)
+	named.DisplayName = "Model M"
+	if _, err := e.svc.CreateProfile(ctx, ui("x"), "m", named); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.SetStage(ctx, ui("x"), "m", "test"); err != nil {
+		t.Fatal(err)
+	}
+	c := 32768
+	if _, _, _, err := e.svc.CreateMissing(ctx, ui("x"), []NewProfile{{ID: "m:32k", Spec: &config.ProfileSpec{Model: "m.gguf", Ctx: &c, Stage: "production", Description: "standard set"}}}); err != nil {
+		t.Fatal(err)
+	}
+	r, err := e.cs.Get(ctx, e.svc.Revision())
+	if err != nil || len(r.Unknown) != 0 {
+		t.Fatalf("%+v %v", r, err)
+	}
+	b, _ := json.Marshal(r.Doc.Profiles)
+	var raw map[string]map[string]any
+	if err := json.Unmarshal(b, &raw); err != nil {
+		t.Fatal(err)
+	}
+	for id, p := range raw {
+		for k := range p {
+			if !v83Fields[k] {
+				t.Errorf("profile %s stores %q, which v83 does not know", id, k)
+			}
+		}
+	}
+	if raw["m"]["stage"] != "test" || raw["m"]["display_name"] != "Model M" || raw["m:32k"]["stage"] != "production" {
+		t.Fatalf("stored %v", raw)
 	}
 }
