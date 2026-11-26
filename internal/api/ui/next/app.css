@@ -1663,7 +1663,6 @@ table.bp-runs td.bp-start .bp-resw{gap:10px}
 .side:has(.bp-panel) .side-names{flex:1 1 calc(100% - 60px);min-width:0}
 .side:has(.bp-panel) .side-ctl{order:3;flex-basis:100%;flex-wrap:wrap;white-space:normal}
 .bp-tools .fs{max-width:200px;overflow:hidden;text-overflow:ellipsis}
-/* the runs beside a run's panel (board Bench-Runs-Group): views and filters on one line */
 /* beside a docked panel: every view tab stays reachable; the tabs take their own line and wrap, the filters go under them */
 .bp-runsp.beside .bp-tools{flex-wrap:wrap}
 .bp-runsp.beside .bp-views{flex:1 1 100%;flex-wrap:wrap;min-width:0}
