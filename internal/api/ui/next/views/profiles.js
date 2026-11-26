@@ -131,7 +131,7 @@ export function makeEditor(o) {
   const PLACEHOLDER = { extra_args: '--rope-scaling yarn', force_nodes: 'Zone name, then Enter', allow_tiers: 'Tier number, then Enter', tensor_split: 'One weight per forced zone, then Enter',
     ttl: 'Same as the ttl setting', stall_timeout: 'Same as the stall_timeout setting', load_stall_timeout: 'Same as the load_stall_timeout setting', load_timeout: 'Worked out from the model size',
     needs_mib: '0 = estimate from the model file', model: 'for example gemma-4-12b-it-Q4_K_M.gguf', display_name: 'Shown in place of the id; leave empty to show the id',
-    ctx_checkpoints: 'Same as the ctx_checkpoints setting (32)', cache_ram_mib: 'Same as the cache setting of where it is hosted' };
+    ctx_checkpoints: 'Cluster value (32)', cache_ram_mib: 'Cluster value' };
   const fieldDef = f => Object.assign({}, f, { label: LABELS[f.key], type: f.key === 'extra_args' ? 'text' : f.type, placeholder: PLACEHOLDER[f.key],
     description: f.key === 'extra_args' ? f.description + ' One argument per line.' : f.description });
   function collect() {
