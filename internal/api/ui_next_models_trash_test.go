@@ -471,6 +471,7 @@ func TestUINextModelsTrashOnARealServer(t *testing.T) {
 	comment := func(text string) map[string]any {
 		return map[string]any{"type": "div.dlg textarea.dlg-comment", "value": text}
 	}
+	te.trained.Store("a.gguf", 2048) // a2 (8,192) is stored above it: restored all the same, with the warning
 	run(
 		map[string]any{"name": "real: the footer row", "route": "#/models", "status": "fetch",
 			// the test's files are a few bytes: "under 1 MB", never "0.0 GB" (the reviewer, 26 Nov)
@@ -487,7 +488,8 @@ func TestUINextModelsTrashOnARealServer(t *testing.T) {
 			"expect":       []string{"Deleted b.gguf", "1 profile left the configuration"}},
 		map[string]any{"name": "real: restore a.gguf", "route": "#/models/deleted?item=" + id, "status": "fetch",
 			"click": []any{"aside.side button[data-act=restore]", comment("needed again"), "div.dlg button[data-go]"},
-			"page":  []string{"Restored a.gguf", "2 profiles are back"}},
+			"page": []string{"Restored a.gguf", "2 profiles are back", "They come back as they were stored",
+				"1 of the 2 restored profiles of a.gguf have a context above the model's trained 2,048 and run at 2,048", "Test profiles"}},
 	)
 	if !te.has("a.gguf") || te.has("b.gguf") {
 		t.Fatalf("after the UI's delete and restore: a.gguf in the folder %v (want true), b.gguf %v (want false)", te.has("a.gguf"), te.has("b.gguf"))

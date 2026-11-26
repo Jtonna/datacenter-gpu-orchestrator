@@ -339,6 +339,13 @@ type mutation struct {
 	requireEmpty bool
 	fn           func(d *config.Document) error
 	refuse       func(before, after *config.Document, force bool) ([]string, error)
+	// stored are profiles put back exactly as they were stored (keyed by
+	// their id in the new document): a trash record's, a revision's. Each is
+	// checked as a stored profile is (storedKeep), never as a new write; what
+	// a new write would refuse comes back as warnings (storedWarnings).
+	stored map[string]*config.ProfileSpec
+	// storedWhat names them in those warnings ("restored profiles").
+	storedWhat string
 }
 
 func (s *Service) mutate(ctx context.Context, o WriteOpts, m mutation) (*Result, error) {
@@ -389,10 +396,12 @@ func (s *Service) commit(ctx context.Context, o WriteOpts, m mutation) (*Result,
 	parse.KeepModels, parse.KeepArgs = keptModels(before), keptArgs(before)
 	parse.KeepCtx = keptCtx(before)    // a stored ctx above the trained context still loads; a new one is refused
 	parse.ModelNote = s.trashNote(ctx) // a file in the trash is named as such (models slice 3)
+	storedKeep(&parse, m.stored)
 	cfg, err := config.Build(after, s.o.Boot, parse)
 	if err != nil {
 		return nil, nil, validationFrom(err)
 	}
+	warnings = append(warnings, s.storedWarnings(before, after, m, cfg)...)
 	chs := sectionChanges(before, after)
 	// A forced write while the stored configuration has fields this
 	// version does not know writes a new revision even when nothing else

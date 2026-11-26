@@ -593,7 +593,7 @@ func (s *Server) addMissingProfiles(ctx context.Context, ps map[string]*config.P
 		return nil, nil
 	}
 	o := cfgsvc.WriteOpts{Origin: audit.Origin{Source: audit.SourceREST, Actor: "potluck (models trash)", Comment: comment}}
-	if _, err := s.opts.Config.AddProfiles(ctx, o, add); err != nil {
+	if _, err := s.opts.Config.AddStoredProfiles(ctx, o, add, "profiles put back"); err != nil {
 		return nil, err
 	}
 	return keysOfSpecs(add), nil
@@ -692,7 +692,7 @@ func (s *Server) handleModelRestore(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		o.DryRun, o.Force, o.IfMatch = false, false, nil
-		res, err = s.opts.Config.AddProfiles(ctx, o, add)
+		res, err = s.opts.Config.AddStoredProfiles(ctx, o, add, "restored profiles")
 		if err != nil {
 			s.undoRestore(rec)
 			trashRefuse(w, http.StatusConflict, "config_refused", fmt.Sprintf("the profiles of %s could not be added back, so it stays in the trash: %v", rec.File, err), nil)
@@ -711,9 +711,9 @@ func (s *Server) handleModelRestore(w http.ResponseWriter, r *http.Request) {
 	s.catalogDirty(false)
 	s.announce(r, audit.SectionModels, rec.File, auditID)
 	out := map[string]any{"file": rec.File, "trash_id": id, "profiles_restored": keysOfSpecs(add), "renamed": renamed, "aliases_dropped": dropped,
-		"revision": 0, "audit_id": auditID}
+		"revision": 0, "audit_id": auditID, "warnings": []string{}}
 	if res != nil {
-		out["revision"] = res.Revision
+		out["revision"], out["warnings"] = res.Revision, res.Warnings
 	}
 	writeJSON(w, http.StatusOK, out)
 }

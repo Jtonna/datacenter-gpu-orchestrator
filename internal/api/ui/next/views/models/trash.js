@@ -485,13 +485,16 @@ function restoreItem(it, onDone, writable) {
   draw();
 }
 
-// restoredText(res) -> the sentence after a restore
+// restoredText(res) -> the sentence after a restore, with its warnings (a
+// restored profile a new write would refuse, e.g. a ctx above the trained one)
 function restoredText(res) {
   const n = (res.profiles_restored || []).length;
   const ren = Object.entries(res.renamed || {}).map(([a, b]) => `${a} is back as ${b}`);
   const dropped = res.aliases_dropped || [];
   return [`Restored ${res.file}: `, n ? (n === 1 ? 'its 1 profile is back' : `its ${n} profiles are back`) : 'it had no profiles', ren.length ? ` (${list(ren)})` : '',
-    dropped.length ? `; the taken ${dropped.length === 1 ? 'alias' : 'aliases'} ${list(dropped)} ${dropped.length === 1 ? 'was' : 'were'} left off` : '', '.'].join('');
+    dropped.length ? `; the taken ${dropped.length === 1 ? 'alias' : 'aliases'} ${list(dropped)} ${dropped.length === 1 ? 'was' : 'were'} left off` : '', '.',
+    // what a new profile could not have; they come back as they were stored (never a refusal)
+    (res.warnings || []).length ? ` They come back as they were stored; ${res.warnings.join('. ')}. Their profiles are on the model's page (benchmark ones on Test profiles).` : ''].join('');
 }
 
 // ---------- the Deleted models view ----------
