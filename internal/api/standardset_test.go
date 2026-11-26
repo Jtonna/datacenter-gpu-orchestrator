@@ -237,7 +237,7 @@ func TestStandardSet_Read(t *testing.T) {
 	// a rejected candidate keeps its reason; the kept ones stay
 	h := ssGet(t, e, "huge.gguf")
 	if r := ssRow(t, h, 65536); r.State != "estimate-does-not-fit" || !r.Tickable || r.Selected ||
-		!strings.HasPrefix(r.Reason, "not measured: by the file estimate it does not fit even with nothing loaded; the plan says: ") {
+		!strings.HasPrefix(r.Reason, "not measured: by the file estimate it does not fit even with nothing loaded (71,200 MiB on 3 zones); the plan says: placer: need 71200 MiB ") {
 		t.Fatalf("huge 64k reason: %q", r.Reason)
 	}
 	if r := ssRow(t, h, 65536); r.Kept || r.Action != "reject" || r.Reason == "" {
