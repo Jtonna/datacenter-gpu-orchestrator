@@ -983,3 +983,37 @@ export function dropButton(label, options, current, onPick, key) {
       h('button', { type: 'button', role: 'menuitemradio', 'aria-checked': o.id === (cur && cur.id) ? 'true' : 'false', 'data-dd-opt': o.id,
         onclick: () => { openDrop = null; onPick(o.id); for (const fn of Array.from(dropRedraws)) fn(); } }, o.label))) : null);
 }
+
+// ---------- the TEST / PRODUCTION marking (profiles plan, section 9) ----------
+// The one shown-name rule of the page, the server's config.ShownName: a test
+// profile is "TEST - " + (display_name or id), a production one its
+// display_name or id. It is ONLY for people to read: ids sent to the API,
+// URLs, data-* keys and copy-id fields keep the id itself.
+
+export const TEST_PREFIX = 'TEST - ';
+
+// profileStage(p) -> 'test' | 'production': the server's stage (GET
+// /api/profiles, /api/models), else the rule (generated or forced zones:
+// test).
+export function profileStage(p) {
+  if (!p) return 'production';
+  if (p.stage === 'test' || p.stage === 'production') return p.stage;
+  return p.generated || (p.force_nodes || []).length ? 'test' : 'production';
+}
+
+// profileLabel(p) -> the name people see: the server's shown_name, else the
+// same rule built here.
+export function profileLabel(p) {
+  if (!p) return '';
+  if (p.shown_name) return p.shown_name;
+  const name = p.display_name || p.id || p.name || p.profile || '';
+  return profileStage(p) === 'test' ? TEST_PREFIX + name : name;
+}
+
+// labelOf(id) -> profileLabel of the profile id from the catalog's rows,
+// else the id itself (a profile the page has no row for).
+export function labelOf(id) {
+  const m = id ? catalog.byProfile[id] : null;
+  const p = m && (m.profiles || []).find(x => (x.id || x.name) === id);
+  return p ? profileLabel(Object.assign({ id }, p)) : id || '';
+}

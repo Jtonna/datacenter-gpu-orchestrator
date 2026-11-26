@@ -20,6 +20,7 @@ import './views/activity.js';
 import './views/placement.js';
 import './views/benchmarks.js';
 import './views/profiles.js';
+import './views/testprofiles.js';
 import './views/tiers.js';
 import './views/settings.js';
 import './views/audit.js';

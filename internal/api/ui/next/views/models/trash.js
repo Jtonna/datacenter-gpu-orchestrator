@@ -37,7 +37,7 @@
 import { h } from '../../core/dom.js';
 import { href, navigate } from '../../core/router.js';
 import * as api from '../../core/api.js';
-import { liveView, empty, skeleton, searchField, sidePanel, filterSelect, dialog } from '../../core/ui.js';
+import { liveView, empty, skeleton, searchField, sidePanel, filterSelect, dialog, profileLabel } from '../../core/ui.js';
 import { num, plural, dateTime, agoText, parseGoDuration, list, dur, DASH, now } from '../../core/format.js';
 import { onCatalog, needCatalog, refreshCatalog } from '../../core/catalog.js';
 import { isProduction, testText } from './kinds.js';
@@ -103,15 +103,18 @@ const roFlag = (...figures) => [h('p.del-figs', { 'data-figures': '' }, ...figur
   box('ro', { 'data-ro-flag': '' }, pt(icon(WARN), 'amber', h('b', RO_FLAG)))];
 const profilesOf = ids => (ids.length ? [plural(ids.length, 'profile'), ': ', monoList(ids)] : 'no profiles');
 // kindsOf(ids, m) -> the delete dialog's profiles (the owner's note 9): the
-// production profiles counted and named, the test and benchmark
-// configurations as a count only ("2 profiles: a, b and 18 test and
-// benchmark configurations"); the kind is read from the catalog's profiles
-// (views/models/kinds.js), an id it does not list counts as production
+// production profiles counted and named, the test profiles as a count
+// only ("2 profiles: a, b and 18 test profiles"); the kind is read from the catalog's profiles
+// (views/models/kinds.js), an id it does not list counts as production.
+// Each is named by its shown name (core/ui.js profileLabel), the id on hover;
+// the request still sends the file only.
 function kindsOf(ids, m) {
   const by = new Map((m.profiles || []).map(p => [p.id, p]));
   const prod = ids.filter(id => isProduction(by.get(id) || {})), nTest = ids.length - prod.length;
+  const named = prod.flatMap((id, k) => [k ? (k === prod.length - 1 ? ' and ' : ', ') : null,
+    h('span.mono', { title: id, 'data-id': id }, profileLabel(Object.assign({ id }, by.get(id) || {})))]);
   return h('span', { 'data-profiles': '', 'data-prod': String(prod.length), 'data-test': String(nTest) },
-    prod.length ? [plural(prod.length, 'profile'), ': ', monoList(prod)] : 'no profiles',
+    prod.length ? [plural(prod.length, 'profile'), ': ', named] : 'no profiles',
     nTest ? [prod.length ? ' and ' : ', ', testText(nTest)] : null);
 }
 const roState = (what, msg) => box('warn', { 'data-ro': '' }, pt(icon(WARN), 'red', h('b', 'The models folder is read-only on this scheduler: nothing was changed. '), what),

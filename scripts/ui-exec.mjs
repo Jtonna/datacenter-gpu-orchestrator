@@ -64,7 +64,7 @@
 //               "noHeaderLine": ["ptl_"]: no header line matched any,
 //               "subscribed": ["models"] / "notSubscribed": ["models"]: topics the
 //               live channel's last subscribe names, or not (with top-level "wsOpen")}],
-//    (fetch answers: "POST /api/agents" before "/api/agents"; {"$status": 409, "$body": {...}} for an error;
+//    (fetch answers: "POST /api/agents" before "/api/agents"; {"$status": 409, "$body": {...}} for an error; {"$hang": true}: never answers;
 //     {"$match": [["regexp", answer], ...]}: the first regexp that matches the request line
 //     "METHOD /path?query body" picks the answer, none answers 404: one route, answers by query or body)
 //    "wsOpen": true,                               // the live channel's socket opens (with "app")
@@ -416,6 +416,8 @@ def('fetch', async (u, opts = {}) => {
     const hit = ans.$match.find(([re]) => new RegExp(re).test(line));
     ans = hit ? hit[1] : undefined;
   }
+  // {"$hang": true}: an answer that never comes (a dialog's waiting state)
+  if (ans && typeof ans === 'object' && ans.$hang) return new Promise(() => {});
   let status = ans !== undefined ? 200 : 404;
   if (ans && typeof ans === 'object' && ans.$status) { status = ans.$status; ans = ans.$body; }
   const ok = status >= 200 && status < 300;

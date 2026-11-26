@@ -5,6 +5,13 @@
 //   profileEntries()  GET /api/profiles: 12 hand-written profiles and 300
 //                     generated benchmark profiles (generated: true)
 //   profileSpecs()    GET /api/config profiles{} (the editor's source)
+//   testProfiles()    GET /api/profiles/test (the Test profiles page)
+//   standardSet(file, state)   GET and POST /api/models/{file}/standard-set (--stdset)
+//
+// The marking (profiles plan, section 5): two hand-written profiles pinned to
+// zones are marked production, one is left to the rule (test: forced
+// zones), qwen3-14b-128k is marked test with a display name, and every
+// generated one is test by the rule; gemma-4-27b has a display name.
 //   catalog()         GET /api/models (with --catalog): one entry per model file, short_name
 //   planAnswer(body)  POST /api/plan: the full dry-run plan (scheduler.PlanReport),
 //                     on chosen zones when the body names them
@@ -36,20 +43,32 @@ const fileOf = s => MODEL_FILES.find(m => m.short_name === s).file;
 
 // hand-written profiles: [id, model short name, ctx, forced zones, need MiB, verdict, extra]
 const HAND = [
-  ['gemma-4-27b', 'gemma-4-27b', 32768, [], 17900, 'serve', { description: 'The default chat model: two consoles, host on the first.', aliases: ['chat'] }],
+  ['gemma-4-27b', 'gemma-4-27b', 32768, [], 17900, 'serve', { description: 'The default chat model: two consoles, host on the first.', aliases: ['chat'], display_name: 'Gemma chat' }],
   ['gemma-4-27b-long', 'gemma-4-27b', 131072, [], 25400, 'evict', { description: 'Long documents. Takes three consoles; unloads the small models first.' }],
   ['gemma-4-12b', 'gemma-4-12b', 65536, [], 9100, 'wait', {}],
-  ['gemma-4-12b-fast', 'gemma-4-12b', 8192, ['ps5-05'], 13120, 'tight', { description: 'One console, short context, for quick answers.' }],
+  ['gemma-4-12b-fast', 'gemma-4-12b', 8192, ['ps5-05'], 13120, 'tight', { description: 'One console, short context, for quick answers.', stage: 'production' }],
   ['qwen3-14b', 'qwen3-14b', 40960, [], 9800, 'start', { aliases: ['coder'] }],
   ['qwen3-14b-laptop', 'qwen3-14b', 16384, ['laptop-02'], 9200, 'warn', { description: 'Pinned to the named-only laptop: it is the only profile that may use it.' }],
   ['qwen3-32b', 'qwen3-32b', 32768, [], 20500, 'queue', {}],
-  ['qwen3-32b-split', 'qwen3-32b', 32768, ['ps5-03', 'ps5-04', 'ps5-05'], 21000, 'start', { tensor_split: [3, 3, 4], description: 'A hand-made split over three consoles, measured at 9.8 tok/s; the even split ran out of memory on the first console, so the third takes the largest share and hosts nothing.' }],
+  ['qwen3-32b-split', 'qwen3-32b', 32768, ['ps5-03', 'ps5-04', 'ps5-05'], 21000, 'start', { stage: 'production', tensor_split: [3, 3, 4], description: 'A hand-made split over three consoles, measured at 9.8 tok/s; the even split ran out of memory on the first console, so the third takes the largest share and hosts nothing.' }],
   ['llama-3.3-70b', 'llama-3.3-70b', 16384, [], 36800, 'reject', {}],
   ['glm-4.5-air', 'glm-4.5-air', 32768, [], 46100, 'reject', { description: 'Too big for this fleet today; kept for when the second rack joins.' }],
-  ['qwen3-14b-128k', 'qwen3-14b', 131072, [], 14800, 'backoff', {}],
+  ['qwen3-14b-128k', 'qwen3-14b', 131072, [], 14800, 'backoff', { stage: 'test', display_name: 'Qwen 128k trial' }],
   ['gemma-4-12b-vision', 'gemma-4-12b', 32768, [], 8600, 'start', { parallel: 2 }],
 ];
 const RACK = ['ps5-03', 'ps5-04', 'ps5-05'];
+// each file's trained context (GGUF context_length)
+const TRAINED = { 'gemma-4-27b': 131072, 'gemma-4-12b': 131072, 'qwen3-14b': 40960, 'qwen3-32b': 40960, 'llama-3.3-70b': 131072, 'glm-4.5-air': 131072 };
+
+// marks(e, x) -> the server's marking fields (config.EffectiveStage, ShownName)
+function marks(e, x) {
+  const set = x.stage === 'test' || x.stage === 'production';
+  const stage = set ? x.stage : (e.generated || e.force_nodes.length ? 'test' : 'production');
+  const name = x.display_name || e.id;
+  Object.assign(e, { stage, stage_set: set, shown_name: (stage === 'test' ? 'TEST - ' : '') + name });
+  if (x.display_name) e.display_name = x.display_name;
+  return e;
+}
 
 // the short plan of GET /api/profiles (internal/api/profiles.go)
 function planOf(action, need, force) {
@@ -78,6 +97,8 @@ export function profileEntries() {
       plan: planOf(action, need, force), host: force.length > 1 ? 'node' : 'server' };
     if (x.description) e.description = x.description;
     if (force.length > 1) Object.assign(e, { host_node: force[0], host_overhead_mib: 1536 });
+    marks(e, x);
+    if (x.stage) e.spec_stage = x.stage;
     out.push(e);
   }
   // 300 generated: six models × five contexts × ten zone counts
@@ -90,8 +111,8 @@ export function profileEntries() {
         const force = ZONES.filter(z => z.budget > 0).slice(0, Math.min(k, 6)).map(z => z.name);
         const need = Math.round(m.size * 1024 * 1.1 + c / 16);
         const action = need > 30000 ? 'reject' : k % 4 === 0 ? 'queue' : 'start';
-        out.push({ id, kind: 'llama', model: m.file, ctx: c, parallel: 1, aliases: [], force_nodes: force, tensor_split: [], generated: true,
-          needs_mib: need, needs_basis: 'estimated, +5% margin; the estimate is ' + need + ' MiB', needs_measured: false, plan: planOf(action, need, force), host: 'server' });
+        out.push(marks({ id, kind: 'llama', model: m.file, ctx: c, parallel: 1, aliases: [], force_nodes: force, tensor_split: [], generated: true,
+          needs_mib: need, needs_basis: 'estimated, +5% margin; the estimate is ' + need + ' MiB', needs_measured: false, plan: planOf(action, need, force), host: 'server' }, {}));
         i++;
       }
     }
@@ -110,6 +131,8 @@ export function profileSpecs() {
     if (e.aliases.length) s.aliases = e.aliases;
     if (e.description) s.description = e.description;
     if (e.generated) s.generated = true;
+    if (e.spec_stage) s.stage = e.spec_stage;
+    if (e.display_name) s.display_name = e.display_name;
     out[e.id] = s;
   }
   return out;
@@ -121,7 +144,8 @@ export function catalog() {
     const mine = ps.filter(p => p.model === m.file);
     return { key: m.file, kind: 'llama', file: m.file, exists: true, size_bytes: Math.round(m.size * 2 ** 30), name: m.name, short_name: m.short_name, publisher: m.publisher, family: m.family,
       brand: m.family, quant: (m.file.match(/(Q\d_K(?:_M)?)/) || [])[1] || '', state: 'not_loaded', icon: null,
-      profiles: mine.map(p => ({ id: p.id, ctx: p.ctx, parallel: p.parallel, force_nodes: p.force_nodes, generated: p.generated, needs_mib: p.needs_mib, plan: p.plan })),
+      profiles: mine.map(p => ({ id: p.id, ctx: p.ctx, parallel: p.parallel, force_nodes: p.force_nodes, generated: p.generated, needs_mib: p.needs_mib, plan: p.plan,
+        stage: p.stage, stage_set: p.stage_set, shown_name: p.shown_name, display_name: p.display_name })),
       profile_count: mine.length, generated_count: mine.filter(p => p.generated).length, startable_count: mine.filter(p => p.plan.would_start).length,
       instances: [], measured: [], loads: { count: 0, recent: [] } };
   });
@@ -170,4 +194,71 @@ export function planAnswer(body) {
     memory, tight_fit: tight,
     host: e.host, host_node: e.host === 'node' ? zone(e.host_node).id : '', host_overhead_mib: e.host === 'node' ? 1536 : 0, host_problem: '',
   } };
+}
+
+// testProfiles(now) -> GET /api/profiles/test (internal/api/testprofiles.go):
+// the test profiles, each with the context it really runs at (a Qwen3 file
+// is trained at 40,960: its 64k bench profiles run at 40k), why it is test,
+// who refers to it and its last use
+export function testProfiles(now = Date.now()) {
+  const rows = [], models = {}, reasons = {};
+  let i = 0, production = 0;
+  for (const e of profileEntries()) {
+    if (e.stage !== 'test') { production++; continue; }
+    const why = [];
+    if (e.stage_set) why.push('marked');
+    if (e.generated) why.push('generated');
+    if (e.force_nodes.length) why.push('forced zones');
+    const short = MODEL_FILES.find(m => m.file === e.model).short_name;
+    const trained = TRAINED[short] || 0;
+    const real = trained && e.ctx > trained ? trained : e.ctx;
+    const row = { id: e.id, shown_name: e.shown_name, model: e.model, model_name: short, ctx: e.ctx, ctx_real: real, reason: why[0], reasons: why, stage_set: e.stage_set,
+      aliases: e.aliases, force_nodes: e.force_nodes,
+      refs: { benchmarks: i % 7 === 0 ? ['cold-load-' + short] : [], groups: i % 21 === 0 ? ['nightly'] : [] }, last_used: i % 5 === 0 ? now - (i + 1) * 3600e3 : null };
+    if (real !== e.ctx) row.ctx_note = 'ctx ' + e.ctx.toLocaleString('en-US') + ' is above this model\'s trained context of ' + trained.toLocaleString('en-US') + '; the server runs it at ' + trained.toLocaleString('en-US');
+    if (e.display_name) row.display_name = e.display_name;
+    rows.push(row);
+    models[e.model] = (models[e.model] || 0) + 1;
+    reasons[why[0]] = (reasons[why[0]] || 0) + 1;
+    i++;
+  }
+  return { profiles: rows, count: rows.length, production_count: production, models, reasons, history: true };
+}
+
+// standardSet(file, state) -> GET /api/models/{file}/standard-set
+// (internal/api/standardset.go) for any file: 16k and 32k kept on one zone,
+// 64k kept on two, 128k only on every zone with the host memory not counted;
+// the default id exists. state: ready (the default), nothing (every kept one
+// exists), error (the read fails), refused (the write fails).
+export function standardSet(file, state) {
+  if (state === 'error') return { status: 503, body: { error: { message: 'the scheduler is shutting down', type: 'server_error', code: 'shutting_down' } } };
+  const short = file.replace(/\.gguf$/i, '').replace(/-?(it-)?Q\d_K(_M)?|-?Q\d_\d$/i, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const all = state === 'nothing';
+  const row = (ctx, id, x) => Object.assign({ id, ctx, kept: true, action: 'start', reason: '', zones: ['ps5-05'], zones_may_use: 6, need_mib: 9000 + ctx / 16, need_source: 'estimate',
+    need_basis: 'estimated, +5% margin; the estimate is ' + (9000 + ctx / 16) + ' MiB', uses_every_zone: false, host: 'server', host_memory_mib: 4096, host_memory_counted: false,
+    host_memory_note: "restore points and prompt cache on the scheduler's machine: up to 4,096 MiB, not counted in what it needs (restore points 0 MiB, prompt cache 4,096 MiB)",
+    exists: all, default: false }, all ? { exists_as: 'the profile ' + id } : {}, x);
+  const rows = [
+    row(16384, short + ':16k', { need_source: 'derived', need_basis: 'derived from the measurement at ctx 32768' }),
+    row(32768, short, { default: true, exists: true, exists_as: 'the profile ' + short, need_source: 'measured for this shape', need_basis: 'measured this run' }),
+    row(65536, short + ':64k', { zones: ['ps5-03', 'ps5-04'] }),
+    row(131072, short + ':128k', { zones: ['ps5-01', 'ps5-02', 'ps5-03', 'ps5-04', 'ps5-05', 'ps5-06'], uses_every_zone: true,
+      every_zone_note: 'this context fits only by using every zone it may use (6 of 6): nothing else can be placed beside it', host_memory_mib: 10240,
+      host_memory_note: "restore points and prompt cache on the scheduler's machine: up to 10,240 MiB, not counted in what it needs (restore points 6,144 MiB, prompt cache 4,096 MiB)" }),
+    Object.assign(row(262144, short + ':256k'), { kept: false, action: 'reject', exists: false, zones: [], need_mib: null, need_source: 'unknown', need_basis: '', host_memory_mib: null, host_memory_note: '',
+      reason: 'memory need unknown: the file names no layout for a context above its trained one' }),
+  ];
+  const toWrite = rows.filter(r => r.kept && !r.exists).map(r => r.id);
+  return { status: 200, body: { file, short, trained_ctx: 262144, trained_ctx_known: true, note: 'trained at 262,144 tokens: no candidate above it', default_id: short, default_ctx: 32768, rows, to_write: toWrite } };
+}
+
+// standardWrite(file, state, body) -> POST /api/models/{file}/standard-set
+export function standardWrite(file, state, body) {
+  if (!body || !String(body.comment || '').trim()) return { status: 400, body: { error: { message: 'a comment is required (body {"comment": "..."} or the X-Comment header)', type: 'invalid_request_error' } } };
+  if (state === 'refused') return { status: 409, body: { error: { message: 'configuration changed since revision 412 (now 413): read it again', type: 'invalid_request_error', code: 'stale' } } };
+  const set = standardSet(file, state).body;
+  const written = set.to_write;
+  const skipped = set.rows.filter(r => r.exists).map(r => ({ id: r.id, reason: 'exists, kept as it is' }))
+    .concat(set.rows.filter(r => !r.kept).map(r => ({ id: r.id, reason: 'not kept: ' + r.reason })));
+  return { status: 200, body: { revision: 413, changed: written.length > 0, written, skipped, rows: set.rows, diff: [], warnings: [], audit_entry_ids: [] } };
 }
