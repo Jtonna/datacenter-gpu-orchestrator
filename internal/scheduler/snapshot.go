@@ -174,7 +174,7 @@ func (c *schedCore) instStatus(in *inst) InstanceStatus {
 
 func (c *schedCore) statusDoc() Status {
 	st := Status{Time: c.now, ShuttingDown: c.shutdown, RecentLoads: c.recentLoads(), LearnedNeeds: c.learnedNeeds(), ConfigRevision: c.cfg.Revision, Configured: c.cfg.Configured,
-		ServerHostMemory: c.serverHostMemory()}
+		ServerHostMemory: c.serverHostMemory(), NodeHostMemory: c.nodeHostMemory()}
 	for _, in := range c.sortedInsts() {
 		st.Instances = append(st.Instances, c.instStatus(in))
 	}

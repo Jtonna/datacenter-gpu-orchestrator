@@ -786,10 +786,16 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 		out["read_panics"] = s.sched.ReadPanics() // read-only queries that panicked and were recovered; 0 when all is well
 		out["loop"] = s.sched.LoopStats()         // the core loop's step times (B9), read without the loop
 		// the host-memory term summed over the instances loaded on the
-		// scheduler's machine, where nothing places it (scheduler hostmem.go);
-		// the same as /api/status server_host_memory
+		// scheduler's machine ONLY (scope says so), where nothing places it
+		// (scheduler hostmem.go), and per console that hosts a loaded model;
+		// the same as /api/status server_host_memory and node_host_memory
 		if st, err := s.sched.Status(r.Context()); err == nil {
 			out["host_memory"] = jsonView(st.ServerHostMemory)
+			nodes := []any{}
+			for _, n := range st.NodeHostMemory {
+				nodes = append(nodes, jsonView(n))
+			}
+			out["node_host_memory"] = nodes
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
