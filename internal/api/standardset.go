@@ -284,8 +284,10 @@ func (s *Server) buildStandardSet(ctx context.Context, file string) (*standardSe
 			row.Zones = cp.IdleZones
 		}
 		switch {
+		case !row.Kept && r.NeedMiB <= 0:
+			row.Reason = r.Reason // "memory need unknown: ...": nothing was placed
 		case !row.Kept && r.Action == scheduler.PlanReject:
-			row.Reason = r.Reason
+			row.Reason = "it does not fit even with nothing loaded; the plan says: " + r.Reason
 		case !row.Kept:
 			row.Reason = "it does not fit even with nothing loaded"
 		}

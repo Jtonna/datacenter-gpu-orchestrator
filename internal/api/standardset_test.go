@@ -202,12 +202,29 @@ func TestStandardSet_Read(t *testing.T) {
 	if !big.Kept || !big.UsesEveryZone || len(big.Zones) != 3 || !strings.Contains(big.EveryZoneNote, "every zone") || big.ID != "gemma-3-12b:128k" {
 		t.Fatalf("gemma 128k: %+v", big)
 	}
+	// a candidate EQUAL to the trained context is not above it (realctx.go
+	// realCtx: p.Ctx <= trained runs as written): kept, no reason, no cap
+	if g.TrainedCtx != 131072 || big.Ctx != g.TrainedCtx || big.Reason != "" || big.NeedMiB == nil || big.NeedSource != "estimate" {
+		t.Fatalf("gemma 128k = trained: %+v (trained %d)", big, g.TrainedCtx)
+	}
+	// a kept row always has a need: kept means the idle-fleet plan placed it,
+	// and a plan places nothing without a need (an unknown need is never kept)
+	for _, s := range []standardSet{tiny, nm, g} {
+		for _, r := range s.Rows {
+			if r.Kept && (r.NeedMiB == nil || r.NeedSource == "unknown") {
+				t.Fatalf("kept without a need: %+v", r)
+			}
+		}
+	}
 	if !reflect.DeepEqual(g.ToWrite, []string{"gemma-3-12b:16k", "gemma-3-12b", "gemma-3-12b:128k"}) {
 		t.Fatalf("gemma to write: %v", g.ToWrite)
 	}
 
 	// a rejected candidate keeps its reason; the kept ones stay
 	h := ssGet(t, e, "huge.gguf")
+	if r := ssRow(t, h, 65536); !strings.HasPrefix(r.Reason, "it does not fit even with nothing loaded; the plan says: ") {
+		t.Fatalf("huge 64k reason: %q", r.Reason)
+	}
 	if r := ssRow(t, h, 65536); r.Kept || r.Action != "reject" || r.Reason == "" {
 		t.Fatalf("huge 64k: %+v", r)
 	}

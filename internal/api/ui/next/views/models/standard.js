@@ -22,7 +22,6 @@ import { h } from '../../core/dom.js';
 import * as api from '../../core/api.js';
 import { dialog, badge } from '../../core/ui.js';
 import { num, plural } from '../../core/format.js';
-import { plainReason } from '../../core/status.js';
 import { refreshCatalog } from '../../core/catalog.js';
 
 const ctxText = c => (c % 1024 === 0 ? c / 1024 + 'k' : num(c));
@@ -37,7 +36,7 @@ function rowsTable(set) {
     // kept) go on a full-width line under their row, so the columns stay narrow
     h('tbody', set.rows.map(r => {
       const notes = [
-        !r.kept && r.reason ? h('div', { 'data-why': '' }, h('b', 'Not kept: '), plainReason(r.reason)) : null,
+        !r.kept && r.reason ? h('div', { 'data-why': '' }, h('b', 'Not kept: '), r.reason) : null, // the plan's own words: plainReason speaks of the fleet as it is now
         r.uses_every_zone ? h('div.warn-t', { 'data-every-zone': '' }, r.every_zone_note) : null,
         r.now_note ? h('div', { 'data-now': r.action }, h('b', 'Now: '), r.now_note) : null,
         r.host_memory_note ? h('div', { 'data-host-memory': r.host_memory_counted ? 'counted' : 'not-counted' }, r.host_memory_note) : null,

@@ -102,7 +102,7 @@ func TestUINextModelsStandardSet(t *testing.T) {
 	}
 	open := []any{"aside.side button[data-act=standard]"}
 	written := map[string]any{"revision": 413, "changed": true, "written": []any{"gemma-4-27b:16k", "gemma-4-27b:64k", "gemma-4-27b:128k"},
-		"skipped": []any{map[string]any{"id": "gemma-4-27b", "reason": "exists, kept as it is"}, map[string]any{"id": "gemma-4-27b:256k", "reason": "not kept: memory need unknown"}}}
+		"skipped": []any{map[string]any{"id": "gemma-4-27b", "reason": "exists, kept as it is"}, map[string]any{"id": "gemma-4-27b:256k", "reason": "not kept: it does not fit even with nothing loaded; the plan says: placer: need 63488 MiB (requires 66662 MiB) does not fit the available nodes"}}}
 	refused := map[string]any{"$status": 409, "$body": map[string]any{"error": map[string]any{"message": "configuration changed since revision 412 (now 413): read it again", "code": "stale"}}}
 	failed := map[string]any{"$status": 503, "$body": map[string]any{"error": map[string]any{"message": "the scheduler is shutting down", "code": "shutting_down"}}}
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
@@ -116,10 +116,10 @@ func TestUINextModelsStandardSet(t *testing.T) {
 			"click": open, "pageHas": []string{"div.dlg[data-dlg=standard][data-state=checking]"}, "page": []string{"Planning each context"}},
 		map[string]any{"name": "standard: ready, the read call's table", "route": "#/models?model=" + mdlLoaded, "status": st, "fetch": with(std, nil),
 			"click": open,
-			"pageHas": []string{"div.dlg[data-dlg=standard][data-state=ready]", "tr[data-std='gemma-4-27b'][data-exists=true]", "tr[data-std='gemma-4-27b:256k'][data-kept=false]", "tr[data-std-notes='gemma-4-27b:256k'] [data-why]",
+			"pageHas": []string{"div.dlg[data-dlg=standard][data-state=ready]", "tr[data-std='gemma-4-27b'][data-exists=true]", "tr[data-std='gemma-4-27b:256k'][data-kept=false]", "tr[data-std-notes='gemma-4-27b:256k'] [data-why]", "tr[data-std='gemma-4-27b:256k'] [data-source=estimate]",
 				"tr[data-std-notes='gemma-4-27b:128k'] [data-every-zone]", "tr[data-std-notes='gemma-4-27b:64k'] [data-now=evict]", "tr[data-std-notes='gemma-4-27b:128k'] [data-host-memory=not-counted]", "[data-to-write='3']", "div.dlg-foot button[data-go][disabled]"},
 			"page": []string{"exists, kept as it is", "Not kept", "fits only by using every zone", "up to 10,240 MiB, not counted",
-				"the default context", "measured for this shape", "derived from another context", "Write 3 profiles", "Comment (required)", "now it would first unload gemma-4-12b"}},
+				"the default context", "measured for this shape", "derived from another context", "Write 3 profiles", "Comment (required)", "now it would first unload gemma-4-12b", "Not kept: it does not fit even with nothing loaded; the plan says: placer: need 63488 MiB"}},
 		map[string]any{"name": "standard: the write sends the comment", "route": "#/models?model=" + mdlLoaded, "status": st, "fetch": with(std, written),
 			"click":        append(append([]any{}, open...), map[string]any{"type": "div.dlg textarea[aria-label=Comment]", "value": "standard set for gemma"}, "div.dlg-foot button[data-go]"),
 			"fetchedQuery": []string{`^POST /api/models/` + mdlLoaded + `/standard-set \{"comment":"standard set for gemma"\}$`},

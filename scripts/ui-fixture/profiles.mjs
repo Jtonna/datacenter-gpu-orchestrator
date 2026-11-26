@@ -246,8 +246,11 @@ export function standardSet(file, state) {
     row(131072, short + ':128k', { zones: ['ps5-01', 'ps5-02', 'ps5-03', 'ps5-04', 'ps5-05', 'ps5-06'], uses_every_zone: true,
       every_zone_note: 'this context fits only by using every zone it may use (6 of 6): nothing else can be placed beside it', host_memory_mib: 10240,
       host_memory_note: "restore points and prompt cache on the scheduler's machine: up to 10,240 MiB, not counted in what it needs (restore points 6,144 MiB, prompt cache 4,096 MiB)" }),
-    Object.assign(row(262144, short + ':256k'), { kept: false, action: 'reject', exists: false, zones: [], need_mib: null, need_source: 'unknown', need_basis: '', host_memory_mib: null, host_memory_note: '',
-      reason: 'memory need unknown: the file names no layout for a context above its trained one' }),
+    // 256k = the trained context (not above it): planned as written, its need known; it
+    // does not fit the zones even with nothing loaded, and the reason is the plan's own
+    Object.assign(row(262144, short + ':256k'), { kept: false, action: 'reject', exists: false, zones: [], need_mib: 63488, need_source: 'estimate',
+      need_basis: 'estimated, +5% margin; the estimate is 60465 MiB', host_memory_note: '',
+      reason: 'it does not fit even with nothing loaded; the plan says: placer: need 63488 MiB (requires 66662 MiB) does not fit the available nodes' }),
   ];
   const toWrite = rows.filter(r => r.kept && !r.exists).map(r => r.id);
   return { status: 200, body: { file, short, trained_ctx: 262144, trained_ctx_known: true, note: 'trained at 262,144 tokens: no candidate above it', default_id: short, default_ctx: 32768, rows, to_write: toWrite } };
