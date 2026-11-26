@@ -76,11 +76,11 @@ type Options struct {
 	// stopping or queued (default 2 s; with a scripted status source, the
 	// status interval: nothing wakes the loop for those). A real change
 	// wakes the loop at once (ws.go statusLoop).
-	WSIdlePace time.Duration
-	WSPingInterval   time.Duration // ping message period (default 15 s)
-	WSRequestsTick   time.Duration // running rows on the requests topic (default 1 s)
-	WSQueue          int           // per-client send queue (default 64 frames)
-	WSWriteTimeout   time.Duration // one frame write (default 10 s)
+	WSIdlePace     time.Duration
+	WSPingInterval time.Duration // ping message period (default 15 s)
+	WSRequestsTick time.Duration // running rows on the requests topic (default 1 s)
+	WSQueue        int           // per-client send queue (default 64 frames)
+	WSWriteTimeout time.Duration // one frame write (default 10 s)
 
 	// Bench and BenchStore are the benchmark feature; nil means it is off (its
 	// endpoints answer 503).

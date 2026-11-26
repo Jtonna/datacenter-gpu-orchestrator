@@ -57,7 +57,7 @@ func TestCostAttribution(t *testing.T) {
 			"cpu":     map[string]any{"util_percent": 2.0, "logical_cpus": 8},
 			"memory":  map[string]any{"total_bytes": int64(16000) << 20, "available_bytes": avail << 20},
 			"load":    map[string]any{"load1": 0.1}, "net": []any{},
-			"temps":   []any{map[string]any{"id": "fake/temp1", "label": "fake", "celsius": 50.0}},
+			"temps":           []any{map[string]any{"id": "fake/temp1", "label": "fake", "celsius": 50.0}},
 			"headline_temp_c": 50.0, "fans": []any{}, "gpus": []any{}})
 		return b
 	}
