@@ -156,7 +156,7 @@ func TestMCPBenchmarkToolsThroughTheRealAPI(t *testing.T) {
 		t.Fatalf("%v", l)
 	}
 
-	run := mcpJSON(t, h, "run_suite", `{"id":"nightly","note":"via mcp"}`)
+	run := mcpJSON(t, h, "run_suite", `{"id":"nightly","note":"via mcp","comment":"test"}`)
 	id := run["id"].(string)
 	if run["state"] != "queued" || run["note"] != "via mcp" {
 		t.Fatalf("%v", run)
@@ -176,7 +176,7 @@ func TestMCPBenchmarkToolsThroughTheRealAPI(t *testing.T) {
 	if csv := mcpTool(t, h, "export_run", `{"id":"`+id+`","format":"csv"}`); csv.IsError || !strings.HasPrefix(csv.Text, "run_id,") {
 		t.Fatalf("%+v", csv)
 	}
-	if o := mcpTool(t, h, "cancel_run", `{"id":"`+id+`"}`); !o.IsError || !strings.Contains(o.Text, "HTTP 409") {
+	if o := mcpTool(t, h, "cancel_run", `{"id":"`+id+`","comment":"test"}`); !o.IsError || !strings.Contains(o.Text, "HTTP 409") {
 		t.Fatalf("cancel finished run: %+v", o)
 	}
 	if tr := mcpJSON(t, h, "get_bench_trends", `{"benchmark":"alpha-cold","metric":"load_s"}`); tr["points"] == nil {

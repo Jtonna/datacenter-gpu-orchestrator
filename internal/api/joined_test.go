@@ -55,6 +55,7 @@ func newJoined(t *testing.T) *joinedEnv {
 	m.Start(ctx)
 	t.Cleanup(func() { cancel(); m.Stop(context.Background()) })
 	e.api.opts.Bench, e.api.opts.BenchStore = m, st
+	e.api.opts.benchLocalOK = true // the test fleet is the scheduler's own machine
 	h := mcpserver.New(e.api, mcpserver.Options{Version: "test",
 		Bridge: func(ctx context.Context, actor string) context.Context { return audit.WithSource(ctx, "mcp", actor) }})
 	return &joinedEnv{env: e, mcp: h}
@@ -341,7 +342,7 @@ func TestMCPBenchToolsAggregatesSchemaAndBenchAudit(t *testing.T) {
 	j.ok(sid, "list_benchmarks", `{}`)
 	j.ok(sid, "list_suites", `{}`)
 
-	run := j.ok(sid, "run_suite", `{"id":"quick","note":"via mcp"}`)
+	run := j.ok(sid, "run_suite", `{"id":"quick","note":"via mcp","comment":"test"}`)
 	id := run["id"].(string)
 	eventually(t, "run completed", func() bool { return j.ok(sid, "get_run", `{"id":"`+id+`"}`)["state"] == "completed" })
 	got := j.ok(sid, "get_run", `{"id":"`+id+`"}`)
@@ -365,9 +366,9 @@ func TestMCPBenchToolsAggregatesSchemaAndBenchAudit(t *testing.T) {
 	}
 
 	// a second run, cancelled (or too late: both are fine, the start is audited)
-	run2 := j.ok(sid, "run_suite", `{"id":"quick"}`)
+	run2 := j.ok(sid, "run_suite", `{"id":"quick","comment":"test"}`)
 	id2 := run2["id"].(string)
-	j.call(sid, "cancel_run", `{"id":"`+id2+`"}`)
+	j.call(sid, "cancel_run", `{"id":"`+id2+`","comment":"test"}`)
 	eventually(t, "second run over", func() bool {
 		s := j.ok(sid, "get_run", `{"id":"`+id2+`"}`)["state"]
 		return s == "completed" || s == "cancelled"
@@ -425,7 +426,7 @@ func TestBenchRunLoadsAreTaggedAndAuditedAsSystem(t *testing.T) {
 	eventually(t, "profile live", func() bool { return j.sched.Config().Profiles["mcp-alpha"] != nil })
 	j.ok(sid, "create_benchmark", `{"benchmark":{"id":"lo","profile":"mcp-alpha","phases":[{"type":"load"},{"type":"unload"}]}}`)
 	j.ok(sid, "create_suite", `{"suite":{"id":"s","benchmarks":["lo"],"cooldown_s":0,"only_when_idle":false}}`)
-	id := j.ok(sid, "run_suite", `{"id":"s"}`)["id"].(string)
+	id := j.ok(sid, "run_suite", `{"id":"s","comment":"test"}`)["id"].(string)
 	eventually(t, "run completed", func() bool { return j.ok(sid, "get_run", `{"id":"`+id+`"}`)["state"] == "completed" })
 
 	sys := j.waitAudit("system load audited", "source=system&section=runtime", 2)

@@ -437,6 +437,10 @@ type Bench struct {
 	// trimmed (its requests and transcripts removed; the run, its steps and its
 	// measurements kept). 0, the default, is off: nothing is ever trimmed.
 	RetentionDays int
+	// NotStartable (bench_not_startable) lists benchmark and group ids that
+	// may not be started: a run of one, or of a group that holds one at any
+	// depth, is refused whole before anything starts. Empty by default.
+	NotStartable []string
 	// Benchmarks and Suites are seeded into the database at start (source "config").
 	Benchmarks []*benchspec.Benchmark
 	Suites     []*benchspec.Suite

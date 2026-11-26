@@ -355,18 +355,18 @@ func TestOnlyWhenIdleNoticesRequestsInFlight(t *testing.T) {
 	api.external["other"] = true
 	api.extReq = 2
 	st, _ := api.Status(context.Background())
-	if why := busyReason(st, map[string]bool{"other": true}, false); !strings.Contains(why, "2 requests in flight") {
+	if why := busyReason(st, map[string]bool{"other": true}, false, nil); !strings.Contains(why, "2 requests in flight") {
 		t.Fatalf("%q", why)
 	}
-	if why := busyReason(st, map[string]bool{}, false); !strings.Contains(why, "not loaded by this run") {
+	if why := busyReason(st, map[string]bool{}, false, nil); !strings.Contains(why, "not loaded by this run") {
 		t.Fatalf("%q", why)
 	}
 	st.Instances = nil
-	if busyReason(st, nil, false) != "" {
+	if busyReason(st, nil, false, nil) != "" {
 		t.Fatal("an empty scheduler is idle")
 	}
 	st.QueueLen = 1
-	if busyReason(st, nil, false) == "" {
+	if busyReason(st, nil, false, nil) == "" {
 		t.Fatal("a queue entry is not idle")
 	}
 }

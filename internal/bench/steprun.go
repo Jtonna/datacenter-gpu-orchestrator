@@ -1083,6 +1083,15 @@ func (br *benchRun) phaseUnload(p *benchspec.Phase, pr *PhaseResult) {
 	pr.Unload = res
 	br.loaded = false
 	if !res.Loaded {
+		// A failed or cancelled step whose load the scheduler accepted may
+		// still have it waiting in the queue: no instance yet, so the status
+		// does not show it. The forced unload withdraws it (the scheduler
+		// matches it by X-Bench-Run), or it would start later for nobody.
+		if force && x.a.loadedSet()[b.Profile] {
+			if ans, err := x.m.o.API.Unload(ctx, b.Profile, true); err != nil || ans.Status != 200 {
+				x.m.log.Warn("benchmark step could not withdraw its queued load", "run", st.RunID, "profile", b.Profile, "err", err)
+			}
+		}
 		res.Gone = true
 		x.a.markLoaded(b.Profile, false)
 		return

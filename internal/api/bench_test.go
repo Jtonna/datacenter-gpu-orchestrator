@@ -30,6 +30,7 @@ func benchEnv(t *testing.T) *env {
 	m.Start(ctx)
 	t.Cleanup(func() { cancel(); m.Stop(context.Background()) })
 	e.api.opts.Bench, e.api.opts.BenchStore = m, store
+	e.api.opts.benchLocalOK = true // the test fleet is the scheduler's own machine
 	return e
 }
 
@@ -38,6 +39,12 @@ func (e *env) do(method, path, body string) (int, string, http.Header) {
 	req, _ := http.NewRequest(method, e.front.URL+path, strings.NewReader(body))
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	// A start or a cancel of a run needs a comment (v88); the tests that are
+	// not about it send one in the header (benchstart_test.go checks the rule
+	// with requests of their own).
+	if method == "POST" && (strings.HasSuffix(path, "/run") || strings.HasSuffix(path, "/cancel")) && !strings.Contains(body, `"comment"`) {
+		req.Header.Set("X-Comment", "test")
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

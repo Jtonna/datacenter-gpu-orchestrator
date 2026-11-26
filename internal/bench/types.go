@@ -469,6 +469,13 @@ type Run struct {
 	Counts *RunCounts   `json:"counts,omitempty"`
 	Cold   *ColdSummary `json:"cold,omitempty"`
 	Inputs *RunInputs   `json:"inputs,omitempty"`
+	// StartedBy and StartComment: who started the run and why (the run's
+	// stored plan keeps them; empty for a scheduled run or one started
+	// before release v88).
+	StartedBy    string `json:"started_by,omitempty"`
+	StartComment string `json:"start_comment,omitempty"`
+
+	cancelBy, cancelWhy string // who cancelled a queued run and why (history data)
 }
 
 // RunFilter selects runs for a listing.

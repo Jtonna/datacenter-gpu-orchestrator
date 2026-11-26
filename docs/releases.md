@@ -2,6 +2,17 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Run and Cancel from the Benchmarks pages
+
+No agent change, no new port, no table, no migration. One new setting: `bench_not_startable`.
+
+- **Every run passes one start gate** (the page, REST, MCP and a schedule), decided on the expanded run before anything is queued. A run is refused whole, naming every entry and machine at fault, when it (or a group it holds, or an entry) is listed in `bench_not_startable`, when a load would go to a zone that is excluded or to the scheduler's own machine, when a profile's model file is in deleted models, or when 20 runs are queued already.
+- **A dry read**: `POST /api/bench/benchmarks/<id>/run?dry_run=1` (and `groups/<id>/run`, `suites/<id>/run`) with the start's body answers the steps, per load the profile, the machines by name, what it takes there and whether it fits now, what is loaded now and who uses it, what the run would unload now and why, the refusals and, for `again_of` (Run again), the definitions changed since that run (a warning, not a refusal). Nothing starts.
+- **A start needs a comment** (`comment` in the body or `X-Comment`), and when the run would unload other people's models, the list it was shown (`evict`): a different list is refused (409 `evict_set_changed`) with the new one. With `evict_others` a run waits for a model of someone else it was not shown, instead of unloading it. The run keeps who started it and why (`started_by`, `start_comment`). Group runs take `only_when_idle` and `idle_wait_s` for the run too.
+- **A cancel needs a comment**; the outcome says where and who: `cancelled at step 7 of 30 by ann: "wrong zones"`. A cancel while a run's load still waits in the scheduler's queue withdraws that load (it no longer starts later for nobody, and its claim and the drain of other models end).
+- MCP: `run_suite`, `run_bench_group`, `run_benchmark` and `cancel_run` require `comment`; the run tools take `evict` and `dry_run`.
+- **Going back:** the image before ignores `bench_not_startable` (listed as an unknown field; configuration writes then need force, as for any newer key) and reads the runs this one stored; its run routes take no comment.
+
 ## Web UI: benchmark pages, second round; one round of plans per page open; a calmer status loop
 
 No agent change, no new port, no table, no setting. One new query on an existing route: `GET /api/models?only=disk`.

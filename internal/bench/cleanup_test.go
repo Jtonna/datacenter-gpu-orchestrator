@@ -138,14 +138,14 @@ func TestBusyReasonWithEvictOthers(t *testing.T) {
 	api := newFake()
 	api.external["other"] = true
 	st, _ := api.Status(context.Background())
-	if busyReason(st, nil, false) == "" {
+	if busyReason(st, nil, false, nil) == "" {
 		t.Fatal("off: an outside model makes the scheduler busy")
 	}
-	if why := busyReason(st, nil, true); why != "" {
+	if why := busyReason(st, nil, true, nil); why != "" {
 		t.Fatalf("on: an idle outside model is ignored, got %q", why)
 	}
 	st.QueueLen = 1
-	if busyReason(st, nil, true) == "" {
+	if busyReason(st, nil, true, nil) == "" {
 		t.Fatal("on: a queue entry still waits")
 	}
 }

@@ -786,6 +786,16 @@ func (s *Scheduler) CancelQueued(ctx context.Context, profiles []string) (int, e
 	return ask(s, ctx, func(c *schedCore) int { return c.cancelQueued(profiles) })
 }
 
+// DropBenchLoads withdraws the loads benchmark run run sent for model that
+// still wait in the queue (dropBenchLoads); the number withdrawn.
+func (s *Scheduler) DropBenchLoads(ctx context.Context, model, run string) (int, error) {
+	p, _, ok := s.resolve(model)
+	if !ok {
+		return 0, errUnknown(model)
+	}
+	return ask(s, ctx, func(c *schedCore) int { return c.dropBenchLoads(p.Name, run) })
+}
+
 // Drain is POST /api/models/drain/{model}: the instance admits nothing
 // new and stops once its runs finish (drain.go); the answer is the ETA in
 // seconds (nil: idle and stopped now, or no run length known yet).
