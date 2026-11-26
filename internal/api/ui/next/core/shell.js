@@ -86,6 +86,8 @@ export const NAV = [
   // the gear (Q69): everything that configures Potluck or describes it
   { id: 'settings', label: 'Settings', icon: I.gear, foot: true, gear: true, pages: [
     { id: 'profiles', label: 'Profiles', desc: 'Models, context size and memory need' },
+    // under Profiles and out of the way (profiles plan, section 9)
+    { id: 'test-profiles', label: 'Test profiles', desc: 'Profiles for trials and benchmarks, kept apart' },
     { id: 'tiers', label: 'Tiers and zones', desc: 'Priority, link speed, switch zones off' },
     { id: 'settings', label: 'Settings', desc: 'Holds, timeouts, settle time and the other defaults' },
     { id: 'audit', label: 'Audit', desc: 'Every change, who made it and why' },

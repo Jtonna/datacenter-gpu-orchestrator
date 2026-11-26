@@ -5,6 +5,13 @@
 //   profileEntries()  GET /api/profiles: 12 hand-written profiles and 300
 //                     generated benchmark profiles (generated: true)
 //   profileSpecs()    GET /api/config profiles{} (the editor's source)
+//   testProfiles()    GET /api/profiles/test (the Test profiles page)
+//   standardSet(file, state)   GET and POST /api/models/{file}/standard-set (--stdset)
+//
+// The marking (profiles plan, section 5): two hand-written profiles pinned to
+// zones are marked production, one is left to the rule (test: forced
+// zones), qwen3-14b-128k is marked test with a display name, and every
+// generated one is test by the rule; gemma-4-27b has a display name.
 //   catalog()         GET /api/models (with --catalog): one entry per model file, short_name
 //   planAnswer(body)  POST /api/plan: the full dry-run plan (scheduler.PlanReport),
 //                     on chosen zones when the body names them
@@ -36,20 +43,32 @@ const fileOf = s => MODEL_FILES.find(m => m.short_name === s).file;
 
 // hand-written profiles: [id, model short name, ctx, forced zones, need MiB, verdict, extra]
 const HAND = [
-  ['gemma-4-27b', 'gemma-4-27b', 32768, [], 17900, 'serve', { description: 'The default chat model: two consoles, host on the first.', aliases: ['chat'] }],
+  ['gemma-4-27b', 'gemma-4-27b', 32768, [], 17900, 'serve', { description: 'The default chat model: two consoles, host on the first.', aliases: ['chat'], display_name: 'Gemma chat' }],
   ['gemma-4-27b-long', 'gemma-4-27b', 131072, [], 25400, 'evict', { description: 'Long documents. Takes three consoles; unloads the small models first.' }],
   ['gemma-4-12b', 'gemma-4-12b', 65536, [], 9100, 'wait', {}],
-  ['gemma-4-12b-fast', 'gemma-4-12b', 8192, ['ps5-05'], 13120, 'tight', { description: 'One console, short context, for quick answers.' }],
+  ['gemma-4-12b-fast', 'gemma-4-12b', 8192, ['ps5-05'], 13120, 'tight', { description: 'One console, short context, for quick answers.', stage: 'production' }],
   ['qwen3-14b', 'qwen3-14b', 40960, [], 9800, 'start', { aliases: ['coder'] }],
   ['qwen3-14b-laptop', 'qwen3-14b', 16384, ['laptop-02'], 9200, 'warn', { description: 'Pinned to the named-only laptop: it is the only profile that may use it.' }],
   ['qwen3-32b', 'qwen3-32b', 32768, [], 20500, 'queue', {}],
-  ['qwen3-32b-split', 'qwen3-32b', 32768, ['ps5-03', 'ps5-04', 'ps5-05'], 21000, 'start', { tensor_split: [3, 3, 4], description: 'A hand-made split over three consoles, measured at 9.8 tok/s; the even split ran out of memory on the first console, so the third takes the largest share and hosts nothing.' }],
+  ['qwen3-32b-split', 'qwen3-32b', 32768, ['ps5-03', 'ps5-04', 'ps5-05'], 21000, 'start', { stage: 'production', tensor_split: [3, 3, 4], description: 'A hand-made split over three consoles, measured at 9.8 tok/s; the even split ran out of memory on the first console, so the third takes the largest share and hosts nothing.' }],
   ['llama-3.3-70b', 'llama-3.3-70b', 16384, [], 36800, 'reject', {}],
   ['glm-4.5-air', 'glm-4.5-air', 32768, [], 46100, 'reject', { description: 'Too big for this fleet today; kept for when the second rack joins.' }],
-  ['qwen3-14b-128k', 'qwen3-14b', 131072, [], 14800, 'backoff', {}],
+  ['qwen3-14b-128k', 'qwen3-14b', 131072, [], 14800, 'backoff', { stage: 'test', display_name: 'Qwen 128k trial' }],
   ['gemma-4-12b-vision', 'gemma-4-12b', 32768, [], 8600, 'start', { parallel: 2 }],
 ];
 const RACK = ['ps5-03', 'ps5-04', 'ps5-05'];
+// each file's trained context (GGUF context_length)
+const TRAINED = { 'gemma-4-27b': 131072, 'gemma-4-12b': 131072, 'qwen3-14b': 40960, 'qwen3-32b': 40960, 'llama-3.3-70b': 131072, 'glm-4.5-air': 131072 };
+
+// marks(e, x) -> the server's marking fields (config.EffectiveStage, ShownName)
+function marks(e, x) {
+  const set = x.stage === 'test' || x.stage === 'production';
+  const stage = set ? x.stage : (e.generated || e.force_nodes.length ? 'test' : 'production');
+  const name = x.display_name || e.id;
+  Object.assign(e, { stage, stage_set: set, shown_name: (stage === 'test' ? 'TEST - ' : '') + name });
+  if (x.display_name) e.display_name = x.display_name;
+  return e;
+}
 
 // the short plan of GET /api/profiles (internal/api/profiles.go)
 function planOf(action, need, force) {
@@ -78,6 +97,8 @@ export function profileEntries() {
       plan: planOf(action, need, force), host: force.length > 1 ? 'node' : 'server' };
     if (x.description) e.description = x.description;
     if (force.length > 1) Object.assign(e, { host_node: force[0], host_overhead_mib: 1536 });
+    marks(e, x);
+    if (x.stage) e.spec_stage = x.stage;
     out.push(e);
   }
   // 300 generated: six models × five contexts × ten zone counts
@@ -90,8 +111,8 @@ export function profileEntries() {
         const force = ZONES.filter(z => z.budget > 0).slice(0, Math.min(k, 6)).map(z => z.name);
         const need = Math.round(m.size * 1024 * 1.1 + c / 16);
         const action = need > 30000 ? 'reject' : k % 4 === 0 ? 'queue' : 'start';
-        out.push({ id, kind: 'llama', model: m.file, ctx: c, parallel: 1, aliases: [], force_nodes: force, tensor_split: [], generated: true,
-          needs_mib: need, needs_basis: 'estimated, +5% margin; the estimate is ' + need + ' MiB', needs_measured: false, plan: planOf(action, need, force), host: 'server' });
+        out.push(marks({ id, kind: 'llama', model: m.file, ctx: c, parallel: 1, aliases: [], force_nodes: force, tensor_split: [], generated: true,
+          needs_mib: need, needs_basis: 'estimated, +5% margin; the estimate is ' + need + ' MiB', needs_measured: false, plan: planOf(action, need, force), host: 'server' }, {}));
         i++;
       }
     }
@@ -110,6 +131,8 @@ export function profileSpecs() {
     if (e.aliases.length) s.aliases = e.aliases;
     if (e.description) s.description = e.description;
     if (e.generated) s.generated = true;
+    if (e.spec_stage) s.stage = e.spec_stage;
+    if (e.display_name) s.display_name = e.display_name;
     out[e.id] = s;
   }
   return out;
@@ -121,7 +144,8 @@ export function catalog() {
     const mine = ps.filter(p => p.model === m.file);
     return { key: m.file, kind: 'llama', file: m.file, exists: true, size_bytes: Math.round(m.size * 2 ** 30), name: m.name, short_name: m.short_name, publisher: m.publisher, family: m.family,
       brand: m.family, quant: (m.file.match(/(Q\d_K(?:_M)?)/) || [])[1] || '', state: 'not_loaded', icon: null,
-      profiles: mine.map(p => ({ id: p.id, ctx: p.ctx, parallel: p.parallel, force_nodes: p.force_nodes, generated: p.generated, needs_mib: p.needs_mib, plan: p.plan })),
+      profiles: mine.map(p => ({ id: p.id, ctx: p.ctx, parallel: p.parallel, force_nodes: p.force_nodes, generated: p.generated, needs_mib: p.needs_mib, plan: p.plan,
+        stage: p.stage, stage_set: p.stage_set, shown_name: p.shown_name, display_name: p.display_name })),
       profile_count: mine.length, generated_count: mine.filter(p => p.generated).length, startable_count: mine.filter(p => p.plan.would_start).length,
       instances: [], measured: [], loads: { count: 0, recent: [] } };
   });
@@ -170,4 +194,119 @@ export function planAnswer(body) {
     memory, tight_fit: tight,
     host: e.host, host_node: e.host === 'node' ? zone(e.host_node).id : '', host_overhead_mib: e.host === 'node' ? 1536 : 0, host_problem: '',
   } };
+}
+
+// testProfiles(now) -> GET /api/profiles/test (internal/api/testprofiles.go):
+// the test profiles, each with the context it really runs at (a Qwen3 file
+// is trained at 40,960: its 64k bench profiles run at 40k), why it is test,
+// who refers to it and its last use
+export function testProfiles(now = Date.now()) {
+  const rows = [], models = {}, reasons = {};
+  let i = 0, production = 0;
+  for (const e of profileEntries()) {
+    if (e.stage !== 'test') { production++; continue; }
+    const why = [];
+    if (e.stage_set) why.push('marked');
+    if (e.generated) why.push('generated');
+    if (e.force_nodes.length) why.push('forced zones');
+    const short = MODEL_FILES.find(m => m.file === e.model).short_name;
+    const trained = TRAINED[short] || 0;
+    const real = trained && e.ctx > trained ? trained : e.ctx;
+    const row = { id: e.id, shown_name: e.shown_name, model: e.model, model_name: short, ctx: e.ctx, ctx_real: real, reason: why[0], reasons: why, stage_set: e.stage_set,
+      aliases: e.aliases, force_nodes: e.force_nodes,
+      refs: { benchmarks: i % 7 === 0 ? ['cold-load-' + short] : [], groups: i % 21 === 0 ? ['nightly'] : [] }, last_used: i % 5 === 0 ? now - (i + 1) * 3600e3 : null };
+    if (real !== e.ctx) row.ctx_note = 'ctx ' + e.ctx.toLocaleString('en-US') + ' is above this model\'s trained context of ' + trained.toLocaleString('en-US') + '; the server runs it at ' + trained.toLocaleString('en-US');
+    if (e.display_name) row.display_name = e.display_name;
+    rows.push(row);
+    models[e.model] = (models[e.model] || 0) + 1;
+    reasons[why[0]] = (reasons[why[0]] || 0) + 1;
+    i++;
+  }
+  return { profiles: rows, count: rows.length, production_count: production, models, reasons, history: true };
+}
+
+// standardSet(file, state, short) -> GET /api/models/{file}/standard-set
+// (internal/api/standardset.go) for any file, ?short= as short. The name is
+// the file's production family (its base, gemma-4-27b for the gemma file)
+// unless short names another; "qwen3-14b" (another file's profile) and
+// "TEST - x" are refused. The rows show each state of ruling C:
+//   16k   fits, derived                       ticked
+//   32k   the default; the family has its id at 8k: exists, not written
+//   64k   fits by the estimate only            ticked; now it would unload
+//   128k  fits, measured, every zone (max_pool) ticked
+//   256k  the trained context; by the estimate it does not fit: not ticked
+//         but may be; a figure of another shape named beside it
+// state: ready (the default), nothing (every row exists), error (the read
+// fails), refused (the write fails).
+const STD_TAKEN = { 'qwen3-14b': 'the name qwen3-14b is taken: the profile qwen3-14b is of another file (qwen3-14b-Q5_K_M.gguf)' };
+export function standardSet(file, state, short) {
+  const long = state === 'long'; // as long as live's gemma-4-12b (v85 copy): every row carries four notes
+  if (long) state = 'ready';
+  if (state === 'error') return { status: 503, body: { error: { message: 'the scheduler is shutting down', type: 'server_error', code: 'shutting_down' } } };
+  const bad = m => ({ status: 400, body: { error: { message: m, type: 'invalid_request_error' } } });
+  if (short && STD_TAKEN[short]) return bad(STD_TAKEN[short]);
+  if (short && /^test - /i.test(short)) return bad('the name must not start with "TEST - ": a test profile is shown with it already');
+  if (short && /[@:\s/]/.test(short)) return bad('the name must be one word: no spaces, ":", "@" or "/"');
+  const fam = file.replace(/\.gguf$/i, '').replace(/-?(it-)?Q\d_K(_M)?|-?Q\d_\d$/i, '').toLowerCase().replace(/[^a-z0-9.]+/g, '-').replace(/^-|-$/g, '');
+  const name = short || fam;
+  const all = state === 'nothing';
+  const est = ctx => 9000 + ctx / 16;
+  const row = (ctx, id, x) => Object.assign({ id, ctx, state: 'fits', kept: true, selected: !all, tickable: !all, action: 'start', reason: '', zones: ['ps5-05'], zones_may_use: 4, zones_may_use_by_max_pool: true,
+    need_mib: est(ctx), fit_need_mib: est(ctx), need_source: 'derived', need_basis: 'derived from the measurement at ctx 32768', uses_every_zone: false, host: 'server', host_memory_mib: 4096, host_memory_counted: false,
+    host_memory_note: "restore points and prompt cache on the scheduler's machine: up to 4,096 MiB, not counted in what it needs (restore points 0 MiB, prompt cache 4,096 MiB)",
+    exists: all, default: false }, all ? { exists_as: id, exists_note: 'exists, kept as it is', exists_carries: [] } : {}, x);
+  const estRow = ctx => ({ need_source: 'estimate', need_mib: est(ctx), fit_need_mib: Math.ceil(est(ctx) * 1.05), need_basis: 'estimated, +5% margin; the estimate is ' + est(ctx) + ' MiB',
+    need_note: 'the fit uses ' + Math.ceil(est(ctx) * 1.05).toLocaleString('en-US') + ' MiB: the estimate with its 5% margin',
+    shape_note: 'the existing ' + fam + ' (8k) runs at 15,900 MiB (written by hand) with KV q8_0, flash attention; this row would use the default KV type (f16), no flash attention, so that figure is not its own' });
+  const famHas = !short || short === fam;
+  const rows = [
+    row(16384, name + ':16k'),
+    row(32768, name, famHas && !all ? { default: true, exists: true, selected: false, tickable: false, exists_as: fam, need_source: 'measured for this shape', need_basis: 'measured this run',
+      exists_note: fam + ' exists at 8k, kept as it is; the standard default would be 32k', exists_carries: ['KV type q8_0', 'flash attention', 'thinking off (the chat-template argument)', 'a hand-written need of 15,900 MiB', 'aliases (gemma-27b)'] }
+      : { default: true, need_source: 'measured for this shape', need_basis: 'measured this run' }),
+    row(65536, name + ':64k', Object.assign({ state: 'fits-by-estimate', zones: ['ps5-03', 'ps5-04'], action: 'evict', now_note: 'fits only when other models are unloaded: now it would first unload gemma-4-12b' }, estRow(65536))),
+    row(131072, name + ':128k', { zones: ['ps5-01', 'ps5-02', 'ps5-03', 'ps5-04'], uses_every_zone: true, need_source: 'measured for this shape', need_basis: 'measured this run',
+      every_zone_note: 'this context fits only by using every zone it may use (4: the setting max_pool): nothing else can be placed beside it', host_memory_mib: 10240,
+      host_memory_note: "restore points and prompt cache on the scheduler's machine: up to 10,240 MiB, not counted in what it needs (restore points 6,144 MiB, prompt cache 4,096 MiB)" }),
+    // 256k = the trained context (not above it); only the estimate, and by it it does not fit
+    row(262144, name + ':256k', Object.assign(estRow(262144), { state: 'estimate-does-not-fit', kept: false, selected: false, tickable: !all, action: 'reject', zones: [], host_memory_note: '',
+      reason: 'not measured: by the file estimate it does not fit even with nothing loaded; the plan says: placer: need 25384 MiB (requires 26654 MiB) does not fit the available nodes' })),
+  ];
+  if (long) {
+    const shape = 'the existing ' + fam + ':48k (48k) runs at 8,210 MiB (written by hand) with KV q8_0, flash attention, extra arguments --chat-template-kwargs {"enable_thinking":false}; this row would use the default KV type (f16), no flash attention, no extra arguments, so that figure is not its own';
+    const host = "restore points and prompt cache on the scheduler's machine: up to 12,288 MiB, not counted in what it needs (restore points 10,240 MiB, prompt cache 2,048 MiB)";
+    rows.forEach((r, i) => {
+      Object.assign(r, estRow(r.ctx), { state: 'fits-by-estimate', shape_note: shape, host_memory_note: host });
+      if (i === 0) return; // 16k: the one row left to write
+      Object.assign(r, { exists: true, selected: false, tickable: false, exists_as: r.id,
+        exists_note: r.default ? r.id + ' exists at 8k, kept as it is; the standard default would be 32k (the family has 32k as ' + fam + '-thinking)' : 'exists, kept as it is',
+        exists_carries: ['KV type q8_0', 'flash attention', 'thinking off (the chat-template argument)', 'a hand-written need of 7,850 MiB', 'aliases (' + fam + '-1pool-8k, ' + fam + '-2pool-8k)'] });
+      if (i >= 2) Object.assign(r, { state: 'estimate-does-not-fit', kept: false, action: 'reject',
+        reason: 'not measured: by the file estimate it does not fit even with nothing loaded; the plan says: placer: need 48776 MiB (requires 53263 MiB) exceeds cluster capacity 52268 MiB; short by 995 MiB even without the margin; nodes in no_auto_nodes (used only by profiles that force them) and not counted: laptop-1' });
+    });
+  }
+  const toWrite = rows.filter(r => r.selected).map(r => r.id);
+  return { status: 200, body: { file, short: name, short_source: short ? 'asked' : 'family', family: fam, family_ids: [fam, fam + '-thinking', fam + ':48k'], trained_ctx: 262144, trained_ctx_known: true,
+    note: 'trained at 262,144 tokens: every standard context is at or below it', default_id: name, default_ctx: 32768, max_pool: 4, rows, to_write: toWrite } };
+}
+
+// standardWrite(file, state, body) -> POST /api/models/{file}/standard-set
+// {comment, short, ids}: the comment is required always; ids default to the
+// read's selection, and each must be a row that may be ticked.
+export function standardWrite(file, state, body) {
+  const bad = m => ({ status: 400, body: { error: { message: m, type: 'invalid_request_error' } } });
+  if (!body || !String(body.comment || '').trim()) return bad('a comment is required (body {"comment": "..."} or the X-Comment header)');
+  if (state === 'refused') return { status: 409, body: { error: { message: 'configuration changed since revision 412 (now 413): read it again', type: 'invalid_request_error', code: 'stale' } } };
+  const r0 = standardSet(file, state, body.short || '');
+  if (r0.status !== 200) return r0;
+  const set = r0.body;
+  const ids = Array.isArray(body.ids) ? body.ids : set.to_write;
+  for (const id of ids) {
+    const r = set.rows.find(x => x.id === id);
+    if (!r) return bad(id + " is not one of this call's rows (" + set.rows.map(x => x.id).join(', ') + ')');
+    if (!r.tickable) return bad(id + ' cannot be written: ' + (r.exists ? r.exists_note : r.reason));
+  }
+  const written = set.rows.filter(r => ids.includes(r.id)).map(r => r.id);
+  const skipped = set.rows.filter(r => !ids.includes(r.id)).map(r => ({ id: r.id, reason: r.exists ? r.exists_note : r.tickable ? 'not chosen' : 'not kept: ' + r.reason }));
+  return { status: 200, body: { revision: 413, changed: written.length > 0, file, short: set.short, written, skipped, rows: set.rows, diff: [], warnings: [], audit_entry_ids: [] } };
 }

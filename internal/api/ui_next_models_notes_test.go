@@ -134,23 +134,22 @@ func TestUINextNotesProductionProfiles(t *testing.T) {
 		// "No profiles yet", and smaller under it the real count of its test
 		// and benchmark configurations; nothing under it when there are none.
 		map[string]any{"name": "adjust c: no production profile", "route": "#/models", "status": st,
-			"has": []string{"div.mr[data-model='" + mdlRecent + "'] span.mdl-pc[data-prod='0'] span.sub[data-test='1'][title*=configuration]",
+			"has": []string{"div.mr[data-model='" + mdlRecent + "'] span.mdl-pc[data-prod='0'] span.sub[data-test='1'][title*=profile]",
 				"div.mr[data-model='" + mdlNoProfs + "'] span.mdl-pc[data-prod='0']"},
 			"none": []string{"div.mr[data-model='" + mdlNoProfs + "'] span.mdl-pc span.sub", row + " span.mdl-pc span.sub"},
-			// the second line is short and one line ("1 test config"); the full phrase is on hover and in the panel (lead, 25 Nov)
-			"expect": []string{"No profiles yet", "1 test config"}, "absent": []string{"1 test configuration"}},
-		map[string]any{"name": "notes 9: the panel lists production, the rest collapsed", "route": "#/models?model=" + mdlOlder, "status": st,
-			"page": []string{"2 profiles", "18 test and benchmark configurations"},
-			"pageHas": []string{"aside.side table.mdl-ptbl tr[data-profile='gemma-4-12b']", "aside.side details.mdl-tests summary",
-				"aside.side details.mdl-tests:not([open])", "aside.side details.mdl-tests tr[data-profile='gemma-4-12b:ps5-03']"},
-			"pageNone":  []string{"aside.side table.mdl-ptbl tr[data-profile='gemma-4-12b:ps5-03']", "aside.side table.mdl-ptbl tr[data-profile='bench-gemma-4-12b-ca']"},
+			// the second line counts the test profiles (profiles plan, section 9: "1 test profile")
+			"expect": []string{"No profiles yet", "1 test profile"}, "absent": []string{"test config"}},
+		map[string]any{"name": "notes 9: the panel lists production, the test profiles are a line to their page", "route": "#/models?model=" + mdlOlder, "status": st,
+			"page":      []string{"2 profiles", "and 18 test profiles"},
+			"pageHas":   []string{"aside.side table.mdl-ptbl tr[data-profile='gemma-4-12b']", "aside.side p.mdl-tests[data-tests='18'] a[href^='#/test-profiles?model=']"},
+			"pageNone":  []string{"aside.side details.mdl-tests", "aside.side table.mdl-ptbl tr[data-profile='gemma-4-12b:ps5-03']", "aside.side table.mdl-ptbl tr[data-profile='bench-gemma-4-12b-ca']"},
 			"notOnPage": []string{"20 profiles", "generated configuration"}},
 		map[string]any{"name": "notes 9: a model with only test configurations", "route": "#/models?model=" + mdlRecent, "status": st,
-			"page": []string{"No profiles", "1 test and benchmark configuration"}, "pageNone": []string{"aside.side table.mdl-ptbl"}},
+			"page": []string{"No profiles", "1 test profile"}, "pageNone": []string{"aside.side table.mdl-ptbl"}},
 		map[string]any{"name": "notes 9: the delete dialog names production, counts the rest", "route": "#/models?model=" + mdlOlder, "status": st,
 			"click":     []any{"aside.side button[data-act=delete]"},
 			"pageHas":   []string{"div.dlg[data-dlg=delete][data-state=ready] [data-profiles]"},
-			"page":      []string{"2 profiles", "gemma-4-12b:64k", "18 test and benchmark configurations"},
+			"page":      []string{"2 profiles", "gemma-4-12b:64k", "18 test profiles"},
 			"notOnPage": []string{"all 20 profiles", "20 profiles come back"}},
 	}})
 }

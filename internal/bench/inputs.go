@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"reflect"
 	"sort"
@@ -109,7 +110,7 @@ func placeOn(p benchspec.Placement, cons []Console) ([]string, error) {
 
 // ProfileSpecOf is the generated profile's settings for these inputs on these consoles.
 func ProfileSpecOf(in benchspec.Inputs, nodes []string) map[string]any {
-	spec := map[string]any{"model": in.Model, "ctx": in.Ctx, "generated": true}
+	spec := map[string]any{"model": in.Model, "ctx": in.Ctx, "generated": true, "stage": "test"}
 	if len(nodes) > 0 {
 		spec["force_nodes"] = nodes
 	}
@@ -225,6 +226,15 @@ func (h *HTTPAPI) EnsureProfile(ctx context.Context, id string, spec map[string]
 		if sameProfile(cur.Profile, spec) {
 			return nil
 		}
+		// A person's marks and description stay (profiles slice B2): a stored
+		// stage, display_name and description replace the spec's.
+		kept := maps.Clone(spec)
+		for _, k := range []string{"stage", "display_name", "description"} {
+			if v, ok := cur.Profile[k].(string); ok && v != "" {
+				kept[k] = v
+			}
+		}
+		body["profile"] = kept
 		method = "PUT"
 	default:
 		return fmt.Errorf("%s answered %d: %s", path, resp.StatusCode, Head(strings.TrimSpace(string(raw)), 300))

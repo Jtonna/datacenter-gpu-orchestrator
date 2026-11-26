@@ -33,6 +33,10 @@ const (
 	// ActionRemove erases a model file from the models trash for good
 	// (section models).
 	ActionRemove = "remove"
+	// ActionPromote and ActionDemote set a profile's stage to production or
+	// test (section profiles; a required comment).
+	ActionPromote = "promote"
+	ActionDemote  = "demote"
 )
 
 // Sections of an entry. Configuration sections are the keys of the configuration document.

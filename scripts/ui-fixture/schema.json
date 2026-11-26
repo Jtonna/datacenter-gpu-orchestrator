@@ -944,6 +944,29 @@
    "restart_required": false
   },
   {
+   "key": "stage",
+   "scope": "profile",
+   "section": "identity",
+   "type": "enum",
+   "enum": [
+    "test",
+    "production"
+   ],
+   "nullable": true,
+   "default": null,
+   "description": "Whether the profile is a test or a production profile. Empty means not said: a generated profile or one with force_nodes counts as test, any other as production. It changes nothing in scheduling.",
+   "restart_required": false
+  },
+  {
+   "key": "display_name",
+   "scope": "profile",
+   "section": "identity",
+   "type": "string",
+   "default": null,
+   "description": "A name for people, shown in place of the id (a test profile is shown as \"TEST - \" and the name). One line, at most 80 characters; not another profile's id, alias or display name; it changes nothing in scheduling.",
+   "restart_required": false
+  },
+  {
    "key": "generated",
    "scope": "profile",
    "section": "identity",

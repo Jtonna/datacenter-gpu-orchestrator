@@ -38,7 +38,7 @@ import { h } from '../core/dom.js';
 import { registerView, href, navigate } from '../core/router.js';
 import { state } from '../core/store.js';
 import * as api from '../core/api.js';
-import { liveView, legend, memoryRow, empty, skeleton, searchField, sidePanel, facts, badge, filterSelect, dialog, runStatus } from '../core/ui.js';
+import { liveView, legend, memoryRow, empty, skeleton, searchField, sidePanel, facts, badge, filterSelect, dialog, runStatus, profileLabel } from '../core/ui.js';
 import { num, gb, tps, dur, ago, plural, agoText, dateTime, bytes, DASH } from '../core/format.js';
 import { staleBanner, nodeName, nodeMemory, machines, shortReason, plainReason } from '../core/status.js';
 import { loadConfig, loadSchema, fieldsOf, clone } from '../core/configdata.js';
@@ -50,6 +50,7 @@ import { stateBadge, fitOf, cannotRun, runsOnCell, testRun } from './models/comm
 import { mountDetail } from './models/detail.js';
 import { splitProfiles, prodText, testText, prodNeeds, profName, needBasis, zonesFor } from './models/kinds.js';
 import { trashFooter, hasTrash, deleteModel, deletedText, mountTrash } from './models/trash.js';
+import { standardDialog } from './models/standard.js';
 
 // the reasons of what is drawn but not built yet (p7-models-backend-STATUS.md)
 export const NOT_YET = {
@@ -171,8 +172,8 @@ function profCell(m) {
   const { prod, test } = splitProfiles(m.profiles);
   if (prod.length) return h('span.mdl-pc', { 'data-prod': String(prod.length) }, prodText(prod.length));
   return h('span.mdl-pc.mut', { 'data-prod': '0' }, 'No profiles yet',
-    // one short line: "22 test configs"; the full phrase on hover (and in the panel's collapsed line)
-    test.length ? h('span.sub', { 'data-test': String(test.length), title: testText(test.length) }, plural(test.length, 'test config')) : null);
+    // one short line: "22 test profiles"
+    test.length ? h('span.sub', { 'data-test': String(test.length), title: testText(test.length) }, testText(test.length)) : null);
 }
 // sizeText(m) -> "16.5 GB", or why there is none (decimal GB, as the board and the disk line).
 // Below 0.1 GB in MB, below 1 MB "under 1 MB", as the trash page (models/trash.js sizeOf)
@@ -306,12 +307,14 @@ function modelPanel(st, m, ps) {
   const loadedProfiles = new Set(insts.filter(i => i.state !== 'starting').map(i => i.profile));
   const all = m.profiles || [];
   // the production profiles are the model's profiles; the rest is one collapsed line (views/models/kinds.js)
-  const { prod: hand, test: tests } = splitProfiles(all);
+  const split = splitProfiles(all), tests = split.test;
+  // production profiles by context (then by id)
+  const hand = split.prod.slice().sort((a, b) => (a.ctx || 0) - (b.ctx || 0) || String(a.id).localeCompare(String(b.id)));
   const ctxs = [...new Set(hand.map(p => p.ctx).filter(Boolean))].sort((x, y) => x - y);
   const q = ps.q.trim().toLowerCase();
   // "Unload when idle" from ttl_s (v60; 0 = never); no column when the server has no ttl_s
   const ttlCol = hand.some(p => typeof p.ttl_s === 'number');
-  const rows = hand.filter(p => (!q || p.id.toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q)) && (!ps.ctx || String(p.ctx) === ps.ctx));
+  const rows = hand.filter(p => (!q || p.id.toLowerCase().includes(q) || profileLabel(p).toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q)) && (!ps.ctx || String(p.ctx) === ps.ctx));
   if (ps.view === 'bench') return benchView(m, ps);
   if (ps.view === 'edit') return editView(m, ps);
   return [
@@ -345,6 +348,7 @@ function modelPanel(st, m, ps) {
         h('div.mdl-cfg-tools',
           hand.length > 1 ? searchField(ps.q, v => { ps.q = v; ps.redraw(); }, 'Search profiles', 'mdl-psearch') : null,
           ctxs.length > 1 ? filterSelect('Context', [{ id: '', label: 'any' }].concat(ctxs.map(c => ({ id: String(c), label: num(c) }))), ps.ctx, v => { ps.ctx = v; ps.redraw(); }) : null,
+          standardButton(m, ps),
           h('a.btn.sm', { href: href('profiles', ['new']), title: 'Open the profile editor' }, 'Add profile'))),
       hand.length ? (rows.length ? h('div.scroll.mdl-pscroll', h('table.tbl.mdl-ptbl',
         h('thead', h('tr', h('th', { scope: 'col' }, 'Profile'), h('th.r', { scope: 'col' }, 'Context'),
@@ -353,22 +357,30 @@ function modelPanel(st, m, ps) {
           h('th', { scope: 'col' }, h('span.sr', 'Edit')))),
         h('tbody', rows.map(profileRow))))
         : h('p.mut.mdl-pad', 'No profile matches.'))
-        : h('p.mut.mdl-pad', all.length ? 'No profile: only test and benchmark configurations.' : 'No configuration uses this file yet. Add a profile to load it.'),
-      // the test and benchmark configurations: one collapsed line, never counted as profiles
-      tests.length ? h('details.mdl-tests', { key: 'tests' }, h('summary', testText(tests.length)),
-        h('table.tbl.mdl-ttbl', h('tbody', tests.map(profileRow)))) : null),
+        : h('p.mut.mdl-pad', all.length ? 'No production profile: only test profiles.' : 'No configuration uses this file yet. Add a profile to load it.'),
+      // the test profiles: one collapsed line to the Test profiles page, never counted as profiles
+      tests.length ? h('p.mdl-tests.mdl-pad', { key: 'tests', 'data-tests': String(tests.length) },
+        h('a', { href: href('test-profiles', [], { model: m.file || m.key }), title: 'On the Test profiles page, out of the way' }, (hand.length ? 'and ' : '') + testText(tests.length))) : null),
     h('div.mdl-pad.row', { key: 'page', style: 'gap:12px' }, h('a.btn', { href: href('models', [m.key]) }, 'Open the model page')),
   ];
   // one profile's row (production table and the test list)
   function profileRow(p) {
     return h('tr', { key: p.id, 'data-profile': p.id },
-          h('td', h('span.mono', p.id), loadedProfiles.has(p.id) ? h('span.mdl-pill', { title: 'Loaded now' }, 'Now') : null, p.description ? h('span.sub', p.description) : null,
+          h('td', h('span', { 'data-shown': '' }, profileLabel(p)), profileLabel(p) !== p.id ? h('span.sub.mono', { title: 'The id clients send' }, p.id) : null, loadedProfiles.has(p.id) ? h('span.mdl-pill', { title: 'Loaded now' }, 'Now') : null, p.description ? h('span.sub', p.description) : null,
             p.parallel > 1 ? h('span.sub', `${num(p.parallel)} requests in parallel`) : null, hostLine(p)),
           h('td.r.mono', p.ctx ? num(p.ctx) : DASH),
           h('td.r', p.needs_mib ? [h('span.mono', num(p.needs_mib) + ' MiB'), h('span.sub', { title: p.needs_basis || null }, needBasis(p))] : h('span.mut', DASH)),
           ttlCol ? (typeof p.ttl_s === 'number' ? h('td.r.mono', { 'data-ttl': String(p.ttl_s) }, p.ttl_s > 0 ? dur(p.ttl_s) : 'Never') : h('td.r.mut', DASH)) : null,
           h('td.r', h('button.go', { type: 'button', 'data-act': 'edit', 'aria-label': 'Edit ' + p.id, title: 'Edit it here', onclick: () => ps.edit(p.id) }, h('span.tx', 'Edit'), icon('M8 5l5 5-5 5'))));
   }
+}
+
+// standardButton(m, ps) -> "Make standard profiles": the dialog of
+// views/models/standard.js (a llama model whose file is there)
+function standardButton(m, ps) {
+  if (m.kind === 'command' || m.exists === false) return null;
+  return h('button.btn.sm', { type: 'button', 'data-act': 'standard', title: 'Plan 16k, 32k, 64k and up to the trained context, then write the ones that fit',
+    onclick: () => standardDialog(m, text => { ps.saved = text; ps.redraw(); }) }, 'Make standard profiles');
 }
 
 // backBar(m, ps) -> the way back to the panel's main view

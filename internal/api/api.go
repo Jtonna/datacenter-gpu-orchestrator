@@ -377,6 +377,7 @@ func (s *Server) routes() *http.ServeMux {
 	s.benchRoutes(m)
 	s.configRoutes(m) // /api/config, /api/audit (config.go)
 	m.HandleFunc("GET /api/profiles", s.handleProfiles)
+	m.HandleFunc("GET /api/profiles/test", s.handleTestProfiles) // testprofiles.go
 	m.HandleFunc("GET /api/models", s.handleModelCatalog)
 	m.HandleFunc("GET /api/models/{key...}", s.handleModelDetail)             // and GET /api/models/{key}/icon
 	m.HandleFunc("PUT /api/models/pin/{key...}", s.handlePinPut)              // pins.go
@@ -387,6 +388,7 @@ func (s *Server) routes() *http.ServeMux {
 	m.HandleFunc("DELETE /api/models/pin/{key...}", s.handlePinDelete)        // pins.go
 	m.HandleFunc("PUT /api/models/{key...}", s.handleIconPut)                 // only /api/models/{key}/icon
 	m.HandleFunc("DELETE /api/models/{key...}", s.handleIconDelete)
+	m.HandleFunc("POST /api/models/{key...}", s.handleModelPost) // only /api/models/{file}/standard-set (standardset.go)
 	// GET /api/nodes/availability (availability.go)
 	s.availabilityRoutes(m)
 	m.HandleFunc("GET /api/health", s.handleHealthSummary)

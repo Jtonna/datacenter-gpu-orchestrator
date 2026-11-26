@@ -71,7 +71,7 @@ var routeScopes = map[string]access.Scope{
 	"GET /api/bench/task-sets/{id}": access.Observe, "GET /api/bench/trends": access.Observe,
 	"GET /api/config": access.Observe, "GET /api/config/exclude-nodes": access.Observe, "GET /api/config/export": access.Observe,
 	"GET /api/config/fleet": access.Observe, "GET /api/config/no-auto-nodes": access.Observe, "GET /api/config/node-overrides": access.Observe,
-	"GET /api/config/profiles": access.Observe, "GET /api/config/profiles/{id...}": access.Observe, "GET /api/config/recovery": access.Observe,
+	"GET /api/profiles/test": access.Observe, "GET /api/config/profiles": access.Observe, "GET /api/config/profiles/{id...}": access.Observe, "GET /api/config/recovery": access.Observe,
 	"GET /api/config/revisions": access.Observe, "GET /api/config/revisions/{n}": access.Observe, "GET /api/config/schema": access.Observe,
 	"GET /api/config/settings": access.Observe, "GET /api/config/tiers": access.Observe,
 	"GET /api/events": access.Observe, "GET /api/health": access.Observe, "GET /api/history": access.Observe,
@@ -119,9 +119,11 @@ var routeScopes = map[string]access.Scope{
 	"PUT /api/config/fleet": access.Settings, "PUT /api/config/node-overrides": access.Settings, "PUT /api/config/recovery": access.Settings,
 	"PUT /api/config/tiers": access.Settings, "POST /api/config/import": access.Settings, "POST /api/config/profiles": access.Settings,
 	"PUT /api/config/profiles/{id...}": access.Settings, "DELETE /api/config/profiles/{id...}": access.Settings,
+	"POST /api/config/profiles/{rest...}":     access.Settings, // {id}/promote and {id}/demote: a profile edit
 	"POST /api/config/revisions/{n}/rollback": access.Settings,
 	"PUT /api/models/{key...}":                access.Settings, "DELETE /api/models/{key...}": access.Settings,
-	"POST /api/forget-need": access.Settings, "POST /api/needs/forget": access.Settings, "DELETE /api/nodes/{id}": access.Settings,
+	"POST /api/models/{key...}": access.Settings, // {file}/standard-set: writes profiles
+	"POST /api/forget-need":     access.Settings, "POST /api/needs/forget": access.Settings, "DELETE /api/nodes/{id}": access.Settings,
 	"POST /api/bench/benchmarks": access.Settings, "PUT /api/bench/benchmarks/{id}": access.Settings, "DELETE /api/bench/benchmarks/{id}": access.Settings,
 	"POST /api/bench/external": access.Settings, "PUT /api/bench/external/{id}": access.Settings, "DELETE /api/bench/external/{id}": access.Settings,
 	"POST /api/bench/groups": access.Settings, "PUT /api/bench/groups/{id}": access.Settings, "DELETE /api/bench/groups/{id}": access.Settings,
