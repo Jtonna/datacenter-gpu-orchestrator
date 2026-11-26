@@ -49,7 +49,9 @@ export function runsData() {
 export async function loadRuns(d, q) {
   const page = Math.max(1, parseInt(q.page || '1', 10) || 1);
   const key = JSON.stringify([q.kind || '', q.result || '', q.model || '', q.suite || '', page]);
-  if (d.key === key && d.runs) return false;
+  // asked once per filter set: render calls this on every draw, and a draw
+  // while the answer is on its way must not ask again (v83 asked 8 times)
+  if (d.key === key) return false;
   d.key = key;
   try {
     const r = await api.get('/api/bench/runs', { limit: PAGE, offset: (page - 1) * PAGE, kind: q.kind || undefined, result: q.result || undefined,

@@ -59,6 +59,7 @@
 //               "titles": ["text some title attribute on the page contains", ...],
 //               "fetchedQuery": ["regexp a request (GET /path?query body) must match", ...],
 //               "notFetched": ["regexp no request of the case may match", ...],
+//               "fetchedCount": {"regexp": n}: exactly n requests of the case match it,
 //               "noHeader": ["X-Actor", ...]: no request of the case carried it,
 //               "sentHeader": ["^X-Comment: why$"]: a header line "Name: value" matched each,
 //               "noHeaderLine": ["ptl_"]: no header line matched any,
@@ -710,6 +711,8 @@ for (const c of spec.cases) {
   for (const re of c.fetchedQuery || []) if (!fetchedFull.some(f => new RegExp(re).test(f))) errors.push('no request matches /' + re + '/ (requests: ' + JSON.stringify([...new Set(fetchedFull)]) + ')');
   // notFetched: regular expressions no request may match (a write that must not be sent)
   for (const re of c.notFetched || []) { const hit = fetchedFull.find(f => new RegExp(re).test(f)); if (hit) errors.push('a request that must not be sent: ' + hit); }
+  // fetchedCount: how many requests match (a read sent once, not once per draw)
+  for (const [re, n] of Object.entries(c.fetchedCount || {})) { const hits = fetchedFull.filter(f => new RegExp(re).test(f)); if (hits.length !== n) errors.push(hits.length + ' requests match /' + re + '/, want ' + n + ': ' + JSON.stringify(hits)); }
   for (const hd of c.noHeader || []) if (sentHeaders.has(hd)) errors.push('a request carried the header ' + hd);
   for (const re of c.sentHeader || []) if (!sentHeaderLines.some(l => new RegExp(re).test(l))) errors.push('no header matches /' + re + '/ (headers: ' + JSON.stringify([...new Set(sentHeaderLines)]) + ')');
   // subscribed / notSubscribed: topics the live channel's last subscribe names, or not

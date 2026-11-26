@@ -480,48 +480,157 @@ func TestLivePlansChangeReachesClient(t *testing.T) {
 	t.Fatal("the client did not get p02's new plan in time")
 }
 
-// One opening of a page that draws model avatars (the Overview, the
-// benchmark pages): GET /api/models, then one GET /api/models/<key>/icon per
-// avatar. The memory moves between the two (a heartbeat). The page open
-// costs at most one round of plans: an icon read needs the model's family,
-// which does not depend on the status, so it never computes the plans again
-// (it did: brandOfKey asked catalogGet, a fresh round whenever the status
-// had moved since GET /api/models; live counted two rounds of every plan per
-// open of the Overview, 26 Nov). GET /api/models itself stays fresh
-// (TestLivePlansRESTStaysFresh).
+// One open of a page costs at most one round of plans, counted from every
+// source (REST, the live channel's subscribe, the rebuild loop), under the
+// conditions on live: memory moving on every heartbeat (a background feed,
+// not a step the test waits on), another browser tab already connected
+// (watching the catalog live, or not), and plans older than catalogDriftGap
+// when nobody watches them. Each page's reads are what its screen sends on
+// open (pinned by the UI tests TestUINextBenchPageOpenReads and
+// TestUIModelsOpenReadsCatalogOnce):
+//   - Overview and the benchmark pages: GET /api/models (names only), the
+//     live channel without "models", one GET /api/models/<key>/icon per
+//     avatar (an icon read needs only the model's family: on live v83 it
+//     asked catalogGet, a second fresh round whenever the memory had moved
+//     since GET /api/models), and the status reads;
+//   - Models: GET /api/models, the disk alone (?only=disk, no plans; its
+//     30 s re-read too), then the "models" subscribe once the REST answer
+//     is in (the server reuses the plans it just computed).
+//
+// GET /api/models itself stays fresh (TestLivePlansRESTStaysFresh).
 func TestPageOpenPlanReads(t *testing.T) {
-	le := newLiveEnv(t, 0)
-	st, err := bench.OpenStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
+	base := []string{"status", "event", "bench", "config", "health", "requests"}
+	type page struct {
+		name   string
+		models bool // the screen watches the catalog live
+		gets   []string
 	}
-	t.Cleanup(func() { st.Close() })
-	cs, err := cfgstore.Open(st)
-	if err != nil {
-		t.Fatal(err)
-	}
-	le.api.store = cs
-	reads := le.api.catalog.planReads.Load()
-	body(t, le.get("/api/models"))
-	if r := le.rounds(); r != 1 {
-		t.Fatalf("GET /api/models: %d plan rounds, want 1", r)
-	}
-	le.tick(2 * time.Second)
-	le.heartbeat(100) // the status moved while the page drew
+	icons := []string{}
 	for i := 0; i < 6; i++ {
-		res := le.get(fmt.Sprintf("/api/models/m%02d.gguf/icon", i))
-		res.Body.Close()
-		if res.StatusCode != 404 { // no icon is set: the family is looked up, and none is set either
-			t.Fatalf("icon %d: %d", i, res.StatusCode)
+		icons = append(icons, fmt.Sprintf("/api/models/m%02d.gguf/icon", i))
+	}
+	pages := []page{
+		{"overview", false, append([]string{"/api/health", "/api/status"}, icons...)},
+		{"benchmarks/runs", false, icons},
+		{"models", true, append([]string{"/api/models?only=disk"}, icons...)},
+	}
+	for _, standingLive := range []bool{false, true} {
+		for _, pg := range pages {
+			t.Run(fmt.Sprintf("%s, the other tab watching the catalog %v", pg.name, standingLive), func(t *testing.T) {
+				le := newLiveEnv(t, 50*time.Millisecond)
+				st, err := bench.OpenStore(t.TempDir())
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { st.Close() })
+				cs, err := cfgstore.Open(st)
+				if err != nil {
+					t.Fatal(err)
+				}
+				le.api.store = cs
+				// the memory moves on every heartbeat, all along
+				stop, fed := make(chan struct{}), make(chan struct{})
+				go func() {
+					defer close(fed)
+					for i := 1; ; i++ {
+						select {
+						case <-stop:
+							return
+						case <-time.After(40 * time.Millisecond):
+						}
+						le.tick(100 * time.Millisecond)
+						le.view.heartbeat(37 * (i % 7))
+					}
+				}()
+				defer func() { close(stop); <-fed }()
+				// the other tab, connected before the open
+				topics := base
+				if standingLive {
+					topics = append(append([]string{}, base...), "models")
+				}
+				other := liveClient(t, le.env, topics...)
+				other.until(t, "status", 3*time.Second)
+				if standingLive {
+					other.until(t, "models", 5*time.Second)
+				}
+				time.Sleep(time.Second)
+				if !standingLive {
+					le.tick(catalogDriftGap + time.Second) // nobody watched the plans for a while
+				}
+				before, reads := le.rounds(), le.api.catalog.planReads.Load()
+
+				// the page opens
+				res := le.get("/api/models")
+				res.Body.Close()
+				own := base
+				if pg.models {
+					own = append(append([]string{}, base...), "models")
+				}
+				c := liveClient(t, le.env, own...)
+				for _, p := range pg.gets {
+					res := le.get(p)
+					res.Body.Close()
+					if res.StatusCode >= 500 || (res.StatusCode != 200 && !strings.HasSuffix(p, "/icon")) {
+						t.Fatalf("GET %s: %d", p, res.StatusCode)
+					}
+				}
+				c.until(t, "status", 3*time.Second)
+				if pg.models {
+					c.until(t, "models", 5*time.Second)
+				}
+				time.Sleep(1500 * time.Millisecond) // the rebuild loop and the hub settle
+				if pg.models {
+					res := le.get("/api/models?only=disk") // the 30 s re-read of the disk figures
+					res.Body.Close()
+				}
+				got, plans := le.rounds()-before, le.api.catalog.planReads.Load()-reads
+				t.Logf("one open of %s: %d rounds of plans (%d plan reads, %d profiles)", pg.name, got, plans, livePlanProfiles)
+				if got > 1 {
+					t.Fatalf("one open of %s computed %d rounds of plans, want at most 1", pg.name, got)
+				}
+			})
 		}
 	}
-	for _, p := range []string{"/api/status", "/api/system"} {
-		res := le.get(p)
-		res.Body.Close()
+}
+
+// The order the Models page keeps (the REST read, then the subscribe) is
+// what makes its open one round: a subscribe first, with plans older than
+// catalogDriftGap, computes them for the channel, and the REST read that
+// follows computes them again under the status of its own moment. Logged,
+// not judged: the client's order is what is pinned
+// (TestUIModelsOpenReadsCatalogOnce).
+func TestPageOpenSubscribeFirstCostsTwo(t *testing.T) {
+	le := newLiveEnv(t, 50*time.Millisecond)
+	le.tick(catalogDriftGap + time.Second)
+	before := le.rounds()
+	c := liveClient(t, le.env, "status", "models")
+	c.until(t, "models", 5*time.Second)
+	le.tick(time.Second)
+	le.heartbeat(100)
+	body(t, le.get("/api/models"))
+	t.Logf("subscribe first, then GET /api/models: %d rounds of plans", le.rounds()-before)
+}
+
+// GET /api/models?only=disk is the disk block alone and computes no plans,
+// however much the memory moved; any other value of only is refused.
+func TestModelsDiskOnlyComputesNoPlans(t *testing.T) {
+	le := newLiveEnv(t, 0)
+	body(t, le.get("/api/models"))
+	before := le.rounds()
+	for i := 1; i <= 3; i++ {
+		le.tick(catalogDriftGap)
+		le.heartbeat(2000 * i)
+		doc := jsonOf(t, body(t, le.get("/api/models?only=disk")))
+		if _, ok := doc["disk"]; !ok || len(doc) != 1 {
+			t.Fatalf("only=disk answered %v, want the disk block alone", doc)
+		}
 	}
-	got := le.api.catalog.planReads.Load() - reads
-	t.Logf("one page open: %d plan rounds, %d plan reads (%d profiles)", le.rounds(), got, livePlanProfiles)
-	if r := le.rounds(); r != 1 || got != livePlanProfiles {
-		t.Fatalf("one page open computed %d rounds (%d plans), want 1 round of %d", r, got, livePlanProfiles)
+	if r := le.rounds() - before; r != 0 {
+		t.Fatalf("three disk reads computed %d rounds of plans, want 0", r)
+	}
+	if res := le.get("/api/models?only=plans"); res.StatusCode != 400 {
+		t.Fatalf("only=plans: %d, want 400", res.StatusCode)
+	} else {
+		res.Body.Close()
 	}
 }

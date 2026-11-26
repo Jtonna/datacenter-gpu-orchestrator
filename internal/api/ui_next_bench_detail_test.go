@@ -340,3 +340,27 @@ func TestUINextBenchGroupPanelScrollsInside(t *testing.T) {
 		}
 	}
 }
+
+// One open of a benchmark page reads each thing once: the Runs page's list
+// is read once (not once per draw while the answer is on its way), the
+// Overview's recent runs and the results per model only where they are drawn.
+// (On live v83 one open of the Runs page sent GET /api/bench/runs 8 times.)
+func TestUINextBenchPageOpenReads(t *testing.T) {
+	f := benchBoards(t)
+	st := f["/api/status"]
+	tick := []any{map[string]any{"type": "status", "data": st}, map[string]any{"type": "status", "data": st}, map[string]any{"type": "status", "data": st}}
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": f, "cases": []any{
+		map[string]any{"name": "runs: the list read once, the menu's total once", "route": "#/benchmarks/runs", "status": st, "ws": tick,
+			"expect": []string{"1–12 of 49"},
+			"fetchedCount": map[string]any{`^GET /api/bench/runs\?(.*&)?offset=`: 1, `^GET /api/bench/runs\?limit=1$`: 1, `^GET /api/bench/runs\b`: 2, `^GET /api/bench/results/models`: 0}},
+		// the list's answer still on its way while live messages draw the page again
+		map[string]any{"name": "runs: the list asked once while its answer is on its way", "route": "#/benchmarks/runs", "status": st, "ws": tick,
+			"fetch":        map[string]any{"/api/bench/runs": map[string]any{"$match": []any{[]any{`offset=`, map[string]any{"$hang": true}}, []any{`.`, f["/api/bench/runs"]}}}},
+			"fetchedCount": map[string]any{`^GET /api/bench/runs\?(.*&)?offset=`: 1}},
+		map[string]any{"name": "overview: the recent runs and the menu's total", "route": "#/benchmarks", "status": st, "ws": tick,
+			"expect": []string{"Recent runs"},
+			"fetchedCount": map[string]any{`^GET /api/bench/runs\?limit=4$`: 1, `^GET /api/bench/runs\b`: 2, `^GET /api/bench/results/models`: 1}},
+		map[string]any{"name": "groups: no runs list but the menu's total", "route": "#/benchmarks/all", "status": st, "ws": tick,
+			"fetchedCount": map[string]any{`^GET /api/bench/runs\b`: 1, `^GET /api/bench/results/models`: 0}},
+	}})
+}

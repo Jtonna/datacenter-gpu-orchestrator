@@ -883,7 +883,7 @@ func (s *Server) withModelsDisk(list []byte) []byte {
 	}
 	out := make([]byte, 0, len(list)+len(b)+10)
 	out = append(append(append(out, `{"disk":`...), b...), ',')
-	if len(list) > 2 && list[1] == '}' {
+	if list[1] == '}' { // an empty document: no comma after the disk
 		out = out[:len(out)-1]
 	}
 	return append(out, list[1:]...)

@@ -46,3 +46,28 @@ func TestUILiveCatalogOnlyWhereShown(t *testing.T) {
 		t.Error("next/core/live.js subscribes to models on every screen")
 	}
 }
+
+// One open of the Models page costs one round of plans: the catalog is read
+// once over REST, the disk figures with GET /api/models?only=disk (no plans),
+// and the live channel's "models" subscribe waits for the REST answer (the
+// server then reuses the plans it just computed; a subscribe sent first
+// computed them once for the channel and the REST read once more).
+func TestUIModelsOpenReadsCatalogOnce(t *testing.T) {
+	e := newEnv(t, chatOK)
+	st := jsonOf(t, body(t, e.get("/api/status")))
+	cat := map[string]any{"version": 1, "models": []any{}}
+	disk := map[string]any{"disk": map[string]any{"state": "ok", "total_bytes": 240e9, "used_bytes": 50e9}}
+	both := map[string]any{"$match": []any{[]any{`only=disk`, disk}, []any{`.`, cat}}}
+	// the REST answer still on its way: no models topic yet
+	uiExec(t, map[string]any{"shell": "next", "app": true, "wsOpen": true, "fetch": map[string]any{"/api/profiles": map[string]any{"profiles": []any{}},
+		"/api/models": map[string]any{"$match": []any{[]any{`only=disk`, disk}, []any{`.`, map[string]any{"$hang": true}}}}}, "cases": []any{
+		map[string]any{"name": "models: the subscribe waits for the catalog's REST answer", "route": "#/models", "status": st,
+			"subscribed": []string{"status"}, "notSubscribed": []string{"models"},
+			"fetchedCount": map[string]any{`^GET /api/models$`: 1, `^GET /api/models\?only=disk$`: 1}},
+	}})
+	uiExec(t, map[string]any{"shell": "next", "app": true, "wsOpen": true, "fetch": map[string]any{"/api/profiles": map[string]any{"profiles": []any{}}, "/api/models": both}, "cases": []any{
+		map[string]any{"name": "models: one catalog read, the disk alone, then the models topic", "route": "#/models", "status": st,
+			"subscribed":   []string{"status", "models"},
+			"fetchedCount": map[string]any{`^GET /api/models$`: 1, `^GET /api/models\?only=disk$`: 1}},
+	}})
+}
