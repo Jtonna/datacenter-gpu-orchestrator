@@ -851,33 +851,6 @@
    "restart_required": false
   },
   {
-   "key": "ctx_checkpoints",
-   "scope": "profile",
-   "section": "memory",
-   "type": "int",
-   "default": null,
-   "min": 0,
-   "max": 1024,
-   "unit": "restore points",
-   "description": "A restore point (--ctx-checkpoints) is a saved copy of a conversation's state, kept per slot on the machine that hosts the model at one checkpoint each (tens of MiB, recurrent and sliding-window models only); fewer hold less memory: with 3, a conversation continued or edited at its last message is as fast as with 32; with 1, an edit of the last message is read again from the start (measured 25 Nov). Empty: the setting ctx_checkpoints (32).",
-   "restart_required": false,
-   "applies_to": "llama",
-   "nullable": true
-  },
-  {
-   "key": "cache_ram_mib",
-   "scope": "profile",
-   "section": "memory",
-   "type": "int",
-   "default": null,
-   "min": 0,
-   "unit": "MiB",
-   "description": "The prompt cache (--cache-ram) keeps earlier prompts on the machine that hosts the model, up to this many MiB shared by all slots, so a returning prompt is not read again; 0 keeps no prompt cache. Empty: the setting cache_ram_mib (2,048 MiB) on the scheduler's machine, node_host_cache_ram_mib (0) on a node.",
-   "restart_required": false,
-   "applies_to": "llama",
-   "nullable": true
-  },
-  {
    "key": "allow_tiers",
    "scope": "profile",
    "section": "placement",

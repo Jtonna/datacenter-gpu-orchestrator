@@ -103,13 +103,6 @@ func (s *Server) profileEntriesOf(ctx context.Context, cfg *config.Config) []map
 		if p.DisplayName != "" {
 			e["display_name"] = p.DisplayName
 		}
-		// the profile's own host-process memory (absent: the cluster value)
-		if p.CtxCheckpoints != nil {
-			e["ctx_checkpoints"] = *p.CtxCheckpoints
-		}
-		if p.CacheRAMMiB != nil {
-			e["cache_ram_mib"] = *p.CacheRAMMiB
-		}
 		// It forces a node exclude_nodes names: kept, refused until lifted.
 		if b, ok := cfg.BlockedByExclusion(n); ok {
 			e["blocked_by_exclusion"] = b.Entry

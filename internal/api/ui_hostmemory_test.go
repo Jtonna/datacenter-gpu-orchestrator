@@ -48,8 +48,6 @@ func TestUIHostMemoryLine(t *testing.T) {
 	unknown := map[string]any{"family": "windowed", "cell_mib": 0, "checkpoints": 32, "checkpoints_mib": 0, "prompt_cache_mib": 2048, "on_node": false, "counted": false, "size_unknown": true, "estimate": false}
 	window := map[string]any{"family": "windowed", "cell_mib": 320, "checkpoints": 32, "checkpoints_mib": 10240, "prompt_cache_mib": 2048, "on_node": false, "counted": false, "estimate": true}
 	madeUp := map[string]any{"family": "recurrent", "cell_mib": 0, "checkpoints": 32, "checkpoints_mib": 0, "prompt_cache_mib": 0, "on_node": true, "counted": false, "size_unknown": true}
-	own := map[string]any{"family": "recurrent", "cell_mib": 50.25, "checkpoints": 3, "per_slot": 3, "checkpoints_mib": 151, "prompt_cache_mib": 0, "on_node": true, "counted": false,
-		"checkpoints_set": true, "set_note": "set on this profile: 3 restore points per slot"}
 	logged := map[string]any{"family": "windowed", "cell_mib": 42.5, "checkpoints": 32, "checkpoints_mib": 1360, "prompt_cache_mib": 2048, "on_node": false, "counted": false,
 		"from_log": true, "logged_file": "gemma-x.gguf", "logged_file_bytes": 7000000000, "logged_ctx": 8192}
 	with := func(hm map[string]any) map[string]any {
@@ -77,8 +75,6 @@ func TestUIHostMemoryLine(t *testing.T) {
 		{madeUp, map[string]any{"name": "host memory: an architecture without an exact rule shows no number",
 			"page":      []string{"Conversation memory: this model keeps restore points on the machine that hosts it: size not yet known: read at the first load."},
 			"notOnPage": []string{" MB each", "(0 MB)"}}},
-		{own, map[string]any{"name": "host memory: a profile that sets its own restore points says so",
-			"page": []string{"Conversation memory: this model keeps restore points on the machine that hosts it: about 50 MB each, up to 3 (151 MB), not yet counted (set on this profile: 3 restore points per slot)."}}},
 		{logged, map[string]any{"name": "host memory: a size read from a load's log says which file and context",
 			"page": []string{"Conversation memory: this model keeps restore points on the machine that hosts it: 43 MB each as the server logged it at a load of gemma-x.gguf at ctx 8,192, up to 32 (1,360 MB), not yet counted."}}},
 	} {

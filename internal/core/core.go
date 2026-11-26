@@ -174,14 +174,6 @@ type Profile struct {
 	// LoadStallTimeout is nil for "use the default"; an explicit 0 disables
 	// the load stall rule for this profile.
 	LoadStallTimeout *time.Duration
-	// CtxCheckpoints and CacheRAMMiB are the profile's own host-process
-	// memory (llama): restore points per conversation slot
-	// (--ctx-checkpoints) and the prompt cache in MiB (--cache-ram; 0 off).
-	// Nil is the cluster value, as before they existed: the setting
-	// ctx_checkpoints, and cache_ram_mib or node_host_cache_ram_mib by where
-	// the model is hosted (config EffectiveCtxCheckpoints, EffectiveCacheRAMMiB).
-	CtxCheckpoints *int
-	CacheRAMMiB    *int
 	// Host is where the llama-server host process runs: "" on the
 	// scheduler's machine (profile host: server, the default), HostNode on
 	// the first forced node, started there by its agent (phase 6).

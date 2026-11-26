@@ -44,8 +44,7 @@ const fileOf = s => MODEL_FILES.find(m => m.short_name === s).file;
 // hand-written profiles: [id, model short name, ctx, forced zones, need MiB, verdict, extra]
 const HAND = [
   ['gemma-4-27b', 'gemma-4-27b', 32768, [], 17900, 'serve', { description: 'The default chat model: two consoles, host on the first.', aliases: ['chat'], display_name: 'Gemma chat' }],
-  ['gemma-4-27b-long', 'gemma-4-27b', 131072, [], 25400, 'evict', { description: 'Long documents. Takes three consoles; unloads the small models first.', ctx_checkpoints: 3,
-    host_memory: { family: 'windowed', cell_mib: 320, estimate: true, checkpoints: 3, per_slot: 3, checkpoints_mib: 960, prompt_cache_mib: 2048, on_node: false, counted: false, checkpoints_set: true, prompt_cache_set: false, set_note: 'set on this profile: 3 restore points per slot' } }],
+  ['gemma-4-27b-long', 'gemma-4-27b', 131072, [], 25400, 'evict', { description: 'Long documents. Takes three consoles; unloads the small models first.' }],
   ['gemma-4-12b', 'gemma-4-12b', 65536, [], 9100, 'wait', {}],
   ['gemma-4-12b-fast', 'gemma-4-12b', 8192, ['ps5-05'], 13120, 'tight', { description: 'One console, short context, for quick answers.', stage: 'production' }],
   ['qwen3-14b', 'qwen3-14b', 40960, [], 9800, 'start', { aliases: ['coder'] }],
@@ -97,8 +96,6 @@ export function profileEntries() {
       generated: false, needs_mib: need, needs_basis: action === 'reject' ? 'estimated, +5% margin; the estimate is ' + need + ' MiB' : 'measured, needs_mib', needs_measured: action !== 'reject',
       plan: planOf(action, need, force), host: force.length > 1 ? 'node' : 'server' };
     if (x.description) e.description = x.description;
-    if (x.ctx_checkpoints !== undefined) e.ctx_checkpoints = x.ctx_checkpoints;
-    if (x.host_memory) e.host_memory = x.host_memory;
     if (force.length > 1) Object.assign(e, { host_node: force[0], host_overhead_mib: 1536 });
     marks(e, x);
     if (x.stage) e.spec_stage = x.stage;
@@ -136,7 +133,6 @@ export function profileSpecs() {
     if (e.generated) s.generated = true;
     if (e.spec_stage) s.stage = e.spec_stage;
     if (e.display_name) s.display_name = e.display_name;
-    if (e.ctx_checkpoints !== undefined) s.ctx_checkpoints = e.ctx_checkpoints;
     out[e.id] = s;
   }
   return out;
@@ -197,7 +193,6 @@ export function planAnswer(body) {
     required_mib: action === 'reject' ? fit : 0, capacity_mib: action === 'reject' ? 31200 : 0, load_mode: action === 'start' ? 'file_read' : '', reload_from_cache: [],
     memory, tight_fit: tight,
     host: e.host, host_node: e.host === 'node' ? zone(e.host_node).id : '', host_overhead_mib: e.host === 'node' ? 1536 : 0, host_problem: '',
-    host_memory: e.host_memory || null,
   } };
 }
 

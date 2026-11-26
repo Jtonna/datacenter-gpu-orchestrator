@@ -280,29 +280,19 @@ function needsLine(m, st, f) {
 // keeps on the machine that hosts it, from its profiles' host_memory (GET
 // /api/profiles; scheduler hostmem.go), and whether what it needs counts
 // them (count_host_memory, a host on a node); nothing for a plain family
-// A profile that sets its own restore points or prompt cache (its fields
-// ctx_checkpoints, cache_ram_mib) is named with its value, "set on this
-// profile", when its value is not the one the sentence shows.
 function convMemory(m) {
-  const ps = (m.profiles || []).filter(p => p.host_memory && p.host_memory.family && p.host_memory.family !== 'plain');
-  const own = ps.filter(p => p.host_memory.set_note);
-  const hm = (ps.find(p => p.host_memory.checkpoints > 0) || {}).host_memory;
-  if (!hm) return own.length ? h('div.mut', { 'data-convmem': 'set' }, 'Conversation memory: ' + ownWords(own) + '.') : null;
-  const others = own.filter(p => p.host_memory.set_note !== hm.set_note);
-  const tail = (hm.set_note ? ' (' + hm.set_note + ')' : '') + (others.length ? '; ' + ownWords(others) : '');
+  const hm = (m.profiles || []).map(p => p.host_memory).find(x => x && x.family && x.family !== 'plain' && x.checkpoints > 0);
+  if (!hm) return null;
   const lead = 'Conversation memory: this model keeps restore points on the machine that hosts it: ';
   // a window model whose size the header does not tell: no number until a load's log gives it
-  if (hm.size_unknown) return h('div.mut', { 'data-convmem': 'unknown' }, lead + 'size not yet known: read at the first load' + tail + '.');
+  if (hm.size_unknown) return h('div.mut', { 'data-convmem': 'unknown' }, lead + 'size not yet known: read at the first load.');
   // a size read from a load's log names the file and the context it was read at
   const mb = num(Math.round(hm.cell_mib));
   const each = hm.from_log ? `${mb} MB each as the server logged it at a load of ${hm.logged_file} at ctx ${num(hm.logged_ctx)}`
     : hm.estimate ? `at most ${mb} MB each` : `about ${mb} MB each`;
   return h('div.mut', { 'data-convmem': hm.from_log ? 'logged' : '', title: hm.from_log ? `Read from the model server's log this run (file of ${num(hm.logged_file_bytes)} bytes); kept until a restart` : null },
-    lead + `${each}, up to ${num(hm.checkpoints)} (${num(hm.checkpoints_mib)} MB)` + (hm.counted ? ', counted in what it needs' : ', not yet counted') + tail + '.');
+    lead + `${each}, up to ${num(hm.checkpoints)} (${num(hm.checkpoints_mib)} MB)` + (hm.counted ? ', counted in what it needs.' : ', not yet counted.'));
 }
-
-// ownWords(ps) -> "gemma-4-12b: 3 restore points per slot, set on this profile"
-const ownWords = ps => ps.map(p => (p.shown_name || p.id) + ': ' + p.host_memory.set_note.replace(/^set on this profile: /, '') + ', set on this profile').join('; ');
 
 // the side panel of one model
 function modelPanel(st, m, ps) {

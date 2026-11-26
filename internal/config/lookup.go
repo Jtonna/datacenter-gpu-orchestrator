@@ -103,29 +103,6 @@ func (c *Config) EffectiveStallTimeout(p *core.Profile) time.Duration {
 	return c.Defaults.StallTimeout
 }
 
-// EffectiveCtxCheckpoints is the restore points per conversation slot a
-// launch of p passes (--ctx-checkpoints): the profile's own, else the
-// setting ctx_checkpoints. set says it is the profile's own.
-func (c *Config) EffectiveCtxCheckpoints(p *core.Profile) (n int, set bool) {
-	if p != nil && p.CtxCheckpoints != nil {
-		return *p.CtxCheckpoints, true
-	}
-	return c.Defaults.CtxCheckpoints, false
-}
-
-// EffectiveCacheRAMMiB is the prompt cache a launch of p passes
-// (--cache-ram, MiB): the profile's own, else cache_ram_mib for a host on
-// the scheduler's machine and node_host_cache_ram_mib for host: node.
-func (c *Config) EffectiveCacheRAMMiB(p *core.Profile) (mib int, set bool) {
-	if p != nil && p.CacheRAMMiB != nil {
-		return *p.CacheRAMMiB, true
-	}
-	if p != nil && p.Host == core.HostNode {
-		return c.Defaults.NodeHostCacheRAMMiB, false
-	}
-	return c.Defaults.CacheRAMMiB, false
-}
-
 // EffectiveLoadStallTimeout is how long a measured upload may acknowledge no
 // new bytes before the load fails: the profile's own, else the default; 0
 // means disabled.

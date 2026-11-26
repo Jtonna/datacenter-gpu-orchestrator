@@ -43,23 +43,6 @@ var lateManaged = map[string]string{
 	"--ctx-checkpoints": "ctx_checkpoints", "-ctxcp": "ctx_checkpoints", "--swa-checkpoints": "ctx_checkpoints",
 }
 
-// MaxCtxCheckpoints bounds ctx_checkpoints, the setting and the profile
-// field alike (the server takes any int; 1024 x one checkpoint per slot is
-// already far beyond a host's memory).
-const MaxCtxCheckpoints = 1024
-
-// hostMemoryFlags are the host-process memory flags a profile sets with its
-// own fields (ctx_checkpoints, cache_ram_mib), never in extra_args.
-var hostMemoryFlags = map[string]string{
-	"--ctx-checkpoints": "ctx_checkpoints", "-ctxcp": "ctx_checkpoints", "--swa-checkpoints": "ctx_checkpoints",
-	"--cache-ram": "cache_ram_mib", "-cram": "cache_ram_mib",
-}
-
-var hostMemoryFieldWords = map[string]string{
-	"ctx_checkpoints": "restore points per conversation slot",
-	"cache_ram_mib":   "prompt cache in MiB, 0 off",
-}
-
 // StripLateManaged is args without the lateManaged flags and their values
 // (the next entry, for a flag written without "=").
 func StripLateManaged(args []string) []string {
@@ -169,12 +152,6 @@ func (c *Config) validate(raw map[string]*ProfileSpec, modelOK func(*core.Profil
 		}
 		if p.LoadStallTimeout != nil && *p.LoadStallTimeout < 0 {
 			pf("load_stall_timeout", "must not be negative")
-		}
-		if v := p.CtxCheckpoints; v != nil && (*v < 0 || *v > MaxCtxCheckpoints) {
-			pf("ctx_checkpoints", "must be between 0 and %d, got %d", MaxCtxCheckpoints, *v)
-		}
-		if v := p.CacheRAMMiB; v != nil && *v < 0 {
-			pf("cache_ram_mib", "must not be negative (0 keeps no prompt cache), got %d", *v)
 		}
 		if p.LoadTimeout < 0 {
 			pf("load_timeout", "must not be negative")
@@ -291,7 +268,7 @@ func (c *Config) validateLlama(p *core.Profile, r *ProfileSpec, pf func(field, f
 		if strings.HasPrefix(a, "-") {
 			name, _, _ = strings.Cut(a, "=")
 		}
-		if managedFlags[name] && hostMemoryFlags[name] == "" {
+		if managedFlags[name] {
 			pf("extra_args", "entry %d %q is a managed flag (%s); the scheduler sets it from the profile", i, a, name)
 		}
 		if setting, ok := lateManaged[name]; ok && strings.HasPrefix(a, "-") {
@@ -302,12 +279,10 @@ func (c *Config) validateLlama(p *core.Profile, r *ProfileSpec, pf func(field, f
 				} else if i+1 < len(p.ExtraArgs) {
 					val = name + " " + p.ExtraArgs[i+1]
 				}
-				c.lateArgs = append(c.lateArgs, fmt.Sprintf("profile %q: extra_args %s is not passed: the scheduler passes --ctx-checkpoints on every launch, from this profile's field ctx_checkpoints or else the setting %s; remove it from extra_args and set the field", p.Name, val, setting))
+				c.lateArgs = append(c.lateArgs, fmt.Sprintf("profile %q: extra_args %s is not passed: the scheduler passes --ctx-checkpoints from the setting %s on every launch; remove it from the profile", p.Name, val, setting))
 				continue
 			}
-		}
-		if field, ok := hostMemoryFlags[name]; ok && strings.HasPrefix(a, "-") {
-			pf("extra_args", "entry %d %q sets %s, which the scheduler passes on every launch; remove it here and set this profile's field %s (%s), or leave the field empty for the cluster value", i, a, name, field, hostMemoryFieldWords[field])
+			pf("extra_args", "entry %d %q sets %s, which the scheduler passes on every launch from the setting %s; remove it here and change the setting instead", i, a, name, setting)
 		}
 	}
 }
@@ -329,7 +304,7 @@ func validateCommand(p *core.Profile, r *ProfileSpec, pf func(field, format stri
 		{"kv_quant", r.KVQuant != ""}, {"flash_attn", r.FlashAttn != nil},
 		{"allow_tiers", r.AllowTiers != nil}, {"force_nodes", r.ForceNodes != nil},
 		{"tensor_split", r.TensorSplit != nil}, {"extra_args", r.ExtraArgs != nil},
-		{"host", r.Host != ""}, {"ctx_checkpoints", r.CtxCheckpoints != nil}, {"cache_ram_mib", r.CacheRAMMiB != nil},
+		{"host", r.Host != ""},
 	}
 	for _, f := range llamaOnly {
 		if f.set {

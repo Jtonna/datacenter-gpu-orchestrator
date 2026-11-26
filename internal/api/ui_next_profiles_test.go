@@ -35,10 +35,6 @@ func TestUINextProfiles(t *testing.T) {
 			"has":     []string{"tr.sel[data-profile=qwen3-32b-split]"}},
 		map[string]any{"name": "profiles: the editor", "route": "#/profiles/gemma-4-12b", "status": st,
 			"expect": []string{"Edit profile", "gemma-4-12b", "Context size", "Placement", "Back to the list", "Save"}, "none": []string{"tr[data-profile=gemma-4-12b]"}},
-		// p33: the two host-memory fields, each with its sentence
-		map[string]any{"name": "profiles: the editor: restore points and prompt cache", "route": "#/profiles/gemma-4-27b-long", "status": st,
-			"expect": []string{"Restore points per conversation", "A restore point (--ctx-checkpoints) is a saved copy of a conversation's state", "with 3, a conversation continued or edited at its last message is as fast as with 32",
-				"with 1, an edit of the last message is read again from the start", "Prompt cache", "0 keeps no prompt cache"}},
 		map[string]any{"name": "profiles: a copy", "route": "#/profiles/new?from=gemma-4-12b", "status": st, "expect": []string{"New profile, copied from", "Name"}},
 		map[string]any{"name": "profiles: a profile that does not exist", "route": "#/profiles/nope", "status": st, "expect": []string{"There is no profile nope"}},
 	}})
