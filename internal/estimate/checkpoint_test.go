@@ -50,6 +50,43 @@ func TestCheckpoint_PerFamily(t *testing.T) {
 //
 //	gemma3 shape, window 1024: 1024 x 163,840 elements x 2 bytes (f16) = 320 MiB
 //	an architecture whose window rule is not known here: no bound either
+// Gemma 4 12B (the real file's header keys): one checkpoint is at most the
+// window's 1,024 cells x the 40 window layers' K+V, proven against the
+// server's log ("created context checkpoint ... size = 320.013 MiB" at
+// every context from 2,048 to 131,072):
+//
+//	f16:  40 x 8 x (256 + 256) x 2 bytes x 1,024 = 335,544,320 bytes = 320.00 MiB
+//	q8_0: the same elements at 17/16 bytes (34 per 32) = 178,257,920 bytes = 170.00 MiB
+//
+// Below the window, the context per slot bounds it (ctx 512: 160.00 MiB).
+func TestCheckpoint_Gemma4_12BIsTheProvenBound(t *testing.T) {
+	m := meta(t, ggufgen.Gemma4_12B())
+	c := Checkpoint(m, "f16", 8192)
+	if c.Family != gguf.FamilyWindowed || c.Unknown || !c.Estimate || c.CellBytes != 335544320 || fmt.Sprintf("%.2f", c.CellMiB()) != "320.00" {
+		t.Fatalf("f16 %+v (%.3f MiB)", c, c.CellMiB())
+	}
+	if c.TotalMiB(32) != 10240 {
+		t.Fatalf("32 x: %d", c.TotalMiB(32))
+	}
+	q := Checkpoint(m, "q8_0", 8192)
+	if q.CellBytes != 178257920 || fmt.Sprintf("%.2f", q.CellMiB()) != "170.00" {
+		t.Fatalf("q8_0 %+v (%.3f MiB)", q, q.CellMiB())
+	}
+	if s := Checkpoint(m, "f16", 512); s.CellBytes != 335544320/2 {
+		t.Fatalf("ctx 512: %d", s.CellBytes)
+	}
+	// within 1% of the logged 320.013 MiB
+	if d := 100 * (320.013 - c.CellMiB()) / c.CellMiB(); d < 0 || d > 1 {
+		t.Fatalf("%.4f%% from the log", d)
+	}
+	// the same file without the pattern: no number
+	s := ggufgen.Gemma4_12B()
+	s.SWAPattern = nil
+	if u := Checkpoint(meta(t, s), "f16", 8192); !u.Unknown || u.CellBytes != 0 {
+		t.Fatalf("no pattern: %+v", u)
+	}
+}
+
 func TestCheckpoint_WindowedIsUnknown(t *testing.T) {
 	g3 := ggufgen.Spec{Arch: "gemma3", Blocks: 48, Embd: 3840, Heads: 16, HeadsKV: 8, KeyLength: 256, ValueLength: 256, SlidingWindow: 1024}
 	w := Checkpoint(meta(t, g3), "f16", 8192)

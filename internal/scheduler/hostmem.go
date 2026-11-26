@@ -11,6 +11,7 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/config"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/core"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/estimate"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/gguf"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/history"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/modelpath"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/supervise"
@@ -321,19 +322,33 @@ func (c *schedCore) checkHostMemorySizes() {
 			in.ckptChecked = 3
 			continue
 		}
+		largest := max(hm.LargestCheckpointMiB, hm.CheckpointMiB)
 		if f.SizeUnknown || f.FromLog {
 			if cs, ok := c.needs.(CheckpointSizer); ok {
 				if ck, err := cs.CheckpointOf(in.prof); err == nil {
 					k := ckptKey{in.prof.Model, ck.FileBytes, in.prof.Ctx}
-					if hm.CheckpointMiB > c.ckptSeen[k].MiB {
+					if largest > c.ckptSeen[k].MiB {
 						if c.ckptSeen == nil {
 							c.ckptSeen = map[ckptKey]ckptLogged{}
 						}
-						c.ckptSeen[k] = ckptLogged{MiB: hm.CheckpointMiB, At: c.now}
+						c.ckptSeen[k] = ckptLogged{MiB: largest, At: c.now}
 					}
 				}
 			}
 			continue // nothing to compare with: the log is the figure
+		}
+		if f.Family == string(gguf.FamilyWindowed) {
+			// a bound: the largest checkpoint is compared, and only above it
+			// (a conversation shorter than the window keeps less)
+			if in.ckptChecked&2 == 0 && f.CellMiB > 0 && largest > f.CellMiB*(1+ckptDriftPct/100) {
+				in.ckptChecked |= 2
+				d := 100 * (largest - f.CellMiB) / f.CellMiB
+				c.recordInst(in, history.TLearnedNeed, history.Warn,
+					fmt.Sprintf("The largest context checkpoint of %s is %.2f MiB in the server log; the window bound says at most %.2f MiB (%.1f%% above). The host memory shown for it may be wrong.",
+						in.prof.Name, largest, f.CellMiB, d),
+					map[string]any{"logged_mib": largest, "formula_mib": f.CellMiB, "family": f.Family, "source": "largest context checkpoint"})
+			}
+			continue
 		}
 		check := func(bit int, what string, logged float64) {
 			if in.ckptChecked&bit != 0 || logged == 0 {

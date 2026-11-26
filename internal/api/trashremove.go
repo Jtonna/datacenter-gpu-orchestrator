@@ -170,7 +170,7 @@ func (s *Server) recordRemovedEvent(t *cfgstore.RemovedRecord, atStart bool) {
 	if t.Reason == cfgstore.RemovedByClearing {
 		how = fmt.Sprintf("cleared from the models trash (in it since %s; model_trash_days)", msText(t.DeletedAt))
 	}
-	sum := fmt.Sprintf("%s was %s: %.1f GB freed. It and its %d profiles cannot be restored.", t.File, how, float64(t.SizeBytes)/1e9, len(t.ProfileIDs))
+	sum := fmt.Sprintf("%s was %s: %.1f GB freed. It and %s cannot be restored.", t.File, how, float64(t.SizeBytes)/1e9, itsProfiles(len(t.ProfileIDs)))
 	data := map[string]any{"file": t.File, "trash_id": t.ID, "size_bytes": t.SizeBytes, "reason": t.Reason, "profiles": t.ProfileIDs,
 		"deleted_at": t.DeletedAt, "removed_by": t.RemovedBy}
 	if atStart {
@@ -355,7 +355,7 @@ func (s *Server) handleTrashRemove(w http.ResponseWriter, r *http.Request) {
 	}
 	figures := map[string]any{"file": rec.File, "trash_id": id, "size_bytes": rec.SizeBytes, "profiles": ids, "deleted_at": rec.DeletedAt, "purge_at": at,
 		"days_early": daysEarly, "cannot_undo": true, "purge_on": s.trashPurgeOn(),
-		"message": fmt.Sprintf("This cannot be undone. %s and its %d profiles are erased now, %d days before they would have been. %.1f GB is freed.", rec.File, len(ids), daysEarly, float64(rec.SizeBytes)/1e9)}
+		"message": fmt.Sprintf("This cannot be undone. %s and %s are erased now, %d days before they would have been. %.1f GB is freed.", rec.File, itsProfiles(len(ids)), daysEarly, float64(rec.SizeBytes)/1e9)}
 	if dry {
 		_, ro, rf := s.removeTrashed(ctx, rec, cfgstore.RemovedByOwner, audit.FromRequest(r).Actor, comment, true)
 		if rf != nil {
@@ -536,4 +536,12 @@ func (t *trashState) noteClearFailed(id string) bool {
 	first := !t.clearFailed[id]
 	t.clearFailed[id] = true
 	return first
+}
+
+// itsProfiles is "its 1 profile" or "its N profiles" (the removal sentences).
+func itsProfiles(n int) string {
+	if n == 1 {
+		return "its 1 profile"
+	}
+	return fmt.Sprintf("its %d profiles", n)
 }

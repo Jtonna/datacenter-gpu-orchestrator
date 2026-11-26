@@ -178,3 +178,24 @@ func Gemma4Like() Spec {
 	return Spec{Arch: "gemma4", Blocks: 12, Embd: 1024, Heads: 8, HeadsKV: 4, KeyLength: 256, ValueLength: 256,
 		KeyLengthSWA: 128, ValueLengthSWA: 128, SlidingWindow: 512, SWAPattern: pat, SharedKVLayers: 2}
 }
+
+// Gemma4_12B is the header of the real Gemma 4 12B file (gemma-4-12b-it,
+// Q4_K_M): every key the checkpoint size reads, with the file's values.
+// 48 blocks; the pattern is 5 window layers then 1 full, repeated (40
+// window layers); head_count_kv 8 on window layers and 1 on the others;
+// window K and V head size 256 (512 on the full layers); window 1024;
+// shared_kv_layers 0; trained context 262,144.
+func Gemma4_12B() Spec {
+	pat := make([]bool, 48)
+	kv := make([]uint32, 48)
+	for i := range pat {
+		pat[i] = i%6 < 5
+		kv[i] = 1
+		if pat[i] {
+			kv[i] = 8
+		}
+	}
+	return Spec{Arch: "gemma4", Blocks: 48, Embd: 3840, Heads: 16, HeadsKVPerLayer: kv, Context: 262144,
+		KeyLength: 512, ValueLength: 512, KeyLengthSWA: 256, ValueLengthSWA: 256,
+		SlidingWindow: 1024, SWAPattern: pat}
+}

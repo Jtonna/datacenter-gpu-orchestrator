@@ -659,3 +659,13 @@ func TestModelRemove_KillBetweenAuditAndMark(t *testing.T) {
 		})
 	}
 }
+
+// The removal sentences count profiles in the singular for one:
+// "its 1 profile", never "its 1 profiles".
+func TestItsProfiles(t *testing.T) {
+	for n, want := range map[int]string{0: "its 0 profiles", 1: "its 1 profile", 2: "its 2 profiles"} {
+		if got := itsProfiles(n); got != want {
+			t.Errorf("%d: %q, want %q", n, got, want)
+		}
+	}
+}

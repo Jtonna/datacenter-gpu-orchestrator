@@ -32,3 +32,21 @@ func TestLoadLogReadsHostMemoryLines(t *testing.T) {
 		t.Errorf("held %v MiB", got)
 	}
 }
+
+// A window model's checkpoints grow with the conversation up to the window:
+// the largest one created is kept beside the last (the log check compares
+// the largest with the bound).
+func TestLoadLogKeepsTheLargestCheckpoint(t *testing.T) {
+	l := NewLoadLog()
+	for _, s := range []string{
+		"1.00.000.000 I slot update_slots: id  0 | task 0 | created context checkpoint 1 of 32 (pos_min = 0, pos_max = 40, n_tokens = 41, size = 12.500 MiB)",
+		"1.00.000.001 I slot update_slots: id  0 | task 1 | created context checkpoint 2 of 32 (pos_min = 0, pos_max = 1999, n_tokens = 2000, size = 320.013 MiB)",
+		"1.00.000.002 I slot update_slots: id  0 | task 2 | created context checkpoint 1 of 32 (pos_min = 0, pos_max = 300, n_tokens = 301, size = 94.000 MiB)",
+	} {
+		l.Feed(s)
+	}
+	h := l.Snapshot().HostMem
+	if h.CheckpointMiB != 94 || h.LargestCheckpointMiB != 320.013 {
+		t.Fatalf("%+v", h)
+	}
+}
