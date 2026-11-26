@@ -40,7 +40,7 @@ func TestNextOpTurnsCreateChangeDelete(t *testing.T) {
 	cur := ""
 	var methods []string
 	for i := 0; i < 4; i++ {
-		w := nextOp("g", "m.gguf", cur)
+		w := nextOp("g", "m.gguf", cur, true)
 		if w.before != cur {
 			t.Fatalf("step %d: before %q, want %q", i, w.before, cur)
 		}
@@ -49,6 +49,14 @@ func TestNextOpTurnsCreateChangeDelete(t *testing.T) {
 	}
 	if got := strings.Join(methods, " "); got != "POST PUT DELETE POST" {
 		t.Fatal(got)
+	}
+	// without the change, a cycle is the old test's pair; a changed profile left by a kill is deleted
+	if w := nextOp("g", "m.gguf", nextOp("g", "m.gguf", "", false).after, false); w.method != "DELETE" {
+		t.Fatal(w.method)
+	}
+	two := nextOp("g", "m.gguf", nextOp("g", "m.gguf", "", true).after, true).after
+	if w := nextOp("g", "m.gguf", two, false); w.method != "DELETE" {
+		t.Fatal(w.method)
 	}
 }
 
@@ -153,10 +161,13 @@ func TestCrashPassesABuildThatKeepsItsWrites(t *testing.T) {
 	if code != 0 || res.Result != "PASS" || res.Cycles != 15 || res.Kills != 4 || res.BadReads+res.BadWrites != 0 {
 		t.Fatalf("exit %d %+v\n%s", code, res, out)
 	}
-	if res.Listings["profiles"] != res.Listings["config_profiles"] || res.Listings["catalog_profiles"] != res.Listings["profiles"] {
-		t.Fatalf("listings %v", res.Listings)
+	if res.ListingCounts["profiles"] != res.ListingCounts["config_profiles"] || res.ListingCounts["catalog_profiles"] != res.ListingCounts["profiles"] {
+		t.Fatalf("listing counts %v", res.ListingCounts)
 	}
-	if !regexp.MustCompile(`crash: PASS cycles=15 writes=15 reads=\d+ kills=4 listings\[.*config_profiles=\d+.*\] bad_reads=0 bad_writes=0 panics=0 errors=0`).MatchString(out) {
+	if res.Writes < 3*15-4 || res.Listings["list"] == 0 || res.Listings["models"] == 0 || res.Listings["needs"] == 0 {
+		t.Fatalf("writes %d, readers' reads %v", res.Writes, res.Listings)
+	}
+	if !regexp.MustCompile(`crash: PASS cycles=15 writes=\d+ kills=4 listings\{list=\d+ models=\d+ needs=\d+\} bad_reads=0 bad_writes=0 counts\[.*config_profiles=\d+.*\] panics=0 errors=0 integrity=ok`).MatchString(out) {
 		t.Fatalf("line %q", out)
 	}
 }
@@ -176,6 +187,30 @@ func TestCrashFailsALostWriteAndAnErrorLine(t *testing.T) {
 	res, code, _ = fakeCrash(t, "file", "--env", "GATE_FAKE_LOG_ERROR=1", "--allow-log", "a fake error")
 	if code != 0 || res.Log.Errors != 0 || res.Log.Allowed != 5 {
 		t.Fatalf("an allowed ERROR line: exit %d %+v", code, res.Log)
+	}
+	res, code, _ = fakeCrash(t, "file", "--env", "GATE_FAKE_BAD_MODELS=1")
+	if code != 1 || res.BadReads == 0 || !strings.Contains(strings.Join(res.Problems, "\n"), "reader /v1/models: HTTP 500") {
+		t.Fatalf("a reader's bad answer: exit %d bad reads %d %v", code, res.BadReads, res.Problems)
+	}
+}
+
+// The old test's shape: POST-and-DELETE pairs for a time, no kill, a read
+// per cycle; a cycle is one pair, so the figures compare.
+func TestCrashTheOldTestsShape(t *testing.T) {
+	data, models := t.TempDir(), t.TempDir()
+	work := filepath.Join(t.TempDir(), "work")
+	code, out, errOut := runCLI("crash", "--scheduler", fakeBin(t, "sched"), "--data", data, "--models", models, "--work", work,
+		"--duration", "2s", "--change=false", "--kills", "0", "--verify", "cycle", "--ready", "20s", "--env", "GATE_FAKE_SCHED=file")
+	if code != 0 {
+		t.Fatalf("exit %d\n%s%s", code, out, errOut)
+	}
+	var res crashResult
+	b, _ := os.ReadFile(filepath.Join(work, "crash.json"))
+	if err := json.Unmarshal(b, &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.Cycles < 5 || res.Writes != 2*res.Cycles || res.Kills != 0 || res.DurationS < 2 || res.DurationS > 10 {
+		t.Fatalf("%+v", &res)
 	}
 }
 
@@ -268,8 +303,9 @@ func TestCrashOnTheRealScheduler(t *testing.T) {
 	data, models, programs := realData(t, sched)
 	before := hashDir(t, data)
 	work := filepath.Join(t.TempDir(), "work")
-	o := crashOpts{data: data, models: models, programs: programs, work: work, cycles: 12, kills: 3, seed: 5,
-		window: 300 * time.Millisecond, ready: time.Minute,
+	o := crashOpts{data: data, models: models, programs: programs, work: work, cycles: 12, kills: 3, seed: 5, slots: 9, change: true, verify: "write",
+		readers: map[string]int{"list": 3, "models": 1, "needs": 1},
+		window:  300 * time.Millisecond, ready: time.Minute,
 		// the test release has no host program: the same-build check refuses loads, which this test does not make
 		allow: []*regexp.Regexp{regexp.MustCompile(`same-build rule`)}}
 	o.spec, _ = parseSpec(sched)
@@ -277,7 +313,7 @@ func TestCrashOnTheRealScheduler(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Result != "PASS" || res.Kills != 3 || res.Writes != 12 || res.Listings["profiles"] < 2 || len(res.Databases) == 0 || !dbsOK(res.Databases) {
+	if res.Result != "PASS" || res.Kills != 3 || res.Writes < 3*12-3 || res.ListingCounts["profiles"] < 2 || res.Listings["list"] == 0 || res.Listings["models"] == 0 || len(res.Databases) == 0 || !dbsOK(res.Databases) {
 		t.Fatalf("%s\n%+v\n%s", res.line(), res.Problems, res.Log.Samples)
 	}
 	if hashDir(t, data) != before {

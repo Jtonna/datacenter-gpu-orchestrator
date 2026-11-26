@@ -191,27 +191,29 @@ It runs the real scheduler against simulated machines. The UI is at `http://127.
 
 ## How a release is judged
 
-A candidate build replaces the live scheduler only after three programs have run on a **copy** of the live data folder. The programs make the copy themselves. Each database is copied with SQLite (`VACUUM INTO` from a read-only connection), so the copy is consistent even while the live scheduler writes the database. The programs live in this repository, so a gate can be run again from a clean clone at a commit. Nothing about one deployment is built in: the data folder, the models folder, the program release, the fake fleet and the builds are all flags. The examples use 192.0.2.x addresses and made-up names.
+A candidate build replaces the live scheduler only after its tests and three programs have run on a **copy** of the live data folder. The programs make the copy themselves. Each database is copied with SQLite (`VACUUM INTO` from a read-only connection), so the copy is consistent even while the live scheduler writes the database. The programs live in this repository, so a gate can be run again from a clean clone at a commit. Nothing about one deployment is built in: the data folder, the models folder, the program release, the fake fleet and the builds are all flags. The examples use 192.0.2.x addresses and made-up names.
 
-The first two are `potluck-gate` (`cmd/potluck-gate`). A build is a binary, or `image:NAME` for an image run with `docker run --network host`. Each program copies `--data` (and `--history`, the event history folder, when given) into its own work folder and never writes the source.
+The first two programs are subcommands of `potluck-gate` (`cmd/potluck-gate`). A build is a binary, or `image:NAME` for an image run with `docker run --network host`. Each program copies `--data` (and `--history`, the event history folder, when given) into its own work folder and never writes the source.
 
-1. **Readiness and crash test.** It loops configuration writes and reads on one build. It kills the build at random moments within a write and starts it again.
+1. **Readiness and crash test.** It loops configuration writes on one build while reader goroutines read the listings without a pause (`--readers`, by default three on `/api/profiles`, one on `/v1/models` and one on `/api/needs`). A cycle takes one gate profile from absent back to absent: create, change, delete. It kills the build at random moments within a write and starts it again.
 
    ```sh
    go build -o bin/potluck-gate ./cmd/potluck-gate
    bin/potluck-gate crash --scheduler image:potluck:candidate --data /srv/copy/data --models /srv/models \
-       --programs /srv/programs --cycles 2000 --kills 40 --out gate/crash.json
+       --programs /srv/programs --duration 5m --kills 40 --out gate/crash.json
    ```
 
    It passes when all of these hold:
-   - every read parses;
+   - every read answers 200 and parses, the readers' too;
    - every acknowledged write is stored whole, and a write cut by a kill is stored whole or not at all;
    - the configuration revision never goes back;
    - `/api/profiles`, `/api/config/profiles` and the model catalog list the same number of profiles;
    - the log has no panic and no `ERROR` line. `--allow-log` names an error the caller expects;
    - after the last stop, every database of the copy passes SQLite's integrity check.
 
-   Output: one line with the cycles, the writes, the kills, the listings by kind, the bad reads and the bad writes, plus the JSON file. Exit 0 PASS, 1 FAIL.
+   Output: one line with the cycles, the writes, the kills, the readers' reads by kind (`listings{list models needs}`), the bad reads, the bad writes and the listing counts, plus the JSON file. Exit 0 PASS, 1 FAIL.
+
+   An earlier readiness test ran 40 seconds of create-and-delete pairs beside the same readers, with no kill and no read-back. `--duration 40s --change=false --kills 0 --verify cycle` runs the same cycles, so its figures compare with that test's.
 
 2. **Plan rows of two builds.** OLD and NEW run, one after the other, on the same copy, each with the same fake fleet (`potluck-fake-agents --nodes FILE`, built from `cmd/potluck-fake-agents`; `nodes.sample.json` shows the format).
 
@@ -242,9 +244,17 @@ The first two are `potluck-gate` (`cmd/potluck-gate`). A build is a binary, or `
 
    Playwright is a dev dependency of `scripts/gate` alone, pinned in its `package.json`. It lives there beside the other UI scripts, and the scheduler itself does not use node. In the Playwright container image of the same version, no install is needed. On Git Bash for Windows, set `MSYS_NO_PATHCONV=1`, or `/api/plan` is rewritten to a Windows path.
 
-Each program has `--help` and a `--dry-run` that starts nothing. `go test ./cmd/potluck-gate` checks all three in about 20 seconds:
+The tests of the build come first, with `potluck-gate tests`. It runs `go test -json` in stages given by flags. It keeps every stage's whole output in `<out>/<stage>.log`, and it names each failing test (subtests too, with the log line where its output starts), each package that did not build, and each data race and panic with its test:
+
+```sh
+bin/potluck-gate tests --out gate/tests --stage "unit=-count=1 ./..." \
+    --stage "race=-race -count=1 ./..." --env CGO_ENABLED=1
+```
+
+Each program has `--help` and a `--dry-run` that starts nothing. `go test ./cmd/potluck-gate` checks them all in about 30 seconds:
 - the crash test and the plan comparison run against a fake build that loses writes or changes plans;
 - the same two run against the real scheduler with a fake fleet;
+- `tests` runs a small module with failing tests, a panic and a package that does not build;
 - the harness's rules run under `node --test`.
 
 ## Licence

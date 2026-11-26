@@ -29,6 +29,7 @@ import (
 //	GATE_FAKE_SCHED=file    configuration in <data-dir>/fake.json, replaced
 //	                        whole (write a temporary file, rename)
 //	GATE_FAKE_LOG_ERROR=1   writes one level=ERROR line at start
+//	GATE_FAKE_BAD_MODELS=1  GET /v1/models answers 500
 //
 // A copy of the binary named new* adds 512 MiB to every will_take of the
 // plans and marks the data folder (a migration); a binary named old* that
@@ -198,6 +199,13 @@ func fakeScheduler(mode string, args []string) int {
 		ans(w, map[string]any{"models": []any{map[string]any{"key": "alpha.gguf", "profiles": entries()}}})
 	})
 	m.HandleFunc("GET /api/needs", func(w http.ResponseWriter, r *http.Request) { ans(w, map[string]any{"needs": []any{}}) })
+	m.HandleFunc("GET /v1/models", func(w http.ResponseWriter, r *http.Request) {
+		if os.Getenv("GATE_FAKE_BAD_MODELS") != "" {
+			http.Error(w, "broken", http.StatusInternalServerError)
+			return
+		}
+		ans(w, map[string]any{"object": "list", "data": []any{}})
+	})
 	m.HandleFunc("GET /api/status", func(w http.ResponseWriter, r *http.Request) { ans(w, map[string]any{"agents": []any{}}) })
 	if err := http.ListenAndServe(*listen, m); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -244,7 +252,7 @@ func TestHelp(t *testing.T) {
 		args []string
 		want []string
 	}{
-		{[]string{"--help"}, []string{"potluck-gate crash", "potluck-gate plans"}},
+		{[]string{"--help"}, []string{"potluck-gate crash", "potluck-gate plans", "potluck-gate tests"}},
 		{[]string{"crash", "--help"}, []string{"It asserts:", "-kills", "-allow-log", "-dry-run"}},
 		{[]string{"plans", "--help"}, []string{"the way back", "-fail-on", "-nodes", "-dry-run"}},
 	} {

@@ -368,8 +368,19 @@ type client struct {
 	hc   *http.Client
 }
 
+// transport is shared by the gate's requests and readers: it keeps enough
+// idle connections that concurrent readers reuse theirs. With Go's default
+// of two per host, the others are closed after each answer and a long run
+// at full speed leaves the client's ephemeral ports in TIME_WAIT until a
+// dial fails (seen on Windows: "Only one usage of each socket address").
+var transport = func() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.MaxIdleConns, t.MaxIdleConnsPerHost = 256, 64
+	return t
+}()
+
 func newClient(base string) *client {
-	return &client{base: base, hc: &http.Client{Timeout: 60 * time.Second}}
+	return &client{base: base, hc: &http.Client{Timeout: 60 * time.Second, Transport: transport}}
 }
 
 // call sends one request and decodes a JSON answer into out (when not nil).
