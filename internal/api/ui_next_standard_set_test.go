@@ -1,6 +1,9 @@
 package api
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // The TEST / PRODUCTION pages (profiles plan, section 9; the owner's note:
 // "test profiles get their own page … all visible but moved out of the way
@@ -267,5 +270,39 @@ func TestUINextPromoteDropsTheTestName(t *testing.T) {
 			"wsAfter": []any{map[string]any{"type": "models", "data": cat}},
 			"pageHas": []string{"aside.side table.mdl-ptbl tr[data-profile=qwen3-14b] [data-shown]"}, "pageNone": []string{"aside.side p.mdl-tests"},
 			"notOnPage": []string{"TEST - qwen3-14b", "1 test profile"}},
+	}})
+}
+
+// The standard dialog on rows as long as live's gemma-4-12b (every row with
+// four notes; the v85 copy drew a 1,467 px dialog): only the rows scroll, the
+// name and the intro stay above them, and what is written, the comment and
+// the buttons stay below them, so Write is on screen without scrolling. The
+// fake DOM has no layout: this checks the structure and the rules that pin
+// it; the real browser's boxes at 1536 x 864 and 1280 x 800 are measured by
+// the picture script (potluck-notes .../standard-set/shots-pin.cjs).
+func TestUINextStandardDialogPinnedFooter(t *testing.T) {
+	css := uiText(t, uiNextDir+"app.css")
+	for _, rule := range []string{
+		".dlg[data-dlg=standard]{overflow:hidden}",
+		".dlg .std-body{flex:1 1 auto;min-height:0}",
+		".std-body>*{flex:none}",
+		".std-body>.std-rows{flex:0 1 auto;min-height:120px;overflow:auto;overscroll-behavior:contain;",
+	} {
+		if !strings.Contains(css, rule) {
+			t.Errorf("app.css lacks %q", rule)
+		}
+	}
+	fetch := fixtureAnswers(t, []string{"--models", "five"}, "/api/models", "/api/status")
+	path := "/api/models/" + mdlLoaded + "/standard-set"
+	fetch[path] = fixtureAnswers(t, []string{"--stdset", "long"}, path)[path]
+	open := []any{"aside.side button[data-act=standard]"}
+	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": []any{
+		map[string]any{"name": "standard: long rows scroll, the footer does not", "route": "#/models?model=" + mdlLoaded, "status": fetch["/api/status"],
+			"click": append(append([]any{}, open...), map[string]any{"type": "div.dlg textarea[aria-label=Comment]", "value": "x"}),
+			"pageHas": []string{"div.dlg[data-state=ready] div.std-body div.std-rows[data-std-scroll] table.std-tbl", "div.std-body div.std-foot[data-std-foot] [data-to-write='1']",
+				"div.std-foot textarea[aria-label=Comment]", "div.std-foot div.dlg-foot button[data-go]:not([disabled])", "div.std-body div.std-namef input.std-name",
+				"tr[data-std-notes='gemma-4-27b:256k'] [data-need-note]", "tr[data-std-notes='gemma-4-27b:256k'] [data-shape-note]", "tr[data-std-notes='gemma-4-27b:256k'] [data-exists-note]", "tr[data-std-notes='gemma-4-27b:256k'] [data-host-memory]"},
+			"pageNone": []string{"div.std-rows button", "div.std-rows textarea", "div.std-rows input.std-name", "div.std-rows [data-to-write]"},
+			"page":     []string{"Write 1 profile"}},
 	}})
 }

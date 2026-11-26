@@ -1692,6 +1692,15 @@ a.bp-view:hover{background:var(--hover-bg)}
 .bp-res-t td.sel{outline:2px solid var(--accent,#0f6b4a);outline-offset:-3px;border-radius:6px}
 .bp-res-t a.bp-fv.sel{font-weight:800}
 /* the standard profiles dialog (views/models/standard.js): narrow columns, each row's long sentences on a full-width line under it */
+/* the standard dialog: the name and the intro on top, the rows scroll, what
+   is written, the comment and the buttons pinned below (views/models/standard.js) */
+.dlg[data-dlg=standard]{overflow:hidden}
+.dlg .std-body{flex:1 1 auto;min-height:0}
+.std-body>*{flex:none}
+.std-body>.std-rows{flex:0 1 auto;min-height:120px;overflow:auto;overscroll-behavior:contain;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.std-foot{display:flex;flex-direction:column;gap:10px}
+.std-foot p{margin:0}
+.std-rows thead th{position:sticky;top:0;z-index:1;background:var(--surface)}
 .std-tbl{width:100%}
 .std-tbl td{vertical-align:top}
 .std-tbl td .sub{display:block}
@@ -1701,12 +1710,15 @@ a.bp-view:hover{background:var(--hover-bg)}
 .std-tbl tr.std-notes td div+div{margin-top:2px}
 /* the Test profiles page (views/testprofiles.js): long generated names wrap anywhere, the real context and its note in one column */
 .tp-tbl td.tp-name div{overflow-wrap:anywhere}
-.tp-tbl th:nth-child(2){width:110px}
+.tp-tbl th:nth-child(2){width:230px}
+.tp-tbl td.prf-model span{white-space:normal;overflow-wrap:anywhere;text-overflow:clip}
 .tp-tbl th:nth-child(3){width:170px}
 .tp-tbl th:nth-child(4){width:140px}
 .tp-tbl th:nth-child(5){width:140px}
 .tp-tbl th:nth-child(6){width:130px}
 .tp-tbl th:nth-child(7){width:100px}
+/* at 1440 px and below the side columns narrow, so the name keeps about 220 px and the model wraps at its hyphens */
+@media(max-width:1440px){.tp-tbl th:nth-child(2){width:140px}.tp-tbl th:nth-child(3){width:100px}.tp-tbl th:nth-child(4){width:110px}.tp-tbl th:nth-child(5){width:100px}.tp-tbl th:nth-child(6){width:90px}.tp-tbl th:nth-child(7){width:84px}}
 .tp-tbl td.r .sub{display:block;white-space:normal}
 .tp-tbl td .sub{display:block}
 .std-tbl td.std-tick{width:28px;padding-right:0}

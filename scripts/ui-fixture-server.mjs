@@ -32,7 +32,7 @@
 //   configuration pages' fixture (scripts/ui-fixture/config.mjs, profiles.mjs)
 //   any other /api/... answers 404 in the API's error shape; other writes 405.
 //
-// --stdset ready|nothing|error|refused: the "Make standard profiles" dialog's
+// --stdset ready|long|nothing|error|refused: the "Make standard profiles" dialog's
 // answers (GET and POST /api/models/{file}/standard-set); POST
 // /api/config/profiles/{id}/promote and /demote answer a write;
 // GET /api/profiles/test the Test profiles page (profiles.mjs).
@@ -147,7 +147,7 @@ const PINNED = argv.includes('--pinned');
 const CONFIG = opt('--config', 'normal');
 // --catalog: GET /api/models answers the profile fixture's six model files (default: none)
 const CATALOG = argv.includes('--catalog');
-// --stdset ready|nothing|error|refused: GET and POST /api/models/{file}/standard-set (profiles.mjs standardSet)
+// --stdset ready|long|nothing|error|refused: GET and POST /api/models/{file}/standard-set (profiles.mjs standardSet)
 const STDSET = opt('--stdset', 'ready');
 // --named-only <name>: that zone is in no_auto_nodes (auto: false)
 const NAMED_ONLY = opt('--named-only', '');

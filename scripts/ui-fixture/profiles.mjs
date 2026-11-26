@@ -240,6 +240,8 @@ export function testProfiles(now = Date.now()) {
 // fails), refused (the write fails).
 const STD_TAKEN = { 'qwen3-14b': 'the name qwen3-14b is taken: the profile qwen3-14b is of another file (qwen3-14b-Q5_K_M.gguf)' };
 export function standardSet(file, state, short) {
+  const long = state === 'long'; // as long as live's gemma-4-12b (v85 copy): every row carries four notes
+  if (long) state = 'ready';
   if (state === 'error') return { status: 503, body: { error: { message: 'the scheduler is shutting down', type: 'server_error', code: 'shutting_down' } } };
   const bad = m => ({ status: 400, body: { error: { message: m, type: 'invalid_request_error' } } });
   if (short && STD_TAKEN[short]) return bad(STD_TAKEN[short]);
@@ -270,6 +272,19 @@ export function standardSet(file, state, short) {
     row(262144, name + ':256k', Object.assign(estRow(262144), { state: 'estimate-does-not-fit', kept: false, selected: false, tickable: !all, action: 'reject', zones: [], host_memory_note: '',
       reason: 'not measured: by the file estimate it does not fit even with nothing loaded; the plan says: placer: need 25384 MiB (requires 26654 MiB) does not fit the available nodes' })),
   ];
+  if (long) {
+    const shape = 'the existing ' + fam + ':48k (48k) runs at 8,210 MiB (written by hand) with KV q8_0, flash attention, extra arguments --chat-template-kwargs {"enable_thinking":false}; this row would use the default KV type (f16), no flash attention, no extra arguments, so that figure is not its own';
+    const host = "restore points and prompt cache on the scheduler's machine: up to 12,288 MiB, not counted in what it needs (restore points 10,240 MiB, prompt cache 2,048 MiB)";
+    rows.forEach((r, i) => {
+      Object.assign(r, estRow(r.ctx), { state: 'fits-by-estimate', shape_note: shape, host_memory_note: host });
+      if (i === 0) return; // 16k: the one row left to write
+      Object.assign(r, { exists: true, selected: false, tickable: false, exists_as: r.id,
+        exists_note: r.default ? r.id + ' exists at 8k, kept as it is; the standard default would be 32k (the family has 32k as ' + fam + '-thinking)' : 'exists, kept as it is',
+        exists_carries: ['KV type q8_0', 'flash attention', 'thinking off (the chat-template argument)', 'a hand-written need of 7,850 MiB', 'aliases (' + fam + '-1pool-8k, ' + fam + '-2pool-8k)'] });
+      if (i >= 2) Object.assign(r, { state: 'estimate-does-not-fit', kept: false, action: 'reject',
+        reason: 'not measured: by the file estimate it does not fit even with nothing loaded; the plan says: placer: need 48776 MiB (requires 53263 MiB) exceeds cluster capacity 52268 MiB; short by 995 MiB even without the margin; nodes in no_auto_nodes (used only by profiles that force them) and not counted: laptop-1' });
+    });
+  }
   const toWrite = rows.filter(r => r.selected).map(r => r.id);
   return { status: 200, body: { file, short: name, short_source: short ? 'asked' : 'family', family: fam, family_ids: [fam, fam + '-thinking', fam + ':48k'], trained_ctx: 262144, trained_ctx_known: true,
     note: 'trained at 262,144 tokens: every standard context is at or below it', default_id: name, default_ctx: 32768, max_pool: 4, rows, to_write: toWrite } };

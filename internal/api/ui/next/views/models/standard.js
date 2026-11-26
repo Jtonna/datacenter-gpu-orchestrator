@@ -46,7 +46,10 @@ const SRC_LABEL = { 'family': 'from the existing family', file: "from the file's
 
 // rowsTable(set, ticks, onTick) -> the candidates' table
 function rowsTable(set, ticks, onTick) {
-  return h('div.scroll', h('table.tbl.std-tbl', { 'data-std-rows': String(set.rows.length) },
+  // the only part of the dialog that scrolls (std-rows): the name and the
+  // intro stay above it, what will be written, the comment and the buttons
+  // below it
+  return h('div.std-rows', { 'data-std-scroll': '' }, h('table.tbl.std-tbl', { 'data-std-rows': String(set.rows.length) },
     h('thead', h('tr', h('th', { scope: 'col' }, h('span.sr', 'Write')), h('th', { scope: 'col' }, 'Profile'), h('th.r', { scope: 'col' }, 'Context'), h('th', { scope: 'col' }, 'Fits'),
       h('th', { scope: 'col' }, 'Zones'), h('th.r', { scope: 'col' }, 'Needs'), h('th', { scope: 'col' }, 'Already there'))),
     // the long sentences go on a full-width line under their row, so the
@@ -98,7 +101,8 @@ export function standardDialog(m, onDone) {
     if (state === 'ready' && note.value.trim() && ids().length) go.removeAttribute('disabled'); else go.setAttribute('disabled', '');
   };
   note.addEventListener('input', gate);
-  const root = h('div.dcol');
+  const root = h('div.dcol.std-body');
+  const foot = (...k) => h('div.std-foot', { 'data-std-foot': '' }, k);
   const closeBtn = label => h('button', { class: 'btn lg', type: 'button', 'data-close': '', onclick: () => closeFn(undefined) }, label);
   const nameBtn = () => h('button', { class: 'btn', type: 'button', 'data-go': 'name', onclick: () => check(name.value.trim()) }, 'Use this name');
   // the name field: what it is prefilled from, the refusal under it
@@ -127,8 +131,8 @@ export function standardDialog(m, onDone) {
       go.textContent = 'Write'; go.setAttribute('disabled', '');
       kids = [nameField(), h('div.dlg-foot', closeBtn('Cancel'), go)];
     } else if (state === 'refused') {
-      kids = [head(), rowsTable(set, ticks, () => {}), h('div.banner.err', { 'data-refused': '' }, h('span', h('b', 'Not written: nothing changed. '), msg)),
-        h('div.dlg-foot', h('button', { class: 'btn lg', type: 'button', 'data-go': 'again', onclick: () => check(set.short_source === 'asked' ? set.short : '') }, 'Check again'), closeBtn('Close'))];
+      kids = [head(), rowsTable(set, ticks, () => {}), foot(h('div.banner.err', { 'data-refused': '' }, h('span', h('b', 'Not written: nothing changed. '), msg)),
+        h('div.dlg-foot', h('button', { class: 'btn lg', type: 'button', 'data-go': 'again', onclick: () => check(set.short_source === 'asked' ? set.short : '') }, 'Check again'), closeBtn('Close')))];
     } else if (state === 'written') {
       const w = answer.written || [], sk = answer.skipped || [];
       kids = [h('div.banner.info', { role: 'status', 'data-written': String(w.length) },
@@ -136,19 +140,24 @@ export function standardDialog(m, onDone) {
       sk.length ? h('ul.std-skip', sk.map(s => h('li', h('span.mono', s.id), ': ', s.reason))) : null,
       h('div.dlg-foot', closeBtn('Close'))];
     } else if (state === 'nothing') {
-      kids = [nameField(), head(), rowsTable(set, ticks, () => {}),
+      kids = [nameField(), head(), rowsTable(set, ticks, () => {}), foot(
         set.short_problem ? h('div.banner.err', { 'data-name-refused': '' }, h('span', h('b', 'The name cannot be used. '), set.short_problem, ' Give another name above.')) : null,
         h('p', { 'data-to-write': '0' }, set.short_problem ? 'Nothing can be written under this name.' : 'Nothing to write: every context that fits has its profile already.'),
-        h('div.dlg-foot', closeBtn('Close'))];
+        h('div.dlg-foot', closeBtn('Close')))];
     } else {
       const n = ids().length;
-      kids = [nameField(), head(), rowsTable(set, ticks, (id, on) => { if (on) ticks.add(id); else ticks.delete(id); draw(); }),
+      kids = [nameField(), head(), rowsTable(set, ticks, (id, on) => { if (on) ticks.add(id); else ticks.delete(id); draw(); }), foot(
         h('p', { 'data-to-write': String(n) }, n ? ['Writes ', h('b', plural(n, 'profile')), ': ', ids().map((id, i) => [i ? ', ' : null, h('span.mono', id)]),
           '. Placed automatically, marked production, described "standard set". A profile that exists is never changed.'] : 'No row is ticked: tick the rows to write.'),
         h('div.field.dlg-note', h('label.dlbl', 'Comment (required)'), note),
-        h('div.dlg-foot', closeBtn('Cancel'), go)];
+        h('div.dlg-foot', closeBtn('Cancel'), go))];
     }
+    // a tick redraws the table: keep where the rows were scrolled to
+    const was = root.querySelector('.std-rows');
+    const top = was ? was.scrollTop : 0;
     root.replaceChildren(...kids.flat().filter(Boolean));
+    const now = root.querySelector('.std-rows');
+    if (now && top) now.scrollTop = top;
     if (state === 'ready' || state === 'sending') gate();
   };
   const setState = s => { state = s; draw(); };
