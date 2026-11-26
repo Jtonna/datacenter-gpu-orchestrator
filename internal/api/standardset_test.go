@@ -165,25 +165,27 @@ func TestStandardSet_Read(t *testing.T) {
 
 	// trained at 2,048: only that context, and it is the default
 	tiny := ssGet(t, e, "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf")
-	if len(tiny.Rows) != 1 || tiny.Rows[0].Ctx != 2048 || !tiny.Rows[0].Kept || tiny.Rows[0].ID != "tinyllama-1-1b-chat-v1-0" || !tiny.Rows[0].Default || tiny.TrainedCtx != 2048 {
+	if len(tiny.Rows) != 1 || tiny.Rows[0].Ctx != 2048 || !tiny.Rows[0].Kept || tiny.Rows[0].ID != "tinyllama-1.1b-chat-v1.0" || tiny.ShortSource != "file" || !tiny.Rows[0].Default || tiny.TrainedCtx != 2048 {
 		t.Fatalf("tinyllama: %+v", tiny)
 	}
 	if tiny.Rows[0].NeedSource != "estimate" || tiny.Rows[0].NeedMiB == nil {
 		t.Fatalf("tinyllama need: %+v", tiny.Rows[0])
 	}
 
-	// no trained context: 16k and 32k; 16k is an alias of "older"
+	// no trained context: 16k and 32k; the file's production family is
+	// "older" (its one profile, at 32k): the name is older, its 32k exists
 	nm := ssGet(t, e, "nometa.gguf")
-	if nm.TrainedSet || len(nm.Rows) != 2 || nm.Rows[0].Ctx != 16384 || nm.Rows[1].Ctx != 32768 {
+	if nm.TrainedSet || len(nm.Rows) != 2 || nm.Rows[0].Ctx != 16384 || nm.Rows[1].Ctx != 32768 || nm.Short != "older" || nm.ShortSource != "family" {
 		t.Fatalf("nometa: %+v", nm)
 	}
-	if r := nm.Rows[0]; r.ID != "nometa:16k" || !r.Exists || !strings.Contains(r.ExistsAs, "alias of the profile older") {
+	if r := nm.Rows[0]; r.ID != "older:16k" || r.Exists {
 		t.Fatalf("nometa 16k: %+v", r)
 	}
-	if r := nm.Rows[1]; r.ID != "nometa" || !r.Default || r.Exists {
+	if r := nm.Rows[1]; r.ID != "older" || !r.Default || !r.Exists || r.ExistsNote != "exists, kept as it is" ||
+		!reflect.DeepEqual(r.Carries, []string{"a hand-written need of 3,600 MiB", "aliases (nometa:16k)"}) || r.Selected || r.Tickable {
 		t.Fatalf("nometa 32k: %+v", r)
 	}
-	if !reflect.DeepEqual(nm.ToWrite, []string{"nometa"}) {
+	if !reflect.DeepEqual(nm.ToWrite, []string{"older:16k"}) {
 		t.Fatalf("nometa to write: %v", nm.ToWrite)
 	}
 
@@ -192,7 +194,7 @@ func TestStandardSet_Read(t *testing.T) {
 	if len(g.Rows) != 4 || g.Rows[3].Ctx != 131072 || g.DefaultID != "gemma-3-12b" || g.DefaultCtx != 32768 {
 		t.Fatalf("gemma: %+v", g)
 	}
-	if r := ssRow(t, g, 65536); r.ID != "gemma-3-12b:64k" || !r.Exists || r.ExistsAs != "the profile gemma-3-12b:64k" {
+	if r := ssRow(t, g, 65536); r.ID != "gemma-3-12b:64k" || !r.Exists || r.ExistsAs != "gemma-3-12b:64k" || r.ExistsNote != "exists, kept as it is" {
 		t.Fatalf("gemma 64k: %+v", r)
 	}
 	if r := ssRow(t, g, 16384); r.UsesEveryZone || len(r.Zones) != 1 || r.MayUse != 3 {
@@ -222,7 +224,8 @@ func TestStandardSet_Read(t *testing.T) {
 
 	// a rejected candidate keeps its reason; the kept ones stay
 	h := ssGet(t, e, "huge.gguf")
-	if r := ssRow(t, h, 65536); !strings.HasPrefix(r.Reason, "it does not fit even with nothing loaded; the plan says: ") {
+	if r := ssRow(t, h, 65536); r.State != "estimate-does-not-fit" || !r.Tickable || r.Selected ||
+		!strings.HasPrefix(r.Reason, "not measured: by the file estimate it does not fit even with nothing loaded; the plan says: ") {
 		t.Fatalf("huge 64k reason: %q", r.Reason)
 	}
 	if r := ssRow(t, h, 65536); r.Kept || r.Action != "reject" || r.Reason == "" {

@@ -29,8 +29,10 @@ type CandidatePlan struct {
 	// (a queue or a reject) the nodes the memory rows are for.
 	Zones []string
 	// MayUse is how many zones an automatic placement of it may use now:
-	// the reachable nodes it may be placed on, at most max_pool.
+	// the reachable nodes it may be placed on, at most max_pool; ByPool says
+	// the setting max_pool is what set it (more zones are reachable).
 	MayUse int
+	ByPool bool
 	// IdleFits: it fits with nothing loaded (idleFleetFit); IdleZones are
 	// the zones that placement uses.
 	IdleFits  bool
@@ -51,7 +53,8 @@ func (s *Scheduler) PlanCandidates(ctx context.Context, ps []*core.Profile) ([]C
 			r := c.dryPlanOf(sp.Name, sp)
 			c.forgetScopedNeed(sp.Name)
 			r.Profile = p.Name
-			cpl := CandidatePlan{Report: r, MayUse: c.zonesMayUse(sp)}
+			cpl := CandidatePlan{Report: r}
+			cpl.MayUse, cpl.ByPool = c.zonesMayUse(sp)
 			if pl, ok := c.idleFleetFit(sp); ok {
 				cpl.IdleFits = true
 				for _, n := range pl.Nodes {
@@ -115,9 +118,8 @@ func (c *schedCore) idleFleetFit(p *core.Profile) (core.Placement, bool) {
 }
 
 // zonesMayUse counts the nodes an automatic placement of p may use now, at
-// most max_pool.
-func (c *schedCore) zonesMayUse(p *core.Profile) int {
-	n := 0
+// most max_pool; byPool: max_pool is below the count.
+func (c *schedCore) zonesMayUse(p *core.Profile) (n int, byPool bool) {
 	for _, id := range c.sortedNodeIDs() {
 		nd, ok := c.node(id)
 		if !ok || !c.reachable(nd) || c.autoOff(p, nd) || (localOnly(p) && !nd.Local) {
@@ -128,5 +130,6 @@ func (c *schedCore) zonesMayUse(p *core.Profile) int {
 		}
 		n++
 	}
-	return min(n, max(c.cfg.Defaults.MaxPool, 1))
+	pool := max(c.cfg.Defaults.MaxPool, 1)
+	return min(n, pool), n > pool
 }
