@@ -32,6 +32,11 @@
 //   configuration pages' fixture (scripts/ui-fixture/config.mjs, profiles.mjs)
 //   any other /api/... answers 404 in the API's error shape; other writes 405.
 //
+// --stdset ready|long|nothing|error|refused: the "Make standard profiles" dialog's
+// answers (GET and POST /api/models/{file}/standard-set); POST
+// /api/config/profiles/{id}/promote and /demote answer a write;
+// GET /api/profiles/test the Test profiles page (profiles.mjs).
+//
 // --config normal|unknown|fresh: the settings state (config.mjs). --catalog:
 // /api/models lists the profile fixture's model files. --named-only <zone>:
 // that zone is in no_auto_nodes (auto: false), drawn "Named only".
@@ -110,7 +115,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { zonesStatus, counts, groupsDoc, uptimeDoc, fleetStrip } from './ui-fixture/zones.mjs';
 import { schema as cfgSchema, configDoc, storedConfig, dryRun } from './ui-fixture/config.mjs';
-import { profileEntries, profileSpecs, catalog as cfgCatalog, planAnswer } from './ui-fixture/profiles.mjs';
+import { profileEntries, profileSpecs, catalog as cfgCatalog, planAnswer, testProfiles, standardSet, standardWrite } from './ui-fixture/profiles.mjs';
 import { Keys, toolsAnswer } from './ui-fixture/keys.mjs';
 import { modelsDoc, modelsInstances, seedPins, pinRoute } from './ui-fixture/models.mjs';
 import { TRASH_STATES, seedTrash, trashList, withTrash, deleteRoute, restoreRoute, removeRoute } from './ui-fixture/trash.mjs';
@@ -142,6 +147,8 @@ const PINNED = argv.includes('--pinned');
 const CONFIG = opt('--config', 'normal');
 // --catalog: GET /api/models answers the profile fixture's six model files (default: none)
 const CATALOG = argv.includes('--catalog');
+// --stdset ready|long|nothing|error|refused: GET and POST /api/models/{file}/standard-set (profiles.mjs standardSet)
+const STDSET = opt('--stdset', 'ready');
 // --named-only <name>: that zone is in no_auto_nodes (auto: false)
 const NAMED_ONLY = opt('--named-only', '');
 // --named-only-id <name>: that zone's ID (not its name) is added to no_auto_nodes (auto: false), as a stored id the Tiers page names
@@ -445,6 +452,15 @@ const server = http.createServer((req, res) => {
     if (one && req.method === 'PATCH') return readBody(req, b => send(KEYS.patch(one[1], b || {}, host)));
     if (one && req.method === 'DELETE') return send(KEYS.revoke(one[1], host));
   }
+  const std = /^\/api\/models\/(.+)\/standard-set$/.exec(p);
+  if (std && req.method === 'POST') return readBody(req, b => { b = Object.assign({}, b || {}); if (!b.comment && req.headers['x-comment']) b.comment = String(req.headers['x-comment']); const r = standardWrite(decodeURIComponent(std[1]), STDSET, b); json(res, r.status, r.body); });
+  if (std && req.method === 'GET') { const r = standardSet(decodeURIComponent(std[1]), STDSET, (u.searchParams.get('short') || '').trim()); return json(res, r.status, r.body); }
+  const stg = /^\/api\/config\/profiles\/(.+)\/(promote|demote)$/.exec(p);
+  if (stg && req.method === 'POST') return readBody(req, b => {
+    const c = (b && b.comment) || req.headers['x-comment'];
+    if (!c) return json(res, 400, { error: { message: 'a comment is required (body {"comment": "..."} or the X-Comment header)', type: 'invalid_request_error' } });
+    json(res, 200, { revision: 413, changed: true, diff: [], warnings: [], audit_entry_ids: [77], id: decodeURIComponent(stg[1]), stage: stg[2] === 'promote' ? 'production' : 'test' });
+  });
   if (p === '/api/plan' && req.method === 'POST' && !LOAD_SET) return readBody(req, b => { const r = planAnswer(b); json(res, r.status, r.body); });
   if (req.method === 'POST' && MODEL_ROUTE.test(p)) return modelAction(req, res, p);
   // --models: PUT / DELETE /api/models/pin/{key} (v61), the comment in the body or X-Comment
@@ -479,6 +495,7 @@ const server = http.createServer((req, res) => {
   if (p === '/api/models/trash' && TRASH_STATE) return json(res, 200, trashList());
   if (BENCH_STATE && p.startsWith('/api/bench/')) { const d = benchRoute(BENCH_STATE, p, u.searchParams, now); return d ? json(res, 200, d) : notFound(res, p); }
   if (p === '/api/profiles') return json(res, 200, { profiles: profileEntries() });
+  if (p === '/api/profiles/test') return json(res, 200, testProfiles(now));
   if (p === '/api/config') { const d = cfgDoc(); return json(res, 200, withNamedId(Object.assign({ updated_at: now - 3 * H, configured: d.revision > 0, tiers: [], exclude_nodes: [], no_auto_nodes: NAMED_ONLY ? [NAMED_ONLY] : [], node_overrides: {} }, d, TIER_LISTS, { profiles: profileSpecs() }), now)); }
   // what the health popup reads (the Health board's sample, generic names)
   if (p === '/api/about') return json(res, 200, { version: '0.1.5', started_at: now - 12 * 24 * H, now, uptime_s: 12 * 24 * 3600, history: 'on' });

@@ -677,6 +677,10 @@ func (s *Server) handleModelDetail(w http.ResponseWriter, r *http.Request) {
 		s.handleIconGet(w, r, k)
 		return
 	}
+	if f, ok := standardPath(key); ok { // standardset.go
+		s.handleStandardSetGet(w, r, f)
+		return
+	}
 	snap, err := s.catalogGet(r.Context())
 	if err != nil {
 		s.writeErr(w, err)

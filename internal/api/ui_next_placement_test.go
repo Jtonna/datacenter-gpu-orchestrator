@@ -74,7 +74,7 @@ func TestUINextPlacement(t *testing.T) {
 			"has":    []string{"input[data-zone=laptop-02][checked]"}},
 		map[string]any{"name": "placement: pick a profile", "route": "#/placement/qwen3-14b", "status": "fetch", "click": []string{"button.plc-opt[data-profile=gemma-4-12b]"},
 			"hash": "#/placement/gemma-4-12b"},
-		map[string]any{"name": "placement: generated, asked for", "route": "#/placement/qwen3-14b?gen=1", "status": "fetch", "expect": []string{"bench-gemma-4-12b-c16k-n1", "generated", "more: search to narrow the list."}},
+		map[string]any{"name": "placement: test profiles, asked for", "route": "#/placement/qwen3-14b?gen=1", "status": "fetch", "expect": []string{"TEST - bench-gemma-4-12b-c16k-n1", "test", "more: search to narrow the list."}},
 		map[string]any{"name": "placement: generated, searched", "route": "#/placement/qwen3-14b?q=m-glm", "status": "fetch", "expect": []string{"m-glm-4.5-air-c4k-n2"}, "absent": []string{"gemma-4-27b-long"}},
 		map[string]any{"name": "placement: nothing picked", "route": "#/placement", "status": "fetch", "expect": []string{"Pick a profile"}},
 	}})

@@ -34,7 +34,7 @@ import { h } from '../core/dom.js';
 import { registerView, href, navigate } from '../core/router.js';
 import { state, on } from '../core/store.js';
 import * as api from '../core/api.js';
-import { liveView, pageHead, badge, nodeChips, empty, banner, skeleton, button, schemaForm, searchField, facts, fileShort } from '../core/ui.js';
+import { liveView, pageHead, badge, nodeChips, empty, banner, skeleton, button, schemaForm, searchField, facts, fileShort, dialog, toast, profileLabel, profileStage } from '../core/ui.js';
 import { openPanel, openPanelNow } from '../core/panel.js';
 import { pager } from '../core/pager.js';
 import { num, mib, gb, ctx, plural } from '../core/format.js';
@@ -79,8 +79,11 @@ const LABELS = {
   kind: 'Kind', model: 'Model file', ctx: 'Context size', parallel: 'Parallel slots', kv_quant: 'KV cache precision', flash_attn: 'Flash attention',
   needs_mib: 'Memory need', allow_tiers: 'Allowed tiers', force_nodes: 'Forced zones', tensor_split: 'Tensor split', extra_args: 'Extra arguments',
   cmd: 'Command', check_endpoint: 'Readiness path', aliases: 'Aliases', ttl: 'Idle time before unload', load_timeout: 'Load timeout',
-  stall_timeout: 'Stall timeout', load_stall_timeout: 'Load stall timeout', description: 'Description',
+  stall_timeout: 'Stall timeout', load_stall_timeout: 'Load stall timeout', description: 'Description', display_name: 'Display name',
 };
+// stage is set by Promote and Demote (their own audited calls), not in the
+// editor: the editor leaves it out and the save keeps the stored one
+const NOT_EDITED = ['stage'];
 const SECTIONS = [['identity', 'Identity'], ['model', 'Model'], ['memory', 'Memory'], ['placement', 'Placement'], ['command', 'Command'], ['timing', 'Timing']];
 const NUMERIC_LISTS = ['allow_tiers', 'tensor_split'];
 
@@ -114,7 +117,8 @@ function fromForm(vals, fields, orig) {
 // is set, o.onCancel replaces the links back to the list, and o.above (a node)
 // sits above the fields (the plan preview).
 export function makeEditor(o) {
-  const { fields, mode, id } = o;
+  const { mode, id } = o;
+  const fields = o.fields.filter(f => !NOT_EDITED.includes(f.key));
   const orig = o.initial || {};
   let current = toForm(orig);
   let forms = [];
@@ -125,7 +129,7 @@ export function makeEditor(o) {
   const applicable = (f, kind) => !f.applies_to || f.applies_to === (kind === 'command' ? 'command' : 'llama');
   const PLACEHOLDER = { extra_args: '--rope-scaling yarn', force_nodes: 'Zone name, then Enter', allow_tiers: 'Tier number, then Enter', tensor_split: 'One weight per forced zone, then Enter',
     ttl: 'Same as the ttl setting', stall_timeout: 'Same as the stall_timeout setting', load_stall_timeout: 'Same as the load_stall_timeout setting', load_timeout: 'Worked out from the model size',
-    needs_mib: '0 = estimate from the model file', model: 'for example gemma-4-12b-it-Q4_K_M.gguf' };
+    needs_mib: '0 = estimate from the model file', model: 'for example gemma-4-12b-it-Q4_K_M.gguf', display_name: 'Shown in place of the id; leave empty to show the id' };
   const fieldDef = f => Object.assign({}, f, { label: LABELS[f.key], type: f.key === 'extra_args' ? 'text' : f.type, placeholder: PLACEHOLDER[f.key],
     description: f.key === 'extra_args' ? f.description + ' One argument per line.' : f.description });
   function collect() {
@@ -207,6 +211,43 @@ export function saveProfile(o) {
   const op = exists ? { label: `Change profile ${pid}`, method: 'PUT', path: '/api/config/profiles/' + encodeURIComponent(pid), body: { profile: prof } }
     : { label: `Create profile ${pid}`, method: 'POST', path: '/api/config/profiles', body: { id: pid, profile: prof } };
   return reviewChanges({ title: exists ? 'Save profile ' + pid : 'Create profile ' + pid, getRevision: o.getRevision, buildOps: () => [op], reload: o.reload, onInvalid: o.onInvalid, requireComment: true });
+}
+
+// ---------- promote and demote ----------
+
+// changeStage(e, to) -> the dialog and the write that marks a profile
+// production (promote) or test (demote): POST /api/config/profiles/<id>/promote
+// or /demote with a required comment (audited; nothing is written when it
+// is already so). Resolves to the answer, or null when cancelled or refused
+// (a toast says why). e is a GET /api/profiles (or /api/profiles/test) row.
+export async function changeStage(e, to) {
+  const promote = to === 'production';
+  const shown = profileLabel(e);
+  const after = promote ? (e.display_name || e.id) : 'TEST - ' + (e.display_name || e.id);
+  const r = await dialog({
+    title: h('span', promote ? 'Promote ' : 'Demote ', h('span.mono', e.id), '?'),
+    body: h('div.col', { style: 'gap:10px', 'data-dlg': promote ? 'promote' : 'demote' },
+      h('p', promote ? "It becomes a production profile: listed with the model's profiles." : 'It becomes a test profile: moved to the Test profiles page, out of the way.'),
+      h('p', 'Shown as ', h('b', shown), ' now, ', h('b', { 'data-after': '' }, after), ' after. The id clients send stays ', h('span.mono', e.id),
+        '. Nothing about where or how it loads changes.')),
+    comment: { label: 'Comment', required: true, placeholder: 'Why? It is kept in the audit log.' },
+    actions: [{ label: 'Cancel', value: undefined }, { label: promote ? 'Promote' : 'Demote', kind: 'pri', value: true }],
+  });
+  if (!r || r.value !== true || !r.comment) return null;
+  try {
+    const res = await api.send('POST', '/api/config/profiles/' + encodeURIComponent(e.id) + (promote ? '/promote' : '/demote'), { comment: r.comment }, { comment: r.comment });
+    toast(res && res.changed ? (promote ? 'Promoted ' : 'Demoted ') + e.id + (res.revision ? ' (revision ' + num(res.revision) + ')' : '') + '.'
+      : e.id + ' was already ' + (promote ? 'production' : 'test') + ': nothing written.', 'ok');
+    return res || {};
+  } catch (err) { toast((promote ? 'Promote' : 'Demote') + ' of ' + e.id + ' refused: ' + err.message, 'err'); return null; }
+}
+
+// testWhy(e) -> why a profile is test, in words: marked, generated, forced zones
+export function testWhy(e) {
+  if (e.stage_set && e.stage === 'test') return 'marked test';
+  if (e.generated) return 'generated';
+  if ((e.force_nodes || []).length) return 'forced zones';
+  return '';
 }
 
 // ---------- the view ----------
@@ -316,6 +357,9 @@ registerView({
           (e.aliases || []).length ? ['Aliases', e.aliases.join(', ')] : null,
           e.needs_mib ? ['Memory need', h('span', { title: mib(e.needs_mib) + (e.needs_basis ? ' · ' + e.needs_basis : '') }, gb(e.needs_mib))] : null,
           e.needs_mib && e.needs_basis ? ['Worked out', h('span', { title: e.needs_basis }, plainBasis(e.needs_basis))] : null,
+          ['Stage', h('span', { 'data-stage': profileStage(e) }, profileStage(e) === 'test' ? 'Test (' + testWhy(e) + ')' : 'Production' + (e.stage_set ? '' : ' (not marked: the rule)'))],
+          e.display_name ? ['Display name', e.display_name] : null,
+          ['Id', h('span.mono', e.id)],
           ['Generated', e.generated ? 'yes, for benchmarks' : 'no, made by hand'],
         ])),
         h('section.prf-part', { key: 'placement' }, h('h3', 'Placement'),
@@ -338,18 +382,24 @@ registerView({
       if (panel && panelId === id && openPanelNow() === panel) { panel.redraw(); return; }
       if (!list) return;
       panelId = id;
-      const e = list.find(x => x.id === id);
+      // the profile as the list holds it NOW: after a promote the list is read
+      // again and the title, sub and buttons follow (the owner's note: it
+      // "loses the TEST - part automatically")
+      const cur = () => (list || []).find(x => x.id === id);
       panel = openPanel({
         label: 'Profile', name: 'Profile ' + id,
-        title: () => h('span.mono', id),
-        sub: () => (e ? [shortModel(e.model), e.ctx ? ctx(e.ctx) + ' context' : null].filter(Boolean).join(' · ') : null),
+        title: () => { const e = cur(); return e ? h('span', { 'data-shown': '' }, profileLabel(e)) : h('span.mono', id); },
+        sub: () => { const e = cur(); return e ? [profileLabel(e) !== id ? id : null, shortModel(e.model), e.ctx ? ctx(e.ctx) + ' context' : null].filter(Boolean).join(' · ') : null; },
         body: () => panelBody(id),
-        foot: () => (e ? [
+        foot: () => { const e = cur(); return e ? [
           h('a.btn.pri', { href: href('profiles', [id]), 'data-act': 'edit' }, 'Edit'),
           h('a.btn', { href: href('profiles', ['new'], { from: id }), 'data-act': 'copy' }, 'Duplicate'),
+          profileStage(e) === 'test'
+            ? button('Promote', async () => { if (await changeStage(e, 'production')) load(); }, '', { 'data-act': 'promote', title: 'Make it a production profile (a comment is required)' })
+            : button('Demote', async () => { if (await changeStage(e, 'test')) load(); }, '', { 'data-act': 'demote', title: 'Make it a test profile (a comment is required)' }),
           h('span.grow'),
           button('Delete', () => remove(id), 'dng', { 'data-act': 'delete' }),
-        ] : null),
+        ] : null; },
         onClose: () => { if (panelId === id) { panel = null; panelId = ''; if (route.query.profile === id) go({ profile: null }); } },
       });
     }
@@ -358,11 +408,12 @@ registerView({
     function listPanel(st) {
       const all = list || [];
       const s = q().trim().toLowerCase();
-      const nGen = all.filter(e => e.generated).length;
-      const match = e => !s || e.id.toLowerCase().includes(s) || String(e.model || '').toLowerCase().includes(s) || shortModel(e.model).toLowerCase().includes(s)
+      const isTest = e => profileStage(e) === 'test';
+      const nGen = all.filter(isTest).length;
+      const match = e => !s || e.id.toLowerCase().includes(s) || profileLabel(e).toLowerCase().includes(s) || String(e.model || '').toLowerCase().includes(s) || shortModel(e.model).toLowerCase().includes(s)
         || (e.aliases || []).some(a => a.toLowerCase().includes(s)) || (e.description || '').toLowerCase().includes(s);
-      const rows = all.filter(e => (showAll() || !e.generated) && match(e));
-      const hiddenHits = showAll() ? 0 : all.filter(e => e.generated && match(e)).length;
+      const rows = all.filter(e => (showAll() || !isTest(e)) && match(e));
+      const hiddenHits = showAll() ? 0 : all.filter(e => isTest(e) && match(e)).length;
       const pages = Math.max(1, Math.ceil(rows.length / PER));
       const pg = Math.min(page(), pages);
       const shown = rows.slice((pg - 1) * PER, pg * PER);
@@ -372,11 +423,12 @@ registerView({
         h('div.prf-bar',
           searchField(q(), v => go({ q: v || null, page: null }), 'Search name, model, alias or description', 'prf-search', { size: 'lg' }),
           nGen ? h('button', { type: 'button', class: 'fc' + (showAll() ? ' on' : ''), 'aria-pressed': showAll() ? 'true' : 'false', 'data-gen': '',
-            title: 'Benchmark profiles the scheduler generated (their generated flag, or an id that starts bench-, b- or m-)',
-            onclick: () => go({ show: showAll() ? null : 'all', page: null }) }, showAll() ? 'Hide generated' : 'Show generated', h('span.n', num(nGen))) : null,
-          h('span.prf-count.mut', plural(rows.length, 'profile') + (hiddenHits && s ? ' · ' + num(hiddenHits) + ' generated match too' : ''))),
+            title: 'Test profiles: marked test, generated for benchmarks, or pinned to zones. They also have their own page.',
+            onclick: () => go({ show: showAll() ? null : 'all', page: null }) }, showAll() ? 'Hide test profiles' : 'Show test profiles too', h('span.n', num(nGen))) : null,
+          h('span.prf-count.mut', plural(rows.length, 'profile') + (hiddenHits && s ? ' · ' + num(hiddenHits) + ' test profiles match too' : '')),
+          nGen ? h('a', { href: href('test-profiles'), 'data-test-page': '' }, 'Test profiles page') : null),
         !rows.length ? empty(all.length ? 'No profile matches' : 'No profiles yet',
-          all.length ? (hiddenHits ? hiddenHits + ' generated profiles match. Show the generated ones to see them.' : 'Change the search.') : 'A profile names a model file and how to load it. Add the first one to let the scheduler place a model.',
+          all.length ? (hiddenHits ? hiddenHits + ' test profiles match. Show the test profiles too to see them.' : 'Change the search.') : 'A profile names a model file and how to load it. Add the first one to let the scheduler place a model.',
           all.length ? null : h('a.btn.pri.sm', { href: href('profiles', ['new']) }, 'Add the first profile'))
           : h('div.prf-scroll', h('table.tbl.prf-tbl',
             h('thead', h('tr', h('th', { scope: 'col' }, 'Profile'), h('th', { scope: 'col' }, 'Model'), h('th.r', { scope: 'col' }, 'Context'),
@@ -387,7 +439,8 @@ registerView({
               return h('tr', { key: 'p-' + e.id, class: 'click' + (open === e.id ? ' sel' : ''), tabindex: '0', 'data-profile': e.id, 'aria-selected': open === e.id ? 'true' : null,
                 onclick: openRow, onkeydown: ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openRow(); } } },
                 h('td.prf-name',
-                  h('div.prf-id', h('span.mono', { title: e.id }, e.id), e.generated ? h('span.plc-gen', 'generated') : null, loaded.has(e.id) && e.plan && e.plan.action !== 'serve' ? badge('Loaded', 'use') : null),
+                  h('div.prf-id', h('span', { 'data-shown': '', title: e.id }, profileLabel(e)), e.display_name ? h('span.mono.mut', e.id) : null,
+                    isTest(e) ? h('span.plc-gen', { title: testWhy(e) }, 'test') : null, loaded.has(e.id) && e.plan && e.plan.action !== 'serve' ? badge('Loaded', 'use') : null),
                   e.description ? h('div.prf-d', { title: e.description }, e.description) : null),
                 // a command profile runs a program, not a model file: it has no model and no context size
                 e.kind === 'command'
@@ -409,8 +462,8 @@ registerView({
     const render = () => {
       const st = state.status;
       const all = list || [];
-      const hand = all.filter(e => !e.generated).length;
-      const head = pageHead('Profiles', list ? [h('b', num(hand)), ' made by hand · ', h('b', num(all.length - hand)), ' generated'] : null,
+      const hand = all.filter(e => profileStage(e) === 'production').length;
+      const head = pageHead('Profiles', list ? [h('b', num(hand)), ' production · ', h('a', { href: href('test-profiles') }, h('b', num(all.length - hand)), ' test')] : null,
         list && !route.rest.length ? h('a.btn.pri', { href: href('profiles', ['new']) }, 'New profile') : null);
       if (error && !list) return [head, banner('err', ['The profiles could not be read: ', error])];
       return [
