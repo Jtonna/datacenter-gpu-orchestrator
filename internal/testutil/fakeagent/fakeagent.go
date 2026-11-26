@@ -300,10 +300,12 @@ func (a *Agent) register(ctx context.Context) bool {
 		id := a.cur.req.LaunchID
 		lid = &id
 	}
+	// the slices are copied under a.mu: the request is marshalled after the
+	// lock is released (post), and a setter may change the agent meanwhile
 	req := agentproto.RegisterRequest{ID: a.ID, Name: a.Name, AgentRelease: a.Release, AgentStartID: a.StartID,
-		OS: "linux", Arch: "amd64", Install: a.Install, Addr: a.Addr, GPUs: a.GPUs, Backends: a.Backends,
+		OS: "linux", Arch: "amd64", Install: a.Install, Addr: a.Addr, GPUs: slices.Clone(a.GPUs), Backends: slices.Clone(a.Backends),
 		MemTotalMiB: a.memTotal(), ModelSource: agentproto.ModelSource{Kind: agentproto.ModelSourceShare, Target: "192.0.2.1:/"},
-		LaunchID: lid, ForeignProcesses: a.Foreign, WatchdogFloorMiB: a.WatchdogFloorMiB, Capabilities: a.Capabilities}
+		LaunchID: lid, ForeignProcesses: slices.Clone(a.Foreign), WatchdogFloorMiB: a.WatchdogFloorMiB, Capabilities: slices.Clone(a.Capabilities)}
 	a.mu.Unlock()
 	req.FillEmpty()
 	var ans agentproto.RegisterAnswer
@@ -333,18 +335,23 @@ func (a *Agent) heartbeat(ctx context.Context) int {
 		a.mu.Unlock()
 		return http.StatusOK
 	}
+	// Everything the body holds is copied under a.mu: json.Marshal runs in
+	// post, after the lock is released, while SetMemAvail may write
+	// a.Devices[i].FreeMiB (the data race the Linux race run found when the
+	// body held a.Devices itself).
+	devices := slices.Clone(a.Devices)
+	if devices == nil {
+		devices = []agentproto.Device{}
+	}
 	hb := map[string]any{"agent_start_id": a.StartID, "seq": time.Now().UnixNano(), "uptime_s": 1.0,
 		"role": agentproto.RoleIdle, "launch_id": nil, "programs_ready": true, "programs_error": nil,
 		"model_source": map[string]any{"kind": "share", "reachable": true, "checked_age_s": 1.0},
-		"devices":      a.Devices, "mem_available_mib": a.MemAvail}
-	if a.Devices == nil {
-		hb["devices"] = []agentproto.Device{}
-	}
+		"devices":      devices, "mem_available_mib": a.MemAvail}
 	if a.cur != nil && a.cur.state != agentproto.StateExited {
 		hb["role"], hb["launch_id"] = roleOf(a.cur.req), a.cur.req.LaunchID
 	}
 	if a.Stats != nil {
-		hb["stats"] = a.Stats
+		hb["stats"] = slices.Clone(a.Stats)
 	}
 	if a.WatchdogFloorMiB > 0 {
 		hb["watchdog_floor_mib"] = a.WatchdogFloorMiB
@@ -748,18 +755,22 @@ func (a *Agent) HostAuth() []string {
 
 // SetMemAvail changes the agent's MemAvailable from the next heartbeat on,
 // with the free figure of its devices that share system memory, and the
-// stats object when stats is not nil (a scripted memory drop).
+// stats object when stats is not nil (a scripted memory drop). It writes
+// under a.mu, into a new Devices slice (never the array a caller or a
+// body being sent may hold), and keeps its own copy of stats.
 func (a *Agent) SetMemAvail(mib int64, stats json.RawMessage) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.MemAvail = mib
-	for i := range a.Devices {
-		if a.Devices[i].SharesSystemMemory {
-			a.Devices[i].FreeMiB = mib
+	devices := slices.Clone(a.Devices)
+	for i := range devices {
+		if devices[i].SharesSystemMemory {
+			devices[i].FreeMiB = mib
 		}
 	}
+	a.Devices = devices
 	if stats != nil {
-		a.Stats = stats
+		a.Stats = slices.Clone(stats)
 	}
 }
 
