@@ -2,6 +2,14 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: the process's memory in one read; the wheel stays over overlays
+
+No agent change, no new port, no new route, no table, no setting. New fields only: `GET /api/system` gains `runtime`.
+
+- **`GET /api/system` `runtime`**: the scheduler process's own memory, so a memory question is one read: `heap_inuse_bytes`, `heap_alloc_bytes`, `heap_objects`, `sys_bytes`, `goroutines`, `gc_cycles`, `last_gc_at` (unix ms, 0 before the first collection) and `read_at` (unix ms). Read with `runtime.ReadMemStats` at most once every 5 s and served from that copy in between.
+- The mouse wheel over an overlay that does not scroll (the System health popup at a desktop width, a popover, a context menu, the Ask Potluck drawer, a side panel's head and foot, the shade behind a panel, the drawer or a dialog) no longer scrolls the page behind; a list inside an overlay that can still scroll takes the wheel as before (`core/wheel.js`).
+- A tab left open on the Models page no longer doubles the plan rounds after a scheduler restart (the restart fix of the previous section, now in an image): one page open by another browser costs one round of plans, and that round is the standing tab's catalog too.
+
 ## Web UI: benchmark pages, second round; one round of plans per page open; a calmer status loop
 
 No agent change, no new port, no table, no setting. One new query on an existing route: `GET /api/models?only=disk`.

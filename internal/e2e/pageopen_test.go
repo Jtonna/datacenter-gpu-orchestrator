@@ -86,4 +86,11 @@ func TestPageOpenCostAcrossARestart(t *testing.T) {
 		})
 	}
 	measure("GET /api/models", func() { c.get("/api/models") })
+	// the standing tab alone: one round a minute at most (the drift rule)
+	for w := 1; w <= 2; w++ {
+		s0 := steps()
+		time.Sleep(30 * time.Second)
+		n := steps() - s0
+		t.Logf("IDLE window %d, the Models tab alone: %5.0f loop steps per 30 s (%.1f rounds)", w, n, n/fleetProfiles)
+	}
 }
