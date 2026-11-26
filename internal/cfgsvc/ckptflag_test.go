@@ -57,3 +57,48 @@ func TestStoredCtxCheckpointsFlagStaysLoadable(t *testing.T) {
 		t.Fatal("changing the stored flag was accepted")
 	}
 }
+
+// v87: a configuration stored by the next release, where profiles carry
+// their own --cache-ram / -cram / --ctx_checkpoints, loads with every
+// profile (no fall back to built-in defaults: a rollback is clean); a
+// write that adds --cache-ram is still refused.
+func TestStoredHostFlagsFromTheNextReleaseLoad(t *testing.T) {
+	ctx := context.Background()
+	st, err := bench.OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	cs, err := cfgstore.Open(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := config.NewDocument()
+	d.Profiles = map[string]*config.ProfileSpec{"fine": llama("b.gguf", 1024)}
+	for name, args := range map[string][]string{
+		"cache": {"--cache-ram", "0"}, "cram": {"-cram", "512"}, "under": {"--ctx_checkpoints", "3", "--cache_ram", "256"},
+		"both": {"--ctx-checkpoints", "3", "--cache-ram", "0", "--temp", "0.7"},
+	} {
+		p := llama("a.gguf", 1024)
+		p.ExtraArgs = args
+		d.Profiles[name] = p
+	}
+	if _, _, err := cs.Commit(ctx, cfgstore.Change{Doc: d, Origin: audit.Origin{Actor: "newer-version", Source: "test"}}); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(ctx, Options{Store: cs, Parse: config.Options{FileExists: func(string) bool { return true }}})
+	if e := svc.LoadError(); e != "" {
+		t.Fatalf("load error %q", e)
+	}
+	if n := len(svc.Config().Profiles); n != 5 {
+		t.Fatalf("%d profiles loaded, want 5", n)
+	}
+	if _, err := svc.UpdateProfile(ctx, ui("x"), "fine", llama("b.gguf", 2048)); err != nil {
+		t.Fatalf("an edit of another profile: %v", err)
+	}
+	add := llama("b.gguf", 1024)
+	add.ExtraArgs = []string{"--cache-ram", "0"}
+	if _, err := svc.UpdateProfile(ctx, ui("x"), "fine", add); err == nil || !strings.Contains(err.Error(), "cache_ram_mib") {
+		t.Fatalf("adding --cache-ram: %v", err)
+	}
+}
