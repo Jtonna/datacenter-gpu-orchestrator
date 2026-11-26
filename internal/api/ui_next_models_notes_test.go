@@ -22,7 +22,9 @@ func TestUINextNotesMenuHasNoHealthCard(t *testing.T) {
 			"pageNone": []string{".menu .fleet", ".fleet"}, "notOnPage": []string{"reachable · ", "Updated 0 s ago"},
 			"pageHas": []string{".menu .menu-foot .slotbox", "button.rb[data-surface=health]"}})
 	}
-	// the Benchmarks run card stays at the menu's foot while a run goes
+	// the Benchmarks run card stays at the menu's foot while a run goes (the
+	// board's card: the run's name, its bar and the time left; the words
+	// "Benchmark running" went with the classic card)
 	running := map[string]any{}
 	for k, v := range fetch {
 		running[k] = v
@@ -30,7 +32,7 @@ func TestUINextNotesMenuHasNoHealthCard(t *testing.T) {
 	running["/api/bench/state"] = map[string]any{"run": map[string]any{"id": "run-1", "state": "running", "suite_id": "cold-warm", "suite_name": "Cold and warm loads", "percent": 40,
 		"started_at": 1764057600000, "current": map[string]any{"name": "Load on two consoles"}}}
 	cases = append(cases, map[string]any{"name": "menu: the run card stays on Benchmarks", "route": "#/benchmarks", "status": st, "fetch": running,
-		"pageHas": []string{".menu .menu-foot .slotbox a.run-ind"}, "pageNone": []string{".fleet"}, "page": []string{"Benchmark running", "Cold and warm loads"}})
+		"pageHas": []string{".menu .menu-foot .slotbox a.run-ind"}, "pageNone": []string{".fleet"}, "page": []string{"Cold and warm loads"}})
 	uiExec(t, map[string]any{"shell": "next", "app": true, "fetch": fetch, "cases": cases})
 }
 

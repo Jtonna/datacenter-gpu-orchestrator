@@ -1,9 +1,11 @@
 // The models trash (models slice 3, v65) in the server's shapes
 // (internal/api/trash.go): GET /api/models/trash, POST
 // /api/models/delete/{file} (dry run, interrupt), POST
-// /api/models/trash/{id}/restore, and the trash figures of the catalog's
-// disk block (trash_bytes, trash_count, next_purge_at, trash_purge_on).
-// Purge is off, as on the server: nothing is ever removed.
+// /api/models/trash/{id}/restore, POST /api/models/trash/{id}/remove
+// ("Remove for good": dry run, then the real remove; the list's removed
+// tombstones), and the trash figures of the catalog's disk block
+// (trash_bytes, trash_count, next_purge_at, trash_purge_on). Purge is off,
+// as on the server: nothing is removed automatically.
 //
 // States (--trash <state>, with --models five):
 //   empty       nothing in the trash; every delete works
@@ -26,11 +28,17 @@
 //               interrupt_incomplete
 //   again       as two; a delete of a file nothing holds answers 409
 //               loaded_again
+//   not-regular as two; the remove of phi-4-14b answers 409 not_regular
+//               (dry run and real), the server's sentence
+// The states two and later carry two tombstones under removed: one removed
+// for good by the owner (with a comment), one by the timed clearing. A
+// remove that works takes the item out of the list into removed; under
+// read-only its dry run says read_only true and the real one answers 409.
 // A delete that works moves the file out of the catalog into the list; a
 // restore takes it out of the list (and back into the catalog).
 
 const GB = 1e9, DAY = 24 * 3600e3, DAYS = 30;
-export const TRASH_STATES = ['empty', 'two', 'in-use', 'run', 'read-only', 'taken', 'incomplete', 'again'];
+export const TRASH_STATES = ['empty', 'two', 'in-use', 'run', 'read-only', 'taken', 'incomplete', 'again', 'not-regular'];
 
 // goDur(600) -> "10m0s", as Go marshals a profile's ttl
 const goDur = s => { if (!s) return '0s'; const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60; return (h ? h + 'h' : '') + (h || m ? m + 'm' : '') + x + 's'; };
@@ -38,12 +46,13 @@ const spec = (file, ctx, needs, ttl) => Object.assign({ model: file, ctx }, need
 
 let items = [];
 let repairs = [];
+let removed = []; // tombstones: removed for good
 const deleted = new Map(); // catalog file -> its catalog entry, while it is in the trash
 let seq = 0;
 let writable = true; // models_writable in the disk block and the list
 
 export function seedTrash(state, now = Date.now()) {
-  items = []; repairs = []; deleted.clear(); seq = 0;
+  items = []; repairs = []; removed = []; deleted.clear(); seq = 0;
   writable = state !== 'read-only';
   if (!state || state === 'empty') return;
   const phi = 'phi-4-14b-q4_k_m.gguf', llama = 'llama-3.3-70b-q3_k_s.gguf';
@@ -55,6 +64,10 @@ export function seedTrash(state, now = Date.now()) {
   items.push({ id: 'f6e5d4c3b2a1', file: llama, size_bytes: Math.round(26.2 * GB), deleted_at: at2, purge_at: at2 + DAYS * DAY, state: 'interrupted', profile_count: 1,
     profiles: [{ id: 'llama-3.3-70b', spec: spec(llama, 8192, 31200, 900) }], revision: 37, actor: 'owner', comment: 'too slow on two zones', problem: why, in_trash_folder: false });
   repairs.push(`${llama} (trash id f6e5d4c3b2a1): needs a look: ${why}`);
+  const tomb = (id, file, gb, delAgo, remAgo, reason, by, comment, ids) => ({ id, file, size_bytes: Math.round(gb * GB), deleted_at: now - delAgo * DAY, deleted_by: 'owner',
+    deleted_comment: 'not used', purge_at: now - delAgo * DAY + DAYS * DAY, removed_at: now - remAgo * DAY, state: 'removed', reason, removed_by: by, comment, profile_ids: ids, revision: 30 });
+  removed.push(tomb('0a0b0c0d0e0f', 'mistral-7b-v0.3-q4_k_m.gguf', 4.4, 12, 2, 'owner', 'owner', 'the disk was full before the 72B arrived', ['mistral-7b', 'mistral-7b:32k']));
+  removed.push(tomb('1a1b1c1d1e1f', 'tinyllama-1.1b-q8_0.gguf', 1.2, 45, 15, 'clearing', 'potluck', '', ['tinyllama']));
 }
 
 // summary: the records whose file is in the trash (trashed or interrupted), as summarizeTrash
@@ -70,7 +83,7 @@ function summary() {
 
 export const trashList = () => {
   const s = summary();
-  return { items: items.map(r => Object.assign({}, r)), count: s.count, total_bytes: s.bytes, next_purge_at: s.next, trash_days: DAYS, purge_on: false, repairs_at_start: repairs.slice(), models_writable: writable };
+  return { items: items.map(r => Object.assign({}, r)), count: s.count, total_bytes: s.bytes, next_purge_at: s.next, trash_days: DAYS, purge_on: false, repairs_at_start: repairs.slice(), removed: removed.map(t => Object.assign({}, t)), models_writable: writable };
 };
 
 // withTrash(doc) -> the catalog without the files in the trash, its disk block with the trash figures
@@ -165,4 +178,29 @@ export function restoreRoute(state, id, body) {
   deleted.delete(rec.file);
   const restored = ids.map(p => renamed[p] || p).sort();
   return { status: 200, body: { file: rec.file, trash_id: id, profiles_restored: restored, renamed, aliases_dropped: [], revision: restored.length ? 60 + seq : 0, audit_id: 400 + seq } };
+}
+
+// removeRoute(state, id, body, query, now) -> {status, body}, as handleTrashRemove
+export function removeRoute(state, id, body, query, now = Date.now()) {
+  body = body || {};
+  const comment = String(body.comment || '').trim();
+  if (!comment) return refuse(400, null, 'a comment is required (body {"comment": "..."} or the X-Comment header)');
+  const dry = body.dry_run === true || /^(1|true)$/.test(String(query.get('dry_run') || ''));
+  const tomb = removed.find(t => t.id === id);
+  if (tomb) return refuse(410, 'already_removed', `${tomb.file} (trash id ${id}) was removed for good on ${new Date(tomb.removed_at).toISOString()} by ${tomb.removed_by}`);
+  const rec = items.find(r => r.id === id);
+  if (!rec) return refuse(404, 'not_found', `no trash item ${id}: see GET /api/models/trash`);
+  if (rec.state !== 'trashed') return refuse(409, 'needs_a_look', `${rec.file} (trash id ${id}) was not removed: its record needs a look (${rec.problem}). Restore or settle it first. Nothing was changed.`);
+  if (state === 'not-regular') return refuse(409, 'not_regular', `${rec.file} was not removed: .trash/${id}/${rec.file} is a symbolic link. Potluck erases only a plain file in a plain trash folder; nothing was changed`);
+  const ids = rec.profiles.map(p => p.id).sort();
+  const daysEarly = Math.max(0, Math.ceil((rec.purge_at - now) / DAY));
+  const figures = { file: rec.file, trash_id: id, size_bytes: rec.size_bytes, profiles: ids, deleted_at: rec.deleted_at, purge_at: rec.purge_at, days_early: daysEarly, cannot_undo: true, purge_on: false,
+    message: `This cannot be undone. ${rec.file} and its ${ids.length} profile${ids.length === 1 ? '' : 's'} are erased now, ${daysEarly} days before they would have been. ${rec.size_bytes >= 100e6 ? (rec.size_bytes / 1e9).toFixed(1) + ' GB' : rec.size_bytes >= 1e6 ? Math.round(rec.size_bytes / 1e6) + ' MB' : 'under 1 MB'} is freed.` };
+  if (dry) return { status: 200, body: Object.assign(figures, { dry_run: true, read_only: state === 'read-only' }) };
+  if (state === 'read-only') return refuse(409, 'read_only', READ_ONLY(`unlink /models/.trash/${id}/${rec.file}`));
+  items = items.filter(r => r !== rec);
+  deleted.delete(rec.file);
+  removed.unshift({ id, file: rec.file, size_bytes: rec.size_bytes, deleted_at: rec.deleted_at, deleted_by: rec.actor, deleted_comment: rec.comment, purge_at: rec.purge_at, removed_at: now,
+    state: 'removed', reason: 'owner', removed_by: 'owner', comment, profile_ids: ids, revision: rec.revision });
+  return { status: 200, body: { file: rec.file, trash_id: id, removed_at: now, freed_bytes: rec.size_bytes, profiles_removed: ids, reason: 'owner', cannot_undo: true, audit_id: 500 + ++seq } };
 }

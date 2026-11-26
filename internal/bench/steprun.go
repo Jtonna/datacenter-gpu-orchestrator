@@ -1275,6 +1275,7 @@ func (x *suiteExec) finish(br *benchRun) {
 		defer supervise.Unlocked("bench", x.a.mu.Unlock)
 		x.a.done++
 		x.a.step = nil
+		x.a.counts.add(&factStep{outcome: st.Outcome, state: st.State, stats: st.Stats, expect: st.Expect, phases: st.Phases})
 	}()
 	m.emit(map[string]any{"kind": "step_finished", "run_id": st.RunID, "step": stepBrief(st)})
 	sev := history.Info

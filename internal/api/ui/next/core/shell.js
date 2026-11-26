@@ -72,9 +72,13 @@ export const NAV = [
     { id: 'models', label: 'Models', desc: 'The models available to you' },
   ] },
   { id: 'benchmarks', label: 'Benchmarks', icon: I.benchmarks, pages: [
-    { id: 'benchmarks', label: 'Overview', match: r => !['runs', 'trends'].includes(r.rest[0]) },
-    { id: 'benchmarks', rest: ['runs'], label: 'Runs', match: r => r.rest[0] === 'runs' },
-    { id: 'benchmarks', rest: ['trends'], label: 'Aggregates', match: r => r.rest[0] === 'trends' },
+    // the boards' menu (Bench-Overview): Overview, Benchmarks N, Runs N,
+    // Settings (the Settings page's Benchmarks group). The counts are the
+    // benchmark pages' own copy (state.benchCounts), shown once read.
+    { id: 'benchmarks', label: 'Overview', match: r => !['runs', 'all'].includes(r.rest[0]) },
+    { id: 'benchmarks', rest: ['all'], label: 'Benchmarks', match: r => r.rest[0] === 'all', count: () => state.benchCounts && state.benchCounts.benchmarks, countWord: 'group or benchmark', countWords: 'groups and benchmarks' },
+    { id: 'benchmarks', rest: ['runs'], label: 'Runs', match: r => r.rest[0] === 'runs', count: () => state.benchCounts && state.benchCounts.runs, countWord: 'run' },
+    { id: 'settings', rest: ['bench'], label: 'Settings', link: true },
   ] },
   { id: 'mcp', label: 'MCP', icon: I.mcp, foot: true, pages: [
     { id: 'mcp', label: 'MCP', desc: 'The MCP server and the keys of AI agents' },
@@ -211,10 +215,13 @@ function placeSlots() {
   if (!root) return;
   const inMenu = !narrow.matches && !root.classList.contains('menu-closed');
   const menuBox = root.querySelector('.menu .slotbox');
-  const box = inMenu ? menuBox : strip;
-  if (!box) return;
+  // the Benchmarks pages draw the run themselves (the Overview's run card,
+  // the list's "Running now" row; board Bench-Group has no strip): there the
+  // strip stays empty
+  const box = inMenu ? menuBox : route.id === 'benchmarks' ? null : strip;
+  if (!box && (inMenu || route.id !== 'benchmarks')) return;
   const want = Object.keys(slots).map(k => slots[k]);
-  for (const n of want) if (n.parentNode !== box) box.appendChild(n);
+  if (box) for (const n of want) if (n.parentNode !== box) box.appendChild(n);
   for (const other of [strip, menuBox]) {
     if (!other) continue;
     for (const c of Array.from(other.children)) if (!want.includes(c) || other !== box) c.remove();
@@ -324,8 +331,9 @@ function menuItem(p, c) {
   let nb = null;
   if (p.id === 'models' && !p.link && c.models) nb = h('span.nb', { title: plural(c.models, 'model') + ' loaded' }, num(c.models));
   if (p.id === 'queue' && c.queue) nb = h('span.nb', { title: plural(c.queue, 'request') + ' waiting' }, num(c.queue));
+  if (p.count) { const n = p.count(); if (n) nb = h('span.nb.cnt', { title: n === 1 ? '1 ' + p.countWord : num(n) + ' ' + (p.countWords || p.countWord + 's') }, num(n)); }
   if (p.id === 'zones' && c.zonesBad) nb = h('span.nb.alert', { title: plural(c.zonesBad, 'zone') + ' need a look' }, num(c.zonesBad));
-  const attrs = { href: href(p.id, p.rest), 'aria-current': on_ ? 'page' : null, onclick: closeDrawer, key: 'p-' + p.id + (p.rest ? '-' + p.rest.join('-') : '') };
+  const attrs = { href: href(p.id, p.rest), 'aria-current': on_ && !p.link ? 'page' : null, onclick: closeDrawer, key: 'p-' + p.id + (p.rest ? '-' + p.rest.join('-') : '') };
   if (p.desc) return h('a', Object.assign({ class: 'nd' + (on_ ? ' on' : '') }, attrs), h('b', p.label, nb), h('span', p.desc));
   return h('a', Object.assign({ class: 'ni' + (on_ ? ' on' : '') }, attrs), p.label, nb);
 }

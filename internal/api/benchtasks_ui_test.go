@@ -7,9 +7,10 @@ import (
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
 )
 
-// The run page draws a tasks phase: the counts, the median speed, each
-// scorer's total, one row per task and a link to each stored answer; and it
-// still draws when the phase has no scores, or failed before it sent anything.
+// The benchmark report draws a tasks phase: the set, the counts and each
+// scorer's total; and it still draws when the phase has no scores, or failed
+// before it sent anything (the reason printed once). The per-task table is in
+// the server's full report (Open full report).
 func TestUI018TasksPhaseExecutes(t *testing.T) {
 	e := newEnv(t, chatOK)
 	var profiles map[string]any
@@ -45,9 +46,11 @@ func TestUI018TasksPhaseExecutes(t *testing.T) {
 		Steps: []bench.Step{step(0, tasks, bench.OutcomeReady, ""), step(1, &unscored, bench.OutcomeReady, ""), missing}}
 	fetch := map[string]any{"/api/bench/runs/run-t": run, "/api/bench/runs": map[string]any{"runs": []any{run}}, "/api/profiles": profiles}
 	cases := []any{
-		map[string]any{"name": "run with a tasks phase", "route": "#/benchmarks/runs/run-t",
-			"expect": []string{"Coding tasks v1", "Decode, median", "Score, kit-tests", "25.5 / 34", "Timed out", "Not sent", "1,800 chars", "own time limit", "is not stored"}},
-		map[string]any{"name": "run with a tasks phase, steps tab", "route": "#/benchmarks/runs/run-t?tab=steps"},
+		map[string]any{"name": "report of a tasks phase", "route": "#/benchmarks/runs/run-t/0",
+			"page": []string{"Coding tasks v1", "2 of 4 answered", "1 timed out", "1 not sent", "kit-tests 25.5 / 34", "the phase's time limit ran out"}},
+		map[string]any{"name": "report of a tasks phase with no scores", "route": "#/benchmarks/runs/run-t/1", "page": []string{"Coding tasks v1", "2 of 4 answered"}, "notOnPage": []string{"kit-tests"}},
+		map[string]any{"name": "report of a step that failed before it sent anything", "route": "#/benchmarks/runs/run-t/2", "page": []string{"is not stored"}},
+		map[string]any{"name": "the run's panel", "route": "#/benchmarks/runs/run-t", "page": []string{"Reports", "is not stored"}},
 	}
 	uiExec(t, map[string]any{"modules": []string{"views/benchmarks.js"}, "fetch": fetch, "cases": cases})
 }

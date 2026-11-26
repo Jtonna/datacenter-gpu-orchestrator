@@ -568,10 +568,16 @@ func (m *Meta) NEmbdVGqa(il int) (int, error) {
 // hybrid architecture whose file does not carry full_attention_interval.
 var hybridDefaultInterval = map[string]uint32{"qwen3next": 4, "qwen35": 4, "qwen35moe": 4}
 
-// HasKV reports whether layer il keeps a KV cache: every layer, except the
-// recurrent layers of a hybrid model (llama.cpp: a layer is recurrent unless
-// (il + 1) % full_attention_interval == 0).
+// HasKV reports whether layer il keeps a KV cache: every layer of the
+// trunk, except the recurrent layers of a hybrid model (llama.cpp: a layer
+// is recurrent unless (il + 1) % full_attention_interval == 0). An MTP
+// (nextn) block at the end keeps none: the pinned server's caches take
+// il < n_layer() only (create_memory: the hybrid filter_attn and the plain
+// cache's filter), n_layer() = block_count - nextn_predict_layers.
 func (m *Meta) HasKV(il int) bool {
+	if il >= m.TrunkLayers() {
+		return false
+	}
 	return m.FullAttentionInterval == 0 || (il+1)%int(m.FullAttentionInterval) == 0
 }
 

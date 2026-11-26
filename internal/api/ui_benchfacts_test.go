@@ -31,10 +31,6 @@ func TestUIBenchStepFactsKeysMatchTheServer(t *testing.T) {
 		Roles:  []bench.NodeRole{{ID: "i", Node: "n", Role: bench.RoleHost, MemoryMiB: &mem}},
 		Reload: []bench.NodeReload{{ID: "i", Node: "n", Verdict: "partial", CachedPct: &pct, CachedNowMiB: &room, CacheRoomMiB: &room, CacheOccupied: true, CacheLastFile: "f.gguf", CacheNote: "n"}},
 	})
-	res := jsonKeys(t, bench.BenchmarkResult{LowestMiB: &lo, LowestGPUMiB: &lo, LoadMode: "pushed", Host: "h", Workers: []string{"w"},
-		MemLow: []bench.NodeMemLow{{StepMiB: &lo, Kind: bench.MemKindGPU}}, Reload: []bench.NodeReload{{Verdict: "full"}}})
-	mode := "pushed"
-	agg := jsonKeys(t, bench.AggregatesDoc{ByModelLoadMode: []bench.ModelAgg{{ModelFile: "m", LoadMode: &mode}}})
 	suite := jsonKeys(t, benchspec.Suite{ID: "s", Status: benchspec.SuitePlanned, Reason: "r"})
 
 	for _, c := range []struct {
@@ -42,10 +38,9 @@ func TestUIBenchStepFactsKeysMatchTheServer(t *testing.T) {
 		file string
 		keys []string
 	}{
-		{step, "views/benchmarks/runs.js", []string{"load_mode", "mem_low", "load_mib", "step_mib", "kind", "note", "roles", "role", "memory_mib", "reload_from_cache"}},
-		{res, "views/benchmarks/pages.js", []string{"lowest_available_mib", "lowest_available_gpu_mib", "load_mode", "host", "workers", "mem_low", "step_mib", "kind", "reload_from_cache"}},
-		{agg, "views/benchmarks/aggregates.js", []string{"by_model_load_mode", "load_mode", "model_file"}},
-		{suite, "views/benchmarks/common.js", []string{"status", "reason"}},
+		// the classic run, benchmark and aggregates pages that drew the other
+		// facts were dropped (25 Nov); the server still writes them (above)
+		{suite, uiNextDir + "views/bench/list.js", []string{"status", "reason"}},
 		{step, "core/stepfacts.js", []string{"verdict", "cached_pct", "cache_occupied", "cached_now_mib", "cache_last_file"}},
 	} {
 		text := uiText(t, c.file)
@@ -77,13 +72,7 @@ func TestUIBenchStepFactsWords(t *testing.T) {
 		}
 	}
 	for file, wants := range map[string][]string{
-		"views/benchmarks/runs.js": {"setupBlock(step)", "'Lowest available, load'", "'Lowest available, step'", "'Not recorded'",
-			"'Load mode'", "loadModeNode(l.load_mode)", "title: RELOAD_TIP", "stepRoles(step)",
-			"'(GPU)'", "'(system)'", "label: 'Can stay in the file cache'", "occupiedText(r.node, r.reload)"},
-		"views/benchmarks/pages.js":      {"label: 'Lowest available (system)'", "label: 'Lowest available (GPU)'", "label: 'Load mode'", "rolesText(r.host, r.workers)", "label: 'Can stay in the file cache'"},
-		"views/benchmarks/aggregates.js": {"h('h2', 'By load mode')", "loadModeCard(agg)"},
-		"views/benchmarks/common.js":     {"key: 'lowest_available_mib'", "key: 'lowest_available_gpu_mib'"},
-		"views/models/common.js":         {"reloadLine(plan.reload_from_cache"},
+		"views/models/common.js": {"reloadLine(plan.reload_from_cache"},
 	} {
 		text := uiText(t, file)
 		for _, want := range wants {
@@ -94,16 +83,13 @@ func TestUIBenchStepFactsWords(t *testing.T) {
 	}
 }
 
-// A planned or blocked suite is listed with a badge and its reason, and its
-// Run buttons are off with the reason as the tooltip; the run dialog refuses
-// it too, and a 409 from the server is shown with its reason.
+// A planned or blocked group is listed with its status and reason, and its
+// panel says it cannot run until that is settled (the run buttons are not
+// on these pages yet: slice 6).
 func TestUIPlannedSuites(t *testing.T) {
 	for file, wants := range map[string][]string{
-		"views/benchmarks/common.js":     {"planned: ['Planned'", "blocked: ['Blocked'", "export const suiteNotRunnable", "cannot be run yet: ${s.reason"},
-		"views/benchmarks/overview.js":   {"suiteStatusBadge(s)", "s.reason ? h('span.sub', s.reason)", "disabled: !!cache.off || !!suiteNotRunnable(s)", "title: suiteNotRunnable(s) ||"},
-		"views/benchmarks/pages.js":      {"suiteStatusBadge(s)", "disabled: !!cache.off || !!suiteNotRunnable(s)", "It cannot be run until its status is removed."},
-		"views/benchmarks/runconfirm.js": {"const why = suiteNotRunnable(suite);", "e.status === 409 ? 'The suite cannot be run: '"},
-		"views/benchmarks/editor.js":     {"if (!su.benchmarks.length && !su.status)"},
+		uiNextDir + "views/bench/list.js": {"g.status === 'planned' ? 'planned: ' + (g.reason || 'not ready')", "'blocked: ' + (g.reason || 'cannot run')",
+			"`This group is ${g.status}: ${g.reason || 'no reason given'}. It cannot run until that is settled.`"},
 	} {
 		text := uiText(t, file)
 		for _, want := range wants {

@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/bench"
+	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/cfgstore"
 	"github.com/Jtonna/datacenter-gpu-orchestrator/internal/benchspec"
 )
 
@@ -23,6 +25,7 @@ func (s *Server) modelRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/bench/runs/{id}/measurements", g(s.runMeasurements))
 	m.HandleFunc("GET /api/bench/measurements", g(s.queryMeasurements))
 	m.HandleFunc("GET /api/bench/metrics", g(s.listMetrics))
+	m.HandleFunc("GET /api/bench/results/models", g(s.resultsByModel))
 	// Groups are suites (decision D24: old suites read as groups); the same
 	// routes under the new name.
 	m.HandleFunc("GET /api/bench/groups", g(s.listSuites))
@@ -382,6 +385,79 @@ func (s *Server) runMeasurements(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"run_id": id, "measurements": ms})
+}
+
+// resultsByModel is GET /api/bench/results/models (?ctx=): per model file the
+// newest finished step's figures (cold load, reload, tok/s, first token,
+// memory), the newest per zone count, and the smallest fit. Read from the
+// steps and the measurement record; nothing stored (the Overview's "Latest
+// result for each model" and the Runs page's result views).
+func (s *Server) resultsByModel(w http.ResponseWriter, r *http.Request) {
+	f := bench.ResultsFilter{}
+	if v := r.URL.Query().Get("ctx"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			badParam(w, "ctx must be a context size in tokens, got %q", v)
+			return
+		}
+		f.Ctx = n
+	}
+	// ?run=<id or number>: one run's results (board Bench-Runs-Load "From")
+	if v := r.URL.Query().Get("run"); v != "" {
+		id := v
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			got, err := s.opts.BenchStore.RunIDByNumber(n)
+			if err != nil {
+				apiErr(w, http.StatusNotFound, "there is no run %d", n)
+				return
+			}
+			id = got
+		}
+		f.RunID = id
+	}
+	ctxs, err := s.opts.BenchStore.ResultContexts()
+	if err != nil {
+		s.storeErr(w, err)
+		return
+	}
+	rows, err := s.opts.BenchStore.ResultsByModel(f)
+	if err != nil {
+		s.storeErr(w, err)
+		return
+	}
+	// a model whose file is no longer in the models folder keeps its history
+	// (the results were measured) but is said so and listed last
+	here := map[string]bool{}
+	var files []ModelFile
+	if s.opts.modelFiles != nil {
+		files = s.opts.modelFiles()
+	} else {
+		files = s.files.list(s.conf().ModelsDir, nil)
+	}
+	for _, mf := range files {
+		if mf.Exists {
+			here[filepath.Base(mf.File)] = true
+		}
+	}
+	inTrash := map[string]string{} // file -> trash id, files in Deleted models
+	if s.store != nil {
+		if recs, err := s.store.TrashList(r.Context()); err == nil {
+			for _, rec := range recs {
+				if rec.State == cfgstore.TrashTrashed && inTrash[filepath.Base(rec.File)] == "" {
+					inTrash[filepath.Base(rec.File)] = rec.ID
+				}
+			}
+		}
+	}
+	for i := range rows {
+		f := filepath.Base(rows[i].Model)
+		rows[i].FileGone = !here[f]
+		if rows[i].FileGone {
+			rows[i].TrashID = inTrash[f]
+		}
+	}
+	sort.SliceStable(rows, func(i, j int) bool { return !rows[i].FileGone && rows[j].FileGone })
+	writeJSON(w, http.StatusOK, map[string]any{"models": rows, "ctx": f.Ctx, "run": f.RunID, "contexts": ctxs})
 }
 
 // queryMeasurements is GET /api/bench/measurements: the history of the

@@ -2,6 +2,37 @@
 
 What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent (`potluck-agent`) brings, newest first. The wire details are in the [agent contract](agent-contract.md), the day-to-day steps in the [runbook](runbook.md).
 
+## Scheduler image: the need estimate leaves out the MTP block's KV
+
+No agent change, no new port, no new route, no table, no setting.
+
+- **The KV part of an estimated need** counts only the trunk's attention layers, as the model server allocates its cache: an MTP (`nextn_predict_layers`) block at the end of the file keeps no KV cache (pinned llama.cpp: the caches take `il < n_layer()`, `n_layer() = block_count - nextn_predict_layers`).
+- **Who changes:** only profiles whose need is estimated (not measured, not written), on a file with an MTP block that the rule before counted as an attention layer: a plain (all-attention) architecture with `nextn_predict_layers`, or a hybrid whose MTP block falls on its full-attention interval. Qwen 3.5 4B (33 blocks) and Qwen 3.8 27B (65 blocks), interval 4, do not: their MTP block was never counted. Their estimates are unchanged.
+- **Going back:** the image before counts the block again; nothing stored changes.
+
+## Web UI: the benchmark pages and "Remove for good" in the trash
+
+No schema change, no setting. One new read route and one new field:
+
+- **`GET /api/bench/results/models`** (`?ctx=`, `?run=` a run id or number, permission **observe**; the answer also lists `contexts`, the contexts the record holds figures at): per model file, each figure from the newest finished step that measured it (`cold_load_s` with `cold` and `cold_verified`, `reload_s`, `decode_tps`, `ttft_ms`, `memory_mib`, `lowest_available_mib`: the lowest available system memory of the machines the step used, with `lowest_available_node`), the newest step per zone count (`by_nodes`) and `smallest_fit` (the fewest zones a load of the file completed on, in any run). Read from the steps and the measurement record; nothing stored. A figure the step did not measure is left out. Each figure's step is in `from` (`run_id`, `run_number`, `step`, `at`, `node_count`) and `mixed` says a cell's figures come from more than one run; the page marks such a row "several runs". `file_gone` marks a model file no longer in the models folder (with `trash_id` when it is in Deleted models); such rows come last. The Overview's "Latest result for each model" and the Runs page's views Load times, Generation speed, First token and Memory draw it.
+- **Steps: `reason_short`**, a refusal in a few words ("Does not fit on 1 zone") beside the scheduler's sentence in `reason`; computed when read, nothing stored.
+- **Groups list: `task_count`**, the coding tasks a run of the group sends (its tasks phases' stored or inline task sets), when it has any.
+
+- **Benchmarks.** The new pages of the boards: the Overview, the groups and benchmarks (a group's panel beside the list), the runs (views, filters, pages of 12), a run's panel and a benchmark's report. The report's four headline figures come from the step's phases. What the server does not serve yet is drawn greyed with the missing thing and its slice on hover (the Coding figures, "smallest that fits", the group option "cold loads", Compare, drop-out notes, one-click PDF, the editors, run control). The menu: Overview, Benchmarks, Runs, Settings.
+- **Classic benchmark pages dropped.** Their routes and data stay; these lose their page: `GET /api/bench/trends`, `GET /api/bench/aggregates` (still read by the Models pass rates), `/api/bench/external*`, `GET /api/bench/benchmarks/{id}/results`, `GET /api/bench/runs/{id}/export`, `GET /api/bench/schema`, `GET /api/bench/profiles`, the benchmark and suite writes (`POST`/`PUT`/`DELETE /api/bench/benchmarks*`, `/api/bench/suites*`), `POST /api/bench/suites/{id}/run`, `POST /api/bench/benchmarks/{id}/run`, `POST /api/bench/runs/{id}/cancel`. A group can still be duplicated and a run pinned from the pages.
+- **Trash.** Each deleted model says "Kept until <date>"; while purge is off the page says nothing is removed automatically. "Remove for good" in an item's panel: the dry run first and the server's own sentence, the file name typed exactly and a comment, then the remove; every refusal (read-only, not a plain file, ...) in the server's words. "Removed for good" under the trash lists the files removed (when, by whom, why).
+
+## Scheduler image: benchmark run facts and run numbers (benchmarks slice 2)
+
+No agent change, no new port, no schema change, no new route, no new setting. Every new field is computed when it is read; nothing is stored.
+
+- **Run rows.** `GET /api/bench/runs` takes `offset` and `result` (running, queued, waiting, passed, with_issues, failed, refused, cancelled, skipped; has_failed, has_refused, clean) and answers `total` and `offset`. Each run (also `last_run` on the groups list and `GET /api/bench/runs/{id}`) carries `number`, `result`, `counts` {steps, done, to_go, completed, passed, with_issues, failed, refused, cancelled, skipped}, `cold` {loads, cold, verified, state} and, for a direct run, `inputs`. Passed means every step completed with no issue (a failed request, turn, concurrent request or task, a failed phase, or an expectation not met).
+- **Run numbers.** A run's number is its place in queue order (`queued_at`, then id; oldest 1) over the run rows and the `run_removals` log together: a trim, a restart and new runs do not move any number, and a run whose row were removed (no code does this; a remove must log the run as a trim does) keeps its number and moves no other. `GET /api/bench/runs/{id}` takes a number for `{id}`; `?requests=0` leaves out the request rows. Each step carries `slug`, its entry address (model name and placement; the step index is added only when two entries share a slug).
+- **Lists.** `GET /api/bench/benchmarks` rows carry `last_use` (by id or as a recipe); groups carry `expanded_count`. The progress document (`/ws` and `GET /api/bench/state`) carries `current.placement` and `counts`.
+- **Behaviour change for keys: pinning a run takes the permission `models`** (it was `settings`), as a model pin does. A key with only `settings` is now refused 403 on `PUT`/`DELETE /api/bench/runs/{id}/pin`.
+- **MCP.** `list_runs` takes `offset` and `result`; `get_run` takes a number and `requests`. Group-named aliases: `list_bench_groups`, `get_bench_group`, `create_bench_group`, `update_bench_group`, `delete_bench_group`, `run_bench_group` (the zone-group tools keep `list_groups` and the rest).
+- **Going back.** The image before sends none of these fields; nothing it reads changed. Its pin routes take `settings` again.
+
 ## Scheduler image: Gemma 4's restore-point size shown as a proven bound
 
 No agent change, no new port, no new route, no table, no setting. Plans change only where `count_host_memory` is on (default off) for a gemma4 profile hosted on a node.

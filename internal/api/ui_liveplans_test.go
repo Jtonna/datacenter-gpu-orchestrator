@@ -37,7 +37,7 @@ func TestUILiveCatalogOnlyWhereShown(t *testing.T) {
 		without("#/benchmarks"), // names only
 		without("#/nodes"),
 	}})
-	for _, f := range []string{"next/views/overview.js", "next/views/requests.js", "views/benchmarks.js"} {
+	for _, f := range []string{"next/views/overview.js", "next/views/requests.js", "next/views/benchmarks.js"} {
 		if !strings.Contains(uiText(t, f), "needCatalog({ live: false })") {
 			t.Errorf("%s asks for the live catalog: it draws only model names", f)
 		}

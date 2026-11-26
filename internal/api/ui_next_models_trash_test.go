@@ -1,6 +1,13 @@
 package api
 
-import "testing"
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
 
 // The models trash in the UI (v65, models slice 3; boards Models,
 // Models-Trash and Models-Delete): the Models list's footer row "Deleted
@@ -9,12 +16,16 @@ import "testing"
 // /api/models/trash (each item with its size, profiles, when and by whom,
 // an interrupted item with its problem, the repairs of the last start), its
 // side panel (?item=<id>) with Restore (a required comment; a 409
-// profiles_taken offers rename_taken) and "Remove now" drawn but
-// unavailable; and the panel's "Delete model": a dry run first (with
+// profiles_taken offers rename_taken) and "Remove for good" (a dry run
+// first and the server's own sentence, the file name typed exactly and a
+// comment, then the remove; refusals in the server's words), the "Removed
+// for good" list of the tombstones under the trash; and the panel's
+// "Delete model": a dry run first (with
 // interrupt when something holds the file, to read would_interrupt), then
 // the name typed and a comment, then the delete; interrupt is sent only
 // when the dialog showed what it interrupts. Every refusal is a sentence in
-// the dialog; read_only is its own state. Nothing removes a file for good.
+// the dialog; read_only is its own state. Nothing is removed automatically
+// while the server says purge_on false.
 
 const (
 	trashPhi   = "a1b2c3d4e5f6" // phi-4-14b-q4_k_m.gguf, in the trash, 3 profiles
@@ -113,17 +124,78 @@ func TestUINextModelsTrash(t *testing.T) {
 			"hash": "#/models/deleted?item=" + trashPhi},
 		map[string]any{"name": "trash: the panel of an item", "route": "#/models/deleted?item=" + trashPhi, "status": st,
 			"page": []string{"Deleted model", "phi-4-14b-q4_k_m.gguf", "8.4 GB", "deleted", "by owner", "not used since qwen3-14b arrived", "Kept until",
-				"Restore model", "Remove now", "Configurations", "3 profiles", "phi-4-14b:16k", "16,384", "10,350 MiB", "10 min", "5 min"},
-			"pageHas": []string{"aside.side button[data-act=restore]", "aside.side button[data-act=remove][data-off][aria-disabled=true][title*=erases]",
+				"Restore model", "Remove for good", "Configurations", "3 profiles", "phi-4-14b:16k", "16,384", "10,350 MiB", "10 min", "5 min"},
+			"pageHas": []string{"aside.side button[data-act=restore]", "aside.side button[data-act=remove]",
 				"aside.side tr[data-profile='phi-4-14b:json']"},
-			"pageNone": []string{"aside.side button[data-act=restore][data-off]"},
+			"pageNone": []string{"aside.side button[data-act=restore][data-off]", "aside.side button[data-act=remove][data-off]"},
 			"has":      []string{"div.mr.del.sel[data-trash='" + trashPhi + "']"}},
-		map[string]any{"name": "trash: Remove now does nothing", "route": "#/models/deleted?item=" + trashPhi, "status": st, "click": []string{"aside.side button[data-act=remove]"},
-			"pageNone": []string{"div.dlg"}, "notFetched": []string{"^POST ", "^DELETE "}},
-		map[string]any{"name": "trash: an interrupted item cannot be restored", "route": "#/models/deleted?item=" + trashLlama, "status": st,
+		map[string]any{"name": "trash: an interrupted item cannot be restored or removed", "route": "#/models/deleted?item=" + trashLlama, "status": st,
 			"page":    []string{"llama-3.3-70b-q3_k_s.gguf", "Needs a look", "not in exactly one place"},
-			"pageHas": []string{"aside.side button[data-act=restore][data-off][aria-disabled=true]"}},
+			"pageHas": []string{"aside.side button[data-act=restore][data-off][aria-disabled=true]", "aside.side button[data-act=remove][data-off][aria-disabled=true]"}},
+		map[string]any{"name": "trash: Removed for good under the trash", "route": "#/models/deleted", "status": st,
+			"expect": []string{"Removed for good", "2 files", "mistral-7b-v0.3-q4_k_m.gguf", "4.4 GB · 2 profiles", "2 days ago", "owner", "removed for good: the disk was full before the 72B arrived",
+				"tinyllama-1.1b-q8_0.gguf", "15 days ago", "potluck", "the timed clearing (model_trash_days)"},
+			"has":   []string{"section.del-gone div.mr.del.gone[data-removed='0a0b0c0d0e0f'][data-reason=owner]", "section.del-gone div.mr.del.gone[data-removed='1a1b1c1d1e1f'][data-reason=clearing]"},
+			"order": []string{"mistral-7b-v0.3-q4_k_m.gguf", "tinyllama-1.1b-q8_0.gguf"}},
 	)
+	// a remove stamped by the server a moment ahead of this clock reads "just now", never "in 0 s"
+	ahead := map[string]any{}
+	if err := json.Unmarshal([]byte(mustJSON(t, two["/api/models/trash"])), &ahead); err != nil {
+		t.Fatal(err)
+	}
+	ahead["removed"].([]any)[0].(map[string]any)["removed_at"] = float64(time.Now().Add(time.Hour).UnixMilli())
+	ahead["removed"].([]any)[0].(map[string]any)["size_bytes"] = float64(52_400_000) // under 0.1 GB: in MB
+	run(with(two, map[string]any{"/api/models/trash": ahead}),
+		map[string]any{"name": "trash: a remove stamped ahead of the clock", "route": "#/models/deleted", "status": st,
+			"expect": []string{"just now", "52 MB · 2 profiles"}, "absent": []string{"in 0 s", "in 1 h", "in 59 min", "0.1 GB ·", "0.0 GB"}})
+
+	// 2b. remove for good: the dry run first and the server's sentence; the
+	// file name typed exactly and a comment; then the remove; the refusals
+	removeURL := "/api/models/trash/" + trashPhi + "/remove"
+	sentence := "This cannot be undone. phi-4-14b-q4_k_m.gguf and its 3 profiles are erased now, 27 days before they would have been. 8.4 GB is freed."
+	rmDry := map[string]any{"file": "phi-4-14b-q4_k_m.gguf", "trash_id": trashPhi, "size_bytes": 8400000000, "profiles": []any{"phi-4-14b", "phi-4-14b:16k", "phi-4-14b:json"},
+		"deleted_at": 1795289513419, "purge_at": 1797881513419, "days_early": 27, "cannot_undo": true, "purge_on": false, "message": sentence, "dry_run": true, "read_only": false}
+	rmDone := map[string]any{"file": "phi-4-14b-q4_k_m.gguf", "trash_id": trashPhi, "removed_at": 1795589513419, "freed_bytes": 8400000000,
+		"profiles_removed": []any{"phi-4-14b", "phi-4-14b:16k", "phi-4-14b:json"}, "reason": "owner", "cannot_undo": true, "audit_id": 501}
+	const reRmDry, reRmReal = `^POST /api/models/trash/[^/]+/remove\?dry_run=1 \{"comment":"[^"]+","dry_run":true\}$`, `^POST /api/models/trash/[^/]+/remove \{"comment":"[^"]+"\}$`
+	rmOpen := "aside.side button[data-act=remove]"
+	roDry := map[string]any{}
+	for k, v := range rmDry {
+		roDry[k] = v
+	}
+	roDry["read_only"] = true
+	notRegular := "phi-4-14b-q4_k_m.gguf was not removed: .trash/a1b2c3d4e5f6/phi-4-14b-q4_k_m.gguf is a symbolic link. Potluck erases only a plain file in a plain trash folder; nothing was changed"
+	rmRoMsg := "the models folder is read-only here: nothing was changed (unlink /models/.trash/a1b2c3d4e5f6/phi-4-14b-q4_k_m.gguf: read-only file system). Deleting and restoring model files need the scheduler's models folder mounted read-write."
+	run(with(two, map[string]any{removeURL: map[string]any{"$match": []any{[]any{reRmDry, rmDry}, []any{reRmReal, rmDone}}}}),
+		map[string]any{"name": "remove: the dry run first, the server's sentence", "route": "#/models/deleted?item=" + trashPhi, "status": st, "click": []string{rmOpen},
+			"page":         []string{"Remove phi-4-14b-q4_k_m.gguf for good?", sentence, "Its profiles go with it: phi-4-14b, phi-4-14b:16k and phi-4-14b:json.", "Type phi-4-14b-q4_k_m.gguf to confirm", "Comment (required)"},
+			"pageHas":      []string{"div.dlg[data-dlg=remove][data-state=ready] [data-cannot-undo] [data-msg]", "div.dlg button[data-go][disabled]"},
+			"fetchedQuery": []string{reRmDry}, "notFetched": []string{reRmReal}},
+		map[string]any{"name": "remove: a name not typed exactly keeps it off", "route": "#/models/deleted?item=" + trashPhi, "status": st,
+			"click":   []any{rmOpen, confirm("phi-4-14b-q4_k_m.GGUF"), comment("free the disk"), "div.dlg button[data-go]"},
+			"pageHas": []string{"div.dlg button[data-go][disabled]"}, "notFetched": []string{reRmReal}},
+		map[string]any{"name": "remove: no comment keeps it off", "route": "#/models/deleted?item=" + trashPhi, "status": st,
+			"click":   []any{rmOpen, confirm("phi-4-14b-q4_k_m.gguf"), "div.dlg button[data-go]"},
+			"pageHas": []string{"div.dlg button[data-go][disabled]"}, "notFetched": []string{reRmReal}},
+		map[string]any{"name": "remove: typed and commented, it goes", "route": "#/models/deleted?item=" + trashPhi, "status": st,
+			"click":        []any{rmOpen, confirm("phi-4-14b-q4_k_m.gguf"), comment("free the disk"), "div.dlg button[data-go]"},
+			"fetchedQuery": []string{reRmDry, `^POST /api/models/trash/` + trashPhi + `/remove \{"comment":"free the disk"\}$`}, "sentHeader": []string{"^X-Comment: free the disk$"},
+			"expect": []string{"Removed phi-4-14b-q4_k_m.gguf for good: 8.4 GB freed; 3 profiles went with it."}, "pageNone": []string{"div.dlg"}, "hash": "#/models/deleted"},
+	)
+	run(with(two, map[string]any{removeURL: map[string]any{"$match": []any{[]any{reRmDry, roDry}, []any{reRmReal, trashRefusal(409, "read_only", rmRoMsg, nil)}}}}),
+		map[string]any{"name": "remove: the dry run says read-only", "route": "#/models/deleted?item=" + trashPhi, "status": st, "click": []string{rmOpen},
+			"page":    []string{sentence, "The models folder is read-only on this scheduler: removing a file is not possible here. Nothing can be changed."},
+			"pageHas": []string{"div.dlg[data-dlg=remove][data-state=read-only] [data-ro-flag]"}, "pageNone": []string{"div.dlg input[data-confirm]", "div.dlg textarea"},
+			"notFetched": []string{reRmReal}})
+	run(with(two, map[string]any{removeURL: map[string]any{"$match": []any{[]any{reRmDry, rmDry}, []any{reRmReal, trashRefusal(409, "read_only", rmRoMsg, nil)}}}}),
+		map[string]any{"name": "remove: the server refuses read_only", "route": "#/models/deleted?item=" + trashPhi, "status": st,
+			"click":   []any{rmOpen, confirm("phi-4-14b-q4_k_m.gguf"), comment("free the disk"), "div.dlg button[data-go]"},
+			"page":    []string{"The models folder is read-only on this scheduler: nothing was changed.", rmRoMsg, "phi-4-14b-q4_k_m.gguf stays in Deleted models."},
+			"pageHas": []string{"div.dlg[data-dlg=remove][data-state=read-only] [data-ro]"}, "notOnPage": []string{"Removed phi-4-14b-q4_k_m.gguf for good"}})
+	run(with(two, map[string]any{removeURL: trashRefusal(409, "not_regular", notRegular, nil)}),
+		map[string]any{"name": "remove: not a plain file, in the server's words", "route": "#/models/deleted?item=" + trashPhi, "status": st, "click": []string{rmOpen},
+			"page":    []string{"Not removed: it is not a plain file in a plain trash folder.", "Nothing was erased.", notRegular},
+			"pageHas": []string{"div.dlg[data-dlg=remove][data-state=refused] [data-refused=not_regular]"}, "pageNone": []string{"div.dlg input[data-confirm]"}})
 
 	// 3. restore: the comment is required; it works; the view and the footer are read again
 	restoreURL := "/api/models/trash/" + trashPhi + "/restore"
@@ -394,7 +466,8 @@ func TestUINextModelsTrashOnARealServer(t *testing.T) {
 	}
 	run(
 		map[string]any{"name": "real: the footer row", "route": "#/models", "status": "fetch",
-			"expect": []string{"GB in deleted models", "1 file", "nothing is removed automatically yet", "View"}, "has": []string{"a.tbar[data-act=trash]"}},
+			// the test's files are a few bytes: "under 1 MB", never "0.0 GB" (the reviewer, 26 Nov)
+			"expect": []string{"under 1 MB in deleted models", "1 file", "nothing is removed automatically yet", "View"}, "has": []string{"a.tbar[data-act=trash]"}},
 		map[string]any{"name": "real: the view", "route": "#/models/deleted", "status": "fetch",
 			"expect": []string{"a.gguf", "2 profiles", "Kept until"}, "has": []string{"div.mr.del[data-trash='" + id + "'][data-state=trashed]"}},
 		map[string]any{"name": "real: the panel", "route": "#/models/deleted?item=" + id, "status": "fetch",
@@ -412,6 +485,37 @@ func TestUINextModelsTrashOnARealServer(t *testing.T) {
 	}
 	if ids := te.profileIDs(); len(ids) != 2 || ids[0] != "a1" || ids[1] != "a2" {
 		t.Fatalf("profiles after the UI's delete and restore: %v", ids)
+	}
+
+	// remove b.gguf for good from its panel: the dry run's sentence, the
+	// name typed, a comment; the file is erased from the trash folder and
+	// the list shows it under Removed for good
+	recs, err := te.cs.TrashList(context.Background())
+	if err != nil || len(recs) != 1 || recs[0].File != "b.gguf" {
+		t.Fatalf("the trash before the remove: %v %v", recs, err)
+	}
+	bid := recs[0].ID
+	// the remove answers slowly, as on the Linux gate (a race build and the
+	// fsync of the trash folder, modelfiles/remove_linux.go:82): the page
+	// must wait for the answer before it is judged (the harness waits for
+	// requests to a real server still in flight)
+	te.api.opts.trashStop = func(step string) bool {
+		if step == "remove:after-record" {
+			time.Sleep(400 * time.Millisecond)
+		}
+		return false
+	}
+	uiExec(t, map[string]any{"shell": "next", "app": true, "base": te.front.URL, "passWrites": []string{`^POST /api/models/trash/` + bid + `/remove`}, "cases": []any{
+		map[string]any{"name": "real: remove b.gguf for good", "route": "#/models/deleted?item=" + bid, "status": "fetch",
+			"click":        []any{"aside.side button[data-act=remove]", map[string]any{"type": "div.dlg input[data-confirm]", "value": "b.gguf"}, comment("free the disk"), "div.dlg button[data-go]"},
+			"fetchedQuery": []string{`^POST /api/models/trash/` + bid + `/remove\?dry_run=1 `, `^POST /api/models/trash/` + bid + `/remove \{"comment":"free the disk"\}$`},
+			"expect":       []string{"Removed b.gguf for good: under 1 MB freed", "Removed for good", "removed for good: free the disk", "under 1 MB"}, "absent": []string{"0.0 GB"}},
+	}})
+	if _, err := os.Lstat(filepath.Join(te.dir, ".trash", bid, "b.gguf")); !os.IsNotExist(err) {
+		t.Fatalf("b.gguf is still in its trash folder after the UI's remove: %v", err)
+	}
+	if recs, _ := te.cs.TrashList(context.Background()); len(recs) != 0 {
+		t.Fatalf("the trash after the remove: %v", recs)
 	}
 
 	// read-only: the server says models_writable false, and the dialog says
@@ -445,4 +549,17 @@ func shortOf(t *testing.T, te *trashEnv, file string) string {
 		}
 	}
 	return file
+}
+
+// Sizes in the trash's sentences: GB from 0.1 GB, MB below, "under 1 MB"
+// below that; never "0.0 GB" (the reviewer, 26 Nov).
+func TestTrashSizeText(t *testing.T) {
+	for _, c := range []struct {
+		b    int64
+		want string
+	}{{8_400_000_000, "8.4 GB"}, {100_000_000, "0.1 GB"}, {99_499_999, "99 MB"}, {52_400_000, "52 MB"}, {1_000_000, "1 MB"}, {999_999, "under 1 MB"}, {0, "under 1 MB"}} {
+		if got := sizeText(c.b); got != c.want {
+			t.Errorf("sizeText(%d) = %q, want %q", c.b, got, c.want)
+		}
+	}
 }

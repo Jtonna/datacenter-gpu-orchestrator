@@ -216,8 +216,9 @@ func TestUI016ScreensExecute(t *testing.T) {
 		Steps: []bench.Step{step(0, true, ""), step(1, false, "not guaranteed: console-2 is busy")}}
 	fetch := map[string]any{"/api/bench/runs/run-1": run, "/api/bench/runs": map[string]any{"runs": []any{run}}, "/api/profiles": profiles}
 	cases := []any{
-		map[string]any{"name": "run with cold loads", "route": "#/benchmarks/runs/run-1", "expect": []string{"cold: verified", "cold: not guaranteed"}},
-		map[string]any{"name": "run with cold loads, steps tab", "route": "#/benchmarks/runs/run-1?tab=steps"},
+		map[string]any{"name": "report of a verified cold load", "route": "#/benchmarks/runs/run-1/0", "page": []string{"cold verified", "26.6 s"}},
+		map[string]any{"name": "report of a cold load not verified", "route": "#/benchmarks/runs/run-1/1", "page": []string{"cold not verified: not guaranteed: console-2 is busy"}},
+		map[string]any{"name": "the run's panel", "route": "#/benchmarks/runs/run-1", "page": []string{"Reports", "Cold suite"}},
 		map[string]any{"name": "runs list", "route": "#/benchmarks/runs"},
 		map[string]any{"name": "placement with the memory table", "route": "#/placement/alpha", "status": status, "fetch": map[string]any{"/api/plan": plan},
 			"expect": []string{"Memory, with the context filled"}},
@@ -262,7 +263,7 @@ func TestUIExecBaseUsesTheServersPage(t *testing.T) {
 		t.Fatalf("good page: the run looked at /ui/classic/, which is removed\n%s", out)
 	}
 	for _, c := range []struct{ name, path, body, want string }{
-		{"does not parse", "/ui/views/benchmarks/editor.js", "export const x = 'users' idle';\n", "views/benchmarks/editor.js:1: does not parse as an ES module"},
+		{"does not parse", "/ui/views/bench/list.js", "export const x = 'users' idle';\n", "views/bench/list.js:1: does not parse as an ES module"},
 		{"not served", "/ui/core/reserve.js", "", "core/reserve.js: the server answered 404"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -307,7 +308,9 @@ func TestUIExecIgnoresAParentPackageJSON(t *testing.T) {
 // 0.1.7 review, S2-1 and S2-2: a run whose only step was refused by an
 // exclusion (the profile forces an excluded node) is drawn as not judged
 // everywhere: never "Failed", "Not met", "did not pass" or a 0 % pass
-// rate, and the step card has no red error edge. The run is a real one
+// rate, and the step card has no red error edge. (The benchmark pages of
+// 25 Nov: the run's panel and the report say "Not judged"; the lists, which
+// carry counts only, never say Failed.) The run is a real one
 // (the bench manager against the real scheduler); the screens draw from
 // the API's real answers, the Activity feed from the events such a run
 // records.
@@ -349,15 +352,13 @@ func TestUINotJudgedScreens(t *testing.T) {
 		"fetch": map[string]any{"/api/history": history, "/api/history/summary": map[string]any{"counts": map[string]any{}}, "/api/metrics/activity": map[string]any{"data": []any{}}},
 		"cases": []any{
 			map[string]any{"name": "run with a not-judged step", "route": "#/benchmarks/runs/" + id, "status": "fetch",
-				"expect": []string{"Not judged"}, "absent": []string{")Failed", "Not met", "did not pass", "0%"}, "none": []string{"section.flag-err"}},
-			map[string]any{"name": "benchmark page", "route": "#/benchmarks/benchmark/fx-bench", "status": "fetch",
-				"expect": []string{"Not judged"}, "absent": failWords},
-			map[string]any{"name": "suite page", "route": "#/benchmarks/suite/s", "status": "fetch",
-				"expect": []string{"not judged"}, "absent": []string{"0%", "Passed 0 of 1", "0 of 1"}},
-			map[string]any{"name": "overview", "route": "#/benchmarks", "status": "fetch", "expect": []string{"not judged"}, "absent": []string{"0%"}},
-			map[string]any{"name": "trends", "route": "#/benchmarks/trends", "status": "fetch", "expect": []string{"not judged"},
-				"absent": []string{"0%", "refused_by_exclusion"}},
-			map[string]any{"name": "runs list", "route": "#/benchmarks/runs", "status": "fetch", "expect": []string{"Not judged"}},
+				"page": []string{"Not judged"}, "notOnPage": []string{"Failed", "Not met", "did not pass", "0%"}, "none": []string{"section.flag-err"}},
+			map[string]any{"name": "its benchmark report", "route": "#/benchmarks/runs/" + id + "/0", "status": "fetch",
+				"page": []string{"Not judged"}, "notOnPage": failWords},
+			map[string]any{"name": "group panel", "route": "#/benchmarks/all/s", "status": "fetch",
+				"page": []string{"Forced suite"}, "notOnPage": []string{"0%", "Passed 0 of 1", "0 of 1", "Failed"}},
+			map[string]any{"name": "overview", "route": "#/benchmarks", "status": "fetch", "expect": []string{"Forced suite"}, "absent": []string{"0%", "Failed"}},
+			map[string]any{"name": "runs list", "route": "#/benchmarks/runs", "status": "fetch", "expect": []string{"Forced suite"}, "absent": []string{"Failed", "0%"}},
 			map[string]any{"name": "activity feed", "route": "#/activity", "status": "fetch",
 				"expect": []string{"was not judged", "1 not judged"}, "absent": []string{"did not pass"}},
 		}})

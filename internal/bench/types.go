@@ -379,6 +379,8 @@ func (e *Environment) Key() string {
 
 // Step is one benchmark execution within a run.
 type Step struct {
+	// Slug is the entry address of the step in its run (EntrySlugs), set by GetRun.
+	Slug        string               `json:"slug,omitempty"`
 	ID          int64                `json:"id"`
 	RunID       string               `json:"-"`
 	Idx         int                  `json:"idx"`
@@ -389,6 +391,7 @@ type Step struct {
 	State       string               `json:"state"`
 	Outcome     string               `json:"outcome,omitempty"`
 	Reason      string               `json:"reason,omitempty"` // the scheduler's words for a refusal or failure
+	ReasonShort string               `json:"reason_short,omitempty"` // a refusal in a few words (ShortReason; read time, not stored)
 	HTTPStatus  int                  `json:"http_status,omitempty"`
 	LogFile     string               `json:"log_file,omitempty"`
 	StartedAt   int64                `json:"started_at,omitempty"`
@@ -458,6 +461,14 @@ type Run struct {
 	// TrimmedAt (unix ms) is when retention removed the run's requests and
 	// transcripts; the run, its steps and its measurements stay.
 	TrimmedAt int64 `json:"trimmed_at,omitempty"`
+
+	// Computed, not stored (runfacts.go): the run's number in queue order,
+	// its result word, step counts, cold summary and, for a direct run, its inputs.
+	Number int          `json:"number,omitempty"`
+	Result string       `json:"result,omitempty"`
+	Counts *RunCounts   `json:"counts,omitempty"`
+	Cold   *ColdSummary `json:"cold,omitempty"`
+	Inputs *RunInputs   `json:"inputs,omitempty"`
 }
 
 // RunFilter selects runs for a listing.
@@ -474,6 +485,10 @@ type RunFilter struct {
 	// ModelProfiles names it (the profiles of that file now).
 	Model         string
 	ModelProfiles []string
+	// Offset skips that many rows; Result keeps the runs with that result
+	// (or has_failed, has_refused, clean): ListRunsPage only.
+	Offset int
+	Result string
 }
 
 // TrendPoint is one value of a metric over past runs.

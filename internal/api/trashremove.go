@@ -170,7 +170,7 @@ func (s *Server) recordRemovedEvent(t *cfgstore.RemovedRecord, atStart bool) {
 	if t.Reason == cfgstore.RemovedByClearing {
 		how = fmt.Sprintf("cleared from the models trash (in it since %s; model_trash_days)", msText(t.DeletedAt))
 	}
-	sum := fmt.Sprintf("%s was %s: %.1f GB freed. It and %s cannot be restored.", t.File, how, float64(t.SizeBytes)/1e9, itsProfiles(len(t.ProfileIDs)))
+	sum := removedSentence(t.File, how, t.SizeBytes, len(t.ProfileIDs))
 	data := map[string]any{"file": t.File, "trash_id": t.ID, "size_bytes": t.SizeBytes, "reason": t.Reason, "profiles": t.ProfileIDs,
 		"deleted_at": t.DeletedAt, "removed_by": t.RemovedBy}
 	if atStart {
@@ -355,7 +355,7 @@ func (s *Server) handleTrashRemove(w http.ResponseWriter, r *http.Request) {
 	}
 	figures := map[string]any{"file": rec.File, "trash_id": id, "size_bytes": rec.SizeBytes, "profiles": ids, "deleted_at": rec.DeletedAt, "purge_at": at,
 		"days_early": daysEarly, "cannot_undo": true, "purge_on": s.trashPurgeOn(),
-		"message": fmt.Sprintf("This cannot be undone. %s and %s are erased now, %d days before they would have been. %.1f GB is freed.", rec.File, itsProfiles(len(ids)), daysEarly, float64(rec.SizeBytes)/1e9)}
+		"message": eraseSentence(rec.File, len(ids), daysEarly, rec.SizeBytes)}
 	if dry {
 		_, ro, rf := s.removeTrashed(ctx, rec, cfgstore.RemovedByOwner, audit.FromRequest(r).Actor, comment, true)
 		if rf != nil {
@@ -538,10 +538,34 @@ func (t *trashState) noteClearFailed(id string) bool {
 	return first
 }
 
+// sizeText is a file size in the trash's sentences: GB from 0.1 GB, MB below
+// that, "under 1 MB" for less ("0.0 GB" would read as nothing; the
+// reviewer, 26 Nov). The page writes sizes the same way (trash.js sizeOf).
+func sizeText(b int64) string {
+	switch {
+	case b >= 100e6:
+		return fmt.Sprintf("%.1f GB", float64(b)/1e9)
+	case b >= 1e6:
+		return fmt.Sprintf("%.0f MB", float64(b)/1e6)
+	default:
+		return "under 1 MB"
+	}
+}
+
 // itsProfiles is "its 1 profile" or "its N profiles" (the removal sentences).
 func itsProfiles(n int) string {
 	if n == 1 {
 		return "its 1 profile"
 	}
 	return fmt.Sprintf("its %d profiles", n)
+}
+
+// removedSentence is the summary after a removal for good.
+func removedSentence(file, how string, size int64, profiles int) string {
+	return fmt.Sprintf("%s was %s: %s freed. It and %s cannot be restored.", file, how, sizeText(size), itsProfiles(profiles))
+}
+
+// eraseSentence is the dry run's warning before a removal for good.
+func eraseSentence(file string, profiles int, daysEarly, size int64) string {
+	return fmt.Sprintf("This cannot be undone. %s and %s are erased now, %d days before they would have been. %s is freed.", file, itsProfiles(profiles), daysEarly, sizeText(size))
 }
