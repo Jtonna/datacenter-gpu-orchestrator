@@ -67,7 +67,21 @@ func (s *Service) storedWarnings(before, after *config.Document, m mutation, cfg
 	if len(m.stored) == 0 {
 		return nil
 	}
-	what := m.storedWhat
+	ps := map[string]*config.ProfileSpec{}
+	for id := range m.stored {
+		ps[id] = after.Profiles[id]
+	}
+	return s.storedNotes(ps, before, m.storedWhat, cfg.ModelsDir)
+}
+
+// StoredNotes says, for profiles as they are stored now (the delete's dry
+// run: the profiles a later restore puts back), what a new write would
+// refuse in them; nil when nothing.
+func (s *Service) StoredNotes(ps map[string]*config.ProfileSpec, what string) []string {
+	return s.storedNotes(ps, nil, what, s.Config().ModelsDir)
+}
+
+func (s *Service) storedNotes(ps map[string]*config.ProfileSpec, before *config.Document, what, modelsDir string) []string {
 	if what == "" {
 		what = "profiles put back"
 	}
@@ -79,14 +93,16 @@ func (s *Service) storedWarnings(before, after *config.Document, m mutation, cfg
 	above := map[string]*agg{}
 	total := map[string]int{}
 	var paths, late []string
-	for _, id := range sortedKeys(keysOf(m.stored)) {
-		p := after.Profiles[id]
+	for _, id := range sortedKeys(keysOf(ps)) {
+		p := ps[id]
 		if p == nil || p.Kind == "command" {
 			continue
 		}
 		total[p.Model]++
-		if b := before.Profiles[id]; b != nil && reflect.DeepEqual(b, p) {
-			continue
+		if before != nil {
+			if b := before.Profiles[id]; b != nil && reflect.DeepEqual(b, p) {
+				continue
+			}
 		}
 		if p.Model != "" && modelpath.Check(p.Model) != nil {
 			paths = append(paths, fmt.Sprintf("profile %q names the model path %q, which a new profile may not (%v): it is kept and its load is refused", id, p.Model, modelpath.Check(p.Model)))
@@ -95,7 +111,7 @@ func (s *Service) storedWarnings(before, after *config.Document, m mutation, cfg
 			late = append(late, fmt.Sprintf("profile %q: extra_args %s is not passed (the scheduler passes it from the setting ctx_checkpoints); a new profile may not set it", id, strings.Join(l, ", ")))
 		}
 		if p.Ctx != nil && (p.CtxAboveTrained == nil || !*p.CtxAboveTrained) && s.o.Parse.TrainedCtx != nil {
-			if tr, ok := s.o.Parse.TrainedCtx(filepath.Join(cfg.ModelsDir, p.Model)); ok && tr > 0 && *p.Ctx > tr {
+			if tr, ok := s.o.Parse.TrainedCtx(filepath.Join(modelsDir, p.Model)); ok && tr > 0 && *p.Ctx > tr {
 				a := above[p.Model]
 				if a == nil {
 					a = &agg{trained: tr}

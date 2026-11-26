@@ -4,9 +4,11 @@ What each release of Potluck (the scheduler, `llm-scheduler`) and its node agent
 
 ## Restore keeps stored profiles
 
-No agent change, no new port, no table, no setting, no schema change.
+No agent change, no new port, no table, no setting, no schema change (one new value of model_trash.state: held_back).
 
 - A model restored from the trash gets its profiles back exactly as they were stored, also those a new write would refuse (since v79: a ctx above the model's trained context). Before, such a restore was refused with `config_refused` and the file stayed in the trash. The same holds for a delete that puts its profiles back (`loaded_again`, `move_failed`, `read_only`), the start's repair of a cut delete or restore, and a configuration rollback to a revision that holds such profiles. The answer (and the page's sentence after a restore) carries them as `warnings`, never as a refusal. A new profile with any of them is refused as before.
+- A restore never leaves the file in the trash because of a profile. A name taken meanwhile still refuses it by default, now naming both ways out: `rename_taken: true`, or the new `hold_back_refused: true`, which brings the file and its other profiles back and keeps the taken ones in Deleted models as a `held_back` item (new record state, no schema change) to add later by restoring it again. A profile any rule refuses even as stored is held back the same way, without an option. The answer lists `held_back` ([{id, reason}]) and `state` (restored or held_back); the page says it after a restore and shows the held-back item with an "Add the held-back profiles" button.
+- The delete's dry run answers `restore_note`: every profile comes back as it is, naming those a new write would refuse (a note); the delete dialog shows it.
 
 ## Web UI: benchmark pages, second round; one round of plans per page open; a calmer status loop
 

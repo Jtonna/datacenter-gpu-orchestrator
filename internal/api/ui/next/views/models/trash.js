@@ -238,7 +238,9 @@ export function deleteModel(m, onDone, writable) {
           it.n ? 'It is unloaded now and these requests fail.' : 'It is unloaded now.'))
           : box('ok', { 'data-free': '' }, pt(icon(CHECK), 'green', h('b', 'Nothing is interrupted.'), ' Nothing is loaded or queued for it now.')),
         box('ok', null, pt(clockIcon(), 'green', ...kept),
-          pt(icon(BACK), 'green', h('b', 'Restorable.'), np ? [' Restore it and its configuration comes back exactly as it is now: ', kindsOf(ids, m), '.'] : ' Restore it any time. It has no profiles.')),
+          pt(icon(BACK), 'green', h('b', 'Restorable.'), np ? [' Restore it and its configuration comes back exactly as it is now: ', kindsOf(ids, m), '.'] : ' Restore it any time. It has no profiles.'),
+          // the server's note on a later restore: what a new profile could not have, all the same coming back (never a failure)
+          f.restore_note && /;/.test(f.restore_note) ? h('p.dmsg', { 'data-restore-note': '' }, 'On a restore, ' + f.restore_note + '.') : null),
         roNote(),
         h('div.field', h('label.dlbl', 'Type ', h('span.mono', name), ' to confirm'), typed),
         h('div.field.dlg-note', h('label.dlbl', 'Comment (required)'), note),
@@ -442,8 +444,10 @@ function restoreItem(it, onDone, writable) {
     if (d && d.setAttribute) { d.setAttribute('data-dlg', 'restore'); d.setAttribute('data-state', state); }
     let kids;
     if (state === 'ask' || state === 'sending') {
-      kids = [box('ok', null, pt(icon(BACK), 'green', h('b', 'Restorable.'), ' The file moves back to the models folder',
-        ids.length ? [ids.length === 1 ? ' and its 1 profile comes back as it was: ' : ` and its ${ids.length} profiles come back as they were: `, monoList(ids), '.'] : '. It had no profiles.')),
+      kids = [it.state === 'held_back'
+        ? box('ok', null, pt(icon(BACK), 'green', h('b', 'The file is restored already.'), ' Its held-back profiles come back where their names are free now: ', monoList(ids), '.'))
+        : box('ok', null, pt(icon(BACK), 'green', h('b', 'Restorable.'), ' The file moves back to the models folder',
+          ids.length ? [ids.length === 1 ? ' and its 1 profile comes back as it was: ' : ` and its ${ids.length} profiles come back as they were: `, monoList(ids), '.'] : '. It had no profiles.')),
       roNote(),
       h('div.field.dlg-note', h('label.dlbl', 'Comment (required)'), note),
       h('div.dlg-foot', closeBtn('Cancel'), go)];
@@ -452,7 +456,9 @@ function restoreItem(it, onDone, writable) {
       const taken = refusal.err.taken || [];
       kids = [box('ro', null, pt(icon(WARN), 'amber', h('b', 'Some names of its profiles are taken now: '), list(taken), '. Nothing was restored.'), h('p.dmsg', refusal.msg)),
         h('p', 'Restore with new names: a taken profile comes back as ', h('span.mono', '<id>-restored'), ' and a taken alias is left off. The other profiles keep their names.'),
-        h('div.dlg-foot', closeBtn('Cancel'), h('button', { class: 'btn lg pri', type: 'button', 'data-go': 'rename', onclick: () => send(true) }, 'Restore with new names'))];
+        h('p', 'Or hold them back: the file and its other profiles come back now; the profiles whose names are taken stay in Deleted models, to add later once the names are free.'),
+        h('div.dlg-foot', closeBtn('Cancel'), h('button', { class: 'btn lg', type: 'button', 'data-go': 'hold', onclick: () => send('hold') }, 'Restore, hold these back'),
+          h('button', { class: 'btn lg pri', type: 'button', 'data-go': 'rename', onclick: () => send(true) }, 'Restore with new names'))];
     } else if (state === 'read-only' && !refusal) {
       kids = [...roFlag(h('span.mono', it.file), ' · ', sizeOf(it.size_bytes || 0) + ' · ', profilesOf(ids)), h('div.dlg-foot', closeBtn('Close'))];
     } else if (state === 'read-only') {
@@ -468,7 +474,8 @@ function restoreItem(it, onDone, writable) {
     if (!rename) { comment = note.value.trim(); if (state !== 'ask' || !comment) return; }
     set('sending');
     try {
-      const res = await api.send('POST', '/api/models/trash/' + encodeURIComponent(it.id) + '/restore', rename ? { comment, rename_taken: true } : { comment }, { comment });
+      const body = rename === 'hold' ? { comment, hold_back_refused: true } : rename ? { comment, rename_taken: true } : { comment };
+      const res = await api.send('POST', '/api/models/trash/' + encodeURIComponent(it.id) + '/restore', body, { comment });
       if (closed) return;
       closeFn(undefined);
       changed();
@@ -494,7 +501,8 @@ function restoredText(res) {
   return [`Restored ${res.file}: `, n ? (n === 1 ? 'its 1 profile is back' : `its ${n} profiles are back`) : 'it had no profiles', ren.length ? ` (${list(ren)})` : '',
     dropped.length ? `; the taken ${dropped.length === 1 ? 'alias' : 'aliases'} ${list(dropped)} ${dropped.length === 1 ? 'was' : 'were'} left off` : '', '.',
     // what a new profile could not have; they come back as they were stored (never a refusal)
-    (res.warnings || []).length ? ` They come back as they were stored; ${res.warnings.join('. ')}. Their profiles are on the model's page (benchmark ones on Test profiles).` : ''].join('');
+    (res.warnings || []).length ? ` They come back as they were stored; ${res.warnings.join('. ')}. Their profiles are on the model's page (benchmark ones on Test profiles).` : '',
+    (res.held_back || []).length ? ` Held back, kept in Deleted models to add later: ${res.held_back.map(x => `${x.id} (${x.reason})`).join('; ')}.` : ''].join('');
 }
 
 // ---------- the Deleted models view ----------
@@ -509,8 +517,15 @@ const SORT = {
 const ttlText = t => { const s = t == null ? null : parseGoDuration(t); return s == null ? null : s > 0 ? dur(s) : 'Never'; };
 
 function itemPanel(it, purgeOn, onRestore, onRemove) {
-  const bad = it.state !== 'trashed' || it.in_trash_folder === false;
   const profs = it.profiles || [];
+  // held_back: the file is restored; the profiles listed here could not be added
+  if (it.state === 'held_back') {
+    return [
+      h('div.mdl-acts.del-acts', { key: 'acts' },
+        h('button.btn.pri', { type: 'button', 'data-act': 'restore', title: 'Add the held-back profiles whose names are free now', onclick: () => onRestore(it) }, icon(BACK), 'Add the held-back profiles')),
+      h('div.banner.warn', { key: 'held', role: 'status', 'data-held': '' }, h('span.grow', h('b', `Restored; ${plural(profs.length, 'profile')} held back. `), it.problem || ''))];
+  }
+  const bad = it.state !== 'trashed' || it.in_trash_folder === false;
   return [
     h('div.mdl-acts.del-acts', { key: 'acts' },
       bad ? off('button.btn.pri', it.problem ? 'It cannot be restored: ' + it.problem : `It is ${it.state}, not in the trash: it cannot be restored.`, { 'data-act': 'restore' }, icon(BACK), 'Restore model')
