@@ -46,3 +46,17 @@ func TestLaunch_DroppedCheckpointFlagIsLoggedOnce(t *testing.T) {
 		}
 	}
 }
+
+// v87: a stored --cache-ram is dropped too, and the line says the setting
+// used on that path.
+func TestLaunch_DroppedCacheFlagNamesTheCacheSetting(t *testing.T) {
+	h := newHarness(t).nodes(ps5("a", 2, 15000))
+	h.cfg.Defaults.CtxCheckpoints, h.cfg.Defaults.CacheRAMMiB = 32, 2048
+	h.llama("s", 4000, func(p *core.Profile) { p.ExtraArgs = []string{"--ctx-checkpoints", "3", "-cram", "0"} })
+	h.release(h.granted(func() *waiter { w := h.request("s"); h.healthy("s"); return w }()))
+	recs := h.logs.find(msgCkptFlagDropped)
+	if len(recs) != 1 || recs[0].Attrs["dropped"] != "--ctx-checkpoints 3, -cram 0" ||
+		recs[0].Attrs["used"] != "--ctx-checkpoints 32 (setting ctx_checkpoints), --cache-ram 2048 (setting cache_ram_mib)" {
+		t.Fatalf("%+v", recs)
+	}
+}

@@ -96,7 +96,7 @@ func (h HostMemory) TermMiB() int { return h.CheckpointsMiB + h.PromptCacheMiB }
 
 // msgCkptFlagDropped is the one launch line for a profile whose own
 // extra_args set a checkpoint flag the scheduler passes from the setting.
-const msgCkptFlagDropped = "profile's own checkpoint flag dropped at launch"
+const msgCkptFlagDropped = "profile's own checkpoint or prompt cache flag dropped at launch"
 
 // noteDroppedCkptFlag logs, in one line, a stored profile's own checkpoint
 // flag that the launch drops (config.StripLateManaged, on the scheduler's
@@ -109,7 +109,27 @@ func (c *schedCore) noteDroppedCkptFlag(in *inst) {
 		return
 	}
 	d := strings.Join(dropped, ", ")
-	used := fmt.Sprintf("--ctx-checkpoints %d (setting ctx_checkpoints)", max(c.cfg.Defaults.CtxCheckpoints, 0))
+	var ck, cache bool
+	for _, x := range dropped {
+		name, _, _ := strings.Cut(strings.Fields(x)[0], "=")
+		if config.LateManagedSetting(name) == "cache_ram_mib" {
+			cache = true
+		} else {
+			ck = true
+		}
+	}
+	var uses []string
+	if ck {
+		uses = append(uses, fmt.Sprintf("--ctx-checkpoints %d (setting ctx_checkpoints)", max(c.cfg.Defaults.CtxCheckpoints, 0)))
+	}
+	if cache {
+		if in.prof.Host == core.HostNode {
+			uses = append(uses, fmt.Sprintf("--cache-ram %d (setting node_host_cache_ram_mib)", max(c.cfg.Defaults.NodeHostCacheRAMMiB, 0)))
+		} else {
+			uses = append(uses, fmt.Sprintf("--cache-ram %d (setting cache_ram_mib)", max(c.cfg.Defaults.CacheRAMMiB, 0)))
+		}
+	}
+	used := strings.Join(uses, ", ")
 	in.launchNote = fmt.Sprintf("the profile's own %s is not passed: the launch uses %s", d, used)
 	c.log.Warn(msgCkptFlagDropped, "profile", in.prof.Name, "dropped", d, "used", used)
 }

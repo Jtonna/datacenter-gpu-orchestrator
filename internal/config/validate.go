@@ -26,7 +26,7 @@ var managedFlags = map[string]bool{
 	"--split-mode": true, "-sm": true, "--host": true, "--port": true, "--model": true, "-m": true,
 	"--ctx-size": true, "-c": true, "--n-gpu-layers": true, "--gpu-layers": true, "-ngl": true,
 	"--parallel": true, "-np": true, "--cache-type-k": true, "-ctk": true, "--cache-type-v": true,
-	"-ctv": true, "--fit": true, "-fit": true, "--cache-ram": true, "-cram": true,
+	"-ctv": true, "--fit": true, "-fit": true,
 	"--flash-attn": true, "-fa": true, "--main-gpu": true, "-mg": true,
 	// Log verbosity is always set by the scheduler (-lv 4, design 7.4); -v and
 	// --log-disable would change what the load-log reader sees.
@@ -34,14 +34,35 @@ var managedFlags = map[string]bool{
 	"-v": true, "--verbose": true, "--log-verbose": true, "--log-disable": true,
 }
 
-// lateManaged are flags the scheduler began to set after profiles could
-// already carry them (--ctx-checkpoints, from the setting ctx_checkpoints).
-// A write may not set them, as with managedFlags; a stored profile that
+// lateManaged are flags the scheduler sets on every launch from a setting
+// that a stored profile may already carry: --ctx-checkpoints (setting
+// ctx_checkpoints) and --cache-ram (cache_ram_mib, or
+// node_host_cache_ram_mib for host: node), in every spelling the pinned
+// llama.cpp reads, the underscore forms of the long flags included. A
+// write may not set them, as with managedFlags; a stored profile that
 // already has them unchanged (Options.KeepArgs) stays loadable, and the
-// launch drops them (StripLateManaged) so the setting is the one value.
+// launch drops them (StripLateManaged) so the setting is the one value and
+// the server never sees two. The next release reads a profile's own
+// --ctx-checkpoints / --cache-ram (p33): this keeps a rollback from it
+// loadable (v87, tolerate stored host flags).
 var lateManaged = map[string]string{
 	"--ctx-checkpoints": "ctx_checkpoints", "-ctxcp": "ctx_checkpoints", "--swa-checkpoints": "ctx_checkpoints",
+	"--ctx_checkpoints": "ctx_checkpoints", "--swa_checkpoints": "ctx_checkpoints",
+	"--cache-ram": "cache_ram_mib", "-cram": "cache_ram_mib", "--cache_ram": "cache_ram_mib",
 }
+
+// lateValue: the entry after a lateManaged flag written without "=" is its
+// value when it is a number (negative too: --cache-ram -1) or not a flag.
+func lateValue(next string) bool {
+	if _, err := strconv.Atoi(next); err == nil {
+		return true
+	}
+	return !strings.HasPrefix(next, "-")
+}
+
+// LateManagedSetting is the setting a lateManaged flag's value comes from
+// ("" when name is not one).
+func LateManagedSetting(name string) string { return lateManaged[name] }
 
 // StripLateManaged is args without the lateManaged flags and their values
 // (the next entry, for a flag written without "=").
@@ -50,7 +71,7 @@ func StripLateManaged(args []string) []string {
 	for i := 0; i < len(args); i++ {
 		name, _, eq := strings.Cut(args[i], "=")
 		if _, ok := lateManaged[name]; ok && strings.HasPrefix(args[i], "-") {
-			if !eq && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			if !eq && i+1 < len(args) && lateValue(args[i+1]) {
 				i++
 			}
 			continue
@@ -68,7 +89,7 @@ func LateManagedIn(args []string) []string {
 		name, _, eq := strings.Cut(args[i], "=")
 		if _, ok := lateManaged[name]; ok && strings.HasPrefix(args[i], "-") {
 			d := args[i]
-			if !eq && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			if !eq && i+1 < len(args) && lateValue(args[i+1]) {
 				i++
 				d += " " + args[i]
 			}
@@ -276,10 +297,17 @@ func (c *Config) validateLlama(p *core.Profile, r *ProfileSpec, pf func(field, f
 				val := a
 				if _, v, eq := strings.Cut(a, "="); eq {
 					val = name + " " + v
-				} else if i+1 < len(p.ExtraArgs) {
+				} else if i+1 < len(p.ExtraArgs) && lateValue(p.ExtraArgs[i+1]) {
 					val = name + " " + p.ExtraArgs[i+1]
 				}
-				c.lateArgs = append(c.lateArgs, fmt.Sprintf("profile %q: extra_args %s is not passed: the scheduler passes --ctx-checkpoints from the setting %s on every launch; remove it from the profile", p.Name, val, setting))
+				flag, s := "--ctx-checkpoints", setting
+				if setting == "cache_ram_mib" {
+					flag = "--cache-ram"
+					if p.Host == core.HostNode {
+						s = "node_host_cache_ram_mib"
+					}
+				}
+				c.lateArgs = append(c.lateArgs, fmt.Sprintf("profile %q: extra_args %s is not passed: the scheduler passes %s from the setting %s on every launch; remove it from the profile", p.Name, val, flag, s))
 				continue
 			}
 			pf("extra_args", "entry %d %q sets %s, which the scheduler passes on every launch from the setting %s; remove it here and change the setting instead", i, a, name, setting)
