@@ -253,9 +253,12 @@ function hostLine(plan, name) {
     : null;
   // p33: the scheduler machine's budget for it (scheduler hostbudget.go)
   const hr = plan.host_room;
-  const room = !hr ? null : !hr.known ? h('p.mut', { 'data-hostroom': 'unknown' }, hr.note + '.')
-    : h('p', { 'data-hostroom': hr.fits ? 'fits' : 'short' }, `${hr.machine} has ${gb(Math.max(hr.budget_mib, 0))} for conversation memory (available ${gb(hr.mem_available_mib)} minus ${gb(hr.floor_mib + hr.headroom_mib)} kept free)`,
-      hr.held_mib ? `; the models hosted there may hold up to ${gb(hr.held_mib)}` : '', `; this one up to ${gb(hr.this_mib)}: `,
-      hr.fits ? 'it fits.' : (hr.unload || []).length ? hr.unload.join(', ') + ' would be unloaded first.' : 'it waits.');
+  const room = !hr ? null
+    : hr.never ? h('p.err-t', { 'data-hostroom': 'never' }, `${hr.machine} has at most ${gb(Math.max(hr.capacity_mib, 0))} for conversation memory (total ${gb(hr.mem_total_mib)} minus ${gb(hr.floor_mib + hr.headroom_mib)} kept free); this one up to ${gb(hr.this_mib)}: it can never start there.`)
+    : !hr.known ? h('p.mut', { 'data-hostroom': 'unknown' }, hr.note + '.')
+    : [h('p', { 'data-hostroom': hr.fits ? 'fits' : 'short' }, `${hr.machine} has ${gb(Math.max(hr.budget_mib, 0))} for conversation memory (available ${gb(hr.mem_available_mib)} minus ${gb(hr.floor_mib + hr.headroom_mib)} kept free)`,
+      hr.held_mib ? `; the models hosted there may still take up to ${gb(hr.held_mib)}` : '', `; this one up to ${gb(hr.this_mib)}: `,
+      hr.fits ? 'it fits.' : (hr.unload || []).length ? hr.unload.join(', ') + ' would be unloaded first.' : "it will not start until memory frees or this profile's limits are lowered."),
+      hr.note ? h('p.mut', { 'data-hostroom-note': '' }, hr.note + '.') : null];
   return h('div.plc-block', h('h3', 'Host'), h('p', text), conv, room, plan.host_problem ? h('p.err-t', 'It cannot host now: ' + plainReason(plan.host_problem)) : null);
 }

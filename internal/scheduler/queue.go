@@ -151,7 +151,12 @@ func (c *schedCore) place(e *entry) bool {
 	// hostbudget.go: its conversation memory must fit the machine that
 	// hosts it; idle models hosted there are unloaded first (a claim on
 	// the placement's nodes, as step 2 makes), else it waits
-	hv, wait := c.hostCheck(e.prof, nil, e.clock)
+	hv, wait, refuse := c.hostCheck(e.prof, nil, e.clock)
+	if refuse != nil {
+		c.log.Warn("request can never fit the conversation memory of the machine that hosts it; refused", "profile", e.prof.Name, "reason", refuse.Message)
+		c.answerEntry(e, refuse)
+		return true
+	}
 	if wait {
 		return false
 	}
@@ -210,7 +215,12 @@ func (c *schedCore) plan(e *entry) bool {
 	// hostbudget.go: with the device victims gone, its conversation memory
 	// must fit the machine that hosts it; idle models hosted there join
 	// the victims, else it waits
-	hv, wait := c.hostCheck(e.prof, res.Victims, e.clock)
+	hv, wait, refuse := c.hostCheck(e.prof, res.Victims, e.clock)
+	if refuse != nil {
+		c.log.Warn("request can never fit the conversation memory of the machine that hosts it; refused", "profile", e.prof.Name, "reason", refuse.Message)
+		c.answerEntry(e, refuse)
+		return true
+	}
 	if wait {
 		return false
 	}

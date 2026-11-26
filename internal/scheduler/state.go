@@ -210,6 +210,13 @@ type inst struct {
 	// cycle (hostoverhead.go).
 	hostMeasured bool
 	hostHigh     int
+	// anonBase is the host process's anonymous memory at its first reading
+	// after ready, anonNow the latest (anonAt), for a model hosted on the
+	// scheduler's machine: what it took since counts against its maximum
+	// (hostbudget.go takenOf).
+	anonBase, anonNow int
+	anonBaseSet       bool
+	anonAt            time.Time
 	// ckptChecked: bit 1 the recurrent state, bit 2 the first checkpoint,
 	// compared with the formula (hostmem.go checkHostMemorySizes).
 	ckptChecked int

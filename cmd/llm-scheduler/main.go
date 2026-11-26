@@ -400,10 +400,13 @@ func serveUntil(boot config.Bootstrap, log *slog.Logger, sigs <-chan os.Signal) 
 	so.HostBuild = func(ctx context.Context) (string, error) { return release.HostBuild(ctx, cfg.Defaults.ServerBin) }
 	// The available memory of this machine (MemAvailable), for the
 	// conversation memory of the models it hosts (count_host_memory).
-	so.LocalMemory = func() (int, error) {
+	so.LocalMemory = func() (scheduler.LocalMem, error) {
 		mi, err := osx.MemInfoFile{}.MemInfo()
-		return int(mi.AvailableMiB), err
+		return scheduler.LocalMem{AvailableMiB: int(mi.AvailableMiB), TotalMiB: int(mi.TotalMiB)}, err
 	}
+	// what the host processes of the models it hosts have taken since they
+	// were ready (RssAnon): counted against their maximum
+	so.ProcMemory = osx.ProcFS{}.RssAnonMiB
 	if hist.On() {
 		so.History = hist
 	}

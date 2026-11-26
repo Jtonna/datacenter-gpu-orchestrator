@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -12,8 +13,9 @@ import (
 // The hosting machine's memory budget (p33; the owner, 26 Nov: "same rule
 // as the consoles"). A model's host process keeps its conversation memory
 // (restore points x the model's checkpoint cell, per slot, plus the prompt
-// cache: HostMemory.TermMiB) on the machine that hosts it. That maximum is
-// counted against what the machine has, with count_host_memory on:
+// cache: HostMemory.TermMiB, its maximum) on the machine that hosts it.
+// With count_host_memory on, that maximum is counted against what the
+// machine has:
 //
 //   - On a console (host: node) the term joins the console's reservation in
 //     its own node fit (hostnode.go hostOverhead, reserve.go): the console's
@@ -24,18 +26,30 @@ import (
 //     same formula, checked here: MemAvailable as the scheduler reads it
 //     for itself (Options.LocalMemory), minus watchdog_floor_mib, minus the
 //     headroom_mib of the tier its local node matches (0 when none). What
-//     must fit: the terms of the loaded models hosted there (a
-//     reservation, until the instance is gone) plus the one being planned.
+//     must fit: what the loaded models hosted there may still take (their
+//     maximum minus what their host process has already taken, which is
+//     gone from MemAvailable already: Options.ProcMemory; the full maximum,
+//     "conservative", when that cannot be read) plus this one's maximum.
 //
 // When a new load does not fit, the consoles' rule: idle models hosted
-// there are unloaded first (longest idle first), then it queues; with
-// nothing of ours hosted there it is refused. An unknown reading checks
-// nothing ("host memory not checked") and never refuses.
+// there are unloaded first (longest idle first), then it waits, and the
+// plan says plainly it will not start until memory frees or the profile's
+// limits are lowered. A model whose maximum is more than the machine's
+// total memory minus the same margin can never fit: refused. An unknown
+// reading checks nothing ("host memory not checked") and never refuses.
 
-// localMemReading is the scheduler machine's MemAvailable, as the last
+// LocalMem is one reading of the scheduler's machine: MemAvailable and
+// MemTotal, MiB (Options.LocalMemory).
+type LocalMem struct {
+	AvailableMiB int
+	TotalMiB     int
+}
+
+// localMemReading is the scheduler machine's memory, as the last
 // evLocalMem said.
 type localMemReading struct {
 	availMiB int
+	totalMiB int // kept from the last good reading: it does not move
 	at       time.Time
 	known    bool
 	err      string
@@ -45,30 +59,56 @@ type localMemReading struct {
 // localMemStale: a reading older than this does not count.
 const localMemStale = 60 * time.Second
 
-func (evLocalMem) isEvent() {}
-
-// evLocalMem is one reading of the scheduler's machine (runner.go
-// readLocalMemory).
+// evLocalMem is one reading of the scheduler's machine and of the host
+// processes of the models it hosts (startLocalMemory).
 type evLocalMem struct {
-	availMiB int
-	at       time.Time
-	err      error
+	mem LocalMem
+	at  time.Time
+	err error
+	// procs: instance iid -> its host process's anonymous resident memory
+	// (MiB), for the ones read this time.
+	procs map[uint64]int
 }
 
+func (evLocalMem) isEvent() {}
+
 func (c *schedCore) localMemRead(e evLocalMem) {
+	for iid, mib := range e.procs {
+		in := c.instByIID(iid)
+		if in == nil || !serverHosted(in.prof, in.placement) {
+			continue
+		}
+		if !in.anonBaseSet { // the first reading after ready: what it took to load
+			in.anonBase, in.anonBaseSet = mib, true
+		}
+		in.anonNow, in.anonAt = mib, e.at
+	}
+	c.changed = true // a queued request may fit now
 	if e.err != nil {
 		c.localMem.known, c.localMem.err = false, e.err.Error()
 		return
 	}
-	c.localMem.availMiB, c.localMem.at, c.localMem.known, c.localMem.err, c.localMem.warned = e.availMiB, e.at, true, "", false
-	c.changed = true // a queued request may fit now
+	c.localMem.availMiB, c.localMem.at, c.localMem.known, c.localMem.err, c.localMem.warned = e.mem.AvailableMiB, e.at, true, "", false
+	if e.mem.TotalMiB > 0 {
+		c.localMem.totalMiB = e.mem.TotalMiB
+	}
+}
+
+// takenOf is what in's host process has taken for conversation memory
+// since it was ready (its anonymous memory now minus its first reading);
+// ok is false when that is not read or the reading is stale.
+func (c *schedCore) takenOf(in *inst) (int, bool) {
+	if !in.anonBaseSet || c.now.Sub(in.anonAt) > localMemStale {
+		return 0, false
+	}
+	return max(in.anonNow-in.anonBase, 0), true
 }
 
 // HostRoom is the hosting machine's budget for one plan (PlanReport).
 type HostRoom struct {
 	Machine string
 	// Known: the machine's available memory was read (fresh). When not,
-	// Note says so and nothing is checked.
+	// Note says so and nothing but Never is checked.
 	Known bool
 	// MemAvailableMiB as read; FloorMiB (watchdog_floor_mib) and
 	// HeadroomMiB (its tier's) kept free; BudgetMiB what is left for
@@ -78,22 +118,36 @@ type HostRoom struct {
 	FloorMiB        int
 	HeadroomMiB     int
 	BudgetMiB       int
-	// HeldMiB is the sum of the terms of the loaded models hosted there
-	// (Held names them), ThisMiB this profile's.
+	// MemTotalMiB and CapacityMiB (MemTotal minus the same margin): the
+	// most conversation memory the machine could ever give one model;
+	// Never is set when this one's maximum is more (0 when not read).
+	MemTotalMiB int
+	CapacityMiB int
+	Never       bool
+	// HeldMiB is what the loaded models hosted there may still take (Held
+	// names them), ThisMiB this profile's maximum.
 	HeldMiB int
 	Held    []HeldTerm
 	ThisMiB int
 	Fits    bool
+	// Conservative names the loaded models whose growth could not be read:
+	// they count at their full maximum.
+	Conservative []string `view:"omitempty"`
 	// Unload: idle models hosted there that would be unloaded first for it.
 	Unload []string `view:"omitempty"`
 	Note   string
 }
 
-// HeldTerm is one loaded model's conversation memory on the machine.
+// HeldTerm is one loaded model's conversation memory on the machine: its
+// maximum, what its host process has already taken (when Measured), and
+// MiB, what it may still take (counted).
 type HeldTerm struct {
-	Profile string
-	MiB     int
-	Idle    bool
+	Profile  string
+	MaxMiB   int
+	TakenMiB int
+	Measured bool
+	MiB      int
+	Idle     bool
 }
 
 // serverHosted: in's host process runs on the scheduler's machine.
@@ -123,12 +177,26 @@ func (c *schedCore) serverHostRoom(p *core.Profile, gone []string) (HostRoom, bo
 		if in.prof.Name == p.Name || slices.Contains(gone, in.prof.Name) || !serverHosted(in.prof, in.placement) {
 			continue
 		}
-		if t, ok := c.hostMemoryOf(in.prof, false); ok && t.TermMiB() > 0 {
-			r.Held = append(r.Held, HeldTerm{Profile: in.prof.Name, MiB: t.TermMiB(), Idle: in.state == stReady && in.inFlight == 0})
-			r.HeldMiB += t.TermMiB()
+		t, ok := c.hostMemoryOf(in.prof, false)
+		if !ok || t.TermMiB() <= 0 {
+			continue
 		}
+		h := HeldTerm{Profile: in.prof.Name, MaxMiB: t.TermMiB(), MiB: t.TermMiB(), Idle: in.state == stReady && in.inFlight == 0}
+		if tk, ok := c.takenOf(in); ok {
+			h.Measured, h.TakenMiB = true, min(tk, h.MaxMiB)
+			h.MiB = h.MaxMiB - h.TakenMiB
+		} else {
+			r.Conservative = append(r.Conservative, in.prof.Name)
+		}
+		r.Held = append(r.Held, h)
+		r.HeldMiB += h.MiB
 	}
 	lm := c.localMem
+	if lm.totalMiB > 0 {
+		r.MemTotalMiB = lm.totalMiB
+		r.CapacityMiB = lm.totalMiB - r.FloorMiB - r.HeadroomMiB
+		r.Never = r.ThisMiB > r.CapacityMiB
+	}
 	switch {
 	case !lm.known:
 		why := "it could not be read"
@@ -144,12 +212,17 @@ func (c *schedCore) serverHostRoom(p *core.Profile, gone []string) (HostRoom, bo
 	r.Known, r.MemAvailableMiB, r.ReadAt = true, lm.availMiB, lm.at
 	r.BudgetMiB = lm.availMiB - r.FloorMiB - r.HeadroomMiB
 	r.Fits = r.HeldMiB+r.ThisMiB <= r.BudgetMiB
+	if len(r.Conservative) > 0 {
+		r.Note = fmt.Sprintf("conservative: what the host process of %s has already taken could not be read, so it counts at its full maximum", strings.Join(r.Conservative, ", "))
+	}
 	return r, true
 }
 
 // hostVictims are the idle models hosted on the scheduler's machine that
 // unloading frees enough for r, longest idle first (the consoles' rule);
-// nil when even all of them are not enough.
+// nil when even all of them are not enough. Unloading one frees its whole
+// maximum: what it may still take leaves the sum, what it took comes back
+// to MemAvailable.
 func (c *schedCore) hostVictims(r HostRoom, gone []string, clock time.Duration) []string {
 	var idle []*inst
 	for _, in := range c.sortedInsts() {
@@ -165,8 +238,10 @@ func (c *schedCore) hostVictims(r HostRoom, gone []string, clock time.Duration) 
 		if short <= 0 {
 			break
 		}
-		if t, ok := c.hostMemoryOf(in.prof, false); ok && t.TermMiB() > 0 {
-			out, short = append(out, in.prof.Name), short-t.TermMiB()
+		for _, h := range r.Held {
+			if h.Profile == in.prof.Name {
+				out, short = append(out, h.Profile), short-h.MaxMiB
+			}
 		}
 	}
 	if short > 0 {
@@ -175,46 +250,80 @@ func (c *schedCore) hostVictims(r HostRoom, gone []string, clock time.Duration) 
 	return out
 }
 
-// hostShortWords is the plan's sentence for r when the load does not fit:
-// "<machine> has N MiB available (MemAvailable M MiB minus watchdog_floor_mib
-// F MiB); the models hosted there hold up to H MiB; this model may hold up
-// to T MiB of conversation memory there".
-func (r HostRoom) hostShortWords() string {
+// margin says what is kept free: "watchdog_floor_mib 1,000 MiB and the
+// tier's headroom_mib 200 MiB".
+func (r HostRoom) margin() string {
 	kept := fmt.Sprintf("watchdog_floor_mib %s MiB", commasInt(r.FloorMiB))
 	if r.HeadroomMiB > 0 {
 		kept += fmt.Sprintf(" and the tier's headroom_mib %s MiB", commasInt(r.HeadroomMiB))
 	}
-	s := fmt.Sprintf("%s has %s MiB available for conversation memory (MemAvailable %s MiB minus %s)", r.Machine, commasInt(max(r.BudgetMiB, 0)), commasInt(r.MemAvailableMiB), kept)
-	if r.HeldMiB > 0 {
-		var names []string
+	return kept
+}
+
+// hostShortWords is the plan's sentence for r when the load does not fit:
+// what the machine has, what the models hosted there may still take, and
+// this model's maximum.
+func (r HostRoom) hostShortWords() string {
+	s := fmt.Sprintf("%s has %s MiB available for conversation memory (MemAvailable %s MiB minus %s)", r.Machine, commasInt(max(r.BudgetMiB, 0)), commasInt(r.MemAvailableMiB), r.margin())
+	if len(r.Held) > 0 {
+		var each []string
 		for _, h := range r.Held {
-			names = append(names, h.Profile)
+			w := fmt.Sprintf("%s up to %s MiB", h.Profile, commasInt(h.MaxMiB))
+			switch {
+			case !h.Measured:
+				w += " (conservative: what it has taken could not be read)"
+			case h.TakenMiB > 0:
+				w += fmt.Sprintf(", %s MiB already taken", commasInt(h.TakenMiB))
+			}
+			each = append(each, w)
 		}
-		s += fmt.Sprintf("; the models hosted there (%s) may hold up to %s MiB", strings.Join(names, ", "), commasInt(r.HeldMiB))
+		s += fmt.Sprintf("; the models hosted there may still take up to %s MiB more (%s)", commasInt(r.HeldMiB), strings.Join(each, "; "))
 	}
 	return s + fmt.Sprintf("; this model may hold up to %s MiB of conversation memory there", commasInt(r.ThisMiB))
 }
 
-// smallerWords says what would make p fit: "with --ctx-checkpoints 3
-// --cache-ram 0 on this profile it would hold up to 960 MiB"; "" when that
-// is no smaller than what it holds now or the size is not known.
-func (c *schedCore) smallerWords(p *core.Profile) string {
+// neverWords is the refusal of a model whose maximum is more than the
+// machine could ever give it.
+func (r HostRoom) neverWords() string {
+	return fmt.Sprintf("%s has at most %s MiB for conversation memory (MemTotal %s MiB minus %s); this model may hold up to %s MiB of conversation memory there, so it can never start there",
+		r.Machine, commasInt(max(r.CapacityMiB, 0)), commasInt(r.MemTotalMiB), r.margin(), commasInt(r.ThisMiB))
+}
+
+// fitWords says which extra arguments on p would make it fit room MiB:
+// the most restore points per slot that fit with the prompt cache off
+// ("with --ctx-checkpoints 5 --cache-ram 0 on this profile it would hold up
+// to 1,600 MiB and fit"); for a family without checkpoints, the prompt
+// cache that fits. "" when the size is not known or nothing would help.
+func (c *schedCore) fitWords(p *core.Profile, room int) string {
 	hm, ok := c.hostMemoryOf(p, p.Host == core.HostNode)
 	if !ok || hm.SizeUnknown || hm.Family == "" {
 		return ""
 	}
-	if hm.Family == "plain" || hm.CellMiB == 0 { // no checkpoints: the prompt cache is all of it
-		if hm.PromptCacheMiB == 0 {
+	room = max(room, 0)
+	if hm.Family == "plain" || hm.CellMiB == 0 { // the prompt cache is all of it
+		if hm.PromptCacheMiB <= room {
 			return ""
 		}
-		return "with --cache-ram 0 on this profile it would hold none"
+		if room == 0 {
+			return "with --cache-ram 0 on this profile it would hold none"
+		}
+		return fmt.Sprintf("with --cache-ram %d on this profile it would fit", room)
 	}
-	n := 3 * max(p.Parallel, 1)
-	alt := int(float64(n)*hm.CellMiB + 0.999999)
+	slots := max(p.Parallel, 1)
+	n := int(math.Floor(float64(room) / (hm.CellMiB * float64(slots))))
+	n = min(n, hm.PerSlot)
+	alt := int(math.Ceil(float64(n*slots) * hm.CellMiB))
 	if alt >= hm.TermMiB() {
 		return ""
 	}
-	return fmt.Sprintf("with --ctx-checkpoints 3 --cache-ram 0 on this profile it would hold up to %s MiB", commasInt(alt))
+	w := fmt.Sprintf("with --ctx-checkpoints %d --cache-ram 0 on this profile it would hold up to %s MiB", n, commasInt(alt))
+	if n == hm.PerSlot { // the prompt cache alone is in the way
+		w = fmt.Sprintf("with --cache-ram 0 on this profile it would hold up to %s MiB", commasInt(alt))
+	}
+	if alt <= room {
+		w += " and fit"
+	}
+	return w
 }
 
 // noteNotChecked WARNs once that the scheduler machine's memory is not
@@ -249,28 +358,47 @@ const (
 )
 
 // startLocalMemory reads the scheduler's machine in the background
-// (Options.LocalMemory): once now, then every localMemEvery; it posts the
-// first reading, every change of localMemStep MiB or more, every error,
-// and a reading at least every localMemStale/2 so a fresh one never ages.
+// (Options.LocalMemory) and the host processes of the models it hosts
+// (Options.ProcMemory, by the pids the last snapshot lists): once now,
+// then every localMemEvery. It posts the first reading, every change of
+// localMemStep MiB or more (of the machine or of one process), a changed
+// set of processes, every error, and a reading at least every
+// localMemStale/2 so a fresh one never ages.
 func (s *Scheduler) startLocalMemory() {
-	read := s.opts.LocalMemory
+	read, proc := s.opts.LocalMemory, s.opts.ProcMemory
 	if read == nil {
 		return
 	}
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		last, lastAt, posted := 0, time.Time{}, false
+		var last LocalMem
+		var lastProcs map[uint64]int
+		lastAt, posted := time.Time{}, false
 		for {
-			mib, err := read()
+			m, err := read()
+			procs := map[uint64]int{}
+			if snap := s.snap.Load(); snap != nil && proc != nil {
+				for iid, pid := range snap.hostPIDs {
+					if mib, perr := proc(pid); perr == nil {
+						procs[iid] = mib
+					}
+				}
+			}
+			moved := len(procs) != len(lastProcs)
+			for iid, mib := range procs {
+				if old, ok := lastProcs[iid]; !ok || abs(mib-old) >= localMemStep {
+					moved = true
+				}
+			}
 			now := time.Now()
-			if err != nil || !posted || abs(mib-last) >= localMemStep || now.Sub(lastAt) >= localMemStale/2 {
-				if !s.post(s.bgCtx, evLocalMem{availMiB: mib, at: s.opts.Clock.Now(), err: err}) {
+			if err != nil || !posted || moved || abs(m.AvailableMiB-last.AvailableMiB) >= localMemStep || now.Sub(lastAt) >= localMemStale/2 {
+				if !s.post(s.bgCtx, evLocalMem{mem: m, at: s.opts.Clock.Now(), err: err, procs: procs}) {
 					return
 				}
-				posted, lastAt = err == nil, now
+				posted, lastAt, lastProcs = err == nil, now, procs
 				if err == nil {
-					last = mib
+					last = m
 				}
 			}
 			select {
@@ -285,24 +413,47 @@ func (s *Scheduler) startLocalMemory() {
 // hostCheck is the hosting machine's rule for a load of p with the
 // instances in gone already leaving: victims are the idle models hosted
 // there to unload first; wait is true when it does not fit even so (it
-// queues). An unknown reading checks nothing (WARN once).
-func (c *schedCore) hostCheck(p *core.Profile, gone []string, clock time.Duration) (victims []string, wait bool) {
+// queues); refuse is set when it can never fit there. An unknown reading
+// checks nothing else (WARN once).
+func (c *schedCore) hostCheck(p *core.Profile, gone []string, clock time.Duration) (victims []string, wait bool, refuse *Error) {
 	r, ok := c.serverHostRoom(p, gone)
 	if !ok {
-		return nil, false
+		return nil, false, nil
+	}
+	if r.Never {
+		msg := "profile " + p.Name + ": " + r.neverWords()
+		if s := c.fitWords(p, r.CapacityMiB); s != "" {
+			msg += "; " + s
+		}
+		e := err503(ReasonDoesNotFit, msg, 0)
+		e.RetryAfter = 0 // permanent, as every does-not-fit
+		e.NeedMiB, e.CapacityMiB = r.ThisMiB, max(r.CapacityMiB, 0)
+		return nil, false, e
 	}
 	if !r.Known {
 		c.noteNotChecked(r)
-		return nil, false
+		return nil, false, nil
 	}
 	if r.Fits {
-		return nil, false
+		return nil, false, nil
 	}
 	if victims = c.hostVictims(r, gone, clock); victims == nil {
-		return nil, true
+		return nil, true, nil
 	}
 	c.log.Info("idle models unloaded first for conversation memory", "profile", p.Name, "unload", victims, "detail", r.hostShortWords())
-	return victims, false
+	return victims, false, nil
+}
+
+// waitWords is what a plan or a queue reason says when p waits for the
+// machine that hosts it: the figures, that it will not start until memory
+// frees or its limits are lowered, and the extra arguments that would make
+// it fit now.
+func (c *schedCore) waitWords(p *core.Profile, r HostRoom) string {
+	text := r.hostShortWords() + fmt.Sprintf("; nothing hosted there is idle to unload: it will NOT start until memory frees on %s or this profile's limits are lowered", r.Machine)
+	if s := c.fitWords(p, r.BudgetMiB-r.HeldMiB); s != "" {
+		text += "; " + s
+	}
+	return text
 }
 
 // dryHost is hostCheck for a plan that would start (gone nil) or evict
@@ -314,23 +465,32 @@ func (c *schedCore) dryHost(r *PlanReport, p *core.Profile, gone []string) {
 		return
 	}
 	defer func() { r.HostRoom = &room }()
-	if !room.Known || room.Fits {
-		return
-	}
-	text := room.hostShortWords()
-	if hv := c.hostVictims(room, gone, 0); hv != nil {
-		room.Unload = hv
-		r.Action = PlanEvict
-		for _, v := range hv {
-			r.Victims = append(r.Victims, PlanVictim{Profile: v})
+	var text string
+	switch {
+	case room.Never:
+		r.Action, r.Victims = PlanReject, nil
+		r.RequiredMiB, r.CapacityMiB = room.ThisMiB, max(room.CapacityMiB, 0)
+		text = room.neverWords()
+		if s := c.fitWords(p, room.CapacityMiB); s != "" {
+			text += "; " + s
 		}
-		text += "; " + strings.Join(hv, ", ") + ", idle, would be unloaded first"
-	} else {
-		r.Action = PlanQueue
-		text += "; nothing hosted there is idle to unload, so it waits"
-	}
-	if s := c.smallerWords(p); s != "" {
-		text += "; " + s
+	case !room.Known || room.Fits:
+		return
+	default:
+		if hv := c.hostVictims(room, gone, 0); hv != nil {
+			room.Unload = hv
+			r.Action = PlanEvict
+			for _, v := range hv {
+				r.Victims = append(r.Victims, PlanVictim{Profile: v})
+			}
+			text = room.hostShortWords() + "; " + strings.Join(hv, ", ") + ", idle, would be unloaded first"
+			if s := c.fitWords(p, room.BudgetMiB-room.HeldMiB); s != "" {
+				text += "; to start beside them instead: " + s
+			}
+		} else {
+			r.Action = PlanQueue
+			text = c.waitWords(p, room)
+		}
 	}
 	if r.Reason == "" {
 		r.Reason = text

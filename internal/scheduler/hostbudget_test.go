@@ -73,9 +73,22 @@ func budgetFleet(t *testing.T, mem int, extra ...string) *harness {
 	return h
 }
 
+// memAvailable posts a reading of the scheduler's machine: mib available
+// of 32,000 MiB in total.
 func (h *harness) memAvailable(mib int) {
 	h.t.Helper()
-	h.step(evLocalMem{availMiB: mib, at: h.clk.Now()})
+	h.step(evLocalMem{mem: LocalMem{AvailableMiB: mib, TotalMiB: 32000}, at: h.clk.Now()})
+}
+
+// memProcs posts a reading with the host processes' anonymous memory, by
+// profile (MiB).
+func (h *harness) memProcs(mib, total int, procs map[string]int) {
+	h.t.Helper()
+	by := map[uint64]int{}
+	for p, v := range procs {
+		by[h.inst(p).iid] = v
+	}
+	h.step(evLocalMem{mem: LocalMem{AvailableMiB: mib, TotalMiB: total}, at: h.clk.Now(), procs: by})
 }
 
 var budgetProfiles = []string{gemmaA, gemmaB, gemmaP2, qwen, plain}
@@ -110,8 +123,8 @@ func TestHostBudget_FlipA_Idle(t *testing.T) {
 	for _, want := range []string{
 		"has 14,200 MiB available for conversation memory (MemAvailable 15,400 MiB minus watchdog_floor_mib 1,000 MiB and the tier's headroom_mib 200 MiB)",
 		"this model may hold up to 22,528 MiB of conversation memory there",
-		"nothing hosted there is idle to unload, so it waits",
-		"with --ctx-checkpoints 3 --cache-ram 0 on this profile it would hold up to 1,920 MiB",
+		"nothing hosted there is idle to unload: it will NOT start until memory frees on host-1 or this profile's limits are lowered",
+		"with --ctx-checkpoints 22 --cache-ram 0 on this profile it would hold up to 14,080 MiB and fit",
 	} {
 		if !strings.Contains(r.Reason, want) {
 			t.Errorf("reason %q\nwant %q", r.Reason, want)
@@ -142,14 +155,14 @@ func TestHostBudget_FlipB_OneLoaded(t *testing.T) {
 	h := budgetFleet(t, 15400)
 	loadIdle(h, gemmaA, 15400)
 	want := map[string]string{
-		gemmaB: "this model may hold up to 12,288 MiB of conversation memory there; gemma-4-12b, idle, would be unloaded first; with --ctx-checkpoints 3 --cache-ram 0 on this profile it would hold up to 960 MiB",
-		qwen:   "this model may hold up to 3,656 MiB of conversation memory there; gemma-4-12b, idle, would be unloaded first; with --ctx-checkpoints 3 --cache-ram 0 on this profile it would hold up to 151 MiB",
-		plain:  "this model may hold up to 2,048 MiB of conversation memory there; gemma-4-12b, idle, would be unloaded first; with --cache-ram 0 on this profile it would hold none",
+		gemmaB: "this model may hold up to 12,288 MiB of conversation memory there; gemma-4-12b, idle, would be unloaded first; to start beside them instead: with --ctx-checkpoints 5 --cache-ram 0 on this profile it would hold up to 1,600 MiB and fit",
+		qwen:   "this model may hold up to 3,656 MiB of conversation memory there; gemma-4-12b, idle, would be unloaded first; to start beside them instead: with --cache-ram 0 on this profile it would hold up to 1,608 MiB and fit",
+		plain:  "this model may hold up to 2,048 MiB of conversation memory there; gemma-4-12b, idle, would be unloaded first; to start beside them instead: with --cache-ram 1912 on this profile it would fit",
 	}
 	for p, w := range want {
 		r := h.c.dryPlan(p)
 		if r.Action != PlanEvict || len(r.Victims) != 1 || r.Victims[0].Profile != gemmaA || !strings.Contains(r.Reason, w) ||
-			!strings.Contains(r.Reason, "the models hosted there (gemma-4-12b) may hold up to 12,288 MiB") {
+			!strings.Contains(r.Reason, "the models hosted there may still take up to 12,288 MiB more (gemma-4-12b up to 12,288 MiB (conservative: what it has taken could not be read))") {
 			t.Errorf("%s: %s %+v\n%q\nwant %q", p, r.Action, r.Victims, r.Reason, w)
 		}
 	}
@@ -163,7 +176,7 @@ func TestHostBudget_FlipB_OneLoaded(t *testing.T) {
 	h2.advance(2 * time.Minute)
 	h2.memAvailable(15400)
 	for p := range want {
-		if r := h2.c.dryPlan(p); r.Action != PlanQueue || !strings.Contains(r.Reason, "nothing hosted there is idle to unload, so it waits") {
+		if r := h2.c.dryPlan(p); r.Action != PlanQueue || !strings.Contains(r.Reason, "it will NOT start until memory frees on host-1 or this profile's limits are lowered") {
 			t.Errorf("busy %s: %s %q", p, r.Action, r.Reason)
 		}
 	}
@@ -293,5 +306,66 @@ func TestHostBudget_ShapeKeyLeavesTheFlagsOut(t *testing.T) {
 	q.ExtraArgs = []string{"--temp", "0.8"}
 	if needKeyOf(p) == needKeyOf(&q) {
 		t.Fatal("another argument is no longer in the shape")
+	}
+}
+
+// Double counting: what a loaded model's host process has already taken is
+// gone from MemAvailable, so only its maximum minus that is held. Gemma at
+// --cache-ram 0 may hold 10,240 MiB; its host process has grown by 3,072
+// MiB since it was ready: it holds 7,168 more, not 10,240. With 21,000
+// available (budget 19,800) a second Gemma (12,288) fits beside it; read
+// conservatively (no growth reading) it would not.
+func TestHostBudget_GrowthAlreadyTakenIsNotCountedTwice(t *testing.T) {
+	h := budgetFleet(t, 21000)
+	h.cfg.Profiles[gemmaA].ExtraArgs = []string{"--cache-ram", "0"}
+	loadIdle(h, gemmaA, 0)
+	h.memProcs(21000, 32000, map[string]int{gemmaA: 500}) // first reading after ready: the base
+	h.memProcs(21000, 32000, map[string]int{gemmaA: 3572})
+	r := h.c.dryPlan(gemmaB)
+	held := r.HostRoom.Held
+	if len(held) != 1 || held[0].MaxMiB != 10240 || held[0].TakenMiB != 3072 || held[0].MiB != 7168 || !held[0].Measured || r.HostRoom.HeldMiB != 7168 {
+		t.Fatalf("held %+v", held)
+	}
+	if r.Action != PlanStart || len(r.HostRoom.Conservative) != 0 {
+		t.Fatalf("with the growth read: %s %q %+v", r.Action, r.Reason, r.HostRoom)
+	}
+
+	// no growth reading (it went stale): the full maximum, and the plan says conservative
+	h.advance(2 * time.Minute)
+	h.memAvailable(21000)
+	r = h.c.dryPlan(gemmaB)
+	if r.HostRoom.HeldMiB != 10240 || r.Action != PlanEvict || !strings.Contains(r.HostRoom.Note, "conservative: what the host process of gemma-4-12b has already taken could not be read, so it counts at its full maximum") ||
+		!strings.Contains(r.Reason, "gemma-4-12b up to 10,240 MiB (conservative: what it has taken could not be read)") {
+		t.Fatalf("conservative: %s %q %+v", r.Action, r.Reason, r.HostRoom)
+	}
+
+	// measured again, more taken: the words name it
+	h.memProcs(15400, 32000, map[string]int{gemmaA: 3572})
+	r = h.c.dryPlan(gemmaB)
+	if !strings.Contains(r.Reason, "the models hosted there may still take up to 7,168 MiB more (gemma-4-12b up to 10,240 MiB, 3,072 MiB already taken)") {
+		t.Fatalf("%q", r.Reason)
+	}
+}
+
+// A model whose maximum is more than the machine's total memory minus the
+// margin can never fit: refused, with the figures and the advice, in the
+// plan and for a request. MemTotal 16,000: at most 14,800 MiB; the two-slot
+// Gemma may hold 22,528.
+func TestHostBudget_NeverFitsIsRefused(t *testing.T) {
+	h := budgetFleet(t, 0)
+	h.step(evLocalMem{mem: LocalMem{AvailableMiB: 15400, TotalMiB: 16000}, at: h.clk.Now()})
+	r := h.c.dryPlan(gemmaP2)
+	want := "host-1 has at most 14,800 MiB for conversation memory (MemTotal 16,000 MiB minus watchdog_floor_mib 1,000 MiB and the tier's headroom_mib 200 MiB); this model may hold up to 22,528 MiB of conversation memory there, so it can never start there; with --ctx-checkpoints 23 --cache-ram 0 on this profile it would hold up to 14,720 MiB and fit"
+	if r.Action != PlanReject || !strings.Contains(r.Reason, want) || r.RequiredMiB != 22528 || r.CapacityMiB != 14800 {
+		t.Fatalf("%s %q (%d/%d)", r.Action, r.Reason, r.RequiredMiB, r.CapacityMiB)
+	}
+	w := h.request(gemmaP2)
+	a, ok := h.peek(w)
+	if !ok || a.err == nil || a.err.Reason != ReasonDoesNotFit || a.err.RetryAfter != 0 || !strings.Contains(a.err.Message, "so it can never start there") {
+		t.Fatalf("answer %+v", a)
+	}
+	// one that fits the total but not what is available now only waits
+	if r := h.c.dryPlan(gemmaA); r.Action != PlanStart {
+		t.Fatalf("gemma-4-12b: %s %q", r.Action, r.Reason)
 	}
 }

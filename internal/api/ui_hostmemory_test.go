@@ -144,7 +144,17 @@ func TestUIHostRoomLine(t *testing.T) {
 		"held_mib": 12288, "this_mib": 12288, "fits": false, "unload": []any{"gemma-4-12b"}}
 	unknown := plan()
 	unknown["host_room"] = map[string]any{"machine": "host-1", "known": false, "note": "host memory not checked: available memory of host-1 unknown (no reading yet)"}
+	never := plan()
+	never["host_room"] = map[string]any{"machine": "host-1", "known": true, "mem_available_mib": 15400, "mem_total_mib": 16000, "capacity_mib": 14800, "floor_mib": 1000, "headroom_mib": 200,
+		"budget_mib": 14200, "this_mib": 22528, "never": true}
+	waits := plan()
+	waits["host_room"] = map[string]any{"machine": "host-1", "known": true, "mem_available_mib": 15400, "floor_mib": 1000, "headroom_mib": 200, "budget_mib": 14200,
+		"held_mib": 12288, "this_mib": 12288, "fits": false, "note": "conservative: what the host process of gemma-4-12b has already taken could not be read, so it counts at its full maximum"}
 	cases := []any{
+		map[string]any{"name": "host room: can never start", "route": "#/placement/alpha", "status": status, "fetch": map[string]any{"/api/plan": never},
+			"expect": []string{"host-1 has at most ", ": it can never start there."}},
+		map[string]any{"name": "host room: waits, conservative", "route": "#/placement/alpha", "status": status, "fetch": map[string]any{"/api/plan": waits},
+			"expect": []string{"it will not start until memory frees or this profile's limits are lowered.", "conservative: what the host process of gemma-4-12b has already taken could not be read, so it counts at its full maximum."}},
 		map[string]any{"name": "host room: short, an idle model unloaded first", "route": "#/placement/alpha", "status": status, "fetch": map[string]any{"/api/plan": short},
 			"expect": []string{"restore points and prompt cache the cluster default.", "host-1 has ", " for conversation memory (available ", "gemma-4-12b would be unloaded first."}},
 		map[string]any{"name": "host room: not checked", "route": "#/placement/alpha", "status": status, "fetch": map[string]any{"/api/plan": unknown},

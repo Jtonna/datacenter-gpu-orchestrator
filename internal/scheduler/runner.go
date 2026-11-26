@@ -79,7 +79,12 @@ type Options struct {
 	// localMemStep MiB or more, or an error, is posted to the core
 	// (hostbudget.go). nil: never read, and the host memory of loads hosted
 	// on the scheduler's machine is not checked.
-	LocalMemory func() (int, error)
+	LocalMemory func() (LocalMem, error)
+	// ProcMemory reads a host process's anonymous resident memory in MiB
+	// (RssAnon), for the models hosted on the scheduler's machine, read with
+	// LocalMemory. nil: their growth is not read, and each counts at its
+	// full maximum ("conservative").
+	ProcMemory func(pid int) (int, error)
 }
 
 // Scheduler is the scheduler core plus the one goroutine (Run) that owns
@@ -130,6 +135,9 @@ type snapshot struct {
 	upKeys   map[string]string // the key of an upstream that wants one (a host on a node)
 	upPlace  map[string]UpstreamPlacement
 	scoped   map[string]*core.Profile // scoped.go: the run-scoped profiles held now (never modified)
+	// hostPIDs: iid -> pid of the ready host processes on this machine
+	// (hostbudget.go startLocalMemory reads their memory)
+	hostPIDs map[uint64]int
 }
 
 // UpstreamPlacement is where a ready instance runs, for a passthrough
@@ -287,7 +295,15 @@ func (s *Scheduler) step(ev event) {
 			place[name] = UpstreamPlacement{Instance: in.iid, Session: in.sessionID, Nodes: s.core.leaseNodesOf(in)} // built once per instance
 		}
 	}
-	s.snap.Store(&snapshot{running: s.core.runningList(), recent: s.core.recentLoads(), profiles: s.core.profileStates(), upstream: up, upKeys: keys, upPlace: place, scoped: maps.Clone(s.core.scoped)})
+	pids := map[uint64]int{}
+	for _, in := range s.core.insts {
+		if (in.state == stReady || in.state == stDraining) && in.child != nil && serverHosted(in.prof, in.placement) {
+			if pid := in.child.PID(); pid > 0 {
+				pids[in.iid] = pid
+			}
+		}
+	}
+	s.snap.Store(&snapshot{running: s.core.runningList(), recent: s.core.recentLoads(), profiles: s.core.profileStates(), upstream: up, upKeys: keys, upPlace: place, scoped: maps.Clone(s.core.scoped), hostPIDs: pids})
 	for _, ef := range s.core.takeEffects() {
 		s.exec(ef)
 	}
