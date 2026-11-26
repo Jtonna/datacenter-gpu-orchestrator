@@ -24,7 +24,9 @@ var gateScripts = filepath.Join("..", "..", "scripts", "gate")
 
 func TestPagesHarnessRules(t *testing.T) {
 	node := nodeOrSkip(t)
-	cmd := exec.Command(node, "--test", "pages-lib.test.mjs")
+	// pages-fixture.test.mjs draws a fixture page in Chromium and skips
+	// itself when Playwright or its browser is not installed
+	cmd := exec.Command(node, "--test", "pages-lib.test.mjs", "pages-fixture.test.mjs")
 	cmd.Dir = gateScripts
 	out, err := cmd.CombinedOutput()
 	if err != nil {

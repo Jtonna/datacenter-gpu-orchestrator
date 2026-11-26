@@ -2,6 +2,8 @@
 // kept apart from the browser so that `node --test scripts/gate/` checks
 // them in a second without one.
 
+import { pathToFileURL } from 'node:url';
+
 // ---------- arguments ----------
 
 export const USAGE = `pages.mjs: draw every page of the scheduler's web UI, read-only.
@@ -23,8 +25,9 @@ usage: node scripts/gate/pages.mjs --base URL [--out DIR] [--widths 1536,1280]
 --allow-post P   let a POST to the path P through (repeatable), for a dry-run
                  endpoint such as /api/plan. Every other request that is not
                  a GET is aborted in the browser, so nothing is written.
---strict         exit 1 when a page scrolls sideways, has a squeezed text
-                 or logs a console error (default: report only, exit 0)
+--strict         exit 1 when a page scrolls sideways, has a squeezed text,
+                 has an overlap or logs a console error (default: report
+                 only, exit 0)
 --dry-run        list the routes found from the API and the shell; no pictures
 
 Routes: every view of the UI (a fixed list of its addresses, checked by a
@@ -52,6 +55,20 @@ Per page and width it measures:
                   the font size per character) while it wraps onto three lines
                   or more; a screen-reader-only text (a box of 2 px or less,
                   or a CSS clip) is not judged
+  overlaps        two texts of different cells of one row painted over each
+                  other: their visible text boxes intersect by more than
+                  1 px in both directions. A row is a table row (its td and
+                  th are the cells) or an element laid out as a grid or as a
+                  flex row (flex-direction row; its children are the cells).
+                  A text box is a line box of a text node, from
+                  Range.getClientRects(), so a text that runs out of its cell
+                  is measured where it is painted; the part of it that an
+                  ancestor's overflow (hidden, clip, auto, scroll) cuts off
+                  is not counted. Not judged: text in an absolutely or fixed
+                  positioned element inside the cell (a badge, a tooltip, a
+                  menu), text hidden for screen readers (a CSS clip, or a
+                  box of 2 px or less), and text not shown (visibility
+                  hidden, opacity 0)
   console_errors  console errors and uncaught exceptions, less the "failed to
                   load" errors of the writes the harness aborted itself
   blocked_writes  the non-GET requests the harness aborted
@@ -301,14 +318,70 @@ export function squeezeVerdict(m, minChars) {
   return null;
 }
 
+// ---------- the overlap rule ----------
+
+// overlapFindings: rows is [{row: label, cells: [[{id, text, rect, clips}]]}],
+// each cell the text boxes of its text nodes (one rect per line box; id
+// names the text node). Two boxes of DIFFERENT cells of one row whose
+// visible parts intersect by more than px (1) in both directions are a
+// finding; a pair of texts is reported once, at the first row that holds
+// both apart. It is self-contained (no other function of this file), because
+// measurePage sends it into the page as text.
+export function overlapFindings(rows, px = 1) {
+  // r cut by every clip rectangle (the boxes of the ancestors whose overflow
+  // is not visible); null when nothing of it is left
+  const cut = (r, clips) => {
+    let { left, top, right, bottom } = r;
+    for (const c of clips || []) {
+      left = Math.max(left, c.left); top = Math.max(top, c.top);
+      right = Math.min(right, c.right); bottom = Math.min(bottom, c.bottom);
+    }
+    return right > left && bottom > top ? { left, top, right, bottom } : null;
+  };
+  const out = [], seen = new Set();
+  const union = boxes => boxes.reduce((u, b) => u ? { left: Math.min(u.left, b.v.left), top: Math.min(u.top, b.v.top),
+    right: Math.max(u.right, b.v.right), bottom: Math.max(u.bottom, b.v.bottom) } : { ...b.v }, null);
+  const hit = (a, b) => Math.min(a.right, b.right) - Math.max(a.left, b.left) > px && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > px;
+  for (const row of rows) {
+    const cells = row.cells.map(c => c.map(t => ({ ...t, v: cut(t.rect, t.clips) })).filter(t => t.v));
+    const bounds = cells.map(union);
+    for (let i = 0; i < cells.length; i++) {
+      for (let j = i + 1; j < cells.length; j++) {
+        if (!bounds[i] || !bounds[j] || !hit(bounds[i], bounds[j])) continue;
+        for (const a of cells[i]) {
+          for (const b of cells[j]) {
+            if (!hit(a.v, b.v)) continue;
+            const key = [String(a.id ?? a.text), String(b.id ?? b.text)].sort().join('|');
+            if (seen.has(key)) continue;
+            seen.add(key);
+            out.push({ row: row.row, a: a.text, b: b.text });
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// overlapLine: the words of one finding.
+export function overlapLine(route, f) {
+  return `overlap: #/${route} row ${f.row}: '${f.a}' over '${f.b}'`;
+}
+
 // measurePage runs IN THE PAGE (page.evaluate(measurePage, {minChars,
-// verdict: squeezeVerdict.toString()})): the sideways scroll and the squeezed
-// texts. A text is an element's own text nodes (not its children's).
+// verdict: squeezeVerdict.toString(), overlaps: overlapFindings.toString()})):
+// the sideways scroll, the squeezed texts and the overlaps. For the squeeze
+// rule a text is an element's own text nodes (not its children's).
 export function measurePage(arg) {
   const verdict = (0, eval)('(' + arg.verdict + ')');
   const de = document.documentElement;
   const out = { sideways: de.scrollWidth > de.clientWidth + 1, scrollWidth: de.scrollWidth, clientWidth: de.clientWidth,
-    squeezed: 0, titled: 0, samples: [] };
+    squeezed: 0, titled: 0, samples: [], overlaps: 0, overlapSamples: [] };
+  if (arg.overlaps) {
+    const findings = (0, eval)('(' + arg.overlaps + ')')(overlapRows(), 1);
+    out.overlaps = findings.length;
+    out.overlapSamples = findings.slice(0, 8);
+  }
   for (const el of document.body.querySelectorAll('*')) {
     let own = '';
     for (const n of el.childNodes) if (n.nodeType === 3) own += n.nodeValue;
@@ -328,9 +401,84 @@ export function measurePage(arg) {
       width: Math.round(r.width), text: own.slice(0, 80) });
   }
   return out;
+
+  // overlapRows: every row of the page, with the text boxes of its cells.
+  function overlapRows() {
+    const styles = new Map(), clipsOf = new Map(), ids = new Map();
+    const st = el => { let s = styles.get(el); if (!s) { s = getComputedStyle(el); styles.set(el, s); } return s; };
+    const label = el => el.tagName.toLowerCase() + (typeof el.className === 'string' && el.className.trim() ? '.' + el.className.trim().split(/\s+/).join('.') : '');
+    // the clip rectangles of el and its ancestors whose overflow is not visible
+    const clips = el => {
+      if (!el || el === document.documentElement || el === document.body) return [];
+      if (clipsOf.has(el)) return clipsOf.get(el);
+      const up = clips(el.parentElement), s = st(el);
+      let mine = up;
+      if (s.overflowX !== 'visible' || s.overflowY !== 'visible') {
+        const r = el.getBoundingClientRect(), left = r.left + el.clientLeft, top = r.top + el.clientTop;
+        mine = up.concat([{ left, top, right: left + el.clientWidth, bottom: top + el.clientHeight }]);
+      }
+      clipsOf.set(el, mine);
+      return mine;
+    };
+    // a text is set apart when it, or an element up to its cell, is not
+    // shown, is hidden for screen readers, or (below the cell) is placed
+    // absolutely or fixed: a badge, a tooltip, a menu
+    const setApart = (el, cell) => {
+      for (let e = el; e; e = e.parentElement) {
+        const s = st(e);
+        if (s.visibility === 'hidden' || s.opacity === '0' || s.display === 'none') return true;
+        if ((s.clip && s.clip !== 'auto') || (s.clipPath && s.clipPath !== 'none')) return true;
+        const r = e.getBoundingClientRect();
+        if (s.display !== 'contents' && (r.width <= 2 || r.height <= 2)) return true;
+        if (e !== cell && (s.position === 'absolute' || s.position === 'fixed')) return true;
+        if (e === cell) return false;
+      }
+      return false;
+    };
+    const texts = cell => {
+      const boxes = [];
+      const walk = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+      for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+        const text = n.nodeValue.replace(/\s+/g, ' ').trim();
+        if (!text || setApart(n.parentElement, cell)) continue;
+        if (!ids.has(n)) ids.set(n, ids.size);
+        const range = document.createRange();
+        range.selectNodeContents(n);
+        const c = clips(n.parentElement);
+        for (const r of range.getClientRects()) {
+          if (r.width > 0 && r.height > 0) boxes.push({ id: ids.get(n), text: text.slice(0, 60), rect: { left: r.left, top: r.top, right: r.right, bottom: r.bottom }, clips: c });
+        }
+      }
+      return boxes;
+    };
+    const rows = [];
+    let n = 0;
+    for (const el of document.body.querySelectorAll('*')) {
+      const s = st(el);
+      if (s.display === 'none') continue;
+      let cells;
+      if (el.tagName === 'TR') cells = [...el.children].filter(c => c.tagName === 'TD' || c.tagName === 'TH');
+      else if (/^(inline-)?grid$/.test(s.display) || (/^(inline-)?flex$/.test(s.display) && /^row/.test(s.flexDirection))) cells = [...el.children];
+      else continue;
+      if (cells.length < 2) continue;
+      n++;
+      rows.push({ row: n + ' (' + label(el) + ')', cells: cells.map(texts) });
+    }
+    return rows;
+  }
 }
 
 // pageLine: the one line of a page.
 export function pageLine(p) {
-  return `PAGE ${p.width} #/${p.route} sideways=${p.sideways ? 'YES' : 'no'} squeezed=${p.squeezed} titled=${p.titled} console_errors=${p.console_errors.length} blocked_writes=${p.blocked_writes.length} -> ${p.png}`;
+  return `PAGE ${p.width} #/${p.route} sideways=${p.sideways ? 'YES' : 'no'} squeezed=${p.squeezed} titled=${p.titled} overlaps=${p.overlaps || 0} console_errors=${p.console_errors.length} blocked_writes=${p.blocked_writes.length} -> ${p.png}`;
+}
+
+// loadPlaywright: the folder's pinned Playwright, or the one PLAYWRIGHT_MODULE
+// names (its index.mjs).
+export async function loadPlaywright() {
+  const tries = ['playwright', process.env.PLAYWRIGHT_MODULE].filter(Boolean);
+  for (const m of tries) {
+    try { return await import(m === 'playwright' ? m : pathToFileURL(m).href); } catch { /* next */ }
+  }
+  throw new Error('playwright is not installed: run `npm install` in scripts/gate (or set PLAYWRIGHT_MODULE to its index.mjs)');
 }

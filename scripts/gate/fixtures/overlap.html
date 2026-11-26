@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>overlap fixture</title>
+<style>
+  body { font: 14px/17px sans-serif; margin: 20px; width: 900px; }
+  /* a list row as on the models page: the needs cell is narrow and its
+     second line does not wrap, so it is painted over the next two cells */
+  .mr { display: grid; grid-template-columns: 200px 90px 80px 80px; gap: 0 12px; align-items: center; min-height: 48px; padding: 4px 0; border-top: 1px solid #ccc; }
+  .need small { display: block; white-space: nowrap; }
+  .fixed .need small { white-space: normal; }
+  /* stacked on purpose */
+  .icon { position: relative; display: inline-block; width: 20px; height: 20px; background: #ddd; }
+  .badge { position: absolute; left: 40px; top: 2px; background: red; color: #fff; font-size: 11px; padding: 0 3px; white-space: nowrap; }
+  .tip { position: absolute; left: 0; top: 18px; white-space: nowrap; background: #333; color: #fff; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .cut { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wrap { display: flex; flex-wrap: wrap; gap: 4px 8px; width: 160px; }
+  table { border-collapse: collapse; table-layout: fixed; width: 400px; }
+  td { width: 100px; padding: 2px 4px; }
+  td span { white-space: nowrap; }
+</style>
+</head>
+<body>
+  <!-- 1: the fault -->
+  <div class="mr" id="fault">
+    <div><b>alpha-7b</b></div>
+    <div class="need">9.1 GiB<small>set by hand, measured on 2 of 3 nodes</small></div>
+    <div>1 profile</div>
+    <div>3 d ago</div>
+  </div>
+  <!-- 2: the same row with the fix (the line wraps in its cell): no finding -->
+  <div class="mr fixed">
+    <div><b>beta-3b</b></div>
+    <div class="need">4.2 GiB<small>set by hand, measured on 2 of 3 nodes</small></div>
+    <div>2 profiles</div>
+    <div>5 d ago</div>
+  </div>
+  <!-- 3: a clipped cell: the text runs on under overflow:hidden, not painted: no finding -->
+  <div class="mr">
+    <div><b>gamma-1b</b></div>
+    <div class="cut">set by hand, measured on 2 of 3 nodes</div>
+    <div>1 profile</div>
+    <div>1 d ago</div>
+  </div>
+  <!-- 4: stacked on purpose: a badge on an icon, a tooltip and a screen-reader
+       label run over the next cell: no finding -->
+  <div class="mr">
+    <div><b>delta-2b</b></div>
+    <div><span class="icon"><span class="badge">12 waiting now</span><span class="tip">a tooltip that is long</span></span><span class="sr">a label for screen readers only</span></div>
+    <div>4 profiles</div>
+    <div>2 d ago</div>
+  </div>
+  <!-- 5: a flex row whose items wrap onto two lines: no finding -->
+  <div class="wrap"><span>first item</span><span>second item</span><span>third item</span></div>
+  <!-- 6: a table row whose cell text runs over the next cell -->
+  <table><tr><td><span>a very long name that does not wrap</span></td><td>next cell</td><td>last</td></tr></table>
+  <!-- 7: two cells side by side with no gap: no finding -->
+  <div style="display:flex"><span style="width:60px;white-space:nowrap">beside</span><span>neighbour</span></div>
+</body>
+</html>

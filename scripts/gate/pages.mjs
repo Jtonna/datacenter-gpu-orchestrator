@@ -2,7 +2,7 @@
 // pages.mjs: the every-page drawing harness of the release gate (README, "How
 // a release is judged"). It draws every route of the web UI of a running
 // scheduler at given widths, as full-page PNGs, and measures each page:
-// sideways scroll, squeezed texts, console errors. It sends no write: every
+// sideways scroll, squeezed texts, overlapping texts, console errors. It sends no write: every
 // request that is not a GET is aborted in the browser (--allow-post lets a
 // named dry-run POST through). The rules are in pages-lib.mjs, checked by
 // `node --test scripts/gate/`. Run with --help for the flags.
@@ -12,8 +12,8 @@
 // chromium`, or run in the Playwright image of the same version. --help,
 // --dry-run and the tests need no browser and no install.
 import { mkdir, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
-import { USAGE, parseArgs, writeVerdict, consoleCounts, apiRoutes, RouteQueue, fileName, squeezeVerdict, measurePage, pageLine, VIEWS } from './pages-lib.mjs';
+import { join } from 'node:path';
+import { USAGE, parseArgs, writeVerdict, consoleCounts, apiRoutes, RouteQueue, fileName, squeezeVerdict, overlapFindings, overlapLine, measurePage, pageLine, loadPlaywright, VIEWS } from './pages-lib.mjs';
 
 // Animations and transitions off, so a picture never catches a page mid-move.
 const STILL = `(() => {
@@ -35,14 +35,6 @@ async function getJSON(base, path) {
   const r = await fetch(base + path, { headers: { Accept: 'application/json' } });
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return r.json();
-}
-
-async function loadPlaywright() {
-  const tries = ['playwright', process.env.PLAYWRIGHT_MODULE].filter(Boolean);
-  for (const m of tries) {
-    try { return await import(m.startsWith('playwright') ? m : 'file://' + resolve(m)); } catch { /* next */ }
-  }
-  throw new Error('playwright is not installed: run `npm install` in scripts/gate (or set PLAYWRIGHT_MODULE to its index.mjs)');
 }
 
 // drawOne opens a fresh page at route and width, waits, measures, draws.
@@ -68,15 +60,15 @@ async function drawOne(ctx, o, route, width) {
   try {
     await page.goto(o.base + '/ui/#/' + route, { waitUntil: 'load', timeout: 60000 });
     await settle(page, o.wait);
-    const m = await page.evaluate(measurePage, { minChars: o.minChars, verdict: squeezeVerdict.toString() });
+    const m = await page.evaluate(measurePage, { minChars: o.minChars, verdict: squeezeVerdict.toString(), overlaps: overlapFindings.toString() });
     links = await page.evaluate(() => [...document.querySelectorAll('a[href*="#/"]')].map(a => a.getAttribute('href')));
     const png = join(o.out, fileName(route, width));
     await page.screenshot({ path: png, fullPage: true });
     return { page: { route, width, sideways: m.sideways, scroll_width: m.scrollWidth, squeezed: m.squeezed, titled: m.titled,
-      squeezed_samples: m.samples, console_errors: errors, blocked_writes: blocked, png }, links };
+      squeezed_samples: m.samples, overlaps: m.overlaps, overlap_samples: m.overlapSamples, console_errors: errors, blocked_writes: blocked, png }, links };
   } catch (e) {
     errors.push('harness: ' + e.message);
-    return { page: { route, width, sideways: false, squeezed: 0, titled: 0, squeezed_samples: [], console_errors: errors, blocked_writes: blocked, png: '', failed: true }, links };
+    return { page: { route, width, sideways: false, squeezed: 0, titled: 0, squeezed_samples: [], overlaps: 0, overlap_samples: [], console_errors: errors, blocked_writes: blocked, png: '', failed: true }, links };
   } finally {
     await page.close();
   }
@@ -110,6 +102,7 @@ async function main() {
         const { page, links } = await drawOne(ctx, o, route, w);
         pages.push(page);
         console.log(pageLine(page));
+        for (const f of page.overlap_samples || []) console.log('  ' + overlapLine(route, f));
         if (w === o.widths[0]) for (const l of links) q.add(l);
       }
     }
@@ -119,14 +112,15 @@ async function main() {
   const totals = {
     routes: q.items.length, pictures: pages.filter(p => p.png).length, failed: pages.filter(p => p.failed).length,
     sideways: pages.filter(p => p.sideways).length, squeezed: pages.reduce((a, p) => a + p.squeezed, 0),
+    overlaps: pages.reduce((a, p) => a + (p.overlaps || 0), 0),
     console_errors: pages.reduce((a, p) => a + p.console_errors.length, 0), blocked_writes: pages.reduce((a, p) => a + p.blocked_writes.length, 0),
     routes_over_max: q.skipped,
   };
   const summary = { base: o.base, widths: o.widths, min_chars: o.minChars, notes: found.notes, totals, pages };
   await writeFile(join(o.out, 'summary.json'), JSON.stringify(summary, null, 2) + '\n');
-  console.log(`pages: ${totals.routes} routes, ${totals.pictures} pictures, failed ${totals.failed}, sideways ${totals.sideways}, squeezed ${totals.squeezed}, console errors ${totals.console_errors}, blocked writes ${totals.blocked_writes} -> ${join(o.out, 'summary.json')}`);
+  console.log(`pages: ${totals.routes} routes, ${totals.pictures} pictures, failed ${totals.failed}, sideways ${totals.sideways}, squeezed ${totals.squeezed}, overlaps ${totals.overlaps}, console errors ${totals.console_errors}, blocked writes ${totals.blocked_writes} -> ${join(o.out, 'summary.json')}`);
   if (totals.failed) return 2;
-  if (o.strict && (totals.sideways || totals.squeezed || totals.console_errors)) return 1;
+  if (o.strict && (totals.sideways || totals.squeezed || totals.overlaps || totals.console_errors)) return 1;
   return 0;
 }
 

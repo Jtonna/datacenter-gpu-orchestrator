@@ -235,7 +235,9 @@ The first two programs are subcommands of `potluck-gate` (`cmd/potluck-gate`). A
 
    Pages are drawn in a light theme, with motion reduced and animations off, in en-US and UTC, so two runs give the same pictures.
 
-   For each page it reports whether the page scrolls sideways, the squeezed texts, and the console errors. A text is squeezed when it is clipped (a clip with the full text in a `title` is counted apart). A long text is also squeezed when it wraps onto three lines or more in a box narrower than `--min-chars` characters. Screen-reader-only text is not judged. The rule is in `pages-lib.mjs`.
+   For each page it reports whether the page scrolls sideways, the squeezed texts, the overlapping texts, and the console errors. A text is squeezed when it is clipped (a clip with the full text in a `title` is counted apart). A long text is also squeezed when it wraps onto three lines or more in a box narrower than `--min-chars` characters. Screen-reader-only text is not judged.
+
+   Two texts overlap when they sit in different cells of one row and are painted over each other: their visible line boxes intersect by more than 1 px both ways. A row is a table row, or an element laid out as a grid or as a flex row; its children are the cells. Each line box comes from `Range.getClientRects()` on the text node, so a text that runs out of its cell is measured where it is painted. The part an ancestor's overflow cuts off does not count. Text that is placed absolutely or fixed inside its cell (a badge, a tooltip, a menu), hidden for screen readers, or not shown is not judged. `--strict` fails on any of these findings. The rules are in `pages-lib.mjs`; `pages-fixture.test.mjs` checks the overlap rule in Chromium on a fixture page when Playwright is installed.
 
    ```sh
    cd scripts/gate && npm install && npx playwright install chromium
